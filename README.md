@@ -14,6 +14,8 @@ Agent AI đã giải xong "làm thế nào". Cái chưa ai giải: **tôi đang 
 
 Các công cụ orchestration hiện có đều nhắm dân code. AgentCo nhắm người **không code nhưng cho phép đi sâu**: mặc định thấy một công ty đang làm việc với kế hoạch 4 bước dễ hiểu; muốn xem transcript thô và bảng chi phí từng token thì cách một cú click.
 
+Và điểm khác biệt lớn nhất: **nhân viên biết dùng hệ thống của chính bạn.** Muốn agent gọi API của bạn, các công cụ khác bắt bạn viết một MCP server. Ở đây bạn **mô tả cái API** — dán link OpenAPI, dán một lệnh cURL, hoặc điền form — rồi bấm Test. Xem [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md).
+
 ## Nguyên tắc thiết kế
 
 1. **Sở hữu artifact, không sở hữu prompt.** Giá trị nằm ở file trong thư mục công ty của bạn. Chúng sống độc lập với mọi thay đổi của Claude Code.
@@ -27,6 +29,7 @@ Các công cụ orchestration hiện có đều nhắm dân code. AgentCo nhắm
 | [`docs/SPEC-2026-08-14-agentco.md`](docs/SPEC-2026-08-14-agentco.md) | Spec hệ thống — tổ chức, role, giao thức Task/Receipt, đồ thị tri thức, scheduler |
 | [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md) | **Đọc cái này trước nếu chỉ đọc một file.** Luật chi phí token, kiến trúc prefix cache |
 | [`docs/SPEC-cli.md`](docs/SPEC-cli.md) | Process model, bộ lệnh, cấu hình, đường lên container |
+| [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md) | **Đặc sản** — nhân viên biết CRUD vào REST API / MCP của chính bạn |
 | [`docs/SPEC-ui.md`](docs/SPEC-ui.md) | Giao diện, sự kiện SSE |
 | [`docs/FINDINGS-sdk-2026-08-14.md`](docs/FINDINGS-sdk-2026-08-14.md) | Kết quả đo thật trên Claude Agent SDK — số liệu, cái bẫy, quyết định phát sinh |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Mốc phát triển |

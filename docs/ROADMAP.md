@@ -61,7 +61,15 @@ Nếu ngày 4 thấy trễ: bỏ luôn hạng mục 6 (tri thức), ship với r
 
 ---
 
-## M1 — Tiết kiệm & bền (2–3 tuần sau golive)
+## M1 — Tiết kiệm & bền + Connector (2–3 tuần sau golive)
+
+**Connector** (`SPEC-connectors.md`) — đây là đặc sản, ưu tiên ngang với phần tiết kiệm:
+
+- Path A: dán MCP config + nút Test + gán theo role
+- Path B: form tay định nghĩa REST action + nút Test + `confirm` khi ghi dữ liệu
+- Trần token connector theo role (2 000), chặn host ngoài `base_url`, token chỉ ở env
+
+Phần tiết kiệm & bền:
 
 - Librarian + hàng đợi `_inbox` + gộp trùng + archive
 - HOT/COLD hai tầng tri thức + `knowledge_version`
@@ -80,6 +88,7 @@ Nếu ngày 4 thấy trễ: bỏ luôn hạng mục 6 (tri thức), ship với r
 
 - License key Ed25519 ký offline (đã thiết kế xong ở `product-decisions-2026-08-03.md` §5 — dùng lại nguyên)
 - Gumroad/Polar cho thanh toán, không tự làm backend
+- **Connector: dán cURL, dán OpenAPI/Swagger, quản lý token trong UI** — đây là thứ biến "đặc sản" thành thứ người non-code dùng được thật
 - Thư viện role mẫu theo ngành (nội dung, ecommerce, freelance dev)
 - Nạp tài liệu tay → tự chia node
 - Trình duyệt đồ thị tri thức

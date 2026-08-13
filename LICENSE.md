@@ -6,12 +6,12 @@ FSL-1.1-ALv2
 
 ## Notice
 
-Copyright 2026 TODO_LICENSOR_NAME
+Copyright 2026 Vũ Quốc Minh
 
 <!--
-  ⚠ PHẢI ĐIỀN TRƯỚC KHI PUBLIC.
-  Thay TODO_LICENSOR_NAME bằng tên pháp lý hoặc tên tổ chức đứng cấp phép.
-  Đây là danh tính pháp lý của bên cấp phép — chỉ chủ sở hữu quyết định được.
+  Nếu sau này lập pháp nhân: chuyển quyền và đổi dòng Copyright ở các bản
+  phát hành MỚI. FSL cấp phép theo từng phiên bản — bản cũ giữ licensor cũ.
+
   Text bên dưới là bản canonical lấy từ
   https://github.com/getsentry/fsl.software/blob/main/FSL-1.1-ALv2.template.md
   — không sửa gì ngoài dòng Copyright.
