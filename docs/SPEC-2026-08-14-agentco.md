@@ -392,6 +392,32 @@ Quy tắc bảo mật bridge: whitelist `chat_id` bắt buộc. Không whitelist
 
 ---
 
+## 9b. Hết hạn mức subscription — kịch bản CHẮC CHẮN xảy ra
+
+Spec bản đầu bỏ sót cái này. Khách chạy bằng subscription Claude Code, nên **họ sẽ hết hạn mức giữa chừng** — không phải "nếu", là "khi nào". Với người non-code, đây là lúc sản phẩm dễ mất niềm tin nhất: một công ty đang chạy bỗng đứng im không rõ lý do.
+
+**Phải phân biệt hai loại lỗi, xử lý ngược nhau:**
+
+| | Rate limit (429) | Hết hạn mức subscription |
+|---|---|---|
+| Bản chất | tạm thời, tính bằng giây | đến kỳ reset, tính bằng **giờ** |
+| Xử lý | backoff mũ + AIMD giảm concurrency | **dừng ca làm việc**, không retry |
+| Nói với người dùng | không cần | **bắt buộc**, kèm thời điểm reset nếu biết |
+
+SDK có sẵn `USAGE_LIMIT_ERROR_PREFIXES` và `USAGE_WARNING_PREFIXES` để nhận diện — dùng chúng, đừng tự đoán bằng regex.
+
+**Hành vi bắt buộc khi hết hạn mức:**
+
+1. Task đang chạy: để chạy nốt, không giết.
+2. Task chưa bắt đầu: **giữ nguyên trong DAG**, không đánh `failed`.
+3. Ghi toàn bộ trạng thái DAG ra `tasks/` → **`agentco resume` chạy tiếp được**, không làm lại từ đầu.
+4. UI + Telegram báo bằng tiếng người: *"Hết lượt dùng Claude. Công ty tạm nghỉ, còn 3 việc chưa làm. Gõ `tiếp tục` khi có lượt lại."*
+5. **Không tự động retry vòng lặp.** Retry mù khi hết hạn mức chỉ làm người dùng tưởng phần mềm hỏng.
+
+Bắt `USAGE_WARNING_PREFIXES` để cảnh báo **trước** khi hết: *"Sắp hết lượt — còn 2 việc nữa là chạm."* Với người non-code, cảnh báo sớm đáng giá hơn xử lý lỗi đẹp.
+
+---
+
 ## 10. Kiểm thử — trả lời nỗi lo "TDD có lỗ hổng cả hai không biết"
 
 Bạn nói đúng: unit test cho hệ này không bắt được lớp lỗi nguy hiểm nhất. Lỗi nguy hiểm ở đây **không phải sai logic — là rò rỉ chi phí**, mà rò rỉ chi phí thì test thường không nhìn.

@@ -32,9 +32,18 @@ Mục tiêu: **một người lạ tải về, chạy, giao một việc thật,
 | 9 | `agentco cost` + `logs/usage.jsonl` | không đo thì không biết mình đang cháy tiền |
 | 10 | `LICENSE.md` (FSL) + README + 1 video 90 giây | golive cần cái này, không phải code |
 
+### Phát sinh sau khi thẩm định SDK — xếp vào đâu
+
+| Hạng mục | Tuần 1? | Vì sao |
+|---|---|---|
+| **Tách skills core / user** | ✅ **CÓ** | Phân tầng prompt sau này mới gắn thì phải viết lại — cùng lý do với Task/Receipt |
+| **Xử lý hết hạn mức subscription** (§9b) | ✅ **CÓ** | Chắc chắn xảy ra với khách thật. Golive mà không có = mất niềm tin ngay lần đầu |
+| `concierge` / `quick_action` | ❌ M1 | Là tối ưu, không phải chức năng. Tuần 1 master gọi worker bình thường cũng chạy được |
+| `use_preset: false` cho role phi-code | ✅ **CÓ** | Một trường trong yaml, tốn 5 phút, tiết kiệm 5,5 lần |
+
 ### KHÔNG làm tuần 1
 
-Librarian · HOT knowledge hai tầng · đồ thị trực quan · nạp tài liệu tay · license key Ed25519 · Docker · `bench` · replay · leo thang tier · Zalo/Messenger · thêm role qua UI · Tauri.
+Librarian · HOT knowledge hai tầng · đồ thị trực quan · nạp tài liệu tay · license key Ed25519 · Docker · `bench` · replay · leo thang tier · Zalo/Messenger · thêm role qua UI · Tauri · `concierge`.
 
 ### Nhịp gợi ý
 
@@ -126,6 +135,7 @@ Kết quả đầy đủ: **`FINDINGS-sdk-2026-08-14.md`**.
 1. **`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` với tri thức HOT ~2K đặt trước marker có hit cross-process không?** Đây là bài kiểm chứng trực tiếp cho `SPEC-token-economy.md` §2.
 2. ~~`agents` (subagent SDK) vs tự chạy `query()`~~ → **ĐÃ QUYẾT, không cần test.** Tự viết. Lý do phủ quyết: output subagent đi thẳng vào context cha, phá giao thức Receipt. Cache vẫn chung vì cache là thuộc tính của prefix trên server, không phải của cách sinh agent (bằng chứng: probe2, 4 call độc lập đều `cr=10 555`). Mượn shape `AgentDefinition` làm định dạng file role.
 3. Bao nhiêu `query()` đồng thời thì dính 429 → đặt mặc định `concurrency`.
+3b. **`jsonSchema` trong `SDKControlInitializeRequest` có phải structured output không?** Nếu có, Receipt được SDK ép schema **miễn phí** thay vì ta validate rồi hỏi lại (tốn một lượt). Đây là thứ rẻ nhất có thể tìm được — kiểm ngay ngày 2.
 4. **Đo lại overhead với task NHIỀU LƯỢT.** Probe dùng `maxTurns: 1` là trường hợp xấu nhất; khoản `cache_write` ~2 600 khấu hao qua các lượt sau. Cần số thật để tính tiền đúng.
 5. Khoản `cache_write` ~2 600/call lặp lại — ép xuống được không? (để M1)
 6. `sessionStore` (alpha) có dùng được cho chế độ VPS không. (để M2)
