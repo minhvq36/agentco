@@ -1,0 +1,13 @@
+{
+  "name": "agentco-bench",
+  "private": true,
+  "type": "module",
+  "description": "Đo chi phí token của Claude Agent SDK. Hạt giống của `agentco bench`.",
+  "scripts": {
+    "cache": "node probe-cache.mjs",
+    "prefix": "node probe-prefix.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.231"
+  }
+}

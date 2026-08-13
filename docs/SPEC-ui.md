@@ -1,0 +1,170 @@
+# SPEC — Giao diện
+
+Đọc kèm `SPEC-2026-08-14-agentco.md`.
+
+**Nguyên lý chủ đạo:** người dùng nhìn thấy **một công ty đang làm việc**, không phải một terminal đang cuộn log. Nhưng log advanced luôn cách một cú click — không giấu, chỉ không phô ra.
+
+Đây cũng là nỗi đau gốc đã tìm ra ở phiên 03/08: *"người ngoại đạo hoang mang không biết bị dắt đi đâu và scope AI làm đến đâu"*. Toàn bộ UI này tồn tại để trả lời bốn câu: **đang ở đâu, ai đang làm, còn bao xa, có đúng hướng không.**
+
+---
+
+## 1. Bố cục
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  Xưởng Nội Dung          ● 3 đang làm   ⏱ 4p12s   💰 62K token   ⚙  │
+├──────────────┬───────────────────────────────────────────────────────┤
+│              │                                                       │
+│  ĐỘI NGŨ     │   ┌─ KẾ HOẠCH ────────────────────────────────────┐  │
+│              │   │ "viết 3 bài fanpage về sản phẩm X"            │  │
+│  🔎 Nghiên   │   │                                               │  │
+│     ● đang   │   │ ✓ 1. Tìm hiểu sản phẩm và khách hàng          │  │
+│     T-01     │   │ ⟳ 2. Nghiên cứu bài viết đối thủ    ← đang    │  │
+│              │   │ ○ 3. Viết 3 bản nháp                          │  │
+│  ✍ Viết      │   │ ○ 4. Soát và chỉnh giọng                      │  │
+│     ○ rảnh   │   └───────────────────────────────────────────────┘  │
+│              │                                                       │
+│  🔍 Soát     │   ┌─ ĐANG DIỄN RA ────────────────────────────────┐  │
+│     ○ rảnh   │   │ 🔎 Nghiên cứu viên                            │  │
+│              │   │    Đang đọc 4 fanpage cùng ngành...           │  │
+│  📚 Thủ thư  │   │                                               │  │
+│     ○ rảnh   │   │ ✍ Người viết                                  │  │
+│              │   │    Chờ kết quả nghiên cứu                     │  │
+│  + Thêm      │   └───────────────────────────────────────────────┘  │
+│              │                                                       │
+│              │   ┌─ NÓI VỚI GIÁM ĐỐC ────────────────────────────┐  │
+│              │   │ > _                                           │  │
+│              │   └───────────────────────────────────────────────┘  │
+├──────────────┴───────────────────────────────────────────────────────┤
+│  ▸ Nhật ký chi tiết (12)                             ▸ Tri thức (48) │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+Hai thanh dưới cùng là **ngăn kéo**, mặc định đóng.
+
+---
+
+## 2. Bốn khu vực
+
+### 2.1 Kế hoạch — trái tim của UI
+
+Đúng như hình dung: **kế hoạch ngắn gọn 1. 2. 3. 4., đi qua những đâu.**
+
+- Master sinh ra kế hoạch với **tối đa 6 bước**, mỗi bước **≤10 từ tiếng Việt**. Đây là ràng buộc trong prompt của master, không phải gợi ý.
+- Trạng thái: `○ chưa làm` · `⟳ đang làm` · `✓ xong` · `⚠ có vấn đề` · `⏸ chờ bạn`
+- Bước có nhiều task con chạy song song → hiện `⟳ 2/3`
+- Click một bước → mở chi tiết: task nào, ai làm, file gì ra, tốn bao nhiêu
+
+**Nút `Xem trước kế hoạch` (`--plan-only`):** master lập kế hoạch xong thì **dừng, chờ duyệt**, chưa tiêu token thực thi. Người dùng sửa/xoá bước rồi bấm Chạy. Bật/tắt được trong cài đặt; **mặc định BẬT** cho người mới — đây chính là "kiểm soát scope", lý do tồn tại của sản phẩm.
+
+### 2.2 Đội ngũ
+
+Danh sách role như danh sách nhân viên. Mỗi người: avatar, tên, trạng thái, task hiện tại.
+
+Click vào một người → thẻ nhân viên:
+- **Giới thiệu** (`pitch` từ role yaml)
+- **Kỹ năng** — chọn mức `ngắn / trung bình / formal`, đổi tại chỗ
+- **Kinh nghiệm riêng** — các node `k/agents/<role>/`, đọc và sửa được
+- **Lịch sử** — 20 task gần nhất, chi phí trung bình
+- **Nâng cao** — tier model, budget, tool, MCP
+
+Đây là mặt "modding" chính cho người advanced, nhưng trình bày như hồ sơ nhân sự chứ không như file cấu hình.
+
+**Hai ràng buộc bắt buộc khi soạn kỹ năng:**
+
+1. **KHÔNG autosave theo từng phím.** Phải có nút **Lưu** tường minh. Mỗi lần lưu là bump cache key → trả một lần cache write. Autosave = churn cache liên tục, đắt và chậm.
+2. **Lớp core hiện ở chế độ chỉ đọc**, có nhãn rõ "phần này đảm bảo hệ thống chạy đúng chi phí — không sửa được". Đừng giấu nó đi: người advanced cần **thấy** để tin, chỉ là không được sửa. Xem `SPEC-2026-08-14-agentco.md` §3.
+
+`concierge` **không xuất hiện** trong danh sách này — nó là tool của master, không phải nhân viên.
+
+### 2.3 Đang diễn ra
+
+Stream trạng thái sống của các worker. **Mỗi dòng là trường `say` trong receipt/progress event — do chính worker sinh ra, không tốn thêm call LLM nào để "dịch cho thân thiện".**
+
+Quy tắc hiển thị:
+- Một agent chỉ giữ **một dòng hiện tại**, cập nhật tại chỗ, không cuộn vô hạn
+- Không hiện tên tool, không hiện JSON, không hiện đường dẫn dài
+- Agent chờ dependency → hiện rõ "Chờ kết quả nghiên cứu", không để trống
+- `⏸ chờ bạn` → nổi lên trên cùng, có nút trả lời ngay
+
+### 2.4 Nói với giám đốc
+
+Ô chat với master. Chính là kênh Telegram nhưng ở dạng web. Một session, một ca làm việc.
+
+Hiện ở góc: `ngữ cảnh 23K / 60K` — khi gần chạm sẽ báo "sắp gộp ký ức", để người dùng không bị bất ngờ khi master quên chi tiết cũ.
+
+---
+
+## 3. Ngăn kéo Nhật ký chi tiết
+
+Mở ra là log advanced đầy đủ. Ba mức, chọn bằng tab:
+
+| Mức | Nội dung |
+|---|---|
+| **Sự kiện** | task bắt đầu/kết thúc, quyết định của master, lỗi — dạng bảng thời gian |
+| **Hội thoại** | transcript thô của từng worker, chọn theo task |
+| **Chi phí** | bảng `agentco cost` dạng web: token vào/ra/cache theo task, cảnh báo cache write bất thường |
+
+Tab **Chi phí** phải dễ tìm và dễ đọc — đây là thứ giữ cho sản phẩm không âm thầm đắt lên, và là thứ khách hàng advanced đánh giá cao nhất.
+
+---
+
+## 4. Ngăn kéo Tri thức
+
+Trình duyệt đồ thị tri thức. Hai chế độ:
+
+**Danh sách** (mặc định) — bảng: tiêu đề, loại, phạm vi, độ tin, lượt dùng, cập nhật. Lọc theo `shared` / từng role. Tìm kiếm dùng index, 0 token.
+
+**Đồ thị** — node + liên kết, `shared` một màu, mỗi role một màu. Kích thước node theo `hits`. Chỉ hiển thị, không phải công cụ chỉnh sửa.
+
+Node mở ra: markdown render, sửa được tại chỗ, nút `Ghim` (đưa vào charter) và `Bỏ`.
+
+**Nạp tài liệu tay:** kéo-thả file vào ngăn này → chạy một task `librarian` chia nhỏ tài liệu thành các node ≤250 token và gắn tag. Có màn xem trước trước khi ghi — người dùng thấy tài liệu 20 trang biến thành 34 node và duyệt.
+
+---
+
+## 5. Kỹ thuật
+
+- **Web app chạy local**, phục vụ bởi chính daemon tại `:7317`
+- **SSE** cho stream sự kiện một chiều (đơn giản hơn WS, đủ dùng; WS chỉ khi cần input hai chiều tần suất cao — hiện không cần)
+- Stack: nhẹ nhất có thể. Không SSR, không router phức tạp. **UI không được là thứ ngốn thời gian tuần đầu.**
+- **Không có build step phức tạp cho v1.** Ưu tiên bundle một lần, phục vụ tĩnh.
+- Không auth ở v1 (bind `127.0.0.1`). Bind `0.0.0.0` (chế độ VPS) → **bắt buộc bật token đăng nhập**, daemon từ chối chạy nếu không.
+
+### Sự kiện SSE
+
+```
+plan.created     { plan_id, steps[] }
+plan.step        { step_idx, status }
+task.started     { task_id, role, say }
+task.progress    { task_id, say }
+task.done        { task_id, status, say, artifacts[], usage }
+task.blocked     { task_id, reason, question? }
+master.message   { text }
+knowledge.changed{ count, version }
+cost.tick        { session_totals }
+```
+
+**`say` là trường bắt buộc ở mọi sự kiện hướng người dùng.** Không có `say` → UI không hiện gì. Ràng buộc này ép mọi thứ hiển thị đều đã ở dạng tiếng người ngay từ nguồn.
+
+---
+
+## 6. Chống hoang mang — checklist
+
+Mỗi màn hình phải trả lời được, không cần click:
+
+- [ ] Đang ở bước mấy trên mấy?
+- [ ] Ai đang làm gì lúc này?
+- [ ] Đã tốn bao nhiêu?
+- [ ] Có gì đang chờ tôi không?
+- [ ] Muốn dừng thì bấm đâu? → **nút Dừng phải luôn thấy được, không nằm trong menu.**
+
+---
+
+## 7. Ngoài phạm vi v1
+
+- Đa ca làm việc song song (v1: một ca một lúc)
+- Nhiều người dùng / phân quyền (đó là hướng doanh nghiệp, xem `ROADMAP.md`)
+- Sửa đồ thị bằng kéo-thả node
+- Giao diện di động riêng — **Telegram chính là bản di động**
+- Theme tuỳ biến

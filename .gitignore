@@ -1,0 +1,38 @@
+# deps / build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# state của công ty — KHÔNG BAO GIỜ commit
+company/.state/
+**/.state/
+**/secrets.json
+*.session.jsonl
+
+# log & đo đạc
+logs/
+*.log
+bench/baseline.json
+bench/results/
+
+# bí mật
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# hệ điều hành / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ghi chú cá nhân — tuyệt đối không lọt sang repo này
+SESSIONS_MEMORY.md
+product-decisions-*.md
+BUSINESS.md
+NOTES.md
+notes/
