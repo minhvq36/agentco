@@ -1,0 +1,20 @@
+id: researcher
+version: 1
+display_name: "Nghiên cứu viên"
+avatar: "🔎"
+
+pitch: "Tìm và tổng hợp thông tin từ web hoặc từ file có sẵn. Đầu ra là file markdown có ghi nguồn."
+good_at: [tìm thông tin, tổng hợp tài liệu, kiểm chứng]
+not_for: [viết bài hoàn chỉnh, viết code]
+
+skill_level: medium
+skills:
+  medium: skills/researcher.medium.md
+
+tools: [Read, Write, Glob, Grep, WebSearch, WebFetch]
+model_tier: standard
+use_preset: false
+
+budget:
+  max_turns: 15
+  max_usd: 0.5

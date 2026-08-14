@@ -1,0 +1,284 @@
+/**
+ * Scheduler: chạy DAG task song song.
+ *
+ * → docs/SPEC-2026-08-14-agentco.md §7, §9b
+ */
+
+import { CachePrimingGate } from './gate.js';
+import { buildWorkerPrompt } from './prompt.js';
+import { runWorker } from './worker.js';
+import type { LoadedCompany } from './config.js';
+import type { KnowledgeStore } from '../knowledge/store.js';
+import {
+  RunError,
+  type AgentEvent,
+  type Plan,
+  type Receipt,
+  type TaskBrief,
+} from './types.js';
+
+export interface SchedulerDeps {
+  company: LoadedCompany;
+  knowledge: KnowledgeStore;
+  emit(event: AgentEvent): void;
+  /** Kiểm tra giữa các task — người dùng bấm Dừng thì thoát sạch. */
+  shouldStop?(): boolean;
+}
+
+export interface RunResult {
+  receipts: Map<string, Receipt>;
+  /** Task chưa chạy vì hết hạn mức / bị dừng. Giữ lại để `agentco resume`. */
+  pending: TaskBrief[];
+  stoppedBy?: 'usage_limit' | 'user' | 'auth';
+}
+
+export class Scheduler {
+  private readonly gate: CachePrimingGate;
+  /** AIMD: gặp 429 thì giảm nửa, chạy trơn 10 task thì tăng 1. */
+  private concurrency: number;
+  private readonly maxConcurrency: number;
+  private smoothRun = 0;
+
+  constructor(private readonly deps: SchedulerDeps) {
+    const rt = deps.company.config.runtime;
+    this.maxConcurrency = rt.concurrency;
+    this.concurrency = rt.concurrency;
+    this.gate = new CachePrimingGate(ttlMs(rt.cache_ttl), rt.priming_timeout_ms);
+  }
+
+  /**
+   * Từ chối DAG hỏng NGAY LÚC LẬP KẾ HOẠCH, không đợi lúc chạy mới nổ.
+   * Rẻ hơn nhiều: chưa tốn token nào.
+   */
+  static validate(plan: Plan, knownRoles: ReadonlySet<string>): string[] {
+    const problems: string[] = [];
+    const ids = new Set(plan.tasks.map((t) => t.task_id));
+    const writers = new Map<string, string>();
+
+    for (const t of plan.tasks) {
+      if (!knownRoles.has(t.role)) problems.push(`Task ${t.task_id}: không có vai trò "${t.role}"`);
+      for (const d of t.deps) {
+        if (!ids.has(d)) problems.push(`Task ${t.task_id}: phụ thuộc "${d}" không tồn tại`);
+      }
+      for (const o of t.outputs) {
+        const prev = writers.get(o.path);
+        if (prev) problems.push(`Task ${t.task_id} và ${prev} cùng ghi "${o.path}"`);
+        else writers.set(o.path, t.task_id);
+      }
+    }
+
+    // chu trình
+    const state = new Map<string, 0 | 1 | 2>();
+    const byId = new Map(plan.tasks.map((t) => [t.task_id, t]));
+    const visit = (id: string, trail: string[]): void => {
+      if (state.get(id) === 2) return;
+      if (state.get(id) === 1) {
+        problems.push(`Phụ thuộc vòng tròn: ${[...trail, id].join(' → ')}`);
+        return;
+      }
+      state.set(id, 1);
+      for (const d of byId.get(id)?.deps ?? []) visit(d, [...trail, id]);
+      state.set(id, 2);
+    };
+    for (const t of plan.tasks) visit(t.task_id, []);
+
+    return problems;
+  }
+
+  async run(plan: Plan): Promise<RunResult> {
+    const receipts = new Map<string, Receipt>();
+    const remaining = new Map(plan.tasks.map((t) => [t.task_id, t]));
+    const failed = new Set<string>();
+    const running = new Set<Promise<void>>();
+    let stoppedBy: RunResult['stoppedBy'];
+
+    while (remaining.size > 0 && !stoppedBy) {
+      if (this.deps.shouldStop?.()) {
+        stoppedBy = 'user';
+        break;
+      }
+
+      const ready = [...remaining.values()].filter((t) =>
+        t.deps.every((d) => receipts.has(d) || failed.has(d)),
+      );
+
+      // Dep hỏng thì task con không chạy — nhưng KHÔNG đánh failed âm thầm,
+      // trả receipt "blocked" để người dùng thấy vì sao nó không chạy.
+      for (const t of ready) {
+        if (t.deps.some((d) => failed.has(d))) {
+          remaining.delete(t.task_id);
+          failed.add(t.task_id);
+          const blocked: Receipt = {
+            status: 'blocked',
+            say: `Không làm được vì bước trước chưa xong.`,
+            artifacts: [],
+            lessons: [],
+            blocked_on: `phụ thuộc hỏng: ${t.deps.filter((d) => failed.has(d)).join(', ')}`,
+            task_id: t.task_id,
+            role: t.role,
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '' },
+            wall_ms: 0,
+            reasked: false,
+          };
+          receipts.set(t.task_id, blocked);
+          this.deps.emit({
+            type: 'task.blocked',
+            task_id: t.task_id,
+            role: t.role,
+            say: blocked.say,
+            reason: blocked.blocked_on ?? '',
+          });
+        }
+      }
+
+      const launchable = ready.filter((t) => remaining.has(t.task_id)).slice(0, Math.max(0, this.concurrency - running.size));
+
+      if (launchable.length === 0) {
+        if (running.size === 0) break; // deadlock hoặc hết việc
+        await Promise.race(running);
+        continue;
+      }
+
+      for (const brief of launchable) {
+        remaining.delete(brief.task_id);
+        const p = this.execute(brief)
+          .then((receipt) => {
+            receipts.set(brief.task_id, receipt);
+            if (receipt.status === 'failed') failed.add(brief.task_id);
+            this.onSuccess();
+          })
+          .catch((err: unknown) => {
+            const kind = err instanceof RunError ? err.kind : 'other';
+            if (kind === 'usage_limit') {
+              // Hết hạn mức: DỪNG CA, không retry. Task chưa chạy giữ nguyên.
+              stoppedBy = 'usage_limit';
+              remaining.set(brief.task_id, brief);
+              return;
+            }
+            if (kind === 'auth') {
+              stoppedBy = 'auth';
+              remaining.set(brief.task_id, brief);
+              return;
+            }
+            if (kind === 'rate_limit') {
+              this.onRateLimit();
+              remaining.set(brief.task_id, brief); // thử lại vòng sau
+              return;
+            }
+            failed.add(brief.task_id);
+            receipts.set(brief.task_id, this.errorReceipt(brief, err));
+          })
+          .finally(() => {
+            running.delete(p);
+          });
+        running.add(p);
+      }
+
+      if (running.size >= this.concurrency) await Promise.race(running);
+    }
+
+    await Promise.allSettled(running);
+
+    const result: RunResult = { receipts, pending: [...remaining.values()] };
+    if (stoppedBy) result.stoppedBy = stoppedBy;
+    return result;
+  }
+
+  gateStats() {
+    return this.gate.snapshot();
+  }
+
+  // ── nội bộ
+
+  private async execute(brief: TaskBrief): Promise<Receipt> {
+    const { company, knowledge } = this.deps;
+    const role = company.roles.get(brief.role);
+    if (!role) throw new RunError(`Không có vai trò "${brief.role}"`, 'other');
+
+    // HOT: nằm trong prefix cache, tính theo role, KHÔNG theo task.
+    const hot = knowledge.hot(role.id, role.hot_knowledge_size, company.config.budgets.hot_knowledge_tokens);
+    // COLD: chọn theo nội dung task, nằm sau breakpoint, trả giá đầy đủ.
+    const cold = knowledge.cold(
+      role.id,
+      `${brief.goal} ${brief.constraints.join(' ')}`,
+      Math.min(role.budget.knowledge_pack, company.config.budgets.cold_knowledge_tokens),
+      hot.ids,
+    );
+
+    this.deps.emit({
+      type: 'task.started',
+      task_id: brief.task_id,
+      role: role.id,
+      say: `${role.display_name || role.id}: ${brief.goal}`,
+    });
+
+    const receipt = await runWorker(
+      {
+        company,
+        acquireCacheSlot: (key) => this.gate.acquire(key),
+        onProgress: (say) =>
+          this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
+      },
+      { brief, role, hotKnowledge: hot.text, coldKnowledge: cold.text },
+    );
+
+    knowledge.recordHits([...hot.ids, ...cold.ids]);
+
+    this.deps.emit({
+      type: 'task.done',
+      task_id: brief.task_id,
+      role: role.id,
+      say: receipt.say,
+      status: receipt.status,
+      artifacts: receipt.artifacts,
+      usage: receipt.usage,
+    });
+
+    return receipt;
+  }
+
+  /** Cho phép kiểm tra cacheKey trước khi chạy — dùng ở `agentco status`. */
+  cacheKeyFor(roleId: string): string | undefined {
+    const role = this.deps.company.roles.get(roleId);
+    if (!role) return undefined;
+    return buildWorkerPrompt(this.deps.company, role).cacheKey;
+  }
+
+  private onRateLimit(): void {
+    this.smoothRun = 0;
+    this.concurrency = Math.max(1, Math.floor(this.concurrency / 2));
+  }
+
+  private onSuccess(): void {
+    if (++this.smoothRun >= 10 && this.concurrency < this.maxConcurrency) {
+      this.concurrency++;
+      this.smoothRun = 0;
+    }
+  }
+
+  private errorReceipt(brief: TaskBrief, err: unknown): Receipt {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      status: 'failed',
+      say: 'Việc này gặp lỗi và không hoàn thành được.',
+      artifacts: [],
+      lessons: [],
+      blocked_on: msg.slice(0, 200),
+      task_id: brief.task_id,
+      role: brief.role,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '' },
+      wall_ms: 0,
+      reasked: false,
+    };
+  }
+}
+
+/**
+ * TTL 1 giờ khi đang "trong ca": người dùng nghĩ 7 phút giữa hai câu là chuyện
+ * thường, mà TTL 5 phút thì mất trắng cache. Ghi cache TTL 1h đắt hơn ~1.6×
+ * nhưng cứu được toàn bộ khoảng nghỉ.
+ */
+function ttlMs(setting: 'auto' | '5m' | '1h'): number {
+  if (setting === '5m') return 5 * 60_000;
+  return 60 * 60_000;
+}

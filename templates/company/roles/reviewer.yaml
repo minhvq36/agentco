@@ -1,0 +1,21 @@
+id: reviewer
+version: 1
+display_name: "Người soát"
+avatar: "🔍"
+
+pitch: "Đọc lại kết quả của người khác, chỉ ra lỗi và chỗ chưa đạt. Đầu ra là file nhận xét ngắn."
+good_at: [soát lỗi, kiểm tra tính nhất quán, đối chiếu yêu cầu]
+not_for: [tự viết lại nội dung, nghiên cứu]
+
+skill_level: medium
+skills:
+  medium: skills/reviewer.medium.md
+
+tools: [Read, Write, Glob, Grep]
+# Việc soát lỗi phần lớn là đối chiếu — không cần model mạnh nhất.
+model_tier: cheap
+use_preset: false
+
+budget:
+  max_turns: 8
+  max_usd: 0.2

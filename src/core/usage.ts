@@ -1,0 +1,170 @@
+/**
+ * Kế toán token.
+ *
+ * → docs/SPEC-token-economy.md §5
+ *
+ * "Không có số đo thì không tối ưu được, và không phát hiện được chết chậm."
+ * Dòng quan trọng nhất trong báo cáo là CẢNH BÁO CACHE WRITE BẤT THƯỜNG:
+ * cùng một vai trò mà phải ghi cache nhiều lần trong một ca nghĩa là có gì đó
+ * đang phá prefix. Đó chính xác là lỗi đã xảy ra với `claude -p`, và là lỗi
+ * người dùng sẽ KHÔNG tự nhìn ra nếu không có dòng này.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { Paths } from './paths.js';
+import type { Usage } from './types.js';
+
+export interface UsageRecord {
+  ts: string;
+  task_id: string;
+  role: string;
+  cache_key: string;
+  model: string;
+  in: number;
+  cache_read: number;
+  cache_write: number;
+  out: number;
+  cost_usd: number;
+  wall_ms: number;
+  status: string;
+  reasked: boolean;
+}
+
+export function appendUsage(paths: Paths, rec: UsageRecord): void {
+  fs.mkdirSync(path.dirname(paths.usageLog), { recursive: true });
+  fs.appendFileSync(paths.usageLog, JSON.stringify(rec) + '\n', 'utf8');
+}
+
+export function readUsage(paths: Paths, sinceMs?: number): UsageRecord[] {
+  if (!fs.existsSync(paths.usageLog)) return [];
+  const cutoff = sinceMs ? Date.now() - sinceMs : 0;
+  const out: UsageRecord[] = [];
+  for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const rec = JSON.parse(line) as UsageRecord;
+      if (!cutoff || Date.parse(rec.ts) >= cutoff) out.push(rec);
+    } catch {
+      /* dòng hỏng thì bỏ qua, không để log hỏng làm sập lệnh cost */
+    }
+  }
+  return out;
+}
+
+export interface CostReport {
+  tasks: number;
+  totals: Usage;
+  /** cache_read / (cache_read + in + cache_write). Ngưỡng cảnh báo: 0.70 */
+  cacheHitRatio: number;
+  p50Tokens: number;
+  p95Tokens: number;
+  mostExpensive?: { task_id: string; role: string; tokens: number; cost: number };
+  /** Vai trò phải ghi cache >1 lần — dấu hiệu prefix đang bị phá. */
+  suspiciousCacheWrites: Array<{ role: string; writes: number; keys: number }>;
+  reaskCount: number;
+}
+
+export function summarize(records: UsageRecord[]): CostReport {
+  const totals: Usage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    costUSD: 0,
+    model: '',
+  };
+  const perTask: number[] = [];
+  let worst: CostReport['mostExpensive'];
+  const byRole = new Map<string, { writes: number; keys: Set<string> }>();
+  let reaskCount = 0;
+
+  for (const r of records) {
+    totals.input += r.in;
+    totals.output += r.out;
+    totals.cacheRead += r.cache_read;
+    totals.cacheWrite += r.cache_write;
+    totals.costUSD += r.cost_usd;
+    if (r.reasked) reaskCount++;
+
+    const tokens = r.in + r.cache_read + r.cache_write + r.out;
+    perTask.push(tokens);
+    if (!worst || tokens > worst.tokens) {
+      worst = { task_id: r.task_id, role: r.role, tokens, cost: r.cost_usd };
+    }
+
+    if (r.cache_write > 0) {
+      const e = byRole.get(r.role) ?? { writes: 0, keys: new Set<string>() };
+      e.writes++;
+      e.keys.add(r.cache_key);
+      byRole.set(r.role, e);
+    }
+  }
+
+  perTask.sort((a, b) => a - b);
+  const denominator = totals.cacheRead + totals.input + totals.cacheWrite;
+
+  const report: CostReport = {
+    tasks: records.length,
+    totals,
+    cacheHitRatio: denominator > 0 ? totals.cacheRead / denominator : 0,
+    p50Tokens: percentile(perTask, 0.5),
+    p95Tokens: percentile(perTask, 0.95),
+    // Ghi cache nhiều lần cho CÙNG một cacheKey = prefix đang bị phá đâu đó.
+    // Nhiều key khác nhau thì chỉ là có nhiều biến thể role, không đáng lo.
+    suspiciousCacheWrites: [...byRole.entries()]
+      .filter(([, v]) => v.writes > v.keys.size + 1)
+      .map(([role, v]) => ({ role, writes: v.writes, keys: v.keys.size }))
+      .sort((a, b) => b.writes - a.writes),
+    reaskCount,
+  };
+  if (worst) report.mostExpensive = worst;
+  return report;
+}
+
+export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
+  if (r.tasks === 0) return 'Chưa có việc nào được ghi nhận.';
+
+  const n = (x: number) => (x >= 1000 ? `${(x / 1000).toFixed(1)}K` : String(x));
+  const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  const lines: string[] = [];
+
+  lines.push(`${title.padEnd(28)} ${r.tasks} việc`);
+  lines.push(
+    `${'Tổng token'.padEnd(28)} vào ${n(r.totals.input)} · đọc-cache ${n(r.totals.cacheRead)} · ` +
+      `ghi-cache ${n(r.totals.cacheWrite)} · ra ${n(r.totals.output)}`,
+  );
+  lines.push(`${'Chi phí'.padEnd(28)} $${r.totals.costUSD.toFixed(4)}`);
+
+  const ok = r.cacheHitRatio >= 0.7;
+  lines.push(
+    `${'Tỉ lệ dùng lại cache'.padEnd(28)} ${pct(r.cacheHitRatio)}  ${ok ? '✓' : '✗ dưới ngưỡng 70% — prefix đang bị phá'}`,
+  );
+  lines.push(`${'Token/việc (p50 / p95)'.padEnd(28)} ${n(r.p50Tokens)} / ${n(r.p95Tokens)}`);
+
+  if (r.mostExpensive) {
+    lines.push(
+      `${'Tốn nhất'.padEnd(28)} ${r.mostExpensive.task_id} (${r.mostExpensive.role}) ` +
+        `${n(r.mostExpensive.tokens)} · $${r.mostExpensive.cost.toFixed(4)}`,
+    );
+  }
+  if (r.reaskCount > 0) {
+    lines.push(
+      `${'Phải hỏi lại định dạng'.padEnd(28)} ${r.reaskCount} lần  ⚠ tốn thêm — xem lại prompt của vai trò đó`,
+    );
+  }
+  for (const s of r.suspiciousCacheWrites) {
+    lines.push(
+      `${'⚠ Ghi cache bất thường'.padEnd(28)} vai trò "${s.role}": ${s.writes} lần ghi cho ${s.keys} khoá — ` +
+        `có ai đang sửa role/tri thức giữa ca?`,
+    );
+  }
+  return lines.join('\n');
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const i = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  return sorted[i] ?? 0;
+}

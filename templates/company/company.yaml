@@ -1,0 +1,33 @@
+# Cấu hình công ty. Sửa thoải mái — nhưng đọc ghi chú trước khi đổi phần budgets.
+name: "Công ty của tôi"
+charter_file: knowledge/shared/_charter.md
+
+runtime:
+  port: 7317
+  # Số nhân viên chạy song song cùng lúc.
+  concurrency: 4
+
+budgets:
+  # TRẦN CỨNG. Đây là thứ giữ cho chi phí không âm thầm phình lên.
+  # Nới lên thì tốn tiền hơn, không phải "chạy tốt hơn". Đọc docs/SPEC-token-economy.md trước khi đổi.
+  receipt_tokens: 800
+  knowledge_node_tokens: 250
+  cold_knowledge_tokens: 3000
+
+models:
+  cheap: claude-haiku-4-5-20251001
+  standard: claude-sonnet-5
+  deep: claude-opus-5
+  master: standard
+
+master:
+  # Gắn MCP vào master sẽ phá prompt cache của chính master (issue #247)
+  # -> tốn thêm rất nhiều mỗi lượt trò chuyện. Để false.
+  mcp: false
+
+# MCP server tự cắm thêm. Chỉ worker mới được dùng, master thì không.
+# mcpServers:
+#   notion:
+#     command: npx
+#     args: ["-y", "@notionhq/notion-mcp-server"]
+mcpServers: {}

@@ -1,0 +1,27 @@
+id: writer
+version: 1
+display_name: "Người viết"
+avatar: "✍"
+
+# Đây là THỨ DUY NHẤT giám đốc nhìn thấy khi lên kế hoạch.
+# Giữ ngắn: nó nằm trong ngữ cảnh của giám đốc suốt cả ca làm việc.
+pitch: "Viết nội dung tiếng Việt: bài đăng, email, mô tả, kịch bản. Đầu ra là file markdown."
+good_at: [viết bài, biên tập, đặt tiêu đề]
+not_for: [viết code, phân tích số liệu]
+
+skill_level: medium
+skills:
+  short: skills/writer.short.md
+  medium: skills/writer.medium.md
+
+tools: [Read, Write, Glob, Grep]
+model_tier: standard
+
+# Không dùng system prompt preset của Claude Code: preset chứa toàn bộ hướng dẫn
+# viết code mà vai trò này không cần — đắt hơn ~6.300 token mỗi lần gọi.
+use_preset: false
+
+budget:
+  max_turns: 12
+  max_usd: 0.4
+  knowledge_pack: 3000
