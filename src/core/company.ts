@@ -98,7 +98,7 @@ export class Company {
 
     this.stopRequested = false;
     this.setState('working', 'Giám đốc đang lập kế hoạch...');
-    let usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '' };
+    let usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 };
 
     try {
       // 1. Kế hoạch
@@ -253,6 +253,7 @@ export class Company {
       out: r.usage.output,
       cost_usd: r.usage.costUSD,
       wall_ms: r.wall_ms,
+      turns: r.usage.turns,
       status: r.status,
       reasked: r.reasked,
     });
@@ -328,5 +329,6 @@ function add(a: Usage, b: Usage): Usage {
     cacheWrite: a.cacheWrite + b.cacheWrite,
     costUSD: a.costUSD + b.costUSD,
     model: a.model || b.model,
+    turns: a.turns + b.turns,
   };
 }

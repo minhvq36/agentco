@@ -200,6 +200,58 @@ Nên quyết định bằng lý do khác, và cả ba đều nghiêng về tự 
 
 ---
 
+## 5c. Số lượt là đòn bẩy chi phí thật — không phải số task
+
+Đo trên hệ thống chạy thật, không phải probe tổng hợp.
+
+**Công thức chi phí thực tế:**
+
+```
+chi phí ≈ SỐ LƯỢT × prefix × 0.1  +  ghi-cache × 1.25  +  output
+```
+
+`cache_read` **nhân theo số lượt**, vì mỗi lượt gọi tool là một lần đọc lại toàn bộ prefix. Điều này **sửa lại §5** ở trên: task nhiều lượt có khấu hao khoản `cache_write`, nhưng đồng thời **nhân** khoản `cache_read` lên — và phần nhân lớn hơn phần khấu hao.
+
+→ SDK trả `num_turns` trong result message. Hệ thống ghi nó vào `logs/usage.jsonl` và `agentco cost` in **lượt/việc theo vai trò**. Đây là số cần nhìn khi tối ưu, không phải tổng token.
+
+### Prompt "kỷ luật số lượt" gần như KHÔNG ăn thua
+
+Đã thêm hẳn một mục vào system prompt (đọc mỗi file một lần, không đọc lại file vừa ghi, không thăm dò, gộp các lần đọc). Đo trước/sau: writer đứng yên (34 650 → 35 693 cache_read), reviewer còn tăng.
+
+**Kết luận trung thực: không tối ưu được số lượt bằng cách bảo model đừng dùng nhiều lượt.** Số lượt là thuộc tính của model + độ khó việc, không phải của lời dặn. Đòn bẩy thật nằm ở: chọn model, và cho brief đủ rõ để agent không phải đi tìm.
+
+### So sánh tier trên cùng một việc (cache đã ấm)
+
+| tier | lượt | token | thời gian | tiền |
+|---|---:|---:|---:|---:|
+| `cheap` (Haiku) | 10 | 137 372 | 77,9s | **$0.0556** |
+| `standard` (Sonnet) | 4 | 63 350 | 37,0s | $0.0893 |
+
+Haiku dùng **2,5× số lượt**, 2,17× token, chậm 2,11× — **nhưng vẫn rẻ hơn 38%**, vì nó rẻ hơn ~3,4× trên mỗi token.
+
+> **Luật: `cheap` chỉ lãi khi `bội_số_token < tỉ_lệ_giá`.** Biên mỏng hơn tỉ lệ giá gợi ý nhiều. Việc càng phức tạp, bội số càng tăng, tới lúc lỗ.
+
+Hai cái giá không nằm trong bảng tiền:
+- **Độ trễ gấp đôi** — với sản phẩm một người dùng ngồi chờ, thường quan trọng hơn 3 cent
+- **Số lượt không đoán được** — Haiku: 9 rồi 10 cho cùng một việc; Sonnet: 4 rồi 4. Nên **vai trò `cheap` cần `max_turns` cao hơn vai trò `standard`**, ngược trực giác.
+
+Tái lập: `node bench/tier-compare.mjs`
+
+---
+
+## 5d. Cache priming gate — đo được trên hệ thống thật
+
+Hai `writer` chạy song song, cùng cacheKey:
+
+| | cache_write | tiền |
+|---|---:|---:|
+| task đầu (primer, chạy một mình) | 20 103 | $0.136 |
+| task sau (chờ ở gate rồi mới bung) | **4 239** | **$0.048** |
+
+Cùng vai trò, cùng loại việc, **rẻ hơn 2,8×**. Không có gate thì cả hai cùng trả ~20K cache_write.
+
+---
+
 ## 6. Còn phải kiểm (chưa làm)
 
 1. `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` với **tri thức HOT ~2K token** đặt trước marker — có thật sự hit cross-session giữa hai process khác nhau không? Đây là bài kiểm chứng trực tiếp cho §2.

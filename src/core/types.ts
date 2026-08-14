@@ -200,6 +200,12 @@ export interface Usage {
   cacheWrite: number;
   costUSD: number;
   model: string;
+  /**
+   * Số lượt API. ĐÂY LÀ SỐ ĐO QUAN TRỌNG NHẤT cho chi phí: mỗi lượt đọc lại
+   * TOÀN BỘ prefix, nên chi phí ≈ lượt × prefix × 0.1. Trước đây phải suy ra
+   * từ cache_read, giờ lấy thẳng `num_turns` của SDK.
+   */
+  turns: number;
 }
 
 export const EMPTY_USAGE: Usage = {
@@ -209,6 +215,7 @@ export const EMPTY_USAGE: Usage = {
   cacheWrite: 0,
   costUSD: 0,
   model: '',
+  turns: 0,
 };
 
 /** Receipt đã qua validate + gắn số liệu đo được. */

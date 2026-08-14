@@ -135,6 +135,29 @@ Ghim thành hằng số trong code, override được qua `company.yaml`.
 | Concurrency | 4 | cấu hình |
 | **Sàn overhead / worker call** | **~13 200 token** | **không giảm được** — xem `FINDINGS` §2b |
 
+### Chọn tier: luật quyết định, không phải trực giác
+
+Đo thật ngày 14/08/2026 trên **cùng một việc soát lỗi** (2 file input, cùng ràng buộc, cache đã ấm):
+
+| tier | lượt | token | thời gian | tiền |
+|---|---:|---:|---:|---:|
+| `cheap` (Haiku) | 10 | 137 372 | 77,9s | **$0.0556** |
+| `standard` (Sonnet) | 4 | 63 350 | 37,0s | $0.0893 |
+
+Model rẻ **dò dẫm nhiều lượt hơn**, mà mỗi lượt đọc lại toàn bộ prefix. Nên "rẻ trên mỗi token" KHÔNG tự động thành "rẻ trên mỗi việc". Luật:
+
+> **`cheap` chỉ lãi khi `bội_số_token < tỉ_lệ_giá`.**
+> Ở đây 2,17 < ~3,4 nên vẫn lãi. Nhưng biên mỏng hơn tỉ lệ giá gợi ý rất nhiều — và với việc phức tạp hơn, bội số token sẽ tăng cho tới lúc lỗ.
+
+**Đo, đừng đoán:** `node bench/tier-compare.mjs` chạy đúng phép so này cho một vai trò bất kỳ.
+
+### Hai cái giá của `cheap` mà bảng tiền không thể hiện
+
+1. **Độ trễ gấp đôi.** 78s so với 37s. Người dùng ngồi chờ — với sản phẩm một người dùng thì đây thường quan trọng hơn 3 cent.
+2. **Số lượt không đoán được.** Haiku: 9 rồi 10 lượt cho cùng một việc. Sonnet: 4 rồi 4. Nghĩa là **vai trò dùng `cheap` cần ngân sách `max_turns` CAO HƠN HẲN** vai trò dùng `standard` — ngược với trực giác, và là lý do `reviewer` từng fail ở `max_turns` 4 rồi 6.
+
+> **Luật:** vai trò `cheap` đặt `max_turns` ≥ 1,5× số lượt đo được. Vai trò `standard` đặt ≈ 2× là đủ.
+
 > **Luật bổ sung sau khi đo (spec gốc thiếu):**
 > **Ưu tiên ít task lớn hơn nhiều task nhỏ.** Mỗi task gánh ~13K token overhead bất kể việc to hay nhỏ. Chỉ chẻ task khi có **song song thật** hoặc **cần role khác** — không chẻ để nhìn cho gọn. Đây là ràng buộc ngược với §7 `SPEC-2026-08-14-agentco.md` (scheduler); scheduler phải từ chối DAG có task tầm thường và gộp chúng lại.
 

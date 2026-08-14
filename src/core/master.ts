@@ -234,6 +234,7 @@ export class Master {
             cacheWrite: u['cache_creation_input_tokens'] ?? 0,
             costUSD: typeof m['total_cost_usd'] === 'number' ? m['total_cost_usd'] : 0,
             model,
+            turns: typeof m['num_turns'] === 'number' ? m['num_turns'] : 0,
           });
           text = typeof m['result'] === 'string' ? m['result'] : '';
         }

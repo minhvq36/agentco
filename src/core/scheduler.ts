@@ -118,7 +118,7 @@ export class Scheduler {
             blocked_on: `phụ thuộc hỏng: ${t.deps.filter((d) => failed.has(d)).join(', ')}`,
             task_id: t.task_id,
             role: t.role,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '' },
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
             wall_ms: 0,
             reasked: false,
           };
@@ -295,7 +295,7 @@ export class Scheduler {
       blocked_on: msg.slice(0, 200),
       task_id: brief.task_id,
       role: brief.role,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '' },
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
       wall_ms: 0,
       reasked: false,
     };

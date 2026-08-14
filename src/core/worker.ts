@@ -205,6 +205,7 @@ function readUsage(result: Record<string, unknown>): Usage {
     cacheWrite: u['cache_creation_input_tokens'] ?? 0,
     costUSD: typeof result['total_cost_usd'] === 'number' ? result['total_cost_usd'] : 0,
     model: dominantModel(result['modelUsage']),
+    turns: typeof result['num_turns'] === 'number' ? result['num_turns'] : 0,
   };
 }
 
@@ -236,6 +237,7 @@ export function addUsage(a: Usage, b: Usage): Usage {
     cacheWrite: a.cacheWrite + b.cacheWrite,
     costUSD: a.costUSD + b.costUSD,
     model: a.model || b.model,
+    turns: a.turns + b.turns,
   };
 }
 

@@ -28,6 +28,8 @@ export interface UsageRecord {
   out: number;
   cost_usd: number;
   wall_ms: number;
+  /** Số lượt API. Chi phí ≈ turns × prefix × 0.1 — đây là đòn bẩy chính. */
+  turns: number;
   status: string;
   reasked: boolean;
 }
@@ -64,6 +66,17 @@ export interface CostReport {
   /** Vai trò phải ghi cache >1 lần — dấu hiệu prefix đang bị phá. */
   suspiciousCacheWrites: Array<{ role: string; writes: number; keys: number }>;
   reaskCount: number;
+  /** Hiệu suất theo vai trò — để so sánh tier model bằng số, không bằng cảm giác. */
+  perRole: Array<RolePerf & { role: string }>;
+}
+
+export interface RolePerf {
+  tasks: number;
+  turns: number;
+  tokens: number;
+  cost: number;
+  ms: number;
+  model: string;
 }
 
 export function summarize(records: UsageRecord[]): CostReport {
@@ -74,10 +87,12 @@ export function summarize(records: UsageRecord[]): CostReport {
     cacheWrite: 0,
     costUSD: 0,
     model: '',
+    turns: 0,
   };
   const perTask: number[] = [];
   let worst: CostReport['mostExpensive'];
   const byRole = new Map<string, { writes: number; keys: Set<string> }>();
+  const perRole = new Map<string, RolePerf>();
   let reaskCount = 0;
 
   for (const r of records) {
@@ -86,7 +101,16 @@ export function summarize(records: UsageRecord[]): CostReport {
     totals.cacheRead += r.cache_read;
     totals.cacheWrite += r.cache_write;
     totals.costUSD += r.cost_usd;
+    totals.turns += r.turns ?? 0;
     if (r.reasked) reaskCount++;
+
+    const byR = perRole.get(r.role) ?? { tasks: 0, turns: 0, tokens: 0, cost: 0, ms: 0, model: r.model };
+    byR.tasks++;
+    byR.turns += r.turns ?? 0;
+    byR.tokens += r.in + r.cache_read + r.cache_write + r.out;
+    byR.cost += r.cost_usd;
+    byR.ms += r.wall_ms;
+    perRole.set(r.role, byR);
 
     const tokens = r.in + r.cache_read + r.cache_write + r.out;
     perTask.push(tokens);
@@ -118,6 +142,9 @@ export function summarize(records: UsageRecord[]): CostReport {
       .map(([role, v]) => ({ role, writes: v.writes, keys: v.keys.size }))
       .sort((a, b) => b.writes - a.writes),
     reaskCount,
+    perRole: [...perRole.entries()]
+      .map(([role, v]) => ({ role, ...v }))
+      .sort((a, b) => b.cost - a.cost),
   };
   if (worst) report.mostExpensive = worst;
   return report;
@@ -142,6 +169,19 @@ export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
     `${'Tỉ lệ dùng lại cache'.padEnd(28)} ${pct(r.cacheHitRatio)}  ${ok ? '✓' : '✗ dưới ngưỡng 70% — prefix đang bị phá'}`,
   );
   lines.push(`${'Token/việc (p50 / p95)'.padEnd(28)} ${n(r.p50Tokens)} / ${n(r.p95Tokens)}`);
+
+  if (r.perRole.length) {
+    lines.push('');
+    lines.push(`  ${'vai trò'.padEnd(12)} ${'model'.padEnd(12)} ${'việc'.padStart(5)} ${'lượt/việc'.padStart(10)} ${'token/việc'.padStart(11)} ${'giây/việc'.padStart(10)} ${'$/việc'.padStart(9)}`);
+    for (const p of r.perRole) {
+      lines.push(
+        `  ${p.role.padEnd(12)} ${p.model.replace(/claude-|-\d{8}/g, '').padEnd(12)} ${String(p.tasks).padStart(5)} ` +
+          `${(p.turns / p.tasks).toFixed(1).padStart(10)} ${n(Math.round(p.tokens / p.tasks)).padStart(11)} ` +
+          `${(p.ms / p.tasks / 1000).toFixed(1).padStart(10)} ${('$' + (p.cost / p.tasks).toFixed(4)).padStart(9)}`,
+      );
+    }
+    lines.push('');
+  }
 
   if (r.mostExpensive) {
     lines.push(
