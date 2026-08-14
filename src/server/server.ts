@@ -122,6 +122,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         return json(res, 202, { accepted: true });
       }
 
+      // Cửa vào cho MỌI thứ người dùng gõ. Master tự quyết định là trò chuyện,
+      // hỏi lại, hay giao việc cho đội. UI dùng cái này, không dùng /api/run.
+      case route === 'POST /api/say': {
+        const body = await readJson<{ message?: string }>(req);
+        const message = body.message?.trim();
+        if (!message) return json(res, 400, { error: 'thiếu "message"' });
+        const out = await company.say(message);
+        return json(res, 200, out);
+      }
+
       case route === 'POST /api/chat': {
         const body = await readJson<{ message?: string }>(req);
         const message = body.message?.trim();

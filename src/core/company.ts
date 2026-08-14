@@ -170,10 +170,42 @@ export class Company {
       return outcome;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.setState('idle', 'Gặp lỗi, công ty dừng lại.');
+      // Thông báo cho người dùng và thông báo cho log là HAI thứ khác nhau.
+      // Người dùng cần biết LÀM GÌ TIẾP; log cần biết chuyện gì xảy ra.
+      this.setState('idle', 'Công ty dừng lại.');
       this.emit({ type: 'master.message', say: msg });
-      throw err;
+      return {
+        plan: { plan_id: '', request, steps: [], tasks: [] },
+        receipts: [],
+        pending: [],
+        report: msg,
+        usage,
+      };
     }
+  }
+
+  /**
+   * Cửa vào DUY NHẤT cho mọi thứ người dùng gõ. UI và bridge chat đều dùng cái này.
+   *
+   * Trước đây UI luôn gọi thẳng `run()`, nên gõ "Chào" cũng khởi động cả một
+   * DAG rồi fail — lỗi người dùng gặp ngay thao tác đầu tiên.
+   */
+  async say(message: string): Promise<{ intent: string; reply: string }> {
+    const routed = await this.master.route(message);
+    this.saveSessionId();
+
+    if (routed.value.intent === 'task') {
+      const request = routed.value.request;
+      void this.run(request).catch(() => {
+        /* run() đã emit lỗi lên UI rồi */
+      });
+      return { intent: 'task', reply: '' };
+    }
+
+    // chat hoặc ask — trả lời rồi thôi, không tốn một token worker nào
+    this.emit({ type: 'master.message', say: routed.value.say });
+    this.setState(this.state === 'working' ? 'working' : 'idle', routed.value.say);
+    return { intent: routed.value.intent, reply: routed.value.say };
   }
 
   async chat(message: string): Promise<string> {

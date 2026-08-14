@@ -1,5 +1,14 @@
 # SPEC — Giao diện
 
+> **⚠ §1–§2 ĐÃ BỊ THAY THẾ bởi [`SPEC-canvas.md`](SPEC-canvas.md).**
+> Bố cục danh sách mô tả dưới đây là bản v0 đang chạy. Bản kế tiếp là **canvas dạng node**
+> (kiểu n8n) — công ty thành một sơ đồ kéo thả được, và ràng buộc kiến trúc
+> (mô hình sao, agent không nối agent) trở thành thứ *không vẽ được* thay vì
+> một dòng trong tài liệu.
+>
+> Các phần vẫn còn nguyên giá trị: §3 ngăn kéo nhật ký · §4 ngăn kéo tri thức ·
+> §5 kỹ thuật & sự kiện SSE · §6 checklist chống hoang mang.
+
 Đọc kèm `SPEC-2026-08-14-agentco.md`.
 
 **Nguyên lý chủ đạo:** người dùng nhìn thấy **một công ty đang làm việc**, không phải một terminal đang cuộn log. Nhưng log advanced luôn cách một cú click — không giấu, chỉ không phô ra.

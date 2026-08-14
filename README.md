@@ -30,7 +30,8 @@ Và điểm khác biệt lớn nhất: **nhân viên biết dùng hệ thống c
 | [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md) | **Đọc cái này trước nếu chỉ đọc một file.** Luật chi phí token, kiến trúc prefix cache |
 | [`docs/SPEC-cli.md`](docs/SPEC-cli.md) | Process model, bộ lệnh, cấu hình, đường lên container |
 | [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md) | **Đặc sản** — nhân viên biết CRUD vào REST API / MCP của chính bạn |
-| [`docs/SPEC-ui.md`](docs/SPEC-ui.md) | Giao diện, sự kiện SSE |
+| [`docs/SPEC-canvas.md`](docs/SPEC-canvas.md) | Canvas dạng node — văn phòng kéo thả được (bản UI kế tiếp) |
+| [`docs/SPEC-ui.md`](docs/SPEC-ui.md) | Giao diện v0 (danh sách), sự kiện SSE |
 | [`docs/FINDINGS-sdk-2026-08-14.md`](docs/FINDINGS-sdk-2026-08-14.md) | Kết quả đo thật trên Claude Agent SDK — số liệu, cái bẫy, quyết định phát sinh |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Mốc phát triển |
 | [`bench/`](bench/) | Script đo, tái lập được mọi con số trong FINDINGS |

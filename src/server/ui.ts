@@ -232,10 +232,18 @@ $('chat').onsubmit = async (ev) => {
   if (!text) return;
   $('inp').value = '';
   addMsg(text, true);
-  await fetch('/api/run', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ request: text }),
-  });
+  $('send').disabled = true;
+  try {
+    // /api/say chứ KHÔNG phải /api/run: giám đốc tự quyết định đây là trò
+    // chuyện, cần hỏi lại, hay là việc phải giao cho đội. Gõ "Chào" mà khởi
+    // động cả một kế hoạch là lỗi người dùng gặp ngay thao tác đầu tiên.
+    await fetch('/api/say', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+  } finally {
+    $('send').disabled = false;
+  }
 };
 
 $('stop').onclick = () => fetch('/api/stop', { method: 'POST' });

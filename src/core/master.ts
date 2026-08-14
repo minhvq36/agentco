@@ -90,6 +90,13 @@ export interface MasterResult<T> {
   usage: Usage;
 }
 
+const RouteSchema = z.discriminatedUnion('intent', [
+  z.object({ intent: z.literal('chat'), say: z.string().min(1) }),
+  z.object({ intent: z.literal('ask'), say: z.string().min(1) }),
+  z.object({ intent: z.literal('task'), request: z.string().min(1) }),
+]);
+export type RouteDecision = z.infer<typeof RouteSchema>;
+
 export class Master {
   private sessionId: string | undefined;
 
@@ -136,7 +143,10 @@ export class Master {
 
     const parsed = extractJson(text, PlanOutputSchema);
     if (!parsed) {
-      throw new RunError('Giám đốc không lập được kế hoạch đọc hiểu được.', 'other');
+      throw new RunError(
+        'Giám đốc chưa hiểu đủ rõ để chia việc. Thử nói cụ thể hơn: làm gì, cho ai, và cần kết quả dạng nào.',
+        'other',
+      );
     }
 
     const steps: PlanStep[] = parsed.steps.map((title) => ({ title, status: 'pending' }));
@@ -169,6 +179,41 @@ export class Master {
         `Không liệt kê lại từng việc. Không dùng thuật ngữ kỹ thuật. Chỉ trả về văn bản, không JSON.`,
     );
     return { value: text.trim(), usage };
+  }
+
+  /**
+   * Quyết định người dùng vừa nói gì: trò chuyện, hỏi thêm, hay giao việc.
+   *
+   * Chạy TRÊN session master (rẻ: ngữ cảnh master chỉ có roster + charter, đã
+   * cache) nên nó nhớ cả cuộc hội thoại. "Chào" không được biến thành một
+   * kế hoạch DAG — đó là lỗi người dùng gặp ngay thao tác đầu tiên.
+   *
+   * `ask` là trường hợp đáng giá nhất: yêu cầu mơ hồ thì HỎI LẠI thay vì lập
+   * kế hoạch sai rồi đốt tiền. Đây đúng là nỗi đau gốc của sản phẩm —
+   * người ngoại đạo hoang mang không biết AI đang dắt mình đi đâu.
+   */
+  async route(message: string): Promise<MasterResult<RouteDecision>> {
+    const { text, usage } = await this.askSession(
+      `Người dùng vừa nhắn: "${message}"\n\n` +
+        `Trả về đúng một object JSON, không có gì khác:\n` +
+        `{"intent":"chat","say":"<trả lời ngắn bằng tiếng Việt>"}\n` +
+        `  dùng khi: chào hỏi, cảm ơn, hỏi về công ty, hỏi về việc đã làm, nói chuyện phiếm.\n` +
+        `{"intent":"ask","say":"<một câu hỏi làm rõ, tiếng Việt>"}\n` +
+        `  dùng khi: có vẻ là yêu cầu công việc NHƯNG thiếu thông tin quan trọng ` +
+        `(làm cho ai, dài bao nhiêu, giọng thế nào, dựa trên tài liệu nào). ` +
+        `Hỏi MỘT câu quan trọng nhất thôi. Thà hỏi còn hơn đoán sai rồi làm lại.\n` +
+        `{"intent":"task","request":"<viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh>"}\n` +
+        `  dùng khi: đã đủ rõ để giao cho đội.`,
+    );
+
+    const parsed = extractJson(text, RouteSchema);
+    // Không đọc được thì coi là trò chuyện — an toàn hơn nhiều so với việc
+    // lỡ khởi động cả một DAG tốn tiền vì hiểu nhầm.
+    const value: RouteDecision = parsed ?? {
+      intent: 'chat',
+      say: text.trim() || 'Mình chưa hiểu ý bạn, nói rõ hơn giúp mình nhé.',
+    };
+    return { value, usage };
   }
 
   /** Trò chuyện thường — không lập kế hoạch. */
