@@ -1,5 +1,5 @@
-id: writer
-version: 1
+﻿id: writer
+version: 2
 display_name: "Người viết"
 avatar: "✍"
 
@@ -22,6 +22,6 @@ model_tier: standard
 use_preset: false
 
 budget:
-  max_turns: 12
+  max_turns: 6
   max_usd: 0.4
   knowledge_pack: 3000

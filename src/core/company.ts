@@ -154,7 +154,7 @@ export class Company {
         report = `Đã dừng theo yêu cầu. Còn ${result.pending.length} việc chưa làm.`;
         this.setState('paused', report);
       } else {
-        const summary = await this.master.report(receipts);
+        const summary = await this.master.report(plan.steps, receipts);
         usage = add(usage, summary.usage);
         report = summary.value;
         this.setState('idle', report);
@@ -194,12 +194,14 @@ export class Company {
   }
 
   /** cacheKey hiện tại của từng vai trò — để chẩn đoán prefix bị phá. */
-  cacheKeys(): Array<{ role: string; key: string; staticTokens: number }> {
+  cacheKeys(): Array<{ role: string; key: string; staticTokens: number; model: string }> {
     return [...this.loaded.roles.values()].map((r) => {
+      const model = this.loaded.config.models[r.model_tier];
       const built = buildWorkerPrompt(this.loaded, r, {
         hotKnowledge: this.knowledge.hot(r.id, r.hot_knowledge_size, this.loaded.config.budgets.hot_knowledge_tokens).text,
+        model,
       });
-      return { role: r.id, key: built.cacheKey, staticTokens: built.staticTokens };
+      return { role: r.id, key: built.cacheKey, staticTokens: built.staticTokens, model };
     });
   }
 
@@ -241,7 +243,9 @@ export class Company {
       ts: new Date().toISOString(),
       task_id: r.task_id,
       role: r.role,
-      cache_key: role ? buildWorkerPrompt(this.loaded, role).cacheKey : '',
+      cache_key: role
+        ? buildWorkerPrompt(this.loaded, role, { model: this.loaded.config.models[role.model_tier] }).cacheKey
+        : '',
       model: r.usage.model,
       in: r.usage.input,
       cache_read: r.usage.cacheRead,

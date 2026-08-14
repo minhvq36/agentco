@@ -1,5 +1,5 @@
-id: reviewer
-version: 1
+﻿id: reviewer
+version: 3
 display_name: "Người soát"
 avatar: "🔍"
 
@@ -17,5 +17,5 @@ model_tier: cheap
 use_preset: false
 
 budget:
-  max_turns: 8
+  max_turns: 10
   max_usd: 0.2

@@ -36,6 +36,8 @@ const MASTER_CORE = `You are the director of a small virtual company. You do NOT
 2. When you assign a task, you pass FILE PATHS, never file contents. Employees read their own inputs.
 3. You only ever see an employee's short receipt, never their working notes.
 4. Prefer FEWER, BIGGER tasks. Every task carries a large fixed overhead, so splitting work into many small tasks wastes money. Split only when two tasks can genuinely run at the same time, or when they need different employees.
+5. Write goals that can be done in ONE pass. Each extra step an employee takes re-sends their whole context, so a vague goal is an expensive goal. Put every decision the employee needs — tone, length, audience, format — into \`constraints\` so they never have to go looking or guess.
+6. Never make an employee "review and then fix". That is two passes. Either ask for the work, or ask for a review — not both in one goal.
 
 ## Planning output
 
@@ -117,10 +119,19 @@ export class Master {
     return [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY];
   }
 
+  /**
+   * Lập kế hoạch — chạy ở query ONE-SHOT RIÊNG, KHÔNG nằm trong session master.
+   *
+   * Lý do: prompt cache đánh theo (model, prefix). Nếu bước này chạy trên
+   * session master bằng một model khác (ví dụ Opus cho chất lượng) thì MỖI LẦN
+   * đổi model là miss toàn bộ ngữ cảnh master — đúng cái ~36.000 token quy đổi
+   * đã cảnh báo ở vụ MCP. Tách ra thì đặt `models.planner: deep` thoải mái mà
+   * session master vẫn ấm nguyên.
+   */
   async plan(request: string): Promise<MasterResult<Plan>> {
-    const { text, usage } = await this.ask(
+    const { text, usage } = await this.askOneShot(
       `Lập kế hoạch cho yêu cầu sau. Trả về đúng một object JSON như đã quy định.\n\nYêu cầu: ${request}`,
-      'plan',
+      this.company.config.models[this.company.config.models.planner],
     );
 
     const parsed = extractJson(text, PlanOutputSchema);
@@ -141,37 +152,52 @@ export class Master {
     return { value: { plan_id: `P-${Date.now().toString(36)}`, request, steps, tasks }, usage };
   }
 
-  /** Tổng kết sau khi DAG chạy xong. Chỉ nhận receipt, không nhận transcript. */
-  async report(receipts: Receipt[]): Promise<MasterResult<string>> {
+  /**
+   * Tổng kết sau khi DAG chạy xong. Chạy TRÊN session master — đây cũng là
+   * cách kế hoạch (vốn lập ở query riêng) được ghi vào trí nhớ hội thoại,
+   * ở dạng nén, để lần sau người dùng hỏi "sao lại làm thế" thì master biết.
+   */
+  async report(steps: readonly { title: string }[], receipts: Receipt[]): Promise<MasterResult<string>> {
+    const plan = steps.map((s, i) => `${i + 1}. ${s.title}`).join(' · ');
     const summary = receipts
       .map((r) => `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}`)
       .join('\n');
 
-    const { text, usage } = await this.ask(
-      `Đội đã làm xong. Kết quả:\n\n${summary}\n\n` +
+    const { text, usage } = await this.askSession(
+      `Kế hoạch vừa chạy: ${plan}\n\nKết quả:\n${summary}\n\n` +
         `Viết 1–3 câu tiếng Việt báo cáo cho người dùng: đã xong gì, có gì cần họ để ý. ` +
         `Không liệt kê lại từng việc. Không dùng thuật ngữ kỹ thuật. Chỉ trả về văn bản, không JSON.`,
-      'report',
     );
     return { value: text.trim(), usage };
   }
 
   /** Trò chuyện thường — không lập kế hoạch. */
   async chat(message: string): Promise<MasterResult<string>> {
-    const { text, usage } = await this.ask(
+    const { text, usage } = await this.askSession(
       `${message}\n\n(Trả lời ngắn gọn bằng tiếng Việt. Nếu đây là một yêu cầu công việc cần giao cho đội, ` +
         `nói rõ bạn sẽ lập kế hoạch chứ đừng tự làm.)`,
-      'chat',
     );
     return { value: text.trim(), usage };
   }
 
   // ── nội bộ
 
-  private async ask(prompt: string, step: string): Promise<{ text: string; usage: Usage }> {
+  /** Trên session master. Model CỐ ĐỊNH — không bao giờ đổi giữa ca. */
+  private askSession(prompt: string): Promise<{ text: string; usage: Usage }> {
     const cfg = this.company.config;
-    const tier = cfg.models.master_deep_steps.includes(step) ? 'deep' : cfg.models.master;
+    return this.run(prompt, cfg.models[cfg.models.master], true);
+  }
 
+  /** Query độc lập, không đụng session master. Đổi model ở đây là an toàn. */
+  private askOneShot(prompt: string, model: string): Promise<{ text: string; usage: Usage }> {
+    return this.run(prompt, model, false);
+  }
+
+  private async run(
+    prompt: string,
+    model: string,
+    useSession: boolean,
+  ): Promise<{ text: string; usage: Usage }> {
     let usage: Usage = { ...EMPTY_USAGE };
     let text = '';
 
@@ -180,23 +206,26 @@ export class Master {
         prompt,
         options: {
           systemPrompt: this.systemPrompt(),
-          model: cfg.models[tier],
+          model,
           cwd: this.company.dir,
-          maxTurns: 6,
+          maxTurns: 4,
           settingSources: [],
           strictMcpConfig: true,
           // Master KHÔNG có tool: nó không tự làm việc tay chân. Đây vừa là kỷ
           // luật kiến trúc vừa là tiết kiệm — không tool thì không có vòng lặp tool.
           allowedTools: [],
-          ...(this.sessionId ? { resume: this.sessionId } : {}),
+          ...(useSession ? {} : { persistSession: false }),
+          ...(useSession && this.sessionId ? { resume: this.sessionId } : {}),
         },
       })) {
         const m = msg as Record<string, unknown>;
-        if (m['type'] === 'system' && m['subtype'] === 'init' && typeof m['session_id'] === 'string') {
+        // CHỈ ghi nhận session id khi đang chạy TRÊN session master. Query
+        // one-shot (lập kế hoạch) cũng sinh ra session_id riêng — ghi đè bằng
+        // nó là mất trí nhớ hội thoại của master.
+        if (useSession && typeof m['session_id'] === 'string' && (m['type'] === 'result' || m['subtype'] === 'init')) {
           this.sessionId = m['session_id'];
         }
         if (m['type'] === 'result') {
-          if (typeof m['session_id'] === 'string') this.sessionId = m['session_id'];
           const u = (m['usage'] ?? {}) as Record<string, number>;
           usage = addUsage(usage, {
             input: u['input_tokens'] ?? 0,
@@ -204,7 +233,7 @@ export class Master {
             cacheRead: u['cache_read_input_tokens'] ?? 0,
             cacheWrite: u['cache_creation_input_tokens'] ?? 0,
             costUSD: typeof m['total_cost_usd'] === 'number' ? m['total_cost_usd'] : 0,
-            model: cfg.models[tier],
+            model,
           });
           text = typeof m['result'] === 'string' ? m['result'] : '';
         }

@@ -15,6 +15,7 @@ import {
   type Plan,
   type Receipt,
   type TaskBrief,
+  type Tier,
 } from './types.js';
 
 export interface SchedulerDeps {
@@ -38,6 +39,7 @@ export class Scheduler {
   private concurrency: number;
   private readonly maxConcurrency: number;
   private smoothRun = 0;
+  private readonly runningByTier = new Map<Tier, number>();
 
   constructor(private readonly deps: SchedulerDeps) {
     const rt = deps.company.config.runtime;
@@ -131,7 +133,21 @@ export class Scheduler {
         }
       }
 
-      const launchable = ready.filter((t) => remaining.has(t.task_id)).slice(0, Math.max(0, this.concurrency - running.size));
+      // Trần toàn cục VÀ trần theo tier. Trần theo tier quan trọng vì model
+      // đắt (deep/Opus) ăn hạn mức subscription nhanh hơn nhiều — chạy 4 Opus
+      // song song sẽ đốt gói của người dùng rất nhanh.
+      const launchable: TaskBrief[] = [];
+      const perTier = new Map(this.runningByTier);
+      for (const t of ready) {
+        if (!remaining.has(t.task_id)) continue;
+        if (running.size + launchable.length >= this.concurrency) break;
+        const tier = this.deps.company.roles.get(t.role)?.model_tier ?? 'standard';
+        const cap = this.deps.company.config.runtime.concurrency_by_tier[tier];
+        const used = perTier.get(tier) ?? 0;
+        if (used >= cap) continue;
+        perTier.set(tier, used + 1);
+        launchable.push(t);
+      }
 
       if (launchable.length === 0) {
         if (running.size === 0) break; // deadlock hoặc hết việc
@@ -141,6 +157,8 @@ export class Scheduler {
 
       for (const brief of launchable) {
         remaining.delete(brief.task_id);
+        const tier = this.deps.company.roles.get(brief.role)?.model_tier ?? 'standard';
+        this.runningByTier.set(tier, (this.runningByTier.get(tier) ?? 0) + 1);
         const p = this.execute(brief)
           .then((receipt) => {
             receipts.set(brief.task_id, receipt);
@@ -166,10 +184,11 @@ export class Scheduler {
               return;
             }
             failed.add(brief.task_id);
-            receipts.set(brief.task_id, this.errorReceipt(brief, err));
+            receipts.set(brief.task_id, this.errorReceipt(brief, err, kind));
           })
           .finally(() => {
             running.delete(p);
+            this.runningByTier.set(tier, Math.max(0, (this.runningByTier.get(tier) ?? 1) - 1));
           });
         running.add(p);
       }
@@ -241,7 +260,9 @@ export class Scheduler {
   cacheKeyFor(roleId: string): string | undefined {
     const role = this.deps.company.roles.get(roleId);
     if (!role) return undefined;
-    return buildWorkerPrompt(this.deps.company, role).cacheKey;
+    return buildWorkerPrompt(this.deps.company, role, {
+      model: this.deps.company.config.models[role.model_tier],
+    }).cacheKey;
   }
 
   private onRateLimit(): void {
@@ -256,11 +277,19 @@ export class Scheduler {
     }
   }
 
-  private errorReceipt(brief: TaskBrief, err: unknown): Receipt {
+  private errorReceipt(brief: TaskBrief, err: unknown, kind: string): Receipt {
     const msg = err instanceof Error ? err.message : String(err);
+    // Nói CHUYỆN GÌ XẢY RA + LÀM GÌ TIẾP THEO. "Gặp lỗi" chung chung là vô dụng
+    // với người non-code — họ không biết sửa ở đâu.
+    const say =
+      kind === 'max_turns'
+        ? `Việc này cần nhiều bước hơn mức cho phép. Nới max_turns trong roles/${brief.role}.yaml, hoặc chia nhỏ yêu cầu.`
+        : kind === 'budget'
+          ? `Việc này chạm trần chi phí đã đặt cho ${brief.role}. Nới max_usd trong roles/${brief.role}.yaml nếu thấy đáng.`
+          : 'Việc này gặp lỗi và không hoàn thành được. Xem nhật ký chi tiết.';
     return {
       status: 'failed',
-      say: 'Việc này gặp lỗi và không hoàn thành được.',
+      say,
       artifacts: [],
       lessons: [],
       blocked_on: msg.slice(0, 200),

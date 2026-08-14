@@ -14,6 +14,7 @@ import { Company } from '../core/company.js';
 import { ensureDirs, isCompanyDir, paths, resolveCompanyDir } from '../core/paths.js';
 import { serve } from '../server/server.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
+import { formatRunUsage } from '../core/usage.js';
 
 const EXIT = { ok: 0, general: 1, config: 2, noDaemon: 3, auth: 4, taskFail: 5, budget: 6, rateLimit: 7 };
 
@@ -192,7 +193,9 @@ async function cmdRun(): Promise<void> {
 
   const out = await company.run(request);
   console.log(`\n${out.report}\n`);
-  console.log(company.costText());
+  // Chi phí của ĐÚNG ca này. `agentco cost` mới là tích luỹ — trộn hai thứ
+  // vào nhau làm người dùng tưởng một việc nhỏ tốn cả trăm nghìn token.
+  console.log(formatRunUsage(out.usage, out.receipts.length));
   if (out.receipts.some((r) => r.status === 'failed')) process.exit(EXIT.taskFail);
 }
 

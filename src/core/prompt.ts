@@ -48,6 +48,20 @@ const CORE_PROMPT = `You are an employee of a small virtual company. You do one 
 3. Write every substantial output to the files listed in "outputs". Never paste file contents back in your reply.
 4. Finish by emitting your receipt (below). Nothing after it.
 
+## Step discipline — this matters as much as the work itself
+
+Every step you take re-sends your whole context. Ten steps cost ten times one step.
+A careful worker who finishes in 3 steps beats a thorough one who takes 9.
+
+- **Read each file at most once.** You already have it; do not read it again.
+- **Never read back a file you just wrote** to check it saved. It saved.
+- **Do not explore.** Open exactly the files listed in your inputs. Do not list directories, do not go looking for related files, do not check whether output folders exist — they do.
+- **Batch your reads.** If you need three files, request all three in one step, not one at a time.
+- **Do not re-plan out loud.** Think, then act. Narrating your plan before each step costs a step.
+- Write your output in **one** Write call. Do not draft then revise unless the first attempt was actually wrong.
+
+If you genuinely cannot finish within your step budget, stop and return status "blocked" explaining what you still needed. That is cheaper and more honest than flailing.
+
 ## Your receipt — the only thing your manager sees
 
 Your final message MUST be exactly one JSON object inside a \`\`\`json fenced block, and nothing else:
@@ -93,6 +107,13 @@ export interface BuildPromptOpts {
   hotKnowledge?: string;
   /** Ngôn ngữ cho trường `say`. Mặc định tiếng Việt. */
   language?: string;
+  /**
+   * Model sẽ chạy. BẮT BUỘC đưa vào cacheKey: prompt cache đánh theo
+   * (model, prefix) — hai vai trò prompt giống hệt nhau nhưng khác model thì
+   * KHÔNG dùng chung cache. Thiếu nó thì priming gate tưởng cache đã ấm
+   * trong khi thực ra chưa, và ta trả cache_write mà cứ nghĩ là đang tiết kiệm.
+   */
+  model?: string;
 }
 
 export function buildWorkerPrompt(
@@ -101,6 +122,7 @@ export function buildWorkerPrompt(
   opts: BuildPromptOpts = {},
 ): BuiltPrompt {
   const language = opts.language ?? 'Vietnamese';
+  const model = opts.model ?? company.config.models[role.model_tier];
 
   const roleCard = [
     `# Your role: ${role.display_name || role.id}`,
@@ -131,7 +153,7 @@ export function buildWorkerPrompt(
     const append = blocks.join('\n\n---\n\n');
     return {
       systemPrompt: { type: 'preset', preset: 'claude_code', append, excludeDynamicSections: true },
-      cacheKey: hashKey(['preset', String(PROMPT_SCHEMA_VERSION), append]),
+      cacheKey: hashKey(['preset', model, String(PROMPT_SCHEMA_VERSION), append]),
       staticTokens,
     };
   }
@@ -141,7 +163,7 @@ export function buildWorkerPrompt(
   // vào global cache scope.
   return {
     systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
-    cacheKey: hashKey([String(PROMPT_SCHEMA_VERSION), ...blocks]),
+    cacheKey: hashKey([model, String(PROMPT_SCHEMA_VERSION), ...blocks]),
     staticTokens,
   };
 }

@@ -163,6 +163,18 @@ export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
   return lines.join('\n');
 }
 
+/** Chi phí của ĐÚNG ca vừa chạy. Khác `formatReport` — cái kia là tích luỹ cả đời công ty. */
+export function formatRunUsage(u: Usage, tasks: number): string {
+  const n = (x: number) => (x >= 1000 ? `${(x / 1000).toFixed(1)}K` : String(x));
+  const denominator = u.cacheRead + u.input + u.cacheWrite;
+  const ratio = denominator > 0 ? u.cacheRead / denominator : 0;
+  return (
+    `Ca này: ${tasks} việc · $${u.costUSD.toFixed(4)} · ` +
+    `vào ${n(u.input)} · đọc-cache ${n(u.cacheRead)} · ghi-cache ${n(u.cacheWrite)} · ra ${n(u.output)} · ` +
+    `dùng lại cache ${(ratio * 100).toFixed(0)}%`
+  );
+}
+
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const i = Math.min(sorted.length - 1, Math.floor(p * sorted.length));

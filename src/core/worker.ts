@@ -43,7 +43,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   const { brief, role } = input;
   const started = Date.now();
 
-  const built = buildWorkerPrompt(company, role, { hotKnowledge: input.hotKnowledge });
+  const model = modelFor(company, role.model_tier);
+  // model PHẢI đi vào cacheKey: prompt cache đánh theo (model, prefix).
+  const built = buildWorkerPrompt(company, role, { hotKnowledge: input.hotKnowledge, model });
   const message = buildTaskMessage(brief, input.coldKnowledge, company.config.budgets.task_brief_tokens);
 
   const release = await deps.acquireCacheSlot?.(built.cacheKey);
@@ -57,7 +59,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
       prompt: message,
       options: {
         systemPrompt: built.systemPrompt,
-        model: modelFor(company, role.model_tier),
+        model,
         cwd: company.dir,
         maxTurns: role.budget.max_turns,
         maxBudgetUsd: role.budget.max_usd,
@@ -95,7 +97,18 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     }
   } catch (err) {
     if (err instanceof RunError) throw err;
-    throw new RunError(errorMessage(err), classifyError(err), { cause: err });
+    const kind = classifyError(err);
+    if (kind === 'max_turns') {
+      // Không phải "lỗi" — là nhân viên bị cắt giữa chừng. Nói rõ sửa ở đâu.
+      throw new RunError(
+        `"${role.display_name || role.id}" hết lượt cho phép (${role.budget.max_turns}) khi làm ${brief.task_id}. ` +
+          `Việc này cần nhiều bước hơn: nới max_turns trong roles/${role.id}.yaml, ` +
+          `hoặc chia nhỏ yêu cầu, hoặc viết hướng dẫn rõ hơn để nhân viên bớt dò dẫm.`,
+        'max_turns',
+        { cause: err },
+      );
+    }
+    throw new RunError(errorMessage(err), kind, { cause: err });
   } finally {
     release?.();
   }
@@ -278,6 +291,7 @@ export function classifyError(err: unknown): FailureKind {
   for (const prefix of USAGE_LIMIT_PREFIXES) {
     if (msg.includes(prefix)) return 'usage_limit';
   }
+  if (/maximum number of turns|max_turns/i.test(msg)) return 'max_turns';
   if (/\b429\b|rate.?limit|too many requests/i.test(msg)) return 'rate_limit';
   if (/not logged in|unauthor|authentic|invalid api key|no credentials/i.test(msg)) return 'auth';
   return 'other';

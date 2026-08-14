@@ -1,5 +1,5 @@
-id: researcher
-version: 1
+﻿id: researcher
+version: 2
 display_name: "Nghiên cứu viên"
 avatar: "🔎"
 
@@ -16,5 +16,5 @@ model_tier: standard
 use_preset: false
 
 budget:
-  max_turns: 15
+  max_turns: 8
   max_usd: 0.5

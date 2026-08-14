@@ -106,9 +106,18 @@ export const CompanyConfigSchema = z.object({
       cheap: z.string().default('claude-haiku-4-5-20251001'),
       standard: z.string().default('claude-sonnet-5'),
       deep: z.string().default('claude-opus-5'),
-      /** Tier mặc định của master. Chỉ leo 'deep' ở các bước trong master_deep_steps. */
+      /**
+       * Tier của master — session dài, đối thoại với người.
+       * PHẢI CỐ ĐỊNH suốt ca. Đổi model giữa chừng là miss toàn bộ ngữ cảnh
+       * master mỗi lần đổi, vì prompt cache đánh theo (model, prefix).
+       */
       master: z.enum(TIERS).default('standard'),
-      master_deep_steps: z.array(z.string()).default(['plan', 'arbitrate']),
+      /**
+       * Tier cho việc LẬP KẾ HOẠCH. Chạy ở query one-shot RIÊNG, không nằm
+       * trong session master — nên đặt 'deep' ở đây không phá cache của master.
+       * Đây là cách duy nhất dùng Opus cho khâu cần chất lượng mà không trả giá.
+       */
+      planner: z.enum(TIERS).default('standard'),
     })
     .prefault({}),
 
@@ -243,6 +252,8 @@ export type FailureKind =
   | 'auth'
   /** chạm trần ngân sách ta tự đặt → hỏi người dùng, không tự nới */
   | 'budget'
+  /** hết lượt cho phép → nói rõ sửa ở đâu, đừng báo "lỗi" chung chung */
+  | 'max_turns'
   | 'other';
 
 export class RunError extends Error {
