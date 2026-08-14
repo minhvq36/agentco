@@ -10,6 +10,11 @@ company/.state/
 **/secrets.json
 *.session.jsonl
 
+# công ty thật của người phát triển (tạo bởi `agentco init` ở gốc repo).
+# templates/company/ mới là bản mẫu được commit.
+/company/
+/.bench-company/
+
 # log & đo đạc
 logs/
 *.log
