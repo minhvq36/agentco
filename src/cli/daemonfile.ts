@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Theo dõi daemon đang chạy.
  *
  * → docs/SPEC-cli.md §1
@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-import type { Paths } from '../core/paths.js';
+import type { CompanyPaths } from '../core/paths.js';
 
 export interface DaemonInfo {
   pid: number;
@@ -22,17 +22,17 @@ export interface DaemonInfo {
   started_at: string;
 }
 
-export function writeDaemonFile(paths: Paths, info: DaemonInfo): void {
+export function writeDaemonFile(paths: CompanyPaths, info: DaemonInfo): void {
   fs.mkdirSync(path.dirname(paths.daemonFile), { recursive: true });
   fs.writeFileSync(paths.daemonFile, JSON.stringify(info, null, 2), 'utf8');
 }
 
-export function clearDaemonFile(paths: Paths): void {
+export function clearDaemonFile(paths: CompanyPaths): void {
   fs.rmSync(paths.daemonFile, { force: true });
 }
 
 /** Trả về daemon ĐANG SỐNG THẬT, tự dọn file cũ nếu tiến trình đã chết. */
-export async function liveDaemon(paths: Paths): Promise<DaemonInfo | undefined> {
+export async function liveDaemon(paths: CompanyPaths): Promise<DaemonInfo | undefined> {
   if (!fs.existsSync(paths.daemonFile)) return undefined;
 
   let info: DaemonInfo;

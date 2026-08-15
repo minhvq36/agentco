@@ -1,5 +1,57 @@
 # SPEC — Giao diện
 
+> **⚠ CHỐT 15/08/2026 — stack và bố cục đổi. Đọc §0 trước.**
+
+## 0. Stack và bố cục — **ĐÃ CÀI ĐẶT** (Đợt 2, 15/08/2026)
+
+| Phần | Ở đâu |
+|---|---|
+| Vỏ app, dải kế hoạch, toast, trạng thái rỗng | `web/src/App.tsx` |
+| Canvas SVG + tương tác chuột | `web/src/canvas/` |
+| State + SSE | `web/src/lib/store.ts` |
+| Client API (không nuốt lỗi) | `web/src/lib/api.ts` |
+| Sidebar + 4 panel | `web/src/components/` |
+| Daemon phục vụ `web/dist` | `src/server/static.ts` |
+
+Lệnh: `npm run build:all` (backend + UI) · `npm run dev:web` (Vite 5173, proxy `/api` sang 7317).
+
+### Stack: React + Vite + Tailwind v4 + shadcn/ui
+
+Bỏ ràng buộc "không build step" của §5. Lý do: sáu màn hình mới (sidebar đóng/mở, chuyển văn phòng, log nhiều luồng, prompt phân lớp, dialog cảnh báo, canvas) trong một chuỗi `String.raw` không có type check sẽ thành ~2 500 dòng không ai bảo trì nổi — và bốn tiêu chí chất lượng mới (`SPEC-2026-08-14-agentco.md` §1) đòi đúng những thứ shadcn/Radix cho sẵn: focus trap, aria, không nhảy layout.
+
+```
+agentco/
+├─ src/                backend TS, như cũ
+└─ web/                mới
+   ├─ src/App.tsx
+   ├─ src/canvas/      SVG VIẾT TAY, không thư viện canvas
+   └─ src/components/ui/   shadcn copy vào
+```
+
+`npm run build` = `tsc` + `vite build`. Daemon phục vụ `web/dist` tĩnh.
+
+**Ràng buộc hiệu năng, không thương lượng:** kéo node cập nhật `transform` qua `ref`, **không** `setState` mỗi frame. React lo phần vỏ; canvas tự lo vòng lặp chuột của nó. 60fps kể cả khi công ty đang chạy.
+
+### Bố cục: sidebar trái đóng/mở
+
+Chat, nhật ký, tổng quan công ty, tri thức chuyển hết vào **sidebar trái**. Bấm vào mục nào hiện mục đó; luôn có nút ✕ để đóng lại và trả toàn bộ màn hình cho canvas.
+
+Thanh dưới (kế hoạch + chat) của bản v0 biến mất — nó chiếm chỗ vĩnh viễn cho thứ người dùng chỉ cần từng lúc.
+
+Hai nút `Sắp xếp` / `Vừa khung` đổi thành **icon**, không chữ.
+
+### Log đi theo CÔNG VIỆC, không theo thời gian
+
+→ `SPEC-offices.md` §6. Mỗi agent (kể cả Trợ lý) có một màu ổn định băm từ id. Log lọc theo `plan_id`; hội thoại là một luồng riêng (`plan_id: null`).
+
+### Ngoại lệ có chủ ý: dải kế hoạch KHÔNG nằm trong sidebar
+
+Checklist §6 đòi trả lời được *"đang ở bước mấy"* **không cần click**. Nhét kế hoạch vào một panel đóng/mở là vi phạm đúng điều đó.
+
+Nên kế hoạch nằm ở một **dải mỏng đè lên canvas**, chỉ hiện khi có việc đang chạy, và bấm vào thì mở nhật ký của chính việc đó. Dòng gợi ý cho người mới tự ẩn đi khi dải này xuất hiện — hai thứ tranh cùng một chỗ thì thứ đang chạy thắng.
+
+---
+
 > **⚠ §1–§2 ĐÃ BỊ THAY THẾ bởi [`SPEC-canvas.md`](SPEC-canvas.md).**
 > Bố cục danh sách mô tả dưới đây là bản v0 đang chạy. Bản kế tiếp là **canvas dạng node**
 > (kiểu n8n) — công ty thành một sơ đồ kéo thả được, và ràng buộc kiến trúc

@@ -27,6 +27,19 @@ Một **công ty ảo chạy trên máy của người dùng**: Claude Code làm
 2. **Agent là hàm stateless.** Đến, làm, ghi kết quả ra file, chết. Trí nhớ nằm ở đồ thị tri thức, không nằm trong context window.
 3. **Mỗi token phải có lý do tồn tại.** Xem `SPEC-token-economy.md`.
 
+### Bốn tiêu chí chất lượng — thêm 15/08/2026
+
+Ba nguyên tắc trên nói **xây cái gì**. Bốn tiêu chí này nói **xây tới mức nào**, và chúng là điều kiện để gọi một tính năng là "xong". Từ đây trở đi, "chạy được trên máy tôi" không còn là định nghĩa của xong.
+
+| | Nghĩa cụ thể — kiểm được, không phải khẩu hiệu |
+|---|---|
+| **Ổn định** | Không có đường nào dẫn tới màn hình trắng. Mọi trạng thái rỗng (chưa có văn phòng, chưa có nhân viên, chưa có việc) đều là màn hình được thiết kế, không phải tai nạn. Sập một văn phòng không được kéo theo văn phòng khác. |
+| **Xử lý lỗi tốt** | Mọi lỗi hiển thị cho người dùng phải trả lời được **chuyện gì xảy ra + làm gì tiếp**. Lỗi mạng/hết hạn mức/file hỏng có đường phục hồi, không chỉ có thông báo. Lỗi của một agent không giết cả ca làm việc. |
+| **Hiệu năng** | Kéo node giữ 60fps kể cả khi công ty đang chạy. Log dài không làm đơ tab. Không lượt gọi LLM nào tồn tại chỉ để phục vụ hiển thị. |
+| **Mượt** | Đổi văn phòng, mở panel, đóng dialog không giật, không nhảy layout. Thao tác kéo/nối phản hồi tức thì trước khi server trả lời. |
+
+**Ràng buộc chéo với kinh tế token:** không tiêu chí nào ở đây được phép mua bằng token. "Mượt" không bao giờ có nghĩa là gọi thêm LLM cho trơn tru; "xử lý lỗi tốt" không bao giờ có nghĩa là nhờ model diễn giải lỗi. `SPEC-token-economy.md` vẫn là luật cao hơn.
+
 ---
 
 ## 2. Mô hình tổ chức
@@ -96,7 +109,7 @@ skills:
 tools: [Read, Glob, Grep, WebSearch, WebFetch, Write]
 mcp: []                    # người dùng cắm thêm
 
-model_tier: standard       # cheap | standard | deep  → xem switch center
+model_tier: standard       # eco | standard | deep  → xem switch center
 budget:
   max_tokens: 60000
   max_turns: 15
@@ -134,9 +147,9 @@ Trong prompt: core đứng trước, user layer đứng sau, **cả hai đều t
 | `writer` | viết nội dung | standard |
 | `coder` | viết/sửa code | standard |
 | `reviewer` | soát lỗi, kiểm chất lượng | standard |
-| `librarian` | gộp/dọn đồ thị tri thức | **cheap** |
+| `librarian` | gộp/dọn đồ thị tri thức | **eco** |
 | `analyst` | đọc số liệu, tổng hợp | standard |
-| `concierge` | **việc vặt có MCP** — xem lịch, gửi tin, tra DB, lấy URL | **cheap** |
+| `concierge` | **việc vặt có MCP** — xem lịch, gửi tin, tra DB, lấy URL | **eco** |
 
 ### `concierge` — là TOOL, không phải nhân viên
 
@@ -302,7 +315,7 @@ Bảng thuần code, 0 token, không LLM tham gia.
 
 | Tier | Dùng cho | Model |
 |---|---|---|
-| `cheap` | phân loại, trích xuất, format, gộp trùng, tóm tắt ngắn, librarian | Haiku |
+| `eco` | phân loại, trích xuất, format, gộp trùng, tóm tắt ngắn, librarian | Haiku |
 | `standard` | viết, code, nghiên cứu, phân tích, review | Sonnet |
 | `deep` | lập kế hoạch phức tạp, phân xử xung đột, postmortem | Opus |
 

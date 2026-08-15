@@ -1,0 +1,107 @@
+@import 'tailwindcss';
+
+/**
+ * Bảng màu giữ nguyên tinh thần bản v0: giấy ấm, mực nâu đen, nhấn cam đất.
+ * Tailwind v4 khai token bằng @theme — không cần tailwind.config.js.
+ */
+@theme {
+  --color-paper: #fbfaf8;
+  --color-panel: #ffffff;
+  --color-line: #e7e3dc;
+  --color-ink: #232019;
+  --color-muted: #7d766a;
+  --color-accent: #b4532a;
+  --color-accent-soft: #f3e4dc;
+  --color-ok: #3f7d4a;
+  --color-warn: #b4832a;
+  --color-danger: #c0392b;
+  --color-grid: #ece7de;
+  --color-wire: #cbc4b8;
+
+  --radius-node: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-paper: #16150f;
+    --color-panel: #1e1c15;
+    --color-line: #332f24;
+    --color-ink: #ece7dc;
+    --color-muted: #948c7c;
+    --color-accent: #e08a5c;
+    --color-accent-soft: #3a2a1f;
+    --color-ok: #7fb583;
+    --color-warn: #d8b45e;
+    --color-danger: #e07a6a;
+    --color-grid: #221f18;
+    --color-wire: #4a4436;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Bật `light-dark()` — màu của agent trong log phụ thuộc vào nó. */
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  overflow: hidden;
+}
+
+/* Bố cục canvas hoàn toàn do transform điều khiển; không cho gì cuộn ngoài ý muốn. */
+* {
+  box-sizing: border-box;
+}
+
+/**
+ * Hai animation của canvas. Để ở CSS chứ không ở JS: chúng chạy trên compositor,
+ * không tốn một frame JS nào — tiêu chí "Hiệu năng" đòi 60fps kể cả lúc công ty
+ * đang chạy và có dây đang nhấp nháy.
+ */
+@keyframes wire-flow {
+  to {
+    stroke-dashoffset: -13;
+  }
+}
+@keyframes soft-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.wire-busy {
+  stroke-dasharray: 7 6;
+  animation: wire-flow 0.7s linear infinite;
+}
+.soft-pulse {
+  animation: soft-pulse 1.5s ease-in-out infinite;
+}
+
+/* Chỉ hiện viền focus khi điều hướng bằng bàn phím. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

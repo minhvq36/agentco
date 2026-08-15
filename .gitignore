@@ -4,6 +4,13 @@ dist/
 build/
 *.tsbuildinfo
 
+# giao diện: mã nguồn trong web/src được commit, bản build thì không.
+# `dist/` ở trên đã bắt cả web/dist — ghi rõ ra để khỏi ai tưởng là sót.
+web/dist/
+
+# thư mục thử nghiệm tạm khi kiểm bằng tay
+/tmp-*/
+
 # state của công ty — KHÔNG BAO GIỜ commit
 company/.state/
 **/.state/

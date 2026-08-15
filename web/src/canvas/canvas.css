@@ -1,0 +1,163 @@
+/**
+ * Style của canvas. Để ở CSS thuần chứ không phải Tailwind trong JSX vì:
+ * lúc kéo node, ta gắn/gỡ CLASS bằng JS (`is-working`, `is-dragging`) — CSS lo
+ * phần hiển thị, JS không phải đụng tới style nào. Không có lớp nào ở đây kích
+ * hoạt một lần render React.
+ */
+
+.canvas-root {
+  cursor: grab;
+  background-image: radial-gradient(var(--color-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.canvas-root.is-panning {
+  cursor: grabbing;
+}
+.canvas-root.is-linking {
+  cursor: crosshair;
+}
+
+/* ── node */
+.node {
+  cursor: grab;
+}
+.node.is-dragging {
+  cursor: grabbing;
+}
+
+.node-box {
+  fill: var(--color-panel);
+  stroke: var(--color-line);
+  stroke-width: 1.5;
+  transition:
+    stroke 0.14s,
+    stroke-width 0.14s;
+}
+.node-assistant .node-box {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+.node-knowledge .node-box {
+  stroke-dasharray: 5 4;
+}
+
+.node-nm {
+  fill: var(--color-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.node-sub {
+  fill: var(--color-muted);
+  font-size: 12px;
+}
+.node-av {
+  font-size: 20px;
+}
+.node-say {
+  fill: var(--color-accent);
+  font-size: 12px;
+}
+
+.node.is-off .node-box {
+  stroke-dasharray: 4 4;
+}
+.node.is-off .node-nm,
+.node.is-off .node-av,
+.node.is-off .node-sub,
+.node.is-off .node-stripe {
+  opacity: 0.45;
+}
+
+.node.is-working .node-box {
+  stroke: var(--color-accent);
+  stroke-width: 2.5;
+}
+.node.is-working .node-say {
+  animation: soft-pulse 1.5s ease-in-out infinite;
+}
+.node.is-done .node-box {
+  stroke: var(--color-ok);
+  stroke-width: 2;
+}
+.node.is-error .node-box {
+  stroke: var(--color-danger);
+  stroke-width: 2.5;
+}
+.node.is-missing .node-box {
+  stroke: var(--color-danger);
+  stroke-dasharray: 3 3;
+}
+.node.is-selected .node-box {
+  stroke: var(--color-accent);
+  stroke-width: 2.5;
+}
+.node.is-droptarget .node-box {
+  stroke: var(--color-ok);
+  stroke-width: 3;
+}
+
+/* ── cổng nối */
+.port {
+  fill: var(--color-panel);
+  stroke: var(--color-wire);
+  stroke-width: 2;
+  cursor: crosshair;
+  transition:
+    fill 0.12s,
+    stroke 0.12s;
+}
+.port-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+.port-hit:hover + .port,
+.port:hover {
+  fill: var(--color-accent);
+  stroke: var(--color-accent);
+}
+
+/* ── dây */
+.wire {
+  fill: none;
+  stroke: var(--color-wire);
+  stroke-width: 2;
+}
+.wire.is-busy {
+  stroke: var(--color-accent);
+}
+.wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  cursor: pointer;
+}
+.edge:hover .wire {
+  stroke: var(--color-accent);
+}
+.edge .cut {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.edge:hover .cut {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.edge .cut circle {
+  fill: var(--color-panel);
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.edge .cut text {
+  fill: var(--color-accent);
+  font-size: 12px;
+}
+
+.ghost {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+  pointer-events: none;
+}

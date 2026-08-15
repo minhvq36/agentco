@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { Paths } from '../core/paths.js';
+import type { OfficePaths } from '../core/paths.js';
 import { estimateTokens } from '../core/tokens.js';
 import { keywordsOf, readNodeFile, tokenize, writeNodeFile, type KnowledgeNode } from './node.js';
 
@@ -41,9 +41,15 @@ export class KnowledgeStore {
   private nodeCache = new Map<string, KnowledgeNode>();
 
   constructor(
-    private readonly companyDir: string,
-    private readonly paths: Paths,
+    private companyDir: string,
+    private paths: OfficePaths,
   ) {}
+
+  /** Sau khi nạp lại văn phòng từ đĩa. */
+  rebind(dir: string, paths: OfficePaths): void {
+    this.companyDir = dir;
+    this.paths = paths;
+  }
 
   /** Quét lại toàn bộ thư mục knowledge/ và ghi index.json. */
   scan(): void {
@@ -93,6 +99,28 @@ export class KnowledgeStore {
   }
 
   /**
+   * Số ghi chú trong SỔ TAY RIÊNG của từng vai trò (`knowledge/agents/<role>/`).
+   * Đây là con số `📒 n` trên node agent — thứ phân biệt tri thức chung
+   * (node knowledge ở giữa canvas) với kinh nghiệm riêng agent tự ghi.
+   */
+  notesByRole(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const e of this.byId.values()) {
+      if (!e.scope.startsWith('role:')) continue;
+      const role = e.scope.slice('role:'.length);
+      out[role] = (out[role] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /** Duyệt kho cho ngăn kéo tri thức. Đọc từ index — 0 token. */
+  list(): IndexEntry[] {
+    return [...this.byId.values()].sort(
+      (a, b) => b.hits - a.hits || a.scope.localeCompare(b.scope) || a.title.localeCompare(b.title),
+    );
+  }
+
+  /**
    * Tri thức HOT của một vai trò: node hay dùng nhất, nằm trong prefix cache.
    * Chỉ tính lại khi bump knowledge_version — KHÔNG tính lại mỗi task,
    * nếu không thì prefix đổi liên tục và cache vô nghĩa.
@@ -132,12 +160,14 @@ export class KnowledgeStore {
     );
   }
 
-  /** Ghi một bài học mới. Chưa gộp trùng — đó là việc của Librarian (M1). */
+  /**
+   * Sổ tay RIÊNG của một vai trò. Chỉ chính nó đọc.
+   * Chưa gộp trùng — đó là việc của Librarian (M1).
+   */
   addLesson(roleId: string, text: string, source: string): KnowledgeNode {
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
-    const id = `k/agents/${roleId}/${slug}`;
     const node: KnowledgeNode = {
-      id,
+      id: `k/agents/${roleId}/${slug}`,
       type: 'pitfall',
       title: text.slice(0, 60),
       tags: [roleId],
@@ -155,6 +185,42 @@ export class KnowledgeStore {
     };
     writeNodeFile(this.companyDir, node);
     return node;
+  }
+
+  /**
+   * Kho CHUNG của văn phòng — cả văn phòng đọc.
+   *
+   * Chỉ Trợ lý được gọi hàm này (SPEC-offices.md §4.3). Kho chung nằm trong
+   * prefix cache của mọi nhân viên; cho ai cũng ghi được thì nó phình theo cấp
+   * số nhân và không ai chịu trách nhiệm.
+   */
+  addSharedLesson(text: string, source: string): KnowledgeNode {
+    const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
+    const node: KnowledgeNode = {
+      id: `k/shared/${slug}`,
+      type: 'playbook',
+      title: text.slice(0, 60),
+      tags: ['office'],
+      links: [],
+      scope: 'shared',
+      author: 'assistant',
+      confidence: 0.7,
+      hits: 0,
+      pinned: false,
+      updated: new Date().toISOString().slice(0, 10),
+      source,
+      body: text.trim(),
+      tokens: estimateTokens(text),
+      file: `knowledge/shared/${slug}.md`,
+    };
+    writeNodeFile(this.companyDir, node);
+    return node;
+  }
+
+  countShared(): number {
+    let n = 0;
+    for (const e of this.byId.values()) if (e.scope === 'shared') n++;
+    return n;
   }
 
   /** Node được dùng thật thì tăng hits — đây là tín hiệu xếp hạng HOT. */
@@ -228,7 +294,10 @@ function* walk(dir: string): Generator<string> {
 function slugify(s: string): string {
   return s
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    // \p{M} = dấu tổ hợp. Lớp ký tự viết tay [U+0300-U+036F] TRÔNG thì đúng
+    // nhưng dấu tổ hợp bám lên dấu ngoặc vuông làm regex thành thứ khác —
+    // hậu quả là "Người dùng" ra "ngu-i-d-ng" thay vì "nguoi-dung".
+    .replace(/\p{M}/gu, '')
     .replace(/đ/gi, 'd')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')

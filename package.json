@@ -1,35 +1,39 @@
 {
-  "name": "agentco",
-  "version": "0.0.1",
-  "description": "Một công ty ảo chạy trên máy bạn: Claude làm giám đốc, điều phối đội agent chuyên môn chạy song song.",
-  "license": "SEE LICENSE IN LICENSE.md",
-  "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
-  "bin": {
-    "agentco": "./dist/cli/index.js"
-  },
-  "files": [
-    "dist",
-    "templates",
-    "README.md",
-    "LICENSE.md"
-  ],
-  "scripts": {
-    "dev": "tsx src/cli/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --experimental-strip-types test/*.test.ts"
-  },
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.231",
-    "yaml": "^2.6.0",
-    "zod": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
-  }
+    "name":  "agentco",
+    "version":  "0.0.1",
+    "description":  "Một công ty ảo chạy trên máy bạn: Claude làm giám đốc, điều phối đội agent chuyên môn chạy song song.",
+    "license":  "SEE LICENSE IN LICENSE.md",
+    "type":  "module",
+    "engines":  {
+                    "node":  "\u003e=22"
+                },
+    "bin":  {
+                "agentco":  "./dist/cli/index.js"
+            },
+    "files":  [
+                  "dist",
+                  "templates",
+                  "web/dist",
+                  "README.md",
+                  "LICENSE.md"
+              ],
+    "scripts":  {
+                    "dev":  "tsx src/cli/index.ts",
+                    "build":  "tsc -p tsconfig.json",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit",
+                    "test":  "node --test --experimental-strip-types test/*.test.ts",
+                    "build:web":  "npm --prefix web run build",
+                    "build:all":  "tsc -p tsconfig.json \u0026\u0026 npm --prefix web run build",
+                    "dev:web":  "npm --prefix web run dev"
+                },
+    "dependencies":  {
+                         "@anthropic-ai/claude-agent-sdk":  "0.3.231",
+                         "yaml":  "^2.6.0",
+                         "zod":  "^4.0.0"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^22.10.0",
+                            "tsx":  "^4.19.0",
+                            "typescript":  "^5.7.0"
+                        }
 }

@@ -19,13 +19,13 @@
 import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 
-import type { LoadedCompany } from './config.js';
+import type { LoadedOffice } from './config.js';
 import { loadSkill } from './config.js';
 import type { Role, TaskBrief } from './types.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 
 /** Bump khi CORE_PROMPT hoặc cách dựng prompt thay đổi. Đi vào cacheKey. */
-export const PROMPT_SCHEMA_VERSION = 1;
+export const PROMPT_SCHEMA_VERSION = 2;
 
 /**
  * L0 — LỚP CORE. Người dùng KHÔNG sửa được.
@@ -39,7 +39,7 @@ export const PROMPT_SCHEMA_VERSION = 1;
  * tiếng Việt có dấu tốn nhiều token hơn đáng kể (~2.6 vs ~4 char/token).
  * Phần người dùng đọc và sửa (skills, charter) thì viết tiếng Việt thoải mái.
  */
-const CORE_PROMPT = `You are an employee of a small virtual company. You do one assigned task, then stop.
+export const CORE_PROMPT = `You are an employee of a small virtual company. You do one assigned task, then stop.
 
 ## How you work
 
@@ -86,7 +86,67 @@ Hard rules:
 - The whole JSON object must stay under 500 words. Your manager never sees anything else you wrote, so put results in files, not in the receipt.
 - Never invent an artifact path you did not write.
 - If you cannot finish, return status "failed" or "blocked" with an honest \`say\`. A truthful failure is worth more than a fabricated success.
-- Stay inside the company directory. Never write outside it.`;
+- Stay inside the office directory. Never write outside it.
+
+## What you already have
+
+Relevant notes from the office knowledge base are already in your prompt — selected for you before you started. Do not go looking for a knowledge folder; there is nothing there you have not been given.`;
+
+/**
+ * L0 của ASSISTANT — lớp core, người dùng không sửa được (mặc định) nhưng
+ * LUÔN XEM ĐƯỢC. → docs/SPEC-offices.md §4.1
+ *
+ * Đây là "quy cách kết nối": cách Assistant nói chuyện với nhân viên, giao thức
+ * Receipt, và luật chia việc. Nó thuộc về mã nguồn, không thuộc về việc vận hành
+ * doanh nghiệp — người dùng điều hành công ty của họ, họ không sửa giao thức.
+ *
+ * Cũng viết bằng tiếng Anh vì cùng lý do như CORE_PROMPT: khối này nằm trong
+ * prefix của mọi lượt trò chuyện, và tiếng Việt có dấu tốn nhiều token hơn đáng kể.
+ */
+export const ASSISTANT_CORE = `You are the assistant running one office of a small virtual company. You talk to the human, and you assign work to the office's employees. You do NOT do the work yourself.
+
+## Non-negotiable rules
+
+1. You never read or write project files yourself. Employees do that.
+2. When you assign a task, you pass FILE PATHS, never file contents. Employees read their own inputs.
+3. You only ever see an employee's short receipt, never their working notes.
+4. Prefer FEWER, BIGGER tasks. Every task carries a large fixed overhead, so splitting work into many small tasks wastes money. Split only when two tasks can genuinely run at the same time, or when they need different employees.
+5. Write goals that can be done in ONE pass. Each extra step an employee takes re-sends their whole context, so a vague goal is an expensive goal. Put every decision the employee needs — tone, length, audience, format — into \`constraints\` so they never have to go looking or guess.
+6. Never make an employee "review and then fix". That is two passes. Either ask for the work, or ask for a review — not both in one goal.
+7. You may only assign to employees listed in your roster. If nobody fits, say so plainly instead of inventing an employee.
+
+## Knowledge
+
+Notes from this office's knowledge base are already in your prompt. When a run finishes you may record what the office learned — durable insights only, never "the task went fine".
+
+## Planning output
+
+When asked to plan, reply with exactly one JSON object in a \`\`\`json block, nothing else:
+
+\`\`\`json
+{
+  "steps": ["Tìm hiểu yêu cầu", "Viết nội dung"],
+  "tasks": [
+    {
+      "task_id": "T-01",
+      "role": "<employee id>",
+      "goal": "<one clear sentence, in the user's language>",
+      "inputs": [{"path": "artifacts/T-00/notes.md"}],
+      "outputs": [{"path": "artifacts/T-01/result.md"}],
+      "constraints": ["..."],
+      "deps": [],
+      "step": 0
+    }
+  ]
+}
+\`\`\`
+
+- \`steps\`: AT MOST 6. Each at most 10 words, in the user's language, written for a non-technical reader. This is what the user sees.
+- **Every step must have at least one task pointing at it.** Do not write a step for something an employee already does inside another task — "save the result to a file" is part of writing it, not a step of its own. A step nobody works on is a step the user watches never finish.
+- \`tasks\`: the actual work. \`step\` is the index into \`steps\`.
+- \`deps\`: task_ids that must finish first. Leave empty when tasks can run in parallel — parallel is good.
+- \`outputs\`: every task must write at least one file under \`artifacts/<task_id>/\`. Two tasks must NEVER write the same path.
+- Only use employee ids from the roster you were given.`;
 
 export interface BuiltPrompt {
   /** Truyền vào Options.systemPrompt của SDK. */
@@ -117,12 +177,12 @@ export interface BuildPromptOpts {
 }
 
 export function buildWorkerPrompt(
-  company: LoadedCompany,
+  office: LoadedOffice,
   role: Role,
   opts: BuildPromptOpts = {},
 ): BuiltPrompt {
   const language = opts.language ?? 'Vietnamese';
-  const model = opts.model ?? company.config.models[role.model_tier];
+  const model = opts.model ?? office.company.models[role.model_tier];
 
   const roleCard = [
     `# Your role: ${role.display_name || role.id}`,
@@ -134,16 +194,26 @@ export function buildWorkerPrompt(
     .filter(Boolean)
     .join('\n');
 
-  const skills = loadSkill(company, role);
-  const charter = company.charter;
+  const skills = loadSkill(office, role);
+  const charter = office.charter;
   const hot = opts.hotKnowledge?.trim() ?? '';
 
   const blocks: string[] = [CORE_PROMPT, roleCard];
   if (skills) blocks.push(`# Your working instructions\n\n${skills}`);
-  if (charter) blocks.push(`# About this company\n\n${charter}`);
-  if (hot) blocks.push(`# What the company has learned\n\n${hot}`);
+  if (charter) blocks.push(`# About this office\n\n${charter}`);
+  if (hot) blocks.push(`# What this office has learned\n\n${hot}`);
 
   const staticTokens = blocks.reduce((n, b) => n + estimateTokens(b), 0);
+
+  /**
+   * tools/MCP KHÔNG nằm trong systemPrompt, nhưng định nghĩa tool đứng TRƯỚC
+   * system prompt trong prefix mà Anthropic đánh cache. Đổi tool = đổi prefix.
+   *
+   * Thiếu chúng ở đây là đúng con bug đã sửa cho `model`: cache priming gate
+   * tưởng cache ấm trong khi chưa, rồi ta trả cache_write mà cứ nghĩ đang
+   * tiết kiệm. Canvas cho phép cắm MCP bằng chuột nên bug này sẽ gặp thật.
+   */
+  const toolKey = `tools:${[...role.tools].sort().join(',')}|mcp:${[...role.mcp].sort().join(',')}`;
 
   if (role.use_preset) {
     // Preset của Claude Code: đắt hơn ~6.300 token/call (FINDINGS §2a).
@@ -153,7 +223,7 @@ export function buildWorkerPrompt(
     const append = blocks.join('\n\n---\n\n');
     return {
       systemPrompt: { type: 'preset', preset: 'claude_code', append, excludeDynamicSections: true },
-      cacheKey: hashKey(['preset', model, String(PROMPT_SCHEMA_VERSION), append]),
+      cacheKey: hashKey(['preset', model, String(PROMPT_SCHEMA_VERSION), toolKey, append]),
       staticTokens,
     };
   }
@@ -163,9 +233,145 @@ export function buildWorkerPrompt(
   // vào global cache scope.
   return {
     systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
-    cacheKey: hashKey([model, String(PROMPT_SCHEMA_VERSION), ...blocks]),
+    cacheKey: hashKey([model, String(PROMPT_SCHEMA_VERSION), toolKey, ...blocks]),
     staticTokens,
   };
+}
+
+/**
+ * Prompt của Assistant. Cùng cấu trúc phân tầng với worker, cùng cache breakpoint.
+ *
+ * Thứ tự CÓ CHỦ Ý — ổn định nhất lên trước, hay đổi nhất xuống sau, để một thay
+ * đổi nhỏ không vứt toàn bộ prefix:
+ *
+ *   ASSISTANT_CORE   đổi khi nâng phần mềm
+ *   charter          đổi hiếm
+ *   skills           đổi khi người dùng bấm Lưu
+ *   HOT knowledge    đổi khi bump knowledge_version
+ *   roster           đổi khi kéo dây trên canvas   ← hay đổi nhất, để cuối
+ */
+export function buildAssistantPrompt(
+  office: LoadedOffice,
+  opts: { roster: string; hotKnowledge?: string; language?: string },
+): BuiltPrompt {
+  const language = opts.language ?? 'Vietnamese';
+  const hot = opts.hotKnowledge?.trim() ?? '';
+
+  const blocks: string[] = [ASSISTANT_CORE];
+  if (office.charter) blocks.push(`# About this office\n\n${office.charter}`);
+  if (office.assistantSkills) blocks.push(`# How you work\n\n${office.assistantSkills}`);
+  if (hot) blocks.push(`# What this office has learned\n\n${hot}`);
+  blocks.push(opts.roster);
+  blocks.push(`Always speak to the human in ${language}.`);
+
+  return {
+    systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
+    cacheKey: hashKey(['assistant', String(PROMPT_SCHEMA_VERSION), ...blocks]),
+    staticTokens: blocks.reduce((n, b) => n + estimateTokens(b), 0),
+  };
+}
+
+/** Một lớp prompt như UI hiển thị nó. → SPEC-offices.md §8 `/api/office/:id/prompt/:who` */
+export interface PromptLayer {
+  id: string;
+  title: string;
+  /** Sửa được không. Lớp core luôn false trừ khi bật allow_core_prompt_edit. */
+  editable: boolean;
+  /** File chứa nó, nếu sửa được. */
+  file?: string;
+  text: string;
+  tokens: number;
+  /** Trần token của lớp này, nếu có. UI cảnh báo khi gõ vượt. */
+  limit?: number;
+  /** File này là node tri thức (có YAML frontmatter phải giữ nguyên khi ghi). */
+  frontmatter?: boolean;
+  note: string;
+}
+
+/**
+ * Bóc prompt thành từng lớp để NGƯỜI XEM ĐƯỢC.
+ *
+ * Đây không phải tính năng phụ. Người dùng advanced cần *thấy* lớp core mới tin;
+ * giấu đi thì họ đoán, và đoán sai thì họ viết skills chống lại chính hệ thống.
+ * → SPEC-offices.md §4.1
+ */
+export function describePrompt(
+  office: LoadedOffice,
+  who: string,
+  hotKnowledge = '',
+): PromptLayer[] {
+  const coreEditable = office.company.allow_core_prompt_edit;
+  const layers: PromptLayer[] = [];
+  const add = (l: Omit<PromptLayer, 'tokens'>): void => {
+    layers.push({ ...l, tokens: estimateTokens(l.text) });
+  };
+
+  if (who === 'assistant') {
+    add({
+      id: 'core',
+      title: 'Quy cách kết nối (lõi)',
+      editable: coreEditable,
+      text: ASSISTANT_CORE,
+      note:
+        'Cách Trợ lý nói chuyện với nhân viên và giao thức nhận kết quả. Thuộc về mã nguồn, ' +
+        'không thuộc về việc vận hành doanh nghiệp. Sửa được sẽ phá kiến trúc chi phí.',
+    });
+    add({
+      id: 'charter',
+      title: 'Giới thiệu văn phòng',
+      editable: true,
+      file: office.config.charter_file,
+      frontmatter: true,
+      limit: office.company.budgets.charter_tokens,
+      text: office.charter,
+      note: 'Nằm trong prefix cache của MỌI nhân viên. Giữ ngắn.',
+    });
+    add({
+      id: 'skills',
+      title: 'Kỹ năng — bạn viết',
+      editable: true,
+      file: 'skills/assistant.md',
+      limit: office.company.budgets.assistant_skills_tokens,
+      text: office.assistantSkills,
+      note:
+        'Tính cách, giọng điệu, thói quen. Để trắng cũng được. Nằm trong prefix của mọi lượt ' +
+        'trò chuyện nên mỗi dòng thừa là một khoản thuế thu suốt ca làm việc.',
+    });
+  } else {
+    const role = office.roles.get(who);
+    if (!role) return [];
+    add({
+      id: 'core',
+      title: 'Quy cách làm việc (lõi)',
+      editable: coreEditable,
+      text: CORE_PROMPT,
+      note:
+        'Giao thức Receipt, kỷ luật số lượt, luật ghi ra file thay vì dán nội dung. ' +
+        'Đây là thứ giữ cho chi phí không phình.',
+    });
+    add({
+      id: 'skills',
+      title: 'Kỹ năng — bạn viết',
+      editable: true,
+      file: role.skills[role.skill_level] ?? `skills/${role.id}.md`,
+      text: loadSkill(office, role),
+      note:
+        'Cách làm việc của riêng vai trò này. Để TRỐNG là bình thường: cắm MCP là ' +
+        'agent đã biết nó có thêm cánh tay. Chỉ viết ở đây thứ đúng với MỌI task ' +
+        '— tri thức riêng của từng việc thuộc về kho tri thức.',
+    });
+  }
+
+  add({
+    id: 'knowledge',
+    title: 'Kinh nghiệm nạp sẵn',
+    editable: false,
+    text: hotKnowledge,
+    note:
+      'Tự động chọn từ kho tri thức bằng code, KHÔNG tốn token. Sửa ở ngăn kéo Tri thức, ' +
+      'không sửa ở đây.',
+  });
+  return layers;
 }
 
 /**

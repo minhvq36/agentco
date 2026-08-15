@@ -8,9 +8,13 @@
  * persistSession:false — session chỉ tồn tại trong RAM suốt lời gọi.
  */
 
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { LoadedCompany } from './config.js';
+import type { LoadedOffice } from './config.js';
+import fs from 'node:fs';
+
+import { companyPaths, safeJoin } from './paths.js';
+import { grantFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
 import {
@@ -23,12 +27,49 @@ import {
   type Tier,
   type Usage,
 } from './types.js';
+import { effectiveTools } from './types.js';
 
 export interface WorkerDeps {
-  company: LoadedCompany;
+  office: LoadedOffice;
   /** Gọi trước khi bắn request; scheduler dùng để chặn cache priming gate. */
   acquireCacheSlot?(cacheKey: string): Promise<() => void>;
   onProgress?(say: string): void;
+  /**
+   * Trao tay cầm để NGẮT GIỮA CHỪNG. Scheduler giữ nó, `Esc` / `/stop` gọi tới.
+   * → docs/SPEC-tools-approval.md §3b
+   */
+  onStart?(handle: WorkerHandle): void;
+}
+
+export interface WorkerHandle {
+  /** Ngắt ngay lời gọi đang chạy. Chỉ hoạt động ở streaming input mode. */
+  interrupt(): Promise<void>;
+}
+
+/**
+ * Nguồn tin nhắn kiểu stream — yield một tin rồi ĐÓNG.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÃ ĐO, ĐỪNG THỬ LẠI: hai cách ngắt qua `Query.interrupt()` đều hỏng.     │
+ * │                                                                          │
+ * │ (a) Stream đóng ngay (bản này): `interrupt()` gọi vào chỗ trống. Bấm     │
+ * │     Dừng xong cả ba task vẫn chạy hết — đo được $0.36 tiêu sau khi dừng. │
+ * │ (b) Stream GIỮ MỞ để `interrupt()` có chỗ bám: worker ghi file xong rồi  │
+ * │     KHÔNG BAO GIỜ trả `result` — SDK ngồi chờ thêm đầu vào. DEADLOCK,    │
+ * │     đo được: quá 90 giây không có sự kiện nào, phải kill daemon.         │
+ * │                                                                          │
+ * │ Nên công tắc dừng THẬT là `abortController` bên dưới, không phải         │
+ * │ `interrupt()`. Giữ streaming input mode vì nó vô hại và là nền sẵn cho   │
+ * │ lúc SDK/CLI hỗ trợ đủ.                                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+async function* oneMessage(text: string): AsyncGenerator<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: { role: 'user', content: text },
+    parent_tool_use_id: null,
+    session_id: '',
+  } as SDKUserMessage;
 }
 
 export interface WorkerInput {
@@ -39,14 +80,14 @@ export interface WorkerInput {
 }
 
 export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<Receipt> {
-  const { company } = deps;
+  const { office } = deps;
   const { brief, role } = input;
   const started = Date.now();
 
-  const model = modelFor(company, role.model_tier);
+  const model = modelFor(office, role.model_tier);
   // model PHẢI đi vào cacheKey: prompt cache đánh theo (model, prefix).
-  const built = buildWorkerPrompt(company, role, { hotKnowledge: input.hotKnowledge, model });
-  const message = buildTaskMessage(brief, input.coldKnowledge, company.config.budgets.task_brief_tokens);
+  const built = buildWorkerPrompt(office, role, { hotKnowledge: input.hotKnowledge, model });
+  const message = buildTaskMessage(brief, input.coldKnowledge, office.company.budgets.task_brief_tokens);
 
   const release = await deps.acquireCacheSlot?.(built.cacheKey);
 
@@ -54,13 +95,19 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   let finalText = '';
   let firstTokenSeen = false;
 
+  let interrupted = false;
+  // Công tắc dừng THẬT. Xem khối chú thích ở `oneMessage` để biết vì sao không
+  // dùng `Query.interrupt()`.
+  const abortController = new AbortController();
+
   try {
-    for await (const msg of query({
-      prompt: message,
+    const running = query({
+      prompt: oneMessage(message),
       options: {
+        abortController,
         systemPrompt: built.systemPrompt,
         model,
-        cwd: company.dir,
+        cwd: office.dir,
         maxTurns: role.budget.max_turns,
         maxBudgetUsd: role.budget.max_usd,
         // Session chỉ trong RAM — worker stateless, không rác trên đĩa.
@@ -69,10 +116,24 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         // và theo thời gian, sẽ phá prefix cache.
         settingSources: [],
         strictMcpConfig: true,
-        ...(role.tools.length ? { allowedTools: role.tools } : {}),
-        ...(role.mcp.length ? { mcpServers: pickMcp(company, role.mcp) } : {}),
+        // Bộ mặc định + phần khai thêm. -> types.ts BUILTIN_TOOLS, SPEC-tools-approval.md §5
+        allowedTools: effectiveTools(role.tools),
+        ...(role.mcp.length ? { mcpServers: pickMcp(office, role) } : {}),
       },
-    })) {
+    });
+
+    deps.onStart?.({
+      async interrupt() {
+        interrupted = true;
+        abortController.abort();
+        // Vẫn gọi `interrupt()` sau — vô hại, và nếu CLI hỗ trợ thì nó dừng
+        // sạch hơn abort. Nuốt lỗi: người dùng đã bấm Dừng, đừng ném một lỗi
+        // kỹ thuật lên mặt họ.
+        await running.interrupt().catch(() => undefined);
+      },
+    });
+
+    for await (const msg of running) {
       const m = msg as Record<string, unknown>;
 
       // Cache prefix đã được ghi ngay khi bắt đầu stream — thả các task
@@ -96,6 +157,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
       }
     }
   } catch (err) {
+    // Ngắt theo yêu cầu người dùng KHÔNG phải lỗi. SDK ném ra khi bị interrupt,
+    // và biến nó thành "task failed" là nói dối trong nhật ký.
+    if (interrupted) return stoppedReceipt(office, brief, role, usage, started);
     if (err instanceof RunError) throw err;
     const kind = classifyError(err);
     if (kind === 'max_turns') {
@@ -113,6 +177,11 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     release?.();
   }
 
+  // Bị ngắt mà vòng lặp kết thúc ÊM (không ném lỗi) thì cũng phải dừng ở đây.
+  // Đi tiếp là gọi thêm một lượt "sửa receipt" — tốn tiền cho một việc người
+  // dùng vừa bảo dừng.
+  if (interrupted) return stoppedReceipt(office, brief, role, usage, started);
+
   // ── receipt
   let parsed = parseReceipt(finalText);
   let reasked = false;
@@ -121,7 +190,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     // Call sửa lỗi: model rẻ nhất, system prompt tối giản, KHÔNG kèm context role.
     // Sửa định dạng không cần biết gì về vai trò — kèm vào chỉ tốn tiền.
     reasked = true;
-    const repaired = await repairReceipt(company, finalText, parsed.problem ?? 'không rõ');
+    const repaired = await repairReceipt(office, finalText, parsed.problem ?? 'không rõ');
     usage = addUsage(usage, repaired.usage);
     parsed = parseReceipt(repaired.text);
   }
@@ -137,7 +206,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
       };
 
   return {
-    ...enforceCap(body, company.config.budgets.receipt_tokens),
+    ...enforceCap(body, office.company.budgets.receipt_tokens),
     task_id: brief.task_id,
     role: role.id,
     usage,
@@ -148,8 +217,51 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
 
 // ─────────────────────────────────────────────────────────── nội bộ
 
+/**
+ * Ngắt theo yêu cầu người dùng KHÔNG phải lỗi — đừng ghi "failed" vào nhật ký.
+ *
+ * NHƯNG phải nói ra "mớ dở dang": worker bị giết giữa chừng có thể đã ghi được
+ * một phần các file nó được giao. Bản trước trả `artifacts: []` — tức là nói
+ * dối rằng không có gì trên đĩa, rồi lần chạy sau ghi đè lên mà không ai biết.
+ *
+ * Ta KHÔNG xoá chúng: file dở vẫn có thể dùng được, và xoá thứ người dùng chưa
+ * kịp nhìn là quyết định của họ chứ không phải của ta. Chỉ liệt kê ra.
+ */
+function stoppedReceipt(
+  office: LoadedOffice,
+  brief: TaskBrief,
+  role: Role,
+  usage: Usage,
+  started: number,
+): Receipt {
+  const written = brief.outputs
+    .map((o) => o.path)
+    .filter((p) => {
+      try {
+        return fs.existsSync(safeJoin(office.dir, p));
+      } catch {
+        return false;
+      }
+    });
+
+  return {
+    status: 'blocked',
+    say: written.length
+      ? `Đã dừng giữa chừng. Có ${written.length} file đã ghi dở, xem lại trước khi dùng.`
+      : 'Đã dừng theo yêu cầu của bạn, chưa ghi gì.',
+    artifacts: written,
+    lessons: [],
+    blocked_on: 'người dùng dừng giữa chừng',
+    task_id: brief.task_id,
+    role: role.id,
+    usage,
+    wall_ms: Date.now() - started,
+    reasked: false,
+  };
+}
+
 async function repairReceipt(
-  company: LoadedCompany,
+  office: LoadedOffice,
   badText: string,
   problem: string,
 ): Promise<{ text: string; usage: Usage }> {
@@ -160,7 +272,7 @@ async function repairReceipt(
       prompt: repairPrompt(badText, problem),
       options: {
         systemPrompt: 'You convert malformed text into strict JSON. You output JSON only.',
-        model: company.config.models.cheap,
+        model: office.company.models.eco,
         maxTurns: 1,
         persistSession: false,
         settingSources: [],
@@ -179,18 +291,42 @@ async function repairReceipt(
   return { text, usage };
 }
 
-export function modelFor(company: LoadedCompany, tier: Tier): string {
-  return company.config.models[tier];
+export function modelFor(office: LoadedOffice, tier: Tier): string {
+  return office.company.models[tier];
 }
 
 type McpServers = NonNullable<Options['mcpServers']>;
 
-function pickMcp(company: LoadedCompany, names: string[]): McpServers {
+/**
+ * MCP server của một vai trò, đã tiêm ĐÚNG những chìa vai trò đó được cầm.
+ *
+ * Giá trị bí mật đi vào biến môi trường của tiến trình MCP, KHÔNG vào prompt —
+ * model không đọc được chúng, chỉ dùng được tool đã mở khoá sẵn. Đó là khác biệt
+ * giữa "agent có quyền" và "agent biết mật khẩu".
+ */
+function pickMcp(office: LoadedOffice, role: Role): McpServers {
+  const { env, missing } = grantFor(readSecrets(companyPaths(office.companyDir)), role.secrets);
+  if (missing.length) {
+    process.emitWarning(
+      `Vai trò "${role.id}" khai secrets ${missing.join(', ')} nhưng chưa có trong ` +
+        `.state/secrets.json. Tool cần chìa đó sẽ hỏng — thêm bằng \`agentco secret set <TÊN>\`.`,
+    );
+  }
+
   const out: Record<string, unknown> = {};
-  for (const n of names) {
-    const cfg = company.config.mcpServers[n];
-    if (cfg) out[n] = cfg;
-    else process.emitWarning(`MCP server "${n}" chưa khai trong company.yaml`);
+  for (const n of role.mcp) {
+    const cfg = office.company.mcpServers[n];
+    if (!cfg) {
+      process.emitWarning(`MCP server "${n}" chưa khai trong company.yaml`);
+      continue;
+    }
+    // Chỉ tiêm vào server chạy bằng tiến trình con (có `command`). Server kiểu
+    // http/sse nhận xác thực theo cách khác, tiêm env vào là vô nghĩa.
+    const isProcess = typeof (cfg as { command?: unknown }).command === 'string';
+    out[n] =
+      isProcess && Object.keys(env).length
+        ? { ...(cfg as object), env: { ...((cfg as { env?: object }).env ?? {}), ...env } }
+        : cfg;
   }
   // Hình dạng do người dùng khai trong company.yaml — SDK tự validate lúc khởi tạo.
   return out as McpServers;

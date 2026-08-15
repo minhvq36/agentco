@@ -6,12 +6,12 @@
 
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
-import { runWorker } from './worker.js';
-import type { LoadedCompany } from './config.js';
+import { runWorker, type WorkerHandle } from './worker.js';
+import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
 import {
   RunError,
-  type AgentEvent,
+  type AgentEventBody,
   type Plan,
   type Receipt,
   type TaskBrief,
@@ -19,9 +19,9 @@ import {
 } from './types.js';
 
 export interface SchedulerDeps {
-  company: LoadedCompany;
+  office: LoadedOffice;
   knowledge: KnowledgeStore;
-  emit(event: AgentEvent): void;
+  emit(event: AgentEventBody): void;
   /** Kiểm tra giữa các task — người dùng bấm Dừng thì thoát sạch. */
   shouldStop?(): boolean;
 }
@@ -40,9 +40,16 @@ export class Scheduler {
   private readonly maxConcurrency: number;
   private smoothRun = 0;
   private readonly runningByTier = new Map<Tier, number>();
+  /**
+   * Tay cầm của những worker ĐANG chạy. Không có nó thì `stop()` chỉ là một cờ
+   * kiểm tra GIỮA các task — người dùng bấm Dừng vẫn phải ngồi chờ task hiện
+   * tại chạy hết, có khi cả phút và cả nghìn token.
+   * → docs/SPEC-tools-approval.md §3b
+   */
+  private readonly live = new Set<WorkerHandle>();
 
   constructor(private readonly deps: SchedulerDeps) {
-    const rt = deps.company.config.runtime;
+    const rt = deps.office.company.runtime;
     this.maxConcurrency = rt.concurrency;
     this.concurrency = rt.concurrency;
     this.gate = new CachePrimingGate(ttlMs(rt.cache_ttl), rt.priming_timeout_ms);
@@ -141,8 +148,8 @@ export class Scheduler {
       for (const t of ready) {
         if (!remaining.has(t.task_id)) continue;
         if (running.size + launchable.length >= this.concurrency) break;
-        const tier = this.deps.company.roles.get(t.role)?.model_tier ?? 'standard';
-        const cap = this.deps.company.config.runtime.concurrency_by_tier[tier];
+        const tier = this.deps.office.roles.get(t.role)?.model_tier ?? 'standard';
+        const cap = this.deps.office.company.runtime.concurrency_by_tier[tier];
         const used = perTier.get(tier) ?? 0;
         if (used >= cap) continue;
         perTier.set(tier, used + 1);
@@ -157,7 +164,7 @@ export class Scheduler {
 
       for (const brief of launchable) {
         remaining.delete(brief.task_id);
-        const tier = this.deps.company.roles.get(brief.role)?.model_tier ?? 'standard';
+        const tier = this.deps.office.roles.get(brief.role)?.model_tier ?? 'standard';
         this.runningByTier.set(tier, (this.runningByTier.get(tier) ?? 0) + 1);
         const p = this.execute(brief)
           .then((receipt) => {
@@ -207,20 +214,30 @@ export class Scheduler {
     return this.gate.snapshot();
   }
 
+  /** Số nhân viên ĐANG chạy — giao diện hiện "2 nhân viên đang làm việc". */
+  get runningCount(): number {
+    return this.live.size;
+  }
+
+  /** Ngắt NGAY mọi worker đang chạy. Gọi từ `Esc` / `/stop`. */
+  async interruptAll(): Promise<void> {
+    await Promise.allSettled([...this.live].map((h) => h.interrupt()));
+  }
+
   // ── nội bộ
 
   private async execute(brief: TaskBrief): Promise<Receipt> {
-    const { company, knowledge } = this.deps;
-    const role = company.roles.get(brief.role);
+    const { office, knowledge } = this.deps;
+    const role = office.roles.get(brief.role);
     if (!role) throw new RunError(`Không có vai trò "${brief.role}"`, 'other');
 
     // HOT: nằm trong prefix cache, tính theo role, KHÔNG theo task.
-    const hot = knowledge.hot(role.id, role.hot_knowledge_size, company.config.budgets.hot_knowledge_tokens);
+    const hot = knowledge.hot(role.id, role.hot_knowledge_size, office.company.budgets.hot_knowledge_tokens);
     // COLD: chọn theo nội dung task, nằm sau breakpoint, trả giá đầy đủ.
     const cold = knowledge.cold(
       role.id,
       `${brief.goal} ${brief.constraints.join(' ')}`,
-      Math.min(role.budget.knowledge_pack, company.config.budgets.cold_knowledge_tokens),
+      Math.min(role.budget.knowledge_pack, office.company.budgets.cold_knowledge_tokens),
       hot.ids,
     );
 
@@ -231,15 +248,26 @@ export class Scheduler {
       say: `${role.display_name || role.id}: ${brief.goal}`,
     });
 
-    const receipt = await runWorker(
-      {
-        company,
-        acquireCacheSlot: (key) => this.gate.acquire(key),
-        onProgress: (say) =>
-          this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
-      },
-      { brief, role, hotKnowledge: hot.text, coldKnowledge: cold.text },
-    );
+    let handle: WorkerHandle | undefined;
+    let receipt: Receipt;
+    try {
+      receipt = await runWorker(
+        {
+          office,
+          acquireCacheSlot: (key) => this.gate.acquire(key),
+          onProgress: (say) =>
+            this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
+          // Đăng ký tay cầm để `stop()` với tới được worker ĐANG chạy.
+          onStart: (h) => {
+            handle = h;
+            this.live.add(h);
+          },
+        },
+        { brief, role, hotKnowledge: hot.text, coldKnowledge: cold.text },
+      );
+    } finally {
+      if (handle) this.live.delete(handle);
+    }
 
     knowledge.recordHits([...hot.ids, ...cold.ids]);
 
@@ -258,10 +286,10 @@ export class Scheduler {
 
   /** Cho phép kiểm tra cacheKey trước khi chạy — dùng ở `agentco status`. */
   cacheKeyFor(roleId: string): string | undefined {
-    const role = this.deps.company.roles.get(roleId);
+    const role = this.deps.office.roles.get(roleId);
     if (!role) return undefined;
-    return buildWorkerPrompt(this.deps.company, role, {
-      model: this.deps.company.config.models[role.model_tier],
+    return buildWorkerPrompt(this.deps.office, role, {
+      model: this.deps.office.company.models[role.model_tier],
     }).cacheKey;
   }
 

@@ -1,8 +1,13 @@
 /**
- * Nạp cấu hình công ty và định nghĩa vai trò.
+ * Nạp cấu hình. HAI CẤP: công ty (tiền, model) và văn phòng (người, tri thức).
+ *
+ * → docs/SPEC-offices.md §2, docs/SPEC-cli.md §3
  *
  * Thứ tự ưu tiên: cờ dòng lệnh > biến môi trường > company.yaml > mặc định.
- * (docs/SPEC-cli.md §3)
+ *
+ * Ranh giới đặt ở đâu và vì sao: thứ gì ảnh hưởng tới HOÁ ĐƠN thì ở cấp công ty
+ * (một subscription Claude, một hoá đơn, một chỗ để siết). Thứ gì đi vào PREFIX
+ * CACHE thì ở cấp văn phòng, vì prefix phải hẹp nhất có thể.
  */
 
 import fs from 'node:fs';
@@ -11,29 +16,39 @@ import YAML from 'yaml';
 
 import {
   CompanyConfigSchema,
+  OfficeConfigSchema,
   RoleSchema,
   type CompanyConfig,
+  type OfficeConfig,
   type Role,
   type SkillLevel,
 } from './types.js';
-import { paths, type Paths } from './paths.js';
+import { companyPaths, officePaths, type CompanyPaths, type OfficePaths } from './paths.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 
-export interface LoadedCompany {
+export interface LoadedOffice {
+  id: string;
   dir: string;
-  paths: Paths;
-  config: CompanyConfig;
+  paths: OfficePaths;
+  config: OfficeConfig;
+  /** Cấu hình công ty — model, ngân sách, trần token. Dùng chung, chỉ đọc. */
+  company: CompanyConfig;
+  companyDir: string;
   roles: Map<string, Role>;
-  /** Nội dung charter đã đọc + cắt về trần. Nằm trong prefix được cache. */
+  /** Charter đã đọc + cắt về trần. Nằm trong prefix được cache của MỌI agent. */
   charter: string;
-  /** Bump khi tri thức HOT đổi -> đi vào cacheKey. Xem knowledge/version.ts */
+  /** Skills người dùng viết cho Assistant. Có thể rỗng — đó là lựa chọn hợp lệ. */
+  assistantSkills: string;
   knowledgeVersion: number;
 }
 
 function readYaml(file: string): unknown {
   if (!fs.existsSync(file)) return {};
-  const raw = fs.readFileSync(file, 'utf8');
-  return YAML.parse(raw) ?? {};
+  try {
+    return YAML.parse(fs.readFileSync(file, 'utf8')) ?? {};
+  } catch (err) {
+    throw new Error(`${path.basename(file)} không phải YAML hợp lệ: ${(err as Error).message}`);
+  }
 }
 
 /** AGENTCO_RUNTIME_CONCURRENCY=8 -> config.runtime.concurrency = 8 */
@@ -42,7 +57,7 @@ function applyEnvOverrides(cfg: Record<string, unknown>): void {
     if (!key.startsWith('AGENTCO_') || value === undefined) continue;
     const pathParts = key.slice('AGENTCO_'.length).toLowerCase().split('_');
     // Bỏ qua biến điều khiển process, không phải cấu hình công ty
-    if (['company', 'dir', 'headless', 'log', 'format'].includes(pathParts[0] ?? '')) continue;
+    if (['company', 'dir', 'headless', 'log', 'format', 'token', 'office'].includes(pathParts[0] ?? '')) continue;
 
     let cursor: Record<string, unknown> = cfg;
     for (let i = 0; i < pathParts.length - 1; i++) {
@@ -52,78 +67,124 @@ function applyEnvOverrides(cfg: Record<string, unknown>): void {
     }
     const leaf = pathParts[pathParts.length - 1]!;
     const num = Number(value);
-    cursor[leaf] = value === 'true' ? true : value === 'false' ? false : Number.isFinite(num) && value.trim() !== '' ? num : value;
+    cursor[leaf] =
+      value === 'true' ? true : value === 'false' ? false : Number.isFinite(num) && value.trim() !== '' ? num : value;
   }
 }
 
-export function loadCompany(dir: string, overrides: Record<string, unknown> = {}): LoadedCompany {
-  const pp = paths(dir);
-
+export function loadCompanyConfig(dir: string, overrides: Record<string, unknown> = {}): CompanyConfig {
+  const pp = companyPaths(dir);
   if (!fs.existsSync(pp.configFile)) {
     throw new Error(
       `Không tìm thấy company.yaml trong ${dir}.\nChạy \`agentco init\` để tạo công ty mới.`,
     );
   }
-
   const raw = readYaml(pp.configFile) as Record<string, unknown>;
   applyEnvOverrides(raw);
   deepMerge(raw, overrides);
 
   const parsed = CompanyConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error(`company.yaml sai định dạng:\n${formatZodError(parsed.error)}`);
+  if (!parsed.success) throw new Error(`company.yaml sai định dạng:\n${formatZodError(parsed.error)}`);
+  return parsed.data;
+}
+
+/**
+ * Nạp một văn phòng.
+ *
+ * KHÔNG ném lỗi khi chưa có nhân viên nào — văn phòng vừa tạo hợp lệ và rỗng là
+ * bình thường (SPEC-offices.md §3). v0 ném lỗi ở đây, và đó là lý do "khởi điểm
+ * sạch" không thể tồn tại cùng nó.
+ */
+export function loadOffice(
+  companyDir: string,
+  companyConfig: CompanyConfig,
+  officeId: string,
+): LoadedOffice {
+  const dir = path.join(companyPaths(companyDir).offices, officeId);
+  const pp = officePaths(dir);
+
+  const rawCfg = readYaml(pp.configFile) as Record<string, unknown>;
+  rawCfg['id'] ??= officeId;
+  const parsedCfg = OfficeConfigSchema.safeParse(rawCfg);
+  if (!parsedCfg.success) {
+    throw new Error(`offices/${officeId}/office.yaml sai định dạng:\n${formatZodError(parsedCfg.error)}`);
   }
-  const config = parsed.data;
+  const config = parsedCfg.data;
 
   // ── roles
   const roles = new Map<string, Role>();
   if (fs.existsSync(pp.roles)) {
-    for (const file of fs.readdirSync(pp.roles)) {
+    for (const file of fs.readdirSync(pp.roles).sort()) {
       if (!/\.(ya?ml)$/i.test(file)) continue;
       const roleRaw = readYaml(path.join(pp.roles, file)) as Record<string, unknown>;
       roleRaw['id'] ??= file.replace(/\.(ya?ml)$/i, '');
       const r = RoleSchema.safeParse(roleRaw);
       if (!r.success) {
-        throw new Error(`roles/${file} sai định dạng:\n${formatZodError(r.error)}`);
+        // Một file role hỏng KHÔNG được làm sập cả văn phòng — tiêu chí "Ổn định".
+        // Bỏ qua nó, cảnh báo, canvas sẽ hiện node đỏ "không tìm thấy vai trò".
+        process.emitWarning(
+          `offices/${officeId}/roles/${file} sai định dạng, đã bỏ qua:\n${formatZodError(r.error)}`,
+        );
+        continue;
       }
       roles.set(r.data.id, r.data);
     }
-  }
-  if (roles.size === 0) {
-    throw new Error(`Không có vai trò nào trong ${pp.roles}. Cần ít nhất một file .yaml.`);
   }
 
   // ── charter: pinned, nằm trong prefix cache, phải nhỏ và ổn định
   let charter = '';
   const charterFile = path.join(dir, config.charter_file);
   if (fs.existsSync(charterFile)) {
-    charter = fs.readFileSync(charterFile, 'utf8').trim();
+    // CHỈ lấy phần thân. Charter là một node tri thức nên nó có YAML frontmatter
+    // (id, type, tags, confidence…) — thứ có nghĩa với KHO, không có nghĩa với
+    // MODEL. Đọc nguyên file là nhét ~40 token metadata vào prefix cache của
+    // MỌI nhân viên, mãi mãi, để nói với model những điều nó không dùng được.
+    charter = stripFrontmatter(fs.readFileSync(charterFile, 'utf8'));
     const tokens = estimateTokens(charter);
-    if (tokens > config.budgets.charter_tokens) {
+    if (tokens > companyConfig.budgets.charter_tokens) {
       process.emitWarning(
-        `Charter ${tokens} token, vượt trần ${config.budgets.charter_tokens}. Đã cắt. ` +
-          `Charter nằm trong prefix cache của MỌI agent — giữ nó ngắn.`,
+        `Charter văn phòng "${officeId}" ${tokens} token, vượt trần ${companyConfig.budgets.charter_tokens}. ` +
+          `Đã cắt. Charter nằm trong prefix cache của MỌI agent — giữ nó ngắn.`,
       );
-      charter = truncateToTokens(charter, config.budgets.charter_tokens);
+      charter = truncateToTokens(charter, companyConfig.budgets.charter_tokens);
+    }
+  }
+
+  // ── skills của Assistant: người dùng sửa được, rỗng cũng hợp lệ
+  let assistantSkills = '';
+  if (fs.existsSync(pp.assistantSkills)) {
+    assistantSkills = fs.readFileSync(pp.assistantSkills, 'utf8').trim();
+    const tokens = estimateTokens(assistantSkills);
+    if (tokens > companyConfig.budgets.assistant_skills_tokens) {
+      process.emitWarning(
+        `skills/assistant.md của "${officeId}" ${tokens} token, vượt trần ` +
+          `${companyConfig.budgets.assistant_skills_tokens}. Đã cắt. Khối này nằm trong prefix của ` +
+          `MỌI lượt trò chuyện với Assistant — mỗi dòng thừa là thuế thu suốt ca.`,
+      );
+      assistantSkills = truncateToTokens(assistantSkills, companyConfig.budgets.assistant_skills_tokens);
     }
   }
 
   return {
+    id: officeId,
     dir,
     paths: pp,
     config,
+    company: companyConfig,
+    companyDir,
     roles,
     charter,
+    assistantSkills,
     knowledgeVersion: readKnowledgeVersion(pp),
   };
 }
 
 /** Đọc nội dung skill theo mức đã chọn của role. */
-export function loadSkill(company: LoadedCompany, role: Role): string {
+export function loadSkill(office: LoadedOffice, role: Role): string {
   const level: SkillLevel = role.skill_level;
   const rel = role.skills[level] ?? role.skills['medium'] ?? role.skills['short'];
   if (!rel) return '';
-  const file = path.join(company.dir, rel);
+  const file = path.join(office.dir, rel);
   if (!fs.existsSync(file)) {
     process.emitWarning(`Vai trò "${role.id}": không thấy file skill ${rel}`);
     return '';
@@ -131,7 +192,7 @@ export function loadSkill(company: LoadedCompany, role: Role): string {
   return fs.readFileSync(file, 'utf8').trim();
 }
 
-export function readKnowledgeVersion(pp: Paths): number {
+export function readKnowledgeVersion(pp: OfficePaths): number {
   const file = path.join(pp.knowledge, 'version.json');
   if (!fs.existsSync(file)) return 1;
   try {
@@ -146,7 +207,7 @@ export function readKnowledgeVersion(pp: Paths): number {
  * Bump version tri thức -> đổi cacheKey của mọi role -> mọi prefix phải ghi lại cache.
  * CỐ Ý không gọi tự động mỗi lần ghi node: gom theo lô (Librarian, M1).
  */
-export function bumpKnowledgeVersion(pp: Paths): number {
+export function bumpKnowledgeVersion(pp: OfficePaths): number {
   const next = readKnowledgeVersion(pp) + 1;
   fs.mkdirSync(pp.knowledge, { recursive: true });
   fs.writeFileSync(path.join(pp.knowledge, 'version.json'), JSON.stringify({ version: next }, null, 2));
@@ -154,6 +215,13 @@ export function bumpKnowledgeVersion(pp: Paths): number {
 }
 
 // ─────────────────────────────────────────────────────────── helpers
+
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+
+/** Bỏ khối YAML đầu file, giữ phần thân. Không có frontmatter thì trả nguyên. */
+function stripFrontmatter(raw: string): string {
+  return raw.replace(FRONTMATTER, '').trim();
+}
 
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const [k, v] of Object.entries(source)) {
@@ -169,3 +237,5 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 function formatZodError(err: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
   return err.issues.map((i) => `  ${i.path.join('.') || '(gốc)'}: ${i.message}`).join('\n');
 }
+
+export type { CompanyPaths, OfficePaths };

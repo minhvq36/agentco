@@ -13,11 +13,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { Paths } from './paths.js';
+import type { CompanyPaths } from './paths.js';
 import type { Usage } from './types.js';
 
 export interface UsageRecord {
   ts: string;
+  /** Văn phòng nào tiêu. Sổ chi phí ở cấp công ty — một hoá đơn Claude một sổ. */
+  office: string;
+  /** Việc nào tiêu. Để trả lời "việc đó tốn bao nhiêu" mà không đọc lại log. */
+  plan_id: string;
   task_id: string;
   role: string;
   cache_key: string;
@@ -34,12 +38,12 @@ export interface UsageRecord {
   reasked: boolean;
 }
 
-export function appendUsage(paths: Paths, rec: UsageRecord): void {
+export function appendUsage(paths: CompanyPaths, rec: UsageRecord): void {
   fs.mkdirSync(path.dirname(paths.usageLog), { recursive: true });
   fs.appendFileSync(paths.usageLog, JSON.stringify(rec) + '\n', 'utf8');
 }
 
-export function readUsage(paths: Paths, sinceMs?: number): UsageRecord[] {
+export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] {
   if (!fs.existsSync(paths.usageLog)) return [];
   const cutoff = sinceMs ? Date.now() - sinceMs : 0;
   const out: UsageRecord[] = [];

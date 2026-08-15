@@ -12,15 +12,15 @@ skills:
   medium: skills/reviewer.medium.md
 
 tools: [Read, Write, Glob, Grep]
-# Đo thật (bench/tier-compare.mjs): với việc soát lỗi này, `cheap` tốn 2,5 lần
+# Đo thật (bench/tier-compare.mjs): với việc soát lỗi này, `eco` tốn 2,5 lần
 # số lượt và chậm gấp đôi so với `standard`, nhưng VẪN rẻ hơn 38% về tiền.
 # Đổi sang `standard` nếu bạn ưu tiên tốc độ hơn chi phí.
-model_tier: cheap
+model_tier: eco
 use_preset: false
 
 budget:
   # Model rẻ dò dẫm nhiều lượt hơn VÀ số lượt không ổn định (đo được 9 rồi 10
-  # cho cùng một việc). Nên vai trò `cheap` cần ngân sách lượt CAO HƠN vai trò
+  # cho cùng một việc). Nên vai trò `eco` cần ngân sách lượt CAO HƠN vai trò
   # `standard` — ngược trực giác. Để 14 = ~1,5× số lượt đo được.
   max_turns: 14
   max_usd: 0.2

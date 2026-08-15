@@ -1,7 +1,7 @@
 /**
  * So sánh tier model trên CÙNG một việc agentic.
  *
- * Câu hỏi: tier `cheap` (Haiku) có thật sự rẻ hơn cho việc CÓ TOOL không?
+ * Câu hỏi: tier `eco` (Haiku) có thật sự rẻ hơn cho việc CÓ TOOL không?
  * Nghi vấn: Haiku dò dẫm nhiều lượt hơn, mà mỗi lượt đọc lại toàn bộ prefix,
  * nên rẻ trên mỗi token chưa chắc rẻ trên mỗi việc.
  *
@@ -86,7 +86,7 @@ async function measure(tier, round) {
 
 console.log('So sánh tier trên CÙNG một việc soát lỗi (2 file input, cùng ràng buộc)\n');
 const results = [];
-for (const tier of ['cheap', 'standard']) {
+for (const tier of ['eco', 'standard']) {
   for (const round of [1, 2]) {
     const r = await measure(tier, round);
     if (r) results.push(r);
@@ -96,19 +96,19 @@ for (const tier of ['cheap', 'standard']) {
 
 // Chỉ so lần 2 (cache đã ấm) — lần 1 chỉ để làm ấm prefix.
 const warm = Object.fromEntries(results.filter((r) => r.round === 2).map((r) => [r.tier, r]));
-if (warm.cheap && warm.standard) {
-  const c = warm.cheap;
+if (warm.eco && warm.standard) {
+  const c = warm.eco;
   const s = warm.standard;
   const f = (a, b) => (b === 0 ? '—' : `${(a / b).toFixed(2)}×`);
   console.log('─── SO SÁNH (cache đã ấm) ───');
-  console.log(`  lượt      cheap ${c.turns}  vs  standard ${s.turns}      → cheap dùng ${f(c.turns, s.turns)} số lượt`);
-  console.log(`  token     cheap ${c.tokens}  vs  standard ${s.tokens}    → cheap dùng ${f(c.tokens, s.tokens)} token`);
-  console.log(`  thời gian cheap ${(c.ms / 1000).toFixed(1)}s vs standard ${(s.ms / 1000).toFixed(1)}s → cheap chậm ${f(c.ms, s.ms)}`);
-  console.log(`  TIỀN      cheap $${c.cost.toFixed(4)} vs standard $${s.cost.toFixed(4)} → cheap tốn ${f(c.cost, s.cost)}`);
+  console.log(`  lượt      eco ${c.turns}  vs  standard ${s.turns}      → eco dùng ${f(c.turns, s.turns)} số lượt`);
+  console.log(`  token     eco ${c.tokens}  vs  standard ${s.tokens}    → eco dùng ${f(c.tokens, s.tokens)} token`);
+  console.log(`  thời gian eco ${(c.ms / 1000).toFixed(1)}s vs standard ${(s.ms / 1000).toFixed(1)}s → eco chậm ${f(c.ms, s.ms)}`);
+  console.log(`  TIỀN      eco $${c.cost.toFixed(4)} vs standard $${s.cost.toFixed(4)} → eco tốn ${f(c.cost, s.cost)}`);
   console.log('');
   console.log(
     c.cost < s.cost
-      ? '  → tier `cheap` VẪN rẻ hơn về tiền. Giữ nguyên bảng tier.'
-      : '  → tier `cheap` ĐẮT HƠN cho việc có tool. Phải viết lại bảng tier trong spec.',
+      ? '  → tier `eco` VẪN rẻ hơn về tiền. Giữ nguyên bảng tier.'
+      : '  → tier `eco` ĐẮT HƠN cho việc có tool. Phải viết lại bảng tier trong spec.',
   );
 }

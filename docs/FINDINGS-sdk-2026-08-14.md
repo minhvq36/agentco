@@ -178,7 +178,7 @@ Vấn đề: master là session dài, resume liên tục. Gắn MCP → issue #2
 
 Định lượng: master context ~40K, cache vỡ → mỗi lượt trả 40K ở 1.0x thay vì 0.1x = **dư ~36 000 token quy đổi mỗi lượt master nói chuyện**. Một worker one-shot có MCP chỉ tốn **~4 350** trên Haiku. **Rẻ hơn gần một bậc độ lớn.**
 
-→ Thêm role **`concierge`**: one-shot, tier `cheap`, có MCP, dùng cho việc vặt (xem lịch, gửi tin, tra DB, lấy URL). Master gọi nó thay vì tự cầm MCP.
+→ Thêm role **`concierge`**: one-shot, tier `eco`, có MCP, dùng cho việc vặt (xem lịch, gửi tin, tra DB, lấy URL). Master gọi nó thay vì tự cầm MCP.
 
 **"Gọi nhân viên" là chuyện UI, không phải chuyện kiến trúc.** Trên giao diện, `concierge` **không hiện ra như một task** — hiện như chính master đang làm. Giữ nguyên cảm giác "master tự làm được việc vặt", nhưng rẻ hơn và không phá cache.
 
@@ -224,16 +224,16 @@ chi phí ≈ SỐ LƯỢT × prefix × 0.1  +  ghi-cache × 1.25  +  output
 
 | tier | lượt | token | thời gian | tiền |
 |---|---:|---:|---:|---:|
-| `cheap` (Haiku) | 10 | 137 372 | 77,9s | **$0.0556** |
+| `eco` (Haiku) | 10 | 137 372 | 77,9s | **$0.0556** |
 | `standard` (Sonnet) | 4 | 63 350 | 37,0s | $0.0893 |
 
 Haiku dùng **2,5× số lượt**, 2,17× token, chậm 2,11× — **nhưng vẫn rẻ hơn 38%**, vì nó rẻ hơn ~3,4× trên mỗi token.
 
-> **Luật: `cheap` chỉ lãi khi `bội_số_token < tỉ_lệ_giá`.** Biên mỏng hơn tỉ lệ giá gợi ý nhiều. Việc càng phức tạp, bội số càng tăng, tới lúc lỗ.
+> **Luật: `eco` chỉ lãi khi `bội_số_token < tỉ_lệ_giá`.** Biên mỏng hơn tỉ lệ giá gợi ý nhiều. Việc càng phức tạp, bội số càng tăng, tới lúc lỗ.
 
 Hai cái giá không nằm trong bảng tiền:
 - **Độ trễ gấp đôi** — với sản phẩm một người dùng ngồi chờ, thường quan trọng hơn 3 cent
-- **Số lượt không đoán được** — Haiku: 9 rồi 10 cho cùng một việc; Sonnet: 4 rồi 4. Nên **vai trò `cheap` cần `max_turns` cao hơn vai trò `standard`**, ngược trực giác.
+- **Số lượt không đoán được** — Haiku: 9 rồi 10 cho cùng một việc; Sonnet: 4 rồi 4. Nên **vai trò `eco` cần `max_turns` cao hơn vai trò `standard`**, ngược trực giác.
 
 Tái lập: `node bench/tier-compare.mjs`
 

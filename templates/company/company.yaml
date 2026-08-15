@@ -15,7 +15,7 @@ budgets:
   cold_knowledge_tokens: 3000
 
 models:
-  cheap: claude-haiku-4-5-20251001
+  eco: claude-haiku-4-5-20251001
   standard: claude-sonnet-5
   deep: claude-opus-5
   master: standard

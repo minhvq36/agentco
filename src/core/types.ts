@@ -9,8 +9,60 @@ import { z } from 'zod';
 
 // ─────────────────────────────────────────────────────────── tier & model
 
-export const TIERS = ['cheap', 'standard', 'deep'] as const;
+export const TIERS = ['eco', 'standard', 'deep'] as const;
 export type Tier = (typeof TIERS)[number];
+
+/**
+ * Tên tier cũ → tên hiện tại.
+ *
+ * `cheap` đổi thành `eco` ngày 15/08/2026. File `roles/*.yaml` của người dùng đã
+ * viết `cheap` thì KHÔNG được vì thế mà hỏng: schema từ chối, role bị bỏ qua, và
+ * nhân viên biến mất khỏi văn phòng chỉ vì ta đổi một chữ.
+ *
+ * Đổi tên trong schema mà không kèm bảng này là cách âm thầm nhất để làm mất
+ * việc của người dùng. Bảng chỉ có một dòng hôm nay — chỗ để nó lớn lên.
+ */
+const TIER_ALIASES: Record<string, Tier> = { cheap: 'eco' };
+
+export const TierSchema = z.preprocess(
+  (v) => (typeof v === 'string' && TIER_ALIASES[v] ? TIER_ALIASES[v] : v),
+  z.enum(TIERS),
+);
+
+// ─────────────────────────────────────────────────────────── tool
+
+/**
+ * Tool BẬT SẴN cho mọi nhân viên, không tắt được.
+ * → docs/SPEC-tools-approval.md §5
+ *
+ * Đây là TAY của văn phòng, không phải một lựa chọn. Bắt người dùng bật
+ * `WebSearch` cho một nhân viên tên "Người tìm tin" là hỏi một câu chỉ có một
+ * đáp án — đó không phải lựa chọn, đó là thủ tục. Bản trước bắt mở file yaml
+ * bằng tay để thêm chúng, và đó là chỗ người non-code rơi rụng.
+ *
+ * An toàn vì: bốn tool file chỉ chạm được `cwd` (= thư mục văn phòng) và
+ * `safeJoin` chặn đi ra ngoài; hai tool web chỉ ĐỌC.
+ *
+ * `Bash` CỐ Ý vắng mặt — nó là thứ duy nhất chạm được ra ngoài thư mục văn
+ * phòng, nên phải là một quyết định tường minh trong `roles/<id>.yaml`.
+ */
+export const BUILTIN_TOOLS = [
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+] as const;
+
+/** Tool mức `write_external` — sẽ phải qua cổng duyệt khi §8 được cài đặt. */
+export const EXTERNAL_TOOLS = new Set(['Bash']);
+
+/** Bộ tool thật sự trao cho một vai trò: mặc định + phần khai thêm. */
+export function effectiveTools(extra: readonly string[]): string[] {
+  return [...new Set<string>([...BUILTIN_TOOLS, ...extra])];
+}
 
 // ─────────────────────────────────────────────────────────── role
 
@@ -33,13 +85,37 @@ export const RoleSchema = z.object({
   /** map mức -> đường dẫn file skill, tương đối với thư mục công ty */
   skills: z.partialRecord(SkillLevelSchema, z.string()).prefault({}),
 
+  /**
+   * Tool THÊM ngoài bộ mặc định. → docs/SPEC-tools-approval.md §5
+   *
+   * Gần như luôn để trống. Bộ mặc định (`BUILTIN_TOOLS`) đã bật sẵn cho mọi
+   * nhân viên và không tắt được — chúng là TAY của văn phòng, và `cwd` +
+   * `safeJoin` đã nhốt chúng trong thư mục văn phòng.
+   *
+   * Chỗ duy nhất đáng dùng trường này là `Bash` — thứ duy nhất chạm được ra
+   * ngoài thư mục văn phòng.
+   */
   tools: z.array(z.string()).default([]),
   /** Tên MCP server (khai trong company.yaml). Worker mới được gắn — master thì không. */
   mcp: z.array(z.string()).default([]),
   /** Connector REST (docs/SPEC-connectors.md). Chưa dùng ở v0. */
   connectors: z.array(z.string()).default([]),
 
-  model_tier: z.enum(TIERS).default('standard'),
+  /**
+   * TÊN các bí mật vai trò này được cầm — chìa khoá vào tool/API bên ngoài.
+   * Giá trị nằm ở `company/.state/secrets.json` (đã gitignore), KHÔNG ở đây.
+   *
+   * Đặc quyền tối thiểu theo từng người: chỉ bí mật có tên trong danh sách này
+   * mới được đưa vào môi trường của MCP server mà agent chạy. Nhân viên viết bài
+   * không cầm chìa vào cổng thanh toán, dù hai người ở chung một văn phòng.
+   *
+   * Trợ lý KHÔNG có trường này. Nó không tự cầm tool — việc cần tool đi qua
+   * worker ẩn, và worker đó có vai trò riêng với secrets riêng.
+   * → docs/SPEC-offices.md §5
+   */
+  secrets: z.array(z.string()).default([]),
+
+  model_tier: TierSchema.default('standard'),
 
   /**
    * Dùng system prompt preset của Claude Code hay không.
@@ -68,19 +144,18 @@ export type Role = z.infer<typeof RoleSchema>;
 
 export const CompanyConfigSchema = z.object({
   name: z.string().default('Công ty của tôi'),
-  charter_file: z.string().default('knowledge/shared/_charter.md'),
 
   runtime: z
     .object({
       port: z.number().int().default(7317),
       concurrency: z.number().int().positive().default(4),
       concurrency_by_tier: z
-        .object({
-          cheap: z.number().int().positive().default(6),
-          standard: z.number().int().positive().default(4),
-          deep: z.number().int().positive().default(1),
-        })
-        .prefault({}),
+      .object({
+        eco: z.number().int().positive().default(6),
+        standard: z.number().int().positive().default(4),
+        deep: z.number().int().positive().default(1),
+      })
+      .prefault({}),
       /** auto = 1h khi đang "trong ca" (UI mở / bridge bật), 5m khi chạy lẻ. */
       cache_ttl: z.enum(['auto', '5m', '1h']).default('auto'),
       /** Chờ tối đa bao lâu ở cache priming gate trước khi thả hết. */
@@ -94,6 +169,11 @@ export const CompanyConfigSchema = z.object({
       receipt_tokens: z.number().int().positive().default(800),
       knowledge_node_tokens: z.number().int().positive().default(250),
       charter_tokens: z.number().int().positive().default(500),
+      /**
+       * Trần cho skills người dùng viết cho Assistant. Khối này nằm trong prefix
+       * của MỌI lượt trò chuyện — nhỏ hơn charter là có chủ ý.
+       */
+      assistant_skills_tokens: z.number().int().positive().default(400),
       hot_knowledge_tokens: z.number().int().positive().default(2_000),
       cold_knowledge_tokens: z.number().int().positive().default(3_000),
       task_brief_tokens: z.number().int().positive().default(1_500),
@@ -103,7 +183,7 @@ export const CompanyConfigSchema = z.object({
 
   models: z
     .object({
-      cheap: z.string().default('claude-haiku-4-5-20251001'),
+      eco: z.string().default('claude-haiku-4-5-20251001'),
       standard: z.string().default('claude-sonnet-5'),
       deep: z.string().default('claude-opus-5'),
       /**
@@ -111,25 +191,13 @@ export const CompanyConfigSchema = z.object({
        * PHẢI CỐ ĐỊNH suốt ca. Đổi model giữa chừng là miss toàn bộ ngữ cảnh
        * master mỗi lần đổi, vì prompt cache đánh theo (model, prefix).
        */
-      master: z.enum(TIERS).default('standard'),
+      master: TierSchema.default('standard'),
       /**
        * Tier cho việc LẬP KẾ HOẠCH. Chạy ở query one-shot RIÊNG, không nằm
        * trong session master — nên đặt 'deep' ở đây không phá cache của master.
        * Đây là cách duy nhất dùng Opus cho khâu cần chất lượng mà không trả giá.
        */
-      planner: z.enum(TIERS).default('standard'),
-    })
-    .prefault({}),
-
-  master: z
-    .object({
-      /**
-       * Gắn MCP vào master hay không. Mặc định FALSE.
-       * Master là session dài, resume liên tục; MCP phá prompt cache khi resume
-       * (issue #247) → mất ~36.000 token quy đổi mỗi lượt.
-       * Việc vặt cần MCP đi qua tool quick_action (role concierge, M1).
-       */
-      mcp: z.boolean().default(false),
+      planner: TierSchema.default('standard'),
     })
     .prefault({}),
 
@@ -139,9 +207,52 @@ export const CompanyConfigSchema = z.object({
     })
     .prefault({}),
 
+  /**
+   * MCP server khai ở cấp CÔNG TY (một chỗ cắm, mọi văn phòng thấy), nhưng
+   * việc ai được DÙNG cái nào thì do cạnh nối trên canvas của từng văn phòng.
+   */
   mcpServers: z.record(z.string(), z.unknown()).prefault({}),
+
+  /**
+   * Cho phép sửa lớp core prompt. MẶC ĐỊNH FALSE, và UI phải hỏi qua một dialog
+   * cảnh báo trước khi bật. → SPEC-offices.md §4.1
+   *
+   * Core là phần thuộc về MÃ NGUỒN, không thuộc về việc vận hành doanh nghiệp.
+   * Cho sửa không phải trao tự do — là trao cái bẫy: gỡ mất giao thức Receipt
+   * thì kiến trúc chi phí sụp, rồi người dùng đổ lỗi cho sản phẩm chứ không cho
+   * bản sửa của họ. Nhưng GIẤU nó đi thì người advanced đoán, và đoán sai thì họ
+   * viết skills chống lại chính hệ thống. Nên: luôn xem được, mặc định khoá.
+   */
+  allow_core_prompt_edit: z.boolean().default(false),
 });
 export type CompanyConfig = z.infer<typeof CompanyConfigSchema>;
+
+// ─────────────────────────────────────────────────────────── office config
+
+/**
+ * Cấu hình một văn phòng. CỐ Ý nhỏ: mọi thứ dính tới tiền nằm ở company.yaml,
+ * ở đây chỉ có "văn phòng này tên gì và Assistant của nó là ai".
+ */
+export const OfficeConfigSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().default('Văn phòng mới'),
+  charter_file: z.string().default('knowledge/shared/_charter.md'),
+
+  assistant: z
+    .object({
+      display_name: z.string().default('Trợ lý'),
+      avatar: z.string().default('★'),
+      /**
+       * MCP server mà Assistant "dùng được". Thực chất gắn cho worker ẩn
+       * (concierge) — master không bao giờ tự cầm MCP vì nó resume liên tục và
+       * MCP phá prompt cache khi resume (issue #247), mất ~36.000 token quy đổi
+       * MỖI LƯỢT trò chuyện. → SPEC-offices.md §4.4
+       */
+      mcp: z.array(z.string()).default([]),
+    })
+    .prefault({}),
+});
+export type OfficeConfig = z.infer<typeof OfficeConfigSchema>;
 
 // ─────────────────────────────────────────────────────────── task & receipt
 
@@ -244,6 +355,33 @@ export interface Plan {
   tasks: TaskBrief[];
 }
 
+/**
+ * PLAN LÀ ĐƠN VỊ CÔNG VIỆC, không phải dòng chat. → SPEC-offices.md §6
+ *
+ * Log của v0 là một dòng chảy phẳng: không đọc được khi hai việc chạy chồng
+ * nhau, và không trả lời được "việc hôm qua đã làm những gì". Mọi sự kiện giờ
+ * mang `plan_id`, và đây là bản ghi mà `plan_id` trỏ tới.
+ */
+export type PlanStatus = 'planning' | 'running' | 'done' | 'failed' | 'paused' | 'stopped';
+
+export interface PlanRecord {
+  plan_id: string;
+  office: string;
+  /** Câu người dùng gõ, đã được Assistant viết lại cho rõ. */
+  request: string;
+  status: PlanStatus;
+  started_at: string;
+  ended_at?: string;
+  steps: PlanStep[];
+  /** Số task đã xong / tổng — để hiện tiến độ mà không phải đọc hết receipt. */
+  tasks_done: number;
+  tasks_total: number;
+  costUSD: number;
+  turns: number;
+  /** Câu tổng kết của Assistant khi xong. */
+  report?: string;
+}
+
 // ─────────────────────────────────────────────────────────── lỗi phân loại
 
 /**
@@ -276,18 +414,72 @@ export class RunError extends Error {
 // ─────────────────────────────────────────────────────────── sự kiện (SSE)
 
 /**
- * BẤT BIẾN: mọi sự kiện hướng người dùng PHẢI có `say`.
+ * BẤT BIẾN 1: mọi sự kiện hướng người dùng PHẢI có `say`.
  * Không có `say` thì UI không hiện gì — ràng buộc này ép mọi thứ hiển thị
  * đều đã ở dạng tiếng người ngay từ nguồn.
+ *
+ * BẤT BIẾN 2 (từ 15/08): mọi sự kiện PHẢI có `office`, và mọi sự kiện thuộc về
+ * một công việc PHẢI có `plan_id`. Thiếu `office` thì UI đa văn phòng hiện nhầm
+ * chỗ; thiếu `plan_id` thì log không tách được hai việc chạy chồng nhau.
+ * Sự kiện không thuộc việc nào (trò chuyện) mang `plan_id: null`.
  */
-export type AgentEvent =
+interface EventBase {
+  office: string;
+  plan_id: string | null;
+}
+
+/**
+ * Thân sự kiện, chưa gắn `office`/`plan_id`.
+ *
+ * Tách ra vì `Omit<AgentEvent, 'office' | 'plan_id'>` trên một union sẽ RÚT GỌN
+ * về các khoá chung — tức là mất sạch trường riêng của từng loại sự kiện, và
+ * TypeScript im lặng chấp nhận rồi báo lỗi ở chỗ khác. Nơi phát sự kiện
+ * (scheduler, office) nhận đúng kiểu này; `Office.emit` gắn hai trường kia vào.
+ */
+export type AgentEventBody =
   | { type: 'plan.created'; plan_id: string; request: string; steps: PlanStep[] }
   | { type: 'plan.step'; step: number; status: PlanStep['status'] }
+  /**
+   * Đóng sổ một công việc. CỐ Ý không có `say`: câu báo cáo đã đi bằng
+   * `master.message` ngay trước đó. Mang thêm lần nữa ở đây thì nhật ký hiện
+   * hai dòng y hệt nhau cạnh nhau — đây là ngoại lệ duy nhất của bất biến
+   * "mọi sự kiện hướng người dùng phải có say", vì nó không hướng người dùng.
+   */
+  | { type: 'plan.finished'; status: PlanStatus; costUSD: number; turns: number }
   | { type: 'task.started'; task_id: string; role: string; say: string }
   | { type: 'task.progress'; task_id: string; role: string; say: string }
-  | { type: 'task.done'; task_id: string; role: string; say: string; status: ReceiptBody['status']; artifacts: string[]; usage: Usage }
+  | {
+      type: 'task.done';
+      task_id: string;
+      role: string;
+      say: string;
+      status: ReceiptBody['status'];
+      artifacts: string[];
+      usage: Usage;
+      }
   | { type: 'task.blocked'; task_id: string; role: string; say: string; reason: string }
-  | { type: 'master.message'; say: string }
-  | { type: 'company.state'; say: string; state: 'idle' | 'working' | 'paused' | 'stopped' }
+  /** Tin nhắn trong luồng hội thoại. `role` = 'assistant' hoặc 'user'. */
+  | { type: 'master.message'; say: string; role: 'assistant' | 'user' }
+  | { type: 'office.state'; say: string; state: 'idle' | 'working' | 'paused' | 'stopped' }
+  /**
+   * Trợ lý bận và nhân viên bận là HAI chuyện. Giao diện phải nói được cả hai,
+   * nếu không người dùng thấy im lặng và tưởng hệ thống chết.
+   * → docs/SPEC-tools-approval.md §11
+   */
+  | {
+      type: 'office.activity';
+      assistant: 'idle' | 'thinking';
+      workers: number;
+      /** tin nhắn chờ Trợ lý đọc */
+      queued: number;
+      /** VIỆC chờ tới lượt chạy — hàng đợi phải nhìn thấy được, không phải mảng riêng tư */
+      jobs: number;
+    }
   | { type: 'cost.tick'; totals: Usage & { tasks: number } }
-  | { type: 'knowledge.changed'; count: number; version: number };
+  | { type: 'knowledge.changed'; count: number; version: number }
+  /** Hình dạng văn phòng đổi (kéo node, nối/ngắt dây, thêm/bớt nhân viên). */
+  | { type: 'layout.changed'; say: string }
+  /** Danh sách văn phòng đổi. `office` là cái vừa thêm/bớt. */
+  | { type: 'company.offices'; say: string };
+
+export type AgentEvent = EventBase & AgentEventBody;

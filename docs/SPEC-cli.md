@@ -119,7 +119,7 @@ charter_file: knowledge/shared/_charter.md   # pinned, ≤500 token
 runtime:
   port: 7317
   concurrency: 4
-  concurrency_by_tier: { cheap: 6, standard: 4, deep: 1 }
+  concurrency_by_tier: { eco: 6, standard: 4, deep: 1 }
   cache_ttl: auto            # auto | 5m | 1h
 
 budgets:                     # override SPEC-token-economy §4
@@ -128,7 +128,7 @@ budgets:                     # override SPEC-token-economy §4
   master_compact_at: 60000
 
 models:
-  cheap:    claude-haiku-4-5-20251001
+  eco:    claude-haiku-4-5-20251001
   standard: claude-sonnet-5
   deep:     claude-opus-5
   master:   standard
