@@ -228,6 +228,111 @@ Master **không** dán nội dung file vào brief — chỉ đưa **đường d�
 
 ## 5. Đồ thị tri thức
 
+### ⚠ Node tri thức ≠ tài liệu người dùng tải lên
+
+Câu hỏi hay bị hiểu nhầm: *"nạp cả kho vào input à?"* — không, và ranh giới phải nói rõ.
+
+| | Node tri thức | Tài liệu tải lên |
+|---|---|---|
+| Kích thước | trần **250 token/node**, cảnh báo khi vượt | tuỳ ý, hàng MB |
+| Vào prompt | **HOT** vào prefix (trần `hot_knowledge_tokens: 2000`) · **COLD** chọn theo task | **không bao giờ** |
+| Cách với tới | code chọn sẵn, 0 token | agent tự `Glob`/`Grep`/`Read` khi cần |
+| Ai sinh ra | agent rút ra sau khi làm, hoặc người dùng chốt | khách bỏ vào |
+
+Nói cách khác: **kho tri thức là những câu ngắn đã chắt ra, không phải nơi chứa file.** File của khách nằm trong `artifacts/` và được với tới bằng khoá ngoại + `Grep` — xem phụ lục `SPEC-connectors.md`. Trần 250 token/node tồn tại chính là để ranh giới này không bị xoá nhoà theo thời gian.
+
+Vì sao HOT tồn tại chứ không "khi nào cần mới mò vào": thứ nằm trong prefix được cache trả **~0.1×** sau lần ghi đầu; thứ lấy theo từng task trả **nguyên giá mỗi lần**, và nếu nhét vào prefix thì prefix đổi mỗi task → cache miss 100%, tệ hơn không cache. Hai tầng là để có cả hai.
+
+### Cơ chế chọn: HOT xếp hạng, COLD khớp từ khoá
+
+Cả hai đều **tất định, chạy bằng code, 0 token**. Không có lời gọi model nào để "quyết xem nên nhớ gì".
+
+| | HOT | COLD |
+|---|---|---|
+| Đầu vào | chỉ `roleId` | `roleId` **+ nội dung task** (`goal` + `constraints`) |
+| Chọn thế nào | xếp hạng theo `hits` → `confidence` → `id` (phá hoà tất định), lấy top `hot_knowledge_size` | chấm điểm **trùng từ khoá** giữa từ trong task và từ trong node; `tags` nhân đôi; chuẩn hoá theo √(độ dài node) để node dài không tự thắng; nhân `(0.5 + confidence)`; cộng `0.1·log(1+hits)` |
+| Nằm ở đâu | **trong** prefix cache | **sau** cache breakpoint |
+| Đổi theo task? | **KHÔNG** — đổi là vỡ cache | có |
+| Trần | `hot_knowledge_tokens` 2000 | `cold_knowledge_tokens` 3000 |
+
+**Task không "biết" node nào có thông tin nó cần** — nó không chọn gì cả. `cold()` chấm điểm mọi node *nhìn thấy được* dựa trên từ ngữ của chính task, rồi xếp hạng. Không phải grep trên đĩa: là một vòng quét trong bộ nhớ trên `index.json` đã dựng sẵn.
+
+> ⚠ **Giới hạn phải nói thẳng: đây là khớp TỪ NGỮ, không phải khớp Ý NGHĨA.** Task viết *"bài đăng Facebook"*, node viết *"nội dung mạng xã hội"* → trùng nhau **bằng 0** → node không được chọn. Đây chính là chỗ embedding sẽ có ích, và là chỗ duy nhất. Chưa làm vì chưa đo được là cần.
+
+#### COLD leo lên thành HOT — có, và đó là vòng tự sửa
+
+`recordHits` cộng điểm, `hot()` xếp hạng theo `hits`. Node cứ được COLD chọn nhiều lần sẽ leo vào HOT. Không phiêu lưu, vì tín hiệu là **"đã hợp với một việc CÓ THẬT"**, không phải phỏng đoán.
+
+> ⚠ **Bug đã sửa — vòng lặp khép kín không tự sửa được.**
+> Bản trước: `recordHits([...hot.ids, ...cold.ids])`. Node HOT được +1 ở **mọi** task chỉ vì nó đang ở trong HOT; `hot()` lại xếp hạng bằng chính `hits`; và `cold()` **loại** node HOT khỏi cuộc thi (`excludeIds: hot.ids`).
+> ⇒ Vào được HOT một lần là ở đó **vĩnh viễn**. Số liệu thật: ba node HOT có `hits` 6/3/2, **mọi** node còn lại đúng bằng 0.
+> Tệ hơn: `hits` mất hết ý nghĩa — nó đo *"anh ở trong HOT bao lâu"*, không đo *"anh có ích không"*. Và vì thế điều kiện `hits === 0` của `pruneStale` cũng vô nghĩa theo.
+> **Sửa: chỉ đếm `cold.ids`.** Giờ `hits` mang đúng một nghĩa: *bộ chọn từ khoá đã thấy node này hợp với một việc có thật bao nhiêu lần*. Vòng tự sửa: COLD leo → chen vào HOT → HOT yếu nhất rơi ra → lại được dự thi COLD.
+
+### Chống phình: `supersedes` — squash lúc GHI, không phải lúc ĐỌC
+
+> **Đây là luật quyết định vì sao kho này không cần vector DB.**
+>
+> RAG đẩy vấn đề sang **lúc đọc**: kho phình mãi, rồi retrieve top-k từ một đống hỗn độn — nên nó *buộc* phải có embedding. Nén **lúc ghi** thì kho luôn nhỏ, và việc đọc được phép ngu: chọn bằng code, tất định, **0 token**. Đó đúng là thứ `hot()` đang làm và là lý do nó rẻ.
+
+`hits` và `updated` chỉ làm node ít dùng **tụt hạng**. Chúng không trả lời được câu quan trọng nhất: *"quyết định này đã bị đảo ngược chưa?"* — một node **sai** mà hay được đọc sẽ đứng đầu bảng mãi mãi.
+
+`supersedes: [id…]` là mảnh còn thiếu. Bốn tính chất, cả bốn đều có chủ ý:
+
+| | |
+|---|---|
+| Node bị đè **không bị xoá** | file còn nguyên, đọc lại được để biết vì sao ngày xưa nghĩ thế. Nó chỉ rời khỏi phần nạp vào prompt — cùng tinh thần với Lưu trữ |
+| Quan hệ thuộc về node **MỚI** | xoá node mới đi thì quan hệ tự biến mất và node cũ sống lại; không cần bước dọn dẹp nào |
+| Lọc ở **`visible()`** | một chốt duy nhất, loại khỏi cả HOT lẫn COLD cùng lúc |
+| **Một trường, không phải một đồ thị** | quan hệ duy nhất kho này thật sự dùng là "đè lên". Dựng graph engine cho một quan hệ là mua độ phức tạp trước khi có bài toán |
+
+Bốn cơ chế chống phình, xếp theo thứ tự nên dùng: **`supersedes`** (đúng lên) → **`pruneStale`** (dọn rác) → **`pinned`** (không bao giờ tụt) → **Librarian** gộp trùng định kỳ (`librarian.every_n_tasks`).
+
+#### HAI chỉ số, hai việc — cố ý không trộn
+
+| | Dùng để | Tính chất |
+|---|---|---|
+| `hits` | **xếp hạng** vào HOT | cộng dồn, chỉ tăng, thưởng cho ích lâu dài |
+| `last_used` + cửa sổ `prune_after_days` (15) | **khai tử**, kể cả khi `hits > 0` | **không trạng thái**, tính lúc đọc |
+
+Node 50 hit từ năm ngoái, 15 ngày không ai đụng → **chết**. Node 3 hit, hôm qua vừa dùng → sống, xếp hạng khiêm tốn.
+
+**Vì sao cửa sổ chứ không phải decay:** decay cần một **lịch chạy** — decay lúc nào? mỗi task? mỗi ngày? daemon tắt hai tuần thì sao? Cái lịch đó sẽ trôi. Cửa sổ chỉ cần biết *lần cuối là bao giờ* rồi so với hôm nay **lúc đọc** — daemon tắt bao lâu cũng đúng, không job nền.
+
+> Cùng một luật với `supersedes`, chỉ là lật ngược: **squash quyết lúc GHI, decay tính lúc ĐỌC.** Dữ liệu nào bé thì tính lúc đọc; dữ liệu nào lớn thì nén lúc ghi.
+
+Node cũ chưa có `last_used` rơi về `updated` → được ân hạn trọn cửa sổ. Không cần bảng alias.
+
+> ⚠ **`matched` ≠ `ids` — bẫy đã dẫm và đo được.**
+> `cold()` loại node HOT khỏi phần **render** (chúng đã nằm trong prefix rồi). Nếu ghi `last_used` theo danh sách render thì **node trong HOT không bao giờ ghi được gì**.
+> Hậu quả thật: kho 5 node với `hot_knowledge_size: 8` → HOT lấy sạch → COLD render rỗng → không node nào có `last_used` → **15 ngày sau cả kho chết**, kể cả những node đang được nạp vào mọi lượt gọi.
+> Sửa: `cold()` chấm điểm **toàn bộ** node nhìn thấy được, trả về `matched` (hợp việc) tách khỏi `ids` (thật sự render). `recordHits(cold.matched)`.
+> Đo lại: `HOT lấy 2 → COLD render 0 → matched 2 → cả hai ghi được last_used`. Và node HOT **chưa bao giờ** hợp việc nào thì vẫn chết đúng lúc — nó đang ngồi trong prefix của mọi lời gọi mà không đóng góp gì.
+
+#### `pruneStale` — và giới hạn của `hits` phải nói thẳng
+
+Mỗi lần nén trí nhớ (`/clear` hoặc tự động), xoá node thoả **TẤT CẢ**: cũ hơn `librarian.prune_after_days` (mặc định 12) **VÀ** `hits === 0` **VÀ** không `pinned` **VÀ** không phải node GHI NHỚ.
+
+> ⚠ **`hits` chỉ đáng tin khi kho ĐÃ LỚN HƠN `hot_knowledge_size`.** Dưới ngưỡng đó, `hot()` lấy *toàn bộ* node mỗi lượt nên `hits` gần như đồng đều — nó không xếp hạng được gì, và lọc theo nó là lọc theo nhiễu.
+>
+> Đó chính là lý do điều kiện là **VÀ** chứ không phải **HOẶC**: phải vừa **cũ** vừa **chưa từng được dùng**. Ở kho nhỏ, `hits === 0` gần như không bao giờ xảy ra với node còn sống, nên luật này **tự động im lặng** — và đó là hành vi đúng, không phải một khiếm khuyết.
+
+`supersedes` chỉ xử lý được ca *"quyết định bị đảo ngược"*. Phần lớn rác không bị đảo ngược — nó chỉ **hết liên quan**, và không ai đi tuyên bố điều đó. Hai cơ chế bù cho nhau, không thay nhau.
+
+**Node đã bị đè thì xoá thẳng, không cần chờ đủ tuổi.** Nó đã được thay bằng một node CHỨA nội dung gộp lại; giữ để "tham khảo" chỉ là giữ rác, và người dùng mở ngăn kéo thấy ba bản trông hệt nhau rồi phải tự đoán bản nào còn hiệu lực. An toàn vì `superseded` chỉ được đặt khi node đè **vẫn tồn tại** — nó dựng lại ở mỗi `scan()` từ chính trường `supersedes` của node còn sống.
+
+⚠ Việc dọn phải chạy **cả ở đường thoát sớm** (chưa có hội thoại nào để nén). Bản trước `return` thẳng, nên gõ `/clear` lần thứ hai thì không có gì xảy ra — đúng lúc người dùng đang cố dọn thì lệnh dọn im lặng.
+
+### Sửa / xoá ghi chú từ giao diện — tác động 1-1, ngay lập tức
+
+`PATCH /api/office/:id/knowledge { id, body? , remove? }`. Sửa xong: quét lại kho, dựng lại ngữ cảnh Trợ lý, và **mọi worker phóng SAU đó dùng bản mới**. Worker đang chạy giữ nguyên bản cũ — cùng luật với đổi model.
+
+Trước đây ngăn kéo này **chỉ đọc**, nên muốn sửa một câu sai trong đầu nhân viên thì phải mở đúng file yaml của người đó ra. Người non-code không làm được, và đó cũng là thứ khiến kho tri thức trông như một hộp đen.
+
+Node đã bị đè vẫn **hiện trong ngăn kéo, kèm nhãn "đã bị bản mới đè"**. Giấu đi thì người dùng mở thư mục thấy file không có trên giao diện; hiện mà không dán nhãn thì họ thấy ba bản giống hệt nhau và tưởng hệ thống nhân bản rác.
+
+
+
 ### Cấu trúc thư mục (nằm trong thư mục công ty của người dùng)
 
 ```

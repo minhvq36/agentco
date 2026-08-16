@@ -214,6 +214,37 @@ Kết quả: **một công tắc duy nhất trong toàn hệ thống**, kèm m�
 
 `roles/*.yaml` vẫn giữ khoá `tools:` cho người advanced ghi đè — nhưng người dùng thường không bao giờ chạm tới.
 
+### ⚠ Bảng trên KHÔNG được thi hành cho tới 16/08/2026 — `tools` ≠ `allowedTools`
+
+Ta chỉ truyền `allowedTools` và tưởng thế là giới hạn. `.d.ts` nói ngược lại:
+
+> `allowedTools` — *"List of tool names that are **auto-allowed without prompting**… To restrict which tools are available, use the **`tools`** option instead."*
+> `tools` — *"Specify the **base set** of available built-in tools."*
+> `disallowedTools` — *"removed **from the model's context** and cannot be used."*
+
+Nghĩa là **mọi nhân viên vẫn nhìn thấy toàn bộ bộ tool của Claude Code**, kể cả `Bash`. Dòng "Bash tắt, phải bật tường minh" ở bảng trên là một lời hứa chưa từng có mã nguồn đứng sau.
+
+**Phát hiện ra bằng quan sát, không phải bằng đọc code:** dựng một file chỉ-đọc rồi giao việc ghi vào đó. `nguoi-viet` — vai trò **không khai tool nào ngoài bộ mặc định** — thử `Write` hai lần rồi **với tay sang `PowerShell` bốn lần**.
+
+Ba cái giá cùng lúc:
+
+| | |
+|---|---|
+| **Token** | định nghĩa của mọi tool nằm trong prefix được cache của MỌI lời gọi worker, vĩnh viễn |
+| **Lượt** | mỗi lần thử một tool bị từ chối là một lượt trả tiền để nhận một lời từ chối |
+| **Kiến trúc** | vai trò không khai `Bash` vẫn với tay tới shell được — bất biến §5 chỉ tồn tại trên giấy |
+
+**Sửa:** truyền `tools: effectiveTools(role.tools)` cùng với `allowedTools`. Đo trên cùng một vai trò, cùng 2 lượt, cache đều ấm:
+
+| | cache_read | cache_write | $/task |
+|---|---:|---:|---:|
+| trước | ~34 100 | ~4 320 | $0.051 |
+| **sau** | **13 607** | **1 406** | **$0.0275** |
+
+**Prefix giảm ~60%, giá một task giảm gần một nửa.** Phần lớn "sàn ~13 200 token mỗi worker call" hoá ra là định nghĩa của những tool ta chưa bao giờ định trao.
+
+> **Bài học đóng gói được: một bất biến chỉ có thật khi có mã nguồn thi hành nó.** Bảng này nằm trong spec từ đầu, đọc rất thuyết phục, và sai suốt. Thứ phát hiện ra nó là một thí nghiệm 5 phút với một file chỉ-đọc — không phải một lần đọc lại code.
+
 ### Còn MCP/connector thì vẫn là NODE
 
 Vì chúng là **thực thể có danh tính**: tiến trình riêng, cấu hình riêng, chìa khoá riêng, và **được chia sẻ giữa nhiều agent**. Node + dây là mô tả đúng cho thứ như thế. Tool hệ thống thì là *thuộc tính*, và thuộc tính không đáng có node.

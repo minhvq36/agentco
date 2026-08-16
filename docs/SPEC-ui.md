@@ -40,6 +40,49 @@ Thanh dưới (kế hoạch + chat) của bản v0 biến mất — nó chiếm 
 
 Hai nút `Sắp xếp` / `Vừa khung` đổi thành **icon**, không chữ.
 
+### Sidebar KÉO RỘNG ĐƯỢC — bề rộng là nội dung, không phải trang trí
+
+336px đủ cho một dòng chat, **không** đủ cho thứ Trợ lý thật sự trả về: danh sách lệnh, kế hoạch nhiều bước, báo cáo cuối ca. Nội dung dạng đó không co lại được — nó chỉ ngắt dòng xấu đi. Nên bề rộng phải là thứ người dùng chỉnh:
+
+- **tay nắm kéo** ở mép phải, vùng bắt 7px, vạch chỉ hiện khi rê tới (một đường kẻ đậm suốt chiều cao màn hình là nhiễu thị giác)
+- **nút mở rộng** nhảy thẳng tới bề rộng rộng (720px) và về lại
+- **nhấp đúp** tay nắm → về mặc định
+- nhớ trong `localStorage`; kẹp lại khi thu nhỏ cửa sổ, nếu không canvas biến mất hẳn và không có cách lấy lại
+
+> **Ràng buộc hiệu năng, giống hệt luật của canvas:** bề rộng lúc **đang kéo** đi thẳng vào DOM qua `ref`, không qua `setState`. Một `setState` mỗi frame kéo là render lại cả cây React 60 lần/giây **trong khi SSE vẫn đang bắn sự kiện vào**. React chỉ biết bề rộng mới khi **thả chuột**.
+
+### Tin nhắn phải giữ ký tự xuống dòng
+
+Bong bóng chat dùng `white-space: pre-wrap`. Đây là **bắt buộc**, không phải thẩm mỹ: những câu trả lời nhiều dòng mà backend dựng sẵn bằng code — `/help`, danh sách bước của kế hoạch, báo cáo cuối ca — dùng ký tự xuống dòng thật, và HTML gộp mọi khoảng trắng thành một dấu cách. Không giữ thì `/help` hiện ra thành một khối chữ liền không đọc nổi.
+
+Kèm `break-words`: đường dẫn file và URL dài không có khoảng trắng để ngắt; thiếu nó thì bong bóng tự nong ra và đẩy cả panel sinh thanh cuộn ngang.
+
+Phía backend chịu ràng buộc đối ứng: `helpText()` xếp **tên lệnh một dòng, mô tả thụt vào ở dòng dưới** thay vì căn cột. Căn cột bằng khoảng trắng chỉ đúng với font đơn cách, mà bong bóng chat dùng font thường — và cùng bộ lệnh này sẽ chạy qua Telegram, nơi còn hẹp hơn.
+
+### Lỗi phải TRÔNG NHƯ lỗi
+
+Toast lỗi có **nền màu** (`danger-soft`) và viền `danger`, `role="alert"`, `aria-live="assertive"`.
+
+Bản trước dùng nền `panel` — y hệt mọi bảng khác — và chỉ đổi màu một cái icon 16px. Người dùng bấm "Thêm nhân viên", tên trùng, toast hiện lên trông như một thông báo bình thường, và họ **đứng khựng vì tưởng app đơ** chứ không đọc ra rằng vừa có lỗi.
+
+Tiêu chí "Xử lý lỗi tốt" đòi mọi lỗi nói được *chuyện gì xảy ra + làm gì tiếp*. Bước đầu tiên của việc đó là **nhìn vào phải biết ngay đây là lỗi** — nếu không thì phần chữ viết hay đến mấy cũng không ai đọc.
+
+### Xoá luôn có hai mức, và mức an toàn đứng trước
+
+Văn phòng và nhân viên đều: **Lưu trữ** (cất đi, khôi phục được) · **Xoá hẳn** (mất luôn). → `SPEC-offices.md` §3.1, §5.1
+
+- Hai **nút riêng**, không phải một nút rồi hỏi lại. Hai ý định khác nhau thật thì cho chúng hai lối đi khác nhau.
+- Nút "Xoá hẳn" mang `variant="danger"`; dialog xác nhận **nói ra thứ sẽ mất**, và **chỉ đường sang mức Lưu trữ** cho người bấm nhầm.
+- Danh sách "Trong lưu trữ" dùng viền **nét đứt** — nhìn là biết chưa phải trạng thái bình thường.
+
+### Chi phí: gộp để HIỂN THỊ, không gộp DỮ LIỆU
+
+Những dòng chi phí không còn văn phòng (đã xoá hẳn, hoặc bản ghi có trước khi tách văn phòng) gom vào **một khối đóng/mở**: *"N mục không còn · $X · bấm để xem"*.
+
+Không gom thì sau vài tháng bảng đầy tên đã chết. Nhưng **cộng chúng thành một dòng** thì cái mã văn phòng mất — mà với văn phòng đã xoá hẳn, cái mã là manh mối **duy nhất** còn lại để biết khoản tiền đó là của việc gì. Thu gọn giữ được cả hai, và không tốn một dòng code kế toán nào — chỉ là một `<details>`.
+
+Văn phòng **lưu trữ** thì vẫn nằm ở danh sách chính kèm nhãn *(lưu trữ)*: nó còn cứu được, và nó còn tên.
+
 ### Log đi theo CÔNG VIỆC, không theo thời gian
 
 → `SPEC-offices.md` §6. Mỗi agent (kể cả Trợ lý) có một màu ổn định băm từ id. Log lọc theo `plan_id`; hội thoại là một luồng riêng (`plan_id: null`).

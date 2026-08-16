@@ -146,6 +146,30 @@ export function isSafeId(id: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,39}$/.test(id);
 }
 
+/**
+ * Tên hiển thị người dùng gõ: bỏ khoảng trắng thừa ở hai đầu VÀ ở giữa.
+ *
+ * Gộp khoảng trắng giữa là phần hay bị quên. "Nội  dung" và "Nội dung" nhìn
+ * giống hệt nhau trong ô chọn văn phòng nhưng là hai chuỗi khác nhau — người
+ * dùng sẽ thấy hai dòng y hệt và không biết mình đang mở cái nào.
+ */
+export function normalizeName(input: string): string {
+  return input.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Khoá so trùng TÊN. Cố ý dùng lại `slugId`: hai văn phòng không được có tên
+ * trùng nhau theo đúng cái nghĩa mà hệ thống đã dùng để đặt tên thư mục.
+ *
+ * Nhờ vậy chỉ có MỘT định nghĩa "trùng": "Nội dung", "nội  dung", "Noi Dung"
+ * đều ra `noi-dung`. Nếu so bằng chuỗi thô thì `createOffice` (so theo slug) và
+ * `rename` (so theo chuỗi) sẽ bất đồng, và đổi tên trở thành cửa sau để tạo ra
+ * đúng cái trùng lặp mà lúc tạo mới đã bị chặn.
+ */
+export function nameKey(input: string): string {
+  return slugId(normalizeName(input));
+}
+
 export function slugId(input: string): string {
   return input
     .normalize('NFD')

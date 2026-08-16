@@ -1,4 +1,12 @@
-import { BookOpen, Building2, MessageSquare, ScrollText, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  BookOpen,
+  Building2,
+  ChevronsLeftRight,
+  MessageSquare,
+  ScrollText,
+  X,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -16,18 +24,100 @@ const TABS: Array<{ id: PanelId; icon: LucideIcon; label: string }> = [
   { id: 'knowledge', icon: BookOpen, label: 'Kho tri thức' },
 ];
 
+const MIN_W = 300;
+const WIDE_W = 720;
+const STORAGE_KEY = 'agentco.panelWidth';
+
+/** Trần theo cửa sổ: canvas phải còn chỗ để nhìn thấy sơ đồ, không chỉ một khe. */
+function maxWidth(): number {
+  return Math.max(MIN_W, Math.min(WIDE_W + 240, window.innerWidth - 420));
+}
+
+function clampWidth(w: number): number {
+  return Math.round(Math.max(MIN_W, Math.min(w, maxWidth())));
+}
+
 /**
  * Sidebar trái. → docs/SPEC-ui.md §0
  *
  * Bản v0 có một thanh dock dưới chiếm chỗ VĨNH VIỄN cho chat và kế hoạch —
  * thứ người dùng chỉ cần từng lúc. Ở đây: rail icon luôn thấy, panel mở ra khi
  * bấm và đóng lại được, trả toàn bộ màn hình cho canvas.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO PANEL KÉO ĐƯỢC                                                    │
+ * │                                                                          │
+ * │ 336px là đủ cho một dòng chat, không đủ cho thứ Trợ lý thật sự trả về:   │
+ * │ danh sách lệnh, kế hoạch nhiều bước, báo cáo. Nội dung không co lại được │
+ * │ — nó chỉ ngắt dòng xấu đi. Nên bề rộng phải là thứ người dùng chỉnh.     │
+ * │                                                                          │
+ * │ Bề rộng lúc ĐANG KÉO đi thẳng vào DOM qua ref, y hệt toạ độ node trên    │
+ * │ canvas. Một `setState` mỗi frame kéo là render lại cả cây React 60       │
+ * │ lần/giây trong khi SSE vẫn đang bắn sự kiện vào — đúng thứ tiêu chí      │
+ * │ "Hiệu năng" cấm. React chỉ biết bề rộng mới khi THẢ CHUỘT.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function Sidebar() {
   const panel = useApp((s) => s.panel);
   const unread = useApp((s) => s.messages.length - s.seenMessages);
   const working = useApp((s) => s.officeState === 'working');
   const active = TABS.find((t) => t.id === panel);
+
+  const paneRef = useRef<HTMLElement | null>(null);
+  const [width, setWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(STORAGE_KEY));
+    return Number.isFinite(saved) && saved > 0 ? clampWidth(saved) : 336;
+  });
+
+  // Thu nhỏ cửa sổ có thể làm panel rộng hơn cả màn hình. Kẹp lại, nếu không
+  // canvas biến mất hoàn toàn và không có cách nào lấy lại ngoài xoá localStorage.
+  useEffect(() => {
+    const onResize = () => setWidth((w) => clampWidth(w));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const startResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const pane = paneRef.current;
+    if (!pane) return;
+
+    const startX = e.clientX;
+    const startW = pane.getBoundingClientRect().width;
+    let next = startW;
+
+    // `setPointerCapture` trên chính tay nắm: chuột đi nhanh ra ngoài phần tử
+    // vẫn không tuột, và không cần bắt sự kiện ở tận `window`.
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev: PointerEvent) => {
+      next = clampWidth(startW + (ev.clientX - startX));
+      pane.style.width = `${next}px`;
+    };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setWidth(next);
+      localStorage.setItem(STORAGE_KEY, String(next));
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  }, []);
+
+  function applyWidth(w: number): void {
+    const next = clampWidth(w);
+    setWidth(next);
+    localStorage.setItem(STORAGE_KEY, String(next));
+  }
+
+  const wide = width >= Math.min(WIDE_W, maxWidth()) - 1;
 
   return (
     <div className="flex flex-none border-r border-line bg-panel">
@@ -61,12 +151,27 @@ export function Sidebar() {
       </nav>
 
       {active && (
-        <section className="flex w-[336px] flex-none flex-col" aria-label={active.label}>
+        <section
+          ref={paneRef}
+          className="relative flex flex-none flex-col"
+          style={{ width }}
+          aria-label={active.label}
+        >
           <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.09em] text-muted">
               {active.label}
             </span>
             <div className="flex-1" />
+            <Tip label={wide ? 'Thu về bề rộng thường' : 'Mở rộng bảng'}>
+              <Button
+                size="iconSm"
+                variant="ghost"
+                aria-label={wide ? 'Thu hẹp bảng' : 'Mở rộng bảng'}
+                onClick={() => applyWidth(wide ? 336 : WIDE_W)}
+              >
+                <ChevronsLeftRight className="h-4 w-4" />
+              </Button>
+            </Tip>
             <Button
               size="iconSm"
               variant="ghost"
@@ -84,6 +189,20 @@ export function Sidebar() {
             {panel === 'overview' && <OverviewPanel />}
             {panel === 'knowledge' && <KnowledgePanel />}
           </div>
+
+          {/* Tay nắm kéo. Vùng bắt rộng 7px nhưng vạch chỉ hiện khi rê tới —
+              một đường kẻ đậm nằm suốt chiều cao màn hình là nhiễu thị giác. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Kéo để đổi bề rộng bảng"
+            title="Kéo để đổi bề rộng · nhấp đúp để về mặc định"
+            onPointerDown={startResize}
+            onDoubleClick={() => applyWidth(336)}
+            className="absolute -right-[3px] top-0 z-20 h-full w-[7px] cursor-col-resize touch-none
+                       after:absolute after:inset-y-0 after:left-[3px] after:w-px after:bg-transparent
+                       hover:after:bg-accent"
+          />
         </section>
       )}
     </div>

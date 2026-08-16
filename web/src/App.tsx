@@ -16,7 +16,12 @@ import { Canvas, type CanvasHandle } from '@/canvas/Canvas';
 import { Header } from '@/components/Header';
 import { Inspector } from '@/components/Inspector';
 import { Sidebar } from '@/components/Sidebar';
-import { NewAgentDialog, NewOfficeDialog, PromptDialog } from '@/components/dialogs';
+import {
+  NewAgentDialog,
+  NewOfficeDialog,
+  PromptDialog,
+  RenameOfficeDialog,
+} from '@/components/dialogs';
 import { actions, connectEvents, getState, markLocalSave, useApp } from '@/lib/store';
 import type { CanvasEdge, CanvasNode } from '@/lib/types';
 
@@ -31,6 +36,7 @@ export default function App() {
   const selected = useApp((s) => s.selected);
 
   const [newOffice, setNewOffice] = useState(false);
+  const [renameOffice, setRenameOffice] = useState(false);
   const [newAgent, setNewAgent] = useState(false);
   const [promptFor, setPromptFor] = useState<string | null>(null);
   const canvasRef = useRef<CanvasHandle | null>(null);
@@ -110,7 +116,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        <Header onNewOffice={() => setNewOffice(true)} />
+        <Header onNewOffice={() => setNewOffice(true)} onRenameOffice={() => setRenameOffice(true)} />
 
         {noOffices ? (
           <main className="flex flex-1 items-center justify-center">
@@ -169,6 +175,7 @@ export default function App() {
       </div>
 
       <NewOfficeDialog open={newOffice} onOpenChange={setNewOffice} />
+      <RenameOfficeDialog open={renameOffice} onOpenChange={setRenameOffice} />
       <NewAgentDialog open={newAgent} onOpenChange={setNewAgent} />
       <PromptDialog who={promptFor} onClose={() => setPromptFor(null)} />
     </TooltipProvider>
@@ -301,18 +308,34 @@ function Hint() {
   );
 }
 
-/** Lỗi thoáng qua. Không chặn gì, tự tắt — nhưng không bao giờ im lặng nuốt lỗi. */
+/**
+ * Lỗi thoáng qua. Không chặn gì, tự tắt — nhưng không bao giờ im lặng nuốt lỗi.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ LỖI PHẢI TRÔNG NHƯ LỖI.                                                  │
+ * │                                                                          │
+ * │ Bản trước dùng nền `bg-panel` — y hệt mọi bảng khác — và chỉ đổi màu một │
+ * │ cái icon 16px. Người dùng bấm "Thêm nhân viên", tên trùng, toast hiện    │
+ * │ lên trông như một thông báo bình thường, và họ đứng khựng vì tưởng app   │
+ * │ đơ chứ không đọc ra rằng vừa có lỗi.                                     │
+ * │                                                                          │
+ * │ Tiêu chí "Xử lý lỗi tốt" đòi mọi lỗi nói được CHUYỆN GÌ XẢY RA — mà      │
+ * │ bước đầu tiên của việc đó là nhìn vào phải biết ngay đây là lỗi.         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 function Toast() {
   const toast = useApp((s) => s.toast);
   if (!toast) return null;
+  const bad = toast.kind === 'error';
   return (
     <div
-      role="status"
-      className="fixed bottom-4 right-4 z-50 flex max-w-md items-start gap-2 rounded-xl border border-line bg-panel px-3.5 py-2.5 shadow-xl"
+      role={bad ? 'alert' : 'status'}
+      aria-live={bad ? 'assertive' : 'polite'}
+      className={`fixed bottom-4 right-4 z-50 flex max-w-md items-start gap-2.5 rounded-xl border px-3.5 py-2.5 shadow-xl ${
+        bad ? 'border-danger bg-danger-soft' : 'border-line bg-panel'
+      }`}
     >
-      <AlertTriangle
-        className={`mt-0.5 h-4 w-4 flex-none ${toast.kind === 'error' ? 'text-danger' : 'text-muted'}`}
-      />
+      <AlertTriangle className={`mt-0.5 h-4 w-4 flex-none ${bad ? 'text-danger' : 'text-muted'}`} />
       <span className="text-[13px] leading-snug text-ink">{toast.text}</span>
       <button
         className="mt-0.5 flex-none text-muted hover:text-ink"

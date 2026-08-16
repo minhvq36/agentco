@@ -163,6 +163,17 @@ Model rẻ **dò dẫm nhiều lượt hơn**, mà mỗi lượt đọc lại to
 
 Khi chạm trần cứng: task chuyển `blocked` với `blocked_on: "budget"`, hiện lên UI, hỏi người dùng có nới không. **Không bao giờ tự nới.**
 
+### Đổi model giữa chừng — cho phép, và đắt ít hơn dự đoán
+
+Chi tiết + bảng số: `SPEC-offices.md` §4.5. Ba điều cần nhớ ở đây:
+
+1. **Nhân viên là hàm không trạng thái** → đổi `model_tier` không mất gì. Chỉ ghi cache một lần cho cặp (model mới, prefix).
+2. **Trợ lý chạy `resume`** → trí nhớ hội thoại **không mất** (bản ghi nằm trên đĩa, độc lập với model). Đo được: lượt đổi tốn thêm ~1 000–1 400 token ghi cache, tức **+60–80% của một lượt, một lần**.
+3. **Việc đang chạy giữ nguyên model cũ.** Ép bởi kiến trúc, không bởi kỷ luật: `applyCompanyConfig` dựng `LoadedOffice` mới, Scheduler đang chạy giữ bản cũ.
+
+> ⚠ **Bẫy đã dẫm: đổi tên KHOÁ trong schema cũng phải có alias, không chỉ đổi GIÁ TRỊ.**
+> `TIER_ALIASES` lo `model_tier: cheap` trong `roles/*.yaml`. Nhưng `company.yaml` viết `models.cheap: <model>` thì zod bỏ qua khoá lạ, `eco` rơi về mặc định, và người dùng chạy suốt một model **khác** cái họ đã ghi ra — không lỗi, không cảnh báo, chỉ có hoá đơn không khớp. Im lặng hơn hẳn nửa kia của cùng một bài học.
+
 ---
 
 ## 5. Đo lường — bắt buộc có từ ngày đầu
@@ -188,6 +199,25 @@ Token / task (p50 / p95)     19.8K / 44.1K
 Tốn nhất                     T-0031 researcher 44.1K
 Cache write bất thường       role=coder 3 lần   ← có ai bump version giữa ca?
 ```
+
+### Sổ phải ghi CẢ lượt của Trợ lý, không chỉ receipt của nhân viên
+
+Bản trước chỉ ghi một dòng cho mỗi receipt worker. Hệ quả: `route()` — chạy **mỗi lượt người dùng nhắn** — có `usage` bị vứt thẳng đi, còn `plan()`/`report()` chỉ được cộng vào `cost.tick` trong bộ nhớ. Với văn phòng dùng chủ yếu để trò chuyện, đó là **phần lớn hoá đơn**, và nó vô hình với `agentco cost`.
+
+Giờ mỗi lượt Trợ lý ghi một dòng với `role: "assistant"` và `task_id` = tên **khâu**: `route` · `plan` · `report`. Tách khâu chứ không gộp, vì ba khâu có hình dạng chi phí khác hẳn nhau — `route` chạy mỗi lượt nên phải rẻ; `plan` chạy một lần một ca ở query riêng. Gộp lại thì không thấy khâu nào đang phình.
+
+Đây cũng là điều kiện để đánh giá được việc đổi model: **không đo được thì không cân nhắc được cái giá.** Và nó là một nửa của việc `agentco cost` phải trả lời được *"còn bao nhiêu"*, không chỉ *"đã tiêu"* (`USE-CASES.md` §10).
+
+### Số liệu token phải HIỆN ĐƯỢC trên giao diện — và model không bao giờ thấy nó
+
+`agentco cost` là công cụ của người biết gõ lệnh. Người dùng chính của ta thì không, nên bảng này phải có mặt trong **Nhật ký công việc**: một khối đóng/mở với `đọc lại · ghi cache · lượt · $` cho từng task.
+
+Số liệu **đã nằm sẵn** trong mỗi sự kiện `task.done` và trong file log — vẽ nó ra tốn **0 token**. Không có nó thì bài 1 của `TEST-WALKTHROUGH.md` (*"nhìn `cache_write`: task đầu lớn, hai task sau nhỏ"*) là một bài **không làm được**, vì chữ `cache_write` không xuất hiện ở đâu trên màn hình.
+
+> **Kế toán là việc của người đứng ngoài đếm, không phải của người đang làm.** Nhân viên và Trợ lý KHÔNG BAO GIỜ được biết những con số này. Ba lý do, mỗi lý do tự nó đã đủ:
+> 1. Nhân viên **không làm gì được** với con số đó — nó không tự đổi cách làm việc vì biết mình vừa ghi 13K cache. Đã đo: prompt "kỷ luật số lượt" gần như không ăn thua (§4).
+> 2. Nói cho model biết nghĩa là **nhét con số vào prompt**, tức là trả tiền ở MỌI lượt để kể một chuyện chỉ có nghĩa với người quan sát.
+> 3. `CORE_PROMPT` đã cấm thuật ngữ kỹ thuật trong `say`. Đưa token vào đó là tự mâu thuẫn.
 
 **Dòng "cache write bất thường" là hệ thống báo động chính.** Cache write lặp lại nhiều lần cho cùng một role trong một ca = có gì đó đang phá prefix. Đó chính xác là lỗi đã xảy ra với `claude -p`, và là lỗi bạn sẽ không tự nhìn ra nếu không có dòng này.
 

@@ -211,8 +211,20 @@ export const actions = {
       plan: detail.plan,
       loading: false,
     });
-    // Phát lại lịch sử để tab mở muộn vẫn thấy chuyện vừa xảy ra.
-    for (const e of detail.history) applyEvent(e, false);
+    /**
+     * Phát lại theo ĐÚNG THỨ TỰ NÀY, và hai nguồn không được trộn:
+     *
+     *  1. `chat`    — hội thoại đọc từ đĩa. Đây là thứ sống sót qua tắt daemon,
+     *                 và là thứ khiến màn hình khớp với những gì Trợ lý còn nhớ.
+     *  2. `history` — vòng đệm trong bộ nhớ của daemon, cho trạng thái SỐNG
+     *                 (kế hoạch đang chạy, ai đang làm gì). Bỏ `master.message`
+     *                 ở đây vì bước 1 đã có, giữ lại sẽ hiện tin nhắn hai lần.
+     */
+    for (const e of detail.chat ?? []) applyEvent(e, false);
+    for (const e of detail.history) {
+      if (e.type === 'master.message') continue;
+      applyEvent(e, false);
+    }
   },
 
   async refreshCompany(): Promise<void> {
@@ -236,11 +248,82 @@ export const actions = {
     return true;
   },
 
-  async removeOffice(id: string, deleteFiles: boolean): Promise<boolean> {
-    const ok = await guard(() => api.removeOffice(id, deleteFiles));
+  /**
+   * Đổi tên văn phòng. Mã (thư mục) giữ nguyên — không có gì phải mở lại.
+   *
+   * Server trả về cả danh sách văn phòng đã cập nhật, nên không cần thêm một
+   * vòng `GET /api/company` nữa; ô chọn ở đầu màn hình đổi tên ngay lập tức.
+   */
+  async renameOffice(name: string): Promise<boolean> {
+    const id = state.officeId;
+    if (!id) return false;
+    const res = await guard(() => api.patchOffice(id, { name }));
+    if (!res) return false;
+    set({
+      canvas: res.canvas,
+      company: state.company ? { ...state.company, offices: res.offices } : state.company,
+    });
+    return true;
+  },
+
+  /**
+   * Đổi mức model của Trợ lý văn phòng này. `null` = theo mặc định của công ty.
+   *
+   * Trí nhớ hội thoại KHÔNG mất: bản ghi session nằm trên đĩa và độc lập với
+   * model. Cái mất là prompt cache — lượt kế tiếp ghi lại một lần.
+   */
+  async setAssistantTier(tier: string | null): Promise<boolean> {
+    const id = state.officeId;
+    if (!id) return false;
+    const res = await guard(() => api.patchOffice(id, { assistant_tier: tier }));
+    if (!res) return false;
+    set({ canvas: res.canvas });
+    return true;
+  },
+
+  /** Mức nào chạy model nào — cấp CÔNG TY, đụng tới mọi văn phòng. */
+  async updateModels(models: Record<string, string>): Promise<boolean> {
+    const res = await guard(() => api.updateModels(models as never));
+    if (!res) return false;
+    set({ company: state.company ? { ...state.company, models: res.models } : state.company });
+    await actions.refreshCanvas();
+    return true;
+  },
+
+  /** Cất đi / đưa trở lại một VĂN PHÒNG. Chỉ gắn cờ, file không đi đâu cả. */
+  async archiveOffice(id: string, archived: boolean): Promise<boolean> {
+    const res = await guard(() => api.patchOffice(id, { archived }));
+    if (!res) return false;
+    // Cất chính văn phòng đang mở thì phải chuyển sang cái khác — ở lại nghĩa là
+    // mọi thao tác tiếp theo đều báo lỗi "chỉ đọc", và người dùng không hiểu vì sao.
+    if (archived && state.officeId === id) {
+      set({ company: state.company ? { ...state.company, offices: res.offices } : state.company });
+      const next = res.offices.find((o) => !o.archived && !o.error);
+      if (next) await actions.openOffice(next.id);
+      else set({ officeId: null, canvas: null });
+      return true;
+    }
+    set({ company: state.company ? { ...state.company, offices: res.offices } : state.company });
+    return true;
+  },
+
+  /** XOÁ HẲN. Không lấy lại được — chỗ gọi phải hỏi xác nhận trước. */
+  async removeOffice(id: string): Promise<boolean> {
+    const ok = await guard(() => api.removeOffice(id));
     if (!ok) return false;
-    set({ officeId: null });
+    if (state.officeId === id) set({ officeId: null });
     await actions.boot();
+    return true;
+  },
+
+  /** Cất đi / đưa trở lại một NHÂN VIÊN. Khôi phục về đúng văn phòng cũ. */
+  async archiveAgent(role: string, archived: boolean): Promise<boolean> {
+    const id = state.officeId;
+    if (!id) return false;
+    const res = await guard(() => api.archiveAgent(id, role, archived));
+    if (!res) return false;
+    set({ canvas: res.canvas, ...(archived ? { selected: null } : {}) });
+    void actions.refreshCompany();
     return true;
   },
 
@@ -317,10 +400,11 @@ export const actions = {
     return true;
   },
 
-  async removeAgent(role: string, keepFile: boolean): Promise<boolean> {
+  /** XOÁ HẲN file roles/<id>.yaml. Sổ tay kinh nghiệm vẫn được giữ lại. */
+  async removeAgent(role: string): Promise<boolean> {
     const id = state.officeId;
     if (!id) return false;
-    const res = await guard(() => api.removeAgent(id, role, keepFile));
+    const res = await guard(() => api.removeAgent(id, role));
     if (!res) return false;
     set({ canvas: res.canvas, selected: null });
     void actions.refreshCompany();
@@ -464,12 +548,31 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
     case 'office.activity': {
       const bits: string[] = [];
       if (e.assistant === 'thinking') bits.push('Trợ lý đang nghĩ…');
+      if (e.assistant === 'planning') bits.push('Trợ lý đang lập kế hoạch…');
       if (e.workers > 0) bits.push(`${e.workers} nhân viên đang làm việc`);
       if (e.queued > 0) bits.push(`${e.queued} tin chờ`);
       if (e.jobs > 0) bits.push(`${e.jobs} việc xếp hàng`);
+      // MẠCH KHÔNG ĐƯỢC ĐỨT. Còn `plan_id` nghĩa là còn một công việc đang chạy,
+      // nên phải còn một câu gì đó trên màn hình — kể cả ở những nhịp ngắn không
+      // ai "bận" theo nghĩa hẹp (vừa lập kế hoạch xong, chưa phóng task đầu).
+      // Khoảng im lặng chính là chỗ người dùng tưởng hệ thống chết và bấm lại.
+      if (bits.length === 0 && e.plan_id) bits.push('Đang chạy…');
       set({ activity: bits.length ? bits.join(' · ') : null });
       break;
     }
+
+    /**
+     * Dọn ô chat. Sự kiện này là một MỆNH LỆNH, không phải một câu để đọc —
+     * nên nó không đi vào `messages`.
+     *
+     * Câu báo kết quả đến NGAY SAU nó bằng `master.message`, và vì thế trở
+     * thành dòng đầu tiên của cuộc trò chuyện mới. Người dùng thấy: "Đang
+     * dọn…" → màn hình trắng → "Đã dọn xong". Cảm giác dọn rác là THẬT, vì
+     * bản ghi hội thoại phía sau cũng vừa bị bỏ thật.
+     */
+    case 'office.cleared':
+      set({ messages: [], seenMessages: 0, activity: null });
+      break;
 
     case 'cost.tick':
       set({ cost: e.totals });

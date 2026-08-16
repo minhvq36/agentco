@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import YAML from 'yaml';
 
 import { loadCompanyConfig, loadOffice } from './config.js';
 import {
@@ -20,6 +21,8 @@ import {
   ensureOfficeDirs,
   isSafeId,
   listOfficeIds,
+  nameKey,
+  normalizeName,
   officePaths,
   resolveCompanyDir,
   slugId,
@@ -28,7 +31,7 @@ import {
 import { Office } from './office.js';
 import { appendUsage, formatReport, readUsage, summarize, type CostReport, type UsageRecord } from './usage.js';
 import { migrateIfNeeded } from './migrate.js';
-import { RunError, type AgentEvent, type CompanyConfig } from './types.js';
+import { RunError, TIERS, type AgentEvent, type CompanyConfig } from './types.js';
 
 export interface OfficeSummary {
   id: string;
@@ -38,6 +41,8 @@ export interface OfficeSummary {
   agents: number;
   onDuty: number;
   knowledge: number;
+  /** Đã cất vào lưu trữ — đóng băng, chỉ đọc, khôi phục được. */
+  archived: boolean;
   /** Có việc đang chạy không, và là việc nào. */
   plan_id: string | null;
   /** Văn phòng nạp lỗi — vẫn liệt kê, kèm lý do. Không được biến mất âm thầm. */
@@ -101,9 +106,10 @@ export class Company {
         name: o.name,
         avatar: o.loaded.config.assistant.avatar,
         state: o.currentState,
-        agents: o.loaded.roles.size,
+        agents: o.loaded.roles.size - o.loaded.archivedRoles.size,
         onDuty: o.assistant.assignableRoles().size,
         knowledge: o.knowledge.size,
+        archived: o.archived,
         plan_id: o.plan?.plan_id ?? null,
       });
     }
@@ -116,6 +122,7 @@ export class Company {
         agents: 0,
         onDuty: 0,
         knowledge: 0,
+        archived: false,
         plan_id: null,
         error,
       });
@@ -147,14 +154,18 @@ export class Company {
    * và không dám xoá.
    */
   createOffice(input: { name?: string; id?: string }): Office {
-    const name = (input.name ?? '').trim() || 'Văn phòng mới';
+    const name = normalizeName(input.name ?? '') || 'Văn phòng mới';
     const id = slugId(input.id?.trim() || name);
     if (!isSafeId(id)) {
       throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
     }
+    if (name.length > 60) {
+      throw new RunError('Tên văn phòng dài quá 60 ký tự.', 'other');
+    }
     if (this.offices.has(id) || this.broken.has(id)) {
       throw new RunError(`Đã có văn phòng "${id}".`, 'other');
     }
+    this.assertNameFree(name, id);
 
     const dir = path.join(this.paths.offices, id);
     const pp = officePaths(dir);
@@ -172,7 +183,135 @@ export class Company {
     return office;
   }
 
-  removeOffice(officeId: string, deleteFiles = false): void {
+  /**
+   * Đổi tên hiển thị một văn phòng. Mã (thư mục) giữ nguyên — xem `Office.rename`.
+   *
+   * Kiểm trùng ở ĐÂY chứ không ở `Office`: chỉ công ty mới nhìn thấy các văn
+   * phòng khác. Office tự chứa và không biết hàng xóm là ai — đó là điều kiện để
+   * zip một thư mục `offices/<id>/` ra thành template chạy được ở máy khác.
+   */
+  renameOffice(officeId: string, name: string): string {
+    const office = this.get(officeId);
+    const next = normalizeName(name);
+    if (!nameKey(next)) {
+      throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
+    }
+    this.assertNameFree(next, officeId);
+    const applied = office.rename(next);
+    this.emit({
+      type: 'company.offices',
+      say: `Đã đổi tên văn phòng thành "${applied}".`,
+      office: officeId,
+      plan_id: null,
+    });
+    return applied;
+  }
+
+  /** Không cho hai văn phòng mang cùng một cái tên. `exceptId` = chính nó khi đổi tên. */
+  private assertNameFree(name: string, exceptId: string): void {
+    const key = nameKey(name);
+    for (const o of this.offices.values()) {
+      if (o.id === exceptId) continue;
+      if (nameKey(o.name) === key) {
+        throw new RunError(
+          `Đã có văn phòng tên "${o.name}". Hai văn phòng trùng tên thì ô chọn ở đầu ` +
+            `màn hình hiện hai dòng y hệt nhau — đặt tên khác đi.`,
+          'other',
+        );
+      }
+    }
+  }
+
+  /**
+   * Đổi cấu hình model của công ty (mức nào chạy model nào, Trợ lý/lập kế hoạch
+   * chạy mức nào). → docs/SPEC-offices.md §4.5
+   *
+   * Ghi bằng `parseDocument` để giữ nguyên chú thích trong company.yaml, rồi
+   * ĐỌC LẠI QUA SCHEMA thay vì tự vá object trong bộ nhớ — file trên đĩa là
+   * nguồn sự thật, và đọc lại là cách duy nhất chắc chắn hai bên không lệch.
+   *
+   * KHÔNG dựng lại các Office: làm thế là vứt mất kế hoạch đang chạy, hòm thư và
+   * scheduler của chúng. Chỉ đưa cấu hình mới vào, và mỗi Office tự dựng một
+   * `LoadedOffice` MỚI (ca đang chạy giữ nguyên bản cũ). → `Office.applyCompanyConfig`
+   */
+  updateModels(patch: Record<string, string>): CompanyConfig['models'] {
+    const allowed = new Set(['eco', 'standard', 'deep', 'master', 'planner']);
+    const entries = Object.entries(patch).filter(([k]) => allowed.has(k));
+    if (entries.length === 0) throw new RunError('Không có trường model nào hợp lệ.', 'other');
+
+    for (const [key, value] of entries) {
+      if (typeof value !== 'string' || !value.trim()) {
+        throw new RunError(`Giá trị cho "${key}" không được để trống.`, 'other');
+      }
+      if ((key === 'master' || key === 'planner') && !TIERS.includes(value as never)) {
+        throw new RunError(`"${key}" phải là một MỨC: ${TIERS.join(', ')}.`, 'other');
+      }
+    }
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.has('models')) doc.set('models', {});
+    for (const [key, value] of entries) doc.setIn(['models', key], value.trim());
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+
+    this.emit({
+      type: 'company.offices',
+      say: 'Đã đổi model. Việc đang chạy giữ nguyên model cũ cho tới khi xong.',
+      office: '',
+      plan_id: null,
+    });
+    return this.config.models;
+  }
+
+  /**
+   * LƯU TRỮ / KHÔI PHỤC một văn phòng (soft delete). → docs/SPEC-offices.md §3.1
+   *
+   * Chỉ gắn một cờ trong `office.yaml`. Không dời file, không đổi mã, không đụng
+   * tới `artifacts/` hay session của Trợ lý — nên khôi phục là trở lại nguyên
+   * vẹn, kể cả cuộc hội thoại đang dở.
+   *
+   * Văn phòng đang chạy phải Dừng trước: cất một thứ đang tiêu tiền vào kho là
+   * cách chắc chắn nhất để nó tiêu tiếp mà không ai nhìn.
+   */
+  archiveOffice(officeId: string, archived: boolean): void {
+    const office = this.get(officeId);
+    if (archived && office.currentState === 'working') {
+      throw new RunError('Văn phòng đang chạy việc. Bấm Dừng trước đã.', 'other');
+    }
+    // Khôi phục xong mà trùng tên với một văn phòng đang sống thì ô chọn hiện
+    // hai dòng y hệt nhau. Kiểm ở đây, trước khi ghi.
+    if (!archived) this.assertNameFree(office.name, officeId);
+
+    const file = office.loaded.paths.configFile;
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (archived) doc.set('archived', true);
+    else doc.delete('archived');
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+    office.applyCompanyConfig(this.config);
+
+    this.emit({
+      type: 'company.offices',
+      say: archived
+        ? `Đã cất văn phòng "${office.name}" vào lưu trữ. Khôi phục được bất cứ lúc nào.`
+        : `Đã khôi phục văn phòng "${office.name}".`,
+      office: officeId,
+      plan_id: null,
+    });
+  }
+
+  /**
+   * XOÁ HẲN: `rm -rf` cả thư mục. Nhân viên, kỹ năng, kho tri thức, kết quả — mất sạch.
+   *
+   * Không lấy lại được, và sổ chi phí sau đó chỉ còn cái MÃ để lần ra những dòng
+   * tiền của nó. Đó chính là lý do lưu trữ tồn tại và là mức nên dùng.
+   */
+  removeOffice(officeId: string): void {
     const office = this.offices.get(officeId);
     if (!office && !this.broken.has(officeId)) {
       throw new RunError(`Không có văn phòng "${officeId}".`, 'other');
@@ -184,12 +323,10 @@ export class Company {
 
     this.offices.delete(officeId);
     this.broken.delete(officeId);
-    if (deleteFiles) {
-      fs.rmSync(path.join(this.paths.offices, officeId), { recursive: true, force: true });
-    }
+    fs.rmSync(path.join(this.paths.offices, officeId), { recursive: true, force: true });
     this.emit({
       type: 'company.offices',
-      say: deleteFiles ? `Đã xoá văn phòng "${officeId}".` : `Đã đóng văn phòng "${officeId}".`,
+      say: `Đã xoá hẳn văn phòng "${officeId}".`,
       office: officeId,
       plan_id: null,
     });
@@ -223,11 +360,29 @@ export class Company {
     return formatReport(this.costReport(sinceMs, officeId));
   }
 
-  /** Chi phí tách theo văn phòng — để thấy văn phòng nào đang ăn hết hạn mức. */
-  costByOffice(sinceMs?: number): Array<{ office: string; name: string; tasks: number; costUSD: number; turns: number }> {
+  /**
+   * Chi phí tách theo văn phòng — để thấy văn phòng nào đang ăn hết hạn mức.
+   *
+   * `gone: true` = văn phòng không còn trên đĩa (xoá hẳn), hoặc bản ghi có từ
+   * TRƯỚC khi có khái niệm văn phòng (v0, cột `office` rỗng). Giao diện gom
+   * những dòng này vào một khối đóng/mở — **gộp để HIỂN THỊ, không gộp DỮ
+   * LIỆU**: danh sách không dài ra theo số văn phòng đã xoá, mà bung ra vẫn thấy
+   * đủ từng dòng và từng cái mã. Cộng chúng lại thành một cục "đã xoá" thì cái
+   * mã mất, và cái mã là manh mối duy nhất còn lại để biết tiền đã đi đâu.
+   */
+  costByOffice(sinceMs?: number): Array<{
+    office: string;
+    name: string;
+    tasks: number;
+    costUSD: number;
+    turns: number;
+    archived: boolean;
+    gone: boolean;
+  }> {
+    const LEGACY = '';
     const byOffice = new Map<string, { tasks: number; costUSD: number; turns: number }>();
     for (const r of this.usageRecords(sinceMs)) {
-      const key = r.office || '(không rõ)';
+      const key = r.office || LEGACY;
       const e = byOffice.get(key) ?? { tasks: 0, costUSD: 0, turns: 0 };
       e.tasks++;
       e.costUSD += r.cost_usd;
@@ -235,7 +390,19 @@ export class Company {
       byOffice.set(key, e);
     }
     return [...byOffice.entries()]
-      .map(([office, v]) => ({ office, name: this.offices.get(office)?.name ?? office, ...v }))
+      .map(([office, v]) => {
+        const live = this.offices.get(office);
+        return {
+          office,
+          // Nói đúng sự thật cho từng ca: mã cũ đã xoá thì hiện MÃ (manh mối duy
+          // nhất còn lại); bản ghi v0 thì nói rõ nó có trước khi tách văn phòng,
+          // chứ không gọi là "đã xoá" — không có văn phòng nào bị xoá ở đó cả.
+          name: live?.name ?? (office === LEGACY ? '(trước khi tách văn phòng)' : office),
+          ...v,
+          archived: live?.archived ?? false,
+          gone: !live,
+        };
+      })
       .sort((a, b) => b.costUSD - a.costUSD);
   }
 

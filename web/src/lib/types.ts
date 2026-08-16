@@ -30,7 +30,12 @@ export interface CanvasNode {
   server?: string;
   label: string;
   avatar?: string;
+  /** Mức model: `eco` | `standard` | `deep`. */
   tier?: string;
+  /** Model thật sự sẽ chạy ở mức đó, ví dụ `claude-sonnet-5`. */
+  model?: string;
+  /** Chỉ Trợ lý: mức đang thừa hưởng `models.master` của công ty, không đặt riêng. */
+  tierInherited?: boolean;
   pitch?: string;
   count?: number;
   mcp?: string[];
@@ -59,14 +64,39 @@ export interface OfficeSummary {
   agents: number;
   onDuty: number;
   knowledge: number;
+  /** Đã cất vào lưu trữ — đóng băng, chỉ đọc, khôi phục được. */
+  archived: boolean;
   plan_id: string | null;
   error?: string;
+}
+
+/** Nhân viên đang nằm trong lưu trữ. Khôi phục về đúng văn phòng cũ. */
+export interface ArchivedAgent {
+  role: string;
+  label: string;
+  avatar: string;
+  pitch: string;
+  notes: number;
+}
+
+export type Tier = 'eco' | 'standard' | 'deep';
+
+/** Mức nào chạy model nào — cấu hình cấp CÔNG TY (một hoá đơn, một chỗ để siết). */
+export interface CompanyModels {
+  eco: string;
+  standard: string;
+  deep: string;
+  /** Mức mặc định của Trợ lý mọi văn phòng. Văn phòng ghi đè được. */
+  master: Tier;
+  /** Mức cho khâu lập kế hoạch — chạy ở query riêng nên không phá cache Trợ lý. */
+  planner: Tier;
 }
 
 export interface CompanyView {
   name: string;
   offices: OfficeSummary[];
   allowCorePromptEdit: boolean;
+  models: CompanyModels;
 }
 
 export interface PlanStep {
@@ -96,6 +126,8 @@ export interface PromptLayer {
   file?: string;
   text: string;
   tokens: number;
+  /** Ví dụ THẬT hiện mờ khi lớp trống. Không bao giờ được lưu → 0 token. */
+  placeholder?: string;
   /** Trần token — UI cảnh báo khi gõ vượt, server từ chối lưu. */
   limit?: number;
   frontmatter?: boolean;
@@ -112,6 +144,10 @@ export interface KnowledgeEntry {
   hits: number;
   pinned: boolean;
   confidence: number;
+  /** Đã bị một node mới đè — còn file, không còn đi vào prompt của ai. */
+  superseded: boolean;
+  body: string;
+  updated: string;
 }
 
 export interface OfficeDetail {
@@ -121,6 +157,9 @@ export interface OfficeDetail {
   plan: { plan_id: string; request: string; steps: PlanStep[] } | null;
   pending: number;
   knowledge: number;
+  /** Hội thoại đọc từ đĩa — sống sót qua mọi lần tắt daemon. */
+  chat?: AgentEvent[];
+  /** Vòng đệm trong bộ nhớ của daemon: trạng thái SỐNG, mất khi daemon tắt. */
   history: AgentEvent[];
 }
 
@@ -152,11 +191,12 @@ export type AgentEvent = EventBase &
     | { type: 'office.state'; say: string; state: OfficeState }
     | {
         type: 'office.activity';
-        assistant: 'idle' | 'thinking';
+        assistant: 'idle' | 'thinking' | 'planning';
         workers: number;
         queued: number;
         jobs: number;
       }
+    | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }
     | { type: 'knowledge.changed'; count: number; version: number }
     | { type: 'layout.changed'; say: string }

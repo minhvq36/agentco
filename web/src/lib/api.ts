@@ -7,10 +7,13 @@
  */
 
 import type {
+  ArchivedAgent,
   CanvasState,
+  CompanyModels,
   CompanyView,
   KnowledgeEntry,
   OfficeDetail,
+  OfficeSummary,
   PlanRecord,
   PromptLayer,
   AgentEvent,
@@ -67,10 +70,43 @@ export const api = {
   createOffice: (name: string) =>
     call<{ id: string }>('/api/office', { method: 'POST', body: JSON.stringify({ name }) }),
 
-  removeOffice: (id: string, deleteFiles: boolean) =>
-    call<{ ok: true }>(`/api/office/${enc(id)}?deleteFiles=${deleteFiles}`, { method: 'DELETE' }),
+  /** XOÁ HẲN cả thư mục. Mức "cất đi" là `patchOffice({ archived: true })`. */
+  removeOffice: (id: string) => call<{ ok: true }>(`/api/office/${enc(id)}`, { method: 'DELETE' }),
+
+  archivedAgents: (id: string) =>
+    call<{ agents: ArchivedAgent[] }>(`/api/office/${enc(id)}/archived`),
+
+  /** Cất đi / đưa trở lại một nhân viên. File yaml không đi đâu cả. */
+  archiveAgent: (id: string, role: string, archived: boolean) =>
+    call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ archived }),
+    }),
 
   office: (id: string) => call<OfficeDetail>(`/api/office/${enc(id)}`),
+
+  /**
+   * Đổi tên văn phòng và/hoặc mức model của Trợ lý. Cả hai nằm trong office.yaml.
+   * `assistant_tier: null` = bỏ đặt riêng, quay về mức mặc định của công ty.
+   */
+  patchOffice: (
+    id: string,
+    patch: { name?: string; assistant_tier?: string | null; archived?: boolean },
+  ) =>
+    call<{
+      id: string;
+      name: string;
+      archived: boolean;
+      canvas: CanvasState;
+      offices: OfficeSummary[];
+    }>(`/api/office/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  /** Mức nào chạy model nào — cấp công ty, ảnh hưởng MỌI văn phòng. */
+  updateModels: (models: Partial<CompanyModels>) =>
+    call<{ models: CompanyModels }>('/api/company', {
+      method: 'PATCH',
+      body: JSON.stringify({ models }),
+    }),
 
   canvas: (id: string) => call<CanvasState>(`/api/office/${enc(id)}/canvas`),
 
@@ -93,10 +129,9 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
-  removeAgent: (id: string, role: string, keepFile: boolean) =>
-    call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}?keepFile=${keepFile}`, {
-      method: 'DELETE',
-    }),
+  /** XOÁ HẲN file roles/<id>.yaml. Mức "cất đi" là `archiveAgent`. */
+  removeAgent: (id: string, role: string) =>
+    call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}`, { method: 'DELETE' }),
 
   say: (id: string, message: string) =>
     call<{ intent: string; reply: string }>(`/api/office/${enc(id)}/say`, {
@@ -107,6 +142,17 @@ export const api = {
   stop: (id: string) => call<{ ok: true }>(`/api/office/${enc(id)}/stop`, { method: 'POST' }),
 
   knowledge: (id: string) => call<{ nodes: KnowledgeEntry[] }>(`/api/office/${enc(id)}/knowledge`),
+
+  /**
+   * Sửa hoặc xoá một ghi chú. Id đi trong BODY chứ không trên đường dẫn —
+   * id có dấu `/` (`k/agents/assistant/…`), nhét vào path thì phải encode
+   * nhiều lớp và sớm muộn cũng có một lớp bị quên.
+   */
+  editKnowledge: (id: string, nodeId: string, patch: { body?: string; remove?: boolean }) =>
+    call<{ nodes: KnowledgeEntry[] }>(`/api/office/${enc(id)}/knowledge`, {
+      method: 'PATCH',
+      body: JSON.stringify({ id: nodeId, ...patch }),
+    }),
 
   plans: (id: string) => call<{ plans: PlanRecord[] }>(`/api/office/${enc(id)}/plans`),
 
@@ -123,9 +169,20 @@ export const api = {
     }),
 
   cost: () =>
-    call<{ text: string; byOffice: Array<{ office: string; name: string; tasks: number; costUSD: number; turns: number }> }>(
-      '/api/cost',
-    ),
+    call<{
+      text: string;
+      byOffice: Array<{
+        office: string;
+        name: string;
+        tasks: number;
+        costUSD: number;
+        turns: number;
+        /** Văn phòng còn đó nhưng đang trong lưu trữ. */
+        archived: boolean;
+        /** Văn phòng không còn trên đĩa, hoặc bản ghi có trước khi tách văn phòng. */
+        gone: boolean;
+      }>;
+    }>('/api/cost'),
 
   shutdown: () => call<{ ok: true }>('/api/shutdown', { method: 'POST' }),
 };

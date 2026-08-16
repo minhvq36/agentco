@@ -13,7 +13,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 
 import { loadOffice, type LoadedOffice } from './config.js';
-import { ensureOfficeDirs, isSafeId, safeJoin, slugId } from './paths.js';
+import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId } from './assistant.js';
@@ -28,6 +28,7 @@ import {
   TIERS,
   type AgentEvent,
   type AgentEventBody,
+  type CompanyConfig,
   type Plan,
   type PlanRecord,
   type PlanStatus,
@@ -38,11 +39,26 @@ import {
 
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 
+/**
+ * Trần số file liệt kê trong câu báo cáo. Một ca chạm 20 CV (bài 8 của
+ * TEST-WALKTHROUGH) sẽ sinh hàng chục file — đổ hết vào ô chat là biến câu báo
+ * cáo thành một bức tường không ai đọc. Phần dư nói bằng một dòng đếm.
+ */
+const MAX_LISTED_FILES = 8;
+
+/** Số tin nhắn phát lại khi mở văn phòng. Đủ để nhớ mạch, không phải cả đời. */
+const CHAT_REPLAY = 200;
+
 /** Node đã kèm metadata để vẽ. Không có gì trong đây được ghi vào layout.json. */
 export interface CanvasNode extends LayoutNode {
   label: string;
   avatar?: string;
+  /** Mức model: `eco` | `standard` | `deep`. Với Trợ lý có thể là mức thừa hưởng. */
   tier?: string;
+  /** Model thật sự sẽ chạy ở mức đó. Nói ra để người dùng không phải đoán. */
+  model?: string;
+  /** Trợ lý: true khi mức đang theo `models.master` của công ty, không phải đặt riêng. */
+  tierInherited?: boolean;
   pitch?: string;
   /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
   count?: number;
@@ -114,6 +130,27 @@ export class Office {
     return this.state;
   }
 
+  /** Đã cất vào lưu trữ — đóng băng, chỉ đọc. → docs/SPEC-offices.md §3.1 */
+  get archived(): boolean {
+    return this.loaded.config.archived;
+  }
+
+  /**
+   * Chốt chặn DUY NHẤT cho "văn phòng lưu trữ là chỉ đọc".
+   *
+   * Gọi ở đầu MỌI hàm làm thay đổi thứ gì đó. Một chốt một câu, thay vì rải
+   * điều kiện khắp nơi rồi sót một chỗ — mà chỗ sót nguy hiểm nhất là chỗ tiêu
+   * tiền, vì tiền là thứ duy nhất người dùng không lấy lại được.
+   */
+  private assertLive(): void {
+    if (!this.archived) return;
+    throw new RunError(
+      `Văn phòng "${this.name}" đang trong lưu trữ nên chỉ xem được. ` +
+        `Khôi phục nó ở bảng Tổng quan công ty rồi làm tiếp.`,
+      'other',
+    );
+  }
+
   get plan(): Plan | undefined {
     return this.currentPlan;
   }
@@ -127,7 +164,63 @@ export class Office {
     const planId = e.plan_id !== undefined ? e.plan_id : (this.currentRecord?.plan_id ?? null);
     const full = { ...e, office: this.id, plan_id: planId } as AgentEvent;
     if (planId) this.plans.append(planId, full);
+    if (full.type === 'master.message') this.appendChat(full);
     this.emitFn(full);
+  }
+
+  /**
+   * Luồng hội thoại, GHI RA ĐĨA. → docs/SPEC-offices.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MÀN HÌNH KHÔNG ĐƯỢC NÓI DỐI VỀ THỨ HỆ THỐNG CÒN NHỚ.                    │
+   * │                                                                          │
+   * │ Trí nhớ của Trợ lý nằm trên đĩa ở HAI chỗ và sống sót qua mọi lần tắt    │
+   * │ daemon: con trỏ `.state/assistant-session.json`, và bản ghi hội thoại    │
+   * │ do chính CLI Claude Code giữ trong `~/.claude/projects/`. Nhưng ô chat   │
+   * │ trên giao diện lại đọc từ một vòng đệm 300 sự kiện TRONG BỘ NHỚ.         │
+   * │                                                                          │
+   * │ Hệ quả người dùng gặp thật: tắt daemon, mở lại, ô chat TRẮNG TRƠN — rồi  │
+   * │ gõ tiếp "200 từ, hài hước" thì Trợ lý trả lời đúng như chưa hề mất gì.   │
+   * │ Model nhớ, màn hình quên. Người dùng không thể tin cái nào nữa.          │
+   * │                                                                          │
+   * │ Sự kiện gắn với một công việc đã được ghi ở `<plan_id>.log.jsonl` từ     │
+   * │ trước; chỗ hổng đúng là hội thoại (`plan_id: null`) — thứ KHÔNG thuộc    │
+   * │ việc nào nên không có file nào nhận.                                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private appendChat(e: AgentEvent): void {
+    try {
+      fs.mkdirSync(this.loaded.paths.state, { recursive: true });
+      fs.appendFileSync(this.chatFile(), `${JSON.stringify({ ...e, ts: new Date().toISOString() })}\n`, 'utf8');
+    } catch {
+      /* Không ghi được nhật ký hội thoại KHÔNG được làm hỏng câu trả lời. */
+    }
+  }
+
+  /**
+   * Hội thoại đã lưu, mới nhất ở cuối. Đọc khi mở văn phòng.
+   *
+   * Cắt về `CHAT_REPLAY` dòng cuối chứ không đọc cả file: nó chỉ để người dùng
+   * thấy lại mạch chuyện, không phải để làm trí nhớ cho model — trí nhớ model
+   * nằm ở session của SDK và không đi qua đây.
+   */
+  readChat(limit = CHAT_REPLAY): AgentEvent[] {
+    try {
+      const lines = fs.readFileSync(this.chatFile(), 'utf8').split('\n').filter((l) => l.trim());
+      return lines.slice(-limit).flatMap((l) => {
+        try {
+          return [JSON.parse(l) as AgentEvent];
+        } catch {
+          return [];
+        }
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private chatFile(): string {
+    return path.join(this.loaded.paths.state, 'chat.jsonl');
   }
 
   /**
@@ -159,6 +252,7 @@ export class Office {
    * rồi fail — lỗi người dùng gặp ngay thao tác đầu tiên.
    */
   async say(message: string): Promise<SayOutcome> {
+    this.assertLive();
     this.emit({ type: 'master.message', say: message, role: 'user', plan_id: null });
 
     // Lệnh chữ bị bắt TRƯỚC khi tới model. Hai lý do, cả hai đều bắt buộc:
@@ -166,7 +260,15 @@ export class Office {
     // bằng "/" có thể bị chính CLI Claude Code hiểu là lệnh CỦA NÓ.
     // → docs/SPEC-tools-approval.md §8e
     const parsed = parseInput(message);
-    if (parsed.kind !== 'text') return this.runCommand(parsed);
+    if (parsed.kind !== 'text') {
+      const outcome = this.runCommand(parsed);
+      // BẮT BUỘC: giao diện bật dòng "đang đọc yêu cầu…" ngay khi bấm Gửi, và
+      // chỉ tắt nó khi nhận được `office.activity`. Lệnh chữ trả lời tức thì
+      // bằng code nên KHÔNG đi qua hòm thư — không có dòng này thì ba chấm quay
+      // mãi mãi sau mỗi `/help`, và người dùng phải tải lại trang mới hết.
+      this.emitActivity();
+      return outcome;
+    }
 
     // Bỏ vào hòm thư thay vì gọi thẳng. Trợ lý là MỘT NGƯỜI: hai lượt gọi chồng
     // nhau trên cùng một session thì một lượt bị mất trắng khỏi trí nhớ hội
@@ -218,6 +320,11 @@ export class Office {
 
   private async handleUserBatch(text: string): Promise<void> {
     const routed = await this.assistant.route(text, this.state === 'working');
+    // `route` chạy MỖI lượt người dùng nhắn. Bản trước vứt thẳng `routed.usage`
+    // đi, nên toàn bộ chi phí trò chuyện vô hình với `agentco cost` — và đó
+    // đúng là phần bị đổi model làm đắt lên. Không đo được thì không đánh giá
+    // được cái giá của việc đổi model. → SPEC-token-economy.md §5
+    this.logAssistantUsage('route', routed.usage);
     this.saveSessionId();
 
     if (routed.value.intent === 'task') {
@@ -248,11 +355,27 @@ export class Office {
     this.emit({ type: 'master.message', say: routed.value.say, role: 'assistant', plan_id: null });
   }
 
-  /** Trạng thái Trợ lý và trạng thái nhân viên là HAI thứ. Nói cả hai ra. */
+  /**
+   * Trạng thái Trợ lý và trạng thái nhân viên là HAI thứ. Nói cả hai ra.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MẠCH KHÔNG ĐƯỢC ĐỨT.                                                     │
+   * │                                                                          │
+   * │ Từ lúc người dùng bấm Gửi tới lúc có kết quả, LUÔN phải có một câu mô tả │
+   * │ việc đang diễn ra. Bản trước đứt đúng một nhịp — giữa lúc Trợ lý đọc     │
+   * │ xong yêu cầu và lúc kế hoạch hiện ra — vì `run()` chạy nền còn hòm thư   │
+   * │ đã mở khoá, nên mọi con số đều bằng 0.                                   │
+   * │                                                                          │
+   * │ `planning` lấp đúng nhịp đó. Đọc từ `currentRecord.status`, tức là từ    │
+   * │ BẢN GHI CÔNG VIỆC — thứ tồn tại từ trước khi lập kế hoạch, kể cả khi lập │
+   * │ kế hoạch fail. Không suy ra từ hòm thư, vì hòm thư chính là chỗ đã sai.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
   private emitActivity(): void {
+    const planning = this.currentRecord?.status === 'planning';
     this.emit({
       type: 'office.activity',
-      assistant: this.mailbox.isBusy ? 'thinking' : 'idle',
+      assistant: this.mailbox.isBusy ? 'thinking' : planning ? 'planning' : 'idle',
       workers: this.activeScheduler?.runningCount ?? 0,
       queued: this.mailbox.size,
       jobs: this.deferred.length,
@@ -300,6 +423,35 @@ export class Office {
         );
       }
 
+      case 'clear': {
+        if (this.state === 'working') {
+          return reply('Đang có việc chạy dở. Bấm Dừng hoặc chờ xong rồi mình dọn nhé.');
+        }
+        // Nói NGAY là đang làm gì. Nén là một lượt gọi model, mất vài giây —
+        // không có dòng này thì người dùng gõ `/clear` xong nhìn vào một ô chat
+        // im lặng và không biết lệnh đã ăn hay chưa. Câu này rồi sẽ bị chính
+        // `office.cleared` cuốn đi, nên nó không để lại rác.
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt…',
+          plan_id: null,
+        });
+        // KHÔNG await: trả lời ngay để ô chat không đứng hình, rồi báo kết quả
+        // bằng sự kiện như mọi thứ khác.
+        void this.compactMemory()
+          .then((r) => this.emit({ type: 'master.message', say: r.note, role: 'assistant', plan_id: null }))
+          .catch(() => {
+            this.emit({
+              type: 'master.message',
+              say: 'Chưa dọn được cuộc trò chuyện. Mình giữ nguyên mọi thứ, thử lại sau nhé.',
+              role: 'assistant',
+              plan_id: null,
+            });
+          });
+        return { intent: 'chat', reply: '' };
+      }
+
       // Cổng duyệt chưa cài đặt (SPEC-tools-approval.md §8). Trả lời trung thực
       // thay vì im lặng — người dùng gõ /approve nghĩa là họ đang chờ một thứ
       // mà ta chưa hỏi, và họ cần biết là ta chưa hỏi.
@@ -312,6 +464,7 @@ export class Office {
   // ── chạy một yêu cầu
 
   async run(request: string): Promise<{ plan_id: string; report: string; usage: Usage }> {
+    this.assertLive();
     if (this.state === 'working') {
       throw new RunError('Văn phòng đang bận. Đợi xong ca này đã.', 'other');
     }
@@ -336,6 +489,10 @@ export class Office {
     this.currentRecord = record;
     this.plans.upsert(record);
     this.setState('working', 'Trợ lý đang lập kế hoạch...');
+    // Nối mạch NGAY. `run()` được gọi bằng `void` từ `handleUserBatch`, và ngay
+    // sau đó `pump()` phát một activity toàn số 0 — nếu ta không phát cái này
+    // trước thì dòng trạng thái tắt đúng vào lúc việc mới bắt đầu.
+    this.emitActivity();
 
     try {
       // 0. Không ai trực thì đừng tốn một token nào để biết điều đó.
@@ -353,6 +510,7 @@ export class Office {
       // gì đó thì lượt đó phải xong trước, không được chồng lên lượt này.
       const planned = await this.mailbox.lock(() => this.assistant.plan(request));
       usage = addUsage(usage, planned.usage);
+      this.logAssistantUsage('plan', planned.usage);
       const plan = { ...planned.value, plan_id: record.plan_id };
 
       // 2. Chặn DAG hỏng TRƯỚC khi tốn token nào cho worker. Danh sách đối chiếu
@@ -368,6 +526,7 @@ export class Office {
       record.tasks_total = plan.tasks.length;
       record.status = 'running';
       this.plans.upsert(record);
+      this.emitActivity();
       this.savePlan(plan);
       this.emit({ type: 'plan.created', plan_id: plan.plan_id, request, steps: plan.steps });
 
@@ -440,6 +599,7 @@ export class Office {
       } else {
         const summary = await this.mailbox.lock(() => this.assistant.report(plan.steps, receipts));
         usage = addUsage(usage, summary.usage);
+        this.logAssistantUsage('report', summary.usage);
         report = summary.value.say;
         status = receipts.some((r) => r.status === 'failed') ? 'failed' : 'done';
         // Trợ lý là bên DUY NHẤT được ghi vào kho chung (SPEC-offices.md §4.3):
@@ -464,7 +624,9 @@ export class Office {
       this.lastArtifacts = receipts.flatMap((r) => r.artifacts);
       this.savePending(result.pending);
       this.saveSessionId();
-      this.finish(record, status, report, usage, receipts.length);
+      // Nhánh "đã dừng" tự liệt kê artifact trong câu của nó rồi (§11f) — đưa
+      // thêm khối đường dẫn vào đó là nói hai lần cùng một chuyện.
+      this.finish(record, status, report, usage, receipts.length, status === 'stopped' ? [] : receipts);
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -475,13 +637,85 @@ export class Office {
     }
   }
 
+  /**
+   * Khối "kết quả nằm ở đâu", DỰNG BẰNG CODE từ điểm đến QUAN SÁT ĐƯỢC. 0 token.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO KHÔNG DẶN MODEL, VÀ VÌ SAO KHÔNG DÙNG `artifacts`                │
+   * │                                                                          │
+   * │ Bản đầu: model NGẪU NHIÊN nhắc đường dẫn trong câu tổng kết. Không ai    │
+   * │ bảo đảm → mất. Dặn prompt "hãy nêu đường dẫn" là mua lại đúng sự bất     │
+   * │ định vừa bỏ đi, bằng token vĩnh viễn, và vẫn hỏng khi đổi model.         │
+   * │                                                                          │
+   * │ Bản hai dùng `receipt.artifacts` — khá hơn, nhưng vẫn là lời model KỂ,   │
+   * │ và nó CHỈ MÔ TẢ ĐƯỢC FILE. Kết quả có thể nằm ở Notion, Google Sheets,   │
+   * │ một database. Với những ca đó `artifacts` rỗng và khối này im lặng — tức │
+   * │ là ta lại quay về phụ thuộc câu chữ của model.                           │
+   * │                                                                          │
+   * │ Bản này đọc `receipt.landed`: suy từ TOOL ĐÃ GỌI trong luồng, là sự việc │
+   * │ quan sát được chứ không phải lời kể. → worker.ts `landingOf`             │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Ba loại điểm đến, ba cách nói — và cách nói phản ánh ĐÚNG mức chắc chắn:
+   *
+   *  file     kiểm `existsSync` rồi mới liệt kê → nói chắc "đã lưu tại".
+   *  external biết chắc đã gọi server nào, không kiểm được nó lưu ra sao →
+   *           nói "đã ghi ra", nêu tên server.
+   *  command  KHÔNG biết dữ liệu đi đâu → nói thẳng là không biết.
+   *
+   * Ca cuối là phần bất định còn lại, và nó được KHOANH VÙNG + DÁN NHÃN chứ
+   * không bị giấu. Chi tiết còn lại nằm ở câu `say` của chính nhân viên — đó
+   * đúng là việc của `say`, và ta không phải dặn thêm gì để có nó.
+   */
+  private whereBlock(receipts: readonly Receipt[]): string {
+    const files = new Set<string>();
+    const servers = new Set<string>();
+    let ranCommand = false;
+
+    for (const r of receipts) {
+      for (const spot of r.landed ?? []) {
+        if (spot.kind === 'external') servers.add(spot.ref);
+        else if (spot.kind === 'command') ranCommand = true;
+        else if (spot.kind === 'file') {
+          try {
+            if (fs.existsSync(safeJoin(this.loaded.dir, spot.ref))) files.add(spot.ref);
+          } catch {
+            /* ra ngoài thư mục văn phòng — không khai là kết quả của người dùng */
+          }
+        }
+      }
+    }
+
+    const lines: string[] = [];
+    if (files.size) {
+      // Đường dẫn tính từ THƯ MỤC LÀM VIỆC, không từ thư mục văn phòng: người
+      // dùng đang đứng ở đó khi mở file explorer. `artifacts/T-01/x.md` đứng một
+      // mình thì đúng về kỹ thuật mà vô dụng với người lần đầu đi tìm.
+      const base = `${path.basename(this.loaded.companyDir)}/offices/${this.id}`;
+      const shown = [...files].sort().slice(0, MAX_LISTED_FILES);
+      lines.push('Kết quả đã lưu tại:');
+      lines.push(...shown.map((p) => `  ${base}/${p}`));
+      if (files.size > shown.length) lines.push(`  …và ${files.size - shown.length} file nữa`);
+    }
+    if (servers.size) {
+      lines.push(`Đã ghi ra ngoài qua: ${[...servers].sort().join(', ')}`);
+    }
+    if (ranCommand) {
+      lines.push('Có chạy lệnh trên máy — kết quả có thể nằm ngoài thư mục văn phòng.');
+    }
+
+    return lines.length ? `\n\n${lines.join('\n')}` : '';
+  }
+
   private finish(
     record: PlanRecord,
     status: PlanStatus,
     report: string,
     usage: Usage,
     tasks: number,
+    receipts: readonly Receipt[] = [],
   ): void {
+    report += this.whereBlock(receipts);
     record.status = status;
     record.ended_at = new Date().toISOString();
     record.report = report;
@@ -523,6 +757,10 @@ export class Office {
     } else {
       this.emitActivity();
     }
+    // Còn việc xếp hàng thì để nó chạy trước — nén giữa hai việc liên tiếp là
+    // cắt đúng chỗ mạch chuyện đang liền.
+    if (!next) this.maybeCompact();
+
     // `setState` cũng phát một `office.state` mang `say`. Đưa câu báo cáo vào
     // đó nữa là lặp lần thứ ba — trạng thái chỉ cần nói TRẠNG THÁI.
     this.setState(
@@ -546,6 +784,7 @@ export class Office {
   }
 
   saveCanvas(input: { nodes?: unknown; edges?: unknown }): CanvasState {
+    this.assertLive();
     const { touched } = this.layout.save(input);
     if (touched.length) this.reload();
     this.refreshAssistantContext();
@@ -560,6 +799,7 @@ export class Office {
    * yaml người đọc được chứ không phải một cục JSON riêng.
    */
   addAgent(input: { id?: string; display_name?: string; pitch?: string; tier?: string }): string {
+    this.assertLive();
     const name = (input.display_name ?? '').trim();
     const id = slugId(input.id?.trim() || name || 'nhan-vien');
     if (!isSafeId(id)) {
@@ -581,31 +821,95 @@ export class Office {
     );
 
     this.reload();
-    this.layout.connectAssistant(id);
+    // `placeAgent` chứ không phải `connectAssistant`: nó GHI vị trí xuống đĩa kể
+    // cả khi cạnh đã có sẵn. Bản cũ return sớm ở đó, nên toạ độ vừa tính không
+    // bao giờ được lưu. → layout.ts
+    this.layout.placeAgent(id);
     this.refreshAssistantContext();
     this.emit({ type: 'layout.changed', say: `Đã thêm "${name || id}".`, plan_id: null });
     return id;
   }
 
   /**
-   * Bỏ nhân viên khỏi sơ đồ. MẶC ĐỊNH GIỮ FILE yaml lại.
+   * LƯU TRỮ một nhân viên (soft delete). → docs/SPEC-offices.md §5.1
    *
-   * Xoá node và xoá công sức viết skills là hai ý định khác nhau; gộp chúng làm
-   * một là cách chắc chắn nhất để người dùng mất việc đã làm vì một cú click.
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO PHẢI CÓ CỜ, KHÔNG THỂ CHỈ "BỎ KHỎI SƠ ĐỒ"                        │
+   * │                                                                          │
+   * │ Bản trước xoá node khỏi layout.json rồi giữ file yaml — nghe thì đúng,   │
+   * │ nhưng `layout.read()` TÁI TẠO node từ `office.roles` ở lần đọc kế tiếp.  │
+   * │ Nhân viên "đã bỏ" quay lại canvas ở một ô lưới khác, chỉ mất sợi dây.    │
+   * │ Tức là "bỏ khỏi sơ đồ" chưa bao giờ thật sự bỏ được cái gì.              │
+   * │                                                                          │
+   * │ Cờ trong yaml là nguồn sự thật DUY NHẤT: canvas, roster và scheduler đều │
+   * │ đọc nó. Không có đường nào để một nhân viên đã cất nhận được việc.       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * File không đi đâu cả. Kinh nghiệm trong `knowledge/agents/<id>/` còn nguyên,
+   * skills còn nguyên — khôi phục là trở lại đúng chỗ cũ, vì nó chưa từng rời đi.
    */
-  removeAgent(roleId: string, keepFile = true): void {
+  archiveAgent(roleId: string, archived: boolean): CanvasState {
+    this.assertLive();
+    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
+    const role = this.loaded.roles.get(roleId);
+    if (!role) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+
+    const file = this.roleFile(roleId);
+    if (!file) throw new RunError(`Không tìm thấy file roles/${roleId}.yaml.`, 'other');
+
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (archived) doc.set('archived', true);
+    else doc.delete('archived');
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+
+    if (archived) this.layout.dropAgent(roleId);
+    this.reload();
+    if (!archived) this.layout.placeAgent(roleId);
+    this.refreshAssistantContext();
+
+    const name = role.display_name || roleId;
+    this.emit({
+      type: 'layout.changed',
+      say: archived ? `Đã cất "${name}" vào lưu trữ.` : `Đã đưa "${name}" trở lại.`,
+      plan_id: null,
+    });
+    return this.canvas();
+  }
+
+  /**
+   * XOÁ HẲN một nhân viên: mất file yaml, mất skills. Không lấy lại được.
+   *
+   * Sổ tay kinh nghiệm ở `knowledge/agents/<id>/` CỐ Ý được giữ: nó là thứ văn
+   * phòng đã học được, không phải tài sản riêng của một cái tên. Xoá người mà
+   * xoá luôn bài học là mất thứ đắt nhất trong cả thư mục.
+   */
+  removeAgent(roleId: string): void {
+    this.assertLive();
     if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
     if (!this.loaded.roles.has(roleId)) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
 
     this.layout.dropAgent(roleId);
-    if (!keepFile) {
-      for (const ext of ['.yaml', '.yml']) {
-        fs.rmSync(path.join(this.loaded.paths.roles, `${roleId}${ext}`), { force: true });
-      }
-      this.reload();
+    for (const ext of ['.yaml', '.yml']) {
+      fs.rmSync(path.join(this.loaded.paths.roles, `${roleId}${ext}`), { force: true });
     }
+    this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã bỏ "${roleId}" khỏi sơ đồ.`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: `Đã xoá hẳn "${roleId}".`, plan_id: null });
+  }
+
+  /** Nhân viên đang nằm trong lưu trữ — để giao diện cho khôi phục. */
+  archivedAgents(): Array<{ role: string; label: string; avatar: string; pitch: string; notes: number }> {
+    const notes = this.knowledge.notesByRole();
+    return [...this.loaded.archivedRoles]
+      .map((id) => this.loaded.roles.get(id))
+      .filter((r): r is NonNullable<typeof r> => !!r)
+      .map((r) => ({
+        role: r.id,
+        label: r.display_name || r.id,
+        avatar: r.avatar,
+        pitch: r.pitch,
+        notes: notes[r.id] ?? 0,
+      }));
   }
 
   /**
@@ -621,6 +925,7 @@ export class Office {
     roleId: string,
     patch: { display_name?: string; avatar?: string; pitch?: string; not_for?: string[]; model_tier?: string },
   ): CanvasState {
+    this.assertLive();
     if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
     const role = this.loaded.roles.get(roleId);
     if (!role) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
@@ -654,6 +959,93 @@ export class Office {
     return this.canvas();
   }
 
+  /**
+   * Đổi tên hiển thị của văn phòng. → docs/SPEC-offices.md §3
+   *
+   * MÃ văn phòng (`id`) giữ nguyên, và đó là quyết định chứ không phải lười:
+   * `id` là TÊN THƯ MỤC. Đổi nó là dời `artifacts/`, `tasks/`, `.state/`, mọi
+   * đường dẫn đã ghi trong receipt cũ, và session của Trợ lý — để đổi một cái
+   * nhãn. Người dùng đổi tên vì cái nhãn đọc sai, không phải vì họ muốn dời nhà.
+   *
+   * Ghi bằng `parseDocument` để giữ nguyên chú thích trong office.yaml.
+   */
+  rename(name: string): string {
+    this.assertLive();
+    const next = normalizeName(name);
+    if (!next) throw new RunError('Tên văn phòng không được để trống.', 'other');
+    if (next.length > 60) throw new RunError('Tên văn phòng dài quá 60 ký tự.', 'other');
+    if (next === this.loaded.config.name) return next;
+
+    const file = this.loaded.paths.configFile;
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    doc.set('name', next);
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+
+    this.reload();
+    // Tên văn phòng KHÔNG nằm trong prompt của ai — không có gì phải ghi lại cache.
+    this.emit({ type: 'layout.changed', say: `Văn phòng đã đổi tên thành "${next}".`, plan_id: null });
+    return next;
+  }
+
+  /**
+   * Đổi mức model của Trợ lý văn phòng này. → docs/SPEC-offices.md §4.5
+   *
+   * `undefined` = bỏ ghi đè, quay về `models.master` của công ty.
+   *
+   * KHÔNG chạm vào session: `resume` nạp bản ghi hội thoại từ đĩa, và bản ghi đó
+   * độc lập với model. Trợ lý vẫn nhớ nguyên mọi thứ đã nói. Thứ mất là PROMPT
+   * CACHE — cặp (model, prefix) đổi nên lượt kế tiếp ghi lại cache một lần, và
+   * vì `resume` gửi lại cả bản ghi hội thoại nên lần đó trả giá đầy đủ cho phần
+   * đó. Đắt nhất khi hội thoại đã dài; vẫn là MỘT LẦN, không phải mỗi lượt.
+   */
+  setAssistantTier(tier: string | undefined): { tier: string; model: string } {
+    this.assertLive();
+    if (tier !== undefined && !TIERS.includes(tier as never)) {
+      throw new RunError(`Mức model phải là một trong: ${TIERS.join(', ')}.`, 'other');
+    }
+
+    const file = this.loaded.paths.configFile;
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (!doc.has('assistant')) doc.set('assistant', {});
+    if (tier === undefined) doc.deleteIn(['assistant', 'model_tier']);
+    else doc.setIn(['assistant', 'model_tier'], tier);
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+
+    this.reload();
+    this.refreshAssistantContext();
+    this.emit({
+      type: 'layout.changed',
+      say: `Trợ lý chuyển sang mức "${this.assistant.modelTier}". Áp dụng từ lượt trò chuyện tiếp theo.`,
+      plan_id: null,
+    });
+    return { tier: this.assistant.modelTier, model: this.assistant.model };
+  }
+
+  /**
+   * Nhận cấu hình công ty mới (đổi model, đổi ngân sách…).
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BẤT BIẾN: KHÔNG BAO GIỜ SỬA `this.loaded` TẠI CHỖ.                       │
+   * │                                                                          │
+   * │ Scheduler của ca đang chạy giữ THAM CHIẾU tới đúng object `LoadedOffice` │
+   * │ mà nó nhận lúc `run()`. Dựng object MỚI ở đây nghĩa là ca đang chạy tiếp │
+   * │ tục với model và cấu hình cũ cho tới khi xong — đúng thứ người dùng muốn:│
+   * │ đổi model không được đổi luật giữa ván. Còn nếu sửa tại chỗ              │
+   * │ (`this.loaded.company = next`), những task CHƯA phóng của cùng một kế    │
+   * │ hoạch sẽ chạy model khác các task đã phóng, và hoá đơn không giải thích  │
+   * │ được nữa.                                                                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  applyCompanyConfig(next: CompanyConfig): void {
+    this.loaded = loadOffice(this.loaded.companyDir, next, this.loaded.id);
+    this.assistant.rebind(this.loaded);
+    this.layout.rebind(this.loaded);
+    this.plans.rebind(this.loaded.paths);
+    this.knowledge.rebind(this.loaded.dir, this.loaded.paths);
+    this.knowledge.scan();
+    this.refreshAssistantContext();
+  }
+
   private roleFile(roleId: string): string | undefined {
     for (const ext of ['.yaml', '.yml']) {
       const f = path.join(this.loaded.paths.roles, `${roleId}${ext}`);
@@ -673,6 +1065,7 @@ export class Office {
    *     cũ — ghi đè cả file là xoá mất id/scope/pinned và node biến khỏi kho.
    */
   savePromptLayer(who: string, layerId: string, text: string): PromptLayer[] {
+    this.assertLive();
     const layer = this.describePrompt(who).find((l) => l.id === layerId);
     if (!layer) throw new RunError(`Không có lớp "${layerId}".`, 'other');
     if (!layer.editable || !layer.file) {
@@ -709,6 +1102,34 @@ export class Office {
     return this.describePrompt(who);
   }
 
+  /**
+   * Sửa / xoá một node tri thức. → docs/SPEC-2026-08-14-agentco.md §5
+   *
+   * Tác động 1-1 và NGAY LẬP TỨC: quét lại kho, dựng lại ngữ cảnh Trợ lý, và
+   * mọi worker phóng SAU thời điểm này dùng bản mới (chúng đọc `hot()` lúc
+   * dựng prompt). Worker đang chạy giữ nguyên bản cũ — cùng luật với đổi model:
+   * đổi luật giữa ván thì không ván nào đọc được.
+   *
+   * Cái giá phải nói ra: node tri thức nằm trong prefix được cache, nên mỗi lần
+   * sửa là một lần ghi lại cache cho những vai trò có node đó trong phần HOT.
+   */
+  editKnowledge(id: string, patch: { body?: string; remove?: boolean }): void {
+    this.assertLive();
+    const ok = patch.remove
+      ? this.knowledge.removeNode(id)
+      : this.knowledge.editNode(id, patch.body ?? '');
+    if (!ok) throw new RunError(`Không có ghi chú "${id}".`, 'other');
+
+    this.knowledge.scan();
+    this.refreshAssistantContext();
+    this.emit({
+      type: 'knowledge.changed',
+      count: this.knowledge.size,
+      version: this.loaded.knowledgeVersion,
+      plan_id: null,
+    });
+  }
+
   /** Prompt phân lớp để NGƯỜI XEM ĐƯỢC. → SPEC-offices.md §4.1 */
   describePrompt(who: string): PromptLayer[] {
     const hot =
@@ -719,7 +1140,9 @@ export class Office {
             this.loaded.roles.get(who)?.hot_knowledge_size ?? 8,
             this.loaded.company.budgets.hot_knowledge_tokens,
           ).text;
-    return describePrompt(this.loaded, who, hot);
+    // Ghi nhớ hội thoại chỉ có với Trợ lý — nhân viên không có, và không được có.
+    const memory = who === 'assistant' ? this.knowledge.assistantMemoryText() : '';
+    return describePrompt(this.loaded, who, hot, memory);
   }
 
   /** cacheKey hiện tại của từng vai trò — để chẩn đoán prefix bị phá. */
@@ -738,14 +1161,173 @@ export class Office {
     });
   }
 
+  /**
+   * NÉN TRÍ NHỚ TRỢ LÝ vào kho riêng của nó, rồi bắt đầu hội thoại mới.
+   * → docs/SPEC-offices.md §4.6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO CHỦ ĐỘNG NÉN, THAY VÌ ĐỂ CLI TỰ NÉN                              │
+   * │                                                                          │
+   * │ CLI Claude Code CÓ auto-compact (SDK phơi ra hook `PreCompact`/          │
+   * │ `PostCompact` với `trigger: 'manual' | 'auto'`). Nghĩa là nén SẼ xảy ra  │
+   * │ dù ta muốn hay không.                                                    │
+   * │                                                                          │
+   * │ Rủi ro không phải tràn bộ nhớ — mà là nén tự động LÀ MẤT MÁT, xảy ra ở  │
+   * │ ngưỡng ta không thấy, giữ lại thứ ta không chọn, vào một cái kho ta      │
+   * │ không đọc được. Trợ lý sẽ quên một quyết định nào đó, lúc nào đó, và     │
+   * │ không ai biết.                                                           │
+   * │                                                                          │
+   * │ Nén chủ động: đúng thời điểm ta chọn (ranh giới một công việc vừa xong), │
+   * │ vào một file người dùng mở ra đọc được, và có `supersedes` để bản cũ     │
+   * │ rời khỏi prompt mà không mất dấu vết.                                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Vào `knowledge/agents/assistant/`, KHÔNG vào kho chung: ký ức hội thoại của
+   * Trợ lý là thứ nhân viên viết bài không cần biết và không dùng được.
+   */
+  async compactMemory(): Promise<{ saved: boolean; note: string }> {
+    this.assertLive();
+    // Chưa có hội thoại nào để nén — nhưng VẪN PHẢI DỌN RÁC.
+    //
+    // Bản trước return thẳng ở đây, nên người dùng gõ `/clear` lần thứ hai (lúc
+    // session đã sạch) thì không có gì xảy ra cả: node bị đè vẫn nằm nguyên,
+    // ghi chú cũ vẫn nằm nguyên. Đúng lúc họ đang cố dọn thì lệnh dọn im lặng.
+    if (!this.assistant.session) {
+      const swept = this.pruneNow();
+      this.clearChatLog();
+      this.emit({ type: 'office.cleared', say: 'Đã dọn cuộc trò chuyện.', plan_id: null });
+      return {
+        saved: false,
+        note: swept ? `Chưa có gì mới để nhớ.${swept}` : 'Chưa có gì để nhớ — bắt đầu mới luôn.',
+      };
+    }
+
+    let saved = false;
+    try {
+      const result = await this.mailbox.lock(() => this.assistant.compact(this.factSkeleton()));
+      this.logAssistantUsage('report', result.usage);
+      const body = result.value;
+      // "KHÔNG" là câu trả lời hợp lệ và đáng tôn trọng: ép ghi một node rỗng
+      // vào kho là tự đầu độc phần HOT của chính mình ở mọi lượt sau.
+      if (body && !/^KHÔNG\.?$/i.test(body)) {
+        this.knowledge.addAssistantMemory(
+          `Ghi nhớ tới ${new Date().toISOString().slice(0, 10)}`,
+          body,
+          this.knowledge.assistantMemoryIds(),
+        );
+        saved = true;
+      }
+    } catch (err) {
+      // Nén hỏng thì KHÔNG được quên: thà giữ một bản ghi dài còn hơn mất trắng.
+      return {
+        saved: false,
+        note: `Chưa nén được trí nhớ (${err instanceof Error ? err.message : 'lỗi'}), nên mình giữ nguyên cuộc trò chuyện.`,
+      };
+    }
+
+    const tail = this.pruneNow();
+
+    this.assistant.forget();
+    fs.rmSync(this.sessionFile(), { force: true });
+    this.clearChatLog();
+    // Phát TRƯỚC câu báo kết quả: đây là lệnh "xoá những gì đang hiện", nên câu
+    // đi sau nó mới là câu đầu tiên của cuộc trò chuyện mới.
+    this.emit({ type: 'office.cleared', say: 'Đã dọn cuộc trò chuyện.', plan_id: null });
+    this.knowledge.scan();
+    this.refreshAssistantContext();
+    this.emit({
+      type: 'knowledge.changed',
+      count: this.knowledge.size,
+      version: this.loaded.knowledgeVersion,
+      plan_id: null,
+    });
+    return {
+      saved,
+      note:
+        (saved
+          ? 'Đã dọn cuộc trò chuyện. Những gì bạn đã chốt mình cất vào sổ tay riêng, mở ở ngăn Tri thức xem được.'
+          : 'Đã dọn cuộc trò chuyện.') + tail,
+    };
+  }
+
+  /**
+   * Tự nén khi ngữ cảnh vượt trần. → docs/SPEC-token-economy.md §4
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KIỂM Ở ĐÂU VÀ VÌ SAO — hai quyết định tách biệt:                        │
+   * │                                                                          │
+   * │ NGƯỠNG là `budgets.master_compact_at` (mặc định 60 000), đo bằng         │
+   * │ `assistant.contextTokens` — tức `cache_read` thật của lượt gần nhất, chứ │
+   * │ không phải một phép đếm tay. Cửa sổ là 200K nên 60K còn rất nhiều dư     │
+   * │ địa: ta muốn chặn TRƯỚC auto-compact của CLI, không phải chạy đua với    │
+   * │ nó. Và vì `chi phí ≈ lượt × prefix × 0.1`, ngữ cảnh nhỏ là rẻ ở MỌI      │
+   * │ lượt, không chỉ ở lượt nén.                                              │
+   * │                                                                          │
+   * │ THỜI ĐIỂM là ranh giới một công việc vừa xong — chứ không phải "hễ vượt  │
+   * │ ngưỡng là nén ngay". Nén giữa lúc người dùng đang hỏi dở là cắt đúng     │
+   * │ chỗ mạch chuyện đang liền, và bản tóm tắt sẽ tệ hơn hẳn. Một việc xong   │
+   * │ là một đường may tự nhiên.                                               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Token của NHÂN VIÊN không tính vào đây. Worker chạy `persistSession:
+   * false` ở query riêng, khâu lập kế hoạch cũng vậy — chỉ `route()` (mỗi tin
+   * nhắn) và `report()` (mỗi ca) làm bản ghi này phình.
+   */
+  private maybeCompact(): void {
+    const limit = this.loaded.company.budgets.master_compact_at;
+    if (this.assistant.contextTokens < limit) return;
+    void this.compactMemory()
+      .then((r) => {
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say: `Cuộc trò chuyện đã dài, mình dọn bớt cho nhẹ. ${r.note}`,
+          plan_id: null,
+        });
+      })
+      .catch(() => {
+        /* Nén hỏng thì giữ nguyên — `compactMemory` không quên khi lỗi. */
+      });
+  }
+
+  /**
+   * Bộ khung SỰ THẬT, dựng bằng code từ `tasks/index.json`. 0 token.
+   *
+   * Đưa vào để model KHÔNG phải kể lại — và để nó không kể sai. Việc đã chạy,
+   * kết quả ở đâu, tốn bao nhiêu đều là dữ liệu ta đang cầm; thứ duy nhất chỉ
+   * model biết là những gì người dùng đã nói mà không nằm trong bản ghi nào.
+   */
+  private factSkeleton(): string {
+    const plans = this.plans.list().slice(0, 12);
+    if (plans.length === 0) return '(chưa có việc nào chạy)';
+    return plans
+      .map((p) => `- [${p.status}] ${p.request}${p.report ? `\n  → ${p.report.split('\n')[0]}` : ''}`)
+      .join('\n');
+  }
+
+  /**
+   * Dọn kho ngay, trả về câu đuôi để ghép vào báo cáo (rỗng nếu không bỏ gì).
+   *
+   * `/clear` là lúc DUY NHẤT người dùng chủ động nói "dọn đi", nên gộp mọi việc
+   * dọn vào đúng nhịp đó — thay vì rải một bộ hẹn giờ chạy ngầm mà không ai thấy
+   * và không ai kiểm được.
+   */
+  private pruneNow(): string {
+    const days = this.loaded.company.librarian.prune_after_days;
+    if (days <= 0) return '';
+    const dropped = this.knowledge.pruneStale(days);
+    if (dropped.length === 0) return '';
+    this.knowledge.scan();
+    return ` Bỏ luôn ${dropped.length} ghi chú đã cũ hoặc đã bị bản mới đè.`;
+  }
+
+  private clearChatLog(): void {
+    fs.rmSync(path.join(this.loaded.paths.state, 'chat.jsonl'), { force: true });
+  }
+
   /** Nạp lại từ đĩa. Giữ nguyên session Trợ lý — nạp lại config không phải quên hội thoại. */
   reload(): void {
-    this.loaded = loadOffice(this.loaded.companyDir, this.loaded.company, this.loaded.id);
-    this.assistant.rebind(this.loaded);
-    this.layout.rebind(this.loaded);
-    this.plans.rebind(this.loaded.paths);
-    this.knowledge.rebind(this.loaded.dir, this.loaded.paths);
-    this.knowledge.scan();
+    this.applyCompanyConfig(this.loaded.company);
   }
 
   readArtifact(rel: string): string | undefined {
@@ -784,6 +1366,7 @@ export class Office {
   private refreshAssistantContext(): void {
     this.assistant.setAssignable(this.layout.assignable());
     this.assistant.setHotKnowledge(this.assistantHot());
+    this.assistant.setMemory(this.knowledge.assistantMemoryText());
   }
 
   private assistantHot(): string {
@@ -803,7 +1386,12 @@ export class Office {
         ...base,
         label: a.display_name,
         avatar: a.avatar,
-        tier: this.loaded.company.models[this.loaded.company.models.master],
+        // Trước đây trường này mang MODEL ID cho Trợ lý nhưng mang TÊN MỨC cho
+        // nhân viên, nên cùng một ô "Model" trên giao diện hiện hai loại giá trị
+        // khác nhau. Giờ `tier` luôn là mức, `model` luôn là model.
+        tier: this.assistant.modelTier,
+        model: this.assistant.model,
+        tierInherited: a.model_tier === undefined,
         count: notes['assistant'] ?? 0,
         mcp: a.mcp,
         hue: agentHue('assistant'),
@@ -831,6 +1419,7 @@ export class Office {
       label: role.display_name || role.id,
       avatar: role.avatar,
       tier: role.model_tier,
+      model: this.loaded.company.models[role.model_tier],
       pitch: role.pitch,
       count: notes[role.id] ?? 0,
       mcp: role.mcp,
@@ -878,6 +1467,40 @@ export class Office {
   private setState(state: OfficeState, say: string): void {
     this.state = state;
     this.emit({ type: 'office.state', state, say, plan_id: this.currentRecord?.plan_id ?? null });
+  }
+
+  /**
+   * Ghi một lượt của TRỢ LÝ vào sổ chi phí.
+   *
+   * Trợ lý cũng tiêu tiền, và với văn phòng dùng nhiều để trò chuyện thì nó tiêu
+   * phần lớn. Trước đây sổ chỉ có receipt của nhân viên, nên `agentco cost` trả
+   * lời sai cho đúng câu hỏi quan trọng nhất — "còn bao nhiêu hạn mức".
+   *
+   * `task_id` mang tên KHÂU (`route`/`plan`/`report`) chứ không phải một id
+   * task: ba khâu này có hình dạng chi phí khác hẳn nhau — `route` chạy mỗi lượt
+   * và phải rẻ; `plan` chạy một lần một ca ở query riêng. Gộp lại thì không thấy
+   * khâu nào đang phình.
+   */
+  private logAssistantUsage(stage: 'route' | 'plan' | 'report', usage: Usage): void {
+    if (usage.turns === 0 && usage.costUSD === 0) return;
+    this.onUsage?.({
+      ts: new Date().toISOString(),
+      office: this.id,
+      plan_id: this.currentRecord?.plan_id ?? '',
+      task_id: stage,
+      role: 'assistant',
+      cache_key: '',
+      model: usage.model,
+      in: usage.input,
+      cache_read: usage.cacheRead,
+      cache_write: usage.cacheWrite,
+      out: usage.output,
+      cost_usd: usage.costUSD,
+      wall_ms: 0,
+      turns: usage.turns,
+      status: 'done',
+      reasked: false,
+    });
   }
 
   private recordUsage(r: Receipt): void {

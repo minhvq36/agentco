@@ -100,7 +100,15 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         name: company.config.name,
         offices: company.list(),
         allowCorePromptEdit: company.config.allow_core_prompt_edit,
+        // Mức nào là model nào — giao diện cần nói ra, nếu không thì "standard"
+        // chỉ là một chữ và người dùng không biết mình đang trả tiền cho cái gì.
+        models: company.config.models,
       });
+    }
+    if (url.pathname === '/api/company' && method === 'PATCH') {
+      const body = await readJson<{ models?: Record<string, string> }>(req);
+      if (!body.models) return json(res, 400, { error: 'thiếu "models"' });
+      return json(res, 200, { models: company.updateModels(body.models) });
     }
     if (url.pathname === '/api/office' && method === 'POST') {
       const body = await readJson<{ name?: string; id?: string }>(req);
@@ -140,8 +148,11 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       const officeId = decodeURIComponent(segments[2]);
       const rest = segments.slice(3);
 
+      // DELETE giờ chỉ còn một nghĩa: XOÁ HẲN. Mức "cất đi" là PATCH archived —
+      // hai ý định khác hẳn nhau thì không nên đi chung một động từ với một cờ
+      // trên query string, vì cờ đó rất dễ quên và hậu quả không lấy lại được.
       if (rest.length === 0 && method === 'DELETE') {
-        company.removeOffice(officeId, url.searchParams.get('deleteFiles') === 'true');
+        company.removeOffice(officeId);
         return json(res, 200, { ok: true, offices: company.list() });
       }
 
@@ -155,9 +166,39 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
           plan: office.plan ?? null,
           pending: office.readPending().length,
           knowledge: office.knowledge.size,
+          // Hai nguồn, hai vai trò khác nhau — đừng gộp:
+          //   `chat`    = hội thoại ĐÃ GHI ĐĨA, sống sót qua mọi lần tắt daemon.
+          //   `history` = vòng đệm trong bộ nhớ, để tab mở muộn bắt kịp trạng
+          //               thái SỐNG (việc đang chạy, ai đang làm gì).
+          chat: office.readChat(),
           history: company.history(officeId),
         });
       }
+      // Đổi tên văn phòng / đổi mức model của Trợ lý. Hai thứ đều nằm trong
+      // office.yaml nên đi chung một route.
+      if (rest.length === 0 && method === 'PATCH') {
+        const body = await readJson<{
+          name?: string;
+          assistant_tier?: string | null;
+          archived?: boolean;
+        }>(req);
+        // `archived` đi TRƯỚC: khôi phục rồi mới sửa được những thứ còn lại.
+        // Ngược lại thì "khôi phục và đổi tên trong một lần" sẽ bị chính chốt
+        // chỉ-đọc chặn, và người dùng không hiểu vì sao.
+        if (typeof body.archived === 'boolean') company.archiveOffice(officeId, body.archived);
+        if (typeof body.name === 'string') company.renameOffice(officeId, body.name);
+        if (body.assistant_tier !== undefined) {
+          office.setAssistantTier(body.assistant_tier ?? undefined);
+        }
+        return json(res, 200, {
+          id: office.id,
+          name: office.name,
+          archived: office.archived,
+          canvas: office.canvas(),
+          offices: company.list(),
+        });
+      }
+
       if (rest[0] === 'canvas' && method === 'GET') return json(res, 200, office.canvas());
       if (rest[0] === 'canvas' && method === 'PUT') {
         const body = await readJson<{ nodes?: unknown; edges?: unknown }>(req);
@@ -170,13 +211,21 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       }
       if (rest[0] === 'agent' && rest[1] && method === 'PATCH') {
         const body = await readJson<Record<string, unknown>>(req);
-        return json(res, 200, {
-          canvas: office.editAgent(decodeURIComponent(rest[1]), body as never),
-        });
+        const role = decodeURIComponent(rest[1]);
+        // Lưu trữ / khôi phục đi riêng: nó không sửa NỘI DUNG hồ sơ mà đổi việc
+        // người này có tồn tại trên sơ đồ hay không.
+        if (typeof body['archived'] === 'boolean') {
+          return json(res, 200, { canvas: office.archiveAgent(role, body['archived']) });
+        }
+        return json(res, 200, { canvas: office.editAgent(role, body as never) });
       }
+      // XOÁ HẲN file yaml. Mức "cất đi" là PATCH { archived } ở trên.
       if (rest[0] === 'agent' && rest[1] && method === 'DELETE') {
-        office.removeAgent(decodeURIComponent(rest[1]), url.searchParams.get('keepFile') !== 'false');
+        office.removeAgent(decodeURIComponent(rest[1]));
         return json(res, 200, { ok: true, canvas: office.canvas() });
+      }
+      if (rest[0] === 'archived' && method === 'GET') {
+        return json(res, 200, { agents: office.archivedAgents() });
       }
       if (rest[0] === 'say' && method === 'POST') {
         const body = await readJson<{ message?: string }>(req);
@@ -197,6 +246,15 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         return json(res, 200, { ok: true });
       }
       if (rest[0] === 'knowledge' && method === 'GET') {
+        return json(res, 200, { nodes: office.knowledge.list() });
+      }
+      // Id node có dấu `/` (`k/agents/assistant/…`) nên nó đi trong BODY, không
+      // trên đường dẫn — nhét vào path thì phải encode/decode nhiều lớp và sớm
+      // muộn cũng có một lớp bị quên.
+      if (rest[0] === 'knowledge' && method === 'PATCH') {
+        const body = await readJson<{ id?: string; body?: string; remove?: boolean }>(req);
+        if (!body.id) return json(res, 400, { error: 'thiếu "id"' });
+        office.editKnowledge(body.id, { body: body.body, remove: body.remove === true });
         return json(res, 200, { nodes: office.knowledge.list() });
       }
       if (rest[0] === 'plans' && !rest[1] && method === 'GET') {

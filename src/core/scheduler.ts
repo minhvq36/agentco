@@ -128,6 +128,7 @@ export class Scheduler {
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
             wall_ms: 0,
             reasked: false,
+            landed: [],
           };
           receipts.set(t.task_id, blocked);
           this.deps.emit({
@@ -241,11 +242,24 @@ export class Scheduler {
       hot.ids,
     );
 
+    /**
+     * ⚠ BẤT BIẾN: `say` KHÔNG BAO GIỜ chứa TÊN người nói.
+     *
+     * Sự kiện đã mang `role`, và mọi chỗ hiển thị đều tự tra tên từ đó
+     * (`labelFor` ở nhật ký và ở dòng trạng thái). Ghép sẵn tên vào đây thì
+     * người dùng đọc được "Người viết: Người viết: Viết 3 đoạn…" — tên hiện
+     * hai lần, ở cả hai nơi.
+     *
+     * Luật này thuộc về giao thức chứ không phải thẩm mỹ: bridge Telegram sau
+     * này cũng là một chỗ hiển thị, và nó cần tự quyết cách gắn tên (in đậm,
+     * emoji, hay bỏ hẳn). Nướng sẵn tên vào chuỗi là tước quyền đó của mọi
+     * client tương lai.
+     */
     this.deps.emit({
       type: 'task.started',
       task_id: brief.task_id,
       role: role.id,
-      say: `${role.display_name || role.id}: ${brief.goal}`,
+      say: brief.goal,
     });
 
     let handle: WorkerHandle | undefined;
@@ -269,7 +283,37 @@ export class Scheduler {
       if (handle) this.live.delete(handle);
     }
 
-    knowledge.recordHits([...hot.ids, ...cold.ids]);
+    /**
+     * ⚠ CHỈ đếm lượt COLD. Đếm cả HOT là một vòng lặp KHÉP KÍN không tự sửa được.
+     *
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ Bản trước: `recordHits([...hot.ids, ...cold.ids])`.                │
+     * │                                                                    │
+     * │  · node HOT được +1 ở MỌI task, chỉ vì nó đang ở trong HOT          │
+     * │  · `hot()` lại xếp hạng bằng chính `hits`                           │
+     * │  · `cold()` LOẠI node HOT ra khỏi cuộc thi (`excludeIds: hot.ids`)  │
+     * │                                                                    │
+     * │ ⇒ vào được HOT một lần là ở đó VĨNH VIỄN. Node ngoài HOT chỉ được   │
+     * │ +1 khi khớp từ khoá, không bao giờ đuổi kịp. Số liệu thật của người │
+     * │ dùng cho thấy đúng thế: ba node HOT có hits 6/3/2, mọi node còn lại │
+     * │ đúng bằng 0.                                                        │
+     * │                                                                    │
+     * │ Và nó làm `hits` mất hết ý nghĩa: nó đo "anh ở trong HOT bao lâu",  │
+     * │ không đo "anh có ích không".                                        │
+     * └────────────────────────────────────────────────────────────────────┘
+     *
+     * Chỉ đếm COLD thì `hits` mang đúng một nghĩa: **bộ chọn từ khoá đã thấy
+     * node này hợp với một việc CÓ THẬT bao nhiêu lần.** Vòng lặp tự sửa:
+     * node COLD leo dần → chen vào HOT → node HOT yếu nhất rơi ra → nó lại
+     * được dự thi COLD và leo lại nếu thật sự có ích.
+     *
+     * Đây cũng là điều kiện để cửa sổ khai tử trong `pruneStale` có nghĩa.
+     *
+     * Dùng `cold.matched` chứ không `cold.ids`: `matched` là MỌI node hợp việc,
+     * kể cả node đang nằm trong HOT (chúng bị loại khỏi phần render vì đã có
+     * trong prefix rồi, nhưng vẫn phải được ghi nhận là có ích). → store.ts
+     */
+    knowledge.recordHits(cold.matched);
 
     this.deps.emit({
       type: 'task.done',
@@ -326,6 +370,7 @@ export class Scheduler {
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
       wall_ms: 0,
       reasked: false,
+            landed: [],
     };
   }
 }

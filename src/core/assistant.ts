@@ -27,6 +27,7 @@ import {
   type PlanStep,
   type Receipt,
   type Role,
+  type Tier,
   type Usage,
 } from './types.js';
 import { truncateToTokens } from './tokens.js';
@@ -95,6 +96,58 @@ export class Assistant {
     this.sessionId = sessionId;
   }
 
+  /**
+   * Ngữ cảnh hiện tại to bao nhiêu — đo được, không phải ước.
+   *
+   * Ở một lượt cache ẤM, `cache_read` chính là toàn bộ prefix + bản ghi hội
+   * thoại mà server vừa đọc lại. Đó là con số thật, miễn phí, và là thứ quyết
+   * định khi nào phải nén. Đếm tay số token đã gửi thì vừa sai vừa thừa.
+   *
+   * ⚠ KHÔNG bao gồm token của nhân viên: worker chạy `persistSession: false` ở
+   * một `query()` riêng, và khâu lập kế hoạch cũng vậy. Chỉ `route()`/`report()`
+   * làm phình bản ghi này.
+   */
+  contextTokens = 0;
+
+  /** Quên hội thoại: lượt sau bắt đầu một session mới tinh. */
+  forget(): void {
+    this.sessionId = undefined;
+    this.contextTokens = 0;
+  }
+
+  /**
+   * NÉN TRÍ NHỚ: hỏi Trợ lý phần duy nhất chỉ nó biết. → docs/SPEC-offices.md §4.6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `skeleton` DO CODE DỰNG, KHÔNG HỎI MODEL.                                │
+   * │                                                                          │
+   * │ Việc đã chạy, kết quả ở đâu, tốn bao nhiêu — tất cả nằm trong            │
+   * │ `tasks/index.json` và trong receipt. Bắt model kể lại là trả tiền để     │
+   * │ nhận về một bản sao có thể sai. Ta đưa sự thật vào, và chỉ hỏi thứ       │
+   * │ KHÔNG có ở đâu khác: người dùng thích gì, đã chốt gì, đang dở gì.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Chạy TRÊN session cũ — phải thế, vì cả điểm của nó là đọc bản ghi sắp bỏ.
+   */
+  async compact(skeleton: string): Promise<AssistantResult<string>> {
+    const { text, usage } = await this.askSession(
+      `Sắp bắt đầu một cuộc trò chuyện mới. Đây là những việc đã chạy (dữ liệu hệ thống, KHÔNG cần kể lại):\n\n` +
+        `${skeleton}\n\n` +
+        `Hãy viết lại NHỮNG THỨ KHÔNG CÓ TRONG DỮ LIỆU TRÊN mà bạn cần nhớ để phục vụ tiếp:\n` +
+        `- người dùng thích gì, không thích gì (giọng văn, độ dài, cách trình bày)\n` +
+        `- những gì đã CHỐT và không cần bàn lại\n` +
+        `- việc đang dở, câu hỏi bạn đã hỏi mà chưa có trả lời\n\n` +
+        // ~500 từ chứ không phải 200: khối này là thứ ĐẮT GIÁ NHẤT trong prefix
+        // của Trợ lý — nó nằm trong cache nên trả ~0.1× sau lần ghi đầu, mà mất
+        // một quyết định của người dùng thì không mua lại được bằng token nào.
+        // Dài hơn một chút mà giữ được đủ ý là lãi.
+        `Viết gạch đầu dòng tiếng Việt, dưới 500 từ, mỗi dòng một ý dùng lại được. ` +
+        `KHÔNG kể lại danh sách việc đã làm. KHÔNG viết lời chào hay lời hứa. ` +
+        `Nếu thật sự không có gì đáng nhớ thì trả về đúng một chữ: KHÔNG`,
+    );
+    return { value: text.trim(), usage };
+  }
+
   /** Sau khi nạp lại văn phòng từ đĩa. Giữ nguyên session. */
   rebind(office: LoadedOffice): void {
     this.office = office;
@@ -102,6 +155,13 @@ export class Assistant {
 
   setHotKnowledge(text: string): void {
     this.hotKnowledge = text.trim();
+  }
+
+  /** Bản nén trí nhớ — khối riêng trong prefix, không trộn vào hot. */
+  private memory = '';
+
+  setMemory(text: string): void {
+    this.memory = text.trim();
   }
 
   /**
@@ -116,11 +176,18 @@ export class Assistant {
     this.assignable = ids;
   }
 
-  /** Vai trò Assistant thật sự thấy. Scheduler dùng đúng danh sách này để validate. */
+  /**
+   * Vai trò Assistant thật sự thấy. Scheduler dùng đúng danh sách này để validate.
+   *
+   * Vai trò đã LƯU TRỮ bị loại ở đây, không phụ thuộc vào canvas: `assignable`
+   * đến từ cạnh nối, mà cạnh nối chỉ tồn tại khi có layout.json. Văn phòng chưa
+   * có file đó thì `assignable` là undefined = "tất cả" — và "tất cả" phải
+   * không bao gồm người đã cất đi.
+   */
   assignableRoles(): Set<string> {
-    const all = new Set(this.office.roles.keys());
-    if (!this.assignable) return all;
-    return new Set([...all].filter((id) => this.assignable!.has(id)));
+    const live = [...this.office.roles.keys()].filter((id) => !this.office.archivedRoles.has(id));
+    if (!this.assignable) return new Set(live);
+    return new Set(live.filter((id) => this.assignable!.has(id)));
   }
 
   /**
@@ -158,10 +225,25 @@ export class Assistant {
     return `# Employees you can assign to\n\n${lines.join('\n')}`;
   }
 
+  /**
+   * Mức model của Trợ lý này. Văn phòng có quyền ghi đè `models.master`.
+   * → docs/SPEC-offices.md §4.5
+   */
+  get modelTier(): Tier {
+    return this.office.config.assistant.model_tier ?? this.office.company.models.master;
+  }
+
+  /** Model thật sự sẽ chạy — để giao diện nói ra thay vì bắt người dùng đoán. */
+  get model(): string {
+    return this.office.company.models[this.modelTier];
+  }
+
   private systemPrompt(): string[] {
     const built = buildAssistantPrompt(this.office, {
       roster: this.roster(),
       hotKnowledge: this.hotKnowledge,
+      memory: this.memory,
+      model: this.model,
     });
     return built.systemPrompt as string[];
   }
@@ -308,10 +390,22 @@ export class Assistant {
 
   // ── nội bộ
 
-  /** Trên session Assistant. Model CỐ ĐỊNH — không bao giờ đổi giữa ca. */
+  /**
+   * Trên session Assistant.
+   *
+   * Model đọc lại ở MỖI lượt, cố ý. Trước đây chú thích ở đây ghi "model CỐ
+   * ĐỊNH — không bao giờ đổi giữa ca", nhưng đó là mô tả một giới hạn chứ không
+   * phải một bất biến: người dùng có quyền đổi model của Trợ lý, và cái giá của
+   * việc đó đã biết rõ (SPEC-offices.md §4.5).
+   *
+   * Thứ THẬT SỰ bất biến là: đổi model KHÔNG được chạm vào việc đang chạy. Điều
+   * đó đã đúng sẵn — `Office.applyCompanyConfig` dựng một `LoadedOffice` MỚI,
+   * còn Scheduler của ca đang chạy giữ nguyên bản cũ nó cầm từ đầu. Trợ lý thì
+   * mỗi lúc chỉ làm một việc (hòm thư khoá), nên không có lượt nào bị đổi model
+   * giữa chừng.
+   */
   private askSession(prompt: string): Promise<{ text: string; usage: Usage }> {
-    const models = this.office.company.models;
-    return this.run(prompt, models[models.master], true);
+    return this.run(prompt, this.model, true);
   }
 
   /** Query độc lập, không đụng session. Đổi model ở đây là an toàn. */
@@ -353,6 +447,11 @@ export class Assistant {
         }
         if (m['type'] === 'result') {
           const u = (m['usage'] ?? {}) as Record<string, number>;
+          // Chỉ đo trên session THẬT. Query one-shot (lập kế hoạch) có ngữ cảnh
+          // riêng, lấy số của nó là đo nhầm người.
+          if (useSession) {
+            this.contextTokens = (u['cache_read_input_tokens'] ?? 0) + (u['cache_creation_input_tokens'] ?? 0);
+          }
           usage = addUsage(usage, {
             input: u['input_tokens'] ?? 0,
             output: u['output_tokens'] ?? 0,

@@ -152,6 +152,8 @@ function PlanDetail({
         </ol>
       )}
 
+      <TokenPanel log={log} />
+
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {log.length === 0 ? (
           <div className="px-1 py-4 text-[13px] text-muted">Việc này chưa ghi được sự kiện nào.</div>
@@ -173,6 +175,110 @@ function PlanDetail({
 
 function stepIcon(s: string): string {
   return { pending: '○', running: '⟳', done: '✓', problem: '⚠', waiting_human: '⏸' }[s] ?? '○';
+}
+
+function kilo(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+}
+
+/**
+ * BẢNG TOKEN của một công việc. → docs/SPEC-token-economy.md §5
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO PHẢI HIỆN, VÀ VÌ SAO MODEL KHÔNG ĐƯỢC BIẾT                        │
+ * │                                                                          │
+ * │ `SPEC-token-economy.md` §5 gọi cảnh báo "cache write bất thường" là hệ    │
+ * │ thống báo động CHÍNH, và nói thẳng: đây là lỗi người dùng sẽ KHÔNG tự     │
+ * │ nhìn ra nếu không có dòng này. Nhưng cho tới giờ nó không tồn tại ở đâu   │
+ * │ trên giao diện — số liệu vẫn nằm sẵn trong mỗi sự kiện `task.done` và     │
+ * │ trong file log, chỉ là chưa ai vẽ ra. Hiện nó lên tốn 0 token.            │
+ * │                                                                          │
+ * │ Và nó phải là VIỆC CỦA CODE, không bao giờ của model. Ba lý do:           │
+ * │  1. Nhân viên không làm gì được với con số đó — nó không tự đổi cách làm  │
+ * │     việc vì biết mình vừa ghi 13K cache.                                  │
+ * │  2. Nói cho model biết nghĩa là nhét con số vào prompt, tức là trả tiền   │
+ * │     ở MỌI lượt để kể một chuyện chỉ có nghĩa với người quan sát.          │
+ * │  3. `CORE_PROMPT` đã cấm thuật ngữ kỹ thuật trong `say`. Kế toán là việc  │
+ * │     của người đứng ngoài đếm, không phải của người đang làm.              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Đọc bảng này thế nào (bài 1 của TEST-WALKTHROUGH): nhìn cột **ghi cache** —
+ * task ĐẦU của mỗi vai trò lớn, các task sau nhỏ. Đó là cache priming gate đang
+ * chạy đúng. Cả loạt đều lớn = gate hỏng, và mỗi task đang trả nguyên giá prefix.
+ */
+function TokenPanel({ log }: { log: AgentEvent[] }) {
+  const rows = log.filter(
+    (e): e is Extract<AgentEvent, { type: 'task.done' }> => e.type === 'task.done',
+  );
+  if (rows.length === 0) return null;
+
+  const total = rows.reduce(
+    (a, e) => ({
+      read: a.read + e.usage.cacheRead,
+      write: a.write + e.usage.cacheWrite,
+      out: a.out + e.usage.output,
+      turns: a.turns + e.usage.turns,
+      cost: a.cost + e.usage.costUSD,
+    }),
+    { read: 0, write: 0, out: 0, turns: 0, cost: 0 },
+  );
+
+  // Cùng một vai trò ghi cache nhiều lần trong MỘT ca = có gì đó đang phá prefix
+  // giữa chừng (bump version, sửa skills, đổi model). Đây là dòng báo động chính.
+  const writesByRole = new Map<string, number>();
+  for (const e of rows) {
+    if (e.usage.cacheWrite > 2000) writesByRole.set(e.role, (writesByRole.get(e.role) ?? 0) + 1);
+  }
+  const noisy = [...writesByRole.entries()].filter(([, n]) => n > 1);
+
+  return (
+    <details className="flex-none border-b border-line px-4 py-2">
+      <summary className="cursor-pointer list-none text-xs text-muted marker:hidden">
+        Token: <span className="tabular-nums text-ink">{kilo(total.read)}</span> đọc lại ·{' '}
+        <span className="tabular-nums text-ink">{kilo(total.write)}</span> ghi cache ·{' '}
+        <span className="tabular-nums text-ink">{total.turns}</span> lượt
+        {noisy.length > 0 && <span className="ml-1.5 text-danger">⚠ ghi cache lặp</span>}
+        <span className="float-right">chi tiết</span>
+      </summary>
+
+      <table className="mt-2 w-full text-[12px]">
+        <thead>
+          <tr className="text-muted">
+            <th className="pb-1 text-left font-normal">việc</th>
+            <th className="pb-1 text-right font-normal">đọc lại</th>
+            <th className="pb-1 text-right font-normal">ghi cache</th>
+            <th className="pb-1 text-right font-normal">lượt</th>
+            <th className="pb-1 text-right font-normal">$</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((e, i) => (
+            <tr key={i} className="border-t border-line">
+              <td className="py-1 pr-2 text-ink">{labelFor(e.role)}</td>
+              <td className="py-1 text-right tabular-nums text-muted">{kilo(e.usage.cacheRead)}</td>
+              <td className="py-1 pl-2 text-right tabular-nums text-ink">{kilo(e.usage.cacheWrite)}</td>
+              <td className="py-1 pl-2 text-right tabular-nums text-muted">{e.usage.turns}</td>
+              <td className="py-1 pl-2 text-right tabular-nums text-muted">
+                ${e.usage.costUSD.toFixed(4)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {noisy.length > 0 ? (
+        <p className="mt-2 text-xs leading-relaxed text-danger">
+          ⚠ {noisy.map(([r]) => labelFor(r)).join(', ')} ghi cache nhiều lần trong một ca. Có thứ gì
+          đang phá prefix giữa chừng — sửa skills, đổi model, hoặc bump version lúc đang chạy.
+        </p>
+      ) : (
+        <p className="mt-2 text-xs leading-relaxed text-muted">
+          Task đầu của mỗi vai trò <b>ghi cache</b> lớn, các task sau nhỏ — đó là cache priming gate
+          chạy đúng. Cả loạt đều lớn nghĩa là gate hỏng.
+        </p>
+      )}
+    </details>
+  );
 }
 
 /**

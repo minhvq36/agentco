@@ -22,7 +22,7 @@
  * `office.say()`.
  */
 
-export type CommandName = 'stop' | 'approve' | 'reject' | 'status' | 'help';
+export type CommandName = 'stop' | 'approve' | 'reject' | 'status' | 'help' | 'clear';
 
 export interface CommandSpec {
   name: CommandName;
@@ -36,6 +36,15 @@ export const COMMANDS: readonly CommandSpec[] = [
   { name: 'approve', aliases: ['approve', 'ok', 'y'], help: 'Duyệt thứ đang chờ bạn' },
   { name: 'reject', aliases: ['reject', 'no', 'n'], help: 'Từ chối thứ đang chờ bạn' },
   { name: 'status', aliases: ['status', 'st'], help: 'Đang chạy gì, đã tốn bao nhiêu' },
+  /**
+   * Cùng TÊN với `/clear` của Claude Code là có chủ ý: người dùng đã quen phản
+   * xạ đó, và ý nghĩa ở đây khớp. Nhưng nó KHÔNG bao giờ đi tới CLI — danh sách
+   * trắng ở `parseInput` chặn mọi chuỗi gạch chéo, và ta xử lý bằng code.
+   *
+   * Khác một điểm quan trọng so với `/clear` của Claude Code: ta NÉN TRƯỚC KHI
+   * QUÊN. Bản nén đi vào sổ tay riêng của Trợ lý, đọc lại được ở ngăn Tri thức.
+   */
+  { name: 'clear', aliases: ['clear'], help: 'Dọn cuộc trò chuyện, cất những gì đã chốt vào sổ tay' },
   { name: 'help', aliases: ['help', 'h', '?'], help: 'Xem danh sách lệnh này' },
 ];
 
@@ -72,11 +81,39 @@ export function parseInput(raw: string): ParsedInput {
   return { kind: 'unknown', typed: word };
 }
 
-/** Câu trả lời cho `/help` và cho lệnh không nhận ra. Tiếng Việt, 0 token. */
+/**
+ * Câu trả lời cho `/help` và cho lệnh không nhận ra. Tiếng Việt, 0 token.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO XUỐNG DÒNG THAY VÌ CĂN CỘT                                        │
+ * │                                                                          │
+ * │ Bản trước xếp `/lệnh — mô tả` trên MỘT dòng. Khung chat rộng ~330px, và  │
+ * │ cùng bộ lệnh này sẽ chạy qua Telegram — cả hai đều hẹp. Một dòng dài bị  │
+ * │ ngắt tự động ở chỗ ngẫu nhiên, và phần mô tả rơi xuống thẳng hàng với    │
+ * │ tên lệnh kế tiếp: người đọc không còn phân biệt được đâu là lệnh.        │
+ * │                                                                          │
+ * │ Căn cột bằng khoảng trắng cũng không cứu được — nó chỉ đúng với font     │
+ * │ đơn cách, mà bong bóng chat dùng font thường.                            │
+ * │                                                                          │
+ * │ Nên: tên lệnh một dòng, mô tả thụt vào ở dòng dưới. Đọc được ở mọi bề    │
+ * │ rộng, kể cả trên điện thoại.                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Chuỗi này có ký tự xuống dòng thật. Bên hiển thị PHẢI giữ chúng
+ * (`white-space: pre-wrap`), nếu không HTML gộp hết thành một dòng.
+ */
 export function helpText(unknown?: string): string {
-  const lines = COMMANDS.map((c) => `  /${c.aliases[0]}  —  ${c.help}`);
+  const blocks = COMMANDS.map((c) => {
+    // Viết tắt là thứ người dùng chỉ cần biết MỘT lần, nên nó đi cùng dòng tên
+    // lệnh chứ không chiếm dòng riêng.
+    const short = c.aliases.slice(1).filter((a) => a.length <= 2);
+    const alias = short.length ? `   (hoặc ${short.map((a) => `/${a}`).join(', ')})` : '';
+    return `/${c.aliases[0]}${alias}\n    ${c.help}`;
+  });
+
   const head = unknown
     ? `Không có lệnh "/${unknown}". Các lệnh dùng được:`
     : 'Các lệnh dùng được:';
-  return `${head}\n${lines.join('\n')}\n\nMuốn nhắn một câu bắt đầu bằng dấu "/" thì gõ hai dấu: //`;
+
+  return `${head}\n\n${blocks.join('\n\n')}\n\nMuốn nhắn một câu bắt đầu bằng dấu "/" thì gõ hai dấu: //`;
 }

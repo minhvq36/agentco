@@ -15,6 +15,12 @@
   --color-ok: #3f7d4a;
   --color-warn: #b4832a;
   --color-danger: #c0392b;
+  /**
+   * Nền cho thông báo lỗi. Đủ đậm để nhìn phát biết là lỗi, đủ nhạt để chữ
+   * `ink` vẫn đọc được trên đó — lỗi phải NÓI được chuyện gì xảy ra, mà muốn
+   * nói được thì trước hết phải đọc được.
+   */
+  --color-danger-soft: #fbe6e2;
   --color-grid: #ece7de;
   --color-wire: #cbc4b8;
 
@@ -33,6 +39,7 @@
     --color-ok: #7fb583;
     --color-warn: #d8b45e;
     --color-danger: #e07a6a;
+    --color-danger-soft: #40201a;
     --color-grid: #221f18;
     --color-wire: #4a4436;
   }

@@ -1,4 +1,4 @@
-import { Plus, Power, Square } from 'lucide-react';
+import { Pencil, Plus, Power, Square } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Select, Tip } from '@/components/ui/misc';
@@ -19,7 +19,13 @@ const STATE_DOT: Record<string, string> = {
   stopped: 'bg-muted',
 };
 
-export function Header({ onNewOffice }: { onNewOffice(): void }) {
+export function Header({
+  onNewOffice,
+  onRenameOffice,
+}: {
+  onNewOffice(): void;
+  onRenameOffice(): void;
+}) {
   const company = useApp((s) => s.company);
   const officeId = useApp((s) => s.officeId);
   const officeState = useApp((s) => s.officeState);
@@ -36,13 +42,28 @@ export function Header({ onNewOffice }: { onNewOffice(): void }) {
           onChange={(e) => void actions.openOffice(e.target.value)}
           className="max-w-56"
         >
-          {company.offices.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.avatar} {o.name}
-              {o.error ? ' ⚠' : ''}
-            </option>
-          ))}
+          {/* Văn phòng đã cất vào lưu trữ KHÔNG nằm ở đây — ô này là chỗ chọn
+              nơi làm việc, mà chỗ đã cất đi thì không làm việc được. Chúng nằm
+              ở bảng Tổng quan, kèm nút Khôi phục. Ngoại lệ: nếu đang mở đúng
+              cái vừa bị cất thì vẫn phải hiện, nếu không ô chọn trống trơn. */}
+          {company.offices
+            .filter((o) => !o.archived || o.id === officeId)
+            .map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.avatar} {o.name}
+                {o.archived ? ' (lưu trữ)' : ''}
+                {o.error ? ' ⚠' : ''}
+              </option>
+            ))}
         </Select>
+      )}
+
+      {officeId && (
+        <Tip label="Đổi tên văn phòng đang mở">
+          <Button size="iconSm" variant="ghost" aria-label="Đổi tên văn phòng" onClick={onRenameOffice}>
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        </Tip>
       )}
 
       {officeId && (

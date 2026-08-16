@@ -245,25 +245,69 @@ async function cmdOffice(): Promise<void> {
     return;
   }
 
+  /**
+   * `office archive <id>` / `office restore <id>` — soft delete.
+   * → docs/SPEC-offices.md §3.1
+   *
+   * Đây là mức người dùng nên dùng: chỉ gắn một cờ, file không đi đâu cả, và
+   * văn phòng vẫn giữ TÊN trong sổ chi phí. Xoá hẳn thì những dòng tiền của nó
+   * chỉ còn cái mã trần để lần ra.
+   */
+  if (sub === 'archive' || sub === 'restore') {
+    const id = argv[2];
+    if (!id) {
+      console.error(`Thiếu mã văn phòng.\nVí dụ:  agentco office ${sub} noi-dung`);
+      process.exit(EXIT.config);
+    }
+    const archived = sub === 'archive';
+    if (info) {
+      await askDaemon(`${info.url}/api/office/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ archived }),
+      });
+    } else {
+      Company.open(companyDir).archiveOffice(id, archived);
+    }
+    console.log(
+      archived
+        ? `Đã cất văn phòng "${id}" vào lưu trữ. Khôi phục: agentco office restore ${id}`
+        : `Đã khôi phục văn phòng "${id}".`,
+    );
+    return;
+  }
+
   if (sub === 'rm') {
     const id = argv[2];
     if (!id) {
       console.error('Thiếu mã văn phòng.\nVí dụ:  agentco office rm noi-dung');
       process.exit(EXIT.config);
     }
-    const deleteFiles = flags['delete-files'] === true;
-    if (info) {
-      await askDaemon(`${info.url}/api/office/${encodeURIComponent(id)}?deleteFiles=${deleteFiles}`, {
-        method: 'DELETE',
-      });
-    } else {
-      Company.open(companyDir).removeOffice(id, deleteFiles);
+    // `rm` giờ chỉ còn MỘT nghĩa: xoá hẳn, không lấy lại được. Muốn cất đi thì
+    // dùng `archive`. Cờ `--delete-files` từng là cách phân biệt hai ý định đó,
+    // và đó là chỗ sai: cái cờ dễ quên nhất lại là cái quyết định mất hay không.
+    if (flags['yes'] !== true) {
+      console.error(
+        `Xoá hẳn văn phòng "${id}": mất toàn bộ nhân viên, kỹ năng, kho tri thức và kết quả.\n` +
+          `Không lấy lại được.\n\n` +
+          `  Muốn cất đi rồi lấy lại sau:  agentco office archive ${id}\n` +
+          `  Chắc chắn xoá hẳn:            agentco office rm ${id} --yes`,
+      );
+      process.exit(EXIT.config);
     }
-    console.log(deleteFiles ? `Đã xoá văn phòng "${id}" và toàn bộ file.` : `Đã đóng văn phòng "${id}" (file vẫn còn).`);
+    if (info) {
+      await askDaemon(`${info.url}/api/office/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    } else {
+      Company.open(companyDir).removeOffice(id);
+    }
+    console.log(`Đã xoá hẳn văn phòng "${id}" và toàn bộ file.`);
     return;
   }
 
-  console.error(`Không có lệnh "office ${sub}".\nDùng: office list | office new "Tên" | office rm <id>`);
+  console.error(
+    `Không có lệnh "office ${sub}".\n` +
+      `Dùng: office list | office new "Tên" | office archive <id> | office restore <id> | office rm <id> --yes`,
+  );
   process.exit(EXIT.config);
 }
 

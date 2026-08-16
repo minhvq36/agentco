@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { FileCode2, Pencil, X } from 'lucide-react';
+﻿import { useEffect, useState } from 'react';
+import { Archive, FileCode2, Pencil, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Textarea } from '@/components/ui/misc';
@@ -18,32 +18,32 @@ import type { CanvasNode } from '@/lib/types';
  * Sửa hồ sơ nhân viên tại chỗ. → docs/SPEC-tools-approval.md §1
  *
  * KHÔNG autosave. Sửa `pitch` bump cacheKey của Trợ lý (pitch nằm trong roster
- * của nó); sửa mức model bump cacheKey của chính agent này. Nút Lưu tường minh
- * và nói ra cái giá — cùng luật với skills.
+ * của nó). Nút Lưu tường minh và nói ra cái giá — cùng luật với skills.
+ *
+ * Mức model CỐ Ý không nằm trong form này nữa: nó có ô riêng (`ModelPicker`),
+ * đúng một chỗ, dùng chung với Trợ lý. Cùng một thứ sửa được ở hai nơi là kiểu
+ * gì rồi cũng có một nơi bị quên khi luật đổi.
  */
 function AgentProfile({ node }: { node: CanvasNode }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(node.label);
   const [pitch, setPitch] = useState(node.pitch ?? '');
-  const [tier, setTier] = useState(node.tier ?? 'standard');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setName(node.label);
     setPitch(node.pitch ?? '');
-    setTier(node.tier ?? 'standard');
     setOpen(false);
-  }, [node.id, node.label, node.pitch, node.tier]);
+  }, [node.id, node.label, node.pitch]);
 
-  const dirty = name !== node.label || pitch !== (node.pitch ?? '') || tier !== node.tier;
+  const dirty = name !== node.label || pitch !== (node.pitch ?? '');
 
   if (!open) {
     return (
       <>
         {node.pitch && <Note>{node.pitch}</Note>}
-        <Row k="Model" v={node.tier} />
         <button
-          className="mt-2 flex items-center gap-1.5 text-[13px] text-accent hover:underline"
+          className="mb-3 flex items-center gap-1.5 text-[13px] text-accent hover:underline"
           onClick={() => setOpen(true)}
         >
           <Pencil className="h-3.5 w-3.5" />
@@ -63,15 +63,6 @@ function AgentProfile({ node }: { node: CanvasNode }) {
       </Label>
       <Textarea id="ag-pitch" rows={3} value={pitch} onChange={(e) => setPitch(e.target.value)} />
 
-      <Label htmlFor="ag-tier" className="mt-3">
-        Mức model
-      </Label>
-      <Select id="ag-tier" className="w-full" value={tier} onChange={(e) => setTier(e.target.value)}>
-        <option value="standard">standard — cân bằng</option>
-        <option value="eco">eco — rẻ hơn, chậm hơn, cần nhiều lượt hơn</option>
-        <option value="deep">deep — chỉ cho việc thật khó</option>
-      </Select>
-
       <p className="mt-3 text-xs leading-relaxed text-muted">
         Lưu sẽ làm Trợ lý ghi lại bộ nhớ đệm một lần — giới thiệu nằm trong ngữ cảnh của nó ở mọi lượt
         trò chuyện.
@@ -90,7 +81,6 @@ function AgentProfile({ node }: { node: CanvasNode }) {
             const ok = await actions.editAgent(node.role!, {
               display_name: name.trim(),
               pitch: pitch.trim(),
-              model_tier: tier,
             });
             setBusy(false);
             if (ok) setOpen(false);
@@ -102,6 +92,127 @@ function AgentProfile({ node }: { node: CanvasNode }) {
     </div>
   );
 }
+
+const TIER_HINT: Record<string, string> = {
+  eco: 'eco — rẻ nhất, chậm hơn và cần nhiều lượt hơn',
+  standard: 'standard — cân bằng',
+  deep: 'deep — chỉ cho việc thật khó, đắt hơn nhiều',
+};
+
+/**
+ * Ô đổi model. MỘT component cho cả Trợ lý và nhân viên.
+ * → docs/SPEC-offices.md §4.5
+ *
+ * Hai bên khác nhau đúng hai điểm, và cả hai đều là SỰ THẬT về cái giá phải trả:
+ *
+ *  - Trợ lý có tuỳ chọn "theo mặc định công ty", và đổi nó làm mất prompt cache
+ *    một lượt (nó chạy `resume`, nên lượt đó gửi lại cả bản ghi hội thoại).
+ *    Trí nhớ KHÔNG mất — bản ghi nằm trên đĩa, độc lập với model.
+ *  - Nhân viên là hàm không trạng thái: đổi model không mất gì cả.
+ *
+ * Nói ra khác nhau đó thay vì một câu cảnh báo chung, vì một câu chung thì hoặc
+ * doạ người dùng ở chỗ không đáng, hoặc trấn an ở chỗ đáng lo.
+ */
+function ModelPicker({ node }: { node: CanvasNode }) {
+  const isAssistant = node.kind === 'assistant';
+  const companyDefault = useApp((s) => s.company?.models.master ?? 'standard');
+  const models = useApp((s) => s.company?.models);
+  const [open, setOpen] = useState(false);
+  const current = isAssistant && node.tierInherited ? '' : (node.tier ?? 'standard');
+  const [tier, setTier] = useState(current);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setTier(isAssistant && node.tierInherited ? '' : (node.tier ?? 'standard'));
+    setOpen(false);
+  }, [node.id, node.tier, node.tierInherited, isAssistant]);
+
+  const effective = tier || companyDefault;
+
+  if (!open) {
+    return (
+      <>
+        <Row
+          k="Mức model"
+          v={
+            <>
+              {node.tier}
+              {node.tierInherited ? ' · theo công ty' : ''}
+            </>
+          }
+        />
+        <Row k="Model" v={<span className="font-mono text-[11.5px]">{node.model}</span>} />
+        <button
+          className="mt-2 flex items-center gap-1.5 text-[13px] text-accent hover:underline"
+          onClick={() => setOpen(true)}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Đổi model
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <div className="my-3 rounded-lg border border-line p-3">
+      <Label htmlFor="tier-pick">Mức model</Label>
+      <Select
+        id="tier-pick"
+        className="w-full"
+        value={tier}
+        onChange={(e) => setTier(e.target.value)}
+      >
+        {isAssistant && <option value="">theo mặc định công ty ({companyDefault})</option>}
+        <option value="eco">{TIER_HINT['eco']}</option>
+        <option value="standard">{TIER_HINT['standard']}</option>
+        <option value="deep">{TIER_HINT['deep']}</option>
+      </Select>
+      {models && (
+        <p className="mt-1.5 font-mono text-[11.5px] text-muted">
+          {models[effective as 'eco' | 'standard' | 'deep']}
+        </p>
+      )}
+
+      {isAssistant ? (
+        <p className="mt-3 text-xs leading-relaxed text-muted">
+          Trợ lý <b>vẫn nhớ nguyên</b> cuộc trò chuyện — bản ghi nằm trên đĩa, không thuộc về model.
+          Cái mất là bộ nhớ đệm: lượt sau phải gửi lại toàn bộ ngữ cảnh một lần, nên trò chuyện càng
+          dài thì lần đổi này càng tốn. Sau đó về lại bình thường.
+        </p>
+      ) : (
+        <p className="mt-3 text-xs leading-relaxed text-muted">
+          Nhân viên làm xong là quên, nên đổi model <b>không mất gì cả</b> — chỉ ghi lại bộ nhớ đệm
+          một lần cho model mới.
+        </p>
+      )}
+      <p className="mt-2 text-xs leading-relaxed text-muted">
+        Việc đang chạy giữ nguyên model cũ cho tới khi xong. Mức mới áp dụng cho việc giao từ giờ.
+      </p>
+
+      <div className="mt-3 flex gap-2">
+        <Button size="sm" onClick={() => setOpen(false)}>
+          Thôi
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={tier === current || busy}
+          onClick={async () => {
+            setBusy(true);
+            const ok = isAssistant
+              ? await actions.setAssistantTier(tier || null)
+              : await actions.editAgent(node.role!, { model_tier: tier });
+            setBusy(false);
+            if (ok) setOpen(false);
+          }}
+        >
+          {busy ? 'Đang lưu…' : 'Lưu'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -155,7 +266,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               Trợ lý không tự làm việc. Nó chia việc, và chỉ nhìn thấy giới thiệu của những người{' '}
               <b>có dây nối</b> tới đây.
             </Note>
-            <Row k="Model" v={node.tier} />
+            <ModelPicker node={node} />
             <Row k="Đang trực" v={`${onDuty.length} người`} />
             <Row k="Đang nghỉ" v={`${off.length} người`} />
             <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
@@ -219,6 +330,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
         {node.kind === 'agent' && (
           <>
             <AgentProfile node={node} />
+            <ModelPicker node={node} />
             <Row k="Mã vai trò" v={node.role} />
             <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
             <Row k="Trạng thái" v={node.connected ? 'đang trực' : 'đang nghỉ'} />
@@ -237,8 +349,16 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               <Button onClick={() => toggleDuty(node)}>
                 {node.connected ? 'Cho nghỉ' : 'Cho trực lại'}
               </Button>
+              {/* "Cho nghỉ" = còn trên sơ đồ, chỉ mất dây → tạm thời.
+                  "Cất đi"  = biến khỏi sơ đồ, file còn nguyên → lâu dài.
+                  Hai mức khác nhau thật, nên là hai nút, không phải một nút hỏi lại. */}
+              <Button onClick={() => void actions.archiveAgent(node.role!, true)}>
+                <Archive className="h-4 w-4" />
+                Cất vào lưu trữ
+              </Button>
               <Button variant="danger" onClick={() => setConfirmRemove(node)}>
-                Bỏ khỏi sơ đồ
+                <Trash2 className="h-4 w-4" />
+                Xoá hẳn
               </Button>
             </div>
 
@@ -254,32 +374,30 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
       <Dialog open={!!confirmRemove} onOpenChange={(o) => !o && setConfirmRemove(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Bỏ “{confirmRemove?.label}” khỏi sơ đồ?</DialogTitle>
+            <DialogTitle>Xoá hẳn “{confirmRemove?.label}”?</DialogTitle>
             <DialogDescription>
-              Mặc định vẫn <b>giữ nguyên</b> file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ sổ
-              tay kinh nghiệm của người này — chỉ là Trợ lý không thấy nữa. Xoá node và xoá công sức viết
-              kỹ năng là hai ý định khác nhau.
+              Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết cho
+              người này. <b>Không lấy lại được.</b>
+              <br />
+              <br />
+              Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ —
+              đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
+              <br />
+              <br />
+              Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục được
+              bất cứ lúc nào.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button onClick={() => setConfirmRemove(null)}>Thôi</Button>
             <Button
-              variant="primary"
-              onClick={() => {
-                if (confirmRemove?.role) void actions.removeAgent(confirmRemove.role, true);
-                setConfirmRemove(null);
-              }}
-            >
-              Bỏ, giữ file
-            </Button>
-            <Button
               variant="danger"
               onClick={() => {
-                if (confirmRemove?.role) void actions.removeAgent(confirmRemove.role, false);
+                if (confirmRemove?.role) void actions.removeAgent(confirmRemove.role);
                 setConfirmRemove(null);
               }}
             >
-              Xoá cả file
+              Xoá hẳn
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -20,12 +20,19 @@ import { createHash } from 'node:crypto';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 
 import type { LoadedOffice } from './config.js';
-import { loadSkill } from './config.js';
+import { loadSkill, skillFileFor } from './config.js';
 import type { Role, TaskBrief } from './types.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 
-/** Bump khi CORE_PROMPT hoặc cách dựng prompt thay đổi. Đi vào cacheKey. */
-export const PROMPT_SCHEMA_VERSION = 2;
+/**
+ * Bump khi CORE_PROMPT hoặc cách dựng prompt thay đổi. Đi vào cacheKey.
+ *
+ * v3 (16/08/2026): thêm `Options.tools` để CẮT THẬT bộ tool, không chỉ tự-duyệt
+ * bằng `allowedTools`. Định nghĩa tool đứng TRƯỚC system prompt trong prefix
+ * được cache, nên bộ tool đổi = prefix đổi — phải bump, nếu không priming gate
+ * tưởng cache còn ấm trong khi nó đã nguội. → worker.ts
+ */
+export const PROMPT_SCHEMA_VERSION = 3;
 
 /**
  * L0 — LỚP CORE. Người dùng KHÔNG sửa được.
@@ -252,21 +259,35 @@ export function buildWorkerPrompt(
  */
 export function buildAssistantPrompt(
   office: LoadedOffice,
-  opts: { roster: string; hotKnowledge?: string; language?: string },
+  opts: {
+    roster: string;
+    hotKnowledge?: string;
+    /** Bản nén trí nhớ hội thoại. Khối RIÊNG, không trộn vào hot. */
+    memory?: string;
+    language?: string;
+    model?: string;
+  },
 ): BuiltPrompt {
   const language = opts.language ?? 'Vietnamese';
   const hot = opts.hotKnowledge?.trim() ?? '';
+  const memory = opts.memory?.trim() ?? '';
 
   const blocks: string[] = [ASSISTANT_CORE];
   if (office.charter) blocks.push(`# About this office\n\n${office.charter}`);
   if (office.assistantSkills) blocks.push(`# How you work\n\n${office.assistantSkills}`);
+  // GHI NHỚ đứng TRƯỚC kinh nghiệm, và là khối riêng: nó là thứ người dùng đã
+  // chốt, nên phải thắng khi mâu thuẫn với một bài học agent tự rút ra.
+  if (memory) blocks.push(`# What the human has decided — follow these\n\n${memory}`);
   if (hot) blocks.push(`# What this office has learned\n\n${hot}`);
   blocks.push(opts.roster);
   blocks.push(`Always speak to the human in ${language}.`);
 
   return {
     systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
-    cacheKey: hashKey(['assistant', String(PROMPT_SCHEMA_VERSION), ...blocks]),
+    // `model` BẮT BUỘC nằm trong khoá: prompt cache đánh theo (model, prefix).
+    // Đổi model của Trợ lý mà khoá không đổi thì mọi công cụ chẩn đoán sẽ báo
+    // "cache vẫn ấm" trong khi thực tế lượt kế tiếp trả nguyên giá ghi cache.
+    cacheKey: hashKey(['assistant', opts.model ?? '', String(PROMPT_SCHEMA_VERSION), ...blocks]),
     staticTokens: blocks.reduce((n, b) => n + estimateTokens(b), 0),
   };
 }
@@ -281,6 +302,16 @@ export interface PromptLayer {
   file?: string;
   text: string;
   tokens: number;
+  /**
+   * Chữ mờ trong ô nhập khi lớp này TRỐNG — một ví dụ THẬT về nội dung nên viết.
+   *
+   * Đây là chỗ đúng cho ví dụ, và lý do rất cụ thể: nội dung mặc định của file
+   * đi vào prefix cache của mọi lượt gọi, nên một dòng hướng dẫn kiểu "hãy viết
+   * vài dòng về văn phòng này" là khoản thuế thu mãi mãi để nói với MODEL một
+   * câu chỉ có nghĩa với NGƯỜI. Placeholder không bao giờ được lưu, không bao
+   * giờ đi vào prompt → 0 token. → SPEC-offices.md §4.1
+   */
+  placeholder?: string;
   /** Trần token của lớp này, nếu có. UI cảnh báo khi gõ vượt. */
   limit?: number;
   /** File này là node tri thức (có YAML frontmatter phải giữ nguyên khi ghi). */
@@ -299,6 +330,7 @@ export function describePrompt(
   office: LoadedOffice,
   who: string,
   hotKnowledge = '',
+  assistantMemory = '',
 ): PromptLayer[] {
   const coreEditable = office.company.allow_core_prompt_edit;
   const layers: PromptLayer[] = [];
@@ -324,7 +356,13 @@ export function describePrompt(
       frontmatter: true,
       limit: office.company.budgets.charter_tokens,
       text: office.charter,
-      note: 'Nằm trong prefix cache của MỌI nhân viên. Giữ ngắn.',
+      placeholder:
+        `Văn phòng ${office.config.name} làm nội dung cho khách hàng nhỏ ở Việt Nam.\n` +
+        'Người đọc là chủ shop, không phải dân kỹ thuật.\n' +
+        'Mọi bài viết đều xưng "mình", không dùng từ Hán Việt nặng.',
+      note:
+        'Văn phòng này làm gì, cho ai, ràng buộc nào luôn đúng. Mọi NHÂN VIÊN đều đọc, ' +
+        'ở mọi task — nên viết sự thật về công việc, đừng viết lời dặn chung chung.',
     });
     add({
       id: 'skills',
@@ -333,9 +371,13 @@ export function describePrompt(
       file: 'skills/assistant.md',
       limit: office.company.budgets.assistant_skills_tokens,
       text: office.assistantSkills,
+      placeholder:
+        '- Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.\n' +
+        '- Yêu cầu mơ hồ thì hỏi lại đúng MỘT câu quan trọng nhất.\n' +
+        '- Báo cáo bằng lời người thường, không nhắc tên tool hay số token.',
       note:
-        'Tính cách, giọng điệu, thói quen. Để trắng cũng được. Nằm trong prefix của mọi lượt ' +
-        'trò chuyện nên mỗi dòng thừa là một khoản thuế thu suốt ca làm việc.',
+        'Tính cách, giọng điệu, thói quen của riêng Trợ lý. Để trắng cũng được. Nằm trong ' +
+        'prefix của mọi lượt trò chuyện nên mỗi dòng thừa là một khoản thuế thu suốt ca.',
     });
   } else {
     const role = office.roles.get(who);
@@ -353,12 +395,46 @@ export function describePrompt(
       id: 'skills',
       title: 'Kỹ năng — bạn viết',
       editable: true,
-      file: role.skills[role.skill_level] ?? `skills/${role.id}.md`,
+      // ⚠ PHẢI là đúng file mà `loadSkill` sẽ đọc lại. Khai hai đường dẫn khác
+      // nhau cho cùng một thứ = bấm Lưu xong nội dung biến mất. → config.ts
+      file: skillFileFor(office, role),
       text: loadSkill(office, role),
+      placeholder:
+        'Ví dụ:\n' +
+        '- Luôn viết ở ngôi thứ hai, câu ngắn.\n' +
+        '- Mở đầu bằng kết luận, đừng dẫn dắt.\n' +
+        '- Không dùng emoji.',
       note:
         'Cách làm việc của riêng vai trò này. Để TRỐNG là bình thường: cắm MCP là ' +
         'agent đã biết nó có thêm cánh tay. Chỉ viết ở đây thứ đúng với MỌI task ' +
         '— tri thức riêng của từng việc thuộc về kho tri thức.',
+    });
+  }
+
+  /**
+   * GHI NHỚ tách khỏi KINH NGHIỆM — cùng một kho, hai cách nhìn.
+   * → docs/SPEC-offices.md §4.6
+   *
+   * Lưu chung `knowledge/` là để dùng lại `supersedes`, lão hoá, ngân sách và
+   * Librarian — không phải để tiện. Nhưng với người dùng đây là hai thứ khác
+   * hẳn nhau, và gộp làm một dòng thì thứ quan trọng hơn bị lẫn mất:
+   *
+   *   kinh nghiệm — AGENT tự rút ra sau khi làm  (confidence 0.6)
+   *   ghi nhớ     — NGƯỜI DÙNG đã chốt           (confidence 0.9)
+   *
+   * Người dùng phải tìm thấy được "hệ thống đang nhớ gì về tôi" mà không phải
+   * lục kho. Đó là lý do nó là một lớp riêng ở đây, chứ không phải một kho riêng
+   * ở tầng lưu trữ.
+   */
+  if (who === 'assistant' && assistantMemory.trim()) {
+    add({
+      id: 'memory',
+      title: 'Ghi nhớ từ trò chuyện',
+      editable: false,
+      text: assistantMemory,
+      note:
+        'Những gì BẠN đã chốt, Trợ lý nén lại mỗi khi dọn cuộc trò chuyện (`/clear`). ' +
+        'Sửa hoặc xoá ở ngăn kéo Tri thức — bản mới tự đè bản cũ, bản cũ vẫn còn file.',
     });
   }
 
@@ -368,8 +444,8 @@ export function describePrompt(
     editable: false,
     text: hotKnowledge,
     note:
-      'Tự động chọn từ kho tri thức bằng code, KHÔNG tốn token. Sửa ở ngăn kéo Tri thức, ' +
-      'không sửa ở đây.',
+      'Tự động chọn từ kho tri thức bằng code, KHÔNG tốn token. Đây là thứ agent TỰ RÚT RA ' +
+      'sau khi làm việc. Sửa ở ngăn kéo Tri thức, không sửa ở đây.',
   });
   return layers;
 }

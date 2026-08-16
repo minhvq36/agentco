@@ -1,5 +1,19 @@
 # SPEC — Connector: nhân viên biết dùng hệ thống của bạn
 
+> ## Phụ lục: tìm kiếm trong kho tài liệu người dùng tải lên (chưa xây)
+>
+> Chốt hướng để lần sau không bàn lại từ đầu.
+>
+> **1. Khoá ngoại trước, tìm kiếm sau.** Câu hỏi thật của người dùng hiếm khi là *"file nào nói về X"* — thường là *"file này ở đâu ra, ai tạo, từ việc nào"*. Đó là một JSONL phẳng `file · plan_id · task_id · role · nguồn · thời điểm`, và ta **đã có gần đủ**: `receipt.landed` chính là mảnh đó. Cái mà trực giác gọi là "graph" ở đây thực ra là một **phép join**, không phải một graph engine.
+>
+> **2. `Glob` + `Grep` đi xa hơn tưởng.** Đã bật sẵn cho mọi nhân viên, chạy trên đĩa của chính người dùng, **0 chi phí thường trực**. Với vài nghìn file, grep thắng vector cả về tốc độ lẫn độ chính xác — và không bao giờ trả về thứ "gần giống mà sai".
+>
+> **3. Tầng tóm tắt đệm CÓ giá trị — nhưng để ĐỊNH TUYẾN, không để thay thế.** Trực giác "nén tóm tắt ở giữa" đúng một nửa: nó không thay được việc đọc file gốc (kiểu gì cũng phải lấy nội dung thật), nhưng nó trả lời rất tốt câu *"file nào đáng mở"*. Và thứ đó **đã tồn tại**: `knowledge/index.json` + node tri thức chính là tầng đó. Đừng xây tầng thứ hai — hãy để file tải lên sinh ra một node tóm tắt **trỏ về** file gốc.
+>
+> **4. Vector để cuối cùng, và chỉ khi ĐO ĐƯỢC là cần** — khi corpus lớn tới mức grep hết đủ. Lúc đó dùng embedding **chạy local**, không qua API, đúng như `store.ts` đã ghi từ đầu.
+>
+> **PDF/DOCX:** `Read` của Claude Code đọc được PDF; `.docx`/`.xlsx` thì không. Hướng đúng là **bóc thành text lúc NẠP VÀO**, không phải lúc đọc: một lần, tất định, và file text nằm cạnh file gốc nên `Grep` dùng được ngay. Bóc lúc đọc thì mỗi task trả tiền lại cho cùng một việc. ⚠ Chưa kiểm bằng file thật — thử trước khi hứa với khách.
+
 **Đây là đặc sản của sản phẩm.** Người không biết code tự định nghĩa một nhân viên biết CRUD vào REST API / hệ thống của chính họ.
 
 Đọc kèm `SPEC-2026-08-14-agentco.md` và `SPEC-token-economy.md`.

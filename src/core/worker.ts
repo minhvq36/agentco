@@ -17,10 +17,12 @@ import { companyPaths, safeJoin } from './paths.js';
 import { grantFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
+import { relative } from 'node:path';
 import {
   EMPTY_USAGE,
   RunError,
   type FailureKind,
+  type Landing,
   type Receipt,
   type Role,
   type TaskBrief,
@@ -94,6 +96,8 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   let usage: Usage = { ...EMPTY_USAGE };
   let finalText = '';
   let firstTokenSeen = false;
+  /** Điểm đến quan sát được từ tool đã gọi. Xem `landingOf`. */
+  const landed = new Map<string, Landing>();
 
   let interrupted = false;
   // Công tắc dừng THẬT. Xem khối chú thích ở `oneMessage` để biết vì sao không
@@ -116,7 +120,28 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         // và theo thời gian, sẽ phá prefix cache.
         settingSources: [],
         strictMcpConfig: true,
-        // Bộ mặc định + phần khai thêm. -> types.ts BUILTIN_TOOLS, SPEC-tools-approval.md §5
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ `tools` GIỚI HẠN, `allowedTools` CHỈ TỰ-DUYỆT. HAI THỨ KHÁC NHAU.  │
+         * │                                                                    │
+         * │ Bản trước chỉ đặt `allowedTools` và tưởng thế là giới hạn. `.d.ts`  │
+         * │ nói rõ: allowedTools = "auto-allowed without prompting… To restrict │
+         * │ which tools are available, use the `tools` option instead."         │
+         * │                                                                    │
+         * │ Hậu quả ĐÃ ĐO: nhân viên `nguoi-viet` (không khai tool nào ngoài bộ │
+         * │ mặc định) gặp file chỉ-đọc → thử `PowerShell` BỐN LẦN. Nó thấy tool │
+         * │ đó trong ngữ cảnh vì ta chưa bao giờ cắt đi. Ba cái giá cùng lúc:   │
+         * │                                                                    │
+         * │  1. TOKEN — định nghĩa của MỌI tool Claude Code nằm trong prefix    │
+         * │     được cache của MỌI lời gọi worker, vĩnh viễn.                   │
+         * │  2. LƯỢT — mỗi lần thử một tool bị từ chối là một lượt trả tiền để  │
+         * │     nhận về một lời từ chối.                                        │
+         * │  3. KIẾN TRÚC — SPEC-tools-approval §5 nói `Bash` phải là quyết      │
+         * │     định tường minh trong roles/<id>.yaml. Điều đó CHƯA từng được   │
+         * │     thi hành: vai trò không khai `Bash` vẫn với tay tới shell được. │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        tools: effectiveTools(role.tools),
         allowedTools: effectiveTools(role.tools),
         ...(role.mcp.length ? { mcpServers: pickMcp(office, role) } : {}),
       },
@@ -144,8 +169,15 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
       }
 
       if (m['type'] === 'assistant') {
-        const say = describeAssistant(m);
-        if (say) deps.onProgress?.(say);
+        const calls = toolCalls(m);
+        // Một tin nhắn có thể chứa nhiều tool_use. Dòng trạng thái chỉ hiện cái
+        // ĐẦU (nhiều hơn thì nhấp nháy vô nghĩa), nhưng ĐIỂM ĐẾN thì ghi hết —
+        // đây là chỗ ta biết kết quả thật sự đã đi đâu.
+        if (calls[0]) deps.onProgress?.(describeCall(calls[0]));
+        for (const call of calls) {
+          const spot = landingOf(office.dir, call);
+          if (spot) landed.set(`${spot.kind}:${spot.ref}`, spot);
+        }
       }
 
       if (m['type'] === 'result') {
@@ -159,7 +191,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   } catch (err) {
     // Ngắt theo yêu cầu người dùng KHÔNG phải lỗi. SDK ném ra khi bị interrupt,
     // và biến nó thành "task failed" là nói dối trong nhật ký.
-    if (interrupted) return stoppedReceipt(office, brief, role, usage, started);
+    if (interrupted) return stoppedReceipt(office, brief, role, usage, started, [...landed.values()]);
     if (err instanceof RunError) throw err;
     const kind = classifyError(err);
     if (kind === 'max_turns') {
@@ -180,7 +212,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   // Bị ngắt mà vòng lặp kết thúc ÊM (không ném lỗi) thì cũng phải dừng ở đây.
   // Đi tiếp là gọi thêm một lượt "sửa receipt" — tốn tiền cho một việc người
   // dùng vừa bảo dừng.
-  if (interrupted) return stoppedReceipt(office, brief, role, usage, started);
+  if (interrupted) return stoppedReceipt(office, brief, role, usage, started, [...landed.values()]);
 
   // ── receipt
   let parsed = parseReceipt(finalText);
@@ -212,6 +244,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     usage,
     wall_ms: Date.now() - started,
     reasked,
+    landed: [...landed.values()],
   };
 }
 
@@ -233,16 +266,19 @@ function stoppedReceipt(
   role: Role,
   usage: Usage,
   started: number,
+  landed: Landing[] = [],
 ): Receipt {
-  const written = brief.outputs
-    .map((o) => o.path)
-    .filter((p) => {
-      try {
-        return fs.existsSync(safeJoin(office.dir, p));
-      } catch {
-        return false;
-      }
-    });
+  // Gộp hai nguồn: file NÓ ĐƯỢC GIAO ghi (brief.outputs) và file ta THẤY nó ghi
+  // (landed). Nguồn hai bắt được cả file phụ nó tự tạo — thứ brief không biết
+  // trước, và cũng là thứ dễ bị bỏ quên lại trên đĩa nhất.
+  const candidates = [...brief.outputs.map((o) => o.path), ...landed.filter((l) => l.kind === 'file').map((l) => l.ref)];
+  const written = [...new Set(candidates)].filter((p) => {
+    try {
+      return fs.existsSync(safeJoin(office.dir, p));
+    } catch {
+      return false;
+    }
+  });
 
   return {
     status: 'blocked',
@@ -257,6 +293,7 @@ function stoppedReceipt(
     usage,
     wall_ms: Date.now() - started,
     reasked: false,
+    landed,
   };
 }
 
@@ -377,38 +414,97 @@ export function addUsage(a: Usage, b: Usage): Usage {
   };
 }
 
-/** Đổi hoạt động của agent thành một câu tiếng người cho UI. Không tốn token. */
-function describeAssistant(m: Record<string, unknown>): string | undefined {
+/** Xuất ra để kiểm được bằng test — đây là hàm quyết định "kết quả đi đâu". */
+export interface ToolCall {
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** Bóc mọi khối `tool_use` trong một tin nhắn của model. Không tốn token. */
+function toolCalls(m: Record<string, unknown>): ToolCall[] {
   const content = ((m['message'] as Record<string, unknown> | undefined)?.['content'] ?? []) as Array<
     Record<string, unknown>
   >;
-  if (!Array.isArray(content)) return undefined;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((b) => b['type'] === 'tool_use')
+    .map((b) => ({
+      name: String(b['name'] ?? ''),
+      input: (b['input'] ?? {}) as Record<string, unknown>,
+    }));
+}
 
-  for (const block of content) {
-    if (block['type'] !== 'tool_use') continue;
-    const name = String(block['name'] ?? '');
-    const inp = (block['input'] ?? {}) as Record<string, unknown>;
-    const file = typeof inp['file_path'] === 'string' ? basename(inp['file_path']) : '';
-    switch (name) {
-      case 'Read':
-        return file ? `đang đọc ${file}` : 'đang đọc tài liệu';
-      case 'Write':
-      case 'Edit':
-        return file ? `đang viết ${file}` : 'đang viết kết quả';
-      case 'Grep':
-      case 'Glob':
-        return 'đang tìm trong dự án';
-      case 'WebSearch':
-        return `đang tìm trên web`;
-      case 'WebFetch':
-        return 'đang đọc một trang web';
-      case 'Bash':
-        return 'đang chạy lệnh';
-      default:
-        return `đang dùng ${name}`;
+/** Đổi hoạt động của agent thành một câu tiếng người cho UI. Không tốn token. */
+function describeCall(call: ToolCall): string {
+  const file = typeof call.input['file_path'] === 'string' ? basename(call.input['file_path']) : '';
+  switch (call.name) {
+    case 'Read':
+      return file ? `đang đọc ${file}` : 'đang đọc tài liệu';
+    case 'Write':
+    case 'Edit':
+      return file ? `đang viết ${file}` : 'đang viết kết quả';
+    case 'Grep':
+    case 'Glob':
+      return 'đang tìm trong dự án';
+    case 'WebSearch':
+      return 'đang tìm trên web';
+    case 'WebFetch':
+      return 'đang đọc một trang web';
+    case 'Bash':
+      return 'đang chạy lệnh';
+    default: {
+      const server = mcpServerOf(call.name);
+      return server ? `đang làm việc với ${server}` : `đang dùng ${call.name}`;
     }
   }
-  return undefined;
+}
+
+/** `mcp__notion__create_page` → `notion`. Quy ước đặt tên tool của SDK. */
+export function mcpServerOf(name: string): string | undefined {
+  const parts = name.split('__');
+  return parts[0] === 'mcp' && parts[1] ? parts[1] : undefined;
+}
+
+/**
+ * KẾT QUẢ ĐÃ ĐI ĐÂU — suy từ TOOL ĐÃ GỌI, không từ lời model kể.
+ *
+ * → docs/SPEC-offices.md §6 "Kết quả nằm ở đâu"
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG DÙNG `receipt.artifacts`, VÀ KHÔNG SỬA PROMPT               │
+ * │                                                                          │
+ * │ `artifacts` là thứ model KHAI. Nó có thể bịa một đường dẫn chưa từng     │
+ * │ viết, và nó chỉ mô tả được FILE — trong khi kết quả có thể nằm ở Notion, │
+ * │ Google Sheets, một database. Dặn prompt "hãy nói rõ kết quả ở đâu" thì   │
+ * │ mua lại đúng sự bất định vừa bỏ đi, bằng token vĩnh viễn.                 │
+ * │                                                                          │
+ * │ Nhưng ta ĐÃ ĐỌC từng khối `tool_use` trong luồng để dựng dòng "đang làm  │
+ * │ gì" — chỉ là vứt đi sau khi ghép câu. Tool đã gọi là SỰ VIỆC QUAN SÁT    │
+ * │ ĐƯỢC, không phải lời kể. Giữ lại là xong, 0 token, không đụng prompt.    │
+ * │                                                                          │
+ * │ Giới hạn phải nói thẳng: `Bash` có thể đẩy dữ liệu đi bất cứ đâu và ta   │
+ * │ KHÔNG biết đâu. Ca đó ta chỉ khai "có chạy lệnh" — nói đúng thứ mình     │
+ * │ biết, phần còn lại để câu `say` của nhân viên kể. Bất định còn lại được  │
+ * │ KHOANH VÙNG và DÁN NHÃN, không bị giấu đi.                               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function landingOf(officeDir: string, call: ToolCall): Landing | undefined {
+  if (call.name === 'Write' || call.name === 'Edit' || call.name === 'NotebookEdit') {
+    const raw = call.input['file_path'] ?? call.input['notebook_path'];
+    if (typeof raw !== 'string' || !raw) return undefined;
+    try {
+      // Nhốt trong thư mục văn phòng: `safeJoin` ném nếu đi ra ngoài. Một đường
+      // dẫn ra ngoài thì ta không khai là "kết quả của bạn nằm ở đây".
+      const abs = safeJoin(officeDir, raw);
+      const rel = relative(officeDir, abs).replace(/\\/g, '/');
+      return rel ? { kind: 'file', ref: rel } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (call.name === 'Bash') return { kind: 'command', ref: '' };
+  const server = mcpServerOf(call.name);
+  return server ? { kind: 'external', ref: server } : undefined;
 }
 
 function basename(p: string): string {

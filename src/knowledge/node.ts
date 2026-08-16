@@ -28,7 +28,51 @@ export interface KnowledgeNode {
   confidence: number;
   hits: number;
   pinned: boolean;
+  /**
+   * Node này ĐÈ LÊN những node nào. → docs/SPEC-2026-08-14-agentco.md §5
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐÂY LÀ MẢNH DUY NHẤT GIỮ CHO KHO TRI THỨC ĐÚNG LÊN, KHÔNG CHỈ CŨ ĐI.    │
+   * │                                                                          │
+   * │ `hits` và `updated` chỉ làm node ít dùng TỤT HẠNG. Chúng không trả lời   │
+   * │ được câu quan trọng nhất: "quyết định này đã bị đảo ngược chưa?" Một     │
+   * │ node sai mà hay được đọc sẽ đứng đầu bảng mãi mãi.                        │
+   * │                                                                          │
+   * │ Node bị đè KHÔNG bị xoá — file còn nguyên, đọc lại được để biết vì sao   │
+   * │ ngày xưa mình nghĩ thế. Nó chỉ rời khỏi phần được nạp vào prompt.        │
+   * │ Cùng tinh thần với Lưu trữ: cất đi thì được, xoá dấu vết thì không.      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Cố ý là MỘT TRƯỜNG chứ không phải một đồ thị: quan hệ duy nhất kho này thật
+   * sự dùng là "đè lên". Dựng graph engine cho một quan hệ là mua độ phức tạp
+   * trước khi có bài toán.
+   */
+  supersedes: string[];
   updated: string;
+  /**
+   * Lần cuối node này được chọn vì HỢP VỚI MỘT VIỆC (tức là được `cold()` chấm
+   * trúng). Rỗng = chưa lần nào.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MỘT NGÀY, KHÔNG PHẢI MỘT MẢNG — và không phải một cơ chế decay.          │
+   * │                                                                          │
+   * │ `hits` cộng dồn và chỉ tăng, nên nó bất tử: một node được dùng đúng một  │
+   * │ lần hai năm trước vẫn `hits > 0` mãi mãi và không bao giờ bị dọn.        │
+   * │                                                                          │
+   * │ Lối ra KHÔNG phải cho `hits` tự tiêu hao — decay cần một LỊCH CHẠY (mỗi  │
+   * │ task? mỗi ngày? daemon tắt hai tuần thì sao?), và cái lịch đó sẽ trôi.   │
+   * │                                                                          │
+   * │ Cửa sổ thì KHÔNG TRẠNG THÁI: chỉ cần biết lần cuối là bao giờ, rồi so    │
+   * │ với hôm nay LÚC ĐỌC. Daemon tắt bao lâu cũng vẫn đúng, không job nền.    │
+   * │                                                                          │
+   * │ Hai chỉ số, hai việc, cố ý không trộn:                                    │
+   * │   `hits`      → XẾP HẠNG vào HOT  (cộng dồn, thưởng cho ích lâu dài)     │
+   * │   `last_used` → KHAI TỬ, kể cả khi hits > 0                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Node cũ chưa có trường này thì rơi về `updated` — không cần bảng alias.
+   */
+  last_used?: string;
   source?: string;
   body: string;
   tokens: number;
@@ -61,7 +105,9 @@ export function parseNode(raw: string, file: string): KnowledgeNode | undefined 
     confidence: num(fm['confidence'], 0.7),
     hits: num(fm['hits'], 0),
     pinned: fm['pinned'] === true,
+    supersedes: arr(fm['supersedes']),
     updated: str(fm['updated']) || new Date().toISOString().slice(0, 10),
+    ...(str(fm['last_used']) ? { last_used: str(fm['last_used']) } : {}),
     ...(str(fm['source']) ? { source: str(fm['source']) } : {}),
     body,
     tokens: estimateTokens(body),
@@ -83,6 +129,8 @@ export function serializeNode(n: KnowledgeNode): string {
     updated: n.updated,
   };
   if (n.pinned) fm['pinned'] = true;
+  if (n.supersedes.length) fm['supersedes'] = n.supersedes;
+  if (n.last_used) fm['last_used'] = n.last_used;
   if (n.source) fm['source'] = n.source;
   return `---\n${YAML.stringify(fm).trim()}\n---\n\n${n.body.trim()}\n`;
 }

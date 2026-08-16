@@ -115,6 +115,19 @@ export const RoleSchema = z.object({
    */
   secrets: z.array(z.string()).default([]),
 
+  /**
+   * Đã LƯU TRỮ (soft delete). → docs/SPEC-offices.md §5.1
+   *
+   * Chỉ là một cờ — file không đi đâu cả, kinh nghiệm trong
+   * `knowledge/agents/<id>/` còn nguyên, và khôi phục thì nhân viên trở lại
+   * đúng văn phòng cũ vì nó chưa bao giờ rời khỏi đó.
+   *
+   * Vai trò lưu trữ biến khỏi canvas VÀ khỏi roster của Trợ lý — tức là `pitch`
+   * của nó rời khỏi prefix cache. Cất một người đi là tiết kiệm token thật,
+   * giống hệt ngắt dây, chỉ khác là dứt khoát hơn.
+   */
+  archived: z.boolean().default(false),
+
   model_tier: TierSchema.default('standard'),
 
   /**
@@ -181,7 +194,24 @@ export const CompanyConfigSchema = z.object({
     })
     .prefault({}),
 
-  models: z
+  /**
+   * ⚠ `cheap` là TÊN KHOÁ CŨ của `eco` (đổi 15/08/2026).
+   *
+   * `TIER_ALIASES` đã lo phần GIÁ TRỊ (`model_tier: cheap` trong roles/*.yaml)
+   * nhưng bỏ sót phần KHOÁ ở đây, và hậu quả im lặng hơn hẳn: `company.yaml`
+   * viết `models.cheap: <model>` thì zod bỏ qua khoá lạ, `eco` rơi về mặc định,
+   * và người dùng chạy suốt một model KHÁC cái họ đã ghi ra — không lỗi, không
+   * cảnh báo, chỉ có hoá đơn không khớp. Cùng một bài học, hai nửa của nó.
+   */
+  models: z.preprocess(
+    (v) => {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+      const m = { ...(v as Record<string, unknown>) };
+      if (m['cheap'] !== undefined && m['eco'] === undefined) m['eco'] = m['cheap'];
+      delete m['cheap'];
+      return m;
+    },
+    z
     .object({
       eco: z.string().default('claude-haiku-4-5-20251001'),
       standard: z.string().default('claude-sonnet-5'),
@@ -199,11 +229,21 @@ export const CompanyConfigSchema = z.object({
        */
       planner: TierSchema.default('standard'),
     })
-    .prefault({}),
+      .prefault({}),
+  ),
 
   librarian: z
     .object({
       every_n_tasks: z.number().int().positive().default(20),
+      /**
+       * Cửa sổ KHAI TỬ: ghi chú không được chọn lần nào trong N ngày thì bị dọn, mỗi lần nén
+       * trí nhớ. Đặt 0 để tắt hẳn.
+       *
+       * Điều kiện là VÀ chứ không phải HOẶC: `hits` chỉ đáng tin khi kho đã lớn
+       * hơn `hot_knowledge_size` — dưới ngưỡng đó mọi node đều được nạp mỗi lượt
+       * nên `hits` gần như đồng đều, và lọc theo nó là lọc theo nhiễu.
+       */
+      prune_after_days: z.number().int().nonnegative().default(15),
     })
     .prefault({}),
 
@@ -238,10 +278,37 @@ export const OfficeConfigSchema = z.object({
   name: z.string().default('Văn phòng mới'),
   charter_file: z.string().default('knowledge/shared/_charter.md'),
 
+  /**
+   * Đã LƯU TRỮ (soft delete). → docs/SPEC-offices.md §3.1
+   *
+   * Nghĩa: **ĐÓNG BĂNG, CHỈ ĐỌC.** Không nhận việc, không trả lời chat, không
+   * sửa được gì. Nhưng kết quả cũ vẫn mở ra xem được, và nó vẫn có TÊN trong sổ
+   * chi phí — đó mới là lý do soft delete tồn tại: một văn phòng xoá hẳn để lại
+   * những dòng tiền không ai giải thích được nữa.
+   *
+   * Không cho chạy là có chủ ý. "Đã xoá nhưng vẫn âm thầm tiêu tiền" là hành vi
+   * không ai đoán được, và tiền là thứ duy nhất người dùng không lấy lại được.
+   */
+  archived: z.boolean().default(false),
+
   assistant: z
     .object({
       display_name: z.string().default('Trợ lý'),
       avatar: z.string().default('★'),
+      /**
+       * Mức model của Trợ lý VĂN PHÒNG NÀY. Bỏ trống = theo `models.master` của
+       * công ty. → docs/SPEC-offices.md §4.5
+       *
+       * Ranh giới giữ nguyên: CÔNG TY quyết mỗi mức là model nào (đó là tiền);
+       * VĂN PHÒNG quyết Trợ lý của nó chạy ở mức nào (đó là công việc). Giống
+       * hệt `model_tier` của một vai trò, và vì thế không đẻ ra khái niệm mới.
+       *
+       * ⚠ Đổi trường này là đổi khoá cache (model, prefix). Lượt trò chuyện kế
+       * tiếp phải GHI LẠI toàn bộ prefix, và vì Trợ lý chạy `resume` nên nó gửi
+       * lại cả bản ghi hội thoại ở giá đầy đủ. Trí nhớ KHÔNG mất — bản ghi nằm
+       * trên đĩa, độc lập với model — nhưng đây là một lần trả tiền thật.
+       */
+      model_tier: TierSchema.optional(),
       /**
        * MCP server mà Assistant "dùng được". Thực chất gắn cho worker ẩn
        * (concierge) — master không bao giờ tự cầm MCP vì nó resume liên tục và
@@ -329,6 +396,24 @@ export const EMPTY_USAGE: Usage = {
   turns: 0,
 };
 
+/**
+ * Kết quả của một task đã ĐI ĐÂU — QUAN SÁT được, không do model khai.
+ * → docs/SPEC-offices.md §6, `worker.ts → landingOf`
+ *
+ * Đây là thứ khác hẳn `artifacts`: `artifacts` là lời model KỂ (có thể bịa, và
+ * chỉ mô tả được file), còn cái này suy ra từ TOOL ĐÃ GỌI trong luồng.
+ */
+export interface Landing {
+  /**
+   * `file`     — ghi vào thư mục văn phòng, KIỂM ĐƯỢC bằng `existsSync`
+   * `external` — gọi một MCP server (`ref` = tên server). Không kiểm được, nhưng
+   *              biết chắc là đã gọi.
+   * `command`  — chạy `Bash`. Ta KHÔNG biết dữ liệu đi đâu, và phải nói thế.
+   */
+  kind: 'file' | 'external' | 'command';
+  ref: string;
+}
+
 /** Receipt đã qua validate + gắn số liệu đo được. */
 export interface Receipt extends ReceiptBody {
   task_id: string;
@@ -337,6 +422,8 @@ export interface Receipt extends ReceiptBody {
   wall_ms: number;
   /** true nếu worker trả sai schema và phải hỏi lại. Dùng để cảnh báo prompt kém. */
   reasked: boolean;
+  /** Điểm đến quan sát được. Rỗng = task không tạo ra tác động nào nhìn thấy. */
+  landed: Landing[];
 }
 
 // ─────────────────────────────────────────────────────────── plan
@@ -468,13 +555,35 @@ export type AgentEventBody =
    */
   | {
       type: 'office.activity';
-      assistant: 'idle' | 'thinking';
+      /**
+       * `planning` là trạng thái THỨ BA, và nó tồn tại vì một khoảng mù có thật:
+       * `handleUserBatch` gọi `run()` KHÔNG await rồi trả về, nên hòm thư mở
+       * khoá ngay và `pump()` phát ra một `office.activity` toàn số 0 — đúng lúc
+       * `run()` mới bắt đầu lập kế hoạch. Giao diện tắt dòng "đang làm gì", rồi
+       * 15 giây sau kế hoạch mới hiện ra.
+       *
+       * Người dùng thấy: "Trợ lý đang nghĩ…" → im bặt → (chờ) → kế hoạch. Khoảng
+       * im bặt đó chính là chỗ họ tưởng hệ thống chết và bấm Gửi lần nữa.
+       */
+      assistant: 'idle' | 'thinking' | 'planning';
       workers: number;
       /** tin nhắn chờ Trợ lý đọc */
       queued: number;
       /** VIỆC chờ tới lượt chạy — hàng đợi phải nhìn thấy được, không phải mảng riêng tư */
       jobs: number;
     }
+  /**
+   * Hội thoại vừa được dọn (`/clear` hoặc tự nén). → docs/SPEC-offices.md §4.6
+   *
+   * Tách khỏi `master.message` vì nó là một MỆNH LỆNH cho bên hiển thị ("xoá
+   * những gì đang hiện"), không phải một câu để đọc. Bridge như Telegram không
+   * xoá được tin đã gửi nên nó bỏ qua sự kiện này và chỉ đọc câu `master.message`
+   * đi ngay sau — cùng một luồng, hai bên hiển thị tự chọn cách phản ứng.
+   *
+   * THỨ TỰ BẮT BUỘC: `office.cleared` phát TRƯỚC, câu báo kết quả phát SAU.
+   * Ngược lại thì câu vừa hiện ra bị chính lệnh xoá cuốn đi.
+   */
+  | { type: 'office.cleared'; say: string }
   | { type: 'cost.tick'; totals: Usage & { tasks: number } }
   | { type: 'knowledge.changed'; count: number; version: number }
   /** Hình dạng văn phòng đổi (kéo node, nối/ngắt dây, thêm/bớt nhân viên). */

@@ -36,11 +36,24 @@ export function ChatPanel() {
           <div className="flex flex-col gap-3">
             {messages.map((m) => (
               <div key={m.id} className={m.role === 'user' ? 'text-right' : ''}>
+                {/*
+                  `whitespace-pre-wrap` là BẮT BUỘC, không phải trang trí.
+                  Backend dựng sẵn bằng code những câu trả lời nhiều dòng —
+                  `/help`, danh sách bước của kế hoạch, báo cáo cuối ca — và
+                  chúng dùng ký tự xuống dòng thật. HTML gộp mọi khoảng trắng
+                  thành một dấu cách, nên nếu không giữ thì `/help` hiện ra
+                  thành một khối chữ liền không đọc nổi.
+
+                  `break-words`: đường dẫn file và URL dài không có khoảng trắng
+                  để ngắt — thiếu nó thì bong bóng chat tự nong ra và đẩy cả
+                  panel sinh thanh cuộn ngang.
+                */}
                 <div
                   className={
-                    m.role === 'user'
+                    'whitespace-pre-wrap break-words ' +
+                    (m.role === 'user'
                       ? 'ml-auto inline-block max-w-[85%] rounded-xl rounded-br-sm bg-accent-soft px-3 py-2 text-left text-[13.5px] text-ink'
-                      : 'inline-block max-w-[92%] rounded-xl rounded-bl-sm border border-line bg-paper px-3 py-2 text-[13.5px] text-ink'
+                      : 'inline-block max-w-[92%] rounded-xl rounded-bl-sm border border-line bg-paper px-3 py-2 text-[13.5px] leading-relaxed text-ink')
                   }
                 >
                   {m.text}

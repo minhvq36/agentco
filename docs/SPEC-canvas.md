@@ -69,6 +69,19 @@ company/
 
 Node `role` trỏ tới file trong `roles/`. Thiếu file → node hiện đỏ "không tìm thấy vai trò". Có file mà thiếu node → canvas tự thêm node ở chỗ trống (tự phục hồi khi người dùng thả file yaml vào tay).
 
+#### ⚠ "Chỗ trống" phải là chỗ trống THẬT — bug đã dẫm
+
+Bản trước cấp ô bằng `agentSlot(i)` với `i` = **thứ tự alphabet** của vai trò, không kiểm ô đó đã có ai ngồi chưa. Node đã có thì giữ toạ độ đã lưu; node mới thì lấy ô thứ `i`. Thêm một nhân viên tên sắp xếp **trước** người cũ ⇒ nó rơi **đúng lên trên** người cũ.
+
+Người dùng thấy: *"bấm Thêm nhân viên mà không có gì xảy ra"*, rồi bấm **Sắp xếp lại sơ đồ** thì nó hiện ra (vì `arrange()` rải lại toàn bộ). Trông y hệt lỗi mạng ngẫu nhiên — **thực ra tất định 100%**: tên sắp xếp sau mọi tên cũ → ô trống → thấy; trước hoặc giữa → đè lên → không thấy.
+
+Luật thay thế, và **cả hai nửa đều bắt buộc**:
+
+1. **Kiểm va chạm bằng hình chữ nhật thật** (kèm khoảng đệm), không bằng "toạ độ có bằng nhau không" — người dùng kéo node đi đâu tuỳ ý, hai node lệch 10px vẫn là chồng nhau với con mắt. Kiểm với **mọi** loại node, kể cả kho tri thức.
+2. **HAI LƯỢT.** Đặt xong mọi node **đã có toạ độ** rồi mới cấp ô cho node mới. Đây là nửa dễ làm sai: duyệt một lượt theo alphabet thì node mới tên `ai-do` được cấp ô **trước khi** `nguoi-viet` kịp vào danh sách, và ta lại kiểm va chạm với một danh sách còn rỗng — sửa xong mà vẫn chồng đúng như cũ. *(Đã dẫm đúng bẫy này một lần.)*
+
+Kèm theo: `addAgent` phải **ghi vị trí xuống đĩa**. Bản cũ gọi `connectAssistant`, mà hàm đó `return` sớm khi cạnh đã tồn tại — và cạnh **luôn** tồn tại khi chưa có `layout.json` (lúc đó `read()` tự sinh cạnh cho mọi vai trò). Kết quả: toạ độ vừa tính không bao giờ được lưu.
+
 ### Sửa lúc cài đặt: cạnh `mcp → agent` KHÔNG nằm trong layout.json
 
 Bản thiết kế ban đầu để nó ở đây. Sai — vì chính lập luận của §2: "agent này dùng được tool nào" là **NỘI DUNG**, không phải hình dạng. Nó đã có nhà rồi: `mcp:` trong `roles/<id>.yaml`.

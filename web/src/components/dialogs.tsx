@@ -67,6 +67,83 @@ export function NewOfficeDialog({ open, onOpenChange }: { open: boolean; onOpenC
   );
 }
 
+/**
+ * Đổi tên văn phòng đang mở.
+ *
+ * MÃ văn phòng (tên thư mục) KHÔNG đổi theo, và dialog nói thẳng điều đó. Đổi mã
+ * là dời `artifacts/`, `tasks/`, `.state/` và mọi đường dẫn đã ghi trong receipt
+ * cũ — để đổi một cái nhãn. Người dùng đổi tên vì cái nhãn đọc sai, không phải
+ * vì họ muốn dời nhà; im lặng dời cả thư mục là làm nhiều hơn thứ họ yêu cầu.
+ */
+export function RenameOfficeDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange(v: boolean): void;
+}) {
+  const officeId = useApp((s) => s.officeId);
+  const current = useApp((s) => s.company?.offices.find((o) => o.id === s.officeId)?.name ?? '');
+  const [name, setName] = useState(current);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) setName(current);
+  }, [open, current]);
+
+  const trimmed = name.replace(/\s+/g, ' ').trim();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!trimmed || busy) return;
+    if (trimmed === current) return onOpenChange(false);
+    setBusy(true);
+    // Trùng tên do SERVER từ chối, không phải client: một client khác POST thẳng
+    // vào daemon vẫn phải bị chặn. Ở đây chỉ hiện lại câu server trả về.
+    const ok = await actions.renameOffice(trimmed);
+    setBusy(false);
+    if (ok) onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>Đổi tên văn phòng</DialogTitle>
+            <DialogDescription>
+              Chỉ đổi tên hiển thị. Mã văn phòng <code>{officeId}</code> — cũng là tên thư mục chứa
+              toàn bộ kết quả và lịch sử — giữ nguyên.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Label htmlFor="rename-office">Tên mới</Label>
+          <Input
+            id="rename-office"
+            autoFocus
+            maxLength={60}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-muted">
+            Không được trùng tên với văn phòng khác — hai dòng y hệt nhau trong ô chọn là cách chắc
+            chắn nhất để gõ nhầm chỗ.
+          </p>
+
+          <DialogFooter>
+            <Button type="button" onClick={() => onOpenChange(false)}>
+              Thôi
+            </Button>
+            <Button type="submit" variant="primary" disabled={!trimmed || busy}>
+              {busy ? 'Đang lưu…' : 'Lưu'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const [name, setName] = useState('');
   const [pitch, setPitch] = useState('');
@@ -232,12 +309,21 @@ function LayerCard({
 
         {editing ? (
           <>
+            {/*
+              Placeholder là một VÍ DỤ THẬT, không phải lời dặn "hãy viết gì đó
+              vào đây". Nội dung mặc định của file đi thẳng vào prefix cache của
+              mọi lượt gọi, nên một dòng hướng dẫn nằm trong đó là khoản thuế
+              thu mãi mãi để nói với MODEL một câu chỉ có nghĩa với NGƯỜI.
+              Chỗ đúng của lời hướng dẫn là ở đây — trên giao diện, 0 token.
+            */}
             <Textarea
               rows={10}
               value={text}
               onChange={(e) => setText(e.target.value)}
               className="font-mono text-[11.5px] leading-relaxed"
-              placeholder="Để trống cũng được — khối này sẽ biến mất hẳn khỏi prompt."
+              placeholder={
+                layer.placeholder ?? 'Để trống cũng được — khối này sẽ biến mất hẳn khỏi prompt.'
+              }
             />
             {over && (
               <p className="mt-1.5 text-xs text-danger">
@@ -263,10 +349,24 @@ function LayerCard({
               </Button>
             </div>
           </>
-        ) : (
+        ) : layer.text ? (
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded bg-paper p-2 text-[11.5px] leading-relaxed text-muted">
-            {layer.text || '(trống)'}
+            {layer.text}
           </pre>
+        ) : (
+          /* Trạng thái rỗng được THIẾT KẾ, không phải chữ "(trống)". Lớp trống
+             là lựa chọn hợp lệ và thường là lựa chọn ĐÚNG — nói ra điều đó, rồi
+             cho xem một ví dụ thật để người dùng biết hình dạng thứ cần viết. */
+          <div className="rounded border border-dashed border-line bg-paper p-2">
+            <p className="text-[11.5px] text-muted">
+              Đang để trống — khối này không nằm trong prompt, không tốn token nào.
+            </p>
+            {layer.placeholder && layer.editable && (
+              <pre className="mt-1.5 whitespace-pre-wrap font-mono text-[11.5px] leading-relaxed text-muted opacity-60">
+                {layer.placeholder}
+              </pre>
+            )}
+          </div>
         )}
       </div>
     </section>

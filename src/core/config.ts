@@ -35,6 +35,15 @@ export interface LoadedOffice {
   company: CompanyConfig;
   companyDir: string;
   roles: Map<string, Role>;
+  /**
+   * Vai trò đã lưu trữ. Vẫn nằm trong `roles` (để khôi phục và để tra tên trong
+   * nhật ký cũ) nhưng KHÔNG lên canvas, KHÔNG vào roster của Trợ lý.
+   *
+   * Tách thành Set riêng chứ không bắt mỗi chỗ tự đọc `role.archived`: có sáu
+   * chỗ phải lọc, và chỗ nào quên thì lỗi hiện ra rất muộn và rất khó hiểu
+   * (nhân viên "đã cất" bỗng nhận được việc).
+   */
+  archivedRoles: Set<string>;
   /** Charter đã đọc + cắt về trần. Nằm trong prefix được cache của MỌI agent. */
   charter: string;
   /** Skills người dùng viết cho Assistant. Có thể rỗng — đó là lựa chọn hợp lệ. */
@@ -113,6 +122,7 @@ export function loadOffice(
 
   // ── roles
   const roles = new Map<string, Role>();
+  const archivedRoles = new Set<string>();
   if (fs.existsSync(pp.roles)) {
     for (const file of fs.readdirSync(pp.roles).sort()) {
       if (!/\.(ya?ml)$/i.test(file)) continue;
@@ -128,6 +138,7 @@ export function loadOffice(
         continue;
       }
       roles.set(r.data.id, r.data);
+      if (r.data.archived) archivedRoles.add(r.data.id);
     }
   }
 
@@ -173,20 +184,54 @@ export function loadOffice(
     company: companyConfig,
     companyDir,
     roles,
+    archivedRoles,
     charter,
     assistantSkills,
     knowledgeVersion: readKnowledgeVersion(pp),
   };
 }
 
-/** Đọc nội dung skill theo mức đã chọn của role. */
-export function loadSkill(office: LoadedOffice, role: Role): string {
+/**
+ * File skill của một vai trò — ĐƯỜNG DẪN TƯƠNG ĐỐI với thư mục văn phòng.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐỌC VÀ GHI PHẢI DÙNG CHUNG ĐÚNG HÀM NÀY.                                 │
+ * │                                                                          │
+ * │ Bug đã sửa: giao diện GHI vào `skills/<id>.md` (đường dự phòng của        │
+ * │ `describePrompt`), còn `loadSkill` chỉ ĐỌC những gì khai trong            │
+ * │ `role.skills`. Nhân viên tạo từ giao diện có `skills: {}`, nên người dùng │
+ * │ bấm Lưu → server ghi file thật → đọc lại vẫn ra rỗng. Nội dung họ vừa    │
+ * │ viết biến mất, kể cả sau khi tải lại trang, mà không có một câu lỗi nào.  │
+ * │                                                                          │
+ * │ Hai đường dẫn khác nhau cho cùng một thứ là cách âm thầm nhất để làm mất  │
+ * │ việc của người dùng — cùng loại lỗi với `cheap`→`eco` không có alias.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Thứ tự: khai trong yaml → quy ước `<id>.<mức>.md` đã có trên đĩa → `<id>.md`.
+ */
+export function skillFileFor(office: LoadedOffice, role: Role): string {
   const level: SkillLevel = role.skill_level;
-  const rel = role.skills[level] ?? role.skills['medium'] ?? role.skills['short'];
-  if (!rel) return '';
+  const declared = role.skills[level] ?? role.skills['medium'] ?? role.skills['short'];
+  if (declared) return declared;
+
+  // Văn phòng của v0 đặt tên theo mức (`skills/writer.medium.md`). Tôn trọng
+  // file đã có trên đĩa, đừng đẻ ra file thứ hai cạnh nó.
+  const byLevel = `skills/${role.id}.${level}.md`;
+  if (fs.existsSync(path.join(office.dir, byLevel))) return byLevel;
+
+  return `skills/${role.id}.md`;
+}
+
+/** Đọc nội dung skill theo mức đã chọn của role. Rỗng là hợp lệ. */
+export function loadSkill(office: LoadedOffice, role: Role): string {
+  const rel = skillFileFor(office, role);
   const file = path.join(office.dir, rel);
   if (!fs.existsSync(file)) {
-    process.emitWarning(`Vai trò "${role.id}": không thấy file skill ${rel}`);
+    // Chỉ cảnh báo khi file được KHAI TƯỜNG MINH mà không thấy — đó mới là lỗi
+    // cấu hình. Đường dự phòng chưa có file là trạng thái bình thường của một
+    // nhân viên mới: skills mặc định TRỐNG.
+    const declared = role.skills[role.skill_level] ?? role.skills['medium'] ?? role.skills['short'];
+    if (declared) process.emitWarning(`Vai trò "${role.id}": không thấy file skill ${declared}`);
     return '';
   }
   return fs.readFileSync(file, 'utf8').trim();
