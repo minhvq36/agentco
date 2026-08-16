@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Company } from '../core/company.js';
+import { LibraryError } from '../library/store.js';
 import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 
@@ -282,6 +283,56 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
           ),
         });
       }
+      // ── tủ tài liệu → docs/SPEC-library.md §13
+      if (rest[0] === 'library' && !rest[1] && method === 'GET') {
+        // Quét ở ĐÂY, không dùng watcher: watcher bắn sự kiện giữa lúc một file
+        // lớn đang được copy vào và ta bóc phải bản dở. → SPEC-library.md §9.1
+        return json(res, 200, { docs: office.library.scan() });
+      }
+      if (rest[0] === 'library' && !rest[1] && method === 'POST') {
+        const name = url.searchParams.get('name');
+        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        const maxBytes = Math.round(company.config.library.max_file_mb * 1024 * 1024);
+        // Trần phải chặn THEO DÒNG lúc đang nhận, không phải sau khi đã đệm đủ
+        // vào RAM — nếu không thì một file 2GB làm sập daemon trước khi tới được
+        // câu kiểm tra. → SPEC-library.md §13
+        const data = await readBody(req, maxBytes);
+        try {
+          const doc = office.library.add(decodeURIComponent(name), data, {
+            replace: url.searchParams.get('replace') === '1',
+            maxBytes,
+          });
+          return json(res, 201, { doc, docs: office.library.list() });
+        } catch (err) {
+          if (err instanceof LibraryError) {
+            // 409 chỉ dành cho TRÙNG TÊN: giao diện phải phân biệt được "hỏi lại
+            // để thay thế" với "file này không nhận được" — hai câu khác hẳn.
+            return json(res, err.kind === 'duplicate' ? 409 : 400, { error: err.message });
+          }
+          throw err;
+        }
+      }
+      if (rest[0] === 'library' && rest[1] === 'file' && method === 'GET') {
+        const name = url.searchParams.get('name');
+        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        const abs = office.library.originalPath(decodeURIComponent(name));
+        if (!abs) return json(res, 404, { error: 'không có tài liệu này' });
+        res.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(abs))}`,
+        });
+        fs.createReadStream(abs).pipe(res);
+        return;
+      }
+      if (rest[0] === 'library' && !rest[1] && method === 'DELETE') {
+        const name = url.searchParams.get('name');
+        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        if (!office.library.remove(decodeURIComponent(name))) {
+          return json(res, 404, { error: 'không có tài liệu này' });
+        }
+        return json(res, 200, { docs: office.library.list() });
+      }
+
       if (rest[0] === 'artifact' && method === 'GET') {
         const rel = url.searchParams.get('path');
         if (!rel) return json(res, 400, { error: 'thiếu "path"' });
@@ -366,6 +417,38 @@ async function readJson<T>(req: http.IncomingMessage): Promise<T> {
   } catch {
     throw new RunError('Dữ liệu gửi lên không phải JSON hợp lệ.', 'other');
   }
+}
+
+/**
+ * Đọc body NHỊ PHÂN, cắt ngay khi vượt trần.
+ *
+ * → docs/SPEC-library.md §13
+ *
+ * Đây là route đầu tiên của hệ thống nhận dữ liệu nhị phân, và cái bẫy nằm ở chỗ
+ * dễ bỏ qua nhất: kiểm kích thước SAU khi đã `Buffer.concat` là đã quá muộn —
+ * một file 2GB làm daemon hết bộ nhớ trước khi tới được câu kiểm tra. Phải cộng
+ * dồn theo từng chunk và ném ngay khi vượt.
+ *
+ * CỐ Ý không dùng `multipart/form-data`: parse multipart đúng chuẩn (biên, mã
+ * hoá tên file, chunk cắt giữa biên) là một thư viện, còn ở đây tên file đi trên
+ * query string và body là nguyên si nội dung. Ít mã hơn, ít chỗ sai hơn.
+ */
+async function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > maxBytes) {
+      req.destroy();
+      throw new RunError(
+        `File vượt trần ${Math.round(maxBytes / 1024 / 1024)}MB. ` +
+          'Đổi trần ở company.yaml (library.max_file_mb) nếu bạn thật sự cần.',
+        'other',
+      );
+    }
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 function pkgVersion(): string {

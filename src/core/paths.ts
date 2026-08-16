@@ -49,6 +49,16 @@ export interface OfficePaths {
   knowledgeInbox: string;
   knowledgeIndex: string;
   artifacts: string;
+  /**
+   * Tủ tài liệu — file NGƯỜI DÙNG đưa vào. → docs/SPEC-library.md
+   *
+   * ⚠ KHÔNG được đặt dưới `.state/` hay bất kỳ thư mục nào bắt đầu bằng dấu
+   * chấm: `Grep` bỏ qua thư mục ẩn khi duyệt xuống (đã đo — SPEC-library.md
+   * §2.1), nên giấu nó đi là làm cả cơ chế truy xuất chết im lặng.
+   */
+  library: string;
+  libraryFiles: string;
+  libraryText: string;
   tasks: string;
   planIndex: string;
   state: string;
@@ -89,6 +99,9 @@ export function officePaths(officeDir: string): OfficePaths {
     knowledgeInbox: p('knowledge', '_inbox'),
     knowledgeIndex: p('knowledge', 'index.json'),
     artifacts: p('artifacts'),
+    library: p('library'),
+    libraryFiles: p('library', 'files'),
+    libraryText: p('library', 'text'),
     tasks: p('tasks'),
     planIndex: p('tasks', 'index.json'),
     state: p('.state'),
@@ -116,6 +129,9 @@ export function ensureOfficeDirs(pp: OfficePaths): void {
     pp.knowledgeAgents,
     pp.knowledgeInbox,
     pp.artifacts,
+    pp.library,
+    pp.libraryFiles,
+    pp.libraryText,
     pp.tasks,
     pp.state,
     pp.connectors,

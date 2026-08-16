@@ -3,6 +3,7 @@ import {
   BookOpen,
   Building2,
   ChevronsLeftRight,
+  FolderOpen,
   MessageSquare,
   ScrollText,
   X,
@@ -16,11 +17,19 @@ import { ChatPanel } from './panels/ChatPanel';
 import { PlansPanel } from './panels/PlansPanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { KnowledgePanel } from './panels/KnowledgePanel';
+import { LibraryPanel } from './panels/LibraryPanel';
 
+/**
+ * Tủ tài liệu đứng NGAY CẠNH Kho tri thức, và thứ tự đó có chủ ý: hai thứ dễ
+ * lẫn nhất trong cả sản phẩm, nên chúng phải đứng cạnh nhau để sự khác biệt
+ * đọc được bằng mắt — thứ NGƯỜI DÙNG đưa vào, và thứ hệ thống ĐÃ HỌC.
+ * → docs/SPEC-library.md §1
+ */
 const TABS: Array<{ id: PanelId; icon: LucideIcon; label: string }> = [
   { id: 'chat', icon: MessageSquare, label: 'Nói với Trợ lý' },
   { id: 'plans', icon: ScrollText, label: 'Nhật ký công việc' },
   { id: 'overview', icon: Building2, label: 'Tổng quan công ty' },
+  { id: 'library', icon: FolderOpen, label: 'Tủ tài liệu' },
   { id: 'knowledge', icon: BookOpen, label: 'Kho tri thức' },
 ];
 
@@ -187,6 +196,7 @@ export function Sidebar() {
             {panel === 'chat' && <ChatPanel />}
             {panel === 'plans' && <PlansPanel />}
             {panel === 'overview' && <OverviewPanel />}
+            {panel === 'library' && <LibraryPanel />}
             {panel === 'knowledge' && <KnowledgePanel />}
           </div>
 

@@ -150,6 +150,29 @@ export interface KnowledgeEntry {
   updated: string;
 }
 
+/**
+ * Một tài liệu trong tủ. → docs/SPEC-library.md
+ *
+ * PHẢI khớp `DocRecord` trong `src/library/store.ts`.
+ */
+export type DocState = 'pending' | 'extracting' | 'ready' | 'image-only' | 'unindexed' | 'failed';
+
+export interface LibraryDoc {
+  name: string;
+  ext: string;
+  bytes: number;
+  mtime: string;
+  state: DocState;
+  /** "34 trang" · "3 sheet: Tháng 7, Tổng" — dựng bằng code, không qua model. */
+  shape?: string;
+  preview?: string;
+  tokens?: number;
+  pages?: number;
+  /** Câu giải thích khi state khác `ready`. Luôn kèm việc phải làm. */
+  note?: string;
+  extracted_at?: string;
+}
+
 export interface OfficeDetail {
   id: string;
   name: string;
@@ -199,6 +222,7 @@ export type AgentEvent = EventBase &
     | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }
     | { type: 'knowledge.changed'; count: number; version: number }
+    | { type: 'library.changed'; count: number; busy: number }
     | { type: 'layout.changed'; say: string }
     | { type: 'company.offices'; say: string }
   );

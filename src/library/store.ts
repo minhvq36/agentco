@@ -1,0 +1,497 @@
+/**
+ * Tủ tài liệu: file NGƯỜI DÙNG đưa vào.
+ *
+ * → docs/SPEC-library.md
+ *
+ * Khác kho tri thức ở đúng chỗ quan trọng nhất: **không có gì ở đây vào prefix**.
+ * Kho tri thức trả tiền mỗi lượt, mỗi worker, nên nó có trần 250 token và một
+ * vòng đời tự động (supersedes · hits · prune). Tủ tài liệu nằm trên đĩa, với
+ * tới bằng `Glob`/`Grep`, và **không bao giờ tự xoá thứ gì** — vì thứ nó giữ là
+ * file của khách, không phải ghi chú agent tự sinh.
+ *
+ * ⚠ Không thư mục nào trong đây được bắt đầu bằng dấu chấm: `Grep` bỏ qua thư
+ * mục ẩn khi duyệt xuống (đã đo — SPEC-library.md §2.1). Giấu `text/` vào
+ * `.state/` là làm cả cơ chế truy xuất chết im lặng.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { OfficePaths } from '../core/paths.js';
+import { estimateTokens } from '../core/tokens.js';
+import {
+  HANDLING,
+  formatBytes,
+  formatTokens,
+  safeName,
+  sniffType,
+  type Handling,
+} from './names.js';
+import {
+  PdfToolMissing,
+  extractDocx,
+  extractPdf,
+  extractPptx,
+  extractText,
+  extractXlsx,
+  type Extracted,
+} from './extract.js';
+
+export type DocState =
+  /** vừa vào tủ, chưa bóc */
+  | 'pending'
+  /** đang bóc — đây là trạng thái DUY NHẤT `office.run()` phải chờ (§10) */
+  | 'extracting'
+  /** bóc xong, tìm được bằng từ khoá */
+  | 'ready'
+  /** bản chụp/scan: bóc ra ~0 chữ. KHÔNG phải lỗi — model đọc trực tiếp được */
+  | 'image-only'
+  /** chưa bóc được vì thiếu công cụ, nhưng bản gốc vẫn dùng được */
+  | 'unindexed'
+  /** file hỏng, có mật khẩu, hoặc không đúng định dạng như đuôi khai */
+  | 'failed';
+
+export interface DocRecord {
+  name: string;
+  ext: string;
+  bytes: number;
+  mtime: string;
+  state: DocState;
+  /** "34 trang" · "3 sheet: …" — cho INDEX.md và giao diện. */
+  shape?: string;
+  preview?: string;
+  tokens?: number;
+  pages?: number;
+  /** Câu nói cho người dùng khi state không phải `ready`. Luôn kèm việc phải làm. */
+  note?: string;
+  extracted_at?: string;
+}
+
+/** Ngưỡng phát hiện bản chụp: dưới ngần này ký tự mỗi trang thì coi như không có lớp chữ. */
+const CHARS_PER_PAGE_MIN = 50;
+
+export class LibraryStore {
+  private docs = new Map<string, DocRecord>();
+  private working = false;
+
+  constructor(
+    private paths: OfficePaths,
+    private onChange: () => void = () => {},
+  ) {
+    this.load();
+  }
+
+  rebind(paths: OfficePaths): void {
+    this.paths = paths;
+    this.docs.clear();
+    this.load();
+  }
+
+  get size(): number {
+    return this.docs.size;
+  }
+
+  list(): DocRecord[] {
+    return [...this.docs.values()].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }
+
+  /**
+   * Đồng bộ catalog với thư mục thật, rồi khởi động việc bóc còn thiếu.
+   *
+   * CỐ Ý gọi ở mỗi `GET /library` thay vì dùng file watcher. Watcher bắn sự kiện
+   * GIỮA LÚC một file lớn đang được copy vào → bóc ra text cụt → catalog ghi
+   * `ready` → không ai biết. Quét lúc đọc là `readdir` + `stat`, vài ms, và
+   * không bao giờ nhìn thấy file dở. → SPEC-library.md §9.1
+   */
+  scan(): DocRecord[] {
+    fs.mkdirSync(this.filesDir, { recursive: true });
+    fs.mkdirSync(this.textDir, { recursive: true });
+
+    const onDisk = new Map<string, fs.Stats>();
+    for (const entry of fs.readdirSync(this.filesDir, { withFileTypes: true })) {
+      if (!entry.isFile() || entry.name.startsWith('.')) continue;
+      try {
+        onDisk.set(entry.name, fs.statSync(path.join(this.filesDir, entry.name)));
+      } catch {
+        /* file biến mất giữa readdir và stat — coi như không có */
+      }
+    }
+
+    // Biến khỏi đĩa → biến khỏi catalog, và sidecar đi cùng. Bỏ sót bước dọn
+    // sidecar là để `Grep` tìm thấy nội dung của một tài liệu đã bị xoá.
+    for (const name of [...this.docs.keys()]) {
+      if (!onDisk.has(name)) {
+        this.docs.delete(name);
+        this.dropSidecar(name);
+      }
+    }
+
+    for (const [name, stat] of onDisk) {
+      const mtime = stat.mtime.toISOString();
+      const known = this.docs.get(name);
+      if (known && known.bytes === stat.size && known.mtime === mtime) continue;
+
+      // File mới, hoặc đã bị thay bằng bản khác ngay trên đĩa. Cả hai đều phải
+      // bóc lại từ đầu — và sidecar cũ phải chết TRƯỚC.
+      this.dropSidecar(name);
+      const checked = safeName(name);
+      this.docs.set(name, {
+        name,
+        ext: checked.ok ? checked.ext : path.extname(name).slice(1).toLowerCase(),
+        bytes: stat.size,
+        mtime,
+        ...(checked.ok
+          ? { state: 'pending' as const }
+          : { state: 'failed' as const, note: checked.reason }),
+      });
+    }
+
+    this.save();
+    void this.pump();
+    return this.list();
+  }
+
+  /**
+   * Nhận một tài liệu mới.
+   *
+   * Ném lỗi có CÂU ĐỌC ĐƯỢC cho mọi đường từ chối — người dùng thả nhầm file thì
+   * phải biết ngay vì sao, không phải thử lại ba lần.
+   */
+  add(rawName: string, data: Buffer, opts: { replace?: boolean; maxBytes: number }): DocRecord {
+    const checked = safeName(rawName);
+    if (!checked.ok) throw new LibraryError(checked.reason);
+
+    if (data.length === 0) throw new LibraryError('File rỗng.');
+    if (data.length > opts.maxBytes) {
+      throw new LibraryError(
+        `File nặng ${formatBytes(data.length)}, vượt trần ${formatBytes(opts.maxBytes)}. ` +
+          'Nếu là bản chụp/scan thì nén lại hoặc tách nhỏ trước khi thả vào.',
+      );
+    }
+
+    const sniffed = sniffType(data.subarray(0, 8192), checked.ext);
+    if (!sniffed.ok) throw new LibraryError(sniffed.reason);
+
+    const dest = path.join(this.filesDir, checked.name);
+    if (fs.existsSync(dest) && !opts.replace) {
+      throw new LibraryError(`Đã có tài liệu tên "${checked.name}" trong tủ.`, 'duplicate');
+    }
+
+    /**
+     * XOÁ SIDECAR TRƯỚC KHI GHI ĐÈ — không phải sau.
+     *
+     * Đây đúng lớp bug "ghi một đằng đọc một nẻo" (SESSIONS_MEMORY §8). Nếu ghi
+     * file mới xong mới dọn, và bước dọn hỏng, thì `Grep` tìm thấy nội dung của
+     * bản ĐÃ BỊ THAY — im lặng, mãi mãi, và nhân viên trích dẫn một câu không
+     * còn tồn tại trong file người dùng đang mở.
+     */
+    this.dropSidecar(checked.name);
+
+    fs.mkdirSync(this.filesDir, { recursive: true });
+    fs.writeFileSync(dest, data);
+    const stat = fs.statSync(dest);
+
+    const rec: DocRecord = {
+      name: checked.name,
+      ext: checked.ext,
+      bytes: stat.size,
+      mtime: stat.mtime.toISOString(),
+      state: 'pending',
+    };
+    this.docs.set(rec.name, rec);
+    this.save();
+    void this.pump();
+    return rec;
+  }
+
+  /** Xoá hẳn: bản gốc + văn bản đã bóc. Một mức, không có "lưu trữ". → §6 */
+  remove(rawName: string): boolean {
+    const rec = this.docs.get(rawName);
+    if (!rec) return false;
+    fs.rmSync(path.join(this.filesDir, rec.name), { force: true });
+    this.dropSidecar(rec.name);
+    this.docs.delete(rec.name);
+    this.save();
+    this.renderIndex();
+    this.onChange();
+    return true;
+  }
+
+  /** Đường dẫn tuyệt đối của bản gốc, để tải về. `undefined` nếu không có. */
+  originalPath(rawName: string): string | undefined {
+    const rec = this.docs.get(rawName);
+    if (!rec) return undefined;
+    const abs = path.join(this.filesDir, rec.name);
+    return fs.existsSync(abs) ? abs : undefined;
+  }
+
+  /**
+   * Chờ những tài liệu ĐANG BÓC — và chỉ chúng.
+   *
+   * Đây là điểm chờ DUY NHẤT của cả tính năng (§10). Không có nó thì có một ca
+   * hỏng thật và im lặng: người dùng thả PDF xong hỏi ngay, `Grep` chạy trước
+   * khi text kịp tồn tại, nhân viên trả lời "không tìm thấy gì" một cách rất
+   * thuyết phục. Có nó thì đổi lại vài giây chờ, và câu trả lời đúng.
+   *
+   * Timeout là bắt buộc: một file hỏng theo cách ta chưa lường được không được
+   * phép treo cả văn phòng.
+   */
+  async settled(timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.busyCount() > 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  busyCount(): number {
+    let n = 0;
+    for (const d of this.docs.values()) if (d.state === 'pending' || d.state === 'extracting') n++;
+    return n;
+  }
+
+  /** Tên tài liệu đang bóc — để dòng trạng thái nói đúng tên chứ không nói "đang xử lý". */
+  busyNames(): string[] {
+    return [...this.docs.values()]
+      .filter((d) => d.state === 'pending' || d.state === 'extracting')
+      .map((d) => d.name);
+  }
+
+  // ── nội bộ
+
+  private get filesDir(): string {
+    return path.join(this.paths.library, 'files');
+  }
+  private get textDir(): string {
+    return path.join(this.paths.library, 'text');
+  }
+  private get catalogFile(): string {
+    return path.join(this.paths.library, 'catalog.json');
+  }
+  private get indexFile(): string {
+    return path.join(this.paths.library, 'INDEX.md');
+  }
+
+  private sidecarFor(name: string): string {
+    return path.join(this.textDir, `${name}.txt`);
+  }
+
+  private dropSidecar(name: string): void {
+    fs.rmSync(this.sidecarFor(name), { force: true });
+  }
+
+  /**
+   * Bóc lần lượt, MỘT file một lúc.
+   *
+   * Không chạy song song có chủ ý: giải nén và bóc XML là việc CPU đồng bộ, chạy
+   * bốn cái cùng lúc trong một tiến trình Node không nhanh hơn mà chỉ giữ vòng
+   * lặp sự kiện lâu hơn — mà chính vòng lặp đó đang phục vụ giao diện và SSE.
+   */
+  private async pump(): Promise<void> {
+    if (this.working) return;
+    this.working = true;
+    try {
+      for (;;) {
+        const next = [...this.docs.values()].find((d) => d.state === 'pending');
+        if (!next) break;
+        next.state = 'extracting';
+        this.save();
+        this.onChange();
+        await this.extractOne(next);
+        this.save();
+        this.onChange();
+      }
+      this.renderIndex();
+      this.onChange();
+    } finally {
+      this.working = false;
+    }
+  }
+
+  private async extractOne(rec: DocRecord): Promise<void> {
+    const abs = path.join(this.filesDir, rec.name);
+    const kind: Handling | undefined = HANDLING[rec.ext];
+    if (!kind) {
+      rec.state = 'failed';
+      rec.note = `Chưa nhận đuôi .${rec.ext}.`;
+      return;
+    }
+
+    let out: Extracted;
+    try {
+      const buf = fs.readFileSync(abs);
+      out =
+        kind === 'text'
+          ? extractText(buf, rec.ext)
+          : kind === 'pdf'
+            ? await extractPdf(buf)
+            : rec.ext === 'docx'
+              ? extractDocx(buf)
+              : rec.ext === 'xlsx'
+                ? extractXlsx(buf)
+                : extractPptx(buf);
+    } catch (err) {
+      if (err instanceof PdfToolMissing) {
+        /**
+         * KHÔNG phải lỗi của người dùng, và tài liệu vẫn dùng được — nhân viên
+         * `Read` thẳng bản gốc theo trang. Chỉ mất khả năng tìm bằng từ khoá.
+         * Nói đúng điều đó, kèm việc phải làm.
+         */
+        rec.state = 'unindexed';
+        rec.note =
+          'Chưa cài công cụ đọc PDF nên không tìm được bằng từ khoá. ' +
+          'Nhân viên vẫn đọc được nếu bạn nói rõ trang. Cài: npm i pdfjs-dist';
+        rec.shape = 'pdf';
+        return;
+      }
+      rec.state = 'failed';
+      rec.note = friendlyError(err, rec.ext);
+      return;
+    }
+
+    rec.shape = out.shape;
+    rec.preview = out.preview;
+    rec.tokens = estimateTokens(out.text);
+    if (out.pages !== undefined) rec.pages = out.pages;
+    rec.extracted_at = new Date().toISOString();
+
+    /**
+     * Bản chụp: bóc ra gần như không có chữ. KHÔNG đánh là lỗi — model nhìn
+     * trang PDF như một tấm ảnh nên nó ĐỌC ĐƯỢC, chỉ đắt hơn và không grep
+     * được. Bản nháp đầu của spec gọi đây là "cần OCR, chưa hỗ trợ", và đó là
+     * một câu sai đã đuổi người dùng khỏi một thứ vốn chạy được. → §3.2
+     */
+    if (rec.pages && out.text.replace(/--- trang \d+ ---/g, '').trim().length < rec.pages * CHARS_PER_PAGE_MIN) {
+      rec.state = 'image-only';
+      rec.note =
+        'Bản chụp, không có lớp chữ — tìm bằng từ khoá sẽ không ra. ' +
+        'Nhân viên phải đọc từng trang nên tốn hơn bình thường.';
+      return;
+    }
+
+    // Định dạng text sẵn KHÔNG cần bản sao: bản gốc đã là văn bản và `Grep` đọc
+    // thẳng được. Sinh sidecar cho nó chỉ tạo ra hai bản của cùng một thứ, rồi
+    // một ngày nào đó chúng lệch nhau.
+    if (kind !== 'text') {
+      fs.mkdirSync(this.textDir, { recursive: true });
+      fs.writeFileSync(this.sidecarFor(rec.name), out.text, 'utf8');
+    }
+    rec.state = 'ready';
+    delete rec.note;
+  }
+
+  /**
+   * `INDEX.md` — tầng định tuyến, dựng bằng CODE, 0 token. → §8
+   *
+   * Mọi cột đều QUAN SÁT ĐƯỢC từ chính file. Không có lượt gọi LLM nào ở đây, và
+   * đó là điểm khác biệt với ý "sinh một node tóm tắt cho mỗi file" — ý đó đúng
+   * mục tiêu nhưng trả bằng một lượt gọi cho mỗi tài liệu.
+   *
+   * File này KHÔNG vào prefix. Trợ lý chủ động đọc nó khi cần biết "tủ có gì" —
+   * một file nhỏ, thay cho việc `Glob` mò cả thư mục.
+   */
+  renderIndex(): void {
+    const docs = this.list();
+    fs.mkdirSync(this.paths.library, { recursive: true });
+
+    if (docs.length === 0) {
+      fs.writeFileSync(
+        this.indexFile,
+        '# Tủ tài liệu\n\nChưa có tài liệu nào. Người dùng thả file vào qua giao diện.\n',
+        'utf8',
+      );
+      return;
+    }
+
+    const rows = docs.map((d) => {
+      const note =
+        d.state === 'ready'
+          ? (d.preview ?? '')
+          : `**${stateLabel(d.state)}** — ${d.note ?? ''} ${d.preview ?? ''}`.trim();
+      return `| ${d.name} | ${d.shape ?? d.ext} | ${formatBytes(d.bytes)} | ${
+        d.tokens ? formatTokens(d.tokens) : '—'
+      } | ${note.replace(/\|/g, '/').replace(/\n/g, ' ')} |`;
+    });
+
+    const lines = [
+      `# Tủ tài liệu — ${docs.length} tài liệu`,
+      '',
+      'Bản gốc ở `library/files/`. Văn bản đã bóc ở `library/text/` (dùng `Grep` ở đó).',
+      'Với PDF: tìm trong `library/text/`, thấy dòng nào thì xem mốc `--- trang N ---`',
+      'gần nhất phía trên, rồi `Read` bản gốc đúng trang đó.',
+      '',
+      '| Tên | Loại | Cỡ | ~Token | Mở đầu / cấu trúc |',
+      '|---|---|---|---|---|',
+      ...rows,
+      '',
+      `_Cập nhật ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — dựng bằng code, không qua model._`,
+      '',
+    ];
+    fs.writeFileSync(this.indexFile, lines.join('\n'), 'utf8');
+  }
+
+  private load(): void {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.catalogFile, 'utf8')) as { docs?: DocRecord[] };
+      for (const d of raw.docs ?? []) {
+        // Daemon tắt giữa lúc đang bóc thì trạng thái đó vô nghĩa khi bật lại.
+        // Đưa về `pending` để nó được bóc lại, thay vì kẹt `extracting` vĩnh
+        // viễn và làm `settled()` chờ đủ timeout ở MỌI ca chạy sau đó.
+        this.docs.set(d.name, d.state === 'extracting' ? { ...d, state: 'pending' } : d);
+      }
+    } catch {
+      /* chưa có catalog, hoặc hỏng — quét lại là dựng được hết */
+    }
+  }
+
+  private save(): void {
+    fs.mkdirSync(this.paths.library, { recursive: true });
+    fs.writeFileSync(
+      this.catalogFile,
+      JSON.stringify({ generated: new Date().toISOString(), docs: this.list() }, null, 2),
+      'utf8',
+    );
+  }
+}
+
+export class LibraryError extends Error {
+  constructor(
+    message: string,
+    readonly kind: 'invalid' | 'duplicate' = 'invalid',
+  ) {
+    super(message);
+    this.name = 'LibraryError';
+  }
+}
+
+export function stateLabel(s: DocState): string {
+  switch (s) {
+    case 'pending':
+      return 'đang chờ';
+    case 'extracting':
+      return 'đang đọc';
+    case 'ready':
+      return 'sẵn sàng';
+    case 'image-only':
+      return 'bản chụp';
+    case 'unindexed':
+      return 'chưa lập chỉ mục';
+    case 'failed':
+      return 'lỗi';
+  }
+}
+
+/**
+ * Đổi lỗi kỹ thuật thành câu nói được việc phải làm.
+ *
+ * Tiêu chí "Xử lý lỗi tốt" nói: mọi lỗi phải nói *chuyện gì xảy ra + làm gì
+ * tiếp*. Một dòng "Invalid PDF structure" thoả đúng nửa đầu.
+ */
+function friendlyError(err: unknown, ext: string): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/password|encrypt/i.test(msg)) return 'File có mật khẩu — bỏ mật khẩu rồi thả lại.';
+  if (/ZIP64/i.test(msg)) return 'File quá lớn để đọc. Tách nhỏ rồi thả lại.';
+  if (/zip|inflate|nén/i.test(msg)) {
+    return `File .${ext} hỏng hoặc không đúng định dạng. Mở bằng ứng dụng gốc rồi "Lưu thành" một bản mới.`;
+  }
+  return `Không đọc được nội dung: ${msg}`;
+}

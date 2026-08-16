@@ -16,6 +16,7 @@ Mỗi bài giả định bạn **luôn tạo văn phòng mới trước**. Làm 
 | Thêm nhân viên (tên, giới thiệu, mức model) | ✅ nút **Nhân viên** |
 | **Sửa hồ sơ nhân viên** (tên · giới thiệu · mức model) | ✅ **MỚI** — bảng chi tiết → *Sửa hồ sơ* |
 | **Đọc/ghi file + tìm trên web** | ✅ **MỚI — bật sẵn, không phải khai gì** |
+| **Đưa tài liệu vào cho nhân viên đọc** | ✅ **MỚI** — panel **Tủ tài liệu**, kéo thả · pdf docx xlsx pptx md txt csv json yaml |
 | Nối / ngắt dây, cho nghỉ, bỏ khỏi sơ đồ | ✅ kéo trên sơ đồ, **phản hồi tức thì** |
 | Giao việc, xem kế hoạch, xem nhật ký, xem chi phí | ✅ |
 | **Kế hoạch hiện trong khung chat** | ✅ **MỚI** — chuẩn bị cho Telegram |
@@ -30,6 +31,8 @@ Mỗi bài giả định bạn **luôn tạo văn phòng mới trước**. Làm 
 > **Đổi từ 15/08:** mọi nhân viên **bật sẵn** `Read` `Write` `Edit` `Glob` `Grep` `WebSearch` `WebFetch` và **không tắt được**. Chúng là *tay* của văn phòng: bốn tool file chỉ chạm được thư mục văn phòng (`cwd` + `safeJoin`), hai tool web chỉ **đọc**. Bài 4 và 10A vì thế **hết phải mở editor**.
 >
 > `Bash` **cố ý** không bật sẵn — nó là thứ duy nhất ra được khỏi thư mục văn phòng, nên phải là một quyết định tường minh. Chỉ bài 9 cần nó.
+>
+> **Đổi từ 17/08 — TỦ TÀI LIỆU** (`SPEC-library.md`). Mọi bước 📝 *"bỏ file vào `artifacts/input/`"* trong bài 2 · 3 · 5 · 6 · 7 · 8 giờ là 🖱 **kéo thả vào panel Tủ tài liệu**. Nội dung `.pdf` `.docx` `.xlsx` `.pptx` được **bóc thành text một lần lúc thả vào** nên `Grep` tìm được ngay và không tốn token lặp lại. Đây là thay đổi lớn nhất với chỉ số *"bao nhiêu bài phải mở editor"* ở cuối file.
 
 **Ký hiệu trong file này:** 🖱 = bấm trong giao diện · ⌨ = gõ trong terminal · 📝 = mở file bằng editor.
 
@@ -83,38 +86,33 @@ ba giọng khác nhau: ấm áp, sang trọng, vui nhộn. Lưu mỗi đoạn m�
 
 ---
 
-## Bài 2 — Hỗ trợ khách hàng ⚠ *cần gõ tay: nạp tri thức*
+## Bài 2 — Hỗ trợ khách hàng ✅ *không cần gõ tay* — **viết lại 17/08**
+
+> **Đổi đề, giữ nguyên mục đích.** Bản cũ bắt tự tay viết 5 file node vào `knowledge/shared/`. Nhưng chính sách của shop là **tài liệu người dùng sở hữu**, không phải bài học agent tự rút ra — nó thuộc **tủ tài liệu**. Xem `SPEC-library.md` §7.
+>
+> ⚠ Hệ quả phải ghi nhận: bài này giờ đo **`Grep` trên tủ tài liệu**, không còn đo chấm điểm từ khoá của `KnowledgeStore.cold()`. Sau khi đổi thì **không còn bài nào đo `cold()` trực tiếp** — nó chỉ được kiểm gián tiếp qua bài 5.
 
 **Bước 1.** 🖱 **+ Văn phòng** → `Hỗ trợ khách`
 
 **Bước 2.** 🖱 **Nhân viên**:
 - Tên: `Người trả lời`
-- Giới thiệu: `Soạn câu trả lời cho khách dựa trên chính sách của shop. Đầu ra là file trả lời ngắn, đúng giọng shop.`
+- Giới thiệu: `Soạn câu trả lời cho khách dựa trên chính sách của shop trong tủ tài liệu. Đầu ra là file trả lời ngắn, đúng giọng shop.`
 - Mức: `eco`
 
-**Bước 3.** 📝 Nạp chính sách vào kho tri thức. Tạo `company/offices/ho-tro-khach/knowledge/shared/doi-tra.md`:
+**Bước 3.** 🖱 Mở panel **Tủ tài liệu** → **Thêm tài liệu** (hoặc kéo thả). Bỏ vào **4–5 file, mỗi file một chủ đề**:
 
-```markdown
----
-id: k/shared/doi-tra
-type: policy
-title: "Chính sách đổi trả"
-tags: [doi-tra, hoan-tien, van-chuyen]
-scope: shared
-author: master
-confidence: 1
-hits: 0
-updated: 2026-08-15
----
+| File | Nội dung |
+|---|---|
+| `doi-tra.md` | Đổi trả trong 7 ngày, còn nguyên tem mác. **Hàng giảm trên 50% không đổi trả.** Phí ship chiều đổi do khách chịu, trừ khi shop giao sai. |
+| `bang-gia.md` | bảng giá các nhóm sản phẩm |
+| `thoi-gian-giao.md` | nội thành 1–2 ngày, tỉnh 3–5 ngày |
+| `bao-hanh.md` | bảo hành 12 tháng, không bảo hành lỗi do người dùng |
 
-Đổi trả trong 7 ngày kể từ khi nhận hàng, sản phẩm còn nguyên tem mác.
-Hàng giảm giá trên 50% không đổi trả. Phí ship chiều đổi do khách chịu,
-trừ trường hợp shop giao sai hoặc hàng lỗi.
-```
+Cứ viết bằng Notepad rồi kéo vào — **không cần frontmatter, không cần id, không cần gì cả**. Đó chính là điểm khác nhau giữa tủ tài liệu và kho tri thức.
 
-Làm thêm 3–4 file nữa cho các chủ đề khác (bảng giá, thời gian giao, bảo hành). **Mỗi file một chủ đề, dưới 250 token.** Một file to nhồi hết mọi thứ sẽ làm hỏng chính bài test này.
+> Muốn thử luôn phần bóc text: xuất một trong số đó ra `.docx` hoặc `.pdf` rồi thả bản đó vào. Trong tủ nó phải hiện `sẵn sàng` sau vài giây.
 
-**Bước 4.** ⌨ `node dist/cli/index.js stop` rồi `start` lại (kho tri thức quét lúc mở văn phòng).
+**Bước 4.** *(đã bỏ)* — **không phải khởi động lại**. Tủ tài liệu quét lúc mở panel, không phải lúc mở văn phòng.
 
 **Bước 5.** 🖱 chat, gõ **một câu hỏi chỉ liên quan tới ĐÚNG MỘT file**:
 
@@ -122,15 +120,24 @@ Làm thêm 3–4 file nữa cho các chủ đề khác (bảng giá, thời gian
 Khách mua hàng sale 60% hôm kia, giờ đòi đổi size. Soạn giúp mình câu trả lời.
 ```
 
-**Phải thấy:** câu trả lời nêu đúng luật "hàng giảm trên 50% không đổi trả". 🖱 mở **Nhật ký** → nếu nó trả lời đúng thì truy xuất COLD đã kéo đúng node.
+**Phải thấy:** câu trả lời nêu đúng luật "hàng giảm trên 50% không đổi trả".
 
-**Bài test thật nằm ở đây:** hỏi 5 câu, mỗi câu thuộc một file khác nhau. Đếm bao nhiêu câu trả đúng. Dưới 4/5 nghĩa là chấm điểm từ khoá của `KnowledgeStore.cold()` chưa đủ tốt — đó là kết quả có ích, không phải thất bại.
+**Bài test thật nằm ở đây:** hỏi 5 câu, mỗi câu thuộc một file khác nhau. Đếm bao nhiêu câu trả đúng.
+
+**Đo cái gì — và đây là phần mới:** 🖱 mở **Nhật ký**, nhìn nhân viên đã làm gì để tìm ra câu trả lời.
+
+| Nó làm gì | Nghĩa là |
+|---|---|
+| `Grep` một lần → `Read` đúng một file | **tốt nhất** — cơ chế chạy đúng như thiết kế |
+| `Read` `library/INDEX.md` trước rồi mới mở file | cũng tốt — tầng định tuyến đang có tác dụng |
+| `Read` lần lượt **hết** các file | tủ nhỏ nên chưa đau, nhưng với 50 tài liệu thì đây là chỗ hoá đơn nổ. Ghi nhận |
+| trả lời mà không đọc file nào | **hỏng** — nó đang bịa, và câu đúng chỉ là may |
 
 **Chi phí:** ~$0.02/câu
 
 ---
 
-## Bài 3 — Sổ sách & hoá đơn ⚠ *cần gõ tay: chuẩn bị dữ liệu*
+## Bài 3 — Sổ sách & hoá đơn ✅ *không cần gõ tay* (từ 17/08)
 
 **Bước 1.** 🖱 **+ Văn phòng** → `Sổ sách`
 
@@ -139,7 +146,7 @@ Khách mua hàng sale 60% hôm kia, giờ đòi đổi size. Soạn giúp mình 
 - Giới thiệu: `Đọc file CSV sao kê, phân loại từng dòng vào nhóm chi tiêu, ghi ra bảng tổng hợp và file CSV đã gắn nhãn.`
 - Mức: `eco`
 
-**Bước 3.** 📝 Chuẩn bị dữ liệu. Tạo `company/offices/so-sach/artifacts/input/sao-ke.csv`:
+**Bước 3.** 🖱 **Tủ tài liệu** → thả vào một file `sao-ke.csv`:
 
 ```csv
 ngay,noi_dung,so_tien
@@ -149,12 +156,12 @@ ngay,noi_dung,so_tien
 2026-07-08,SHOPEE MUA HANG,320000
 ```
 
-Làm khoảng 30–40 dòng cho có ý nghĩa.
+Làm khoảng 30–40 dòng cho có ý nghĩa. **Cố ý chừa vài ô trống ở GIỮA hàng** — đó là ca đã làm lệch cột trong bản đầu của bộ bóc, và bạn muốn biết nó còn lệch không.
 
 **Bước 4.** 🖱 chat:
 
 ```
-Đọc file artifacts/input/sao-ke.csv, phân loại từng dòng vào các nhóm:
+Đọc file sao-ke.csv trong tủ tài liệu, phân loại từng dòng vào các nhóm:
 ăn uống, đi lại, nhà ở, mua sắm, khác. Ghi ra artifacts/bao-cao-thang-7.md
 gồm tổng từng nhóm và tổng chung.
 ```
@@ -204,12 +211,12 @@ Bài chứng minh kho tri thức có giá trị thật — và giá trị đó *
 - Giới thiệu: `Dịch tài liệu sang tiếng Việt, giữ nguyên thuật ngữ đã thống nhất. Đầu ra là file markdown.`
 - Mức: `standard`
 
-**Bước 3.** 📝 Bỏ 3–5 tài liệu tiếng Anh vào `company/offices/ban-dia-hoa/artifacts/input/`.
+**Bước 3.** 🖱 **Tủ tài liệu** → thả 3–5 tài liệu tiếng Anh vào.
 
 **Bước 4.** 🖱 chat, dịch **file thứ nhất**:
 
 ```
-Dịch artifacts/input/doc-1.md sang tiếng Việt, giọng tài liệu sản phẩm.
+Dịch doc-1.md trong tủ tài liệu sang tiếng Việt, giọng tài liệu sản phẩm.
 Lưu vào artifacts/vi/doc-1.md. Sau khi dịch xong, ghi lại các thuật ngữ
 quan trọng và cách bạn đã chọn dịch chúng.
 ```
@@ -227,7 +234,7 @@ quan trọng và cách bạn đã chọn dịch chúng.
 
 ---
 
-## Bài 6 — Rà hợp đồng ❌ *chặn: tài liệu dài hơn một task*
+## Bài 6 — Rà hợp đồng ⚠ *bài đã ĐỔI BẢN CHẤT từ 17/08 — đọc kỹ*
 
 ⚠ **Không phải tư vấn pháp lý.** Đây là bài test kỹ thuật, đừng dùng kết quả để ký gì.
 
@@ -241,20 +248,27 @@ quan trọng và cách bạn đã chọn dịch chúng.
 | `Người soi` | `Đọc một điều khoản, chỉ ra chỗ bất lợi cho bên nhận việc và giải thích vì sao.` | deep |
 | `Người gộp` | `Gộp các nhận xét thành một checklist ngắn cho người không rành luật.` | eco |
 
-**Bước 3.** 📝 Bỏ một hợp đồng **dài** (10+ trang, dạng `.md` hoặc `.txt`) vào `artifacts/input/hop-dong.md`.
+**Bước 3.** 🖱 **Tủ tài liệu** → thả một hợp đồng **dài** (10+ trang). **Dùng `.pdf` hoặc `.docx` thật**, đừng dùng `.md` — cả điểm của bài này giờ nằm ở đó.
 
 **Bước 4.** 🖱 chat:
 
 ```
-Đọc artifacts/input/hop-dong.md, tách theo điều khoản, soi từng điều
+Đọc hợp đồng trong tủ tài liệu, tách theo điều khoản, soi từng điều
 xem có gì bất lợi cho bên nhận việc, rồi gộp thành một checklist ngắn.
 ```
 
-**Phải thấy — và đây là bài test:** Trợ lý **không đọc được file** nên nó phải đoán hợp đồng dài bao nhiêu để chia việc. Nhiều khả năng nó giao một task duy nhất "đọc và tách", rồi task đó chạm `max_turns` hoặc trả về kết quả cắt cụt.
+**Bài test cũ (giữ lại để đối chiếu):** Trợ lý **không đọc được file** nên phải đoán hợp đồng dài bao nhiêu để chia việc. Nó giao một task duy nhất "đọc và tách", rồi task đó chạm `max_turns` hoặc trả kết quả cắt cụt. Đó là *lỗ hổng số 4*, và nó cần một bước `survey` rẻ chạy trước khi lập kế hoạch.
 
-**Ghi nhận:** *lỗ hổng số 4*. Cần một bước `survey` rẻ (đo kích thước file) chạy trước khi lập kế hoạch. Chưa có, và không tự nhiên có.
+**Bài test mới — `library/INDEX.md` CHÍNH LÀ bước `survey` đó**, và nó tốn 0 token vì dựng bằng code. Câu hỏi bây giờ là:
 
-**Chi phí:** $0.30 – $1.50, và có khả năng cao là **tiền mất mà kết quả cụt** — đó là dữ liệu, không phải tai nạn.
+| Quan sát trong **Nhật ký** | Nghĩa là |
+|---|---|
+| Trợ lý đọc `INDEX.md`, thấy "34 trang", rồi chia **nhiều task theo khoảng** | ✅ lỗ hổng số 4 đã đóng |
+| Trợ lý vẫn giao **một task duy nhất** rồi cụt | ❌ tầng định tuyến có mà nó không dùng → cần dặn ở prompt lập kế hoạch. Ghi nhận |
+| Nhân viên `Grep` `library/text/` rồi `Read` bản gốc **đúng vài trang** | ✅ mốc trang đang hoạt động (`SPEC-library.md` §3.1) |
+| Nhân viên `Read` cả PDF một lần | ❌ với PDF trên 10 trang thì tool **bắt buộc** khai `pages`, nên nhiều khả năng nó sẽ vấp — và đó là kết quả cần ghi |
+
+**Chi phí:** $0.30 – $1.50. Nếu sau khi có tủ tài liệu mà con số này **giảm rõ**, đó là số đo đáng ghi vào `SESSIONS_MEMORY` §7.
 
 ---
 
@@ -271,12 +285,12 @@ Bài này để **đo tier**, không phải để lấy kết quả.
 | `Phân tích eco` | `Đọc CSV, tính tổng hợp theo nhóm, ghi bảng kết quả ra markdown.` | eco |
 | `Phân tích standard` | `Đọc CSV, tính tổng hợp theo nhóm, ghi bảng kết quả ra markdown.` | standard |
 
-**Bước 3.** 📝 Bỏ một CSV ~200 dòng vào `artifacts/input/du-lieu.csv`.
+**Bước 3.** 🖱 **Tủ tài liệu** → thả một CSV ~200 dòng tên `du-lieu.csv`. (Thả thêm bản `.xlsx` của cùng dữ liệu thì đo được luôn chi phí bóc xlsx so với csv.)
 
 **Bước 4.** 🖱 chat **hai lần, cùng một câu**, mỗi lần chỉ định một người:
 
 ```
-Nhờ Phân tích eco đọc artifacts/input/du-lieu.csv, tính tổng theo từng
+Nhờ Phân tích eco đọc du-lieu.csv trong tủ tài liệu, tính tổng theo từng
 nhóm và ghi ra artifacts/ket-qua-eco.md
 ```
 
@@ -314,14 +328,14 @@ Loại thẳng nếu không có sản phẩm nào kèm theo.
 
 Giữ dưới 500 token — khối này nằm trong prefix của mọi nhân viên.
 
-**Bước 4.** 📝 Bỏ 20 CV giả vào `artifacts/input/cv/`.
+**Bước 4.** 🖱 **Tủ tài liệu** → thả 20 CV giả vào (thả cả lô một lần được).
 
-**Bước 5.** ⌨ `stop` / `start` (charter đọc lúc mở văn phòng).
+**Bước 5.** ⌨ `stop` / `start` (charter đọc lúc mở văn phòng — **tủ tài liệu thì không cần**).
 
 **Bước 6.** 🖱 chat:
 
 ```
-Đọc hết CV trong artifacts/input/cv/, chấm theo tiêu chí trong charter,
+Đọc hết CV trong tủ tài liệu, chấm theo tiêu chí trong charter,
 ghi bảng xếp hạng vào artifacts/xep-hang.md
 ```
 
@@ -456,11 +470,11 @@ In ra hoặc copy vào một file, điền trong lúc chạy:
 | Bài | Chạy được? | Chi phí thật | Số lượt | Chỗ vấp | Ghi chú |
 |---|---|---|---|---|---|
 | 1 Xưởng nội dung | | | | | cache priming có hoạt động? |
-| 2 Hỗ trợ khách | | | | | mấy/5 câu trả đúng? |
-| 3 Sổ sách | | | | | **tổng có khớp không?** |
+| 2 Hỗ trợ khách | | | | | mấy/5 câu trả đúng? **Grep hay Read hết?** |
+| 3 Sổ sách | | | | | **tổng có khớp không?** ô trống có làm lệch cột không? |
 | 4 Theo dõi | | | | | dừng ở "không có lịch" |
 | 5 Bản địa hoá | | | | | số cách dịch có giảm không? |
-| 6 Rà hợp đồng | | | | | có bị cụt không? |
+| 6 Rà hợp đồng | | | | | Trợ lý có đọc `INDEX.md` trước khi chia việc không? |
 | 7 Bảng tính | | | | | eco rẻ hơn hay đắt hơn? |
 | 8 Sàng lọc | | | | | chia mấy task? |
 | 9 Báo cáo | | | | | |
@@ -470,5 +484,6 @@ In ra hoặc copy vào một file, điền trong lúc chạy:
 **Ba con số đáng quan tâm nhất sau khi chạy hết:**
 
 1. **Bao nhiêu bài phải mở editor?** Mỗi lần mở là một chỗ người dùng non-code rơi rụng.
+   *Mốc 17/08: tủ tài liệu vừa bỏ bước 📝 khỏi bài 2 · 3 · 5 · 6 · 7 · 8. Còn lại đúng ba chỗ, và cả ba đều CỐ Ý — skills (bài chưa có), `Bash` (bài 9), MCP (bài 10B).*
 2. **Tổng chi phí cả 10 bài.** Ước tính $1.5 – $4. Nếu vượt $8 thì có gì đó đang rò rỉ — chạy `agentco cost` và nhìn cột `ghi-cache bất thường`.
 3. **Bài nào bạn thật sự muốn dùng lại tuần sau?** Đó mới là danh sách template nên làm, không phải bảng ở trên.

@@ -15,6 +15,7 @@ import YAML from 'yaml';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
+import { LibraryStore } from '../library/store.js';
 import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId } from './assistant.js';
 import { helpText, parseInput, type ParsedInput } from './commands.js';
@@ -88,6 +89,8 @@ export interface SayOutcome {
 export class Office {
   loaded: LoadedOffice;
   readonly knowledge: KnowledgeStore;
+  /** Tủ tài liệu — file người dùng đưa vào. → docs/SPEC-library.md */
+  readonly library: LibraryStore;
   readonly assistant: Assistant;
   readonly layout: LayoutStore;
   readonly plans: PlanStore;
@@ -111,6 +114,9 @@ export class Office {
     ensureOfficeDirs(loaded.paths);
     this.knowledge = new KnowledgeStore(loaded.dir, loaded.paths);
     this.knowledge.scan();
+    // Bóc tài liệu chạy NGẦM (§10) nên nó phải có đường báo cho giao diện — nếu
+    // không thì dòng "đang đọc…" đứng im cho tới lần người dùng bấm mở tủ.
+    this.library = new LibraryStore(loaded.paths, () => this.emitLibrary());
     this.assistant = new Assistant(loaded);
     this.assistant.resumeFrom(this.readSessionId());
     this.layout = new LayoutStore(loaded);
@@ -495,6 +501,26 @@ export class Office {
     this.emitActivity();
 
     try {
+      /**
+       * 0a. Chờ tài liệu đang bóc — ĐIỂM CHỜ DUY NHẤT của tủ tài liệu.
+       *
+       * → docs/SPEC-library.md §10
+       *
+       * Không chờ ở đây thì có một ca hỏng thật và im lặng: người dùng thả một
+       * PDF rồi hỏi ngay, `Grep` chạy trước khi văn bản kịp tồn tại, và nhân
+       * viên trả lời "không tìm thấy gì trong tài liệu" một cách rất thuyết
+       * phục. Sai mà không ai biết là kết cục tệ nhất trong mọi kết cục.
+       *
+       * Phạm vi chờ hẹp hết mức: chỉ file đang bóc của CHÍNH văn phòng này, có
+       * timeout, và không đụng gì tới văn phòng khác. Dừng cả hệ thống để đợi
+       * index là thứ luật "không có ngoại lệ nào cần dừng tất cả" đã cấm.
+       */
+      const waitingFor = this.library.busyNames();
+      if (waitingFor.length > 0) {
+        this.setState('working', `Đang đọc tài liệu ${waitingFor.slice(0, 2).join(', ')}…`);
+        await this.library.settled(this.loaded.company.library.extract_timeout_ms);
+      }
+
       // 0. Không ai trực thì đừng tốn một token nào để biết điều đó.
       const onDuty = this.assistant.assignableRoles();
       if (onDuty.size === 0) {
@@ -1043,6 +1069,7 @@ export class Office {
     this.plans.rebind(this.loaded.paths);
     this.knowledge.rebind(this.loaded.dir, this.loaded.paths);
     this.knowledge.scan();
+    this.library.rebind(this.loaded.paths);
     this.refreshAssistantContext();
   }
 
@@ -1367,6 +1394,16 @@ export class Office {
     this.assistant.setAssignable(this.layout.assignable());
     this.assistant.setHotKnowledge(this.assistantHot());
     this.assistant.setMemory(this.knowledge.assistantMemoryText());
+  }
+
+  /** Tủ tài liệu vừa đổi — số lượng và số đang bóc. → docs/SPEC-library.md §10 */
+  private emitLibrary(): void {
+    this.emit({
+      type: 'library.changed',
+      count: this.library.size,
+      busy: this.library.busyCount(),
+      plan_id: null,
+    });
   }
 
   private assistantHot(): string {

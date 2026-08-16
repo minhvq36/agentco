@@ -37,7 +37,7 @@ export interface LiveAgent {
   say: string;
 }
 
-export type PanelId = 'chat' | 'plans' | 'overview' | 'knowledge';
+export type PanelId = 'chat' | 'plans' | 'overview' | 'knowledge' | 'library';
 
 export interface AppState {
   loading: boolean;
@@ -69,6 +69,17 @@ export interface AppState {
    */
   activity: string | null;
 
+  /**
+   * Tăng mỗi khi tủ tài liệu đổi. → docs/SPEC-library.md §10
+   *
+   * Việc bóc văn bản chạy ngầm và mất vài giây cho một PDF dày, nên panel không
+   * thể chỉ nạp một lần lúc mở. Dùng một con số đếm thay vì nhét cả danh sách
+   * vào store: danh sách chỉ có đúng một bên đọc, còn store thì mọi component
+   * đang lắng nghe — đẩy nó vào đây là bắt cả cây render lại vì một dòng đổi
+   * trạng thái.
+   */
+  libraryVersion: number;
+
   panel: PanelId | null;
   /** Node đang chọn trên canvas (id node, không phải id vai trò). */
   selected: string | null;
@@ -89,6 +100,7 @@ const initial: AppState = {
   cost: null,
   sending: false,
   activity: null,
+  libraryVersion: 0,
   panel: null,
   selected: null,
 };
@@ -580,6 +592,21 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
 
     case 'knowledge.changed':
       if (fromLive) void actions.refreshCanvas();
+      break;
+
+    /**
+     * Tủ tài liệu đổi. Chỉ bump một số đếm — panel tự nạp lại danh sách.
+     *
+     * `busy > 0` được nói ra ở dòng trạng thái vì nó là câu trả lời cho một câu
+     * hỏi có thật: "sao giao việc rồi mà chưa thấy gì chạy?". Văn phòng đang
+     * chờ đọc xong tài liệu (SPEC-library.md §10), và im lặng ở đây là đúng cái
+     * khoảng mù đã sửa ở `office.activity`.
+     */
+    case 'library.changed':
+      set({
+        libraryVersion: state.libraryVersion + 1,
+        ...(e.busy > 0 ? { activity: `Đang đọc ${e.busy} tài liệu…` } : {}),
+      });
       break;
 
     case 'layout.changed':

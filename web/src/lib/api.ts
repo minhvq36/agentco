@@ -12,6 +12,7 @@ import type {
   CompanyModels,
   CompanyView,
   KnowledgeEntry,
+  LibraryDoc,
   OfficeDetail,
   OfficeSummary,
   PlanRecord,
@@ -153,6 +154,35 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ id: nodeId, ...patch }),
     }),
+
+  // ── tủ tài liệu → docs/SPEC-library.md §13
+
+  /** Quét lại thư mục rồi trả danh sách. Không có watcher — xem SPEC §9.1. */
+  library: (id: string) => call<{ docs: LibraryDoc[] }>(`/api/office/${enc(id)}/library`),
+
+  /**
+   * Tải một tài liệu lên. Body là nội dung NGUYÊN SI, tên đi trên query string.
+   *
+   * CỐ Ý không dùng `FormData`/multipart: nó buộc server phải parse biên, mã hoá
+   * tên file và chunk cắt giữa biên — tức là một thư viện nữa, cho một thứ ta
+   * không cần. Ở đây một request là một file, và đó là toàn bộ giao thức.
+   *
+   * `replace` là quyết định CÓ Ý THỨC của người dùng sau khi thấy câu hỏi lại;
+   * không bao giờ tự bật.
+   */
+  uploadDoc: (id: string, file: File, replace = false) =>
+    call<{ doc: LibraryDoc; docs: LibraryDoc[] }>(
+      `/api/office/${enc(id)}/library?name=${enc(file.name)}${replace ? '&replace=1' : ''}`,
+      { method: 'POST', body: file, headers: { 'content-type': 'application/octet-stream' } },
+    ),
+
+  /** Xoá hẳn. Một mức duy nhất — tài liệu là file của chính người dùng (SPEC §6). */
+  removeDoc: (id: string, name: string) =>
+    call<{ docs: LibraryDoc[] }>(`/api/office/${enc(id)}/library?name=${enc(name)}`, {
+      method: 'DELETE',
+    }),
+
+  docUrl: (id: string, name: string) => `/api/office/${enc(id)}/library/file?name=${enc(name)}`,
 
   plans: (id: string) => call<{ plans: PlanRecord[] }>(`/api/office/${enc(id)}/plans`),
 

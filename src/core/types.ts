@@ -248,6 +248,30 @@ export const CompanyConfigSchema = z.object({
     .prefault({}),
 
   /**
+   * Tủ tài liệu. → docs/SPEC-library.md §12
+   *
+   * Nằm ở cấp CÔNG TY dù tủ nằm ở cấp văn phòng: đây là mấy con số về giới hạn
+   * máy móc, không phải chuyện "văn phòng này làm nghề gì". Cùng lý do với
+   * `budgets`.
+   */
+  library: z
+    .object({
+      /**
+       * Trần một file. 50MB phủ gần hết PDF có lớp chữ (sách 300 trang chỉ
+       * 1–5MB) và phần lớn PDF nhiều hình. Trên mức này gần như chắc chắn là
+       * bản chụp — thứ ta nhận được nhưng không tìm bằng từ khoá được.
+       */
+      max_file_mb: z.number().positive().default(50),
+      /**
+       * Chờ tối đa bao lâu cho tài liệu đang bóc trước khi chạy việc mà không
+       * có văn bản. Timeout là bắt buộc: một file hỏng theo cách chưa lường
+       * được không được phép treo cả văn phòng. → SPEC-library.md §10
+       */
+      extract_timeout_ms: z.number().int().positive().default(30_000),
+    })
+    .prefault({}),
+
+  /**
    * MCP server khai ở cấp CÔNG TY (một chỗ cắm, mọi văn phòng thấy), nhưng
    * việc ai được DÙNG cái nào thì do cạnh nối trên canvas của từng văn phòng.
    */
@@ -586,6 +610,17 @@ export type AgentEventBody =
   | { type: 'office.cleared'; say: string }
   | { type: 'cost.tick'; totals: Usage & { tasks: number } }
   | { type: 'knowledge.changed'; count: number; version: number }
+  /**
+   * Tủ tài liệu đổi. → docs/SPEC-library.md §10
+   *
+   * Việc bóc văn bản chạy NGẦM, có thể mất vài giây cho một PDF dày. Không có
+   * sự kiện này thì dòng "đang đọc…" đứng im cho tới lần người dùng tự bấm mở
+   * tủ — tức là đúng lúc họ cần biết nhất thì màn hình im lặng.
+   *
+   * `busy` là số tài liệu đang bóc, KHÔNG phải cờ: giao diện cần nói được "còn
+   * 3 file" chứ không chỉ "đang bận".
+   */
+  | { type: 'library.changed'; count: number; busy: number }
   /** Hình dạng văn phòng đổi (kéo node, nối/ngắt dây, thêm/bớt nhân viên). */
   | { type: 'layout.changed'; say: string }
   /** Danh sách văn phòng đổi. `office` là cái vừa thêm/bớt. */
