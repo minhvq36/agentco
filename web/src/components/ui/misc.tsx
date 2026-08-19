@@ -1,5 +1,6 @@
 import * as React from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
+import { Check, Copy } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -80,6 +81,59 @@ export function SectionTitle({ className, ...props }: React.HTMLAttributes<HTMLD
       className={cn('text-[11px] font-semibold uppercase tracking-[0.09em] text-muted', className)}
       {...props}
     />
+  );
+}
+
+/**
+ * Nút CHÉP THAM CHIẾU FILE — dùng chung Tủ tài liệu và ngăn Kết quả.
+ * → docs/SPEC-library.md §8c
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CHÉP ĐƯỜNG DẪN ĐỦ, KHÔNG CHÉP TÊN TRẦN — và đó là cả lý do nút này tồn   │
+ * │ tại.                                                                     │
+ * │                                                                          │
+ * │ Hai kho **được phép** có file trùng tên: tủ tài liệu có `doc-1.md`, ngăn │
+ * │ Kết quả cũng có `doc-1.md`. Chép tên trần là đẩy sự mập mờ đó sang cho    │
+ * │ người dùng gõ lại bằng tay, rồi sang cho model đoán. Đường dẫn đủ         │
+ * │ (`library/files/…` vs `artifacts/…`) tự nó là thứ phân biệt.             │
+ * │                                                                          │
+ * │ Tiền tố `@` là quy ước CỦA TA, do `Office.resolveRefs()` bóc ra bằng      │
+ * │ code trước khi tới model — KHÔNG phải cú pháp của SDK. Xem chú thích ở    │
+ * │ `resolveRefs` để biết vì sao ta còn KHÔNG MUỐN SDK hiểu nó.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Đổi icon sau khi chép và tự trả lại sau 1.2s: clipboard là thao tác duy nhất
+ * trong giao diện KHÔNG có phản hồi thị giác nào từ hệ thống, nên người dùng
+ * bấm hai lần rồi dán ra hai dòng.
+ */
+export function CopyRef({ path }: { path: string }) {
+  const [done, setDone] = React.useState(false);
+
+  return (
+    <button
+      type="button"
+      className="rounded p-1.5 text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink"
+      aria-label={`Chép tham chiếu ${path}`}
+      title={`Copy đường dẫn`}
+      onClick={() => {
+        // `navigator.clipboard` cần secure context. Daemon chạy ở
+        // `http://127.0.0.1` — trình duyệt coi localhost là secure, nên đường
+        // này chạy. Nhưng người dùng có thể mở qua IP LAN (`--host`), và ở đó
+        // API biến mất hoàn toàn: `?.` chứ không phải `try` là vì nó KHÔNG
+        // TỒN TẠI chứ không phải ném lỗi.
+        void navigator.clipboard?.writeText(`@${path}`).then(
+          () => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1_200);
+          },
+          () => {
+            /* trình duyệt từ chối — người dùng vẫn đọc được đường dẫn ở tooltip */
+          },
+        );
+      }}
+    >
+      {done ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
+    </button>
   );
 }
 

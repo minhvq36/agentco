@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, FileCheck2, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -10,10 +10,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Empty } from '@/components/ui/misc';
+import { CopyRef, Empty } from '@/components/ui/misc';
 import { api } from '@/lib/api';
 import { Markdown } from '@/lib/markdown';
-import { toast, useApp } from '@/lib/store';
+import { actions, toast, useApp } from '@/lib/store';
 import type { ArtifactRecord, ArtifactView } from '@/lib/types';
 
 /**
@@ -43,6 +43,10 @@ import type { ArtifactRecord, ArtifactView } from '@/lib/types';
 export function ArtifactsPanel() {
   const officeId = useApp((s) => s.officeId);
   const artifactsVersion = useApp((s) => s.artifactsVersion);
+  // Đọc để BIẾT có yêu cầu mới, còn lấy giá trị thì qua `takeRevealArtifact()`.
+  // Bấm cùng một đường dẫn hai lần vẫn phải mở lại được, mà giá trị thì không
+  // đổi — nên hiệu ứng phải bám vào chính ô này chứ không vào nội dung của nó.
+  const revealRequest = useApp((s) => s.revealArtifact);
   const [items, setItems] = useState<ArtifactRecord[] | null>(null);
   const [confirmDel, setConfirmDel] = useState<ArtifactRecord | null>(null);
   const [open, setOpen] = useState<ArtifactRecord | null>(null);
@@ -59,6 +63,27 @@ export function ArtifactsPanel() {
   }, [officeId]);
 
   useEffect(reload, [reload, artifactsVersion]);
+
+  /**
+   * Mở thẳng một kết quả vì người dùng vừa bấm đường dẫn của nó trong ô chat.
+   * → docs/SPEC-artifacts.md §2.5
+   *
+   * Chờ `items` nạp xong rồi mới xử: yêu cầu tới cùng lúc panel vừa mở, mà lúc
+   * đó danh sách còn `null` — làm ngay thì luôn "không tìm thấy".
+   *
+   * ⚠ KHÔNG tìm thấy thì phải NÓI. File có thể đã bị xoá sau khi tin nhắn được
+   * gửi, và đó là chuyện bình thường — nhưng một cú bấm không gây ra chuyện gì
+   * cả thì người dùng chỉ biết là "hỏng", và họ bấm lại. Câu này phân biệt được
+   * "đã xoá" với "app đơ".
+   */
+  useEffect(() => {
+    if (items === null) return;
+    const want = actions.takeRevealArtifact();
+    if (!want) return;
+    const found = items.find((a) => a.path === want);
+    if (found) setOpen(found);
+    else toast(`Không còn "${want.split('/').pop()}" trong ngăn Kết quả — có lẽ nó đã bị xoá.`);
+  }, [items, revealRequest]);
 
   /**
    * Gom theo KẾ HOẠCH, không theo `task_id`.
@@ -162,6 +187,9 @@ export function ArtifactsPanel() {
                       </div>
                     </button>
                     <div className="flex flex-none gap-1">
+                      {/* `a.path` đã là đường dẫn đủ tính từ thư mục văn phòng —
+                          đúng chuỗi planner phải ghi vào `inputs`. */}
+                      <CopyRef path={a.path} />
                       <a
                         href={officeId ? api.artifactUrl(officeId, a.path, true) : '#'}
                         download={a.name}

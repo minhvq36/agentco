@@ -11,6 +11,9 @@
  * worker ẩn `concierge` (M1) — người dùng chỉ thấy "Trợ lý dùng được tool này".
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
@@ -33,7 +36,35 @@ import {
 } from './types.js';
 import { truncateToTokens } from './tokens.js';
 
-const PlanOutputSchema = z.object({
+/**
+ * Khâu lập kế hoạch KHÔNG chia được việc, và muốn HỎI LẠI. → SPEC-offices.md §6
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TRƯỚC 20/08, KHÂU NÀY CÓ ĐÚNG MỘT CỬA RA — và đó là cả vấn đề.          │
+ * │                                                                          │
+ * │ `route()` có `intent: 'ask'`: Trợ lý ĐƯỢC PHÉP hỏi lại khi trò chuyện.   │
+ * │ `plan()` thì không có gì cả — hình dạng hợp lệ duy nhất là một kế hoạch  │
+ * │ hoàn chỉnh. Nên khi planner thật sự cần một thông tin, nó KHÔNG CÓ CÁCH  │
+ * │ HỢP LỆ để nói ra: nó rơi khỏi giao thức, trả về văn xuôi, và ta gọi cái  │
+ * │ rơi đó là "lỗi parse" rồi đổ cho cách người dùng diễn đạt.               │
+ * │                                                                          │
+ * │ Nguyên văn đo được 20/08 (`.state/plan-failure.log`):                     │
+ * │   *"Bạn cho mình biết bản dịch tiếng Việt đã có trước đó của doc-2.md và │
+ * │   doc-3.md đang nằm ở đường dẫn nào không?"*                             │
+ * │ Một câu hỏi hoàn toàn hợp lý, bị hệ thống biến thành một lỗi.            │
+ * │                                                                          │
+ * │ Bảng kê kết quả (§2.4) chữa ĐÚNG ca đó. Cửa này chữa CẢ LỚP: sẽ luôn có  │
+ * │ lúc planner cần hỏi, và ta không đoán trước được là lúc nào.             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `discriminatedUnion` KHÔNG dùng được ở đây — hai nhánh không có khoá chung để
+ * phân biệt, và bắt model điền một trường `kind` là thêm một chỗ để nó quên.
+ * `union` thử `ask` TRƯỚC: nhánh kế hoạch đòi `tasks` tối thiểu 1 phần tử nên
+ * hai nhánh không thể cùng khớp.
+ */
+const PlanAskSchema = z.object({ ask: z.string().min(1) });
+
+const PlanTasksSchema = z.object({
   steps: z.array(z.string()).min(1).max(6),
   tasks: z
     .array(
@@ -54,6 +85,11 @@ const PlanOutputSchema = z.object({
     )
     .min(1),
 });
+
+const PlanOutputSchema = z.union([PlanAskSchema, PlanTasksSchema]);
+
+/** Kế hoạch đã chia xong, hoặc một câu hỏi ngược lại cho người dùng. */
+export type PlanOrAsk = { kind: 'plan'; plan: Plan } | { kind: 'ask'; say: string };
 
 /**
  * Bốn kết quả định tuyến. → SPEC-offices.md §6
@@ -149,8 +185,40 @@ async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * Đánh đổi đã biết và chấp nhận: kho tri thức lớn chậm hẳn lại.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TÍN HIỆU THỨ NĂM: MA SÁT CỦA CON NGƯỜI (20/08).                         │
+ * │                                                                          │
+ * │ Bốn tín hiệu đầu đều đọc từ `receipts` — tức là chúng đo **ĐỘ KHÓ CỦA CỖ │
+ * │ MÁY**. Có một hạng ca mà cả bốn đều im: cỗ máy chạy hoàn hảo, còn con     │
+ * │ người thì vật lộn.                                                       │
+ * │                                                                          │
+ * │ Ca thật 20/08. Người dùng: *"doc-2, doc-3 thiếu file thuật ngữ"*. Bốn    │
+ * │ lượt qua lại — Trợ lý bảo họ đi kiểm đường dẫn, rồi hỏi họ file cũ nằm ở │
+ * │ đâu, rồi một lượt lập kế hoạch chết hẳn — cho tới khi người dùng phải tự │
+ * │ nghĩ ra giải pháp: *"thì bạn phải kêu người dịch tạo bổ sung đi chứ"*.   │
+ * │ Ca chạy sau đó: 2 task, cả hai `done`, receipt sạch bong. **0 bài học.** │
+ * │                                                                          │
+ * │ Văn phòng vừa học được một điều rất giá trị — *"ở đây, muốn làm tiếp     │
+ * │ trên một kết quả cũ thì phải nói thẳng là giao cho ai làm lại"* — và vứt │
+ * │ nó đi, vì nó không nằm trong bất kỳ biên nhận nào.                       │
+ * │                                                                          │
+ * │ `friction` = số lượt lập kế hoạch HỎNG hoặc PHẢI HỎI LẠI kể từ ca chạy   │
+ * │ được gần nhất. Vẫn là **sự việc quan sát được**, đếm bằng code, 0 token, │
+ * │ không phụ thuộc model — đúng cùng một luật đã bác bỏ `usage.turns`.      │
+ * │                                                                          │
+ * │ Và nó mở ra một LỚP bài học mới: kinh nghiệm về **cách giao việc trong   │
+ * │ văn phòng này**, không phải về nội dung công việc. Đây là lớp duy nhất   │
+ * │ học được từ chính người dùng mà không phải hỏi họ một câu nào.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Vì sao KHÔNG đếm số tin nhắn người dùng gõ, dù nghe tự nhiên hơn: người ta
+ * nhắn nhiều vì nhiều lý do — nghĩ ra thêm ý, đổi ý, hay chỉ là gõ thành hai
+ * dòng. Chỉ **lượt lập kế hoạch không ra được kế hoạch** mới là bằng chứng
+ * chắc chắn rằng hệ thống đã bắt người dùng nói lại.
  */
-export function worthLearning(receipts: readonly Receipt[]): boolean {
+export function worthLearning(receipts: readonly Receipt[], friction = 0): boolean {
+  if (friction > 0) return true;
   return receipts.some((r) => r.status !== 'done' || r.reasked || !!r.blocked_on || r.looped);
 }
 
@@ -347,6 +415,20 @@ export class Assistant {
   }
 
   /**
+   * Bảng kê KẾT QUẢ các ca trước. → docs/SPEC-artifacts.md §2.4
+   *
+   * Chỉ TÊN FILE. Trợ lý vẫn không đọc được một byte nào của chúng — nó chỉ
+   * biết đủ để ghi đường dẫn vào `inputs` cho nhân viên đi mở. Ranh giới đó
+   * giống hệt tủ tài liệu, và nó là lý do bẻ được luật "artifact vô hình" mà
+   * không mở toang cái cửa luật ấy sinh ra để đóng.
+   */
+  private artifacts = '';
+
+  setArtifacts(text: string): void {
+    this.artifacts = text.trim();
+  }
+
+  /**
    * Ai được giao việc — do cạnh `Assistant → agent` trên canvas quyết định.
    *
    * Đây là chỗ kéo một sợi dây thành hậu quả ĐO ĐƯỢC: agent bị ngắt thì `pitch`
@@ -426,6 +508,7 @@ export class Assistant {
       hotKnowledge: this.hotKnowledge,
       memory: this.memory,
       library: this.library,
+      artifacts: this.artifacts,
       model: this.model,
     });
     return built.systemPrompt as string[];
@@ -457,7 +540,7 @@ export class Assistant {
    * │ cần. Một id sinh ở hai chỗ thì kiểu gì cũng có ngày lệch.                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  async plan(request: string, planId: string): Promise<AssistantResult<Plan>> {
+  async plan(request: string, planId: string): Promise<AssistantResult<PlanOrAsk>> {
     const models = this.office.company.models;
     const { text, usage } = await this.askOneShot(
       `Lập kế hoạch cho yêu cầu sau. Trả về đúng một object JSON như đã quy định.\n\nYêu cầu: ${request}`,
@@ -465,12 +548,11 @@ export class Assistant {
     );
 
     const parsed = extractJson(text, PlanOutputSchema);
-    if (!parsed) {
-      throw new RunError(
-        'Trợ lý chưa hiểu đủ rõ để chia việc. Thử nói cụ thể hơn: làm gì, cho ai, và cần kết quả dạng nào.',
-        'other',
-      );
-    }
+    if (!parsed) throw this.planFailed(request, text);
+
+    // Nó cần biết thêm một thứ trước khi chia được việc. Đây là một CÂU NÓI,
+    // không phải một lỗi — đi thẳng lên ô chat và không tốn token nhân viên nào.
+    if ('ask' in parsed) return { value: { kind: 'ask', say: parsed.ask.trim() }, usage };
 
     const rawSteps = parsed.steps;
     const rawTasks = parsed.tasks.map((t) => ({ ...t, step: clampStep(t.step, rawSteps.length) }));
@@ -510,7 +592,86 @@ export class Assistant {
       });
     });
 
-    return { value: { plan_id: planId, request, steps, tasks }, usage };
+    return { value: { kind: 'plan', plan: { plan_id: planId, request, steps, tasks } }, usage };
+  }
+
+  /**
+   * Lập kế hoạch KHÔNG ra JSON — và đây là chỗ hệ thống từng NÓI DỐI.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BUG ĐÃ SỬA (20/08): một câu lỗi cho HAI nguyên nhân trái ngược.         │
+   * │                                                                          │
+   * │ Bản trước ném đúng một câu cho mọi ca: *"Trợ lý chưa hiểu đủ rõ để chia  │
+   * │ việc. Thử nói cụ thể hơn…"* — một CHẨN ĐOÁN mà code không hề có căn cứ   │
+   * │ để đưa ra. Nó chỉ biết duy nhất một sự thật: `extractJson` trả về rỗng.  │
+   * │                                                                          │
+   * │ Đo được trên máy người dùng 20/08: ba lượt liên tiếp nhận câu này, trong │
+   * │ khi `route()` ngay trước đó viết lại yêu cầu **rất rõ ràng** (*"Tạo file │
+   * │ ghi chú thuật ngữ riêng cho doc-3.md… lưu tại artifacts/vi/…"*). Người   │
+   * │ dùng đọc câu lỗi rồi diễn đạt lại ba kiểu khác nhau — vô ích, vì diễn    │
+   * │ đạt chưa bao giờ là vấn đề — và cuối cùng đoán *"hết tiền?"*. Trả lời    │
+   * │ sai còn tệ hơn không trả lời: nó gửi người dùng đi sai hướng và tính     │
+   * │ tiền một lượt `route` cho mỗi lần thử.                                   │
+   * │                                                                          │
+   * │ Ba nguyên nhân THẬT, cần ba câu khác nhau:                               │
+   * │   · model không trả về gì   → lỗi hạ tầng, diễn đạt lại không cứu được   │
+   * │   · model trả lời bằng VĂN  → nó đang hỏi/từ chối; nội dung câu đó CHÍNH │
+   * │     LÀ thông tin, và bản cũ ném thẳng nó vào thùng rác                    │
+   * │   · JSON sai hình dạng      → lỗi của ta hoặc của model, không của user  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Có TRÍCH lời model, và điều đó không phá luật *"đừng để model tự giải
+   * thích hệ thống cho người dùng"*. Luật đó cấm để model **kể về cơ chế** như
+   * thể nó biết. Ở đây câu của nó được đóng ngoặc kép và giới thiệu là *"nó
+   * nói"* — một BẰNG CHỨNG được trích dẫn, không phải một lời giải thích. Và
+   * việc phải làm thì vẫn do code viết ra.
+   *
+   * Bản đầy đủ ghi ra `.state/plan-failure.log` — câu trên chat phải ngắn, còn
+   * chẩn đoán một ca hỏng thì cần nguyên văn. Ghi hỏng KHÔNG được nuốt mất lỗi
+   * gốc: người dùng đang chờ một câu trả lời, không phải một lỗi ghi file.
+   */
+  private planFailed(request: string, text: string): RunError {
+    const raw = text.trim();
+    try {
+      fs.mkdirSync(this.office.paths.state, { recursive: true });
+      fs.appendFileSync(
+        path.join(this.office.paths.state, 'plan-failure.log'),
+        `\n=== ${new Date().toISOString()}\n--- yêu cầu\n${request}\n--- model trả về (${raw.length} ký tự)\n${raw || '(RỖNG)'}\n`,
+        'utf8',
+      );
+    } catch {
+      /* không ghi được nhật ký thì vẫn phải trả lời người dùng */
+    }
+
+    if (!raw) {
+      return new RunError(
+        'Mình gọi được model nhưng nó không trả về gì cả — lỗi này nằm ở đường truyền, ' +
+          'không phải ở cách bạn nói. Thử lại sau một chút nhé.',
+        'other',
+      );
+    }
+    /**
+     * ⚠ Câu này ĐÃ PHẢI SỬA MỘT LẦN, và đó là bài học đáng giữ.
+     *
+     * Bản đầu (cùng ngày) khuyên: *"Trợ lý chỉ nhìn thấy tủ tài liệu, KHÔNG
+     * nhìn thấy ngăn Kết quả"*. Đúng lúc viết, **sai vài giờ sau** khi bảng kê
+     * kết quả ra đời (SPEC-artifacts §2.4). Một câu lỗi mô tả GIỚI HẠN của hệ
+     * thống là một câu sẽ lạc hậu đúng vào ngày giới hạn đó được gỡ — và không
+     * có test nào bắt được, vì nó chỉ là chữ.
+     *
+     * Nên bản này chỉ nói thứ **luôn đúng ở thời điểm chạy**: model đã phá giao
+     * thức. Từ 20/08 nó CÓ cửa hợp lệ để hỏi (`{"ask": "…"}`), nên trả về văn
+     * xuôi không còn là "nó cần hỏi" mà là "nó không dùng cửa đã có".
+     */
+    return new RunError(
+      'Mình chưa chia được việc này. Thay vì một kế hoạch, Trợ lý nói:\n' +
+        `  "${briefText(raw)}"\n` +
+        'Câu đó lẽ ra phải đi qua đường hỏi lại chứ không phải viết thẳng ra như vậy — ' +
+        'nên đây là lỗi của mình, không phải của cách bạn nói. Cứ giao lại y nguyên: ' +
+        'phần lớn ca như thế chạy được ở lần thứ hai. Nếu nó hỏi một điều gì cụ thể thì ' +
+        'trả lời luôn trong câu giao việc.',
+      'other',
+    );
   }
 
   /**
@@ -525,13 +686,29 @@ export class Assistant {
   async report(
     steps: readonly { title: string }[],
     receipts: Receipt[],
+    /** Số lượt lập kế hoạch không ra được kế hoạch trước ca này. → `worthLearning` */
+    friction = 0,
   ): Promise<AssistantResult<{ say: string; lessons: Lesson[] }>> {
     const plan = steps.map((s, i) => `${i + 1}. ${s.title}`).join(' · ');
     const summary = receipts
       .map((r) => `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}`)
       .join('\n');
 
-    const wantLessons = worthLearning(receipts);
+    const wantLessons = worthLearning(receipts, friction);
+
+    /**
+     * Ca ma sát hỏi một câu KHÁC HẲN — và khác là cả điểm của nó.
+     *
+     * Ca trục trặc kỹ thuật hỏi *"cái bẫy đã vấp là gì"*. Ca ma sát thì cỗ máy
+     * chạy sạch, nên hỏi câu đó sẽ nhận về "không có gì" — đúng, và vô dụng.
+     * Thứ đáng học nằm ở phía NGƯỜI DÙNG: câu nào cuối cùng làm việc chạy được,
+     * và lần sau nên hỏi thẳng điều gì. → `worthLearning`
+     */
+    const frictionAsk =
+      `⚠ Người dùng đã phải nói lại ${friction} lần mới giao được việc này — mấy lượt trước ` +
+      `bạn không chia được việc. Ca chạy thì sạch, nên bài học KHÔNG nằm ở kỹ thuật mà nằm ở ` +
+      `chỗ hiểu nhau: câu nào của họ cuối cùng làm việc chạy được, và lần sau gặp yêu cầu ` +
+      `tương tự thì nên hỏi thẳng điều gì ngay từ đầu?\n\n`;
 
     const { text, usage } = await this.askSession(
       `Kế hoạch vừa chạy: ${plan}\n\nKết quả:\n${summary}\n\n` +
@@ -540,8 +717,10 @@ export class Assistant {
         `Không liệt kê lại từng việc, không dùng thuật ngữ kỹ thuật>"` +
         (wantLessons
           ? `,\n "lessons":[{"kind":"pitfall","text":"<CÁCH LÀM dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
-            `Ca này có trục trặc, nên \`lessons\` là chỗ ghi lại thứ giúp lần sau tránh được — ` +
-            `tối đa 2, và vẫn ĐỂ TRỐNG nếu trục trặc đó không dạy được gì dùng lại.\n\n` +
+            (friction > 0
+              ? frictionAsk
+              : `Ca này có trục trặc, nên \`lessons\` là chỗ ghi lại thứ giúp lần sau tránh được — ` +
+                `tối đa 2, và vẫn ĐỂ TRỐNG nếu trục trặc đó không dạy được gì dùng lại.\n\n`) +
             `Bài học ghi CÁCH LÀM, tuyệt đối không ghi KIẾN THỨC:\n` +
             `  ✅ "chính sách đổi trả nằm ở library/files/doi-tra.md — grep ở đó trước khi trả lời"\n` +
             `  ⛔ "sản phẩm giảm trên 50% không được đổi trả"\n` +
@@ -748,10 +927,37 @@ export class Assistant {
             model,
             turns: typeof m['num_turns'] === 'number' ? m['num_turns'] : 0,
           });
+          /**
+           * KẾT QUẢ LỖI KHÔNG ĐƯỢC ĐI TIẾP NHƯ MỘT KẾT QUẢ RỖNG (20/08).
+           *
+           * SDK báo lỗi bằng HAI đường: ném exception (bắt ở `catch` dưới), và
+           * — với lỗi xảy ra GIỮA lượt chạy — trả về một message `result` mang
+           * `is_error: true` / `subtype: 'error_*'`. Đường thứ hai không ném gì
+           * cả, nên bản trước để nó rơi xuống `text = ''` rồi đi tiếp như thể
+           * model đã trả lời xong mà không nói gì.
+           *
+           * Hậu quả: tầng trên đọc chuỗi rỗng, không parse được JSON, rồi đổ
+           * lỗi cho cách người dùng diễn đạt — trong khi thứ vừa xảy ra là hết
+           * hạn mức, mất mạng, hay hết lượt. `classifyError` mới là thứ phải
+           * quyết, và nó chỉ quyết được nếu lỗi ĐI TỚI được nó.
+           */
+          const failed =
+            m['is_error'] === true ||
+            (typeof m['subtype'] === 'string' && m['subtype'].startsWith('error'));
+          if (failed) {
+            const why =
+              (typeof m['result'] === 'string' && m['result'].trim()) ||
+              (typeof m['subtype'] === 'string' ? m['subtype'] : 'lỗi không rõ từ Claude Code');
+            throw new RunError(why, classifyError(why), { cause: m });
+          }
           text = typeof m['result'] === 'string' ? m['result'] : '';
         }
       }
     } catch (err) {
+      // `RunError` do chính vòng lặp trên ném ra thì ĐI THẲNG: nó đã mang đúng
+      // `kind` rồi, bọc lại một lần nữa là chạy `classifyError` trên câu tiếng
+      // Việt của chính mình và có ngày hạ một `usage_limit` xuống `other`.
+      if (err instanceof RunError) throw err;
       throw new RunError(err instanceof Error ? err.message : String(err), classifyError(err), {
         cause: err,
       });

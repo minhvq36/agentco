@@ -15,7 +15,15 @@ import type { NodeKind } from '@core/layout-geometry';
 
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 export type StepStatus = 'pending' | 'running' | 'done' | 'problem' | 'waiting_human';
-export type PlanStatus = 'planning' | 'running' | 'done' | 'failed' | 'paused' | 'stopped';
+export type PlanStatus =
+  | 'planning'
+  | 'running'
+  | 'done'
+  | 'failed'
+  /** Chưa THỬ vì Trợ lý còn thiếu thông tin và đã hỏi lại. Khác `failed` (đã thử và hỏng). */
+  | 'blocked'
+  | 'paused'
+  | 'stopped';
 
 export interface Usage {
   input: number;
@@ -257,7 +265,14 @@ export type AgentEvent = EventBase &
      * tới người dùng, không qua Trợ lý. `say` không chứa tên người nói — bên
      * hiển thị tự tra. → docs/SPEC-offices.md §6
      */
-    | { type: 'master.message'; say: string; role: string }
+    /**
+     * `files` — đường dẫn kết quả đã xác minh, dạng DỮ LIỆU. → core/types.ts
+     *
+     * Chỉ có mặt ở tin do `whereBlock` dựng bằng code. Đây là danh sách DUY
+     * NHẤT được phép biến thành nút bấm được: dò đường dẫn bằng regex trên
+     * `say` là cho một câu model bịa mượn uy tín của giao diện.
+     */
+    | { type: 'master.message'; say: string; role: string; files?: string[] }
     | { type: 'office.state'; say: string; state: OfficeState }
     | {
         type: 'office.activity';

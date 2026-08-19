@@ -100,14 +100,14 @@ export function Header({
         </Button>
       </Tip>
 
-      <Tip label="Tắt hẳn daemon — phải chạy `agentco start` để bật lại">
+      <Tip label="Shutdown">
         <Button
           size="icon"
           variant="ghost"
           aria-label="Tắt hẳn"
           onClick={() => {
             const ok = window.confirm(
-              'Tắt hẳn daemon?\n\nCông ty sẽ ngừng chạy. Muốn bật lại phải chạy lệnh:\n\n  agentco start',
+              'Tắt hẳn?\n\nCông ty sẽ ngừng lại.',
             );
             if (ok) void api.shutdown().catch(() => undefined);
           }}

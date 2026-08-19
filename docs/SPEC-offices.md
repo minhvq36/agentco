@@ -639,6 +639,32 @@ Sửa: `${plan_id}.${task_id}.receipt.json`. Không di trú — không đoạn c
 
 > **Bài học:** khi sửa một lỗi *"id không duy nhất"*, phải rà **hết** mọi chỗ lấy id đó làm tên file — không chỉ chỗ người dùng vừa kêu. Bản vá một nửa trông y hệt bản vá đủ cho tới ngày có người đi đếm file.
 
+### Khâu LẬP KẾ HOẠCH được quyền HỎI LẠI (chốt 20/08)
+
+Trước 20/08, `plan()` có **đúng một cửa ra**: một kế hoạch hoàn chỉnh. Trong khi `route()` ngay cạnh nó thì có `intent: 'ask'` — Trợ lý **được phép** hỏi lại khi trò chuyện, nhưng không được phép hỏi khi chia việc.
+
+Nên khi planner thật sự cần một thông tin, nó **không có cách hợp lệ để nói ra**: nó rơi khỏi giao thức, trả về văn xuôi, và hệ thống gọi cái rơi đó là *"lỗi parse"* rồi đổ cho cách người dùng diễn đạt.
+
+Nguyên văn đo được, `.state/plan-failure.log`:
+
+> *"Bạn cho mình biết bản dịch tiếng Việt đã có trước đó của doc-2.md và doc-3.md đang nằm ở đường dẫn nào không? Mình không thấy file đó trong tủ tài liệu hay trong danh sách artifacts đã có."*
+
+Một câu hỏi hoàn toàn hợp lý, bị hệ thống biến thành một lỗi. *(Chú ý *"hay trong danh sách artifacts đã có"* — **không hề có danh sách đó**. Model diễn theo bản đồ thư mục trong prompt, đúng bẫy §4.7.)*
+
+**Sửa:** `PlanOutputSchema` thành `union([{ask}, {steps,tasks}])`.
+
+- `union` chứ không `discriminatedUnion`: hai nhánh không có khoá chung, và bắt model điền một trường `kind` là thêm một chỗ để nó quên. Nhánh kế hoạch đòi `tasks` tối thiểu 1 phần tử nên hai nhánh không thể cùng khớp.
+- Câu hỏi đi thẳng lên ô chat với vai `assistant`, y như một lượt `intent: 'ask'` — với người dùng đây **là** cùng một chuyện, họ không cần biết nó đến từ khâu nào. **0 token nhân viên.**
+- Ca kết thúc ở `status: 'blocked'`, **không** `failed`. `failed` = đã thử và hỏng; `blocked` = chưa thử. Nhật ký phải phân biệt được *"hệ thống làm sai"* với *"hệ thống đang chờ mình"*. Panel tô `warn`, không tô `danger`: tô đỏ một ca chỉ vì Trợ lý hỏi lại là **dạy người dùng sợ câu hỏi**.
+
+Hai luật kèm theo trong prompt, và luật thứ nhất là thứ chữa đúng cái làm người dùng bực:
+
+> **Đừng bao giờ bảo con người đi kiểm một file nằm trong văn phòng.** Không nhìn thấy thì nói là không nhìn thấy — họ không phải là mắt của bạn.
+
+> Chỉ hỏi khi câu trả lời **đổi được kế hoạch**. Chọn được một mặc định hợp lý và nói ra trong `constraints` thì làm thế — một vòng hỏi-đáp tốn của con người nhiều hơn một mặc định hơi lệch.
+
+> **Bài học:** bảng kê kết quả (`SPEC-artifacts.md` §2.4) chữa đúng **một ca**. Cửa này chữa **cả lớp** — sẽ luôn có lúc planner cần hỏi, và ta không đoán trước được là lúc nào. Khi một giao thức chỉ cho phép **một** hình dạng trả lời, mọi thứ nằm ngoài hình dạng đó sẽ hiện ra thành lỗi hệ thống, kể cả khi nó là hành vi đúng.
+
 ### `worthLearning` — đừng dặn model đừng làm, đừng cho nó cơ hội làm
 
 Bản trước LUÔN kèm trường `lessons` vào mọi báo cáo, kèm câu dặn *"Việc chạy trơn tru không phải bài học"*. Hỏi một model *"bạn học được gì?"* thì nó gần như luôn nặn ra một câu, và **lời dặn không cản được**.
@@ -658,6 +684,29 @@ Ngưỡng: chỉ hỏi khi có thứ **quan sát được**, không phải thứ
 Đánh đổi đã biết và chấp nhận: **kho tri thức lớn chậm hẳn lại.** Kinh nghiệm thật của người dùng vẫn có đường vào kho, và là đường **tốt hơn**: nói với Trợ lý rồi `/clear` → node GHI NHỚ, confidence 0.9 (§4.6).
 
 Chốt cuối nằm ở code chứ không ở prompt: không hỏi thì **không nhận**, kể cả khi model tự ý gửi kèm `lessons`.
+
+#### Tín hiệu thứ NĂM: ma sát của CON NGƯỜI (chốt 20/08)
+
+Bốn tín hiệu trên đều đọc từ `receipts` — tức là chúng đo **độ khó của cỗ máy**. Có một hạng ca mà cả bốn đều im lặng: **cỗ máy chạy hoàn hảo, còn con người thì vật lộn.**
+
+**Ca thật, 20/08.** Người dùng mất **bốn lượt** mới giao được việc (§2.4 của `SPEC-artifacts.md` kể chi tiết), và phải tự nghĩ ra giải pháp kiến trúc. Ca chạy sau đó: 2 task, cả hai `done`, receipt sạch bong → **0 bài học**.
+
+Văn phòng vừa học được một điều rất giá trị — *"ở đây, muốn làm tiếp trên một kết quả cũ thì phải nói thẳng là giao cho ai làm lại"* — và **vứt nó đi**, vì nó không nằm trong bất kỳ biên nhận nào.
+
+`friction` = **số lượt lập kế hoạch không ra được kế hoạch chạy được**, kể từ ca chạy được gần nhất. Tăng ở ba chỗ: planner hỏi lại, planner ném lỗi, `validate` chặn. Về 0 ngay khi một ca thật sự khởi động.
+
+- Vẫn là **sự việc quan sát được**, đếm bằng code, 0 token, không phụ thuộc model — đúng cùng luật đã bác bỏ `usage.turns`.
+- ⚠ **KHÔNG đếm số tin nhắn người dùng gõ**, dù nghe tự nhiên hơn: người ta nhắn nhiều vì nhiều lý do — nghĩ thêm ý, đổi ý, hay chỉ gõ thành hai dòng. Chỉ **lượt lập kế hoạch không ra được kế hoạch** mới là bằng chứng chắc chắn rằng hệ thống đã bắt người dùng nói lại.
+- Ở **RAM**, không trên đĩa: nó chỉ có nghĩa trong một mạch hội thoại liền. Tắt daemon rồi mở lại nghĩa là người dùng đã bỏ đi và quay lại — ma sát của phiên trước không dạy được gì về phiên này.
+- ⚠ **KHÔNG** tăng ở `catch` cuối `run()`: chỗ đó còn nhận cả *"chưa có nhân viên nào trực"* và *"văn phòng đang bận"* — chuyện **cấu hình**, không phải chuyện hai bên chưa hiểu nhau.
+
+Câu hỏi đặt cho Trợ lý ở ca ma sát **khác hẳn**, và khác là cả điểm của nó. Ca trục trặc kỹ thuật hỏi *"cái bẫy đã vấp là gì"*; ca ma sát thì cỗ máy chạy sạch nên hỏi câu đó sẽ nhận về *"không có gì"* — đúng, và vô dụng. Thứ đáng học nằm ở phía con người:
+
+> *"Người dùng đã phải nói lại N lần mới giao được việc này. Câu nào của họ cuối cùng làm việc chạy được, và lần sau gặp yêu cầu tương tự thì nên hỏi thẳng điều gì ngay từ đầu?"*
+
+Đây là một **lớp bài học mới**: kinh nghiệm về **cách giao việc trong văn phòng này**, không phải về nội dung công việc. Nó là lớp duy nhất học được từ chính người dùng mà **không phải hỏi họ một câu nào**.
+
+> **Bài học:** khi một cơ chế "im lặng đúng lúc cần nói", hãy kiểm xem nó đang **đo ở đâu**. `worthLearning` không hỏng — nó chỉ chưa bao giờ nhìn về phía con người.
 
 ### Mã chết đã biết: `Assistant.chat()`
 

@@ -115,6 +115,103 @@ Không có lỗi nào nổ. Nhưng người dùng dịch năm tài liệu **đ�
 
 ⚠ **Đây là bất định còn lại, không phải bất định đã đóng.** Muốn chắc chắn thì người dùng phải nói rõ, hoặc văn phòng phải có `charter.md` ghi luật đó.
 
+## 2.4 BẺ luật "artifact vô hình" — bảng kê cho Trợ lý (chốt 20/08)
+
+> Đây là lần **đảo một quyết định đã ghi trong §1**. Ghi lại đầy đủ vì lý do đảo quan trọng hơn kết luận.
+
+### Ca hỏng buộc phải xem lại
+
+Người dùng: *"doc-2, doc-3 thiếu file thuật ngữ"*. Bốn lượt qua lại:
+
+1. Trợ lý bảo họ **đi kiểm đường dẫn** — bắt người dùng làm việc mà máy làm hết 1ms, và diễn đạt như thể họ có thể là người nhầm
+2. Người dùng: *"files chưa xuất hiện"*
+3. Khâu lập kế hoạch **chết hẳn** — nó hỏi *"bản dịch tiếng Việt đang nằm ở đường dẫn nào?"*, mà câu hỏi lại không phải hình dạng hợp lệ nên hiện ra thành lỗi (xem `SPEC-offices.md` §6)
+4. Người dùng phải **tự nghĩ ra giải pháp kiến trúc**: *"thì bạn phải kêu người dịch tạo bổ sung đi chứ"*
+
+Rồi ca chạy được — và **kết quả của nó SAI**:
+
+| `Widget` | |
+|---|---|
+| bản dịch `doc-2.md` thật sự dùng | `Widget` — giữ nguyên |
+| bảng thuật ngữ mới sinh ra ghi | **`Tiện ích (widget)`** |
+| số lần chuỗi `"Tiện ích"` xuất hiện trong bản dịch | **0** |
+
+Vì `inputs` trỏ vào `library/files/doc-2.md` — **bản gốc tiếng Anh**. Người dịch chưa bao giờ nhìn thấy bản dịch, nên khi được bảo *"ghi lại các thuật ngữ và cách ĐÃ CHỌN dịch chúng"* nó **chọn lại từ đầu**. Một tài liệu ghi lại những lựa chọn chưa từng được thực hiện, nhìn rất chuyên nghiệp. Tệ hơn nữa: `doc-2.md` **đã có sẵn** một mục `## Ghi chú thuật ngữ` ở cuối, nên giờ có **hai bảng mâu thuẫn** — và không ai trong cuộc hội thoại biết, vì không ai nhìn được vào ngăn Kết quả.
+
+### Quyết định cũ ĐÚNG về rủi ro, SAI về phạm vi
+
+§1 canh đúng thứ đáng canh: đừng biến ngăn Kết quả thành một cái kho thứ hai người dùng phải quản, và đừng để kết quả cũ trôi vào ngữ cảnh việc mới. Nhưng nó chọn cách canh **thô nhất — vô hình hoàn toàn** — và cái giá là chặn luôn thao tác tự nhiên nhất của cả sản phẩm: *"làm tiếp cái vừa xong"*.
+
+**Mấu chốt khiến bản vá rẻ hơn nhiều so với vẻ ngoài của nó:**
+
+> **Nhân viên ĐÃ đọc được artifact rồi.** Worker có `Read`/`Grep`/`Glob` với `cwd` là thư mục văn phòng — chỉ cần kế hoạch ghi đường dẫn vào `inputs` là nó mở được, ngay hôm nay.
+
+Nên thứ thiếu **không phải quyền đọc**, mà đúng một thứ: **planner không biết đường dẫn để mà ghi vào `inputs`.** Đây là lỗ hổng **thông tin ở thời điểm lập kế hoạch**, không phải lỗ hổng quyền hạn — nên bản vá cũng chỉ vá đúng chỗ đó.
+
+### Năm chốt chống tiếng ồn
+
+| # | Chốt | Vì sao |
+|---|---|---|
+| 1 | Chỉ **tên file**, không nội dung | Nội dung đã có `Read` lo, và chỉ khi `inputs` gọi tên |
+| 2 | Gom theo **CA**, kèm một dòng `request` (cắt còn **30 token**) | `P-260820-0314-rab5/T-01/doc-2.md` không nói gì với model; *"ca: dịch doc-2 sang tiếng Việt"* nói tất cả. `briefText` (200 token) là trần của **nhật ký**, không phải của prefix — đo thật: một `request` đầy đủ ăn hơn nửa ngân sách cả bảng |
+| 3 | Chỉ **5 ca** gần nhất + một dòng đếm phần còn lại | Không phải 1: ca người dùng nhắc lại không phải lúc nào cũng là ca vừa xong — ca thật 20/08 cần một kết quả của **25 phút và hai ca trước** |
+| 4 | Trần cứng `budgets.artifacts_manifest_tokens` = **600**, cắt từ ca **cũ nhất** | Cắt nguyên khối bằng `truncateToTokens` sẽ để lại một đường dẫn cụt — mà đường dẫn cụt **tệ hơn không có**: model vẫn điền nó vào `inputs` |
+| 5 | 🔒 **CHỈ Trợ lý. Không bao giờ vào prefix nhân viên.** | Nhân viên nhận đường dẫn qua `inputs`. Nhét bảng kê vào prefix của họ là trả tiền ở **mọi** lượt của **mọi** người để mua một thứ họ không dùng |
+
+Đo trên dữ liệu thật (4 ca, 6 file): **192 token**.
+
+### Cái giá, nói thẳng
+
+Khối này đổi sau **mỗi ca** → prefix Trợ lý bị ghi lại mỗi ca. Giảm thiểu bằng **vị trí**: đặt **cuối cùng** trong chuỗi khối của `buildAssistantPrompt`. Prompt cache là cache theo **tiền tố**, nên mọi khối phía trên vẫn trúng cache và chỉ cái đuôi bị viết lại. Ước ~$0.002/ca — **là số ước, chưa đo.**
+
+Đồng bộ (`refreshAssistantContext`) chạy **ngoài** cổng `status === 'done'`: ca `failed`/`stopped` vẫn có thể đã ghi xong vài file trước lúc hỏng, và đó chính là những file người dùng sẽ nhắc ở câu tiếp theo (*"làm nốt phần còn lại"*).
+
+⚠ **Artifact sinh trước bản vá `plan_id` đôi (20/08) mang id mồ côi nên KHÔNG tra được tên ca** — bảng kê hiện *"(một việc cũ, không còn tên trong sổ)"*. Suy giảm êm, không sửa được, và chỉ ảnh hưởng dữ liệu cũ.
+
+### Phải thêm vào `describePrompt` trong CÙNG một lần sửa
+
+Bài học §5e (`SPEC-offices.md`): prompt đúng mà bảng "Xem prompt phân lớp" sai thì bảng đó vô dụng, vì cả điểm của nó là để tin được. **Mỗi khối mới trong `buildAssistantPrompt` phải có một mục tương ứng ở `describePrompt`.**
+
+## 2.5 Đường dẫn trong ô chat BẤM ĐƯỢC — và chốt chống model bịa (chốt 20/08)
+
+Người dùng: *"`company/offices/ban-dia-hoa/artifacts/P-…/T-01/vi/doc-2-thuat-ngu.md` — cách này bắt người dùng mò vào folder trong máy, hơi bất tiện"*. Đúng: sản phẩm vừa mất công dựng một cửa sổ xem trước, rồi lại đưa người dùng ra file explorer.
+
+Kèm theo một nỗi lo **đúng chỗ**: *"trường hợp nghe worker bịa thì khá thảm hoạ"*.
+
+### Vì sao ca này AN TOÀN — và nó an toàn từ trước, không phải nhờ bản vá này
+
+Đường dẫn trong khối *"Kết quả đã lưu tại"* **chưa bao giờ là chữ của model**. Nó đã qua **ba cửa**:
+
+| cửa | ở đâu | chặn gì |
+|---|---|---|
+| suy từ **tool ĐÃ GỌI** (`receipt.landed`) | `worker.ts → landingOf` | không dùng `receipt.artifacts` — trường đó là thứ model **khai**, và nó bịa được |
+| `safeJoin` | `landingOf` | đường dẫn đi ra ngoài thư mục văn phòng |
+| `existsSync` | `whereBlock` | file model nói đã ghi mà thật ra không có |
+
+### Cơ chế: dữ liệu, KHÔNG phải regex trên chữ
+
+`master.message` nhận thêm `files?: string[]` — đường dẫn tính từ thư mục văn phòng, **chỉ** được điền bởi `whereBlock`.
+
+> ⛔ **KHÔNG BAO GIỜ dò đường dẫn trong `say` bằng regex.** Một phần tin nhắn trong luồng do model viết (`answer` của nhân viên ở task `deliver: reply`). Dò bằng regex nghĩa là: nhân viên bịa một đường dẫn nghe rất thật, giao diện biến nó thành nút bấm được, người dùng tin tưởng bấm vào. Đó là **cho một câu model đoán mượn uy tín của giao diện**, và người dùng không có cách nào phân biệt.
+>
+> Luật gọn: **chỉ đường dẫn do CHÍNH CODE đặt vào mới bấm được.**
+
+Ghép chữ ↔ dữ liệu bằng **so đuôi chuỗi**, không regex: `say` in đường dẫn có tiền tố `company/offices/<id>/` (cho người mở file explorer), `files` mang đường dẫn tính từ thư mục văn phòng. Hai hệ quy chiếu vì hai người dùng khác nhau — nhưng cả hai đầu do **cùng một hàm** dựng ra nên chúng không thể lệch. `whereBlock` trả đúng `shown` (mảng đã in ra chữ), không trả cả `files`: lệch một cái là giao diện có mục bấm được không ứng với dòng nào, hoặc một dòng không bấm được nằm cạnh dòng bấm được.
+
+### Bridge (Telegram) không đổi một chữ
+
+`files` là **metadata đi kèm**, không thay thế phần chữ. Bên hiển thị không đọc nó thì thấy `say` nguyên văn y như hôm nay — đường dẫn vẫn đủ, chỉ là không bấm được. Cùng một sự kiện, hai kết cục, đúng luật *"mỗi bên hiển thị tự chọn cách phản ứng"* (giống `hold_ms` ở `SPEC-offices.md` §4.6).
+
+### Luồng bấm
+
+`actions.revealArtifact(path)` → `panel: 'artifacts'` + đặt ô `revealArtifact` → `ArtifactsPanel` nhận, tra trong danh sách **đã nạp**, mở cửa sổ xem trước.
+
+- Băng chuyền qua store, cùng khuôn `pendingDocs`: cả luồng xem trước (nạp nội dung, ba nhóm định dạng, trần 2MB, nút tải về) sống ở **đúng một chỗ**.
+- `showPanel` chứ không `openPanel`: bấm đường dẫn thứ hai mà panel đóng lại là một cái bẫy.
+- Hiệu ứng bám vào **ô yêu cầu**, không vào giá trị của nó — bấm cùng một đường dẫn hai lần vẫn phải mở lại được.
+- Không tìm thấy (file đã bị xoá sau khi tin nhắn gửi) thì **nói ra bằng toast**. Một cú bấm không gây ra chuyện gì cả thì người dùng chỉ biết là "hỏng", và họ bấm lại.
+- Ô yêu cầu dọn **ngay** kể cả khi không khớp: giữ lại thì lần sau mở panel Kết quả vì việc khác cũng bị bật lên một cửa sổ họ không yêu cầu.
+
 ## 2.1 `plan_id` phải ĐỌC ĐƯỢC — và tên file thì KHÔNG đụng tới (chốt 19/08)
 
 Đề bài của người dùng: `artifacts/P-mt08w0t8-iu50/T-01/tra-loi.md` — chuỗi giữa **không nói gì với con người**. Đề xuất ban đầu: thêm tiền tố `yyMMddhhmmss` vào **tên file**, và bỏ thư mục `P-…`.

@@ -297,7 +297,11 @@ export class LibraryStore {
             : d.state === 'unindexed'
               ? ' (chưa lập chỉ mục — phải nói rõ số trang)'
               : ' (lỗi, chưa dùng được)';
-      return `- ${d.name} — ${d.shape ?? d.ext}${flag}`;
+      // ĐƯỜNG DẪN ĐỦ, không phải tên trần (20/08). Ba thứ cùng phải khớp nhau
+      // từng ký tự: chuỗi ở đây, chuỗi nút Chép đưa vào ô chat, và chuỗi
+      // planner ghi vào `inputs`. Nêu tên trần thì planner phải TỰ GHÉP tiền tố
+      // `library/files/` — một phép ghép nhỏ, và là một chỗ nữa để sai.
+      return `- library/files/${d.name} — ${d.shape ?? d.ext}${flag}`;
     });
 
     return [
@@ -305,7 +309,7 @@ export class LibraryStore {
       '',
       ...lines,
       '',
-      'Originals are in `library/files/`. Extracted text for keyword search is in `library/text/`.',
+      'Extracted text for keyword search is in `library/text/`.',
       'When a task needs one of these, put its path in that task\'s `inputs` so the employee opens it',
       'directly instead of searching for it.',
     ].join('\n');

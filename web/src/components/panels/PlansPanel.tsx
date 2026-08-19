@@ -13,6 +13,9 @@ const STATUS: Record<PlanStatus, { label: string; cls: string }> = {
   running: { label: 'đang chạy', cls: 'text-accent' },
   done: { label: 'xong', cls: 'text-ok' },
   failed: { label: 'hỏng', cls: 'text-danger' },
+  // `warn` chứ không phải `danger`: chưa có gì hỏng, hệ thống đang chờ NGƯỜI
+  // DÙNG. Tô đỏ một ca chỉ vì Trợ lý hỏi lại là dạy người dùng sợ câu hỏi.
+  blocked: { label: 'đang chờ bạn trả lời', cls: 'text-warn' },
   paused: { label: 'tạm nghỉ', cls: 'text-warn' },
   stopped: { label: 'đã dừng', cls: 'text-muted' },
 };

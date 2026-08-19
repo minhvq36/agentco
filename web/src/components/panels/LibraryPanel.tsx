@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, FolderOpen, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Empty } from '@/components/ui/misc';
+import { CopyRef, Empty } from '@/components/ui/misc';
 import { api, ApiError } from '@/lib/api';
 import { actions, toast, useApp } from '@/lib/store';
 import type { DocState, LibraryDoc } from '@/lib/types';
@@ -178,6 +178,9 @@ export function LibraryPanel() {
                   </div>
                 </div>
                 <div className="flex flex-none gap-1">
+                  {/* Đường dẫn ĐỦ, không phải `d.name`: tủ tài liệu và ngăn Kết
+                      quả được phép có file trùng tên. → ui/misc.tsx `CopyRef` */}
+                  <CopyRef path={`library/files/${d.name}`} />
                   <a
                     href={officeId ? api.docUrl(officeId, d.name) : '#'}
                     download={d.name}

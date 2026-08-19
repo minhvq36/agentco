@@ -117,3 +117,90 @@ export function helpText(unknown?: string): string {
 
   return `${head}\n\n${blocks.join('\n\n')}\n\nMuốn nhắn một câu bắt đầu bằng dấu "/" thì gõ hai dấu: //`;
 }
+
+/**
+ * `@đường-dẫn` trong ô chat → đường dẫn ĐÃ XÁC MINH. → docs/SPEC-library.md §8c
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG TRÔNG CHỜ SDK HIỂU `@` — VÀ VÌ SAO TA KHÔNG MUỐN NÓ HIỂU.   │
+ * │                                                                          │
+ * │ CLI Claude Code có cú pháp `@file` khi gõ tay. Nó CÓ chạy trong SDK hay  │
+ * │ không thì **chưa ai đo** — `FINDINGS-sdk` không có một dòng nào về nó, và │
+ * │ dự án này đã trả giá một lần cho việc xây lên một hành vi SDK chưa đo     │
+ * │ (`canUseTool` không nổ lần nào, SPEC-offices §4.7).                       │
+ * │                                                                          │
+ * │ 🔥 Nhưng lý do thật mạnh hơn nhiều: **nếu SDK có hiểu thì đó là chuyện    │
+ * │ XẤU.** Mở rộng `@` nghĩa là nhét NỘI DUNG file vào lượt gọi — mà Trợ lý   │
+ * │ chạy trên session được persist, nên mọi thứ nó đọc nằm trong ngữ cảnh của │
+ * │ MỌI lượt sau đó: *đọc một lần, trả tiền mãi mãi*. Cả kiến trúc dựng trên  │
+ * │ luật "Trợ lý không đọc file, nhân viên mới đọc".                          │
+ * │                                                                          │
+ * │ Nên `@` bị BÓC HẾT ở đây, trước khi chuỗi tới model. Ta không phụ thuộc   │
+ * │ vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Regex này chạy trên chữ NGƯỜI DÙNG GÕ, không phải chữ model sinh — khác
+ * hẳn luật cấm dò đường dẫn trong `say` (SPEC-artifacts §2.5). Ở đó rủi ro là
+ * model bịa ra một đường dẫn nghe rất thật; ở đây người dùng tự chịu trách
+ * nhiệm cho thứ họ gõ, VÀ mọi tham chiếu vẫn phải đối chiếu với `known` — danh
+ * sách đường dẫn có thật, đọc từ đĩa — trước khi được công nhận.
+ *
+ * Ba dạng nhận được, và dạng thứ ba là lý do hàm này phải tồn tại:
+ *
+ *   @artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
+ *   @library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
+ *   @doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+ *
+ * Tên trần trùng nhau là ca CÓ THẬT và hai kho được phép trùng: tủ tài liệu có
+ * `doc-1.md`, ngăn Kết quả cũng có `doc-1.md`. Đoán bừa một bên là làm sai việc
+ * của người dùng một cách im lặng — nên hỏi lại, bằng code, 0 token.
+ */
+export function resolveFileRefs(
+  text: string,
+  known: readonly string[],
+): { text: string; problem?: string } {
+  // `@` phải đứng đầu chuỗi hoặc sau khoảng trắng — `ten@mail.com` không phải
+  // tham chiếu file. Dừng ở khoảng trắng: tên có dấu cách thì dùng đường dẫn
+  // đủ, mà nút Chép vốn luôn cho đường dẫn đủ.
+  const found = [...text.matchAll(/(^|\s)@([^\s@]+)/g)];
+  if (found.length === 0) return { text };
+
+  let out = text;
+  for (const m of found) {
+    // Bỏ dấu câu dính đuôi: người ta gõ "sửa @a/b.md, giữ nguyên phần đầu".
+    //
+    // ⚠ Phần bị bỏ phải được TRẢ LẠI vào câu. Bản đầu thay cả `m[0]` bằng
+    // đường dẫn sạch, và dấu phẩy biến mất khỏi câu của người dùng — sửa chữ
+    // họ viết mà không nói là chuyện nhỏ ở đây nhưng là một thói quen sai:
+    // ta chỉ được phép bóc `@`, không được phép biên tập.
+    const typed = m[2]!.replace(/\\/g, '/');
+    const tail = /[.,;:)\]}]+$/.exec(typed)?.[0] ?? '';
+    const raw = tail ? typed.slice(0, -tail.length) : typed;
+    let hit = known.find((p) => p === raw);
+    if (!hit) {
+      const matches = known.filter((p) => p.split('/').pop() === raw);
+      if (matches.length > 1) {
+        return {
+          text,
+          problem:
+            `Có ${matches.length} file tên "${raw}", mình không đoán bạn muốn cái nào:\n` +
+            matches.map((p) => `  ${p}`).join('\n') +
+            `\nDán lại đường dẫn đầy đủ nhé — nút Chép ở ngăn Tủ tài liệu và Kết quả cho đúng chuỗi đó.`,
+        };
+      }
+      hit = matches[0];
+    }
+    if (!hit) {
+      return {
+        text,
+        problem:
+          `Mình không tìm thấy "${raw}" trong tủ tài liệu hay ngăn Kết quả. ` +
+          `Kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn.`,
+      };
+    }
+    // Bỏ `@`, giữ đường dẫn đã xác minh. Model nhận một chuỗi khớp CHÍNH XÁC
+    // thứ nó đã thấy trong bảng kê, nên nó chỉ việc chép sang `inputs`.
+    out = out.replace(m[0], `${m[1]}${hit}${tail}`);
+  }
+  return { text: out };
+}

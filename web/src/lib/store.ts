@@ -37,6 +37,14 @@ export interface ChatMessage {
   role: string;
   text: string;
   at: number;
+  /**
+   * Đường dẫn kết quả ĐÃ XÁC MINH đi kèm tin nhắn (tính từ thư mục văn phòng).
+   *
+   * Chỉ có ở tin do `whereBlock` dựng — tức là do CODE, không phải do model.
+   * Đây là danh sách duy nhất được phép biến thành nút bấm được; xem
+   * `FileLinks` trong ChatPanel.
+   */
+  files?: string[];
 }
 
 /** Trạng thái sống của một agent. Giữ ngoài DOM để sống sót qua mọi lần render. */
@@ -145,6 +153,16 @@ export interface AppState {
    */
   pendingDocs: File[] | null;
 
+  /**
+   * Kết quả người dùng vừa bấm trong ô chat, đang chờ panel Kết quả mở ra.
+   *
+   * Cùng khuôn `pendingDocs` và cùng lý do: cả luồng xem trước — nạp nội dung,
+   * ba nhóm định dạng, trần 2MB, nút tải về — sống ở đúng MỘT chỗ là
+   * `ArtifactsPanel`. Ô này là băng chuyền giữa hai cửa vào, không phải một bản
+   * sao thứ hai của logic đó.
+   */
+  revealArtifact: string | null;
+
   panel: PanelId | null;
   /** Node đang chọn trên canvas (id node, không phải id vai trò). */
   selected: string | null;
@@ -170,6 +188,7 @@ const initial: AppState = {
   knowledgeVersion: 0,
   artifactsVersion: 0,
   pendingDocs: null,
+  revealArtifact: null,
   panel: null,
   selected: null,
 };
@@ -554,6 +573,30 @@ export const actions = {
     return files;
   },
 
+  /**
+   * Bấm một đường dẫn kết quả trong ô chat → mở panel Kết quả và bật xem trước.
+   * → docs/SPEC-ui.md · docs/SPEC-artifacts.md §2.5
+   *
+   * `showPanel` chứ không `openPanel`: ý định ở đây luôn là MỞ. Bấm hai đường
+   * dẫn liên tiếp mà cái thứ hai đóng panel lại thì đó là một cái bẫy.
+   */
+  revealArtifact(path: string): void {
+    set({ panel: 'artifacts', selected: null, revealArtifact: path });
+  },
+
+  /**
+   * Panel nhận yêu cầu rồi dọn ô.
+   *
+   * Dọn NGAY cả khi không tìm thấy file: giữ lại thì lần sau người dùng mở panel
+   * Kết quả vì việc khác hẳn cũng bị bật lên một cửa sổ xem trước họ không hề
+   * yêu cầu — và họ sẽ không hiểu nó từ đâu ra.
+   */
+  takeRevealArtifact(): string | null {
+    const p = state.revealArtifact;
+    if (p) set({ revealArtifact: null });
+    return p;
+  },
+
   select(nodeId: string | null): void {
     set({ selected: nodeId });
   },
@@ -663,7 +706,19 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       break;
 
     case 'master.message': {
-      const messages = [...state.messages, { id: ++msgSeq, role: e.role, text: e.say, at: Date.now() }];
+      const messages = [
+        ...state.messages,
+        {
+          id: ++msgSeq,
+          role: e.role,
+          text: e.say,
+          at: Date.now(),
+          // Chuyển tiếp NGUYÊN VẸN, không suy diễn thêm gì. Giao diện không bao
+          // giờ tự dò đường dẫn trong `text` — xem chú thích ở `master.message`
+          // trong core/types.ts để biết vì sao đó là luật cứng.
+          ...(e.files?.length ? { files: e.files } : {}),
+        },
+      ];
       // Panel chat đang mở thì coi như đã đọc ngay — chấm đỏ chỉ dành cho tin
       // đến lúc người dùng không nhìn.
       set({ messages, ...(state.panel === 'chat' ? { seenMessages: messages.length } : {}) });
@@ -689,13 +744,30 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
        */
       if (e.note) {
         if (noteTimer) clearTimeout(noteTimer);
+        noteTimer = undefined;
         set({ activity: e.note });
+        /**
+         * ⚠ VẮNG `hold_ms` = GIỮ CHO TỚI SỰ KIỆN KẾ TIẾP. KHÔNG có mặc định.
+         *
+         * BUG ĐÃ SỬA (20/08): người dùng báo *"/clear vẫn khựng 3–5 giây không
+         * thông báo gì"*. Bản trước đọc "vắng mặt" thành `?? 4_000` — mà nén
+         * trí nhớ mất 5–15 giây, nên dòng "Đang dọn…" **tự tắt lúc 4 giây
+         * trong khi việc vẫn đang chạy**, để lại đúng khoảng im lặng mà cả cơ
+         * chế này sinh ra để lấp.
+         *
+         * Hai loại `note` có vòng đời ngược nhau, và server ĐÃ phân biệt sẵn:
+         * `emitNote()` (kết quả đã xong) luôn gửi `hold_ms`; nhánh `clearing`
+         * (việc đang chạy) không bao giờ gửi. Chỉ client đọc sai.
+         *
+         * → core/types.ts `office.activity`
+         */
+        if (e.hold_ms === undefined) break;
         noteTimer = setTimeout(() => {
           noteTimer = undefined;
           // Chỉ xoá nếu chưa ai ghi đè — tránh nuốt dòng trạng thái của một
           // việc vừa được giao ngay sau lệnh dọn.
           if (state.activity === e.note) set({ activity: null });
-        }, e.hold_ms ?? 4_000);
+        }, e.hold_ms);
         break;
       }
       if (noteTimer) {

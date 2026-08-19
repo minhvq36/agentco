@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CornerDownLeft, MessageSquare } from 'lucide-react';
+import { CornerDownLeft, FileText, MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Empty, Textarea } from '@/components/ui/misc';
@@ -106,7 +106,13 @@ export function ChatPanel() {
                     tự giữ), vì khối code phải cuộn ngang riêng — để ở ngoài thì
                     một dòng code dài nong rộng cả bong bóng.
                   */}
-                  {m.role === 'user' ? m.text : <Markdown text={m.text} />}
+                  {m.role === 'user' ? (
+                    m.text
+                  ) : m.files?.length ? (
+                    <FileLinks text={m.text} files={m.files} />
+                  ) : (
+                    <Markdown text={m.text} />
+                  )}
                 </div>
               </div>
             ))}
@@ -166,6 +172,69 @@ export function ChatPanel() {
         </Button>
       </form>
     </div>
+  );
+}
+
+/**
+ * Tin nhắn có kèm ĐƯỜNG DẪN KẾT QUẢ — mỗi đường dẫn là một nút mở xem trước.
+ * → docs/SPEC-artifacts.md §2.5 · docs/SPEC-ui.md
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO GHÉP THEO `files`, KHÔNG DÒ ĐƯỜNG DẪN TRONG CHỮ.                 │
+ * │                                                                          │
+ * │ Một phần tin nhắn trong luồng do MODEL viết (`answer` của nhân viên ở    │
+ * │ task `deliver: reply`). Dò đường dẫn bằng regol trên chữ nghĩa là: nhân  │
+ * │ viên bịa ra một đường dẫn nghe rất thật, giao diện biến nó thành nút bấm │
+ * │ được, người dùng tin tưởng bấm vào. Đó là **cho một câu model đoán mượn  │
+ * │ uy tín của giao diện** — và người dùng không có cách nào phân biệt.      │
+ * │                                                                          │
+ * │ `files` chỉ được điền bởi `whereBlock`, và mỗi đường dẫn trong đó đã qua │
+ * │ ba cửa: suy từ tool ĐÃ GỌI (`receipt.landed`, không phải `artifacts` do  │
+ * │ model khai) → `safeJoin` chặn ra ngoài văn phòng → `existsSync`.         │
+ * │                                                                          │
+ * │ Luật gọn: **chỉ đường dẫn do CHÍNH CODE đặt vào mới bấm được.**          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ghép bằng so ĐUÔI chuỗi, không regex: `say` in đường dẫn có tiền tố
+ * `company/offices/<id>/` cho người mở file explorer, còn `files` mang đường
+ * dẫn tính từ thư mục văn phòng. Hai hệ quy chiếu, một phép so tất định — và
+ * cả hai đầu do cùng một hàm dựng ra nên chúng không thể lệch nhau.
+ *
+ * Dòng KHÔNG khớp file nào đi qua `Markdown` như mọi tin khác. Không có nhánh
+ * nào ở đây được phép làm hỏng cách hiển thị hiện tại.
+ */
+function FileLinks({ text, files }: { text: string; files: string[] }) {
+  return (
+    <span className="block">
+      {text.split('\n').map((line, i) => {
+        const hit = files.find((f) => line.trim().endsWith(f));
+        if (!hit) {
+          return (
+            <span key={i} className="block">
+              <Markdown text={line} />
+            </span>
+          );
+        }
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => actions.revealArtifact(hit)}
+            /*
+              `text-left` + `break-all`: đường dẫn dài không có khoảng trắng để
+              ngắt, và một cái nút không xuống dòng được sẽ nong rộng bong bóng.
+              `w-full` để cả dòng là vùng bấm — một mục tiêu 8px cao thì người
+              dùng bấm trượt, rồi kết luận là nó không bấm được.
+            */
+            className="flex w-full items-center gap-1.5 break-all rounded px-1 py-0.5 text-left font-mono text-[12px] text-accent hover:bg-accent-soft"
+            title="Mở xem trước trong ngăn Kết quả"
+          >
+            <FileText className="h-3.5 w-3.5 flex-none" aria-hidden />
+            <span className="min-w-0">{line.trim()}</span>
+          </button>
+        );
+      })}
+    </span>
   );
 }
 

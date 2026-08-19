@@ -19,12 +19,12 @@ import { LibraryStore } from '../library/store.js';
 import { ArtifactStore } from './artifacts.js';
 import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId } from './assistant.js';
-import { helpText, parseInput, type ParsedInput } from './commands.js';
+import { helpText, parseInput, resolveFileRefs, type ParsedInput } from './commands.js';
 import { Mailbox, mergeUserText } from './mailbox.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
-import { estimateTokens } from './tokens.js';
+import { estimateTokens, truncateToTokens } from './tokens.js';
 import {
   RunError,
   TIERS,
@@ -50,6 +50,19 @@ const MAX_LISTED_FILES = 8;
 
 /** Số tin nhắn phát lại khi mở văn phòng. Đủ để nhớ mạch, không phải cả đời. */
 const CHAT_REPLAY = 200;
+
+/**
+ * Số CA gần nhất được nêu trong bảng kê kết quả gửi cho Trợ lý.
+ *
+ * 5 chứ không phải 1: ca người dùng muốn nhắc lại không phải lúc nào cũng là ca
+ * vừa xong. Ca thật 20/08 cần một kết quả của **25 phút và hai ca trước đó**.
+ * Cũng không phải "tất cả": trần token mới là chốt cuối, còn đây là chốt rẻ
+ * chạy trước nó. → `artifactManifest`
+ */
+const MANIFEST_PLANS = 5;
+
+/** Khoá gom cho file cũ nằm thẳng dưới `artifacts/<task_id>/` (trước 19/08). */
+const LEGACY_PLAN = '(cũ)';
 
 /** Node đã kèm metadata để vẽ. Không có gì trong đây được ghi vào layout.json. */
 export interface CanvasNode extends LayoutNode {
@@ -110,6 +123,17 @@ export class Office {
   private deferred: Array<{ request: string; at: number }> = [];
   /** Artifact của ca vừa xong — để bàn giao cho việc xếp hàng kế tiếp. */
   private lastArtifacts: string[] = [];
+  /**
+   * MA SÁT: số lượt lập kế hoạch KHÔNG ra được kế hoạch kể từ ca chạy được gần
+   * nhất. Tăng khi planner hỏi lại hoặc không trả về JSON; về 0 khi một ca thật
+   * sự khởi động. Đây là thứ duy nhất trong hệ thống đo được **con người phải
+   * vật lộn bao nhiêu**, chứ không phải cỗ máy. → `assistant.ts → worthLearning`
+   *
+   * Ở RAM chứ không trên đĩa là có chủ ý: nó chỉ có nghĩa trong một mạch hội
+   * thoại liền. Tắt daemon rồi mở lại thì người dùng đã bỏ đi và quay lại — ma
+   * sát của phiên trước không còn dạy được gì về phiên này.
+   */
+  private planFriction = 0;
   private emitFn: (e: AgentEvent) => void = () => {};
 
   constructor(loaded: LoadedOffice) {
@@ -265,6 +289,23 @@ export class Office {
     this.assertLive();
     this.emit({ type: 'master.message', say: message, role: 'user', plan_id: null });
 
+    /**
+     * `@đường-dẫn` — GIẢI BẰNG CODE, TRƯỚC KHI TỚI MODEL. → docs/SPEC-library.md §8c
+     *
+     * Chạy ở đây, ngay sau khi ghi tin của người dùng vào luồng và TRƯỚC mọi
+     * nhánh khác: người dùng phải thấy đúng thứ họ gõ trong ô chat, còn model
+     * thì nhận bản đã được xác minh.
+     */
+    const refs = this.resolveRefs(message);
+    if (refs.problem) {
+      // Trả lời bằng CODE. Một đường dẫn không tồn tại là SỰ VIỆC — ta đang cầm
+      // cả hai cái kho trong tay, hỏi model là trả tiền để nhận về một phỏng đoán.
+      this.emit({ type: 'master.message', say: refs.problem, role: 'assistant', plan_id: null });
+      this.emitActivity();
+      return { intent: 'chat', reply: refs.problem };
+    }
+    message = refs.text;
+
     // Lệnh chữ bị bắt TRƯỚC khi tới model. Hai lý do, cả hai đều bắt buộc:
     // ném "/stop" cho model là trả tiền để được dừng chậm hơn; và chuỗi bắt đầu
     // bằng "/" có thể bị chính CLI Claude Code hiểu là lệnh CỦA NÓ.
@@ -292,6 +333,51 @@ export class Office {
     this.emitActivity();
     void this.pump();
     return { intent: 'chat', reply: '' };
+  }
+
+  /**
+   * Giải `@đường-dẫn` người dùng dán vào ô chat. → docs/SPEC-library.md §8c
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO KHÔNG TRÔNG CHỜ SDK HIỂU `@` — VÀ VÌ SAO TA KHÔNG MUỐN NÓ HIỂU.  │
+   * │                                                                          │
+   * │ CLI Claude Code có cú pháp `@file` khi gõ tay. Nó CÓ chạy trong SDK hay  │
+   * │ không thì **chưa ai đo** — `FINDINGS-sdk` không có dòng nào về nó, và    │
+   * │ dự án này đã có tiền lệ đắt về việc xây lên một hành vi SDK chưa đo      │
+   * │ (`canUseTool` không nổ lần nào, §4.7).                                   │
+   * │                                                                          │
+   * │ 🔥 Nhưng lý do thật mạnh hơn: **nếu SDK có hiểu thì đó là chuyện XẤU.**  │
+   * │ Mở rộng `@` nghĩa là nhét NỘI DUNG file vào lượt gọi — mà Trợ lý chạy    │
+   * │ trên session được persist, nên mọi thứ nó đọc nằm trong ngữ cảnh của     │
+   * │ MỌI lượt sau đó: *đọc một lần, trả tiền mãi mãi*. Cả kiến trúc dựng trên │
+   * │ luật "Trợ lý không đọc file, nhân viên mới đọc".                         │
+   * │                                                                          │
+   * │ Nên `@` bị BÓC HẾT ở đây. Model không bao giờ nhìn thấy ký tự đó, và ta  │
+   * │ không phụ thuộc vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Regex chạy trên chữ NGƯỜI DÙNG GÕ, không phải chữ model sinh — khác hẳn
+   * luật cấm dò đường dẫn trong `say` (SPEC-artifacts §2.5). Ở đó rủi ro là
+   * model bịa; ở đây người dùng tự chịu trách nhiệm cho thứ họ gõ, và mọi tham
+   * chiếu vẫn phải ĐỐI CHIẾU với kho thật trước khi được công nhận.
+   *
+   * Ba dạng nhận được, và dạng thứ ba là lý do phải có hàm này:
+   *
+   *   @artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
+   *   @library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
+   *   @doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+   *
+   * Tên trần trùng nhau là ca có thật: tủ tài liệu có `doc-1.md` và ngăn Kết
+   * quả cũng có `doc-1.md`. Đoán bừa một bên là làm sai việc của người dùng
+   * một cách im lặng — nên hỏi lại, bằng code, 0 token.
+   */
+  private resolveRefs(text: string): { text: string; problem?: string } {
+    // Danh sách đường dẫn THẬT, đọc từ hai kho ngay tại thời điểm này. Phần
+    // quyết định thì thuần và nằm ở `commands.ts` để bộ test chạm được.
+    return resolveFileRefs(text, [
+      ...this.library.list().map((d) => `library/files/${d.name}`),
+      ...this.artifacts.list().map((a) => a.path),
+    ]);
   }
 
   /**
@@ -412,7 +498,15 @@ export class Office {
         workers: this.activeScheduler?.runningCount ?? 0,
         queued: this.mailbox.size,
         jobs: this.deferred.length,
-        note: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt…',
+        /**
+         * Nói luôn là MẤT VÀI GIÂY — đây là khoảng chờ dài nhất trong sản phẩm
+         * mà người dùng không thấy có việc gì đang chạy trên sơ đồ.
+         *
+         * ⚠ CỐ Ý KHÔNG kèm `hold_ms`: đây là TRẠNG THÁI của một việc đang chạy,
+         * phải đúng chừng nào việc còn chạy. Thêm `hold_ms` vào đây là tái tạo
+         * lại đúng khoảng im lặng vừa vá. → core/types.ts `office.activity`
+         */
+        note: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt… (mất vài giây)',
         plan_id: null,
       });
       return;
@@ -613,10 +707,47 @@ export class Office {
       // kết quả của nó: `artifactScoper` đóng khung đường dẫn bằng id nó nhận
       // được, nên ghi đè sau đó là để lại một thư mục kết quả mang id mồ côi.
       // → `Assistant.plan`
-      const planned = await this.mailbox.lock(() => this.assistant.plan(request, record.plan_id));
+      // Lập kế hoạch NÉM thì cũng là một lượt người dùng phải nói lại — đếm ở
+      // đây chứ không ở `catch` cuối hàm: `catch` đó còn nhận cả "chưa có nhân
+      // viên nào trực" và "văn phòng đang bận", vốn là chuyện cấu hình chứ
+      // không phải chuyện hai bên chưa hiểu nhau. → `planFriction`
+      const planned = await this.mailbox
+        .lock(() => this.assistant.plan(request, record.plan_id))
+        .catch((err: unknown) => {
+          this.planFriction++;
+          throw err;
+        });
       usage = addUsage(usage, planned.usage);
       this.logAssistantUsage('plan', planned.usage);
-      const plan = planned.value;
+
+      /**
+       * 1b. Chưa chia được vì THIẾU THÔNG TIN → hỏi lại, KHÔNG phải một lỗi.
+       *
+       * → docs/SPEC-offices.md §6 · `Assistant.plan`
+       *
+       * Ca này kết thúc ở `blocked`, không phải `failed`: `failed` nghĩa là đã
+       * thử và hỏng, còn đây là chưa thử. Người dùng nhìn nhật ký phải phân biệt
+       * được "hệ thống làm sai" với "hệ thống đang chờ mình" — gộp hai thứ đó
+       * vào một trạng thái là làm hỏng chính cái nhật ký sinh ra để tin.
+       *
+       * KHÔNG tiêu một token nhân viên nào. Câu hỏi đi thẳng lên ô chat với vai
+       * `assistant`, y như một lượt `intent: 'ask'` của `route()` — với người
+       * dùng thì đây LÀ cùng một chuyện, và họ không cần biết nó đến từ khâu nào.
+       */
+      if (planned.value.kind === 'ask') {
+        this.planFriction++;
+        this.emit({ type: 'master.message', role: 'assistant', say: planned.value.say });
+        // `finish` tự trả văn phòng về `idle` — không gọi `setState` thêm ở đây.
+        this.finish(record, 'blocked', '', usage, 0);
+        return { plan_id: record.plan_id, report: '', usage };
+      }
+
+      const plan = planned.value.plan;
+      // Chia được việc rồi thì CHỐT con số ma sát cho ca này, và trả biến đếm về
+      // 0 ngay: một ca sau đó chạy trơn từ câu đầu tiên không được thừa hưởng
+      // ma sát của ca này. Đọc lại ở khâu báo cáo bên dưới.
+      const friction = this.planFriction;
+      this.planFriction = 0;
 
       /**
        * 2. SỬA thứ sửa được, rồi mới CHẶN thứ không sửa được.
@@ -649,6 +780,9 @@ export class Office {
 
       const problems = Scheduler.validate(plan, onDuty, this.loaded.dir);
       if (problems.length) {
+        // Kế hoạch có ra, nhưng không chạy được — với người dùng thì vẫn là một
+        // lượt phải nói lại. Tính là ma sát. → `planFriction`
+        this.planFriction++;
         /**
          * Câu này đi thẳng lên mặt người dùng, nên nó phải nói được VIỆC PHẢI
          * LÀM — tiêu chí "Xử lý lỗi tốt". Bản trước in nguyên văn danh sách kỹ
@@ -792,7 +926,9 @@ export class Office {
           report = '';
           status = 'done';
         } else {
-        const summary = await this.mailbox.lock(() => this.assistant.report(plan.steps, receipts));
+        const summary = await this.mailbox.lock(() =>
+          this.assistant.report(plan.steps, receipts, friction),
+        );
         usage = addUsage(usage, summary.usage);
         this.logAssistantUsage('report', summary.usage);
         report = summary.value.say;
@@ -832,8 +968,17 @@ export class Office {
           count: this.knowledge.size,
           version: this.loaded.knowledgeVersion,
         });
-        this.refreshAssistantContext();
       }
+      /**
+       * Đồng bộ NGOÀI nhánh trên, và đó là chỗ bản nháp đầu suýt sai.
+       *
+       * Nhánh trên chỉ chạy khi có bài học hoặc ca `done`. Nhưng bảng kê kết quả
+       * phải cập nhật kể cả khi ca `failed`/`stopped` — nhân viên có thể đã ghi
+       * xong vài file trước lúc hỏng, và đó chính là những file người dùng sẽ
+       * nhắc tới ở câu tiếp theo ("làm nốt phần còn lại"). Gắn nó vào cổng của
+       * kho tri thức là để nó lỡ đúng cái ca cần nó nhất.
+       */
+      this.refreshAssistantContext();
 
       // Nhớ kết quả để bàn giao cho việc đang xếp hàng — xem inish().
       this.lastArtifacts = receipts.flatMap((r) => r.artifacts);
@@ -925,7 +1070,7 @@ export class Office {
     return gone;
   }
 
-  private whereBlock(receipts: readonly Receipt[]): string {
+  private whereBlock(receipts: readonly Receipt[]): { text: string; files: string[] } {
     const files = new Set<string>();
     const servers = new Set<string>();
     let ranCommand = false;
@@ -945,12 +1090,13 @@ export class Office {
     }
 
     const lines: string[] = [];
+    let shown: string[] = [];
     if (files.size) {
       // Đường dẫn tính từ THƯ MỤC LÀM VIỆC, không từ thư mục văn phòng: người
       // dùng đang đứng ở đó khi mở file explorer. `artifacts/T-01/x.md` đứng một
       // mình thì đúng về kỹ thuật mà vô dụng với người lần đầu đi tìm.
       const base = `${path.basename(this.loaded.companyDir)}/offices/${this.id}`;
-      const shown = [...files].sort().slice(0, MAX_LISTED_FILES);
+      shown = [...files].sort().slice(0, MAX_LISTED_FILES);
       lines.push('Kết quả đã lưu tại:');
       lines.push(...shown.map((p) => `  ${base}/${p}`));
       if (files.size > shown.length) lines.push(`  …và ${files.size - shown.length} file nữa`);
@@ -977,7 +1123,17 @@ export class Office {
       lines.push('Có chạy lệnh trên máy — kết quả có thể nằm ngoài thư mục văn phòng.');
     }
 
-    return lines.length ? `\n\n${lines.join('\n')}` : '';
+    return {
+      text: lines.length ? `\n\n${lines.join('\n')}` : '',
+      /**
+       * Trả `shown` — ĐÚNG những đường dẫn đã in ra chữ, không phải cả `files`.
+       *
+       * Lệch một cái là giao diện có một mục bấm được không ứng với dòng nào,
+       * hoặc một dòng chữ không bấm được trong khi hàng xóm của nó thì được.
+       * Cả hai đều là giao diện tự mâu thuẫn với chính nó. Một nguồn, hai dạng.
+       */
+      files: shown,
+    };
   }
 
   private finish(
@@ -988,7 +1144,8 @@ export class Office {
     tasks: number,
     receipts: readonly Receipt[] = [],
   ): void {
-    report += this.whereBlock(receipts);
+    const where = this.whereBlock(receipts);
+    report += where.text;
     record.status = status;
     record.ended_at = new Date().toISOString();
     record.report = report;
@@ -1004,7 +1161,16 @@ export class Office {
     // `report` RỖNG là hợp lệ và có chủ ý: ca một task `reply` đã phát câu trả
     // lời của nhân viên rồi, và đó CHÍNH LÀ báo cáo. Phát thêm một bong bóng
     // trống ở đây là tái tạo đúng cái "cấn" vừa bỏ đi.
-    if (report.trim()) this.emit({ type: 'master.message', say: report, role: 'assistant' });
+    // `files` đi KÈM tin nhắn, không thay thế phần chữ trong nó: bên hiển thị
+    // nào không đọc trường này (Telegram) vẫn thấy đủ đường dẫn trong `say`.
+    if (report.trim()) {
+      this.emit({
+        type: 'master.message',
+        say: report,
+        role: 'assistant',
+        ...(where.files.length ? { files: where.files } : {}),
+      });
+    }
     this.emit({ type: 'plan.finished', status, costUSD: usage.costUSD, turns: usage.turns });
 
     this.currentPlan = undefined;
@@ -1040,9 +1206,17 @@ export class Office {
 
     // `setState` cũng phát một `office.state` mang `say`. Đưa câu báo cáo vào
     // đó nữa là lặp lần thứ ba — trạng thái chỉ cần nói TRẠNG THÁI.
+    // `blocked` về `idle` như mọi ca đã đóng, nhưng KHÔNG được nói "Xong việc."
+    // — chưa có việc nào chạy cả, và câu hỏi của Trợ lý vừa hiện ngay phía trên.
     this.setState(
       status === 'paused' || status === 'stopped' ? 'paused' : 'idle',
-      status === 'paused' ? 'Tạm nghỉ.' : status === 'stopped' ? 'Đã dừng.' : 'Xong việc.',
+      status === 'paused'
+        ? 'Tạm nghỉ.'
+        : status === 'stopped'
+          ? 'Đã dừng.'
+          : status === 'blocked'
+            ? 'Đang chờ bạn trả lời.'
+            : 'Xong việc.',
     );
   }
 
@@ -1433,9 +1607,12 @@ export class Office {
           ).text;
     // Ghi nhớ hội thoại chỉ có với Trợ lý — nhân viên không có, và không được có.
     const memory = who === 'assistant' ? this.knowledge.assistantMemoryText() : '';
-    // Bảng kê tủ chỉ có với Trợ lý — nhân viên tìm bằng `Grep`, không cần danh sách.
+    // Hai bảng kê chỉ có với Trợ lý. Tủ tài liệu: nhân viên tìm bằng `Grep`.
+    // Kết quả: nhân viên nhận đường dẫn qua `inputs`, không cần danh sách —
+    // và đó là chốt giữ cho prefix của họ không phình theo số ca đã chạy.
     const library = who === 'assistant' ? this.library.manifest() : '';
-    return describePrompt(this.loaded, who, hot, memory, library);
+    const artifacts = who === 'assistant' ? this.artifactManifest() : '';
+    return describePrompt(this.loaded, who, hot, memory, library, artifacts);
   }
 
   /** cacheKey hiện tại của từng vai trò — để chẩn đoán prefix bị phá. */
@@ -1728,6 +1905,120 @@ export class Office {
     this.assistant.setHotKnowledge(this.assistantHot());
     this.assistant.setMemory(this.knowledge.assistantMemoryText());
     this.assistant.setLibrary(this.library.manifest());
+    this.assistant.setArtifacts(this.artifactManifest());
+  }
+
+  /**
+   * BẢNG KÊ KẾT QUẢ cho Trợ lý — tên file, KHÔNG nội dung. → docs/SPEC-artifacts.md §2.4
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO BẺ LUẬT "ARTIFACT VÔ HÌNH" (20/08) — và bẻ tới đâu.              │
+   * │                                                                          │
+   * │ Luật cũ (§1) canh ĐÚNG rủi ro: đừng biến ngăn Kết quả thành một cái kho  │
+   * │ thứ hai người dùng phải quản, và đừng để kết quả cũ trôi vào ngữ cảnh    │
+   * │ việc mới. Nhưng nó chọn cách canh THÔ NHẤT — vô hình hoàn toàn — và cái  │
+   * │ giá là chặn luôn thao tác tự nhiên nhất của cả sản phẩm: "làm tiếp cái   │
+   * │ vừa xong".                                                               │
+   * │                                                                          │
+   * │ CA HỎNG ĐO ĐƯỢC 20/08. Người dùng: *"doc-2, doc-3 thiếu file thuật       │
+   * │ ngữ"*. Bốn lượt qua lại, một lượt lập kế hoạch chết vì planner hỏi *"bản │
+   * │ dịch tiếng Việt đang nằm ở đường dẫn nào?"* — nó KHÔNG THỂ tự biết. Rồi  │
+   * │ khi chạy được, kế hoạch lấy `inputs = library/files/doc-2.md` (bản gốc   │
+   * │ TIẾNG ANH), nên người dịch **chưa bao giờ nhìn thấy bản dịch** mà vẫn    │
+   * │ viết ra một bảng "các thuật ngữ và cách ĐÃ CHỌN dịch chúng".             │
+   * │                                                                          │
+   * │ 🔥 Kết quả: bảng ghi `Widget → "Tiện ích (widget)"`, trong khi bản dịch  │
+   * │ thật dùng `Widget` nguyên văn và KHÔNG chứa chữ "Tiện ích" lần nào. Một  │
+   * │ tài liệu ghi lại những lựa chọn CHƯA TỪNG ĐƯỢC THỰC HIỆN — nhìn rất      │
+   * │ chuyên nghiệp, và sai. Đúng lớp lỗi "sai mà không ai biết".              │
+   * │                                                                          │
+   * │ Thứ THIẾU không phải QUYỀN ĐỌC: nhân viên đã có `Read`/`Grep` với `cwd`  │
+   * │ là thư mục văn phòng, chỉ cần `inputs` gọi tên là đọc được ngay hôm nay. │
+   * │ Thiếu đúng một thứ — **planner không biết đường dẫn để mà ghi vào        │
+   * │ `inputs`.** Đây là lỗ hổng THÔNG TIN lúc lập kế hoạch, không phải lỗ     │
+   * │ hổng quyền hạn. Nên bản vá cũng chỉ vá đúng chỗ đó.                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Năm chốt để nó không thành tiếng ồn:
+   *
+   *  1. CHỈ tên + hình dạng. Nội dung đã có `Read` lo, và chỉ khi `inputs` gọi.
+   *  2. Gom theo CA, kèm một dòng `request` của ca đó. `P-260820-0314-rab5/T-01/
+   *     doc-2.md` không nói gì với model; *"ca: dịch doc-2 sang tiếng Việt"* nói
+   *     tất cả. Đây là mảnh làm bảng kê DÙNG ĐƯỢC, không phải đường dẫn.
+   *  3. Chỉ `MANIFEST_PLANS` ca gần nhất, kèm một dòng nói còn bao nhiêu ca cũ.
+   *  4. Trần token cứng, cắt từ ca CŨ NHẤT.
+   *  5. 🔒 CHỈ Trợ lý. Không bao giờ vào prefix nhân viên — xem `budgets`.
+   *
+   * ⚠ Cái giá đã biết: khối này đổi sau MỖI ca, nên prefix Trợ lý bị ghi lại
+   * mỗi ca. Giảm thiểu bằng cách đặt nó CUỐI chuỗi khối (`buildAssistantPrompt`)
+   * để mọi thứ phía trên vẫn ấm — chỉ cái đuôi bị viết lại.
+   */
+  private artifactManifest(): string {
+    const files = this.artifacts.list();
+    if (files.length === 0) return '';
+
+    // Gom theo ca, giữ thứ tự mới→cũ mà `list()` đã sắp (theo `mtime`).
+    const byPlan = new Map<string, string[]>();
+    for (const a of files) {
+      const key = a.plan_id || LEGACY_PLAN;
+      const list = byPlan.get(key) ?? [];
+      list.push(a.path);
+      byPlan.set(key, list);
+    }
+
+    const titles = new Map(this.plans.list().map((p) => [p.plan_id, p.request]));
+    const groups = [...byPlan.entries()];
+    const shown = groups.slice(0, MANIFEST_PLANS);
+
+    const blocks: string[] = [];
+    for (const [planId, paths] of shown) {
+      /**
+       * Tên việc là thứ làm đường dẫn có nghĩa — nhưng CẮT NGẮN HẲN.
+       *
+       * `request` là câu Trợ lý viết lại "cho rõ, đủ ngữ cảnh" nên nó dài thật:
+       * đo trên máy người dùng, một câu chiếm 300+ ký tự và ăn hơn nửa ngân sách
+       * của cả bảng kê. Ở đây nó chỉ làm một việc — giúp model nhận ra *"à, ca
+       * dịch doc-2"* — và 30 token là quá đủ cho việc đó. Phần đuôi chi tiết
+       * không giúp chọn file, chỉ đẩy các ca khác ra khỏi trần.
+       *
+       * `briefText` (200 token) là trần dành cho NHẬT KÝ, không phải cho prefix.
+       *
+       * Không tra được tên (ca đã rơi khỏi `index.json`, trần 200 bản ghi — hoặc
+       * là artifact sinh trước bản vá `plan_id` đôi 20/08, mang một id mồ côi)
+       * thì nói thẳng là không biết. Bịa một nhãn ngày giờ chỉ tốn token mà
+       * không giúp model quyết gì.
+       */
+      const title = titles.get(planId);
+      blocks.push(
+        [
+          `## ${title ? truncateToTokens(title, 30) : '(một việc cũ, không còn tên trong sổ)'}`,
+          // Sắp theo đường dẫn trong MỘT ca: `T-01` phải đứng trước `T-02`.
+          // `list()` sắp theo `mtime` nên task chạy xong sau lại lên trên, và
+          // một danh sách nhảy số là một danh sách người đọc phải dò lại.
+          ...[...paths].sort().map((p) => `- ${p}`),
+        ].join('\n'),
+      );
+    }
+
+    const head = '# Results this office has already produced';
+    const foot = [
+      groups.length > shown.length ? `(and ${groups.length - shown.length} older job(s) not listed)` : '',
+      'These are files EMPLOYEES wrote in earlier jobs. To reuse one, put its path in a',
+      "task's `inputs` — the employee opens it directly. You cannot read them yourself.",
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    /**
+     * Cắt từ ca CŨ NHẤT khi vượt trần — bỏ dần từ cuối chứ không `truncateToTokens`
+     * cả khối. Cắt giữa chuỗi sẽ để lại một đường dẫn cụt, mà một đường dẫn cụt
+     * còn tệ hơn không có đường dẫn nào: model vẫn sẽ điền nó vào `inputs`.
+     */
+    const limit = this.loaded.company.budgets.artifacts_manifest_tokens;
+    const kept = [...blocks];
+    const render = (): string => [head, '', ...kept, '', foot].join('\n');
+    while (kept.length > 1 && estimateTokens(render()) > limit) kept.pop();
+    return render();
   }
 
   /**

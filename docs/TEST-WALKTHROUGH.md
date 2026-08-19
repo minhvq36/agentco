@@ -287,6 +287,72 @@ Luật ngắn, ít, ổn định → node tri thức. Bảng 200 dòng → tủ 
 
 ---
 
+## Bài 5b — Làm tiếp trên kết quả cũ ✅ *không cần gõ tay* · 🆕 **MỚI 20/08**
+
+> **Vì sao có bài này.** Đây là thao tác tự nhiên nhất của cả sản phẩm — *"làm tiếp cái vừa xong"* — và nó là thao tác **hỏng nặng nhất** khi được thử lần đầu. Ghi lại nguyên văn để bài test có mỏ neo:
+>
+> Người dùng gõ *"doc-2, doc-3 thiếu file thuật ngữ"*. **Bốn lượt** qua lại: Trợ lý bảo họ đi kiểm đường dẫn (bắt con người làm việc máy làm hết 1ms) → họ nói *"files chưa xuất hiện"* → một lượt lập kế hoạch **chết hẳn** vì Trợ lý hỏi *"bản dịch tiếng Việt nằm ở đường dẫn nào?"* mà câu hỏi lại không phải hình dạng hợp lệ → cuối cùng **người dùng phải tự nghĩ ra giải pháp**: *"thì bạn phải kêu người dịch tạo bổ sung đi chứ"*.
+>
+> Rồi ca chạy được, và **kết quả SAI**: `inputs` trỏ vào bản gốc tiếng Anh nên bảng thuật ngữ ghi `Widget → "Tiện ích (widget)"` trong khi bản dịch dùng `Widget` nguyên văn. Một tài liệu ghi lại những lựa chọn **chưa từng được thực hiện**, nhìn rất chuyên nghiệp.
+>
+> Ba bản vá 20/08 nhắm đúng ba chỗ đó: **bảng kê kết quả** trong prefix Trợ lý, **quyền hỏi lại** cho khâu lập kế hoạch, và **nút Chép + `@đường-dẫn`** để người dùng chỉ đích danh. Bài này đo cả ba.
+
+Chạy **tiếp ngay sau Bài 5**, cùng văn phòng `Bản địa hoá`, không tạo văn phòng mới.
+
+**Bước 1 — đo bằng cách KHÔNG chỉ đường.** 🖱 chat, cố tình nói mơ hồ như lần đầu:
+
+```
+doc-2 thiếu bảng thuật ngữ
+```
+
+| Quan sát | Nghĩa là |
+|---|---|
+| Trợ lý **tự tìm ra** bản dịch cũ và giao việc luôn | ✅ bảng kê kết quả đang hoạt động |
+| Trợ lý **hỏi lại một câu rõ ràng** (*"bạn muốn đối chiếu với bản dịch nào?"*) | ✅ chấp nhận được — cửa `ask` chạy đúng, ca hiện **`đang chờ bạn trả lời`** màu vàng ở Nhật ký, **không phải `hỏng` màu đỏ** |
+| Hiện *"Mình chưa chia được việc này. Thay vì một kế hoạch, Trợ lý nói: …"* | ❌ nó phá giao thức. **Ghi nhận**, và xem `.state/plan-failure.log` để biết nguyên văn |
+| Bảo bạn đi kiểm một đường dẫn | ❌ luật *"đừng bắt con người làm mắt cho mình"* không ăn. **Ghi nhận** |
+
+**Bước 2 — chỉ đích danh bằng nút Chép.**
+
+🖱 Mở ngăn **Kết quả** → tìm bản dịch `doc-2.md` của Bài 5 → bấm nút **Chép** (icon 📋) cạnh tên file. Nó chép một chuỗi dạng:
+
+```
+@artifacts/P-260820-0314-rab5/T-01/doc-2.md
+```
+
+🖱 Về ô chat, dán vào và gõ tiếp:
+
+```
+Đối chiếu @artifacts/…/doc-2.md với bản gốc @library/files/doc-2.md,
+ghi bảng thuật ngữ ĐÚNG NHƯ ĐÃ DỊCH ra artifacts/vi/doc-2-thuat-ngu.md
+```
+
+*(Dán bằng nút Chép cả hai, đừng gõ tay — cả điểm của nút đó là bạn không phải gõ.)*
+
+**Bước 3 — kiểm ba thứ, theo thứ tự tăng dần độ khó:**
+
+| # | Kiểm | Đạt khi |
+|---|---|---|
+| 1 | Nhật ký công việc → mở ca vừa chạy → xem `inputs` | có **cả hai** đường dẫn bạn dán, **không** có đường dẫn nào khác |
+| 2 | Mở file thuật ngữ mới sinh | mỗi dòng khớp với **bản dịch thật**, không phải một cách dịch nghe hợp lý |
+| 3 | Tìm `Widget` trong cả hai file | bảng ghi đúng thứ bản dịch dùng. Lệch = **lỗi gốc chưa chết**, ghi nhận |
+
+**Bước 4 — thử ba cách gõ sai. Cả ba phải bị chặn bằng CODE, 0 token, trả lời tức thì:**
+
+| Gõ | Phải nhận |
+|---|---|
+| `@doc-2.md` (tên trần, trùng ở hai kho) | *"Có 2 file tên doc-2.md, mình không đoán bạn muốn cái nào:"* + liệt kê đủ hai đường dẫn |
+| `@library/files/doc-9.md` (không có thật) | *"Mình không tìm thấy … trong tủ tài liệu hay ngăn Kết quả"* |
+| `gửi cho ke-toan@congty.vn` | **không có gì xảy ra** — email không phải tham chiếu file |
+
+> ⚠ Ba câu trên phải hiện **ngay lập tức** (dưới 100ms). Nếu có độ trễ vài giây thì chúng đã đi qua model — sai chỗ, và đang tốn tiền cho một việc chỉ là tra danh sách.
+
+**Bước 5 — đường dẫn trong câu báo kết quả phải BẤM ĐƯỢC.** 🖱 Bấm vào một dòng trong khối *"Kết quả đã lưu tại:"* → panel Kết quả mở ra kèm cửa sổ xem trước đúng file đó. Không phải mò vào thư mục trên máy.
+
+**Chi phí:** ~$0.05 – $0.10 · bước 4 tốn **$0**
+
+---
+
 ## Bài 6 — Rà hợp đồng ⚠ *bài đã ĐỔI BẢN CHẤT từ 17/08 — đọc kỹ*
 
 ⚠ **Không phải tư vấn pháp lý.** Đây là bài test kỹ thuật, đừng dùng kết quả để ký gì.

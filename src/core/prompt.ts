@@ -181,10 +181,26 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
 - **Every step must have at least one task pointing at it.** Do not write a step for something an employee already does inside another task — "save the result to a file" is part of writing it, not a step of its own. A step nobody works on is a step the user watches never finish.
 - \`tasks\`: the actual work. \`step\` is the index into \`steps\`.
 - \`deps\`: task_ids that must finish first. Leave empty when tasks can run in parallel — parallel is good.
+- **A path the human typed is exact — copy it into \`inputs\` verbatim.** They picked it from a list in the interface, and it was checked against the real files before it reached you. Do not search for it, do not "correct" it, and never ask them to confirm it exists.
 - \`outputs\`: every task must write at least one file under \`artifacts/<task_id>/\`. Two tasks must NEVER write the same path. This holds for **every** task, including \`deliver: "reply"\` ones.
 - **When the human named a path, keep the part they chose.** Their folders and filenames go *inside* \`artifacts/<task_id>/\`, they do not replace it — \`artifacts/vi/doc-1.md\` becomes \`artifacts/<task_id>/vi/doc-1.md\`. Silently flattening what they asked for is how a person ends up hunting for a file that is not where they put it.
 - **When the human asked for separate files, write separate files.** "translate it, and also note the terms you chose" is two outputs, not one file with a section at the bottom. The same request must produce the same shape every time it is run — a person translating five documents one at a time is comparing the results.
 - Only use employee ids from the roster you were given.
+
+### When you cannot plan yet — ASK, in JSON
+
+If you are missing something you genuinely need, reply with this instead. It is a normal, expected answer, not a failure:
+
+\`\`\`json
+{"ask": "<one short question, in the user's language>"}
+\`\`\`
+
+**Never** reply with a question as plain prose — prose is not a valid answer here and the human will see a system error instead of your question.
+
+Two rules on what to ask:
+
+- **Never ask the human to check a file inside this office.** You cannot see file contents, and they should not have to be your eyes. If a path you need is not in the lists above, say plainly that you cannot find it and ask what to do — do not ask them to go and look.
+- Ask only when the answer changes the plan. If you can pick a sensible default and say so in a \`constraint\`, do that instead — a round-trip costs the human more than a slightly wrong default.
 
 ## \`deliver\` — does the human want to KNOW something, or to HAVE something?
 
@@ -310,6 +326,8 @@ export function buildAssistantPrompt(
     memory?: string;
     /** Bảng kê tủ tài liệu — tên + hình dạng, dựng bằng code. → SPEC-library.md §8b */
     library?: string;
+    /** Bảng kê KẾT QUẢ các ca trước — tên file, không nội dung. → SPEC-artifacts.md §2.4 */
+    artifacts?: string;
     language?: string;
     model?: string;
   },
@@ -318,6 +336,7 @@ export function buildAssistantPrompt(
   const hot = opts.hotKnowledge?.trim() ?? '';
   const memory = opts.memory?.trim() ?? '';
   const library = opts.library?.trim() ?? '';
+  const artifacts = opts.artifacts?.trim() ?? '';
 
   const blocks: string[] = [ASSISTANT_CORE];
   /**
@@ -355,6 +374,17 @@ export function buildAssistantPrompt(
   if (memory) blocks.push(`# What the human has decided — follow these\n\n${memory}`);
   if (hot) blocks.push(`# What this office has learned\n\n${hot}`);
   blocks.push(opts.roster);
+  /**
+   * Bảng kê kết quả đứng CUỐI CÙNG trong các khối nội dung — và vị trí đó là
+   * một quyết định về TIỀN, không phải về thứ tự đọc.
+   *
+   * Luật của hàm này là "ít đổi trước, hay đổi sau", và khối này đổi sau MỖI
+   * ca — thường xuyên hơn cả roster (đổi khi kéo dây trên canvas). Prompt cache
+   * là cache theo TIỀN TỐ: đặt thứ hay đổi nhất ở cuối thì mọi khối phía trên
+   * vẫn trúng cache, chỉ cái đuôi bị ghi lại. Đặt nó lên trên là mỗi ca xong
+   * lại trả tiền ghi lại TOÀN BỘ prefix. → SPEC-artifacts.md §2.4
+   */
+  if (artifacts) blocks.push(artifacts);
   blocks.push(`Always speak to the human in ${language}.`);
 
   return {
@@ -407,6 +437,7 @@ export function describePrompt(
   hotKnowledge = '',
   assistantMemory = '',
   libraryManifest = '',
+  artifactManifest = '',
 ): PromptLayer[] {
   const coreEditable = office.company.allow_core_prompt_edit;
   const layers: PromptLayer[] = [];
@@ -541,6 +572,27 @@ export function describePrompt(
         'Tên và hình dạng các tài liệu BẠN đã thả vào tủ, dựng bằng code nên không tốn lượt gọi nào. ' +
         'Nhờ khối này Trợ lý biết trong tủ có gì TRƯỚC khi chia việc — nó chỉ thẳng file cho nhân viên ' +
         'thay vì để nhân viên đi mò. Cố ý KHÔNG kèm nội dung: tài liệu không bao giờ vào prompt.',
+    });
+  }
+
+  /**
+   * Bảng kê KẾT QUẢ — phải có mặt ở đây vì nó CÓ MẶT trong prompt thật.
+   *
+   * Bài học §5e (khối GHI NHỚ bị đếm hai lần): prompt đúng mà bảng xem sai thì
+   * bảng đó vô dụng, vì cả điểm của nó là để tin được. Mỗi khối mới thêm vào
+   * `buildAssistantPrompt` phải thêm một mục ở đây trong cùng một lần sửa.
+   */
+  if (who === 'assistant' && artifactManifest.trim()) {
+    add({
+      id: 'artifacts',
+      title: 'Kết quả các ca trước — bảng kê',
+      editable: false,
+      text: artifactManifest,
+      note:
+        'Tên file NHÂN VIÊN đã làm ra ở các ca trước, dựng bằng code nên không tốn lượt gọi nào. ' +
+        'Nhờ khối này Trợ lý làm tiếp được trên kết quả cũ — trước 20/08 nó không nhìn thấy gì ở ' +
+        'đây và phải hỏi bạn đường dẫn. Cố ý CHỈ có tên: nội dung không bao giờ vào prompt, và ' +
+        'khối này KHÔNG bao giờ vào prompt của nhân viên.',
     });
   }
 

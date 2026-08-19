@@ -187,6 +187,18 @@ export const CompanyConfigSchema = z.object({
        * của MỌI lượt trò chuyện — nhỏ hơn charter là có chủ ý.
        */
       assistant_skills_tokens: z.number().int().positive().default(400),
+      /**
+       * Trần cho BẢNG KÊ KẾT QUẢ trong prefix Trợ lý. → SPEC-artifacts.md §2.4
+       *
+       * Nhỏ có chủ ý, và nó là trần DUY NHẤT chống được việc kho kết quả lớn
+       * dần vô hạn còn ngữ cảnh thì không. Vượt trần là cắt từ CA CŨ NHẤT — kết
+       * quả cũ ít khả năng được nhắc lại hơn kết quả vừa xong.
+       *
+       * ⚠ Khối này KHÔNG bao giờ vào prefix của nhân viên. Nhân viên nhận đường
+       * dẫn qua `inputs`; nhét bảng kê vào đó là trả tiền ở MỌI lượt của MỌI
+       * người để mua một thứ họ không dùng.
+       */
+      artifacts_manifest_tokens: z.number().int().positive().default(600),
       hot_knowledge_tokens: z.number().int().positive().default(2_000),
       cold_knowledge_tokens: z.number().int().positive().default(3_000),
       task_brief_tokens: z.number().int().positive().default(1_500),
@@ -613,7 +625,22 @@ export interface Plan {
  * nhau, và không trả lời được "việc hôm qua đã làm những gì". Mọi sự kiện giờ
  * mang `plan_id`, và đây là bản ghi mà `plan_id` trỏ tới.
  */
-export type PlanStatus = 'planning' | 'running' | 'done' | 'failed' | 'paused' | 'stopped';
+/**
+ * `blocked` (20/08) — CHƯA THỬ vì còn thiếu thông tin, khác hẳn `failed` (ĐÃ
+ * thử và hỏng). Khâu lập kế hoạch hỏi ngược lại người dùng thì ca dừng ở đây.
+ *
+ * Tách ra là để nhật ký công việc không nói dối: người dùng phải phân biệt được
+ * *"hệ thống làm sai"* với *"hệ thống đang chờ mình"*, và gộp hai thứ đó vào một
+ * trạng thái là làm hỏng chính cái nhật ký sinh ra để tin. → SPEC-offices.md §6
+ */
+export type PlanStatus =
+  | 'planning'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'blocked'
+  | 'paused'
+  | 'stopped';
 
 export interface PlanRecord {
   plan_id: string;
@@ -720,7 +747,39 @@ export type AgentEventBody =
    * `role` — nướng sẵn tên vào chuỗi là tước quyền đó của mọi client tương lai,
    * và trên giao diện hiện tại thì tên sẽ hiện HAI lần.
    */
-  | { type: 'master.message'; say: string; role: string }
+  /**
+   * `files` — đường dẫn kết quả ĐÃ ĐƯỢC XÁC MINH, kèm theo tin nhắn dưới dạng
+   * DỮ LIỆU chứ không phải chữ. → docs/SPEC-ui.md · SPEC-artifacts.md §2.5
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO KHÔNG ĐỂ GIAO DIỆN TỰ DÒ ĐƯỜNG DẪN TRONG `say`.                  │
+   * │                                                                          │
+   * │ `say` là chuỗi hướng người đọc, và một phần các tin nhắn trong luồng do  │
+   * │ MODEL viết (`answer` của nhân viên ở task `deliver: reply`). Dò đường    │
+   * │ dẫn bằng regex trên đó nghĩa là: nhân viên bịa ra một đường dẫn nghe rất │
+   * │ thật, giao diện biến nó thành một cái nút bấm được, và người dùng tin    │
+   * │ tưởng bấm vào. Đó là lấy uy tín của giao diện cho một câu model đoán.    │
+   * │                                                                          │
+   * │ Ở đây thì ngược lại: `files` CHỈ được điền bởi `whereBlock`, và mỗi      │
+   * │ đường dẫn trong đó đã qua BA cửa — suy từ `receipt.landed` (tool ĐÃ GỌI, │
+   * │ không phải `receipt.artifacts` do model khai), `safeJoin` chặn ra ngoài  │
+   * │ thư mục văn phòng, và `existsSync` ngay trước khi phát.                  │
+   * │                                                                          │
+   * │ Hệ quả là một luật gọn: **chỉ đường dẫn do CHÍNH CODE đặt vào mới bấm    │
+   * │ được.** Model không có đường nào làm một chữ trở nên bấm được.           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Đường dẫn ở đây tính từ THƯ MỤC VĂN PHÒNG (`artifacts/…`), còn trong `say`
+   * thì có tiền tố `company/offices/<id>/` cho người mở file explorer. Hai hệ
+   * quy chiếu khác nhau vì hai người dùng khác nhau, và bên hiển thị ghép lại
+   * bằng cách so ĐUÔI chuỗi — không regex, không đoán.
+   *
+   * ⚠ Vắng mặt là bình thường và là mặc định. Bên hiển thị không đọc `files`
+   * (Telegram) thì hiện `say` nguyên văn như hôm nay — đường dẫn vẫn nằm trong
+   * đó, chỉ là không bấm được. Cùng một sự kiện, hai kết cục, đúng luật "mỗi
+   * bên hiển thị tự chọn cách phản ứng".
+   */
+  | { type: 'master.message'; say: string; role: string; files?: string[] }
   | { type: 'office.state'; say: string; state: 'idle' | 'working' | 'paused' | 'stopped' }
   /**
    * Trợ lý bận và nhân viên bận là HAI chuyện. Giao diện phải nói được cả hai,
@@ -764,6 +823,32 @@ export type AgentEventBody =
        *
        * `hold_ms` = bên hiển thị giữ câu này bao lâu rồi tự xoá. Tin xấu giữ lâu
        * hơn tin tốt: người ta đọc tin xấu chậm hơn.
+       *
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ ⚠ VẮNG `hold_ms` = GIỮ CHO TỚI SỰ KIỆN KẾ TIẾP. KHÔNG có mặc định.   │
+       * │                                                                      │
+       * │ BUG ĐÃ SỬA (20/08): "/clear vẫn khựng 3–5 giây không báo gì".        │
+       * │                                                                      │
+       * │ Hai loại `note` đi chung một trường nhưng có VÒNG ĐỜI ngược nhau:    │
+       * │                                                                      │
+       * │   `emitNote()`            KẾT QUẢ đã xong → hiện rồi biến  (có hold) │
+       * │   nhánh `clearing`        VIỆC ĐANG CHẠY  → giữ tới khi xong (không) │
+       * │                                                                      │
+       * │ Bản trước ở web đọc "vắng mặt" thành `?? 4_000`. Mà nén trí nhớ mất  │
+       * │ 5–15 giây — nên dòng "Đang dọn…" **tự tắt lúc 4 giây trong khi việc  │
+       * │ vẫn đang chạy**, để lại đúng khoảng im lặng mà cả cơ chế này sinh ra  │
+       * │ để lấp. Người dùng nhìn màn hình đứng im và tưởng app treo.          │
+       * │                                                                      │
+       * │ 🔥 Cay ở chỗ: chú thích `clearing` bên `office.ts` đã viết ra chính  │
+       * │ bài học đó — *"thông báo thì có kẻ khác ghi đè được và CÓ HẸN GIỜ ĐỂ │
+       * │ HẾT HẠN; trạng thái thì đúng chừng nào việc còn chạy"*. Server được  │
+       * │ sửa thành trạng thái, client thì vẫn đặt hẹn giờ. **Lỗi không chết,  │
+       * │ nó chuyển nhà.** Sửa một bất biến ở một tầng thì phải rà cả đường đi │
+       * │ của nó — hai đầu cùng đọc một trường thì phải hiểu nó giống nhau.    │
+       * │                                                                      │
+       * │ An toàn: luôn có bên kết thúc — `office.cleared` xoá dòng trạng thái,│
+       * │ và cả nhánh `.then` lẫn `.catch` của `/clear` đều phát `emitNote`.   │
+       * └──────────────────────────────────────────────────────────────────────┘
        */
       note?: string;
       hold_ms?: number;

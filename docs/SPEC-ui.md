@@ -117,6 +117,14 @@ Sửa bằng một luật cho riêng ô nhập: bỏ `outline`, giữ viền đ�
 
 Nút bấm **cố ý** không nằm trong luật này — chúng là nền đặc, một vòng outline bao quanh đọc ra đúng là *"đang được chọn"*, không phải một viền dày.
 
+### Đường dẫn kết quả trong chat BẤM ĐƯỢC — nhưng chỉ đường dẫn CODE đặt vào (20/08)
+
+Chi tiết cơ chế ở `SPEC-artifacts.md` §2.5. Phần thuộc về giao diện:
+
+- Tin nhắn mang `files` thì mỗi dòng khớp một đường dẫn trong đó thành **một nút cả dòng** (`w-full`) — một mục tiêu cao 8px thì người dùng bấm trượt rồi kết luận là nó không bấm được. `break-all` vì đường dẫn dài không có khoảng trắng để ngắt, và một cái nút không xuống dòng được sẽ nong rộng bong bóng.
+- Dòng **không** khớp file nào đi qua `Markdown` như mọi tin khác. Không nhánh nào ở đây được phép đổi cách hiển thị hiện tại.
+- ⛔ Giao diện **không bao giờ** tự dò đường dẫn trong chữ. Xem §2.5 — đó là cách cho một câu model bịa mượn uy tín của giao diện.
+
 ### Lỗi phải TRÔNG NHƯ lỗi
 
 Toast lỗi có **nền màu** (`danger-soft`) và viền `danger`, `role="alert"`, `aria-live="assertive"`.

@@ -304,6 +304,59 @@ Ranh giới *"ghi chú ≠ tài liệu"* vẫn nằm trong `ASSISTANT_CORE`, nh�
 
 ---
 
+## 8c. `@đường-dẫn` — người dùng chỉ đích danh một file (chốt 20/08)
+
+Hai cái kho (`library/files/` và `artifacts/`) **được phép có file trùng tên**, và đó không phải thiếu sót: chúng thuộc về hai người khác nhau (người dùng đưa vào / nhân viên làm ra) và có vòng đời khác nhau. Nên **tên trần không bao giờ là một định danh**.
+
+### Nút Chép cho ĐƯỜNG DẪN ĐỦ, không cho tên
+
+| kho | chuỗi chép ra |
+|---|---|
+| Tủ tài liệu | `@library/files/doc-1.md` |
+| Kết quả | `@artifacts/P-260820-0314-rab5/T-01/doc-2.md` |
+
+Đường dẫn đủ **tự nó là thứ phân biệt**. Chép tên trần là đẩy sự mập mờ sang cho người dùng gõ lại bằng tay, rồi sang cho model đoán.
+
+> ⚠ Hai hệ quy chiếu, hai người dùng — đừng trộn. `company/offices/<id>/artifacts/…` là cho người **mở file explorer** (chỉ xuất hiện trong câu báo kết quả). `artifacts/…` tính từ thư mục văn phòng là dạng **chuẩn** mà mọi thứ hệ thống tiêu thụ đều dùng: `inputs`, API, bảng kê, và nút Chép.
+
+### `@` là quy ước CỦA TA, không phải cú pháp của SDK
+
+CLI Claude Code có `@file` khi gõ tay. Nó có chạy trong SDK hay không thì **chưa ai đo** — `FINDINGS-sdk` không có một dòng nào, và dự án đã trả giá một lần cho việc xây lên hành vi SDK chưa đo (`canUseTool`, `SPEC-offices.md` §4.7).
+
+> 🔥 **Lý do thật mạnh hơn: nếu SDK có hiểu thì đó là chuyện XẤU.** Mở rộng `@` nghĩa là nhét **nội dung file** vào lượt gọi — mà Trợ lý chạy trên session được persist, nên mọi thứ nó đọc nằm trong ngữ cảnh của **mọi** lượt sau: *đọc một lần, trả tiền mãi mãi*. Cả kiến trúc dựng trên luật *"Trợ lý không đọc file, nhân viên mới đọc"*.
+
+Nên `resolveFileRefs()` **bóc sạch `@`** trước khi chuỗi tới model. Ta không phụ thuộc vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.
+
+### Ba dạng, và dạng thứ ba là lý do hàm này tồn tại
+
+```
+@artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
+@library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
+@doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+```
+
+Mọi tham chiếu đều **đối chiếu với danh sách đường dẫn có thật** đọc từ đĩa. Ba nhánh trả lời bằng **code, 0 token, tức thì**:
+
+| ca | trả lời |
+|---|---|
+| trùng tên | liệt kê đủ các đường dẫn, bảo dùng nút Chép |
+| không tồn tại | nêu đúng chuỗi họ gõ |
+| một tham chiếu hỏng trong câu có nhiều | **chặn cả câu**, giữ nguyên chữ gốc |
+
+Nhánh cuối đáng nói riêng: giải một nửa nghĩa là model nhận một câu có một đường dẫn thật và một chuỗi `@…` lạ — nó sẽ **tự xoay sở**, và ta mất quyền kiểm soát đúng lúc cần nhất.
+
+> ⚠ Regex này chạy trên chữ **người dùng gõ**, khác hẳn luật cấm dò đường dẫn trong `say` (`SPEC-artifacts.md` §2.5). Ở đó rủi ro là *model bịa*; ở đây người dùng tự chịu trách nhiệm cho thứ họ gõ, và kết quả vẫn phải qua cửa đối chiếu.
+>
+> Và ta chỉ được phép **bóc `@`**, không được phép **biên tập**: bản đầu nuốt luôn dấu phẩy dính đuôi (`sửa @a/b.md, giữ nguyên…`), tức là sửa chữ người dùng viết mà không nói. Chuyện nhỏ, nhưng là một thói quen sai.
+
+### Bảng kê tủ tài liệu cũng phải nêu đường dẫn đủ
+
+Ba chuỗi phải khớp nhau **từng ký tự**: chuỗi trong bảng kê, chuỗi nút Chép đưa vào ô chat, và chuỗi planner ghi vào `inputs`. Bảng kê trước 20/08 nêu tên trần (`- doc-1.md`) kèm một câu *"originals are in `library/files/`"*, tức là bắt planner **tự ghép tiền tố** — một phép ghép nhỏ, và một chỗ nữa để sai.
+
+Kèm một luật trong `CORE_PROMPT`: *"đường dẫn người dùng gõ là chính xác — chép thẳng vào `inputs`, đừng đi tìm, đừng 'sửa' nó, và đừng hỏi lại xem nó có tồn tại không."* Nó **đã** được đối chiếu trước khi tới model.
+
+---
+
 ## 9. Nạp file vào: một đường chính, hai cửa phụ miễn phí
 
 **Đường chính: upload HTTP, kể cả khi cùng một máy.**

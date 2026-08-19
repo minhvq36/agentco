@@ -112,6 +112,30 @@ test('worthLearning: chỉ MỘT việc lặp trong cả lô là đủ để h�
   assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02', looped: true })]), true);
 });
 
+// ─────────────────────── tín hiệu 5: MA SÁT CỦA CON NGƯỜI (20/08)
+
+test('worthLearning: cỗ máy chạy SẠCH nhưng người dùng phải nói lại → VẪN hỏi', () => {
+  /**
+   * Ca thật 20/08, và nó là lý do tín hiệu này tồn tại.
+   *
+   * Người dùng mất BỐN lượt mới giao được việc ("doc-2, doc-3 thiếu file thuật
+   * ngữ" → Trợ lý bảo họ đi kiểm đường dẫn → hỏi họ file cũ ở đâu → một lượt
+   * lập kế hoạch chết hẳn → họ phải tự nghĩ ra giải pháp). Ca chạy sau đó: 2
+   * task, cả hai `done`, receipt sạch bong.
+   *
+   * Bốn tín hiệu cũ đều đọc từ `receipts` — chúng đo ĐỘ KHÓ CỦA CỖ MÁY. Ở đây
+   * cỗ máy không khó gì cả; con người mới là bên vật lộn.
+   */
+  assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02' })]), false, 'đối chứng: không ma sát thì im');
+  assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02' })], 3), true);
+});
+
+test('worthLearning: ma sát 0 KHÔNG làm đổi hành vi cũ', () => {
+  // Tham số mới phải là bổ sung thuần tuý: mọi ca cũ giữ nguyên kết quả.
+  assert.equal(worthLearning([receipt()], 0), false);
+  assert.equal(worthLearning([receipt({ looped: true })], 0), true);
+});
+
 // ───────────────────────────────── `deliver`: hai kênh, hai cái trần
 
 test('enforceCap: answer KHÔNG ăn vào trần của receipt', () => {
