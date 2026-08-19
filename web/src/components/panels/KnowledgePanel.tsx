@@ -210,12 +210,23 @@ function NodeDialog({
               </>
             )}{' '}
             <code>{node?.file}</code>
+            {/*
+              Bản bị đè giờ bị XOÁ THẲNG ngay lúc bản mới ra đời
+              (`KnowledgeStore.dropSuperseded`), nên nhánh này gần như không bao
+              giờ chạy — nó chỉ còn là lưới cho file người dùng tự sửa tay.
+
+              Câu cũ ở đây quảng cáo *"file vẫn ở đây để bạn đọc lại khi cần"*.
+              Bỏ hẳn: người dùng cuối KHÔNG đọc lại bản nén cũ. Thứ họ nhận được
+              là một ngăn kéo đầy bản trùng, cộng một đoạn giải thích về cơ chế
+              bên trong mà họ không cần biết — tức là ta bắt họ trả phí chú ý
+              cho một tính năng chỉ có lập trình viên dùng.
+            */}
             {node?.superseded && (
               <>
                 <br />
                 <br />
-                <b className="text-warn">Đã bị một bản mới đè.</b> Nó không còn đi vào prompt của ai,
-                nhưng file vẫn ở đây để bạn đọc lại khi cần.
+                <b className="text-warn">Đã có bản mới thay thế.</b> Bản này không còn đi vào prompt
+                của ai và sẽ được dọn ở lần dọn tới.
               </>
             )}
           </DialogDescription>

@@ -196,6 +196,14 @@ export interface ArtifactRecord {
   plan_id: string;
   task_id: string;
   view: ArtifactView;
+  /**
+   * TÊN VIỆC đã sinh ra file này — `PlanRecord.request`, server tra sẵn.
+   *
+   * Rỗng khi kế hoạch đã rơi khỏi `tasks/index.json` (trần 200 bản ghi) hoặc
+   * với kết quả cũ chưa đóng khung theo kế hoạch. Giao diện rơi về nhãn ngày
+   * giờ — suy giảm êm, không phải lỗi. → docs/SPEC-artifacts.md §2.1
+   */
+  plan_title: string;
 }
 
 export interface OfficeDetail {
@@ -222,7 +230,14 @@ export type AgentEvent = EventBase &
   (
     | { type: 'plan.created'; plan_id: string; request: string; steps: PlanStep[] }
     | { type: 'plan.step'; step: number; status: StepStatus }
-    | { type: 'plan.finished'; status: PlanStatus; say: string; costUSD: number; turns: number }
+    /**
+     * ⚠ CỐ Ý không có `say` — phải khớp `AgentEventBody` ở `src/core/types.ts`.
+     *
+     * Server KHÔNG BAO GIỜ gửi trường đó (`office.ts` → `finish()`): câu báo cáo
+     * đã đi bằng `master.message` ngay trước đó. Khai `say` ở đây là một kiểu
+     * NÓI DỐI — TypeScript sẽ gật đầu cho `e.say`, và lúc chạy nó là `undefined`.
+     */
+    | { type: 'plan.finished'; status: PlanStatus; costUSD: number; turns: number }
     | { type: 'task.started'; task_id: string; role: string; say: string }
     | { type: 'task.progress'; task_id: string; role: string; say: string }
     | {
@@ -235,7 +250,14 @@ export type AgentEvent = EventBase &
         usage: Usage;
       }
     | { type: 'task.blocked'; task_id: string; role: string; say: string; reason: string }
-    | { type: 'master.message'; say: string; role: 'assistant' | 'user' }
+    /**
+     * `role` = 'user' · 'assistant' · **hoặc id một NHÂN VIÊN**.
+     *
+     * Nhánh thứ ba là task `deliver: reply`: câu trả lời đi thẳng từ nhân viên
+     * tới người dùng, không qua Trợ lý. `say` không chứa tên người nói — bên
+     * hiển thị tự tra. → docs/SPEC-offices.md §6
+     */
+    | { type: 'master.message'; say: string; role: string }
     | { type: 'office.state'; say: string; state: OfficeState }
     | {
         type: 'office.activity';
@@ -243,6 +265,13 @@ export type AgentEvent = EventBase &
         workers: number;
         queued: number;
         jobs: number;
+        /**
+         * Câu trạng thái TẠM, đè lên dòng dựng từ các con số trên. Tự xoá sau
+         * `hold_ms`. Đây là đường nói chuyện của `/clear`, thay cho hai tin nhắn
+         * cũ. → docs/SPEC-offices.md §4.6
+         */
+        note?: string;
+        hold_ms?: number;
       }
     | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }

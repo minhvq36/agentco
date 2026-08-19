@@ -26,7 +26,15 @@ import type {
 
 export interface ChatMessage {
   id: number;
-  role: 'assistant' | 'user';
+  /**
+   * 'user' · 'assistant' · **hoặc id một NHÂN VIÊN**.
+   *
+   * Nhánh thứ ba từ 19/08: task `deliver: reply` gửi câu trả lời thẳng từ nhân
+   * viên tới người dùng, không qua Trợ lý. Ô chat chỉ tách 'user' ra một bên;
+   * mọi vai trò còn lại dùng chung bong bóng bên trái, khác nhau ở cái nhãn tên
+   * tra bằng `labelFor(role)`. → docs/SPEC-offices.md §6
+   */
+  role: string;
   text: string;
   at: number;
 }
@@ -591,6 +599,15 @@ export function connectEvents(): () => void {
   return () => es.close();
 }
 
+/**
+ * Hẹn giờ tắt câu trạng thái TẠM (`office.activity.note`). → SPEC-offices.md §4.6
+ *
+ * Một biến duy nhất, không phải một bảng: mỗi lúc chỉ có đúng một dòng trạng
+ * thái trên màn hình, nên hai câu tạm chồng nhau thì câu sau thắng — và bộ đếm
+ * của câu trước phải bị huỷ, nếu không nó sẽ xoá nhầm câu đang hiện.
+ */
+let noteTimer: ReturnType<typeof setTimeout> | undefined;
+
 let doneTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
 function setLive(role: string, next: LiveAgent | null): void {
@@ -660,6 +677,32 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
     // Trợ lý bận và nhân viên bận là HAI chuyện. Câu hiện ra phải nói đúng cái
     // đang xảy ra, nếu không người dùng thấy im lặng và tưởng hệ thống chết.
     case 'office.activity': {
+      /**
+       * `note` ĐÈ LÊN dòng dựng từ con số, rồi tự tắt. → SPEC-offices.md §4.6
+       *
+       * Đây là chỗ `/clear` nói chuyện. Nó KHÔNG vào `messages`, nên dọn xong
+       * ô chat trắng thật — quá trình hiện rồi biến, chỉ kết quả mới ở lại, y
+       * hệt khuôn `…thinking` → trắng.
+       *
+       * Hẹn giờ được HUỶ nếu một `office.activity` khác tới trước: nếu không,
+       * bộ đếm cũ sẽ xoá mất dòng trạng thái của việc MỚI vừa bắt đầu.
+       */
+      if (e.note) {
+        if (noteTimer) clearTimeout(noteTimer);
+        set({ activity: e.note });
+        noteTimer = setTimeout(() => {
+          noteTimer = undefined;
+          // Chỉ xoá nếu chưa ai ghi đè — tránh nuốt dòng trạng thái của một
+          // việc vừa được giao ngay sau lệnh dọn.
+          if (state.activity === e.note) set({ activity: null });
+        }, e.hold_ms ?? 4_000);
+        break;
+      }
+      if (noteTimer) {
+        clearTimeout(noteTimer);
+        noteTimer = undefined;
+      }
+
       const bits: string[] = [];
       if (e.assistant === 'thinking') bits.push('Trợ lý đang nghĩ…');
       if (e.assistant === 'planning') bits.push('Trợ lý đang lập kế hoạch…');

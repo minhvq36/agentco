@@ -338,23 +338,25 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'library' && !rest[1] && method === 'DELETE') {
         const name = url.searchParams.get('name');
         if (!name) return json(res, 400, { error: 'thiếu "name"' });
-        if (!office.library.remove(decodeURIComponent(name))) {
-          return json(res, 404, { error: 'không có tài liệu này' });
-        }
-        return json(res, 200, { docs: office.library.list() });
+        // `office.removeDocument`, KHÔNG phải `library.remove` thẳng: xoá tài
+        // liệu phải kéo theo mọi ghi chú sống nhờ nó (`depends_on`). Gọi thẳng
+        // vào store là bỏ qua đúng cái ràng buộc đó.
+        const gone = office.removeDocument(decodeURIComponent(name));
+        if (!gone.removed) return json(res, 404, { error: 'không có tài liệu này' });
+        return json(res, 200, { docs: office.library.list(), droppedNotes: gone.droppedNotes });
       }
 
       // ── kết quả (artifacts) → docs/SPEC-artifacts.md
       if (rest[0] === 'artifacts' && !rest[1] && method === 'GET') {
         // Quét đĩa mỗi lần, không catalog: file này do NHÂN VIÊN ghi trong lúc
         // chạy, nên mọi bản lưu sẵn đều lỗi thời ngay giữa một ca.
-        return json(res, 200, { artifacts: office.artifacts.list() });
+        return json(res, 200, { artifacts: office.artifactList() });
       }
       if (rest[0] === 'artifacts' && !rest[1] && method === 'DELETE') {
         const rel = url.searchParams.get('path');
         if (!rel) return json(res, 400, { error: 'thiếu "path"' });
         if (!office.artifacts.remove(rel)) return json(res, 404, { error: 'không có kết quả này' });
-        return json(res, 200, { artifacts: office.artifacts.list() });
+        return json(res, 200, { artifacts: office.artifactList() });
       }
       /**
        * Đọc một kết quả — XEM hoặc TẢI VỀ.

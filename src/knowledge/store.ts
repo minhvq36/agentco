@@ -176,6 +176,43 @@ export class KnowledgeStore {
   }
 
   /**
+   * Xoá HẲN mọi node đã bị node khác đè lên. Trả về tiêu đề những cái đã bỏ.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TÁCH KHỎI `pruneStale` VÌ ĐÂY LÀ HAI VIỆC KHÁC NHAU.                     │
+   * │                                                                          │
+   * │   pruneStale     — LÃO HOÁ: "lâu rồi không ai dùng". Có ngưỡng ngày, và  │
+   * │                    người dùng có quyền tắt (`prune_after_days: 0`).      │
+   * │   dropSuperseded — THAY THẾ: "bản này đã có bản mới". Không liên quan gì │
+   * │                    tới ngày tháng, và KHÔNG được phép tắt.               │
+   * │                                                                          │
+   * │ Gộp chúng vào một cổng là bug đã gặp: tắt lão hoá thì node bị đè cũng    │
+   * │ bất tử theo, và người dùng nhìn thấy hai bản "Ghi nhớ" trông hệt nhau     │
+   * │ trong ngăn Tri thức mà phải tự đoán bản nào đang có hiệu lực.            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Trước đây chủ trương là GIỮ file bị đè lại "để đọc lại khi cần". Bỏ chủ
+   * trương đó — người dùng cuối không đọc lại, họ chỉ thấy một ngăn kéo đầy bản
+   * trùng và một dòng giải thích dài về một cơ chế bên trong mà họ không cần
+   * biết. Dấu vết vẫn còn ở nơi đúng của nó: `git`, và bản sao lưu thư mục.
+   *
+   * An toàn vì `superseded` chỉ được đặt khi node ĐÈ vẫn tồn tại — nó được dựng
+   * lại ở mỗi `scan()` từ chính trường `supersedes` của node còn sống. Không có
+   * ca "xoá bản cũ rồi phát hiện bản mới cũng biến mất".
+   *
+   * ⚠ GỌI SAU `scan()`. Node vừa ghi ra đĩa chưa nằm trong `superseded` cho tới
+   * lần quét kế tiếp — đó đúng là nửa còn lại của bug này.
+   */
+  dropSuperseded(): string[] {
+    const dropped: string[] = [];
+    for (const e of [...this.byId.values()]) {
+      if (!this.superseded.has(e.id)) continue;
+      if (this.removeNode(e.id)) dropped.push(e.title);
+    }
+    return dropped;
+  }
+
+  /**
    * Dọn ghi chú CŨ mà CHƯA AI DÙNG. Chạy mỗi lần nén trí nhớ.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -350,14 +387,15 @@ export class KnowledgeStore {
    * chứng kiến chứ không phải nghe kể. Đó cũng là lý do nó giữ `confidence`
    * 0.6, cao hơn 0.55 của bài học chung.
    */
-  addLesson(roleId: string, text: string, source: string, docs: readonly string[] = []): KnowledgeNode | undefined {
-    const echo = echoesLibrary(text, docs);
-    if (echo) {
-      process.emitWarning(
-        `Bỏ qua kinh nghiệm của "${roleId}" vì chép lại tài liệu "${echo}": ${text.slice(0, 60)}…`,
-      );
-      return undefined;
-    }
+  addLesson(
+    roleId: string,
+    text: string,
+    source: string,
+    docs: readonly string[] = [],
+    dependsOn: readonly string[] = [],
+  ): KnowledgeNode | undefined {
+    if (this.rejectLesson(text, docs, `role:${roleId}`, `kinh nghiệm của "${roleId}"`)) return undefined;
+
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
     const node: KnowledgeNode = {
       id: `k/agents/${roleId}/${slug}`,
@@ -372,6 +410,9 @@ export class KnowledgeStore {
       pinned: false,
       supersedes: [],
       updated: new Date().toISOString().slice(0, 10),
+      // Tài liệu nhân viên THẬT SỰ đọc trong ca này. Quan sát được, không phải
+      // lời khai — cùng luật với `landed`. Xoá một trong số đó là node đi theo.
+      ...(dependsOn.length ? { depends_on: [...dependsOn] } : {}),
       source,
       body: text.trim(),
       tokens: estimateTokens(text),
@@ -379,6 +420,113 @@ export class KnowledgeStore {
     };
     writeNodeFile(this.companyDir, node);
     return node;
+  }
+
+  /**
+   * BA LƯỚI trước khi một bài học được ghi. Trả về `true` nghĩa là ĐÃ TỪ CHỐI.
+   *
+   * Xếp theo độ chắc chắn giảm dần — lưới chắc nhất chạy trước để lưới yếu hơn
+   * không bao giờ phải gánh ca nó không gánh nổi:
+   *
+   *   1. CON SỐ trùng tài liệu  → gần như chắc chắn là kiến thức, không phải cách làm
+   *   2. TRÙNG LẶP với node cũ  → so được chính xác, không phải phỏng đoán
+   *   3. CHỒNG TỪ với tài liệu  → `echoesLibrary`, lưới thô nhất, hay lọt
+   *
+   * Mọi lần từ chối đều NÓI RA. Một cơ chế lọc im lặng là một cơ chế không ai
+   * kiểm được, và ngày nó chặn nhầm thì không ai biết vì sao kho ngừng lớn.
+   */
+  private rejectLesson(text: string, docs: readonly string[], scope: string, who: string): boolean {
+    const digit = quotesLibraryNumber(text, docs);
+    if (digit) {
+      process.emitWarning(
+        `Bỏ qua ${who} vì nó chép CON SỐ "${digit}" từ tài liệu: ${text.slice(0, 60)}… ` +
+          `Kinh nghiệm ghi CÁCH LÀM, không ghi kiến thức — con số thuộc về tủ tài liệu.`,
+      );
+      return true;
+    }
+
+    const twin = this.findTwin(text, scope);
+    if (twin) {
+      /**
+       * TRÙNG THÌ CỘNG PHIẾU, ĐỪNG VỨT.
+       *
+       * Bài học lặp lại là BẰNG CHỨNG nó có thật, không phải rác. `hits` chính
+       * là thang xếp hạng vào HOT, nên biến bản trùng thành một lá phiếu vừa
+       * chặn được spam vừa đẩy node đúng lên trên — rẻ hơn hẳn việc đẻ ra node
+       * thứ hai rồi chờ Librarian gộp lại.
+       *
+       * Nó cũng làm node đó TRẺ LẠI (`recordHits` ghi `last_used`), nên một bài
+       * học vẫn còn đúng sẽ không bị cửa sổ khai tử dọn mất.
+       */
+      this.recordHits([twin.id]);
+      process.emitWarning(
+        `Bỏ qua ${who} vì trùng ghi chú đã có ("${twin.title}") — đã cộng lượt dùng cho bản cũ.`,
+      );
+      return true;
+    }
+
+    const echo = echoesLibrary(text, docs);
+    if (echo) {
+      process.emitWarning(
+        `Bỏ qua ${who} vì chép lại tài liệu "${echo}": ${text.slice(0, 60)}… ` +
+          `Nội dung tài liệu ở tủ, không vào kho tri thức.`,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Node CÙNG SCOPE nói gần như cùng một chuyện. `undefined` = chưa có.
+   *
+   * Jaccard trên tập từ đặc trưng: đối xứng, không thiên vị câu dài, và **tất
+   * định** — không lượt gọi model nào, chạy được ở mọi lúc.
+   *
+   * Chỉ so trong cùng scope: một bài học của `nguoi-viet` và một của kho chung
+   * nói giống nhau thì đó KHÔNG phải trùng — chúng đi vào prefix của hai tập
+   * người khác nhau, và gộp là làm mất một trong hai.
+   */
+  private findTwin(text: string, scope: string): IndexEntry | undefined {
+    const terms = new Set(tokenize(text));
+    if (terms.size < 3) return undefined;
+    for (const e of this.byId.values()) {
+      if (e.scope !== scope || this.superseded.has(e.id)) continue;
+      const other = new Set(tokenize(this.nodeCache.get(e.id)?.body ?? ''));
+      if (other.size === 0) continue;
+      let shared = 0;
+      for (const t of terms) if (other.has(t)) shared++;
+      if (shared / (terms.size + other.size - shared) >= TWIN_RATIO) return e;
+    }
+    return undefined;
+  }
+
+  /**
+   * XOÁ DÂY CHUYỀN: file biến mất → mọi node khai phụ thuộc vào nó cũng biến mất.
+   * → `KnowledgeNode.depends_on`
+   *
+   * Gọi từ chỗ file thật sự bị xoá (`LibraryStore.remove`), không phải từ một
+   * job quét định kỳ. Quét định kỳ nghĩa là có một cửa sổ thời gian mà node mồ
+   * côi vẫn nằm trong prefix của mọi nhân viên và vẫn được nghe theo — mà độ dài
+   * cửa sổ đó thì không ai kiểm được.
+   *
+   * Trả về tiêu đề các node đã bỏ, để bên gọi nói ra. Xoá âm thầm thứ người dùng
+   * nhìn thấy trong ngăn kéo Tri thức là đúng lớp lỗi "mất việc, im lặng".
+   */
+  dropDependents(removedPaths: readonly string[]): string[] {
+    const gone = new Set(removedPaths.map((p) => p.replace(/\\/g, '/').replace(/^\.\//, '')));
+    if (gone.size === 0) return [];
+
+    const dropped: string[] = [];
+    for (const e of [...this.byId.values()]) {
+      const deps = this.nodeCache.get(e.id)?.depends_on ?? [];
+      // BẤT KỲ, không phải TẤT CẢ: một lời khuyên đúng một nửa nguy hiểm hơn
+      // không có lời khuyên nào, vì không ai biết nửa nào đã hỏng.
+      if (!deps.some((d) => gone.has(d))) continue;
+      if (this.removeNode(e.id)) dropped.push(e.title);
+    }
+    if (dropped.length) this.scan();
+    return dropped;
   }
 
   /**
@@ -400,16 +548,13 @@ export class KnowledgeStore {
    *   0.6  kinh nghiệm — nhân viên rút ra sau khi làm thật
    *   0.55 bài học chung — Trợ lý suy từ receipt, chưa từng thấy file
    */
-  addSharedLesson(text: string, source: string, docs: readonly string[] = []): KnowledgeNode | undefined {
-    const echo = echoesLibrary(text, docs);
-    if (echo) {
-      // Nói ra, đừng nuốt. Một cơ chế lọc im lặng là một cơ chế không ai kiểm được.
-      process.emitWarning(
-        `Bỏ qua bài học chép lại tài liệu "${echo}": ${text.slice(0, 60)}… ` +
-          `Nội dung tài liệu ở tủ, không vào kho tri thức.`,
-      );
-      return undefined;
-    }
+  addSharedLesson(
+    text: string,
+    source: string,
+    docs: readonly string[] = [],
+    dependsOn: readonly string[] = [],
+  ): KnowledgeNode | undefined {
+    if (this.rejectLesson(text, docs, 'shared', 'bài học chung')) return undefined;
 
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
     const node: KnowledgeNode = {
@@ -425,6 +570,7 @@ export class KnowledgeStore {
       pinned: false,
       supersedes: [],
       updated: new Date().toISOString().slice(0, 10),
+      ...(dependsOn.length ? { depends_on: [...dependsOn] } : {}),
       source,
       body: text.trim(),
       tokens: estimateTokens(text),
@@ -649,6 +795,61 @@ export function echoesLibrary(text: string, docs: readonly string[]): string | u
 
 /** Bao nhiêu phần từ đặc trưng của bài học phải nằm sẵn trong tài liệu thì coi là chép lại. */
 const ECHO_RATIO = 0.6;
+
+/**
+ * Hai bài học giống nhau tới mức nào thì coi là một. Jaccard trên tập từ.
+ *
+ * Đặt CAO (0.75) chứ không vừa phải: chặn nhầm là mất hẳn một bài học thật, còn
+ * bỏ sót thì chỉ tốn một node mà Librarian (M1) gộp lại được sau. Lệch về phía
+ * bỏ sót là lệch đúng hướng.
+ *
+ * ⚠ Con số này CHƯA ĐƯỢC ĐO trên kho thật — nó là điểm khởi đầu bảo thủ, không
+ * phải một hằng số đã hiệu chỉnh. Đo lại khi có một kho vài chục node.
+ */
+const TWIN_RATIO = 0.75;
+
+/**
+ * Bài học này có CHÉP CON SỐ từ tài liệu không? Trả về con số đó nếu có.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÂY LÀ MẢNH VÁ CHO ĐÚNG CA `echoesLibrary` ĐÃ ĐO ĐƯỢC LÀ LỌT.           │
+ * │                                                                          │
+ * │ Ngày 19/08, node `k/shared/san-pham-giam-gia-60-…` ghi *"giảm 60% THƯỜNG │
+ * │ không được đổi trả"* trong khi tài liệu viết *"trên 50% KHÔNG áp dụng"*. │
+ * │ Chồng từ đo được **0.47** — dưới ngưỡng 0.6, lọt lưới. Diễn giải càng    │
+ * │ xa bản gốc thì lưới chồng-từ càng yếu, mà **diễn giải sai mới là thứ     │
+ * │ nguy hiểm**: nó vừa sai vừa không truy được về nguồn.                    │
+ * │                                                                          │
+ * │ Con số thì ngược lại — nó SỐNG SÓT qua mọi cách diễn đạt. Và một câu về  │
+ * │ CÁCH LÀM gần như không bao giờ cần tới ngưỡng, giá hay ngày tháng:       │
+ * │                                                                          │
+ * │   ✅ "grep trong library/text/ trước khi trả lời"          — không số     │
+ * │   ⛔ "hàng giảm trên 50% không đổi trả"                     — có 50       │
+ * │                                                                          │
+ * │ Nên "có con số, mà con số đó nằm sẵn trong tài liệu" là dấu hiệu gần như │
+ * │ chắc chắn của KIẾN THỨC bị chép, và nó tất định — không phỏng đoán gì.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Chỉ chặn khi con số CÓ MẶT TRONG TÀI LIỆU. Bài học kiểu *"hỏi lại tối đa 2 câu
+ * rồi bắt tay vào làm"* mang số 2 nhưng đó là số của CÁCH LÀM, không của tài
+ * liệu nào — nó phải đi qua được.
+ *
+ * Bỏ qua số ≤ 1 chữ số: chúng gần như luôn là số đếm bước ("2 câu", "3 lần") và
+ * đụng ngẫu nhiên với tài liệu quá dễ.
+ */
+export function quotesLibraryNumber(text: string, docs: readonly string[]): string | undefined {
+  const nums = [...new Set(text.match(/\d[\d.,]*/g) ?? [])].filter((n) => n.replace(/\D/g, '').length >= 2);
+  if (nums.length === 0 || docs.length === 0) return undefined;
+
+  for (const n of nums) {
+    // Ranh giới chữ số ở hai đầu: "50" không được khớp vào "150" hay "500".
+    const re = new RegExp(`(?<!\\d)${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\d)`);
+    for (const doc of docs) {
+      if (re.test(doc)) return n;
+    }
+  }
+  return undefined;
+}
 
 /** Dòng đầu của bản văn tài liệu là tên file — xem `Office.libraryTexts()`. */
 function docNameOf(doc: string): string {

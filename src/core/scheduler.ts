@@ -197,6 +197,7 @@ export class Scheduler {
           const blocked: Receipt = {
             status: 'blocked',
             say: `Không làm được vì bước trước chưa xong.`,
+            answer: '',
             artifacts: [],
             lessons: [],
             blocked_on: `phụ thuộc hỏng: ${t.deps.filter((d) => failed.has(d)).join(', ')}`,
@@ -206,6 +207,8 @@ export class Scheduler {
             wall_ms: 0,
             reasked: false,
             landed: [],
+            looped: false,
+            reads: [],
           };
           receipts.set(t.task_id, blocked);
           this.deps.emit({
@@ -439,6 +442,7 @@ export class Scheduler {
     return {
       status: 'failed',
       say,
+      answer: '',
       artifacts: [],
       lessons: [],
       blocked_on: msg.slice(0, 200),
@@ -447,7 +451,11 @@ export class Scheduler {
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
       wall_ms: 0,
       reasked: false,
-            landed: [],
+      landed: [],
+      // Task nổ trước khi chạy được gì: không quan sát được thao tác nào, nên
+      // không được khai là có lặp. `status: failed` đã là tín hiệu trục trặc rồi.
+      looped: false,
+      reads: [],
     };
   }
 }

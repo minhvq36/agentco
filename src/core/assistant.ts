@@ -18,6 +18,7 @@ import type { LoadedOffice } from './config.js';
 import { buildAssistantPrompt } from './prompt.js';
 import { addUsage, classifyError } from './worker.js';
 import {
+  DeliverSchema,
   EMPTY_USAGE,
   LessonSchema,
   RunError,
@@ -45,6 +46,10 @@ const PlanOutputSchema = z.object({
         constraints: z.array(z.string()).default([]),
         deps: z.array(z.string()).default([]),
         step: z.number().int().nonnegative().default(0),
+        // Model quên khai thì KHÔNG mặc định cứng ở đây — `plan()` điền bằng
+        // mặc định của văn phòng. Đóng đinh 'file' tại chỗ này là làm cho
+        // `default_deliver: reply` im lặng vô tác dụng đúng lúc model quên.
+        deliver: DeliverSchema.optional(),
       }),
     )
     .min(1),
@@ -129,13 +134,24 @@ async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
  * Lấy nó làm tín hiệu "có trục trặc" nghĩa là mọi văn phòng chạy `eco` đều bị
  * coi là đang trục trặc, còn `deep` thì không bao giờ.
  *
- * Ba dấu hiệu còn lại đều KHÔNG phụ thuộc model: việc hỏng, việc bị chặn, hoặc
- * receipt phải sửa lại.
+ * Bốn dấu hiệu đều KHÔNG phụ thuộc model: việc hỏng, việc bị chặn, receipt phải
+ * sửa lại, hoặc nhân viên LẶP THAO TÁC.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `looped` LÀ CÁCH ĐÚNG ĐỂ BẮT "FLOW BỊ LOOP" — và nó KHÔNG phải số lượt.  │
+ * │                                                                          │
+ * │ Đo bằng LẶP THAO TÁC (đọc lại file đã đọc, đọc lại file vừa ghi, gọi lại │
+ * │ y nguyên một tool), suy từ luồng `tool_use` mà worker vốn đã bóc sẵn.    │
+ * │ Cả ba đều là vi phạm một luật `CORE_PROMPT` đã viết thành lời, nên đây   │
+ * │ không phải heuristic mới — chỉ là đo xem kỷ luật đã tuyên bố có được     │
+ * │ tuân thủ không. Và nó model-independent: haiku hay sonnet thì đọc hai    │
+ * │ lần vẫn là đọc hai lần. → `worker.ts → observeCall`                      │
+ * └──────────────────────────────────────────────────────────────────────────┘
  *
  * Đánh đổi đã biết và chấp nhận: kho tri thức lớn chậm hẳn lại.
  */
 export function worthLearning(receipts: readonly Receipt[]): boolean {
-  return receipts.some((r) => r.status !== 'done' || r.reasked || !!r.blocked_on);
+  return receipts.some((r) => r.status !== 'done' || r.reasked || !!r.blocked_on || r.looped);
 }
 
 /**
@@ -406,12 +422,17 @@ export class Assistant {
     const plan_id = newPlanId();
     const scope = artifactScoper(plan_id, rawTasks.map((t) => t.task_id));
 
+    const fallbackDeliver = this.office.config.assistant.default_deliver;
     const tasks = rawTasks.map((t) =>
       TaskBriefSchema.parse({
         ...t,
         inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scope(i.path) })),
         outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scope(o.path) })),
         step: remap.get(t.step) ?? 0,
+        // Mặc định VĂN PHÒNG, không phải mặc định của schema. Đây là chỗ cần
+        // gạt tất định thật sự có hiệu lực: model im lặng = đi theo cấu hình
+        // người dùng đã đặt, chứ không rơi về 'file' một cách âm thầm.
+        deliver: t.deliver ?? fallbackDeliver,
       }),
     );
 
@@ -444,10 +465,17 @@ export class Assistant {
         `{"say":"<1–3 câu tiếng Việt báo cáo cho người dùng: đã xong gì, có gì cần họ để ý. ` +
         `Không liệt kê lại từng việc, không dùng thuật ngữ kỹ thuật>"` +
         (wantLessons
-          ? `,\n "lessons":[{"kind":"pitfall","text":"<bài học dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
+          ? `,\n "lessons":[{"kind":"pitfall","text":"<CÁCH LÀM dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
             `Ca này có trục trặc, nên \`lessons\` là chỗ ghi lại thứ giúp lần sau tránh được — ` +
-            `tối đa 2, và vẫn ĐỂ TRỐNG nếu trục trặc đó không dạy được gì dùng lại. ` +
-            `Viết về CÁCH LÀM VIỆC, đừng chép lại nội dung tài liệu.`
+            `tối đa 2, và vẫn ĐỂ TRỐNG nếu trục trặc đó không dạy được gì dùng lại.\n\n` +
+            `Bài học ghi CÁCH LÀM, tuyệt đối không ghi KIẾN THỨC:\n` +
+            `  ✅ "chính sách đổi trả nằm ở library/files/doi-tra.md — grep ở đó trước khi trả lời"\n` +
+            `  ⛔ "sản phẩm giảm trên 50% không được đổi trả"\n` +
+            `Câu dưới đã nằm sẵn trong tài liệu của văn phòng. Chép nó vào đây là tạo ra một ` +
+            `bản sao thứ hai KHÔNG AI CẬP NHẬT: ngày người dùng sửa chính sách, tài liệu đổi còn ` +
+            `bài học thì không — và bài học THẮNG, vì nó nằm sẵn trong đầu mọi nhân viên còn tài ` +
+            `liệu thì phải đi tìm.\n` +
+            `Không ghi con số, ngưỡng, giá, ngày tháng. Chỉ ghi con đường đã đi và cái bẫy đã vấp.`
           : `}`),
     );
 
@@ -500,14 +528,12 @@ export class Assistant {
     return { value, usage };
   }
 
-  /** Trò chuyện thường — không lập kế hoạch. */
-  async chat(message: string): Promise<AssistantResult<string>> {
-    const { text, usage } = await this.askSession(
-      `${message}\n\n(Trả lời ngắn gọn bằng tiếng Việt. Nếu đây là một yêu cầu công việc cần giao cho đội, ` +
-        `nói rõ bạn sẽ lập kế hoạch chứ đừng tự làm.)`,
-    );
-    return { value: text.trim(), usage };
-  }
+  // `chat()` ĐÃ BỎ (19/08) — nó là mã chết và việc nối nó lại là một lỗi.
+  //
+  // `route()` đã trả luôn `say` cho cả `chat` lẫn `ask`, và `handleUserBatch`
+  // phát thẳng câu đó. Gọi thêm một hàm `chat()` sau `route()` nghĩa là HAI lượt
+  // model cho một câu chào — trên đúng đường đông người qua lại nhất của sản
+  // phẩm. → docs/SPEC-offices.md §6
 
   // ── nội bộ
 
@@ -665,8 +691,33 @@ function clampStep(step: number, count: number): number {
   return Math.max(0, Math.min(step, Math.max(0, count - 1)));
 }
 
+/**
+ * Mã kế hoạch — ĐỌC ĐƯỢC BẰNG MẮT. → docs/SPEC-artifacts.md §2.1
+ *
+ * ```
+ * cũ   P-mt08w0t8-iu50     base36 của Date.now()
+ * mới  P-260819-1430-iu50
+ * ```
+ *
+ * Cùng một lượng thông tin, khác ở chỗ con người đọc được. Mã này thành TÊN THƯ
+ * MỤC (`artifacts/<plan_id>/`) và người dùng được bảo đi mở nó trong file
+ * explorer, nên "đọc được" không phải chuyện thẩm mỹ.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ KHÔNG CẦN DI TRÚ, và lý do là CẤU TRÚC chứ không phải may mắn:           │
+ * │ `plan_id` KHÔNG BỊ PARSE Ở ĐÂU CẢ. Nó chỉ là một khoá và một đoạn đường  │
+ * │ dẫn. Kế hoạch cũ giữ tên cũ, kế hoạch mới nhận tên mới, hai loại sống     │
+ * │ chung vô thời hạn. Sắp xếp từ điển vẫn đúng thứ tự thời gian ở cả hai.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Bốn ký tự ngẫu nhiên vẫn giữ: phút là độ phân giải thô, và hai kế hoạch trong
+ * cùng một phút đụng nhau với xác suất 1/36⁴ ≈ 1/1.680.000.
+ */
 export function newPlanId(): string {
-  return `P-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const d = new Date();
+  const p = (n: number): string => String(n).padStart(2, '0');
+  const stamp = `${p(d.getFullYear() % 100)}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  return `P-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function extractJson<T>(text: string, schema: z.ZodType<T>): T | undefined {

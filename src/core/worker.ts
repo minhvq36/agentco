@@ -98,11 +98,21 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   let firstTokenSeen = false;
   /** Điểm đến quan sát được từ tool đã gọi. Xem `landingOf`. */
   const landed = new Map<string, Landing>();
+  /** Dấu vết lặp thao tác + file tủ đã chạm. Xem `LoopWatch`. */
+  const watch = newLoopWatch();
 
   let interrupted = false;
   // Công tắc dừng THẬT. Xem khối chú thích ở `oneMessage` để biết vì sao không
   // dùng `Query.interrupt()`.
   const abortController = new AbortController();
+
+  // Ngắt / lỗi / xong đều phải trả về cùng một bộ số đo — gói lại một chỗ để
+  // không có nhánh nào lỡ trả receipt thiếu `looped`/`reads`.
+  const observed = (): { landed: Landing[]; looped: boolean; reads: string[] } => ({
+    landed: [...landed.values()],
+    looped: watch.looped,
+    reads: [...watch.libraryReads].sort(),
+  });
 
   try {
     const running = query({
@@ -177,6 +187,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         for (const call of calls) {
           const spot = landingOf(office.dir, call);
           if (spot) landed.set(`${spot.kind}:${spot.ref}`, spot);
+          // Cùng một luồng `tool_use`, thêm hai thứ quan sát được và không tốn
+          // gì: có lặp thao tác không, và đã chạm tài liệu nào trong tủ.
+          observeCall(watch, call);
         }
       }
 
@@ -191,7 +204,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   } catch (err) {
     // Ngắt theo yêu cầu người dùng KHÔNG phải lỗi. SDK ném ra khi bị interrupt,
     // và biến nó thành "task failed" là nói dối trong nhật ký.
-    if (interrupted) return stoppedReceipt(office, brief, role, usage, started, [...landed.values()]);
+    if (interrupted) return stoppedReceipt(office, brief, role, usage, started, observed());
     if (err instanceof RunError) throw err;
     const kind = classifyError(err);
     if (kind === 'max_turns') {
@@ -212,7 +225,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   // Bị ngắt mà vòng lặp kết thúc ÊM (không ném lỗi) thì cũng phải dừng ở đây.
   // Đi tiếp là gọi thêm một lượt "sửa receipt" — tốn tiền cho một việc người
   // dùng vừa bảo dừng.
-  if (interrupted) return stoppedReceipt(office, brief, role, usage, started, [...landed.values()]);
+  if (interrupted) return stoppedReceipt(office, brief, role, usage, started, observed());
 
   // ── receipt
   let parsed = parseReceipt(finalText);
@@ -232,20 +245,123 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     : {
         status: 'failed' as const,
         say: 'Nhân viên trả về kết quả không đọc được. Xem nhật ký chi tiết.',
+        answer: '',
         artifacts: [],
         lessons: [],
         blocked_on: `receipt không hợp lệ: ${parsed.problem ?? 'không rõ'}`,
       };
 
+  const capped = enforceCap(body, office.company.budgets.receipt_tokens);
+
+  /**
+   * Task `file` mà nhân viên vẫn gửi kèm `answer` thì BỎ, không chuyển tiếp.
+   *
+   * Không phải kỷ luật vặt: `answer` bay thẳng lên chat với tư cách câu trả lời
+   * cho người dùng. Một bài viết 300 từ lọt vào đó sẽ hiện nguyên trong ô chat
+   * NGAY CẠNH khối "kết quả đã lưu tại" — người dùng đọc cùng một nội dung hai
+   * lần, ở hai dạng, và không biết cái nào mới là bản thật.
+   *
+   * Chốt bằng code vì `deliver` là thứ TA đặt, không phải thứ model đoán: nó
+   * không được phép tự quyết đổi hình dạng giao hàng giữa chừng.
+   */
+  if (brief.deliver !== 'reply') capped.answer = '';
+
   return {
-    ...enforceCap(body, office.company.budgets.receipt_tokens),
+    ...capped,
     task_id: brief.task_id,
     role: role.id,
     usage,
     wall_ms: Date.now() - started,
     reasked,
-    landed: [...landed.values()],
+    ...observed(),
   };
+}
+
+// ─────────────────────────────────────────── lặp thao tác & tài liệu đã chạm
+
+/**
+ * Hai thứ suy ra từ CÙNG luồng `tool_use` mà ta vốn đã bóc để dựng dòng
+ * "đang làm gì". Không thêm một lượt gọi nào, không đụng một chữ prompt nào.
+ */
+interface LoopWatch {
+  /** chữ ký `tool+tham số` đã gặp — gặp lại lần hai là lặp y nguyên */
+  signatures: Set<string>;
+  /** file đã ĐỌC — đọc lại lần hai là vi phạm "read each file at most once" */
+  read: Set<string>;
+  /** file đã GHI — đọc lại nó là vi phạm "never read back a file you just wrote" */
+  written: Set<string>;
+  /** file trong `library/` đã chạm → nguồn của `depends_on` */
+  libraryReads: Set<string>;
+  looped: boolean;
+}
+
+function newLoopWatch(): LoopWatch {
+  return {
+    signatures: new Set(),
+    read: new Set(),
+    written: new Set(),
+    libraryReads: new Set(),
+    looped: false,
+  };
+}
+
+/**
+ * CA NÀY CÓ LẶP KHÔNG — đo bằng thao tác, KHÔNG bằng số lượt.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ba dấu hiệu, và cả ba đều là VI PHẠM MỘT LUẬT `CORE_PROMPT` ĐÃ VIẾT RA.  │
+ * │                                                                          │
+ * │   gọi lại đúng tool với đúng tham số  →  không có luật nào cho phép      │
+ * │   đọc lại file đã đọc                 →  "Read each file at most once"   │
+ * │   đọc lại file vừa ghi                →  "Never read back a file you     │
+ * │                                           just wrote. It saved."         │
+ * │                                                                          │
+ * │ Vì thế đây KHÔNG phải một heuristic mới — nó chỉ là đo xem kỷ luật ta đã │
+ * │ tuyên bố có được tuân thủ không. Và nó MODEL-INDEPENDENT: haiku hay      │
+ * │ sonnet, đọc hai lần vẫn là đọc hai lần.                                  │
+ * │                                                                          │
+ * │ ⚠ ĐỪNG thay bằng `turns >= N`. Đã thử, đã bị bộ test bác: số lượt là     │
+ * │ thuộc tính của MODEL (haiku 10 vs sonnet 4 cho cùng một việc), nên nó    │
+ * │ gắn cờ mọi văn phòng `eco` và bỏ sót mọi văn phòng `deep`. → types.ts    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `Grep`/`Glob` CỐ Ý không tính vào "đọc": tìm nhiều lần với từ khoá khác nhau
+ * là cách làm việc ĐÚNG, không phải dò dẫm. Chỉ lặp Y NGUYÊN mới bị bắt, và ca
+ * đó đã nằm trong `signatures`.
+ */
+function observeCall(w: LoopWatch, call: ToolCall): void {
+  const sig = `${call.name}|${stableJson(call.input)}`;
+  if (w.signatures.has(sig)) w.looped = true;
+  w.signatures.add(sig);
+
+  const file = normalizeRel(str(call.input['file_path']) || str(call.input['notebook_path']));
+
+  if (call.name === 'Write' || call.name === 'Edit' || call.name === 'NotebookEdit') {
+    if (file) w.written.add(file);
+    return;
+  }
+
+  if (call.name === 'Read' && file) {
+    if (w.read.has(file) || w.written.has(file)) w.looped = true;
+    w.read.add(file);
+    // Chỉ tủ tài liệu mới sinh ràng buộc: kinh nghiệm rút ra từ một artifact
+    // của chính ca này thì không có gì để phụ thuộc vào — artifact đó là kết
+    // quả của ca, không phải nguồn sự thật người dùng đang giữ.
+    if (/^library\//.test(file)) w.libraryReads.add(file);
+  }
+}
+
+/** Khoá ổn định: model đảo thứ tự khoá JSON không được tính là một thao tác khác. */
+function stableJson(input: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(input, Object.keys(input).sort());
+  } catch {
+    return '';
+  }
+}
+
+function normalizeRel(p: string): string {
+  return p.replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
 // ─────────────────────────────────────────────────────────── nội bộ
@@ -266,8 +382,9 @@ function stoppedReceipt(
   role: Role,
   usage: Usage,
   started: number,
-  landed: Landing[] = [],
+  observed: { landed: Landing[]; looped: boolean; reads: string[] },
 ): Receipt {
+  const { landed } = observed;
   // Gộp hai nguồn: file NÓ ĐƯỢC GIAO ghi (brief.outputs) và file ta THẤY nó ghi
   // (landed). Nguồn hai bắt được cả file phụ nó tự tạo — thứ brief không biết
   // trước, và cũng là thứ dễ bị bỏ quên lại trên đĩa nhất.
@@ -285,6 +402,9 @@ function stoppedReceipt(
     say: written.length
       ? `Đã dừng giữa chừng. Có ${written.length} file đã ghi dở, xem lại trước khi dùng.`
       : 'Đã dừng theo yêu cầu của bạn, chưa ghi gì.',
+    // Người dùng vừa bấm Dừng. Đẩy một câu trả lời dở dang lên chat như thể nó
+    // là kết quả hoàn chỉnh là đúng loại nói dối `stoppedReceipt` sinh ra để bỏ.
+    answer: '',
     artifacts: written,
     lessons: [],
     blocked_on: 'người dùng dừng giữa chừng',
@@ -293,7 +413,7 @@ function stoppedReceipt(
     usage,
     wall_ms: Date.now() - started,
     reasked: false,
-    landed,
+    ...observed,
   };
 }
 

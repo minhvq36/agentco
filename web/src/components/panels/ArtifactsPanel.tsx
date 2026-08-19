@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Empty } from '@/components/ui/misc';
 import { api } from '@/lib/api';
+import { Markdown } from '@/lib/markdown';
 import { toast, useApp } from '@/lib/store';
 import type { ArtifactRecord, ArtifactView } from '@/lib/types';
 
@@ -110,8 +111,27 @@ export function ArtifactsPanel() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {groups.map(([planId, list]) => (
           <section key={planId}>
-            <div className="sticky top-0 z-10 border-b border-line bg-panel px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
-              {planId === LEGACY ? 'Kết quả cũ (trước khi tách theo việc)' : planTitle(list)}
+            <div className="sticky top-0 z-10 flex items-baseline gap-3 border-b border-line bg-panel px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+              {/*
+                Tên việc CẮT MỘT DÒNG, bản đầy đủ ở tooltip. `request` là câu
+                Trợ lý VIẾT LẠI ("viết lại yêu cầu thành một câu rõ ràng, đủ
+                ngữ cảnh") nên nó dài được — để nó xuống dòng thì tiêu đề dính
+                (`sticky`) chiếm mất nửa panel.
+              */}
+              <span className="min-w-0 flex-1 truncate normal-case" title={planTitle(planId, list)}>
+                {planTitle(planId, list)}
+              </span>
+              {/*
+                Thời gian dạng ĐẦY ĐỦ CÓ GIÂY, chỉ ở tiêu đề nhóm.
+
+                Tiêu đề là mỏ neo phân biệt "lần chạy nào" — chạy lại CÙNG một
+                yêu cầu trong một ngày thì giây là thứ DUY NHẤT tách được hai
+                nhóm. Dòng file bên trong giữ `when()` rút gọn: nó đã nằm sẵn
+                trong một nhóm đã biết, lặp lại ngày ở đó là nhiễu.
+              */}
+              {planId !== LEGACY && (
+                <span className="flex-none tabular-nums font-normal">{stamp(newestOf(list).mtime)}</span>
+              )}
             </div>
             <ul>
               {list.map((a) => (
@@ -206,10 +226,30 @@ export function ArtifactsPanel() {
 
 const LEGACY = '__legacy__';
 
-/** Nhãn nhóm. Chưa có tên việc thì nói ngày giờ — không bao giờ hiện mã kế hoạch. */
-function planTitle(list: readonly ArtifactRecord[]): string {
-  const newest = list.reduce((a, b) => (a.mtime > b.mtime ? a : b));
-  return `Việc chạy ${when(newest.mtime)}`;
+function newestOf(list: readonly ArtifactRecord[]): ArtifactRecord {
+  return list.reduce((a, b) => (a.mtime > b.mtime ? a : b));
+}
+
+/**
+ * Nhãn nhóm — TÊN VIỆC THẬT. Không bao giờ hiện mã kế hoạch.
+ * → docs/SPEC-artifacts.md §2.1
+ *
+ * `plan_title` do server tra sẵn từ `tasks/index.json`. Rỗng thì rơi về nhãn
+ * ngày giờ cũ: kế hoạch đã rớt khỏi sổ (trần 200 bản ghi) là chuyện bình thường
+ * ở một văn phòng chạy lâu, và một tiêu đề trống thì tệ hơn một tiêu đề mờ.
+ */
+function planTitle(planId: string, list: readonly ArtifactRecord[]): string {
+  if (planId === LEGACY) return 'Kết quả cũ (trước khi tách theo việc)';
+  const named = list.find((a) => a.plan_title.trim());
+  return named ? named.plan_title.trim() : `Việc chạy ${when(newestOf(list).mtime)}`;
+}
+
+/** Ngày giờ ĐẦY ĐỦ có giây — dùng cho tiêu đề nhóm, xem chú thích ở chỗ gọi. */
+function stamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // ──────────────────────────────────────────────────────────── xem trước
@@ -296,6 +336,19 @@ function ViewerDialog({
             <div className="py-6 text-[13px] text-muted">Đang đọc…</div>
           ) : item.view === 'csv' ? (
             <CsvTable text={text} sep={item.ext === 'tsv' ? '\t' : ','} />
+          ) : item.view === 'markdown' ? (
+            /*
+              `.md` là 100% kết quả thật hôm nay (SPEC-artifacts §3: 14/14), nên
+              đây là màn hình người dùng nhìn nhiều nhất trước khi quyết có gửi
+              cho khách hay không. Hiện `**đậm**` thành đúng hai dấu sao là bắt
+              họ tự dịch markdown trong đầu để đoán xem khách sẽ thấy gì.
+
+              `variant="preview"` nới cỡ tiêu đề thêm một nấc: hộp này rộng 56rem
+              chứ không phải bong bóng chat 330px.
+            */
+            <div className="text-[13.5px] leading-relaxed text-ink">
+              <Markdown text={text} variant="preview" />
+            </div>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] leading-relaxed text-ink">
               {text}

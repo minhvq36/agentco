@@ -57,6 +57,53 @@ Hôm nay chưa mất gì vì tên file tình cờ khác nhau. **Chạy lại m�
 
 ⚠ **Chỉ viết lại đường dẫn trỏ tới task CỦA CHÍNH KẾ HOẠCH NÀY.** Người dùng có quyền nói *"sửa lại file hôm qua"*, và lúc đó `inputs` trỏ tới artifact của một kế hoạch cũ — viết lại nó là chỉ nhân viên tới một file không tồn tại.
 
+## 2.1 `plan_id` phải ĐỌC ĐƯỢC — và tên file thì KHÔNG đụng tới (chốt 19/08)
+
+Đề bài của người dùng: `artifacts/P-mt08w0t8-iu50/T-01/tra-loi.md` — chuỗi giữa **không nói gì với con người**. Đề xuất ban đầu: thêm tiền tố `yyMMddhhmmss` vào **tên file**, và bỏ thư mục `P-…`.
+
+**Cả hai nhánh đó đều bác bỏ, nhưng vấn đề gốc thì có thật.**
+
+### Bỏ thư mục `<plan_id>/`: KHÔNG
+
+Nó gánh **bốn** thứ, không phải một: `artifactScoper` (đóng khung), `Scheduler.linkDeps` (dò trùng đường dẫn để nối `deps`), `Scheduler.validate` (chặn hai task cùng ghi), và gom nhóm ở panel. Bỏ nó là **tái tạo đúng lỗi §2** — tám kế hoạch cùng đổ vào `artifacts/T-01/`.
+
+### Timestamp vào tên file: KHÔNG
+
+`newPlanId()` là `P-${Date.now().toString(36)}-${rand4}`. Nghĩa là **`mt08w0t8` ĐÃ LÀ một timestamp** — base36 của `Date.now()`, chỉ là ở dạng người không đọc được.
+
+Thêm ngày giờ vào tên file nữa thì người đọc **thấy thời gian hai lần**, và tên file **thôi mô tả nội dung** — mà đó là việc duy nhất của tên file. Chưa kể timestamp lúc *ghi* không dùng được: `outputs` của T-01 và `inputs` của T-02 do model viết ở hai chỗ trong cùng một khối JSON, chúng phải khớp nhau, nên mọi định danh **phải sinh ra ở lúc LẬP KẾ HOẠCH** — tức là đúng thứ `plan_id` đang làm.
+
+> **Tên file giữ nguyên, đặt là gì cũng được.** Ràng buộc duy nhất vẫn như cũ: hai task **trong cùng một kế hoạch** không được ghi trùng đường dẫn (`validate` chặn). Khác kế hoạch thì thư mục `<plan_id>/` đã lo.
+
+### Thứ ĐÚNG là vấn đề: đọc không ra. Hai bản vá, tách bạch.
+
+**a. Đổi FORMAT của `plan_id` — không đổi cơ chế.**
+
+```
+cũ   P-mt08w0t8-iu50
+mới  P-260819-1430-iu50
+```
+
+Giữ nguyên mọi bảo đảm: sắp xếp từ điển vẫn đúng thứ tự thời gian, `logFile` regex (`^[A-Za-z0-9_-]{1,64}$`) nhận bình thường, xác suất đụng độ trong cùng một phút là `1/36⁴ ≈ 1/1.680.000`.
+
+**Không cần di trú, và lý do là cấu trúc chứ không phải may mắn: `plan_id` KHÔNG BỊ PARSE Ở ĐÂU CẢ.** Nó chỉ là khoá và là một đoạn đường dẫn. Kế hoạch cũ giữ tên cũ, kế hoạch mới nhận tên mới, hai loại sống chung vô thời hạn.
+
+**b. Panel hiện TÊN VIỆC THẬT.**
+
+Đây mới là bản vá ăn tiền, và nó **không đụng gì tới `plan_id`**. Panel vốn đã cố ý **không bao giờ hiện mã kế hoạch** — nhưng thứ nó hiện thay vào là một bản dự phòng mà chú thích trong `ArtifactsPanel.tsx` đã tự thú: *"Chưa có tên việc thì nói ngày giờ"*. Tên việc **có sẵn** ở `tasks/index.json` (`PlanRecord.request`), chỉ là chưa ai nối dây.
+
+| | trước | sau |
+|---|---|---|
+| tiêu đề nhóm | `Việc chạy 19/08 15:10` | `Trả lời khách hỏi chính sách bảo hành…` |
+| nguồn | `mtime` mới nhất trong nhóm | `PlanStore.get(plan_id).request` |
+
+Hai chi tiết bắt buộc:
+
+- **`request` là câu Trợ lý VIẾT LẠI** (`route()` trả *"viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh"*), nên nó **dài** được. Cắt một dòng, giữ bản đầy đủ ở `title` tooltip. Nhóm không tra được `request` (kế hoạch đã rơi khỏi `index.json` — trần 200 bản ghi) thì **rơi về nhãn ngày giờ cũ**, đừng hiện chuỗi rỗng.
+- **Thời gian vẫn hiện, ở dạng ĐẦY ĐỦ CÓ GIÂY** (`19/08/2026 15:10:42`), căn phải, `tabular-nums`. Tiêu đề nhóm là mỏ neo phân biệt *"lần chạy nào"* — chạy lại **cùng một yêu cầu** trong một ngày thì **giây là thứ duy nhất tách được hai nhóm**. Dòng file bên trong giữ `when()` rút gọn như hiện tại: nó đã nằm sẵn trong một nhóm đã biết, không cần lặp lại ngày.
+
+Lấy `mtime` **mới nhất trong nhóm**, không lấy `PlanRecord.ended_at`: đó là **sự việc quan sát được trên đĩa** (đúng luật *"thứ gì QUAN SÁT ĐƯỢC thì đừng hỏi, đừng suy"* — `SPEC-offices.md` §6), và nó sống sót cả khi `index.json` mất.
+
 ### Không di trú
 
 Dữ liệu cũ là demo, người dùng chốt xoá. Đó là quyết định của người dùng và nó cắt bỏ phần khó nhất của thay đổi này. Panel vẫn **đọc được** file nằm thẳng dưới `artifacts/<task_id>/` và gom chúng vào một nhóm *"Kết quả cũ"* — không ai bị mất màn hình vì một bố cục cũ.

@@ -294,6 +294,27 @@ export type CompanyConfig = z.infer<typeof CompanyConfigSchema>;
 // ─────────────────────────────────────────────────────────── office config
 
 /**
+ * KẾT QUẢ RƠI XUỐNG ĐÂU — trục thứ hai, độc lập với `intent`.
+ * → docs/SPEC-offices.md §6 "`deliver`"
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `intent` quyết AI LÀM. `deliver` quyết KẾT QUẢ RƠI XUỐNG ĐÂU.            │
+ * │                                                                          │
+ * │ Trước 19/08 trục này bị đóng đinh `file` trong prompt, nên nó VÔ HÌNH —  │
+ * │ và mọi nỗ lực sửa đều đi nhầm sang trục `intent`. Ca thật: khách hỏi     │
+ * │ *"shop bảo hành bao lâu?"*, hệ thống trả lời *"đã lưu tại artifacts/     │
+ * │ P-mt08w0t8-iu50/T-01/tra-loi.md"*. Định tuyến ĐÚNG (Trợ lý không có     │
+ * │ tool, phải có nhân viên đọc tài liệu) — chỉ là task chỉ có đúng một      │
+ * │ hình dạng giao hàng.                                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `reply` — người ta muốn BIẾT một điều. Đọc xong là thôi.
+ * `file`  — người ta muốn CÓ một thứ. Mở · gửi · sửa · lưu.
+ */
+export const DeliverSchema = z.enum(['reply', 'file']);
+export type Deliver = z.infer<typeof DeliverSchema>;
+
+/**
  * Cấu hình một văn phòng. CỐ Ý nhỏ: mọi thứ dính tới tiền nằm ở company.yaml,
  * ở đây chỉ có "văn phòng này tên gì và Assistant của nó là ai".
  */
@@ -345,6 +366,24 @@ export const OfficeConfigSchema = z.object({
        * trên đĩa, độc lập với model — nhưng đây là một lần trả tiền thật.
        */
       model_tier: TierSchema.optional(),
+
+      /**
+       * Kết quả của văn phòng này MẶC ĐỊNH rơi xuống đâu. → SPEC-offices.md §6
+       *
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ ĐÂY LÀ CẦN GẠT TẤT ĐỊNH THAY CHO LỆNH `/answer` ĐÃ BỊ BÁC BỎ.       │
+       * │                                                                      │
+       * │ Chat hay file KHÔNG phải chuyện của từng tin nhắn — nó là thuộc tính │
+       * │ của VĂN PHÒNG, ổn định hàng tháng. `ho-tro-khach` sinh ra để đẻ câu  │
+       * │ trả lời; `noi-dung` sinh ra để đẻ file. Đặt đúng mặc định ở đây thì  │
+       * │ Trợ lý không còn phải tung đồng xu ở mỗi lượt — nó chỉ ghi đè khi ca │
+       * │ này thật sự khác thường.                                             │
+       * │                                                                      │
+       * │ Giá: 0 token. Nó là một chữ nằm trong prefix vốn đã được cache.      │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      default_deliver: DeliverSchema.default('file'),
+
       /**
        * MCP server mà Assistant "dùng được". Thực chất gắn cho worker ẩn
        * (concierge) — master không bao giờ tự cầm MCP vì nó resume liên tục và
@@ -383,11 +422,44 @@ export const TaskBriefSchema = z.object({
   deps: z.array(z.string()).default([]),
   /** Bước trong kế hoạch mà task này thuộc về (để UI gom nhóm). */
   step: z.number().int().nonnegative().default(0),
+
+  /**
+   * Kết quả task này rơi xuống đâu. Mặc định `file` — hình dạng cũ, không đổi
+   * hành vi của văn phòng nào chưa khai `default_deliver`.
+   *
+   * ⚠ Task `reply` VẪN GHI FILE như thường. Nó chỉ thôi được RAO LÊN: file là
+   * mỏ neo cho lần sửa sau và là dấu vết kiểm lại, gần như miễn phí. Thứ đổi là
+   * người dùng đọc CÂU TRẢ LỜI trong chat thay vì đọc một đường dẫn.
+   */
+  deliver: DeliverSchema.default('file'),
 });
 export type TaskBrief = z.infer<typeof TaskBriefSchema>;
 
+/**
+ * ⚠ `'fact'` ĐÃ BỊ BỎ KHỎI ENUM NÀY (19/08) — và đó là chốt chặn, không phải dọn dẹp.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ KINH NGHIỆM CHỈ ĐƯỢC GHI *CÁCH LÀM*, KHÔNG ĐƯỢC GHI *KIẾN THỨC*.        │
+ * │                                                                          │
+ * │ `fact` chính là cái ô để chép kiến thức vào. Còn ô đó thì model sẽ dùng  │
+ * │ nó — bỏ ô đi rẻ hơn và chắc hơn mọi câu dặn. Đúng luật §4.3: đừng dặn    │
+ * │ model đừng làm, đừng cho nó cơ hội làm.                                  │
+ * │                                                                          │
+ * │   ✅ "chính sách đổi trả nằm ở library/files/doi-tra.md, grep ở đó"      │
+ * │   ⛔ "sản phẩm giảm 60% thường không được đổi trả"                       │
+ * │                                                                          │
+ * │ Vì sao ranh giới nằm đúng chỗ này: câu TRÊN vẫn đúng khi người dùng sửa  │
+ * │ chính sách; câu DƯỚI thành lời nói dối ngay hôm đó, và nó THẮNG tài liệu │
+ * │ vì nó nằm sẵn trong prefix của mọi nhân viên còn tài liệu thì phải đi     │
+ * │ tìm. Weak-entity (`depends_on`) chỉ cứu được ca file BỊ XOÁ; ca file BỊ  │
+ * │ SỬA thì chỉ luật này cứu được.                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `NodeType` vẫn giữ `'fact'`: bản GHI NHỚ của Trợ lý dùng nó, và thứ NGƯỜI
+ * DÙNG tự chốt thì đúng là fact. Chỉ KINH NGHIỆM AGENT TỰ RÚT mất ô đó.
+ */
 export const LessonSchema = z.object({
-  kind: z.enum(['pitfall', 'playbook', 'fact']).default('pitfall'),
+  kind: z.enum(['pitfall', 'playbook']).default('pitfall'),
   text: z.string(),
 });
 export type Lesson = z.infer<typeof LessonSchema>;
@@ -401,6 +473,30 @@ export type Lesson = z.infer<typeof LessonSchema>;
 export const ReceiptSchema = z.object({
   status: z.enum(['done', 'failed', 'blocked', 'needs_human']),
   say: z.string().min(1),
+
+  /**
+   * CÂU TRẢ LỜI ĐẦY ĐỦ cho người dùng — chỉ có ở task `deliver: reply`.
+   * → docs/SPEC-offices.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HAI KÊNH, KHÔNG KÊNH NÀO CHỞ LẠI CHỮ CỦA KÊNH KIA.                      │
+   * │                                                                          │
+   * │   answer  →  thẳng ra chat, role = NHÂN VIÊN                             │
+   * │             ⛔ KHÔNG BAO GIỜ đi vào session Trợ lý                       │
+   * │   say     →  report() y như cũ                                           │
+   * │             ✅ thứ DUY NHẤT Trợ lý nhìn thấy                             │
+   * │                                                                          │
+   * │ Nhờ tách đôi mà bất biến chi phí còn nguyên: ngữ cảnh Trợ lý vẫn chỉ    │
+   * │ nhận MỘT CÂU cho mỗi task, dù câu trả lời cho khách dài 300 từ.         │
+   * │                                                                          │
+   * │ Nỗi lo "Trợ lý đọc file rồi truyền lại nội dung hai lần" KHÔNG xảy ra    │
+   * │ được: nó đòi Trợ lý phải đọc được file, mà §4.7 đã cấm cứng có số đo.   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Trần riêng, KHÔNG nằm trong trần 500 từ của `say` — xem `enforceCap`.
+   */
+  answer: z.string().default(''),
+
   artifacts: z.array(z.string()).default([]),
   lessons: z.array(LessonSchema).default([]),
   blocked_on: z.string().nullable().default(null),
@@ -460,6 +556,38 @@ export interface Receipt extends ReceiptBody {
   reasked: boolean;
   /** Điểm đến quan sát được. Rỗng = task không tạo ra tác động nào nhìn thấy. */
   landed: Landing[];
+
+  /**
+   * Nhân viên có LẶP LẠI thao tác không — tín hiệu "ca này có trục trặc".
+   * → `worker.ts → detectLoop`, `assistant.ts → worthLearning`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ "LOOP" KHÔNG PHẢI "NHIỀU LƯỢT". ĐỪNG BAO GIỜ TRỘN HAI THỨ NÀY.          │
+   * │                                                                          │
+   * │ Số lượt là thuộc tính của MODEL, không phải của ca chạy: đo được haiku   │
+   * │ 10 lượt vs sonnet 4 lượt cho CÙNG một việc. Lấy nó làm tín hiệu trục     │
+   * │ trặc thì mọi văn phòng `eco` luôn "đang hỏng" còn `deep` thì không bao   │
+   * │ giờ. Bản nháp `turns >= 8` đã bị bộ test bác bỏ: ca 19/08 chạy đúng 9    │
+   * │ lượt, tức nó CHO QUA đúng cái ca nó sinh ra để chặn.                     │
+   * │                                                                          │
+   * │ Lặp thao tác thì ngược lại — nó MODEL-INDEPENDENT, và nó là vi phạm     │
+   * │ một kỷ luật `CORE_PROMPT` đã tuyên bố thành lời ("Read each file at most │
+   * │ once", "Never read back a file you just wrote"). Đọc lại file đã đọc,    │
+   * │ đọc lại file vừa ghi, gọi lại đúng một tool với đúng tham số cũ — cả ba  │
+   * │ đều quan sát được trong luồng `tool_use` mà `worker.ts` đã bóc sẵn.      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  looped: boolean;
+
+  /**
+   * File TỦ TÀI LIỆU nhân viên thật sự chạm vào — QUAN SÁT ĐƯỢC, không do model khai.
+   *
+   * Đây là nguồn của `depends_on` trên node tri thức: kinh nghiệm rút ra sau khi
+   * đọc `library/files/doi-tra.md` thì SỐNG CHẾT theo file đó. Người dùng xoá
+   * tài liệu là kinh nghiệm đi theo — thực thể yếu, xoá 1-1, không có node mồ côi
+   * nào nói về một file không còn tồn tại. → `KnowledgeStore.dropDependents`
+   */
+  reads: string[];
 }
 
 // ─────────────────────────────────────────────────────────── plan
@@ -581,8 +709,18 @@ export type AgentEventBody =
       usage: Usage;
       }
   | { type: 'task.blocked'; task_id: string; role: string; say: string; reason: string }
-  /** Tin nhắn trong luồng hội thoại. `role` = 'assistant' hoặc 'user'. */
-  | { type: 'master.message'; say: string; role: 'assistant' | 'user' }
+  /**
+   * Tin nhắn trong luồng hội thoại.
+   *
+   * `role` = `'user'` · `'assistant'` · **hoặc id một NHÂN VIÊN** — nhánh thứ ba
+   * mở ra 19/08 cho task `deliver: reply`: câu trả lời đi THẲNG từ nhân viên tới
+   * người dùng, không qua Trợ lý, nên nó phải mang tên người thật sự viết ra nó.
+   *
+   * ⚠ `say` KHÔNG BAO GIỜ chứa tên người nói (§6). Bên hiển thị tự tra tên từ
+   * `role` — nướng sẵn tên vào chuỗi là tước quyền đó của mọi client tương lai,
+   * và trên giao diện hiện tại thì tên sẽ hiện HAI lần.
+   */
+  | { type: 'master.message'; say: string; role: string }
   | { type: 'office.state'; say: string; state: 'idle' | 'working' | 'paused' | 'stopped' }
   /**
    * Trợ lý bận và nhân viên bận là HAI chuyện. Giao diện phải nói được cả hai,
@@ -607,14 +745,40 @@ export type AgentEventBody =
       queued: number;
       /** VIỆC chờ tới lượt chạy — hàng đợi phải nhìn thấy được, không phải mảng riêng tư */
       jobs: number;
+      /**
+       * Câu trạng thái TẠM, đè lên dòng dựng từ các con số trên. → §4.6
+       *
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ ĐÂY LÀ CHỖ `/clear` NÓI CHUYỆN, THAY VÌ PHÁT `master.message`.       │
+       * │                                                                      │
+       * │ Nhịp "Đang dọn…" VỐN ĐÃ là trạng thái giả dạng tin nhắn — nó luôn bị │
+       * │ chính `office.cleared` ngay sau đó cuốn đi, không nhánh nào nó sống   │
+       * │ sót. Một tin nhắn được thiết kế để không tồn tại quá một nhịp thì nó  │
+       * │ LÀ trạng thái. Còn nhịp "Đã dọn xong" thì tệ hơn: nó khiến `/clear`  │
+       * │ để lại rác cho đúng thứ nó vừa dọn.                                  │
+       * │                                                                      │
+       * │ Cùng khuôn với `…thinking` → trắng: QUÁ TRÌNH thì hiện rồi biến, chỉ │
+       * │ KẾT QUẢ mới ở lại. `/clear` không có kết quả nào thuộc về ô chat —   │
+       * │ bằng chứng bền là node GHI NHỚ trong ngăn Tri thức.                  │
+       * └──────────────────────────────────────────────────────────────────────┘
+       *
+       * `hold_ms` = bên hiển thị giữ câu này bao lâu rồi tự xoá. Tin xấu giữ lâu
+       * hơn tin tốt: người ta đọc tin xấu chậm hơn.
+       */
+      note?: string;
+      hold_ms?: number;
     }
   /**
    * Hội thoại vừa được dọn (`/clear` hoặc tự nén). → docs/SPEC-offices.md §4.6
    *
    * Tách khỏi `master.message` vì nó là một MỆNH LỆNH cho bên hiển thị ("xoá
-   * những gì đang hiện"), không phải một câu để đọc. Bridge như Telegram không
-   * xoá được tin đã gửi nên nó bỏ qua sự kiện này và chỉ đọc câu `master.message`
-   * đi ngay sau — cùng một luồng, hai bên hiển thị tự chọn cách phản ứng.
+   * những gì đang hiện"), không phải một câu để đọc. Mỗi bên hiển thị tự chọn
+   * cách phản ứng: web xoá sạch `messages`, bridge Telegram bỏ qua.
+   *
+   * ⚠ Lý do Telegram bỏ qua KHÔNG phải "không xoá được" (Bot API có
+   * `deleteMessage`, bot xoá được tin của chính nó trong 48 giờ). Lý do là
+   * KHÔNG NÊN: trên Telegram khung chat chính là bản lưu của người dùng, không
+   * phải một khung nhìn vẽ lại được.
    *
    * THỨ TỰ BẮT BUỘC: `office.cleared` phát TRƯỚC, câu báo kết quả phát SAU.
    * Ngược lại thì câu vừa hiện ra bị chính lệnh xoá cuốn đi.

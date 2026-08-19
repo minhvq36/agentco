@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { CornerDownLeft, MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Empty, Input } from '@/components/ui/misc';
-import { actions, useApp } from '@/lib/store';
+import { Empty, Textarea } from '@/components/ui/misc';
+import { Markdown } from '@/lib/markdown';
+import { actions, labelFor, useApp } from '@/lib/store';
 
 /**
  * Ô chat với Trợ lý. Cửa vào DUY NHẤT cho mọi thứ người dùng gõ — Trợ lý tự
@@ -23,6 +24,13 @@ export function ChatPanel() {
     endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages.length, activity]);
 
+  function submit(): void {
+    const t = text.trim();
+    if (!t || sending) return;
+    setText('');
+    void actions.say(t);
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
@@ -37,6 +45,22 @@ export function ChatPanel() {
             {messages.map((m) => (
               <div key={m.id} className={m.role === 'user' ? 'text-right' : ''}>
                 {/*
+                  TÊN NGƯỜI TRẢ LỜI — chỉ khi KHÔNG phải Trợ lý.
+
+                  Từ 19/08, task `deliver: reply` gửi câu trả lời THẲNG từ nhân
+                  viên tới người dùng (SPEC-offices.md §6). Không gắn nhãn thì
+                  người dùng tưởng Trợ lý tự trả lời — mà cả điểm của sản phẩm
+                  là họ thấy được đội mình đang làm việc.
+
+                  Tên tra từ `role`, KHÔNG lấy từ `text`: luật giao thức nói
+                  `say` không bao giờ chứa tên người nói, vì nướng sẵn vào chuỗi
+                  thì tên hiện hai lần và mọi client tương lai mất quyền tự chọn
+                  cách gắn nhãn.
+                */}
+                {m.role !== 'user' && m.role !== 'assistant' && (
+                  <div className="mb-0.5 text-[11px] font-medium text-muted">{labelFor(m.role)}</div>
+                )}
+                {/*
                   `whitespace-pre-wrap` là BẮT BUỘC, không phải trang trí.
                   Backend dựng sẵn bằng code những câu trả lời nhiều dòng —
                   `/help`, danh sách bước của kế hoạch, báo cáo cuối ca — và
@@ -50,13 +74,22 @@ export function ChatPanel() {
                 */}
                 <div
                   className={
-                    'whitespace-pre-wrap break-words ' +
-                    (m.role === 'user'
-                      ? 'ml-auto inline-block max-w-[85%] rounded-xl rounded-br-sm bg-accent-soft px-3 py-2 text-left text-[13.5px] text-ink'
-                      : 'inline-block max-w-[92%] rounded-xl rounded-bl-sm border border-line bg-paper px-3 py-2 text-[13.5px] leading-relaxed text-ink')
+                    m.role === 'user'
+                      ? 'ml-auto inline-block max-w-[85%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-accent-soft px-3 py-2 text-left text-[13.5px] text-ink'
+                      : 'inline-block max-w-[92%] break-words rounded-xl rounded-bl-sm border border-line bg-paper px-3 py-2 text-[13.5px] leading-relaxed text-ink'
                   }
                 >
-                  {m.text}
+                  {/*
+                    Chỉ VẼ markdown cho tin của hệ thống. Tin của NGƯỜI DÙNG giữ
+                    nguyên văn — họ gõ gì thì thấy đúng thứ đó, không bị giao
+                    diện diễn giải lại. Gõ `**` để nhấn giọng mà nó biến mất là
+                    một cách âm thầm để nói với người dùng rằng họ gõ sai.
+
+                    `whitespace-pre-wrap` chuyển vào TRONG `Markdown` (từng khối
+                    tự giữ), vì khối code phải cuộn ngang riêng — để ở ngoài thì
+                    một dòng code dài nong rộng cả bong bóng.
+                  */}
+                  {m.role === 'user' ? m.text : <Markdown text={m.text} />}
                 </div>
               </div>
             ))}
@@ -68,21 +101,48 @@ export function ChatPanel() {
       {activity && <Activity text={activity} />}
 
       <form
-        className="flex flex-none gap-2 border-t border-line p-3"
+        className="flex flex-none items-end gap-2 border-t border-line p-3"
         onSubmit={(e) => {
           e.preventDefault();
-          const t = text.trim();
-          if (!t || sending) return;
-          setText('');
-          void actions.say(t);
+          submit();
         }}
       >
-        <Input
+        {/*
+          Textarea, KHÔNG phải input: Enter gửi, Shift+Enter xuống dòng.
+
+          Cố ý KHÔNG có dòng hướng dẫn nào trên giao diện, và không có setting.
+          Đây là tổ hợp phím ai cũng đã biết từ mọi ứng dụng chat khác — viết ra
+          là chiếm chỗ vĩnh viễn để dạy một thứ người dùng vốn đã biết.
+
+          Cao tự nong theo nội dung, trần ~5 dòng rồi mới cuộn: một yêu cầu dài
+          gõ vào ô cao 36px thì người ta không đọc lại được thứ mình vừa viết,
+          và đó là lúc họ gửi đi một câu thiếu mất nửa cuối.
+        */}
+        <Textarea
           value={text}
+          rows={1}
           onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || e.shiftKey) return;
+            // ⚠ `isComposing` là BẮT BUỘC với tiếng Việt. Bộ gõ (Telex/VNI, và
+            // mọi IME) dùng Enter để chốt ký tự đang dựng — nuốt phím đó là gửi
+            // tin nhắn giữa lúc người dùng mới gõ được nửa chữ.
+            if (e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            submit();
+          }}
           placeholder="Giao việc, hoặc hỏi Trợ lý…"
           aria-label="Tin nhắn"
           disabled={sending}
+          className="max-h-[7.5rem] min-h-[2.25rem] resize-none py-1.5 leading-relaxed"
+          style={{ height: 'auto' }}
+          ref={(el) => {
+            if (!el) return;
+            // Nong theo nội dung: reset về auto trước khi đo, nếu không
+            // `scrollHeight` chỉ tăng được chứ không co lại khi xoá bớt chữ.
+            el.style.height = 'auto';
+            el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+          }}
         />
         <Button type="submit" variant="primary" size="icon" disabled={sending || !text.trim()} aria-label="Gửi">
           <CornerDownLeft className="h-4 w-4" />

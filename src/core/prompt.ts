@@ -77,6 +77,7 @@ Your final message MUST be exactly one JSON object inside a \`\`\`json fenced bl
 {
   "status": "done",
   "say": "one short sentence, plain human language",
+  "answer": "",
   "artifacts": ["relative/path/you/wrote.md"],
   "lessons": [{"kind": "pitfall", "text": "..."}],
   "blocked_on": null
@@ -85,15 +86,38 @@ Your final message MUST be exactly one JSON object inside a \`\`\`json fenced bl
 
 - \`status\`: "done" | "failed" | "blocked" | "needs_human"
 - \`say\`: ONE sentence a non-technical person understands. No file paths, no tool names, no jargon. This is shown directly in the UI.
+- \`answer\`: normally \`""\`. See "Delivery" below — only tasks marked **deliver: reply** fill this in.
 - \`artifacts\`: paths you actually wrote, relative to the company directory.
-- \`lessons\`: OPTIONAL, at most 2. Only durable insights worth reusing on future tasks — not "the task went fine". Each under 25 words.
+- \`lessons\`: OPTIONAL, at most 2. See "Lessons" below. Empty is the normal answer.
 - \`blocked_on\`: short reason if status is "blocked" or "needs_human", otherwise null.
 
 Hard rules:
-- The whole JSON object must stay under 500 words. Your manager never sees anything else you wrote, so put results in files, not in the receipt.
+- Apart from \`answer\`, the JSON object must stay under 500 words. Your manager never sees anything else you wrote, so put results in files, not in the receipt.
 - Never invent an artifact path you did not write.
 - If you cannot finish, return status "failed" or "blocked" with an honest \`say\`. A truthful failure is worth more than a fabricated success.
 - Stay inside the office directory. Never write outside it.
+
+## Delivery — where your result goes
+
+Your task says **deliver: file** or **deliver: reply**. You always write your output files either way. The difference is what the human reads.
+
+- **deliver: file** — leave \`answer\` as \`""\`. The human opens the file. Do not paste its contents anywhere.
+- **deliver: reply** — the human asked a question and wants to READ the answer, not open a document. Put the complete answer in \`answer\`, written directly to them, under 300 words. Still write your output file: it is the record. But \`answer\` is what they actually see, so it must stand alone — no "see the attached file", no file paths.
+
+\`say\` stays one short sentence in both cases. It goes to your manager, not to the human.
+
+## Lessons — method only, never facts
+
+A lesson records **how to work**, never **what is true**. This is a hard line, not a preference.
+
+- ✅ "Return policy lives in library/files/doi-tra.md — grep there before answering"
+- ⛔ "Items discounted over 50% cannot be returned"
+
+The second one is already written down in a document the office owns. Copying it into a lesson creates a **second copy that nobody updates**: the day the human edits that policy, the document changes and your lesson does not — and your lesson wins, because it sits in every employee's prompt while the document has to be searched for.
+
+So: never restate document content, never record numbers, thresholds, prices, or dates. Record the path you took, the trap you fell into, the order that worked.
+
+Leave \`lessons\` empty unless this task actually went wrong. A task that went smoothly teaches nothing, and saying so is the correct answer.
 
 ## What you already have
 
@@ -146,7 +170,8 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
       "outputs": [{"path": "artifacts/T-01/result.md"}],
       "constraints": ["..."],
       "deps": [],
-      "step": 0
+      "step": 0,
+      "deliver": "file"
     }
   ]
 }
@@ -156,8 +181,21 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
 - **Every step must have at least one task pointing at it.** Do not write a step for something an employee already does inside another task — "save the result to a file" is part of writing it, not a step of its own. A step nobody works on is a step the user watches never finish.
 - \`tasks\`: the actual work. \`step\` is the index into \`steps\`.
 - \`deps\`: task_ids that must finish first. Leave empty when tasks can run in parallel — parallel is good.
-- \`outputs\`: every task must write at least one file under \`artifacts/<task_id>/\`. Two tasks must NEVER write the same path.
-- Only use employee ids from the roster you were given.`;
+- \`outputs\`: every task must write at least one file under \`artifacts/<task_id>/\`. Two tasks must NEVER write the same path. This holds for **every** task, including \`deliver: "reply"\` ones.
+- Only use employee ids from the roster you were given.
+
+## \`deliver\` — does the human want to KNOW something, or to HAVE something?
+
+This office has a default, stated below. **Follow the default unless this particular request is clearly the other kind** — you are overriding, not deciding fresh each time.
+
+| | the human's next action | examples |
+|---|---|---|
+| \`"reply"\` | **reads it**, and that is all | answering a customer's question, checking a policy, a short summary, an explanation |
+| \`"file"\` | **opens · sends · edits · keeps** it | an article, a report, a table, a script, a contract |
+
+One test that settles most cases: *does the whole result fit in a chat message they read once?*
+
+Both kinds still write their output file. \`deliver\` only decides whether the human reads the answer in the chat or opens the document.`;
 
 export interface BuiltPrompt {
   /** Truyền vào Options.systemPrompt của SDK. */
@@ -280,6 +318,21 @@ export function buildAssistantPrompt(
   const library = opts.library?.trim() ?? '';
 
   const blocks: string[] = [ASSISTANT_CORE];
+  /**
+   * MẶC ĐỊNH `deliver` của văn phòng — một dòng, nằm ngay sau lớp lõi.
+   *
+   * Đặt ở đây chứ không nhét vào `ASSISTANT_CORE` vì nó là cấu hình của NGƯỜI
+   * DÙNG, còn lớp lõi thuộc về mã nguồn. Và đặt TRƯỚC charter vì nó là luật
+   * cứng: charter mô tả văn phòng làm gì, dòng này quyết kết quả rơi xuống đâu.
+   *
+   * Đây là thứ thay cho lệnh `/answer` đã bị bác bỏ — nó biến một phép đoán
+   * lặp lại ở MỖI tin nhắn thành một mặc định đúng sẵn, giá 0 token vì nó nằm
+   * trong prefix vốn đã được cache. → SPEC-offices.md §6
+   */
+  blocks.push(
+    `# Default delivery for this office\n\n` +
+      `Unless a request is clearly the other kind, every task you create uses \`"deliver": "${office.config.assistant.default_deliver}"\`.`,
+  );
   if (office.charter) blocks.push(`# About this office\n\n${office.charter}`);
   if (office.assistantSkills) blocks.push(`# How you work\n\n${office.assistantSkills}`);
   /**
@@ -531,6 +584,20 @@ export function buildTaskMessage(
   }
 
   parts.push(`# Your task (${brief.task_id})\n\n${brief.goal}`);
+
+  /**
+   * Hình dạng giao hàng, nói TƯỜNG MINH ở mỗi task.
+   *
+   * Nằm trong user message (phần biến động), KHÔNG trong systemPrompt: nó đổi
+   * theo từng task, mà `deliver` đứng trong prefix thì hai task khác `deliver`
+   * của cùng một vai trò sẽ dùng hai cache entry khác nhau — trả tiền ghi cache
+   * hai lần cho cùng một nhân viên.
+   */
+  parts.push(
+    brief.deliver === 'reply'
+      ? `## Delivery: REPLY\nThe human asked a question. Write your files as listed, then put the complete answer in the receipt's \`answer\` field — under 300 words, addressed to them, standing on its own. Do not mention file paths.`
+      : `## Delivery: FILE\nLeave \`answer\` empty. The human opens the file.`,
+  );
 
   if (brief.inputs.length) {
     parts.push(

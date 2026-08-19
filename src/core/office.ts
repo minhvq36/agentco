@@ -381,8 +381,42 @@ export class Office {
    * │ kế hoạch fail. Không suy ra từ hòm thư, vì hòm thư chính là chỗ đã sai.  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
+  /**
+   * Đang nén trí nhớ — TRẠNG THÁI THẬT, không phải một câu hẹn giờ.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BUG ĐÃ SỬA: "/clear nháy một cái rồi khựng im rất lâu".                  │
+   * │                                                                          │
+   * │ Bản trước phát câu "Đang dọn…" bằng một `note` có hẹn giờ. Nhưng `say()` │
+   * │ gọi `emitActivity()` NGAY SAU `runCommand()` — và activity đó không mang │
+   * │ `note`, nên giao diện xoá luôn câu vừa đặt. Người dùng thấy nó nháy vài  │
+   * │ chục mili giây, rồi im lặng hoàn toàn suốt cả lượt gọi model.            │
+   * │                                                                          │
+   * │ Bài học chung hơn: **một việc đang chạy là TRẠNG THÁI, không phải một    │
+   * │ thông báo.** Thông báo thì có kẻ khác ghi đè được và có hẹn giờ để hết   │
+   * │ hạn; trạng thái thì đúng chừng nào việc còn chạy, bất kể ai phát         │
+   * │ `emitActivity()` xen vào. Nén mất 5–15 giây — đó là khoảng im lặng dài   │
+   * │ nhất trong sản phẩm, đúng thứ luật "mạch không được đứt" (§6) cấm.       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private clearing = false;
+
   private emitActivity(): void {
     const planning = this.currentRecord?.status === 'planning';
+    if (this.clearing) {
+      // Đè lên mọi thứ khác: lúc này Trợ lý không "nghĩ" về tin nhắn nào cả,
+      // nó đang nén trí nhớ. Nói "đang nghĩ…" ở đây là mô tả sai việc đang chạy.
+      this.emit({
+        type: 'office.activity',
+        assistant: 'thinking',
+        workers: this.activeScheduler?.runningCount ?? 0,
+        queued: this.mailbox.size,
+        jobs: this.deferred.length,
+        note: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt…',
+        plan_id: null,
+      });
+      return;
+    }
     this.emit({
       type: 'office.activity',
       assistant: this.mailbox.isBusy ? 'thinking' : planning ? 'planning' : 'idle',
@@ -390,6 +424,30 @@ export class Office {
       queued: this.mailbox.size,
       jobs: this.deferred.length,
       plan_id: this.currentRecord?.plan_id ?? null,
+    });
+  }
+
+  /**
+   * Một câu trạng thái TẠM — hiện rồi tự biến, không để lại gì trong luồng chat.
+   *
+   * Đây là đường nói chuyện của `/clear` (§4.6). Nó cố ý KHÔNG mang các con số
+   * bận/rảnh: nó đè lên dòng trạng thái, và lượt `emitActivity()` kế tiếp sẽ tự
+   * lấy lại quyền — nên không có ca "câu tạm kẹt trên màn hình vĩnh viễn".
+   *
+   * `hold_ms` là gợi ý cho BÊN HIỂN THỊ, không phải hẹn giờ ở server: web tự xoá
+   * sau ngần ấy, còn Telegram giữ nguyên tin đã sửa làm vạch ngăn. Cùng một sự
+   * kiện, hai kết cục — đúng luật "mỗi bên hiển thị tự chọn cách phản ứng".
+   */
+  private emitNote(note: string, holdMs = 4_000): void {
+    this.emit({
+      type: 'office.activity',
+      assistant: this.mailbox.isBusy ? 'thinking' : 'idle',
+      workers: this.activeScheduler?.runningCount ?? 0,
+      queued: this.mailbox.size,
+      jobs: this.deferred.length,
+      note,
+      hold_ms: holdMs,
+      plan_id: null,
     });
   }
 
@@ -437,27 +495,40 @@ export class Office {
         if (this.state === 'working') {
           return reply('Đang có việc chạy dở. Bấm Dừng hoặc chờ xong rồi mình dọn nhé.');
         }
-        // Nói NGAY là đang làm gì. Nén là một lượt gọi model, mất vài giây —
-        // không có dòng này thì người dùng gõ `/clear` xong nhìn vào một ô chat
-        // im lặng và không biết lệnh đã ăn hay chưa. Câu này rồi sẽ bị chính
-        // `office.cleared` cuốn đi, nên nó không để lại rác.
-        this.emit({
-          type: 'master.message',
-          role: 'assistant',
-          say: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt…',
-          plan_id: null,
-        });
+        /**
+         * `/clear` KHÔNG PHÁT MỘT `master.message` NÀO. → SPEC-offices.md §4.6
+         *
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ Nhịp "Đang dọn…" VỐN ĐÃ là trạng thái giả dạng tin nhắn: nó luôn │
+         * │ bị chính `office.cleared` ngay sau đó cuốn đi, không nhánh nào nó │
+         * │ sống sót. Một tin nhắn được thiết kế để không tồn tại quá một     │
+         * │ nhịp thì nó LÀ trạng thái — gọi đúng tên là trung thực hơn.       │
+         * │                                                                  │
+         * │ Nhịp "Đã dọn xong" thì tệ hơn: nó khiến `/clear` để lại rác cho  │
+         * │ đúng thứ nó vừa dọn, và dòng đó không thuộc về ai — không phải    │
+         * │ người dùng hỏi, không phải Trợ lý trả lời, mà là hệ thống tự nói  │
+         * │ về chính mình.                                                    │
+         * │                                                                  │
+         * │ Cùng khuôn `…thinking` → trắng: QUÁ TRÌNH hiện rồi biến, chỉ KẾT  │
+         * │ QUẢ mới ở lại. Bằng chứng bền là node GHI NHỚ trong ngăn Tri thức.│
+         * └──────────────────────────────────────────────────────────────────┘
+         */
+        // Cờ TRẠNG THÁI, không phải một câu có hẹn giờ. `say()` phát
+        // `emitActivity()` ngay sau hàm này, và chính nó đọc cờ để nói đúng
+        // việc đang chạy — thay vì xoá mất câu vừa đặt. Xem `clearing`.
+        this.clearing = true;
         // KHÔNG await: trả lời ngay để ô chat không đứng hình, rồi báo kết quả
         // bằng sự kiện như mọi thứ khác.
         void this.compactMemory()
-          .then((r) => this.emit({ type: 'master.message', say: r.note, role: 'assistant', plan_id: null }))
+          .then((r) => {
+            this.clearing = false;
+            this.emitNote(r.note);
+          })
+          // Tin XẤU giữ lâu hơn tin tốt: người ta đọc tin xấu chậm hơn, và câu
+          // này báo một việc ĐÃ KHÔNG xảy ra — ngữ cảnh vẫn còn nguyên.
           .catch(() => {
-            this.emit({
-              type: 'master.message',
-              say: 'Chưa dọn được cuộc trò chuyện. Mình giữ nguyên mọi thứ, thử lại sau nhé.',
-              role: 'assistant',
-              plan_id: null,
-            });
+            this.clearing = false;
+            this.emitNote('Chưa dọn được cuộc trò chuyện. Mình giữ nguyên mọi thứ, thử lại sau nhé.', 8_000);
           });
         return { intent: 'chat', reply: '' };
       }
@@ -638,7 +709,9 @@ export class Office {
         this.recordUsage(r);
         usage = addUsage(usage, r.usage);
         for (const lesson of r.lessons) {
-          this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? []);
+          // `r.reads` = tài liệu tủ mà CHÍNH nhân viên này đã mở trong ca. Bài
+          // học của nó sống chết theo đúng những file đó — thực thể yếu.
+          this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? [], r.reads);
         }
       }
 
@@ -675,6 +748,46 @@ export class Office {
           `\nNhắn tiếp để mình làm phần còn lại — việc đã xong giữ nguyên, không làm lại.`;
         status = 'stopped';
       } else {
+        /**
+         * CÂU TRẢ LỜI ĐI THẲNG TỪ NHÂN VIÊN TỚI NGƯỜI DÙNG. → SPEC-offices.md §6
+         *
+         * Không qua Trợ lý, không nằm trong `report()`, không bao giờ vào session
+         * Trợ lý. Đây là nửa "answer" của hai kênh — nửa "say" vẫn chạy đường cũ.
+         *
+         * Phát TRƯỚC báo cáo: người dùng hỏi một câu, thứ họ chờ là CÂU TRẢ LỜI,
+         * không phải một dòng tổng kết về việc đã trả lời.
+         */
+        const answered = receipts.filter((r) => r.answer.trim() && r.status === 'done');
+        for (const r of answered) {
+          this.emit({ type: 'master.message', say: r.answer.trim(), role: r.role });
+        }
+
+        /**
+         * MỘT task `reply` duy nhất thì BỎ LUÔN `report()` — câu trả lời của nhân
+         * viên CHÍNH LÀ báo cáo.
+         *
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ Đây là chỗ hết "cấn", và nó tiết kiệm thật chứ không chỉ gọn mắt.  │
+         * │                                                                    │
+         * │ Chạy `report()` ở đây nghĩa là ô chat hiện HAI tin nói cùng một     │
+         * │ chuyện: câu trả lời cho khách, rồi một dòng Trợ lý nói lại rằng đã  │
+         * │ trả lời. Bỏ nó đi cắt luôn MỘT LƯỢT TRỢ LÝ cho mỗi câu hỏi — mà     │
+         * │ văn phòng hỗ trợ là nơi hình dạng chi phí này lặp nhiều nhất.       │
+         * │                                                                    │
+         * │ Cái giá, nói thẳng: session Trợ lý KHÔNG chứa câu trả lời đó. Lần  │
+         * │ sửa sau nó biết YÊU CẦU (chính nó định tuyến) nhưng không biết ĐÃ   │
+         * │ TRẢ LỜI GÌ — nó phải giao lại cho nhân viên đọc file. Đúng một lượt │
+         * │ nhân viên, đổi lấy việc ngữ cảnh Trợ lý KHÔNG phình theo số câu     │
+         * │ khách hỏi. Với văn phòng hỗ trợ, đó là đánh đổi đúng chiều.         │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        const soloReply = plan.tasks.length === 1 && answered.length === 1;
+        if (soloReply) {
+          // `report` rỗng: `finish()` sẽ không phát thêm tin nào. Câu trả lời vừa
+          // phát ở trên đã là thứ người dùng cần đọc.
+          report = '';
+          status = 'done';
+        } else {
         const summary = await this.mailbox.lock(() => this.assistant.report(plan.steps, receipts));
         usage = addUsage(usage, summary.usage);
         this.logAssistantUsage('report', summary.usage);
@@ -700,7 +813,11 @@ export class Office {
         // nó phình theo cấp số nhân và không ai chịu trách nhiệm.
         if (summary.value.lessons.length > 0) docTexts ??= this.library.texts();
         for (const lesson of summary.value.lessons) {
-          this.knowledge.addSharedLesson(lesson.text, plan.plan_id, docTexts ?? []);
+          // Bài học CHUNG phụ thuộc vào MỌI tài liệu ca này đã chạm: Trợ lý
+          // không đọc file nào, nên thứ duy nhất nó có thể đang nói tới là tài
+          // liệu nhân viên vừa đọc. Xoá bất kỳ file nào trong đó là bài học đi theo.
+          this.knowledge.addSharedLesson(lesson.text, plan.plan_id, docTexts ?? [], readsOf(receipts));
+        }
         }
       }
 
@@ -718,9 +835,17 @@ export class Office {
       this.lastArtifacts = receipts.flatMap((r) => r.artifacts);
       this.savePending(result.pending);
       this.saveSessionId();
-      // Nhánh "đã dừng" tự liệt kê artifact trong câu của nó rồi (§11f) — đưa
-      // thêm khối đường dẫn vào đó là nói hai lần cùng một chuyện.
-      this.finish(record, status, report, usage, receipts.length, status === 'stopped' ? [] : receipts);
+      /**
+       * Khối "kết quả đã lưu tại" bị CHẶN ở hai nhánh, vì hai lý do khác nhau:
+       *
+       *  · `stopped` — câu của nó đã tự liệt kê artifact rồi (§11f).
+       *  · task `reply` — người dùng vừa ĐỌC XONG câu trả lời. Dán thêm một
+       *    đường dẫn xuống dưới là nói lại cùng một chuyện bằng ngôn ngữ của
+       *    máy, và nó lôi cả `P-260819-1430-…` ra trước mặt một người mở tiệm
+       *    hoa. File vẫn nằm nguyên trong ngăn Kết quả cho ai cần.
+       */
+      const shown = status === 'stopped' ? [] : receipts.filter((r) => !r.answer.trim());
+      this.finish(record, status, report, usage, receipts.length, shown);
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -856,7 +981,11 @@ export class Office {
     // Câu báo cáo phát ĐÚNG MỘT LẦN, ở đây. `plan.finished` là sự kiện cấu trúc
     // (trạng thái + tiền) để UI đóng sổ, KHÔNG mang lại câu chữ — trước đây nó
     // mang, và nhật ký hiện hai dòng y hệt nhau ngay cạnh nhau.
-    this.emit({ type: 'master.message', say: report, role: 'assistant' });
+    //
+    // `report` RỖNG là hợp lệ và có chủ ý: ca một task `reply` đã phát câu trả
+    // lời của nhân viên rồi, và đó CHÍNH LÀ báo cáo. Phát thêm một bong bóng
+    // trống ở đây là tái tạo đúng cái "cấn" vừa bỏ đi.
+    if (report.trim()) this.emit({ type: 'master.message', say: report, role: 'assistant' });
     this.emit({ type: 'plan.finished', status, costUSD: usage.costUSD, turns: usage.turns });
 
     this.currentPlan = undefined;
@@ -1421,15 +1550,11 @@ export class Office {
   private maybeCompact(): void {
     const limit = this.loaded.company.budgets.master_compact_at;
     if (this.assistant.contextTokens < limit) return;
+    // Cùng đường với `/clear`: một câu trạng thái tạm, KHÔNG một tin nhắn nào.
+    // Tự nén còn cần điều đó hơn cả `/clear` — người dùng không hề gõ lệnh gì,
+    // nên một bong bóng chat tự mọc ra là thứ họ không giải thích được.
     void this.compactMemory()
-      .then((r) => {
-        this.emit({
-          type: 'master.message',
-          role: 'assistant',
-          say: `Cuộc trò chuyện đã dài, mình dọn bớt cho nhẹ. ${r.note}`,
-          plan_id: null,
-        });
-      })
+      .then((r) => this.emitNote(`Cuộc trò chuyện đã dài, mình dọn bớt cho nhẹ. ${r.note}`, 6_000))
       .catch(() => {
         /* Nén hỏng thì giữ nguyên — `compactMemory` không quên khi lỗi. */
       });
@@ -1458,13 +1583,48 @@ export class Office {
    * và không ai kiểm được.
    */
   private pruneNow(): string {
-    const days = this.loaded.company.librarian.prune_after_days;
-    if (days <= 0) return '';
-    // Sổ tay của người đã cất được miễn trừ — xem `pruneStale`.
-    const dropped = this.knowledge.pruneStale(days, this.loaded.archivedRoles);
-    if (dropped.length === 0) return '';
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ BUG ĐÃ SỬA: node bị đè vẫn nằm lại, dù lần trước đã "sửa rồi".        │
+     * │                                                                      │
+     * │ HAI nguyên nhân ĐỘC LẬP — và đó chính là lý do bản vá trước chỉ giết  │
+     * │ được một nửa, rồi ai cũng tưởng xong:                                 │
+     * │                                                                      │
+     * │  1. QUÉT MUỘN. `addAssistantMemory` GHI file mới (mang `supersedes`)  │
+     * │     nhưng KHÔNG `scan()`. Tập `superseded` chỉ được dựng lại lúc quét,│
+     * │     nên ngay sau đó `pruneStale` vẫn đang cầm tập CŨ — bản vừa bị đè  │
+     * │     không có trong đó. Nó chỉ chết ở lần `/clear` KẾ TIẾP, tức là     │
+     * │     người dùng luôn nhìn thấy đúng một node thừa, mãi mãi.            │
+     * │                                                                      │
+     * │  2. CHẶN NHẦM CỬA. `prune_after_days <= 0` là lựa chọn hợp lệ ("đừng  │
+     * │     tự xoá ghi chú của tôi theo tuổi"), nhưng nó `return` sớm và cuốn │
+     * │     theo cả việc dọn node bị đè. Mà xoá node bị đè KHÔNG PHẢI lão hoá │
+     * │     — nó là "bản này đã được thay thế", đúng hay sai không liên quan  │
+     * │     gì tới ngày tháng. Hai việc khác nhau thì không dùng chung cổng.  │
+     * └──────────────────────────────────────────────────────────────────────┘
+     *
+     * Quét TRƯỚC: mọi thứ dưới đây đọc `superseded`, mà tập đó chỉ đúng sau khi
+     * đã đọc lại đĩa. Đây là bước bản trước thiếu.
+     */
     this.knowledge.scan();
-    return ` Bỏ luôn ${dropped.length} ghi chú đã cũ hoặc đã bị bản mới đè.`;
+
+    // Node bị đè: xoá LUÔN, không qua cổng `prune_after_days`.
+    const replaced = this.knowledge.dropSuperseded();
+
+    const days = this.loaded.company.librarian.prune_after_days;
+    // Sổ tay của người đã cất được miễn trừ — xem `pruneStale`.
+    const aged = days > 0 ? this.knowledge.pruneStale(days, this.loaded.archivedRoles) : [];
+
+    if (replaced.length === 0 && aged.length === 0) return '';
+    this.knowledge.scan();
+
+    // Nói RIÊNG hai loại: "bản cũ bị thay" là chuyện bình thường và đáng yên
+    // tâm; "ghi chú cũ bị dọn" là mất mát thật. Gộp một câu thì người dùng
+    // không biết mình vừa mất gì.
+    const parts: string[] = [];
+    if (replaced.length) parts.push(`${replaced.length} bản ghi nhớ cũ đã được thay`);
+    if (aged.length) parts.push(`${aged.length} ghi chú lâu không dùng`);
+    return ` Dọn luôn ${parts.join(' và ')}.`;
   }
 
   private clearChatLog(): void {
@@ -1505,6 +1665,73 @@ export class Office {
     this.assistant.setHotKnowledge(this.assistantHot());
     this.assistant.setMemory(this.knowledge.assistantMemoryText());
     this.assistant.setLibrary(this.library.manifest());
+  }
+
+  /**
+   * Danh sách kết quả, KÈM TÊN VIỆC đã sinh ra chúng. → docs/SPEC-artifacts.md §2.1
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MÃ KẾ HOẠCH KHÔNG BAO GIỜ ĐƯỢC LÀ THỨ NGƯỜI DÙNG PHẢI ĐỌC.              │
+   * │                                                                          │
+   * │ Panel vốn đã cố ý không hiện `plan_id` — nhưng thứ nó hiện thay vào là   │
+   * │ một bản dự phòng ("Việc chạy 19/08 15:10") mà chú thích trong chính file │
+   * │ đó đã tự thú: *"chưa có tên việc thì nói ngày giờ"*. Tên việc thì CÓ SẴN │
+   * │ ở `tasks/index.json`, chỉ là chưa ai nối dây.                            │
+   * │                                                                          │
+   * │ Nối ở đây chứ không ở `ArtifactStore`: store quét ĐĨA và không được biết │
+   * │ gì về sổ công việc. Trộn hai nguồn vào một lớp là để lần sau ai đó phải  │
+   * │ tự hỏi cái nào mới là sự thật.                                           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Kế hoạch đã rơi khỏi `index.json` (trần 200 bản ghi) thì trả rỗng — giao
+   * diện tự rơi về nhãn ngày giờ. Đó là suy giảm êm, không phải lỗi.
+   */
+  artifactList(): Array<import('./artifacts.js').ArtifactRecord & { plan_title: string }> {
+    // Đọc sổ MỘT LẦN rồi tra bằng Map: `plans.list()` đọc và parse cả file
+    // index, mà một ca chạm 20 CV sẽ sinh hàng chục artifact — gọi nó trong
+    // vòng lặp là đọc lại cùng một file hàng chục lần cho mỗi lần mở panel.
+    const titles = new Map(this.plans.list().map((p) => [p.plan_id, p.request]));
+    return this.artifacts.list().map((a) => ({ ...a, plan_title: titles.get(a.plan_id) ?? '' }));
+  }
+
+  /**
+   * XOÁ MỘT TÀI LIỆU — và mọi kinh nghiệm sống nhờ nó. → `KnowledgeNode.depends_on`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO XOÁ DÂY CHUYỀN Ở ĐÂY, KHÔNG PHẢI Ở MỘT JOB QUÉT ĐỊNH KỲ.         │
+   * │                                                                          │
+   * │ Quét định kỳ nghĩa là có một cửa sổ thời gian mà node mồ côi vẫn nằm     │
+   * │ trong prefix của mọi nhân viên và vẫn được nghe theo — nó trỏ vào một    │
+   * │ file không còn tồn tại, và nó nói điều đó rất tự tin. Độ dài cửa sổ ấy   │
+   * │ không ai kiểm được, mà đó đúng là loại lỗi tệ nhất: sai mà im lặng.      │
+   * │                                                                          │
+   * │ Ở đây thì quan hệ là 1-1 với thao tác của người dùng: bấm xoá, mất luôn. │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Nói ra số node đã bỏ. Xoá âm thầm thứ người dùng nhìn thấy trong ngăn Tri
+   * thức là đúng lớp lỗi "mất việc của người dùng, im lặng" (§8).
+   */
+  removeDocument(name: string): { removed: boolean; droppedNotes: string[] } {
+    this.assertLive();
+    if (!this.library.remove(name)) return { removed: false, droppedNotes: [] };
+
+    // Đường dẫn trong `depends_on` tính từ thư mục VĂN PHÒNG — cùng dạng với
+    // `receipt.reads`, vốn là nguồn sinh ra chúng.
+    const dropped = this.knowledge.dropDependents([`library/files/${name}`]);
+    if (dropped.length) {
+      this.refreshAssistantContext();
+      this.emit({
+        type: 'knowledge.changed',
+        count: this.knowledge.size,
+        version: this.loaded.knowledgeVersion,
+        plan_id: null,
+      });
+      this.emitNote(
+        `Đã xoá "${name}" và ${dropped.length} ghi chú chỉ có nghĩa nhờ tài liệu đó.`,
+        6_000,
+      );
+    }
+    return { removed: true, droppedNotes: dropped };
   }
 
   /** Tủ tài liệu vừa đổi — số lượng và số đang bóc. → docs/SPEC-library.md §10 */
@@ -1743,6 +1970,16 @@ export class Office {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(value, null, 2), 'utf8');
   }
+}
+
+/**
+ * Mọi tài liệu tủ mà ca này đã chạm — gộp từ receipt, bỏ trùng.
+ *
+ * Dùng làm `depends_on` cho bài học CHUNG: Trợ lý không đọc file nào, nên thứ
+ * duy nhất nó có thể đang nói tới là tài liệu nhân viên vừa mở.
+ */
+function readsOf(receipts: readonly Receipt[]): string[] {
+  return [...new Set(receipts.flatMap((r) => r.reads))].sort();
 }
 
 function emptyUsage(): Usage {

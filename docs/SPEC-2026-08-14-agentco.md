@@ -243,6 +243,87 @@ Nói cách khác: **kho tri thức là những câu ngắn đã chắt ra, khôn
 
 Vì sao HOT tồn tại chứ không "khi nào cần mới mò vào": thứ nằm trong prefix được cache trả **~0.1×** sau lần ghi đầu; thứ lấy theo từng task trả **nguyên giá mỗi lần**, và nếu nhét vào prefix thì prefix đổi mỗi task → cache miss 100%, tệ hơn không cache. Hai tầng là để có cả hai.
 
+### 5a. BỐN LUẬT SINH KINH NGHIỆM — chốt 19/08/2026
+
+Đề bài do người dùng nêu, và nó là chẩn đoán đúng về một lớp lỗi chứ không phải một bug:
+
+> *"Cơ chế ghi lại kinh nghiệm đang tự tạo một CACHE, và rất có thể cache này **sai khi người dùng update tài liệu**."*
+
+Đúng. Bảng ở §5 trên tuyên bố *"node tri thức ≠ tài liệu"* từ 14/08, nhưng cái làm ranh giới đó vỡ không phải kích thước — mà là **thể loại nội dung**. Một node chép lại *nội dung* tài liệu là một bản sao thứ hai của cùng một sự thật, và **bản sao đó thắng**: nó nằm sẵn trong prefix của mọi nhân viên, còn tài liệu thì phải đi tìm.
+
+| # | luật | che ca nào | thi hành ở đâu |
+|---|---|---|---|
+| 1 | chỉ ghi **CÁCH LÀM**, không ghi **KIẾN THỨC** | tài liệu **bị SỬA** | `LessonSchema` (bỏ `'fact'`) · `quotesLibraryNumber` · `echoesLibrary` |
+| 2 | **thực thể yếu** — file mất thì node mất | tài liệu **bị XOÁ / đổi tên** | `KnowledgeNode.depends_on` · `dropDependents` |
+| 3 | chỉ sinh khi ca có **trục trặc hoặc LẶP** | ca sinh ra từ hư không | `worthLearning` |
+| 4 | không spam bản **na ná nhau** | kho phình vì lặp lại | `findTwin` |
+
+#### ⚠ Luật 1 và luật 2 KHÔNG thay thế nhau — đây là chỗ dễ hiểu nhầm nhất
+
+Trực giác nói *"gắn node vào file là xong"*. Không xong:
+
+```
+doi-tra.md  bị XOÁ   → depends_on nổ  → node biến mất        ✅ luật 2
+doi-tra.md  bị SỬA   → file VẪN CÒN   → depends_on IM LẶNG   ⛔
+                                       → node cũ vẫn sống, vẫn sai
+```
+
+Mà ca **bị sửa** mới đúng là ca người dùng lo (*"update tài liệu"*), và nó cũng là ca **thường xuyên hơn** — người ta sửa chính sách nhiều hơn là xoá nó.
+
+Thứ che ca đó là **luật 1**: một câu về *cách làm* vẫn đúng bất kể nội dung file đổi thế nào.
+
+```
+✅ "chính sách đổi trả nằm ở library/files/doi-tra.md — grep ở đó trước khi trả lời"
+⛔ "hàng giảm trên 50% không được đổi trả"
+```
+
+→ **Vì thế luật 1 phải thi hành bằng CODE, không phải bằng một câu dặn trong prompt.** Nếu nó chỉ là lời khuyên thì luật 2 phải gánh phần nó không gánh nổi.
+
+#### Luật 1 — ba lớp, cứng trước mềm sau
+
+1. **Bỏ `'fact'` khỏi `LessonSchema.kind`.** Chính nó là cái ô để chép kiến thức vào. Còn ô thì model sẽ dùng — bỏ ô đi rẻ hơn và chắc hơn mọi câu dặn. (`NodeType` vẫn giữ `'fact'`: bản GHI NHỚ của Trợ lý dùng nó, và thứ **người dùng** tự chốt thì đúng là fact.)
+2. **`quotesLibraryNumber` — chốt chặn CON SỐ.** Kinh nghiệm chứa số ≥2 chữ số mà con số đó **có mặt trong tài liệu** thì từ chối.
+3. **`echoesLibrary`** — lưới chồng-từ đã có từ trước, giờ là lưới thứ ba chứ không phải lưới chính.
+
+> **Vì sao lớp 2 tồn tại, và nó vá đúng lỗ nào.** Node `k/shared/san-pham-giam-gia-60-…` ngày 19/08 ghi *"giảm 60% **thường** không được đổi trả"* trong khi tài liệu viết *"trên 50% KHÔNG áp dụng"*. Chồng từ **đo được 0.47** — dưới ngưỡng 0.6, **lọt lưới**.
+>
+> Quy luật đằng sau: **diễn giải càng xa bản gốc thì lưới chồng-từ càng yếu — mà diễn giải sai mới là thứ nguy hiểm**, vì nó vừa sai vừa không truy được về nguồn. Con số thì ngược lại: nó **sống sót qua mọi cách diễn đạt**. Và một câu về cách làm gần như không bao giờ cần tới ngưỡng, giá hay ngày tháng.
+>
+> Chỉ chặn khi con số **nằm sẵn trong tài liệu**: bài học *"hỏi lại tối đa 2 câu rồi bắt tay vào làm"* mang số 2 nhưng đó là số của **cách làm**, phải qua được. Bỏ qua số 1 chữ số vì chúng đụng ngẫu nhiên quá dễ.
+
+#### Luật 2 — `depends_on` đến từ QUAN SÁT, không từ lời khai
+
+Nguồn là `receipt.reads`: file trong `library/` mà nhân viên **thật sự `Read`** trong ca, bóc từ luồng `tool_use`. Cùng luật với `landed` (§6 SPEC-offices): *thứ gì quan sát được thì đừng hỏi model*.
+
+Xoá theo kiểu **BẤT KỲ** (một file mất là node mất), không phải TẤT CẢ — bảo thủ có chủ ý: **một lời khuyên đúng một nửa nguy hiểm hơn không có lời khuyên nào**, vì không ai biết nửa nào đã hỏng.
+
+Cascade chạy ở **`Office.removeDocument`**, ngay lúc người dùng bấm xoá — **không** ở một job quét định kỳ. Job quét nghĩa là có một cửa sổ thời gian mà node mồ côi vẫn nằm trong prefix của mọi nhân viên và vẫn được nghe theo, mà độ dài cửa sổ đó không ai kiểm được.
+
+#### Luật 3 — `looped`, và vì sao KHÔNG phải số lượt
+
+Người dùng nói *"chỉ sinh kinh nghiệm khi flow bị **loop**"*. Đúng ý, nhưng phải đo đúng thứ — chi tiết ở `SPEC-offices.md` §6 và `types.ts`. Tóm tắt:
+
+| | model-independent? | |
+|---|---|---|
+| `turns >= N` | ❌ | haiku 10 lượt vs sonnet 4 lượt cho **cùng một việc**. Ca 19/08 chạy đúng **9 lượt** → `turns >= 8` cho qua đúng cái ca nó sinh ra để chặn |
+| **lặp thao tác** | ✅ | đọc lại file đã đọc · đọc lại file vừa ghi · gọi lại y nguyên một tool. Cả ba đều là **vi phạm một luật `CORE_PROMPT` đã viết thành lời** |
+
+#### Luật 4 — trùng thì CỘNG PHIẾU, đừng vứt
+
+Jaccard trên tập từ, **cùng scope**, ngưỡng `TWIN_RATIO = 0.75`. Trùng thì `recordHits` cho node đang sống thay vì ghi node mới.
+
+Bản trùng là **bằng chứng** bài học có thật, không phải rác — mà `hits` chính là thang xếp hạng vào HOT. Nên biến nó thành một lá phiếu vừa chặn spam vừa **đẩy node đúng lên trên**, và (qua `last_used`) làm nó **trẻ lại** để cửa sổ khai tử không dọn mất một bài học vẫn còn đúng.
+
+Chỉ so **trong cùng scope**: một bài học của `nguoi-viet` và một của kho chung nói giống nhau **không phải** trùng — chúng vào prefix của hai tập người khác nhau.
+
+> ⚠ `0.75` **chưa được đo** trên kho thật; nó là điểm khởi đầu bảo thủ. Lệch về phía **bỏ sót** là lệch đúng hướng: chặn nhầm mất hẳn một bài học thật, còn bỏ sót thì Librarian (M1) gộp lại được sau.
+
+#### Hệ quả phải nói thẳng: kho này gần như KHÔNG GHI nữa
+
+Chồng đủ bốn luật thì số kinh nghiệm agent tự sinh tiến về **gần bằng không**. Đó là **kết quả mong muốn**, không phải tác dụng phụ — nhưng phải ghi ra để lần sau không ai tưởng cơ chế hỏng.
+
+Đường lành mạnh vốn không phải đường này: nói với Trợ lý rồi `/clear` → node **GHI NHỚ**, `confidence 0.9`, do **chính người dùng chốt**. So với `0.6` của kinh nghiệm agent tự rút, thang confidence đã nói sẵn cái gì đáng tin hơn.
+
 ### Cơ chế chọn: HOT xếp hạng, COLD khớp từ khoá
 
 Cả hai đều **tất định, chạy bằng code, 0 token**. Không có lời gọi model nào để "quyết xem nên nhớ gì".

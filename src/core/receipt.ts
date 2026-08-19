@@ -58,12 +58,43 @@ export function parseReceipt(text: string): ParseResult {
   return { ok: false, problem: 'không tìm thấy object JSON nào trong câu trả lời cuối' };
 }
 
+/**
+ * Trần cho `answer` — TÍNH RIÊNG, không nằm trong `receipt_tokens`.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO TÁCH TRẦN, KHÔNG NỚI TRẦN CŨ.                                     │
+ * │                                                                          │
+ * │ `receipt_tokens` (mặc định 800) tồn tại để bảo vệ NGỮ CẢNH TRỢ LÝ. Mà    │
+ * │ `answer` KHÔNG BAO GIỜ đi vào đó — nó bay thẳng ra chat cho người dùng   │
+ * │ (`office.ts`). Nới trần cũ để chứa nó là nới đúng cái trần đang bảo vệ   │
+ * │ thứ không cần bảo vệ, và đồng thời làm `say` (thứ THẬT SỰ vào ngữ cảnh   │
+ * │ Trợ lý) được phép phình theo. Hai đường đời khác nhau thì hai cái trần.  │
+ * │                                                                          │
+ * │ ~450 token ≈ 300 từ tiếng Việt: vừa một bong bóng chat, vừa một tin      │
+ * │ Telegram, và đủ dài cho một câu trả lời chính sách có dẫn điều kiện.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const ANSWER_TOKENS = 450;
+
 /** Ép trần CỨNG. Vượt là cắt, không thương lượng. */
 export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody {
   const out: ReceiptBody = { ...receipt };
 
   // `say` là thứ người dùng đọc — ưu tiên giữ, nhưng cũng phải có trần
   out.say = truncateToTokens(out.say.replace(/\s+/g, ' ').trim(), Math.floor(maxTokens * 0.25));
+
+  /**
+   * `answer` được cắt TRƯỚC, rồi TÁCH RA khỏi phép đo `estimateJsonTokens`.
+   *
+   * Để nó trong phép đo thì một câu trả lời dài sẽ đẩy `lessons` và `say` ra
+   * ngoài trần — tức là câu trả lời cho khách đi ăn cắp chỗ của receipt, trong
+   * khi hai thứ đó chạy trên hai đường hoàn toàn khác nhau.
+   *
+   * ⚠ KHÔNG gom khoảng trắng như `say`: đây là văn bản người đọc, xuống dòng
+   * và gạch đầu dòng là một phần của nội dung. `say` thì gom được vì nó là một
+   * câu duy nhất chạy trong dòng trạng thái.
+   */
+  const answer = truncateToTokens(out.answer.trim(), ANSWER_TOKENS);
 
   // lessons là thứ dễ phình nhất: model thích viết dài
   out.lessons = out.lessons.slice(0, 2).map((l) => ({
@@ -74,11 +105,15 @@ export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody
   out.artifacts = out.artifacts.slice(0, 20);
   if (out.blocked_on) out.blocked_on = truncateToTokens(out.blocked_on, 80);
 
+  // Đo phần ĐI VÀO NGỮ CẢNH TRỢ LÝ. `answer` không thuộc phần đó.
+  const measured = { ...out, answer: '' };
   // vẫn quá thì bỏ lessons trước, vì artifacts và say quan trọng hơn
-  if (estimateJsonTokens(out) > maxTokens) out.lessons = [];
-  if (estimateJsonTokens(out) > maxTokens) {
+  if (estimateJsonTokens(measured) > maxTokens) measured.lessons = out.lessons = [];
+  if (estimateJsonTokens(measured) > maxTokens) {
     out.say = truncateToTokens(out.say, Math.floor(maxTokens * 0.5));
   }
+
+  out.answer = answer;
   return out;
 }
 
@@ -103,6 +138,7 @@ function normalize(r: ReceiptBody): ReceiptBody {
   return {
     ...r,
     say: r.say.trim(),
+    answer: r.answer.trim(),
     // đường dẫn từ LLM: chuẩn hoá dấu gạch, bỏ ./ đầu, bỏ trùng
     artifacts: [...new Set(r.artifacts.map((a) => a.trim().replace(/\\/g, '/').replace(/^\.\//, '')))].filter(Boolean),
   };

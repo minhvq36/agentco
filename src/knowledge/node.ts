@@ -73,6 +73,36 @@ export interface KnowledgeNode {
    * Node cũ chưa có trường này thì rơi về `updated` — không cần bảng alias.
    */
   last_used?: string;
+
+  /**
+   * Node này SỐNG CHẾT theo những file nào. Rỗng = độc lập, không ai gỡ được nó.
+   * → docs/SPEC-2026-08-14-agentco.md §5, `KnowledgeStore.dropDependents`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THỰC THỂ YẾU: xoá một file trong danh sách là node NÀY BIẾN MẤT.         │
+   * │                                                                          │
+   * │ Kinh nghiệm rút ra sau khi đọc `library/files/doi-tra.md` chỉ có nghĩa    │
+   * │ chừng nào file đó còn. Người dùng xoá tài liệu mà node ở lại thì ta giữ  │
+   * │ một lời khuyên trỏ vào hư không, trong prefix của mọi nhân viên, mãi mãi │
+   * │ — và nó nghe vẫn rất tự tin.                                             │
+   * │                                                                          │
+   * │ Xoá theo kiểu BẤT KỲ (một file mất là node mất), không phải TẤT CẢ. Bảo  │
+   * │ thủ có chủ ý: một lời khuyên đúng một nửa nguy hiểm hơn không có lời     │
+   * │ khuyên nào, vì không ai biết nửa nào đã hỏng.                            │
+   * │                                                                          │
+   * │ ⚠ CHỈ che ca file BỊ XOÁ. Ca file BỊ SỬA (chính sách 50% → 30%) thì cơ   │
+   * │ chế này KHÔNG nổ — file vẫn còn. Ca đó do luật "chỉ ghi CÁCH LÀM, không  │
+   * │ ghi KIẾN THỨC" che (`LessonSchema` bỏ `'fact'` + chốt chặn con số), vì   │
+   * │ một câu về ĐƯỜNG ĐI vẫn đúng dù nội dung file đổi thế nào. Hai luật bù   │
+   * │ nhau; thiếu một là hở một nửa.                                           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Đường dẫn tương đối với thư mục VĂN PHÒNG (`library/files/x.md`), và nó
+   * đến từ QUAN SÁT — file nhân viên thật sự `Read` trong lúc làm việc
+   * (`receipt.reads`) — chứ không phải từ lời model khai. Cùng luật với `landed`.
+   */
+  depends_on?: string[];
+
   source?: string;
   body: string;
   tokens: number;
@@ -108,6 +138,7 @@ export function parseNode(raw: string, file: string): KnowledgeNode | undefined 
     supersedes: arr(fm['supersedes']),
     updated: str(fm['updated']) || new Date().toISOString().slice(0, 10),
     ...(str(fm['last_used']) ? { last_used: str(fm['last_used']) } : {}),
+    ...(arr(fm['depends_on']).length ? { depends_on: arr(fm['depends_on']) } : {}),
     ...(str(fm['source']) ? { source: str(fm['source']) } : {}),
     body,
     tokens: estimateTokens(body),
@@ -131,6 +162,7 @@ export function serializeNode(n: KnowledgeNode): string {
   if (n.pinned) fm['pinned'] = true;
   if (n.supersedes.length) fm['supersedes'] = n.supersedes;
   if (n.last_used) fm['last_used'] = n.last_used;
+  if (n.depends_on?.length) fm['depends_on'] = n.depends_on;
   if (n.source) fm['source'] = n.source;
   return `---\n${YAML.stringify(fm).trim()}\n---\n\n${n.body.trim()}\n`;
 }

@@ -191,7 +191,9 @@ Người dùng phải trả lời được *"hệ thống đang nhớ gì về t
 >
 > Và việc loại khỏi `hot()` còn giải một chuyện quan trọng hơn: thứ **người dùng đã chốt** không được phép cạnh tranh chỗ với **bài học agent tự rút ra** trong top-N, rồi tụt hạng và biến mất âm thầm khi kho lớn dần.
 
-#### Ba nhịp khi dọn — và vì sao phải đúng thứ tự
+#### Ba nhịp khi dọn — chốt lại 19/08: **KHÔNG NHỊP NÀO LÀ MESSAGE**
+
+**Bản cũ (đã bỏ):**
 
 ```
 master.message   "Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt…"
@@ -199,9 +201,46 @@ office.cleared   ← lệnh cho bên hiển thị: xoá những gì đang hiện
 master.message   "Đã dọn xong. …"   ← dòng ĐẦU TIÊN của cuộc trò chuyện mới
 ```
 
-Nhịp một tồn tại vì nén mất vài giây: không có nó thì người dùng gõ `/clear` xong nhìn vào ô chat im lặng và không biết lệnh đã ăn chưa.
+**Bản chốt:**
 
-`office.cleared` tách khỏi `master.message` vì nó là một **mệnh lệnh**, không phải một câu để đọc. Bridge như Telegram không xoá được tin đã gửi nên nó **bỏ qua** sự kiện này và chỉ đọc hai câu kia — cùng một luồng, mỗi bên hiển thị tự chọn cách phản ứng.
+```
+office.activity  "Đang dọn cuộc trò chuyện…"
+office.cleared   ← lệnh cho bên hiển thị: xoá những gì đang hiện
+office.activity  "Đã cất 3 điều bạn chốt vào sổ tay"    giữ ~4 giây
+office.activity  null                                    → trắng
+```
+
+**Vì sao đổi — và lý do không phải thẩm mỹ.**
+
+Nhịp một **vốn đã là status giả dạng message**: nó bị chính `office.cleared` ngay sau đó cuốn đi, luôn luôn, không có nhánh nào nó sống sót. Một tin nhắn được thiết kế để không bao giờ tồn tại quá một nhịp thì **nó là trạng thái**, không phải tin nhắn. Gọi đúng tên nó là trung thực hơn, không phải gọn hơn.
+
+Nhịp ba tệ hơn: nó khiến `/clear` **để lại rác cho chính thứ nó vừa dọn** — người dùng gõ lệnh xoá cuộc trò chuyện và nhận về một cuộc trò chuyện có sẵn một dòng. Dòng đó lại **không thuộc về ai**: không phải người dùng hỏi, không phải Trợ lý trả lời, mà là hệ thống tự nói về chính mình.
+
+> Cùng khuôn với `…thinking` → trắng: quá trình thì **hiện rồi biến**, chỉ **kết quả** mới ở lại. `/clear` không có kết quả nào thuộc về ô chat.
+
+**Nhưng nội dung của nhịp ba KHÔNG được bốc hơi.** *"Đã cất 3 điều bạn chốt vào sổ tay · bỏ 12 ghi chú cũ"* chính là thứ làm `/clear` cảm giác **an toàn** thay vì **phá hoại** — bỏ hẳn thì lệnh này trông y hệt một nút xoá. Nên nó chuyển vào cùng dòng `activity`, giữ ~4 giây rồi tắt (đã có tiền lệ `4500ms` ở `store.ts`).
+
+Bằng chứng **bền** không nằm ở ô chat và không cần nằm ở đó: node GHI NHỚ mới hiện ngay trong ngăn Tri thức, và `knowledge.changed` đã bump sẵn từ trước. Ô chat chỉ cần **trấn an trong 4 giây**, không cần **lưu trữ**.
+
+**Hệ quả bắt buộc:** không nhánh nào của `/clear` được phát `master.message` nữa — kể cả nhánh lỗi (*"Chưa nén được trí nhớ…"*) và nhánh tự nén (`maybeCompact`). Nhánh **lỗi** là ngoại lệ đáng cân nhắc riêng: nó báo một việc **đã không xảy ra**, và người dùng cần biết ngữ cảnh vẫn còn nguyên. Chốt: lỗi vẫn đi bằng `activity`, nhưng giữ lâu hơn (~8 giây) — vì đây là tin xấu, và tin xấu thì đọc chậm hơn.
+
+#### Trên Telegram: cùng một luồng, hiển thị khác — và đó là đúng thiết kế
+
+Telegram **không có** khái niệm "xoá những gì đang hiện", nên `office.cleared` bị bỏ qua (lý do thật ở khối cảnh báo bên dưới). Thứ nó có là `editMessageText`, và `activity` vốn đã được đặc tả chạy qua đường đó (§6 *"Khoảng im lặng phải được lấp"*).
+
+Nên `/clear` trên Telegram = **một tin duy nhất, tự sửa nội dung tại chỗ**:
+
+```
+"Đang dọn cuộc trò chuyện…"   →   "Đã cất 3 điều bạn chốt vào sổ tay"
+```
+
+Và nó **ở lại** — đọc như một **vạch ngăn** giữa hai cuộc trò chuyện. Người dùng nhìn thấy một tin nhắn "đã xong", nhưng nó **không phải một message trong luồng hội thoại**, nó là *process status đã đông cứng lại*. Hai bên hiển thị, hai kết cục, **cùng một luồng sự kiện, 0 token thêm** — vì mọi câu đều lấy từ `say` của sự kiện đã có sẵn.
+
+`office.cleared` tách khỏi `master.message` vì nó là một **mệnh lệnh**, không phải một câu để đọc. Mỗi bên hiển thị tự chọn cách phản ứng: giao diện web xoá sạch `messages`; bridge Telegram **bỏ qua** và chỉ đọc hai câu kia.
+
+> ⚠ **Sửa một lý do SAI đã ghi ở đây.** Bản trước viết *"Telegram không xoá được tin đã gửi"*. **Sai về kỹ thuật** — Bot API có `deleteMessage`, và bot xoá được tin của chính nó (trong 48 giờ). Lý do thật thì **mạnh hơn**: trên Telegram, khung chat **chính là bản lưu của người dùng**, không phải một khung nhìn có thể vẽ lại. Xoá hàng loạt tin cũ của họ vì một lệnh dọn ngữ cảnh là phá dữ liệu của người dùng để phục vụ một chi tiết cài đặt bên trong.
+>
+> Ghi lại vì đây đúng lớp lỗi hay gặp: một quyết định **đúng** được chống đỡ bằng một tiền đề **sai**. Ngày ai đó phát hiện `deleteMessage` tồn tại, họ sẽ tưởng quyết định cũng sai theo.
 
 ⚠ Thứ tự bắt buộc: `office.cleared` **trước**, câu báo kết quả **sau**. Ngược lại thì câu vừa hiện ra bị chính lệnh xoá cuốn đi.
 
@@ -386,6 +425,70 @@ Assistant định tuyến mỗi câu người dùng gõ thành một trong bốn
 
 Phân biệt `new` với `refine` do Assistant quyết trên session của nó (nó có cả lịch sử hội thoại), không suy ra bằng heuristic ở client. Sai lệch về phía `new` — hai plan độc lập chỉ tốn thêm một lần lập kế hoạch, còn gắn nhầm vào plan cũ thì làm hỏng cả việc đang chạy.
 
+### `deliver` — kết quả rơi xuống ĐÂU, là trục THỨ HAI (chốt 19/08)
+
+#### Đề bài, và vì sao chẩn đoán đầu tiên sai
+
+Người dùng hỏi văn phòng hỗ trợ: *"Sản phẩm bên shop được bảo hành trong bao lâu vậy?"* → hệ thống lập kế hoạch, nhân viên đọc tủ tài liệu, và ô chat trả về:
+
+> *"Đã trả lời câu hỏi. Kết quả đã lưu tại: `company/offices/ho-tro-khach/artifacts/P-mt08w0t8-iu50/T-01/tra-loi.md`"*
+
+Chẩn đoán đầu tiên — *"ranh giới chat/task quá mong manh, Trợ lý định tuyến sai"* — **sai**. Định tuyến **đúng**: Trợ lý không có tool (§4.7), nên muốn biết chính sách viết gì thì bắt buộc phải có nhân viên đọc tài liệu. Đây **là** một task.
+
+Hỏng ở chỗ khác: **một task chỉ có đúng MỘT hình dạng giao hàng.** `ASSISTANT_CORE` ép *"every task must write at least one file"*, `CORE_PROMPT` ép *"never paste file contents back in your reply"*, `receipt.say` bó về một câu. Nên dù Trợ lý hiểu đúng tuyệt đối rằng người ta chỉ muốn **biết**, bộ máy phía dưới vẫn chỉ đẻ ra được một **file**.
+
+> **Hai trục độc lập, đừng trộn:** `intent` quyết **AI LÀM**. `deliver` quyết **KẾT QUẢ RƠI XUỐNG ĐÂU**.
+> Trước 19/08, `deliver` bị đóng đinh `file` trong prompt — nên nó vô hình, và mọi nỗ lực sửa đều đi nhầm vào trục `intent`.
+
+| `deliver` | dùng khi | người dùng làm gì tiếp |
+|---|---|---|
+| `reply` | họ muốn **BIẾT** một điều | **đọc**, rồi thôi |
+| `file` | họ muốn **CÓ** một thứ | mở · gửi · sửa · lưu |
+
+Câu hỏi phân biệt, gõ được thành một dòng: *kết quả có lọt vừa một bong bóng chat và người ta chỉ đọc nó một lần không?*
+
+#### Vì sao KHÔNG xây `/answer [câu hỏi]`
+
+Đã cân nhắc nghiêm túc và **bác bỏ**. Ba lý do, xếp theo sức nặng:
+
+**1. Nó không khử được phần bất định mà nó hứa khử.** `/answer` vẫn phải: chọn vai trò, viết `goal`, viết `constraints`, chỉ đúng file trong tủ. Toàn bộ khối bất định nằm ở đó và lệnh này không chạm tới. Nó ghim **mỗi** hình dạng giao hàng — trả một cái giá giao diện đầy đủ để mua một mẩu rất nhỏ.
+
+**2. Sai đối tượng.** Sáu lệnh hiện có đều là **động từ điều khiển cỗ máy** (`stop` `approve` `reject` `status` `help` `clear`). `/answer` sẽ là lệnh đầu tiên bắt người dùng **tự phân loại câu nói của chính mình trước khi nói**. Chủ tiệm hoa không làm việc đó — và đúng cái lần họ quên, họ lại gặp cái file.
+
+**3. Đã có sẵn một cần gạt TẤT ĐỊNH, miễn phí, mà chưa ai kéo: VĂN PHÒNG.**
+
+`ho-tro-khach` sinh ra để đẻ **câu trả lời**. `noi-dung` sinh ra để đẻ **file**. Đó không phải chuyện của từng tin nhắn — nó là thuộc tính của văn phòng, ổn định hàng tháng.
+
+```yaml
+# office.yaml
+assistant:
+  default_deliver: reply      # mặc định: file
+```
+
+Từ *"đoán lại ở mỗi tin nhắn"* thành *"đi đúng mặc định, model chỉ ghi đè khi thật sự khác"*. **0 token** (một dòng nằm trong prefix vốn đã cache), 0 gánh nặng cho người dùng. Đúng luật §4.3: **đừng dặn model đừng làm — đừng cho nó cơ hội làm.**
+
+#### Cơ chế: HAI KÊNH, không kênh nào chở lại chữ của kênh kia
+
+Nỗi lo đã nêu: *"assistant hiểu phải trả lời nhưng worker ghi file → assistant đọc file → nội dung truyền lại hai lần"*. Kịch bản đó **đòi hỏi Trợ lý đọc được file**, mà điều đó đã bị cấm cứng ở §4.7 **có số đo**. Bỏ nhánh không thể xảy ra đó đi thì thiết kế **chỉ còn đúng một hình dạng** — đó là dấu hiệu tốt, không phải trùng hợp:
+
+```
+receipt ─┬─ answer  (≤300 từ)  ──→ master.message, role = NHÂN VIÊN
+         │                          ⛔ KHÔNG BAO GIỜ vào session Trợ lý
+         └─ say     (1 câu)    ──→ report() y như hôm nay
+                                    ✅ đây là thứ DUY NHẤT Trợ lý thấy
+```
+
+Bất biến chi phí **nguyên vẹn**: ngữ cảnh Trợ lý vẫn chỉ nhận một câu cho mỗi task, y hệt trước. `answer` là trường **mới**, không nới trần 500 từ của `say`.
+
+Bốn hệ quả bắt buộc:
+
+1. **Vẫn ghi file như cũ**, kể cả với `deliver: reply`. Miễn phí, và nó là mỏ neo cho lần `refine` sau (*"sửa câu trả lời nhẹ nhàng hơn"*) cùng dấu vết kiểm lại. Chỉ **thôi rao lên**.
+2. **Chặn `whereBlock` cho task `reply`.** Người ta vừa đọc xong câu trả lời; dán thêm một đường dẫn vào dưới là nói lại cùng một chuyện bằng ngôn ngữ của máy.
+3. **Plan chỉ có MỘT task `reply` thì bỏ luôn `report()`.** Câu trả lời của nhân viên **chính là** báo cáo. Đây là chỗ hết "cấn": không còn hai tin nhắn nói cùng một việc. Và nó **rẻ đi một lượt Trợ lý mỗi câu hỏi** — văn phòng hỗ trợ là nơi hình dạng chi phí này lặp lại nhiều nhất.
+4. Cái giá phải nói thẳng: bỏ `report()` nghĩa là **session Trợ lý không chứa câu trả lời đó**. Lần `refine` sau nó biết *yêu cầu* (nó tự định tuyến) nhưng không biết *đã trả lời gì* — nó phải giao lại cho nhân viên đọc file. Chấp nhận: đúng một lượt nhân viên, đổi lấy việc ngữ cảnh Trợ lý **không phình theo số câu hỏi khách hỏi**. Với văn phòng hỗ trợ, đó là đánh đổi đúng chiều.
+
+> Tiện thể giải một chuyện khác: văn phòng hỗ trợ **thôi in `P-…-iu50` ra chat**. Xem `SPEC-artifacts.md` §2.1.
+
 ### `say` KHÔNG BAO GIỜ chứa tên người nói
 
 Sự kiện đã mang `role`; **bên hiển thị** tự tra tên từ đó. Ghép sẵn tên vào `say` thì người dùng đọc được *"Người viết: Người viết: Viết 3 đoạn…"* — tên hiện hai lần, ở cả nhật ký lẫn dòng trạng thái, vì cả hai đều gọi `labelFor(e.role)`.
@@ -413,7 +516,11 @@ Hai lớp bảo vệ, cố ý chồng nhau:
 | Việc đang xếp hàng (`jobs`) | **chỉ trong bộ nhớ** | ❌ |
 | Hòm thư Trợ lý | **chỉ trong bộ nhớ** | ❌ |
 | Kế hoạch đang chạy | bộ nhớ; bản ghi kẹt ở `status: running` vĩnh viễn | ❌ |
-| `pending.json` | có ghi, **chưa ai đọc** | ❌ (mã chết) |
+| `pending.json` | có ghi, **đọc để ĐẾM, chưa ai chạy tiếp** | ⚠ nửa vời |
+
+> ⚠ **`pending.json` — trạng thái thật, đừng gọi là "mã chết" nữa.** `Office.savePending()` ghi, `Office.readPending()` đọc, và `GET /api/company` **có** trả `pending: <số>` cho mỗi văn phòng (`server.ts`). Tức là con số đã lên được tới giao diện.
+>
+> Thứ **chưa** có là bên TIÊU THỤ: không có lệnh `agentco resume` nào cầm danh sách đó chạy tiếp. Hết hạn mức giữa chừng thì người dùng phải **nhắn lại bằng lời**, và Trợ lý làm lại từ kế hoạch mới. Đây là hai lỗ hổng khác nhau và chỉ một cái đã bịt — ghi rõ ra để lần sau không ai tưởng còn phải làm cả hai.
 
 **Lỗi đã sửa: model nhớ, màn hình quên.** Ô chat đọc từ một vòng đệm 300 sự kiện *trong bộ nhớ*, nên tắt daemon rồi mở lại là **trắng trơn** — trong khi Trợ lý vẫn trả lời tiếp được câu hỏi dở dang như chưa hề mất gì. Người dùng gặp đúng cảnh này và mô tả là *"ảo quá"*: không còn tin được cái nào nói thật.
 
@@ -427,7 +534,11 @@ Người dùng hỏi *"nếu ngày mai tôi mới gõ `200 từ, hài hước` t
 
 Cơ chế: `route()` chạy **trên session Trợ lý**, tức là có toàn bộ bản ghi hội thoại, rồi trả `intent` + `scope: new | refine`. Không có correlation id, không có bảng "câu hỏi đang chờ ↔ công việc". Model đọc ngữ cảnh và tự nối.
 
-Đánh đổi, nói thẳng: rẻ và tự nhiên (0 cấu trúc thừa), nhưng **liên kết đó chỉ tồn tại trong bản ghi hội thoại**. Mất session = mất liên kết, không có đường lui. Và bản ghi đó **đang phình vô hạn**: `budgets.master_compact_at` được khai trong schema nhưng **chưa ai dùng**. Đó mới là trần thật của "chạy trọn đời", không phải daemon.
+Đánh đổi, nói thẳng: rẻ và tự nhiên (0 cấu trúc thừa), nhưng **liên kết đó chỉ tồn tại trong bản ghi hội thoại**. Mất session = mất liên kết, không có đường lui.
+
+> ✅ **Cập nhật 19/08 — đoạn này từng ghi sai.** Bản trước viết *"bản ghi đó đang phình vô hạn: `budgets.master_compact_at` được khai trong schema nhưng chưa ai dùng"*. Đã dùng: `Office.maybeCompact()` đọc đúng ngưỡng đó, so với `assistant.contextTokens` (= `cache_read` thật của lượt gần nhất), và chỉ nén ở ranh giới **một việc vừa xong, không còn việc xếp hàng** — xem §4.6. Bản ghi **không** phình vô hạn nữa.
+>
+> Nhưng hệ quả tiếp theo thì có thật và vẫn chưa giải: **nén là mất liên kết.** Bản nén giữ *quyết định* của người dùng, không giữ *"câu này thuộc việc nào"*. Nên `refine` nói về một việc chạy trước lần nén gần nhất sẽ trượt về `new`. Chấp nhận được — sai về phía `new` đúng là hướng sai đã chọn ở §6 — nhưng phải biết là nó tồn tại, đừng ngạc nhiên khi gặp.
 
 ### Mọi sự kiện đều mang `plan_id` và `office`
 
@@ -448,6 +559,59 @@ Model rất hay viết một bước kiểu *"Lưu kết quả vào file"* rồi
 Lọc bằng **code** lúc dựng kế hoạch (bỏ bước rỗng, đánh lại chỉ số), không bằng cách bắt model lập lại — rẻ hơn một lượt gọi và deterministic. Prompt cũng dặn thêm, nhưng dặn là gợi ý còn lọc là bảo đảm.
 
 Kèm theo: một bước có **nhiều task** chỉ done khi **mọi task** của nó đã kết thúc — đếm theo task đã xong, đừng hỏi "bước này done chưa" (câu hỏi tự tham chiếu chính nó, và bước nhiều task sẽ kẹt mãi ở "đang làm").
+
+### Bốn chốt bằng CODE quanh một kế hoạch — đã chạy từ lâu, chưa từng viết ra
+
+Cả bốn đều đã có trong mã nguồn và không có chốt nào được đặc tả ở đây. Bổ sung 19/08, vì đây là loại thứ **im lặng khi đúng** — nghĩa là không ai nhớ nó tồn tại cho tới hôm có người gỡ nhầm.
+
+Xếp theo **thời điểm nổ**, và thứ tự đó là cả điểm của thiết kế: sửa được thì sửa, không sửa được thì chặn, chặn không được thì soi lại sau khi chạy.
+
+| # | Chốt | Ở đâu | Lúc nào | Làm gì |
+|---|---|---|---|---|
+| 1 | `Scheduler.linkDeps` | `scheduler.ts` | **sau** lập kế hoạch, **trước** worker đầu | **SỬA** |
+| 2 | `Scheduler.validate` | `scheduler.ts` | cùng nhịp, ngay sau (1) | **CHẶN** |
+| 3 | `Office.missingOutputs` | `office.ts` | sau khi DAG chạy xong | **HẠ TRẠNG THÁI** |
+| 4 | `worthLearning` | `assistant.ts` | trước khi hỏi Trợ lý tổng kết | **KHÔNG HỎI** |
+
+**1 — `linkDeps`: task đọc kết quả của task khác mà quên khai `deps` thì NỐI THẲNG.** Quan hệ đó suy ra được từ hai đường dẫn ta đang cầm (một bên khai `outputs`, một bên khai `inputs`). Bắt model lập lại kế hoạch cho đúng là một lượt gọi nữa để đổi lấy một kết quả **vẫn có thể sai**. Nối xong thì **nói ra** — người dùng nhìn dải kế hoạch thấy hai việc chạy nối tiếp thay vì song song thì phải có một dòng giải thích, sửa lén là hành vi hệ thống không đoán được.
+
+**2 — `validate`: từ chối DAG hỏng NGAY, chưa phóng worker nào.** Bốn thứ bị chặn: vai trò không tồn tại (đối chiếu với **vai trò đang trực**, không phải mọi file trong `roles/` — nếu không thì cắt dây trên canvas chỉ là trang trí), `deps` trỏ vào task không có, hai task cùng ghi một đường dẫn, và phụ thuộc vòng tròn.
+
+> Thứ tư đáng nói riêng: **`inputs` trỏ vào hư không.** Chỉ báo khi đường dẫn vừa **không có trên đĩa** vừa **không task nào sinh ra nó**. Trợ lý gõ nhầm một chữ trong tên tài liệu là nhân viên nhận một đường dẫn chết — và nó **không báo lỗi**: nó đi TÌM, tốn lượt, rồi hoặc trả `blocked`, hoặc **tệ hơn nhiều là trả lời bằng thứ nó đoán ra**. Cái giá là cả một task, và ca tệ nhất thì không ai biết là sai.
+
+Câu báo cho người dùng phải nói được **việc phải làm**, không in nguyên văn danh sách kỹ thuật. Bản trước đưa *"Task T-02: phụ thuộc T-05 không tồn tại"* cho một người mở tiệm hoa đọc. Và phải nói rõ **chưa tốn tiền cho việc nào cả** — đó là thông tin quan trọng nhất ở khoảnh khắc đó.
+
+**3 — `missingOutputs`: nhân viên báo `done` mà file đã hứa không có trên đĩa → hạ xuống `failed` và nói ra.** Đây là ca nói dối tệ nhất: người dùng đọc *"xong rồi"*, đi mở file, và không có gì. Khối *"Kết quả đã lưu tại"* (`whereBlock`) liệt kê thứ **có thật**, nên nó **im lặng đúng lúc cần nói to nhất** — chốt này lấp đúng chỗ đó. Chỉ soi task **tự nhận là xong**: việc bị chặn hoặc bị dừng giữa chừng không có file là chuyện bình thường và nó đã tự nói ra rồi.
+
+Nhánh bị NGẮT đã được `stoppedReceipt` xử lý từ trước; nhánh **chạy hết bình thường** thì trước 19/08 không ai kiểm.
+
+**4 — `worthLearning`: chỉ hỏi bài học khi ca có DẤU VẾT trục trặc.** Xem §4.3 để biết vì sao chốt này phải là code chứ không phải một câu dặn trong prompt.
+
+### `worthLearning` — đừng dặn model đừng làm, đừng cho nó cơ hội làm
+
+Bản trước LUÔN kèm trường `lessons` vào mọi báo cáo, kèm câu dặn *"Việc chạy trơn tru không phải bài học"*. Hỏi một model *"bạn học được gì?"* thì nó gần như luôn nặn ra một câu, và **lời dặn không cản được**.
+
+**Ca thật, 19/08.** Một ca chạy trơn tru hoàn toàn (1 việc, `done`, không blocked, receipt không phải hỏi lại) đẻ ra node `k/shared/san-pham-giam-gia-60-…`. Nội dung của nó là bản diễn giải **LỆCH** của một câu trong tài liệu người dùng: chính sách viết *"trên 50% không đổi trả"*, node ghi *"giảm 60% **thường** không được đổi trả"*. Sai ngưỡng, thêm chữ *"thường"* mà chính sách không có — và nằm trong prefix của mọi nhân viên cho tới khi hết hạn.
+
+Trợ lý viết được câu đó mà **chưa từng đọc tài liệu nào**: nó chỉ nhìn thấy MỘT dòng `say` của nhân viên. Đó là **nghe kể lại**, không phải bài học.
+
+Ngưỡng: chỉ hỏi khi có thứ **quan sát được**, không phải thứ suy đoán — `status !== 'done'`, hoặc `blocked_on`, hoặc receipt phải hỏi lại (`reasked`).
+
+> ⚠ **CỐ Ý KHÔNG dùng SỐ LƯỢT làm dấu hiệu, dù rất cám dỗ.**
+>
+> Bản nháp đầu có thêm `usage.turns >= 8`, và bộ test bác bỏ nó ngay: ca 19/08 chạy đúng **9 lượt** — tức là điều kiện đó **cho qua đúng cái ca nó sinh ra để chặn**.
+>
+> Lý do sâu hơn: *số lượt là thuộc tính của MODEL và độ khó việc*, đo được là haiku 10 lượt vs sonnet 4 lượt cho **cùng một việc**. Lấy nó làm tín hiệu "có trục trặc" nghĩa là mọi văn phòng chạy `eco` đều bị coi là đang trục trặc, còn `deep` thì **không bao giờ**.
+
+Đánh đổi đã biết và chấp nhận: **kho tri thức lớn chậm hẳn lại.** Kinh nghiệm thật của người dùng vẫn có đường vào kho, và là đường **tốt hơn**: nói với Trợ lý rồi `/clear` → node GHI NHỚ, confidence 0.9 (§4.6).
+
+Chốt cuối nằm ở code chứ không ở prompt: không hỏi thì **không nhận**, kể cả khi model tự ý gửi kèm `lessons`.
+
+### Mã chết đã biết: `Assistant.chat()`
+
+`assistant.ts` có `chat(message)` — không nơi nào gọi. Đường đi thật là `route()` trả luôn `say` cho cả `chat` lẫn `ask`, và `handleUserBatch` phát thẳng câu đó.
+
+**Và đó là thiết kế đúng, không phải thiếu sót:** gọi `chat()` sau `route()` là **hai lượt model cho một câu chào**, trên đúng đường đông người qua lại nhất của sản phẩm. Ghi ra đây để lần sau không ai "nối lại cho đủ" — hàm này nên **xoá**, đừng nối.
 
 ### Kết quả nằm ở đâu — suy từ TOOL ĐÃ GỌI, không từ lời model kể
 
