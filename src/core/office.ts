@@ -1446,6 +1446,24 @@ export class Office {
         removable: false,
       };
     }
+    if (n.kind === 'library') {
+      /**
+       * `size` đọc từ catalog trong bộ nhớ — KHÔNG quét đĩa ở đây.
+       *
+       * `describeNode` chạy mỗi lần vẽ lại sơ đồ (kéo node, đổi dây, mỗi sự
+       * kiện SSE). Nhét một `readdir` vào đây là mua một lần chạm đĩa cho mỗi
+       * khung hình. Quét đĩa chỉ xảy ra ở `GET /library`, đúng lúc người dùng
+       * mở tủ ra nhìn. → docs/SPEC-library.md §9.1
+       */
+      return {
+        ...base,
+        label: 'Tủ tài liệu',
+        avatar: '🗄',
+        count: this.library.size,
+        connected: true,
+        removable: false,
+      };
+    }
     if (n.kind === 'mcp') {
       return { ...base, label: n.server ?? n.id, avatar: '🔌', connected: true };
     }

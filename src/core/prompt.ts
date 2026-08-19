@@ -352,8 +352,28 @@ export function describePrompt(
       id: 'charter',
       title: 'Giới thiệu văn phòng',
       editable: true,
+      /**
+       * `charter.md` ở gốc văn phòng — markdown THUẦN, KHÔNG frontmatter.
+       *
+       * Trước 17/08 nó là `knowledge/shared/_charter.md`, tức là cùng lúc vừa
+       * lớp prompt vừa node tri thức: hai cửa sổ sửa cùng một file, không cửa
+       * nào nhắc tới cửa kia. Người dùng xoá "node" ở ngăn kéo Tri thức (hợp
+       * lý — nó trông như rác agent sinh ra) rồi sửa ở đây, và file được ghi
+       * lại KHÔNG còn frontmatter → nó lặng lẽ thôi là node, mà prompt vẫn
+       * chạy nên không có gì báo. → docs/SPEC-library.md §17
+       */
       file: office.config.charter_file,
-      frontmatter: true,
+      /**
+       * Suy ra từ ĐƯỜNG DẪN THẬT, không đóng đinh `false`.
+       *
+       * Sau di trú thì charter là `charter.md` thuần và cờ này là `false`. Nhưng
+       * di trú CÓ THỂ hỏng (Windows khoá file, thư mục chỉ đọc, người dùng khôi
+       * phục một bản sao lưu cũ) — và lúc đó file vẫn nằm trong `knowledge/`,
+       * vẫn còn frontmatter, vẫn là một node. Đóng đinh `false` nghĩa là lần lưu
+       * kế tiếp xoá sạch frontmatter và tái tạo đúng cái lỗi ta vừa sửa, ở đúng
+       * những máy mà di trú đã không chạy được.
+       */
+      frontmatter: office.config.charter_file.replace(/\\/g, '/').startsWith('knowledge/'),
       limit: office.company.budgets.charter_tokens,
       text: office.charter,
       placeholder:
@@ -362,7 +382,8 @@ export function describePrompt(
         'Mọi bài viết đều xưng "mình", không dùng từ Hán Việt nặng.',
       note:
         'Văn phòng này làm gì, cho ai, ràng buộc nào luôn đúng. Mọi NHÂN VIÊN đều đọc, ' +
-        'ở mọi task — nên viết sự thật về công việc, đừng viết lời dặn chung chung.',
+        'ở mọi task — nên viết sự thật về công việc, đừng viết lời dặn chung chung. ' +
+        'Đây là chỗ DUY NHẤT sửa nó; nó không nằm trong kho tri thức.',
     });
     add({
       id: 'skills',

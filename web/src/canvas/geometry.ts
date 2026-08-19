@@ -55,11 +55,16 @@ export function arrange(nodes: readonly CanvasNode[]): Map<string, Point> {
 
   for (const n of nodes) {
     if (n.kind === 'assistant') out.set(n.id, { x: Math.round(mid - NODE_SIZE.assistant.w / 2), y: 40 });
-    if (n.kind === 'knowledge') {
-      out.set(n.id, {
-        x: Math.round(mid - NODE_SIZE.knowledge.w / 2),
-        y: 250 + rows * (NODE_SIZE.agent.h + 60) + 30,
-      });
+    // Hai kho nằm CÙNG một hàng dưới cùng: kho tri thức TRÁI, tủ tài liệu PHẢI.
+    // Chúng là hai khái niệm dễ lẫn nhất, nên phải nhìn thấy cùng lúc — đứng
+    // cạnh nhau thì sự khác biệt "hệ thống tự học" / "bạn đưa vào" đọc được
+    // bằng mắt. ⚠ Thứ tự phải khớp vị trí mặc định ở src/core/layout.ts.
+    const shelfY = 250 + rows * (NODE_SIZE.agent.h + 60) + 30;
+    const gap = 24;
+    const shelfW = NODE_SIZE.knowledge.w + gap + NODE_SIZE.library.w;
+    if (n.kind === 'knowledge') out.set(n.id, { x: Math.round(mid - shelfW / 2), y: shelfY });
+    if (n.kind === 'library') {
+      out.set(n.id, { x: Math.round(mid - shelfW / 2 + NODE_SIZE.knowledge.w + gap), y: shelfY });
     }
   }
   mcps.forEach((n, i) => {

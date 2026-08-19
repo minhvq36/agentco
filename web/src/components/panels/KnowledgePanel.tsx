@@ -13,7 +13,7 @@ import {
 import { Empty, Input, Textarea } from '@/components/ui/misc';
 import { api } from '@/lib/api';
 import { agentInk, agentWash, agentHue } from '@/lib/colors';
-import { toast, useApp } from '@/lib/store';
+import { actions, toast, useApp } from '@/lib/store';
 import type { KnowledgeEntry } from '@/lib/types';
 
 /**
@@ -58,10 +58,18 @@ export function KnowledgePanel() {
 
   if (nodes.length === 0) {
     return (
+      // Trạng thái rỗng của kho tri thức là chỗ DUY NHẤT người dùng mới đọc kỹ,
+      // nên nó phải trả lời luôn câu hỏi sẽ đến ngay sau: "vậy tài liệu của tôi
+      // bỏ đâu?". Không trả lời ở đây thì họ đi tìm nút "thêm ghi chú" không có.
       <Empty
         icon={<BookOpen className="h-7 w-7" />}
         title="Kho tri thức còn trống"
-        hint="Nhân viên tự ghi vào sổ tay riêng khi rút ra bài học; Trợ lý ghi vào kho chung sau mỗi ca. Không ai phải nhập tay."
+        hint="Nhân viên tự ghi vào sổ tay riêng khi rút ra bài học; Trợ lý ghi vào kho chung sau mỗi ca. Không ai phải nhập tay — đây là thứ hệ thống tự học được."
+        action={
+          <Button onClick={() => actions.showPanel('library')}>
+            Tài liệu của bạn thì thả vào Tủ tài liệu
+          </Button>
+        }
       />
     );
   }
@@ -109,6 +117,24 @@ export function KnowledgePanel() {
           <li className="px-4 py-6 text-[13px] text-muted">Không có ghi chú nào khớp “{q}”.</li>
         )}
       </ul>
+
+      {/*
+        Hai câu này chuyển từ bảng chi tiết bên phải sang đây (17/08). Chúng là
+        sự thật về cái KHO, không phải về cái node trên sơ đồ — và ở đây thì
+        người dùng đọc được chúng ở đúng lúc đang nhìn vào kho.
+
+        Câu thứ hai là quan trọng nhất: nó phân biệt kho tri thức với tủ tài
+        liệu. Thiếu nó thì hai khái niệm nhập làm một, và người dùng đi tìm chỗ
+        "thêm ghi chú" không có.
+      */}
+      <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
+        Đây là thứ hệ thống <b>tự rút ra</b>: Trợ lý ghi vào kho chung, nhân viên ghi vào sổ tay riêng (📒
+        trên node của họ, chỉ mình họ đọc). Bạn sửa và xoá được, nhưng không thêm mới —{' '}
+        <button className="underline hover:text-ink" onClick={() => actions.showPanel('library')}>
+          tài liệu của bạn thì thả vào Tủ tài liệu
+        </button>
+        .
+      </div>
 
       <NodeDialog
         node={open}

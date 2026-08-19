@@ -172,7 +172,18 @@ export class Company {
     ensureOfficeDirs(pp);
     fs.writeFileSync(pp.configFile, officeTemplate(id, name), 'utf8');
     fs.writeFileSync(pp.assistantSkills, ASSISTANT_SKILLS_DEFAULT, 'utf8');
-    fs.writeFileSync(path.join(pp.knowledgeShared, '_charter.md'), charterTemplate(name), 'utf8');
+    /**
+     * KHÔNG tạo file charter, và không tạo node tri thức nào.
+     *
+     * Bản trước ghi sẵn `knowledge/shared/_charter.md` với frontmatter đầy đủ và
+     * thân rỗng. Hậu quả: mỗi văn phòng mới đẻ ra một node ma trong ngăn kéo Tri
+     * thức mà người dùng không tạo ra, không hiểu, và xoá đi thì hỏng một thứ
+     * khác (xem `charter_file` trong types.ts).
+     *
+     * Giờ charter là `charter.md` ở gốc văn phòng và **chỉ tồn tại khi người
+     * dùng thật sự viết gì đó** — `savePromptLayer` tạo file ở lần lưu đầu tiên.
+     * Văn phòng mới có kho tri thức RỖNG THẬT, đúng như ngăn kéo đang nói.
+     */
 
     const office = new Office(loadOffice(this.dir, this.config, id));
     office.bindBus((e) => this.emit(e));
@@ -417,7 +428,7 @@ export class Company {
 function officeTemplate(id: string, name: string): string {
   return `id: ${id}
 name: ${JSON.stringify(name)}
-charter_file: knowledge/shared/_charter.md
+charter_file: charter.md
 
 assistant:
   display_name: "Trợ lý"
@@ -452,28 +463,15 @@ Báo cáo bằng lời người thường: đã xong gì, có gì cần để ý
 không nhắc số token, không dùng thuật ngữ kỹ thuật.
 `;
 
-/**
- * Charter mặc định: frontmatter đầy đủ, THÂN RỖNG.
+/*
+ * `charterTemplate()` đã bị BỎ HẲN ngày 17/08 — không thay bằng gì cả.
  *
- * Cùng lý do với skills của Trợ lý — thân charter đi vào prefix cache của MỌI
- * nhân viên, nên một dòng "hãy viết vài dòng về văn phòng này" là khoản thuế thu
- * mãi mãi để nói với model một câu chỉ có nghĩa với người.
+ * Nó từng ghi sẵn `knowledge/shared/_charter.md` với frontmatter đầy đủ và thân
+ * rỗng, để charter vừa là lớp prompt vừa là node tri thức. Đó chính là gốc của
+ * ba lỗi mà người dùng gặp cùng lúc (xem `charter_file` trong `types.ts` và
+ * `migrateCharters()` trong `migrate.ts`).
  *
- * Rỗng thì `office.charter` là chuỗi rỗng và khối này biến mất hẳn khỏi prompt.
- * Giao diện mới là chỗ nói cho người dùng biết nên viết gì vào đây.
+ * Charter giờ là `charter.md` ở gốc văn phòng, markdown thuần, và **chỉ ra đời
+ * khi người dùng lưu lần đầu**. Không có file mặc định nào cả: một file rỗng chỉ
+ * để "cho có" là một dòng nữa trong thư mục mà không ai giải thích được.
  */
-function charterTemplate(name: string): string {
-  return `---
-id: k/shared/_charter
-type: policy
-title: "Văn phòng ${name}"
-tags: [charter]
-scope: shared
-author: master
-confidence: 1
-hits: 0
-pinned: true
-updated: ${new Date().toISOString().slice(0, 10)}
----
-`;
-}

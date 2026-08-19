@@ -236,6 +236,20 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
   const node = canvas?.nodes.find((n) => n.id === selected);
   if (!canvas || !node) return null;
 
+  /**
+   * Node KHO không bao giờ có bảng chi tiết.
+   *
+   * Bảng này để CHỈNH một đối tượng. Kho tri thức và tủ tài liệu không có gì để
+   * chỉnh — chúng là cửa dẫn tới một ngăn kéo, và bấm vào chúng mở thẳng ngăn
+   * kéo đó (xem `onOpenStore` trong Canvas.tsx).
+   *
+   * Chốt đặt ở ĐÂY chứ không phải ở chỗ gọi, vì nó chặn cả LỚP lỗi: bản trước
+   * tủ tài liệu chưa có nhánh render nên bấm vào nó mở ra một bảng rỗng chỉ có
+   * dấu ✕ — và mỗi node kho thêm vào sau này sẽ lặp lại đúng như thế nếu ai đó
+   * quên viết nhánh. Giờ quên cũng không sao.
+   */
+  if (node.kind === 'knowledge' || node.kind === 'library') return null;
+
   const onDuty = canvas.nodes.filter((n) => n.kind === 'agent' && n.connected);
   const off = canvas.nodes.filter((n) => n.kind === 'agent' && !n.connected);
 
@@ -282,22 +296,11 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           </>
         )}
 
-        {node.kind === 'knowledge' && (
-          <>
-            <Row k="Tổng số ghi chú" v={node.count ?? 0} />
-            <Row k="Kho chung" v={canvas.knowledge.shared} />
-            <Note>
-              Kho chung: Trợ lý ghi, cả văn phòng đọc. Node này cố ý <b>không có dây</b> — nó là môi trường,
-              không phải quan hệ. Ai cũng với tới được.
-            </Note>
-            <Note>
-              Kinh nghiệm riêng của từng người nằm ở 📒 trên node của họ, và chỉ mình họ đọc.
-            </Note>
-            <Button className="w-full" onClick={() => actions.openPanel('knowledge')}>
-              Mở kho tri thức
-            </Button>
-          </>
-        )}
+        {/*
+          Nhánh `knowledge` đã BỎ (17/08). Hai đoạn giải thích của nó không mất
+          — chúng chuyển vào chính ngăn kéo Tri thức, nơi chúng vốn thuộc về:
+          đó là sự thật về cái KHO, không phải về cái node trên sơ đồ.
+        */}
 
         {node.kind === 'mcp' && (
           <>

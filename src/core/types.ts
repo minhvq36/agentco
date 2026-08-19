@@ -300,7 +300,19 @@ export type CompanyConfig = z.infer<typeof CompanyConfigSchema>;
 export const OfficeConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().default('Văn phòng mới'),
-  charter_file: z.string().default('knowledge/shared/_charter.md'),
+  /**
+   * Giới thiệu văn phòng — markdown THUẦN, không frontmatter, ở gốc văn phòng.
+   *
+   * ⚠ Trước 17/08 file này nằm ở `knowledge/shared/_charter.md`, tức là nó vừa
+   * là một lớp prompt vừa là một node tri thức. Hai cửa sổ, hai đường ghi, không
+   * liên kết — và người dùng gặp đủ ba hậu quả: node ma trong ngăn kéo Tri thức,
+   * xoá node đó rồi sửa lớp prompt là file mất frontmatter và lặng lẽ thôi là
+   * node, và nó dự thi COLD nên thân charter bị gửi HAI lần mỗi task (một lần
+   * trong prefix đã cache, một lần ở giá đầy đủ).
+   *
+   * → docs/SPEC-library.md §17. `migrateCharters()` tự dời, không hỏi.
+   */
+  charter_file: z.string().default('charter.md'),
 
   /**
    * Đã LƯU TRỮ (soft delete). → docs/SPEC-offices.md §3.1

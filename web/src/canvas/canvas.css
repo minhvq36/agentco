@@ -37,7 +37,16 @@
   stroke: var(--color-accent);
   stroke-width: 2;
 }
-.node-knowledge .node-box {
+/*
+ * Hai KHO dùng chung một ngôn ngữ hình: viền nét đứt = "không nối dây được".
+ *
+ * Đây không phải trang trí. Node agent có cổng và có dây, nên viền liền đọc ra
+ * "thứ này tham gia vào quan hệ". Kho tri thức và tủ tài liệu là MÔI TRƯỜNG —
+ * ai cũng với tới được, không ai phải nối tới. Nét đứt nói đúng điều đó trước
+ * khi người dùng kịp thử kéo một sợi dây và thất bại.
+ */
+.node-knowledge .node-box,
+.node-library .node-box {
   stroke-dasharray: 5 4;
 }
 

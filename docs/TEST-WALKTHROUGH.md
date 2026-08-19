@@ -318,7 +318,7 @@ Bảng tham chiếu (SESSIONS_MEMORY, đo tháng 8): `eco` dùng 2,5× lượt, 
 
 **Bước 2.** 🖱 **Nhân viên**: tên `Người sàng`, giới thiệu `Đọc CV theo một bộ tiêu chí cố định, chấm điểm từng mục và ghi một dòng kết luận cho mỗi hồ sơ.`, mức `eco`
 
-**Bước 3.** 📝 Viết tiêu chí vào charter — `company/offices/tuyen-dung/knowledge/shared/_charter.md`, **thêm vào sau khối `---`**:
+**Bước 3.** 🖱 Viết tiêu chí vào **Giới thiệu văn phòng** — bấm đúp node Trợ lý → bảng prompt phân lớp → lớp *Giới thiệu văn phòng* → sửa tại chỗ. *(Từ 17/08 nó là `charter.md` ở gốc văn phòng, markdown thuần, và không còn là node trong kho tri thức — `SPEC-library.md` §17.)*
 
 ```markdown
 Tuyển: Nhân viên nội dung, 1–3 năm kinh nghiệm.
@@ -327,6 +327,8 @@ Loại thẳng nếu không có sản phẩm nào kèm theo.
 ```
 
 Giữ dưới 500 token — khối này nằm trong prefix của mọi nhân viên.
+
+Bài này giờ **không cần mở editor nữa**: cả tiêu chí lẫn 20 CV đều vào bằng giao diện.
 
 **Bước 4.** 🖱 **Tủ tài liệu** → thả 20 CV giả vào (thả cả lô một lần được).
 

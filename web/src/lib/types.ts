@@ -6,7 +6,7 @@
  * Đổi bên kia thì phải đổi ở đây; `npm run typecheck` của web sẽ không bắt được.
  */
 
-export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'mcp';
+export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'library' | 'mcp';
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 export type StepStatus = 'pending' | 'running' | 'done' | 'problem' | 'waiting_human';
 export type PlanStatus = 'planning' | 'running' | 'done' | 'failed' | 'paused' | 'stopped';
@@ -232,6 +232,7 @@ export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
   assistant: { w: 232, h: 84 },
   agent: { w: 196, h: 88 },
   knowledge: { w: 200, h: 64 },
+  library: { w: 200, h: 64 },
   mcp: { w: 168, h: 56 },
 };
 

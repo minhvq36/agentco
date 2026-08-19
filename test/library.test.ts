@@ -12,6 +12,9 @@
  */
 
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import zlib from 'node:zlib';
 
@@ -26,6 +29,7 @@ import zlib from 'node:zlib';
 import { formatBytes, pageOfLine, safeName, sniffType } from '../dist/library/names.js';
 import { openZip } from '../dist/library/zip.js';
 import { extractDocx, extractText, extractXlsx } from '../dist/library/extract.js';
+import { migrateCharters } from '../dist/core/migrate.js';
 
 // ────────────────────────────────────────────────────────────── safeName
 
@@ -84,6 +88,66 @@ test('safeName: đuôi bị chặn có câu giải thích riêng, không phải 
   const old = safeName('bao-cao.doc');
   assert.equal(old.ok, false);
   if (!old.ok) assert.match(old.reason, /docx/);
+});
+
+// ─────────────────────────────────────────────────── charter rời kho tri thức
+
+test('migrateCharters: dời thân charter ra charter.md, bỏ frontmatter, sửa office.yaml', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-charter-'));
+  const office = path.join(dir, 'offices', 'vp');
+  fs.mkdirSync(path.join(office, 'knowledge', 'shared'), { recursive: true });
+  fs.writeFileSync(
+    path.join(office, 'knowledge', 'shared', '_charter.md'),
+    '---\nid: k/shared/_charter\npinned: true\n---\n\nVăn phòng làm nội dung.\n',
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(office, 'office.yaml'),
+    'id: vp\nname: "VP"\ncharter_file: knowledge/shared/_charter.md\n',
+    'utf8',
+  );
+
+  migrateCharters(path.join(dir, 'offices'));
+
+  assert.equal(fs.readFileSync(path.join(office, 'charter.md'), 'utf8').trim(), 'Văn phòng làm nội dung.');
+  // File cũ phải BIẾN MẤT — còn nó là kho tri thức vẫn quét ra node ma.
+  assert.equal(fs.existsSync(path.join(office, 'knowledge', 'shared', '_charter.md')), false);
+  assert.match(fs.readFileSync(path.join(office, 'office.yaml'), 'utf8'), /^charter_file: charter\.md$/m);
+
+  // Idempotent: chạy lại không hỏng gì, không mất gì.
+  migrateCharters(path.join(dir, 'offices'));
+  assert.equal(fs.readFileSync(path.join(office, 'charter.md'), 'utf8').trim(), 'Văn phòng làm nội dung.');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('migrateCharters: KHÔNG đè bản charter.md người dùng đã viết', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-charter-'));
+  const office = path.join(dir, 'offices', 'vp');
+  fs.mkdirSync(path.join(office, 'knowledge', 'shared'), { recursive: true });
+  fs.writeFileSync(path.join(office, 'knowledge', 'shared', '_charter.md'), '---\nid: x\n---\n\nBẢN CŨ\n', 'utf8');
+  fs.writeFileSync(path.join(office, 'charter.md'), 'BẢN MỚI\n', 'utf8');
+
+  migrateCharters(path.join(dir, 'offices'));
+
+  assert.equal(fs.readFileSync(path.join(office, 'charter.md'), 'utf8').trim(), 'BẢN MỚI');
+  assert.equal(fs.existsSync(path.join(office, 'knowledge', 'shared', '_charter.md')), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('migrateCharters: charter rỗng thì không đẻ ra file rỗng', () => {
+  // Đây là ca PHỔ BIẾN NHẤT: mọi văn phòng tạo từ giao diện đều có charter thân
+  // rỗng. Ghi ra một `charter.md` trống là thay một file rác bằng một file rác.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-charter-'));
+  const office = path.join(dir, 'offices', 'vp');
+  fs.mkdirSync(path.join(office, 'knowledge', 'shared'), { recursive: true });
+  fs.writeFileSync(path.join(office, 'knowledge', 'shared', '_charter.md'), '---\nid: x\npinned: true\n---\n', 'utf8');
+
+  migrateCharters(path.join(dir, 'offices'));
+
+  assert.equal(fs.existsSync(path.join(office, 'charter.md')), false);
+  assert.equal(fs.existsSync(path.join(office, 'knowledge', 'shared', '_charter.md')), false);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // ────────────────────────────────────────────────────────────── sniffType

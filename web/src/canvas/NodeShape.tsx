@@ -56,6 +56,25 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
         </>
       )}
 
+      {/*
+        Tủ tài liệu. Câu phụ nói THẲNG cách đưa file vào, vì đây là node duy
+        nhất trên sơ đồ mà người dùng làm gì đó với NÓ chứ không phải với một
+        người — "bấm để mở" không đủ để đoán ra là thả file được.
+      */}
+      {node.kind === 'library' && (
+        <>
+          <text className="node-av" x={14} y={40}>
+            🗄
+          </text>
+          <text className="node-nm" x={44} y={30}>
+            Tủ tài liệu
+          </text>
+          <text className="node-sub" x={44} y={50}>
+            {node.count ?? 0} tài liệu · thả file vào đây
+          </text>
+        </>
+      )}
+
       {node.kind === 'mcp' && (
         <>
           <text className="node-av" x={12} y={36}>

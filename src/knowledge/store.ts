@@ -191,7 +191,7 @@ export class KnowledgeStore {
    * │ HOẶC: phải vừa cũ VỪA chưa từng được dùng.                               │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * KHÔNG đụng tới: node `pinned` (charter), node GHI NHỚ (người dùng chốt), và
+   * KHÔNG đụng tới: node `pinned`, node GHI NHỚ (người dùng chốt), và
    * node vừa bị đè trong chính lần nén này. Xoá hẳn chứ không cất — đây là ghi
    * chú agent tự sinh, chưa ai từng đọc, và giữ lại chỉ đẻ ra một kho thứ hai
    * cũng cần dọn.
@@ -250,7 +250,21 @@ export class KnowledgeStore {
   hot(roleId: string, count: number, tokenBudget: number): { text: string; ids: string[] } {
     const scoped = this.visible(roleId);
     const ranked = scoped
-      .filter((e) => !e.pinned) // pinned đã nằm trong charter rồi
+      /**
+       * ⚠ Lý do cũ của dòng này ("pinned đã nằm trong charter rồi") KHÔNG CÒN
+       * ĐÚNG từ 17/08: charter đã rời khỏi `knowledge/` (→ SPEC-library.md §17),
+       * và nó là node `pinned` duy nhất từng tồn tại.
+       *
+       * Giữ nguyên hành vi vì hiện KHÔNG có đường nào đặt `pinned: true` — cả
+       * ba hàm `add*` đều ghi `false`, giao diện không có nút, chỉ sửa file bằng
+       * tay mới đặt được. Đổi ngữ nghĩa của một cờ chưa ai dùng là mua rủi ro
+       * không đổi lấy gì.
+       *
+       * Nếu sau này thật sự làm nút "ghim ghi chú": ghim phải nghĩa là LUÔN nằm
+       * trong HOT (và khi đó `cold()` phải loại nó ra, nếu không nó được render
+       * hai lần cho cùng một task — đúng cái bẫy charter vừa dẫm).
+       */
+      .filter((e) => !e.pinned)
       // Bản GHI NHỚ đi bằng khối riêng của nó (`assistantMemoryText`), KHÔNG
       // xếp hàng ở đây. Hai lý do, cả hai đều quan trọng:
       //  1. Nó là thứ NGƯỜI DÙNG chốt — không được phép tụt khỏi top-N và biến

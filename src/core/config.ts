@@ -142,14 +142,19 @@ export function loadOffice(
     }
   }
 
-  // ── charter: pinned, nằm trong prefix cache, phải nhỏ và ổn định
+  // ── charter: nằm trong prefix cache của MỌI nhân viên, phải nhỏ và ổn định
   let charter = '';
   const charterFile = path.join(dir, config.charter_file);
   if (fs.existsSync(charterFile)) {
-    // CHỈ lấy phần thân. Charter là một node tri thức nên nó có YAML frontmatter
-    // (id, type, tags, confidence…) — thứ có nghĩa với KHO, không có nghĩa với
-    // MODEL. Đọc nguyên file là nhét ~40 token metadata vào prefix cache của
-    // MỌI nhân viên, mãi mãi, để nói với model những điều nó không dùng được.
+    /**
+     * `stripFrontmatter` GIỮ LẠI dù charter giờ là markdown thuần (nó đã rời
+     * `knowledge/` — xem SPEC-library.md §17). Lý do không còn là "bóc metadata
+     * của node" mà là **chống hồi quy**: một bản sao lưu cũ, một thư mục văn
+     * phòng người dùng zip lại từ tháng trước, hay một lần di trú hỏng nửa
+     * chừng đều có thể mang file còn frontmatter tới đây. Không bóc thì ~40
+     * token `id/type/tags/confidence` chui vào prefix cache của mọi nhân viên,
+     * mãi mãi, để nói với model những điều nó không dùng được.
+     */
     charter = stripFrontmatter(fs.readFileSync(charterFile, 'utf8'));
     const tokens = estimateTokens(charter);
     if (tokens > companyConfig.budgets.charter_tokens) {

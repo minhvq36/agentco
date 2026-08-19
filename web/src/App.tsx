@@ -148,7 +148,8 @@ export default function App() {
                     selected={selected}
                     onSelect={actions.select}
                     onCommit={onCommit}
-                    onOpenKnowledge={() => actions.openPanel('knowledge')}
+                    onOpenStore={actions.showPanel}
+                    onDropDocs={actions.dropDocs}
                   />
                   <Toolbar
                     onAddAgent={() => setNewAgent(true)}

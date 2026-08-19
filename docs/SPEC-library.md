@@ -211,6 +211,8 @@ Người dùng vẫn có **ba cửa** để đưa kiến thức vào, không c�
 
 API `PATCH /knowledge` giữ nguyên: **sửa và xoá, không tạo**. Không có nút "+ Ghi chú".
 
+⚠ Bất biến này **chỉ thành thật từ 17/08**, khi charter rời khỏi `knowledge/` — xem §17. Trước đó mỗi văn phòng mới tự đẻ một node charter, tức là chính hệ thống đang vi phạm điều nó vừa tuyên bố. *Một bất biến chỉ có thật khi có mã nguồn thi hành nó.*
+
 ---
 
 ## 8. `INDEX.md` — tầng định tuyến dựng bằng CODE, 0 token
@@ -367,6 +369,137 @@ Theo luật *"một bất biến chỉ có thật khi có mã nguồn thi hành 
 | **Đếm lại phụ thuộc** | ✅ `.docx`/`.xlsx`/`.pptx` đọc bằng `node:zlib`, **0 phụ thuộc mới** (dự án vẫn đúng 3: `sdk` `yaml` `zod`). `.pdf` là phụ thuộc **tuỳ chọn** nạp động: chưa cài thì mọi thứ khác vẫn chạy, PDF về trạng thái `unindexed` |
 | **Spike PDF thật**: 1 sách có lớp chữ · 1 bản scan | ⏳ **CHƯA LÀM** — cần `npm i pdfjs-dist` rồi thử. Đây là mảnh duy nhất còn nằm trên giấy, và phụ lục `SPEC-connectors` đã tự ghi *"chưa kiểm bằng file thật"* từ trước |
 | **Bóc file lớn giữ vòng lặp sự kiện** | ⏳ chưa đo. `inflateRawSync` là đồng bộ; một `.xlsx` 40MB có thể làm giao diện khựng vài trăm ms. Nếu đo thấy đau thì chuyển sang `worker_threads` — đổi được mà không đụng gì ngoài `pump()` |
+
+---
+
+## 15b. Node **Tủ tài liệu** trên sơ đồ — hai cửa vào, MỘT đường xử lý
+
+Người dùng hỏi thẳng: *"tức là có 2 chỗ upfile?"* — **Có hai CỬA, không có hai bản mã.**
+
+| | |
+|---|---|
+| Node `🗄 Tủ tài liệu` trên canvas | **bấm một cái** → mở ngăn kéo · **thả file thẳng lên node** → mở ngăn kéo rồi tải lên |
+| Ngăn kéo Tủ tài liệu ở sidebar | nút **Thêm tài liệu** · kéo thả vào ngăn kéo |
+
+Canvas **không gọi API tải lên**. Nó đặt file vào `pendingDocs` trong store rồi mở ngăn kéo; ngăn kéo là nơi DUY NHẤT có `upload()`. Lý do không phải gọn gàng mà là hồi quy: có hai bản thì đến ngày sửa luật trùng tên, một bản được sửa và một bản bị quên — đúng lớp lỗi `skillFileFor` đã dẫm (`SESSIONS_MEMORY` §8).
+
+**Số trên node đọc từ catalog trong bộ nhớ, không quét đĩa.** `describeNode` chạy mỗi lần vẽ lại sơ đồ (kéo node, mỗi sự kiện SSE); một `readdir` ở đó là một lần chạm đĩa cho mỗi khung hình. Quét đĩa chỉ xảy ra ở `GET /library`.
+
+---
+
+## 15c. Node KHO không có bảng chi tiết — bấm là MỞ THẲNG
+
+Người dùng báo: *"bấm vào tủ tài liệu thì mở ra bên tay phải nhưng chẳng tương tác được gì, không có nút bấm ngoài dấu ✕. Mà trong sidebar cũng có tủ tài liệu rồi. Flow thế có rườm rà không?"*
+
+**Rườm rà, và bảng rỗng là một lỗi thật** — `Inspector` không có nhánh render cho `library`, nên nó vẽ ra đúng cái khung với dấu ✕ và không có gì bên trong.
+
+Nhưng sửa bằng cách *thêm nhánh* là sửa sai chỗ. Câu hỏi đúng: **bảng chi tiết bên phải để làm gì?**
+
+> Để **CHỈNH một đối tượng**: đổi model, sửa hồ sơ, nối/ngắt dây, cho nghỉ, xoá.
+
+Kho tri thức và tủ tài liệu **không có gì để chỉnh**. Chúng là **CỬA**, không phải đối tượng. Bảng của kho tri thức trước đây chỉ có 2 con số + 2 đoạn giải thích + một nút *"Mở kho tri thức"* — tức là một cái **sảnh phải đi qua** để tới nơi mình muốn tới.
+
+### Luật, và nó tự trả lời cho mọi node thêm vào sau này
+
+| Node | Bấm một cái |
+|---|---|
+| Trợ lý · nhân viên · MCP | **bảng chi tiết bên phải** — có thứ để chỉnh |
+| Kho tri thức · Tủ tài liệu | **ngăn kéo bên trái, mở thẳng** — không có gì để chỉnh |
+
+### Bốn chi tiết khiến nó chạy đúng
+
+**1. `showPanel` không đảo trạng thái, khác `openPanel`.** Nút trên thanh tab thì bấm lại = đóng (đó là hành vi của một tab). Nhưng bấm vào node "Tủ tài liệu" thì ý định **luôn là MỞ** — dùng `openPanel` ở đây thì bấm đúp thành "mở rồi đóng ngay", trông y hệt *"bấm không ăn"*.
+
+**2. Bấm node kho thì KHÔNG chọn nó** (`selected: null`). Chọn nó là mở kèm một cột rỗng bên phải — đúng cái vừa bỏ.
+
+**3. Chốt đặt trong `Inspector`, không đặt ở chỗ gọi:**
+
+```ts
+if (node.kind === 'knowledge' || node.kind === 'library') return null;
+```
+
+Một dòng, và nó chặn cả **LỚP** lỗi: mỗi node kho thêm vào sau này sẽ lặp lại đúng cái bảng rỗng nếu ai đó quên viết nhánh. Giờ quên cũng không sao.
+
+**4. Bỏ `onDoubleClick`.** Một cái bấm đã mở rồi.
+
+### Hai đoạn giải thích không mất — chúng về đúng chỗ
+
+Chúng là sự thật về cái **KHO**, không phải về cái node trên sơ đồ. Nên chúng chuyển vào chân của chính ngăn kéo, nơi người dùng đọc được đúng lúc đang nhìn vào kho. Và mỗi ngăn kéo **chỉ sang cái kia**:
+
+- Kho tri thức: *"đây là thứ hệ thống tự rút ra… bạn sửa và xoá được nhưng không thêm mới — **tài liệu của bạn thì thả vào Tủ tài liệu**"* (bấm được, nhảy thẳng sang)
+- Tủ tài liệu: *"đây là tài liệu **bạn đưa vào**… nó **không** nằm trong prompt"*
+
+Trạng thái **rỗng** của kho tri thức mang nút bắc cầu đó, vì đó là màn hình duy nhất người dùng mới đọc kỹ — và câu hỏi đến ngay sau nó luôn là *"vậy tài liệu của tôi bỏ đâu?"*. Không trả lời ở đây thì họ đi tìm nút "thêm ghi chú" không tồn tại.
+
+> **Nguyên tắc rút ra: hai khái niệm dễ lẫn thì mỗi cái phải tự nói mình LÀ GÌ và chỉ sang cái kia.** Rẻ nhất trong mọi cách chống nhầm lẫn, và tốn **0 token** vì nằm hoàn toàn ở giao diện.
+
+### Bố cục
+
+Hai kho đứng **cạnh nhau** ở hàng dưới cùng — **kho tri thức TRÁI, tủ tài liệu PHẢI** — và **cùng dùng viền nét đứt**.
+
+- *Cạnh nhau:* đây là hai khái niệm dễ lẫn nhất trong sản phẩm; đặt xa nhau thì người dùng không bao giờ nhìn thấy chúng cùng lúc, và đó chính là lúc chúng nhập làm một trong đầu họ.
+- *Nét đứt:* không phải trang trí. Node agent có cổng và có dây, nên viền liền đọc ra *"thứ này tham gia vào quan hệ"*. Hai kho là **môi trường** — ai cũng với tới được, không ai phải nối tới. Nét đứt nói điều đó **trước** khi người dùng kịp thử kéo một sợi dây và thất bại.
+
+⚠ Thứ tự phải khớp ở **hai chỗ**: vị trí mặc định (`src/core/layout.ts`) và `autoArrange()` (`web/src/canvas/geometry.ts`). Văn phòng đã lưu `layout.json` giữ vị trí cũ cho tới khi bấm **Sắp xếp lại sơ đồ** — cố ý: không tự dời node người dùng đã đặt.
+
+---
+
+## 17. Charter rời khỏi kho tri thức — ba lỗi cùng một gốc
+
+Người dùng báo: *"tạo văn phòng mới thì nó tự tạo một điều lệ trống trong kho tri thức, hits khá nhiều… mà tôi không thấy nó link tới giới thiệu văn phòng trong assistant. Hay là hai cái khác nhau?"*
+
+**Là MỘT.** `charter_file` mặc định trỏ `knowledge/shared/_charter.md`, nên cùng một file vừa là lớp prompt *"Giới thiệu văn phòng"* vừa là một node trong ngăn kéo Tri thức. Hai cửa sổ, hai đường ghi, không cửa nào nhắc tới cửa kia. Ba hậu quả, tất cả đều đã xảy ra trên máy người dùng:
+
+**1. Node ma.** Mỗi văn phòng mới đẻ ra một node người dùng không tạo, không hiểu, và ngăn kéo thì nói *"nhân viên tự ghi… không ai phải nhập tay"* — một câu sai ngay ở màn hình đầu tiên.
+
+**2. Xoá node đó là hỏng thầm lặng.** Tái hiện được 100%:
+
+```
+PATCH /knowledge {id:"k/shared/_charter", remove:true}   → 200
+PUT   /prompt/assistant/charter {text:"Chào"}            → 200
+file  → "\nChào\n"          ← frontmatter biến mất, nó thôi là node tri thức
+```
+
+Ghi lại giữ frontmatter *"cũ"*, mà file vừa bị xoá nên không có gì để giữ. Prompt vẫn chạy nên **không có gì báo**. File `ho-tro-khach/knowledge/shared/_charter.md` trên máy người dùng đúng bằng `"\nChào\n"`, từng byte.
+
+**3. Trả tiền HAI lần cho cùng một đoạn văn.** `hot()` loại node `pinned`, nhưng `cold()` thì **không** — `visible()` không lọc `pinned`. Nên charter dự thi COLD, bị tính `hits` (đo được: 6 và 3 ở hai văn phòng), và được render **thêm** vào task, trong khi thân charter **đã** nằm sẵn trong prefix qua `office.charter`. Lần thứ hai nằm sau cache breakpoint nên trả **giá đầy đủ**, mỗi task. Đây là câu trả lời cho *"hits khá nhiều"*.
+
+### Chốt: DỜI RA, không vá tại chỗ
+
+> **`charter.md` ở gốc văn phòng. Markdown thuần, không frontmatter, không phải node tri thức.**
+
+Vá từng triệu chứng thì phải nhớ cả ba chỗ mãi mãi. Dời ra thì cả ba biến mất cùng lúc — và bất biến §7 (*kho tri thức chỉ agent ghi*) trở thành **thật**, có mã nguồn thi hành, chứ không phải một lời hứa trong spec.
+
+| | Trước | Sau |
+|---|---|---|
+| Đường dẫn | `knowledge/shared/_charter.md` | `charter.md` |
+| Định dạng | markdown + YAML frontmatter | markdown thuần |
+| Tạo lúc nào | **tự tạo** khi tạo văn phòng | **chỉ khi người dùng lưu lần đầu** |
+| Trong ngăn kéo Tri thức | có (node ma) | **không** |
+| Vào prompt mấy lần | 2 (prefix + COLD) | **1** (prefix) |
+| Chỗ sửa | hai chỗ, không đồng bộ | **một chỗ** |
+
+**Trả lời câu *"điều lệ này có bị xoá không?"*: nội dung KHÔNG mất.** `migrateCharters()` chạy lúc khởi động, bóc thân ra `charter.md`, xoá file cũ, và sửa dòng `charter_file:` trong `office.yaml`. Thứ duy nhất mất là frontmatter — metadata của cái kho nó vừa rời khỏi. Đã chạy thật trên cả ba văn phòng: không mất chữ nào.
+
+### Bốn chốt của di trú
+1. **Idempotent từng văn phòng**, một văn phòng hỏng không chặn phần còn lại.
+2. **Không đè `charter.md` đã có nội dung** — đó là bản người dùng viết sau di trú.
+3. **Charter thân rỗng thì không đẻ ra file rỗng** (ca phổ biến nhất: mọi văn phòng tạo từ UI).
+4. **Gọi HAI lần** trong `migrateIfNeeded`: lượt đầu cho công ty đã ở bố cục mới, lượt sau cho công ty v0 vừa được dời `knowledge/` vào văn phòng.
+
+### Một chỗ hở đã bịt
+`PromptLayer.frontmatter` **suy ra từ đường dẫn thật**, không đóng đinh `false`:
+
+```ts
+frontmatter: office.config.charter_file.replace(/\\/g, '/').startsWith('knowledge/')
+```
+
+Di trú **có thể** hỏng (Windows khoá file, thư mục chỉ đọc, người dùng khôi phục bản sao lưu cũ). Đóng đinh `false` nghĩa là ở đúng những máy đó, lần lưu kế tiếp xoá sạch frontmatter và **tái tạo chính cái lỗi vừa sửa**.
+
+### Còn lại: `pinned` giờ là cờ chết
+Charter là node `pinned` duy nhất từng tồn tại. Sau khi dời, **không đường nào đặt `pinned: true`** — cả ba hàm `add*` ghi `false`, giao diện không có nút, chỉ sửa file bằng tay mới đặt được.
+
+**Giữ nguyên hành vi**, chỉ sửa lại chú thích cho khỏi nói dối. Đổi ngữ nghĩa một cờ chưa ai dùng là mua rủi ro không đổi lấy gì. Nhưng ghi lại đây cho lần sau: **nếu làm nút "ghim ghi chú", ghim phải nghĩa là LUÔN nằm trong HOT — và khi đó `cold()` bắt buộc phải loại nó ra**, nếu không nó được render hai lần cho cùng một task, đúng cái bẫy charter vừa dẫm.
 
 ---
 

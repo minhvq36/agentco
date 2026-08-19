@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Empty } from '@/components/ui/misc';
 import { api, ApiError } from '@/lib/api';
-import { toast, useApp } from '@/lib/store';
+import { actions, toast, useApp } from '@/lib/store';
 import type { DocState, LibraryDoc } from '@/lib/types';
 
 /**
@@ -31,6 +31,9 @@ export function LibraryPanel() {
   // thì dòng "đang đọc…" đứng im cho tới lần người dùng tự bấm mở lại tủ — đúng
   // lúc họ cần biết nhất thì màn hình im lặng.
   const libraryVersion = useApp((s) => s.libraryVersion);
+  // File vừa thả lên node Tủ tài liệu trên sơ đồ. Canvas chỉ chuyển tay —
+  // toàn bộ luồng tải lên sống ở đây, đúng MỘT bản.
+  const pendingDocs = useApp((s) => s.pendingDocs);
   const [docs, setDocs] = useState<LibraryDoc[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -50,6 +53,14 @@ export function LibraryPanel() {
   }, [officeId]);
 
   useEffect(reload, [reload, libraryVersion]);
+
+  useEffect(() => {
+    if (!pendingDocs || !officeId) return;
+    void upload(actions.takeDroppedDocs());
+    // `upload` dựng lại mỗi lần render nhưng chỉ đọc `officeId`; đưa nó vào deps
+    // sẽ chạy lại effect mỗi lần render và tải lên lặp.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDocs, officeId]);
 
   async function upload(files: File[], replace = false) {
     if (!officeId || files.length === 0) return;
@@ -193,6 +204,19 @@ export function LibraryPanel() {
             </li>
           ))}
         </ul>
+      )}
+
+      {/*
+        Câu đối xứng với chân ngăn kéo Tri thức. Hai ngăn kéo mỗi cái nói mình
+        LÀ GÌ và chỉ sang cái kia — đó là cách rẻ nhất để hai khái niệm không
+        nhập làm một, và nó tốn 0 token vì nằm hoàn toàn ở giao diện.
+      */}
+      {docs.length > 0 && (
+        <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
+          Đây là tài liệu <b>bạn đưa vào</b>. Nội dung được bóc ra một lần lúc thả vào nên nhân viên tìm
+          bằng từ khoá mà không tốn thêm chi phí — nó <b>không</b> nằm trong prompt. Sửa thì sửa ngoài rồi
+          thả lại đè lên.
+        </div>
       )}
 
       <Dialog open={!!confirmDel} onOpenChange={(o) => !o && setConfirmDel(null)}>

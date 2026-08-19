@@ -80,6 +80,17 @@ export interface AppState {
    */
   libraryVersion: number;
 
+  /**
+   * File vừa được thả lên node Tủ tài liệu, đang chờ panel nhận.
+   *
+   * Canvas KHÔNG tự tải lên. Cả luồng tải lên — hỏi lại khi trùng tên, câu từ
+   * chối cho từng đuôi file, trạng thái bóc text — sống ở đúng MỘT chỗ là
+   * `LibraryPanel`. Ô này là băng chuyền giữa hai cửa vào, không phải bản sao
+   * thứ hai của logic: có hai bản thì đến ngày sửa luật trùng tên sẽ có một bản
+   * được sửa và một bản bị quên.
+   */
+  pendingDocs: File[] | null;
+
   panel: PanelId | null;
   /** Node đang chọn trên canvas (id node, không phải id vai trò). */
   selected: string | null;
@@ -101,6 +112,7 @@ const initial: AppState = {
   sending: false,
   activity: null,
   libraryVersion: 0,
+  pendingDocs: null,
   panel: null,
   selected: null,
 };
@@ -441,9 +453,44 @@ export const actions = {
     await guard(() => api.stop(id));
   },
 
+  /** Nút trên thanh tab: bấm lại tab đang mở thì ĐÓNG. Đó là hành vi của một tab. */
   openPanel(panel: PanelId | null): void {
     const next = state.panel === panel ? null : panel;
     set({ panel: next, ...(next === 'chat' ? { seenMessages: state.messages.length } : {}) });
+  },
+
+  /**
+   * Mở một ngăn kéo, KHÔNG đảo trạng thái. Dùng cho lối vào từ sơ đồ.
+   *
+   * Khác `openPanel` ở đúng chỗ quan trọng: bấm node "Tủ tài liệu" hai lần phải
+   * là "mở, rồi vẫn mở" — không phải "mở rồi đóng". Người dùng bấm vào một thứ
+   * cụ thể để tới nơi cụ thể; ý định luôn là MỞ. Chỉ nút tab mới có nghĩa bật/tắt.
+   */
+  showPanel(panel: PanelId): void {
+    if (state.panel === panel) return;
+    // Bảng chi tiết bên phải phải đóng lại: node kho không có gì để hiện ở đó,
+    // và để nó mở là một cột rỗng đứng cạnh ngăn kéo vừa mở.
+    set({ panel, selected: null, ...(panel === 'chat' ? { seenMessages: state.messages.length } : {}) });
+  },
+
+  /**
+   * Thả file lên node Tủ tài liệu trên sơ đồ.
+   *
+   * MỞ PANEL RA luôn, không tải lên im lặng phía sau: người dùng vừa thả một
+   * file và họ cần thấy chuyện gì đang xảy ra với nó — bóc xong chưa, có bị từ
+   * chối không, có trùng tên không. Một thao tác không có phản hồi thị giác thì
+   * lần sau họ thả hai lần.
+   */
+  dropDocs(files: File[]): void {
+    if (files.length === 0) return;
+    set({ panel: 'library', selected: null, pendingDocs: files });
+  },
+
+  /** Panel nhận lô file rồi dọn ô — nếu không thì mở lại panel là tải lên lần nữa. */
+  takeDroppedDocs(): File[] {
+    const files = state.pendingDocs ?? [];
+    if (files.length) set({ pendingDocs: null });
+    return files;
   },
 
   select(nodeId: string | null): void {
@@ -607,6 +654,9 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
         libraryVersion: state.libraryVersion + 1,
         ...(e.busy > 0 ? { activity: `Đang đọc ${e.busy} tài liệu…` } : {}),
       });
+      // Node Tủ tài liệu trên sơ đồ hiện SỐ tài liệu — không nạp lại thì con số
+      // đó đứng im và sơ đồ nói sai về chính thứ người dùng vừa làm.
+      if (fromLive) void actions.refreshCanvas();
       break;
 
     case 'layout.changed':

@@ -114,7 +114,7 @@ Thứ tự ưu tiên: **cờ dòng lệnh > biến môi trường > `company.yam
 ```yaml
 # company/company.yaml
 name: "Xưởng Nội Dung"
-charter_file: knowledge/shared/_charter.md   # pinned, ≤500 token
+charter_file: charter.md                     # markdown thuần, ≤500 token → SPEC-library.md §17
 
 runtime:
   port: 7317

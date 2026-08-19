@@ -26,7 +26,7 @@ import YAML from 'yaml';
 import type { LoadedOffice } from './config.js';
 import { isSafeId } from './paths.js';
 
-export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'mcp';
+export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'library' | 'mcp';
 
 export interface LayoutNode {
   id: string;
@@ -52,6 +52,13 @@ export interface LayoutFile {
 
 export const ASSISTANT_NODE = 'assistant';
 export const KNOWLEDGE_NODE = 'knowledge';
+/**
+ * Tủ tài liệu. Đứng CẠNH kho tri thức trên sơ đồ, và đó là cả điểm của nó:
+ * hai thứ dễ lẫn nhất trong sản phẩm, nên phải nhìn thấy cùng lúc để phân biệt
+ * được — thứ NGƯỜI DÙNG đưa vào, và thứ hệ thống ĐÃ HỌC.
+ * → docs/SPEC-library.md §1
+ */
+export const LIBRARY_NODE = 'library';
 export const agentNodeId = (roleId: string): string => `agent:${roleId}`;
 export const mcpNodeId = (server: string): string => `mcp:${server}`;
 
@@ -60,6 +67,7 @@ export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
   assistant: { w: 232, h: 84 },
   agent: { w: 196, h: 88 },
   knowledge: { w: 200, h: 64 },
+  library: { w: 200, h: 64 },
   mcp: { w: 168, h: 56 },
 };
 
@@ -149,13 +157,26 @@ export class LayoutStore {
       keep(prev ? { ...prev, kind: 'mcp', server } : { id, kind: 'mcp', server, x: 980, y: 40 + i * 90 });
     });
 
-    const knowledge = stored.get(KNOWLEDGE_NODE) ?? {
-      id: KNOWLEDGE_NODE,
-      kind: 'knowledge' as const,
-      x: 520,
-      y: 470,
-    };
-    keep(knowledge);
+    // Hai kho đứng cạnh nhau ở hàng dưới cùng: TRÁI = kho tri thức (hệ thống tự
+    // học), PHẢI = tủ tài liệu (người dùng đưa vào). Đặt xa nhau thì người dùng
+    // không bao giờ nhìn thấy chúng cùng lúc, và đó chính là lúc hai khái niệm
+    // lẫn vào nhau. ⚠ Thứ tự phải khớp `autoArrange()` ở web/src/canvas/geometry.ts.
+    keep(
+      stored.get(KNOWLEDGE_NODE) ?? {
+        id: KNOWLEDGE_NODE,
+        kind: 'knowledge' as const,
+        x: 300,
+        y: 470,
+      },
+    );
+    keep(
+      stored.get(LIBRARY_NODE) ?? {
+        id: LIBRARY_NODE,
+        kind: 'library' as const,
+        x: 524,
+        y: 470,
+      },
+    );
 
     // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho người mới.
     // `firstFreeSlot` đọc chính `nodes`, nên hai người thêm cùng lúc cũng không
@@ -492,7 +513,11 @@ function isNodeShape(v: unknown): v is LayoutNode {
     typeof n.id === 'string' &&
     n.id.length > 0 &&
     n.id.length < 200 &&
-    (n.kind === 'assistant' || n.kind === 'agent' || n.kind === 'knowledge' || n.kind === 'mcp')
+    (n.kind === 'assistant' ||
+      n.kind === 'agent' ||
+      n.kind === 'knowledge' ||
+      n.kind === 'library' ||
+      n.kind === 'mcp')
   );
 }
 
