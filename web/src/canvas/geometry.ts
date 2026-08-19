@@ -1,9 +1,7 @@
 import { NODE_SIZE, type CanvasNode, type NodeKind } from '@/lib/types';
+import { arrangeAll, type Point } from '@core/layout-geometry';
 
-export interface Point {
-  x: number;
-  y: number;
-}
+export type { Point };
 
 export interface Viewport {
   x: number;
@@ -32,46 +30,15 @@ export function screenToWorld(ev: { clientX: number; clientY: number }, rect: DO
 }
 
 /**
- * Tự sắp xếp. PHẢI khớp `agentSlot` trong `src/core/layout.ts` — hai bên lệch
- * nhau thì node mới do server tạo sẽ rơi chồng lên node cũ do client sắp.
+ * Tự sắp xếp — nút "Sắp xếp lại sơ đồ".
+ *
+ * Chỉ là lớp vỏ mỏng quanh `arrangeAll` ở `src/core/layout-geometry.ts`, tức là
+ * ĐÚNG hàm server dùng khi cấp chỗ cho node chưa có toạ độ. Trước đây đây là
+ * bản mã thứ hai, và hai bản đã lệch nhau: văn phòng mới hiện sơ đồ méo, bấm
+ * nút này thì nó thẳng lại.
  */
 export function arrange(nodes: readonly CanvasNode[]): Map<string, Point> {
-  const out = new Map<string, Point>();
-  const perRow = 4;
-  const agents = nodes.filter((n) => n.kind === 'agent');
-  const mcps = nodes.filter((n) => n.kind === 'mcp');
-
-  agents.forEach((n, i) => {
-    out.set(n.id, {
-      x: 140 + (i % perRow) * (NODE_SIZE.agent.w + 40),
-      y: 250 + Math.floor(i / perRow) * (NODE_SIZE.agent.h + 60),
-    });
-  });
-
-  const cols = Math.min(perRow, Math.max(1, agents.length));
-  const width = cols * (NODE_SIZE.agent.w + 40) - 40;
-  const mid = 140 + width / 2;
-  const rows = Math.max(1, Math.ceil(agents.length / perRow));
-
-  for (const n of nodes) {
-    if (n.kind === 'assistant') out.set(n.id, { x: Math.round(mid - NODE_SIZE.assistant.w / 2), y: 40 });
-    // Hai kho nằm CÙNG một hàng dưới cùng: kho tri thức TRÁI, tủ tài liệu PHẢI.
-    // Chúng là hai khái niệm dễ lẫn nhất, nên phải nhìn thấy cùng lúc — đứng
-    // cạnh nhau thì sự khác biệt "hệ thống tự học" / "bạn đưa vào" đọc được
-    // bằng mắt. ⚠ Thứ tự phải khớp vị trí mặc định ở src/core/layout.ts.
-    const shelfY = 250 + rows * (NODE_SIZE.agent.h + 60) + 30;
-    const gap = 24;
-    const shelfW = NODE_SIZE.knowledge.w + gap + NODE_SIZE.library.w;
-    if (n.kind === 'knowledge') out.set(n.id, { x: Math.round(mid - shelfW / 2), y: shelfY });
-    if (n.kind === 'library') {
-      out.set(n.id, { x: Math.round(mid - shelfW / 2 + NODE_SIZE.knowledge.w + gap), y: shelfY });
-    }
-  }
-  mcps.forEach((n, i) => {
-    out.set(n.id, { x: Math.round(140 + width + 90), y: 40 + i * (NODE_SIZE.mcp.h + 34) });
-  });
-
-  return out;
+  return arrangeAll(nodes);
 }
 
 /** Khung bao mọi node, để tính "vừa khung". */

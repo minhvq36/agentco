@@ -4,8 +4,11 @@
  * → docs/SPEC-2026-08-14-agentco.md §7, §9b
  */
 
+import fs from 'node:fs';
+
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
+import { safeJoin } from './paths.js';
 import { runWorker, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
@@ -56,13 +59,56 @@ export class Scheduler {
   }
 
   /**
-   * Từ chối DAG hỏng NGAY LÚC LẬP KẾ HOẠCH, không đợi lúc chạy mới nổ.
-   * Rẻ hơn nhiều: chưa tốn token nào.
+   * NỐI DÂY CÒN THIẾU — sửa, không báo lỗi. Chạy TRƯỚC `validate`.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TASK ĐỌC KẾT QUẢ CỦA TASK KHÁC MÀ KHÔNG KHAI `deps` = RACE, VÀ NÓ IM.   │
+   * │                                                                          │
+   * │ `deps` rỗng nghĩa là "chạy song song được" — nên T-02 được phóng cùng    │
+   * │ lúc T-01, rồi đọc một file T-01 chưa kịp ghi. Nhân viên không báo lỗi:   │
+   * │ nó thấy file trống/không có, tự xoay sở, và trả về một kết quả trông     │
+   * │ vẫn hợp lý. Đây đúng loại "conflict" tốn tiền mà không ai nhìn thấy.     │
+   * │                                                                          │
+   * │ Quan hệ này SUY RA ĐƯỢC: cùng một đường dẫn, một bên khai `outputs`, một │
+   * │ bên khai `inputs`. Ta đang cầm cả hai. Bắt model khai lại cho đúng là     │
+   * │ trả tiền để đổi lấy bất định — sửa thẳng thì tất định và 0 token.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Trả về những dây đã tự nối, để nhật ký nói ra chứ không sửa lén.
+   *
+   * An toàn với vòng lặp: nếu việc nối dây đẻ ra chu trình (T-01 cũng đọc kết
+   * quả của T-02) thì `validate` chạy ngay sau đây sẽ bắt được — đó là lý do
+   * hàm này phải chạy TRƯỚC, không phải sau.
    */
-  static validate(plan: Plan, knownRoles: ReadonlySet<string>): string[] {
+  static linkDeps(plan: Plan): string[] {
+    const producer = new Map<string, string>();
+    for (const t of plan.tasks) for (const o of t.outputs) producer.set(norm(o.path), t.task_id);
+
+    const linked: string[] = [];
+    for (const t of plan.tasks) {
+      for (const i of t.inputs) {
+        const from = producer.get(norm(i.path));
+        if (!from || from === t.task_id || t.deps.includes(from)) continue;
+        t.deps.push(from);
+        linked.push(`${t.task_id} → ${from}`);
+      }
+    }
+    return linked;
+  }
+
+  /**
+   * Từ chối DAG hỏng NGAY LÚC LẬP KẾ HOẠCH, không đợi lúc chạy mới nổ.
+   * Rẻ hơn nhiều: mới tốn đúng một lượt lập kế hoạch, chưa phóng worker nào.
+   *
+   * `officeDir` để kiểm `inputs` có thật trên đĩa không. Không truyền thì bỏ
+   * qua kiểm đó — hàm vẫn dùng được trong test mà không cần dựng thư mục.
+   */
+  static validate(plan: Plan, knownRoles: ReadonlySet<string>, officeDir?: string): string[] {
     const problems: string[] = [];
     const ids = new Set(plan.tasks.map((t) => t.task_id));
     const writers = new Map<string, string>();
+    const produced = new Set<string>();
+    for (const t of plan.tasks) for (const o of t.outputs) produced.add(norm(o.path));
 
     for (const t of plan.tasks) {
       if (!knownRoles.has(t.role)) problems.push(`Task ${t.task_id}: không có vai trò "${t.role}"`);
@@ -73,6 +119,32 @@ export class Scheduler {
         const prev = writers.get(o.path);
         if (prev) problems.push(`Task ${t.task_id} và ${prev} cùng ghi "${o.path}"`);
         else writers.set(o.path, t.task_id);
+      }
+
+      /**
+       * ĐẦU VÀO TRỎ VÀO HƯ KHÔNG — kiểm được, nên phải kiểm.
+       *
+       * Trợ lý gõ nhầm một chữ trong tên tài liệu là nhân viên nhận một đường
+       * dẫn chết. Nó không báo lỗi: nó đi TÌM, tốn lượt, rồi hoặc trả `blocked`
+       * hoặc tệ hơn — trả lời bằng thứ nó đoán ra. Cái giá là cả một task.
+       *
+       * Chỉ báo khi đường dẫn KHÔNG có trên đĩa VÀ không task nào sinh ra nó.
+       */
+      if (officeDir) {
+        for (const i of t.inputs) {
+          if (produced.has(norm(i.path))) continue;
+          let exists = false;
+          try {
+            exists = fs.existsSync(safeJoin(officeDir, i.path));
+          } catch {
+            exists = false;
+          }
+          if (!exists) {
+            problems.push(
+              `Task ${t.task_id} cần đọc "${i.path}" nhưng không có file đó, và không việc nào tạo ra nó`,
+            );
+          }
+        }
       }
     }
 
@@ -93,6 +165,11 @@ export class Scheduler {
 
     return problems;
   }
+
+  // ────────────────────────────────────────────────────────────
+  //
+  // (`norm` ở cuối file: một đường dẫn phải so được với chính nó dù model viết
+  //  `./artifacts/x.md`, `artifacts\x.md` hay `artifacts/x.md`.)
 
   async run(plan: Plan): Promise<RunResult> {
     const receipts = new Map<string, Receipt>();
@@ -383,4 +460,16 @@ export class Scheduler {
 function ttlMs(setting: 'auto' | '5m' | '1h'): number {
   if (setting === '5m') return 5 * 60_000;
   return 60 * 60_000;
+}
+
+/**
+ * Chuẩn hoá đường dẫn để SO SÁNH — không phải để mở file.
+ *
+ * `outputs` của T-01 và `inputs` của T-02 do model viết ở hai chỗ khác nhau
+ * trong cùng một khối JSON, nên nó viết `artifacts/x.md` ở đây và
+ * `./artifacts/x.md` ở kia là chuyện bình thường. So chuỗi thô thì hai cái đó
+ * là hai file khác nhau, và cả cơ chế nối dây tự động im lặng không chạy.
+ */
+function norm(p: string): string {
+  return p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+/g, '/').toLowerCase();
 }

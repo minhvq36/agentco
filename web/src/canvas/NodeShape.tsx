@@ -1,8 +1,39 @@
 import { memo } from 'react';
 
 import { agentInk } from '@/lib/colors';
+import { useApp } from '@/lib/store';
 import { sizeOf } from './geometry';
 import type { CanvasNode } from '@/lib/types';
+
+/**
+ * Ruột của node Tủ tài liệu — tách riêng CHỈ để giữ ràng buộc hiệu năng.
+ *
+ * Nó phải theo `libraryBusy`, mà `libraryBusy` đổi khi có sự kiện SSE. Đăng ký
+ * store ngay trong `NodeShape` thì mọi node trên sơ đồ render lại theo, đúng
+ * thứ "một sự kiện SSE không kéo theo một lần render cây" đã cấm. Tách ra thì
+ * chỉ đúng cái node này render lại.
+ */
+function LibraryBody({ count }: { count: number }) {
+  const busy = useApp((s) => s.libraryBusy);
+  return (
+    <>
+      <text className="node-av" x={14} y={40}>
+        🗄
+      </text>
+      <text className="node-nm" x={44} y={30}>
+        Tủ tài liệu
+      </text>
+      {/*
+        Câu phụ nói THẲNG cách đưa file vào, vì đây là node duy nhất trên sơ đồ
+        mà người dùng làm gì đó với NÓ chứ không phải với một người — "bấm để mở"
+        không đủ để đoán ra là thả file được.
+      */}
+      <text className="node-sub" x={44} y={50}>
+        {busy > 0 ? `đang đọc ${busy} tài liệu…` : `${count} tài liệu · thả file vào đây`}
+      </text>
+    </>
+  );
+}
 
 function cut(s: string | undefined, n: number): string {
   const t = String(s ?? '');
@@ -61,19 +92,7 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
         nhất trên sơ đồ mà người dùng làm gì đó với NÓ chứ không phải với một
         người — "bấm để mở" không đủ để đoán ra là thả file được.
       */}
-      {node.kind === 'library' && (
-        <>
-          <text className="node-av" x={14} y={40}>
-            🗄
-          </text>
-          <text className="node-nm" x={44} y={30}>
-            Tủ tài liệu
-          </text>
-          <text className="node-sub" x={44} y={50}>
-            {node.count ?? 0} tài liệu · thả file vào đây
-          </text>
-        </>
-      )}
+      {node.kind === 'library' && <LibraryBody count={node.count ?? 0} />}
 
       {node.kind === 'mcp' && (
         <>

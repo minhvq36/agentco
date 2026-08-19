@@ -6,7 +6,13 @@
  * Đổi bên kia thì phải đổi ở đây; `npm run typecheck` của web sẽ không bắt được.
  */
 
-export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'library' | 'mcp';
+// Kích thước node và phép toán bố cục dùng CHUNG với backend — không còn bản
+// sao thủ công. → src/core/layout-geometry.ts
+export { NODE_SIZE } from '@core/layout-geometry';
+export type { NodeKind } from '@core/layout-geometry';
+
+import type { NodeKind } from '@core/layout-geometry';
+
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 export type StepStatus = 'pending' | 'running' | 'done' | 'problem' | 'waiting_human';
 export type PlanStatus = 'planning' | 'running' | 'done' | 'failed' | 'paused' | 'stopped';
@@ -173,6 +179,25 @@ export interface LibraryDoc {
   extracted_at?: string;
 }
 
+/**
+ * Một kết quả nhân viên làm ra. → docs/SPEC-artifacts.md
+ *
+ * PHẢI khớp `ArtifactRecord` trong `src/core/artifacts.ts`.
+ */
+export type ArtifactView = 'text' | 'markdown' | 'csv' | 'code' | 'image' | 'pdf' | 'video' | 'download';
+
+export interface ArtifactRecord {
+  path: string;
+  name: string;
+  ext: string;
+  bytes: number;
+  mtime: string;
+  /** Rỗng với kết quả cũ, sinh ra trước khi đường dẫn được đóng khung theo kế hoạch. */
+  plan_id: string;
+  task_id: string;
+  view: ArtifactView;
+}
+
 export interface OfficeDetail {
   id: string;
   name: string;
@@ -226,15 +251,6 @@ export type AgentEvent = EventBase &
     | { type: 'layout.changed'; say: string }
     | { type: 'company.offices'; say: string }
   );
-
-/** Kích thước node — PHẢI khớp `NODE_SIZE` trong `src/core/layout.ts`. */
-export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
-  assistant: { w: 232, h: 84 },
-  agent: { w: 196, h: 88 },
-  knowledge: { w: 200, h: 64 },
-  library: { w: 200, h: 64 },
-  mcp: { w: 168, h: 56 },
-};
 
 /**
  * Luật nối dây — BẢN SAO của `CAN_CONNECT` trong `src/core/layout.ts`.

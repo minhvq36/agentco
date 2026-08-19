@@ -16,6 +16,7 @@ import { loadOffice, type LoadedOffice } from './config.js';
 import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore } from '../library/store.js';
+import { ArtifactStore } from './artifacts.js';
 import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId } from './assistant.js';
 import { helpText, parseInput, type ParsedInput } from './commands.js';
@@ -91,6 +92,8 @@ export class Office {
   readonly knowledge: KnowledgeStore;
   /** Tủ tài liệu — file người dùng đưa vào. → docs/SPEC-library.md */
   readonly library: LibraryStore;
+  /** Kết quả — file nhân viên làm ra. → docs/SPEC-artifacts.md */
+  readonly artifacts: ArtifactStore;
   readonly assistant: Assistant;
   readonly layout: LayoutStore;
   readonly plans: PlanStore;
@@ -117,6 +120,7 @@ export class Office {
     // Bóc tài liệu chạy NGẦM (§10) nên nó phải có đường báo cho giao diện — nếu
     // không thì dòng "đang đọc…" đứng im cho tới lần người dùng bấm mở tủ.
     this.library = new LibraryStore(loaded.paths, () => this.emitLibrary());
+    this.artifacts = new ArtifactStore(loaded.paths);
     this.assistant = new Assistant(loaded);
     this.assistant.resumeFrom(this.readSessionId());
     this.layout = new LayoutStore(loaded);
@@ -539,12 +543,49 @@ export class Office {
       this.logAssistantUsage('plan', planned.usage);
       const plan = { ...planned.value, plan_id: record.plan_id };
 
-      // 2. Chặn DAG hỏng TRƯỚC khi tốn token nào cho worker. Danh sách đối chiếu
-      // là vai trò ĐANG TRỰC, không phải mọi file trong roles/ — nếu không thì
-      // ngắt dây trên canvas chỉ là trang trí.
-      const problems = Scheduler.validate(plan, onDuty);
+      /**
+       * 2. SỬA thứ sửa được, rồi mới CHẶN thứ không sửa được.
+       *
+       * Thứ tự có chủ ý, và nó là phương châm "ra bản nháp để sửa còn hơn viết
+       * mới từ đầu" áp vào chính kế hoạch:
+       *
+       *  · `linkDeps` — task đọc kết quả của task khác mà quên khai `deps` thì
+       *    NỐI THẲNG. Quan hệ đó suy ra được từ hai đường dẫn ta đang cầm; bắt
+       *    model lập lại kế hoạch cho đúng là một lượt gọi nữa để đổi lấy một
+       *    kết quả vẫn có thể sai.
+       *  · `validate` — thứ còn lại thì không đoán được, phải dừng.
+       *
+       * Cả hai chạy SAU lập kế hoạch nhưng TRƯỚC khi phóng worker đầu tiên: tới
+       * đây mới tốn đúng một lượt planner.
+       *
+       * Danh sách vai trò đối chiếu là vai trò ĐANG TRỰC, không phải mọi file
+       * trong `roles/` — nếu không thì ngắt dây trên canvas chỉ là trang trí.
+       */
+      const linked = Scheduler.linkDeps(plan);
+      if (linked.length) {
+        // Nói ra, đừng sửa lén. Người dùng nhìn dải kế hoạch thấy hai việc chạy
+        // nối tiếp thay vì song song thì phải có một dòng giải thích vì sao.
+        this.emit({
+          type: 'office.state',
+          state: 'working',
+          say: `Đã nối ${linked.length} việc phải chạy nối tiếp (${linked.join(', ')}) — chúng dùng chung file.`,
+        });
+      }
+
+      const problems = Scheduler.validate(plan, onDuty, this.loaded.dir);
       if (problems.length) {
-        throw new RunError(`Kế hoạch không hợp lệ:\n- ${problems.join('\n- ')}`, 'other');
+        /**
+         * Câu này đi thẳng lên mặt người dùng, nên nó phải nói được VIỆC PHẢI
+         * LÀM — tiêu chí "Xử lý lỗi tốt". Bản trước in nguyên văn danh sách kỹ
+         * thuật ("Task T-02: phụ thuộc T-05 không tồn tại") cho một người mở
+         * tiệm hoa đọc.
+         */
+        throw new RunError(
+          `Mình chia việc bị lỗi nên chưa chạy được — chưa tốn tiền cho việc nào cả.\n` +
+            problems.map((p) => `  · ${p}`).join('\n') +
+            `\nBạn nhắn lại yêu cầu rõ hơn một chút, hoặc nói cụ thể tên tài liệu cần dùng nhé.`,
+          'other',
+        );
       }
 
       this.currentPlan = plan;
@@ -581,12 +622,23 @@ export class Office {
       const result = await scheduler.run(plan);
       const receipts = [...result.receipts.values()];
 
+      /**
+       * Bản văn tài liệu, đọc ĐÚNG MỘT LẦN cho cả ca — dùng để chặn bài học chỉ
+       * là bản chép lại một tài liệu (`echoesLibrary`).
+       *
+       * Chỉ đọc khi thật sự có bài học để kiểm. Phần lớn ca không có: chốt
+       * `worthLearning` đã cắt nhánh Trợ lý, còn nhân viên thì thường trả về
+       * `lessons: []`.
+       */
+      const anyLesson = receipts.some((r) => r.lessons.length > 0);
+      let docTexts: string[] | undefined = anyLesson ? this.library.texts() : undefined;
+
       for (const r of receipts) {
         this.saveReceipt(r);
         this.recordUsage(r);
         usage = addUsage(usage, r.usage);
         for (const lesson of r.lessons) {
-          this.knowledge.addLesson(r.role, lesson.text, r.task_id);
+          this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? []);
         }
       }
 
@@ -628,11 +680,27 @@ export class Office {
         this.logAssistantUsage('report', summary.usage);
         report = summary.value.say;
         status = receipts.some((r) => r.status === 'failed') ? 'failed' : 'done';
+
+        /**
+         * File đã hứa mà không có trên đĩa → NÓI RA, và hạ trạng thái xuống
+         * `failed`. Nhật ký ghi "xong" cho một ca không ra được kết quả là đúng
+         * loại nói dối mà `stoppedReceipt` đã sửa cho nhánh bị ngắt; nhánh chạy
+         * hết bình thường thì chưa ai kiểm.
+         */
+        const gone = this.missingOutputs(plan, receipts);
+        if (gone.length) {
+          status = 'failed';
+          report +=
+            `\n\n⚠ Có ${gone.length} file lẽ ra phải được ghi mà không thấy trên đĩa: ` +
+            `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}. ` +
+            `Nhân viên báo xong nhưng kết quả chưa có — nhắn mình làm lại việc này nhé.`;
+        }
         // Trợ lý là bên DUY NHẤT được ghi vào kho chung (SPEC-offices.md §4.3):
         // kho chung nằm trong prefix của cả văn phòng, cho ai cũng ghi được thì
         // nó phình theo cấp số nhân và không ai chịu trách nhiệm.
+        if (summary.value.lessons.length > 0) docTexts ??= this.library.texts();
         for (const lesson of summary.value.lessons) {
-          this.knowledge.addSharedLesson(lesson.text, plan.plan_id);
+          this.knowledge.addSharedLesson(lesson.text, plan.plan_id, docTexts ?? []);
         }
       }
 
@@ -693,6 +761,41 @@ export class Office {
    * không bị giấu. Chi tiết còn lại nằm ở câu `say` của chính nhân viên — đó
    * đúng là việc của `say`, và ta không phải dặn thêm gì để có nó.
    */
+  /**
+   * KIỂM LẮP RÁP — bằng code, 0 token, 0 lượt gọi.
+   *
+   * Câu hỏi "kết quả có khớp với việc đã giao không" có hai nửa, và chỉ MỘT nửa
+   * cần model:
+   *
+   *  · *"Câu trả lời cho khách có hay không"* → phải đọc nội dung. Việc đó thuộc
+   *    về một nhân viên soát, quyết ở lúc lập kế hoạch. KHÔNG thuộc về Trợ lý:
+   *    Trợ lý chạy trên session được persist, nên mọi thứ nó đọc sẽ nằm trong
+   *    ngữ cảnh của MỌI lượt trò chuyện sau đó — đọc một lần, trả tiền mãi mãi.
+   *  · *"Việc khai sẽ ghi ra file X mà file X có tồn tại không"* → đây là SỰ
+   *    VIỆC. Hỏi model là trả tiền để đổi lấy bất định. Đó là nửa nằm ở đây.
+   *
+   * Nhân viên báo `done` mà file đã hứa không có trên đĩa là ca nói dối tệ nhất:
+   * người dùng đọc "xong rồi", đi mở file, và không có gì. `whereBlock` liệt kê
+   * thứ CÓ THẬT nên nó im lặng đúng lúc cần nói to nhất.
+   */
+  private missingOutputs(plan: Plan, receipts: readonly Receipt[]): string[] {
+    const byTask = new Map(receipts.map((r) => [r.task_id, r]));
+    const gone: string[] = [];
+    for (const task of plan.tasks) {
+      // Chỉ soi việc TỰ NHẬN là xong. Việc bị chặn hoặc bị dừng giữa chừng
+      // không có file là chuyện bình thường, và nó đã tự nói ra rồi.
+      if (byTask.get(task.task_id)?.status !== 'done') continue;
+      for (const out of task.outputs) {
+        try {
+          if (!fs.existsSync(safeJoin(this.loaded.dir, out.path))) gone.push(out.path);
+        } catch {
+          gone.push(out.path);
+        }
+      }
+    }
+    return gone;
+  }
+
   private whereBlock(receipts: readonly Receipt[]): string {
     const files = new Set<string>();
     const servers = new Set<string>();
@@ -850,7 +953,9 @@ export class Office {
     // `placeAgent` chứ không phải `connectAssistant`: nó GHI vị trí xuống đĩa kể
     // cả khi cạnh đã có sẵn. Bản cũ return sớm ở đó, nên toạ độ vừa tính không
     // bao giờ được lưu. → layout.ts
-    this.layout.placeAgent(id);
+    // Nhân viên MỚI thì nối dây luôn: thêm một người rồi không giao được việc
+    // cho họ là một thao tác không có kết quả nhìn thấy được.
+    this.layout.placeAgent(id, true);
     this.refreshAssistantContext();
     this.emit({ type: 'layout.changed', say: `Đã thêm "${name || id}".`, plan_id: null });
     return id;
@@ -873,6 +978,11 @@ export class Office {
    *
    * File không đi đâu cả. Kinh nghiệm trong `knowledge/agents/<id>/` còn nguyên,
    * skills còn nguyên — khôi phục là trở lại đúng chỗ cũ, vì nó chưa từng rời đi.
+   * (Lời hứa đó chỉ THẬT nhờ `pruneStale` miễn trừ sổ tay của người đã cất —
+   * xem `KnowledgeStore.pruneStale`.)
+   *
+   * ⚠ KHÔI PHỤC KHÔNG NỐI DÂY. Node trở lại sơ đồ, nhưng muốn nó nhận việc thì
+   * người dùng phải tự kéo một sợi dây. Xem `LayoutStore.placeAgent`.
    */
   archiveAgent(roleId: string, archived: boolean): CanvasState {
     this.assertLive();
@@ -890,13 +1000,18 @@ export class Office {
 
     if (archived) this.layout.dropAgent(roleId);
     this.reload();
-    if (!archived) this.layout.placeAgent(roleId);
+    // `connect: false` — đưa trở lại KHÔNG phải là cho nhận việc lại.
+    if (!archived) this.layout.placeAgent(roleId, false);
     this.refreshAssistantContext();
 
     const name = role.display_name || roleId;
     this.emit({
       type: 'layout.changed',
-      say: archived ? `Đã cất "${name}" vào lưu trữ.` : `Đã đưa "${name}" trở lại.`,
+      // Câu này phải nói ra việc CÒN LẠI phải làm. Không nói thì người dùng thấy
+      // node hiện lên, tưởng xong, rồi giao việc và Trợ lý bảo không có ai làm.
+      say: archived
+        ? `Đã cất "${name}" vào lưu trữ.`
+        : `Đã đưa "${name}" trở lại sơ đồ. Kéo một sợi dây từ Trợ lý xuống nếu muốn giao việc cho họ.`,
       plan_id: null,
     });
     return this.canvas();
@@ -1070,6 +1185,7 @@ export class Office {
     this.knowledge.rebind(this.loaded.dir, this.loaded.paths);
     this.knowledge.scan();
     this.library.rebind(this.loaded.paths);
+    this.artifacts.rebind(this.loaded.paths);
     this.refreshAssistantContext();
   }
 
@@ -1169,7 +1285,9 @@ export class Office {
           ).text;
     // Ghi nhớ hội thoại chỉ có với Trợ lý — nhân viên không có, và không được có.
     const memory = who === 'assistant' ? this.knowledge.assistantMemoryText() : '';
-    return describePrompt(this.loaded, who, hot, memory);
+    // Bảng kê tủ chỉ có với Trợ lý — nhân viên tìm bằng `Grep`, không cần danh sách.
+    const library = who === 'assistant' ? this.library.manifest() : '';
+    return describePrompt(this.loaded, who, hot, memory, library);
   }
 
   /** cacheKey hiện tại của từng vai trò — để chẩn đoán prefix bị phá. */
@@ -1342,7 +1460,8 @@ export class Office {
   private pruneNow(): string {
     const days = this.loaded.company.librarian.prune_after_days;
     if (days <= 0) return '';
-    const dropped = this.knowledge.pruneStale(days);
+    // Sổ tay của người đã cất được miễn trừ — xem `pruneStale`.
+    const dropped = this.knowledge.pruneStale(days, this.loaded.archivedRoles);
     if (dropped.length === 0) return '';
     this.knowledge.scan();
     return ` Bỏ luôn ${dropped.length} ghi chú đã cũ hoặc đã bị bản mới đè.`;
@@ -1357,20 +1476,11 @@ export class Office {
     this.applyCompanyConfig(this.loaded.company);
   }
 
-  readArtifact(rel: string): string | undefined {
-    const normalized = rel.replace(/\\/g, '/');
-    // safeJoin chặn đi RA NGOÀI văn phòng, nhưng `.state/` nằm BÊN TRONG — đó là
-    // chỗ chứa session id. Một đường dẫn hợp lệ hoàn toàn như `.state/x.json`
-    // sẽ lọt qua safeJoin. Chặn riêng ở đây.
-    if (normalized.split('/').some((seg) => seg.startsWith('.'))) return undefined;
-    try {
-      const abs = safeJoin(this.loaded.dir, normalized);
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return undefined;
-      return fs.readFileSync(abs, 'utf8');
-    } catch {
-      return undefined;
-    }
-  }
+  // `readArtifact` ĐÃ BỎ (19/08). Nó đọc bất kỳ file nào trong văn phòng —
+  // `roles/*.yaml`, `charter.md`, `office.yaml` — chỉ vì tên nó nghe như chỉ
+  // đọc artifact; và nó luôn `readFileSync(…, 'utf8')` nên làm hỏng mọi file
+  // nhị phân. Thay bằng `ArtifactStore`, nhốt trong `artifacts/` và stream.
+  // → src/core/artifacts.ts
 
   readPending(): TaskBrief[] {
     const file = path.join(this.loaded.paths.state, 'pending.json');
@@ -1394,10 +1504,15 @@ export class Office {
     this.assistant.setAssignable(this.layout.assignable());
     this.assistant.setHotKnowledge(this.assistantHot());
     this.assistant.setMemory(this.knowledge.assistantMemoryText());
+    this.assistant.setLibrary(this.library.manifest());
   }
 
   /** Tủ tài liệu vừa đổi — số lượng và số đang bóc. → docs/SPEC-library.md §10 */
   private emitLibrary(): void {
+    // Tủ đổi thì BẢNG KÊ trong prefix Trợ lý cũng phải đổi. Thiếu dòng này thì
+    // người dùng thả tài liệu vào rồi hỏi ngay, và Trợ lý lập kế hoạch như thể
+    // tủ vẫn trống — đúng cái lỗ hổng vừa bịt, chỉ khác là muộn hơn vài giây.
+    this.refreshAssistantContext();
     this.emit({
       type: 'library.changed',
       count: this.library.size,

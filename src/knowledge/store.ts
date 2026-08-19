@@ -196,11 +196,26 @@ export class KnowledgeStore {
    * chú agent tự sinh, chưa ai từng đọc, và giữ lại chỉ đẻ ra một kho thứ hai
    * cũng cần dọn.
    */
-  pruneStale(maxAgeDays: number): string[] {
+  pruneStale(maxAgeDays: number, archivedRoles: ReadonlySet<string> = new Set()): string[] {
     const cutoff = Date.now() - maxAgeDays * 86_400_000;
     const dropped: string[] = [];
     for (const e of [...this.byId.values()]) {
       if (e.pinned) continue;
+
+      /**
+       * SỔ TAY CỦA NGƯỜI ĐÃ CẤT ĐƯỢC MIỄN TRỪ — nếu không, "lưu trữ khôi phục
+       * được" là một lời nói dối có hạn 15 ngày.
+       *
+       * Nhân viên đã cất KHÔNG BAO GIỜ chạy, nên `last_used` của nó vĩnh viễn
+       * đứng yên và mọi ghi chú của nó chắc chắn rơi qua cửa sổ khai tử. Cất một
+       * người đi hai tuần rồi đưa trở lại là nhận về một người mất sạch kinh
+       * nghiệm — im lặng, và đúng thứ `archiveAgent` đang hứa là không xảy ra.
+       *
+       * Đây là mặt trái của cửa sổ khai tử (§5e): nó KHÔNG TRẠNG THÁI nên rất
+       * bền, nhưng cũng vì thế nó không phân biệt được "hết liên quan" với
+       * "đang nghỉ phép". Chỗ phân biệt được là ở đây, bằng một cờ ta đã có.
+       */
+      if (e.scope.startsWith('role:') && archivedRoles.has(e.scope.slice('role:'.length))) continue;
 
       /**
        * Node ĐÃ BỊ ĐÈ: xoá thẳng, không cần chờ đủ tuổi.
@@ -328,8 +343,21 @@ export class KnowledgeStore {
   /**
    * Sổ tay RIÊNG của một vai trò. Chỉ chính nó đọc.
    * Chưa gộp trùng — đó là việc của Librarian (M1).
+   *
+   * Cũng đi qua `echoesLibrary`: nhân viên vừa đọc xong một tài liệu là lúc nó
+   * dễ chép lại một câu trong đó nhất. Nhưng KHÔNG đi qua `worthLearning` —
+   * khác Trợ lý, nhân viên đã LÀM THẬT và đã đọc file, nên bài học của nó là
+   * chứng kiến chứ không phải nghe kể. Đó cũng là lý do nó giữ `confidence`
+   * 0.6, cao hơn 0.55 của bài học chung.
    */
-  addLesson(roleId: string, text: string, source: string): KnowledgeNode {
+  addLesson(roleId: string, text: string, source: string, docs: readonly string[] = []): KnowledgeNode | undefined {
+    const echo = echoesLibrary(text, docs);
+    if (echo) {
+      process.emitWarning(
+        `Bỏ qua kinh nghiệm của "${roleId}" vì chép lại tài liệu "${echo}": ${text.slice(0, 60)}…`,
+      );
+      return undefined;
+    }
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
     const node: KnowledgeNode = {
       id: `k/agents/${roleId}/${slug}`,
@@ -359,8 +387,30 @@ export class KnowledgeStore {
    * Chỉ Trợ lý được gọi hàm này (SPEC-offices.md §4.3). Kho chung nằm trong
    * prefix cache của mọi nhân viên; cho ai cũng ghi được thì nó phình theo cấp
    * số nhân và không ai chịu trách nhiệm.
+   *
+   * Trả `undefined` khi bài học bị TỪ CHỐI — xem `echoesLibrary`.
+   *
+   * ⚠ `confidence` 0.55, THẤP HƠN cả kinh nghiệm nhân viên tự rút (0.6). Không
+   * phải vì nó ít quan trọng hơn, mà vì NGUỒN của nó yếu hơn: nhân viên viết
+   * bài học sau khi ĐÃ LÀM việc và đã đọc file; Trợ lý viết sau khi đọc đúng
+   * một dòng `say` của nhân viên. Đó là nghe kể lại. Thang phải phản ánh nguồn,
+   * nếu không thì lời đồn xếp trên chứng kiến:
+   *
+   *   0.9  GHI NHỚ  — người dùng tự chốt
+   *   0.6  kinh nghiệm — nhân viên rút ra sau khi làm thật
+   *   0.55 bài học chung — Trợ lý suy từ receipt, chưa từng thấy file
    */
-  addSharedLesson(text: string, source: string): KnowledgeNode {
+  addSharedLesson(text: string, source: string, docs: readonly string[] = []): KnowledgeNode | undefined {
+    const echo = echoesLibrary(text, docs);
+    if (echo) {
+      // Nói ra, đừng nuốt. Một cơ chế lọc im lặng là một cơ chế không ai kiểm được.
+      process.emitWarning(
+        `Bỏ qua bài học chép lại tài liệu "${echo}": ${text.slice(0, 60)}… ` +
+          `Nội dung tài liệu ở tủ, không vào kho tri thức.`,
+      );
+      return undefined;
+    }
+
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
     const node: KnowledgeNode = {
       id: `k/shared/${slug}`,
@@ -370,7 +420,7 @@ export class KnowledgeStore {
       links: [],
       scope: 'shared',
       author: 'assistant',
-      confidence: 0.7,
+      confidence: 0.55,
       hits: 0,
       pinned: false,
       supersedes: [],
@@ -539,6 +589,70 @@ function* walk(dir: string): Generator<string> {
     if (entry.isDirectory()) yield* walk(abs);
     else if (entry.isFile() && entry.name.endsWith('.md')) yield abs;
   }
+}
+
+/**
+ * Bài học này có phải chỉ là chép lại một tài liệu không? Trả về tên file nếu có.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BẤT BIẾN "NODE TRI THỨC ≠ FILE NGƯỜI DÙNG TẢI LÊN" — GIỜ CÓ MÃ THI HÀNH. │
+ * │                                                                          │
+ * │ SPEC-library §1 tuyên bố ranh giới này từ 17/08, và không có dòng code    │
+ * │ nào giữ nó. Ngày 19/08 chính hệ thống vi phạm: Trợ lý ghi vào kho chung   │
+ * │ một câu diễn giải chính sách đổi trả của shop — thứ đã nằm sẵn trong tủ   │
+ * │ tài liệu, chính xác hơn, và tìm bằng `Grep` thì miễn phí.                 │
+ * │                                                                          │
+ * │ Cái giá của bản sao đó không phải token (36 token, không đáng kể) mà là   │
+ * │ SỰ THẬT: ngày người dùng sửa chính sách xuống 40%, file được cập nhật còn │
+ * │ node thì không — và node thắng, vì nó nằm sẵn trong đầu mọi nhân viên     │
+ * │ còn tài liệu thì phải đi tìm.                                            │
+ * │                                                                          │
+ * │ Cùng lớp lỗi với charter (§5f): hai chỗ giữ cùng một sự thật, không chỗ   │
+ * │ nào biết chỗ kia.                                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ ĐÂY LÀ LƯỚI THỨ HAI, KHÔNG PHẢI LƯỚI CHÍNH — ghi rõ để đừng ai tin quá │
+ * │                                                                          │
+ * │ Chồng từ chỉ bắt được bản CHÉP GẦN NGUYÊN VĂN. Chính câu của ngày 19/08  │
+ * │ ("giảm giá 60% thường không được đổi trả…") diễn giải khá xa bản gốc     │
+ * │ ("Hàng giảm giá trên 50% KHÔNG áp dụng chính sách đổi trả") — đo được    │
+ * │ chỉ ~0.47, LỌT qua lưới này. Bộ test ghi lại đúng ca đó để không ai lầm  │
+ * │ tưởng hàm này là hàng rào.                                               │
+ * │                                                                          │
+ * │ Hàng rào thật là `worthLearning`: ca đó chạy sạch nên lẽ ra KHÔNG BAO    │
+ * │ GIỜ được hỏi bài học. Hàm này chỉ lo phần còn lại — ca có trục trặc thật │
+ * │ mà Trợ lý nhân tiện chép luôn một đoạn tài liệu vào.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ngưỡng đặt CAO (0.6) chứ không hạ xuống cho vừa ca 19/08, vì hạ xuống là mua
+ * báo nhầm: *"Khi khách hỏi đổi trả, luôn hỏi mã đơn hàng trước khi trả lời"* là
+ * bài học thật về cách làm việc, mà nó cũng chạm ~0.4 từ của tài liệu chỉ vì
+ * nói cùng chủ đề. Bỏ sót thì còn lưới `worthLearning`; chặn nhầm thì mất hẳn.
+ *
+ * Đòi TỐI THIỂU 4 từ đặc trưng: bài học ngắn kiểu "luôn hỏi lại size" có quá ít
+ * từ để so, và ép nó qua ngưỡng tỉ lệ sẽ toàn báo nhầm.
+ */
+export function echoesLibrary(text: string, docs: readonly string[]): string | undefined {
+  const terms = tokenize(text);
+  if (terms.length < 4 || docs.length === 0) return undefined;
+
+  for (const doc of docs) {
+    const words = new Set(tokenize(doc));
+    if (words.size === 0) continue;
+    let hit = 0;
+    for (const t of terms) if (words.has(t)) hit++;
+    if (hit / terms.length >= ECHO_RATIO) return docNameOf(doc);
+  }
+  return undefined;
+}
+
+/** Bao nhiêu phần từ đặc trưng của bài học phải nằm sẵn trong tài liệu thì coi là chép lại. */
+const ECHO_RATIO = 0.6;
+
+/** Dòng đầu của bản văn tài liệu là tên file — xem `Office.libraryTexts()`. */
+function docNameOf(doc: string): string {
+  return doc.split('\n', 1)[0]?.trim() || 'tài liệu';
 }
 
 function slugify(s: string): string {

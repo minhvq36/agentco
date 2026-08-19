@@ -37,7 +37,7 @@ export interface LiveAgent {
   say: string;
 }
 
-export type PanelId = 'chat' | 'plans' | 'overview' | 'knowledge' | 'library';
+export type PanelId = 'chat' | 'plans' | 'overview' | 'knowledge' | 'library' | 'artifacts';
 
 export interface AppState {
   loading: boolean;
@@ -81,6 +81,52 @@ export interface AppState {
   libraryVersion: number;
 
   /**
+   * Số tài liệu ĐANG được bóc văn bản. → docs/SPEC-library.md §10
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TRẠNG THÁI CỦA CÁI TỦ, KHÔNG PHẢI TRẠNG THÁI CỦA CUỘC TRÒ CHUYỆN.       │
+   * │                                                                          │
+   * │ Bản trước nhét câu "Đang đọc N tài liệu…" vào `activity` — dòng trạng    │
+   * │ thái của ô chat. Hai lỗi cùng lúc:                                        │
+   * │                                                                          │
+   * │  1. SAI CHỖ. Người dùng vừa thả file vào tủ, không hỏi Trợ lý câu nào,   │
+   * │     mà ô chat lại báo bận. Việc đang xảy ra ở tủ thì phải hiện ở tủ.     │
+   * │  2. KHÔNG BAO GIỜ TẮT. `busy` về 0 thì nhánh đó không đặt `activity`     │
+   * │     nữa — nó chỉ không ghi gì, nên chuỗi cũ nằm nguyên trên màn hình     │
+   * │     cho tới khi người dùng tình cờ gõ một tin nhắn và ghi đè lên.        │
+   * │     Đúng lớp lỗi "/help ba chấm quay mãi": bật được mà không tắt được.   │
+   * │                                                                          │
+   * │ Một con SỐ chứ không phải một lá cờ: giao diện phải nói được "còn 3 file"│
+   * │ chứ không chỉ "đang bận".                                                │
+   * │                                                                          │
+   * │ Chỗ chat THẬT SỰ cần biết vẫn còn nguyên và không đi qua đây: khi một ca │
+   * │ chạy phải đứng chờ bóc xong, `office.run()` phát `office.state` riêng    │
+   * │ với câu "Đang đọc tài liệu X…". Đó mới là lúc im lặng gây hiểu nhầm.     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  libraryBusy: number;
+
+  /**
+   * Tăng mỗi khi kho tri thức đổi.
+   *
+   * ⚠ Trước 19/08 `KnowledgePanel` bám vào `canvas.knowledge.total` — tức là
+   * SỐ ĐẾM, không phải sự kiện. Nó chỉ nạp lại khi số node thay đổi, nên mọi
+   * thay đổi giữ nguyên số lượng đều vô hình cho tới khi người dùng bấm F5:
+   * sửa nội dung một ghi chú, một node bị đè, dọn một node rồi thêm một node.
+   * Đếm không phải là biết đã đổi.
+   */
+  knowledgeVersion: number;
+
+  /**
+   * Tăng mỗi khi có kết quả mới. → docs/SPEC-artifacts.md
+   *
+   * Không cần sự kiện riêng từ server: kết quả chỉ sinh ra khi một việc chạy
+   * xong, mà `task.done` / `plan.finished` đã bay tới rồi. Thêm một sự kiện nữa
+   * để nói lại cùng một chuyện là thêm một chỗ có thể lệch nhau.
+   */
+  artifactsVersion: number;
+
+  /**
    * File vừa được thả lên node Tủ tài liệu, đang chờ panel nhận.
    *
    * Canvas KHÔNG tự tải lên. Cả luồng tải lên — hỏi lại khi trùng tên, câu từ
@@ -112,6 +158,9 @@ const initial: AppState = {
   sending: false,
   activity: null,
   libraryVersion: 0,
+  libraryBusy: 0,
+  knowledgeVersion: 0,
+  artifactsVersion: 0,
   pendingDocs: null,
   panel: null,
   selected: null,
@@ -217,6 +266,10 @@ export const actions = {
       live: {},
       cost: null,
       selected: null,
+      // Tủ tài liệu là của TỪNG văn phòng. Không dọn thì mở văn phòng khác vẫn
+      // thấy "đang đọc 2 tài liệu" của văn phòng vừa rời đi.
+      libraryBusy: 0,
+      activity: null,
       loading: true,
     });
 
@@ -578,6 +631,8 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
 
     case 'task.done': {
       const ok = e.status === 'done';
+      // Việc xong = có thể có kết quả mới trên đĩa. Panel Kết quả tự nạp lại.
+      if (e.artifacts.length) set({ artifactsVersion: state.artifactsVersion + 1 });
       setLive(e.role, { status: ok ? 'done' : 'error', say: e.say });
       clearTimeout(doneTimers[e.role]);
       doneTimers[e.role] = setTimeout(() => {
@@ -638,22 +693,22 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       break;
 
     case 'knowledge.changed':
+      // Bump LUÔN, kể cả khi phát lại từ log: ngăn kéo Tri thức bám vào con số
+      // này chứ không bám vào số node, nên nó thấy được cả những thay đổi giữ
+      // nguyên số lượng (sửa nội dung, node bị đè, dọn một thêm một).
+      set({ knowledgeVersion: state.knowledgeVersion + 1 });
       if (fromLive) void actions.refreshCanvas();
       break;
 
     /**
      * Tủ tài liệu đổi. Chỉ bump một số đếm — panel tự nạp lại danh sách.
      *
-     * `busy > 0` được nói ra ở dòng trạng thái vì nó là câu trả lời cho một câu
-     * hỏi có thật: "sao giao việc rồi mà chưa thấy gì chạy?". Văn phòng đang
-     * chờ đọc xong tài liệu (SPEC-library.md §10), và im lặng ở đây là đúng cái
-     * khoảng mù đã sửa ở `office.activity`.
+     * `libraryBusy` GHI MỖI LẦN, kể cả khi bằng 0. Ghi có điều kiện là cách một
+     * dòng trạng thái mắc kẹt trên màn hình vĩnh viễn: nhánh "hết bận" không
+     * ghi gì cả thì giá trị cũ sống mãi. Xem chú thích ở `AppState.libraryBusy`.
      */
     case 'library.changed':
-      set({
-        libraryVersion: state.libraryVersion + 1,
-        ...(e.busy > 0 ? { activity: `Đang đọc ${e.busy} tài liệu…` } : {}),
-      });
+      set({ libraryVersion: state.libraryVersion + 1, libraryBusy: e.busy });
       // Node Tủ tài liệu trên sơ đồ hiện SỐ tài liệu — không nạp lại thì con số
       // đó đứng im và sơ đồ nói sai về chính thứ người dùng vừa làm.
       if (fromLive) void actions.refreshCanvas();

@@ -8,6 +8,7 @@
 
 import type {
   ArchivedAgent,
+  ArtifactRecord,
   CanvasState,
   CompanyModels,
   CompanyView,
@@ -183,6 +184,29 @@ export const api = {
     }),
 
   docUrl: (id: string, name: string) => `/api/office/${enc(id)}/library/file?name=${enc(name)}`,
+
+  // ── kết quả (artifacts) → docs/SPEC-artifacts.md
+  //
+  // CỐ Ý không có hàm `upload`. Đây không phải tủ tài liệu thứ hai: không có
+  // đường nào từ giao diện đưa một kết quả trở lại làm đầu vào cho nhân viên.
+  // Muốn dùng lại thì người dùng tự bàn giao.
+
+  /** Quét thư mục kết quả. Không catalog — file do nhân viên ghi lúc đang chạy. */
+  artifacts: (id: string) => call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts`),
+
+  /**
+   * URL của một kết quả. `download` phân biệt XEM với TẢI VỀ, và khác biệt là thật:
+   * xem thì bị chặn theo dung lượng và có `content-type` đúng để trình duyệt tự
+   * hiện; tải về thì luôn `octet-stream` + `content-disposition`.
+   */
+  artifactUrl: (id: string, p: string, download = false) =>
+    `/api/office/${enc(id)}/artifacts/file?path=${enc(p)}${download ? '&download=1' : ''}`,
+
+  /** Xoá hẳn. Một mức — nhưng khác tủ tài liệu, ĐÂY LÀ BẢN DUY NHẤT. */
+  removeArtifact: (id: string, p: string) =>
+    call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?path=${enc(p)}`, {
+      method: 'DELETE',
+    }),
 
   plans: (id: string) => call<{ plans: PlanRecord[] }>(`/api/office/${enc(id)}/plans`),
 

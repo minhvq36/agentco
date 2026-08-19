@@ -408,6 +408,24 @@ Mình chia thành 3 việc:
 
 ### 8c. Tầng 2 — chặn từng lần, dùng `canUseTool`
 
+> ## ⚠⚠ ĐỌC TRƯỚC KHI XÂY MỤC NÀY — PHÉP ĐO 19/08 CHƯA XÁC NHẬN CƠ CHẾ
+>
+> Toàn bộ mục 8c dưới đây dựng trên kiểu trong `.d.ts`, **chưa từng chạy thật**. Ngày 19/08 lần đầu có người thử `canUseTool` trong dự án này, và **nó không nổ một lần nào**:
+>
+> | thử | kết quả |
+> |---|---|
+> | `canUseTool` với `allowedTools: []` | không nổ |
+> | `canUseTool` + `prompt` là streaming input | không nổ |
+> | hook `PreToolUse`, có và không có `matcher: '*'` | không nổ |
+>
+> Đo bằng cách ghi mọi lời gọi ra file: **rỗng tuyệt đối** trong khi tool vẫn chạy bình thường. Chi tiết: `SPEC-offices.md` §4.7.
+>
+> **⚠ Ranh giới của phép đo — đừng suy rộng hơn:** chỉ đo với `Grep`/`Glob`, tức là tool **chỉ-đọc**. Suy đoán tốt nhất là chúng được CLI tự duyệt nên không bao giờ đi qua đường phê duyệt. `Bash` và tool ghi **chưa đo**, nên thiết kế dưới đây **chưa bị bác bỏ**.
+>
+> **Việc bắt buộc trước khi xây:** một spike 10 phút — cho một vai trò khai `Bash`, giao nó chạy một lệnh, và kiểm `canUseTool` có nổ không. Nếu không nổ thì cả tầng 2 phải thiết kế lại (khả năng cao là bằng **tool MCP tự khai**, nơi ta tự chạy tác vụ nên không phụ thuộc cơ chế duyệt nào).
+>
+> Đây đúng luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*, áp cho một tính năng **chưa viết**: đừng lên lịch dựa trên một cơ chế chưa ai thấy chạy.
+
 Đây là chỗ SDK làm sẵn cho ta, và làm tốt hơn mọi cách tự chế. Kiểm trên `sdk.d.ts@0.3.231`:
 
 ```ts

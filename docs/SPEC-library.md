@@ -242,6 +242,68 @@ Số trang · tên sheet · tên cột · tiêu đề mục · 40 chữ đầu �
 
 ---
 
+## 8b. ⚠ ĐÍNH CHÍNH 19/08 — điểm 2 ở trên CHƯA BAO GIỜ ĐÚNG
+
+> *"Trợ lý biết hợp đồng 34 trang **trước khi** chia việc."*
+
+**Câu đó sai suốt từ 17/08 tới 19/08.** `INDEX.md` được dựng ra tử tế, ghi ra đĩa tử tế, rồi **không ai đưa nó cho Trợ lý**. Kiểm bằng một lệnh:
+
+```
+grep "INDEX.md" src/core/     → 0 kết quả
+assistant.ts                   → allowedTools: []
+```
+
+Trợ lý không có tool, nên nó **không có đường nào** đọc file đó. Lần thứ hai của cùng một bài học §5d: *một bất biến chỉ có thật khi có mã nguồn thi hành nó.*
+
+### Cái giá, đo được trên máy người dùng (bài 2, 19/08)
+
+| | trước | sau |
+|---|---|---|
+| Trợ lý hỏi lại trước khi làm | **có** — *"size khách muốn đổi còn hàng không?"* | không |
+| `inputs` của task | `[]` | `["library/files/doi-tra.md"]` |
+| ràng buộc do Trợ lý viết | 7, trong đó **4 cái chết** khi nhân viên đọc tài liệu, và một cái là **nhánh IF** giao cho model tự rẽ | 5, đều dùng được |
+| nhân viên | **9 lượt · $0.0582** — 4 lượt `Grep` mò + đọc trùng một file 2 lần | **6 lượt · $0.0296** |
+| cả ca | **11 lượt · $0.1082** | **8 lượt · $0.0511** |
+
+Câu hỏi *"size còn hàng không"* là câu mà **câu trả lời không đổi được việc phải làm** — chính sách đã cấm đổi từ trước. Nhưng Trợ lý **không có cách nào biết điều đó**. Đây không phải model quá thận trọng, và **không sửa được bằng prompt**: đó là lỗ hổng dữ liệu.
+
+> **Thước đo nâng thành luật:** *một câu hỏi làm rõ chỉ đáng hỏi khi câu trả lời làm ĐỔI việc phải làm.*
+
+### Cách sửa: DỮ LIỆU, không phải LỜI DẶN
+
+`LibraryStore.manifest()` — khối nhỏ đi vào **prefix được cache** của Trợ lý:
+
+```markdown
+# Documents the human put in this office's library
+
+- doi-tra.md — 15 dòng
+- bang-gia.md — 17 dòng
+
+Originals are in `library/files/`. Extracted text for keyword search is in `library/text/`.
+When a task needs one of these, put its path in that task's `inputs`.
+```
+
+Đo thật: **103 token cho 5 tài liệu**, trả ~0.1× mỗi lượt vì nằm trong cache.
+
+**Hai ràng buộc giữ cho nó không phá cache:**
+
+1. **Chỉ tên + hình dạng, KHÔNG `preview`.** Preview làm khối vừa to vừa hay đổi. Trợ lý cần biết *có gì trong tủ* để chỉ đường, không cần biết *nội dung nói gì* — nó không phải người đọc tài liệu.
+2. **Bỏ qua tài liệu đang bóc.** `pending`/`extracting` là trạng thái thoáng qua vài giây; đưa vào là mỗi lần thả một file thì prefix đổi **ba** lần thay vì hai.
+
+`emitLibrary()` gọi `refreshAssistantContext()` — thả tài liệu xong hỏi ngay thì Trợ lý đã thấy.
+
+### Trợ lý vẫn KHÔNG có tool — đã thử trao `Grep`, và đã thu lại
+
+Bảng kê chỉ nói *có file gì*, nên ý muốn tự nhiên là cho Trợ lý `Grep` để với tới nội dung. **Đã thử ngày 19/08 và đã bỏ.** Chi tiết ở `SPEC-offices.md` §4.7; tóm tắt: không có cơ chế nào của SDK chặn được `Grep` theo thư mục, nên Trợ lý sẽ đọc được cả sổ tay riêng của nhân viên đã bị ngắt dây — và tệ hơn, nó **nói với người dùng rằng nó bị chặn** trong khi không hề bị.
+
+**Cái giá của việc bỏ: đo được là bằng không.** Trong cả hai lần chạy lại bài 2, Trợ lý **không gọi tool nào** — bảng kê trong prefix đã đủ để nó lập kế hoạch đúng và đưa `inputs` đúng file.
+
+⚠ **Nhưng con rò thứ hai tìm ra ở đây thì có thật và đã vá:** `assistant.ts` chỉ đặt `allowedTools: []` mà **không đặt `tools`**. Đó chính xác là con rò đã vá cho worker ngày 16/08 — `allowedTools` không cắt tool khỏi ngữ cảnh, nên **định nghĩa của toàn bộ bộ tool Claude Code vẫn nằm trong prefix của `route()`**, thứ chạy ở **mỗi tin nhắn người dùng gõ**. Worker được vá 16/08; Trợ lý bị bỏ quên ba ngày. Giờ `tools: []` được truyền tường minh.
+
+Ranh giới *"ghi chú ≠ tài liệu"* vẫn nằm trong `ASSISTANT_CORE`, nhưng ở dạng ngắn và **đúng sự thật**: Trợ lý không có tool, không tự mở file, và **tài liệu thắng khi mâu thuẫn với ghi chú**.
+
+---
+
 ## 9. Nạp file vào: một đường chính, hai cửa phụ miễn phí
 
 **Đường chính: upload HTTP, kể cả khi cùng một máy.**

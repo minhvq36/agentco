@@ -24,9 +24,20 @@ import path from 'node:path';
 import YAML from 'yaml';
 
 import type { LoadedOffice } from './config.js';
+import {
+  NODE_SIZE,
+  SHELF_GAP,
+  agentSlot,
+  arrangeAll,
+  clashes,
+  firstFreeSlot,
+  type NodeKind,
+  type Point,
+} from './layout-geometry.js';
 import { isSafeId } from './paths.js';
 
-export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'library' | 'mcp';
+export { NODE_SIZE };
+export type { NodeKind };
 
 export interface LayoutNode {
   id: string;
@@ -62,15 +73,6 @@ export const LIBRARY_NODE = 'library';
 export const agentNodeId = (roleId: string): string => `agent:${roleId}`;
 export const mcpNodeId = (server: string): string => `mcp:${server}`;
 
-/** Kích thước node — server và client PHẢI thống nhất để tự sắp xếp khớp nhau. */
-export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
-  assistant: { w: 232, h: 84 },
-  agent: { w: 196, h: 88 },
-  knowledge: { w: 200, h: 64 },
-  library: { w: 200, h: 64 },
-  mcp: { w: 168, h: 56 },
-};
-
 const COORD_LIMIT = 20_000;
 const MAX_NODES = 200;
 
@@ -105,24 +107,40 @@ export class LayoutStore {
    */
   read(): { layout: LayoutFile; missing: Set<string> } {
     const raw = this.readRaw();
+    const stored = new Map(raw.nodes.map((n) => [n.id, n]));
+
+    /**
+     * LƯỢT 0 — danh sách node PHẢI có mặt, chưa cần toạ độ.
+     *
+     * Tách hẳn bước "có những ai" khỏi bước "ai ngồi đâu". Bản trước trộn hai
+     * việc vào một vòng lặp, và đó là lý do toạ độ mặc định phải viết tay từng
+     * con số: lúc đặt Trợ lý thì còn chưa biết văn phòng có bao nhiêu nhân viên
+     * để căn giữa theo.
+     */
+    const wanted: LayoutNode[] = [{ id: ASSISTANT_NODE, kind: 'assistant', x: 0, y: 0 }];
+    for (const roleId of this.office.roles.keys()) {
+      if (this.office.archivedRoles.has(roleId)) continue;
+      wanted.push({ id: agentNodeId(roleId), kind: 'agent', role: roleId, x: 0, y: 0 });
+    }
+    for (const server of Object.keys(this.office.company.mcpServers)) {
+      wanted.push({ id: mcpNodeId(server), kind: 'mcp', server, x: 0, y: 0 });
+    }
+    // Hai kho đứng cạnh nhau ở hàng dưới cùng: TRÁI = kho tri thức (hệ thống tự
+    // học), PHẢI = tủ tài liệu (người dùng đưa vào). Thứ tự này giờ do
+    // `arrangeAll` giữ, không còn là hai hằng số phải nhớ khớp nhau.
+    wanted.push({ id: KNOWLEDGE_NODE, kind: 'knowledge', x: 0, y: 0 });
+    wanted.push({ id: LIBRARY_NODE, kind: 'library', x: 0, y: 0 });
+
+    // Bố cục sạch, tính bằng ĐÚNG hàm mà nút "Sắp xếp lại sơ đồ" chạy.
+    const tidy = arrangeAll(wanted);
+
     const nodes: LayoutNode[] = [];
     const seen = new Set<string>();
-
     const keep = (n: LayoutNode): void => {
       if (seen.has(n.id)) return;
       seen.add(n.id);
       nodes.push(n);
     };
-
-    const stored = new Map(raw.nodes.map((n) => [n.id, n]));
-
-    const assistant = stored.get(ASSISTANT_NODE) ?? {
-      id: ASSISTANT_NODE,
-      kind: 'assistant' as const,
-      x: 520,
-      y: 40,
-    };
-    keep(assistant);
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
@@ -131,70 +149,32 @@ export class LayoutStore {
      * │ Bản trước dùng `agentSlot(i)` với `i` = thứ tự ALPHABET của vai     │
      * │ trò, không kiểm ô đó đã có ai ngồi chưa. Thêm một nhân viên tên sắp │
      * │ xếp TRƯỚC người cũ thì nó rơi ĐÚNG lên trên người cũ, và người dùng │
-     * │ thấy "bấm Thêm mà không có gì xảy ra". Bấm "Sắp xếp lại sơ đồ" mới  │
-     * │ hiện ra, vì lúc đó mới rải lại toàn bộ. Trông y hệt một lỗi ngẫu    │
-     * │ nhiên "lúc được lúc không", nhưng tái hiện được 100%.               │
+     * │ thấy "bấm Thêm mà không có gì xảy ra".                              │
      * │                                                                    │
      * │ ⚠ HAI LƯỢT, và đây là nửa dễ làm sai: phải đặt xong MỌI node đã có  │
      * │ toạ độ rồi mới cấp ô cho node mới. Duyệt một lượt theo alphabet thì │
      * │ node mới tên "ai-do" được cấp ô TRƯỚC khi "nguoi-viet" kịp vào danh │
-     * │ sách — và ta lại kiểm va chạm với một danh sách còn rỗng. Sửa xong  │
-     * │ mà vẫn chồng đúng như cũ.                                           │
+     * │ sách — và ta lại kiểm va chạm với một danh sách còn rỗng.           │
      * └────────────────────────────────────────────────────────────────────┘
      */
-    const fresh: string[] = [];
-    for (const roleId of this.office.roles.keys()) {
-      if (this.office.archivedRoles.has(roleId)) continue;
-      const prev = stored.get(agentNodeId(roleId));
-      if (prev) keep({ ...prev, kind: 'agent', role: roleId });
-      else fresh.push(roleId);
+    const fresh: LayoutNode[] = [];
+    for (const n of wanted) {
+      const prev = stored.get(n.id);
+      if (prev) keep({ ...n, x: prev.x, y: prev.y });
+      else fresh.push(n);
     }
 
-    const servers = Object.keys(this.office.company.mcpServers);
-    servers.forEach((server, i) => {
-      const id = mcpNodeId(server);
-      const prev = stored.get(id);
-      keep(prev ? { ...prev, kind: 'mcp', server } : { id, kind: 'mcp', server, x: 980, y: 40 + i * 90 });
-    });
-
-    // Hai kho đứng cạnh nhau ở hàng dưới cùng: TRÁI = kho tri thức (hệ thống tự
-    // học), PHẢI = tủ tài liệu (người dùng đưa vào). Đặt xa nhau thì người dùng
-    // không bao giờ nhìn thấy chúng cùng lúc, và đó chính là lúc hai khái niệm
-    // lẫn vào nhau. ⚠ Thứ tự phải khớp `autoArrange()` ở web/src/canvas/geometry.ts.
-    keep(
-      stored.get(KNOWLEDGE_NODE) ?? {
-        id: KNOWLEDGE_NODE,
-        kind: 'knowledge' as const,
-        x: 300,
-        y: 470,
-      },
-    );
-    keep(
-      stored.get(LIBRARY_NODE) ?? {
-        id: LIBRARY_NODE,
-        kind: 'library' as const,
-        x: 524,
-        y: 470,
-      },
-    );
-
-    // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho người mới.
-    // `firstFreeSlot` đọc chính `nodes`, nên hai người thêm cùng lúc cũng không
-    // đụng nhau — người thứ hai đã thấy ô của người thứ nhất.
-    for (const roleId of fresh) {
-      keep({
-        id: agentNodeId(roleId),
-        kind: 'agent',
-        role: roleId,
-        ...firstFreeSlot(nodes),
-      });
-    }
-
-    // Node mồ côi: file yaml/mcp server đã biến mất. Giữ lại + báo đỏ.
-    //
-    // ⚠ Vai trò đã LƯU TRỮ không phải mồ côi. File của nó còn nguyên, chỉ là
-    // người dùng bảo cất đi. Đưa nó vào đây là "cất xong nó hiện lại, màu đỏ" —
-    // tệ hơn cả không cho cất.
+    /**
+     * Node mồ côi: file yaml / mcp server đã biến mất. Giữ lại + báo đỏ.
+     *
+     * Xếp TRƯỚC lượt hai chứ không phải sau: chúng đang chiếm chỗ thật trên sơ
+     * đồ, nên node mới phải tránh chúng. Bản trước nối chúng vào cuối, tức là
+     * `firstFreeSlot` không nhìn thấy chúng và có thể đặt người mới đè lên.
+     *
+     * ⚠ Vai trò đã LƯU TRỮ không phải mồ côi. File của nó còn nguyên, chỉ là
+     * người dùng bảo cất đi. Đưa nó vào đây là "cất xong nó hiện lại, màu đỏ" —
+     * tệ hơn cả không cho cất.
+     */
     const missing = new Set<string>();
     for (const n of raw.nodes) {
       if (seen.has(n.id)) continue;
@@ -203,6 +183,9 @@ export class LayoutStore {
       missing.add(n.id);
       keep(n);
     }
+
+    // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho node mới.
+    for (const n of fresh) keep({ ...n, ...this.spotFor(n, nodes, tidy) });
 
     const byId = new Map(nodes.map((n) => [n.id, n]));
     // Chưa có file = mọi nhân viên đều được giao việc. Đây là phép thử
@@ -233,6 +216,39 @@ export class LayoutStore {
     }
 
     return { layout: { version: 1, nodes, edges }, missing };
+  }
+
+  /**
+   * Chỗ ngồi cho một node CHƯA TỪNG có toạ độ. Ba nước, dừng ở nước đầu chạy được.
+   *
+   * 1. **Chưa có `layout.json`** = văn phòng mới tinh, chưa ai kéo gì → dùng
+   *    nguyên bố cục sạch. Đây là chỗ sửa lỗi "tạo văn phòng mới thì canvas
+   *    lệch": trước đây nhánh này là ba hằng số viết tay không căn theo nhau.
+   *
+   * 2. **Kho mọc thêm vào sơ đồ đã có** — ca thật đang nằm trên đĩa: văn phòng
+   *    lưu `layout.json` từ trước khi có node Tủ tài liệu. Bố cục sạch tính
+   *    theo số nhân viên, còn kho anh em thì người dùng đã kéo đi chỗ khác →
+   *    hai kho rơi ra hai nơi, lệch cả hàng. Bám theo ANH EM của nó thì hàng
+   *    dưới luôn thẳng, dù người dùng đã kéo nó đi đâu.
+   *
+   * 3. Còn lại: chỗ sạch nếu chỗ đó trống, không thì ô lưới trống đầu tiên.
+   */
+  private spotFor(node: LayoutNode, placed: readonly LayoutNode[], tidy: ReadonlyMap<string, Point>): Point {
+    if (!this.exists) return tidy.get(node.id) ?? agentSlot(0);
+
+    if (node.kind === 'library' || node.kind === 'knowledge') {
+      const twinKind = node.kind === 'library' ? 'knowledge' : 'library';
+      const twin = placed.find((n) => n.kind === twinKind);
+      if (twin) {
+        const step = NODE_SIZE.knowledge.w + SHELF_GAP;
+        const spot = { x: node.kind === 'library' ? twin.x + step : twin.x - step, y: twin.y };
+        if (!clashes(spot, node.kind, placed)) return spot;
+      }
+    }
+
+    const want = tidy.get(node.id);
+    if (want && !clashes(want, node.kind, placed)) return want;
+    return firstFreeSlot(placed, node.kind);
   }
 
   /**
@@ -326,19 +342,36 @@ export class LayoutStore {
   }
 
   /**
-   * Đưa một nhân viên MỚI lên sơ đồ: đặt vào ô trống, nối dây từ Trợ lý, GHI ĐĨA.
+   * Đưa một nhân viên lên sơ đồ: đặt vào ô trống, GHI ĐĨA.
    *
    * Luôn `writeRaw`, kể cả khi không có gì để thêm. Bản trước gọi
    * `connectAssistant` và nó `return` sớm nếu cạnh đã tồn tại — mà cạnh LUÔN tồn
    * tại khi chưa có layout.json (lúc đó `read()` tự sinh cạnh cho mọi vai trò).
    * Kết quả: vị trí vừa tính ra không bao giờ được lưu, và mỗi lần đọc lại nó
    * được tính lại từ đầu.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `connect` PHẢI LÀ QUYẾT ĐỊNH CỦA NGƯỜI GỌI, KHÔNG PHẢI MẶC ĐỊNH.        │
+   * │                                                                          │
+   * │ Nhân viên MỚI thì nối: thêm một người rồi không giao được việc cho họ là │
+   * │ một thao tác không có kết quả, và người dùng không đoán ra là còn thiếu  │
+   * │ một sợi dây.                                                             │
+   * │                                                                          │
+   * │ Nhân viên KHÔI PHỤC từ lưu trữ thì KHÔNG nối. Ba lý do:                  │
+   * │  1. Nối dây = vào roster = vào prefix được cache của MỌI lượt trò chuyện.│
+   * │     Một cú bấm "đưa trở lại" không được phép âm thầm bật lại một khoản   │
+   * │     chi thu suốt ca.                                                     │
+   * │  2. "Đưa trở lại" và "cho nhận việc" là HAI ý định. Một nút không được   │
+   * │     làm hai việc, nhất là khi việc thứ hai tốn tiền.                     │
+   * │  3. Người dùng có thể đã CỐ Ý ngắt dây trước khi cất. Tự nối lại là ghi  │
+   * │     đè lên một quyết định họ đã ra — và ghi đè im lặng.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
-  placeAgent(roleId: string): void {
+  placeAgent(roleId: string, connect: boolean): void {
     const { layout } = this.read();
     const to = agentNodeId(roleId);
     if (!layout.nodes.some((n) => n.id === to)) return;
-    if (!layout.edges.some((e) => e.from === ASSISTANT_NODE && e.to === to)) {
+    if (connect && !layout.edges.some((e) => e.from === ASSISTANT_NODE && e.to === to)) {
       layout.edges.push({ from: ASSISTANT_NODE, to });
     }
     this.writeRaw(layout);
@@ -461,44 +494,6 @@ function sanitizeEdges(raw: unknown, byId: ReadonlyMap<string, LayoutNode>): Lay
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return [...a].sort().join(' ') === [...b].sort().join(' ');
-}
-
-function agentSlot(i: number): { x: number; y: number } {
-  const perRow = 4;
-  return {
-    x: 140 + (i % perRow) * (NODE_SIZE.agent.w + 40),
-    y: 250 + Math.floor(i / perRow) * (NODE_SIZE.agent.h + 60),
-  };
-}
-
-/**
- * Ô lưới đầu tiên KHÔNG chạm vào node nào đã đặt.
- *
- * Kiểm bằng hình chữ nhật thật chứ không bằng "toạ độ có trùng nhau không":
- * người dùng kéo node đi đâu tuỳ ý, nên hai node lệch nhau 10px vẫn là chồng
- * lên nhau với con mắt. Đây là chỗ lỗi "thêm nhân viên mà không thấy gì" bị
- * chặn ở gốc — không cần ai nhớ phải gọi hàm nào.
- *
- * Có trần vòng lặp: hết ô thì trả ô cuối, thà hai node chồng nhau còn hơn treo.
- */
-function firstFreeSlot(placed: readonly LayoutNode[]): { x: number; y: number } {
-  const GAP = 24;
-  const mine = NODE_SIZE.agent;
-
-  for (let i = 0; i < MAX_NODES; i++) {
-    const slot = agentSlot(i);
-    const clash = placed.some((n) => {
-      const s = NODE_SIZE[n.kind];
-      return (
-        slot.x < n.x + s.w + GAP &&
-        n.x < slot.x + mine.w + GAP &&
-        slot.y < n.y + s.h + GAP &&
-        n.y < slot.y + mine.h + GAP
-      );
-    });
-    if (!clash) return slot;
-  }
-  return agentSlot(placed.length);
 }
 
 function clampCoord(v: unknown): number {

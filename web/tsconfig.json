@@ -20,7 +20,7 @@
     "allowImportingTsExtensions": true,
 
     "types": ["vite/client", "node"],
-    "paths": { "@/*": ["./src/*"] }
+    "paths": { "@/*": ["./src/*"], "@core/*": ["../src/core/*"] }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "../src/core/layout-geometry.ts"]
 }

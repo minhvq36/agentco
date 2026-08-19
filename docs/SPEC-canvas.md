@@ -223,7 +223,7 @@ Daemon bind `127.0.0.1` **không** có nghĩa là chỉ mình bạn gọi đư�
 |---|---|
 | `Sec-Fetch-Site` / `Origin` trên mọi method ghi | trang lạ giao việc đốt token, xoá nhân viên, ngắt sạch dây |
 | `Host` phải là localhost/host đã bind | DNS rebinding (tên miền của kẻ tấn công trỏ về 127.0.0.1) |
-| `readArtifact` chặn mọi segment bắt đầu bằng `.` | `?path=.state/assistant-session.json` — `safeJoin` cho qua vì `.state/` nằm **bên trong** thư mục công ty |
+| `ArtifactStore.resolve` nhốt trong `artifacts/`, chặn segment bắt đầu bằng `.`, và so lại bằng đường dẫn ĐÃ GIẢI | `?path=.state/assistant-session.json` — `safeJoin` cho qua vì `.state/` nằm **bên trong** thư mục công ty; và `?path=office.yaml`, `roles/*.yaml` — hàm cũ `readArtifact` cho qua hết vì nó chỉ chặn dấu chấm. → `SPEC-artifacts.md` §6 |
 
 CLI và Telegram bridge không gửi `Origin`/`Sec-Fetch-Site` nên không bị ảnh hưởng — đã kiểm bằng `agentco stop`.
 

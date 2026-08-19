@@ -260,6 +260,42 @@ Trợ lý thì mỗi lúc chỉ làm một việc (hòm thư khoá), nên không
 > **Ra bản nháp để SỬA còn hơn viết mới từ đầu.**
 > Đã có ở chỗ bàn giao việc xếp hàng (§11f của `SPEC-tools-approval.md`) và ở chỗ không giết worker đang chạy. Đổi model là ca thứ ba: thứ đang chạy chạy nốt, thứ mới áp dụng cho luồng mới. Không có ngoại lệ nào cần "dừng tất cả để áp dụng cấu hình".
 
+### 4.7 Trợ lý KHÔNG có tool — đã thử trao `Grep`, đo, rồi thu lại (19/08)
+
+Người dùng nêu đúng một câu hỏi: *"Trợ lý phải là người biết rõ tủ tài liệu nhất, sao không cho nó quyền truy cập?"* Không có lý do nguyên tắc nào chống lại — `allowedTools: []` được chọn vì *"Trợ lý không tự làm việc tay chân"*, mà đọc mục lục thì không phải làm việc tay chân.
+
+Nên đã thử: `tools: ['Grep','Glob']`, kèm một cổng chặn theo thư mục để nó **không** đọc được sổ tay riêng của nhân viên đã bị ngắt dây. Vùng cho phép suy thẳng từ `assignableRoles()` — cùng hàm `roster()` dùng, nên chỉ có MỘT nguồn sự thật và cắt dây thì cả hai đổi cùng lúc.
+
+**Cổng đó không bao giờ chạy. Ba cơ chế, không cơ chế nào nổ một lần nào:**
+
+| thử | kết quả |
+|---|---|
+| `canUseTool` (với `allowedTools: []`) | không nổ |
+| `canUseTool` + đổi `prompt` sang streaming input | không nổ |
+| hook `PreToolUse`, có và không có `matcher: '*'` | không nổ |
+
+Đo bằng cách ghi **mọi** quyết định của cổng ra `.state/gate.log`: file **rỗng tuyệt đối** trong khi `Grep` vẫn chạy và vẫn đọc được đúng file lẽ ra bị cấm.
+
+⚠ **Ranh giới của phép đo, đừng suy rộng hơn:** đã đo với `Grep`/`Glob` — tool **chỉ-đọc**. Suy đoán tốt nhất là chúng được CLI tự duyệt nên không đi qua đường phê duyệt nào. **Chưa đo** `Bash` hay tool ghi, nên §8 (cổng duyệt) **chưa bị bác bỏ** — nhưng phải đo lại trước khi xây, đừng tin vào tài liệu.
+
+#### 🔥 Vì sao phải BỎ HẲN chứ không "tạm chấp nhận không có cổng"
+
+Khi bị hỏi về một file ngoài vùng cho phép, Trợ lý trả lời:
+
+> *"Mình không có quyền xem file cấu hình hệ thống như office.yaml đâu, chỉ đọc được trong library, knowledge và artifacts thôi."*
+
+**Nó có toàn quyền.** Nó đang diễn theo bản đồ thư mục ta viết trong prompt. Không có hàng rào thì người dùng còn biết là không có; một hàng rào **giả** được model thuật lại đầy tự tin thì tệ hơn hẳn — và đó đúng là luật *"đừng bao giờ để model tự giải thích hệ thống cho người dùng"* (§5d): nó không có quyền truy cập nội quan, nó bịa một câu nghe hợp lý, rồi người dùng tin.
+
+#### Đường ra có tồn tại, và vì sao vẫn không đi
+
+Tự khai một tool MCP của mình (`createSdkMcpServer` + `tool()`) với tham số `where` là **ENUM** dựng từ `assignableRoles()` thì thao tác sai **không diễn đạt được** — chặn bằng cấu trúc, mạnh hơn mọi cổng kiểm. Nhưng *"Trợ lý KHÔNG gắn MCP"* là luật cứng: MCP phá prompt cache khi resume (~36 000 token quy đổi mỗi lượt), mà `route()` resume ở **mọi tin nhắn**. Đổi 36K token/lượt lấy một tiện ích là lỗ nặng.
+
+#### Cái giá của việc bỏ: đo được là BẰNG KHÔNG
+
+Cả hai lần chạy lại bài 2 (có tool và không tool), Trợ lý **không gọi tool nào**. Bảng kê tủ tài liệu trong prefix (`SPEC-library.md` §8b) đã đủ để nó lập kế hoạch đúng và đưa `inputs` trỏ đúng file. Thứ giải được bài toán là **dữ liệu trong prefix**, không phải khả năng đi tìm.
+
+> **Bài học: một khả năng không chặn được thì đừng trao.** Và nếu đã trao rồi mới biết không chặn được, thu lại — đừng vá bằng một câu dặn trong prompt, vì model sẽ diễn câu dặn đó thành một lời bảo đảm sai.
+
 ---
 
 ## 5. Worker — cũng hai lớp
@@ -297,7 +333,7 @@ Xoá hẳn thì mất `roles/<id>.yaml` và skills. Nhưng **sổ tay kinh nghi�
 
 ### `secrets` — chìa khoá tool, cấp theo từng người
 
-Vai trò khai **TÊN** chìa; giá trị nằm ở `company/.state/secrets.json` (gitignore, và `readArtifact` chặn mọi đường dẫn có segment bắt đầu bằng dấu chấm nên API không đọc ra được).
+Vai trò khai **TÊN** chìa; giá trị nằm ở `company/.state/secrets.json` (gitignore, và API đọc file duy nhất — `ArtifactStore.resolve` — chỉ nhận đường dẫn nằm trong `artifacts/`, nên `.state/` không có cửa nào ra HTTP).
 
 ```yaml
 # roles/inbox.yaml

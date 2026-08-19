@@ -159,8 +159,8 @@ function PlanDetail({
           <div className="px-1 py-4 text-[13px] text-muted">Việc này chưa ghi được sự kiện nào.</div>
         ) : (
           <ul className="flex flex-col gap-1.5">
-            {log.map((e, i) => (
-              <LogLine key={i} event={e} />
+            {collapse(log).map((row, i) => (
+              <LogLine key={i} event={row.event} times={row.times} />
             ))}
           </ul>
         )}
@@ -282,10 +282,38 @@ function TokenPanel({ log }: { log: AgentEvent[] }) {
 }
 
 /**
+ * Gộp những dòng LIÊN TIẾP giống hệt nhau thành một, kèm số lần.
+ *
+ * Một lượt gọi có nhiều tool chạy song song đến qua SDK thành nhiều tin nhắn
+ * riêng, nên bốn lần `Grep` cùng lúc hiện ra bốn dòng y hệt trong cùng một
+ * giây. Bốn dòng không nói được gì hơn một dòng, mà chúng đẩy phần còn lại của
+ * nhật ký ra khỏi màn hình.
+ *
+ * Chỉ gộp dòng LIỀN KỀ và CÙNG một người: gộp cả những dòng cách xa nhau sẽ
+ * giấu mất việc nhân viên lặp lại đúng một thao tác ở hai thời điểm — mà đó
+ * chính là dấu hiệu nó đang dò dẫm, thứ ta cần nhìn thấy.
+ */
+function collapse(log: readonly AgentEvent[]): Array<{ event: AgentEvent; times: number }> {
+  const out: Array<{ event: AgentEvent; times: number }> = [];
+  for (const event of log) {
+    const prev = out[out.length - 1];
+    if (prev && sameLine(prev.event, event)) prev.times++;
+    else out.push({ event, times: 1 });
+  }
+  return out;
+}
+
+function sameLine(a: AgentEvent, b: AgentEvent): boolean {
+  if (a.type !== b.type) return false;
+  if (a.type !== 'task.progress' || b.type !== 'task.progress') return false;
+  return a.role === b.role && a.say === b.say;
+}
+
+/**
  * Một dòng log. Màu lấy từ id vai trò (băm) — cùng công thức với node trên
  * canvas, nên mắt nối được "dòng này của ai" với "node nào đang sáng".
  */
-function LogLine({ event }: { event: AgentEvent }) {
+function LogLine({ event, times = 1 }: { event: AgentEvent; times?: number }) {
   // Màu băm từ `id` (ổn định), nhãn lấy tên người dùng đặt (dễ đọc). Hai thứ
   // này CỐ Ý lấy từ hai nguồn khác nhau — đổi tên hiển thị không được làm đổi
   // màu, vì mắt đã quen nối màu với người.
@@ -305,7 +333,10 @@ function LogLine({ event }: { event: AgentEvent }) {
       >
         {labelFor(who)}
       </span>
-      <span className="min-w-0 flex-1 break-words text-ink">{text}</span>
+      <span className="min-w-0 flex-1 break-words text-ink">
+        {text}
+        {times > 1 && <span className="ml-1 tabular-nums text-muted">×{times}</span>}
+      </span>
     </li>
   );
 }

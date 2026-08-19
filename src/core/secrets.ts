@@ -1,8 +1,9 @@
 /**
  * Kho bí mật cấp CÔNG TY. → docs/SPEC-offices.md §5
  *
- * `company/.state/secrets.json` — đã nằm trong .gitignore, và `readArtifact`
- * chặn mọi đường dẫn có segment bắt đầu bằng dấu chấm nên API không đọc ra được.
+ * `company/.state/secrets.json` — đã nằm trong .gitignore, và hàm đọc file duy
+ * nhất phơi ra HTTP (`ArtifactStore.resolve`) chỉ nhận đường dẫn nằm TRONG
+ * `artifacts/`, nên `.state/` không có cửa nào ra ngoài.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ ĐẶC QUYỀN TỐI THIỂU. Vai trò khai `secrets: [NOTION_TOKEN]` thì CHỈ khoá  │

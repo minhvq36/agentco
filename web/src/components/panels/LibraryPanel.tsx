@@ -31,6 +31,9 @@ export function LibraryPanel() {
   // thì dòng "đang đọc…" đứng im cho tới lần người dùng tự bấm mở lại tủ — đúng
   // lúc họ cần biết nhất thì màn hình im lặng.
   const libraryVersion = useApp((s) => s.libraryVersion);
+  // Số tài liệu đang được bóc. Đây là chỗ ĐÚNG của con số này — nó là trạng
+  // thái của cái tủ, không phải của cuộc trò chuyện. Xem `AppState.libraryBusy`.
+  const libraryBusy = useApp((s) => s.libraryBusy);
   // File vừa thả lên node Tủ tài liệu trên sơ đồ. Canvas chỉ chuyển tay —
   // toàn bộ luồng tải lên sống ở đây, đúng MỘT bản.
   const pendingDocs = useApp((s) => s.pendingDocs);
@@ -130,6 +133,17 @@ export function LibraryPanel() {
         <p className="mt-2 text-xs leading-relaxed text-muted">
           Kéo thả file vào đây cũng được. Nhận <b>pdf · docx · xlsx · pptx · md · txt · csv · json · yaml</b>.
         </p>
+        {/*
+          Bóc văn bản chạy ngầm. Câu này đứng ở ĐẦU TỦ chứ không ở ô chat: việc
+          đang xảy ra với tài liệu thì phải hiện cạnh tài liệu. Và nó biến mất
+          khi `libraryBusy` về 0 — bản trước dùng chung dòng trạng thái của chat
+          rồi không có đường nào tắt.
+        */}
+        {libraryBusy > 0 && (
+          <p className="mt-2 rounded bg-accent-soft px-2 py-1.5 text-xs leading-relaxed text-accent">
+            Đang đọc nội dung {libraryBusy} tài liệu… Nhân viên tìm được bằng từ khoá ngay khi xong.
+          </p>
+        )}
       </div>
 
       {docs.length === 0 ? (

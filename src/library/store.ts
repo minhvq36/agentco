@@ -249,6 +249,97 @@ export class LibraryStore {
     return n;
   }
 
+  /**
+   * BẢNG KÊ CHO TRỢ LÝ — khối dữ liệu nhỏ đi vào prefix được cache. → §8b
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO PHẢI CÓ: TRỢ LÝ ĐANG MÙ, VÀ NÓ TỐN TIỀN THẬT.                     │
+   * │                                                                          │
+   * │ `INDEX.md` được dựng ra từ 17/08 với đúng mục đích "Trợ lý biết tủ có gì │
+   * │ TRƯỚC khi chia việc" — rồi không ai đưa nó cho Trợ lý. Trợ lý chạy       │
+   * │ `allowedTools: []`, nên nó không có đường nào biết trong tủ có gì.        │
+   * │                                                                          │
+   * │ Hậu quả đo được trên máy người dùng (bài 2, 19/08):                       │
+   * │  · hỏi lại một câu mà câu trả lời KHÔNG đổi được việc phải làm           │
+   * │    ("size còn hàng không" — trong khi chính sách đã cấm đổi từ trước)     │
+   * │  · lập kế hoạch với `inputs: []` → nhân viên phải mò: 4 lượt Grep +      │
+   * │    2 lượt Read cùng một file → 9 lượt, $0.0582 cho một câu trả lời khách │
+   * │  · viết 7 ràng buộc trong đó 4 cái chết ngay khi nhân viên đọc tài liệu, │
+   * │    và một cái là nhánh IF giao cho model tự rẽ                            │
+   * │                                                                          │
+   * │ Sửa bằng DỮ LIỆU, không phải bằng lời dặn: bảng kê này quan sát được     │
+   * │ hoàn toàn từ chính các file, dựng bằng code, 0 lượt gọi LLM.             │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Hai ràng buộc giữ cho nó KHÔNG phá prompt cache:
+   *
+   * 1. **Chỉ tên + hình dạng, KHÔNG có `preview`.** Preview làm khối vừa to
+   *    (mỗi file thêm ~40 chữ) vừa hay đổi. Trợ lý cần biết *có gì trong tủ* để
+   *    chỉ đúng đường cho nhân viên, không cần biết *nội dung nói gì* — nó
+   *    không phải người đọc tài liệu.
+   * 2. **Bỏ qua tài liệu đang bóc.** `pending`/`extracting` là trạng thái thoáng
+   *    qua vài giây; đưa vào là mỗi lần thả một file thì prefix đổi BA lần thay
+   *    vì hai. Tài liệu chỉ xuất hiện khi nó đã thật sự dùng được.
+   */
+  manifest(): string {
+    const usable = this.list().filter((d) => d.state !== 'pending' && d.state !== 'extracting');
+    if (usable.length === 0) return '';
+
+    const lines = usable.map((d) => {
+      // Chỉ dán nhãn trạng thái KHÁC ready, và chỉ những trạng thái BỀN. Nhãn
+      // ở đây là để Trợ lý đừng giao việc "tìm bằng từ khoá" cho một file mà
+      // cơ chế đó không chạy được — nó là ràng buộc thật, không phải trang trí.
+      const flag =
+        d.state === 'ready'
+          ? ''
+          : d.state === 'image-only'
+            ? ' (bản chụp — phải đọc từng trang, không tìm được bằng từ khoá)'
+            : d.state === 'unindexed'
+              ? ' (chưa lập chỉ mục — phải nói rõ số trang)'
+              : ' (lỗi, chưa dùng được)';
+      return `- ${d.name} — ${d.shape ?? d.ext}${flag}`;
+    });
+
+    return [
+      `# Documents the human put in this office's library`,
+      '',
+      ...lines,
+      '',
+      'Originals are in `library/files/`. Extracted text for keyword search is in `library/text/`.',
+      'When a task needs one of these, put its path in that task\'s `inputs` so the employee opens it',
+      'directly instead of searching for it.',
+    ].join('\n');
+  }
+
+  /**
+   * Văn bản của mọi tài liệu, mỗi bản mở đầu bằng TÊN FILE trên dòng một.
+   *
+   * Chỉ dùng cho một việc: kiểm một bài học sắp ghi vào kho tri thức có phải chỉ
+   * là chép lại tài liệu không (`echoesLibrary`). Tên file đi kèm để câu cảnh
+   * báo nói được ĐÚNG file nào — "trùng với tài liệu nào đó" thì người dùng
+   * không kiểm được, mà không kiểm được thì cảnh báo vô dụng.
+   *
+   * KHÔNG BAO GIỜ đi vào prompt của ai. Nó ở lại trong tiến trình, sống vài mili
+   * giây, rồi bị thu hồi — trần dưới đây tồn tại để một tài liệu 40MB không làm
+   * daemon nghẹn ở một việc chỉ là kiểm tra.
+   */
+  texts(maxCharsPerDoc = 200_000): string[] {
+    const out: string[] = [];
+    for (const doc of this.docs.values()) {
+      if (doc.state !== 'ready') continue;
+      // Định dạng text sẵn không có sidecar — bản gốc CHÍNH LÀ văn bản (§3.1).
+      const file = fs.existsSync(this.sidecarFor(doc.name))
+        ? this.sidecarFor(doc.name)
+        : path.join(this.filesDir, doc.name);
+      try {
+        out.push(`${doc.name}\n${fs.readFileSync(file, 'utf8').slice(0, maxCharsPerDoc)}`);
+      } catch {
+        /* file vừa bị xoá dưới chân ta — bỏ qua, đây chỉ là bước kiểm */
+      }
+    }
+    return out;
+  }
+
   /** Tên tài liệu đang bóc — để dòng trạng thái nói đúng tên chứ không nói "đang xử lý". */
   busyNames(): string[] {
     return [...this.docs.values()]

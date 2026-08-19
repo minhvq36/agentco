@@ -19,8 +19,19 @@ import { fileURLToPath } from 'node:url';
 
 import type { Company } from '../core/company.js';
 import { LibraryError } from '../library/store.js';
+import { PREVIEW_MAX_BYTES, mimeOf } from '../core/artifacts.js';
 import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
+
+/**
+ * Đuôi file KHÔNG BAO GIỜ được render trong trình duyệt, luôn ép tải về.
+ *
+ * `.svg` và `.html` là văn bản, trông vô hại, và chạy được JavaScript. Chúng do
+ * MODEL sinh ra — không phải do người dùng viết — và daemon phục vụ chúng ở
+ * cùng origin với chính giao diện điều khiển công ty, thứ không có xác thực nào
+ * ngoài "cùng máy". Xem trước một file như thế là cho nó chạy trong nhà.
+ */
+const RISKY = new Set(['svg', 'html', 'htm', 'xhtml']);
 
 export interface ServeOptions {
   company: Company;
@@ -333,13 +344,57 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         return json(res, 200, { docs: office.library.list() });
       }
 
-      if (rest[0] === 'artifact' && method === 'GET') {
+      // ── kết quả (artifacts) → docs/SPEC-artifacts.md
+      if (rest[0] === 'artifacts' && !rest[1] && method === 'GET') {
+        // Quét đĩa mỗi lần, không catalog: file này do NHÂN VIÊN ghi trong lúc
+        // chạy, nên mọi bản lưu sẵn đều lỗi thời ngay giữa một ca.
+        return json(res, 200, { artifacts: office.artifacts.list() });
+      }
+      if (rest[0] === 'artifacts' && !rest[1] && method === 'DELETE') {
         const rel = url.searchParams.get('path');
         if (!rel) return json(res, 400, { error: 'thiếu "path"' });
-        const content = office.readArtifact(rel);
-        if (content === undefined) return json(res, 404, { error: 'không tìm thấy' });
-        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end(content);
+        if (!office.artifacts.remove(rel)) return json(res, 404, { error: 'không có kết quả này' });
+        return json(res, 200, { artifacts: office.artifacts.list() });
+      }
+      /**
+       * Đọc một kết quả — XEM hoặc TẢI VỀ.
+       *
+       * ⚠ Bản trước (`GET /artifact`) đọc bằng `readFileSync(abs, 'utf8')` và
+       * luôn trả `text/plain`. Với markdown thì chạy được, với một tấm ảnh hay
+       * một file pdf thì nó **làm hỏng dữ liệu** — utf8 decode một chuỗi byte
+       * nhị phân là mất thông tin không lấy lại được. Chưa ai gặp vì tới hôm
+       * nay mọi kết quả đều là markdown; đó chính là lúc rẻ nhất để sửa.
+       *
+       * Cũng không có trần dung lượng: một `.csv` 50MB nhân viên sinh ra sẽ
+       * được nạp trọn vào bộ nhớ daemon. Giờ thì stream, không nạp.
+       */
+      if (rest[0] === 'artifacts' && rest[1] === 'file' && method === 'GET') {
+        const rel = url.searchParams.get('path');
+        if (!rel) return json(res, 400, { error: 'thiếu "path"' });
+        const abs = office.artifacts.resolve(rel);
+        if (!abs) return json(res, 404, { error: 'không có kết quả này' });
+
+        const ext = path.extname(abs).slice(1);
+        const download = url.searchParams.get('download') === '1';
+        const stat = fs.statSync(abs);
+        if (!download && stat.size > PREVIEW_MAX_BYTES) {
+          return json(res, 413, {
+            error: `File nặng ${Math.round(stat.size / 1024 / 1024)}MB, quá lớn để xem trước. Tải về để mở.`,
+          });
+        }
+        res.writeHead(200, {
+          // `svg` và `html` do model sinh ra CÓ THỂ chứa script. Ép tải về thay
+          // vì render là chốt duy nhất chặn nó chạy trong cùng origin với daemon
+          // — mà daemon thì không có xác thực nào ngoài "cùng máy".
+          'content-type': download || RISKY.has(ext.toLowerCase()) ? 'application/octet-stream' : mimeOf(ext),
+          'content-length': String(stat.size),
+          ...(download
+            ? {
+                'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(abs))}`,
+              }
+            : {}),
+        });
+        fs.createReadStream(abs).pipe(res);
         return;
       }
     }

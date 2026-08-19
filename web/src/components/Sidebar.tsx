@@ -3,6 +3,7 @@ import {
   BookOpen,
   Building2,
   ChevronsLeftRight,
+  FileCheck2,
   FolderOpen,
   MessageSquare,
   ScrollText,
@@ -18,18 +19,29 @@ import { PlansPanel } from './panels/PlansPanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { KnowledgePanel } from './panels/KnowledgePanel';
 import { LibraryPanel } from './panels/LibraryPanel';
+import { ArtifactsPanel } from './panels/ArtifactsPanel';
 
 /**
- * Tủ tài liệu đứng NGAY CẠNH Kho tri thức, và thứ tự đó có chủ ý: hai thứ dễ
- * lẫn nhất trong cả sản phẩm, nên chúng phải đứng cạnh nhau để sự khác biệt
- * đọc được bằng mắt — thứ NGƯỜI DÙNG đưa vào, và thứ hệ thống ĐÃ HỌC.
- * → docs/SPEC-library.md §1
+ * BA KHO ĐỨNG LIỀN NHAU, và thứ tự đó có chủ ý.
+ *
+ * Chúng là ba khái niệm dễ lẫn nhất trong cả sản phẩm, phân biệt bằng đúng một
+ * câu hỏi: **AI ĐẶT FILE VÀO ĐÓ?**
+ *
+ *   Tủ tài liệu   NGƯỜI DÙNG đưa vào   → thêm/xoá được, không sửa
+ *   Kết quả       NHÂN VIÊN làm ra     → xoá được, không thêm, không sửa
+ *   Kho tri thức  AGENT tự rút ra      → sửa/xoá được, không thêm
+ *
+ * Đứng cạnh nhau thì khác biệt đó đọc được bằng mắt; rải ra ba chỗ thì người
+ * dùng phải nhớ. Đặt "Kết quả" ở GIỮA vì nó là cái duy nhất có cả hai đầu:
+ * nhân viên đọc tài liệu ở trên, và học được gì thì thành tri thức ở dưới.
+ * → docs/SPEC-library.md §1 · docs/SPEC-artifacts.md
  */
 const TABS: Array<{ id: PanelId; icon: LucideIcon; label: string }> = [
   { id: 'chat', icon: MessageSquare, label: 'Nói với Trợ lý' },
   { id: 'plans', icon: ScrollText, label: 'Nhật ký công việc' },
   { id: 'overview', icon: Building2, label: 'Tổng quan công ty' },
   { id: 'library', icon: FolderOpen, label: 'Tủ tài liệu' },
+  { id: 'artifacts', icon: FileCheck2, label: 'Kết quả' },
   { id: 'knowledge', icon: BookOpen, label: 'Kho tri thức' },
 ];
 
@@ -197,6 +209,7 @@ export function Sidebar() {
             {panel === 'plans' && <PlansPanel />}
             {panel === 'overview' && <OverviewPanel />}
             {panel === 'library' && <LibraryPanel />}
+            {panel === 'artifacts' && <ArtifactsPanel />}
             {panel === 'knowledge' && <KnowledgePanel />}
           </div>
 

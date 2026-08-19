@@ -11,7 +11,7 @@
  * worker ẩn `concierge` (M1) — người dùng chỉ thấy "Trợ lý dùng được tool này".
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 import type { LoadedOffice } from './config.js';
@@ -77,6 +77,104 @@ const ReportSchema = z.object({
 export interface AssistantResult<T> {
   value: T;
   usage: Usage;
+}
+
+/**
+ * Bọc một lượt hỏi thành streaming input. Xem khối chú thích ở `run()`.
+ *
+ * Yield đúng MỘT tin rồi kết thúc: SDK nhận đủ đầu vào và đóng stream ngay, nên
+ * không có ca treo nào. `session_id` để rỗng — SDK tự điền; con trỏ session
+ * thật đi qua `options.resume`.
+ */
+async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: { role: 'user', content: text },
+    parent_tool_use_id: null,
+    session_id: '',
+  } as SDKUserMessage;
+}
+
+/**
+ * Ca này có gì để học không? Quyết bằng CODE, trước khi hỏi model.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐỪNG DẶN MODEL ĐỪNG LÀM — ĐỪNG CHO NÓ CƠ HỘI LÀM.                        │
+ * │                                                                          │
+ * │ Bản trước LUÔN kèm trường `lessons` vào mọi báo cáo, kèm câu dặn "Việc    │
+ * │ chạy trơn tru không phải bài học". Hỏi một model "bạn học được gì?" thì   │
+ * │ nó gần như luôn nặn ra một câu, và lời dặn không cản được.                │
+ * │                                                                          │
+ * │ Ca thật, 19/08: một ca chạy trơn tru hoàn toàn (1 việc, done, không       │
+ * │ blocked, không sửa receipt) đẻ ra node `k/shared/san-pham-giam-gia-60-…`. │
+ * │ Nội dung của nó là bản diễn giải LỆCH của một câu trong tài liệu người    │
+ * │ dùng: chính sách viết "trên 50% không đổi trả", node ghi "giảm 60%        │
+ * │ THƯỜNG không được đổi trả". Sai ngưỡng, thêm chữ "thường" mà chính sách   │
+ * │ không có, và nằm trong prefix của mọi nhân viên cho tới khi hết hạn.      │
+ * │                                                                          │
+ * │ Trợ lý viết được câu đó mà chưa từng đọc tài liệu nào — nó chỉ nhìn thấy  │
+ * │ MỘT dòng `say` của nhân viên. Đó là nghe kể lại, không phải bài học.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ngưỡng: chỉ hỏi khi ca có DẤU VẾT trục trặc — thứ quan sát được, không phải
+ * thứ suy đoán. Ca êm đẹp thì kinh nghiệm thật của người dùng vẫn có đường vào
+ * kho, và là đường tốt hơn: nói với Trợ lý rồi `/clear` → node GHI NHỚ 0.9.
+ *
+ * ⚠ CỐ Ý KHÔNG dùng SỐ LƯỢT làm dấu hiệu, dù rất cám dỗ.
+ *
+ * Bản nháp đầu của hàm này có thêm `usage.turns >= 8`, và bộ test đã bác bỏ nó
+ * ngay: ca 19/08 chạy đúng **9 lượt** — tức là điều kiện đó cho qua đúng cái ca
+ * nó sinh ra để chặn. Lý do sâu hơn nằm ở §7: *số lượt là thuộc tính của MODEL
+ * và độ khó việc*, đo được là haiku 10 lượt vs sonnet 4 lượt cho cùng một việc.
+ * Lấy nó làm tín hiệu "có trục trặc" nghĩa là mọi văn phòng chạy `eco` đều bị
+ * coi là đang trục trặc, còn `deep` thì không bao giờ.
+ *
+ * Ba dấu hiệu còn lại đều KHÔNG phụ thuộc model: việc hỏng, việc bị chặn, hoặc
+ * receipt phải sửa lại.
+ *
+ * Đánh đổi đã biết và chấp nhận: kho tri thức lớn chậm hẳn lại.
+ */
+export function worthLearning(receipts: readonly Receipt[]): boolean {
+  return receipts.some((r) => r.status !== 'done' || r.reasked || !!r.blocked_on);
+}
+
+/**
+ * Đóng khung mọi đường dẫn artifact của kế hoạch này vào thư mục RIÊNG của nó.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `T-01` LÀ SỐ THỨ TỰ TRONG MỘT KẾ HOẠCH, VÀ MỌI KẾ HOẠCH ĐỀU BẮT ĐẦU TỪ 1.│
+ * │                                                                          │
+ * │ Nên `artifacts/T-01/` là thư mục dùng CHUNG cho mọi lần chạy. Đo được    │
+ * │ trên máy người dùng: văn phòng `noi-dung` có TÁM kế hoạch, cả tám cùng   │
+ * │ đổ vào `artifacts/T-01/` — chín file lẫn lộn một chỗ, không có gì cho    │
+ * │ biết file nào của lần chạy nào.                                          │
+ * │                                                                          │
+ * │ Hôm nay chưa mất gì vì tên file tình cờ khác nhau. Chạy lại một yêu cầu  │
+ * │ giống lần trước là kết quả cũ bị GHI ĐÈ, không hỏi, không báo — đúng lớp │
+ * │ lỗi "mất việc của người dùng, im lặng" ở §8.                             │
+ * │                                                                          │
+ * │ `Scheduler.validate` chỉ chặn hai task trong CÙNG một kế hoạch ghi đè    │
+ * │ nhau; nó không biết gì về các kế hoạch trước.                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Làm bằng CODE, không dặn model: `plan_id` được sinh ra ở đây, model không hề
+ * biết nó. Hỏi model tự đặt đường dẫn duy nhất là trả tiền để mua lại đúng sự
+ * bất định ta vừa loại bỏ.
+ *
+ * ⚠ CHỈ viết lại đường dẫn trỏ tới task CỦA CHÍNH KẾ HOẠCH NÀY. Người dùng có
+ * quyền nói "sửa lại file hôm qua", và lúc đó `inputs` trỏ tới artifact của một
+ * kế hoạch cũ — viết lại nó là chỉ nhân viên tới một file không tồn tại.
+ */
+export function artifactScoper(planId: string, taskIds: readonly string[]): (p: string) => string {
+  const mine = new Set(taskIds);
+  return (raw: string): string => {
+    const p = raw.replace(/\\/g, '/').replace(/^\.\//, '');
+    const parts = p.split('/');
+    if (parts[0] !== 'artifacts' || parts.length < 2) return raw;
+    // Đã được đóng khung rồi (đường dẫn cũ do người dùng dán lại) — để nguyên.
+    if (!mine.has(parts[1] ?? '')) return raw;
+    return ['artifacts', planId, ...parts.slice(1)].join('/');
+  };
 }
 
 export class Assistant {
@@ -165,6 +263,19 @@ export class Assistant {
   }
 
   /**
+   * Bảng kê tủ tài liệu. → docs/SPEC-library.md §8b
+   *
+   * Nằm trong prefix được cache, KHÔNG phải một lượt gọi tool. Cho Trợ lý một
+   * tool để đi đọc mục lục thì mỗi lần đọc là một lượt, mà `route()` chạy ở MỖI
+   * tin nhắn — đó là đường đông người qua lại nhất của sản phẩm.
+   */
+  private library = '';
+
+  setLibrary(text: string): void {
+    this.library = text.trim();
+  }
+
+  /**
    * Ai được giao việc — do cạnh `Assistant → agent` trên canvas quyết định.
    *
    * Đây là chỗ kéo một sợi dây thành hậu quả ĐO ĐƯỢC: agent bị ngắt thì `pitch`
@@ -243,6 +354,7 @@ export class Assistant {
       roster: this.roster(),
       hotKnowledge: this.hotKnowledge,
       memory: this.memory,
+      library: this.library,
       model: this.model,
     });
     return built.systemPrompt as string[];
@@ -291,16 +403,19 @@ export class Assistant {
     const remap = new Map(kept.map((s, newIndex) => [s.i, newIndex]));
 
     const steps: PlanStep[] = kept.map((s) => ({ title: s.title, status: 'pending' }));
+    const plan_id = newPlanId();
+    const scope = artifactScoper(plan_id, rawTasks.map((t) => t.task_id));
+
     const tasks = rawTasks.map((t) =>
       TaskBriefSchema.parse({
         ...t,
-        inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: i.path })),
-        outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: o.path })),
+        inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scope(i.path) })),
+        outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scope(o.path) })),
         step: remap.get(t.step) ?? 0,
       }),
     );
 
-    return { value: { plan_id: newPlanId(), request, steps, tasks }, usage };
+    return { value: { plan_id, request, steps, tasks }, usage };
   }
 
   /**
@@ -321,20 +436,26 @@ export class Assistant {
       .map((r) => `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}`)
       .join('\n');
 
+    const wantLessons = worthLearning(receipts);
+
     const { text, usage } = await this.askSession(
       `Kế hoạch vừa chạy: ${plan}\n\nKết quả:\n${summary}\n\n` +
         `Trả về đúng một object JSON trong khối \`\`\`json:\n` +
         `{"say":"<1–3 câu tiếng Việt báo cáo cho người dùng: đã xong gì, có gì cần họ để ý. ` +
-        `Không liệt kê lại từng việc, không dùng thuật ngữ kỹ thuật>",\n` +
-        ` "lessons":[{"kind":"pitfall","text":"<bài học dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
-        `\`lessons\` tối đa 2, và ĐỂ TRỐNG nếu ca này không rút ra được gì đáng nhớ. ` +
-        `"Việc chạy trơn tru" không phải bài học.`,
+        `Không liệt kê lại từng việc, không dùng thuật ngữ kỹ thuật>"` +
+        (wantLessons
+          ? `,\n "lessons":[{"kind":"pitfall","text":"<bài học dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
+            `Ca này có trục trặc, nên \`lessons\` là chỗ ghi lại thứ giúp lần sau tránh được — ` +
+            `tối đa 2, và vẫn ĐỂ TRỐNG nếu trục trặc đó không dạy được gì dùng lại. ` +
+            `Viết về CÁCH LÀM VIỆC, đừng chép lại nội dung tài liệu.`
+          : `}`),
     );
 
     const parsed = extractJson(text, ReportSchema);
     // Không đọc được thì vẫn phải có câu báo cáo — người dùng đang chờ.
     const value = parsed ?? { say: text.trim() || 'Đã xong.', lessons: [] };
-    return { value, usage };
+    // Chốt cuối: không hỏi thì không nhận, kể cả model tự ý gửi kèm.
+    return { value: wantLessons ? value : { ...value, lessons: [] }, usage };
   }
 
   /**
@@ -423,7 +544,23 @@ export class Assistant {
 
     try {
       for await (const msg of query({
-        prompt,
+        /**
+         * ⚠ STREAMING INPUT, KHÔNG PHẢI CHUỖI — và đây là điều kiện để
+         * `canUseTool` chạy. Truyền `prompt` là một chuỗi thì SDK **im lặng bỏ
+         * qua `canUseTool`**: không lỗi, không cảnh báo, tool vẫn chạy, cổng
+         * chặn không tồn tại.
+         *
+         * Đã đo 19/08: Trợ lý `Grep` được vào sổ tay của một nhân viên đã bị
+         * ngắt dây, `gate.log` rỗng tuyệt đối. Tệ hơn nữa, khi bị hỏi về một
+         * file ngoài vùng cho phép nó trả lời *"mình không có quyền xem"* —
+         * **model tự diễn theo bản đồ thư mục trong prompt**, trong khi thực
+         * tế nó có toàn quyền. Đúng thứ luật *"đừng để model tự giải thích hệ
+         * thống cho người dùng"* đã cấm: nghe rất hợp lý và sai hoàn toàn.
+         *
+         * Generator này yield MỘT lần rồi kết thúc, nên stream đóng ngay — khác
+         * hẳn ca DEADLOCK ở §8, vốn do GIỮ MỞ stream để chờ `interrupt()`.
+         */
+        prompt: oneShot(prompt),
         options: {
           systemPrompt: this.systemPrompt(),
           model,
@@ -431,8 +568,58 @@ export class Assistant {
           maxTurns: 4,
           settingSources: [],
           strictMcpConfig: true,
-          // Assistant KHÔNG có tool: nó không tự làm việc tay chân. Đây vừa là kỷ
-          // luật kiến trúc vừa là tiết kiệm — không tool thì không có vòng lặp tool.
+          /**
+           * ┌──────────────────────────────────────────────────────────────────┐
+           * │ `tools` GIỚI HẠN. `allowedTools` CHỈ TỰ-DUYỆT. HAI THỨ KHÁC NHAU.│
+           * │                                                                  │
+           * │ Bản trước chỉ đặt `allowedTools: []` và tưởng thế là "Trợ lý      │
+           * │ không có tool". Không phải — đó chính xác là con rò đã tìm ra ở   │
+           * │ worker ngày 16/08 (§5d): `allowedTools` không cắt tool khỏi ngữ   │
+           * │ cảnh, nên ĐỊNH NGHĨA của toàn bộ bộ tool Claude Code vẫn nằm      │
+           * │ trong prefix — ở đây là prefix của `route()`, thứ chạy ở MỖI TIN  │
+           * │ NHẮN người dùng gõ. Worker được vá 16/08; Trợ lý bị bỏ quên.      │
+           * │                                                                  │
+           * │ `tools` phải LUÔN được truyền, kể cả khi danh sách rỗng — và ở    │
+           * │ đây nó rỗng THẬT.                                                 │
+           * └──────────────────────────────────────────────────────────────────┘
+           *
+           * ┌──────────────────────────────────────────────────────────────────┐
+           * │ VÌ SAO TRỢ LÝ KHÔNG CÓ `Grep` — dù ai cũng muốn nó có.           │
+           * │                                                                  │
+           * │ Ngày 19/08 đã thử trao `Grep`/`Glob` kèm một cổng chặn theo thư  │
+           * │ mục, để nó không đọc được sổ tay của nhân viên đã bị ngắt dây.   │
+           * │ **Ba cơ chế, không cơ chế nào chặn được:**                        │
+           * │                                                                  │
+           * │   `canUseTool`                     → không nổ lần nào             │
+           * │   `canUseTool` + streaming input   → không nổ lần nào             │
+           * │   hook `PreToolUse` (± `matcher`)  → không nổ lần nào             │
+           * │                                                                  │
+           * │ Đo bằng cách ghi mọi quyết định ra `.state/gate.log`: file RỖNG   │
+           * │ TUYỆT ĐỐI trong khi `Grep` vẫn chạy và vẫn đọc được file cấm.     │
+           * │ Suy đoán tốt nhất: tool chỉ-đọc được CLI tự duyệt và không đi qua │
+           * │ đường phê duyệt nào cả. Chưa xác nhận được, nên **đừng xây gì lên │
+           * │ phần này** cho tới khi đo lại.                                    │
+           * │                                                                  │
+           * │ 🔥 Và đây là lý do phải BỎ HẲN chứ không "tạm chấp nhận": khi bị │
+           * │ hỏi về một file ngoài vùng, Trợ lý trả lời *"mình không có quyền  │
+           * │ xem file cấu hình hệ thống"* — nó DIỄN theo bản đồ thư mục trong  │
+           * │ prompt, trong khi thực tế có toàn quyền. Không hàng rào thì còn   │
+           * │ biết là không có; một hàng rào giả được model thuật lại đầy tự    │
+           * │ tin thì tệ hơn hẳn. Đúng luật "đừng để model tự giải thích hệ     │
+           * │ thống cho người dùng".                                            │
+           * │                                                                  │
+           * │ Đường ra CÓ tồn tại — tự khai một tool MCP với `where` là ENUM    │
+           * │ dựng từ `assignableRoles()`, thì thao tác sai không diễn đạt      │
+           * │ được. Nhưng "Trợ lý KHÔNG gắn MCP" là luật cứng: MCP phá prompt   │
+           * │ cache khi resume (~36K token/lượt), mà `route()` resume ở mọi tin │
+           * │ nhắn. Đổi 36K token/lượt lấy một tiện ích là lỗ nặng.             │
+           * │                                                                  │
+           * │ Và cái giá của việc bỏ: ĐO ĐƯỢC LÀ BẰNG KHÔNG. Trong lần chạy    │
+           * │ lại bài 2, Trợ lý không gọi tool nào — bảng kê tủ tài liệu trong  │
+           * │ prefix đã đủ để nó lập kế hoạch đúng.                             │
+           * └──────────────────────────────────────────────────────────────────┘
+           */
+          tools: [],
           allowedTools: [],
           ...(useSession ? {} : { persistSession: false }),
           ...(useSession && this.sessionId ? { resume: this.sessionId } : {}),

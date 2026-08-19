@@ -15,7 +15,18 @@ export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+      /**
+       * Phép toán bố cục sơ đồ dùng CHUNG với backend. → src/core/layout-geometry.ts
+       *
+       * Đây là file DUY NHẤT của `src/` mà giao diện được nạp, và nó thuần —
+       * không import `node:*`, không đụng đĩa. Hai bản mã của cùng một phép
+       * toán đã lệch nhau một lần (văn phòng mới ra sơ đồ méo); import chung
+       * thì lỗi đó không xảy ra lại được.
+       */
+      '@core': path.resolve(__dirname, '../src/core'),
+    },
   },
   build: {
     outDir: 'dist',

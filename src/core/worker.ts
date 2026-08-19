@@ -434,7 +434,24 @@ function toolCalls(m: Record<string, unknown>): ToolCall[] {
     }));
 }
 
-/** Đổi hoạt động của agent thành một câu tiếng người cho UI. Không tốn token. */
+/**
+ * Đổi hoạt động của agent thành một câu tiếng người cho UI. Không tốn token.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NÓI RA THỨ TA ĐÃ CẦM TRONG TAY.                                          │
+ * │                                                                          │
+ * │ Bản trước trả về "đang tìm trong dự án" cho CẢ `Grep` lẫn `Glob`, không  │
+ * │ kèm từ khoá, không kèm chỗ tìm. Một lượt tìm song song 4 chỗ hiện ra 4   │
+ * │ dòng giống hệt nhau trong cùng một giây — người dùng đọc nhật ký và      │
+ * │ không biết nhân viên đang làm gì, chỉ biết nó đang bận.                  │
+ * │                                                                          │
+ * │ Từ khoá và đường dẫn nằm sẵn trong `call.input`. Ta ĐANG CẦM chúng, nên  │
+ * │ không nói ra là tự nguyện mù — cùng một luật với khối "kết quả nằm ở     │
+ * │ đâu": thứ gì quan sát được thì đừng để người dùng phải đoán.             │
+ * │                                                                          │
+ * │ Và "dự án" là từ của lập trình viên. Người dùng của ta mở tiệm hoa.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 function describeCall(call: ToolCall): string {
   const file = typeof call.input['file_path'] === 'string' ? basename(call.input['file_path']) : '';
   switch (call.name) {
@@ -444,8 +461,12 @@ function describeCall(call: ToolCall): string {
     case 'Edit':
       return file ? `đang viết ${file}` : 'đang viết kết quả';
     case 'Grep':
-    case 'Glob':
-      return 'đang tìm trong dự án';
+    case 'Glob': {
+      const what = str(call.input['pattern']);
+      const room = roomOf(str(call.input['path']));
+      const term = what && what.length <= 40 ? ` “${what}”` : '';
+      return `đang tìm${term} trong ${room}`;
+    }
     case 'WebSearch':
       return 'đang tìm trên web';
     case 'WebFetch':
@@ -458,6 +479,23 @@ function describeCall(call: ToolCall): string {
     }
   }
 }
+
+/**
+ * Đường dẫn tìm kiếm → tên căn phòng mà người dùng biết.
+ *
+ * Người dùng không biết `library/text/` là gì, nhưng họ biết "tủ tài liệu" vì
+ * họ vừa thả file vào đó. Ánh xạ thư mục → tên trên giao diện, và mặc định là
+ * "văn phòng" chứ không phải "dự án".
+ */
+function roomOf(searchPath: string): string {
+  const p = searchPath.replace(/\\/g, '/');
+  if (/(^|\/)library(\/|$)/.test(p)) return 'tủ tài liệu';
+  if (/(^|\/)artifacts(\/|$)/.test(p)) return 'kết quả đã có';
+  if (/(^|\/)knowledge(\/|$)/.test(p)) return 'kho tri thức';
+  return 'văn phòng';
+}
+
+const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
 /** `mcp__notion__create_page` → `notion`. Quy ước đặt tên tool của SDK. */
 export function mcpServerOf(name: string): string | undefined {

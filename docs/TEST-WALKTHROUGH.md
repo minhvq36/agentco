@@ -122,18 +122,26 @@ Khách mua hàng sale 60% hôm kia, giờ đòi đổi size. Soạn giúp mình 
 
 **Phải thấy:** câu trả lời nêu đúng luật "hàng giảm trên 50% không đổi trả".
 
+**Và phải thấy Trợ lý KHÔNG hỏi lại** *"size khách muốn đổi còn hàng không?"* — câu đó là câu mà **câu trả lời không đổi được việc phải làm**, vì chính sách đã cấm đổi từ trước. Trước 19/08 nó luôn hỏi, vì nó mù tủ tài liệu. → `SPEC-library.md` §8b
+
 **Bài test thật nằm ở đây:** hỏi 5 câu, mỗi câu thuộc một file khác nhau. Đếm bao nhiêu câu trả đúng.
 
 **Đo cái gì — và đây là phần mới:** 🖱 mở **Nhật ký**, nhìn nhân viên đã làm gì để tìm ra câu trả lời.
 
 | Nó làm gì | Nghĩa là |
 |---|---|
-| `Grep` một lần → `Read` đúng một file | **tốt nhất** — cơ chế chạy đúng như thiết kế |
-| `Read` `library/INDEX.md` trước rồi mới mở file | cũng tốt — tầng định tuyến đang có tác dụng |
+| mở thẳng đúng một file, không tìm kiếm gì | **tốt nhất** — Trợ lý đã đưa `inputs` đúng, nhân viên không phải mò |
+| `Grep` một lần → `Read` đúng một file | tốt — cơ chế truy xuất chạy đúng |
 | `Read` lần lượt **hết** các file | tủ nhỏ nên chưa đau, nhưng với 50 tài liệu thì đây là chỗ hoá đơn nổ. Ghi nhận |
 | trả lời mà không đọc file nào | **hỏng** — nó đang bịa, và câu đúng chỉ là may |
 
-**Chi phí:** ~$0.02/câu
+**Bước 6 (mới 19/08).** 🖱 Mở **Kho tri thức**. **Phải TRỐNG.**
+
+Ca này chạy trơn tru, và ca chạy trơn tru **không sinh ra bài học nào** — hệ thống không hỏi Trợ lý câu đó nữa. Nếu thấy một node kiểu *"sản phẩm giảm 60% thường không được đổi trả…"* thì chốt `worthLearning` đã hỏng: đó là **nội dung tài liệu bị chép vào prefix**, nó sẽ nói sai ngày bạn đổi chính sách. → `SESSIONS_MEMORY` §5g
+
+**Bước 7 (mới 19/08).** 🖱 Mở **Kết quả**. Phải thấy file vừa tạo, xem trước được, tải về được, xoá được. Đường dẫn phải là `artifacts/<mã kế hoạch>/T-01/…` — chạy lại câu hỏi lần hai thì nó vào **thư mục khác**, không ghi đè lần một.
+
+**Chi phí đo được 19/08:** cả ca **8 lượt · $0.051** (trước khi sửa: 11 lượt · $0.108).
 
 ---
 

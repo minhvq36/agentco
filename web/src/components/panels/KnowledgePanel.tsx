@@ -25,7 +25,9 @@ import type { KnowledgeEntry } from '@/lib/types';
  */
 export function KnowledgePanel() {
   const officeId = useApp((s) => s.officeId);
-  const knowledgeVersion = useApp((s) => s.canvas?.knowledge.total ?? 0);
+  // Bám vào SỰ KIỆN, không vào số đếm: sửa một ghi chú không làm đổi số node,
+  // nên bản trước đứng im cho tới khi người dùng bấm F5.
+  const knowledgeVersion = useApp((s) => s.knowledgeVersion);
   const [nodes, setNodes] = useState<KnowledgeEntry[] | null>(null);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<KnowledgeEntry | null>(null);

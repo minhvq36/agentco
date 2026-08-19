@@ -122,9 +122,13 @@ export const ASSISTANT_CORE = `You are the assistant running one office of a sma
 6. Never make an employee "review and then fix". That is two passes. Either ask for the work, or ask for a review — not both in one goal.
 7. You may only assign to employees listed in your roster. If nobody fits, say so plainly instead of inventing an employee.
 
-## Knowledge
+## Knowledge and documents
 
-Notes from this office's knowledge base are already in your prompt. When a run finishes you may record what the office learned — durable insights only, never "the task went fine".
+Notes from this office's knowledge base are already in your prompt, and so is the list of documents the human uploaded. **You have no tools** — you never open a file yourself. When a task needs a document, name its path in that task's \`inputs\` and let the employee read it.
+
+If a note and a document disagree, **the document wins** — notes are second-hand, documents are the source.
+
+A note must never restate what a document already says. Documents are searched for free when they are needed; a copy of one lives in every employee's prompt forever, and it goes stale the day the human updates the file.
 
 ## Planning output
 
@@ -264,6 +268,8 @@ export function buildAssistantPrompt(
     hotKnowledge?: string;
     /** Bản nén trí nhớ hội thoại. Khối RIÊNG, không trộn vào hot. */
     memory?: string;
+    /** Bảng kê tủ tài liệu — tên + hình dạng, dựng bằng code. → SPEC-library.md §8b */
+    library?: string;
     language?: string;
     model?: string;
   },
@@ -271,10 +277,24 @@ export function buildAssistantPrompt(
   const language = opts.language ?? 'Vietnamese';
   const hot = opts.hotKnowledge?.trim() ?? '';
   const memory = opts.memory?.trim() ?? '';
+  const library = opts.library?.trim() ?? '';
 
   const blocks: string[] = [ASSISTANT_CORE];
   if (office.charter) blocks.push(`# About this office\n\n${office.charter}`);
   if (office.assistantSkills) blocks.push(`# How you work\n\n${office.assistantSkills}`);
+  /**
+   * Tủ tài liệu đứng TRƯỚC tri thức và roster, sau charter.
+   *
+   * Thứ tự trong khối chú thích đầu hàm là "ít đổi trước, hay đổi sau", và bảng
+   * kê tủ nằm đúng giữa: đổi khi người dùng thêm/bớt tài liệu — hiếm hơn kéo
+   * dây trên canvas (roster), thường hơn sửa điều lệ.
+   *
+   * Đây là mảnh sửa lỗ hổng lớn nhất tìm được ngày 19/08: `INDEX.md` được dựng
+   * từ 17/08 để Trợ lý "biết hợp đồng 34 trang trước khi chia việc", nhưng chưa
+   * bao giờ tới tay Trợ lý. Nó lập kế hoạch mù, hỏi lại những câu mà câu trả
+   * lời không đổi được gì, và để `inputs` rỗng cho nhân viên tự mò.
+   */
+  if (library) blocks.push(library);
   // GHI NHỚ đứng TRƯỚC kinh nghiệm, và là khối riêng: nó là thứ người dùng đã
   // chốt, nên phải thắng khi mâu thuẫn với một bài học agent tự rút ra.
   if (memory) blocks.push(`# What the human has decided — follow these\n\n${memory}`);
@@ -331,6 +351,7 @@ export function describePrompt(
   who: string,
   hotKnowledge = '',
   assistantMemory = '',
+  libraryManifest = '',
 ): PromptLayer[] {
   const coreEditable = office.company.allow_core_prompt_edit;
   const layers: PromptLayer[] = [];
@@ -447,6 +468,27 @@ export function describePrompt(
    * lục kho. Đó là lý do nó là một lớp riêng ở đây, chứ không phải một kho riêng
    * ở tầng lưu trữ.
    */
+  /**
+   * Bảng kê tủ tài liệu — PHẢI hiện ở đây, không được là một khối ẩn.
+   *
+   * Bảng phân lớp này tồn tại để người dùng tin được con số token. Thêm một khối
+   * vào prompt thật mà không thêm vào bảng thì bảng nói dối — đúng lỗi đã dẫm ở
+   * §5e khi khối GHI NHỚ bị đếm hai lần: prompt vẫn đúng, nhưng cái bảng dùng
+   * để kiểm tra prompt thì sai, mà cả điểm của nó là để tin được.
+   */
+  if (who === 'assistant' && libraryManifest.trim()) {
+    add({
+      id: 'library',
+      title: 'Tủ tài liệu — bảng kê',
+      editable: false,
+      text: libraryManifest,
+      note:
+        'Tên và hình dạng các tài liệu BẠN đã thả vào tủ, dựng bằng code nên không tốn lượt gọi nào. ' +
+        'Nhờ khối này Trợ lý biết trong tủ có gì TRƯỚC khi chia việc — nó chỉ thẳng file cho nhân viên ' +
+        'thay vì để nhân viên đi mò. Cố ý KHÔNG kèm nội dung: tài liệu không bao giờ vào prompt.',
+    });
+  }
+
   if (who === 'assistant' && assistantMemory.trim()) {
     add({
       id: 'memory',

@@ -10,7 +10,7 @@
 | Canvas SVG + tương tác chuột | `web/src/canvas/` |
 | State + SSE | `web/src/lib/store.ts` |
 | Client API (không nuốt lỗi) | `web/src/lib/api.ts` |
-| Sidebar + 4 panel | `web/src/components/` |
+| Sidebar + 6 panel | `web/src/components/` |
 | Daemon phục vụ `web/dist` | `src/server/static.ts` |
 
 Lệnh: `npm run build:all` (backend + UI) · `npm run dev:web` (Vite 5173, proxy `/api` sang 7317).
@@ -39,6 +39,25 @@ Chat, nhật ký, tổng quan công ty, tri thức chuyển hết vào **sidebar
 Thanh dưới (kế hoạch + chat) của bản v0 biến mất — nó chiếm chỗ vĩnh viễn cho thứ người dùng chỉ cần từng lúc.
 
 Hai nút `Sắp xếp` / `Vừa khung` đổi thành **icon**, không chữ.
+
+### Sáu tab, và BA KHO đứng liền nhau (19/08)
+
+```
+Nói với Trợ lý · Nhật ký công việc · Tổng quan công ty · Tủ tài liệu · Kết quả · Kho tri thức
+                                                        └────────── ba kho ──────────┘
+```
+
+Ba kho là ba khái niệm dễ lẫn nhất trong sản phẩm, phân biệt bằng đúng một câu hỏi: **ai đặt file vào đó?**
+
+| | ai ghi | người dùng làm được gì |
+|---|---|---|
+| Tủ tài liệu | NGƯỜI DÙNG | thêm · xoá |
+| **Kết quả** | NHÂN VIÊN | xoá |
+| Kho tri thức | AGENT tự rút ra | sửa · xoá |
+
+Đứng cạnh nhau thì khác biệt đọc được bằng mắt; rải ra ba chỗ thì người dùng phải nhớ. **Kết quả đặt ở GIỮA** vì nó là cái duy nhất có cả hai đầu: nhân viên đọc tài liệu ở trên, học được gì thì thành tri thức ở dưới.
+
+Mỗi ngăn kéo có một dòng ở chân tự nói mình LÀ GÌ và chỉ sang cái kia. **0 token** — nằm hoàn toàn ở giao diện. → `SPEC-artifacts.md`
 
 ### Sidebar KÉO RỘNG ĐƯỢC — bề rộng là nội dung, không phải trang trí
 
