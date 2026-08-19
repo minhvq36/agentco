@@ -46,6 +46,34 @@ function webRoot(): string | null {
   return null;
 }
 
+/**
+ * Bundle đang phục vụ có CŨ HƠN mã nguồn giao diện không? → `cmdStart`
+ *
+ * Daemon phục vụ `web/dist` (đã build), nên sửa `web/src` mà quên build thì
+ * trình duyệt tải về bản cũ — và cả ba phản xạ tự nhiên (Ctrl+Shift+R, tắt mở
+ * daemon, Ctrl+C) đều KHÔNG chạm tới bước build. Người dùng gặp thật 20/08 và
+ * kết luận là mình sai. Một phép so `mtime` vài mili giây thì nói ra được.
+ */
+export function webBuildStale(): boolean {
+  const root = webRoot();
+  if (!root) return false;
+  const src = path.resolve(root, '../src');
+  if (!fs.existsSync(src)) return false; // bản cài từ npm — không có mã nguồn
+  const newest = (dir: string): number => {
+    let max = 0;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      max = Math.max(max, e.isDirectory() ? newest(p) : fs.statSync(p).mtimeMs);
+    }
+    return max;
+  };
+  try {
+    return newest(src) > newest(root);
+  } catch {
+    return false;
+  }
+}
+
 /** Trả về true nếu đã xử lý request. */
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
   const root = webRoot();

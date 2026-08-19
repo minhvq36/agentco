@@ -12,6 +12,7 @@ import path from 'node:path';
 import { Company } from '../core/company.js';
 import { companyPaths, ensureCompanyDirs, isCompanyDir, resolveCompanyDir } from '../core/paths.js';
 import { serve } from '../server/server.js';
+import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
@@ -127,6 +128,12 @@ async function cmdStart(): Promise<void> {
       console.log(`  ${o.name.padEnd(20)} ${o.agents} nhân viên · ${o.knowledge} ghi chú${o.error ? '  ⚠ ' + o.error : ''}`);
     }
   }
+  if (webBuildStale()) {
+    console.log('\n⚠ Giao diện đang phục vụ bản build CŨ — web/src có thay đổi chưa build.');
+    console.log('  npm run build:web    build lại một lần');
+    console.log('  npm run dev:web      sửa giao diện có hot-reload');
+  }
+
   console.log(`\nCtrl+C để tắt. Đóng tab trình duyệt KHÔNG tắt công ty.`);
 
   if (!flags['no-ui']) openBrowser(daemon.url);
