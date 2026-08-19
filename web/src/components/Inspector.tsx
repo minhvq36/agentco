@@ -59,7 +59,7 @@ function AgentProfile({ node }: { node: CanvasNode }) {
       <Input id="ag-name" value={name} onChange={(e) => setName(e.target.value)} />
 
       <Label htmlFor="ag-pitch" className="mt-3">
-        Giới thiệu — thứ DUY NHẤT Trợ lý thấy khi chia việc
+        Giới thiệu
       </Label>
       <Textarea id="ag-pitch" rows={3} value={pitch} onChange={(e) => setPitch(e.target.value)} />
 

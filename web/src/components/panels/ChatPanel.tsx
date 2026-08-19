@@ -4,6 +4,7 @@ import { CornerDownLeft, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Empty, Textarea } from '@/components/ui/misc';
 import { Markdown } from '@/lib/markdown';
+import { hasTable } from '@/lib/markdown-core';
 import { actions, labelFor, useApp } from '@/lib/store';
 
 /**
@@ -41,9 +42,9 @@ export function ChatPanel() {
             hint="Giao việc, hoặc hỏi han bình thường. Trợ lý tự phân biệt — chào hỏi không tốn token của nhân viên nào."
           />
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex min-w-0 flex-col gap-3">
             {messages.map((m) => (
-              <div key={m.id} className={m.role === 'user' ? 'text-right' : ''}>
+              <div key={m.id} className={`min-w-0 ${m.role === 'user' ? 'text-right' : ''}`}>
                 {/*
                   TÊN NGƯỜI TRẢ LỜI — chỉ khi KHÔNG phải Trợ lý.
 
@@ -72,11 +73,27 @@ export function ChatPanel() {
                   để ngắt — thiếu nó thì bong bóng chat tự nong ra và đẩy cả
                   panel sinh thanh cuộn ngang.
                 */}
+                {/*
+                  BỀ RỘNG BONG BÓNG — ba dạng, và dạng thứ ba là vì cái bảng.
+
+                  Tin thường co theo nội dung (`inline-block`) vì một bong bóng
+                  chiếm trọn bề ngang cho câu "Đã xong." trông như lỗi bố cục.
+
+                  Tin CÓ BẢNG thì ngược lại: bảng là thứ duy nhất trong markdown
+                  mà bề rộng mang thông tin, nên nó lấy trọn bề ngang panel. Và
+                  `block w-full` ở đây không chỉ để đẹp — nó cho khối bọc bảng
+                  một BỀ RỘNG XÁC ĐỊNH để bám vào, thứ `inline-block` không có.
+                  Thiếu nó thì `max-w-full` + `overflow-x-auto` bên trong mất
+                  mốc, bảng tự nong bong bóng ra và panel sinh thanh cuộn ngang.
+                  → `Table` trong lib/markdown.tsx
+                */}
                 <div
                   className={
                     m.role === 'user'
                       ? 'ml-auto inline-block max-w-[85%] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-accent-soft px-3 py-2 text-left text-[13.5px] text-ink'
-                      : 'inline-block max-w-[92%] break-words rounded-xl rounded-bl-sm border border-line bg-paper px-3 py-2 text-[13.5px] leading-relaxed text-ink'
+                      : `break-words rounded-xl rounded-bl-sm border border-line bg-paper px-3 py-2 text-[13.5px] leading-relaxed text-ink ${
+                          hasTable(m.text) ? 'block w-full' : 'inline-block max-w-[92%]'
+                        }`
                   }
                 >
                   {/*

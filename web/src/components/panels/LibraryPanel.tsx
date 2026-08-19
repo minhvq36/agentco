@@ -228,8 +228,7 @@ export function LibraryPanel() {
       {docs.length > 0 && (
         <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
           Đây là tài liệu <b>bạn đưa vào</b>. Nội dung được bóc ra một lần lúc thả vào nên nhân viên tìm
-          bằng từ khoá mà không tốn thêm chi phí — nó <b>không</b> nằm trong prompt. Sửa thì sửa ngoài rồi
-          thả lại đè lên.
+          bằng từ khoá mà không tốn thêm chi phí.
         </div>
       )}
 

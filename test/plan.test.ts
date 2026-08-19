@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { outputScoper } from '../dist/core/assistant.js';
 import { Scheduler } from '../dist/core/scheduler.js';
 
 type Plan = Parameters<typeof Scheduler.linkDeps>[0];
@@ -144,6 +145,57 @@ test('validate: đầu vào do task KHÁC sinh ra thì không đòi phải có s
 test('validate: không truyền officeDir thì bỏ qua kiểm đĩa, các kiểm khác vẫn chạy', () => {
   const p = plan([task('T-01', { role: 'khong-co-ai' })]);
   assert.equal(Scheduler.validate(p, ROLES).length, 1);
+});
+
+// ─────────────────────────────────────────────────────────── outputScoper
+
+/**
+ * Ca hỏng có thật, 20/08: người dùng nói *"Lưu vào `artifacts/vi/doc-1.md`"* và
+ * file ra ở `artifacts/P-…/T-01/doc-1.md` — thư mục `vi/` biến mất, không một
+ * câu nào giải thích. Đường ra phải giữ ĐƯỢC CẢ HAI: khung theo ca (bảo đảm
+ * không ghi đè) và phần đuôi người dùng đặt (ý định của họ).
+ */
+const out = outputScoper('P-01', 'T-01');
+
+test('outputScoper: GIỮ phần đuôi người dùng đặt, chỉ bọc thêm khung', () => {
+  assert.equal(out('artifacts/vi/doc-1.md'), 'artifacts/P-01/T-01/vi/doc-1.md');
+});
+
+test('outputScoper: đường dẫn theo đúng luật vẫn ra y nguyên', () => {
+  assert.equal(out('artifacts/T-01/bai.md'), 'artifacts/P-01/T-01/bai.md');
+});
+
+test('outputScoper: IDEMPOTENT — gọi lại không bọc thêm lớp nữa', () => {
+  // Người dùng dán lại một đường dẫn cũ, hay code chạy hai lượt: cả hai đều
+  // không được đẻ ra `artifacts/P-01/T-01/P-01/T-01/...`.
+  const once = out('artifacts/vi/doc-1.md');
+  assert.equal(out(once), once);
+});
+
+test('outputScoper: tên file trần cũng vào đúng thư mục của task', () => {
+  assert.equal(out('bao-cao.md'), 'artifacts/P-01/T-01/bao-cao.md');
+});
+
+test('outputScoper: `\\` và `./` không làm lệch khung', () => {
+  // Model viết `outputs` bằng đủ kiểu; khung không được phụ thuộc vào kiểu viết.
+  assert.equal(out('.\\artifacts\\vi\\doc-1.md'), 'artifacts/P-01/T-01/vi/doc-1.md');
+});
+
+test('outputScoper: `..` bị BỎ, không có đường đi ra ngoài artifacts/', () => {
+  assert.equal(out('../../office.yaml'), 'artifacts/P-01/T-01/office.yaml');
+  assert.equal(out('artifacts/../../roles/x.yaml'), 'artifacts/P-01/T-01/roles/x.yaml');
+});
+
+test('outputScoper: đường dẫn rỗng vẫn ra một file có thật, không ra một thư mục', () => {
+  // `outputs` chỉ có thư mục là một kế hoạch hỏng, nhưng nó không được biến
+  // thành một đường dẫn trỏ vào thư mục — worker sẽ ghi hỏng mà không ai biết.
+  assert.equal(out('artifacts/'), 'artifacts/P-01/T-01/ket-qua.md');
+});
+
+test('outputScoper: hai task KHÁC NHAU không bao giờ đụng nhau, kể cả cùng tên file', () => {
+  const a = outputScoper('P-01', 'T-01')('artifacts/vi/doc.md');
+  const b = outputScoper('P-01', 'T-02')('artifacts/vi/doc.md');
+  assert.notEqual(a, b);
 });
 
 /*

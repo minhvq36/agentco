@@ -47,6 +47,21 @@ Muốn dùng chung tri thức thì copy node sang, hoặc (M2) một lệnh `age
 
 **Văn phòng không giao việc cho nhau.** Đó chính là bài toán agent-to-agent mà kiến trúc cố tránh, không phải một mở rộng của canvas. Vẫn ở M3+.
 
+#### Độc lập tới đâu — kiểm ở BỐN tầng (chốt lại 20/08)
+
+Câu hỏi của người dùng: *"các văn phòng đã có session độc lập với nhau chưa? có dùng chung cache không?"* Trả lời: **độc lập ở cả bốn tầng, không tầng nào là do may mắn.**
+
+| tầng | cơ chế | hệ quả |
+|---|---|---|
+| Đối tượng | `Company.loadOffices()` dựng một `Office` riêng cho mỗi thư mục, mỗi cái có `KnowledgeStore` · `LibraryStore` · `ArtifactStore` · `Assistant` của nó | không chia sẻ gì trong RAM |
+| Con trỏ session | `.state/assistant-session.json` nằm **trong** thư mục văn phòng | mỗi văn phòng một con trỏ hội thoại |
+| Bản ghi hội thoại SDK | `cwd: office.dir` — Claude Code băm `cwd` thành thư mục riêng trong `~/.claude/projects/` | mỗi văn phòng một transcript |
+| Cache priming gate | `CachePrimingGate` nằm **trong** `Scheduler`, mà `Scheduler` được dựng mới **mỗi ca** | không chia sẻ giữa văn phòng, cũng không giữa hai ca của cùng một văn phòng |
+
+Còn **prompt cache phía Anthropic**: khoá theo *nội dung prefix*, và `BuiltPrompt.cacheKey` là hash của chính nội dung tĩnh. Hai văn phòng khác roster / tri thức / bảng kê tủ tài liệu → prefix khác → entry khác. Và kể cả khi hai prefix **giống hệt** thì việc trúng chung một entry cũng không rò rỉ gì: muốn trúng thì nội dung phải giống hệt, tức là không có gì để lộ.
+
+> ⚠ **Đánh đổi đã biết, chưa sửa:** gate bị vứt sau mỗi ca nên task đầu của ca kế tiếp luôn coi cache là nguội, dù server còn giữ ấm (TTL 5 phút). Ca một task thì vô hại; ca nhiều task song song chạy lại trong 5 phút sẽ trả thừa **một** lần `cache_write`. Ghi nhận, chưa đáng sửa.
+
 ---
 
 ## 3. Khởi điểm sạch
@@ -152,7 +167,24 @@ Kho chung nằm trong prefix của **mọi nhân viên**. Ký ức hội thoại
 
 **3. `supersedes` trỏ về bản nén trước.** Không có nó thì sau ba tháng kho đầy quyết định mâu thuẫn — trạng thái **tệ hơn** cả không nén. Xem §5 của `SPEC-2026-08-14-agentco.md`.
 
-**4. Nén hỏng thì KHÔNG quên.** `compactMemory()` chỉ gọi `forget()` sau khi ghi node xong. Thà giữ một bản ghi dài còn hơn mất trắng.
+**4. Nén hỏng thì KHÔNG quên — nhưng chỉ khi hỏng còn SỬA ĐƯỢC.** `compactMemory()` chỉ gọi `forget()` sau khi ghi node xong. Thà giữ một bản ghi dài còn hơn mất trắng. ⚠ Từ 20/08 luật này có ngoại lệ bắt buộc — xem ngay dưới.
+
+#### ⚠ `/clear` KHÔNG ĐƯỢC PHÉP KẸT (bản vá 20/08)
+
+Bản trước gộp **mọi** lỗi nén vào cùng một nhánh *"giữ nguyên cuộc trò chuyện"*. Đúng cho lỗi tạm, **sai hoàn toàn** cho lỗi vĩnh viễn.
+
+Nén chạy `resume: <session_id>`, và bản ghi hội thoại đó nằm trong `~/.claude/projects/` — **một thư mục agentco không sở hữu**. Người dùng dọn nó, đổi tên thư mục công ty, hay bê máy khác là bản ghi biến mất. Từ giây phút đó **mọi** lần gõ `/clear` đều ném cùng một lỗi và ô chat **không bao giờ dọn được nữa** — lệnh dọn duy nhất của sản phẩm chết cứng, còn câu lỗi thì nói *"mình giữ nguyên cuộc trò chuyện"* như thể đó là một lựa chọn.
+
+| lỗi | xử lý |
+|---|---|
+| tạm (mạng, hết hạn mức, rate limit) | giữ nguyên hội thoại, mời gõ lại `/clear` sau |
+| **session không còn tồn tại** (`sessionGone()`) | **vẫn dọn**, và nói thật đã mất gì |
+
+> Mất trí nhớ là chuyện **đã rồi** ở thời điểm đó — bản ghi không còn thì không ai nén được nó nữa. Giữ thêm một ô chat không xoá được chỉ là mất lần thứ hai.
+
+`sessionGone()` **không** dùng `classifyError`: hàm đó phân loại theo *cái giá phải trả* (có nên retry không), còn đây hỏi *cái ta định đọc còn tồn tại không*. Một lỗi mạng là `other`, một session đã bị xoá cũng là `other` — gộp lại là mất đúng thông tin cần dùng. Mặc định của nó là `false`: **khớp mẫu không chắc thì coi là lỗi tạm**, vì nhận nhầm một lỗi mạng thành "session mất" là ném đi một bản nén cứu được, còn nhầm chiều ngược lại chỉ tốn của người dùng thêm một lần gõ.
+
+**Bài học chung:** một lệnh mà người dùng dùng để *thoát khỏi trạng thái xấu* thì bản thân nó không được có trạng thái xấu nào không thoát ra được.
 
 #### Khi nào tự nén
 
@@ -586,6 +618,26 @@ Câu báo cho người dùng phải nói được **việc phải làm**, không
 Nhánh bị NGẮT đã được `stoppedReceipt` xử lý từ trước; nhánh **chạy hết bình thường** thì trước 19/08 không ai kiểm.
 
 **4 — `worthLearning`: chỉ hỏi bài học khi ca có DẤU VẾT trục trặc.** Xem §4.3 để biết vì sao chốt này phải là code chứ không phải một câu dặn trong prompt.
+
+### MỘT ca = MỘT `plan_id`, sinh ở ĐÚNG MỘT CHỖ (bản vá 20/08)
+
+`Office.run()` gọi `newPlanId()` cho bản ghi công việc; `Assistant.plan()` **cũng** gọi `newPlanId()` cho riêng nó. Hai id cho một ca. `office.ts` ghi đè `plan.plan_id` bằng id của bản ghi — nhưng lúc đó `artifactScoper` **đã đóng khung xong** mọi đường dẫn bằng id kia.
+
+Đo được trên máy người dùng 20/08: `artifacts/P-260820-0302-ov9e/` tồn tại trên đĩa, `tasks/index.json` chỉ biết `P-260820-0301-aajq`. Thư mục kết quả mang một **id mồ côi** — không kế hoạch nào, không file log nào tên đó. Người dùng còn nhìn thấy **cả hai id trong cùng một tin nhắn báo kết quả**.
+
+Sửa: `Assistant.plan(request, planId)` **nhận** id, không tự sinh. Không có `newPlanId()` nào ngoài `Office.run()`.
+
+> **Bài học:** ghi đè một định danh **sau** khi nó đã được dùng để dựng thứ khác là một cách rất êm để tạo ra hai sự thật. Một id phải sinh ở một chỗ rồi **chảy xuống**, không phải sinh hai lần rồi hoà giải.
+
+### Tên file bản ghi phải mang `plan_id` — RÀ HẾT, không chỉ chỗ bị kêu
+
+`saveReceipt` đặt tên `${task_id}.receipt.json`. `T-01` là số thứ tự trong một kế hoạch và mọi kế hoạch đều bắt đầu từ 1 → **mọi ca ghi đè lên cùng một file**. Đo được 20/08: văn phòng `ban-dia-hoa` chạy ba ca, `tasks/` còn đúng một `T-01.receipt.json` của ca cuối. Token, số lượt, `reads`, `looped`, `lessons` của hai ca đầu **mất trắng**.
+
+Đây **chính xác** là lỗi đã sửa cho `artifacts/` ngày 19/08 (`SPEC-artifacts.md` §2) — cùng nguyên nhân, cùng lớp hậu quả, chỉ khác thư mục. Lần đó `tasks/` bị bỏ quên, dù `savePlan` ngay cạnh đã dùng `plan_id` từ đầu.
+
+Sửa: `${plan_id}.${task_id}.receipt.json`. Không di trú — không đoạn code nào đọc biên nhận trở lại, nó là bản ghi pháp y để người dùng mở ra xem.
+
+> **Bài học:** khi sửa một lỗi *"id không duy nhất"*, phải rà **hết** mọi chỗ lấy id đó làm tên file — không chỉ chỗ người dùng vừa kêu. Bản vá một nửa trông y hệt bản vá đủ cho tới ngày có người đi đếm file.
 
 ### `worthLearning` — đừng dặn model đừng làm, đừng cho nó cơ hội làm
 

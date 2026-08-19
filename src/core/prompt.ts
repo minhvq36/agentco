@@ -182,6 +182,8 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
 - \`tasks\`: the actual work. \`step\` is the index into \`steps\`.
 - \`deps\`: task_ids that must finish first. Leave empty when tasks can run in parallel — parallel is good.
 - \`outputs\`: every task must write at least one file under \`artifacts/<task_id>/\`. Two tasks must NEVER write the same path. This holds for **every** task, including \`deliver: "reply"\` ones.
+- **When the human named a path, keep the part they chose.** Their folders and filenames go *inside* \`artifacts/<task_id>/\`, they do not replace it — \`artifacts/vi/doc-1.md\` becomes \`artifacts/<task_id>/vi/doc-1.md\`. Silently flattening what they asked for is how a person ends up hunting for a file that is not where they put it.
+- **When the human asked for separate files, write separate files.** "translate it, and also note the terms you chose" is two outputs, not one file with a section at the bottom. The same request must produce the same shape every time it is run — a person translating five documents one at a time is comparing the results.
 - Only use employee ids from the roster you were given.
 
 ## \`deliver\` — does the human want to KNOW something, or to HAVE something?

@@ -53,9 +53,67 @@ Hôm nay chưa mất gì vì tên file tình cờ khác nhau. **Chạy lại m�
 
 ### Đóng khung bằng CODE, không dặn model
 
-`artifactScoper(planId, taskIds)` viết lại đường dẫn sau khi model trả kế hoạch về. Model không hề biết `plan_id` — nó được sinh ra ở chính hàm đó. Hỏi model tự đặt đường dẫn duy nhất là trả tiền để mua lại đúng sự bất định ta vừa loại bỏ.
+`artifactScoper(planId, taskIds)` viết lại đường dẫn sau khi model trả kế hoạch về. Model không hề biết `plan_id`. Hỏi model tự đặt đường dẫn duy nhất là trả tiền để mua lại đúng sự bất định ta vừa loại bỏ.
 
 ⚠ **Chỉ viết lại đường dẫn trỏ tới task CỦA CHÍNH KẾ HOẠCH NÀY.** Người dùng có quyền nói *"sửa lại file hôm qua"*, và lúc đó `inputs` trỏ tới artifact của một kế hoạch cũ — viết lại nó là chỉ nhân viên tới một file không tồn tại.
+
+## 2.2 Đầu VÀO và đầu RA đi qua HAI luật khác nhau (chốt 20/08)
+
+Trước 20/08 cả `inputs` lẫn `outputs` dùng chung `artifactScoper`. Gộp hai thứ là nguyên nhân của một ca hỏng đo được trên máy người dùng.
+
+**Ca hỏng.** Người dùng gõ: *"Dịch doc-1.md… **Lưu vào `artifacts/vi/doc-1.md`**"*. Kết quả ra ở `artifacts/P-…/T-01/doc-1.md` — thư mục `vi/` **biến mất, không một câu nào giải thích**. Nguyên nhân là câu luật trong `CORE_PROMPT` (*"every task must write at least one file under `artifacts/<task_id>/`"*), nên planner tự bỏ phần đuôi để tuân luật. Và nhánh còn lại cũng sai: nếu planner ghi đúng `artifacts/vi/doc-1.md` thì `artifactScoper` thấy `vi` không phải task id nên **để nguyên** — file rơi ra ngoài khung theo ca, mất luôn bảo đảm §2.
+
+**Hai câu hỏi khác nhau, nên hai hàm:**
+
+| | câu hỏi | trả lời |
+|---|---|---|
+| `artifactScoper` (đầu VÀO) | *đường dẫn này trỏ tới task của chính kế hoạch này không?* | không → **để nguyên** |
+| `outputScoper` (đầu RA) | *task này ghi ở đâu?* | **luôn** `artifacts/<plan_id>/<task_id>/` + phần đuôi |
+
+```
+artifacts/vi/doc-1.md   →  artifacts/<plan>/<task>/vi/doc-1.md
+artifacts/T-01/x.md     →  artifacts/<plan>/T-01/x.md
+bao-cao.md              →  artifacts/<plan>/<task>/bao-cao.md
+```
+
+`outputScoper` **idempotent** (gọi lại không bọc thêm lớp), bỏ `..`/`.` ở lớp đầu (`safeJoin` vẫn là chốt cuối), và `outputs` rỗng rơi về `ket-qua.md` chứ không bao giờ trả về một đường dẫn trỏ vào thư mục.
+
+**Người dùng giữ được cấu trúc thư mục mình muốn; hệ thống giữ được bảo đảm không ghi đè.** Đây là điểm chung với §2.1: khi hai bên cùng có lý, đừng chọn một bên — tìm hình dạng chứa được cả hai.
+
+### Và phải NÓI RA, đúng một lần
+
+`whereBlock` in đường dẫn thật của mọi file đã ghi. Từ 20/08 nó thêm một dòng — **chỉ khi** có đường dẫn sâu hơn `artifacts/<plan>/<task>/`, tức là chỉ khi người dùng thật sự đã tự đặt thư mục:
+
+```
+(mỗi ca có thư mục riêng để lần chạy sau không đè lên lần này)
+```
+
+Đó đúng là lúc họ đang nhìn đường dẫn của mình bị bọc thêm hai lớp lạ, và cũng là lúc **duy nhất** đáng nói. Dán câu này vào mọi ca là biến một lời giải thích thành tiếng ồn. 0 token — dựng bằng code từ chính đường dẫn đang cầm.
+
+### Prompt cũng phải đổi, và vì sao cả hai đều cần
+
+Code bảo đảm **khung**; prompt quyết **phần đuôi** — code không thể đoán ra người dùng muốn thư mục `vi/` nếu planner không viết nó vào `outputs`. Nên `CORE_PROMPT` thêm hai câu: giữ lại đường dẫn người dùng đặt (nằm *trong* `artifacts/<task_id>/`, không thay thế nó), và *"người dùng đòi file riêng thì ghi file riêng"* — xem §2.3.
+
+Cái giá: prefix của planner đổi → **ghi lại prompt cache một lần**. Rẻ, và đã biết trước.
+
+## 2.3 Hình dạng đầu ra phải ỔN ĐỊNH giữa các ca (chốt 20/08)
+
+Đo được 20/08, ba ca **cùng một câu yêu cầu** (dịch tài liệu + ghi lại thuật ngữ), ba hình dạng khác nhau:
+
+| ca | `outputs` planner khai |
+|---|---|
+| doc-1 | `doc-1.md` **+ `thuat-ngu.md`** |
+| doc-2 | chỉ `doc-2.md`, thuật ngữ nhét vào cuối file |
+| doc-3 | chỉ `doc-3.md`, thuật ngữ nhét vào cuối file |
+
+Không có lỗi nào nổ. Nhưng người dùng dịch năm tài liệu **để so sánh chúng với nhau**, và họ vừa mất khả năng đó: ca 1 có bảng ở file riêng, ca 2–3 chôn nó trong bản dịch.
+
+**Không sửa được bằng code** — hình dạng đầu ra là thứ planner quyết từ một câu tiếng Việt. Hai chỗ can thiệp, cả hai đều đã làm:
+
+- `CORE_PROMPT`: *"khi người dùng đòi file riêng thì ghi file riêng… cùng một yêu cầu phải cho cùng một hình dạng mỗi lần chạy"*.
+- `TEST-WALKTHROUGH.md` bài 5: câu mẫu nói thẳng *"ghi bảng thuật ngữ ra một file RIÊNG"*, và có một bước kiểm hình dạng đầu ra.
+
+⚠ **Đây là bất định còn lại, không phải bất định đã đóng.** Muốn chắc chắn thì người dùng phải nói rõ, hoặc văn phòng phải có `charter.md` ghi luật đó.
 
 ## 2.1 `plan_id` phải ĐỌC ĐƯỢC — và tên file thì KHÔNG đụng tới (chốt 19/08)
 

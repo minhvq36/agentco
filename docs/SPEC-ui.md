@@ -78,6 +78,45 @@ Kèm `break-words`: đường dẫn file và URL dài không có khoảng trắn
 
 Phía backend chịu ràng buộc đối ứng: `helpText()` xếp **tên lệnh một dòng, mô tả thụt vào ở dòng dưới** thay vì căn cột. Căn cột bằng khoảng trắng chỉ đúng với font đơn cách, mà bong bóng chat dùng font thường — và cùng bộ lệnh này sẽ chạy qua Telegram, nơi còn hẹp hơn.
 
+### Bảng markdown: TRỌN BẢNG HOẶC KHÔNG GÌ CẢ (20/08)
+
+Bộ vẽ markdown tự viết (`markdown-core.ts` + `markdown.tsx`, dùng chung ô chat và cửa sổ xem trước `.md`) nhận thêm **luật thứ năm**: bảng. Lý do là dữ liệu, không phải sở thích — bảng là dạng kết quả nhân viên sinh ra thật: bảng thuật ngữ, bảng chi tiêu, bảng so sánh giá. Hiện nguyên văn dấu `|` là bắt người dùng tự dựng cái bảng đó trong đầu, mà họ mở file `.md` ra để **duyệt trước khi gửi cho khách**.
+
+**Nhận diện đòi BA điều kiện**, thiếu một là rơi thẳng về văn bản thường và hiện nguyên văn y như trước:
+
+1. dòng hiện tại có `|`
+2. dòng **ngay sau** là dòng phân cách (`|---|:--:|`) — và **chính nó cũng phải có `|`**
+3. số cột của hai dòng đó **khớp nhau**
+
+> Điều kiện 2 có vế thứ hai là để hai dòng vô hại `chọn cà phê | trà sữa` + `---` không thành một bảng một cột. `---` đứng một mình là gạch ngang / tiêu đề setext — hai thứ bộ vẽ này **cố ý không hỗ trợ**, nên chúng phải tiếp tục hiện nguyên văn. Miễn phí: bảng từ hai cột trở lên thì dòng phân cách bắt buộc đã có `|`.
+
+Vì sao khắt khe: **một bảng vẽ ra mà lệch cột hay thiếu ô là một lời khẳng định SAI về dữ liệu** — người đọc tin cái bảng hơn hẳn tin một đống dấu `|`. Hiện nguyên văn thì xấu nhưng không nói dối, và người dùng nhìn ra ngay *"chỗ này chưa dựng được"*.
+
+Hàng **thân** thì ngược lại, được nới: thiếu ô thì đệm rỗng, thừa ô thì cắt (đúng GFM). Ràng buộc chặt đặt ở chỗ **quyết định "đây có phải bảng không"**; quyết rồi thì một hàng lệch không đáng để vứt cả bảng.
+
+#### Hai lớp chống vỡ — và cả hai đều bắt buộc
+
+1. **`overflow-x-auto` + `max-w-full` ở khối bọc ngoài** — cùng luật đã áp cho khối code: nội dung rộng cuộn **trong khối của nó**.
+2. **Bong bóng chứa bảng phải có BỀ RỘNG XÁC ĐỊNH** (`block w-full`), không phải `inline-block` co theo nội dung. Với `inline-block`, bề rộng khối bọc lại phụ thuộc vào nội dung bên trong — `max-w-full` không còn mốc nào để bám và lớp 1 mất tác dụng.
+
+Nhờ đó **panel thu hẹp tới `MIN_W` = 300px thì bảng vẫn chỉ cuộn ngang bên trong, không bao giờ đẩy sidebar rộng ra** — thân panel là `flex-none` với `width` tường minh và `overflow-hidden`, nên nội dung không có đường nào nong nó.
+
+Bong bóng nới rộng **chỉ khi tin nhắn thật sự có bảng** (`hasTable()`): một bong bóng chiếm trọn bề ngang cho câu *"Đã xong."* trông như lỗi bố cục. Và `hasTable()` đi qua **đúng `blocksOf`** chứ không phải một regex riêng — hai cách nhận diện song song thì kiểu gì cũng có ngày lệch, và lúc đó bong bóng nới rộng cho một thứ tầng vẽ lại quyết định hiện nguyên văn.
+
+### Một ô nhập, MỘT vòng focus (20/08)
+
+Người dùng: *"viền ô chat khi được chọn bị dày, hai đường cam song song tạo cảm giác thô"*. Đúng, và nguyên nhân đáng ghi lại.
+
+Ô nhập nhận **hai** dấu focus chồng lên nhau: `focus:border-accent` (viền 1px cam) trong `ui/misc.tsx`, cộng luật nền `:focus-visible { outline: 2px; outline-offset: 2px }` — hai đường cam cách nhau một khe 2px, mắt đọc ra thành viền dày ~5px.
+
+> 🔥 **`misc.tsx` ĐÃ CÓ `focus:outline-none`, và nó không có tác dụng.** Không phải vì specificity mà vì **cascade layer**: Tailwind v4 đặt utility trong `@layer utilities`, còn CSS trần trong `index.css` nằm **ngoài mọi layer** — mà style không nằm trong layer **thắng mọi style nằm trong layer**, bất kể specificity. Người viết dòng đó tin rằng mình đã tắt xong.
+>
+> **Bài học chung:** đã `@import 'tailwindcss'` thì mọi luật CSS trần viết sau nó là luật **ưu tiên cao nhất trong ứng dụng** — phải viết như thế, và không được trông đợi một utility nào đè lại được.
+
+Sửa bằng một luật cho riêng ô nhập: bỏ `outline`, giữ viền đổi màu, thêm quầng mềm **sát viền** (`box-shadow 0 0 0 3px`). Không khe hở thì không có hai đường. Quầng trộn từ chính `accent` bằng `color-mix` chứ không dùng `--color-accent-soft`: ở nền tối `accent-soft` là nâu sẫm đặt trên `panel`, gần như biến mất.
+
+Nút bấm **cố ý** không nằm trong luật này — chúng là nền đặc, một vòng outline bao quanh đọc ra đúng là *"đang được chọn"*, không phải một viền dày.
+
 ### Lỗi phải TRÔNG NHƯ lỗi
 
 Toast lỗi có **nền màu** (`danger-soft`) và viền `danger`, `role="alert"`, `aria-live="assertive"`.

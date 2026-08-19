@@ -22,7 +22,13 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { blocksOf, spansOf, tokenize } from '../web/src/lib/markdown-core.ts';
+import { blocksOf, hasTable, spansOf, tokenize } from '../web/src/lib/markdown-core.ts';
+
+type TableBlock = { kind: 'table'; head: string[]; rows: string[][]; align: string[] };
+
+/** Lấy bảng đầu tiên, hoặc `undefined` nếu bộ phân tích không coi đó là bảng. */
+const tableOf = (src: string): TableBlock | undefined =>
+  blocksOf(src).find((b) => b.kind === 'table') as TableBlock | undefined;
 
 /** Gọn cho dễ đọc: `code` -> `` `x` ``, đậm -> `*x*`, thường -> `x`. */
 const sketch = (src: string): string =>
@@ -145,4 +151,135 @@ test('đường dẫn có gạch dưới KHÔNG bị biến thành chữ nghiên
 test('văn bản trơn đi thẳng, không sinh khối thừa', () => {
   assert.equal(sketch('Cảm ơn quý khách đã quan tâm!'), 'Cảm ơn quý khách đã quan tâm!');
   assert.deepEqual(blocksOf(''), []);
+});
+
+// ─────────────────────────────────────────── bảng: "trọn bảng hoặc không gì cả"
+
+test('bảng THẬT: đúng bảng người dùng đưa ra (20/08)', () => {
+  // Nguyên văn kết quả một ca chạy thật — đây là dạng bảng nhân viên sinh ra
+  // nhiều nhất: nhóm · nội dung · số tiền.
+  const src = [
+    '| Nhóm | Danh Sách Nội Dung | Tổng Tiền |',
+    '|------|-------------------|----------|',
+    '| Ăn Uống | (không có) | 0 VNĐ |',
+    '| Đi Lại | GRAB *TRIP | 85.000 VNĐ |',
+    '| Nhà Ở | TIEN NHA THANG 7 | 4.500.000 VNĐ |',
+  ].join('\n');
+
+  const t = tableOf(src);
+  assert.ok(t, 'phải nhận ra là bảng');
+  assert.deepEqual(t.head, ['Nhóm', 'Danh Sách Nội Dung', 'Tổng Tiền']);
+  assert.equal(t.rows.length, 3);
+  assert.deepEqual(t.rows[2], ['Nhà Ở', 'TIEN NHA THANG 7', '4.500.000 VNĐ']);
+  // `*TRIP` KHÔNG được biến mất: một dấu sao lẻ là văn bản, không phải cú pháp.
+  assert.equal(sketch(t.rows[1]![1]!), 'GRAB *TRIP');
+});
+
+test('KHÔNG có dòng phân cách → KHÔNG phải bảng, giữ nguyên văn', () => {
+  // Người dùng gõ "a | b" trong một câu bình thường là chuyện xảy ra hằng ngày.
+  const src = 'chọn giữa cà phê | trà sữa | nước ép nhé';
+  const b = blocksOf(src);
+  assert.equal(b.length, 1);
+  assert.equal(b[0]!.kind, 'text');
+  assert.equal((b[0] as { text: string }).text, src);
+});
+
+test('LỆCH SỐ CỘT giữa tiêu đề và dòng phân cách → vứt cả bảng, hiện nguyên văn', () => {
+  // Luật "trọn bảng hoặc không gì cả". Một bảng thiếu cột là lời khẳng định SAI
+  // về dữ liệu, và người đọc tin cái bảng hơn tin đống dấu `|`.
+  const src = '| A | B | C |\n|---|---|\n| 1 | 2 | 3 |';
+  assert.equal(tableOf(src), undefined);
+  assert.equal(blocksOf(src)[0]!.kind, 'text');
+});
+
+test('dòng phân cách hỏng (có chữ) → KHÔNG phải bảng', () => {
+  assert.equal(tableOf('| A | B |\n|--- | xx |\n| 1 | 2 |'), undefined);
+});
+
+test('canh cột đọc từ dấu hai chấm', () => {
+  const t = tableOf('| A | B | C |\n|:---|:---:|---:|\n| 1 | 2 | 3 |');
+  assert.deepEqual(t!.align, ['left', 'center', 'right']);
+});
+
+test('không có `|` hai đầu vẫn là bảng hợp lệ (GFM)', () => {
+  const t = tableOf('A | B\n--- | ---\n1 | 2');
+  assert.deepEqual(t!.head, ['A', 'B']);
+  assert.deepEqual(t!.rows, [['1', '2']]);
+});
+
+test('`\\|` là NỘI DUNG ô, không phải vách ngăn', () => {
+  // Thiếu luật thoát thì ô này tự tách làm đôi, hàng lệch cột so với tiêu đề,
+  // và cả bảng bị vứt ở khâu kiểm — người dùng chỉ thấy "bảng không hiện".
+  const t = tableOf('| Ký hiệu | Nghĩa |\n|---|---|\n| a \\| b | hoặc |');
+  assert.deepEqual(t!.rows, [['a | b', 'hoặc']]);
+});
+
+test('hàng THÂN thiếu/thừa ô thì đệm hoặc cắt, KHÔNG vứt bảng', () => {
+  // Ràng buộc chặt chỉ đặt ở chỗ quyết định "đây có phải bảng không". Quyết rồi
+  // thì một hàng lệch không đáng để vứt cả bảng.
+  const t = tableOf('| A | B | C |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |');
+  assert.deepEqual(t!.rows, [
+    ['1', '', ''],
+    ['1', '2', '3'],
+  ]);
+});
+
+test('bảng DỪNG ở dòng trắng, văn bản sau đó là khối riêng', () => {
+  const b = blocksOf('| A |\n|---|\n| 1 |\n\nCâu sau bảng.');
+  assert.equal(b.length, 2);
+  assert.equal(b[0]!.kind, 'table');
+  assert.equal((b[1] as { text: string }).text.trim(), 'Câu sau bảng.');
+});
+
+test('văn bản TRƯỚC bảng không bị nuốt vào bảng', () => {
+  const b = blocksOf('Bảng chi tiêu:\n| A |\n|---|\n| 1 |');
+  assert.equal(b.length, 2);
+  assert.equal((b[0] as { text: string }).text, 'Bảng chi tiêu:');
+  assert.equal(b[1]!.kind, 'table');
+});
+
+test('bảng bên TRONG khối code KHÔNG bị dựng thành bảng', () => {
+  // Thứ tự bất biến của `blocksOf`: fence xong hẳn trước mọi luật khác.
+  const b = blocksOf('```\n| A |\n|---|\n| 1 |\n```');
+  assert.equal(b.length, 1);
+  assert.equal(b[0]!.kind, 'code');
+});
+
+test('`**` và `` ` `` bên trong ô vẫn chạy', () => {
+  const t = tableOf('| Tên | Ghi chú |\n|---|---|\n| **quan trọng** | xem `a.md` |');
+  assert.equal(sketch(t!.rows[0]![0]!), '*quan trọng*');
+  assert.equal(sketch(t!.rows[0]![1]!), 'xem |`a.md`');
+});
+
+test('gạch ngang `---` KHÔNG biến một câu có dấu `|` thành bảng một cột', () => {
+  // Ca giả nguy hiểm nhất của bảng một cột. `---` đứng một mình là gạch ngang /
+  // tiêu đề setext — hai thứ bộ phân tích này cố ý không hỗ trợ.
+  const src = 'chọn cà phê | trà sữa\n---\nnói mình biết nhé';
+  assert.equal(tableOf(src), undefined);
+  assert.equal(blocksOf(src)[0]!.kind, 'text');
+});
+
+test('bảng MỘT CỘT hợp lệ vẫn dựng được', () => {
+  const t = tableOf('| Việc cần làm |\n|---|\n| Gọi cho khách |');
+  assert.deepEqual(t!.head, ['Việc cần làm']);
+  assert.deepEqual(t!.rows, [['Gọi cho khách']]);
+});
+
+test('hasTable khớp ĐÚNG với blocksOf — hai cách nhận diện không được lệch nhau', () => {
+  // Ô chat dùng `hasTable` để chọn bề rộng bong bóng. Lệch nhau nghĩa là bong
+  // bóng nới rộng cho một thứ tầng vẽ lại quyết định hiện nguyên văn.
+  const yes = '| A |\n|---|\n| 1 |';
+  const no = 'a | b | c';
+  assert.equal(hasTable(yes), true);
+  assert.equal(hasTable(no), false);
+  assert.equal(hasTable('```\n| A |\n|---|\n```'), false);
+  assert.equal(hasTable('Đã xong.'), false);
+});
+
+test('hồi quy: /help và dải bước kế hoạch vẫn KHÔNG chạm luật bảng', () => {
+  // Cả hai đều không có `|`, nhưng chốt lại vì luật bảng là luật mới nhất trong
+  // `blocksOf` và nó chạy trước `text.push`.
+  const help = '/stop   (hoặc /s)\n    Ngắt việc đang chạy';
+  assert.equal(blocksOf(help)[0]!.kind, 'text');
+  assert.equal((blocksOf(help)[0] as { text: string }).text, help);
 });

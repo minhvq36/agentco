@@ -20,9 +20,15 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BỐN LUẬT, KHÔNG HƠN — và hai thứ CỐ Ý BỎ.                               │
+ * │ NĂM LUẬT, KHÔNG HƠN — và hai thứ CỐ Ý BỎ.                               │
  * │                                                                          │
  * │   ✅ ```khối code```   ✅ `code trong dòng`   ✅ **đậm**   ✅ # tiêu đề   │
+ * │   ✅ | bảng |                                                            │
+ * │                                                                          │
+ * │ Bảng thêm vào 20/08 vì nó là dạng kết quả nhân viên SINH RA THẬT: bảng    │
+ * │ thuật ngữ, bảng chi tiêu, bảng so sánh giá. Hiện nguyên văn dấu `|` là    │
+ * │ bắt người dùng tự dựng cái bảng đó trong đầu — và họ mở file `.md` ra để  │
+ * │ DUYỆT trước khi gửi cho khách, nên nhìn sai là gửi sai.                   │
  * │                                                                          │
  * │   ⛔ `_nghiêng_` — sản phẩm này nói `plan_id`, `hot_knowledge_tokens`,   │
  * │      `max_turns`, `default_deliver` suốt ngày. Biến gạch dưới thành      │
@@ -37,7 +43,7 @@
 
 import { Fragment } from 'react';
 
-import { blocksOf, spansOf } from './markdown-core';
+import { blocksOf, spansOf, type Align } from './markdown-core';
 
 /**
  * Cỡ tiêu đề — CỐ Ý SÁT CỠ CHỮ THƯỜNG.
@@ -73,6 +79,75 @@ function Inline({ text }: { text: string }) {
         );
       })}
     </>
+  );
+}
+
+const ALIGN: Record<Align, string> = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+};
+
+/**
+ * Bảng markdown. Dùng chung ngôn ngữ hình với `CsvTable` ở ngăn Kết quả — hai
+ * cái bảng cạnh nhau trong cùng một sản phẩm mà trông khác nhau thì người dùng
+ * đi tìm ý nghĩa của sự khác nhau đó.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ HAI LỚP CHỐNG VỠ, VÀ CẢ HAI ĐỀU BẮT BUỘC.                               │
+ * │                                                                          │
+ * │  1. `overflow-x-auto` + `max-w-full` ở khối BỌC NGOÀI — cùng luật đã áp   │
+ * │     cho khối code: nội dung rộng cuộn TRONG khối của nó. Thiếu nó thì     │
+ * │     bảng nong bong bóng chat ra và cả panel sinh thanh cuộn ngang.        │
+ * │                                                                          │
+ * │  2. Bong bóng chứa bảng phải là khối có BỀ RỘNG XÁC ĐỊNH (`block w-full`, │
+ * │     xem `ChatPanel`), không phải `inline-block` co theo nội dung. Với     │
+ * │     `inline-block`, bề rộng bọc ngoài lại phụ thuộc vào nội dung bên      │
+ * │     trong — `max-w-full` không còn mốc nào để bám, và lớp 1 mất tác dụng. │
+ * │                                                                          │
+ * │ Nhờ vậy panel thu hẹp tới mức nào (MIN_W = 300px) bảng vẫn chỉ cuộn ngang │
+ * │ bên trong, không bao giờ đẩy được sidebar rộng ra.                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `min-w-max` trên `<table>`: để bảng giữ bề rộng tự nhiên của nó rồi mới cuộn,
+ * thay vì bị bóp cho vừa khung và mỗi ô xuống dòng thành một cột chữ dọc.
+ */
+function Table({ head, rows, align }: { head: string[]; rows: string[][]; align: Align[] }) {
+  return (
+    <div className="my-1.5 max-w-full overflow-x-auto rounded-lg border border-line">
+      <table className="min-w-max border-collapse text-[12.5px]">
+        <thead>
+          <tr>
+            {head.map((c, i) => (
+              <th
+                key={i}
+                className={`border-b border-line bg-line/30 px-2.5 py-1.5 font-semibold text-ink ${
+                  ALIGN[align[i] ?? 'left']
+                }`}
+              >
+                <Inline text={c} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="even:bg-line/15">
+              {r.map((c, j) => (
+                <td
+                  key={j}
+                  className={`border-b border-line/60 px-2.5 py-1 align-top text-ink last:border-r-0 ${
+                    ALIGN[align[j] ?? 'left']
+                  }`}
+                >
+                  <Inline text={c} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -113,6 +188,10 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
               </pre>
             </div>
           );
+        }
+
+        if (b.kind === 'table') {
+          return <Table key={i} head={b.head} rows={b.rows} align={b.align} />;
         }
 
         if (b.kind === 'heading') {

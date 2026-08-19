@@ -188,7 +188,7 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           />
 
           <Label htmlFor="agent-pitch" className="mt-3">
-            Giới thiệu — thứ DUY NHẤT Trợ lý thấy khi chia việc
+            Giới thiệu
           </Label>
           <Textarea
             id="agent-pitch"

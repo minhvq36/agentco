@@ -208,9 +208,15 @@ https://ví-dụ-3.com/pricing
 
 ---
 
-## Bài 5 — Bản địa hoá ✅ *không cần gõ tay*
+## Bài 5 — Bản địa hoá ✅ *không cần gõ tay* · ⚠ **VIẾT LẠI 20/08 — bản cũ đo một thứ đã bị gỡ**
 
-Bài chứng minh kho tri thức có giá trị thật — và giá trị đó **đếm được**.
+> **Vì sao viết lại.** Bản cũ đo *"sổ tay của `Người dịch` dày lên sau mỗi ca"*. Hành vi đó **không còn tồn tại**, và đó là chuyện tốt: ngày 19/08 một ca chạy trơn tru đã đẻ ra một node tri thức **diễn giải sai** chính sách của người dùng ("trên 50% không đổi trả" → "giảm 60% *thường* không được đổi trả"), rồi nằm trong prompt của mọi nhân viên cho tới khi hết hạn. Bản vá: `worthLearning()` (`assistant.ts`) chỉ hỏi bài học khi ca có **dấu vết trục trặc** — hỏng, bị chặn, receipt phải sửa, hoặc nhân viên lặp thao tác.
+>
+> Hệ quả: một ca dịch chạy êm sinh ra **0 bài học**, đúng thiết kế. Chạy bài cũ hôm nay thì panel Tri thức đứng im ở 0 và người test kết luận "hệ thống hỏng" — trong khi nó đang làm đúng. **Đã đo trên máy người dùng 20/08:** ba ca dịch, `knowledge/index.json` = 74 byte (rỗng).
+>
+> Bài mới đo thứ THAY THẾ nó: **hai đường vào tri thức còn lại**, và cả hai đều do người dùng chủ động mở.
+
+Bài chứng minh nhất quán thuật ngữ **đếm được** — và đắt hơn hay rẻ hơn tuỳ vào việc bạn chốt luật ở đâu.
 
 **Bước 1.** 🖱 **+ Văn phòng** → `Bản địa hoá`
 
@@ -221,24 +227,63 @@ Bài chứng minh kho tri thức có giá trị thật — và giá trị đó *
 
 **Bước 3.** 🖱 **Tủ tài liệu** → thả 3–5 tài liệu tiếng Anh vào.
 
-**Bước 4.** 🖱 chat, dịch **file thứ nhất**:
+### Vòng A — đối chứng (chưa chốt gì)
+
+**Bước 4.** 🖱 chat, dịch **file thứ nhất**. Nói rõ **hai file**, vì "ghi lại thuật ngữ" một mình là câu mà planner đọc ra hai hình dạng khác nhau:
 
 ```
 Dịch doc-1.md trong tủ tài liệu sang tiếng Việt, giọng tài liệu sản phẩm.
-Lưu vào artifacts/vi/doc-1.md. Sau khi dịch xong, ghi lại các thuật ngữ
-quan trọng và cách bạn đã chọn dịch chúng.
+Lưu vào artifacts/vi/doc-1.md, và ghi bảng thuật ngữ ra một file RIÊNG
+artifacts/vi/thuat-ngu-doc-1.md — cột: thuật ngữ gốc, bản dịch, lý do chọn.
 ```
 
-**Bước 5.** Lặp cho file 2, 3, 4, 5 — **mỗi lần một ca riêng**, đừng gộp.
+**Bước 5.** Lặp cho file 2 và 3 — **mỗi lần một ca riêng**, đừng gộp.
 
-**Bước 6 — đo:** chọn 10 thuật ngữ xuất hiện ở nhiều file. Đếm mỗi thuật ngữ được dịch bằng **mấy cách khác nhau**.
+**Bước 6 — kiểm hình dạng đầu ra.** 🖱 Mở panel **Kết quả**. Cả ba ca phải cho **đúng hai file mỗi ca**, ở `…/T-01/vi/`.
 
-- File 1→5 mà số cách dịch **giảm dần** → kho tri thức đang hoạt động.
-- Không giảm → `addLesson` không ghi được gì hữu ích, hoặc HOT không kéo nó vào. Cũng là kết quả có ích.
+- ✅ Ba ca ba hình dạng giống nhau → planner ổn định.
+- ❌ Ca này hai file, ca kia nhét bảng vào cuối bản dịch → **ghi nhận**. Đây là lỗi đã gặp thật ngày 20/08 với câu yêu cầu mơ hồ hơn, và là lý do bước 4 phải nói "một file RIÊNG".
 
-🖱 Mở panel **Tri thức** sau mỗi ca để nhìn sổ tay của `Người dịch` dày lên.
+Đường dẫn có dạng `artifacts/<plan_id>/T-01/vi/doc-1.md`: phần `vi/` là **thư mục bạn đặt**, được giữ nguyên; hai lớp trước nó là khung theo ca để lần chạy sau không đè lên lần này (`outputScoper`, 20/08).
 
-**Chi phí:** ~$0.10/file
+### Vòng B — chốt luật rồi đo lại
+
+**Bước 7.** 🖱 chat — **không giao việc**, chỉ nói chuyện. Chốt cách dịch 5–10 thuật ngữ bạn thấy ba bản trên dịch mỗi bản một kiểu:
+
+```
+Từ giờ trong văn phòng này: workspace = không gian làm việc,
+credentials = thông tin đăng nhập, toggle = công tắc gạt.
+Giữ nguyên viết tắt trong ngoặc: SSO, MFA, IdP.
+```
+
+**Bước 8.** 🖱 gõ `/clear`.
+
+**Bước 9 — kiểm.** 🖱 Mở panel **Tri thức**. Phải có **một node `GHI NHỚ` trọng số 0.9** chứa đúng những luật bạn vừa chốt.
+
+- ✅ Có → đây là đường vào tri thức **đúng đắn** còn lại: thứ *người dùng* chốt, không phải thứ model nghe kể lại rồi tự diễn giải.
+- ❌ Không có → `compactMemory` trả về `KHÔNG`, hoặc lỗi nén. Ghi nhận.
+
+**Bước 10.** Dịch file 4 và 5, cùng câu lệnh ở bước 4.
+
+**Bước 11 — ĐO:** chọn 10 thuật ngữ xuất hiện ở nhiều file. Đếm mỗi thuật ngữ được dịch bằng **mấy cách khác nhau**.
+
+| So sánh | Ý nghĩa |
+|---|---|
+| File 4–5 nhất quán hơn file 1–3 | ✅ node `GHI NHỚ` đang vào prefix và có tác dụng thật |
+| Không khá hơn | ❌ HOT không kéo node đó vào, hoặc nội dung node quá mờ. Cũng là kết quả có ích |
+
+### Đường thứ hai — và nó rẻ hơn
+
+Thay vì bước 7–8, viết một file `glossary.md` rồi 🖱 thả vào **Tủ tài liệu**. Khác biệt về cái giá, và đây là thứ bài test này thật sự dạy:
+
+| | vào đâu | trả tiền khi nào |
+|---|---|---|
+| Node `GHI NHỚ` | **prefix** của Trợ lý | **mọi lượt trò chuyện**, mãi mãi |
+| `glossary.md` trong tủ | bảng kê + `Grep` của nhân viên | chỉ lúc nhân viên thật sự mở nó |
+
+Luật ngắn, ít, ổn định → node tri thức. Bảng 200 dòng → tủ tài liệu. Nhét bảng 200 dòng vào tri thức là trả tiền cho nó ở mỗi câu "chào bạn".
+
+**Chi phí:** ~$0.10/file · vòng B thêm ~$0.02 cho lượt nén ở `/clear`
 
 ---
 

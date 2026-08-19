@@ -609,10 +609,14 @@ export class Office {
 
       // 1. Kế hoạch — QUA KHOÁ. Trợ lý là một người: nếu người dùng vừa nhắn
       // gì đó thì lượt đó phải xong trước, không được chồng lên lượt này.
-      const planned = await this.mailbox.lock(() => this.assistant.plan(request));
+      // `record.plan_id` đi VÀO khâu lập kế hoạch, không phải được ghi đè lên
+      // kết quả của nó: `artifactScoper` đóng khung đường dẫn bằng id nó nhận
+      // được, nên ghi đè sau đó là để lại một thư mục kết quả mang id mồ côi.
+      // → `Assistant.plan`
+      const planned = await this.mailbox.lock(() => this.assistant.plan(request, record.plan_id));
       usage = addUsage(usage, planned.usage);
       this.logAssistantUsage('plan', planned.usage);
-      const plan = { ...planned.value, plan_id: record.plan_id };
+      const plan = planned.value;
 
       /**
        * 2. SỬA thứ sửa được, rồi mới CHẶN thứ không sửa được.
@@ -705,7 +709,7 @@ export class Office {
       let docTexts: string[] | undefined = anyLesson ? this.library.texts() : undefined;
 
       for (const r of receipts) {
-        this.saveReceipt(r);
+        this.saveReceipt(plan.plan_id, r);
         this.recordUsage(r);
         usage = addUsage(usage, r.usage);
         for (const lesson of r.lessons) {
@@ -950,6 +954,21 @@ export class Office {
       lines.push('Kết quả đã lưu tại:');
       lines.push(...shown.map((p) => `  ${base}/${p}`));
       if (files.size > shown.length) lines.push(`  …và ${files.size - shown.length} file nữa`);
+      /**
+       * Một câu giải thích cái tiền tố `P-…/T-01/`, CHỈ khi người dùng đã tự đặt
+       * thư mục.
+       *
+       * `artifacts/<plan>/<task>/` là bốn đoạn. Sâu hơn thế nghĩa là `outputScoper`
+       * vừa giữ lại một phần đuôi mà người dùng viết ra — tức là họ CÓ ý về chỗ
+       * để file, và giờ đang nhìn đường dẫn của mình bị bọc thêm hai lớp lạ. Đó
+       * đúng là lúc phải nói vì sao, và cũng là lúc DUY NHẤT đáng nói: dán câu
+       * này vào mọi ca là biến một lời giải thích thành tiếng ồn.
+       *
+       * 0 token — dựng bằng code từ chính đường dẫn đang cầm.
+       */
+      if (shown.some((p) => p.split('/').length > 4)) {
+        lines.push('(mỗi ca có thư mục riêng để lần chạy sau không đè lên lần này)');
+      }
     }
     if (servers.size) {
       lines.push(`Đã ghi ra ngoài qua: ${[...servers].sort().join(', ')}`);
@@ -1467,9 +1486,7 @@ export class Office {
     // session đã sạch) thì không có gì xảy ra cả: node bị đè vẫn nằm nguyên,
     // ghi chú cũ vẫn nằm nguyên. Đúng lúc họ đang cố dọn thì lệnh dọn im lặng.
     if (!this.assistant.session) {
-      const swept = this.pruneNow();
-      this.clearChatLog();
-      this.emit({ type: 'office.cleared', say: 'Đã dọn cuộc trò chuyện.', plan_id: null });
+      const swept = this.finishClear();
       return {
         saved: false,
         note: swept ? `Chưa có gì mới để nhớ.${swept}` : 'Chưa có gì để nhớ — bắt đầu mới luôn.',
@@ -1492,15 +1509,67 @@ export class Office {
         saved = true;
       }
     } catch (err) {
-      // Nén hỏng thì KHÔNG được quên: thà giữ một bản ghi dài còn hơn mất trắng.
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ BUG ĐÃ SỬA (20/08): `/clear` KẸT VĨNH VIỄN, không có đường thoát.    │
+       * │                                                                      │
+       * │ Bản trước gộp MỌI lỗi nén vào một nhánh "giữ nguyên cuộc trò chuyện".│
+       * │ Ý định đúng cho lỗi TẠM (mạng, hết hạn mức) — nhưng sai hoàn toàn    │
+       * │ cho lỗi VĨNH VIỄN.                                                    │
+       * │                                                                      │
+       * │ Nén chạy `resume: <session_id>`, và bản ghi hội thoại đó nằm trong   │
+       * │ `~/.claude/projects/` — MỘT THƯ MỤC AGENTCO KHÔNG SỞ HỮU. Người dùng │
+       * │ dọn nó, đổi tên thư mục công ty, hay bê máy khác là bản ghi biến     │
+       * │ mất. Từ giây phút đó, mọi lần gõ `/clear` đều ném cùng một lỗi, và ô │
+       * │ chat KHÔNG BAO GIỜ dọn được nữa. Lệnh dọn duy nhất của sản phẩm chết │
+       * │ cứng, còn câu lỗi thì nói "mình giữ nguyên cuộc trò chuyện" như thể  │
+       * │ đó là một lựa chọn.                                                   │
+       * │                                                                      │
+       * │ Mất trí nhớ là chuyện ĐÃ RỒI ở thời điểm này — bản ghi không còn thì │
+       * │ không ai nén được nó nữa. Giữ thêm một ô chat không xoá được chỉ là   │
+       * │ mất thêm lần thứ hai. Nên: dọn, và NÓI THẬT đã mất gì.                │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      if (!sessionGone(err)) {
+        // Lỗi TẠM — thà giữ một bản ghi dài còn hơn mất trắng. Gõ lại sau là được.
+        return {
+          saved: false,
+          note:
+            `Chưa nén được trí nhớ (${err instanceof Error ? err.message : 'lỗi'}), ` +
+            'nên mình giữ nguyên cuộc trò chuyện. Bạn thử lại /clear sau nhé.',
+        };
+      }
+      const swept = this.finishClear();
       return {
         saved: false,
-        note: `Chưa nén được trí nhớ (${err instanceof Error ? err.message : 'lỗi'}), nên mình giữ nguyên cuộc trò chuyện.`,
+        note:
+          'Mình không đọc lại được cuộc trò chuyện cũ (bản ghi của Claude Code đã bị dọn), ' +
+          `nên không cất lại được gì. Đã dọn ô chat, bắt đầu mới.${swept}`,
       };
     }
 
-    const tail = this.pruneNow();
+    const tail = this.finishClear();
+    return {
+      saved,
+      note:
+        (saved
+          ? 'Đã dọn cuộc trò chuyện. Những gì bạn đã chốt mình cất vào sổ tay riêng, mở ở ngăn Tri thức xem được.'
+          : 'Đã dọn cuộc trò chuyện.') + tail,
+    };
+  }
 
+  /**
+   * Dọn THẬT: quên session, xoá con trỏ, xoá nhật ký hội thoại, dọn kho, báo UI.
+   *
+   * Gộp một chỗ vì `compactMemory` có BA đường tới đây — chưa có gì để nén, nén
+   * xong, và bản ghi hội thoại đã biến mất. Bản trước viết tay từng đường, nên
+   * đường "chưa có gì để nén" thiếu mất `knowledge.changed`: `pruneNow()` có thể
+   * vừa xoá vài node xong mà ngăn Tri thức vẫn hiện số cũ cho tới lần mở lại.
+   *
+   * Trả về câu đuôi của `pruneNow()` để người gọi ghép vào báo cáo.
+   */
+  private finishClear(): string {
+    const tail = this.pruneNow();
     this.assistant.forget();
     fs.rmSync(this.sessionFile(), { force: true });
     this.clearChatLog();
@@ -1515,13 +1584,7 @@ export class Office {
       version: this.loaded.knowledgeVersion,
       plan_id: null,
     });
-    return {
-      saved,
-      note:
-        (saved
-          ? 'Đã dọn cuộc trò chuyện. Những gì bạn đã chốt mình cất vào sổ tay riêng, mở ở ngăn Tri thức xem được.'
-          : 'Đã dọn cuộc trò chuyện.') + tail,
-    };
+    return tail;
   }
 
   /**
@@ -1931,8 +1994,33 @@ export class Office {
     this.writeJson(path.join(this.loaded.paths.tasks, `${plan.plan_id}.plan.json`), plan);
   }
 
-  private saveReceipt(r: Receipt): void {
-    this.writeJson(path.join(this.loaded.paths.tasks, `${r.task_id}.receipt.json`), r);
+  /**
+   * Biên nhận một task. Tên file mang CẢ `plan_id`.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BUG ĐÃ SỬA (20/08): ba ca chạy, còn đúng MỘT file biên nhận.             │
+   * │                                                                          │
+   * │ Bản trước đặt tên `${task_id}.receipt.json`. Nhưng `T-01` là số thứ tự   │
+   * │ TRONG một kế hoạch và mọi kế hoạch đều bắt đầu từ 1 — nên mọi ca đều ghi │
+   * │ đè lên cùng một file. Đo được trên máy người dùng: văn phòng             │
+   * │ `ban-dia-hoa` chạy ba ca dịch, `tasks/` còn lại đúng `T-01.receipt.json` │
+   * │ của ca CUỐI. Token, số lượt, `reads`, `looped`, `lessons` của hai ca đầu │
+   * │ mất trắng, không khôi phục được.                                         │
+   * │                                                                          │
+   * │ Đây CHÍNH XÁC là lỗi đã sửa cho `artifacts/` ngày 19/08 (xem             │
+   * │ `artifactScoper`) — cùng nguyên nhân, cùng lớp hậu quả. Lần đó `tasks/`  │
+   * │ bị bỏ quên, dù `savePlan` ngay bên trên đã dùng `plan_id` từ đầu.        │
+   * │                                                                          │
+   * │ Bài học: khi sửa một lỗi "id không duy nhất", phải rà HẾT mọi chỗ lấy id │
+   * │ đó làm tên file — không chỉ chỗ người dùng vừa kêu.                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * File cũ KHÔNG di trú: không có đoạn code nào đọc biên nhận trở lại (đây là
+   * bản ghi pháp y để người dùng mở ra xem), nên đổi tên là đủ. Bản `T-01.
+   * receipt.json` cũ nằm lại vô hại.
+   */
+  private saveReceipt(planId: string, r: Receipt): void {
+    this.writeJson(path.join(this.loaded.paths.tasks, `${planId}.${r.task_id}.receipt.json`), r);
   }
 
   /** Task chưa chạy — để `agentco resume` chạy tiếp thay vì làm lại từ đầu. */
@@ -1970,6 +2058,35 @@ export class Office {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(value, null, 2), 'utf8');
   }
+}
+
+/**
+ * Bản ghi hội thoại đã BIẾN MẤT — `resume` sẽ không bao giờ chạy lại được.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÂY LÀ RANH GIỚI "THỬ LẠI ĐƯỢC" vs "THỬ LẠI VÔ NGHĨA".                   │
+ * │                                                                          │
+ * │ Không dùng `classifyError` (worker.ts): nó phân loại theo cái giá phải    │
+ * │ trả (hết hạn mức, rate limit, auth) để quyết có retry không. Ở đây câu    │
+ * │ hỏi khác hẳn — không phải "chờ rồi thử lại được không" mà "cái ta định    │
+ * │ đọc còn tồn tại không". Một lỗi mạng là `other`, một session đã bị xoá    │
+ * │ cũng là `other`; gộp chúng lại là mất đúng thông tin cần dùng.            │
+ * │                                                                          │
+ * │ ⚠ MẶC ĐỊNH LÀ `false` — khớp mẫu không chắc thì coi là lỗi TẠM. Nhận      │
+ * │ nhầm một lỗi mạng thành "session mất" là ném đi một bản nén trí nhớ có    │
+ * │ thể cứu được; nhận nhầm chiều ngược lại chỉ khiến người dùng gõ `/clear`  │
+ * │ thêm một lần. Sai lệch về phía giữ dữ liệu.                              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Khớp theo VĂN BẢN lỗi vì SDK không phơi mã lỗi có cấu trúc cho ca này. Mẫu
+ * để rộng có chủ ý: một bản SDK đổi cách diễn đạt không được làm `/clear` kẹt
+ * lại lần nữa. → `Office.compactMemory`
+ */
+function sessionGone(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /no conversation found|session[^.]{0,24}not found|no such session|could not find[^.]{0,24}session|ENOENT/i.test(
+    msg,
+  );
 }
 
 /**

@@ -101,6 +101,43 @@ body {
   outline-offset: 2px;
 }
 
+/**
+ * Ô NHẬP: MỘT vòng focus, không phải hai.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG ĐÃ SỬA (20/08): "viền ô chat khi được chọn bị dày và thô".           │
+ * │                                                                          │
+ * │ Ô nhập nhận HAI dấu focus chồng lên nhau: `focus:border-accent` ở         │
+ * │ `ui/misc.tsx` cho viền 1px cam, cộng luật `:focus-visible` ngay trên cho  │
+ * │ một vòng 2px cam CÁCH VIỀN 2px. Hai đường cam song song, giữa là một khe  │
+ * │ nền — mắt đọc ra thành một viền dày ~5px.                                │
+ * │                                                                          │
+ * │ 🔥 `misc.tsx` ĐÃ CÓ `focus:outline-none`, và nó không có tác dụng. Lý do  │
+ * │ không phải specificity mà là CASCADE LAYER: Tailwind v4 đặt utility trong │
+ * │ `@layer utilities`, còn file này viết NGOÀI mọi layer — mà style không    │
+ * │ nằm trong layer thắng mọi style nằm trong layer, bất kể specificity. Nên  │
+ * │ luật trên đè được `focus:outline-none`, và người viết dòng đó tin rằng    │
+ * │ mình đã tắt xong. Bài học: đã dùng `@layer` thì mọi CSS trần trong file   │
+ * │ này là một luật ƯU TIÊN CAO NHẤT, phải viết như thế.                      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Thay bằng viền đổi màu + quầng mềm SÁT viền: không khe hở thì không có hai
+ * đường, và 1px viền + 3px quầng vẫn thấy rõ hơn hẳn 1px viền trơn — tiêu chí
+ * dễ nhìn cho người điều hướng bằng bàn phím không bị mua rẻ ở đây.
+ *
+ * `color-mix` chứ không phải `--color-accent-soft`: ở nền tối `accent-soft` là
+ * nâu sẫm, đặt trên `panel` thì gần như biến mất. Trộn từ chính `accent` thì
+ * quầng luôn cùng sắc với viền và luôn thấy được ở CẢ hai bảng màu.
+ *
+ * Nút bấm CỐ Ý không nằm trong luật này: chúng là nền đặc, một vòng outline
+ * bao quanh đọc ra đúng là "đang được chọn", không phải một viền dày.
+ */
+:where(input, textarea, select):focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 28%, transparent);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

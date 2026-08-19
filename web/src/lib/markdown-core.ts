@@ -16,9 +16,13 @@
  * → `test/markdown.test.ts` · `web/src/lib/markdown.tsx`
  */
 
+/** Canh cột, đọc từ dòng phân cách: `:---` `:--:` `---:`. */
+export type Align = 'left' | 'center' | 'right';
+
 export type Block =
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'heading'; level: number; text: string }
+  | { kind: 'table'; head: string[]; rows: string[][]; align: Align[] }
   | { kind: 'text'; text: string };
 
 /** Một mẩu trong dòng: code span, hoặc văn bản thường. */
@@ -26,6 +30,80 @@ export type Token = { code: boolean; text: string };
 
 const FENCE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
+
+/**
+ * Dòng phân cách của bảng: `|---|:--:|---:|`. Đây là thứ ĐỊNH NGHĨA một bảng.
+ *
+ * Một dòng chỉ có dấu `|` thì chưa phải bảng — người dùng gõ "a | b" trong câu
+ * là chuyện bình thường. Chỉ khi dòng NGAY SAU là dòng phân cách hợp lệ thì
+ * khối đó mới là bảng, đúng luật GFM.
+ */
+const DELIM_CELL = /^:?-{1,}:?$/;
+
+/** Số cột tối đa. Bảng rộng hơn thế gần như chắc chắn là văn bản bị hiểu nhầm. */
+const MAX_COLS = 24;
+/** Số hàng tối đa cho một bảng. Vượt thì cắt — bong bóng chat không phải bảng tính. */
+const MAX_ROWS = 500;
+
+/**
+ * Cắt một dòng bảng thành các ô.
+ *
+ * Bỏ đúng MỘT dấu `|` ở hai đầu (viết `| a | b |` hay `a | b` đều hợp lệ trong
+ * GFM), và tôn trọng `\|` — dấu gạch đứng đã thoát là NỘI DUNG, không phải vách
+ * ngăn. Thiếu luật thoát đó thì một ô chứa `a\|b` tự tách làm đôi và cả hàng
+ * lệch cột so với hàng tiêu đề — tức là cả bảng bị vứt đi ở khâu kiểm cột.
+ */
+function splitCells(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  // Cắt `|` cuối, nhưng KHÔNG cắt nếu nó đã được thoát (`\|`).
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+
+  const out: string[] = [];
+  let cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === '\\' && s[i + 1] === '|') {
+      cur += '|';
+      i++;
+      continue;
+    }
+    if (ch === '|') {
+      out.push(cur.trim());
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/**
+ * Dòng này có phải dòng phân cách với ĐÚNG `cols` cột không?
+ *
+ * ⚠ ĐÒI CÓ `|` TRONG CHÍNH DÒNG PHÂN CÁCH, và đó không phải thừa. Không có luật
+ * này thì hai dòng vô hại sau đây thành một cái bảng một cột:
+ *
+ *   chọn cà phê | trà sữa
+ *   ---
+ *
+ * `---` đứng một mình là gạch ngang / tiêu đề kiểu setext — hai thứ bộ phân
+ * tích này CỐ Ý không hỗ trợ, nên hôm nay chúng hiện nguyên văn và phải tiếp
+ * tục như thế. Luật này miễn phí: bảng từ hai cột trở lên thì dòng phân cách
+ * BẮT BUỘC đã có `|` rồi.
+ */
+function delimAlign(line: string, cols: number): Align[] | undefined {
+  if (!line.includes('-') || !line.includes('|')) return undefined;
+  const cells = splitCells(line);
+  if (cells.length !== cols) return undefined;
+  if (!cells.every((c) => DELIM_CELL.test(c))) return undefined;
+  return cells.map((c) => {
+    const l = c.startsWith(':');
+    const r = c.endsWith(':');
+    return l && r ? 'center' : r ? 'right' : 'left';
+  });
+}
 
 /**
  * LƯỢT KHỐI — quét theo DÒNG.
@@ -38,6 +116,27 @@ const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
  * `helpText()` thụt mô tả lệnh đúng 4 dấu cách; dải bước kế hoạch dùng `  1. `.
  * Bật hai luật đó lên là biến những câu backend dựng sẵn thành khối code xám và
  * danh sách đánh số lại — hỏng đúng thứ đang chạy tốt.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BẢNG: "TRỌN BẢNG HOẶC KHÔNG GÌ CẢ" (20/08).                             │
+ * │                                                                          │
+ * │ Nhận diện bảng đòi BA điều kiện, thiếu một là rơi thẳng về `text` và      │
+ * │ hiện nguyên văn y như trước khi có luật này:                              │
+ * │                                                                          │
+ * │   1. dòng hiện tại có `|`                                                │
+ * │   2. dòng NGAY SAU là dòng phân cách (`|---|:--:|`)                      │
+ * │   3. số cột của hai dòng đó KHỚP NHAU                                    │
+ * │                                                                          │
+ * │ Vì sao khắt khe: một bảng vẽ ra mà lệch cột, thiếu ô, hay nuốt mất hàng   │
+ * │ cuối là một LỜI KHẲNG ĐỊNH SAI về dữ liệu — người đọc tin vào cái bảng    │
+ * │ hơn hẳn tin vào một đống dấu `|`. Hiện nguyên văn thì xấu nhưng không     │
+ * │ nói dối, và người dùng nhìn ra ngay là "chỗ này chưa dựng được".          │
+ * │                                                                          │
+ * │ Hàng THÂN thì ngược lại — được nới: GFM cho phép hàng thiếu ô (đệm rỗng)  │
+ * │ và thừa ô (cắt bớt). Ràng buộc chặt đặt ở chỗ QUYẾT ĐỊNH "đây có phải     │
+ * │ bảng không"; sau khi đã quyết rồi thì một hàng lệch không đáng để vứt cả  │
+ * │ bảng đi.                                                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function blocksOf(src: string): Block[] {
   const lines = src.replace(/\r\n?/g, '\n').split('\n');
@@ -84,11 +183,55 @@ export function blocksOf(src: string): Block[] {
       continue;
     }
 
+    // BẢNG — kiểm trước khi gom vào văn bản, nhưng chỉ khi cả ba điều kiện đủ.
+    // Không đủ thì `continue` KHÔNG chạy và dòng rơi xuống `text.push` như cũ.
+    if (line.includes('|')) {
+      const head = splitCells(line);
+      // Bảng MỘT CỘT là hợp lệ và có thật (một danh sách có tiêu đề). Cửa chặn
+      // ca giả nằm ở `delimAlign`, không nằm ở số cột.
+      const align =
+        head.length <= MAX_COLS ? delimAlign(lines[i + 1] ?? '', head.length) : undefined;
+      if (align) {
+        flush();
+        const rows: string[][] = [];
+        let j = i + 2;
+        // Ăn tới dòng đầu tiên KHÔNG có `|`. Dòng trắng cũng dừng — nó là ranh
+        // giới đoạn văn, và một bảng nối qua dòng trắng là hai bảng khác nhau.
+        for (; j < lines.length && rows.length < MAX_ROWS; j++) {
+          const row = lines[j]!;
+          if (!row.includes('|') || !row.trim()) break;
+          const cells = splitCells(row);
+          // Đệm/cắt về đúng số cột của tiêu đề — xem khối chú thích ở trên.
+          while (cells.length < head.length) cells.push('');
+          rows.push(cells.slice(0, head.length));
+        }
+        out.push({ kind: 'table', head, rows, align });
+        i = j - 1;
+        continue;
+      }
+    }
+
     text.push(line);
   }
 
   flush();
   return out;
+}
+
+/**
+ * Tin nhắn này có bảng dựng được không?
+ *
+ * Ô chat dùng nó để chọn bề rộng bong bóng: bảng là thứ DUY NHẤT trong markdown
+ * mà bề rộng mang thông tin, nên tin có bảng được nới ra hết panel còn tin
+ * thường vẫn giữ 92% (một bong bóng full width cho câu "Đã xong." trông sai).
+ *
+ * Đi qua ĐÚNG `blocksOf`, không phải một regex riêng: hai cách nhận diện song
+ * song thì kiểu gì cũng có ngày lệch nhau — bong bóng nới rộng cho một "bảng"
+ * mà tầng vẽ lại quyết định hiện nguyên văn. Phân tích lại một tin nhắn chat là
+ * vài chục micro giây, rẻ hơn nhiều so với một lớp lỗi.
+ */
+export function hasTable(src: string): boolean {
+  return blocksOf(src).some((b) => b.kind === 'table');
 }
 
 /**

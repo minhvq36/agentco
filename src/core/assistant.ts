@@ -193,6 +193,61 @@ export function artifactScoper(planId: string, taskIds: readonly string[]): (p: 
   };
 }
 
+/**
+ * Đóng khung ĐƯỜNG RA của một task — và GIỮ LẠI phần đuôi người dùng đặt.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO TÁCH KHỎI `artifactScoper` (20/08).                              │
+ * │                                                                          │
+ * │ Hai bên trả lời hai câu hỏi khác nhau, và gộp chúng lại là lý do một ca   │
+ * │ hỏng có thật:                                                            │
+ * │                                                                          │
+ * │  · `artifactScoper` (đầu VÀO) — "đường dẫn này trỏ tới task của chính kế │
+ * │    hoạch này không?" Nếu không thì ĐỂ NGUYÊN, vì người dùng có quyền nói │
+ * │    "sửa lại file hôm qua".                                               │
+ * │  · `outputScoper` (đầu RA) — "task này ghi ở đâu?" Câu trả lời KHÔNG phụ │
+ * │    thuộc vào chuỗi model viết ra: luôn là `artifacts/<plan>/<task>/`.     │
+ * │                                                                          │
+ * │ CA HỎNG: người dùng nói *"Lưu vào `artifacts/vi/doc-1.md`"*. Planner ghi  │
+ * │ đúng chuỗi đó vào `outputs`, `artifactScoper` thấy `vi` không phải task   │
+ * │ id nên để nguyên — và file rơi ra ngoài khung theo ca, mất luôn bảo đảm   │
+ * │ "lần chạy sau không đè lần này". Ca đo được trên máy người dùng thì đi    │
+ * │ nhánh kia: planner tự bỏ `vi/` để tuân luật trong prompt, nên **yêu cầu  │
+ * │ tường minh của người dùng biến mất mà không ai nói một câu nào**.        │
+ * │                                                                          │
+ * │ Cả hai kết cục đều sai, và cả hai đều sinh ra từ việc để MODEL quyết một │
+ * │ chuyện thuộc về CODE. Ở đây code quyết phần khung, model giữ phần đuôi:  │
+ * │                                                                          │
+ * │   artifacts/vi/doc-1.md   →  artifacts/<plan>/<task>/vi/doc-1.md         │
+ * │   artifacts/T-01/x.md     →  artifacts/<plan>/T-01/x.md                  │
+ * │   bao-cao.md              →  artifacts/<plan>/<task>/bao-cao.md          │
+ * │                                                                          │
+ * │ Người dùng giữ được cấu trúc thư mục mình muốn, hệ thống giữ được bảo    │
+ * │ đảm không ghi đè, và `whereBlock` in ra đường dẫn THẬT nên không ai bị    │
+ * │ lừa. → docs/SPEC-artifacts.md                                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Idempotent: gọi lại trên kết quả của chính nó không đóng khung thêm lớp nữa.
+ */
+export function outputScoper(planId: string, taskId: string): (p: string) => string {
+  const home = `artifacts/${planId}/${taskId}`;
+  return (raw: string): string => {
+    let rest = raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+    if (rest.startsWith('artifacts/')) rest = rest.slice('artifacts/'.length);
+    // Bóc các lớp khung ĐÃ CÓ, đúng thứ tự — đây là chỗ giữ tính idempotent.
+    if (rest.startsWith(`${planId}/`)) rest = rest.slice(planId.length + 1);
+    if (rest.startsWith(`${taskId}/`)) rest = rest.slice(taskId.length + 1);
+    // `..` và `.` bị bỏ chứ không phải bị từ chối: đây là chuỗi do model sinh,
+    // và một đường dẫn đi ngược ra ngoài `artifacts/` là thứ không được tồn tại
+    // dù model có ý gì. Chốt chặn thật vẫn nằm ở `safeJoin`; đây là lớp đầu.
+    const tail = rest
+      .split('/')
+      .filter((s) => s && s !== '.' && s !== '..')
+      .join('/');
+    return tail ? `${home}/${tail}` : `${home}/ket-qua.md`;
+  };
+}
+
 export class Assistant {
   private sessionId: string | undefined;
   /** Vai trò có dây nối từ Assistant trên canvas. undefined = chưa cấu hình = tất cả. */
@@ -383,8 +438,26 @@ export class Assistant {
    * Assistant bằng một model khác (ví dụ Opus cho chất lượng) thì MỖI LẦN đổi model
    * là miss toàn bộ ngữ cảnh — đúng cái ~36.000 token quy đổi đã cảnh báo ở vụ MCP.
    * Tách ra thì đặt `models.planner: deep` thoải mái mà session vẫn ấm nguyên.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `planId` ĐƯỢC TRUYỀN VÀO, KHÔNG TỰ SINH — bug đã sửa 20/08.              │
+   * │                                                                          │
+   * │ Bản trước gọi `newPlanId()` ngay tại đây, còn `Office.run()` cũng gọi    │
+   * │ `newPlanId()` cho bản ghi công việc của nó. HAI id cho MỘT ca. Rồi        │
+   * │ `office.ts` ghi đè `plan.plan_id` bằng id của bản ghi — nhưng lúc đó      │
+   * │ `artifactScoper` đã đóng khung xong mọi đường dẫn bằng id KIA.            │
+   * │                                                                          │
+   * │ Hậu quả đo được trên máy người dùng: `artifacts/P-260820-0302-ov9e/` tồn  │
+   * │ tại trên đĩa, còn `tasks/index.json` chỉ biết `P-260820-0301-aajq`. Thư   │
+   * │ mục kết quả mang một id MỒ CÔI — không có kế hoạch nào, không có file log │
+   * │ nào tên đó. Người dùng còn nhìn thấy cả hai id trong cùng một tin nhắn    │
+   * │ báo kết quả.                                                             │
+   * │                                                                          │
+   * │ Một ca = MỘT id, sinh ở đúng một chỗ (`Office.run`), chảy xuống mọi nơi  │
+   * │ cần. Một id sinh ở hai chỗ thì kiểu gì cũng có ngày lệch.                │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
-  async plan(request: string): Promise<AssistantResult<Plan>> {
+  async plan(request: string, planId: string): Promise<AssistantResult<Plan>> {
     const models = this.office.company.models;
     const { text, usage } = await this.askOneShot(
       `Lập kế hoạch cho yêu cầu sau. Trả về đúng một object JSON như đã quy định.\n\nYêu cầu: ${request}`,
@@ -419,24 +492,25 @@ export class Assistant {
     const remap = new Map(kept.map((s, newIndex) => [s.i, newIndex]));
 
     const steps: PlanStep[] = kept.map((s) => ({ title: s.title, status: 'pending' }));
-    const plan_id = newPlanId();
-    const scope = artifactScoper(plan_id, rawTasks.map((t) => t.task_id));
+    // Đầu VÀO và đầu RA đi qua hai luật khác nhau — xem `outputScoper`.
+    const scopeIn = artifactScoper(planId, rawTasks.map((t) => t.task_id));
 
     const fallbackDeliver = this.office.config.assistant.default_deliver;
-    const tasks = rawTasks.map((t) =>
-      TaskBriefSchema.parse({
+    const tasks = rawTasks.map((t) => {
+      const scopeOut = outputScoper(planId, t.task_id);
+      return TaskBriefSchema.parse({
         ...t,
-        inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scope(i.path) })),
-        outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scope(o.path) })),
+        inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
+        outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scopeOut(o.path) })),
         step: remap.get(t.step) ?? 0,
         // Mặc định VĂN PHÒNG, không phải mặc định của schema. Đây là chỗ cần
         // gạt tất định thật sự có hiệu lực: model im lặng = đi theo cấu hình
         // người dùng đã đặt, chứ không rơi về 'file' một cách âm thầm.
         deliver: t.deliver ?? fallbackDeliver,
-      }),
-    );
+      });
+    });
 
-    return { value: { plan_id, request, steps, tasks }, usage };
+    return { value: { plan_id: planId, request, steps, tasks }, usage };
   }
 
   /**
