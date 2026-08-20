@@ -2275,10 +2275,28 @@ export class Office {
     }
 
     const head = '# Results this office has already produced';
+    /**
+     * TỔNG SỐ CHÍNH XÁC, kể cả khi danh sách bị cắt. → SPEC-artifacts.md §2.4
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ Bảng kê CỐ Ý chỉ liệt kê `MANIFEST_PLANS` ca gần nhất — đó là ngân    │
+     * │ sách token, không phải khiếm khuyết. Nhưng nó khiến một câu hỏi rất   │
+     * │ thường gặp trở nên KHÔNG TRẢ LỜI ĐƯỢC: *"mình đang có bao nhiêu kết   │
+     * │ quả?"*. Model nhìn vào danh sách cắt ngắn rồi đếm — và đếm sai.        │
+     * │                                                                      │
+     * │ Hai con số này ta đang CẦM TRONG TAY (`files.length`, `byPlan.size`). │
+     * │ Luật tối cao: *thứ gì ta quan sát được thì đừng để model đoán*. Giá:   │
+     * │ một dòng, ~15 token, và nó biến một câu trả lời bịa thành một sự việc.│
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const totals =
+      `Total: ${files.length} file(s) across ${groups.length} job(s). ` +
+      `These numbers are exact — use them when the human asks how much is here.`;
     const foot = [
       groups.length > shown.length
-        ? `(and ${groups.length - shown.length} older job(s) not listed — those files still exist, ` +
-          `so a path the human gives you from one of them is valid)`
+        ? `Listed above: the ${shown.length} most recent job(s) only. The older ones still exist on ` +
+          `disk, so a path the human gives you from one of them is valid — never tell them a file ` +
+          `is missing because it is not listed here.`
         : '',
       'These are files EMPLOYEES wrote in earlier jobs. To reuse one, put its path in a',
       "task's `inputs`, or send a `lookup` at it to find out what it says.",
@@ -2293,7 +2311,10 @@ export class Office {
      */
     const limit = this.loaded.company.budgets.artifacts_manifest_tokens;
     const kept = [...blocks];
-    const render = (): string => [head, '', ...kept, '', foot].join('\n');
+    // `totals` đứng NGAY SAU tiêu đề và KHÔNG bao giờ bị cắt: vòng lặp dưới chỉ
+    // bỏ bớt `kept`. Trần token được phép làm danh sách ngắn đi, không được phép
+    // làm con số sai đi.
+    const render = (): string => [head, '', totals, '', ...kept, '', foot].join('\n');
     while (kept.length > 1 && estimateTokens(render()) > limit) kept.pop();
     return render();
   }

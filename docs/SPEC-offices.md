@@ -665,6 +665,34 @@ Hai luật kèm theo trong prompt, và luật thứ nhất là thứ chữa đú
 
 > **Bài học:** bảng kê kết quả (`SPEC-artifacts.md` §2.4) chữa đúng **một ca**. Cửa này chữa **cả lớp** — sẽ luôn có lúc planner cần hỏi, và ta không đoán trước được là lúc nào. Khi một giao thức chỉ cho phép **một** hình dạng trả lời, mọi thứ nằm ngoài hình dạng đó sẽ hiện ra thành lỗi hệ thống, kể cả khi nó là hành vi đúng.
 
+### `/clear` phải GỘP, không phải VIẾT LẠI — và luật gộp có hai chiều (bản vá 20/08)
+
+`compactMemory()` → `addAssistantMemory(…, assistantMemoryIds())` cho bản mới `supersedes` **toàn bộ** bản ghi nhớ đang sống, rồi `dropSuperseded()` **xoá hẳn** chúng. Nhưng prompt nén chỉ bảo *"viết lại những thứ bạn cần nhớ"* và **không nhắc gì** tới khối GHI NHỚ đang nằm sẵn trong ngữ cảnh.
+
+> ⇒ Mỗi `/clear` là một lần **tóm tắt lại bản tóm tắt**. Thứ gì phiên vừa rồi không nhắc thì model không viết lại, và nó **biến mất vĩnh viễn, im lặng**. Đây là `supersedes` bị dùng ngược: nó sinh ra để thay **một bản đã cũ**, không phải để thay **cả trí nhớ bằng lát cắt mới nhất**.
+
+Model **đã nhìn thấy** khối GHI NHỚ — thứ thiếu duy nhất là một câu bảo nó giữ lại. Nhưng *"giữ lại"* một mình là **nửa luật**, và nửa còn lại nguy hiểm ngang nửa đầu: một quyết định cũ đã sai, được chép lại vì nó nằm trong trí nhớ cũ, làm kho có **hai dòng nói ngược nhau** mà không ai biết dòng nào thắng — đúng thứ `supersedes` chặn ở tầng node, tái diễn ở tầng dòng.
+
+**Ba luật, có thứ tự:**
+
+1. **Chép lại** mọi mục cũ còn đúng. Bỏ vì *"phiên này không nhắc tới"* là làm mất một quyết định người dùng đã chốt.
+2. Mục bị phiên vừa rồi **sửa hoặc huỷ** → viết **đúng một dòng theo ý mới**, bỏ hẳn ý cũ. Cái mới thắng, cái cũ biến mất.
+3. **Mỗi chủ đề một dòng.** Phải viết *"trước đây X, giờ Y"* thì chỉ giữ Y.
+
+> **Một luật giữ-lại không có luật ghi-đè đi kèm thì chỉ đổi kiểu hỏng:** mất trí nhớ → mâu thuẫn trí nhớ. Cái sau khó thấy hơn và tệ hơn — nó không im lặng biến mất, nó **im lặng nói dối**.
+
+### Bảng kê trả lời "GIAO ĐƯỢC VIỆC GÌ", không trả lời "CÓ BAO NHIÊU" (chốt 20/08)
+
+Câu hỏi đặt ra: *"người dùng hỏi có bao nhiêu file thì dùng worker ẩn `cwd` thay bảng kê (vốn có thể sai)?"* — **Không.** Ba lý do:
+
+1. **Đó là câu hỏi của CODE.** `office.readablePaths()` trả về danh sách thật, đọc từ đĩa, không cắt. Tiêu một lượt LLM để đếm file là trả tiền mua sự bất định — luật *"thứ gì ta quan sát được thì đừng hỏi model"*.
+2. **Nó không chữa đúng nỗi lo.** Bảng kê sai thì phải làm nó hết sai, không phải thêm một đường thứ hai đôi khi bất đồng với nó. **Hai nguồn sự thật cãi nhau tệ hơn một nguồn thiếu.**
+3. **Giá của một luật định tuyến là vĩnh viễn, cái lợi là ca hiếm.** Thêm *"hỏi về file thì dùng lookup"* là thêm một ranh giới model phải đoán đúng ở mọi tin nhắn, mãi mãi, cho một câu thỉnh thoảng mới có.
+
+**Đo lại thì bảng kê không sai như tưởng:** tủ tài liệu **không cắt** (`library.manifest()` liệt kê đủ) ⇒ *"có bao nhiêu tài liệu"* vốn đã đúng. Chỉ **bảng kê kết quả** bị cắt (`MANIFEST_PLANS = 5` + trần token) ⇒ đó mới là chỗ đếm sai. Vá bằng **code, không bằng lời dặn**: một dòng `Total: N file(s) across M job(s) — these numbers are exact`, đặt ngay sau tiêu đề và **không bao giờ bị trần token cắt** (vòng lặp cắt chỉ bỏ bớt danh sách ca). ~27 token.
+
+**Vẫn cần bảng kê.** Việc của nó không phải trả lời *"bao nhiêu"* mà là để **planner ghi được `inputs` không cần một vòng hỏi lại** — đúng lỗ hổng 19/08. `lookup` không thay được: planner cần đường dẫn **trong lúc lập kế hoạch**, còn `lookup` chạy **thay cho** lập kế hoạch.
+
 ### Nhật ký KHÔNG xoá được — lọc ở tầng hiển thị (chốt 20/08)
 
 User đòi một nút xoá (*"nhiều khi hỏng, bị zombie thấy ngứa mắt"*) rồi **tự chặn lại**: *"hay là giữ lại log nhỉ, để trace được, liên quan cả tiền nong các thứ"*. Câu chặn đó đúng, và đây là lý do:

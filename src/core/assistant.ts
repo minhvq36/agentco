@@ -636,7 +636,49 @@ export class Assistant {
     const { text, usage } = await this.askSession(
       `Sắp bắt đầu một cuộc trò chuyện mới. Đây là những việc đã chạy (dữ liệu hệ thống, KHÔNG cần kể lại):\n\n` +
         `${skeleton}\n\n` +
-        `Hãy viết lại NHỮNG THỨ KHÔNG CÓ TRONG DỮ LIỆU TRÊN mà bạn cần nhớ để phục vụ tiếp:\n` +
+        /**
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ 🔴 GỘP, KHÔNG PHẢI VIẾT MỚI — bug đã sửa 20/08.                  │
+         * │                                                                  │
+         * │ `addAssistantMemory(..., assistantMemoryIds())` cho bản mới       │
+         * │ `supersedes` **TOÀN BỘ** bản ghi nhớ đang sống, rồi `pruneNow()`  │
+         * │ → `dropSuperseded()` **XOÁ HẲN** chúng khỏi đĩa.                  │
+         * │                                                                  │
+         * │ Bản prompt trước chỉ bảo *"viết lại những thứ bạn cần nhớ"* và    │
+         * │ không nói một chữ nào về khối GHI NHỚ đang có sẵn trong ngữ cảnh. │
+         * │ Nên mỗi `/clear` là một lần **tóm tắt lại bản tóm tắt**: thứ gì    │
+         * │ không được nhắc trong phiên vừa rồi thì model không viết lại, và  │
+         * │ nó **biến mất vĩnh viễn**. Một quyết định người dùng chốt tháng    │
+         * │ trước bị bốc hơi sau ba lần dọn, im lặng, không ai báo.           │
+         * │                                                                  │
+         * │ Đây đúng lớp lỗi mà `supersedes` sinh ra để tránh, chỉ là nó bị   │
+         * │ dùng ngược: `supersedes` để **thay một bản đã cũ**, không phải để │
+         * │ **thay cả trí nhớ bằng lát cắt mới nhất**.                        │
+         * │                                                                  │
+         * │ Model ĐÃ nhìn thấy khối GHI NHỚ (nó nằm trong prefix của chính    │
+         * │ lượt này) — thứ thiếu duy nhất là một câu bảo nó giữ lại.         │
+         * │                                                                  │
+         * │ ⚠ NHƯNG "GIỮ LẠI" MỘT MÌNH LÀ NỬA LUẬT, và nửa còn lại nguy hiểm │
+         * │ ngang nửa đầu — user chỉ ra ngay khi đọc bản nháp. Một quyết định │
+         * │ cũ ĐÃ SAI, đã được thay bằng quyết định mới, mà vẫn được chép lại │
+         * │ "vì nó nằm trong trí nhớ cũ", thì kho có HAI dòng nói ngược nhau  │
+         * │ và không ai biết dòng nào thắng. Đó đúng là thứ `supersedes` sinh │
+         * │ ra để chặn ở tầng NODE (*"sau ba tháng kho đầy quyết định mâu     │
+         * │ thuẫn, tệ hơn không nén"*) — ở đây nó tái diễn ở tầng DÒNG, bên    │
+         * │ trong một node.                                                  │
+         * │                                                                  │
+         * │ Nên luật phải HAI CHIỀU và CÓ THỨ TỰ: giữ là mặc định · cái mới   │
+         * │ thắng khi mâu thuẫn · mỗi chủ đề đúng một dòng.                   │
+         * └──────────────────────────────────────────────────────────────────┘
+         */
+        `Trong ngữ cảnh của bạn đã có khối "What the human has decided" — đó là TRÍ NHỚ TỪ TRƯỚC, ` +
+        `và bản bạn viết ra bây giờ sẽ THAY THẾ HẲN nó. Ba luật, theo đúng thứ tự này:\n` +
+        `1. CHÉP LẠI mọi mục cũ còn đúng. Bỏ một mục vì "phiên này không nhắc tới" là làm mất ` +
+        `một quyết định người dùng đã chốt.\n` +
+        `2. Mục cũ nào bị phiên vừa rồi SỬA hoặc HUỶ thì viết ĐÚNG MỘT dòng theo ý MỚI, và bỏ hẳn ý cũ. ` +
+        `Tuyệt đối không để hai dòng nói ngược nhau về cùng một chuyện — cái mới thắng, cái cũ biến mất.\n` +
+        `3. Mỗi chủ đề một dòng. Nếu phải viết "trước đây X, giờ Y" thì chỉ giữ Y.\n\n` +
+        `Những thứ cần nhớ để phục vụ tiếp:\n` +
         `- người dùng thích gì, không thích gì (giọng văn, độ dài, cách trình bày)\n` +
         `- những gì đã CHỐT và không cần bàn lại\n` +
         `- việc đang dở, câu hỏi bạn đã hỏi mà chưa có trả lời\n\n` +
@@ -646,7 +688,11 @@ export class Assistant {
         // Dài hơn một chút mà giữ được đủ ý là lãi.
         `Viết gạch đầu dòng tiếng Việt, dưới 500 từ, mỗi dòng một ý dùng lại được. ` +
         `KHÔNG kể lại danh sách việc đã làm. KHÔNG viết lời chào hay lời hứa. ` +
-        `Nếu thật sự không có gì đáng nhớ thì trả về đúng một chữ: KHÔNG`,
+        // "KHÔNG" chỉ hợp lệ khi CẢ HAI đều trống. Bản trước không nói rõ, nên
+        // một phiên chat vặt ("chào bạn") có thể trả về KHÔNG — và tuy nhánh đó
+        // không ghi node mới (nên không xoá gì), câu dặn vẫn phải khớp với luật
+        // gộp ở trên, nếu không thì hai câu trong cùng một prompt đá nhau.
+        `Nếu KHÔNG có trí nhớ cũ và phiên này cũng không có gì đáng nhớ thì trả về đúng một chữ: KHÔNG`,
     );
     return { value: text.trim(), usage };
   }

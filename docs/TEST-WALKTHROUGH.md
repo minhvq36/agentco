@@ -353,6 +353,77 @@ ghi bảng thuật ngữ ĐÚNG NHƯ ĐÃ DỊCH ra artifacts/vi/doc-2-thuat-ngu
 
 ---
 
+## Bài 5c — Trí nhớ qua `/clear` ✅ *không cần gõ tay* · 🆕 **MỚI 20/08**
+
+> **Vì sao có bài này.** `/clear` là lệnh **ghi đè**, không phải append: bản nén mới `supersedes` toàn bộ bản ghi nhớ đang sống, và bản cũ **bị xoá hẳn khỏi đĩa** (quyết định có chủ ý — giữ lại thì ngăn kéo Tri thức đầy bản trùng và người dùng hoang mang). Nghĩa là **không có lưới an toàn nào**: thứ gì bản nén mới không viết lại thì mất vĩnh viễn.
+>
+> Khối GHI NHỚ cũng **cố ý đứng ngoài cả ba cơ chế** của kho tri thức — không xếp hạng HOT, không khớp COLD, không lão hoá 15 ngày. Với kinh nghiệm agent tự sinh thì hai node mâu thuẫn được `hits` + cửa sổ 15 ngày phân xử dần; với GHI NHỚ thì **không có tầng phân xử nào cả**. Chữ trong khối đó *là* sự thật, nguyên văn, cho tới lần `/clear` sau.
+>
+> Nên toàn bộ trách nhiệm nằm ở **ba luật trong prompt nén**, và bài này đo đúng ba luật đó. Nó rẻ (chỉ lượt Trợ lý, không đụng nhân viên nào) nhưng là bài đo thứ **đắt nhất khi hỏng** — mất một quyết định đã chốt thì không token nào mua lại được.
+
+Chạy ở bất kỳ văn phòng nào **đang rảnh** (`/clear` bị chặn khi có việc chạy dở). Dùng `Bản địa hoá` cho tiện.
+
+**Xem kết quả ở đâu:** 🖱 bảng chi tiết Trợ lý → **prompt phân lớp** → lớp **"Ghi nhớ từ trò chuyện"**. Đó là **nguyên văn** thứ đi vào prefix — chính xác hơn ngăn kéo Tri thức, vì nó là chuỗi model thật sự đọc.
+
+### Vòng A — chốt điều thứ nhất
+
+🖱 chat:
+```
+Từ giờ mọi bản dịch giữ NGUYÊN tên sản phẩm tiếng Anh, đừng Việt hoá.
+```
+🖱 chat: `/clear`
+
+| Quan sát | Nghĩa là |
+|---|---|
+| Dòng trạng thái *"Đang dọn cuộc trò chuyện…"* hiện **suốt** lượt nén | ✅ nó là TRẠNG THÁI, không phải câu có hẹn giờ |
+| Lớp *"Ghi nhớ từ trò chuyện"* có một dòng về tên sản phẩm | ✅ nén chạy |
+| Ô chat **trắng, không còn tin nhắn nào** — kể cả "đã dọn xong" | ✅ đúng §4.6 |
+
+### Vòng B — chốt điều thứ hai, **KHÔNG nhắc lại điều thứ nhất** → đo **luật ①**
+
+🖱 chat:
+```
+Báo cáo cho mình thì viết ngắn thôi, tối đa 5 dòng.
+```
+🖱 chat: `/clear`
+
+| Quan sát | Nghĩa là |
+|---|---|
+| Khối GHI NHỚ có **CẢ HAI** dòng | ✅ **luật ① chạy** — chép lại mục cũ còn đúng |
+| Chỉ còn dòng về báo cáo ngắn, dòng tên sản phẩm **biến mất** | ❌ **luật ① hỏng** — đây đúng là bug 20/08 tái phát. Ghi nhận, dán lại nguyên văn khối GHI NHỚ vào ghi chú phiên |
+
+> ⚠ Đây là bước quan trọng nhất của cả bài. Cái hỏng ở đây **im lặng**: không lỗi, không cảnh báo, chỉ là một quyết định của bạn lặng lẽ không còn.
+
+### Vòng C — **ĐẢO NGƯỢC** điều thứ nhất → đo **luật ②** và **luật ③**
+
+🖱 chat:
+```
+À thôi đổi ý: tên sản phẩm thì Việt hoá hết, kèm tiếng Anh trong ngoặc.
+```
+🖱 chat: `/clear`
+
+| # | Kiểm trong khối GHI NHỚ | Đạt khi |
+|---|---|---|
+| 1 | Đếm số dòng nói về **tên sản phẩm** | **đúng 1** dòng ← luật ② |
+| 2 | Dòng đó nói theo ý **nào** | ý **MỚI** (Việt hoá kèm ngoặc). Còn giữ ý cũ = luật ② hỏng |
+| 3 | Có dòng nào dạng *"trước đây giữ nguyên, giờ Việt hoá"* không | **không có** ← luật ③. Có = model đang lưu cả lịch sử thay đổi, khối này sẽ phình mãi |
+| 4 | Dòng **báo cáo ngắn** còn không | **còn** ← luật ① lần thứ hai, ở một phiên khác |
+
+> ❌ **Ca hỏng tệ nhất** là hai dòng cùng tồn tại: *"giữ nguyên tên tiếng Anh"* **và** *"Việt hoá kèm ngoặc"*. Không có tầng nào phân xử, nên từ đó mọi ca dịch đều là tung đồng xu — và nhật ký sẽ không giải thích được vì sao hai ca giống nhau ra hai kiểu.
+
+### Vòng D — kiểm cơ chế dọn (0 token)
+
+🖱 Mở ngăn kéo **Tri thức** → lọc các node có nhãn `bo-nho`.
+
+| Quan sát | Nghĩa là |
+|---|---|
+| **Đúng MỘT** node GHI NHỚ | ✅ `supersedes` + `dropSuperseded` chạy đúng — bản cũ đã bị dọn |
+| Ba node GHI NHỚ chồng nhau | ❌ quét muộn hoặc chặn nhầm cửa (bug §5e). Ghi nhận |
+
+**Chi phí:** ~$0.03 – $0.06 · vòng D tốn **$0** · **không tiêu một token nhân viên nào**
+
+---
+
 ## Bài 6 — Rà hợp đồng ⚠ *bài đã ĐỔI BẢN CHẤT từ 17/08 — đọc kỹ*
 
 ⚠ **Không phải tư vấn pháp lý.** Đây là bài test kỹ thuật, đừng dùng kết quả để ký gì.
@@ -595,6 +666,8 @@ In ra hoặc copy vào một file, điền trong lúc chạy:
 | 3 Sổ sách | | | | | **tổng có khớp không?** ô trống có làm lệch cột không? |
 | 4 Theo dõi | | | | | dừng ở "không có lịch" |
 | 5 Bản địa hoá | | | | | số cách dịch có giảm không? |
+| 5b Làm tiếp kết quả cũ | | | | | `inputs` có đúng hai đường dẫn đã dán không? |
+| 5c Trí nhớ qua `/clear` | | | | | **luật ① mục cũ còn không · ② một dòng theo ý MỚI · ③ không có "trước đây X giờ Y"** |
 | 6 Rà hợp đồng | | | | | Trợ lý có đọc `INDEX.md` trước khi chia việc không? |
 | 7 Bảng tính | | | | | eco rẻ hơn hay đắt hơn? |
 | 8 Sàng lọc | | | | | chia mấy task? |
