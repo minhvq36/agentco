@@ -434,6 +434,13 @@ assistant:
   display_name: "Trợ lý"
   avatar: "★"
 
+  # Kết quả rơi xuống đâu khi yêu cầu không nghiêng hẳn về bên nào:
+  #   file  - người dùng MỞ file (bài viết, báo cáo, bảng, hợp đồng)
+  #   reply - người dùng ĐỌC câu trả lời ngay trong ô chat (hỏi đáp, tra cứu)
+  # Task "reply" VẪN ghi file như thường; nó chỉ thôi bắt người ta đi mở file.
+  # Văn phòng chuyên hỏi-đáp thì đổi dòng này thành reply.
+  default_deliver: file
+
   # MCP/API mà Trợ lý "dùng được". Thực chất chúng được gắn cho một worker ẩn
   # chạy phía sau, KHÔNG gắn thẳng vào Trợ lý: Trợ lý là session dài, resume
   # liên tục, mà MCP phá prompt cache khi resume -> mất rất nhiều token MỖI LƯỢT

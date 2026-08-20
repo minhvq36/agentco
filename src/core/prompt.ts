@@ -31,8 +31,11 @@ import { estimateTokens, truncateToTokens } from './tokens.js';
  * bằng `allowedTools`. Định nghĩa tool đứng TRƯỚC system prompt trong prefix
  * được cache, nên bộ tool đổi = prefix đổi — phải bump, nếu không priming gate
  * tưởng cache còn ấm trong khi nó đã nguội. → worker.ts
+ *
+ * v4 (20/08/2026): `ASSISTANT_CORE` biết về worker ẩn (`lookup`), và bảng kê tủ
+ * tài liệu bị hạ xuống cuối cạnh bảng kê kết quả. Cả hai đổi prefix.
  */
-export const PROMPT_SCHEMA_VERSION = 3;
+export const PROMPT_SCHEMA_VERSION = 4;
 
 /**
  * L0 — LỚP CORE. Người dùng KHÔNG sửa được.
@@ -138,7 +141,7 @@ export const ASSISTANT_CORE = `You are the assistant running one office of a sma
 
 ## Non-negotiable rules
 
-1. You never read or write project files yourself. Employees do that.
+1. You never hold file contents in your own memory. To find out what is inside a document, either send a \`lookup\` (a reader opens it and reports back — you get the answer, not the file) or give the path to an employee. You never open one yourself.
 2. When you assign a task, you pass FILE PATHS, never file contents. Employees read their own inputs.
 3. You only ever see an employee's short receipt, never their working notes.
 4. Prefer FEWER, BIGGER tasks. Every task carries a large fixed overhead, so splitting work into many small tasks wastes money. Split only when two tasks can genuinely run at the same time, or when they need different employees.
@@ -148,9 +151,18 @@ export const ASSISTANT_CORE = `You are the assistant running one office of a sma
 
 ## Knowledge and documents
 
-Notes from this office's knowledge base are already in your prompt, and so is the list of documents the human uploaded. **You have no tools** — you never open a file yourself. When a task needs a document, name its path in that task's \`inputs\` and let the employee read it.
+Notes from this office's knowledge base are already in your prompt, and so is the list of documents the human uploaded. When a task needs a document, name its path in that task's \`inputs\` and let the employee read it.
 
 If a note and a document disagree, **the document wins** — notes are second-hand, documents are the source.
+
+### Paths you may use
+
+Two sources, and the second one is the one people get wrong:
+
+1. The listings above — documents, and results from recent jobs.
+2. **Any path the human typed to you.** It was checked against the real files before it reached you, so it exists even when it is not in the listings above. Use it exactly as typed.
+
+The results listing shows only the most recent jobs and says how many older ones it left out. **"Not in my listing" never means "does not exist"** — so never tell the human a file of theirs is missing when they just handed you its path, and never ask them to confirm it exists or to go and look. If you genuinely cannot place a path, send a \`lookup\` at it and find out.
 
 A note must never restate what a document already says. Documents are searched for free when they are needed; a copy of one lives in every employee's prompt forever, and it goes stale the day the human updates the file.
 
@@ -213,7 +225,48 @@ This office has a default, stated below. **Follow the default unless this partic
 
 One test that settles most cases: *does the whole result fit in a chat message they read once?*
 
-Both kinds still write their output file. \`deliver\` only decides whether the human reads the answer in the chat or opens the document.`;
+Both kinds still write their output file. \`deliver\` only decides whether the human reads the answer in the chat or opens the document.
+
+**When the two readings are close, pick \`"reply"\`.** The mistake is not symmetric, and this is the whole reason the tie has a rule: a \`reply\` task still writes its file, so a wrong \`reply\` costs a few extra lines in the chat and nothing else. A wrong \`file\` costs the human a second request — they have to ask again for the thing you already made, and pay for the whole run twice.`;
+
+/**
+ * WORKER ẨN — prompt đầy đủ của nó, và nó ngắn đến mức trông như thiếu.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ KHÔNG CHARTER · KHÔNG KHO TRI THỨC · KHÔNG SKILLS · KHÔNG ROSTER.       │
+ * │ VÀ KHÔNG SINH KINH NGHIỆM.                                               │
+ * │                                                                          │
+ * │ Đây không phải cắt bớt cho rẻ — nó là chỗ DUY NHẤT đúng, vì ba lý do độc │
+ * │ lập nhau cùng chỉ về một hướng:                                          │
+ * │                                                                          │
+ * │  1. **Kinh nghiệm chỉ ghi CÁCH LÀM.** Agent này có đúng một cách làm và  │
+ * │     nó không bao giờ đổi: đọc file được chỉ, trả lời câu được hỏi. Thứ    │
+ * │     duy nhất nó CÓ THỂ "học" được là NỘI DUNG TÀI LIỆU — đúng cái loại   │
+ * │     node đã bị cấm (§2, `fact` bị bỏ khỏi enum). Cho nó kho tri thức là   │
+ * │     dựng một cái máy chuyên sản xuất đúng thứ hàng cấm.                   │
+ * │  2. **`worthLearning` vốn đã trả `false` cho ca chạy sạch**, và một lượt  │
+ * │     lookup luôn sạch theo cấu trúc: không file để hỏng, không dep để kẹt. │
+ * │  3. Kho tri thức ẩn của một agent người dùng không nhìn thấy là một lỗ    │
+ * │     hổng không debug được — chính nỗi lo user nêu ra. **Không có gì ẩn    │
+ * │     ở đây, vì không có gì cả.**                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ NÓI THẲNG PHẦN KHÔNG CHẶN ĐƯỢC: `tools` giới hạn nó ở `Read`/`Grep`/`Glob`
+ * nên nó **không ghi được file** — đó là cơ chế thật, đo được (§5d). Nhưng
+ * *đọc tới đâu* trong thư mục văn phòng thì KHÔNG có cổng nào chặn (§4.7, ba
+ * cơ chế đều không nổ). Nó không tệ hơn một nhân viên bình thường — họ cũng
+ * chạy với `cwd` là thư mục văn phòng — và khác Trợ lý ở chỗ quyết định: thứ
+ * nó đọc **chết cùng lượt gọi**, không nằm lại trong ngữ cảnh nào.
+ */
+export const LOOKUP_PROMPT = `You read documents and answer questions about them. You do not write files, and you do not do work — you look things up.
+
+Rules:
+
+1. Read only the files named in your task. They have already been checked to exist.
+2. A long file: use Grep to find the part that matters, then Read that part. Extracted document text carries page markers like \`--- trang 12 ---\`; use them to Read the right pages of the original when you need detail.
+3. Answer in the language the question was asked in, under 300 words, addressed to the person asking. Plain prose or a small table — no preamble, no "based on the document provided".
+4. Answer only from what you read. If the files do not contain the answer, say exactly that and name what you did find. A confident wrong answer is the worst outcome available to you.
+5. Never mention file paths, task ids, or how you were invoked. The person asked a question; give them the answer.`;
 
 export interface BuiltPrompt {
   /** Truyền vào Options.systemPrompt của SDK. */
@@ -314,8 +367,11 @@ export function buildWorkerPrompt(
  *   ASSISTANT_CORE   đổi khi nâng phần mềm
  *   charter          đổi hiếm
  *   skills           đổi khi người dùng bấm Lưu
+ *   memory           đổi khi `/clear`
  *   HOT knowledge    đổi khi bump knowledge_version
- *   roster           đổi khi kéo dây trên canvas   ← hay đổi nhất, để cuối
+ *   roster           đổi khi kéo dây trên canvas — thao tác DỰNG, làm một lần
+ *   bảng kê tủ       đổi khi thêm/xoá tài liệu    ┐ thao tác DÙNG, lặp mãi
+ *   bảng kê kết quả  đổi sau MỖI ca               ┘ ← đuôi biến động, liền nhau
  */
 export function buildAssistantPrompt(
   office: LoadedOffice,
@@ -349,6 +405,18 @@ export function buildAssistantPrompt(
    * Đây là thứ thay cho lệnh `/answer` đã bị bác bỏ — nó biến một phép đoán
    * lặp lại ở MỖI tin nhắn thành một mặc định đúng sẵn, giá 0 token vì nó nằm
    * trong prefix vốn đã được cache. → SPEC-offices.md §6
+   *
+   * ⚠ VÀ ĐÂY LÀ GIỚI HẠN CỦA NÓ, đo được 20/08: **một văn phòng có CẢ HAI loại
+   * yêu cầu.** Cùng văn phòng dịch thuật, "dịch doc-4" là `file` còn "nêu cho
+   * tôi 10 thuật ngữ" là `reply` — không con mặc định nào đúng cho cả hai. Mặc
+   * định khử được bất định của ca THƯỜNG GẶP; ca còn lại vẫn phải phân loại
+   * từng lần, nên chốt thật nằm ở luật phá hoà trong `ASSISTANT_CORE` (*"gần
+   * nhau thì chọn reply"*), không nằm ở dòng này.
+   *
+   * Hệ quả: **đừng đẻ thêm một nút trên giao diện cho `default_deliver`.** Một
+   * cái nút chỉ đúng một nửa số lượt là bắt người dùng làm việc của bộ phân
+   * loại — và họ sẽ gạt qua gạt lại mãi. Nó ở lại trong `office.yaml`, có chú
+   * thích 0 token ngay cạnh, cho người thật sự có một văn phòng thuần hỏi-đáp.
    */
   blocks.push(
     `# Default delivery for this office\n\n` +
@@ -356,34 +424,41 @@ export function buildAssistantPrompt(
   );
   if (office.charter) blocks.push(`# About this office\n\n${office.charter}`);
   if (office.assistantSkills) blocks.push(`# How you work\n\n${office.assistantSkills}`);
-  /**
-   * Tủ tài liệu đứng TRƯỚC tri thức và roster, sau charter.
-   *
-   * Thứ tự trong khối chú thích đầu hàm là "ít đổi trước, hay đổi sau", và bảng
-   * kê tủ nằm đúng giữa: đổi khi người dùng thêm/bớt tài liệu — hiếm hơn kéo
-   * dây trên canvas (roster), thường hơn sửa điều lệ.
-   *
-   * Đây là mảnh sửa lỗ hổng lớn nhất tìm được ngày 19/08: `INDEX.md` được dựng
-   * từ 17/08 để Trợ lý "biết hợp đồng 34 trang trước khi chia việc", nhưng chưa
-   * bao giờ tới tay Trợ lý. Nó lập kế hoạch mù, hỏi lại những câu mà câu trả
-   * lời không đổi được gì, và để `inputs` rỗng cho nhân viên tự mò.
-   */
-  if (library) blocks.push(library);
   // GHI NHỚ đứng TRƯỚC kinh nghiệm, và là khối riêng: nó là thứ người dùng đã
   // chốt, nên phải thắng khi mâu thuẫn với một bài học agent tự rút ra.
   if (memory) blocks.push(`# What the human has decided — follow these\n\n${memory}`);
   if (hot) blocks.push(`# What this office has learned\n\n${hot}`);
   blocks.push(opts.roster);
   /**
-   * Bảng kê kết quả đứng CUỐI CÙNG trong các khối nội dung — và vị trí đó là
-   * một quyết định về TIỀN, không phải về thứ tự đọc.
+   * ĐUÔI BIẾN ĐỘNG — HAI BẢNG KÊ NẰM LIỀN NHAU, VÀ NẰM CUỐI.
    *
-   * Luật của hàm này là "ít đổi trước, hay đổi sau", và khối này đổi sau MỖI
-   * ca — thường xuyên hơn cả roster (đổi khi kéo dây trên canvas). Prompt cache
-   * là cache theo TIỀN TỐ: đặt thứ hay đổi nhất ở cuối thì mọi khối phía trên
-   * vẫn trúng cache, chỉ cái đuôi bị ghi lại. Đặt nó lên trên là mỗi ca xong
-   * lại trả tiền ghi lại TOÀN BỘ prefix. → SPEC-artifacts.md §2.4
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BẢNG KÊ TỦ ĐÃ ĐƯỢC HẠ XUỐNG ĐÂY (20/08) — trước đó nó đứng ngay sau      │
+   * │ charter, TRÊN cả memory · hot · roster.                                   │
+   * │                                                                          │
+   * │ Lý do cũ: *"tủ đổi hiếm hơn kéo dây trên canvas"*. **Quan sát thật bác bỏ │
+   * │ điều đó.** Kéo dây là thao tác DỰNG VĂN PHÒNG — làm một lần rồi gần như   │
+   * │ không đụng lại. Thả tài liệu vào tủ là thao tác DÙNG sản phẩm, lặp đi lặp │
+   * │ lại suốt đời văn phòng. Xếp nhầm thứ tự nên mỗi lần thêm một file lại ghi │
+   * │ lại luôn cả memory + hot + roster + bảng kê kết quả.                      │
+   * │                                                                          │
+   * │ Prompt cache là cache theo TIỀN TỐ, nên gộp hai khối hay đổi nhất vào một │
+   * │ vùng LIỀN NHAU ở cuối: thêm một tài liệu giờ chỉ ghi lại `library` +      │
+   * │ `artifacts` + dòng ngôn ngữ, thay vì sáu khối.                            │
+   * │                                                                          │
+   * │ ⚠ Đổi thứ tự = đổi prefix = MỘT lần ghi lại cache cho mọi văn phòng. Trả  │
+   * │ một lần, lãi mỗi lần người dùng thả file — đúng hình dạng đánh đổi mà     │
+   * │ luật "HOT phải ổn định" bảo vệ, chỉ khác ở chỗ ở đó cái giá lặp lại MỖI   │
+   * │ TASK, còn ở đây nó là một lần cho một thao tác của con người.             │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Bảng kê tủ là mảnh sửa lỗ hổng lớn nhất tìm được 19/08: `INDEX.md` dựng từ
+   * 17/08 để Trợ lý "biết hợp đồng 34 trang trước khi chia việc" nhưng chưa bao
+   * giờ tới tay Trợ lý — nó lập kế hoạch mù và để `inputs` rỗng cho nhân viên mò.
+   *
+   * Bảng kê kết quả đổi sau MỖI ca nên đứng sát cuối cùng. → SPEC-artifacts §2.4
    */
+  if (library) blocks.push(library);
   if (artifacts) blocks.push(artifacts);
   blocks.push(`Always speak to the human in ${language}.`);
 
@@ -430,6 +505,26 @@ export interface PromptLayer {
  * Đây không phải tính năng phụ. Người dùng advanced cần *thấy* lớp core mới tin;
  * giấu đi thì họ đoán, và đoán sai thì họ viết skills chống lại chính hệ thống.
  * → SPEC-offices.md §4.1
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THỨ TỰ Ở ĐÂY PHẢI KHỚP `buildAssistantPrompt` — bug đã sửa 20/08.     │
+ * │                                                                          │
+ * │ Bảng này từng liệt kê `library` và `artifacts` TRƯỚC `memory`/`knowledge`,│
+ * │ trong khi prompt thật xếp ngược lại. Với một bảng chỉ để "xem có gì" thì  │
+ * │ lệch thứ tự là chuyện nhỏ — nhưng bảng này còn dùng để trả lời câu hỏi    │
+ * │ **"đổi khối X thì phải ghi lại bao nhiêu token"**, mà câu đó chỉ có nghĩa │
+ * │ khi cache là cache theo TIỀN TỐ. Thứ tự sai ⇒ con số sai ⇒ quyết định     │
+ * │ kiến trúc dựa trên nó sai. Đo được 20/08: bảng nói đổi bảng kê tủ tốn     │
+ * │ 359 token, thứ tự thật cho ra một con số khác hẳn.                        │
+ * │                                                                          │
+ * │ Đúng lớp lỗi §5e (khối GHI NHỚ bị đếm hai lần): **prompt đúng mà bảng     │
+ * │ xem sai thì bảng đó vô dụng, vì cả điểm của nó là để tin được.**          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Sửa `buildAssistantPrompt` thì sửa cả đây, TRONG CÙNG MỘT LẦN. Hai hàm mô
+ * tả cùng một thứ thì sẽ lệch — đây là bản mã thứ hai của cùng một phép toán,
+ * đúng thứ luật 19/08 cảnh báo, và ta giữ nó vì bảng cần thêm `note`/`file`/
+ * `limit` mà prompt thật không có.
  */
 export function describePrompt(
   office: LoadedOffice,
@@ -562,6 +657,28 @@ export function describePrompt(
    * §5e khi khối GHI NHỚ bị đếm hai lần: prompt vẫn đúng, nhưng cái bảng dùng
    * để kiểm tra prompt thì sai, mà cả điểm của nó là để tin được.
    */
+  if (who === 'assistant' && assistantMemory.trim()) {
+    add({
+      id: 'memory',
+      title: 'Ghi nhớ từ trò chuyện',
+      editable: false,
+      text: assistantMemory,
+      note:
+        'Những gì BẠN đã chốt, Trợ lý nén lại mỗi khi dọn cuộc trò chuyện (`/clear`). ' +
+        'Sửa hoặc xoá ở ngăn kéo Tri thức — bản mới tự đè bản cũ, bản cũ vẫn còn file.',
+    });
+  }
+
+  add({
+    id: 'knowledge',
+    title: 'Kinh nghiệm nạp sẵn',
+    editable: false,
+    text: hotKnowledge,
+    note:
+      'Tự động chọn từ kho tri thức bằng code, KHÔNG tốn token. Đây là thứ agent TỰ RÚT RA ' +
+      'sau mỗi ca — sửa hoặc xoá từng mục ở ngăn kéo Tri thức.',
+  });
+
   if (who === 'assistant' && libraryManifest.trim()) {
     add({
       id: 'library',
@@ -596,27 +713,6 @@ export function describePrompt(
     });
   }
 
-  if (who === 'assistant' && assistantMemory.trim()) {
-    add({
-      id: 'memory',
-      title: 'Ghi nhớ từ trò chuyện',
-      editable: false,
-      text: assistantMemory,
-      note:
-        'Những gì BẠN đã chốt, Trợ lý nén lại mỗi khi dọn cuộc trò chuyện (`/clear`). ' +
-        'Sửa hoặc xoá ở ngăn kéo Tri thức — bản mới tự đè bản cũ, bản cũ vẫn còn file.',
-    });
-  }
-
-  add({
-    id: 'knowledge',
-    title: 'Kinh nghiệm nạp sẵn',
-    editable: false,
-    text: hotKnowledge,
-    note:
-      'Tự động chọn từ kho tri thức bằng code, KHÔNG tốn token. Đây là thứ agent TỰ RÚT RA ' +
-      'sau khi làm việc. Sửa ở ngăn kéo Tri thức, không sửa ở đây.',
-  });
   return layers;
 }
 
@@ -676,7 +772,13 @@ function hashKey(parts: string[]): string {
   const h = createHash('sha256');
   for (const p of parts) {
     h.update(p);
-    h.update(' ');
+    // Vách ngăn giữa hai phần, viết bằng ESCAPE '\0' chứ không nhúng byte NUL
+    // thật vào file nguồn. Byte thật thì đúng về hành vi nhưng làm Grep xếp cả
+    // file này vào loại BINARY và từ chối tìm trong đó — tức là file prompt quan
+    // trọng nhất dự án thành file duy nhất agent không tra được, đúng lớp lỗi
+    // "thứ gì agent phải Grep thấy thì đừng chôn nó ở chỗ Grep không tới"
+    // (SPEC-library, thư mục dấu chấm).
+    h.update('\0');
   }
   return h.digest('hex').slice(0, 16);
 }

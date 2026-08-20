@@ -665,6 +665,176 @@ Hai luật kèm theo trong prompt, và luật thứ nhất là thứ chữa đú
 
 > **Bài học:** bảng kê kết quả (`SPEC-artifacts.md` §2.4) chữa đúng **một ca**. Cửa này chữa **cả lớp** — sẽ luôn có lúc planner cần hỏi, và ta không đoán trước được là lúc nào. Khi một giao thức chỉ cho phép **một** hình dạng trả lời, mọi thứ nằm ngoài hình dạng đó sẽ hiện ra thành lỗi hệ thống, kể cả khi nó là hành vi đúng.
 
+### Nhật ký KHÔNG xoá được — lọc ở tầng hiển thị (chốt 20/08)
+
+User đòi một nút xoá (*"nhiều khi hỏng, bị zombie thấy ngứa mắt"*) rồi **tự chặn lại**: *"hay là giữ lại log nhỉ, để trace được, liên quan cả tiền nong các thứ"*. Câu chặn đó đúng, và đây là lý do:
+
+> Nhật ký công việc là bên **DUY NHẤT** nối `plan_id` trong `logs/usage.jsonl` với một cái **tên đọc được**. Xoá một bản ghi thì tiền vẫn nằm trong sổ mà không ai biết nó của việc gì — và **"(không rõ)" trong sổ chi phí từ đó mang HAI nghĩa** (bản ghi v0, hoặc người dùng đã xoá), tức là không còn giải thích được. Luật *"sổ chi phí không được nói sai câu nào"* mất hiệu lực ngay hôm có nút xoá.
+
+Nên **không có `DELETE /plans`**, và đó là một quyết định chứ không phải thiếu sót.
+
+Nhưng nỗi khó chịu là có thật — đo trên máy user: `ban-dia-hoa` có **18 việc, 8 trong đó không `done`** (4 `failed` · 3 `stopped` · 1 `blocked`). Hai bản vá, mỗi cái chữa một nửa khác nhau:
+
+**1. Ca ZOMBIE → chữa, không xoá.** Bản ghi kẹt ở `planning`/`running` sau khi daemon chết là **nhật ký nói dối**: nó bảo "đang chạy" cho một việc không ai làm. `PlanStore.healStale()` chạy một lần lúc dựng `Office` — lúc đó tiến trình vừa khởi động nên chắc chắn chưa có ca nào chạy — hạ chúng xuống `failed` kèm một câu nói rõ *chuyện gì xảy ra + làm gì tiếp*. Trả một phần **nợ kỹ thuật #2**.
+
+- ⚠ Giữ NGUYÊN thứ tự trong index: **không dùng `upsert`**, vì nó đẩy bản ghi lên đầu. Chữa ba con zombie bằng `upsert` là xáo tung lịch sử theo thời gian — đúng thứ nhật ký sinh ra để giữ. Có test.
+- ⚠ Idempotent: daemon khởi động lại nhiều lần không nối thêm câu giải thích thứ hai. Có test.
+
+**2. Ca HỎNG THẬT → lọc, không giấu.** Một dòng `failed` là **lịch sử đúng** — nó là thứ trả lời được *"cái này có hay hỏng không"*. Nên nó ở lại trên đĩa, và người dùng được một nút **"Chỉ việc xong"**.
+
+> Đây đúng là ca luật §5e nói tới: **tách ở tầng HIỂN THỊ rẻ, tách ở tầng LƯU TRỮ đắt — nghi ngờ thì tách chỗ rẻ trước.** Bộ lọc cho đúng sự nhẹ nhõm mà nút Xoá hứa, với 0 dòng lịch sử bị mất.
+
+Ba chốt của bộ lọc: mặc định là **TẤT CẢ** (mở nhật ký ra mà đã giấu sẵn phần hỏng là nói dối bằng cách im lặng — người dùng phải CHỌN mới được nhìn ít đi) · thanh lọc **chỉ hiện khi có gì để lọc** · trạng thái rỗng của bộ lọc nói rõ *"dữ liệu vẫn còn, đang bị lọc"* kèm đường quay lại, khác hẳn trạng thái rỗng của cả nhật ký.
+
+### `lookup` — WORKER ẨN: cửa thứ tư của `route()` (chốt 20/08)
+
+**Ca đo được:** *"nội dung chính của doc-2.md là gì"* → một lượt lập kế hoạch + một worker đủ prefix (**sàn ~13 200 token**) để đọc một file rồi thuật lại. User gọi đúng tên: *"Trợ lý khá ngơ… và flow này có thể không tối ưu chi phí."*
+
+Ba đường, và **chỉ đường thứ ba rẻ ở cả hai cột**:
+
+| | tốn NGAY | tốn MÃI |
+|---|---|---|
+| DAG (plan + worker) | plan + **sàn 13 200 token** | 0 |
+| Trợ lý tự `Grep` | ~0 | **nội dung file × MỌI lượt sau đó** |
+| **`lookup`** | 1 one-shot, prefix tí xíu | **0** |
+
+Cột thứ hai là câu trả lời cuối cùng cho *"tại sao Trợ lý không được grep"*, hỏi tới lần thứ ba (§4.7).
+
+> ⚠ **Đính chính một lập luận cũ đã bị bác đúng.** Trước đây lý do nêu ra là *"Trợ lý sẽ nhớ nội dung cũ và nó thắng tài liệu"*. User phản biện: kho tri thức **đã** có chốt (chỉ ghi cách làm), còn session chat thì **vốn đã** chứa chi tiết Trợ lý tiện tay nói ra — nên grep không tạo ra một lớp lỗi MỚI. **Đúng.** Lập luận đó là chuyện mức độ, không phải một luật, và đã bị trình bày quá tay.
+>
+> Luận điểm còn đứng được thì khác và mạnh hơn: **ngữ cảnh Trợ lý là thứ DUY NHẤT không bao giờ bị vứt đi.** Worker đọc một lần rồi chết; Trợ lý đọc một lần rồi trả tiền `cache_read` ở **mọi lượt** cho tới `/clear`. Một PDF 34 trang bóc ra text là 10–20K token nằm lại vĩnh viễn. Trần Receipt 800 token sinh ra đúng vì chuyện này.
+
+**Không làm nó thành MCP tool** như bản phác thảo `concierge` ban đầu: MCP phá prompt cache khi resume (~36K/lượt) mà `route()` resume ở **mọi** tin nhắn. Là một **intent** thì cùng ý tưởng, 0 đồng cache.
+
+#### Ba tính chất, cả ba do CODE giữ
+
+| | cơ chế | thật hay hứa |
+|---|---|---|
+| Đọc xong là quên | `persistSession: false` | **thật** — cả lý do nó tồn tại |
+| Không ghi được file | `tools: ['Read','Grep','Glob']` | **thật** — `tools` GIỚI HẠN (§5d) |
+| Đọc trong phạm vi nào | không có cổng nào | **hứa** — §4.7, ba cơ chế đều không nổ |
+
+Dòng thứ ba nói thẳng vì luật *"đừng dựng hàng rào giả"*: nó không tệ hơn một nhân viên bình thường (họ cũng chạy `cwd` = thư mục văn phòng), và khác Trợ lý ở chỗ quyết định — thứ nó đọc **chết cùng lượt gọi**. Phần siết được thì đã siết bằng cơ chế: `paths` do model đề nghị phải qua `pickReadable`, đối chiếu với tủ tài liệu + ngăn Kết quả **đọc từ đĩa ngay lúc đó**.
+
+#### `paths` bắt buộc ≥ 1 — không có ca "thả agent đi mò"
+
+Trợ lý đã cầm sẵn bảng kê tủ tài liệu và bảng kê Kết quả trong prefix; đó **chính là việc của hai bảng đó**. Không nêu được tên file thì đường đúng là `ask`. Schema chặn, nên một `lookup` thiếu `paths` rơi xuống `garbled` và người dùng không thấy khối JSON nào.
+
+Model đề nghị ba file mà hai file có thật thì **đọc hai file đó** và **nói ra** phần thiếu — khác `resolveFileRefs`, nơi một đường dẫn hỏng là lỗi người dùng nên phải dừng cả câu. Ở đây model đoán sai; bắt người dùng gõ lại vì thế là phạt nhầm người.
+
+#### KHÔNG kinh nghiệm, KHÔNG charter, KHÔNG skills, KHÔNG roster
+
+Không phải cắt cho rẻ — **ba lý do độc lập cùng chỉ một hướng**:
+
+1. **Kinh nghiệm chỉ ghi CÁCH LÀM.** Agent này có đúng một cách làm và nó không bao giờ đổi. Thứ duy nhất nó *có thể* học là **nội dung tài liệu** — đúng loại node đã bị cấm (`fact` bị bỏ khỏi enum 19/08). Cho nó kho tri thức là dựng một cái máy chuyên sản xuất hàng cấm.
+2. `worthLearning` vốn đã trả `false` cho ca chạy sạch, và một lượt lookup **luôn sạch theo cấu trúc**: không file để hỏng, không dep để kẹt.
+3. Kho tri thức ẩn của một agent người dùng không nhìn thấy là **một lỗ hổng không debug được** — đúng nỗi lo user nêu. **Không có gì ẩn ở đây, vì không có gì cả.**
+
+#### Luật phân cửa: *"người khác làm thì kết quả có khác không?"*
+
+Câu hỏi **không** phải *"ai làm được việc này"* — người dịch hoàn toàn đọc và tóm tắt được một tài liệu, và user đã chứng minh điều đó trên máy thật.
+
+| | | |
+|---|---|---|
+| Dịch · viết · soát · tư vấn | **có khác** — phụ thuộc thuật ngữ, giọng, charter, tức là phụ thuộc `role` | `task` |
+| Thuật lại xem tài liệu nói gì | **không khác** — ai đọc cũng ra chừng ấy | `lookup` |
+| Cần ra một FILE để giữ | — | `task`, luôn luôn |
+
+Và đây cũng là câu trả lời cho ca *"người dùng tự tạo một nhân viên chỉ-đọc rồi thấy Trợ lý tự làm hết"*: nhân viên đó tồn tại vì họ mang một **góc nhìn** (soát hợp đồng, kiểm số liệu), nên mọi câu hỏi cần góc nhìn ấy vẫn về tay họ theo đúng luật trên. `lookup` chỉ lấy phần mà vai trò **không thêm được gì** — phần đó vốn không phải việc của ai cả.
+
+#### Mức model: của chính Trợ lý, không phải `models.planner`
+
+Với người dùng thì đây **là** Trợ lý đang trả lời; nó chỉ không giữ tài liệu lại trong đầu. Knob quyết chất lượng đó đã có sẵn (`assistant.model_tier`), và **không đẻ knob thứ ba**. `models.planner` thì sai trục: người ta đặt nó `deep` để khâu chia việc nghĩ kỹ, dùng ở đây thì mỗi câu *"file này nói gì"* chạy Opus.
+
+#### Không sinh Plan — và dòng trạng thái là nửa sự thật còn lại
+
+`lookup` **không** sinh `PlanRecord`, không có tin *"Mình chia thành 1 việc"*, không có bước nào trên sơ đồ. Câu trả lời phát với `role: 'assistant'`.
+
+Một tin *"mình chia thành 1 việc để đọc file"* cho một câu hỏi tra cứu tốn **hai tin nhắn chỉ để báo rằng sắp trả lời** — đúng cái "ngơ" mà cửa này sinh ra để bỏ. Nhưng trả lời mà không nói gì thêm thì người dùng tưởng Trợ lý tự biết, trong khi vừa có một lượt đọc file thật sự chạy. User gọi đúng tên: **một nửa sự thật**.
+
+Nửa còn lại giá **0 token**: một dòng trạng thái `Đang đọc doc-2.md…` trong lúc worker ẩn chạy. Người dùng thấy *có việc đọc đang diễn ra* và *đọc file nào* — hết. Không plan, không bước, không tin thừa nằm lại trong luồng chat; dòng đó tự biến khi câu trả lời tới.
+
+Thi hành bằng **cờ trạng thái** (`Office.reading`), cùng khuôn `clearing` và cùng lý do: *việc đang chạy là TRẠNG THÁI, không phải thông báo*. Cố ý **không** `hold_ms` — đặt hẹn giờ cho nó là tái tạo đúng bug `/clear` nháy rồi khựng. Đặt trong `try/finally` để không kẹt trên màn hình khi lượt đọc ném lỗi hoặc bị `/stop` cắt.
+
+#### Ba lỗ đo được ở lần chạy thật đầu tiên (20/08) — cả ba là "nửa vá"
+
+**1. `ASSISTANT_CORE` không biết gì về worker ẩn.** Cửa `lookup` được thêm vào prompt của `route()` (khối theo lượt) nhưng `ASSISTANT_CORE` (khối system, được cache) vẫn viết *"You never read or write project files yourself"* / *"**You have no tools**"*. Hai khối mâu thuẫn, và model theo khối to hơn — nó trả lời *"Mình không tự mở được file để kiểm tra"*. Nó **không sai**, nó tuân lệnh.
+
+> **Thêm một khả năng thì phải rà HẾT mọi khối prompt mô tả khả năng.** Cùng hình dạng với `planFailed`/`route` và `tools`/`allowedTools` — ba lần trong một tuần.
+
+**2. "Không có trong bảng kê" bị hiểu thành "không tồn tại".** `MANIFEST_PLANS = 5` nên ca cũ cố ý không liệt kê. Nhưng `pickReadable` đối chiếu với **toàn bộ** `artifacts.list()`, và `resolveFileRefs` đã xác minh đường dẫn người dùng gõ **trước khi** nó tới model — ca này vốn đã chạy được, chỉ có prompt cấm nó thử. Luật *"A path the human typed is exact"* có sẵn nhưng nằm trong mục **Planning output** nên không phủ `lookup`. Đã nâng thành mục gốc **"Paths you may use"**, và dòng chân bảng kê nói rõ ca cũ **vẫn còn sống**.
+
+**3. Bảng kê thiu — hai trong bốn cửa không nạp lại prefix.** Thêm tài liệu và xoá kết quả gọi thẳng vào store từ tầng `server/`, bỏ qua `Office`. Ca tệ nhất: **tải tài liệu lên rồi hỏi ngay** và Trợ lý nói không thấy file nào tên đó. Vá bằng cách **đóng cửa tắt** (`Office.addDocument` · `Office.removeArtifact`), không phải bằng cách thêm hai lời gọi rải rác.
+
+> **Một luật chỉ đúng ở tầng nó được viết ra.** *"Ghi/đọc phải dùng chung một hàm"* đúng tuyệt đối trong `core/`, và tầng `server/` reach thẳng qua nó lúc nào không ai để ý.
+
+#### Cái giá, nói trước
+
+- ~120 token vĩnh viễn trong prefix `route` (mô tả cửa + luật phân cửa).
+- Câu trả lời `lookup` **không vào session Trợ lý** — hỏi lại *"sao bạn nói doc-2 về dashboard"* thì nó không nhớ. Đây đúng là đánh đổi đã chấp nhận cho `deliver: reply`, và là chỗ cần đo lại nếu mục tiêu nghiêng về **second brain**.
+- Rủi ro định tuyến sai còn đó. Chặn cứng thì chỉ có một: `lookup` **không ghi được file**, nên ca sai tệ nhất là một câu trả lời thay vì một tài liệu — hồi được bằng một câu nhắn, đúng cùng hình dạng với luật phá hoà của `deliver` ngay dưới đây.
+
+### Luật phá hoà của `deliver`: gần nhau thì chọn `reply` (chốt 20/08)
+
+`default_deliver` khử được bất định của ca **thường gặp** trong một văn phòng. Nó **không** khử được ca còn lại, và ca còn lại là ca có thật:
+
+> Cùng văn phòng **Bản địa hoá**: *"dịch doc-4"* là `file`, *"nêu cho tôi 10 thuật ngữ"* là `reply`. **Không con mặc định nào đúng cho cả hai.**
+
+Đo được trên máy người dùng: họ hỏi 10 thuật ngữ, nhận về một **đường dẫn file** cho mười dòng chữ, và phải gõ lại *"5 thuật ngữ, chỉ trả lời, không ghi file"* mới đọc được câu trả lời trong chat. **Hai lần chạy đầy đủ cho một câu hỏi.**
+
+Nên phân loại vẫn phải xảy ra từng lần, và chốt nằm ở **luật phá hoà**, không ở mặc định:
+
+> **Sai về `reply` thì hồi được, sai về `file` thì không.** Task `reply` **vẫn ghi file** — sai kiểu đó tốn vài dòng thừa trong chat, hết. Task `file` mà người ta muốn được trả lời thì tốn của họ **một lượt yêu cầu nữa**: hỏi lại đúng thứ vừa làm xong, và trả tiền cho cả ca lần thứ hai.
+
+Cùng khuôn *"xoá luôn có hai mức, mức an toàn đứng trước"*: **lựa chọn hồi được đứng làm mặc định.** Giá của luật này là ~35 token trong prefix vĩnh viễn; nó tự trả tiền ngay lần đầu tiên nó chặn được một ca chạy đôi.
+
+**Hai hệ quả về cơ chế:**
+
+- `officeTemplate` **ghi thẳng `default_deliver: file`** kèm chú thích. Trước 20/08 không template nào, không route API nào, không màn hình nào ghi trường này ⇒ mọi văn phòng đều rơi về `'file'` của schema. **Một cái nút không ai vặn được thì không phải một cái nút** — đúng lớp lỗi *"trục bị hard-code nên vô hình"* mà chính `deliver` sinh ra để chữa. Chú thích YAML là **0 token** (không bao giờ tới model) nên chỗ giải thích đúng là ở đó.
+- **KHÔNG đẻ thêm một nút trên giao diện cho `default_deliver`.** Một cái nút chỉ đúng một nửa số lượt là bắt người dùng làm việc của bộ phân loại, và họ sẽ gạt qua gạt lại mãi. Đây là chỗ luật *"bất định lặp lại mỗi lượt thì đừng khử bằng giao diện"* áp vào **chính cái mặc định** sinh ra từ nó.
+
+### `decideRoute` — VĂN BẢN THÔ CỦA MODEL KHÔNG BAO GIỜ ĐI THẲNG LÊN Ô CHAT (bản vá 20/08)
+
+Nhánh dự phòng của `route()` từng là một dòng:
+
+```ts
+const value = parsed ?? { intent: 'chat', say: text.trim() };   // ← thô
+```
+
+**Ca đo được trên máy người dùng.** Họ hỏi *"nêu cho tôi 10 thuật ngữ tiếng anh?"* → Trợ lý hỏi lại *"lấy từ tài liệu nào?"* → họ đáp *"uhm, bất kỳ, random cũng đc"* → **ô chat nhả ra nguyên một khối `json`** với `steps`/`tasks`/`deps`/`deliver`.
+
+Ba chuyện xảy ra cùng lúc, và chỉ chuyện thứ nhất là dễ thấy:
+
+1. Người mở tiệm hoa nhìn thấy một đoạn mã.
+2. `RouteSchema` không khớp ⇒ `intent` là `chat` ⇒ **`run()` không bao giờ được gọi**. Không ai làm việc vừa giao. Không có dòng lỗi nào.
+3. Kế hoạch đó **đúng** — giao `nguoi-dich`, `inputs` trỏ đúng file bảng thuật ngữ của ca cũ, `deliver: reply`. Nó bị **vứt vào thùng rác sau khi đã trả tiền**.
+
+**Vì sao model làm thế — và vì sao đó KHÔNG phải lỗi của nó.** `ASSISTANT_CORE` mang mục *"Planning output"* trong prefix của **mọi** lượt: `route()` và `plan()` cố ý dùng chung một prefix để chung một cache entry (§4.5). Ngay sau một câu `ask`, *"bất kỳ cũng được"* đọc lên giống hệt tín hiệu *"chia việc đi"*. Đây là **hệ quả của một đánh đổi đã chốt**, không phải một model tồi — nên chữa bằng **cơ chế**, không bằng lời dặn thêm: dặn thì tốn token vĩnh viễn, chỉ là gợi ý, và luật 19/08 đã nói *đừng dặn model đừng làm*.
+
+Ta không ngăn được nó viết ra một kế hoạch. Nhưng ta **đang cầm** một kế hoạch hợp lệ đã trả tiền — nên việc đúng là **DÙNG NÓ**.
+
+`decideRoute(text)` — **hàm thuần, có test**, thử bốn cửa theo thứ tự:
+
+| | khớp gì | kết cục |
+|---|---|---|
+| 1 | `RouteSchema` | cửa chính, ca thường |
+| 2 | `PlanTasksSchema` | **nhặt về** → `Office.run(request, draft)`, **bỏ luôn lượt `plan()`** |
+| 3 | `PlanAskSchema` | `{"ask":…}` là câu hỏi hợp lệ của khâu lập kế hoạch → `intent: 'ask'` |
+| 4 | còn lại | **có JSON hay không** mới là câu hỏi quyết định |
+
+**Luật ở bước 4 hẹp có chủ ý: văn xuôi vẫn hiện như cũ.** Model lỡ quên bọc JSON mà vẫn nói một câu tiếng Việt cho người đọc thì hiện câu đó đúng hơn là nuốt đi. Thứ bị chặn **chỉ là JSON** — một khối JSON không bao giờ là câu nói cho người dùng, nó là tin nhắn giao thức đi lạc cửa. Phân biệt bằng `JSON.parse`, tức là bằng **sự việc**, không bằng dò chữ.
+
+Ca bước 4 nhận một câu do **CODE** viết (*"Mình trả lời sai định dạng nên câu vừa rồi chưa dùng được — lỗi của mình, không phải cách bạn nói"*) và nguyên văn đi vào `.state/route-failure.log`. **Cố ý KHÔNG trích lời model**, khác `planFailed`: ở đó thứ nó nói là văn xuôi — đọc được, và chính nó là thông tin. Ở đây nó là JSON.
+
+**Hai chốt của cửa cứu hộ:**
+
+- **KHÔNG hạ xuống `intent: 'task'` với chính câu người dùng vừa gõ**, dù nghe gọn hơn nhiều: `plan()` chạy ở query **one-shot, không có trí nhớ hội thoại**. *"Bất kỳ, random cũng đc"* đứng một mình thì planner không chia được việc gì — ta sẽ trả tiền thêm một lượt để nhận về một ca hỏng. **Phải tái dùng, không gọi lại.**
+- `PlanRecord.request` suy từ `goal` của các task (`requestOf`), không từ câu người dùng gõ: câu đó đúng nhưng vô nghĩa khi đọc lại trong nhật ký ba ngày sau. `goal` vốn đã được yêu cầu đúng hình dạng *"một câu rõ ràng, tiếng của người dùng"*.
+
+`buildPlan` được **tách khỏi `Assistant.plan()`** vì nó có hai người gọi. Bốn luật nó đang giữ (đóng khung đầu vào · đóng khung đầu ra · bỏ bước không ai làm · mặc định `deliver` của văn phòng) đều đã từng có bug, và nằm trong một method `async` gọi model thì **không bộ test nào chạm tới được**. Hai bản mã cho cùng một phép biến đổi thì sẽ lệch — và một dòng chú thích *"⚠ phải khớp bên kia"* không phải một cơ chế.
+
+> **Bài học chung:** một nhánh dự phòng `?? { say: text }` là **một cái cửa hậu để văn bản thô của model đi ra mặt người dùng**. Ở đây nó tồn tại từ đầu, đọc rất vô hại, và chỉ lộ ra khi model lạc cửa đúng một lần. Chỗ nào code lấy chuỗi model trả về làm câu nói cho người, chỗ đó phải trả lời được: *nếu nó trả về thứ khác hình dạng đã hẹn thì người dùng nhìn thấy gì?*
+
 ### `worthLearning` — đừng dặn model đừng làm, đừng cho nó cơ hội làm
 
 Bản trước LUÔN kèm trường `lessons` vào mọi báo cáo, kèm câu dặn *"Việc chạy trơn tru không phải bài học"*. Hỏi một model *"bạn học được gì?"* thì nó gần như luôn nặn ra một câu, và **lời dặn không cản được**.

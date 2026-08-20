@@ -677,6 +677,19 @@ export type FailureKind =
   | 'budget'
   /** hết lượt cho phép → nói rõ sửa ở đâu, đừng báo "lỗi" chung chung */
   | 'max_turns'
+  /**
+   * Người dùng bấm Dừng. KHÔNG PHẢI MỘT LỖI — và đó là cả lý do nó có tên riêng.
+   *
+   * Không có nhãn này thì một lượt Trợ lý bị ngắt trông y hệt một lượt hỏng: ca
+   * đóng ở `failed`, nhật ký ghi "hệ thống làm sai" cho một việc người dùng tự
+   * bảo đừng làm nữa. Đúng lớp lỗi mà `blocked` đã tách ra khỏi `failed`
+   * (SPEC-offices §6) — nhật ký phải phân biệt được ba chuyện khác hẳn nhau:
+   * *ta hỏng* · *ta đang chờ bạn* · *bạn bảo dừng*.
+   *
+   * Không bao giờ retry: thứ duy nhất có thể xảy ra là làm lại đúng việc vừa bị
+   * huỷ.
+   */
+  | 'stopped'
   | 'other';
 
 export class RunError extends Error {

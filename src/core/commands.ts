@@ -204,3 +204,80 @@ export function resolveFileRefs(
   }
   return { text: out };
 }
+
+/**
+ * Đường dẫn Trợ lý ĐỀ NGHỊ đọc → đường dẫn CÓ THẬT. → SPEC-offices.md §6 `lookup`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÂY LÀ CHỖ "WORKER ẨN" TRỞ THÀNH MỘT CƠ CHẾ CHỨ KHÔNG PHẢI MỘT LỜI HỨA. │
+ * │                                                                          │
+ * │ Chuỗi vào là do MODEL sinh, nên nó bịa được — và luật SPEC-artifacts §2.5 │
+ * │ cấm cho một đường dẫn model đoán mượn uy tín của hệ thống. Ở đây mọi      │
+ * │ đường dẫn phải khớp `known` (đọc từ đĩa ngay lúc đó) mới đi tiếp; thứ     │
+ * │ không khớp KHÔNG bị đoán hộ, nó được NÓI RA.                             │
+ * │                                                                          │
+ * │ Khác `resolveFileRefs` ở một điểm quan trọng: ở đó một đường dẫn hỏng là  │
+ * │ lỗi của người dùng nên phải dừng cả câu. Ở đây model đề nghị ba file mà   │
+ * │ hai file có thật thì **đọc hai file đó** — nó chỉ đoán sai một chỗ, và    │
+ * │ bắt người dùng gõ lại vì thế là phạt nhầm người.                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Nhận cả tên trần (`doc-1.md`) như `resolveFileRefs`, và cũng CHẶN khi trùng —
+ * tủ tài liệu và ngăn Kết quả được phép có cùng một tên file.
+ */
+export function pickReadable(
+  paths: readonly string[],
+  known: readonly string[],
+): { ok: string[]; missing: string[] } {
+  const ok: string[] = [];
+  const missing: string[] = [];
+
+  for (const raw of paths) {
+    const p = raw.replace(/\\/g, '/').replace(/^\.\//, '').trim();
+    if (!p) continue;
+    const exact = known.find((k) => k === p);
+    if (exact) {
+      if (!ok.includes(exact)) ok.push(exact);
+      continue;
+    }
+    // Tên trần: chỉ nhận khi có ĐÚNG MỘT ứng viên. Hai file cùng tên ở hai kho
+    // thì đoán bừa là đọc nhầm tài liệu rồi trả lời rất thuyết phục — kết cục
+    // tệ nhất trong mọi kết cục.
+    const byName = known.filter((k) => k.split('/').pop() === p);
+    if (byName.length === 1) {
+      if (!ok.includes(byName[0]!)) ok.push(byName[0]!);
+      continue;
+    }
+    if (!missing.includes(p)) missing.push(p);
+  }
+
+  return { ok, missing };
+}
+
+/**
+ * Dòng trạng thái của một lượt `lookup`. → SPEC-offices.md §6 `lookup`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NỬA SỰ THẬT CÒN LẠI, GIÁ 0 TOKEN.                                        │
+ * │                                                                          │
+ * │ Worker ẩn cố ý KHÔNG sinh Plan: một tin *"mình chia thành 1 việc để đọc  │
+ * │ file"* cho một câu hỏi tra cứu tốn hai tin nhắn chỉ để báo rằng sắp trả   │
+ * │ lời — đúng cái "ngơ" mà cửa này sinh ra để bỏ. Nhưng trả lời với vai      │
+ * │ `assistant` mà không nói gì thêm thì người dùng tưởng Trợ lý tự biết,     │
+ * │ trong khi có một lượt đọc file thật sự vừa chạy.                          │
+ * │                                                                          │
+ * │ Một dòng trạng thái nói ĐỌC FILE NÀO là đủ: người dùng thấy có việc đọc   │
+ * │ đang diễn ra và đọc cái gì. Không plan, không bước, không tin thừa nằm    │
+ * │ lại trong luồng chat.                                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Chỉ nêu TÊN FILE, không nêu đường dẫn: `library/files/doc-2.md` trên một dòng
+ * trạng thái là ngôn ngữ của máy. Cắt ở 2 tên vì dòng này bị `truncate` trong
+ * giao diện — cùng cách `office.run()` nói "Đang đọc tài liệu X, Y…".
+ */
+export function readingNote(paths: readonly string[]): string {
+  const names = paths.map((p) => p.split('/').pop() ?? p);
+  const head = names.slice(0, 2).join(', ');
+  const rest = names.length - 2;
+  return `Đang đọc ${head}${rest > 0 ? ` và ${rest} file nữa` : ''}…`;
+}

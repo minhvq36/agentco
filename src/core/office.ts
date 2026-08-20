@@ -15,11 +15,18 @@ import YAML from 'yaml';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
-import { LibraryStore } from '../library/store.js';
+import { LibraryStore, type DocRecord } from '../library/store.js';
 import { ArtifactStore } from './artifacts.js';
 import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
-import { Assistant, newPlanId } from './assistant.js';
-import { helpText, parseInput, resolveFileRefs, type ParsedInput } from './commands.js';
+import { Assistant, newPlanId, requestOf, type PlanDraft } from './assistant.js';
+import {
+  helpText,
+  parseInput,
+  pickReadable,
+  readingNote,
+  resolveFileRefs,
+  type ParsedInput,
+} from './commands.js';
 import { Mailbox, mergeUserText } from './mailbox.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler } from './scheduler.js';
@@ -149,6 +156,23 @@ export class Office {
     this.assistant.resumeFrom(this.readSessionId());
     this.layout = new LayoutStore(loaded);
     this.plans = new PlanStore(loaded.paths);
+    /**
+     * CHỮA CA ZOMBIE ngay lúc dựng — nợ kỹ thuật #2, trả một phần.
+     *
+     * Tiến trình vừa khởi động nên KHÔNG có ca nào đang chạy: mọi bản ghi còn
+     * mang `planning`/`running` đều là tàn dư của một lần daemon chết giữa
+     * chừng. Để nguyên thì nhật ký nói dối vĩnh viễn — nó bảo "đang chạy" cho
+     * một việc không ai làm, và người dùng ngồi chờ một thứ đã chết từ lâu.
+     *
+     * Câu này đi vào `report`, tức là đi thẳng lên mặt người dùng, nên nó phải
+     * nói được *chuyện gì xảy ra* + *làm gì tiếp* — tiêu chí "Xử lý lỗi tốt".
+     * Và nó KHÔNG đổ lỗi cho hệ thống hay cho người dùng: tắt daemon là việc
+     * hạ tầng bình thường (cập nhật, reboot), không phải một sự cố.
+     */
+    this.plans.healStale(
+      'Việc này bị ngắt giữa chừng vì công ty tắt (cập nhật, khởi động lại, hoặc mất điện). ' +
+        'Những phần đã xong vẫn còn trong ngăn Kết quả — nhắn lại để mình làm nốt phần còn lại.',
+    );
     this.refreshAssistantContext();
   }
 
@@ -264,9 +288,19 @@ export class Office {
    * GIỮA các task, nên bấm Dừng xong vẫn phải ngồi chờ task hiện tại chạy hết —
    * có khi cả phút và cả nghìn token đã tiêu.
    */
-  stop(): { dropped: number } {
+  stop(): { dropped: number; cutAssistant: boolean } {
     this.stopRequested = true;
     void this.activeScheduler?.interruptAll();
+    /**
+     * NGẮT LUÔN LƯỢT CỦA CHÍNH TRỢ LÝ — thứ tư, và nó bị bỏ quên tới 20/08.
+     *
+     * §11e liệt kê ba thứ (nhân viên · hòm thư · việc hoãn) và cả ba đều đã
+     * chạy. Nhưng `route()`/`plan()`/`report()` không nằm trong ba thứ đó, nên
+     * gõ `/stop` giữa lúc Trợ lý đang nghĩ thì nó nghĩ nốt và trả lời sau khi
+     * màn hình đã nói "đang dừng". Cùng đúng một lớp lỗi mà chính §11e sinh ra
+     * để chặn: bấm Dừng xong hệ thống vẫn tự làm tiếp.
+     */
+    const cutAssistant = this.assistant.abort();
     // Dừng là dừng CẢ HỆ THỐNG: ngắt nhân viên đang chạy, bỏ tin còn trong hòm
     // thư, bỏ việc đang hoãn. Giữ lại bất cứ thứ gì trong số đó nghĩa là người
     // dùng bấm Dừng xong vẫn thấy hệ thống tự làm tiếp — đúng thứ họ vừa bảo đừng.
@@ -274,7 +308,7 @@ export class Office {
     this.deferred = [];
     if (this.state === 'working') this.setState('paused', 'Đang dừng…');
     this.emitActivity();
-    return { dropped };
+    return { dropped, cutAssistant };
   }
 
   // ── cửa vào duy nhất
@@ -372,12 +406,23 @@ export class Office {
    * một cách im lặng — nên hỏi lại, bằng code, 0 token.
    */
   private resolveRefs(text: string): { text: string; problem?: string } {
-    // Danh sách đường dẫn THẬT, đọc từ hai kho ngay tại thời điểm này. Phần
-    // quyết định thì thuần và nằm ở `commands.ts` để bộ test chạm được.
-    return resolveFileRefs(text, [
+    // Phần quyết định thì thuần và nằm ở `commands.ts` để bộ test chạm được.
+    return resolveFileRefs(text, this.readablePaths());
+  }
+
+  /**
+   * Mọi đường dẫn người dùng (hoặc Trợ lý) được phép trỏ tới — ĐỌC TỪ ĐĨA ngay
+   * lúc gọi, không cache.
+   *
+   * Đúng một nguồn sự thật cho cả hai cửa: `@đường-dẫn` người dùng gõ, và
+   * `paths` của một lượt `lookup`. Hai danh sách riêng cho cùng một câu hỏi thì
+   * sẽ lệch nhau vào đúng ngày ai đó thêm một kho thứ ba.
+   */
+  private readablePaths(): string[] {
+    return [
       ...this.library.list().map((d) => `library/files/${d.name}`),
       ...this.artifacts.list().map((a) => a.path),
-    ]);
+    ];
   }
 
   /**
@@ -401,12 +446,17 @@ export class Office {
         await this.handleUserBatch(mergeUserText(batch));
       });
     } catch (err) {
-      this.emit({
-        type: 'master.message',
-        role: 'assistant',
-        say: err instanceof Error ? err.message : 'Có lỗi khi xử lý tin nhắn của bạn.',
-        plan_id: null,
-      });
+      // Người dùng bấm Dừng thì `/stop` ĐÃ trả lời rồi. Phát thêm một dòng nữa ở
+      // đây là hai tin nói cùng một chuyện — và tin thứ hai trông như một lỗi,
+      // trong khi thứ vừa xảy ra chính là thứ họ yêu cầu. → types.ts `stopped`
+      if (!(err instanceof RunError && err.kind === 'stopped')) {
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say: err instanceof Error ? err.message : 'Có lỗi khi xử lý tin nhắn của bạn.',
+          plan_id: null,
+        });
+      }
     }
 
     this.emitActivity();
@@ -422,6 +472,108 @@ export class Office {
     // được cái giá của việc đổi model. → SPEC-token-economy.md §5
     this.logAssistantUsage('route', routed.usage);
     this.saveSessionId();
+
+    /**
+     * `lookup` — WORKER ẨN đọc tài liệu rồi trả lời thẳng. → `RouteSchema`
+     *
+     * KHÔNG lập kế hoạch, KHÔNG sinh Plan, KHÔNG đụng `state`: đây không phải
+     * một ca làm việc, nó là một câu hỏi có câu trả lời nằm trong file. Sinh một
+     * `PlanRecord` cho nó là làm nhật ký công việc đầy những dòng không phải
+     * công việc — cùng lý do `intent: 'chat'` không sinh Plan.
+     *
+     * Chạy TRONG khoá hòm thư (`pump` đang giữ): Trợ lý là MỘT người, và lượt
+     * này là lượt của nó. Nhờ thế `/stop` cắt được — `Assistant.run` đặt
+     * `inflight` cho mọi lượt, kể cả lượt này.
+     */
+    if (routed.value.intent === 'lookup') {
+      // Đường dẫn do MODEL sinh ⇒ phải đối chiếu với đĩa trước khi ai đọc gì.
+      // → commands.ts `pickReadable`
+      const { ok, missing } = pickReadable(routed.value.paths, this.readablePaths());
+      if (ok.length === 0) {
+        // Trả lời bằng CODE. Ta đang cầm cả hai cái kho trong tay; hỏi model
+        // "file này có thật không" là trả tiền để nhận về một phỏng đoán.
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say:
+            `Mình không tìm thấy ${missing.map((m) => `"${m}"`).join(', ')} trong tủ tài liệu hay ngăn Kết quả. ` +
+            `Bạn kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn nhé.`,
+          plan_id: null,
+        });
+        return;
+      }
+
+      // Dòng "Đang đọc doc-2.md…" — 0 token, và là nửa sự thật còn lại của
+      // worker ẩn. `finally` để nó không kẹt trên màn hình khi lượt đọc ném lỗi
+      // hoặc bị `/stop` cắt. → `reading`
+      this.reading = readingNote(ok);
+      this.emitActivity();
+      let found: { value: string; usage: Usage };
+      try {
+        found = await this.assistant.lookup(ok, routed.value.question);
+      } finally {
+        this.reading = null;
+      }
+      // Khâu riêng trong sổ chi phí: `lookup` có hình dạng chi phí khác hẳn
+      // `route` (prefix tí xíu, nhưng đọc file nên output dài hơn). Gộp vào một
+      // khâu thì không thấy khâu nào đang phình. → `logAssistantUsage`
+      this.logAssistantUsage('lookup', found.usage);
+      this.emit({
+        type: 'master.message',
+        role: 'assistant',
+        say:
+          found.value ||
+          'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.',
+        plan_id: null,
+      });
+      // ⚠ Một phần đề nghị của Trợ lý không có thật thì NÓI RA, đừng im. Câu
+      // trả lời ở trên dựa trên ít tài liệu hơn nó tưởng, và người dùng là bên
+      // duy nhất biết được thiếu file đó có đổi câu trả lời hay không.
+      if (missing.length > 0) {
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say: `(Mình không tìm thấy ${missing.map((m) => `"${m}"`).join(', ')} nên câu trên chỉ dựa trên ${ok.length} tài liệu còn lại.)`,
+          plan_id: null,
+        });
+      }
+      return;
+    }
+
+    /**
+     * CỬA CỨU HỘ: Trợ lý trả về nguyên một KẾ HOẠCH thay vì một quyết định.
+     *
+     * → `Assistant.decideRoute`
+     *
+     * Ta đang cầm một kế hoạch hợp lệ ĐÃ TRẢ TIỀN. Chạy nó thì bỏ luôn được một
+     * lượt `plan()` — rẻ hơn ca thường, không phải đắt hơn.
+     *
+     * ⚠ KHÔNG hạ xuống `intent: 'task'` với chính câu người dùng vừa gõ, dù nghe
+     * gọn hơn nhiều: `plan()` chạy ở query ONE-SHOT, **không có trí nhớ hội
+     * thoại**. Câu "bất kỳ, random cũng được" đứng một mình thì planner không
+     * chia được việc gì cả — ta sẽ trả tiền thêm một lượt để nhận về một ca hỏng.
+     * Đúng ca đã đo được 20/08.
+     */
+    if (routed.value.intent === 'plan') {
+      const draft = routed.value.draft;
+      if (this.state === 'working') {
+        // Bản nháp KHÔNG đi vào hàng đợi cùng câu yêu cầu: tới lượt nó chạy thì
+        // danh sách nhân viên trực và các file đầu vào có thể đã khác, mà một kế
+        // hoạch đã đóng khung không được kiểm lại lần nữa. Giữ lại phần bền hơn
+        // — mô tả việc — rồi lập kế hoạch mới lúc thật sự chạy.
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say: 'Mình đang bận một việc rồi. Xong việc này mình làm tiếp việc bạn vừa giao nhé.',
+        });
+        this.deferred.push({ request: requestOf(draft), at: Date.now() });
+        return;
+      }
+      void this.run(requestOf(draft), draft).catch(() => {
+        /* run() đã emit lỗi lên UI rồi */
+      });
+      return;
+    }
 
     if (routed.value.intent === 'task') {
       // scope "refine" gắn vào việc đang chạy; "new" sinh một Plan độc lập.
@@ -447,7 +599,10 @@ export class Office {
       return;
     }
 
-    // chat hoặc ask — trả lời rồi thôi, không tốn một token worker nào
+    // chat, ask, hoặc garbled — trả lời rồi thôi, không tốn một token worker nào.
+    // Cả ba mang một câu ĐÃ ĐƯỢC DUYỆT để cho người đọc: hai cửa đầu là lời model
+    // nói với người dùng, cửa thứ ba là câu do CODE viết vì lời model không đưa ra
+    // được (nguyên văn nằm ở `.state/route-failure.log`). → `Assistant.decideRoute`
     this.emit({ type: 'master.message', say: routed.value.say, role: 'assistant', plan_id: null });
   }
 
@@ -487,8 +642,34 @@ export class Office {
    */
   private clearing = false;
 
+  /**
+   * Đang đọc tài liệu cho một lượt `lookup` — TRẠNG THÁI, không phải thông báo.
+   *
+   * Cùng khuôn `clearing` và cùng lý do: một việc đang chạy phải đúng chừng nào
+   * nó còn chạy, bất kể ai phát `emitActivity()` xen vào. Đặt nó thành một câu
+   * có `hold_ms` là tái tạo đúng cái bug "/clear nháy rồi khựng".
+   *
+   * Đây là nửa sự thật còn lại của worker ẩn: nó cố ý không sinh Plan, nên nếu
+   * không có dòng này thì người dùng tưởng Trợ lý tự biết, trong khi vừa có một
+   * lượt đọc file thật sự chạy. → commands.ts `readingNote`
+   */
+  private reading: string | null = null;
+
   private emitActivity(): void {
     const planning = this.currentRecord?.status === 'planning';
+    if (this.reading) {
+      this.emit({
+        type: 'office.activity',
+        assistant: 'thinking',
+        workers: this.activeScheduler?.runningCount ?? 0,
+        queued: this.mailbox.size,
+        jobs: this.deferred.length,
+        // ⚠ CỐ Ý KHÔNG kèm `hold_ms` — xem `reading`.
+        note: this.reading,
+        plan_id: null,
+      });
+      return;
+    }
     if (this.clearing) {
       // Đè lên mọi thứ khác: lúc này Trợ lý không "nghĩ" về tin nhắn nào cả,
       // nó đang nén trí nhớ. Nói "đang nghĩ…" ở đây là mô tả sai việc đang chạy.
@@ -559,11 +740,38 @@ export class Office {
         return reply(helpText());
 
       case 'stop': {
-        const idle = this.state !== 'working' && this.mailbox.size === 0 && this.deferred.length === 0;
+        /**
+         * ⚠ `mailbox.size` LÀ HÀNG ĐỢI, KHÔNG PHẢI "ĐANG BẬN". Bug đã sửa 20/08.
+         *
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ Bản trước hỏi `state !== 'working' && mailbox.size === 0 &&      │
+         * │ deferred.length === 0` rồi kết luận "đang rảnh". Nhưng lúc Trợ lý │
+         * │ đang nghĩ, lô tin đã được `take()` ra khỏi hàng đợi — `size` về 0, │
+         * │ `state` vẫn là `idle` (chưa có Plan nào), và cái đang chạy nằm ở  │
+         * │ `mailbox.isBusy`, một biến KHÔNG AI HỎI TỚI.                      │
+         * │                                                                  │
+         * │ Đo được trên máy người dùng, ngay thao tác đầu tiên của phiên:    │
+         * │ họ gõ "Chào, giới thiệu về bạn", gõ tiếp `/stop`, nhận về *"Hiện  │
+         * │ không có việc nào đang chạy."* — rồi câu trả lời hiện ra ngay sau. │
+         * │ Hệ thống vừa nói dối về trạng thái của chính nó.                  │
+         * │                                                                  │
+         * │ Ba trạng thái, ba biến, phải hỏi cả ba: Plan đang chạy (`state`)  │
+         * │ · Trợ lý đang trong một lượt (`isBusy`) · còn việc xếp hàng        │
+         * │ (`size`/`deferred`). Nén nhớ (`clearing`) cũng là một lượt model   │
+         * │ đang bay, và `/stop` cắt được nó.                                 │
+         * └──────────────────────────────────────────────────────────────────┘
+         */
+        const idle =
+          this.state !== 'working' &&
+          !this.mailbox.isBusy &&
+          !this.clearing &&
+          this.mailbox.size === 0 &&
+          this.deferred.length === 0;
         if (idle) return reply('Hiện không có việc nào đang chạy.');
-        const { dropped } = this.stop();
+        const { dropped, cutAssistant } = this.stop();
         return reply(
           'Đang dừng tất cả.' +
+            (cutAssistant ? ' Đã cắt lượt Trợ lý đang chạy.' : '') +
             (dropped ? ` Đã bỏ ${dropped} việc còn trong hàng đợi.` : '') +
             ' Việc đã xong vẫn giữ nguyên — nhắn tiếp để mình làm phần còn lại.',
         );
@@ -638,7 +846,17 @@ export class Office {
 
   // ── chạy một yêu cầu
 
-  async run(request: string): Promise<{ plan_id: string; report: string; usage: Usage }> {
+  /**
+   * `draft` — kế hoạch ĐÃ CÓ, khỏi lập lại. → `Assistant.decideRoute` cửa cứu hộ
+   *
+   * Truyền vào thì bỏ hẳn lượt `plan()`. Mọi chốt sau đó (`linkDeps`, `validate`,
+   * đóng khung đường dẫn) chạy y nguyên: một kế hoạch tới từ cửa khác vẫn phải
+   * qua đúng những cửa kiểm của kế hoạch bình thường.
+   */
+  async run(
+    request: string,
+    draft?: PlanDraft,
+  ): Promise<{ plan_id: string; report: string; usage: Usage }> {
     this.assertLive();
     if (this.state === 'working') {
       throw new RunError('Văn phòng đang bận. Đợi xong ca này đã.', 'other');
@@ -711,12 +929,16 @@ export class Office {
       // đây chứ không ở `catch` cuối hàm: `catch` đó còn nhận cả "chưa có nhân
       // viên nào trực" và "văn phòng đang bận", vốn là chuyện cấu hình chứ
       // không phải chuyện hai bên chưa hiểu nhau. → `planFriction`
-      const planned = await this.mailbox
-        .lock(() => this.assistant.plan(request, record.plan_id))
-        .catch((err: unknown) => {
-          this.planFriction++;
-          throw err;
-        });
+      // Kế hoạch tới từ cửa cứu hộ thì KHÔNG gọi model lần nữa — nó đã được trả
+      // tiền ở lượt `route()` vừa rồi. `usage` cũng đã tính ở đó, nên ở đây là 0.
+      const planned = draft
+        ? { value: this.assistant.adopt(draft, request, record.plan_id), usage: emptyUsage() }
+        : await this.mailbox
+            .lock(() => this.assistant.plan(request, record.plan_id))
+            .catch((err: unknown) => {
+              this.planFriction++;
+              throw err;
+            });
       usage = addUsage(usage, planned.usage);
       this.logAssistantUsage('plan', planned.usage);
 
@@ -998,6 +1220,21 @@ export class Office {
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      /**
+       * NGƯỜI DÙNG BẤM DỪNG KHÔNG PHẢI MỘT CA HỎNG. → types.ts `stopped`
+       *
+       * Ca thật: `/stop` giữa lúc Trợ lý đang lập kế hoạch. Lượt đó bị ngắt và
+       * ném ra, rồi rơi vào đây — bản trước đóng bản ghi ở `failed` với nguyên
+       * văn câu lỗi làm báo cáo. Nhật ký công việc ghi "hệ thống làm sai" cho
+       * đúng một việc người dùng tự bảo đừng làm nữa.
+       *
+       * Và nó KHÔNG phát thêm tin nào: `/stop` đã trả lời rồi (§11e). `finish`
+       * bỏ qua `report` rỗng, nên chỉ còn `plan.finished` đóng sổ cho UI.
+       */
+      if (err instanceof RunError && err.kind === 'stopped') {
+        this.finish(record, 'stopped', '', usage, 0);
+        return { plan_id: record.plan_id, report: '', usage };
+      }
       // Thông báo cho người dùng và thông báo cho log là HAI thứ khác nhau.
       // Người dùng cần biết LÀM GÌ TIẾP; log cần biết chuyện gì xảy ra.
       this.finish(record, 'failed', msg, usage, 0);
@@ -1900,6 +2137,43 @@ export class Office {
    * Cả hai nằm trong prefix được cache nên hàm này ĐẮT — gọi khi hình dạng hoặc
    * tri thức đổi, không gọi mỗi lượt trò chuyện.
    */
+  /**
+   * BẢNG KÊ VỪA ĐỔI — nạp lại prefix Trợ lý. → SPEC-library §8b · SPEC-artifacts §2.4
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BUG ĐÃ SỬA (20/08): HAI TRONG BỐN CỬA KHÔNG NẠP LẠI.                    │
+   * │                                                                          │
+   * │   thêm tài liệu  → `library.add()` thẳng từ server   ❌ KHÔNG nạp lại    │
+   * │   xoá tài liệu   → `Office.removeDocument()`          ✅                  │
+   * │   sinh kết quả   → cuối `Office.run()`                ✅                  │
+   * │   xoá kết quả    → `artifacts.remove()` thẳng từ server ❌ KHÔNG nạp lại │
+   * │                                                                          │
+   * │ Hậu quả của cửa thứ nhất là ca tệ nhất: người dùng **vừa tải một tài     │
+   * │ liệu lên rồi hỏi ngay về nó** — thao tác tự nhiên nhất của cả sản phẩm — │
+   * │ và Trợ lý nói không thấy file nào tên đó. Cửa thứ tư ngược lại: nó nêu    │
+   * │ tên một kết quả người dùng vừa xoá.                                      │
+   * │                                                                          │
+   * │ Gốc rễ là luật "ghi/đọc phải dùng chung một hàm" bị phá ở tầng HTTP:      │
+   * │ hai route gọi thẳng vào store, hai route đi qua `Office`. Cửa nào đi tắt  │
+   * │ thì cửa đó quên. Nên bản vá không phải "thêm hai lời gọi" mà là **đóng    │
+   * │ cửa tắt**: mọi thao tác đổi hai cái kho đi qua `Office`.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  addDocument(name: string, data: Buffer, opts: { replace: boolean; maxBytes: number }): DocRecord {
+    this.assertLive();
+    const doc = this.library.add(name, data, opts);
+    this.refreshAssistantContext();
+    return doc;
+  }
+
+  /** Xoá một KẾT QUẢ. Đi qua đây để bảng kê trong prefix Trợ lý không nói tên file đã mất. */
+  removeArtifact(rel: string): boolean {
+    this.assertLive();
+    if (!this.artifacts.remove(rel)) return false;
+    this.refreshAssistantContext();
+    return true;
+  }
+
   private refreshAssistantContext(): void {
     this.assistant.setAssignable(this.layout.assignable());
     this.assistant.setHotKnowledge(this.assistantHot());
@@ -2002,9 +2276,12 @@ export class Office {
 
     const head = '# Results this office has already produced';
     const foot = [
-      groups.length > shown.length ? `(and ${groups.length - shown.length} older job(s) not listed)` : '',
+      groups.length > shown.length
+        ? `(and ${groups.length - shown.length} older job(s) not listed — those files still exist, ` +
+          `so a path the human gives you from one of them is valid)`
+        : '',
       'These are files EMPLOYEES wrote in earlier jobs. To reuse one, put its path in a',
-      "task's `inputs` — the employee opens it directly. You cannot read them yourself.",
+      "task's `inputs`, or send a `lookup` at it to find out what it says.",
     ]
       .filter(Boolean)
       .join('\n');
@@ -2232,7 +2509,7 @@ export class Office {
    * và phải rẻ; `plan` chạy một lần một ca ở query riêng. Gộp lại thì không thấy
    * khâu nào đang phình.
    */
-  private logAssistantUsage(stage: 'route' | 'plan' | 'report', usage: Usage): void {
+  private logAssistantUsage(stage: 'route' | 'plan' | 'report' | 'lookup', usage: Usage): void {
     if (usage.turns === 0 && usage.costUSD === 0) return;
     this.onUsage?.({
       ts: new Date().toISOString(),

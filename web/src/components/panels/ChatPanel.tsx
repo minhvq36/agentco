@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { CornerDownLeft, FileText, MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -18,19 +18,19 @@ export function ChatPanel() {
   const messages = useApp((s) => s.messages);
   const sending = useApp((s) => s.sending);
   const activity = useApp((s) => s.activity);
-  const [text, setText] = useState('');
+  /**
+   * Bản nháp đọc từ STORE, không phải `useState` của component này.
+   *
+   * Sidebar dựng panel bằng `{panel === 'chat' && <ChatPanel />}` — đổi tab là
+   * unmount, và state của component chết theo. Người dùng gõ dở một yêu cầu
+   * dài, ghé tab Tài liệu chép đường dẫn, quay lại: **trống trơn**. → `AppState.draft`
+   */
+  const text = useApp((s) => s.draft);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages.length, activity]);
-
-  function submit(): void {
-    const t = text.trim();
-    if (!t || sending) return;
-    setText('');
-    void actions.say(t);
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -127,7 +127,7 @@ export function ChatPanel() {
         className="flex flex-none items-end gap-2 border-t border-line p-3"
         onSubmit={(e) => {
           e.preventDefault();
-          submit();
+          void actions.say();
         }}
       >
         {/*
@@ -144,7 +144,7 @@ export function ChatPanel() {
         <Textarea
           value={text}
           rows={1}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => actions.setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== 'Enter' || e.shiftKey) return;
             // ⚠ `isComposing` là BẮT BUỘC với tiếng Việt. Bộ gõ (Telex/VNI, và
@@ -152,7 +152,7 @@ export function ChatPanel() {
             // tin nhắn giữa lúc người dùng mới gõ được nửa chữ.
             if (e.nativeEvent.isComposing) return;
             e.preventDefault();
-            submit();
+            void actions.say();
           }}
           placeholder="Giao việc, hoặc hỏi Trợ lý…"
           aria-label="Tin nhắn"

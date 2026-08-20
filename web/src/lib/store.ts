@@ -76,6 +76,32 @@ export interface AppState {
   cost: (Usage & { tasks: number }) | null;
   /** Đang chờ Trợ lý trả lời câu vừa gõ. */
   sending: boolean;
+
+  /**
+   * BẢN NHÁP đang gõ trong ô chat. SỐNG NGOÀI component, và có bản sao trên đĩa.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BUG ĐÃ SỬA (20/08): gõ dở, mở tab Tài liệu xem đường dẫn, quay lại —     │
+   * │ MẤT SẠCH.                                                                │
+   * │                                                                          │
+   * │ Sidebar dựng panel bằng `{panel === 'chat' && <ChatPanel />}`, nên đổi   │
+   * │ tab là **unmount**, và bản nháp nằm trong `useState` của chính component │
+   * │ đó thì chết theo. Đúng thao tác người ta làm nhiều nhất khi soạn một yêu │
+   * │ cầu dài: đi tra tên file rồi quay lại.                                   │
+   * │                                                                          │
+   * │ Thuộc lớp lỗi tệ nhất của dự án — **mất việc của người dùng, im lặng**.  │
+   * │ Không có thông báo nào, và người ta chỉ phát hiện khi nhìn vào ô trống.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Sửa ở TẦNG STATE chứ không phải bằng cách giữ panel luôn mounted (`hidden`):
+   * ẩn đi thì mọi panel khác cũng phải sống mãi, và ta đổi một bug lấy sáu cây
+   * component không bao giờ được dọn.
+   *
+   * Bản sao `localStorage` lo nốt ca thứ hai — **F5, crash tab, đóng nhầm cửa
+   * sổ**. Cùng một nỗi đau, và nếu chỉ chữa nửa trong bộ nhớ thì người dùng học
+   * được một luật sai ("đổi tab thì an toàn") rồi mất bài lúc lỡ tay tải lại.
+   */
+  draft: string;
   /**
    * Câu mô tả việc đang diễn ra, hiện ngay trong khung chat.
    *
@@ -182,6 +208,7 @@ const initial: AppState = {
   live: {},
   cost: null,
   sending: false,
+  draft: '',
   activity: null,
   libraryVersion: 0,
   libraryBusy: 0,
@@ -196,6 +223,37 @@ const initial: AppState = {
 let state: AppState = initial;
 const listeners = new Set<() => void>();
 let msgSeq = 0;
+
+/**
+ * Bản nháp trên đĩa — MỖI VĂN PHÒNG MỘT NGĂN.
+ *
+ * Dùng chung một khoá thì soạn dở một yêu cầu ở văn phòng Kế toán, ghé sang Nội
+ * dung, và câu đó hiện ra trong ô chat của người khác. Văn phòng độc lập hoàn
+ * toàn là luật gốc của sản phẩm; nó phải đúng cả ở những chỗ nhỏ thế này.
+ *
+ * Mọi lời gọi đều nuốt lỗi: `localStorage` ném khi hết quota hoặc khi trình
+ * duyệt chặn cookie/storage. Một bản nháp không lưu được là chuyện đáng tiếc;
+ * một màn hình trắng vì nó thì không chấp nhận được.
+ */
+const draftKey = (officeId: string): string => `agentco:draft:${officeId}`;
+
+function readDraft(officeId: string): string {
+  try {
+    return localStorage.getItem(draftKey(officeId)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeDraft(officeId: string | null, text: string): void {
+  if (!officeId) return;
+  try {
+    if (text) localStorage.setItem(draftKey(officeId), text);
+    else localStorage.removeItem(draftKey(officeId));
+  } catch {
+    /* hết chỗ hoặc bị chặn — bản trong bộ nhớ vẫn chạy đúng */
+  }
+}
 
 function set(patch: Partial<AppState>): void {
   state = { ...state, ...patch };
@@ -296,6 +354,9 @@ export const actions = {
       // Tủ tài liệu là của TỪNG văn phòng. Không dọn thì mở văn phòng khác vẫn
       // thấy "đang đọc 2 tài liệu" của văn phòng vừa rời đi.
       libraryBusy: 0,
+      // Bản nháp cũng của TỪNG văn phòng: đọc lại đúng ngăn của văn phòng vừa
+      // mở, không mang câu đang soạn ở chỗ khác sang đây.
+      draft: readDraft(id),
       activity: null,
       loading: true,
     });
@@ -515,16 +576,41 @@ export const actions = {
     return true;
   },
 
-  async say(text: string): Promise<void> {
+  /** Người dùng gõ một phím. Ghi cả vào bộ nhớ lẫn đĩa — xem `draft`. */
+  setDraft(text: string): void {
+    set({ draft: text });
+    writeDraft(state.officeId, text);
+  },
+
+  /**
+   * Gửi bản nháp đang có. Không nhận tham số: **ô chat không còn giữ chữ nữa**,
+   * nên nguồn sự thật duy nhất là `state.draft`.
+   */
+  async say(): Promise<void> {
     const id = state.officeId;
-    if (!id || !text.trim()) return;
+    const text = state.draft.trim();
+    if (!id || !text || state.sending) return;
+
+    /**
+     * XOÁ Ô CHAT NGAY, NHƯNG GIỮ MỘT BẢN ĐỂ TRẢ LẠI NẾU GỬI HỎNG.
+     *
+     * Xoá ngay là bắt buộc cho tiêu chí "mượt": thao tác phải phản hồi trước
+     * khi server trả lời. Nhưng bản trước xoá xong là **hết** — mất mạng đúng
+     * lúc bấm Gửi thì câu vừa gõ biến mất và chỉ còn một cái toast đỏ. Người ta
+     * gõ dài mấy trăm chữ rồi mất trắng vì một cú mạng chập.
+     */
+    actions.setDraft('');
     set({ sending: true, activity: 'đang đọc yêu cầu…' });
     // KHÔNG tự thêm tin nhắn của mình vào đây: server phát lại nó dưới dạng
     // sự kiện (role: 'user') để mọi tab và Telegram bridge cùng thấy một luồng.
     // `say` giờ trả về NGAY sau khi bỏ tin vào hòm thư — mọi cập nhật tiếp theo
     // đến bằng sự kiện `office.activity`, nên đừng tự tắt dòng trạng thái ở đây.
-    await guard(() => api.say(id, text.trim()));
+    const ok = await guard(() => api.say(id, text));
     set({ sending: false });
+    // `guard` đã hiện lỗi rồi; việc ở đây là **trả lại chữ cho người ta**. Chỉ
+    // trả khi ô còn trống: họ có thể đã gõ câu khác trong lúc chờ, và đè lên
+    // chữ mới là mất việc của người dùng lần thứ hai.
+    if (ok === undefined && !state.draft) actions.setDraft(text);
   },
 
   async stop(): Promise<void> {

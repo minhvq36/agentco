@@ -27,11 +27,46 @@ const STATUS: Record<PlanStatus, { label: string; cls: string }> = {
  * không đọc được khi hai việc chạy chồng nhau, và không trả lời được "việc hôm
  * qua đã làm những gì". Ở đây: danh sách việc → mở một việc → log của đúng nó.
  */
+/**
+ * Lọc ở tầng HIỂN THỊ, không xoá ở tầng LƯU TRỮ. → docs/SPEC-offices.md §6
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ USER ĐÒI NÚT XOÁ, RỒI TỰ CHẶN LẠI — và câu chặn đó đúng.                │
+ * │                                                                          │
+ * │ *"nhiều khi hỏng, bị zombie thấy ngứa mắt"* → *"hay là giữ lại log nhỉ,  │
+ * │ để trace được, liên quan cả tiền nong các thứ"*.                         │
+ * │                                                                          │
+ * │ Nhật ký là bên DUY NHẤT nối `plan_id` trong sổ chi phí với một cái tên    │
+ * │ đọc được. Xoá một dòng thì tiền vẫn nằm trong sổ mà không ai biết nó của  │
+ * │ việc gì. Nhưng nỗi khó chịu thì có thật: 18 việc, 8 trong đó không `done`.│
+ * │                                                                          │
+ * │ Đây đúng là ca luật §5e nói tới: **tách ở tầng HIỂN THỊ rẻ, tách ở tầng   │
+ * │ LƯU TRỮ đắt — nghi ngờ thì tách chỗ rẻ trước.** Một cái nút lọc cho đúng │
+ * │ sự nhẹ nhõm ấy, 0 dòng lịch sử bị mất, và bấm lại là thấy hết.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Mặc định là **TẤT CẢ**, không phải "chỉ việc xong". Nhật ký mở ra mà đã giấu
+ * sẵn phần hỏng là nói dối bằng cách im lặng — người dùng phải CHỌN mới được
+ * nhìn ít đi.
+ */
+const FILTER_KEY = 'agentco.plansFilter';
+
+function readFilter(): boolean {
+  try {
+    return localStorage.getItem(FILTER_KEY) === 'done';
+  } catch {
+    return false;
+  }
+}
+
 export function PlansPanel() {
   const officeId = useApp((s) => s.officeId);
   const currentPlanId = useApp((s) => s.plan?.plan_id ?? null);
   const [plans, setPlans] = useState<PlanRecord[] | null>(null);
   const [open, setOpen] = useState<{ plan: PlanRecord; log: AgentEvent[] } | null>(null);
+  // Panel bị unmount khi đổi tab (`{panel === 'plans' && …}`), nên lựa chọn này
+  // phải sống ngoài component — cùng lớp lỗi với bản nháp ô chat.
+  const [onlyDone, setOnlyDone] = useState(readFilter);
 
   const load = useCallback(async () => {
     if (!officeId) return;
@@ -78,33 +113,83 @@ export function PlansPanel() {
     );
   }
 
+  const hidden = plans.filter((p) => p.status !== 'done').length;
+  const shown = onlyDone ? plans.filter((p) => p.status === 'done') : plans;
+
+  const toggle = (): void => {
+    const next = !onlyDone;
+    setOnlyDone(next);
+    try {
+      localStorage.setItem(FILTER_KEY, next ? 'done' : 'all');
+    } catch {
+      /* bị chặn storage thì lựa chọn chỉ sống trong phiên — không sao */
+    }
+  };
+
   return (
-    <ul className="flex h-full flex-col overflow-y-auto">
-      {plans.map((p) => {
-        const st = STATUS[p.status];
-        return (
-          <li key={p.plan_id}>
-            <button
-              className="w-full border-b border-line px-4 py-3 text-left transition-colors hover:bg-line/40"
-              onClick={() => void openPlan(p.plan_id)}
-            >
-              <div className="line-clamp-2 text-[13.5px] text-ink">{p.request}</div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-                <span className={st.cls}>{st.label}</span>
-                <span>·</span>
-                <span className="tabular-nums">
-                  {p.tasks_done}/{p.tasks_total} việc
-                </span>
-                <span>·</span>
-                <span className="tabular-nums">${p.costUSD.toFixed(4)}</span>
-                <span className="flex-1" />
-                <span>{new Date(p.started_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</span>
-              </div>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="flex h-full flex-col">
+      {/*
+        Thanh lọc chỉ hiện khi CÓ gì để lọc. Một cái nút không đổi được gì trên
+        màn hình là nhiễu — và ở văn phòng mới, mọi việc đều `done`.
+      */}
+      {hidden > 0 && (
+        <div className="flex flex-none items-center gap-2 border-b border-line px-4 py-2 text-xs text-muted">
+          <span className="tabular-nums">
+            {plans.length} việc · {hidden} chưa xong
+          </span>
+          <span className="flex-1" />
+          <Button size="sm" variant="ghost" onClick={toggle}>
+            {onlyDone ? 'Hiện tất cả' : 'Chỉ việc xong'}
+          </Button>
+        </div>
+      )}
+      {/*
+        Trạng thái rỗng của một BỘ LỌC khác trạng thái rỗng của cả nhật ký: ở đây
+        dữ liệu vẫn còn nguyên, chỉ là đang bị lọc đi. Nói đúng chuyện đó, kèm
+        đường quay lại — nếu không thì người dùng tưởng nhật ký vừa bị mất.
+      */}
+      {shown.length === 0 ? (
+        <div className="px-4 py-6 text-[13px] text-muted">
+          Chưa có việc nào xong. {plans.length} việc còn lại đang bị bộ lọc ẩn đi —{' '}
+          <button className="text-accent underline underline-offset-2" onClick={toggle}>
+            hiện tất cả
+          </button>
+          .
+        </div>
+      ) : (
+        <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {shown.map((p) => {
+            const st = STATUS[p.status];
+            return (
+              <li key={p.plan_id}>
+                <button
+                  className="w-full border-b border-line px-4 py-3 text-left transition-colors hover:bg-line/40"
+                  onClick={() => void openPlan(p.plan_id)}
+                >
+                  <div className="line-clamp-2 text-[13.5px] text-ink">{p.request}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-muted">
+                    <span className={st.cls}>{st.label}</span>
+                    <span>·</span>
+                    <span className="tabular-nums">
+                      {p.tasks_done}/{p.tasks_total} việc
+                    </span>
+                    <span>·</span>
+                    <span className="tabular-nums">${p.costUSD.toFixed(4)}</span>
+                    <span className="flex-1" />
+                    <span>
+                      {new Date(p.started_at).toLocaleTimeString('vi-VN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 

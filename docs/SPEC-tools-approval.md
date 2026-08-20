@@ -671,9 +671,31 @@ Ba chỗ phải qua khoá: `route()` · `plan()` · `report()`. Giai đoạn DAG
 
 Trợ lý mà phải suy luận trên một danh sách việc tồn đọng thì danh sách đó nằm trong ngữ cảnh **mọi lượt**, và nó dài ra theo thời gian. Thay vào đó: hàng đợi là một cấu trúc dữ liệu thật, code loại tin cũ, và **Trợ lý chỉ bao giờ nhìn thấy đúng lô hiện tại**.
 
-### 11e. `/stop` dừng CẢ HỆ THỐNG
+### 11e. `/stop` dừng CẢ HỆ THỐNG — **BỐN** thứ, không phải ba
 
-Ngắt nhân viên đang chạy **+** xoá hòm thư **+** bỏ việc đang hoãn. Giữ lại bất cứ thứ gì trong ba thứ đó nghĩa là người dùng bấm Dừng xong vẫn thấy hệ thống tự làm tiếp — đúng thứ họ vừa bảo đừng. Câu trả lời nói rõ đã bỏ bao nhiêu việc.
+Ngắt nhân viên đang chạy **+** **ngắt lượt của chính Trợ lý** **+** xoá hòm thư **+** bỏ việc đang hoãn. Giữ lại bất cứ thứ gì trong bốn thứ đó nghĩa là người dùng bấm Dừng xong vẫn thấy hệ thống tự làm tiếp — đúng thứ họ vừa bảo đừng. Câu trả lời nói rõ đã cắt gì và bỏ bao nhiêu việc.
+
+> ⚠ **Thứ thứ hai bị bỏ quên tới 20/08, và bảng này là bằng chứng.** Ba thứ kia có mã nguồn thi hành từ đầu; lượt Trợ lý thì `Assistant.run()` **không có `AbortController` nào** — không tồn tại tay cầm để ngắt. Đúng luật *một bất biến chỉ có thật khi có mã nguồn thi hành nó*: câu "dừng CẢ HỆ THỐNG" đọc rất thuyết phục và sai suốt.
+
+**Ba biến, phải hỏi cả ba trước khi kết luận "đang rảnh":**
+
+| | biến | ý nghĩa |
+|---|---|---|
+| Plan đang chạy | `office.state === 'working'` | có DAG trên sơ đồ |
+| Trợ lý đang trong một lượt | `mailbox.isBusy` · `clearing` | **không** suy được từ hàng đợi |
+| Còn việc xếp hàng | `mailbox.size` · `deferred.length` | |
+
+Bug đã sửa 20/08: phép kiểm cũ chỉ hỏi `state` + `size` + `deferred`. Lúc Trợ lý đang nghĩ, lô tin đã được `take()` ra khỏi hàng đợi nên `size === 0`, và `state` vẫn `idle` vì chưa có Plan nào ⇒ `/stop` trả *"Hiện không có việc nào đang chạy."* rồi câu trả lời hiện ra ngay sau. **Hệ thống nói dối về trạng thái của chính nó**, ngay thao tác đầu tiên của phiên.
+
+**Ngắt lượt Trợ lý KHÔNG mâu thuẫn với §11f** (*"mặc định để chạy nốt, không giết"*). Luật đó bảo vệ **bản nháp đã trả tiền** của nhân viên: giết ở 80% là mất trắng 80% tiền đã tiêu. Một lượt `route()` không đẻ ra bản nháp nào — ngắt nó chỉ mất một câu trả lời, đúng cái người dùng vừa bảo đừng nói.
+
+**Ba hệ quả phải làm cùng lúc, thiếu một là hở:**
+
+1. `FailureKind` có thêm `'stopped'` — ngắt **không phải lỗi**. Không có nhãn này thì ca đóng ở `failed` và nhật ký ghi *"hệ thống làm sai"* cho một việc người dùng tự bảo đừng làm. Cùng lý do `blocked` đã tách khỏi `failed` (SPEC-offices §6): nhật ký phải phân biệt *ta hỏng* · *ta đang chờ bạn* · *bạn bảo dừng*.
+2. **Đúng MỘT câu báo.** `/stop` đã trả lời rồi, nên `pump()` và `Office.run()` **không** phát thêm tin cho `kind === 'stopped'`.
+3. **Con trỏ session trả về chỗ cũ.** `sessionId` được ghi từ tin `init`, tức là ngay đầu lượt — giữ con trỏ mới sau khi ngắt nghĩa là lượt sau `resume` vào một bản ghi **viết dở**, và cái giá là toàn bộ trí nhớ hội thoại. Bản ghi cũ vẫn nằm nguyên trên đĩa (append-only) nên trả về là an toàn, và ngữ nghĩa cũng đúng: lượt bị dừng thì **không xảy ra**.
+
+⚠ Cơ chế là `abortController`, **không** phải `Query.interrupt()` — bài học đã trả tiền một lần ở §8, đừng thử lại.
 
 ---
 

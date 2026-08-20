@@ -272,6 +272,18 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'plans' && !rest[1] && method === 'GET') {
         return json(res, 200, { plans: office.plans.list() });
       }
+      /**
+       * ⚠ KHÔNG CÓ `DELETE /plans` — và đó là một quyết định, không phải thiếu sót.
+       *
+       * Nhật ký công việc là bên duy nhất nối `plan_id` trong `logs/usage.jsonl`
+       * với một cái TÊN đọc được. Xoá một bản ghi thì tiền vẫn còn trong sổ mà
+       * không ai biết nó của việc gì — và "(không rõ)" trong sổ chi phí từ đó
+       * mang HAI nghĩa (bản ghi v0, hoặc người dùng đã xoá), tức là không còn
+       * giải thích được. → SPEC-offices.md §6 · SESSIONS_MEMORY §5i
+       *
+       * Thứ người dùng thật sự muốn dọn là ca kẹt `running` sau crash —
+       * `healStalePlans()` chữa đúng cái đó mà không mất một dòng lịch sử nào.
+       */
       if (rest[0] === 'plans' && rest[1] && method === 'GET') {
         const planId = decodeURIComponent(rest[1]);
         const record = office.plans.get(planId);
@@ -309,7 +321,11 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         // câu kiểm tra. → SPEC-library.md §13
         const data = await readBody(req, maxBytes);
         try {
-          const doc = office.library.add(decodeURIComponent(name), data, {
+          // `office.addDocument`, KHÔNG phải `library.add` thẳng: bảng kê tủ tài
+          // liệu nằm trong prefix Trợ lý và phải được nạp lại NGAY. Thiếu bước
+          // đó thì người dùng tải file lên rồi hỏi ngay — thao tác tự nhiên nhất
+          // của cả sản phẩm — và Trợ lý nói không thấy file nào tên đó.
+          const doc = office.addDocument(decodeURIComponent(name), data, {
             replace: url.searchParams.get('replace') === '1',
             maxBytes,
           });
@@ -355,7 +371,9 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'artifacts' && !rest[1] && method === 'DELETE') {
         const rel = url.searchParams.get('path');
         if (!rel) return json(res, 400, { error: 'thiếu "path"' });
-        if (!office.artifacts.remove(rel)) return json(res, 404, { error: 'không có kết quả này' });
+        // Qua `Office` để bảng kê Kết quả trong prefix Trợ lý được nạp lại —
+        // nếu không, nó nêu tên một file người dùng vừa xoá. → `removeArtifact`
+        if (!office.removeArtifact(rel)) return json(res, 404, { error: 'không có kết quả này' });
         return json(res, 200, { artifacts: office.artifactList() });
       }
       /**

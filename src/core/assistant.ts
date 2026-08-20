@@ -18,7 +18,7 @@ import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 import type { LoadedOffice } from './config.js';
-import { buildAssistantPrompt } from './prompt.js';
+import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
 import { addUsage, classifyError } from './worker.js';
 import {
   DeliverSchema,
@@ -26,6 +26,7 @@ import {
   LessonSchema,
   RunError,
   TaskBriefSchema,
+  type Deliver,
   type Lesson,
   type Plan,
   type PlanStep,
@@ -88,6 +89,14 @@ const PlanTasksSchema = z.object({
 
 const PlanOutputSchema = z.union([PlanAskSchema, PlanTasksSchema]);
 
+/**
+ * Kế hoạch model vừa viết ra, CHƯA đóng khung đường dẫn và chưa gắn `plan_id`.
+ *
+ * Tách tên riêng vì nó đi qua HAI cửa: khâu `plan()` bình thường, và cửa cứu hộ
+ * ở `route()` khi model trả về một kế hoạch trong lúc lẽ ra phải định tuyến.
+ */
+export type PlanDraft = z.infer<typeof PlanTasksSchema>;
+
 /** Kế hoạch đã chia xong, hoặc một câu hỏi ngược lại cho người dùng. */
 export type PlanOrAsk = { kind: 'plan'; plan: Plan } | { kind: 'ask'; say: string };
 
@@ -102,6 +111,41 @@ export type PlanOrAsk = { kind: 'plan'; plan: Plan } | { kind: 'ask'; say: strin
 const RouteSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('chat'), say: z.string().min(1) }),
   z.object({ intent: z.literal('ask'), say: z.string().min(1) }),
+  /**
+   * `lookup` — WORKER ẨN. Đọc để TRẢ LỜI, không tạo ra gì. → SPEC-offices.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO CÓ CỬA THỨ TƯ, VÀ VÌ SAO NÓ KHÔNG PHẢI MỘT TOOL CỦA TRỢ LÝ.      │
+   * │                                                                          │
+   * │ Ca đo được 20/08: *"nội dung chính của doc-2.md là gì"* → một lượt lập   │
+   * │ kế hoạch + một worker đủ prefix (**sàn ~13 200 token**) để đọc một file   │
+   * │ rồi thuật lại. Người dùng gọi đúng tên: *"Trợ lý khá ngơ"*.               │
+   * │                                                                          │
+   * │ Ba đường, và chỉ đường thứ ba rẻ ở CẢ HAI cột:                            │
+   * │                                                                          │
+   * │              tốn NGAY                          tốn MÃI                    │
+   * │   DAG        plan + sàn 13 200                 0                          │
+   * │   Trợ lý grep ~0                               nội dung file × MỌI lượt   │
+   * │   lookup     1 one-shot, prefix tí xíu         0                          │
+   * │                                                                          │
+   * │ Cột thứ hai là lý do KHÔNG trao `Grep` cho Trợ lý: ngữ cảnh Trợ lý là     │
+   * │ thứ DUY NHẤT không bao giờ bị vứt đi. Một PDF 34 trang bóc ra text rơi    │
+   * │ vào đó là 10–20K token bị `cache_read` lại ở mọi lượt cho tới `/clear`.   │
+   * │                                                                          │
+   * │ Và KHÔNG làm nó thành MCP tool như bản phác thảo `concierge` ban đầu:     │
+   * │ MCP phá prompt cache khi resume (~36K/lượt) mà `route()` resume ở MỌI     │
+   * │ tin nhắn. Là một INTENT thì cùng ý tưởng, 0 đồng cache.                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * `paths` bắt buộc có ít nhất một: Trợ lý đã cầm sẵn bảng kê tủ tài liệu và
+   * bảng kê Kết quả trong prefix — đó chính là việc của hai bảng đó. Không nêu
+   * được tên file thì đường đúng là `ask`, không phải thả một agent đi mò.
+   */
+  z.object({
+    intent: z.literal('lookup'),
+    paths: z.array(z.string()).min(1),
+    question: z.string().min(1),
+  }),
   z.object({
     intent: z.literal('task'),
     request: z.string().min(1),
@@ -109,6 +153,109 @@ const RouteSchema = z.discriminatedUnion('intent', [
   }),
 ]);
 export type RouteDecision = z.infer<typeof RouteSchema>;
+
+/**
+ * Năm kết cục của một lượt định tuyến — ba cửa hợp lệ, hai cửa cứu hộ.
+ *
+ * `plan` và `garbled` KHÔNG phải thứ model được phép trả về; chúng là những gì
+ * ta làm khi nó trả về thứ khác. Giữ chúng trong cùng một union để không chỗ nào
+ * quên xử lý — xem `decideRoute`.
+ */
+export type RouteOutcome =
+  | RouteDecision
+  /** Model trả nguyên một KẾ HOẠCH thay vì một quyết định định tuyến. */
+  | { intent: 'plan'; draft: PlanDraft }
+  /** Trả về thứ không dùng được, VÀ không được cho người dùng nhìn thấy. */
+  | { intent: 'garbled'; say: string; raw: string };
+
+/**
+ * Model vừa nói gì? Hàm THUẦN — 0 token, và đây là chỗ một bug đã lọt.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG ĐÃ SỬA (20/08): KẾ HOẠCH RÒ RA Ô CHAT.                              │
+ * │                                                                          │
+ * │ Bản trước, khi `RouteSchema` không khớp:                                 │
+ * │     `parsed ?? { intent: 'chat', say: text.trim() }`                     │
+ * │ — tức là **văn bản thô của model đi thẳng lên mặt người dùng**.           │
+ * │                                                                          │
+ * │ Ca đo được trên máy người dùng: họ hỏi *"nêu cho tôi 10 thuật ngữ"*, Trợ  │
+ * │ lý hỏi lại *"lấy từ tài liệu nào"*, họ đáp *"bất kỳ, random cũng được"* — │
+ * │ và ô chat nhả ra nguyên một khối `json` với `steps`/`tasks`/`deps`. Model │
+ * │ đã trả lời ĐÚNG NỘI DUNG (giao `nguoi-dich`, trỏ đúng file, `deliver:     │
+ * │ reply`) nhưng qua SAI CỬA, nên `run()` không bao giờ được gọi và **không  │
+ * │ ai làm việc đó cả**. Người dùng trả tiền một lượt để nhận về một đoạn mã. │
+ * │                                                                          │
+ * │ Vì sao model làm thế: `ASSISTANT_CORE` mang mục "Planning output" trong   │
+ * │ prefix của MỌI lượt — `route()` và `plan()` cố ý dùng chung một prefix để │
+ * │ chung một cache entry. Ngay sau một câu `ask`, "bất kỳ cũng được" đọc lên │
+ * │ giống hệt tín hiệu *"chia việc đi"*. Đây là hệ quả của một đánh đổi đã    │
+ * │ chốt, không phải một model tồi.                                          │
+ * │                                                                          │
+ * │ Nên chữa bằng CƠ CHẾ, không bằng lời dặn thêm trong prompt: dặn thì tốn   │
+ * │ token vĩnh viễn, chỉ là gợi ý, và luật 19/08 đã nói *đừng dặn model đừng  │
+ * │ làm*. Ở đây ta không ngăn được nó viết ra — nhưng ta ĐANG CẦM một kế      │
+ * │ hoạch hợp lệ đã trả tiền, nên việc đúng là DÙNG NÓ.                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Thứ tự thử có chủ ý:
+ *
+ *  1. `RouteSchema`   — cửa chính, ca thường.
+ *  2. `PlanTasksSchema` — nó lập kế hoạch mất rồi → nhặt về, đừng gọi lại.
+ *  3. `PlanAskSchema`  — `{"ask":"…"}` là một CÂU HỎI hợp lệ ở khâu lập kế
+ *     hoạch; hình dạng khác nhưng ý nghĩa trùng khít `intent: 'ask'`.
+ *  4. Còn lại: **có JSON hay không** mới là câu hỏi quyết định.
+ *
+ * Bước 4 là luật mới, và nó hẹp có chủ ý: **văn xuôi vẫn hiện như cũ**. Model
+ * đáp "Chào bạn!" mà lỡ quên bọc JSON thì hiện câu đó vẫn đúng hơn là nuốt đi.
+ * Thứ bị chặn chỉ là JSON — một khối JSON KHÔNG BAO GIỜ là câu nói cho người
+ * dùng, nó là tin nhắn giao thức đi lạc cửa. Phân biệt được bằng `JSON.parse`,
+ * tức là bằng sự việc, không bằng phỏng đoán trên câu chữ.
+ */
+export function decideRoute(text: string): RouteOutcome {
+  const routed = extractJson(text, RouteSchema);
+  if (routed) return routed;
+
+  const draft = extractJson(text, PlanTasksSchema);
+  if (draft) return { intent: 'plan', draft };
+
+  const asked = extractJson(text, PlanAskSchema);
+  if (asked) return { intent: 'ask', say: asked.ask.trim() };
+
+  const raw = text.trim();
+  if (!raw) {
+    return {
+      intent: 'garbled',
+      say: 'Mình gọi được model nhưng nó không trả về gì cả — lỗi đường truyền, không phải cách bạn nói. Nhắn lại giúp mình nhé.',
+      raw: '',
+    };
+  }
+  if (hasJsonObject(raw)) {
+    return {
+      intent: 'garbled',
+      // Không trích lời model ở đây, khác hẳn `planFailed`. Ở đó thứ model nói
+      // là VĂN XUÔI — đọc được, và chính nó là thông tin. Ở đây nó là JSON: dán
+      // một đoạn mã trước mặt người mở tiệm hoa không thêm được gì ngoài hoang
+      // mang. Bản nguyên văn đi vào `.state/route-failure.log` cho người sửa lỗi.
+      say:
+        'Mình trả lời sai định dạng nên câu vừa rồi chưa dùng được — lỗi của mình, ' +
+        'không phải cách bạn nói. Bạn nhắn lại y nguyên giúp mình nhé.',
+      raw,
+    };
+  }
+  return { intent: 'chat', say: raw };
+}
+
+/** Có ít nhất một object JSON parse được trong chuỗi? Sự việc, không phải phỏng đoán. */
+function hasJsonObject(text: string): boolean {
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first === -1 || last <= first) return false;
+  try {
+    return typeof JSON.parse(text.slice(first, last + 1)) === 'object';
+  } catch {
+    return false;
+  }
+}
 
 const ReportSchema = z.object({
   say: z.string().min(1),
@@ -316,8 +463,114 @@ export function outputScoper(planId: string, taskId: string): (p: string) => str
   };
 }
 
+/**
+ * Kế hoạch model vừa viết ra → kế hoạch CHẠY ĐƯỢC. Hàm THUẦN, 0 token, 0 lượt.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO TÁCH RA KHỎI `Assistant.plan()` (20/08).                          │
+ * │                                                                          │
+ * │ Hai lý do, và lý do thứ hai mới là lý do thật:                            │
+ * │                                                                          │
+ * │  1. Nó là hàm thuần và nó đang giữ BỐN luật đã từng có bug — đóng khung   │
+ * │     đầu vào, đóng khung đầu ra, bỏ bước không ai làm, mặc định `deliver`  │
+ * │     của văn phòng. Nằm trong một method `async` gọi model thì không có bộ │
+ * │     test nào chạm tới được. → §4 nợ kỹ thuật, ưu tiên 0                   │
+ * │  2. **Nó có HAI người gọi.** `route()` có một cửa cứu hộ: khi model trả   │
+ * │     về nguyên một kế hoạch trong lúc lẽ ra phải định tuyến, ta đang cầm   │
+ * │     trong tay một kế hoạch ĐÃ TRẢ TIỀN — và luật "ra bản nháp để sửa còn  │
+ * │     hơn viết mới từ đầu" cấm vứt nó đi để gọi lại `plan()`.               │
+ * │                                                                          │
+ * │ Hai bản mã cho cùng một phép biến đổi thì sẽ lệch — luật 19/08, và một    │
+ * │ dòng chú thích "⚠ phải khớp bên kia" KHÔNG phải một cơ chế.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function buildPlan(
+  draft: PlanDraft,
+  request: string,
+  planId: string,
+  defaultDeliver: Deliver,
+): Plan {
+  const rawSteps = draft.steps;
+  const rawTasks = draft.tasks.map((t) => ({ ...t, step: clampStep(t.step, rawSteps.length) }));
+
+  /**
+   * BỎ BƯỚC KHÔNG CÓ TASK NÀO.
+   *
+   * Model rất hay viết một bước kiểu "Lưu kết quả vào file" rồi không giao
+   * task nào cho nó — vì việc đó đã nằm trong task trước. Bước như thế KHÔNG
+   * AI TICK ĐƯỢC: nó đứng nguyên ở "chưa làm" kể cả khi mọi việc đã xong, và
+   * người dùng nhìn vào tưởng hệ thống bỏ sót.
+   *
+   * Lọc bằng code chứ không bằng cách bắt model lập lại kế hoạch: rẻ hơn một
+   * lượt gọi, và deterministic. Prompt cũng đã dặn thêm, nhưng dặn là gợi ý
+   * còn cái này là bảo đảm.
+   */
+  const used = new Set(rawTasks.map((t) => t.step));
+  const kept = rawSteps.map((title, i) => ({ title, i })).filter((s) => used.has(s.i));
+  const remap = new Map(kept.map((s, newIndex) => [s.i, newIndex]));
+
+  const steps: PlanStep[] = kept.map((s) => ({ title: s.title, status: 'pending' }));
+  // Đầu VÀO và đầu RA đi qua hai luật khác nhau — xem `outputScoper`.
+  const scopeIn = artifactScoper(planId, rawTasks.map((t) => t.task_id));
+
+  const tasks = rawTasks.map((t) => {
+    const scopeOut = outputScoper(planId, t.task_id);
+    return TaskBriefSchema.parse({
+      ...t,
+      inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
+      outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scopeOut(o.path) })),
+      step: remap.get(t.step) ?? 0,
+      // Mặc định VĂN PHÒNG, không phải mặc định của schema. Đây là chỗ cần
+      // gạt tất định thật sự có hiệu lực: model im lặng = đi theo cấu hình
+      // người dùng đã đặt, chứ không rơi về 'file' một cách âm thầm.
+      deliver: t.deliver ?? defaultDeliver,
+    });
+  });
+
+  return { plan_id: planId, request, steps, tasks };
+}
+
+/**
+ * Câu "việc này là việc gì" cho một bản nháp kế hoạch — SUY TỪ DỮ LIỆU, 0 token.
+ *
+ * `PlanRecord.request` là thứ người dùng đọc trong `/status` và trong nhật ký
+ * công việc. Ở ca thường nó do `route()` viết ra ("viết lại yêu cầu thành một
+ * câu rõ ràng"). Ở cửa cứu hộ ta không có câu đó — nhưng ta có `goal` của từng
+ * task, vốn được yêu cầu đúng cùng một hình dạng: *một câu rõ ràng, tiếng của
+ * người dùng*. Dùng lại thứ đang cầm thay vì hỏi thêm một lượt.
+ *
+ * ⚠ KHÔNG dùng chính câu người dùng vừa gõ: câu đó thường là *"ừ, cái nào cũng
+ * được"* — đúng nhưng vô nghĩa khi đọc lại trong nhật ký ba ngày sau.
+ */
+export function requestOf(draft: PlanDraft): string {
+  return truncateToTokens(draft.tasks.map((t) => t.goal.trim()).filter(Boolean).join(' · '), 120);
+}
+
 export class Assistant {
   private sessionId: string | undefined;
+  /**
+   * Lượt gọi ĐANG BAY — tay cầm để `/stop` ngắt. → SPEC-tools-approval.md §11e
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TRƯỚC 20/08 KHÔNG CÓ TAY CẦM NÀO, và người dùng đo được ngay lượt đầu.  │
+   * │                                                                          │
+   * │ `Office.stop()` ngắt nhân viên (`Scheduler.interruptAll`), xoá hòm thư,   │
+   * │ bỏ việc hoãn — ba thứ, đúng như §11e viết. Nhưng lượt gọi của CHÍNH Trợ   │
+   * │ lý (`route`/`plan`/`report`) chạy ở `run()` bên dưới, và ở đó không có gì │
+   * │ để ngắt cả. Gõ `/stop` giữa lúc Trợ lý đang nghĩ thì nó vẫn nghĩ nốt, vẫn │
+   * │ trả lời, vẫn tính tiền — sau khi màn hình đã nói "Đang dừng tất cả".      │
+   * │                                                                          │
+   * │ Đây KHÔNG mâu thuẫn với luật *"mặc định để chạy nốt, không giết"* (§11f). │
+   * │ Luật đó bảo vệ BẢN NHÁP ĐÃ TRẢ TIỀN của nhân viên: giết ở 80% là mất      │
+   * │ trắng 80% tiền đã tiêu. Một lượt `route()` không đẻ ra bản nháp nào —     │
+   * │ ngắt nó chỉ mất một câu trả lời, đúng cái người dùng vừa bảo đừng nói.    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ `abortController`, KHÔNG phải `Query.interrupt()`. Bài học đã trả tiền một
+   * lần ở `worker.ts` (§8, hai cách ngắt qua `interrupt()` đều hỏng) — chép lại
+   * đúng cơ chế đã đo được thay vì thử lại cái đã biết là không chạy.
+   */
+  private inflight: AbortController | undefined;
   /** Vai trò có dây nối từ Assistant trên canvas. undefined = chưa cấu hình = tất cả. */
   private assignable: Set<string> | undefined;
   /** Tri thức HOT nạp sẵn vào prefix. Chỉ đổi khi bump knowledge_version. */
@@ -331,6 +584,19 @@ export class Assistant {
 
   resumeFrom(sessionId: string | undefined): void {
     this.sessionId = sessionId;
+  }
+
+  /**
+   * Ngắt lượt đang bay. Trả về `true` nếu thật sự có cái để ngắt.
+   *
+   * Giá trị trả về là thứ `Office.stop()` dùng để nói ĐÚNG chuyện vừa xảy ra —
+   * "đang dừng" khi có ngắt thật, và không hứa gì khi không có. Đoán ở tầng trên
+   * là cách câu trả lời của `/stop` đã sai một lần rồi.
+   */
+  abort(): boolean {
+    if (!this.inflight) return false;
+    this.inflight.abort();
+    return true;
   }
 
   /**
@@ -540,6 +806,65 @@ export class Assistant {
    * │ cần. Một id sinh ở hai chỗ thì kiểu gì cũng có ngày lệch.                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
+  /**
+   * Nhận một bản nháp có sẵn thay vì gọi model. → `decideRoute` cửa cứu hộ
+   *
+   * Mỏng có chủ ý: nó chỉ tiêm `default_deliver` của văn phòng vào `buildPlan`.
+   * Để `Office` tự gọi `buildPlan` thì `Office` phải tự đi lấy con mặc định đó —
+   * và ngày ai đó quên, `default_deliver: reply` im lặng vô tác dụng ở đúng một
+   * trong hai cửa. Một phép biến đổi, một chỗ gọi.
+   */
+  adopt(draft: PlanDraft, request: string, planId: string): PlanOrAsk {
+    return {
+      kind: 'plan',
+      plan: buildPlan(draft, request, planId, this.office.config.assistant.default_deliver),
+    };
+  }
+
+  /**
+   * WORKER ẨN — đọc file đã được xác minh, trả lời thẳng. → `RouteSchema` lookup
+   *
+   * Ba tính chất, và cả ba đều do CODE giữ chứ không do lời dặn:
+   *
+   *  · `persistSession: false` — thứ nó đọc **chết cùng lượt gọi**. Đây là cả
+   *    lý do nó tồn tại thay vì trao `Grep` cho Trợ lý.
+   *  · `tools` chỉ đọc — nó **không ghi được file**, nên nó không thể lấn sang
+   *    việc của nhân viên kể cả khi Trợ lý định tuyến sai. Ranh giới "hỏi để
+   *    BIẾT / giao để CÓ" là một giới hạn NĂNG LỰC, không phải một lời hứa.
+   *  · `systemPrompt` là `LOOKUP_PROMPT` trần — không charter, không kho tri
+   *    thức, không skills, không roster. Prefix tí xíu, và **không có gì ẩn**.
+   *
+   * `usage` trả về cho `Office` ghi sổ dưới khâu `lookup`: nó có hình dạng chi
+   * phí riêng, gộp vào `route` thì không thấy khâu nào đang phình.
+   */
+  async lookup(paths: readonly string[], question: string): Promise<AssistantResult<string>> {
+    const { text, usage } = await this.run(
+      `Tài liệu cần đọc:\n${paths.map((p) => `- ${p}`).join('\n')}\n\nCâu hỏi: ${question}`,
+      /**
+       * Mức model của CHÍNH TRỢ LÝ, không phải `models.planner` — và cố ý KHÔNG
+       * đẻ một knob thứ ba.
+       *
+       * Với người dùng thì đây LÀ Trợ lý đang trả lời; nó chỉ không giữ tài liệu
+       * lại trong đầu. Nên nó phải nói cùng một chất lượng với phần còn lại của
+       * cuộc trò chuyện, và cái knob quyết chuyện đó đã có sẵn:
+       * `assistant.model_tier` của văn phòng.
+       *
+       * `models.planner` thì SAI hẳn trục: người ta đặt nó `deep` để khâu chia
+       * việc nghĩ kỹ, và nếu dùng ở đây thì mỗi câu "file này nói gì" chạy Opus.
+       */
+      this.model,
+      false,
+      {
+        systemPrompt: LOOKUP_PROMPT,
+        // `Read` để đọc, `Grep` để tìm ĐÚNG CHỖ trong một file dài — luật "text
+        // đã bóc dùng để TÌM, bản gốc dùng để ĐỌC KỸ" (SPEC-library §7). `Glob`
+        // vì một đường dẫn thư mục vẫn hợp lệ trong `paths`.
+        tools: ['Read', 'Grep', 'Glob'],
+      },
+    );
+    return { value: text.trim(), usage };
+  }
+
   async plan(request: string, planId: string): Promise<AssistantResult<PlanOrAsk>> {
     const models = this.office.company.models;
     const { text, usage } = await this.askOneShot(
@@ -554,45 +879,13 @@ export class Assistant {
     // không phải một lỗi — đi thẳng lên ô chat và không tốn token nhân viên nào.
     if ('ask' in parsed) return { value: { kind: 'ask', say: parsed.ask.trim() }, usage };
 
-    const rawSteps = parsed.steps;
-    const rawTasks = parsed.tasks.map((t) => ({ ...t, step: clampStep(t.step, rawSteps.length) }));
-
-    /**
-     * BỎ BƯỚC KHÔNG CÓ TASK NÀO.
-     *
-     * Model rất hay viết một bước kiểu "Lưu kết quả vào file" rồi không giao
-     * task nào cho nó — vì việc đó đã nằm trong task trước. Bước như thế KHÔNG
-     * AI TICK ĐƯỢC: nó đứng nguyên ở "chưa làm" kể cả khi mọi việc đã xong, và
-     * người dùng nhìn vào tưởng hệ thống bỏ sót.
-     *
-     * Lọc bằng code chứ không bằng cách bắt model lập lại kế hoạch: rẻ hơn một
-     * lượt gọi, và deterministic. Prompt cũng đã dặn thêm, nhưng dặn là gợi ý
-     * còn cái này là bảo đảm.
-     */
-    const used = new Set(rawTasks.map((t) => t.step));
-    const kept = rawSteps.map((title, i) => ({ title, i })).filter((s) => used.has(s.i));
-    const remap = new Map(kept.map((s, newIndex) => [s.i, newIndex]));
-
-    const steps: PlanStep[] = kept.map((s) => ({ title: s.title, status: 'pending' }));
-    // Đầu VÀO và đầu RA đi qua hai luật khác nhau — xem `outputScoper`.
-    const scopeIn = artifactScoper(planId, rawTasks.map((t) => t.task_id));
-
-    const fallbackDeliver = this.office.config.assistant.default_deliver;
-    const tasks = rawTasks.map((t) => {
-      const scopeOut = outputScoper(planId, t.task_id);
-      return TaskBriefSchema.parse({
-        ...t,
-        inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
-        outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scopeOut(o.path) })),
-        step: remap.get(t.step) ?? 0,
-        // Mặc định VĂN PHÒNG, không phải mặc định của schema. Đây là chỗ cần
-        // gạt tất định thật sự có hiệu lực: model im lặng = đi theo cấu hình
-        // người dùng đã đặt, chứ không rơi về 'file' một cách âm thầm.
-        deliver: t.deliver ?? fallbackDeliver,
-      });
-    });
-
-    return { value: { kind: 'plan', plan: { plan_id: planId, request, steps, tasks } }, usage };
+    return {
+      value: {
+        kind: 'plan',
+        plan: buildPlan(parsed, request, planId, this.office.config.assistant.default_deliver),
+      },
+      usage,
+    };
   }
 
   /**
@@ -632,16 +925,7 @@ export class Assistant {
    */
   private planFailed(request: string, text: string): RunError {
     const raw = text.trim();
-    try {
-      fs.mkdirSync(this.office.paths.state, { recursive: true });
-      fs.appendFileSync(
-        path.join(this.office.paths.state, 'plan-failure.log'),
-        `\n=== ${new Date().toISOString()}\n--- yêu cầu\n${request}\n--- model trả về (${raw.length} ký tự)\n${raw || '(RỖNG)'}\n`,
-        'utf8',
-      );
-    } catch {
-      /* không ghi được nhật ký thì vẫn phải trả lời người dùng */
-    }
+    this.logFailure('plan-failure.log', request, raw);
 
     if (!raw) {
       return new RunError(
@@ -750,7 +1034,7 @@ export class Assistant {
    * kế hoạch sai rồi đốt tiền. Đây đúng là nỗi đau gốc của sản phẩm — người
    * ngoại đạo hoang mang không biết AI đang dắt mình đi đâu.
    */
-  async route(message: string, hasActivePlan: boolean): Promise<AssistantResult<RouteDecision>> {
+  async route(message: string, hasActivePlan: boolean): Promise<AssistantResult<RouteOutcome>> {
     const scopeHint = hasActivePlan
       ? `\nĐang có một công việc chạy dở. Với intent "task", đặt "scope":"refine" nếu câu này BỔ SUNG hoặc SỬA cho việc đang chạy; ` +
         `đặt "scope":"new" nếu đây là một việc KHÁC HẲN. Khi phân vân, chọn "new" — hai việc tách rời chỉ tốn thêm một lần lập kế hoạch, ` +
@@ -766,18 +1050,41 @@ export class Assistant {
         `  dùng khi: có vẻ là yêu cầu công việc NHƯNG thiếu thông tin quan trọng ` +
         `(làm cho ai, dài bao nhiêu, giọng thế nào, dựa trên tài liệu nào). ` +
         `Hỏi MỘT câu quan trọng nhất thôi. Thà hỏi còn hơn đoán sai rồi làm lại.\n` +
+        `{"intent":"lookup","paths":["library/files/doc-2.md"],"question":"<câu hỏi, giữ nguyên ý người dùng>"}\n` +
+        `  dùng khi: người dùng hỏi TRONG TÀI LIỆU CÓ GÌ và chỉ cần ĐỌC là trả lời được — ` +
+        `tóm tắt, tra một con số, một điều khoản, "file này nói về gì".\n` +
+        `  Đường dẫn lấy từ hai bảng kê trên HOẶC từ chính câu người dùng vừa gõ (đã được kiểm là có thật). ` +
+        `Không có đường dẫn nào để nêu thì dùng "ask", đừng bịa.\n` +
         `{"intent":"task","request":"<viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh>","scope":"new"}\n` +
-        `  dùng khi: đã đủ rõ để giao cho đội.` +
+        `  dùng khi: đã đủ rõ để giao cho đội.\n` +
+        /**
+         * LUẬT PHÂN CỬA `lookup` vs `task` — một câu, và nó phải đúng TRỤC.
+         *
+         * Câu hỏi KHÔNG phải *"ai làm được việc này"* — người dịch hoàn toàn đọc
+         * và tóm tắt được một tài liệu, người dùng đã chứng minh điều đó trên
+         * máy thật. Câu hỏi là *"ai làm thì kết quả có khác không"*.
+         *
+         * Dịch một tài liệu thì CÓ khác: nó phụ thuộc bảng thuật ngữ, giọng văn,
+         * charter — tức là phụ thuộc `role`. Thuật lại xem tài liệu nói gì thì
+         * KHÔNG: ai đọc cũng ra chừng ấy.
+         *
+         * Và đây cũng là câu trả lời cho ca *"người dùng tự tạo một nhân viên
+         * chỉ-đọc rồi thấy Trợ lý tự làm hết"*: nhân viên đó tồn tại vì họ mang
+         * một GÓC NHÌN (soát hợp đồng, kiểm số liệu), nên mọi câu hỏi cần góc
+         * nhìn ấy vẫn về tay họ theo đúng luật này. `lookup` chỉ lấy phần mà vai
+         * trò không thêm được gì — phần đó vốn không phải việc của ai cả.
+         */
+        `Phân biệt "lookup" với "task": hỏi xem NGƯỜI KHÁC làm thì kết quả có khác không. ` +
+        `Dịch, viết, soát, tư vấn — CÓ khác, vì phụ thuộc chuyên môn và giọng của từng nhân viên → "task". ` +
+        `Đọc rồi thuật lại xem tài liệu nói gì — ai đọc cũng ra chừng ấy → "lookup". ` +
+        `Cần ra một FILE để người dùng giữ thì luôn là "task".` +
         scopeHint,
     );
 
-    const parsed = extractJson(text, RouteSchema);
-    // Không đọc được thì coi là trò chuyện — an toàn hơn nhiều so với việc
-    // lỡ khởi động cả một DAG tốn tiền vì hiểu nhầm.
-    const value: RouteDecision = parsed ?? {
-      intent: 'chat',
-      say: text.trim() || 'Mình chưa hiểu ý bạn, nói rõ hơn giúp mình nhé.',
-    };
+    // Quyết định là hàm THUẦN và có test riêng. Ở đây chỉ còn phần có tác dụng
+    // phụ: ghi nhật ký ca hỏng. → `decideRoute`
+    const value = decideRoute(text);
+    if (value.intent === 'garbled') this.logFailure('route-failure.log', message, value.raw);
     return { value, usage };
   }
 
@@ -804,6 +1111,26 @@ export class Assistant {
    * mỗi lúc chỉ làm một việc (hòm thư khoá), nên không có lượt nào bị đổi model
    * giữa chừng.
    */
+  /**
+   * Nguyên văn thứ model trả về, cho người đi sửa lỗi. KHÔNG cho người dùng.
+   *
+   * Câu trên chat phải ngắn và nói việc phải làm; chẩn đoán một ca hỏng thì cần
+   * đủ chữ. Ghi hỏng KHÔNG được nuốt mất ca gốc: người dùng đang chờ một câu trả
+   * lời, không phải một lỗi ghi file.
+   */
+  private logFailure(file: string, request: string, raw: string): void {
+    try {
+      fs.mkdirSync(this.office.paths.state, { recursive: true });
+      fs.appendFileSync(
+        path.join(this.office.paths.state, file),
+        `\n=== ${new Date().toISOString()}\n--- yêu cầu\n${request}\n--- model trả về (${raw.length} ký tự)\n${raw || '(RỖNG)'}\n`,
+        'utf8',
+      );
+    } catch {
+      /* không ghi được nhật ký thì vẫn phải trả lời người dùng */
+    }
+  }
+
   private askSession(prompt: string): Promise<{ text: string; usage: Usage }> {
     return this.run(prompt, this.model, true);
   }
@@ -817,9 +1144,27 @@ export class Assistant {
     prompt: string,
     model: string,
     useSession: boolean,
+    /**
+     * Ghi đè cho WORKER ẨN — và cố ý chỉ có ĐÚNG HAI trường.
+     *
+     * Mọi thứ khác (`abortController`, `settingSources`, `strictMcpConfig`,
+     * `persistSession`) phải giữ nguyên cho mọi lượt. Mở rộng thành một object
+     * options tự do là mời một ngày nào đó có người tắt mất `abortController`
+     * cho một nhánh, rồi `/stop` im lặng thôi tác dụng ở đúng nhánh đó — lớp
+     * lỗi vừa sửa sáng nay.
+     */
+    override?: { systemPrompt: string; tools: string[] },
   ): Promise<{ text: string; usage: Usage }> {
     let usage: Usage = { ...EMPTY_USAGE };
     let text = '';
+
+    // Một tay cầm cho MỖI lượt, không dùng lại: một `AbortController` đã abort
+    // thì abort vĩnh viễn, nên tái sử dụng nghĩa là lượt kế tiếp chết ngay khi
+    // vừa sinh ra. Xem `inflight`.
+    const controller = new AbortController();
+    this.inflight = controller;
+    // Con trỏ hội thoại TRƯỚC lượt này — xem nhánh `aborted` ở `catch`.
+    const sessionBefore = this.sessionId;
 
     try {
       for await (const msg of query({
@@ -841,7 +1186,7 @@ export class Assistant {
          */
         prompt: oneShot(prompt),
         options: {
-          systemPrompt: this.systemPrompt(),
+          systemPrompt: override?.systemPrompt ?? this.systemPrompt(),
           model,
           cwd: this.office.dir,
           maxTurns: 4,
@@ -898,8 +1243,14 @@ export class Assistant {
            * │ prefix đã đủ để nó lập kế hoạch đúng.                             │
            * └──────────────────────────────────────────────────────────────────┘
            */
-          tools: [],
-          allowedTools: [],
+          /**
+           * `tools` GIỚI HẠN — nên worker ẩn nhận đúng ba tool chỉ-đọc và
+           * KHÔNG ghi được file. `allowedTools` đi kèm để chúng không bị hỏi
+           * duyệt: đây là một lượt chạy nền, không có ai ở đó để bấm.
+           */
+          tools: override?.tools ?? [],
+          allowedTools: override?.tools ?? [],
+          abortController: controller,
           ...(useSession ? {} : { persistSession: false }),
           ...(useSession && this.sessionId ? { resume: this.sessionId } : {}),
         },
@@ -954,6 +1305,35 @@ export class Assistant {
         }
       }
     } catch (err) {
+      /**
+       * NGẮT THEO YÊU CẦU NGƯỜI DÙNG KHÔNG PHẢI LỖI — hỏi TAY CẦM, đừng đọc
+       * câu chữ của lỗi.
+       *
+       * SDK ném ra một `AbortError` khi bị abort, và cám dỗ tự nhiên là so tên
+       * lỗi hoặc dò chữ "abort" trong `message`. Cả hai đều là suy đoán trên
+       * chuỗi do thư viện bên ngoài sinh ra, và sẽ lệch vào ngày nó đổi câu chữ.
+       * `controller.signal.aborted` là SỰ VIỆC ta tự gây ra và tự quan sát được
+       * — cùng đúng một luật đã bác bỏ việc đoán bằng regex ở `landingOf`.
+       *
+       * Phải đứng TRƯỚC nhánh `RunError`: một `usage_limit` ném ra đúng lúc
+       * người dùng bấm Dừng thì thứ vừa xảy ra vẫn là "đã dừng".
+       */
+      if (controller.signal.aborted) {
+        /**
+         * TRẢ CON TRỎ HỘI THOẠI VỀ CHỖ CŨ.
+         *
+         * `sessionId` được ghi từ tin `init`, tức là NGAY ĐẦU lượt — trước khi
+         * model nói một chữ nào. Ngắt giữa chừng rồi giữ con trỏ mới nghĩa là
+         * lượt sau `resume` vào một bản ghi VIẾT DỞ, và cái giá của một bản ghi
+         * hỏng là toàn bộ trí nhớ hội thoại — thứ đắt nhất trong sản phẩm.
+         *
+         * Bản ghi cũ vẫn nằm nguyên trên đĩa (`~/.claude/projects/`, append-only)
+         * nên trả về là an toàn. Ngữ nghĩa cũng đúng: người dùng bấm Dừng thì
+         * lượt đó KHÔNG XẢY RA — không có câu nào được nói, không có gì để nhớ.
+         */
+        this.sessionId = sessionBefore;
+        throw new RunError('Đã dừng theo yêu cầu của bạn.', 'stopped', { cause: err });
+      }
       // `RunError` do chính vòng lặp trên ném ra thì ĐI THẲNG: nó đã mang đúng
       // `kind` rồi, bọc lại một lần nữa là chạy `classifyError` trên câu tiếng
       // Việt của chính mình và có ngày hạ một `usage_limit` xuống `other`.
@@ -961,6 +1341,12 @@ export class Assistant {
       throw new RunError(err instanceof Error ? err.message : String(err), classifyError(err), {
         cause: err,
       });
+    } finally {
+      // Chỉ dọn tay cầm CỦA CHÍNH MÌNH. Hòm thư khoá nên hai lượt không chồng
+      // nhau được, nhưng phép so này làm điều đó thành BẢO ĐẢM chứ không phải
+      // một giả định — nếu khoá có ngày hở, xoá nhầm tay cầm của lượt sau nghĩa
+      // là `/stop` im lặng mất tác dụng, đúng lớp lỗi vừa sửa.
+      if (this.inflight === controller) this.inflight = undefined;
     }
 
     return { text, usage };

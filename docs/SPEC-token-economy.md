@@ -90,6 +90,26 @@ Lý do: TTL 1 giờ đắt gấp ~1.6× lúc ghi nhưng cứu được toàn b�
 
 ---
 
+### 2b. Xếp khối trong prefix: hỏi "DỰNG hay DÙNG", đừng đoán tần suất (chốt 20/08)
+
+`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` nằm ở **cuối** mọi khối, nên toàn bộ khối nằm trong vùng được cache — và cache là **theo tiền tố**. Một khối đổi thì mọi khối **phía sau nó** bị ghi lại theo.
+
+Bảng kê tủ tài liệu từng đứng ngay sau charter, **trên** memory · hot · roster · bảng kê kết quả, với lý do ghi thẳng trong code: *"tủ đổi hiếm hơn kéo dây trên canvas"*. **Quan sát thật bác bỏ:**
+
+| | thao tác | tần suất thật |
+|---|---|---|
+| roster | kéo dây trên canvas | **DỰNG** — một lần, gần như không đụng lại |
+| bảng kê tủ | thả tài liệu vào | **DÙNG** — lặp suốt đời văn phòng |
+| bảng kê kết quả | sinh sau mỗi ca | **DÙNG** — mỗi ca |
+
+Hạ bảng kê tủ xuống sát bảng kê kết quả ⇒ thêm một tài liệu ghi lại **3 khối** thay vì **6**. `PROMPT_SCHEMA_VERSION` 3 → 4.
+
+> **Đừng đoán tần suất bằng cảm giác cái nào "nghe có vẻ hiếm hơn".** Câu hỏi cho ra tần suất thật là: *đây là thứ người ta làm lúc DỰNG hệ thống, hay thứ họ làm mỗi ngày khi DÙNG nó?*
+
+⚠ Phân biệt với luật **"HOT phải ỔN ĐỊNH"** (§2): ở đó cái giá lặp lại **mỗi task** nên nó chết người. Ở đây cái giá là **một lần cho một thao tác của con người** — trả nó để đổi lấy một bảng kê không nói dối là đánh đổi đúng chiều.
+
+**Một tiền đề hay nhầm, đã đo:** worker **không** dùng cache của Trợ lý. Prefix worker mở bằng `CORE_PROMPT`, prefix Trợ lý mở bằng `ASSISTANT_CORE` — hai cache entry khác nhau. Cả hai bảng kê đều gác `who === 'assistant'` nên **chưa bao giờ** vào prefix nhân viên. Thêm/xoá tài liệu không đụng một token cache nào của worker.
+
 ## 3. Cache priming gate
 
 **Vấn đề:** bung 5 task cùng role song song khi cache chưa có → cả 5 cùng miss, cả 5 cùng trả cache-write (1.25–2×). Đúng lúc song song đáng lẽ tiết kiệm thì lại đắt nhất.

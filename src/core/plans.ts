@@ -86,6 +86,53 @@ export class PlanStore {
     return out;
   }
 
+  /**
+   * CHỮA CA ZOMBIE: bản ghi kẹt ở `planning`/`running` sau khi daemon chết.
+   * Trả về số ca đã chữa. → nợ kỹ thuật #2 · SPEC-offices.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO CHỮA CHỨ KHÔNG CHO XOÁ — user hỏi đúng câu, 20/08.                │
+   * │                                                                          │
+   * │ Triệu chứng user nêu: *"nhiều khi hỏng, bị zombie thấy ngứa mắt"*, và    │
+   * │ phản xạ đầu tiên của cả hai bên là **thêm nút Xoá**. Nhưng nhật ký công  │
+   * │ việc là bên DUY NHẤT nối `plan_id` trong `logs/usage.jsonl` với một cái  │
+   * │ TÊN đọc được. Xoá một bản ghi thì tiền vẫn còn trong sổ mà không ai biết │
+   * │ nó của việc gì — và "(không rõ)" trong sổ chi phí từ đó mang HAI nghĩa   │
+   * │ (bản ghi v0, hoặc người dùng đã xoá), tức là **không còn giải thích      │
+   * │ được**. Chính user chặn lại: *"hay là giữ lại log nhỉ, để trace được,    │
+   * │ liên quan cả tiền nong"*.                                                │
+   * │                                                                          │
+   * │ Chẩn đoán đúng trục: cái ngứa mắt KHÔNG phải "có quá nhiều dòng", mà là  │
+   * │ **những dòng đó đang NÓI DỐI** — chúng bảo "đang chạy" trong khi không   │
+   * │ có gì chạy cả. Sửa lời nói dối thì cái ngứa mắt biến mất, và không mất   │
+   * │ một dòng lịch sử nào. Thêm nút Xoá là chữa triệu chứng bằng cách đốt      │
+   * │ bằng chứng.                                                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Chạy MỘT LẦN lúc dựng `Office`, tức là lúc tiến trình vừa khởi động và
+   * chắc chắn chưa có ca nào đang chạy. Gọi nó ở bất kỳ đâu khác là có ngày
+   * đóng dấu `failed` lên một ca đang chạy thật.
+   *
+   * ⚠ GIỮ NGUYÊN THỨ TỰ trong index — không dùng `upsert`, vì `upsert` đẩy bản
+   * ghi lên đầu danh sách. Chữa ba con zombie bằng `upsert` là xáo tung lịch sử
+   * theo thứ tự thời gian, đúng thứ nhật ký sinh ra để giữ.
+   */
+  healStale(note: string): number {
+    const plans = this.list();
+    let healed = 0;
+    for (const p of plans) {
+      if (p.status !== 'planning' && p.status !== 'running') continue;
+      p.status = 'failed';
+      p.ended_at ??= new Date().toISOString();
+      p.report = p.report ? `${p.report}\n\n${note}` : note;
+      healed++;
+    }
+    if (healed === 0) return 0;
+    fs.mkdirSync(path.dirname(this.paths.planIndex), { recursive: true });
+    fs.writeFileSync(this.paths.planIndex, JSON.stringify({ plans }, null, 2), 'utf8');
+    return healed;
+  }
+
   /** plan_id đến từ URL nên phải kiểm — nó thành tên file. */
   private logFile(planId: string): string | undefined {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(planId)) return undefined;
