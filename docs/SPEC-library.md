@@ -129,11 +129,46 @@ Phát hiện bằng **code, 0 token**: `số ký tự bóc được / số trang
 |---|---|---|
 | Text sẵn | `.md` `.txt` `.csv` `.json` `.yaml` `.yml` | không convert, `Grep` thẳng bản gốc |
 | Bóc lúc nạp (ZIP+XML, 0 phụ thuộc) | `.docx` `.xlsx` `.pptx` | → `library/text/` |
-| Bóc lúc nạp (cần thư viện) | `.pdf` | → `library/text/` **có mốc trang**, bản gốc vẫn đọc được |
+| Bóc lúc nạp (`pdfjs-dist`, **đi kèm sản phẩm**) | `.pdf` | → `library/text/` **có mốc trang**, bản gốc vẫn đọc được |
 | **Chặn**, kèm câu giải thích | ảnh · video · audio · `.zip` · `.exe` · `.doc` `.xls` (nhị phân cũ, parser khác hẳn) | |
 
 `.csv` **bắt buộc có** — bài 3 và bài 7 của `TEST-WALKTHROUGH` sống bằng nó.
 `.zip` nói không thẳng: giải nén đẻ ra đệ quy, zip bomb, và path traversal trong tên mục.
+
+### 4.2 `pdfjs-dist` là phụ thuộc THẬT, không phải tuỳ chọn — sửa 20/08
+
+Bản đầu để nó là phụ thuộc **tuỳ chọn**, nạp động, và khi thiếu thì tủ tài liệu hiện nhãn `chưa lập chỉ mục` kèm câu *"Cài: `npm i pdfjs-dist`"*. Lý lẽ nghe rất gọn: PDF vẫn đọc được bằng `Read` theo trang, chỉ mất khả năng grep — nên đừng bắt ai tải 36MB nếu họ không dùng PDF.
+
+**Người dùng bác đúng chỗ:** *"tôi tưởng cái này phải build in-app chứ, sau này ra product cũng thế, bắt người dùng handle sao?"*
+
+Một người mở tiệm hoa không có `npm`. Với họ dòng chữ đó không phải một gợi ý — nó là một **cánh cửa đóng**, và tính năng coi như không tồn tại. Tệ hơn: nó xuất hiện đúng lúc họ vừa thả hợp đồng vào, tức là đúng lúc họ đang tin sản phẩm làm được việc.
+
+| | |
+|---|---|
+| Luật *"0 phụ thuộc mới"* (17/08) | **vẫn đúng ở chỗ nó sinh ra**: `.docx/.xlsx/.pptx` là ZIP+XML, tự bóc trong ~200 dòng, thêm thư viện là lười |
+| PDF | content stream nén + bảng mã CID font — **không tự viết được**, và một tính năng chỉ chạy trên máy có toolchain thì nó **chưa được xây xong** |
+| Cái giá | **~36 MB trên đĩa**, nằm cạnh 304 MB của Agent SDK. +10% |
+
+> **Luật rút ra: "0 phụ thuộc mới" là một luật về SỰ LƯỜI, không phải một luật về DUNG LƯỢNG.** Nó cấm thêm thư viện cho việc tự làm được, chứ không cho phép đẩy một bước cài đặt sang cho người không có công cụ để làm bước đó.
+
+**Ba chốt code:**
+
+1. `pdfjs-dist` trong `dependencies`, ghim `~5.4.624`. ⚠ Dòng `5.7+` và `6.x` đòi **Node ≥ 22.13**, còn `engines` của agentco là `>=22` — nâng lên phải nâng cả hai cùng lúc, nếu không người dùng Node 22.12 nhận một cảnh báo `EBADENGINE` mà không hiểu vì sao.
+2. **Vẫn nạp động** (`await import(spec)`), nhưng vì lý do khác hẳn lý do cũ: 36MB đó chỉ vào bộ nhớ khi có người thả PDF, không phải mỗi lần khởi động daemon.
+3. `PdfToolMissing` **còn nguyên**, đổi nghĩa: nay là **cài đặt hỏng** (`npm install` chạy dở, hoặc `--omit=optional`). Việc phải làm đổi theo — *"chạy lại `npm install`"*, không phải *"đi tìm tên một gói npm"*.
+
+### 4.3 ⚠ `standardFontDataUrl` + `cMapUrl` — hỏng IM LẶNG nếu đưa `file://`
+
+Hai tham số này **không phải để vẽ trang** — chúng là **bảng mã chữ**:
+
+| | Thiếu nó thì |
+|---|---|
+| `standardFontDataUrl` | font base-14 **không nhúng** không dịch ngược được glyph → unicode |
+| `cMapUrl` (+ `cMapPacked`) | CMap dựng sẵn cho **CID/CJK** — tức là PDF **tiếng Việt xuất từ Word**, đúng loại hợp đồng bài 6 |
+
+Cả hai chỉ trỏ được **vì `pdfjs-dist` giờ là phụ thuộc thật**; hồi nó còn tuỳ chọn thì không có đường nào biết nó nằm ở đâu.
+
+> ⚠ **Đưa ĐƯỜNG DẪN ĐĨA TRẦN, gạch chéo XUÔI, có gạch ở cuối — KHÔNG phải `file://`.** Tên tham số kết thúc bằng `Url` nên phản xạ đầu tiên là `pathToFileURL()`, và nó **hỏng không thành lỗi**: dưới Node, pdf.js gọi thẳng `fs.readFile(url)` với chuỗi ta đưa, mà `fs` không hiểu chuỗi `file:///D:/…`. Nó in một dòng `Warning:` rồi **chạy tiếp** và trả về chữ thiếu bảng mã. Đã dẫm đúng bẫy này lúc sửa 20/08 — bắt được vì chạy thật với PDF thật, không phải vì đọc lại code.
 
 ### 4.1 Hai chốt bắt buộc khi nhận file
 
@@ -481,8 +516,8 @@ Theo luật *"một bất biến chỉ có thật khi có mã nguồn thi hành 
 | **Test hàm thuần** (`node --test`) | ✅ **21 test, chạy 0,4s, 0 token.** Bộ test đầu tiên của dự án. Nó bắt được một lỗi thật ngay lần chạy đầu — xem §16 |
 | **`Grep` có thấy `library/text/` không** | ✅ **đã kiểm với file thật**: `Grep "nghỉ phép"` trên thư mục văn phòng trả về `library/text/Sổ tay nhân sự.docx.txt`. Nội dung bên trong một `.docx` giờ tìm được bằng từ khoá |
 | **Đường từ chối** | ✅ đã kiểm chạy thật cả bảy: ảnh · `../` · tên bắt đầu bằng dấu chấm · `CON.txt` · `.exe` đội lốt `.pdf` · file không phải ZIP đội lốt `.docx` · trùng tên (409) |
-| **Đếm lại phụ thuộc** | ✅ `.docx`/`.xlsx`/`.pptx` đọc bằng `node:zlib`, **0 phụ thuộc mới** (dự án vẫn đúng 3: `sdk` `yaml` `zod`). `.pdf` là phụ thuộc **tuỳ chọn** nạp động: chưa cài thì mọi thứ khác vẫn chạy, PDF về trạng thái `unindexed` |
-| **Spike PDF thật**: 1 sách có lớp chữ · 1 bản scan | ⏳ **CHƯA LÀM** — cần `npm i pdfjs-dist` rồi thử. Đây là mảnh duy nhất còn nằm trên giấy, và phụ lục `SPEC-connectors` đã tự ghi *"chưa kiểm bằng file thật"* từ trước |
+| **Đếm lại phụ thuộc** | ✅ `.docx`/`.xlsx`/`.pptx` đọc bằng `node:zlib`, **0 phụ thuộc mới**. `.pdf` → `pdfjs-dist`, **phụ thuộc thật, đi kèm sản phẩm** từ 20/08 (§4.2). Dự án giờ có 4: `sdk` `yaml` `zod` `pdfjs-dist` |
+| **Spike PDF thật**: 1 sách có lớp chữ · 1 bản scan | 🟡 **MỘT NỬA** — 20/08 đã chạy thật một PDF 2 trang có lớp chữ: bóc đúng chữ, **mốc trang đúng**, không còn dòng `Warning` nào sau khi sửa `standardFontDataUrl`/`cMapUrl` (§4.3). Còn nợ: **sách dài thật** và **bản scan** (ca `image-only`) |
 | **Bóc file lớn giữ vòng lặp sự kiện** | ⏳ chưa đo. `inflateRawSync` là đồng bộ; một `.xlsx` 40MB có thể làm giao diện khựng vài trăm ms. Nếu đo thấy đau thì chuyển sang `worker_threads` — đổi được mà không đụng gì ngoài `pump()` |
 
 ---

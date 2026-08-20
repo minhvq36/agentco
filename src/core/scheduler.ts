@@ -87,10 +87,17 @@ export class Scheduler {
     const linked: string[] = [];
     for (const t of plan.tasks) {
       for (const i of t.inputs) {
-        const from = producer.get(norm(i.path));
-        if (!from || from === t.task_id || t.deps.includes(from)) continue;
-        t.deps.push(from);
-        linked.push(`${t.task_id} → ${from}`);
+        const want = norm(i.path);
+        // Khớp thẳng trước; không có thì hỏi tiếp "có ai ĐANG GHI VÀO thư mục
+        // này không". Một thư mục có thể có nhiều người ghi, nên nối HẾT —
+        // thiếu một dây là task đọc thư mục khi mới có một nửa số file.
+        const exact = producer.get(want);
+        const from = exact ? [exact] : producersInto(producer, want);
+        for (const d of from) {
+          if (d === t.task_id || t.deps.includes(d)) continue;
+          t.deps.push(d);
+          linked.push(`${t.task_id} → ${d}`);
+        }
       }
     }
     return linked;
@@ -132,7 +139,9 @@ export class Scheduler {
        */
       if (officeDir) {
         for (const i of t.inputs) {
-          if (produced.has(norm(i.path))) continue;
+          const want = norm(i.path);
+          // Thư mục mà một task khác đang ghi vào cũng là "sẽ có" — xem `contains`.
+          if (produced.has(want) || [...produced].some((p) => contains(want, p))) continue;
           let exists = false;
           try {
             exists = fs.existsSync(safeJoin(officeDir, i.path));
@@ -477,7 +486,50 @@ function ttlMs(setting: 'auto' | '5m' | '1h'): number {
  * trong cùng một khối JSON, nên nó viết `artifacts/x.md` ở đây và
  * `./artifacts/x.md` ở kia là chuyện bình thường. So chuỗi thô thì hai cái đó
  * là hai file khác nhau, và cả cơ chế nối dây tự động im lặng không chạy.
+ *
+ * ⚠ DẤU GẠCH CUỐI CŨNG LÀ MỘT CA NHƯ THẾ, và nó đã nổ thật (20/08). Ca hợp
+ * đồng: T-01 khai `outputs: artifacts/T-01/dieu-khoan/`, T-02 khai `inputs:`
+ * đúng chuỗi đó. Nhưng `outputScoper` cắt dấu gạch cuối (nó tách chuỗi rồi bỏ
+ * mảnh rỗng) còn `artifactScoper` thì không — nên hai bên bước vào `norm` với
+ * `…/dieu-khoan` và `…/dieu-khoan/`, không khớp, và người dùng nhận
+ * *"không việc nào tạo ra nó"* cho một thư mục mà T-01 đang tạo ra.
  */
 function norm(p: string): string {
-  return p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+/g, '/').toLowerCase();
+  return p
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '')
+    .toLowerCase();
+}
+
+/**
+ * `dir` có phải THƯ MỤC CHỨA `file` không (đã chuẩn hoá cả hai).
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MỘT TASK KHÔNG BIẾT TRƯỚC NÓ SẼ ĐẺ RA BAO NHIÊU FILE — VÀ ĐÓ LÀ CA THẬT. │
+ * │                                                                          │
+ * │ *"Tách hợp đồng theo điều khoản, mỗi điều một file"*: số file bằng số     │
+ * │ điều khoản, mà số điều khoản chỉ biết được sau khi đọc. Nên planner viết  │
+ * │ `outputs: […/dieu-khoan/dieu-01.md]` rồi `inputs` của bước sau trỏ vào cả │
+ * │ THƯ MỤC — đó là cách khai đúng nhất nó có, không phải một lỗi.            │
+ * │                                                                          │
+ * │ So bằng `===` thì thư mục không bao giờ khớp file, `validate` chặn cả kế  │
+ * │ hoạch, và người dùng phải diễn đạt lại một yêu cầu vốn đã rõ ràng.        │
+ * │                                                                          │
+ * │ So bằng tiền tố + `/` chứ không phải `startsWith` trần: `dieu-khoan` là   │
+ * │ tiền tố chuỗi của `dieu-khoan-cu.md` nhưng KHÔNG phải thư mục chứa nó.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function contains(dir: string, file: string): boolean {
+  return dir.length > 0 && file.startsWith(`${dir}/`);
+}
+
+/** Mọi task ghi một file NẰM TRONG `dir`. Thứ tự giữ nguyên, không trùng. */
+function producersInto(producer: ReadonlyMap<string, string>, dir: string): string[] {
+  const out: string[] = [];
+  for (const [path, task] of producer) {
+    if (contains(dir, path) && !out.includes(task)) out.push(task);
+  }
+  return out;
 }

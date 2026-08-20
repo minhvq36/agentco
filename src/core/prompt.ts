@@ -65,7 +65,7 @@ A careful worker who finishes in 3 steps beats a thorough one who takes 9.
 
 - **Read each file at most once.** You already have it; do not read it again.
 - **Never read back a file you just wrote** to check it saved. It saved.
-- **Do not explore.** Open exactly the files listed in your inputs. Do not list directories, do not go looking for related files, do not check whether output folders exist — they do.
+- **Do not explore.** Open exactly what your inputs list, nothing else. Do not go looking for related files, do not check whether output folders exist — they do. An input path ending in \`/\` IS a folder and is meant to be read: list it once, read what is in it, and stop there.
 - **Batch your reads.** If you need three files, request all three in one step, not one at a time.
 - **Do not re-plan out loud.** Think, then act. Narrating your plan before each step costs a step.
 - Write your output in **one** Write call. Do not draft then revise unless the first attempt was actually wrong.

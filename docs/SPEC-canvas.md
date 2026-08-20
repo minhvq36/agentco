@@ -82,6 +82,38 @@ Luật thay thế, và **cả hai nửa đều bắt buộc**:
 
 Kèm theo: `addAgent` phải **ghi vị trí xuống đĩa**. Bản cũ gọi `connectAssistant`, mà hàm đó `return` sớm khi cạnh đã tồn tại — và cạnh **luôn** tồn tại khi chưa có `layout.json` (lúc đó `read()` tự sinh cạnh cho mọi vai trò). Kết quả: toạ độ vừa tính không bao giờ được lưu.
 
+#### ⚠⚠ "Ô trống" chưa đủ — nó còn phải là ô ĐÚNG CHỖ (20/08)
+
+Sửa xong bug trên thì node mới không đè ai nữa. Nhưng người dùng quay lại với triệu chứng thứ hai:
+
+> *"Nhân viên số 3 tự lệch phải so với assistant (3 nhân viên về 1 phía) thay vì cân bằng đều so với trợ lý — phải bấm Sắp xếp lại thì nó mới đều."*
+
+**Cùng một lớp lỗi, khác một bậc:** node mới được cấp ô mà **không nhìn sơ đồ đang có hình gì**. Lần trước cái bị bỏ qua là *"ô đó có ai ngồi chưa"*; lần này là *"hàng này đang cân quanh cái gì"*.
+
+Gốc rễ nằm ở chỗ hai hàm trả lời hai câu hỏi khác nhau và ta dùng nhầm:
+
+| | |
+|---|---|
+| `arrangeAll` | *"cả sơ đồ nên trông thế nào?"* — căn Trợ lý theo **SỐ** nhân viên. Chỉ chạy khi bấm **Sắp xếp lại** hoặc văn phòng chưa có `layout.json` |
+| `firstFreeSlot` | *"người mới ngồi đâu?"* — mà nó đếm **từ trái sang**, nên người thứ ba rơi vào ô thứ ba |
+
+Trợ lý thì **đứng yên** suốt quá trình thêm người. Hàng nhân viên mọc sang phải còn trục thì không nhúc nhích ⇒ sơ đồ nghiêng dần, và người dùng phải bấm Sắp xếp lại mới thấy cân.
+
+> **Một thao tác dọn dẹp của hệ thống không được nằm ở tay người dùng.** Nếu có một nút bấm xong thì mọi thứ đúng, thì thứ nút đó làm chính là thứ lẽ ra phải xảy ra sẵn.
+
+**Luật thay thế — `centeredSlot(i, centerX)`:** ô mới mọc **toả ra hai bên** một trục, và trục đó là **tâm node Trợ lý đang nằm ở đâu thật**, không phải chỗ `arrangeAll` nghĩ nó nên nằm.
+
+| Người | Lệch cột | Vì sao |
+|---|---|---|
+| 1 | `0` | thẳng dưới Trợ lý |
+| 2 | `+1` | số chẵn thì không cân được — đây là lựa chọn bắt buộc, và người dùng cũng gọi nó là hợp lý |
+| 3 | `−1` | hàng ba người cân trở lại quanh Trợ lý |
+| 4 | `+2` | rồi **xuống hàng**, vẫn `PER_ROW` cột mỗi hàng nên sơ đồ không nở ngang vô hạn |
+
+> ⚠ **Vẫn phải BÁM ĐÚNG LƯỚI của `agentSlot`** — `centerX` được làm tròn về chỉ số cột trước khi cộng độ lệch. Không làm thế thì ở ca số nhân viên **chẵn** (trục nằm giữa hai cột) mọi ô mới lệch **nửa cột** và chồng một nửa lên người cũ. Đó là bug 16/08 quay lại qua một cửa khác — và **tệ hơn hẳn** lỗi lệch phải mà ta đang đi sửa.
+
+Hai hàm dùng **chung một lưới**, nên trộn lẫn (một phần node đặt bằng `arrangeAll`, phần sau bằng `centeredSlot`) cũng không đẻ ra node lệch. `firstFreeSlot` vẫn là cửa duy nhất, chỉ nhận thêm tham số `centerX`; thiếu trục thì rơi về đếm-từ-trái như cũ.
+
 ### Sửa lúc cài đặt: cạnh `mcp → agent` KHÔNG nằm trong layout.json
 
 Bản thiết kế ban đầu để nó ở đây. Sai — vì chính lập luận của §2: "agent này dùng được tool nào" là **NỘI DUNG**, không phải hình dạng. Nó đã có nhà rồi: `mcp:` trong `roles/<id>.yaml`.

@@ -54,12 +54,51 @@ const CLEARANCE = 24;
 const SHELF_DROP = 30;
 const MAX_SLOTS = 200;
 
-/** Ô lưới thứ `i` của hàng nhân viên. */
+/** Bước lưới. Mọi ô nhân viên — kể cả ô mọc sang trái — đều nằm trên lưới này. */
+const COL_STEP = NODE_SIZE.agent.w + COL_GAP;
+const ROW_STEP = NODE_SIZE.agent.h + ROW_GAP;
+
+/** Ô lưới thứ `i` của hàng nhân viên, đếm từ TRÁI sang. */
 export function agentSlot(i: number): Point {
   return {
-    x: ORIGIN_X + (i % PER_ROW) * (NODE_SIZE.agent.w + COL_GAP),
-    y: ORIGIN_Y + Math.floor(i / PER_ROW) * (NODE_SIZE.agent.h + ROW_GAP),
+    x: ORIGIN_X + (i % PER_ROW) * COL_STEP,
+    y: ORIGIN_Y + Math.floor(i / PER_ROW) * ROW_STEP,
   };
+}
+
+/**
+ * Ô thứ `i` khi hàng nhân viên MỌC QUANH MỘT TRỤC, không nối đuôi sang phải.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG DÙNG `agentSlot` CHO NGƯỜI MỚI (20/08).                     │
+ * │                                                                          │
+ * │ `agentSlot` đếm từ trái sang, nên thêm người thứ ba là nó rơi vào ô thứ   │
+ * │ ba — bên phải người thứ hai. Trợ lý thì ĐỨNG YÊN (nó chỉ được căn lại     │
+ * │ lúc bấm "Sắp xếp lại sơ đồ"), nên sơ đồ nghiêng hẳn sang phải và người    │
+ * │ dùng phải bấm Sắp xếp lại mới thấy nó cân. Một thao tác sửa lỗi của hệ    │
+ * │ thống không được nằm ở tay người dùng.                                    │
+ * │                                                                          │
+ * │ Thứ tự ở đây là thứ tự người dùng tự mô tả khi báo lỗi:                    │
+ * │                                                                          │
+ * │   người 1 → thẳng dưới Trợ lý     (lệch 0)                               │
+ * │   người 2 → bên phải người 1      (lệch +1, số chẵn thì không cân được)   │
+ * │   người 3 → bên TRÁI người 1      (lệch −1, hàng cân trở lại)             │
+ * │   người 4 → +2 … rồi xuống hàng                                          │
+ * │                                                                          │
+ * │ Vẫn ĐÚNG LƯỚI của `agentSlot`, chỉ khác THỨ TỰ duyệt: `kc` là chỉ số cột  │
+ * │ chứa trục, làm tròn về lưới. Không bám lưới thì ô mới lệch nửa cột và     │
+ * │ chồng một nửa lên người cũ — tệ hơn hẳn lệch phải.                        │
+ * │                                                                          │
+ * │ Mỗi hàng vẫn chỉ `PER_ROW` cột (lệch −1…+2), nên sơ đồ không nở ngang     │
+ * │ vô hạn: người thứ năm xuống hàng dưới, thẳng trục, y như `arrangeAll`.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function centeredSlot(i: number, centerX: number): Point {
+  const kc = Math.round((centerX - (ORIGIN_X + NODE_SIZE.agent.w / 2)) / COL_STEP);
+  const j = i % PER_ROW;
+  // 0, +1, −1, +2 — `PER_ROW` cột đầu của dãy toả ra từ giữa.
+  const off = j === 0 ? 0 : j % 2 === 1 ? Math.ceil(j / 2) : -(j / 2);
+  return { x: ORIGIN_X + (kc + off) * COL_STEP, y: ORIGIN_Y + Math.floor(i / PER_ROW) * ROW_STEP };
 }
 
 /**
@@ -134,15 +173,22 @@ export function clashes(
  * lên nhau với con mắt. Đây là chỗ lỗi "thêm nhân viên mà không thấy gì" bị
  * chặn ở gốc — không cần ai nhớ phải gọi hàm nào.
  *
+ * `centerX` = tâm ngang của TRỤC (thực tế: node Trợ lý). Có trục thì ô mọc toả
+ * ra hai bên (`centeredSlot`); không có thì rơi về đếm-từ-trái. Hai đường dùng
+ * CHUNG một lưới nên trộn lẫn cũng không sinh ra node lệch nửa cột.
+ *
  * Có trần vòng lặp: hết ô thì trả ô cuối, thà hai node chồng nhau còn hơn treo.
  */
 export function firstFreeSlot(
   placed: readonly { kind: NodeKind; x: number; y: number }[],
   kind: NodeKind = 'agent',
+  centerX?: number,
 ): Point {
+  const slotAt = (i: number): Point =>
+    centerX === undefined ? agentSlot(i) : centeredSlot(i, centerX);
   for (let i = 0; i < MAX_SLOTS; i++) {
-    const slot = agentSlot(i);
+    const slot = slotAt(i);
     if (!clashes(slot, kind, placed)) return slot;
   }
-  return agentSlot(placed.length);
+  return slotAt(placed.length);
 }

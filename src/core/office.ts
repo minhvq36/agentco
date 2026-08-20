@@ -1010,9 +1010,27 @@ export class Office {
          * LÀM — tiêu chí "Xử lý lỗi tốt". Bản trước in nguyên văn danh sách kỹ
          * thuật ("Task T-02: phụ thuộc T-05 không tồn tại") cho một người mở
          * tiệm hoa đọc.
+         *
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ VÀ NÓ KHÔNG ĐƯỢC NÓI "CHƯA TỐN TIỀN" (sửa 20/08, user bắt được).  │
+         * │                                                                    │
+         * │ Bản trước ghi *"chưa tốn tiền cho việc nào cả"*. Người dùng mở sổ   │
+         * │ chi phí ngay sau đó và thấy có tiền — vì lượt `route()` và lượt     │
+         * │ `plan()` vừa chạy xong đều đã ghi vào sổ. Câu an ủi đó là một câu   │
+         * │ nói dối, và nó nói dối đúng ở chỗ người dùng kiểm được dễ nhất.     │
+         * │                                                                    │
+         * │ Thứ ta biết chắc và nói được: KHÔNG nhân viên nào chạy — mà nhân   │
+         * │ viên mới là phần đắt (một lượt worker sàn ~13 200 token, so với     │
+         * │ một lượt Trợ lý). Nói đúng phần đó, và chỉ thẳng sang sổ chi phí    │
+         * │ cho phần còn lại, thay vì gắn một con số vào đây: ở nhánh cửa cứu   │
+         * │ hộ, `usage` tại điểm này bằng 0 trong khi lượt `route()` đã tính    │
+         * │ tiền — in số ra là đẻ ra một câu nói dối thứ hai.                   │
+         * │ → SESSIONS_MEMORY §2 "Sổ chi phí không được nói sai câu nào"        │
+         * └────────────────────────────────────────────────────────────────────┘
          */
         throw new RunError(
-          `Mình chia việc bị lỗi nên chưa chạy được — chưa tốn tiền cho việc nào cả.\n` +
+          `Mình chia việc bị lỗi nên chưa chạy được. Chưa nhân viên nào bắt tay vào — ` +
+            `phần tốn tiền nhất chưa mất gì (lượt chia việc vừa rồi vẫn nằm trong sổ chi phí).\n` +
             problems.map((p) => `  · ${p}`).join('\n') +
             `\nBạn nhắn lại yêu cầu rõ hơn một chút, hoặc nói cụ thể tên tài liệu cần dùng nhé.`,
           'other',

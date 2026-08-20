@@ -102,7 +102,81 @@ test('linkDeps chạy trước validate: chu trình do nối dây sinh ra vẫn 
   );
 });
 
+// ──────────────────────────────────────── linkDeps: đầu vào là một THƯ MỤC
+//
+// Ca thật 20/08, bài 6 (rà hợp đồng). "Tách theo điều khoản, mỗi điều một file"
+// → số file bằng số điều khoản, chỉ biết được sau khi đọc. Nên bước sau trỏ vào
+// cả THƯ MỤC; đó là cách khai đúng nhất planner có, không phải một lỗi.
+// Kế hoạch bị chặn với câu *"cần đọc … nhưng không có file đó, và không việc
+// nào tạo ra nó"* — cho một thư mục mà T-01 đang tạo ra.
+
+test('linkDeps: đầu vào là thư mục mà task khác ghi vào thì vẫn nối dây', () => {
+  const p = plan([
+    task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan/dieu-01.md')] }),
+    task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan/')] }),
+  ]);
+  assert.deepEqual(Scheduler.linkDeps(p), ['T-02 → T-01']);
+});
+
+test('linkDeps: dấu gạch CUỐI không được làm lệch phép so — hai bên scoper cắt khác nhau', () => {
+  // `outputScoper` bỏ dấu gạch cuối, `artifactScoper` giữ. Đây chính là chỗ hai
+  // chuỗi của CÙNG một thư mục không khớp nhau.
+  const p = plan([
+    task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan')] }),
+    task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan/')] }),
+  ]);
+  assert.deepEqual(Scheduler.linkDeps(p), ['T-02 → T-01']);
+});
+
+test('linkDeps: thư mục có NHIỀU người ghi thì nối HẾT, không nối mỗi người đầu', () => {
+  // Thiếu một dây là task đọc thư mục khi mới có một nửa số file — đúng loại
+  // hỏng im lặng mà `linkDeps` sinh ra để chặn.
+  const p = plan([
+    task('T-01', { outputs: [file('artifacts/P/T-01/soi/a.md')] }),
+    task('T-02', { outputs: [file('artifacts/P/T-01/soi/b.md')] }),
+    task('T-03', { inputs: [file('artifacts/P/T-01/soi/')] }),
+  ]);
+  Scheduler.linkDeps(p);
+  assert.deepEqual(p.tasks[2]!.deps, ['T-01', 'T-02']);
+});
+
+test('linkDeps: tiền tố chuỗi KHÔNG phải thư mục cha', () => {
+  // `dieu-khoan` là tiền tố của `dieu-khoan-cu.md` nhưng không chứa nó.
+  // `startsWith` trần ở đây là một dây nối sai, và nó xếp hai việc độc lập
+  // thành nối tiếp — chậm hơn mà không ai giải thích được vì sao.
+  const p = plan([
+    task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan-cu.md')] }),
+    task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan')] }),
+  ]);
+  assert.deepEqual(Scheduler.linkDeps(p), []);
+});
+
 // ────────────────────────────────────────────────────────────── validate
+
+test('validate: thư mục do task khác ghi vào thì KHÔNG đòi phải có sẵn trên đĩa', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
+  try {
+    const p = plan([
+      task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan/dieu-01.md')] }),
+      task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan/')], deps: ['T-01'] }),
+    ]);
+    assert.deepEqual(Scheduler.validate(p, ROLES, dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('validate: thư mục KHÔNG ai ghi vào và không có trên đĩa thì vẫn chặn', () => {
+  // Nới lỏng phép so không được biến thành "cái gì cũng qua": một thư mục không
+  // ai tạo ra vẫn là một đường dẫn chết, và nhân viên vẫn sẽ đi tìm nó.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
+  try {
+    const p = plan([task('T-01', { inputs: [file('artifacts/P/T-09/dieu-khoan/')] })]);
+    assert.equal(Scheduler.validate(p, ROLES, dir).length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('validate: đầu vào KHÔNG có trên đĩa và không việc nào tạo ra thì chặn', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));

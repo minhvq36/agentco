@@ -607,11 +607,48 @@ Xếp theo **thời điểm nổ**, và thứ tự đó là cả điểm của t
 
 **1 — `linkDeps`: task đọc kết quả của task khác mà quên khai `deps` thì NỐI THẲNG.** Quan hệ đó suy ra được từ hai đường dẫn ta đang cầm (một bên khai `outputs`, một bên khai `inputs`). Bắt model lập lại kế hoạch cho đúng là một lượt gọi nữa để đổi lấy một kết quả **vẫn có thể sai**. Nối xong thì **nói ra** — người dùng nhìn dải kế hoạch thấy hai việc chạy nối tiếp thay vì song song thì phải có một dòng giải thích, sửa lén là hành vi hệ thống không đoán được.
 
+#### 1b. Đầu vào là một THƯ MỤC — bổ sung 20/08, sau một ca hỏng thật
+
+Bài 6 (`rà hợp đồng`) là ca đầu tiên một task **không biết trước nó đẻ ra bao nhiêu file**: *"tách theo điều khoản, mỗi điều một file"* → số file bằng số điều khoản, chỉ biết sau khi đọc. Nên planner khai `inputs` của bước sau trỏ vào cả **thư mục** — đó là cách khai **đúng nhất nó có**, không phải một lỗi. Kế hoạch bị chặn thẳng:
+
+```
+· Task T-02 cần đọc "artifacts/P-260820-2044-ki6b/T-01/dieu-khoan/"
+  nhưng không có file đó, và không việc nào tạo ra nó
+```
+
+**Hai nguyên nhân, và cái thứ hai chỉ lộ ra sau khi sửa cái thứ nhất** — đúng luật *"một triệu chứng tái phát hầu như luôn có nguyên nhân thứ hai"*:
+
+| | Nguyên nhân | Sửa |
+|---|---|---|
+| a | **Dấu gạch cuối.** `outputScoper` cắt nó (nó tách chuỗi rồi bỏ mảnh rỗng), `artifactScoper` giữ. Hai chuỗi của **cùng một thư mục** bước vào `norm` khác nhau | `norm` bỏ gạch cuối |
+| b | Thư mục **không bao giờ** `===` một file trong nó, nên kể cả khi T-01 khai `…/dieu-khoan/dieu-01.md` thì phép so vẫn trượt | `contains(dir, file)` — tiền tố **+ `/`** |
+
+> ⚠ Tiền tố phải kèm `/`. `startsWith` trần thì `dieu-khoan` khớp `dieu-khoan-cu.md` — một dây nối **sai**, và nó xếp hai việc độc lập thành nối tiếp, chậm hơn mà không ai giải thích được vì sao.
+
+Thư mục có **nhiều người ghi** thì nối **hết**: thiếu một dây là task đọc thư mục khi mới có một nửa số file — đúng loại hỏng im lặng mà `linkDeps` sinh ra để chặn.
+
+Và `CORE_PROMPT` phải thôi tự mâu thuẫn: câu *"Do not list directories"* cấm đúng thứ task này buộc phải làm. Nay là *"an input path ending in `/` IS a folder and is meant to be read: list it once, read what is in it, and stop there"* — vẫn cấm đi lang thang, chỉ bỏ mệnh lệnh tuyệt đối.
+
 **2 — `validate`: từ chối DAG hỏng NGAY, chưa phóng worker nào.** Bốn thứ bị chặn: vai trò không tồn tại (đối chiếu với **vai trò đang trực**, không phải mọi file trong `roles/` — nếu không thì cắt dây trên canvas chỉ là trang trí), `deps` trỏ vào task không có, hai task cùng ghi một đường dẫn, và phụ thuộc vòng tròn.
 
 > Thứ tư đáng nói riêng: **`inputs` trỏ vào hư không.** Chỉ báo khi đường dẫn vừa **không có trên đĩa** vừa **không task nào sinh ra nó**. Trợ lý gõ nhầm một chữ trong tên tài liệu là nhân viên nhận một đường dẫn chết — và nó **không báo lỗi**: nó đi TÌM, tốn lượt, rồi hoặc trả `blocked`, hoặc **tệ hơn nhiều là trả lời bằng thứ nó đoán ra**. Cái giá là cả một task, và ca tệ nhất thì không ai biết là sai.
 
-Câu báo cho người dùng phải nói được **việc phải làm**, không in nguyên văn danh sách kỹ thuật. Bản trước đưa *"Task T-02: phụ thuộc T-05 không tồn tại"* cho một người mở tiệm hoa đọc. Và phải nói rõ **chưa tốn tiền cho việc nào cả** — đó là thông tin quan trọng nhất ở khoảnh khắc đó.
+Câu báo cho người dùng phải nói được **việc phải làm**, không in nguyên văn danh sách kỹ thuật. Bản trước đưa *"Task T-02: phụ thuộc T-05 không tồn tại"* cho một người mở tiệm hoa đọc.
+
+> ### ⚠ VÀ NÓ KHÔNG ĐƯỢC NÓI *"CHƯA TỐN TIỀN"* — sửa 20/08, user bắt được
+>
+> Bản trước ghi: *"Mình chia việc bị lỗi nên chưa chạy được — **chưa tốn tiền cho việc nào cả**."* Người dùng mở sổ chi phí ngay sau đó và thấy **có tiền**, rồi nhắn đúng ba chữ: *"Lỗi rồi, check usage vẫn còn"*.
+>
+> Câu đó sai vì lượt `route()` và lượt `plan()` vừa chạy xong **đều đã ghi vào sổ**. Nó là một câu an ủi, và nó nói dối đúng ở chỗ người dùng **kiểm được dễ nhất**.
+>
+> | | |
+> |---|---|
+> | Ta **biết chắc** | không nhân viên nào chạy — mà nhân viên mới là phần đắt (sàn ~13 200 token/lượt worker) |
+> | Ta **không nên in ra số** | ở nhánh cửa cứu hộ, `usage` tại điểm này bằng **0** trong khi `route()` đã tính tiền → in số là đẻ ra một câu nói dối **thứ hai** |
+>
+> Câu đúng: *"Chưa nhân viên nào bắt tay vào — phần tốn tiền nhất chưa mất gì (lượt chia việc vừa rồi vẫn nằm trong sổ chi phí)."* Nói đúng phần biết chắc, chỉ thẳng sang sổ cho phần còn lại.
+>
+> → `SESSIONS_MEMORY` §2 *"Sổ chi phí không được nói sai câu nào"*. Luật đó viết cho sổ chi phí; ca này cho thấy nó áp cho **mọi câu nói về tiền**, ở bất cứ đâu trên màn hình.
 
 **3 — `missingOutputs`: nhân viên báo `done` mà file đã hứa không có trên đĩa → hạ xuống `failed` và nói ra.** Đây là ca nói dối tệ nhất: người dùng đọc *"xong rồi"*, đi mở file, và không có gì. Khối *"Kết quả đã lưu tại"* (`whereBlock`) liệt kê thứ **có thật**, nên nó **im lặng đúng lúc cần nói to nhất** — chốt này lấp đúng chỗ đó. Chỉ soi task **tự nhận là xong**: việc bị chặn hoặc bị dừng giữa chừng không có file là chuyện bình thường và nó đã tự nói ra rồi.
 

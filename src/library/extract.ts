@@ -10,6 +10,9 @@
  * file — số trang, tên sheet, tên cột, chữ đầu tiên. → SESSIONS_MEMORY §2
  */
 
+import { createRequire } from 'node:module';
+import path from 'node:path';
+
 import { openZip } from './zip.js';
 
 export interface Extracted {
@@ -22,10 +25,14 @@ export interface Extracted {
   preview: string;
 }
 
-/** Thư viện bóc PDF chưa được cài. Khác hẳn "file hỏng" nên có kiểu riêng. */
+/**
+ * `pdfjs-dist` không nạp được. Từ 20/08 đây là một CÀI ĐẶT HỎNG, không còn là
+ * "người dùng chưa cài thêm" — nên nó vẫn có kiểu riêng, nhưng câu nói cho
+ * người dùng đã đổi hẳn. Xem `extractPdf`.
+ */
 export class PdfToolMissing extends Error {
   constructor() {
-    super('Chưa cài thư viện đọc PDF');
+    super('Không nạp được thư viện đọc PDF');
     this.name = 'PdfToolMissing';
   }
 }
@@ -237,30 +244,68 @@ function slideNo(name: string): number {
   return Number(/slide(\d+)\.xml$/.exec(name)?.[1] ?? '0');
 }
 
+/**
+ * Thư mục tài nguyên của pdf.js, đúng hình dạng nó đòi.
+ *
+ * ⚠ ĐƯỜNG DẪN ĐĨA TRẦN, KHÔNG PHẢI `file://`. Tên tham số là `...Url` nên phản
+ * xạ đầu tiên là dựng một URL — và nó hỏng IM LẶNG: dưới Node, pdf.js gọi thẳng
+ * `fs.readFile(url)` với chuỗi ta đưa, mà `fs` không hiểu chuỗi `file:///D:/…`.
+ * Nó chỉ kêu một dòng `Warning:` rồi chạy tiếp và trả về chữ thiếu bảng mã.
+ *
+ * Gạch chéo XUÔI kể cả trên Windows: pdf.js nối chuỗi `url + tên-file` chứ
+ * không `path.join`, và chính nó bắt buộc phải có gạch ở cuối.
+ */
+function assetDir(home: string, name: string): string {
+  return `${home.replace(/\\/g, '/')}/${name}/`;
+}
+
 // ─────────────────────────────────────────────────────────────── pdf
 
 /**
  * Bóc PDF — định dạng DUY NHẤT cần một thư viện ngoài.
  *
  * Content stream nén + bảng mã CID font là thứ không tự viết được trong vài trăm
- * dòng, khác hẳn ZIP+XML của Office. Nên nó là phụ thuộc TUỲ CHỌN, nạp động:
- * chưa cài thì tủ tài liệu vẫn chạy đủ mọi định dạng khác, và PDF vẫn dùng được
- * (nhân viên `Read` thẳng bản gốc theo trang) — chỉ mất khả năng tìm từ khoá.
+ * dòng, khác hẳn ZIP+XML của Office. Nên `pdfjs-dist` là một phụ thuộc THẬT.
  *
- * Đó là lý do nó ném `PdfToolMissing` thay vì một lỗi chung: hai chuyện này phải
- * hiện ra hai câu khác nhau cho người dùng.
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TRƯỚC 20/08 NÓ LÀ PHỤ THUỘC TUỲ CHỌN, VÀ ĐÓ LÀ MỘT QUYẾT ĐỊNH SAI.       │
+ * │                                                                          │
+ * │ Người dùng thả một hợp đồng PDF vào và nhận:                              │
+ * │   *"Chưa cài công cụ đọc PDF … Cài: npm i pdfjs-dist"*                    │
+ * │                                                                          │
+ * │ Họ hỏi đúng câu phải hỏi: *"sau này ra product cũng thế, bắt người dùng   │
+ * │ handle sao?"* Một người mở tiệm hoa không có `npm`. Với họ đó không phải  │
+ * │ một gợi ý — đó là một cánh cửa đóng, và tính năng coi như không tồn tại.  │
+ * │                                                                          │
+ * │ Luật *"0 phụ thuộc mới"* của tủ tài liệu (17/08) vẫn đúng ở chỗ nó sinh   │
+ * │ ra: docx/xlsx/pptx là ZIP+XML, tự bóc được trong hai trăm dòng. PDF thì   │
+ * │ không, và một tính năng chỉ chạy trên máy có toolchain thì nó chưa được   │
+ * │ xây xong. 36MB trên đĩa là cái giá, và nó nằm cạnh 304MB của SDK.         │
+ * │                                                                          │
+ * │ Nạp ĐỘNG thì vẫn giữ, nhưng vì lý do khác hẳn: 36MB đó chỉ vào bộ nhớ     │
+ * │ khi có người thả PDF vào, không phải mỗi lần khởi động daemon.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `PdfToolMissing` vẫn còn, nay mang nghĩa **cài đặt hỏng** (`npm install`
+ * chạy dở, hoặc ai đó cài với `--omit=optional`). Vẫn là kiểu riêng vì việc
+ * phải làm khác hẳn "file này hỏng": một bên sửa cài đặt, một bên đổi file.
  */
 export async function extractPdf(buf: Buffer): Promise<Extracted> {
   let pdfjs: any;
+  let home: string;
   try {
     /**
-     * Đường dẫn để trong BIẾN có chủ ý: `pdfjs-dist` là phụ thuộc TUỲ CHỌN, và
-     * một `import()` với chuỗi hằng làm TypeScript đòi có sẵn kiểu lúc biên
-     * dịch — tức là dự án không build được trên máy chưa cài nó. Đúng thứ ta
-     * đang cố tránh.
+     * Đường dẫn để trong BIẾN: bản `legacy` không kèm khai báo kiểu, và một
+     * `import()` với chuỗi hằng làm TypeScript đòi kiểu lúc biên dịch.
+     *
+     * Dùng bản `legacy` chứ không phải `build/pdf.mjs`: bản thường giả định các
+     * API rất mới của trình duyệt/Node, còn bản legacy đã hạ cú pháp xuống —
+     * đây là bản chạy được trên dải Node rộng nhất, và ta không kiểm soát được
+     * máy người dùng.
      */
     const spec = 'pdfjs-dist/legacy/build/pdf.mjs';
     pdfjs = await import(spec);
+    home = path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
   } catch {
     throw new PdfToolMissing();
   }
@@ -271,6 +316,25 @@ export async function extractPdf(buf: Buffer): Promise<Extracted> {
     // trình duyệt, nếu không nó đi tìm canvas và ném lỗi khó hiểu.
     disableFontFace: true,
     isEvalSupported: false,
+    /**
+     * ⚠ HAI THƯ MỤC NÀY KHÔNG PHẢI ĐỂ VẼ — CHÚNG LÀ BẢNG MÃ CHỮ.
+     *
+     * Thiếu `standardFontDataUrl`, pdf.js kêu ngay ở lượt đầu; ta vẫn ra chữ
+     * với PDF đơn giản nên rất dễ tưởng là vô hại. Nhưng với font base-14
+     * KHÔNG NHÚNG, bảng mã nằm trong chính mấy file này — không có nó thì
+     * `getTextContent` trả ra glyph không dịch ngược được sang unicode.
+     *
+     * `cMapUrl` là bản đồ CID → unicode cho các CMap dựng sẵn. Đây là ca
+     * TIẾNG VIỆT/CJK trong PDF xuất từ Word — tức là đúng loại hợp đồng bài 6
+     * đang thả vào. Bỏ qua thì văn bản bóc ra là một mớ ký tự, `Grep` không
+     * trúng gì, và không có dòng lỗi nào cả.
+     *
+     * Cả hai chỉ trỏ được vì `pdfjs-dist` giờ là phụ thuộc THẬT — hồi nó còn
+     * tuỳ chọn thì không có đường nào biết nó nằm ở đâu.
+     */
+    standardFontDataUrl: assetDir(home, 'standard_fonts'),
+    cMapUrl: assetDir(home, 'cmaps'),
+    cMapPacked: true,
   }).promise;
 
   const parts: string[] = [];

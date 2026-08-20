@@ -231,7 +231,13 @@ export class LayoutStore {
    *    hai kho rơi ra hai nơi, lệch cả hàng. Bám theo ANH EM của nó thì hàng
    *    dưới luôn thẳng, dù người dùng đã kéo nó đi đâu.
    *
-   * 3. Còn lại: chỗ sạch nếu chỗ đó trống, không thì ô lưới trống đầu tiên.
+   * 3. **Nhân viên mới** — mọc TOẢ RA hai bên Trợ lý, không nối đuôi sang phải.
+   *    Bố cục sạch ở đây vô dụng: nó căn theo SỐ nhân viên, mà Trợ lý thì đứng
+   *    yên cho tới lúc ai đó bấm "Sắp xếp lại". Bám vào nó thì người thứ ba rơi
+   *    bên phải người thứ hai và sơ đồ nghiêng hẳn — người dùng phải bấm Sắp
+   *    xếp lại mới thấy cân, tức là hệ thống bắt họ dọn hộ mình. → `centeredSlot`
+   *
+   * 4. Còn lại: chỗ sạch nếu chỗ đó trống, không thì ô lưới trống đầu tiên.
    */
   private spotFor(node: LayoutNode, placed: readonly LayoutNode[], tidy: ReadonlyMap<string, Point>): Point {
     if (!this.exists) return tidy.get(node.id) ?? agentSlot(0);
@@ -244,6 +250,15 @@ export class LayoutStore {
         const spot = { x: node.kind === 'library' ? twin.x + step : twin.x - step, y: twin.y };
         if (!clashes(spot, node.kind, placed)) return spot;
       }
+    }
+
+    if (node.kind === 'agent') {
+      // Trợ lý LUÔN nằm trong `placed` khi tới lượt nhân viên: `wanted` xếp nó
+      // đầu tiên, nên nó được cấp chỗ trước. Vẫn kiểm — thiếu nó thì rơi về
+      // đếm-từ-trái chứ không được ném.
+      const boss = placed.find((n) => n.kind === 'assistant');
+      const centerX = boss ? boss.x + NODE_SIZE.assistant.w / 2 : undefined;
+      return firstFreeSlot(placed, 'agent', centerX);
     }
 
     const want = tidy.get(node.id);

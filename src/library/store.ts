@@ -427,14 +427,19 @@ export class LibraryStore {
     } catch (err) {
       if (err instanceof PdfToolMissing) {
         /**
-         * KHÔNG phải lỗi của người dùng, và tài liệu vẫn dùng được — nhân viên
-         * `Read` thẳng bản gốc theo trang. Chỉ mất khả năng tìm bằng từ khoá.
-         * Nói đúng điều đó, kèm việc phải làm.
+         * Tài liệu vẫn dùng được — nhân viên `Read` thẳng bản gốc theo trang,
+         * chỉ mất khả năng tìm bằng từ khoá. Nói đúng điều đó, kèm việc phải làm.
+         *
+         * ⚠ Câu này ĐÃ TỪNG bảo người dùng gõ `npm i pdfjs-dist` (sửa 20/08).
+         * Đọc PDF là một phần của sản phẩm, không phải một tiện ích người dùng
+         * tự lắp thêm — giờ `pdfjs-dist` nằm trong `dependencies`, nên tới được
+         * nhánh này nghĩa là CÀI ĐẶT HỎNG, và việc phải làm là chạy lại
+         * `npm install`, không phải đi tìm tên một gói npm.
          */
         rec.state = 'unindexed';
         rec.note =
-          'Chưa cài công cụ đọc PDF nên không tìm được bằng từ khoá. ' +
-          'Nhân viên vẫn đọc được nếu bạn nói rõ trang. Cài: npm i pdfjs-dist';
+          'Bộ đọc PDF chưa nạp được nên chưa tìm được bằng từ khoá — nhiều khả năng bản cài thiếu file. ' +
+          'Nhân viên vẫn đọc được nếu bạn nói rõ trang. Chạy lại `npm install` trong thư mục agentco rồi thả lại file.';
         rec.shape = 'pdf';
         return;
       }

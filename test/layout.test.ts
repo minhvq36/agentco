@@ -21,6 +21,7 @@ import {
   NODE_SIZE,
   agentSlot,
   arrangeAll,
+  centeredSlot,
   clashes,
   firstFreeSlot,
   type NodeKind,
@@ -136,4 +137,89 @@ test('firstFreeSlot: node lệch 10px vẫn tính là chồng — mắt người
 
 test('firstFreeSlot: sơ đồ rỗng thì nhận ô đầu tiên', () => {
   assert.deepEqual(firstFreeSlot([]), agentSlot(0));
+});
+
+// ─────────────────────────────────────────────────────────── centeredSlot
+//
+// Lỗi 20/08 do user báo: "3 nhân viên về 1 phía, phải bấm Sắp xếp lại nó mới
+// đều". Cùng lớp với lỗi 16/08 — người mới được cấp ô mà không nhìn sơ đồ đang
+// có hình gì — nhưng lần này ô KHÔNG chồng lên ai, nó chỉ nằm sai chỗ.
+
+test('centeredSlot: thứ tự lệch là 0 → +1 → −1 → +2 rồi xuống hàng', () => {
+  const c = 238; // tâm cột 0
+  const step = NODE_SIZE.agent.w + 40;
+  assert.equal(centeredSlot(0, c).x, agentSlot(0).x);
+  assert.equal(centeredSlot(1, c).x, agentSlot(0).x + step);
+  assert.equal(centeredSlot(2, c).x, agentSlot(0).x - step);
+  assert.equal(centeredSlot(3, c).x, agentSlot(0).x + 2 * step);
+  // Người thứ năm xuống hàng dưới, và về lại đúng trục.
+  assert.equal(centeredSlot(4, c).x, agentSlot(0).x);
+  assert.ok(centeredSlot(4, c).y > centeredSlot(0, c).y);
+});
+
+test('centeredSlot: luôn bám ĐÚNG LƯỚI của agentSlot, kể cả khi trục lệch nửa cột', () => {
+  // Trục nằm giữa hai cột (ca số nhân viên CHẴN). Không làm tròn về lưới thì ô
+  // mới lệch nửa cột và chồng một nửa lên người cũ — tệ hơn hẳn lệch phải.
+  const step = NODE_SIZE.agent.w + 40;
+  for (const centerX of [238, 300, 356, 400, 474]) {
+    const x = centeredSlot(0, centerX).x;
+    assert.equal((x - agentSlot(0).x) % step, 0, `trục ${centerX} đẻ ra ô lệch lưới: ${x}`);
+  }
+});
+
+/**
+ * ĐÂY LÀ TEST CHO ĐÚNG CA USER MÔ TẢ, chạy y như thứ tự họ bấm.
+ *
+ * Người 1 thẳng dưới Trợ lý · người 2 sang phải (số chẵn thì không cân được) ·
+ * người 3 phải sang TRÁI. Trợ lý ĐỨNG YÊN suốt — đó là điều kiện của bài, vì
+ * `arrangeAll` chỉ chạy khi bấm "Sắp xếp lại sơ đồ".
+ */
+test('thêm ba nhân viên liên tiếp: người thứ ba sang TRÁI, không nối đuôi sang phải', () => {
+  const tidy = arrangeAll(shell(1));
+  const placed: Array<{ kind: NodeKind; x: number; y: number }> = [
+    { kind: 'assistant', ...tidy.get('assistant')! },
+    { kind: 'knowledge', ...tidy.get('knowledge')! },
+    { kind: 'library', ...tidy.get('library')! },
+  ];
+  const boss = placed[0]!;
+  const centerX = boss.x + NODE_SIZE.assistant.w / 2;
+
+  const add = (): { x: number; y: number } => {
+    const spot = firstFreeSlot(placed, 'agent', centerX);
+    placed.push({ kind: 'agent', ...spot });
+    return spot;
+  };
+
+  const one = add();
+  const two = add();
+  const three = add();
+
+  assert.equal(one.x + NODE_SIZE.agent.w / 2, centerX, 'người 1 phải thẳng dọc với Trợ lý');
+  assert.ok(two.x > one.x, 'người 2 sang phải');
+  assert.ok(three.x < one.x, 'người 3 phải sang TRÁI, đây là chỗ bug 20/08');
+  assert.equal(three.y, one.y, 'cả ba vẫn cùng một hàng');
+
+  // Và hàng ba người phải cân quanh Trợ lý, không lệch một cột.
+  const rowMid = (Math.min(three.x, one.x, two.x) + Math.max(three.x, one.x, two.x) + NODE_SIZE.agent.w) / 2;
+  assert.ok(Math.abs(rowMid - centerX) <= 1, `hàng lệch: ${rowMid} vs ${centerX}`);
+});
+
+test('mọc quanh trục vẫn KHÔNG BAO GIỜ chồng lên ai — kể cả kho và mcp', () => {
+  const tidy = arrangeAll(shell(1));
+  const placed: Array<{ kind: NodeKind; x: number; y: number }> = [
+    { kind: 'assistant', ...tidy.get('assistant')! },
+    { kind: 'knowledge', ...tidy.get('knowledge')! },
+    { kind: 'library', ...tidy.get('library')! },
+  ];
+  const centerX = placed[0]!.x + NODE_SIZE.assistant.w / 2;
+
+  for (let i = 0; i < 8; i++) {
+    const spot = firstFreeSlot(placed, 'agent', centerX);
+    assert.equal(
+      clashes(spot, 'agent', placed),
+      false,
+      `nhân viên thứ ${i + 1} rơi vào chỗ đã có người`,
+    );
+    placed.push({ kind: 'agent', ...spot });
+  }
 });

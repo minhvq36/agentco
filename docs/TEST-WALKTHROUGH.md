@@ -337,19 +337,33 @@ ghi bảng thuật ngữ ĐÚNG NHƯ ĐÃ DỊCH ra artifacts/vi/doc-2-thuat-ngu
 | 2 | Mở file thuật ngữ mới sinh | mỗi dòng khớp với **bản dịch thật**, không phải một cách dịch nghe hợp lý |
 | 3 | Tìm `Widget` trong cả hai file | bảng ghi đúng thứ bản dịch dùng. Lệch = **lỗi gốc chưa chết**, ghi nhận |
 
-**Bước 4 — thử ba cách gõ sai. Cả ba phải bị chặn bằng CODE, 0 token, trả lời tức thì:**
+**Bước 4 — thử hai cách gõ sai. Cả hai phải bị chặn bằng CODE, 0 token, trả lời tức thì:**
 
 | Gõ | Phải nhận |
 |---|---|
 | `@doc-2.md` (tên trần, trùng ở hai kho) | *"Có 2 file tên doc-2.md, mình không đoán bạn muốn cái nào:"* + liệt kê đủ hai đường dẫn |
 | `@library/files/doc-9.md` (không có thật) | *"Mình không tìm thấy … trong tủ tài liệu hay ngăn Kết quả"* |
-| `gửi cho ke-toan@congty.vn` | **không có gì xảy ra** — email không phải tham chiếu file |
 
-> ⚠ Ba câu trên phải hiện **ngay lập tức** (dưới 100ms). Nếu có độ trễ vài giây thì chúng đã đi qua model — sai chỗ, và đang tốn tiền cho một việc chỉ là tra danh sách.
+> ⚠ **Hai câu trên** phải hiện **ngay lập tức** (dưới 100ms) và tốn **$0**. Nếu có độ trễ vài giây thì chúng đã đi qua model — sai chỗ, và đang tốn tiền cho một việc chỉ là tra danh sách.
+
+**Bước 4b — phép thử NGƯỢC LẠI: `@` mà KHÔNG phải tham chiếu file.**
+
+🖱 chat: `gửi cho ke-toan@congty.vn`
+
+| Quan sát | Nghĩa là |
+|---|---|
+| **Không** có câu nào kiểu *"mình không tìm thấy `congty.vn`"* | ✅ tầng tham chiếu đứng yên đúng lúc phải đứng yên |
+| Trợ lý trả lời như một tin nhắn bình thường (*"mình không gửi email được, bạn tải file rồi tự gửi nhé"*) | ✅ **đúng, và nó ĐƯỢC PHÉP tốn vài giây + một lượt tiền** |
+
+> ⚠ **Đừng đo dòng này bằng 100ms/0 token** — bảng trên từng gộp nó vào chung với hai ca kia, và đó là một kỳ vọng sai đã ghi vào tài liệu (sửa 20/08).
+>
+> Hai ca kia là tầng tham chiếu **NÓI**: có một câu trả lời dựng bằng code, nên nó phải tức thì. Ca này là tầng tham chiếu **IM**: một địa chỉ email không phải đường dẫn, nên không có gì để chặn cả — và câu còn lại là một tin nhắn người dùng gửi cho Trợ lý, y như mọi tin nhắn khác. Bắt nó rẻ và tức thì nghĩa là bắt Trợ lý **đừng trả lời**, mà im lặng thì mới là hỏng.
+>
+> Thứ duy nhất bài này đo được là **tầng tham chiếu không nhận nhầm**. Nó có test tự động rồi (`test/refs.test.ts`, ca *"email KHÔNG bị coi là tham chiếu file"*), nên ở đây chỉ cần liếc xem có câu lỗi lạ nào chen vào không.
 
 **Bước 5 — đường dẫn trong câu báo kết quả phải BẤM ĐƯỢC.** 🖱 Bấm vào một dòng trong khối *"Kết quả đã lưu tại:"* → panel Kết quả mở ra kèm cửa sổ xem trước đúng file đó. Không phải mò vào thư mục trên máy.
 
-**Chi phí:** ~$0.05 – $0.10 · bước 4 tốn **$0**
+**Chi phí:** ~$0.05 – $0.10 · bước 4 tốn **$0** · bước 4b là một lượt trò chuyện bình thường (~$0.005)
 
 ---
 
@@ -438,6 +452,16 @@ Báo cáo cho mình thì viết ngắn thôi, tối đa 5 dòng.
 | `Người soi` | `Đọc một điều khoản, chỉ ra chỗ bất lợi cho bên nhận việc và giải thích vì sao.` | deep |
 | `Người gộp` | `Gộp các nhận xét thành một checklist ngắn cho người không rành luật.` | eco |
 
+> 🖱 **Nhìn sơ đồ sau MỖI người, đừng bấm "Sắp xếp lại".** Đây là ba người thêm liên tiếp, tức là đúng ca đã đẻ ra bug 20/08.
+>
+> | Người | Phải nằm ở đâu |
+> |---|---|
+> | 1 | thẳng dọc **dưới Trợ lý** |
+> | 2 | bên **phải** người 1 (số chẵn thì không cân được — đây là lựa chọn bắt buộc) |
+> | 3 | bên **TRÁI** người 1, hàng ba người cân lại quanh Trợ lý |
+>
+> Cả ba dồn về **một phía** = ❌ lỗi 20/08 sống lại (`centeredSlot` không được gọi). Hai người **chồng lên nhau** = ❌ lỗi 16/08 sống lại. Phải bấm "Sắp xếp lại sơ đồ" thì mới đều = ❌ vẫn tính là hỏng — thao tác dọn dẹp đó là việc của hệ thống, không phải của người dùng.
+
 **Bước 3.** 🖱 **Tủ tài liệu** → thả một hợp đồng **dài** (10+ trang). **Dùng `.pdf` hoặc `.docx` thật**, đừng dùng `.md` — cả điểm của bài này giờ nằm ở đó.
 
 **Bước 4.** 🖱 chat:
@@ -453,10 +477,27 @@ xem có gì bất lợi cho bên nhận việc, rồi gộp thành một checkli
 
 | Quan sát trong **Nhật ký** | Nghĩa là |
 |---|---|
+| Tài liệu PDF hiện **`sẵn sàng`** kèm số trang, không phải `chưa lập chỉ mục` | ✅ bộ đọc PDF nằm sẵn trong sản phẩm (sửa 20/08 — trước đó nó bảo người dùng tự `npm i pdfjs-dist`) |
 | Trợ lý đọc `INDEX.md`, thấy "34 trang", rồi chia **nhiều task theo khoảng** | ✅ lỗ hổng số 4 đã đóng |
 | Trợ lý vẫn giao **một task duy nhất** rồi cụt | ❌ tầng định tuyến có mà nó không dùng → cần dặn ở prompt lập kế hoạch. Ghi nhận |
 | Nhân viên `Grep` `library/text/` rồi `Read` bản gốc **đúng vài trang** | ✅ mốc trang đang hoạt động (`SPEC-library.md` §3.1) |
 | Nhân viên `Read` cả PDF một lần | ❌ với PDF trên 10 trang thì tool **bắt buộc** khai `pages`, nên nhiều khả năng nó sẽ vấp — và đó là kết quả cần ghi |
+
+**Bước 5 — ca hỏng đã sửa 20/08, kiểm lại xem nó có sống lại không.**
+
+Bài này là bài đầu tiên mà một task **không biết trước nó sẽ đẻ ra bao nhiêu file** ("mỗi điều khoản một file" — số file bằng số điều khoản, chỉ biết sau khi đọc). Nên bước sau khai đầu vào là cả một **THƯ MỤC**, và kế hoạch từng bị chặn thẳng:
+
+```
+Mình chia việc bị lỗi nên chưa chạy được …
+  · Task T-02 cần đọc "artifacts/P-…/T-01/dieu-khoan/" nhưng không có
+    file đó, và không việc nào tạo ra nó
+```
+
+| Quan sát | Nghĩa là |
+|---|---|
+| Ca chạy thẳng, Nhật ký hiện *"Đã nối … việc phải chạy nối tiếp"* | ✅ thư mục được hiểu là "sẽ có", `linkDeps` nối T-02 → T-01 |
+| Vẫn hiện câu *"không việc nào tạo ra nó"* cho một thư mục | ❌ **ghi nhận** — lỗi 20/08 sống lại |
+| Câu báo lỗi (nếu có) nói *"chưa tốn tiền cho việc nào cả"* | ❌ **ghi nhận, đây là câu nói dối** — lượt chia việc đã vào sổ chi phí. Câu đúng là *"chưa nhân viên nào bắt tay vào"* |
 
 **Chi phí:** $0.30 – $1.50. Nếu sau khi có tủ tài liệu mà con số này **giảm rõ**, đó là số đo đáng ghi vào `SESSIONS_MEMORY` §7.
 
