@@ -205,19 +205,36 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     // Ngắt theo yêu cầu người dùng KHÔNG phải lỗi. SDK ném ra khi bị interrupt,
     // và biến nó thành "task failed" là nói dối trong nhật ký.
     if (interrupted) return stoppedReceipt(office, brief, role, usage, started, observed());
-    if (err instanceof RunError) throw err;
+    /**
+     * ⚠ MỌI ĐƯỜNG NÉM PHẢI MANG THEO `usage`. → `RunError.usage`
+     *
+     * Token đã tiêu rồi thì nó tồn tại dù lượt gọi kết thúc kiểu gì. Bản trước
+     * ném tay không ở cả ba nhánh (`max_turns`, `budget`, còn lại) nên tiền
+     * biến mất khỏi sổ — đo được ở ca `P-260820-2219-5ltb`: 9 lượt tool, sổ
+     * ghi $0. Nhánh `interrupted` ngay trên đã làm đúng từ đầu; đây là bịt ba
+     * đường còn lại vào cùng một hình dạng.
+     *
+     * Gói ở MỘT chỗ chứ không rắc `{ usage }` vào từng lời gọi: thêm một nhánh
+     * ném mới trong tương lai thì nó tự đúng, không cần ai nhớ.
+     */
+    const fail = (message: string, kind: FailureKind): RunError =>
+      new RunError(message, kind, { cause: err, usage });
+
+    // `RunError` ném từ TRONG vòng lặp (ví dụ `error_max_budget_usd`) chưa kịp
+    // biết `usage` — gắn vào bằng cách dựng lại, giữ nguyên câu và `kind`.
+    if (err instanceof RunError) throw err.usage ? err : fail(err.message, err.kind);
+
     const kind = classifyError(err);
     if (kind === 'max_turns') {
       // Không phải "lỗi" — là nhân viên bị cắt giữa chừng. Nói rõ sửa ở đâu.
-      throw new RunError(
+      throw fail(
         `"${role.display_name || role.id}" hết lượt cho phép (${role.budget.max_turns}) khi làm ${brief.task_id}. ` +
           `Việc này cần nhiều bước hơn: nới max_turns trong roles/${role.id}.yaml, ` +
           `hoặc chia nhỏ yêu cầu, hoặc viết hướng dẫn rõ hơn để nhân viên bớt dò dẫm.`,
         'max_turns',
-        { cause: err },
       );
     }
-    throw new RunError(errorMessage(err), kind, { cause: err });
+    throw fail(errorMessage(err), kind);
   } finally {
     release?.();
   }

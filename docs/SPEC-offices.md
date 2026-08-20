@@ -1,4 +1,4 @@
-# SPEC — Công ty nhiều văn phòng, và Assistant là công dân hạng nhất
+﻿# SPEC — Công ty nhiều văn phòng, và Assistant là công dân hạng nhất
 
 **Ngày:** 15/08/2026 · **Trạng thái:** Đợt 1 đang cài đặt
 
@@ -31,7 +31,7 @@ company/
    │  │  ├─ shared/        Assistant ghi, cả văn phòng đọc
    │  │  └─ agents/<id>/   riêng từng người, gồm agents/assistant/
    │  ├─ artifacts/        kết quả công việc
-   │  ├─ tasks/            plan + receipt
+   │  ├─ .state/tasks/     plan + receipt — ẨN CÓ CHỦ Ý, xem §2e
    │  └─ .state/           master-session.json, pending.json
    └─ ke-toan/             y hệt, độc lập hoàn toàn
 ```
@@ -649,6 +649,100 @@ Câu báo cho người dùng phải nói được **việc phải làm**, không
 > Câu đúng: *"Chưa nhân viên nào bắt tay vào — phần tốn tiền nhất chưa mất gì (lượt chia việc vừa rồi vẫn nằm trong sổ chi phí)."* Nói đúng phần biết chắc, chỉ thẳng sang sổ cho phần còn lại.
 >
 > → `SESSIONS_MEMORY` §2 *"Sổ chi phí không được nói sai câu nào"*. Luật đó viết cho sổ chi phí; ca này cho thấy nó áp cho **mọi câu nói về tiền**, ở bất cứ đâu trên màn hình.
+
+### 6b. CHẠY TIẾP VIỆC DỞ — hai đường, và đường thứ ba CỐ Ý KHÔNG XÂY (20/08)
+
+User đặt vấn đề đúng: *"cái tôi cần là bắt đầu tiếp từ sản phẩm chạy lỗi ấy, ví dụ đã sinh được 2 files. **Tự thông minh** được chứ không phải là nút chạy tiếp."*
+
+Trả lời: **nên tự động, không nên tự đoán** — và chỗ cắt không nằm ở "nút bấm hay không".
+
+#### ⛔ Thứ KHÔNG xây: tự khớp "yêu cầu mới này là việc cũ kia"
+
+Để tự nhận ra điều đó, hệ thống phải đoán **ba** lần chồng nhau: *có phải cùng một việc không* · *file cũ còn đúng không* · *task nào ứng với task nào* (kế hoạch mới chia việc khác đi thì `task_id` không mang nghĩa gì qua hai lần chạy). Hai trong ba **không quan sát được**.
+
+> Và kiểu hỏng không phải tốn tiền. Nhân viên tách hợp đồng cũ ra 12 điều khoản · người dùng thay `hd1.docx` bằng bản mới · hệ thống "thông minh" dùng lại 12 file cũ và trả về một checklist **hoàn hảo, thuyết phục, nói về một hợp đồng đã không còn tồn tại.** Cùng gốc với luật *"kho tri thức không bao giờ chứa nội dung tài liệu"*: **bản sao cũ THẮNG bản gốc**, vì nó nằm trong tầm với còn bản gốc thì phải đi tìm.
+>
+> **Tiền mất thì lấy lại được. Một kết quả sai đã bàn giao thì không.**
+
+#### ① Việc dở HIỆN RA như một đầu vào bình thường — tất định, tự động, 0 token
+
+Trợ lý **đã có sẵn** bảng kê kết quả trong prefix (§SPEC-artifacts 2.4). Thiếu đúng hai mảnh dữ liệu, và cả hai đều quan sát được:
+
+| Mảnh | Suy từ đâu |
+|---|---|
+| Ca này **chưa xong**, dừng ở bước nào | `PlanRecord.status !== 'done'` + đếm `steps` |
+| File này **ôi hay tươi** | `plan.json` ghi rõ task nào đọc gì / ghi ra gì → so `mtime` hai đầu |
+
+Bảng kê giờ in `## <tên ca> — ⚠ UNFINISHED (2/3 steps)` và dán `(STALE — its source changed after this was written)` lên từng file đã ôi.
+
+Rồi **để đường lập kế hoạch bình thường quyết định**. Nó không "khớp việc cũ với việc mới" — nó làm đúng việc nó làm mỗi ngày: *nhìn thấy một file có sẵn và quyết định có dùng không*, với đầy đủ ngữ cảnh câu người dùng vừa gõ. **Không nút bấm, không đoán, không đẻ cơ chế thứ hai phải đồng bộ.**
+
+> ⚠ So `mtime` bằng `>` chứ không `>=`. Ghi xong trong cùng một giây là chuyện thường trên đĩa; đánh ôi nhầm thì **mọi** kết quả vừa sinh đều mang nhãn cảnh báo, người dùng học cách bỏ qua nhãn đó, rồi bỏ qua luôn lần nó nói thật.
+
+#### ② `/resume` — ca bị NGẮT, không phải ca bị gõ lại
+
+Đây là ca resume **duy nhất không phải đoán gì**: `/stop` · hết hạn mức · daemon crash. Ca chưa bao giờ được lập kế hoạch lại ⇒ **vẫn đúng `plan_id` đó, vẫn đúng danh sách task đó**, receipt nằm trên đĩa. Không có gì để khớp nên không có gì để đoán sai.
+
+| Chốt | |
+|---|---|
+| `pending.json` mang **`plan_id`** | thiếu nó thì không biết ghi kết quả vào đâu; `artifacts/<plan_id>/` là khung theo ca, id mới = mớ dở dang cũ thành mồ côi |
+| Đi qua **đúng `Office.run()`** (tham số thứ ba `resumePlan`) | không phải bản sao rút gọn. `linkDeps`, `validate`, `missingInputs`, sổ chi phí, `finish` đều chạy y hệt — hai bản mã của cùng một phép toán sẽ lệch, và bản chạy hiếm hơn là bản lệch trước |
+| **0 lượt model** | kế hoạch đã có và đã trả tiền. Đó là cả điểm: phần đắt nhất của một ca hỏng là những lượt đã tiêu |
+| `deps` trỏ tới task ĐÃ XONG bị cắt | không cắt thì `validate` báo *"phụ thuộc không tồn tại"* và chặn chính cái ca ta đang cứu. File nó sinh ra vẫn trên đĩa nên `missingInputs` lúc phóng vẫn kiểm thật |
+
+> ⚠ **KHÔNG BAO GIỜ tự chạy lúc bật daemon.** Cùng luật đã chốt cho trí nhớ Trợ lý: gắn ngữ nghĩa vào việc tắt/bật daemon nghĩa là một lần crash âm thầm tiêu tiền người dùng. Và ca dở thường tới từ `/stop` — tức là họ **vừa nói dừng**; tự chạy tiếp là ghi đè lên quyết định đó.
+>
+> Nó được **MỜI** ra: một dòng ở ô chat lúc văn phòng nối bus, nói đủ ba thứ cần để quyết — *còn bao nhiêu việc*, *của ca nào*, và *chạy tiếp không tốn thêm lượt chia việc nào*. Người dùng gõ `/resume`. Đó là **hội thoại**, không phải quản lý trạng thái.
+
+⚠ **Bẫy đã dẫm:** đặt lời mời trong `constructor` thì nó chạy **trước** khi `PlanStore` được dựng (`resumable()` nổ) **và trước** khi có bus (câu mời rơi vào hư không). Một chỗ sai, hai triệu chứng, và triệu chứng thứ hai im lặng. Phải phát ở `bindBus()`.
+
+#### 2e. 🔴 `tasks/` DỜI VÀO `.state/` — chặn bằng CẤU TRÚC, không bằng kỷ luật (20/08)
+
+`cwd` của worker là **cả thư mục văn phòng**. Đo được ở `P-260820-2219-5ltb`: `nguoi-gop` lạc đường đã Glob quét sạch cây thư mục rồi **ĐỌC** `P-…plan.json` và `P-…log.jsonl`. File log chứa **receipt của những task khác** ⇒ một cửa sau của giao thức *"Receipt trần 800 token — Trợ lý không bao giờ đọc transcript worker"*. Nó cũng đọc được cả DAG.
+
+Lời giải dùng lại đúng một sự thật đã đo (§SPEC-library 2.1): **`Grep`/`Glob` không duyệt xuống thư mục bắt đầu bằng dấu chấm.** Đây là **đảo chiều** của luật đã có:
+
+| | |
+|---|---|
+| `library/`, `artifacts/`, `knowledge/` | agent **PHẢI** tìm thấy → **không** được ẩn |
+| `.state/tasks/` (plan · log · receipt) | agent **KHÔNG** được lạc vào → **phải** ẩn |
+
+Không cần `canUseTool` (đã đo 19/08: không nổ lần nào với tool chỉ-đọc), không cần danh sách cấm, không cần ai nhớ gì.
+
+> ⚠ **KHÔNG phải một bức tường bảo mật** — `Read` với đường dẫn tường minh vẫn mở được. Nó chặn đúng con đường có thật: **đi lạc rồi vấp phải.**
+
+Kèm di trú `migrateTasksIntoState()` chạy cho **mọi** văn phòng ở mọi công ty, idempotent, gọi hai lần trong `migrateIfNeeded` (lượt hai bắt ca `tasks/` vừa được di trú v0 dời vào văn phòng ở bố cục cũ). Không dời thì bản vá chỉ đúng với văn phòng tạo mới sau hôm nay — mà đúng văn phòng cũ mới là nơi có kế hoạch và log thật để lạc vào.
+
+#### 2b. 🔴 Chốt thứ NĂM — `inputs` phải có thật NGAY TRƯỚC KHI PHÓNG (20/08)
+
+`validate` chạy lúc **lập kế hoạch**, khi file của bước trước còn chưa được sinh ra, nên nó buộc phải bỏ qua mọi đường dẫn "sẽ có". Tới lúc phóng thì mọi bước trước đã xong và câu hỏi mới trả lời được. Cùng một phép kiểm, **đúng lúc** — `Scheduler.missingInputs`, 0 token.
+
+Đo được ở `P-260820-2219-5ltb`: thiếu chốt này thì nhân viên nhận đường dẫn chết và **ĐI TÌM** — `nguoi-soi` 6 lượt (5 lượt Glob), `nguoi-gop` 9 lượt tool rồi chạm `max_turns`. Cả hai kết luận đúng thứ hệ thống biết miễn phí từ đầu.
+
+Kèm một luật trong `CORE_PROMPT`: *đọc hỏng lần đầu → trả `blocked` NGAY*, vì `inputs` vừa được kiểm một khoảnh khắc trước ⇒ đường dẫn hỏng là lỗi hệ thống, không phải lỗi sắp xếp file, và đi tìm bản thay thế thì đốt hết ngân sách mà không ra gì.
+
+#### 2c. 🔴 LAN TRUYỀN CHẶN THEO *"CÓ GIAO ĐƯỢC HÀNG KHÔNG"*, KHÔNG THEO `failed` (20/08)
+
+`Scheduler.run` chỉ `failed.add` khi `receipt.status === 'failed'`. Một task trả **`blocked`** thì vào `receipts` và **không** vào `failed` ⇒ nó được tính là *"phụ thuộc đã xong"*.
+
+> Đo được: T-01 trả `blocked` lúc **22:20:21** (không đọc nổi `.docx`, không sinh file nào) và T-02 phóng lúc **22:20:21 — cùng một giây**. Rồi T-03. Cả hai đi tìm những file mà hệ thống đã biết chắc là không tồn tại. T-02 còn tự chẩn đoán đúng, **bằng tiền người dùng**: *"toàn bộ thư mục artifacts đều trống"*.
+
+⚠ Tách `blocked` ≠ `failed` là **ĐÚNG và phải giữ** — nhật ký phải phân biệt *"hệ thống hỏng"* với *"đang chờ bạn"*. Cái sai là dùng `failed` làm **tín hiệu lan truyền**. Tín hiệu đúng quan sát được: **nó có giao được hàng không.**
+
+`delivered(receipt)` + `unmetDeps(task, receipts, failed)` — hai hàm **thuần**, và cố ý: đây là luật đắt nhất trong `run()`, mà `run()` gọi thẳng `runWorker` nên không bộ test nào chạm tới được nếu để nguyên trong đó. Câu giải thích tách hai ý (*"bước trước chưa chạy xong"* ≠ *"bước trước không tạo ra file nào"*) vì hai ca dẫn tới hai việc phải làm khác hẳn.
+
+#### 2d. 🔴 MỌI ĐƯỜNG NÉM PHẢI MANG THEO `usage` (20/08)
+
+`RunError` có thêm trường `usage`. Không có nó thì **tiền biến mất khỏi sổ**: đo được `nguoi-gop` gọi 9 lượt tool trong 29 giây rồi chạm `max_turns`, và `usage.jsonl` ghi **`0 lượt, $0`**.
+
+`worker.ts` ném tay không ở cả ba nhánh (`max_turns` · `error_max_budget_usd` · còn lại) trong khi nhánh bị **ngắt** ngay bên trên vốn đã làm đúng (`stoppedReceipt(…, usage, …)`). Giờ gói ở **một chỗ** trong `catch` — thêm một nhánh ném mới trong tương lai thì nó tự đúng, không cần ai nhớ.
+
+| Đường | Trước | Sau |
+|---|---|---|
+| `max_turns` · `budget` · `other` | receipt ghi cứng `0` | `errorReceipt` dùng `err.usage` |
+| `rate_limit` (trả task về hàng đợi, chạy lại **từ đầu**) | vứt hẳn | cộng vào `RunResult.wasted` |
+
+> Nó rơi đúng chỗ đau nhất: **`max_turns` theo định nghĩa là kiểu hỏng ĐẮT NHẤT** — nó chạy tới kịch trần lượt. Và `rate_limit` là ca *tiêu hai lần cho một task*, tức đúng ca người dùng cần nhìn thấy con số nhất.
 
 **3 — `missingOutputs`: nhân viên báo `done` mà file đã hứa không có trên đĩa → hạ xuống `failed` và nói ra.** Đây là ca nói dối tệ nhất: người dùng đọc *"xong rồi"*, đi mở file, và không có gì. Khối *"Kết quả đã lưu tại"* (`whereBlock`) liệt kê thứ **có thật**, nên nó **im lặng đúng lúc cần nói to nhất** — chốt này lấp đúng chỗ đó. Chỉ soi task **tự nhận là xong**: việc bị chặn hoặc bị dừng giữa chừng không có file là chuyện bình thường và nó đã tự nói ra rồi.
 

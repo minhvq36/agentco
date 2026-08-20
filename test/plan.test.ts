@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test cho hai chốt chạy TRƯỚC khi phóng worker đầu tiên (19/08 vòng hai).
  *
  * Cả hai đều thi hành cùng một câu hỏi: *sạn trong kế hoạch có QUAN SÁT ĐƯỢC
@@ -19,7 +19,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { outputScoper } from '../dist/core/assistant.js';
-import { Scheduler } from '../dist/core/scheduler.js';
+import { Scheduler, delivered, unmetDeps } from '../dist/core/scheduler.js';
+import { isStale } from '../dist/core/artifacts.js';
 
 type Plan = Parameters<typeof Scheduler.linkDeps>[0];
 
@@ -280,3 +281,76 @@ test('outputScoper: hai task KHÁC NHAU không bao giờ đụng nhau, kể cả
  * chết còn tệ hơn không có test: nó báo một vùng an toàn không tồn tại.
  * → SPEC-offices.md §4.7
  */
+
+// ────────────────────── lan truyền chặn: `blocked` KHÔNG phải "đã xong" (§B)
+//
+// Đo được 20/08 (`P-260820-2219-5ltb`): T-01 trả `blocked` lúc 22:20:21 và
+// T-02 phóng lúc 22:20:21 — cùng một giây, trên một nền rỗng. Rồi T-03.
+// Nguyên nhân: `run()` chỉ `failed.add` khi `status === 'failed'`, nên
+// `blocked` lọt vào `receipts` và được tính là phụ thuộc đã xong.
+
+const receipt = (patch: Record<string, unknown> = {}) =>
+  ({ status: 'done', artifacts: ['a.md'], landed: ['a.md'], ...patch }) as never;
+
+test('delivered: chỉ `done` MÀ CÓ giao hàng mới tính là xong', () => {
+  assert.equal(delivered(receipt()), true);
+  assert.equal(delivered(receipt({ status: 'blocked' })), false, 'đây là bug 20/08');
+  assert.equal(delivered(receipt({ status: 'failed' })), false);
+  assert.equal(delivered(receipt({ status: 'stopped' })), false);
+  assert.equal(delivered(undefined), false);
+});
+
+test('delivered: tự nhận `done` mà KHÔNG có file nào đáp xuống thì chưa xong', () => {
+  // `missingOutputs` cũng bắt ca này, nhưng nó chạy SAU khi cả DAG xong — quá
+  // muộn để ngăn task con phóng vào hư không.
+  assert.equal(delivered(receipt({ artifacts: [], landed: [] })), true, 'không hứa thì không nợ');
+  assert.equal(delivered(receipt({ artifacts: ['x.md'], landed: [] })), true);
+});
+
+test('unmetDeps: nêu ĐÍCH DANH bước nào chưa giao được hàng', () => {
+  const t = task('T-02', { deps: ['T-01'] }) as never;
+  const blocked = new Map([['T-01', receipt({ status: 'blocked' })]]);
+  assert.deepEqual(unmetDeps(t, blocked, new Set()), ['T-01']);
+  const ok = new Map([['T-01', receipt()]]);
+  assert.deepEqual(unmetDeps(t, ok, new Set()), []);
+  assert.deepEqual(unmetDeps(t, ok, new Set(['T-01'])), ['T-01'], 'failed vẫn phải lan truyền');
+});
+
+// ────────────────────────── isStale: mớ dở dang còn tươi hay đã ôi (§2.6)
+//
+// User chốt 20/08 tối: KHÔNG tự đoán "đây có phải việc cũ không" (ba phép đoán
+// chồng nhau, và kiểu hỏng là trả về một checklist hoàn hảo nói về một hợp đồng
+// đã bị thay). Chỉ NÓI RA thứ đang có, kèm nhãn ôi/tươi — thứ này quan sát
+// được: plan.json ghi rõ task nào đọc gì và ghi ra gì, so mtime hai đầu là xong.
+
+const t = (iso: string) => new Date(iso).toISOString();
+
+test('isStale: nguồn đổi SAU khi file được ghi → ôi', () => {
+  assert.equal(isStale(t('2026-08-20T10:00:00Z'), [t('2026-08-20T11:00:00Z')]), true);
+});
+
+test('isStale: nguồn cũ hơn sản phẩm → còn tươi', () => {
+  assert.equal(isStale(t('2026-08-20T12:00:00Z'), [t('2026-08-20T11:00:00Z')]), false);
+});
+
+test('isStale: CHỈ MỘT nguồn đổi cũng đủ làm ôi', () => {
+  const made = t('2026-08-20T12:00:00Z');
+  assert.equal(isStale(made, [t('2026-08-20T09:00:00Z'), t('2026-08-20T13:00:00Z')]), true);
+});
+
+test('isStale: ghi cùng lúc KHÔNG phải ôi', () => {
+  // So `>` chứ không `>=`: ghi xong trong cùng một giây là chuyện thường. Đánh
+  // ôi nhầm thì mọi kết quả vừa sinh đều mang nhãn cảnh báo, người dùng học
+  // cách bỏ qua nhãn đó, rồi bỏ qua luôn lần nó nói thật.
+  const same = t('2026-08-20T12:00:00Z');
+  assert.equal(isStale(same, [same]), false);
+});
+
+test('isStale: không có nguồn nào thì KHÔNG kết luận gì', () => {
+  assert.equal(isStale(t('2026-08-20T12:00:00Z'), []), false);
+});
+
+test('isStale: mtime rác thì im lặng cho qua, không dán nhãn bừa', () => {
+  assert.equal(isStale('rác', [t('2026-08-20T12:00:00Z')]), false);
+  assert.equal(isStale(t('2026-08-20T12:00:00Z'), ['rác']), false);
+});

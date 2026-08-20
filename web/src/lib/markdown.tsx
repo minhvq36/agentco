@@ -203,6 +203,47 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
           );
         }
 
+        /**
+         * DANH SÁCH VIỆC CẦN LÀM. → markdown-core.ts `TASK`
+         *
+         * Ô vuông vẽ bằng CSS, không phải `<input type="checkbox">`:
+         *
+         *  · `<input>` mặc định của trình duyệt không nghe theo bảng màu, nên nó
+         *    hiện xanh hệ điều hành giữa một giao diện đã chọn màu cẩn thận.
+         *  · Nó BẤM ĐƯỢC theo mặc định, và bấm được ở đây là nói dối: không có
+         *    đường nào ghi ngược lại vào file. `disabled` thì lại hiện xám mờ
+         *    như một ô đang hỏng.
+         *
+         * `aria-hidden` trên ô vuông + chữ "đã xong/chưa xong" cho trình đọc màn
+         * hình: người khiếm thị phải nghe được trạng thái, không chỉ thấy dấu ✓.
+         */
+        if (b.kind === 'tasks') {
+          return (
+            <ul key={i} className="my-1.5 flex flex-col gap-1">
+              {b.items.map((it, k) => (
+                <li key={k} className="flex items-start gap-2">
+                  <span
+                    aria-hidden
+                    className={`mt-[0.15em] flex h-[1em] w-[1em] flex-none items-center justify-center rounded-[3px] border text-[0.7em] leading-none ${
+                      it.done
+                        ? 'border-accent bg-accent-soft text-accent'
+                        : 'border-line bg-transparent text-transparent'
+                    }`}
+                  >
+                    ✓
+                  </span>
+                  <span className="sr-only">{it.done ? 'đã xong: ' : 'chưa xong: '}</span>
+                  {/* Gạch ngang việc đã xong, nhưng KHÔNG làm mờ chữ: người ta
+                      vẫn phải đọc lại được thứ mình đã làm. */}
+                  <span className={`min-w-0 break-words ${it.done ? 'text-muted line-through' : 'text-ink'}`}>
+                    <Inline text={it.text} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          );
+        }
+
         // Dòng trắng ở HAI ĐẦU bị cắt, bên TRONG giữ nguyên: backend dựng sẵn
         // nhiều câu nhiều dòng (`/help`, dải bước kế hoạch, khối "kết quả đã lưu
         // tại") và chúng dựa vào đúng những ký tự xuống dòng đó.

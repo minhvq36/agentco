@@ -20,13 +20,20 @@ import test from 'node:test';
 
 import { resolveFileRefs } from '../dist/core/commands.js';
 
-/** Hai kho, và CÓ MỘT TÊN TRÙNG NHAU — đó là cả điểm của bộ test này. */
+/**
+ * Hai kho, và CÓ MỘT TÊN TRÙNG NHAU — đó là cả điểm của bộ test này.
+ *
+ * Từ 20/08 mỗi mục là một CẶP: `ref` = chuỗi người dùng thấy và nút Chép đưa
+ * ra · `open` = chuỗi nhân viên mở được. Với `.md` hai cái bằng nhau; với
+ * `.xlsx` thì bản gốc là file nén nên `open` trỏ sang bản đã bóc.
+ */
+const pair = (p: string) => ({ ref: p, open: p });
 const KNOWN = [
-  'library/files/doc-1.md',
-  'library/files/doc-2.md',
-  'library/files/bao-gia.xlsx',
-  'artifacts/P-260820-0302-ov9e/T-01/doc-1.md',
-  'artifacts/P-260820-0440-9a3q/T-01/vi/doc-2-thuat-ngu.md',
+  pair('library/files/doc-1.md'),
+  pair('library/files/doc-2.md'),
+  { ref: 'library/files/bao-gia.xlsx', open: 'library/text/bao-gia.xlsx.txt' },
+  pair('artifacts/P-260820-0302-ov9e/T-01/doc-1.md'),
+  pair('artifacts/P-260820-0440-9a3q/T-01/vi/doc-2-thuat-ngu.md'),
 ];
 
 // ───────────────────────────────────────── ca 1: trùng tên giữa hai kho
@@ -41,10 +48,41 @@ test('tên trần TRÙNG hai kho → DỪNG và liệt kê, không đoán', () =
   assert.equal(r.text, 'dịch lại @doc-1.md giúp mình', 'chữ gốc giữ NGUYÊN khi có vấn đề');
 });
 
-test('tên trần DUY NHẤT thì nở ra thành đường dẫn đủ', () => {
+/**
+ * ĐÂY LÀ TEST CHO ĐÚNG CA HỎNG 20/08 (`P-260820-2219-5ltb`).
+ *
+ * Bản trước nở `@bao-gia.xlsx` ra `library/files/bao-gia.xlsx` — một file nén
+ * mà không tool nào mở trực tiếp được. Cả một ca ba bước chết ở bước một trong
+ * khi bản `.txt` đã nằm sẵn cạnh nó.
+ *
+ * User chốt và nói rõ đây KHÔNG phải phá luật *"đường dẫn người dùng gõ là
+ * chính xác"* mà là SỬA luật: thứ họ chỉ đích danh là một TÀI LIỆU.
+ */
+test('tên trần nở ra ĐƯỜNG MỞ ĐƯỢC, không phải chuỗi người dùng gõ', () => {
   const r = resolveFileRefs('xem @bao-gia.xlsx', KNOWN);
   assert.equal(r.problem, undefined);
-  assert.equal(r.text, 'xem library/files/bao-gia.xlsx');
+  assert.equal(r.text, 'xem library/text/bao-gia.xlsx.txt');
+});
+
+test('dán ĐƯỜNG DẪN ĐỦ từ nút Chép cũng phải dịch sang đường mở được', () => {
+  // Nút Chép đưa `library/files/…` vì đó là thứ người dùng nhận ra. Nếu chuỗi
+  // đó không còn được nhận thì nút Chép gãy im lặng — đúng nửa dễ quên nhất.
+  const r = resolveFileRefs('xem @library/files/bao-gia.xlsx', KNOWN);
+  assert.equal(r.problem, undefined);
+  assert.equal(r.text, 'xem library/text/bao-gia.xlsx.txt');
+});
+
+test('gõ thẳng đường ĐÃ BÓC cũng nhận — bảng kê Trợ lý nêu chính đường này', () => {
+  const r = resolveFileRefs('xem @library/text/bao-gia.xlsx.txt', KNOWN);
+  assert.equal(r.problem, undefined);
+  assert.equal(r.text, 'xem library/text/bao-gia.xlsx.txt');
+});
+
+test('một tài liệu khớp qua HAI cửa thì KHÔNG phải là trùng tên', () => {
+  // `ref` và `open` cùng trỏ một tài liệu. Đếm thành hai là hỏi lại một câu vô
+  // nghĩa: "bạn muốn cái nào?" với hai dòng cùng nói về một file.
+  const r = resolveFileRefs('xem @bao-gia.xlsx', KNOWN);
+  assert.equal(r.problem, undefined);
 });
 
 // ───────────────────────────────────────── ca 2: không có thật

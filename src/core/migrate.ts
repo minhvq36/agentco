@@ -37,6 +37,7 @@ export function migrateIfNeeded(companyDir: string): void {
   // Chạy TRƯỚC di trú v0 và độc lập với nó: charter phải rời kho tri thức ở MỌI
   // công ty, kể cả công ty đã ở bố cục nhiều văn phòng từ lâu.
   migrateCharters(pp.offices);
+  migrateTasksIntoState(pp.offices);
 
   // Dấu hiệu còn sót bố cục v0: có bất kỳ mục nào của văn phòng nằm ở cấp công ty.
   const leftovers = OFFICE_ENTRIES.filter((e) => fs.existsSync(path.join(companyDir, e)));
@@ -93,6 +94,9 @@ export function migrateIfNeeded(companyDir: string): void {
   // cấp công ty nên không thấy charter nào. Giờ nó đã ở trong văn phòng. Hàm
   // idempotent nên gọi hai lần không tốn gì.
   migrateCharters(pp.offices);
+  // Cùng lý do: `tasks/` của công ty v0 vừa được dời vào văn phòng ở trên, và
+  // nó vào ở bố cục CŨ (ngay dưới gốc văn phòng). Phải giấu nó đi lần nữa.
+  migrateTasksIntoState(pp.offices);
 
   if (failed.length) {
     process.emitWarning(
@@ -108,6 +112,57 @@ export function migrateIfNeeded(companyDir: string): void {
       `  Mọi thứ cũ giờ nằm trong offices/${DEFAULT_OFFICE}/\n` +
       `  Không có nội dung file nào bị sửa.`,
   );
+}
+
+/**
+ * `tasks/` → `.state/tasks/`. → `OfficePaths.tasks`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ DI TRÚ NÀY LÀ MỘT PHẦN CỦA BẢN VÁ, KHÔNG PHẢI DỌN DẸP CHO GỌN.           │
+ * │                                                                          │
+ * │ Chốt chặn là dấu chấm: `Grep`/`Glob` không duyệt xuống thư mục ẩn. Văn    │
+ * │ phòng nào còn `tasks/` ở gốc thì chốt đó KHÔNG có hiệu lực với nó — mà    │
+ * │ đúng những văn phòng đó mới là nơi đang có kế hoạch và log thật để lạc    │
+ * │ vào. Không dời thì bản vá chỉ đúng với văn phòng tạo mới sau hôm nay.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Idempotent từng văn phòng, và một văn phòng hỏng không chặn văn phòng khác.
+ * Đích đã tồn tại thì GỘP từng file thay vì bó tay: một lần dời hỏng giữa chừng
+ * trên Windows (antivirus giữ khoá) là chuyện SẼ xảy ra, và lần chạy sau phải
+ * đi tiếp được từ chỗ đang dở.
+ */
+function migrateTasksIntoState(officesDir: string): void {
+  if (!fs.existsSync(officesDir)) return;
+  for (const entry of fs.readdirSync(officesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const office = path.join(officesDir, entry.name);
+    const from = path.join(office, 'tasks');
+    if (!fs.existsSync(from)) continue;
+    const to = officePaths(office).tasks;
+
+    try {
+      if (!fs.existsSync(to)) {
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        if (moveWithRetry(from, to)) continue;
+      }
+      // Đích đã có (hoặc rename cả thư mục hỏng): dời từng file, rồi bỏ vỏ rỗng.
+      fs.mkdirSync(to, { recursive: true });
+      for (const f of fs.readdirSync(from)) {
+        const dest = path.join(to, f);
+        // KHÔNG ghi đè: bản ở `.state/` là bản mới hơn. Bản cũ để nguyên chỗ cũ
+        // còn hơn đè mất một kế hoạch đang chạy.
+        if (fs.existsSync(dest)) continue;
+        moveWithRetry(path.join(from, f), dest);
+      }
+      if (fs.readdirSync(from).length === 0) fs.rmdirSync(from);
+    } catch (err) {
+      process.emitWarning(
+        `Chưa dời được tasks/ của văn phòng "${entry.name}" vào .state/: ${
+          err instanceof Error ? err.message : String(err)
+        }. Nhật ký công việc vẫn chạy; chạy lại \`agentco start\` sau khi tắt hẳn daemon cũ.`,
+      );
+    }
+  }
 }
 
 /**

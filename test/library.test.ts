@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test cho lớp hàm THUẦN của tủ tài liệu.
  *
  * → docs/SPEC-library.md §15 · SESSIONS_MEMORY.md §4
@@ -26,7 +26,7 @@ import zlib from 'node:zlib';
  * trên bản đã biên dịch còn đúng hơn về bản chất: ta test thứ THẬT SỰ CHẠY,
  * không phải một biến thể chỉ tồn tại trong bộ test.
  */
-import { formatBytes, pageOfLine, safeName, sniffType } from '../dist/library/names.js';
+import { docPaths, formatBytes, pageOfLine, safeName, sniffType } from '../dist/library/names.js';
 import { openZip } from '../dist/library/zip.js';
 import { extractDocx, extractText, extractXlsx } from '../dist/library/extract.js';
 import { migrateCharters } from '../dist/core/migrate.js';
@@ -364,4 +364,46 @@ test('extractXlsx: cột quá chữ Z (AA, AB) tính đúng vị trí', () => {
   // AA là cột thứ 27 → 26 ô rỗng đứng trước.
   const row = extractXlsx(book).text.split('\n').find((l) => l.includes('27')) ?? '';
   assert.equal(row.split('|').length, 27);
+});
+
+// ───────────────────────────────── docPaths: đường nhân viên MỞ ĐƯỢC (§4.4)
+//
+// Ca hỏng 20/08 (`P-260820-2219-5ltb`): bảng kê nêu `library/files/hd1.docx`,
+// Trợ lý chép đúng chuỗi đó vào `inputs`, và `Read` không mở được file nén.
+// Cả ca ba bước chết ở bước một, $0.25 — trong khi bản `.txt` nằm ngay cạnh.
+
+test('docPaths: docx/xlsx/pptx chỉ nêu bản ĐÃ BÓC, không bao giờ nêu bản gốc', () => {
+  for (const ext of ['docx', 'xlsx', 'pptx']) {
+    const p = docPaths(`hd1.${ext}`, ext, 'ready');
+    assert.equal(p.open, `library/text/hd1.${ext}.txt`);
+    assert.equal(p.original, undefined, 'bản gốc nén KHÔNG mở được — nêu ra là bẫy');
+  }
+});
+
+test('docPaths: text-native thì bản gốc CHÍNH LÀ văn bản', () => {
+  for (const ext of ['md', 'txt', 'csv', 'json', 'yaml']) {
+    assert.equal(docPaths(`a.${ext}`, ext, 'ready').open, `library/files/a.${ext}`);
+  }
+});
+
+test('docPaths: pdf nêu CẢ HAI — text để tìm, bản gốc để đọc đúng trang', () => {
+  const p = docPaths('hd2.pdf', 'pdf', 'ready');
+  assert.equal(p.open, 'library/text/hd2.pdf.txt');
+  assert.equal(p.original, 'library/files/hd2.pdf');
+});
+
+test('docPaths: pdf CHƯA bóc vẫn dùng được — model nhìn trang như ảnh', () => {
+  for (const state of ['image-only', 'unindexed']) {
+    const p = docPaths('hd2.pdf', 'pdf', state);
+    assert.equal(p.open, 'library/files/hd2.pdf', `state ${state}`);
+    assert.equal(p.original, undefined, 'không nêu hai lần cùng một file');
+  }
+});
+
+test('docPaths: KHÔNG mở được thì không trả đường dẫn nào', () => {
+  // Nêu một đường dẫn chết còn tệ hơn không nêu gì: Trợ lý sẽ giao một task
+  // chắc chắn hỏng, và hoá đơn vẫn tính đủ.
+  assert.deepEqual(docPaths('hd1.docx', 'docx', 'failed'), {});
+  assert.deepEqual(docPaths('hd1.docx', 'docx', 'unindexed'), {});
+  assert.deepEqual(docPaths('la.zip', 'zip', 'ready'), {});
 });

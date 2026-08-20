@@ -10,9 +10,14 @@
  * ├─ .state/             daemon.json, secrets.json
  * └─ offices/<id>/       văn phòng — TỰ CHỨA, zip lại là một template
  *    ├─ office.yaml · layout.json · roles/ · skills/
- *    ├─ knowledge/{shared,agents}/
- *    └─ artifacts/ · tasks/ · .state/
+ *    ├─ knowledge/{shared,agents}/ · library/{files,text}/
+ *    └─ artifacts/ · .state/tasks/
  * ```
+ *
+ * Dấu chấm ở `.state/` là một CƠ CHẾ, không phải quy ước đặt tên: `Grep`/`Glob`
+ * không duyệt xuống thư mục ẩn (đã đo). Thứ agent phải tìm thấy (`library/`,
+ * `artifacts/`, `knowledge/`) nằm ngoài; thứ agent không được lạc vào
+ * (`tasks/` — kế hoạch, log, receipt của nhau) nằm trong. → `OfficePaths.tasks`
  *
  * Vì sao chi phí ở cấp công ty mà tri thức ở cấp văn phòng: tiền là thứ người
  * dùng muốn nhìn TỔNG (một hoá đơn Claude), còn tri thức nằm trong prefix cache
@@ -59,6 +64,29 @@ export interface OfficePaths {
   library: string;
   libraryFiles: string;
   libraryText: string;
+  /**
+   * Kế hoạch · log · receipt. **Nằm SAU dấu chấm, và đó là cả cơ chế.**
+   *
+   * ┌─────────────────────────────────────────────────────────────────────────┐
+   * │ ĐẢO CHIỀU CỦA LUẬT NGAY TRÊN, VÀ DÙNG CHUNG MỘT SỰ THẬT ĐÃ ĐO.          │
+   * │                                                                         │
+   * │ `library/` không được ẩn vì agent PHẢI `Grep` thấy. `tasks/` thì ngược   │
+   * │ lại: agent KHÔNG được thấy, nên nó phải ẩn.                             │
+   * │                                                                         │
+   * │ Đo được 20/08 (`P-260820-2219-5ltb`): `cwd` của worker là cả thư mục     │
+   * │ văn phòng, nên `nguoi-gop` lạc đường đã Glob quét sạch cây thư mục rồi   │
+   * │ ĐỌC `P-…plan.json` và `P-…log.jsonl`. File log chứa receipt của task     │
+   * │ khác ⇒ một cửa sau của giao thức *"Receipt trần 800 token — Trợ lý       │
+   * │ không bao giờ đọc transcript worker"*. Nó cũng đọc được cả DAG.          │
+   * │                                                                         │
+   * │ Chặn bằng CẤU TRÚC, không bằng kỷ luật: `Grep`/`Glob` không duyệt xuống  │
+   * │ thư mục bắt đầu bằng dấu chấm (đã đo — SPEC-library.md §2.1). Không cần  │
+   * │ `canUseTool`, không cần danh sách cấm, không cần ai nhớ gì.              │
+   * │                                                                         │
+   * │ ⚠ Đây KHÔNG phải một bức tường bảo mật — `Read` với đường dẫn tường minh │
+   * │ vẫn mở được. Nó chặn đúng con đường có thật: **đi lạc rồi vấp phải.**    │
+   * └─────────────────────────────────────────────────────────────────────────┘
+   */
   tasks: string;
   planIndex: string;
   state: string;
@@ -102,8 +130,8 @@ export function officePaths(officeDir: string): OfficePaths {
     library: p('library'),
     libraryFiles: p('library', 'files'),
     libraryText: p('library', 'text'),
-    tasks: p('tasks'),
-    planIndex: p('tasks', 'index.json'),
+    tasks: p('.state', 'tasks'),
+    planIndex: p('.state', 'tasks', 'index.json'),
     state: p('.state'),
     connectors: p('connectors'),
   };

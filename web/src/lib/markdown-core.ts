@@ -23,6 +23,19 @@ export type Block =
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'heading'; level: number; text: string }
   | { kind: 'table'; head: string[]; rows: string[][]; align: Align[] }
+  /**
+   * Danh sách việc cần làm — `- [ ]` / `- [x]`. → SPEC-ui.md
+   *
+   * Có kiểu RIÊNG chứ không nhét vào `text`, vì đây đúng là thứ bài 6 sinh ra
+   * ("gộp thành một checklist ngắn") và in nó ra dạng `- [ ] …` nguyên văn thì
+   * người dùng nhận về ký tự thay vì một danh sách đọc được bằng mắt.
+   *
+   * `done` là thứ QUAN SÁT ĐƯỢC từ chữ trong file, không phải trạng thái ta
+   * giữ: ô này không bấm được, và đó là chủ ý — file kết quả là thứ nhân viên
+   * viết ra, ngăn Kết quả là cửa sổ ĐỌC. Cho bấm là mở một đường ghi thứ hai
+   * vào cùng một file, và sớm muộn nó lệch với thứ agent vừa ghi.
+   */
+  | { kind: 'tasks'; items: { done: boolean; text: string }[] }
   | { kind: 'text'; text: string };
 
 /** Một mẩu trong dòng: code span, hoặc văn bản thường. */
@@ -30,6 +43,18 @@ export type Token = { code: boolean; text: string };
 
 const FENCE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
+/**
+ * `- [ ] việc` · `* [x] việc` · `+ [X] việc`, thụt lề tuỳ ý.
+ *
+ * ⚠ BẮT BUỘC có khoảng trắng sau `]`. Thiếu nó thì `- [x]abc` cũng khớp, mà
+ * chuỗi đó trong văn xuôi kỹ thuật là một tham chiếu, không phải một việc.
+ *
+ * ⚠ Và nội dung phải MỞ ĐẦU BẰNG KÝ TỰ THẬT (`\S`), không phải `.+` — `.` khớp
+ * cả khoảng trắng, nên `- [ ]` kèm vài dấu cách thừa ở cuối vẫn lọt và đẻ ra
+ * một việc RỖNG. Test bắt đúng ca đó ở vòng đầu, và nó là ca có thật: model
+ * xuống dòng sau `]` là chuyện thường.
+ */
+const TASK = /^\s*[-*+]\s+\[([ xX])\]\s+(\S.*)$/;
 
 /**
  * Dòng phân cách của bảng: `|---|:--:|---:|`. Đây là thứ ĐỊNH NGHĨA một bảng.
@@ -209,6 +234,31 @@ export function blocksOf(src: string): Block[] {
         i = j - 1;
         continue;
       }
+    }
+
+    /**
+     * DANH SÁCH VIỆC — gom các dòng `- [ ]` / `- [x]` LIỀN NHAU thành một khối.
+     *
+     * Kiểm SAU bảng và SAU heading: một dòng `- [x]` không chứa `|` và không bắt
+     * đầu bằng `#`, nên thứ tự ở đây không tranh chấp — nhưng giữ nó cuối cùng
+     * để mọi cấu trúc "mạnh" hơn vẫn được xét trước.
+     *
+     * Dừng ở dòng đầu tiên KHÔNG phải việc cần làm, kể cả dòng trắng: một danh
+     * sách nối qua dòng trắng là hai danh sách khác nhau — cùng luật với bảng.
+     */
+    const firstTask = TASK.exec(line);
+    if (firstTask) {
+      flush();
+      const items: { done: boolean; text: string }[] = [];
+      let j = i;
+      for (; j < lines.length && items.length < MAX_ROWS; j++) {
+        const m = TASK.exec(lines[j]!);
+        if (!m) break;
+        items.push({ done: m[1]!.toLowerCase() === 'x', text: m[2]!.trim() });
+      }
+      out.push({ kind: 'tasks', items });
+      i = j - 1;
+      continue;
     }
 
     text.push(line);

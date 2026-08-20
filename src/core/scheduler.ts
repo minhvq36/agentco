@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Scheduler: chạy DAG task song song.
  *
  * → docs/SPEC-2026-08-14-agentco.md §7, §9b
@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
 import { safeJoin } from './paths.js';
-import { runWorker, type WorkerHandle } from './worker.js';
+import { addUsage, runWorker, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
 import {
@@ -19,7 +19,19 @@ import {
   type Receipt,
   type TaskBrief,
   type Tier,
+  type Usage,
 } from './types.js';
+
+/** Task không tiêu token nào. Một chỗ định nghĩa, ba receipt dùng chung. */
+const ZERO_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  costUSD: 0,
+  model: '',
+  turns: 0,
+};
 
 export interface SchedulerDeps {
   office: LoadedOffice;
@@ -34,6 +46,13 @@ export interface RunResult {
   /** Task chưa chạy vì hết hạn mức / bị dừng. Giữ lại để `agentco resume`. */
   pending: TaskBrief[];
   stoppedBy?: 'usage_limit' | 'user' | 'auth';
+  /**
+   * Token của những lượt ĐÃ TIÊU nhưng không có receipt nào mang — lượt hỏng vì
+   * 429 rồi được chạy lại từ đầu. Không có trường này thì mỗi lần gặp rate limit
+   * là một khoản chi vô hình, và đúng ca hay gặp 429 mới là ca người dùng cần
+   * nhìn thấy con số. → `RunError.usage`
+   */
+  wasted: Usage;
 }
 
 export class Scheduler {
@@ -186,6 +205,7 @@ export class Scheduler {
     const failed = new Set<string>();
     const running = new Set<Promise<void>>();
     let stoppedBy: RunResult['stoppedBy'];
+    let wasted: Usage = ZERO_USAGE;
 
     while (remaining.size > 0 && !stoppedBy) {
       if (this.deps.shouldStop?.()) {
@@ -197,10 +217,11 @@ export class Scheduler {
         t.deps.every((d) => receipts.has(d) || failed.has(d)),
       );
 
-      // Dep hỏng thì task con không chạy — nhưng KHÔNG đánh failed âm thầm,
-      // trả receipt "blocked" để người dùng thấy vì sao nó không chạy.
+      // Dep chưa giao được hàng thì task con không chạy — nhưng KHÔNG đánh
+      // failed âm thầm, trả receipt "blocked" để người dùng thấy vì sao.
       for (const t of ready) {
-        if (t.deps.some((d) => failed.has(d))) {
+        const stale = unmetDeps(t, receipts, failed);
+        if (stale.length) {
           remaining.delete(t.task_id);
           failed.add(t.task_id);
           const blocked: Receipt = {
@@ -209,10 +230,10 @@ export class Scheduler {
             answer: '',
             artifacts: [],
             lessons: [],
-            blocked_on: `phụ thuộc hỏng: ${t.deps.filter((d) => failed.has(d)).join(', ')}`,
+            blocked_on: reasonFor(stale, receipts),
             task_id: t.task_id,
             role: t.role,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
+            usage: ZERO_USAGE,
             wall_ms: 0,
             reasked: false,
             landed: [],
@@ -254,6 +275,26 @@ export class Scheduler {
 
       for (const brief of launchable) {
         remaining.delete(brief.task_id);
+
+        /**
+         * ĐẦU VÀO PHẢI CÓ THẬT — KIỂM NGAY TRƯỚC KHI PHÓNG, 0 TOKEN.
+         *
+         * Đây đúng phép kiểm của `validate`, nhưng chạy ĐÚNG LÚC. `validate`
+         * chạy lúc lập kế hoạch, khi file của bước trước còn chưa được sinh ra,
+         * nên nó buộc phải bỏ qua mọi đường dẫn "sẽ có". Tới đây thì mọi bước
+         * trước đã xong và câu hỏi trở nên trả lời được.
+         *
+         * Đo được 20/08: thiếu chốt này thì nhân viên nhận một đường dẫn chết và
+         * ĐI TÌM — `nguoi-soi` 6 lượt (5 lượt Glob), `nguoi-gop` 9 lượt tool rồi
+         * chạm `max_turns`. Cả hai kết luận đúng thứ ta biết miễn phí từ đầu.
+         */
+        const gone = this.missingInputs(brief);
+        if (gone.length) {
+          failed.add(brief.task_id);
+          receipts.set(brief.task_id, this.blockedReceipt(brief, gone));
+          continue;
+        }
+
         const tier = this.deps.office.roles.get(brief.role)?.model_tier ?? 'standard';
         this.runningByTier.set(tier, (this.runningByTier.get(tier) ?? 0) + 1);
         const p = this.execute(brief)
@@ -277,6 +318,11 @@ export class Scheduler {
             }
             if (kind === 'rate_limit') {
               this.onRateLimit();
+              // ⚠ GHI SỔ TRƯỚC KHI THỬ LẠI. Lượt vừa hỏng đã tiêu token thật;
+              // task chạy lại từ đầu và tiêu tiếp. Không ghi ở đây thì mỗi lần
+              // gặp 429 là một khoản chi vô hình, và đúng ca hay gặp 429 mới là
+              // ca người dùng cần nhìn thấy con số. → `RunError.usage`
+              if (err instanceof RunError && err.usage) wasted = addUsage(wasted, err.usage);
               remaining.set(brief.task_id, brief); // thử lại vòng sau
               return;
             }
@@ -295,9 +341,50 @@ export class Scheduler {
 
     await Promise.allSettled(running);
 
-    const result: RunResult = { receipts, pending: [...remaining.values()] };
+    const result: RunResult = { receipts, pending: [...remaining.values()], wasted };
     if (stoppedBy) result.stoppedBy = stoppedBy;
     return result;
+  }
+
+  /** `inputs` không có trên đĩa. Rỗng = phóng được. → `run()` */
+  private missingInputs(brief: TaskBrief): string[] {
+    const out: string[] = [];
+    for (const i of brief.inputs) {
+      try {
+        if (!fs.existsSync(safeJoin(this.deps.office.dir, i.path))) out.push(i.path);
+      } catch {
+        out.push(i.path);
+      }
+    }
+    return out;
+  }
+
+  /** Task không chạy vì đầu vào không có thật. 0 lượt, $0, và NÓI RA vì sao. */
+  private blockedReceipt(brief: TaskBrief, missing: readonly string[]): Receipt {
+    const blocked: Receipt = {
+      status: 'blocked',
+      say: `Không làm được vì thiếu file cần đọc.`,
+      answer: '',
+      artifacts: [],
+      lessons: [],
+      blocked_on: `không có trên đĩa: ${missing.join(', ')}`,
+      task_id: brief.task_id,
+      role: brief.role,
+      usage: ZERO_USAGE,
+      wall_ms: 0,
+      reasked: false,
+      landed: [],
+      looped: false,
+      reads: [],
+    };
+    this.deps.emit({
+      type: 'task.blocked',
+      task_id: brief.task_id,
+      role: brief.role,
+      say: blocked.say,
+      reason: blocked.blocked_on ?? '',
+    });
+    return blocked;
   }
 
   gateStats() {
@@ -457,7 +544,13 @@ export class Scheduler {
       blocked_on: msg.slice(0, 200),
       task_id: brief.task_id,
       role: brief.role,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
+      // Token ĐÃ TIÊU trước khi lỗi nổ, không phải số 0 cho tiện. Bản trước ghi
+      // cứng 0 ở đây và đó là chỗ tiền biến mất khỏi sổ — `max_turns` chạy tới
+      // kịch trần lượt rồi báo $0. → `RunError.usage`
+      usage:
+        err instanceof RunError && err.usage
+          ? err.usage
+          : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
       wall_ms: 0,
       reasked: false,
       landed: [],
@@ -523,6 +616,64 @@ function norm(p: string): string {
  */
 function contains(dir: string, file: string): boolean {
   return dir.length > 0 && file.startsWith(`${dir}/`);
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MỘT PHỤ THUỘC CHỈ ĐƯỢC COI LÀ XONG KHI NÓ THẬT SỰ GIAO ĐƯỢC HÀNG.        │
+ * │                                                                          │
+ * │ Bản trước lan truyền theo `failed`, mà `Scheduler.run` chỉ `failed.add`   │
+ * │ khi `receipt.status === 'failed'`. Một task trả **`blocked`** thì vào     │
+ * │ `receipts` và KHÔNG vào `failed` ⇒ nó được tính là "phụ thuộc đã xong".  │
+ * │                                                                          │
+ * │ Đo được 20/08, ca `P-260820-2219-5ltb`: T-01 trả `blocked` lúc 22:20:21   │
+ * │ (không đọc nổi `.docx`, không sinh file nào) và T-02 phóng lúc **22:20:21 │
+ * │ — cùng một giây**. Rồi T-03. Cả hai đi tìm những file mà hệ thống đã biết │
+ * │ chắc là không tồn tại. T-02 còn tự chẩn đoán đúng, bằng tiền người dùng:  │
+ * │ *"toàn bộ thư mục artifacts đều trống"*.                                  │
+ * │                                                                          │
+ * │ ⚠ Tách `blocked` ≠ `failed` là ĐÚNG và phải giữ — nhật ký phải phân biệt │
+ * │ "hệ thống hỏng" với "đang chờ bạn". Cái sai là dùng `failed` làm TÍN HIỆU │
+ * │ LAN TRUYỀN. Tín hiệu đúng quan sát được: **nó có giao được hàng không.**  │
+ * │                                                                          │
+ * │ Và "giao được hàng" mạnh hơn `status === 'done'`: một task tự nhận xong   │
+ * │ mà `outputs` không có gì đáp xuống thì bước sau vẫn đọc vào hư không.     │
+ * │ `missingOutputs` bắt ca đó, nhưng nó chạy SAU khi cả DAG xong — quá muộn  │
+ * │ cho việc ngăn task con phóng.                                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Hàm THUẦN, và cố ý: đây là luật đắt nhất trong `run()` mà `run()` thì gọi
+ * thẳng `runWorker` nên không bộ test nào chạm tới được. → SESSIONS_MEMORY §4
+ */
+export function delivered(receipt: Receipt | undefined): boolean {
+  if (!receipt || receipt.status !== 'done') return false;
+  // Không hứa gì thì không nợ gì. Task `deliver: reply` vẫn phải khai `outputs`
+  // theo prompt, nhưng luật này không được sập nếu một ngày nào đó có ngoại lệ.
+  if (receipt.artifacts.length === 0 && receipt.landed.length === 0) return true;
+  return receipt.landed.length > 0 || receipt.artifacts.length > 0;
+}
+
+/** Những `deps` của `t` chưa giao được hàng. Rỗng = phóng được. */
+export function unmetDeps(
+  t: TaskBrief,
+  receipts: ReadonlyMap<string, Receipt>,
+  failed: ReadonlySet<string>,
+): string[] {
+  return t.deps.filter((d) => failed.has(d) || !delivered(receipts.get(d)));
+}
+
+/**
+ * Câu giải thích, TÁCH HAI Ý. "Bước trước hỏng" và "bước trước không tạo ra file
+ * nào" dẫn tới hai việc phải làm khác hẳn nhau — gộp lại thành một câu là bắt
+ * người dùng tự đoán mình nên sửa gì.
+ */
+function reasonFor(stale: readonly string[], receipts: ReadonlyMap<string, Receipt>): string {
+  const empty = stale.filter((d) => receipts.get(d)?.status === 'done');
+  const broke = stale.filter((d) => !empty.includes(d));
+  const parts: string[] = [];
+  if (broke.length) parts.push(`bước trước chưa chạy xong: ${broke.join(', ')}`);
+  if (empty.length) parts.push(`bước trước không tạo ra file nào: ${empty.join(', ')}`);
+  return parts.join(' · ');
 }
 
 /** Mọi task ghi một file NẰM TRONG `dir`. Thứ tự giữ nguyên, không trùng. */

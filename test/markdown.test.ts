@@ -283,3 +283,52 @@ test('hồi quy: /help và dải bước kế hoạch vẫn KHÔNG chạm luật
   assert.equal(blocksOf(help)[0]!.kind, 'text');
   assert.equal((blocksOf(help)[0] as { text: string }).text, help);
 });
+
+// ───────────────────────────────── danh sách việc `- [ ]` / `- [x]` (21/08)
+//
+// Bài 6 sinh ra đúng thứ này ("gộp thành một checklist ngắn"). In nguyên văn
+// thì người dùng nhận về ký tự thay vì một danh sách đọc được bằng mắt.
+
+test('tasks: gom các dòng liền nhau thành MỘT khối, đọc đúng trạng thái', () => {
+  const b = blocksOf('- [ ] chưa làm\n- [x] đã làm\n* [X] hoa thị, chữ X hoa');
+  assert.equal(b.length, 1);
+  assert.equal(b[0].kind, 'tasks');
+  assert.deepEqual(b[0].items, [
+    { done: false, text: 'chưa làm' },
+    { done: true, text: 'đã làm' },
+    { done: true, text: 'hoa thị, chữ X hoa' },
+  ]);
+});
+
+test('tasks: dòng trắng CẮT danh sách thành hai — cùng luật với bảng', () => {
+  const b = blocksOf('- [ ] a\n\n- [ ] b');
+  assert.deepEqual(b.map((x) => x.kind), ['tasks', 'tasks']);
+});
+
+test('tasks: gạch đầu dòng THƯỜNG không bị nuốt vào danh sách việc', () => {
+  const b = blocksOf('- [ ] việc\n- chỉ là gạch đầu dòng');
+  assert.equal(b[0].kind, 'tasks');
+  assert.equal(b[0].items.length, 1, 'chỉ MỘT việc');
+  assert.equal(b[1].kind, 'text');
+});
+
+test('tasks: thiếu khoảng trắng sau `]` thì KHÔNG phải việc cần làm', () => {
+  // `- [x]abc` trong văn xuôi kỹ thuật là một tham chiếu, không phải checkbox.
+  assert.equal(blocksOf('- [x]abc')[0].kind, 'text');
+});
+
+test('tasks: ô trống rỗng không nội dung vẫn là gạch đầu dòng thường', () => {
+  assert.equal(blocksOf('- [ ]')[0].kind, 'text');
+  assert.equal(blocksOf('- [ ]   ')[0].kind, 'text');
+});
+
+test('tasks: nằm trong khối code thì KHÔNG bị bóc — fence thắng', () => {
+  const b = blocksOf('```md\n- [ ] đây là ví dụ\n```');
+  assert.equal(b.length, 1);
+  assert.equal(b[0].kind, 'code');
+});
+
+test('tasks: giữ được định dạng inline trong nội dung việc', () => {
+  const b = blocksOf('- [x] xem `file.md` và **sửa**');
+  assert.equal(b[0].items[0].text, 'xem `file.md` và **sửa**');
+});

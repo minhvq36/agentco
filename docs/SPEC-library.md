@@ -1,4 +1,4 @@
-# SPEC — Tủ tài liệu: file của người dùng, tách khỏi kho tri thức
+﻿# SPEC — Tủ tài liệu: file của người dùng, tách khỏi kho tri thức
 
 **Chốt 17/08/2026.** Đọc kèm `SPEC-token-economy.md` (luật cao nhất), `SPEC-offices.md` §2 (bố cục thư mục), phụ lục `SPEC-connectors.md` (hướng tìm kiếm — spec này *thi hành* nó).
 
@@ -156,6 +156,52 @@ Một người mở tiệm hoa không có `npm`. Với họ dòng chữ đó kh�
 1. `pdfjs-dist` trong `dependencies`, ghim `~5.4.624`. ⚠ Dòng `5.7+` và `6.x` đòi **Node ≥ 22.13**, còn `engines` của agentco là `>=22` — nâng lên phải nâng cả hai cùng lúc, nếu không người dùng Node 22.12 nhận một cảnh báo `EBADENGINE` mà không hiểu vì sao.
 2. **Vẫn nạp động** (`await import(spec)`), nhưng vì lý do khác hẳn lý do cũ: 36MB đó chỉ vào bộ nhớ khi có người thả PDF, không phải mỗi lần khởi động daemon.
 3. `PdfToolMissing` **còn nguyên**, đổi nghĩa: nay là **cài đặt hỏng** (`npm install` chạy dở, hoặc `--omit=optional`). Việc phải làm đổi theo — *"chạy lại `npm install`"*, không phải *"đi tìm tên một gói npm"*.
+
+### 4.4 🔴 MỘT tài liệu, MỘT đường dẫn — và nó phải là đường MỞ ĐƯỢC (20/08)
+
+**Ca hỏng có thật, `P-260820-2219-5ltb`.** Bảng kê nêu `library/files/hd1.docx` rồi dặn *"put its path in that task's `inputs`"*. Trợ lý làm **đúng y lời dặn**, tool `Read` không mở được file nén, và cả ca ba bước chết ở bước một — **$0.25**, trong khi `library/text/hd1.docx.txt` đã nằm sẵn trên đĩa từ lúc thả file vào.
+
+> ⚠ **Luật §3.1 (*"text để TÌM, bản gốc để ĐỌC KỸ"*) CHỈ ĐÚNG VỚI PDF.** Model nhìn trang PDF như ảnh nên bản gốc thật sự đọc được. Với `.docx/.xlsx/.pptx` thì **bản gốc không mở được bằng gì cả** — áp luật đó cho chúng là chỉ nhân viên vào một file nhị phân. Bản trước nói như thể ba định dạng giống nhau.
+
+Luật giờ là hàm **thuần** `docPaths(name, ext, state)` trong `library/names.ts`:
+
+| `HANDLING[ext]` | `open` | `original` |
+|---|---|---|
+| `text` (md/txt/csv/json/yaml) | `library/files/<tên>` — bản gốc CHÍNH LÀ văn bản | — |
+| `zip` (docx/xlsx/pptx) | `library/text/<tên>.txt` | **không bao giờ** |
+| `pdf` đã bóc | `library/text/<tên>.txt` | `library/files/<tên>` |
+| `pdf` `image-only`/`unindexed` | `library/files/<tên>` (đọc theo trang) | — |
+| còn lại (`failed`, đuôi lạ) | **không có** → bảng kê **không nêu đường dẫn nào** | — |
+
+**Thuần được** vì `extractOne` chỉ ghi sidecar trên đúng một nhánh (`ready` và `kind !== 'text'`); mọi nhánh khác `return` trước đó. Nên *"sidecar có tồn tại không"* suy được từ trạng thái, không cần chạm đĩa — và hai bên không thể lệch vì chỉ có một chỗ định nghĩa.
+
+> ⚠ Nêu một đường dẫn chết **tệ hơn không nêu gì**: Trợ lý sẽ giao một task chắc chắn hỏng, và hoá đơn vẫn tính đủ. Đuôi không nhận cũng phải rơi vào nhánh này — bỏ sót thì mọi đuôi lạ trượt vào nhánh `zip` và ta nêu một sidecar chưa bao giờ được ghi. *(Test bắt đúng chỗ này ở vòng đầu.)*
+
+**Ba cửa cùng đi qua một luật.** `LibraryStore.manifest()` (prefix Trợ lý) · `resolveFileRefs` (`@` người dùng gõ) · `pickReadable` (worker ẩn `lookup`). Hai cửa sau nhận `ReadableRef { ref, open }`:
+
+- `ref` = chuỗi **người dùng nhận ra**, và là chuỗi nút Chép đưa vào ô chat (`library/files/hd1.docx`).
+- `open` = chuỗi **đi tới model** (`library/text/hd1.docx.txt`).
+
+Bỏ `ref` thì nút Chép gãy im lặng; bỏ `open` thì ta quay lại đúng ca hỏng. Cả hai đều nhận, cả hai đều nở ra `open`. Một tài liệu khớp qua **hai** cửa thì không tính là trùng tên.
+
+> **User chốt và nói rõ đây KHÔNG phải phá luật *"đường dẫn người dùng gõ là chính xác, chép nguyên văn"* — mà là SỬA luật.** Thứ họ chỉ đích danh là một **TÀI LIỆU**, không phải một chuỗi byte. Giữ nguyên văn cái chuỗi mà đánh mất tài liệu thì mới là làm sai ý họ.
+
+`INDEX.md` có thêm cột **"Mở bằng"** và nêu luật theo từng định dạng ngay dưới tiêu đề.
+
+### 4.5 Bóc lại — trạng thái là bản ghi về QUÁ KHỨ, không phải một lời tuyên án
+
+`hd2.pdf` vào tủ lúc chưa có bộ đọc PDF nên nhận `unindexed`. Chiều hôm đó `pdfjs-dist` thành phụ thuộc thật — và tài liệu **vẫn** `unindexed`, kèm nguyên câu *"Cài: `npm i pdfjs-dist`"* nằm trong prefix Trợ lý. Đường duy nhất để thử lại là **xoá rồi thả lại chính file của mình**: một thao tác đáng sợ, và người dùng có thể không còn giữ bản gốc.
+
+| Cửa | |
+|---|---|
+| Nút **Bóc lại** (icon ↻) trong Tủ tài liệu | chỉ hiện khi tài liệu **chưa dùng được**. `POST /api/office/:id/library/reextract?name=…` → `202`, tài liệu về `pending`, bóc chạy ngầm y như lúc mới thả |
+| `LibraryStore.retryUnindexed()` lúc dựng `Office` | thử lại **một lần** mỗi lần khởi động |
+
+**Không hỏi lại trước khi bóc lại** — khác `remove`, thao tác này không mất gì (bản gốc nguyên vẹn, chỉ dựng lại bản text). Hỏi lại một việc không có hậu quả là dạy người dùng bấm "Đồng ý" mà không đọc, rồi họ bấm đúng như thế vào hộp thoại xoá.
+
+> ⚠ **CHỈ thử lại `unindexed`, cố ý không đụng `failed`.** Hai trạng thái nói hai chuyện khác hẳn: `unindexed` = *máy này chưa có công cụ* (đổi được, và thường đã đổi đúng vào lúc khởi động lại sau khi cài); `failed` = *file này hỏng* (không đổi). Thử lại `failed` mỗi lần bật daemon là đốt CPU cho một kết quả biết trước, và với file lớn thì nó làm chậm mọi lần khởi động.
+
+Kiểm chạy thật 20/08 trên đúng văn phòng đã hỏng: `hd2.pdf` tự gỡ kẹt thành `pdf, 1 trang` kèm mốc trang, `hd1.docx` đổi sang `library/text/hd1.docx.txt`.
 
 ### 4.3 ⚠ `standardFontDataUrl` + `cMapUrl` — hỏng IM LẶNG nếu đưa `file://`
 

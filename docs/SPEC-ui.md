@@ -277,6 +277,43 @@ Mở ra là log advanced đầy đủ. Ba mức, chọn bằng tab:
 
 Tab **Chi phí** phải dễ tìm và dễ đọc — đây là thứ giữ cho sản phẩm không âm thầm đắt lên, và là thứ khách hàng advanced đánh giá cao nhất.
 
+### 3.1 🔴 KHỐI KHÔNG CO ĐƯỢC THÌ NÓ ĂN HẾT CHỖ CỦA KHỐI CO ĐƯỢC (bug 21/08)
+
+Bảng chi tiết một ca là một cột flex với **năm** khối, và bốn trong số đó là `flex-none`: tiêu đề · dải bước · bảng token · **câu tổng kết của Trợ lý**. Chỉ nhật ký sự kiện là `flex-1`.
+
+Hậu quả người dùng gặp: báo cáo dài 30 dòng chiếm 30 dòng, nhật ký bị ép xuống gần bằng không.
+
+> *"Nếu câu kết quả này dài, nó chiếm hết diện tích bên trên khiến tôi thực sự không biết các worker trao đổi với nhau cái gì (cảm giác như không kéo xuống hoặc lăn chuột được). Tôi chỉ làm được khi kéo khung rộng ra."*
+
+Kéo khung rộng ra thì chữ xuống dòng ít hơn ⇒ báo cáo thấp xuống ⇒ nhật ký có lại chỗ. Tức là **bố cục đang bắt người dùng chỉnh cửa sổ để đọc được nội dung** — cùng lớp với luật *"thao tác dọn dẹp của hệ thống không được nằm ở tay người dùng"* (§SPEC-canvas).
+
+**Ba tầng, và cần cả ba:**
+
+| | Vì sao không bỏ được |
+|---|---|
+| Báo cáo **mặc định gấp lại** (`max-h-[4.5rem]`) + nút *Xem đầy đủ* | nhật ký giữ gần như toàn bộ chiều cao ngay khi mở — đó là thứ người ta mở bảng này để xem |
+| Báo cáo **trần 40%** kể cả khi mở, cuộn nằm bên trong | vẫn còn 60% cho nhật ký với báo cáo dài nhất |
+| Nhật ký có **sàn** `min-h-[8rem]` | trần một mình chưa đủ: khung thấp thì hai bên lại tranh nhau |
+
+> ⚠ **Lúc gấp lại dùng `max-h`, KHÔNG dùng `line-clamp`.** `line-clamp` chạy trên `-webkit-box` và chỉ đáng tin với một dòng chảy văn bản; báo cáo đi qua `Markdown` nên bên trong là nhiều khối block — clamp lúc đó hoặc không cắt gì, hoặc cắt ở chỗ không ai đoán được.
+
+> **LUẬT RÚT RA: trong một cột flex, mỗi khối `flex-none` là một lời hứa rằng nội dung của nó KHÔNG BAO GIỜ dài.** Với nội dung do model sinh thì lời hứa đó luôn sai. Nội dung độ dài không đoán được ⇒ phải có trần + đường cuộn riêng, và khối co giãn phải có sàn.
+
+Báo cáo cũng render qua `Markdown` chứ không in chuỗi trần — nó là chữ Trợ lý viết, có gạch đầu dòng, đường dẫn, đôi khi cả bảng, hệt như trong ô chat.
+
+### 3.2 Danh sách việc `- [ ]` trong markdown (21/08)
+
+Bài 6 sinh ra đúng thứ này (*"gộp thành một checklist ngắn"*), và in nguyên văn thì người dùng nhận về ký tự thay vì một danh sách đọc được bằng mắt. Có ở **cả** ô chat lẫn cửa sổ xem trước file kết quả — dùng chung một `Markdown`.
+
+| Chốt | Vì sao |
+|---|---|
+| Ô vuông vẽ bằng **CSS**, không phải `<input type="checkbox">` | `<input>` mặc định không nghe bảng màu (hiện xanh hệ điều hành); `disabled` thì hiện xám như một ô đang hỏng |
+| **KHÔNG bấm được**, và đó là chủ ý | ngăn Kết quả là cửa sổ **ĐỌC**. Cho bấm là mở một đường ghi thứ hai vào cùng một file, sớm muộn lệch với thứ agent vừa ghi. Cùng lý do tủ tài liệu không có editor |
+| `sr-only` nói *"đã xong / chưa xong"* | người khiếm thị phải **nghe** được trạng thái, không chỉ thấy dấu ✓ |
+| Việc đã xong **gạch ngang, không làm mờ** | vẫn phải đọc lại được thứ mình đã làm |
+
+⚠ Hai bẫy trong regex, cả hai đã dẫm: bắt buộc **khoảng trắng sau `]`** (thiếu thì `- [x]abc` — một tham chiếu trong văn xuôi kỹ thuật — cũng khớp), và nội dung phải mở đầu bằng **`\S`** chứ không `.` (`.` khớp cả khoảng trắng, nên `- [ ]` kèm vài dấu cách thừa đẻ ra một việc RỖNG; test bắt ca này ở vòng đầu).
+
 ---
 
 ## 4. Ngăn kéo Tri thức

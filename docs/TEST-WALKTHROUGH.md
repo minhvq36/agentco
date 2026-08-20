@@ -499,6 +499,73 @@ Mình chia việc bị lỗi nên chưa chạy được …
 | Vẫn hiện câu *"không việc nào tạo ra nó"* cho một thư mục | ❌ **ghi nhận** — lỗi 20/08 sống lại |
 | Câu báo lỗi (nếu có) nói *"chưa tốn tiền cho việc nào cả"* | ❌ **ghi nhận, đây là câu nói dối** — lượt chia việc đã vào sổ chi phí. Câu đúng là *"chưa nhân viên nào bắt tay vào"* |
 
+---
+
+### 🔴 Bước 6 — DỪNG SỚM: bước đầu hỏng thì các bước sau **không được chạy**
+
+> **Vì sao có bước này.** Đo thật 20/08 tối, ca `P-260820-2219-5ltb`: T-01 trả `blocked` lúc **22:20:21**, và T-02 được phóng lúc **22:20:21** — cùng một giây. Rồi T-03. Cả hai đi tìm những file mà hệ thống đã biết chắc là không tồn tại.
+>
+> T-02 còn tự chẩn đoán đúng, **bằng tiền của bạn**: *"Thư mục artifacts/…/T-01/dieu-khoan/ không tồn tại và toàn bộ thư mục artifacts đều trống."* Hệ thống đã biết điều đó 0 giây trước, miễn phí.
+
+Ca này dựng được **cố ý và rẻ**: cho bước đầu một đầu vào chắc chắn hỏng.
+
+🖱 Thả một file `.docx` vào tủ, rồi chat:
+
+```
+Đọc hd1.docx, tách theo điều khoản, soi từng điều rồi gộp thành checklist
+```
+
+*(hoặc bất kỳ chuỗi 3 bước nào mà bước đầu sẽ `blocked`)*
+
+| Quan sát trong **Nhật ký** | Nghĩa là |
+|---|---|
+| T-01 hỏng → T-02 và T-03 hiện **`không làm được vì bước trước chưa xong`**, **0 lượt, $0** | ✅ lan truyền chặn chạy đúng |
+| T-02 khởi động **cùng giây** T-01 báo hỏng | ❌ **lỗi 20/08 tối**: `blocked` đang bị tính là "phụ thuộc đã xong". `Scheduler.run` lan truyền theo `failed`, mà `blocked` không vào `failed` |
+| T-02/T-03 chạy rồi tự nói *"chưa có file nào từ bước trước"* | ❌ cùng lỗi trên — và đây là bản đắt tiền của nó |
+| Có task nào chạm `max_turns` khi chỉ đi tìm file không có | ❌ nhân viên thiếu input phải trả `blocked` **ngay lần đọc hỏng đầu tiên**, không dò tới hết lượt |
+
+> ⚠ **Kiểm luôn SỔ CHI PHÍ ở bước này** — 🖱 Tổng quan → chi phí ca vừa chạy. Ca đo được có một task chạy 9 lượt tool trong 29 giây mà sổ ghi **$0**: nhánh `max_turns` ở `worker.ts` ném lỗi và **vứt mất biến `usage`** đã cộng dồn (nhánh bị ngắt ngay bên trên thì truyền đúng). Task nào có lượt tool trong log mà $0 trong sổ = ❌ **ghi nhận, tiền đang biến mất**.
+
+> ⚠⚠ **Và đọc kỹ câu cuối Trợ lý nói với bạn.** Ca đo được trả về: *"cần bạn xuất/chuyển hợp đồng này sang PDF hoặc file văn bản rồi gửi lại"* — trong khi `library/text/hd1.docx.txt` **đã nằm sẵn trên đĩa từ lúc thả file**. Bất kỳ câu nào bảo bạn làm bằng tay một việc hệ thống đã làm xong = ❌ ghi nhận.
+
+---
+
+### 🔴 Bước 7 — CHẠY LẠI: việc đã xong có được tận dụng không?
+
+> **Vì sao có bước này.** Hôm nay câu trả lời là **KHÔNG**, và bài test tồn tại để đo lúc nào nó thành **có**. Mỗi lần chạy sinh `plan_id` mới → `artifacts/<plan-mới>/T-01/` rỗng → mọi bước làm lại từ đầu, trả tiền lại. Việc đã xong nằm **mồ côi** trong thư mục của ca cũ. `agentco resume` chưa tồn tại (§4 nợ #2).
+
+**Bước 7a — dựng ca "xong một nửa".** Cho hai bước đầu chạy được, bước ba hỏng. Cách rẻ nhất: hạ `max_turns` của `Người gộp` xuống `2` trong `roles/nguoi-gop.yaml`, rồi chạy bài 6 với một `.md` hoặc `.txt` đọc được.
+
+🖱 Xác nhận trạng thái mong muốn: T-01 ✅ · T-02 ✅ · T-03 ❌. Ghi lại **chi phí ca** và **đường dẫn `artifacts/<plan_id>/`**.
+
+**Bước 7b — trả `max_turns` về cũ, rồi gõ LẠI đúng câu vừa rồi.**
+
+| Quan sát | Nghĩa là |
+|---|---|
+| Bảng kê Trợ lý ghi ca đó là **`UNFINISHED (2/3 steps)`** | ✅ việc dở hiện ra như một đầu vào bình thường (§6b ①) |
+| Trợ lý **dùng lại** 2 file cũ, chỉ giao lại bước 3 | ✅ đúng mục tiêu — và nó **tự quyết**, không có nút nào cả |
+| **Cả ba** chạy lại từ đầu, `plan_id` mới, thư mục kết quả mới | 🟡 ghi lại con số: bao nhiêu $ trả lại cho việc đã nằm trên đĩa |
+| Kết quả cũ bị **ghi đè** hoặc biến mất | ❌ nghiêm trọng — khung `artifacts/<plan_id>/` sinh ra chính để chặn cái này |
+
+**Bước 7c — nhãn ÔI phải bật lên khi nguồn đổi.** 🖱 Thả đè một bản `.docx` mới cùng tên vào tủ (hoặc sửa file gốc), rồi mở lại bảng chi tiết Trợ lý → lớp bảng kê kết quả.
+
+| Quan sát | Nghĩa là |
+|---|---|
+| File cũ mang nhãn **`(STALE — its source changed…)`** | ✅ so `mtime` chạy đúng |
+| Không có nhãn nào | ❌ ghi nhận — đây là chốt DUY NHẤT ngăn một checklist nói về hợp đồng đã bị thay |
+| Nhãn ôi bật lên cho **cả file vừa mới sinh** | ❌ so `>=` thay vì `>`. Nhãn kêu bừa thì người dùng học cách bỏ qua nó |
+
+**Bước 7d — `/resume` cho ca bị NGẮT (đường thứ hai, khác hẳn 7a–7b).** 🖱 Chạy một ca 3 bước, gõ `/stop` giữa chừng. Rồi gõ `/status`.
+
+| Quan sát | Nghĩa là |
+|---|---|
+| `/status` nói *"còn N việc dở… gõ /resume"* | ✅ ca dở là **trạng thái**, không phải một thông báo đã trôi qua |
+| Mở lại tab / bật lại daemon → có một dòng **mời** chạy tiếp trong chat | ✅ phát ở `bindBus`, và `chat.jsonl` giữ lại |
+| Ca tự chạy tiếp mà không hỏi | ❌ **nghiêm trọng** — bạn vừa gõ `/stop`, tự chạy tiếp là ghi đè quyết định đó |
+| `/resume` → **0 lượt lập kế hoạch**, kết quả rơi vào ĐÚNG thư mục `artifacts/<plan_id>/` cũ | ✅ cả hai chốt của §6b ② |
+
+> ⚠ **Đừng trông chờ 7a–7b dựng được ca "xong một nửa" dễ dàng.** Tính tới 21/08 **chưa từng quan sát được** một ca chạy được vài bước rồi hỏng ở bước sau — mọi ca hỏng đều chết ở bước một. Con số "% hoá đơn trả lại" vẫn là **phỏng đoán**, và bài này tồn tại để biến nó thành số đo.
+
 **Chi phí:** $0.30 – $1.50. Nếu sau khi có tủ tài liệu mà con số này **giảm rõ**, đó là số đo đáng ghi vào `SESSIONS_MEMORY` §7.
 
 ---

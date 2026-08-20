@@ -22,7 +22,7 @@
  * `office.say()`.
  */
 
-export type CommandName = 'stop' | 'approve' | 'reject' | 'status' | 'help' | 'clear';
+export type CommandName = 'stop' | 'approve' | 'reject' | 'status' | 'help' | 'clear' | 'resume';
 
 export interface CommandSpec {
   name: CommandName;
@@ -36,6 +36,15 @@ export const COMMANDS: readonly CommandSpec[] = [
   { name: 'approve', aliases: ['approve', 'ok', 'y'], help: 'Duyệt thứ đang chờ bạn' },
   { name: 'reject', aliases: ['reject', 'no', 'n'], help: 'Từ chối thứ đang chờ bạn' },
   { name: 'status', aliases: ['status', 'st'], help: 'Đang chạy gì, đã tốn bao nhiêu' },
+  /**
+   * Chạy tiếp ca bị NGẮT — không lập kế hoạch lại, không tốn một lượt model.
+   *
+   * Là một LỆNH chứ không phải một nút, vì nó phải chạy được cả qua Telegram
+   * (bridge là mục tiêu tối thượng, và ở đó sơ đồ không tồn tại). Và nó phải là
+   * hành động TƯỜNG MINH của người dùng: tự chạy tiếp lúc bật daemon nghĩa là
+   * một lần crash âm thầm tiêu tiền của họ. → SPEC-offices.md §6b
+   */
+  { name: 'resume', aliases: ['resume', 'tiep'], help: 'Chạy tiếp việc còn dở của ca vừa bị ngắt' },
   /**
    * Cùng TÊN với `/clear` của Claude Code là có chủ ý: người dùng đã quen phản
    * xạ đó, và ý nghĩa ở đây khớp. Nhưng nó KHÔNG bao giờ đi tới CLI — danh sách
@@ -155,9 +164,51 @@ export function helpText(unknown?: string): string {
  * `doc-1.md`, ngăn Kết quả cũng có `doc-1.md`. Đoán bừa một bên là làm sai việc
  * của người dùng một cách im lặng — nên hỏi lại, bằng code, 0 token.
  */
+/**
+ * Một tài liệu, nhìn từ HAI phía. → SPEC-library.md §4.4
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NGƯỜI DÙNG GÕ TÊN HỌ NHÌN THẤY; MODEL PHẢI NHẬN ĐƯỜNG MỞ ĐƯỢC.           │
+ * │                                                                          │
+ * │ Nút Chép ở ngăn Tủ tài liệu đưa `library/files/hd1.docx` — đúng thứ họ    │
+ * │ thấy trên màn hình. Nhưng `.docx` là file nén, không tool nào mở trực     │
+ * │ tiếp; đường mở được là `library/text/hd1.docx.txt`. Trước 20/08 hai thứ   │
+ * │ này là MỘT chuỗi, nên cái nào cũng sai một phía.                          │
+ * │                                                                          │
+ * │ ⚠ User chốt và nói rõ đây KHÔNG phải phá luật *"đường dẫn người dùng gõ  │
+ * │ là chính xác, chép nguyên văn"* mà là **SỬA luật**: thứ họ chỉ đích danh  │
+ * │ là một TÀI LIỆU, không phải một chuỗi byte. Giữ nguyên văn cái chuỗi mà   │
+ * │ đánh mất tài liệu thì mới là làm sai ý họ.                                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface ReadableRef {
+  /** Chuỗi người dùng (hoặc model) được phép gõ — thứ hiện trên giao diện. */
+  ref: string;
+  /** Chuỗi đi tới model. Bằng `ref` với mọi thứ vốn đã mở được. */
+  open: string;
+}
+
+/** Tra một chuỗi người ta gõ về đúng một tài liệu. Tên trần trùng → `undefined`. */
+function lookupRef(
+  raw: string,
+  known: readonly ReadableRef[],
+): { hit?: ReadableRef; clash?: ReadableRef[] } {
+  // Khớp đủ trước, cả hai phía: họ có thể dán đường hiển thị (nút Chép) HOẶC
+  // đường mở được (bảng kê trong prefix Trợ lý nêu đường này).
+  const exact = known.find((k) => k.ref === raw || k.open === raw);
+  if (exact) return { hit: exact };
+
+  const base = (p: string): string => p.split('/').pop() ?? p;
+  const matches = known.filter((k) => base(k.ref) === raw || base(k.open) === raw);
+  // Cùng một tài liệu khớp qua hai cửa thì KHÔNG phải trùng lặp.
+  const distinct = [...new Map(matches.map((k) => [k.open, k])).values()];
+  if (distinct.length > 1) return { clash: distinct };
+  return distinct[0] ? { hit: distinct[0] } : {};
+}
+
 export function resolveFileRefs(
   text: string,
-  known: readonly string[],
+  known: readonly ReadableRef[],
 ): { text: string; problem?: string } {
   // `@` phải đứng đầu chuỗi hoặc sau khoảng trắng — `ten@mail.com` không phải
   // tham chiếu file. Dừng ở khoảng trắng: tên có dấu cách thì dùng đường dẫn
@@ -176,19 +227,15 @@ export function resolveFileRefs(
     const typed = m[2]!.replace(/\\/g, '/');
     const tail = /[.,;:)\]}]+$/.exec(typed)?.[0] ?? '';
     const raw = tail ? typed.slice(0, -tail.length) : typed;
-    let hit = known.find((p) => p === raw);
-    if (!hit) {
-      const matches = known.filter((p) => p.split('/').pop() === raw);
-      if (matches.length > 1) {
-        return {
-          text,
-          problem:
-            `Có ${matches.length} file tên "${raw}", mình không đoán bạn muốn cái nào:\n` +
-            matches.map((p) => `  ${p}`).join('\n') +
-            `\nDán lại đường dẫn đầy đủ nhé — nút Chép ở ngăn Tủ tài liệu và Kết quả cho đúng chuỗi đó.`,
-        };
-      }
-      hit = matches[0];
+    const { hit, clash } = lookupRef(raw, known);
+    if (clash) {
+      return {
+        text,
+        problem:
+          `Có ${clash.length} file tên "${raw}", mình không đoán bạn muốn cái nào:\n` +
+          clash.map((k) => `  ${k.ref}`).join('\n') +
+          `\nDán lại đường dẫn đầy đủ nhé — nút Chép ở ngăn Tủ tài liệu và Kết quả cho đúng chuỗi đó.`,
+      };
     }
     if (!hit) {
       return {
@@ -198,9 +245,11 @@ export function resolveFileRefs(
           `Kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn.`,
       };
     }
-    // Bỏ `@`, giữ đường dẫn đã xác minh. Model nhận một chuỗi khớp CHÍNH XÁC
-    // thứ nó đã thấy trong bảng kê, nên nó chỉ việc chép sang `inputs`.
-    out = out.replace(m[0], `${m[1]}${hit}${tail}`);
+    // Bỏ `@`, thay bằng đường NHÂN VIÊN MỞ ĐƯỢC — không nhất thiết là chuỗi họ
+    // vừa gõ. `@hd1.docx` ra `library/text/hd1.docx.txt`, vì `.docx` gốc không
+    // tool nào mở được và một đường dẫn chết là cách đắt nhất để tôn trọng
+    // nguyên văn. → `ReadableRef`
+    out = out.replace(m[0], `${m[1]}${hit.open}${tail}`);
   }
   return { text: out };
 }
@@ -227,7 +276,7 @@ export function resolveFileRefs(
  */
 export function pickReadable(
   paths: readonly string[],
-  known: readonly string[],
+  known: readonly ReadableRef[],
 ): { ok: string[]; missing: string[] } {
   const ok: string[] = [];
   const missing: string[] = [];
@@ -235,17 +284,14 @@ export function pickReadable(
   for (const raw of paths) {
     const p = raw.replace(/\\/g, '/').replace(/^\.\//, '').trim();
     if (!p) continue;
-    const exact = known.find((k) => k === p);
-    if (exact) {
-      if (!ok.includes(exact)) ok.push(exact);
-      continue;
-    }
-    // Tên trần: chỉ nhận khi có ĐÚNG MỘT ứng viên. Hai file cùng tên ở hai kho
-    // thì đoán bừa là đọc nhầm tài liệu rồi trả lời rất thuyết phục — kết cục
-    // tệ nhất trong mọi kết cục.
-    const byName = known.filter((k) => k.split('/').pop() === p);
-    if (byName.length === 1) {
-      if (!ok.includes(byName[0]!)) ok.push(byName[0]!);
+    // Tên trần chỉ nhận khi có ĐÚNG MỘT ứng viên — hai file cùng tên ở hai kho
+    // thì đoán bừa là đọc nhầm tài liệu rồi trả lời rất thuyết phục, kết cục tệ
+    // nhất trong mọi kết cục. `lookupRef` giữ luật đó cho cả hai cửa.
+    const { hit } = lookupRef(p, known);
+    // Đường MỞ ĐƯỢC, y như cửa `@`: worker ẩn `lookup` cũng chỉ có `Read`/`Grep`,
+    // nên đưa nó một `.docx` là đưa một file nó không mở nổi.
+    if (hit) {
+      if (!ok.includes(hit.open)) ok.push(hit.open);
       continue;
     }
     if (!missing.includes(p)) missing.push(p);

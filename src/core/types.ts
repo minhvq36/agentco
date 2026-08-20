@@ -694,11 +694,37 @@ export type FailureKind =
 
 export class RunError extends Error {
   readonly kind: FailureKind;
+  /**
+   * Token ĐÃ TIÊU trước khi lỗi nổ. → SPEC-token-economy.md §5
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THIẾU TRƯỜNG NÀY LÀ TIỀN BIẾN MẤT KHỎI SỔ — ĐO ĐƯỢC 20/08.              │
+   * │                                                                          │
+   * │ Ca `P-260820-2219-5ltb`: `nguoi-gop` gọi 9 lượt tool trong 29 giây rồi   │
+   * │ chạm `max_turns`. `worker.ts` ném `RunError` và **vứt biến `usage`** đã  │
+   * │ cộng dồn, nên `usage.jsonl` ghi `0 lượt, $0`. Người dùng trả tiền thật   │
+   * │ cho một dòng ghi $0.                                                     │
+   * │                                                                          │
+   * │ Và nó rơi đúng chỗ đau nhất: `max_turns` theo định nghĩa là kiểu hỏng    │
+   * │ ĐẮT NHẤT — nó chạy tới kịch trần lượt. Cùng lớp với `budget` và          │
+   * │ `rate_limit` (nhánh này còn trả task về hàng đợi rồi chạy lại từ đầu).   │
+   * │                                                                          │
+   * │ Nhánh bị NGẮT vốn đã làm đúng (`stoppedReceipt(…, usage, …)`) — nên đây  │
+   * │ không phải một cơ chế mới, chỉ là bịt ba đường còn lại vào cùng một chỗ. │
+   * │ → SESSIONS_MEMORY §2 "Sổ chi phí không được nói sai câu nào"             │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  readonly usage: Usage | undefined;
 
-  constructor(message: string, kind: FailureKind, options?: { cause?: unknown }) {
+  constructor(
+    message: string,
+    kind: FailureKind,
+    options?: { cause?: unknown; usage?: Usage },
+  ) {
     super(message, options);
     this.name = 'RunError';
     this.kind = kind;
+    this.usage = options?.usage;
   }
 }
 

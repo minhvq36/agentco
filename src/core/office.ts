@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Một VĂN PHÒNG đang chạy — chỗ mọi thứ gặp nhau.
  *
  * → docs/SPEC-offices.md
@@ -16,13 +16,15 @@ import { loadOffice, type LoadedOffice } from './config.js';
 import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
-import { ArtifactStore } from './artifacts.js';
+import { docPaths } from '../library/names.js';
+import { ArtifactStore, isStale } from './artifacts.js';
 import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId, requestOf, type PlanDraft } from './assistant.js';
 import {
   helpText,
   parseInput,
   pickReadable,
+  type ReadableRef,
   readingNote,
   resolveFileRefs,
   type ParsedInput,
@@ -151,6 +153,14 @@ export class Office {
     // Bóc tài liệu chạy NGẦM (§10) nên nó phải có đường báo cho giao diện — nếu
     // không thì dòng "đang đọc…" đứng im cho tới lần người dùng bấm mở tủ.
     this.library = new LibraryStore(loaded.paths, () => this.emitLibrary());
+    /**
+     * Tài liệu kẹt vì THIẾU CÔNG CỤ thì thử lại một lần lúc dựng văn phòng.
+     *
+     * Khởi động lại daemon là đúng thời điểm nguyên nhân vừa biến mất: người ta
+     * chạy `npm install`, nâng phiên bản, rồi `stop`+`start`. Bắt họ tự nhớ đi
+     * xoá và thả lại từng file là bắt họ dọn hộ mình. → `retryUnindexed`
+     */
+    this.library.retryUnindexed();
     this.artifacts = new ArtifactStore(loaded.paths);
     this.assistant = new Assistant(loaded);
     this.assistant.resumeFrom(this.readSessionId());
@@ -213,9 +223,17 @@ export class Office {
     return this.currentPlan;
   }
 
-  /** Company gắn bus vào đây. Mọi sự kiện tự động mang `office` và `plan_id`. */
+  /**
+   * Company gắn bus vào đây. Mọi sự kiện tự động mang `office` và `plan_id`.
+   *
+   * ⚠ Lời mời chạy tiếp phát Ở ĐÂY, không phải trong constructor — đã dẫm 20/08.
+   * Constructor chạy trước khi `PlanStore` được dựng (`resumable()` nổ) VÀ trước
+   * khi có bus, nên câu mời rơi vào hư không. Cùng một chỗ sai đẻ ra hai triệu
+   * chứng, và triệu chứng thứ hai thì im lặng — đúng loại chỉ lộ ra khi chạy thật.
+   */
   bindBus(fn: (e: AgentEvent) => void): void {
     this.emitFn = fn;
+    this.offerResume();
   }
 
   emit(e: AgentEventBody & { plan_id?: string | null }): void {
@@ -418,11 +436,28 @@ export class Office {
    * `paths` của một lượt `lookup`. Hai danh sách riêng cho cùng một câu hỏi thì
    * sẽ lệch nhau vào đúng ngày ai đó thêm một kho thứ ba.
    */
-  private readablePaths(): string[] {
-    return [
-      ...this.library.list().map((d) => `library/files/${d.name}`),
-      ...this.artifacts.list().map((a) => a.path),
-    ];
+  private readablePaths(): ReadableRef[] {
+    /**
+     * ⚠ MỖI TÀI LIỆU CÓ HAI CHUỖI, VÀ CẢ HAI ĐỀU PHẢI NHẬN. → `ReadableRef`
+     *
+     * `ref` = thứ hiện trên giao diện và thứ nút Chép đưa vào ô chat
+     * (`library/files/hd1.docx`). `open` = đường nhân viên mở được
+     * (`library/text/hd1.docx.txt`). Bỏ `ref` đi thì nút Chép gãy ngay lập tức;
+     * bỏ `open` đi thì ta quay lại đúng ca hỏng 20/08.
+     *
+     * Tài liệu chưa dùng được (`docPaths` không trả `open`) thì KHÔNG có mặt ở
+     * đây — `@` vào nó phải nhận câu "không tìm thấy", không phải một đường dẫn
+     * chết đi tiếp tới nhân viên.
+     */
+    const docs: ReadableRef[] = [];
+    for (const d of this.library.list()) {
+      const { open, original } = docPaths(d.name, d.ext, d.state);
+      if (!open) continue;
+      docs.push({ ref: `library/files/${d.name}`, open });
+      // PDF: bản gốc là một đường hợp lệ theo đúng nghĩa của nó, nêu riêng.
+      if (original && original !== open) docs.push({ ref: original, open: original });
+    }
+    return [...docs, ...this.artifacts.list().map((a) => ({ ref: a.path, open: a.path }))];
   }
 
   /**
@@ -777,8 +812,45 @@ export class Office {
         );
       }
 
+      /**
+       * Chạy tiếp ca bị ngắt. 0 lượt model — kế hoạch đã có và đã trả tiền.
+       * → `Office.resume` · SPEC-offices.md §6b
+       */
+      case 'resume': {
+        const ready = this.resumable();
+        if (!ready) {
+          return reply('Không có việc nào đang dở cả. Nhắn cho mình việc mới nhé.');
+        }
+        if (this.state === 'working') {
+          return reply('Văn phòng đang bận. Đợi xong ca này rồi gõ /resume nhé.');
+        }
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say: `Chạy tiếp ${ready.left} việc còn dở${ready.request ? ` của "${ready.request}"` : ''}. Mình không chia lại việc — kế hoạch cũ vẫn còn.`,
+        });
+        // `void`: lệnh trả lời NGAY, ca chạy nền — y như đường `run()` thường.
+        void this.resume().catch((err: unknown) => {
+          this.emit({
+            type: 'master.message',
+            role: 'assistant',
+            say: err instanceof Error ? err.message : 'Chưa chạy tiếp được.',
+          });
+        });
+        return reply('');
+      }
+
       case 'status': {
         if (!this.currentRecord) {
+          const ready = this.resumable();
+          if (ready) {
+            // Ca dở là TRẠNG THÁI của văn phòng, không phải một thông báo đã
+            // trôi qua — nên nó phải trả lời được câu "giờ đang thế nào".
+            return reply(
+              `Đang rảnh, nhưng còn ${ready.left} việc dở của "${ready.request}". ` +
+                `Gõ /resume để làm nốt — mình không chia lại việc nên không tốn thêm lượt nào.`,
+            );
+          }
           return reply(
             `Đang rảnh. Văn phòng có ${this.loaded.roles.size} nhân viên, ` +
               `${this.assistant.assignableRoles().size} người đang trực.`,
@@ -853,9 +925,18 @@ export class Office {
    * đóng khung đường dẫn) chạy y nguyên: một kế hoạch tới từ cửa khác vẫn phải
    * qua đúng những cửa kiểm của kế hoạch bình thường.
    */
+  /**
+   * `resumePlan` — kế hoạch ĐÃ CÓ, chỉ còn phần chưa chạy. → `resume()`
+   *
+   * Đi qua ĐÚNG hàm này chứ không phải một bản sao rút gọn: `linkDeps`,
+   * `validate`, `missingInputs`, sổ chi phí, báo cáo, `finish` — tất cả đều
+   * phải chạy y hệt. Hai bản mã của cùng một phép toán sẽ lệch (luật 19/08), và
+   * bản chạy hiếm hơn là bản lệch trước.
+   */
   async run(
     request: string,
     draft?: PlanDraft,
+    resumePlan?: Plan,
   ): Promise<{ plan_id: string; report: string; usage: Usage }> {
     this.assertLive();
     if (this.state === 'working') {
@@ -868,7 +949,10 @@ export class Office {
     // Bản ghi công việc tồn tại TỪ TRƯỚC khi lập kế hoạch: nếu lập kế hoạch
     // fail thì người dùng vẫn phải thấy "đã có một việc, và nó hỏng ở đâu".
     const record: PlanRecord = {
-      plan_id: newPlanId(),
+      // DÙNG LẠI id cũ khi chạy tiếp: `artifacts/<plan_id>/` là khung theo ca,
+      // nên id mới nghĩa là kết quả mới rơi vào một thư mục khác và phần đã làm
+      // xong thành mồ côi — đúng chuyện `resume` sinh ra để tránh.
+      plan_id: resumePlan?.plan_id ?? newPlanId(),
       office: this.id,
       request,
       status: 'planning',
@@ -931,14 +1015,19 @@ export class Office {
       // không phải chuyện hai bên chưa hiểu nhau. → `planFriction`
       // Kế hoạch tới từ cửa cứu hộ thì KHÔNG gọi model lần nữa — nó đã được trả
       // tiền ở lượt `route()` vừa rồi. `usage` cũng đã tính ở đó, nên ở đây là 0.
-      const planned = draft
-        ? { value: this.assistant.adopt(draft, request, record.plan_id), usage: emptyUsage() }
-        : await this.mailbox
-            .lock(() => this.assistant.plan(request, record.plan_id))
-            .catch((err: unknown) => {
-              this.planFriction++;
-              throw err;
-            });
+      // Chạy tiếp thì kế hoạch ĐÃ CÓ và ĐÃ TRẢ TIỀN — không gọi model lần nào.
+      // Đây là cả điểm của `resume`: phần đắt nhất của một ca hỏng là những
+      // lượt đã tiêu, và làm lại kế hoạch là tiêu thêm cho một thứ đang có sẵn.
+      const planned = resumePlan
+        ? { value: { kind: 'plan' as const, plan: resumePlan }, usage: emptyUsage() }
+        : draft
+          ? { value: this.assistant.adopt(draft, request, record.plan_id), usage: emptyUsage() }
+          : await this.mailbox
+              .lock(() => this.assistant.plan(request, record.plan_id))
+              .catch((err: unknown) => {
+                this.planFriction++;
+                throw err;
+              });
       usage = addUsage(usage, planned.usage);
       this.logAssistantUsage('plan', planned.usage);
 
@@ -1222,7 +1311,7 @@ export class Office {
 
       // Nhớ kết quả để bàn giao cho việc đang xếp hàng — xem inish().
       this.lastArtifacts = receipts.flatMap((r) => r.artifacts);
-      this.savePending(result.pending);
+      this.savePending(record.plan_id, result.pending);
       this.saveSessionId();
       /**
        * Khối "kết quả đã lưu tại" bị CHẶN ở hai nhánh, vì hai lý do khác nhau:
@@ -2137,14 +2226,169 @@ export class Office {
   // nhị phân. Thay bằng `ArtifactStore`, nhốt trong `artifacts/` và stream.
   // → src/core/artifacts.ts
 
-  readPending(): TaskBrief[] {
-    const file = path.join(this.loaded.paths.state, 'pending.json');
-    if (!fs.existsSync(file)) return [];
+  /**
+   * Artifact nào ĐÃ ÔI: nguồn của nó đổi sau khi nó được ghi. → `isStale`
+   *
+   * Quan hệ "file này sinh ra từ file kia" KHÔNG phải phỏng đoán — `plan.json`
+   * ghi rõ từng task đọc gì (`inputs`) và ghi ra gì (`outputs`). Ta chỉ việc so
+   * `mtime` hai đầu.
+   *
+   * Chỉ chạy cho ca CHƯA XONG và chỉ ≤ `MANIFEST_PLANS` ca được hiện, nên nó
+   * đọc nhiều nhất vài file JSON nhỏ mỗi lần dựng prefix. Ca đã xong không cần:
+   * kết quả trọn vẹn thì "ôi" là chuyện của lần chạy sau, không phải của việc
+   * quyết định có dùng lại một mớ dở dang hay không.
+   */
+  private staleIn(
+    planId: string,
+    paths: readonly string[],
+    mtimes: ReadonlyMap<string, string>,
+  ): Set<string> {
+    const out = new Set<string>();
+    let plan: Plan | undefined;
     try {
-      return JSON.parse(fs.readFileSync(file, 'utf8')) as TaskBrief[];
+      const file = path.join(this.loaded.paths.tasks, `${planId}.plan.json`);
+      if (!fs.existsSync(file)) return out;
+      plan = JSON.parse(fs.readFileSync(file, 'utf8')) as Plan;
     } catch {
-      return [];
+      // Không đọc được kế hoạch thì KHÔNG đoán bừa là ôi. Dán nhãn cảnh báo sai
+      // còn tệ hơn không dán: người dùng học cách bỏ qua nhãn đó.
+      return out;
     }
+
+    const norm = (p: string): string => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+    for (const t of plan.tasks ?? []) {
+      // `mtime` của một input đọc THẲNG từ đĩa: nguồn thường là tài liệu trong
+      // tủ, và tủ không nằm trong bảng kê kết quả.
+      const srcTimes: string[] = [];
+      for (const i of t.inputs ?? []) {
+        try {
+          srcTimes.push(fs.statSync(safeJoin(this.loaded.dir, i.path)).mtime.toISOString());
+        } catch {
+          /* nguồn đã biến mất — không kết luận gì, `missingInputs` lo ca đó */
+        }
+      }
+      if (srcTimes.length === 0) continue;
+
+      const owned = new Set((t.outputs ?? []).map((o) => norm(o.path)));
+      for (const p of paths) {
+        const made = mtimes.get(p);
+        // `outputs` có thể là một THƯ MỤC (ca "mỗi điều khoản một file"), nên
+        // vừa so bằng vừa so tiền tố — cùng luật với `contains` ở scheduler.
+        const mine = owned.has(norm(p)) || [...owned].some((o) => norm(p).startsWith(`${o}/`));
+        if (mine && made && isStale(made, srcTimes)) out.add(p);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Việc còn dở của ca bị NGẮT. → SPEC-offices.md §6b
+   *
+   * Nhận cả hình dạng cũ (mảng trần, chưa có `plan_id`) để một lần nâng cấp
+   * không làm mất việc đang chờ của người dùng — nhưng ca đó không chạy tiếp
+   * được, và `resumable()` nói thẳng ra thay vì im lặng bỏ qua.
+   */
+  readPending(): { plan_id: string; tasks: TaskBrief[] } {
+    const file = path.join(this.loaded.paths.state, 'pending.json');
+    if (!fs.existsSync(file)) return { plan_id: '', tasks: [] };
+    try {
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+      if (Array.isArray(raw)) return { plan_id: '', tasks: raw as TaskBrief[] };
+      const o = raw as { plan_id?: string; tasks?: TaskBrief[] };
+      return { plan_id: o.plan_id ?? '', tasks: o.tasks ?? [] };
+    } catch {
+      return { plan_id: '', tasks: [] };
+    }
+  }
+
+  /**
+   * Ca bị ngắt có chạy tiếp được không — và nếu có thì còn bao nhiêu việc.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐÂY LÀ CA `resume` DUY NHẤT KHÔNG PHẢI ĐOÁN GÌ (user chốt 20/08 tối).    │
+   * │                                                                          │
+   * │ Ca này **chưa bao giờ được lập kế hoạch lại**: `/stop`, hết hạn mức,      │
+   * │ daemon crash. Vẫn đúng `plan_id` đó, vẫn đúng danh sách task đó, receipt  │
+   * │ nằm trên đĩa. Không có gì để khớp, nên không có gì để đoán sai.           │
+   * │                                                                          │
+   * │ Khác hẳn ca *"người dùng gõ lại một yêu cầu tương tự"* — ca đó ta CỐ Ý    │
+   * │ không tự khớp, chỉ nói ra mớ dở dang qua bảng kê rồi để planner quyết.    │
+   * │ → `artifacts.ts` `isStale`                                               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  resumable(): { plan_id: string; left: number; request: string } | undefined {
+    const { plan_id, tasks } = this.readPending();
+    if (tasks.length === 0) return undefined;
+    // Hình dạng cũ không mang `plan_id` ⇒ không biết ghi kết quả vào đâu.
+    if (!plan_id) return undefined;
+    if (!fs.existsSync(path.join(this.loaded.paths.tasks, `${plan_id}.plan.json`))) return undefined;
+    const rec = this.plans.list().find((p) => p.plan_id === plan_id);
+    return { plan_id, left: tasks.length, request: rec?.request ?? '' };
+  }
+
+  /**
+   * Một dòng mời chạy tiếp, phát lúc văn phòng nối bus. 0 token.
+   *
+   * Việc dở được MỜI RA, KHÔNG tự chạy — ba lý do:
+   *
+   *  1. Tự chạy lúc bật daemon = một lần crash âm thầm tiêu tiền người dùng.
+   *     Cùng luật đã chốt cho trí nhớ Trợ lý: đừng gắn ngữ nghĩa vào việc
+   *     tắt/bật daemon, đó là việc hạ tầng (cập nhật, crash, reboot).
+   *  2. Ca dở thường tới từ `/stop` — tức là người dùng vừa NÓI dừng. Tự chạy
+   *     tiếp là ghi đè lên một quyết định họ vừa ra.
+   *  3. Một dòng chat để họ đáp là HỘI THOẠI, không phải quản lý trạng thái —
+   *     đúng thứ họ muốn khi nói *"tự thông minh, không phải nút bấm"*.
+   *
+   * Câu phải nói được cả ba thứ người dùng cần để quyết: **còn bao nhiêu việc**,
+   * **của ca nào**, và **chạy tiếp thì tốn gì** — vì nỗi lo thật ở khoảnh khắc
+   * đó là "bấm vào có mất thêm tiền không". Câu trả lời là *không thêm lượt lập
+   * kế hoạch nào*, và nói ra được thì nó thành một quyết định dễ.
+   */
+  private offerResume(): void {
+    const ready = this.resumable();
+    if (!ready) return;
+    this.emit({
+      type: 'master.message',
+      role: 'assistant',
+      say:
+        `Ca trước còn ${ready.left} việc chưa chạy${ready.request ? ` — "${ready.request}"` : ''}. ` +
+        `Gõ /resume là mình làm nốt, dùng lại kế hoạch cũ nên không tốn thêm lượt chia việc nào. ` +
+        `Hoặc cứ nhắn việc mới, phần đã xong vẫn nằm trong ngăn Kết quả.`,
+      plan_id: null,
+    });
+  }
+
+  /**
+   * Chạy tiếp ca dở — DÙNG LẠI đúng `plan_id`, chỉ chạy những task chưa chạy.
+   *
+   * ⚠ KHÔNG bao giờ tự chạy lúc khởi động daemon. Cùng lý do đã chốt cho trí
+   * nhớ Trợ lý: gắn ngữ nghĩa vào việc tắt/bật daemon nghĩa là một lần crash âm
+   * thầm tiêu tiền của người dùng. Nó được MỜI ra ở ô chat, và người dùng nói
+   * "ừ" — đó là hội thoại, không phải quản lý trạng thái.
+   */
+  async resume(): Promise<{ plan_id: string; report: string; usage: Usage }> {
+    const ready = this.resumable();
+    if (!ready) throw new RunError('Không có việc nào đang dở để chạy tiếp.', 'other');
+
+    const file = path.join(this.loaded.paths.tasks, `${ready.plan_id}.plan.json`);
+    const full = JSON.parse(fs.readFileSync(file, 'utf8')) as Plan;
+    const left = new Set(this.readPending().tasks.map((t) => t.task_id));
+
+    /**
+     * Cắt `deps` trỏ tới task ĐÃ XONG.
+     *
+     * Task đã xong không còn trong kế hoạch rút gọn, nên để nguyên `deps` là
+     * `validate` báo *"phụ thuộc không tồn tại"* và chặn chính cái ca ta đang
+     * cứu. Bỏ được vì "đã xong" nghĩa đúng như thế — và file nó sinh ra vẫn nằm
+     * trên đĩa, nên chốt `missingInputs` lúc phóng vẫn kiểm được thật sự.
+     */
+    const plan: Plan = {
+      ...full,
+      tasks: full.tasks
+        .filter((t) => left.has(t.task_id))
+        .map((t) => ({ ...t, deps: t.deps.filter((d) => left.has(d)) })),
+    };
+    return this.run(plan.request, undefined, plan);
   }
 
   // ── nội bộ
@@ -2258,12 +2502,29 @@ export class Office {
       byPlan.set(key, list);
     }
 
-    const titles = new Map(this.plans.list().map((p) => [p.plan_id, p.request]));
+    const records = new Map(this.plans.list().map((p) => [p.plan_id, p]));
+    const titles = new Map([...records].map(([id, p]) => [id, p.request]));
+    const mtimes = new Map(files.map((a) => [a.path, a.mtime]));
     const groups = [...byPlan.entries()];
     const shown = groups.slice(0, MANIFEST_PLANS);
 
     const blocks: string[] = [];
     for (const [planId, paths] of shown) {
+      /**
+       * CA CHƯA XONG PHẢI NÓI RA LÀ CHƯA XONG. → SPEC-artifacts.md §2.6
+       *
+       * Trước 20/08 bảng kê chỉ liệt kê file, không phân biệt "kết quả của một
+       * ca chạy trọn" với "mớ dở dang của một ca chết giữa chừng". Người dùng gõ
+       * lại yêu cầu thì Trợ lý làm lại từ đầu — trả tiền lần nữa cho việc đã nằm
+       * sẵn trên đĩa — hoặc tệ hơn, dùng lại một file dở như thể nó đã xong.
+       *
+       * Đây là nửa TẤT ĐỊNH của bài toán "chạy tiếp": ta không đoán *"đây có
+       * phải việc cũ không"*, ta chỉ nói ra thứ đang có và để planner quyết với
+       * đầy đủ ngữ cảnh câu người dùng vừa gõ. → `isStale`
+       */
+      const rec = records.get(planId);
+      const unfinished = rec && rec.status !== 'done' ? rec : undefined;
+      const stale = unfinished ? this.staleIn(planId, paths, mtimes) : new Set<string>();
       /**
        * Tên việc là thứ làm đường dẫn có nghĩa — nhưng CẮT NGẮN HẲN.
        *
@@ -2281,13 +2542,23 @@ export class Office {
        * không giúp model quyết gì.
        */
       const title = titles.get(planId);
+      const name = title ? truncateToTokens(title, 30) : '(một việc cũ, không còn tên trong sổ)';
+      // Nói bằng SỐ BƯỚC, không bằng tên trạng thái nội bộ: "2/3 bước" nói được
+      // cả *"còn dở"* lẫn *"dở tới đâu"*, mà `status: 'blocked'` thì không.
+      const progress = unfinished
+        ? ` — ⚠ UNFINISHED (${unfinished.steps.filter((s) => s.status === 'done').length}/${
+            unfinished.steps.length
+          } steps). Files below are partial results you may reuse as inputs.`
+        : '';
       blocks.push(
         [
-          `## ${title ? truncateToTokens(title, 30) : '(một việc cũ, không còn tên trong sổ)'}`,
+          `## ${name}${progress}`,
           // Sắp theo đường dẫn trong MỘT ca: `T-01` phải đứng trước `T-02`.
           // `list()` sắp theo `mtime` nên task chạy xong sau lại lên trên, và
           // một danh sách nhảy số là một danh sách người đọc phải dò lại.
-          ...[...paths].sort().map((p) => `- ${p}`),
+          ...[...paths]
+            .sort()
+            .map((p) => (stale.has(p) ? `- ${p} (STALE — its source changed after this was written)` : `- ${p}`)),
         ].join('\n'),
       );
     }
@@ -2630,14 +2901,21 @@ export class Office {
     this.writeJson(path.join(this.loaded.paths.tasks, `${planId}.${r.task_id}.receipt.json`), r);
   }
 
-  /** Task chưa chạy — để `agentco resume` chạy tiếp thay vì làm lại từ đầu. */
-  private savePending(pending: TaskBrief[]): void {
+  /**
+   * Task chưa chạy — để chạy tiếp thay vì làm lại từ đầu. → SPEC-offices §6b
+   *
+   * ⚠ PHẢI ghi kèm `plan_id`. Bản trước lưu một mảng `TaskBrief` trần, và thiếu
+   * đúng mảnh đó thì không chạy tiếp được: `artifacts/<plan_id>/` là khung theo
+   * ca, nên không biết ca nào là ghi kết quả mới vào một thư mục khác và mớ dở
+   * dang cũ thành mồ côi — đúng chuyện `resume` sinh ra để tránh.
+   */
+  private savePending(planId: string, pending: TaskBrief[]): void {
     const file = path.join(this.loaded.paths.state, 'pending.json');
     if (pending.length === 0) {
       fs.rmSync(file, { force: true });
       return;
     }
-    this.writeJson(file, pending);
+    this.writeJson(file, { plan_id: planId, tasks: pending });
   }
 
   private sessionFile(): string {

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/misc';
 import { api } from '@/lib/api';
 import { agentHue, agentInk, agentWash } from '@/lib/colors';
+import { Markdown } from '@/lib/markdown';
 import { labelFor, toast, useApp } from '@/lib/store';
 import type { AgentEvent, PlanRecord, PlanStatus } from '@/lib/types';
 
@@ -242,7 +243,15 @@ function PlanDetail({
 
       <TokenPanel log={log} />
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+      {/*
+        `min-h-[8rem]` là SÀN, không phải trang trí.
+
+        Khối này là thứ duy nhất co giãn trong cột; mọi khối khác đều `flex-none`.
+        Không có sàn thì bốn khối cứng bên trên + báo cáo bên dưới ép nó xuống
+        vài chục pixel, và người dùng thấy một ô "không cuộn được" — nó CÓ cuộn,
+        chỉ là cửa sổ nhỏ hơn một dòng. Đây đúng triệu chứng user báo 21/08.
+      */}
+      <div className="min-h-[8rem] flex-1 overflow-y-auto px-3 py-2">
         {log.length === 0 ? (
           <div className="px-1 py-4 text-[13px] text-muted">Việc này chưa ghi được sự kiện nào.</div>
         ) : (
@@ -254,9 +263,77 @@ function PlanDetail({
         )}
       </div>
 
-      {plan.report && (
-        <div className="flex-none border-t border-line px-4 py-3 text-[13px] text-ink">{plan.report}</div>
-      )}
+      {plan.report && <Report text={plan.report} />}
+    </div>
+  );
+}
+
+/**
+ * Câu tổng kết của Trợ lý, ở đáy bảng chi tiết một ca.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG UX 21/08 — MỘT CHỮ `flex-none` NUỐT CẢ NHẬT KÝ.                      │
+ * │                                                                          │
+ * │ Bản trước: `<div className="flex-none …">{plan.report}</div>`. Trong một  │
+ * │ cột flex, `flex-none` nghĩa là *"không bao giờ co lại"* — nên một báo cáo │
+ * │ dài 30 dòng chiếm 30 dòng, và khối nhật ký (thứ DUY NHẤT co giãn) bị ép   │
+ * │ xuống gần bằng không.                                                     │
+ * │                                                                          │
+ * │ Người dùng báo đúng cảm giác đó: *"không biết các worker trao đổi cái gì, │
+ * │ cảm giác như không lăn chuột được — chỉ làm được khi kéo khung rộng ra"*. │
+ * │ Kéo rộng ra thì chữ xuống dòng ít hơn ⇒ báo cáo thấp xuống ⇒ nhật ký có   │
+ * │ lại chỗ. Tức là bố cục đang bắt người dùng chỉnh cửa sổ để đọc được nội   │
+ * │ dung — cùng lớp với luật *"thao tác dọn dẹp của hệ thống không được nằm   │
+ * │ ở tay người dùng"*.                                                       │
+ * │                                                                          │
+ * │ ⚠ Sàn `min-h` cho nhật ký là CHƯA ĐỦ. Sàn chỉ cứu khi khung đủ cao; khung │
+ * │ thấp thì hai bên lại tranh nhau. Phải chặn từ phía gây ra: báo cáo KHÔNG  │
+ * │ được phép cao hơn một tỉ lệ cố định.                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ba tầng, và thứ tự có chủ ý:
+ *
+ *  1. **Mặc định gấp lại 3 dòng.** Nhật ký giữ gần như toàn bộ chiều cao ngay
+ *     khi mở ra — đó là thứ người ta mở bảng này để xem.
+ *  2. **Mở ra thì trần 40%.** Vẫn còn 60% cho nhật ký kể cả với báo cáo dài
+ *     nhất. Cuộn nằm TRONG khối này.
+ *  3. Nút bấm nói **"Thu gọn"/"Xem đầy đủ"**, không phải một mũi tên — người
+ *     dùng phải biết mình sắp mất chỗ hay được thêm chỗ.
+ *
+ * Dùng `Markdown` chứ không in chuỗi trần: báo cáo là chữ Trợ lý viết ra và nó
+ * có gạch đầu dòng, đường dẫn, đôi khi cả bảng — hệt như trong ô chat.
+ */
+function Report({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="flex max-h-[40%] flex-none flex-col border-t border-line">
+      <div className="flex flex-none items-center gap-2 px-4 pt-2.5">
+        <span className="text-xs font-medium text-muted">Kết quả</span>
+        <span className="flex-1" />
+        <button
+          className="rounded px-1.5 py-0.5 text-xs text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? 'Thu gọn' : 'Xem đầy đủ'}
+        </button>
+      </div>
+      {/*
+        Lúc gấp lại dùng TRẦN CHIỀU CAO, không dùng `line-clamp`.
+
+        `line-clamp` chạy trên `-webkit-box` và chỉ đáng tin với MỘT dòng chảy
+        văn bản. Báo cáo đi qua `Markdown` nên bên trong là nhiều khối block
+        (đoạn văn, danh sách việc, đôi khi cả bảng) — clamp lúc đó hoặc không
+        cắt gì, hoặc cắt ở chỗ không ai đoán được. `max-h` thì tất định bất kể
+        bên trong có cấu trúc gì.
+      */}
+      <div
+        className={`min-h-0 px-4 pb-3 pt-1 text-[13px] text-ink ${
+          open ? 'overflow-y-auto' : 'max-h-[4.5rem] overflow-hidden'
+        }`}
+      >
+        <Markdown text={text} />
+      </div>
     </div>
   );
 }

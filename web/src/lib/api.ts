@@ -177,6 +177,19 @@ export const api = {
       { method: 'POST', body: file, headers: { 'content-type': 'application/octet-stream' } },
     ),
 
+  /**
+   * Bóc lại một tài liệu chưa dùng được. → SPEC-library.md §4.5
+   *
+   * Có mặt vì `state` là bản ghi về QUÁ KHỨ, còn nguyên nhân thì sửa được: một
+   * PDF kẹt `chưa lập chỉ mục` vì máy thiếu bộ đọc phải bóc lại được sau khi bộ
+   * đọc có mặt, chứ không bắt người dùng xoá rồi thả lại file của chính họ.
+   */
+  libraryReextract: (id: string, name: string) =>
+    call<{ docs: LibraryDoc[] }>(
+      `/api/office/${enc(id)}/library/reextract?name=${enc(name)}`,
+      { method: 'POST' },
+    ),
+
   /** Xoá hẳn. Một mức duy nhất — tài liệu là file của chính người dùng (SPEC §6). */
   removeDoc: (id: string, name: string) =>
     call<{ docs: LibraryDoc[] }>(`/api/office/${enc(id)}/library?name=${enc(name)}`, {

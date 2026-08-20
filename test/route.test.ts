@@ -235,11 +235,31 @@ test('buildPlan: đường dẫn trỏ task CỦA CHÍNH kế hoạch này thì 
 
 // ─────────────────────────────────────────────────────────────── pickReadable
 
+/**
+ * Mỗi mục là một CẶP từ 20/08: `ref` = chuỗi hiện trên giao diện · `open` =
+ * chuỗi nhân viên mở được. Với `.md` hai cái bằng nhau; `hd1.docx` là ca thật
+ * làm chết cả một ca chạy vì bản gốc nén không tool nào mở nổi. → §4.4
+ */
+const pair = (p: string) => ({ ref: p, open: p });
 const KNOWN = [
-  'library/files/doc-1.md',
-  'library/files/doc-2.md',
-  'artifacts/P-01/T-01/vi/doc-1.md',
+  pair('library/files/doc-1.md'),
+  pair('library/files/doc-2.md'),
+  pair('artifacts/P-01/T-01/vi/doc-1.md'),
+  { ref: 'library/files/hd1.docx', open: 'library/text/hd1.docx.txt' },
 ];
+
+test('pickReadable: worker ẩn `lookup` cũng nhận ĐƯỜNG MỞ ĐƯỢC, không phải bản gốc', () => {
+  // `lookup` chỉ có `Read`/`Grep`/`Glob` — đưa nó một `.docx` là đưa một file
+  // nó không mở nổi, y hệt ca đã giết `P-260820-2219-5ltb`.
+  assert.deepEqual(pickReadable(['library/files/hd1.docx'], KNOWN), {
+    ok: ['library/text/hd1.docx.txt'],
+    missing: [],
+  });
+  assert.deepEqual(pickReadable(['hd1.docx'], KNOWN), {
+    ok: ['library/text/hd1.docx.txt'],
+    missing: [],
+  });
+});
 
 test('pickReadable: đường dẫn đủ thì nhận, tên trần duy nhất cũng nhận', () => {
   assert.deepEqual(pickReadable(['library/files/doc-2.md'], KNOWN), {

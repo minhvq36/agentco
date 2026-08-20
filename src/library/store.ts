@@ -21,6 +21,7 @@ import type { OfficePaths } from '../core/paths.js';
 import { estimateTokens } from '../core/tokens.js';
 import {
   HANDLING,
+  docPaths,
   formatBytes,
   formatTokens,
   safeName,
@@ -204,6 +205,54 @@ export class LibraryStore {
     return rec;
   }
 
+  /**
+   * BÓC LẠI một tài liệu chưa dùng được. → SPEC-library.md §4.5
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MỘT TÀI LIỆU HỎNG VÌ LÝ DO ĐÃ ĐƯỢC SỬA THÌ HỎNG MÃI MÃI — CHO TỚI 20/08. │
+   * │                                                                          │
+   * │ `hd2.pdf` vào tủ lúc chưa có bộ đọc PDF nên nhận `unindexed`. Chiều hôm   │
+   * │ đó `pdfjs-dist` thành phụ thuộc thật — và tài liệu vẫn `unindexed`, kèm   │
+   * │ nguyên câu *"Cài: npm i pdfjs-dist"* nằm trong prefix Trợ lý. Không có    │
+   * │ đường nào bóc lại: người dùng phải XOÁ rồi thả lại chính file của mình.   │
+   * │                                                                          │
+   * │ Trạng thái `state` là một BẢN GHI VỀ QUÁ KHỨ, không phải một sự thật      │
+   * │ vĩnh viễn — mà nguyên nhân của nó thì thay đổi được (cài thêm công cụ,    │
+   * │ nâng phiên bản, sửa bug). Thiếu đường quay lại thì bản ghi đó hoá thành   │
+   * │ một lời tuyên án.                                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Trả `false` khi không có tài liệu đó hoặc bản gốc đã biến mất khỏi đĩa.
+   */
+  reextract(rawName: string): boolean {
+    const rec = this.docs.get(rawName);
+    if (!rec) return false;
+    if (!fs.existsSync(path.join(this.filesDir, rec.name))) return false;
+    // Dọn sidecar cũ TRƯỚC: bóc lại mà thất bại thì thà không có bản text còn
+    // hơn giữ một bản cũ mà `state` mới nói là chưa bóc được.
+    this.dropSidecar(rec.name);
+    delete rec.note;
+    rec.state = 'pending';
+    this.save();
+    void this.pump();
+    return true;
+  }
+
+  /**
+   * Thử lại MỘT LẦN lúc khởi động cho tài liệu thiếu công cụ. → `reextract`
+   *
+   * ⚠ CHỈ `unindexed`, cố ý không đụng `failed`. Hai trạng thái nói hai chuyện
+   * khác hẳn: `unindexed` = *máy này chưa có công cụ* (đổi được, và thường đã
+   * đổi đúng vào lúc khởi động lại sau khi cài); `failed` = *file này hỏng*
+   * (không đổi). Thử lại `failed` mỗi lần bật daemon là đốt CPU cho một kết
+   * quả biết trước, và với file lớn thì nó làm chậm mọi lần khởi động.
+   */
+  retryUnindexed(): number {
+    const stuck = [...this.docs.values()].filter((d) => d.state === 'unindexed');
+    for (const d of stuck) this.reextract(d.name);
+    return stuck.length;
+  }
+
   /** Xoá hẳn: bản gốc + văn bản đã bóc. Một mức, không có "lưu trữ". → §6 */
   remove(rawName: string): boolean {
     const rec = this.docs.get(rawName);
@@ -286,22 +335,35 @@ export class LibraryStore {
     if (usable.length === 0) return '';
 
     const lines = usable.map((d) => {
-      // Chỉ dán nhãn trạng thái KHÁC ready, và chỉ những trạng thái BỀN. Nhãn
-      // ở đây là để Trợ lý đừng giao việc "tìm bằng từ khoá" cho một file mà
-      // cơ chế đó không chạy được — nó là ràng buộc thật, không phải trang trí.
+      /**
+       * ĐƯỜNG DẪN NÊU RA PHẢI LÀ ĐƯỜNG NHÂN VIÊN MỞ ĐƯỢC. → `docPaths`, §4.4
+       *
+       * Bản trước luôn nêu `library/files/<tên>` rồi dặn "nhét đường dẫn đó vào
+       * `inputs`". Với `.docx` đó là một file nhị phân — cả một ca ba bước chết
+       * ở bước một (20/08) trong khi bản `.txt` đã nằm sẵn cạnh nó.
+       *
+       * Ba thứ vẫn phải khớp nhau từng ký tự: chuỗi ở đây, chuỗi nút Chép, và
+       * chuỗi planner ghi vào `inputs`. Nút Chép đưa đường dẫn NGƯỜI DÙNG nhận
+       * ra (`library/files/…`) và `readablePaths` dịch nó sang đường mở được —
+       * nên hai bên vẫn gặp nhau, chỉ khác lớp.
+       */
+      const { open, original } = docPaths(d.name, d.ext, d.state);
+      const shape = d.shape ?? d.ext;
+
+      // Không có đường nào mở được thì ĐỪNG NÊU ĐƯỜNG DẪN. Nêu ra là mời Trợ lý
+      // giao một task chắc chắn hỏng — đúng chuyện vừa xảy ra.
+      if (!open) return `- ${d.name} — ${shape} (chưa bóc được, chưa dùng được)`;
+
+      // Nhãn chỉ cho trạng thái BỀN, và chỉ nói ràng buộc thật: cái nào tìm
+      // được bằng từ khoá, cái nào không.
       const flag =
-        d.state === 'ready'
-          ? ''
-          : d.state === 'image-only'
-            ? ' (bản chụp — phải đọc từng trang, không tìm được bằng từ khoá)'
-            : d.state === 'unindexed'
-              ? ' (chưa lập chỉ mục — phải nói rõ số trang)'
-              : ' (lỗi, chưa dùng được)';
-      // ĐƯỜNG DẪN ĐỦ, không phải tên trần (20/08). Ba thứ cùng phải khớp nhau
-      // từng ký tự: chuỗi ở đây, chuỗi nút Chép đưa vào ô chat, và chuỗi
-      // planner ghi vào `inputs`. Nêu tên trần thì planner phải TỰ GHÉP tiền tố
-      // `library/files/` — một phép ghép nhỏ, và là một chỗ nữa để sai.
-      return `- library/files/${d.name} — ${d.shape ?? d.ext}${flag}`;
+        d.state === 'image-only'
+          ? ' (bản chụp — đọc từng trang, KHÔNG tìm được bằng từ khoá)'
+          : d.state === 'unindexed'
+            ? ' (chưa bóc — đọc theo trang, KHÔNG tìm được bằng từ khoá)'
+            : '';
+      const alt = original ? ` (original for exact pages: ${original})` : '';
+      return `- ${open} — ${shape}${flag}${alt}`;
     });
 
     return [
@@ -309,9 +371,9 @@ export class LibraryStore {
       '',
       ...lines,
       '',
-      'Extracted text for keyword search is in `library/text/`.',
-      'When a task needs one of these, put its path in that task\'s `inputs` so the employee opens it',
-      'directly instead of searching for it.',
+      'Each path above is one an employee can open directly — put it in that task\'s `inputs`',
+      'instead of making them search. Where a `.pdf` original is listed too, give BOTH: the text',
+      'to find the passage, the original to read those exact pages.',
     ].join('\n');
   }
 
@@ -507,20 +569,33 @@ export class LibraryStore {
         d.state === 'ready'
           ? (d.preview ?? '')
           : `**${stateLabel(d.state)}** — ${d.note ?? ''} ${d.preview ?? ''}`.trim();
+      // Cột "Mở bằng" là cột QUAN TRỌNG NHẤT của bảng này, và trước 20/08 nó
+      // không tồn tại — ai đọc INDEX.md phải tự suy ra đường nào mở được, và
+      // Trợ lý suy sai. → `docPaths`
+      const { open, original } = docPaths(d.name, d.ext, d.state);
+      const openCell = open
+        ? original
+          ? `\`${open}\` + \`${original}\` (đọc kỹ theo trang)`
+          : `\`${open}\``
+        : '— chưa dùng được';
       return `| ${d.name} | ${d.shape ?? d.ext} | ${formatBytes(d.bytes)} | ${
         d.tokens ? formatTokens(d.tokens) : '—'
-      } | ${note.replace(/\|/g, '/').replace(/\n/g, ' ')} |`;
+      } | ${openCell} | ${note.replace(/\|/g, '/').replace(/\n/g, ' ')} |`;
     });
 
     const lines = [
       `# Tủ tài liệu — ${docs.length} tài liệu`,
       '',
-      'Bản gốc ở `library/files/`. Văn bản đã bóc ở `library/text/` (dùng `Grep` ở đó).',
-      'Với PDF: tìm trong `library/text/`, thấy dòng nào thì xem mốc `--- trang N ---`',
-      'gần nhất phía trên, rồi `Read` bản gốc đúng trang đó.',
+      '**Dùng đúng đường ở cột "Mở bằng".** Luật khác nhau theo định dạng:',
       '',
-      '| Tên | Loại | Cỡ | ~Token | Mở đầu / cấu trúc |',
-      '|---|---|---|---|---|',
+      '- `.md .txt .csv .json .yaml` — bản gốc CHÍNH LÀ văn bản, đọc thẳng `library/files/`.',
+      '- `.docx .xlsx .pptx` — bản gốc là file nén, **không tool nào mở trực tiếp được**.',
+      '  Chỉ dùng bản đã bóc ở `library/text/<tên>.txt`.',
+      '- `.pdf` — dùng CẢ HAI: `Grep` bản text để tìm, thấy dòng nào thì xem mốc',
+      '  `--- trang N ---` gần nhất phía trên, rồi `Read` bản gốc đúng trang đó.',
+      '',
+      '| Tên | Loại | Cỡ | ~Token | Mở bằng | Mở đầu / cấu trúc |',
+      '|---|---|---|---|---|---|',
       ...rows,
       '',
       `_Cập nhật ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — dựng bằng code, không qua model._`,

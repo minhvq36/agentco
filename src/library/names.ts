@@ -25,6 +25,67 @@ export const HANDLING: Record<string, Handling> = {
 };
 
 /**
+ * ĐƯỜNG DẪN NHÂN VIÊN MỞ ĐƯỢC — hàm thuần, suy từ `(ext, state)`. → SPEC-library §4.4
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CA HỎNG CÓ THẬT ĐÃ ĐẺ RA HÀM NÀY (20/08, `P-260820-2219-5ltb`).          │
+ * │                                                                          │
+ * │ Bảng kê tủ nêu `library/files/hd1.docx` rồi dặn *"put its path in that    │
+ * │ task's inputs"*. Trợ lý làm ĐÚNG y lời dặn — và tool `Read` không mở      │
+ * │ được `.docx` nhị phân. Cả ca ba bước chết ở bước một, $0.25, trong khi    │
+ * │ `library/text/hd1.docx.txt` đã nằm sẵn trên đĩa từ lúc thả file vào.      │
+ * │                                                                          │
+ * │ ⚠ LUẬT KHÁC NHAU THEO ĐỊNH DẠNG, và bản trước nói như thể nó giống nhau: │
+ * │                                                                          │
+ * │   text (md/txt/csv/…)  bản gốc CHÍNH LÀ text        → files/             │
+ * │   zip  (docx/xlsx/pptx) bản gốc KHÔNG MỞ ĐƯỢC BẰNG GÌ → chỉ text/        │
+ * │   pdf                   bản gốc ĐỌC ĐƯỢC theo trang  → text/ + files/    │
+ * │                                                                          │
+ * │ Chỉ PDF mới đúng luật "text để TÌM, bản gốc để ĐỌC KỸ" (§3.1). Áp luật   │
+ * │ đó cho docx là chỉ nhân viên vào một file nhị phân.                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * THUẦN được vì `extractOne` chỉ ghi sidecar trên đúng một nhánh: `ready` và
+ * `kind !== 'text'`. `image-only`/`unindexed`/`failed` đều `return` trước đó.
+ * Nên "sidecar có tồn tại không" suy được từ trạng thái, không cần chạm đĩa —
+ * và hai bên không thể lệch nhau vì chỉ có một chỗ định nghĩa.
+ */
+export interface DocPaths {
+  /**
+   * Đường nhân viên mở được. **Thiếu = tài liệu chưa dùng được** — và lúc đó
+   * bảng kê KHÔNG được nêu đường dẫn nào, vì nêu ra là mời người ta đâm đầu vào.
+   */
+  open?: string;
+  /** Bản gốc, CHỈ nêu khi nó vừa đọc được vừa có ích THÊM (pdf đã bóc). */
+  original?: string;
+}
+
+export function docPaths(name: string, ext: string, state: string): DocPaths {
+  const files = `library/files/${name}`;
+  const text = `library/text/${name}.txt`;
+  const kind = HANDLING[ext];
+  // Đuôi không nhận thì KHÔNG có đường nào. Bỏ nhánh này là mọi đuôi lạ rơi vào
+  // nhánh `zip` và ta nêu một sidecar chưa bao giờ được ghi — test bắt đúng chỗ
+  // này ở vòng đầu.
+  if (!kind) return {};
+
+  if (kind === 'text') return { open: files };
+
+  if (state === 'ready') {
+    // pdf: nêu cả hai — mốc `--- trang N ---` trong bản text chỉ có nghĩa khi
+    // nhân viên với được tới bản gốc để `Read` đúng trang đó.
+    return kind === 'pdf' ? { open: text, original: files } : { open: text };
+  }
+
+  // Chưa bóc được. Bản gốc PDF vẫn đọc được (model nhìn trang như ảnh); bản gốc
+  // docx/xlsx/pptx thì không có đường nào.
+  if (kind === 'pdf' && (state === 'image-only' || state === 'unindexed')) {
+    return { open: files };
+  }
+  return {};
+}
+
+/**
  * Đuôi bị chặn CÓ CHỦ Ý, kèm câu nói cho người dùng.
  *
  * Danh sách này tồn tại để câu từ chối nói được *vì sao*, thay vì một câu

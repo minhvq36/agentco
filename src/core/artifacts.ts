@@ -28,6 +28,46 @@ import path from 'node:path';
 
 import type { OfficePaths } from './paths.js';
 
+/**
+ * VIỆC DỞ DANG HIỆN RA NHƯ MỘT ĐẦU VÀO BÌNH THƯỜNG. → SPEC-artifacts.md §2.6
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG LÀM "TỰ NHẬN RA ĐÂY LÀ VIỆC CŨ" (user chốt 20/08 tối).      │
+ * │                                                                          │
+ * │ Để tự khớp một yêu cầu mới với một ca hỏng cũ, hệ thống phải đoán ba lần │
+ * │ chồng nhau: *có phải cùng việc không* · *file cũ còn đúng không* · *task  │
+ * │ nào ứng với task nào* (kế hoạch mới chia việc khác đi thì `task_id` không │
+ * │ mang nghĩa gì qua hai lần chạy). Hai trong ba không quan sát được.        │
+ * │                                                                          │
+ * │ Và kiểu hỏng KHÔNG phải tốn tiền — mà là: nhân viên tách hợp đồng cũ ra   │
+ * │ 12 điều khoản · người dùng thay `hd1.docx` bằng bản mới · hệ thống "thông │
+ * │ minh" dùng lại 12 file cũ và trả về một checklist hoàn hảo, thuyết phục,  │
+ * │ **nói về một hợp đồng đã không còn tồn tại.** Cùng gốc với luật *"kho tri │
+ * │ thức không bao giờ chứa nội dung tài liệu"*: bản sao cũ THẮNG bản gốc.    │
+ * │                                                                          │
+ * │ ⇒ Không đoán "cùng một việc". Chỉ NÓI RA thứ đang nằm trên đĩa, kèm nhãn  │
+ * │   ôi/tươi, rồi để đường lập kế hoạch bình thường quyết định — nó vốn đã   │
+ * │   làm đúng việc đó mỗi ngày, và nó có trong tay câu người dùng vừa gõ.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * "Ôi" là thứ QUAN SÁT ĐƯỢC, không phải phỏng đoán: `plan.json` ghi rõ task nào
+ * đọc file nào và ghi ra file nào, nên so `mtime` hai đầu là xong. Nguồn mới hơn
+ * sản phẩm ⇒ sản phẩm đã ôi. 0 token, tất định.
+ *
+ * ⚠ So `>` chứ không `>=`: ghi xong trong cùng một giây là chuyện thường trên
+ * đĩa, và đánh ôi nhầm thì mọi kết quả vừa sinh đều mang nhãn cảnh báo — người
+ * dùng học cách bỏ qua nhãn đó, rồi bỏ qua luôn lần nó nói thật.
+ */
+export function isStale(artifactMtime: string, inputMtimes: readonly string[]): boolean {
+  if (inputMtimes.length === 0) return false;
+  const made = Date.parse(artifactMtime);
+  if (!Number.isFinite(made)) return false;
+  return inputMtimes.some((m) => {
+    const src = Date.parse(m);
+    return Number.isFinite(src) && src > made;
+  });
+}
+
 export interface ArtifactRecord {
   /** Đường dẫn tương đối với thư mục văn phòng: `artifacts/<plan_id>/<task_id>/x.md`. */
   path: string;

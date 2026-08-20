@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, FolderOpen, Trash2, Upload } from 'lucide-react';
+import { Download, FolderOpen, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -99,6 +99,27 @@ export function LibraryPanel() {
     }
   }
 
+  /**
+   * Bóc lại một tài liệu chưa dùng được. → SPEC-library.md §4.5
+   *
+   * KHÔNG hỏi lại: khác `remove`, thao tác này không mất gì cả — bản gốc vẫn
+   * nguyên, chỉ có bản text được dựng lại. Hỏi lại một việc không có hậu quả là
+   * dạy người dùng bấm "Đồng ý" mà không đọc, rồi họ bấm đúng như thế vào hộp
+   * thoại xoá.
+   */
+  async function reextract(doc: LibraryDoc) {
+    if (!officeId) return;
+    setBusy(true);
+    try {
+      const r = await api.libraryReextract(officeId, doc.name);
+      setDocs(r.docs);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Chưa bóc lại được tài liệu này.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (docs === null) return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
 
   return (
@@ -131,7 +152,7 @@ export function LibraryPanel() {
           {busy ? 'Đang tải lên…' : 'Thêm tài liệu'}
         </Button>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Kéo thả file vào đây cũng được. Nhận <b>pdf · docx · xlsx · pptx · md · txt · csv · json · yaml</b>.
+          Kéo thả file vào đây. Hỗ trợ mạnh <b>pdf · md · txt · csv · json · yaml</b>. Có hỗ trợ <b>docx · xlsx · pptx</b> nhưng cân nhắc bị giảm hiệu suất.
         </p>
         {/*
           Bóc văn bản chạy ngầm. Câu này đứng ở ĐẦU TỦ chứ không ở ô chat: việc
@@ -181,6 +202,25 @@ export function LibraryPanel() {
                   {/* Đường dẫn ĐỦ, không phải `d.name`: tủ tài liệu và ngăn Kết
                       quả được phép có file trùng tên. → ui/misc.tsx `CopyRef` */}
                   <CopyRef path={`library/files/${d.name}`} />
+                  {/*
+                    BÓC LẠI — chỉ hiện khi tài liệu CHƯA dùng được.
+                    Trạng thái là bản ghi về quá khứ, còn nguyên nhân thì sửa
+                    được (cài thêm bộ đọc, nâng phiên bản). Thiếu nút này thì
+                    cách duy nhất để thử lại là xoá rồi thả lại chính file của
+                    mình — một thao tác đáng sợ, và người dùng có thể không còn
+                    giữ bản gốc. → SPEC-library.md §4.5
+                  */}
+                  {d.state !== 'ready' && d.state !== 'pending' && d.state !== 'extracting' && (
+                    <button
+                      className="rounded p-1.5 text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink disabled:opacity-40"
+                      disabled={busy}
+                      onClick={() => void reextract(d)}
+                      aria-label={`Bóc lại ${d.name}`}
+                      title="Bóc lại — thử đọc lại tài liệu này"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </button>
+                  )}
                   <a
                     href={officeId ? api.docUrl(officeId, d.name) : '#'}
                     download={d.name}

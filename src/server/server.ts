@@ -176,7 +176,10 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
           name: office.name,
           state: office.currentState,
           plan: office.plan ?? null,
-          pending: office.readPending().length,
+          pending: office.readPending().tasks.length,
+          // Ca dở CHẠY TIẾP ĐƯỢC — khác `pending` ở chỗ nó đã kiểm đủ điều kiện
+          // (có `plan_id`, có `plan.json` trên đĩa). UI mời, không tự chạy.
+          resumable: office.resumable() ?? null,
           knowledge: office.knowledge.size,
           // Hai nguồn, hai vai trò khác nhau — đừng gộp:
           //   `chat`    = hội thoại ĐÃ GHI ĐĨA, sống sót qua mọi lần tắt daemon.
@@ -338,6 +341,17 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
           }
           throw err;
         }
+      }
+      // Bóc lại một tài liệu chưa dùng được. → SPEC-library.md §4.5
+      if (rest[0] === 'library' && rest[1] === 'reextract' && method === 'POST') {
+        const name = url.searchParams.get('name');
+        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        if (!office.library.reextract(decodeURIComponent(name))) {
+          return json(res, 404, { error: 'không có tài liệu này, hoặc bản gốc đã mất' });
+        }
+        // Trả danh sách NGAY, chưa đợi bóc xong: tài liệu về `pending` và giao
+        // diện hiện "đang đọc…" — bóc chạy ngầm, đúng như lúc mới thả file.
+        return json(res, 202, { docs: office.library.list() });
       }
       if (rest[0] === 'library' && rest[1] === 'file' && method === 'GET') {
         const name = url.searchParams.get('name');
