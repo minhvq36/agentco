@@ -1138,6 +1138,30 @@ Ba chốt sau bản vá:
 
 ⚠ **Trần chi phí KHÔNG phải thứ cần sửa ở ca này.** Nó chặn đúng lúc và đúng việc. Nới `max_usd` lên vô hạn là bỏ đúng cái phanh vừa hoạt động để chữa một triệu chứng nằm ở **báo cáo**. Khi một câu báo lỗi làm người dùng muốn tắt một cơ chế an toàn, hãy nghi câu báo lỗi trước.
 
+### 🔴 GIAO ĐỦ HÀNG ⇒ KHÔNG PHẢI `failed` (user chốt 21/08)
+
+Bản vá ở khối trên mới chỉ sửa **câu chữ**; nhãn trạng thái vẫn là `failed`. Ba lượt liền sau đó (`m78h` · `i9h2` · `yap2`) đều ghi ra file đầy đủ — `i9h2` **đúng 56/56 nhóm, không sai một con số** — và cả ba vẫn hiện chữ **hỏng** trên giao diện.
+
+Đếm cả buổi 21/08: **năm lượt, năm file hoàn chỉnh trên đĩa, đúng một nhãn ✅** — và cái nhãn ✅ đó rơi vào `d6v9`, lượt sai 45/51 nhóm.
+
+> Cái giá thật không phải một chữ xấu xí. Hệ thống **kêu sai bốn lần và im lặng đúng lần cần kêu**. Một cái chuông sai 80% thì người dùng học cách tắt nó — rồi lần cháy thật không ai nghe. Với người non-code đang tin hệ thống 100%, đó là toàn bộ vốn liếng uy tín của sản phẩm, và uy tín là thứ quyết định tệp người dùng có mở rộng được không.
+
+**Luật, suy từ đĩa chứ không suy từ cách vòng lặp chết:**
+
+| Đã hứa (`brief.outputs`) | Có trên đĩa | Trạng thái |
+|---|---|---|
+| n file | **đủ n** | **`done`** + một câu nhắc nhẹ về trần |
+| n file | m < n | `blocked` — dở dang, cần người dùng quyết |
+| n file | 0 | `failed` |
+
+Áp cho **cả bốn đường ra** (`budget` · `max_turns` · `stopped` · lỗi lạ).
+
+**Ba chốt đi kèm, thiếu một là hở:**
+
+1. **`blocked_on` phải RỖNG khi giao đủ hàng**, không chỉ đổi `status`. `worthLearning` đọc `!!blocked_on` như một tín hiệu độc lập — đổi mỗi `status` thì cửa hỏi-bài-học vẫn bắn và lại đẻ ra node rác. Nửa còn lại của cùng một bản vá.
+2. **Câu báo là GHI CHÚ, không phải cảnh báo.** Việc đã có kết quả, người dùng không cần làm gì: *"Đã làm xong và ghi ra X. Chỉ lưu ý nhỏ: việc này tốn hơn mức chi phí bạn đặt cho <vai trò>, nên nếu còn giao việc tương tự thì cân nhắc nới trần lên một chút."* Không đi qua kho tri thức — đây là chuyện của con người, và con người đọc ô chat.
+3. **Ta KHÔNG hứa nội dung đúng.** Vẫn chỉ khai đúng thứ `existsSync` biết, y như đường chạy thành công. Rủi ro file bị cắt giữa chừng có thật, nhưng nó **y hệt** đường chạy thành công hôm nay — không thêm một lời nói dối nào.
+
 ### Câu báo cáo phát ĐÚNG MỘT LẦN
 
 `master.message` mang câu báo cáo. `plan.finished` là sự kiện **cấu trúc** (trạng thái + tiền) và **cố ý không có `say`** — ngoại lệ duy nhất của bất biến "mọi sự kiện hướng người dùng phải có say", vì nó không hướng người dùng. `office.state` khi kết thúc chỉ nói trạng thái (`Xong việc.`), không lặp lại báo cáo.

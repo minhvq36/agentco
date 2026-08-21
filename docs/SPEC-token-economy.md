@@ -205,7 +205,23 @@ Ba điều rút ra, xếp theo mức đáng nhớ:
 > **Luật bổ sung sau khi đo (spec gốc thiếu):**
 > **Ưu tiên ít task lớn hơn nhiều task nhỏ.** Mỗi task gánh ~13K token overhead bất kể việc to hay nhỏ. Chỉ chẻ task khi có **song song thật** hoặc **cần role khác** — không chẻ để nhìn cho gọn. Đây là ràng buộc ngược với §7 `SPEC-2026-08-14-agentco.md` (scheduler); scheduler phải từ chối DAG có task tầm thường và gộp chúng lại.
 
-Khi chạm trần cứng: task chuyển `blocked` với `blocked_on: "budget"`, hiện lên UI, hỏi người dùng có nới không. **Không bao giờ tự nới.**
+### 🔴 `max_usd`: TRẦN LÀ CÁI PHANH CỦA NGƯỜI DÙNG, KHÔNG PHẢI CÁI THƯỚC CỦA TA (user chốt 21/08)
+
+> *"Nếu task nào khó thì phải cho nó có trần cao để nó còn hoàn thành job của nó chứ."*
+
+**`0` = không giới hạn, và đó là mặc định của schema.** `newRoleYaml` ghi sẵn một số **rộng** theo tier (`eco: 1.0` · `standard: 2.0`) để người dùng nhìn thấy và tự siết xuống khi đã biết việc của mình tốn bao nhiêu.
+
+Vì sao đổi: mặc định cũ là $0.4 ở template và $0.5 ở schema, trong khi đo được cùng ngày, đúng việc mà `pitch` của vai trò quảng cáo (*"đọc CSV, tính tổng hợp theo nhóm"*) tốn **$0.425 · $0.448 · $0.516** trên `standard`. Mặc định của TA nằm **dưới giá của công việc mà vai trò đó tồn tại để làm** — nó bắn trên đường hạnh phúc, mọi lần.
+
+Và một con số cho cả hai tier cũng sai: cùng việc, `eco` tiêu $0.157–0.179 còn `standard` $0.425–0.516 (**~2,7×**). Một trần chung thì vừa quá lỏng cho tier này vừa quá chặt cho tier kia.
+
+**Bất đối xứng quyết định hướng lệch:** chặn giữa chừng là **mất trắng** số tiền đã tiêu mà chưa có kết quả; còn đặt trần rộng thì việc nào tiêu ít vẫn chỉ tính tiền phần nó dùng. Lệch về phía rộng là lệch đúng hướng.
+
+⚠ `maxBudgetUsd` **không được truyền xuống SDK khi giá trị là 0** — truyền 0 là đặt trần bằng không, tức chặn ngay lượt đầu.
+
+**Sửa được trên giao diện**, cùng ô với mức model (`Inspector → Đổi model & giới hạn`): người dùng đổi tier là lúc duy nhất họ nghĩ về cái giá, và cùng một việc trên `deep` đắt gấp mấy lần trên `eco`. Tách ra hai màn hình là bắt họ nhớ quay lại sửa lần hai. Trước 21/08 hai con số này **không có mặt ở bất kỳ màn hình nào** — trong khi câu báo lỗi vẫn bảo người dùng *"nới max_usd trong roles/…yaml"*. Không phải nói dối, nhưng là **chỉ sai cửa**: số đó có sửa được, chỉ là không sửa được ở nơi người dùng đang đứng.
+
+Khi chạm trần cứng mà **chưa** giao đủ hàng: task chuyển `blocked`, hiện lên UI, hỏi người dùng có nới không. **Không bao giờ tự nới.** Chạm trần mà **đã** giao đủ hàng thì task là `done` — xem `SPEC-offices.md` §6.
 
 ### Đổi model giữa chừng — cho phép, và đắt ít hơn dự đoán
 

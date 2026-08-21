@@ -121,11 +121,23 @@ function ModelPicker({ node }: { node: CanvasNode }) {
   const current = isAssistant && node.tierInherited ? '' : (node.tier ?? 'standard');
   const [tier, setTier] = useState(current);
   const [busy, setBusy] = useState(false);
+  // Giữ dạng CHUỖI trong lúc gõ: number state biến "" thành 0 giữa chừng, và 0
+  // ở đây mang nghĩa "không giới hạn" — người dùng xoá ô để sửa sẽ vô tình bỏ trần.
+  const [usd, setUsd] = useState(String(node.maxUsd ?? 0));
+  const [turns, setTurns] = useState(String(node.maxTurns ?? 6));
 
   useEffect(() => {
     setTier(isAssistant && node.tierInherited ? '' : (node.tier ?? 'standard'));
+    setUsd(String(node.maxUsd ?? 0));
+    setTurns(String(node.maxTurns ?? 6));
     setOpen(false);
-  }, [node.id, node.tier, node.tierInherited, isAssistant]);
+  }, [node.id, node.tier, node.tierInherited, node.maxUsd, node.maxTurns, isAssistant]);
+
+  const usdNum = Number(usd);
+  const turnsNum = Number(turns);
+  const limitsOk =
+    Number.isFinite(usdNum) && usdNum >= 0 && Number.isInteger(turnsNum) && turnsNum >= 1;
+  const limitsDirty = !isAssistant && (usdNum !== (node.maxUsd ?? 0) || turnsNum !== (node.maxTurns ?? 6));
 
   const effective = tier || companyDefault;
 
@@ -142,12 +154,23 @@ function ModelPicker({ node }: { node: CanvasNode }) {
           }
         />
         <Row k="Model" v={<span className="font-mono text-[11.5px]">{node.model}</span>} />
+        {!isAssistant && (
+          <Row
+            k="Giới hạn một việc"
+            v={
+              <>
+                {node.maxUsd ? `tối đa $${node.maxUsd}` : 'không giới hạn tiền'}
+                {` · ${node.maxTurns ?? 6} bước`}
+              </>
+            }
+          />
+        )}
         <button
           className="mt-2 flex items-center gap-1.5 text-[13px] text-accent hover:underline"
           onClick={() => setOpen(true)}
         >
           <Pencil className="h-3.5 w-3.5" />
-          Đổi model
+          {isAssistant ? 'Đổi model' : 'Đổi model & giới hạn'}
         </button>
       </>
     );
@@ -189,6 +212,45 @@ function ModelPicker({ node }: { node: CanvasNode }) {
         Việc đang chạy giữ nguyên model cũ cho tới khi xong. Mức mới áp dụng cho việc giao từ giờ.
       </p>
 
+      {/*
+        Giới hạn nằm CHUNG ô với mức model, không tách màn hình riêng: người dùng
+        đổi tier là lúc duy nhất họ nghĩ về cái giá, và cùng một việc trên `deep`
+        đắt gấp mấy lần trên `eco`. Tách ra là bắt họ nhớ quay lại sửa lần hai.
+      */}
+      {!isAssistant && (
+        <div className="mt-4 border-t border-line pt-3">
+          <Label htmlFor="lim-usd">Giới hạn cho MỘT việc</Label>
+          <div className="mt-1.5 flex gap-2">
+            <div className="flex-1">
+              <Input
+                id="lim-usd"
+                type="number"
+                min="0"
+                step="0.5"
+                value={usd}
+                onChange={(e) => setUsd(e.target.value)}
+              />
+              <p className="mt-1 text-[11.5px] text-muted">tiền tối đa ($) · 0 = không giới hạn</p>
+            </div>
+            <div className="flex-1">
+              <Input
+                id="lim-turns"
+                type="number"
+                min="1"
+                step="1"
+                value={turns}
+                onChange={(e) => setTurns(e.target.value)}
+              />
+              <p className="mt-1 text-[11.5px] text-muted">số bước tối đa</p>
+            </div>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-muted">
+            Đặt <b>rộng tay</b>. Chạm giới hạn giữa chừng là mất trắng số tiền đã tiêu mà chưa có kết
+            quả — còn việc nào tiêu ít thì vốn dĩ đã chỉ tính tiền phần nó dùng.
+          </p>
+        </div>
+      )}
+
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
           Thôi
@@ -196,12 +258,16 @@ function ModelPicker({ node }: { node: CanvasNode }) {
         <Button
           size="sm"
           variant="primary"
-          disabled={tier === current || busy}
+          disabled={busy || !limitsOk || (tier === current && !limitsDirty)}
           onClick={async () => {
             setBusy(true);
             const ok = isAssistant
               ? await actions.setAssistantTier(tier || null)
-              : await actions.editAgent(node.role!, { model_tier: tier });
+              : await actions.editAgent(node.role!, {
+                  model_tier: tier,
+                  max_usd: usdNum,
+                  max_turns: turnsNum,
+                });
             setBusy(false);
             if (ok) setOpen(false);
           }}

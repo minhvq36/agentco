@@ -366,7 +366,79 @@ async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
  */
 export function worthLearning(receipts: readonly Receipt[], friction = 0): boolean {
   if (friction > 0) return true;
-  return receipts.some((r) => r.status !== 'done' || r.reasked || !!r.blocked_on || r.looped);
+  return receipts.some(agentFault);
+}
+
+/**
+ * TRỤC TRẶC NÀY CÓ PHẢI DO MỘT AGENT TRONG VĂN PHÒNG GÂY RA KHÔNG?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CÂU HỎI *"CỦA AI"* PHẢI ĐƯỢC TRẢ LỜI TRƯỚC CÂU HỎI *"HỌC ĐƯỢC GÌ"*.      │
+ * │ (user chốt 21/08)                                                        │
+ * │                                                                          │
+ * │ Bản trước bắn khi `status !== 'done'` — BẤT KỂ vì sao. Chạm trần chi phí │
+ * │ là `failed`, nên mọi lượt chạm trần đều bị hỏi *"học được gì"*. Model bị  │
+ * │ hỏi thì phải trả lời, và nó chỉ có đúng một thứ để kể: cái trần. Sản      │
+ * │ phẩm đo được ngày 21/08 — hai node gần như y hệt nhau:                   │
+ * │                                                                          │
+ * │   "Phan-tich-standard liên tục chạm trần chi phí … nên nới max_usd"      │
+ * │   "Việc nhóm+tổng hợp CSV có thể chạm trần … cân nhắc nới max_usd"       │
+ * │                                                                          │
+ * │ Ba thứ hỏng cùng lúc, và cái thứ hai là cái đắt:                         │
+ * │                                                                          │
+ * │  1. SAI NGƯỜI ĐỌC. Kinh nghiệm nằm trong prefix của MỌI worker. Worker   │
+ * │     không sửa được `max_usd` — nó không có tay để làm việc đó. Lời khuyên│
+ * │     ấy gửi cho CON NGƯỜI, mà con người không đọc kho tri thức; họ đọc ô  │
+ * │     chat, nơi câu đó đã được nói rồi. Ta trả tiền vĩnh viễn để nhắc lại  │
+ * │     một câu đã giao đúng cửa.                                            │
+ * │  2. TỰ CHUỐC LẤY. Node vào prefix → prefix dài ra → mỗi lượt đắt lên →   │
+ * │     **chạm trần dễ hơn**. Một bài học cảnh báo về chạm trần, mà cơ chế   │
+ * │     tồn tại của nó là làm tăng chi phí. Nó sản xuất ra chính vấn đề nó   │
+ * │     cảnh báo.                                                            │
+ * │  3. SẼ SAI. Ngày người dùng nới trần, node vẫn nói "hay chạm trần" — và  │
+ * │     node THẮNG, vì nó nằm sẵn trong đầu mọi nhân viên. Đúng lớp lỗi mà   │
+ * │     luật *"ghi CÁCH LÀM, không ghi KIẾN THỨC"* sinh ra để chặn.          │
+ * │                                                                          │
+ * │ ⚠ VÌ SAO KHÔNG LỌC BẰNG PROMPT: prompt ĐÃ cấm, bằng hai dòng riêng biệt  │
+ * │   (*"Không ghi con số, ngưỡng, giá"* và *"ghi CÁCH LÀM"*), và model vẫn  │
+ * │   ghi ra hai node về ngưỡng chi phí. Một luật chỉ sống trong prompt là    │
+ * │   một LỜI HỨA. Và LLM đặc biệt yếu ở đúng chỗ này — nó không phân biệt   │
+ * │   nổi *"tôi làm sai"* với *"môi trường quanh tôi chặn tôi lại"*, vì cả    │
+ * │   hai đều hiện ra trong ngữ cảnh của nó y hệt nhau: một lượt không xong. │
+ * │   Nên đừng hỏi model câu đó. **Ta biết chắc, bằng dữ liệu.**             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `FailureKind` phân hoạch sạch theo *ai sửa được*:
+ *
+ * | kiểu | ai gây ra | agent làm gì được |
+ * |---|---|---|
+ * | `budget` · `max_turns` | trần NGƯỜI DÙNG đặt | không — nó không sửa cấu hình |
+ * | `rate_limit` · `usage_limit` | hạ tầng / gói cước | không |
+ * | `auth` | cấu hình máy | không |
+ * | `stopped` | người dùng bấm Dừng | không, và đó không phải trục trặc |
+ * | `other` | có thể là chính nó | có |
+ *
+ * Còn `reasked` (trả sai định dạng) và `looped` (lặp thao tác) thì luôn là việc
+ * của chính agent — quan sát được trong luồng, model-independent.
+ */
+export function agentFault(r: Receipt): boolean {
+  // Quan sát được trong luồng `tool_use`, model-independent, luôn là việc của
+  // chính agent. Đứng trước vì nó chắc chắn nhất.
+  if (r.reasked || r.looped) return true;
+
+  /**
+   * Có `failure` ⇒ vòng lặp bị cắt TỪ BÊN NGOÀI, và `blocked_on` lúc đó là câu
+   * của HỆ THỐNG chứ không phải lời khai của nhân viên. Đây chính là chỗ bản
+   * vá đầu của tôi sai: tôi bỏ luôn `blocked_on` khỏi tín hiệu, và làm mất một
+   * ca có thật — nhân viên `done` nhưng tự ghi *"thiếu file thuật ngữ"* thì đó
+   * là bài học đắt nhất trong kho. Hai `blocked_on` khác nguồn, và `failure`
+   * chính là thứ phân biệt được chúng.
+   */
+  if (r.failure) return r.failure === 'other';
+
+  // Không có `failure` ⇒ vòng lặp chạy hết, mọi thứ dưới đây là NHÂN VIÊN TỰ
+  // KHAI. Lời khai của người trong cuộc, và nó đáng học.
+  return r.status !== 'done' || !!r.blocked_on;
 }
 
 /**

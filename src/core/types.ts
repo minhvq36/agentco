@@ -142,7 +142,31 @@ export const RoleSchema = z.object({
     .object({
       max_tokens: z.number().int().positive().default(60_000),
       max_turns: z.number().int().positive().default(15),
-      max_usd: z.number().positive().default(0.5),
+      /**
+       * Trần chi phí một task. **`0` = KHÔNG GIỚI HẠN**, và đó là mặc định.
+       *
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ TRẦN LÀ CÁI PHANH CỦA NGƯỜI DÙNG, KHÔNG PHẢI CÁI THƯỚC CỦA TA.     │
+       * │ (user chốt 21/08)                                                  │
+       * │                                                                    │
+       * │ Bản trước mặc định $0.5 ở schema và $0.4 ở template sinh vai trò.  │
+       * │ Đo được cùng ngày: đúng việc mà `pitch` của vai trò quảng cáo      │
+       * │ (*"đọc CSV, tính tổng hợp theo nhóm"*) tốn **$0.425 · $0.448 ·     │
+       * │ $0.516** trên tier `standard`. Tức mặc định của TA nằm DƯỚI giá    │
+       * │ của công việc mà vai trò đó tồn tại để làm — nó bắn trên đường     │
+       * │ hạnh phúc, mọi lần, và người dùng đọc chữ "hỏng" cho một việc      │
+       * │ chạy đúng.                                                         │
+       * │                                                                    │
+       * │ Một con số cho cả hai tier cũng sai: cùng việc, `eco` tiêu         │
+       * │ $0.157–0.179 còn `standard` $0.425–0.516 (~2,7×). Một trần chung   │
+       * │ thì vừa quá lỏng cho tier này vừa quá chặt cho tier kia.           │
+       * │                                                                    │
+       * │ ⇒ Mặc định KHÔNG chặn; `newRoleYaml` ghi sẵn một số RỘNG theo tier │
+       * │   để người dùng thấy và tự siết. Việc khó thì phải cho nó đủ chỗ   │
+       * │   mà làm xong — chặn giữa chừng là mất trắng số tiền đã tiêu.      │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      max_usd: z.number().nonnegative().default(0),
       /** Trần cho tri thức COLD (nạp theo task). HOT nằm trong prefix, tính riêng. */
       knowledge_pack: z.number().int().nonnegative().default(3_000),
     })
@@ -604,6 +628,24 @@ export interface Receipt extends ReceiptBody {
   wall_ms: number;
   /** true nếu worker trả sai schema và phải hỏi lại. Dùng để cảnh báo prompt kém. */
   reasked: boolean;
+
+  /**
+   * VÌ SAO lượt chạy kết thúc sớm — kiểu hỏng, không phải câu chữ.
+   * `undefined` = vòng lặp chạy hết bình thường.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CÓ ĐỂ TRẢ LỜI CÂU "LỖI NÀY CỦA AI" BẰNG CODE, KHÔNG BẰNG SUY ĐOÁN.       │
+   * │                                                                          │
+   * │ `blocked_on` đã mang thông tin này rồi — nhưng dưới dạng một câu tiếng   │
+   * │ Việt. Muốn quyết định gì dựa trên nó thì phải khớp chuỗi, mà khớp chuỗi   │
+   * │ trên câu chữ hiển thị là thứ sẽ vỡ đúng hôm ai đó sửa lại câu cho hay hơn.│
+   * │                                                                          │
+   * │ Người đọc trường này là `agentFault()` — cửa quyết định CÓ HỎI model      │
+   * │ "học được gì" hay không. Xem khối ở đó để biết vì sao câu hỏi *"của ai"*  │
+   * │ phải được trả lời trước câu hỏi *"học được gì"*.                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  failure?: FailureKind;
   /** Điểm đến quan sát được. Rỗng = task không tạo ra tác động nào nhìn thấy. */
   landed: Landing[];
 

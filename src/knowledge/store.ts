@@ -488,15 +488,11 @@ export class KnowledgeStore {
    * người khác nhau, và gộp là làm mất một trong hai.
    */
   private findTwin(text: string, scope: string): IndexEntry | undefined {
-    const terms = new Set(tokenize(text));
-    if (terms.size < 3) return undefined;
+    if (new Set(tokenize(text)).size < 3) return undefined;
     for (const e of this.byId.values()) {
       if (e.scope !== scope || this.superseded.has(e.id)) continue;
-      const other = new Set(tokenize(this.nodeCache.get(e.id)?.body ?? ''));
-      if (other.size === 0) continue;
-      let shared = 0;
-      for (const t of terms) if (other.has(t)) shared++;
-      if (shared / (terms.size + other.size - shared) >= TWIN_RATIO) return e;
+      const body = this.nodeCache.get(e.id)?.body ?? '';
+      if (twinScore(text, body) >= TWIN_RATIO) return e;
     }
     return undefined;
   }
@@ -799,14 +795,54 @@ const ECHO_RATIO = 0.6;
 /**
  * Hai bài học giống nhau tới mức nào thì coi là một. Jaccard trên tập từ.
  *
- * Đặt CAO (0.75) chứ không vừa phải: chặn nhầm là mất hẳn một bài học thật, còn
- * bỏ sót thì chỉ tốn một node mà Librarian (M1) gộp lại được sau. Lệch về phía
- * bỏ sót là lệch đúng hướng.
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÃ ĐO 21/08 — 0.75 QUÁ CAO, VÀ TIỀN ĐỀ BIỆN MINH CHO NÓ LÀ MỘT LỜI HỨA. │
+ * │                                                                          │
+ * │ Cặp trùng thật, cùng `scope: shared`, cách nhau chín phút:               │
+ * │                                                                          │
+ * │   "Phan-tich-standard liên tục chạm trần chi phí khi làm việc            │
+ * │    nhóm+tổng hợp CSV — nên nới max_usd trước khi giao việc dạng này."    │
+ * │   "Việc nhóm+tổng hợp CSV có thể chạm trần chi phí ở phan-tich-standard  │
+ * │    — cân nhắc nới max_usd trước khi giao việc tương tự."                 │
+ * │                                                                          │
+ * │ Jaccard đo được: **0.654**. Trượt ngưỡng 0.75, hai node cùng sống. Phần  │
+ * │ lệch nằm gần như trọn vẹn ở từ đệm — *liên tục* ↔ *có thể*, *nên* ↔      │
+ * │ *cân nhắc*, *dạng này* ↔ *tương tự*. Cùng một câu, hai giọng.            │
+ * │                                                                          │
+ * │ ⚠ Chú thích cũ biện minh cho 0.75 bằng câu *"bỏ sót thì chỉ tốn một node │
+ * │   mà Librarian (M1) gộp lại được sau"*. **Librarian CHƯA TỒN TẠI.** Nên  │
+ * │   cái giá thật của bỏ sót không phải "một node chờ gộp" mà là **token    │
+ * │   trong prefix của mọi worker, mọi lượt, vĩnh viễn**. Quyết định đúng    │
+ * │   dựa trên một tiền đề sai là một quả bom hẹn giờ — và nó vừa nổ.        │
+ * │                                                                          │
+ * │ Hai phía KHÔNG đối xứng như chú thích cũ giả định:                       │
+ * │   chặn nhầm  → mất một bài học, `hits` của bản cũ +1, còn dấu vết        │
+ * │   bỏ sót     → trả token mãi mãi cho một bản sao không ai dọn            │
+ * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Con số này CHƯA ĐƯỢC ĐO trên kho thật — nó là điểm khởi đầu bảo thủ, không
- * phải một hằng số đã hiệu chỉnh. Đo lại khi có một kho vài chục node.
+ * 0.6 chứ không thấp hơn: dưới đó thì hai bài học cùng nói về một tài liệu bắt
+ * đầu dính nhau chỉ vì chia sẻ tên file. Đo lại khi kho vượt vài chục node.
  */
-const TWIN_RATIO = 0.75;
+const TWIN_RATIO = 0.6;
+
+/**
+ * Hai câu giống nhau bao nhiêu — Jaccard trên tập từ đặc trưng. `0`…`1`.
+ *
+ * Tách khỏi `findTwin` để NGƯỠNG KIỂM ĐƯỢC BẰNG TEST mà không phải dựng cả một
+ * `KnowledgeStore` trên đĩa. Đây là nửa trả được ngay của nợ 0b: khi một luật
+ * quan trọng nằm trong một method private cần I/O, món nợ thật là **hình dạng
+ * của code**, không phải cái test còn thiếu.
+ *
+ * Đối xứng và không thiên vị câu dài — đổi thứ tự hai tham số không đổi kết quả.
+ */
+export function twinScore(a: string, b: string): number {
+  const x = new Set(tokenize(a));
+  const y = new Set(tokenize(b));
+  if (x.size === 0 || y.size === 0) return 0;
+  let shared = 0;
+  for (const t of x) if (y.has(t)) shared++;
+  return shared / (x.size + y.size - shared);
+}
 
 /**
  * Bài học này có CHÉP CON SỐ từ tài liệu không? Trả về con số đó nếu có.

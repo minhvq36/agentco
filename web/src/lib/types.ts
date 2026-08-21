@@ -51,6 +51,9 @@ export interface CanvasNode {
   /** Chỉ Trợ lý: mức đang thừa hưởng `models.master` của công ty, không đặt riêng. */
   tierInherited?: boolean;
   pitch?: string;
+  /** Trần chi phí một việc, đơn vị USD. **`0` = không giới hạn.** */
+  maxUsd?: number;
+  maxTurns?: number;
   count?: number;
   mcp?: string[];
   hue?: number;

@@ -604,7 +604,15 @@ export const actions = {
    */
   async editAgent(
     role: string,
-    patch: { display_name?: string; avatar?: string; pitch?: string; model_tier?: string },
+    patch: {
+      display_name?: string;
+      avatar?: string;
+      pitch?: string;
+      model_tier?: string;
+      /** `0` = không giới hạn. */
+      max_usd?: number;
+      max_turns?: number;
+    },
   ): Promise<boolean> {
     const id = state.officeId;
     if (!id) return false;

@@ -85,6 +85,9 @@ export interface CanvasNode extends LayoutNode {
   /** Trợ lý: true khi mức đang theo `models.master` của công ty, không phải đặt riêng. */
   tierInherited?: boolean;
   pitch?: string;
+  /** Trần chi phí một việc. **`0` = không giới hạn.** → `RoleBudget.max_usd` */
+  maxUsd?: number;
+  maxTurns?: number;
   /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
   count?: number;
   mcp?: string[];
@@ -1842,7 +1845,16 @@ export class Office {
    */
   editAgent(
     roleId: string,
-    patch: { display_name?: string; avatar?: string; pitch?: string; not_for?: string[]; model_tier?: string },
+    patch: {
+      display_name?: string;
+      avatar?: string;
+      pitch?: string;
+      not_for?: string[];
+      model_tier?: string;
+      /** Trần chi phí một việc. **`0` = không giới hạn.** → `RoleBudget.max_usd` */
+      max_usd?: number;
+      max_turns?: number;
+    },
   ): CanvasState {
     this.assertLive();
     if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
@@ -1870,6 +1882,25 @@ export class Office {
       else doc.delete('not_for');
     }
     if (patch.model_tier !== undefined) doc.set('model_tier', patch.model_tier);
+
+    /**
+     * Ngân sách nằm trong một map con — `doc.set('budget', …)` sẽ THAY CẢ KHỐI
+     * và nuốt mất `knowledge_pack` cùng mọi chú thích người dùng viết trong đó.
+     * `setIn` sửa đúng một khoá. Cùng lý do với `parseDocument` ở đầu hàm.
+     */
+    if (patch.max_usd !== undefined) {
+      if (!Number.isFinite(patch.max_usd) || patch.max_usd < 0) {
+        throw new RunError('Trần chi phí phải là số không âm. Đặt 0 nghĩa là không giới hạn.', 'other');
+      }
+      doc.setIn(['budget', 'max_usd'], patch.max_usd);
+    }
+    if (patch.max_turns !== undefined) {
+      if (!Number.isInteger(patch.max_turns) || patch.max_turns < 1) {
+        throw new RunError('Số bước tối đa phải là số nguyên từ 1 trở lên.', 'other');
+      }
+      doc.setIn(['budget', 'max_turns'], patch.max_turns);
+    }
+
     fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
 
     this.reload();
@@ -3004,6 +3035,8 @@ export class Office {
       tier: role.model_tier,
       model: this.loaded.company.models[role.model_tier],
       pitch: role.pitch,
+      maxUsd: role.budget.max_usd,
+      maxTurns: role.budget.max_turns,
       count: notes[role.id] ?? 0,
       mcp: role.mcp,
       hue: agentHue(role.id),
@@ -3288,7 +3321,11 @@ budget:
   # Vai trò tier eco cần con số CAO HƠN tier standard — model rẻ đi nhiều
   # bước hơn cho cùng một việc.
   max_turns: ${tier === 'eco' ? 12 : 6}
-  max_usd: 0.4
+  # Trần chi phí MỘT việc. Đặt 0 = không giới hạn.
+  # Số dưới đây RỘNG có chủ ý: chặn giữa chừng là mất trắng số tiền đã tiêu mà
+  # không có kết quả. Đo được 21/08 trên bài gộp CSV 200 dòng: eco ~$0.17,
+  # standard ~$0.45. Siết xuống khi bạn đã biết việc của mình tốn bao nhiêu.
+  max_usd: ${tier === 'eco' ? '1.0' : '2.0'}
   knowledge_pack: 3000
 `;
 }

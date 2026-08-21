@@ -256,7 +256,56 @@ Vì sao HOT tồn tại chứ không "khi nào cần mới mò vào": thứ nằ
 | 1 | chỉ ghi **CÁCH LÀM**, không ghi **KIẾN THỨC** | tài liệu **bị SỬA** | `LessonSchema` (bỏ `'fact'`) · `quotesLibraryNumber` · `echoesLibrary` |
 | 2 | **thực thể yếu** — file mất thì node mất | tài liệu **bị XOÁ / đổi tên** | `KnowledgeNode.depends_on` · `dropDependents` |
 | 3 | chỉ sinh khi ca có **trục trặc hoặc LẶP** | ca sinh ra từ hư không | `worthLearning` |
-| 4 | không spam bản **na ná nhau** | kho phình vì lặp lại | `findTwin` |
+| 4 | không spam bản **na ná nhau** | kho phình vì lặp lại | `findTwin` · `twinScore` |
+| **5** | **chỉ ghi thứ MỘT AGENT SỬA ĐƯỢC** | lỗi của hạ tầng / cấu hình / người dùng | `agentFault` · `Receipt.failure` |
+
+#### 🔴 Luật 5 — CÂU HỎI *"CỦA AI"* PHẢI ĐƯỢC TRẢ LỜI TRƯỚC CÂU HỎI *"HỌC ĐƯỢC GÌ"* (user chốt 21/08)
+
+Ca thật: hai node gần như y hệt nhau, cùng `scope: shared`, cách nhau chín phút.
+
+```
+"Phan-tich-standard liên tục chạm trần chi phí … nên nới max_usd"
+"Việc nhóm+tổng hợp CSV có thể chạm trần … cân nhắc nới max_usd"
+```
+
+Ba thứ hỏng cùng lúc, và cái thứ hai là cái đắt:
+
+1. **SAI NGƯỜI ĐỌC.** Kinh nghiệm nằm trong prefix của **mọi worker**. Worker không sửa được `max_usd` — nó không có tay để làm việc đó. Lời khuyên ấy gửi cho **con người**, mà con người không đọc kho tri thức; họ đọc ô chat, nơi câu đó **đã được nói rồi**. Ta trả tiền vĩnh viễn để nhắc lại một câu đã giao đúng cửa.
+2. **TỰ CHUỐC LẤY.** Node vào prefix → prefix dài ra → mỗi lượt đắt lên → **chạm trần dễ hơn**. Một bài học cảnh báo về chạm trần, mà cơ chế tồn tại của nó là làm tăng chi phí. Nó sản xuất ra chính vấn đề nó cảnh báo.
+3. **SẼ SAI.** Ngày người dùng nới trần, node vẫn nói *"hay chạm trần"* — và node **thắng**, vì nó nằm sẵn trong đầu mọi nhân viên. Đúng lớp lỗi luật 1 sinh ra để chặn, chỉ khác là kiến thức bị chép ở đây là **cấu hình của chính hệ thống**, không phải nội dung tài liệu.
+
+**Vì sao KHÔNG lọc bằng prompt.** Prompt **đã** cấm, bằng hai dòng riêng biệt (*"Không ghi con số, ngưỡng, giá, ngày tháng"* và *"Bài học ghi CÁCH LÀM"*), và model vẫn ghi ra hai node về ngưỡng chi phí. Một luật chỉ sống trong prompt là một **LỜI HỨA**.
+
+> ⚠ **Và đây là chỗ LLM yếu nhất, nên đừng hỏi nó.** Model không phân biệt nổi *"tôi làm sai"* với *"môi trường quanh tôi chặn tôi lại"* — trong ngữ cảnh của nó, cả hai đều hiện ra y hệt nhau: **một lượt không xong**. Nó không có chỗ đứng để nhìn ra ranh giới đó. Ta thì có, và ta biết chắc **bằng dữ liệu**.
+
+`FailureKind` phân hoạch sạch theo *ai sửa được*:
+
+| kiểu | ai gây ra | agent làm gì được |
+|---|---|---|
+| `budget` · `max_turns` | trần NGƯỜI DÙNG đặt | không — nó không sửa cấu hình |
+| `rate_limit` · `usage_limit` | hạ tầng / gói cước | không |
+| `auth` | cấu hình máy | không |
+| `stopped` | người dùng bấm Dừng | không, và đó không phải trục trặc |
+| `other` | có thể là chính nó | có |
+
+⚠ **Nửa dễ làm mất nhất:** `blocked_on` do **nhân viên tự khai** (*"thiếu file thuật ngữ"*) là bài học đắt nhất trong kho; `blocked_on` do **hệ thống ghi** (*"chạm trần $0.4"*) là rác. Hai câu nằm cùng một trường, và `Receipt.failure` là thứ **duy nhất** phân biệt được chúng. Bản vá đầu bỏ luôn `blocked_on` khỏi tín hiệu và làm mất một ca có thật — bộ test bắt được ngay.
+
+⚠ Vì thế `stoppedReceipt` **phải** khai `failure: 'stopped'`. Thiếu dòng đó thì `agentFault` đọc `blocked_on: "người dùng dừng giữa chừng"` như lời khai của nhân viên, rồi đi hỏi model *"học được gì"* cho một việc chính người dùng vừa bảo đừng làm.
+
+#### Luật 4 — ngưỡng đã ĐO, và tiền đề cũ là một lời hứa
+
+`TWIN_RATIO` từ **0.75 → 0.6**. Cặp trùng thật ở trên đo được **0.654** — trượt ngưỡng cũ, hai node cùng sống. Phần lệch nằm gần như trọn vẹn ở từ đệm (*liên tục* ↔ *có thể*, *nên* ↔ *cân nhắc*, *dạng này* ↔ *tương tự*): cùng một câu, hai giọng.
+
+Chú thích cũ biện minh cho 0.75 bằng câu *"bỏ sót thì chỉ tốn một node mà Librarian (M1) gộp lại được sau"*. **Librarian chưa tồn tại.** Nên cái giá thật của bỏ sót không phải "một node chờ gộp" mà là **token trong prefix của mọi worker, mọi lượt, vĩnh viễn** — hai phía không đối xứng như giả định:
+
+```
+chặn nhầm → mất một bài học, hits của bản cũ +1, còn dấu vết
+bỏ sót    → trả token mãi mãi cho một bản sao không ai dọn
+```
+
+> **Quyết định đúng + tiền đề sai = bom hẹn giờ.** Nó vừa nổ.
+
+`twinScore` được **tách ra khỏi `findTwin`** để ngưỡng kiểm được bằng test mà không phải dựng `KnowledgeStore` trên đĩa — trả một nửa nợ 0b, đúng luật *"khi một luật quan trọng nằm trong hàm không test được thì món nợ thật là hình dạng của code"*.
 
 #### ⚠ Luật 1 và luật 2 KHÔNG thay thế nhau — đây là chỗ dễ hiểu nhầm nhất
 

@@ -124,7 +124,15 @@ export const api = {
   editAgent: (
     id: string,
     role: string,
-    patch: { display_name?: string; avatar?: string; pitch?: string; model_tier?: string },
+    patch: {
+      display_name?: string;
+      avatar?: string;
+      pitch?: string;
+      model_tier?: string;
+      /** `0` = không giới hạn. */
+      max_usd?: number;
+      max_turns?: number;
+    },
   ) =>
     call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}`, {
       method: 'PATCH',

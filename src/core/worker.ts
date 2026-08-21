@@ -124,7 +124,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         model,
         cwd: office.dir,
         maxTurns: role.budget.max_turns,
-        maxBudgetUsd: role.budget.max_usd,
+        // `0` = người dùng không đặt trần → KHÔNG truyền cờ. Truyền 0 xuống SDK
+        // là đặt trần bằng không, tức chặn ngay lượt đầu. → `RoleBudget.max_usd`
+        ...(role.budget.max_usd > 0 ? { maxBudgetUsd: role.budget.max_usd } : {}),
         // Session chỉ trong RAM — worker stateless, không rác trên đĩa.
         persistSession: false,
         // Không nạp CLAUDE.md / settings của người dùng: chúng thay đổi theo máy
@@ -497,6 +499,11 @@ function stoppedReceipt(
     artifacts: written,
     lessons: [],
     blocked_on: 'người dùng dừng giữa chừng',
+    // Người dùng bấm Dừng KHÔNG phải bài học — nhân viên không làm gì sai và
+    // không có gì để rút kinh nghiệm. Thiếu dòng này thì `agentFault` đọc
+    // `blocked_on` ở trên như lời khai của nhân viên và đi hỏi model "học được
+    // gì" cho một việc chính người dùng vừa bảo đừng làm. → `agentFault`
+    failure: 'stopped',
     task_id: brief.task_id,
     role: role.id,
     usage,

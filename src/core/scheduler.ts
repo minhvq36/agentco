@@ -15,6 +15,7 @@ import type { KnowledgeStore } from '../knowledge/store.js';
 import {
   RunError,
   type AgentEventBody,
+  type FailureKind,
   type Plan,
   type Receipt,
   type TaskBrief,
@@ -612,46 +613,95 @@ export class Scheduler {
      * được mời chạy lại (và trả tiền lại) cho thứ đã nằm sẵn trên đĩa.
      */
     const observed = err instanceof RunError ? err.observed : undefined;
-    const written = observed
-      ? filesOnDisk(this.deps.office.dir, brief.outputs.map((o) => o.path), observed.landed)
-      : [];
+    const promised = brief.outputs.map((o) => o.path);
+    const written = observed ? filesOnDisk(this.deps.office.dir, promised, observed.landed) : [];
     const strays = observed ? straysOnDisk(observed.landed) : [];
+
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ GIAO ĐỦ HÀNG ⇒ KHÔNG PHẢI `failed`. (user chốt 21/08)                │
+     * │                                                                      │
+     * │ Đo được cùng ngày, ba lượt liền: `m78h` · `i9h2` · `yap2` đều ghi ra │
+     * │ file đầy đủ — `i9h2` đúng **56/56 nhóm, không sai một con số** — rồi  │
+     * │ chạm trần chi phí SAU đó và bị đóng nhãn "hỏng".                     │
+     * │                                                                      │
+     * │ Trần dừng lượt gọi; nó không hoá kiếp cái file đã nằm trên đĩa. Lấy   │
+     * │ tín hiệu *"đã tiêu hết tiền cho phép"* làm nhãn cho *"việc có xong    │
+     * │ không"* là dùng thước của câu hỏi này để đo câu hỏi khác.             │
+     * │                                                                      │
+     * │ Cái giá thật không phải một chữ xấu xí. Hôm đó hệ thống kêu SAI bốn   │
+     * │ lần và im lặng đúng lần cần kêu (`d6v9` sai 45/51 nhóm, nhãn ✅). Một │
+     * │ cái chuông sai 80% thì người dùng học cách tắt — rồi lần cháy thật    │
+     * │ không ai nghe. Với người non-code đang tin hệ thống, đó là toàn bộ    │
+     * │ vốn liếng uy tín của sản phẩm.                                        │
+     * │                                                                      │
+     * │ ⚠ Ta KHÔNG hứa nội dung đúng — vẫn chỉ khai đúng thứ `existsSync`     │
+     * │   biết, y như đường chạy thành công. Không thêm một lời nói dối nào.  │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const deliveredAll = promised.length > 0 && promised.every((p) => written.includes(p));
 
     // Nói CHUYỆN GÌ XẢY RA + LÀM GÌ TIẾP THEO. "Gặp lỗi" chung chung là vô dụng
     // với người non-code — họ không biết sửa ở đâu.
     const cause =
       kind === 'max_turns'
-        ? `Việc này cần nhiều bước hơn mức cho phép. Nới max_turns trong roles/${brief.role}.yaml, hoặc chia nhỏ yêu cầu.`
+        ? `Việc này cần nhiều bước hơn mức cho phép của ${brief.role}. Nới số bước tối đa trong trang nhân viên, hoặc chia nhỏ yêu cầu.`
         : kind === 'budget'
-          ? `Việc này chạm trần chi phí đã đặt cho ${brief.role}. Nới max_usd trong roles/${brief.role}.yaml nếu thấy đáng.`
+          ? `Việc này chạm trần chi phí đã đặt cho ${brief.role}. Nới trần chi phí trong trang nhân viên nếu thấy đáng.`
           : 'Việc này gặp lỗi và không hoàn thành được. Xem nhật ký chi tiết.';
 
     /**
-     * Câu "đã ghi được gì" đứng TRƯỚC câu "vì sao hỏng".
+     * Câu "đã ghi được gì" đứng TRƯỚC câu "vì sao dừng".
      *
      * Người dùng non-code đọc câu đầu rồi quyết định. Chôn *"nhưng file có
      * rồi"* xuống cuối một câu bắt đầu bằng "bị chặn" thì họ đã bấm chạy lại
      * xong mới đọc tới. Thứ tự câu chữ ở đây là một quyết định sản phẩm, không
      * phải cách trình bày.
      */
-    const say = written.length
-      ? `Nhân viên đã ghi xong ${written.length} file trước khi dừng: ${written.slice(0, 3).join(', ')}` +
-        `${written.length > 3 ? '…' : ''}. Xem thử trước khi quyết chạy lại — có thể đã đủ dùng. ${cause}`
-      : cause;
+    const say = deliveredAll
+      ? // Giao đủ hàng: báo XONG, và chỉ NHẮC NHẸ về tiền. Đây là ghi chú, không
+        // phải cảnh báo — việc đã có kết quả, người dùng không cần làm gì cả.
+        `Đã làm xong và ghi ra ${written.length > 1 ? `${written.length} file` : written[0]}. ` +
+        (kind === 'budget'
+          ? `Chỉ lưu ý nhỏ: việc này tốn hơn mức chi phí bạn đặt cho ${brief.role}, ` +
+            `nên nếu còn giao việc tương tự thì cân nhắc nới trần lên một chút.`
+          : `Chỉ lưu ý nhỏ: việc này dùng hết số bước tối đa của ${brief.role} — ` +
+            `nếu còn giao việc tương tự thì cân nhắc nới lên một chút.`)
+      : written.length
+        ? `Nhân viên đã ghi được ${written.length} file trước khi dừng: ${written.slice(0, 3).join(', ')}` +
+          `${written.length > 3 ? '…' : ''}. Xem thử trước khi quyết chạy lại — có thể đã đủ dùng. ${cause}`
+        : cause;
 
     return {
-      status: 'failed',
+      // Đủ hàng → `done`. Có nhưng thiếu → `blocked` (dở dang, cần bạn quyết).
+      // Trắng tay → `failed`. Ba mức, suy từ đĩa, không suy từ cách vòng lặp chết.
+      status: deliveredAll ? 'done' : written.length ? 'blocked' : 'failed',
       say,
       answer: '',
       // File có thật trên đĩa, dù ca này đóng ở `failed`. Khai rỗng là nói dối
       // rằng đĩa sạch — đúng lớp lỗi `stoppedReceipt` đã sửa cho nhánh bị ngắt.
       artifacts: written,
       lessons: [],
-      blocked_on: strays.length
-        ? `${msg.slice(0, 160)} · ghi ra ngoài văn phòng: ${strays.slice(0, 2).join(', ')}`
-        : msg.slice(0, 200),
+      /**
+       * ⚠ Giao đủ hàng thì `blocked_on` phải RỖNG, không chỉ `status` đổi.
+       *
+       * `worthLearning` đọc `!!blocked_on` như một tín hiệu trục trặc độc lập.
+       * Đổi mỗi `status` mà để lại câu "chạm trần" ở đây thì cửa hỏi-bài-học
+       * vẫn bắn, và ta lại đẻ ra đúng hai node rác đã phải đi dọn. Đây là nửa
+       * còn lại của cùng một bản vá — sửa một nhánh xong phải hỏi *"còn nhánh
+       * nào cùng hình dạng?"*.
+       */
+      blocked_on: deliveredAll
+        ? null
+        : strays.length
+          ? `${msg.slice(0, 160)} · ghi ra ngoài văn phòng: ${strays.slice(0, 2).join(', ')}`
+          : msg.slice(0, 200),
       task_id: brief.task_id,
       role: brief.role,
+      // Kiểu hỏng dưới dạng DỮ LIỆU, để `agentFault()` quyết được "lỗi của ai"
+      // mà không phải khớp chuỗi trên câu chữ hiển thị. Giao đủ hàng thì không
+      // có kiểu hỏng nào cả — việc đã xong. → `Receipt.failure`
+      ...(deliveredAll ? {} : { failure: kind as FailureKind }),
       // Token ĐÃ TIÊU trước khi lỗi nổ, không phải số 0 cho tiện. Bản trước ghi
       // cứng 0 ở đây và đó là chỗ tiền biến mất khỏi sổ — `max_turns` chạy tới
       // kịch trần lượt rồi báo $0. → `RunError.usage`
