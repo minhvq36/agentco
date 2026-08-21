@@ -553,9 +553,47 @@ export interface Landing {
    * `external` — gọi một MCP server (`ref` = tên server). Không kiểm được, nhưng
    *              biết chắc là đã gọi.
    * `command`  — chạy `Bash`. Ta KHÔNG biết dữ liệu đi đâu, và phải nói thế.
+   * `outside`  — ghi ra NGOÀI thư mục văn phòng (`ref` = đường dẫn thô model gõ).
+   *              Xem khối dưới: đây là nhãn cho một sự việc ta biết chắc.
    */
-  kind: 'file' | 'external' | 'command';
+  kind: 'file' | 'external' | 'command' | 'outside';
   ref: string;
+}
+
+/**
+ * ĐIỂM ĐẾN NGOÀI VĂN PHÒNG PHẢI CÓ TÊN — ĐO ĐƯỢC 21/08.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ca `P-260821-1818-yydi`: nhân viên `Write` một đường dẫn trỏ lên hai cấp, │
+ * │ file rơi vào `company/artifacts/…` thay vì `offices/<mã>/artifacts/…`.    │
+ * │ `landingOf` gọi `safeJoin`, `safeJoin` ném đúng như thiết kế, và cái      │
+ * │ `catch { return undefined }` **nuốt luôn sự việc**.                       │
+ * │                                                                          │
+ * │ Hậu quả: `landed` rỗng → hệ thống nói *"không thấy file trên đĩa, nhắn    │
+ * │ mình làm lại"* trong khi bảng kết quả 4236 byte nằm nguyên vẹn cách đó    │
+ * │ hai thư mục. Người dùng được mời trả tiền lần thứ hai cho thứ họ đã có.   │
+ * │                                                                          │
+ * │ Đây là cột KIỂU HỎNG của nợ 0c, ô `bỏ qua lặng lẽ` — và nó nguy hơn ô     │
+ * │ `từ chối` đúng như đã dự đoán: từ chối thì có câu báo lỗi, bỏ qua thì     │
+ * │ không có gì cả. `undefined` ở đây nghĩa là "không có điểm đến nào", mà sự │
+ * │ thật là "có điểm đến, và nó nằm ngoài chỗ ta cho phép". Hai câu khác hẳn  │
+ * │ nhau; trả về cùng một giá trị là mất một nửa.                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+
+/**
+ * Thứ QUAN SÁT ĐƯỢC trong một lượt worker — độc lập hoàn toàn với việc lượt đó
+ * kết thúc kiểu gì.
+ *
+ * Gói thành một kiểu riêng vì nó phải đi theo **mọi** đường ra (xong · bị ngắt ·
+ * chạm trần · hết lượt · lỗi lạ). Cùng hình dạng với `RunError.usage`, và vì
+ * cùng một lý do: token đã tiêu thì tồn tại dù lượt gọi kết thúc thế nào, và
+ * file đã ghi thì nằm trên đĩa dù lượt gọi kết thúc thế nào.
+ */
+export interface Observed {
+  landed: Landing[];
+  looped: boolean;
+  reads: string[];
 }
 
 /** Receipt đã qua validate + gắn số liệu đo được. */
@@ -716,15 +754,41 @@ export class RunError extends Error {
    */
   readonly usage: Usage | undefined;
 
+  /**
+   * File ĐÃ GHI trước khi lỗi nổ. → `Observed`, SPEC-artifacts.md §5
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CÙNG MỘT BÀI HỌC VỚI `usage` NGAY TRÊN — VÀ LẦN TRƯỚC CHỈ HỌC MỘT NỬA.   │
+   * │                                                                          │
+   * │ Ca `P-260821-1827-m78h`: worker ghi xong bảng kết quả 4474 byte lúc      │
+   * │ 18:30:01, đúng chỗ, đủ 56/56 nhóm và **không sai một con số nào**. Chín  │
+   * │ giây sau, `error_max_budget_usd` nổ. `worker.ts` ném, `observed()` bị bỏ │
+   * │ lại trong hàm, `errorReceipt` ghi cứng `landed: []` — và người dùng đọc  │
+   * │ được câu *"chưa ra kết quả"* cho một việc đã xong và đã trả tiền.        │
+   * │                                                                          │
+   * │ Chua nhất: `stoppedReceipt` đã mô tả đúng con bug này từ trước           │
+   * │ (*"Bản trước trả `artifacts: []` — tức là nói dối rằng không có gì trên  │
+   * │ đĩa"*) rồi sửa cho ĐÚNG MỘT trên bốn nhánh ném. Ngay bên cạnh, `usage`   │
+   * │ được gói vào hàm `fail()` kèm lời tự dặn *"thêm một nhánh ném mới trong  │
+   * │ tương lai thì nó tự đúng"*. Hai trường, cùng một khối `catch`, cùng một  │
+   * │ lý lẽ — một trường đi hết bốn nhánh, trường kia đi một.                  │
+   * │                                                                          │
+   * │ ⇒ VÁ MỘT TẦNG THÌ PHẢI ĐI HẾT MỌI ĐƯỜNG CỦA TẦNG ĐÓ. Sửa xong một nhánh │
+   * │   thì câu hỏi tiếp theo luôn là *"còn nhánh nào cùng hình dạng?"*        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  readonly observed: Observed | undefined;
+
   constructor(
     message: string,
     kind: FailureKind,
-    options?: { cause?: unknown; usage?: Usage },
+    options?: { cause?: unknown; usage?: Usage; observed?: Observed },
   ) {
     super(message, options);
     this.name = 'RunError';
     this.kind = kind;
     this.usage = options?.usage;
+    this.observed = options?.observed;
   }
 }
 

@@ -696,6 +696,40 @@ Rồi **để đường lập kế hoạch bình thường quyết định**. N�
 
 ⚠ **Bẫy đã dẫm:** đặt lời mời trong `constructor` thì nó chạy **trước** khi `PlanStore` được dựng (`resumable()` nổ) **và trước** khi có bus (câu mời rơi vào hư không). Một chỗ sai, hai triệu chứng, và triệu chứng thứ hai im lặng. Phải phát ở `bindBus()`.
 
+#### ⚠⚠ `"không nằm trong pending"` ≠ `"đã xong"` — bom hẹn giờ, nổ sau một ngày
+
+Bản đầu của `resume()` cắt `deps` trỏ tới mọi task vắng mặt trong `pending`, kèm chú thích *"Bỏ được vì 'đã xong' nghĩa đúng như thế"*. **Tiền đề sai.** `pending` là *task CHƯA CHẠY LẦN NÀO*; vắng mặt ở đó có thể là xong ✓ · hỏng ✗ · bị chặn ✗ · **bị cắt giữa lúc đang ghi file ✗**.
+
+Đo được hai lần liên tiếp trên máy người dùng (hd3 3/5, hd4 4/5): họ bấm Dừng lúc `Người đọc` đang tách hợp đồng rồi gõ `/resume`. T-01 vắng mặt trong `pending` vì nó ĐÃ chạy — và trả `blocked`. Dây `T-02 → T-01` bị cắt, `missingInputs` thấy thư mục có file nên cho qua, và cả chuỗi sau chạy trên một hợp đồng thiếu 20–40%, trả về một bản rà soát **trông hoàn hảo**.
+
+> 🔥 `delivered()` (§2c) tồn tại **đúng để trả lời câu hỏi này**, và `resume()` đi vòng qua nó vì lọc theo **DANH SÁCH** thay vì hỏi **RECEIPT**. → luật *"quyết định đúng + tiền đề sai = bom hẹn giờ"*.
+
+**Luật:** một task chỉ được bỏ qua khi **receipt nói đã giao được hàng**. Còn lại thì **CHẠY LẠI** — kể cả khi nó đã chạy một lần và để lại file dở. Chạy lại ghi đè vào đúng `artifacts/<plan>/<task>/` của chính nó ⇒ **không cần cơ chế dọn mảnh mồ côi nào**, vì thư mục theo task đã là nguyên tử sẵn.
+
+⚠ Và `run()` phải chặn **bốn** nhánh chỉ dành cho lượt lập kế hoạch thật khi `resumePlan` có mặt: dòng *"đang lập kế hoạch"* · `savePlan` (**ghi đè kế hoạch gốc, mất bản ghi pháp y**) · `plan.created` · câu *"Mình chia thành N việc"*. Bốn cái này lọt ra là bốn triệu chứng khiến chính người viết code đọc nhầm log và báo cáo nhầm là "dị thường chưa giải thích được".
+
+#### Hai hàng rào cho cửa CÒN LẠI: người dùng gõ lại thay vì `/resume`
+
+Bịt `/resume` mới đóng một cửa. Đường gõ-lại đi `route → plan()` → planner đọc bảng kê kết quả → nhặt file dở làm `inputs`. `validate` cho qua (file có trên đĩa), `missingInputs` cho qua (thư mục tồn tại).
+
+| | |
+|---|---|
+| **Câu mời** | *"Gõ **/resume** để mình làm nốt"* thay cho *"Nhắn tiếp…"*. Một câu chữ, và nó đổi hẳn xác suất người dùng rơi vào cửa nào — rẻ hơn mọi hàng rào kỹ thuật phía sau |
+| **Bảng kê** | **giấu ĐƯỜNG DẪN, giữ CON SỐ** — planner không có chuỗi nào để chép vào `inputs`, nhưng vẫn trả lời được *"ca vừa rồi làm tới đâu?"* |
+| **Chốt cứng** | `Scheduler.interruptedInputs` — đọc NGƯỢC từ đường dẫn (`artifacts/<plan>/<task>/…` tự khai ra cả hai id) → tra receipt → chưa `delivered` thì chặn lúc phóng |
+
+> **LUẬT: NHÃN LÀ MỘT LỜI NHỜ MODEL TUÂN THEO; BỎ HẲN THÌ KHÔNG CÓ GÌ ĐỂ TUÂN THEO.** Nhãn `INCOMPLETE` dán lên từng file đọc rất thuyết phục, và ca hd4 vẫn hỏng y hệt. Đã gỡ.
+>
+> ⚠ Giấu đường dẫn một mình KHÔNG đủ — model **đoán được** vì đường dẫn có quy luật, và người dùng dán `@` thì cũng lọt. Chốt cứng là thứ duy nhất không cần ai hợp tác.
+
+#### Báo cáo không được mâu thuẫn với dải bước ngay cạnh nó
+
+`finish` nối thêm một dòng dựng bằng **code** khi ca tự nhận `done` mà `record.steps` còn bước chưa xong. Người dùng bắt được ca `1. ○ Tách hợp đồng` nằm cạnh *"Xong hợp đồng 4 rồi!"* — thông tin ĐÃ có trên màn hình, nhưng **hai bề mặt nói ngược nhau tệ hơn cả thiếu một trong hai**, và cái sai lại là cái viết bằng tiếng người nên dễ tin hơn.
+
+Chỉ nối ở ca `done`: `stopped`/`failed` đã tự nói ra rồi, thêm nữa là lải nhải đúng lúc người dùng đang bực.
+
+> Cùng họ với *"chưa tốn tiền"* (§2 chốt 2) và *"xuất sang PDF giúp mình"* (§SPEC-library 4.2): **model khẳng định một điều mà dữ liệu TRONG TAY TA bác bỏ được. Ba lần trong hai ngày ⇒ một LỚP lỗi, không phải ba lần xui** — và lớp đó chỉ chặn được bằng code đối chiếu, không bằng một câu dặn trong prompt.
+
 #### 2e. 🔴 `tasks/` DỜI VÀO `.state/` — chặn bằng CẤU TRÚC, không bằng kỷ luật (20/08)
 
 `cwd` của worker là **cả thư mục văn phòng**. Đo được ở `P-260820-2219-5ltb`: `nguoi-gop` lạc đường đã Glob quét sạch cây thư mục rồi **ĐỌC** `P-…plan.json` và `P-…log.jsonl`. File log chứa **receipt của những task khác** ⇒ một cửa sau của giao thức *"Receipt trần 800 token — Trợ lý không bao giờ đọc transcript worker"*. Nó cũng đọc được cả DAG.
@@ -1077,10 +1111,32 @@ Ba loại điểm đến, và **cách nói phản ánh đúng mức chắc chắ
 `command` là phần bất định còn lại. Nó được **khoanh vùng và dán nhãn**, không bị giấu — chi tiết còn lại nằm ở câu `say` của chính nhân viên, và đó đúng là việc của `say`, không phải dặn thêm gì mới có.
 
 Hai chi tiết bắt buộc:
-- **Đường dẫn ra ngoài thư mục văn phòng bị loại** (`safeJoin` ném) — ta không khai một file ngoài kia là "kết quả của bạn".
+- **Đường dẫn ra ngoài thư mục văn phòng không được khai là kết quả** — nhưng **vẫn phải được GHI NHẬN** dưới nhãn `outside`. Xem khối ngay dưới: bản trước loại thẳng, và đó là một lỗ.
 - **Đường dẫn tính từ thư mục làm việc**, không từ thư mục văn phòng. `artifacts/T-01/x.md` đứng một mình thì đúng về kỹ thuật mà vô dụng với người lần đầu đi tìm.
 
 > Mẫu chung đáng nhân rộng: **thứ gì ta QUAN SÁT ĐƯỢC thì đừng hỏi model.** Hỏi model là trả tiền để đổi lấy sự bất định — kể cả khi nó trả lời đúng chín lần trên mười.
+
+### 🔴 MỘT LƯỢT HỎNG KHÔNG XOÁ THỨ NÓ ĐÃ KỊP GHI (bản vá 21/08)
+
+**Ca `P-260821-1827-m78h`:** worker ghi xong bảng kết quả 4474 byte lúc 18:30:01 — đúng chỗ, đủ 56/56 nhóm, **không sai một con số nào**. Chín giây sau, `error_max_budget_usd` nổ. Người dùng đọc được:
+
+> *"Việc này bị chặn vì đã chạm mức chi phí tối đa cho phân-tích-standard, **chưa ra kết quả**. Bạn muốn mình thử lại với phan-tich-eco, hay nâng mức chi phí?"*
+
+Cả hai lựa chọn đều là trả tiền lần thứ hai cho thứ đã nằm sẵn trên đĩa. Và đây là kiểu hỏng **đắt nhất với người dùng non-code**: họ tin hệ thống 100%, nên **không ai đi kiểm một câu mình tin**. Người biết code còn mở thư mục ra xem; người mở tiệm hoa thì bấm "thử lại".
+
+**Gốc:** `worker.ts` ném, `observed()` bị bỏ lại trong hàm, `scheduler.errorReceipt` ghi cứng `landed: []`.
+
+**Chua nhất:** `stoppedReceipt` đã mô tả đúng con bug này từ trước — *"Bản trước trả `artifacts: []` — tức là nói dối rằng không có gì trên đĩa"* — rồi sửa cho **đúng một trên bốn nhánh ném**. Ngay bên cạnh, `usage` được gói vào hàm `fail()` kèm lời tự dặn *"thêm một nhánh ném mới trong tương lai thì nó tự đúng"*. Hai trường, cùng một khối `catch`, cùng một lý lẽ — một trường đi hết bốn nhánh, trường kia đi một.
+
+> **VÁ MỘT TẦNG THÌ PHẢI ĐI HẾT MỌI ĐƯỜNG CỦA TẦNG ĐÓ.** Sửa xong một nhánh, câu hỏi tiếp theo luôn là: *"còn nhánh nào cùng hình dạng?"* Ở đây có bốn: xong · bị ngắt · chạm trần · lỗi lạ.
+
+Ba chốt sau bản vá:
+
+1. `RunError.observed` — song sinh với `RunError.usage`, gói ở **cùng một hàm `fail()`** để nhánh ném mới trong tương lai tự đúng.
+2. `filesOnDisk()` / `straysOnDisk()` **xuất ra và import chung**, không chép sang `scheduler.ts`. Bốn bản chép là bốn cơ hội để một nhánh lại quên (luật 19/08).
+3. **Câu "đã ghi được gì" đứng TRƯỚC câu "vì sao hỏng".** Chôn *"nhưng file có rồi"* xuống cuối một câu bắt đầu bằng *"bị chặn"* thì người dùng đã bấm chạy lại xong mới đọc tới. Thứ tự câu chữ ở đây là **quyết định sản phẩm**, không phải cách trình bày.
+
+⚠ **Trần chi phí KHÔNG phải thứ cần sửa ở ca này.** Nó chặn đúng lúc và đúng việc. Nới `max_usd` lên vô hạn là bỏ đúng cái phanh vừa hoạt động để chữa một triệu chứng nằm ở **báo cáo**. Khi một câu báo lỗi làm người dùng muốn tắt một cơ chế an toàn, hãy nghi câu báo lỗi trước.
 
 ### Câu báo cáo phát ĐÚNG MỘT LẦN
 

@@ -171,12 +171,36 @@ Model rẻ **dò dẫm nhiều lượt hơn**, mà mỗi lượt đọc lại to
 
 **Đo, đừng đoán:** `node bench/tier-compare.mjs` chạy đúng phép so này cho một vai trò bất kỳ.
 
-### Hai cái giá của `eco` mà bảng tiền không thể hiện
+> ⚠ **Bảng này đo ĐƯỜNG ĐI, không đo ĐẦU RA.** Nó ngầm giả định hai tier cho ra cùng một kết quả. Với việc có một đáp án đúng duy nhất thì giả định đó sai, và cả công thức trên vô nghĩa — xem cái giá thứ ba ngay dưới.
+
+### Ba cái giá của `eco` mà bảng tiền không thể hiện
 
 1. **Độ trễ gấp đôi.** 78s so với 37s. Người dùng ngồi chờ — với sản phẩm một người dùng thì đây thường quan trọng hơn 3 cent.
 2. **Số lượt không đoán được.** Haiku: 9 rồi 10 lượt cho cùng một việc. Sonnet: 4 rồi 4. Nghĩa là **vai trò dùng `eco` cần ngân sách `max_turns` CAO HƠN HẲN** vai trò dùng `standard` — ngược với trực giác, và là lý do `reviewer` từng fail ở `max_turns` 4 rồi 6.
 
 > **Luật:** vai trò `eco` đặt `max_turns` ≥ 1,5× số lượt đo được. Vai trò `standard` đặt ≈ 2× là đủ.
+
+3. 🔴 **CÁI GIÁ THỨ BA, ĐO ĐƯỢC 21/08 VÀ NẶNG HƠN HAI CÁI TRÊN CỘNG LẠI: KẾT QUẢ SAI.**
+
+Bảng so ở §4 trên đo **lượt · token · giây**, tức ngầm giả định *hai tier cho ra cùng một kết quả, chỉ khác đường đi*. Ca `bang-tinh` 21/08 bác bỏ giả định đó. Cùng một việc (gộp CSV 200 dòng theo `Phòng_Ban`×`Thành_Phố`, tổng + trung bình lương và tuổi), cùng một đầu vào, chạy ba lượt:
+
+| lượt | tier | tiền (worker) | **số học** |
+|---|---|---:|---|
+| `P-260821-1805-d6v9` | `eco` (Haiku) | $0.157 | **sai 45/51 nhóm**, thiếu hẳn 5 nhóm, thừa 1 nhóm không tồn tại |
+| `P-260821-1818-yydi` | `eco` (Haiku) | $0.179 | sai 3/56 nhóm |
+| `P-260821-1827-m78h` | `standard` (Sonnet) | $0.425 | **đúng 56/56 — không sai một con số** |
+
+**`eco` ở bài này tiết kiệm ÂM:** $0.336 tiêu cho hai kết quả không dùng được, rồi vẫn phải trả $0.425 để có một kết quả đúng. Tổng $0.761 thay vì $0.425.
+
+Ba điều rút ra, xếp theo mức đáng nhớ:
+
+- **Sai số KHÔNG ổn định giữa hai lượt cùng tier.** Cùng haiku, cùng đầu vào, hai đáp án sai *khác nhau* (45/51 rồi 3/56). Nên đây không phải một khiếm khuyết đo được một lần rồi trừ hao — nó là **xổ số**, và xổ số thì không có con số nào để đưa vào công thức `bội_số_token < tỉ_lệ_giá`.
+- **Không phải "LLM không biết tính".** Sonnet đúng tuyệt đối **mà không dùng một tool nào**. Vế "chịu thôi, model ngôn ngữ vốn dốt số" bị chính số đo bác bỏ.
+- **Không chốt nào đang có nhìn thấy chuyện này.** `missingOutputs` kiểm file tồn tại; `looped` kiểm lặp thao tác; cả hai đều xanh cho lượt sai 45/51 nhóm. Xem `SESSIONS_MEMORY` §5l ④.
+
+> **Luật:** công thức chọn tier ở §4 chỉ áp dụng cho việc mà **mọi tier đều cho ra kết quả đúng** — soạn thảo, tóm tắt, phân loại, định dạng lại. Với việc có **một đáp án đúng duy nhất** (số học, đối chiếu, trích xuất chính xác), bảng token không nói được gì cả và `eco` phải được **đo trên đầu ra**, không đo trên hoá đơn.
+
+⚠ **Đây KHÔNG phải lý do để agentco tự nâng tier.** Tier là tiền của người dùng và là quyết định của họ (`role.model_tier` trong `roles/<id>.yaml`). Ta không có quyền bỏ phiếu — ta chỉ có nghĩa vụ làm cho lựa chọn đó **sáng mắt thay vì mù**, và mục này tồn tại để được đọc trước khi ai đó gõ `model_tier: eco` cho một vai trò làm việc có đáp án đúng duy nhất. Con đường đúng cho *chất lượng* chuyên môn vẫn là **khách cắm tool/MCP** (`SPEC-connectors.md`), không phải ta vá trong lõi.
 
 > **Luật bổ sung sau khi đo (spec gốc thiếu):**
 > **Ưu tiên ít task lớn hơn nhiều task nhỏ.** Mỗi task gánh ~13K token overhead bất kể việc to hay nhỏ. Chỉ chẻ task khi có **song song thật** hoặc **cần role khác** — không chẻ để nhìn cho gọn. Đây là ràng buộc ngược với §7 `SPEC-2026-08-14-agentco.md` (scheduler); scheduler phải từ chối DAG có task tầm thường và gộp chúng lại.
@@ -227,6 +251,32 @@ Bản trước chỉ ghi một dòng cho mỗi receipt worker. Hệ quả: `rout
 Giờ mỗi lượt Trợ lý ghi một dòng với `role: "assistant"` và `task_id` = tên **khâu**: `route` · `plan` · `report`. Tách khâu chứ không gộp, vì ba khâu có hình dạng chi phí khác hẳn nhau — `route` chạy mỗi lượt nên phải rẻ; `plan` chạy một lần một ca ở query riêng. Gộp lại thì không thấy khâu nào đang phình.
 
 Đây cũng là điều kiện để đánh giá được việc đổi model: **không đo được thì không cân nhắc được cái giá.** Và nó là một nửa của việc `agentco cost` phải trả lời được *"còn bao nhiêu"*, không chỉ *"đã tiêu"* (`USE-CASES.md` §10).
+
+### 🔴 Token lấy từ `modelUsage`, KHÔNG lấy từ `usage` (chốt 21/08, sổ đã lệch 14×)
+
+Đây là một bất biến của **sổ chi phí**, không phải chi tiết cài đặt của SDK — nên nó nằm ở đây, ở luật cao nhất.
+
+`.d.ts` của `@anthropic-ai/claude-agent-sdk` nói thẳng (`sdk.d.ts:4453`, nguyên văn):
+
+> `usage`: **MAIN AGENT LOOP ONLY** — excludes Task subagent, sidechain, and auxiliary model calls, and is **per-turn in streaming-input sessions**. **Prefer `modelUsage` for token/cost accounting.**
+>
+> `total_cost_usd`: *"Cumulative … each result carries the running total so far, so read the latest result rather than summing across results."*
+
+`worker.ts` chạy **streaming-input mode** (`oneMessage()`), nên vế *"per-turn"* áp dụng cho ta. Bản trước lấy **token từ `usage`** (một lượt) và **tiền từ `total_cost_usd`** (tích luỹ) — hai đơn vị khác nhau trong cùng một dòng sổ.
+
+**Đo được, ca `P-260821-1827-m78h`:** sổ ghi `out 59 · cache_read 0` nằm cạnh `$0.4248`. Với sonnet thì 59 token đầu ra là khoảng $0.001 — **sổ lệch 14×**, và lệch theo hướng làm mọi phép tính `$/lượt` trở thành rác.
+
+Ba hệ quả, và cái thứ ba là cái đau:
+
+1. Số token trên giao diện sai ở mọi ca nhiều lượt.
+2. `cost.tick` cộng dồn những con số không cùng đơn vị.
+3. **Nó lệch to nhất đúng ở ca `budget` và `max_turns`** — tức ca ĐẮT NHẤT, và cũng là ca người dùng cần con số nhất. Ca chạy êm thì lượt cuối tình cờ là lượt lớn nên nhìn "gần đúng"; ca hỏng thì lượt cuối là một câu báo lỗi 59 token.
+
+> **Luật chung rút ra:** *một trường tên là `usage` không tự động có nghĩa là "tất cả usage".* Trước khi cắm một con số của SDK vào sổ, đọc chú thích của chính trường đó — chi phí nửa phút, và nó chặn đúng loại lỗi **không bao giờ tự lộ ra** vì sổ vẫn in ra một con số trông hợp lý.
+
+`total_cost_usd` **giữ nguyên** làm nguồn TIỀN: nó bao cả lượt phụ trợ mà `modelUsage` có thể không kê hết, và `maxBudgetUsd` của SDK đo theo chính con số đó — sổ của ta phải nói cùng thứ tiếng với cái phanh.
+
+→ `worker.ts → readUsage`, test ở `test/landing.test.ts`.
 
 ### Số liệu token phải HIỆN ĐƯỢC trên giao diện — và model không bao giờ thấy nó
 

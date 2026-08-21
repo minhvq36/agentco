@@ -23,6 +23,7 @@ import {
   RunError,
   type FailureKind,
   type Landing,
+  type Observed,
   type Receipt,
   type Role,
   type TaskBrief,
@@ -108,7 +109,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
 
   // Ngắt / lỗi / xong đều phải trả về cùng một bộ số đo — gói lại một chỗ để
   // không có nhánh nào lỡ trả receipt thiếu `looped`/`reads`.
-  const observed = (): { landed: Landing[]; looped: boolean; reads: string[] } => ({
+  const observed = (): Observed => ({
     landed: [...landed.values()],
     looped: watch.looped,
     reads: [...watch.libraryReads].sort(),
@@ -153,6 +154,33 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          */
         tools: effectiveTools(role.tools),
         allowedTools: effectiveTools(role.tools),
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ LUẬT: KẾT QUẢ LUÔN SINH RA BÊN TRONG THƯ MỤC VĂN PHÒNG.            │
+         * │ (user chốt 21/08) — và đây là DÒNG CODE thi hành nó.               │
+         * │                                                                    │
+         * │ `cwd: office.dir` KHÔNG phải một bức tường: `Write` nhận đường dẫn  │
+         * │ tuyệt đối, và `tools`/`allowedTools` chỉ chặn *tool nào được dùng*, │
+         * │ không chặn *ghi vào đâu*. Ca `P-260821-1818-yydi` đi thẳng qua khe  │
+         * │ đó: file của người dùng rơi vào `company/artifacts/…`, ngang cấp    │
+         * │ với `offices/`, nơi không văn phòng nào nhìn thấy.                  │
+         * │                                                                    │
+         * │ ⚠ VÌ SAO HOOK CHỨ KHÔNG PHẢI `canUseTool`: đã đo 19/08 — tool nằm   │
+         * │ trong `allowedTools` thì được tự duyệt và **BỎ QUA `canUseTool`**.  │
+         * │ Mà `Write` nằm trong `allowedTools` của mọi vai trò. Đặt luật vào   │
+         * │ `canUseTool` là viết một luật không bao giờ chạy — đúng cái       │
+         * │ "LỜI HỨA" mà nợ 0c sinh ra để đi tìm. `PreToolUse` chạy TRƯỚC tầng  │
+         * │ quyền nên nó không bị `allowedTools` che.                           │
+         * │                                                                    │
+         * │ Chặn, KHÔNG sửa lén: `updatedInput` nắn đường dẫn về trong văn      │
+         * │ phòng thì rơi vào ô `viết lại lặng lẽ` — nguy hơn `từ chối` vì      │
+         * │ không ai thấy gì. `deny` kèm câu chỉ đường thì model tự ghi lại     │
+         * │ đúng chỗ ngay lượt sau, và nhật ký có dấu vết.                      │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        hooks: {
+          PreToolUse: [{ matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(office.dir)] }],
+        },
         ...(role.mcp.length ? { mcpServers: pickMcp(office, role) } : {}),
       },
     });
@@ -206,7 +234,8 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     // và biến nó thành "task failed" là nói dối trong nhật ký.
     if (interrupted) return stoppedReceipt(office, brief, role, usage, started, observed());
     /**
-     * ⚠ MỌI ĐƯỜNG NÉM PHẢI MANG THEO `usage`. → `RunError.usage`
+     * ⚠ MỌI ĐƯỜNG NÉM PHẢI MANG THEO `usage` **VÀ** `observed`.
+     * → `RunError.usage`, `RunError.observed`
      *
      * Token đã tiêu rồi thì nó tồn tại dù lượt gọi kết thúc kiểu gì. Bản trước
      * ném tay không ở cả ba nhánh (`max_turns`, `budget`, còn lại) nên tiền
@@ -214,15 +243,31 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
      * ghi $0. Nhánh `interrupted` ngay trên đã làm đúng từ đầu; đây là bịt ba
      * đường còn lại vào cùng một hình dạng.
      *
+     * `observed` vào đây ngày 21/08 vì **đúng câu chuyện đó lặp lại y hệt trên
+     * một trường khác**: file đã ghi cũng tồn tại dù lượt gọi kết thúc kiểu gì,
+     * mà ba nhánh này vẫn báo `landed: []`. Ca `P-260821-1827-m78h` chạm trần
+     * chi phí CHÍN GIÂY SAU khi ghi xong bảng kết quả đúng và đủ, rồi nói với
+     * người dùng là *"chưa ra kết quả"*.
+     *
      * Gói ở MỘT chỗ chứ không rắc `{ usage }` vào từng lời gọi: thêm một nhánh
-     * ném mới trong tương lai thì nó tự đúng, không cần ai nhớ.
+     * ném mới trong tương lai thì nó tự đúng, không cần ai nhớ. Bài học lần
+     * trước dừng ở đây — lần này nó phải bao cả hai trường, và khi thêm trường
+     * thứ ba thì cũng thêm vào đúng chỗ này.
      */
     const fail = (message: string, kind: FailureKind): RunError =>
-      new RunError(message, kind, { cause: err, usage });
+      new RunError(message, kind, { cause: err, usage, observed: observed() });
 
-    // `RunError` ném từ TRONG vòng lặp (ví dụ `error_max_budget_usd`) chưa kịp
-    // biết `usage` — gắn vào bằng cách dựng lại, giữ nguyên câu và `kind`.
-    if (err instanceof RunError) throw err.usage ? err : fail(err.message, err.kind);
+    /**
+     * `RunError` ném từ TRONG vòng lặp (ví dụ `error_max_budget_usd`) chưa kịp
+     * biết gì cả — dựng lại, giữ nguyên câu và `kind`.
+     *
+     * ⚠ Điều kiện phải kiểm CẢ HAI trường. Bản trước viết `err.usage ? err : …`
+     * nên một lỗi đã mang `usage` được ném thẳng qua và **không bao giờ nhận
+     * được `observed`** — đúng cái cửa mà `budget` sẽ đi qua sau này.
+     */
+    if (err instanceof RunError) {
+      throw err.usage && err.observed ? err : fail(err.message, err.kind);
+    }
 
     const kind = classifyError(err);
     if (kind === 'max_turns') {
@@ -291,6 +336,44 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     wall_ms: Date.now() - started,
     reasked,
     ...observed(),
+  };
+}
+
+// ───────────────────────────────────────────────────── luật: ghi trong văn phòng
+
+/**
+ * Cửa chặn ghi ra ngoài thư mục văn phòng. Xem khối `hooks` ở `runWorker`.
+ *
+ * Trả `deny` kèm ĐƯỜNG DẪN ĐÚNG PHẢI DÙNG, không chỉ trả lời "không". Một câu
+ * từ chối trống rỗng thì model dò lại bằng một đường dẫn sai khác — mỗi lần dò
+ * là một lượt trả tiền để nhận về một lời từ chối (§5 "`tools` vs
+ * `allowedTools`", cái giá thứ 2). Nói luôn chỗ đúng thì nó ghi được ở lượt kế.
+ */
+function officeJail(officeDir: string) {
+  return async (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const raw = (input['tool_input'] ?? {}) as Record<string, unknown>;
+    const target = str(raw['file_path']) || str(raw['notebook_path']);
+
+    let inside = true;
+    if (target) {
+      try {
+        safeJoin(officeDir, target);
+      } catch {
+        inside = false;
+      }
+    }
+    if (inside) return {};
+
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          `Đường dẫn "${target}" nằm ngoài thư mục văn phòng. Mọi kết quả phải ghi BÊN TRONG ` +
+          `thư mục làm việc hiện tại — dùng đường dẫn tương đối như "artifacts/<...>" ` +
+          `và không đi lên cấp trên bằng "..".`,
+      },
+    };
   };
 }
 
@@ -399,20 +482,9 @@ function stoppedReceipt(
   role: Role,
   usage: Usage,
   started: number,
-  observed: { landed: Landing[]; looped: boolean; reads: string[] },
+  observed: Observed,
 ): Receipt {
-  const { landed } = observed;
-  // Gộp hai nguồn: file NÓ ĐƯỢC GIAO ghi (brief.outputs) và file ta THẤY nó ghi
-  // (landed). Nguồn hai bắt được cả file phụ nó tự tạo — thứ brief không biết
-  // trước, và cũng là thứ dễ bị bỏ quên lại trên đĩa nhất.
-  const candidates = [...brief.outputs.map((o) => o.path), ...landed.filter((l) => l.kind === 'file').map((l) => l.ref)];
-  const written = [...new Set(candidates)].filter((p) => {
-    try {
-      return fs.existsSync(safeJoin(office.dir, p));
-    } catch {
-      return false;
-    }
-  });
+  const written = filesOnDisk(office.dir, brief.outputs.map((o) => o.path), observed.landed);
 
   return {
     status: 'blocked',
@@ -432,6 +504,52 @@ function stoppedReceipt(
     reasked: false,
     ...observed,
   };
+}
+
+/**
+ * MỚ DỞ DANG CÓ THẬT TRÊN ĐĨA — dùng chung cho MỌI đường ra.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Xuất ra và import chung, KHÔNG chép sang `scheduler.ts`.                  │
+ * │                                                                          │
+ * │ Luật 19/08: *"một dòng chú thích ⚠ phải khớp bên kia KHÔNG phải một cơ    │
+ * │ chế — hai bản mã của cùng một phép toán sẽ lệch, hãy import chung một     │
+ * │ hàm."* Phép toán ở đây là *"nhân viên để lại gì trên đĩa"*, và nó có bốn  │
+ * │ nơi cần hỏi (xong · bị ngắt · chạm trần · lỗi lạ). Bốn bản chép là bốn    │
+ * │ cơ hội để một nhánh lại quên.                                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Gộp hai nguồn: file NÓ ĐƯỢC GIAO ghi (`brief.outputs`) và file ta THẤY nó ghi
+ * (`landed`). Nguồn hai bắt được cả file phụ nó tự tạo — thứ brief không biết
+ * trước, và cũng là thứ dễ bị bỏ quên lại trên đĩa nhất.
+ */
+export function filesOnDisk(officeDir: string, promised: readonly string[], landed: readonly Landing[]): string[] {
+  const candidates = [...promised, ...landed.filter((l) => l.kind === 'file').map((l) => l.ref)];
+  return [...new Set(candidates)].filter((p) => {
+    try {
+      return fs.existsSync(safeJoin(officeDir, p));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * File nhân viên ghi RA NGOÀI văn phòng, và thật sự có trên đĩa.
+ *
+ * Kiểm `existsSync` chứ không tin `landed` suông: `landed` chỉ chứng minh model
+ * đã GỌI `Write`, không chứng minh cú ghi đó thành công. Ta chỉ nói với người
+ * dùng về file ta sờ được.
+ */
+export function straysOnDisk(landed: readonly Landing[]): string[] {
+  const out = landed.filter((l) => l.kind === 'outside').map((l) => l.ref);
+  return [...new Set(out)].filter((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function repairReceipt(
@@ -506,14 +624,60 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
   return out as McpServers;
 }
 
-function readUsage(result: Record<string, unknown>): Usage {
+/**
+ * SỐ TOKEN LẤY TỪ `modelUsage`, KHÔNG LẤY TỪ `usage`. → SPEC-token-economy.md §5
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐỌC THẲNG TỪ `.d.ts` CỦA SDK, KHÔNG PHẢI SUY ĐOÁN (sdk.d.ts:4453):       │
+ * │                                                                          │
+ * │   usage: "MAIN AGENT LOOP ONLY — excludes Task subagent, sidechain, and  │
+ * │           auxiliary model calls, and is PER-TURN in streaming-input      │
+ * │           sessions. Prefer modelUsage for token/cost accounting."        │
+ * │   total_cost_usd: "Cumulative … each result carries the running total"   │
+ * │                                                                          │
+ * │ Ta CHẠY streaming-input mode (`oneMessage()`), nên vế "per-turn" áp dụng  │
+ * │ cho ta. Bản trước lấy token từ `usage` (MỘT LƯỢT) và tiền từ              │
+ * │ `total_cost_usd` (TÍCH LUỸ) — hai đơn vị khác nhau trong cùng một dòng sổ.│
+ * │                                                                          │
+ * │ Đo được ở ca `P-260821-1827-m78h`: sổ ghi `out 59, cacheRead 0` bên cạnh  │
+ * │ `$0.4248`. Với sonnet thì 59 token đầu ra là khoảng $0.001 — sổ lệch 14×. │
+ * │ Nó lệch to nhất đúng ở ca `budget`/`max_turns`, tức ca ĐẮT NHẤT và cũng   │
+ * │ là ca người dùng cần con số nhất.                                        │
+ * │                                                                          │
+ * │ `modelUsage` cộng dồn theo từng model VÀ có sẵn `costUSD` — nó vốn đã nằm │
+ * │ trong tay ta, chỉ đang bị dùng mỗi việc lấy tên model ở `dominantModel`.  │
+ * │                                                                          │
+ * │ ⚠ Giữ `total_cost_usd` làm nguồn TIỀN: nó bao cả lượt phụ trợ mà          │
+ * │ `modelUsage` có thể không kê hết, và trần `maxBudgetUsd` của SDK đo theo  │
+ * │ chính con số này — sổ của ta phải nói cùng thứ tiếng với cái phanh.       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function readUsage(result: Record<string, unknown>): Usage {
+  const mu =(result['modelUsage'] ?? {}) as Record<string, Record<string, number>>;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  let summed = 0;
+  for (const m of Object.values(mu)) {
+    input += m['inputTokens'] ?? 0;
+    output += m['outputTokens'] ?? 0;
+    cacheRead += m['cacheReadInputTokens'] ?? 0;
+    cacheWrite += m['cacheCreationInputTokens'] ?? 0;
+    summed += m['costUSD'] ?? 0;
+  }
+
+  // SDK cũ / ca crash sớm có thể không kê `modelUsage`. Rơi về `usage` còn hơn
+  // ghi 0 — nhưng chỉ khi thật sự không có gì, không phải làm mặc định.
   const u = (result['usage'] ?? {}) as Record<string, number>;
+  const empty = Object.keys(mu).length === 0;
+
   return {
-    input: u['input_tokens'] ?? 0,
-    output: u['output_tokens'] ?? 0,
-    cacheRead: u['cache_read_input_tokens'] ?? 0,
-    cacheWrite: u['cache_creation_input_tokens'] ?? 0,
-    costUSD: typeof result['total_cost_usd'] === 'number' ? result['total_cost_usd'] : 0,
+    input: empty ? (u['input_tokens'] ?? 0) : input,
+    output: empty ? (u['output_tokens'] ?? 0) : output,
+    cacheRead: empty ? (u['cache_read_input_tokens'] ?? 0) : cacheRead,
+    cacheWrite: empty ? (u['cache_creation_input_tokens'] ?? 0) : cacheWrite,
+    costUSD: typeof result['total_cost_usd'] === 'number' ? result['total_cost_usd'] : summed,
     model: dominantModel(result['modelUsage']),
     turns: typeof result['num_turns'] === 'number' ? result['num_turns'] : 0,
   };
@@ -668,13 +832,24 @@ export function landingOf(officeDir: string, call: ToolCall): Landing | undefine
     const raw = call.input['file_path'] ?? call.input['notebook_path'];
     if (typeof raw !== 'string' || !raw) return undefined;
     try {
-      // Nhốt trong thư mục văn phòng: `safeJoin` ném nếu đi ra ngoài. Một đường
-      // dẫn ra ngoài thì ta không khai là "kết quả của bạn nằm ở đây".
+      // Nhốt trong thư mục văn phòng: `safeJoin` ném nếu đi ra ngoài.
       const abs = safeJoin(officeDir, raw);
       const rel = relative(officeDir, abs).replace(/\\/g, '/');
       return rel ? { kind: 'file', ref: rel } : undefined;
     } catch {
-      return undefined;
+      /**
+       * RA NGOÀI VĂN PHÒNG VẪN LÀ MỘT ĐIỂM ĐẾN — khai đúng tên nó.
+       *
+       * Bản trước trả `undefined`, tức là nói "không có điểm đến nào". Sai:
+       * ta biết CHẮC nó vừa ghi, và biết CHẮC ghi ở đâu. Thứ ta không có là
+       * QUYỀN gọi đó là kết quả hợp lệ của người dùng — và đó là chuyện khác.
+       *
+       * Nhãn `outside` giữ đúng hai nửa: sự việc thì khai, tính hợp lệ thì
+       * không. `whereBlock` vẫn không liệt kê nó vào "kết quả đã lưu tại";
+       * `missingOutputs` thì dùng nó để nói *"file nằm ở X"* thay vì
+       * *"chưa có gì, làm lại nhé"* — câu sau bắt người dùng trả tiền lần hai.
+       */
+      return { kind: 'outside', ref: raw.replace(/\\/g, '/') };
     }
   }
   if (call.name === 'Bash') return { kind: 'command', ref: '' };

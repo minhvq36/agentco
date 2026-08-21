@@ -31,8 +31,9 @@ import {
 } from './commands.js';
 import { Mailbox, mergeUserText } from './mailbox.js';
 import { PlanStore, agentHue } from './plans.js';
-import { Scheduler } from './scheduler.js';
+import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
+import { straysOnDisk } from './worker.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 import {
   RunError,
@@ -240,6 +241,10 @@ export class Office {
     const planId = e.plan_id !== undefined ? e.plan_id : (this.currentRecord?.plan_id ?? null);
     const full = { ...e, office: this.id, plan_id: planId } as AgentEvent;
     if (planId) this.plans.append(planId, full);
+    // Lưới an toàn cuối cùng cho tin RỖNG. Cửa thật nằm ở nơi phát (`reply`),
+    // nhưng `emit` là chốt DUY NHẤT mọi sự kiện đi qua — một tin rỗng lọt tới
+    // đây là nó sắp nằm lại trên `chat.jsonl` vĩnh viễn. → bug 21/08
+    if (full.type === 'master.message' && !String(full.say ?? '').trim()) return;
     if (full.type === 'master.message') this.appendChat(full);
     this.emitFn(full);
   }
@@ -763,8 +768,26 @@ export class Office {
 
   /** Lệnh chữ — xử lý hoàn toàn bằng code, KHÔNG gọi model. 0 token. */
   private runCommand(parsed: Exclude<ParsedInput, { kind: 'text' }>): SayOutcome {
+    /**
+     * ⚠ `say` RỖNG thì KHÔNG phát sự kiện nào. → bug 21/08
+     *
+     * Một `master.message` với `say: ''` vẫn đi hết đường: `appendChat` ghi nó
+     * vào `chat.jsonl`, SSE đẩy nó ra, và giao diện vẽ một bong bóng chat TRỐNG
+     * TRƠN — người dùng thấy một ô rỗng và không có cách nào đoán nó là gì.
+     *
+     * Ca đẻ ra nó: những lệnh vừa trả lời bằng một câu RIÊNG (`/resume` tự phát
+     * câu "chạy tiếp N việc…") vừa phải trả về một `SayOutcome`. Chúng gọi
+     * `reply('')` để nói *"tôi nói xong rồi"* — và `reply` cứ thế phát thêm một
+     * tin rỗng nữa.
+     *
+     * Chặn ở ĐÂY chứ không ở tầng vẽ: một tin rỗng lọt xuống `chat.jsonl` là
+     * nằm lại trên đĩa vĩnh viễn, và mọi client tương lai (Telegram) lại phải
+     * tự nhớ mà lọc. Tầng vẽ có chốt thứ hai, nhưng đó là lưới, không phải cửa.
+     */
     const reply = (say: string): SayOutcome => {
-      this.emit({ type: 'master.message', say, role: 'assistant', plan_id: null });
+      if (say.trim()) {
+        this.emit({ type: 'master.message', say, role: 'assistant', plan_id: null });
+      }
       return { intent: 'chat', reply: say };
     };
 
@@ -808,7 +831,8 @@ export class Office {
           'Đang dừng tất cả.' +
             (cutAssistant ? ' Đã cắt lượt Trợ lý đang chạy.' : '') +
             (dropped ? ` Đã bỏ ${dropped} việc còn trong hàng đợi.` : '') +
-            ' Việc đã xong vẫn giữ nguyên — nhắn tiếp để mình làm phần còn lại.',
+            // Cùng lý do với câu ở `finish`: mời `/resume`, đừng mời "nhắn tiếp".
+            ' Việc đã xong vẫn giữ nguyên — gõ /resume để mình làm nốt.',
         );
       }
 
@@ -965,7 +989,13 @@ export class Office {
     };
     this.currentRecord = record;
     this.plans.upsert(record);
-    this.setState('working', 'Trợ lý đang lập kế hoạch...');
+    // Câu này phải nói ĐÚNG việc đang xảy ra. `/resume` không gọi model lần
+    // nào — in "đang lập kế hoạch" ở đó là nói dối đúng chỗ người dùng đang
+    // nhìn, và nó chính là thứ làm cả hai chúng tôi đọc nhầm log ca hd3/hd4.
+    this.setState(
+      'working',
+      resumePlan ? 'Đang chạy tiếp việc còn dở...' : 'Trợ lý đang lập kế hoạch...',
+    );
     // Nối mạch NGAY. `run()` được gọi bằng `void` từ `handleUserBatch`, và ngay
     // sau đó `pump()` phát một activity toàn số 0 — nếu ta không phát cái này
     // trước thì dòng trạng thái tắt đúng vào lúc việc mới bắt đầu.
@@ -1132,21 +1162,41 @@ export class Office {
       record.status = 'running';
       this.plans.upsert(record);
       this.emitActivity();
-      this.savePlan(plan);
-      this.emit({ type: 'plan.created', plan_id: plan.plan_id, request, steps: plan.steps });
 
-      // Kế hoạch phải LÊN LUỒNG HỘI THOẠI, không chỉ nằm trên sơ đồ. Qua
-      // Telegram thì sơ đồ không tồn tại — mà bridge là mục tiêu tối thượng.
-      // Dựng bằng code từ `steps` đã có: 0 token. Khi có cổng duyệt
-      // (SPEC-tools-approval.md §8b) thì chính tin nhắn này mang nút duyệt.
-      this.emit({
-        type: 'master.message',
-        role: 'assistant',
-        say:
-          `Mình chia thành ${plan.steps.length} việc:\n` +
-          plan.steps.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n') +
-          `\nBắt đầu nhé.`,
-      });
+      /**
+       * ⚠ BỐN VIỆC DƯỚI ĐÂY CHỈ DÀNH CHO MỘT LƯỢT LẬP KẾ HOẠCH THẬT.
+       *
+       * Sửa 21/08, sau khi `/resume` đi nhờ `run()` và kéo theo cả bốn:
+       *
+       *  · `savePlan` **GHI ĐÈ** `<plan_id>.plan.json` bằng kế hoạch RÚT GỌN.
+       *    Bản gốc 3 task biến mất khỏi đĩa — mất bản ghi pháp y, và đó là thứ
+       *    duy nhất trả lời được câu "ca này ban đầu định làm gì". Cùng lớp với
+       *    lỗi `plan_id` đôi 19/08.
+       *  · `plan.created` lần hai trong cùng một file log → nhật ký hiện *"lập
+       *    kế hoạch 3 bước"* cho một lượt KHÔNG gọi model lần nào.
+       *  · Câu *"Mình chia thành 3 việc: 1. Tách hợp đồng…"* đọc to cả cái bước
+       *    nó sẽ KHÔNG làm — người dùng không có cách nào biết đây là chạy tiếp.
+       *
+       * `resume()` tự phát câu của nó (*"Chạy tiếp N việc còn dở…"*) ở tầng
+       * lệnh, nên ở đây im lặng là đúng, không phải là thiếu.
+       */
+      if (!resumePlan) {
+        this.savePlan(plan);
+        this.emit({ type: 'plan.created', plan_id: plan.plan_id, request, steps: plan.steps });
+
+        // Kế hoạch phải LÊN LUỒNG HỘI THOẠI, không chỉ nằm trên sơ đồ. Qua
+        // Telegram thì sơ đồ không tồn tại — mà bridge là mục tiêu tối thượng.
+        // Dựng bằng code từ `steps` đã có: 0 token. Khi có cổng duyệt
+        // (SPEC-tools-approval.md §8b) thì chính tin nhắn này mang nút duyệt.
+        this.emit({
+          type: 'master.message',
+          role: 'assistant',
+          say:
+            `Mình chia thành ${plan.steps.length} việc:\n` +
+            plan.steps.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n') +
+            `\nBắt đầu nhé.`,
+        });
+      }
 
       // 3. Chạy
       const scheduler = new Scheduler({
@@ -1212,7 +1262,19 @@ export class Office {
           (finished.length
             ? `\nĐã có: ${finished.flatMap((r) => r.artifacts).join(', ') || 'kết quả đã lưu'}.`
             : '') +
-          `\nNhắn tiếp để mình làm phần còn lại — việc đã xong giữ nguyên, không làm lại.`;
+          /**
+           * ⚠ MỜI ĐÚNG CON ĐƯỜNG ĐÃ ĐƯỢC BẢO VỆ. → SPEC-offices.md §6b
+           *
+           * Bản trước mời *"Nhắn tiếp để mình làm phần còn lại"* — tức là đẩy
+           * người dùng vào đường LẬP KẾ HOẠCH LẠI, nơi planner nhìn bảng kê và
+           * có thể nhặt một file dở dang làm đầu vào. `/resume` thì đi qua
+           * `delivered()`: task nào chưa giao được hàng thì CHẠY LẠI.
+           *
+           * Một câu chữ, và nó đổi hẳn xác suất người dùng rơi vào cửa nào —
+           * rẻ hơn mọi hàng rào kỹ thuật dựng ở phía sau.
+           */
+          `\nGõ /resume để mình làm nốt — việc nào đã xong trọn thì giữ nguyên, ` +
+          `việc bị cắt giữa chừng sẽ làm lại cho đủ.`;
         status = 'stopped';
       } else {
         /**
@@ -1272,10 +1334,26 @@ export class Office {
         const gone = this.missingOutputs(plan, receipts);
         if (gone.length) {
           status = 'failed';
-          report +=
-            `\n\n⚠ Có ${gone.length} file lẽ ra phải được ghi mà không thấy trên đĩa: ` +
-            `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}. ` +
-            `Nhân viên báo xong nhưng kết quả chưa có — nhắn mình làm lại việc này nhé.`;
+          /**
+           * HAI CA KHÁC HẲN NHAU, VÀ BẢN TRƯỚC GỘP LÀM MỘT.
+           *
+           *  · không có gì trên đĩa      → làm lại là đúng
+           *  · CÓ, nhưng nằm sai chỗ     → làm lại là bắt trả tiền lần hai cho
+           *                                thứ đã có, và bỏ lại một file lạc
+           *
+           * Ca hai đã xảy ra thật (`P-260821-1818-yydi`) và bản trước nói câu
+           * của ca một. Ta QUAN SÁT ĐƯỢC sự khác biệt qua `landed.outside` —
+           * không nói ra là tự nguyện mù.
+           */
+          const strays = strayFilesOf(receipts);
+          report += strays.length
+            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm NGOÀI văn phòng nên panel Kết quả không thấy: ` +
+              `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}. ` +
+              `File có thật và dùng được — bạn xem thử rồi bảo mình chép về đúng chỗ, ` +
+              `không cần chạy lại từ đầu.`
+            : `\n\n⚠ Có ${gone.length} file lẽ ra phải được ghi mà không thấy trên đĩa: ` +
+              `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}. ` +
+              `Nhân viên báo xong nhưng kết quả chưa có — nhắn mình làm lại việc này nhé.`;
         }
         // Trợ lý là bên DUY NHẤT được ghi vào kho chung (SPEC-offices.md §4.3):
         // kho chung nằm trong prefix của cả văn phòng, cho ai cũng ghi được thì
@@ -1488,6 +1566,40 @@ export class Office {
     tasks: number,
     receipts: readonly Receipt[] = [],
   ): void {
+    /**
+     * ⚠ BÁO CÁO KHÔNG ĐƯỢC MÂU THUẪN VỚI DẢI BƯỚC NGAY BÊN CẠNH NÓ. → §B
+     *
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ User bắt được 21/08, và cái họ chỉ ra là một MÂU THUẪN, không phải  │
+     * │ một thông tin thiếu:                                               │
+     * │                                                                    │
+     * │   1. ○ Tách hợp đồng thành từng điều khoản                          │
+     * │   2. ✓ …            ← rồi Trợ lý nói "Xong hợp đồng 4 rồi!"        │
+     * │                                                                    │
+     * │ Thông tin ĐÃ có mặt trên màn hình — dải bước nói đúng. Nhưng hai    │
+     * │ bề mặt nói ngược nhau thì tệ hơn cả việc thiếu một trong hai: người │
+     * │ dùng không biết tin cái nào, và cái sai thì lại là cái viết bằng    │
+     * │ tiếng người nên dễ tin hơn.                                        │
+     * │                                                                    │
+     * │ Cùng họ với "chưa tốn tiền" (20/08) và "xuất sang PDF giúp mình"    │
+     * │ (20/08): model khẳng định một điều mà dữ liệu TRONG TAY TA bác bỏ   │
+     * │ được. Ba lần trong hai ngày ⇒ không phải xui, là một lớp lỗi.       │
+     * └────────────────────────────────────────────────────────────────────┘
+     *
+     * Dựng bằng CODE từ `record.steps`: 0 token, không phụ thuộc model, và
+     * không có cách nào để nó "quên" như một câu dặn trong prompt.
+     *
+     * Chỉ nối khi ca tự nhận là XONG. Ca `stopped`/`failed` đã tự nói ra rồi —
+     * thêm một dòng nữa là lải nhải đúng lúc người dùng đang bực.
+     */
+    const undone = record.steps.filter((s) => s.status !== 'done');
+    if (status === 'done' && undone.length > 0 && report.trim()) {
+      report +=
+        `\n\n⚠ Nhưng còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
+        undone.map((s) => `"${s.title}"`).join(', ') +
+        `. Kết quả ở trên chỉ tính phần đã làm.`;
+    }
+
     const where = this.whereBlock(receipts);
     report += where.text;
     record.status = status;
@@ -2227,6 +2339,64 @@ export class Office {
   // → src/core/artifacts.ts
 
   /**
+   * Artifact do một task BỊ NGẮT GIỮA CHỪNG ghi ra. → SPEC-artifacts.md §2.7
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CA HỎNG NGUY HIỂM NHẤT TÌM ĐƯỢC TỚI GIỜ — đo được 21/08.                 │
+   * │                                                                          │
+   * │ User bấm Dừng đúng lúc `Người đọc` đang tách hợp đồng. Hợp đồng có **5**  │
+   * │ điều khoản; nó kịp ghi **3**. Receipt ghi đúng: `status: 'blocked'`,      │
+   * │ *"Đã dừng giữa chừng. Có 4 file đã ghi dở, xem lại trước khi dùng."*      │
+   * │                                                                          │
+   * │ Rồi ca sau đọc thư mục đó, thấy 3 file, và trả về:                        │
+   * │   *"Đã soi xong CẢ 3 điều khoản, cả ba đều bất lợi…"* → checklist 16 điểm │
+   * │                                                                          │
+   * │ 🔥 Người dùng nhận một bản rà soát hợp đồng **trông hoàn hảo, bỏ sót 40%**│
+   * │ và không có một dòng nào nói rằng nó thiếu. Đây đúng là *"sai mà không ai │
+   * │ biết"* — kết cục tệ nhất trong mọi kết cục.                               │
+   * │                                                                          │
+   * │ ⚠ Nhãn `UNFINISHED` ở cấp CA không cứu được: nó nói *"ca chưa xong"*,     │
+   * │ không nói *"file NÀY thiếu"*. Và `isStale` cũng không: nguồn không đổi,   │
+   * │ file vẫn tươi — nó chỉ CỤT. Phải là một nhãn thứ ba.                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Quan sát được, không đoán: receipt của mỗi task nằm trên đĩa và mang cả
+   * `status` lẫn `landed` — tức là *"ai bị ngắt"* và *"nó đã kịp ghi file nào"*.
+   * Ta chỉ việc nối hai thứ đang cầm.
+   *
+   * ⚠ Nhãn nói **"làm lại bước đó"**, không phải "cẩn thận nhé". Với một file
+   * cụt thì không có mức độ cẩn thận nào cứu được: cái thiếu KHÔNG nằm trong
+   * file, nên đọc kỹ đến mấy cũng không thấy nó.
+   */
+  private partialIn(planId: string): Set<string> {
+    const out = new Set<string>();
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.loaded.paths.tasks);
+    } catch {
+      return out;
+    }
+    const prefix = `${planId}.`;
+    for (const name of names) {
+      if (!name.startsWith(prefix) || !name.endsWith('.receipt.json')) continue;
+      try {
+        const r = JSON.parse(
+          fs.readFileSync(path.join(this.loaded.paths.tasks, name), 'utf8'),
+        ) as Receipt;
+        // CHỈ task bị cắt ngang. `done` thì thứ nó ghi là thứ nó định ghi; một
+        // task chưa bao giờ chạy thì không có file nào để dán nhãn.
+        if (r.status === 'done') continue;
+        for (const l of r.landed ?? []) {
+          if (l.kind === 'file' && l.ref) out.add(l.ref);
+        }
+      } catch {
+        /* receipt hỏng — không đoán bừa, xem `staleIn` */
+      }
+    }
+    return out;
+  }
+
+  /**
    * Artifact nào ĐÃ ÔI: nguồn của nó đổi sau khi nó được ghi. → `isStale`
    *
    * Quan hệ "file này sinh ra từ file kia" KHÔNG phải phỏng đoán — `plan.json`
@@ -2372,23 +2542,56 @@ export class Office {
 
     const file = path.join(this.loaded.paths.tasks, `${ready.plan_id}.plan.json`);
     const full = JSON.parse(fs.readFileSync(file, 'utf8')) as Plan;
-    const left = new Set(this.readPending().tasks.map((t) => t.task_id));
+    const queued = new Set(this.readPending().tasks.map((t) => t.task_id));
 
     /**
-     * Cắt `deps` trỏ tới task ĐÃ XONG.
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ "KHÔNG NẰM TRONG `pending`" ≠ "ĐÃ XONG". Bản trước tin thế và nó nổ.  │
+     * │                                                                      │
+     * │ `pending` là *task CHƯA CHẠY LẦN NÀO* (scheduler trả về khi bị ngắt). │
+     * │ Một task vắng mặt ở đó có thể là: xong ✓ · hỏng ✗ · bị chặn ✗ ·      │
+     * │ **bị cắt giữa lúc đang ghi file ✗**. Bản trước cắt phăng `deps` trỏ   │
+     * │ tới mọi task vắng mặt, tức là coi cả bốn ca như ca đầu.               │
+     * │                                                                      │
+     * │ Đo được 21/08, hai lần liên tiếp (hd3, hd4): user bấm Dừng lúc        │
+     * │ `Người đọc` đang tách hợp đồng (4/5 điều khoản), rồi gõ `/resume`.    │
+     * │ T-01 vắng mặt trong `pending` vì nó ĐÃ chạy — và trả `blocked`. Dây   │
+     * │ `T-02 → T-01` bị cắt, `missingInputs` thấy thư mục có 4 file nên cho  │
+     * │ qua, và cả chuỗi sau chạy trên một hợp đồng thiếu 20%.               │
+     * │                                                                      │
+     * │ ⚠ `delivered()` tồn tại ĐÚNG để trả lời câu hỏi này, và bản trước đi  │
+     * │ vòng qua nó vì lọc theo DANH SÁCH thay vì hỏi RECEIPT.               │
+     * │ → luật 20/08 "quyết định đúng + tiền đề sai = bom hẹn giờ"           │
+     * └──────────────────────────────────────────────────────────────────────┘
      *
-     * Task đã xong không còn trong kế hoạch rút gọn, nên để nguyên `deps` là
-     * `validate` báo *"phụ thuộc không tồn tại"* và chặn chính cái ca ta đang
-     * cứu. Bỏ được vì "đã xong" nghĩa đúng như thế — và file nó sinh ra vẫn nằm
-     * trên đĩa, nên chốt `missingInputs` lúc phóng vẫn kiểm được thật sự.
+     * Luật đúng: một task được bỏ qua **chỉ khi receipt của nó nói là đã giao
+     * được hàng**. Còn lại thì nó CHẠY LẠI — kể cả khi nó đã chạy một lần và
+     * để lại file dở. Chạy lại ghi đè vào đúng thư mục của chính nó
+     * (`artifacts/<plan>/<task>/`) nên không đẻ ra mảnh mồ côi nào.
      */
+    const redo = (id: string): boolean => queued.has(id) || !delivered(this.receiptOf(ready.plan_id, id));
+    const run = new Set(full.tasks.filter((t) => redo(t.task_id)).map((t) => t.task_id));
+
     const plan: Plan = {
       ...full,
       tasks: full.tasks
-        .filter((t) => left.has(t.task_id))
-        .map((t) => ({ ...t, deps: t.deps.filter((d) => left.has(d)) })),
+        .filter((t) => run.has(t.task_id))
+        // Chỉ cắt dây tới task THẬT SỰ đã giao hàng — nó không còn trong kế
+        // hoạch rút gọn nên để nguyên là `validate` báo "phụ thuộc không tồn
+        // tại" và chặn chính cái ca ta đang cứu.
+        .map((t) => ({ ...t, deps: t.deps.filter((d) => run.has(d)) })),
     };
     return this.run(plan.request, undefined, plan);
+  }
+
+  /** Receipt của một task, hoặc `undefined` nếu nó chưa từng chạy. */
+  private receiptOf(planId: string, taskId: string): Receipt | undefined {
+    try {
+      const f = path.join(this.loaded.paths.tasks, `${planId}.${taskId}.receipt.json`);
+      return JSON.parse(fs.readFileSync(f, 'utf8')) as Receipt;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── nội bộ
@@ -2526,6 +2729,15 @@ export class Office {
       const unfinished = rec && rec.status !== 'done' ? rec : undefined;
       const stale = unfinished ? this.staleIn(planId, paths, mtimes) : new Set<string>();
       /**
+       * ⚠ KHÔNG gắn vào `unfinished`. Đã dẫm đúng bẫy này 21/08.
+       *
+       * Ca `P-260821-0103-cx3a` mang `status: 'done'` — vì lần chạy SAU của nó
+       * kết thúc êm — trong khi file của T-01 vẫn cụt ở 3/5 điều khoản. Trạng
+       * thái CA nói về lần chạy cuối; tính dở dang là thuộc tính của TỪNG TASK.
+       * Gắn nhầm tầng thì nhãn im lặng đúng ở ca nguy hiểm nhất.
+       */
+      const partial = this.partialIn(planId);
+      /**
        * Tên việc là thứ làm đường dẫn có nghĩa — nhưng CẮT NGẮN HẲN.
        *
        * `request` là câu Trợ lý viết lại "cho rõ, đủ ngữ cảnh" nên nó dài thật:
@@ -2556,9 +2768,42 @@ export class Office {
           // Sắp theo đường dẫn trong MỘT ca: `T-01` phải đứng trước `T-02`.
           // `list()` sắp theo `mtime` nên task chạy xong sau lại lên trên, và
           // một danh sách nhảy số là một danh sách người đọc phải dò lại.
+          /**
+           * ⚠ FILE DỞ DANG: GIẤU ĐƯỜNG DẪN, GIỮ CON SỐ. → SPEC-artifacts §2.7
+           *
+           * ┌──────────────────────────────────────────────────────────────┐
+           * │ NHÃN LÀ MỘT LỜI NHỜ MODEL TUÂN THEO. BỎ HẲN THÌ KHÔNG CÓ GÌ │
+           * │ ĐỂ TUÂN THEO CẢ.                                             │
+           * │                                                              │
+           * │ Bản trước dán `(INCOMPLETE — … Redo that step …)` lên từng    │
+           * │ file. Đọc rất thuyết phục — và ca hd4 vẫn hỏng y hệt. Đó là   │
+           * │ một LỜI HỨA, không phải một cơ chế: luật cổ nhất của dự án.   │
+           * │                                                              │
+           * │ Không nêu đường dẫn thì planner không có chuỗi nào để chép    │
+           * │ vào `inputs`, nên nó buộc phải lập lại bước đó. Không cần     │
+           * │ model hợp tác một lần nào.                                    │
+           * └──────────────────────────────────────────────────────────────┘
+           *
+           * Nhưng KHÔNG giấu sạch — giữ một dòng đếm. Ẩn hết thì người dùng
+           * hỏi *"ca vừa rồi làm tới đâu?"* và Trợ lý mù, mà đó là câu hỏi
+           * chính đáng ở đúng khoảnh khắc đó. Con số trả lời được câu hỏi mà
+           * không đưa ra thứ để chép.
+           *
+           * ⚠ Model ĐOÁN ĐƯỢC đường dẫn (`artifacts/<plan>/<task>/…` có quy
+           * luật), nên đây chỉ là hàng rào thứ nhất. Hàng rào cứng nằm ở
+           * `Scheduler.missingInputs`, chặn lúc phóng.
+           */
           ...[...paths]
+            .filter((p) => !partial.has(p))
             .sort()
             .map((p) => (stale.has(p) ? `- ${p} (STALE — its source changed after this was written)` : `- ${p}`)),
+          ...(paths.some((p) => partial.has(p))
+            ? [
+                `(${paths.filter((p) => partial.has(p)).length} more files here were left half-written by an ` +
+                  `interrupted employee. They are NOT usable as inputs and their paths are withheld on purpose — ` +
+                  `plan that step again instead. The human can still open them.)`,
+              ]
+            : []),
         ].join('\n'),
       );
     }
@@ -2982,6 +3227,17 @@ function sessionGone(err: unknown): boolean {
  */
 function readsOf(receipts: readonly Receipt[]): string[] {
   return [...new Set(receipts.flatMap((r) => r.reads))].sort();
+}
+
+/**
+ * File ca này ghi RA NGOÀI thư mục văn phòng, và có thật trên đĩa.
+ *
+ * Dùng ở đúng một chỗ: chọn câu nào để nói khi file đã hứa không có mặt. Không
+ * bao giờ đi vào `whereBlock` — "kết quả của bạn nằm ở đây" chỉ được nói về chỗ
+ * hệ thống quản được. → `worker.ts → landingOf`, nhãn `outside`
+ */
+function strayFilesOf(receipts: readonly Receipt[]): string[] {
+  return straysOnDisk(receipts.flatMap((r) => r.landed ?? []));
 }
 
 function emptyUsage(): Usage {

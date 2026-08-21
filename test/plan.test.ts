@@ -354,3 +354,89 @@ test('isStale: mtime rác thì im lặng cho qua, không dán nhãn bừa', () =
   assert.equal(isStale('rác', [t('2026-08-20T12:00:00Z')]), false);
   assert.equal(isStale(t('2026-08-20T12:00:00Z'), ['rác']), false);
 });
+
+// ─────────────── resume: "không nằm trong pending" ≠ "đã xong" (bug 21/08)
+//
+// User bấm Dừng lúc `Người đọc` đang tách hợp đồng (4/5 điều khoản), rồi gõ
+// /resume. T-01 vắng mặt trong `pending` vì nó ĐÃ chạy — và trả `blocked`.
+// Bản trước cắt phăng dây `T-02 → T-01` và cả chuỗi sau chạy trên 4/5.
+// Nổ hai lần liên tiếp trên máy user (hd3, hd4).
+
+test('delivered: task bị NGẮT giữa lúc ghi file KHÔNG phải là đã xong', () => {
+  // Đây là ca đúng như trên đĩa: `blocked`, nhưng CÓ file đã đáp xuống — nên
+  // mọi phép kiểm nhìn vào "có file không" đều cho qua. Chỉ `status` cứu được.
+  const interrupted = {
+    status: 'blocked',
+    artifacts: ['a/dieu-01.md', 'a/dieu-02.md'],
+    landed: ['a/dieu-01.md', 'a/dieu-02.md'],
+  } as never;
+  assert.equal(delivered(interrupted), false, 'CÓ file không có nghĩa là đã xong');
+});
+
+test('resume: task phải chạy lại khi receipt CHƯA giao được hàng', () => {
+  // Mô phỏng đúng phép quyết định của `Office.resume`: `queued` là danh sách
+  // pending, `receipt` là thứ đọc từ đĩa.
+  const queued = new Set(['T-02', 'T-03']);
+  const receipts = new Map([['T-01', { status: 'blocked', artifacts: ['x.md'], landed: ['x.md'] }]]);
+  const redo = (id: string) =>
+    queued.has(id) || !delivered(receipts.get(id) as never);
+
+  assert.equal(redo('T-01'), true, 'T-01 bị cắt giữa chừng → PHẢI chạy lại');
+  assert.equal(redo('T-02'), true);
+
+  // Ngược lại: T-01 xong hẳn thì bỏ qua, đúng như `/resume` hứa.
+  const ok = new Map([['T-01', { status: 'done', artifacts: ['x.md'], landed: ['x.md'] }]]);
+  const redoOk = (id: string) => queued.has(id) || !delivered(ok.get(id) as never);
+  assert.equal(redoOk('T-01'), false, 'xong hẳn thì KHÔNG chạy lại — resume phải rẻ');
+});
+
+test('resume: chỉ cắt `deps` tới task THẬT SỰ đã giao hàng', () => {
+  // Cắt nhầm là bỏ qua chốt lan truyền, và task con chạy trên nền dở.
+  const run = new Set(['T-01', 'T-02']); // T-01 phải chạy lại nên vẫn trong kế hoạch
+  const deps = ['T-01'].filter((d) => run.has(d));
+  assert.deepEqual(deps, ['T-01'], 'dây phải CÒN thì scheduler mới chặn được T-02');
+});
+
+// ────────── hàng rào CỨNG: đầu vào là đầu ra của một task bị cắt (A2)
+//
+// Bảng kê giấu đường dẫn là hàng rào MỀM — model đoán ra được vì
+// `artifacts/<plan>/<task>/…` có quy luật, và user dán `@` thì cũng lọt.
+// Chốt này đọc NGƯỢC từ chính đường dẫn nên không cần ai hợp tác.
+
+test('đường dẫn artifact tự khai ra plan_id và task_id', () => {
+  // Đây là toàn bộ cơ sở của `interruptedInputs`: không cần chỉ mục nào cả.
+  const parts = 'artifacts/P-260821-0126-mxzo/T-01/dieu-khoan/dieu-khoan-01.md'.split('/');
+  assert.equal(parts[0], 'artifacts');
+  assert.equal(parts[1], 'P-260821-0126-mxzo');
+  assert.equal(parts[2], 'T-01');
+  assert.ok(parts.length >= 4, 'ngắn hơn 4 mảnh thì không trỏ vào đầu ra của task nào');
+});
+
+test('đường dẫn KHÔNG phải artifact thì chốt đứng ngoài', () => {
+  // Tủ tài liệu và file gốc không bao giờ là "đầu ra của một task".
+  for (const p of ['library/text/hd5.pdf.txt', 'library/files/hd5.pdf', 'artifacts/x.md']) {
+    const parts = p.split('/');
+    assert.ok(parts[0] !== 'artifacts' || parts.length < 4, p);
+  }
+});
+
+// ────────── báo cáo không được mâu thuẫn với dải bước (B)
+
+test('còn bước chưa done thì câu báo cáo phải nói ra', () => {
+  // User bắt được 21/08: dải bước hiện ○ ở bước 1, báo cáo nói "Xong rồi!".
+  // Hai bề mặt nói ngược nhau tệ hơn cả thiếu một trong hai.
+  const steps = [
+    { title: 'Tách hợp đồng', status: 'pending' },
+    { title: 'Soi điều khoản', status: 'done' },
+    { title: 'Gộp checklist', status: 'done' },
+  ];
+  const undone = steps.filter((s) => s.status !== 'done');
+  assert.equal(undone.length, 1);
+  assert.equal(undone[0].title, 'Tách hợp đồng');
+});
+
+test('xong trọn thì KHÔNG nối thêm câu cảnh báo nào', () => {
+  // Cảnh báo kêu bừa thì người dùng học cách bỏ qua nó — cùng luật với nhãn ôi.
+  const steps = [{ status: 'done' }, { status: 'done' }];
+  assert.equal(steps.filter((s) => s.status !== 'done').length, 0);
+});

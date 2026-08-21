@@ -237,6 +237,43 @@ let msgSeq = 0;
  */
 const draftKey = (officeId: string): string => `agentco:draft:${officeId}`;
 
+/**
+ * Văn phòng đang mở — nhớ qua F5 và qua mọi lần tắt tab.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG 21/08: `officeId` chỉ sống trong BỘ NHỚ.                             │
+ * │                                                                          │
+ * │ `bootstrap` giữ lại lựa chọn cũ (`state.officeId`) — nhưng sau F5 thì     │
+ * │ state đã reset, `officeId` là `null`, nên nó luôn rơi về                  │
+ * │ `company.offices[0]` = văn phòng đầu tiên theo alphabet. Người dùng thoát │
+ * │ ở "Rà hợp đồng", quay lại thấy "Bản địa hoá", mỗi lần.                    │
+ * │                                                                          │
+ * │ Cùng lớp với bug "model nhớ, màn hình quên": trạng thái sống trong RAM    │
+ * │ thì tắt cái là mất, và người dùng không có cách nào biết vì sao.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `localStorage` chứ không phải server: đây là VIEW STATE của một trình duyệt
+ * cụ thể. Hai tab mở hai văn phòng khác nhau là chuyện hợp lệ, và nhét nó lên
+ * server thì tab này đá tab kia.
+ */
+const LAST_OFFICE = 'agentco:office';
+
+function readLastOffice(): string | null {
+  try {
+    return localStorage.getItem(LAST_OFFICE);
+  } catch {
+    return null;
+  }
+}
+
+function writeLastOffice(id: string): void {
+  try {
+    localStorage.setItem(LAST_OFFICE, id);
+  } catch {
+    /* hết quota / chế độ riêng tư — mất trí nhớ chỗ này không đáng làm sập gì */
+  }
+}
+
 function readDraft(officeId: string): string {
   try {
     return localStorage.getItem(draftKey(officeId)) ?? '';
@@ -335,13 +372,26 @@ export const actions = {
       set({ loading: false, officeId: null, canvas: null });
       return;
     }
-    const keep = state.officeId && company.offices.some((o) => o.id === state.officeId);
-    await actions.openOffice(keep ? state.officeId! : company.offices[0]!.id);
+    /**
+     * Thứ tự ba nước: văn phòng ĐANG mở → văn phòng mở LẦN CUỐI → cái đầu tiên.
+     *
+     * Nước hai là nước mới (21/08) và là nước cứu ca F5: sau khi tải lại trang
+     * thì nước một luôn trượt vì state đã reset. Vẫn phải đối chiếu với danh
+     * sách thật — văn phòng có thể đã bị xoá hoặc cất đi từ phiên trước, và mở
+     * một id không còn tồn tại thì màn hình trắng.
+     */
+    const wanted = [state.officeId, readLastOffice()].find(
+      (id) => id && company.offices.some((o) => o.id === id),
+    );
+    await actions.openOffice(wanted ?? company.offices[0]!.id);
     set({ loading: false });
   },
 
   /** Mở một văn phòng. Xoá sạch state của văn phòng cũ — không trộn hai luồng. */
   async openOffice(id: string): Promise<void> {
+    // Ghi NGAY, không đợi tải xong: người dùng đóng tab giữa lúc đang tải thì
+    // lần sau vẫn phải quay lại đúng chỗ họ vừa chọn.
+    writeLastOffice(id);
     set({
       officeId: id,
       canvas: null,

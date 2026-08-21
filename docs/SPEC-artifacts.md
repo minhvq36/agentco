@@ -57,6 +57,46 @@ Hôm nay chưa mất gì vì tên file tình cờ khác nhau. **Chạy lại m�
 
 ⚠ **Chỉ viết lại đường dẫn trỏ tới task CỦA CHÍNH KẾ HOẠCH NÀY.** Người dùng có quyền nói *"sửa lại file hôm qua"*, và lúc đó `inputs` trỏ tới artifact của một kế hoạch cũ — viết lại nó là chỉ nhân viên tới một file không tồn tại.
 
+## 2.6 🔴 LUẬT: KẾT QUẢ LUÔN SINH RA BÊN TRONG THƯ MỤC VĂN PHÒNG (user chốt 21/08)
+
+> *"Cái này sao lòi ra đứng cùng cấp với office vậy, luôn phải sinh tài liệu inside office, đây là luật."*
+
+**Ca đã xảy ra — `P-260821-1818-yydi`.** Nhân viên gọi `Write` với đường dẫn trỏ lên hai cấp. File 4236 byte rơi vào `company/artifacts/<plan_id>/T-01/`, **ngang cấp với `offices/`** — một chỗ không văn phòng nào nhìn thấy, không panel Kết quả nào liệt kê, và `office rm --delete-files` không bao giờ chạm tới.
+
+### Vì sao `cwd` KHÔNG phải một bức tường
+
+Ba thứ trông như đang chặn, và không thứ nào chặn:
+
+| | Chặn cái gì | Không chặn cái gì |
+|---|---|---|
+| `cwd: office.dir` | chỗ đường dẫn **tương đối** neo vào | đường dẫn **tuyệt đối** — `Write` nhận thoải mái |
+| `tools` / `allowedTools` | **tool nào** được dùng | ghi **vào đâu** |
+| `artifactScoper` | đường dẫn trong **kế hoạch** | đường dẫn model tự gõ **lúc chạy** |
+
+`artifactScoper` viết đúng `outputs` vào brief. Nhưng brief là *lời dặn*, và lời dặn không phải cơ chế — model vẫn tự do gõ một đường dẫn khác vào `Write`. Đúng luật 16/08: **một bất biến chỉ có thật khi có mã nguồn thi hành nó.** Luật này nằm trong spec từ đầu dưới dạng bố cục thư mục ở §2, đọc rất thuyết phục, và **chưa từng chạy**.
+
+### Thi hành: `PreToolUse` hook, không phải `canUseTool`
+
+```ts
+hooks: { PreToolUse: [{ matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(office.dir)] }] }
+```
+
+⚠ **Đừng đặt luật này vào `canUseTool`.** Đã đo 19/08: tool nằm trong `allowedTools` thì được tự duyệt và **BỎ QUA `canUseTool`** — mà `Write` nằm trong `allowedTools` của mọi vai trò. Viết luật ở đó là viết một luật không bao giờ chạy, tức đẻ thêm đúng loại **LỜI HỨA** mà nợ 0c sinh ra để đi tìm. `PreToolUse` chạy trước tầng quyền nên `allowedTools` không che được nó.
+
+### `deny` kèm chỉ đường, KHÔNG `updatedInput`
+
+`updatedInput` có thể nắn đường dẫn về trong văn phòng, và đó chính xác là ô **`viết lại lặng lẽ`** ở bảng kiểu hỏng của nợ 0c — nguy hơn `từ chối` vì không ai thấy gì. Ta `deny`, và câu từ chối **nói luôn đường dẫn đúng phải dùng**: model ghi lại đúng chỗ ngay lượt sau, nhật ký có dấu vết, và ta không tốn một lượt cho một lời từ chối trống rỗng.
+
+### Nhãn `outside`: chặn là một chuyện, KHAI RA là chuyện khác
+
+`landingOf` trước đây `catch { return undefined }` khi `safeJoin` ném. `undefined` nghĩa là *"không có điểm đến nào"* — nhưng sự thật là *"có điểm đến, và nó nằm ngoài chỗ ta cho phép"*. Hai câu khác hẳn nhau.
+
+Cái giá của việc trộn hai câu: Trợ lý nói *"không thấy file trên đĩa — nhắn mình làm lại việc này nhé"* trong khi kết quả nằm nguyên vẹn cách đó hai thư mục. Người dùng **trả tiền lần thứ hai cho thứ họ đã có**, và bỏ lại một file lạc không ai dọn.
+
+`Landing.kind` giờ có `outside`, và nó được dùng ở đúng một chỗ: chọn câu nào để nói khi file đã hứa vắng mặt (`office.ts → strayFilesOf`). Nó **không bao giờ** vào `whereBlock` — *"kết quả của bạn nằm ở đây"* chỉ được nói về chỗ hệ thống quản được.
+
+> Hook chặn ca **từ nay trở đi**; nhãn `outside` cứu ca **đã xảy ra rồi** và mọi ca lọt lưới trong tương lai. Cần cả hai — một cái là cửa, một cái là đèn.
+
 ## 2.2 Đầu VÀO và đầu RA đi qua HAI luật khác nhau (chốt 20/08)
 
 Trước 20/08 cả `inputs` lẫn `outputs` dùng chung `artifactScoper`. Gộp hai thứ là nguyên nhân của một ca hỏng đo được trên máy người dùng.

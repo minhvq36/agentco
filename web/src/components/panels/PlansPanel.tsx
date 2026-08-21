@@ -206,6 +206,7 @@ function PlanDetail({
   const { plan, log } = data;
   const st = STATUS[plan.status];
   const live = useApp((s) => s.plan?.plan_id === plan.plan_id);
+  const [openRequest, setOpenRequest] = useState(false);
 
   return (
     <div className="flex h-full flex-col">
@@ -214,7 +215,28 @@ function PlanDetail({
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="min-w-0 flex-1">
-          <div className="text-[13.5px] leading-snug text-ink">{plan.request}</div>
+          {/*
+            Câu yêu cầu cũng phải có TRẦN — cùng bệnh với khối báo cáo ở đáy.
+            `request` là câu Trợ lý viết lại "cho rõ, đủ ngữ cảnh" nên nó dài
+            thật: đo được 300+ ký tự, và trong một sidebar hẹp thì nó xuống 6–7
+            dòng rồi đẩy tất cả những thứ bên dưới xuống.
+
+            ⚠ KHÔNG thêm nút "Xem đầy đủ" ở đây: hàng này đã có nút "Quay lại"
+            bên trái và "Tải lại" bên phải, nhét nút thứ ba vào là chen chúc và
+            người dùng dễ bấm nhầm. Cho CHÍNH ĐOẠN CHỮ làm nút — nó là thứ duy
+            nhất trong hàng có sẵn diện tích, và "bấm vào chữ bị cắt để xem đủ"
+            là phản xạ người ta đã có. `title` để rê chuột cũng đọc được.
+          */}
+          <button
+            className={`w-full cursor-pointer text-left text-[13.5px] leading-snug text-ink ${
+              openRequest ? '' : 'line-clamp-2'
+            }`}
+            title={plan.request}
+            aria-expanded={openRequest}
+            onClick={() => setOpenRequest((v) => !v)}
+          >
+            {plan.request}
+          </button>
           <div className="mt-1 flex items-center gap-2 text-xs text-muted">
             <span className={st.cls}>{st.label}</span>
             <span>·</span>

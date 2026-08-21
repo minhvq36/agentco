@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
 import { safeJoin } from './paths.js';
-import { addUsage, runWorker, type WorkerHandle } from './worker.js';
+import { addUsage, filesOnDisk, runWorker, straysOnDisk, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
 import {
@@ -295,6 +295,24 @@ export class Scheduler {
           continue;
         }
 
+        // File CÓ trên đĩa nhưng do một task bị cắt ngang ghi ra — nguy hơn hẳn
+        // file thiếu, vì mọi phép kiểm "có tồn tại không" đều cho qua và nhân
+        // viên đọc được thật. Cái thiếu nằm NGOÀI file. → `interruptedInputs`
+        const halfDone = this.interruptedInputs(brief);
+        if (halfDone.length) {
+          failed.add(brief.task_id);
+          receipts.set(
+            brief.task_id,
+            this.blockedReceipt(
+              brief,
+              halfDone,
+              'Không làm được vì bước trước bị cắt giữa chừng, kết quả của nó còn thiếu.',
+              'ghi dở, chưa đủ để dùng',
+            ),
+          );
+          continue;
+        }
+
         const tier = this.deps.office.roles.get(brief.role)?.model_tier ?? 'standard';
         this.runningByTier.set(tier, (this.runningByTier.get(tier) ?? 0) + 1);
         const p = this.execute(brief)
@@ -359,15 +377,72 @@ export class Scheduler {
     return out;
   }
 
-  /** Task không chạy vì đầu vào không có thật. 0 lượt, $0, và NÓI RA vì sao. */
-  private blockedReceipt(brief: TaskBrief, missing: readonly string[]): Receipt {
+  /**
+   * `inputs` trỏ vào đầu ra của một task BỊ CẮT GIỮA CHỪNG. → SPEC-offices §6b
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HÀNG RÀO CỨNG. Bảng kê giấu đường dẫn là hàng rào MỀM — model vẫn đoán   │
+   * │ ra được, vì `artifacts/<plan>/<task>/…` có quy luật rõ ràng. Và người    │
+   * │ dùng có thể dán thẳng một đường dẫn cũ bằng `@`.                          │
+   * │                                                                          │
+   * │ Chốt này không cần bảng kê, không cần model hợp tác: nó ĐỌC NGƯỢC từ     │
+   * │ chính đường dẫn. `artifacts/P-…/T-01/x.md` tự khai ra kế hoạch nào và    │
+   * │ task nào, nên tra receipt của task đó là xong. Tất định, 0 token.        │
+   * │                                                                          │
+   * │ Đo được 21/08, hai lần liên tiếp (hd3 3/5, hd4 4/5): thiếu chốt này thì  │
+   * │ cả chuỗi sau chạy trên một hợp đồng thiếu 20–40% và trả về một bản rà    │
+   * │ soát trông hoàn hảo.                                                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Chỉ chặn khi receipt NÓI RÕ là chưa giao được hàng. Không có receipt thì
+   * KHÔNG chặn: file có thể tới từ một ca quá cũ đã bị dọn khỏi `tasks/`, và
+   * chặn một thứ ta không biết gì về nó là biến chốt an toàn thành chốt chặn đường.
+   */
+  private interruptedInputs(brief: TaskBrief): string[] {
+    const out: string[] = [];
+    for (const i of brief.inputs) {
+      const parts = norm(i.path).split('/');
+      // `artifacts/<plan_id>/<task_id>/…` — ngắn hơn thì không trỏ vào đầu ra
+      // của task nào cả (tủ tài liệu, file gốc), bỏ qua.
+      if (parts[0] !== 'artifacts' || parts.length < 4) continue;
+      const receipt = this.receiptOnDisk(parts[1]!, parts[2]!);
+      if (receipt && !delivered(receipt)) out.push(i.path);
+    }
+    return out;
+  }
+
+  /**
+   * Receipt của một task BẤT KỲ, kể cả của ca khác. Tên file mang cả hai id nên
+   * không cần chỉ mục nào — đọc thẳng, `undefined` nếu không có.
+   *
+   * ⚠ `task_id` đến từ một đường dẫn do model sinh ⇒ phải đi qua `safeJoin`,
+   * nếu không nó là một lỗ đọc file tuỳ ý qua tên receipt.
+   */
+  private receiptOnDisk(planId: string, taskId: string): Receipt | undefined {
+    try {
+      const dir = this.deps.office.paths.tasks;
+      return JSON.parse(
+        fs.readFileSync(safeJoin(dir, `${planId}.${taskId}.receipt.json`), 'utf8'),
+      ) as Receipt;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Task không chạy vì đầu vào không dùng được. 0 lượt, $0, và NÓI RA vì sao. */
+  private blockedReceipt(
+    brief: TaskBrief,
+    missing: readonly string[],
+    say = 'Không làm được vì thiếu file cần đọc.',
+    why = 'không có trên đĩa',
+  ): Receipt {
     const blocked: Receipt = {
       status: 'blocked',
-      say: `Không làm được vì thiếu file cần đọc.`,
+      say,
       answer: '',
       artifacts: [],
       lessons: [],
-      blocked_on: `không có trên đĩa: ${missing.join(', ')}`,
+      blocked_on: `${why}: ${missing.join(', ')}`,
       task_id: brief.task_id,
       role: brief.role,
       usage: ZERO_USAGE,
@@ -527,21 +602,54 @@ export class Scheduler {
 
   private errorReceipt(brief: TaskBrief, err: unknown, kind: string): Receipt {
     const msg = err instanceof Error ? err.message : String(err);
+
+    /**
+     * ĐỌC ĐĨA TRƯỚC KHI NÓI "CHƯA RA KẾT QUẢ". → `RunError.observed`
+     *
+     * Một lượt hỏng ở lượt thứ N không xoá những gì lượt 1..N-1 đã ghi. Ca
+     * `P-260821-1827-m78h` chạm trần chi phí CHÍN GIÂY SAU khi ghi xong bảng
+     * kết quả đúng và đủ — bản trước ghi cứng `landed: []` ở đây nên người dùng
+     * được mời chạy lại (và trả tiền lại) cho thứ đã nằm sẵn trên đĩa.
+     */
+    const observed = err instanceof RunError ? err.observed : undefined;
+    const written = observed
+      ? filesOnDisk(this.deps.office.dir, brief.outputs.map((o) => o.path), observed.landed)
+      : [];
+    const strays = observed ? straysOnDisk(observed.landed) : [];
+
     // Nói CHUYỆN GÌ XẢY RA + LÀM GÌ TIẾP THEO. "Gặp lỗi" chung chung là vô dụng
     // với người non-code — họ không biết sửa ở đâu.
-    const say =
+    const cause =
       kind === 'max_turns'
         ? `Việc này cần nhiều bước hơn mức cho phép. Nới max_turns trong roles/${brief.role}.yaml, hoặc chia nhỏ yêu cầu.`
         : kind === 'budget'
           ? `Việc này chạm trần chi phí đã đặt cho ${brief.role}. Nới max_usd trong roles/${brief.role}.yaml nếu thấy đáng.`
           : 'Việc này gặp lỗi và không hoàn thành được. Xem nhật ký chi tiết.';
+
+    /**
+     * Câu "đã ghi được gì" đứng TRƯỚC câu "vì sao hỏng".
+     *
+     * Người dùng non-code đọc câu đầu rồi quyết định. Chôn *"nhưng file có
+     * rồi"* xuống cuối một câu bắt đầu bằng "bị chặn" thì họ đã bấm chạy lại
+     * xong mới đọc tới. Thứ tự câu chữ ở đây là một quyết định sản phẩm, không
+     * phải cách trình bày.
+     */
+    const say = written.length
+      ? `Nhân viên đã ghi xong ${written.length} file trước khi dừng: ${written.slice(0, 3).join(', ')}` +
+        `${written.length > 3 ? '…' : ''}. Xem thử trước khi quyết chạy lại — có thể đã đủ dùng. ${cause}`
+      : cause;
+
     return {
       status: 'failed',
       say,
       answer: '',
-      artifacts: [],
+      // File có thật trên đĩa, dù ca này đóng ở `failed`. Khai rỗng là nói dối
+      // rằng đĩa sạch — đúng lớp lỗi `stoppedReceipt` đã sửa cho nhánh bị ngắt.
+      artifacts: written,
       lessons: [],
-      blocked_on: msg.slice(0, 200),
+      blocked_on: strays.length
+        ? `${msg.slice(0, 160)} · ghi ra ngoài văn phòng: ${strays.slice(0, 2).join(', ')}`
+        : msg.slice(0, 200),
       task_id: brief.task_id,
       role: brief.role,
       // Token ĐÃ TIÊU trước khi lỗi nổ, không phải số 0 cho tiện. Bản trước ghi
@@ -553,11 +661,12 @@ export class Scheduler {
           : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
       wall_ms: 0,
       reasked: false,
-      landed: [],
-      // Task nổ trước khi chạy được gì: không quan sát được thao tác nào, nên
-      // không được khai là có lặp. `status: failed` đã là tín hiệu trục trặc rồi.
-      looped: false,
-      reads: [],
+      // Task nổ TRƯỚC khi chạy được gì (`observed` undefined) thì mới rỗng —
+      // không quan sát được thao tác nào, nên cũng không được khai là có lặp.
+      // Task nổ GIỮA CHỪNG thì mang theo đúng thứ nó đã kịp làm.
+      landed: observed?.landed ?? [],
+      looped: observed?.looped ?? false,
+      reads: observed?.reads ?? [],
     };
   }
 }
