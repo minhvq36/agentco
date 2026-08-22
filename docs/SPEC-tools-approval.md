@@ -208,11 +208,56 @@ Bằng chứng từ chính bài test: bài 4 và bài 10A **bắt buộc mở `r
 |---|---|---|
 | `Read` `Write` `Glob` `Grep` | ✅ **luôn bật, không tắt được** | Đây là *tay* của văn phòng. Chúng chỉ chạm được vào thư mục văn phòng (`cwd`) và `safeJoin` đã chặn đi ra ngoài. |
 | `WebSearch` `WebFetch` | ✅ **luôn bật** | Chỉ đọc. Không hỏng được gì. Là 1/4 giá trị của use case trợ lý cá nhân, và nó miễn phí. |
-| `Bash` | ❌ **tắt, một công tắc trong bảng chi tiết** | Cái duy nhất chạm được ra ngoài thư mục văn phòng. Bật là mở cửa ra cả máy. Xếp mức `write_external` ở §8. |
+| `Bash` | ⚠ **bật sẵn từ 22/08, tắt được bằng một công tắc trong bảng chi tiết** | Cái duy nhất chạm được ra ngoài thư mục văn phòng. Xếp mức `write_external` ở §8. Mặc định đổi từ ❌ sang ⚠ ngày 22/08 — xem ngay dưới. |
+
+#### Mặc định đổi từ TẮT sang BẬT (user chốt 22/08), và lý lẽ token đã chết
+
+Lý lẽ chống default-on lâu nay có hai chân: **an toàn** và **token** (mỗi tool là một khối định nghĩa trong prefix được cache của mọi lượt gọi — chính là bài học 16/08 ở dưới). Chân thứ hai gãy khi đem đo:
+
+| | prefix (cache_creation, nonce phá cache) |
+|---|---|
+| 7 tool mặc định | 4 540 |
+| + `Bash` | 4 541 |
+| **`Bash` thêm vào** | **1 token / lượt gọi worker** |
+
+⚠ Phép đo đầu tiên ra "0 token" vì **lần hai ăn cache của lần một** (`cache_read` = đúng `cache_write` lần trước). Phải cắm nonce vào system prompt để ép miss cả hai lần. Cơ chế vì sao tool thứ 8 chỉ +1 trong khi 7 tool đầu tốn 4 352 thì **chưa giải thích được** — ghi lại con số, không ghi lời giải thích chưa kiểm.
+
+Còn lại thuần lý lẽ an toàn, và đó là đánh đổi của chủ sản phẩm: phần lớn việc văn phòng thật (gọi `git`, đổi định dạng file, nén kết quả, đụng thư mục ngoài) cần `Bash`, mà người dùng non-code không tự biết đi bật.
+
+Điều kiện đi kèm — **nói ra lúc tạo, không đợi họ tự đi tìm**: hộp thoại Thêm nhân viên có một dòng nói thẳng *"người này sẽ chạy được lệnh trên máy"*, và `roleTemplate` ghi `tools: [Bash]` kèm khối chú thích giải thích ngoại lệ. Một mặc định rộng tay mà im lặng thì không phải tiện, là bẫy: người dùng chỉ biết nó tồn tại vào lúc đã muộn.
 
 Kết quả: **một công tắc duy nhất trong toàn hệ thống**, kèm một câu cảnh báo. Không chip, không node, không danh sách.
 
 `roles/*.yaml` vẫn giữ khoá `tools:` cho người advanced ghi đè — nhưng người dùng thường không bao giờ chạm tới.
+
+### ✅ Công tắc đó tồn tại thật từ 22/08/2026 — trước đó nó là dòng thứ hai chưa có mã nguồn
+
+Bảng trên chốt "một công tắc trong bảng chi tiết" từ đầu. Bản thi hành đầu tiên (16/08) chỉ trả nửa còn lại — `tools: effectiveTools(role.tools)` **cắt thật** `Bash` khỏi ngữ cảnh của vai trò không khai nó. Nhưng cách duy nhất để **khai** vẫn là mở `roles/<id>.yaml` gõ tay.
+
+Thứ chỉ ra chỗ hổng không phải một lần đọc lại code, mà một dòng trong tài liệu test: bài 9 của `TEST-WALKTHROUGH.md` có bước 📝 **BẮT BUỘC** bảo người dùng mở file yaml.
+
+> **Bài học đóng gói được, và nó khác bài học 16/08 một nấc:** ở đó một bất biến chỉ có thật khi có mã nguồn thi hành nó. Ở đây — **một tính năng dành cho người non-code chỉ có thật khi có giao diện cho nó.** Cả hai lần, thứ phát hiện ra đều nằm ngoài code: lần trước là một thí nghiệm 5 phút, lần này là một dòng hướng dẫn tự tố cáo chính nó. Một bước "mở file yaml" trong hướng dẫn của sản phẩm này luôn là chuông báo, không bao giờ là chuyện bình thường.
+
+Thi hành:
+
+| | |
+|---|---|
+| `Office.editAgent({ bash })` | giữ nguyên tool khác trong `tools:`, xoá hẳn khoá khi rỗng, rồi `reload()` — nên **không cần restart** |
+| `CanvasNode.bash` | `role.tools.includes('Bash')` |
+| `Inspector.tsx` §`BashSwitch` | công tắc + câu cảnh báo nói đúng hậu quả |
+| cache | **không cần bump `version`**: `cacheKey` băm chính `toolKey` (`prompt.ts`), nên bộ tool đổi là khoá đổi |
+
+⚠ Công tắc này là **ngoại lệ duy nhất** của luật "kết quả luôn nằm trong văn phòng" — `officeJail` khớp `Write|Edit|NotebookEdit` và **không thể** khớp `Bash`. → `SPEC-artifacts.md` §2.6.
+
+### Còn Trợ lý và worker ẩn thì KHÔNG, và đó không phải chuyện quên
+
+| | `tools` thật sự | vì sao |
+|---|---|---|
+| **Nhân viên** (worker) | 6 tool mặc định + `Bash` nếu bật | Đây là chỗ việc được làm. Công tắc thuộc về đây. |
+| **Trợ lý** | `[]` — rỗng thật | Nó **không làm việc, nó chia việc**. Trao tool cho nó là tạo đường thứ hai để một việc được thực hiện — đường đó không có receipt, không có kế hoạch, không vào sổ chi phí theo task, và không đi qua bất kỳ giới hạn nào của vai trò. Chưa kể `route()` chạy `resume` ở **mọi tin nhắn**, nên mỗi tool thêm vào là thuế thu ở mọi lượt gõ phím. |
+| **Worker ẩn** trong Trợ lý (`lookup`) | `['Read','Grep','Glob']` — chỉ đọc | Nó tồn tại để trả lời *"trong tủ có gì"* mà không phải phóng một worker thật. Việc đó chỉ cần đọc. Cho nó `Bash` là cho Trợ lý một cánh tay qua cửa sau, đúng thứ vừa từ chối ở dòng trên. |
+
+Nói cách khác: **`Bash` gắn vào MỘT NGƯỜI mà bạn nhìn thấy trên sơ đồ và bật bằng tay.** Không có đường nào để một lệnh chạy mà không có một cái tên chịu trách nhiệm cho nó trong nhật ký.
 
 ### ⚠ Bảng trên KHÔNG được thi hành cho tới 16/08/2026 — `tools` ≠ `allowedTools`
 

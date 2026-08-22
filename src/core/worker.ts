@@ -13,6 +13,7 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
 import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
 
+import { noteRateLimit } from './energy.js';
 import { companyPaths, safeJoin } from './paths.js';
 import { grantFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
@@ -207,6 +208,10 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         firstTokenSeen = true;
         release?.();
       }
+
+      // Hạn mức tài khoản đi kèm luồng, MIỄN PHÍ. Bắn một lần mỗi query, ngay
+      // đầu — nhặt lên chứ đừng gọi thêm gì. → `core/energy.ts`
+      if (m['type'] === 'rate_limit_event') noteRateLimit(m['rate_limit_info']);
 
       if (m['type'] === 'assistant') {
         const calls = toolCalls(m);
@@ -779,8 +784,30 @@ function describeCall(call: ToolCall): string {
       return 'đang tìm trên web';
     case 'WebFetch':
       return 'đang đọc một trang web';
-    case 'Bash':
-      return 'đang chạy lệnh';
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ NÓI RA LỆNH, KHÔNG CHỈ NÓI "CÓ CHẠY LỆNH".                           │
+     * │                                                                      │
+     * │ Bản trước trả đúng chuỗi `'đang chạy lệnh'` cho mọi lệnh — trong khi  │
+     * │ `call.input['command']` đang nằm ngay trong tay. Đó là tự nguyện mù,  │
+     * │ cùng lỗi với `landingOf` từng nuốt đường dẫn ghi ra ngoài.            │
+     * │                                                                      │
+     * │ Và nó nặng lên hẳn từ 22/08, khi `Bash` thành MẶC ĐỊNH BẬT: đây là    │
+     * │ tool duy nhất ra được khỏi thư mục văn phòng, `officeJail` không khớp │
+     * │ được nó, cổng `write_external` thì chưa cài. Dòng này là **cửa sổ duy │
+     * │ nhất** người dùng có để thấy nhân viên vừa làm gì với cái máy của họ. │
+     * │                                                                      │
+     * │ Cắt ở 60 ký tự: dòng trạng thái chỉ có một dòng, mà một lệnh có       │
+     * │ pipe dài vài trăm ký tự sẽ đẩy mọi thứ khác ra khỏi màn hình. Phần    │
+     * │ đầu của lệnh là phần nói lên ý định (`git log …`, `ls …`, `curl …`).  │
+     * │ Xuống dòng bị thu về dấu cách — một lệnh nhiều dòng làm vỡ bố cục.    │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    case 'Bash': {
+      const cmd = str(call.input['command']).replace(/\s+/g, ' ');
+      if (!cmd) return 'đang chạy lệnh';
+      return `đang chạy: ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}`;
+    }
     default: {
       const server = mcpServerOf(call.name);
       return server ? `đang làm việc với ${server}` : `đang dùng ${call.name}`;

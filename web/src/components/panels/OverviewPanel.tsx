@@ -243,10 +243,26 @@ function CostRowView({ row }: { row: CostRow }) {
  *
  * Khôi phục thì họ trở lại đúng văn phòng cũ — vì họ chưa bao giờ rời đi.
  * `roles/<id>.yaml` không hề di chuyển, chỉ có một cờ `archived` được gỡ.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TÊN VĂN PHÒNG PHẢI HIỆN RA, DÙ DANH SÁCH NÀY CHỈ CÓ MỘT VĂN PHÒNG.       │
+ * │                                                                          │
+ * │ Khối này nằm trong bảng **Tổng quan công ty** — một màn hình mà mọi thứ  │
+ * │ khác đều nói về CẢ công ty (danh sách văn phòng, sổ chi phí, model dùng  │
+ * │ chung). Một mục "Nhân viên trong lưu trữ" đặt giữa đó thì đọc như là     │
+ * │ toàn công ty, và người dùng bấm "Đưa trở lại" xong đi tìm người đó trong │
+ * │ một mớ văn phòng.                                                        │
+ * │                                                                          │
+ * │ Nhãn ở đây không phải để phân biệt các dòng với nhau — chúng cùng một    │
+ * │ văn phòng cả. Nó trả lời câu người dùng thật sự đang hỏi: **"bấm nút này │
+ * │ thì người đó xuất hiện ở đâu?"** Nên nhãn nằm ở TIÊU ĐỀ khối, chỗ đọc    │
+ * │ trước khi bấm, chứ không rắc vào từng dòng.                              │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ArchivedAgentsSection() {
   const officeId = useApp((s) => s.officeId);
   const canvas = useApp((s) => s.canvas);
+  const office = useApp((s) => s.company?.offices.find((o) => o.id === s.officeId));
   const [agents, setAgents] = useState<ArchivedAgent[]>([]);
   const [confirm, setConfirm] = useState<ArchivedAgent | null>(null);
 
@@ -264,7 +280,15 @@ function ArchivedAgentsSection() {
 
   return (
     <section>
-      <SectionTitle className="mb-2">Nhân viên trong lưu trữ</SectionTitle>
+      <div className="mb-2 flex items-center gap-2">
+        <SectionTitle>Nhân viên trong lưu trữ</SectionTitle>
+        {office && (
+          <span className="flex min-w-0 items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+            <span className="flex-none">{office.avatar}</span>
+            <span className="truncate">{office.name}</span>
+          </span>
+        )}
+      </div>
       <ul className="flex flex-col gap-1">
         {agents.map((a) => (
           <li
@@ -278,10 +302,18 @@ function ArchivedAgentsSection() {
                 {a.notes > 0 ? `${a.notes} ghi chú kinh nghiệm còn giữ` : a.pitch}
               </span>
             </span>
-            <Button size="sm" onClick={() => void actions.archiveAgent(a.role, false)}>
-              <ArchiveRestore className="h-3.5 w-3.5" />
-              Đưa trở lại
-            </Button>
+            <Tip
+              label={
+                office
+                  ? `Trở lại sơ đồ của "${office.name}", đứng ở một chỗ trống — không đè lên ai. Vẫn ở trạng thái NGHỈ cho tới khi bạn nối dây.`
+                  : 'Trở lại sơ đồ, đứng ở một chỗ trống, vẫn ở trạng thái nghỉ.'
+              }
+            >
+              <Button size="sm" onClick={() => void actions.archiveAgent(a.role, false)}>
+                <ArchiveRestore className="h-3.5 w-3.5" />
+                Đưa trở lại
+              </Button>
+            </Tip>
             <Tip label="Xoá hẳn file vai trò — không lấy lại được">
               <Button
                 size="iconSm"
@@ -295,6 +327,19 @@ function ArchivedAgentsSection() {
           </li>
         ))}
       </ul>
+
+      {/*
+        Câu này nói về CHỖ NGỒI, vì đó mới là nỗi lo thật khi bấm "Đưa trở lại":
+        người dùng sợ họ hiện ra ở một chỗ không tìm thấy. Cất đi là node bị XOÁ
+        khỏi layout (`layout.dropAgent`), nên lúc quay lại nó được cấp ô trống
+        đầu tiên như một người mới — kể cả khi ai đó đã ngồi vào chỗ cũ.
+        → test/layout.test.ts "cất đi rồi đưa trở lại"
+      */}
+      <p className="mt-2 text-xs leading-relaxed text-muted">
+        Đưa trở lại là họ xuất hiện trên sơ đồ của <b>{office?.name ?? 'văn phòng này'}</b> ở một chỗ
+        trống — không bao giờ nằm đè lên người khác, kể cả khi đã có ai ngồi vào chỗ cũ của họ. Trạng
+        thái vẫn là <b>đang nghỉ</b> cho tới khi bạn nối dây từ Trợ lý.
+      </p>
 
       <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
         <DialogContent>

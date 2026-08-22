@@ -2,6 +2,7 @@
 import { Download, FolderOpen, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmDelete } from '@/components/ui/confirm';
 import {
   Dialog,
   DialogContent,
@@ -275,26 +276,18 @@ export function LibraryPanel() {
         </div>
       )}
 
-      <Dialog open={!!confirmDel} onOpenChange={(o) => !o && setConfirmDel(null)}>
-        <DialogContent className="w-[min(30rem,94vw)]">
-          <DialogHeader>
-            <DialogTitle>Xoá tài liệu?</DialogTitle>
-            <DialogDescription>
-              {/* Tên file nằm TRONG câu hỏi, không phải ở đâu đó phía sau hộp
-                  thoại: xoá hẳn thì người dùng phải đọc được chính xác cái gì
-                  sắp biến mất. */}
-              <b>{confirmDel?.name}</b> sẽ bị xoá khỏi tủ, cùng phần văn bản đã bóc ra. Bản gốc trên máy
-              bạn không bị ảnh hưởng.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setConfirmDel(null)}>Thôi</Button>
-            <Button variant="danger" onClick={() => confirmDel && void remove(confirmDel)}>
-              Xoá hẳn
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Tên file nằm TRONG câu hỏi, không phải ở đâu đó phía sau hộp thoại:
+          xoá hẳn thì người dùng phải đọc được chính xác cái gì sắp biến mất.
+          Enter = Xoá — xem chú thích ở `ConfirmDelete`. */}
+      <ConfirmDelete
+        open={!!confirmDel}
+        title="Xoá tài liệu?"
+        onCancel={() => setConfirmDel(null)}
+        onConfirm={() => confirmDel && void remove(confirmDel)}
+      >
+        <b>{confirmDel?.name}</b> sẽ bị xoá khỏi tủ, cùng phần văn bản đã bóc ra. Bản gốc trên máy bạn
+        không bị ảnh hưởng.
+      </ConfirmDelete>
 
       <Dialog open={!!askReplace} onOpenChange={(o) => !o && setAskReplace(null)}>
         <DialogContent className="w-[min(30rem,94vw)]">

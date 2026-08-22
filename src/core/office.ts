@@ -13,6 +13,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 
 import { loadOffice, type LoadedOffice } from './config.js';
+import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
@@ -88,6 +89,13 @@ export interface CanvasNode extends LayoutNode {
   /** Trần chi phí một việc. **`0` = không giới hạn.** → `RoleBudget.max_usd` */
   maxUsd?: number;
   maxTurns?: number;
+  /**
+   * agent: vai trò này có `Bash` không. → docs/SPEC-tools-approval.md §5
+   *
+   * Chỉ tool DUY NHẤT đáng đưa lên node, vì nó là tool duy nhất bật/tắt được —
+   * và là ranh giới giữa "chỉ chạm được văn phòng" với "chạm được cả máy".
+   */
+  bash?: boolean;
   /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
   count?: number;
   mcp?: string[];
@@ -238,6 +246,15 @@ export class Office {
   bindBus(fn: (e: AgentEvent) => void): void {
     this.emitFn = fn;
     this.offerResume();
+    /**
+     * Hỏi hạn mức NGAY khi có bus. Người dùng mở app lên là thấy số, không phải
+     * chờ tới lượt chạy đầu tiên — mà "còn chạy được nữa không" thường chính là
+     * câu họ hỏi TRƯỚC khi giao việc.
+     *
+     * `force` bỏ tiết lưu: đây là lần đầu, và nó chỉ xảy ra một lần mỗi lần mở.
+     * Không `await`: nó tốn ~5 giây và không ai đứng đợi nó. → `core/energy.ts`
+     */
+    void refreshEnergy(true).then(() => this.emitEnergy());
   }
 
   emit(e: AgentEventBody & { plan_id?: string | null }): void {
@@ -249,7 +266,40 @@ export class Office {
     // đây là nó sắp nằm lại trên `chat.jsonl` vĩnh viễn. → bug 21/08
     if (full.type === 'master.message' && !String(full.say ?? '').trim()) return;
     if (full.type === 'master.message') this.appendChat(full);
+    this.emitEnergy();
     this.emitFn(full);
+  }
+
+  /** So `energyVersion()` với lần bắn trước. Chỉ đổi mới bắn. */
+  private energySeen = 0;
+
+  /**
+   * Hạn mức tài khoản ĐI NHỜ luồng sự kiện đang có, không có bus riêng.
+   * → `core/energy.ts`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO KHÔNG DÙNG PUB/SUB — dù đó là phản xạ đầu tiên.                   │
+   * │                                                                          │
+   * │ `energy.ts` là state ở MODULE (hạn mức thuộc về tài khoản, không thuộc   │
+   * │ văn phòng nào), còn `Office` thì sinh ra và mất đi theo thao tác của     │
+   * │ người dùng. Cho Office đăng ký listener là tự nhận một bài toán vòng đời │
+   * │ — gỡ ở đâu, ai gỡ, và một listener sót lại sẽ bắn vào một SSE đã đóng.   │
+   * │                                                                          │
+   * │ `emit()` đã là CHỐT DUY NHẤT mọi sự kiện đi qua, và trong lúc chạy thì   │
+   * │ nó dày đặc (`plan.step`, `agent.progress`, `cost.tick`). Mà               │
+   * │ `rate_limit_event` tới ngay ĐẦU query — tức là ngay trước cả một trận    │
+   * │ sự kiện. Đi nhờ ở đây thì độ trễ tính bằng mili-giây, còn số listener    │
+   * │ phải quản là 0.                                                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Bắn thẳng qua `emitFn`, KHÔNG qua `emit()`: đệ quy là một, và đây không
+   * phải chuyện của một kế hoạch nên nó không được nằm trong `plans.append`.
+   */
+  private emitEnergy(): void {
+    if (energyVersion() === this.energySeen) return;
+    this.energySeen = energyVersion();
+    const energy = energySnapshot();
+    if (energy) this.emitFn({ type: 'energy.tick', energy, office: this.id, plan_id: null });
   }
 
   /**
@@ -1613,6 +1663,16 @@ export class Office {
     this.plans.upsert(record);
 
     this.emit({ type: 'cost.tick', totals: { ...usage, tasks } });
+    /**
+     * Kế hoạch vừa xong là lúc DUY NHẤT con số hạn mức thật sự nhảy — hỏi lại ở
+     * đây, đừng hẹn giờ. Polling khi không có gì chạy là mở một tiến trình CLI
+     * mỗi phút để nghe cùng một câu trả lời.
+     *
+     * Không `await`: người dùng đang đọc báo cáo, không đứng đợi cái ô ở header.
+     * `refreshEnergy` tự tiết lưu 60 giây nên ba kế hoạch ngắn liên tiếp cũng
+     * chỉ mở một tiến trình. → `core/energy.ts`
+     */
+    void refreshEnergy().then(() => this.emitEnergy());
     // Câu báo cáo phát ĐÚNG MỘT LẦN, ở đây. `plan.finished` là sự kiện cấu trúc
     // (trạng thái + tiền) để UI đóng sổ, KHÔNG mang lại câu chữ — trước đây nó
     // mang, và nhật ký hiện hai dòng y hệt nhau ngay cạnh nhau.
@@ -1854,6 +1914,14 @@ export class Office {
       /** Trần chi phí một việc. **`0` = không giới hạn.** → `RoleBudget.max_usd` */
       max_usd?: number;
       max_turns?: number;
+      /**
+       * Bật/tắt `Bash` cho vai trò này. → docs/SPEC-tools-approval.md §5
+       *
+       * Công tắc DUY NHẤT trong cả hệ thống về khả năng — mọi tool khác bật sẵn
+       * và không tắt được (`BUILTIN_TOOLS`). Nó có công tắc riêng vì nó là thứ
+       * duy nhất chạm được ra NGOÀI thư mục văn phòng.
+       */
+      bash?: boolean;
     },
   ): CanvasState {
     this.assertLive();
@@ -1899,6 +1967,31 @@ export class Office {
         throw new RunError('Số bước tối đa phải là số nguyên từ 1 trở lên.', 'other');
       }
       doc.setIn(['budget', 'max_turns'], patch.max_turns);
+    }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────────┐
+     * │ `Bash` — CÔNG TẮC, KHÔNG PHẢI Ô NHẬP DANH SÁCH TOOL.                   │
+     * │ → docs/SPEC-tools-approval.md §5                                        │
+     * │                                                                         │
+     * │ Spec chốt "một công tắc duy nhất trong toàn hệ thống" từ đầu, nhưng     │
+     * │ cách duy nhất để bật vẫn là mở `roles/<id>.yaml` gõ tay — tức là bài 9  │
+     * │ của TEST-WALKTHROUGH có một bước 📝 **BẮT BUỘC** dành cho một sản phẩm  │
+     * │ làm cho người non-code. Đây là dòng code trả nốt lời hứa đó.            │
+     * │                                                                         │
+     * │ GIỮ tool khác trong `tools:` nếu người dùng advanced đã tự thêm: đây là │
+     * │ công tắc CHO MỘT TOOL, không phải nút ghi đè cả danh sách. Xoá hẳn khoá │
+     * │ khi danh sách rỗng để file quay về đúng hình dạng template.             │
+     * │                                                                         │
+     * │ KHÔNG cần bump `version`: `cacheKey` băm chính `toolKey` (prompt.ts     │
+     * │ §buildWorkerPrompt), nên bộ tool đổi là khoá đổi — không thể quên.      │
+     * └────────────────────────────────────────────────────────────────────────┘
+     */
+    if (patch.bash !== undefined) {
+      const rest = role.tools.filter((t) => t !== 'Bash');
+      const next = patch.bash ? [...rest, 'Bash'] : rest;
+      if (next.length) doc.set('tools', next);
+      else doc.delete('tools');
     }
 
     fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
@@ -2050,7 +2143,25 @@ export class Office {
 
     this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: 'Đã lưu. Bộ nhớ đệm sẽ ghi lại một lần.', plan_id: null });
+    /**
+     * TRẢ LỜI CÂU HỎI NGƯỜI DÙNG THẬT SỰ ĐANG CÓ: *"đã ăn chưa?"*
+     *
+     * Câu cũ — *"Đã lưu. Bộ nhớ đệm sẽ ghi lại một lần."* — nói về một cơ chế
+     * bên trong mà người dùng không hỏi, và **im lặng đúng chỗ họ đang phân
+     * vân**: có phải restart không, ai đã biết, việc đang chạy có bị ảnh hưởng.
+     * User hỏi thẳng ba câu đó 21/08, và tài liệu thì đang bảo họ đi `stop`/
+     * `start` — một bước thừa không bao giờ gây triệu chứng nên sống rất lâu.
+     *
+     * Nói ba việc, theo đúng thứ tự người ta lo: hiệu lực · phạm vi · cái giá.
+     */
+    this.emit({
+      type: 'layout.changed',
+      say:
+        'Đã lưu và áp dụng ngay — không cần khởi động lại. Nhân viên nhận việc từ giờ dùng bản mới; ' +
+        'việc đang chạy vẫn theo bản cũ cho tới khi xong. Lượt đầu của mỗi nhân viên sẽ tốn thêm ' +
+        'một chút vì phải ghi lại bộ nhớ đệm.',
+      plan_id: null,
+    });
     return this.describePrompt(who);
   }
 
@@ -3037,6 +3148,7 @@ export class Office {
       pitch: role.pitch,
       maxUsd: role.budget.max_usd,
       maxTurns: role.budget.max_turns,
+      bash: role.tools.includes('Bash'),
       count: notes[role.id] ?? 0,
       mcp: role.mcp,
       hue: agentHue(role.id),
@@ -3310,9 +3422,18 @@ skill_level: medium
 skills: {}
 
 # Đọc/ghi file trong văn phòng và tìm trên web đã BẬT SẴN cho mọi nhân viên —
-# không cần khai gì ở đây. Trường này chỉ để thêm thứ nằm ngoài bộ mặc định:
-#   tools: [Bash]   # cho phép chạy lệnh trên máy — cân nhắc, nó ra được khỏi
-#                   # thư mục văn phòng
+# không cần khai gì ở đây. Trường này chỉ để thêm thứ nằm ngoài bộ mặc định.
+#
+# Bash = cho phép chạy lệnh trên máy. BẬT SẴN (user chốt 22/08) vì phần lớn
+# việc văn phòng thật sự cần nó: gọi git, đổi định dạng file, nén kết quả,
+# đụng tới thư mục nằm ngoài văn phòng.
+#
+# ⚠ Đây là NGOẠI LỆ DUY NHẤT của luật "kết quả luôn nằm trong thư mục văn
+# phòng" (docs/SPEC-artifacts.md §2.6): hook chặn ghi bậy chỉ khớp được
+# Write/Edit, không khớp được lệnh shell. Người này đọc và ghi được bất cứ
+# đâu trên máy bạn. Xoá dòng dưới, hoặc tắt công tắc trong bảng chi tiết,
+# nếu vai trò này không cần.
+tools: [Bash]
 model_tier: ${tier}
 use_preset: false
 

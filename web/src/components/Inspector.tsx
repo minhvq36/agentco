@@ -280,6 +280,71 @@ function ModelPicker({ node }: { node: CanvasNode }) {
 }
 
 
+/**
+ * Công tắc `Bash`. → docs/SPEC-tools-approval.md §5
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CÔNG TẮC DUY NHẤT VỀ KHẢ NĂNG TRONG CẢ SẢN PHẨM — và đó là chủ ý.        │
+ * │                                                                          │
+ * │ Sáu tool còn lại bật sẵn, không tắt được, vì chúng chỉ chạm tới thư mục  │
+ * │ văn phòng hoặc chỉ đọc web. Hỏi người dùng bật `WebSearch` cho một nhân  │
+ * │ viên tên "Người tìm tin" là hỏi một câu chỉ có một đáp án.                │
+ * │                                                                          │
+ * │ `Bash` khác HẲN về loại, không khác về mức: nó là thứ duy nhất ra được   │
+ * │ khỏi văn phòng. Cụ thể — và câu này phải nói thẳng ra ở giao diện, không  │
+ * │ chỉ nằm trong spec:                                                      │
+ * │                                                                          │
+ * │  · LUẬT "kết quả luôn sinh ra trong văn phòng" được thi hành bằng hook   │
+ * │    `PreToolUse` khớp `Write|Edit|NotebookEdit` (worker.ts §officeJail).  │
+ * │    `Bash` KHÔNG nằm trong matcher đó, và không thể nằm: đường dẫn của    │
+ * │    một lệnh shell nằm trong chuỗi lệnh, không nằm ở một trường có tên.   │
+ * │    Bật công tắc này là tự tay mở một cửa mà cái hook kia không canh.      │
+ * │  · Cổng duyệt `write_external` ở SPEC §8 CHƯA được cài. Nên hôm nay      │
+ * │    không có tầng chặn nào phía sau công tắc này cả.                      │
+ * │                                                                          │
+ * │ ⇒ Câu cảnh báo ở đây không phải thủ tục. Nó là tầng bảo vệ DUY NHẤT, nên │
+ * │   nó nói ĐÚNG hậu quả ("đọc và ghi bất cứ đâu trên máy bạn") thay vì một │
+ * │   câu chung chung kiểu "hãy cân nhắc".                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function BashSwitch({ node }: { node: CanvasNode }) {
+  const on = !!node.bash;
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div className={`mt-4 rounded-lg border p-3 ${on ? 'border-warn' : 'border-line'}`}>
+      <label className="flex cursor-pointer items-start gap-2.5">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 flex-none accent-accent"
+          checked={on}
+          disabled={busy}
+          onChange={async (e) => {
+            setBusy(true);
+            await actions.editAgent(node.role!, { bash: e.target.checked });
+            setBusy(false);
+          }}
+        />
+        <span className="min-w-0">
+          <span className="block text-[13px] text-ink">Cho chạy lệnh trên máy</span>
+          <span className="block text-xs leading-relaxed text-muted">
+            Mở <code>Bash</code> — cần khi việc phải gọi <code>git</code>, chạy script, hoặc đụng tới
+            file nằm ngoài văn phòng.
+          </span>
+        </span>
+      </label>
+
+      {on && (
+        <p className="mt-2.5 rounded bg-warn-soft px-2 py-1.5 text-xs leading-relaxed text-warn">
+          Người này <b>đọc và ghi được bất cứ đâu trên máy bạn</b>, không chỉ trong thư mục văn phòng —
+          và đó là <b>ngoại lệ duy nhất</b> của luật "kết quả luôn nằm trong văn phòng". Chỉ bật cho
+          nhân viên bạn thật sự cần, rồi tắt lại.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-3 border-b border-line py-1.5 text-[13px] last:border-0">
@@ -434,6 +499,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Note>
               Mọi nhân viên đã có sẵn: đọc/ghi file trong văn phòng, và tìm trên web. Không cần bật gì.
             </Note>
+            <BashSwitch node={node} />
           </>
         )}
       </div>

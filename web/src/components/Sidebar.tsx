@@ -147,7 +147,9 @@ export function Sidebar() {
           const Icon = t.icon;
           const on = panel === t.id;
           return (
-            <Tip key={t.id} label={t.label}>
+            /* `side="right"`: rail này XẾP DỌC, nên tooltip mặc định (`top`)
+               phủ đúng lên nút phía trên. → chú thích ở `Tip` */
+            <Tip key={t.id} label={t.label} side="right">
               <Button
                 size="icon"
                 variant="ghost"

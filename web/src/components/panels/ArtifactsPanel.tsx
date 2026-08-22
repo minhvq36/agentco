@@ -2,6 +2,7 @@
 import { Download, FileCheck2, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmDelete } from '@/components/ui/confirm';
 import {
   Dialog,
   DialogContent,
@@ -226,28 +227,26 @@ export function ArtifactsPanel() {
 
       <ViewerDialog item={open} officeId={officeId} onClose={() => setOpen(null)} />
 
-      <Dialog open={!!confirmDel} onOpenChange={(o) => !o && setConfirmDel(null)}>
-        <DialogContent className="w-[min(30rem,94vw)]">
-          <DialogHeader>
-            <DialogTitle>Xoá kết quả?</DialogTitle>
-            <DialogDescription>
-              {/*
-                Khác hẳn câu của tủ tài liệu, và khác biệt phải nói ra: tài liệu
-                thì bản gốc còn trên máy người dùng, còn kết quả thì ĐÂY LÀ BẢN
-                DUY NHẤT — xoá là mất thứ đã trả tiền để làm ra.
-              */}
-              <b>{confirmDel?.name}</b> sẽ bị xoá hẳn. Đây là <b>bản duy nhất</b> — không có bản sao nào
-              khác trên máy bạn, và nhân viên phải chạy lại từ đầu nếu bạn cần nó.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setConfirmDel(null)}>Thôi</Button>
-            <Button variant="danger" onClick={() => confirmDel && void remove(confirmDel)}>
-              Xoá hẳn
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/*
+        Khác hẳn câu của tủ tài liệu, và khác biệt phải nói ra: tài liệu thì bản
+        gốc còn trên máy người dùng, còn kết quả thì ĐÂY LÀ BẢN DUY NHẤT — xoá là
+        mất thứ đã trả tiền để làm ra.
+
+        Vẫn dùng `ConfirmDelete` (Enter = xoá) dù mất mát ở đây nặng hơn tủ tài
+        liệu: hậu quả vẫn CÓ TRẦN — chạy lại là ra, chỉ tốn tiền — và ngăn này
+        mới là chỗ file dồn lại thành hàng chục sau vài ngày, tức là chỗ cần dọn
+        nhanh nhất. Ranh giới nằm ở "dựng lại được hay không", không ở "tiếc hay
+        không".
+      */}
+      <ConfirmDelete
+        open={!!confirmDel}
+        title="Xoá kết quả?"
+        onCancel={() => setConfirmDel(null)}
+        onConfirm={() => confirmDel && void remove(confirmDel)}
+      >
+        <b>{confirmDel?.name}</b> sẽ bị xoá hẳn. Đây là <b>bản duy nhất</b> — không có bản sao nào khác
+        trên máy bạn, và nhân viên phải chạy lại từ đầu nếu bạn cần nó.
+      </ConfirmDelete>
     </div>
   );
 }

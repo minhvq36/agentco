@@ -54,6 +54,8 @@ export interface CanvasNode {
   /** Trần chi phí một việc, đơn vị USD. **`0` = không giới hạn.** */
   maxUsd?: number;
   maxTurns?: number;
+  /** Nhân viên: có `Bash` không — tool duy nhất chạm được ra ngoài văn phòng. */
+  bash?: boolean;
   count?: number;
   mcp?: string[];
   hue?: number;
@@ -293,6 +295,8 @@ export type AgentEvent = EventBase &
       }
     | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }
+    /** Hạn mức TÀI KHOẢN đổi — không dọn khi đổi văn phòng. Xem `Energy`. */
+    | { type: 'energy.tick'; energy: Energy }
     | { type: 'knowledge.changed'; count: number; version: number }
     | { type: 'library.changed'; count: number; busy: number }
     | { type: 'layout.changed'; say: string }
@@ -318,4 +322,34 @@ export function canConnect(from: CanvasNode, to: CanvasNode, edges: readonly Can
   if (from.id === to.id) return false;
   if (!CAN_CONNECT[from.kind]?.includes(to.kind)) return false;
   return !edges.some((e) => e.from === from.id && e.to === to.id);
+}
+
+// ─────────────────────────────────────────────────────────── hạn mức tài khoản
+
+/**
+ * Hạn mức của TÀI KHOẢN Claude, không phải của công ty.
+ * → src/core/energy.ts · docs/SPEC-token-economy.md §5e
+ *
+ * Cùng cái quota mà Claude Code và claude.ai của chính người dùng đang tiêu.
+ * Vì thế nó KHÔNG bị dọn khi đổi văn phòng — khác hẳn `cost`.
+ */
+export interface EnergyWindow {
+  /** Chỉ hai — không tách theo model. Xem chú thích ở `energy.ts`. */
+  kind: 'session' | 'weekly';
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+  /** ISO 8601, hoặc null khi server không gửi. */
+  resetsAt: string | null;
+  /**
+   * 0-100. `null` khi chưa lấy được số. Không có số thì **KHÔNG vẽ thanh** —
+   * một cái thanh 0% là nói dối về thứ ta không biết.
+   */
+  utilization: number | null;
+}
+
+export interface Energy {
+  /** Thứ tự CỐ ĐỊNH: phiên rồi tuần. */
+  windows: EnergyWindow[];
+  /** `pro` · `max` … · `null` khi chạy bằng API key. */
+  plan: string | null;
+  seenAt: string;
 }

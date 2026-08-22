@@ -18,6 +18,7 @@ import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 import type { LoadedOffice } from './config.js';
+import { noteRateLimit } from './energy.js';
 import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
 import { addUsage, classifyError } from './worker.js';
 import {
@@ -1374,6 +1375,10 @@ export class Assistant {
         },
       })) {
         const m = msg as Record<string, unknown>;
+        // Hạn mức tài khoản đi kèm luồng, MIỄN PHÍ. Trợ lý mở query ở MỌI tin
+        // nhắn người dùng gõ, nên đây là nguồn cập nhật dày nhất — kể cả khi
+        // không có nhân viên nào chạy. → `core/energy.ts`
+        if (m['type'] === 'rate_limit_event') noteRateLimit(m['rate_limit_info']);
         // CHỈ ghi nhận session id khi đang chạy TRÊN session Assistant. Query
         // one-shot (lập kế hoạch) cũng sinh session_id riêng — ghi đè bằng nó
         // là mất trí nhớ hội thoại.

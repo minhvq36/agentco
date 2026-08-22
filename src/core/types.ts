@@ -7,6 +7,9 @@
 
 import { z } from 'zod';
 
+// Chỉ KIỂU, và `energy.ts` không import ngược lại đây — không có vòng.
+import type { Energy } from './energy.js';
+
 // ─────────────────────────────────────────────────────────── tier & model
 
 export const TIERS = ['eco', 'standard', 'deep'] as const;
@@ -1015,6 +1018,16 @@ export type AgentEventBody =
    */
   | { type: 'office.cleared'; say: string }
   | { type: 'cost.tick'; totals: Usage & { tasks: number } }
+  /**
+   * Hạn mức TÀI KHOẢN Claude đổi. → `core/energy.ts`
+   *
+   * ⚠ Khác `cost.tick` ở đúng chỗ dễ nhầm nhất, và giao diện phải xử khác:
+   * `cost.tick` là tiền của MỘT VĂN PHÒNG trong phiên này — đổi văn phòng là
+   * dọn sạch. `energy.tick` là hạn mức của cả TÀI KHOẢN, dùng chung với Claude
+   * Code và claude.ai của chính người dùng. Dọn nó khi đổi văn phòng là xoá một
+   * sự thật vẫn còn đúng.
+   */
+  | { type: 'energy.tick'; energy: Energy }
   | { type: 'knowledge.changed'; count: number; version: number }
   /**
    * Tủ tài liệu đổi. → docs/SPEC-library.md §10

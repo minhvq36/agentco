@@ -210,6 +210,18 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <option value="deep">deep — chỉ cho việc thật khó</option>
           </Select>
 
+          {/*
+            NÓI RA LÚC TẠO, không đợi họ tự đi tìm trong bảng chi tiết.
+            `Bash` bật sẵn (user chốt 22/08) vì phần lớn việc văn phòng cần nó —
+            nhưng nó cũng là ngoại lệ duy nhất của luật "kết quả luôn nằm trong
+            văn phòng". Một mặc định rộng tay mà im lặng thì không phải tiện, là
+            bẫy: người dùng chỉ biết nó tồn tại vào lúc đã muộn.
+          */}
+          <p className="mt-3 rounded bg-line/50 px-2 py-1.5 text-xs leading-relaxed text-muted">
+            Người này sẽ <b>chạy được lệnh trên máy</b> (gọi git, đổi định dạng file, đụng tới thư mục
+            ngoài văn phòng). Tắt được bất cứ lúc nào ở bảng chi tiết.
+          </p>
+
           <DialogFooter>
             <Button type="button" onClick={() => onOpenChange(false)}>
               Thôi

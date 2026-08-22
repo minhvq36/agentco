@@ -18,6 +18,7 @@ import type {
   CanvasEdge,
   CanvasState,
   CompanyView,
+  Energy,
   OfficeState,
   PlanStep,
   StepStatus,
@@ -74,6 +75,16 @@ export interface AppState {
   seenMessages: number;
   live: Record<string, LiveAgent>;
   cost: (Usage & { tasks: number }) | null;
+  /**
+   * Hạn mức TÀI KHOẢN Claude. → src/core/energy.ts
+   *
+   * ⚠ Nằm ngay cạnh `cost` nhưng có vòng đời NGƯỢC HẲN, và đó là chỗ dễ sai
+   * nhất: `cost` là tiền của một văn phòng trong phiên này nên đổi văn phòng
+   * là dọn; `energy` là hạn mức dùng chung với Claude Code và claude.ai của
+   * chính người dùng, nên đổi văn phòng KHÔNG được dọn. Xoá nó là xoá một sự
+   * thật vẫn còn đúng, rồi để header trống cho tới lượt chạy kế tiếp.
+   */
+  energy: Energy | null;
   /** Đang chờ Trợ lý trả lời câu vừa gõ. */
   sending: boolean;
 
@@ -207,6 +218,7 @@ const initial: AppState = {
   seenMessages: 0,
   live: {},
   cost: null,
+  energy: null,
   sending: false,
   draft: '',
   activity: null,
@@ -400,6 +412,9 @@ export const actions = {
       seenMessages: 0,
       live: {},
       cost: null,
+      // ⚠ `energy` CỐ Ý không có ở đây. Hạn mức là của TÀI KHOẢN, không của văn
+      // phòng — dọn nó lúc đổi chỗ làm là xoá một sự thật vẫn còn đúng, rồi để
+      // header trống cho tới lượt chạy kế tiếp. → `AppState.energy`
       selected: null,
       // Tủ tài liệu là của TỪNG văn phòng. Không dọn thì mở văn phòng khác vẫn
       // thấy "đang đọc 2 tài liệu" của văn phòng vừa rời đi.
@@ -612,6 +627,8 @@ export const actions = {
       /** `0` = không giới hạn. */
       max_usd?: number;
       max_turns?: number;
+      /** Bật `Bash` cho vai trò này — tool duy nhất ra được khỏi thư mục văn phòng. */
+      bash?: boolean;
     },
   ): Promise<boolean> {
     const id = state.officeId;
@@ -949,6 +966,11 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
 
     case 'cost.tick':
       set({ cost: e.totals });
+      break;
+
+    // ⚠ KHÔNG dọn ở chỗ đổi văn phòng — xem chú thích ở `AppState.energy`.
+    case 'energy.tick':
+      set({ energy: e.energy });
       break;
 
     case 'knowledge.changed':

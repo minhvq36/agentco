@@ -97,6 +97,28 @@ Cái giá của việc trộn hai câu: Trợ lý nói *"không thấy file trê
 
 > Hook chặn ca **từ nay trở đi**; nhãn `outside` cứu ca **đã xảy ra rồi** và mọi ca lọt lưới trong tương lai. Cần cả hai — một cái là cửa, một cái là đèn.
 
+### 🔴 NGOẠI LỆ DUY NHẤT, VÀ NÓ PHẢI ĐƯỢC KHAI RA: `Bash` (ghi 22/08)
+
+`matcher: 'Write|Edit|NotebookEdit'` **không khớp `Bash`**. Và nó không thể khớp: `officeJail` chặn được vì nó đọc `tool_input.file_path` — một **trường có tên**. Lệnh shell không có trường đó; đường dẫn nằm lẫn trong chuỗi lệnh, cạnh biến, cạnh pipe, cạnh `$()`. Muốn chặn thì phải **phân tích cú pháp shell** để tìm mọi chỗ có thể ghi, trên ba hệ điều hành, và bất kỳ chỗ nào bỏ sót cũng là một luật vẫn nói mình đang chạy.
+
+⇒ Câu đúng của luật §2.6 là:
+
+> **Kết quả luôn sinh ra bên trong thư mục văn phòng — TRỪ khi vai trò được bật `Bash`.**
+
+Ba hệ quả, và cả ba đã được thi hành:
+
+| | |
+|---|---|
+| `Bash` phải **hiện ra được và tắt được**, không bao giờ ngầm | `BUILTIN_TOOLS` không chứa nó (nên nó là một dòng THẤY ĐƯỢC trong `roles/<id>.yaml`); công tắc riêng ở bảng chi tiết (`Inspector.tsx` §`BashSwitch`) |
+| Chỗ bật nó phải nói ra **đúng hậu quả**, không phải một câu "hãy cân nhắc" | *"đọc và ghi được bất cứ đâu trên máy bạn"* + *"ngoại lệ duy nhất của luật…"* |
+| Ta vẫn **khai** rằng đã có lệnh chạy, dù không biết nó ghi đi đâu | `landingOf` → `{ kind: 'command' }`; `describeCall` → *"đang chạy lệnh"* |
+
+> Không ghi ngoại lệ này ra thì §2.6 đọc như một bất biến tuyệt đối trong khi nó là một bất biến **có điều kiện** — và người tin vào nó sẽ tin sai đúng ở ca duy nhất mà hậu quả là cả cái máy. Cùng một họ với bài học `tools` ≠ `allowedTools`: một luật viết đúng, đọc thuyết phục, và sai ở một khe không ai nhìn.
+>
+> 🔴 **Và từ 22/08 điều kiện đó là MẶC ĐỊNH BẬT** (user chốt — `SPEC-tools-approval.md` §5). Nghĩa là câu đúng của §2.6 hôm nay là: *"kết quả nằm trong văn phòng với những nhân viên bạn đã tắt `Bash`"*. Đó là một luật yếu hơn hẳn luật hôm 21/08, và **phải đọc đúng độ yếu của nó** — đừng dẫn §2.6 như một bảo đảm nữa. Bù lại: `tools: [Bash]` là một dòng THẤY ĐƯỢC trong file vai trò, công tắc nằm ngay bảng chi tiết, và hộp thoại tạo nhân viên nói thẳng ra. Ngoại lệ được **khai báo**, không phải được **giấu**.
+>
+> **Chưa trả:** cổng duyệt `write_external` (`SPEC-tools-approval.md` §8) là tầng chặn thứ hai đã thiết kế nhưng **chưa cài**. Tới khi có nó, công tắc `Bash` là thứ duy nhất đứng giữa người dùng và cái máy của họ.
+
 ## 2.2 Đầu VÀO và đầu RA đi qua HAI luật khác nhau (chốt 20/08)
 
 Trước 20/08 cả `inputs` lẫn `outputs` dùng chung `artifactScoper`. Gộp hai thứ là nguyên nhân của một ca hỏng đo được trên máy người dùng.

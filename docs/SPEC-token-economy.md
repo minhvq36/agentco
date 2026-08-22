@@ -307,6 +307,66 @@ Số liệu **đã nằm sẵn** trong mỗi sự kiện `task.done` và trong f
 
 **Dòng "cache write bất thường" là hệ thống báo động chính.** Cache write lặp lại nhiều lần cho cùng một role trong một ca = có gì đó đang phá prefix. Đó chính xác là lỗi đã xảy ra với `claude -p`, và là lỗi bạn sẽ không tự nhìn ra nếu không có dòng này.
 
+### 5e. Hạn mức TÀI KHOẢN — thứ đắt hơn tiền, và ta nhặt được miễn phí (22/08)
+
+`$` là thứ đo được sau khi tiêu. Nhưng thứ **thật sự chặn** người dùng lại giữa chừng không phải tiền — mà là **hạn mức gói Claude**: cửa sổ 5 giờ và cửa sổ 7 ngày, dùng chung với Claude Code và claude.ai của chính họ. Hết hạn mức thì việc dừng, và không có số tiền nào mua lại được cho tới mốc reset.
+
+#### 🔴 ĐIỀU KIỆN LÀ **CLI PHẢI RẢNH** — và chỗ này đã suýt bị đóng đinh một kết luận sai
+
+Nguồn của hai con số `%` là `Query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`, tức là thứ đứng sau lệnh `/usage` của Claude Code. Sáu phép đo:
+
+| probe | gọi lúc | kết quả |
+|---|---|---|
+| 1 | sau vòng lặp | `ProcessTransport is not ready` |
+| 2 | tin đầu tiên | `Query closed…` sau 601 ms |
+| 3 | `init`, query sống ~3 s | `Query closed…` sau 3 043 ms |
+| 4 | `init`, **query sống 32 GIÂY** | `Query closed…` sau **27 476 ms** |
+| **5** | **CLI RẢNH** (streaming-input mở, chưa gửi tin nào) | ✅ **3 342 ms**, đủ số |
+
+Bốn lần đầu đều gọi **trong lúc CLI đang xử lý một prompt**. Probe 4 bác bỏ giả thuyết dễ chịu nhất ("thua vì query của ta quá ngắn") — nó chờ gần hết đời query rồi chết cùng. Kết luận rút ra lúc đó — *"control request không được trả lời khi vòng lặp chính đang bận"* — **đúng**. Kết luận đi kèm — *"nên không lấy được %"* — **sai**.
+
+Câu hỏi bỏ sót: **vì sao `/usage` gõ tay lại chạy?** Vì lúc người ta gõ thì CLI đang **rảnh**. Và streaming-input dựng lại được đúng trạng thái đó: mở query với một generator **giữ stream mở mà chưa gửi tin nào**.
+
+```
+✅ USAGE OK — 3342ms          subscription_type: pro
+   five_hour : 58%  reset 2026-08-22T02:49:59Z
+   seven_day : 65%  reset 2026-08-26T03:59:59Z
+   session cost: 0                    ← không tin nhắn nào, không token nào
+```
+
+**Giá: 0 token.** Không tin nhắn nào được gửi, không lượt suy luận nào chạy. Cái phải trả là ~3,3 giây và một tiến trình CLI sống trong khoảnh khắc đó. (`behaviors` trong phản hồi = *"a scan of local transcripts on this machine"* — đắt về **đĩa và thời gian**, không về token. Đó cũng là lý do có tiết lưu 60 giây.)
+
+> **⚠ Bài học, và nó đắt hơn tính năng này: "đo bốn lần đều hỏng" chứng minh một CƠ CHẾ, không chứng minh một KẾT LUẬN.** Bốn phép đo đó nói đúng một điều — *"khi bận thì không được"* — còn *"nên bỏ đi"* là suy rộng tự thêm vào. Trước khi tuyên bố một đường là chết, phải hỏi: **thứ tương đương đang chạy được ở đâu đó, và nó khác ta ở chỗ nào?** Ở đây thứ đó là `/usage` gõ tay, và khác biệt là một chữ: *rảnh*.
+>
+> Cùng họ với `tools` ≠ `allowedTools`: một suy luận đọc rất thuyết phục, và sai ở một điều kiện không ai nghĩ tới việc kiểm.
+
+#### Vai trò còn lại của `rate_limit_event` — hẹp, rõ, và miễn phí
+
+Nó **không mang `utilization`** (đo 22/08: server không gửi), nên nó không phải nguồn của số. Nhưng nó là thành viên của union `SDKMessage` — đã nằm sẵn trong `for await` của `worker.ts`/`assistant.ts`, **0 token, 0 request** — và nó tới **ngay đầu mỗi query**. Vai trò: **báo đổi trạng thái NGAY GIỮA lượt chạy**. Người dùng bị chặn lúc 14:03 phải thấy lúc 14:03, không chờ refresh kế tiếp.
+
+⚠ Vì thế nó **chỉ được sửa `status`**. Hai bẫy đã bịt bằng test:
+
+| trường | vì sao không cho sự kiện đụng vào |
+|---|---|
+| `utilization` | sự kiện không mang % → ghi đè bằng `null` là làm thanh biến mất giữa chừng |
+| `resetsAt` | **hai nguồn lệch 0,23 giây**: sự kiện trả `1787367000` (giây tròn), `usage()` trả `…T02:49:59.770958Z`. Cho ghi đè thì mỗi query lại lật qua lật lại → `bump` thấy "có đổi" → một `energy.tick` **rác bắn lên SSE ở mọi lượt gọi worker** |
+
+#### Nhịp refresh: theo SỰ KIỆN, không theo đồng hồ
+
+Mở văn phòng (`bindBus`, `force`) và **mỗi lần kế hoạch xong** (`finish`, cạnh `cost.tick`) — đó là lúc DUY NHẤT con số thật sự nhảy. Tiết lưu 60 giây, single-flight, timeout 20 giây, nuốt mọi lỗi. Hẹn giờ định kỳ là mở một tiến trình CLI mỗi phút để nghe cùng một câu trả lời.
+
+#### Chỉ HAI cửa sổ: phiên và tuần (user chốt 22/08)
+
+Server trả về nhiều rổ hơn — `seven_day_opus`, `seven_day_sonnet`, và một loạt tên mã rõ ràng là cờ tính năng nội bộ (`nimbus_quill`, `iguana_necktie`, `tangelo`…). Trên tài khoản đo được (`pro`) các rổ theo model đều `null`.
+
+Bỏ chúng không phải vì rỗng, mà vì **chúng không phải chuyện của agentco**: hạn mức là của cả tài khoản, và người dùng có thể đã tiêu phần lớn nó vào việc chẳng liên quan gì tới công ty này. Ô này trả lời đúng một câu — *"tôi còn chạy được nữa không, và tới khi nào"*. Mọi con số khác là mời họ đi truy nguyên một thứ họ không sửa được.
+
+#### Đường đi lên giao diện: ĐI NHỜ, không có bus riêng
+
+`Office.emit()` đã là chốt duy nhất mọi sự kiện đi qua, và trong lúc chạy thì nó dày đặc. `emit` so `energyVersion()` với lần bắn trước, đổi thì chèn một `energy.tick`. **Không listener nào phải quản** — `energy.ts` là state ở module (hạn mức thuộc TÀI KHOẢN) còn `Office` thì sinh/mất theo thao tác người dùng, nên pub/sub ở đây chỉ đẻ ra bài toán vòng đời và một listener sót lại bắn vào SSE đã đóng.
+
+⚠ `energy` **không bị dọn khi đổi văn phòng**, khác hẳn `cost`. Dọn nó là xoá một sự thật vẫn còn đúng.
+
 ---
 
 ## 6. Bộ kịch bản chuẩn (golden scenarios)

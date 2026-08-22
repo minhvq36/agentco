@@ -223,3 +223,48 @@ test('mọc quanh trục vẫn KHÔNG BAO GIỜ chồng lên ai — kể cả kh
     placed.push({ kind: 'agent', ...spot });
   }
 });
+
+// ────────────────────────────────────── cất đi rồi đưa trở lại: CHỖ NGỒI
+
+/**
+ * Ca user hỏi 22/08: *"khôi phục thì trùng 100% toạ độ với một nhân viên đang
+ * nằm sẵn ⇒ người dùng không tìm thấy"*.
+ *
+ * Nó KHÔNG xảy ra, và test này khoá lại lý do — vì lý do đó nằm ở hai chỗ cách
+ * xa nhau trong code, tức là đúng loại dễ bị gỡ mất khi ai đó dọn dẹp:
+ *
+ *   1. `Office.archiveAgent(id, true)` gọi `layout.dropAgent()` → node bị XOÁ
+ *      khỏi layout.json, không phải chỉ bị ẩn đi.
+ *   2. Vì thế lúc đưa trở lại, `read()` thấy nó là node MỚI (`fresh`) và cấp ô
+ *      bằng `firstFreeSlot` — tức là né mọi người đang ngồi.
+ *
+ * Nếu bước 1 đổi thành "giữ node lại cho nhớ chỗ cũ" thì bug xuất hiện ngay:
+ * người mới đã được cấp đúng cái ô đó trong lúc người cũ nằm trong lưu trữ.
+ */
+test('cất đi rồi đưa trở lại: KHÔNG bao giờ chồng lên người đã ngồi vào chỗ cũ', () => {
+  const spot = agentSlot(2);
+
+  // "An" ngồi ô 2 rồi bị cất đi → node biến khỏi layout, ô 2 trống trên sơ đồ.
+  // "Bình" được thêm sau, và `firstFreeSlot` cấp cho đúng ô đang trống đó.
+  const afterArchive: Array<{ kind: NodeKind; x: number; y: number }> = [
+    { kind: 'agent', ...agentSlot(0) },
+    { kind: 'agent', ...agentSlot(1) },
+  ];
+  const binh = firstFreeSlot(afterArchive);
+  assert.deepEqual(binh, spot, 'tiền đề: chỗ của người bị cất đi ĐƯỢC cấp lại cho người mới');
+  afterArchive.push({ kind: 'agent', ...binh });
+
+  // Đưa "An" trở lại: nó là node mới với layout, nên phải được cấp ô khác.
+  const an = firstFreeSlot(afterArchive);
+  assert.notDeepEqual(an, binh, 'An không được rơi đúng lên Bình');
+  assert.ok(!clashes(an, 'agent', afterArchive), 'và không chạm bất kỳ ai khác');
+});
+
+test('cất/đưa lại nhiều người liên tiếp: mỗi người một ô, không ai chồng ai', () => {
+  const placed: Array<{ kind: NodeKind; x: number; y: number }> = [];
+  for (let i = 0; i < 8; i++) {
+    const s = firstFreeSlot(placed);
+    assert.ok(!clashes(s, 'agent', placed), `người thứ ${i + 1} phải có ô riêng`);
+    placed.push({ kind: 'agent', ...s });
+  }
+});

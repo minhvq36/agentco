@@ -6,14 +6,42 @@ import { cn } from '@/lib/utils';
 
 export const TooltipProvider = TooltipPrimitive.Provider;
 
-/** Tooltip một dòng. Dùng cho các nút chỉ có icon — không có nó thì icon là câu đố. */
-export function Tip({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * Tooltip một dòng. Dùng cho các nút chỉ có icon — không có nó thì icon là câu đố.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `side` KHÔNG PHẢI CHUYỆN THẨM MỸ — nó quyết định nút KẾ BÊN có bấm được. │
+ * │                                                                          │
+ * │ Mặc định của Radix là `top`. Trong một DÃY DỌC (rail icon bên trái) thì   │
+ * │ "trên" chính là chỗ nút kế tiếp đang đứng: rê vào "Kết quả" là chú thích  │
+ * │ của nó phủ lên "Tủ tài liệu". Muốn bấm nút bị phủ thì phải rê chuột ra    │
+ * │ chỗ khác cho tooltip tắt rồi mới quay lại — mỗi lần đổi ngăn là ba thao   │
+ * │ tác thay vì một.                                                          │
+ * │                                                                          │
+ * │ Luật: dãy DỌC thì tooltip ra `right`, dãy NGANG thì `top`/`bottom`. Tức   │
+ * │ là luôn đẩy nó ra khỏi trục mà các nút xếp hàng.                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function Tip({
+  label,
+  side = 'top',
+  children,
+}: {
+  label: string;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  children: React.ReactNode;
+}) {
   return (
     <TooltipPrimitive.Root>
       <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
+          side={side}
           sideOffset={6}
+          /* `collisionPadding`: sát mép trái màn hình, Radix tự lật sang phía
+             đối diện khi hết chỗ — mà phía đối diện của `right` là `left`, tức
+             là ra ngoài cửa sổ. Chừa lề để nó lật sớm và lật đúng. */
+          collisionPadding={8}
           className="z-50 rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs text-ink shadow-lg"
         >
           {label}

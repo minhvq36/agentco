@@ -132,6 +132,8 @@ export const api = {
       /** `0` = không giới hạn. */
       max_usd?: number;
       max_turns?: number;
+      /** Bật `Bash` cho vai trò này — tool duy nhất ra được khỏi thư mục văn phòng. */
+      bash?: boolean;
     },
   ) =>
     call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}`, {
