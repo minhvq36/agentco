@@ -240,3 +240,56 @@ export function safeJoin(base: string, relative: string): string {
   }
   return target;
 }
+
+/**
+ * ĐẦU VÀO của một task → đường dẫn tuyệt đối để mở. `undefined` = không hợp lệ.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MỘT LUẬT, MỘT CHỖ. Đây là hàm sinh ra vì đã có BA chỗ tự suy ra nó.      │
+ * │                                                                          │
+ * │ `inputs` có HAI loại đường dẫn, và trước 22/08 code chỉ biết một:         │
+ * │                                                                          │
+ * │   · TƯƠNG ĐỐI với thư mục văn phòng — tài liệu trong tủ, kết quả ca      │
+ * │     trước. `safeJoin` nhốt chúng lại, và phải giữ nguyên như thế.        │
+ * │   · TUYỆT ĐỐI, nằm ngoài văn phòng — thứ người dùng gõ thẳng vào ô chat  │
+ * │     (`D:\Downloads\…`, `/home/an/anh`). Hợp lệ từ ngày `Bash` bật sẵn.   │
+ * │                                                                          │
+ * │ Ba chỗ tự viết lại phép phân biệt này: `Scheduler.validate`,             │
+ * │ `Scheduler.missingInputs`, và phép kiểm "kết quả có ôi không" ở          │
+ * │ `Office`. Cả ba đều viết đúng MỘT nửa — `try { safeJoin } catch { coi    │
+ * │ như không có }` — nên cả ba cùng mù trước loại thứ hai. Ca đo được       │
+ * │ 22/08: người dùng gõ một thư mục có thật trên máy và bị chặn ở bước lập  │
+ * │ kế hoạch với câu *"không việc nào tạo ra nó"*.                           │
+ * │                                                                          │
+ * │ Sửa ba chỗ bằng ba miếng vá là mời lỗi quay lại ở chỗ thứ tư. Một hàm    │
+ * │ thì chỗ thứ tư tự đúng.                                                  │
+ * │                                                                          │
+ * │ ⚠ Phân biệt bằng `isAbsolute`, KHÔNG bằng "safeJoin có ném không". Một   │
+ * │ đường dẫn tương đối leo ra ngoài (`../../etc/passwd`) cũng làm safeJoin  │
+ * │ ném, nhưng nó là mưu toan traversal — nó phải trả `undefined`, không     │
+ * │ được rơi vào nhánh "ngoài văn phòng" rồi được đem đi `existsSync` theo   │
+ * │ `cwd` của daemon, một cái gốc chẳng liên quan gì tới ai.                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function resolveInput(officeDir: string, p: string): string | undefined {
+  if (path.isAbsolute(p)) return p;
+  try {
+    return safeJoin(officeDir, p);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Có thật trên đĩa không. `existsSync` **ném được**, không chỉ trả `false`: ký
+ * tự cấm trong tên, hoặc một ổ mạng đã ngắt. Ném ở đây là làm sập cả lượt lập
+ * kế hoạch vì một đường dẫn gõ sai — đúng thứ phép kiểm này sinh ra để báo cáo
+ * tử tế.
+ */
+export function existsOnDisk(p: string): boolean {
+  try {
+    return fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}

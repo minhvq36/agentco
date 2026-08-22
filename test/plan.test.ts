@@ -21,6 +21,7 @@ import test from 'node:test';
 import { outputScoper } from '../dist/core/assistant.js';
 import { Scheduler, delivered, unmetDeps } from '../dist/core/scheduler.js';
 import { isStale } from '../dist/core/artifacts.js';
+import { existsOnDisk, resolveInput } from '../dist/core/paths.js';
 
 type Plan = Parameters<typeof Scheduler.linkDeps>[0];
 
@@ -439,4 +440,84 @@ test('xong trọn thì KHÔNG nối thêm câu cảnh báo nào', () => {
   // Cảnh báo kêu bừa thì người dùng học cách bỏ qua nó — cùng luật với nhãn ôi.
   const steps = [{ status: 'done' }, { status: 'done' }];
   assert.equal(steps.filter((s) => s.status !== 'done').length, 0);
+});
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐẦU VÀO NẰM NGOÀI VĂN PHÒNG — ca thật 22/08, chặn ngay ở bước lập kế hoạch│
+ * │                                                                          │
+ * │ Người dùng gõ: *"Kiểm kê thư mục D:\Downloads\Programs Installation…"*.   │
+ * │ Trợ lý chép đường dẫn vào `inputs` — ĐÚNG như `ASSISTANT_CORE` dặn nó:    │
+ * │ *"a path the human typed is exact — copy it into `inputs` verbatim"*.     │
+ * │                                                                          │
+ * │ Rồi `validate` chặn cả kế hoạch: *"không có file đó, và không việc nào    │
+ * │ tạo ra nó"*. Vì phép kiểm chỉ có MỘT đường — `safeJoin(officeDir, …)` —   │
+ * │ mang sẵn tiền đề "mọi đầu vào đều nằm trong văn phòng". Tiền đề đó đúng   │
+ * │ cho tới ngày `Bash` bật sẵn.                                             │
+ * │                                                                          │
+ * │ Trợ lý tuân lệnh và bị chặn VÌ tuân lệnh. Đó là hình dạng tệ nhất của     │
+ * │ một lỗi: không ai làm sai cả.                                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('validate: thư mục TUYỆT ĐỐI ngoài văn phòng, có thật trên máy ⇒ CHO QUA', () => {
+  const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-ngoai-'));
+  try {
+    const p = plan([task('T-01', { inputs: [file(outside)] })]);
+    assert.deepEqual(Scheduler.validate(p, ROLES, office), []);
+  } finally {
+    fs.rmSync(office, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('validate: đường dẫn tuyệt đối KHÔNG có thật vẫn chặn — và nói đúng lý do', () => {
+  // Nới lỏng không được thành "cái gì tuyệt đối cũng qua": prompt của nhân viên
+  // HỨA rằng inputs vừa được đối chiếu với file thật, và chính lời hứa đó khiến
+  // nó dám dừng ngay thay vì đi mò. Bỏ kiểm là phá lời hứa đó.
+  const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
+  try {
+    const ghost = path.join(os.tmpdir(), 'agentco-khong-bao-gio-co-that-9k2');
+    const problems = Scheduler.validate(plan([task('T-01', { inputs: [file(ghost)] })]), ROLES, office);
+    assert.equal(problems.length, 1);
+    assert.ok(problems[0]!.includes(ghost), 'phải nêu đúng đường dẫn để người dùng sửa được');
+    assert.ok(
+      problems[0]!.includes('không tìm thấy trên máy'),
+      'câu "không việc nào tạo ra nó" vô nghĩa với một thư mục ngoài văn phòng',
+    );
+  } finally {
+    fs.rmSync(office, { recursive: true, force: true });
+  }
+});
+
+test('validate: đường dẫn TƯƠNG ĐỐI leo ra ngoài vẫn bị chặn — không đi nhánh "ngoài văn phòng"', () => {
+  // Tách theo `isAbsolute`, không theo "safeJoin có ném không". Cả hai đều làm
+  // safeJoin ném, nhưng cái này là mưu toan traversal chứ không phải đường dẫn
+  // người dùng gõ — và đem existsSync nó thì ta đo theo cwd của daemon.
+  const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
+  try {
+    const p = plan([task('T-01', { inputs: [file('../../../etc/passwd')] })]);
+    assert.equal(Scheduler.validate(p, ROLES, office).length, 1);
+  } finally {
+    fs.rmSync(office, { recursive: true, force: true });
+  }
+});
+
+test('missingInputs dùng CHUNG luật với validate: đường dẫn tuyệt đối có thật thì phóng được', () => {
+  // Hai chốt trên cùng một luật. Hiểu khác nhau thì kế hoạch qua cửa một rồi
+  // chết ở cửa hai — người dùng nhận một câu từ chối cho thứ vừa được duyệt.
+  const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-ngoai-'));
+  try {
+    for (const p of [outside, path.join(office, 'library')]) {
+      const abs = resolveInput(office, p);
+      assert.ok(abs, `resolveInput phải nhận "${p}"`);
+    }
+    assert.equal(resolveInput(office, '../../../etc/passwd'), undefined, 'traversal vẫn bị chặn');
+    assert.ok(existsOnDisk(outside));
+    assert.equal(existsOnDisk(path.join(os.tmpdir(), 'khong-bao-gio-co-that-7x1')), false);
+  } finally {
+    fs.rmSync(office, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
 });

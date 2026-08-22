@@ -14,7 +14,7 @@ import YAML from 'yaml';
 
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
-import { ensureOfficeDirs, isSafeId, normalizeName, safeJoin, slugId } from './paths.js';
+import { ensureOfficeDirs, isSafeId, normalizeName, resolveInput, safeJoin, slugId } from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
@@ -42,6 +42,9 @@ import {
   type AgentEvent,
   type AgentEventBody,
   type CompanyConfig,
+  EXTERNAL_TOOLS,
+  SHELL_TOOL,
+  hasShell,
   type Plan,
   type PlanRecord,
   type PlanStatus,
@@ -1988,8 +1991,10 @@ export class Office {
      * └────────────────────────────────────────────────────────────────────────┘
      */
     if (patch.bash !== undefined) {
-      const rest = role.tools.filter((t) => t !== 'Bash');
-      const next = patch.bash ? [...rest, 'Bash'] : rest;
+      // Lọc MỌI tên nền tảng, ghi lại đúng MỘT tên chuẩn: file vai trò phải
+      // portable giữa Windows và macOS. → types.ts §SHELL_ALIASES
+      const rest = role.tools.filter((t) => !EXTERNAL_TOOLS.has(t));
+      const next = patch.bash ? [...rest, SHELL_TOOL] : rest;
       if (next.length) doc.set('tools', next);
       else doc.delete('tools');
     }
@@ -2573,8 +2578,13 @@ export class Office {
       // tủ, và tủ không nằm trong bảng kê kết quả.
       const srcTimes: string[] = [];
       for (const i of t.inputs ?? []) {
+        // `resolveInput` chứ không phải `safeJoin`: đầu vào có thể là một đường
+        // dẫn TUYỆT ĐỐI ngoài văn phòng. Dùng safeJoin thì mọi kết quả dựng từ
+        // nguồn bên ngoài lặng lẽ mất phép kiểm "có ôi không". → paths.ts
+        const abs = resolveInput(this.loaded.dir, i.path);
+        if (!abs) continue;
         try {
-          srcTimes.push(fs.statSync(safeJoin(this.loaded.dir, i.path)).mtime.toISOString());
+          srcTimes.push(fs.statSync(abs).mtime.toISOString());
         } catch {
           /* nguồn đã biến mất — không kết luận gì, `missingInputs` lo ca đó */
         }
@@ -3148,7 +3158,7 @@ export class Office {
       pitch: role.pitch,
       maxUsd: role.budget.max_usd,
       maxTurns: role.budget.max_turns,
-      bash: role.tools.includes('Bash'),
+      bash: hasShell(role.tools),
       count: notes[role.id] ?? 0,
       mcp: role.mcp,
       hue: agentHue(role.id),

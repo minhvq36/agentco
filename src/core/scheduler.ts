@@ -5,10 +5,11 @@
  */
 
 import fs from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
-import { safeJoin } from './paths.js';
+import { existsOnDisk, resolveInput, safeJoin } from './paths.js';
 import { addUsage, filesOnDisk, runWorker, straysOnDisk, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
@@ -156,23 +157,50 @@ export class Scheduler {
        * hoặc tệ hơn — trả lời bằng thứ nó đoán ra. Cái giá là cả một task.
        *
        * Chỉ báo khi đường dẫn KHÔNG có trên đĩa VÀ không task nào sinh ra nó.
+       *
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ HAI LOẠI ĐƯỜNG DẪN, HAI PHÉP KIỂM. (sửa 22/08, ca thật)            │
+       * │                                                                    │
+       * │ Bản trước chỉ có MỘT phép kiểm — `safeJoin(officeDir, path)` — nên  │
+       * │ nó mang sẵn tiền đề *"mọi đầu vào đều nằm trong văn phòng"*. Tiền   │
+       * │ đề đó đúng cho tới ngày `Bash` bật sẵn, rồi thành sai.              │
+       * │                                                                    │
+       * │ Ca đo được: người dùng gõ *"Kiểm kê thư mục D:\Downloads\..."*.     │
+       * │ `safeJoin` ném (đúng phận sự của nó), `catch` biến cái ném đó thành │
+       * │ `exists = false`, và cả kế hoạch bị chặn với câu **"không có file   │
+       * │ đó, và không việc nào tạo ra nó"** — trong khi thư mục nằm đó, và   │
+       * │ nhân viên có `Bash` để đọc nó.                                      │
+       * │                                                                    │
+       * │ Nặng hơn: Trợ lý làm ĐÚNG. `ASSISTANT_CORE` dặn *"a path the human │
+       * │ typed is exact — copy it into `inputs` verbatim"*. Nó tuân lệnh và  │
+       * │ bị chặn vì tuân lệnh. Lỗi nằm ở tầng kiểm, không ở tầng lập kế      │
+       * │ hoạch — và một `catch` nuốt lỗi là chỗ nó ẩn mình.                  │
+       * │                                                                    │
+       * │ ⚠ Tách theo `isAbsolute`, KHÔNG theo "safeJoin có ném không". Một   │
+       * │ đường dẫn TƯƠNG ĐỐI mà leo ra ngoài (`../../etc/passwd`) cũng làm   │
+       * │ `safeJoin` ném, nhưng nó là mưu toan traversal chứ không phải một   │
+       * │ đường dẫn người dùng gõ — và nếu đem `existsSync` nó thì ta lại đo  │
+       * │ theo `cwd` của daemon, một cái gốc chẳng liên quan gì. Nó phải ở    │
+       * │ lại nhánh lỗi.                                                     │
+       * └────────────────────────────────────────────────────────────────────┘
        */
       if (officeDir) {
         for (const i of t.inputs) {
           const want = norm(i.path);
           // Thư mục mà một task khác đang ghi vào cũng là "sẽ có" — xem `contains`.
           if (produced.has(want) || [...produced].some((p) => contains(want, p))) continue;
-          let exists = false;
-          try {
-            exists = fs.existsSync(safeJoin(officeDir, i.path));
-          } catch {
-            exists = false;
-          }
-          if (!exists) {
-            problems.push(
-              `Task ${t.task_id} cần đọc "${i.path}" nhưng không có file đó, và không việc nào tạo ra nó`,
-            );
-          }
+
+          const abs = resolveInput(officeDir, i.path);
+          if (abs && existsOnDisk(abs)) continue;
+
+          // Hai câu khác nhau vì hai chuyện khác nhau. "Không việc nào tạo ra
+          // nó" vô nghĩa với một thư mục trên máy người dùng — nó gợi ý sửa kế
+          // hoạch, trong khi thứ cần sửa là đường dẫn họ vừa gõ.
+          problems.push(
+            isAbsolute(i.path)
+              ? `Task ${t.task_id} cần đọc "${i.path}" nhưng không tìm thấy trên máy — kiểm lại đường dẫn`
+              : `Task ${t.task_id} cần đọc "${i.path}" nhưng không có file đó, và không việc nào tạo ra nó`,
+          );
         }
       }
     }
@@ -365,15 +393,19 @@ export class Scheduler {
     return result;
   }
 
-  /** `inputs` không có trên đĩa. Rỗng = phóng được. → `run()` */
+  /**
+   * `inputs` không có trên đĩa. Rỗng = phóng được. → `run()`
+   *
+   * ⚠ Phải dùng ĐÚNG `resolveInput` mà `validate` dùng. Đây là chốt thứ hai
+   * trên cùng một luật, chạy ngay trước lúc phóng worker — hai chốt hiểu
+   * "đầu vào hợp lệ" khác nhau thì kế hoạch qua được cửa một rồi chết ở cửa
+   * hai, và người dùng nhận một câu từ chối cho thứ hệ thống vừa duyệt.
+   */
   private missingInputs(brief: TaskBrief): string[] {
     const out: string[] = [];
     for (const i of brief.inputs) {
-      try {
-        if (!fs.existsSync(safeJoin(this.deps.office.dir, i.path))) out.push(i.path);
-      } catch {
-        out.push(i.path);
-      }
+      const abs = resolveInput(this.deps.office.dir, i.path);
+      if (!abs || !existsOnDisk(abs)) out.push(i.path);
     }
     return out;
   }
@@ -776,6 +808,7 @@ function norm(p: string): string {
 function contains(dir: string, file: string): boolean {
   return dir.length > 0 && file.startsWith(`${dir}/`);
 }
+
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐

@@ -328,8 +328,7 @@ function BashSwitch({ node }: { node: CanvasNode }) {
         <span className="min-w-0">
           <span className="block text-[13px] text-ink">Cho chạy lệnh trên máy</span>
           <span className="block text-xs leading-relaxed text-muted">
-            Mở <code>Bash</code> — cần khi việc phải gọi <code>git</code>, chạy script, hoặc đụng tới
-            file nằm ngoài văn phòng.
+            Nhân viên có thể chạy lệnh trên hệ thống, đọc và ghi được bất cứ đâu trên máy bạn, linh hoạt và thông minh hơn. Cân nhắc tắt khi không cần thiết để tiết kiệm chi phí.
           </span>
         </span>
       </label>

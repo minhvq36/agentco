@@ -43,11 +43,35 @@ export const TierSchema = z.preprocess(
  * đáp án — đó không phải lựa chọn, đó là thủ tục. Bản trước bắt mở file yaml
  * bằng tay để thêm chúng, và đó là chỗ người non-code rơi rụng.
  *
- * An toàn vì: bốn tool file chỉ chạm được `cwd` (= thư mục văn phòng) và
- * `safeJoin` chặn đi ra ngoài; hai tool web chỉ ĐỌC.
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ ĐÍNH CHÍNH 22/08 — KHỐI NÀY TỪNG GHI MỘT ĐIỀU KHÔNG ĐÚNG.              │
+ * │                                                                          │
+ * │ Câu cũ: *"bốn tool file chỉ chạm được `cwd` (= thư mục văn phòng) và     │
+ * │ `safeJoin` chặn đi ra ngoài"*. **Sai.** `safeJoin` là hàm CỦA TA, chạy   │
+ * │ trong mã CỦA TA — nó chưa bao giờ đứng giữa model và tool `Read`.         │
+ * │                                                                          │
+ * │ Đo được: một vai trò chỉ có bộ mặc định (KHÔNG `Bash`) đọc trọn vẹn một  │
+ * │ file nằm ở thư mục tạm khác, chỉ bằng một đường dẫn tuyệt đối. `cwd`     │
+ * │ **không phải một bức tường** — nó là thư mục làm việc mặc định.          │
+ * │                                                                          │
+ * │ Ranh giới THẬT hôm nay:                                                  │
+ * │                                                                          │
+ * │   GHI   `Write`/`Edit`/`NotebookEdit` → CÓ hàng rào (`officeJail`)       │
+ * │   ĐỌC   `Read`/`Glob`/`Grep`          → KHÔNG có hàng rào nào            │
+ * │   WEB   `WebFetch`/`WebSearch`        → chỉ đọc, nhưng GỬI RA ĐƯỢC       │
+ * │   LỆNH  `Bash`                        → không hàng rào, và bật sẵn       │
+ * │                                                                          │
+ * │ ⇒ `Read` + `WebFetch` là một đường dữ liệu đi ra, **không cần `Bash`**.  │
+ * │   Hàng rào đọc DỰNG ĐƯỢC (đã đo: `PreToolUse` nổ cho `Read` và `deny`    │
+ * │   chặn thật) nhưng CHƯA DỰNG — đang chờ quyết định. → SPEC §5            │
+ * │                                                                          │
+ * │ Bài học: một bất biến chỉ có thật khi có mã nguồn thi hành nó. Câu cũ    │
+ * │ đọc rất thuyết phục vì nó NÊU TÊN một hàm có thật — chỉ là hàm đó ở      │
+ * │ nhầm tầng.                                                              │
+ * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `Bash` CỐ Ý vắng mặt — nó là thứ duy nhất chạm được ra ngoài thư mục văn
- * phòng, nên phải là một quyết định tường minh trong `roles/<id>.yaml`.
+ * `Bash` vắng mặt ở đây để nó vẫn là một DÒNG THẤY ĐƯỢC trong `roles/<id>.yaml`
+ * và có công tắc riêng — dù từ 22/08 `roleTemplate` ghi sẵn nó cho nhân viên mới.
  */
 export const BUILTIN_TOOLS = [
   'Read',
@@ -59,12 +83,60 @@ export const BUILTIN_TOOLS = [
   'WebFetch',
 ] as const;
 
-/** Tool mức `write_external` — sẽ phải qua cổng duyệt khi §8 được cài đặt. */
-export const EXTERNAL_TOOLS = new Set(['Bash']);
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 TOOL SHELL ĐỔI TÊN THEO HỆ ĐIỀU HÀNH — và đó là lý do công tắc        │
+ * │    "cho chạy lệnh" KHÔNG chạy suốt từ 16/08 tới 22/08/2026.              │
+ * │                                                                          │
+ * │ Đo bằng cách hỏi thẳng CLI (`system/init` có trường `tools`):            │
+ * │                                                                          │
+ * │   không truyền `tools` → 29 tool, và trong đó là **`PowerShell`**,       │
+ * │                          KHÔNG hề có `Bash`  (máy Windows)               │
+ * │   `tools: ['Bash']`    → CLI cấp **0 tool**                              │
+ * │                                                                          │
+ * │ `tools` là allowlist theo TÊN. Tên không tồn tại trên nền tảng này bị    │
+ * │ **bỏ im lặng** — không lỗi, không cảnh báo. Nên vai trò khai `Bash` trên │
+ * │ Windows nhận đúng bộ mặc định, y như chưa khai gì.                       │
+ * │                                                                          │
+ * │ Dấu vết đã nằm sẵn trong spec suốt sáu ngày mà không ai đọc ra: ca       │
+ * │ 16/08 ghi *"`nguoi-viet` … với tay sang **PowerShell** BỐN LẦN"*. Cái    │
+ * │ tên đúng nằm ngay trong bằng chứng của một bug khác.                     │
+ * │                                                                          │
+ * │ ⇒ CONFIG dùng MỘT tên chuẩn (`Bash`) để một văn phòng zip lại vẫn chạy   │
+ * │   được ở máy khác hệ điều hành. Việc dịch sang tên nền tảng làm ở đây,   │
+ * │   bằng cách gửi **CẢ HAI** tên xuống SDK: cái nào không tồn tại thì CLI  │
+ * │   tự bỏ. Đo được: gửi thừa một tên tốn **0 token**, vì nó bị bỏ trước    │
+ * │   khi vào prefix.                                                        │
+ * │                                                                          │
+ * │ Không dò `process.platform`: Claude Code trên Windows CÓ Git Bash có thể │
+ * │ đặt tên khác, mà ta thì không kiểm soát bảng tên đó. Gửi cả hai là để    │
+ * │ SDK trả lời câu hỏi của chính nó — không có tiền đề nào để sai.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const SHELL_TOOL = 'Bash';
 
-/** Bộ tool thật sự trao cho một vai trò: mặc định + phần khai thêm. */
+/** Mọi tên mà tool shell có thể mang. Gửi hết, SDK tự bỏ cái không có. */
+export const SHELL_ALIASES = ['Bash', 'PowerShell'] as const;
+
+/** Vai trò này có tool shell không — khai bằng bất kỳ tên nào cũng tính. */
+export function hasShell(tools: readonly string[]): boolean {
+  return tools.some((t) => (SHELL_ALIASES as readonly string[]).includes(t));
+}
+
+/** Tool mức `write_external` — sẽ phải qua cổng duyệt khi §8 được cài đặt. */
+export const EXTERNAL_TOOLS = new Set<string>(SHELL_ALIASES);
+
+/**
+ * Bộ tool thật sự trao cho một vai trò: mặc định + phần khai thêm.
+ *
+ * Khai shell bằng MỘT tên thì nhận được MỌI tên — xem khối trên. Đây là chỗ
+ * duy nhất biết chuyện đó, nên `roles/*.yaml` giữ nguyên `tools: [Bash]` dù
+ * máy đang chạy là gì.
+ */
 export function effectiveTools(extra: readonly string[]): string[] {
-  return [...new Set<string>([...BUILTIN_TOOLS, ...extra])];
+  const out = new Set<string>([...BUILTIN_TOOLS, ...extra]);
+  if (hasShell(extra)) for (const alias of SHELL_ALIASES) out.add(alias);
+  return [...out];
 }
 
 // ─────────────────────────────────────────────────────────── role

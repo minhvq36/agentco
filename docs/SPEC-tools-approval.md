@@ -206,23 +206,77 @@ Bằng chứng từ chính bài test: bài 4 và bài 10A **bắt buộc mở `r
 
 | Tool | Mặc định | Vì sao |
 |---|---|---|
-| `Read` `Write` `Glob` `Grep` | ✅ **luôn bật, không tắt được** | Đây là *tay* của văn phòng. Chúng chỉ chạm được vào thư mục văn phòng (`cwd`) và `safeJoin` đã chặn đi ra ngoài. |
-| `WebSearch` `WebFetch` | ✅ **luôn bật** | Chỉ đọc. Không hỏng được gì. Là 1/4 giá trị của use case trợ lý cá nhân, và nó miễn phí. |
+| `Read` `Write` `Glob` `Grep` | ✅ **luôn bật, không tắt được** | Đây là *tay* của văn phòng. ⚠ Ô "vì sao" của dòng này từng ghi *"chỉ chạm được `cwd`, `safeJoin` đã chặn"* — **sai, xem §5b**. |
+| `WebSearch` `WebFetch` | ✅ **luôn bật** | Chỉ đọc **từ ngoài vào**. Nhưng `WebFetch` cũng là một đường **đi ra** — xem §5b. |
 | `Bash` | ⚠ **bật sẵn từ 22/08, tắt được bằng một công tắc trong bảng chi tiết** | Cái duy nhất chạm được ra ngoài thư mục văn phòng. Xếp mức `write_external` ở §8. Mặc định đổi từ ❌ sang ⚠ ngày 22/08 — xem ngay dưới. |
 
-#### Mặc định đổi từ TẮT sang BẬT (user chốt 22/08), và lý lẽ token đã chết
+#### 🔴 5a-bis. TÊN TOOL SHELL ĐỔI THEO HỆ ĐIỀU HÀNH — công tắc là NO-OP suốt 6 ngày
 
-Lý lẽ chống default-on lâu nay có hai chân: **an toàn** và **token** (mỗi tool là một khối định nghĩa trong prefix được cache của mọi lượt gọi — chính là bài học 16/08 ở dưới). Chân thứ hai gãy khi đem đo:
+Trước khi bàn mặc định, phải sửa một chuyện lớn hơn: **`tools: ['Bash']` trên Windows cấp ĐÚNG 0 tool.**
+
+Hỏi thẳng CLI (`system/init` có trường `tools`), máy Windows:
+
+| truyền vào | CLI thật sự cấp |
+|---|---|
+| *(không truyền `tools`)* | **29 tool**, trong đó có **`PowerShell`** — và **không hề có `Bash`** |
+| `['Bash']` | **0 tool** |
+| 7 mặc định + `['PowerShell']` | 8 tool ✅ |
+
+`tools` là allowlist **theo tên**, và tên không tồn tại trên nền tảng này bị **bỏ im lặng** — không lỗi, không cảnh báo. Nên mọi vai trò khai `Bash` trên Windows nhận đúng bộ mặc định, y như chưa khai gì. Công tắc, giá trị mặc định, và cả bài 9 của walkthrough đều đang nói về một khả năng **không tồn tại**.
+
+> **Dấu vết đã nằm sẵn trong chính file này suốt sáu ngày.** Ca 16/08 ở dưới ghi: *"`nguoi-viet` … với tay sang **PowerShell** bốn lần"*. Cái tên đúng nằm ngay trong bằng chứng của một bug khác, và không ai đọc ra — vì lúc đó ta đang đi tìm một câu trả lời khác.
+>
+> **Bài học: một allowlist im lặng bỏ phần tử lạ là một cái bẫy.** Nó không bao giờ gây ra triệu chứng ở chỗ nó nằm — nó chỉ khiến một tính năng lặng lẽ không tồn tại. Khi truyền một danh sách tên xuống hệ thống khác, phải **hỏi lại xem nó nhận được gì**, đừng tin là nó nhận đủ.
+
+**Sửa:** config giữ **một tên chuẩn** (`Bash`) để một văn phòng zip lại vẫn chạy được ở máy khác hệ điều hành; `effectiveTools()` gửi **cả hai tên** xuống SDK và để CLI tự bỏ cái không có. Không dò `process.platform` — Claude Code trên Windows *có* Git Bash có thể đặt tên khác, mà ta không kiểm soát bảng tên đó. Gửi cả hai là để SDK trả lời câu hỏi của chính nó, không có tiền đề nào để sai. Đo được: **gửi thừa một tên tốn 0 token** (bị bỏ trước khi vào prefix).
+
+#### Có bao nhiêu tool shell, và có `WebSearchMacOS` không? — tra ở nguồn có thẩm quyền
+
+Danh sách runtime chỉ nói về **một** hệ điều hành. Nguồn đúng là `sdk-tools.d.ts`, nơi SDK khai schema của **mọi** tool, không phụ thuộc nền tảng:
+
+- Có đúng **MỘT** schema shell: `BashInput`. **Không có `PowerShellInput`.** Nghĩa là `PowerShell` trên Windows không phải tool thứ hai — nó là **cùng một tool đội tên hiển thị khác**, cùng trường `command`. (Vì thế `describeCall` đọc `input.command` cho cả hai tên là đúng.)
+- Không tool nào khác có biến thể theo nền tảng: đúng một `FileReadInput`, một `FileWriteInput`, một `GlobInput`, một `GrepInput`, một `WebSearchInput`, một `WebFetchInput`. **Không có thứ gì kiểu `WebSearchMacOS`.**
+
+⇒ `Read` `Write` `Edit` `Glob` `Grep` `WebSearch` `WebFetch` là **tên trung tính, dùng chung ba hệ điều hành**. Shell là ngoại lệ duy nhất.
+
+⚠ Ranh giới của bằng chứng này, đừng suy rộng: danh sách schema chứng minh không có hai *schema*; danh sách runtime Windows chứng minh các *tên* trên Windows. Một cái tên chỉ tồn tại trên macOS thì không xuất hiện ở cả hai. Vì thế mới có chốt dưới đây.
+
+#### 🔒 Chốt chặn thật KHÔNG phải bảng tên — mà là phép đối chiếu lúc chạy
+
+`SHELL_ALIASES` là danh sách **ta viết tay**, mà bảng tên là của SDK. Xuất hiện một nền tảng thứ tư với tên thứ ba thì lỗi cũ quay lại y nguyên, **im lặng y nguyên**.
+
+Nên `worker.ts` §`warnDroppedTools` đối chiếu ngay ở `system/init`: CLI có trường `tools` liệt kê thứ nó **thật sự cấp**. So với thứ ta gửi, khác thì kêu. Nó không cần biết tên nào đúng — chỉ cần biết *"thứ tôi xin và thứ tôi nhận không khớp"*. Đó là bất biến bền hơn hẳn một danh sách chuỗi.
+
+Tên shell tính theo **nhóm**: ta cố ý gửi cả hai và **mong** một cái bị bỏ, nên chỉ kêu khi **không tên nào** được cấp. Cảnh báo ở mức tiến trình, một lần cho mỗi (vai trò × bộ thiếu) — người vận hành tiệm hoa không làm gì được với câu này, người cài đặt hệ thống thì có.
+
+#### Mặc định đổi từ TẮT sang BẬT (user chốt 22/08) — và giá thật là 2 688 token
+
+⚠ **Đính chính.** Bản đầu của mục này ghi *"`Bash` chỉ thêm **1 token**"* và kết luận *"lý lẽ token đã chết"*. **Sai** — phép đo đó đang đo một cái tên bị vứt im lặng, tức là đo một no-op. Đo lại sau khi tool thật sự được cấp (CLI khai 8 tool):
 
 | | prefix (cache_creation, nonce phá cache) |
 |---|---|
-| 7 tool mặc định | 4 540 |
-| + `Bash` | 4 541 |
-| **`Bash` thêm vào** | **1 token / lượt gọi worker** |
+| 7 tool mặc định | 4 547 |
+| + shell (`PowerShell`) | 7 235 |
+| **shell thêm vào** | **2 688 token / mỗi lượt gọi worker** |
+| + cả `Bash` lẫn `PowerShell` | 7 235 — **tên thừa tốn 0** |
 
-⚠ Phép đo đầu tiên ra "0 token" vì **lần hai ăn cache của lần một** (`cache_read` = đúng `cache_write` lần trước). Phải cắm nonce vào system prompt để ép miss cả hai lần. Cơ chế vì sao tool thứ 8 chỉ +1 trong khi 7 tool đầu tốn 4 352 thì **chưa giải thích được** — ghi lại con số, không ghi lời giải thích chưa kiểm.
+⚠ Phép đo còn một cái bẫy nữa: lần đo thứ hai **ăn cache của lần một** (`cache_read` = đúng `cache_write` lần trước) và cho ra chênh lệch 0. Phải cắm nonce vào system prompt để ép miss cả hai lần.
 
-Còn lại thuần lý lẽ an toàn, và đó là đánh đổi của chủ sản phẩm: phần lớn việc văn phòng thật (gọi `git`, đổi định dạng file, nén kết quả, đụng thư mục ngoài) cần `Bash`, mà người dùng non-code không tự biết đi bật.
+**+2 688 là ~59% trên nền 4 547** — không nhỏ, và trả ở mọi lượt của mọi nhân viên. Nhưng nó là **cache read** sau lần đầu (~0,1× giá vào), nên vẫn nhỏ hơn nhiều so với một lượt chạy thừa vì thiếu tool. Lý lẽ token **không chết, chỉ là không thắng**.
+
+Còn lại là đánh đổi của chủ sản phẩm: phần lớn việc văn phòng thật (liệt kê thư mục kèm kích thước, đổi định dạng file, nén kết quả, gọi `git`) cần shell, mà người dùng non-code không tự biết đi bật.
+
+#### Worker có tự ưu tiên `Read` thay vì shell không? ĐO RỒI: CÓ
+
+Câu hỏi thật là *"có phải dặn nó ưu tiên `Read` không"*. Đo với vai trò có ĐỦ 8 tool:
+
+| việc | tool nó chọn |
+|---|---|
+| đọc một file trong văn phòng | `Glob` → `Read` |
+| đọc một file NGOÀI, đường dẫn tuyệt đối | **`Read`** |
+| liệt kê thư mục ngoài + kích thước | **`PowerShell`** — `Get-ChildItem -Path …` |
+
+⇒ Nó chạm tới shell **chỉ khi bộ tool có lỗ thật** (không tool nào trả về kích thước file), và nó tự chọn đúng lệnh cho hệ điều hành mà không ai nói cho nó biết máy chạy gì. **Không cần thêm một dòng dặn nào** — mà thêm cũng là token vĩnh viễn trong prefix để mua một hành vi đã có sẵn.
 
 Điều kiện đi kèm — **nói ra lúc tạo, không đợi họ tự đi tìm**: hộp thoại Thêm nhân viên có một dòng nói thẳng *"người này sẽ chạy được lệnh trên máy"*, và `roleTemplate` ghi `tools: [Bash]` kèm khối chú thích giải thích ngoại lệ. Một mặc định rộng tay mà im lặng thì không phải tiện, là bẫy: người dùng chỉ biết nó tồn tại vào lúc đã muộn.
 
@@ -259,6 +313,45 @@ Thi hành:
 
 Nói cách khác: **`Bash` gắn vào MỘT NGƯỜI mà bạn nhìn thấy trên sơ đồ và bật bằng tay.** Không có đường nào để một lệnh chạy mà không có một cái tên chịu trách nhiệm cho nó trong nhật ký.
 
+### 5b. 🔴 ĐÍNH CHÍNH 22/08 — HÀNG RÀO ĐỌC KHÔNG TỒN TẠI, VÀ CHƯA BAO GIỜ TỒN TẠI
+
+Bảng trên (và một khối chú thích trong `types.ts`) ghi: *"chúng chỉ chạm được vào thư mục văn phòng (`cwd`) và `safeJoin` đã chặn đi ra ngoài"*.
+
+**Sai.** `safeJoin` là hàm **của ta**, chạy trong **mã của ta** — nó chưa bao giờ đứng giữa model và tool `Read`. `cwd` không phải một bức tường; nó là thư mục làm việc mặc định.
+
+**Đo được 22/08** — một vai trò chỉ có bộ mặc định, **không** `Bash`, `cwd` là thư mục văn phòng:
+
+```
+KHÔNG Bash · đường dẫn tuyệt đối   tool=[Read] → ✅ ĐỌC ĐƯỢC nội dung file ở thư mục khác
+```
+
+> **Câu cũ đọc rất thuyết phục vì nó NÊU TÊN một hàm có thật.** Chỉ là hàm đó ở nhầm tầng. Đây là biến thể tinh vi nhất của luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"* — lần này mã nguồn tồn tại, chạy đúng, và bảo vệ một thứ khác.
+
+#### Ranh giới THẬT hôm nay
+
+| | hàng rào | thi hành bởi |
+|---|---|---|
+| **Ghi** — `Write` `Edit` `NotebookEdit` | ✅ có | `officeJail` (`PreToolUse`), đo được là chạy |
+| **Đọc** — `Read` `Glob` `Grep` | ❌ **không có gì** | — |
+| **Web** — `WebFetch` `WebSearch` | ❌ không có | chỉ đọc *từ ngoài vào*, nhưng URL là một đường **đi ra** |
+| **Lệnh** — `Bash` | ❌ không có, và **bật sẵn** từ 22/08 | — |
+
+⇒ **`Read` (bất cứ đâu) + `WebFetch` (URL tuỳ ý) là một đường dữ liệu đi ra hoàn chỉnh, không cần `Bash`.** Nói ra không phải để doạ: nó là điều kiện để bàn đúng chuyện. Với một sản phẩm mà `SPEC-offices.md` §5 dựng cả trường `secrets` theo nguyên tắc đặc quyền tối thiểu, một hàng rào đọc không tồn tại là chỗ nguyên tắc đó hụt chân.
+
+#### Hàng rào đọc DỰNG ĐƯỢC — đã đo, chưa dựng
+
+Ngày 19/08 từng đo *"hook `PreToolUse` không nổ lần nào"* cho `Grep`/`Glob`, và spec đã cẩn thận ghi kèm *"⚠ ranh giới của phép đo — đừng suy rộng hơn"*. Đo lại 22/08, trong ngữ cảnh **worker** (không phải Trợ lý):
+
+| | hook nổ | kết quả |
+|---|---|---|
+| không hook (đối chứng) | — | ❌ đọc được file ngoài |
+| `PreToolUse` matcher `Read` | ✅ `Read` | ✅ **bị chặn** |
+| `PreToolUse` không matcher | ✅ `Read` | ✅ **bị chặn** |
+
+Nên đường xây **có tồn tại**, và nó cùng một cơ chế với `officeJail` đang chạy. Hình dạng đề xuất: **allowlist suy từ chính bản kế hoạch** — cho đọc trong thư mục văn phòng, **cộng** các đường dẫn tuyệt đối đã khai trong `inputs` của đúng task đó, chặn phần còn lại. Nó biến `inputs` từ một lời khai thành một **hợp đồng ràng buộc**, và biến dòng dặn sẵn có trong prompt nhân viên (*"Do not explore. Open exactly what your inputs list"*) từ **lời dặn** thành **cơ chế**.
+
+**Chưa dựng — đang chờ quyết định**, vì nó đổi hành vi lúc chạy của mọi nhân viên và có rủi ro chặn nhầm một lượt đọc hợp lệ.
+
 ### ⚠ Bảng trên KHÔNG được thi hành cho tới 16/08/2026 — `tools` ≠ `allowedTools`
 
 Ta chỉ truyền `allowedTools` và tưởng thế là giới hạn. `.d.ts` nói ngược lại:
@@ -289,6 +382,46 @@ Ba cái giá cùng lúc:
 **Prefix giảm ~60%, giá một task giảm gần một nửa.** Phần lớn "sàn ~13 200 token mỗi worker call" hoá ra là định nghĩa của những tool ta chưa bao giờ định trao.
 
 > **Bài học đóng gói được: một bất biến chỉ có thật khi có mã nguồn thi hành nó.** Bảng này nằm trong spec từ đầu, đọc rất thuyết phục, và sai suốt. Thứ phát hiện ra nó là một thí nghiệm 5 phút với một file chỉ-đọc — không phải một lần đọc lại code.
+
+### 5c. LẤY 8 HAY LẤY HẾT 29? — số đo, rồi lý do kiến trúc (chốt 22/08)
+
+Đo cô lập **chỉ phần tool** (cùng một system prompt tí hon, nonce phá cache cả bốn lần):
+
+| bộ tool | CLI cấp | prefix | thêm vào |
+|---|---:|---:|---:|
+| không tool nào | 0 | 193 | — |
+| 7 tool văn phòng | 7 | 4 547 | +4 354 |
+| **7 + shell (đang chạy)** | **8** | **7 235** | +2 688 |
+| **lấy hết (không truyền `tools`)** | **29** | **13 188** | **+5 953** |
+
+**Lấy hết = 1,82× prefix hiện tại, cộng 5 953 token vào MỌI lượt gọi worker, vĩnh viễn.**
+
+Nhưng tiền là lý lẽ THỨ HAI. Lý lẽ thứ nhất là kiến trúc — xếp 21 tool còn lại thành bốn nhóm thì thấy ngay:
+
+| nhóm | tool | vì sao KHÔNG lấy |
+|---|---|---|
+| **Điều phối / sub-agent** | `Task` `TaskCreate` `TaskGet` `TaskUpdate` `TaskList` `TaskOutput` `TaskStop` `SendMessage` | agentco **đã có** tầng này: Trợ lý + `Scheduler` + kế hoạch + receipt. Lấy về là có **hai bộ điều phối cạnh tranh** — nhân viên tự đẻ nhân viên, **ngoài sổ chi phí, ngoài nhật ký, ngoài mọi giới hạn vai trò**. Đây không phải chuyện tiền. |
+| **Agent nền / lịch** | `CronCreate` `CronDelete` `CronList` `ScheduleWakeup` `RemoteTrigger` `PushNotification` | Cùng lý do: vòng đời việc là của agentco. Một nhân viên tự đặt cron là một khoản chi lặp lại mà người dùng **không thấy ở đâu cả**. |
+| **Của lập trình viên** | `EnterWorktree` `ExitWorktree` `NotebookEdit` `DesignSync` | Khách mở tiệm hoa không có git worktree, không có Jupyter. |
+| **Nội bộ Claude Code** | `Skill` `ToolSearch` `ReportFindings` `Monitor` | Thuộc về sản phẩm Claude Code, không thuộc về một văn phòng ảo. |
+
+#### Vì sao Claude Code có nhiều tool đến thế — và bằng chứng nằm ngay trong danh sách
+
+Vì nó là **sản phẩm khác**: một agent lập trình tương tác **cộng** một nền tảng agent chạy nền, cho **một người dùng thành thạo ngồi ở terminal**. agentco là một **sản phẩm cho người không code**, và nó **tự sở hữu tầng điều khiển** — nên chỗ hai bên trùng chức năng, bản của ta phải thắng.
+
+> Bằng chứng mạnh nhất nằm ngay trong chính danh sách đó: **`ToolSearch`**. Đó là cơ chế "tool trả chậm" — nạp tên trước, nạp schema sau khi cần. Nó tồn tại **chính vì** bộ tool đã lớn tới mức không nạp hết được nữa. **Anthropic cũng biết là nhiều, nên họ làm một tool để hoãn những tool khác.** Ta gạn ở đầu nguồn; họ hoãn ở giữa đường. Cùng một nhận định, khác chỗ ra tay.
+
+#### Thước cho mọi đề nghị "thêm tool builtin" sau này
+
+Một tool chỉ được vào bộ mặc định khi **cả ba** đúng:
+
+1. **Không tool nào hiện có làm được việc đó.** (`Bash` từng qua cửa này: không gì khác trả về kích thước file.)
+2. **Nó không nhân đôi một tầng điều khiển agentco đã sở hữu** — điều phối, lịch, chi phí, nhật ký.
+3. **Người dùng văn phòng thật sự cần**, chứ không phải lập trình viên cần.
+
+Cho 21 tool còn lại đi qua thước này: **không cái nào qua nổi**, và phần lớn trượt ở (2) chứ không phải ở tiền. Nếu chỉ đếm token thì `NotebookEdit` trông "rẻ" — nhưng nó vẫn trượt ở (3).
+
+⚠ Một chỗ lệch nhỏ đáng ghi: `officeJail` khớp `Write|Edit|NotebookEdit`, mà `NotebookEdit` **không nằm** trong `BUILTIN_TOOLS`. Vô hại (phòng thủ thừa còn hơn thiếu) nhưng nó là một dòng hứa canh một cánh cửa chưa từng tồn tại. Giữ nguyên có chủ ý: ngày nào `NotebookEdit` được thêm vào, hàng rào đã sẵn ở đó.
 
 ### Còn MCP/connector thì vẫn là NODE
 

@@ -19,8 +19,10 @@ import { grantFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
 import { relative } from 'node:path';
+import { hasShell } from './types.js';
 import {
   EMPTY_USAGE,
+  EXTERNAL_TOOLS,
   RunError,
   type FailureKind,
   type Landing,
@@ -212,6 +214,11 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
       // Hạn mức tài khoản đi kèm luồng, MIỄN PHÍ. Bắn một lần mỗi query, ngay
       // đầu — nhặt lên chứ đừng gọi thêm gì. → `core/energy.ts`
       if (m['type'] === 'rate_limit_event') noteRateLimit(m['rate_limit_info']);
+
+      // CLI TỰ KHAI nó được cấp tool nào. Đối chiếu ngay. → `warnDroppedTools`
+      if (m['type'] === 'system' && m['subtype'] === 'init') {
+        warnDroppedTools(role, m['tools']);
+      }
 
       if (m['type'] === 'assistant') {
         const calls = toolCalls(m);
@@ -803,7 +810,9 @@ function describeCall(call: ToolCall): string {
      * │ Xuống dòng bị thu về dấu cách — một lệnh nhiều dòng làm vỡ bố cục.    │
      * └──────────────────────────────────────────────────────────────────────┘
      */
-    case 'Bash': {
+    // Cả hai tên: `Bash` trên POSIX, `PowerShell` trên Windows. → types.ts
+    case 'Bash':
+    case 'PowerShell': {
       const cmd = str(call.input['command']).replace(/\s+/g, ' ');
       if (!cmd) return 'đang chạy lệnh';
       return `đang chạy: ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}`;
@@ -886,9 +895,68 @@ export function landingOf(officeDir: string, call: ToolCall): Landing | undefine
       return { kind: 'outside', ref: raw.replace(/\\/g, '/') };
     }
   }
-  if (call.name === 'Bash') return { kind: 'command', ref: '' };
+  // `EXTERNAL_TOOLS` chứ không phải `=== 'Bash'`: tool shell mang tên khác nhau
+  // theo hệ điều hành, và một điểm đến bị bỏ sót là một điểm đến bị GIẤU.
+  if (EXTERNAL_TOOLS.has(call.name)) return { kind: 'command', ref: '' };
   const server = mcpServerOf(call.name);
   return server ? { kind: 'external', ref: server } : undefined;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ HỎI LẠI XEM CLI NHẬN ĐƯỢC GÌ — thay vì tin là nó nhận đủ.               │
+ * │                                                                          │
+ * │ Đây là dòng code sinh ra từ ca 22/08: tool shell tên `PowerShell` trên   │
+ * │ Windows, `Bash` trên POSIX, và `Options.tools` là allowlist theo TÊN     │
+ * │ **bỏ im lặng** tên không tồn tại. Vai trò khai `Bash` trên Windows nhận  │
+ * │ đúng bộ mặc định — công tắc "cho chạy lệnh" là no-op suốt SÁU NGÀY, và   │
+ * │ không có một triệu chứng nào.                                            │
+ * │                                                                          │
+ * │ `effectiveTools` đã bịt ca đó bằng cách gửi mọi tên. Nhưng bản vá ấy     │
+ * │ dựa trên một bảng tên **ta viết tay**, mà bảng tên là của SDK. Xuất hiện │
+ * │ một nền tảng thứ tư với tên thứ ba thì lỗi cũ quay lại y nguyên, im      │
+ * │ lặng y nguyên.                                                           │
+ * │                                                                          │
+ * │ Nên chốt chặn thật không phải bảng tên — mà là **phép đối chiếu này**:   │
+ * │ `system/init` có trường `tools` liệt kê thứ CLI thật sự cấp. So với thứ  │
+ * │ ta gửi, khác thì kêu. Nó không cần biết tên nào đúng; nó chỉ cần biết    │
+ * │ "thứ tôi xin và thứ tôi nhận không khớp". Đó là bất biến bền hơn hẳn     │
+ * │ một danh sách chuỗi.                                                     │
+ * │                                                                          │
+ * │ Cảnh báo mức TIẾN TRÌNH, không phải mức người dùng: người vận hành tiệm  │
+ * │ hoa không làm gì được với câu này, còn người cài đặt hệ thống thì có.    │
+ * │ Một lần cho mỗi (vai trò × bộ tool thiếu) — worker chạy liên tục, kêu    │
+ * │ mỗi lượt là biến một tín hiệu thật thành nhiễu ai cũng bỏ qua.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const warned = new Set<string>();
+
+export function warnDroppedTools(role: Role, granted: unknown): string[] {
+  if (!Array.isArray(granted)) return [];
+  const got = new Set(granted.filter((t): t is string => typeof t === 'string'));
+
+  /**
+   * Tên shell tính theo NHÓM, không theo từng cái. Ta cố ý gửi cả `Bash` lẫn
+   * `PowerShell` và **mong** một cái bị bỏ — kêu vì cái đó là tự tạo báo động
+   * giả ở mọi lượt chạy, trên mọi hệ điều hành.
+   */
+  const asked = effectiveTools(role.tools);
+  const dropped = asked.filter((t) => !got.has(t) && !EXTERNAL_TOOLS.has(t));
+  if (hasShell(role.tools) && !asked.some((t) => EXTERNAL_TOOLS.has(t) && got.has(t))) {
+    dropped.push('(tool chạy lệnh)');
+  }
+  if (dropped.length === 0) return [];
+
+  const key = `${role.id}:${dropped.join(',')}`;
+  if (!warned.has(key)) {
+    warned.add(key);
+    process.emitWarning(
+      `Vai trò "${role.id}" xin ${dropped.length} tool mà Claude Code không cấp: ${dropped.join(', ')}. ` +
+        `CLI bỏ im lặng tên tool nó không có, nên tính năng này đang KHÔNG chạy. ` +
+        `Kiểm bảng tên ở src/core/types.ts §SHELL_ALIASES.`,
+    );
+  }
+  return dropped;
 }
 
 function basename(p: string): string {

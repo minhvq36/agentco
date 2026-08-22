@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test cho ĐƯỜNG RANH "kết quả đi đâu, và tiền là bao nhiêu" — cả hai đường đều
  * đã nói dối với người dùng trong cùng một buổi chạy thật, 21/08.
  *
@@ -32,7 +32,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { filesOnDisk, landingOf, straysOnDisk, readUsage } from '../dist/core/worker.js';
+import { filesOnDisk, landingOf, straysOnDisk, readUsage, warnDroppedTools } from '../dist/core/worker.js';
+import { BUILTIN_TOOLS, effectiveTools, hasShell } from '../dist/core/types.js';
 
 const OFFICE = path.resolve('/co/offices/bang-tinh');
 
@@ -264,3 +265,95 @@ test('straysOnDisk: không có file lạc nào thì rỗng — im lặng đúng 
   assert.deepEqual(straysOnDisk([{ kind: 'file', ref: 'artifacts/a.md' }]), []);
   assert.deepEqual(straysOnDisk([]), []);
 });
+
+// ──────────────────────────────── tool shell đổi tên theo hệ điều hành
+
+/**
+ * Ca thật 22/08: công tắc "cho chạy lệnh" KHÔNG chạy suốt sáu ngày.
+ *
+ * Trên Windows tool shell tên là `PowerShell`; bộ 29 tool của CLI **không hề
+ * có** `Bash`. Mà `tools` là allowlist theo TÊN và **bỏ im lặng** tên không tồn
+ * tại — nên `tools: ['Bash']` cấp đúng 0 tool thêm. Hỏi thẳng CLI mới ra:
+ *
+ *   không truyền `tools` → 29 tool, có `PowerShell`, KHÔNG có `Bash`
+ *   `tools: ['Bash']`    → CLI cấp 0 tool
+ *   7 mặc định + `PowerShell` → 8 tool, prefix +2 688 token
+ *
+ * Luật: **config giữ MỘT tên chuẩn** (`Bash`) để một văn phòng zip lại vẫn
+ * chạy ở máy khác hệ điều hành; việc dịch sang tên nền tảng làm ở
+ * `effectiveTools`, bằng cách gửi CẢ HAI tên và để SDK tự bỏ cái không có.
+ */
+test('effectiveTools: khai shell bang MOT ten thi nhan duoc MOI ten nen tang', () => {
+  const out = effectiveTools(['Bash']);
+  assert.ok(out.includes('Bash'), 'giu ten POSIX');
+  assert.ok(out.includes('PowerShell'), 'thieu ten Windows = cong tac la no-op tren Windows');
+  for (const t of BUILTIN_TOOLS) assert.ok(out.includes(t));
+});
+
+test('effectiveTools: khai bang ten Windows cung nhan du', () => {
+  const out = effectiveTools(['PowerShell']);
+  assert.ok(out.includes('Bash') && out.includes('PowerShell'));
+});
+
+test('effectiveTools: KHONG khai shell thi khong ten nao lot vao', () => {
+  const out = effectiveTools([]);
+  assert.equal(out.includes('Bash'), false);
+  assert.equal(out.includes('PowerShell'), false);
+  assert.deepEqual(out, [...BUILTIN_TOOLS]);
+});
+
+test('hasShell: nhan ra vai tro co shell du khai bang ten nao', () => {
+  assert.equal(hasShell([]), false);
+  assert.equal(hasShell(['Read']), false);
+  assert.equal(hasShell(['Bash']), true);
+  assert.equal(hasShell(['PowerShell']), true);
+});
+
+/**
+ * `landingOf` phải khai "có chạy lệnh" cho CẢ HAI tên. Sót một tên là một điểm
+ * đến bị GIẤU — người dùng Windows sẽ thấy "không có kết quả nào" cho một lượt
+ * chạy vừa gọi shell.
+ */
+test('landingOf: ca Bash lan PowerShell deu khai la diem den "command"', () => {
+  for (const name of ['Bash', 'PowerShell']) {
+    assert.deepEqual(landingOf('/vp', { name, input: { command: 'ls' } }), { kind: 'command', ref: '' });
+  }
+});
+
+
+// ──────────────────────── CLI bỏ im lặng tool nó không có → phải kêu
+
+/**
+ * Chốt chặn BỀN hơn bảng tên: nó không cần biết tên nào đúng, chỉ cần biết
+ * "thứ tôi xin và thứ tôi nhận không khớp". Bảng `SHELL_ALIASES` là do TA viết
+ * tay; xuất hiện một nền tảng thứ tư với tên thứ ba thì bảng sai còn phép đối
+ * chiếu này vẫn đúng.
+ */
+const roleWith = (tools) => ({ id: 'r1', tools, budget: {}, mcp: [] });
+const GRANTED_POSIX = [...BUILTIN_TOOLS, 'Bash'];
+const GRANTED_WIN = [...BUILTIN_TOOLS, 'PowerShell'];
+
+test('warnDroppedTools: POSIX cap Bash, Windows cap PowerShell -> ca hai deu IM', () => {
+  assert.deepEqual(warnDroppedTools(roleWith(['Bash']), GRANTED_POSIX), []);
+  assert.deepEqual(warnDroppedTools(roleWith(['Bash']), GRANTED_WIN), []);
+});
+
+test('warnDroppedTools: xin shell ma KHONG duoc cap ten nao -> KEU', () => {
+  const dropped = warnDroppedTools(roleWith(['Bash']), [...BUILTIN_TOOLS]);
+  assert.ok(dropped.length > 0, 'day chinh la ca no-op suot 6 ngay, phai co tieng');
+});
+
+test('warnDroppedTools: KHONG xin shell thi khong bao gio keu vi shell', () => {
+  assert.deepEqual(warnDroppedTools(roleWith([]), [...BUILTIN_TOOLS]), []);
+});
+
+test('warnDroppedTools: tool thuong bi bo cung phai keu', () => {
+  const dropped = warnDroppedTools(roleWith([]), BUILTIN_TOOLS.filter((t) => t !== 'WebSearch'));
+  assert.deepEqual(dropped, ['WebSearch']);
+});
+
+test('warnDroppedTools: granted khong phai mang -> im, dung nem', () => {
+  assert.deepEqual(warnDroppedTools(roleWith(['Bash']), undefined), []);
+  assert.deepEqual(warnDroppedTools(roleWith(['Bash']), 'nope'), []);
+});
+
