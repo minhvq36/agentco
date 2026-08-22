@@ -72,16 +72,48 @@ function processAlive(pid: number): boolean {
 }
 
 export function openBrowser(url: string): void {
+  reveal(url);
+}
+
+/**
+ * Mở một THƯ MỤC bằng trình quản lý file của hệ điều hành.
+ * → docs/SPEC-offices.md §3
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÂY LÀ LỐI THOÁT CHO "MÃ VĂN PHÒNG KHÔNG ĐỔI THEO TÊN".                 │
+ * │                                                                          │
+ * │ `id` là tên thư mục và cố ý KHÔNG đổi khi người dùng đổi tên hiển thị —  │
+ * │ đổi nó là dời `artifacts/`, `tasks/`, `.state/` và mọi đường dẫn đã ghi  │
+ * │ trong receipt cũ, để đổi một cái nhãn. Nhưng hệ quả thì thật: người dùng │
+ * │ đổi "Báo cáo" thành "Kiểm kê" rồi đi tìm thư mục `kiem-ke/` không có.    │
+ * │ Với tên phi-Latin còn tệ hơn — thư mục tên `vp-ee6fd8`.                   │
+ * │                                                                          │
+ * │ Cách rẻ nhất để hoà giải hai thứ đó không phải là đổi tên thư mục, mà là │
+ * │ **bỏ hẳn nhu cầu biết tên thư mục**: một nút mở thẳng nó ra. Người dùng  │
+ * │ không bao giờ phải gõ, nhớ, hay đoán cái id nữa — và ta không phải dời   │
+ * │ một byte nào.                                                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function openFolder(dir: string): void {
+  reveal(dir);
+}
+
+function reveal(target: string): void {
   if (process.env['AGENTCO_HEADLESS'] === '1') return;
+  /**
+   * ⚠ Windows đi qua `cmd /c start` với đối số thứ hai RỖNG — đó là chỗ tiêu
+   * đề cửa sổ, và bỏ nó đi thì một đường dẫn có dấu ngoặc kép bị `start` hiểu
+   * thành tiêu đề rồi không mở gì cả.
+   */
   const [cmd, args] =
     process.platform === 'win32'
-      ? ['cmd', ['/c', 'start', '', url]]
+      ? ['cmd', ['/c', 'start', '', target]]
       : process.platform === 'darwin'
-        ? ['open', [url]]
-        : ['xdg-open', [url]];
+        ? ['open', [target]]
+        : ['xdg-open', [target]];
   try {
     spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
   } catch {
-    /* không mở được thì thôi, URL đã in ra terminal rồi */
+    /* không mở được thì thôi — giao diện vẫn hiện đường dẫn để chép tay */
   }
 }

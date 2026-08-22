@@ -22,6 +22,21 @@ import { LibraryError } from '../library/store.js';
 import { PREVIEW_MAX_BYTES, mimeOf } from '../core/artifacts.js';
 import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
+import { openFolder } from '../cli/daemonfile.js';
+
+/**
+ * Yêu cầu này đến từ chính máy đang chạy daemon?
+ *
+ * Chỉ đọc địa chỉ SOCKET — `Host` và `X-Forwarded-For` do client gửi nên giả
+ * được. IPv4-mapped (`::ffff:127.0.0.1`) là dạng Node trả về khi socket lắng
+ * nghe trên IPv6 nhưng nhận kết nối IPv4; bỏ sót nó là chặn nhầm chính máy
+ * mình trên phần lớn cấu hình mặc định.
+ */
+export function isLoopback(addr: string | undefined): boolean {
+  if (!addr) return false;
+  const a = addr.replace(/^::ffff:/i, '');
+  return a === '127.0.0.1' || a === '::1' || a.startsWith('127.');
+}
 
 /**
  * Đuôi file KHÔNG BAO GIỜ được render trong trình duyệt, luôn ép tải về.
@@ -168,6 +183,12 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         return json(res, 200, { ok: true, offices: company.list() });
       }
 
+      /**
+       * ⚠ Handle này chỉ đúng cho tới mutation ĐẦU TIÊN có thể đổi danh tính
+       * văn phòng. Hôm nay đúng một thao tác làm được điều đó — đổi tên có dời
+       * thư mục — và nhánh PATCH tự lấy lại handle sau mỗi bước (`cur()`).
+       * Thêm một thao tác dời/thay instance mới thì phải theo đúng khuôn đó.
+       */
       const office = company.get(officeId);
 
       if (rest.length === 0 && method === 'GET') {
@@ -195,23 +216,91 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         const body = await readJson<{
           name?: string;
           assistant_tier?: string | null;
+          /** Tên hiển thị của Trợ lý. Không nằm trong prompt nào → không phá cache. */
+          assistant_name?: string;
           archived?: boolean;
         }>(req);
+        /**
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ ĐỔI TÊN CÓ THỂ ĐỔI LUÔN `id` — nên KHÔNG được giữ một handle.    │
+         * │ (bug user báo 22/08)                                              │
+         * │                                                                  │
+         * │ `const office` ở đầu route lấy MỘT LẦN. Nhưng `renameOffice` dời │
+         * │ thư mục và **thay hẳn instance** trong map (`Company.moveOffice`),│
+         * │ nên từ dòng đó trở đi cái handle cũ là ma: `office.id` vẫn là id  │
+         * │ cũ, `office.loaded.dir` trỏ vào thư mục đã biến mất.              │
+         * │                                                                  │
+         * │ Hai hậu quả, và cái thứ hai nặng hơn triệu chứng người dùng thấy: │
+         * │                                                                  │
+         * │  1. Response trả `id` CŨ ⇒ client tưởng không có gì đổi ⇒ mọi     │
+         * │     lời gọi sau đó 404 tới khi F5. Đây là thứ user nhìn thấy.    │
+         * │  2. `setAssistantTier` / `renameAssistant` trong CÙNG một request │
+         * │     sẽ ghi `office.yaml` vào **đường dẫn cũ đã bị dời**. Giao     │
+         * │     diện hôm nay chưa gửi hai thứ đó chung một lần, nhưng route   │
+         * │     thì cho phép — một cái bẫy nằm chờ.                           │
+         * │                                                                  │
+         * │ Sửa MỘT chỗ, hết cả hai: theo dõi `curId` và LẤY LẠI office sau  │
+         * │ mỗi mutation có thể đổi danh tính. Thêm một mutation mới sau này  │
+         * │ thì nó tự đúng, miễn là gọi qua `cur()`.                          │
+         * └──────────────────────────────────────────────────────────────────┘
+         */
+        let curId = officeId;
+        const cur = () => company.get(curId);
+
         // `archived` đi TRƯỚC: khôi phục rồi mới sửa được những thứ còn lại.
         // Ngược lại thì "khôi phục và đổi tên trong một lần" sẽ bị chính chốt
         // chỉ-đọc chặn, và người dùng không hiểu vì sao.
-        if (typeof body.archived === 'boolean') company.archiveOffice(officeId, body.archived);
-        if (typeof body.name === 'string') company.renameOffice(officeId, body.name);
+        if (typeof body.archived === 'boolean') company.archiveOffice(curId, body.archived);
+        if (typeof body.name === 'string') curId = company.renameOffice(curId, body.name).id;
         if (body.assistant_tier !== undefined) {
-          office.setAssistantTier(body.assistant_tier ?? undefined);
+          cur().setAssistantTier(body.assistant_tier ?? undefined);
         }
+        if (typeof body.assistant_name === 'string') cur().renameAssistant(body.assistant_name);
+
+        const after = cur();
         return json(res, 200, {
-          id: office.id,
-          name: office.name,
-          archived: office.archived,
-          canvas: office.canvas(),
+          id: after.id,
+          name: after.name,
+          archived: after.archived,
+          canvas: after.canvas(),
           offices: company.list(),
         });
+      }
+
+      /**
+       * Thư mục văn phòng: LUÔN trả đường dẫn, và CHỈ mở khi trình duyệt đang
+       * chạy trên chính cái máy này. → `cli/daemonfile.ts §openFolder`
+       *
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ ⚠ "MỞ THƯ MỤC" MỞ TRÊN MÁY CHỦ, KHÔNG PHẢI MÁY NGƯỜI ĐANG NHÌN.    │
+       * │                                                                    │
+       * │ Trên máy cá nhân hai cái đó là một, nên nút này rất tiện. Nhưng     │
+       * │ agentco sẽ chạy trên VPS và trong Docker, và ở đó nó sai hoàn toàn: │
+       * │ người dùng bấm nút ở Hà Nội, một cửa sổ Explorer bật ra trên con    │
+       * │ server ở Singapore mà không ai nhìn thấy. Tốt nhất là không có gì   │
+       * │ xảy ra; tệ hơn là một tiến trình mồ côi mỗi lần bấm.                │
+       * │                                                                    │
+       * │ `AGENTCO_HEADLESS=1` đã chặn được ca Docker dựng đúng — nhưng nó là │
+       * │ thứ người triển khai phải NHỚ ĐẶT. Một bất biến dựa vào việc ai đó  │
+       * │ nhớ thì không phải bất biến.                                        │
+       * │                                                                    │
+       * │ Chốt thật: hỏi chính cái socket. Yêu cầu đến từ loopback thì trình  │
+       * │ duyệt và daemon ở cùng một máy — đó là ĐIỀU KIỆN duy nhất làm cho   │
+       * │ "mở thư mục" có nghĩa. Không phải loopback thì chỉ trả đường dẫn.   │
+       * │                                                                    │
+       * │ ⚠ Không tin `Host`/`X-Forwarded-For`: cả hai do client gửi. Địa chỉ │
+       * │ socket thì không giả được từ xa. Reverse proxy chạy CÙNG máy sẽ lọt │
+       * │ (nó cũng là loopback) — chấp nhận: hậu quả xấu nhất là một lời gọi  │
+       * │ `spawn` không làm gì cả trên một máy không có màn hình.             │
+       * └────────────────────────────────────────────────────────────────────┘
+       *
+       * `officeId` đã qua `isSafeId`, và `office.dir` do chính ta dựng từ
+       * `companyDir` — không có chuỗi nào của người dùng đi vào `spawn`.
+       */
+      if (rest[0] === 'reveal' && method === 'POST') {
+        const local = isLoopback(req.socket.remoteAddress);
+        if (local) openFolder(office.dir);
+        return json(res, 200, { dir: office.dir, opened: local });
       }
 
       if (rest[0] === 'canvas' && method === 'GET') return json(res, 200, office.canvas());

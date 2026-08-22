@@ -457,9 +457,39 @@ export const actions = {
     }
   },
 
-  async refreshCompany(): Promise<void> {
+  /**
+   * Nạp lại danh sách văn phòng — và TỰ CHỮA nếu văn phòng đang mở biến mất.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐÂY LÀ CHỖ CỨU CẢ CA "TAB KHÁC", thứ mà response của PATCH không với tới.│
+   * │                                                                          │
+   * │ Đổi tên văn phòng có thể đổi luôn `id` (thư mục dời theo). Tab BẤM nút   │
+   * │ thì nhận `id` mới trong response và tự cập nhật. Nhưng **tab thứ hai**   │
+   * │ đang mở cùng văn phòng thì không gọi gì cả — nó chỉ nghe SSE, và         │
+   * │ `state.officeId` của nó vẫn là id cũ. Từ đó mọi lời gọi 404, và người    │
+   * │ dùng thấy toast *"Không có văn phòng …"* cho một thao tác đã thành công. │
+   * │                                                                          │
+   * │ Nên bất biến phải là: **`officeId` không bao giờ trỏ tới một id server   │
+   * │ không có.** Kiểm ở đây vì đây là chỗ DUY NHẤT biết danh sách thật vừa    │
+   * │ đổi — và nó chạy cho mọi tab, không chỉ tab vừa bấm.                     │
+   * │                                                                          │
+   * │ `hint` là `event.office` của `company.offices`: nó mang id MỚI, nên tab  │
+   * │ kia đi thẳng tới đúng văn phòng thay vì rơi về cái đầu danh sách.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  async refreshCompany(hint?: string): Promise<void> {
     const company = await guard(() => api.company());
-    if (company) set({ company });
+    if (!company) return;
+    set({ company });
+
+    const id = state.officeId;
+    if (!id || company.offices.some((o) => o.id === id)) return;
+    // Văn phòng đang mở không còn trong danh sách: hoặc vừa đổi id (đổi tên có
+    // dời thư mục), hoặc vừa bị xoá ở tab khác. Cả hai đều phải đi tiếp, không
+    // được đứng lại ở một id chết.
+    const next = hint && company.offices.some((o) => o.id === hint) ? hint : company.offices[0]?.id;
+    if (next) await actions.openOffice(next);
+    else set({ officeId: null, canvas: null });
   },
 
   async refreshCanvas(): Promise<void> {
@@ -479,17 +509,35 @@ export const actions = {
   },
 
   /**
-   * Đổi tên văn phòng. Mã (thư mục) giữ nguyên — không có gì phải mở lại.
+   * Đổi tên văn phòng.
    *
    * Server trả về cả danh sách văn phòng đã cập nhật, nên không cần thêm một
    * vòng `GET /api/company` nữa; ô chọn ở đầu màn hình đổi tên ngay lập tức.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MÃ VĂN PHÒNG CÓ THỂ ĐỔI THEO — phải bám lấy `res.id`. (22/08)           │
+   * │                                                                          │
+   * │ Từ 22/08, đổi tên mà tên mới cho ra một slug thật thì **thư mục dời theo**│
+   * │ và `id` đổi (`Company.renameTarget`). Bản trước của khối này ghi *"mã giữ │
+   * │ nguyên — không có gì phải mở lại"* và không đụng tới `officeId`.          │
+   * │                                                                          │
+   * │ Không sửa thì `state.officeId` còn trỏ id CŨ: mọi lời gọi sau đó (chat,   │
+   * │ canvas, tủ tài liệu) đi tới một văn phòng không còn tồn tại và trả 404 —  │
+   * │ người dùng vừa đổi tên xong thì màn hình chết, mà không có gì giải thích. │
+   * │                                                                          │
+   * │ `writeLastOffice` cũng phải theo, nếu không mở lại app là quay về đúng    │
+   * │ cái id đã biến mất.                                                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
   async renameOffice(name: string): Promise<boolean> {
     const id = state.officeId;
     if (!id) return false;
     const res = await guard(() => api.patchOffice(id, { name }));
     if (!res) return false;
+    const moved = res.id !== id;
+    if (moved) writeLastOffice(res.id);
     set({
+      ...(moved ? { officeId: res.id } : {}),
       canvas: res.canvas,
       company: state.company ? { ...state.company, offices: res.offices } : state.company,
     });
@@ -506,6 +554,22 @@ export const actions = {
     const id = state.officeId;
     if (!id) return false;
     const res = await guard(() => api.patchOffice(id, { assistant_tier: tier }));
+    if (!res) return false;
+    set({ canvas: res.canvas });
+    return true;
+  },
+
+  /**
+   * Đổi tên hiển thị của Trợ lý. → `Office.renameAssistant`
+   *
+   * Khác `setAssistantTier` ở cái giá, dù hai nút nằm cạnh nhau: tên KHÔNG nằm
+   * trong prompt của ai, nên không ghi lại cache, không mất trí nhớ, không đụng
+   * session. Sửa thoải mái.
+   */
+  async renameAssistant(name: string): Promise<boolean> {
+    const id = state.officeId;
+    if (!id) return false;
+    const res = await guard(() => api.patchOffice(id, { assistant_name: name }));
     if (!res) return false;
     set({ canvas: res.canvas });
     return true;
@@ -784,7 +848,9 @@ export function connectEvents(): () => void {
       return;
     }
     if (e.type === 'company.offices') {
-      void actions.refreshCompany();
+      // `e.office` mang id MỚI khi đổi tên làm dời thư mục — chuyển tiếp làm
+      // gợi ý để tab nào đang mở id cũ đi thẳng tới đúng chỗ. → `refreshCompany`
+      void actions.refreshCompany(e.office ?? undefined);
       return;
     }
     // Sự kiện của văn phòng KHÁC không được hiện ở đây. Đây là lý do mọi sự

@@ -304,7 +304,7 @@ function Hint() {
   if (!hasAgents || plan) return null;
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-line bg-panel/90 px-2.5 py-1.5 text-xs text-muted backdrop-blur">
-      Kéo node để sắp xếp · Kết nối Trợ lý và nhân viên để giao quyền
+      Kéo node để sắp xếp · kết nối Trợ lý và nhân viên để giao quyền
     </div>
   );
 }

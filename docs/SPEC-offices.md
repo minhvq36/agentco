@@ -74,11 +74,49 @@ Lý do bỏ vai trò mẫu: người dùng đầu tiên của v0 mở lên thấ
 
 Template mẫu vẫn còn giá trị, nhưng ở dạng **chọn khi tạo văn phòng**, không phải bị nhét sẵn.
 
-### Đổi tên văn phòng — tên đổi, MÃ không đổi
+### Đổi tên văn phòng — thư mục ĐỔI THEO, khi và chỉ khi tên mới có slug thật
 
-`PATCH /api/office/:id { name }` chỉ ghi lại `name` trong `office.yaml`. **`id` giữ nguyên vĩnh viễn.**
+> **Đổi 22/08/2026.** Mục này trước đây ghi *"`id` giữ nguyên vĩnh viễn"*, với hai lý do: *dời thư mục sẽ phá prompt cache* và *mất session của Trợ lý*. **Đem đo thì cả hai đều sai** — xem bảng dưới. Chỉ còn đúng một nạn nhân, và nó giải được sạch.
 
-`id` là *tên thư mục*. Đổi nó là dời `artifacts/`, `tasks/`, `.state/`, mọi đường dẫn đã ghi trong receipt cũ, và session của Trợ lý — để đổi một cái nhãn. Người dùng đổi tên vì cái nhãn đọc sai, không phải vì họ muốn dời nhà; im lặng dời cả thư mục là làm nhiều hơn thứ họ yêu cầu.
+`PATCH /api/office/:id { name }` ghi `name` vào `office.yaml`, **và dời luôn thư mục** nếu tên mới cho ra một slug thật. Response trả `id` mới — client phải bám lấy nó.
+
+#### Luật, đúng một câu
+
+> **Đổi thư mục khi và chỉ khi `slugId(tên mới)` không rỗng và khác `id` hiện tại.**
+
+`slugId` chứ **không** phải `folderId`, và đó là cả sự khác biệt. Đổi "Kế toán" → "会计部" mà đem băm thì `ke-toan` biến thành `vp-ee6fd8`: một cái tên đọc được đổi thành vô nghĩa, để phục vụ đúng con số không ai nhìn. `folderId` chỉ dùng lúc **tạo**, khi chưa có gì để mất.
+
+| tên cũ → tên mới | thư mục |
+|---|---|
+| `Báo cáo` → `Kiểm kê` | `bao-cao` → `kiem-ke` ✅ |
+| `Kế toán` → `会计部` | `ke-toan` **đứng yên** — chỉ đổi phía nhìn |
+| `会计部` → `人力资源` | `vp-ee6fd8` **đứng yên** |
+| `Báo cáo` → `Kiểm kê` mà đã có `kiem-ke` | **đứng yên** (tên vẫn đổi — `assertNameFree` đã lo phần trùng tên) |
+
+Phương án từng cân nhắc và **bị bác**: *"chỉ đổi thư mục khi văn phòng còn trắng"*. Một cơ chế lúc chạy lúc không thì người dùng không đoán nổi — tệ hơn cả không có.
+
+#### Ba nỗi lo, đo hết
+
+| | đo được |
+|---|---|
+| **Prompt cache** | ❌ không đụng. `prompt.ts` không chứa `office.dir`/`office.id` ở đâu cả; mọi đường dẫn trong prefix đều tương đối |
+| **Trí nhớ Trợ lý** | ❌ không mất. Thử thật: nói một mã ở `bao-cao` → đổi tên thành `kiem-ke` → `resume` cùng session id đọc lại đúng mã. `resume` **không** bám theo cwd |
+| **Sổ chi phí** | ✅ **thật.** `logs/usage.jsonl` ở cấp CÔNG TY nên không đi theo thư mục, và mang `office: "<id>"` ở 315/317 dòng |
+
+Sổ chi phí giải bằng **bản ghi alias append-only**: nối `{kind:'office.renamed', from, to}` vào cuối sổ, `renameChain()` dựng bảng `id cũ → id hiện tại` (đi hết chuỗi, nên đổi tên ba lần thì mắt xích đầu vẫn nhảy thẳng tới đích cuối). `costByOffice()` và `usageRecords()` gộp qua bảng đó. **Không viết lại một dòng lịch sử nào** — một cuốn sổ sửa được thì hết là bằng chứng.
+
+⚠ `readUsage` phải **bỏ qua** dòng có `kind`: nó không phải một lượt chạy (không `cost_usd`, không `turns`), lọt vào phép cộng là `tasks` đếm dư và tổng tiền thành `NaN`.
+
+⚠ **Chặn khi văn phòng đang chạy việc** — Windows khoá file đang mở, và một worker ghi vào `artifacts/` giữa lúc thư mục bị dời là hỏng nửa chừng. Cùng luật với `archiveOffice`.
+
+#### Hai thứ KHÔNG biến mất
+
+1. **Tên phi-Latin vẫn ra `vp-<hash>`** trước và sau. "Thư mục khớp tên" là bảo đảm **chỉ dành cho chữ Latin**. Với thị trường dùng chữ phi-Latin, thứ phục vụ họ là **nút 📂 Mở thư mục**, không phải cơ chế này. Hai thứ bổ sung nhau.
+2. **Tham chiếu bên ngoài đứt im lặng** — script backup, thư mục đồng bộ, shortcut, `cd` đang mở trong terminal. Không mã nguồn nào cứu được; chấp nhận vì "đổi tên thư mục" là khái niệm người dùng hiểu.
+
+#### Còn `id` của NHÂN VIÊN thì KHÔNG đổi — và nó nặng hơn, không nhẹ hơn
+
+Thư mục văn phòng đi theo nguyên khối; `id` nhân viên thì rải ra bốn nơi: `knowledge/agents/<id>/` (**sổ tay kinh nghiệm riêng**), `layout.json` (node `agent:<id>` **và mọi dây nối**), `logs/usage.jsonl` (trường `role`), `tasks/*.plan.json` (`task.role`). Và không có UX nào đổi lại — `roles/<id>.yaml` là **một file**, không ai duyệt thư mục đó. Đổi tên hiển thị thì đã có sẵn và miễn phí.
 
 **Luật hợp lệ, thi hành ở SERVER (client nào cũng POST thẳng vào daemon được):**
 

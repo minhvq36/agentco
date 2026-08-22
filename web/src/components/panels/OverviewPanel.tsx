@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Archive, ArchiveRestore, Building2, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Building2, FolderOpen, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Tip } from '@/components/ui/misc';
@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
-import { actions, useApp } from '@/lib/store';
+import { actions, toast, useApp } from '@/lib/store';
 
 interface CostRow {
   office: string;
@@ -70,6 +70,38 @@ export function OverviewPanel() {
                   </span>
                 </span>
               </button>
+              {/*
+                MỞ THƯ MỤC — lối thoát cho "mã văn phòng không đổi theo tên".
+                → src/cli/daemonfile.ts §openFolder
+
+                `id` là tên thư mục và cố ý không đổi khi đổi tên hiển thị, nên
+                người đổi "Báo cáo" thành "Kiểm kê" sẽ đi tìm `kiem-ke/` không
+                có. Với tên phi-Latin còn tệ hơn: thư mục tên `vp-ee6fd8`.
+                Nút này bỏ hẳn nhu cầu biết thư mục tên gì.
+              */}
+              <Tip label={`Thư mục trên đĩa — offices/${o.id}/`}>
+                <Button
+                  size="iconSm"
+                  variant="ghost"
+                  aria-label={`Thư mục của ${o.name}`}
+                  className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                  onClick={async () => {
+                    const r = await api.revealOffice(o.id).catch(() => null);
+                    if (!r) return;
+                    /*
+                      Truy cập từ xa (VPS, Docker) thì server CỐ Ý không mở gì —
+                      cửa sổ đó sẽ bật trên máy chủ, không phải máy bạn đang
+                      nhìn. Chép đường dẫn vào clipboard là thứ thật sự dùng
+                      được ở đó, và câu thông báo phải nói ra vì sao.
+                    */
+                    if (r.opened) return toast(`Đã mở: ${r.dir}`);
+                    void navigator.clipboard?.writeText(r.dir).catch(() => undefined);
+                    toast(`Đang xem từ máy khác nên không mở được — đã chép đường dẫn: ${r.dir}`);
+                  }}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                </Button>
+              </Tip>
               <Tip label="Cất vào lưu trữ — khôi phục được">
                 <Button
                   size="iconSm"

@@ -29,6 +29,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 
 export interface CompanyPaths {
   root: string;
@@ -211,7 +212,55 @@ export function normalizeName(input: string): string {
  * đúng cái trùng lặp mà lúc tạo mới đã bị chặn.
  */
 export function nameKey(input: string): string {
-  return slugId(normalizeName(input));
+  const name = normalizeName(input);
+  /**
+   * ⚠ RƠI VỀ CHÍNH CÁI TÊN khi slug rỗng — nếu không thì MỌI tên phi-Latin
+   * cùng khoá `""`, và `assertNameFree` coi 会计部 với 人力资源 là **trùng tên**.
+   * Đo được 22/08: Trung, Nhật, Hàn, Thái, Nga, Ả Rập, Hy Lạp đều ra `""`.
+   */
+  return slugId(name) || name.toLowerCase();
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TÊN THƯ MỤC — `slugId` KHÔNG ĐỦ, VÀ ĐÓ LÀ MỘT BỨC TƯỜNG CHẶN CẢ THỊ      │
+ * │ TRƯỜNG. (sửa 22/08)                                                      │
+ * │                                                                          │
+ * │ `slugId` bóc dấu tổ hợp rồi giữ lại `[a-z0-9]`. Với tiếng Việt nó hoàn   │
+ * │ hảo. Với mọi chữ viết KHÔNG phải Latin thì nó trả về **chuỗi rỗng** —    │
+ * │ `NFD` không phân rã chữ Hán/Kana/Hangul/Thái/Kirin thành ASCII được:     │
+ * │                                                                          │
+ * │   "会计部" → ""    "経理部" → ""    "회계팀" → ""                          │
+ * │   "แผนกบัญชี" → ""  "Бухгалтерия" → ""  "Λογιστήριο" → ""                  │
+ * │                                                                          │
+ * │ Hậu quả CŨ: `isSafeId('')` false → `createOffice` ném                    │
+ * │ *"Tên văn phòng cần có ít nhất một chữ cái hoặc số"*. Dữ liệu không hỏng │
+ * │ (chốt chặn làm đúng việc), nhưng người dùng Trung Quốc gõ 会计部 và nhận  │
+ * │ một câu bảo họ *"hãy dùng chữ cái"* — trong khi với họ đó CHÍNH LÀ chữ.  │
+ * │ Không có đường đi tiếp. Cả một thị trường dừng ở màn hình tạo văn phòng. │
+ * │                                                                          │
+ * │ ⚠ VÌ SAO KHÔNG CHO UNICODE THẲNG VÀO TÊN THƯ MỤC — nghe hợp lý mà bẫy:   │
+ * │ macOS chuẩn hoá tên file về NFD còn Linux/Windows giữ NFC. Cùng một cái  │
+ * │ tên gõ ra hai chuỗi byte khác nhau tuỳ máy, nên `id` thôi khớp ngay khi  │
+ * │ một văn phòng được zip từ máy này sang máy kia — đúng thứ lời hứa        │
+ * │ "zip lại là chạy được ở máy khác" cấm.                                   │
+ * │                                                                          │
+ * │ ⇒ Rơi về một id ASCII **ổn định, suy từ chính cái tên**. Thư mục trông   │
+ * │   vô nghĩa (`vp-3f8a1c`) nhưng: tên thật nằm trong `office.yaml` ngay     │
+ * │   bên trong, giao diện không bao giờ hiện id này, và người dùng có nút    │
+ * │   mở thẳng thư mục. Đánh đổi đúng chiều — thà một cái tên xấu mà mở được │
+ * │   còn hơn một câu từ chối không có đường đi tiếp.                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function folderId(input: string, prefix = 'vp'): string {
+  const name = normalizeName(input);
+  const slug = slugId(name);
+  if (slug) return slug;
+  if (!name) return '';
+  // Băm CHÍNH cái tên: cùng một tên luôn ra cùng một thư mục, kể cả sau khi
+  // xoá đi tạo lại. `toLowerCase` để "会计部 " và "会计部" không thành hai chỗ.
+  const h = createHash('sha256').update(name.toLowerCase()).digest('hex').slice(0, 6);
+  return `${prefix}-${h}`;
 }
 
 export function slugId(input: string): string {

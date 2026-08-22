@@ -14,7 +14,15 @@ import YAML from 'yaml';
 
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
-import { ensureOfficeDirs, isSafeId, normalizeName, resolveInput, safeJoin, slugId } from './paths.js';
+import {
+  ensureOfficeDirs,
+  folderId,
+  isSafeId,
+  normalizeName,
+  resolveInput,
+  safeJoin,
+  slugId,
+} from './paths.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
@@ -207,6 +215,11 @@ export class Office {
 
   get name(): string {
     return this.loaded.config.name;
+  }
+
+  /** Thư mục thật trên đĩa. Để giao diện mở được nó — xem `openFolder`. */
+  get dir(): string {
+    return this.loaded.dir;
   }
 
   get currentState(): OfficeState {
@@ -1774,7 +1787,8 @@ export class Office {
   addAgent(input: { id?: string; display_name?: string; pitch?: string; tier?: string }): string {
     this.assertLive();
     const name = (input.display_name ?? '').trim();
-    const id = slugId(input.id?.trim() || name || 'nhan-vien');
+    // `folderId` để tên nhân viên phi-Latin không chết ở cửa này. → paths.ts
+    const id = input.id?.trim() ? slugId(input.id.trim()) : folderId(name || 'nhan-vien', 'nv');
     if (!isSafeId(id)) {
       throw new RunError('Mã nhân viên chỉ dùng chữ thường, số, gạch ngang.', 'other');
     }
@@ -1994,9 +2008,17 @@ export class Office {
       // Lọc MỌI tên nền tảng, ghi lại đúng MỘT tên chuẩn: file vai trò phải
       // portable giữa Windows và macOS. → types.ts §SHELL_ALIASES
       const rest = role.tools.filter((t) => !EXTERNAL_TOOLS.has(t));
-      const next = patch.bash ? [...rest, SHELL_TOOL] : rest;
-      if (next.length) doc.set('tools', next);
-      else doc.delete('tools');
+      /**
+       * GHI `tools: []` chứ KHÔNG xoá khoá. `doc.delete('tools')` kéo theo cả
+       * khối chú thích đứng trên nó — yaml gắn comment vào KHOÁ, không vào
+       * file. Đo được trên `nguoi-kiem-ke.yaml`: tắt công tắc một lần là mất
+       * vĩnh viễn đoạn giải thích "Bash = cho phép chạy lệnh… ngoại lệ duy
+       * nhất của luật §2.6", và bật lại chỉ còn một dòng trần.
+       *
+       * `[]` cũng đọc đúng hơn: nó nói "không có tool thêm nào", khác với
+       * "chưa ai từng nghĩ về chuyện này".
+       */
+      doc.set('tools', patch.bash ? [...rest, SHELL_TOOL] : rest);
     }
 
     fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
@@ -2010,14 +2032,29 @@ export class Office {
   /**
    * Đổi tên hiển thị của văn phòng. → docs/SPEC-offices.md §3
    *
-   * MÃ văn phòng (`id`) giữ nguyên, và đó là quyết định chứ không phải lười:
-   * `id` là TÊN THƯ MỤC. Đổi nó là dời `artifacts/`, `tasks/`, `.state/`, mọi
-   * đường dẫn đã ghi trong receipt cũ, và session của Trợ lý — để đổi một cái
-   * nhãn. Người dùng đổi tên vì cái nhãn đọc sai, không phải vì họ muốn dời nhà.
+   * `id` (tên thư mục) có đổi theo hay không là quyết định của `Company` —
+   * xem `Company.renameTarget`. Hàm này chỉ ghi cái tên.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `silent` — ĐỪNG PHÁT SỰ KIỆN MANG MỘT ID SẮP CHẾT. (bug user báo 22/08)  │
+   * │                                                                          │
+   * │ Khi đổi tên kéo theo dời thư mục, `Company` gọi hàm này TRƯỚC rồi mới     │
+   * │ `fs.renameSync`. Sự kiện `layout.changed` phát ở đây mang `office: <id    │
+   * │ CŨ>` — và tới tay trình duyệt SAU khi thư mục đã dời.                     │
+   * │                                                                          │
+   * │ Client thấy id đó vẫn khớp `state.officeId` nên xử lý bình thường: gọi    │
+   * │ `refreshCanvas()` → `GET /api/office/<id cũ>/canvas` → **404** → toast    │
+   * │ *"Không có văn phòng …"*. Người dùng vừa đổi tên THÀNH CÔNG mà màn hình   │
+   * │ báo lỗi — đúng thứ họ kể lại.                                            │
+   * │                                                                          │
+   * │ Nên khi sắp dời, `Company` bảo im, rồi tự phát **một** sự kiện            │
+   * │ `company.offices` mang id MỚI. Một thao tác của người dùng ⇒ một sự kiện, │
+   * │ và sự kiện đó nói đúng nơi cần đến.                                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
    *
    * Ghi bằng `parseDocument` để giữ nguyên chú thích trong office.yaml.
    */
-  rename(name: string): string {
+  rename(name: string, opts?: { silent?: boolean }): string {
     this.assertLive();
     const next = normalizeName(name);
     if (!next) throw new RunError('Tên văn phòng không được để trống.', 'other');
@@ -2030,6 +2067,7 @@ export class Office {
     fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
 
     this.reload();
+    if (opts?.silent) return next;
     // Tên văn phòng KHÔNG nằm trong prompt của ai — không có gì phải ghi lại cache.
     this.emit({ type: 'layout.changed', say: `Văn phòng đã đổi tên thành "${next}".`, plan_id: null });
     return next;
@@ -2067,6 +2105,45 @@ export class Office {
       plan_id: null,
     });
     return { tier: this.assistant.modelTier, model: this.assistant.model };
+  }
+
+  /**
+   * Đổi tên hiển thị của Trợ lý văn phòng này. → docs/SPEC-offices.md §4.5
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KHÔNG PHÁ CACHE, VÀ ĐÓ LÀ LÝ DO TÊN NÀY ĐƯỢC PHÉP SỬA THOẢI MÁI.        │
+   * │                                                                          │
+   * │ `display_name` **không nằm trong prompt của ai cả** — không trong         │
+   * │ `ASSISTANT_CORE`, không trong roster (roster chỉ liệt kê NHÂN VIÊN).     │
+   * │ Nó chỉ là cái nhãn trên sơ đồ và trong bong bóng chat. Nên đổi nó rẻ      │
+   * │ ngang đổi tên văn phòng: không ghi lại cache, không mất trí nhớ, không    │
+   * │ đụng session.                                                            │
+   * │                                                                          │
+   * │ Đối lập hẳn với `model_tier` ngay trên: cái đó là một nửa của khoá cache │
+   * │ (model, prefix), nên nó phải kèm câu cảnh báo. Hai thao tác trông giống  │
+   * │ nhau trên giao diện mà giá khác hẳn nhau — giao diện phải nói ra.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Ghi bằng `parseDocument` để giữ chú thích người dùng viết trong office.yaml.
+   */
+  renameAssistant(name: string): string {
+    this.assertLive();
+    const next = normalizeName(name);
+    if (!next) throw new RunError('Tên Trợ lý không được để trống.', 'other');
+    if (next.length > 40) throw new RunError('Tên Trợ lý dài quá 40 ký tự.', 'other');
+    if (next === this.loaded.config.assistant.display_name) return next;
+
+    const file = this.loaded.paths.configFile;
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (!doc.has('assistant')) doc.set('assistant', {});
+    doc.setIn(['assistant', 'display_name'], next);
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+
+    this.reload();
+    // KHÔNG `refreshAssistantContext()`: tên không nằm trong prompt, nên không
+    // có gì để làm mới. Gọi thừa ở đây là tự dựng lại prefix cho vui.
+    this.emit({ type: 'layout.changed', say: `Trợ lý giờ tên là "${next}".`, plan_id: null });
+    return next;
   }
 
   /**

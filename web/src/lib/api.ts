@@ -93,7 +93,14 @@ export const api = {
    */
   patchOffice: (
     id: string,
-    patch: { name?: string; assistant_tier?: string | null; archived?: boolean },
+    patch: {
+      name?: string;
+      assistant_tier?: string | null;
+      /** Tên hiển thị của Trợ lý. Không nằm trong prompt nào → không phá cache. */
+      assistant_name?: string;
+      archived?: boolean;
+    },
+
   ) =>
     call<{
       id: string;
@@ -216,6 +223,17 @@ export const api = {
 
   /** Quét thư mục kết quả. Không catalog — file do nhân viên ghi lúc đang chạy. */
   artifacts: (id: string) => call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts`),
+
+  /**
+   * Đường dẫn thư mục văn phòng — và server MỞ nó ra nếu trình duyệt đang chạy
+   * cùng máy với daemon.
+   *
+   * `opened: false` là ca BÌNH THƯỜNG khi truy cập từ xa (VPS, Docker), không
+   * phải lỗi: "mở thư mục" sẽ mở trên MÁY CHỦ chứ không phải máy đang nhìn, nên
+   * server cố ý không làm gì. Giao diện rơi về chép đường dẫn.
+   */
+  revealOffice: (id: string) =>
+    call<{ dir: string; opened: boolean }>(`/api/office/${enc(id)}/reveal`, { method: 'POST' }),
 
   /**
    * URL của một kết quả. `download` phân biệt XEM với TẢI VỀ, và khác biệt là thật:

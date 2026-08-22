@@ -25,11 +25,21 @@ import {
   normalizeName,
   officePaths,
   resolveCompanyDir,
+  folderId,
   slugId,
   type CompanyPaths,
 } from './paths.js';
 import { Office } from './office.js';
-import { appendUsage, formatReport, readUsage, summarize, type CostReport, type UsageRecord } from './usage.js';
+import {
+  appendRename,
+  appendUsage,
+  formatReport,
+  readUsage,
+  renameChain,
+  summarize,
+  type CostReport,
+  type UsageRecord,
+} from './usage.js';
 import { migrateIfNeeded } from './migrate.js';
 import { RunError, TIERS, type AgentEvent, type CompanyConfig } from './types.js';
 
@@ -155,7 +165,15 @@ export class Company {
    */
   createOffice(input: { name?: string; id?: string }): Office {
     const name = normalizeName(input.name ?? '') || 'Văn phòng mới';
-    const id = slugId(input.id?.trim() || name);
+    /**
+     * `folderId` chứ không phải `slugId`: tên phi-Latin (中文, 日本語, 한국어,
+     * ไทย, Русский…) cho slug RỖNG, và bản cũ ném thẳng *"cần có ít nhất một
+     * chữ cái"* — một câu vô nghĩa với người vừa gõ đúng chữ của họ. → paths.ts
+     *
+     * `id` người dùng TỰ gõ thì vẫn qua `slugId` như cũ: đó là họ đang chọn
+     * tên thư mục, nên phải nhận đúng thứ mình gõ hoặc bị từ chối rõ ràng.
+     */
+    const id = input.id?.trim() ? slugId(input.id.trim()) : folderId(name);
     if (!isSafeId(id)) {
       throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
     }
@@ -201,21 +219,119 @@ export class Company {
    * phòng khác. Office tự chứa và không biết hàng xóm là ai — đó là điều kiện để
    * zip một thư mục `offices/<id>/` ra thành template chạy được ở máy khác.
    */
-  renameOffice(officeId: string, name: string): string {
+  /**
+   * ⚠ TRẢ VỀ CẢ `id`, và người gọi BẮT BUỘC phải dùng nó.
+   *
+   * Đổi tên có thể **dời thư mục và thay hẳn instance `Office`** trong map
+   * (`moveOffice`). Mọi handle lấy TRƯỚC lời gọi này đều thành ma: `office.id`
+   * của nó vẫn là id cũ, và `office.loaded.dir` trỏ vào một thư mục không còn
+   * tồn tại. Bản trước chỉ trả về cái TÊN, nên `server.ts` không có đường nào
+   * biết id đã đổi — nó dựng response từ handle cũ, client thấy `id` cũ, rồi
+   * mọi lời gọi sau đó 404 cho tới khi người dùng F5. → bug user báo 22/08
+   */
+  renameOffice(officeId: string, name: string): { name: string; id: string } {
     const office = this.get(officeId);
     const next = normalizeName(name);
     if (!nameKey(next)) {
       throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
     }
     this.assertNameFree(next, officeId);
-    const applied = office.rename(next);
+
+    const moveTo = this.renameTarget(officeId, next);
+    if (moveTo && office.currentState === 'working') {
+      throw new RunError(
+        'Văn phòng đang chạy việc, chưa đổi tên thư mục được. Bấm Dừng rồi thử lại — ' +
+          'hoặc đổi tên sau khi việc xong.',
+        'other',
+      );
+    }
+    // `silent` khi sắp dời: sự kiện của `Office` mang id CŨ, và nó tới tay
+    // trình duyệt SAU khi thư mục đã dời → client đuổi theo một id chết rồi ăn
+    // 404. Ta tự phát một sự kiện mang id MỚI ở cuối hàm. → `Office.rename`
+    const applied = office.rename(next, moveTo ? { silent: true } : undefined);
+    if (moveTo) this.moveOffice(officeId, moveTo);
+
     this.emit({
       type: 'company.offices',
-      say: `Đã đổi tên văn phòng thành "${applied}".`,
-      office: officeId,
+      say: moveTo
+        ? `Đã đổi tên văn phòng thành "${applied}", và thư mục trên đĩa cũng đổi theo.`
+        : `Đã đổi tên văn phòng thành "${applied}".`,
+      office: moveTo ?? officeId,
       plan_id: null,
     });
-    return applied;
+    return { name: applied, id: moveTo ?? officeId };
+  }
+
+  /**
+   * Id mới nếu đổi tên KÉO THEO cả thư mục, `undefined` nếu giữ nguyên id.
+   * → docs/SPEC-offices.md §3
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MỘT LUẬT, KHÔNG PHẢI MỘT BẢNG ĐIỀU KIỆN. (user chốt 22/08)               │
+   * │                                                                          │
+   * │ Bản đề xuất trước là *"chỉ đổi thư mục khi văn phòng còn trắng"*. User   │
+   * │ bác đúng: **một cơ chế lúc chạy lúc không thì người dùng không đoán      │
+   * │ nổi** — tệ hơn cả không có. Luật ở đây chỉ có một câu:                    │
+   * │                                                                          │
+   * │   **Đổi thư mục khi và chỉ khi tên mới cho ra một slug thật.**            │
+   * │                                                                          │
+   * │ `slugId` chứ KHÔNG phải `folderId` — và đó là cả sự khác biệt. Đổi từ    │
+   * │ "Kế toán" sang "会计部" mà đem băm thì `ke-toan` biến thành `vp-ee6fd8`:  │
+   * │ một cái tên đọc được đổi thành một cái vô nghĩa, để phục vụ đúng con số  │
+   * │ không ai nhìn. `folderId` chỉ dùng lúc TẠO, khi chưa có gì để mất.       │
+   * │                                                                          │
+   * │ Hệ quả (user hỏi thẳng, và đúng): tên phi-Latin ⇒ **id đứng yên**, chỉ   │
+   * │ đổi phía nhìn — kể cả khi tên cũ là Latin. Với thị trường dùng chữ       │
+   * │ phi-Latin thì đổi tên thư mục **không đổi gì cả**, và nút 📂 mới là thứ  │
+   * │ phục vụ họ. Hai cơ chế bổ sung nhau, không thay nhau.                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private renameTarget(officeId: string, name: string): string | undefined {
+    const next = slugId(name);
+    if (!next || next === officeId) return undefined;
+    // Trùng với một văn phòng khác (kể cả cái đang hỏng) thì GIỮ NGUYÊN id thay
+    // vì ném: người dùng chỉ muốn đổi cái nhãn, và cái nhãn thì không trùng —
+    // `assertNameFree` đã kiểm rồi. Chặn ở đây là từ chối một việc hợp lệ.
+    if (this.offices.has(next) || this.broken.has(next)) return undefined;
+    return next;
+  }
+
+  /**
+   * Dời `offices/<cũ>/` → `offices/<mới>/` rồi dựng lại Office ở chỗ mới.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐO TRƯỚC KHI XÂY — hai nỗi lo lớn nhất đều KHÔNG có thật:               │
+   * │                                                                          │
+   * │  · **Prompt cache**: `prompt.ts` không chứa `office.dir`/`office.id` ở    │
+   * │    đâu cả, mọi đường dẫn trong prefix đều tương đối. Dời thư mục ⇒ 0 lần │
+   * │    ghi lại cache.                                                        │
+   * │  · **Trí nhớ Trợ lý**: đã thử thật — nói một mã ở `bao-cao`, đổi tên     │
+   * │    thành `kiem-ke`, rồi `resume` cùng session id: nó đọc lại đúng mã.    │
+   * │    `resume` KHÔNG bám theo cwd.                                          │
+   * │                                                                          │
+   * │ Nạn nhân duy nhất là `logs/usage.jsonl` — nó nằm ở cấp CÔNG TY (không đi │
+   * │ theo thư mục) và mang `office: "<id>"` ở 315/317 dòng. Giải bằng một bản │
+   * │ ghi ALIAS nối vào cuối sổ: append-only được giữ nguyên, không viết lại   │
+   * │ một dòng lịch sử nào. → `usage.ts`                                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Chặn khi đang chạy việc: Windows khoá file đang mở, và một lượt worker
+   * ghi vào `artifacts/` giữa lúc thư mục bị dời là hỏng nửa chừng. Cùng luật
+   * với `archiveOffice`.
+   */
+  private moveOffice(officeId: string, nextId: string): void {
+    const from = path.join(this.paths.offices, officeId);
+    const to = path.join(this.paths.offices, nextId);
+    if (fs.existsSync(to)) throw new RunError(`Thư mục "${nextId}" đã tồn tại.`, 'other');
+
+    fs.renameSync(from, to);
+    appendRename(this.paths, officeId, nextId);
+
+    this.offices.delete(officeId);
+    const office = new Office(loadOffice(this.dir, this.config, nextId));
+    office.bindBus((e) => this.emit(e));
+    office.onUsage = (rec) => appendUsage(this.paths, rec);
+    this.offices.set(nextId, office);
   }
 
   /** Không cho hai văn phòng mang cùng một cái tên. `exceptId` = chính nó khi đổi tên. */
@@ -391,9 +507,18 @@ export class Company {
     gone: boolean;
   }> {
     const LEGACY = '';
+    /**
+     * Gộp qua bảng ĐỔI TÊN trước khi cộng. → `usage.ts §renameChain`
+     *
+     * Không có dòng này thì đổi tên `bao-cao` → `kiem-ke` làm sổ tách làm hai
+     * mục: một mục "kiem-ke" mới tinh, và một mục "bao-cao" bị đánh dấu `gone`
+     * — tức là giao diện nói với người dùng rằng họ có một văn phòng đã xoá,
+     * trong khi họ chỉ đổi tên. Đúng loại nói dối mà cuốn sổ này không được phép.
+     */
+    const chain = renameChain(this.paths);
     const byOffice = new Map<string, { tasks: number; costUSD: number; turns: number }>();
     for (const r of this.usageRecords(sinceMs)) {
-      const key = r.office || LEGACY;
+      const key = (r.office && (chain.get(r.office) ?? r.office)) || LEGACY;
       const e = byOffice.get(key) ?? { tasks: 0, costUSD: 0, turns: 0 };
       e.tasks++;
       e.costUSD += r.cost_usd;
@@ -417,9 +542,19 @@ export class Company {
       .sort((a, b) => b.costUSD - a.costUSD);
   }
 
+  /**
+   * Bản ghi chi phí, lọc theo văn phòng nếu có.
+   *
+   * ⚠ Lọc phải nhận CẢ id cũ đã đổi tên. Thiếu chỗ này thì
+   * `agentco cost --office kiem-ke` trả về đúng những gì tiêu SAU khi đổi tên,
+   * và toàn bộ lịch sử trước đó biến mất không dấu vết — người dùng thấy văn
+   * phòng chạy hai tháng mà sổ chỉ ghi hai ngày. → `usage.ts §renameChain`
+   */
   private usageRecords(sinceMs?: number, officeId?: string): UsageRecord[] {
     const all = readUsage(this.paths, sinceMs);
-    return officeId ? all.filter((r) => r.office === officeId) : all;
+    if (!officeId) return all;
+    const chain = renameChain(this.paths);
+    return all.filter((r) => r.office === officeId || chain.get(r.office ?? '') === officeId);
   }
 }
 

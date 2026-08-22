@@ -93,6 +93,83 @@ function AgentProfile({ node }: { node: CanvasNode }) {
   );
 }
 
+/**
+ * Đổi tên Trợ lý.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ô NÀY CỐ Ý *KHÔNG* CÓ CÂU CẢNH BÁO VỀ CACHE — và đó là thông tin.        │
+ * │                                                                          │
+ * │ Nó nằm ngay trên `ModelPicker`, thứ có nguyên một đoạn giải thích về bộ  │
+ * │ nhớ đệm. Hai nút giống hệt nhau về hình dạng mà khác hẳn nhau về giá:    │
+ * │ `display_name` **không nằm trong prompt của ai cả** (roster chỉ liệt kê  │
+ * │ NHÂN VIÊN), nên đổi nó không ghi lại cache, không mất trí nhớ, không     │
+ * │ đụng session.                                                            │
+ * │                                                                          │
+ * │ Dán một câu cảnh báo chung lên cả hai là dạy người dùng bỏ qua cảnh báo  │
+ * │ — rồi họ bỏ qua đúng cái đáng đọc. Im lặng ở đây là một lựa chọn.        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function AssistantName({ node }: { node: CanvasNode }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(node.label);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setName(node.label);
+    setOpen(false);
+  }, [node.id, node.label]);
+
+  const trimmed = name.replace(/\s+/g, ' ').trim();
+
+  if (!open) {
+    return (
+      <button
+        className="mb-3 flex items-center gap-1.5 text-[13px] text-accent hover:underline"
+        onClick={() => setOpen(true)}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+        Đổi tên Trợ lý
+      </button>
+    );
+  }
+
+  return (
+    <div className="mb-3 rounded-lg border border-line p-3">
+      <Label htmlFor="as-name">Tên hiển thị</Label>
+      <Input
+        id="as-name"
+        autoFocus
+        maxLength={40}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Ví dụ: Quản lý, Chị Lan, Điều phối viên"
+      />
+      <p className="mt-1.5 text-xs leading-relaxed text-muted">
+        Chỉ là cái tên trên sơ đồ và trong khung chat. Trợ lý <b>vẫn nhớ nguyên</b> mọi thứ đã nói, và
+        không có gì phải chạy lại.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <Button size="sm" onClick={() => setOpen(false)}>
+          Thôi
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={!trimmed || trimmed === node.label || busy}
+          onClick={async () => {
+            setBusy(true);
+            const ok = await actions.renameAssistant(trimmed);
+            setBusy(false);
+            if (ok) setOpen(false);
+          }}
+        >
+          {busy ? 'Đang lưu…' : 'Lưu'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const TIER_HINT: Record<string, string> = {
   eco: 'eco — rẻ nhất, chậm hơn và cần nhiều lượt hơn',
   standard: 'standard — cân bằng',
@@ -410,6 +487,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               Trợ lý không tự làm việc. Nó chia việc, và chỉ nhìn thấy giới thiệu của những người{' '}
               <b>có dây nối</b> tới đây.
             </Note>
+            <AssistantName node={node} />
             <ModelPicker node={node} />
             <Row k="Đang trực" v={`${onDuty.length} người`} />
             <Row k="Đang nghỉ" v={`${off.length} người`} />

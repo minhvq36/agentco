@@ -27,6 +27,7 @@ import {
   LessonSchema,
   RunError,
   TaskBriefSchema,
+  hasShell,
   type Deliver,
   type Lesson,
   type Plan,
@@ -855,6 +856,31 @@ export class Assistant {
     // Web bật sẵn cho mọi nhân viên (BUILTIN_TOOLS) nên luôn nêu — đây là khả
     // năng thật, và không nêu thì Trợ lý không biết mà giao việc tra cứu.
     parts.push('web');
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ `pitch` LÀ LỜI KHAI. Khối này là SỰ THẬT. Phải có cả hai.            │
+     * │                                                                      │
+     * │ Ca đo được 22/08 (bài 9.3): vai trò `nguoi-kiem-ke` có `pitch` ghi    │
+     * │ *"Chạy lệnh để lấy thông tin về file và thư mục trên máy"* — nhưng    │
+     * │ công tắc shell của nó ĐANG TẮT. Trợ lý đọc lời khai đó, giao việc,    │
+     * │ và nhân viên tiêu **4 lượt · $0,1358** để phát hiện ra mình không có  │
+     * │ tay. Rồi task sau đổ theo vì phụ thuộc.                               │
+     * │                                                                      │
+     * │ Không ai nói dối cả: `pitch` do người dùng gõ lúc tạo nhân viên, và   │
+     * │ nó mô tả Ý ĐỊNH. Khả năng thì nằm ở `tools`, và trước dòng này Trợ lý │
+     * │ **không có đường nào nhìn thấy `tools`**.                             │
+     * │                                                                      │
+     * │ Giá: ~3 token cho mỗi vai trò CÓ shell, 0 cho vai trò không có. Đổi   │
+     * │ lại là chặn được cả một lượt chạy hỏng — và quan trọng hơn, Trợ lý    │
+     * │ giờ nói được *"không ai chạy lệnh được"* NGAY, thay vì tiêu tiền để   │
+     * │ khám phá ra điều đó.                                                  │
+     * │                                                                      │
+     * │ Chỉ nêu mặt KHẲNG ĐỊNH. Liệt kê cả thứ vai trò KHÔNG có là trả token  │
+     * │ cho một danh sách rỗng ở mọi lượt trò chuyện, và `ASSISTANT_CORE`     │
+     * │ luật 7 (*"nếu không ai hợp thì nói thẳng"*) đã lo mặt phủ định.       │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    if (hasShell(role.tools)) parts.push('lệnh trên máy');
     return parts.length ? ` [với tới: ${parts.join(', ')}]` : '';
   }
 

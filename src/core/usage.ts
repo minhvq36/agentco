@@ -43,6 +43,58 @@ export function appendUsage(paths: CompanyPaths, rec: UsageRecord): void {
   fs.appendFileSync(paths.usageLog, JSON.stringify(rec) + '\n', 'utf8');
 }
 
+/**
+ * Bản ghi ĐỔI TÊN văn phòng — nối vào cuối sổ, KHÔNG sửa dòng nào.
+ * → `Company.moveOffice`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ SỔ CHI PHÍ LÀ APPEND-ONLY, VÀ ĐÓ LÀ THỨ LÀM NÓ ĐÁNG TIN.                │
+ * │                                                                          │
+ * │ Đổi tên thư mục `bao-cao` → `kiem-ke` làm mồ côi 315 dòng mang           │
+ * │ `office: "bao-cao"` (sổ nằm ở cấp CÔNG TY nên không đi theo thư mục).    │
+ * │ Cách hiển nhiên là đi sửa lại 315 dòng đó — và đó chính là cách phá cuốn │
+ * │ sổ: một cuốn sổ sửa được thì hết là bằng chứng.                          │
+ * │                                                                          │
+ * │ Thay vào đó nối MỘT dòng nói *"từ giờ `bao-cao` chính là `kiem-ke`"*.    │
+ * │ Lịch sử còn nguyên chữ nào chữ nấy, và ai đọc sổ thì đi theo chuỗi alias │
+ * │ để gộp. Đổi tên ba lần thì có ba dòng, chuỗi vẫn nối được.                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface RenameRecord {
+  ts: string;
+  kind: 'office.renamed';
+  from: string;
+  to: string;
+}
+
+export function appendRename(paths: CompanyPaths, from: string, to: string): void {
+  fs.mkdirSync(path.dirname(paths.usageLog), { recursive: true });
+  const rec: RenameRecord = { ts: new Date().toISOString(), kind: 'office.renamed', from, to };
+  fs.appendFileSync(paths.usageLog, JSON.stringify(rec) + '\n', 'utf8');
+}
+
+/**
+ * Bảng `id cũ → id hiện tại`, đã đi hết chuỗi. Đổi tên nhiều lần
+ * (`a → b → c`) thì cả `a` lẫn `b` đều trỏ tới `c`.
+ */
+export function renameChain(paths: CompanyPaths): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!fs.existsSync(paths.usageLog)) return out;
+  for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
+    if (!line.includes('"office.renamed"')) continue;
+    try {
+      const r = JSON.parse(line) as Partial<RenameRecord>;
+      if (r.kind !== 'office.renamed' || !r.from || !r.to) continue;
+      // Trỏ lại MỌI mắt xích cũ về đích mới, nên không ai phải lần chuỗi lúc đọc.
+      for (const [k, v] of out) if (v === r.from) out.set(k, r.to);
+      out.set(r.from, r.to);
+    } catch {
+      /* dòng hỏng thì bỏ — cùng luật với `readUsage` */
+    }
+  }
+  return out;
+}
+
 export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] {
   if (!fs.existsSync(paths.usageLog)) return [];
   const cutoff = sinceMs ? Date.now() - sinceMs : 0;
@@ -50,7 +102,14 @@ export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] 
   for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
     if (!line.trim()) continue;
     try {
-      const rec = JSON.parse(line) as UsageRecord;
+      const rec = JSON.parse(line) as UsageRecord & { kind?: string };
+      /**
+       * ⚠ Sổ giờ chứa HAI loại dòng. `appendRename` nối vào cùng file (nó phải
+       * nằm cùng chỗ để thứ tự thời gian có nghĩa), nhưng nó KHÔNG phải một
+       * lượt chạy: không `cost_usd`, không `turns`. Lọt vào đây là `tasks` đếm
+       * dư và tổng tiền thành `NaN` — một cuốn sổ nói dối, đúng thứ tệ nhất.
+       */
+      if (rec.kind) continue;
       if (!cutoff || Date.parse(rec.ts) >= cutoff) out.push(rec);
     } catch {
       /* dòng hỏng thì bỏ qua, không để log hỏng làm sập lệnh cost */
