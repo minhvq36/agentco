@@ -209,6 +209,29 @@ export class LayoutStore {
       if (seen.has(n.id)) continue;
       if (n.kind !== 'agent' && n.kind !== 'mcp') continue;
       if (n.role && this.office.archivedRoles.has(n.role)) continue;
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 NODE MCP ĐÃ RÚT HẲN THÌ BIẾN MẤT, KHÔNG "MỒ CÔI VĨNH VIỄN".     │
+       * │                                                                    │
+       * │ Bug user báo 23/08: xoá kết nối xong node `🔌 files` vẫn nằm trên   │
+       * │ sơ đồ với nhãn "không còn cắm", và **không nút nào gỡ được nó** —   │
+       * │ bấm Xoá lần nữa cũng thế, vì `company.yaml` và `roles/*.yaml` đều   │
+       * │ đã sạch từ lâu.                                                    │
+       * │                                                                    │
+       * │ Thủ phạm là chính vòng lặp này: `layout.json` còn lưu node, vòng    │
+       * │ lặp thấy nó "không được muốn nữa" nên **giữ lại + báo đỏ**, rồi     │
+       * │ `save()` ghi `current.nodes` trở lại đĩa ⇒ nó tự tái sinh mãi mãi.  │
+       * │                                                                    │
+       * │ Với AGENT thì giữ lại là ĐÚNG: file `roles/x.yaml` biến mất là một  │
+       * │ sự cố, người dùng cần thấy để còn khôi phục. Với MCP thì không có   │
+       * │ gì để khôi phục — không khai ở công ty, không vai trò nào trỏ tới,  │
+       * │ tức là nó **đã bị rút xong**, và cái node chỉ còn là rác nhìn thấy.  │
+       * │                                                                    │
+       * │ Mồ côi THẬT của MCP là ca khác, và nó vẫn được giữ ở vòng lặp dưới:│
+       * │ vai trò CÒN khai `mcp: [x]` mà `company.yaml` đã sạch.              │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      if (n.kind === 'mcp' && n.server && !inUse.has(n.server)) continue;
       missing.add(n.id);
       keep(n);
     }

@@ -78,6 +78,27 @@ function nextFreeId(base: string, taken: { id: string }[]): string {
 /** Thư mục người dùng rời đi lần trước — bộ chọn mở lại ĐÚNG ĐÓ, không về ổ đĩa. */
 const LAST_DIR = 'agentco.lastBrowseDir';
 
+/** So như server: bỏ gạch chéo cuối, thống nhất `/`, bỏ phân biệt hoa thường. */
+const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/**
+ * Thư mục này đã là cánh tay nào của văn phòng NÀY chưa? Trả tên nó.
+ *
+ * Bản khách của `catalog.ts §coveredBy`. ⚠ Nó KHÔNG thay chốt server — client
+ * bỏ qua được, nên luật thật vẫn phải nằm ở server. Nó chỉ dời câu trả lời từ
+ * bước cuối lên bước một.
+ */
+function clashingArm(folder: string, installed: InstalledArm[], officeId: string | null): string | undefined {
+  const want = normPath(folder);
+  for (const a of installed) {
+    if (!a.usedBy.some((u) => u.office === officeId)) continue;
+    const args = (a.config as { args?: unknown })?.args;
+    if (!Array.isArray(args)) continue;
+    if (args.some((x) => typeof x === 'string' && normPath(x) === want)) return a.id;
+  }
+  return undefined;
+}
+
 export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const officeId = useApp((s) => s.officeId);
   const canvas = useApp((s) => s.canvas);
@@ -401,6 +422,29 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <FolderPicker
                   chosen={folderList()}
                   onChange={(list) => {
+                    /*
+                      ┌──────────────────────────────────────────────────────┐
+                      │ BÁO TRÙNG NGAY LÚC CHỌN, KHÔNG ĐỢI TỚI LÚC LƯU.      │
+                      │                                                      │
+                      │ Chốt server vẫn là chốt THẬT (client bỏ qua được),   │
+                      │ nhưng để nó bắn ở cuối thì người dùng đã đi qua: chọn│
+                      │ → chờ thử ~20 giây → giao cho ai → bấm Xong → RỒI    │
+                      │ MỚI bị từ chối. Bốn bước phí cho một chuyện biết      │
+                      │ được ngay ở bước một.                                │
+                      │                                                      │
+                      │ ⚠ Chỉ so với cánh tay ĐANG DÙNG Ở VĂN PHÒNG NÀY —    │
+                      │ khác văn phòng là clone độc lập, hợp lệ.             │
+                      └──────────────────────────────────────────────────────┘
+                    */
+                    const dup = list[0] ? clashingArm(list[0], installed, officeId) : undefined;
+                    if (dup) {
+                      setErr(
+                        `Thư mục này đã là kết nối "${dup}" của văn phòng. Đóng hộp thoại rồi kéo dây từ "${dup}" ` +
+                          `sang nhân viên cần nó — một kết nối dùng chung được cho nhiều người.`,
+                      );
+                      return;
+                    }
+                    setErr('');
                     setFolders(list.join('\n'));
                     // Đổi thư mục thì kết quả Thử cũ nói về một cấu hình KHÁC.
                     // Giữ dấu ✓ lại là cho Lưu một thứ chưa ai thử.
@@ -669,7 +713,7 @@ function BrowseDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(92vw,1040px)] max-w-none">
+      <DialogContent className="w-full max-w-5xl">
         <DialogHeader>
           <DialogTitle>Chọn thư mục</DialogTitle>
           <DialogDescription>

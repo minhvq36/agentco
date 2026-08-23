@@ -99,7 +99,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const didFit = useRef(false);
 
   const drag = useRef<{ id: string; dx: number; dy: number; sx: number; sy: number; moved: boolean } | null>(null);
-  const link = useRef<{ from: string; target: string | null } | null>(null);
+  /** `top` = đang cầm cổng TRÊN. Quyết định chỗ đường kẻ mờ mọc ra. */
+  const link = useRef<{ from: string; target: string | null; top: boolean } | null>(null);
   const pan = useRef<{ x: number; y: number } | null>(null);
 
   // ── đồng bộ dữ liệu từ server vào bản sống (không đụng khi đang kéo)
@@ -258,7 +259,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       */
       if (portHost?.dataset['port'] && nodeHost) {
         ev.preventDefault();
-        link.current = { from: nodeHost.dataset['node']!, target: null };
+        // Nhớ CỔNG NÀO đang bị cầm: đường kẻ mờ phải mọc ra từ đúng chỗ ngón
+        // tay đặt xuống. Suy từ `from.kind` như lúc vẽ dây thật là sai ở đây —
+        // dây thật đã biết đầu kia là ai, đường kẻ mờ thì chưa.
+        link.current = {
+          from: nodeHost.dataset['node']!,
+          target: null,
+          top: portHost.dataset['port'] === 'in',
+        };
         svgRef.current?.setPointerCapture(ev.pointerId);
         svgRef.current?.classList.add('is-linking');
         return;
@@ -314,7 +322,10 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         if (!from) return;
         const pf = posRef.current.get(l.from) ?? from;
         const w = screenToWorld(ev, rect, viewRef.current);
-        const gUp = from.kind === 'mcp';
+        // `up` ở đây nghĩa là "cổng TRÊN", suy từ cổng đang cầm — không suy từ
+        // loại node. Node MCP chỉ có cổng trên nên hai cách trùng nhau ở đó;
+        // nhân viên có hai cổng nên chúng KHÁC nhau, và đó là ca user bắt được.
+        const gUp = l.top;
         ghostRef.current?.setAttribute('d', curve(anchor({ kind: from.kind, ...pf }, 'out', gUp), w, gUp));
 
         const over = document.elementFromPoint(ev.clientX, ev.clientY);
