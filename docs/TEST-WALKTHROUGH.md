@@ -811,7 +811,7 @@ Bài duy nhất cần cắm dịch vụ ngoài. Làm theo **ba chặng**, đừn
 
 **Bước A3.** 🖱 chat: `Tìm giúp mình 5 quán cà phê làm việc được ở quận 1, ghi giờ mở cửa và giá đồ uống vào file.`
 
-**Chỉ ba bước, không mở file nào.** Đây là 1/4 giá trị của cả use case và nó chạy trong 2 phút — trong khi openclaw đòi cài Gateway, nối kênh chat, và với nhiều người là vài chục đô tiền gỡ rối. Nếu chặng A đã đủ dùng thì dừng lại ở đây.
+**Chỉ ba bước, không mở file nào.** Đây là 1/4 giá trị của cả use case và nó chạy trong 2 phút.
 
 ### Chặng B — cắm Google (Drive / Sheets / Docs)
 
