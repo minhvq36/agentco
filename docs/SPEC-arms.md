@@ -53,7 +53,9 @@ Luật của dự án này: *"đo N lần chứng minh một CƠ CHẾ, không c
 | 11 | Danh mục v1 gồm gì | **Filesystem · Notion · GitHub · Google** — thứ tự đó là **thứ tự XÂY**: 0 chìa → chìa tĩnh → HTTP/OAuth sẵn → OAuth phải tự đăng ký. §4e |
 | 19 | 🆕 Danh mục có phải cơ chế riêng không? | **KHÔNG — nó là đường B với form điền sẵn.** Cùng mã nguồn, khác dữ liệu ⇒ **xây đường B trước, danh mục là hệ quả**. §5h·1 |
 | 20 | 🆕 Thứ OAuth trả về có phải key không? | **CÓ — nhưng loại khác:** ta giữ chìa tĩnh, **MCP server giữ chìa OAuth**. Scope hẹp, hết hạn, thu hồi được. ⚠ Google **vẫn cần 2 chìa tĩnh** (`client_id`/`secret`) ⇒ đường **G2**. §5h |
-| 21 | 🆕 ✅ Spike 6 | **Cả hai lỗ có thật**, đo 23/08, $0,0389. Vai trò trần đọc kho chìa **và** ghi đè `roles/*.yaml` — bằng `Write`, tức **ghi đè trọn file**. §5d |
+| 21 | 🆕 ✅ Spike 6 | **Cả hai lỗ có thật**, đo 23/08, $0,0389 — **đã vá cùng ngày, cả hai 🟢**. §5d |
+| 22 | 🆕 ✅ Spike 1 | `mcpServerStatus()` trả **14 tool · 13/14 annotations**. §7 và §8a **đều có nguồn**. ⚠ Nhưng `destructive` ≠ `irreversible` — §8a sửa một dòng vì số liệu. §3a · §8a-bis |
+| 23 | 🆕 ✅ Spike 2 | **Tool MCP KHÔNG được hoãn** — nằm trong prefix mọi lượt, **+2 185 token** = **0,81× cái shell**. Trần 2 000 của `SPEC-connectors` §5 **chặn ngay cánh tay đầu tiên** ⇒ phải đặt lại bằng số. §9b |
 | 12 | Đường ranh quyền | Agent có **quyền dùng**, cấm bằng **cấu trúc**; **chỉ người được nối dây** mới dùng được. §5e ① |
 | 13 | Mô hình đe doạ | **Đơn người dùng**, như Claude Code ⇒ chỉ làm **cổng chặn đọc chìa**. ⚠ Ghi là *"chấp nhận có ý thức"*, **không phải** *"không áp dụng"* — agentco cố ý không có người ngồi xem. §5e ② |
 | 14 | Provider | Bản chính thức chỉ nhận **Claude Code · Codex · Antigravity**. Danh sách trắng phải lên UI, không phải hằng số trong code. §5e ③ |
@@ -210,7 +212,47 @@ HTTP"*. **Không bao giờ đề xuất SSE cho một cánh tay mới.**
 | 5 | `McpServerToolPolicy{name, permission_policy}` trên config http/sse | **Cổng duyệt theo từng tool, do SDK làm sẵn**. §8 |
 | 6 | `alwaysLoad?: boolean` + "tools are deferred when tool search is enabled" | Token của MCP **có thể không nằm trong prefix**. §9 |
 
-### 3a. `McpServerStatus` — mỏ vàng, và nó có `annotations`
+### 3a. `McpServerStatus` — mỏ vàng, và nó có `annotations` · ✅ **ĐÃ CHẠY 23/08**
+
+> ## ✅ SPIKE 1 — `scripts/spike-mcp.ts`. Cắm `@modelcontextprotocol/server-filesystem` thật.
+>
+> ```
+> server "files"  status=connected   (chờ 4 000 ms mới rời `pending`)
+> serverInfo: secure-filesystem-server v0.2.0
+> tools: 14        annotations: 13/14
+> ```
+>
+> | annotation | tool |
+> |---|---|
+> | `readOnly: true` (10) | `read_file` `read_text_file` `read_media_file` `read_multiple_files` `list_directory` `list_directory_with_sizes` `directory_tree` `search_files` `get_file_info` `list_allowed_directories` |
+> | `destructive: true` (3) | `write_file` `edit_file` `move_file` |
+> | **không annotation** (1) | `create_directory` |
+> | `openWorld` | **0/14** — không tool nào khai |
+>
+> ⇒ **§7 (dòng năng lực) và §8a (mức duyệt) đều CÓ nguồn.** Cả hai thiết kế đứng.
+>
+> ### ⚠⚠ Lần đo ĐẦU TIÊN cho kết quả NGƯỢC LẠI, và đó là bài học của spike này
+>
+> Hỏi `mcpServerStatus()` ngay sau khi mở query:
+>
+> ```
+> server "files"  status=pending      tools: 0
+> ⇒ "annotations có nội dung: ❌ KHÔNG — §8a mất nguồn"
+> ```
+>
+> **Một kết luận sai hoàn chỉnh, có số liệu đi kèm, và sẵn sàng để dán vào spec.**
+> Thứ đo được không phải API — là **THỜI ĐIỂM HỎI**. 📖 `.d.ts` đã nói thẳng ở
+> chỗ khác: *"MCP startup is otherwise **non-blocking** by default"*.
+>
+> Sửa: hỏi lại tới khi rời `pending` (đo được: **4 giây**, sau khi cache `npx` đã ấm; lần đầu tải
+> gói mất **17,7 s**). ⇒ [[agentco-measurement-vs-conclusion]] lần thứ tư, và lần này nó bị bắt
+> **trong vòng năm phút** thay vì sau một tuần — vì script tự in ra trạng thái thô thay vì chỉ in
+> kết luận.
+>
+> **Hệ quả bắt buộc cho §6c, và nó là một tính năng chứ không phải một chi tiết:** nút **Thử ngay**
+> phải **CHỜ VÀ HỎI LẠI**, không được hỏi một lần rồi kết luận. Hỏi một lần thì mọi cánh tay đều
+> hiện `⏳ pending` và người dùng học được rằng nút đó vô dụng. `⏳` là **trạng thái quá độ có
+> thật, kéo dài nhiều giây** — giao diện phải nói *"đang kết nối…"* chứ không phải một dấu ✗.
 
 ```ts
 type McpServerStatus = {
@@ -1074,6 +1116,51 @@ khi không biết"*. Giờ có nguồn tốt hơn một lời khai của ngườ
 | `destructive: true` | **`irreversible`** — duyệt lại **từng lần** |
 | `openWorld: true` | dấu hiệu chạm ra Internet ⇒ **không được hạ mức** |
 
+### 8a-bis. ✅ ĐO 23/08 — bảng trên **đúng một nửa**, và nửa sai là nửa quan trọng
+
+Số liệu thật từ spike 1 (14 tool của `filesystem`):
+
+| annotation | có mấy tool | mức bảng §8a nói | **đúng không?** |
+|---|---|---|---|
+| `readOnly: true` | **10** | `read` | ✅ đúng, và tín hiệu này **dày** (10/14) |
+| không annotation | **1** | `write_external` | ✅ đúng — và ca này **có thật**, không phải giả định |
+| `destructive: true` | **3** | `irreversible` | 🔴 **SAI** — xem dưới |
+| `openWorld: true` | **0** | — | ❓ **không có quan sát nào** |
+
+#### 🔴 `destructive` KHÔNG phải `irreversible` — hai khái niệm khác nhau, và số liệu chỉ ra chỗ khác
+
+Ba tool bị gắn `destructive: true` là `write_file` · `edit_file` · `move_file`. Áp bảng cũ thì
+**mọi lần ghi một file qua cánh tay này đều phải hỏi người dùng**. Đó là hỏng: `SPEC-tools-approval`
+§8a định nghĩa `irreversible` là *"gửi đi · xoá · trả tiền · **đăng công khai**"* — tức **rời khỏi
+thế giới của người dùng**. Ghi một file lên đĩa của chính họ không phải chuyện đó.
+
+| | MCP nói gì | Ta hỏi gì |
+|---|---|---|
+| `destructive` | *"tool này ghi đè / xoá dữ liệu"* | — |
+| `openWorld` | *"tool này chạm ra thế giới ngoài"* | — |
+| `irreversible` của ta | — | *"làm xong có rút lại được không"* |
+
+**Chốt sửa:** `destructive: true` ⇒ **`write_external`**, không phải `irreversible`. Nó nói *"ít
+nhất là ghi"*, và đúng như thế.
+
+**⇒ `irreversible` KHÔNG suy được từ annotations.** Nó phải đến từ một trong hai chỗ, và cả hai
+đều có chủ thể chịu trách nhiệm:
+
+| nguồn | ví dụ |
+|---|---|
+| **Danh mục ta curate** | *"tool `send_email` của cánh tay này là gửi đi"* — ta viết, ta chịu |
+| **Người dùng bấm** | *"tool này nguy hiểm, hỏi tôi mỗi lần"* |
+
+> **Đây là một chỗ thiết kế bị số liệu sửa, không phải bị lập luận sửa.** Bảng §8a viết khi chưa ai
+> thấy một `annotations` thật; nó ghép hai từ nghe giống nhau (`destructive` ↔ *phá huỷ* ↔
+> *không hoàn tác*) và đọc rất trôi. Mười bốn dòng dữ liệu làm nó lộ ra ngay.
+
+⚠ **`openWorld` là ứng viên tốt hơn hẳn cho `irreversible`** — nó hỏi đúng câu *"có rời khỏi thế
+giới này không"*. Nhưng **0/14 tool khai nó**, nên ta **không có một quan sát nào**. `filesystem`
+là một thế giới đóng, nên đó là kết quả hợp lý — và cũng có nghĩa phép đo này **không nói được gì**
+về `openWorld`. **Phải đo lại với một cánh tay chạm mạng (GitHub — spike 8)** trước khi xây §8 lên
+trên nó.
+
 ### 8b. ⚠⚠ Luật một chiều — annotations là **GỢI Ý của server**, không phải bảo đảm
 
 🌐 Đặc tả MCP gọi chúng là *hints* và nói rõ **client không được tin chúng như bảo đảm an toàn**.
@@ -1149,7 +1236,65 @@ một **phép đo lúc chạy**. Và nó cho phép giao diện nói câu đúng 
 
 > Đây đúng nấc thứ ba mà nợ 0c nói là còn thiếu: **`ĐO`**, bên cạnh `chặn` / `không chặn`.
 
-### 9b. ❓ CÂU HỎI CHẶN — tool của MCP có nằm trong prefix không?
+### 9b. 🔴 CÂU HỎI CHẶN — ✅ **ĐÃ ĐO 23/08: CÓ. Tool MCP nằm trong prefix, mọi lượt.**
+
+> ## ✅ SPIKE 2 — `scripts/spike-mcp.ts`. Hai phép đo độc lập, và **chúng không khớp nhau**.
+>
+> **2a · `getContextUsage()`** — miễn phí, control request:
+>
+> | | total | `mcpTools` |
+> |---|---:|---|
+> | không MCP | 5 915 | 0 |
+> | + MCP files (mặc định) | **8 690** | 14 tool · **`isLoaded: 0`** · 2 775 token |
+> | + MCP files · `alwaysLoad` | **8 690** | 14 tool · **`isLoaded: 14`** · 2 775 token |
+>
+> **2b · hoá đơn thật** — 2 lượt haiku, **nonce phá cache** (`cache_read = 0` cả hai ⇒ nonce chạy):
+>
+> | | `cache_write` |
+> |---|---:|
+> | 7 tool văn phòng | **4 546** |
+> | + MCP files (14 tool) | **6 731** |
+> | **MCP thêm vào** | **+2 185 token / mỗi lượt gọi worker** |
+>
+> ### Bốn kết luận, và cái thứ ba là cái không ai đoán trước
+>
+> **① Không có hoãn. `alwaysLoad` là NO-OP ở cấu hình của ta.** Hai dòng 2a cho **cùng một số**;
+> chỉ `isLoaded` đổi. 📖 `.d.ts` nói tool *"deferred **when tool search is enabled**"* — và ta
+> truyền `tools: [7 tool văn phòng]`, một allowlist **không chứa `ToolSearch`**. Giả thuyết ở §9b
+> bản cũ **đúng nguyên văn**, giờ có số.
+>
+> **② Một cánh tay ≈ một cái shell.** MCP 14 tool = **2 185**, shell = **2 688**. ⇒ **0,81×**.
+> Đây là con số đáng nhớ nhất của cả spike: *cắm một cánh tay đắt gần bằng bật shell*.
+>
+> **③ ⚠ HAI NGUỒN LỆCH 27%, và phải biết dùng cái nào lúc nào.**
+>
+> | | MCP thêm vào |
+> |---|---:|
+> | `getContextUsage()` | **2 775** |
+> | hoá đơn (`cacheCreationInputTokens`) | **2 185** |
+>
+> Chúng **không đo cùng một thứ**: `getContextUsage` kê **cửa sổ ngữ cảnh** (nên nó có cả
+> `Autocompact buffer 33 000` và `Free space`), hoá đơn kê **thứ được ghi vào cache**.
+> ⇒ **Tiền thì đọc hoá đơn; giao diện thì đọc `getContextUsage`** (nó có phân rã theo từng tool,
+> hoá đơn không có). Trộn hai số là báo sai 27%.
+>
+> **④ Một con số cũ được xác nhận chéo:** 2b đo `4 546` cho 7 tool văn phòng — đo 22/08 ghi
+> **`4 547`**. Lệch 1 token sau một ngày, một script khác, một model khác. Nền tảng đo được là đáng
+> tin. ⚠ Nhưng `getContextUsage` gọi cùng thứ đó là **`System tools 5 711`** — **đừng đem so với
+> 4 547**, chúng là hai hệ quy chiếu.
+>
+> ### ⇒ Việc phải làm, và nó KHÔNG phải "bật `ToolSearch`"
+>
+> | | |
+> |---|---|
+> | **Trần token cho cánh tay là THẬT** | `SPEC-connectors` §5 đặt trần 2 000 token/vai trò khi chưa có số. Một cánh tay đã **2 185**. ⇒ trần đó **chặn ngay cánh tay đầu tiên** — phải đặt lại bằng số, không bằng ước |
+> | **Giao diện phải hiện giá** | `🔌 File trên máy · 14 việc · ~2 200 token mỗi lượt`. Người dùng có quyền biết cái nút họ sắp bấm tốn gì — cùng luật với nút Lưu của skills |
+| | **Cắm 3 cánh tay ≈ +6 500 token/lượt** | trên nền 4 546 là **2,4×**. Đây là lúc câu hỏi `ToolSearch` (§5c) đáng mở lại — nhưng **chỉ khi đo được rằng hoãn thật sự rẻ hơn**, không phải vì con số này trông to |
+>
+> ⚠ **Ranh giới:** đo với **đúng một** server 14 tool. Quan hệ giữa *số tool* và *số token*
+> **chưa đo** — đừng ngoại suy tuyến tính. Đo lại khi có mục danh mục thứ hai (Notion).
+
+### 9b·cũ. ❓ Giả thuyết ban đầu (giữ lại để thấy nó đúng)
 
 📖 `alwaysLoad` ghi: *"Default: tools are **deferred** when tool search is enabled."*
 
@@ -1414,8 +1559,8 @@ kế nào sụp nếu nó hỏng**:
 
 | # | Spike | Chứng minh gì | Sụp cái gì nếu hỏng |
 |---|---|---|---|
-| **1** | Cắm một MCP stdio thật (`filesystem`), gọi `mcpServerStatus()` | `tools[]` + `annotations` có thật không | **§7 và §8a cùng lúc** — mất nguồn duy nhất của cả năng lực lẫn mức duyệt |
-| **2** | `getContextUsage()` với/không MCP, **cắm nonce phá cache** | tool MCP có nằm trong prefix không | **§9** — và có thể mở lại quyết định `ToolSearch` (§5c) |
+| ~~**1**~~ | ✅ **XONG 23/08** — `scripts/spike-mcp.ts` | **✅ CÓ.** 14 tool · **13/14 có annotations** · `openWorld` **0/14** | §8a sửa một dòng — xem §8a-bis |
+| ~~**2**~~ | ✅ **XONG 23/08** — cùng script, `--paid` | **🔴 KHÔNG hoãn.** `alwaysLoad` là no-op · **+2 185 token/lượt** (0,81× shell) | §9b |
 | **3** | `PreToolUse` matcher `mcp__*` trên một lời gọi tool MCP thật | cổng duyệt cho **stdio** có tồn tại không | **§8c** — stdio là ca phổ biến nhất. Hỏng thì phải bọc proxy |
 | **4** | `setMcpServers()` giữa phiên: thêm · bớt · sai chìa | cắm/rút không restart · `errors` có nói được gì hữu ích không | **§6** — nút Thử ngay và cả B7 |
 | **5** | `onElicitation` `mode:'url'` với một server cần OAuth | OAuth qua UI có đi được không | **§6d** — và bài 10 chặng B |
@@ -1444,8 +1589,8 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
 |---|---|---|---|
 | ~~1~~ | ✅ **Spike 6** — hai lỗ §5d + §5f | **cả hai 🔴 CÓ.** $0,0389 · 23/08 | xong |
 | ~~2~~ | ✅ **Bịt §5d + §5f** — `paths.ts §guardedZone` + `officeJail` hai matcher | **cả hai 🟢 KHÔNG**, đo lại cùng ngày. **+17 test → 298.** 0 token | xong |
-| **3** | **Spike 1 + 2** — `mcpServerStatus` + token (nhớ **nonce**) | **§7, §8, §9 cùng lúc** | nhỏ |
-| 4 | **Spike 4** — `setMcpServers` hot-plug | nút **Thử ngay**, xoá bước restart | nhỏ |
+| ~~3~~ | ✅ **Spike 1 + 2** — `scripts/spike-mcp.ts` | `tools[]`+`annotations` ✅ **CÓ** (13/14) · MCP **KHÔNG hoãn**, **+2 185 token/lượt** · $0,025 | xong |
+| **4** | **Spike 4** — `setMcpServers` hot-plug | nút **Thử ngay**, xoá bước restart | nhỏ |
 | 5 | **Đường B** — hộp thoại `+ Kết nối` 3 bước, dán config (§6f) | **xoá cả 4 chuông** 📝 | vừa |
 | 6 | Mục **File trên máy** (§4e #1) | ⭐ **thước của cả §6**: bấm → chạy, **0 ô chìa** | nhỏ |
 | 7 | Chìa đi theo cạnh nối (§6b) | xoá bước B6 | nhỏ |
