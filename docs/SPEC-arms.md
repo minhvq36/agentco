@@ -1034,6 +1034,74 @@ của văn phòng Kế toán, không dây nào, không việc gì.
 *"văn phòng này không dùng"* là **hai chuyện khác hẳn nhau**, và gộp chúng là đúng lỗi
 `catch { exists = false }` ([[agentco-catch-hides-premises]]).
 
+## 6i. ✅ SỔ CHUNG + BĂM — danh tính tách khỏi tên (user chốt 23/08, đã xây)
+
+**Vấn đề gốc của bốn triệu chứng khác nhau: `id` gánh hai vai cùng lúc** — vừa là danh tính, vừa
+là tên hiển thị. Cất đi rồi tạo lại cùng thư mục không bắt được · danh sách "đã cắm ở nơi khác" nở
+ra một mớ gần giống nhau · cùng cấu hình khác tên thành hai thứ · đổi tên là **đổi khoá**, kéo theo
+viết lại `mcp:` trong mọi `roles/*.yaml` của mọi văn phòng.
+
+```yaml
+mcpServers:                    # nửa của SDK — không thêm một trường nào
+  a2bebbdc121: { command: npx, args: [-y, "…filesystem@…", "D:\\Ho so"] }
+arms:                          # nửa của agentco
+  a2bebbdc121: { label: "Hồ sơ công ty", catalog: files, secrets: [] }
+```
+
+| Tầng | Là gì | Ai quyết |
+|---|---|---|
+| **Sổ chung** (công ty) | băm(cấu hình + tên chìa) → cấu hình · nhãn · tên chìa | máy sinh, bất biến |
+| **Hiện diện** (văn phòng) | `role.mcp: [băm]` | người dùng, mỗi văn phòng một kiểu |
+
+⇒ **Clone giữ nguyên** như user chốt trước đó — nhưng clone ở tầng *hiện diện*, không phải ở tầng
+*bản sao cấu hình*. Cái nở ra trước đây chính là thứ thứ hai.
+
+### Ba hệ quả, và cái thứ ba xoá được cả một khái niệm
+
+**① Trùng lặp thành chuyện KHÔNG THỂ XẢY RA**, không phải chuyện phải nhớ đi kiểm ở bốn chỗ. Cùng
+cấu hình ⇒ cùng khoá. Đây là *chặn bằng cấu trúc, không bằng kỷ luật* — cùng luật đã áp cho chìa.
+
+**② Đổi tên là thao tác rẻ nhất hệ**: sửa một chuỗi trong sổ. Không đổi khoá, không di trú, không
+phá cache của ai ⇒ **cố ý không có câu cảnh báo nào**. Dán cảnh báo lên một thao tác vô hại là dạy
+người dùng bỏ qua cảnh báo, rồi họ bỏ qua đúng cái đáng đọc.
+
+**③ 🔴 BỎ HẲN "LƯU TRỮ" cho cánh tay.** Nhân viên cần hai mức vì họ mang thứ **dựng lại không
+được** — kỹ năng, giới thiệu, sổ kinh nghiệm. Cánh tay **chỉ mang cấu hình**, mà sổ chung không xoá
+nó. Nên "xoá" đã sẵn có tính chất của "cất đi": ✅ đo được — xoá rồi cắm lại đúng thư mục thì
+**cùng id, và cái tên đã đặt tự quay lại**.
+
+> Mượn một khái niệm từ chỗ nó xứng đáng sang chỗ nó không — đó là thứ vừa được gỡ ra. Nó xoá luôn
+> câu hỏi *"chỗ khôi phục MCP nằm đâu"* thay vì phải đi trả lời nó.
+
+⚠ Mất **sợi dây**: cắm lại phải nối lại. Với một cánh tay phục vụ 1–2 người thì đó là một cú kéo —
+rẻ hơn hẳn việc nuôi cả một khái niệm chỉ để cứu nó.
+
+### ⚠⚠ BĂM KHÔNG THAY ĐƯỢC PHÉP KIỂM ĐƯỜNG DẪN — phải giữ CẢ HAI
+
+Câu hỏi user tự đặt, và nó đúng chỗ:
+
+| | Hỏi gì | Phạm vi |
+|---|---|---|
+| **băm** | *cấu hình y hệt này đã biết chưa* | **công ty** — để tái dùng |
+| **đường dẫn** | *văn phòng này đã với tới thư mục đó chưa* | **văn phòng** — luật một-đường-dẫn |
+
+Ca chứng minh không bỏ được cái thứ hai: **ngày ta bump phiên bản gói trong danh mục**, cùng một
+thư mục ra **băm khác** ⇒ tạo được cánh tay thứ hai trỏ đúng chỗ cũ ⇒ luật một-đường-dẫn **thủng
+im lặng**. Băm không thấy, vì với nó đó là hai cấu hình khác nhau thật.
+
+### 🔴 Và nó vá luôn một lỗ đã mở từ đầu: `role.secrets` không có ai ghi
+
+`pickMcp` dựng env từ `role.secrets`, nhưng cho tới 23/08 **không chỗ nào ghi trường đó** trong
+luồng cắm cánh tay. ⇒ cắm một cánh tay cần chìa thì token vào `.state/secrets.json` đúng, `role.mcp`
+đúng, mà **tiến trình MCP khởi động không có biến môi trường nào**.
+
+Tệ hơn: `probeArm` cũng không tiêm chìa ⇒ **nút "Thử ngay" kiểm một thứ khác với thứ sẽ chạy** —
+đúng lớp lỗi dự án này bắt đi bắt lại.
+
+Sổ chung là chỗ trả lời *"cánh tay này cần chìa tên gì"*, nên `grantArm` gộp danh sách đó vào
+`role.secrets` và `probeArm` nhận cùng bộ. **Một nguồn, hai chỗ dùng — không còn lệch.**
+⚠ Nhánh HTTP (`headers`) vẫn chưa nối — §5a, còn mở.
+
 ## 6h. Đếm lại số bước — thước đo của cả §6
 
 | | Hôm nay (bài 10 chặng B) | Sau §6 |

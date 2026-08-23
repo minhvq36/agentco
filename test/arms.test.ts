@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test cho luật MỘT THƯ MỤC, MỘT CÁNH TAY (user chốt 23/08).
  * → docs/SPEC-arms.md §6 · `src/core/catalog.ts`
  *
@@ -16,7 +16,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { coveredBy, folderRoots, swallowsOffice } from '../dist/core/catalog.js';
+import { armHash, coveredBy, folderRoots, swallowsOffice } from '../dist/core/catalog.js';
 
 // ───────────────────────────────────────────────────────────── folderRoots
 
@@ -124,3 +124,50 @@ test('coveredBy: cắm nhiều thư mục — chỉ cần MỘT cái đụng là
   const hit = coveredBy([have('files', 'D:\\Ho so')], ['D:\\Moi', 'D:\\Ho so']);
   assert.equal(hit?.id, 'files');
 });
+
+// ─────────────────────────────────────────────────── armHash (danh tính)
+//
+// Băm là DANH TÍNH, tên là NHÃN. Ba tính chất phải giữ, mỗi cái canh một ca
+// hỏng có thật:
+//   ổn định   — cùng cấu hình luôn ra cùng khoá, nếu không thì "cắm lại tìm
+//               thấy" thành xổ số
+//   thứ tự khoá không đổi kết quả — cùng cấu hình gõ khác thứ tự vẫn là nó
+//   TÊN CHÌA vào băm — hai workspace Notion khác nhau không được gộp làm một
+
+test('armHash: ổn định qua nhiều lần gọi', () => {
+  const c = { command: 'npx', args: ['-y', 'x', 'D:\\A'] };
+  assert.equal(armHash(c), armHash(c));
+});
+
+test('armHash: THỨ TỰ KHOÁ không đổi kết quả', () => {
+  assert.equal(
+    armHash({ command: 'npx', args: ['a'] }),
+    armHash({ args: ['a'], command: 'npx' }),
+  );
+});
+
+test('armHash: thứ tự PHẦN TỬ trong mảng thì CÓ đổi — args là có thứ tự thật', () => {
+  assert.notEqual(armHash({ args: ['a', 'b'] }), armHash({ args: ['b', 'a'] }));
+});
+
+test('armHash: cấu hình khác nhau ra khoá khác nhau', () => {
+  assert.notEqual(
+    armHash({ command: 'npx', args: ['-y', 'x', 'D:\\A'] }),
+    armHash({ command: 'npx', args: ['-y', 'x', 'D:\\B'] }),
+  );
+});
+
+test('armHash: TÊN CHÌA vào băm — hai workspace khác nhau KHÔNG bị gộp', () => {
+  const c = { command: 'npx', args: ['-y', 'notion'] };
+  assert.notEqual(armHash(c, ['NOTION_TOKEN']), armHash(c, ['NOTION_TOKEN_B']));
+});
+
+test('armHash: thứ tự tên chìa không đổi kết quả', () => {
+  const c = { command: 'npx', args: [] };
+  assert.equal(armHash(c, ['A', 'B']), armHash(c, ['B', 'A']));
+});
+
+test('armHash: khoá an toàn để làm tên khoá yaml và id node', () => {
+  assert.match(armHash({ args: ['x'] }), /^a[0-9a-f]{10}$/);
+});
+

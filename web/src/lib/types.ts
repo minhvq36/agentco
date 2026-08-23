@@ -384,9 +384,16 @@ export interface CatalogArm {
   brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
 }
 
-/** Cánh tay đã cắm — cấp CÔNG TY, nên nó dùng lại được ở mọi văn phòng. */
+/**
+ * Một mục trong SỔ CHUNG của công ty. → docs/SPEC-arms.md §6i
+ *
+ * `id` là **băm cấu hình**, không phải tên — nó không bao giờ lên màn hình.
+ * `label` là thứ người dùng đọc và đổi được.
+ */
 export interface InstalledArm {
   id: string;
+  label: string;
+  catalog?: string;
   config: unknown;
   usedBy: { office: string; role: string }[];
 }

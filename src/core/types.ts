@@ -389,6 +389,48 @@ export const CompanyConfigSchema = z.object({
   mcpServers: z.record(z.string(), z.unknown()).prefault({}),
 
   /**
+   * SỔ CHUNG của cánh tay — nửa của agentco, tách khỏi `mcpServers` là nửa của SDK.
+   * → docs/SPEC-arms.md §6i (user chốt 23/08)
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HAI MAP, CÙNG MỘT KHOÁ (băm cấu hình), HAI PHẬN SỰ KHÁC HẲN NHAU.        │
+   * │                                                                          │
+   * │   `mcpServers[băm]`  ĐÚNG hình dạng SDK cần, không thêm một trường nào.  │
+   * │   `arms[băm]`        thứ agentco cần mà SDK không biết: nhãn, chìa, gốc. │
+   * │                                                                          │
+   * │ Nhét `label`/`secrets` vào `mcpServers` thì chúng đi thẳng xuống SDK như │
+   * │ trường lạ — hôm nay vô hại, ngày SDK siết schema thì hỏng, và ta sẽ đi   │
+   * │ tìm nguyên nhân ở chỗ khác.                                              │
+   * │                                                                          │
+   * │ ⚠ SỔ NÀY KHÔNG BỊ XOÁ KHI RÚT CÁNH TAY. Đó chính là chỗ "cắm lại thì     │
+   * │ tìm thấy": rút ở văn phòng = bỏ `mcp:` trong `roles/*.yaml`, còn cấu     │
+   * │ hình + tên + tên chìa nằm nguyên ở đây. Vì thế mới BỎ HẲN được khái niệm │
+   * │ "lưu trữ" cho cánh tay — nhân viên cần lưu trữ vì họ mang thứ dựng lại   │
+   * │ không được (kỹ năng, sổ kinh nghiệm); cánh tay chỉ mang cấu hình, và sổ  │
+   * │ này giữ đúng thứ đó.                                                     │
+   * │                                                                          │
+   * │ Mục không ai dùng KHÔNG tốn gì: `pickMcp` chỉ dựng server có tên trong   │
+   * │ `role.mcp`, nên chúng không vào prompt của ai.                           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  arms: z
+    .record(
+      z.string(),
+      z.object({
+        /** Tên hiển thị. Đổi tự do — KHÔNG ai tham chiếu tới nó. */
+        label: z.string().default(''),
+        /** Mục danh mục đã dùng để dựng, nếu có. Chỉ để hiện icon và gợi ý. */
+        catalog: z.string().optional(),
+        /**
+         * TÊN chìa (không bao giờ là giá trị). `grantArm` gộp danh sách này vào
+         * `role.secrets` để `pickMcp` tiêm đúng bộ đó vào tiến trình MCP.
+         */
+        secrets: z.array(z.string()).default([]),
+      }),
+    )
+    .prefault({}),
+
+  /**
    * Cho phép sửa lớp core prompt. MẶC ĐỊNH FALSE, và UI phải hỏi qua một dialog
    * cảnh báo trước khi bật. → SPEC-offices.md §4.1
    *

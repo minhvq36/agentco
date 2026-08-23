@@ -88,7 +88,22 @@ function levelOf(a: { readOnly?: boolean; destructive?: boolean; openWorld?: boo
 export async function probeArm(
   servers: Record<string, McpServerConfig>,
   baseline?: number,
+  /**
+   * Chìa tiêm vào tiến trình MCP — PHẢI là đúng bộ mà `pickMcp` sẽ tiêm lúc
+   * chạy thật. Thiếu nó thì nút "Thử ngay" kiểm một cấu hình KHÔNG CÓ CHÌA rồi
+   * báo ✓, và cánh tay hỏng ở lần đầu một nhân viên dùng nó.
+   */
+  env?: Record<string, string>,
 ): Promise<ProbeResult> {
+  if (env && Object.keys(env).length) {
+    for (const [name, cfg] of Object.entries(servers)) {
+      // Chỉ server chạy bằng tiến trình con mới có `env`. Server HTTP nhận chìa
+      // qua `headers` — chưa nối, và §5a đã ghi đó là một lỗ còn mở.
+      if (cfg && typeof cfg === 'object' && 'command' in cfg) {
+        servers[name] = { ...cfg, env: { ...(cfg as { env?: Record<string, string> }).env, ...env } };
+      }
+    }
+  }
   const t0 = Date.now();
   let release: (() => void) | undefined;
 

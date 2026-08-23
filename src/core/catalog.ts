@@ -1,3 +1,5 @@
+﻿import { createHash } from 'node:crypto';
+
 /**
  * DANH MỤC CÁNH TAY — thứ người dùng "rút ra xài được ngay".
  * → docs/SPEC-arms.md §4e · §5c · §5h·1 · §11c
@@ -125,6 +127,55 @@ export function findArm(id: string): CatalogArm | undefined {
 }
 
 /**
+ * DANH TÍNH của một cánh tay = BĂM(cấu hình + tên chìa). → docs/SPEC-arms.md §6i
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO BĂM CHỨ KHÔNG PHẢI TÊN NGƯỜI DÙNG ĐẶT (user chốt 23/08)           │
+ * │                                                                          │
+ * │ Bản trước lấy `id` do người dùng gõ làm khoá, tức MỘT chuỗi gánh hai vai:│
+ * │ danh tính và nhãn hiển thị. Mọi triệu chứng đều từ đó — cất đi rồi tạo   │
+ * │ lại cùng thư mục không bắt được · danh sách "đã cắm ở nơi khác" nở ra    │
+ * │ một mớ gần giống nhau · cùng cấu hình khác tên thành hai thứ · và đổi    │
+ * │ tên thì phải ĐỔI KHOÁ, kéo theo viết lại `mcp:` trong mọi roles/*.yaml.  │
+ * │                                                                          │
+ * │ Tách ra: **băm là danh tính** (bất biến, máy sinh), **nhãn là tên** (đổi │
+ * │ tự do, không ai phụ thuộc). Cùng cấu hình ⇒ cùng băm ⇒ trùng lặp là      │
+ * │ chuyện KHÔNG THỂ XẢY RA, chứ không phải chuyện phải nhớ đi kiểm.         │
+ * │                                                                          │
+ * │ ⚠ TÊN CHÌA PHẢI VÀO BĂM. Hai không gian Notion khác nhau có `args` y hệt │
+ * │ và chỉ khác `NOTION_TOKEN` vs `NOTION_TOKEN_B`. Băm mỗi cấu hình là gộp  │
+ * │ hai workspace thành một — hỏng im lặng, ở đúng chỗ đắt nhất.             │
+ * │                                                                          │
+ * │ ⚠⚠ BĂM KHÔNG THAY ĐƯỢC PHÉP KIỂM ĐƯỜNG DẪN, và đây là chỗ dễ tưởng nhầm:│
+ * │ ngày ta bump phiên bản gói trong danh mục, CÙNG một thư mục ra băm KHÁC  │
+ * │ ⇒ tạo được cánh tay thứ hai trỏ đúng chỗ cũ ⇒ luật "một đường dẫn một    │
+ * │ cánh tay" thủng im lặng. Hai phép kiểm canh hai chuyện khác nhau:        │
+ * │                                                                          │
+ * │    băm        "cấu hình y hệt này đã biết chưa"   → phạm vi CÔNG TY      │
+ * │    đường dẫn  "văn phòng này đã với tới đó chưa"  → phạm vi VĂN PHÒNG    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `JSON.stringify` với khoá đã SẮP XẾP: cùng một cấu hình viết khác thứ tự
+ * khoá vẫn phải ra cùng một băm, nếu không thì "trùng lặp không thể xảy ra"
+ * lại thành "trùng lặp xảy ra khi gõ khác thứ tự".
+ */
+export function armHash(config: unknown, secretNames: readonly string[] = []): string {
+  const stable = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(stable);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([k, val]) => [k, stable(val)]),
+      );
+    }
+    return v;
+  };
+  const seed = JSON.stringify({ c: stable(config), s: [...secretNames].sort() });
+  return `a${createHash('sha256').update(seed).digest('hex').slice(0, 10)}`;
+}
+
+/**
  * Thư mục mà một cấu hình cánh tay với tới được. Rỗng = không phải cánh tay file.
  *
  * Suy từ `args`: mọi tham số trông như một ĐƯỜNG DẪN TUYỆT ĐỐI. Cố ý không dò
@@ -230,3 +281,4 @@ export function swallowsOffice(root: string, officeDir: string, companyDir: stri
 export function catalogForUi() {
   return CATALOG.map(({ build: _build, ...rest }) => rest);
 }
+

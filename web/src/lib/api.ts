@@ -93,11 +93,17 @@ export const api = {
    * giây** lần đầu phải tải gói về. Giao diện phải hiện "đang kết nối…" — coi im
    * lặng là hỏng thì mọi cánh tay đều trông như hỏng ở lần cắm đầu tiên.
    */
-  testArm: (id: string, body: { config?: unknown; catalogId?: string; folders?: string[] }) =>
-    call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
+  testArm: (
+    id: string,
+    body: { config?: unknown; catalogId?: string; folders?: string[]; secrets?: Record<string, string> },
+  ) => call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
 
+  /**
+   * Cắm một cánh tay. KHÔNG gửi `id` — danh tính là **băm cấu hình**, do server
+   * sinh. Client chỉ gửi cái tên hiển thị. → `catalog.ts §armHash`
+   */
   addArm: (body: {
-    id: string;
+    label?: string;
     /** Gửi thẳng cấu hình (đường "tự cắm")… */
     config?: unknown;
     /** …hoặc để SERVER dựng từ danh mục — số phiên bản gói chỉ nằm ở một chỗ. */
@@ -112,8 +118,13 @@ export const api = {
     body: JSON.stringify(body),
   }),
 
-  removeArm: (id: string) =>
-    call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}`, { method: 'DELETE' }),
+  /** Đổi tên — chỉ đụng nhãn trong sổ chung, không đổi khoá, không di trú gì. */
+  renameArm: (id: string, label: string) =>
+    call<{ label: string }>(`/api/arms/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }),
+
+  /** Rút khỏi MỘT văn phòng. Sổ chung giữ nguyên — cắm lại là tìm thấy. */
+  removeArm: (id: string, office: string) =>
+    call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?office=${enc(office)}`, { method: 'DELETE' }),
 
   createOffice: (name: string) =>
     call<{ id: string }>('/api/office', { method: 'POST', body: JSON.stringify({ name }) }),

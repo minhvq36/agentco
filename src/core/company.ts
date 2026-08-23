@@ -31,7 +31,7 @@ import {
 } from './paths.js';
 import { Office } from './office.js';
 import { readSecrets, writeSecrets } from './secrets.js';
-import { coveredBy, folderRoots, swallowsOffice } from './catalog.js';
+import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
 import {
   appendRename,
   appendUsage,
@@ -419,16 +419,23 @@ export class Company {
    * nơi commit lên git được. **Giá trị chìa không bao giờ nằm trong company.yaml.**
    */
   addArm(input: {
-    id: string;
+    /** Tên hiển thị. KHÔNG phải danh tính — danh tính là băm cấu hình. */
+    label?: string;
     config: Record<string, unknown>;
+    catalog?: string;
+    /** TÊN chìa cần có. Vào băm, và vào `role.secrets` lúc giao. */
+    secretNames?: string[];
     secrets?: Record<string, string>;
     /** Văn phòng sắp dùng nó — cần cho luật "một thư mục, một cánh tay". */
     office?: string;
-  }): void {
-    const id = input.id.trim();
-    if (!isSafeId(id)) {
-      throw new RunError('Mã cánh tay chỉ được dùng chữ thường, số, gạch ngang.', 'other');
-    }
+  }): string {
+    const secretNames = [...new Set(input.secretNames ?? Object.keys(input.secrets ?? {}))].sort();
+    /**
+     * Danh tính do MÁY sinh, không do người gõ. Cùng cấu hình ⇒ cùng khoá ⇒
+     * "cắm trùng" là chuyện KHÔNG THỂ XẢY RA, thay vì chuyện phải nhớ đi kiểm
+     * ở bốn chỗ. → `catalog.ts §armHash`
+     */
+    const id = armHash(input.config, secretNames);
     if (!input.config || typeof input.config !== 'object') {
       throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
     }
@@ -445,9 +452,21 @@ export class Company {
      * ⚠ Một cánh tay `filesystem` nhận NHIỀU thư mục cùng lúc (đo 23/08:
      * `connected` với 2 gốc) — nên "hai thư mục" thường KHÔNG cần hai cánh tay.
      */
-    if (id in this.config.mcpServers) {
+    /**
+     * ĐÃ CÓ TRONG SỔ = tái dùng, KHÔNG phải lỗi.
+     *
+     * Đây là chỗ "cắm lại thì tìm thấy" thành hiện thực: người dùng xoá cánh
+     * tay khỏi văn phòng rồi cắm lại đúng thư mục đó ⇒ cùng băm ⇒ ta lấy lại
+     * nguyên cấu hình + tên + tên chìa, không hỏi lại một câu nào.
+     *
+     * Chỉ chặn khi văn phòng NÀY đang dùng nó rồi — và câu chặn nói ra cách đi
+     * tiếp (kéo dây), vì "đã có" mà không chỉ đường là một ngõ cụt.
+     */
+    if (input.office && this.armInUse(input.office, id)) {
+      const label = this.config.arms[id]?.label || id;
       throw new RunError(
-        `Đã có kết nối tên "${id}". Đặt tên khác, hoặc sửa cái đang có — một kết nối "file trên máy" nhận được nhiều thư mục cùng lúc.`,
+        `Văn phòng này đã có kết nối "${label}". Kéo dây từ nó sang nhân viên cần dùng — ` +
+          `một kết nối dùng chung được cho nhiều người.`,
         'other',
       );
     }
@@ -514,8 +533,17 @@ export class Company {
     };
     const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
     if (!doc.has('mcpServers')) doc.set('mcpServers', block(doc.createNode({})));
+    if (!doc.has('arms')) doc.set('arms', block(doc.createNode({})));
     block(doc.get('mcpServers', true));
+    block(doc.get('arms', true));
     doc.setIn(['mcpServers', id], block(doc.createNode(input.config)));
+    // Giữ nhãn cũ nếu mục đã có trong sổ — người dùng cắm lại một thứ từng đặt
+    // tên thì cái tên đó là của họ, đừng lặng lẽ thay bằng tên mặc định.
+    const label = this.config.arms[id]?.label || input.label?.trim() || id;
+    doc.setIn(
+      ['arms', id],
+      block(doc.createNode({ label, ...(input.catalog ? { catalog: input.catalog } : {}), secrets: secretNames })),
+    );
     fs.writeFileSync(
       this.paths.configFile,
       doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
@@ -527,10 +555,51 @@ export class Company {
 
     this.emit({
       type: 'company.offices',
-      say: `Đã cắm "${id}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.`,
+      say: `Đã cắm "${label}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.`,
       office: '',
       plan_id: null,
     });
+    return id;
+  }
+
+  /** Vai trò nào trong văn phòng này đang nối tới cánh tay `id`? */
+  private armInUse(officeId: string, id: string): boolean {
+    const office = this.offices.get(officeId);
+    if (!office) return false;
+    if (office.loaded.config.assistant.mcp.includes(id)) return true;
+    for (const [roleId, role] of office.loaded.roles) {
+      if (office.loaded.archivedRoles.has(roleId)) continue;
+      if (role.mcp.includes(id)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * ĐỔI TÊN một cánh tay. Chỉ đụng `arms[id].label` — không ai tham chiếu tới
+   * nhãn, nên đây là thao tác rẻ nhất trong cả hệ: không đổi khoá, không viết
+   * lại `roles/*.yaml`, không phá cache của ai.
+   *
+   * Đó chính là lý do danh tính phải là BĂM chứ không phải cái tên: hồi `id`
+   * còn là tên người dùng gõ, "đổi tên" là ĐỔI KHOÁ, kéo theo một cuộc di trú
+   * nhỏ qua mọi vai trò của mọi văn phòng — mỗi lần bấm.
+   */
+  renameArm(id: string, label: string): string {
+    const next = label.trim();
+    if (!next) throw new RunError('Tên kết nối không được để trống.', 'other');
+    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.has('arms')) doc.set('arms', doc.createNode({}));
+    doc.setIn(['arms', id, 'label'], next);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+    this.emit({ type: 'company.offices', say: `Kết nối giờ tên là "${next}".`, office: '', plan_id: null });
+    return next;
   }
 
   /**
@@ -543,41 +612,51 @@ export class Company {
    * Cạnh nối `mcp→agent` sống trong `roles/*.yaml`; `layout.read()` tự bỏ qua
    * cạnh trỏ tới node không còn tồn tại, nên không cần dọn tay ở đây.
    */
-  removeArm(id: string): void {
-    /**
-     * ⚠ IDEMPOTENT — "xoá một thứ đã không còn" phải THÀNH CÔNG, không phải báo
-     * lỗi. Bản đầu ném `Không có cánh tay "<id>"`, và user gặp đúng nó: node mồ
-     * côi (vai trò còn khai `mcp:` trong khi `company.yaml` đã sạch) thì bấm
-     * Xoá hẳn nhận về một câu lỗi, và node ở lại vĩnh viễn.
-     *
-     * Một câu từ chối chỉ đúng khi người dùng còn đường đi tiếp. Ở đây không có
-     * đường nào — nên nó không phải lời từ chối, nó là một ngõ cụt.
-     */
-    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
-    doc.deleteIn(['mcpServers', id]);
-    fs.writeFileSync(
-      this.paths.configFile,
-      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
-      'utf8',
-    );
+  /**
+   * XOÁ một cánh tay KHỎI MỘT VĂN PHÒNG. Sổ chung **không bị đụng**.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐỔI NGHĨA 23/08, và nó là thứ xoá được cả khái niệm "lưu trữ".           │
+   * │                                                                          │
+   * │ Bản trước xoá khỏi `company.yaml`, tức mất luôn cấu hình — nên mới cần   │
+   * │ một mức "cất đi" ở giữa để giữ nó lại. Giờ cấu hình sống trong SỔ CHUNG   │
+   * │ và không ai xoá nó, nên "xoá" đã mang đúng tính chất của "cất đi": cắm   │
+   * │ lại cùng thư mục ⇒ cùng băm ⇒ tìm thấy nguyên vẹn.                       │
+   * │                                                                          │
+   * │ ⇒ Một mức thay vì hai. Nhân viên cần hai mức vì họ mang thứ dựng lại     │
+   * │ không được; cánh tay chỉ mang cấu hình. Mượn khái niệm từ chỗ nó xứng    │
+   * │ đáng sang chỗ nó không, là thứ ta vừa gỡ ra.                              │
+   * │                                                                          │
+   * │ Mất một thứ, nói ra: SỢI DÂY. Cắm lại phải nối lại. Với một cánh tay     │
+   * │ phục vụ 1–2 người thì đó là một cú kéo — rẻ hơn hẳn việc nuôi cả một     │
+   * │ khái niệm chỉ để cứu nó.                                                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ IDEMPOTENT: "xoá thứ đã không còn" phải THÀNH CÔNG. Một câu từ chối chỉ
+   * đúng khi người dùng còn đường đi tiếp; ở đây không có đường nào, nên nó sẽ
+   * là một ngõ cụt chứ không phải một lời từ chối.
+   */
+  removeArm(id: string, officeId?: string): void {
+    const targets = officeId ? [this.get(officeId)] : [...this.offices.values()];
+    for (const office of targets) office.dropArm(id);
 
-    this.config = loadCompanyConfig(this.dir);
-    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
-    // Dọn mọi tham chiếu còn sót: không dọn thì node ở lại dạng mồ côi và không
-    // có nút nào gỡ được nó nữa. Chạy SAU `applyCompanyConfig` để mỗi Office
-    // đang đọc đúng bản config mới.
-    for (const office of this.offices.values()) office.dropArm(id);
-
+    const label = this.config.arms[id]?.label || id;
     this.emit({
       type: 'company.offices',
-      say: `Đã rút "${id}". Chìa khoá vẫn được giữ lại.`,
-      office: '',
+      say: `Đã rút "${label}". Cắm lại lúc nào cũng được — cấu hình và chìa vẫn giữ.`,
+      office: officeId ?? '',
       plan_id: null,
     });
   }
 
-  /** Cánh tay đã cắm ở CẤP CÔNG TY + nơi nào đang dùng. → SPEC-arms.md §6f khối 2 */
-  listArms(): { id: string; config: unknown; usedBy: { office: string; role: string }[] }[] {
+  /** SỔ CHUNG + nơi nào đang dùng. → docs/SPEC-arms.md §6i */
+  listArms(): {
+    id: string;
+    label: string;
+    catalog?: string;
+    config: unknown;
+    usedBy: { office: string; role: string }[];
+  }[] {
     return Object.entries(this.config.mcpServers).map(([id, config]) => {
       const usedBy: { office: string; role: string }[] = [];
       for (const office of this.offices.values()) {
@@ -585,7 +664,14 @@ export class Company {
           if (role.mcp.includes(id)) usedBy.push({ office: office.id, role: roleId });
         }
       }
-      return { id, config, usedBy };
+      const meta = this.config.arms[id];
+      return {
+        id,
+        label: meta?.label || id,
+        ...(meta?.catalog ? { catalog: meta.catalog } : {}),
+        config,
+        usedBy,
+      };
     });
   }
 
@@ -810,5 +896,6 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
  * khi người dùng lưu lần đầu**. Không có file mặc định nào cả: một file rỗng chỉ
  * để "cho có" là một dòng nữa trong thư mục mà không ai giải thích được.
  */
+
 
 

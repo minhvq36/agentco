@@ -66,14 +66,11 @@ function TypeCard({
   );
 }
 
-/** `files` đã có → `files-2`. Mã trùng bị server từ chối, nên gợi sẵn cái rảnh. */
-function nextFreeId(base: string, taken: { id: string }[]): string {
-  const has = new Set(taken.map((t) => t.id));
-  const stem = base.replace(/-\d+$/, '');
-  if (!has.has(stem)) return stem;
-  for (let i = 2; i < 100; i++) if (!has.has(`${stem}-${i}`)) return `${stem}-${i}`;
-  return `${stem}-${Date.now()}`;
-}
+/*
+  `nextFreeId` đã BỎ (23/08). Nó tồn tại để né trùng mã khi mã là do người dùng
+  đặt — giờ mã là BĂM cấu hình, nên "trùng" nghĩa là "đúng cùng một thứ", và
+  câu trả lời không còn là đặt tên khác mà là DÙNG LẠI. → SPEC-arms.md §6i
+*/
 
 /** Thư mục người dùng rời đi lần trước — bộ chọn mở lại ĐÚNG ĐÓ, không về ổ đĩa. */
 const LAST_DIR = 'agentco.lastBrowseDir';
@@ -112,7 +109,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [pick, setPick] = useState<CatalogArm | null>(null);
   /** Đường B — dán cấu hình MCP. Không mục danh mục nào chặn ai. → §4c */
   const [paste, setPaste] = useState('');
-  const [armId, setArmId] = useState('');
+  const [label, setLabel] = useState('');
   const [folders, setFolders] = useState('');
   const [keys, setKeys] = useState<Record<string, string>>({});
 
@@ -128,7 +125,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setPane('type');
     setPick(null);
     setPaste('');
-    setArmId('');
+    setLabel('');
     setFolders('');
     setKeys({});
     setProbe(null);
@@ -178,7 +175,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       const servers = parsed['mcpServers'];
       if (servers && typeof servers === 'object') {
         const [name, cfg] = Object.entries(servers as Record<string, unknown>)[0] ?? [];
-        if (name && !armId) setArmId(name);
+        if (name && !label) setLabel(name);
         return (cfg as Record<string, unknown>) ?? null;
       }
       return parsed;
@@ -197,7 +194,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setTesting(true);
     setProbe(null);
     try {
-      setProbe(await api.testArm(armId || pick?.id || 'thu', p));
+      setProbe(await api.testArm('thu', { ...p, ...(Object.keys(keys).length ? { secrets: keys } : {}) }));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Không thử được.');
     } finally {
@@ -207,12 +204,12 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   async function save() {
     const p = payload();
-    const id = (armId || pick?.id || '').trim();
-    if (!p || !id || busy) return;
+    const name = (label || pick?.name || '').trim();
+    if (!p || busy) return;
     setBusy(true);
     try {
       await api.addArm({
-        id,
+        ...(name ? { label: name } : {}),
         ...p,
         ...(Object.keys(keys).length ? { secrets: keys } : {}),
         ...(officeId ? { office: officeId } : {}),
@@ -237,7 +234,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {step === 1 ? 'Cắm một kết nối' : step === 2 ? `Chìa khoá · ${pick?.name ?? armId}` : 'Ai được dùng?'}
+            {step === 1
+              ? 'Cắm một kết nối'
+              : step === 2
+                ? `Cài đặt · ${pick?.name ?? label ?? ''}`
+                : 'Ai được dùng?'}
           </DialogTitle>
           <DialogDescription>
             {step === 1
@@ -275,7 +276,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     const files = catalog.find((a) => a.folders);
                     if (!files) return;
                     setPick(files);
-                    setArmId(files.id);
+                    setLabel(files.name);
                     setStep(2);
                   }}
                 />
@@ -308,7 +309,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         type="button"
                         onClick={() => {
                           setPick(a);
-                          setArmId(a.id);
+                          setLabel(a.name);
                           setStep(2);
                         }}
                         className="rounded-lg border border-line px-3 py-3 text-left transition hover:border-accent hover:bg-accent-soft"
@@ -343,25 +344,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       type="button"
                       onClick={() => {
                         /*
-                          NHÂN BẢN, không dùng chung. User chốt 23/08: *"các node
-                          MCP không được phép liên văn phòng, kể cả dùng chung đi
-                          nữa thì nó cũng phải là những clone khác nhau"*.
+                          DÙNG LẠI ĐÚNG MỤC ĐÓ, không nhân bản cấu hình.
 
-                          Dùng chung một mã nghĩa là đổi thư mục ở văn phòng A thì
-                          văn phòng B đổi theo, âm thầm. Chép cấu hình sang một mã
-                          MỚI thì hai bên độc lập thật.
+                          Danh tính là băm cấu hình, nên "chép sang một mã mới"
+                          không còn nghĩa gì: cùng cấu hình ⇒ cùng băm ⇒ vẫn là
+                          nó. Cái "clone" mà user muốn nằm ở tầng khác — SỰ HIỆN
+                          DIỆN theo từng văn phòng (`role.mcp`), không phải bản
+                          sao cấu hình. → SPEC-arms.md §6i
                         */
                         setPick(null);
                         setPaste(JSON.stringify(a.config, null, 2));
-                        setArmId(nextFreeId(a.id, installed));
+                        setLabel(a.label);
                         setProbe(null);
                         setStep(2);
                       }}
                       className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-accent"
                     >
                       <Plug className="h-3.5 w-3.5 text-muted" />
-                      <span className="flex-1">{a.id}</span>
-                      <span className="text-[11px] text-muted">chép sang đây</span>
+                      <span className="flex-1 truncate">{a.label}</span>
+                      <span className="shrink-0 text-[11px] text-muted">dùng lại</span>
                     </button>
                   ))}
                 </div>
@@ -408,8 +409,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <Input
                   id="arm-id"
                   autoFocus
-                  value={armId}
-                  onChange={(e) => setArmId(e.target.value)}
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
                   placeholder="vi-du: notion"
                 />
                 <p className="mt-1 text-xs text-muted">Chữ thường, số, gạch ngang. Đây là tên hiện trên sơ đồ.</p>
@@ -461,7 +462,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       .replace(/[^a-z0-9]+/g, '-')
                       .replace(/^-+|-+$/g, '')
                       .slice(0, 24);
-                    if (slug) setArmId(nextFreeId(slug, installed));
+                    if (slug) setLabel(leaf);
                   }}
                 />
                 {/*
@@ -837,4 +838,6 @@ function ProbeReport({ r }: { r: ProbeResult }) {
     </div>
   );
 }
+
+
 

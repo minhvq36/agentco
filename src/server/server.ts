@@ -219,16 +219,23 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         config?: Record<string, unknown>;
         catalogId?: string;
         folders?: string[];
+        secrets?: Record<string, string>;
       }>(req);
       const config = armConfig(body);
       if (!config) return json(res, 400, { error: 'thiếu "config" hoặc "catalogId"' });
       const base = await baselineTokens();
-      const r = await probeArm({ [body.id || 'thu']: config as never }, base);
+      /**
+       * ⚠ TIÊM CHÌA VÀO PHÉP THỬ, nếu không thì nút Thử **kiểm một thứ khác với
+       * thứ sẽ chạy** — đúng lớp lỗi dự án này bắt đi bắt lại. Worker nhận chìa
+       * qua `pickMcp`; probe phải nhận cùng bộ đó, nếu không một cánh tay cần
+       * chìa sẽ báo ✓ ở đây rồi hỏng lúc làm việc thật.
+       */
+      const r = await probeArm({ [body.id || 'thu']: config as never }, base, body.secrets);
       return json(res, 200, r);
     }
     if (url.pathname === '/api/arms' && method === 'POST') {
       const body = await readJson<{
-        id?: string;
+        label?: string;
         config?: Record<string, unknown>;
         catalogId?: string;
         folders?: string[];
@@ -237,10 +244,18 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         grantTo?: string[];
       }>(req);
       const config = armConfig(body);
-      if (!body.id || !config) return json(res, 400, { error: 'thiếu "id" hoặc "config"' });
-      company.addArm({
-        id: body.id,
+      if (!config) return json(res, 400, { error: 'thiếu "config" hoặc "catalogId"' });
+      // Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên
+      // biến phải khớp chính xác thứ server MCP đọc — đó là sự thật của ta.
+      const fromCatalog = body.catalogId ? findArm(body.catalogId) : undefined;
+      const secretNames = fromCatalog
+        ? fromCatalog.secrets.map((s) => s.name)
+        : Object.keys(body.secrets ?? {});
+      const id = company.addArm({
         config,
+        secretNames,
+        ...(body.label ? { label: body.label } : {}),
+        ...(body.catalogId ? { catalog: body.catalogId } : {}),
         ...(body.secrets ? { secrets: body.secrets } : {}),
         ...(body.office ? { office: body.office } : {}),
       });
@@ -251,12 +266,23 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // ra để tránh. → Office.grantArm
       let canvas: unknown;
       if (body.office && body.grantTo?.length) {
-        canvas = company.get(body.office).grantArm(body.id, body.grantTo);
+        canvas = company.get(body.office).grantArm(id, body.grantTo);
       }
-      return json(res, 201, { id: body.id, arms: company.listArms(), canvas });
+      return json(res, 201, { id, arms: company.listArms(), canvas });
     }
+    /** Đổi tên — chỉ đụng nhãn trong sổ chung. Không đổi khoá, không di trú gì. */
+    if (segments[0] === 'api' && segments[1] === 'arms' && segments[2] && method === 'PATCH') {
+      const body = await readJson<{ label?: string }>(req);
+      const label = company.renameArm(decodeURIComponent(segments[2]), body.label ?? '');
+      return json(res, 200, { label, arms: company.listArms() });
+    }
+    /**
+     * Rút khỏi MỘT văn phòng (`?office=`), hoặc khỏi mọi văn phòng nếu không nêu.
+     * Sổ chung không bị đụng — cắm lại là tìm thấy. → `Company.removeArm`
+     */
     if (segments[0] === 'api' && segments[1] === 'arms' && segments[2] && method === 'DELETE') {
-      company.removeArm(decodeURIComponent(segments[2]));
+      const office = url.searchParams.get('office') ?? undefined;
+      company.removeArm(decodeURIComponent(segments[2]), office);
       return json(res, 200, { arms: company.listArms() });
     }
 

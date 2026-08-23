@@ -1914,6 +1914,34 @@ export class Office {
       .map((r) => ({ from, to: agentNodeId(r) }))
       .filter((e) => !have.has(`${e.from} ${e.to}`));
 
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 CHÌA PHẢI ĐI THEO SỢI DÂY — nửa này TỪNG THIẾU HẲN.             │
+     * │                                                                    │
+     * │ `pickMcp` (worker.ts) dựng env từ `role.secrets`, nhưng cho tới     │
+     * │ 23/08 **không có chỗ nào GHI `role.secrets`** trong luồng cắm cánh  │
+     * │ tay. Hậu quả: cắm một cánh tay cần chìa thì token vào               │
+     * │ `.state/secrets.json` đúng, `role.mcp` đúng, mà tiến trình MCP khởi │
+     * │ động KHÔNG CÓ BIẾN MÔI TRƯỜNG nào — hỏng lúc chạy thật, sau khi     │
+     * │ giao diện đã báo ✓.                                                 │
+     * │                                                                    │
+     * │ Sổ chung là chỗ trả lời "cánh tay này cần chìa tên gì" (§6i), nên   │
+     * │ nối dây và cấp chìa giờ là MỘT thao tác — đúng chốt §7a của          │
+     * │ SPEC-tools-approval: *"nối dây là xong, chìa đi theo"*.             │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const need = this.loaded.company.arms[server]?.secrets ?? [];
+    if (need.length) {
+      for (const r of roleIds) {
+        const role = this.loaded.roles.get(r);
+        if (!role) continue;
+        const next = [...new Set([...role.secrets, ...need])].sort();
+        if (next.length === role.secrets.length) continue;
+        this.writeYamlList(path.join(this.loaded.paths.roles, `${r}.yaml`), ['secrets'], next);
+      }
+      this.reload();
+    }
+
     // Không có gì để thêm thì KHÔNG ghi và KHÔNG phát sự kiện: một `layout.changed`
     // rỗng làm mọi tab vẽ lại sơ đồ để nhận về đúng thứ chúng đang có.
     if (!add.length) return this.canvas();
@@ -3316,6 +3344,19 @@ export class Office {
     notes: Record<string, number>,
   ): CanvasNode {
     const base: CanvasNode = { ...n, label: n.id, missing, connected, removable: true };
+    /**
+     * Node cánh tay hiện NHÃN, không hiện băm. `a3f9c2e1b0` là danh tính, không
+     * phải thứ để đọc — sơ đồ mà đầy chuỗi băm thì không ai nhìn ra cái gì.
+     * Rơi về chính băm khi sổ chưa có mục (cấu hình cũ, hoặc dán tay vào yaml).
+     */
+    if (n.kind === 'mcp') {
+      return {
+        ...base,
+        label: (n.server && this.loaded.company.arms[n.server]?.label) || n.server || n.id,
+        avatar: '🔌',
+        connected: true,
+      };
+    }
     if (n.kind === 'assistant') {
       const a = this.loaded.config.assistant;
       return {
@@ -3362,9 +3403,6 @@ export class Office {
         connected: true,
         removable: false,
       };
-    }
-    if (n.kind === 'mcp') {
-      return { ...base, label: n.server ?? n.id, avatar: '🔌', connected: true };
     }
     const role = n.role ? this.loaded.roles.get(n.role) : undefined;
     if (!role) return { ...base, label: n.role ?? n.id, avatar: '?', missing: true };

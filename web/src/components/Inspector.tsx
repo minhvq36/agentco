@@ -459,6 +459,35 @@ function Note({ children }: { children: React.ReactNode }) {
   return <p className="my-3 text-xs leading-relaxed text-muted">{children}</p>;
 }
 
+/**
+ * ĐỔI TÊN KẾT NỐI — và nó CỐ Ý không có câu cảnh báo nào.
+ *
+ * Nhãn không phải danh tính (danh tính là băm cấu hình), nên đổi nó không đụng
+ * khoá, không viết lại `roles/*.yaml`, không phá cache của ai. Dán một câu
+ * cảnh báo lên đây là dạy người dùng bỏ qua cảnh báo — rồi họ bỏ qua đúng cái
+ * đáng đọc, y như lý do `renameAssistant` không có cảnh báo.
+ */
+function ArmName({ node }: { node: CanvasNode }) {
+  const [text, setText] = useState(node.label);
+  useEffect(() => setText(node.label), [node.label]);
+  const dirty = text.trim() !== node.label && text.trim().length > 0;
+
+  return (
+    <div className="mt-3">
+      <label className="text-[11px] uppercase tracking-wide text-muted">Tên hiển thị</label>
+      <div className="mt-1 flex gap-1.5">
+        <Input value={text} onChange={(e) => setText(e.target.value)} />
+        <Button
+          disabled={!dirty}
+          onClick={() => void actions.renameArm(node.server!, text.trim())}
+        >
+          Lưu
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Bảng chi tiết bên phải. Mở khi chọn một node; ✕ để đóng. */
 export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void }) {
   const canvas = useApp((s) => s.canvas);
@@ -568,15 +597,26 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                                    token, bắt đi lấy lại là phạt một thao tác
                                    vốn vô hại.
             */}
-            <div className="mt-4 flex flex-col gap-2">
-              <Button onClick={() => void actions.detachArm(node.server!)}>Cất vào lưu trữ</Button>
-              <Button variant="danger" onClick={() => setConfirmRemove(node)}>
-                Xoá hẳn kết nối
-              </Button>
-            </div>
+            <ArmName node={node} />
+
+            {/*
+              MỘT MỨC, KHÔNG HAI. (user chốt 23/08)
+
+              Nhân viên có "Cất đi" và "Xoá hẳn" vì họ mang thứ dựng lại KHÔNG
+              ĐƯỢC — kỹ năng, giới thiệu, sổ kinh nghiệm. Cánh tay chỉ mang cấu
+              hình, mà cấu hình sống trong SỔ CHUNG và không ai xoá nó. Nên "xoá"
+              ở đây đã có sẵn tính chất của "cất đi": cắm lại đúng thư mục ⇒ cùng
+              băm ⇒ tìm thấy nguyên vẹn, không phải nhập lại gì.
+
+              Mượn một khái niệm từ chỗ nó xứng đáng sang chỗ nó không, là thứ
+              vừa được gỡ ra. → SPEC-arms.md §6i
+            */}
+            <Button variant="danger" className="mt-4 w-full" onClick={() => setConfirmRemove(node)}>
+              Xoá khỏi văn phòng này
+            </Button>
             <Note>
-              <b>Cất đi</b> = biến khỏi sơ đồ, cấu hình và chìa còn nguyên — lấy lại bằng nút{' '}
-              <b>Kết nối</b>. <b>Xoá hẳn</b> = bỏ khỏi công ty. Cùng hai mức với nhân viên.
+              Cấu hình và chìa khoá <b>vẫn được giữ</b>. Cắm lại đúng thứ này lúc nào cũng được — nút{' '}
+              <b>Kết nối</b> sẽ tự tìm ra nó.
             </Note>
             <Note>
               Nối vào Trợ lý = việc vặt Trợ lý tự xử lý. Dây này hiện mới được <b>ghi nhận</b>: nó cần{' '}
@@ -634,22 +674,23 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
       <Dialog open={!!confirmRemove} onOpenChange={(o) => !o && setConfirmRemove(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Xoá hẳn “{confirmRemove?.label}”?</DialogTitle>
+            <DialogTitle>
+              {confirmRemove?.kind === 'mcp'
+                ? `Xoá “${confirmRemove.label}” khỏi văn phòng này?`
+                : `Xoá hẳn “${confirmRemove?.label}”?`}
+            </DialogTitle>
             <DialogDescription>
               {confirmRemove?.kind === 'mcp' ? (
                 <>
-                  Bỏ kết nối này khỏi <code>company.yaml</code> — <b>mọi văn phòng</b> đều mất, không
-                  riêng văn phòng này.
+                  Kết nối này biến khỏi sơ đồ, và những nhân viên đang nối tới nó thôi dùng được.{' '}
+                  <b>Chỉ văn phòng này</b> — nơi khác không bị chạm.
                   <br />
                   <br />
-                  {/* Rút dây ≠ vứt chìa. Người ta hay rút để xoay token hoặc thử
-                      một server khác; bắt họ đi lấy lại chìa là phạt một thao
-                      tác vốn vô hại. → `Company.removeArm` */}
-                  <b>Chìa khoá vẫn được giữ lại</b>, nên cắm lại thì không phải nhập lại.
-                  <br />
-                  <br />
-                  Chỉ muốn nó biến khỏi sơ đồ văn phòng này? Bấm <b>Thôi</b> rồi chọn{' '}
-                  <b>Gỡ khỏi văn phòng này</b>.
+                  {/* Không doạ, vì không có gì đáng doạ: sổ chung giữ cấu hình và
+                      chìa, nên đây là thao tác HOÀN TÁC ĐƯỢC. Nói đúng mức độ
+                      của nó là cách giữ cho những cảnh báo THẬT còn sức nặng. */}
+                  Cấu hình và chìa khoá <b>vẫn được giữ</b>. Cắm lại đúng thứ này thì không phải nhập
+                  lại gì — chỉ mất công nối dây.
                 </>
               ) : (
                 <>
@@ -680,7 +721,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                 setConfirmRemove(null);
               }}
             >
-              Xoá hẳn
+              {confirmRemove?.kind === 'mcp' ? 'Xoá khỏi văn phòng' : 'Xoá hẳn'}
             </Button>
           </DialogFooter>
         </DialogContent>

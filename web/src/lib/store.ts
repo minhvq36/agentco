@@ -734,11 +734,24 @@ export const actions = {
     return true;
   },
 
-  /** XOÁ HẲN khỏi company.yaml — mọi văn phòng đều mất. Chìa vẫn được giữ. */
+  /**
+   * RÚT một cánh tay khỏi văn phòng NÀY. Sổ chung giữ nguyên cấu hình + chìa,
+   * nên cắm lại đúng thứ đó là tìm thấy — đó là lý do không còn mức "lưu trữ".
+   */
   async removeArm(server: string): Promise<boolean> {
-    const res = await guard(() => api.removeArm(server));
+    const id = state.officeId;
+    if (!id) return false;
+    const res = await guard(() => api.removeArm(server, id));
     if (!res) return false;
     set({ selected: null });
+    await actions.refreshCanvas();
+    return true;
+  },
+
+  /** Đổi tên kết nối. Nhãn không phải danh tính, nên đây là thao tác rẻ nhất hệ. */
+  async renameArm(server: string, label: string): Promise<boolean> {
+    const res = await guard(() => api.renameArm(server, label));
+    if (!res) return false;
     await actions.refreshCanvas();
     return true;
   },
