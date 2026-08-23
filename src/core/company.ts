@@ -30,6 +30,7 @@ import {
   type CompanyPaths,
 } from './paths.js';
 import { Office } from './office.js';
+import { readSecrets, writeSecrets } from './secrets.js';
 import {
   appendRename,
   appendUsage,
@@ -394,6 +395,122 @@ export class Company {
       plan_id: null,
     });
     return this.config.models;
+  }
+
+  /**
+   * CẮM MỘT CÁNH TAY. → docs/SPEC-arms.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KHÔNG CẦN RESTART, VÀ KHÔNG CẦN `setMcpServers`.                         │
+   * │                                                                          │
+   * │ 📖 SDK có `Query.setMcpServers()` để cắm/rút giữa phiên. Ta KHÔNG dùng,   │
+   * │ và lý do là kiến trúc chứ không phải lười: **worker là `query()` one-shot │
+   * │ nên lượt sau tự đọc cấu hình mới**, còn phiên dài duy nhất (Trợ lý)       │
+   * │ KHÔNG BAO GIỜ cầm MCP (MCP phá prompt cache khi `resume` — `types.ts:499`).│
+   * │ ⇒ `applyCompanyConfig` là đủ, đúng như `updateModels` ngay trên.          │
+   * │                                                                          │
+   * │ Đây là lý do bước `stop`/`start` ở bài 10 bước B7 biến mất — không phải   │
+   * │ nhờ một API mới, mà nhờ một ràng buộc đã có sẵn từ đầu.                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Bí mật đi vào `.state/secrets.json` (đã gitignore, và từ 23/08 nhân viên
+   * không đọc được — `paths.ts §guardedZone`). Cấu hình đi vào `company.yaml`,
+   * nơi commit lên git được. **Giá trị chìa không bao giờ nằm trong company.yaml.**
+   */
+  addArm(input: { id: string; config: Record<string, unknown>; secrets?: Record<string, string> }): void {
+    const id = input.id.trim();
+    if (!isSafeId(id)) {
+      throw new RunError('Mã cánh tay chỉ được dùng chữ thường, số, gạch ngang.', 'other');
+    }
+    if (!input.config || typeof input.config !== 'object') {
+      throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
+    }
+
+    // Chìa TRƯỚC cấu hình: nếu ghi cấu hình xong mới hỏng ở bước chìa thì trên
+    // sơ đồ đã có một node trỏ vào một tiến trình không bao giờ khởi động được.
+    const secrets = input.secrets ?? {};
+    if (Object.keys(secrets).length) {
+      const pp = companyPaths(this.dir);
+      writeSecrets(pp, { ...readSecrets(pp), ...secrets });
+    }
+
+    /**
+     * ⚠ `createNode` mặc định ra FLOW style, và flow LÂY từ map cha xuống: cả
+     * cấu hình dồn vào một dòng, đường dẫn Windows không được nháy. `company.yaml`
+     * là file người dùng ĐỌC và commit lên git — nó phải trông như ví dụ đã
+     * comment sẵn ngay phía trên khoá này.
+     *
+     * Ép block cho map ở cả hai tầng. `args` cũng ra block theo — hơi khác ví
+     * dụ đã comment, nhưng đọc tốt hơn với tên gói dài kèm số phiên bản ghim.
+     */
+    const block = (n: unknown) => {
+      if (n && typeof n === 'object') (n as { flow?: boolean }).flow = false;
+      return n;
+    };
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.has('mcpServers')) doc.set('mcpServers', block(doc.createNode({})));
+    block(doc.get('mcpServers', true));
+    doc.setIn(['mcpServers', id], block(doc.createNode(input.config)));
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+
+    this.emit({
+      type: 'company.offices',
+      say: `Đã cắm "${id}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.`,
+      office: '',
+      plan_id: null,
+    });
+  }
+
+  /**
+   * RÚT một cánh tay khỏi công ty.
+   *
+   * ⚠ **Chìa KHÔNG bị xoá theo.** Rút dây ≠ vứt chìa: người dùng hay rút để xoay
+   * token hoặc thử một server khác, và bắt họ đi lấy lại token là phạt một thao
+   * tác vốn vô hại. Muốn xoá chìa thì có đường riêng, có chủ ý.
+   *
+   * Cạnh nối `mcp→agent` sống trong `roles/*.yaml`; `layout.read()` tự bỏ qua
+   * cạnh trỏ tới node không còn tồn tại, nên không cần dọn tay ở đây.
+   */
+  removeArm(id: string): void {
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.deleteIn(['mcpServers', id])) {
+      throw new RunError(`Không có cánh tay "${id}".`, 'other');
+    }
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+
+    this.emit({
+      type: 'company.offices',
+      say: `Đã rút "${id}". Chìa khoá vẫn được giữ lại.`,
+      office: '',
+      plan_id: null,
+    });
+  }
+
+  /** Cánh tay đã cắm ở CẤP CÔNG TY + nơi nào đang dùng. → SPEC-arms.md §6f khối 2 */
+  listArms(): { id: string; config: unknown; usedBy: { office: string; role: string }[] }[] {
+    return Object.entries(this.config.mcpServers).map(([id, config]) => {
+      const usedBy: { office: string; role: string }[] = [];
+      for (const office of this.offices.values()) {
+        for (const [roleId, role] of office.loaded.roles) {
+          if (role.mcp.includes(id)) usedBy.push({ office: office.id, role: roleId });
+        }
+      }
+      return { id, config, usedBy };
+    });
   }
 
   /**

@@ -141,9 +141,39 @@ Ràng buộc bắt buộc:
 
 | Hạng mục | Trần | Kiểu |
 |---|---|---|
-| Tổng token connector / role | **2 000** | cứng — từ chối gán thêm |
+| ~~Tổng token connector / role~~ | ~~**2 000** cứng~~ | 🔴 **ĐÃ BỎ 23/08** — xem khối dưới |
 | Số action / connector | 20 | mềm — cảnh báo |
 | Mô tả một action | 120 token | cứng |
+
+> ### 🔴 TRẦN 2 000 ĐÃ BỎ — số đo giết nó, user chốt 23/08
+>
+> Con số 2 000 viết ngày 14/08, **khi chưa ai đo một cánh tay nào**. Đo 23/08
+> (`scripts/spike-mcp.ts`, `SPEC-arms.md` §9b): **một** MCP `filesystem` 14 tool tốn
+> **2 185 token/lượt**. ⇒ trần đó **chặn ngay cánh tay ĐẦU TIÊN**, trước khi người dùng cắm được
+> thứ gì.
+>
+> **Thay bằng: HIỆN GIÁ, không chặn.**
+>
+> ```
+> 🔌 File trên máy      ● hoạt động · 14 việc · ~2 200 token mỗi lượt
+> ```
+>
+> **Ba lý do, và lý do thứ ba là lý do chốt:**
+>
+> 1. **Trần cứng ở đây chặn đúng thứ người dùng CỐ Ý muốn.** Họ vừa đi qua ba bước để cắm nó.
+> 2. **Con số thì họ chưa bao giờ được thấy.** Chặn một thứ vô hình rồi báo *"vượt trần"* là câu
+>    lỗi không có đường đi tiếp — đúng lớp lỗi *"nới `max_usd` trong `roles/…yaml`"* (§5m ②): không
+>    nói dối, nhưng **chỉ sai cửa**.
+> 3. **Tiền là của khách.** Nghĩa vụ của ta là làm lựa chọn đó **sáng mắt thay vì mù**, không phải
+>    quyết hộ. Cùng luật đã chốt cho `model_tier` (`SESSIONS_MEMORY` §5l ④): *không dùng số này để
+>    agentco tự nâng/hạ — đó là quyết định của khách*.
+>
+> ⚠ **"Bỏ trần" KHÔNG có nghĩa "thôi đo".** Số phải hiện ở **ba chỗ**, và thiếu chỗ nào là quay lại
+> đúng cái vô hình vừa bỏ: trên **thẻ danh mục** lúc chọn · trên **node** trên sơ đồ · trong **bảng
+> chi tiết** của nhân viên được nối vào (cộng dồn cả các cánh tay của người đó).
+>
+> Nguồn của số: `getContextUsage().mcpTools` — nó phân rã tới từng tool. ⚠ **Không** dùng số của
+> hoá đơn ở đây: hai nguồn lệch 27% và **không đo cùng một thứ** (`SPEC-arms.md` §9b ③).
 
 **Tin tốt:** connector nằm trong **static prefix** nên được cache. Trả một lần cache write, sau đó gần như miễn phí. Nhưng vì thế:
 

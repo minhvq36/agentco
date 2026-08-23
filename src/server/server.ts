@@ -23,6 +23,8 @@ import { PREVIEW_MAX_BYTES, mimeOf } from '../core/artifacts.js';
 import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
+import { catalogForUi } from '../core/catalog.js';
+import { baselineTokens, probeArm } from '../core/probe.js';
 
 /**
  * Yêu cầu này đến từ chính máy đang chạy daemon?
@@ -164,6 +166,57 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         byOffice: company.costByOffice(),
       });
     }
+    // ── cánh tay (MCP) — cấp CÔNG TY. → docs/SPEC-arms.md §6
+    //
+    // Ở cấp công ty vì `mcpServers` là cấp công ty: cắm một lần, mọi văn phòng
+    // dùng lại được mà không phải khai chìa lần hai. Còn AI ĐƯỢC DÙNG thì là
+    // chuyện của văn phòng — nó đi qua cạnh nối trên canvas, không qua đây.
+    if (url.pathname === '/api/arms/catalog' && method === 'GET') {
+      return json(res, 200, { arms: catalogForUi() });
+    }
+    if (url.pathname === '/api/arms' && method === 'GET') {
+      return json(res, 200, { arms: company.listArms() });
+    }
+    /**
+     * THỬ NGAY — bắt tay thật với cấu hình chưa lưu.
+     *
+     * ⚠ Đây là route CHẬM nhất trong cả server: đo được 4 s khi cache `npx` ấm,
+     * **17,7 s** lần đầu phải tải gói. Giao diện PHẢI hiện "đang kết nối…" chứ
+     * không được coi im lặng là hỏng. → SPEC-arms.md §3a
+     */
+    if (url.pathname === '/api/arms/test' && method === 'POST') {
+      const body = await readJson<{ id?: string; config?: Record<string, unknown> }>(req);
+      if (!body.config) return json(res, 400, { error: 'thiếu "config"' });
+      const base = await baselineTokens();
+      const r = await probeArm({ [body.id || 'thu']: body.config as never }, base);
+      return json(res, 200, r);
+    }
+    if (url.pathname === '/api/arms' && method === 'POST') {
+      const body = await readJson<{
+        id?: string;
+        config?: Record<string, unknown>;
+        secrets?: Record<string, string>;
+        office?: string;
+        grantTo?: string[];
+      }>(req);
+      if (!body.id || !body.config) return json(res, 400, { error: 'thiếu "id" hoặc "config"' });
+      company.addArm({ id: body.id, config: body.config, ...(body.secrets ? { secrets: body.secrets } : {}) });
+
+      // Giao cho ai — cùng MỘT request, cố ý. Tách làm hai lời gọi là mở ra một
+      // cửa sổ mà cánh tay đã tồn tại nhưng chưa ai dùng được, và nếu lời gọi
+      // thứ hai hỏng thì người dùng ở lại với đúng cái NODE CHẾT mà bước 3 sinh
+      // ra để tránh. → Office.grantArm
+      let canvas: unknown;
+      if (body.office && body.grantTo?.length) {
+        canvas = company.get(body.office).grantArm(body.id, body.grantTo);
+      }
+      return json(res, 201, { id: body.id, arms: company.listArms(), canvas });
+    }
+    if (segments[0] === 'api' && segments[1] === 'arms' && segments[2] && method === 'DELETE') {
+      company.removeArm(decodeURIComponent(segments[2]));
+      return json(res, 200, { arms: company.listArms() });
+    }
+
     if (url.pathname === '/api/shutdown' && method === 'POST') {
       json(res, 200, { ok: true });
       setTimeout(() => opts.onShutdown?.(), 100);

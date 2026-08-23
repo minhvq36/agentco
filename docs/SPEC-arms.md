@@ -1287,9 +1287,10 @@ một **phép đo lúc chạy**. Và nó cho phép giao diện nói câu đúng 
 >
 > | | |
 > |---|---|
-> | **Trần token cho cánh tay là THẬT** | `SPEC-connectors` §5 đặt trần 2 000 token/vai trò khi chưa có số. Một cánh tay đã **2 185**. ⇒ trần đó **chặn ngay cánh tay đầu tiên** — phải đặt lại bằng số, không bằng ước |
-> | **Giao diện phải hiện giá** | `🔌 File trên máy · 14 việc · ~2 200 token mỗi lượt`. Người dùng có quyền biết cái nút họ sắp bấm tốn gì — cùng luật với nút Lưu của skills |
-| | **Cắm 3 cánh tay ≈ +6 500 token/lượt** | trên nền 4 546 là **2,4×**. Đây là lúc câu hỏi `ToolSearch` (§5c) đáng mở lại — nhưng **chỉ khi đo được rằng hoãn thật sự rẻ hơn**, không phải vì con số này trông to |
+> | ✅ **BỎ TRẦN** — user chốt 23/08 | `SPEC-connectors` §5 đặt trần **2 000** token/vai trò khi chưa ai đo. Một cánh tay đã **2 185** ⇒ nó **chặn ngay cánh tay ĐẦU TIÊN**. Bỏ hẳn, **không đặt số mới** |
+> | **Thay bằng: HIỆN GIÁ** | Trần cứng chặn đúng thứ người dùng **cố ý** muốn, còn con số thì họ **chưa bao giờ được thấy**. Tiền là của khách — nghĩa vụ của ta là làm lựa chọn đó **sáng mắt thay vì mù**, không quyết hộ |
+> | Ba chỗ phải hiện số | thẻ danh mục lúc chọn · node trên sơ đồ · bảng chi tiết nhân viên (**cộng dồn** mọi cánh tay của người đó). Thiếu chỗ nào là quay lại đúng cái vô hình vừa bỏ |
+> | Cắm 3 cánh tay ≈ **+6 500 token/lượt** | trên nền 4 546 là **2,4×**. Đây là lúc câu `ToolSearch` (§5c) đáng mở lại — nhưng **chỉ khi đo được rằng hoãn thật sự rẻ hơn**, không phải vì con số này trông to |
 >
 > ⚠ **Ranh giới:** đo với **đúng một** server 14 tool. Quan hệ giữa *số tool* và *số token*
 > **chưa đo** — đừng ngoại suy tuyến tính. Đo lại khi có mục danh mục thứ hai (Notion).

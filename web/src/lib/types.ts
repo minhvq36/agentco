@@ -361,3 +361,48 @@ export interface Energy {
   plan: string | null;
   seenAt: string;
 }
+
+// ─────────────────────────────────────────────────────────── cánh tay (MCP)
+// → docs/SPEC-arms.md §4e · §6
+
+/** Một mục danh mục — thứ người dùng "rút ra xài được ngay". */
+export interface CatalogArm {
+  id: string;
+  name: string;
+  /** Icon TRUNG TÍNH của ta, không phải logo bên thứ ba. → SPEC-arms.md §11c */
+  icon: string;
+  blurb: string;
+  /**
+   * Câu phụ trên thẻ nói CÁI GIÁ, không nói tính năng: người dùng chọn theo
+   * CÔNG SỨC bỏ ra, không theo tên hãng.
+   */
+  price: 'none' | 'keys' | 'login';
+  transport: 'stdio' | 'http';
+  secrets: { name: string; label: string; help: string }[];
+  /** Cánh tay cần danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
+  folders?: { label: string; help: string };
+  brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
+}
+
+/** Cánh tay đã cắm — cấp CÔNG TY, nên nó dùng lại được ở mọi văn phòng. */
+export interface InstalledArm {
+  id: string;
+  config: unknown;
+  usedBy: { office: string; role: string }[];
+}
+
+/**
+ * Kết quả bắt tay. `status` có NĂM giá trị, không phải hai — `needs-auth` KHÔNG
+ * phải lỗi, nó là "bấm nút đăng nhập đi". → SPEC-arms.md §6c
+ */
+export interface ProbeResult {
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  serverName?: string;
+  serverVersion?: string;
+  /** NGUYÊN VĂN câu lỗi của server — chuỗi duy nhất copy đi hỏi chỗ khác được. */
+  error?: string;
+  tools: { name: string; description?: string; level: 'read' | 'write_external' }[];
+  /** Token cộng vào prefix mỗi lượt. `undefined` = chưa đo được, và ô để TRỐNG. */
+  tokens?: number;
+  connectMs: number;
+}

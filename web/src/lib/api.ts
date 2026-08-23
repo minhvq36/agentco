@@ -10,6 +10,9 @@ import type {
   ArchivedAgent,
   ArtifactRecord,
   CanvasState,
+  CatalogArm,
+  InstalledArm,
+  ProbeResult,
   CompanyModels,
   CompanyView,
   KnowledgeEntry,
@@ -68,6 +71,35 @@ const enc = encodeURIComponent;
 
 export const api = {
   company: () => call<CompanyView>('/api/company'),
+
+  // ── cánh tay (MCP). → docs/SPEC-arms.md §6
+  armCatalog: () => call<{ arms: CatalogArm[] }>('/api/arms/catalog'),
+  arms: () => call<{ arms: InstalledArm[] }>('/api/arms'),
+
+  /**
+   * THỬ NGAY — bắt tay thật, chưa lưu gì.
+   *
+   * ⚠ CHẬM VÀ ĐÓ LÀ BÌNH THƯỜNG: đo được 4 giây khi cache `npx` đã ấm, **17,7
+   * giây** lần đầu phải tải gói về. Giao diện phải hiện "đang kết nối…" — coi im
+   * lặng là hỏng thì mọi cánh tay đều trông như hỏng ở lần cắm đầu tiên.
+   */
+  testArm: (id: string, config: unknown) =>
+    call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, config }) }),
+
+  addArm: (body: {
+    id: string;
+    config: unknown;
+    secrets?: Record<string, string>;
+    office?: string;
+    /** Giao cho ai — đi CÙNG request với việc cắm, xem `Office.grantArm`. */
+    grantTo?: string[];
+  }) => call<{ id: string; arms: InstalledArm[]; canvas?: CanvasState }>('/api/arms', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+
+  removeArm: (id: string) =>
+    call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}`, { method: 'DELETE' }),
 
   createOffice: (name: string) =>
     call<{ id: string }>('/api/office', { method: 'POST', body: JSON.stringify({ name }) }),

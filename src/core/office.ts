@@ -27,7 +27,7 @@ import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
 import { ArtifactStore, isStale } from './artifacts.js';
-import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
+import { LayoutStore, ASSISTANT_NODE, agentNodeId, mcpNodeId, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId, requestOf, type PlanDraft } from './assistant.js';
 import {
   helpText,
@@ -1841,6 +1841,40 @@ export class Office {
     this.refreshAssistantContext();
     this.emit({ type: 'layout.changed', say: 'Sơ đồ văn phòng đã cập nhật.', plan_id: null });
     return this.canvas();
+  }
+
+  /**
+   * GIAO một cánh tay cho những nhân viên nào. → docs/SPEC-arms.md §6f bước 3
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BƯỚC NÀY BẮT BUỘC, KHÔNG PHẢI TUỲ CHỌN — và đây là lý do nó có mã nguồn │
+   * │ riêng thay vì để giao diện tự kéo dây.                                   │
+   * │                                                                          │
+   * │ Một node KHÔNG CÓ DÂY là một NODE CHẾT: nó hiện trên sơ đồ, trông như đã │
+   * │ xong, và không ai dùng được. Người dùng non-code vừa bấm "Lưu" và thấy    │
+   * │ dấu ✓ — họ sẽ không đoán ra là còn phải kéo một sợi dây nữa. Đó đúng lớp │
+   * │ lỗi "hệ thống nói dối về trạng thái của chính nó" (§5i·1).                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Cạnh `mcp→agent` là NGUỒN SỰ THẬT cho `role.mcp` — `LayoutStore.save` ghi nó
+   * xuống `roles/<id>.yaml`, không xuống `layout.json`. Nên "kéo dây" và "cấp
+   * quyền dùng" là **cùng một hành động**, không phải hai.
+   */
+  grantArm(server: string, roleIds: string[]): CanvasState {
+    this.assertLive();
+    const from = mcpNodeId(server);
+    const cur = this.layout.read().layout.edges;
+    const have = new Set(cur.map((e) => `${e.from} ${e.to}`));
+
+    const add = roleIds
+      .filter((r) => this.loaded.roles.has(r))
+      .map((r) => ({ from, to: agentNodeId(r) }))
+      .filter((e) => !have.has(`${e.from} ${e.to}`));
+
+    // Không có gì để thêm thì KHÔNG ghi và KHÔNG phát sự kiện: một `layout.changed`
+    // rỗng làm mọi tab vẽ lại sơ đồ để nhận về đúng thứ chúng đang có.
+    if (!add.length) return this.canvas();
+    return this.saveCanvas({ edges: [...cur, ...add] });
   }
 
   /**

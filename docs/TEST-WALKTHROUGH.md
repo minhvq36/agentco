@@ -895,7 +895,7 @@ Nên hôm nay chỉ có hai lựa chọn, và cả hai đều không ổn:
 >
 > | Bài | Đo gì | Chạy được chưa |
 > |---|---|---|
-> | **11** | Cắm cánh tay **không cần chìa** (File trên máy) | ⛔ cần §6 việc 5+6 |
+> | **11** | Cắm cánh tay **không cần chìa** (File trên máy) | ✅ **CHẠY ĐƯỢC 23/08** |
 > | **12** | **Ô chìa tĩnh** + chìa đi theo dây (Notion) | ⛔ cần §6 việc 7+8 |
 > | **13** | **Transport HTTP** + tiêm `headers` (GitHub) | ⛔ cần §6 việc 10 |
 > | **14** | Google qua UI — bản thay chặng B của bài 10 | ⛔ cần §6 việc 12 |
@@ -907,7 +907,15 @@ Nên hôm nay chỉ có hai lựa chọn, và cả hai đều không ổn:
 
 ---
 
-## Bài 11 — Cắm cánh tay đầu tiên: **File trên máy** ⛔ *chưa chạy được* · ⭐ **thước của cả §6**
+## Bài 11 — Cắm cánh tay đầu tiên: **File trên máy** ✅ *chạy được 23/08* · ⭐ **thước của cả §6**
+
+> **⚠ PHẢI `stop` / `start` MỘT LẦN trước khi chạy bài này** — daemon đang chạy là bản build cũ.
+> Đây là lần restart CUỐI cho tính năng này: từ đây cắm/rút cánh tay **không cần restart nữa**
+> (`Company.addArm` → `applyCompanyConfig`, cùng khuôn `updateModels`).
+>
+> **Phần server đã được kiểm đầu-cuối** (catalog → Thử ngay → cắm → giao → canvas → `company.yaml`
+> → `roles/*.yaml`). Thứ **chưa ai bấm bằng chuột** là chính ba bước của hộp thoại — đó là phần
+> bài này đo, và là phần chỉ có mắt người dùng mới bắt được.
 
 > **Vì sao bài này quan trọng hơn vẻ ngoài của nó.** Đây là mục danh mục **duy nhất không có một ô
 > chìa nào** — nên nó tách bạch được hai thứ mà mọi bài khác trộn lẫn: *"cắm một cánh tay có dễ
@@ -942,7 +950,11 @@ Nên hôm nay chỉ có hai lựa chọn, và cả hai đều không ổn:
 > ⚠ **Đây chính là allowlist.** Không phải một ô cấu hình phụ — nó **là** cơ chế. Chọn `D:\` cả ổ
 > thì bạn vừa dựng lại đúng cái `Bash` không hàng rào mà cánh tay này sinh ra để thay thế.
 
-**Bước 6.** 🖱 **Thử ngay** → mong đợi `✓ connected` kèm **số việc** (`filesystem` khai ~10 tool).
+**Bước 6.** 🖱 **Thử ngay** → mong đợi `✓ Chạy được · 14 việc`, kèm dòng `10 việc chỉ đọc · 4 việc có ghi · ~2 775 token mỗi lượt`.
+
+> ⏱ **Chờ 20–30 giây ở lần đầu là BÌNH THƯỜNG**, không phải treo — đo đầu-cuối qua route: **22,3
+> giây** lần đầu (phải tải gói `npx` về), **~4 giây** những lần sau. Hộp thoại phải hiện *"đang kết
+> nối…"* kèm câu giải thích. **Nếu nó im lặng hoặc trả ✗ ngay lập tức thì đó mới là bug.**
 
 | Thấy gì | Nghĩa là |
 |---|---|
