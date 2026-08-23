@@ -555,6 +555,25 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Note>
               Nối vào một nhân viên = ghi <code>mcp:</code> vào <code>roles/&lt;id&gt;.yaml</code> của người đó.
             </Note>
+
+            {/*
+              HAI MỨC, đúng như nhân viên có "Cho nghỉ" và "Cất đi" — ranh giới
+              là *dựng lại được hay không*:
+
+                Gỡ khỏi văn phòng  cắt mọi sợi dây ở ĐÂY. Cấu hình và chìa còn
+                                   nguyên ở cấp công ty, nên nó quay lại qua
+                                   "đã cắm ở văn phòng khác" trong `+ Kết nối`.
+                Xoá hẳn            bỏ khỏi company.yaml. ⚠ CHÌA VẪN GIỮ — rút
+                                   dây ≠ vứt chìa: người ta hay rút để xoay
+                                   token, bắt đi lấy lại là phạt một thao tác
+                                   vốn vô hại.
+            */}
+            <div className="mt-4 flex flex-col gap-2">
+              <Button onClick={() => void actions.detachArm(node.server!)}>Gỡ khỏi văn phòng này</Button>
+              <Button variant="danger" onClick={() => setConfirmRemove(node)}>
+                Xoá hẳn kết nối
+              </Button>
+            </div>
             <Note>
               Nối vào Trợ lý = việc vặt Trợ lý tự xử lý. Dây này hiện mới được <b>ghi nhận</b>: nó cần{' '}
               <code>concierge</code> (M1) mới chạy được — Trợ lý không tự cầm MCP, vì MCP phá prompt cache ở
@@ -613,16 +632,35 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           <DialogHeader>
             <DialogTitle>Xoá hẳn “{confirmRemove?.label}”?</DialogTitle>
             <DialogDescription>
-              Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết cho
-              người này. <b>Không lấy lại được.</b>
-              <br />
-              <br />
-              Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ —
-              đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
-              <br />
-              <br />
-              Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục được
-              bất cứ lúc nào.
+              {confirmRemove?.kind === 'mcp' ? (
+                <>
+                  Bỏ kết nối này khỏi <code>company.yaml</code> — <b>mọi văn phòng</b> đều mất, không
+                  riêng văn phòng này.
+                  <br />
+                  <br />
+                  {/* Rút dây ≠ vứt chìa. Người ta hay rút để xoay token hoặc thử
+                      một server khác; bắt họ đi lấy lại chìa là phạt một thao
+                      tác vốn vô hại. → `Company.removeArm` */}
+                  <b>Chìa khoá vẫn được giữ lại</b>, nên cắm lại thì không phải nhập lại.
+                  <br />
+                  <br />
+                  Chỉ muốn nó biến khỏi sơ đồ văn phòng này? Bấm <b>Thôi</b> rồi chọn{' '}
+                  <b>Gỡ khỏi văn phòng này</b>.
+                </>
+              ) : (
+                <>
+                  Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết
+                  cho người này. <b>Không lấy lại được.</b>
+                  <br />
+                  <br />
+                  Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ
+                  — đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
+                  <br />
+                  <br />
+                  Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục
+                  được bất cứ lúc nào.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -630,7 +668,11 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Button
               variant="danger"
               onClick={() => {
-                if (confirmRemove?.role) void actions.removeAgent(confirmRemove.role);
+                if (confirmRemove?.kind === 'mcp' && confirmRemove.server) {
+                  void actions.removeArm(confirmRemove.server);
+                } else if (confirmRemove?.role) {
+                  void actions.removeAgent(confirmRemove.role);
+                }
                 setConfirmRemove(null);
               }}
             >

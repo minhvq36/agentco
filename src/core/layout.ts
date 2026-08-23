@@ -122,7 +122,36 @@ export class LayoutStore {
       if (this.office.archivedRoles.has(roleId)) continue;
       wanted.push({ id: agentNodeId(roleId), kind: 'agent', role: roleId, x: 0, y: 0 });
     }
-    for (const server of Object.keys(this.office.company.mcpServers)) {
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ CÁNH TAY CHỈ HIỆN Ở VĂN PHÒNG ĐANG DÙNG NÓ. (đổi 23/08)            │
+     * │                                                                    │
+     * │ Bản trước dựng node cho MỌI khoá trong `company.mcpServers`, ở MỌI  │
+     * │ văn phòng — đúng với ý *"một chỗ cắm, mọi văn phòng thấy"*. Ý đó    │
+     * │ viết khi cắm một MCP tốn 9 bước và không ai có quá một cái.         │
+     * │                                                                    │
+     * │ Hộp thoại `+ Kết nối` làm việc cắm rẻ đi ⇒ TIỀN ĐỀ ĐÓ HẾT ĐÚNG.     │
+     * │ User bắt được ngay lượt test đầu: cắm một cánh tay ở văn phòng này  │
+     * │ thì nó mọc lên sơ đồ của cả sáu văn phòng kia, không dây nào, không │
+     * │ việc gì.                                                           │
+     * │                                                                    │
+     * │ ⇒ Ranh giới đọc được bằng mắt: **cái gì đã cắm** là của CÔNG TY     │
+     * │ (hiện ở khối "đã cắm ở văn phòng khác" trong hộp thoại), **ai được  │
+     * │ dùng** là của VĂN PHÒNG (sợi dây trên sơ đồ này).                   │
+     * │                                                                    │
+     * │ ⚠ Duyệt theo `role.mcp` chứ KHÔNG theo `company.mcpServers`: một    │
+     * │ vai trò còn khai một server đã bị rút phải vẫn thấy node đó — ở     │
+     * │ trạng thái mồ côi, báo đỏ. Gộp hai chuyện *"văn phòng này không     │
+     * │ dùng"* và *"không còn khai trong company.yaml"* là đúng lỗi         │
+     * │ `catch { exists = false }` — hai sự việc khác hẳn nhau, một nhãn.   │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const inUse = new Set<string>(this.office.config.assistant.mcp);
+    for (const [roleId, role] of this.office.roles) {
+      if (this.office.archivedRoles.has(roleId)) continue;
+      for (const s of role.mcp) inUse.add(s);
+    }
+    for (const server of inUse) {
       wanted.push({ id: mcpNodeId(server), kind: 'mcp', server, x: 0, y: 0 });
     }
     // Hai kho đứng cạnh nhau ở hàng dưới cùng: TRÁI = kho tri thức (hệ thống tự
@@ -182,6 +211,18 @@ export class LayoutStore {
       if (n.role && this.office.archivedRoles.has(n.role)) continue;
       missing.add(n.id);
       keep(n);
+    }
+    /**
+     * Mồ côi KIỂU THỨ HAI, và nó chỉ xuất hiện từ 23/08: một vai trò còn khai
+     * `mcp: [x]` trong khi `x` đã bị rút khỏi `company.yaml`.
+     *
+     * Vòng lặp trên không bắt được nó — nó bắt node CÒN TRONG `layout.json` mà
+     * không còn được muốn; ca này thì ngược lại, node ĐANG được muốn (vì role
+     * khai) nhưng thứ nó trỏ tới đã biến mất. Hai hình dạng khác nhau, và gộp
+     * chúng vào một vòng lặp là cách chắc chắn nhất để sót một cái.
+     */
+    for (const server of inUse) {
+      if (!(server in this.office.company.mcpServers)) missing.add(mcpNodeId(server));
     }
 
     // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho node mới.
@@ -298,6 +339,31 @@ export class LayoutStore {
   save(input: { nodes?: unknown; edges?: unknown }): { touched: string[] } {
     const current = this.read().layout;
     const byId = new Map(current.nodes.map((n) => [n.id, n]));
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ "NODE HIỆN RA" ≠ "ĐẦU DÂY HỢP LỆ" — và gộp hai cái là một VÒNG LẶP │
+     * │ tự khoá. (bắt được lúc kiểm đầu-cuối 23/08, ngay sau khi viết)      │
+     * │                                                                    │
+     * │ Từ 23/08 `read()` chỉ dựng node mcp cho server ĐANG ĐƯỢC DÙNG ở văn │
+     * │ phòng này (`role.mcp`). Nhưng `role.mcp` lại được ghi TỪ cạnh nối, │
+     * │ mà cạnh nối thì `sanitizeEdges` lọc theo node đang có ⇒ cắm một     │
+     * │ cánh tay mới và giao cho ai đó thì:                                 │
+     * │                                                                    │
+     * │   chưa ai dùng → không có node → cạnh bị loại → không ghi `mcp:`    │
+     * │   → vẫn không ai dùng. Kẹt vĩnh viễn, và **im lặng**.               │
+     * │                                                                    │
+     * │ Hai tập vốn khác nhau và giờ nói ra: HIỆN RA = đang có dây ở văn    │
+     * │ phòng này (chuyện của sơ đồ). HỢP LỆ = có khai trong `company.yaml`  │
+     * │ (chuyện của công ty). Node bù ở đây chỉ sống trong lời gọi này để   │
+     * │ thẩm định cạnh — nó KHÔNG bao giờ vào `layout.json`, vì cạnh mcp    │
+     * │ vốn không được lưu ở đó.                                           │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    for (const server of Object.keys(this.office.company.mcpServers)) {
+      const id = mcpNodeId(server);
+      if (!byId.has(id)) byId.set(id, { id, kind: 'mcp', server, x: 0, y: 0 });
+    }
 
     // Toạ độ: chỉ nhận node đã biết. Client không được tự sinh node bằng PUT.
     if (Array.isArray(input.nodes)) {

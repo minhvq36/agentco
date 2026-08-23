@@ -140,9 +140,31 @@ export function arrangeAll(
     }
   }
 
-  mcps.forEach((n, i) => {
-    out.set(n.id, { x: Math.round(ORIGIN_X + width + 90), y: 40 + i * (NODE_SIZE.mcp.h + 34) });
-  });
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CÁNH TAY XẾP THÀNH MỘT HÀNG DƯỚI CÙNG, CĂN GIỮA. (đổi 23/08, user chốt)  │
+   * │                                                                          │
+   * │ Bản trước xếp chúng thành một CỘT bên phải, chạy từ y=40 xuống. Hai cái   │
+   * │ sai cùng lúc, và user bắt được cả hai ngay lượt test đầu:                 │
+   * │                                                                          │
+   * │  1. Nó cắt ngang trục dọc mà cả sơ đồ đang căn theo. Trợ lý trên, nhân   │
+   * │     viên giữa, hai kho dưới — rồi một cột lạ mọc ra bên hông.            │
+   * │  2. **Sai CHIỀU DÒNG CHẢY.** Cạnh là `mcp → agent`, tức cánh tay NUÔI    │
+   * │     nhân viên. Đặt nó ngang vai nhân viên thì sợi dây đi ngang, và mắt   │
+   * │     không đọc ra ai cấp gì cho ai.                                       │
+   * │                                                                          │
+   * │ Đặt dưới cùng thì ngữ pháp của cả sơ đồ thành một câu đọc được:          │
+   * │ **việc đi từ trên xuống, tài nguyên đẩy từ dưới lên.** Hai kho và cánh   │
+   * │ tay cùng nằm ở tầng dưới vì chúng cùng là thứ nhân viên VỚI TỚI.         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  if (mcps.length) {
+    const armStep = NODE_SIZE.mcp.w + COL_GAP;
+    const armW = mcps.length * armStep - COL_GAP;
+    const armX = Math.round(mid - armW / 2);
+    const armY = shelfY + NODE_SIZE.knowledge.h + SHELF_DROP;
+    mcps.forEach((n, i) => out.set(n.id, { x: armX + i * armStep, y: armY }));
+  }
 
   return out;
 }

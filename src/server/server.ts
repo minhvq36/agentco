@@ -23,6 +23,7 @@ import { PREVIEW_MAX_BYTES, mimeOf } from '../core/artifacts.js';
 import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
+import { browseDirs } from '../core/paths.js';
 import { catalogForUi } from '../core/catalog.js';
 import { baselineTokens, probeArm } from '../core/probe.js';
 
@@ -171,6 +172,14 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     // Ở cấp công ty vì `mcpServers` là cấp công ty: cắm một lần, mọi văn phòng
     // dùng lại được mà không phải khai chìa lần hai. Còn AI ĐƯỢC DÙNG thì là
     // chuyện của văn phòng — nó đi qua cạnh nối trên canvas, không qua đây.
+    /**
+     * Duyệt thư mục cho bộ chọn. Liệt kê filesystem của DAEMON — đúng cái mà
+     * cánh tay sẽ nhìn thấy, không phải cái của người đang ngồi trước màn hình.
+     * Chỉ trả TÊN thư mục, không đọc nội dung gì. → `paths.ts §browseDirs`
+     */
+    if (url.pathname === '/api/browse' && method === 'GET') {
+      return json(res, 200, browseDirs(url.searchParams.get('path') ?? undefined));
+    }
     if (url.pathname === '/api/arms/catalog' && method === 'GET') {
       return json(res, 200, { arms: catalogForUi() });
     }

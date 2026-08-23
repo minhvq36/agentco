@@ -423,6 +423,79 @@ export function guardedZone(
 }
 
 /**
+ * DUYỆT THƯ MỤC — nguồn của bộ chọn thư mục trong hộp thoại `+ Kết nối`.
+ * → docs/SPEC-arms.md §6f
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG DÙNG HỘP THOẠI CHỌN FILE CỦA HỆ ĐIỀU HÀNH                   │
+ * │                                                                          │
+ * │ Trình duyệt KHÔNG đưa được đường dẫn tuyệt đối: `<input webkitdirectory>` │
+ * │ chỉ trả tên tương đối, File System Access API trả một handle chứ không    │
+ * │ phải chuỗi. Còn mở hộp thoại của HĐH thì nó mở **trên MÁY CHỦ** — đúng ca │
+ * │ nút 📂 đã dẫm (`isLoopback`): bấm ở Hà Nội, cửa sổ bật ở Singapore.       │
+ * │                                                                          │
+ * │ ⇒ Tự liệt kê. Chạy được cả khi daemon ở xa hoặc trong container, và nó    │
+ * │ liệt kê ĐÚNG cái filesystem mà cánh tay sẽ nhìn thấy — không phải cái     │
+ * │ filesystem của người đang ngồi trước màn hình. Với Docker (§10b) đó là    │
+ * │ khác biệt sống còn, và bộ chọn này tự đúng ở đó mà không sửa gì.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ CHỈ ĐỌC TÊN, không đọc nội dung. Nó nói *"có những thư mục nào"*, và đó là
+ * thứ ít nhất cần để chọn được — không hơn.
+ */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+}
+
+export function browseDirs(target?: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
+  // Không truyền gì = gốc. Trên Windows "gốc" là DANH SÁCH Ổ ĐĨA, không phải
+  // một thư mục — bỏ qua chuyện này là người dùng Windows không có đường lên
+  // trên `C:\` và không bao giờ với tới ổ D.
+  if (!target) {
+    if (process.platform === 'win32') {
+      const drives: BrowseEntry[] = [];
+      for (const c of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+        const root = `${c}:\\`;
+        try {
+          if (fs.existsSync(root)) drives.push({ name: root, path: root });
+        } catch {
+          /* ổ mạng đã ngắt thì bỏ qua, đừng làm hỏng cả danh sách */
+        }
+      }
+      return { path: '', parent: null, dirs: drives };
+    }
+    return listDirs('/');
+  }
+  return listDirs(path.resolve(target));
+}
+
+function listDirs(dir: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
+  const up = path.dirname(dir);
+  // `dirname('C:\\')` trả về chính nó ⇒ đã ở gốc ổ. Trả `''` để giao diện quay
+  // về danh sách ổ đĩa thay vì đưa một nút "lên trên" không đi đâu cả.
+  const parent = up === dir ? (process.platform === 'win32' ? '' : null) : up;
+
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // Không đọc được (không quyền, ổ đã rút) — trả rỗng chứ không ném. Người
+    // dùng vẫn bấm "lên trên" được, và đó là đường thoát duy nhất họ cần.
+    return { path: dir, parent, dirs: [] };
+  }
+
+  const dirs = entries
+    // Bỏ thư mục ẩn: chúng là nhiễu với người dùng văn phòng, và `.state/` thì
+    // đằng nào cũng nằm sau hàng rào `guardedZone`.
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => ({ name: e.name, path: path.join(dir, e.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+
+  return { path: dir, parent, dirs };
+}
+
+/**
  * Có thật trên đĩa không. `existsSync` **ném được**, không chỉ trả `false`: ký
  * tự cấm trong tên, hoặc một ổ mạng đã ngắt. Ném ở đây là làm sập cả lượt lập
  * kế hoạch vì một đường dẫn gõ sai — đúng thứ phép kiểm này sinh ra để báo cáo

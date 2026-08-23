@@ -261,17 +261,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
             {pick?.folders && (
               <>
-                <Label htmlFor="arm-folders">{pick.folders.label}</Label>
-                <Textarea
-                  id="arm-folders"
-                  autoFocus
-                  rows={3}
-                  className="font-mono text-[12px]"
-                  value={folders}
-                  onChange={(e) => setFolders(e.target.value)}
-                  placeholder={'Mỗi dòng một thư mục\nD:\\Ho so\nD:\\Downloads'}
+                <Label>{pick.folders.label}</Label>
+                <FolderPicker
+                  chosen={folders.split('\n').map((s) => s.trim()).filter(Boolean)}
+                  onChange={(list) => {
+                    setFolders(list.join('\n'));
+                    // Đổi danh sách thư mục thì kết quả Thử cũ nói về một cấu
+                    // hình KHÁC. Giữ dấu ✓ lại là cho Lưu một thứ chưa ai thử.
+                    setProbe(null);
+                  }}
                 />
-                <p className="mt-1 text-xs text-muted">{pick.folders.help}</p>
+                <p className="mt-1.5 text-xs text-muted">{pick.folders.help}</p>
+                {/*
+                  Đo 23/08: một cánh tay `filesystem` nhận NHIỀU gốc cùng lúc và
+                  vẫn `connected`. Nói ra, vì trực giác mặc định là "mỗi thư mục
+                  một kết nối" — và đi đường đó thì đụng ngay chốt trùng mã.
+                */}
+                <p className="mt-1 text-xs text-muted">
+                  Chọn được nhiều thư mục cho cùng một kết nối — không cần tạo nhiều cái.
+                </p>
               </>
             )}
 
@@ -372,6 +380,107 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * BỘ CHỌN THƯ MỤC — duyệt và bấm, không gõ tay.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO NÓ THAY HẲN Ô GÕ TAY, chứ không đứng cạnh làm "tiện ích thêm"     │
+ * │                                                                          │
+ * │ Ô gõ tay đẩy BỐN bài toán sang người dùng, và cả bốn đều không phải việc │
+ * │ của họ: gõ sai một ký tự · `\` hay `/` · thư mục có dấu cách · và câu    │
+ * │ hỏi "đường dẫn này là trên MÁY NÀO" khi daemon chạy ở VPS.               │
+ * │                                                                          │
+ * │ Duyệt-và-bấm xoá cả bốn cùng lúc: chuỗi do MÁY CHỦ sinh ra, đúng định    │
+ * │ dạng của chính nó, đúng cái filesystem mà cánh tay sẽ nhìn thấy.         │
+ * │                                                                          │
+ * │ ⚠ Và một chuyện đã ĐO: `args` đi vào `spawn` dạng MẢNG, không qua shell. │
+ * │ Nên thư mục có dấu cách chạy trần bình thường, còn **bọc dấu nháy vào là │
+ * │ HỎNG** (`failed · MCP error -32000`) — dấu nháy trở thành một phần của   │
+ * │ tên thư mục. Bộ chọn làm câu hỏi đó biến mất luôn.                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function FolderPicker({ chosen, onChange }: { chosen: string[]; onChange(v: string[]): void }) {
+  const [cur, setCur] = useState<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>({
+    path: '',
+    parent: null,
+    dirs: [],
+  });
+  const [loading, setLoading] = useState(false);
+
+  const go = (p?: string) => {
+    setLoading(true);
+    void api
+      .browse(p)
+      .then(setCur)
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => go(), []);
+
+  const here = cur.path;
+  const already = here && chosen.includes(here);
+
+  return (
+    <div className="rounded-md border border-line">
+      <div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
+        <Button
+          size="sm"
+          disabled={cur.parent === null}
+          onClick={() => go(cur.parent ?? undefined)}
+          aria-label="Lên thư mục trên"
+        >
+          ↑
+        </Button>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
+          {here || 'Chọn ổ đĩa'}
+        </span>
+        {/* Thêm CHÍNH thư mục đang mở — nếu không thì không có cách nào chọn một
+            thư mục không có thư mục con, và đó là ca rất thường gặp. */}
+        <Button size="sm" disabled={!here || !!already} onClick={() => onChange([...chosen, here])}>
+          {already ? 'Đã chọn' : 'Chọn thư mục này'}
+        </Button>
+      </div>
+
+      <div className="max-h-40 overflow-y-auto">
+        {loading && <div className="px-3 py-2 text-xs text-muted">Đang đọc…</div>}
+        {!loading && cur.dirs.length === 0 && (
+          <div className="px-3 py-2 text-xs text-muted">Không có thư mục con nào đọc được ở đây.</div>
+        )}
+        {!loading &&
+          cur.dirs.map((d) => (
+            <button
+              key={d.path}
+              type="button"
+              onDoubleClick={() => go(d.path)}
+              onClick={() => go(d.path)}
+              className="block w-full truncate px-3 py-1.5 text-left text-[13px] hover:bg-accent-soft"
+            >
+              📁 {d.name}
+            </button>
+          ))}
+      </div>
+
+      {chosen.length > 0 && (
+        <div className="border-t border-line px-2 py-1.5">
+          {chosen.map((p) => (
+            <div key={p} className="flex items-center gap-2 py-0.5">
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{p}</span>
+              <button
+                type="button"
+                className="text-xs text-muted hover:text-danger"
+                onClick={() => onChange(chosen.filter((x) => x !== p))}
+              >
+                bỏ
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

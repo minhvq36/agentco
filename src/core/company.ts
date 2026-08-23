@@ -425,6 +425,25 @@ export class Company {
     if (!input.config || typeof input.config !== 'object') {
       throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
     }
+    /**
+     * ⚠ TRÙNG MÃ = GHI ĐÈ IM LẶNG, và user bắt được ngay lượt test đầu: cắm
+     * `files` cho thư mục A rồi cắm `files` cho thư mục B thì A biến mất, không
+     * một câu nào. Node trên sơ đồ vẫn y nguyên (cùng id), mọi sợi dây vẫn y
+     * nguyên — chỉ thư mục bên dưới đổi. **Không có triệu chứng ở chỗ nó nằm.**
+     *
+     * Từ chối, KHÔNG tự đổi tên hộ: đổi thành `files-2` là ô `viết lại lặng lẽ`
+     * — người dùng gõ một cái tên và nhận về một cái khác. Câu từ chối nêu luôn
+     * hai đường đi tiếp, vì "đã tồn tại" mà không nói làm gì tiếp là bỏ họ ở đó.
+     *
+     * ⚠ Một cánh tay `filesystem` nhận NHIỀU thư mục cùng lúc (đo 23/08:
+     * `connected` với 2 gốc) — nên "hai thư mục" thường KHÔNG cần hai cánh tay.
+     */
+    if (id in this.config.mcpServers) {
+      throw new RunError(
+        `Đã có kết nối tên "${id}". Đặt tên khác, hoặc sửa cái đang có — một kết nối "file trên máy" nhận được nhiều thư mục cùng lúc.`,
+        'other',
+      );
+    }
 
     // Chìa TRƯỚC cấu hình: nếu ghi cấu hình xong mới hỏng ở bước chìa thì trên
     // sơ đồ đã có một node trỏ vào một tiến trình không bao giờ khởi động được.

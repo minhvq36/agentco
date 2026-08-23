@@ -715,6 +715,34 @@ export const actions = {
     return true;
   },
 
+  /**
+   * GỠ một cánh tay khỏi văn phòng NÀY — cắt mọi sợi dây ở đây, giữ nguyên cấu
+   * hình và chìa ở cấp công ty. Nó quay lại qua khối "đã cắm ở văn phòng khác".
+   *
+   * Cắt bằng cách ghi lại `edges` chứ không có route riêng: cạnh `mcp→agent`
+   * sống trong `roles/*.yaml`, và `LayoutStore.save` đã là con đường DUY NHẤT
+   * ghi xuống đó. Thêm một cửa thứ hai là dựng một bản sao của cùng một luật.
+   */
+  async detachArm(server: string): Promise<boolean> {
+    const c = state.canvas;
+    if (!c) return false;
+    const from = `mcp:${server}`;
+    const kept = c.edges.filter((e) => e.from !== from);
+    if (kept.length === c.edges.length) return true;
+    await actions.saveCanvas(c.nodes, kept, true);
+    set({ selected: null });
+    return true;
+  },
+
+  /** XOÁ HẲN khỏi company.yaml — mọi văn phòng đều mất. Chìa vẫn được giữ. */
+  async removeArm(server: string): Promise<boolean> {
+    const res = await guard(() => api.removeArm(server));
+    if (!res) return false;
+    set({ selected: null });
+    await actions.refreshCanvas();
+    return true;
+  },
+
   /** Người dùng gõ một phím. Ghi cả vào bộ nhớ lẫn đĩa — xem `draft`. */
   setDraft(text: string): void {
     set({ draft: text });

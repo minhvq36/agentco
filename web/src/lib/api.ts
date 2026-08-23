@@ -72,6 +72,16 @@ const enc = encodeURIComponent;
 export const api = {
   company: () => call<CompanyView>('/api/company'),
 
+  /**
+   * Duyệt thư mục trên máy CHẠY DAEMON. Trình duyệt không đưa được đường dẫn
+   * tuyệt đối, còn hộp thoại của HĐH thì mở nhầm máy khi daemon ở xa — nên ta
+   * tự liệt kê. → `paths.ts §browseDirs`
+   */
+  browse: (p?: string) =>
+    call<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>(
+      `/api/browse${p ? `?path=${enc(p)}` : ''}`,
+    ),
+
   // ── cánh tay (MCP). → docs/SPEC-arms.md §6
   armCatalog: () => call<{ arms: CatalogArm[] }>('/api/arms/catalog'),
   arms: () => call<{ arms: InstalledArm[] }>('/api/arms'),
