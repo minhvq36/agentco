@@ -542,7 +542,25 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                   trong khi ngón tay đặt ở đỉnh. Lấy cái tên thay cho vị trí —
                   cùng lỗi với `pitch` vs `tools`, ở tầng pixel.
                 */}
-                {(n.kind === 'agent' || n.kind === 'assistant') && (
+                {/*
+                  ┌──────────────────────────────────────────────────────────┐
+                  │ SỐ CỔNG = SỐ QUAN HỆ CHẠM VÀO NODE ĐÓ. (chốt 23/08)      │
+                  │                                                          │
+                  │   Trợ lý     chỉ GỬI          → 1 cổng, ở ĐÁY            │
+                  │   cánh tay   chỉ GỬI          → 1 cổng, ở ĐỈNH           │
+                  │   nhân viên  NHẬN từ hai phía → 2 cổng                   │
+                  │                                                          │
+                  │ Trợ lý từng có thêm một cổng ở đỉnh, từ hồi `mcp →       │
+                  │ assistant` còn hợp lệ. Cạnh đó đã gỡ (nó không làm gì,   │
+                  │ và nếu chạy thật thì ~36 000 token mỗi lượt), nên cái     │
+                  │ cổng ở lại là một ô nhận KHÔNG NHẬN ĐƯỢC GÌ — mời người   │
+                  │ dùng kéo một sợi dây không bao giờ đậu được.              │
+                  │                                                          │
+                  │ Cùng luật vừa áp cho chính sợi dây đó: đừng bày ra một    │
+                  │ lối đi không dẫn tới đâu.                                │
+                  └──────────────────────────────────────────────────────────┘
+                */}
+                {n.kind === 'agent' && (
                   <g data-port="in" data-side="top">
                     <circle className="port-hit" cx={s.w / 2} cy={0} r={13} />
                     <circle className="port" cx={s.w / 2} cy={0} r={5.5} />

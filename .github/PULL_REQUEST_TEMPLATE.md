@@ -1,31 +1,32 @@
 <!--
-  Cảm ơn bạn đã bỏ công. Vài ô dưới đây không phải thủ tục cho vui — mỗi ô
-  tương ứng với một lớp lỗi đã từng lọt trong dự án này.
+  Thanks for the work. The boxes below are not paperwork — each one maps to a
+  class of bug that has actually slipped through this project before.
 -->
 
-## Thay đổi gì
+## What changes
 
-<!-- Một hai câu. Nếu sửa bug: bug đó biểu hiện ra sao với người dùng? -->
+<!-- One or two sentences. If it fixes a bug: what did the user see? -->
 
-## CLA — chỉ cần ở PR ĐẦU TIÊN của bạn
+## CLA — first pull request only
 
-- [ ] Đây không phải PR đầu tiên của tôi (đã ký trước đó)
-- [ ] Tôi ký CLA — dán dòng dưới đây vào và điền:
+- [ ] Not my first pull request (already signed)
+- [ ] I am signing the CLA — paste and fill in:
 
 ```
 I have read the CLA at CLA.md and I hereby sign it.
-Name: <họ tên>   GitHub: @<tài khoản>   Date: <YYYY-MM-DD>
+Name: <your full name>   GitHub: @<your-handle>   Date: <YYYY-MM-DD>
 ```
 
-> Bạn **giữ nguyên bản quyền** phần mình viết ([CLA.md](../CLA.md) §4). Giấy phép bạn cấp là thứ
-> làm cho lời hứa *"mỗi bản tự thành Apache 2.0 sau 2 năm"* thi hành được — xem
-> [LICENSE-SCHEDULE.md](../LICENSE-SCHEDULE.md).
+> You **keep the copyright** to what you wrote ([CLA.md](../CLA.md) §4). The license you grant is
+> what makes the promise *"every release becomes Apache 2.0 after two years"* enforceable.
 
-## Trước khi gửi
+## Before submitting
 
-- [ ] `npm test` xanh
-- [ ] Có test cho phần **hàm thuần** đã thêm/sửa (chạy <1 giây, 0 token)
-- [ ] Nếu động tới chi phí token: **có số đo**, và đã **cắm nonce** phá cache
-      *(không có nonce thì lần đo thứ hai ăn cache lần một và ra chênh lệch 0 — bẫy này đã bắt hụt hai lần)*
-- [ ] Nếu sửa một luật đã ghi trong `docs/`: **đã sửa tài liệu trong cùng PR này**
-      *(tài liệu lệch mã là một bug, và là loại sống lâu nhất vì nó không gây triệu chứng)*
+- [ ] `npm test` is green
+- [ ] Tests added for any **pure functions** touched (they run in under a second, cost zero tokens)
+- [ ] If token cost is affected: **measurements included**, with a **nonce** to defeat the cache
+      *(without one, the second measurement reads the first one's cache and reports zero difference —
+      this trap has been missed twice)*
+- [ ] If a rule documented in `docs/` changed: **the document is updated in this same pull request**
+      *(documentation that disagrees with the code is a bug, and the longest-lived kind, because it
+      never produces a symptom)*

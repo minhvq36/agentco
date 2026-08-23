@@ -1,88 +1,92 @@
-# Đóng góp cho agentco
+# Contributing to agentco
 
-## Giấy phép: nói thẳng, vì bạn xứng đáng biết trước khi bỏ công
+## The license, stated up front
 
-agentco dùng **[FSL-1.1-ALv2](LICENSE.md)** — *Functional Source License*. Nó **không** phải giấy
-phép được OSI công nhận, và tôi nói ra ngay ở đây thay vì để bạn tự phát hiện sau khi đã viết code.
+agentco uses **[FSL-1.1-ALv2](LICENSE.md)** — the Functional Source License. It is **not** an
+OSI-approved open source license, and this page says so before you spend time on code rather than
+letting you discover it afterwards.
 
-Nhưng nó cũng **không phải mã nguồn đóng**, và khoảng cách giữa hai điều đó lớn hơn vẻ ngoài:
+It is also not closed source, and the gap between those two is wider than it looks:
 
-| Bạn được làm ngay hôm nay | |
+| What you may do today | |
 |---|---|
-| Đọc toàn bộ mã nguồn | ✅ |
-| Chạy cho bất kỳ mục đích gì — cá nhân, nội bộ công ty, thương mại | ✅ |
-| Sửa, fork, phát hành bản sửa của bạn | ✅ |
-| Dựng một sản phẩm nội bộ trên nền nó | ✅ |
-| **Bán một sản phẩm/dịch vụ CẠNH TRANH với agentco** | ❌ — trong 2 năm, rồi hết |
+| Read the entire source | ✅ |
+| Run it for any purpose — personal, internal company use, commercial | ✅ |
+| Modify it, fork it, publish your fork | ✅ |
+| Build an internal product on top of it | ✅ |
+| **Sell a product or service that COMPETES with agentco** | ❌ — for two years, then it expires |
 
-Đúng **một** hạn chế, và nó có hạn dùng.
+Exactly one restriction, and it has an expiry date.
 
-## Điều khoản quan trọng nhất, và nó tự chạy
+## The clause that matters most, and it runs by itself
 
-> **Mỗi bản phát hành TỰ TRỞ THÀNH Apache 2.0 vào đúng ngày kỷ niệm 2 năm của chính nó.**
+> **Every release becomes Apache 2.0 on its own two-year anniversary.**
 >
 > *"We hereby irrevocably grant you an additional license to use the Software under the Apache
 > License, Version 2.0 that is effective on the second anniversary of the date we make the Software
 > available."* — [LICENSE.md](LICENSE.md), §Grant of Future License
 
-Ba tính chất đáng đọc kỹ:
+Three properties worth reading carefully:
 
-**① Không huỷ ngang được.** Chữ `irrevocably` nằm ngay trong giấy phép. Tôi **không có quyền** rút
-lại lời hứa đó — kể cả khi đổi ý, kể cả khi dự án được mua lại, kể cả khi tôi biến mất. Bạn không
-cần tin tôi; bạn chỉ cần đọc dòng đó.
+**① It cannot be revoked.** The word `irrevocably` is in the license text itself. The Project Owner
+has no power to take it back — not by changing his mind, not if the project is acquired, not if he
+disappears. You do not have to trust anyone; you read that line.
 
-**② Đồng hồ chạy theo TỪNG BẢN, và không có gì bị đẩy lùi.** Bản `v0.1` phát hành 15/09/2026 thành
-Apache 2.0 vào **15/09/2028** — bất kể sau đó có bao nhiêu bản mới. Phát hành thêm **không** làm bản
-cũ chậm lại một ngày nào. Hệ quả: dự án luôn có một **cửa sổ trượt rộng đúng 2 năm** — mọi thứ già
-hơn thế đều đã là Apache 2.0 hoàn toàn.
+**② The clock runs per release, and nothing gets pushed back.** A release published on 2026-09-15
+becomes Apache 2.0 on 2028-09-15, no matter how many releases follow it. Publishing more does not
+delay older ones by a single day. The consequence: the project always carries a **rolling two-year
+window** — everything older than that is already fully Apache 2.0.
 
-**③ Ngày cụ thể, không mập mờ.** Mỗi bản phát hành trên GitHub Releases ghi rõ ngày nó thành
-Apache 2.0. Xem [LICENSE-SCHEDULE.md](LICENSE-SCHEDULE.md). Đây là chuyện có thể tra được, không
-phải chuyện phải hỏi.
+**③ Dates are concrete, not vague.** Each GitHub Release states the exact date on which that
+release converts. This is something you can look up, not something you have to ask about.
 
-> Nếu bạn theo trường phái "chỉ đóng góp cho OSS thuần" — tôi hiểu, và không tranh cãi. Đóng góp
-> của bạn sẽ là Apache 2.0 sau hai năm, nhưng *hôm nay* nó chưa phải, và đó là một lý do chính đáng
-> để đứng ngoài. Không có gì phải giải thích thêm.
+> If you only contribute to OSI-approved open source — that is a fair position and there is no
+> argument here. Your contribution becomes Apache 2.0 after two years, but *today* it is not, and
+> that is a legitimate reason to stay out.
 
-## Trước PR đầu tiên: ký CLA
+## Before your first pull request: sign the CLA
 
-Một dòng, một lần duy nhất, dán vào mô tả PR đầu tiên của bạn:
+One line, once, pasted into the description of your first pull request:
 
 ```
 I have read the CLA at CLA.md and I hereby sign it.
-Name: <họ tên>   GitHub: @<tài khoản>   Date: <YYYY-MM-DD>
+Name: <your full name>   GitHub: @<your-handle>   Date: <YYYY-MM-DD>
 ```
 
-**Bạn không mất bản quyền** — xem [CLA.md](CLA.md) §4. Bạn cấp một giấy phép đủ rộng để lời hứa
-"tự thành Apache 2.0" ở trên thi hành được. Không có nó thì mỗi lần đổi giấy phép phải đi xin chữ
-ký từng người, và một người không liên lạc được là cả dự án kẹt.
+**You do not lose your copyright** — see [CLA.md](CLA.md) §4. You grant a license broad enough for
+the "automatically becomes Apache 2.0" promise above to be enforceable. Without it, every licensing
+change would require collecting signatures again, and one unreachable contributor blocks everyone.
 
-## Bắt tay vào việc
+## Getting started
 
 ```bash
 npm install
-npm run build:all     # biên dịch server + giao diện
-npm test              # 323 test, ~6 giây, 0 token, không gọi LLM
-npm run dev           # chạy CLI từ mã nguồn
+npm run build:all     # compile server + web UI
+npm test              # 323 tests, ~6 seconds, 0 tokens, no LLM calls
+npm run dev           # run the CLI from source
 ```
 
-### Bốn tiêu chí, và chúng định nghĩa "xong"
+### Four quality criteria — they define "done"
 
-Một thay đổi chỉ xong khi qua cả bốn: **ổn định** · **xử lý lỗi tử tế** · **hiệu năng** · **mượt**.
-Chi tiết: `docs/SPEC-2026-08-14-agentco.md` §1.
+A change is finished only when it passes all four: **stability** · **good error handling** ·
+**performance** · **smoothness**. Details in `docs/SPEC-2026-08-14-agentco.md` §1.
 
-### Ba luật nhắc lại nhiều lần trong repo này, vì cả ba đều đã trả giá
+### Three rules repeated throughout this repository, because all three were paid for
 
-1. **Một bất biến chỉ có thật khi có mã nguồn thi hành nó.** Chú thích không phải cơ chế; một hàm
-   có thật nhưng bảo vệ thứ khác thì còn nguy hơn một lời hứa suông.
-2. **Đo được N lần hỏng chứng minh một CƠ CHẾ, không chứng minh một KẾT LUẬN.** Trước khi tuyên bố
-   một đường là chết, hỏi: *thứ tương đương đang chạy được ở đâu, và nó khác ta chỗ nào?*
-3. **Token là ràng buộc thiết kế, không phải chuyện tối ưu sau.** Mọi thứ vào prefix là trả ở **mọi
-   lượt**, vĩnh viễn. `docs/SPEC-token-economy.md` là luật cao nhất.
+1. **An invariant is only real when there is code that enforces it.** A comment is not a mechanism,
+   and a function that exists but guards something else is more dangerous than an empty promise.
+2. **Measuring N failures proves a MECHANISM, not a CONCLUSION.** Before declaring a path dead, ask:
+   *where is the equivalent thing working today, and how does it differ from ours?*
+3. **Tokens are a design constraint, not a later optimization.** Anything placed in the prefix is
+   paid on **every** turn, forever. `docs/SPEC-token-economy.md` is the highest law here.
 
-### Trước khi gửi PR
+### Before you open a pull request
 
-- `npm test` xanh. Thêm test cho **hàm thuần** — chúng chạy dưới 1 giây và 0 token.
-- Nếu thay đổi động tới chi phí token: kèm **số đo**, và nhớ **cắm nonce** để phá cache (không có
-  nonce thì lần đo thứ hai ăn cache lần một và cho ra chênh lệch 0).
-- Nếu sửa một luật đã ghi trong `docs/`: sửa luôn tài liệu trong cùng PR. Tài liệu lệch mã là một bug.
+- `npm test` is green. Add tests for **pure functions** — they run in under a second and cost zero
+  tokens.
+- If your change touches token cost: include **measurements**, and remember to **insert a nonce**
+  to defeat the cache. Without one, the second measurement reads the first one's cache and reports
+  a difference of zero.
+- If you change a rule documented in `docs/`: update that document in the same pull request.
+  Documentation that disagrees with the code is a bug, and the longest-lived kind, because it never
+  produces a symptom.

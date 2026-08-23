@@ -79,9 +79,9 @@ hạn dùng — xem dưới.
 - **Hệ quả:** một cửa sổ trượt rộng đúng hai năm — mọi thứ già hơn thế **đã là Apache 2.0 hoàn
   toàn**, không cần ai bấm nút.
 
-📅 Ngày cụ thể của từng bản: [**LICENSE-SCHEDULE.md**](LICENSE-SCHEDULE.md) — ghi rõ, không nói
-chung chung. Mập mờ không cản được người muốn copy (họ tự tính ra được), nó chỉ cản người đang
-phân vân có nên tin dự án này không.
+📅 Mỗi bản phát hành trên GitHub Releases sẽ ghi **ngày cụ thể** nó thành Apache 2.0 — ghi rõ,
+không nói chung chung. Mập mờ không cản được người muốn copy (họ tự tính ra được từ giấy phép), nó
+chỉ cản người đang phân vân có nên tin dự án này không.
 
 ## Đóng góp
 

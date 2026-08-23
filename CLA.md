@@ -1,19 +1,20 @@
 # Contributor License Agreement (CLA)
 
-> **⚠ Bản tiếng Anh dưới đây là bản CÓ HIỆU LỰC.** Phần tóm tắt tiếng Việt ở cuối file chỉ để
-> đọc cho nhanh và **không có giá trị pháp lý**. Nếu hai bên đọc khác nhau, bản tiếng Anh thắng.
->
-> **Vì sao dự án này cần CLA.** agentco phát hành dưới [FSL-1.1-ALv2](LICENSE.md), và mỗi bản phát
-> hành tự chuyển thành Apache 2.0 sau hai năm. Để làm được điều đó — và để sau này còn có thể bán
-> giấy phép thương mại, hoặc chuyển dự án cho một pháp nhân — người phát hành phải **có đủ quyền
-> đối với toàn bộ mã trong dự án, kể cả phần bạn đóng góp**. Không có CLA thì mỗi lần cần đổi giấy
-> phép lại phải đi xin chữ ký của từng người từng gửi PR, và chỉ cần một người không liên lạc được
-> là kẹt vĩnh viễn.
->
-> CLA này **không** lấy bản quyền của bạn. Bạn vẫn là chủ sở hữu phần mình viết.
-
 *Adapted from the Apache Software Foundation Individual Contributor License Agreement v2.0.
-This is not legal advice; if in doubt, consult your own counsel before signing.*
+This document is not legal advice. If in doubt, consult your own counsel before signing.*
+
+## Why this project asks for a CLA
+
+agentco is released under [FSL-1.1-ALv2](LICENSE.md), and every release converts to the Apache
+License 2.0 on its own two-year anniversary. For that promise to hold — and to keep the door open
+for commercial licensing or transferring the project to a legal entity later — the Project Owner
+must hold sufficient rights over **all** the code in the project, including the parts you write.
+
+Without a CLA, every future licensing decision would require chasing down a signature from every
+person who ever sent a pull request. One unreachable contributor is enough to block the project
+permanently.
+
+**This CLA does not take your copyright.** You keep ownership of what you write (see Section 4).
 
 ---
 
@@ -62,7 +63,7 @@ Contribution or Work shall terminate as of the date such litigation is filed.
 ## 4. You Retain Ownership
 
 **You retain all right, title, and interest in and to Your Contributions.** Nothing in this
-Agreement transfers ownership of Your copyright to the Project Owner. You are free to use Your
+Agreement transfers ownership of Your copyright to the Project Owner. You remain free to use Your
 Contributions for any other purpose.
 
 ## 5. Your Representations
@@ -99,8 +100,8 @@ would make these representations inaccurate in any respect.
 
 ## How to sign
 
-Signing is a **one-time** action per contributor. In your first pull request, add this line to the
-description, replacing the placeholders:
+Signing is a **one-time** action per contributor. In your first pull request, add these lines to
+the description, replacing the placeholders:
 
 ```
 I have read the CLA at CLA.md and I hereby sign it.
@@ -110,14 +111,12 @@ Name: <your full name>   GitHub: @<your-handle>   Date: <YYYY-MM-DD>
 That statement, recorded in the pull request, is your signature. You do not need to repeat it for
 later pull requests.
 
----
+## Summary
 
-## Tóm tắt tiếng Việt — KHÔNG có giá trị pháp lý
-
-| | |
+| Question | Answer |
 |---|---|
-| Bạn có mất bản quyền không? | **Không.** Bạn vẫn sở hữu phần mình viết, và vẫn dùng nó ở đâu tuỳ ý (§4) |
-| Bạn cho gì? | Một **giấy phép** rộng và không huỷ ngang, cho phép chủ dự án dùng, sửa, phát hành, và **cấp phép lại** phần bạn đóng góp — kể cả dưới giấy phép thương mại (§2, §3) |
-| Vì sao cần rộng đến thế? | Để bản phát hành **tự chuyển thành Apache 2.0 sau 2 năm** làm được, và để dự án còn đường bán giấy phép hoặc chuyển cho pháp nhân sau này. Thiếu nó thì mọi lần đổi giấy phép phải xin chữ ký lại từng người |
-| Bạn hứa gì? | Rằng bạn **có quyền** cho những thứ trên — tự viết ra, hoặc đã xin phép công ty nơi bạn làm (§5) |
-| Ký thế nào? | Dán **một dòng** vào mô tả PR đầu tiên. Một lần duy nhất, không phải lặp lại |
+| Do you lose your copyright? | **No.** You still own what you wrote and may use it anywhere else (§4) |
+| What do you grant? | A broad, irrevocable **license** allowing the Project Owner to use, modify, distribute, and **re-license** your contribution — including under commercial terms (§2, §3) |
+| Why must it be that broad? | So the automatic conversion to Apache 2.0 after two years can actually happen, and so the project keeps the option to sell licenses or transfer to a legal entity. Without it, every licensing change means collecting signatures again |
+| What do you promise? | That you have the right to grant the above — you wrote it, or your employer permits it (§5) |
+| How do you sign? | Paste **one line** into your first pull request. Once, never repeated |
