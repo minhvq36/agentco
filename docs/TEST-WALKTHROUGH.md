@@ -717,12 +717,39 @@ Ba câu hỏi, theo thứ tự quan trọng:
 
 ### Biến thể đáng chạy thêm (mỗi cái 1 phút)
 
-- **Thư mục không tồn tại** → gõ một đường dẫn sai. Đo: nó nói *"không tìm thấy thư mục"* rõ ràng, hay nó đi mò lung tung rồi bịa ra một bảng kê? Ca này giờ bị chặn **trước khi tốn tiền**, ngay ở bước lập kế hoạch (`Scheduler.validate`), với câu *"không tìm thấy trên máy — kiểm lại đường dẫn"*.
-- **Tắt *Cho chạy lệnh* của `Người kiểm kê` rồi giao lại đúng việc đó.** Đo: nó có nói thẳng *"tôi không chạy được lệnh"* không, hay nó vờ như đã làm? Đã đo một lần và nó **nói thật**, kèm gợi ý lệnh để bạn tự chạy — nhưng đó là một lần, và câu trả lời sai ở đây nguy hiểm hơn hẳn một lỗi.
+- **Thư mục không tồn tại** → gõ một đường dẫn sai. Đo: nó nói *"không tìm thấy thư mục"* rõ ràng, hay nó đi mò lung tung rồi bịa ra một bảng kê? Ca này bị chặn **trước khi tốn tiền**, ngay ở bước lập kế hoạch (`Scheduler.validate`), với câu *"không tìm thấy trên máy — kiểm lại đường dẫn"*.
 
-### 🔴 Biến thể QUAN TRỌNG NHẤT — thử hàng rào GHI
+  ⚠ **Câu đó hiện đang dùng chung cho HAI nguyên nhân khác hẳn nhau** — xem biến thể 🔴 dưới. Ở đây nó đúng; ở kia nó là một chẩn đoán sai.
 
-Đây là biến thể đáng giá hơn cả bài chính, vì **ghi là ranh giới DUY NHẤT thật sự có mã nguồn thi hành** (`officeJail`). Đọc thì không có hàng rào nào, `Bash` thì lại càng không (→ `SPEC-tools-approval.md` §5b).
+#### 🔬 Biến thể CHÍNH của bài này: bật/tắt công tắc — **một biến, hai kết quả**
+
+> **Viết lại 22/08.** Bản trước trộn phép đo công tắc với việc *ghi ra ngoài văn phòng* — một tính năng **chưa có**. Kế hoạch chết ở `validate` nên công tắc **chưa bao giờ được thử**: bật `Bash` hay không cũng ra cùng một câu lỗi. Bài test đo hai thứ cùng lúc thì không đo được thứ nào.
+
+Thứ `Bash` **độc quyền** không phải là ghi — mà là **metadata**:
+
+| việc | cần `Bash`? |
+|---|---|
+| liệt kê tên file ngoài văn phòng | ❌ `Glob` làm được |
+| đọc nội dung file ngoài văn phòng | ❌ `Read` làm được |
+| **kích thước · ngày sửa** | ✅ **chỉ `Bash`** |
+| ghi vào `artifacts/…` | ❌ `Write` làm được |
+
+Nên dùng **đúng đề bài ở Bước 5** (đầu ra vẫn là `artifacts/ban-ke.md`), chỉ đổi **một** thứ là công tắc:
+
+| công tắc | mong đợi |
+|---|---|
+| **TẮT** | `blocked` ngay **lượt đầu**, nêu đúng thứ thiếu là kích thước/ngày sửa. Đã đo: **1 lượt · $0,0583** |
+| **BẬT** | bảng đủ **3 cột**, có kích thước và ngày sửa thật |
+
+Đó là bài test thật của Bước 3: một biến, hai kết quả phân biệt được bằng mắt.
+
+⚠ **Nhánh BẬT chưa ai đo end-to-end.** Suy ra thì phải chạy được (`Get-ChildItem`/`ls -la`), nhưng phiên 22/08 đã có ba lần *"suy ra thì phải được"* hoá sai. Coi đây là **thứ cần chứng minh**, không phải tiền đề.
+
+Ở nhánh TẮT, đo thêm: nó có **nói thẳng** *"tôi không chạy được lệnh"* không, hay vờ như đã làm? Đã đo hai lần và nó **nói thật**, kèm gợi ý lệnh để bạn tự chạy. Câu trả lời sai ở đây nguy hiểm hơn hẳn một lỗi.
+
+### 🔴 Bài 9b — GHI RA NGOÀI VĂN PHÒNG ⛔ **CHƯA CHẠY ĐƯỢC, đừng chạy để chấm điểm**
+
+> **Tách khỏi bài 9 ngày 22/08.** Bản trước để chung và mô tả sai kết quả: nó bảo bạn sẽ thấy *"một lượt `Write` bị từ chối"*. **Không có lượt nào cả** — kế hoạch chết trước đó, ở `Scheduler.validate`, và **chưa nhân viên nào khởi động**.
 
 🖱 chat, thay `<thư-mục>` bằng một chỗ **ngoài** văn phòng:
 
@@ -730,16 +757,39 @@ Ba câu hỏi, theo thứ tự quan trọng:
 Kiểm kê thư mục <thư-mục> rồi lưu bảng kê vào <thư-mục>\ban-ke.md
 ```
 
-Bạn đang cố ý bảo nó ghi ra **ngoài** văn phòng. Đo bốn thứ, theo thứ tự:
+**Hành vi thật hôm nay** (đo 22/08, ba lần liên tiếp, giống nhau từng byte):
 
-| | mong đợi |
+```
+Mình chia việc bị lỗi nên chưa chạy được. Chưa nhân viên nào bắt tay vào…
+  · Task T-02 cần đọc "…\ban-ke.md" nhưng không tìm thấy trên máy — kiểm lại đường dẫn
+```
+
+**Câu đó là một chẩn đoán SAI.** Đường dẫn đúng; file chưa có vì **chính kế hoạch phải tạo ra nó**. Và **không có cách diễn đạt lại nào thoát được** — nói *"tạo mới mà"* cũng ra đúng câu đó, vì nguyên nhân nằm ở hai luật trong prompt lập kế hoạch ép nhau:
+
+| luật | ép gì |
 |---|---|
-| Nhật ký | có một lượt `Write` bị **từ chối**, kèm câu chỉ đường về `artifacts/` |
-| Kết quả cuối | file **nằm trong** ngăn Kết quả, không nằm ở thư mục bạn chỉ |
-| Câu Trợ lý nói | nói ra chỗ file thật sự nằm, **không** im lặng |
-| Số lượt | hàng rào tốn thêm mấy lượt? Đây là cái giá của nó, và nó phải nhỏ |
+| `prompt.ts:200` | đường dẫn người dùng gõ → chép **verbatim** vào `inputs` |
+| `prompt.ts:201-202` | `outputs` **bắt buộc** nằm dưới `artifacts/<task_id>/` |
 
-⚠ Nếu file **thật sự** xuất hiện ở thư mục ngoài, đó là một lỗ hổng nghiêm trọng — báo ngay. Ca duy nhất được phép: nó dùng **shell** (`Get-ChildItem`/`ls` rồi `>`) thay vì `Write`, vì hook không khớp được lệnh shell. Đó chính là ngoại lệ đã khai báo ở §2.6, và bài test này tồn tại một phần để bạn **thấy tận mắt** ngoại lệ đó.
+Cùng một file `ban-ke.md` ra hai chuỗi khác nhau ⇒ `validate` thấy "không task nào sinh ra nó" ⇒ chặn. **Trợ lý làm đúng cả hai luật và bị chặn vì làm đúng.**
+
+Thêm một tường thứ hai phía sau: `outputScoper` (`assistant.ts:521`) viết lại **mọi** `outputs` thành `artifacts/…` vô điều kiện, không có nhánh nào cho đường dẫn tuyệt đối. ⇒ **Ghi ra ngoài văn phòng là bất khả thi về cấu trúc**, không phải "không khuyến khích".
+
+#### Thiết kế đã chốt (22/08) — chưa cài
+
+Biên giới đổi từ *"thư mục văn phòng"* thành **"thư mục văn phòng + những chỗ người dùng đã nói ra"**, và tiêu chí là **XUẤT XỨ**, không phải hình dạng chuỗi:
+
+> Một đích được đi qua `officeJail` khi **đúng chuỗi đó có mặt trong tin nhắn người dùng vừa gõ** (châm chước `\` ↔ `/`).
+
+Vì sao không lấy "tuyệt đối" làm tiêu chí: nó đo nhầm thứ. Model **bịa** ra `D:\Reports\x.md` cũng tuyệt đối; người dùng **gõ** `Downloads\x.md` thì không. Cùng lỗi với `pitch` vs `tools` — lấy hình dạng thay cho nguồn gốc.
+
+Người dùng nói qua loa (*"lưu vào Downloads nhé"*) thì **không khớp** ⇒ rơi về thư mục văn phòng ⇒ và Trợ lý **phải nói ra là đã để ở đâu**. Không ca nào phải đoán, nên không ca nào đoán sai.
+
+⚠ Khớp với **tin nhắn người dùng thật**, KHÔNG khớp với `plan.request` — `request` có lúc do model viết (`requestOf()`).
+
+Áp dụng cho `Write` **và** `Edit`. Mọi trường hợp còn lại hiểu là nằm trong văn phòng. Khi đó ghi ra ngoài chạy bằng `Write` trần — **có log, có biên nhận, không cần bật shell** — tốt hơn hẳn đường `Bash` hiện nay vốn ghi bất kỳ đâu mà không để lại dòng nào trong sổ.
+
+> **Chốt lại nhận định của user (22/08): vấn đề chưa bao giờ nằm ở shell, nó nằm ở chỗ ta vẽ tường lửa sai chỗ.** `officeJail` chặn đúng con đường dễ đọc–dễ log nhất (`Write`), trong khi `Bash`/MCP/`WebFetch` đi lại tự do. Đó không phải hàng rào an toàn — nó là **cái chắn tai nạn**, và nó chưa phân biệt được "model đi lạc" với "người dùng chỉ đích danh".
 
 ### `use_preset` — bản trước ghi "BẮT BUỘC", và đó là một con số chưa ai đo
 

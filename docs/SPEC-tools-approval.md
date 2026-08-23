@@ -47,6 +47,71 @@ Giá: ~5–10 token mỗi nhân viên. Đổi lại là Trợ lý chia việc đ
 
 **Bắt buộc kèm theo:** dòng này nằm trong roster → nằm trong prefix được cache của Trợ lý. Cắm thêm một MCP = ghi lại cache Trợ lý một lần. Rẻ, nhưng phải biết là có.
 
+### 1a. 🔴 CỜ SHELL PHẢI NÊU CẢ HAI CHIỀU — bản chỉ-khẳng-định đã đo là VÔ HIỆU
+
+Bản 22/08 đẩy `lệnh trên máy` vào dòng khả năng **chỉ khi** vai trò có shell, với lý do *"luật 7 (`không ai hợp thì nói thẳng`) đã lo mặt phủ định"*. **Chạy lại bài 9.3 thì nó nằm im:** Trợ lý vẫn giao việc cho một vai trò có `pitch` hứa chạy lệnh nhưng công tắc TẮT, vẫn lập đủ 2 bước, vẫn tiêu $0,1380 cho 0 kết quả.
+
+**Vì sao:** văn phòng đó không ai có shell ⇒ chuỗi `lệnh trên máy` không xuất hiện ở đâu ⇒ **vắng mặt không phải tín hiệu**. Một dấu hiệu chỉ-khẳng-định chỉ đọc được nhờ TƯƠNG PHẢN. Và luật 7 không thể bắn: theo bằng chứng Trợ lý cầm, `pitch` nói CÓ người hợp.
+
+**Chốt: cờ hai chiều trên từng dòng, ý nghĩa gom một chỗ.**
+
+```
+# Employees you can assign to
+
+Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội
+dung, liệt kê tên file. "chạy lệnh" là công tắc riêng của từng người, và là thứ DUY
+NHẤT lấy được kích thước · ngày sửa · dung lượng, hoặc ghi ra ngoài thư mục văn phòng.
+
+- nguoi-kiem-ke (Người kiểm kê): Chạy lệnh để lấy thông tin về file… [web · chạy lệnh: TẮT]
+- nguoi-viet (Người viết): Viết nội dung tiếng Việt… [Notion · web · chạy lệnh: BẬT]
+```
+
+**Vì sao ý nghĩa gom vào một chỗ (`SHELL_LEGEND`), không nhắc ở từng dòng:** "shell nghĩa là gì" là sự thật về **agentco**, không phải thuộc tính của **một nhân viên** — đặt nó lên dòng của một người là gán nhầm tầng, đúng cái sai (`pitch` vs `tools`) đã sinh ra ca này. Đo: legend **77 token** trả một lần, cờ **6 token**/vai trò; hoà vốn so với phương án lặp-từng-dòng ở **~4 nhân viên**, sau đó gom càng lúc càng thắng.
+
+⚠ **Cờ viết `chạy lệnh: TẮT`, KHÔNG viết `shell: 0`.** Chú giải nằm đầu khối còn cờ nằm ở dòng thứ 9 — khoảng cách là có thật, nên cờ phải tự đọc được khi đứng một mình. 2 token cho việc không phụ thuộc vào khoảng cách.
+
+⚠⚠ **CÂU PHỦ ĐỊNH PHẢI HẸP — mặt phủ định rộng là một lời nói dối.** *"Không có shell"* KHÔNG đồng nghĩa *"không với tới máy của bạn"*: `Read`/`Glob`/`Grep` không có hàng rào nào (§5b), nên vai trò trần vẫn mở được `D:\Hồ sơ\hopdong.pdf`. Viết câu rộng là dạy Trợ lý từ chối cả việc nó làm được — hỏng **ngược chiều**, và im lặng hơn hẳn ca gốc vì không ai thấy việc đã bị từ chối. Có test canh (`plan.test.ts`).
+
+### 1b. 🔴 ĐỔI BIÊN GIỚI TƯỜNG LỬA — chốt 22/08, **chưa cài**
+
+> **Đã GỠ:** một cổng tất định ở `Scheduler.validate` chặn *"`outputs` tuyệt đối + vai trò không có shell"*. Nó là **code chết**: `buildPlan` chạy `outputScoper` lên outputs của mọi task trước đó (`assistant.ts:591`) và hàm đó luôn trả `artifacts/<plan>/<task>/…` ⇒ `isAbsolute` không bao giờ đúng. 9 test của nó vẫn xanh vì gọi thẳng `validate`, **đi vòng qua `buildPlan`**. Và nó còn sai theo thiết kế dưới đây: ghi ra ngoài **không cần shell**.
+
+**Nhận định gốc (user, 22/08): vấn đề chưa bao giờ nằm ở shell — nó nằm ở chỗ ta vẽ tường lửa sai chỗ.**
+
+Hiện trạng là tổ hợp tệ nhất của hai lựa chọn:
+
+| đường ra | bị chặn? |
+|---|---|
+| `Write` · `Edit` · `NotebookEdit` | ✅ `officeJail` deny thật |
+| `Bash` | ❌ không hook nào |
+| MCP | ❌ |
+| `WebFetch` / `WebSearch` (đường dữ liệu đi RA) | ❌ |
+
+⇒ **Không ngăn được gì** (một dòng `Bash` là vượt), mà **lại chặn đúng con đường dễ đọc–dễ log–dễ kiểm nhất**. Nó không phải hàng rào an toàn; nó là **cái chắn tai nạn** — và ở vai trò đó nó có ích thật (bắt được ca `P-260821-1818-yydi`). Lỗi của nó không phải "chỉ gác ba tool", mà là **chưa phân biệt được "model đi lạc" với "người dùng chỉ đích danh"**.
+
+**Chốt: biên đổi từ *"thư mục văn phòng"* thành *"thư mục văn phòng + những chỗ người dùng đã nói ra"*.**
+
+> Một đích đi qua `officeJail` khi **đúng chuỗi đó có mặt trong tin nhắn người dùng vừa gõ** (châm chước `\` ↔ `/`). Áp dụng cho `Write` **và** `Edit`. Mọi trường hợp còn lại hiểu là nằm trong văn phòng.
+
+⚠⚠ **Tiêu chí là XUẤT XỨ, không phải hình dạng chuỗi.** "Tuyệt đối" đo nhầm thứ: model **bịa** ra `D:\Reports\x.md` cũng tuyệt đối, còn người dùng **gõ** `Downloads\x.md` thì không. Đây đúng lỗi `pitch` vs `tools` và *"tên MCP vs năng lực MCP"* — **lấy hình dạng thay cho nguồn gốc**, lần thứ tư trong một phiên.
+
+| người dùng gõ | model khai | khớp? | kết quả |
+|---|---|---|---|
+| `D:\Downloads\…\ban-ke.md` | y nguyên | ✅ | ghi đúng chỗ họ muốn |
+| *"lưu vào Downloads nhé"* | `D:\Users\…\Downloads\x.md` | ❌ | thư mục văn phòng, **và Trợ lý phải nói ra đã để ở đâu** |
+
+Người dùng nói qua loa thì tự động rơi về mặc định an toàn — **không ca nào phải đoán, nên không ca nào đoán sai**. Model càng "giúp" bằng cách bung đường dẫn đầy đủ thì càng không khớp, và lệch về phía an toàn.
+
+⚠ Khớp với **tin nhắn người dùng thật**, KHÔNG với `plan.request` — `request` có lúc do model viết (`requestOf()`, `assistant.ts:619`). Khớp chuỗi model viết là mời lại đúng vòng lặp cũ.
+
+**Hệ quả tốt:** ghi ra ngoài khi đó chạy bằng `Write` trần — **có log, có biên nhận, không cần bật shell** — chặt hơn hiện trạng, nơi `Bash` ghi bất kỳ đâu mà không để lại dòng nào trong sổ.
+
+Cần đi kèm: `outputScoper` chừa cửa cho đích đã khớp (nếu không thì allowlist không có gì để cho qua), và một **tip trong tài liệu** — *"muốn ghi ra ngoài văn phòng thì gõ đường dẫn tuyệt đối đầy đủ"* — **không đưa lên UI** (user chốt: nhiều chữ quá thì giảm UX).
+
+> **Luật chung vẫn giữ: cái TẤT ĐỊNH chỉ được nói về thứ CÓ MÃ NGUỒN THI HÀNH.** `officeJail` deny thật ⇒ chặn được. *"Việc này có cần shell không"* là câu hỏi ngữ nghĩa ⇒ không bao giờ tất định.
+
+**Chưa quyết, để riêng:** hàng rào ĐỌC (`Read` + `WebFetch` là đường dữ liệu đi ra, không cần `Bash` — §5b: dựng được, đã đo, chưa dựng). Nếu jail chỉ là cái chắn tai nạn thì hiện agentco **không có câu chuyện containment nào** — phải chọn có hay không, đừng để mặc định quyết hộ.
+
 ### Chưa có chỗ sửa giới thiệu — đúng, thiếu thật
 
 Thêm vào bảng chi tiết: sửa được `display_name`, `avatar`, `pitch`, `not_for`, `model_tier`. Ghi thẳng vào `roles/<id>.yaml` bằng `parseDocument` để giữ chú thích.
@@ -554,6 +619,26 @@ Và tri thức riêng ở bảng phải kia **thuộc về kho tri thức, khôn
 ---
 
 ## 8. Cổng duyệt — hai tầng
+
+### 8·0 🔴 LUẬT: mọi đường GHI RA NGOÀI phải qua một tool/MCP TƯỜNG MINH
+
+> **Chốt 22/08 (user). ⚠ CHÍNH SÁCH — CHƯA CÓ MÃ NGUỒN THI HÀNH.**
+>
+> Nhãn này bắt buộc phải đứng đây. `types.ts:68` vừa dạy đúng bài đó: *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*, và `worker.ts:177` ghi lại lần đã sập vì đặt luật vào `canUseTool` — một chỗ không bao giờ chạy. Viết luật này mà không dán nhãn là đẻ ra lời hứa thứ ba.
+
+**Nội dung luật:** ra khỏi thư mục văn phòng phải là một **năng lực có TÊN, được khai báo, đọc được trong nhật ký** — tức một tool hoặc MCP người dùng chủ động cắm. Không được là **tác dụng phụ của việc bật một công tắc chung**.
+
+Hệ quả: `Bash` **thôi là "cánh cửa ra ngoài"**. Nó quay về đúng thứ nó độc quyền — metadata file và chạy script.
+
+**Vì sao chưa thi hành được, nói thẳng:** hook `PreToolUse` khớp được `Write`/`Edit`/`NotebookEdit` vì đường dẫn nằm ở một **trường có tên**. Với `Bash` thì đường dẫn nằm **lẫn trong chuỗi lệnh** (`… > D:\x.md`), không có trường nào để đọc. Nên chặn `Bash` ghi ra ngoài là bài toán thật sự khó, không phải việc chưa làm.
+
+**Chỗ sẽ thi hành:** `PreToolUse` là tầng **duy nhất** mọi lời gọi tool đều đi qua — kể cả tool MCP (tên dạng `mcp__<server>__<tool>`, matcher khớp được **về nguyên tắc, chưa đo**). `outputScoper` **không phải** chỗ này và chưa bao giờ là: nó nắn *lời khai trong kế hoạch*, không chặn *hành động*.
+
+| tầng | nắn/chặn gì | ai đi qua |
+|---|---|---|
+| `outputScoper` | sổ sách trên KẾ HOẠCH | chỉ chuỗi model khai trong `outputs` |
+| `officeJail` (`PreToolUse`) | thi hành trên HÀNH ĐỘNG | `Write` · `Edit` · `NotebookEdit` |
+| `Bash` · MCP · CLI | — | **không qua cái nào** |
 
 ### 8a. Phân loại theo HẬU QUẢ, không theo tên tool
 

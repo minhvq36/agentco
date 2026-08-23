@@ -211,15 +211,34 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           </Select>
 
           {/*
-            NÓI RA LÚC TẠO, không đợi họ tự đi tìm trong bảng chi tiết.
-            `Bash` bật sẵn (user chốt 22/08) vì phần lớn việc văn phòng cần nó —
-            nhưng nó cũng là ngoại lệ duy nhất của luật "kết quả luôn nằm trong
-            văn phòng". Một mặc định rộng tay mà im lặng thì không phải tiện, là
-            bẫy: người dùng chỉ biết nó tồn tại vào lúc đã muộn.
+            NÓI RA LÚC TẠO, không đợi họ tự đi tìm trong bảng chi tiết. `Bash`
+            bật sẵn (user chốt 22/08) vì phần lớn việc văn phòng cần nó.
+
+            ┌──────────────────────────────────────────────────────────────────┐
+            │ ⚠ VIẾT LẠI 22/08 — BẢN TRƯỚC BÁN MỘT THỨ SẢN PHẨM KHÔNG LÀM.    │
+            │                                                                  │
+            │ Câu cũ: *"đụng tới thư mục ngoài văn phòng"*. Nghe như một năng  │
+            │ lực dùng được, nhưng KHÔNG có đường nào dẫn tới nó: `outputScoper`│
+            │ luôn đóng khung đầu ra về `artifacts/`, nên kế hoạch chưa bao giờ │
+            │ trỏ `Bash` ra ngoài. Ca 22/08 22:06 đi thử lối đó: **7 lượt ·     │
+            │ $0,3158 · blocked**, không ra file nào.                           │
+            │                                                                  │
+            │ Vừa doạ quá tay vừa hứa quá tay — và cái hứa mới là chỗ tệ hơn,   │
+            │ vì người dùng bật công tắc để mua một thứ không tồn tại.          │
+            │                                                                  │
+            │ Câu mới chỉ nêu thứ `Bash` THẬT SỰ mua được, và đã đo được ở      │
+            │ chính ca đó: metadata file (`Get-ChildItem` chạy thật, lấy đủ     │
+            │ kích thước + ngày sửa) và chạy script.                            │
+            │                                                                  │
+            │ "Ghi ra ngoài văn phòng" là chính sách RIÊNG, chốt là KHÔNG, và   │
+            │ sẽ đi qua một tool/MCP tường minh chứ không qua công tắc này.     │
+            │ → SPEC-tools-approval.md §1b, §8                                  │
+            └──────────────────────────────────────────────────────────────────┘
           */}
           <p className="mt-3 rounded bg-line/50 px-2 py-1.5 text-xs leading-relaxed text-muted">
-            Người này sẽ <b>chạy được lệnh trên máy</b> (gọi git, đổi định dạng file, đụng tới thư mục
-            ngoài văn phòng). Tắt được bất cứ lúc nào ở bảng chi tiết.
+            Người này sẽ <b>chạy được lệnh trên máy</b> — xem kích thước · ngày sửa · dung lượng
+            file, chạy script, gọi git. Kết quả vẫn lưu trong thư mục văn phòng. Tắt được bất cứ lúc
+            nào ở bảng chi tiết.
           </p>
 
           <DialogFooter>

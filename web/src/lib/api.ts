@@ -139,7 +139,7 @@ export const api = {
       /** `0` = không giới hạn. */
       max_usd?: number;
       max_turns?: number;
-      /** Bật `Bash` cho vai trò này — tool duy nhất ra được khỏi thư mục văn phòng. */
+      /** Bật `Bash` — mua được metadata file (kích thước · ngày sửa) và chạy script. */
       bash?: boolean;
     },
   ) =>

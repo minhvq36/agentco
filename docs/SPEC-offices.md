@@ -684,7 +684,7 @@ Câu báo cho người dùng phải nói được **việc phải làm**, không
 > | Ta **biết chắc** | không nhân viên nào chạy — mà nhân viên mới là phần đắt (sàn ~13 200 token/lượt worker) |
 > | Ta **không nên in ra số** | ở nhánh cửa cứu hộ, `usage` tại điểm này bằng **0** trong khi `route()` đã tính tiền → in số là đẻ ra một câu nói dối **thứ hai** |
 >
-> Câu đúng: *"Chưa nhân viên nào bắt tay vào — phần tốn tiền nhất chưa mất gì (lượt chia việc vừa rồi vẫn nằm trong sổ chi phí)."* Nói đúng phần biết chắc, chỉ thẳng sang sổ cho phần còn lại.
+> Câu đúng: *"Chưa nhân viên nào bắt tay vào — "* Nói đúng phần biết chắc, chỉ thẳng sang sổ cho phần còn lại.
 >
 > → `SESSIONS_MEMORY` §2 *"Sổ chi phí không được nói sai câu nào"*. Luật đó viết cho sổ chi phí; ca này cho thấy nó áp cho **mọi câu nói về tiền**, ở bất cứ đâu trên màn hình.
 

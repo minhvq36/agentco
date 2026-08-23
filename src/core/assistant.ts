@@ -521,6 +521,39 @@ export function artifactScoper(planId: string, taskIds: readonly string[]): (p: 
 export function outputScoper(planId: string, taskId: string): (p: string) => string {
   const home = `artifacts/${planId}/${taskId}`;
   return (raw: string): string => {
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 ĐƯỜNG DẪN TUYỆT ĐỐI → LẤY BASENAME. Bản trước lồng cả nó vào       │
+     * │    trong khung, và đẻ ra một đường dẫn KHÔNG HỢP LỆ.                  │
+     * │                                                                      │
+     * │ Ca thật 22/08 22:06, in nguyên văn từ `P-260822-2206-ajcd.plan.json`: │
+     * │                                                                      │
+     * │   outputs: artifacts/P-…/T-01/ban-ke.md                               │
+     * │          | artifacts/P-…/T-01/D:/Downloads/Programs Installation/…    │
+     * │                                        ↑ chữ `D:` thành một THƯ MỤC   │
+     * │                                                                      │
+     * │ Trên Windows dấu hai chấm giữa segment là đường dẫn bất hợp lệ, nên   │
+     * │ nhân viên đào **7 lượt · $0,3158** để `mkdir` một thứ không thể tồn   │
+     * │ tại, rồi chết ở trần lượt. Ta không "từ chối một việc chưa hỗ trợ" —  │
+     * │ ta **bịa ra một đường dẫn hỏng rồi giao cho nhân viên như mục tiêu**. │
+     * │                                                                      │
+     * │ Nhánh POSIX cũng sai, chỉ êm hơn: `/home/an/x.md` bị `^\/+` bóc đầu   │
+     * │ rồi thành `artifacts/…/home/an/x.md` — hợp lệ, nhưng sai chỗ và im.   │
+     * │                                                                      │
+     * │ ⚠ Kiểm CẢ HAI hệ, không dò `process.platform`: một văn phòng zip từ   │
+     * │ máy Windows sang máy Linux vẫn phải đọc đúng chuỗi đã ghi trong kế    │
+     * │ hoạch cũ. Cùng lý do `SHELL_ALIASES` gửi cả hai tên.                  │
+     * │                                                                      │
+     * │ Đây KHÔNG phải chỗ cài luật "được ghi ra ngoài hay không" — luật đó   │
+     * │ thuộc `officeJail`, và hiện chốt là KHÔNG (→ SPEC §1b, §8). Ở đây chỉ │
+     * │ đảm bảo: thứ ta giao cho nhân viên luôn là một đường dẫn DÙNG ĐƯỢC.   │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    if (path.win32.isAbsolute(raw) || path.posix.isAbsolute(raw)) {
+      const base = raw.replace(/\\/g, '/').split('/').filter(Boolean).pop();
+      return base ? `${home}/${base}` : `${home}/ket-qua.md`;
+    }
+
     let rest = raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
     if (rest.startsWith('artifacts/')) rest = rest.slice('artifacts/'.length);
     // Bóc các lớp khung ĐÃ CÓ, đúng thứ tự — đây là chỗ giữ tính idempotent.
@@ -592,7 +625,21 @@ export function buildPlan(
     return TaskBriefSchema.parse({
       ...t,
       inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
-      outputs: t.outputs.map((o) => ({ kind: 'file' as const, path: scopeOut(o.path) })),
+      /**
+       * GỘP TRÙNG SAU KHI ĐÓNG KHUNG — hai chuỗi khác nhau có thể quy về một.
+       *
+       * Ca 22/08 22:06: người dùng nói *"ghi vào `D:\…\ban-ke.md`"*, Trợ lý khai
+       * HAI đích (một trong khung, một là đường dẫn người dùng gõ) — đúng phận
+       * sự của nó. Sau `outputScoper` cả hai rút về `…/T-01/ban-ke.md`.
+       *
+       * Không gộp thì nhân viên nhận một danh sách bảo nó ghi cùng một file hai
+       * lần, và `validate` cũng không bắt: phép kiểm "hai task cùng ghi một
+       * đường dẫn" so GIỮA các task, không so trong lòng một task.
+       */
+      outputs: [...new Set(t.outputs.map((o) => scopeOut(o.path)))].map((p) => ({
+        kind: 'file' as const,
+        path: p,
+      })),
       step: remap.get(t.step) ?? 0,
       // Mặc định VĂN PHÒNG, không phải mặc định của schema. Đây là chỗ cần
       // gạt tất định thật sự có hiệu lực: model im lặng = đi theo cấu hình
@@ -618,6 +665,71 @@ export function buildPlan(
  */
 export function requestOf(draft: PlanDraft): string {
   return truncateToTokens(draft.tasks.map((t) => t.goal.trim()).filter(Boolean).join(' · '), 120);
+}
+
+/**
+ * Ý NGHĨA của cờ `chạy lệnh`, nói ĐÚNG MỘT LẦN ở đầu danh bạ. → `Assistant.reach`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CÂU NÀY PHẢI HẸP, VÌ MẶT PHỦ ĐỊNH RỘNG LÀ MỘT LỜI NÓI DỐI.               │
+ * │                                                                          │
+ * │ Ranh giới thật hôm nay (`types.ts §BUILTIN_TOOLS`, đo 22/08):             │
+ * │                                                                          │
+ * │   ĐỌC   `Read`/`Glob`/`Grep`  → KHÔNG hàng rào, với tới MỌI đường dẫn    │
+ * │   GHI   `Write`/`Edit`        → có hàng rào `officeJail`                 │
+ * │   LỆNH  `Bash`                → không hàng rào                           │
+ * │                                                                          │
+ * │ Nên *"không có shell"* KHÔNG đồng nghĩa *"không với tới máy của bạn"*.   │
+ * │ Vai trò trần vẫn mở được `D:\Hồ sơ\hopdong.pdf` bằng `Read`. Viết câu    │
+ * │ phủ định rộng là dạy Trợ lý từ chối cả việc nó làm được — hỏng ngược     │
+ * │ chiều, và im lặng hơn hẳn ca 9.3 vì không ai thấy việc đã bị từ chối.    │
+ * │                                                                          │
+ * │ Bằng chứng nằm ngay trong 9.3: nhân viên báo *"Glob chỉ trả về đường     │
+ * │ dẫn file"* — tức là Glob ĐÃ ra tới `D:\Downloads` thành công. Nó thiếu   │
+ * │ cột, không phải thiếu đường.                                             │
+ * │                                                                          │
+ * │ ⇒ Chỉ nêu đúng thứ shell thêm vào: metadata file, và ghi ra ngoài.       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ VÌ SAO KHÔNG VIẾT "shell là thứ DUY NHẤT lấy được kích thước".         │
+ * │                                                                          │
+ * │ Bản đầu của câu này viết đúng như vậy. Nó ĐÚNG hôm nay — 7 tool mặc      │
+ * │ định không có cái nào trả metadata — nhưng nó là một khẳng định về TOÀN  │
+ * │ BỘ THẾ GIỚI, nên nó **hết đúng vào đúng ngày MCP có mặt**: một MCP       │
+ * │ filesystem trả `size`/`mtime` là câu này thành nói dối, và nói dối theo  │
+ * │ chiều làm Trợ lý TỪ CHỐI một việc vốn chạy được.                         │
+ * │                                                                          │
+ * │ User bắt được lỗ này trước khi MCP kịp tồn tại (22/08): *"worker không   │
+ * │ có shell nhưng có nhiều tool khác, mcp khác thì assistant có chủ quan mà │
+ * │ chặn không"*. Có. Và nó sẽ chặn IM LẶNG.                                 │
+ * │                                                                          │
+ * │ ⇒ Thay bằng bất biến TỰ ĐÚNG: *"dòng của mỗi người liệt kê ĐỦ nơi họ với │
+ * │   tới"*. Đó là khẳng định về ĐỊNH DẠNG, không phải về thế giới — và      │
+ * │   `reach()` thi hành nó theo đúng nghĩa đen (`[...role.mcp]` đi đầu).    │
+ * │   Thêm bao nhiêu năng lực về sau, câu vẫn đúng, không phải sửa lại.      │
+ * │                                                                          │
+ * │ ⚠ CÒN NỢ: dòng đó liệt kê MCP bằng TÊN (`notion`), không bằng NĂNG LỰC.  │
+ * │ Trợ lý biết "với tới Notion", không biết "ghi được file". Đó đúng là ca  │
+ * │ ⑱ lặp lại thấp hơn một tầng — tên server là LỜI KHAI, danh sách tool     │
+ * │ của nó mới là SỰ THẬT. Chưa giải; xem §4 SESSIONS_MEMORY.                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const SHELL_LEGEND =
+  'Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội dung, ' +
+  'liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: kích thước · ngày sửa · dung lượng của file, ' +
+  'và ghi được ra ngoài thư mục văn phòng. Dòng của mỗi người liệt kê ĐỦ nơi họ với tới — ' +
+  'không có gì ngoài danh sách đó.';
+
+/**
+ * Cờ shell của MỘT vai trò. Tách ra để test được mà không phải dựng văn phòng —
+ * cùng lý do `resolveInput` từng được rút ra: luật đã sai một lần thì phải gọi
+ * được riêng để canh. Xem khối `⚠ ĐÍNH CHÍNH` ở `Assistant.reach`.
+ *
+ * LUÔN trả về một chuỗi, không bao giờ trả rỗng. Đó chính là chỗ bản trước sai.
+ */
+export function shellFlag(tools: readonly string[]): string {
+  return hasShell(tools) ? 'chạy lệnh: BẬT' : 'chạy lệnh: TẮT';
 }
 
 export class Assistant {
@@ -869,19 +981,36 @@ export class Assistant {
      * │ Không ai nói dối cả: `pitch` do người dùng gõ lúc tạo nhân viên, và   │
      * │ nó mô tả Ý ĐỊNH. Khả năng thì nằm ở `tools`, và trước dòng này Trợ lý │
      * │ **không có đường nào nhìn thấy `tools`**.                             │
+     * └──────────────────────────────────────────────────────────────────────┘
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ ⚠ ĐÍNH CHÍNH 22/08 (lần chạy lại 9.3) — BẢN CHỈ-KHẲNG-ĐỊNH VÔ HIỆU.  │
      * │                                                                      │
-     * │ Giá: ~3 token cho mỗi vai trò CÓ shell, 0 cho vai trò không có. Đổi   │
-     * │ lại là chặn được cả một lượt chạy hỏng — và quan trọng hơn, Trợ lý    │
-     * │ giờ nói được *"không ai chạy lệnh được"* NGAY, thay vì tiêu tiền để   │
-     * │ khám phá ra điều đó.                                                  │
+     * │ Bản trước đẩy `lệnh trên máy` vào danh sách CHỈ KHI có shell, với lý  │
+     * │ do *"luật 7 đã lo mặt phủ định"*. Chạy lại 9.3: Trợ lý **vẫn** giao   │
+     * │ việc cho `nguoi-kiem-ke`, vẫn lập đủ 2 bước, vẫn tiêu $0,1380.        │
      * │                                                                      │
-     * │ Chỉ nêu mặt KHẲNG ĐỊNH. Liệt kê cả thứ vai trò KHÔNG có là trả token  │
-     * │ cho một danh sách rỗng ở mọi lượt trò chuyện, và `ASSISTANT_CORE`     │
-     * │ luật 7 (*"nếu không ai hợp thì nói thẳng"*) đã lo mặt phủ định.       │
+     * │ Vì sao: văn phòng `kiem-ke` KHÔNG AI có shell ⇒ chuỗi `lệnh trên máy` │
+     * │ không xuất hiện ở đâu trong danh bạ ⇒ **vắng mặt không phải tín       │
+     * │ hiệu**. Một dấu hiệu chỉ-khẳng-định chỉ đọc được nhờ TƯƠNG PHẢN, mà   │
+     * │ ở đây không có gì để tương phản. Luật 7 cũng không thể bắn: theo bằng │
+     * │ chứng Trợ lý cầm, `pitch` nói CÓ người hợp.                           │
+     * │                                                                      │
+     * │ ⇒ Cờ phải nêu CẢ HAI chiều (`BẬT`/`TẮT`) thì mỗi dòng mới tự mang     │
+     * │   thông tin, không phụ thuộc vào việc trong phòng có ai khác kiểu.    │
+     * │                                                                      │
+     * │ Ý NGHĨA của cờ thì gom vào `SHELL_LEGEND`, nói MỘT LẦN. Nó là sự      │
+     * │ thật về agentco, không phải thuộc tính của một nhân viên — đặt nó lên │
+     * │ dòng của từng người là gán nhầm tầng, đúng cái sai đã sinh ra ca này. │
+     * │ Hoà vốn token ở ~3 nhân viên, sau đó gom càng lúc càng thắng.         │
+     * │                                                                      │
+     * │ ⚠ Cờ vẫn viết `chạy lệnh: TẮT` chứ KHÔNG phải `shell: 0` — chú giải   │
+     * │ nằm ở đầu khối, còn dòng thứ 9 thì đã xa; cờ phải tự đọc được khi     │
+     * │ đứng một mình. 2 token cho việc không phụ thuộc vào khoảng cách.      │
      * └──────────────────────────────────────────────────────────────────────┘
      */
-    if (hasShell(role.tools)) parts.push('lệnh trên máy');
-    return parts.length ? ` [với tới: ${parts.join(', ')}]` : '';
+    parts.push(shellFlag(role.tools));
+    return ` [${parts.join(' · ')}]`;
   }
 
   private roster(): string {
@@ -897,7 +1026,7 @@ export class Assistant {
     if (lines.length === 0) {
       return `# Employees you can assign to\n\n(none — this office has nobody on duty)`;
     }
-    return `# Employees you can assign to\n\n${lines.join('\n')}`;
+    return `# Employees you can assign to\n\n${SHELL_LEGEND}\n\n${lines.join('\n')}`;
   }
 
   /**

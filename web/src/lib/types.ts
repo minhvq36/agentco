@@ -54,7 +54,15 @@ export interface CanvasNode {
   /** Trần chi phí một việc, đơn vị USD. **`0` = không giới hạn.** */
   maxUsd?: number;
   maxTurns?: number;
-  /** Nhân viên: có `Bash` không — tool duy nhất chạm được ra ngoài văn phòng. */
+  /**
+   * Nhân viên: có `Bash` không.
+   *
+   * ⚠ KHÔNG mô tả nó là *"tool duy nhất ra được khỏi văn phòng"* (câu cũ). Đọc
+   * thì `Read`/`Glob`/`Grep` cũng ra được, mà ghi thì `outputScoper` luôn kéo
+   * đầu ra về `artifacts/` nên `Bash` chưa bao giờ được trỏ ra ngoài. Thứ nó
+   * thật sự độc quyền: **metadata file** (kích thước · ngày sửa) và chạy script.
+   * → SPEC-tools-approval.md §1a
+   */
   bash?: boolean;
   count?: number;
   mcp?: string[];

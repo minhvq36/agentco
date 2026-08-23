@@ -405,16 +405,41 @@ function BashSwitch({ node }: { node: CanvasNode }) {
         <span className="min-w-0">
           <span className="block text-[13px] text-ink">Cho chạy lệnh trên máy</span>
           <span className="block text-xs leading-relaxed text-muted">
-            Nhân viên có thể chạy lệnh trên hệ thống, đọc và ghi được bất cứ đâu trên máy bạn, linh hoạt và thông minh hơn. Cân nhắc tắt khi không cần thiết để tiết kiệm chi phí.
+            Xem được <b>kích thước · ngày sửa · dung lượng</b> file, chạy script, gọi git — những thứ
+            các tool đọc file thường không lấy được. Kết quả vẫn lưu trong thư mục văn phòng. Tắt khi
+            không cần: bật thì mỗi lượt tốn thêm ~2 700 token.
           </span>
         </span>
       </label>
 
+      {/*
+        ┌────────────────────────────────────────────────────────────────────┐
+        │ ⚠ VIẾT LẠI 22/08 — CÂU CŨ VỪA DOẠ QUÁ TAY VỪA HỨA QUÁ TAY.        │
+        │                                                                    │
+        │ Cũ: *"đọc và ghi được bất cứ đâu trên máy bạn"* + *"ngoại lệ duy   │
+        │ nhất của luật kết quả luôn nằm trong văn phòng"*.                   │
+        │                                                                    │
+        │ Sai ở hai đầu:                                                     │
+        │  · KHÔNG phải ngoại lệ duy nhất về ĐỌC — `Read`/`Glob`/`Grep`      │
+        │    cũng không có hàng rào nào (types.ts §BUILTIN_TOOLS).            │
+        │  · "Ghi bất cứ đâu" thì đúng về mặt kỹ thuật nhưng SAI về mặt sản  │
+        │    phẩm: `outputScoper` luôn kéo đầu ra về `artifacts/`, nên kế     │
+        │    hoạch chưa bao giờ trỏ `Bash` ra ngoài. Ca 22/08 22:06 thử lối   │
+        │    đó: 7 lượt · $0,3158 · blocked, không ra file nào.               │
+        │                                                                    │
+        │ Doạ quá tay làm người dùng tắt một thứ họ cần; hứa quá tay làm họ   │
+        │ bật để mua một thứ không tồn tại. Cái sau tệ hơn.                   │
+        │                                                                    │
+        │ Câu mới giữ đúng MỘT cảnh báo, và nó có thật: lệnh chạy bằng quyền  │
+        │ của chính người dùng. Chính sách "ghi ra ngoài phải qua tool/MCP    │
+        │ tường minh" → SPEC-tools-approval.md §1b, §8.                       │
+        └────────────────────────────────────────────────────────────────────┘
+      */}
       {on && (
         <p className="mt-2.5 rounded bg-warn-soft px-2 py-1.5 text-xs leading-relaxed text-warn">
-          Người này <b>đọc và ghi được bất cứ đâu trên máy bạn</b>, không chỉ trong thư mục văn phòng —
-          và đó là <b>ngoại lệ duy nhất</b> của luật "kết quả luôn nằm trong văn phòng". Chỉ bật cho
-          nhân viên bạn thật sự cần, rồi tắt lại.
+          Lệnh chạy bằng <b>quyền của chính bạn</b> trên máy này. Nhân viên chỉ được giao việc trong
+          thư mục văn phòng, nhưng một câu lệnh thì không có hàng rào — nên chỉ bật cho người bạn
+          thật sự cần.
         </p>
       )}
     </div>

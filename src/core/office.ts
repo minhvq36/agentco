@@ -132,6 +132,43 @@ export interface SayOutcome {
   plan_id?: string;
 }
 
+/**
+ * Câu báo "chia việc hỏng" gửi thẳng lên mặt người dùng.
+ *
+ * `repeats` = số lần DANH SÁCH LỖI Y HỆT vừa lặp lại (0 = lần đầu).
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TỪ LẦN THỨ BA, LỜI KHUYÊN MẶC ĐỊNH TRỞ THÀNH MỘT LỜI NÓI DỐI.            │
+ * │                                                                          │
+ * │ *"Bạn nhắn lại yêu cầu rõ hơn một chút"* là lời khuyên tốt ở lần đầu.     │
+ * │ Tới lần thứ ba với cùng một danh sách lỗi thì ta đã có BẰNG CHỨNG rằng    │
+ * │ diễn đạt lại không đổi được kết quả — ca 22/08: người dùng gõ lại hai     │
+ * │ lần, mỗi lần rõ hơn, và nhận đúng cùng một chuỗi từng byte, vì nguyên     │
+ * │ nhân nằm ở hai luật trong prompt ép nhau chứ không ở câu chữ của họ.      │
+ * │                                                                          │
+ * │ Lặp lại lời khuyên đó là để người dùng tự tiêu thời gian đi tìm một cách  │
+ * │ diễn đạt KHÔNG TỒN TẠI. Ta chưa sửa được nguyên nhân, nhưng ta biết chắc  │
+ * │ điều này và phải nói ra — rồi chuyển hướng sang thứ họ thật sự làm được.  │
+ * │                                                                          │
+ * │ ⚠ KHÔNG giấu danh sách lỗi đi ở lần thứ ba. Nó vẫn là thứ duy nhất nói    │
+ * │ được chuyện gì đang xảy ra, và người dùng có thể copy nó đi hỏi chỗ khác. │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function planProblemsMessage(problems: readonly string[], repeats: number): string {
+  const head =
+    'Mình chia việc bị lỗi nên chưa chạy được. Chưa nhân viên nào bắt tay vào làm\n' +
+    problems.map((p) => `  · ${p}`).join('\n');
+
+  if (repeats < 2) {
+    return `${head}\nBạn nhắn lại yêu cầu rõ hơn một chút, hoặc nói cụ thể tên tài liệu cần dùng nhé.`;
+  }
+  return (
+    `${head}\nĐây là lần thứ ${repeats + 1} mình kẹt y hệt, nên gõ lại lần nữa nhiều khả năng ` +
+    `cũng vậy — vướng nằm ở chỗ mình chia việc, không nằm ở cách bạn diễn đạt. Thử bỏ bớt một ` +
+    `yêu cầu trong câu (nhất là chỗ chỉ định nơi lưu file), hoặc tách ra hai lần nhắn.`
+  );
+}
+
 export class Office {
   loaded: LoadedOffice;
   readonly knowledge: KnowledgeStore;
@@ -166,6 +203,31 @@ export class Office {
    * sát của phiên trước không còn dạy được gì về phiên này.
    */
   private planFriction = 0;
+
+  /**
+   * Dấu vân tay của lần `validate` hỏng gần nhất, và số lần nó lặp lại y nguyên.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CÙNG MỘT CÂU TỪ CHỐI BA LẦN LIÊN TIẾP LÀ HỆ THỐNG ĐANG KHÔNG HỌC ĐƯỢC   │
+   * │ GÌ TỪ CHÍNH LỜI TỪ CHỐI CỦA NÓ. (ca thật 22/08, user chạy bài 9b)       │
+   * │                                                                          │
+   * │ Người dùng gõ lại yêu cầu hai lần, mỗi lần rõ hơn — *"chưa có file đó,   │
+   * │ tạo mới mà"*, rồi *"tức là đọc đường dẫn, xong mới ghi vào file đó"* —   │
+   * │ và nhận về **đúng cùng một chuỗi, từng byte**. Vì nguyên nhân nằm ở hai  │
+   * │ luật trong prompt ép nhau (→ TEST-WALKTHROUGH §Bài 9b), nên KHÔNG cách   │
+   * │ diễn đạt lại nào thoát được. Vòng lặp vô hạn theo cấu trúc.              │
+   * │                                                                          │
+   * │ Ta chưa sửa được nguyên nhân ở đây, nhưng ta biết chắc một điều và phải  │
+   * │ nói ra: **gõ lại lần nữa sẽ không giúp gì.** Im lặng lặp lại câu cũ là   │
+   * │ để người dùng tự tiêu thời gian đi tìm cách diễn đạt không tồn tại.      │
+   * │                                                                          │
+   * │ Ở RAM, cùng lý do `planFriction`: nó chỉ có nghĩa trong một mạch hội     │
+   * │ thoại liền.                                                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private lastPlanProblems = '';
+  private samePlanProblemsCount = 0;
+
   private emitFn: (e: AgentEvent) => void = () => {};
 
   constructor(loaded: LoadedOffice) {
@@ -1216,14 +1278,17 @@ export class Office {
          * │ → SESSIONS_MEMORY §2 "Sổ chi phí không được nói sai câu nào"        │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        throw new RunError(
-          `Mình chia việc bị lỗi nên chưa chạy được. Chưa nhân viên nào bắt tay vào — ` +
-            `phần tốn tiền nhất chưa mất gì (lượt chia việc vừa rồi vẫn nằm trong sổ chi phí).\n` +
-            problems.map((p) => `  · ${p}`).join('\n') +
-            `\nBạn nhắn lại yêu cầu rõ hơn một chút, hoặc nói cụ thể tên tài liệu cần dùng nhé.`,
-          'other',
-        );
+        const fingerprint = problems.join('\n');
+        this.samePlanProblemsCount =
+          fingerprint === this.lastPlanProblems ? this.samePlanProblemsCount + 1 : 0;
+        this.lastPlanProblems = fingerprint;
+
+        throw new RunError(planProblemsMessage(problems, this.samePlanProblemsCount), 'other');
       }
+
+      // Qua được cửa `validate` thì mạch kẹt đã đứt — xem `samePlanProblemsCount`.
+      this.lastPlanProblems = '';
+      this.samePlanProblemsCount = 0;
 
       this.currentPlan = plan;
       record.steps = plan.steps;

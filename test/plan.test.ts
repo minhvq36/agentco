@@ -18,10 +18,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { outputScoper } from '../dist/core/assistant.js';
+import { SHELL_LEGEND, outputScoper, shellFlag } from '../dist/core/assistant.js';
 import { Scheduler, delivered, unmetDeps } from '../dist/core/scheduler.js';
 import { isStale } from '../dist/core/artifacts.js';
 import { existsOnDisk, resolveInput } from '../dist/core/paths.js';
+import { planProblemsMessage } from '../dist/core/office.js';
 
 type Plan = Parameters<typeof Scheduler.linkDeps>[0];
 
@@ -520,4 +521,135 @@ test('missingInputs dùng CHUNG luật với validate: đường dẫn tuyệt �
     fs.rmSync(office, { recursive: true, force: true });
     fs.rmSync(outside, { recursive: true, force: true });
   }
+});
+
+
+// ═════════════════════════════════════════ cờ BẤT ĐỊNH: hai chiều, và hẹp
+//
+// Bản 22/08 chỉ đẩy `lệnh trên máy` vào danh bạ KHI có shell. Chạy lại 9.3:
+// văn phòng không ai có shell ⇒ chuỗi đó không xuất hiện ở đâu ⇒ vắng mặt không
+// phải tín hiệu, và Trợ lý vẫn giao việc, vẫn tiêu $0,1380.
+
+test('shellFlag: LUÔN nói ra, cả hai chiều — vắng mặt không phải tín hiệu', () => {
+  assert.notEqual(shellFlag([]), '', 'không có shell vẫn PHẢI nói ra');
+  assert.notEqual(shellFlag([]), shellFlag(['Bash']), 'hai chiều phải phân biệt được');
+  assert.ok(shellFlag(['Bash']).includes('BẬT'));
+  assert.ok(shellFlag([]).includes('TẮT'));
+  // Khai bằng tên nền tảng nào cũng tính — xem types.ts §SHELL_ALIASES.
+  assert.equal(shellFlag(['PowerShell']), shellFlag(['Bash']));
+});
+
+test('shellFlag: cờ TỰ ĐỌC ĐƯỢC khi đứng một mình, không cần chú giải ở trên', () => {
+  // Chú giải nằm đầu khối, cờ nằm ở dòng thứ 9 — khoảng cách là có thật.
+  for (const tools of [[], ['Bash']]) {
+    assert.ok(shellFlag(tools).includes('chạy lệnh'), `cờ phải tự mang nghĩa: ${shellFlag(tools)}`);
+  }
+});
+
+/**
+ * 🔴 MẶT PHỦ ĐỊNH RỘNG LÀ MỘT LỜI NÓI DỐI, và nó hỏng NGƯỢC CHIỀU.
+ *
+ * "không có shell" KHÔNG đồng nghĩa "không với tới máy của bạn" — vai trò trần
+ * vẫn `Read` được mọi đường dẫn tuyệt đối. Viết câu phủ định rộng là dạy Trợ lý
+ * từ chối cả việc nó làm được, và ca hỏng đó IM LẶNG hơn 9.3 vì không ai thấy
+ * việc đã bị từ chối.
+ */
+test('SHELL_LEGEND: nêu quyền ĐỌC, và không phủ định rộng ra cả việc với tới máy', () => {
+  assert.ok(/MỞ ĐƯỢC file trên máy/.test(SHELL_LEGEND), 'phải nói ra quyền đọc');
+  for (const doi of ['không với tới', 'không đọc được', 'không truy cập']) {
+    assert.ok(!SHELL_LEGEND.includes(doi), `câu phủ định rộng "${doi}" là sai sự thật`);
+  }
+});
+
+/**
+ * 🔴 KHÔNG ĐƯỢC KHẲNG ĐỊNH VỀ TOÀN BỘ THẾ GIỚI — nó hết đúng khi thế giới lớn ra.
+ *
+ * "shell là thứ DUY NHẤT lấy được kích thước" đúng hôm nay (7 tool mặc định không
+ * cái nào trả metadata) và thành NÓI DỐI vào đúng ngày một MCP filesystem có mặt —
+ * nói dối theo chiều làm Trợ lý TỪ CHỐI việc vốn chạy được, tức là hỏng im lặng.
+ *
+ * Bất biến thay thế nói về ĐỊNH DẠNG, không về thế giới, nên nó tự đúng mãi.
+ */
+test('SHELL_LEGEND: không khẳng định độc quyền — câu phải sống sót khi MCP có mặt', () => {
+  for (const dong of ['DUY NHẤT', 'duy nhất', 'chỉ có thể', 'cách duy nhất']) {
+    assert.ok(
+      !SHELL_LEGEND.includes(dong),
+      `"${dong}" là khẳng định về toàn bộ thế giới — hết đúng khi thêm MCP`,
+    );
+  }
+  assert.ok(/liệt kê ĐỦ/.test(SHELL_LEGEND), 'phải thay bằng bất biến về định dạng');
+});
+
+// ═══════════════════════════════════════════ chặn vòng lặp câu từ chối
+//
+// Ca thật 22/08 (bài 9b): người dùng gõ lại yêu cầu HAI lần, mỗi lần rõ hơn, và
+// nhận về đúng cùng một chuỗi từng byte — vì nguyên nhân nằm ở hai luật trong
+// prompt ép nhau, không nằm ở cách họ diễn đạt. Không lời nào thoát được.
+
+test('planProblemsMessage: lần đầu vẫn khuyên nhắn lại — lời khuyên đó đúng ở lần đầu', () => {
+  const m = planProblemsMessage(['Task T-02 cần đọc "x.md"'], 0);
+  assert.ok(m.includes('nhắn lại yêu cầu rõ hơn'));
+  assert.ok(!m.includes('lần thứ'));
+});
+
+test('planProblemsMessage: từ lần thứ BA thì đổi câu — thôi khuyên một thứ đã đo là vô ích', () => {
+  const m = planProblemsMessage(['Task T-02 cần đọc "x.md"'], 2);
+  assert.ok(m.includes('lần thứ 3'), `phải nói ra là đang kẹt lặp: ${m}`);
+  assert.ok(
+    !m.includes('nhắn lại yêu cầu rõ hơn'),
+    'không được lặp lại lời khuyên vừa bị chứng minh là vô ích',
+  );
+  // Phải chuyển hướng sang thứ người dùng THẬT SỰ làm được.
+  assert.ok(m.includes('bỏ bớt') || m.includes('tách ra'));
+});
+
+test('planProblemsMessage: KHÔNG giấu danh sách lỗi đi ở lần lặp', () => {
+  // Nó vẫn là thứ duy nhất nói được chuyện gì đang xảy ra, và người dùng copy
+  // được nó đi hỏi chỗ khác.
+  for (const n of [0, 2, 5]) {
+    assert.ok(planProblemsMessage(['Task T-02 cần đọc "x.md"'], n).includes('Task T-02'));
+  }
+});
+
+// ══════════════════════════════ outputScoper: đường dẫn TUYỆT ĐỐI → basename
+//
+// Ca thật 22/08 22:06 (`P-260822-2206-ajcd`). Người dùng nói "ghi vào
+// D:\Downloads\Programs Installation\ban-ke.md". Kế hoạch lưu ra:
+//
+//   outputs: artifacts/P-…/T-01/ban-ke.md
+//          | artifacts/P-…/T-01/D:/Downloads/Programs Installation/ban-ke.md
+//
+// Chữ `D:` thành một đoạn thư mục ⇒ trên Windows là đường dẫn BẤT HỢP LỆ ⇒
+// nhân viên đào 7 lượt · $0,3158 để mkdir một thứ không thể tồn tại.
+
+test('outputScoper: đường dẫn Windows tuyệt đối → basename, KHÔNG lồng ổ đĩa vào khung', () => {
+  const s = outputScoper('P-1', 'T-01');
+  assert.equal(s('D:\\Downloads\\Programs Installation\\ban-ke.md'), 'artifacts/P-1/T-01/ban-ke.md');
+  assert.ok(!s('D:\\Downloads\\x.md').includes('D:'), 'ổ đĩa không được thành tên thư mục');
+});
+
+test('outputScoper: đường dẫn POSIX tuyệt đối → basename', () => {
+  // Nhánh này hỏng êm hơn (hợp lệ nhưng sai chỗ) nên trước đây không ai thấy.
+  const s = outputScoper('P-1', 'T-01');
+  assert.equal(s('/home/an/bao-cao/ban-ke.md'), 'artifacts/P-1/T-01/ban-ke.md');
+});
+
+test('outputScoper: UNC share cũng là tuyệt đối', () => {
+  const s = outputScoper('P-1', 'T-01');
+  assert.equal(s('\\\\server\\share\\ban-ke.md'), 'artifacts/P-1/T-01/ban-ke.md');
+});
+
+test('outputScoper: kiểm CẢ HAI hệ, không dò process.platform', () => {
+  // Văn phòng zip từ Windows sang Linux vẫn phải đọc đúng chuỗi trong kế hoạch cũ.
+  const s = outputScoper('P-1', 'T-01');
+  for (const p of ['D:\\a\\x.md', '/a/x.md']) {
+    assert.equal(s(p), 'artifacts/P-1/T-01/x.md', `phải xử lý được "${p}" trên mọi máy`);
+  }
+});
+
+test('outputScoper: đường dẫn TƯƠNG ĐỐI giữ nguyên hành vi cũ — vẫn giữ đuôi người dùng đặt', () => {
+  // Nới cho tuyệt đối không được làm hỏng luật "giữ phần người dùng chọn".
+  const s = outputScoper('P-1', 'T-01');
+  assert.equal(s('vi/doc-1.md'), 'artifacts/P-1/T-01/vi/doc-1.md');
+  assert.equal(s('artifacts/P-1/T-01/vi/doc-1.md'), 'artifacts/P-1/T-01/vi/doc-1.md');
 });

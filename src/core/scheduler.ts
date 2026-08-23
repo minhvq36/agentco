@@ -130,6 +130,26 @@ export class Scheduler {
    *
    * `officeDir` để kiểm `inputs` có thật trên đĩa không. Không truyền thì bỏ
    * qua kiểm đó — hàm vẫn dùng được trong test mà không cần dựng thư mục.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ ĐÃ GỠ 22/08: cổng "ghi ra ngoài mà không có shell" — CODE CHẾT.        │
+   * │                                                                          │
+   * │ Nó kiểm `isAbsolute(o.path)` trên `outputs`. Nhưng `buildPlan` chạy      │
+   * │ `outputScoper` lên outputs của MỌI task trước đó (`assistant.ts:591`),   │
+   * │ và hàm đó luôn trả `artifacts/<plan>/<task>/…` — không có nhánh nào cho  │
+   * │ đường dẫn tuyệt đối. ⇒ điều kiện KHÔNG BAO GIỜ đúng trong sản phẩm.      │
+   * │                                                                          │
+   * │ 9 test của nó vẫn xanh vì chúng gọi thẳng `validate` với plan tự chế,    │
+   * │ **đi vòng qua `buildPlan`**. Chứng minh cơ chế chạy khi gọi trực tiếp,   │
+   * │ rồi kết luận nó bảo vệ production — [[agentco-measurement-vs-conclusion]]│
+   * │ lần thứ ba trong một phiên.                                              │
+   * │                                                                          │
+   * │ Và nó còn SAI theo thiết kế mới: biên giới đã chốt là *"văn phòng +      │
+   * │ chỗ người dùng gõ ra"*, thi hành ở `officeJail` theo XUẤT XỨ chuỗi.      │
+   * │ Ghi ra ngoài khi đó dùng `Write` — **không cần shell**. Một cổng bắt     │
+   * │ phải-có-shell-mới-được-ghi là chặn ngược chiều.                          │
+   * │ → docs/TEST-WALKTHROUGH.md §Bài 9b                                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
   static validate(plan: Plan, knownRoles: ReadonlySet<string>, officeDir?: string): string[] {
     const problems: string[] = [];
