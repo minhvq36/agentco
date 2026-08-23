@@ -93,12 +93,16 @@ export const api = {
    * giây** lần đầu phải tải gói về. Giao diện phải hiện "đang kết nối…" — coi im
    * lặng là hỏng thì mọi cánh tay đều trông như hỏng ở lần cắm đầu tiên.
    */
-  testArm: (id: string, config: unknown) =>
-    call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, config }) }),
+  testArm: (id: string, body: { config?: unknown; catalogId?: string; folders?: string[] }) =>
+    call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
 
   addArm: (body: {
     id: string;
-    config: unknown;
+    /** Gửi thẳng cấu hình (đường "tự cắm")… */
+    config?: unknown;
+    /** …hoặc để SERVER dựng từ danh mục — số phiên bản gói chỉ nằm ở một chỗ. */
+    catalogId?: string;
+    folders?: string[];
     secrets?: Record<string, string>;
     office?: string;
     /** Giao cho ai — đi CÙNG request với việc cắm, xem `Office.grantArm`. */

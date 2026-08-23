@@ -69,6 +69,8 @@ export interface CatalogArm {
  * "code người lạ" không còn đủ — **chọn hộ khách là bảo đảm hộ khách**.
  */
 const FILESYSTEM_PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
+/** Chính chủ Notion phát hành — khác hẳn một gói cộng đồng, và UI phải nói ra. */
+const NOTION_PKG = '@notionhq/notion-mcp-server@2.5.1';
 
 export const CATALOG: CatalogArm[] = [
   {
@@ -90,6 +92,31 @@ export const CATALOG: CatalogArm[] = [
       command: 'npx',
       args: ['-y', FILESYSTEM_PKG, ...folders],
     }),
+  },
+  {
+    id: 'notion',
+    name: 'Notion',
+    icon: '📝',
+    blurb: 'Tìm, đọc và cập nhật trang trong không gian Notion của bạn.',
+    price: 'keys',
+    transport: 'stdio',
+    secrets: [
+      {
+        // ⚠ TÊN NÀY PHẢI KHỚP CHÍNH XÁC, và nó KHÔNG suy được từ giao thức: MCP
+        // không công bố "tôi cần biến nào" vì đó là yêu cầu lúc KHỞI ĐỘNG TIẾN
+        // TRÌNH, xảy ra TRƯỚC khi bắt tay. Sai tên ⇒ `status: 'failed'` — biết
+        // là hỏng, không biết vì sao. Đó là lý do danh mục ship sẵn nó.
+        name: 'NOTION_TOKEN',
+        label: 'Token tích hợp Notion',
+        help:
+          'Notion → Settings → Connections → Develop your own integration → tạo mới → copy "Internal Integration Secret". ' +
+          'Rồi MỞ TRANG bạn muốn cho đọc → menu ··· → Connections → thêm tích hợp vừa tạo.',
+      },
+    ],
+    // ❓ `checkedOn: null` = CHƯA ai đọc quy tắc thương hiệu của Notion. Ô trống
+    // nghĩa là KHÔNG dùng logo — cấu trúc, không phải kỷ luật. → SPEC-arms §11c
+    brand: { owner: 'Notion Labs, Inc.', guidelineUrl: null, checkedOn: null },
+    build: () => ({ command: 'npx', args: ['-y', NOTION_PKG] }),
   },
 ];
 
@@ -122,25 +149,36 @@ function norm(p: string): string {
 }
 
 /**
- * `next` có bị một trong `existing` PHỦ SẴN không? Trả thư mục đụng nhau.
+ * `next` có TRÙNG KHÍT thư mục nào trong `existing` không?
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ LUẬT (user chốt 23/08): TRONG MỘT VĂN PHÒNG, một thư mục chỉ được phủ    │
- * │ bởi ĐÚNG MỘT cánh tay. Khác văn phòng thì thoải mái — clone độc lập là   │
- * │ chủ ý.                                                                   │
+ * │ LUẬT (user chốt 23/08): TRONG MỘT VĂN PHÒNG, hai cánh tay không được trỏ │
+ * │ vào **ĐÚNG CÙNG MỘT** thư mục. Khác văn phòng thì thoải mái — clone độc  │
+ * │ lập là chủ ý.                                                            │
  * │                                                                          │
- * │ Vì sao CHẶN chứ không cảnh báo: hai cánh tay phủ cùng một thư mục thì    │
- * │ văn phòng trả **2× token** cho đúng một năng lực, và nhân viên nhìn thấy │
- * │ hai bộ tool làm y hệt nhau — vừa tốn tiền vừa mời model chọn nhầm.       │
+ * │ Vì sao chặn ca trùng khít: nó là **nhân đôi thuần** — hai bộ tool y hệt  │
+ * │ nhau, văn phòng trả 2× token cho đúng một năng lực, và model có hai       │
+ * │ đường làm cùng một việc. Không có lý do nào để muốn nó.                   │
  * │                                                                          │
- * │ Và cái giá của việc chặn bằng KHÔNG: người thứ hai cần thư mục đó thì    │
- * │ **nối dây vào chính cái node đã có**. Một cánh tay phục vụ nhiều nhân    │
- * │ viên là chuyện bình thường — đó chính là lý do nó là NODE chứ không phải │
- * │ một thuộc tính của từng người.                                           │
+ * │ Cách đi tiếp thì miễn phí: người thứ hai cần thư mục đó thì **nối dây     │
+ * │ vào chính node đã có**. Một cánh tay phục vụ nhiều nhân viên là chuyện    │
+ * │ bình thường — đó chính là lý do nó là NODE chứ không phải thuộc tính.     │
  * │                                                                          │
- * │ "Phủ" gồm cả NẰM TRONG: đã cho `D:/Ho so` thì `D:/Ho so/2026` không thêm │
- * │ được gì. Chiều ngược lại (cái mới RỘNG hơn) KHÔNG chặn — đó là mở rộng   │
- * │ có chủ ý, và chặn nó là cấm người dùng nới quyền.                        │
+ * │ ⚠ BẢN ĐẦU CÒN CHẶN "THƯ MỤC CON", VÀ ĐÃ GỠ (user bác, và bác đúng).      │
+ * │                                                                          │
+ * │ Lý lẽ cũ: *"`D:/Ho so/2026` nằm trong `D:/Ho so` nên không thêm gì"*.     │
+ * │ Sai hai lần:                                                             │
+ * │                                                                          │
+ * │  1. Nó THÊM THẬT — một cánh tay hẹp là **đặc quyền tối thiểu**: nhân      │
+ * │     viên A chỉ với tới `2026`, nhân viên B với tới cả kho. Và nó giúp     │
+ * │     model đỡ mò trong một cây thư mục to.                                │
+ * │  2. Nó BẤT ĐỐI XỨNG THEO THỨ TỰ TẠO. Cấu hình cuối cùng y hệt nhau, chỉ  │
+ * │     khác ai được cắm trước — mà thứ tự thao tác không phải một tính chất  │
+ * │     của thiết kế.                                                        │
+ * │                                                                          │
+ * │ Chồng lấn VẪN tốn token thật. Nhưng đó là **cái giá người dùng chọn**,   │
+ * │ và luật đã chốt cho đúng loại câu hỏi này là *hiện giá, đừng chặn*        │
+ * │ (§9b — bỏ trần 2 000). Áp lần thứ hai, cùng một lý do.                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function coveredBy(
@@ -150,11 +188,42 @@ export function coveredBy(
   for (const want of next.map(norm)) {
     for (const e of existing) {
       for (const have of e.folders.map(norm)) {
-        if (want === have || want.startsWith(`${have}/`)) return { id: e.id, folder: want };
+        if (want === have) return { id: e.id, folder: want };
       }
     }
   }
   return undefined;
+}
+
+/**
+ * Gốc này có nuốt trọn thư mục VĂN PHÒNG (hoặc CÔNG TY) không?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CHẶN, và lý do thứ hai NẶNG HƠN lý do thứ nhất.                          │
+ * │                                                                          │
+ * │ 1. THỪA: `Read`/`Write`/`Glob`/`Grep` đã đọc-ghi tự do trong thư mục văn │
+ * │    phòng (đó là `cwd`). Cắm một cánh tay lên chính chỗ đó là trả ~2 200  │
+ * │    token MỖI LƯỢT để mua một năng lực đang có sẵn, miễn phí.             │
+ * │                                                                          │
+ * │ 2. 🔴 NÓ ĐI VÒNG QUA HÀNG RÀO `.state/`. `paths.ts §guardedZone` chặn    │
+ * │    đọc kho chìa và ghi file cấu hình — nhưng hook chỉ khớp tool BUILTIN  │
+ * │    (`Read|Grep|Glob|Write|Edit`). Tool của MCP mang tên `mcp__x__read_   │
+ * │    file`, KHÔNG khớp. ⇒ một cánh tay trỏ vào thư mục văn phòng mở lại    │
+ * │    đúng hai cái lỗ vừa vá sáng nay, qua một cửa khác.                    │
+ * │                                                                          │
+ * │ Đây là bản vá HẸP cho một lỗ RỘNG hơn: mọi MCP filesystem trỏ vào bất kỳ │
+ * │ đâu chứa `.state/` đều đi vòng qua được. Lỗ rộng phải vá bằng cách mở    │
+ * │ matcher của hook sang `mcp__*` — đã ghi vào SPEC-arms §5f, CHƯA làm, và  │
+ * │ chưa ai đo là matcher đó có khớp không. Đừng đọc chốt này thành "đã an   │
+ * │ toàn": nó đóng con đường DỄ ĐI NHẤT, không đóng cả lớp.                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function swallowsOffice(root: string, officeDir: string, companyDir: string): boolean {
+  const r = norm(root);
+  return [officeDir, companyDir].some((d) => {
+    const n = norm(d);
+    return n === r || n.startsWith(`${r}/`);
+  });
 }
 
 /** Bản gửi lên giao diện — bỏ `build` (hàm không serialize được). */

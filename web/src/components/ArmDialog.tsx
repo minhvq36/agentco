@@ -119,18 +119,26 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   const agents = (canvas?.nodes ?? []).filter((n) => n.kind === 'agent' && n.role);
 
-  /** Cấu hình sắp gửi đi. `null` = chưa đủ để thử. */
-  function buildConfig(): Record<string, unknown> | null {
+  const folderList = () => folders.split('\n').map((s) => s.trim()).filter(Boolean);
+
+  /**
+   * Thứ gửi lên server. Mục danh mục thì gửi **`catalogId` + thư mục** và để
+   * SERVER dựng — client không ghép chuỗi `npx …@phiên-bản` nữa.
+   *
+   * Bản trước client tự ghép, tức số phiên bản gói ghim ở HAI chỗ. Hai bản của
+   * cùng một hằng số đã đốt dự án này một lần (`agentSlot` vs `arrange`).
+   */
+  function payload(): { config?: Record<string, unknown>; catalogId?: string; folders?: string[] } | null {
     if (pick) {
-      if (pick.folders) {
-        const list = folders.split('\n').map((s) => s.trim()).filter(Boolean);
-        if (!list.length) return null;
-        // Giữ ĐÚNG hình dạng `catalog.ts §build` dựng ra. Server là nơi ghép
-        // thật; ở đây chỉ để nút Thử có cái mà gửi.
-        return { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem@2026.7.10', ...list] };
-      }
-      return { command: 'npx', args: [] };
+      if (pick.folders && folderList().length === 0) return null;
+      return { catalogId: pick.id, folders: folderList() };
     }
+    const cfg = parsePaste();
+    return cfg ? { config: cfg } : null;
+  }
+
+  /** Khối JSON người dùng dán. `null` = chưa đọc được. */
+  function parsePaste(): Record<string, unknown> | null {
     try {
       const parsed = JSON.parse(paste) as Record<string, unknown>;
       // Nhận cả hai hình dạng: khối `{"mcpServers":{"ten":{…}}}` chép nguyên từ
@@ -149,16 +157,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }
 
   async function test() {
-    const config = buildConfig();
-    if (!config) {
-      setErr(pick?.folders ? 'Điền ít nhất một thư mục.' : 'Chưa đọc được cấu hình — kiểm lại khối JSON.');
+    const p = payload();
+    if (!p) {
+      setErr(pick?.folders ? 'Chọn ít nhất một thư mục.' : 'Chưa đọc được cấu hình — kiểm lại khối JSON.');
       return;
     }
     setErr('');
     setTesting(true);
     setProbe(null);
     try {
-      setProbe(await api.testArm(armId || pick?.id || 'thu', config));
+      setProbe(await api.testArm(armId || pick?.id || 'thu', p));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Không thử được.');
     } finally {
@@ -167,14 +175,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }
 
   async function save() {
-    const config = buildConfig();
+    const p = payload();
     const id = (armId || pick?.id || '').trim();
-    if (!config || !id || busy) return;
+    if (!p || !id || busy) return;
     setBusy(true);
     try {
       await api.addArm({
         id,
-        config,
+        ...p,
         ...(Object.keys(keys).length ? { secrets: keys } : {}),
         ...(officeId ? { office: officeId } : {}),
         ...(grant.length ? { grantTo: grant } : {}),

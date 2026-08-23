@@ -1161,6 +1161,26 @@ là một thế giới đóng, nên đó là kết quả hợp lý — và cũng
 về `openWorld`. **Phải đo lại với một cánh tay chạm mạng (GitHub — spike 8)** trước khi xây §8 lên
 trên nó.
 
+### 8a-ter. 🔴 HÀNG RÀO `guardedZone` **KHÔNG che tool MCP** — lỗ vừa mở lại qua cửa khác
+
+`paths.ts §guardedZone` (vá 23/08) chặn đọc `.state/` và ghi file cấu hình. Nhưng hook khớp
+`Read|Grep|Glob` và `Write|Edit|NotebookEdit` — **tên builtin**. Tool của một MCP filesystem mang
+tên `mcp__<server>__read_file`, **không khớp cái nào**.
+
+⇒ **Một cánh tay file trỏ vào thư mục chứa `company/` mở lại đúng hai lỗ đã vá sáng cùng ngày.**
+
+| | trạng thái |
+|---|---|
+| Vá HẸP — chặn cắm gốc nuốt thư mục văn phòng/công ty | ✅ **đã làm** — `catalog.ts §swallowsOffice`, 6 test |
+| Vá RỘNG — mở matcher hook sang `mcp__*` | ❌ **chưa làm**, và ❓ **chưa ai đo matcher đó có khớp không** |
+
+> ⚠ **Đừng đọc vá hẹp thành "đã an toàn".** Nó đóng **con đường dễ đi nhất** (người dùng vô tình
+> chọn ổ `D:\`), không đóng cả lớp: một MCP bất kỳ có tool đọc file, trỏ vào bất kỳ đâu chứa
+> `.state/`, vẫn đi vòng qua được. Cùng luật *"đã hẹp lại, chưa đóng"* đã áp cho `Bash`.
+>
+> Đây là **lý do thứ hai** để §8 (cổng duyệt) không bị hoãn vô hạn: `PreToolUse` là tầng duy nhất
+> mọi lời gọi tool đi qua, kể cả MCP — và spike 3 vẫn chưa chạy.
+
 ### 8b. ⚠⚠ Luật một chiều — annotations là **GỢI Ý của server**, không phải bảo đảm
 
 🌐 Đặc tả MCP gọi chúng là *hints* và nói rõ **client không được tin chúng như bảo đảm an toàn**.

@@ -31,7 +31,7 @@ import {
 } from './paths.js';
 import { Office } from './office.js';
 import { readSecrets, writeSecrets } from './secrets.js';
-import { coveredBy, folderRoots } from './catalog.js';
+import { coveredBy, folderRoots, swallowsOffice } from './catalog.js';
 import {
   appendRename,
   appendUsage,
@@ -462,6 +462,18 @@ export class Company {
     const want = folderRoots(input.config);
     if (input.office && want.length) {
       const office = this.get(input.office);
+
+      // Thư mục văn phòng / công ty: thừa VÀ đi vòng qua hàng rào `.state/`.
+      // → `catalog.ts §swallowsOffice`
+      const bad = want.find((r) => swallowsOffice(r, office.loaded.dir, this.dir));
+      if (bad) {
+        throw new RunError(
+          `"${bad}" chứa chính thư mục làm việc của văn phòng. Nhân viên đã đọc-ghi được ở đó sẵn ` +
+            `mà không tốn token nào, nên cắm thêm là trả tiền cho thứ đang có. Chọn một thư mục bên ngoài.`,
+          'other',
+        );
+      }
+
       const used = new Set<string>();
       for (const [roleId, role] of office.loaded.roles) {
         if (office.loaded.archivedRoles.has(roleId)) continue;
@@ -798,4 +810,5 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
  * khi người dùng lưu lần đầu**. Không có file mặc định nào cả: một file rỗng chỉ
  * để "cho có" là một dòng nữa trong thư mục mà không ai giải thích được.
  */
+
 

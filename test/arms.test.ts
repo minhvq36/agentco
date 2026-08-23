@@ -16,7 +16,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { coveredBy, folderRoots } from '../dist/core/catalog.js';
+import { coveredBy, folderRoots, swallowsOffice } from '../dist/core/catalog.js';
 
 // ───────────────────────────────────────────────────────────── folderRoots
 
@@ -58,18 +58,54 @@ test('coveredBy: khác dấu gạch chéo và khác hoa thường VẪN là mộ
   assert.ok(coveredBy([have('files', 'D:\\Ho So')], ['d:/ho so/']));
 });
 
-test('coveredBy: thư mục con của cái ĐÃ CÓ thì chặn — nó không thêm được gì', () => {
-  assert.ok(coveredBy([have('files', 'D:\\Ho so')], ['D:\\Ho so\\2026']));
+/**
+ * ⚠ CHỒNG LẤN KHÔNG BỊ CHẶN — cả hai chiều. Bản đầu chặn "thư mục con", user
+ * bác, và bác đúng: một cánh tay hẹp hơn là **đặc quyền tối thiểu** (nhân viên A
+ * chỉ với tới `2026`, B với tới cả kho), và luật cũ **bất đối xứng theo thứ tự
+ * tạo** — cùng một cấu hình cuối cùng, chặn hay không tuỳ ai cắm trước.
+ *
+ * Chồng lấn vẫn tốn token thật, nhưng đó là cái giá NGƯỜI DÙNG CHỌN ⇒ *hiện giá,
+ * đừng chặn* (cùng luật đã bỏ trần 2 000). Hai test này khoá chiều đó lại.
+ */
+test('coveredBy: thư mục CON thì CHO — đó là đặc quyền tối thiểu, không phải trùng lặp', () => {
+  assert.equal(coveredBy([have('files', 'D:\\Ho so')], ['D:\\Ho so\\2026']), undefined);
 });
 
-test('coveredBy: cái mới RỘNG HƠN thì KHÔNG chặn — đó là nới quyền có chủ ý', () => {
-  // Chiều này phải để lọt: chặn nó là cấm người dùng mở rộng phạm vi.
+test('coveredBy: cái mới RỘNG HƠN cũng CHO — nới quyền có chủ ý', () => {
   assert.equal(coveredBy([have('files', 'D:\\Ho so\\2026')], ['D:\\Ho so']), undefined);
 });
 
-test('coveredBy: tên chỉ TRÙNG TIỀN TỐ thì KHÔNG phải thư mục con', () => {
-  // `D:\Ho so-cu` không nằm trong `D:\Ho so`. Thiếu dấu `/` khi so là chặn nhầm.
+test('coveredBy: trùng tiền tố tên thì KHÔNG phải trùng thư mục', () => {
   assert.equal(coveredBy([have('files', 'D:\\Ho so')], ['D:\\Ho so-cu']), undefined);
+});
+
+// ───────────────────────────────────────────────────────── swallowsOffice
+
+const OFFICE = 'D:\\cty\\offices\\noi-dung';
+const COMPANY = 'D:\\cty';
+
+test('swallowsOffice: chính thư mục văn phòng thì chặn', () => {
+  assert.ok(swallowsOffice(OFFICE, OFFICE, COMPANY));
+});
+
+test('swallowsOffice: thư mục CHA của văn phòng cũng chặn — nó nuốt cả `.state/`', () => {
+  // Đây là nửa nguy hiểm: tool MCP mang tên `mcp__x__read_file`, KHÔNG khớp
+  // matcher của `guardedZone` ⇒ nó đi vòng qua hàng rào kho chìa.
+  assert.ok(swallowsOffice('D:\\', OFFICE, COMPANY));
+  assert.ok(swallowsOffice(COMPANY, OFFICE, COMPANY));
+});
+
+test('swallowsOffice: thư mục CON bên trong văn phòng thì CHO', () => {
+  // Không nuốt `.state/`, và người dùng có thể thật sự muốn phạm vi hẹp đó.
+  assert.equal(swallowsOffice(`${OFFICE}\\artifacts`, OFFICE, COMPANY), false);
+});
+
+test('swallowsOffice: thư mục chẳng liên quan thì cho', () => {
+  assert.equal(swallowsOffice('D:\\Downloads', OFFICE, COMPANY), false);
+});
+
+test('swallowsOffice: khác dấu gạch chéo và hoa thường vẫn bắt được', () => {
+  assert.ok(swallowsOffice('d:/cty', OFFICE, COMPANY));
 });
 
 test('coveredBy: thư mục khác hẳn thì cho qua', () => {

@@ -24,7 +24,7 @@ import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
-import { catalogForUi } from '../core/catalog.js';
+import { catalogForUi, findArm } from '../core/catalog.js';
 import { baselineTokens, probeArm } from '../core/probe.js';
 
 /**
@@ -39,6 +39,26 @@ export function isLoopback(addr: string | undefined): boolean {
   if (!addr) return false;
   const a = addr.replace(/^::ffff:/i, '');
   return a === '127.0.0.1' || a === '::1' || a.startsWith('127.');
+}
+
+/**
+ * Cấu hình cánh tay sắp dùng: hoặc client gửi thẳng (`config`), hoặc SERVER
+ * DỰNG từ mục danh mục (`catalogId` + `folders`).
+ *
+ * ⚠ Đường thứ hai tồn tại để **số phiên bản gói chỉ nằm ở MỘT chỗ**. Bản trước
+ * client tự ghép `npx -y @…/server-filesystem@2026.7.10 <dirs>` — tức chuỗi ghim
+ * phiên bản nằm ở cả `catalog.ts` lẫn `ArmDialog.tsx`. Hai bản của cùng một hằng
+ * số là chuyện đã đốt dự án này một lần rồi (`agentSlot` vs `arrange`, xem
+ * `layout-geometry.ts`): chúng lệch nhau, và không ai thấy cho tới khi hỏng.
+ */
+function armConfig(body: {
+  config?: Record<string, unknown>;
+  catalogId?: string;
+  folders?: string[];
+}): Record<string, unknown> | undefined {
+  if (body.config) return body.config;
+  const arm = body.catalogId ? findArm(body.catalogId) : undefined;
+  return arm ? arm.build({ folders: body.folders ?? [] }) : undefined;
 }
 
 /**
@@ -194,24 +214,33 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      * không được coi im lặng là hỏng. → SPEC-arms.md §3a
      */
     if (url.pathname === '/api/arms/test' && method === 'POST') {
-      const body = await readJson<{ id?: string; config?: Record<string, unknown> }>(req);
-      if (!body.config) return json(res, 400, { error: 'thiếu "config"' });
+      const body = await readJson<{
+        id?: string;
+        config?: Record<string, unknown>;
+        catalogId?: string;
+        folders?: string[];
+      }>(req);
+      const config = armConfig(body);
+      if (!config) return json(res, 400, { error: 'thiếu "config" hoặc "catalogId"' });
       const base = await baselineTokens();
-      const r = await probeArm({ [body.id || 'thu']: body.config as never }, base);
+      const r = await probeArm({ [body.id || 'thu']: config as never }, base);
       return json(res, 200, r);
     }
     if (url.pathname === '/api/arms' && method === 'POST') {
       const body = await readJson<{
         id?: string;
         config?: Record<string, unknown>;
+        catalogId?: string;
+        folders?: string[];
         secrets?: Record<string, string>;
         office?: string;
         grantTo?: string[];
       }>(req);
-      if (!body.id || !body.config) return json(res, 400, { error: 'thiếu "id" hoặc "config"' });
+      const config = armConfig(body);
+      if (!body.id || !config) return json(res, 400, { error: 'thiếu "id" hoặc "config"' });
       company.addArm({
         id: body.id,
-        config: body.config,
+        config,
         ...(body.secrets ? { secrets: body.secrets } : {}),
         ...(body.office ? { office: body.office } : {}),
       });
@@ -707,4 +736,5 @@ function pkgVersion(): string {
     return '0.0.0';
   }
 }
+
 
