@@ -1844,6 +1844,49 @@ export class Office {
   }
 
   /**
+   * BỎ HẲN một cánh tay khỏi văn phòng này: xoá `mcp:` khỏi mọi vai trò và khỏi
+   * Trợ lý. Dùng khi cánh tay bị xoá ở cấp công ty.
+   *
+   * ⚠ Phải chạy CẢ KHI server đã biến mất khỏi `company.yaml` — nếu không thì
+   * một vai trò còn khai `mcp: [x]` sẽ giữ node mồ côi trên sơ đồ mãi mãi, và
+   * người dùng bấm "Xoá hẳn" lần nữa chỉ nhận về *"không có cánh tay x"*. Đó
+   * đúng ca user báo 23/08: nút xoá báo lỗi, node không biến mất.
+   *
+   * Trả `true` nếu có gì đó thật sự đổi — caller dùng để quyết có phát sự kiện.
+   */
+  dropArm(server: string): boolean {
+    let touched = false;
+    for (const [roleId, role] of this.loaded.roles) {
+      if (!role.mcp.includes(server)) continue;
+      this.writeYamlList(
+        path.join(this.loaded.paths.roles, `${roleId}.yaml`),
+        ['mcp'],
+        role.mcp.filter((s) => s !== server),
+      );
+      touched = true;
+    }
+    const forAssistant = this.loaded.config.assistant.mcp;
+    if (forAssistant.includes(server)) {
+      this.writeYamlList(
+        this.loaded.paths.configFile,
+        ['assistant', 'mcp'],
+        forAssistant.filter((s) => s !== server),
+      );
+      touched = true;
+    }
+    if (touched) this.reload();
+    return touched;
+  }
+
+  /** Ghi một mảng chuỗi vào yaml, giữ chú thích. Xoá hẳn khoá khi rỗng. */
+  private writeYamlList(file: string, keyPath: string[], next: string[]): void {
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (next.length) doc.setIn(keyPath, doc.createNode(next));
+    else doc.deleteIn(keyPath);
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+  }
+
+  /**
    * GIAO một cánh tay cho những nhân viên nào. → docs/SPEC-arms.md §6f bước 3
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐

@@ -32,21 +32,28 @@ export interface Point {
 }
 
 /** Kích thước node. Server và client PHẢI thống nhất để tự sắp xếp khớp nhau. */
+/**
+ * ⚠ Thu nhỏ 23/08 (user chốt). Sơ đồ cũ hết chỗ rất nhanh: bốn nhân viên là đã
+ * chiếm 944px ngang, và mỗi hàng thêm vào đẩy hai kho xuống 148px nữa.
+ *
+ * Node nhỏ hơn KHÔNG làm mất thông tin nào — chữ trong node vốn đã bị cắt
+ * (`cut(node.label, 17)`), thứ chiếm chỗ là khoảng đệm.
+ */
 export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
-  assistant: { w: 232, h: 84 },
-  agent: { w: 196, h: 88 },
-  knowledge: { w: 200, h: 64 },
-  library: { w: 200, h: 64 },
-  mcp: { w: 168, h: 56 },
+  assistant: { w: 200, h: 72 },
+  agent: { w: 168, h: 76 },
+  knowledge: { w: 184, h: 58 },
+  library: { w: 184, h: 58 },
+  mcp: { w: 152, h: 52 },
 };
 
 /** Số nhân viên mỗi hàng trước khi xuống dòng. */
 export const PER_ROW = 4;
 
 const ORIGIN_X = 140;
-const ORIGIN_Y = 250;
-const COL_GAP = 40;
-const ROW_GAP = 60;
+const ORIGIN_Y = 210;
+const COL_GAP = 34;
+const ROW_GAP = 44;
 /** Khe giữa hai kho ở hàng dưới cùng. */
 export const SHELF_GAP = 24;
 /** Khoảng cách tối thiểu giữa hai node để mắt đọc ra là "hai cái". */
@@ -126,7 +133,22 @@ export function arrangeAll(
   const width = cols * (NODE_SIZE.agent.w + COL_GAP) - COL_GAP;
   const mid = ORIGIN_X + width / 2;
   const rows = Math.max(1, Math.ceil(agents.length / PER_ROW));
-  const shelfY = ORIGIN_Y + rows * (NODE_SIZE.agent.h + ROW_GAP) + SHELF_DROP;
+
+  /**
+   * BỐN TẦNG, và thứ tự này là một CÂU đọc từ trên xuống:
+   *
+   *   Trợ lý      chia việc
+   *   nhân viên   làm việc
+   *   cánh tay    ← ngay dưới người dùng nó, dây ngắn nhất có thể
+   *   hai kho     đáy, vì chúng là NỀN của cả văn phòng
+   *
+   * ⚠ Bản 23/08 sáng đặt cánh tay DƯỚI hai kho. User bác: *"2 kho ở tầng dưới
+   * cùng"*. Và ngoài chuyện thứ bậc, nó còn sai về hình: dây từ cánh tay lên
+   * nhân viên phải vòng qua hai kho, nên nó vẽ ra một cái vòng kỳ cục.
+   */
+  const armRow = mcps.length ? NODE_SIZE.mcp.h + SHELF_DROP : 0;
+  const armY = ORIGIN_Y + rows * (NODE_SIZE.agent.h + ROW_GAP) + SHELF_DROP;
+  const shelfY = armY + armRow;
   const shelfW = NODE_SIZE.knowledge.w + SHELF_GAP + NODE_SIZE.library.w;
   const shelfX = Math.round(mid - shelfW / 2);
 
@@ -162,7 +184,6 @@ export function arrangeAll(
     const armStep = NODE_SIZE.mcp.w + COL_GAP;
     const armW = mcps.length * armStep - COL_GAP;
     const armX = Math.round(mid - armW / 2);
-    const armY = shelfY + NODE_SIZE.knowledge.h + SHELF_DROP;
     mcps.forEach((n, i) => out.set(n.id, { x: armX + i * armStep, y: armY }));
   }
 

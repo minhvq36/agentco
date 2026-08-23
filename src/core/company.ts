@@ -498,10 +498,17 @@ export class Company {
    * cạnh trỏ tới node không còn tồn tại, nên không cần dọn tay ở đây.
    */
   removeArm(id: string): void {
+    /**
+     * ⚠ IDEMPOTENT — "xoá một thứ đã không còn" phải THÀNH CÔNG, không phải báo
+     * lỗi. Bản đầu ném `Không có cánh tay "<id>"`, và user gặp đúng nó: node mồ
+     * côi (vai trò còn khai `mcp:` trong khi `company.yaml` đã sạch) thì bấm
+     * Xoá hẳn nhận về một câu lỗi, và node ở lại vĩnh viễn.
+     *
+     * Một câu từ chối chỉ đúng khi người dùng còn đường đi tiếp. Ở đây không có
+     * đường nào — nên nó không phải lời từ chối, nó là một ngõ cụt.
+     */
     const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
-    if (!doc.deleteIn(['mcpServers', id])) {
-      throw new RunError(`Không có cánh tay "${id}".`, 'other');
-    }
+    doc.deleteIn(['mcpServers', id]);
     fs.writeFileSync(
       this.paths.configFile,
       doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
@@ -510,6 +517,10 @@ export class Company {
 
     this.config = loadCompanyConfig(this.dir);
     for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+    // Dọn mọi tham chiếu còn sót: không dọn thì node ở lại dạng mồ côi và không
+    // có nút nào gỡ được nó nữa. Chạy SAU `applyCompanyConfig` để mỗi Office
+    // đang đọc đúng bản config mới.
+    for (const office of this.offices.values()) office.dropArm(id);
 
     this.emit({
       type: 'company.offices',

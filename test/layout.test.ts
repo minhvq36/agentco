@@ -145,9 +145,20 @@ test('firstFreeSlot: sơ đồ rỗng thì nhận ô đầu tiên', () => {
 // đều". Cùng lớp với lỗi 16/08 — người mới được cấp ô mà không nhìn sơ đồ đang
 // có hình gì — nhưng lần này ô KHÔNG chồng lên ai, nó chỉ nằm sai chỗ.
 
+/**
+ * ⚠ SUY RA BƯỚC LƯỚI, ĐỪNG CHÉP SỐ. Hai test này từng khoá cứng `196 + 40`, và
+ * chúng đỏ ngay lần đầu ai đó tinh chỉnh kích thước node (23/08) — trong khi
+ * hành vi chúng canh (thứ tự 0 → +1 → −1 → +2) **không đổi một chút nào**.
+ *
+ * Một test đỏ vì một hằng số hợp lệ vừa đổi là một test dạy người ta bỏ qua
+ * màu đỏ. Lấy bước lưới từ chính nguồn mà `centeredSlot` dùng.
+ */
+const STEP = () => NODE_SIZE.agent.w + (agentSlot(1).x - agentSlot(0).x - NODE_SIZE.agent.w);
+
 test('centeredSlot: thứ tự lệch là 0 → +1 → −1 → +2 rồi xuống hàng', () => {
-  const c = 238; // tâm cột 0
-  const step = NODE_SIZE.agent.w + 40;
+  // Tâm của ĐÚNG cột 0 — suy ra, không đoán.
+  const c = agentSlot(0).x + NODE_SIZE.agent.w / 2;
+  const step = STEP();
   assert.equal(centeredSlot(0, c).x, agentSlot(0).x);
   assert.equal(centeredSlot(1, c).x, agentSlot(0).x + step);
   assert.equal(centeredSlot(2, c).x, agentSlot(0).x - step);
@@ -160,8 +171,10 @@ test('centeredSlot: thứ tự lệch là 0 → +1 → −1 → +2 rồi xuống
 test('centeredSlot: luôn bám ĐÚNG LƯỚI của agentSlot, kể cả khi trục lệch nửa cột', () => {
   // Trục nằm giữa hai cột (ca số nhân viên CHẴN). Không làm tròn về lưới thì ô
   // mới lệch nửa cột và chồng một nửa lên người cũ — tệ hơn hẳn lệch phải.
-  const step = NODE_SIZE.agent.w + 40;
-  for (const centerX of [238, 300, 356, 400, 474]) {
+  const step = STEP();
+  const base = agentSlot(0).x + NODE_SIZE.agent.w / 2;
+  // Trục đúng cột, lệch nửa cột, lệch một chút — mọi ca đều phải rơi về lưới.
+  for (const centerX of [base, base + step / 2, base + step, base + step * 1.5, base + 17]) {
     const x = centeredSlot(0, centerX).x;
     assert.equal((x - agentSlot(0).x) % step, 0, `trục ${centerX} đẻ ra ô lệch lưới: ${x}`);
   }

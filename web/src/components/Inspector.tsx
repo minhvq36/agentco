@@ -569,11 +569,15 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                                    vốn vô hại.
             */}
             <div className="mt-4 flex flex-col gap-2">
-              <Button onClick={() => void actions.detachArm(node.server!)}>Gỡ khỏi văn phòng này</Button>
+              <Button onClick={() => void actions.detachArm(node.server!)}>Cất vào lưu trữ</Button>
               <Button variant="danger" onClick={() => setConfirmRemove(node)}>
                 Xoá hẳn kết nối
               </Button>
             </div>
+            <Note>
+              <b>Cất đi</b> = biến khỏi sơ đồ, cấu hình và chìa còn nguyên — lấy lại bằng nút{' '}
+              <b>Kết nối</b>. <b>Xoá hẳn</b> = bỏ khỏi công ty. Cùng hai mức với nhân viên.
+            </Note>
             <Note>
               Nối vào Trợ lý = việc vặt Trợ lý tự xử lý. Dây này hiện mới được <b>ghi nhận</b>: nó cần{' '}
               <code>concierge</code> (M1) mới chạy được — Trợ lý không tự cầm MCP, vì MCP phá prompt cache ở

@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Check, Loader2, Plug, TriangleAlert } from 'lucide-react';
+import { Check, FolderOpen, Loader2, Plug, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -40,6 +40,18 @@ const PRICE_SAY: Record<CatalogArm['price'], string> = {
   keys: 'cần 1 chìa',
   login: 'cần đăng nhập',
 };
+
+/** `files` đã có → `files-2`. Mã trùng bị server từ chối, nên gợi sẵn cái rảnh. */
+function nextFreeId(base: string, taken: { id: string }[]): string {
+  const has = new Set(taken.map((t) => t.id));
+  const stem = base.replace(/-\d+$/, '');
+  if (!has.has(stem)) return stem;
+  for (let i = 2; i < 100; i++) if (!has.has(`${stem}-${i}`)) return `${stem}-${i}`;
+  return `${stem}-${Date.now()}`;
+}
+
+/** Thư mục người dùng rời đi lần trước — bộ chọn mở lại ĐÚNG ĐÓ, không về ổ đĩa. */
+const LAST_DIR = 'agentco.lastBrowseDir';
 
 export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const officeId = useApp((s) => s.officeId);
@@ -206,15 +218,26 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       key={a.id}
                       type="button"
                       onClick={() => {
-                        setArmId(a.id);
-                        setProbe({ status: 'connected', tools: [], connectMs: 0 });
-                        setStep(3);
+                        /*
+                          NHÂN BẢN, không dùng chung. User chốt 23/08: *"các node
+                          MCP không được phép liên văn phòng, kể cả dùng chung đi
+                          nữa thì nó cũng phải là những clone khác nhau"*.
+
+                          Dùng chung một mã nghĩa là đổi thư mục ở văn phòng A thì
+                          văn phòng B đổi theo, âm thầm. Chép cấu hình sang một mã
+                          MỚI thì hai bên độc lập thật.
+                        */
+                        setPick(null);
+                        setPaste(JSON.stringify(a.config, null, 2));
+                        setArmId(nextFreeId(a.id, installed));
+                        setProbe(null);
+                        setStep(2);
                       }}
                       className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-accent"
                     >
                       <Plug className="h-3.5 w-3.5 text-muted" />
                       <span className="flex-1">{a.id}</span>
-                      <span className="text-[11px] text-muted">dùng lại</span>
+                      <span className="text-[11px] text-muted">chép sang đây</span>
                     </button>
                   ))}
                 </div>
@@ -403,84 +426,160 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function FolderPicker({ chosen, onChange }: { chosen: string[]; onChange(v: string[]): void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="rounded-md border border-line px-2 py-1.5">
+        {chosen.length === 0 && <div className="px-1 py-1 text-xs text-muted">Chưa chọn thư mục nào.</div>}
+        {chosen.map((p) => (
+          <div key={p} className="flex items-center gap-2 py-0.5">
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{p}</span>
+            <button
+              type="button"
+              className="text-xs text-muted hover:text-danger"
+              onClick={() => onChange(chosen.filter((x) => x !== p))}
+            >
+              bỏ
+            </button>
+          </div>
+        ))}
+        <Button size="sm" className="mt-1.5 w-full" onClick={() => setOpen(true)}>
+          <FolderOpen className="h-3.5 w-3.5" />
+          Chọn thư mục…
+        </Button>
+      </div>
+      <BrowseDialog open={open} onOpenChange={setOpen} chosen={chosen} onChange={onChange} />
+    </>
+  );
+}
+
+/**
+ * MODAL DUYỆT THƯ MỤC — tách hẳn khỏi hộp thoại `+ Kết nối`.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG DÙNG HỘP THOẠI CHỌN THƯ MỤC CỦA HỆ ĐIỀU HÀNH — user hỏi     │
+ * │ thẳng, và câu trả lời là: TRÌNH DUYỆT KHÔNG ĐƯA ĐƯỢC ĐƯỜNG DẪN TUYỆT ĐỐI.│
+ * │                                                                          │
+ * │   `<input webkitdirectory>`  → chỉ trả tên TƯƠNG ĐỐI trong thư mục đã     │
+ * │                                chọn, không có gốc                        │
+ * │   `showDirectoryPicker()`    → trả một HANDLE, cố ý không lộ đường dẫn    │
+ * │                                (đó là tính năng bảo mật, không phải sót)  │
+ * │                                                                          │
+ * │ Cả hai đều là hàng rào có chủ ý của trình duyệt, không phải thứ vá được.  │
+ * │ Và kể cả vá được thì vẫn sai: nó liệt kê máy của NGƯỜI ĐANG NGỒI, trong  │
+ * │ khi cánh tay chạy trên máy của DAEMON — khác nhau ngay khi lên VPS hoặc  │
+ * │ vào container (§10b). Bộ chọn tự liệt kê nên tự đúng ở cả hai chỗ.       │
+ * │                                                                          │
+ * │ Ba thứ bù lại cho việc mất hộp thoại quen thuộc, và user đòi cả ba:      │
+ * │  · mở lại ĐÚNG thư mục rời đi lần trước, không quay về ổ đĩa             │
+ * │  · GÕ/DÁN thẳng đường dẫn — nhanh hơn mọi cú click khi đã biết chỗ       │
+ * │  · modal RIÊNG, rộng, không chen trong hộp thoại đang dở                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function BrowseDialog({
+  open,
+  onOpenChange,
+  chosen,
+  onChange,
+}: {
+  open: boolean;
+  onOpenChange(v: boolean): void;
+  chosen: string[];
+  onChange(v: string[]): void;
+}) {
   const [cur, setCur] = useState<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>({
     path: '',
     parent: null,
     dirs: [],
   });
+  const [typed, setTyped] = useState('');
   const [loading, setLoading] = useState(false);
 
   const go = (p?: string) => {
     setLoading(true);
     void api
       .browse(p)
-      .then(setCur)
+      .then((r) => {
+        setCur(r);
+        setTyped(r.path);
+        if (r.path) localStorage.setItem(LAST_DIR, r.path);
+      })
       .catch(() => undefined)
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => go(), []);
+  useEffect(() => {
+    if (open) go(localStorage.getItem(LAST_DIR) ?? undefined);
+  }, [open]);
 
   const here = cur.path;
-  const already = here && chosen.includes(here);
+  const already = here !== '' && chosen.includes(here);
 
   return (
-    <div className="rounded-md border border-line">
-      <div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
-        <Button
-          size="sm"
-          disabled={cur.parent === null}
-          onClick={() => go(cur.parent ?? undefined)}
-          aria-label="Lên thư mục trên"
-        >
-          ↑
-        </Button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
-          {here || 'Chọn ổ đĩa'}
-        </span>
-        {/* Thêm CHÍNH thư mục đang mở — nếu không thì không có cách nào chọn một
-            thư mục không có thư mục con, và đó là ca rất thường gặp. */}
-        <Button size="sm" disabled={!here || !!already} onClick={() => onChange([...chosen, here])}>
-          {already ? 'Đã chọn' : 'Chọn thư mục này'}
-        </Button>
-      </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Chọn thư mục</DialogTitle>
+          <DialogDescription>
+            Đây là các thư mục trên máy đang chạy agentco — không phải máy bạn đang ngồi, nếu hai cái khác nhau.
+          </DialogDescription>
+        </DialogHeader>
 
-      <div className="max-h-40 overflow-y-auto">
-        {loading && <div className="px-3 py-2 text-xs text-muted">Đang đọc…</div>}
-        {!loading && cur.dirs.length === 0 && (
-          <div className="px-3 py-2 text-xs text-muted">Không có thư mục con nào đọc được ở đây.</div>
-        )}
-        {!loading &&
-          cur.dirs.map((d) => (
-            <button
-              key={d.path}
-              type="button"
-              onDoubleClick={() => go(d.path)}
-              onClick={() => go(d.path)}
-              className="block w-full truncate px-3 py-1.5 text-left text-[13px] hover:bg-accent-soft"
-            >
-              📁 {d.name}
-            </button>
-          ))}
-      </div>
-
-      {chosen.length > 0 && (
-        <div className="border-t border-line px-2 py-1.5">
-          {chosen.map((p) => (
-            <div key={p} className="flex items-center gap-2 py-0.5">
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{p}</span>
-              <button
-                type="button"
-                className="text-xs text-muted hover:text-danger"
-                onClick={() => onChange(chosen.filter((x) => x !== p))}
-              >
-                bỏ
-              </button>
-            </div>
-          ))}
+        <div className="flex items-center gap-2">
+          <Button size="sm" disabled={cur.parent === null} onClick={() => go(cur.parent ?? undefined)}>
+            ↑
+          </Button>
+          {/* Gõ/dán thẳng: khi đã biết chỗ thì đây nhanh hơn mọi cú click. */}
+          <Input
+            className="flex-1 font-mono text-[12px]"
+            value={typed}
+            placeholder="Hoặc dán đường dẫn rồi Enter"
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                go(typed.trim() || undefined);
+              }
+            }}
+          />
+          <Button size="sm" disabled={!here || already} onClick={() => onChange([...chosen, here])}>
+            {already ? 'Đã chọn' : 'Chọn thư mục này'}
+          </Button>
         </div>
-      )}
-    </div>
+
+        <div className="mt-2 grid max-h-[46vh] grid-cols-3 gap-1 overflow-y-auto rounded-md border border-line p-1">
+          {loading && <div className="col-span-3 px-2 py-2 text-xs text-muted">Đang đọc…</div>}
+          {!loading && cur.dirs.length === 0 && (
+            <div className="col-span-3 px-2 py-2 text-xs text-muted">
+              Không có thư mục con nào đọc được ở đây.
+            </div>
+          )}
+          {!loading &&
+            cur.dirs.map((d) => (
+              <button
+                key={d.path}
+                type="button"
+                onClick={() => go(d.path)}
+                title={d.path}
+                className="truncate rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent-soft"
+              >
+                📁 {d.name}
+              </button>
+            ))}
+        </div>
+
+        {chosen.length > 0 && (
+          <div className="mt-2 text-xs text-muted">
+            Đã chọn {chosen.length} thư mục — chọn thêm được, đóng lại khi xong.
+          </div>
+        )}
+        <div className="mt-3 flex justify-end">
+          <Button variant="primary" onClick={() => onOpenChange(false)}>
+            Xong
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
