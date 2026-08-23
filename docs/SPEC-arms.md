@@ -1606,6 +1606,28 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
 | 16 | Builder MCP cho autobot swarm (§5g) | luồng dựng **có tên, có nhật ký** | vừa |
 | 17 | Connector tự sinh (đường **C**) | **đặc sản** | lớn |
 | ⏸ | Docker (§10) | gác lại — user tự test rồi tính | — |
+| ⏸ | **Bố cục HÌNH SAO cho nhân viên** (user đề xuất 23/08) | hàng ngang hết chỗ khi đông người | lớn |
+
+> ### ⏸ Bố cục hình sao — gác lại 23/08, **và đây là thứ phải chốt trước khi xây**
+>
+> **Vấn đề có thật:** hàng ngang `PER_ROW = 4` rồi xuống dòng — mỗi hàng thêm vào đẩy hai kho xuống
+> một tầng, và sơ đồ nở theo chiều dọc. Đã lấy trước phần rẻ (thu nhỏ node, siết khe dọc), nhưng
+> đó là **hoãn**, không phải **giải**.
+>
+> **Chưa xây có chủ ý:** nó động vào `arrangeAll` · `centeredSlot` · `firstFreeSlot` · `clashes`
+> **cùng lúc**, và cả bốn đều có test canh những ca đã từng hỏng thật (người thứ ba dồn về một
+> phía · ô mới đè lên người cũ · ô lệch nửa cột). Làm dở thì tệ hơn hàng ngang.
+>
+> **Một câu phải user chốt trước, vì hai đáp án ra hai sơ đồ khác hẳn nhau:**
+>
+> | | Trợ lý ở đâu | Đọc ra là gì |
+> |---|---|---|
+> | **Vòng tròn** | **giữa**, nhân viên vây quanh | quan hệ **hướng tâm** — ai cũng ngang hàng nhau |
+> | **Hình quạt** | **đỉnh**, nhân viên toả xuống hình nan quạt | quan hệ **trên–dưới**, giữ được "việc chảy từ trên xuống" |
+>
+> ⚠ Vòng tròn đẹp hơn nhưng nó **phá tầng**: cánh tay và hai kho đang nằm dưới cùng vì luật *"việc
+> chảy xuống, tài nguyên đẩy lên"*. Đặt Trợ lý vào giữa thì trục dọc đó không còn, và phải nghĩ
+> lại chỗ cho **cả bốn** loại node chứ không riêng nhân viên.
 
 > **Việc 2 nhảy lên đầu vì spike 6 đã đổi trạng thái của nó**: hôm qua nó là *"bịt một lỗ ta nghi
 > là có"*, hôm nay là *"bịt một lỗ ta đã nhìn thấy chạy, hai lần, trong 45 giây, giá $0,04"*.

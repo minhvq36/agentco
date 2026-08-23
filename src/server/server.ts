@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Daemon: HTTP + SSE.
  *
  * → docs/SPEC-offices.md §8, docs/SPEC-cli.md §1
@@ -209,7 +209,12 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         grantTo?: string[];
       }>(req);
       if (!body.id || !body.config) return json(res, 400, { error: 'thiếu "id" hoặc "config"' });
-      company.addArm({ id: body.id, config: body.config, ...(body.secrets ? { secrets: body.secrets } : {}) });
+      company.addArm({
+        id: body.id,
+        config: body.config,
+        ...(body.secrets ? { secrets: body.secrets } : {}),
+        ...(body.office ? { office: body.office } : {}),
+      });
 
       // Giao cho ai — cùng MỘT request, cố ý. Tách làm hai lời gọi là mở ra một
       // cửa sổ mà cánh tay đã tồn tại nhưng chưa ai dùng được, và nếu lời gọi
@@ -702,3 +707,4 @@ function pkgVersion(): string {
     return '0.0.0';
   }
 }
+

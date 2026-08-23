@@ -41,6 +41,31 @@ const PRICE_SAY: Record<CatalogArm['price'], string> = {
   login: 'cần đăng nhập',
 };
 
+/** Thẻ chọn LOẠI ở bước 1. Câu phụ nói người dùng phải làm gì tiếp, không nói kỹ thuật. */
+function TypeCard({
+  icon,
+  name,
+  say,
+  onClick,
+}: {
+  icon: string;
+  name: string;
+  say: string;
+  onClick(): void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg border border-line px-3 py-4 text-left transition hover:border-accent hover:bg-accent-soft"
+    >
+      <div className="text-2xl">{icon}</div>
+      <div className="mt-1.5 text-[13px] font-medium">{name}</div>
+      <div className="mt-0.5 text-[11px] leading-snug text-muted">{say}</div>
+    </button>
+  );
+}
+
 /** `files` đã có → `files-2`. Mã trùng bị server từ chối, nên gợi sẵn cái rảnh. */
 function nextFreeId(base: string, taken: { id: string }[]): string {
   const has = new Set(taken.map((t) => t.id));
@@ -58,6 +83,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const canvas = useApp((s) => s.canvas);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  /** Bước 1 có ba mặt: chọn LOẠI → chọn dịch vụ / dán cấu hình. */
+  const [pane, setPane] = useState<'type' | 'catalog' | 'paste'>('type');
   const [catalog, setCatalog] = useState<CatalogArm[]>([]);
   const [installed, setInstalled] = useState<InstalledArm[]>([]);
 
@@ -77,6 +104,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   useEffect(() => {
     if (!open) return;
     setStep(1);
+    setPane('type');
     setPick(null);
     setPaste('');
     setArmId('');
@@ -184,25 +212,82 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         {/* ─────────────────────────────────────────────── BƯỚC 1 · Chọn */}
         {step === 1 && (
           <div className="max-h-[52vh] overflow-y-auto">
-            <div className="grid grid-cols-3 gap-2">
-              {catalog.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ CHỌN LOẠI TRƯỚC, chọn dịch vụ sau. (user chốt 23/08)         │
+              │                                                              │
+              │ Bản trước bày thẳng thẻ danh mục: "File trên máy" đứng ngang │
+              │ hàng với "Notion". Sai tầng — người dùng nghĩ *"cho nó đọc    │
+              │ thư mục này"*, họ KHÔNG nghĩ *"cài một MCP server"*. Chuyện   │
+              │ thư mục được thi hành BẰNG một MCP là việc của ta, không phải│
+              │ của họ, và bày nó ra là bắt họ học từ vựng của mình.          │
+              │                                                              │
+              │ Ba loại này khác nhau ở thứ NGƯỜI DÙNG phải làm tiếp, không  │
+              │ ở thứ chạy bên dưới — đó mới là trục phân loại đúng.          │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {pane === 'type' && (
+              <div className="grid grid-cols-3 gap-2">
+                <TypeCard
+                  icon="📁"
+                  name="Thư mục trên máy"
+                  say="chọn thư mục · không cần chìa"
                   onClick={() => {
-                    setPick(a);
-                    setArmId(a.id);
+                    const files = catalog.find((a) => a.folders);
+                    if (!files) return;
+                    setPick(files);
+                    setArmId(files.id);
                     setStep(2);
                   }}
-                  className="rounded-lg border border-line px-3 py-3 text-left transition hover:border-accent hover:bg-accent-soft"
-                >
-                  <div className="text-2xl">{a.icon}</div>
-                  <div className="mt-1 text-[13px] font-medium">{a.name}</div>
-                  {/* CÁI GIÁ, không phải tính năng. → §6f */}
-                  <div className="mt-0.5 text-[11px] text-muted">{PRICE_SAY[a.price]}</div>
-                </button>
-              ))}
-            </div>
+                />
+                <TypeCard
+                  icon="🔌"
+                  name="Dịch vụ có sẵn"
+                  say={`${catalog.filter((a) => !a.folders).length} dịch vụ · điền chìa`}
+                  onClick={() => setPane('catalog')}
+                />
+                <TypeCard
+                  icon="⚙️"
+                  name="Tự cắm MCP"
+                  say="dán cấu hình của bạn"
+                  onClick={() => setPane('paste')}
+                />
+              </div>
+            )}
+
+            {pane === 'catalog' && (
+              <>
+                <Button size="sm" className="mb-2" onClick={() => setPane('type')}>
+                  ← Quay lại
+                </Button>
+                <div className="grid grid-cols-3 gap-2">
+                  {catalog
+                    .filter((a) => !a.folders)
+                    .map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => {
+                          setPick(a);
+                          setArmId(a.id);
+                          setStep(2);
+                        }}
+                        className="rounded-lg border border-line px-3 py-3 text-left transition hover:border-accent hover:bg-accent-soft"
+                      >
+                        <div className="text-2xl">{a.icon}</div>
+                        <div className="mt-1 text-[13px] font-medium">{a.name}</div>
+                        {/* CÁI GIÁ, không phải tính năng. → §6f */}
+                        <div className="mt-0.5 text-[11px] text-muted">{PRICE_SAY[a.price]}</div>
+                      </button>
+                    ))}
+                  {catalog.filter((a) => !a.folders).length === 0 && (
+                    <p className="col-span-3 text-[13px] text-muted">
+                      Chưa có dịch vụ dựng sẵn nào. Dùng <b>Tự cắm MCP</b> — nó nhận mọi server.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
 
             {/*
               `mcpServers` là cấp CÔNG TY: chìa đã khai rồi thì dùng lại là 0
@@ -244,24 +329,34 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               </>
             )}
 
-            <div className="mt-4 text-[11px] uppercase tracking-wide text-muted">Hoặc tự cắm</div>
-            <Textarea
-              rows={4}
-              className="mt-1.5 font-mono text-[12px]"
-              value={paste}
-              onChange={(e) => setPaste(e.target.value)}
-              placeholder={'Dán khối cấu hình MCP từ README của server, ví dụ:\n{ "command": "npx", "args": ["-y", "..."] }'}
-            />
-            <Button
-              className="mt-2 w-full"
-              disabled={!paste.trim()}
-              onClick={() => {
-                setPick(null);
-                setStep(2);
-              }}
-            >
-              Dùng cấu hình này
-            </Button>
+            {pane === 'paste' && (
+              <>
+                <Button size="sm" className="mb-2" onClick={() => setPane('type')}>
+                  ← Quay lại
+                </Button>
+                <Textarea
+                  rows={5}
+                  autoFocus
+                  className="font-mono text-[12px]"
+                  value={paste}
+                  onChange={(e) => setPaste(e.target.value)}
+                  placeholder={'Dán khối cấu hình MCP từ README của server, ví dụ:\n{ "command": "npx", "args": ["-y", "..."] }'}
+                />
+                <p className="mt-1 text-xs text-muted">
+                  Nhận cả khối <code>{'{"mcpServers": {...}}'}</code> chép nguyên từ tài liệu.
+                </p>
+                <Button
+                  className="mt-2 w-full"
+                  disabled={!paste.trim()}
+                  onClick={() => {
+                    setPick(null);
+                    setStep(2);
+                  }}
+                >
+                  Dùng cấu hình này
+                </Button>
+              </>
+            )}
           </div>
         )}
 

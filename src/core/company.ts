@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CÔNG TY — vỏ chứa các văn phòng, cộng hai thứ dùng chung: tiền và bus sự kiện.
  *
  * → docs/SPEC-offices.md §2
@@ -31,6 +31,7 @@ import {
 } from './paths.js';
 import { Office } from './office.js';
 import { readSecrets, writeSecrets } from './secrets.js';
+import { coveredBy, folderRoots } from './catalog.js';
 import {
   appendRename,
   appendUsage,
@@ -417,7 +418,13 @@ export class Company {
    * không đọc được — `paths.ts §guardedZone`). Cấu hình đi vào `company.yaml`,
    * nơi commit lên git được. **Giá trị chìa không bao giờ nằm trong company.yaml.**
    */
-  addArm(input: { id: string; config: Record<string, unknown>; secrets?: Record<string, string> }): void {
+  addArm(input: {
+    id: string;
+    config: Record<string, unknown>;
+    secrets?: Record<string, string>;
+    /** Văn phòng sắp dùng nó — cần cho luật "một thư mục, một cánh tay". */
+    office?: string;
+  }): void {
     const id = input.id.trim();
     if (!isSafeId(id)) {
       throw new RunError('Mã cánh tay chỉ được dùng chữ thường, số, gạch ngang.', 'other');
@@ -443,6 +450,33 @@ export class Company {
         `Đã có kết nối tên "${id}". Đặt tên khác, hoặc sửa cái đang có — một kết nối "file trên máy" nhận được nhiều thư mục cùng lúc.`,
         'other',
       );
+    }
+
+    /**
+     * MỘT THƯ MỤC, MỘT CÁNH TAY — trong phạm vi MỘT văn phòng. → `catalog.ts §coveredBy`
+     *
+     * Chỉ so với những cánh tay ĐANG CÓ DÂY ở văn phòng này, không so cả công
+     * ty: hai văn phòng cùng trỏ vào `D:\Ho so` là hợp lệ và có chủ ý (clone
+     * độc lập, user chốt). Ranh giới của luật này là ranh giới của cái sơ đồ.
+     */
+    const want = folderRoots(input.config);
+    if (input.office && want.length) {
+      const office = this.get(input.office);
+      const used = new Set<string>();
+      for (const [roleId, role] of office.loaded.roles) {
+        if (office.loaded.archivedRoles.has(roleId)) continue;
+        for (const s of role.mcp) used.add(s);
+      }
+      const existing = [...used].map((s) => ({ id: s, folders: folderRoots(this.config.mcpServers[s]) }));
+      const clash = coveredBy(existing, want);
+      if (clash) {
+        throw new RunError(
+          `Thư mục này đã nằm trong kết nối "${clash.id}" của văn phòng. ` +
+            `Nối thẳng "${clash.id}" vào nhân viên cần nó — một kết nối dùng chung được cho nhiều người, ` +
+            `và cắm thêm cái thứ hai là trả token hai lần cho cùng một thứ.`,
+          'other',
+        );
+      }
     }
 
     // Chìa TRƯỚC cấu hình: nếu ghi cấu hình xong mới hỏng ở bước chìa thì trên
@@ -764,3 +798,4 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
  * khi người dùng lưu lần đầu**. Không có file mặc định nào cả: một file rỗng chỉ
  * để "cho có" là một dòng nữa trong thư mục mà không ai giải thích được.
  */
+
