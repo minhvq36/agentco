@@ -321,9 +321,17 @@ export type AgentEvent = EventBase &
  * `agent` cố tình vắng mặt: agent nói chuyện trực tiếp với agent là nguồn đốt
  * token lớn nhất trong mọi hệ multi-agent.
  */
+/**
+ * ⚠ PHẢI KHỚP `src/core/layout.ts §CAN_CONNECT` — server là nơi thi hành thật,
+ * bảng này chỉ để giao diện không vẽ ra thứ server sẽ từ chối.
+ *
+ * `mcp → assistant` đã GỠ 23/08: sợi dây đó không làm gì (`assistant.mcp` chỉ
+ * được ghi rồi đọc lại để vẽ), và nếu có ngày nó chạy thật thì Trợ lý cầm MCP
+ * = ~36 000 token mỗi lượt trò chuyện. Chi tiết ở `layout.ts`.
+ */
 export const CAN_CONNECT: Partial<Record<NodeKind, readonly NodeKind[]>> = {
   assistant: ['agent'],
-  mcp: ['agent', 'assistant'],
+  mcp: ['agent'],
 };
 
 export function canConnect(from: CanvasNode, to: CanvasNode, edges: readonly CanvasEdge[]): boolean {

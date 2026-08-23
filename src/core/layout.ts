@@ -77,9 +77,31 @@ const COORD_LIMIT = 20_000;
 const MAX_NODES = 200;
 
 /** Node kind nào được phép nối RA đâu. Agent cố tình KHÔNG có mặt ở đây. */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `mcp → assistant` ĐÃ GỠ (23/08). Nó là một SỢI DÂY KHÔNG LÀM GÌ CẢ.   │
+ * │                                                                          │
+ * │ Cạnh đó từng được nhận với lý do "việc vặt Trợ lý tự xử lý, cần           │
+ * │ concierge (M1) mới chạy". Nhưng đi soi thì `assistant.mcp` chỉ được GHI   │
+ * │ rồi ĐỌC LẠI ĐỂ VẼ — không mảnh nào nạp nó vào phiên Trợ lý. Concierge     │
+ * │ chưa tồn tại. Nên nó là một lời hứa nữa không có mã nguồn thi hành.       │
+ * │                                                                          │
+ * │ Và nếu có ai nối nó vào thật thì còn tệ hơn im lặng: `types.ts:499` ghi   │
+ * │ Trợ lý KHÔNG BAO GIỜ được cầm MCP — MCP phá prompt cache lúc `resume`,    │
+ * │ mà `route()` resume ở MỌI tin nhắn ⇒ ~36 000 token mỗi lượt trò chuyện.   │
+ * │                                                                          │
+ * │ ⇒ Một cạnh vô hại-vì-chưa-nối-gì, dẫn thẳng tới một cái bẫy đắt nhất hệ.  │
+ * │ Từ khi cắm cánh tay rẻ đi (§6), người dùng SẼ kéo thử. Gỡ khỏi bảng này   │
+ * │ là chặn bằng cấu trúc; ngày concierge có thật thì thêm lại, kèm mã chạy.  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Bảng này có BẢN THỨ HAI ở `web/src/lib/types.ts §CAN_CONNECT`. Hai bản của
+ * cùng một luật đã đốt dự án này một lần (`agentSlot` vs `arrange`) — sửa một
+ * bên thì phải sửa bên kia, và về lâu dài nên nhập chúng lại làm một.
+ */
 const CAN_CONNECT: Partial<Record<NodeKind, ReadonlySet<NodeKind>>> = {
   assistant: new Set<NodeKind>(['agent']),
-  mcp: new Set<NodeKind>(['agent', 'assistant']),
+  mcp: new Set<NodeKind>(['agent']),
 };
 
 export class LayoutStore {

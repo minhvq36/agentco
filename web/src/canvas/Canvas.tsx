@@ -265,7 +265,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         link.current = {
           from: nodeHost.dataset['node']!,
           target: null,
-          top: portHost.dataset['port'] === 'in',
+          // Đọc CHỖ ĐỨNG, không đoán từ tên cổng. → `data-side` ở phần vẽ node
+          top: portHost.dataset['side'] === 'top',
         };
         svgRef.current?.setPointerCapture(ev.pointerId);
         svgRef.current?.classList.add('is-linking');
@@ -533,26 +534,34 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                   │ ngược chiều nhau.                                        │
                   └──────────────────────────────────────────────────────────┘
                 */}
+                {/*
+                  ⚠ `data-side` là SỰ THẬT VỀ CHỖ ĐỨNG, không phải một cái tên.
+
+                  Bản trước suy hướng từ tên cổng (`'in'` ⇒ đỉnh). Node MCP có
+                  cổng tên `out` nhưng NẰM Ở ĐỈNH, nên đường kẻ mờ mọc ra từ đáy
+                  trong khi ngón tay đặt ở đỉnh. Lấy cái tên thay cho vị trí —
+                  cùng lỗi với `pitch` vs `tools`, ở tầng pixel.
+                */}
                 {(n.kind === 'agent' || n.kind === 'assistant') && (
-                  <g data-port="in">
+                  <g data-port="in" data-side="top">
                     <circle className="port-hit" cx={s.w / 2} cy={0} r={13} />
                     <circle className="port" cx={s.w / 2} cy={0} r={5.5} />
                   </g>
                 )}
                 {n.kind === 'agent' && (
-                  <g data-port="arm">
+                  <g data-port="arm" data-side="bottom">
                     <circle className="port-hit" cx={s.w / 2} cy={s.h} r={13} />
                     <circle className="port" cx={s.w / 2} cy={s.h} r={5.5} />
                   </g>
                 )}
                 {n.kind === 'assistant' && (
-                  <g data-port="out">
+                  <g data-port="out" data-side="bottom">
                     <circle className="port-hit" cx={s.w / 2} cy={s.h} r={13} />
                     <circle className="port" cx={s.w / 2} cy={s.h} r={5.5} />
                   </g>
                 )}
                 {n.kind === 'mcp' && (
-                  <g data-port="out">
+                  <g data-port="out" data-side="top">
                     <circle className="port-hit" cx={s.w / 2} cy={0} r={13} />
                     <circle className="port" cx={s.w / 2} cy={0} r={5.5} />
                   </g>
