@@ -14,7 +14,7 @@ import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
 
 import { noteRateLimit } from './energy.js';
-import { companyPaths, safeJoin } from './paths.js';
+import { companyPaths, guardedZone, safeJoin, type GuardedZone } from './paths.js';
 import { grantFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
@@ -89,6 +89,10 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   const { office } = deps;
   const { brief, role } = input;
   const started = Date.now();
+
+  // Hai thư mục, vì vùng cấm nằm ở CẢ HAI cấp: chìa khoá ở `company/.state/`,
+  // file vai trò ở `offices/<id>/roles/`. → paths.ts §guardedZone
+  const jailDirs = { companyDir: office.companyDir, officeDir: office.dir };
 
   const model = modelFor(office, role.model_tier);
   // model PHẢI đi vào cacheKey: prompt cache đánh theo (model, prefix).
@@ -184,7 +188,13 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          * └────────────────────────────────────────────────────────────────────┘
          */
         hooks: {
-          PreToolUse: [{ matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(office.dir)] }],
+          PreToolUse: [
+            { matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(jailDirs, 'write')] },
+            // Nhánh ĐỌC là mới (23/08). Nó KHÔNG dựng hàng rào đọc tổng quát —
+            // `Read` vẫn mở được mọi file trên máy, đúng như trước. Nó chỉ khoá
+            // đúng `.state/`, tức chìa khoá và sổ công việc. → SPEC-arms.md §5d
+            { matcher: 'Read|Grep|Glob', hooks: [officeJail(jailDirs, 'read')] },
+          ],
         },
         ...(role.mcp.length ? { mcpServers: pickMcp(office, role) } : {}),
       },
@@ -363,33 +373,59 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
  * là một lượt trả tiền để nhận về một lời từ chối (§5 "`tools` vs
  * `allowedTools`", cái giá thứ 2). Nói luôn chỗ đúng thì nó ghi được ở lượt kế.
  */
-function officeJail(officeDir: string) {
+function officeJail(dirs: JailDirs, mode: 'read' | 'write') {
   return async (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const raw = (input['tool_input'] ?? {}) as Record<string, unknown>;
-    const target = str(raw['file_path']) || str(raw['notebook_path']);
+    // Bốn tên trường, vì bốn tool khai đường dẫn ở bốn chỗ: `Read`/`Write`/`Edit`
+    // dùng `file_path`, `NotebookEdit` dùng `notebook_path`, `Grep`/`Glob` dùng
+    // `path`. Sót một tên là để hở đúng một tool, và im lặng — cùng bài học
+    // `SHELL_ALIASES`: một danh sách tên viết tay là chỗ lỗi quay lại.
+    const target = str(raw['file_path']) || str(raw['notebook_path']) || str(raw['path']);
 
-    let inside = true;
-    if (target) {
-      try {
-        safeJoin(officeDir, target);
-      } catch {
-        inside = false;
-      }
-    }
-    if (inside) return {};
+    const zone = guardedZone(dirs, target, mode);
+    if (!zone) return {};
 
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason:
-          `Đường dẫn "${target}" nằm ngoài thư mục văn phòng. Mọi kết quả phải ghi BÊN TRONG ` +
-          `thư mục làm việc hiện tại — dùng đường dẫn tương đối như "artifacts/<...>" ` +
-          `và không đi lên cấp trên bằng "..".`,
+        permissionDecisionReason: JAIL_REASON[zone](target),
       },
     };
   };
 }
+
+interface JailDirs {
+  companyDir: string;
+  officeDir: string;
+}
+
+/**
+ * Câu từ chối, mỗi vùng một câu — và cả ba đều CHỈ ĐƯỜNG, không chỉ nói "không".
+ *
+ * Một câu từ chối trống rỗng thì model dò lại bằng một đường dẫn sai khác, và
+ * mỗi lần dò là một lượt trả tiền để nhận về một lời từ chối (§5 "`tools` vs
+ * `allowedTools`", cái giá thứ 2).
+ *
+ * ⚠ `config` cố ý nói ra *cách đúng để làm việc đó* thay vì chỉ cấm: yêu cầu
+ * "đổi cấu hình" hầu như luôn đến từ một việc HỢP LỆ mà người dùng vừa giao.
+ * Cấm mà không chỉ đường thì nhân viên báo `blocked` và người dùng không hiểu
+ * vì sao — trong khi thứ họ cần chỉ là bấm một công tắc trên giao diện.
+ */
+const JAIL_REASON: Record<GuardedZone, (t: string) => string> = {
+  secrets: (t) =>
+    `"${t}" nằm trong thư mục trạng thái nội bộ (.state). Đó là nơi giữ CHÌA KHOÁ và sổ ` +
+    `công việc của hệ thống — không nhân viên nào đọc hoặc ghi ở đó, kể cả khi được yêu cầu. ` +
+    `Bạn không cần chìa khoá để dùng một công cụ đã được cắm sẵn: cứ gọi tool của nó.`,
+  config: (t) =>
+    `"${t}" là file CẤU HÌNH của văn phòng (vai trò, kỹ năng, sơ đồ, kết nối). Nó chỉ được ` +
+    `đổi qua giao diện, để mỗi thay đổi có người chịu trách nhiệm và có dấu vết trong nhật ký. ` +
+    `Nếu việc này cần một quyền bạn chưa có, hãy DỪNG và nói rõ bạn thiếu gì.`,
+  outside: (t) =>
+    `Đường dẫn "${t}" nằm ngoài thư mục văn phòng. Mọi kết quả phải ghi BÊN TRONG ` +
+    `thư mục làm việc hiện tại — dùng đường dẫn tương đối như "artifacts/<...>" ` +
+    `và không đi lên cấp trên bằng "..".`,
+};
 
 // ─────────────────────────────────────────── lặp thao tác & tài liệu đã chạm
 

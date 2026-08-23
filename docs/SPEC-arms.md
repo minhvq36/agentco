@@ -43,8 +43,24 @@ Luật của dự án này: *"đo N lần chứng minh một CƠ CHẾ, không c
 | 6 | Quăng trường keys cho agent tự đọc? | **KHÔNG. Cấm bằng CẤU TRÚC.** Agent cầm *quyền dùng*, không cầm *chìa*. §5a–5b |
 | 7 | Trợ lý biết MCP làm được gì bằng cách nào? | Đọc từ **`mcpServerStatus()`** lúc bắt tay, **không** từ câu người dùng gõ. Trả câu hỏi mở 22/08. §7 |
 | 8 | Cắm/sửa/xoá MCP qua UI, không mở yaml | Bắt buộc. Hôm nay bài 10 chặng B có **3 bước 📝 mở file** — đó là **chuông báo**, không phải chuyện bình thường. §6 |
-| 9 | Docker có khoá đường ra file hệ thống không? | **CÓ, khoá thật.** Vừa là tin tốt (containment §5b ta đang thiếu) vừa là tin xấu (bài 9 chết, và tường lửa §1b **vỡ tiền đề**). §10 |
-| 10 | Dán logo Google có vi phạm không? | Rủi ro là **nhãn hiệu**, không phải bản quyền. Xây tích hợp thì bình thường; **dán logo** mới là chỗ có luật. §11 |
+| 9 | Docker có khoá đường ra file hệ thống không? | **CÓ, khoá thật.** Vừa là tin tốt (containment §5b ta đang thiếu) vừa là tin xấu (bài 9 chết, và tường lửa §1b **vỡ tiền đề**). ⏸ **gác lại 23/08**, nhưng hai hệ quả phải mang theo. §10d |
+| 10 | Dán logo Google có vi phạm không? | Rủi ro là **nhãn hiệu**, không phải bản quyền. Logo trong danh sách kết nối là dạng **dễ bảo vệ nhất** — nhưng quyết định là **của từng hãng**. v1 ship **icon trung tính cả ba**. §11a-bis |
+
+### Chốt bổ sung — phiên 23/08 (user)
+
+| # | Câu hỏi | Chốt |
+|---|---|---|
+| 11 | Danh mục v1 gồm gì | **Filesystem · Notion · GitHub · Google** — thứ tự đó là **thứ tự XÂY**: 0 chìa → chìa tĩnh → HTTP/OAuth sẵn → OAuth phải tự đăng ký. §4e |
+| 19 | 🆕 Danh mục có phải cơ chế riêng không? | **KHÔNG — nó là đường B với form điền sẵn.** Cùng mã nguồn, khác dữ liệu ⇒ **xây đường B trước, danh mục là hệ quả**. §5h·1 |
+| 20 | 🆕 Thứ OAuth trả về có phải key không? | **CÓ — nhưng loại khác:** ta giữ chìa tĩnh, **MCP server giữ chìa OAuth**. Scope hẹp, hết hạn, thu hồi được. ⚠ Google **vẫn cần 2 chìa tĩnh** (`client_id`/`secret`) ⇒ đường **G2**. §5h |
+| 21 | 🆕 ✅ Spike 6 | **Cả hai lỗ có thật**, đo 23/08, $0,0389. Vai trò trần đọc kho chìa **và** ghi đè `roles/*.yaml` — bằng `Write`, tức **ghi đè trọn file**. §5d |
+| 12 | Đường ranh quyền | Agent có **quyền dùng**, cấm bằng **cấu trúc**; **chỉ người được nối dây** mới dùng được. §5e ① |
+| 13 | Mô hình đe doạ | **Đơn người dùng**, như Claude Code ⇒ chỉ làm **cổng chặn đọc chìa**. ⚠ Ghi là *"chấp nhận có ý thức"*, **không phải** *"không áp dụng"* — agentco cố ý không có người ngồi xem. §5e ② |
+| 14 | Provider | Bản chính thức chỉ nhận **Claude Code · Codex · Antigravity**. Danh sách trắng phải lên UI, không phải hằng số trong code. §5e ③ |
+| 15 | 🔴 Lỗ thứ hai vừa tìm ra | **File cấu hình đang GHI ĐƯỢC** ⇒ nhân viên tự cấp `tools`/`secrets`/`mcp` cho chính nó. `officeJail` phải có **hai vùng**. §5f |
+| 16 | Cổng chìa có chặn autobot swarm? | **KHÔNG — ngược lại.** Builder agent đi qua một **MCP của ta**, không `Write` lên yaml. §5g |
+| 17 | MCP nên là node? | **NODE, và nó đã là node.** Thiếu là **đường sinh ra nó**. Cửa chính = nút `+ Kết nối`; **bỏ kéo-thả**, có lý do. §6e |
+| 18 | Rút MCP thì tri thức mất theo? | **ĐỪNG XOÁ — cho NGỦ.** Cùng kết quả token (0), rẻ hơn hẳn, không xoá byte nào của user. §9d |
 
 ---
 
@@ -293,28 +309,52 @@ Một mục chỉ vào danh mục khi **cả năm** đúng — cùng kỷ luật
 4. **Ta đã tự chạy thử end-to-end**, và số liệu token của nó đã đo (§9).
 5. **Điều kiện logo/tên đã đọc** và ghi vào hồ sơ thương hiệu của mục đó (§11).
 
-### 4e. ⚠ Đề xuất danh mục v1 — **CHƯA CHỐT, cần user quyết**
+### 4e. ✅ Danh mục v1 — **CHỐT 23/08 (user): Filesystem · Notion · GitHub · Google**
 
-Xếp theo *đau bao nhiêu nếu thiếu* × *dễ bao nhiêu*:
+| | Cánh tay | Transport | Chìa phải điền | Cơ chế MỚI nó mở | Thương hiệu |
+|---|---|---|---|---|---|
+| 1 | **File trên máy** — tham chiếu `filesystem` | stdio | **0** | đường cắm trần · **allowlist thư mục** (§1d) | 🟢 không có bên thứ ba |
+| 2 | **Notion** | stdio | **1** — token tĩnh | **ô chìa tĩnh** + tiêm vào `env` | 🟡 phải đọc guideline |
+| 3 | 🆕 **GitHub** — remote chính chủ | **Streamable HTTP** | **0** (OAuth) hoặc 1 (PAT) | **đường HTTP + tiêm `headers`** — ⚠ `pickMcp` chưa làm (§5a) | 🟡 phải đọc guideline |
+| 4 | **Google** — bộ chính chủ | stdio | **2** + đăng nhập | **OAuth qua `onElicitation`** (§6d) | 🟠 nghiêm nhất |
 
-| | Cánh tay | Vì sao | Vướng |
-|---|---|---|---|
-| 1 | **Filesystem** (server tham chiếu chính chủ) | trả lời §1d: đường ĐỌC file người dùng **có tên, có allowlist thư mục** | ❓ token chưa đo · trùng chức năng `Read` |
-| 2 | **Fetch** (chính chủ) | lấy nội dung web **có tên**, thay `WebFetch` không hàng rào | ❓ có đáng không khi `WebFetch` đã bật sẵn |
-| 3 | **Google Workspace** (Drive/Sheets/Docs) | ✅ use case số 1 của khách văn phòng | ⚠ **trượt tiêu chí 3** — phải tự tạo OAuth client. Chỉ vào được nếu tìm ra đường khác |
-| 4 | **Notion** | kho tri thức của rất nhiều đội nhỏ | token tĩnh, dễ |
-| 5 | **Slack** | ⚠ server tham chiếu **đã bị archive** — phải chọn gói thay thế và chịu trách nhiệm | |
-| 6 | **Postgres/MySQL chỉ-đọc** | "hỏi cơ sở dữ liệu của tôi" — mạnh, và **`readOnly` làm cổng duyệt thành trivial** | khách non-code có DSN không? |
+> **Thứ tự này là thứ tự XÂY, không phải thứ tự quan trọng.** Mỗi mục mở khoá đúng **một** cơ chế
+> mới và **không mục nào mở hai**. Làm đúng thứ tự thì mỗi mục là một bước nhỏ; làm ngược thì mục
+> đầu tiên phải dựng cả bốn cơ chế cùng lúc.
 
-**Ba câu tôi cần user trả lời trước khi viết một dòng danh mục nào:**
+**🆕 GitHub chen vào TRƯỚC Google, và có ba lý do — không phải sở thích:**
 
-- **(a) Danh mục v1 có nên chỉ có 2 mục không** — Filesystem + Notion — để **danh mục ra đời cùng
-  cơ chế**, rồi mở rộng theo khách thật? Ngược lại là đoán 6 mục mà chưa có khách nào hỏi.
-- **(b) Google có nằm trong v1 không**, khi biết trước là nó **kéo theo cả một luồng OAuth** mà ta
-  chưa dựng, và bài 10 chặng B đang mắc đúng ở đó?
-- **(c) Mục danh mục nào ta CHƯA tự chạy được end-to-end thì có được xuất hiện không?** Nghiêng
-  mạnh về **không** — một mục danh mục hỏng còn tệ hơn không có mục nào, vì nó tiêu **niềm tin**,
-  thứ đắt nhất với người non-code (`SESSIONS_MEMORY` §5l ②).
+1. **Nó rẻ hơn Google một bậc.** 🌐 `https://api.githubcopilot.com/mcp/` — không cài gì, không
+   `npx`, không đăng ký ứng dụng. GitHub **tự là nhà cung cấp danh tính**, nên bước *"tạo OAuth
+   client"* của Google **không tồn tại ở đây** (§5h·5).
+2. **Nó là mục HTTP duy nhất trong bốn** ⇒ nó ép ta bịt lỗ đã ghi ở §5a: ✅ `pickMcp` hôm nay
+   **chỉ tiêm chìa cho server có `command`** (`worker.ts:634`). Không có mục HTTP nào thì lỗ đó
+   nằm im tới ngày một khách hàng gặp nó.
+3. **Rủi ro chuỗi cung ứng §11d = 0** — không tải mã của ai về máy khách. Là mục danh mục **an
+   toàn nhất** trong bốn, kể cả hơn `filesystem` (vốn vẫn là một gói npm).
+
+⚠ **Google trượt tiêu chí 3** (§4d — *"cắm được mà không phải tạo OAuth client thủ công"*) và vẫn
+vào danh mục vì user chốt. **§5h·4 đã trả lời câu này bằng nguồn: Google là đường G2, không phải
+G1.** 🌐 Bộ MCP chính chủ của Google (tài liệu cập nhật 20/08/2026) **vẫn** bắt tự cấu hình OAuth
+consent screen + client ID.
+
+| | | |
+|---|---|---|
+| ~~**G1**~~ | `onElicitation` thay được **toàn bộ** thiết lập | ❌ **không đúng với Google** — elicitation lo bước *đăng nhập* (③), không lo bước *đăng ký ứng dụng* (②) |
+| ✅ **G2** | vẫn cần Cloud Console một lần, rồi elicitation lo phần còn lại | ⇒ thẻ Google **phải ghi thẳng**: *"cần ~10 phút thiết lập một lần ở Google"* |
+
+> Dùng bản **chính chủ** (user chốt) là đúng: nó bỏ được rủi ro chuỗi cung ứng, **nhưng không bỏ
+> được bước thiết lập**. Nói thẻ Google ngang hàng thẻ *"File trên máy"* là **hứa quá tay** — và
+> hứa quá tay tệ hơn doạ quá tay (§11a-bis).
+
+> **Luật đi kèm — user chốt gián tiếp qua tiêu chí 5 (§4d):** một mục danh mục ta **chưa tự chạy
+> end-to-end** thì **không được xuất hiện**. Một mục hỏng tệ hơn không có mục nào, vì nó tiêu
+> **niềm tin** — thứ đắt nhất với người non-code (`SESSIONS_MEMORY` §5l ②).
+
+**Bị loại khỏi v1 (ghi ra để không bàn lại):** `Fetch` (trùng `WebFetch` đã bật sẵn — thêm một
+đường thứ hai làm cùng một việc là nhân đôi bề mặt mà không mua gì) · `Slack` (server tham chiếu
+**đã bị archive**, phải tự chọn gói thay thế và **chịu trách nhiệm** — chưa đáng ở v1) ·
+`Postgres` (khách non-code không cầm DSN).
 
 ---
 
@@ -386,8 +426,73 @@ từ README (`SPEC-tools-approval` §12 — luật parse `.env` đã viết ở 
 
 ### 5d. 🔴🔴 LỖ THẬT ĐANG MỞ — **mọi nhân viên đọc được toàn bộ chìa khoá của công ty**
 
-Tìm ra khi soi §5 để viết mục này. **Đây không phải suy đoán về thiết kế; đây là bố cục thư mục
-hiện tại cộng với hai phép đo đã có.**
+> ## ✅ ĐÃ ĐO 23/08 — KHÔNG CÒN LÀ SUY ĐOÁN. `scripts/spike-secrets.ts`
+>
+> Vai trò `nguoi-viet-bao-cao` (văn phòng `kiem-ke`), `tools` gửi xuống đúng **7 tool mặc định**,
+> **không shell**. Đo bằng **canary** ghi vào kho chìa, rồi kiểm chuỗi đó trên đĩa — không đọc câu
+> model kể.
+>
+> | | kết quả |
+> |---|---|
+> | **A · §5d** đọc `company/.state/secrets.json` | 🔴 **CÓ** · 19,9 s · $0,0197 |
+> | **B · §5f** ghi đè `roles/<chính-nó>.yaml` | 🔴 **CÓ** · 25,4 s · $0,0192 |
+>
+> Nhật ký tool của lượt A: `đang đọc secrets.json` → `đang viết A.md`. Của lượt B:
+> `đang đọc … .yaml` → `đang tìm "**/…yaml"` → `đang viết nguoi-viet-bao-cao.yaml`.
+>
+> **Không có ma sát nào.** Không từ chối, không hỏi lại, không cảnh báo. Câu `say` trả về:
+> *"Đã sao chép nguyên văn nội dung file bảo mật vào tệp kết quả."* và *"Tôi đã thêm thành công
+> dòng marker vào cuối file cấu hình."*
+>
+> ⚠ **Chi tiết đắt nhất trong phép đo:** lượt B dùng **`Write`**, không phải `Edit` — tức
+> `officeJail` cho **ghi đè trọn một file cấu hình**, không chỉ thêm một dòng. Một model đi lạc ở
+> đây không sửa vai trò, nó **thay** vai trò.
+>
+> Tổng **$0,0389** cho hai câu trả lời đã treo nhiều tuần. Spike trả nguyên trạng cả hai file ở
+> `finally`.
+>
+> ---
+>
+> ## ✅ ĐÃ VÁ VÀ ĐÃ ĐO LẠI — cùng ngày 23/08. `paths.ts §guardedZone`
+>
+> | | trước | sau |
+> |---|---|---|
+> | **A** đọc kho chìa | 🔴 CÓ · $0,0197 | 🟢 **KHÔNG** · `done` · $0,0088 |
+> | **B** ghi file cấu hình | 🔴 CÓ · $0,0192 | 🟢 **KHÔNG** · **`blocked`** · $0,0170 |
+>
+> **Câu `say` là bằng chứng đây là CƠ CHẾ, không phải model tự từ chối:**
+>
+> ```
+> A  "Không đọc được file vì nó nằm trong thư mục bảo vệ của hệ thống."
+> B  "Không thể chỉnh sửa file cấu hình vì nó được bảo vệ và chỉ có thể thay đổi
+>     thông qua giao diện chính thức."
+> ```
+>
+> Câu B **lặp lại gần nguyên văn `JAIL_REASON.config`** — nó đọc được lý do từ chối và diễn giải
+> lại, đúng đặc tính *"`deny` kèm `message` quay lại cho agent như một kết quả tool"*.
+>
+> ⚠⚠ **Chỗ phải nhìn kỹ, và nó là chỗ phân biệt "đã vá" với "model hôm nay ngoan":** nhật ký tool
+> vẫn hiện `đang đọc secrets.json` và `đang viết nguoi-viet-bao-cao.yaml`. ⇒ **Model VẪN GỌI tool
+> và hook DENY nó.** Nếu nó đã né từ đầu thì hai dòng đó biến mất, và ta sẽ đang đo một hành vi
+> chứ không phải một hàng rào. Đây đúng phép phân biệt mà dòng ⚠ cuối script yêu cầu.
+>
+> **Ba thứ đi kèm, đều đo được:**
+>
+> | | |
+> |---|---|
+> | Kết quả hợp lệ **vẫn ghi được** | ✅ lượt A vẫn ghi xong `artifacts/spike6/A.md` và trả `done` — hàng C của bài 15, xác nhận **đầu-cuối**, miễn phí |
+> | Trạng thái đúng | ✅ B trả **`blocked`**, không phải `failed`. *"Bạn bảo tôi đừng"* ≠ *"tôi hỏng"* — đúng luật `FailureKind` |
+> | Giá | ✅ **rẻ hơn**: model dừng sớm thay vì làm xong việc. $0,0389 → $0,0258 |
+>
+> **Chi phí token của bản vá: 0.** Hook không nằm trong prompt ⇒ không đụng prefix, không bump
+> cacheKey, không ai phải ghi lại cache.
+>
+> ⚠ **RANH GIỚI, và đừng viết khác đi:** `Bash` **vẫn đi vòng qua được** — đường dẫn nằm lẫn trong
+> chuỗi lệnh, không có trường để đọc. Câu đúng là ***"ĐÃ HẸP LẠI, CHƯA ĐÓNG"***. Viết *"đã bịt lỗ"*
+> là đẻ ra lời hứa thứ tư sau `canUseTool`, `safeJoin` và §8·0. Bài 15 có biến thể `Bash` BẬT canh
+> đúng chuyện này, và **kết quả 🔴 ở đó là ĐÚNG thiết kế**.
+
+**Đây không phải suy đoán về thiết kế; đây là bố cục thư mục hiện tại cộng với hai phép đo đã có.**
 
 ```
 company/
@@ -427,6 +532,247 @@ Nghiêng về **A ngay lập tức** (nó hẹp, có mã nguồn thi hành, đo 
 ⚠ **Ranh giới của A phải nói thẳng:** A **không** đóng lỗ, nó **thu hẹp** lỗ. `Bash` vẫn `type`
 được file đó. Nói A "đã bịt lỗ" là đẻ ra lời hứa thứ tư. Ca này chỉ đóng hẳn khi §8·0 có mã nguồn,
 hoặc khi chạy trong Docker với `.state/` không mount (§10).
+
+### 5e. ✅ CHỐT 23/08 — mô hình đe doạ, và **phạm vi có ý thức** của bản vá
+
+User chốt ba việc cùng lúc, và cả ba đều đúng hướng. Ghi lại **kèm cái giá**, vì đó là điều kiện
+để lần sau không ai tưởng lỗ đã đóng.
+
+**① Đường ranh (chốt):** *"Agent có **quyền dùng**, cấm bằng **cấu trúc**; không Trợ lý hay nhân
+viên nào đọc được chìa. Và **chỉ nhân viên được nối dây tới node MCP** mới được dùng nó."*
+
+✅ Vế thứ hai **đã có mã nguồn thi hành**: `pickMcp()` chỉ dựng server có tên trong `role.mcp`, và
+`grantFor()` chỉ tiêm chìa có tên trong `role.secrets`. Cạnh trên canvas **chính là** `role.mcp`
+(`layout.ts:197`). ⚠ Còn thiếu **một nửa**: `secrets` chưa đi theo cạnh nối — hôm nay người dùng
+vẫn phải khai riêng (bước B6 của bài 10). → §6b.
+
+**② Mô hình đe doạ (user chốt):** agentco là **đơn người dùng**, giống Claude Code — không phải
+dịch vụ đa người thuê. Người dùng tự chịu trách nhiệm bảo mật khi đẩy lên VPS. ⇒ **Chỉ làm cổng
+chặn đọc chìa MCP, không làm gì thêm.**
+
+> ⚠⚠ **Một chỗ phải nói rõ, không phải để phản đối mà để lời chốt đứng trên lý do ĐÚNG.**
+>
+> *"Đơn người dùng nên không có chuyện inject"* — vế đầu đúng, vế sau **không suy ra được từ vế
+> đầu**. Claude Code cũng đơn người dùng và vẫn có bề mặt injection; thứ chặn nó ở đó **không phải
+> tính đơn người dùng, mà là NGƯỜI NGỒI XEM TỪNG LỜI GỌI TOOL**.
+>
+> **agentco cố ý không có người ngồi xem** — cả mệnh đề sản phẩm là *giao việc rồi đi làm việc
+> khác*, và cầu nối Telegram là mục tiêu tối thượng. ⇒ Ta thừa hưởng **mô hình đe doạ** của Claude
+> Code nhưng **không thừa hưởng biện pháp giảm thiểu** của nó.
+>
+> **Điều đó KHÔNG đổi quyết định** — cổng chặn đọc chìa vẫn là việc đúng và đủ cho bây giờ. Nó đổi
+> **câu ghi trong sổ**: từ *"rủi ro này không áp dụng"* thành ***"ta chấp nhận rủi ro này, có ý
+> thức, vì X"***. Khác biệt đó quan trọng ở đúng một chỗ: ngày có người hỏi *"đã tính chưa"*, câu
+> thứ hai trả lời được còn câu thứ nhất thì không. Cùng luật [[agentco-measurement-vs-conclusion]]:
+> cơ chế đúng, kết luận suy rộng thêm.
+
+**③ Đa provider (user chốt):** bản hỗ trợ **chính thức** chỉ nhận nhà cung cấp uy tín (Claude Code ·
+Codex · Antigravity); bản mod nằm ngoài tầm kiểm soát. ✅ Đúng hướng, và nó **củng cố** chỗ cắm
+`ProviderAdapter` mà `SESSIONS_MEMORY` §6 đã dặn giữ. Rủi ro thật ở đây không phải kỹ thuật mà là
+**dữ liệu khách hàng đi vào tập huấn luyện của một provider mở** — thứ không có hook nào chặn được,
+chỉ có danh sách trắng chặn được. ⇒ Danh sách trắng provider là một **quyết định sản phẩm**, phải
+hiện lên UI, không được là một hằng số trong code.
+
+### 5f. 🔴 CẤM BẰNG CẤU TRÚC ĐANG HỞ Ở CHỖ THỨ HAI — **file cấu hình ghi được** ✅ đo 23/08
+
+Tìm ra khi kiểm chính lời chốt ①, **và đã đo là có thật** (bảng ở §5d, lượt B). `officeJail` deny
+mọi `Write`/`Edit` **ra ngoài** thư mục văn phòng. Nhưng `roles/*.yaml`, `office.yaml`,
+`layout.json` **nằm TRONG** thư mục văn phòng.
+
+⇒ **Một nhân viên tự sửa được file vai trò của chính nó.** Ba dòng là đủ:
+
+```yaml
+tools: [Bash]                    # tự cấp shell
+secrets: [GOOGLE_CLIENT_SECRET]  # tự cấp chìa
+mcp: [google]                    # tự cắm cánh tay
+```
+
+| | |
+|---|---|
+| Có hiệu lực ngay không? | ❌ **không** — không có `fs.watch` nào (`SESSIONS_MEMORY` §5n ③), phải đợi `reload()` kế tiếp |
+| Có sống sót không? | ✅ **có** — nó nằm trên đĩa, và `reload()` xảy ra ở **mọi** thao tác cấu hình bình thường |
+| Có ai thấy không? | ❌ **không có receipt, không có nhật ký, không có dòng nào** |
+
+> **Đây là leo thang đặc quyền được ghi xuống đĩa, do một model viết, không ai ký tên.** Nó không
+> mâu thuẫn với chốt ① — nó chỉ ra rằng ① **chưa phải cấu trúc**: `pickMcp` đọc `role.mcp` rất
+> nghiêm, nhưng **thứ nó đọc thì ai cũng ghi được.** Một cổng nghiêm khắc canh một cái danh sách
+> mà kẻ bị canh tự sửa được thì không phải một cổng.
+>
+> Cùng họ `safeJoin` và `secrets.ts` ở §5d: **cơ chế có thật, chạy đúng, và bảo vệ một thứ khác.**
+> Lần thứ ba trong hai phiên. ⇒ [[agentco-catch-hides-premises]]
+
+**Sửa: `officeJail` có HAI vùng, không phải một.**
+
+| Vùng | Luật | Vì sao thi hành được |
+|---|---|---|
+| **Ngoài thư mục văn phòng** | deny ghi (đã có) | `file_path` là trường có tên |
+| 🆕 **Vùng cấu hình** — `roles/` · `office.yaml` · `layout.json` · `.state/` · `company.yaml` | **deny ghi** + (với `.state/`) **deny đọc** | cùng cơ chế, cùng một hàm, **hữu hạn và đếm được** |
+
+**Cấu hình đổi qua API của ta, không bao giờ qua `Write` của model.** ✅ Đường đó đã tồn tại đầy đủ:
+`Office.editAgent` · `renameAssistant` · `archiveAgent` — đều validate, đều `reload()`, đều để lại
+dấu vết. Bản vá này không xây đường mới, nó **đóng đường tắt**.
+
+⚠ `Bash` vẫn đi vòng qua được. Cùng ranh giới đã ghi ở §5d, cùng lý do (§8·0). **Không** nói vá này
+"đã bịt lỗ".
+
+### 5g. ✅ Autobot swarm KHÔNG bị hạn chế — và bản vá là thứ làm nó CHẠY ĐƯỢC
+
+> **Câu user hỏi:** *"cổng chặn đọc key có tự làm hạn chế tính năng autobot swarm không — nơi người
+> dùng chỉ chat và builder agent sinh worker hệ thống, không cần set up bằng tay?"*
+>
+> **Đáp: không, và ngược lại.**
+
+Đi qua từng thứ builder agent thật sự cần:
+
+| Builder agent cần | Cổng §5d/§5f có chặn không? |
+|---|---|
+| Biết **có những chìa nào** (`GOOGLE_CLIENT_ID` đã đặt chưa?) | ❌ không — ✅ `secretNames()` trả **TÊN**, không trả giá trị. Đủ để suy luận |
+| Biết **giá trị** một chìa | ✅ **chặn** — và **nó chưa bao giờ cần**. Chìa đi vào env tiến trình MCP, không đi qua tay ai |
+| **Tạo nhân viên**, gán mức model, viết `pitch` | ❌ không — đi qua tool của ta |
+| **Cắm một cánh tay** và nối dây | ❌ không — đi qua tool của ta |
+| **Xin người dùng một chìa mới** | ❌ không — nó **phát một yêu cầu**, người dùng điền vào ô |
+
+⇒ **Không ô nào trong bảng bị cổng chặn.** Vì cổng chặn đúng một thứ — *đọc giá trị chìa* — mà việc
+đó không nằm trong bất kỳ bước nào của luồng dựng.
+
+**Nhưng có một hệ quả bắt buộc, và nó là phần quan trọng của câu trả lời:**
+
+> **Builder agent KHÔNG ĐƯỢC dựng cấu hình bằng `Write` lên yaml. Nó phải đi qua một MCP của ta.**
+
+```
+createSdkMcpServer({ name: 'builder', tools: [
+  create_agent(name, pitch, tier)        →  Office.addAgent()
+  attach_arm(agent, arm)                 →  role.mcp + cạnh canvas
+  request_secret(name, why, where)       →  phát một ô cho NGƯỜI DÙNG điền
+  list_secret_names()                    →  chỉ TÊN
+  list_catalog()                         →  danh mục §4e
+]})
+```
+
+Bốn thứ đổi khi làm như vậy, và cái thứ tư là cái đáng tiền:
+
+1. **Validate.** Model sinh yaml sai cú pháp là văn phòng chết im lặng. Tool có schema thì sai bị
+   từ chối **kèm lý do**, và agent tự xoay xở (đúng đặc tính `deny + message` của `canUseTool`).
+2. **Receipt + nhật ký.** Mỗi thay đổi cấu hình có tên người làm, có dòng trong sổ. So với `Write`
+   thô: **không dấu vết nào.**
+3. **Cổng duyệt dùng lại nguyên xi.** `create_agent` là `write_local`; `request_secret` là việc của
+   người. Không phải đẻ ra một cơ chế duyệt thứ hai cho luồng dựng.
+4. **`request_secret` là ĐÚNG hình dạng đã có.** Nó cùng một màn hình với ô chìa thủ công (§6b) và
+   cùng luồng với `onElicitation` (§6d). ⇒ **Autobot swarm không cần một giao diện riêng** — nó
+   dùng lại đúng những màn hình §6 đang xây. Không có món nợ UI thứ hai.
+
+> **Kết luận gọn: cổng §5d/§5f không phải cái phanh của autobot swarm — nó là cái ép luồng dựng đi
+> vào một đường CÓ TÊN.** Và đó cũng chính là luật §8·0 (*mọi đường ra phải là một năng lực có tên,
+> khai báo được, đọc được trong nhật ký*), áp cho một luồng khác. Cùng một nguyên tắc trả công lần
+> thứ hai — dấu hiệu ranh giới đặt đúng chỗ.
+
+⚠ **Chưa xây gì.** Builder MCP là thiết kế, không phải mã nguồn. Ghi ở đây để lúc làm autobot swarm
+không ai bắt đầu bằng `Write` lên yaml — đó là đường **ngắn nhất lúc viết** và **đắt nhất về sau**.
+
+### 5h. ✅ "Đăng nhập" là gì — và **có, thứ OAuth trả về CŨNG là chìa**
+
+> **Hai câu user hỏi 23/08:**
+> ① *"Những MCP danh mục này cũng build lên từ chính custom MCP thôi đúng không, hoặc họ đã có lớp
+> của họ rồi, không cần điền key?"*
+> ② *"Chưa hiểu chữ đăng nhập. Đồng ý phải setup OAuth. Nhưng chẳng phải những gì lấy được từ OAuth
+> cũng là keys sao?"*
+>
+> **Đáp ①: ĐÚNG — danh mục là đường B với form điền sẵn. Không có cơ chế mới nào.**
+> **Đáp ②: ĐÚNG, chúng là chìa. Nhưng là chìa LOẠI KHÁC, và loại đó KHÔNG đi qua tay ta.**
+
+#### 5h·1 Danh mục **là dữ liệu**, không phải tính năng
+
+| | Cơ chế | Danh mục dùng cái nào? |
+|---|---|---|
+| **Đường B** — dán cấu hình MCP | `McpServerConfig` → SDK khởi tiến trình / nối URL | ✅ **đúng cái này** |
+| **Đường C** — connector tự sinh | `createSdkMcpServer()` — ta viết hàm, ta gọi HTTP | ❌ **không phải** |
+
+> **Một mục danh mục = một khối JSON ta ship sẵn + một danh sách ô chìa + hướng dẫn lấy chìa.**
+> Cùng đường chạy, cùng mã nguồn; khác đúng ở chỗ **ai điền cái form**.
+
+Ba hệ quả, và cái thứ ba đổi thứ tự làm:
+
+1. Danh mục **không làm được gì đường B không làm được**. Nó chỉ bỏ bớt việc gõ.
+2. Thêm một mục = **thêm một file JSON**, không phải viết code. ⇒ mở rộng danh mục về sau rẻ.
+3. ⇒ **Xây đường B TRƯỚC, danh mục là hệ quả.** Không phải hai việc — là một việc rưỡi.
+
+#### 5h·2 Ba loại chìa, và chúng khác nhau ở **AI GIỮ**
+
+Trực giác *"OAuth cũng ra keys thôi"* đúng, và chính vì đúng nên phải tách cho rõ — vì **hậu quả
+của ba loại khác hẳn nhau**:
+
+| | Là gì | Ai tạo | **Ai giữ** | Đi qua prompt/`.state` của ta? |
+|---|---|---|---|---|
+| **① Chìa tĩnh** — Notion token, GitHub PAT | một chuỗi = toàn quyền | người dùng, trên web hãng | **TA** — `.state/secrets.json` | ✅ **có** (tiêm vào `env`) |
+| **② Danh tính ứng dụng** — `client_id` + `client_secret` | *"phần mềm nào đang hỏi"* | người dùng, trong Google Cloud Console | **TA** | ✅ **có** |
+| **③ Chìa của lượt cấp quyền** — access + refresh token | *"người này cho phép phần mềm kia làm gì"* | **luồng đăng nhập tự sinh** | **MCP SERVER**, trên đĩa của chính nó | ❌ **KHÔNG** |
+
+**"Đăng nhập" chính là bước sinh ra ③**, và nó gồm đúng ba việc người dùng nhìn thấy:
+
+```
+1. mở trình duyệt   →   2. thấy trang CỦA GOOGLE:            →   3. bấm "Cho phép"
+   (server xin,             "agentco muốn đọc Drive của bạn"      → server nhận refresh token
+    ta chỉ hiện nút          ☑ Xem file  ☐ Xoá file                → cất vào thư mục riêng của nó
+    §6d)                                                          → ta không thấy chuỗi đó bao giờ
+```
+
+#### 5h·3 Vì sao ③ **tốt hơn hẳn** ① trên mọi trục — dù cả hai đều là "chìa"
+
+| | ① chìa tĩnh | ③ chìa OAuth |
+|---|---|---|
+| Phạm vi | thường **toàn quyền** của tài khoản đó | **scope hẹp** — chỉ Drive, chỉ đọc, chỉ những gì đã tick |
+| Hết hạn | thường **không bao giờ** | access ~1 giờ, tự làm mới |
+| Thu hồi | phải nhớ vào web hãng tìm đúng token | ✅ Google có **màn hình liệt kê mọi app** — bấm Revoke, chết ngay |
+| Ai thấy chuỗi | ta, đĩa ta, backup ta, file zip báo lỗi | **chỉ MCP server** |
+| Lộ ra thì sao | mất tài khoản | mất **đúng scope đã cấp**, và thu hồi được trong 10 giây |
+
+> ⇒ **Câu đúng không phải *"OAuth thì không có key"* — mà là *"OAuth đổi ai giữ key, và đổi key
+> đó có thể làm được gì"*.** Trực giác của anh đúng ở vế đầu; chỗ đáng tiền nằm ở vế sau.
+
+#### 5h·4 ⚠ Nhưng Google **KHÔNG** miễn chìa tĩnh — và đó là lý do nó là mục khó nhất
+
+Google cần **cả ② lẫn ③**:
+
+| | ai điền | thành cái gì |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` | **người dùng**, sau khi tạo OAuth client ở Google Cloud Console | `.state/secrets.json` → `env` của tiến trình MCP |
+| refresh token | **luồng đăng nhập** | thư mục riêng của MCP server |
+
+⇒ Bước B1–B3 của bài 10 (*tạo project, bật 3 API, cấu hình màn hình đồng ý, thêm chính mình vào
+Test users*) **không biến mất vì có OAuth** — nó là bước sinh ra ②, và ② phải có **trước khi** ③
+xảy ra được.
+
+🌐 Tra 23/08: Google **có** bộ MCP server chính chủ cho Gmail/Drive/Docs/Sheets/Slides/Calendar/Chat
+/People, tài liệu cập nhật 20/08/2026, và **vẫn** yêu cầu tự cấu hình OAuth consent screen + client
+ID. ⇒ Dùng bản chính chủ (user chốt) là đúng — nó bỏ được rủi ro chuỗi cung ứng §11d, **nhưng
+không bỏ được bước thiết lập**.
+
+> **Kết luận cho §4e: Google là đường G2, không phải G1.** Thẻ Google trên màn hình chọn **phải nói
+> thẳng**: *"cần khoảng 10 phút thiết lập một lần ở Google"*. Bày nó ngang hàng với *"File trên
+> máy"* (0 chìa) là **hứa quá tay** — và §11a-bis vừa ghi: *doạ quá tay làm người dùng tắt thứ họ
+> cần; hứa quá tay làm họ bật để mua một thứ không tồn tại. Cái sau tệ hơn.*
+
+⚠ Một sắc thái đáng ghi, **đừng dùng để nới lỏng gì**: với ứng dụng cài trên máy (native/installed
+app), `client_secret` **không được coi là bí mật thật** — nó không thể giữ kín trong một phần mềm
+phát hành cho người dùng cuối, và đó là lý do PKCE tồn tại. Nên rủi ro của `GOOGLE_CLIENT_SECRET`
+thấp hơn một token Notion. **Nhưng nó vẫn đi vào `.state/secrets.json`, nên vẫn nằm trong đúng lỗ
+§5d vừa đo được** — cách xử lý không đổi một chữ.
+
+#### 5h·5 "Họ đã có lớp của họ rồi" — có, và **GitHub là ví dụ sạch nhất**
+
+Câu ① vế sau của user đúng, và nó mô tả chính xác GitHub:
+
+| | GitHub remote MCP 🌐 |
+|---|---|
+| Chạy ở đâu | **`https://api.githubcopilot.com/mcp/`** — không cài gì, không `npx` |
+| Transport | **Streamable HTTP** — đúng chuẩn mới §2 |
+| Xác thực | **OAuth 2.0** (khuyến nghị) **hoặc PAT** |
+| Chìa tĩnh cần điền | **0 nếu đi OAuth**, 1 nếu đi PAT |
+| Rủi ro chuỗi cung ứng §11d | **không có** — không tải mã của ai về máy khách |
+
+⇒ **GitHub không cần một `client_id` nào cả** — GitHub tự là nhà cung cấp danh tính, nên bước ② của
+Google **không tồn tại ở đây**. Đó là khác biệt thật giữa *"hãng đã dựng sẵn lớp cấp quyền"* và
+*"hãng bắt bạn tự đăng ký một ứng dụng trước"*.
 
 ---
 
@@ -508,6 +854,157 @@ ta**. Ta hiện nó trong luồng chat — **cùng chỗ, cùng hình dạng v�
    giải thích, không im lặng mở một cửa sổ ở Singapore.
 3. **Elicitation là một cuộc hội thoại có hạn giờ trong lúc một task đang chạy.** ❓ Chưa biết nó
    tương tác thế nào với `abortController` và với trần chi phí. Phải đo — §12.
+
+---
+
+## 6e. Node hay không node — trả lời, rồi ba cửa vào
+
+> **Câu user hỏi:** *"trên UI cắm MCP được ngay, nó nên là 1 node hay là gì?"*
+>
+> **Đáp: NODE, và nó ĐÃ LÀ node rồi.** ✅ `layout.ts` sinh node `mcp:<server>` cho mọi khoá trong
+> `company.mcpServers`; `CAN_CONNECT` cho `mcp → agent | assistant`; cạnh lưu trong
+> `roles/<id>.yaml`; `Inspector.tsx:538` đã có nhánh render. **Thứ thiếu chưa bao giờ là cái node —
+> là ĐƯỜNG SINH RA nó.**
+
+Node đúng vì năm câu hỏi ở §1a đều "có", nhưng có **một** lý do mạnh hơn cả năm:
+
+> **Cạnh nối LÀ hành động cấp quyền.** Kéo một sợi dây từ `🔌 Notion` xuống `Người viết` **chính là**
+> ghi `mcp: [notion]` vào `roles/nguoi-viet.yaml`. Không có mô tả nào của "cấp quyền cho ai" gọn
+> hơn một sợi dây nhìn thấy được. Bỏ node đi thì phải đẻ ra một danh sách checkbox ở đâu đó — kém
+> hơn ở mọi mặt, và **rời khỏi chỗ người dùng đang nhìn**.
+
+### Ba cửa vào — chọn hai, bỏ một
+
+| | Cửa | Được | Mất |
+|---|---|---|---|
+| **A** ⭐ | Nút **`+ Kết nối`** cạnh `+ Nhân viên` trên thanh nổi của canvas | cùng ngữ pháp với thứ duy nhất người dùng đã biết cách dùng · rẻ · **danh mục hiện ra ngay ở màn đầu** | không "kéo thả" |
+| **B** ❌ | Ngăn kéo palette bên rail, **kéo thả** lên canvas | đúng chữ *"rút ra xài được ngay"* theo nghĩa đen | ba cái mất, xem dưới |
+| **C** ⭐ | Từ bảng chi tiết của **một nhân viên**: `Cánh tay: chưa có [+ Cắm]` | **đúng lúc người dùng nghĩ ra nhu cầu** · cắm xong nối dây sẵn | phải nhớ đồng bộ hai cửa về một hộp thoại |
+
+**Vì sao BỎ B, dù nó nghe hiện đại nhất:**
+
+1. **Kéo thả bán giá trị "chọn chỗ đặt", mà chỗ đặt ở đây không thuộc về người dùng.** ✅ Canvas có
+   tự sắp (`firstFreeSlot` · `centeredSlot`) và có nút **Sắp xếp lại sơ đồ**. Người dùng thả node
+   vào một chỗ rồi bấm sắp xếp là nó nhảy đi — kéo thả **hứa một quyền mà nút bên cạnh lấy lại**.
+2. **Chi phí thật không nằm ở bước chọn.** Từ *"tôi muốn Notion"* tới *"nhân viên dùng được Notion"*,
+   bước chọn tốn **1 giây**; điền chìa + thử + giao cho ai tốn **phần còn lại**. Kéo thả tối ưu
+   đúng cái bước không tốn gì, rồi đặt người dùng trước **cùng một cái form**.
+3. **Nó phá ngữ pháp của rail.** ✅ Sáu ngăn hiện có đều là **kho/danh sách** (`Sidebar.tsx` §TABS —
+   *"AI ĐẶT FILE VÀO ĐÓ?"*). Một palette là khái niệm khác hẳn, và nhét vào đó là dạy người dùng
+   rằng rail không có quy luật nào.
+
+⇒ **Chốt: A là cửa chính, C là cửa phụ, cả hai mở CÙNG MỘT hộp thoại.** *"Rút ra xài được ngay"*
+được đáp bằng **thẻ danh mục hiện sẵn ở màn đầu**, không phải bằng thao tác kéo.
+
+⚠ **Tên nút: `Kết nối`, không phải `MCP`, cũng không phải `Cánh tay`.** `SPEC-connectors` §6 đã chọn
+chữ *"Kết nối"* từ 14/08 và người non-code tự đoán ra nghĩa của nó. *"Cánh tay"* là chữ của **spec**,
+không phải chữ của **sản phẩm** — giữ nó trong tài liệu, đừng đưa lên màn hình.
+
+## 6f. Hộp thoại ba bước — và bước 3 là bước bắt buộc
+
+```
+BƯỚC 1 · Chọn                          BƯỚC 2 · Chìa & Thử       BƯỚC 3 · Giao cho ai
+┌───────────────────────────────┐     ┌────────────────────┐    ┌──────────────────┐
+│  Cắm một kết nối              │     │ 📝 Notion          │    │ Ai được dùng?    │
+│                               │     │                    │    │                  │
+│ ┌──────┐ ┌──────┐ ┌──────┐   │     │ Token  [········]  │    │ ☑ Người viết     │
+│ │  📁  │ │  📝  │ │  🗂  │   │ ──► │  ↳ lấy ở: Notion → │──► │ ☐ Người soát     │
+│ │ File │ │Notion│ │Google│   │     │    Settings →      │    │ ☐ Kế toán        │
+│ │ máy  │ │      │ │      │   │     │    Connections     │    │                  │
+│ │không │ │1 chìa│ │ đăng │   │     │                    │    │ Chưa chọn ai thì │
+│ │ chìa │ │      │ │ nhập │   │     │ [ Thử ngay ]       │    │ kết nối này nằm  │
+│ └──────┘ └──────┘ └──────┘   │     │ ✓ 200 · 15 việc    │    │ im, không tốn gì │
+│                               │     │                    │    │                  │
+│ ── đã cắm ở văn phòng khác ── │     │        [ Lưu ] ←── │    │      [ Xong ]    │
+│ 🔌 shopify   (dùng lại)       │     │    khoá tới khi ✓  │    │                  │
+│                               │     └────────────────────┘    └──────────────────┘
+│ ── hoặc ──                    │
+│ ⚙ Tự cắm — dán cấu hình MCP   │
+└───────────────────────────────┘
+```
+
+**Bước 1 — ba thứ trên một màn, và thứ tự có lý do:**
+
+| Khối | Nội dung | Vì sao ở đó |
+|---|---|---|
+| Thẻ danh mục | 3 mục §4e | *"rút ra xài ngay"*. **Câu phụ trên thẻ nói CÁI GIÁ** (`không chìa` / `1 chìa` / `đăng nhập`) — người dùng chọn được theo công sức, không phải theo tên |
+| **Đã cắm ở văn phòng khác** | 🔌 tên · `dùng lại` | ✅ `mcpServers` là **cấp công ty** (`types.ts:386`). Chìa đã khai rồi ⇒ dùng lại là **0 bước**. Không có khối này thì người dùng khai chìa Notion lần thứ hai và tự hỏi vì sao |
+| Tự cắm | dán JSON | đường **B** §4c — không ai bị chặn |
+
+**Bước 2 — luật đã có, áp nguyên:** *không cho **Lưu** khi chưa **Thử** thành công một lần*
+(`SPEC-tools-approval` §10b). Với MCP, "thành công" có **năm** mức (§6c) — `needs-auth` **không phải
+lỗi**, nó là *"bấm nút đăng nhập đi"*.
+
+**Bước 3 — bắt buộc, không phải tuỳ chọn. Đây là chỗ dễ bỏ sót nhất.**
+
+> **Một node không có dây là một node CHẾT.** Nó hiện trên sơ đồ, trông như đã xong, và **không ai
+> dùng được**. Người dùng non-code sẽ không đoán ra là còn phải kéo một sợi dây — họ vừa bấm "Lưu"
+> và thấy chữ ✓.
+>
+> Đây đúng lớp lỗi *"hệ thống nói dối về trạng thái của chính nó"* (`SESSIONS_MEMORY` §5i·1). Nên
+> bước 3 **hỏi thẳng**, và câu dưới ô nói ra hậu quả của việc không chọn ai — **kèm mặt tốt của
+> nó** (`không tốn gì`), để người muốn cắm sẵn để đó vẫn có đường đi mà không thấy mình làm sai.
+
+## 6g. Node hiện gì — trạng thái, không phải nhãn tĩnh
+
+Hôm nay `NodeShape.tsx:97` in cứng `'tool ngoài'` / `'chưa khai trong company.yaml'`. Với 📖
+`mcpServerStatus()` thì nó nói được sự thật:
+
+```
+┌────────────────────────┐   ● hoạt động · 15 việc · 2 người dùng
+│ 🔌 Notion              │   ⚠ cần đăng nhập            ← bấm vào là mở lại bước 2
+│    ● 15 việc · 2 người │   ✗ không kết nối được       ← bấm vào là hiện nguyên văn `error`
+└────────────────────────┘   ⏳ đang kết nối…
+                             ○ đã tắt
+```
+
+⚠ **Ba ràng buộc, cả ba đều là bài học đã trả tiền:**
+
+1. **`✗` phải mở ra NGUYÊN VĂN `error`.** Nó là chuỗi duy nhất người dùng copy đi hỏi chỗ khác
+   được (cùng lý do `planProblemsMessage` không giấu danh sách lỗi).
+2. **Trạng thái vào node được, vào DANH BẠ TRỢ LÝ thì phải ổn định hoá** — node nhấp nháy chỉ là
+   pixel; danh bạ nhấp nháy là **bump cacheKey mỗi lần**. → §7c.
+3. **Đổi `NodeShape` không được kéo theo render cả cây.** ✅ Đã có tiền lệ đúng: `LibraryBody` tách
+   riêng **chỉ để** giữ ràng buộc đó (`NodeShape.tsx:9`). Node MCP có trạng thái sống ⇒ **phải tách
+   `McpBody` y hệt**, không đăng ký store ngay trong `NodeShape`.
+
+### 🆕 Node MCP chỉ hiện ở văn phòng ĐANG DÙNG nó — **đổi hành vi, chưa cài**
+
+✅ Hôm nay `layout.ts:125` dựng node cho **mọi** khoá trong `company.mcpServers`, ở **mọi** văn
+phòng. Đúng với ý *"một chỗ cắm, mọi văn phòng thấy"* (`types.ts:386`) — nhưng ý đó được viết khi
+cắm một MCP tốn 9 bước và không ai có quá một cái.
+
+**Danh mục làm việc cắm rẻ đi ⇒ tiền đề đó hết đúng.** Cắm 6 kết nối là 6 node lạ nằm trong sơ đồ
+của văn phòng Kế toán, không dây nào, không việc gì.
+
+| | Chốt |
+|---|---|
+| **Canvas** | chỉ node có **ít nhất một dây trong văn phòng này**, cộng node vừa cắm trong phiên |
+| **Kho chung** | vẫn cấp công ty — hiện ở **khối "đã cắm ở văn phòng khác"** của bước 1 |
+| **Bỏ dây cuối cùng** | node rời khỏi canvas, **kết nối và chìa vẫn còn** — giống *"Cho nghỉ"* của nhân viên, không giống *"Xoá"* |
+
+> **Đây là chỗ ranh giới công-ty / văn-phòng cuối cùng cũng đọc được bằng mắt:** *cái gì đã cắm* là
+> của công ty, *ai được dùng* là của văn phòng. Bản hiện tại trộn hai thứ vào một mặt phẳng và bắt
+> người dùng tự tách ra trong đầu.
+
+⚠ Ràng buộc đi kèm: `layout.ts` có nhánh **node mồ côi** (`missing`) giữ lại + báo đỏ node có file
+đã biến mất. Luật mới **không được nuốt nhánh đó** — *"không còn khai trong `company.yaml`"* và
+*"văn phòng này không dùng"* là **hai chuyện khác hẳn nhau**, và gộp chúng là đúng lỗi
+`catch { exists = false }` ([[agentco-catch-hides-premises]]).
+
+## 6h. Đếm lại số bước — thước đo của cả §6
+
+| | Hôm nay (bài 10 chặng B) | Sau §6 |
+|---|---|---|
+| **Notion** | — | **3 bấm + 1 dán** |
+| **File trên máy** | — | **3 bấm + chọn thư mục**, không chìa nào |
+| **Google** | 9 bước · 3 file · 1 restart · 1 project Google Cloud | 3 bấm + 1 lần đăng nhập *(nếu spike 5 xanh)* |
+| Số file yaml phải mở | **3** | **0** |
+| Số lần restart | **1** | **0** |
+
+**Mục "File trên máy" là mục chứng minh cả mệnh đề**: nó đi từ bấm tới chạy được mà **không có một
+ô chìa nào**. Nếu một người non-code không làm nổi mục đó trong 30 giây thì thiết kế §6 sai, và
+biết điều đó **trước khi** xây hai mục còn lại là rẻ nhất.
 
 ---
 
@@ -683,6 +1180,45 @@ nhưng **không được cầm** MCP. ⇒ Danh bạ lấy dữ liệu từ 📖 
 khác** (worker, hoặc một lượt bắt tay riêng lúc cắm), rồi **ghi xuống đĩa** như một sự thật đã
 biết. **Không** gắn MCP vào phiên Trợ lý để hỏi nó. Đây là ràng buộc thi hành, không phải sở thích.
 
+### 9d. Rút một cánh tay thì tri thức của nó đi đâu — **ĐỪNG XOÁ, hãy NGỦ**
+
+> **Câu user hỏi:** *"Rút MCP thì tri thức của nó mất theo — câu hỏi là có đánh đổi công sức quá
+> nhiều không?"*
+>
+> **Đáp: bản XOÁ đắt và nguy hiểm; bản NGỦ gần như miễn phí và đạt đúng mục tiêu anh muốn.**
+
+Mục tiêu thật của "mất theo" là **đừng trả token cho tri thức về một thứ không còn cắm**. Đó là một
+mục tiêu về **prefix**, không phải về **đĩa**. Hai bản khác nhau hẳn:
+
+| | Bản XOÁ | Bản NGỦ ⭐ |
+|---|---|---|
+| Làm gì | tìm mọi node có nguồn là MCP đó, xoá file | thêm `source: mcp:<tên>`, và **lọc khỏi HOT** khi cánh tay không còn dây |
+| Token khi đã rút | 0 | **0** — giống hệt |
+| Công sức | ⚠ phải dựng đường xoá theo lô, phải có test | **một trường + một điều kiện** trong phép chọn HOT |
+| Cắm lại | tri thức **mất vĩnh viễn**, học lại từ đầu (mỗi bài học là một lượt LLM đã trả tiền) | quay lại nguyên vẹn |
+| Rủi ro | 🔴 rơi vào lớp `dropDependents`/`findTwin` — ✅ *"hai mảnh DUY NHẤT thật sự xoá file của user"*, và **nợ 0b ghi rõ chúng CHƯA CÓ TEST** | 🟢 không xoá byte nào |
+
+**Ba lý do bản XOÁ sai, và lý do thứ ba là lý do chặn:**
+
+1. **Tiền đề "rút = thôi dùng" thường sai.** Người ta rút để **xoay token**, để thử một server
+   khác, để tạm tắt cho đỡ tốn. Xoá là phạt một thao tác vốn vô hại.
+2. **Phần lớn tri thức đó KHÔNG nói về cái tool.** ✅ `SPEC-tools-approval` §7b đã tách sẵn:
+   *"tool này tạo một page"* là của MCP; *"hoá đơn nằm ở database Kế toán 2026"*, *"năm tài chính
+   bắt đầu tháng 4"* là **tri thức của TỔ CHỨC**, chỉ tình cờ được phát hiện qua cánh tay đó. Rút
+   Notion không làm năm tài chính đổi.
+3. **Tách hai loại trên là câu hỏi NGỮ NGHĨA ⇒ không bao giờ tất định được.** Luật đã chốt:
+   *cái TẤT ĐỊNH chỉ được nói về thứ CÓ MÃ NGUỒN THI HÀNH.* Một cổng xoá dựa trên *"ghi chú này nói
+   về tool hay về công ty"* là đúng thứ vừa bị bác ở ca ㉕ — và ở đây **phủ định sai làm mất dữ liệu
+   người dùng**, không chỉ chặn nhầm một việc. ⇒ [[agentco-safe-default-direction]]
+
+**Chốt: NGỦ.** Node giữ nguyên trên đĩa, mang `source`, và **rơi khỏi HOT** khi cánh tay không còn
+dây trong văn phòng — nên nó thôi tốn token ngay lập tức. Tra tay vẫn thấy, cắm lại là sống lại.
+Trùng với *"soft delete"* user đã chốt cho mọi thứ khác trong sản phẩm này.
+
+⚠ Kèm một điều kiện: `source` phải ghi lúc **sinh** node (biết chắc bài học đến từ lượt nào, cánh
+tay nào), **không** đoán ngược bằng cách dò chuỗi tên server trong nội dung. Dò chuỗi là lấy **hình
+dạng thay cho nguồn gốc** — lỗi đã đếm được **bốn lần** trong dự án này.
+
 ---
 
 ## 10. Docker — **có, nó khoá thật**, và đó là hai tin cùng lúc
@@ -755,6 +1291,23 @@ của `SPEC-cli.md` §4 đã giữ đúng từ đầu, nên đường này **kh�
 thật), và `npx` trong image (cân nhắc **gỡ sẵn** các MCP danh mục vào image thay vì tải lúc chạy —
 vừa nhanh vừa giảm rủi ro chuỗi cung ứng §11c).
 
+### 10d. ⏸ GÁC LẠI — user chốt 23/08
+
+**Docker để sau**, user tự test rồi tính tiếp. ✅ Không chặn gì: năm ràng buộc container của
+`SPEC-cli.md` §4 vẫn giữ, và §6 không đẻ ra vi phạm nào mới.
+
+**Nhưng hai thứ ở §10b phải mang theo, vì chúng KHÔNG phải việc của Docker:**
+
+1. **Bất biến §1b viết sai ngay từ bây giờ.** *"Chuỗi người dùng vừa gõ"* mang tiền đề ngầm *"người
+   dùng và daemon nhìn cùng một hệ thống file"* — tiền đề đó đã sai với **VPS** (user đã tự nêu ở
+   ca nút 📂), không cần chờ Docker. Sửa câu chữ của bất biến là việc **bây giờ**; dựng ánh xạ
+   đường dẫn mới là việc của Docker.
+2. **Danh mục "File trên máy" (§4e mục 1) là mục ĂN TRỌN cú va này.** Nó hỏi *"cho phép thư mục
+   nào"* ⇒ nó **đã** cần một danh sách thư mục tường minh ⇒ đúng chỗ để đặt ánh xạ đường dẫn sau
+   này. ⇒ Thiết kế mục đó **đừng giả định đường người dùng gõ = đường daemon thấy**, kể cả khi hôm
+   nay chúng bằng nhau. Đó là chỗ rẻ nhất để trả trước cho Docker, và **nó rẻ vì chỉ là đừng khẳng
+   định một điều ta chưa cần khẳng định**.
+
 ---
 
 ## 11. Bản quyền và logo — rủi ro là **NHÃN HIỆU**, không phải bản quyền
@@ -770,6 +1323,48 @@ vừa nhanh vừa giảm rủi ro chuỗi cung ứng §11c).
 | **Xây một tích hợp** với dịch vụ của họ (gọi API công khai, cắm MCP server của họ) | 🟢 **Thấp.** Đây là chuyện bình thường của cả ngành. Ràng buộc nằm ở **điều khoản API** của họ (giới hạn tần suất, cấm dùng lại dữ liệu), không ở bản quyền |
 | **Gọi tên họ** — *"Kết nối Google Drive"*, *"hoạt động với Notion"* | 🟡 **Thấp nếu làm đúng.** Đây là *nominative fair use*: dùng tên để chỉ đúng sản phẩm của họ, chỉ dùng **vừa đủ để nhận ra**, và **không gợi ý là được họ bảo trợ** |
 | **Dán logo của họ trong app** | 🟠 **Đây là chỗ có luật.** Logo vượt quá "vừa đủ để nhận ra", và phần lớn hãng lớn có **trang quy tắc riêng** ràng buộc chuyện này |
+
+### 11a-bis. ✅ Trả lời thẳng: *"dán logo của họ lên node MCP cũng vi phạm à?"*
+
+**Không tự động vi phạm — và đó là dạng dùng logo DỄ BẢO VỆ NHẤT có thể có.** Logo đứng cạnh tên,
+trong một danh sách tích hợp, để chỉ **đúng dịch vụ đó** — đây chính là *nominative use*, và cả
+ngành làm thế (Zapier, n8n, Make đều bày logo đối tác).
+
+**Nhưng "dễ bảo vệ nhất" ≠ "được phép mặc định".** Ba chuyện khác nhau, và người ta hay gộp:
+
+| | Rủi ro |
+|---|---|
+| Logo **nhỏ, cạnh tên, trong danh sách kết nối**, không hàm ý bảo trợ | 🟢–🟡 thấp. Đây là chỗ anh định dùng |
+| Logo trong **ảnh quảng cáo / landing page** của agentco | 🟠 cao hơn — bối cảnh marketing dễ đọc thành "có quan hệ đối tác" |
+| Logo làm **icon của app / của một tính năng** | 🔴 gần như luôn bị cấm tường minh |
+
+**Cái quyết định không phải nguyên tắc chung, mà là QUY TẮC CỦA TỪNG HÃNG** — và ba mục v1 khác
+nhau đúng ở chỗ đó:
+
+| Mục v1 | Thương hiệu bên thứ ba? | Trạng thái |
+|---|---|---|
+| **File trên máy** | ❌ **không có** — server tham chiếu của chính MCP | 🟢 icon của ta, **rủi ro bằng 0** |
+| **Notion** | có | 🟡 ❓ **chưa xác nhận được** trang quy tắc của họ trong một lượt tra. Đó chính là lý do trường `checked_on` tồn tại |
+| **Google** | có | 🟠 🌐 **nghiêm nhất, và đã đọc**: cấm dùng logo Google làm logo app; buộc ghi công; chỉ được nói *"for / compatible with"* |
+
+> ⚠ **Kết quả tra Notion — không tìm thấy trong một lượt — chính là dữ liệu, không phải thất bại.**
+> Trạng thái bình thường của một hãng là *"chưa ai đi đọc quy tắc của họ"*, và đưa logo lên dựa
+> trên *"chắc là được, ai cũng làm"* là **đúng cái hình dạng** mà cả dự án này đang chống:
+> một khẳng định nghe hợp lý, không ai kiểm, sống rất lâu vì **không bao giờ gây triệu chứng** —
+> cho tới ngày nó gây.
+
+**⇒ Chốt cho v1: ship bằng icon trung tính cho CẢ BA.** Không phải vì rủi ro cao, mà vì ba lý do
+cộng lại:
+
+1. **Nó không chặn gì cả.** `brand{}` là một **trường dữ liệu**; bật logo cho từng hãng về sau là
+   sửa một dòng, không phải sửa code.
+2. **Nửa logo nửa icon xấu hơn cả hai phương án thuần.** Ship logo Notion + icon xám cho Google
+   trông như một sản phẩm chưa làm xong.
+3. **Cái giá của việc chờ gần bằng 0.** Người dùng nhận ra "Notion" bằng **chữ Notion**; logo mua
+   thêm khoảng nửa giây nhận diện.
+
+Đổi lấy: **không có món nợ pháp lý nào nằm trong bản đầu tiên đem đi bán.** Đọc quy tắc từng hãng
+là việc của một buổi, làm bất cứ lúc nào, và làm **một lần cho mỗi hãng**.
 
 ### 11b. Bốn luật cứng — vi phạm là chuyện khác hẳn về mức độ
 
@@ -824,8 +1419,9 @@ kế nào sụp nếu nó hỏng**:
 | **3** | `PreToolUse` matcher `mcp__*` trên một lời gọi tool MCP thật | cổng duyệt cho **stdio** có tồn tại không | **§8c** — stdio là ca phổ biến nhất. Hỏng thì phải bọc proxy |
 | **4** | `setMcpServers()` giữa phiên: thêm · bớt · sai chìa | cắm/rút không restart · `errors` có nói được gì hữu ích không | **§6** — nút Thử ngay và cả B7 |
 | **5** | `onElicitation` `mode:'url'` với một server cần OAuth | OAuth qua UI có đi được không | **§6d** — và bài 10 chặng B |
-| **6** | Vai trò không có `Bash`, giao việc `Read` `company/.state/secrets.json` | lỗ §5d có thật không (**dự đoán: có**) | nếu **không** đọc được thì có một hàng rào ta chưa biết là mình có — quan trọng ngang việc nó có |
-| **7** | Chạy toàn bộ trong `node:slim` + mount đúng `company/` | Docker khoá thật tới đâu · stdio `npx` sống được không | **§10** |
+| ~~**6**~~ | ✅ **XONG 23/08** — `scripts/spike-secrets.ts` | **cả §5d lẫn §5f: 🔴 CÓ, cả hai.** $0,0389 | — |
+| ~~**7**~~ | ⏸ Docker — **gác lại 23/08** | | — |
+| **8** | 🆕 Cắm GitHub remote (http) và xem `pickMcp` có tiêm `headers` không | lỗ §5a có thật không (**dự đoán: có** — `worker.ts:634` chỉ nhận `command`) | mục danh mục #3 |
 
 ⚠ **Bẫy đo đã trả tiền hai lần, áp cho spike 2:** lần đo thứ hai **ăn cache của lần một** và cho ra
 chênh lệch 0. **Phải cắm nonce vào system prompt để ép miss cả hai lần.** [[agentco-measurement-vs-conclusion]]
@@ -841,36 +1437,70 @@ và ✅ ta đã học ở §5n ⑤ rằng chúng **không được trả lời k
 
 Xếp theo *mở khoá bao nhiêu / công sức*, và **ba việc đầu là ĐO chứ không phải XÂY**:
 
+Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, việc thứ tư và năm là **bịt hai lỗ
+đang mở** — cả năm cộng lại chưa tới một buổi, và chúng quyết định hình dạng của phần còn lại.
+
 | # | Việc | Mở khoá | Cỡ |
 |---|---|---|---|
-| 1 | Spike 6 — lỗ chìa khoá §5d | biết mình đang hở tới đâu | **10 phút** |
-| 2 | Spike 1 + 2 — `mcpServerStatus` + token | **§7, §8, §9 cùng lúc** | nhỏ |
-| 3 | Spike 3 + 4 — cổng duyệt stdio + hot-plug | §6, §8c | nhỏ |
-| 4 | Bịt §5d bằng phương án **A** | lỗ đang mở | **rất nhỏ** |
-| 5 | Màn hình Thêm/Sửa/Thử cánh tay (đường **B** dán config) | **xoá 3 chuông 📝** ở bài 10 | vừa |
-| 6 | Chìa đi theo cạnh nối (§6b) | xoá bước B6 | nhỏ |
-| 7 | Dòng năng lực từ handshake (§7) | Trợ lý chia việc đúng người | nhỏ |
-| 8 | Cổng duyệt hai tầng (§8) — **chỉ sau spike 3** | bài 10 chặng C | lớn |
-| 9 | Danh mục 2 mục (đường **A**) | trải nghiệm "chọn là chạy" | vừa |
-| 10 | `onElicitation` OAuth (§6d) | bài 10 chặng B **hết cần Google Cloud Console** | vừa |
-| 11 | Connector tự sinh (đường **C**) | **đặc sản** | lớn |
-| 12 | Docker (§10) | containment · doanh nghiệp | lớn |
+| ~~1~~ | ✅ **Spike 6** — hai lỗ §5d + §5f | **cả hai 🔴 CÓ.** $0,0389 · 23/08 | xong |
+| ~~2~~ | ✅ **Bịt §5d + §5f** — `paths.ts §guardedZone` + `officeJail` hai matcher | **cả hai 🟢 KHÔNG**, đo lại cùng ngày. **+17 test → 298.** 0 token | xong |
+| **3** | **Spike 1 + 2** — `mcpServerStatus` + token (nhớ **nonce**) | **§7, §8, §9 cùng lúc** | nhỏ |
+| 4 | **Spike 4** — `setMcpServers` hot-plug | nút **Thử ngay**, xoá bước restart | nhỏ |
+| 5 | **Đường B** — hộp thoại `+ Kết nối` 3 bước, dán config (§6f) | **xoá cả 4 chuông** 📝 | vừa |
+| 6 | Mục **File trên máy** (§4e #1) | ⭐ **thước của cả §6**: bấm → chạy, **0 ô chìa** | nhỏ |
+| 7 | Chìa đi theo cạnh nối (§6b) | xoá bước B6 | nhỏ |
+| 8 | Mục **Notion** (§4e #2) | cơ chế **ô chìa tĩnh** | nhỏ |
+| 9 | Node hiện trạng thái + tách `McpBody` (§6g) | thấy cánh tay sống hay chết | nhỏ |
+| 10 | **Spike 8** → bịt §5a (tiêm `headers`) → mục **GitHub** (§4e #3) | đường **HTTP**, và lỗ §5a chưa ai chạm | vừa |
+| 11 | Dòng năng lực từ handshake (§7) | Trợ lý chia việc đúng người | nhỏ |
+| 12 | **Spike 5** → mục **Google** qua `onElicitation` (§4e #4, đường **G2**) | bài 10 chặng B | vừa |
+| 13 | Node chỉ hiện ở văn phòng đang dùng (§6g) | sơ đồ sạch khi cắm đã rẻ | nhỏ |
+| 14 | **Spike 3** → cổng duyệt hai tầng (§8) | bài 10 chặng C. ⚠ **đừng lên lịch trước spike 3** | lớn |
+| 15 | Tri thức `source` + ngủ theo cánh tay (§9d) | chốt ⑱ của user | **rất nhỏ** |
+| 16 | Builder MCP cho autobot swarm (§5g) | luồng dựng **có tên, có nhật ký** | vừa |
+| 17 | Connector tự sinh (đường **C**) | **đặc sản** | lớn |
+| ⏸ | Docker (§10) | gác lại — user tự test rồi tính | — |
 
-**Bốn việc đầu cộng lại chưa tới một buổi**, và chúng quyết định hình dạng của tám việc còn lại.
+> **Việc 2 nhảy lên đầu vì spike 6 đã đổi trạng thái của nó**: hôm qua nó là *"bịt một lỗ ta nghi
+> là có"*, hôm nay là *"bịt một lỗ ta đã nhìn thấy chạy, hai lần, trong 45 giây, giá $0,04"*.
+>
+> **Việc 5 và 6 gần như là một** — §5h·1 đo được: danh mục **là đường B với form điền sẵn**, không
+> phải cơ chế thứ hai. Nên "xây đường B rồi mới có danh mục" không phải hai giai đoạn, nó là một
+> việc rưỡi.
+
+> **Việc 6 là thước của cả §6.** Mục *"File trên máy"* đi từ bấm tới chạy được **không có ô chìa
+> nào**. Người non-code không làm nổi nó trong 30 giây ⇒ thiết kế sai, và biết điều đó **trước khi**
+> xây Notion + Google là chỗ rẻ nhất để biết.
 
 ---
 
-## 14. Câu chưa trả lời — cần user chốt
+## 14. Câu chưa trả lời
 
-1. **Danh mục v1 gồm mấy mục, và Google có trong đó không?** (§4e — ba câu a/b/c)
-2. **Lỗ chìa khoá §5d sửa bằng A ngay, hay chờ B?** Nghiêng A ngay, B là đích, **C bị loại tường minh**.
-3. **Hàng rào đọc: hook, MCP filesystem, hay cả hai?** (§1d) — ⚠ chỉ một trong hai thì cửa còn lại vẫn mở.
-4. **Nếu spike 2 cho thấy tool MCP nằm trong prefix**, có mở lại quyết định `ToolSearch` không? (§9b)
-5. **Docker: v2 hay xa hơn?** Nó là câu chuyện containment ta đang thiếu (§10), nhưng nó cũng làm
-   **bài 9 chết** và bắt phải viết lại bất biến §1b.
-6. **Kho tri thức riêng cho mỗi cánh tay** — *"database nào là chỗ để hoá đơn"* thuộc về kho tri
-   thức (`SPEC-tools-approval` §7b đã chốt). Nhưng khi cắm/rút MCP thì tri thức về nó **đi theo hay
-   ở lại**? Chưa có ai nghĩ tới.
+### ✅ Đã chốt 23/08 — không bàn lại
+
+| | Chốt |
+|---|---|
+| ~~Danh mục v1~~ | **Filesystem · Notion · Google**, và đó là thứ tự xây. §4e |
+| ~~Lỗ chìa khoá~~ | **A ngay.** B là đích, **C loại tường minh**. §5d · §5e ② |
+| ~~Docker~~ | ⏸ **gác lại**, hai hệ quả mang theo. §10d |
+| ~~Tri thức khi rút MCP~~ | **NGỦ, không xoá.** §9d |
+| ~~MCP là node?~~ | **Node** — đã là node. Cửa vào = nút `+ Kết nối`, **bỏ kéo-thả**. §6e |
+
+### ❓ Còn mở
+
+1. **Hàng rào ĐỌC: hook, MCP filesystem, hay cả hai?** (§1d) ⚠ Câu này **nặng hơn trước** sau khi
+   chốt danh mục: mục *"File trên máy"* **là** một MCP filesystem có allowlist. Nên nửa thứ hai đã
+   được chốt gián tiếp — nhưng **chỉ nó thôi thì `Read` trần vẫn đi vòng qua**. Phải quyết có dựng
+   hook kèm không, nếu không thì đang bán một cái khoá cho một cánh cửa mà tường bên cạnh vẫn thủng.
+2. **Nếu spike 2 cho thấy tool MCP nằm trong prefix** — có mở lại quyết định `ToolSearch` không?
+   (§9b) Chỉ mở bằng **số đo**, không bằng lập luận.
+3. **Google đi đường G1 hay G2?** (§4e) Phụ thuộc spike 5. G2 thì thẻ Google **phải nói ra** là cần
+   ~10 phút thiết lập một lần, không được bày ngang hàng hai mục kia.
+4. **Danh sách trắng provider hiện ở đâu trên UI?** (§5e ③) Nó là quyết định sản phẩm, không phải
+   hằng số — nhưng chưa có màn hình nào nhận nó.
+5. **`+ Kết nối` đặt cạnh `+ Nhân viên`, còn ngăn kéo "Kết nối" của `SPEC-connectors` §6 thì sao?**
+   Nghiêng **bỏ ngăn kéo đó**: canvas đã là danh sách, một ngăn kéo liệt kê lại cùng những object
+   là **hai chỗ hiện một sự thật** — đúng thứ luật "ba kho" của `Sidebar.tsx` tránh. Cần user xác nhận.
 
 ---
 

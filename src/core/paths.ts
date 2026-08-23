@@ -330,6 +330,99 @@ export function resolveInput(officeDir: string, p: string): string | undefined {
 }
 
 /**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÙNG CẤM — hàm thuần đứng sau `officeJail`. → docs/SPEC-arms.md §5d–§5f   │
+ * │                                                                          │
+ * │ ⚠ ĐO ĐƯỢC 23/08 (`scripts/spike-secrets.ts`), một vai trò chỉ có 7 tool  │
+ * │ mặc định, KHÔNG shell:                                                   │
+ * │                                                                          │
+ * │   A · đọc `company/.state/secrets.json`  → 🔴 ĐỌC ĐƯỢC, chép nguyên văn  │
+ * │   B · ghi `roles/<chính-nó>.yaml`        → 🔴 GHI ĐƯỢC, bằng `Write`     │
+ * │                                                                          │
+ * │ Ca B nặng hơn vẻ ngoài: `Write` là GHI ĐÈ TRỌN FILE, nên một nhân viên   │
+ * │ không *sửa* vai trò của mình — nó **thay** vai trò, tự cấp `tools:`,     │
+ * │ `secrets:`, `mcp:`. Không receipt, không nhật ký, không dòng nào. Không   │
+ * │ có hiệu lực ngay (không `fs.watch`) nhưng SỐNG TRÊN ĐĨA tới `reload()`.   │
+ * │                                                                          │
+ * │ Vì sao `officeJail` cũ trượt cả hai: nó hỏi đúng MỘT câu — *"có ra ngoài │
+ * │ thư mục văn phòng không"*. `.state/` của công ty thì ở ngoài nhưng nó     │
+ * │ **chỉ khớp tool GHI**, mà ca A là ĐỌC. `roles/` thì ở TRONG, nên nó cho   │
+ * │ qua đúng theo thiết kế. Một câu hỏi, hai lỗ.                             │
+ * │                                                                          │
+ * │ ⇒ Hai vùng, ba luật, và ranh giới HẸP có chủ ý:                          │
+ * │                                                                          │
+ * │   `secrets`  `.state/` (công ty VÀ văn phòng)  → cấm CẢ ĐỌC LẪN GHI      │
+ * │   `config`   roles· skills· connectors· *.yaml· layout.json → cấm GHI    │
+ * │   `outside`  ngoài thư mục văn phòng           → cấm GHI (luật cũ)       │
+ * │                                                                          │
+ * │ ⚠⚠ THỨ CỐ Ý KHÔNG CHẶN, và nó quan trọng NGANG phần chặn: `artifacts/`,  │
+ * │ `knowledge/`, `library/` mở nguyên. Kho tri thức là chỗ nhân viên GHI     │
+ * │ bài học — chặn nó là giết cơ chế học. Một bản vá chặn được A+B mà chặn    │
+ * │ luôn mấy chỗ này là hỏng NGƯỢC CHIỀU, và im lặng hơn hẳn, vì không ai đi │
+ * │ kiểm một việc vốn vẫn chạy. Có test canh đúng chuyện đó.                 │
+ * │                                                                          │
+ * │ ⚠ Bonus không định trước: cấm đọc `<office>/.state/` bịt luôn lỗ đã ghi   │
+ * │ ở `OfficePaths.tasks` — *"KHÔNG phải một bức tường bảo mật: `Read` với    │
+ * │ đường dẫn tường minh vẫn mở được"*. Giờ nó là tường thật.                │
+ * │                                                                          │
+ * │ ⚠ RANH GIỚI PHẢI NÓI RA: hàm này chỉ với tới tool có ĐƯỜNG DẪN Ở MỘT     │
+ * │ TRƯỜNG CÓ TÊN. `Bash` nhét đường dẫn lẫn trong chuỗi lệnh ⇒ vẫn đi vòng  │
+ * │ qua được. Câu đúng là "ĐÃ HẸP LẠI, CHƯA ĐÓNG" — đừng viết "đã bịt lỗ",   │
+ * │ đó là lời hứa thứ tư sau `canUseTool`, `safeJoin` và §8·0.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type GuardedZone = 'secrets' | 'config' | 'outside';
+
+/** Thư mục/file thuộc vùng `config` — tương đối với thư mục VĂN PHÒNG. */
+const OFFICE_CONFIG = ['roles', 'skills', 'connectors', 'office.yaml', 'layout.json'];
+
+/**
+ * `a` có nằm trong (hoặc chính là) `b` không.
+ *
+ * ⚠ So bằng chữ THƯỜNG trên MỌI nền tảng, không dò `process.platform`. Trên
+ * Windows `ROLES\x.yaml` và `roles\x.yaml` là CÙNG một file, nên so phân biệt
+ * hoa thường ở đó là để hở một cửa sau chỉ cần viết hoa là qua. Cái giá ở phía
+ * kia: trên Linux một thư mục tên `Roles` khác `roles` sẽ bị chặn oan — một ca
+ * gần như không tồn tại, và nó lệch về phía an toàn. Đổi một phủ định-sai
+ * hoang đường lấy việc bịt một cửa sau có thật.
+ */
+function within(a: string, b: string): boolean {
+  const rel = path.relative(b.toLowerCase(), a.toLowerCase());
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Lời gọi tool này có chạm vùng cấm không? `undefined` = cho qua.
+ *
+ * `target` là chuỗi model gõ — tuyệt đối hoặc tương đối với thư mục văn phòng
+ * (`cwd` của worker). Chuỗi rỗng = tool không khai đường dẫn ⇒ cho qua.
+ */
+export function guardedZone(
+  dirs: { companyDir: string; officeDir: string },
+  target: string,
+  mode: 'read' | 'write',
+): GuardedZone | undefined {
+  if (!target) return undefined;
+  const abs = path.resolve(dirs.officeDir, target);
+
+  // `.state` TRƯỚC mọi thứ: nó vừa nằm ngoài văn phòng (bản công ty) vừa nằm
+  // trong (bản văn phòng), nên hỏi sau thì một nửa số ca rơi vào nhánh khác và
+  // nhận một câu giải thích nói về chuyện không liên quan.
+  for (const state of [companyPaths(dirs.companyDir).state, officePaths(dirs.officeDir).state]) {
+    if (within(abs, state)) return 'secrets';
+  }
+
+  if (mode === 'read') return undefined;
+
+  for (const rel of OFFICE_CONFIG) {
+    if (within(abs, path.join(dirs.officeDir, rel))) return 'config';
+  }
+  if (within(abs, companyPaths(dirs.companyDir).configFile)) return 'config';
+
+  return within(abs, dirs.officeDir) ? undefined : 'outside';
+}
+
+/**
  * Có thật trên đĩa không. `existsSync` **ném được**, không chỉ trả `false`: ký
  * tự cấm trong tên, hoặc một ổ mạng đã ngắt. Ném ở đây là làm sập cả lượt lập
  * kế hoạch vì một đường dẫn gõ sai — đúng thứ phép kiểm này sinh ra để báo cáo
