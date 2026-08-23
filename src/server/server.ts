@@ -264,9 +264,19 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // cửa sổ mà cánh tay đã tồn tại nhưng chưa ai dùng được, và nếu lời gọi
       // thứ hai hỏng thì người dùng ở lại với đúng cái NODE CHẾT mà bước 3 sinh
       // ra để tránh. → Office.grantArm
+      /**
+       * ⚠ GỌI KỂ CẢ KHI `grantTo` RỖNG — đây là bug user báo hai lần.
+       *
+       * Điều kiện cũ là `body.grantTo?.length`, nên "cắm mà chưa giao cho ai"
+       * KHÔNG chạy `grantArm` ⇒ không ghi `office.arms` ⇒ **bấm Xong xong
+       * không có gì xảy ra cả**: cánh tay đã vào sổ chung, mà sơ đồ trống trơn.
+       *
+       * `grantArm` với danh sách rỗng vẫn có việc để làm — nó ghi SỰ CÓ MẶT.
+       * Đó chính là thứ tách hai khái niệm ra để làm được.
+       */
       let canvas: unknown;
-      if (body.office && body.grantTo?.length) {
-        canvas = company.get(body.office).grantArm(id, body.grantTo);
+      if (body.office) {
+        canvas = company.get(body.office).grantArm(id, body.grantTo ?? []);
       }
       return json(res, 201, { id, arms: company.listArms(), canvas });
     }

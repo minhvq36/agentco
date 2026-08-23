@@ -440,6 +440,33 @@ export class LayoutStore {
         touched.push('office');
       }
     }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ SỰ CÓ MẶT CHỈ ĐƯỢC THÊM Ở ĐÂY, KHÔNG BAO GIỜ BỚT.                  │
+     * │                                                                    │
+     * │ Bug user báo 23/08: cắt sợi dây cuối cùng thì node cánh tay BIẾN    │
+     * │ MẤT khỏi sơ đồ. Họ muốn nó ở lại như nhân viên "đang nghỉ" — còn    │
+     * │ đó, chưa nối, nối lại lúc nào cũng được.                            │
+     * │                                                                    │
+     * │ `office.arms` là chỗ ghi sự có mặt, và nó CHỈ bị bớt bởi `dropArm`  │
+     * │ — tức một thao tác XOÁ có chủ ý. Cắt dây là đổi *ai được dùng*,     │
+     * │ không phải đổi *có mặt hay không*: hai chuyện khác nhau, hai chỗ    │
+     * │ ghi, và giờ chúng không còn dẫm lên nhau.                          │
+     * │                                                                    │
+     * │ Thêm ở đây cũng TỰ CHỮA dữ liệu cũ: cánh tay cắm trước khi có       │
+     * │ `office.arms` chỉ tồn tại trong `role.mcp`, nên cắt dây là chúng    │
+     * │ bốc hơi. Lần ghi sơ đồ đầu tiên đưa chúng vào sổ, một lần, im lặng. │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const present = new Set(this.office.config.arms);
+    for (const list of mcpByRole.values()) for (const s of list) present.add(s);
+    for (const s of mcpForAssistant) present.add(s);
+    const nextArms = [...present].sort();
+    if (!sameList(nextArms, this.office.config.arms)) {
+      if (this.writeYamlKey(this.office.paths.configFile, ['arms'], nextArms)) touched.push('office');
+    }
+
     return { touched };
   }
 
