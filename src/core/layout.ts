@@ -146,7 +146,10 @@ export class LayoutStore {
      * │ `catch { exists = false }` — hai sự việc khác hẳn nhau, một nhãn.   │
      * └────────────────────────────────────────────────────────────────────┘
      */
-    const inUse = new Set<string>(this.office.config.assistant.mcp);
+    // `office.arms` = CÓ MẶT trên sơ đồ (kể cả chưa nối dây ai).
+    // `role.mcp`    = AI ĐƯỢC DÙNG. Hợp hai tập, vì một cánh tay còn dây mà
+    // thiếu trong `office.arms` (dữ liệu cũ) vẫn phải hiện. → types.ts §arms
+    const inUse = new Set<string>([...this.office.config.arms, ...this.office.config.assistant.mcp]);
     for (const [roleId, role] of this.office.roles) {
       if (this.office.archivedRoles.has(roleId)) continue;
       for (const s of role.mcp) inUse.add(s);

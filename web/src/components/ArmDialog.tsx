@@ -114,6 +114,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [keys, setKeys] = useState<Record<string, string>>({});
 
   const [testing, setTesting] = useState(false);
+  /** Đã chờ quá 6 giây — mốc để GIẢI THÍCH, không phải để đoán trước. */
+  const [slow, setSlow] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [err, setErr] = useState('');
   const [grant, setGrant] = useState<string[]>([]);
@@ -132,8 +134,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setErr('');
     setGrant([]);
     void api.armCatalog().then((r) => setCatalog(r.arms)).catch(() => undefined);
-    void api.arms().then((r) => setInstalled(r.arms)).catch(() => undefined);
-  }, [open]);
+    /**
+     * ⚠ LỌC NGAY Ở NGUỒN: chỉ giữ cánh tay văn phòng NÀY chưa có.
+     *
+     * Bản trước liệt kê cả sổ chung, nên mục văn phòng đang dùng vẫn hiện ra —
+     * bấm vào thì đi qua chọn → thử ~20 giây → giao cho ai → rồi mới bị từ chối.
+     * Bày ra một lựa chọn CHẮC CHẮN SAI rồi để người dùng đâm vào nó là tệ hơn
+     * mọi câu báo lỗi viết khéo.
+     */
+    void api
+      .arms()
+      .then((r) => setInstalled(r.arms.filter((a) => !a.usedBy.some((u) => u.office === officeId))))
+      .catch(() => undefined);
+  }, [open, officeId]);
 
   const agents = (canvas?.nodes ?? []).filter((n) => n.kind === 'agent' && n.role);
 
@@ -192,13 +205,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     }
     setErr('');
     setTesting(true);
+    setSlow(false);
     setProbe(null);
+    const tick = setTimeout(() => setSlow(true), 6_000);
     try {
       setProbe(await api.testArm('thu', { ...p, ...(Object.keys(keys).length ? { secrets: keys } : {}) }));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Không thử được.');
     } finally {
+      clearTimeout(tick);
       setTesting(false);
+      setSlow(false);
     }
   }
 
@@ -403,18 +420,24 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         {/* ─────────────────────────────────────── BƯỚC 2 · Chìa & Thử ngay */}
         {step === 2 && (
           <div className="max-h-[52vh] overflow-y-auto">
-            {!pick && (
-              <>
-                <Label htmlFor="arm-id">Đặt tên cho kết nối</Label>
-                <Input
-                  id="arm-id"
-                  autoFocus
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="vi-du: notion"
-                />
-                <p className="mt-1 text-xs text-muted">Chữ thường, số, gạch ngang. Đây là tên hiện trên sơ đồ.</p>
-              </>
+            {/*
+              ⚠ TÊN Ở ĐÂY CHỈ ĐỂ ĐỌC — ô sửa đã BỎ (user bắt được: "cũng có edit
+              được đâu, đã test").
+
+              Ô cũ nói dối thật: `addArm` giữ nhãn đã có trong sổ chung nếu mục
+              đó từng tồn tại (*"cắm lại một thứ từng đặt tên thì cái tên đó là
+              của họ"*), nên gõ tên mới vào lúc CẮM LẠI bị bỏ qua âm thầm.
+
+              Sửa theo hướng thật thà hơn: tên lúc tạo là TỰ SINH, và đổi tên là
+              một việc riêng ở bảng chi tiết — nơi nó chạy thật, và nơi user đã
+              chỉ định từ đầu (*"không phải ở bước tạo mà là sau đó"*).
+            */}
+            {label && (
+              <div className="mb-3 rounded-md border border-line px-3 py-2">
+                <div className="text-[11px] uppercase tracking-wide text-muted">Tên kết nối</div>
+                <div className="mt-0.5 break-all text-[13px] font-medium">{label}</div>
+                <div className="mt-1 text-xs text-muted">Đổi tên được sau, trong bảng chi tiết của nó.</div>
+              </div>
             )}
 
             {pick?.folders && (
@@ -440,8 +463,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     const dup = list[0] ? clashingArm(list[0], installed, officeId) : undefined;
                     if (dup) {
                       setErr(
-                        `Thư mục này đã là kết nối "${dup}" của văn phòng. Đóng hộp thoại rồi kéo dây từ "${dup}" ` +
-                          `sang nhân viên cần nó — một kết nối dùng chung được cho nhiều người.`,
+                        `Thư mục này đã là kết nối trong văn phòng này rồi.`,
                       );
                       return;
                     }
@@ -450,19 +472,30 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     // Đổi thư mục thì kết quả Thử cũ nói về một cấu hình KHÁC.
                     // Giữ dấu ✓ lại là cho Lưu một thứ chưa ai thử.
                     setProbe(null);
-                    // Đặt tên kết nối theo tên thư mục: `D:\Ho so` → `ho-so`.
-                    // Người dùng gần như không bao giờ cần sửa, và cái tên đó
-                    // làm node trên sơ đồ TỰ NÓI nó trỏ vào đâu.
-                    const leaf = list[0]?.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
-                    const slug = leaf
-                      .normalize('NFD')
-                      .replace(/\p{M}/gu, '')
-                      .replace(/đ/gi, 'd')
-                      .toLowerCase()
-                      .replace(/[^a-z0-9]+/g, '-')
-                      .replace(/^-+|-+$/g, '')
-                      .slice(0, 24);
-                    if (slug) setLabel(leaf);
+                    /*
+                      ┌──────────────────────────────────────────────────────┐
+                      │ NHÃN LÀ CHỮ NGƯỜI ĐỌC — KHÔNG SLUG, GIỮ NGUYÊN UNICODE│
+                      │                                                      │
+                      │ Bản trước chạy `leaf` qua bộ slug rồi dùng slug làm  │
+                      │ CỔNG (`if (slug) setLabel(leaf)`). Với chữ phi-Latin  │
+                      │ — 文档 · 会계 · документы — slug ra RỖNG, nên nhãn    │
+                      │ không bao giờ được đặt, và node hiện nguyên cái BĂM   │
+                      │ `a5e5e1306bf` lên sơ đồ.                             │
+                      │                                                      │
+                      │ Đúng họ với `slugId` trả rỗng cho mọi chữ phi-Latin   │
+                      │ (SESSIONS_MEMORY ⑳) — một hàm chuẩn hoá viết cho      │
+                      │ tiếng Việt TRÔNG NHƯ viết cho mọi ngôn ngữ.          │
+                      │                                                      │
+                      │ Ở đây không cần slug chút nào: nhãn không phải tên   │
+                      │ thư mục, không phải khoá yaml, không phải id — danh   │
+                      │ tính đã là băm, và băm luôn là `a`+hex dù đường dẫn   │
+                      │ viết bằng chữ gì.                                    │
+                      └──────────────────────────────────────────────────────┘
+                    */
+                    const leaf = list[0]?.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.trim() ?? '';
+                    // Gốc ổ đĩa (`D:\`) không có tên lá — rơi về chính đường dẫn
+                    // thay vì để trống, vì để trống là node mang tên băm.
+                    setLabel(leaf || list[0] || 'Thư mục');
                   }}
                 />
                 {/*
@@ -535,12 +568,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 Đang kiểm tra kết nối…
               </div>
             )}
-            {testing && (
-              /* `pending` là trạng thái CÓ THẬT, kéo dài nhiều giây — đo đầu-cuối
-                 qua route: **22,3 giây** lần đầu, ~4 giây khi cache `npx` đã ấm.
-                 Nói ra con số, đừng để im lặng làm người dùng tưởng nó treo. */
+            {/*
+              ĐỪNG ĐOÁN TRƯỚC — GIẢI THÍCH KHI ĐÃ THẤY.
+
+              Câu cũ hứa sẵn *"lần đầu 20–30 giây vì phải tải công cụ"* ngay khi
+              bắt đầu thử. Nó SAI ở ca dùng lại một cấu hình đã có: gói đã nằm
+              trong cache `npx`, chẳng tải gì cả, và người dùng đọc được một câu
+              rõ ràng không đúng với thứ họ đang làm.
+              → Chỉ nói khi phép chờ đã THẬT SỰ lâu.
+            */}
+            {testing && slow && (
               <p className="mt-1.5 text-xs text-muted">
-                Lần đầu có thể mất khoảng 20–30 giây vì phải tải công cụ về máy. Những lần sau chỉ vài giây.
+                Hơi lâu — lần đầu dùng một công cụ, máy phải tải nó về. Những lần sau sẽ nhanh.
               </p>
             )}
 

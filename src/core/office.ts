@@ -1856,6 +1856,16 @@ export class Office {
    */
   dropArm(server: string): boolean {
     let touched = false;
+    // Bỏ SỰ CÓ MẶT trước: thiếu bước này thì node vẫn nằm trên sơ đồ dù không
+    // còn sợi dây nào — đúng cái node ma đã mất một vòng mới bắt được.
+    if (this.loaded.config.arms.includes(server)) {
+      this.writeYamlList(
+        this.loaded.paths.configFile,
+        ['arms'],
+        this.loaded.config.arms.filter((s) => s !== server),
+      );
+      touched = true;
+    }
     for (const [roleId, role] of this.loaded.roles) {
       if (!role.mcp.includes(server)) continue;
       this.writeYamlList(
@@ -1905,6 +1915,17 @@ export class Office {
    */
   grantArm(server: string, roleIds: string[]): CanvasState {
     this.assertLive();
+
+    /**
+     * GHI SỰ CÓ MẶT TRƯỚC, nối dây sau — và bước này chạy KỂ CẢ khi `roleIds`
+     * rỗng. Đó là điểm của nó: cắm một cánh tay mà chưa giao cho ai thì node
+     * vẫn phải hiện ra để còn kéo dây. → types.ts §OfficeConfig.arms
+     */
+    if (!this.loaded.config.arms.includes(server)) {
+      this.writeYamlList(this.loaded.paths.configFile, ['arms'], [...this.loaded.config.arms, server]);
+      this.reload();
+    }
+
     const from = mcpNodeId(server);
     const cur = this.layout.read().layout.edges;
     const have = new Set(cur.map((e) => `${e.from} ${e.to}`));

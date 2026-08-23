@@ -501,6 +501,29 @@ export const OfficeConfigSchema = z.object({
    */
   archived: z.boolean().default(false),
 
+  /**
+   * CÁNH TAY CÓ MẶT TRÊN SƠ ĐỒ VĂN PHÒNG NÀY. → docs/SPEC-arms.md §6i
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TÁCH "CÓ MẶT" KHỎI "AI ĐƯỢC DÙNG" (user chốt 23/08).                     │
+   * │                                                                          │
+   * │ Bản trước suy sự có mặt từ `role.mcp` — cánh tay chỉ hiện khi đã có ít    │
+   * │ nhất một sợi dây. Hậu quả user gặp: cắm xong mà chưa chọn nhân viên nào  │
+   * │ thì bấm Xong **không có gì xảy ra cả**. Về mặt dữ liệu thì nó đã được     │
+   * │ cắm; về mặt màn hình thì nó không tồn tại.                               │
+   * │                                                                          │
+   * │ Hai chuyện khác nhau và giờ có hai chỗ ghi:                               │
+   * │                                                                          │
+   * │   `office.arms`  cái này NẰM TRÊN SƠ ĐỒ của văn phòng   ← chỗ này        │
+   * │   `role.mcp`     ai được phép dùng nó                    ← sợi dây        │
+   * │                                                                          │
+   * │ Nhờ vậy một node chưa nối dây vẫn hiện ra, và người dùng KÉO ĐƯỢC dây từ │
+   * │ nó — thay vì phải quay lại hộp thoại. Node không dây vẫn vô dụng, nhưng  │
+   * │ nó **nhìn thấy được**, và đó là khác biệt giữa "chưa xong" với "biến mất".│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  arms: z.array(z.string()).default([]),
+
   assistant: z
     .object({
       display_name: z.string().default('Trợ lý'),
