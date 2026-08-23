@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CẮM MỘT CÁNH TAY — hộp thoại ba bước. → docs/SPEC-arms.md §6e–§6h
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -118,6 +118,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [open]);
 
   const agents = (canvas?.nodes ?? []).filter((n) => n.kind === 'agent' && n.role);
+
+  /**
+   * Cánh tay thư mục TỰ THỬ ngay khi chọn xong — người dùng không phải bấm gì.
+   * Xem khối chú thích ở nút Thử để biết vì sao phép thử vẫn phải chạy.
+   */
+  useEffect(() => {
+    if (step === 2 && pick?.folders && folders.trim() && !probe && !testing) void test();
+    // Chỉ theo `folders`: thêm `probe`/`testing` vào đây là tự gọi lại chính mình.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folders, step]);
 
   const folderList = () => folders.split('\n').map((s) => s.trim()).filter(Boolean);
 
@@ -389,22 +399,46 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               <>
                 <Label>{pick.folders.label}</Label>
                 <FolderPicker
-                  chosen={folders.split('\n').map((s) => s.trim()).filter(Boolean)}
+                  chosen={folderList()}
                   onChange={(list) => {
                     setFolders(list.join('\n'));
-                    // Đổi danh sách thư mục thì kết quả Thử cũ nói về một cấu
-                    // hình KHÁC. Giữ dấu ✓ lại là cho Lưu một thứ chưa ai thử.
+                    // Đổi thư mục thì kết quả Thử cũ nói về một cấu hình KHÁC.
+                    // Giữ dấu ✓ lại là cho Lưu một thứ chưa ai thử.
                     setProbe(null);
+                    // Đặt tên kết nối theo tên thư mục: `D:\Ho so` → `ho-so`.
+                    // Người dùng gần như không bao giờ cần sửa, và cái tên đó
+                    // làm node trên sơ đồ TỰ NÓI nó trỏ vào đâu.
+                    const leaf = list[0]?.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+                    const slug = leaf
+                      .normalize('NFD')
+                      .replace(/\p{M}/gu, '')
+                      .replace(/đ/gi, 'd')
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, '-')
+                      .replace(/^-+|-+$/g, '')
+                      .slice(0, 24);
+                    if (slug) setArmId(nextFreeId(slug, installed));
                   }}
                 />
-                <p className="mt-1.5 text-xs text-muted">{pick.folders.help}</p>
                 {/*
-                  Đo 23/08: một cánh tay `filesystem` nhận NHIỀU gốc cùng lúc và
-                  vẫn `connected`. Nói ra, vì trực giác mặc định là "mỗi thư mục
-                  một kết nối" — và đi đường đó thì đụng ngay chốt trùng mã.
+                  ┌────────────────────────────────────────────────────────────┐
+                  │ MỘT KẾT NỐI = MỘT THƯ MỤC. (user chốt 23/08)               │
+                  │                                                            │
+                  │ Server `filesystem` NHẬN nhiều gốc (đã đo), nhưng ta cố ý   │
+                  │ chỉ cho một, và lý do là ĐẶC QUYỀN TỐI THIỂU: gộp A+B vào  │
+                  │ một cổng thì nhân viên chỉ cần A vẫn nhận cả B, và không   │
+                  │ có cách nào tách ra sau này ngoài dựng lại từ đầu.         │
+                  │                                                            │
+                  │ Đổi lại: nhân viên cần ba thư mục thì trả ~3× token. Đó là │
+                  │ cái giá THẤY ĐƯỢC (hiện ngay dưới đây), và lối thoát tự    │
+                  │ nhiên là chọn thư mục CHA chung — một quyết định người dùng │
+                  │ tự cân được, khác hẳn một ràng buộc họ không gỡ nổi.       │
+                  └────────────────────────────────────────────────────────────┘
                 */}
+                <p className="mt-1.5 text-xs text-muted">{pick.folders.help}</p>
                 <p className="mt-1 text-xs text-muted">
-                  Chọn được nhiều thư mục cho cùng một kết nối — không cần tạo nhiều cái.
+                  Mỗi kết nối trỏ vào <b>một</b> thư mục. Cần nhiều chỗ thì tạo thêm kết nối, hoặc chọn
+                  thư mục cha chung.
                 </p>
               </>
             )}
@@ -427,10 +461,35 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               </div>
             ))}
 
-            <Button className="mt-4 w-full" onClick={() => void test()} disabled={testing}>
-              {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {testing ? 'Đang kết nối…' : 'Thử ngay'}
-            </Button>
+            {/*
+              ⚠ GIỮ PHÉP THỬ, BỎ CÁI NÚT. (user: *"bỏ nút Thử ngay khi là thư
+              mục được không, tôi khá chắc nó là tất định"*)
+
+              Cấu hình thì tất định thật, nhưng thứ hỏng KHÔNG nằm ở cấu hình —
+              nó nằm ở MÔI TRƯỜNG, và đã đo được cả ba: máy không có `npx` ·
+              không ra được npm (proxy công ty) · thư mục không đọc được. Cả ba
+              cho `failed`, và cả ba là thứ người non-code không tự chẩn được.
+
+              Lý do mạnh hơn: lần đầu phải TẢI GÓI ~22 giây. Khoản chờ đó không
+              biến mất khi bỏ phép thử — nó chỉ **dời sang giữa một việc đang
+              chạy**, lúc người dùng đã bỏ đi. Thử ở đây là trả nó vào đúng lúc
+              họ còn đứng đó và làm được gì đó.
+
+              ⇒ Bỏ một cú bấm, giữ phép kiểm: thử TỰ CHẠY ngay khi chọn xong
+              thư mục. Nút chỉ còn cho đường "tự cắm" và cho ca thử lại.
+            */}
+            {(!pick?.folders || probe?.status === 'failed') && (
+              <Button className="mt-4 w-full" onClick={() => void test()} disabled={testing}>
+                {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {testing ? 'Đang kết nối…' : probe ? 'Thử lại' : 'Thử ngay'}
+              </Button>
+            )}
+            {pick?.folders && testing && (
+              <div className="mt-4 flex items-center gap-2 text-[13px] text-muted">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Đang kiểm tra kết nối…
+              </div>
+            )}
             {testing && (
               /* `pending` là trạng thái CÓ THẬT, kéo dài nhiều giây — đo đầu-cuối
                  qua route: **22,3 giây** lần đầu, ~4 giây khi cache `npx` đã ấm.
@@ -532,26 +591,19 @@ function FolderPicker({ chosen, onChange }: { chosen: string[]; onChange(v: stri
   const [open, setOpen] = useState(false);
   return (
     <>
-      <div className="rounded-md border border-line px-2 py-1.5">
-        {chosen.length === 0 && <div className="px-1 py-1 text-xs text-muted">Chưa chọn thư mục nào.</div>}
-        {chosen.map((p) => (
-          <div key={p} className="flex items-center gap-2 py-0.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{p}</span>
-            <button
-              type="button"
-              className="text-xs text-muted hover:text-danger"
-              onClick={() => onChange(chosen.filter((x) => x !== p))}
-            >
-              bỏ
-            </button>
-          </div>
-        ))}
-        <Button size="sm" className="mt-1.5 w-full" onClick={() => setOpen(true)}>
+      <div className="rounded-md border border-line px-3 py-2">
+        {chosen.length === 0 ? (
+          <div className="py-1 text-xs text-muted">Chưa chọn thư mục nào.</div>
+        ) : (
+          // Đủ chữ, xuống dòng — xem chú thích ở `BrowseDialog`.
+          <div className="break-all font-mono text-[12px]">{chosen[0]}</div>
+        )}
+        <Button size="sm" className="mt-2 w-full" onClick={() => setOpen(true)}>
           <FolderOpen className="h-3.5 w-3.5" />
-          Chọn thư mục…
+          {chosen.length ? 'Đổi thư mục…' : 'Chọn thư mục…'}
         </Button>
       </div>
-      <BrowseDialog open={open} onOpenChange={setOpen} chosen={chosen} onChange={onChange} />
+      <BrowseDialog open={open} onOpenChange={setOpen} onChange={onChange} />
     </>
   );
 }
@@ -582,12 +634,10 @@ function FolderPicker({ chosen, onChange }: { chosen: string[]; onChange(v: stri
 function BrowseDialog({
   open,
   onOpenChange,
-  chosen,
   onChange,
 }: {
   open: boolean;
   onOpenChange(v: boolean): void;
-  chosen: string[];
   onChange(v: string[]): void;
 }) {
   const [cur, setCur] = useState<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>({
@@ -616,11 +666,10 @@ function BrowseDialog({
   }, [open]);
 
   const here = cur.path;
-  const already = here !== '' && chosen.includes(here);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="w-[min(92vw,1040px)] max-w-none">
         <DialogHeader>
           <DialogTitle>Chọn thư mục</DialogTitle>
           <DialogDescription>
@@ -645,15 +694,23 @@ function BrowseDialog({
               }
             }}
           />
-          <Button size="sm" disabled={!here || already} onClick={() => onChange([...chosen, here])}>
-            {already ? 'Đã chọn' : 'Chọn thư mục này'}
-          </Button>
         </div>
 
-        <div className="mt-2 grid max-h-[46vh] grid-cols-3 gap-1 overflow-y-auto rounded-md border border-line p-1">
-          {loading && <div className="col-span-3 px-2 py-2 text-xs text-muted">Đang đọc…</div>}
+        {/*
+          ⚠ ĐƯỜNG DẪN HIỆN ĐỦ, XUỐNG DÒNG CHỨ KHÔNG CẮT. Một đường dẫn bị cắt
+          giữa chừng là chỗ hiểu nhầm rẻ nhất có thể mua: `D:\Ho so\2025\…` và
+          `D:\Ho so\2026\…` trông y hệt nhau sau ba dấu chấm, và người dùng vừa
+          quyết định cho một agent quyền đọc chỗ nào.
+        */}
+        <div className="mt-2 rounded-md border border-line bg-panel px-3 py-2">
+          <div className="text-[11px] uppercase tracking-wide text-muted">Đang ở</div>
+          <div className="mt-0.5 break-all font-mono text-[12px]">{here || 'Chọn một ổ đĩa'}</div>
+        </div>
+
+        <div className="mt-2 grid max-h-[46vh] grid-cols-4 gap-1 overflow-y-auto rounded-md border border-line p-1">
+          {loading && <div className="col-span-4 px-2 py-2 text-xs text-muted">Đang đọc…</div>}
           {!loading && cur.dirs.length === 0 && (
-            <div className="col-span-3 px-2 py-2 text-xs text-muted">
+            <div className="col-span-4 px-2 py-2 text-xs text-muted">
               Không có thư mục con nào đọc được ở đây.
             </div>
           )}
@@ -671,14 +728,22 @@ function BrowseDialog({
             ))}
         </div>
 
-        {chosen.length > 0 && (
-          <div className="mt-2 text-xs text-muted">
-            Đã chọn {chosen.length} thư mục — chọn thêm được, đóng lại khi xong.
-          </div>
-        )}
-        <div className="mt-3 flex justify-end">
-          <Button variant="primary" onClick={() => onOpenChange(false)}>
-            Xong
+        {/*
+          MỘT NÚT, KHÔNG HAI. Bản trước có "Chọn thư mục này" rồi "Xong" — hai
+          nút cho một ý định, và người dùng phải đoán cái nào mới thật sự chọn.
+          Giờ **Xong = chọn thư mục đang mở**, đúng như user đề nghị.
+        */}
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <Button onClick={() => onOpenChange(false)}>Thôi</Button>
+          <Button
+            variant="primary"
+            disabled={!here}
+            onClick={() => {
+              onChange([here]);
+              onOpenChange(false);
+            }}
+          >
+            Xong — dùng thư mục này
           </Button>
         </div>
       </DialogContent>
@@ -728,3 +793,4 @@ function ProbeReport({ r }: { r: ProbeResult }) {
     </div>
   );
 }
+

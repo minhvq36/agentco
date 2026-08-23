@@ -58,16 +58,16 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
 
       {node.kind === 'assistant' && (
         <>
-          <text className="node-av" x={16} y={36}>
+          <text className="node-av" x={16} y={32}>
             {node.avatar || '★'}
           </text>
-          <text className="node-nm" x={46} y={30}>
-            {cut(node.label, 18)}
+          <text className="node-nm" x={44} y={26}>
+            {cut(node.label, 16)}
           </text>
-          <text className="node-sub" x={46} y={50}>
-            {cut(node.tier, 26)}
+          <text className="node-sub" x={44} y={44}>
+            {cut(node.tier, 22)}
           </text>
-          <text className="node-sub" x={16} y={70}>
+          <text className="node-sub" x={16} y={s.h - 10}>
             📒 {node.count ?? 0}
           </text>
         </>
@@ -96,34 +96,44 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
 
       {node.kind === 'mcp' && (
         <>
-          <text className="node-av" x={12} y={36}>
+          <text className="node-av" x={12} y={s.h / 2 + 6}>
             🔌
           </text>
-          <text className="node-nm" x={38} y={28}>
-            {cut(node.label, 16)}
+          <text className="node-nm" x={38} y={s.h / 2 - 3}>
+            {cut(node.label, 14)}
           </text>
-          <text className="node-sub" x={38} y={45}>
-            {node.missing ? 'chưa khai trong company.yaml' : 'tool ngoài'}
+          <text className="node-sub" x={38} y={s.h / 2 + 13}>
+            {node.missing ? 'không còn cắm' : 'kết nối'}
           </text>
         </>
       )}
 
+      {/*
+        ⚠ TOẠ ĐỘ BÁM ĐÁY, KHÔNG PHẢI SỐ CỐ ĐỊNH.
+
+        Bản trước ghi `y={76}` cho dòng cuối, đúng lúc node cao 88 — tức chừa
+        12px. Ngày thu nhỏ node xuống 76 (23/08) thì dòng đó rơi ĐÚNG mép dưới,
+        dính vào viền. Một hằng số hợp lệ đổi ở file khác, và chỗ này hỏng im
+        lặng — cùng họ với hai test khoá cứng bước lưới hỏng cùng ngày.
+
+        Neo theo `s.h` thì mọi lần chỉnh kích thước sau này tự đúng.
+      */}
       {node.kind === 'agent' && (
         <>
           <rect x={0} y={0} width={4} height={s.h} rx={2} fill={ink} className="node-stripe" />
-          <text className="node-av" x={16} y={32}>
+          <text className="node-av" x={16} y={30}>
             {node.avatar || '•'}
           </text>
-          <text className="node-nm" x={46} y={30}>
-            {cut(node.label, 17)}
+          <text className="node-nm" x={44} y={28}>
+            {cut(node.label, 15)}
           </text>
           {/* Câu `say` lúc chạy — canvas ghi thẳng textContent vào đây. */}
-          <text className="node-say" x={16} y={56} />
-          <text className="node-sub" x={16} y={76}>
+          <text className="node-say" x={16} y={s.h - 30} />
+          <text className="node-sub" x={16} y={s.h - 12}>
             {node.missing ? 'không tìm thấy vai trò' : `📒 ${node.count ?? 0}  ·  ${node.tier ?? ''}`}
           </text>
           {!node.connected && (
-            <text className="node-sub" x={s.w - 12} y={76} textAnchor="end">
+            <text className="node-sub" x={s.w - 12} y={s.h - 12} textAnchor="end">
               đang nghỉ
             </text>
           )}

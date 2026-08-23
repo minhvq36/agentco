@@ -247,7 +247,16 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       // Kéo từ cổng RA để nối dây. Node agent không có cổng ra, nên
       // agent→agent không vẽ ra được — đó là ràng buộc vật lý, không phải
       // một thông báo lỗi sau khi vẽ xong.
-      if (portHost?.dataset['port'] === 'out' && nodeHost) {
+      /*
+        KÉO ĐƯỢC TỪ CẢ HAI CỔNG CỦA NHÂN VIÊN. (user chốt 23/08)
+
+        Luật: **thao tác khoan dung, hiển thị không bao giờ sai.** Người dùng
+        bấm cổng trên của nhân viên rồi kéo vào một cánh tay — ý họ rõ ràng là
+        "nối cái này vào người này", và bắt họ đoán đúng cổng nào là bắt họ học
+        một luật của ta. Chiều thật được nắn lúc THẢ (`normalize`), còn chỗ vẽ
+        thì luôn suy từ `from.kind` — nên không có ca nào hiện sai.
+      */
+      if (portHost?.dataset['port'] && nodeHost) {
         ev.preventDefault();
         link.current = { from: nodeHost.dataset['node']!, target: null };
         svgRef.current?.setPointerCapture(ev.pointerId);
@@ -312,7 +321,12 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         const host = over?.closest<SVGGElement>('[data-node]');
         const id = host?.dataset['node'] ?? null;
         const to = id ? canvas.nodes.find((n) => n.id === id) : undefined;
-        const ok = to && canConnect(from, to, edgesRef.current) ? to.id : null;
+        // Nhận cả chiều ngược: kéo từ nhân viên sang cánh tay vẫn sáng lên, vì
+        // `mcp → agent` hợp lệ. Chiều thật được nắn lúc thả.
+        const ok =
+          to && (canConnect(from, to, edgesRef.current) || canConnect(to, from, edgesRef.current))
+            ? to.id
+            : null;
         if (ok !== l.target) {
           if (l.target) nodeEls.current.get(l.target)?.classList.remove('is-droptarget');
           l.target = ok;
@@ -351,7 +365,15 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       if (l) {
         if (l.target) {
           nodeEls.current.get(l.target)?.classList.remove('is-droptarget');
-          edgesRef.current = [...edgesRef.current, { from: l.from, to: l.target }];
+          // Kéo ngược chiều thì ĐẢO LẠI, đừng từ chối: `mcp → agent` là chiều
+          // duy nhất hợp lệ, nên kéo từ nhân viên sang cánh tay vẫn ra đúng nó.
+          const a = canvas.nodes.find((n) => n.id === l.from);
+          const b = canvas.nodes.find((n) => n.id === l.target);
+          const flip = a && b && !canConnect(a, b, edgesRef.current) && canConnect(b, a, edgesRef.current);
+          edgesRef.current = [
+            ...edgesRef.current,
+            flip ? { from: l.target, to: l.from } : { from: l.from, to: l.target },
+          ];
           commit(true);
         }
         ghostRef.current?.removeAttribute('d');
@@ -486,16 +508,42 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
               >
                 <NodeShape node={n} />
 
+                {/*
+                  ┌──────────────────────────────────────────────────────────┐
+                  │ CỔNG PHẢI KHỚP CHỖ SỢI DÂY THẬT SỰ ĐI RA/VÀO.            │
+                  │                                                          │
+                  │   Trợ lý    dưới  → giao việc xuống                      │
+                  │   nhân viên trên  ← nhận việc  ·  DƯỚI ← nhận cánh tay   │
+                  │   cánh tay  TRÊN  → đẩy năng lực lên                     │
+                  │                                                          │
+                  │ Bản trước cho MCP một cổng ở ĐÁY trong khi dây đã đổi ra │
+                  │ đi từ đỉnh (§anchor) — vòng tròn nằm một chỗ, dây mọc ra │
+                  │ chỗ khác. Và nhân viên chỉ có MỘT cổng cho HAI quan hệ    │
+                  │ ngược chiều nhau.                                        │
+                  └──────────────────────────────────────────────────────────┘
+                */}
                 {(n.kind === 'agent' || n.kind === 'assistant') && (
                   <g data-port="in">
                     <circle className="port-hit" cx={s.w / 2} cy={0} r={13} />
                     <circle className="port" cx={s.w / 2} cy={0} r={5.5} />
                   </g>
                 )}
-                {(n.kind === 'assistant' || n.kind === 'mcp') && (
+                {n.kind === 'agent' && (
+                  <g data-port="arm">
+                    <circle className="port-hit" cx={s.w / 2} cy={s.h} r={13} />
+                    <circle className="port" cx={s.w / 2} cy={s.h} r={5.5} />
+                  </g>
+                )}
+                {n.kind === 'assistant' && (
                   <g data-port="out">
                     <circle className="port-hit" cx={s.w / 2} cy={s.h} r={13} />
                     <circle className="port" cx={s.w / 2} cy={s.h} r={5.5} />
+                  </g>
+                )}
+                {n.kind === 'mcp' && (
+                  <g data-port="out">
+                    <circle className="port-hit" cx={s.w / 2} cy={0} r={13} />
+                    <circle className="port" cx={s.w / 2} cy={0} r={5.5} />
                   </g>
                 )}
               </g>
