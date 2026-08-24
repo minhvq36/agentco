@@ -6,7 +6,7 @@
  * tắc `Bash` không liên quan gì tới hai lỗ này.
  *
  *   A. §5d — đọc được `company/.state/secrets.json` không?
- *            (kho chìa nằm NGOÀI thư mục văn phòng, ở `../../.state/`)
+ *            (kho chìa nằm ngoài thư mục văn phòng, ở `../../.state/`)
  *
  *   B. §5f — ghi đè được `roles/<chính-nó>.yaml` không?
  *            (file cấu hình nằm TRONG thư mục văn phòng ⇒ officeJail cho qua)

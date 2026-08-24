@@ -478,7 +478,7 @@ export function agentFault(r: Receipt): boolean {
   if (r.reasked || r.looped) return true;
 
   /**
-   * Có `failure` ⇒ vòng lặp bị cắt TỪ BÊN NGOÀI, và `blocked_on` lúc đó là câu
+   * Có `failure` ⇒ vòng lặp bị cắt TỪ BÊN ngoài, và `blocked_on` lúc đó là câu
    * của HỆ THỐNG chứ không phải lời khai của nhân viên. Đây chính là chỗ bản
    * vá đầu của tôi sai: tôi bỏ luôn `blocked_on` khỏi tín hiệu, và làm mất một
    * ca có thật — nhân viên `done` nhưng tự ghi *"thiếu file thuật ngữ"* thì đó
@@ -571,7 +571,7 @@ export function outputScoper(
   planId: string,
   taskId: string,
   /**
-   * Gọi khi một đường dẫn NGOÀI văn phòng bị kéo về khung. Người gọi dùng nó để
+   * Gọi khi một đường dẫn ngoài văn phòng bị kéo về khung. Người gọi dùng nó để
    * nói ra chuyện đó với người dùng — xem `Plan.redirected`. Không truyền thì
    * hành vi y hệt bản cũ.
    */
@@ -891,11 +891,44 @@ export function armReach(
   // Băm là thứ CUỐI CÙNG dùng tới: nhãn do người dùng đặt là thứ họ nhận ra.
   const label = arms[id]?.label?.trim() || id;
   const roots = folderRoots(servers[id]);
-  return roots.length ? `${label} (thư mục: ${roots.join(' · ')})` : label;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ "ĐƯỜNG TẮT", KHÔNG PHẢI "THƯ MỤC". Một từ, và nó sửa một ca hỏng thật.   │
+   * │ (user chốt 24/08: *"MCP là thư mục được cắm, không phải onlyAllows"*)     │
+   * │                                                                          │
+   * │ Bản trước ghi `Musics (thư mục: D:\…\Musics)`. Trợ lý đọc danh sách đó    │
+   * │ thành **tổng tầm với của nhân viên** rồi TỪ CHỐI việc nằm ngoài — kể cả   │
+   * │ khi người đó có `chạy lệnh: BẬT`, kể cả trong một phiên `/clear` sạch     │
+   * │ tinh. Đo được 24/08, tái lập nhiều lần. Nhưng nó SAI: `SHELL_LEGEND` ở    │
+   * │ ngay đầu danh bạ đã nói *"mọi nhân viên đều MỞ ĐƯỢC file trên máy bằng    │
+   * │ đường dẫn đầy đủ"*.                                                      │
+   * │                                                                          │
+   * │ ⇒ Prompt KHÔNG thiếu sự thật — sự thật ấy **thua vị trí**. Câu chung nằm  │
+   * │ ở đầu khối, chuỗi trông-như-phạm-vi nằm trên CHÍNH DÒNG của nhân viên, và │
+   * │ dòng thắng. Đúng luật đã trả tiền hai lần rồi:                            │
+   * │ [[agentco-prompt-rules-lose-to-examples]] — *điều kiện phải nằm trên chính │
+   * │ dòng có ví dụ*, và ca `chạy lệnh: TẮT` (§1310) đã học đúng bài này.        │
+   * │                                                                          │
+   * │ Nên bản vá KHÔNG thêm một câu dặn nữa (câu dặn đã có và đã thua). Nó đổi  │
+   * │ **một từ, tại chỗ thua**: `thư mục` → `đường tắt tới`. Cùng cỡ token,      │
+   * │ không có luật mới nào phải nhớ.                                          │
+   * │                                                                          │
+   * │ ⚠ Từ này phải khớp với thứ hệ thống THẬT SỰ làm. Hôm nay cánh tay là      │
+   * │ đường tắt thật: `Read`/`Glob` với tới mọi đường dẫn, `Bash` cũng vậy —    │
+   * │ allowlist của MCP server chỉ bó CHÍNH NÓ. Ngày nào §14 #1 đổi (dựng hàng  │
+   * │ rào đọc) thì từ này phải đổi lại thành một từ chỉ giới hạn, cùng lượt.    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  return roots.length ? `${label} (đường tắt tới ${roots.join(' · ')})` : label;
 }
 
 /**
- * DIFF DANH BẠ giữa hai lượt — hàm THUẦN, 0 token. → docs/SPEC-arms.md §15f
+ * DIFF NĂNG LỰC giữa hai lượt — hàm THUẦN, 0 token. → docs/SPEC-arms.md §15f
+ *
+ * "Năng lực" gồm **cánh tay** và **công tắc shell** — mọi thứ trong dòng năng lực
+ * của `roster()` mà người dùng bấm đổi được. Hai thứ này đi chung một đường vì
+ * chúng hỏng chung một kiểu: người dùng đổi, prompt đổi theo đúng ngay lượt sau,
+ * và model vẫn trả lời bằng câu cũ của chính nó.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ VÌ SAO DIFF THẮNG MỘT DÒNG NHẮC CHUNG CHUNG — và lý do KHÔNG phải        │
@@ -935,8 +968,8 @@ export function reachDiff(
   after: Map<string, readonly string[]>,
   cap = 4,
 ): string[] {
-  // `armReach` trả `Nhãn (thư mục: …)`. Diff chỉ giữ phần nhãn — xem ràng buộc 3.
-  const short = (s: string) => s.replace(/\s*\(thư mục:.*$/, '').trim();
+  // `armReach` trả `Nhãn (đường tắt tới …)`. Diff chỉ giữ phần nhãn — ràng buộc 3.
+  const short = (s: string) => s.replace(/\s*\(đường tắt tới .*$/, '').trim();
   const lines: string[] = [];
   for (const id of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     const was = new Set(before.get(id) ?? []);
@@ -1332,11 +1365,30 @@ export class Assistant {
   private reachMap(): Map<string, string[]> {
     const m = new Map<string, string[]>();
     for (const id of [...this.assignableRoles()].sort()) {
-      const mcp = this.office.roles.get(id)?.mcp ?? [];
-      m.set(
-        id,
-        mcp.map((x) => armReach(this.office.company.arms, this.office.company.mcpServers, x)),
+      const role = this.office.roles.get(id);
+      const caps = (role?.mcp ?? []).map((x) =>
+        armReach(this.office.company.arms, this.office.company.mcpServers, x),
       );
+      /**
+       * CÔNG TẮC SHELL ĐI CHUNG MỘT ĐƯỜNG VỚI CÁNH TAY (user chốt 24/08).
+       *
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ Ca thật: user bật `Bash` cho một nhân viên rồi hỏi lại **y hệt**    │
+       * │ câu cũ. Trợ lý đáp *"câu này mình đã thử trước đó rồi và bị chặn"*  │
+       * │ — đúng cùng lớp lỗi với việc rút dây MCP, chỉ khác cái công tắc.    │
+       * │                                                                    │
+       * │ `roster()` **đã** đổi khi công tắc đổi (`shellFlag` nằm trong dòng  │
+       * │ năng lực), nên prompt vốn đã đúng. Thứ thiếu là cái DIFF: bản trước │
+       * │ chỉ chụp `role.mcp`, nên bật/tắt shell không sinh dòng nào và       │
+       * │ lịch sử lại thắng.                                                 │
+       * └────────────────────────────────────────────────────────────────────┘
+       *
+       * ⚠ Chỉ chụp thứ ĐỔI ĐƯỢC. `web` cũng nằm trong dòng năng lực nhưng nó
+       * bật sẵn cho mọi người và không có công tắc — đưa vào đây là một token
+       * không bao giờ diff, tức tiếng ồn thuần.
+       */
+      if (hasShell(role?.tools ?? [])) caps.push('chạy lệnh');
+      m.set(id, caps);
     }
     return m;
   }

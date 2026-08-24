@@ -140,6 +140,29 @@ test('armRoots: server HTTP không có `args` — không phải cánh tay file',
 // cùng một lần sửa*. Cánh tay vừa đi từ "không bao giờ chạy" sang "ghi được
 // file lên đĩa của người dùng" — nhật ký phải theo kịp trong cùng ngày.
 
+// Ca thật 24/08: nhật ký hiện `đang tìm “D:/Downloads/*” trong văn phòng` — SAI,
+// lượt đó không tìm trong văn phòng chút nào. Nhật ký là cửa sổ DUY NHẤT người
+// dùng có để biết nhân viên vừa chạm vào đâu trên máy họ; một dòng nói sai chỗ
+// tệ hơn một dòng không nói gì.
+
+test('describeCall: đường dẫn tuyệt đối trong `pattern` ⇒ nói ngoài văn phòng', () => {
+  // `path` để trống, đường dẫn nhét thẳng vào `pattern` — đúng hình dạng ca thật.
+  assert.equal(
+    describeCall({ name: 'Glob', input: { pattern: 'D:/Downloads/*' } }),
+    'đang tìm “D:/Downloads/*” ngoài văn phòng',
+  );
+});
+
+test('describeCall: đường dẫn tuyệt đối trong `path` cũng vậy, cả hai kiểu hệ', () => {
+  assert.equal(describeCall({ name: 'Grep', input: { pattern: 'x', path: 'D:\\Kho' } }), 'đang tìm “x” ngoài văn phòng');
+  assert.equal(describeCall({ name: 'Grep', input: { pattern: 'x', path: '/home/a' } }), 'đang tìm “x” ngoài văn phòng');
+});
+
+test('describeCall: đường dẫn TƯƠNG ĐỐI vẫn nói đúng tên căn phòng như cũ', () => {
+  assert.equal(describeCall({ name: 'Glob', input: { pattern: '*.md', path: 'library/text' } }), 'đang tìm “*.md” trong tủ tài liệu');
+  assert.equal(describeCall({ name: 'Glob', input: { pattern: '*.md' } }), 'đang tìm “*.md” trong văn phòng');
+});
+
 test('describeCall: cánh tay nói TÊN người dùng đặt, không nói cái băm', () => {
   const line = describeCall(
     { name: 'mcp__a385afc3ab6__write_file', input: { path: 'D:\\Downloads\\x\\ban-ke.md' } },

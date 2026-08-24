@@ -93,7 +93,7 @@ test('config · viết HOA cũng bị chặn — trên Windows đó là cùng m�
   assert.equal(write('Office.YAML'), 'config');
 });
 
-// ─────────────────────────────────────────────── ③ NGOÀI VĂN PHÒNG — luật cũ
+// ─────────────────────────────────────────────── ③ ngoài VĂN PHÒNG — luật cũ
 
 test('outside · ghi ra ngoài thư mục văn phòng vẫn bị chặn như trước', () => {
   assert.equal(write(path.join(companyDir, 'offices', 'khac', 'artifacts', 'x.md')), 'outside');
@@ -143,11 +143,11 @@ test('KHÔNG chặn · file có chữ "roles" trong tên nhưng không phải th
 
 // ───────────────────────────────────── ⑤ CÁNH TAY (mode `arm`, 24/08)
 //
-// Cánh tay là đường GHI RA NGOÀI ĐƯỢC PHÉP — luật §8·0: *"mọi đường ra phải
+// Cánh tay là đường GHI RA ngoài ĐƯỢC PHÉP — luật §8·0: *"mọi đường ra phải
 // qua một tool/MCP TƯỜNG MINH"*. Nên bộ ba luật của nó lệch hẳn `write`, và
 // cả hai chiều đều phải có test: chặn cái phải chặn, VÀ cho qua cái phải cho.
 
-test('arm · RA NGOÀI văn phòng KHÔNG bị chặn — đó là lý do cánh tay tồn tại', () => {
+test('arm · RA ngoài văn phòng KHÔNG bị chặn — đó là lý do cánh tay tồn tại', () => {
   // Đây là dòng khác biệt duy nhất giữa `arm` và `write`, và là cả điểm của
   // bản vá 24/08. Ngày ai đổi nó, họ phải đọc §8·0 trước.
   assert.equal(arm('D:\\Downloads\\Programs Installation\\ban-ke.md'), undefined);

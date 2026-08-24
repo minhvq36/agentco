@@ -114,7 +114,7 @@ body {
  * │                                                                          │
  * │ 🔥 `misc.tsx` ĐÃ CÓ `focus:outline-none`, và nó không có tác dụng. Lý do  │
  * │ không phải specificity mà là CASCADE LAYER: Tailwind v4 đặt utility trong │
- * │ `@layer utilities`, còn file này viết NGOÀI mọi layer — mà style không    │
+ * │ `@layer utilities`, còn file này viết ngoài mọi layer — mà style không    │
  * │ nằm trong layer thắng mọi style nằm trong layer, bất kể specificity. Nên  │
  * │ luật trên đè được `focus:outline-none`, và người viết dòng đó tin rằng    │
  * │ mình đã tắt xong. Bài học: đã dùng `@layer` thì mọi CSS trần trong file   │

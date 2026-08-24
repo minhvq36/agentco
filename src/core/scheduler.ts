@@ -346,7 +346,7 @@ export class Scheduler {
 
         // File CÓ trên đĩa nhưng do một task bị cắt ngang ghi ra — nguy hơn hẳn
         // file thiếu, vì mọi phép kiểm "có tồn tại không" đều cho qua và nhân
-        // viên đọc được thật. Cái thiếu nằm NGOÀI file. → `interruptedInputs`
+        // viên đọc được thật. Cái thiếu nằm ngoài file. → `interruptedInputs`
         const halfDone = this.interruptedInputs(brief);
         if (halfDone.length) {
           failed.add(brief.task_id);

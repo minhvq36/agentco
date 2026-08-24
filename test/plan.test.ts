@@ -483,7 +483,7 @@ test('xong trọn thì KHÔNG nối thêm câu cảnh báo nào', () => {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐẦU VÀO NẰM NGOÀI VĂN PHÒNG — ca thật 22/08, chặn ngay ở bước lập kế hoạch│
+ * │ ĐẦU VÀO NẰM ngoài VĂN PHÒNG — ca thật 22/08, chặn ngay ở bước lập kế hoạch│
  * │                                                                          │
  * │ Người dùng gõ: *"Kiểm kê thư mục D:\Downloads\Programs Installation…"*.   │
  * │ Trợ lý chép đường dẫn vào `inputs` — ĐÚNG như `ASSISTANT_CORE` dặn nó:    │
@@ -611,10 +611,19 @@ test('armReach: cánh tay file nói ra ĐƯỜNG DẪN, không chỉ nói tên',
   assert.ok(!line.includes('a385afc3ab6'), `băm không được lộ ra khi đã có nhãn: ${line}`);
 });
 
-test('armReach: nhãn tự đọc được khi đứng một mình — có chữ "thư mục:"', () => {
+test('armReach: dòng tự đọc được, và nói ĐƯỜNG TẮT chứ không nói GIỚI HẠN', () => {
   // Cùng luật với `chạy lệnh: TẮT`: dòng nằm giữa một khối liệt kê, chú giải thì
   // ở tận đầu khối. Một mũi tên hay dấu hai chấm trần không tự mang nghĩa.
-  assert.ok(/thư mục:/.test(armReach(ARMS, SERVERS, 'a385afc3ab6')));
+  //
+  // 🔴 Từ đổi 24/08 (`thư mục:` → `đường tắt tới`), và test khoá đúng lý do:
+  // `thư mục:` bị Trợ lý đọc thành TỔNG TẦM VỚI của nhân viên rồi từ chối việc
+  // nằm ngoài — kể cả khi người đó có shell, kể cả trong phiên `/clear` sạch.
+  // Sự thật ngược lại đã nằm sẵn ở `SHELL_LEGEND` đầu danh bạ nhưng THUA VỊ TRÍ.
+  // ⇒ [[agentco-prompt-rules-lose-to-examples]]: điều kiện phải nằm trên chính
+  // dòng có ví dụ. User chốt: cánh tay là thư mục ĐƯỢC CẮM, không phải onlyAllows.
+  const line = armReach(ARMS, SERVERS, 'a385afc3ab6');
+  assert.ok(/đường tắt tới/.test(line), `dòng phải tự nói nó là đường tắt: ${line}`);
+  assert.ok(!/thư mục:/.test(line), `"thư mục:" đọc thành giới hạn — đừng quay lại: ${line}`);
 });
 
 test('armReach: cánh tay KHÔNG phải file thì không bịa ra thư mục', () => {

@@ -139,7 +139,30 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
    * Mức duyệt từng tool là việc của cổng §8 — nơi có CHỦ THỂ bấm nút.
    */
   const armGrants = mcpServers ? Object.keys(mcpServers).map((n) => `mcp__${n}`) : [];
-  const armDirs = armRoots(role, mcpServers);
+  /**
+   * ⚠ ĐỌC THƯ MỤC TỪ CẤU HÌNH **KHAI**, KHÔNG TỪ CẤU HÌNH **CHẠY**. (vá 24/08)
+   *
+   * `pickMcp` chạy `fastLaunch`, thứ đổi `{command:'npx', args:['-y', <gói>,
+   * <thư mục>]}` thành `{command:<node>, args:[<entry>.js, <thư mục>]}`. Mà
+   * `folderRoots` chỉ hỏi *"tham số này trông như đường dẫn tuyệt đối không"* —
+   * nên nó nhặt luôn cái `…\dist\index.js`, `statSync` bảo không phải thư mục,
+   * và người dùng nhận một cảnh báo **báo động giả** nói rằng cánh tay của họ
+   * khai một thư mục không tồn tại:
+   *
+   *   Cánh tay của vai trò "nguoi-soi-thu-muc" khai thư mục
+   *   "C:\Users\…\server-filesystem\dist\index.js" nhưng không tìm thấy trên máy.
+   *
+   * Không đổi hành vi (file `.js` bị `statSync` loại đúng như trước), nhưng một
+   * cảnh báo sai là thứ dạy người dùng bỏ qua cảnh báo — rồi họ bỏ qua đúng cái
+   * đáng đọc. Sửa ở NGUỒN: `fastLaunch` là chi tiết thi hành, thư mục là thứ
+   * người dùng KHAI, và hai cái đó không được lẫn vào nhau.
+   */
+  const declaredArms: McpServers = {};
+  for (const id of role.mcp) {
+    const cfg = office.company.mcpServers[id];
+    if (cfg) declaredArms[id] = cfg as McpServers[string];
+  }
+  const armDirs = armRoots(role, role.mcp.length ? declaredArms : undefined);
   /** Băm → tên người dùng đặt. Nhật ký nói tên, không nói băm. → `describeCall` */
   const armLabels: Record<string, string> = {};
   for (const [id, a] of Object.entries(office.company.arms)) if (a.label) armLabels[id] = a.label;
@@ -744,7 +767,7 @@ export function filesOnDisk(officeDir: string, promised: readonly string[], land
 }
 
 /**
- * File nhân viên ghi RA NGOÀI văn phòng, và thật sự có trên đĩa.
+ * File nhân viên ghi RA ngoài văn phòng, và thật sự có trên đĩa.
  *
  * Kiểm `existsSync` chứ không tin `landed` suông: `landed` chỉ chứng minh model
  * đã GỌI `Write`, không chứng minh cú ghi đó thành công. Ta chỉ nói với người
@@ -979,9 +1002,27 @@ export function describeCall(call: ToolCall, arms?: Record<string, string>): str
     case 'Grep':
     case 'Glob': {
       const what = str(call.input['pattern']);
-      const room = roomOf(str(call.input['path']));
+      /**
+       * ⚠ NƠI TÌM SUY TỪ CẢ `path` LẪN `pattern`, và mặc định KHÔNG được là
+       * "văn phòng". Ca thật 24/08, nhật ký hiện nguyên văn:
+       *
+       *   đang tìm “D:/Downloads/*” trong văn phòng
+       *
+       * Một câu **sai**: lượt đó không tìm trong văn phòng chút nào. `roomOf`
+       * chỉ nhận `path`, mà model hay nhét đường dẫn tuyệt đối thẳng vào
+       * `pattern` và bỏ trống `path` ⇒ `roomOf('')` rơi về mặc định.
+       *
+       * Nhật ký là **cửa sổ duy nhất** người dùng có để biết nhân viên vừa chạm
+       * vào đâu trên máy họ — cùng lý do khối `Bash` bên dưới in ra cả câu lệnh.
+       * Một dòng nhật ký nói sai chỗ thì tệ hơn một dòng không nói gì: nó làm
+       * người dùng tin rằng mọi thứ đang diễn ra bên trong văn phòng.
+       */
+      const where = str(call.input['path']) || what;
       const term = what && what.length <= 40 ? ` “${what}”` : '';
-      return `đang tìm${term} trong ${room}`;
+      // Câu đổi HẲN, không chỉ đổi cái tên phòng: "trong ngoài văn phòng" là
+      // tiếng Việt hỏng, và một dòng nhật ký đọc vấp thì người ta thôi đọc.
+      if (isAbsolutePath(where)) return `đang tìm${term} ngoài văn phòng`;
+      return `đang tìm${term} trong ${roomOf(str(call.input['path']))}`;
     }
     case 'WebSearch':
       return 'đang tìm trên web';
@@ -1053,6 +1094,17 @@ export function describeCall(call: ToolCall, arms?: Record<string, string>): str
  * họ vừa thả file vào đó. Ánh xạ thư mục → tên trên giao diện, và mặc định là
  * "văn phòng" chứ không phải "dự án".
  */
+/**
+ * Đường dẫn TUYỆT ĐỐI ở bất kỳ hệ nào — `D:\…`, `D:/…`, `/home/…`.
+ *
+ * Cùng luật với `folderRoots` (`catalog.ts`): nhận cả hai kiểu ở mọi nền, KHÔNG
+ * dò `process.platform`. Một văn phòng zip từ máy khác hệ vẫn phải đọc đúng
+ * chuỗi đã ghi, và nhật ký cũng phải đọc đúng chuỗi model đã gửi.
+ */
+function isAbsolutePath(p: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('/');
+}
+
 function roomOf(searchPath: string): string {
   const p = searchPath.replace(/\\/g, '/');
   if (/(^|\/)library(\/|$)/.test(p)) return 'tủ tài liệu';
@@ -1103,7 +1155,7 @@ export function landingOf(officeDir: string, call: ToolCall): Landing | undefine
       return rel ? { kind: 'file', ref: rel } : undefined;
     } catch {
       /**
-       * RA NGOÀI VĂN PHÒNG VẪN LÀ MỘT ĐIỂM ĐẾN — khai đúng tên nó.
+       * RA ngoài VĂN PHÒNG VẪN LÀ MỘT ĐIỂM ĐẾN — khai đúng tên nó.
        *
        * Bản trước trả `undefined`, tức là nói "không có điểm đến nào". Sai:
        * ta biết CHẮC nó vừa ghi, và biết CHẮC ghi ở đâu. Thứ ta không có là

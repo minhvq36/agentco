@@ -96,7 +96,7 @@ const ALIGN: Record<Align, string> = {
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ HAI LỚP CHỐNG VỠ, VÀ CẢ HAI ĐỀU BẮT BUỘC.                               │
  * │                                                                          │
- * │  1. `overflow-x-auto` + `max-w-full` ở khối BỌC NGOÀI — cùng luật đã áp   │
+ * │  1. `overflow-x-auto` + `max-w-full` ở khối BỌC ngoài — cùng luật đã áp   │
  * │     cho khối code: nội dung rộng cuộn TRONG khối của nó. Thiếu nó thì     │
  * │     bảng nong bong bóng chat ra và cả panel sinh thanh cuộn ngang.        │
  * │                                                                          │

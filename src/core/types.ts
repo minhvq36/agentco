@@ -717,7 +717,7 @@ export interface Landing {
    * `external` — gọi một MCP server (`ref` = tên server). Không kiểm được, nhưng
    *              biết chắc là đã gọi.
    * `command`  — chạy `Bash`. Ta KHÔNG biết dữ liệu đi đâu, và phải nói thế.
-   * `outside`  — ghi ra NGOÀI thư mục văn phòng (`ref` = đường dẫn thô model gõ).
+   * `outside`  — ghi ra ngoài thư mục văn phòng (`ref` = đường dẫn thô model gõ).
    *              Xem khối dưới: đây là nhãn cho một sự việc ta biết chắc.
    */
   kind: 'file' | 'external' | 'command' | 'outside';
@@ -725,7 +725,7 @@ export interface Landing {
 }
 
 /**
- * ĐIỂM ĐẾN NGOÀI VĂN PHÒNG PHẢI CÓ TÊN — ĐO ĐƯỢC 21/08.
+ * ĐIỂM ĐẾN ngoài VĂN PHÒNG PHẢI CÓ TÊN — ĐO ĐƯỢC 21/08.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ Ca `P-260821-1818-yydi`: nhân viên `Write` một đường dẫn trỏ lên hai cấp, │
@@ -837,7 +837,7 @@ export interface Plan {
   steps: PlanStep[];
   tasks: TaskBrief[];
   /**
-   * Đường dẫn NGOÀI văn phòng mà `outputScoper` đã kéo về `artifacts/`.
+   * Đường dẫn ngoài văn phòng mà `outputScoper` đã kéo về `artifacts/`.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ VÌ SAO PHẢI GHI LẠI, THAY VÌ ĐỂ MODEL TỰ NHẬN RA.                        │

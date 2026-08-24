@@ -384,7 +384,7 @@ export type GuardedZone = 'secrets' | 'config' | 'outside';
  * │   `arm`    tool của MCP       → cấm `secrets` · `config`, CHO `outside`  │
  * │                                                                          │
  * │ Vì sao `arm` được ra ngoài: đó chính là LÝ DO NÓ TỒN TẠI. Luật §8·0      │
- * │ (user chốt 22/08) nói *"mọi đường GHI RA NGOÀI phải qua một tool/MCP     │
+ * │ (user chốt 22/08) nói *"mọi đường GHI RA ngoài phải qua một tool/MCP     │
  * │ TƯỜNG MINH — có tên, khai báo được, đọc được trong nhật ký"*. Cấm        │
  * │ `outside` cho `arm` là cấm đúng con đường tử tế mà luật đó vừa dựng ra,  │
  * │ và người dùng sẽ quay lại dùng `Bash` — thứ không có biên nào.           │

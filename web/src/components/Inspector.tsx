@@ -460,6 +460,73 @@ function Note({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * CÁNH TAY MỘT NGƯỜI ĐANG CẦM — hiện NHÃN, không hiện BĂM.
+ *
+ * Bản trước in thẳng `node.mcp.join(', ')`, ra `a385afc3ab6, a4fbabd0360`. Đó là
+ * **cùng một con bug** đã vá ở nhật ký công việc 24/08, chỉ khác chỗ nó nằm: băm
+ * là DANH TÍNH, không phải thứ để đọc. Người dùng đặt tên "Musics" thì mọi chỗ
+ * phải nói "Musics" — bảng chi tiết cũng là một chỗ.
+ *
+ * Nhãn tra qua chính node 🔌 trên sơ đồ nên không cần dữ liệu mới. Rơi về băm khi
+ * cánh tay đã biến khỏi `company.yaml`: lúc đó băm là thứ DUY NHẤT còn thật, và
+ * nó khớp với dòng `Không còn khai trong company.yaml` ở panel của node kia.
+ *
+ * Nhãn ô cũ là *"Tool ngoài"* — từ vựng của người viết code. Người dùng kéo dây
+ * từ một node tên **Kết nối**, nên ô này nói cùng thứ tiếng đó.
+ */
+function ArmList({ ids, nodes }: { ids?: string[]; nodes: CanvasNode[] }) {
+  if (!ids?.length) return null;
+  const name = (id: string) => nodes.find((n) => n.kind === 'mcp' && n.server === id)?.label ?? id;
+  return <Row k="Kết nối đang dùng" v={ids.map(name).join(', ')} />;
+}
+
+/**
+ * THƯ MỤC CÁNH TAY — chỉ đọc, và "chỉ đọc" ở đây là một câu về DANH TÍNH.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG PHẢI MỘT Ô NHẬP.                                            │
+ * │                                                                          │
+ * │ Nhãn sửa được vì nhãn không phải danh tính. Thư mục thì NẰM TRONG cấu     │
+ * │ hình, mà danh tính = `armHash(cấu hình)` — nên "sửa thư mục" không phải   │
+ * │ một phép sửa, nó là **một cánh tay khác**. Cho sửa tại chỗ là dựng lại    │
+ * │ đúng ca GHI ĐÈ IM LẶNG mà §6i sinh ra để chặn: node y nguyên, mọi sợi     │
+ * │ dây y nguyên, chỉ thư mục bên dưới đổi — **không có triệu chứng ở chỗ nó  │
+ * │ nằm**. Đường đi đúng là `+ Kết nối` một cái mới rồi rút cái cũ.           │
+ * │                                                                          │
+ * │ Nhưng PHẢI HIỆN: đây là thứ trả lời câu *"nhân viên này với tới đâu"* —   │
+ * │ hôm nay người dùng chỉ đọc được nó bằng cách mở `company.yaml`, mà một    │
+ * │ bước "mở file yaml" là một chuông báo (§6, chốt 22/08).                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Hiện NGUYÊN VĂN, không chuẩn hoá dấu gạch và không dò hệ điều hành. Chuỗi
+ * này để người dùng đối chiếu bằng mắt với Explorer/Finder, nên nó phải là thứ
+ * họ đã nhập — `D:\…` trên Windows, `/home/…` trên Linux/macOS, và một văn phòng
+ * zip từ máy khác hệ vẫn hiện đúng thứ đã ghi. `folderRoots` cố ý nhận cả hai
+ * kiểu ở mọi nền tảng, cùng lý do `SHELL_ALIASES` gửi cả hai tên tool.
+ *
+ * Rỗng ⇒ KHÔNG vẽ gì: cánh tay Notion/GitHub không có thư mục nào, và một ô
+ * trống nói dối rằng cấu hình bị thiếu.
+ */
+function ArmFolders({ folders }: { folders?: string[] }) {
+  if (!folders?.length) return null;
+  return (
+    <div className="border-b border-line py-1.5 text-[13px] last:border-0">
+      <div className="text-ink">Thư mục với tới được</div>
+      <ul className="mt-1 space-y-0.5">
+        {folders.map((f) => (
+          // `break-all`: đường dẫn Windows có khoảng trắng lẫn dấu gạch ngược,
+          // không ngắt dòng được ở chỗ tử tế nào. Thà xuống dòng giữa chừng còn
+          // hơn tràn ngang cả panel.
+          <li key={f} className="select-all break-all font-mono text-xs text-muted">
+            {f}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * ĐỔI TÊN KẾT NỐI — và nó CỐ Ý không có câu cảnh báo nào.
  *
  * Nhãn không phải danh tính (danh tính là băm cấu hình), nên đổi nó không đụng
@@ -546,7 +613,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Row k="Đang trực" v={`${onDuty.length} người`} />
             <Row k="Đang nghỉ" v={`${off.length} người`} />
             <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
-            {node.mcp && node.mcp.length > 0 && <Row k="Tool ngoài" v={node.mcp.join(', ')} />}
+            <ArmList ids={node.mcp} nodes={canvas.nodes} />
             <Note>
               Mỗi người đang trực chiếm một dòng giới thiệu trong ngữ cảnh của Trợ lý, ở <b>mọi</b> lượt trò
               chuyện. Ngắt dây người không dùng đến là tiết kiệm thật, không phải dọn cho gọn.
@@ -576,6 +643,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                   .join(', ') || 'chưa ai'
               }
             />
+            <ArmFolders folders={node.folders} />
             {node.missing && (
               <Note>
                 <span className="text-danger">Không còn khai trong company.yaml.</span>
@@ -633,7 +701,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Row k="Mã vai trò" v={node.role} />
             <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
             <Row k="Trạng thái" v={node.connected ? 'đang trực' : 'đang nghỉ'} />
-            {node.mcp && node.mcp.length > 0 && <Row k="Tool ngoài" v={node.mcp.join(', ')} />}
+            <ArmList ids={node.mcp} nodes={canvas.nodes} />
             {node.missing && (
               <Note>
                 <span className="text-danger">Không tìm thấy roles/{node.role}.yaml</span>

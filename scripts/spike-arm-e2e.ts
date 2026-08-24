@@ -126,7 +126,7 @@ try {
   // một con số bịa, đúng thứ script này sinh ra để chống.
   if (wants('A')) listed = a?.status === 'done';
 
-  // ── B · ghi RA NGOÀI văn phòng qua cánh tay, vào sandbox ─────────────────
+  // ── B · ghi RA ngoài văn phòng qua cánh tay, vào sandbox ─────────────────
   (office.company.mcpServers as Record<string, unknown>)['tmpfs'] = {
     command: 'npx',
     args: ['-y', PKG, sandbox],
@@ -185,7 +185,7 @@ const jail = (v: boolean | undefined) => (v === undefined ? '?' : v ? '🔴 LỌ
 
 console.log('\n─── KẾT LUẬN ───');
 console.log(`A  liệt kê thư mục của cánh tay              ${ok(listed)}`);
-console.log(`B  ghi RA NGOÀI văn phòng qua cánh tay       ${ok(wroteOut)}`);
+console.log(`B  ghi RA ngoài văn phòng qua cánh tay       ${ok(wroteOut)}`);
 console.log(`C  đọc <office>/.state/ qua cánh tay          ${jail(readState)}`);
 console.log(`D  ghi roles/*.yaml qua cánh tay              ${jail(wroteConfig)}`);
 console.log(

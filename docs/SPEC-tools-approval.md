@@ -59,12 +59,24 @@ Bản 22/08 đẩy `lệnh trên máy` vào dòng khả năng **chỉ khi** vai 
 # Employees you can assign to
 
 Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội
-dung, liệt kê tên file. "chạy lệnh" là công tắc riêng của từng người, và là thứ DUY
-NHẤT lấy được kích thước · ngày sửa · dung lượng, hoặc ghi ra ngoài thư mục văn phòng.
+dung, liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: chạy lệnh/script tuỳ ý trên
+máy, và ghi được ra ngoài thư mục văn phòng.
 
 - nguoi-kiem-ke (Người kiểm kê): Chạy lệnh để lấy thông tin về file… [web · chạy lệnh: TẮT]
-- nguoi-viet (Người viết): Viết nội dung tiếng Việt… [Notion · web · chạy lệnh: BẬT]
+- nguoi-viet (Người viết): Viết nội dung… [Notion (đường tắt tới D:\Ho so) · web · chạy lệnh: BẬT]
 ```
+
+> 🔴 **HAI CÂU TRONG KHỐI TRÊN ĐÃ SAI VÀ ĐÃ SỬA — ghi lại để không ai chép lại bản cũ.**
+>
+> **① *"chạy lệnh là thứ DUY NHẤT lấy được kích thước"* — sai theo số đo (24/08).** `Read` builtin
+> tự in kích thước khi đọc PDF: `PDF file read: …\CV_VU QUOC MINH.pdf (411.7KB)`, khớp
+> `Get-ChildItem` tới 0,1 KB. Câu cũ khiến Trợ lý từ chối một việc nó làm được. Bản trong mã
+> (`SHELL_LEGEND`) đã bỏ vế đó; khối trên là bản đồng bộ lại. → `SPEC-arms` §15h
+>
+> **② `armReach` viết `(thư mục: …)` — đã đổi thành `(đường tắt tới …)`.** Chuỗi cũ bị Trợ lý đọc
+> thành **tổng tầm với** của nhân viên rồi từ chối việc nằm ngoài, kể cả khi người đó có shell, kể
+> cả trong một phiên `/clear` sạch tinh. Sự thật ngược lại **đã nằm ngay dòng đầu khối này** nhưng
+> **thua vị trí** — [[agentco-prompt-rules-lose-to-examples]]. → `SPEC-arms` §15j
 
 **Vì sao ý nghĩa gom vào một chỗ (`SHELL_LEGEND`), không nhắc ở từng dòng:** "shell nghĩa là gì" là sự thật về **agentco**, không phải thuộc tính của **một nhân viên** — đặt nó lên dòng của một người là gán nhầm tầng, đúng cái sai (`pitch` vs `tools`) đã sinh ra ca này. Đo: legend **77 token** trả một lần, cờ **6 token**/vai trò; hoà vốn so với phương án lặp-từng-dòng ở **~4 nhân viên**, sau đó gom càng lúc càng thắng.
 
@@ -338,7 +350,7 @@ Câu hỏi thật là *"có phải dặn nó ưu tiên `Read` không"*. Đo vớ
 | việc | tool nó chọn |
 |---|---|
 | đọc một file trong văn phòng | `Glob` → `Read` |
-| đọc một file NGOÀI, đường dẫn tuyệt đối | **`Read`** |
+| đọc một file ngoài, đường dẫn tuyệt đối | **`Read`** |
 | liệt kê thư mục ngoài + kích thước | **`PowerShell`** — `Get-ChildItem -Path …` |
 
 ⇒ Nó chạm tới shell **chỉ khi bộ tool có lỗ thật** (không tool nào trả về kích thước file), và nó tự chọn đúng lệnh cho hệ điều hành mà không ai nói cho nó biết máy chạy gì. **Không cần thêm một dòng dặn nào** — mà thêm cũng là token vĩnh viễn trong prefix để mua một hành vi đã có sẵn.
@@ -548,7 +560,7 @@ Bạn nói: *"đôi khi cái tool ấy chỉ là text miêu tả: hãy vào tran
 
 **Đường giữa, và nó giữ được cả hai:** người dùng vẫn mô tả bằng lời **cộng một mẫu cụ thể** — dán một lệnh cURL, hoặc điền form 4 ô (method · URL · header · ví dụ body). Ta suy ra schema từ mẫu đó. **Lời văn của họ trở thành `description` của tool** — đúng chỗ model cần nó.
 
-Trả lời câu *"có nên strict bắt build MCP không"*: **strict ở BÊN TRONG, không bao giờ strict ở BÊN NGOÀI.** Ta không nuông chiều — ta chuyển chỗ đau từ người dùng sang mã nguồn của mình.
+Trả lời câu *"có nên strict bắt build MCP không"*: **strict ở BÊN TRONG, không bao giờ strict ở BÊN ngoài.** Ta không nuông chiều — ta chuyển chỗ đau từ người dùng sang mã nguồn của mình.
 
 ---
 
@@ -620,7 +632,7 @@ Và tri thức riêng ở bảng phải kia **thuộc về kho tri thức, khôn
 
 ## 8. Cổng duyệt — hai tầng
 
-### 8·0 🔴 LUẬT: mọi đường GHI RA NGOÀI phải qua một tool/MCP TƯỜNG MINH
+### 8·0 🔴 LUẬT: mọi đường GHI RA ngoài phải qua một tool/MCP TƯỜNG MINH
 
 > **Chốt 22/08 (user). ⚠ CHÍNH SÁCH — CHƯA CÓ MÃ NGUỒN THI HÀNH.**
 >
@@ -628,7 +640,9 @@ Và tri thức riêng ở bảng phải kia **thuộc về kho tri thức, khôn
 
 **Nội dung luật:** ra khỏi thư mục văn phòng phải là một **năng lực có TÊN, được khai báo, đọc được trong nhật ký** — tức một tool hoặc MCP người dùng chủ động cắm. Không được là **tác dụng phụ của việc bật một công tắc chung**.
 
-Hệ quả: `Bash` **thôi là "cánh cửa ra ngoài"**. Nó quay về đúng thứ nó độc quyền — metadata file và chạy script.
+Hệ quả: `Bash` **thôi là "cánh cửa ra ngoài"**. Nó quay về đúng thứ nó độc quyền — ~~metadata file và~~ **chạy script và GHI ra ngoài**.
+
+> ⚠ **Sửa 24/08 theo số đo:** metadata **không** còn là độc quyền của `Bash`. `Read` in kèm kích thước khi đọc PDF (`PDF file read: … (411.7KB)`, khớp `Get-ChildItem` tới 0,1 KB), và một cánh tay filesystem có `get_file_info` cho thư mục nó với tới. ❓ Chưa đo: những **loại file nào khác** `Read` in kích thước, và `Glob`/`Grep` có in gì không. Đừng suy rộng câu này bằng lập luận. → `SPEC-arms` §15h · §14 #9
 
 **Vì sao chưa thi hành được, nói thẳng:** hook `PreToolUse` khớp được `Write`/`Edit`/`NotebookEdit` vì đường dẫn nằm ở một **trường có tên**. Với `Bash` thì đường dẫn nằm **lẫn trong chuỗi lệnh** (`… > D:\x.md`), không có trường nào để đọc. Nên chặn `Bash` ghi ra ngoài là bài toán thật sự khó, không phải việc chưa làm.
 

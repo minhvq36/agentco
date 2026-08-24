@@ -66,6 +66,15 @@ export interface CanvasNode {
   bash?: boolean;
   count?: number;
   mcp?: string[];
+  /**
+   * Cánh tay: thư mục nó với tới, **nguyên văn** như trong `company.yaml`.
+   *
+   * CHỈ ĐỌC. Đổi thư mục = đổi `armHash` = một cánh tay khác, nên đường đi đúng
+   * là cắm một kết nối mới chứ không phải sửa ô này. Rỗng = không phải cánh tay
+   * file (Notion, GitHub…) — khi đó đừng vẽ ô nào cả, một ô trống nói dối rằng
+   * cấu hình bị thiếu.
+   */
+  folders?: string[];
   hue?: number;
   missing: boolean;
   connected: boolean;

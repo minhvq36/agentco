@@ -89,7 +89,7 @@ export interface AppState {
   sending: boolean;
 
   /**
-   * BẢN NHÁP đang gõ trong ô chat. SỐNG NGOÀI component, và có bản sao trên đĩa.
+   * BẢN NHÁP đang gõ trong ô chat. SỐNG ngoài component, và có bản sao trên đĩa.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ BUG ĐÃ SỬA (20/08): gõ dở, mở tab Tài liệu xem đường dẫn, quay lại —     │

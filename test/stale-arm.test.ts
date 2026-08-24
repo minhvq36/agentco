@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test cho CỔNG HẬU KIỂM "Trợ lý nhắc tới cánh tay đã rút dây".
  * → docs/SPEC-arms.md §15 · `src/core/assistant.ts`
  *
@@ -104,7 +104,7 @@ const map = (o: Record<string, string[]>) => new Map(Object.entries(o));
 
 test('reachDiff: rút dây thành một dòng CHỮ, không phải một chỗ trống', () => {
   assert.deepEqual(
-    reachDiff(map({ 'ho-tro': ['Notion (thư mục: D:\\N)'] }), map({ 'ho-tro': [] })),
+    reachDiff(map({ 'ho-tro': ['Notion (đường tắt tới D:\\N)'] }), map({ 'ho-tro': [] })),
     ['− Notion ✗ ho-tro'],
   );
 });
@@ -113,7 +113,7 @@ test('reachDiff: nối dây và rút dây trong cùng một lượt', () => {
   assert.deepEqual(
     reachDiff(
       map({ 'ho-tro': ['Notion'], 'nguoi-soi': [] }),
-      map({ 'ho-tro': [], 'nguoi-soi': ['Musics (thư mục: D:\\Downloads\\Musics)'] }),
+      map({ 'ho-tro': [], 'nguoi-soi': ['Musics (đường tắt tới D:\\Downloads\\Musics)'] }),
     ),
     ['− Notion ✗ ho-tro', '+ Musics → nguoi-soi'],
   );
@@ -121,7 +121,7 @@ test('reachDiff: nối dây và rút dây trong cùng một lượt', () => {
 
 test('reachDiff: chỉ giữ NHÃN — không tiêm lại đường dẫn vừa bị rút', () => {
   const [line] = reachDiff(
-    map({ x: ['Programs Installation (thư mục: D:\\Downloads\\Programs Installation)'] }),
+    map({ x: ['Programs Installation (đường tắt tới D:\\Downloads\\Programs Installation)'] }),
     map({ x: [] }),
   );
   assert.equal(line, '− Programs Installation ✗ x');
@@ -141,6 +141,18 @@ test('reachDiff: đổi tên cánh tay hiện thành rút + nối — thật th�
     '+ Nhac cua toi → a',
     '− Musics ✗ a',
   ]);
+});
+
+test('reachDiff: BẬT shell cũng phải sinh một dòng — cùng lớp lỗi với rút dây', () => {
+  // Ca thật 24/08: bật `Bash` xong hỏi lại y hệt, Trợ lý đáp "câu này mình đã
+  // thử trước đó rồi và bị chặn". Prompt đã đúng; thiếu đúng cái dòng này.
+  assert.deepEqual(reachDiff(map({ 'ho-tro': ['Musics'] }), map({ 'ho-tro': ['Musics', 'chạy lệnh'] })), [
+    '+ chạy lệnh → ho-tro',
+  ]);
+});
+
+test('reachDiff: TẮT shell cũng sinh dòng, và đây là chiều vốn thua lịch sử', () => {
+  assert.deepEqual(reachDiff(map({ r: ['chạy lệnh'] }), map({ r: [] })), ['− chạy lệnh ✗ r']);
 });
 
 test('reachDiff: TRẦN chặn một lần sửa hàng loạt nhét cả bức tường vào phiên', () => {

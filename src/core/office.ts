@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 
+import { folderRoots } from './catalog.js';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import {
@@ -110,6 +111,12 @@ export interface CanvasNode extends LayoutNode {
   /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
   count?: number;
   mcp?: string[];
+  /**
+   * mcp: thư mục cánh tay với tới, nguyên văn như trong `company.yaml`. CHỈ ĐỌC
+   * trên giao diện — đổi thư mục là đổi `armHash`, tức một cánh tay khác. Rỗng =
+   * không phải cánh tay file (Notion, GitHub…).
+   */
+  folders?: string[];
   /** màu đại diện, dùng chung với log */
   hue?: number;
   /** không tìm thấy roles/<id>.yaml hoặc mcp server đã biến khỏi company.yaml */
@@ -1386,7 +1393,7 @@ export class Office {
       if (result.stoppedBy === 'usage_limit') {
         report =
           `Hết lượt dùng Claude. Văn phòng tạm nghỉ, còn ${result.pending.length} việc chưa làm. ` +
-          `Gõ "tiếp tục" khi có lượt lại.`;
+          `Gõ /resume khi có lượt lại.`;
         status = 'paused';
       } else if (result.stoppedBy === 'auth') {
         report = 'Chưa đăng nhập Claude Code. Chạy `claude` một lần để đăng nhập rồi thử lại.';
@@ -1495,7 +1502,7 @@ export class Office {
            */
           const strays = strayFilesOf(receipts);
           report += strays.length
-            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm NGOÀI văn phòng nên panel Kết quả không thấy: ` +
+            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm ngoài văn phòng nên panel Kết quả không thấy: ` +
               `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}. ` +
               `File có thật và dùng được — bạn xem thử rồi bảo mình chép về đúng chỗ, ` +
               `không cần chạy lại từ đầu.`
@@ -1525,7 +1532,7 @@ export class Office {
         });
       }
       /**
-       * Đồng bộ NGOÀI nhánh trên, và đó là chỗ bản nháp đầu suýt sai.
+       * Đồng bộ ngoài nhánh trên, và đó là chỗ bản nháp đầu suýt sai.
        *
        * Nhánh trên chỉ chạy khi có bài học hoặc ca `done`. Nhưng bảng kê kết quả
        * phải cập nhật kể cả khi ca `failed`/`stopped` — nhân viên có thể đã ghi
@@ -1774,7 +1781,7 @@ export class Office {
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ NGƯỜI DÙNG XIN MỘT CHỖ NGOÀI VĂN PHÒNG — NÓI RA, VÀ CHỈ LỐI ĐI.    │
+     * │ NGƯỜI DÙNG XIN MỘT CHỖ ngoài VĂN PHÒNG — NÓI RA, VÀ CHỈ LỐI ĐI.    │
      * │                                                                    │
      * │ Ca 24/08 (`P-260824-0401-q7ma`): họ bảo chép file vào              │
      * │ `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về    │
@@ -2199,7 +2206,7 @@ export class Office {
        *
        * Công tắc DUY NHẤT trong cả hệ thống về khả năng — mọi tool khác bật sẵn
        * và không tắt được (`BUILTIN_TOOLS`). Nó có công tắc riêng vì nó là thứ
-       * duy nhất chạm được ra NGOÀI thư mục văn phòng.
+       * duy nhất chạm được ra ngoài thư mục văn phòng.
        */
       bash?: boolean;
     },
@@ -3448,6 +3455,20 @@ export class Office {
         label: (n.server && this.loaded.company.arms[n.server]?.label) || n.server || n.id,
         avatar: '🔌',
         connected: true,
+        /**
+         * THƯ MỤC THẬT của cánh tay — đọc từ `company.yaml`, KHÔNG sửa được ở đây.
+         *
+         * Nhãn là thứ người dùng đặt và đổi được; thư mục là **cấu hình**, và
+         * đổi nó nghĩa là đổi `armHash` ⇒ một cánh tay KHÁC. Nên ô này chỉ đọc:
+         * muốn thư mục khác thì cắm một kết nối khác, đúng luật §6i.
+         *
+         * ⚠ KHÔNG dò `process.platform`, và đó là chủ ý — `folderRoots` nhận cả
+         * `D:\…` lẫn `/home/…` ở mọi hệ, vì một văn phòng zip từ máy khác hệ
+         * vẫn phải hiện đúng chuỗi đã ghi trong `company.yaml`. Hiện nguyên văn,
+         * không chuẩn hoá dấu gạch: thứ người dùng đối chiếu với Explorer/Finder
+         * là chuỗi họ đã nhập, không phải bản ta viết lại.
+         */
+        folders: n.server ? folderRoots(this.loaded.company.mcpServers[n.server]) : [],
       };
     }
     if (n.kind === 'assistant') {
@@ -3735,7 +3756,7 @@ function readsOf(receipts: readonly Receipt[]): string[] {
 }
 
 /**
- * File ca này ghi RA NGOÀI thư mục văn phòng, và có thật trên đĩa.
+ * File ca này ghi RA ngoài thư mục văn phòng, và có thật trên đĩa.
  *
  * Dùng ở đúng một chỗ: chọn câu nào để nói khi file đã hứa không có mặt. Không
  * bao giờ đi vào `whereBlock` — "kết quả của bạn nằm ở đây" chỉ được nói về chỗ

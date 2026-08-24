@@ -116,7 +116,7 @@ dây nội bộ của ta**. Đúng mệnh đề `SPEC-connectors.md` chốt từ
 
 ### 1d. Hệ quả chưa ai nói ra: `Bash` đang gánh việc của một MCP chưa tồn tại
 
-Luật §8·0 (chốt 22/08) nói *"mọi đường GHI RA NGOÀI phải qua một tool/MCP TƯỜNG MINH"*. Nhưng hôm
+Luật §8·0 (chốt 22/08) nói *"mọi đường GHI RA ngoài phải qua một tool/MCP TƯỜNG MINH"*. Nhưng hôm
 nay việc **ĐỌC** ra ngoài cũng không có tên: ✅ đo 22/08 — vai trò **không có shell** vẫn `Read`
 được `D:\bất-kỳ-đâu`, và không hook nào chạy.
 
@@ -1303,6 +1303,26 @@ Sổ chung là chỗ trả lời *"cánh tay này cần chìa tên gì"*, nên `
 `role.secrets` và `probeArm` nhận cùng bộ. **Một nguồn, hai chỗ dùng — không còn lệch.**
 ⚠ Nhánh HTTP (`headers`) vẫn chưa nối — §5a, còn mở.
 
+### ✅ 24/08 — panel cánh tay hiện THƯ MỤC, và nó CHỈ ĐỌC vì cùng lý do băm
+
+Bấm node 🔌 ⇒ panel phải hiện thư mục nó với tới. Trước đó thứ này chỉ đọc được bằng cách **mở
+`company.yaml`** — mà một bước "mở file yaml" là một chuông báo (§6, chốt 22/08).
+
+**Chỉ đọc, và đó là một câu về DANH TÍNH chứ không phải về quyền:** nhãn sửa được vì nhãn không phải
+danh tính; thư mục nằm **trong** cấu hình, mà danh tính `= armHash(cấu hình)`. "Sửa thư mục" không
+phải một phép sửa — nó là **một cánh tay khác**. Cho sửa tại chỗ là dựng lại đúng ca **ghi đè im
+lặng** §6i sinh ra để chặn: node y nguyên, mọi sợi dây y nguyên, chỉ thư mục bên dưới đổi. Đường đi
+đúng là `+ Kết nối` cái mới rồi rút cái cũ.
+
+**Ba hệ điều hành: không thích nghi gì cả, và đó là chủ ý.** `folderRoots` không dò
+`process.platform` — nó nhận cả `D:\…` lẫn `/home/…` ở mọi nền, vì một văn phòng zip từ máy khác hệ
+vẫn phải đọc đúng chuỗi đã ghi trong `company.yaml` (cùng lý do `SHELL_ALIASES` gửi cả hai tên tool).
+Hiện **nguyên văn**, không chuẩn hoá dấu gạch: chuỗi này để người dùng đối chiếu bằng mắt với
+Explorer/Finder, nên nó phải là thứ họ đã nhập. Rỗng ⇒ **không vẽ gì** — Notion/GitHub không có thư
+mục, và một ô trống nói dối rằng cấu hình bị thiếu.
+
+Mã: `CanvasNode.folders` (`office.ts`) · `ArmFolders` (`web/src/components/Inspector.tsx`).
+
 ## 6h. Đếm lại số bước — thước đo của cả §6
 
 | | Hôm nay (bài 10 chặng B) | Sau §6 |
@@ -2023,9 +2043,34 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
 | ~~Tri thức khi rút MCP~~ | **NGỦ, không xoá.** §9d |
 | ~~MCP là node?~~ | **Node** — đã là node. Cửa vào = nút `+ Kết nối`, **bỏ kéo-thả**. §6e |
 
+### ✅ CHỐT 24/08 tối (user) — **CÁNH TAY LÀ ĐƯỜNG TẮT, KHÔNG PHẢI HÀNG RÀO**
+
+> Câu hỏi đã rút gọn: *"Kết nối thư mục là BẮT BUỘC để chạm một thư mục, hay chỉ là một đường tắt
+> tiện lợi?"* — **Đáp: đường tắt tiện lợi.** *"MCP là thư mục được cắm, chứ không phải onlyAllows.
+> Rồi để bất định của LLM lựa chọn."*
+
+Đây là câu trả lời cho **#1**, và nó đóng luôn bốn mục dưới. Hệ quả phải mang theo, cả bốn:
+
+| | |
+|---|---|
+| **Từ vựng** | Thôi gọi *"thư mục được phép"*. `armReach` đổi sang `(đường tắt tới …)` — §15j |
+| **§1d mất tiền đề an toàn** | *"MCP filesystem có allowlist"* vẫn đúng về **chính nó**, nhưng **không** còn là một luận điểm containment: `Read`/`Glob`/`Bash` vẫn đi vòng qua |
+| **Containment hôm nay** | Chỉ còn `guardedZone` (kho chìa + file cấu hình). **Không có hàng rào đọc.** Ghi thẳng ra, đừng để ai đọc §1d rồi tưởng có |
+| **Đường nâng cấp** | Nếu sau này muốn *"khai thư mục ⇒ thật sự bị bó"* thì có hai đường: **cánh tay và shell loại trừ nhau**, hoặc **Docker** (§10, đang ⏸). Cả hai đều là quyết định sản phẩm, không phải việc kỹ thuật |
+
+### 🚫 ĐÓNG 24/08 — không bàn lại trừ khi #1 bị lật
+
+| | Vì sao đóng |
+|---|---|
+| ~~Cổng đường dẫn tất định~~ | Tiền đề sai: nó sẽ chặn cả việc `Bash`/`Read` **làm được**. Chặn im lặng một năng lực thật là chiều hỏng đắt nhất |
+| ~~Nói ra *"không với tới thư mục nào"*~~ (cũ #6) | Tốn token ở ca phổ biến nhất (vai trò không có cánh tay) để mua rất ít |
+| ~~Chặn artifact cho việc thất bại~~ | Có thể vứt mất phần đã làm được. Một file thừa rẻ hơn một kết quả mất |
+| ~~Dạy Trợ lý *"shell vượt rào"*~~ (cũ #8) | **Đóng vì đã giải bằng đường khác**: không thêm câu dặn nào (câu dặn đã có ở `SHELL_LEGEND` và đã thua vị trí), mà đổi **một từ tại chỗ thua**. → §15j |
+
 ### ❓ Còn mở
 
-1. **Hàng rào ĐỌC: hook, MCP filesystem, hay cả hai?** (§1d) ⚠ Câu này **nặng hơn trước** sau khi
+1. ~~**Hàng rào ĐỌC: hook, MCP filesystem, hay cả hai?**~~ ✅ **ĐÃ CHỐT ở trên: KHÔNG dựng.** Giữ mục
+   này chỉ để ai đọc lại thấy nó đã được trả lời, chứ không phải bị quên. Ngữ cảnh cũ: (§1d) ⚠ Câu này **nặng hơn trước** sau khi
    chốt danh mục: mục *"File trên máy"* **là** một MCP filesystem có allowlist. Nên nửa thứ hai đã
    được chốt gián tiếp — nhưng **chỉ nó thôi thì `Read` trần vẫn đi vòng qua**. Phải quyết có dựng
    hook kèm không, nếu không thì đang bán một cái khoá cho một cánh cửa mà tường bên cạnh vẫn thủng.
@@ -2043,7 +2088,7 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
 5. **`+ Kết nối` đặt cạnh `+ Nhân viên`, còn ngăn kéo "Kết nối" của `SPEC-connectors` §6 thì sao?**
    Nghiêng **bỏ ngăn kéo đó**: canvas đã là danh sách, một ngăn kéo liệt kê lại cùng những object
    là **hai chỗ hiện một sự thật** — đúng thứ luật "ba kho" của `Sidebar.tsx` tránh. Cần user xác nhận.
-6. 🆕 **Dòng năng lực có nên nói ra cái KHÔNG có không?** (§15e) Một vai trò `mcp: []` hôm nay chỉ
+6. 🚫 **ĐÓNG** — xem bảng trên. Ngữ cảnh cũ: (§15e) Một vai trò `mcp: []` hôm nay chỉ
    hiện `[web · chạy lệnh: TẮT]`, và model **vẫn mô tả họ như thể có một thư mục** — đo được ở L2 của
    `spike-resume-roster`, cả trước lẫn sau bản vá 24/08. Cùng lớp lỗi với ca "văn phòng rỗng" đã vá ở
    `roster()`: im lặng thì model lấp chỗ trống bằng một câu nghe hợp lý. Đường vá nghiêng về **nêu
@@ -2054,6 +2099,15 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
    một điều sai về hệ thống — và đây là lớp lỗi đắt nhất với khách non-code, vì thứ bị tiêu là niềm
    tin. Cùng họ với ca *"mình không có quyền xem"* ở `route()` §8: **model tự thuật lại hệ thống**.
    Chưa rõ vá bằng gì: dặn trong prompt là tín hiệu, mà ở đây không có trường nào để dựng cổng.
+8. ✅ **ĐÃ GIẢI — §15j.** Không thêm câu dặn; đổi một từ trên chính dòng thua. Ngữ cảnh cũ:
+   (§15g) Hôm nay không, và hậu quả đo được: Trợ lý từ chối một việc nhân viên **làm được**. Đây là
+   mặt sau của #6 và nguy hơn — *"không nói ra cái CÓ"* ⇒ chặn im lặng một năng lực thật. ⚠ Câu vá
+   nằm đúng chỗ `shellFlag` đã dặn *"mặt phủ định rộng là một lời nói dối"*: viết sai một chữ là đổi
+   từ **chặn nhầm** sang **doạ nhầm**, và doạ nhầm thì người dùng tắt mất thứ họ cần.
+9. 🆕 **`SPEC-tools-approval` §1a ghi metadata file (kích thước) là ĐỘC QUYỀN của `Bash` — sai theo
+   số liệu.** (§15h) `Read` builtin in kèm kích thước khi đọc PDF: `PDF file read: … (411.7KB)`,
+   khớp `Get-ChildItem` tới 0,1 KB. Phải đo lại phạm vi: những loại file nào `Read` in kích thước,
+   và `Glob`/`Grep` có in gì không. Trước khi đo xong thì **đừng** sửa §1a bằng lập luận.
 
 ---
 
@@ -2167,7 +2221,161 @@ cái biến mất trở thành **một dòng chữ xuất hiện**:
   Danh sách nhân viên bên trên là bản ĐÚNG — bỏ qua mọi câu bạn đã nói trước đó về ai với tới đâu.
 ```
 
-**Ba ràng buộc, mỗi cái chặn một cách hỏng khác** (test: `test/stale-arm.test.ts`, 7 test cho `reachDiff`):
+### 15g. ✅ DIFF BẮN ĐÚNG MÀ VẪN BỊ TỪ CHỐI — và thủ phạm KHÔNG phải diff
+
+**Ca thật 24/08:** bật `Bash` cho `nguoi-soi-thu-muc` rồi hỏi lại y hệt *"danh sách … trong
+D:\Downloads"*. Vẫn bị từ chối.
+
+Transcript phiên `c95144e4`, lượt `11:40:19Z`, **dòng chèn CÓ bắn, đúng nội dung**:
+
+```
+⚠ Danh bạ vừa đổi: + chạy lệnh → nguoi-soi-thu-muc. Danh sách nhân viên bên trên là bản ĐÚNG — …
+```
+
+Và lượt kế (`11:40:46Z`, *"dùng lệnh bash đi"*) model **ra `task`** với `request` = *"Dùng lệnh hệ
+thống (ví dụ dir/ls) để liệt kê toàn bộ thư mục con, file và kích thước…"*. ⇒ **Nó biết có shell và
+biết shell làm được việc này.** Cơ chế diff không hỏng.
+
+**Thủ phạm là một lỗ hổng NỘI DUNG trong dòng năng lực:** roster liệt kê cánh tay kèm thư mục, cộng
+`web`, cộng `chạy lệnh: BẬT`. **Không dòng nào nói rằng shell và builtin KHÔNG bị bó trong mấy thư
+mục đó.** Nên Trợ lý đọc danh sách thư mục của cánh tay như **tổng tầm với của nhân viên** — và từ
+chối một việc nhân viên làm được.
+
+Đây là mặt SAU của §14 #6, và nó nguy hơn: #6 là *"không nói ra cái KHÔNG có"*, ca này là *"không
+nói ra cái CÓ"* ⇒ **chặn im lặng một năng lực có thật**, đúng chiều `SPEC-arms` §7 cảnh báo.
+
+> ✅ **Xác nhận 24/08 tối, và nó đóng hẳn nghi vấn "tại lịch sử":** user `/clear` + xoá cả kho kinh
+> nghiệm, bật `Bash`, hỏi `D:\Documents` từ một phiên **sạch tinh** — **vẫn từ chối**. ⇒ Đây **không
+> phải** ô nhiễm lịch sử. Nó là hành vi **hệ thống**, tái lập được từ trạng thái sạch, và do đúng nội
+> dung dòng năng lực sinh ra. Cũng vì thế nó **rẻ để kiểm lại** sau bất kỳ bản vá nào: một phiên mới,
+> một câu hỏi.
+
+⚠ Chưa vá, và cố ý: câu vá nằm đúng chỗ `shellFlag` đã dặn *"mặt phủ định rộng là một lời nói dối"* —
+viết sai một chữ là đổi từ chặn nhầm sang **doạ nhầm**. Và sâu hơn: dạy Trợ lý *"shell vượt rào"* là
+xây lên đúng một tiền đề mà §14 #1 **đang định gỡ bỏ**. Cần user chốt. → §14 #8
+
+## 15h. ✅ "ĐO KÍCH THƯỚC BẰNG GÌ" — builtin `Read`, và nó tự in ra
+
+**Ca thật `P-260824-1850-7u3q`:** hỏi kích thước file trong `D:\Works\Profile_Vu Quoc Minh` — thư mục
+**không cánh tay nào khai**. Artifact trả `411,7 · 425 · 171,7 KB`, đối chiếu `Get-ChildItem`:
+**khớp tuyệt đối cả ba**. Con số đúng tới 0,1 KB thì không phải model đoán.
+
+`scripts/spike-arm-outside.ts` tách hai giả thuyết, đọc **nguyên văn `tool_result`**:
+
+| | kết quả |
+|---|---|
+| **A · cánh tay** `list_allowed_directories` | `<thư mục văn phòng>` + `D:\Downloads\Programs Installation` ✅ |
+| **A · cánh tay** `get_file_info` file ngoài | **`Access denied - path outside allowed directories`** ✅ |
+| **B · builtin** `Glob` `D:\Works\**` | liệt kê thoải mái, không hàng rào |
+| **B · builtin** `Read` file PDF | **`PDF file read: …\CV_VU QUOC MINH.pdf (411.7KB)`** |
+
+⇒ **Allowlist cánh tay CÒN NGUYÊN.** Kích thước đến từ **`Read` builtin**, thứ tự in kèm kích thước
+khi đọc PDF. Nghĩa là §14 #1 **rộng hơn ta vẫn ghi**: `Read` không chỉ lấy được *nội dung* ở mọi
+đường dẫn — nó còn lấy được **metadata kích thước**, thứ `SPEC-tools-approval` §1a đang ghi là
+**độc quyền của `Bash`**. Một dòng phải sửa vì số liệu. → §14 #9
+
+> ⚠⚠ **Hai lần đo hỏng liên tiếp trong chính bài này, và cả hai đều ra "kết luận hoàn chỉnh":**
+> ① quên `additionalDirectories` ⇒ allowlist chỉ hiện `cwd` ⇒ đọc thành *"allowlist là trang trí"* —
+> trong khi đó đúng là thứ `worker.ts` §② **đã vá từ 24/08**. ② bộ lọc thư mục gọi `require()` trong
+> một module ESM ⇒ **ném, `catch` nuốt, mọi thư mục bị loại**, `additionalDirectories` ra `[]` mà
+> không một dòng lỗi. Cái thứ hai là [[agentco-catch-hides-premises]] **nằm trong chính dụng cụ đo**.
+> ⇒ [[agentco-measurement-vs-conclusion]]: dụng cụ đo cũng phải bị nghi ngờ như hệ thống.
+
+## 15i. 🔴 CẢNH BÁO BÁO ĐỘNG GIẢ — `folderRoots` đọc nhầm cấu hình CHẠY thay vì cấu hình KHAI
+
+```
+Warning: Cánh tay của vai trò "nguoi-soi-thu-muc" khai thư mục
+"C:\Users\…\server-filesystem\dist\index.js" nhưng không tìm thấy trên máy.
+```
+
+`pickMcp` chạy `fastLaunch`, đổi `{npx, args:['-y', <gói>, <thư mục>]}` thành
+`{node, args:[<entry>.js, <thư mục>]}`. `armRoots` gọi `folderRoots` trên cấu hình **đã đổi** đó, mà
+`folderRoots` chỉ hỏi *"tham số này trông như đường dẫn tuyệt đối không"* ⇒ nhặt luôn `…\dist\index.js`.
+
+Hành vi không sai (`statSync` loại file `.js` đúng như trước), nhưng **một cảnh báo sai là thứ dạy
+người dùng bỏ qua cảnh báo** — rồi họ bỏ qua đúng cái đáng đọc. ✅ Vá ở nguồn: `armDirs` đọc từ
+`office.company.mcpServers` lọc theo `role.mcp`. `fastLaunch` là chi tiết thi hành; thư mục là thứ
+người dùng **khai**; hai cái không được lẫn.
+
+## 15j. ✅ BẢN VÁ CHO §15g — **đổi MỘT TỪ, tại chỗ thua**, không thêm câu dặn nào
+
+§15g chẩn *"prompt không nói ra rằng shell/builtin không bị bó"*. Chẩn đó **sai một nửa**, và nửa sai
+mới là nửa quan trọng: `SHELL_LEGEND` **đã nói** ngay dòng đầu danh bạ —
+
+> *"Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội dung, liệt kê
+> tên file."*
+
+Prompt **không thiếu sự thật. Sự thật ấy THUA VỊ TRÍ.** Câu chung nằm ở đầu khối; chuỗi trông-như-
+phạm-vi (`Musics (thư mục: D:\Downloads\Musics)`) nằm trên **chính dòng của nhân viên** — và dòng
+thắng. Đây là [[agentco-prompt-rules-lose-to-examples]] lần thứ ba, và ca `chạy lệnh: TẮT` (§1310
+`assistant.ts`) đã học đúng bài này rồi: *cờ phải nằm trên từng dòng thì mỗi dòng mới tự mang tin.*
+
+⇒ **Bản vá không thêm một câu dặn nào** — thêm nữa là dựng câu thứ hai cạnh câu vừa thua. Nó đổi
+**một từ, đúng chỗ thua**:
+
+```
+trước:  Musics (thư mục: D:\Downloads\Musics)          ← đọc thành GIỚI HẠN
+sau:    Musics (đường tắt tới D:\Downloads\Musics)     ← đọc thành ĐƯỜNG TẮT
+```
+
+Cùng cỡ token · không có luật mới phải nhớ · khớp đúng câu user vừa chốt (*"thư mục được cắm, không
+phải onlyAllows"*). `test/plan.test.ts` khoá cả hai chiều: phải có `đường tắt tới`, **và** không được
+quay lại `thư mục:`.
+
+⚠ **Từ này là một lời khai về CƠ CHẾ, nên nó phải đổi khi cơ chế đổi.** Ngày nào dựng hàng rào đọc,
+hoặc cho cánh tay loại trừ shell, thì `đường tắt tới` thành nói dối và phải đổi lại **trong cùng
+lượt** — không phải "để sau".
+
+⚠ **Chưa đo lại sau bản vá.** Cách đo rẻ và tất định: một phiên `/clear` sạch, một câu hỏi trỏ vào
+thư mục ngoài mọi cánh tay, vai trò có `chạy lệnh: BẬT`. §15g đã chứng minh ca này **tái lập được từ
+trạng thái sạch**, nên đây là một phép thử một-câu.
+
+## 15k. ✅ ĐO SAU BẢN VÁ §15j — từ mới chạy, và lộ ra một GIỚI HẠN THẬT
+
+**Ca 20:01–20:13, phiên thật.** Bản vá `đường tắt tới` **có tác dụng**, đo được ngay trong lời Trợ lý:
+
+- Không còn từ chối thẳng. Nó nói *"ngoài phạm vi đó chỉ lấy được tên file, không lấy được kích
+  thước"* rồi **hỏi có làm không** — đúng ngữ nghĩa đường tắt.
+- Nó dùng lại chính từ đó: *"nhân viên chỉ có lối vào qua 2 **đường tắt**…"*.
+- Bật `Bash` ⇒ xong trong một lượt.
+
+**Nhưng lộ ra một giới hạn thật, và nó KHÔNG phải bug:** với shell **TẮT**, *"liệt kê một thư mục bất
+kỳ ngoài văn phòng"* **không đáng tin**. Worker loay hoay với `Glob` — `"*"` → `"D:/Downloads/*"` →
+`"."` → `"*/*"` — rồi chạm trần `max_turns`. Hai lượt hỏng, **9 lượt · $0,2058** một lượt.
+
+| | |
+|---|---|
+| `Read` một đường dẫn ĐÃ BIẾT | ✅ chạy, kể cả ngoài văn phòng (§15h) |
+| `Glob` liệt kê một thư mục ngoài văn phòng | ⚠ **hên xui** — model không tự tìm ra cách trỏ ra ngoài |
+| Có `Bash` | ✅ một lượt |
+
+⇒ Đây là **đặc tính của bộ tool**, không phải hàng rào và cũng không phải lỗi cấu hình. Đừng vá bằng
+một dòng dặn worker cách gọi `Glob`: đó là tín hiệu, tốn token vĩnh viễn, và nó tự khỏi khi bật shell.
+Trần `max_turns` đang làm **đúng việc của nó** — dừng sớm, có câu giải thích, không đốt vô hạn.
+
+🔴 **Nhưng Trợ lý lại thuật sai hệ thống, lần thứ tư:** *"có vẻ D:\Downloads nằm ngoài phạm vi được
+cấp quyền… nên dù chỉ liệt kê tầng 1 cũng không xử lý được trong số bước cho phép"* — gộp **hết lượt**
+với **thiếu quyền** thành một câu chuyện sai. → §14 #7, vẫn chưa có cổng nào để dựng.
+
+✅ **Vá kèm:** nhật ký ghi `đang tìm “D:/Downloads/*” **trong văn phòng**` — sai. `roomOf` chỉ nhìn
+`path`, mà model nhét đường dẫn tuyệt đối vào `pattern`. Giờ suy từ **cả hai** và nói `ngoài văn
+phòng`. Nhật ký là cửa sổ duy nhất người dùng có để biết nhân viên vừa chạm vào đâu trên máy họ —
+cùng luật đã bắt `Bash` phải in ra nguyên câu lệnh. 3 test khoá.
+
+## 15f-bis. ✅ CÔNG TẮC SHELL ĐI CHUNG MỘT ĐƯỜNG (user chốt 24/08)
+
+Ca thật, cùng ngày, cùng lớp lỗi, khác cái công tắc: user **bật `Bash`** cho một nhân viên rồi hỏi
+lại **y hệt** câu cũ. Trợ lý đáp *"câu này mình đã thử trước đó rồi và bị chặn: hệ thống chỉ cấp
+quyền vào hai thư mục con…"*.
+
+`roster()` **đã** đổi đúng khi công tắc đổi — `shellFlag` nằm ngay trong dòng năng lực. Thứ thiếu là
+cái **diff**: bản đầu chỉ chụp `role.mcp`, nên bật/tắt shell không sinh dòng nào và lịch sử lại thắng.
+
+⇒ `reachMap()` chụp **cả hai**: cánh tay + token `chạy lệnh`. Chúng đi chung một đường vì hỏng chung
+một kiểu. ⚠ Nhưng **chỉ chụp thứ ĐỔI ĐƯỢC**: `web` cũng nằm trong dòng năng lực, bật sẵn cho mọi
+người, không có công tắc — đưa vào là một token không bao giờ diff, tức tiếng ồn thuần.
+
+**Ba ràng buộc, mỗi cái chặn một cách hỏng khác** (test: `test/stale-arm.test.ts`, 9 test cho `reachDiff`):
 
 1. **DELTA, không phải changelog.** Chỉ mô tả thay đổi kể từ lượt trước, chèn **một lần**, đúng lượt
    nó xảy ra. Nghịch canvas 20 lần ⇒ 20 dòng rải trong transcript: chấp nhận được. Một khối 20 dòng
