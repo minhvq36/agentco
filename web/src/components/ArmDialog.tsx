@@ -19,9 +19,10 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Check, FolderOpen, Loader2, Plug, TriangleAlert } from 'lucide-react';
+import { Check, FolderOpen, Loader2, Plug, Trash2, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmDelete } from '@/components/ui/confirm';
 import {
   Dialog,
   DialogContent,
@@ -96,6 +97,30 @@ function clashingArm(folder: string, installed: InstalledArm[], officeId: string
   return undefined;
 }
 
+/**
+ * Danh sách "đã cắm ở văn phòng khác": lọc, rồi **ĐANG DÙNG LÊN TRÊN, MỒ CÔI
+ * XUỐNG ĐÁY**. (user chốt 25/08)
+ *
+ * > *"để nó phía trên chiếm mất diện tích chú ý"*
+ *
+ * Đúng cách đọc về danh sách này: nó là chỗ **dùng lại**, không phải chỗ dọn
+ * dẹp. Mục không ai dùng chỉ có mặt để còn xoá được — xếp lẫn vào giữa là bắt
+ * người dùng lọc bằng mắt mỗi lần cắm.
+ *
+ * ⚠ Sắp theo HAI khoá. Thiếu khoá thứ hai thì hai mục cùng nhóm đổi chỗ nhau
+ * giữa hai lần mở hộp thoại: `listArms` đi theo thứ tự khoá trong yaml, mà thứ
+ * tự đó không có gì bảo đảm — và một danh sách tự nhảy chỗ là thứ làm người
+ * dùng bấm nhầm.
+ *
+ * ⚠ MỘT hàm, hai chỗ gọi (lúc mở, và sau khi xoá hẳn). Sắp xếp ở một chỗ rồi
+ * quên chỗ kia là danh sách tự sắp lại ngay dưới tay người vừa bấm.
+ */
+function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] {
+  return arms
+    .filter((a) => !a.usedBy.some((u) => u.office === officeId))
+    .sort((a, b) => Number(a.orphan) - Number(b.orphan) || a.label.localeCompare(b.label, 'vi'));
+}
+
 export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const officeId = useApp((s) => s.officeId);
   const canvas = useApp((s) => s.canvas);
@@ -131,6 +156,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [err, setErr] = useState('');
   const [grant, setGrant] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  /** Mục mồ côi đang chờ xác nhận **xoá hẳn** — mức duy nhất không lấy lại được. */
+  const [forget, setForget] = useState<InstalledArm | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -154,10 +181,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
      * Bày ra một lựa chọn CHẮC CHẮN SAI rồi để người dùng đâm vào nó là tệ hơn
      * mọi câu báo lỗi viết khéo.
      */
-    void api
-      .arms()
-      .then((r) => setInstalled(r.arms.filter((a) => !a.usedBy.some((u) => u.office === officeId))))
-      .catch(() => undefined);
+    void api.arms().then((r) => setInstalled(forList(r.arms, officeId))).catch(() => undefined);
   }, [open, officeId]);
 
   const agents = (canvas?.nodes ?? []).filter((n) => n.kind === 'agent' && n.role);
@@ -401,8 +425,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <div className="mt-4 text-[11px] uppercase tracking-wide text-muted">Đã cắm ở văn phòng khác</div>
                 <div className="mt-1.5 flex flex-col gap-1">
                   {installed.map((a) => (
+                    <div key={a.id} className="flex items-center gap-1">
                     <button
-                      key={a.id}
                       type="button"
                       onClick={() => {
                         /*
@@ -435,8 +459,40 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     >
                       <Plug className="h-3.5 w-3.5 text-muted" />
                       <span className="flex-1 truncate">{a.label}</span>
-                      <span className="shrink-0 text-[11px] text-muted">dùng lại</span>
+                      <span className="shrink-0 text-[11px] text-muted">
+                        {a.orphan ? 'không ai dùng' : 'dùng lại'}
+                      </span>
                     </button>
+                    {/*
+                      ┌──────────────────────────────────────────────────────┐
+                      │ XOÁ HẲN — chỉ hiện cho mục KHÔNG VĂN PHÒNG NÀO GIỮ.  │
+                      │ (user chốt 25/08: *"người dùng nên chịu trách nhiệm  │
+                      │ với hành động của mình"*)                            │
+                      │                                                      │
+                      │ Vì sao nút này đáng tồn tại: tới hôm nay, gỡ một mục │
+                      │ mồ côi khỏi sổ chỉ làm được bằng cách **mở           │
+                      │ `company.yaml` sửa tay** — mà đó là một CHUÔNG BÁO   │
+                      │ (§6a). Không có nó thì `mcpServers:` chỉ dài ra mãi. │
+                      │                                                      │
+                      │ Điều kiện `a.orphan` đến từ SERVER, không tự suy từ  │
+                      │ `usedBy` ở đây: `usedBy` chỉ đếm sợi dây, nên một    │
+                      │ node đang nằm chờ trên sơ đồ ai đó sẽ trông như mồ   │
+                      │ côi. Server chặn lần nữa — nút này chỉ là để không   │
+                      │ bày ra một lựa chọn chắc chắn bị từ chối.            │
+                      └──────────────────────────────────────────────────────┘
+                    */}
+                    {a.orphan && (
+                      <button
+                        type="button"
+                        title="Xoá hẳn khỏi sổ chung"
+                        aria-label={`Xoá hẳn ${a.label}`}
+                        onClick={() => setForget(a)}
+                        className="shrink-0 rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    </div>
                   ))}
                 </div>
               </>
@@ -471,6 +527,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </Button>
               </>
             )}
+
+            {/* Bước 1 cũng cần chỗ nói lỗi: nút "xoá hẳn" sống ở đây, và server
+                từ chối được (mục vẫn còn ai đó giữ). Nuốt câu đó là bấm xong
+                không thấy gì xảy ra. */}
+            {err && <p className="mt-2 text-xs text-danger">{err}</p>}
           </div>
         )}
 
@@ -760,6 +821,38 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             </div>
           </div>
         )}
+
+        {/*
+          Câu xác nhận nói ra ĐÚNG hai chuyện, vì chúng là hai chuyện khác nhau
+          và người dùng đang sợ nhầm cái thứ hai:
+            · cấu hình  → MẤT HẲN, nhưng dựng lại từ danh mục là ba cú bấm
+            · chìa      → **KHÔNG mất**, đó mới là phần đắt (phải sang trang hãng)
+          Không nói vế thứ hai là để họ tưởng mình vừa mất token, rồi không ai
+          dám bấm — tức có nút mà như không.
+        */}
+        <ConfirmDelete
+          open={!!forget}
+          title="Xoá hẳn khỏi sổ chung?"
+          onCancel={() => setForget(null)}
+          onConfirm={() => {
+            const a = forget;
+            if (!a) return;
+            void api
+              .forgetArm(a.id)
+              .then((r) => setInstalled(forList(r.arms, officeId)))
+              .catch((e) => setErr(e instanceof ApiError ? e.message : 'Không xoá được.'))
+              .finally(() => setForget(null));
+          }}
+        >
+          <b>{forget?.label}</b> sẽ biến mất khỏi công ty và <b>không lấy lại được</b>. Không văn phòng
+          nào đang dùng nó.
+          <br />
+          <span className="text-muted">
+            {forget?.secrets.length
+              ? `Chìa (${forget.secrets.join(', ')}) vẫn được giữ — cắm lại thì không phải đi lấy token lần nữa.`
+              : 'Kết nối này không cần chìa nào, nên cắm lại là chọn từ danh mục.'}
+          </span>
+        </ConfirmDelete>
       </DialogContent>
     </Dialog>
   );

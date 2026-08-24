@@ -1519,6 +1519,226 @@ nhận nhiều hơn văn phòng cắm hôm qua, và không ai thấy vì cả ha
 
 Test: `test/missing-key.test.ts` — hai ô cuối canh đúng chuyện "mất tên chìa ⇒ băm khác".
 
+## 6j. ✅ MỨC QUYỀN 3 NẤC — thay cho cổng duyệt từng lần (user chốt 25/08)
+
+Bối cảnh: user bác tầng 2 của `SPEC-tools-approval` §8c, và bác đúng — xem §6k. Thứ thay nó là
+**phạm vi cấp lúc cắm**, không phải hộp thoại lúc chạy.
+
+### Vì sao BA nấc chứ không phải bốn nút READ/INSERT/UPDATE/DELETE
+
+User đề xuất 4 nút. Đo `.d.ts` của cả hai SDK: thứ MCP thật sự khai ra là **bốn boolean chuẩn**, và
+chúng **không** tách được UPDATE khỏi DELETE.
+
+```ts
+// @modelcontextprotocol/sdk — ToolAnnotationsSchema (CHUẨN, không phải quy ước từng hãng)
+{ title?, readOnlyHint?, destructiveHint?, idempotentHint?, openWorldHint? }
+// @anthropic-ai/claude-agent-sdk chuẩn hoá lại còn ba:
+{ readOnly?, destructive?, openWorld? }
+```
+
+| Nấc | Suy từ — **lời khai phải ĐỦ và KHÔNG MÂU THUẪN** | Notion (28 tool) |
+|---|---|---|
+| **Chỉ đọc** | `readOnly === true` **và** `destructive !== true` | 14 |
+| **Đọc + Thêm** | `readOnly === false` **và** `destructive === false` | +11 |
+| **Toàn quyền** | mọi trường hợp còn lại — kể cả **khai thiếu** và **khai mâu thuẫn** | +3 |
+
+### 🔴 MỘT CHIỀU: KHÔNG BIẾT ⇒ LEO THANG. KHÔNG BAO GIỜ HẠ CẤP. (user chốt 25/08)
+
+> *"đảm bảo nếu 0 biết gì thì nó ở nấc cao hơn, đừng kiểu khai chỉ đọc mà đến lúc nó thêm, xóa/sửa
+> được là chết dở. Nói tóm lại **không được nói dối**. Khi chúng ta không biết, chúng ta nói toàn
+> quyền là không nói dối — điều tương tự cũng đúng với nấc 2."*
+
+Hai hệ quả, và cái thứ hai là một **lỗ đang sống trong mã**, đã vá 25/08:
+
+**① Nấc 2 đòi ĐỦ HAI lời khai tường minh** — *"tôi không chỉ đọc"* **và** *"tôi không phá huỷ"*.
+Thiếu một vế là **không biết** ⇒ nấc 3. Đây là chỗ dễ làm sai nhất: `destructive: false` một mình
+trông như một lời hứa, nhưng theo spec MCP `destructiveHint` **chỉ có nghĩa khi `readOnlyHint` là
+false** — thiếu vế kia thì nó không nói được điều ta cần biết.
+
+**② 🔴 KHAI MÂU THUẪN phải LEO THANG** — `{ readOnly: true, destructive: true }`.
+
+`levelOf` bản cũ chỉ hỏi `readOnly === true` ⇒ xếp nó vào **`read`**, tức một tool **tự khai là phá
+huỷ được** vẫn được cấp dưới nhãn *"chỉ đọc"*. Không cần server nói dối — chỉ cần nó khai **ẩu**, mà
+một cặp trường mâu thuẫn chính là dấu hiệu rõ nhất của khai ẩu.
+
+⚠ Và nó **không phải giả thuyết**: `arms[băm].tools` của cánh tay "chỉ đọc" sinh ra từ đúng hàm đó,
+rồi đi **thẳng vào `allowedTools`** lúc chạy. Sai một nấc ở đây không ra một lỗi — nó ra một nhân
+viên ghi được vào workspace thật, dưới một cái nhãn nói rằng không.
+
+Test: `test/level-one-way.test.ts` quét **toàn bộ** không gian `{readOnly, destructive, openWorld} ×
+{true, false, undefined}` và khoá cả bảng chân trị 3 nấc **trước khi** giao diện được xây — chốt rồi
+mà không khoá là để nó bị suy lại sai vào đúng ngày không ai còn nhớ vì sao nấc 2 đòi hai trường.
+
+Làm 4 nút thì hai nút cuối là **đoán mặc áo sự thật**: ta phải tự đoán tên tool nào là xoá ⇒ tên
+tool quay lại nằm trong mã nguồn (thứ vừa dọn sạch 25/08), và đoán sai **theo chiều nguy hiểm** —
+`notion-update-page` nghe như sửa, thực ra xoá sạch nội dung được. Với Notion, ô DELETE còn **rỗng
+vĩnh viễn**: nó archive chứ không xoá.
+
+**Lũy tiến, không phải checkbox độc lập.** *"INSERT mà không READ"* không có nghĩa với MCP nào; bày
+một ô không tick được là bày một câu hỏi giả.
+
+### ✅ Trả lời "lời khai của các server có chung keys không" (user hỏi 25/08)
+
+**Chung — đó là SCHEMA, không phải quy ước.** `ToolAnnotationsSchema` nằm trong SDK chuẩn của MCP,
+mọi server nói cùng bốn tên trường đó. Thứ khác nhau giữa các server **không phải tên khoá** mà là
+**có điền hay không**. Nên `levelOf` không bao giờ phải biết đó là hãng nào — và đó là lý do cả
+danh mục giữ được luật *"dữ liệu, không phải mã"*.
+
+### 🔴 Ca thật đáng lo hơn hẳn: **server KHÔNG KHAI GÌ** (user hỏi 25/08)
+
+> *"server nói dối không quan trọng, cái quan trọng là tôi sợ server KHÔNG NÓI"*
+
+Đúng — và ca đó phổ biến hơn nói dối rất nhiều. Không khai gì ⇒ `levelOf` mặc định `write_external`
+⇒ **cả 28 việc rơi vào Toàn quyền** ⇒ hai nấc đầu hiện **"0 việc"**.
+
+Đó là chiều **đúng** (an toàn khi không biết) nhưng là một trải nghiệm **tệ đội lốt bảo mật**: người
+dùng chỉ muốn đọc dữ liệu của mình, mà lựa chọn duy nhất chạy được là cái đáng sợ nhất — tức ta
+**dạy họ luôn bấm Toàn quyền**, đúng thói quen ta đang cố tránh.
+
+**Ba đường, và hai đường đầu phải bị loại thẳng:**
+
+| | | |
+|---|---|---|
+| ❌ Toàn quyền hoặc không dùng | thuần default-deny | dạy người dùng bấm cái nguy nhất, mỗi lần |
+| ❌ Suy từ TÊN tool (`list_*`, `get_*`) | đoán | đúng cho `filesystem`, **câm** cho mọi server khác, và sai theo chiều nguy hiểm (`get_and_archive`). Là đúng cái *"bảng dịch viết tay"* đã bác ở `describeCall` |
+| ✅ **Hỏi chính người dùng, theo từng việc** | thật thà | ta không biết ⇒ hỏi người biết |
+
+⇒ **Ba nấc là PHÍM TẮT của một danh sách tick, không phải một cơ chế khác.**
+
+- server có khai ⇒ danh sách được **tích sẵn** theo nấc, 1 cú bấm là xong
+- server khai một phần ⇒ nói ra con số: *"22/28 việc có khai · 6 việc không khai, xếp vào Toàn quyền"*
+- server không khai gì ⇒ hai nấc đầu **mờ đi kèm lý do**, chỉ còn đường tick tay
+
+Cùng một `tools: string[]` đi xuống đĩa ở cả ba ca — **không thêm cơ chế nào**. Và độ ma sát rơi
+đúng chỗ nó thuộc về: server theo chuẩn thì 1 cú bấm, server bỏ qua chuẩn thì 28 ô tick. Người dùng
+thấy ngay server nào làm ăn tử tế, mà ta không phải nói một câu nào về hãng nào.
+
+### 🔴 LUẬT: một nấc chỉ tồn tại nếu nó **THÊM** việc so với nấc dưới nó
+
+User chốt 25/08: *"tầng nào 0 việc thì đừng cho chọn — không để một thứ không ý nghĩa hoặc chỉ mang
+noisy mà không lợi ích gì tồn tại."*
+
+Đúng, nhưng *"0 việc"* **chưa đủ chặt**, và ca lọt lưới thì dễ gặp: một server **toàn tool đọc** (MCP
+tra cứu tài liệu chẳng hạn) cho ra
+
+```
+◉ Chỉ đọc      14 việc
+○ Đọc + Thêm   14 việc   ← không thêm gì
+○ Toàn quyền   14 việc   ← không thêm gì
+```
+
+Hai nấc dưới **không rỗng** nên luật "0 việc" cho chúng đi qua — trong khi chúng **hứa thêm quyền mà
+không đưa gì**, đúng thứ noisy user vừa cấm, chỉ khoác một con số khác 0. Nên luật phải là:
+
+> **Một nấc chỉ hiện ra nếu nó thêm ≥1 việc so với nấc ngay dưới nó.** Nấc đáy hiện nếu có ≥1 việc.
+
+⚠ **Và khi chỉ còn MỘT nấc thì HƯỚNG của nó quyết định phải làm gì** — hai ca ngược hẳn nhau:
+
+| Nấc duy nhất còn lại | Nghĩa | Xử lý |
+|---|---|---|
+| **Chỉ đọc** | server toàn tool đọc | **bỏ hẳn bộ chọn**, ghi một câu: *"Kết nối này chỉ đọc · 14 việc"*. Một lựa chọn duy nhất không phải một câu hỏi |
+| **Toàn quyền** | server **không khai gì** | 🔴 **KHÔNG** được rơi vào đây im lặng. Đó không phải lựa chọn, đó là **cảnh báo** ⇒ đi thẳng sang danh sách tick tay |
+
+Gộp hai ca này làm một là chỗ hỏng đắt nhất của cả mục: cùng một triệu chứng *"chỉ còn một nấc"*, mà
+một bên vô hại còn một bên là **cấp trọn server**. Và `tools: []` nghĩa là cấp cả server — chiều
+ngược hẳn. `readOnlyTools` đã ném đúng ca đó từ 25/08; giao diện chỉ cần đừng bày nó ra như một nút
+bấm được.
+
+⇒ Khi xây, phép kiểm là **`đếm(nấc) > đếm(nấc dưới)`**, không phải `đếm(nấc) > 0`.
+
+### Quy câu nói về đúng người nói — rẻ hơn mọi điều khoản miễn trừ
+
+| | Ai thi hành | Phụ thuộc server thật thà? |
+|---|---|---|
+| **Tool NÀO gọi được** | client — `allowedTools` / `McpServerToolPolicy` | ❌ **không** — tất định |
+| **Mỗi tool LÀM GÌ** | `annotations` của server | ✅ có — và **không client nào** làm khác được |
+
+> ❌ *"Cánh tay này chỉ đọc"* — câu ta **không** bảo đảm được
+> ✅ *"Notion khai 14 việc chỉ đọc"* — câu **đúng kể cả khi Notion nói dối**
+
+Một dòng chữ, và nó chuyển chuyện "ai chịu trách nhiệm" về đúng chỗ mà không cần một dòng pháp lý.
+Điều khoản miễn trừ **không sửa được** một giao diện nói sai; quy câu nói về nguồn thì có.
+
+### Mức quyền vào BĂM — và đó là điều bắt buộc, không phải phiền toái
+
+Hôm nay `tools` **không** nằm trong `armHash`; an toàn được vì nó suy tất định từ `readOnly`, một
+hằng số danh mục. Cho người dùng chọn mức thì hai cánh tay **cùng URL, cùng chìa, khác mức** sẽ đụng
+băm ⇒ **ghi đè im lặng** ⇒ đúng ca §6i sinh ra để chặn. ⇒ `arms[băm].level` phải vào băm.
+
+**Rác có TRẦN, không dồn** (user tự suy ra và đúng): A→B→A rơi về **đúng băm cũ**, mà băm cũ đã ở
+trong sổ ⇒ `addArm` dùng lại. Tối đa **3** mục cho một (cấu hình + chìa) — bằng đúng số nấc. Mức cũ
+thành mồ côi ⇒ tự tụt xuống đáy danh sách ⇒ có thùng rác §6i-bis. Vòng tự đóng, không thêm cơ chế.
+
+### 🔴 "Đổi mức quyền" — CHỈ Ở VĂN PHÒNG NÀY (user nhấn mạnh 25/08)
+
+> *"Đổi mức quyền ở văn phòng này không đổi ở văn phòng khác, quan trọng."*
+
+**Băm đã cho tính chất đó miễn phí, và đây là lý do mạnh nhất để mức nằm trong băm** — mạnh hơn cả
+lý do chống đụng độ ở trên. Đổi mức = **một cánh tay khác** ⇒ `role.mcp` và `office.arms` của văn
+phòng khác vẫn trỏ vào băm cũ ⇒ **không đụng tới, không cần một dòng mã nào canh chuyện đó**.
+
+Nếu mức là một trường sửa tại chỗ trong sổ chung thì ngược hẳn: một cú bấm ở văn phòng A **âm thầm
+nâng quyền** cho mọi văn phòng đang dùng chung. Đó là ca hỏng đắt nhất trong cả mục này, và nó bị
+loại bởi **cấu trúc**, không bởi kỷ luật.
+
+Luồng, và thứ tự là bảo mật:
+
+1. cắm cánh tay mức mới + **nối lại đúng những sợi dây cũ** ở văn phòng này
+2. **rồi mới** rút cánh tay cũ — `removeArm(id, officeId)`, đã scope sẵn theo văn phòng
+3. hỏng ở bước 1 ⇒ **không đụng gì tới cái cũ**
+
+Nút gọi là **"Đổi mức quyền…"**, không gọi là *Sửa* — vì nó **không** sửa (§6i-bis: vòng đời có hai
+động từ). Không có nút Lưu riêng: vẫn **Thử ngay → Xong** như mọi lần cắm, vì nó *là* một lần cắm.
+Hộp xác nhận phải nói cả ba vế: dây được nối lại · **văn phòng khác không bị ảnh hưởng** · chìa
+không phải nhập lại.
+
+### Nhãn: huy hiệu SUY RA, không nhét vào chuỗi tên
+
+User hỏi *"thêm quyền vào tên có hơi lủng không"* — **có**. Nhãn là của người dùng, đổi tự do (§6i).
+Nhét `· chỉ đọc` vào chuỗi thì một cú đổi tên tạo ra được **"Notion (ghi được)" trên một cánh tay
+chỉ đọc** — nhãn nói dối về đặc quyền, đúng con bug *"lời hứa rỗng"* vừa gỡ ở bài 11 bước 5.
+
+Cũng **không** thêm trường `sub`: mức đã nằm ở `arms[băm].level`, huy hiệu suy ra được ⇒ 0 trường
+mới và **không thể lệch**. Tên mặc định lúc tạo vẫn là *"Notion (chỉ đọc)"* cho dễ đọc — nhưng đó là
+**gợi ý ban đầu**, còn huy hiệu mới là thứ nói sự thật. Hai lớp, lớp ngoài đổi được, lớp trong không.
+
+## 6k. ✅ BỎ TẦNG 2 CỦA CỔNG DUYỆT — user chốt 25/08, và lý lẽ đứng vững
+
+> *"về dài hạn chính là không cổng duyệt, chấp nhận cuộc chơi bất định, và mỗi mcp cắm cho nó chính
+> là sandbox. Cùng lắm thì chỉ có log mcp."*
+
+Bốn lý do, hai của user, hai thêm:
+
+**① Một cổng dạy người ta bấm Yes thì tệ hơn không có cổng.** 15 hộp thoại một kế hoạch ⇒ auto-accept
+⇒ nó **sản xuất ra sự đồng ý**: hệ thống trông như có giám sát trong khi chỉ chuyển trách nhiệm sang
+người dùng.
+
+**② Nó cãi nhau với tiền đề sản phẩm.** agentco là *"giao việc rồi bỏ đi"*. `SPEC-tools-approval`
+§8d viết sẵn: hết hạn 10 phút ⇒ **deny** ⇒ mọi kế hoạch chạy lúc người dùng không ngồi đó sẽ **chết
+ở lần ghi đầu tiên**. Cổng không hỏng — nó đúng như thiết kế, và thiết kế đó sai chỗ.
+
+**③ Sợi dây trên canvas ĐÃ là cái cổng** (chính user chốt 24/08: *"cạnh nối LÀ hành động cấp
+quyền"*). Duyệt từng lần là hỏi lại đúng câu đó lần thứ hai, trong điều kiện tệ hơn.
+
+**④ Chưa có khách hàng.** `irreversible` = *gửi đi · xoá · trả tiền · đăng công khai*. Notion không
+có tool nào như thế (archive, không xoá); `filesystem` cũng không. Hôm nay **0 tool trong danh mục
+là irreversible** ⇒ xây tầng 2 bây giờ là xây một cái cổng không có ai đi qua.
+
+**GIỮ tầng 1** (duyệt kế hoạch): một quyết định · trước khi bắt đầu · **0 token** · và nó không phải
+cổng bảo mật mà là nút **"Xem trước kế hoạch"** `SPEC-ui` §2.1 đòi từ đầu — câu trả lời cho *"kiểm
+soát scope"*, nỗi đau gốc của sản phẩm. Mọi phản đối của user đều nhắm vào tầng 2, không nhắm vào nó.
+
+### 🔴 Nhưng "chỉ có log" đòi một cái log ta CHƯA CÓ
+
+User hỏi *"log mcp khác log plan đang có không"* — **khác, và khác theo chiều xấu**. Đo `worker.ts`:
+
+- chỉ ghi **`calls[0]`** mỗi lượt ⇒ lượt nào gọi 3 tool thì **2 cái biến mất**
+- ghi câu **cho người đọc** (`Notion · create page → …`), **không ghi tham số**
+
+⇒ đó là **log TIẾN ĐỘ**, không phải **log KIỂM TOÁN**. Nếu đường dài là "không cổng, chỉ log" thì
+log phải lên hạng: **mọi** lời gọi, **có** tham số, ghi xuống đĩa. Việc này nhỏ hơn cổng duyệt nhiều
+và là thứ duy nhất trả lời được câu *"hôm qua nó đã ghi gì vào Notion của tôi"*.
+
 ## 6h. Đếm lại số bước — thước đo của cả §6
 
 | | Hôm nay (bài 10 chặng B) | Sau §6 |

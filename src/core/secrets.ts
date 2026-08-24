@@ -20,19 +20,42 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { CompanyPaths } from './paths.js';
+import type { OAuthAccount } from './oauth.js';
 
 export type SecretMap = Record<string, string>;
 
-export function readSecrets(paths: CompanyPaths): SecretMap {
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CHÌA OAUTH LÀ **MỘT LOẠI CHÌA**, KHÔNG PHẢI MỘT HỆ THỐNG THỨ HAI.        │
+ * │                                                                          │
+ * │ Chìa tĩnh là một chuỗi; chìa OAuth là một object có 4+ trường và tự làm  │
+ * │ mới. Cám dỗ là dựng một kho riêng cho nó — và đó là chỗ hỏng: `grantFor`,│
+ * │ `injectSecrets`, `armHash`, `role.secrets`, `secret list` đều sẽ phải     │
+ * │ mọc thêm một nhánh, tức **năm bản của cùng một luật**.                    │
+ * │                                                                          │
+ * │ Thay vào đó: tài khoản OAuth vẫn **có một cái TÊN** như mọi chìa khác,   │
+ * │ và `readSecrets` **dàn phẳng** nó thành `access_token` hiện hành. Cả năm │
+ * │ chỗ trên không đổi một dòng nào. Thứ duy nhất OAuth thêm vào là *"giá trị│
+ * │ này được làm mới ở nền"* — một chuyện về VÒNG ĐỜI, không phải về hình    │
+ * │ dạng.                                                                    │
+ * │                                                                          │
+ * │ Tên khoá là `$oauth`, và nó **không thể trùng** tên chìa nào: tên chìa   │
+ * │ đi qua `PLACEHOLDER` = `[A-Z0-9_]+`, không có `$`. Và bản `readSecrets`  │
+ * │ cũ **đã** bỏ qua mọi giá trị không phải chuỗi ⇒ công ty tạo bằng bản cũ  │
+ * │ đọc được bản mới và ngược lại, không cần di trú.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const OAUTH_KEY = '$oauth';
+
+/** Tài khoản OAuth theo TÊN CHÌA (`NOTION_OAUTH_A1B2C3D4`). → `oauth.ts` */
+export type OAuthMap = Record<string, OAuthAccount>;
+
+function readRaw(paths: CompanyPaths): Record<string, unknown> {
   if (!fs.existsSync(paths.secretsFile)) return {};
   try {
     const raw = JSON.parse(fs.readFileSync(paths.secretsFile, 'utf8')) as unknown;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-    const out: SecretMap = {};
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      if (typeof v === 'string') out[k] = v;
-    }
-    return out;
+    return raw as Record<string, unknown>;
   } catch {
     // Bí mật hỏng KHÔNG được làm sập công ty — agent nào cần sẽ tự báo thiếu chìa.
     process.emitWarning('.state/secrets.json không đọc được. Agent cần chìa sẽ báo thiếu.');
@@ -40,9 +63,84 @@ export function readSecrets(paths: CompanyPaths): SecretMap {
   }
 }
 
+export function readSecrets(paths: CompanyPaths): SecretMap {
+  const raw = readRaw(paths);
+  const out: SecretMap = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  /**
+   * ⚠ OAUTH GHI ĐÈ CHÌA TĨNH CÙNG TÊN, cố ý và theo đúng chiều này.
+   *
+   * Ca thật: người dùng dán tay một access token vào `NOTION_ACCESS_TOKEN` hôm
+   * nay, rồi mai bấm Đăng nhập. Nếu chìa tĩnh thắng thì họ đăng nhập xong mà
+   * hệ thống vẫn dùng cái chuỗi cũ **đã hết hạn 8 tiếng trước** — và triệu
+   * chứng là 401 ngay sau một thao tác vừa báo thành công.
+   *
+   * Chiều này an toàn vì OAuth là thứ có VÒNG ĐỜI: nó tự làm mới, còn chuỗi
+   * dán tay thì đứng yên chờ chết.
+   */
+  for (const [name, acc] of Object.entries(readOAuth(paths))) {
+    if (acc.access_token) out[name] = acc.access_token;
+  }
+  return out;
+}
+
+/** Chỉ phần OAuth — cho vòng làm mới ở nền và cho giao diện liệt kê tài khoản. */
+export function readOAuth(paths: CompanyPaths): OAuthMap {
+  const bag = readRaw(paths)[OAUTH_KEY];
+  if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {};
+  const out: OAuthMap = {};
+  for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+    // Tối thiểu phải có `access_token` — một bản ghi hỏng nửa chừng thì bỏ qua,
+    // đừng để nó dàn phẳng thành `undefined` rồi bay lên server thành `Bearer `.
+    if (v && typeof v === 'object' && typeof (v as OAuthAccount).access_token === 'string') {
+      out[k] = v as OAuthAccount;
+    }
+  }
+  return out;
+}
+
+/**
+ * Ghi/xoá MỘT tài khoản OAuth. Đọc-sửa-ghi cả file, không ghi đè cả kho.
+ *
+ * ⚠ ĐỌC LẠI TỪ ĐĨA NGAY TRƯỚC KHI GHI, không dùng bản đã cầm sẵn trong tay.
+ * Vòng làm mới ở nền và người dùng bấm "Đăng nhập" chạy song song được; ghi
+ * bằng một bản chụp cũ là xoá mất chìa vừa được cái kia lưu — và mất một
+ * `refresh_token` đã XOAY thì không lấy lại được bằng gì ngoài đăng nhập lại.
+ */
+export function saveOAuth(paths: CompanyPaths, name: string, acc: OAuthAccount | null): void {
+  const raw = readRaw(paths);
+  const bag = { ...(readOAuth(paths) as Record<string, unknown>) };
+  if (acc) bag[name] = acc;
+  else delete bag[name];
+  writeRaw(paths, { ...raw, [OAUTH_KEY]: bag });
+}
+
 export function writeSecrets(paths: CompanyPaths, map: SecretMap): void {
+  /**
+   * ⚠ HAI CÁI BẪY Ở ĐÂY, VÀ CẢ HAI ĐẾN TỪ CÙNG MỘT DÒNG CÓ SẴN:
+   * `addArm` gọi `writeSecrets({ ...readSecrets(pp), ...secrets })`.
+   *
+   * ① Không giữ `$oauth` lại ⇒ cắm một cánh tay bất kỳ là **xoá sạch mọi tài
+   *    khoản đã đăng nhập**. Mất `refresh_token` đã xoay thì không có đường
+   *    nào lấy lại ngoài đăng nhập lại từ đầu.
+   *
+   * ② `readSecrets` giờ DÀN PHẲNG access_token vào map ⇒ nếu ghi thẳng map ấy
+   *    xuống, ta đúc một **bản sao tĩnh** của một chìa vốn tự làm mới. Bản sao
+   *    đó chết sau 8 giờ và nằm lại trong file dưới dạng chuỗi — vô hại hôm nay
+   *    (OAuth thắng lúc đọc) nhưng là một quả mìn cho bất kỳ ai đọc file và
+   *    tưởng đó là chìa thật.
+   */
+  const oauth = readOAuth(paths);
+  const flat: SecretMap = {};
+  for (const [k, v] of Object.entries(map)) if (!(k in oauth)) flat[k] = v;
+  writeRaw(paths, { ...flat, ...(Object.keys(oauth).length ? { [OAUTH_KEY]: oauth } : {}) });
+}
+
+function writeRaw(paths: CompanyPaths, obj: Record<string, unknown>): void {
   fs.mkdirSync(path.dirname(paths.secretsFile), { recursive: true });
-  fs.writeFileSync(paths.secretsFile, `${JSON.stringify(map, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(paths.secretsFile, `${JSON.stringify(obj, null, 2)}\n`, 'utf8');
   // Trên POSIX: chỉ chủ sở hữu đọc được. Trên Windows chmod là no-op, ACL mặc
   // định của thư mục người dùng đã đủ — nhưng gọi vẫn đúng và vô hại.
   try {

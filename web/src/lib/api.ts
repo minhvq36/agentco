@@ -147,6 +147,15 @@ export const api = {
   removeArm: (id: string, office: string) =>
     call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?office=${enc(office)}`, { method: 'DELETE' }),
 
+  /**
+   * XOÁ HẲN khỏi sổ chung — **không lấy lại được**. Chỉ dùng cho mục `orphan`.
+   *
+   * ⚠ Không xoá chìa: chìa sống theo TÊN ở `.state/secrets.json`, độc lập với
+   * sổ. Cắm lại từ danh mục là ba cú bấm; đi lấy lại token thì không.
+   */
+  forgetArm: (id: string) =>
+    call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?forget=1`, { method: 'DELETE' }),
+
   createOffice: (name: string) =>
     call<{ id: string }>('/api/office', { method: 'POST', body: JSON.stringify({ name }) }),
 

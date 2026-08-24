@@ -685,7 +685,42 @@ Mình chia thành 3 việc:
 
 ### 8c. Tầng 2 — chặn từng lần, dùng `canUseTool`
 
-> ## ⚠⚠ ĐỌC TRƯỚC KHI XÂY MỤC NÀY — PHÉP ĐO 19/08 CHƯA XÁC NHẬN CƠ CHẾ
+> ## ✅✅ ĐO 25/08 — **CƠ CHẾ CHẠY ĐƯỢC.** Khối cảnh báo bên dưới đã được GIẢI, giữ lại vì lý do
+>
+> `scripts/spike-canusetool.ts` — 5 ca, mỗi ca một biến. Đây đúng là *"spike 10 phút"* mà mục này
+> đòi từ 19/08 và chưa ai chạy.
+>
+> | Ca | `canUseTool` nổ | file trên đĩa |
+> |---|---|---|
+> | A · mcp **trong** `allowedTools`, không callback | ❌ | đã ghi |
+> | B · mcp **trong** `allowedTools`, **có** callback | ❌ | đã ghi |
+> | **C · mcp NGOÀI `allowedTools`, callback `allow`** | ✅ | đã ghi |
+> | **D · builtin `Write` NGOÀI `allowedTools`, callback `allow`** | ✅ | đã ghi |
+> | **E · mcp NGOÀI `allowedTools`, callback `deny`** | ✅ | **KHÔNG ĐỔI** |
+>
+> **⭐ Bí ẩn 19/08 đã có lời giải, và nó không phải "SDK hỏng": `allowedTools` CHE `canUseTool`.**
+> Phép đo 19/08 gọi `Grep`/`Glob` — hai tool nằm sẵn trong `allowedTools` — nên callback không bao
+> giờ có cửa chạy. Biến thật sự chưa bao giờ là *"tool đọc hay ghi"* mà là **"có nằm trong
+> `allowedTools` hay không"**. Cả một mục spec bị treo 6 ngày vì đọc sai biến.
+>
+> SDK bản đang cài **tự nói ra điều đó** — cảnh báo mới, đáng chép nguyên văn:
+>
+> ```
+> [CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked for: Read, Glob, Grep,
+> mcp__files. Bare allowedTools entries auto-approve the whole tool before the callback is
+> consulted. … remove the bare names from allowedTools so they fall through to canUseTool.
+> ```
+>
+> **Ca E xác nhận nốt nửa còn lại** — nút *[Thôi]* là thật: `deny` **chặn được lệnh ghi** (file trên
+> đĩa không đổi), và câu `message` quay về cho agent **nguyên văn** như một kết quả tool. Lời hứa ở
+> mục 4 dưới đây (*"nó biết vì sao bị từ chối và tự xoay xở"*) có mã thi hành đứng sau.
+>
+> ⚠ Một ca đã đo hỏng rồi đo lại, ghi ra đây vì nó là bài học lặp: ca D lần đầu **vẫn cắm MCP**, nên
+> model lờ `Write` đi để dùng `mcp__files__write_file` ⇒ D đo lại đúng cái C vừa đo và bảng trông
+> như đã trả lời một câu chưa ai hỏi. Cùng lớp lỗi với `--no-browser` hôm 24/08: **phép thử đi vòng
+> qua đúng nhánh nó sinh ra để kiểm.**
+>
+> <details><summary>Khối cảnh báo gốc 19/08 — giữ lại để thấy nó sai ở đâu</summary>
 >
 > Toàn bộ mục 8c dưới đây dựng trên kiểu trong `.d.ts`, **chưa từng chạy thật**. Ngày 19/08 lần đầu có người thử `canUseTool` trong dự án này, và **nó không nổ một lần nào**:
 >
@@ -702,6 +737,8 @@ Mình chia thành 3 việc:
 > **Việc bắt buộc trước khi xây:** một spike 10 phút — cho một vai trò khai `Bash`, giao nó chạy một lệnh, và kiểm `canUseTool` có nổ không. Nếu không nổ thì cả tầng 2 phải thiết kế lại (khả năng cao là bằng **tool MCP tự khai**, nơi ta tự chạy tác vụ nên không phụ thuộc cơ chế duyệt nào).
 >
 > Đây đúng luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*, áp cho một tính năng **chưa viết**: đừng lên lịch dựa trên một cơ chế chưa ai thấy chạy.
+>
+> </details>
 
 Đây là chỗ SDK làm sẵn cho ta, và làm tốt hơn mọi cách tự chế. Kiểm trên `sdk.d.ts@0.3.231`:
 
@@ -727,6 +764,19 @@ type PermissionResult =
 4. **`deny` kèm `message`** quay lại cho agent như một kết quả tool — nó biết vì sao bị từ chối và tự xoay xở, thay vì fail cụt.
 
 **Một thay đổi bắt buộc trong `worker.ts`:** hôm nay ta truyền `allowedTools: role.tools`, mà tool nằm trong `allowedTools` thì **được duyệt tự động và KHÔNG gọi `canUseTool`**. Nên `allowedTools` chỉ được chứa nhóm `read` + `write_local`; mọi thứ từ `write_external` trở lên phải rơi xuống `canUseTool`.
+
+> ✅ **ĐO 25/08 XÁC NHẬN ĐÚNG TỪNG CHỮ** (ca B vs ca C ở trên). Câu này viết ra từ đọc `.d.ts`, và
+> hoá ra nó chính là lời giải cho bí ẩn 19/08 — đã nằm sẵn trong spec suốt 6 ngày mà không ai nối
+> hai đầu lại.
+>
+> 🔴 **Và đây là dòng chặn "Notion ghi được".** `worker.ts` hôm nay đẩy `mcp__<server>` (hoặc
+> `mcp__<server>__<tool>` với cánh tay chỉ-đọc) thẳng vào `allowedTools` ⇒ **tự duyệt, không hỏi
+> ai**. Bật ghi cho Notion trên nền đó nghĩa là agent sửa workspace thật của người dùng mà không một
+> hộp thoại nào — trong khi 3/28 tool của Notion khai `destructive`. Thứ tự bắt buộc là **cổng duyệt
+> TRƯỚC, cánh tay ghi SAU**, không đảo được.
+>
+> ⚠ Đổi `allowedTools` là đổi hành vi của **mọi cánh tay đang chạy**, kể cả `filesystem` của bài 11.
+> Đó là một thay đổi đúng, nhưng không phải một thay đổi im lặng — bài 11 phải chạy lại sau đó.
 
 ### 8d. Luồng đầy đủ
 

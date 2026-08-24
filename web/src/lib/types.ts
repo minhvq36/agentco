@@ -419,6 +419,12 @@ export interface InstalledArm {
    */
   secrets: string[];
   usedBy: { office: string; role: string }[];
+  /**
+   * Không văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
+   * dây". Chỉ mục như thế mới hiện nút **xoá hẳn**. ⚠ Đừng tự suy từ `usedBy`:
+   * nó chỉ đếm sợi dây, nên một node đang nằm chờ sẽ trông như mồ côi.
+   */
+  orphan: boolean;
 }
 
 /**

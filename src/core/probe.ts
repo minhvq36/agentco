@@ -83,10 +83,45 @@ export interface ProbeResult {
  * curate hoặc từ người dùng bấm — cả hai đều có chủ thể chịu trách nhiệm.
  * → SPEC-arms.md §8a-bis
  */
-function levelOf(a: { readOnly?: boolean; destructive?: boolean; openWorld?: boolean } | undefined) {
-  // Không khai gì ⇒ `write_external`. AN TOÀN KHI KHÔNG BIẾT, và ca này CÓ THẬT:
-  // `create_directory` của `filesystem` không có annotation nào.
-  return a?.readOnly === true ? ('read' as const) : ('write_external' as const);
+export function levelOf(a: { readOnly?: boolean; destructive?: boolean; openWorld?: boolean } | undefined) {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MỘT CHIỀU: KHÔNG BIẾT ⇒ LEO THANG. KHÔNG BAO GIỜ HẠ CẤP. (user 25/08)    │
+   * │                                                                          │
+   * │   *"đảm bảo nếu 0 biết gì thì nó ở nấc cao hơn, đừng kiểu khai chỉ đọc   │
+   * │    mà đến lúc nó thêm/xoá/sửa được là chết dở. Nói tóm lại KHÔNG ĐƯỢC    │
+   * │    NÓI DỐI — khi ta không biết, nói toàn quyền là không nói dối."*       │
+   * │                                                                          │
+   * │ Không khai gì ⇒ `write_external`. Ca này CÓ THẬT: `create_directory` của │
+   * │ `filesystem` không mang annotation nào.                                  │
+   * │                                                                          │
+   * │ 🔴 VÀ ĐÂY LÀ LỖ VỪA VÁ 25/08 — ca **KHAI MÂU THUẪN**:                    │
+   * │                                                                          │
+   * │      { readOnly: true, destructive: true }                               │
+   * │                                                                          │
+   * │ Bản cũ chỉ hỏi `readOnly === true` ⇒ xếp nó vào **`read`**, tức một tool │
+   * │ tự khai là phá huỷ được cấp dưới nhãn *"chỉ đọc"*. Không cần server nói  │
+   * │ dối: chỉ cần nó khai **ẩu**, và một trường mâu thuẫn là dấu hiệu rõ nhất │
+   * │ của khai ẩu. Ta đọc lời khai đó theo nghĩa **nặng hơn**, luôn luôn.      │
+   * │                                                                          │
+   * │ Nó KHÔNG phải giả thuyết: `arms[băm].tools` của cánh tay "chỉ đọc" sinh  │
+   * │ ra từ đúng hàm này, và đó là thứ đi thẳng vào `allowedTools` lúc chạy.   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ `destructive: true` ⇒ `write_external`, KHÔNG phải `irreversible`.
+   *
+   * Đo 23/08: `filesystem` gắn `destructive` cho `write_file`/`edit_file`/`move_file`.
+   * Map chúng vào `irreversible` thì MỌI lần ghi một file đều phải hỏi người dùng —
+   * trong khi `irreversible` được định nghĩa là *"gửi đi · xoá · trả tiền · đăng
+   * công khai"*, tức RỜI KHỎI thế giới của người dùng. Ghi file lên đĩa của chính
+   * họ không phải chuyện đó.
+   *
+   * ⇒ `irreversible` KHÔNG suy được từ annotations. Nó phải đến từ danh mục ta
+   * curate hoặc từ người dùng bấm — cả hai đều có chủ thể chịu trách nhiệm.
+   * → SPEC-arms.md §8a-bis · §6j
+   */
+  const readable = a?.readOnly === true && a?.destructive !== true;
+  return readable ? ('read' as const) : ('write_external' as const);
 }
 
 /**

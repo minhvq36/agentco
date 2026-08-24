@@ -410,6 +410,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      * Sổ chung không bị đụng — cắm lại là tìm thấy. → `Company.removeArm`
      */
     if (segments[0] === 'api' && segments[1] === 'arms' && segments[2] && method === 'DELETE') {
+      /**
+       * `?forget=1` = XOÁ HẲN khỏi sổ chung, không lấy lại được. Tường minh, y
+       * như `?all=1` của ngăn Kết quả: không bao giờ suy một lệnh phá huỷ từ
+       * việc **thiếu** một tham số. `Company.forgetArm` tự chặn nếu còn ai giữ,
+       * và **không đụng tới chìa** — phần đắt của việc cắm nằm ở đó.
+       */
+      if (url.searchParams.get('forget') === '1') {
+        company.forgetArm(decodeURIComponent(segments[2]));
+        return json(res, 200, { arms: company.listArms() });
+      }
       const office = url.searchParams.get('office') ?? undefined;
       company.removeArm(decodeURIComponent(segments[2]), office);
       return json(res, 200, { arms: company.listArms() });

@@ -695,6 +695,79 @@ export class Company {
     });
   }
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ XOÁ HẲN khỏi SỔ CHUNG — mức thứ hai, và là mức DUY NHẤT không lấy lại    │
+   * │ được. (user chốt 25/08: *"Người dùng nên chịu trách nhiệm với hành động  │
+   * │ của mình"*)                                                              │
+   * │                                                                          │
+   * │ Vì sao nó cần tồn tại, và lý do mạnh nhất là luật của chính dự án này:   │
+   * │ tới hôm nay, gỡ một mục mồ côi khỏi sổ chỉ làm được bằng cách **mở       │
+   * │ `company.yaml` và sửa tay** — mà một bước "mở file yaml" là **chuông      │
+   * │ báo** (§6a, chốt 22/08). Không có nút này thì `mcpServers:` chỉ có thể   │
+   * │ dài ra, mãi mãi.                                                         │
+   * │                                                                          │
+   * │ ⚠ MỘT MỤC MỒ CÔI KHÔNG TỐN TOKEN — đừng bán tính năng này bằng lý do sai:│
+   * │ `pickMcp` chỉ dựng server có tên trong `role.mcp`. Cái nó tốn là **chỗ   │
+   * │ trong đầu người dùng**: danh sách "đã cắm ở văn phòng khác" dài dần bằng │
+   * │ những thứ không ai còn nhớ là gì.                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠⚠ **CHÌA KHÔNG BỊ XOÁ THEO** — và đây là thứ làm cho quyết định trên rẻ.
+   *
+   * Phần đắt của việc cắm một cánh tay là **đi lấy chìa**, không phải cấu hình.
+   * Cấu hình dựng lại từ danh mục trong ba cú bấm; chìa thì phải sang tận trang
+   * của hãng. Chìa sống ở `.state/secrets.json` **theo TÊN**, độc lập với sổ —
+   * nên xoá nhầm mất cái rẻ, giữ lại cái đắt. Muốn bỏ chìa thì có đường riêng,
+   * có chủ ý: `agentco secret rm <TÊN>`.
+   *
+   * ⚠ Chặn khi còn ai dùng, và "dùng" có HAI nghĩa — thiếu một nghĩa là xoá mất
+   * một node đang nằm trên sơ đồ của ai đó:
+   *   · `role.mcp`        — có sợi dây tới một nhân viên
+   *   · `office.arms`     — **có mặt** trên sơ đồ, chưa nối dây (node chờ)
+   */
+  /**
+   * Văn phòng nào còn giữ cánh tay này — theo CẢ HAI nghĩa của "giữ".
+   *
+   * ⚠ Một hàm, hai chỗ gọi: cái chốt trong `forgetArm` và cái cờ `orphan` mà
+   * giao diện dùng để quyết có hiện nút xoá hẳn hay không. Tách làm hai bản là
+   * mở đúng cửa cho một nút hiện ra rồi bấm vào thì bị từ chối — hoặc tệ hơn,
+   * một nút KHÔNG hiện ra cho thứ đáng lẽ xoá được.
+   */
+  private armHolders(id: string): string[] {
+    const out: string[] = [];
+    for (const office of this.offices.values()) {
+      const wired = [...office.loaded.roles.values()].some((r) => r.mcp.includes(id));
+      if (wired || office.loaded.config.arms.includes(id)) out.push(office.loaded.config.name || office.id);
+    }
+    return out;
+  }
+
+  forgetArm(id: string): void {
+    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+
+    const holders = this.armHolders(id);
+    if (holders.length) {
+      throw new RunError(
+        `"${this.config.arms[id]?.label || id}" vẫn đang ở ${holders.length} văn phòng ` +
+          `(${holders.join(', ')}). Rút khỏi từng chỗ trước đã — xoá hẳn một thứ đang được dùng ` +
+          `là làm hỏng sơ đồ của người khác.`,
+        'other',
+      );
+    }
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    doc.deleteIn(['mcpServers', id]);
+    doc.deleteIn(['arms', id]);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+  }
+
   /** SỔ CHUNG + nơi nào đang dùng. → docs/SPEC-arms.md §6i */
   listArms(): {
     id: string;
@@ -704,6 +777,13 @@ export class Company {
     /** TÊN chìa, không bao giờ giá trị — để giao diện nói "đã có sẵn, khỏi nhập lại". */
     secrets: string[];
     usedBy: { office: string; role: string }[];
+    /**
+     * KHÔNG văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
+     * dây". Chỉ mục như thế mới hiện nút **xoá hẳn**. Suy từ `usedBy` là sai:
+     * `usedBy` chỉ đếm sợi dây, nên một node đang nằm chờ trên sơ đồ sẽ trông
+     * như mồ côi. → `armHolders`
+     */
+    orphan: boolean;
   }[] {
     return Object.entries(this.config.mcpServers).map(([id, config]) => {
       const usedBy: { office: string; role: string }[] = [];
@@ -720,6 +800,7 @@ export class Company {
         config,
         secrets: meta?.secrets ?? [],
         usedBy,
+        orphan: this.armHolders(id).length === 0,
       };
     });
   }

@@ -1343,7 +1343,55 @@ nhau** là toàn bộ điểm của cặp biến thể này.
 > cấu hình (vì `secretNames` rỗng ⇒ băm khác). Với cánh tay `filesystem` thì nó đã sai như thế từ
 > lâu mà không ai thấy — 401 chỉ là thứ cuối cùng làm nó lộ ra. → §6i-bis
 
-**Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4 và 5 **$0** (không lượt suy luận nào)
+### 🔬 Biến thể 6 — **xoá hẳn một kết nối mồ côi** (mới 25/08, user chốt)
+
+> *"Người dùng nên chịu trách nhiệm với hành động của mình"* — nên có nút này. Lý do mạnh nhất không
+> phải "tránh rác" mà là: tới hôm nay, gỡ một mục không ai dùng khỏi sổ chung **chỉ làm được bằng
+> cách mở `company.yaml` sửa tay** — mà đó là một **chuông báo §6a**.
+
+1. 🖱 Ở văn phòng thứ hai (biến thể 5), bấm node 🔌 Notion → **Rút**. Làm tương tự ở văn phòng đầu.
+2. 🖱 **+ Kết nối** → nhìn mục **Đã cắm ở văn phòng khác**.
+
+| Mong đợi | |
+|---|---|
+| Dòng Notion giờ ghi **`không ai dùng`** thay vì `dùng lại` | ✅ cờ `orphan` từ server |
+| Có icon 🗑 bên phải dòng đó | ✅ chỉ hiện cho mục mồ côi |
+| Cánh tay nào **còn** ở một văn phòng ⇒ **không** có icon 🗑 | ✅ không bày ra lựa chọn chắc chắn bị từ chối |
+
+3. 🖱 Bấm 🗑. Hộp xác nhận phải nói **cả hai** vế:
+
+| Mong đợi | |
+|---|---|
+| *"sẽ biến mất khỏi công ty và **không lấy lại được**"* | ✅ mức duy nhất không hoàn tác |
+| *"**Chìa vẫn được giữ** — cắm lại thì không phải đi lấy token lần nữa"* | ⭐ vế này quan trọng hơn vế trên |
+
+> Vế thứ hai là thứ làm quyết định này **rẻ**. Phần đắt của việc cắm một cánh tay là **đi lấy chìa**,
+> không phải cấu hình. Chìa sống ở `.state/secrets.json` **theo TÊN**, độc lập với sổ — nên xoá nhầm
+> là mất cái rẻ, giữ lại cái đắt. Không nói vế này ra thì người dùng tưởng mình vừa mất token và
+> không ai dám bấm: có nút mà như không.
+
+4. 🖱 Xác nhận, rồi 📝 mở `company/company.yaml`:
+
+| Mong đợi | |
+|---|---|
+| `mcpServers:` **không còn** băm đó | ✅ |
+| `arms:` **không còn** băm đó | ✅ xoá cả hai nửa, không để lại nửa mồ côi |
+| 💻 `agentco secret list` **vẫn** có `NOTION_ACCESS_TOKEN` | ⭐ chìa không bị xoá theo |
+
+5. 🖱 Cắm lại Notion từ danh mục → phải chạy được như thường.
+
+**Phép thử chốt an toàn** — cái này quan trọng hơn cả bốn bước trên:
+
+🖱 Cắm Notion ở một văn phòng và **để nguyên**, rồi vào văn phòng khác mở **+ Kết nối**. Dòng Notion
+phải ghi `dùng lại` và **không có icon 🗑**. Nếu icon hiện ra thì cờ `orphan` đang tính sai — và bấm
+vào là xoá mất một node đang nằm trên sơ đồ của người khác.
+
+⚠ *Chỗ dễ tính sai, đã canh trong mã:* "đang dùng" có **hai** nghĩa — có sợi dây (`role.mcp`) **và**
+có mặt trên sơ đồ mà chưa nối dây (`office.arms`). Chỉ đếm sợi dây thì một node vừa cắm xong chưa
+kịp nối sẽ trông như mồ côi. Cả cờ `orphan` lẫn chốt ở server dùng **cùng một hàm** (`armHolders`)
+nên không lệch được.
+
+**Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4, 5, 6 **$0** (không lượt suy luận nào)
 
 ## Bài 13 — **GitHub**: transport HTTP và cái lỗ `pickMcp` ⛔ *chưa chạy được*
 
