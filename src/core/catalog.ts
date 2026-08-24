@@ -111,8 +111,8 @@ export const CATALOG: CatalogArm[] = [
         name: 'NOTION_TOKEN',
         label: 'Token tích hợp Notion',
         help:
-          'Notion → Settings → Connections → Develop your own integration → tạo mới → copy "Internal Integration Secret". ' +
-          'Rồi MỞ TRANG bạn muốn cho đọc → menu ··· → Connections → thêm tích hợp vừa tạo.',
+          'Mở app.notion.com/developers/connections → + New connection → chọn workspace → menu ••• → copy token (bắt đầu bằng "ntn_"). ' +
+          'Rồi MỞ TRANG bạn muốn cho đọc → menu ··· → Connections → thêm connection vừa tạo.',
       },
     ],
     // ❓ `checkedOn: null` = CHƯA ai đọc quy tắc thương hiệu của Notion. Ô trống

@@ -1073,7 +1073,11 @@ Tạo trong thư mục đã cho phép một file ghi-chu.md, nội dung: xin ch�
 
 Dùng lại văn phòng `Cánh tay` của bài 11.
 
-**Bước 1.** Lấy token: Notion → **Settings** → **Connections** → *Develop your own integration* → tạo integration → copy **Internal Integration Token**. Rồi mở một trang Notion bất kỳ → menu `···` → **Connections** → thêm integration vừa tạo.
+**Bước 1.** Lấy token: mở thẳng **https://app.notion.com/developers/connections** → **+ New connection** → chọn workspace → menu `•••` → copy token (chuỗi bắt đầu bằng `ntn_`). Rồi mở một trang Notion bất kỳ → menu `···` → **Connections** → thêm connection vừa tạo.
+
+> 🔴 **ĐÍNH CHÍNH 24/08 — câu cũ ở đây SAI.** Câu cũ: *"Settings → Connections → Develop your own integration → Internal Integration Token"*. Notion đã đổi **cả từ vựng lẫn đường đi**: *integration* → **connection**, *Internal Integration Token* → **internal connection token**. Đường qua UI hôm nay là `Settings` → `Connections` → bật **Developer Mode** → mục developer ở sidebar. Đi thẳng URL trên thì khỏi mò.
+>
+> ⚠ **Trang `Settings → Connections` của workspace KHÔNG phải chỗ tạo** — nó cai quản chứ không đẻ ra. Nếu không thấy nút tạo đâu cả thì kiểm dòng **"Limit who can create internal connections"** ở trang đó: admin bật nó và bạn không nằm trong danh sách ⇒ nút bị **ẩn**, triệu chứng y hệt "không tìm thấy".
 
 > ⚠ Bước "thêm integration vào trang" rất hay bị quên, và triệu chứng của nó **không phải lỗi
 > xác thực** — server nối được, `tools/list` chạy, nhưng **mọi tìm kiếm trả về rỗng**. Nếu bài này
@@ -1087,7 +1091,7 @@ Dùng lại văn phòng `Cánh tay` của bài 11.
 
 | | Mong đợi | Nếu sai |
 |---|---|---|
-| Ô có **hướng dẫn lấy chìa ở đâu** | *"Notion → Settings → Connections → Develop your own integration"* | thiếu ⇒ người non-code kẹt, và họ **không biết để hỏi ai** |
+| Ô có **hướng dẫn lấy chìa ở đâu** | *"app.notion.com/developers/connections → + New connection"* | thiếu ⇒ người non-code kẹt, và họ **không biết để hỏi ai** |
 | Ô che giá trị sau khi lưu | `••••••••` | hiện plaintext ⇒ bug |
 | Bạn **không phải gõ tên biến** | không thấy chữ `NOTION_TOKEN` ở đâu cả | thấy ⇒ danh mục chưa ship sẵn tên biến (`SPEC-arms.md` §5c) |
 
