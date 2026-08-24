@@ -577,9 +577,23 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               rõ ràng không đúng với thứ họ đang làm.
               → Chỉ nói khi phép chờ đã THẬT SỰ lâu.
             */}
+            {/*
+              ⚠ ĐÍNH CHÍNH 24/08 — câu cũ hứa *"Những lần sau sẽ nhanh"*, và đó
+              là một lời hứa sản phẩm KHÔNG GIỮ ĐƯỢC.
+
+              Đo 10 lần (`scripts/spike-npx-cost.ts`) với gói đã nằm sẵn trong
+              cache `_npx`: đầu-cuối **7,7–9,2 giây**, lần đầu bằng lần thứ ba.
+              Phần lớn là phí tự thân của `npx` (~3,2 s mỗi lần khởi động, không
+              phải tải gói). User dùng thật và báo đúng: *"lần nào cũng lâu,
+              chưa thấy lần 4 giây nào"*.
+
+              Câu mới chỉ nói thứ đo được, và KHÔNG hứa lần sau — hứa nhanh rồi
+              vẫn chậm là dạy người dùng thôi tin mọi câu khác trên màn hình.
+            */}
             {testing && slow && (
               <p className="mt-1.5 text-xs text-muted">
-                Hơi lâu — lần đầu dùng một công cụ, máy phải tải nó về. Những lần sau sẽ nhanh.
+                Bước này mất khoảng 10–25 giây: máy phải khởi động công cụ kết nối rồi hỏi xem nó
+                làm được những gì.
               </p>
             )}
 

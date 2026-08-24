@@ -34,6 +34,8 @@ const dirs = { companyDir, officeDir };
 
 const write = (p: string) => guardedZone(dirs, p, 'write');
 const read = (p: string) => guardedZone(dirs, p, 'read');
+/** Tool của MCP — matcher `mcp__.*`. Đo được 24/08 là hook CÓ nổ cho chúng. */
+const arm = (p: string) => guardedZone(dirs, p, 'arm');
 
 // ─────────────────────────────────────────────── ① CHÌA KHOÁ — cấm cả hai chiều
 
@@ -137,4 +139,42 @@ test('KHÔNG chặn · file có chữ "roles" trong tên nhưng không phải th
   // `roles/`, và một phép dò chuỗi ngây thơ sẽ nuốt nhầm nó.
   assert.equal(write('artifacts/roles-cu.md'), undefined);
   assert.equal(write('artifacts/danh-sach-roles/x.md'), undefined);
+});
+
+// ───────────────────────────────────── ⑤ CÁNH TAY (mode `arm`, 24/08)
+//
+// Cánh tay là đường GHI RA NGOÀI ĐƯỢC PHÉP — luật §8·0: *"mọi đường ra phải
+// qua một tool/MCP TƯỜNG MINH"*. Nên bộ ba luật của nó lệch hẳn `write`, và
+// cả hai chiều đều phải có test: chặn cái phải chặn, VÀ cho qua cái phải cho.
+
+test('arm · RA NGOÀI văn phòng KHÔNG bị chặn — đó là lý do cánh tay tồn tại', () => {
+  // Đây là dòng khác biệt duy nhất giữa `arm` và `write`, và là cả điểm của
+  // bản vá 24/08. Ngày ai đổi nó, họ phải đọc §8·0 trước.
+  assert.equal(arm('D:\\Downloads\\Programs Installation\\ban-ke.md'), undefined);
+  assert.equal(arm('/home/an/ho-so/x.md'), undefined);
+  assert.equal(arm(path.join(companyDir, 'offices', 'khac', 'artifacts', 'x.md')), undefined);
+});
+
+test('arm · kho chìa vẫn cấm — MCP không được là cửa sau vào `.state/`', () => {
+  assert.equal(arm(path.join(companyDir, '.state', 'secrets.json')), 'secrets');
+  assert.equal(arm('../../.state/secrets.json'), 'secrets');
+  assert.equal(arm('.state/tasks/P-1.plan.json'), 'secrets');
+});
+
+test('arm · file cấu hình vẫn cấm — kể cả ĐỌC, khác `read` builtin', () => {
+  // Cố ý HẸP HƠN `read`: lúc hook chạy ta chỉ có TÊN TOOL, không có cách tất
+  // định nào biết `mcp__x__foo` là đọc hay ghi. Dò chuỗi tên là quay lại đúng
+  // class bất định đã loại ở §5n ㉕. Phủ định sai ở đây tốn 0: `Read` builtin
+  // vẫn đọc `roles/*.yaml` được như cũ (test ngay dưới khoá chuyện đó).
+  assert.equal(arm('roles/nguoi-kiem-ke.yaml'), 'config');
+  assert.equal(arm('office.yaml'), 'config');
+  assert.equal(arm(path.join(companyDir, 'company.yaml')), 'config');
+  assert.equal(read('roles/nguoi-kiem-ke.yaml'), undefined);
+});
+
+test('arm · artifacts/ và library/ vẫn mở — nửa NGƯỢC CHIỀU của cùng bất biến', () => {
+  assert.equal(arm('artifacts/P-1/T-01/ban-ke.md'), undefined);
+  assert.equal(arm('library/text/hop-dong.txt'), undefined);
+  assert.equal(arm('knowledge/shared/bai-hoc.md'), undefined);
+  assert.equal(arm(''), undefined);
 });

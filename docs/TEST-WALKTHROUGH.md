@@ -952,9 +952,23 @@ Nên hôm nay chỉ có hai lựa chọn, và cả hai đều không ổn:
 
 **Bước 6.** 🖱 **Thử ngay** → mong đợi `✓ Chạy được · 14 việc`, kèm dòng `10 việc chỉ đọc · 4 việc có ghi · ~2 775 token mỗi lượt`.
 
-> ⏱ **Chờ 20–30 giây ở lần đầu là BÌNH THƯỜNG**, không phải treo — đo đầu-cuối qua route: **22,3
-> giây** lần đầu (phải tải gói `npx` về), **~4 giây** những lần sau. Hộp thoại phải hiện *"đang kết
-> nối…"* kèm câu giải thích. **Nếu nó im lặng hoặc trả ✗ ngay lập tức thì đó mới là bug.**
+> ⏱ **Chờ ~8–25 giây là BÌNH THƯỜNG**, không phải treo. Hộp thoại phải hiện *"đang kết nối…"*.
+> **Nếu nó im lặng hoặc trả ✗ ngay lập tức thì đó mới là bug.**
+>
+> 🔴 **ĐÍNH CHÍNH 24/08 — câu cũ ở đây SAI, và user bắt được bằng cách dùng thật:** nó hứa
+> *"22,3 s lần đầu · ~4 giây những lần sau"*. Vế thứ hai không bao giờ xảy ra. Đo lại 10 lần
+> (`scripts/spike-npx-cost.ts`), gói đã nằm sẵn trong cache `_npx`:
+>
+> | | |
+> |---|---:|
+> | `npx` khởi động server (đã cache) | **3,8 – 4,3 s**, lần 1 = lần 3 |
+> | `node <file đã cache>` — bỏ npx | **0,79 – 0,84 s** |
+> | đầu-cuối `probeArm` qua `npx` | **7,7 – 9,2 s** |
+> | đầu-cuối `probeArm` qua `node` | **4,2 – 4,5 s** |
+>
+> ⇒ **`npx` tốn ~3,2 s MỖI LẦN KHỞI ĐỘNG, vĩnh viễn** — không phải tải gói, mà là phí tự thân của
+> npx. "Lần sau nhanh hơn" là một mệnh đề chưa ai đo; nó sinh ra từ đúng **một** lần bấm giờ thuận
+> lợi. Cái giá này lặp lại ở **mỗi task có cánh tay**, không chỉ ở hộp thoại.
 
 | Thấy gì | Nghĩa là |
 |---|---|
@@ -981,10 +995,27 @@ Trong thư mục đã cho phép, tìm 5 file lớn nhất và tóm tắt xem th�
 
 | # | Câu hỏi | Cách chấm |
 |---|---|---|
-| 1 | Nhân viên **có dùng cánh tay** không? | Nhật ký phải có dòng tên tool dạng `mcp__files__…`. Nếu nó dùng `Glob`/`Read` thì cánh tay **không được nạp** — báo |
+| 1 | Nhân viên **có dùng cánh tay** không? | Nhật ký phải có dòng dạng `<tên kết nối> · list directory with sizes → …`. Thấy `đang đọc`/`đang tìm` thay vào đó là nó dùng builtin — báo |
 | 2 | Có lấy được **kích thước** không? | Đây là thứ `Bash` từng độc quyền (bài 9). Cánh tay này lấy được ⇒ **`Bash` bớt đi một lý do tồn tại** |
 | 3 | Có dòng `đang chạy:` nào không? | **Phải là KHÔNG** — shell đã tắt ở bước 2 |
 | 4 | ⏱ **Bước 3 → bước 8 mất bao lâu?** | ⭐ **Ghi con số này.** Trên 60 giây thì thiết kế §6 chưa đạt |
+| 5 | Nhật ký gọi cánh tay bằng **TÊN bạn đặt** hay bằng một chuỗi băm? | Phải là tên. Thấy `a385afc3ab6` là bản vá 24/08 chưa vào |
+
+> 🔴 **Ô số 1 đã hỏng thật, suốt từ 23/08 tới 24/08, và không ai thấy.** Ca `P-260824-0355-r3qe`:
+> cánh tay đã cắm, đã nối dây, nhân viên gọi tool ba lần và **cả ba lần bị SDK từ chối quyền** vì
+> `allowedTools` không chứa tên tool MCP. Nhìn từ ngoài nó giống hệt *"thư mục bị khoá"*. Chi tiết
+> đầy đủ: `SPEC-arms.md` §5i. **Bài này là bài hồi quy cho bản vá đó** — nếu ô 1 hỏng lại, so ngay
+> với `scripts/spike-mcp-allow.ts`.
+
+> 🔴 **LUẬT ĐO, thêm 24/08 — áp cho MỌI bài có sửa cấu hình rồi hỏi lại.**
+>
+> Sửa xong cấu hình (rút dây, cắm thêm, đổi tên) thì **ĐỪNG gõ lại y hệt câu cũ**. Trợ lý `resume`
+> cả hội thoại, nên câu trả lời cũ của **chính nó** nằm trong ngữ cảnh — và nó chép lại câu đó thay
+> vì đọc danh bạ mới. Ca thật 24/08: ba lượt liên tiếp trả về **giống nhau từng ký tự**, kèm một
+> đường dẫn đã không còn trong prompt (đo bằng cache: `cache_read = 0` sau 15 giây ⇒ prompt đã sạch).
+>
+> ⇒ **Đổi cách gõ câu hỏi, hoặc `/clear` trước khi đo lại.** Gõ lại y hệt là đang đo lịch sử hội
+> thoại chứ không đo hệ thống. Chi tiết + bản vá: `SPEC-arms.md` §15.
 
 ### 🔬 Biến thể — **đo cái allowlist, không chỉ đo cái kết nối**
 
@@ -1004,6 +1035,27 @@ Trong thư mục đã cho phép, tìm 5 file lớn nhất và tóm tắt xem th�
 > `Read` builtin **không có hàng rào nào** (đo 22/08). Nên cắm cánh tay "File trên máy" mà **không**
 > dựng hàng rào đọc thì ta vừa **bán một cái khoá cho một cánh cửa, trong khi tường bên cạnh vẫn
 > thủng**. Biến thể này tồn tại để bạn **nhìn thấy tận mắt** chuyện đó trước khi quyết định.
+>
+> ⚠ **Cập nhật 24/08:** trước bản vá §5i, biến thể này **không đo được gì cả** — cánh tay chỉ nhìn
+> thấy thư mục văn phòng (nó nghe `roots` của CLI chứ không nghe `args`), nên "ngoài allowlist" là
+> mọi thứ, và "trong allowlist" cũng vậy. Giờ danh sách thư mục có hiệu lực thật, và biến thể này
+> mới bắt đầu nói được điều nó định nói.
+
+### 🔬 Biến thể — **GHI ra ngoài văn phòng qua cánh tay** (mới 24/08)
+
+Đây là thứ bài 9b (⛔) chưa làm được bằng `Bash`, và là **§8·0 chạy thật lần đầu**: đường ra có TÊN.
+
+🖱 chat:
+
+```
+Tạo trong thư mục đã cho phép một file ghi-chu.md, nội dung: xin chào.
+```
+
+| Mong đợi | |
+|---|---|
+| ✅ File xuất hiện **đúng chỗ đó trên đĩa** | cánh tay là đường ghi ra ngoài hợp lệ |
+| ✅ Nhật ký hiện `<tên kết nối> · write file → ghi-chu.md` | đường ra **đọc được**, khác hẳn `Bash` |
+| ✅ Báo cáo cuối nói `Có dùng kết nối: <tên>` | không nói *"đã ghi ra ngoài"* — ta chỉ khai thứ quan sát được |
 
 **Chi phí:** ~$0.03–0.08
 

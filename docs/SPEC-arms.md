@@ -818,6 +818,207 @@ Google **không tồn tại ở đây**. Đó là khác biệt thật giữa *"h
 
 ---
 
+### 5i. 🔴🔴 CÁNH TAY NỐI VÀO WORKER — ba mảnh, và cả ba đều THIẾU (đo + vá 24/08)
+
+> **Trạng thái: ✅ ĐÃ VÁ.** Đo bằng `scripts/spike-mcp-allow.ts` · `spike-mcp-roots.ts` ·
+> `spike-mcp-hook.ts` · `spike-arm-e2e.ts`. Ca gốc: `P-260824-0355-r3qe`, văn phòng `kiem-ke`.
+
+Cánh tay `File trên máy` đã cắm (23/08), đã nối dây, node hiện trên sơ đồ, `company.yaml` và
+`roles/*.yaml` đều ghi đúng. Nhân viên gọi tool **ba lần**, cả ba lần hỏng. `blocked · 4 lượt ·
+$0,0948 · 0 kết quả`, và bước T-02 đổ theo vì phụ thuộc.
+
+#### ① `allowedTools` không chứa tên tool MCP ⇒ SDK deny mọi lời gọi
+
+Nguyên văn `tool_result` đo được:
+
+```
+"Claude requested permissions to use mcp__files__list_directory_with_sizes,
+ but you haven't granted it yet."
+```
+
+`worker.ts` gửi `allowedTools = effectiveTools(role.tools)` = 7 tool văn phòng (+ shell). Tên
+`mcp__<server>__<tool>` không nằm trong đó ⇒ "cần hỏi" ⇒ không có `canUseTool` ⇒ **deny**.
+
+| lượt | `allowedTools` | tool gọi | deny |
+|---|---|---:|---:|
+| A · đúng production trước 24/08 | 7 tool | 5 | **4** |
+| B · `+ mcp__files` (tiền tố SERVER) | 8 | 2 | 0 |
+| C · `+ 14 tên đầy đủ` | 21 | 2 | 0 |
+
+⇒ Ta trả **~2 185 token MỖI LƯỢT** (§9b) cho một bộ 14 tool **không bao giờ dùng được**.
+
+#### ② 🔴🔴 Thư mục người dùng khai ở hộp thoại BỊ BỎ HOÀN TOÀN
+
+`@modelcontextprotocol/server-filesystem` **ưu tiên `roots` của client hơn tham số dòng lệnh**, và
+Claude Code khai `cwd` (+ `additionalDirectories`) làm roots. Đo bằng cách giữ nguyên `args`, chỉ
+đổi `cwd`:
+
+```
+args → …\muc-tieu   cwd → …\van-phong                       ⇒ Allowed: …\van-phong   ← args bị vứt
+args → …\muc-tieu   cwd → …\muc-tieu                        ⇒ Allowed: …\muc-tieu
+args → …\muc-tieu   cwd → …\van-phong  + additionalDirectories
+                                        = […\muc-tieu]      ⇒ Allowed: cả HAI        ✅
+```
+
+⇒ Trước bản vá, cánh tay trỏ vào `D:\Downloads\…` thực chất **chỉ mở được thư mục văn phòng** — đúng
+thứ `Read` trần đã làm được, miễn phí. Ô nhập thư mục ở §6f là **trang trí**.
+
+> **Ba hình dạng cũ, cùng lúc, và cả ba đã có tên trong sổ:**
+> · `safeJoin`/`secrets.ts` — *cơ chế có thật, chạy đúng, mở/bảo vệ một thứ KHÁC*
+> · công tắc `Bash` no-op 6 ngày — *gửi một danh sách tên xuống hệ khác mà không hỏi lại nó nhận gì*
+> · [[agentco-measurement-vs-conclusion]] — spike 1+2 (23/08) đo **bắt tay** và **token**, rồi kết
+> luận cánh tay chạy được. **Chưa phép đo nào GỌI một tool MCP.**
+
+#### ③ Điều kiện để ①+② an toàn: hook phải khớp `mcp__*`
+
+Bật ①+② mà quên ③ là **mở một cửa ghi vào `roles/` và đọc `<office>/.state/`** — đúng hai lỗ vá
+23/08, qua một cửa khác. Đã ghi trước ở §8a-ter, giờ đã đo và đã cài. Ba vùng, ba luật:
+
+| mode | ai gọi | `secrets` | `config` | `outside` |
+|---|---|---|---|---|
+| `read` | `Read`/`Grep`/`Glob` | cấm | cho | cho |
+| `write` | `Write`/`Edit`/`NotebookEdit` | cấm | cấm | **cấm** |
+| **`arm`** | **`mcp__.*`** | cấm | cấm | **CHO** |
+
+**`arm` được ra ngoài vì đó là LÝ DO NÓ TỒN TẠI** — luật §8·0 (*mọi đường ghi ra ngoài phải qua một
+tool/MCP tường minh, có tên, đọc được trong nhật ký*). Cấm `outside` cho `arm` là cấm đúng con đường
+tử tế mà luật đó vừa dựng, và người dùng sẽ quay lại `Bash` — thứ không có biên nào.
+
+⚠ `arm` cấm **cả ĐỌC** file cấu hình, hẹp hơn `read` builtin. Cố ý: lúc hook chạy ta chỉ có TÊN
+TOOL, không có cách tất định nào biết `mcp__x__foo` là đọc hay ghi — dò chuỗi tên là quay lại đúng
+class bất định đã loại ở `SESSIONS_MEMORY` §5n ㉕. Phủ định sai ở đây tốn **0**: `Read` builtin vẫn
+đọc `roles/*.yaml` như cũ, và có test khoá chuyện đó.
+
+#### Biên của một cánh tay — BA TẦNG, không phải "không có biên"
+
+Câu user hỏi khi duyệt: *"cấp quyền filesystem rồi thì hết bị scope chặn đúng không?"* → **không.**
+
+| tầng | ai giữ | chặn gì |
+|---|---|---|
+| 1 · `roots` của MCP server | **server**, tự từ chối | mọi đường dẫn ngoài `cwd` + thư mục đã khai |
+| 2 · hook `mcp__.*` mode `arm` | agentco | `.state/` (đọc+ghi) · file cấu hình (đọc+ghi) |
+| 3 · `swallowsOffice` (§6i) | agentco, lúc CẮM | không cho lấy thư mục văn phòng/công ty làm gốc |
+
+⇒ Đó chính là thứ làm cánh tay **khác `Bash`**: `Bash` không có tầng nào; cánh tay có ba, và tầng 1
+do **người dùng vẽ ra** và đọc được trên sơ đồ.
+
+#### Danh sách 14 tool — đo thật, không nhớ (`scripts/spike-fs-tools.ts`)
+
+```
+👁 read  (10)  directory_tree · get_file_info · list_allowed_directories · list_directory
+               list_directory_with_sizes · read_file · read_media_file · read_multiple_files
+               read_text_file · search_files
+✍ write (4)   create_directory · edit_file · move_file · write_file
+```
+
+> ⚠ **KHÔNG có tool XOÁ** — không `delete`, không `remove`, không `unlink`. `move_file` chỉ dời được
+> trong phạm vi roots. Cắm cánh tay này **không** cho nhân viên quyền xoá file của người dùng.
+
+#### Chốt: duyệt theo CẢ SERVER (user chốt 24/08)
+
+`allowedTools += mcp__<băm>`, không liệt kê từng tool. Vì **cạnh nối trên sơ đồ LÀ hành động cấp
+quyền** (§6e) — kéo dây từ 🔌 xuống một nhân viên *chính là* câu "người này được dùng cánh tay này".
+Duyệt lẻ từng tool bắt người dùng trả lời lại cùng một câu hỏi bằng từ vựng họ không có
+(`write_file` vs `edit_file`), và 4/14 tool sẽ deny ra **đúng câu "permission denied" khó hiểu** vừa
+mất một buổi để truy. Mức duyệt từng tool là việc của §8 — nơi có **chủ thể bấm nút**.
+
+#### Kiểm đầu-cuối, qua đúng `runWorker` (`scripts/spike-arm-e2e.ts`)
+
+| ca | kết quả | |
+|---|---|---|
+| A · liệt kê thư mục của cánh tay | ✅ `done` · 3 lượt · $0,132 | đúng ca đã hỏng |
+| B · **ghi ra ngoài văn phòng** qua cánh tay | ✅ `done` · canary có trên đĩa | §8·0 lần đầu chạy thật |
+| C · đọc `<office>/.state/` qua cánh tay | 🟢 **bị chặn** | nhật ký vẫn hiện `read text file → index.json` |
+| D · ghi `roles/*.yaml` qua cánh tay | 🟢 **bị chặn** | |
+
+⚠ **Lượt đo đầu của ca D KHÔNG đo được thứ nó định đo:** nhân viên chọn `Write` builtin, nên nó thử
+hàng rào `write` (cũ) chứ không thử matcher `mcp__.*` (mới). Phải nêu đích danh công cụ rồi chạy
+lại. Ghi ra vì đó là bẫy sẽ lặp: **một ca test đi qua đường khác với đường nó định thử thì kết quả
+🟢 của nó nói về chuyện khác.**
+
+#### Hệ quả bắt buộc: ĐƯỜNG NHÌN mở cùng lúc với QUYỀN
+
+Luật 22/08 (`SESSIONS_MEMORY` §5n ⑦): *mở rộng một quyền thì phải mở rộng cả đường nhìn vào nó,
+**trong cùng một lần sửa** — tách hai việc thì giữa hai lần có một khoảng quyền đã rộng mà mắt vẫn
+hẹp, và đó chính xác là hình dạng của mọi sự cố im lặng.* Cánh tay vừa đi từ "không bao giờ chạy"
+sang "ghi được file lên đĩa người dùng", nên cùng ngày:
+
+- `describeCall` nói **tên người dùng đặt** + việc + đích: `Programs Installation 2 · write file →
+  ban-ke.md`, thay cho `đang làm việc với a385afc3ab6` (một cái **băm**).
+  ⚠ Đuôi tên tool in **nguyên văn**, không qua bảng dịch viết tay — bảng đó đúng cho `filesystem` và
+  câm cho Notion/GitHub/server người dùng tự cắm, tức hỏng **đúng lúc danh mục lớn lên**.
+- `whereBlock` bỏ câu *"Đã ghi ra ngoài qua: \<băm\>"*. Nó **khai nhiều hơn thứ ta kiểm**:
+  `landingOf` ghi nhận một *lời gọi*, không ghi nhận kết quả, và 10/14 tool là chỉ đọc. Ca có thật:
+  `r3qe` bị deny cả ba lần, không một byte nào được ghi, báo cáo vẫn nói "Đã ghi ra ngoài qua".
+  Câu mới: `Có dùng kết nối: <nhãn>` + một dòng riêng khoanh vùng phần bất định.
+- `warnDroppedTools` nhận thêm ca **"có khai `mcp:` mà CLI cấp 0 tool `mcp__`"** — cùng bất biến
+  *"thứ tôi xin và thứ tôi nhận không khớp"*, không đẻ cơ chế thứ hai phải giữ đồng bộ.
+
+**+21 test → 344** (`test/arm-wiring.test.ts` + 4 ca `arm` trong `test/jail.test.ts`).
+
+---
+
+### 5j. ✅ BỎ `npx` KHỎI ĐƯỜNG NÓNG — số đo quyết, không phải lập luận (24/08)
+
+User dùng thật và bác bỏ một câu trong tài liệu của chính ta: *"thỉnh thoảng timeout… và trường hợp
+load nhanh tôi chưa thấy lần nào xảy ra cả. Lần nào cũng lâu."* Bài 11 hứa *"22,3 s lần đầu · ~4 s
+những lần sau"*. **Vế thứ hai chưa ai đo** — nó đến từ đúng một lần bấm giờ thuận lợi, rồi được chép
+vào ba chỗ (`probe.ts` · `api.ts` · `TEST-WALKTHROUGH`).
+
+Đo 10 lượt (`scripts/spike-npx-cost.ts`), gói **đã nằm sẵn** trong cache `_npx`:
+
+| | |
+|---|---:|
+| `npx` khởi động server (đã cache) | **3,8 – 4,3 s** — lần 1 = lần 3 |
+| `node <file đã cache>` | **0,79 – 0,84 s** |
+| đầu-cuối `probeArm` qua `npx` | **7,7 – 9,2 s** |
+| đầu-cuối `probeArm` qua `node` | **4,2 – 4,5 s** |
+| `npx -y --offline` | **3 878 ms** ⇒ **KHÔNG phải mạng** |
+
+⇒ **~3,2 s là phí tự thân của bộ máy resolve của npm**, không phải tải gói, và nó không bao giờ nhỏ
+đi. Cái giá thật lớn hơn hộp thoại cắm: mỗi `query()` spawn một tiến trình MCP mới, nên khoản đó bị
+trả ở **MỖI TASK có cánh tay**, mãi mãi.
+
+**Ba hiểu lầm đã đính chính:**
+- *"npx đâu có global, phải npx trong `/company` để reuse?"* → **cache npx LÀ global**
+  (`%LOCALAPPDATA%\npm-cache\_npx` · `~/.npm/_npx`). Reuse giữa các văn phòng **đã xảy ra rồi** — và
+  đó chính là lý do reuse vẫn chậm: chậm không phải vì tải.
+- *"phải npx vào chính thư mục đích?"* → không, và `cwd` của tiến trình MCP cũng không quyết định
+  thư mục nó đọc được (§5i ②).
+- *"do cấu hình máy? do AI?"* → không phải cả hai.
+
+**Đã xây (`core/armexec.ts`), hai nửa cố ý tách:**
+
+| | |
+|---|---|
+| `fastLaunch` | **ĐỒNG BỘ**, thuần đọc đĩa. Dùng ở `pickMcp` (mỗi task) và `probeArm`. Có bản cài sẵn thì đổi `npx` → `node <entry>`; không thì trả **đúng cấu hình gốc** |
+| `ensureInstalled` | **BẤT ĐỒNG BỘ**, `npm install --prefix ~/.agentco/arms/<băm>`. Gọi ở nút **Thử ngay** (có chờ) và lúc daemon mở công ty (`void`, không chờ) |
+
+Tách vì `pickMcp` là đường **đồng bộ** — biến nó thành `async` là kéo `await` vào đúng chỗ nóng nhất
+để đổi lấy một lần cài đáng ra phải xong từ trước.
+
+**Đo lại sau bản vá:** `probeArm` **7,7–9,2 s → 4,0–4,2 s**, khớp đúng mốc `node` thẳng. Lượt đầu
+tiên mất **~28 s** (một lần `npm install`), sau đó không bao giờ trả lại.
+
+> ⚠ **Trả lời thẳng câu user hỏi lúc duyệt — *"một việc bỏ 0 ăn tất thế này có lý do gì mà không
+> làm?"*: KHÔNG phải bỏ 0.** Nó đẻ ra một tầng quản lý gói với ba ca hỏng riêng: máy không có `npm` ·
+> không ra được registry lần đầu · thư mục cache bị dọn. Cả ba xử bằng **MỘT luật**:
+> ***nghi ngờ gì thì trả về cấu hình GỐC và để `npx` chạy như cũ.***
+> Bản vá này chỉ được phép làm **nhanh hơn**, không bao giờ được phép làm **hỏng** — vì nếu nó hỏng,
+> `company.yaml` vẫn ghi `npx` y như cũ và không ai đoán ra nguyên nhân.
+>
+> ⚠ `env` phải đi qua nguyên vẹn: `pickMcp` tiêm chìa vào `env` TRƯỚC `fastLaunch`. Viết lại cấu
+> hình mà đánh rơi `env` là cánh tay chạy nhanh và **không có chìa** — triệu chứng (`401`) nằm rất
+> xa nguyên nhân. Có test canh.
+
+**Kho gói là `~/.agentco/arms/`, và nó là CACHE** — xoá lúc nào cũng được, tự dựng lại, dùng chung
+cho mọi công ty. Cố ý **không** đặt trong `company/.state/`: zip một công ty sang máy khác thì
+`node_modules` đi theo, làm hỏng đúng lời hứa *"zip lại là chạy được"*.
+
+**+12 test → 369** (`test/armexec.test.ts`; hơn nửa số test canh nhánh **"phải trả về cấu hình gốc"**).
+
+---
+
 ## 6. Cắm qua UI — hôm nay có **ba** bước "mở file yaml", và đó là chuông báo
 
 ### 6a. Đếm chuông
@@ -1168,6 +1369,68 @@ người liệt kê ĐỦ nơi họ với tới*.** Câu này tự đúng dù th
 `connected` ↔ `pending` sẽ **bump cacheKey mỗi lần**. ⇒ Trạng thái vào danh bạ phải **ổn định hoá**
 (chỉ đổi khi đứng yên đủ lâu), đúng luật *"HOT phải ỔN ĐỊNH"* của kho tri thức.
 
+### 7d. ✅ ĐÃ TRẢ MÓN NỢ "LIỆT KÊ BẰNG TÊN, KHÔNG BẰNG NĂNG LỰC" — nửa `thư mục` (24/08)
+
+§7b ghi từ 22/08: *"dòng đó liệt kê MCP bằng TÊN (`notion`), không bằng NĂNG LỰC… tên server là LỜI
+KHAI, danh sách tool của nó mới là SỰ THẬT. Chưa giải."* Hai ngày sau nó thu lãi, ba lượt liên tiếp:
+
+```
+— "Trong thư mục đã cho phép, tìm 5 file lớn nhất…"
+— "Bạn cho mình xin đường dẫn đầy đủ của thư mục cần soi nhé?"
+— "thư mục music"
+— "Bạn cho mình xin đường dẫn đầy đủ tới thư mục Music đó nhé?"
+— "nhân viên của bạn biết thư mục này rồi"          ← user nói ĐÚNG
+— "Mình vẫn cần đường dẫn đầy đủ…"
+```
+
+Trợ lý **không cố chấp — nó thật sự không biết**: `role.mcp` là mảng BĂM (`a385afc3ab6`), và `reach()`
+đổ thẳng mảng đó vào dòng năng lực.
+
+**Sửa (`assistant.ts §armReach`, hàm thuần, ~12 token/cánh tay, 0 lời gọi thêm):**
+`[Programs Installation 2 (thư mục: D:\Downloads\Programs Installation) · web · chạy lệnh: TẮT]`
+
+⚠ **Nửa còn lại, thiếu nó thì nửa kia vô nghĩa:** `SHELL_LEGEND` phải dạy *dùng luôn thư mục đã in
+ra, đừng hỏi lại*. Và câu đó phải **HẸP** — chỉ nói về thư mục ĐÃ in ra; viết rộng thành *"đừng hỏi
+đường dẫn"* là dạy Trợ lý đoán bừa một đường dẫn nó chưa từng thấy.
+
+**Còn nợ:** vẫn chưa nêu **TOOL** của cánh tay (14 cái ≈ 45 token/lượt chat). Chưa cần — xem §7e.
+
+### 7e. 🔴🔴 `SHELL_LEGEND` ĐÃ NÓI DỐI, VÀ NÓ TỰ CẢNH BÁO CHÍNH MÌNH TỪ 22/08
+
+Ca user 24/08, cánh tay filesystem cắm đàng hoàng, shell **TẮT**:
+
+> *"Nhân viên phụ trách thư mục Musics đang tắt chế độ chạy lệnh nên không lấy được dung lượng file…
+> Bạn có thể **bật chế độ chạy lệnh** cho nhân viên này không?"*
+
+**Sai, và đo được là sai.** `spike-arm-e2e` ca A chạy với `role.tools = []` (shell tắt hoàn toàn) và
+vẫn ra bảng kích thước đầy đủ: `Programs Installation 2 · list directory with sizes` → `done`.
+`list_directory_with_sizes` và `get_file_info` là 2 trong **14 tool** của cánh tay.
+
+Câu cũ: *'"chạy lệnh: BẬT" thì có thêm: **kích thước · ngày sửa · dung lượng của file**'*.
+
+> ⚠⚠ **VÀ ĐÂY MỚI LÀ PHẦN ĐẮT.** Khối chú thích ngay **TRÊN** hằng số đó, viết 22/08, đã nói chính
+> xác chuyện sẽ xảy ra: *"nó hết đúng vào đúng ngày MCP có mặt… nói dối theo chiều làm Trợ lý TỪ
+> CHỐI một việc vốn chạy được"*. Bản vá hôm ấy **gỡ chữ "DUY NHẤT" mà giữ nguyên vế nhân quả**. Và
+> có hẳn một test canh chữ "DUY NHẤT" — **xanh suốt, trong khi lỗi vẫn sống**.
+>
+> **Sửa CHỮ, không sửa MỆNH ĐỀ.** Test mới canh mệnh đề: `SHELL_LEGEND` không được chứa
+> `kích thước` / `ngày sửa` / `dung lượng`.
+
+**Chốt:** chỉ nêu thứ shell **thật sự độc quyền** — *chạy lệnh/script tuỳ ý · ghi ra ngoài văn
+phòng*. Cộng một câu chặn đúng hành vi đã hỏng:
+
+> *"Một kết nối (🔌) mang thêm khả năng RIÊNG của nó, và nhân viên tự biết mình gọi được gì lúc làm.
+> **ĐỪNG đoán hộ** rằng nhân viên KHÔNG làm được một việc chỉ vì "chạy lệnh: TẮT" — cứ giao, họ sẽ
+> tự báo nếu thiếu tay."*
+
+⇒ Đây cũng là **lý do §7d chưa cần nêu tool**: Trợ lý không cần biết cánh tay có tool gì; nó cần
+biết **nơi** nhân viên với tới (§7d) và **đừng khẳng định điều nó không kiểm được**. Nhân viên biết
+bộ tool của chính nó — Trợ lý thì không, và đó là chuyện bình thường.
+
+> **Luật rút ra: đừng liệt kê NĂNG LỰC theo NGUỒN CẤP.** Mọi câu dạng *"có X thì mới làm được Y"* là
+> một khẳng định về toàn bộ thế giới, và nó hết đúng vào ngày thế giới lớn ra — **theo chiều làm hệ
+> thống từ chối việc nó làm được**, tức là hỏng im lặng.
+
 ---
 
 ## 8. Cổng duyệt cho MCP — `annotations` là nguồn, nhưng chỉ theo MỘT chiều
@@ -1240,7 +1503,7 @@ tên `mcp__<server>__read_file`, **không khớp cái nào**.
 | | trạng thái |
 |---|---|
 | Vá HẸP — chặn cắm gốc nuốt thư mục văn phòng/công ty | ✅ **đã làm** — `catalog.ts §swallowsOffice`, 6 test |
-| Vá RỘNG — mở matcher hook sang `mcp__*` | ❌ **chưa làm**, và ❓ **chưa ai đo matcher đó có khớp không** |
+| Vá RỘNG — mở matcher hook sang `mcp__*` | ✅ **ĐÃ LÀM 24/08** — xem §5i |
 
 > ⚠ **Đừng đọc vá hẹp thành "đã an toàn".** Nó đóng **con đường dễ đi nhất** (người dùng vô tình
 > chọn ổ `D:\`), không đóng cả lớp: một MCP bất kỳ có tool đọc file, trỏ vào bất kỳ đâu chứa
@@ -1248,6 +1511,24 @@ tên `mcp__<server>__read_file`, **không khớp cái nào**.
 >
 > Đây là **lý do thứ hai** để §8 (cổng duyệt) không bị hoãn vô hạn: `PreToolUse` là tầng duy nhất
 > mọi lời gọi tool đi qua, kể cả MCP — và spike 3 vẫn chưa chạy.
+
+**✅ Câu hỏi ❓ ở hàng thứ hai đã có số đo (24/08, `scripts/spike-mcp-hook.ts`):**
+
+| | hook nổ | kết quả |
+|---|---|---|
+| đối chứng, không hook | — | ❌ đọc được `roles/nguoi-viet.yaml` qua `mcp__files__read_text_file` |
+| matcher `mcp__.*` deny | ✅ 2 lần | ✅ **chặn thật** |
+| matcher `.*` deny | ✅ 1 lần | ✅ chặn thật |
+
+> Bằng chứng đây là **cơ chế** chứ không phải "model hôm nay ngoan": nhật ký **vẫn** hiện lời gọi
+> `mcp__files__read_text_file` ⇒ model vẫn gọi tool, hook deny nó. Nếu dòng đó biến mất thì ta đang
+> đo một *hành vi*, không phải một *hàng rào*. (Cùng phép phân biệt đã dùng cho spike 6 hôm 23/08.)
+
+### 8a-quater. 🔴🔴 CÁNH TAY CHƯA BAO GIỜ CHẠY ĐƯỢC — hai lỗ chồng nhau, đo 24/08
+
+Xem **§5i** cho toàn bộ ca. Tóm tắt vì nó sửa lại cách đọc cả §8: mọi kết luận trước 24/08 về
+"cánh tay làm được gì" đều dựng trên các phép đo **bắt tay** (`mcpServerStatus`, `getContextUsage`)
+— **chưa phép đo nào GỌI một tool MCP**. Khi gọi thật thì nó bị `allowedTools` chặn.
 
 ### 8b. ⚠⚠ Luật một chiều — annotations là **GỢI Ý của server**, không phải bảo đảm
 
@@ -1748,6 +2029,11 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
    chốt danh mục: mục *"File trên máy"* **là** một MCP filesystem có allowlist. Nên nửa thứ hai đã
    được chốt gián tiếp — nhưng **chỉ nó thôi thì `Read` trần vẫn đi vòng qua**. Phải quyết có dựng
    hook kèm không, nếu không thì đang bán một cái khoá cho một cánh cửa mà tường bên cạnh vẫn thủng.
+   > **Cập nhật 24/08 — câu hỏi HẸP lại, chưa đóng.** §5i đã dựng hook cho `mcp__*` và cho cánh tay
+   > một allowlist thư mục **có hiệu lực thật**. Nhưng nó chỉ canh `.state/` + file cấu hình;
+   > **`Read` trần vẫn đọc được mọi đường dẫn tuyệt đối trên máy**, y như trước, và `test/jail.test.ts`
+   > có một test khoá đúng hiện trạng đó để ngày ai đổi thì phải nhìn thấy mình đang đổi một quyết
+   > định. Câu còn lại nguyên văn: *có dựng hàng rào đọc TỔNG QUÁT không.*
 2. **Nếu spike 2 cho thấy tool MCP nằm trong prefix** — có mở lại quyết định `ToolSearch` không?
    (§9b) Chỉ mở bằng **số đo**, không bằng lập luận.
 3. **Google đi đường G1 hay G2?** (§4e) Phụ thuộc spike 5. G2 thì thẻ Google **phải nói ra** là cần
@@ -1757,6 +2043,182 @@ Cập nhật 23/08 theo bốn chốt của user. **Ba việc đầu là ĐO**, v
 5. **`+ Kết nối` đặt cạnh `+ Nhân viên`, còn ngăn kéo "Kết nối" của `SPEC-connectors` §6 thì sao?**
    Nghiêng **bỏ ngăn kéo đó**: canvas đã là danh sách, một ngăn kéo liệt kê lại cùng những object
    là **hai chỗ hiện một sự thật** — đúng thứ luật "ba kho" của `Sidebar.tsx` tránh. Cần user xác nhận.
+6. 🆕 **Dòng năng lực có nên nói ra cái KHÔNG có không?** (§15e) Một vai trò `mcp: []` hôm nay chỉ
+   hiện `[web · chạy lệnh: TẮT]`, và model **vẫn mô tả họ như thể có một thư mục** — đo được ở L2 của
+   `spike-resume-roster`, cả trước lẫn sau bản vá 24/08. Cùng lớp lỗi với ca "văn phòng rỗng" đã vá ở
+   `roster()`: im lặng thì model lấp chỗ trống bằng một câu nghe hợp lý. Đường vá nghiêng về **nêu
+   tường minh** (`không với tới thư mục nào`), nhưng nó tốn token ở **mọi** vai trò không có cánh tay
+   — tức là ca phổ biến nhất. Cần đo trước khi chốt, không chốt bằng lập luận.
+7. 🆕 **Trợ lý xin lỗi cho một lỗi KHÔNG có thật.** (§15f) Ca 03:43:01: nó từ chối ba lượt, **cả ba
+   đều đúng**, rồi khi dây được nối thì nói *"xin lỗi lượt trước mình nhầm"*. Người dùng học được
+   một điều sai về hệ thống — và đây là lớp lỗi đắt nhất với khách non-code, vì thứ bị tiêu là niềm
+   tin. Cùng họ với ca *"mình không có quyền xem"* ở `route()` §8: **model tự thuật lại hệ thống**.
+   Chưa rõ vá bằng gì: dặn trong prompt là tín hiệu, mà ở đây không có trường nào để dựng cổng.
+
+---
+
+## 15. ✅ ĐỔI DÂY GIỮA PHIÊN — cấu hình tới nơi, **câu cũ của Trợ lý thì không chịu đi**
+
+**Đo 24/08.** User rút dây rồi hỏi lại **cùng một câu**, ba lần, và nhận về **cùng một câu trả lời
+từng ký tự** — kèm nguyên văn `D:\Downloads\Programs Installation`. Nghi phạm user nêu: *"cơ chế bảo
+vệ cache làm việc thêm/xoá không real-time"*.
+
+### 15a. ✅ Cache VÔ CAN, và chính cache là thứ chứng minh điều đó
+
+`company/logs/usage.jsonl`, văn phòng `canh-tay`, bốn lượt `route` liên tiếp:
+
+| lượt | giờ | `cache_read` | `cache_write` | đọc ra |
+|---|---|---:|---:|---|
+| 1 | 02:33:58 | 0 | 4 788 | phiên mới sau `/clear` |
+| 2 | 02:34:13 | **0** | 6 298 | **prefix ĐỔI** — cắt dây đã tới nơi |
+| 3 | 02:34:37 | **6 298** | 1 269 | prefix **Y HỆT** lượt 2 |
+| 4 | 02:41:19 | 0 | 8 978 | prefix đổi lần nữa |
+
+Lượt 1→2 cách nhau **15 giây** mà `cache_read = 0` ⇒ danh bạ đã được dựng lại và cánh tay đã bị gỡ
+khỏi prompt **ngay lượt kế tiếp**. Cache không thể hết hạn trong 15 giây, và lượt 2→3 (`cache_read =
+6298`) chứng minh cache còn sống nguyên trong khung đó. **Hai con số tự canh nhau.**
+
+Lượt 3 không đổi prefix là **đúng thiết kế**: `reach()` chỉ đọc `role.mcp`. Dây đã cắt ở lượt 2, nên
+"xoá hẳn cánh tay khỏi văn phòng" chỉ đụng `office.yaml → arms` — không nhân viên nào đang cầm nó,
+danh bạ không có gì để đổi. Lượt 4 thì `cache_read = 0` **không kết luận được** (cách lượt 3 tới 6
+phút 42, quá TTL) — chỉ cỡ prefix (6 298 → 8 978) ủng hộ giả thuyết đổi thật.
+
+> ⚠ Và câu trả lời ở lượt 4 **ĐÚNG**: `ho-tro.yaml` ghi lúc 02:39:30 vẫn giữ `a385afc3ab6` =
+> `D:\Downloads\Programs Installation`. Thư mục đó thật sự còn với tới được. Chỉ **lượt 2** là hỏng.
+
+### 15b. ✅ Spike `scripts/spike-resume-roster.ts` — tách hai nghi phạm bằng một phép đo
+
+Bài này tách *"cấu hình không tới"* khỏi *"lịch sử neo"* bằng cách hỏi **cùng ý, khác chữ**:
+
+| | cấu hình gửi đi | Trợ lý nói |
+|---|---|---|
+| L1 · 2 cánh tay | Musics · Programs Installation | hỏi về **cả hai** ✅ |
+| L2 · cắt dây B, **hỏi y hệt** | chỉ Musics | vẫn ám chỉ B có thư mục 🔴 |
+| L3 · cùng cấu hình, **khác chữ** | chỉ Musics | `task` → `D:\Fake\Musics`, **sạch bóng B** ✅ |
+| L4 · cắm thêm C | + Hoa Don | gọi thẳng `D:\Fake\Hoa Don` ngay lượt sau ✅ |
+| L5 · đối chứng, phiên mới | như L4 | như L4 ✅ |
+
+⇒ **Thêm/xoá LÀ real-time, cả hai chiều, kể cả giữa một phiên đang `resume`.** Thứ hỏng là model
+chép lại câu của **chính nó** trong lịch sử — [[agentco-prompt-rules-lose-to-examples]] một tầng sâu
+hơn: ví dụ thắng luật, và lần này ví dụ là lời của chính nó.
+
+### 15c. Vì sao KHÔNG động vào `resume`
+
+`resume` **là** tính năng, không phải chi tiết cài đặt — bỏ nó là Trợ lý quên hội thoại sau mỗi tin
+nhắn. Cửa thoát cho người dùng đã có tên: `/clear`. Rủi ro lây lan sang phần đã test chỉ đứng thứ hai.
+
+### 15d. ✅ Bản vá 24/08 — **ba tầng, và chỉ hai tầng đầu được ghi là bảo đảm**
+
+| tầng | cơ chế | tất định? |
+|---|---|---|
+| **quyền** | `pickMcp()` dựng server từ `role.mcp` đọc mới mỗi task | ✅ **có**, đã có sẵn, không đụng tới |
+| **câu chữ** | `staleMentions()` — quét `say`/`request`/`question` tìm nhãn·thư mục của cánh tay **không còn ai nối**, trúng thì hỏi lại **đúng một lượt** | ✅ **có** |
+| **gợi ý** | `reachDiff()` — danh bạ đổi ⇒ chèn **diff** vào tin nhắn kế | ❌ **tín hiệu**, không phải cổng |
+
+Tầng quyền không có yếu điểm — nó chỉ **đứng sau** chỗ hỏng: `pickMcp` chạy khi task đã được giao,
+còn câu sai xảy ra ở lượt `route`, lúc chưa có worker nào để chặn. Đó là lý do phải có tầng thứ hai,
+không phải vì tầng một yếu.
+
+**Ba điều kiện của cổng câu chữ** (mỗi cái bịt một ca dương tính giả đã nghĩ ra trước khi viết mã,
+và cả ba có test ở `test/stale-arm.test.ts` — 10 test, 0 token):
+
+1. Cánh tay đó không nằm trong `role.mcp` của bất kỳ ai đang trực.
+2. Chuỗi **không** có trong câu người dùng vừa gõ — họ tự nêu tên rồi Trợ lý đáp *"không ai với tới
+   đó"* là hành vi **đúng**.
+3. Chuỗi **không** là một phần của cánh tay còn sống — rút `D:\X` mà `D:\X\con` còn nối thì nhắc
+   `D:\X` không phải nói bậy.
+
+Cộng một ngưỡng **4 ký tự**: nhãn `HS` nằm trong vô số câu tiếng Việt, và một cổng bắn ở mọi lượt
+chat thì tệ hơn một cổng bỏ sót — nó vốn đã là lớp thứ hai.
+
+Dòng gợi ý cố ý **không** nhét mã băm: người dùng không đọc nó, còn model thì càng có chuỗi lạ càng
+dễ bịa ra một câu chuyện về chuỗi đó. Nó cũng chỉ bắn **khi đang có phiên** — lượt đầu của phiên mới
+thì lịch sử rỗng, và cảnh báo về "câu trước" khi không có câu trước nào là mời model bịa ra một cái.
+
+## 15f. ✅ BẤT ĐỐI XỨNG XUẤT HIỆN / BIẾN MẤT — thứ đáng nhớ nhất của vòng này
+
+Ba ca độc lập, đo 24/08, cùng một hình dạng:
+
+| ca | danh bạ đổi thế nào | model làm gì |
+|---|---|---|
+| spike L4 · L5 | **thêm** `Hoa Don` | gọi thẳng tên **ngay lượt sau**, mọi lần chạy |
+| **thật, 03:43:01** | **nối dây** `Musics` | **lật ngược BA lượt từ chối liên tiếp của chính nó**, không cần `/clear` |
+| thật, 02:34:13 | **rút dây** Installation | chép lại nguyên văn câu cũ, kể cả đường dẫn đã biến khỏi prompt |
+
+> Ca 03:43:01 là ca đắt nhất và nó suýt bị đọc ngược. User hỏi *"soi Musics"*, Trợ lý từ chối **ba
+> lượt** — và **cả ba lượt đều ĐÚNG**: `nguoi-soi-thu-muc.yaml` + `layout.json` mới được ghi lúc
+> 03:43:01, tức trước đó cánh tay Musics là một **node không có dây** (§6f). Người dùng tin là đã
+> nối; hệ thống nói đúng. Ngay lượt sau khi sợi dây có thật, việc chạy (`P-260824-1043`, 03:44:05).
+>
+> ⚠ Nhưng Trợ lý lại nói *"xin lỗi lượt trước mình nhầm"* — **sai sự thật**, và nó dạy người dùng
+> rằng hệ thống hay nhầm. Đúng thứ luật *"đừng để model tự giải thích hệ thống cho người dùng"* cấm.
+> → §14 câu còn mở #7.
+
+⇒ **Bất đối xứng nằm ở HÌNH DẠNG TÍN HIỆU, không ở cache và không ở tốc độ cập nhật.** Đúng nghĩa
+đen [[agentco-deterministic-vs-signal]]: *vắng mặt không phải một tín hiệu.* Một dòng **xuất hiện**
+thắng lịch sử; một dòng **biến mất** thì không có gì để thắng bằng.
+
+**Nên bản vá đổi TRỤC, không dặn to hơn.** Bản đầu (24/08 sáng) chỉ nói *"danh bạ vừa đổi, đọc lại
+bên trên"* — một lời dặn, đặt cược vào đúng thứ vừa đo được là yếu. Bản diff nêu thẳng thay đổi, nên
+cái biến mất trở thành **một dòng chữ xuất hiện**:
+
+```
+⚠ Danh bạ vừa đổi: + Musics → nguoi-soi-thu-muc · − Notion ✗ ho-tro.
+  Danh sách nhân viên bên trên là bản ĐÚNG — bỏ qua mọi câu bạn đã nói trước đó về ai với tới đâu.
+```
+
+**Ba ràng buộc, mỗi cái chặn một cách hỏng khác** (test: `test/stale-arm.test.ts`, 7 test cho `reachDiff`):
+
+1. **DELTA, không phải changelog.** Chỉ mô tả thay đổi kể từ lượt trước, chèn **một lần**, đúng lượt
+   nó xảy ra. Nghịch canvas 20 lần ⇒ 20 dòng rải trong transcript: chấp nhận được. Một khối 20 dòng
+   gửi lại ở **mọi** lượt sau thì không — đó là kiểu phình vĩnh viễn cả dự án tránh.
+2. **Trần 4 mục** + `và N thay đổi khác`. Một lần sửa hàng loạt trên sơ đồ không được nhét cả bức
+   tường vào phiên.
+3. **Rút gọn còn NHÃN.** Danh bạ ngay bên trên đã có đủ thư mục; diff chỉ để **trỏ**, không phải làm
+   nguồn. Dán lại nguyên đường dẫn vừa bị rút là tự tay tiêm lại đúng chuỗi ta muốn nó thôi nhắc.
+
+> ⚠ **Danh bạ vẫn là nguồn sự thật DUY NHẤT.** Diff không phải một nguồn thứ hai để model dựng lại
+> trạng thái từ chuỗi thay đổi — chính câu chèn nói ra điều đó (*"danh sách bên trên là bản ĐÚNG"*).
+> Thêm một nguồn để chữa một nguồn khác là cách sinh ra mâu thuẫn, không phải cách gỡ.
+
+### Số đo — và nó là HÀNH VI, không phải hàng rào
+
+Ca L2 của spike (rút dây rồi hỏi **y hệt** câu cũ) — đúng ca đã hỏng ngoài đời:
+
+| bản | L2 nói gì | n |
+|---|---|---|
+| chưa vá | nhắc **nguyên văn** `Programs Installation` + đường dẫn | 1/1 nhiễm |
+| dòng nhắc chung chung | vẫn ám chỉ vai trò đó *"quản lý thư mục cài đặt"* | 1/1 nhiễm |
+| **diff** | **không nhắc cánh tay đã rút, lần nào cũng vậy** | **3/3 sạch** |
+
+⚠ **n=3 chứng minh một CƠ CHẾ đáng tin hơn, KHÔNG chứng minh một bảo đảm.** Cổng tất định vẫn là
+`staleMentions()`; diff chỉ làm ca thoát hiếm đi.
+
+⚠ **Một thứ phải theo dõi, chưa kết luận được:** 2/3 lượt L2–L3 sau bản vá rơi vào cửa `lookup` thay
+vì `task`. `lookup` với `paths: []` là **tra web**, không đọc được thư mục cục bộ — nếu diff đang
+đẩy định tuyến sang cửa đó thì đây là một cái giá thật. Nhưng phương sai của `route` vốn đã cao ở cả
+ba bản (bản chưa vá cũng có lượt ra `task`, lượt ra `ask`), nên **chưa đủ số để quy nhân quả.**
+Cần một bài đo riêng, tách khỏi bài này.
+
+### 15e. ⚠ RANH GIỚI — ***ĐÃ HẸP LẠI, CHƯA ĐÓNG***
+
+Cổng bắt được **TÊN**, không bắt được **CÁCH NÓI VÒNG**. L2 là ca thoát **có thật, đo được cả trước
+lẫn sau bản vá**: model bỏ tên thư mục nhưng vẫn nói *"thư mục mà Người soi cài đặt phụ trách"* —
+không có chuỗi nào để khớp.
+
+> 🔴 **Phải ghi đúng mức, đây là chỗ dễ tự lừa nhất:** bản gợi ý ĐẦU (một dòng nhắc chung chung)
+> chạy lại spike **KHÔNG chứng minh được nó có tác dụng** — L2 vẫn thoát y hệt. Bản **diff** thì
+> 3/3 sạch (§15f), nhưng đó vẫn là **hành vi**, không phải hàng rào. Thứ được chứng minh bằng **test
+> tất định** chỉ có cổng câu chữ.
+> ⇒ [[agentco-measurement-vs-conclusion]]: đo được cơ chế, không đo được kết luận.
+
+Ca thoát còn lại có hình dạng cố định và nên vá ở chỗ khác: **một vai trò `mcp: []` vẫn bị model mô
+tả như thể có thư mục**. `reach()` hôm nay không nói gì về việc *không* có — và im lặng thì model lấp
+chỗ trống, đúng lớp lỗi §7 và ca "văn phòng rỗng" ở `roster()`. Ghi vào §14 câu còn mở.
+
+**Điều bản vá KHÔNG đổi:** hậu quả xấu nhất khi cổng thoát vẫn **không** phải một lời gọi MCP trái
+phép — tầng quyền chặn cái đó tất định. Nó là một câu hỏi vô nghĩa, hoặc một việc rơi xuống `Read`
+trần (§14 câu còn mở #1, đã biết từ 22/08 — **không phải lỗ mới của bài này**).
 
 ---
 

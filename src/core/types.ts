@@ -836,6 +836,33 @@ export interface Plan {
   /** Tối đa 6 bước. */
   steps: PlanStep[];
   tasks: TaskBrief[];
+  /**
+   * Đường dẫn NGOÀI văn phòng mà `outputScoper` đã kéo về `artifacts/`.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO PHẢI GHI LẠI, THAY VÌ ĐỂ MODEL TỰ NHẬN RA.                        │
+   * │                                                                          │
+   * │ Ca 24/08 (`P-260824-0401-q7ma`): người dùng bảo copy file vào             │
+   * │ `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về          │
+   * │ `artifacts/…` (đúng thiết kế). Trợ lý NHÌN RA sự lệch đó và tự viết:      │
+   * │                                                                          │
+   * │   *"…nếu cần mình sẽ thử ghi lại đúng vị trí đó."*                        │
+   * │                                                                          │
+   * │ **Một lời hứa không giữ được.** Thử lại bao nhiêu lần cũng vào             │
+   * │ `artifacts/` — `outputScoper` chạy TRƯỚC khi nhân viên được phóng, nên     │
+   * │ không lượt nào đi qua đường đó cả. Ta vừa mời người dùng vào một vòng lặp  │
+   * │ không có lối ra, và tính tiền mỗi vòng. Đúng lớp ㉗②.                      │
+   * │                                                                          │
+   * │ Không sửa bằng một câu dặn trong prompt: đây là chuyện CODE biết chắc      │
+   * │ (chính `outputScoper` vừa viết lại chuỗi đó), còn model thì đang đoán.     │
+   * │ Cùng luật với dòng "⚠ còn N/M bước chưa xong" — *model khẳng định một      │
+   * │ điều mà dữ liệu trong tay ta bác bỏ được thì chặn bằng code đối chiếu*.    │
+   * │                                                                          │
+   * │ ⚠ Tuỳ chọn (`?`) có chủ ý: `plan.json` cũ trên đĩa không có khoá này, và  │
+   * │ `/resume` phải đọc lại được chúng.                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  redirected?: string[];
 }
 
 /**

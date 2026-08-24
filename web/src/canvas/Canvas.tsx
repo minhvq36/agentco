@@ -128,7 +128,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       g.classList.toggle('is-done', st?.status === 'done');
       g.classList.toggle('is-error', st?.status === 'error');
       const say = g.querySelector<SVGTextElement>('.node-say');
-      if (say) say.textContent = st ? trim(st.say, 30) : '';
+      if (say) fitSay(say, st ? st.say : '');
     }
     for (const [key, els] of edgeEls.current) {
       const to = key.split(' ')[1] ?? '';
@@ -618,4 +618,64 @@ function clamp(v: number, lo: number, hi: number): number {
 
 function trim(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CÂU `say` CẮT THEO SỐ ĐO, KHÔNG THEO SỐ KÝ TỰ. (user báo tràn 24/08)     │
+ * │                                                                          │
+ * │ Bản trước: `trim(st.say, 30)`. Node `agent` rộng **168px** (thu nhỏ từ    │
+ * │ 23/08), `.node-say` bắt đầu ở `x=16`, font 12px ⇒ chỗ còn ~142px, vừa     │
+ * │ khoảng **22–23 ký tự**. 30 ký tự ≈ 186px ⇒ chữ tràn khỏi hình chữ nhật.   │
+ * │                                                                          │
+ * │ Và nó nặng thêm từ 22/08, khi `describeCall` thôi nói "đang chạy lệnh" mà │
+ * │ nói ra cả câu lệnh (tới 60 ký tự) — rồi 24/08 nói thêm tên cánh tay.      │
+ * │                                                                          │
+ * │ Đây ĐÚNG cái bẫy mà chú thích "TOẠ ĐỘ BÁM ĐÁY" trong `NodeShape.tsx` đã   │
+ * │ cảnh báo, chỉ khác trục: một hằng số hợp lệ (`NODE_SIZE`) đổi ở FILE      │
+ * │ KHÁC, và con số ở đây không ai sửa. Chú thích đó neo `y` theo `s.h`;      │
+ * │ dòng này là nửa còn lại — neo BỀ RỘNG theo bề rộng thật.                  │
+ * │                                                                          │
+ * │ Vì sao KHÔNG đổi 30 thành 22: 22 cũng chỉ là một con số ĐOÁN. Chữ Việt có │
+ * │ dấu, `iiii` và `MMMM` rộng khác nhau gấp đôi, và ngày ai chỉnh            │
+ * │ `NODE_SIZE` lần nữa thì lỗi này quay lại y nguyên, im lặng y nguyên.      │
+ * │ `getComputedTextLength()` hỏi đúng cái trình duyệt vừa vẽ ra.             │
+ * │                                                                          │
+ * │ Vì sao KHÔNG nới node: +16px × 4 node mỗi hàng = +64px ngang, đổi lại ~2  │
+ * │ ký tự. Node vừa được thu nhỏ có chủ ý vì sơ đồ hết chỗ quá nhanh.         │
+ * │                                                                          │
+ * │ KHÔNG MẤT THÔNG TIN NÀO: câu đầy đủ vốn đã có ở hai chỗ khác — panel      │
+ * │ Nhật ký (`PlansPanel`, nguyên văn) và dòng hoạt động trên ô chat. Sơ đồ   │
+ * │ là chỗ LIẾC, không phải chỗ đọc. `<title>` trả nốt phần còn lại khi rê    │
+ * │ chuột, bằng cơ chế sẵn có của SVG: 0 state, 0 render, 0 thư viện.         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Ghi `textContent` TRƯỚC rồi mới đo — `getComputedTextLength` đọc thứ đang
+ * nằm trên màn hình, không đọc chuỗi ta định ghi. Cắt 2 ký tự mỗi vòng để một
+ * câu dài không thành vài trăm lần đo.
+ */
+const SAY_PAD = 26; // x=16 của `.node-say` + 10px chừa mép phải
+
+function fitSay(el: SVGTextElement, full: string): void {
+  // Gán `textContent` xoá sạch con, kể cả `<title>` của lượt trước — nên nhánh
+  // rỗng không cần dọn gì thêm.
+  el.textContent = full;
+  if (!full) return;
+
+  const room = sizeOf('agent').w - SAY_PAD;
+  // Cắt thô về 60 TRƯỚC khi đo: `describeCall` có thể trả một câu lệnh dài, và
+  // đo-rồi-cắt-2-ký-tự từ 200 ký tự là 70 lần ép layout cho một dòng chữ.
+  let cut = trim(full, 60);
+  el.textContent = cut;
+  // Trần vòng lặp: `getComputedTextLength()` trả 0 khi node đang ẩn (tab nền,
+  // `display:none`) — không có trần thì đây là một vòng while không lối ra.
+  let guard = 40;
+  while (guard-- > 0 && cut.length > 1 && el.getComputedTextLength() > room) {
+    cut = cut.slice(0, -2);
+    el.textContent = `${cut}…`;
+  }
+
+  const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  tip.textContent = full;
+  el.appendChild(tip);
 }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Assistant — trợ lý của MỘT văn phòng. Session dài, đối thoại với người, chia việc.
  *
  * → docs/SPEC-offices.md §4
@@ -17,6 +17,7 @@ import path from 'node:path';
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
+import { folderRoots } from './catalog.js';
 import type { LoadedOffice } from './config.js';
 import { noteRateLimit } from './energy.js';
 import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
@@ -139,13 +140,43 @@ const RouteSchema = z.discriminatedUnion('intent', [
    * │ tin nhắn. Là một INTENT thì cùng ý tưởng, 0 đồng cache.                   │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * `paths` bắt buộc có ít nhất một: Trợ lý đã cầm sẵn bảng kê tủ tài liệu và
-   * bảng kê Kết quả trong prefix — đó chính là việc của hai bảng đó. Không nêu
-   * được tên file thì đường đúng là `ask`, không phải thả một agent đi mò.
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `paths` TỪNG BẮT BUỘC ≥1. NỚI RA 24/08 (user chốt) — và lý do là SẢN     │
+   * │ PHẨM, không phải kiến trúc.                                              │
+   * │                                                                          │
+   * │ Luật cũ: *"không nêu được tên file thì dùng `ask`, đừng thả agent đi mò"* │
+   * │ — đúng khi thế giới của văn phòng chỉ có tủ tài liệu. Hậu quả thật ở một  │
+   * │ văn phòng mới tinh: người dùng hỏi *"thời tiết hôm nay"*, *"quán ăn"*,    │
+   * │ *"tin tức"* và nhận về *"văn phòng mình chưa có nhân viên phụ trách"*.    │
+   * │                                                                          │
+   * │ User bác bằng một câu không cãi được: *"một người non-code bán hoa có     │
+   * │ vào tạo nhân viên chuyên nghiệp không, hay họ sẽ hỏi vu vơ kiểu quán ăn,  │
+   * │ thời tiết, tin tức?"*. Và sổ đã ghi sẵn thứ tự lo: rủi ro thật là **không │
+   * │ có người dùng (~90%)**, không phải kiến trúc chưa sạch (~1%). Lượt tiếp   │
+   * │ xúc đầu tiên không có lần thứ hai.                                        │
+   * │                                                                          │
+   * │ Vì sao KHÔNG đẻ intent thứ năm: `route()` chạy ở MỌI tin nhắn, nên mỗi    │
+   * │ intent là token vĩnh viễn trong prefix hội thoại. `lookup` vốn đã là làn  │
+   * │ *"trả lời một câu hỏi, không bàn giao gì"* — cho nó tra web là NỚI một    │
+   * │ làn đã có, không mở làn mới. Ba hàng rào giữ nguyên: tool chỉ-đọc ·       │
+   * │ không ghi được file · session chết cùng lượt gọi.                         │
+   * │                                                                          │
+   * │ ⚠ RANH GIỚI PHẢI SẮC, và đây là rủi ro thật của bản nới này: **`lookup`   │
+   * │ TRẢ LỜI, không BÀN GIAO.** Thứ người dùng giữ lại (file, báo cáo, bảng)   │
+   * │ luôn là `task` + nhân viên. Định tuyến quá tay sang đây thì họ nhận một   │
+   * │ câu trong ô chat và **không có artifact nào để mở**.                      │
+   * │                                                                          │
+   * │ Số đo trước khi nới: prefix worker ẩn 2 828 → 3 820 (**+992 token**, chỉ  │
+   * │ trả khi lookup chạy). Một câu hỏi web thật: 29,8 s · $0,0827, so với      │
+   * │ $0,13–0,14 của đường plan→worker.                                         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * `paths` rỗng = câu hỏi phải tra web. Có `paths` = đọc đúng những file đó
+   * (chúng vẫn được đối chiếu với đĩa ở `Office` trước khi ai đọc gì).
    */
   z.object({
     intent: z.literal('lookup'),
-    paths: z.array(z.string()).min(1),
+    paths: z.array(z.string()).default([]),
     question: z.string().min(1),
   }),
   z.object({
@@ -245,6 +276,24 @@ export function decideRoute(text: string): RouteOutcome {
     };
   }
   return { intent: 'chat', say: raw };
+}
+
+/**
+ * Phần CHỮ do model viết ra trong một kết cục định tuyến. Hàm THUẦN, 0 token.
+ *
+ * Dùng cho cổng hậu kiểm `staleArmMentions`. Ba cửa hợp lệ đều có một trường
+ * chữ, và cả ba đều đi tới mặt người dùng hoặc vào `request` của kế hoạch — nên
+ * cả ba đều phải soi.
+ *
+ * `garbled` trả rỗng CÓ CHỦ Ý: câu của nó là câu cứu hộ do TA viết, không phải
+ * lời model. Soi nó là tự kiểm tra chính mình. `plan` cũng rỗng — draft là cấu
+ * trúc, và vai trò trong đó đã được scheduler đối chiếu với `assignableRoles()`.
+ */
+export function routeText(r: RouteOutcome): string {
+  if (r.intent === 'chat' || r.intent === 'ask') return r.say;
+  if (r.intent === 'task') return r.request;
+  if (r.intent === 'lookup') return r.question;
+  return '';
 }
 
 /** Có ít nhất một object JSON parse được trong chuỗi? Sự việc, không phải phỏng đoán. */
@@ -518,7 +567,16 @@ export function artifactScoper(planId: string, taskIds: readonly string[]): (p: 
  *
  * Idempotent: gọi lại trên kết quả của chính nó không đóng khung thêm lớp nữa.
  */
-export function outputScoper(planId: string, taskId: string): (p: string) => string {
+export function outputScoper(
+  planId: string,
+  taskId: string,
+  /**
+   * Gọi khi một đường dẫn NGOÀI văn phòng bị kéo về khung. Người gọi dùng nó để
+   * nói ra chuyện đó với người dùng — xem `Plan.redirected`. Không truyền thì
+   * hành vi y hệt bản cũ.
+   */
+  onRedirect?: (asked: string) => void,
+): (p: string) => string {
   const home = `artifacts/${planId}/${taskId}`;
   return (raw: string): string => {
     /**
@@ -550,6 +608,9 @@ export function outputScoper(planId: string, taskId: string): (p: string) => str
      * └──────────────────────────────────────────────────────────────────────┘
      */
     if (path.win32.isAbsolute(raw) || path.posix.isAbsolute(raw)) {
+      // Ta vừa viết lại thứ người dùng gõ. Đó là một SỰ VIỆC, và giấu nó đi là
+      // cách một hệ thống nói dối về chính mình. → `Plan.redirected`
+      onRedirect?.(raw);
       const base = raw.replace(/\\/g, '/').split('/').filter(Boolean).pop();
       return base ? `${home}/${base}` : `${home}/ket-qua.md`;
     }
@@ -620,8 +681,11 @@ export function buildPlan(
   // Đầu VÀO và đầu RA đi qua hai luật khác nhau — xem `outputScoper`.
   const scopeIn = artifactScoper(planId, rawTasks.map((t) => t.task_id));
 
+  /** Đường dẫn ngoài văn phòng đã bị kéo về khung — nói ra ở `finish`. */
+  const redirected = new Set<string>();
+
   const tasks = rawTasks.map((t) => {
-    const scopeOut = outputScoper(planId, t.task_id);
+    const scopeOut = outputScoper(planId, t.task_id, (asked) => redirected.add(asked));
     return TaskBriefSchema.parse({
       ...t,
       inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
@@ -648,7 +712,13 @@ export function buildPlan(
     });
   });
 
-  return { plan_id: planId, request, steps, tasks };
+  return {
+    plan_id: planId,
+    request,
+    steps,
+    tasks,
+    ...(redirected.size ? { redirected: [...redirected] } : {}),
+  };
 }
 
 /**
@@ -717,9 +787,56 @@ export function requestOf(draft: PlanDraft): string {
  */
 export const SHELL_LEGEND =
   'Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội dung, ' +
-  'liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: kích thước · ngày sửa · dung lượng của file, ' +
-  'và ghi được ra ngoài thư mục văn phòng. Dòng của mỗi người liệt kê ĐỦ nơi họ với tới — ' +
-  'không có gì ngoài danh sách đó.';
+  'liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: chạy lệnh/script tuỳ ý trên máy, ' +
+  'và ghi được ra ngoài thư mục văn phòng.\n' +
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴🔴 CÂU NÀY ĐÃ NÓI DỐI, VÀ NÓ TỰ CẢNH BÁO CHÍNH MÌNH TỪ 22/08.          │
+   * │                                                                          │
+   * │ Bản trước: *'"chạy lệnh: BẬT" thì có thêm: **kích thước · ngày sửa ·      │
+   * │ dung lượng của file**'*. Ca user gặp 24/08, có cánh tay filesystem cắm    │
+   * │ đàng hoàng, shell TẮT:                                                   │
+   * │                                                                          │
+   * │   *"Nhân viên phụ trách thư mục Musics đang tắt chế độ chạy lệnh nên     │
+   * │    không lấy được dung lượng file… Bạn có thể bật chế độ chạy lệnh cho   │
+   * │    nhân viên này không?"*                                                │
+   * │                                                                          │
+   * │ **Sai, và đo được là sai.** `spike-arm-e2e` ca A chạy với `role.tools`    │
+   * │ ép về `[]` (shell TẮT hoàn toàn) và vẫn ra bảng kích thước đầy đủ:       │
+   * │ `Programs Installation 2 · list directory with sizes` → `done`. Cánh tay │
+   * │ filesystem có **14 tool**, trong đó `list_directory_with_sizes` và       │
+   * │ `get_file_info` trả đúng metadata mà câu trên bảo là độc quyền của shell.│
+   * │                                                                          │
+   * │ ⚠⚠ VÀ ĐÂY MỚI LÀ PHẦN ĐẮT: khối chú thích ngay TRÊN hằng số này, viết    │
+   * │ 22/08, đã nói chính xác chuyện sẽ xảy ra — *"nó hết đúng vào đúng ngày   │
+   * │ MCP có mặt… nói dối theo chiều làm Trợ lý TỪ CHỐI một việc vốn chạy      │
+   * │ được"*. Bản vá hôm đó chỉ gỡ chữ **"DUY NHẤT"** mà **giữ nguyên vế nhân  │
+   * │ quả**. Và có hẳn một test canh chữ "DUY NHẤT" — **test XANH suốt, trong  │
+   * │ khi lỗi vẫn sống**. Sửa chữ, không sửa mệnh đề.                          │
+   * │                                                                          │
+   * │ ⇒ Luật: **đừng liệt kê NĂNG LỰC theo nguồn cấp.** Chỉ nêu thứ shell      │
+   * │   thật sự độc quyền (chạy lệnh tuỳ ý · ghi ra ngoài), rồi để dòng cuối   │
+   * │   nói một bất biến về ĐỊNH DẠNG, không về thế giới.                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  'Một kết nối (🔌) mang thêm khả năng RIÊNG của nó, và nhân viên tự biết mình gọi được gì lúc làm. ' +
+  'ĐỪNG đoán hộ rằng nhân viên KHÔNG làm được một việc chỉ vì "chạy lệnh: TẮT" — cứ giao, ' +
+  'họ sẽ tự báo nếu thiếu tay. Dòng của mỗi người liệt kê ĐỦ nơi họ với tới — ' +
+  'không có gì ngoài danh sách đó.\n' +
+  /**
+   * Nửa còn lại của bản vá `armLine`, và THIẾU NÓ THÌ NỬA KIA VÔ NGHĨA.
+   *
+   * Biết đường dẫn mà vẫn hỏi lại là đúng ca user gặp — chỉ khác là lúc đó Trợ
+   * lý không biết, còn từ đây nó biết mà có thể vẫn hỏi cho "chắc". Một vòng
+   * hỏi-đáp thừa với người non-code là một lần họ nghĩ sản phẩm không hiểu mình.
+   *
+   * ⚠ Câu này phải HẸP: nó chỉ nói về thư mục ĐÃ IN RA ở dòng nhân viên. Viết
+   * rộng thành "đừng hỏi đường dẫn" là dạy Trợ lý đoán bừa một đường dẫn nó
+   * chưa từng thấy — hỏng ngược chiều, và im lặng hơn.
+   */
+  'Thư mục ghi sau "thư mục:" là chỗ nhân viên đó ĐÃ được cấp quyền. Khi người dùng nói ' +
+  '"thư mục đã cho phép" hay gọi tên một thư mục trong danh sách đó, DÙNG LUÔN đường dẫn ấy — ' +
+  'đừng hỏi lại họ đường dẫn đầy đủ.';
 
 /**
  * Cờ shell của MỘT vai trò. Tách ra để test được mà không phải dựng văn phòng —
@@ -730,6 +847,152 @@ export const SHELL_LEGEND =
  */
 export function shellFlag(tools: readonly string[]): string {
   return hasShell(tools) ? 'chạy lệnh: BẬT' : 'chạy lệnh: TẮT';
+}
+
+/**
+ * Một cánh tay, nói bằng thứ Trợ lý CẦN — không bằng thứ ta lưu.
+ *
+ * Hàm THUẦN, tách khỏi `Assistant` vì cùng lý do `shellFlag` từng được rút ra:
+ * luật này đã sai một lần thì phải gọi được riêng để canh, không phải dựng cả
+ * một văn phòng mới test được.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 CA USER GẶP 24/08, BA LƯỢT LIÊN TIẾP, KHÔNG THOÁT RA ĐƯỢC:            │
+ * │                                                                          │
+ * │   — "Trong thư mục đã cho phép, tìm 5 file lớn nhất…"                    │
+ * │   — "Bạn cho mình xin đường dẫn đầy đủ của thư mục cần soi nhé?"         │
+ * │   — "thư mục music"                                                      │
+ * │   — "Bạn cho mình xin đường dẫn đầy đủ tới thư mục Music đó nhé?"        │
+ * │   — "nhân viên của bạn biết thư mục này rồi"                             │
+ * │   — "Mình vẫn cần đường dẫn đầy đủ…"                                     │
+ * │                                                                          │
+ * │ **Trợ lý không cố chấp — nó thật sự KHÔNG BIẾT.** `role.mcp` chỉ là một   │
+ * │ mảng BĂM (`a385afc3ab6`), và bản trước đổ thẳng mảng đó vào dòng năng     │
+ * │ lực. Băm không nói được nó trỏ vào đâu, nên *"thư mục đã cho phép"* không │
+ * │ giải được — trong khi `company.yaml` biết thừa. Người dùng nói đúng:      │
+ * │ *"nhân viên của bạn biết thư mục này rồi"*.                               │
+ * │                                                                          │
+ * │ Đây là món nợ ĐÃ CÓ TÊN từ 22/08 ngay trong file này: *"dòng đó liệt kê   │
+ * │ MCP bằng TÊN, không bằng NĂNG LỰC — tên server là LỜI KHAI, danh sách     │
+ * │ tool của nó mới là SỰ THẬT"*. Ca này là món nợ đó thu lãi, và may là ở    │
+ * │ dạng rẻ nhất để trả: thư mục nằm sẵn trong `args`, `folderRoots` đã có,   │
+ * │ 0 lời gọi thêm, ~12 token mỗi cánh tay.                                   │
+ * │                                                                          │
+ * │ ⚠ Ghi `thư mục:` chứ không dùng mũi tên hay dấu hai chấm trần — dòng này  │
+ * │ nằm giữa một khối liệt kê và phải TỰ ĐỌC ĐƯỢC khi đứng một mình, cùng     │
+ * │ luật đã áp cho `chạy lệnh: TẮT`.                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function armReach(
+  arms: Record<string, { label?: string }>,
+  servers: Record<string, unknown>,
+  id: string,
+): string {
+  // Băm là thứ CUỐI CÙNG dùng tới: nhãn do người dùng đặt là thứ họ nhận ra.
+  const label = arms[id]?.label?.trim() || id;
+  const roots = folderRoots(servers[id]);
+  return roots.length ? `${label} (thư mục: ${roots.join(' · ')})` : label;
+}
+
+/**
+ * DIFF DANH BẠ giữa hai lượt — hàm THUẦN, 0 token. → docs/SPEC-arms.md §15f
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO DIFF THẮNG MỘT DÒNG NHẮC CHUNG CHUNG — và lý do KHÔNG phải        │
+ * │ "session nhớ được".                                                      │
+ * │                                                                          │
+ * │ Đo 24/08, ba ca độc lập, cùng một hình dạng:                             │
+ * │                                                                          │
+ * │   một dòng XUẤT HIỆN trong danh bạ  → **thắng** lịch sử, mọi lần         │
+ * │     · spike L4: cắm thêm `Hoa Don` → gọi thẳng tên ngay lượt sau         │
+ * │     · ca 03:43:01 thật: nối dây `Musics` → model **lật ngược BA lượt     │
+ * │       từ chối liên tiếp của chính nó**, không cần `/clear`                │
+ * │   một dòng BIẾN MẤT                  → **thua** lịch sử (ca 02:34:13)     │
+ * │                                                                          │
+ * │ ⇒ Bất đối xứng nằm ở HÌNH DẠNG TÍN HIỆU, không ở cache và không ở tốc độ │
+ * │ cập nhật. Đúng nghĩa đen [[agentco-deterministic-vs-signal]]: *vắng mặt   │
+ * │ không phải một tín hiệu.*                                                │
+ * │                                                                          │
+ * │ Nên việc đúng không phải dặn to hơn, mà là **đổi trục**: biến một sự      │
+ * │ VẮNG MẶT thành một sự CÓ MẶT. Dòng `− Notion ✗ ho-tro` là một dòng chữ    │
+ * │ *xuất hiện* — và thứ xuất hiện thì ta vừa đo được là thắng.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ba ràng buộc, mỗi cái chặn một cách hỏng khác nhau:
+ *
+ *  1. **DELTA, không phải changelog.** Chỉ mô tả thay đổi kể từ lượt trước, và
+ *     chỉ chèn đúng một lần vào lượt nó xảy ra. Nghịch canvas 20 lần thì 20 dòng
+ *     nằm rải trong transcript — chấp nhận được; một khối 20 dòng gửi lại ở MỌI
+ *     lượt sau thì không, và đó đúng là kiểu phình vĩnh viễn cả dự án tránh.
+ *  2. **`cap`.** Một lần sửa hàng loạt trên sơ đồ không được nhét cả bức tường
+ *     vào phiên.
+ *  3. **Rút gọn còn NHÃN.** Danh bạ ngay bên trên đã có đủ thư mục; diff chỉ để
+ *     TRỎ, không phải để làm nguồn. Dán lại nguyên đường dẫn vừa bị rút là tự
+ *     tay tiêm lại đúng chuỗi ta muốn nó thôi nhắc.
+ */
+export function reachDiff(
+  before: Map<string, readonly string[]>,
+  after: Map<string, readonly string[]>,
+  cap = 4,
+): string[] {
+  // `armReach` trả `Nhãn (thư mục: …)`. Diff chỉ giữ phần nhãn — xem ràng buộc 3.
+  const short = (s: string) => s.replace(/\s*\(thư mục:.*$/, '').trim();
+  const lines: string[] = [];
+  for (const id of [...new Set([...before.keys(), ...after.keys()])].sort()) {
+    const was = new Set(before.get(id) ?? []);
+    const now = new Set(after.get(id) ?? []);
+    for (const a of now) if (!was.has(a)) lines.push(`+ ${short(a)} → ${id}`);
+    for (const r of was) if (!now.has(r)) lines.push(`− ${short(r)} ✗ ${id}`);
+  }
+  if (lines.length <= cap) return lines;
+  return [...lines.slice(0, cap), `và ${lines.length - cap} thay đổi khác`];
+}
+
+/**
+ * Phần THUẦN của cổng hậu kiểm — 0 token, tách khỏi class để có test riêng.
+ * Luật ba điều kiện và ranh giới của nó nằm ở `Assistant.staleArmMentions`.
+ */
+export function staleMentions(input: {
+  /** Sổ cánh tay của công ty — chỉ cần `label`. */
+  arms: Record<string, { label?: string }>;
+  /** Cấu hình từng cánh tay — `folderRoots` đọc `args` từ đây. */
+  servers: Record<string, unknown>;
+  /** Id cánh tay ĐANG có ít nhất một nhân viên trực nối vào. */
+  live: Set<string>;
+  say: string;
+  userText: string;
+}): string[] {
+  const { arms, servers, live, say, userText } = input;
+  // Tên/thư mục của những cánh tay CÒN nối — điều kiện 3.
+  const liveText = [...live]
+    .flatMap((id) => [arms[id]?.label, ...folderRoots(servers[id])])
+    .filter((s): s is string => !!s)
+    .join('\n')
+    .toLowerCase();
+
+  const hay = say.toLowerCase();
+  const said = userText.toLowerCase();
+  const hits: string[] = [];
+  for (const id of Object.keys(servers)) {
+    if (live.has(id)) continue;
+    /**
+     * ⚠ Ngưỡng 4 ký tự, và nó là một hàng rào chứ không phải một con số đẹp:
+     * người dùng đặt tên cánh tay là `A` hay `Hs` thì mọi câu tiếng Việt đều
+     * chứa chuỗi đó, và cổng sẽ bắn ở mọi lượt. Thà bỏ sót một nhãn hai chữ
+     * còn hơn biến cổng thành tiếng ồn — nó vốn đã là lớp thứ hai.
+     */
+    const needles = [arms[id]?.label, ...folderRoots(servers[id])].filter(
+      (s): s is string => typeof s === 'string' && s.trim().length >= 4,
+    );
+    for (const n of needles) {
+      const k = n.trim().toLowerCase();
+      if (!hay.includes(k)) continue;
+      if (said.includes(k)) continue;
+      if (liveText.includes(k)) continue;
+      hits.push(n.trim());
+    }
+  }
+  return [...new Set(hits)];
 }
 
 export class Assistant {
@@ -759,6 +1022,12 @@ export class Assistant {
   private inflight: AbortController | undefined;
   /** Vai trò có dây nối từ Assistant trên canvas. undefined = chưa cấu hình = tất cả. */
   private assignable: Set<string> | undefined;
+  /**
+   * Ảnh chụp danh bạ ở lượt `route` TRƯỚC. → `reachMap`, `SPEC-arms.md` §15
+   *
+   * `undefined` = chưa route lần nào trong phiên này, nên chưa có gì để so.
+   */
+  private reachPrev: Map<string, string[]> | undefined;
   /** Tri thức HOT nạp sẵn vào prefix. Chỉ đổi khi bump knowledge_version. */
   private hotKnowledge = '';
 
@@ -802,6 +1071,9 @@ export class Assistant {
   forget(): void {
     this.sessionId = undefined;
     this.contextTokens = 0;
+    // Phiên mới thì lịch sử rỗng ⇒ không có câu cũ nào để đính chính. Giữ lại
+    // ảnh chụp cũ là để lượt đầu của phiên mới bắn một cái diff vô nghĩa.
+    this.reachPrev = undefined;
   }
 
   /**
@@ -963,8 +1235,40 @@ export class Assistant {
    * CỐ Ý chỉ nêu TÊN, không nêu schema: Trợ lý cần biết *với tới được cái gì*,
    * không cần biết *gọi thế nào*. Nó không gọi tool nào cả.
    */
+  /**
+   * Một cánh tay, nói bằng thứ Trợ lý CẦN, không bằng thứ ta lưu.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CA USER GẶP 24/08, BA LƯỢT LIÊN TIẾP, KHÔNG THOÁT RA ĐƯỢC:        │
+   * │                                                                      │
+   * │   — "Trong thư mục đã cho phép, tìm 5 file lớn nhất…"                │
+   * │   — "Bạn cho mình xin đường dẫn đầy đủ của thư mục cần soi nhé?"     │
+   * │   — "thư mục music"                                                  │
+   * │   — "Bạn cho mình xin đường dẫn đầy đủ tới thư mục Music đó nhé?"    │
+   * │   — "nhân viên của bạn biết thư mục này rồi"                         │
+   * │   — "Mình vẫn cần đường dẫn đầy đủ…"                                 │
+   * │                                                                      │
+   * │ **Trợ lý không cố chấp — nó thật sự KHÔNG BIẾT.** `role.mcp` chỉ là   │
+   * │ một mảng BĂM (`a385afc3ab6`), và bản trước đổ thẳng mảng đó vào dòng  │
+   * │ năng lực. Băm không nói được nó trỏ vào đâu, nên câu *"thư mục đã cho │
+   * │ phép"* không giải được, và người dùng thì tin rằng hệ thống đã biết   │
+   * │ (đúng — `company.yaml` biết, chỉ Trợ lý là không).                    │
+   * │                                                                      │
+   * │ Đây là món nợ ĐÃ CÓ TÊN trong chính file này từ 22/08: *"dòng đó      │
+   * │ liệt kê MCP bằng TÊN, không bằng NĂNG LỰC — tên server là LỜI KHAI,   │
+   * │ danh sách tool của nó mới là SỰ THẬT"*. Ca này là món nợ đó thu lãi,  │
+   * │ ở dạng rẻ nhất để trả: thư mục nằm sẵn trong `args`, `folderRoots` đã │
+   * │ có sẵn, 0 lời gọi thêm.                                              │
+   * │                                                                      │
+   * │ ⚠ Ghi `thư mục:` chứ không dùng mũi tên hay dấu hai chấm trần — dòng  │
+   * │ này nằm giữa một khối liệt kê và phải TỰ ĐỌC ĐƯỢC khi đứng một mình,  │
+   * │ cùng luật đã áp cho `chạy lệnh: TẮT`.                                 │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
   private reach(role: Role): string {
-    const parts = [...role.mcp];
+    const parts = role.mcp.map((id) =>
+      armReach(this.office.company.arms, this.office.company.mcpServers, id),
+    );
     // Web bật sẵn cho mọi nhân viên (BUILTIN_TOOLS) nên luôn nêu — đây là khả
     // năng thật, và không nêu thì Trợ lý không biết mà giao việc tra cứu.
     parts.push('web');
@@ -1013,6 +1317,79 @@ export class Assistant {
     return ` [${parts.join(' · ')}]`;
   }
 
+  /**
+   * ẢNH CHỤP DANH BẠ — ai với tới đâu, tính bằng code, 0 token.
+   * → docs/SPEC-arms.md §15
+   *
+   * Dựng từ chính chuỗi `armReach` mà `roster()` gửi đi, nên nó bắt đủ **mọi**
+   * đường làm danh bạ khác đi: cắt/nối dây (`role.mcp`), đổi tên cánh tay
+   * (`arms[id].label`), thêm/cất nhân viên (`assignableRoles`). So chuỗi với
+   * chuỗi thay vì kể ra từng ca — thiếu một ca ở đây là im lặng, không phải lỗi.
+   *
+   * ⚠ Băm cấu hình (`armHash`) KHÔNG dùng được cho việc này: nó là danh tính
+   * của một cánh tay, không phải của cái danh bạ. Đổi tên thì băm không đổi.
+   */
+  private reachMap(): Map<string, string[]> {
+    const m = new Map<string, string[]>();
+    for (const id of [...this.assignableRoles()].sort()) {
+      const mcp = this.office.roles.get(id)?.mcp ?? [];
+      m.set(
+        id,
+        mcp.map((x) => armReach(this.office.company.arms, this.office.company.mcpServers, x)),
+      );
+    }
+    return m;
+  }
+
+  /**
+   * HẬU KIỂM TẤT ĐỊNH: câu vừa nói có nhắc tới cánh tay KHÔNG CÒN AI NỐI không?
+   * → docs/SPEC-arms.md §15
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO CẦN CỔNG NÀY DÙ ĐÃ CÓ DÒNG NHẮC TRONG PROMPT.                     │
+   * │                                                                          │
+   * │ Ca đo được 24/08 (`P` phiên `a425003b`): người dùng gõ **y hệt** một câu │
+   * │ ba lần quanh lúc rút dây, và Trợ lý trả về **giống nhau từng ký tự** cả  │
+   * │ ba, kèm nguyên văn `D:\Downloads\Programs Installation` — một đường dẫn  │
+   * │ ĐÃ KHÔNG CÒN trong prompt của lượt đó (đo bằng cache: lượt 2 `cache_read │
+   * │ = 0` sau 15 giây ⇒ prefix đã dựng lại, danh bạ đã sạch). Model chép lại  │
+   * │ câu của CHÍNH NÓ trong lịch sử `resume`, không đọc lại danh bạ.          │
+   * │                                                                          │
+   * │ Một dòng dặn trong prompt là TÍN HIỆU, không phải cổng — nó không có     │
+   * │ xác suất hỏng bằng 0 và không được ghi vào sổ như một bảo đảm            │
+   * │ ([[agentco-deterministic-vs-signal]]). Cổng này thì tất định: danh sách  │
+   * │ nhãn + thư mục gốc là HỮU HẠN và ta biết hết, nên "có nhắc tới hay       │
+   * │ không" là một phép so chuỗi, không phải một phán đoán.                    │
+   * │                                                                          │
+   * │ ⚠ RANH GIỚI, phải giữ nguyên câu này: nó bắt được TÊN, không bắt được    │
+   * │ CÁCH NÓI VÒNG. Spike L2 là ca thoát có thật — model bỏ tên thư mục       │
+   * │ nhưng vẫn nói *"thư mục mà Người soi cài đặt phụ trách"*, không có chuỗi │
+   * │ nào để khớp. ***ĐÃ HẸP LẠI, CHƯA ĐÓNG.***                                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Ba điều kiện để một chuỗi bị tính là "cũ" — cả ba đều cần, và mỗi cái bịt
+   * một ca dương tính giả đã nghĩ ra trước khi viết:
+   *
+   *  1. Cánh tay đó **không** nằm trong `role.mcp` của bất kỳ ai đang trực.
+   *  2. Chuỗi **không** có trong câu người dùng vừa gõ — họ tự nêu tên thư mục
+   *     rồi Trợ lý trả lời *"không ai với tới đó"* là hành vi ĐÚNG.
+   *  3. Chuỗi **không** là một phần của cánh tay còn sống. `D:\X` bị rút mà
+   *     `D:\X\con` vẫn nối thì nhắc `D:\X` không phải nói bậy.
+   */
+  private staleArmMentions(say: string, userText: string): string[] {
+    const live = new Set<string>();
+    for (const id of this.assignableRoles()) {
+      for (const m of this.office.roles.get(id)?.mcp ?? []) live.add(m);
+    }
+    return staleMentions({
+      arms: this.office.company.arms,
+      servers: this.office.company.mcpServers,
+      live,
+      say,
+      userText,
+    });
+  }
+
   private roster(): string {
     const allowed = this.assignableRoles();
     const lines = [...this.office.roles.values()]
@@ -1023,8 +1400,48 @@ export class Assistant {
           this.reach(r) +
           (r.not_for.length ? ` [không làm: ${r.not_for.join(', ')}]` : ''),
       );
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ VĂN PHÒNG RỖNG: NÓI VIỆC PHẢI LÀM, ĐỪNG ĐỂ MODEL TỰ BỊA RA LÝ DO.    │
+     * │                                                                      │
+     * │ Ca 24/08 — văn phòng mới tinh, 0 nhân viên. Người dùng hỏi *"tìm      │
+     * │ giúp 5 quán cà phê ở quận 1"*, Trợ lý trả lời:                        │
+     * │                                                                      │
+     * │   *"văn phòng mình không có kết nối tìm kiếm thông tin bên ngoài"*    │
+     * │   *"Mình không có khả năng truy cập internet"*                        │
+     * │                                                                      │
+     * │ Vế thứ hai ĐÚNG (Trợ lý `tools: []`). Vế thứ nhất **SAI**, và sai     │
+     * │ theo chiều đắt nhất: `WebSearch`/`WebFetch` nằm trong `BUILTIN_TOOLS` │
+     * │ nên **mọi nhân viên đều tra web được** — đo 24/08, chạy thật, ra kết  │
+     * │ quả kèm nguồn. Thiếu duy nhất một thứ: văn phòng chưa có ai.          │
+     * │                                                                      │
+     * │ Dòng cũ `(none — nobody on duty)` chỉ nêu một sự kiện. Model lấp chỗ  │
+     * │ trống bằng một lời giải thích nghe rất hợp lý về SẢN PHẨM — đúng thứ  │
+     * │ luật *"đừng để model tự giải thích hệ thống cho người dùng"* cấm, và  │
+     * │ hậu quả là người dùng tin sản phẩm không làm được việc nó làm được.   │
+     * │                                                                      │
+     * │ ⚠ Đoạn này CHỈ tồn tại khi roster rỗng ⇒ token trả đúng lúc nó có     │
+     * │ giá trị, và bằng 0 ở mọi văn phòng đang hoạt động.                    │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
     if (lines.length === 0) {
-      return `# Employees you can assign to\n\n(none — this office has nobody on duty)`;
+      /**
+       * ⚠ ĐÃ ĐỔI CÙNG LÚC với việc `lookup` được tra web (24/08) — và phải cùng
+       * lúc, nếu không thì đúng bệnh *hai bề mặt nói ngược nhau*: một bên trả
+       * lời được câu hỏi, bên kia vẫn khai "không việc gì chạy được".
+       *
+       * Bản trước (viết sáng cùng ngày) nói *"No work can run until the human
+       * adds one"*. Đúng lúc đó, nửa sai từ lúc `lookup` biết tra web.
+       */
+      return (
+        `# Employees you can assign to\n\n(none — nobody has been added to this office yet)\n\n` +
+        `You can still answer questions yourself through \`lookup\` — including looking things up ` +
+        `on the web. What you cannot do is **produce anything the human keeps**: a file, a report, ` +
+        `a table. That needs an employee, so when they ask for one, say so plainly and point them ` +
+        `at the "+ Nhân viên" button. **Never describe this as something the product cannot do:** ` +
+        `every employee can search and read the web, and open files on the machine by full path. ` +
+        `What is missing is a person to assign to, not a capability.`
+      );
     }
     return `# Employees you can assign to\n\n${SHELL_LEGEND}\n\n${lines.join('\n')}`;
   }
@@ -1113,7 +1530,12 @@ export class Assistant {
    */
   async lookup(paths: readonly string[], question: string): Promise<AssistantResult<string>> {
     const { text, usage } = await this.run(
-      `Tài liệu cần đọc:\n${paths.map((p) => `- ${p}`).join('\n')}\n\nCâu hỏi: ${question}`,
+      paths.length
+        ? `Tài liệu cần đọc:\n${paths.map((p) => `- ${p}`).join('\n')}\n\nCâu hỏi: ${question}`
+        : // Không nêu tài liệu nào = câu hỏi tra cứu chung. Nói RA điều đó thay vì
+          // gửi một danh sách rỗng — một khối "Tài liệu cần đọc:" trống là thứ
+          // model phải tự diễn giải, và nó sẽ diễn giải khác nhau mỗi lần.
+          `Không có tài liệu nào của văn phòng liên quan tới câu này — tra trên web rồi trả lời.\n\nCâu hỏi: ${question}`,
       /**
        * Mức model của CHÍNH TRỢ LÝ, không phải `models.planner` — và cố ý KHÔNG
        * đẻ một knob thứ ba.
@@ -1130,10 +1552,25 @@ export class Assistant {
       false,
       {
         systemPrompt: LOOKUP_PROMPT,
-        // `Read` để đọc, `Grep` để tìm ĐÚNG CHỖ trong một file dài — luật "text
-        // đã bóc dùng để TÌM, bản gốc dùng để ĐỌC KỸ" (SPEC-library §7). `Glob`
-        // vì một đường dẫn thư mục vẫn hợp lệ trong `paths`.
-        tools: ['Read', 'Grep', 'Glob'],
+        /**
+         * `Read` để đọc, `Grep` để tìm ĐÚNG CHỖ trong một file dài — luật "text
+         * đã bóc dùng để TÌM, bản gốc dùng để ĐỌC KỸ" (SPEC-library §7). `Glob`
+         * vì một đường dẫn thư mục vẫn hợp lệ trong `paths`.
+         *
+         * `WebSearch`/`WebFetch` thêm 24/08 — đo được **+992 token** vào prefix
+         * của lượt lookup (2 828 → 3 820), và chỉ trả khi lookup thật sự chạy.
+         *
+         * ⚠ Cả năm đều CHỈ ĐỌC: worker ẩn vẫn không ghi được file, nên ranh giới
+         * *"lookup TRẢ LỜI, không BÀN GIAO"* là một giới hạn NĂNG LỰC chứ không
+         * phải một lời dặn — kể cả khi Trợ lý định tuyến sai.
+         *
+         * ⚠ Phải nói ra phần KHÔNG chặn được: `WebFetch` là một đường dữ liệu
+         * ĐI RA, và giờ nó với tới được trong một văn phòng 0 nhân viên, 0 cấu
+         * hình. Mọi nhân viên vốn đã có nó nên rủi ro tăng thêm là nhỏ — nhưng
+         * nó đổi từ "phải dựng văn phòng trước" sang "mở app là có". Ghi ra để
+         * sau này không ai bảo chưa tính. → SPEC-arms §5e (mô hình đe doạ)
+         */
+        tools: ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch'],
       },
     );
     return { value: text.trim(), usage };
@@ -1309,13 +1746,44 @@ export class Assistant {
    * ngoại đạo hoang mang không biết AI đang dắt mình đi đâu.
    */
   async route(message: string, hasActivePlan: boolean): Promise<AssistantResult<RouteOutcome>> {
+    /**
+     * DIFF DANH BẠ khi nó vừa đổi — tín hiệu, **không phải** cổng. → `reachDiff`
+     *
+     * Cùng cơ chế `scopeHint` ngay dưới: một dòng có điều kiện, im khi không có
+     * gì đổi. Nó tồn tại vì `resume` mang cả hội thoại cũ, và câu cũ của chính
+     * Trợ lý là một VÍ DỤ — mà ví dụ thì thắng luật trừu tượng
+     * ([[agentco-prompt-rules-lose-to-examples]]).
+     *
+     * ⚠ Bản đầu (24/08 sáng) chỉ nói *"danh bạ vừa đổi, đọc lại bên trên"* —
+     * một lời dặn, và nó đặt cược vào đúng thứ vừa đo được là YẾU: bảo model
+     * chú ý tới một dòng đã **biến mất**. Bản này nêu thẳng thay đổi, nên cái
+     * biến mất trở thành một dòng chữ **xuất hiện**. Đổi trục, không phải dặn
+     * to hơn. Cả số đo nằm ở `reachDiff`.
+     *
+     * ⚠ Cố ý KHÔNG nhét mã băm vào câu: người dùng không đọc nó, còn model thì
+     * càng có chuỗi lạ càng dễ bịa ra một câu chuyện về chuỗi đó.
+     *
+     * Chỉ bắn khi ĐANG có phiên: lượt đầu của một phiên mới thì lịch sử rỗng,
+     * không có gì để đính chính, và một dòng cảnh báo về "câu trước" khi không
+     * có câu trước nào là mời model bịa ra một cái.
+     */
+    const now = this.reachMap();
+    const changes =
+      this.sessionId !== undefined && this.reachPrev !== undefined ? reachDiff(this.reachPrev, now) : [];
+    const reachHint = changes.length
+      ? `\n⚠ Danh bạ vừa đổi: ${changes.join(' · ')}. ` +
+        `Danh sách nhân viên bên trên là bản ĐÚNG — bỏ qua mọi câu bạn đã nói trước đó về ai với tới đâu.`
+      : '';
+    this.reachPrev = now;
+
     const scopeHint = hasActivePlan
       ? `\nĐang có một công việc chạy dở. Với intent "task", đặt "scope":"refine" nếu câu này BỔ SUNG hoặc SỬA cho việc đang chạy; ` +
         `đặt "scope":"new" nếu đây là một việc KHÁC HẲN. Khi phân vân, chọn "new" — hai việc tách rời chỉ tốn thêm một lần lập kế hoạch, ` +
         `còn gắn nhầm vào việc đang chạy thì làm hỏng cả hai.`
       : `\nHiện không có việc nào đang chạy, nên với intent "task" luôn dùng "scope":"new".`;
 
-    const { text, usage } = await this.askSession(
+    // `let`: cổng hậu kiểm bên dưới có thể cộng thêm một lượt sửa vào đây.
+    let { text, usage } = await this.askSession(
       `Người dùng vừa nhắn: "${message}"\n\n` +
         `Trả về đúng một object JSON, không có gì khác:\n` +
         `{"intent":"chat","say":"<trả lời ngắn bằng tiếng Việt>"}\n` +
@@ -1325,10 +1793,27 @@ export class Assistant {
         `(làm cho ai, dài bao nhiêu, giọng thế nào, dựa trên tài liệu nào). ` +
         `Hỏi MỘT câu quan trọng nhất thôi. Thà hỏi còn hơn đoán sai rồi làm lại.\n` +
         `{"intent":"lookup","paths":["library/files/doc-2.md"],"question":"<câu hỏi, giữ nguyên ý người dùng>"}\n` +
-        `  dùng khi: người dùng hỏi TRONG TÀI LIỆU CÓ GÌ và chỉ cần ĐỌC là trả lời được — ` +
-        `tóm tắt, tra một con số, một điều khoản, "file này nói về gì".\n` +
-        `  Đường dẫn lấy từ hai bảng kê trên HOẶC từ chính câu người dùng vừa gõ (đã được kiểm là có thật). ` +
-        `Không có đường dẫn nào để nêu thì dùng "ask", đừng bịa.\n` +
+        `  dùng khi: một câu HỎI ĐỂ BIẾT, trả lời xong là xong, không cần bàn giao file nào. Hai kiểu:\n` +
+        `   (a) TRONG TÀI LIỆU CÓ GÌ — tóm tắt, tra một con số, một điều khoản, "file này nói về gì". ` +
+        `Nêu đường dẫn vào "paths", lấy từ hai bảng kê trên HOẶC từ chính câu người dùng vừa gõ. Đừng bịa đường dẫn.\n` +
+        /**
+         * ⚠ DANH SÁCH VÍ DỤ THẮNG LUẬT TRỪU TƯỢNG — đo được 24/08.
+         *
+         * Bản đầu của dòng này liệt kê thẳng *"quán ăn, thời tiết, tin tức"*, và
+         * luật ưu tiên nhân viên nằm cách đó bốn dòng bên dưới. Kết quả trên một
+         * văn phòng CÓ nhân viên `nguoi-tim-tin` (pitch: *"duyệt web, đối chiếu
+         * nhiều nguồn, dẫn nguồn"*):
+         *
+         *   "Tìm 5 quán cà phê ở quận 1"      → lookup  ❌ (phải là task)
+         *   "Tin tức công nghệ hôm nay"       → lookup  ❌ (phải là task)
+         *
+         * Model khớp danh sách ví dụ rồi dừng, không đọc tới luật. ⇒ **điều kiện
+         * phải nằm TRÊN CHÍNH DÒNG có ví dụ**, không nằm ở một câu khác.
+         */
+        `   (b) TRA CỨU CHUNG mà KHÔNG nhân viên nào trong danh bạ chuyên về việc đó — thời tiết, ` +
+        `một địa chỉ, một con số ngoài đời, "X là gì". Khi đó để "paths" là mảng RỖNG.\n` +
+        `       ⚠ Danh bạ CÓ người chuyên tìm tin/tra cứu/duyệt web thì mọi câu tra cứu đều về tay ` +
+        `họ ("task"), kể cả quán ăn hay tin tức: họ đối chiếu nhiều nguồn và dẫn nguồn, "lookup" thì không.\n` +
         `{"intent":"task","request":"<viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh>","scope":"new"}\n` +
         `  dùng khi: đã đủ rõ để giao cho đội.\n` +
         /**
@@ -1351,14 +1836,60 @@ export class Assistant {
         `Phân biệt "lookup" với "task": hỏi xem NGƯỜI KHÁC làm thì kết quả có khác không. ` +
         `Dịch, viết, soát, tư vấn — CÓ khác, vì phụ thuộc chuyên môn và giọng của từng nhân viên → "task". ` +
         `Đọc rồi thuật lại xem tài liệu nói gì — ai đọc cũng ra chừng ấy → "lookup". ` +
-        `Cần ra một FILE để người dùng giữ thì luôn là "task".` +
-        scopeHint,
+        `Cần ra một FILE để người dùng giữ thì luôn là "task".\n` +
+        /**
+         * Luật ƯU TIÊN, user chốt 24/08: *"cho phép cả lookup cả nhân viên,
+         * assistant tự định tuyến, nhưng ưu tiên nhân viên hơn nếu nhân viên là
+         * người chuyên nghiệp và có thể làm chính xác việc đó"*.
+         *
+         * Nó KHÔNG đổi trục đã có ở câu trên — nó phá thế hoà. Trục là *"người
+         * khác làm thì kết quả có khác không"*; khi hai bên nhìn ngang nhau,
+         * nghiêng về nhân viên. Lý do bất đối xứng: chọn nhầm `task` thì tốn
+         * thêm tiền và thời gian, chọn nhầm `lookup` thì người dùng **mất một
+         * góc nhìn chuyên môn mà họ đã cố ý dựng ra** — và không ai thấy là đã
+         * mất, vì câu trả lời vẫn trôi chảy.
+         */
+        `Khi hai cửa nhìn ngang nhau, NGHIÊNG VỀ NHÂN VIÊN: nếu trong danh bạ có người mà việc này ` +
+        `đúng chuyên môn của họ, giao cho họ ("task"). "lookup" là cho phần mà không vai trò nào ` +
+        `thêm được gì.` +
+        scopeHint +
+        reachHint,
     );
 
     // Quyết định là hàm THUẦN và có test riêng. Ở đây chỉ còn phần có tác dụng
     // phụ: ghi nhật ký ca hỏng. → `decideRoute`
-    const value = decideRoute(text);
+    let value = decideRoute(text);
     if (value.intent === 'garbled') this.logFailure('route-failure.log', message, value.raw);
+
+    /**
+     * BƯỚC 2 — CỔNG HẬU KIỂM. Đây mới là thứ chặn thật. → `staleArmMentions`
+     *
+     * Sạch thì tốn 0: một phép so chuỗi trên một danh sách hữu hạn. Chỉ khi
+     * TRÚNG mới trả tiền một lượt sửa — cùng hình dạng `repairReceipt` của
+     * worker (`worker.ts:401`): phát hiện tất định trước, gọi model sau.
+     *
+     * Sửa đúng MỘT lần. Vòng lặp ở đây là đốt tiền trên một thứ ta vốn đã biết
+     * là không đóng được hoàn toàn.
+     */
+    const stale = this.staleArmMentions(routeText(value), message);
+    if (stale.length) {
+      const repair = await this.askSession(
+        `⚠ Câu vừa rồi của bạn nhắc tới ${stale.map((s) => `"${s}"`).join(', ')} — nhưng KHÔNG nhân viên nào ` +
+          `trong danh bạ hiện tại với tới đó nữa. Đó là thông tin CŨ còn sót lại từ hội thoại trước, ` +
+          `không phải trạng thái bây giờ.\n` +
+          `Đọc lại danh sách nhân viên bên trên và trả lời lại câu của người dùng, đúng định dạng JSON như trên.`,
+      );
+      usage = addUsage(usage, repair.usage);
+      const fixed = decideRoute(repair.text);
+      // Bản sửa hỏng định dạng thì GIỮ bản đầu: một câu cũ còn đọc được vẫn hơn
+      // một câu không dùng được. Cùng luật "không trích JSON ra mặt người dùng".
+      if (fixed.intent !== 'garbled') value = fixed;
+      // Vẫn còn nhắc ⇒ đây là ca thoát của cổng, và nó phải để lại dấu vết.
+      // Không có dòng này thì "đã hẹp lại, chưa đóng" là một câu không đo được.
+      if (this.staleArmMentions(routeText(value), message).length) {
+        this.logFailure('route-stale.log', message, `${stale.join(' · ')}\n${routeText(value)}`);
+      }
+    }
     return { value, usage };
   }
 

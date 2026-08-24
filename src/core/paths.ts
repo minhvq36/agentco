@@ -373,6 +373,36 @@ export function resolveInput(officeDir: string, p: string): string | undefined {
  */
 export type GuardedZone = 'secrets' | 'config' | 'outside';
 
+/**
+ * AI đang gọi, và vì thế luật nào áp.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `arm` KHÔNG PHẢI "write nhẹ tay hơn" — nó là một PHẬN SỰ KHÁC.           │
+ * │                                                                          │
+ * │   `read`   tool đọc builtin   → chỉ cấm `secrets`                        │
+ * │   `write`  tool ghi builtin   → cấm `secrets` · `config` · `outside`     │
+ * │   `arm`    tool của MCP       → cấm `secrets` · `config`, CHO `outside`  │
+ * │                                                                          │
+ * │ Vì sao `arm` được ra ngoài: đó chính là LÝ DO NÓ TỒN TẠI. Luật §8·0      │
+ * │ (user chốt 22/08) nói *"mọi đường GHI RA NGOÀI phải qua một tool/MCP     │
+ * │ TƯỜNG MINH — có tên, khai báo được, đọc được trong nhật ký"*. Cấm        │
+ * │ `outside` cho `arm` là cấm đúng con đường tử tế mà luật đó vừa dựng ra,  │
+ * │ và người dùng sẽ quay lại dùng `Bash` — thứ không có biên nào.           │
+ * │                                                                          │
+ * │ Nhưng biên của cánh tay KHÔNG phải là "không có biên": nó bị chặn bởi    │
+ * │ chính MCP server, ở đúng danh sách thư mục người dùng đã khai            │
+ * │ (`roots` = `cwd` + `additionalDirectories`, đo 24/08). Ta chỉ thêm hai   │
+ * │ vùng mà server KHÔNG BAO GIỜ biết là nhạy cảm: kho chìa và file cấu hình.│
+ * │                                                                          │
+ * │ ⚠ `arm` cấm CẢ ĐỌC file cấu hình, trong khi `read` builtin thì cho.      │
+ * │ Cố ý, và lệch về phía an toàn: lúc hook chạy ta chỉ có TÊN TOOL, không   │
+ * │ có cách tất định nào biết `mcp__x__foo` là đọc hay ghi — dò chuỗi tên là │
+ * │ đúng cái class bất định đã loại ở §5n ㉕. Cái giá của phủ định sai ở đây │
+ * │ bằng 0: `Read` builtin vẫn đọc được `roles/*.yaml` như trước.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type GuardMode = 'read' | 'write' | 'arm';
+
 /** Thư mục/file thuộc vùng `config` — tương đối với thư mục VĂN PHÒNG. */
 const OFFICE_CONFIG = ['roles', 'skills', 'connectors', 'office.yaml', 'layout.json'];
 
@@ -400,7 +430,7 @@ function within(a: string, b: string): boolean {
 export function guardedZone(
   dirs: { companyDir: string; officeDir: string },
   target: string,
-  mode: 'read' | 'write',
+  mode: GuardMode,
 ): GuardedZone | undefined {
   if (!target) return undefined;
   const abs = path.resolve(dirs.officeDir, target);
@@ -418,6 +448,10 @@ export function guardedZone(
     if (within(abs, path.join(dirs.officeDir, rel))) return 'config';
   }
   if (within(abs, companyPaths(dirs.companyDir).configFile)) return 'config';
+
+  // Cánh tay DỪNG Ở ĐÂY. Ra ngoài văn phòng là việc của nó, không phải sự cố —
+  // và biên thật của nó do MCP server giữ, ở đúng thư mục người dùng đã khai.
+  if (mode === 'arm') return undefined;
 
   return within(abs, dirs.officeDir) ? undefined : 'outside';
 }

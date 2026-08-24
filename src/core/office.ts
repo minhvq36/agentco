@@ -657,10 +657,22 @@ export class Office {
      * `inflight` cho mọi lượt, kể cả lượt này.
      */
     if (routed.value.intent === 'lookup') {
+      /**
+       * `paths` RỖNG = câu hỏi tra cứu chung, không đọc tài liệu nào (24/08).
+       *
+       * Phải tách nhánh ở ĐÂY chứ không nới `pickReadable`: hàm đó trả lời câu
+       * *"những đường dẫn model vừa nêu có thật không"*, và với danh sách rỗng
+       * thì câu trả lời đúng là "không có gì để kiểm" — không phải "không tìm
+       * thấy file nào". Gộp hai chuyện đó là đẻ ra câu báo lỗi *"Mình không tìm
+       * thấy … trong tủ tài liệu"* cho một câu hỏi về thời tiết.
+       */
+      const asked = routed.value.paths;
       // Đường dẫn do MODEL sinh ⇒ phải đối chiếu với đĩa trước khi ai đọc gì.
       // → commands.ts `pickReadable`
-      const { ok, missing } = pickReadable(routed.value.paths, this.readablePaths());
-      if (ok.length === 0) {
+      const { ok, missing } = asked.length
+        ? pickReadable(asked, this.readablePaths())
+        : { ok: [] as string[], missing: [] as string[] };
+      if (asked.length > 0 && ok.length === 0) {
         // Trả lời bằng CODE. Ta đang cầm cả hai cái kho trong tay; hỏi model
         // "file này có thật không" là trả tiền để nhận về một phỏng đoán.
         this.emit({
@@ -694,7 +706,9 @@ export class Office {
         role: 'assistant',
         say:
           found.value ||
-          'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.',
+          (asked.length
+            ? 'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.'
+            : 'Mình tra rồi nhưng chưa ra câu trả lời chắc chắn. Bạn hỏi cụ thể hơn một chút nhé.'),
         plan_id: null,
       });
       // ⚠ Một phần đề nghị của Trợ lý không có thật thì NÓI RA, đừng im. Câu
@@ -1535,7 +1549,7 @@ export class Office {
        *    hoa. File vẫn nằm nguyên trong ngăn Kết quả cho ai cần.
        */
       const shown = status === 'stopped' ? [] : receipts.filter((r) => !r.answer.trim());
-      this.finish(record, status, report, usage, receipts.length, shown);
+      this.finish(record, status, report, usage, receipts.length, shown, plan.redirected ?? []);
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1673,7 +1687,29 @@ export class Office {
       }
     }
     if (servers.size) {
-      lines.push(`Đã ghi ra ngoài qua: ${[...servers].sort().join(', ')}`);
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ HAI CHỖ SAI TRONG MỘT DÒNG, cùng sửa 24/08.                          │
+       * │                                                                      │
+       * │ ① Nó in cái BĂM (`a385afc3ab6`). Người dùng đặt tên cánh tay ở hộp   │
+       * │   thoại và không bao giờ gặp lại cái tên đó. Nhãn nằm sẵn ở          │
+       * │   `company.arms[id].label` — ta đang cầm mà không nói ra.            │
+       * │                                                                      │
+       * │ ② Câu cũ *"Đã ghi ra ngoài qua: …"* KHAI NHIỀU HƠN THỨ TA KIỂM.      │
+       * │   `landingOf` ghi nhận một lời GỌI TOOL, không ghi nhận kết quả —    │
+       * │   và 10/14 tool của cánh tay filesystem là CHỈ ĐỌC. Ca có thật, đo   │
+       * │   được: `P-260824-0355-r3qe` bị deny cả ba lần, không một byte nào   │
+       * │   được ghi, và báo cáo vẫn nói *"Đã ghi ra ngoài qua: a385afc3ab6"*. │
+       * │                                                                      │
+       * │ Câu mới nói ĐÚNG thứ quan sát được — *đã dùng cánh tay này* — rồi    │
+       * │ khoanh vùng phần bất định thành một câu riêng. Cùng luật với          │
+       * │ `kind: 'command'` của `Bash`: khai điều mình biết, dán nhãn phần     │
+       * │ mình không biết, không gộp hai thứ vào một câu khẳng định.           │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const named = [...servers].map((id) => this.loaded.company.arms[id]?.label || id).sort();
+      lines.push(`Có dùng kết nối: ${named.join(', ')}`);
+      lines.push('(kết quả của kết nối có thể nằm ngoài thư mục văn phòng)');
     }
     if (ranCommand) {
       lines.push('Có chạy lệnh trên máy — kết quả có thể nằm ngoài thư mục văn phòng.');
@@ -1699,6 +1735,8 @@ export class Office {
     usage: Usage,
     tasks: number,
     receipts: readonly Receipt[] = [],
+    /** Đường dẫn ngoài văn phòng mà `outputScoper` đã kéo về khung. → `Plan.redirected` */
+    redirected: readonly string[] = [],
   ): void {
     /**
      * ⚠ BÁO CÁO KHÔNG ĐƯỢC MÂU THUẪN VỚI DẢI BƯỚC NGAY BÊN CẠNH NÓ. → §B
@@ -1732,6 +1770,40 @@ export class Office {
         `\n\n⚠ Nhưng còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
         undone.map((s) => `"${s.title}"`).join(', ') +
         `. Kết quả ở trên chỉ tính phần đã làm.`;
+    }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ NGƯỜI DÙNG XIN MỘT CHỖ NGOÀI VĂN PHÒNG — NÓI RA, VÀ CHỈ LỐI ĐI.    │
+     * │                                                                    │
+     * │ Ca 24/08 (`P-260824-0401-q7ma`): họ bảo chép file vào              │
+     * │ `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về    │
+     * │ `artifacts/` (đúng thiết kế), Trợ lý nhìn ra sự lệch đó và tự viết:  │
+     * │                                                                    │
+     * │   *"…nếu cần mình sẽ thử ghi lại đúng vị trí đó."*                  │
+     * │                                                                    │
+     * │ Thử lại bao nhiêu lần cũng vào `artifacts/`: `outputScoper` chạy    │
+     * │ TRƯỚC khi nhân viên được phóng. Đó là một lời mời vào vòng lặp      │
+     * │ không có lối ra, và mỗi vòng đều tính tiền.                         │
+     * │                                                                    │
+     * │ Dòng dưới dựng bằng CODE từ chính chuỗi `outputScoper` vừa viết     │
+     * │ lại — 0 token, model không "quên" được, và nó nói ra ĐƯỜNG ĐI CÓ    │
+     * │ THẬT thay vì một lời hứa: cắm một kết nối trỏ vào thư mục đó.       │
+     * │ Đó chính là luật §8·0 nói bằng tiếng người — *mọi đường ra phải là  │
+     * │ một năng lực CÓ TÊN* — và từ 24/08 nó chạy được thật (SPEC-arms     │
+     * │ §5i, ca B).                                                        │
+     * │                                                                    │
+     * │ ⚠ KHÔNG dán vào ca `stopped`: người vừa bấm Dừng không cần một bài  │
+     * │ giảng về chỗ để file.                                              │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    if (redirected.length && status !== 'stopped' && report.trim()) {
+      const shownPaths = [...new Set(redirected)].slice(0, 3);
+      report +=
+        `\n\nBạn có nhắc tới ${shownPaths.map((p) => `"${p}"`).join(', ')}. ` +
+        `Kế hoạch luôn đặt kết quả trong thư mục văn phòng, nên file nằm ở đường dẫn ghi bên dưới. ` +
+        `Muốn nó nằm thẳng ngoài đó, cắm một kết nối "File trên máy" trỏ vào thư mục ấy rồi giao ` +
+        `cho nhân viên — đó là đường duy nhất ghi ra ngoài mà vẫn vào được nhật ký.`;
     }
 
     const where = this.whereBlock(receipts);

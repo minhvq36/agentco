@@ -14,6 +14,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import YAML from 'yaml';
 
+import { ensureInstalled } from './armexec.js';
 import { loadCompanyConfig, loadOffice } from './config.js';
 import {
   companyPaths,
@@ -78,6 +79,26 @@ export class Company {
     this.config = config;
     ensureCompanyDirs(this.paths);
     this.loadOffices();
+    this.warmArms();
+  }
+
+  /**
+   * Cài sẵn gói của mọi cánh tay đã cắm — KHÔNG chờ, KHÔNG chặn gì.
+   *
+   * Cánh tay cắm trước bản vá 24/08 chưa có bản cài nhanh nào, nên nếu chỉ dựa
+   * vào nút "Thử ngay" thì chúng trả ~4 giây mỗi task **mãi mãi** (không ai bấm
+   * Thử lại một cánh tay đang chạy tốt). Daemon mở công ty là lúc rẻ nhất để
+   * trả khoản đó: chưa ai chờ gì cả.
+   *
+   * ⚠ `void` có chủ ý và phải giữ: `await` ở đây là chặn daemon khởi động sau
+   * một lời gọi mạng: hỏng đúng lớp "một thao tác dọn dẹp của hệ thống nằm ở
+   * tay người dùng". Cài xong hay không, `fastLaunch` vẫn tự quyết đúng ở lượt
+   * chạy kế tiếp. → `core/armexec.ts`
+   */
+  private warmArms(): void {
+    for (const cfg of Object.values(this.config.mcpServers)) {
+      void ensureInstalled(cfg as Record<string, unknown>);
+    }
   }
 
   static open(dir?: string): Company {

@@ -13,8 +13,10 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
 import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
 
+import { fastLaunch } from './armexec.js';
+import { folderRoots } from './catalog.js';
 import { noteRateLimit } from './energy.js';
-import { companyPaths, guardedZone, safeJoin, type GuardedZone } from './paths.js';
+import { companyPaths, guardedZone, safeJoin, type GuardedZone, type GuardMode } from './paths.js';
 import { grantFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
@@ -94,6 +96,54 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   // file vai trò ở `offices/<id>/roles/`. → paths.ts §guardedZone
   const jailDirs = { companyDir: office.companyDir, officeDir: office.dir };
 
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CÁNH TAY: BA THỨ, PHẢI ĐI CÙNG NHAU. (đo 24/08, ca `P-260824-0355`)  │
+   * │                                                                        │
+   * │ Trước bản này, một cánh tay đã cắm và đã nối dây vẫn KHÔNG DÙNG ĐƯỢC.   │
+   * │ Hai lỗ chồng lên nhau, cả hai im lặng:                                  │
+   * │                                                                        │
+   * │  ① `allowedTools` chỉ chứa 7 tool văn phòng (+shell). Tên tool MCP là   │
+   * │    `mcp__<server>__<tool>` ⇒ không nằm trong đó ⇒ SDK coi là "cần hỏi"  │
+   * │    ⇒ không có `canUseTool` ⇒ **deny**. Nguyên văn đo được:              │
+   * │    *"Claude requested permissions to use mcp__files__list_directory_    │
+   * │    with_sizes, but you haven't granted it yet."*                       │
+   * │    Receipt thật: 3 lần gọi, 3 lần bị chặn, `blocked`, $0,0948.          │
+   * │                                                                        │
+   * │  ② Thư mục người dùng khai ở hộp thoại **BỊ BỎ HOÀN TOÀN**.             │
+   * │    `server-filesystem` ưu tiên `roots` của client hơn `args` dòng lệnh, │
+   * │    và Claude Code khai `cwd` (+ `additionalDirectories`) làm roots.     │
+   * │    Đo: giữ nguyên `args`, đổi `cwd` → danh sách thư mục cho phép đổi    │
+   * │    theo `cwd`. ⇒ cánh tay trỏ vào `D:\Downloads\…` thực chất chỉ mở     │
+   * │    được thư mục văn phòng — đúng thứ `Read` trần đã làm được, miễn phí. │
+   * │                                                                        │
+   * │ ⇒ Ta trả **~2 185 token MỖI LƯỢT** (đo 23/08) cho một bộ tool không bao │
+   * │ giờ dùng được. Cánh tay cắm vào để nhìn.                                │
+   * │                                                                        │
+   * │ Vá ① mà quên ② thì cánh tay chạy nhưng mù. Vá ①+② mà quên hook          │
+   * │ `mcp__.*` (khối `hooks` bên dưới) thì **mở một cửa ghi vào `roles/` và  │
+   * │ đọc `.state/`** — đúng hai lỗ vừa vá 23/08, qua một cửa khác.           │
+   * │ Ba phần này KHÔNG tách được. → docs/SPEC-arms.md §5g                    │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  const mcpServers = role.mcp.length ? pickMcp(office, role) : undefined;
+  /**
+   * Duyệt theo CẢ SERVER (`mcp__<id>`), không theo từng tool (user chốt 24/08).
+   *
+   * Vì cạnh nối trên sơ đồ **LÀ** hành động cấp quyền: kéo dây từ 🔌 xuống một
+   * nhân viên chính là câu "người này được dùng cánh tay này". Duyệt lẻ từng
+   * tool là bắt người dùng trả lời lại cùng một câu hỏi bằng một từ vựng họ
+   * không có (`write_file` vs `edit_file`), và 4/14 tool `write_external` sẽ
+   * deny ra ĐÚNG câu "permission denied" khó hiểu vừa mất một buổi để truy.
+   *
+   * Mức duyệt từng tool là việc của cổng §8 — nơi có CHỦ THỂ bấm nút.
+   */
+  const armGrants = mcpServers ? Object.keys(mcpServers).map((n) => `mcp__${n}`) : [];
+  const armDirs = armRoots(role, mcpServers);
+  /** Băm → tên người dùng đặt. Nhật ký nói tên, không nói băm. → `describeCall` */
+  const armLabels: Record<string, string> = {};
+  for (const [id, a] of Object.entries(office.company.arms)) if (a.label) armLabels[id] = a.label;
+
   const model = modelFor(office, role.model_tier);
   // model PHẢI đi vào cacheKey: prompt cache đánh theo (model, prefix).
   const built = buildWorkerPrompt(office, role, { hotKnowledge: input.hotKnowledge, model });
@@ -162,7 +212,19 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          * └────────────────────────────────────────────────────────────────────┘
          */
         tools: effectiveTools(role.tools),
-        allowedTools: effectiveTools(role.tools),
+        /**
+         * ⚠ `tools` KHÔNG liệt kê tool MCP, và đó là CỐ Ý — đo được: truyền
+         * `tools: [7 tool]` mà CLI vẫn cấp đủ 21 (7 + 14 của MCP). `tools` lọc
+         * tool BUILTIN theo tên; tool MCP đi đường khác. Nhét `mcp__files` vào
+         * đó là gửi một chuỗi không phải tên tool nào cả — rơi đúng cái bẫy
+         * "allowlist im lặng bỏ phần tử lạ" của `SHELL_ALIASES`, và lần này nó
+         * có thể vứt CẢ BỘ. `warnDroppedTools` canh phần builtin như cũ.
+         */
+        allowedTools: [...effectiveTools(role.tools), ...armGrants],
+        // Thư mục cánh tay được phép chạm. Đây là thứ MCP server thật sự đọc
+        // (`roots`), không phải `args`. Vai trò không có cánh tay ⇒ mảng rỗng ⇒
+        // không truyền gì: đặc quyền tối thiểu giữ nguyên.
+        ...(armDirs.length ? { additionalDirectories: armDirs } : {}),
         /**
          * ┌────────────────────────────────────────────────────────────────────┐
          * │ LUẬT: KẾT QUẢ LUÔN SINH RA BÊN TRONG THƯ MỤC VĂN PHÒNG.            │
@@ -194,9 +256,30 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
             // `Read` vẫn mở được mọi file trên máy, đúng như trước. Nó chỉ khoá
             // đúng `.state/`, tức chìa khoá và sổ công việc. → SPEC-arms.md §5d
             { matcher: 'Read|Grep|Glob', hooks: [officeJail(jailDirs, 'read')] },
+            /**
+             * ┌──────────────────────────────────────────────────────────────┐
+             * │ NHÁNH CÁNH TAY (24/08) — điều kiện để ① và ② ở trên an toàn.  │
+             * │                                                              │
+             * │ `guardedZone` cũ chỉ khớp tool BUILTIN. Chú thích ở           │
+             * │ `catalog.ts §swallowsOffice` đã ghi trước chuyện này:         │
+             * │ *"tool của MCP mang tên `mcp__x__read_file`, KHÔNG khớp ⇒     │
+             * │ mở lại đúng hai cái lỗ vừa vá, qua một cửa khác"* — và ghi    │
+             * │ kèm *"chưa ai đo là matcher đó có khớp không"*.               │
+             * │                                                              │
+             * │ ĐO RỒI 24/08 (`scripts/spike-mcp-hook.ts`):                   │
+             * │   không hook          → ❌ đọc được `roles/nguoi-viet.yaml`   │
+             * │   matcher `mcp__.*`   → ✅ hook nổ 2 lần, **deny thật**       │
+             * │   matcher `.*`        → ✅ nổ, deny thật                      │
+             * │                                                              │
+             * │ Bằng chứng đây là CƠ CHẾ chứ không phải "model ngoan": nhật   │
+             * │ ký vẫn hiện lời gọi `mcp__files__read_text_file` — model VẪN  │
+             * │ gọi tool, hook chặn nó.                                       │
+             * └──────────────────────────────────────────────────────────────┘
+             */
+            { matcher: 'mcp__.*', hooks: [officeJail(jailDirs, 'arm')] },
           ],
         },
-        ...(role.mcp.length ? { mcpServers: pickMcp(office, role) } : {}),
+        ...(mcpServers ? { mcpServers } : {}),
       },
     });
 
@@ -235,7 +318,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         // Một tin nhắn có thể chứa nhiều tool_use. Dòng trạng thái chỉ hiện cái
         // ĐẦU (nhiều hơn thì nhấp nháy vô nghĩa), nhưng ĐIỂM ĐẾN thì ghi hết —
         // đây là chỗ ta biết kết quả thật sự đã đi đâu.
-        if (calls[0]) deps.onProgress?.(describeCall(calls[0]));
+        if (calls[0]) deps.onProgress?.(describeCall(calls[0], armLabels));
         for (const call of calls) {
           const spot = landingOf(office.dir, call);
           if (spot) landed.set(`${spot.kind}:${spot.ref}`, spot);
@@ -373,26 +456,97 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
  * là một lượt trả tiền để nhận về một lời từ chối (§5 "`tools` vs
  * `allowedTools`", cái giá thứ 2). Nói luôn chỗ đúng thì nó ghi được ở lượt kế.
  */
-function officeJail(dirs: JailDirs, mode: 'read' | 'write') {
+function officeJail(dirs: JailDirs, mode: GuardMode) {
   return async (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const raw = (input['tool_input'] ?? {}) as Record<string, unknown>;
-    // Bốn tên trường, vì bốn tool khai đường dẫn ở bốn chỗ: `Read`/`Write`/`Edit`
-    // dùng `file_path`, `NotebookEdit` dùng `notebook_path`, `Grep`/`Glob` dùng
-    // `path`. Sót một tên là để hở đúng một tool, và im lặng — cùng bài học
-    // `SHELL_ALIASES`: một danh sách tên viết tay là chỗ lỗi quay lại.
-    const target = str(raw['file_path']) || str(raw['notebook_path']) || str(raw['path']);
 
-    const zone = guardedZone(dirs, target, mode);
-    if (!zone) return {};
-
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: JAIL_REASON[zone](target),
-      },
-    };
+    // MỌI trường, không phải trường đầu tiên tìm thấy. `move_file` của MCP có
+    // HAI đường dẫn (`source` + `destination`) và chỉ một trong hai chạm vùng
+    // cấm là đủ hỏng. Bản trước dùng chuỗi `||` nên nó dừng ở cái đầu tiên.
+    for (const target of pathsIn(raw)) {
+      const zone = guardedZone(dirs, target, mode);
+      if (!zone) continue;
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: JAIL_REASON[zone](target),
+        },
+      };
+    }
+    return {};
   };
+}
+
+/**
+ * Mọi đường dẫn khai trong `tool_input` của MỘT lời gọi.
+ *
+ * Sáu tên trường, vì các tool khai đường dẫn ở sáu chỗ khác nhau:
+ *
+ *   `file_path`      Read · Write · Edit
+ *   `notebook_path`  NotebookEdit
+ *   `path`           Grep · Glob · và gần như MỌI tool của server-filesystem
+ *   `source`         move_file
+ *   `destination`    move_file
+ *   `paths[]`        read_multiple_files
+ *
+ * ⚠ Đây lại là một DANH SÁCH TÊN VIẾT TAY, đúng thứ đã đốt sáu ngày ở
+ * `SHELL_ALIASES`. Khác biệt phải nói ra: ở đó sót một tên làm một tính năng
+ * lặng lẽ không tồn tại; ở đây sót một tên **để hở một cửa**. Nên nó phải được
+ * đọc lại mỗi lần danh mục thêm một server mới — `spike-fs-tools.ts` in ra
+ * danh sách tool thật để đối chiếu.
+ */
+export function pathsIn(raw: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const key of ['file_path', 'notebook_path', 'path', 'source', 'destination']) {
+    const v = str(raw[key]);
+    if (v) out.push(v);
+  }
+  const many = raw['paths'];
+  if (Array.isArray(many)) {
+    for (const p of many) {
+      const v = str(p);
+      if (v) out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Thư mục mà cánh tay của vai trò này được phép chạm — thứ đi vào
+ * `additionalDirectories`, tức thứ MCP server THẬT SỰ đọc làm `roots`.
+ *
+ * Suy từ chính `args` đã ghi trong `company.yaml` (`folderRoots`), nên không đẻ
+ * ra trường cấu hình thứ hai phải giữ đồng bộ với cái đầu tiên.
+ *
+ * ⚠ THƯ MỤC KHÔNG CÒN THÌ BỎ, VÀ KÊU. Ổ USB rút ra, thư mục bị xoá, văn phòng
+ * zip sang máy khác — cả ba đều có thật. Hai hậu quả, và chúng không cân nhau:
+ * bỏ đi ⇒ cánh tay hẹp hơn người dùng tưởng, có một dòng cảnh báo; truyền
+ * xuống ⇒ CLI có thể từ chối cả lượt chạy, và mọi việc của vai trò đó chết kèm
+ * một câu lỗi không nói gì về cái ổ USB. → [[agentco-safe-default-direction]]
+ */
+export function armRoots(role: Role, servers: McpServers | undefined): string[] {
+  if (!servers) return [];
+  const out = new Set<string>();
+  for (const cfg of Object.values(servers)) {
+    for (const dir of folderRoots(cfg)) {
+      let there = false;
+      try {
+        there = fs.statSync(dir).isDirectory();
+      } catch {
+        there = false;
+      }
+      if (there) out.add(dir);
+      else if (!warned.has(`dir:${dir}`)) {
+        warned.add(`dir:${dir}`);
+        process.emitWarning(
+          `Cánh tay của vai trò "${role.id}" khai thư mục "${dir}" nhưng không tìm thấy trên máy. ` +
+            `Nhân viên sẽ KHÔNG với tới được thư mục đó — kiểm lại đường dẫn ở nút "+ Kết nối".`,
+        );
+      }
+    }
+  }
+  return [...out];
 }
 
 interface JailDirs {
@@ -670,10 +824,16 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
     // Chỉ tiêm vào server chạy bằng tiến trình con (có `command`). Server kiểu
     // http/sse nhận xác thực theo cách khác, tiêm env vào là vô nghĩa.
     const isProcess = typeof (cfg as { command?: unknown }).command === 'string';
-    out[n] =
+    const withEnv =
       isProcess && Object.keys(env).length
         ? { ...(cfg as object), env: { ...((cfg as { env?: object }).env ?? {}), ...env } }
         : cfg;
+    /**
+     * Bỏ `npx` khỏi đường nóng — đo được **~4 giây MỖI task có cánh tay**, vì
+     * mỗi `query()` spawn một tiến trình MCP mới. Đồng bộ, không cài gì, và
+     * không có bản cài sẵn thì trả về đúng cấu hình gốc. → `core/armexec.ts`
+     */
+    out[n] = fastLaunch(withEnv as Record<string, unknown>);
   }
   // Hình dạng do người dùng khai trong company.yaml — SDK tự validate lúc khởi tạo.
   return out as McpServers;
@@ -808,7 +968,7 @@ function toolCalls(m: Record<string, unknown>): ToolCall[] {
  * │ Và "dự án" là từ của lập trình viên. Người dùng của ta mở tiệm hoa.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-function describeCall(call: ToolCall): string {
+export function describeCall(call: ToolCall, arms?: Record<string, string>): string {
   const file = typeof call.input['file_path'] === 'string' ? basename(call.input['file_path']) : '';
   switch (call.name) {
     case 'Read':
@@ -853,9 +1013,35 @@ function describeCall(call: ToolCall): string {
       if (!cmd) return 'đang chạy lệnh';
       return `đang chạy: ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}`;
     }
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ CÁNH TAY PHẢI CÓ TÊN VÀ CÓ ĐIỂM ĐẾN — hệ quả BẮT BUỘC của bản vá     │
+     * │ 24/08, không phải một cải tiến rời.                                  │
+     * │                                                                      │
+     * │ Luật đã ghi 22/08 khi `Bash` thành mặc định bật: *"mở rộng một quyền │
+     * │ thì phải mở rộng cả ĐƯỜNG NHÌN vào nó, TRONG CÙNG MỘT LẦN SỬA. Tách  │
+     * │ hai việc thì giữa hai lần sẽ có một khoảng thời gian quyền đã rộng   │
+     * │ mà mắt vẫn hẹp — và đó chính xác là hình dạng của mọi sự cố im       │
+     * │ lặng."* Hôm nay cánh tay đi từ "không bao giờ chạy" sang "ghi được   │
+     * │ file lên đĩa của người dùng". Cùng ngày, không phải ngày mai.        │
+     * │                                                                      │
+     * │ Bản trước in `đang làm việc với a385afc3ab6` — một cái BĂM. Người    │
+     * │ dùng đặt tên "Programs Installation 2" ở hộp thoại và không bao giờ  │
+     * │ thấy lại cái tên đó. Nhãn nằm sẵn ở `company.arms[id].label`.        │
+     * │                                                                      │
+     * │ ⚠ Đuôi tên tool in NGUYÊN VĂN (`write_file` → `write file`), KHÔNG   │
+     * │ qua một bảng dịch viết tay. Bảng đó sẽ đúng cho `filesystem` và câm  │
+     * │ cho Notion, GitHub, và mọi server người dùng tự cắm — tức là nó hỏng │
+     * │ ĐÚNG LÚC danh mục lớn lên. Tên thô xấu hơn một chút và đúng mãi mãi. │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
     default: {
       const server = mcpServerOf(call.name);
-      return server ? `đang làm việc với ${server}` : `đang dùng ${call.name}`;
+      if (!server) return `đang dùng ${call.name}`;
+      const who = arms?.[server] || server;
+      const what = call.name.split('__').slice(2).join('__').replace(/_/g, ' ');
+      const where = basename(str(call.input['path']) || str(call.input['destination']) || '');
+      return `${who} · ${what || 'đang làm việc'}${where ? ` → ${where}` : ''}`;
     }
   }
 }
@@ -980,6 +1166,23 @@ export function warnDroppedTools(role: Role, granted: unknown): string[] {
   const dropped = asked.filter((t) => !got.has(t) && !EXTERNAL_TOOLS.has(t));
   if (hasShell(role.tools) && !asked.some((t) => EXTERNAL_TOOLS.has(t) && got.has(t))) {
     dropped.push('(tool chạy lệnh)');
+  }
+  /**
+   * CÁNH TAY ĐI QUA CÙNG MỘT BẤT BIẾN — thêm 24/08.
+   *
+   * Hàm này sinh ra 22/08 từ đúng một câu: *"thứ tôi xin và thứ tôi nhận không
+   * khớp"*. Cánh tay vừa nện lại đúng hình dạng đó qua một cửa khác — đã nối
+   * dây, đã trả 2 185 token/lượt, và **không một tool nào được cấp** vì server
+   * chết lúc khởi động (`npx` không tải được gói · sai tên gói · máy không có
+   * node). Không lỗi, không cảnh báo, chỉ có nhân viên nói "tôi không làm được"
+   * và một hoá đơn.
+   *
+   * Đây là phép kiểm ở TẦNG ĐÚNG: nó không cần biết cánh tay tên gì hay có bao
+   * nhiêu tool — chỉ cần biết vai trò có khai `mcp:` mà CLI cấp về 0 tool nào
+   * mang tiền tố `mcp__`.
+   */
+  if (role.mcp.length && ![...got].some((t) => t.startsWith('mcp__'))) {
+    dropped.push(`(cánh tay: ${role.mcp.join(', ')})`);
   }
   if (dropped.length === 0) return [];
 

@@ -81,16 +81,40 @@ test('decideRoute: lookup — worker ẩn, có đường dẫn và câu hỏi', 
 });
 
 /**
- * `paths` RỖNG KHÔNG PHẢI MỘT LOOKUP HỢP LỆ.
+ * 🔄 QUYẾT ĐỊNH ĐÃ ĐỔI 24/08 — test này từng khoá điều NGƯỢC LẠI.
  *
- * Trợ lý đã cầm sẵn bảng kê tủ tài liệu và bảng kê Kết quả trong prefix — đó
- * chính là việc của hai bảng đó. Không nêu được tên file thì đường đúng là hỏi
- * lại, không phải thả một agent đi mò. Schema chặn, nên nó rơi xuống `garbled`
- * và người dùng KHÔNG nhìn thấy khối JSON.
+ * Bản cũ: *"`paths` rỗng KHÔNG phải một lookup hợp lệ — Trợ lý đã cầm sẵn hai
+ * bảng kê, không nêu được tên file thì hỏi lại, đừng thả agent đi mò"*. Đúng
+ * khi thế giới của văn phòng chỉ có tủ tài liệu.
+ *
+ * Nó hỏng ở lượt tiếp xúc đầu tiên với người non-code: hỏi *"thời tiết hôm
+ * nay"*, *"quán ăn"*, *"tin tức"* → không có `paths` nào để nêu → `ask` hoặc
+ * `garbled` → *"văn phòng mình chưa có nhân viên phụ trách"*. User chốt: cho
+ * `lookup` tra web, `paths` rỗng nghĩa là **câu hỏi tra cứu chung**.
+ *
+ * Giữ test này (đổi chiều) thay vì xoá: nó là chỗ ghi rằng đây là một QUYẾT
+ * ĐỊNH đã cân, không phải một chỗ ai đó quên ràng buộc.
  */
-test('decideRoute: lookup thiếu paths thì không lọt qua', () => {
-  const out = decideRoute(fence({ intent: 'lookup', paths: [], question: 'gì đó' }));
-  assert.equal(out.intent, 'garbled');
+test('decideRoute: lookup KHÔNG paths là hợp lệ — đó là câu hỏi tra web', () => {
+  const out = decideRoute(fence({ intent: 'lookup', paths: [], question: 'thời tiết hôm nay' }));
+  assert.equal(out.intent, 'lookup');
+  assert.ok(out.intent === 'lookup');
+  assert.deepEqual(out.paths, []);
+});
+
+test('decideRoute: lookup thiếu HẲN khoá paths cũng hợp lệ, và ra mảng rỗng', () => {
+  // `.default([])` chứ không `.optional()`: mọi nhánh phía sau đọc `.length`,
+  // và một `undefined` lọt xuống đó là một `TypeError` lúc chạy chứ không phải
+  // một nhánh khác. Schema phải trả về hình dạng ổn định, không trả về "có thể".
+  const out = decideRoute(fence({ intent: 'lookup', question: 'tin tức hôm nay' }));
+  assert.ok(out.intent === 'lookup');
+  assert.deepEqual(out.paths, []);
+});
+
+test('decideRoute: lookup THIẾU question vẫn không lọt — câu hỏi là thứ bắt buộc', () => {
+  // Nửa còn lại của bản nới: nới `paths` KHÔNG được nới luôn `question`. Một
+  // lookup không có câu hỏi là một lượt gọi model để hỏi hư không.
+  assert.equal(decideRoute(fence({ intent: 'lookup', paths: [] })).intent, 'garbled');
 });
 
 /**

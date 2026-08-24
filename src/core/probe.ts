@@ -10,8 +10,16 @@
  * │   hồi được bơm ra. Khuôn gốc: `core/energy.ts §refresh`. Đo hỏng 4/4 lần │
  * │   trước khi ai hiểu ra (§5n ⑤).                                          │
  * │                                                                          │
- * │ ② `pending` LÀ TRẠNG THÁI CÓ THẬT, KÉO DÀI NHIỀU GIÂY. Đo: 4 s sau khi   │
- * │   cache `npx` ấm, 17,7 s lần đầu phải tải gói. Hỏi MỘT LẦN rồi kết luận  │
+ * │ ② `pending` LÀ TRẠNG THÁI CÓ THẬT, KÉO DÀI NHIỀU GIÂY.                   │
+ * │                                                                          │
+ * │   ⚠ ĐÍNH CHÍNH 24/08 (`scripts/spike-npx-cost.ts`, 10 lượt): câu cũ ghi  │
+ * │   *"4 s sau khi cache npx ấm, 17,7 s lần đầu"*. Số thật với gói ĐÃ cache │
+ * │   là **7,7–9,2 s, và lần đầu bằng lần thứ ba** — "lần sau nhanh hơn" là  │
+ * │   một mệnh đề chưa ai đo, sinh từ ĐÚNG MỘT lần bấm giờ thuận lợi rồi     │
+ * │   được chép vào ba chỗ. ~3,2 s là phí tự thân của `npx`: chạy thẳng      │
+ * │   `node <file đã cache>` chỉ mất 0,8 s.                                  │
+ * │                                                                          │
+ * │   Hỏi MỘT LẦN rồi kết luận                                               │
  * │   là đo THỜI ĐIỂM HỎI chứ không đo cái server — lần đo đầu của spike đã  │
  * │   ra "0 tool, không có annotations" theo đúng cách đó.                   │
  * │                                                                          │
@@ -25,6 +33,8 @@
  */
 
 import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+
+import { ensureInstalled, fastLaunch } from './armexec.js';
 
 /** Đúng bộ `effectiveTools([])` của một vai trò trần — để số token so sánh được. */
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
@@ -104,6 +114,23 @@ export async function probeArm(
       }
     }
   }
+  /**
+   * CÀI SẴN NGAY Ở ĐÂY, và đây là chỗ ĐÚNG để chờ nó.
+   *
+   * Nút "Thử ngay" là lúc DUY NHẤT người dùng còn đứng đó và biết mình đang chờ
+   * một cánh tay mới. Đẩy lần cài sang lượt chạy đầu tiên là dời khoản chờ vào
+   * giữa một việc đang chạy, lúc họ đã bỏ đi — đúng lý lẽ đã dùng để GIỮ phép
+   * thử này (§6c). Nên trả nó ở đây, một lần, rồi mọi lượt sau nhanh mãi.
+   *
+   * Hỏng thì đi tiếp: `fastLaunch` trả về `npx` như cũ và phép thử vẫn đúng.
+   */
+  for (const cfg of Object.values(servers)) {
+    await ensureInstalled(cfg as Record<string, unknown>);
+  }
+  for (const [name, cfg] of Object.entries(servers)) {
+    servers[name] = fastLaunch(cfg as Record<string, unknown>) as McpServerConfig;
+  }
+
   const t0 = Date.now();
   let release: (() => void) | undefined;
 

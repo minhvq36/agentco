@@ -89,9 +89,14 @@ export const api = {
   /**
    * THỬ NGAY — bắt tay thật, chưa lưu gì.
    *
-   * ⚠ CHẬM VÀ ĐÓ LÀ BÌNH THƯỜNG: đo được 4 giây khi cache `npx` đã ấm, **17,7
-   * giây** lần đầu phải tải gói về. Giao diện phải hiện "đang kết nối…" — coi im
+   * ⚠ CHẬM VÀ ĐÓ LÀ BÌNH THƯỜNG. Giao diện phải hiện "đang kết nối…" — coi im
    * lặng là hỏng thì mọi cánh tay đều trông như hỏng ở lần cắm đầu tiên.
+   *
+   * ĐÍNH CHÍNH 24/08 (`scripts/spike-npx-cost.ts`, 10 lượt): câu cũ ở đây ghi
+   * *"4 giây khi cache npx đã ấm, 17,7 giây lần đầu"*. Số thật, gói đã cache:
+   * **7,7–9,2 giây, lần đầu bằng lần thứ ba** — không có "lần sau nhanh hơn".
+   * ~3,2 s trong đó là phí tự thân của `npx`, đo được bằng cách chạy thẳng
+   * `node <file>` (0,8 s). Cùng khoản đó cũng bị trả ở MỖI task có cánh tay.
    */
   testArm: (
     id: string,
