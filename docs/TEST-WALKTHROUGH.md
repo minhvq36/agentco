@@ -1,4 +1,4 @@
-﻿# Bài test 10 use case — từng bước một, theo đúng thứ tự người dùng bấm
+# Bài test 10 use case — từng bước một, theo đúng thứ tự người dùng bấm
 
 **Ngày:** 15/08/2026 · Đi kèm `USE-CASES.md` (lý do) — file này chỉ có **thao tác**.
 
@@ -144,6 +144,25 @@ Khách mua hàng sale 60% hôm kia, giờ đòi đổi size. Soạn giúp mình 
 Ca này chạy trơn tru, và ca chạy trơn tru **không sinh ra bài học nào** — hệ thống không hỏi Trợ lý câu đó nữa. Nếu thấy một node kiểu *"sản phẩm giảm 60% thường không được đổi trả…"* thì chốt `worthLearning` đã hỏng: đó là **nội dung tài liệu bị chép vào prefix**, nó sẽ nói sai ngày bạn đổi chính sách. → `SESSIONS_MEMORY` §5g
 
 **Bước 7 (mới 19/08).** 🖱 Mở **Kết quả**. Phải thấy file vừa tạo, xem trước được, tải về được, xoá được. Đường dẫn phải là `artifacts/<mã kế hoạch>/T-01/…` — chạy lại câu hỏi lần hai thì nó vào **thư mục khác**, không ghi đè lần một.
+
+**Bước 8 (mới 25/08) — nút Xoá tất cả.** Chạy câu hỏi thêm **hai lần nữa** để ngăn có ≥3 file, rồi 🖱 **Xoá tất cả** ở đầu ngăn Kết quả.
+
+| Mong đợi | |
+|---|---|
+| Dòng đầu ngăn hiện đúng số file + tổng dung lượng **trước khi bấm** | ✅ biết mình sắp mất gì, không phải sau |
+| Hộp xác nhận nêu **con số** (`Xoá cả 3 kết quả?`), không phải chữ "tất cả" | ✅ |
+| Hộp xác nhận nói rõ **Tủ tài liệu và Kho tri thức không bị đụng** | ✅ ba kho dễ lẫn nhau |
+| Sau khi xoá: ngăn về màn hình rỗng, toast báo `Đã xoá 3 kết quả` | ✅ |
+| 🖱 Mở **Tủ tài liệu** và **Kho tri thức** — còn nguyên | ✅ ranh giới đúng chỗ |
+| 💬 Hỏi Trợ lý *"còn kết quả nào không"* — nó phải nói **không**, không kể tên file vừa xoá | ✅ bảng kê trong prefix đã nạp lại |
+
+> Ô cuối là ô đắt nhất: bảng kê Kết quả nằm **trong prefix của Trợ lý**. Quên nạp lại thì nó tiếp tục
+> nêu tên hàng chục file vừa bị xoá, rất tự tin, và người dùng bấm vào từng cái để nhận "không tìm
+> thấy". Đúng cửa tắt mà `Office` đã đóng một lần rồi. → `office.ts §clearArtifacts`
+
+📁 Ngoài ra 📝 mở `offices/<vp>/artifacts/` bằng Explorer: các thư mục `P-…/T-01/` rỗng phải **biến mất
+theo**, còn chính `artifacts/` thì **còn**. Nút này chỉ có ở ngăn Kết quả — **cố ý không** có ở Tủ tài
+liệu (xoá kéo theo kinh nghiệm sống nhờ nó) và Kho tri thức (**không dựng lại được bằng tiền**).
 
 **Chi phí đo được 19/08:** cả ca **8 lượt · $0.051** (trước khi sửa: 11 lượt · $0.108).
 
@@ -896,14 +915,24 @@ Nên hôm nay chỉ có hai lựa chọn, và cả hai đều không ổn:
 > | Bài | Đo gì | Chạy được chưa |
 > |---|---|---|
 > | **11** | Cắm cánh tay **không cần chìa** (File trên máy) | ✅ **CHẠY ĐƯỢC 23/08** |
-> | **12** | **Ô chìa tĩnh** + chìa đi theo dây (Notion) | ⛔ cần §6 việc 7+8 |
-> | **13** | **Transport HTTP** + tiêm `headers` (GitHub) | ⛔ cần §6 việc 10 |
+> | **12** | **HTTP** + chìa vào `headers` + **chỉ đọc** + `ToolSearch` (Notion) | ✅ **CHẠY ĐƯỢC 25/08** |
+> | **13** | Transport HTTP + tiêm `headers` (GitHub) | 🟡 **cơ chế đã xong ở bài 12** — còn kẹt ở chỗ khác, xem dưới |
 > | **14** | Google qua UI — bản thay chặng B của bài 10 | ⛔ cần §6 việc 12 |
 > | **15** ✅ | **HAI LỖ BẢO MẬT** — §5d + §5f | ✅ **CHẠY ĐƯỢC NGAY** · **đã vá 23/08, cả hai 🟢** |
 > | **16** | Rút cánh tay ra — node, chìa, tri thức | ⛔ cần §6 việc 13+15 |
 >
-> **Chạy bài 15 trước tiên.** Nó là bài duy nhất chạy được hôm nay, nó **không tốn công dựng gì**,
-> và kết quả của nó là mốc để biết bản vá có thật sự vá hay không.
+> **Chạy bài 12 trước.** Nó là bài mới nhất chạy được, và nó là bài **duy nhất** đo bốn cơ chế
+> chưa ai chạm: HTTP · chìa vào `headers` (lỗ §5a) · cánh tay chỉ đọc · `ToolSearch`.
+>
+> ### 🔴 Bài 13 đổi lý do kẹt — **không còn kẹt vì §6 việc 10**
+>
+> Việc 10 (*"bịt §5a, tiêm `headers`"*) **đã xong 25/08** cùng bài 12: `injectSecrets` (`secrets.ts`)
+> dùng chung cho `pickMcp` và `probeArm`, +11 test. Bài 13 nay kẹt ở **một chuyện khác hẳn**, tìm
+> ra 25/08 khi đo thật: 🌐 máy chủ uỷ quyền của GitHub **không có `registration_endpoint`** ⇒ không
+> DCR ⇒ **phải có người tự đăng ký một OAuth App**. Tức GitHub là **G2**, ngang Google, **không
+> phải G1** như `SPEC-arms` §5h·5 đang ghi.
+>
+> Kiểm lại được: `npx tsx scripts/spike-notion-oauth.ts --discover https://api.githubcopilot.com/mcp/`
 
 ---
 
@@ -1069,81 +1098,252 @@ Tạo trong thư mục đã cho phép một file ghi-chu.md, nội dung: xin ch�
 
 ---
 
-## Bài 12 — **Notion**: ô chìa tĩnh, và chìa đi theo sợi dây ⛔ *chưa chạy được*
+## Bài 12 — **Notion**: transport HTTP, chìa vào `headers`, và cánh tay CHỈ ĐỌC ✅ *chạy được 25/08*
+
+> **Viết lại hoàn toàn 25/08.** Bản cũ đo *"ô chìa tĩnh"* với gói local
+> `@notionhq/notion-mcp-server` + token tích hợp. Bỏ, vì **chính chủ đã buông gói đó** (🌐 *"We may
+> sunset this local MCP server repository"*). Nay đi **MCP hosted chính chủ qua HTTP**.
+>
+> **Bài này giờ đo BỐN cơ chế, không phải một** — và ba trong bốn chưa bài nào chạm tới:
+>
+> | | Cơ chế | Trước bài này |
+> |---|---|---|
+> | 1 | **Transport HTTP** (`type: 'http'`) | chưa cánh tay nào |
+> | 2 | **Chìa vào `headers`** — lỗ §5a, vá 25/08 | ✅ lỗ đã mở 2 ngày |
+> | 3 | **Cánh tay CHỈ ĐỌC** — cấp tập con việc | chưa có |
+> | 4 | **`ToolSearch` buộc vào cánh tay** — hoãn schema tool | chưa có |
 
 Dùng lại văn phòng `Cánh tay` của bài 11.
 
-**Bước 1.** Lấy token: mở thẳng **https://app.notion.com/developers/connections** → **+ New connection** → chọn workspace → menu `•••` → copy token (chuỗi bắt đầu bằng `ntn_`). Rồi mở một trang Notion bất kỳ → menu `···` → **Connections** → thêm connection vừa tạo.
+> ⚠ **PHẢI `stop` / `start` một lần trước bài này** — daemon đang chạy là bản build cũ, chưa có
+> `injectSecrets`. Không restart thì cánh tay HTTP nhận **0 chìa** và bạn sẽ đi truy nhầm chỗ.
 
-> 🔴 **ĐÍNH CHÍNH 24/08 — câu cũ ở đây SAI.** Câu cũ: *"Settings → Connections → Develop your own integration → Internal Integration Token"*. Notion đã đổi **cả từ vựng lẫn đường đi**: *integration* → **connection**, *Internal Integration Token* → **internal connection token**. Đường qua UI hôm nay là `Settings` → `Connections` → bật **Developer Mode** → mục developer ở sidebar. Đi thẳng URL trên thì khỏi mò.
->
-> ⚠ **Trang `Settings → Connections` của workspace KHÔNG phải chỗ tạo** — nó cai quản chứ không đẻ ra. Nếu không thấy nút tạo đâu cả thì kiểm dòng **"Limit who can create internal connections"** ở trang đó: admin bật nó và bạn không nằm trong danh sách ⇒ nút bị **ẩn**, triệu chứng y hệt "không tìm thấy".
+---
 
-> ⚠ Bước "thêm integration vào trang" rất hay bị quên, và triệu chứng của nó **không phải lỗi
-> xác thực** — server nối được, `tools/list` chạy, nhưng **mọi tìm kiếm trả về rỗng**. Nếu bài này
-> ra kết quả rỗng thì kiểm chỗ này trước khi nghi ngờ hệ thống.
+### Chặng A — lấy chìa (một lần, ~2 phút)
 
-**Bước 2.** 🖱 **+ Kết nối** → thẻ **📝 Notion** → thẻ phải ghi `1 chìa`
+> 🔴 **Chặng này là TẠM, và nó tạm có chủ đích.** Chìa OAuth sống **8 giờ**. Chặng 2 (nút *Đăng
+> nhập* + làm mới ở nền) sẽ xoá cả chặng A này. Giữ nó ở đây để bài 12 **chạy được hôm nay** thay
+> vì chờ toàn bộ luồng OAuth vào giao diện.
 
-**Bước 3.** 🖱 dán token vào ô.
+**Bước A1.** ⌨ trong thư mục `agentco`:
 
-**Ba thứ phải đúng ở màn hình này:**
+```
+npx tsx scripts/spike-notion-oauth.ts
+```
 
-| | Mong đợi | Nếu sai |
+**Bước A2.** Trình duyệt mở ra → chọn workspace → bấm cho phép.
+
+> ⚠ **Trình duyệt mặc định của máy có thể KHÔNG phải chỗ bạn đang đăng nhập Notion.** Script in URL
+> ra terminal — dán sang trình duyệt có sẵn phiên là xong. Đây không phải lỗi, đây là ca thường.
+
+**Bước A3.** Terminal in ra. **Ghi lại ba thứ này**, bài này dùng cả ba:
+
+| Thấy gì | Dùng để |
+|---|---|
+| `✅ Q3 · số việc   28` | đối chiếu với con số bước B4 — **phải khác nhau** |
+| `👁 14 chỉ đọc · ✍ 14 có ghi` | biết ta đang cắt đi cái gì |
+| `workspace_name` trong dòng *Notion trả kèm* | tên workspace thật, dùng ở bước C2 |
+
+**Bước A4.** 🖱 mở `agentco/.state-spike/notion-oauth.json` → copy giá trị **`access_token`** của
+`mac-dinh` (chuỗi 86 ký tự).
+
+> 📝 **Đây là bước "mở file" — CHUÔNG BÁO, và ta biết nó kêu.** §6a đếm chuông; chuông này là
+> **cố ý còn nợ**, và nó là toàn bộ nội dung của chặng 2. Đừng sửa nó thành "cách mới" ở đây.
+
+---
+
+### Chặng B — cắm cánh tay
+
+**Bước B1.** 🖱 nút **`+ Kết nối`** (cạnh **Nhân viên**, góc trên trái canvas)
+
+**Bước B2.** 🖱 thẻ **📝 Notion (chỉ đọc)**
+
+**Đo ngay tại đây, trước khi bấm tiếp:**
+
+| | Mong đợi | Sai thì nghĩa là |
 |---|---|---|
-| Ô có **hướng dẫn lấy chìa ở đâu** | *"app.notion.com/developers/connections → + New connection"* | thiếu ⇒ người non-code kẹt, và họ **không biết để hỏi ai** |
-| Ô che giá trị sau khi lưu | `••••••••` | hiện plaintext ⇒ bug |
-| Bạn **không phải gõ tên biến** | không thấy chữ `NOTION_TOKEN` ở đâu cả | thấy ⇒ danh mục chưa ship sẵn tên biến (`SPEC-arms.md` §5c) |
+| Tên thẻ có chữ **(chỉ đọc)** | ✅ | nhãn chưa nói ra thứ nó là |
+| Câu mô tả nói **bán kính thật** | *"…mọi trang tài khoản Notion của bạn xem được"* | thẻ đang **hứa quá tay** — §11a-bis |
+| Thẻ ghi `1 chìa` | ✅ | |
+| Có khối **"đã cắm ở văn phòng khác"** | rỗng lần đầu, nhưng **phải có mặt** | |
 
-**Bước 4.** 🖱 **Thử ngay** → `✓ connected · N việc`
+> ⚠ **Vì sao câu mô tả phải nói "mọi trang bạn xem được".** OAuth của Notion thừa kế **toàn bộ**
+> quyền người đăng nhập (🌐 *"acts with your full Notion permissions"*), và metadata khai đúng
+> **một** scope. Nó **RỘNG HƠN** token tĩnh — thứ mặc định không thấy gì cho tới khi bạn tự thêm
+> connection vào từng trang. Chữ *"chỉ đọc"* là do **TA cắt**, không phải do Notion cấp hẹp.
 
-**Bước 5.** 🖱 bước 3 — tick **chỉ** `Người soi thư mục`. **Đừng** tick ai khác.
+**Bước B3.** 🖱 dán `access_token` vào ô **Chìa Notion (tạm — 8 giờ)**.
 
-**Bước 6.** 🖱 **Nhân viên** thứ hai: tên `Người viết lại`, giới thiệu `Viết lại ghi chú kỹ thuật thành văn xuôi dễ đọc.`, mức `eco`. **Không** nối vào Notion.
+| | Mong đợi |
+|---|---|
+| Ô che giá trị sau khi lưu | `••••••••` — hiện plaintext ⇒ 🔴 dừng và báo |
+| Bạn **không phải gõ tên biến** | không thấy chuỗi `NOTION_ACCESS_TOKEN` ở đâu cả |
 
-**Bước 7.** 🖱 chat:
+**Bước B4.** 🖱 **Thử ngay**
+
+| Mong đợi | |
+|---|---|
+| `✓ Chạy được · 28 việc` | ⚠ **28**, không phải 14 — server trả về cả bộ; ta cắt ở **quyền gọi**, không cắt ở handshake |
+| Kèm số token mỗi lượt | §5 `SPEC-connectors`: **hiện giá, không chặn** |
+| ⏱ chờ 3–15 giây là bình thường | im lặng hoặc ✗ tức thì mới là bug |
+
+> 🔴 **ĐÂY LÀ Ô ĐO LỖ §5a.** Trước 25/08, `probeArm` **bỏ qua** server HTTP khi tiêm chìa ⇒ ô này
+> báo ✓ **mà không có chìa nào**, rồi cánh tay 401 lúc nhân viên đầu tiên dùng. Nếu bước B4 ✓ mà
+> bước C1 ra 401 thì lỗ đã mở lại — báo ngay, đừng đi truy phía Notion.
+
+**Bước B5.** 🖱 bước 3 của hộp thoại — tick **chỉ** `Người soi thư mục`. **Đừng** tick ai khác.
+
+**Bước B5b.** 📝 mở `company/company.yaml` → tìm khối `arms:` → **đọc `tools:`**
+
+| Mong đợi | |
+|---|---|
+| Có đúng **14** tên, toàn `notion-search` / `notion-fetch` / `notion-list-*` / `notion-get-*` … | ✅ danh sách này **do server khai**, không ai gõ tay |
+| **KHÔNG** có tên nào chứa `create` · `update` · `move` · `duplicate` | ✅ mặc định từ chối đã chạy |
+| Danh sách **rỗng** hoặc thiếu hẳn | 🔴 cấp **cả server** — nhãn "chỉ đọc" thành lời hứa rỗng. Dừng và báo |
+
+> **Vì sao bắt bạn mở file ở đây** — đây là bước **đọc**, không phải bước sửa, nên nó **không** phải
+> chuông báo §6a. Cả điểm của việc ghi danh sách ra `company.yaml` là để *"chỉ đọc"* **kiểm tra
+> được bằng mắt** thay vì phải tin cái nhãn. Không ai kiểm thì tính chất đó vô nghĩa.
+>
+> ⏱ Bấm **Xong** giờ tốn thêm một lần bắt tay (~3–15 giây): server hỏi Notion *"việc nào chỉ đọc"*
+> rồi mới ghi sổ. Cố ý — thứ quyết định agent gọi được gì phải là **sự thật của server**, không
+> phải một mảng JSON do trình duyệt gửi lên.
+
+**Bước B6.** 🖱 thêm **Nhân viên** thứ hai: tên `Người viết lại`, giới thiệu
+`Viết lại ghi chú kỹ thuật thành văn xuôi dễ đọc.`, mức `eco`. **Không** nối vào Notion.
+
+---
+
+### Chặng C — chạy thật
+
+**Bước C1.** 🖱 chat:
 
 ```
 Tìm trong Notion những trang nói về kế hoạch, đọc một trang rồi viết lại nội dung cho dễ đọc.
 ```
 
-### Đo gì — bài này đo **ĐẶC QUYỀN TỐI THIỂU**, không chỉ đo kết nối
-
-| # | Câu hỏi | Cách chấm |
-|---|---|---|
-| 1 | ⭐ **Bạn có phải mở file yaml nào không?** | **Phải là KHÔNG.** Bài 10 bước B6 bắt gõ `mcp:` **và** `secrets:` vào `roles/*.yaml`. Nếu vẫn phải gõ thì §6b (chìa đi theo cạnh nối) chưa xong |
-| 2 | `Người viết lại` có chạm được Notion không? | **Phải là KHÔNG.** Nó không có dây ⇒ `pickMcp` không dựng server cho nó ⇒ tool **không có trong ngữ cảnh** của nó |
-| 3 | Trợ lý có giao **đúng người** không? | Việc "tìm trong Notion" phải về `Người soi thư mục`. Giao nhầm ⇒ dòng năng lực §7 chưa chạy |
-| 4 | Nhật ký có bao giờ hiện **giá trị token** không? | 🔴 **Phải là KHÔNG, tuyệt đối.** Thấy một lần là dừng mọi thứ và báo |
-
-### 🔬 Biến thể — dòng năng lực của Trợ lý (`SPEC-arms.md` §7)
-
-🖱 chat:
+**Bước C2.** 🖱 chat (đo dòng năng lực §7):
 
 ```
 Ai trong văn phòng này với tới được Notion?
 ```
 
-| Mong đợi | |
-|---|---|
-| Nêu đúng **một** người, và nêu **được** | ✅ danh bạ đọc từ handshake |
-| *"Tôi không biết"* / nêu cả hai | ⇒ danh bạ vẫn liệt kê **TÊN**, chưa liệt kê **NĂNG LỰC** — đúng ca ⑱ lặp lại thấp hơn một tầng |
+**Bước C3.** 🖱 **ngắt dây** Notion khỏi `Người soi thư mục` → hỏi lại **đúng câu C2**.
 
-Rồi 🖱 **ngắt dây** Notion khỏi `Người soi thư mục` và hỏi lại **cùng câu đó**.
-
-> ⚠ Đây là phép đo thật, không phải phép đo phụ: `SESSIONS_MEMORY` ca ㉔ đã chứng minh **vắng mặt
-> không phải tín hiệu**. Câu trả lời đúng sau khi ngắt dây là *"không ai"* — **nói ra**, chứ không
-> phải im lặng rồi vẫn giao việc.
-
-### 🔬 Biến thể — chìa sai
-
-🖱 sửa token thành một chuỗi bậy → **Thử ngay**.
-
-Mong đợi: `✗ failed` + **nguyên văn** câu lỗi của server. Không được rơi vào `⏳ pending` mãi mãi, và không được là một câu chung chung do ta tự viết.
-
-**Chi phí:** ~$0.05–0.12
+**Bước C4.** 🖱 nối dây lại.
 
 ---
+
+### Đo gì
+
+| # | Câu hỏi | Mong đợi | Sai thì nghĩa là |
+|---|---|---|---|
+| 1 | ⭐ **Bạn có phải mở file yaml nào không?** | **KHÔNG** | §6b (chìa đi theo cạnh nối) hỏng — nó đã xong 23/08, nên đây là test hồi quy |
+| 2 | Cánh tay có **chạy** không? | ✅ trả về trang thật | lỗ §5a mở lại ⇒ 401 |
+| 3 | 🔴 `Người viết lại` có chạm được Notion không? | **KHÔNG** — không có dây ⇒ `pickMcp` không dựng server cho nó | |
+| 4 | Trợ lý giao **đúng người** không? | việc "tìm trong Notion" về `Người soi thư mục` | dòng năng lực §7 chưa chạy |
+| 5 | 🔴 Nhật ký có bao giờ hiện **giá trị token** không? | **KHÔNG, tuyệt đối** | thấy một lần là dừng mọi thứ và báo |
+| 6 | C2 nêu **đúng một** người, và **nêu được** | ✅ | *"tôi không biết"* ⇒ danh bạ vẫn liệt kê TÊN, chưa liệt kê NĂNG LỰC — ca ⑱ |
+| 7 | C3 (sau khi ngắt dây) trả lời **"không ai"** | **nói ra**, không im lặng rồi vẫn giao việc | ca ㉔ — **vắng mặt không phải tín hiệu** |
+
+---
+
+### 🔬 Biến thể 1 — **CHỈ ĐỌC có thật không** ⭐ *ô đo quan trọng nhất của bài này*
+
+🖱 chat:
+
+```
+Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".
+```
+
+| Mong đợi | |
+|---|---|
+| ✅ **Không tạo được**, và **nói ra là không có quyền đó** | `notion-create-pages` không nằm trong `allowedTools` |
+| 🔴 Trang được tạo thật | **DỪNG MỌI THỨ.** `tools` của mục danh mục không được thi hành ⇒ nhãn *"chỉ đọc"* là lời hứa rỗng |
+| 🟡 Nó nói *"hệ thống không cho phép"* rồi thôi | đúng kết quả, nhưng xem ca dưới |
+
+> ⚠ **Ca "hệ thống đúng, model kể sai" — §5r ghi đã xảy ra BỐN lần.** Câu đúng là *"tôi chỉ có
+> quyền đọc"*. Câu **sai** là *"Notion không cho phép"* hoặc *"trang này bị khoá"* — hệ thống chặn,
+> không phải Notion. Nếu nó kể sai thì **ghi lại nguyên văn**: đó là dữ liệu cho §14 #7, không phải
+> lỗi để vá tại chỗ.
+
+### 🔬 Biến thể 2 — **`ToolSearch` có hoãn được schema không** (mới 25/08)
+
+Đây là lần đầu đo cơ chế này. `worker.ts` cấp `ToolSearch` **chỉ cho vai trò có cánh tay**.
+
+🖱 mở bảng chi tiết của **cả hai** nhân viên, so số token mỗi lượt:
+
+| | Mong đợi | |
+|---|---|---|
+| `Người soi thư mục` (có dây) | thấp hơn ~18 000 token so với bản không có `ToolSearch` | ✅ hoãn có tác dụng |
+| `Người viết lại` (không dây) | **không** có `ToolSearch` trong danh sách tool | ✅ không trả tiền cho thứ vô dụng |
+| Số lượt của C1 | có thể **+1** so với bài 11 | 💰 đó là cái giá — ghi lại |
+
+> ⚠ **Đây là phép đo, không phải phép kiểm.** Con số **18 365** là **ước lượng có hiệu chuẩn**
+> (109 038 byte ÷ 5,94 byte/token, tỉ lệ lấy từ mốc thật §9b: filesystem 12 973 byte = 2 185 token).
+> Số THẬT chỉ có từ `getContextUsage()`. Nếu hai số lệch nhiều thì **tỉ lệ hiệu chuẩn sai**, không
+> phải hệ thống sai — và mọi chỗ khác đang dùng tỉ lệ đó phải sửa theo.
+
+### 🔬 Biến thể 3 — chìa sai
+
+🖱 sửa chìa thành một chuỗi bậy → **Thử ngay**.
+
+Mong đợi: `✗ failed` + **nguyên văn** câu lỗi của server (401). Không được `⏳ pending` mãi mãi, và
+không được là một câu chung chung do ta tự viết.
+
+### 🔬 Biến thể 4 — chìa **thiếu** (khác hẳn chìa sai) — 🔴 *sửa 25/08 sau khi user bắt lỗi*
+
+🖱 để **trắng** ô chìa → **Thử ngay**.
+
+> **Bản cũ của biến thể này đã HỎNG, và user bắt được:** *"chìa thiếu nó cũng báo câu lệnh y hệt
+> [chìa sai] mà? Tôi hiểu sai chỗ nào"*. Không hiểu sai chỗ nào — cả hai ca đều bay lên Notion rồi
+> nhận về cùng một câu 401, vì `injectSecrets` giữ ô trống lại **nhưng ta vẫn gửi cái header đó đi**.
+> Cảnh báo duy nhất đi ra stderr của daemon, chỗ không ai nhìn.
+
+| Mong đợi **sau bản vá** | |
+|---|---|
+| Câu lỗi bắt đầu bằng **`Thiếu chìa: NOTION_ACCESS_TOKEN`** | ✅ nêu đúng tên biến |
+| Câu lỗi nói **"Chưa gửi yêu cầu nào"** | ✅ ta chặn TRƯỚC khi mở kết nối |
+| Trả lời **tức thì** (< 1 s), không chờ ~8–20 s | ✅ dấu hiệu thấy được rằng không có vòng mạng nào |
+| ✗ Nếu vẫn thấy `HTTP 401` | 🔴 hồi quy — chốt `probeArm` đã bị đi vòng |
+
+🖱 rồi gõ một chuỗi bậy vào ô đó → **Thử ngay**: phải quay lại **401** (biến thể 3). Hai câu **khác
+nhau** là toàn bộ điểm của cặp biến thể này.
+
+> Ta không chặn ca "chìa sai" — **ta không biết chìa nào là đúng**. Chỉ server biết. Nhưng "chưa điền
+> chìa" thì ta biết, và biết mà vẫn đi hỏi server là để nó trả lời hộ một câu nó không đủ dữ kiện.
+> → §5m
+
+### 🔬 Biến thể 5 — **bê sang văn phòng thứ hai** ⭐ *bug user bắt 25/08, mới*
+
+Đây là ô đo cho câu user hỏi thẳng: *"về lý thuyết văn phòng nào cũng có thể xài chung?"* — **có**.
+
+1. 🖱 sang một văn phòng **khác** (ví dụ *Trợ lý cá nhân*) → **+ Kết nối**
+2. 🖱 ở màn đầu, mục **Đã cắm ở văn phòng khác** → bấm dòng Notion (`dùng lại`)
+3. 🖱 **Thử ngay** — **không điền gì cả**
+
+| Mong đợi | |
+|---|---|
+| Bước 2 hiện khối *"Không phải điền lại gì cả"* + tên chìa đang dùng | ✅ |
+| **Không** có ô nhập chìa nào | ✅ chìa ở cấp công ty, không hỏi lần hai |
+| **Không** có khối JSON cấu hình | 🔴 thấy JSON = bản cũ, nó đang đẩy bạn sang đường "tự cắm" |
+| Thử ngay ⇒ `✓ Chạy được · 28 việc` | ✅ |
+| ✗ Nếu ra `HTTP 401` | 🔴 hồi quy §6i-bis |
+
+4. 🖱 bấm **Xong**, rồi mở `company/company.yaml`:
+
+| Mong đợi | |
+|---|---|
+| `mcpServers:` vẫn có **đúng MỘT** mục Notion | ✅ dùng lại, không nhân bản |
+| Băm của nó **không đổi** so với trước | ✅ tên chìa vẫn nằm trong băm |
+| `offices/<vp-2>/office.yaml` có băm đó trong `arms:` | ✅ clone ở tầng *hiện diện* |
+
+> Nửa thứ hai của bảng này là nửa **không có triệu chứng**: bản cũ tạo một cánh tay **thứ hai** trùng
+> cấu hình (vì `secretNames` rỗng ⇒ băm khác). Với cánh tay `filesystem` thì nó đã sai như thế từ
+> lâu mà không ai thấy — 401 chỉ là thứ cuối cùng làm nó lộ ra. → §6i-bis
+
+**Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4 và 5 **$0** (không lượt suy luận nào)
 
 ## Bài 13 — **GitHub**: transport HTTP và cái lỗ `pickMcp` ⛔ *chưa chạy được*
 

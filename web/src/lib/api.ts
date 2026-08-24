@@ -100,7 +100,21 @@ export const api = {
    */
   testArm: (
     id: string,
-    body: { config?: unknown; catalogId?: string; folders?: string[]; secrets?: Record<string, string> },
+    body: {
+      /**
+       * DÙNG LẠI một mục đã có trong sổ. Server lấy cấu hình + tên chìa + **giá
+       * trị chìa** từ sổ chung, nên không có gì để client gửi kèm.
+       *
+       * ⚠ Không thay bằng cách dán `config` sang đường "tự cắm": cấu hình trong
+       * sổ giữ ô trống `${…}`, và gửi nó đi mà không có chìa là **401** — đúng
+       * bug user gặp 25/08 khi bê Notion sang văn phòng thứ hai.
+       */
+      armId?: string;
+      config?: unknown;
+      catalogId?: string;
+      folders?: string[];
+      secrets?: Record<string, string>;
+    },
   ) => call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
 
   /**
@@ -109,6 +123,8 @@ export const api = {
    */
   addArm: (body: {
     label?: string;
+    /** Dùng lại mục đã có trong sổ — xem `testArm`. Nhãn và chìa đều lấy từ sổ. */
+    armId?: string;
     /** Gửi thẳng cấu hình (đường "tự cắm")… */
     config?: unknown;
     /** …hoặc để SERVER dựng từ danh mục — số phiên bản gói chỉ nằm ở một chỗ. */
@@ -308,6 +324,16 @@ export const api = {
   /** Xoá hẳn. Một mức — nhưng khác tủ tài liệu, ĐÂY LÀ BẢN DUY NHẤT. */
   removeArtifact: (id: string, p: string) =>
     call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?path=${enc(p)}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Dọn sạch ngăn Kết quả. `all=1` là TƯỜNG MINH — server cố ý không suy
+   * "thiếu path" thành "xoá hết". Chỉ ngăn này có nút này; tủ tài liệu và kho
+   * tri thức thì không. → `artifacts.ts §removeAll`
+   */
+  clearArtifacts: (id: string) =>
+    call<{ removed: number; artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?all=1`, {
       method: 'DELETE',
     }),
 

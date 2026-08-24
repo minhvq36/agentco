@@ -52,7 +52,15 @@ export function writeSecrets(paths: CompanyPaths, map: SecretMap): void {
   }
 }
 
-/** Chỉ những chìa vai trò này được khai. Thiếu chìa nào thì trả tên nó ra. */
+/**
+ * Chỉ những chìa vai trò này được khai. Thiếu chìa nào thì trả tên nó ra.
+ *
+ * ⚠ CHUỖI RỖNG = THIẾU, không phải "có mà rỗng". Ô nhập để trắng gửi lên `''`,
+ * và nếu ta coi nó là một chìa hợp lệ thì `Bearer ` bay lên server và quay về
+ * 401 — tức người dùng nhận câu *"chìa sai"* cho việc **chưa điền chìa**. Cùng
+ * một câu trả lời phải ra từ mọi hàm hỏi "có chìa chưa", nếu không thì hai chỗ
+ * trong cùng một luồng tin hai chuyện khác nhau. → §missingSecretRefs
+ */
 export function grantFor(
   all: SecretMap,
   wanted: readonly string[],
@@ -61,7 +69,7 @@ export function grantFor(
   const missing: string[] = [];
   for (const name of wanted) {
     const value = all[name];
-    if (value === undefined) missing.push(name);
+    if (value === undefined || value === '') missing.push(name);
     else env[name] = value;
   }
   return { env, missing };
@@ -70,4 +78,118 @@ export function grantFor(
 /** Chỉ TÊN, không bao giờ giá trị — dùng cho giao diện và log. */
 export function secretNames(paths: CompanyPaths): string[] {
   return Object.keys(readSecrets(paths)).sort();
+}
+
+/** Chỗ duy nhất biết cú pháp ô trống. Đổi ở đây là đổi mọi nơi. */
+const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ô TRỐNG NÀO CÒN SÓT SAU KHI ĐÃ TIÊM — tức CHÌA THIẾU. (bug user 25/08)   │
+ * │                                                                          │
+ * │ Triệu chứng user báo, và nó là một câu hỏi ĐÚNG:                         │
+ * │                                                                          │
+ * │   *"chìa sai khi tạo mới → 401. Nhưng chìa THIẾU (để trắng) nó cũng báo  │
+ * │    câu lệnh y hệt mà? Tôi hiểu sai chỗ nào"*                             │
+ * │                                                                          │
+ * │ Không hiểu sai chỗ nào cả — **ta báo sai**. Ba nguyên nhân khác hẳn nhau │
+ * │ đều rơi vào đúng một câu 401 của Notion:                                 │
+ * │                                                                          │
+ * │   ① chìa sai thật          → `Bearer ntn_xxx`      → 401  ✔ đúng câu     │
+ * │   ② để trắng               → `Bearer ${NOTION_…}`  → 401  ✘ sai cửa      │
+ * │   ③ dùng lại ở VP khác     → `Bearer ${NOTION_…}`  → 401  ✘ sai cửa      │
+ * │                                                                          │
+ * │ ② và ③ ta BIẾT TRƯỚC khi gửi. `injectSecrets` đã giữ ô trống lại và      │
+ * │ `emitWarning` — nhưng cảnh báo đó đi ra stderr của daemon, còn người      │
+ * │ dùng thì đang nhìn màn hình. Rồi ta **vẫn gửi** cái header có `${…}`.     │
+ * │                                                                          │
+ * │ ⇒ Đừng gửi một yêu cầu mà ta đã biết chắc sẽ 401. Câu lỗi CHỈ SAI CỬA    │
+ * │ đắt hơn câu lỗi không có: người dùng sẽ đi kiểm tài khoản, kiểm quyền,   │
+ * │ kiểm workspace — mọi chỗ trừ chỗ hỏng. → SPEC-arms §5m ②                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Quét trên chuỗi JSON của cả cấu hình, không riêng `headers`: `args`, `env`,
+ * `url` đều mang ô trống được, và một hàm chỉ nhìn `headers` là hàm sẽ đúng cho
+ * tới đúng ngày ai đó viết `url: 'https://${HOST}/mcp'`.
+ */
+export function missingSecretRefs(config: unknown): string[] {
+  const seen = new Set<string>();
+  for (const m of JSON.stringify(config ?? null).matchAll(PLACEHOLDER)) seen.add(m[1]!);
+  return [...seen].sort();
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TIÊM CHÌA VÀO MỘT CẤU HÌNH MCP — MỘT HÀM, HAI NƠI GỌI. → SPEC-arms §5a   │
+ * │                                                                          │
+ * │ 🔴 LỖ ĐANG VÁ: tới 25/08 chìa **chỉ** đi vào server có `command` (tiêm   │
+ * │ qua `env`). Server `http`/`sse` nhận **không gì cả** — nên cánh tay HTTP │
+ * │ đầu tiên sẽ chạy KHÔNG CHÌA và không ai biết vì sao.                     │
+ * │                                                                          │
+ * │ ⚠ VÀ ĐÂY LÀ LÝ DO NÓ PHẢI LÀ MỘT HÀM CHUNG, KHÔNG PHẢI HAI BẢN VÁ:      │
+ * │ `pickMcp` (lúc chạy) và `probeArm` (nút "Thử ngay") **phải tiêm y hệt    │
+ * │ nhau**. Lệch một chút là nút Thử kiểm một thứ khác với thứ sẽ chạy —     │
+ * │ báo ✓ rồi hỏng ở lần đầu một nhân viên dùng nó. `server.ts` đã ghi đúng  │
+ * │ bất biến này bằng lời; hàm này làm nó thành **cấu trúc**.                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Hai đường, chọn theo hình dạng cấu hình chứ không theo tên hãng:
+ *
+ *   có `command`  → gộp vào `env`      (như cũ, không đổi hành vi)
+ *   có `url`      → thay ô trống `${TÊN_CHÌA}` trong `headers`
+ *
+ * Vì sao ô trống thay vì một trường `inject` riêng: nó là **dữ liệu**, nằm ngay
+ * trong `company.yaml` người dùng đọc được — họ THẤY chìa đi vào đâu. Nó cũng
+ * chạy luôn cho cấu hình người dùng **tự dán** (đường B), không cần ta biết
+ * trước đó là hãng nào. Cùng lý lẽ §5h·1: *danh mục là dữ liệu, không phải mã*.
+ *
+ *     headers: { Authorization: 'Bearer ${NOTION_ACCESS_TOKEN}' }
+ *
+ * ⚠ Chỉ thay bằng những chìa vai trò ĐƯỢC CẤP (`grantFor` lọc trước). Ô trống
+ * không có chìa thì **giữ nguyên và cảnh báo** — tuyệt đối không gửi chuỗi
+ * `${TÊN}` lên server như thể nó là token: server sẽ trả 401, và câu lỗi đó
+ * chỉ về "chìa sai" chứ không về "chìa thiếu", tức chỉ sai cửa để đi tìm.
+ */
+export function injectSecrets<T>(config: T, env: Record<string, string>): T {
+  if (!config || typeof config !== 'object') return config;
+  const cfg = config as Record<string, unknown>;
+
+  // Chìa rỗng không phải chìa — cùng luật với `grantFor`. Lọc MỘT LẦN ở đây để
+  // cả hai nhánh dưới thấy cùng một sự thật.
+  const keys = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
+
+  if (typeof cfg['command'] === 'string') {
+    if (!Object.keys(keys).length) return config;
+    return { ...cfg, env: { ...((cfg['env'] as object) ?? {}), ...keys } } as T;
+  }
+
+  if (typeof cfg['url'] === 'string') {
+    const headers = cfg['headers'];
+    if (!headers || typeof headers !== 'object') return config;
+    const out: Record<string, string> = {};
+    const missing = new Set<string>();
+    for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
+      out[k] =
+        typeof v === 'string'
+          ? v.replace(PLACEHOLDER, (whole, name: string) => {
+              const val = keys[name];
+              if (val === undefined) {
+                missing.add(name);
+                return whole;
+              }
+              return val;
+            })
+          : String(v);
+    }
+    if (missing.size) {
+      // TÊN, không bao giờ GIÁ TRỊ — cùng luật với mọi chỗ khác trong file này.
+      process.emitWarning(
+        `Cánh tay HTTP thiếu chìa ${[...missing].join(', ')} — server sẽ trả 401. ` +
+          `Thêm bằng \`agentco secret set <TÊN>\`, đừng đi tìm ở phía server.`,
+      );
+    }
+    return { ...cfg, headers: out } as T;
+  }
+
+  return config;
 }

@@ -412,6 +412,12 @@ export interface InstalledArm {
   label: string;
   catalog?: string;
   config: unknown;
+  /**
+   * TÊN chìa, không bao giờ giá trị. Giá trị nằm ở `.state/secrets.json` cấp
+   * CÔNG TY và không bao giờ đi qua HTTP — đó chính là lý do "dùng lại" ở một
+   * văn phòng khác không phải điền lại gì. → `company.ts §reuseArm`
+   */
+  secrets: string[];
   usedBy: { office: string; role: string }[];
 }
 

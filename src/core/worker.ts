@@ -14,10 +14,10 @@ import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
 
 import { fastLaunch } from './armexec.js';
-import { folderRoots } from './catalog.js';
+import { findArm, folderRoots } from './catalog.js';
 import { noteRateLimit } from './energy.js';
 import { companyPaths, guardedZone, safeJoin, type GuardedZone, type GuardMode } from './paths.js';
-import { grantFor, readSecrets } from './secrets.js';
+import { grantFor, injectSecrets, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
 import { relative } from 'node:path';
@@ -138,7 +138,47 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
    *
    * Mức duyệt từng tool là việc của cổng §8 — nơi có CHỦ THỂ bấm nút.
    */
-  const armGrants = mcpServers ? Object.keys(mcpServers).map((n) => `mcp__${n}`) : [];
+  const armGrants = mcpServers
+    ? Object.keys(mcpServers).flatMap((n) => {
+        /**
+         * Cánh tay có TẬP CON việc thì cấp đúng tập con đó, không cấp cả server.
+         * Đây là chỗ *"Notion (chỉ đọc)"* thành thật — vẫn cấp `mcp__<server>`
+         * thì nhãn "chỉ đọc" là một lời hứa **không có gì thi hành**, đúng loại
+         * lời hứa §14 vừa mất công gỡ ở bài 11 bước 5.
+         *
+         * Danh sách đọc từ `arms[băm].tools` — **đã giải sẵn lúc cắm** từ
+         * `annotations` của chính server (`addArm` → `probeArm` → `levelOf`).
+         * Không có tên tool nào trong mã nguồn, và không có vòng mạng nào ở
+         * đây: `pickMcp` phải giữ đồng bộ. → types.ts §arms.tools
+         */
+        const subset = office.company.arms?.[n]?.tools;
+        return subset?.length ? subset.map((t) => `mcp__${n}__${t}`) : [`mcp__${n}`];
+      })
+    : [];
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ `ToolSearch` BUỘC VÀO CÁNH TAY, KHÔNG VÀO NỀN. (user chốt 25/08)       │
+   * │                                                                        │
+   * │ Nó là thứ cho phép SDK **hoãn** schema tool MCP thay vì để chúng nằm   │
+   * │ trong prefix mọi lượt (📖 `alwaysLoad`: *"tools are deferred when tool │
+   * │ search is enabled"*). Đo 25/08: cánh tay Notion **~18 365 token/lượt** │
+   * │ (hiệu chuẩn từ mốc thật §9b: filesystem 12 973 byte = 2 185 token).    │
+   * │                                                                        │
+   * │ ⚠ VÌ SAO KHÔNG NHÉT VÀO `BUILTIN_TOOLS`: vai trò **không có cánh tay** │
+   * │ thì chẳng có gì để hoãn ⇒ lãi **bằng 0**, mà lỗ thì trả đủ — thêm một  │
+   * │ tool vào prefix, và thêm một đường để model đi lạc. §15k đã có ca thật │
+   * │ về cái giá của đi lạc: **9 lượt · $0,2058** rồi chạm trần.             │
+   * │                                                                        │
+   * │ Cùng điều kiện với `armGrants` ngay trên — không đẻ thêm công tắc nào  │
+   * │ cho người dùng phải nhớ.                                               │
+   * │                                                                        │
+   * │ ⚠ CHƯA ĐO LÃI/LỖ THẬT. Con số 18 365 là ước lượng có hiệu chuẩn, và nó │
+   * │ nằm trong prefix nên **được cache** ⇒ tiền tiết kiệm nhỏ hơn con số    │
+   * │ token rất nhiều. Thứ chắc chắn được là **chỗ trong cửa sổ ngữ cảnh**.  │
+   * │ Bài 12 đo cả hai chiều bằng `getContextUsage()`. → SPEC-arms §9b       │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  const searchTools = armGrants.length ? ['ToolSearch'] : [];
   /**
    * ⚠ ĐỌC THƯ MỤC TỪ CẤU HÌNH **KHAI**, KHÔNG TỪ CẤU HÌNH **CHẠY**. (vá 24/08)
    *
@@ -234,7 +274,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          * │     thi hành: vai trò không khai `Bash` vẫn với tay tới shell được. │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        tools: effectiveTools(role.tools),
+        tools: [...effectiveTools(role.tools), ...searchTools],
         /**
          * ⚠ `tools` KHÔNG liệt kê tool MCP, và đó là CỐ Ý — đo được: truyền
          * `tools: [7 tool]` mà CLI vẫn cấp đủ 21 (7 + 14 của MCP). `tools` lọc
@@ -242,8 +282,13 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          * đó là gửi một chuỗi không phải tên tool nào cả — rơi đúng cái bẫy
          * "allowlist im lặng bỏ phần tử lạ" của `SHELL_ALIASES`, và lần này nó
          * có thể vứt CẢ BỘ. `warnDroppedTools` canh phần builtin như cũ.
+         *
+         * ⚠ `ToolSearch` phải có mặt ở CẢ HAI danh sách. `tools` quyết định nó
+         * có được CẤP không; `allowedTools` quyết định nó có được GỌI mà không
+         * hỏi không. Thiếu vế hai thì nó bị chặn ở cổng duyệt và mọi tool MCP
+         * thành **không với tới được** — hỏng im lặng, ở đúng chỗ khó đoán nhất.
          */
-        allowedTools: [...effectiveTools(role.tools), ...armGrants],
+        allowedTools: [...effectiveTools(role.tools), ...searchTools, ...armGrants],
         // Thư mục cánh tay được phép chạm. Đây là thứ MCP server thật sự đọc
         // (`roots`), không phải `args`. Vai trò không có cánh tay ⇒ mảng rỗng ⇒
         // không truyền gì: đặc quyền tối thiểu giữ nguyên.
@@ -844,13 +889,15 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
       process.emitWarning(`MCP server "${n}" chưa khai trong company.yaml`);
       continue;
     }
-    // Chỉ tiêm vào server chạy bằng tiến trình con (có `command`). Server kiểu
-    // http/sse nhận xác thực theo cách khác, tiêm env vào là vô nghĩa.
-    const isProcess = typeof (cfg as { command?: unknown }).command === 'string';
-    const withEnv =
-      isProcess && Object.keys(env).length
-        ? { ...(cfg as object), env: { ...((cfg as { env?: object }).env ?? {}), ...env } }
-        : cfg;
+    /**
+     * ⚠ MỘT HÀM CHUNG VỚI `probeArm` — xem `secrets.ts §injectSecrets`.
+     *
+     * Bản cũ ở đây chỉ tiêm cho server có `command`, và ghi thẳng lý do là
+     * *"server http/sse nhận xác thực theo cách khác"*. Câu đó đúng, nhưng nó
+     * mô tả một **lỗ** (§5a) chứ không phải một quyết định — và lỗ đó nằm im
+     * được vì chưa có mục danh mục HTTP nào. Nay có Notion.
+     */
+    const withEnv = injectSecrets(cfg, env);
     /**
      * Bỏ `npx` khỏi đường nóng — đo được **~4 giây MỖI task có cánh tay**, vì
      * mỗi `query()` spawn một tiến trình MCP mới. Đồng bộ, không cài gì, và

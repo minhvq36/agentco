@@ -107,6 +107,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [installed, setInstalled] = useState<InstalledArm[]>([]);
 
   const [pick, setPick] = useState<CatalogArm | null>(null);
+  /**
+   * DÙNG LẠI một mục đã có trong sổ chung — mục thứ ba, ngang hàng với `pick`
+   * và `paste`, chứ KHÔNG phải "dán cấu hình của nó rồi đi đường tự cắm".
+   *
+   * Bản cũ làm đúng cái sau, và nó hỏng ngay ở cánh tay HTTP đầu tiên (user
+   * 25/08: Notion chạy ở *Cánh tay*, bấm dùng lại ở *Trợ lý cá nhân* → **401**).
+   * Cấu hình trong sổ giữ ô trống `${NOTION_ACCESS_TOKEN}`; đường tự cắm không
+   * biết nó là mục danh mục nào nên không hiện ô chìa nào; header bay đi nguyên
+   * văn `Bearer ${…}`. → `company.ts §reuseArm`
+   */
+  const [reuse, setReuse] = useState<InstalledArm | null>(null);
   /** Đường B — dán cấu hình MCP. Không mục danh mục nào chặn ai. → §4c */
   const [paste, setPaste] = useState('');
   const [label, setLabel] = useState('');
@@ -126,6 +137,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setStep(1);
     setPane('type');
     setPick(null);
+    setReuse(null);
     setPaste('');
     setLabel('');
     setFolders('');
@@ -169,7 +181,12 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * Bản trước client tự ghép, tức số phiên bản gói ghim ở HAI chỗ. Hai bản của
    * cùng một hằng số đã đốt dự án này một lần (`agentSlot` vs `arrange`).
    */
-  function payload(): { config?: Record<string, unknown>; catalogId?: string; folders?: string[] } | null {
+  function payload():
+    | { armId?: string; config?: Record<string, unknown>; catalogId?: string; folders?: string[] }
+    | null {
+    // Dùng lại: chỉ gửi BĂM. Cấu hình, tên chìa và giá trị chìa đều nằm ở server
+    // rồi — gửi lại bản sao của chúng qua HTTP là mở đường cho hai bản lệch nhau.
+    if (reuse) return { armId: reuse.id };
     if (pick) {
       if (pick.folders && folderList().length === 0) return null;
       return { catalogId: pick.id, folders: folderList() };
@@ -177,6 +194,28 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     const cfg = parsePaste();
     return cfg ? { config: cfg } : null;
   }
+
+  /**
+   * Ô TRỐNG `${TÊN}` trong cấu hình người dùng DÁN → sinh ô nhập chìa cho đúng
+   * chúng. Bản khách của `secrets.ts §missingSecretRefs`.
+   *
+   * Trước đây đường "tự cắm" không có ô chìa nào, nên mọi server HTTP cần token
+   * đều là ngõ cụt: dán vào, thử, 401, hết đường. Danh mục thì khai sẵn tên chìa
+   * — nhưng tên đó không phải bí mật gì, nó nằm ngay trong cấu hình họ vừa dán.
+   * Đọc ra là đủ, và nó chạy cho MỌI hãng mà ta không cần biết trước hãng nào.
+   */
+  const pastedKeys = (): string[] => {
+    if (pick || reuse) return [];
+    const cfg = parsePaste();
+    if (!cfg) return [];
+    const seen = new Set<string>();
+    for (const m of JSON.stringify(cfg).matchAll(/\$\{([A-Z0-9_]+)\}/g)) seen.add(m[1]!);
+    return [...seen].sort();
+  };
+
+  /** Ô để trắng KHÔNG phải một chìa rỗng — nó là chìa CHƯA ĐIỀN. Đừng gửi đi. */
+  const filledKeys = (): Record<string, string> =>
+    Object.fromEntries(Object.entries(keys).filter(([, v]) => v.trim() !== ''));
 
   /** Khối JSON người dùng dán. `null` = chưa đọc được. */
   function parsePaste(): Record<string, unknown> | null {
@@ -209,7 +248,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setProbe(null);
     const tick = setTimeout(() => setSlow(true), 6_000);
     try {
-      setProbe(await api.testArm('thu', { ...p, ...(Object.keys(keys).length ? { secrets: keys } : {}) }));
+      const k = filledKeys();
+      setProbe(await api.testArm('thu', { ...p, ...(Object.keys(k).length ? { secrets: k } : {}) }));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Không thử được.');
     } finally {
@@ -225,10 +265,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (!p || busy) return;
     setBusy(true);
     try {
+      const k = filledKeys();
       await api.addArm({
         ...(name ? { label: name } : {}),
         ...p,
-        ...(Object.keys(keys).length ? { secrets: keys } : {}),
+        ...(Object.keys(k).length ? { secrets: k } : {}),
         ...(officeId ? { office: officeId } : {}),
         ...(grant.length ? { grantTo: grant } : {}),
       });
@@ -293,6 +334,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     const files = catalog.find((a) => a.folders);
                     if (!files) return;
                     setPick(files);
+                    // Ba đường LOẠI TRỪ NHAU. Quay lại rồi chọn đường khác mà
+                    // không xoá đường cũ là để `payload()` im lặng chọn hộ.
+                    setReuse(null);
                     setLabel(files.name);
                     setStep(2);
                   }}
@@ -326,6 +370,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         type="button"
                         onClick={() => {
                           setPick(a);
+                          setReuse(null);
                           setLabel(a.name);
                           setStep(2);
                         }}
@@ -368,9 +413,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                           nó. Cái "clone" mà user muốn nằm ở tầng khác — SỰ HIỆN
                           DIỆN theo từng văn phòng (`role.mcp`), không phải bản
                           sao cấu hình. → SPEC-arms.md §6i
+
+                          ⚠ VÀ ĐÓ CHÍNH LÀ THỨ BẢN CŨ Ở ĐÂY PHÁ HỎNG. Nó gọi
+                          `setPaste(JSON.stringify(a.config))` — tức đẩy mục này
+                          sang đường "TỰ CẮM", nơi không ai biết nó cần chìa gì.
+                          Với cánh tay stdio thì chưa lộ (chìa đi qua `env`, mà
+                          `filesystem` không cần chìa nào); với cánh tay HTTP đầu
+                          tiên thì hỏng ngay: `${NOTION_ACCESS_TOKEN}` bay lên
+                          Notion nguyên văn → 401. Và `secretNames` thành `[]`,
+                          mà tên chìa NẰM TRONG BĂM ⇒ nó tạo bản sao thứ hai
+                          thay vì dùng lại. "Dùng lại" mà nhân bản, im lặng.
                         */
                         setPick(null);
-                        setPaste(JSON.stringify(a.config, null, 2));
+                        setPaste('');
+                        setReuse(a);
                         setLabel(a.label);
                         setProbe(null);
                         setStep(2);
@@ -407,6 +463,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   disabled={!paste.trim()}
                   onClick={() => {
                     setPick(null);
+                    setReuse(null);
                     setStep(2);
                   }}
                 >
@@ -538,6 +595,48 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <p className="mt-1 text-xs text-muted">↳ {s.help}</p>
               </div>
             ))}
+
+            {/*
+              Đường TỰ CẮM cũng phải nhập chìa được — xem `pastedKeys`. Nhãn ở
+              đây là chính tên biến, và đó là đúng: người dùng vừa TỰ GÕ nó vào
+              khối cấu hình, nên nó là từ vựng của họ chứ không phải của ta.
+            */}
+            {pastedKeys().map((name) => (
+              <div key={name} className="mt-3">
+                <Label htmlFor={`k-${name}`}>{name}</Label>
+                <Input
+                  id={`k-${name}`}
+                  type="password"
+                  value={keys[name] ?? ''}
+                  onChange={(e) => setKeys((k) => ({ ...k, [name]: e.target.value }))}
+                />
+                <p className="mt-1 text-xs text-muted">
+                  ↳ Cấu hình bạn dán có ô trống <code>{'${' + name + '}'}</code>. Giá trị lưu trong máy
+                  bạn, không ghi vào <code>company.yaml</code>.
+                </p>
+              </div>
+            ))}
+
+            {/*
+              DÙNG LẠI: không có ô nào để điền, và phải NÓI RA vì sao — một bước
+              "Cài đặt" trống trơn trông như app quên vẽ. Câu này cũng là chỗ trả
+              lời câu hỏi user hỏi thẳng: *"văn phòng nào cũng xài chung được?"*
+            */}
+            {reuse && (
+              <div className="mt-3 rounded-md border border-line bg-accent-soft/30 px-3 py-2 text-[13px]">
+                <div className="font-medium">Không phải điền lại gì cả</div>
+                <div className="mt-1 text-xs leading-relaxed text-muted">
+                  Kết nối này đã cắm ở văn phòng khác. Chìa nằm ở cấp <b>công ty</b>, nên văn phòng nào
+                  cũng dùng chung được — bấm <b>Thử ngay</b> để chắc nó vẫn còn sống.
+                  {reuse.secrets.length > 0 && (
+                    <>
+                      {' '}
+                      Chìa đang dùng: <code>{reuse.secrets.join(', ')}</code>.
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/*
               ⚠ GIỮ PHÉP THỬ, BỎ CÁI NÚT. (user: *"bỏ nút Thử ngay khi là thư

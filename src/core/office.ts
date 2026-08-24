@@ -3138,6 +3138,21 @@ export class Office {
     return true;
   }
 
+  /**
+   * DỌN SẠCH ngăn Kết quả. Trả về số file đã xoá.
+   *
+   * ⚠ `refreshAssistantContext()` ở đây KHÔNG phải thủ tục — bảng kê Kết quả nằm
+   * trong prefix của Trợ lý. Bỏ nó là Trợ lý tiếp tục nêu tên hàng chục file vừa
+   * bị xoá, rất tự tin, và người dùng bấm vào từng cái để nhận "không tìm thấy".
+   * Đúng cửa tắt mà §3116 đã đóng một lần rồi.
+   */
+  clearArtifacts(): number {
+    this.assertLive();
+    const n = this.artifacts.removeAll();
+    if (n) this.refreshAssistantContext();
+    return n;
+  }
+
   private refreshAssistantContext(): void {
     this.assistant.setAssignable(this.layout.assignable());
     this.assistant.setHotKnowledge(this.assistantHot());

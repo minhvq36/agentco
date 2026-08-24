@@ -31,7 +31,7 @@ import {
   type CompanyPaths,
 } from './paths.js';
 import { Office } from './office.js';
-import { readSecrets, writeSecrets } from './secrets.js';
+import { grantFor, readSecrets, writeSecrets } from './secrets.js';
 import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
 import {
   appendRename,
@@ -447,6 +447,18 @@ export class Company {
     /** TÊN chìa cần có. Vào băm, và vào `role.secrets` lúc giao. */
     secretNames?: string[];
     secrets?: Record<string, string>;
+    /**
+     * VIỆC ĐƯỢC CẤP, đã giải từ `annotations` lúc cắm. Rỗng/vắng ⇒ cả server.
+     * → `types.ts §arms.tools` · `server.ts §readOnlyTools`
+     *
+     * ⚠ Trường này TỪNG BỊ NUỐT IM LẶNG (bắt 25/08): `server.ts` truyền
+     * `...(tools.length ? { tools } : {})` vào đây trong khi kiểu ở đây chưa
+     * khai nó — và **spread KHÔNG kích hoạt excess-property check** của
+     * TypeScript. Typecheck xanh, test xanh, tính năng **không làm gì cả**.
+     * Cùng lớp bẫy với `SHELL_ALIASES` và `tools` của SDK: *allowlist im lặng
+     * bỏ phần tử lạ*. → [[agentco-silent-allowlist]]
+     */
+    tools?: string[];
     /** Văn phòng sắp dùng nó — cần cho luật "một thư mục, một cánh tay". */
     office?: string;
   }): string {
@@ -561,9 +573,22 @@ export class Company {
     // Giữ nhãn cũ nếu mục đã có trong sổ — người dùng cắm lại một thứ từng đặt
     // tên thì cái tên đó là của họ, đừng lặng lẽ thay bằng tên mặc định.
     const label = this.config.arms[id]?.label || input.label?.trim() || id;
+    /**
+     * ⚠ `tools` cũng phải GHI RA ĐĨA, không chỉ nhận vào tham số. Cắm lại một
+     * cánh tay đã biết thì lấy lại danh sách cũ — cùng lý lẽ với `label` ngay
+     * trên: cùng băm nghĩa là **cùng cấu hình**, nên tập việc đã giải vẫn đúng.
+     */
+    const tools = input.tools?.length ? input.tools : (this.config.arms[id]?.tools ?? []);
     doc.setIn(
       ['arms', id],
-      block(doc.createNode({ label, ...(input.catalog ? { catalog: input.catalog } : {}), secrets: secretNames })),
+      block(
+        doc.createNode({
+          label,
+          ...(input.catalog ? { catalog: input.catalog } : {}),
+          secrets: secretNames,
+          ...(tools.length ? { tools } : {}),
+        }),
+      ),
     );
     fs.writeFileSync(
       this.paths.configFile,
@@ -676,6 +701,8 @@ export class Company {
     label: string;
     catalog?: string;
     config: unknown;
+    /** TÊN chìa, không bao giờ giá trị — để giao diện nói "đã có sẵn, khỏi nhập lại". */
+    secrets: string[];
     usedBy: { office: string; role: string }[];
   }[] {
     return Object.entries(this.config.mcpServers).map(([id, config]) => {
@@ -691,9 +718,67 @@ export class Company {
         label: meta?.label || id,
         ...(meta?.catalog ? { catalog: meta.catalog } : {}),
         config,
+        secrets: meta?.secrets ?? [],
         usedBy,
       };
     });
+  }
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ DÙNG LẠI MỘT CÁNH TAY ĐÃ CÓ TRONG SỔ — trọn gói, kể cả CHÌA. (bug 25/08) │
+   * │                                                                          │
+   * │ User báo: cắm Notion ở *Cánh tay* xong, sang *Trợ lý cá nhân* bấm "dùng  │
+   * │ lại" thì **401**. Và câu hỏi kèm theo là câu đúng:                       │
+   * │   *"Về lý thuyết văn phòng nào cũng có thể xài chung?"* — ĐÚNG, và đây   │
+   * │ là hàm làm cho nó đúng.                                                  │
+   * │                                                                          │
+   * │ Vì sao nó hỏng: nút "dùng lại" cũ **dán cấu hình** sang đường "tự cắm"   │
+   * │ (`setPaste(JSON.stringify(a.config))`). Mà cấu hình trong sổ giữ Ô TRỐNG │
+   * │ `${NOTION_ACCESS_TOKEN}` — chìa nằm ở `.state/secrets.json`, đúng thiết  │
+   * │ kế. Đường "tự cắm" không có mục danh mục ⇒ không hiện ô chìa ⇒ không     │
+   * │ gửi chìa nào ⇒ header bay lên Notion **nguyên văn `Bearer ${…}`** ⇒ 401. │
+   * │                                                                          │
+   * │ Và một hỏng thứ hai, im lặng hơn: `secretNames` khi ấy là `[]`, mà TÊN   │
+   * │ CHÌA NẰM TRONG BĂM (§armHash) ⇒ băm khác ⇒ nó tạo một cánh tay THỨ HAI   │
+   * │ trùng cấu hình thay vì dùng lại cái đã có. "Dùng lại" mà nhân bản.       │
+   * │                                                                          │
+   * │ ⇒ Danh tính đi trọn gói hoặc không đi: cấu hình + tên chìa + việc được   │
+   * │ cấp, cả ba lấy từ SỔ, không cái nào đi vòng qua client.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ `secrets` trong kết quả là GIÁ TRỊ THẬT — chỉ để đưa xuống `probeArm`.
+   * Nó KHÔNG BAO GIỜ được lọt vào một phản hồi HTTP. Cùng luật với `pickMcp`.
+   */
+  reuseArm(id: string): {
+    config: Record<string, unknown>;
+    secretNames: string[];
+    tools: string[];
+    label: string;
+    catalog?: string;
+    secrets: Record<string, string>;
+  } {
+    const config = this.config.mcpServers[id];
+    if (!config) {
+      throw new RunError(
+        `Không còn kết nối "${id}" trong sổ chung — có lẽ nó vừa bị gỡ. Đóng hộp thoại rồi mở lại.`,
+        'other',
+      );
+    }
+    const meta = this.config.arms[id];
+    const secretNames = meta?.secrets ?? [];
+    // Chỉ đọc đúng những chìa cánh tay này khai — không bê cả kho. `grantFor`
+    // cũng là chỗ chuỗi rỗng bị tính là THIẾU, nên chìa lưu hỏng lộ ra ở đây
+    // thay vì lộ ra bằng một câu 401 ở Notion.
+    const { env } = grantFor(readSecrets(companyPaths(this.dir)), secretNames);
+    return {
+      config: config as Record<string, unknown>,
+      secretNames,
+      tools: meta?.tools ?? [],
+      label: meta?.label || id,
+      ...(meta?.catalog ? { catalog: meta.catalog } : {}),
+      secrets: env,
+    };
   }
 
   /**

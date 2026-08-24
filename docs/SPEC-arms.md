@@ -356,8 +356,8 @@ Một mục chỉ vào danh mục khi **cả năm** đúng — cùng kỷ luật
 | | Cánh tay | Transport | Chìa phải điền | Cơ chế MỚI nó mở | Thương hiệu |
 |---|---|---|---|---|---|
 | 1 | **File trên máy** — tham chiếu `filesystem` | stdio | **0** | đường cắm trần · **allowlist thư mục** (§1d) | 🟢 không có bên thứ ba |
-| 2 | **Notion** | stdio | **1** — token tĩnh | **ô chìa tĩnh** + tiêm vào `env` | 🟡 phải đọc guideline |
-| 3 | 🆕 **GitHub** — remote chính chủ | **Streamable HTTP** | **0** (OAuth) hoặc 1 (PAT) | **đường HTTP + tiêm `headers`** — ⚠ `pickMcp` chưa làm (§5a) | 🟡 phải đọc guideline |
+| 2 | **Notion (chỉ đọc)** — hosted chính chủ | **Streamable HTTP** | **1** — chìa OAuth (chặng 1: dán tay) | **HTTP** + **tiêm `headers`** (§5a) + **cánh tay chỉ đọc** + **`ToolSearch`** | 🟡 phải đọc guideline |
+| 3 | 🆕 **GitHub** — remote chính chủ | **Streamable HTTP** | 🔴 **1 OAuth App tự đăng ký** (đo 25/08) | ~~đường HTTP + tiêm `headers`~~ **đã xong ở #2** ⇒ nó không còn mở khoá cơ chế nào | 🟡 phải đọc guideline |
 | 4 | **Google** — bộ chính chủ | stdio | **2** + đăng nhập | **OAuth qua `onElicitation`** (§6d) | 🟠 nghiêm nhất |
 
 > **Thứ tự này là thứ tự XÂY, không phải thứ tự quan trọng.** Mỗi mục mở khoá đúng **một** cơ chế
@@ -365,6 +365,28 @@ Một mục chỉ vào danh mục khi **cả năm** đúng — cùng kỷ luật
 > đầu tiên phải dựng cả bốn cơ chế cùng lúc.
 
 **🆕 GitHub chen vào TRƯỚC Google, và có ba lý do — không phải sở thích:**
+
+> ## 🔴 CẢ BA LÝ DO DƯỚI ĐÂY ĐÃ HẾT HIỆU LỰC — đo 25/08. Giữ nguyên văn làm mốc đối chứng.
+>
+> **Lý do 1 SAI VỀ SỰ THẬT.** Máy chủ uỷ quyền của GitHub (`https://github.com/login/oauth`)
+> **không có `registration_endpoint`** ⇒ **không DCR** ⇒ **phải có người tự đăng ký một OAuth App**.
+> Bước *"tạo OAuth client"* của Google **có tồn tại ở đây**. ⇒ GitHub là **G2**, không phải G1.
+>
+> **Vì sao lầm — và đây là bài học đáng hơn bản sửa:** Claude Code cắm GitHub "0 chìa" vì **nó ship
+> sẵn `client_id` đã đăng ký của chính nó**. Đó là tiện nghi **của một client**, không phải thuộc
+> tính **của server**. Ta đọc trải nghiệm của người khác rồi ghi thành tính chất của giao thức —
+> **lần thứ hai trong hai phiên** (lần trước: *"OAuth ⇒ scope hẹp"*, §5h·3). ⇒ Luật:
+> **đừng suy tính chất của một server từ việc một client dùng nó thấy dễ.** Đo bằng
+> `scripts/spike-notion-oauth.ts --discover <url>`. → [[agentco-measurement-vs-conclusion]]
+>
+> **Lý do 2 hết tác dụng.** Lỗ §5a **đã bịt 25/08** cùng mục Notion — mục HTTP đầu tiên hoá ra là
+> Notion, không phải GitHub. GitHub nay **không mở khoá cơ chế mới nào**.
+>
+> **Lý do 3 vẫn đúng** (chuỗi cung ứng = 0) nhưng nó đúng với **mọi** mục HTTP, kể cả Notion ⇒ nó
+> không còn là lý do xếp GitHub trước ai.
+>
+> ⇒ **Thứ tự xây theo trục "đăng ký ứng dụng" xếp lại:**
+> **Notion/Linear (0 tay) < GitHub (1 app tay) < Google (app + consent screen + 3 API)**.
 
 1. **Nó rẻ hơn Google một bậc.** 🌐 `https://api.githubcopilot.com/mcp/` — không cài gì, không
    `npx`, không đăng ký ứng dụng. GitHub **tự là nhà cung cấp danh tính**, nên bước *"tạo OAuth
@@ -419,9 +441,36 @@ consent screen + client ID.
 khi agent chạm tay vào nắm cửa.
 
 ✅ Cơ chế này **đã có mã nguồn thi hành** cho stdio: `grantFor()` chỉ đưa đúng những khoá có tên
-trong `role.secrets` vào env của tiến trình MCP. ❓ Nhánh HTTP **chưa có** — `pickMcp` hôm nay chỉ
-tiêm cho server có `command` (`worker.ts:634`). **Đó là một lỗ phải bịt cùng lúc với việc mở đường
-HTTP**, nếu không thì cánh tay HTTP đầu tiên sẽ chạy mà không có chìa và không ai biết vì sao.
+trong `role.secrets` vào env của tiến trình MCP.
+
+> ## ✅ **LỖ HTTP ĐÃ BỊT — 25/08.** `injectSecrets()` trong `core/secrets.ts`, +11 test.
+>
+> Câu cũ ở đây: *"Nhánh HTTP **chưa có** — `pickMcp` hôm nay chỉ tiêm cho server có `command`.
+> Đó là một lỗ phải bịt cùng lúc với việc mở đường HTTP."* Đã bịt, đúng lúc mở đường HTTP cho
+> Notion (§4e #2 nay là mục HTTP đầu tiên, không phải GitHub).
+>
+> **Một hàm, hai nơi gọi — và đó là phần quan trọng hơn bản vá.** `pickMcp` (lúc chạy) và
+> `probeArm` (nút *Thử ngay*) trước đây tiêm chìa bằng **hai đoạn mã riêng**, nên "Thử ngay kiểm
+> đúng thứ sẽ chạy" chỉ là một lời dặn trong comment. Nay nó là **cấu trúc**: cùng một hàm, lệch
+> không được nữa. → [[agentco-catch-hides-premises]]
+>
+> **Hình dạng: ô trống trong `headers`, không phải một trường `inject` riêng.**
+>
+> ```yaml
+> headers: { Authorization: 'Bearer ${NOTION_ACCESS_TOKEN}' }
+> ```
+>
+> Ba thứ mua được bằng lựa chọn đó:
+>
+> 1. Nó là **dữ liệu**, nằm trong `company.yaml` người dùng đọc được — họ **thấy chìa đi vào đâu**
+>    mà không đọc được chìa. Giữ nguyên bất biến §5h·1 (*danh mục là dữ liệu, không phải mã*).
+> 2. Nó chạy luôn cho cấu hình người dùng **tự dán** (đường B) — không cần ta biết trước hãng nào.
+> 3. Tên header, tiền tố, số lượng chìa: tất cả là chuỗi trong dữ liệu, **0 dòng code cho mỗi hãng**.
+>
+> ⚠ **Thiếu chìa thì GIỮ NGUYÊN ô trống và cảnh báo**, tuyệt đối không gửi chuỗi `${TÊN}` lên
+> server. Gửi đi thì server trả **401**, mà 401 nói *"chìa sai"* — người đi tìm sẽ kiểm tài khoản,
+> kiểm quyền, kiểm workspace, trong khi sự thật là **chưa ai điền chìa**. Một câu lỗi **chỉ sai
+> cửa** đắt hơn một câu lỗi không có (§5m ②). Có test riêng khoá ca này.
 
 ### 5b. Vì sao "quăng trường keys cho agent tự đọc" phải bị cấm bằng CẤU TRÚC
 
@@ -771,6 +820,25 @@ của ba loại khác hẳn nhau**:
 > ⇒ **Câu đúng không phải *"OAuth thì không có key"* — mà là *"OAuth đổi ai giữ key, và đổi key
 > đó có thể làm được gì"*.** Trực giác của anh đúng ở vế đầu; chỗ đáng tiền nằm ở vế sau.
 
+> 🔴 **ĐÍNH CHÍNH 24/08 — dòng "Phạm vi" ở trên KHÔNG đúng phổ quát, và nó sai theo chiều nguy:
+> nó hứa một hàng rào mà ở Notion không có.**
+>
+> Bảng này viết từ ca **Google** (nhiều scope, tick từng cái). Ở **Notion hosted MCP thì ngược
+> hẳn**, và có hai nguồn độc lập nói cùng một chuyện:
+>
+> | | nguồn |
+> |---|---|
+> | *"MCP tools act with your **full Notion permissions**"* — thừa kế **toàn bộ** quyền của người đăng nhập, **không** cấp theo trang | 🌐 `notion.com/help/notion-mcp` |
+> | `scopes_supported: ["default"]` — **đúng một** scope, không chia nhỏ được | 🌐 `mcp.notion.com/.well-known/oauth-authorization-server` |
+>
+> Mà **chìa tĩnh của Notion thì mặc định KHÔNG THẤY GÌ** — mỗi trang phải tự tay thêm connection
+> (đó chính là bước bài 12 bước 1 hay bị quên). ⇒ Ở Notion: **① hẹp, ③ rộng.** Đúng ngược bảng.
+>
+> **Luật rút ra, áp cho mọi mục danh mục về sau:** *"OAuth ⇒ scope hẹp"* là một **giả định về từng
+> hãng**, không phải thuộc tính của giao thức. Phải **đọc `scopes_supported` của chính server đó**
+> trước khi ghi bất cứ câu nào về phạm vi lên thẻ. Bốn trục còn lại (hết hạn · thu hồi · ai thấy
+> chuỗi · lộ ra thì sao) vẫn đúng. → [[agentco-measurement-vs-conclusion]]
+
 #### 5h·4 ⚠ Nhưng Google **KHÔNG** miễn chìa tĩnh — và đó là lý do nó là mục khó nhất
 
 Google cần **cả ② lẫn ③**:
@@ -1016,6 +1084,61 @@ cho mọi công ty. Cố ý **không** đặt trong `company/.state/`: zip một
 `node_modules` đi theo, làm hỏng đúng lời hứa *"zip lại là chạy được"*.
 
 **+12 test → 369** (`test/armexec.test.ts`; hơn nửa số test canh nhánh **"phải trả về cấu hình gốc"**).
+
+---
+
+## 5m. 🔴 CHÌA THIẾU BỊ BÁO THÀNH CHÌA SAI — user bắt 25/08 bằng một câu hỏi
+
+> *"chìa sai khi tạo mới → 401, đúng với ý đồ test. Nhưng mà chìa THIẾU (để trắng khi tạo mới) nó
+> cũng báo câu lệnh y hệt mà? Tôi hiểu sai chỗ nào"*
+
+**Không hiểu sai chỗ nào — ta báo sai.** Ba nguyên nhân khác hẳn nhau rơi vào đúng một câu:
+
+| Ca | Thứ bay lên server | Server trả | Câu ta hiện |
+|---|---|---|---|
+| ① chìa sai thật | `Bearer ntn_xxx` | 401 | ✅ đúng |
+| ② để trắng ô nhập | `Bearer ${NOTION_ACCESS_TOKEN}` | 401 | ❌ **sai cửa** |
+| ③ "dùng lại" ở VP khác (§6i-bis) | `Bearer ${NOTION_ACCESS_TOKEN}` | 401 | ❌ **sai cửa** |
+
+② và ③ ta **biết trước khi gửi** — mà vẫn gửi, rồi để Notion trả lời hộ một câu nó **không đủ dữ
+kiện** để trả lời: 401 chỉ nói được *"chìa này sai"*; server không có cách nào biết ta **chưa từng
+điền chìa**.
+
+`injectSecrets` đã làm đúng nửa việc — giữ ô trống lại và `emitWarning`. Nhưng cảnh báo đó đi ra
+**stderr của daemon**, còn người dùng thì đang nhìn màn hình. Rồi ta **vẫn gửi** cái header có `${…}`.
+
+> **Câu lỗi CHỈ SAI CỬA đắt hơn câu lỗi không có.** Người dùng sẽ đi kiểm tài khoản, kiểm quyền,
+> kiểm workspace, thử token khác — **mọi chỗ trừ chỗ hỏng**. Một câu "không rõ" ít nhất còn để họ
+> hỏi; một câu tự tin và sai thì dẫn họ đi.
+
+### Bản vá — ba mảnh, và mảnh thứ hai là mảnh dễ quên
+
+**① `missingSecretRefs(config)`** — quét ô trống còn sót trên **chuỗi JSON của cả cấu hình**, không
+riêng `headers`. Một hàm chỉ nhìn `headers` sẽ đúng cho tới đúng ngày ai đó viết
+`url: 'https://${HOST}/mcp'`, và ngày đó không ai nhớ lại quyết định này.
+
+**② Chuỗi rỗng = THIẾU, ở MỌI hàm.** Ô nhập để trắng gửi lên `''`. `grantFor` cũ coi `''` là chìa
+hợp lệ ⇒ `Bearer ` bay lên server ⇒ 401 ⇒ lại đúng cái câu sai cửa, qua một đường khác. Sửa một
+hàm mà không sửa hàm kia là để hai chỗ trong cùng một luồng tin hai chuyện khác nhau.
+
+**③ Chốt đặt trong `probeArm`, KHÔNG trong route HTTP.** `probeArm` là cửa chung của nút "Thử ngay",
+của `readOnlyTools` lúc bấm Xong, và của mọi phép đo. Đặt ở route là vá một cửa rồi để ba cửa kia
+giữ nguyên hành vi cũ.
+
+⇒ Còn ô trống thì **dừng ngay, không mở kết nối, không chờ 20 giây**:
+
+```
+Thiếu chìa: NOTION_ACCESS_TOKEN. Chưa gửi yêu cầu nào — chìa chưa điền thì server chỉ
+trả về "sai chìa", và câu đó sẽ dắt bạn đi tìm nhầm chỗ.
+```
+
+### Hệ quả tự nhiên: đường "tự cắm" giờ **nhập được chìa**
+
+Trước đó đường B không có ô chìa nào, nên mọi server HTTP cần token đều là **ngõ cụt**: dán vào,
+thử, 401, hết đường. Giờ ô nhập được **sinh từ chính `${…}` trong khối họ vừa dán** — không cần biết
+trước hãng nào, không thêm một mục danh mục nào. Cùng lý lẽ §5h·1: *danh mục là dữ liệu, không phải mã*.
+
+Test: `test/missing-key.test.ts` (+9). Mã: `secrets.ts §missingSecretRefs` · `probe.ts`.
 
 ---
 
@@ -1322,6 +1445,79 @@ Explorer/Finder, nên nó phải là thứ họ đã nhập. Rỗng ⇒ **không
 mục, và một ô trống nói dối rằng cấu hình bị thiếu.
 
 Mã: `CanvasNode.folders` (`office.ts`) · `ArmFolders` (`web/src/components/Inspector.tsx`).
+
+### ✅ 25/08 — user chốt luôn phần tổng quát: **KHÔNG SỬA MỘT CÁNH TAY. Một là ở đó, hai là xoá.**
+
+> *"tôi cũng cho rằng không cho phép edit 1 MCP, 1 là ở đó, 2 là xóa. Là quản lý vòng đời khỏe nhất.
+> Sửa key này nó biến hình rất rách việc, ảnh hưởng tới thuật toán băm clone của chúng ta"*
+
+Đúng, và nó **rộng hơn** câu 24/08 ở trên: 24/08 mới nói về ô *thư mục*; câu này nói về **mọi trường
+đi vào băm** — thư mục, URL, headers, và **tên chìa**. Cả bốn cùng một lý lẽ: sửa chúng không phải
+một phép sửa, nó là *một cánh tay khác*. Cho sửa tại chỗ nghĩa là danh tính đứng yên trong khi thứ
+nó định danh đã đổi — tức đúng ca **ghi đè im lặng** mà §6i sinh ra để chặn.
+
+| Trường | Sửa được? | Vì sao |
+|---|---|---|
+| `label` | ✅ | không ai tham chiếu tới nó, không vào băm |
+| thư mục · `url` · `headers` | ❌ | vào băm ⇒ sửa = cánh tay khác |
+| **tên chìa** | ❌ | vào băm — §armHash, khối "hai workspace Notion" |
+| **giá trị chìa** | ❌ *(ở giao diện)* | xem ngay dưới |
+
+**Giá trị chìa là ca tinh tế nhất, và nó đứng cùng phía.** Giá trị KHÔNG vào băm, nên về lý thì sửa
+được mà không đổi danh tính. Nhưng sửa nó ở panel cánh tay là mở một cửa ghi thứ hai vào
+`.state/secrets.json`, trong khi chìa là tài sản **cấp công ty dùng chung** — sửa từ một văn phòng
+là đổi im lặng cánh tay của mọi văn phòng khác đang dùng chung nó. Cửa duy nhất giữ nguyên:
+`agentco secret set <TÊN>`, nơi phạm vi "cả công ty" là hiển nhiên từ chính câu lệnh.
+
+⇒ Vòng đời một cánh tay có đúng **hai** động từ: **cắm** và **rút**. Không có "sửa".
+
+## 6i-bis. 🔴 "DÙNG LẠI Ở VĂN PHÒNG KHÁC" ĐÃ HỎNG TỪ ĐẦU — bug user bắt 25/08
+
+Triệu chứng user báo, nguyên văn:
+
+> *"Tôi kết nối được notion ở văn phòng Cánh tay rồi. Nhưng khi bê sang test thử và chọn clone chính
+> cái MCP đó ở văn phòng Trợ lý cá nhân thì nó báo `Chưa kết nối được — HTTP 401`. Về lý thuyết với
+> refresh token thì văn phòng nào cũng có thể xài chung?"*
+
+**Câu hỏi đúng, câu trả lời là CÓ** — chìa nằm ở `.state/secrets.json` **cấp công ty**, một bản duy
+nhất. Hỏng nằm ở nút bấm, không ở thiết kế.
+
+### Nguyên nhân: nút "dùng lại" **không** dùng lại — nó DÁN CẤU HÌNH sang đường "tự cắm"
+
+```ts
+setPick(null);                                    // ← vứt luôn mục danh mục
+setPaste(JSON.stringify(a.config, null, 2));      // ← đi đường B
+```
+
+Mà cấu hình trong sổ giữ **ô trống** `${NOTION_ACCESS_TOKEN}` (đúng thiết kế §5a — giá trị chìa
+không bao giờ nằm trong `company.yaml`). Đường "tự cắm" không biết đây là mục danh mục nào ⇒ không
+hiện ô chìa nào ⇒ không gửi chìa nào ⇒ header bay lên Notion **nguyên văn `Bearer ${…}`** ⇒ 401.
+
+**Vì sao nó nằm im được tới hôm nay:** cánh tay duy nhất từng tồn tại là `filesystem` — stdio, và
+**không cần chìa nào**. Ô trống chỉ có ở nhánh `headers`. Lỗ này ra đời cùng ngày với mục HTTP đầu
+tiên và lộ ra ở lần bấm thứ hai.
+
+### 🔴 Và một nửa thứ hai, KHÔNG có triệu chứng nhìn thấy được
+
+`secretNames` khi đó là `[]`. Mà **tên chìa nằm trong băm** (§armHash) ⇒ **băm khác** ⇒ nó tạo một
+cánh tay **thứ hai** trùng cấu hình thay vì dùng lại cái đã có. *"Dùng lại"* mà **nhân bản** — đúng
+thứ §6i được dựng lên để làm cho không thể xảy ra, đi vòng qua bằng cửa sau. Nửa này xảy ra **kể cả
+với cánh tay stdio không cần chìa**, tức nó đã sai từ trước và chưa ai thấy.
+
+### Bản vá: danh tính đi TRỌN GÓI hoặc không đi
+
+Client gửi **`armId`** — đúng một chuỗi băm. Server (`company.ts §reuseArm`) lấy từ sổ: cấu hình ·
+tên chìa · **giá trị chìa** · việc được cấp (`tools`) · nhãn. Không mảnh nào đi vòng qua HTTP rồi
+quay lại.
+
+⇒ cùng cấu hình + cùng tên chìa ⇒ **cùng băm** ⇒ `addArm` nhận ra mục cũ ⇒ `grantArm` chỉ thêm *sự
+hiện diện* ở văn phòng mới. Đúng nghĩa "clone ở tầng hiện diện" mà §6i đã chốt, lần này có mã thi hành.
+
+⚠ `tools` cũng lấy từ sổ, **không probe lại**. Probe lại là mở cửa cho hai văn phòng cầm hai danh
+sách khác nhau của **cùng một cánh tay** — hãng thêm một việc ghi hôm nay, văn phòng cắm hôm nay
+nhận nhiều hơn văn phòng cắm hôm qua, và không ai thấy vì cả hai đều "đúng lúc cắm".
+
+Test: `test/missing-key.test.ts` — hai ô cuối canh đúng chuyện "mất tên chìa ⇒ băm khác".
 
 ## 6h. Đếm lại số bước — thước đo của cả §6
 

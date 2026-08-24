@@ -11,9 +11,12 @@ web/dist/
 # thư mục thử nghiệm tạm khi kiểm bằng tay
 /tmp-*/
 
-# state của công ty — KHÔNG BAO GIỜ commit
+# state của công ty — KHÔNG BAO GIỜ commit.
+# `.state*` chứ không phải `.state`: luật cũ khớp ĐÚNG tên `.state`, nên thư mục
+# nháp `.state-spike/` (chìa OAuth thật của spike Notion) nằm ngoài lưới suốt
+# ngày 25/08/2026. Mọi biến thể `.state-…` từ giờ đều bị chặn.
 company/.state/
-**/.state/
+**/.state*/
 **/secrets.json
 *.session.jsonl
 

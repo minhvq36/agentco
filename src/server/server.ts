@@ -24,8 +24,9 @@ import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
-import { catalogForUi, findArm } from '../core/catalog.js';
+import { buildConfig, catalogForUi, findArm } from '../core/catalog.js';
 import { baselineTokens, probeArm } from '../core/probe.js';
+import { missingSecretRefs } from '../core/secrets.js';
 
 /**
  * Yêu cầu này đến từ chính máy đang chạy daemon?
@@ -58,7 +59,119 @@ function armConfig(body: {
 }): Record<string, unknown> | undefined {
   if (body.config) return body.config;
   const arm = body.catalogId ? findArm(body.catalogId) : undefined;
-  return arm ? arm.build({ folders: body.folders ?? [] }) : undefined;
+  return arm ? buildConfig(arm.spec, { folders: body.folders ?? [] }) : undefined;
+}
+
+/**
+ * BA ĐƯỜNG VÀO, MỘT KIỂU TRẢ VỀ. Chỗ duy nhất quyết định "cánh tay này là gì".
+ *
+ *   `armId`     dùng lại mục đã có trong sổ → SỔ là nguồn (kể cả chìa)
+ *   `catalogId` mục danh mục               → DANH MỤC là nguồn tên chìa
+ *   `config`    người dùng tự dán (đường B) → tên chìa suy từ chính ô trống
+ *
+ * ⚠ Đường thứ ba: tên chìa lấy từ `${…}` trong cấu hình họ dán, **không** từ
+ * `Object.keys(body.secrets)`. Hai thứ đó lệch nhau được — gõ thừa một ô, hoặc
+ * bỏ trống một ô — và `secretNames` đi thẳng vào BĂM, tức lệch là ra một cánh
+ * tay khác. Nguồn sự thật phải là thứ server MCP thật sự đọc: cái ô trống.
+ */
+function resolveArm(
+  company: Company,
+  body: {
+    armId?: string;
+    config?: Record<string, unknown>;
+    catalogId?: string;
+    folders?: string[];
+    secrets?: Record<string, string>;
+  },
+): {
+  config: Record<string, unknown>;
+  secretNames: string[];
+  secrets: Record<string, string>;
+  /** Việc được cấp, nếu đã biết sẵn. `undefined` = phải giải lúc cắm. */
+  tools?: string[];
+  label?: string;
+  catalog?: string;
+} | undefined {
+  if (body.armId) {
+    const r = company.reuseArm(body.armId);
+    return {
+      config: r.config,
+      secretNames: r.secretNames,
+      secrets: r.secrets,
+      // Đã giải lúc cắm lần đầu — dùng lại chính danh sách đó. Giải LẠI là mở
+      // cửa cho hai văn phòng cầm hai danh sách khác nhau của cùng một cánh tay
+      // (hãng thêm việc ghi hôm nay, văn phòng cắm hôm nay nhận nhiều hơn).
+      tools: r.tools,
+      label: r.label,
+      ...(r.catalog ? { catalog: r.catalog } : {}),
+    };
+  }
+  const config = armConfig(body);
+  if (!config) return undefined;
+  const fromCatalog = body.catalogId ? findArm(body.catalogId) : undefined;
+  return {
+    config,
+    // Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên
+    // biến phải khớp chính xác thứ server MCP đọc — đó là sự thật của ta.
+    //
+    // Đường B thì HỢP hai nguồn, không thay nguồn: ô trống `${…}` (cửa của
+    // server HTTP) và khoá client gửi (cửa `env` của server stdio, nơi KHÔNG có
+    // ô trống nào để đọc). Chỉ lấy ô trống là cắt mất nhánh stdio; chỉ lấy khoá
+    // client là quay về đúng chỗ vừa hỏng.
+    secretNames: fromCatalog
+      ? fromCatalog.secrets.map((s) => s.name)
+      : [...new Set([...missingSecretRefs(config), ...Object.keys(body.secrets ?? {})])].sort(),
+    secrets: body.secrets ?? {},
+    ...(fromCatalog?.readOnly ? {} : { tools: [] }),
+    ...(body.catalogId ? { catalog: body.catalogId } : {}),
+  };
+}
+
+/**
+ * Giải cờ `readOnly` của danh mục thành DANH SÁCH TÊN VIỆC, bằng cách hỏi server.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO HỎI SERVER CHỨ KHÔNG NHẬN TỪ CLIENT — dù client vừa bấm "Thử ngay"│
+ * │ và đang cầm sẵn danh sách đó.                                            │
+ * │                                                                          │
+ * │ Cùng lý lẽ với dòng ngay dưới (*"tên chìa lấy từ DANH MỤC, không từ       │
+ * │ client"*): thứ quyết định **agent được gọi gì** phải là sự thật của       │
+ * │ server, không phải một mảng JSON đi qua HTTP. Đây là ranh giới đặc quyền, │
+ * │ và ranh giới đặc quyền không được tin vào phía bên kia nó — kể cả khi     │
+ * │ phía bên kia hôm nay là giao diện của chính ta trên localhost.            │
+ * │                                                                          │
+ * │ Giá: một lần bắt tay nữa lúc bấm Xong. Trả một lần, lúc người dùng còn    │
+ * │ đứng đó và biết mình đang chờ — đúng lý lẽ đã dùng để giữ `ensureInstalled`│
+ * │ trong `probeArm` (§6c).                                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ MẶC ĐỊNH TỪ CHỐI. `levelOf` xếp tool không khai `readOnly` vào
+ * `write_external` ⇒ nó **không** vào danh sách. Vắng annotations không phải
+ * tín hiệu an toàn. Và probe hỏng ⇒ trả `[]` ⇒ `armGrants` cấp **cả server** —
+ * 🔴 đó là chiều SAI, nên chỗ gọi phải coi mảng rỗng là **lỗi**, không phải
+ * "không giới hạn". Xem `readOnlyTools` được dùng ở đâu bên dưới.
+ */
+async function readOnlyTools(
+  config: Record<string, unknown>,
+  secrets: Record<string, string> | undefined,
+): Promise<string[]> {
+  const r = await probeArm({ arm: config as never }, undefined, secrets);
+  if (r.status !== 'connected') {
+    throw new RunError(
+      `Không nối được để đọc danh sách việc: ${r.error ?? r.status}. ` +
+        `Cánh tay "chỉ đọc" không cắm được khi chưa biết việc nào là chỉ đọc.`,
+      'other',
+    );
+  }
+  const read = r.tools.filter((t) => t.level === 'read').map((t) => t.name);
+  if (!read.length) {
+    throw new RunError(
+      `Server trả ${r.tools.length} việc nhưng KHÔNG việc nào khai "chỉ đọc". ` +
+        `Cắm tiếp là cấp cả bộ — từ chối.`,
+      'other',
+    );
+  }
+  return read;
 }
 
 /**
@@ -216,13 +329,15 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     if (url.pathname === '/api/arms/test' && method === 'POST') {
       const body = await readJson<{
         id?: string;
+        armId?: string;
         config?: Record<string, unknown>;
         catalogId?: string;
         folders?: string[];
         secrets?: Record<string, string>;
       }>(req);
-      const config = armConfig(body);
-      if (!config) return json(res, 400, { error: 'thiếu "config" hoặc "catalogId"' });
+      const arm = resolveArm(company, body);
+      if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
+      const config = arm.config;
       const base = await baselineTokens();
       /**
        * ⚠ TIÊM CHÌA VÀO PHÉP THỬ, nếu không thì nút Thử **kiểm một thứ khác với
@@ -230,12 +345,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
        * qua `pickMcp`; probe phải nhận cùng bộ đó, nếu không một cánh tay cần
        * chìa sẽ báo ✓ ở đây rồi hỏng lúc làm việc thật.
        */
-      const r = await probeArm({ [body.id || 'thu']: config as never }, base, body.secrets);
+      const r = await probeArm({ [body.id || 'thu']: config as never }, base, arm.secrets);
       return json(res, 200, r);
     }
     if (url.pathname === '/api/arms' && method === 'POST') {
       const body = await readJson<{
         label?: string;
+        armId?: string;
         config?: Record<string, unknown>;
         catalogId?: string;
         folders?: string[];
@@ -243,20 +359,23 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         office?: string;
         grantTo?: string[];
       }>(req);
-      const config = armConfig(body);
-      if (!config) return json(res, 400, { error: 'thiếu "config" hoặc "catalogId"' });
-      // Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên
-      // biến phải khớp chính xác thứ server MCP đọc — đó là sự thật của ta.
-      const fromCatalog = body.catalogId ? findArm(body.catalogId) : undefined;
-      const secretNames = fromCatalog
-        ? fromCatalog.secrets.map((s) => s.name)
-        : Object.keys(body.secrets ?? {});
+      const arm = resolveArm(company, body);
+      if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
+      // Giải cờ `readOnly` TRƯỚC khi ghi sổ: hỏng thì ném, và không có cánh tay
+      // nào được tạo. Tạo trước rồi giải sau là để lại một cánh tay mang nhãn
+      // "chỉ đọc" với `tools: []` — tức cấp CẢ SERVER. Thứ tự ở đây là bảo mật.
+      const tools = arm.tools ?? (await readOnlyTools(arm.config, arm.secrets));
       const id = company.addArm({
-        config,
-        secretNames,
-        ...(body.label ? { label: body.label } : {}),
-        ...(body.catalogId ? { catalog: body.catalogId } : {}),
-        ...(body.secrets ? { secrets: body.secrets } : {}),
+        config: arm.config,
+        secretNames: arm.secretNames,
+        ...(tools.length ? { tools } : {}),
+        // Nhãn của client CHỈ dùng khi tạo mới. Dùng lại thì nhãn đã là của
+        // người dùng rồi (`addArm` giữ nhãn cũ) — gửi kèm chỉ tạo ảo giác sửa được.
+        ...(body.armId ? {} : body.label ? { label: body.label } : {}),
+        ...(arm.catalog ? { catalog: arm.catalog } : {}),
+        // Dùng lại: chìa ĐÃ nằm trong `.state/secrets.json`, ghi lại là ghi đè
+        // chính nó bằng chính nó. Chỉ ghi khi client thật sự gửi chìa mới.
+        ...(body.armId ? {} : body.secrets ? { secrets: body.secrets } : {}),
         ...(body.office ? { office: body.office } : {}),
       });
 
@@ -605,6 +724,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       }
       if (rest[0] === 'artifacts' && !rest[1] && method === 'DELETE') {
         const rel = url.searchParams.get('path');
+        /**
+         * XOÁ TẤT CẢ — phải nói ra bằng `?all=1`, KHÔNG bao giờ bằng cách thiếu
+         * `path`. Suy "không nêu file nào" thành "xoá hết" là biến một lỗi lập
+         * trình (quên ghép query) thành một lệnh phá huỷ. Thiếu `path` vẫn là 400
+         * y như cũ. → `Office.clearArtifacts`
+         */
+        if (!rel && url.searchParams.get('all') === '1') {
+          const removed = office.clearArtifacts();
+          return json(res, 200, { removed, artifacts: office.artifactList() });
+        }
         if (!rel) return json(res, 400, { error: 'thiếu "path"' });
         // Qua `Office` để bảng kê Kết quả trong prefix Trợ lý được nạp lại —
         // nếu không, nó nêu tên một file người dùng vừa xoá. → `removeArtifact`

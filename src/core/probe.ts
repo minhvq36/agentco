@@ -35,6 +35,7 @@
 import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 import { ensureInstalled, fastLaunch } from './armexec.js';
+import { injectSecrets, missingSecretRefs } from './secrets.js';
 
 /** Đúng bộ `effectiveTools([])` của một vai trò trần — để số token so sánh được. */
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
@@ -106,13 +107,41 @@ export async function probeArm(
   env?: Record<string, string>,
 ): Promise<ProbeResult> {
   if (env && Object.keys(env).length) {
+    /**
+     * ⚠ CÙNG MỘT HÀM `pickMcp` DÙNG — `secrets.ts §injectSecrets`. Đây là bất
+     * biến, không phải tiện tay: nút "Thử ngay" phải kiểm **đúng cấu hình sẽ
+     * chạy**. Bản cũ ở đây bỏ qua server HTTP (lỗ §5a) ⇒ một cánh tay HTTP cần
+     * chìa sẽ báo ✓ ở đây rồi 401 lúc nhân viên đầu tiên dùng nó.
+     */
     for (const [name, cfg] of Object.entries(servers)) {
-      // Chỉ server chạy bằng tiến trình con mới có `env`. Server HTTP nhận chìa
-      // qua `headers` — chưa nối, và §5a đã ghi đó là một lỗ còn mở.
-      if (cfg && typeof cfg === 'object' && 'command' in cfg) {
-        servers[name] = { ...cfg, env: { ...(cfg as { env?: Record<string, string> }).env, ...env } };
-      }
+      servers[name] = injectSecrets(cfg, env);
     }
+  }
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CÒN Ô TRỐNG ⇒ DỪNG Ở ĐÂY. Không bắt tay, không chờ 20 giây, không 401.  │
+   * │                                                                          │
+   * │ Bug user báo 25/08: *"chìa thiếu (để trắng) nó cũng báo câu lệnh y hệt   │
+   * │ [chìa sai] mà? Tôi hiểu sai chỗ nào"*. Không sai chỗ nào — cả hai ca đều │
+   * │ đi tới cùng một câu 401 của server, mà 401 chỉ nói được *"chìa này sai"*.│
+   * │ Server không có cách nào biết ta **chưa từng điền chìa**; ta thì biết.   │
+   * │                                                                          │
+   * │ Đặt ở đây chứ không ở route HTTP: `probeArm` là cửa CHUNG của nút "Thử   │
+   * │ ngay", của `readOnlyTools` lúc bấm Xong, và của mọi phép đo. Đặt ở route │
+   * │ là vá một cửa rồi để ba cửa kia giữ nguyên hành vi cũ — đúng lớp lỗi     │
+   * │ "hai bản của cùng một luật" đã đốt dự án này nhiều lần.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const missing = missingSecretRefs(servers);
+  if (missing.length) {
+    return {
+      status: 'failed',
+      tools: [],
+      connectMs: 0,
+      error:
+        `Thiếu chìa: ${missing.join(', ')}. Chưa gửi yêu cầu nào — chìa chưa điền thì server ` +
+        `chỉ trả về "sai chìa", và câu đó sẽ dắt bạn đi tìm nhầm chỗ.`,
+    };
   }
   /**
    * CÀI SẴN NGAY Ở ĐÂY, và đây là chỗ ĐÚNG để chờ nó.

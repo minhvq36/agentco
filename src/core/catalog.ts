@@ -23,6 +23,48 @@
 /** Câu phụ trên thẻ nói CÁI GIÁ — người dùng chọn theo công sức, không theo tên. */
 export type ArmPrice = 'none' | 'keys' | 'login';
 
+/**
+ * Cách dựng cấu hình MCP — **dữ liệu thuần**, không hàm, không tên hãng.
+ *
+ * Đúng hai hình dạng, vì giao thức có đúng hai (§2: stdio + Streamable HTTP;
+ * SSE nhận vào để tương thích nhưng **không bao giờ đề xuất**, nên nó không có
+ * chỗ ở đây — ai cần thì dán config tay qua đường B).
+ */
+export type ArmSpec =
+  | {
+      kind: 'stdio';
+      command: string;
+      args: string[];
+      /**
+       * Nối danh sách thư mục người dùng chọn vào cuối `args`.
+       *
+       * Đây là **toàn bộ** phần "tuỳ biến theo hãng" mà hàm `build` cũ tồn tại
+       * để làm — một cờ boolean. Đáng để nhớ khi có người muốn thêm hàm trở lại.
+       */
+      appendFolders?: boolean;
+    }
+  | {
+      kind: 'http';
+      url: string;
+      /**
+       * Ô trống `${TÊN_CHÌA}` được `injectSecrets` thay lúc dựng server.
+       * → `core/secrets.ts`. Chuỗi ở đây là thứ người dùng ĐỌC ĐƯỢC trong
+       * `company.yaml`; giá trị thật không bao giờ nằm trong file này.
+       */
+      headers?: Record<string, string>;
+    };
+
+/** MỘT hàm dựng cho mọi mục. Thêm hãng = thêm dữ liệu, không thêm nhánh. */
+export function buildConfig(spec: ArmSpec, input: { folders: string[] }): Record<string, unknown> {
+  if (spec.kind === 'http') {
+    return { type: 'http', url: spec.url, ...(spec.headers ? { headers: spec.headers } : {}) };
+  }
+  return {
+    command: spec.command,
+    args: spec.appendFolders ? [...spec.args, ...input.folders] : [...spec.args],
+  };
+}
+
 export interface ArmSecretField {
   /**
    * TÊN BIẾN CHÍNH XÁC. Người dùng không bao giờ gõ chuỗi này — ta ship sẵn.
@@ -50,7 +92,22 @@ export interface CatalogArm {
   icon: string;
   blurb: string;
   price: ArmPrice;
-  transport: 'stdio' | 'http';
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CẤU HÌNH LÀ DỮ LIỆU, KHÔNG PHẢI HÀM. (user chốt 25/08)                   │
+   * │                                                                          │
+   * │ Bản trước: mỗi mục có `build(input) => config` — tức **một hàm cho mỗi   │
+   * │ hãng**. Nó nhỏ, nhưng nó là chỗ mà "thêm provider" bắt đầu có nghĩa là   │
+   * │ "viết code", và từ đó tới `notion.ts` · `slack.ts` · `gmail.ts` là một   │
+   * │ con dốc không có bậc nào để dừng.                                        │
+   * │                                                                          │
+   * │ Nay: **một** `buildConfig()` dùng chung, mỗi hãng là một object thuần.   │
+   * │ Hệ quả không hiển nhiên nhưng quan trọng: danh mục giờ **tuần tự hoá     │
+   * │ được** — chuyển sang JSON, tải từ xa, hay để người dùng tự thêm một mục  │
+   * │ đều KHÔNG cần đổi một dòng mã nào. Đó là §5h·1 được trả công lần thứ ba. │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  spec: ArmSpec;
   secrets: ArmSecretField[];
   /** Cánh tay cần một danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
   folders?: { label: string; help: string };
@@ -59,7 +116,47 @@ export interface CatalogArm {
    * `checkedOn` rỗng nghĩa là **chưa ai đọc quy tắc của hãng đó**.
    */
   brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
-  build(input: { folders: string[] }): Record<string, unknown>;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CHỈ ĐỌC = MỘT CỜ, KHÔNG PHẢI MỘT DANH SÁCH TÊN TOOL. (user bắt 25/08)    │
+   * │                                                                          │
+   * │ 🔴 Bản đầu ghi thẳng 14 tên `notion-*` vào file này. User chỉ ra ngay:   │
+   * │ *"chúng ta phải tự viết code để pick từng tool… sau này nhiều provider   │
+   * │ nữa?"* — đúng, và tệ hơn thế: **tôi đã ĐO ra thứ làm nó thừa** rồi vẫn   │
+   * │ gõ tay. Số đo 25/08: **28/28 tool Notion đều khai `annotations`**.       │
+   * │                                                                          │
+   * │ ⇒ "Chỉ đọc" là thứ **HỎI RA ĐƯỢC LÚC BẮT TAY**, không phải thứ phải      │
+   * │ liệt kê. `probe.ts §levelOf` đã làm đúng phép suy đó từ 23/08 — kể cả    │
+   * │ luật MẶC ĐỊNH TỪ CHỐI: không khai `readOnly` ⇒ xếp `write_external`,     │
+   * │ **vắng mặt không phải tín hiệu an toàn**.                                │
+   * │                                                                          │
+   * │ Cờ này bật thì lúc CẮM, `addArm` chạy probe, lọc `level === 'read'`, và  │
+   * │ ghi danh sách đã giải vào `arms[băm].tools` trong `company.yaml`. Ba thứ │
+   * │ được cùng lúc:                                                           │
+   * │   · **0 tên tool trong mã** — thêm hãng vẫn là thêm dữ liệu              │
+   * │   · chạy cho **mọi** server, kể cả MCP cộng đồng ta chưa từng nghe tên   │
+   * │   · danh sách nằm trong `company.yaml` ⇒ người dùng **kiểm tra được**    │
+   * │                                                                          │
+   * │ Vẫn giữ tính chất của bản gõ tay: danh sách là **ảnh chụp lúc cắm**, nên │
+   * │ hãng thêm việc GHI về sau **không tự lọt vào**. Khác đúng một chỗ: nó là │
+   * │ ảnh chụp **đo được**, không phải ảnh chụp gõ tay — nên nó cũng không lỗi │
+   * │ thời theo chiều ngược (hãng đổi tên một việc ĐỌC thì bản gõ tay im lặng  │
+   * │ mất việc đó, bản này thì không).                                         │
+   * │                                                                          │
+   * │ ⚠ KHÔNG PHÁ CHỐT "duyệt theo cả server" (user 24/08): chốt đó nói **AI** │
+   * │ được dùng — vẫn là sợi dây. Cờ này nói cánh tay đó **LÀ GÌ**.            │
+   * │                                                                          │
+   * │ ⚠ Nó cắt QUYỀN GỌI, **không** cắt token: schema cả 28 việc vẫn do server │
+   * │ trả về. Thứ cắt token là `ToolSearch` (worker.ts). Hai lá chắn khác nhau │
+   * │ — đừng tưởng cái này mua được cái kia. → SPEC-arms §9b                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  readOnly?: boolean;
+}
+
+/** Giao diện nói "stdio hay http" bằng tiếng người — suy từ `spec`, không khai lại. */
+export function transportOf(a: CatalogArm): 'stdio' | 'http' {
+  return a.spec.kind;
 }
 
 /**
@@ -71,8 +168,19 @@ export interface CatalogArm {
  * "code người lạ" không còn đủ — **chọn hộ khách là bảo đảm hộ khách**.
  */
 const FILESYSTEM_PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
-/** Chính chủ Notion phát hành — khác hẳn một gói cộng đồng, và UI phải nói ra. */
-const NOTION_PKG = '@notionhq/notion-mcp-server@2.5.1';
+
+/**
+ * ⚠ Notion KHÔNG còn ở đây, và sự vắng mặt đó là một quyết định. (25/08)
+ *
+ * Bản cũ ghim `@notionhq/notion-mcp-server@2.5.1` — gói **local, chính chủ**.
+ * Nhưng chính chủ đã buông nó: 🌐 *"We may sunset this local MCP server
+ * repository"* + *"issues and pull requests here are not actively monitored"*.
+ *
+ * ⇒ Bài học đáng giữ cho mọi mục về sau: **ghim phiên bản ≠ được bảo trì.**
+ * §11d ghim để mã người lạ không tự đổi dưới chân khách; nó không cứu được ta
+ * khỏi việc đóng băng một thứ không còn ai vá lỗi. Notion nay đi đường HTTP
+ * hosted (xem `build` bên dưới) — 0 gói, 0 rủi ro chuỗi cung ứng.
+ */
 
 export const CATALOG: CatalogArm[] = [
   {
@@ -81,7 +189,7 @@ export const CATALOG: CatalogArm[] = [
     icon: '📁',
     blurb: 'Đọc file và thư mục trên chính máy này — chỉ những thư mục bạn cho phép.',
     price: 'none',
-    transport: 'stdio',
+    spec: { kind: 'stdio', command: 'npx', args: ['-y', FILESYSTEM_PKG], appendFolders: true },
     secrets: [],
     folders: {
       label: 'Thư mục được phép',
@@ -90,35 +198,69 @@ export const CATALOG: CatalogArm[] = [
     // Server tham chiếu của chính MCP ⇒ KHÔNG có thương hiệu bên thứ ba nào.
     // Đây là mục duy nhất trong danh mục v1 có rủi ro nhãn hiệu bằng 0.
     brand: { owner: null, guidelineUrl: null, checkedOn: null },
-    build: ({ folders }) => ({
-      command: 'npx',
-      args: ['-y', FILESYSTEM_PKG, ...folders],
-    }),
   },
   {
     id: 'notion',
-    name: 'Notion',
+    name: 'Notion (chỉ đọc)',
     icon: '📝',
-    blurb: 'Tìm, đọc và cập nhật trang trong không gian Notion của bạn.',
+    /**
+     * ⚠ CÂU NÀY PHẢI NÓI RA BÁN KÍNH, và nó nói ngược với trực giác. → §5h·3
+     *
+     * OAuth của Notion **thừa kế TOÀN BỘ quyền của người đăng nhập**: 🌐
+     * *"MCP tools act with your full Notion permissions"*, và metadata khai
+     * `scopes_supported: ["default"]` — **một** scope, không chia nhỏ được.
+     *
+     * Tức nó **RỘNG HƠN** token tĩnh, thứ mặc định không thấy gì cho tới khi
+     * người dùng tự thêm connection vào từng trang. Giấu chuyện này đi là
+     * **hứa quá tay**, và §11a-bis đã chốt: *doạ quá tay làm người dùng tắt
+     * thứ họ cần; hứa quá tay làm họ bật để mua một thứ không tồn tại — cái
+     * sau tệ hơn*. "chỉ đọc" ở đây là do TA cắt (`tools` bên dưới), không phải
+     * do Notion cấp hẹp.
+     */
+    blurb: 'Tìm và đọc mọi trang tài khoản Notion của bạn xem được. Không sửa, không xoá.',
     price: 'keys',
-    transport: 'stdio',
+    /**
+     * MCP **hosted chính chủ**, Streamable HTTP. Ba thứ nó bỏ so với bản cũ
+     * (`npx @notionhq/notion-mcp-server`): không tải mã người lạ về máy khách
+     * (rủi ro chuỗi cung ứng §11d = **0**), không `npx` trên đường nóng, và
+     * không phụ thuộc một gói mà chính chủ ghi *"may sunset this repository"*.
+     *
+     * ⚠ `${NOTION_ACCESS_TOKEN}` là **ô trống**, không phải giá trị. Nó nằm
+     * nguyên như vậy trong `company.yaml` — người dùng ĐỌC ĐƯỢC chìa đi vào đâu
+     * mà không đọc được chìa. → `secrets.ts §injectSecrets`
+     */
+    spec: {
+      kind: 'http',
+      url: 'https://mcp.notion.com/mcp',
+      headers: { Authorization: 'Bearer ${NOTION_ACCESS_TOKEN}' },
+    },
+    /** Giải ra 14/28 việc lúc CẮM, từ `annotations`. Xem `CatalogArm.readOnly`. */
+    readOnly: true,
     secrets: [
       {
-        // ⚠ TÊN NÀY PHẢI KHỚP CHÍNH XÁC, và nó KHÔNG suy được từ giao thức: MCP
-        // không công bố "tôi cần biến nào" vì đó là yêu cầu lúc KHỞI ĐỘNG TIẾN
-        // TRÌNH, xảy ra TRƯỚC khi bắt tay. Sai tên ⇒ `status: 'failed'` — biết
-        // là hỏng, không biết vì sao. Đó là lý do danh mục ship sẵn nó.
-        name: 'NOTION_TOKEN',
-        label: 'Token tích hợp Notion',
+        /**
+         * ⚠ TÊN NÀY PHẢI KHỚP CHÍNH XÁC — nó là chuỗi trong ô trống `${…}` của
+         * `headers` bên dưới. Lệch một ký tự ⇒ `injectSecrets` không thay được
+         * ⇒ server trả **401**, và câu lỗi đó chỉ về *"chìa sai"* chứ không về
+         * *"chìa thiếu"* — tức chỉ sai cửa để đi tìm. Danh mục ship sẵn nó
+         * chính vì thế. (Cảnh báo của `injectSecrets` là lưới thứ hai.)
+         *
+         * 🔴 TẠM THỜI — CHẶNG 1. Đây là access token OAuth lấy bằng
+         * `scripts/spike-notion-oauth.ts`, **sống 8 giờ** rồi phải lấy lại.
+         * Chặng 2 thay ô này bằng một nút Đăng nhập + làm mới ở nền, và khi đó
+         * `price` đổi thành `'login'`. Ô dán tay tồn tại để bài 12 chạy được
+         * NGAY, không phải để ở lại.
+         */
+        name: 'NOTION_ACCESS_TOKEN',
+        label: 'Chìa Notion (tạm — 8 giờ)',
         help:
-          'Mở app.notion.com/developers/connections → + New connection → chọn workspace → menu ••• → copy token (bắt đầu bằng "ntn_"). ' +
-          'Rồi MỞ TRANG bạn muốn cho đọc → menu ··· → Connections → thêm connection vừa tạo.',
+          'Chạy `npx tsx scripts/spike-notion-oauth.ts`, đăng nhập, rồi copy `access_token` trong ' +
+          '.state-spike/notion-oauth.json. Chìa sống 8 giờ — hết thì chạy lại lệnh đó.',
       },
     ],
     // ❓ `checkedOn: null` = CHƯA ai đọc quy tắc thương hiệu của Notion. Ô trống
     // nghĩa là KHÔNG dùng logo — cấu trúc, không phải kỷ luật. → SPEC-arms §11c
     brand: { owner: 'Notion Labs, Inc.', guidelineUrl: null, checkedOn: null },
-    build: () => ({ command: 'npx', args: ['-y', NOTION_PKG] }),
   },
 ];
 
@@ -278,7 +420,14 @@ export function swallowsOffice(root: string, officeDir: string, companyDir: stri
 }
 
 /** Bản gửi lên giao diện — bỏ `build` (hàm không serialize được). */
+/**
+ * Danh mục cho giao diện. Nay là `CATALOG` **nguyên vẹn** cộng một trường suy ra.
+ *
+ * Bản trước phải lọc `build` ra vì nó là **hàm** — không tuần tự hoá được, và
+ * `JSON.stringify` nuốt nó im lặng. Bỏ `build` đi thì cái lọc đó biến mất theo:
+ * mọi trường của một mục giờ đều là dữ liệu, nên **không còn gì để quên lọc**.
+ */
 export function catalogForUi() {
-  return CATALOG.map(({ build: _build, ...rest }) => rest);
+  return CATALOG.map((a) => ({ ...a, transport: transportOf(a) }));
 }
 

@@ -426,6 +426,23 @@ export const CompanyConfigSchema = z.object({
          * `role.secrets` để `pickMcp` tiêm đúng bộ đó vào tiến trình MCP.
          */
         secrets: z.array(z.string()).default([]),
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ VIỆC ĐƯỢC CẤP — **đã giải**, không phải chính sách. Rỗng ⇒ cả server│
+         * │                                                                    │
+         * │ Danh mục khai `readOnly: true` (một cờ); `addArm` chạy probe, hỏi   │
+         * │ `annotations` của từng tool, rồi ghi **danh sách đã giải** vào đây. │
+         * │ ⇒ 0 tên tool nằm trong mã nguồn, mà vẫn tất định lúc chạy.          │
+         * │                                                                    │
+         * │ Vì sao nằm ở `arms[]` chứ không tính lại mỗi lần dùng:              │
+         * │  · `pickMcp` là ĐỒNG BỘ (armexec.ts) — hỏi server ở đó là kéo một   │
+         * │    vòng mạng vào đúng đường nóng vừa dọn sạch                       │
+         * │  · người dùng **đọc được** trong `company.yaml` — cánh tay "chỉ đọc"│
+         * │    kiểm tra được bằng mắt, không phải tin lời cái nhãn              │
+         * │  · hãng thêm việc GHI về sau **không tự lọt vào**                   │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        tools: z.array(z.string()).default([]),
       }),
     )
     .prefault({}),
