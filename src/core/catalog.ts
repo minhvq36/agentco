@@ -54,15 +54,50 @@ export type ArmSpec =
       headers?: Record<string, string>;
     };
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ô TRỐNG ĐẶC BIỆT `${OAUTH}` — CHỖ CỦA "TÀI KHOẢN CỦA CHÍNH CÁNH TAY NÀY".│
+ * │                                                                          │
+ * │ Danh mục là **dữ liệu tĩnh**, mà tên chìa OAuth thì **sinh lúc đăng nhập**│
+ * │ (`NOTION_OAUTH_<8 hex workspace_id>` — xem `oauth.ts §accountName`). Hai  │
+ * │ điều đó chỉ gặp nhau ở một chỗ: mục danh mục viết một **chỗ trống có tên  │
+ * │ quy ước**, và `buildConfig` điền tên tài khoản thật vào lúc cắm.          │
+ * │                                                                          │
+ * │ Vì sao không để danh mục ghi thẳng `${NOTION_ACCESS_TOKEN}` như trước:    │
+ * │ **hai workspace Notion dùng chung một tên chìa ⇒ chung một băm ⇒ gộp làm  │
+ * │ một cánh tay.** §6i cảnh báo đúng ca đó từ 23/08.                         │
+ * │                                                                          │
+ * │ Sau khi thay xong, chuỗi trong `company.yaml` là một ô trống BÌNH THƯỜNG  │
+ * │ (`${NOTION_OAUTH_A1B2C3D4}`) — `injectSecrets` không cần biết OAuth tồn   │
+ * │ tại. Một quy ước ở đúng một hàm, 0 nhánh mới ở hạ nguồn.                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const OAUTH_SLOT = '${OAUTH}';
+
 /** MỘT hàm dựng cho mọi mục. Thêm hãng = thêm dữ liệu, không thêm nhánh. */
-export function buildConfig(spec: ArmSpec, input: { folders: string[] }): Record<string, unknown> {
+export function buildConfig(
+  spec: ArmSpec,
+  input: { folders: string[]; account?: string },
+): Record<string, unknown> {
   if (spec.kind === 'http') {
-    return { type: 'http', url: spec.url, ...(spec.headers ? { headers: spec.headers } : {}) };
+    let headers = spec.headers;
+    if (headers && input.account) {
+      const slot = `\${${input.account}}`;
+      headers = Object.fromEntries(
+        Object.entries(headers).map(([k, v]) => [k, v.split(OAUTH_SLOT).join(slot)]),
+      );
+    }
+    return { type: 'http', url: spec.url, ...(headers ? { headers } : {}) };
   }
   return {
     command: spec.command,
     args: spec.appendFolders ? [...spec.args, ...input.folders] : [...spec.args],
   };
+}
+
+/** Mục này cần đăng nhập chứ không cần gõ chìa? Suy từ `spec`, không khai lại. */
+export function needsOAuth(a: CatalogArm): boolean {
+  return a.spec.kind === 'http' && JSON.stringify(a.spec.headers ?? {}).includes(OAUTH_SLOT);
 }
 
 export interface ArmSecretField {
@@ -152,6 +187,15 @@ export interface CatalogArm {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   readOnly?: boolean;
+  /**
+   * Cho người dùng chọn **nấc quyền** lúc cắm (Chỉ đọc / +Thêm / Toàn quyền).
+   * → `probe.ts §tierOf` · docs/SPEC-arms.md §6j
+   *
+   * Thay `readOnly` với những mục hỗ trợ cả ba nấc. Giữ `readOnly` cho mục nào
+   * ta cố ý **không** cho nâng — nhưng hôm nay không còn mục nào như thế, và một
+   * mục "chỉ đọc cứng" nên là một quyết định có lý do viết ra, không phải mặc định.
+   */
+  tiered?: boolean;
 }
 
 /** Giao diện nói "stdio hay http" bằng tiếng người — suy từ `spec`, không khai lại. */
@@ -201,7 +245,7 @@ export const CATALOG: CatalogArm[] = [
   },
   {
     id: 'notion',
-    name: 'Notion (chỉ đọc)',
+    name: 'Notion',
     icon: '📝',
     /**
      * ⚠ CÂU NÀY PHẢI NÓI RA BÁN KÍNH, và nó nói ngược với trực giác. → §5h·3
@@ -217,47 +261,47 @@ export const CATALOG: CatalogArm[] = [
      * sau tệ hơn*. "chỉ đọc" ở đây là do TA cắt (`tools` bên dưới), không phải
      * do Notion cấp hẹp.
      */
-    blurb: 'Tìm và đọc mọi trang tài khoản Notion của bạn xem được. Không sửa, không xoá.',
-    price: 'keys',
+    blurb: 'Tìm, đọc và (nếu bạn cho phép) ghi vào các trang Notion mà tài khoản của bạn xem được.',
+    price: 'login',
     /**
      * MCP **hosted chính chủ**, Streamable HTTP. Ba thứ nó bỏ so với bản cũ
      * (`npx @notionhq/notion-mcp-server`): không tải mã người lạ về máy khách
      * (rủi ro chuỗi cung ứng §11d = **0**), không `npx` trên đường nóng, và
      * không phụ thuộc một gói mà chính chủ ghi *"may sunset this repository"*.
      *
-     * ⚠ `${NOTION_ACCESS_TOKEN}` là **ô trống**, không phải giá trị. Nó nằm
-     * nguyên như vậy trong `company.yaml` — người dùng ĐỌC ĐƯỢC chìa đi vào đâu
-     * mà không đọc được chìa. → `secrets.ts §injectSecrets`
+     * ⚠ `${OAUTH}` là **chỗ trống có tên quy ước**, không phải tên chìa thật.
+     * `buildConfig` thay nó bằng tên tài khoản người dùng vừa đăng nhập
+     * (`NOTION_OAUTH_<8 hex workspace_id>`) — nhờ đó **hai workspace Notion ra
+     * hai băm khác nhau** dù cùng URL. → §OAUTH_SLOT · `oauth.ts §accountName`
+     *
+     * Sau khi thay, `company.yaml` chứa một ô trống bình thường: người dùng ĐỌC
+     * ĐƯỢC chìa đi vào đâu mà không đọc được chìa. → `secrets.ts §injectSecrets`
      */
     spec: {
       kind: 'http',
       url: 'https://mcp.notion.com/mcp',
-      headers: { Authorization: 'Bearer ${NOTION_ACCESS_TOKEN}' },
+      headers: { Authorization: 'Bearer ${OAUTH}' },
     },
-    /** Giải ra 14/28 việc lúc CẮM, từ `annotations`. Xem `CatalogArm.readOnly`. */
-    readOnly: true,
-    secrets: [
-      {
-        /**
-         * ⚠ TÊN NÀY PHẢI KHỚP CHÍNH XÁC — nó là chuỗi trong ô trống `${…}` của
-         * `headers` bên dưới. Lệch một ký tự ⇒ `injectSecrets` không thay được
-         * ⇒ server trả **401**, và câu lỗi đó chỉ về *"chìa sai"* chứ không về
-         * *"chìa thiếu"* — tức chỉ sai cửa để đi tìm. Danh mục ship sẵn nó
-         * chính vì thế. (Cảnh báo của `injectSecrets` là lưới thứ hai.)
-         *
-         * 🔴 TẠM THỜI — CHẶNG 1. Đây là access token OAuth lấy bằng
-         * `scripts/spike-notion-oauth.ts`, **sống 8 giờ** rồi phải lấy lại.
-         * Chặng 2 thay ô này bằng một nút Đăng nhập + làm mới ở nền, và khi đó
-         * `price` đổi thành `'login'`. Ô dán tay tồn tại để bài 12 chạy được
-         * NGAY, không phải để ở lại.
-         */
-        name: 'NOTION_ACCESS_TOKEN',
-        label: 'Chìa Notion (tạm — 8 giờ)',
-        help:
-          'Chạy `npx tsx scripts/spike-notion-oauth.ts`, đăng nhập, rồi copy `access_token` trong ' +
-          '.state-spike/notion-oauth.json. Chìa sống 8 giờ — hết thì chạy lại lệnh đó.',
-      },
-    ],
+    /**
+     * Ba nấc, giải từ `annotations` lúc cắm. Đo 25/08: 28 việc — **14 đọc · 11
+     * thêm · 3 sửa/xoá**, và 28/28 đều khai annotations.
+     *
+     * ⚠ Thay cho `readOnly: true` của bản 25/08. Bản đó đúng nhưng **cứng**:
+     * người dùng muốn Notion ghi được thì không có đường nào ngoài sửa yaml —
+     * một **chuông báo §6a**. Nấc là thứ họ chọn, và nó vào băm nên "đổi nấc"
+     * là một cánh tay khác chứ không phải một lần sửa tại chỗ. → §6j
+     */
+    tiered: true,
+    /**
+     * RỖNG — và đó là toàn bộ điểm của `price: 'login'`.
+     *
+     * Chìa của mục này **sinh ra từ luồng đăng nhập**, không do người dùng gõ.
+     * Tên nó cũng không biết trước được (nó mang `workspace_id`), nên khai ở đây
+     * là khai một chuỗi sẽ sai. Bản 25/08 có một ô dán tay kèm hướng dẫn *"chạy
+     * spike rồi copy access_token"* — nó tồn tại để bài 12 chạy được NGAY, và
+     * đúng như đã ghi lúc đó: **không phải để ở lại**.
+     */
+    secrets: [],
     // ❓ `checkedOn: null` = CHƯA ai đọc quy tắc thương hiệu của Notion. Ô trống
     // nghĩa là KHÔNG dùng logo — cấu trúc, không phải kỷ luật. → SPEC-arms §11c
     brand: { owner: 'Notion Labs, Inc.', guidelineUrl: null, checkedOn: null },
@@ -301,7 +345,36 @@ export function findArm(id: string): CatalogArm | undefined {
  * khoá vẫn phải ra cùng một băm, nếu không thì "trùng lặp không thể xảy ra"
  * lại thành "trùng lặp xảy ra khi gõ khác thứ tự".
  */
-export function armHash(config: unknown, secretNames: readonly string[] = []): string {
+export function armHash(
+  config: unknown,
+  secretNames: readonly string[] = [],
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠⚠ NẤC QUYỀN PHẢI VÀO BĂM — và lý do MẠNH NHẤT không phải chống đụng độ. │
+   * │                                                                          │
+   * │ User nhấn mạnh 25/08: *"Đổi mức quyền ở văn phòng này KHÔNG đổi ở văn     │
+   * │ phòng khác, quan trọng."* Nấc nằm trong băm ⇒ đổi nấc = **một cánh tay    │
+   * │ khác** ⇒ `role.mcp` và `office.arms` của văn phòng kia vẫn trỏ băm cũ ⇒   │
+   * │ **không đụng tới, không cần một dòng mã nào canh chuyện đó**.             │
+   * │                                                                          │
+   * │ Nếu nấc là một trường sửa tại chỗ trong sổ chung thì ngược hẳn: một cú    │
+   * │ bấm ở văn phòng A **âm thầm nâng quyền** cho mọi văn phòng dùng chung.    │
+   * │ Bị loại bởi **cấu trúc**, không bởi kỷ luật.                              │
+   * │                                                                          │
+   * │ Và vế chống đụng độ vẫn đúng: cùng URL + cùng chìa + khác nấc mà chung    │
+   * │ băm là **ghi đè im lặng** — đúng ca §6i sinh ra để chặn.                  │
+   * │                                                                          │
+   * │ ⚠ RÁC CÓ TRẦN: A→B→A rơi về **đúng băm cũ** (đã ở trong sổ ⇒ `addArm`    │
+   * │ dùng lại). Tối đa **3** mục cho một (cấu hình + chìa) — bằng số nấc.      │
+   * │                                                                          │
+   * │ ⚠ `undefined` KHÔNG được đi vào hạt giống băm: mọi cánh tay đã tạo trước  │
+   * │ 26/08 phải giữ **nguyên băm cũ**, nếu không cả `company.yaml` mồ côi sau  │
+   * │ một lần nâng cấp. `JSON.stringify` bỏ khoá `undefined` — đó là hành vi ta │
+   * │ đang DỰA VÀO, không phải may mắn. Có test canh.                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  level?: string,
+): string {
   const stable = (v: unknown): unknown => {
     if (Array.isArray(v)) return v.map(stable);
     if (v && typeof v === 'object') {
@@ -313,7 +386,7 @@ export function armHash(config: unknown, secretNames: readonly string[] = []): s
     }
     return v;
   };
-  const seed = JSON.stringify({ c: stable(config), s: [...secretNames].sort() });
+  const seed = JSON.stringify({ c: stable(config), s: [...secretNames].sort(), l: level });
   return `a${createHash('sha256').update(seed).digest('hex').slice(0, 10)}`;
 }
 
@@ -334,6 +407,56 @@ export function folderRoots(config: unknown): string[] {
   return args.filter(
     (a): a is string => typeof a === 'string' && (/^[a-zA-Z]:[\\/]/.test(a) || a.startsWith('/')),
   );
+}
+
+/**
+ * ⚠ `armKeys` ĐÃ BỎ (26/08) — đừng dựng lại. Nó đổi khoá `mcpServers` từ băm
+ * sang slug của nhãn, để model phân biệt được hai cánh tay cùng loại.
+ *
+ * User bác, và bác đúng: cầu nối ở **dòng danh bạ** (`assistant.ts §armReach`)
+ * vẫn cần trong MỌI trường hợp (nhãn phi-Latin ra slug rỗng · nhãn trùng thì cả
+ * hai phải về băm), nên slug chỉ là tối ưu **một phần** chồng lên một cơ chế đã
+ * đủ. Đổi lại nó đẻ ra ba điểm quy đổi, và cái đầu (`armGrants`) hỏng theo chiều
+ * **cấp thừa quyền**. Chi tiết: `worker.ts` chỗ dựng `mcpServers`.
+ *
+ * > *"tên là cái nhà, băm là địa chỉ nhà"* — user, 26/08. Địa chỉ là thứ để
+ * > định tuyến; cái tên là thứ để gọi. Cuốn danh bạ nối hai thứ đó lại, và nó
+ * > không cần đổi địa chỉ để làm việc ấy.
+ */
+
+/**
+ * TÊN NGƯỜI DÙNG GÕ → THƯ MỤC THẬT của một cánh tay. → `paths.ts §resolveInput`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ca sinh ra nó (26/08): user gõ *"liệt kê bài hát trong Musics"*, Trợ lý   │
+ * │ chép `"Musics"` vào `inputs`, và kế hoạch bị chặn vì không có file tên    │
+ * │ đó — trong khi cánh tay **Musics** trỏ thẳng vào `D:\…\Musics`.           │
+ * │                                                                          │
+ * │ HAI khoá cho mỗi cánh tay, vì người dùng gọi nó bằng cả hai kiểu:         │
+ * │   · **nhãn** — thứ họ thấy trên sơ đồ (`Musics`)                          │
+ * │   · **tên lá của thư mục** — thứ họ thấy trong Explorer                   │
+ * │ Chúng thường trùng nhau, nhưng nhãn đổi tự do được, nên không phải luôn.  │
+ * │                                                                          │
+ * │ ⚠ Cánh tay KHÔNG có thư mục (Notion, GitHub) không vào bảng này: chúng    │
+ * │ không phải một chỗ trên đĩa, và ánh xạ `"Notion" → một đường dẫn` là bịa. │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function armDirIndex(
+  arms: Record<string, { label?: string }>,
+  servers: Record<string, unknown>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [id, cfg] of Object.entries(servers)) {
+    const root = folderRoots(cfg)[0];
+    if (!root) continue;
+    const leaf = root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+    const label = arms[id]?.label?.trim() ?? '';
+    // Nhãn đứng SAU tên lá: nhãn là thứ người dùng đặt, nên khi hai cánh tay
+    // đụng khoá thì cái mang nhãn thắng — nó là thứ họ vừa gõ ra.
+    if (leaf) out[leaf.toLowerCase()] = root;
+    if (label) out[label.toLowerCase()] = root;
+  }
+  return out;
 }
 
 /** Chuẩn hoá để so: bỏ gạch chéo cuối, thống nhất `\`→`/`, bỏ phân biệt hoa thường. */
@@ -427,7 +550,9 @@ export function swallowsOffice(root: string, officeDir: string, companyDir: stri
  * `JSON.stringify` nuốt nó im lặng. Bỏ `build` đi thì cái lọc đó biến mất theo:
  * mọi trường của một mục giờ đều là dữ liệu, nên **không còn gì để quên lọc**.
  */
-export function catalogForUi() {
-  return CATALOG.map((a) => ({ ...a, transport: transportOf(a) }));
+export function catalogForUi(): (CatalogArm & { transport: 'stdio' | 'http'; needsLogin: boolean })[] {
+  // `needsLogin` suy từ `spec` chứ không khai tay: một mục dùng ô `${OAUTH}` thì
+  // nó CẦN đăng nhập, và không có cách nào để hai trường đó nói khác nhau.
+  return CATALOG.map((a) => ({ ...a, transport: transportOf(a), needsLogin: needsOAuth(a) }));
 }
 

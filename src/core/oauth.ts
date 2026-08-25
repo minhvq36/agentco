@@ -63,6 +63,27 @@ export interface OAuthAccount {
   label?: string;
   /** Server trả kèm gì thì giữ nguyên — để ĐỌC, không để TIN. */
   extra?: Record<string, unknown>;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CHÌA ĐÃ CHẾT HẲN — phải ĐĂNG NHẬP LẠI, không phải thử lại.               │
+   * │                                                                          │
+   * │ Ba đường tới đây, và cả ba đều KHÔNG tự khỏi:                            │
+   * │  · người dùng thu hồi ở phía dịch vụ                                     │
+   * │  · tiến trình chết đúng khe giữa lúc dịch vụ XOAY chìa và lúc ta ghi     │
+   * │    xuống đĩa — chìa mới nằm trong một phản hồi HTTP đã mất               │
+   * │  · dịch vụ hết hạn chìa làm mới                                          │
+   * │                                                                          │
+   * │ ⚠ VÌ SAO CẦN MỘT CỜ chứ không để nó tự lộ: không có cờ thì triệu chứng   │
+   * │ duy nhất là cánh tay **401 im lặng lúc một nhân viên đang làm việc** —   │
+   * │ xa nguyên nhân, và câu 401 nói *"chìa sai"* chứ không nói *"chìa chết,   │
+   * │ bấm Đăng nhập"*. Đúng lớp lỗi §5m, ở tầng vòng đời.                      │
+   * │                                                                          │
+   * │ Có cờ thì vòng làm mới **thôi thử lại mỗi 15 phút** (vô ích, và mỗi lần  │
+   * │ là một lời gọi mạng), giao diện hiện được nút Đăng nhập lại, và câu lỗi  │
+   * │ lúc dùng nói đúng việc phải làm.                                         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  dead?: { at: string; why: string };
 }
 
 interface TokenResponse {
@@ -115,7 +136,27 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
    * nhất, vì người dùng đi tìm nguyên nhân ở chỗ khác. Cùng hình dạng với
    * `catch` nuốt tiền đề. → [[agentco-catch-hides-premises]]
    */
-  if (!probe) throw new Error(`Không nối được tới ${mcpUrl} — kiểm mạng hoặc URL.`);
+  /**
+   * ⚠ CHIỀU RA, không phải chiều vào. Câu lỗi phải nói ra điều đó.
+   *
+   * Ba lời gọi của luồng OAuth (`discover` · `register` · đổi/làm mới chìa) là
+   * **daemon → dịch vụ**, không phải dịch vụ → daemon. Trên một VPS công ty
+   * khoá egress hoặc bắt đi qua proxy, chúng chết ở đây — trong khi mọi thứ
+   * khác (giao diện, nginx, đăng nhập SSO) vẫn chạy, nên người đi tìm sẽ soi
+   * chiều VÀO và không thấy gì cả.
+   *
+   * ⚠ Và một chi tiết dễ mất cả buổi: `fetch` của Node **KHÔNG** tự đọc
+   * `HTTPS_PROXY`. Đặt biến đó rồi tưởng xong là một cái bẫy có thật.
+   */
+  if (!probe) {
+    throw new Error(
+      `Không gọi ra được tới ${mcpUrl}.\n` +
+        `Đây là kết nối ĐI RA từ máy chạy agentco, không phải kết nối vào — nên tường lửa vào, ` +
+        `nginx hay VPN đều không phải chỗ cần sửa.\n` +
+        `Kiểm: máy này có ra internet không · công ty có bắt đi qua proxy không ` +
+        `(Node không tự đọc HTTPS_PROXY, phải bật NODE_USE_ENV_PROXY=1).`,
+    );
+  }
   if (probe.ok) return null;
   if (probe.status !== 401 && probe.status !== 403) {
     throw new Error(
@@ -237,6 +278,18 @@ export function authorizeUrl(
   return u.toString();
 }
 
+/**
+ * Chìa đã CHẾT HẲN, hay chỉ tạm hỏng? Hai ca cần hai xử lý ngược nhau.
+ *
+ * `invalid_grant` là câu chuẩn của OAuth 2 cho *"chìa này không còn dùng được"*
+ * — thu hồi, hết hạn, hoặc đã bị xoay mất. Thử lại **không bao giờ** khỏi.
+ * Mọi thứ khác (mạng chết, 500, quá hạn) thì thử lại là đúng.
+ *
+ * ⚠ Đọc cả `error` trong thân JSON lẫn mã HTTP: RFC 6749 quy định `invalid_grant`
+ * đi kèm **400**, nhưng có dịch vụ trả 401. Chỉ nhìn mã số là đọc sót ở một nửa.
+ */
+export class DeadGrantError extends Error {}
+
 async function postToken(meta: AsMeta, form: Record<string, string>): Promise<TokenResponse> {
   const res = await fetch(meta.token_endpoint, {
     method: 'POST',
@@ -244,7 +297,18 @@ async function postToken(meta: AsMeta, form: Record<string, string>): Promise<To
     body: new URLSearchParams(form).toString(),
   });
   const body = await res.text();
-  if (!res.ok) throw new Error(`Đổi chìa hỏng: HTTP ${res.status} — ${body}`);
+  if (!res.ok) {
+    let code = '';
+    try {
+      code = String((JSON.parse(body) as { error?: unknown }).error ?? '');
+    } catch {
+      /* thân không phải JSON — rơi về mã HTTP */
+    }
+    if (code === 'invalid_grant' || code === 'invalid_client') {
+      throw new DeadGrantError(`Chìa không còn hiệu lực (${code || res.status}).`);
+    }
+    throw new Error(`Đổi chìa hỏng: HTTP ${res.status} — ${body}`);
+  }
   return JSON.parse(body) as TokenResponse;
 }
 
@@ -310,6 +374,51 @@ export async function refreshAccount(meta: AsMeta, acc: OAuthAccount): Promise<O
 }
 
 /**
+ * TÊN CHÌA của một tài khoản — máy sinh, tất định, và **`[A-Z0-9_]+`**.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Vì sao tên phải mang DANH TÍNH TÀI KHOẢN chứ không phải chỉ tên hãng:    │
+ * │                                                                          │
+ * │ Tên chìa đi vào `secretNames` ⇒ đi vào **`armHash`**. Hai workspace       │
+ * │ Notion có **cùng URL** `https://mcp.notion.com/mcp` — nếu cả hai cùng    │
+ * │ dùng tên `NOTION_TOKEN` thì chúng ra **cùng một băm**, tức hai không gian│
+ * │ làm việc khác nhau bị gộp thành một cánh tay. §6i đã cảnh báo đúng ca     │
+ * │ này từ 23/08, và đây là chỗ nó được giải.                                 │
+ * │                                                                          │
+ * │ Khoá định danh là `workspace_id` (Notion trả kèm token). Không có thì rơi │
+ * │ về `issuer + mcp_url` — vẫn tất định, chỉ là một tài khoản mỗi server.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Băm rồi mới cắt, KHÔNG lấy thẳng `workspace_id`: id thật chứa dấu `-` và
+ * chữ thường, mà `PLACEHOLDER` chỉ nhận `[A-Z0-9_]`. Lấy thẳng thì ô trống
+ * `${...}` **không khớp** và chìa lặng lẽ không được tiêm — đúng ca §5m.
+ */
+/**
+ * Tên này có phải một TÀI KHOẢN ĐĂNG NHẬP không (thay vì một chìa gõ tay)?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Vì sao cần: câu lỗi *"Thiếu chìa: NOTION_OAUTH_AFAFBCD6"* bảo người dùng │
+ * │ đi điền một thứ **không tồn tại** — Notion không có chìa nào để gõ, và    │
+ * │ user nói thẳng 26/08: *"bản thân human đọc sẽ rất là khó hiểu"*.          │
+ * │                                                                          │
+ * │ Đặt CẠNH `accountName` chứ không ở nơi hiển thị: đây là hàm mint ra cái   │
+ * │ tên, nên nó là chỗ duy nhất biết hình dạng của tên. Để phép nhận dạng ở   │
+ * │ một file khác là dựng bản thứ hai của một quy ước — và bản thứ hai sẽ     │
+ * │ lệch vào đúng ngày ai đó đổi tiền tố.                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function isAccountName(name: string): boolean {
+  return /_OAUTH_[0-9A-F]{8}$/.test(name);
+}
+
+export function accountName(prefix: string, acc: Pick<OAuthAccount, 'issuer' | 'mcp_url' | 'extra'>): string {
+  const ws = acc.extra?.['workspace_id'];
+  const seed = typeof ws === 'string' && ws ? ws : `${acc.issuer}|${acc.mcp_url}`;
+  const id = crypto.createHash('sha256').update(seed).digest('hex').slice(0, 8).toUpperCase();
+  return `${prefix.toUpperCase().replace(/[^A-Z0-9]/g, '')}_OAUTH_${id}`;
+}
+
+/**
  * Sắp hết hạn chưa? Làm mới ở **50% tuổi thọ**, không phải lúc còn 1 phút.
  *
  * Chìa Notion sống 8 giờ ⇒ mốc là 4 giờ. Vì sao rộng thế: một task chạy dài có
@@ -321,6 +430,9 @@ export async function refreshAccount(meta: AsMeta, acc: OAuthAccount): Promise<O
  * nào để nói nó sắp chết, và làm mới bừa là vứt một chìa đang chạy tốt.
  */
 export function needsRefresh(acc: OAuthAccount, now = Date.now(), lifetimeFraction = 0.5): boolean {
+  // Đã chết hẳn ⇒ thôi thử. Mỗi 15 phút một lời gọi mạng chắc chắn hỏng là đốt
+  // pin, đốt log, và che mất những lần hỏng THẬT đáng đọc. → `OAuthAccount.dead`
+  if (acc.dead) return false;
   if (!acc.expires_at) return false;
   if (!acc.refresh_token) return false;
   const left = acc.expires_at - now;

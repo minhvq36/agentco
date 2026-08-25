@@ -180,6 +180,12 @@ export interface AppState {
   artifactsVersion: number;
 
   /**
+   * Sổ chung cánh tay vừa đổi — cắm · rút · xoá hẳn · **đăng nhập xong**.
+   * Hộp thoại cắm bám vào số này để tự nạp lại danh sách tài khoản OAuth.
+   */
+  armsVersion: number;
+
+  /**
    * File vừa được thả lên node Tủ tài liệu, đang chờ panel nhận.
    *
    * Canvas KHÔNG tự tải lên. Cả luồng tải lên — hỏi lại khi trùng tên, câu từ
@@ -226,6 +232,7 @@ const initial: AppState = {
   libraryBusy: 0,
   knowledgeVersion: 0,
   artifactsVersion: 0,
+  armsVersion: 0,
   pendingDocs: null,
   revealArtifact: null,
   panel: null,
@@ -748,6 +755,38 @@ export const actions = {
     return true;
   },
 
+  /**
+   * XOÁ HẲN khỏi sổ chung. → `Company.forgetArm`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 BUG user báo 26/08: *"xóa MCP không văn phòng nào dùng, nó không ngay │
+   * │ lập tức update state lên FE mà báo không có kết nối <id>. Phải F5 mới     │
+   * │ hết."*                                                                    │
+   * │                                                                          │
+   * │ Nguyên nhân: `ArmDialog` gọi **thẳng `api.forgetArm`**, không đi qua đây. │
+   * │ Nên nó cập nhật đúng MỘT danh sách cục bộ trong hộp thoại, còn `selected` │
+   * │ và `canvas` của store thì giữ nguyên cái mã vừa chết — cú bấm tiếp theo   │
+   * │ chạm vào nó (đổi tên / rút) đi hỏi server một mã không còn tồn tại.       │
+   * │                                                                          │
+   * │ Đây **đúng cái cửa tắt** mà `office.ts` đã ghi lại từ 20/08: *"hai route  │
+   * │ gọi thẳng vào store, hai route đi qua `Office`. Cửa nào đi tắt thì cửa đó │
+   * │ quên."* Tôi dựng lại nó ba ngày sau khi codebase viết ra bài học ấy.      │
+   * │                                                                          │
+   * │ ⇒ Mọi thao tác ĐỔI trạng thái đi qua `actions`, không có ngoại lệ "cái    │
+   * │ này nhỏ mà". `removeArm` ngay trên đã làm đúng — chỉ cần giống nó.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  async forgetArm(server: string): Promise<boolean> {
+    const res = await guard(() => api.forgetArm(server));
+    if (!res) return false;
+    // Bỏ chọn TRƯỚC khi vẽ lại: Inspector đang mở trên node đó sẽ đọc một mã
+    // không còn trong sổ, và nút "Lưu" của nó gọi `renameArm` — đúng chỗ sinh ra
+    // câu "Không có kết nối <id>".
+    set({ selected: null });
+    await actions.refreshCanvas();
+    return true;
+  },
+
   /** Đổi tên kết nối. Nhãn không phải danh tính, nên đây là thao tác rẻ nhất hệ. */
   async renameArm(server: string, label: string): Promise<boolean> {
     const res = await guard(() => api.renameArm(server, label));
@@ -889,6 +928,17 @@ export function connectEvents(): () => void {
       return;
     }
     if (e.type === 'company.offices') {
+      /**
+       * Bump `armsVersion`: sổ chung vừa đổi (cắm · rút · xoá hẳn · **vừa đăng
+       * nhập xong một tài khoản**). Hộp thoại cắm bám vào số này để tự nạp lại.
+       *
+       * ⚠ Đây là đường DUY NHẤT biết chắc luồng OAuth đã xong: tab callback là
+       * một điều hướng khác, người dùng đóng nó lúc nào cũng được, và không có
+       * sự kiện DOM nào ở tab agentco nói lên chuyện đó. Thiếu dòng này thì sau
+       * khi đăng nhập, hộp thoại vẫn hiện *"chưa đăng nhập"* và đường đi tiếp
+       * duy nhất là F5 — đúng hình dạng "app nói dối về trạng thái của nó".
+       */
+      set({ armsVersion: state.armsVersion + 1 });
       // `e.office` mang id MỚI khi đổi tên làm dời thư mục — chuyển tiếp làm
       // gợi ý để tab nào đang mở id cũ đi thẳng tới đúng chỗ. → `refreshCompany`
       void actions.refreshCompany(e.office ?? undefined);

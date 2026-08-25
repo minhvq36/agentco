@@ -1,4 +1,4 @@
-# Bài test 10 use case — từng bước một, theo đúng thứ tự người dùng bấm
+﻿# Bài test 10 use case — từng bước một, theo đúng thứ tự người dùng bấm
 
 **Ngày:** 15/08/2026 · Đi kèm `USE-CASES.md` (lý do) — file này chỉ có **thao tác**.
 
@@ -331,7 +331,7 @@ doc-2 thiếu bảng thuật ngữ
 | Quan sát | Nghĩa là |
 |---|---|
 | Trợ lý **tự tìm ra** bản dịch cũ và giao việc luôn | ✅ bảng kê kết quả đang hoạt động |
-| Trợ lý **hỏi lại một câu rõ ràng** (*"bạn muốn đối chiếu với bản dịch nào?"*) | ✅ chấp nhận được — cửa `ask` chạy đúng, ca hiện **`đang chờ bạn trả lời`** màu vàng ở Nhật ký, **không phải `hỏng` màu đỏ** |
+| Trợ lý **hỏi lại một câu rõ ràng** (*"bạn muốn đối chiếu với bản dịch nào?"*) | ✅ chấp nhận được — cửa `ask` chạy đúng, ca hiện **`bạn trả lời`** màu vàng ở Nhật ký, **không phải `hỏng` màu đỏ** |
 | Hiện *"Mình chưa chia được việc này. Thay vì một kế hoạch, Trợ lý nói: …"* | ❌ nó phá giao thức. **Ghi nhận**, và xem `.state/plan-failure.log` để biết nguyên văn |
 | Bảo bạn đi kiểm một đường dẫn | ❌ luật *"đừng bắt con người làm mắt cho mình"* không ăn. **Ghi nhận** |
 
@@ -1391,7 +1391,76 @@ có mặt trên sơ đồ mà chưa nối dây (`office.arms`). Chỉ đếm s�
 kịp nối sẽ trông như mồ côi. Cả cờ `orphan` lẫn chốt ở server dùng **cùng một hàm** (`armHolders`)
 nên không lệch được.
 
-**Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4, 5, 6 **$0** (không lượt suy luận nào)
+### 🔬 Biến thể 7 — **hai bug user báo 26/08** (đã vá, đây là bài hồi quy)
+
+**① Xoá hẳn xong mà giao diện chưa biết.** Sau bước 4 của biến thể 6, **đừng F5**:
+
+| Mong đợi | |
+|---|---|
+| Dòng đó biến khỏi danh sách **ngay** | |
+| 🖱 Bấm quanh canvas / mở bảng chi tiết một node khác — **không** hiện `Không có kết nối <mã>` | 🔴 triệu chứng cũ |
+| 🖱 Mở agentco ở **tab thứ hai** — tab kia cũng tự cập nhật, không cần F5 | server phải phát sự kiện `company.offices` |
+
+> Gốc rễ: hộp thoại gọi thẳng `api.forgetArm`, không đi qua `actions` — nên nó cập nhật đúng **một**
+> danh sách cục bộ, còn `selected`/`canvas` giữ nguyên cái mã vừa chết, và nút **Lưu** của bảng chi
+> tiết gọi `renameArm` với mã đó. Đúng cửa tắt mà `office.ts` đã ghi lại từ 20/08: *"cửa nào đi tắt
+> thì cửa đó quên."*
+
+**② Tab nào chỉ gợi ý loại của tab đó.**
+
+| Bước | Mong đợi |
+|---|---|
+| 🖱 **+ Kết nối** (màn chọn loại) | hiện **TẤT CẢ** cánh tay đã cắm ở nơi khác, không lọc — đây là màn tiếp đất, người quay lại cắm cái đã có không phải đoán nó nằm tab nào |
+| 🖱 **Dịch vụ có sẵn** | chỉ hiện cánh tay **dịch vụ** (Notion…), **không** hiện thư mục / tự cắm |
+| 🖱 **Tự cắm MCP** | chỉ hiện cánh tay **tự dán** |
+| 🖱 **Thư mục trên máy** | vào **thẳng** bước 2 (chọn thư mục) — **không** có màn trung gian nào. Danh sách dùng lại nằm ở **chân bước 2** |
+| Mồ côi | vẫn hiện, ở đáy, có 🗑 — đây là chỗ duy nhất dọn được mà không phải mở yaml |
+
+> ⚠ **Đổi 26/08 so với bản đầu**, cả hai đều do user bác và bác đúng:
+> · màn tiếp đất **không lọc** — lọc là để thu hẹp khi đã biết mình tìm gì, không phải để giấu;
+> · bỏ màn trung gian của thư mục — nút *"Chọn một thư mục khác…"* ở đó **nói dối** (nó không mở bộ
+> chọn nào, chỉ chuyển màn), nên cảm giác *"phải bấm Chọn thư mục hai lần"* là **đúng**.
+
+### 🔬 Biến thể 8 — **đổi cấu hình GIỮA LÚC đang thử** ⭐ *bug user bắt 26/08, hồi quy*
+
+Bài 11 (thư mục) là chỗ dễ dựng lại nhất, vì nó **tự thử** ngay khi chọn xong thư mục.
+
+1. 🖱 **+ Kết nối** → **Thư mục trên máy** → chọn thư mục **A** → nó bắt đầu thử (~8–20 giây)
+2. 🖱 **Ngay trong lúc đang quay**, thử bấm **Đổi thư mục…** và bấm một mục trong danh sách gợi ý
+
+| Mong đợi | |
+|---|---|
+| Nút **Đổi thư mục…** đang **khoá**, ghi *"Đang kiểm tra…"* | |
+| Danh sách gợi ý **mờ đi và không bấm được** | làm mờ chứ không ẩn — ẩn thì bố cục nhảy đúng lúc bạn đang nhìn chỗ khác |
+| Chờ xong ⇒ cả hai mở lại | |
+
+3. Chờ lượt A xong, rồi 🖱 đổi sang thư mục **B** (ví dụ `Music`) và **để nó chạy tới cùng**
+
+| Mong đợi | |
+|---|---|
+| Dấu ✓ hiện ra là của **B**, số việc/token của **B** | 🔴 bug cũ: kết quả của **A** bay về sau và đè lên màn hình đang cấu hình B ⇒ ✓ cho một thứ **chưa bao giờ được thử** |
+| 🖱 Bấm **Xong** → 📝 `company.yaml` ⇒ đường dẫn là **B** | |
+
+> **Vì sao ô này đắt:** dấu ✓ là *toàn bộ* thứ bước 2 tồn tại để bán. Một ✓ nói về một cấu hình khác
+> với cấu hình sắp lưu thì tệ hơn không có ✓ nào. Vá **hai tầng**: `runRef` vứt phản hồi cũ (phần
+> đúng-sai), khoá tương tác (phần đừng-để-rơi-vào-đó). Thiếu tầng nào cũng chưa đủ — khoá mà không
+> có `runRef` thì vẫn hở ở đường "Thử lại" bấm liên tục.
+
+### 🔬 Biến thể 9 — **phân biệt được nhiều Notion** (mới 26/08)
+
+Sau khi đã nối **hai** workspace và cắm cả hai (một `chỉ đọc`, một `toàn quyền`):
+
+| Chỗ | Mong đợi |
+|---|---|
+| Danh sách "đã cắm ở văn phòng khác" | mỗi dòng có **dòng phụ**: tên workspace · mức quyền · số việc |
+| Màn cấu hình bước 2 | dưới tên kết nối có huy hiệu **workspace đang chọn** + **mức đang chọn** |
+| Nhãn mặc định lúc tạo | `Notion · <tên workspace>` — **không** kèm mức quyền |
+| 🖱 Đổi tên thành `"aaa"` → xem lại danh sách | huy hiệu mức quyền **không đổi** theo tên |
+
+> 🔴 Ô cuối là ô canh: mức quyền **không được** nằm trong chuỗi tên. Nhét vào thì một cú đổi tên tạo
+> ra được *"Notion (ghi được)"* trên một cánh tay chỉ đọc — nhãn nói dối về đặc quyền. → §6j
+
+**Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4–9 **$0** (không lượt suy luận nào)
 
 ## Bài 13 — **GitHub**: transport HTTP và cái lỗ `pickMcp` ⛔ *chưa chạy được*
 
@@ -1621,6 +1690,264 @@ Cần bài 12 đã chạy xong (có Notion cắm sẵn, và đã có ít nhất 
 > rõ là **chưa có test**. Ô số 4 là chỗ bảo vệ quyết định đó khỏi bị ai đó "dọn dẹp" mất về sau.
 
 **Chi phí:** ~$0.01 (gần như không gọi model)
+
+---
+
+## Bài 17 — **Ba nấc quyền + Đăng nhập OAuth** ✅ *đã xây 26/08 — chưa ai chạy thật*
+
+> Bài này **viết trước khi xây** (25/08) làm tiêu chí nghiệm thu, rồi mã được viết theo nó. Nên nếu
+> có ô nào lệch, thứ sai nhiều khả năng là **mã**, không phải bảng.
+>
+> ⚠ **Một chỗ tôi đã sửa bảng cho khớp thực tế:** bộ chọn nấc hiện ra **SAU** khi bấm *Thử ngay*,
+> không phải trước. Lý do là điều làm nó thật thà — con số *"14 việc"* đến từ **chính server**, nên
+> không thể hiện nó trước khi hỏi server. Chọn nấc xong **không** phải thử lại: nấc không đổi cấu
+> hình, nó chỉ đổi phần nào của danh sách được cấp.
+
+### Chặng A — Đăng nhập, **0 lần gõ chìa**
+
+**Bước 1.** 🖱 **+ Kết nối** → **Dịch vụ có sẵn** → **Notion**.
+
+| Mong đợi | |
+|---|---|
+| Thẻ ghi **"cần đăng nhập"**, không phải "cần 1 chìa" | `price: 'login'` |
+| Bước 2 có nút **Đăng nhập với Notion**, **không có ô nhập chìa nào** | |
+
+**Bước 2.** 🖱 Bấm **Đăng nhập với Notion**.
+
+| Mong đợi | |
+|---|---|
+| Tab mới mở sang Notion **trong chính trình duyệt bạn đang dùng** | ⭐ đó là lý do nút này ở **web UI** chứ không ở daemon — trình duyệt đã có sẵn phiên đăng nhập, daemon thì không |
+| Đã đăng nhập Notion sẵn ⇒ vào thẳng màn **chọn workspace**, không phải gõ mật khẩu | |
+| URL của Notion **đầy đủ**, có `client_id`, `state`, `code_challenge` | 🔴 hồi quy 24/08: `cmd /c start` cắt URL ở dấu `&` đầu tiên |
+
+**Bước 3.** 🖱 Chọn workspace → **Allow**. Tab tự đóng (hoặc hiện "xong rồi, quay lại agentco").
+
+| Mong đợi | |
+|---|---|
+| Hộp thoại agentco **tự** chuyển sang trạng thái đã đăng nhập, không phải F5 | |
+| Hiện **tên workspace** vừa chọn | server trả `workspace_name` |
+| 📝 `company/.state/secrets.json` có khoá `$oauth` với **một** mục | |
+| 📝 Mục đó có đủ `access_token` · `refresh_token` · `expires_at` · `client_id` | |
+| 📝 `company/company.yaml` **KHÔNG** chứa chuỗi token nào — chỉ có `${...}` | 🔴 chìa không bao giờ vào file commit được |
+
+**Bước 3b — luồng HỎNG phải thoát được.** 🖱 Bấm **Đăng nhập** rồi **đóng tab kia** mà không cho phép.
+
+| Mong đợi | |
+|---|---|
+| Nút **không bị khoá** — bấm lại được ngay (mỗi lần bấm là một lượt mới, `state` mới) | 🔴 bug 26/08: bản cũ `disabled` và chỉ mở khoá khi SSE báo **thành công** ⇒ luồng hỏng thì chờ vĩnh viễn, phải F5 |
+| Có nút **✕** để thôi chờ | |
+| Copy URL callback dán lại ⇒ Notion báo `Invalid MCP state` | ✅ **đúng thiết kế** — `state` dùng một lần, xoá ngay khi callback tới |
+
+> Hình dạng đáng nhớ: **mọi trạng thái "đang chờ" cần một đường ra KHÔNG đi qua nhánh thành công.**
+
+**Bước 4 — nhiều workspace.** 🖱 Lặp bước 1–3 với workspace Notion **thứ hai**.
+
+> 💡 Notion đã đăng nhập sẵn thì nó nhảy thẳng vào tài khoản cũ. Muốn tài khoản **khác** thì mở
+> agentco trong **tab ẩn danh** — phiên nằm ở cookie của notion.com, không ở phía ta. Giống hệt cách
+> đổi tài khoản GitHub khi vào Supabase. **Cố ý không sửa** (user chốt 26/08).
+
+| Mong đợi | |
+|---|---|
+| Nối **cùng một workspace** hai lần ⇒ **không** sinh mục trùng | `accountName` tất định theo `workspace_id` |
+| `$oauth` có **hai** mục, tên khác nhau | tên mang `workspace_id` |
+| Hai cánh tay có **hai băm khác nhau** dù **cùng URL** | ⭐ đây là ca §6i cảnh báo từ 23/08 |
+| Cả hai cùng chạy được, không cái nào đá cái nào | đã đo ở spike 25/08 |
+
+**Bước 4c — gỡ một workspace.** 🖱 Bấm 🗑 cạnh một workspace **chưa cắm vào đâu**.
+
+| Mong đợi | |
+|---|---|
+| Nó biến khỏi danh sách **ngay lập tức**, không đứng chờ | Optimistic UI — thu hồi ở phía Notion là một vòng mạng thật, và nó **không liên quan** tới thứ người dùng đang nhìn |
+| Workspace **đang được một kết nối dùng** ⇒ nút 🗑 **mờ**, tooltip nêu tên kết nối đó | đừng bày ra lựa chọn chắc chắn bị từ chối — và đó cũng là thứ làm cho lạc quan **thành thật**: lý do từ chối duy nhất đã bị loại từ trước |
+| 💻 Vào Notion → Settings → Connections: agentco **không còn** ở workspace đó | thu hồi thật, không chỉ quên chìa ở máy |
+| Ngắt mạng rồi bấm 🗑 ⇒ mục **quay lại** kèm câu lỗi | "gần như chắc chắn" không phải "chắc chắn" — giao diện không được nói dối về việc đã xoá |
+
+### Chặng B — Ba nấc quyền
+
+**Bước 5.** Sau khi đăng nhập, bấm **Thử ngay**. Bộ chọn nấc hiện ra kèm số việc:
+
+```
+◉ Chỉ đọc        14 việc
+○ Đọc + Thêm     25 việc     thêm trang mới, không đụng trang cũ
+○ Toàn quyền     28 việc  ⚠  sửa/xoá được cái đã có
+```
+
+| Mong đợi | |
+|---|---|
+| **Con số việc** hiện ở từng nấc | đến từ chính server lúc bắt tay — thứ làm nút này thật thà |
+| Mặc định là **Chỉ đọc** | an toàn khi chưa ai chọn |
+| Câu dưới bộ chọn nói **"(Notion tự khai mức của từng việc.)"** | ⭐ **không** được viết *"cánh tay này chỉ đọc"* — câu đó ta không bảo đảm được. §6j |
+| Đổi nấc **không** bắt Thử lại | nấc không đổi cấu hình |
+| Đổi **tài khoản** thì dấu ✓ biến mất, phải Thử lại | đổi tài khoản LÀ đổi cấu hình (ô trống mang tên chìa khác) |
+
+**Bước 6.** 🖱 Chọn **Toàn quyền** → **Xong** → 📝 mở `company/company.yaml`.
+
+| Mong đợi | |
+|---|---|
+| `arms.<băm>.level: full` | |
+| `arms.<băm>.tools` có **28** tên | |
+| Băm **khác** băm của cánh tay chỉ-đọc cùng workspace | mức nằm trong băm |
+
+**Bước 7 — huy hiệu không nói dối.** 🖱 Bấm node 🔌 → đổi **tên hiển thị** thành `"Notion chỉ đọc"` → Lưu.
+
+| Mong đợi | |
+|---|---|
+| Tên đổi | nhãn là của người dùng |
+| **Huy hiệu vẫn ghi `[toàn quyền]`** | ⭐ ô đo quan trọng nhất chặng này — huy hiệu **suy từ `level`**, không đọc chuỗi tên. Nếu nó đổi theo tên thì nhãn đang nói dối về đặc quyền, đúng bug §14 bài 11 bước 5 |
+
+### Chặng B-bis — **BA NẤC GHI, đo trên chính trang vừa tạo** ✅ *ĐÃ CHẠY THẬT 26/08 — PASS*
+
+> ✅ **Kết quả thật, user chạy 26/08 ở nấc `add` (25 việc).** Cả ba ô đo đều đúng:
+>
+> | | Kết quả thật |
+> |---|---|
+> | tạo trang `thử nghiệm`, `thử nghiệm 2`, `thử nghiệm 3` | ✅ **làm được** |
+> | thêm nội dung vào trang | ✅ **bị chặn** |
+> | xoá trang | ✅ **bị chặn** |
+>
+> ⭐ **Chặn ở tầng TẤT ĐỊNH, không phải tầng prompt** — nguyên văn SDK trả về:
+> `Claude requested permissions to use mcp__a354ff2bb34__notion-update-page, but you haven't granted
+> it yet.` Tức nhân viên **đã thử gọi** `notion-update-page` (hai lần) và **bị cổng chặn**, chứ không
+> phải model tự nhủ đừng làm. Đó là khác biệt giữa một lời hứa và một hàng rào.
+>
+> ⭐ Và Trợ lý nói đúng nấc: *"Notion của nhân viên chỉ đọc + thêm mới, không sửa/xoá được"* — dòng
+> `armReach` mới đã tới nơi. Nó cũng trả lời đúng khi user hỏi *"sao không gộp hai việc làm một"*:
+> *"không phải do tách việc, mà do quyền"*.
+>
+> 📌 Quan sát phụ đáng ghi: một việc Notion nhiều thao tác **gần chạm `max_turns: 6`**. Mỗi lời gọi
+> MCP là một lượt, nên việc chạm nhiều trang cần trần cao hơn — hoặc chia nhỏ, đúng như Trợ lý tự đề
+> nghị.
+
+> Giả định: chặng B đã xác nhận **chỉ đọc** hoạt động đúng. Chặng này đo ba nấc còn lại, và cố ý
+> **dồn cả ba lên cùng MỘT trang** — tạo nó ở nấc 2, rồi thử sửa/xoá chính nó ở nấc 2 và nấc 3.
+> Dùng chung một đối tượng thì "được/không được" so sánh trực tiếp, không lẫn biến nào khác.
+
+**Chuẩn bị.** Cắm Notion ở nấc **Đọc + Thêm mới** (25 việc), nối dây cho một nhân viên. Ghi lại băm.
+
+#### B-bis.1 — Nấc 2 **TẠO ĐƯỢC**
+
+💬 Trong chat: `Tạo giúp tôi một trang mới trong Notion tên "thu-nghiem-quyen".`
+
+| Mong đợi | |
+|---|---|
+| Nhân viên **tạo được**, báo lại link/tên trang | `notion-create-pages` thuộc nấc 2 |
+| 🌐 Mở Notion — trang có thật | đọc ở nguồn, không tin lời model kể |
+| Trợ lý **không** từ chối trước khi giao | 🔴 nếu nó từ chối: dòng danh bạ chưa nói ra nấc — xem §armReach |
+
+#### B-bis.2 — Nấc 2 **KHÔNG SỬA ĐƯỢC** ⭐ *ô đo đắt nhất cả bài*
+
+💬 `Sửa nội dung trang "thu-nghiem-quyen" thành "đã sửa".`
+
+| Mong đợi | |
+|---|---|
+| **KHÔNG sửa được** | `notion-update-page` khai `destructiveHint: true` ⇒ nấc 3 |
+| 🌐 Nội dung trang trên Notion **không đổi một ký tự** | ⭐ đây mới là phép kiểm thật — đọc ở nguồn |
+| Câu từ chối nói **đúng lý do** (chỉ tạo mới được, không sửa) | không phải "permission denied" trần |
+
+> Đây là ô chứng minh nấc giữa **có nghĩa**. Nếu nó sửa được thì ba nấc chỉ là ba cái nhãn.
+
+#### B-bis.3 — Nấc 2 **KHÔNG XOÁ ĐƯỢC**
+
+💬 `Xoá trang "thu-nghiem-quyen" đi.`
+
+| Mong đợi | |
+|---|---|
+| **KHÔNG xoá được** | |
+| 🌐 Trang vẫn còn | |
+
+> 💡 Notion **archive** chứ không xoá cứng, và đường archive đi qua `notion-update-page` — cùng
+> tool với sửa. Nên ở Notion, "xoá" và "sửa" rơi vào **cùng một nấc**, và ô DELETE riêng sẽ rỗng
+> vĩnh viễn. Đó chính là lý do ta làm **3 nấc chứ không 4 nút CRUD**. → §6j
+
+#### B-bis.4 — Nâng lên nấc 3, **cùng trang đó**
+
+🖱 Cắm Notion ở nấc **Toàn quyền** (28 việc) → nối cho đúng nhân viên đó → rút cánh tay nấc 2.
+
+💬 `Sửa nội dung trang "thu-nghiem-quyen" thành "đã sửa".`
+
+| Mong đợi | |
+|---|---|
+| Lần này **sửa được** | |
+| 🌐 Nội dung trang **đã đổi** | |
+| Trợ lý **không** lặp lại câu từ chối của chính nó ở B-bis.2 | ⭐ `reachDiff` bắn dòng `+ Notion — đọc + ghi + sửa/xoá → <nhân viên>` |
+
+> 🔴 Ô cuối là ca user gặp thật 26/08: đổi sang toàn quyền mà Trợ lý **vẫn trả lời y hệt câu cũ**.
+> Nguyên nhân: dòng danh bạ chỉ ghi TÊN cánh tay, không ghi năng lực — nợ ghi từ 22/08, trả 26/08.
+> Nếu ô này đỏ, kiểm `roles/<id>.yaml` → `mcp:` trỏ vào băm nào **trước khi** nghi prompt.
+
+#### B-bis.5 — Số việc phải khớp `company.yaml`
+
+📝 Mở `company/company.yaml`:
+
+| Nấc | `tools:` phải có | |
+|---|---|---|
+| Chỉ đọc | **14** tên, không tên nào chứa `create`/`update`/`move`/`duplicate` | |
+| Đọc + Thêm | **25** tên, có `notion-create-pages`, **không** có `notion-update-page` | ⭐ |
+| Toàn quyền | **28** tên | |
+
+> ⚠ Nấc giữa ra **0 việc** thì đó là hồi quy 26/08 quay lại: SDK vứt mọi annotation `false`, và
+> `mcp-http.ts` là thứ đi lấy lại chúng. Kiểm bằng `npx tsx scripts/spike-sdk-annotations.ts` —
+> nó in ra chính xác thứ SDK đưa cho ta so với thứ server khai.
+
+### Chặng C — Đổi mức quyền, **chỉ ở văn phòng này** ⭐ *chặng quan trọng nhất*
+
+> ⚠ **Nút "Đổi mức quyền…" ở bảng chi tiết CHƯA có** (26/08). Nhưng thứ nó cần đã có đủ, và chặng
+> này chạy được **bằng tay** — chính vì "đổi mức" **là** một lần cắm mới, không phải một thao tác
+> riêng. Đó không phải cách đi vòng: nó là bằng chứng cho thiết kế.
+
+**Bước 8.** Cắm Notion **Chỉ đọc** ở văn phòng A, rồi sang văn phòng B **dùng lại** nó (bài 12 biến thể 5).
+
+📝 Mở `company/company.yaml` — ghi lại băm. Phải có **đúng một** mục Notion, `level: read`.
+
+**Bước 9.** 🖱 Ở văn phòng A: **+ Kết nối** → Notion → cùng tài khoản đó → Thử ngay → chọn **Toàn quyền** → giao cho đúng những nhân viên cũ → Xong. Rồi bấm node 🔌 **cũ** → **Rút**.
+
+| Mong đợi | |
+|---|---|
+| 📝 `company.yaml` giờ có **HAI** mục Notion, băm khác nhau, `level: read` và `level: full` | nấc nằm trong băm |
+| Mục `full` có `tools:` **28 tên**; mục `read` vẫn **14** | |
+| Văn phòng A: node 🔌 mang huy hiệu **toàn quyền** | |
+| 🔴 **Văn phòng B vẫn là Chỉ đọc, không đụng gì** | ⭐⭐ **ô đo đắt nhất cả bài** — user nhấn mạnh 25/08 |
+| 📝 `offices/<B>/roles/*.yaml` vẫn trỏ băm **cũ** | không cần một dòng mã nào canh chuyện này — băm lo hộ |
+
+**Bước 10 — rác có trần.** 🖱 Ở văn phòng A: cắm lại Notion ở mức **Chỉ đọc**.
+
+| Mong đợi | |
+|---|---|
+| 📝 `company.yaml` vẫn **đúng 2** mục Notion, **không** đẻ mục thứ ba | A→B→A rơi về đúng băm cũ |
+| Trần là **3** mục cho một (tài khoản + cấu hình) — bằng số nấc | |
+| Mục `full` giờ **mồ côi** ⇒ tụt đáy danh sách, có 🗑 | vòng tự đóng với bài 12 biến thể 6 |
+
+### Chặng D — 🔴 Server **KHÔNG KHAI GÌ** (ca đáng lo nhất)
+
+**Bước 11.** 🖱 **Tự cắm MCP** → dán một MCP server **không khai `annotations`**.
+
+| Mong đợi | |
+|---|---|
+| Hai nấc đầu **mờ đi**, kèm lý do: *"server này không khai việc nào là chỉ đọc"* | |
+| 🔴 **KHÔNG** tự rơi vào Toàn quyền và cho bấm Xong | đó không phải lựa chọn, đó là cảnh báo |
+| Hiện **danh sách tick tay** từng việc | ta không biết ⇒ hỏi người biết |
+| Tick 3 việc → Xong → `arms.<băm>.tools` có đúng **3** tên | |
+
+**Bước 12 — nấc rỗng không được tồn tại.** Cắm một server **toàn tool đọc**.
+
+| Mong đợi | |
+|---|---|
+| **KHÔNG** hiện bộ chọn nào cả | chỉ còn một nấc ⇒ không phải một câu hỏi |
+| Chỉ ghi một câu: *"Kết nối này chỉ đọc · N việc"* | |
+| 🔴 KHÔNG hiện "Đọc + Thêm 14 việc / Toàn quyền 14 việc" | ⭐ phép kiểm là **`đếm(nấc) > đếm(nấc dưới)`**, không phải `> 0` — user chốt 25/08 |
+
+### Chặng E — Chìa tự sống, không bắt đăng nhập lại
+
+**Bước 13.** Dùng cánh tay Notion bình thường. Để daemon chạy **qua mốc 4 giờ**.
+
+| Mong đợi | |
+|---|---|
+| 📝 `expires_at` trong `$oauth` **tự nhảy** lên mốc mới | vòng làm mới ở nền, 50% tuổi thọ |
+| 📝 `refresh_token` **cũng đổi** | Notion **xoay** chìa — đo 25/08 |
+| Không có lần nào người dùng bị hỏi đăng nhập lại | |
+| 🔴 Sau ~16 giờ (**hai** lần làm mới) vẫn chạy | ⭐ ô đo thật sự: giữ nhầm `refresh_token` cũ thì hỏng ở lần **thứ hai**, không hỏng ngay |
+
+**Chi phí:** chặng A–D **$0** (không lượt suy luận nào) · chặng E cần daemon chạy nền qua đêm
 
 ---
 

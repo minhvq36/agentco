@@ -36,6 +36,8 @@ import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 import { ensureInstalled, fastLaunch } from './armexec.js';
 import { injectSecrets, missingSecretRefs } from './secrets.js';
+import { isAccountName } from './oauth.js';
+import { httpTarget, rawAnnotations } from './mcp-http.js';
 
 /** Đúng bộ `effectiveTools([])` của một vai trò trần — để số token so sánh được. */
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
@@ -55,6 +57,8 @@ export interface ProbedTool {
    * `readOnly: true` cho một tool xoá dữ liệu.
    */
   level: 'read' | 'write_external';
+  /** Nấc quyền tối thiểu để việc này được cấp. → `tierOf` */
+  tier: Tier;
 }
 
 export interface ProbeResult {
@@ -64,6 +68,15 @@ export interface ProbeResult {
   /** NGUYÊN VĂN câu lỗi của server. Là chuỗi duy nhất người dùng copy đi hỏi được. */
   error?: string;
   tools: ProbedTool[];
+  /**
+   * Nấc quyền ĐÁNG hiện ra, kèm số việc. Tính ở ĐÂY chứ không ở giao diện.
+   *
+   * ⚠ Luật *"chỉ hiện nếu thêm ≥1 việc so với nấc dưới"* là một quyết định sản
+   * phẩm có ca biên tinh tế (server toàn tool đọc ⇒ ba nấc đều bằng nhau ⇒ hai
+   * nấc dưới là noise). Để giao diện tự suy là dựng bản thứ hai của luật đó, và
+   * bản thứ hai luôn là bản quên mất một điều kiện. → `offeredTiers`
+   */
+  tiers?: { tier: Tier; count: number }[];
   /** Token cánh tay này cộng vào prefix mỗi lượt. `undefined` = chưa đo được. */
   tokens?: number;
   /** Mili-giây từ lúc mở query tới lúc rời `pending`. Để giao diện biết nên chờ. */
@@ -124,6 +137,60 @@ export function levelOf(a: { readOnly?: boolean; destructive?: boolean; openWorl
   return readable ? ('read' as const) : ('write_external' as const);
 }
 
+/** Ba nấc quyền người dùng chọn lúc cắm. → docs/SPEC-arms.md §6j */
+export type Tier = 'read' | 'add' | 'full';
+
+/** Thứ tự lũy tiến. Nấc sau **bao gồm** nấc trước — đó là ý nghĩa của "lũy tiến". */
+export const TIERS: readonly Tier[] = ['read', 'add', 'full'];
+
+/**
+ * Một việc thuộc nấc nào — **cùng luật một chiều với `levelOf`, cùng một file**.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NẤC 2 ĐÒI **ĐỦ HAI** LỜI KHAI TƯỜNG MINH. (user chốt 25/08)             │
+ * │                                                                          │
+ * │   *"khi chúng ta không biết, chúng ta nói toàn quyền là không nói dối —  │
+ * │    điều tương tự cũng đúng với nấc 2"*                                   │
+ * │                                                                          │
+ * │ Chỗ dễ sai nhất: `destructive: false` đứng MỘT MÌNH trông như một lời    │
+ * │ hứa. Nhưng theo spec MCP, `destructiveHint` **chỉ có nghĩa khi            │
+ * │ `readOnlyHint` là false** — thiếu vế kia thì nó không nói được điều ta    │
+ * │ cần biết ⇒ **không biết** ⇒ nấc 3.                                       │
+ * │                                                                          │
+ * │ Đặt cạnh `levelOf` chứ không ở file khác: hai hàm trả lời cùng một câu    │
+ * │ hỏi ở hai độ phân giải, và để chúng xa nhau là để chúng lệch nhau.       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function tierOf(a: { readOnly?: boolean; destructive?: boolean } | undefined): Tier {
+  if (levelOf(a) === 'read') return 'read';
+  return a?.readOnly === false && a?.destructive === false ? 'add' : 'full';
+}
+
+/** Việc được cấp ở một nấc — LŨY TIẾN: `add` gồm cả `read`, `full` gồm tất. */
+export function toolsAtTier(tools: readonly ProbedTool[], tier: Tier): string[] {
+  const max = TIERS.indexOf(tier);
+  return tools.filter((t) => TIERS.indexOf(t.tier) <= max).map((t) => t.name);
+}
+
+/**
+ * Nấc nào ĐÁNG hiện ra — user chốt 25/08: *"tầng nào 0 việc thì đừng cho chọn,
+ * không để một thứ không ý nghĩa hoặc chỉ mang noisy mà không lợi ích gì tồn tại"*.
+ *
+ * ⚠ Phép kiểm là **`đếm(nấc) > đếm(nấc dưới)`**, KHÔNG phải `> 0`. Một server
+ * toàn tool đọc cho ra ba nấc **đều 14 việc** — hai nấc dưới không rỗng nên lọt
+ * luật "0 việc", trong khi chúng **hứa thêm quyền mà không đưa gì**.
+ */
+export function offeredTiers(tools: readonly ProbedTool[]): { tier: Tier; count: number }[] {
+  const out: { tier: Tier; count: number }[] = [];
+  let prev = 0;
+  for (const tier of TIERS) {
+    const count = toolsAtTier(tools, tier).length;
+    if (count > prev) out.push({ tier, count });
+    prev = count;
+  }
+  return out;
+}
+
 /**
  * Mở một phiên RỖNG chỉ để bắt tay với `servers`, rồi đóng. Không gửi tin nào.
  *
@@ -169,13 +236,36 @@ export async function probeArm(
    */
   const missing = missingSecretRefs(servers);
   if (missing.length) {
+    /**
+     * ⚠ HAI CÂU KHÁC HẲN NHAU, vì hai việc người dùng phải làm khác hẳn nhau.
+     * (user bắt 26/08: *"Notion làm gì có chìa nào, human đọc sẽ rất khó hiểu"*)
+     *
+     *   chìa gõ tay  → "điền vào ô đó"
+     *   tài khoản    → "bấm Đăng nhập" — **không có ô nào để điền**
+     *
+     * Câu cũ gộp cả hai thành *"Thiếu chìa: NOTION_OAUTH_AFAFBCD6"*, tức bảo
+     * người ta đi tìm một thứ không tồn tại. Đúng lớp lỗi §5m mà chính câu này
+     * sinh ra để chữa — chỉ là ở một cửa khác.
+     */
+    const accounts = missing.filter((n) => isAccountName(n));
+    const keys = missing.filter((n) => !isAccountName(n));
+    const parts: string[] = [];
+    if (accounts.length) {
+      parts.push(
+        `Chưa nối tài khoản, hoặc kết nối đã bị gỡ ở phía dịch vụ. Bấm **Đăng nhập** rồi thử lại — ` +
+          `không có ô chìa nào để điền cho loại này.`,
+      );
+    }
+    if (keys.length) {
+      parts.push(`Thiếu chìa: ${keys.join(', ')}.`);
+    }
     return {
       status: 'failed',
       tools: [],
       connectMs: 0,
       error:
-        `Thiếu chìa: ${missing.join(', ')}. Chưa gửi yêu cầu nào — chìa chưa điền thì server ` +
-        `chỉ trả về "sai chìa", và câu đó sẽ dắt bạn đi tìm nhầm chỗ.`,
+        `${parts.join(' ')} Chưa gửi yêu cầu nào — gửi đi thì server chỉ trả về "sai chìa", ` +
+        `và câu đó sẽ dắt bạn đi tìm nhầm chỗ.`,
     };
   }
   /**
@@ -247,11 +337,45 @@ export async function probeArm(
       out.serverName = s.serverInfo?.name;
       out.serverVersion = s.serverInfo?.version;
       if (s.error) out.error = s.error;
-      out.tools = (s.tools ?? []).map((t) => ({
-        name: t.name,
-        ...(t.description ? { description: t.description } : {}),
-        level: levelOf(t.annotations),
-      }));
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 HỎI THẲNG SERVER VỀ `annotations` — SDK LÀM MẤT MỌI GIÁ TRỊ `false`│
+       * │ (đo 26/08, `spike-sdk-annotations.ts`)                               │
+       * │                                                                      │
+       * │   Notion khai `{readOnlyHint:false, destructiveHint:false}`          │
+       * │   SDK đưa ta `{}` ⇒ `tierOf` thấy "không biết" ⇒ leo thang           │
+       * │                                                                      │
+       * │ Hậu quả: 11/28 tool Notion vốn **chỉ tạo mới** bị xếp vào *toàn       │
+       * │ quyền*, nấc giữa vĩnh viễn rỗng, và người dùng muốn *"cho tạo trang,  │
+       * │ đừng cho sửa trang cũ"* buộc phải cấp cả sửa lẫn xoá. Đó là **hồi     │
+       * │ quy đặc quyền tối thiểu**, không phải chuyện đếm nấc.                 │
+       * │                                                                      │
+       * │ ⚠ Luật một chiều KHÔNG sai — nó đang xử lý một dữ kiện đã mất trên    │
+       * │ đường. Nên bản vá không đụng `tierOf`; nó đi lấy lại dữ kiện.         │
+       * │                                                                      │
+       * │ Hỏng ⇒ `raw` rỗng ⇒ rơi về annotations của SDK, tức đúng hành vi      │
+       * │ trước 26/08: tệ hơn nhưng **không sai** (leo thang = an toàn).        │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const target = out.status === 'connected' ? httpTarget(Object.values(servers)[0]) : undefined;
+      const raw = target ? await rawAnnotations(target.url, target.headers) : new Map();
+
+      out.tools = (s.tools ?? []).map((t) => {
+        // Thô đè SDK khi có — nó là bản ĐẦY ĐỦ hơn của cùng một thứ. Không có
+        // thì dùng bản SDK, không trộn nửa nọ nửa kia (trộn là tạo ra một bộ
+        // annotations chưa server nào từng khai).
+        const a = raw.get(t.name);
+        const ann = a
+          ? { readOnly: a.readOnlyHint, destructive: a.destructiveHint, openWorld: a.openWorldHint }
+          : t.annotations;
+        return {
+          name: t.name,
+          ...(t.description ? { description: t.description } : {}),
+          level: levelOf(ann),
+          tier: tierOf(ann),
+        };
+      });
+      if (out.tools.length) out.tiers = offeredTiers(out.tools);
     }
 
     // Chỉ đo token khi đã nối được: hỏi lúc `pending` là đo một prefix chưa có

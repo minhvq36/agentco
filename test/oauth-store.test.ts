@@ -168,6 +168,48 @@ test('needsRefresh: KHÔNG khai hạn ⇒ false — đừng vứt một chìa đ
   assert.equal(needsRefresh({ ...ACC, expires_at: undefined } as never), false);
 });
 
+// ───────────────── ⭐ ghi NGUYÊN TỬ + chìa chết hẳn (26/08)
+
+test('⭐ file cũ KHÔNG bị cắt cụt khi ghi — mất nửa file là mất CẢ KHO', () => {
+  /**
+   * `writeFileSync` cắt file về 0 byte TRƯỚC rồi mới ghi. Chết giữa hai bước đó
+   * để lại JSON cụt ⇒ `readRaw` parse hỏng ⇒ trả `{}` ⇒ **mọi tài khoản biến
+   * mất**, không riêng cái đang ghi. Và đường ghi hay chạy nhất là vòng làm mới
+   * chìa — chạy ngầm, mỗi 15 phút, khi không ai nhìn.
+   *
+   * Không mô phỏng được một cú kill giữa chừng trong unit test, nên ô này canh
+   * thứ QUAN SÁT ĐƯỢC: sau mỗi lần ghi, file luôn parse được và luôn đủ.
+   */
+  const p = paths();
+  saveOAuth(p, 'A', ACC as never);
+  for (let i = 0; i < 20; i++) {
+    writeSecrets(p, { [`K${i}`]: `v${i}` });
+    const onDisk = JSON.parse(fs.readFileSync((p as { secretsFile: string }).secretsFile, 'utf8'));
+    assert.ok(onDisk['$oauth']?.['A'], `mất tài khoản ở vòng ${i}`);
+  }
+});
+
+test('⭐ không để lại file tạm sau khi ghi xong', () => {
+  // File tạm sót lại là rác trong `.state/`, và tệ hơn: nó chứa **chìa thật**.
+  const p = paths();
+  saveOAuth(p, 'A', ACC as never);
+  const dir = path.dirname((p as { secretsFile: string }).secretsFile);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.tmp')), []);
+});
+
+test('⭐ needsRefresh: chìa đã CHẾT HẲN ⇒ thôi thử lại', () => {
+  /**
+   * Không có cờ này thì vòng nền gọi mạng mỗi 15 phút cho một thứ **chắc chắn
+   * hỏng** — đốt pin, đốt log, và che mất những lần hỏng THẬT đáng đọc.
+   * Đường ra đúng là "đăng nhập lại", không phải "thử lại".
+   */
+  const dead = { ...ACC, expires_at: Date.now() - 1, dead: { at: 'x', why: 'invalid_grant' } };
+  assert.equal(needsRefresh(dead as never), false);
+  // Còn hạn mà chết thì cũng thôi — cờ THẮNG mọi điều kiện thời gian.
+  const deadButFresh = { ...ACC, expires_at: Date.now() + 3600_000, dead: { at: 'x', why: 'y' } };
+  assert.equal(needsRefresh(deadButFresh as never), false);
+});
+
 test('needsRefresh: không có chìa làm mới ⇒ false, dù đã hết hạn', () => {
   // Không có gì để làm mới bằng. Trả `true` ở đây là đẩy vòng nền vào một vòng
   // lặp thử-rồi-hỏng mỗi tick; ca này phải đi ra "đăng nhập lại", không phải

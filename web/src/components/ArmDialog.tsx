@@ -18,8 +18,8 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import { useEffect, useState } from 'react';
-import { Check, FolderOpen, Loader2, Plug, Trash2, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, FolderOpen, Loader2, Plug, Trash2, TriangleAlert, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDelete } from '@/components/ui/confirm';
@@ -33,13 +33,38 @@ import {
 import { Input, Label, Textarea } from '@/components/ui/misc';
 import { api, ApiError } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
-import type { CatalogArm, InstalledArm, ProbeResult } from '@/lib/types';
+import type { CatalogArm, InstalledArm, OAuthAccount, ProbeResult } from '@/lib/types';
 
 /** Câu phụ nói CÁI GIÁ — người dùng chọn theo công sức, không theo tên hãng. */
 const PRICE_SAY: Record<CatalogArm['price'], string> = {
   none: 'không cần chìa',
   keys: 'cần 1 chìa',
   login: 'cần đăng nhập',
+};
+
+/**
+ * Ba nấc quyền, nói bằng HẬU QUẢ chứ không bằng từ vựng MCP.
+ *
+ * Người dùng không biết `destructiveHint` là gì, và không cần biết. Thứ họ cần
+ * quyết là *"nhân viên này có được sửa cái tôi đã viết không"*. → §6j
+ */
+/** Bản NGẮN của `TIER_SAY.name` — dùng cho huy hiệu trong danh sách chật. */
+const LEVEL_SAY: Record<'read' | 'add' | 'full', string> = {
+  read: 'chỉ đọc',
+  add: 'đọc + thêm mới',
+  full: 'toàn quyền',
+};
+
+const TIER_SAY: Record<'read' | 'add' | 'full', { name: string; help: string }> = {
+  read: { name: 'Chỉ đọc', help: 'Tìm và đọc. Không tạo, không sửa, không xoá gì cả.' },
+  add: {
+    name: 'Đọc + Thêm mới',
+    help: 'Tạo được trang/mục mới, nhưng không đụng tới thứ đã có sẵn.',
+  },
+  full: {
+    name: 'Toàn quyền',
+    help: '⚠ Sửa và xoá được nội dung đang có. Chỉ chọn khi bạn thật sự cần nhân viên chỉnh sửa.',
+  },
 };
 
 /** Thẻ chọn LOẠI ở bước 1. Câu phụ nói người dùng phải làm gì tiếp, không nói kỹ thuật. */
@@ -121,13 +146,27 @@ function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] 
     .sort((a, b) => Number(a.orphan) - Number(b.orphan) || a.label.localeCompare(b.label, 'vi'));
 }
 
+/**
+ * BA LOẠI, và một cánh tay đã cắm thuộc đúng một loại. → §6e
+ *
+ * Suy từ `catalog` chứ không từ hình dạng cấu hình: một mục danh mục có
+ * `folders` thì nó LÀ cánh tay thư mục, kể cả khi mai ta đổi nó sang HTTP.
+ * Không có `catalog` ⇒ người dùng tự dán ⇒ `custom`.
+ */
+type Kind = 'files' | 'service' | 'custom';
+
+function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
+  if (!a.catalog) return 'custom';
+  return catalog.find((c) => c.id === a.catalog)?.folders ? 'files' : 'service';
+}
+
 export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const officeId = useApp((s) => s.officeId);
   const canvas = useApp((s) => s.canvas);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  /** Bước 1 có ba mặt: chọn LOẠI → chọn dịch vụ / dán cấu hình. */
-  const [pane, setPane] = useState<'type' | 'catalog' | 'paste'>('type');
+  /** Bước 1 có bốn mặt: chọn LOẠI → thư mục / dịch vụ / dán cấu hình. */
+  const [pane, setPane] = useState<'type' | 'files' | 'catalog' | 'paste'>('type');
   const [catalog, setCatalog] = useState<CatalogArm[]>([]);
   const [installed, setInstalled] = useState<InstalledArm[]>([]);
 
@@ -145,6 +184,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [reuse, setReuse] = useState<InstalledArm | null>(null);
   /** Đường B — dán cấu hình MCP. Không mục danh mục nào chặn ai. → §4c */
   const [paste, setPaste] = useState('');
+  /** Tài khoản đã đăng nhập cho mục đang chọn. Tên chìa, không bao giờ token. */
+  const [accounts, setAccounts] = useState<OAuthAccount[]>([]);
+  const [account, setAccount] = useState('');
+  const [logging, setLogging] = useState(false);
+  /**
+   * Nấc quyền người dùng chọn. Mặc định **thấp nhất** — an toàn khi chưa ai chọn,
+   * và nó cũng là nấc duy nhất luôn hợp lệ nếu server khai tử tế. → §6j
+   */
+  const [tier, setTier] = useState<'read' | 'add' | 'full'>('read');
   const [label, setLabel] = useState('');
   const [folders, setFolders] = useState('');
   const [keys, setKeys] = useState<Record<string, string>>({});
@@ -158,6 +206,35 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [busy, setBusy] = useState(false);
   /** Mục mồ côi đang chờ xác nhận **xoá hẳn** — mức duy nhất không lấy lại được. */
   const [forget, setForget] = useState<InstalledArm | null>(null);
+  /** Workspace đang chờ xác nhận GỠ. Server thu hồi chìa ở phía dịch vụ luôn. */
+  const [dropWs, setDropWs] = useState<OAuthAccount | null>(null);
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ XOÁ CHÌA KHỎI BỘ NHỚ NGAY KHI ĐÓNG — không đợi tới lần mở sau.           │
+   * │ (user hỏi 26/08: *"đảm bảo nó không lưu bất cứ dấu vết gì trên FE"*)     │
+   * │                                                                          │
+   * │ Bản trước chỉ dọn lúc MỞ, nên giá trị chìa nằm lại trong state của React │
+   * │ suốt cả phiên làm việc sau khi người dùng đã bấm Xong và đi làm việc      │
+   * │ khác. Không có lý do nào để nó ở đó — hộp thoại đã gửi xong rồi.          │
+   * │                                                                          │
+   * │ ⚠ Nói cho đúng phạm vi, đừng bán quá lời: cái này KHÔNG chặn được kẻ đã  │
+   * │ chạy mã trong tab của bạn (lúc đó họ đọc thẳng được ô input). Thứ nó thu │
+   * │ hẹp là **cửa sổ thời gian** một chuỗi bí mật còn nằm trong heap và trong │
+   * │ mọi bản chụp heap / công cụ dev / báo cáo lỗi tự động.                    │
+   * │                                                                          │
+   * │ Hàng rào THẬT nằm ở phía server và đã có: `listArms` trả **tên** chìa,   │
+   * │ không bao giờ trả giá trị; `company.yaml` chỉ chứa ô trống `${TÊN}`; và  │
+   * │ giá trị chỉ đi MỘT chiều — từ trình duyệt xuống `.state/secrets.json`,   │
+   * │ không có route nào đọc ngược lên.                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  useEffect(() => {
+    if (open) return;
+    setKeys({});
+    setPaste('');
+    setProbe(null);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -172,6 +249,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setProbe(null);
     setErr('');
     setGrant([]);
+    setAccount('');
+    setAccounts([]);
+    setTier('read');
     void api.armCatalog().then((r) => setCatalog(r.arms)).catch(() => undefined);
     /**
      * ⚠ LỌC NGAY Ở NGUỒN: chỉ giữ cánh tay văn phòng NÀY chưa có.
@@ -185,6 +265,164 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [open, officeId]);
 
   const agents = (canvas?.nodes ?? []).filter((n) => n.kind === 'agent' && n.role);
+  /** Workspace đang chọn — để màn cấu hình nói ra nó, chứ không chỉ ghi "Notion". */
+  const pickedAccount = accounts.find((a) => a.name === account);
+
+  /**
+   * Tên mặc định KÈM WORKSPACE, ngay khi người dùng chọn xong.
+   *
+   * ⚠ Chỉ khi nhãn vẫn đang là tên mặc định của mục danh mục — người dùng đã gõ
+   * tên riêng thì đừng đè lên. Và **chỉ tên workspace, KHÔNG kèm mức quyền**:
+   * nhãn đổi tự do, nên mức quyền nằm trong đó là một lời hứa gỡ được bằng cách
+   * đổi tên. Mức quyền sống ở huy hiệu, suy từ `level`. → §6j
+   */
+  useEffect(() => {
+    if (!pick?.needsLogin || !pickedAccount?.label) return;
+    setLabel((cur) => (cur === pick.name ? `${pick.name} · ${pickedAccount.label}` : cur));
+  }, [pick, pickedAccount]);
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ DANH SÁCH "DÙNG LẠI" — **THEO ĐÚNG LOẠI CỦA TAB ĐANG MỞ**. (bug 26/08)   │
+   * │                                                                          │
+   * │ User báo: *"vào tab Dịch vụ có sẵn mà nó cũng đề xuất cánh tay đang cắm  │
+   * │ ở văn phòng khác của các loại khác. Custom cũng vậy."*                    │
+   * │                                                                          │
+   * │ Bản cũ để khối này NGOÀI mọi nhánh `pane`, nên nó hiện ở cả ba màn cùng  │
+   * │ một nội dung — người đang tìm Notion phải lướt qua bốn cánh tay thư mục. │
+   * │ Một danh sách "gợi ý" mà không lọc theo ngữ cảnh thì không phải gợi ý,   │
+   * │ nó là nhiễu có nhãn.                                                     │
+   * │                                                                          │
+   * │ ⚠ Mồ côi của **loại đó** vẫn phải hiện (user nêu rõ) — nó tụt xuống đáy  │
+   * │ và mang thùng rác, chứ không bị giấu đi: đây là chỗ **duy nhất** dọn      │
+   * │ được chúng mà không phải mở `company.yaml`.                              │
+   * │                                                                          │
+   * │ ⚠ ĐÍNH CHÍNH 26/08 — user bác, và bác đúng:                              │
+   * │   *"trong modal có 3 lựa chọn đúng không, vẫn đề xuất hết như cũ (full   │
+   * │    all mcp). Vào type riêng mới lọc theo type đó."*                      │
+   * │                                                                          │
+   * │ Bản trước tôi cắt sạch danh sách khỏi màn chọn LOẠI với lý lẽ *"ba thẻ   │
+   * │ là toàn bộ câu hỏi"*. Sai ở chỗ: màn đó là **màn tiếp đất**, và người    │
+   * │ quay lại cắm cái họ đã có không nên phải đoán xem nó nằm trong tab nào.  │
+   * │ Lọc là để **thu hẹp khi đã biết mình tìm gì**, không phải để giấu.       │
+   * │                                                                          │
+   * │ ⇒ `kind` bỏ trống = hiện tất cả (màn tiếp đất). Có `kind` = đã vào một   │
+   * │ loại, chỉ hiện loại đó.                                                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  function reuseList(kind?: Kind) {
+    const list = kind ? installed.filter((a) => kindOf(a, catalog) === kind) : installed;
+    if (!list.length) return null;
+    return (
+      <>
+        <div className="mt-4 text-[11px] uppercase tracking-wide text-muted">Đã cắm ở văn phòng khác</div>
+        {/*
+          ĐANG THỬ ⇒ KHOÁ DANH SÁCH. (user đề nghị 26/08)
+
+          `runRef` đã lo phần đúng-sai (kết quả cũ không đè được kết quả mới).
+          Khối này lo phần **đừng để người dùng rơi vào đó**: một danh sách bấm
+          được trong lúc màn hình đang quay là một lời mời vào đúng cái bẫy.
+
+          Làm mờ chứ không ẩn: ẩn thì bố cục nhảy, và cái nhảy đó xảy ra đúng
+          lúc người dùng đang nhìn chỗ khác chờ kết quả.
+        */}
+        <div
+          className={`mt-1.5 flex flex-col gap-1 transition-opacity ${
+            testing ? 'pointer-events-none opacity-40' : ''
+          }`}
+        >
+          {list.map((a) => (
+            <div key={a.id} className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  /*
+                    DÙNG LẠI ĐÚNG MỤC ĐÓ, không nhân bản cấu hình.
+
+                    Danh tính là băm cấu hình, nên "chép sang một mã mới" không
+                    còn nghĩa gì: cùng cấu hình ⇒ cùng băm ⇒ vẫn là nó. Cái
+                    "clone" user muốn nằm ở tầng khác — SỰ HIỆN DIỆN theo từng
+                    văn phòng (`role.mcp`), không phải bản sao cấu hình. → §6i
+
+                    ⚠ VÀ ĐÓ CHÍNH LÀ THỨ BẢN CŨ Ở ĐÂY PHÁ HỎNG. Nó gọi
+                    `setPaste(JSON.stringify(a.config))` — đẩy mục này sang
+                    đường "TỰ CẮM", nơi không ai biết nó cần chìa gì. Cánh tay
+                    stdio chưa lộ (chìa đi qua `env`, `filesystem` không cần
+                    chìa); cánh tay HTTP đầu tiên thì hỏng ngay — ô trống bay
+                    lên Notion nguyên văn → 401. → §6i-bis
+                  */
+                  resetConfig();
+                  setPick(null);
+                  setReuse(a);
+                  setLabel(a.label);
+                  setStep(2);
+                }}
+                className="flex flex-1 items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-accent"
+              >
+                <Plug className="h-3.5 w-3.5 shrink-0 text-muted" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{a.label}</span>
+                  {/*
+                    ┌────────────────────────────────────────────────────────┐
+                    │ DÒNG PHỤ: WORKSPACE + MỨC QUYỀN. (user 26/08)         │
+                    │                                                        │
+                    │   *"1 loạt Notion thì biết là Notion nào"*             │
+                    │                                                        │
+                    │ Cả hai đều SUY TỪ DỮ LIỆU, không đọc chuỗi tên:        │
+                    │  · `via`   ← server tra `arms[].secrets` ra tên         │
+                    │              workspace trong kho OAuth                 │
+                    │  · `level` ← `arms[].level`, thứ nằm trong chính băm    │
+                    │                                                        │
+                    │ Vì sao không nhét vào `label`: nhãn là của người dùng   │
+                    │ và đổi tự do — nhét mức quyền vào chuỗi thì một cú đổi  │
+                    │ tên tạo ra được "Notion (ghi được)" trên một cánh tay   │
+                    │ chỉ đọc. Nhãn nói dối về đặc quyền. → §6j              │
+                    └────────────────────────────────────────────────────────┘
+                  */}
+                  {(a.via || a.level) && (
+                    <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+                      {a.via && <span className="truncate">{a.via}</span>}
+                      {a.via && a.level && <span>·</span>}
+                      {a.level && (
+                        <span className={a.level === 'full' ? 'text-danger' : undefined}>
+                          {LEVEL_SAY[a.level]}
+                        </span>
+                      )}
+                      {a.toolCount ? <span className="tabular-nums">· {a.toolCount} việc</span> : null}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 self-start text-[11px] text-muted">
+                  {a.orphan ? 'không ai dùng' : 'dùng lại'}
+                </span>
+              </button>
+              {/*
+                XOÁ HẲN — chỉ hiện cho mục KHÔNG VĂN PHÒNG NÀO GIỮ. Tới hôm nay,
+                gỡ một mục mồ côi khỏi sổ chỉ làm được bằng cách **mở
+                `company.yaml` sửa tay** — một CHUÔNG BÁO (§6a).
+
+                Điều kiện `a.orphan` đến từ SERVER, không tự suy từ `usedBy`:
+                `usedBy` chỉ đếm sợi dây, nên một node đang nằm chờ trên sơ đồ
+                ai đó sẽ trông như mồ côi. Server chặn lần nữa — nút này chỉ để
+                không bày ra một lựa chọn chắc chắn bị từ chối.
+              */}
+              {a.orphan && (
+                <button
+                  type="button"
+                  title="Xoá hẳn khỏi sổ chung"
+                  aria-label={`Xoá hẳn ${a.label}`}
+                  onClick={() => setForget(a)}
+                  className="shrink-0 rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  }
 
   /**
    * Cánh tay thư mục TỰ THỬ ngay khi chọn xong — người dùng không phải bấm gì.
@@ -199,6 +437,148 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const folderList = () => folders.split('\n').map((s) => s.trim()).filter(Boolean);
 
   /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 MỘT LỰA CHỌN Ở BƯỚC 1 = MỘT CẤU HÌNH MỚI TINH. (bug user bắt 26/08)  │
+   * │                                                                          │
+   * │ Luồng họ dựng lại: chọn thư mục A → thử ✓ → bấm một mục trong danh sách  │
+   * │ gợi ý → **Quay lại** → bấm "Thư mục trên máy" ⇒ **nó tự thử lại thư mục  │
+   * │ A**. Người dùng không chọn A ở lượt này, mà máy vẫn đi thử A.            │
+   * │                                                                          │
+   * │ Gốc rễ: `folders` (và `keys`, `tier`, `account`, `paste`) là state của cả │
+   * │ hộp thoại, còn `setPick`/`setReuse` chỉ đổi ĐƯỜNG. Quay lại rồi vào lại   │
+   * │ thì cấu hình cũ vẫn nằm nguyên đó, và `useEffect` tự-thử thấy đủ điều     │
+   * │ kiện nên bắn.                                                            │
+   * │                                                                          │
+   * │ ⚠ USER CHO HAI PHƯƠNG ÁN, và tôi chọn (1) — "coi như chưa chọn gì":      │
+   * │   (2) giữ lại kết quả thử cũ nghe tiện, nhưng nó là **đúng cái lớp lỗi**  │
+   * │   vừa vá bằng `runRef`: một dấu ✓ nói về một cấu hình khác với cấu hình   │
+   * │   đang trên màn hình. Ở đó nó lệch vài giây; ở đây nó lệch qua cả một     │
+   * │   vòng điều hướng — khó thấy hơn, không dễ hơn.                          │
+   * │                                                                          │
+   * │ ⇒ Luật đọc được thành lời: **thứ bạn vừa bấm là thứ bạn đang cấu hình.**  │
+   * │ Dọn ở MỘT hàm, gọi từ mọi cửa vào bước 1 — vá từng nút là để lần sau      │
+   * │ thêm cửa thứ năm thì quên đúng cửa đó.                                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  function resetConfig() {
+    setFolders('');
+    setKeys({});
+    setPaste('');
+    setProbe(null);
+    setErr('');
+    setTier('read');
+    setAccount('');
+    // Lượt thử đang bay (nếu có) mất quyền ghi kết quả — xem `runRef`. Không có
+    // dòng này thì một lượt cũ vẫn về được và dựng lại đúng cái bug vừa vá.
+    runRef.current++;
+    setTesting(false);
+    setSlow(false);
+  }
+
+  /**
+   * Nạp danh sách tài khoản đã đăng nhập cho mục đang chọn, và tự chọn cái đầu.
+   *
+   * Gọi cả lúc vào bước 2 **lẫn** sau khi đăng nhập xong. Sau đăng nhập, tab
+   * callback đã đóng và người dùng đang nhìn lại hộp thoại này — nếu nó không tự
+   * nạp lại thì họ thấy đúng cái màn hình *"chưa đăng nhập"* mà họ vừa xử lý xong,
+   * và cách duy nhất đi tiếp là F5. Đó là hình dạng của một app nói dối về trạng
+   * thái của chính nó.
+   */
+  const loadAccounts = useCallback(
+    async (catalogId: string) => {
+      const r = await api.oauthAccounts(catalogId).catch(() => null);
+      if (!r) return;
+      setAccounts(r.accounts);
+      setAccount((cur) => cur || r.accounts[0]?.name || '');
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (step === 2 && pick?.needsLogin) void loadAccounts(pick.id);
+  }, [step, pick, loadAccounts]);
+
+  /**
+   * ⚠ NGHE SSE để biết tab callback đã xong. Daemon phát `company.offices` sau
+   * khi lưu chìa — `armsVersion` của store bump theo, và hiệu ứng này bám vào nó.
+   *
+   * Không dùng `window.open(...).onclose` hay polling: tab callback là một
+   * origin khác về mặt điều hướng, và người dùng có thể đóng nó bằng tay trước
+   * khi ta kịp thấy. Sự kiện từ server là thứ DUY NHẤT biết chắc chìa đã lưu.
+   */
+  const armsVersion = useApp((s) => s.armsVersion);
+  useEffect(() => {
+    if (step === 2 && pick?.needsLogin && logging) {
+      setLogging(false);
+      void loadAccounts(pick.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armsVersion]);
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ GỠ WORKSPACE — OPTIMISTIC UI. (user 26/08: *"hơi khựng á"*)              │
+   * │                                                                          │
+   * │ Bỏ khỏi danh sách NGAY, gọi server sau. Thu hồi chìa ở phía dịch vụ là   │
+   * │ một vòng mạng thật (`revocation_endpoint`), nên chờ nó xong rồi mới vẽ   │
+   * │ lại là bắt người dùng nhìn một cái nút đứng im vì một việc **không liên  │
+   * │ quan gì tới thứ họ đang nhìn**.                                          │
+   * │                                                                          │
+   * │ ⚠ VÌ SAO LẠC QUAN Ở ĐÂY LÀ THÀNH THẬT, còn ở chỗ khác thì không:        │
+   * │ nút chỉ bấm được khi `usedBy` rỗng, mà đó là **lý do từ chối duy nhất**  │
+   * │ của server. Thứ còn lại chỉ là mạng chết. Lạc quan đúng nghĩa là "gần    │
+   * │ như chắc chắn thành công", không phải "kệ, hỏng thì hoàn tác" — một danh │
+   * │ sách hay nhấp nháy vì rollback thì tệ hơn hẳn một nút khựng nửa giây.    │
+   * │                                                                          │
+   * │ ⚠ VÀ VẪN PHẢI HOÀN TÁC ĐƯỢC. "Gần như chắc chắn" không phải "chắc chắn", │
+   * │ và một giao diện nói dối về việc đã xoá thì tệ hơn mọi khoản chờ.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  function dropNow(): void {
+    const a = dropWs;
+    if (!a || !pick) return;
+    const before = accounts;
+
+    setDropWs(null);
+    setAccounts((list) => list.filter((x) => x.name !== a.name));
+    // Đang chọn chính nó thì bỏ chọn — nếu không, `payload()` gửi lên một tên
+    // chìa vừa bị xoá và người dùng nhận câu lỗi cho việc họ vừa chủ động làm.
+    setAccount((cur) => (cur === a.name ? '' : cur));
+    setProbe(null);
+
+    void api
+      .oauthForget(a.name)
+      // Nạp lại từ server sau khi xong: `usedBy` của những mục CÒN LẠI có thể đã
+      // khác, và bản lạc quan chỉ biết đúng cái vừa bỏ.
+      .then(() => loadAccounts(pick.id))
+      .catch((e) => {
+        setAccounts(before);
+        setErr(e instanceof ApiError ? e.message : 'Không gỡ được.');
+      });
+  }
+
+  async function login() {
+    if (!pick) return;
+    setErr('');
+    setLogging(true);
+    try {
+      const { authUrl } = await api.oauthStart(pick.id);
+      /**
+       * MỞ TAB TỪ ĐÂY, không để daemon `spawn` trình duyệt.
+       *
+       * 🔴 Hai lớp lỗi bị xoá cùng lúc: (1) trình duyệt mặc định của máy có thể
+       * chưa đăng nhập dịch vụ, còn cái đang mở agentco thì có — user gặp ngay
+       * lượt đầu 24/08; (2) `cmd /c start` trên Windows cắt URL ở dấu `&` đầu
+       * tiên, mà URL OAuth thì **luôn** có `&`. Không qua shell ⇒ không có gì để cắt.
+       */
+      window.open(authUrl, '_blank', 'noopener');
+    } catch (e) {
+      setLogging(false);
+      setErr(e instanceof ApiError ? e.message : 'Không mở được trang đăng nhập.');
+    }
+  }
+
+  /**
    * Thứ gửi lên server. Mục danh mục thì gửi **`catalogId` + thư mục** và để
    * SERVER dựng — client không ghép chuỗi `npx …@phiên-bản` nữa.
    *
@@ -206,14 +586,30 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * cùng một hằng số đã đốt dự án này một lần (`agentSlot` vs `arrange`).
    */
   function payload():
-    | { armId?: string; config?: Record<string, unknown>; catalogId?: string; folders?: string[] }
+    | {
+        armId?: string;
+        config?: Record<string, unknown>;
+        catalogId?: string;
+        folders?: string[];
+        account?: string;
+        level?: 'read' | 'add' | 'full';
+      }
     | null {
     // Dùng lại: chỉ gửi BĂM. Cấu hình, tên chìa và giá trị chìa đều nằm ở server
     // rồi — gửi lại bản sao của chúng qua HTTP là mở đường cho hai bản lệch nhau.
     if (reuse) return { armId: reuse.id };
     if (pick) {
       if (pick.folders && folderList().length === 0) return null;
-      return { catalogId: pick.id, folders: folderList() };
+      // Cần đăng nhập mà chưa chọn tài khoản ⇒ chưa dựng được cấu hình: ô trống
+      // `${OAUTH}` không có tên nào để thay. Trả `null` để nút Thử im, thay vì
+      // gửi lên rồi nhận về một câu lỗi kỹ thuật.
+      if (pick.needsLogin && !account) return null;
+      return {
+        catalogId: pick.id,
+        folders: folderList(),
+        ...(account ? { account } : {}),
+        ...(pick.tiered ? { level: tier } : {}),
+      };
     }
     const cfg = parsePaste();
     return cfg ? { config: cfg } : null;
@@ -260,26 +656,66 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     }
   }
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 SỐ THỨ TỰ LƯỢT THỬ — chặn PHẢN HỒI CŨ ĐÈ LÊN PHẢN HỒI MỚI.           │
+   * │ (bug user bắt 26/08)                                                     │
+   * │                                                                          │
+   * │   *"tôi chọn 1 thư mục, nó đang kết nối, tôi nhanh tay chuyển sang 1 thư │
+   * │    mục khác (Music)… lúc này quá trình test là test của cái nào??"*      │
+   * │                                                                          │
+   * │ Của cái ĐẦU. Một lượt thử mất 8–20 giây; đổi thư mục giữa chừng thì lượt │
+   * │ cũ **vẫn đang bay**, và khi nó về, `setProbe` ghi kết quả của thư mục A   │
+   * │ lên màn hình đang cấu hình thư mục B. Người dùng thấy ✓, bấm Xong, và    │
+   * │ cấu hình được lưu là B — **B chưa bao giờ được thử.**                    │
+   * │                                                                          │
+   * │ Đây đúng lớp lỗi *"hệ thống nói dối về trạng thái của chính nó"*, và nó  │
+   * │ tệ hơn một lỗi thường: dấu ✓ là **toàn bộ** thứ bước 2 tồn tại để bán.   │
+   * │                                                                          │
+   * │ ⚠ Không dùng `AbortController` cho việc này: huỷ được request HTTP nhưng │
+   * │ **không** huỷ được phép thử đang chạy ở server (nó đã spawn tiến trình   │
+   * │ MCP). Thứ ta cần không phải "dừng lượt cũ" mà là **"đừng nghe lượt cũ"**.│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const runRef = useRef(0);
+
   async function test() {
     const p = payload();
     if (!p) {
-      setErr(pick?.folders ? 'Chọn ít nhất một thư mục.' : 'Chưa đọc được cấu hình — kiểm lại khối JSON.');
+      setErr(
+        pick?.needsLogin && !account
+          ? 'Đăng nhập một tài khoản trước đã.'
+          : pick?.folders
+            ? 'Chọn ít nhất một thư mục.'
+            : 'Chưa đọc được cấu hình — kiểm lại khối JSON.',
+      );
       return;
     }
     setErr('');
     setTesting(true);
     setSlow(false);
     setProbe(null);
+    const mine = ++runRef.current;
     const tick = setTimeout(() => setSlow(true), 6_000);
     try {
       const k = filledKeys();
-      setProbe(await api.testArm('thu', { ...p, ...(Object.keys(k).length ? { secrets: k } : {}) }));
+      const r = await api.testArm('thu', { ...p, ...(Object.keys(k).length ? { secrets: k } : {}) });
+      // ⚠ CHỐT: cấu hình đã đổi trong lúc lượt này đang bay ⇒ kết quả này nói về
+      // một thứ KHÁC với thứ đang trên màn hình. Vứt nó đi, im lặng — lượt mới
+      // đã chạy rồi và nó mới là lượt đúng. → `runRef`
+      if (mine !== runRef.current) return;
+      setProbe(r);
     } catch (e) {
+      if (mine !== runRef.current) return;
       setErr(e instanceof ApiError ? e.message : 'Không thử được.');
     } finally {
-      clearTimeout(tick);
-      setTesting(false);
-      setSlow(false);
+      // `testing`/`slow` chỉ được tắt bởi lượt MỚI NHẤT: lượt cũ về sau lượt mới
+      // mà tắt spinner là màn hình báo "xong" trong khi vẫn đang chờ.
+      if (mine === runRef.current) {
+        clearTimeout(tick);
+        setTesting(false);
+        setSlow(false);
+      }
     }
   }
 
@@ -357,6 +793,24 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   onClick={() => {
                     const files = catalog.find((a) => a.folders);
                     if (!files) return;
+                    /*
+                      ┌──────────────────────────────────────────────────────┐
+                      │ ĐI THẲNG VÀO BƯỚC 2 — không màn trung gian nào.      │
+                      │ (user 26/08, và tôi đồng ý vì một lý do khác họ nêu) │
+                      │                                                      │
+                      │ Họ nói *"kiểu đem lại cảm giác phải bấm Chọn thư mục │
+                      │ 2 lần"*. Gốc rễ không phải số cú bấm — **cái nút nói │
+                      │ dối**: "Chọn một thư mục khác…" không mở bộ chọn nào  │
+                      │ cả, nó chỉ chuyển màn. Một nút gọi tên hành động mà  │
+                      │ lại đi điều hướng thì cảm giác "bấm hai lần" là ĐÚNG.│
+                      │                                                      │
+                      │ Sửa nhãn cũng được, nhưng bỏ hẳn màn thì tốt hơn:    │
+                      │ ba loại còn lại đều có gì đó để CHỌN ở bước 1 (dịch  │
+                      │ vụ nào / dán gì), riêng thư mục thì thẻ đã là lựa    │
+                      │ chọn rồi. Danh sách dùng lại xuống chân bước 2.      │
+                      └──────────────────────────────────────────────────────┘
+                    */
+                    resetConfig();
                     setPick(files);
                     // Ba đường LOẠI TRỪ NHAU. Quay lại rồi chọn đường khác mà
                     // không xoá đường cũ là để `payload()` im lặng chọn hộ.
@@ -393,6 +847,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         key={a.id}
                         type="button"
                         onClick={() => {
+                          resetConfig();
                           setPick(a);
                           setReuse(null);
                           setLabel(a.name);
@@ -412,91 +867,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     </p>
                   )}
                 </div>
+                {reuseList('service')}
               </>
             )}
 
             {/*
-              `mcpServers` là cấp CÔNG TY: chìa đã khai rồi thì dùng lại là 0
-              bước. Thiếu khối này là người dùng khai chìa Notion lần thứ hai và
-              tự hỏi vì sao. → §6f khối 2
+              MÀN TIẾP ĐẤT: đề xuất **tất cả**, không lọc. Người quay lại cắm
+              cái họ đã có không nên phải đoán nó nằm trong tab nào. Lọc là để
+              thu hẹp khi đã biết mình tìm gì — không phải để giấu. (user 26/08)
             */}
-            {installed.length > 0 && (
-              <>
-                <div className="mt-4 text-[11px] uppercase tracking-wide text-muted">Đã cắm ở văn phòng khác</div>
-                <div className="mt-1.5 flex flex-col gap-1">
-                  {installed.map((a) => (
-                    <div key={a.id} className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        /*
-                          DÙNG LẠI ĐÚNG MỤC ĐÓ, không nhân bản cấu hình.
-
-                          Danh tính là băm cấu hình, nên "chép sang một mã mới"
-                          không còn nghĩa gì: cùng cấu hình ⇒ cùng băm ⇒ vẫn là
-                          nó. Cái "clone" mà user muốn nằm ở tầng khác — SỰ HIỆN
-                          DIỆN theo từng văn phòng (`role.mcp`), không phải bản
-                          sao cấu hình. → SPEC-arms.md §6i
-
-                          ⚠ VÀ ĐÓ CHÍNH LÀ THỨ BẢN CŨ Ở ĐÂY PHÁ HỎNG. Nó gọi
-                          `setPaste(JSON.stringify(a.config))` — tức đẩy mục này
-                          sang đường "TỰ CẮM", nơi không ai biết nó cần chìa gì.
-                          Với cánh tay stdio thì chưa lộ (chìa đi qua `env`, mà
-                          `filesystem` không cần chìa nào); với cánh tay HTTP đầu
-                          tiên thì hỏng ngay: `${NOTION_ACCESS_TOKEN}` bay lên
-                          Notion nguyên văn → 401. Và `secretNames` thành `[]`,
-                          mà tên chìa NẰM TRONG BĂM ⇒ nó tạo bản sao thứ hai
-                          thay vì dùng lại. "Dùng lại" mà nhân bản, im lặng.
-                        */
-                        setPick(null);
-                        setPaste('');
-                        setReuse(a);
-                        setLabel(a.label);
-                        setProbe(null);
-                        setStep(2);
-                      }}
-                      className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-accent"
-                    >
-                      <Plug className="h-3.5 w-3.5 text-muted" />
-                      <span className="flex-1 truncate">{a.label}</span>
-                      <span className="shrink-0 text-[11px] text-muted">
-                        {a.orphan ? 'không ai dùng' : 'dùng lại'}
-                      </span>
-                    </button>
-                    {/*
-                      ┌──────────────────────────────────────────────────────┐
-                      │ XOÁ HẲN — chỉ hiện cho mục KHÔNG VĂN PHÒNG NÀO GIỮ.  │
-                      │ (user chốt 25/08: *"người dùng nên chịu trách nhiệm  │
-                      │ với hành động của mình"*)                            │
-                      │                                                      │
-                      │ Vì sao nút này đáng tồn tại: tới hôm nay, gỡ một mục │
-                      │ mồ côi khỏi sổ chỉ làm được bằng cách **mở           │
-                      │ `company.yaml` sửa tay** — mà đó là một CHUÔNG BÁO   │
-                      │ (§6a). Không có nó thì `mcpServers:` chỉ dài ra mãi. │
-                      │                                                      │
-                      │ Điều kiện `a.orphan` đến từ SERVER, không tự suy từ  │
-                      │ `usedBy` ở đây: `usedBy` chỉ đếm sợi dây, nên một    │
-                      │ node đang nằm chờ trên sơ đồ ai đó sẽ trông như mồ   │
-                      │ côi. Server chặn lần nữa — nút này chỉ là để không   │
-                      │ bày ra một lựa chọn chắc chắn bị từ chối.            │
-                      └──────────────────────────────────────────────────────┘
-                    */}
-                    {a.orphan && (
-                      <button
-                        type="button"
-                        title="Xoá hẳn khỏi sổ chung"
-                        aria-label={`Xoá hẳn ${a.label}`}
-                        onClick={() => setForget(a)}
-                        className="shrink-0 rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+            {pane === 'type' && reuseList()}
 
             {pane === 'paste' && (
               <>
@@ -518,6 +898,12 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   className="mt-2 w-full"
                   disabled={!paste.trim()}
                   onClick={() => {
+                    // ⚠ KHÔNG `resetConfig()` ở đây: nó xoá luôn `paste`, mà
+                    // `paste` chính là thứ người dùng vừa gõ để đi tiếp. Cửa này
+                    // là cửa duy nhất mà cấu hình được nhập NGAY TẠI bước 1.
+                    setKeys({});
+                    setProbe(null);
+                    setErr('');
                     setPick(null);
                     setReuse(null);
                     setStep(2);
@@ -554,6 +940,42 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               <div className="mb-3 rounded-md border border-line px-3 py-2">
                 <div className="text-[11px] uppercase tracking-wide text-muted">Tên kết nối</div>
                 <div className="mt-0.5 break-all text-[13px] font-medium">{label}</div>
+                {/*
+                  ┌──────────────────────────────────────────────────────────┐
+                  │ NÓI RA WORKSPACE + MỨC QUYỀN NGAY Ở ĐÂY. (user 26/08)    │
+                  │                                                          │
+                  │   *"ít nhất phải cho biết tên workspace, quyền hiện tại"*│
+                  │                                                          │
+                  │ Màn này trước chỉ ghi "Notion" — đúng nhưng vô dụng khi  │
+                  │ người dùng có ba workspace. Hai mẩu này đến từ state của │
+                  │ chính màn (`account`, `tier`), nên chúng **luôn khớp** với│
+                  │ thứ nút Xong sắp gửi đi.                                 │
+                  │                                                          │
+                  │ ⚠ TRẢ LỜI CÂU USER LO — *"hay lại giả edit tiếp?"*: KHÔNG.│
+                  │ Đây là màn **TẠO MỚI**, nên mức quyền ở đây là một lựa    │
+                  │ chọn thật. Thứ không sửa được là mức của một cánh tay ĐÃ │
+                  │ cắm — và cách đổi nó vẫn là cắm một cái mới rồi rút cái   │
+                  │ cũ (§6j). Hai màn khác nhau, hai câu trả lời khác nhau.  │
+                  └──────────────────────────────────────────────────────────┘
+                */}
+                {(pickedAccount || (pick?.tiered && probe?.status === 'connected')) && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                    {pickedAccount && (
+                      <span className="rounded bg-line/70 px-1.5 py-0.5 text-muted">
+                        {pickedAccount.label ?? pickedAccount.name}
+                      </span>
+                    )}
+                    {pick?.tiered && probe?.status === 'connected' && (
+                      <span
+                        className={`rounded px-1.5 py-0.5 ${
+                          tier === 'full' ? 'bg-danger-soft text-danger' : 'bg-line/70 text-muted'
+                        }`}
+                      >
+                        {LEVEL_SAY[tier]}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="mt-1 text-xs text-muted">Đổi tên được sau, trong bảng chi tiết của nó.</div>
               </div>
             )}
@@ -562,6 +984,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               <>
                 <Label>{pick.folders.label}</Label>
                 <FolderPicker
+                  busy={testing}
                   chosen={folderList()}
                   onChange={(list) => {
                     /*
@@ -636,6 +1059,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   Mỗi kết nối trỏ vào <b>một</b> thư mục. Cần nhiều chỗ thì tạo thêm kết nối, hoặc chọn
                   thư mục cha chung.
                 </p>
+                {/*
+                  Danh sách dùng lại ở CHÂN bước 2, không ở một màn riêng — xem
+                  khối chú thích ở thẻ "Thư mục trên máy". Đây là chỗ duy nhất
+                  cánh tay thư mục dùng lại được sau khi bỏ màn trung gian, và
+                  bỏ luôn nó là làm mất một đường vốn đã có dữ liệu sẵn trong sổ.
+                */}
+                {reuseList('files')}
               </>
             )}
 
@@ -656,6 +1086,193 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <p className="mt-1 text-xs text-muted">↳ {s.help}</p>
               </div>
             ))}
+
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ ĐĂNG NHẬP — 0 lần gõ chìa, và nút nằm ở ĐÂY (web UI).        │
+              │                                                              │
+              │ Trình duyệt bạn đang ngồi đã có sẵn phiên Notion; daemon thì │
+              │ không biết gì về nó. Đó là lý do nút này ở giao diện chứ      │
+              │ không phải một lệnh CLI mở trình duyệt hộ. (bài học 24/08)   │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {pick?.needsLogin && (
+              <div className="mt-3 rounded-md border border-line px-3 py-3">
+                {accounts.length === 0 ? (
+                  <>
+                    <div className="text-[13px] font-medium">Chưa nối workspace nào</div>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted">
+                      Bấm nút dưới, chọn workspace rồi bấm <b>Allow</b>. Tab sẽ tự đóng và quay lại
+                      đây. <b>Không cần copy gì cả.</b>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {/*
+                      "WORKSPACE", không phải "tài khoản" — user chỉ ra 26/08 và
+                      đúng: kiến trúc Notion là **1 tài khoản ⇄ N workspace**, và
+                      mỗi lần cấp quyền OAuth gắn với **một workspace** (token
+                      mang `workspace_id`/`workspace_name`). Gọi nó là "tài
+                      khoản" là dùng từ vựng của ta cho một khái niệm của họ, rồi
+                      để người dùng tự dịch.
+                    */}
+                    <div className="text-[11px] uppercase tracking-wide text-muted">Dùng workspace</div>
+                    <div className="mt-1.5 flex flex-col gap-1">
+                      {accounts.map((a) => (
+                        <div key={a.name} className="flex items-center gap-1">
+                          <label className="flex flex-1 cursor-pointer items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px] hover:border-accent">
+                            <input
+                              type="radio"
+                              name="oauth-account"
+                              checked={account === a.name}
+                              onChange={() => {
+                                setAccount(a.name);
+                                // Đổi workspace là đổi CẤU HÌNH (ô trống mang tên
+                                // chìa khác) ⇒ kết quả Thử cũ nói về một thứ khác.
+                                setProbe(null);
+                              }}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">{a.label ?? a.name}</span>
+                              {/*
+                                Chìa chết ⇒ NÓI RA NGAY ĐÂY, cạnh cái tên. Không
+                                nói thì triệu chứng duy nhất là cánh tay 401 im
+                                lặng lúc một nhân viên đang làm việc — xa nguyên
+                                nhân, và câu 401 nói "chìa sai" chứ không nói
+                                "chìa chết, bấm Đăng nhập". → §5m, tầng vòng đời.
+                              */}
+                              {a.dead && (
+                                <span className="mt-0.5 block text-[11px] text-danger">
+                                  ⚠ Hết hiệu lực — bấm <b>Đăng nhập</b> để nối lại
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                          {/*
+                            ⚠ CÒN CÁNH TAY DÙNG ⇒ KHOÁ NÚT, kèm lý do — đừng bày
+                            ra một lựa chọn chắc chắn bị từ chối (§6e). Và nó mua
+                            thêm một thứ: khi mọi lần bấm đều chắc chắn thành
+                            công thì **Optimistic UI mới thành thật** — xem
+                            `dropNow`. Lạc quan mà hay phải hoàn tác thì tệ hơn
+                            khựng: mục biến mất rồi hiện lại kèm câu lỗi.
+                          */}
+                          <button
+                            type="button"
+                            disabled={a.usedBy.length > 0}
+                            title={
+                              a.usedBy.length
+                                ? `Đang được dùng bởi: ${a.usedBy.join(', ')}. Gỡ kết nối đó trước.`
+                                : 'Gỡ workspace này'
+                            }
+                            aria-label={`Gỡ ${a.label ?? a.name}`}
+                            className="shrink-0 rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted"
+                            onClick={() => setDropWs(a)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {/*
+                  ┌──────────────────────────────────────────────────────────┐
+                  │ 🔴 NÚT KHÔNG ĐƯỢC KHOÁ KHI ĐANG CHỜ. (bug user báo 26/08)│
+                  │                                                          │
+                  │ *"do flow không thành công, nó cứ quay vòng vòng vậy đó… │
+                  │  phải F5 lại mới hết, hay là nên có X nhỏ bên phải?"*     │
+                  │                                                          │
+                  │ Bản cũ `disabled={logging}` và chỉ bỏ chờ khi SSE báo    │
+                  │ THÀNH CÔNG. Nhưng luồng OAuth hỏng ở phía dịch vụ thì    │
+                  │ **không có sự kiện nào cả** — Notion trả lỗi trong tab    │
+                  │ kia, còn tab này chờ mãi. Ta để trạng thái chờ phụ thuộc │
+                  │ vào một tín hiệu **chỉ tồn tại ở nhánh thành công**.     │
+                  │                                                          │
+                  │ ⇒ Hai đường ra, và cả hai đều không cần F5: bấm lại nút  │
+                  │ (mở lượt mới, `state` mới) hoặc ✕ để thôi chờ. User đoán │
+                  │ đúng practice — ✕ là thứ người ta tìm.                    │
+                  └──────────────────────────────────────────────────────────┘
+                */}
+                <div className="mt-2 flex gap-1.5">
+                  <Button className="flex-1" onClick={() => void login()}>
+                    {logging ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {logging
+                      ? 'Đang chờ… bấm để mở lại'
+                      : accounts.length
+                        ? 'Nối thêm một workspace khác'
+                        : `Đăng nhập với ${pick.name}`}
+                  </Button>
+                  {logging && (
+                    <Button aria-label="Thôi chờ" title="Thôi chờ" onClick={() => setLogging(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                {logging && (
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                    Xong ở tab kia thì đây tự cập nhật. Nếu tab đó báo lỗi (hay bạn đã đóng nó), bấm
+                    lại nút trên — mỗi lần bấm là một lượt mới.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ BA NẤC QUYỀN — và **CON SỐ VIỆC** là thứ làm nó thật thà.    │
+              │                                                              │
+              │ Danh sách nấc đến từ SERVER (`probe.tiers`), không tự suy ở  │
+              │ đây: luật *"chỉ hiện nếu THÊM ≥1 việc so với nấc dưới"* có   │
+              │ ca biên tinh tế (server toàn tool đọc ⇒ ba nấc bằng nhau ⇒   │
+              │ hai nấc dưới là noise), và dựng bản thứ hai của luật đó là   │
+              │ dựng một bản sẽ quên mất một điều kiện. → §6j                │
+              │                                                              │
+              │ Chỉ còn MỘT nấc ⇒ không vẽ bộ chọn: một lựa chọn duy nhất    │
+              │ không phải một câu hỏi.                                      │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {pick?.tiered && probe?.status === 'connected' && (probe.tiers?.length ?? 0) > 1 && (
+              <div className="mt-3">
+                <Label>Cho nhân viên làm được gì</Label>
+                <div className="mt-1 flex flex-col gap-1">
+                  {probe.tiers!.map((t) => (
+                    <label
+                      key={t.tier}
+                      className="flex cursor-pointer items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px] hover:border-accent"
+                    >
+                      <input
+                        type="radio"
+                        name="tier"
+                        checked={tier === t.tier}
+                        onChange={() => setTier(t.tier)}
+                      />
+                      <span className="flex-1">{TIER_SAY[t.tier].name}</span>
+                      <span className="shrink-0 tabular-nums text-[11px] text-muted">{t.count} việc</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  {TIER_SAY[tier].help}
+                  {/*
+                    ⚠ QUY CÂU NÓI VỀ ĐÚNG NGƯỜI NÓI. Ta viết "server khai", không
+                    viết "cánh tay này chỉ đọc" — câu sau ta KHÔNG bảo đảm được.
+                    `annotations` là **gợi ý của server**; nếu nó khai ẩu hoặc
+                    khai sai thì không client nào phát hiện được. Câu này vẫn
+                    đúng kể cả khi điều đó xảy ra. → §6j
+                  */}
+                  {' '}
+                  <span className="text-muted">
+                    ({probe.serverName ?? 'Server'} tự khai mức của từng việc.)
+                  </span>
+                </p>
+              </div>
+            )}
+            {pick?.tiered && probe?.status === 'connected' && probe.tiers?.length === 1 && (
+              <p className="mt-3 rounded-md border border-line px-3 py-2 text-[13px]">
+                Kết nối này <b>{TIER_SAY[probe.tiers[0]!.tier].name.toLowerCase()}</b> ·{' '}
+                {probe.tiers[0]!.count} việc.
+              </p>
+            )}
 
             {/*
               Đường TỰ CẮM cũng phải nhập chìa được — xem `pastedKeys`. Nhãn ở
@@ -837,8 +1454,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
           onConfirm={() => {
             const a = forget;
             if (!a) return;
-            void api
+            // ⚠ Đi qua `actions`, KHÔNG gọi thẳng `api` — xem khối chú thích ở
+            // `store.ts §forgetArm`. Bản gọi thẳng chỉ cập nhật danh sách trong
+            // hộp thoại này, để `selected`/`canvas` giữ một mã đã chết cho tới
+            // khi người dùng F5. (bug user báo 26/08)
+            void actions
               .forgetArm(a.id)
+              .then(() => api.arms())
               .then((r) => setInstalled(forList(r.arms, officeId)))
               .catch((e) => setErr(e instanceof ApiError ? e.message : 'Không xoá được.'))
               .finally(() => setForget(null));
@@ -851,6 +1473,27 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {forget?.secrets.length
               ? `Chìa (${forget.secrets.join(', ')}) vẫn được giữ — cắm lại thì không phải đi lấy token lần nữa.`
               : 'Kết nối này không cần chìa nào, nên cắm lại là chọn từ danh mục.'}
+          </span>
+        </ConfirmDelete>
+
+        {/*
+          Gỡ workspace — nói ra CẢ HAI vế, vì vế thứ hai là thứ người dùng thật
+          sự muốn: agentco không chỉ quên chìa, nó còn **báo cho Notion thu hồi**.
+          Xoá mỗi bản sao của mình mà để chìa còn sống ở phía họ là làm đúng một
+          nửa việc, và nửa còn lại là nửa họ quan tâm.
+        */}
+        <ConfirmDelete
+          open={!!dropWs}
+          title="Gỡ workspace này?"
+          confirmLabel="Gỡ"
+          onCancel={() => setDropWs(null)}
+          onConfirm={() => dropNow()}
+        >
+          agentco sẽ quên chìa của <b>{dropWs?.label ?? dropWs?.name}</b> và <b>báo cho dịch vụ thu
+          hồi</b> quyền truy cập.
+          <br />
+          <span className="text-muted">
+            Không mất gì trong workspace của bạn. Cần lại thì đăng nhập lần nữa.
           </span>
         </ConfirmDelete>
       </DialogContent>
@@ -877,7 +1520,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
  * │ tên thư mục. Bộ chọn làm câu hỏi đó biến mất luôn.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-function FolderPicker({ chosen, onChange }: { chosen: string[]; onChange(v: string[]): void }) {
+function FolderPicker({
+  chosen,
+  onChange,
+  busy,
+}: {
+  chosen: string[];
+  onChange(v: string[]): void;
+  /** Đang chạy một lượt thử — khoá nút đổi thư mục. Xem chú thích ở nút. */
+  busy?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -888,9 +1540,15 @@ function FolderPicker({ chosen, onChange }: { chosen: string[]; onChange(v: stri
           // Đủ chữ, xuống dòng — xem chú thích ở `BrowseDialog`.
           <div className="break-all font-mono text-[12px]">{chosen[0]}</div>
         )}
-        <Button size="sm" className="mt-2 w-full" onClick={() => setOpen(true)}>
+        {/*
+          ĐANG THỬ ⇒ KHOÁ luôn nút đổi thư mục. Đây chính là cửa user đi vào khi
+          bắt được bug 26/08: chọn thư mục A → đang kết nối → nhanh tay đổi sang
+          Music. `runRef` giữ cho kết quả không lệch; nút này giữ cho họ không
+          phải rơi vào tình huống ấy ngay từ đầu.
+        */}
+        <Button size="sm" className="mt-2 w-full" disabled={busy} onClick={() => setOpen(true)}>
           <FolderOpen className="h-3.5 w-3.5" />
-          {chosen.length ? 'Đổi thư mục…' : 'Chọn thư mục…'}
+          {busy ? 'Đang kiểm tra…' : chosen.length ? 'Đổi thư mục…' : 'Chọn thư mục…'}
         </Button>
       </div>
       <BrowseDialog open={open} onOpenChange={setOpen} onChange={onChange} />

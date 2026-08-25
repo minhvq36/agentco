@@ -25,8 +25,18 @@ import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
 import { buildConfig, catalogForUi, findArm } from '../core/catalog.js';
-import { baselineTokens, probeArm } from '../core/probe.js';
-import { missingSecretRefs } from '../core/secrets.js';
+import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
+import { grantFor, missingSecretRefs, readSecrets } from '../core/secrets.js';
+import { companyPaths } from '../core/paths.js';
+import {
+  REFRESH_TICK_MS,
+  oauthAccounts,
+  oauthCallback,
+  oauthForget,
+  oauthStart,
+  redirectBase,
+  refreshDue,
+} from './oauth-routes.js';
 
 /**
  * Yêu cầu này đến từ chính máy đang chạy daemon?
@@ -56,10 +66,16 @@ function armConfig(body: {
   config?: Record<string, unknown>;
   catalogId?: string;
   folders?: string[];
+  account?: string;
 }): Record<string, unknown> | undefined {
   if (body.config) return body.config;
   const arm = body.catalogId ? findArm(body.catalogId) : undefined;
-  return arm ? buildConfig(arm.spec, { folders: body.folders ?? [] }) : undefined;
+  return arm
+    ? buildConfig(arm.spec, {
+        folders: body.folders ?? [],
+        ...(body.account ? { account: body.account } : {}),
+      })
+    : undefined;
 }
 
 /**
@@ -82,6 +98,10 @@ function resolveArm(
     catalogId?: string;
     folders?: string[];
     secrets?: Record<string, string>;
+    /** Tên chìa OAuth của tài khoản đã chọn. → `oauth.ts §accountName` */
+    account?: string;
+    /** Nấc quyền người dùng chọn. Đi vào băm. → §6j */
+    level?: Tier;
   },
 ): {
   config: Record<string, unknown>;
@@ -91,6 +111,7 @@ function resolveArm(
   tools?: string[];
   label?: string;
   catalog?: string;
+  level?: Tier;
 } | undefined {
   if (body.armId) {
     const r = company.reuseArm(body.armId);
@@ -98,6 +119,7 @@ function resolveArm(
       config: r.config,
       secretNames: r.secretNames,
       secrets: r.secrets,
+      ...(r.level ? { level: r.level } : {}),
       // Đã giải lúc cắm lần đầu — dùng lại chính danh sách đó. Giải LẠI là mở
       // cửa cho hai văn phòng cầm hai danh sách khác nhau của cùng một cánh tay
       // (hãng thêm việc ghi hôm nay, văn phòng cắm hôm nay nhận nhiều hơn).
@@ -109,20 +131,50 @@ function resolveArm(
   const config = armConfig(body);
   if (!config) return undefined;
   const fromCatalog = body.catalogId ? findArm(body.catalogId) : undefined;
+
+  /**
+   * Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên biến
+   * phải khớp chính xác thứ server MCP đọc — đó là sự thật của ta.
+   *
+   * Đường B thì HỢP hai nguồn: ô trống `${…}` (cửa của server HTTP) và khoá
+   * client gửi (cửa `env` của server stdio, nơi không có ô trống nào để đọc).
+   *
+   * 🔴 VÀ TÀI KHOẢN OAUTH PHẢI CÓ TRONG DANH SÁCH NÀY. (bug user báo 26/08)
+   *
+   * Notion khai `secrets: []` — đúng, vì tên chìa của nó sinh lúc đăng nhập.
+   * Nhưng bỏ qua `body.account` thì `secretNames` rỗng, kéo theo **hai** hỏng,
+   * và cái thứ hai im lặng hơn hẳn:
+   *   ① `probeArm` không có chìa ⇒ ô trống còn nguyên ⇒ *"Thiếu chìa"* ngay ở
+   *      nút Thử — đây là cái user nhìn thấy.
+   *   ② `grantArm` ghi `role.secrets` từ danh sách này. Rỗng ⇒ `pickMcp` không
+   *      tiêm gì ⇒ cánh tay **401 lúc nhân viên đầu tiên dùng nó**, sau khi
+   *      giao diện đã báo ✓. Đúng lớp lỗi §5i, qua một cửa mới.
+   */
+  const secretNames = fromCatalog
+    ? [...fromCatalog.secrets.map((s) => s.name), ...(body.account ? [body.account] : [])]
+    : [...new Set([...missingSecretRefs(config), ...Object.keys(body.secrets ?? {})])].sort();
+
+  /**
+   * 🔴 GIÁ TRỊ CHÌA PHẢI ĐỌC TỪ KHO, KHÔNG CHỈ NHẬN TỪ CLIENT. (cùng bug)
+   *
+   * Bản cũ ở đây là `secrets: body.secrets ?? {}` — tức chỉ biết những chìa
+   * người dùng **vừa gõ trong hộp thoại này**. Với OAuth thì không có gì để gõ:
+   * chìa nằm ở `.state/secrets.json` từ lúc đăng nhập xong. `reuseArm` đã đọc
+   * kho (nó gọi `grantFor`), còn đường cắm-mới thì không — hai đường cho cùng
+   * một câu hỏi, và đường mới hơn là đường quên.
+   *
+   * ⚠ Client ghi đè kho, không phải ngược lại: người dùng đang gõ một chìa MỚI
+   * thì thứ họ vừa gõ mới là thứ đúng, kho còn giữ chìa cũ.
+   */
+  const { env } = grantFor(readSecrets(companyPaths(company.dir)), secretNames);
+
   return {
     config,
-    // Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên
-    // biến phải khớp chính xác thứ server MCP đọc — đó là sự thật của ta.
-    //
-    // Đường B thì HỢP hai nguồn, không thay nguồn: ô trống `${…}` (cửa của
-    // server HTTP) và khoá client gửi (cửa `env` của server stdio, nơi KHÔNG có
-    // ô trống nào để đọc). Chỉ lấy ô trống là cắt mất nhánh stdio; chỉ lấy khoá
-    // client là quay về đúng chỗ vừa hỏng.
-    secretNames: fromCatalog
-      ? fromCatalog.secrets.map((s) => s.name)
-      : [...new Set([...missingSecretRefs(config), ...Object.keys(body.secrets ?? {})])].sort(),
-    secrets: body.secrets ?? {},
-    ...(fromCatalog?.readOnly ? {} : { tools: [] }),
+    // Mục có nấc thì nấc là BẮT BUỘC — mặc định `read`, an toàn khi chưa chọn.
+    ...(fromCatalog?.tiered ? { level: body.level ?? 'read' } : {}),
+    secretNames,
+    secrets: { ...env, ...(body.secrets ?? {}) },
+    ...(fromCatalog?.readOnly || fromCatalog?.tiered ? {} : { tools: [] }),
     ...(body.catalogId ? { catalog: body.catalogId } : {}),
   };
 }
@@ -151,27 +203,37 @@ function resolveArm(
  * 🔴 đó là chiều SAI, nên chỗ gọi phải coi mảng rỗng là **lỗi**, không phải
  * "không giới hạn". Xem `readOnlyTools` được dùng ở đâu bên dưới.
  */
-async function readOnlyTools(
+async function scopedTools(
   config: Record<string, unknown>,
   secrets: Record<string, string> | undefined,
+  tier: Tier,
 ): Promise<string[]> {
   const r = await probeArm({ arm: config as never }, undefined, secrets);
   if (r.status !== 'connected') {
     throw new RunError(
       `Không nối được để đọc danh sách việc: ${r.error ?? r.status}. ` +
-        `Cánh tay "chỉ đọc" không cắm được khi chưa biết việc nào là chỉ đọc.`,
+        `Cánh tay có giới hạn quyền không cắm được khi chưa biết việc nào thuộc nấc nào.`,
       'other',
     );
   }
-  const read = r.tools.filter((t) => t.level === 'read').map((t) => t.name);
-  if (!read.length) {
+  const granted = toolsAtTier(r.tools, tier);
+  if (!granted.length) {
+    /**
+     * 🔴 MẢNG RỖNG LÀ CHIỀU SAI, KHÔNG PHẢI "KHÔNG GIỚI HẠN".
+     *
+     * `armGrants` đọc `tools: []` thành **cấp CẢ SERVER**. Nên ở đây rỗng phải
+     * là **lỗi**, không phải một giá trị đi tiếp được. Ca thật: server không
+     * khai `annotations` nào ⇒ mọi việc rơi vào nấc `full` ⇒ chọn `read` ra 0
+     * việc. Giao diện đáng lẽ đã không cho chọn nấc đó (`offeredTiers`), nhưng
+     * chốt thật phải nằm ở đây — client bỏ qua được.
+     */
     throw new RunError(
-      `Server trả ${r.tools.length} việc nhưng KHÔNG việc nào khai "chỉ đọc". ` +
-        `Cắm tiếp là cấp cả bộ — từ chối.`,
+      `Server trả ${r.tools.length} việc nhưng KHÔNG việc nào thuộc mức quyền này. ` +
+        `Nhiều khả năng server không khai annotations — chọn mức cao hơn, hoặc tự chọn từng việc.`,
       'other',
     );
   }
-  return read;
+  return granted;
 }
 
 /**
@@ -183,6 +245,26 @@ async function readOnlyTools(
  * ngoài "cùng máy". Xem trước một file như thế là cho nó chạy trong nhà.
  */
 const RISKY = new Set(['svg', 'html', 'htm', 'xhtml']);
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 ĐƯỜNG DUY NHẤT DƯỚI `/api/` KHÔNG ĐI QUA CỔNG TOKEN — và phải thế.    │
+ * │ (tìm ra 26/08 khi user hỏi *"VPS có bảo mật thì OAuth work không?"*)     │
+ * │                                                                          │
+ * │ Dịch vụ trả mã uỷ quyền bằng một **302 tới trình duyệt người dùng**, và  │
+ * │ trình duyệt đi theo redirect đó như một lần điều hướng bình thường: nó   │
+ * │ **không** gắn `x-agentco-token`, và ta không được nhét token vào          │
+ * │ `redirect_uri` (nó phải khớp từng ký tự với thứ đã đăng ký, và nó sẽ nằm │
+ * │ trong log của dịch vụ). ⇒ Ở chế độ VPS, cổng token trả **401** đúng ở     │
+ * │ bước cuối, **mọi lần**, cho tới khi có dòng loại trừ này.                 │
+ * │                                                                          │
+ * │ ⚠ Không phải nới lỏng bảo mật: xác thực của đường này là **`state`** —    │
+ * │ 128 bit ngẫu nhiên, sống ≤10 phút, dùng đúng một lần, và không khớp thì   │
+ * │ **không có gì xảy ra cả**. Đó là chốt CSRF đúng của OAuth; token của      │
+ * │ daemon chồng lên nó không thêm được gì, mà lại làm gãy cả luồng.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const OAUTH_CALLBACK = '/api/oauth/callback';
 
 export interface ServeOptions {
   company: Company;
@@ -210,6 +292,33 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     );
   }
 
+  /**
+   * Cổng THẬT SỰ đang lắng nghe. Khai ở đây chứ không đọc `const port` phía
+   * dưới: socket bắt đầu nhận kết nối ngay khi `listen` gọi lại, tức TRƯỚC khi
+   * dòng `const port = …` chạy. Một request lọt vào khe đó sẽ chạm vùng chết
+   * của `const` và ném `ReferenceError` — hiếm, và vì hiếm nên sẽ không ai
+   * dựng lại được nó lúc đi tìm.
+   */
+  let boundPort = opts.port;
+
+  /**
+   * Tên miền thật của người triển khai, suy MỘT LẦN từ `runtime.public_url`.
+   *
+   * Bỏ trống (chạy trên máy mình) ⇒ `undefined` ⇒ `hostAllowed` giữ nguyên hành
+   * vi cũ từng ký tự. URL rác ⇒ cũng `undefined`: chốt Host **phải hẹp lại khi
+   * nghi ngờ**, không được nới ra. Câu lỗi về URL rác đã có ở `redirectBase`,
+   * nơi người dùng đang thật sự bấm.
+   */
+  const publicHost = (() => {
+    const raw = company.config.runtime.public_url?.trim();
+    if (!raw) return undefined;
+    try {
+      return new URL(raw).hostname;
+    } catch {
+      return undefined;
+    }
+  })();
+
   const sseClients = new Set<http.ServerResponse>();
   const unsubscribe = company.on((event) => {
     const payload = `data: ${JSON.stringify(event)}\n\n`;
@@ -231,12 +340,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     const segments = url.pathname.split('/').filter(Boolean);
 
     // Chặn DNS rebinding: một tên miền của kẻ tấn công trỏ về 127.0.0.1 sẽ gửi
-    // Host là tên miền đó, không phải localhost.
-    if (!hostAllowed(req.headers.host, host)) {
+    // Host là tên miền đó, không phải localhost. Tên miền THẬT của người triển
+    // khai đi qua được nhờ chính khai báo họ đã đặt. → `hostAllowed`
+    if (!hostAllowed(req.headers.host, host, publicHost)) {
       return json(res, 403, { error: 'Host không được phép' });
     }
 
-    if (opts.token && url.pathname.startsWith('/api/')) {
+    if (opts.token && url.pathname.startsWith('/api/') && url.pathname !== OAUTH_CALLBACK) {
       const given = req.headers['x-agentco-token'] ?? url.searchParams.get('token');
       if (given !== opts.token) return json(res, 401, { error: 'sai token' });
     }
@@ -316,6 +426,69 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     if (url.pathname === '/api/arms/catalog' && method === 'GET') {
       return json(res, 200, { arms: catalogForUi() });
     }
+    /**
+     * ── ĐĂNG NHẬP MỘT DỊCH VỤ. → `server/oauth-routes.ts`
+     *
+     * ⚠ `/start` trả về một **URL cho web UI tự mở**, daemon KHÔNG spawn trình
+     * duyệt: trình duyệt người dùng đang ngồi đã có sẵn phiên Notion, trình
+     * duyệt mặc định của máy thì chưa chắc. (bài học 24/08)
+     */
+    if (url.pathname === '/api/oauth/start' && method === 'POST') {
+      const body = await readJson<{ catalogId?: string }>(req);
+      if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
+      /**
+       * `redirect_uri` phải khớp TỪNG KÝ TỰ với thứ đã đăng ký — và nó KHÔNG
+       * được suy từ header `Host` (client giả được, mà đây là nơi mã uỷ quyền
+       * bay về). Ba nhánh, kể cả nhánh TỪ CHỐI khi daemon bind ra ngoài mà chưa
+       * ai khai địa chỉ thật. → `oauth-routes.ts §redirectBase`
+       */
+      const origin = redirectBase({
+        host,
+        port: boundPort,
+        publicUrl: company.config.runtime.public_url,
+      });
+      return json(res, 200, await oauthStart(body.catalogId, origin));
+    }
+    /**
+     * Notion gọi về đây. KHÔNG phải `/api/` theo nghĩa thông thường — nó trả
+     * HTML cho một tab trình duyệt, không trả JSON cho giao diện.
+     *
+     * ⚠ Nằm TRƯỚC chốt `sameSite`? Không cần: đây là `GET`, mà chốt đó chỉ áp
+     * cho method đổi trạng thái. Nhưng nó ĐỔI trạng thái thật (lưu chìa) — an
+     * toàn nhờ `state`: không có `state` khớp một lượt ta vừa mở thì không có gì
+     * xảy ra cả. Đó là chốt CSRF đúng của OAuth, không phải header của trình duyệt.
+     */
+    if (url.pathname === OAUTH_CALLBACK && method === 'GET') {
+      const done = await oauthCallback(company, url.searchParams, res);
+      if (done) {
+        /**
+         * Giao diện đang chờ ở TAB KIA — báo để nó tự chuyển trạng thái thay vì
+         * bắt người dùng F5. Đây là cả điểm của việc redirect về daemon: cái tab
+         * vừa xong không phải tab đang mở agentco.
+         *
+         * ⚠ Chỉ TÊN và NHÃN. Token không bao giờ đi qua đường này — SSE là kênh
+         * phát cho mọi client đang nghe.
+         */
+        const payload = `data: ${JSON.stringify({
+          type: 'company.offices',
+          say: `Đã kết nối ${done.label ?? done.name}.`,
+          office: '',
+          plan_id: null,
+        })}\n\n`;
+        for (const c of sseClients) c.write(payload);
+      }
+      return;
+    }
+    if (url.pathname === '/api/oauth/accounts' && method === 'GET') {
+      return json(res, 200, {
+        accounts: oauthAccounts(company, url.searchParams.get('for') ?? undefined),
+      });
+    }
+    /** Gỡ một workspace: thu hồi ở dịch vụ (nếu nhận) rồi xoá chìa ở máy này. */
+    if (segments[0] === 'api' && segments[1] === 'oauth' && segments[2] === 'accounts' && segments[3] && method === 'DELETE') {
+      await oauthForget(company, decodeURIComponent(segments[3]));
+      return json(res, 200, { accounts: oauthAccounts(company) });
+    }
     if (url.pathname === '/api/arms' && method === 'GET') {
       return json(res, 200, { arms: company.listArms() });
     }
@@ -364,10 +537,11 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // Giải cờ `readOnly` TRƯỚC khi ghi sổ: hỏng thì ném, và không có cánh tay
       // nào được tạo. Tạo trước rồi giải sau là để lại một cánh tay mang nhãn
       // "chỉ đọc" với `tools: []` — tức cấp CẢ SERVER. Thứ tự ở đây là bảo mật.
-      const tools = arm.tools ?? (await readOnlyTools(arm.config, arm.secrets));
+      const tools = arm.tools ?? (await scopedTools(arm.config, arm.secrets, arm.level ?? 'read'));
       const id = company.addArm({
         config: arm.config,
         secretNames: arm.secretNames,
+        ...(arm.level ? { level: arm.level } : {}),
         ...(tools.length ? { tools } : {}),
         // Nhãn của client CHỈ dùng khi tạo mới. Dùng lại thì nhãn đã là của
         // người dùng rồi (`addArm` giữ nhãn cũ) — gửi kèm chỉ tạo ảo giác sửa được.
@@ -726,6 +900,24 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         return json(res, 200, { docs: office.library.list(), droppedNotes: gone.droppedNotes });
       }
 
+      /**
+       * NHẬT KÝ KIỂM TOÁN CÁNH TAY. → `core/audit.ts` · SPEC-arms §6k
+       *
+       * `?server=<băm>` lọc theo một cánh tay — đó là cách giao diện dùng nó,
+       * vì câu hỏi luôn có dạng *"kết nối NÀY đã làm gì"*, không phải *"văn
+       * phòng đã gọi những gì"*.
+       */
+      if (rest[0] === 'arm-log' && method === 'GET') {
+        const server = url.searchParams.get('server') ?? undefined;
+        const limit = Number(url.searchParams.get('limit') ?? 200);
+        return json(res, 200, {
+          calls: office.audit.list({
+            ...(server ? { server } : {}),
+            limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : 200,
+          }),
+        });
+      }
+
       // ── kết quả (artifacts) → docs/SPEC-artifacts.md
       if (rest[0] === 'artifacts' && !rest[1] && method === 'GET') {
         // Quét đĩa mỗi lần, không catalog: file này do NHÂN VIÊN ghi trong lúc
@@ -803,11 +995,41 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : opts.port;
+  boundPort = port;
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÒNG LÀM MỚI CHÌA — **MỘT CHỖ DUY NHẤT TRONG CẢ HỆ**, và đây là chỗ đó. │
+   * │                                                                          │
+   * │ `refresh_token` **XOAY** (đo 25/08): mỗi lần làm mới trả về cả chìa mới   │
+   * │ lẫn refresh mới, cái cũ chết ngay. Hai tiến trình cùng làm mới thì cái    │
+   * │ chậm hơn gửi một refresh **đã chết** và ghi đè bản tốt bằng bản hỏng.    │
+   * │ Không khoá nào cứu được — chỉ có "một người làm" mới cứu được.           │
+   * │                                                                          │
+   * │ `unref()` để nó KHÔNG giữ tiến trình sống: một daemon đáng lẽ đã tắt mà   │
+   * │ còn treo vì một `setInterval` là thứ người dùng phải đi tìm mà giết.     │
+   * │                                                                          │
+   * │ Chạy MỘT LẦN ngay lúc khởi động, không đợi hết nhịp đầu: máy vừa ngủ dậy │
+   * │ sau 10 tiếng thì chìa đã hết hạn, và bắt người dùng chờ 15 phút nữa để   │
+   * │ nó tự tỉnh là để họ gặp một cánh tay hỏng ngay việc đầu tiên.            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const tick = () => {
+    void refreshDue(company).catch((e: unknown) => {
+      // Vòng nền hỏng KHÔNG được làm sập daemon. Người dùng sẽ thấy hậu quả ở
+      // chỗ họ đang nhìn — câu lỗi lúc dùng cánh tay.
+      process.emitWarning(`Vòng làm mới chìa hỏng: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+  const refreshTimer = setInterval(tick, REFRESH_TICK_MS);
+  refreshTimer.unref();
+  tick();
 
   return {
     port,
     url: `http://${host}:${port}`,
     async close() {
+      clearInterval(refreshTimer);
       unsubscribe();
       for (const res of sseClients) res.end();
       sseClients.clear();
@@ -838,11 +1060,29 @@ function sameSite(req: http.IncomingMessage): boolean {
   return true;
 }
 
-/** Host phải là chính cái ta bind. Chặn tên miền của kẻ tấn công trỏ về 127.0.0.1. */
-function hostAllowed(given: string | undefined, bound: string): boolean {
+/**
+ * Host phải là chính cái ta bind. Chặn tên miền của kẻ tấn công trỏ về 127.0.0.1.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 CHẶN CỨNG SAU REVERSE PROXY — tìm ra 26/08 khi user hỏi về VPS/domain.│
+ * │                                                                          │
+ * │ Sau nginx thì `Host` là **tên miền công ty** (`agentco.cty.com`), còn ta │
+ * │ bind `0.0.0.0`. Hàm bản cũ so hai chuỗi đó rồi trả `false` ⇒ **403 cho    │
+ * │ MỌI request**, không riêng OAuth. Nói cách khác: hôm nay agentco **không │
+ * │ chạy được sau một tên miền** chút nào, và không ai biết vì chưa ai dựng.  │
+ * │                                                                          │
+ * │ ⚠ Bản vá KHÔNG được là "cho qua mọi Host" — chốt này tồn tại để chặn DNS │
+ * │ rebinding, và bỏ nó đi là mở lại đúng lỗ đó. Nên tên miền hợp lệ phải là │
+ * │ thứ **người triển khai KHAI RA**, và họ đã khai rồi: `runtime.public_url`.│
+ * │ Cùng một khai báo vừa quyết `redirect_uri` vừa mở cổng Host — một nguồn,  │
+ * │ hai chỗ dùng, không lệch được.                                           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function hostAllowed(given: string | undefined, bound: string, publicHost?: string): boolean {
   if (!given) return true;
   const hostname = given.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+  if (publicHost && hostname === publicHost.toLowerCase()) return true;
   return hostname === bound.toLowerCase();
 }
 

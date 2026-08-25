@@ -31,7 +31,7 @@ import {
   type CompanyPaths,
 } from './paths.js';
 import { Office } from './office.js';
-import { grantFor, readSecrets, writeSecrets } from './secrets.js';
+import { grantFor, readOAuth, readSecrets, writeSecrets } from './secrets.js';
 import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
 import {
   appendRename,
@@ -459,6 +459,14 @@ export class Company {
      * bỏ phần tử lạ*. → [[agentco-silent-allowlist]]
      */
     tools?: string[];
+    /**
+     * NẤC QUYỀN, và nó **đi vào băm**. → `catalog.ts §armHash` · §6j
+     *
+     * ⚠ Vắng ⇒ băm y hệt bản trước 26/08. Đó không phải tiện tay: mọi cánh tay
+     * đã tồn tại phải giữ nguyên mã, nếu không một lần nâng cấp làm mồ côi cả
+     * `company.yaml` của người dùng.
+     */
+    level?: 'read' | 'add' | 'full';
     /** Văn phòng sắp dùng nó — cần cho luật "một thư mục, một cánh tay". */
     office?: string;
   }): string {
@@ -468,7 +476,7 @@ export class Company {
      * "cắm trùng" là chuyện KHÔNG THỂ XẢY RA, thay vì chuyện phải nhớ đi kiểm
      * ở bốn chỗ. → `catalog.ts §armHash`
      */
-    const id = armHash(input.config, secretNames);
+    const id = armHash(input.config, secretNames, input.level);
     if (!input.config || typeof input.config !== 'object') {
       throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
     }
@@ -587,6 +595,9 @@ export class Company {
           ...(input.catalog ? { catalog: input.catalog } : {}),
           secrets: secretNames,
           ...(tools.length ? { tools } : {}),
+          // Nấc quyền — đã nằm trong băm, ghi ra để người dùng ĐỌC ĐƯỢC bằng mắt
+          // thay vì phải tin cái huy hiệu trên giao diện. → §6j
+          ...(input.level ? { level: input.level } : {}),
         }),
       ),
     );
@@ -764,8 +775,34 @@ export class Company {
       doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
       'utf8',
     );
+    const label = this.config.arms[id]?.label || id;
     this.config = loadCompanyConfig(this.dir);
     for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+    /**
+     * ⚠ PHẢI BÁO, y như `removeArm`. Thiếu sự kiện này thì mọi tab khác (và
+     * chính tab đang mở, nếu nó nghe SSE thay vì tự nạp lại) giữ cái mã vừa chết
+     * cho tới khi người dùng F5 — đúng triệu chứng user báo 26/08.
+     */
+    this.emit({
+      type: 'company.offices',
+      say: `Đã xoá hẳn "${label}" khỏi sổ chung. Chìa vẫn được giữ.`,
+      office: '',
+      plan_id: null,
+    });
+  }
+
+  /**
+   * Tên WORKSPACE của một cánh tay — tra `arms[id].secrets` ra kho OAuth.
+   *
+   * Một hàm, hai chỗ gọi (`listArms` cho hộp thoại, `describeNode` cho bảng chi
+   * tiết). Tách làm hai bản là để hai màn hình nói hai chuyện về cùng một cánh
+   * tay — đúng thứ user vừa phàn nàn: *"1 loạt Notion thì biết là Notion nào"*.
+   */
+  armWorkspace(id: string): string | undefined {
+    const names = this.config.arms[id]?.secrets ?? [];
+    if (!names.length) return undefined;
+    const oauth = readOAuth(companyPaths(this.dir));
+    return names.map((s) => oauth[s]?.label).find(Boolean);
   }
 
   /** SỔ CHUNG + nơi nào đang dùng. → docs/SPEC-arms.md §6i */
@@ -776,6 +813,25 @@ export class Company {
     config: unknown;
     /** TÊN chìa, không bao giờ giá trị — để giao diện nói "đã có sẵn, khỏi nhập lại". */
     secrets: string[];
+    /** Nấc quyền — giao diện vẽ HUY HIỆU từ đây, KHÔNG từ chuỗi tên. → §6j */
+    level?: 'read' | 'add' | 'full';
+    /**
+     * Tên WORKSPACE mà cánh tay này nối tới, tra từ kho OAuth.
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ User 26/08: *"1 loạt Notion thì biết là Notion nào"*.                │
+     * │                                                                      │
+     * │ Suy từ `arms[].secrets` (tên chìa mang `workspace_id`) tra ngược ra   │
+     * │ nhãn trong `$oauth` — **không** đọc chuỗi `label`. Nhãn là của người  │
+     * │ dùng và đổi tự do; workspace là sự thật thuộc về cấu hình.           │
+     * │                                                                      │
+     * │ Vắng khi: cánh tay không dùng OAuth, hoặc workspace đã bị gỡ. Cả hai  │
+     * │ đều là "không biết" ⇒ không vẽ gì, chứ không bịa một cái tên.         │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    via?: string;
+    /** Số việc đã cấp. Hiện cạnh huy hiệu để nhãn "chỉ đọc" kiểm được bằng mắt. */
+    toolCount: number;
     usedBy: { office: string; role: string }[];
     /**
      * KHÔNG văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
@@ -785,6 +841,10 @@ export class Company {
      */
     orphan: boolean;
   }[] {
+    // Đọc kho MỘT LẦN cho cả danh sách: `readOAuth` parse cả file, mà một công
+    // ty chạy lâu có hàng chục cánh tay — gọi trong vòng lặp là đọc lại cùng
+    // một file hàng chục lần cho mỗi lần mở hộp thoại.
+    const oauth = readOAuth(companyPaths(this.dir));
     return Object.entries(this.config.mcpServers).map(([id, config]) => {
       const usedBy: { office: string; role: string }[] = [];
       for (const office of this.offices.values()) {
@@ -799,6 +859,14 @@ export class Company {
         ...(meta?.catalog ? { catalog: meta.catalog } : {}),
         config,
         secrets: meta?.secrets ?? [],
+        ...(meta?.level ? { level: meta.level } : {}),
+        // Chìa nào của cánh tay này là một workspace đã nối ⇒ lấy nhãn của nó.
+        // Không tìm thấy ⇒ không vẽ gì; bịa một cái tên còn tệ hơn để trống.
+        ...(() => {
+          const via = (meta?.secrets ?? []).map((s) => oauth[s]?.label).find(Boolean);
+          return via ? { via } : {};
+        })(),
+        toolCount: meta?.tools?.length ?? 0,
         usedBy,
         orphan: this.armHolders(id).length === 0,
       };
@@ -837,6 +905,7 @@ export class Company {
     tools: string[];
     label: string;
     catalog?: string;
+    level?: 'read' | 'add' | 'full';
     secrets: Record<string, string>;
   } {
     const config = this.config.mcpServers[id];
@@ -858,6 +927,9 @@ export class Company {
       tools: meta?.tools ?? [],
       label: meta?.label || id,
       ...(meta?.catalog ? { catalog: meta.catalog } : {}),
+      // Nấc đi theo trọn gói — thiếu nó thì `addArm` băm lại KHÔNG có nấc và ra
+      // một mã khác, tức "dùng lại" lại nhân bản. Đúng bug §6i-bis, cửa thứ hai.
+      ...(meta?.level ? { level: meta.level } : {}),
       secrets: env,
     };
   }

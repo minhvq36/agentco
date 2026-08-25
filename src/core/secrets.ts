@@ -138,16 +138,58 @@ export function writeSecrets(paths: CompanyPaths, map: SecretMap): void {
   writeRaw(paths, { ...flat, ...(Object.keys(oauth).length ? { [OAUTH_KEY]: oauth } : {}) });
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 GHI NGUYÊN TỬ — vì mất nửa file ở đây là mất **CẢ KHO CHÌA**.         │
+ * │ (user 26/08: *"race condition này nguy hiểm vậy cơ à, vá thôi"*)         │
+ * │                                                                          │
+ * │ `writeFileSync` **cắt file về 0 byte trước, rồi mới ghi**. Chết giữa hai │
+ * │ bước đó (daemon bị kill · máy mất điện · đĩa đầy) để lại một file JSON    │
+ * │ cụt ⇒ `readRaw` parse hỏng ⇒ `catch` trả `{}` ⇒ **mọi tài khoản biến     │
+ * │ mất**, không riêng cái đang ghi. Người dùng phải đăng nhập lại TẤT CẢ.   │
+ * │                                                                          │
+ * │ Và nó đắt gấp đôi vì đường ghi hay chạy nhất là **vòng làm mới chìa** —  │
+ * │ chạy ngầm, mỗi 15 phút, khi không ai nhìn.                               │
+ * │                                                                          │
+ * │ Ghi tạm rồi `rename`: trên cùng một ổ, `rename` là thao tác **nguyên tử** │
+ * │ của hệ điều hành. Mọi lúc, file thật hoặc là bản CŨ nguyên vẹn, hoặc là  │
+ * │ bản MỚI nguyên vẹn — không có trạng thái thứ ba.                         │
+ * │                                                                          │
+ * │ ⚠ `fsync` TRƯỚC khi rename, không phải sau. Rename nguyên tử về mặt thư  │
+ * │ mục, nhưng nó không hứa rằng NỘI DUNG đã xuống đĩa — mất điện có thể để  │
+ * │ lại một tên file mới trỏ vào một khối rỗng.                              │
+ * │                                                                          │
+ * │ ⚠⚠ VÀ ĐÂY LÀ THỨ NÓ **KHÔNG** CỨU ĐƯỢC, phải nói thẳng: nếu tiến trình   │
+ * │ chết SAU khi Notion đã xoay chìa mà TRƯỚC khi ta ghi, chìa mới nằm trong │
+ * │ một phản hồi HTTP đã mất — không cơ chế lưu trữ nào lấy lại được. Cửa sổ │
+ * │ đó vài micro-giây và chỉ mất MỘT tài khoản. Đường ra là `needs_login`.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 function writeRaw(paths: CompanyPaths, obj: Record<string, unknown>): void {
-  fs.mkdirSync(path.dirname(paths.secretsFile), { recursive: true });
-  fs.writeFileSync(paths.secretsFile, `${JSON.stringify(obj, null, 2)}\n`, 'utf8');
-  // Trên POSIX: chỉ chủ sở hữu đọc được. Trên Windows chmod là no-op, ACL mặc
-  // định của thư mục người dùng đã đủ — nhưng gọi vẫn đúng và vô hại.
+  const dir = path.dirname(paths.secretsFile);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.secrets.${process.pid}.tmp`);
+  const fd = fs.openSync(tmp, 'w');
   try {
-    fs.chmodSync(paths.secretsFile, 0o600);
+    fs.writeFileSync(fd, `${JSON.stringify(obj, null, 2)}\n`, 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  /**
+   * ⚠ Đặt quyền trên FILE TẠM, trước khi rename — không phải sau.
+   *
+   * Sau rename thì đã có một khoảnh khắc file thật nằm đó với quyền mặc định,
+   * và trên máy nhiều người dùng thì khoảnh khắc đó là đủ. Trên POSIX: chỉ chủ
+   * sở hữu đọc được. Trên Windows `chmod` là no-op, ACL thư mục người dùng đã đủ.
+   */
+  try {
+    fs.chmodSync(tmp, 0o600);
   } catch {
     /* không đặt được quyền thì thôi */
   }
+  // Nguyên tử: sau dòng này, file thật là bản mới HOẶC bản cũ, không có ở giữa.
+  fs.renameSync(tmp, paths.secretsFile);
 }
 
 /**

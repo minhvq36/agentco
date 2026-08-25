@@ -630,6 +630,70 @@ test('armReach: cánh tay KHÔNG phải file thì không bịa ra thư mục', (
   assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
 });
 
+/**
+ * ⭐ NÓI RA NĂNG LỰC, KHÔNG CHỈ NÓI TÊN — nợ ghi 22/08, trả 26/08.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ca user 26/08, nguyên văn hai lượt **giống hệt nhau**:                   │
+ * │                                                                          │
+ * │   > Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".            │
+ * │   > — chỉ đọc được Notion, không tạo hay ghi trang mới…      ✅ đúng      │
+ * │   (đổi cánh tay sang TOÀN QUYỀN)                                         │
+ * │   > Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".            │
+ * │   > — chỉ đọc được Notion, không tạo hay ghi trang mới…      🔴 sai      │
+ * │                                                                          │
+ * │ Trợ lý **không cố chấp** — dòng danh bạ chỉ ghi một cái TÊN, mà một cái   │
+ * │ tên thì không nói gì về quyền. Nó không có dữ kiện nào để biết khác đi.  │
+ * │                                                                          │
+ * │ ⚠ Và nợ này đắt gấp đôi vì nó đoán **theo chiều TỪ CHỐI** — cùng hình     │
+ * │ dạng với ca `chạy lệnh: TẮT`: *nói dối theo chiều làm Trợ lý từ chối một │
+ * │ việc vốn chạy được*. Lần thứ hai, thấp hơn một tầng.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const TIERED = {
+  n_read: { label: 'Notion · Cá nhân', level: 'read' as const },
+  n_add: { label: 'Notion · Nhóm', level: 'add' as const },
+  n_full: { label: 'Notion · Công ty', level: 'full' as const },
+};
+
+test('⭐ armReach: nấc quyền nằm TRÊN CHÍNH DÒNG của nhân viên', () => {
+  // Không phải thêm một câu dặn ở đầu khối — câu dặn ở đầu khối đã thua vị trí
+  // hai lần rồi. → [[agentco-prompt-rules-lose-to-examples]]
+  assert.match(armReach(TIERED, {}, 'n_read'), /chỉ đọc/);
+  assert.match(armReach(TIERED, {}, 'n_full'), /ghi/);
+  assert.match(armReach(TIERED, {}, 'n_full'), /sửa\/xoá/);
+});
+
+test('⭐ armReach: BA nấc cho BA dòng khác nhau — đổi nấc là đổi prompt', () => {
+  // Nếu hai nấc ra cùng một chuỗi thì đổi nấc không sinh tín hiệu nào, và
+  // `reachDiff` cũng không có gì để báo ⇒ ca user gặp tái diễn y nguyên.
+  const lines = new Set(['n_read', 'n_add', 'n_full'].map((id) => armReach(TIERED, {}, id)));
+  assert.equal(lines.size, 3);
+});
+
+test('armReach: nấc `add` phải nói RÕ nó KHÔNG sửa/xoá', () => {
+  // "Đọc + thêm mới" một mình dễ bị đọc thành "ghi được" ⇒ Trợ lý giao một việc
+  // sửa trang cho người chỉ tạo được trang mới. Vế phủ định phải nằm ngay đó.
+  assert.match(armReach(TIERED, {}, 'n_add'), /không sửa\/xoá/);
+});
+
+test('armReach: KHÔNG có `level` ⇒ không bịa ra năng lực nào', () => {
+  /**
+   * Cánh tay thư mục và cánh tay tự cắm không có nấc. Bịa "toàn quyền" cho
+   * chúng là dựng lại đúng cái lỗi vừa vá, chỉ đảo chiều: đoán hộ một năng lực
+   * từ một thứ không khai nó. → `probe.ts §levelOf`, luật một chiều.
+   */
+  assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
+  assert.ok(!/chỉ đọc|toàn quyền|sửa\/xoá/.test(armReach(ARMS, SERVERS, 'a385afc3ab6')));
+});
+
+test('armReach: có CẢ nấc lẫn thư mục thì nói cả hai, không nuốt cái nào', () => {
+  const arms = { x: { label: 'Kho', level: 'full' as const } };
+  const line = armReach(arms, { x: { args: ['D:\\Kho'] } }, 'x');
+  assert.match(line, /sửa\/xoá/);
+  assert.match(line, /D:\\Kho/);
+});
+
 test('armReach: chưa có nhãn thì rơi về băm — thà xấu còn hơn im', () => {
   assert.equal(armReach({}, {}, 'a1b2c3'), 'a1b2c3');
 });

@@ -1087,6 +1087,102 @@ cho mọi công ty. Cố ý **không** đặt trong `company/.state/`: zip một
 
 ---
 
+## 5h·6. ✅ ĐỊA CHỈ REDIRECT khi daemon KHÔNG ở trên máy người dùng (user hỏi 26/08)
+
+> *"flow redirect cần case khách chạy docker, vps, nginx → domain. Nhưng tôi chưa test cái đó… 1 là
+> ghi backlog, 2 là làm luôn, **tôi sợ làm mà để đó không test cũng ố dề**."*
+
+Câu lo đúng, và nó chia đôi bài toán ở đúng chỗ:
+
+| | Test được hôm nay? | Quyết |
+|---|---|---|
+| **Cái chốt** — quyết định `redirect_uri` là chuỗi nào | ✅ hàm thuần, vài mili giây | **làm ngay** |
+| **Triển khai** — nginx · TLS · compose · docs | ❌ phải dựng thật mới biết | **backlog** |
+
+⇒ Cái đã xây là **chốt**, không phải tính năng triển khai. `test/redirect-base.test.ts` (+13) chạy
+không cần Docker nào.
+
+### 🔴 Vì sao `redirect_uri` là thứ DUY NHẤT trong luồng không được phép đoán
+
+Nó là nơi **mã uỷ quyền** được gửi tới, và mã đó đổi thẳng ra chìa. Suy nó từ header `Host` — thứ
+**client gửi nên giả được** — nghĩa là ai gọi được daemon cũng chỉ định được nơi nhận mã. Đó là lỗ
+chiếm tài khoản, không phải một chi tiết tiện lợi.
+
+*(Cùng lý lẽ đã dùng cho `isLoopback`: chỉ đọc địa chỉ **socket**, không đọc `X-Forwarded-For`.)*
+
+### Ba nhánh, và nhánh thứ ba là thứ cứu người triển khai
+
+| Tình huống | Kết quả |
+|---|---|
+| khai `runtime.public_url` | dùng nó, sau khi soi kỹ |
+| loopback, không khai | `http://127.0.0.1:<cổng đã bound>` — **ca duy nhất đã test thật** |
+| **bind ra ngoài, không khai** | 🔴 **TỪ CHỐI**, câu lỗi nêu thẳng `AGENTCO_RUNTIME_PUBLIC_URL=…` |
+
+Nhánh ba đúng khuôn `serve()` đã dùng cho `AGENTCO_TOKEN`: mở cổng ra ngoài mà thiếu một thứ bắt
+buộc thì **dừng ngay, nói thẳng**. Không có nó, daemon trong Docker vẫn đăng ký `127.0.0.1:7317`,
+dịch vụ trả mã về **máy của người dùng** — nơi không có gì lắng nghe, hoặc tệ hơn, nơi **có một thứ
+khác** đang lắng nghe. Và triệu chứng lộ ra ở tab trình duyệt: xa daemon, xa log.
+
+### Bốn phép soi, mỗi phép chặn một câu lỗi "chỉ sai cửa"
+
+- **`http://` ra ngoài máy này ⇒ từ chối.** Mã uỷ quyền đi trần qua mạng thì ai đứng giữa cũng đổi
+  được nó ra chìa. Phần lớn dịch vụ cũng tự từ chối — ta **không dựa vào việc họ nhớ** từ chối hộ.
+  `http://127.0.0.1` thì được: đó là ca dev/tunnel hợp lệ.
+- **Có `?` hoặc `#` ⇒ từ chối.** Dấu hiệu dán nhầm cả một URL. Bỏ qua im lặng thì `redirect_uri`
+  lệch **từng ký tự** với thứ đã đăng ký, và dịch vụ trả `invalid_redirect_uri` — câu **không hề nói
+  ra nguyên nhân thật**. Bắt lúc người ta còn đang nhìn file cấu hình.
+- **Giữ path prefix**, bỏ gạch chéo cuối — nginx gắn agentco dưới `/agentco` là hợp lệ.
+- **Chuỗi rỗng = CHƯA KHAI**, không phải "khai chuỗi rỗng". `new URL('')` ném ra một câu về URL, che
+  mất câu thật là *"chưa khai"*.
+
+### Cấu hình: KHÔNG đẻ khái niệm mới
+
+`runtime.public_url` trong `company.yaml`, và cơ chế env override **đã có sẵn** biến nó thành
+`AGENTCO_RUNTIME_PUBLIC_URL` — không thêm một file `.env` nào, không thêm một đường đọc cấu hình nào.
+
+### 🔴 "VPS có bảo mật thì OAuth work không?" — user hỏi 26/08, và ĐI KIỂM ra HAI chặn cứng
+
+Câu trả lời không phải "có"/"không". Đi đọc chính mã của ta thì ra **hai chỗ chặn chắc chắn**, cả
+hai đã vá:
+
+**① `hostAllowed` trả `false` cho mọi tên miền ⇒ 403 cho MỌI request.** Sau nginx thì `Host` là
+`agentco.cty.com`, còn ta bind `0.0.0.0`; hàm so hai chuỗi đó rồi từ chối. Tức **agentco chưa bao
+giờ chạy được sau một tên miền** — không riêng OAuth, mà cả trang. Không ai biết vì chưa ai dựng.
+Vá: tên miền hợp lệ là thứ người triển khai **đã khai** ở `public_url`. Cùng một khai báo vừa quyết
+`redirect_uri` vừa mở cổng Host — một nguồn, hai chỗ dùng. ⚠ **Không** nới thành "cho qua mọi Host":
+chốt này chặn DNS rebinding, và Host lạ vẫn bị chặn kể cả khi đã khai.
+
+**② Cổng token chặn `/api/*`, mà callback nằm trong đó ⇒ 401 ở bước cuối, mọi lần.** Dịch vụ trả mã
+bằng một **302 tới trình duyệt**, và trình duyệt đi theo redirect như một lần điều hướng bình
+thường: nó **không** gắn `x-agentco-token`. Nhét token vào `redirect_uri` cũng không được — nó phải
+khớp từng ký tự với thứ đã đăng ký, và nó sẽ nằm trong log của dịch vụ. Vá: loại trừ đúng một đường.
+⚠ Không phải nới lỏng — **xác thực của đường đó là `state`**: 128 bit, sống ≤10 phút, dùng một lần,
+không khớp thì không có gì xảy ra. Token của daemon chồng lên nó không thêm gì mà làm gãy cả luồng.
+
+### ✅ Tin tốt, và nó là một tính chất của giao thức chứ không phải may mắn
+
+**Reverse proxy có xác thực (Cloudflare Access · SSO · basic auth · VPN · mTLS) KHÔNG cản OAuth.**
+Vì callback là một **lần điều hướng của trình duyệt người dùng**, không phải lời gọi server→server
+từ Notion. Trình duyệt đó vừa đăng nhập để vào được agentco, nên nó đã cầm sẵn cookie/chứng chỉ của
+tên miền — và nó mang theo khi đi theo redirect. Notion **không bao giờ** gọi vào máy ta.
+
+⇒ Thứ phải mở ra internet là **trình duyệt của người dùng tới tên miền của bạn**, không phải "tới
+daemon". Đó là điều kiện dễ hơn hẳn, và nó đúng sẵn ở mọi công ty đã có SSO.
+
+### ⚠ Chỗ THẬT SỰ dễ gãy, và nó ở chiều ngược lại: **EGRESS**
+
+Ba lời gọi của luồng (`discover` · `register` · đổi/làm mới chìa) là **daemon → dịch vụ**. VPS công
+ty hay khoá egress hoặc bắt đi qua proxy. Chúng chết ở đó, trong khi **mọi thứ khác vẫn chạy** —
+nên người đi tìm sẽ soi chiều VÀO (nginx, tường lửa, VPN) và không thấy gì cả.
+
+🔴 Và một chi tiết đủ để mất cả buổi: **`fetch` của Node KHÔNG tự đọc `HTTPS_PROXY`.** Đặt biến đó
+rồi tưởng xong là một cái bẫy có thật (`NODE_USE_ENV_PROXY=1`). Câu lỗi của `discover` giờ nói thẳng
+cả ba điều này thay vì *"kiểm mạng hoặc URL"*.
+
+⏸ **Còn backlog thật sự:** Dockerfile · mẫu nginx · TLS · và **chạy thử một lần trên VPS**. Chừng
+nào chưa chạy thật thì nhánh "có domain" vẫn là **chưa đo** — hai bản vá trên gỡ hai chặn *đã biết*,
+chúng không chứng minh rằng không còn chặn thứ ba.
+
 ## 5m. 🔴 CHÌA THIẾU BỊ BÁO THÀNH CHÌA SAI — user bắt 25/08 bằng một câu hỏi
 
 > *"chìa sai khi tạo mới → 401, đúng với ý đồ test. Nhưng mà chìa THIẾU (để trắng khi tạo mới) nó
@@ -1542,6 +1638,44 @@ chúng **không** tách được UPDATE khỏi DELETE.
 | **Đọc + Thêm** | `readOnly === false` **và** `destructive === false` | +11 |
 | **Toàn quyền** | mọi trường hợp còn lại — kể cả **khai thiếu** và **khai mâu thuẫn** | +3 |
 
+> ✅ **ĐO THẬT 26/08** (`scripts/spike-notion-annotations.ts`, hỏi thẳng Notion bằng JSON-RPC): đúng
+> **14 · 11 · 3**, và 28/28 tool khai **cả hai** trường. Bảng trên không còn là suy luận.
+
+### 🔴🔴 NHƯNG: **SDK VỨT MỌI ANNOTATION CÓ GIÁ TRỊ `false`** — và nó xoá sạch nấc giữa
+
+User bắt 26/08: *"sao bạn nói Notion có 3 level mà lúc tạo chỉ có 2?"*. Đi đo cả hai đầu:
+
+| | `notion-create-pages` |
+|---|---|
+| Notion **khai** (JSON-RPC thô) | `{readOnlyHint: false, destructiveHint: false}` |
+| **SDK đưa cho ta** | `{}` |
+| `tierOf({})` | `full` — **đúng luật**, và vô phương biết |
+
+Qua SDK: **14 read · 0 add · 14 full** ⇒ giao diện chỉ hiện hai nấc. 11 tool vốn **chỉ tạo mới** bị
+xếp chung với sửa/xoá.
+
+> ⭐ **Bảng chân trị đúng. `tierOf` đúng. Đầu ra vẫn sai.** Lỗi nằm ở chỗ **thứ ba** mà không ai
+> soi: **con đường dữ liệu**. `test/level-one-way.test.ts` quét cả 27 tổ hợp, xanh hết, và đúng hết
+> — nó kiểm hàm, không kiểm thứ được đưa vào hàm.
+
+⚠ Và vì luật một chiều làm nó hỏng theo chiều **AN TOÀN** (leo thang), nó **im lặng tuyệt đối**:
+không lỗi, không cảnh báo, chỉ mất một nấc. Cái mất là **đặc quyền tối thiểu** — người dùng muốn
+*"cho agent tạo trang, đừng cho sửa trang cũ"* (thứ Notion hỗ trợ chính xác) buộc phải cấp cả hai.
+Tức lớp dữ liệu đang **đẩy người dùng đi cấp thừa quyền**.
+
+**Bản vá KHÔNG đụng `tierOf`** — nó đi lấy lại dữ kiện: `core/mcp-http.ts` hỏi thẳng server
+`tools/list` cho cánh tay HTTP, lấy `annotations` thô, rồi mới phân loại. Đo lại qua `probeArm`:
+**14 · 25 · 28**, đủ ba nấc.
+
+- **Chỉ để PHÂN LOẠI.** Gọi tool, vòng đời phiên, quyền — vẫn của SDK. Một lần đọc, lúc cắm.
+- **Hỏng thì rơi về SDK** ⇒ đúng hành vi trước 26/08: tệ hơn nhưng **không sai** (leo thang = an toàn).
+- **Chỉ HTTP.** stdio phải spawn tiến trình và nói MCP qua đường ống — dựng lại nguyên một client
+  thứ hai. Không đáng: `filesystem` là cánh tay stdio duy nhất, và nó không có nấc.
+- **0 import SDK** — cùng luật `core/oauth.ts`, đường lui còn nguyên.
+
+Test: `test/mcp-http.test.ts` (+7) đóng băng **cả hai** hình dạng annotations làm số đo, nên ngày ai
+đó "dọn cho gọn" `mcp-http.ts` thì ô đó đỏ ngay.
+
 ### 🔴 MỘT CHIỀU: KHÔNG BIẾT ⇒ LEO THANG. KHÔNG BAO GIỜ HẠ CẤP. (user chốt 25/08)
 
 > *"đảm bảo nếu 0 biết gì thì nó ở nấc cao hơn, đừng kiểu khai chỉ đọc mà đến lúc nó thêm, xóa/sửa
@@ -1738,6 +1872,48 @@ User hỏi *"log mcp khác log plan đang có không"* — **khác, và khác th
 ⇒ đó là **log TIẾN ĐỘ**, không phải **log KIỂM TOÁN**. Nếu đường dài là "không cổng, chỉ log" thì
 log phải lên hạng: **mọi** lời gọi, **có** tham số, ghi xuống đĩa. Việc này nhỏ hơn cổng duyệt nhiều
 và là thứ duy nhất trả lời được câu *"hôm qua nó đã ghi gì vào Notion của tôi"*.
+
+### ✅ ĐÃ XÂY 26/08 — `core/audit.ts`, và một ca thật đã chứng minh nó cần thiết
+
+**Ca kích hoạt:** một lượt chạm `max_turns` giữa chừng. Nhật ký cho thấy nó **đã gọi**
+`notion-update-page` (một lời gọi GHI) rồi mới bị cắt, nhưng báo cáo cuối nói *"chưa xoá được"*. Với
+file trong văn phòng thì câu đó vô hại; với **Notion của người dùng** thì nó **sai về thế giới bên
+ngoài** — và ta không tra lại được nó đã ghi gì.
+
+| | |
+|---|---|
+| Ghi ở đâu | vòng lặp `tool_use` của `worker.ts` — **mọi** lời gọi, không phải `calls[0]` |
+| Vì sao không ở `canUseTool` | cổng đó **không nổ** cho tool nằm trong `allowedTools` (đo 26/08), mà cánh tay thì luôn nằm trong đó |
+| Lưu ở đâu | `.state/mcp-audit.jsonl` của **từng văn phòng** — cùng luật `chat.jsonl` |
+| Giữ gì | `ts · server · tool · role · plan_id · task_id · **args**` |
+| Trần | 2 000 ký tự/tham số · 2 000 dòng, dọn **sau mỗi ca** (dọn mỗi dòng là O(n²)) |
+
+⚠ **`args` là toàn bộ lý do nó tồn tại.** Không có tham số thì dòng log chỉ nói *"đã gọi
+update_page"* — đúng bằng thứ ta đã có và đã thấy là không đủ.
+
+⚠ **Không được ném.** `append` chạy giữa một ca đang làm việc; ném ở đó là đổi một mất mát nhỏ (một
+dòng nhật ký) lấy một mất mát lớn (cả ca, kèm tiền đã tiêu). Và **dòng hỏng chỉ bỏ đúng dòng đó** —
+daemon chết giữa một lần ghi để lại một dòng cụt, bỏ cả file là xoá sổ lịch sử của mọi lời gọi
+TRƯỚC nó, đúng lúc người ta cần chúng nhất. Cả hai có test.
+
+### 🎯 Nó nằm ở đâu trên giao diện — user hỏi thẳng 26/08
+
+> *"nên để nó bộ phận nào để UX thấy tiện? … có thể nó là một dạng advanced vì người nocode vào cũng
+> đâu hiểu gì. Vấn đề nó nên thuộc object nào trên UI?"*
+
+**Bảng chi tiết của node 🔌**, khối gập lại tên *"Kết nối này đã làm gì?"*. Ba lý do:
+
+1. **Ba ngăn kéo bên trái đều là NỘI DUNG của người dùng** (Kết quả · Tủ tài liệu · Kho tri thức).
+   Một cuốn nhật ký không phải nội dung — thêm ngăn thứ tư là bắt **mọi** người học một khái niệm
+   nữa, kể cả người sẽ không bao giờ mở nó.
+2. **Object sở hữu rủi ro là cánh tay.** Bảng đó đã nói *"nó LÀM ĐƯỢC gì"* (huy hiệu mức quyền, số
+   việc); nhật ký nói *"nó ĐÃ LÀM gì"*. Hai vế của cùng một câu hỏi ⇒ đứng cạnh nhau.
+3. **Nó tự phân tầng người dùng** mà không cần một chế độ "nâng cao" nào: phải bấm vào một node 🔌
+   mới thấy, và ai bấm vào node 🔌 thì đã đi qua ngưỡng đó rồi.
+
+Mặc định **đóng**, chỉ nạp khi mở. Mỗi dòng là **ai · làm gì · lúc nào**; tham số giấu sau một cú
+bấm — nó là thứ đắt nhất *và* dài nhất, bày hết ra thì 20 lời gọi thành một bức tường JSON và người
+ta thôi đọc, tức mất luôn những dòng đáng đọc.
 
 ## 6h. Đếm lại số bước — thước đo của cả §6
 

@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 
-import { folderRoots } from './catalog.js';
+import { armDirIndex, folderRoots } from './catalog.js';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import {
@@ -28,6 +28,7 @@ import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
 import { ArtifactStore, isStale } from './artifacts.js';
+import { AuditLog } from './audit.js';
 import { LayoutStore, ASSISTANT_NODE, agentNodeId, mcpNodeId, type LayoutNode } from './layout.js';
 import { Assistant, newPlanId, requestOf, type PlanDraft } from './assistant.js';
 import {
@@ -110,6 +111,14 @@ export interface CanvasNode extends LayoutNode {
   bash?: boolean;
   /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
   count?: number;
+  /**
+   * mcp: NẤC QUYỀN, và bảng chi tiết vẽ huy hiệu từ đây — **không** từ `label`.
+   * Nhãn là của người dùng và đổi tự do; nhét mức quyền vào chuỗi tên thì một
+   * cú đổi tên tạo ra được một cái nhãn nói dối về đặc quyền. → §6j
+   */
+  level?: 'read' | 'add' | 'full';
+  /** mcp: số việc đã cấp — để "chỉ đọc" kiểm được bằng mắt, không phải tin nhãn. */
+  toolCount?: number;
   mcp?: string[];
   /**
    * mcp: thư mục cánh tay với tới, nguyên văn như trong `company.yaml`. CHỈ ĐỌC
@@ -183,6 +192,14 @@ export class Office {
   readonly library: LibraryStore;
   /** Kết quả — file nhân viên làm ra. → docs/SPEC-artifacts.md */
   readonly artifacts: ArtifactStore;
+  /**
+   * Nhật ký kiểm toán cánh tay — MỌI lời gọi MCP, kèm tham số.
+   * → `core/audit.ts` · docs/SPEC-arms.md §6k
+   *
+   * Nó là thứ **thay** cho cổng duyệt từng lần (user chốt 25/08), nên nó không
+   * phải một tiện ích: bỏ cổng mà log không đủ thì ta vừa bỏ cả hai.
+   */
+  readonly audit: AuditLog;
   readonly assistant: Assistant;
   readonly layout: LayoutStore;
   readonly plans: PlanStore;
@@ -254,8 +271,10 @@ export class Office {
      */
     this.library.retryUnindexed();
     this.artifacts = new ArtifactStore(loaded.paths);
+    this.audit = new AuditLog(loaded.paths.state);
     this.assistant = new Assistant(loaded);
-    this.assistant.resumeFrom(this.readSessionId());
+    const saved = this.readSession();
+    this.assistant.resumeFrom(saved.id, saved.reach);
     this.layout = new LayoutStore(loaded);
     this.plans = new PlanStore(loaded.paths);
     /**
@@ -1271,7 +1290,14 @@ export class Office {
         });
       }
 
-      const problems = Scheduler.validate(plan, onDuty, this.loaded.dir);
+      // ⚠ Truyền bảng cánh tay: thiếu nó thì `inputs: ["Musics"]` bị chặn dù
+      // nhân viên có cánh tay tên Musics trỏ thẳng vào thư mục đó. → `resolveInput`
+      const problems = Scheduler.validate(
+        plan,
+        onDuty,
+        this.loaded.dir,
+        armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers),
+      );
       if (problems.length) {
         // Kế hoạch có ra, nhưng không chạy được — với người dùng thì vẫn là một
         // lượt phải nói lại. Tính là ma sát. → `planFriction`
@@ -1359,10 +1385,14 @@ export class Office {
         knowledge: this.knowledge,
         emit: (e) => this.onSchedulerEvent(e, plan, record),
         shouldStop: () => this.stopRequested,
+        audit: this.audit,
       });
       this.activeScheduler = scheduler;
 
       const result = await scheduler.run(plan);
+      // Dọn sau MỘT CA, không phải sau mỗi lời gọi: đọc-ghi cả file cho từng
+      // dòng biến một `appendFileSync` thành O(n²). → `audit.ts §trim`
+      this.audit.trim();
       const receipts = [...result.receipts.values()];
 
       /**
@@ -2440,6 +2470,9 @@ export class Office {
     this.knowledge.scan();
     this.library.rebind(this.loaded.paths);
     this.artifacts.rebind(this.loaded.paths);
+    // Đổi tên văn phòng làm dời thư mục ⇒ nhật ký phải đi theo. Quên dòng này
+    // là log ghi tiếp vào thư mục cũ, và giao diện đọc chỗ mới thấy trống trơn.
+    this.audit.rebind(this.loaded.paths.state);
     this.refreshAssistantContext();
   }
 
@@ -2920,15 +2953,17 @@ export class Office {
     }
 
     const norm = (p: string): string => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+    const armDirs = armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers);
     for (const t of plan.tasks ?? []) {
       // `mtime` của một input đọc THẲNG từ đĩa: nguồn thường là tài liệu trong
       // tủ, và tủ không nằm trong bảng kê kết quả.
       const srcTimes: string[] = [];
       for (const i of t.inputs ?? []) {
         // `resolveInput` chứ không phải `safeJoin`: đầu vào có thể là một đường
-        // dẫn TUYỆT ĐỐI ngoài văn phòng. Dùng safeJoin thì mọi kết quả dựng từ
-        // nguồn bên ngoài lặng lẽ mất phép kiểm "có ôi không". → paths.ts
-        const abs = resolveInput(this.loaded.dir, i.path);
+        // dẫn TUYỆT ĐỐI ngoài văn phòng, hoặc **tên một cánh tay** (`Musics`).
+        // Dùng safeJoin thì mọi kết quả dựng từ nguồn bên ngoài lặng lẽ mất
+        // phép kiểm "có ôi không" — chỗ thứ BA của cùng một luật. → paths.ts
+        const abs = resolveInput(this.loaded.dir, i.path, armDirs);
         if (!abs) continue;
         try {
           srcTimes.push(fs.statSync(abs).mtime.toISOString());
@@ -3465,11 +3500,31 @@ export class Office {
      * Rơi về chính băm khi sổ chưa có mục (cấu hình cũ, hoặc dán tay vào yaml).
      */
     if (n.kind === 'mcp') {
+      const meta = n.server ? this.loaded.company.arms[n.server] : undefined;
       return {
         ...base,
-        label: (n.server && this.loaded.company.arms[n.server]?.label) || n.server || n.id,
+        label: meta?.label || n.server || n.id,
         avatar: '🔌',
         connected: true,
+        /**
+         * NẤC QUYỀN + SỐ VIỆC — để bảng chi tiết vẽ huy hiệu **từ dữ liệu**, chứ
+         * không từ chuỗi tên. Nhãn đổi tự do; cái này thì không. → §6j
+         */
+        ...(meta?.level ? { level: meta.level } : {}),
+        ...(meta?.tools?.length ? { toolCount: meta.tools.length } : {}),
+        /**
+         * ⚠ KHÔNG tra tên workspace ở đây, dù bảng chi tiết cũng muốn nó.
+         *
+         * `describeNode` chạy cho **mọi node, mọi lần đọc canvas** — tra kho
+         * OAuth ở đây là một lần đọc file cho mỗi node, mỗi lần vẽ. Đắt, và đổi
+         * lại gần như không được gì: nhãn mặc định của cánh tay OAuth **đã** kèm
+         * tên workspace (`Notion · Không gian của Minh`), nên node trên sơ đồ
+         * vốn đã nói ra nó rồi.
+         *
+         * Chỗ THẬT SỰ cần tra là danh sách "đã cắm ở văn phòng khác" — ở đó
+         * người dùng nhìn nhiều mục Notion cạnh nhau và nhãn có thể đã bị đổi.
+         * `Company.listArms` đọc kho **một lần** cho cả danh sách. → §armWorkspace
+         */
         /**
          * THƯ MỤC THẬT của cánh tay — đọc từ `company.yaml`, KHÔNG sửa được ở đây.
          *
@@ -3708,19 +3763,31 @@ export class Office {
     return path.join(this.loaded.paths.state, 'assistant-session.json');
   }
 
-  private readSessionId(): string | undefined {
+  /**
+   * ⚠ ĐỌC CẢ ẢNH CHỤP DANH BẠ, không chỉ con trỏ phiên. → `Assistant.resumeFrom`
+   *
+   * Hai thứ này là MỘT CẶP: hội thoại cũ (nơi có những câu từ chối cũ) và ảnh
+   * chụp để biết cấu hình đã đổi gì. Lưu một, quên một, thì sau restart lịch sử
+   * còn nguyên mà tín hiệu đính chính thì mất — và model theo lịch sử.
+   */
+  private readSession(): { id?: string; reach?: Record<string, string[]> } {
     try {
-      const raw = JSON.parse(fs.readFileSync(this.sessionFile(), 'utf8')) as { session_id?: string };
-      return raw.session_id;
+      const raw = JSON.parse(fs.readFileSync(this.sessionFile(), 'utf8')) as {
+        session_id?: string;
+        reach?: Record<string, string[]>;
+      };
+      return { id: raw.session_id, reach: raw.reach };
     } catch {
-      return undefined;
+      return {};
     }
   }
 
   private saveSessionId(): void {
     if (!this.assistant.session) return;
+    const reach = this.assistant.reachSnapshot;
     this.writeJson(this.sessionFile(), {
       session_id: this.assistant.session,
+      ...(reach ? { reach } : {}),
       saved: new Date().toISOString(),
     });
   }
@@ -3836,13 +3903,20 @@ use_preset: false
 budget:
   # max_turns là đòn bẩy chi phí lớn nhất: mỗi lượt đọc lại TOÀN BỘ prefix.
   # Vai trò tier eco cần con số CAO HƠN tier standard — model rẻ đi nhiều
-  # bước hơn cho cùng một việc.
-  max_turns: ${tier === 'eco' ? 12 : 6}
+  # bước hơn cho cùng một việc. Tier deep thì ngược lại: mỗi lượt đắt hơn hẳn
+  # nhưng nó đi ít bước hơn.
+  #
+  # ⚠ NỚI 26/08 (user chốt) — 6/12 là con số của thời CHƯA CÓ MCP. Mỗi lời gọi
+  # MCP là MỘT LƯỢT, nên một việc chạm vài trang Notion đốt hết trần trước khi
+  # kịp làm xong. Đo được: xoá một trang con = 9 lượt, chạm trần ở 6, và cái
+  # giá của việc chạm trần là ĐẮT NHẤT trong mọi kiểu hỏng — nó chạy tới kịch
+  # rồi mất trắng.
+  max_turns: ${tier === 'eco' ? 20 : tier === 'deep' ? 10 : 15}
   # Trần chi phí MỘT việc. Đặt 0 = không giới hạn.
   # Số dưới đây RỘNG có chủ ý: chặn giữa chừng là mất trắng số tiền đã tiêu mà
   # không có kết quả. Đo được 21/08 trên bài gộp CSV 200 dòng: eco ~$0.17,
   # standard ~$0.45. Siết xuống khi bạn đã biết việc của mình tốn bao nhiêu.
-  max_usd: ${tier === 'eco' ? '1.0' : '2.0'}
+  max_usd: ${tier === 'eco' ? '2.0' : tier === 'deep' ? '10.0' : '5.0'}
   knowledge_pack: 3000
 `;
 }

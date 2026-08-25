@@ -779,10 +779,17 @@ export function requestOf(draft: PlanDraft): string {
  * │   `reach()` thi hành nó theo đúng nghĩa đen (`[...role.mcp]` đi đầu).    │
  * │   Thêm bao nhiêu năng lực về sau, câu vẫn đúng, không phải sửa lại.      │
  * │                                                                          │
- * │ ⚠ CÒN NỢ: dòng đó liệt kê MCP bằng TÊN (`notion`), không bằng NĂNG LỰC.  │
- * │ Trợ lý biết "với tới Notion", không biết "ghi được file". Đó đúng là ca  │
- * │ ⑱ lặp lại thấp hơn một tầng — tên server là LỜI KHAI, danh sách tool     │
- * │ của nó mới là SỰ THẬT. Chưa giải; xem §4 SESSIONS_MEMORY.                │
+ * │ ✅ NỢ NÀY ĐÃ TRẢ 26/08 — sau khi user đâm thẳng vào nó.                  │
+ * │                                                                          │
+ * │ Nợ cũ: *"dòng đó liệt kê MCP bằng TÊN (`notion`), không bằng NĂNG LỰC.   │
+ * │ Trợ lý biết 'với tới Notion', không biết 'ghi được file'."*               │
+ * │                                                                          │
+ * │ Ca thật: user đổi cánh tay sang toàn quyền, Trợ lý vẫn từ chối bằng       │
+ * │ **đúng câu cũ**. Nó không cố chấp — nó không có dữ kiện nào để biết khác. │
+ * │                                                                          │
+ * │ Giải được vì `arms[].level` mới tồn tại từ 26/08. `armReach` giờ in nấc   │
+ * │ ngay trên dòng của nhân viên. Vắng `level` (thư mục · tự cắm) ⇒ không in  │
+ * │ gì — bịa một năng lực cho thứ không khai nó là dựng lại đúng lỗi này.     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const SHELL_LEGEND =
@@ -884,13 +891,88 @@ export function shellFlag(tools: readonly string[]): string {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function armReach(
-  arms: Record<string, { label?: string }>,
+  arms: Record<string, { label?: string; level?: 'read' | 'add' | 'full' }>,
   servers: Record<string, unknown>,
   id: string,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CẦU NỐI TỪ TÊN NGƯỜI DÙNG GỌI → TÊN TOOL MODEL THẤY. (user hỏi 26/08)   │
+   * │                                                                          │
+   * │   *"trong trường hợp đặt tên phi-latin, mà trường tên không ảnh hưởng     │
+   * │    tới băm ⇒ hết cách…"*  · *"bạn đã tính tới case đặt tên trùng chưa"*  │
+   * │                                                                          │
+   * │ Hai câu, một chỗ hỏng: `armKeys` chỉ tạo được khoá đọc được từ nhãn, mà  │
+   * │ nhãn **phi-Latin** (文档 · 회계) ra chuỗi rỗng và nhãn **trùng nhau** thì  │
+   * │ cả hai phải về băm. Cả hai đường đổ về cùng một chỗ: model lại nhìn thấy │
+   * │ `mcp__a46a7e26403__…` và không biết đó là cánh tay nào.                   │
+   * │                                                                          │
+   * │ ⇒ Đường ra KHÔNG nằm ở cái tên — nó nằm ở **dòng danh bạ**. Một cái tên  │
+   * │ không mang được thông tin thì đặt thông tin ngay cạnh nó:                 │
+   * │                                                                          │
+   * │     文档 — chỉ đọc · gọi bằng mcp__a46a7e26403__*                        │
+   * │                                                                          │
+   * │ Đây KHÔNG phải "thêm một câu dặn" (thứ đã thua ba lần). Nó là một **ánh   │
+   * │ xạ nằm trên chính dòng có cái tên** — đúng khuôn đã thắng ở `chạy lệnh:   │
+   * │ TẮT` và `đường tắt tới`. → [[agentco-prompt-rules-lose-to-examples]]      │
+   * │                                                                          │
+   * │ ⚠ CHỈ nêu khi cần: khoá **suy được từ nhãn** thì model tự bắc cầu, và     │
+   * │ dán thêm một chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích —    │
+   * │ đồng thời dạy model rằng những chuỗi đó là nhiễu, rồi nó bỏ qua đúng lúc │
+   * │ chuỗi đó có nghĩa.                                                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  toolKey?: string,
 ): string {
   // Băm là thứ CUỐI CÙNG dùng tới: nhãn do người dùng đặt là thứ họ nhận ra.
   const label = arms[id]?.label?.trim() || id;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 TRẢ MÓN NỢ ĐÃ GHI TỪ 22/08 — và user vừa đâm thẳng vào nó 26/08.      │
+   * │                                                                          │
+   * │ Nợ, nguyên văn ở `SHELL_LEGEND`: *"dòng đó liệt kê MCP bằng TÊN           │
+   * │ (`notion`), không bằng NĂNG LỰC. Trợ lý biết 'với tới Notion', không biết │
+   * │ 'ghi được file'. Chưa giải."*                                            │
+   * │                                                                          │
+   * │ Ca thật: user đổi cánh tay sang **toàn quyền**, rồi hỏi *"tạo giúp tôi    │
+   * │ một trang Notion"* — Trợ lý vẫn trả lời **y hệt câu cũ**: *"chỉ đọc được  │
+   * │ Notion, không tạo hay ghi trang mới"*. Nó không cố chấp: **nó không có    │
+   * │ dữ kiện nào để biết khác đi.** Dòng danh bạ chỉ ghi một cái tên, và một   │
+   * │ cái tên thì không nói gì về quyền.                                       │
+   * │                                                                          │
+   * │ ⚠ Và đây là chỗ nợ đó đắt gấp đôi: Trợ lý đoán **theo chiều TỪ CHỐI**.   │
+   * │ Cùng hình dạng với ca `chạy lệnh: TẮT` (§SHELL_LEGEND) — *nói dối theo    │
+   * │ chiều làm Trợ lý từ chối một việc vốn chạy được*, lần thứ hai, thấp hơn   │
+   * │ một tầng.                                                                │
+   * │                                                                          │
+   * │ Giải được BÂY GIỜ vì `arms[].level` mới có thật từ 26/08 — trước đó       │
+   * │ không có gì để in ra. Ba chữ, nằm **trên chính dòng của nhân viên** —     │
+   * │ đúng luật [[agentco-prompt-rules-lose-to-examples]]: điều kiện phải nằm   │
+   * │ ở chỗ thua, không phải thêm một câu dặn ở đầu khối.                       │
+   * │                                                                          │
+   * │ ⚠ Vắng `level` ⇒ **không in gì**. Cánh tay thư mục và cánh tay tự cắm     │
+   * │ không có nấc, và bịa "toàn quyền" cho chúng là dựng lại đúng cái lỗi vừa  │
+   * │ vá — đoán hộ một năng lực từ một thứ không khai nó.                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const LEVEL: Record<string, string> = {
+    read: 'chỉ đọc',
+    add: 'đọc + thêm mới, không sửa/xoá',
+    full: 'đọc + ghi + sửa/xoá',
+  };
+  const level = arms[id]?.level ? LEVEL[arms[id]!.level!] : undefined;
   const roots = folderRoots(servers[id]);
+  /**
+   * CUỐN DANH BẠ: tên nhà → địa chỉ nhà. Chỉ in khi chỗ gọi đưa `toolKey`, tức
+   * khi vai trò có **từ hai cánh tay trở lên** — một cánh tay thì không có gì
+   * để nhầm, và dán chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích.
+   */
+  const bridge = toolKey ? ` · gọi bằng mcp__${toolKey}__*` : '';
+  if (level) {
+    return roots.length
+      ? `${label} — ${level} (đường tắt tới ${roots.join(' · ')})${bridge}`
+      : `${label} — ${level}${bridge}`;
+  }
+  if (bridge) return roots.length ? `${label} (đường tắt tới ${roots.join(' · ')})${bridge}` : `${label}${bridge}`;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ "ĐƯỜNG TẮT", KHÔNG PHẢI "THƯ MỤC". Một từ, và nó sửa một ca hỏng thật.   │
@@ -1070,8 +1152,35 @@ export class Assistant {
     return this.sessionId;
   }
 
-  resumeFrom(sessionId: string | undefined): void {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 ẢNH CHỤP DANH BẠ PHẢI SỐNG SÓT QUA LẦN TẮT DAEMON — bug 26/08.       │
+   * │                                                                          │
+   * │ `sessionId` được LƯU RA ĐĨA (`.state/assistant-session.json`) nên hội     │
+   * │ thoại sống qua restart. `reachPrev` thì **chỉ nằm trong RAM**. Hậu quả:   │
+   * │                                                                          │
+   * │   restart → lịch sử CÒN NGUYÊN (kèm mọi câu từ chối cũ)                  │
+   * │           → `reachPrev === undefined` ⇒ **diff bị tắt**                  │
+   * │           → model theo lịch sử, y như §15f đã đo                         │
+   * │                                                                          │
+   * │ ⇒ Cơ chế dựng ra để chống *"câu cũ thắng lịch sử"* bị vô hiệu **đúng vào │
+   * │ lúc nó cần nhất**: sau một lần restart, tức đúng lúc cấu hình hay vừa     │
+   * │ đổi nhất. Nó im lặng, vì im lặng chính là hành vi mặc định của nó.       │
+   * │                                                                          │
+   * │ Hai thứ đi cùng một cặp thì phải bền cùng một mức. Lệch mức bền là một    │
+   * │ lớp lỗi, không phải một chi tiết.                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  resumeFrom(sessionId: string | undefined, reach?: Record<string, string[]>): void {
     this.sessionId = sessionId;
+    // Không có ảnh chụp ⇒ giữ `undefined` (không có gì để so). Có ⇒ dựng lại
+    // đúng hình dạng `reachMap()` trả về, để `reachDiff` so được ngay lượt đầu.
+    this.reachPrev = reach ? new Map(Object.entries(reach)) : undefined;
+  }
+
+  /** Ảnh chụp danh bạ để ghi kèm con trỏ phiên. → `Office.saveSessionId` */
+  get reachSnapshot(): Record<string, string[]> | undefined {
+    return this.reachPrev ? Object.fromEntries(this.reachPrev) : undefined;
   }
 
   /**
@@ -1299,8 +1408,16 @@ export class Assistant {
    * └──────────────────────────────────────────────────────────────────────┘
    */
   private reach(role: Role): string {
+    /**
+     * ⚠ CHỈ bắc cầu khi vai trò có **từ HAI cánh tay trở lên**.
+     *
+     * Một cánh tay thì không có gì để nhầm — model gọi cái duy nhất nó thấy.
+     * Dán chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích, và dạy model
+     * rằng những chuỗi đó là nhiễu — rồi nó bỏ qua đúng lúc chuỗi đó có nghĩa.
+     */
+    const many = role.mcp.length > 1;
     const parts = role.mcp.map((id) =>
-      armReach(this.office.company.arms, this.office.company.mcpServers, id),
+      armReach(this.office.company.arms, this.office.company.mcpServers, id, many ? id : undefined),
     );
     // Web bật sẵn cho mọi nhân viên (BUILTIN_TOOLS) nên luôn nêu — đây là khả
     // năng thật, và không nêu thì Trợ lý không biết mà giao việc tra cứu.
@@ -1366,8 +1483,12 @@ export class Assistant {
     const m = new Map<string, string[]>();
     for (const id of [...this.assignableRoles()].sort()) {
       const role = this.office.roles.get(id);
-      const caps = (role?.mcp ?? []).map((x) =>
-        armReach(this.office.company.arms, this.office.company.mcpServers, x),
+      // ⚠ CÙNG phép tính với `reach()`. Lệch một chỗ thì `reachDiff` báo "đổi"
+      // cho một dòng không đổi gì — một cảnh báo giả ở mỗi lượt.
+      const mcp = role?.mcp ?? [];
+      const many = mcp.length > 1;
+      const caps = mcp.map((x) =>
+        armReach(this.office.company.arms, this.office.company.mcpServers, x, many ? x : undefined),
       );
       /**
        * CÔNG TẮC SHELL ĐI CHUNG MỘT ĐƯỜNG VỚI CÁNH TAY (user chốt 24/08).

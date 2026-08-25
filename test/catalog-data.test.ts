@@ -98,25 +98,47 @@ test('http: không headers thì không đẻ ra khoá rỗng', () => {
 
 // ───────────────────────────────────────────────── mục Notion cụ thể
 
-test('Notion: HTTP hosted, chỉ đọc, và ô trống khớp ĐÚNG tên chìa đã khai', () => {
+test('Notion: HTTP hosted, ĐĂNG NHẬP, và có đủ ba nấc quyền', () => {
   const notion = findArm('notion');
   assert.ok(notion);
   assert.equal(transportOf(notion), 'http');
-  assert.equal(notion.readOnly, true);
+  assert.equal(notion.price, 'login');
+  assert.equal(notion.tiered, true);
+  // Không ô chìa nào: tên chìa OAuth mang `workspace_id`, sinh lúc đăng nhập —
+  // khai trước ở đây là khai một chuỗi chắc chắn sai.
+  assert.deepEqual(notion.secrets, []);
+});
 
+test('⭐ Notion: ô `${OAUTH}` được thay bằng ĐÚNG tên tài khoản, không sót', () => {
   /**
-   * 🔴 Ô ĐO ĐẮT NHẤT: tên trong `${…}` phải khớp `secrets[].name` TỪNG KÝ TỰ.
+   * 🔴 Ô ĐO ĐẮT NHẤT CỦA CẢ LUỒNG OAUTH.
    *
-   * Lệch một ký tự ⇒ `injectSecrets` không thay được ⇒ server trả **401**, mà
-   * 401 nói *"chìa sai"* chứ không nói *"chìa thiếu"* — người đi tìm sẽ kiểm
-   * tài khoản, kiểm quyền, kiểm workspace. Câu lỗi **chỉ sai cửa** đắt hơn câu
-   * lỗi không có. Không ai bắt được chuyện này bằng mắt. → §5m ②
+   * `${OAUTH}` là **chỗ trống có tên quy ước**, không phải tên chìa. `buildConfig`
+   * phải thay nó bằng tên tài khoản thật; sót lại một cái là header bay lên
+   * Notion mang nguyên chữ `${OAUTH}` ⇒ **401** ⇒ và 401 nói *"chìa sai"* chứ
+   * không nói *"chìa thiếu"*, tức dắt người đi tìm sang nhầm cửa. → §5m ②
+   *
+   * (`probeArm` có lưới thứ hai — `missingSecretRefs` chặn trước khi gửi — nhưng
+   * lưới đó bắt *triệu chứng*. Test này canh *nguyên nhân*.)
    */
-  const cfg = buildConfig(notion.spec, { folders: [] }) as { headers: Record<string, string> };
-  const declared = new Set(notion.secrets.map((s) => s.name));
-  const used = Object.values(cfg.headers).flatMap((v) => [...v.matchAll(/\$\{([A-Z0-9_]+)\}/g)].map((m) => m[1]!));
-  assert.ok(used.length, 'Notion đi HTTP mà không dùng ô trống nào — chìa sẽ không tới được server');
-  for (const n of used) assert.ok(declared.has(n), `header dùng \${${n}} nhưng danh mục không khai chìa đó`);
+  const notion = findArm('notion');
+  assert.ok(notion);
+  const cfg = buildConfig(notion.spec, { folders: [], account: 'NOTION_OAUTH_A1B2C3D4' }) as {
+    headers: Record<string, string>;
+  };
+  const used = Object.values(cfg.headers).flatMap((v) =>
+    [...v.matchAll(/\$\{([A-Z0-9_]+)\}/g)].map((m) => m[1]!),
+  );
+  assert.deepEqual(used, ['NOTION_OAUTH_A1B2C3D4']);
+  assert.equal(JSON.stringify(cfg).includes('${OAUTH}'), false, 'còn sót ô trống chưa thay');
+});
+
+test('Notion: CHƯA chọn tài khoản thì ô trống GIỮ NGUYÊN, không tự bịa tên', () => {
+  // Giữ nguyên `${OAUTH}` là đúng: `missingSecretRefs` sẽ thấy và chặn trước khi
+  // gửi. Tự thay bằng một tên đoán mò là biến "chưa chọn" thành "chọn sai".
+  const notion = findArm('notion');
+  const cfg = buildConfig(notion!.spec, { folders: [] });
+  assert.ok(JSON.stringify(cfg).includes('${OAUTH}'));
 });
 
 test('Notion KHÔNG còn phụ thuộc gói npm nào — 0 rủi ro chuỗi cung ứng', () => {

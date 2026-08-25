@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { Archive, FileCode2, Pencil, Trash2, X } from 'lucide-react';
+import { Archive, FileCode2, Pencil, ScrollText, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Textarea } from '@/components/ui/misc';
@@ -11,8 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
-import type { CanvasNode } from '@/lib/types';
+import type { ArmCall, CanvasNode } from '@/lib/types';
 
 /**
  * Sửa hồ sơ nhân viên tại chỗ. → docs/SPEC-tools-approval.md §1
@@ -168,6 +169,119 @@ function AssistantName({ node }: { node: CanvasNode }) {
       </div>
     </div>
   );
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NHẬT KÝ KIỂM TOÁN — VÀ VÌ SAO NÓ NẰM Ở ĐÂY, không ở một ngăn kéo riêng.  │
+ * │ (user hỏi 26/08: *"nó nên thuộc object nào trên UI?"*)                   │
+ * │                                                                          │
+ * │ Ba ngăn kéo bên trái (Kết quả · Tủ tài liệu · Kho tri thức) đều là **nội  │
+ * │ dung của người dùng**. Một cuốn nhật ký không phải nội dung — thêm ngăn   │
+ * │ thứ tư là bắt MỌI người học một khái niệm nữa, kể cả người sẽ không bao   │
+ * │ giờ mở nó. Đúng thứ user cảnh báo: *"người nocode vào cũng đâu hiểu gì"*. │
+ * │                                                                          │
+ * │ Chỗ đúng là **object sở hữu rủi ro**: cánh tay. Bảng này đã nói *"nó LÀM  │
+ * │ ĐƯỢC gì"* (huy hiệu mức quyền, số việc); nhật ký nói *"nó ĐÃ LÀM gì"*.    │
+ * │ Hai vế của cùng một câu hỏi, nên chúng đứng cạnh nhau.                    │
+ * │                                                                          │
+ * │ Và nó **tự phân tầng người dùng** mà không cần một chế độ "nâng cao" nào: │
+ * │ phải bấm vào một node 🔌 mới thấy, và ai bấm vào node 🔌 thì đã đi qua    │
+ * │ ngưỡng đó rồi.                                                           │
+ * │                                                                          │
+ * │ ⚠ Mặc định ĐÓNG. Nó có thể dài hàng trăm dòng, và bảng chi tiết là chỗ    │
+ * │ người ta vào để đổi tên hoặc rút dây — không phải để đọc log.             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function ArmLog({ server }: { server: string }) {
+  const officeId = useApp((s) => s.officeId);
+  const [open, setOpen] = useState(false);
+  const [calls, setCalls] = useState<ArmCall[] | null>(null);
+
+  // Chỉ nạp khi MỞ: một cánh tay chạy lâu có hàng trăm dòng, và nạp sẵn cho mỗi
+  // lần bấm vào node là trả giá cho một thứ hầu như không ai xem.
+  useEffect(() => {
+    if (!open || !officeId) return;
+    setCalls(null);
+    api
+      .armLog(officeId, server)
+      .then((r) => setCalls(r.calls))
+      .catch(() => setCalls([]));
+  }, [open, officeId, server]);
+
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <button
+        className="flex w-full items-center gap-1.5 text-[13px] text-accent hover:underline"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ScrollText className="h-3.5 w-3.5" />
+        {open ? 'Ẩn nhật ký' : 'Kết nối này đã làm gì?'}
+      </button>
+
+      {open && (
+        <div className="mt-2">
+          {calls === null && <p className="text-xs text-muted">Đang đọc…</p>}
+          {calls?.length === 0 && (
+            <p className="text-xs leading-relaxed text-muted">
+              Chưa có lời gọi nào được ghi. Nhật ký bắt đầu từ lúc kết nối được dùng trong một việc
+              thật — bấm <b>Thử ngay</b> lúc cắm thì không tính.
+            </p>
+          )}
+          {calls?.map((c, i) => (
+            <ArmLogRow key={`${c.ts}-${i}`} call={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Một dòng: **AI · LÀM GÌ · LÚC NÀO**, tham số giấu sau một cú bấm.
+ *
+ * Tham số là thứ đắt nhất của cuốn nhật ký (nó trả lời *"nó đã ghi GÌ vào
+ * Notion"*) và cũng là thứ dài nhất. Bày hết ra thì 20 lời gọi thành một bức
+ * tường JSON và người ta thôi đọc — tức mất luôn cả những dòng đáng đọc.
+ */
+function ArmLogRow({ call }: { call: ArmCall }) {
+  const [show, setShow] = useState(false);
+  const when = new Date(call.ts);
+  const stamp = Number.isNaN(when.getTime())
+    ? call.ts
+    : when.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+  return (
+    <div className="border-b border-line/60 py-1.5 last:border-0">
+      <button className="w-full text-left" onClick={() => setShow((v) => !v)}>
+        <div className="flex items-baseline gap-1.5 text-[12.5px]">
+          {/* Tên việc NGUYÊN VĂN, không qua bảng dịch viết tay: bảng đó đúng cho
+              một hãng và câm cho mọi hãng khác — cùng lý lẽ `describeCall`. */}
+          <span className="min-w-0 flex-1 truncate font-medium">{call.tool.replace(/_/g, ' ')}</span>
+          <span className="flex-none tabular-nums text-[11px] text-muted">{stamp}</span>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-muted">
+          {call.role}
+          {call.task_id ? ` · ${call.task_id}` : ''}
+        </div>
+      </button>
+      {show && (
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-line/40 p-2 text-[11px] leading-relaxed text-ink">
+          {pretty(call.args)}
+          {call.truncated ? '\n\n… (đã cắt bớt — tham số quá dài)' : ''}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** JSON cho dễ đọc; hỏng thì hiện nguyên văn — đừng nuốt thứ duy nhất còn lại. */
+function pretty(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
 }
 
 const TIER_HINT: Record<string, string> = {
@@ -541,6 +655,41 @@ function ArmName({ node }: { node: CanvasNode }) {
 
   return (
     <div className="mt-3">
+      {/*
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ HUY HIỆU MỨC QUYỀN — **SUY TỪ `level`, KHÔNG ĐỌC CHUỖI TÊN**.        │
+        │                                                                      │
+        │ User hỏi 25/08 *"thêm quyền vào tên có hơi lủng không"* — có. Nhãn là │
+        │ của người dùng, đổi tự do (§6i). Nhét `· chỉ đọc` vào chuỗi thì một   │
+        │ cú đổi tên tạo ra được **"Notion (ghi được)" trên một cánh tay chỉ    │
+        │ đọc** — nhãn nói dối về ĐẶC QUYỀN, đúng con bug "lời hứa rỗng" đã gỡ  │
+        │ ở bài 11 bước 5.                                                     │
+        │                                                                      │
+        │ Nên: hai lớp. Lớp ngoài (tên) đổi được; lớp trong (huy hiệu) thì      │
+        │ không — nó đọc `arms[băm].level`, thứ nằm trong chính cái băm. Ô nhập │
+        │ ngay dưới **không** với tới được nó, và đó là toàn bộ điểm.           │
+        └──────────────────────────────────────────────────────────────────────┘
+      */}
+      {(node.level || node.via) && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {/* Workspace NÀO — user 26/08. Tra từ tên chìa, không đọc chuỗi tên. */}
+          {node.via && (
+            <span className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">{node.via}</span>
+          )}
+          {node.level && (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                node.level === 'full' ? 'bg-danger-soft text-danger' : 'bg-line/70 text-muted'
+              }`}
+            >
+              {node.level === 'read' ? 'chỉ đọc' : node.level === 'add' ? 'đọc + thêm mới' : 'toàn quyền'}
+            </span>
+          )}
+          {node.toolCount ? (
+            <span className="text-[11px] tabular-nums text-muted">{node.toolCount} việc</span>
+          ) : null}
+        </div>
+      )}
       <label className="text-[11px] uppercase tracking-wide text-muted">Tên hiển thị</label>
       <div className="mt-1 flex gap-1.5">
         <Input value={text} onChange={(e) => setText(e.target.value)} />
@@ -649,9 +798,14 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                 <span className="text-danger">Không còn khai trong company.yaml.</span>
               </Note>
             )}
-            <Note>
-              Nối vào một nhân viên = ghi <code>mcp:</code> vào <code>roles/&lt;id&gt;.yaml</code> của người đó.
-            </Note>
+            {/*
+              ĐÃ BỎ: *"Nối vào một nhân viên = ghi `mcp:` vào `roles/<id>.yaml`"*.
+
+              Nó mô tả **cách ta lưu**, không mô tả thứ người dùng làm — họ kéo
+              một sợi dây, và cái file yaml là chuyện của ta. Cùng luật với hai
+              khối bên dưới: một dòng chỉ đáng ở lại nếu nó đổi được việc người
+              dùng sắp làm.
+            */}
 
             {/*
               HAI MỨC, đúng như nhân viên có "Cho nghỉ" và "Cất đi" — ranh giới
@@ -679,18 +833,31 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               Mượn một khái niệm từ chỗ nó xứng đáng sang chỗ nó không, là thứ
               vừa được gỡ ra. → SPEC-arms.md §6i
             */}
+            {/*
+              ┌──────────────────────────────────────────────────────────────────┐
+              │ HAI KHỐI `Note` ĐÃ BỎ. (user 26/08: *"prune giúp tôi block này,  │
+              │ tôi không ngại nếu prune chúng ở tất cả"*)                       │
+              │                                                                  │
+              │ ① *"Cấu hình và chìa khoá vẫn được giữ…"* — nó lặp lại y hệt câu │
+              │   trong hộp xác nhận, thứ hiện ra **đúng lúc người dùng cần**.   │
+              │   Nói trước một chuyện sẽ được nói lại là bắt họ đọc hai lần.    │
+              │                                                                  │
+              │ ② *"Nối vào Trợ lý = việc vặt… concierge (M1)… phá prompt cache"*│
+              │   — đây là ghi chú cho **người viết code**, không phải cho người │
+              │   dùng: `concierge`, `M1`, `prompt cache` đều là từ vựng của ta. │
+              │                                                                  │
+              │ ⚠ Luật rút ra, áp cho mọi `Note` về sau: một dòng chỉ đáng ở lại │
+              │ nếu nó **đổi được việc người dùng sắp làm**. Chữ nói đúng nhưng  │
+              │ không đổi hành vi là thứ dạy người ta lướt qua mọi chữ khác —    │
+              │ rồi họ lướt qua đúng cái đáng đọc. Cùng lý lẽ đã dùng để KHÔNG   │
+              │ dán cảnh báo lên nút đổi tên (§AssistantName).                   │
+              └──────────────────────────────────────────────────────────────────┘
+            */}
+            <ArmLog server={node.server!} />
+
             <Button variant="danger" className="mt-4 w-full" onClick={() => setConfirmRemove(node)}>
               Xoá khỏi văn phòng này
             </Button>
-            <Note>
-              Cấu hình và chìa khoá <b>vẫn được giữ</b>. Cắm lại đúng thứ này lúc nào cũng được — nút{' '}
-              <b>Kết nối</b> sẽ tự tìm ra nó.
-            </Note>
-            <Note>
-              Nối vào Trợ lý = việc vặt Trợ lý tự xử lý. Dây này hiện mới được <b>ghi nhận</b>: nó cần{' '}
-              <code>concierge</code> (M1) mới chạy được — Trợ lý không tự cầm MCP, vì MCP phá prompt cache ở
-              mỗi lượt trò chuyện.
-            </Note>
           </>
         )}
 

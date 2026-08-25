@@ -320,13 +320,58 @@ export function safeJoin(base: string, relative: string): string {
  * │ `cwd` của daemon, một cái gốc chẳng liên quan gì tới ai.                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export function resolveInput(officeDir: string, p: string): string | undefined {
+export function resolveInput(
+  officeDir: string,
+  p: string,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ LOẠI ĐƯỜNG DẪN THỨ BA: **TÊN MỘT CÁNH TAY**. (bug user báo 26/08)       │
+   * │                                                                          │
+   * │ User gõ *"Liệt kê danh sách bài hát trong Musics"*. Trợ lý làm ĐÚNG      │
+   * │ những gì `ASSISTANT_CORE` dặn — *"đường dẫn người dùng gõ là chính xác,  │
+   * │ chép nguyên văn vào `inputs`"* — nên nó ghi `inputs: ["Musics"]`. Rồi    │
+   * │ `validate` tìm một file tên `Musics` trong văn phòng, không thấy, và     │
+   * │ chặn cả kế hoạch: *"không có file đó, và không việc nào tạo ra nó"*.     │
+   * │                                                                          │
+   * │ Ba lượt liên tiếp, và người dùng nói đúng: *"bạn được cấp MCP rồi mà"*.  │
+   * │ Cánh tay tên **Musics** trỏ vào `D:\…\Musics` và nằm ngay trong danh bạ  │
+   * │ của chính nhân viên đó. Chuỗi ấy giải được — ta chỉ chưa thử.            │
+   * │                                                                          │
+   * │ ⚠ Đây là lần THỨ HAI cùng một lớp lỗi ở cùng một hàm: 22/08 nó mù trước  │
+   * │ đường dẫn tuyệt đối ngoài văn phòng; hôm nay nó mù trước tên cánh tay.   │
+   * │ Cả hai lần, Trợ lý **bị chặn vì tuân lệnh**, và cả hai lần lỗi nằm ở     │
+   * │ TẦNG KIỂM chứ không ở tầng lập kế hoạch. Vá ở đây, không ở prompt: một   │
+   * │ câu dặn thêm sẽ thua chính dòng danh bạ ghi `Musics (đường tắt tới …)`.  │
+   * │ → [[agentco-prompt-rules-lose-to-examples]]                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Khoá đã chuẩn hoá (thường hoá) → thư mục THẬT. Xem `catalog.ts §armDirIndex`.
+   */
+  armDirs?: Record<string, string>,
+): string | undefined {
   if (path.isAbsolute(p)) return p;
+
+  let inOffice: string | undefined;
   try {
-    return safeJoin(officeDir, p);
+    inOffice = safeJoin(officeDir, p);
   } catch {
+    // Mưu toan traversal (`../../etc/passwd`) — KHÔNG được rơi xuống nhánh cánh
+    // tay để rồi tìm thấy một thứ khác. Nó phải chết ở đây, như trước.
     return undefined;
   }
+
+  /**
+   * ⚠ FILE TRONG VĂN PHÒNG THẮNG. Chỉ khi nó không tồn tại mới hỏi tới cánh tay.
+   *
+   * Ngược lại thì một cánh tay tên `bao-cao` sẽ nuốt mất `bao-cao/` có thật
+   * trong văn phòng — im lặng, và ở đúng chỗ người dùng tin nhất.
+   */
+  if (!armDirs || existsOnDisk(inOffice)) return inOffice;
+
+  const hit = armDirs[p.replace(/[\\/]+$/, '').toLowerCase()];
+  // Không khớp ⇒ trả đường trong văn phòng như cũ: câu lỗi phải nói về chỗ
+  // người dùng nghĩ tới, không về một thư mục họ chưa từng nhắc.
+  return hit ?? inOffice;
 }
 
 /**

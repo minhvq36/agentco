@@ -272,6 +272,24 @@ export const CompanyConfigSchema = z.object({
       cache_ttl: z.enum(['auto', '5m', '1h']).default('auto'),
       /** Chờ tối đa bao lâu ở cache priming gate trước khi thả hết. */
       priming_timeout_ms: z.number().int().positive().default(20_000),
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ ĐỊA CHỈ NGƯỜI DÙNG THẬT SỰ GÕ VÀO TRÌNH DUYỆT. Chỉ cần khi daemon    │
+       * │ KHÔNG chạy trên máy người dùng: Docker · VPS · sau nginx · có domain.│
+       * │                                                                      │
+       * │ Vì sao nó không suy được: `Host` header do client gửi nên **giả       │
+       * │ được**, và `redirect_uri` là nơi MÃ UỶ QUYỀN được gửi tới. Suy nó từ  │
+       * │ một header người lạ điều khiển được là mở đúng cửa để lấy trộm mã.   │
+       * │ ⇒ Phải là thứ **người triển khai khai ra**, không phải thứ ta đoán.  │
+       * │                                                                      │
+       * │ Bỏ trống khi chạy trên máy mình (mặc định) — lúc đó `127.0.0.1:<cổng>│
+       * │ vừa đúng vừa an toàn, và đó là ca duy nhất đã test.                  │
+       * │                                                                      │
+       * │ Đặt bằng yaml, hoặc `AGENTCO_RUNTIME_PUBLIC_URL=https://…` (cơ chế    │
+       * │ env override có sẵn — không đẻ thêm khái niệm nào). → SPEC-arms §5h·6│
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      public_url: z.string().default(''),
     })
     .prefault({}),
 
@@ -443,6 +461,18 @@ export const CompanyConfigSchema = z.object({
          * └────────────────────────────────────────────────────────────────────┘
          */
         tools: z.array(z.string()).default([]),
+        /**
+         * NẤC QUYỀN người dùng chọn lúc cắm. → docs/SPEC-arms.md §6j
+         *
+         * `read` chỉ đọc · `add` đọc + thêm mới · `full` toàn quyền.
+         * Vắng = cánh tay tạo trước 26/08, hoặc mục không có nấc (thư mục, tự
+         * cắm) — chúng giữ nguyên hành vi cũ và **giữ nguyên băm cũ**.
+         *
+         * ⚠ Trường này đi vào `armHash`. Đổi nấc = **một cánh tay khác**, đó
+         * chính là thứ làm cho "đổi mức ở văn phòng này" không đụng văn phòng
+         * khác — xem khối chú thích ở `catalog.ts §armHash`.
+         */
+        level: z.enum(['read', 'add', 'full']).optional(),
       }),
     )
     .prefault({}),

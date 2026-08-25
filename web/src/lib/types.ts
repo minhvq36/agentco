@@ -65,6 +65,12 @@ export interface CanvasNode {
    */
   bash?: boolean;
   count?: number;
+  /** Cánh tay: nấc quyền — huy hiệu vẽ từ đây, **KHÔNG** từ `label`. → §6j */
+  level?: 'read' | 'add' | 'full';
+  /** Cánh tay: số việc đã cấp, để nhãn "chỉ đọc" kiểm được bằng mắt. */
+  toolCount?: number;
+  /** Cánh tay: tên WORKSPACE nó nối tới — tra từ kho OAuth, không đọc `label`. */
+  via?: string;
   mcp?: string[];
   /**
    * Cánh tay: thư mục nó với tới, **nguyên văn** như trong `company.yaml`.
@@ -398,7 +404,52 @@ export interface CatalogArm {
   secrets: { name: string; label: string; help: string }[];
   /** Cánh tay cần danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
   folders?: { label: string; help: string };
+  /** Cho chọn nấc quyền lúc cắm (Chỉ đọc / +Thêm / Toàn quyền). → §6j */
+  tiered?: boolean;
+  /** Cần ĐĂNG NHẬP thay vì gõ chìa. Suy từ `spec` ở server, không khai tay. */
+  needsLogin?: boolean;
   brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
+}
+
+/**
+ * Workspace đã nối. **Tên và nhãn, không bao giờ token.**
+ *
+ * "Workspace" chứ không phải "tài khoản": kiến trúc Notion là 1 tài khoản ⇄ N
+ * workspace, và mỗi lần cấp quyền OAuth gắn với **một** workspace.
+ */
+/**
+ * MỘT lời gọi MCP đã xảy ra. → `core/audit.ts` · SPEC-arms §6k
+ *
+ * Bản ghi **kiểm toán**, không phải bản ghi tiến độ: nó có `args`, và `args`
+ * chính là toàn bộ lý do nó tồn tại. Không có tham số thì dòng log chỉ nói
+ * *"đã gọi update_page"* — đúng bằng thứ đã có, và đã thấy là không đủ.
+ */
+export interface ArmCall {
+  ts: string;
+  server: string;
+  tool: string;
+  role: string;
+  plan_id?: string;
+  task_id?: string;
+  args: string;
+  /** Tham số bị cắt vì quá dài — nói ra, đừng để người đọc tưởng đó là tất cả. */
+  truncated?: boolean;
+}
+
+export interface OAuthAccount {
+  name: string;
+  label?: string;
+  expiresAt?: number;
+  /** Cánh tay đang dùng chìa này. Rỗng ⇒ gỡ được ngay, không cần hỏi server. */
+  usedBy: string[];
+  /**
+   * Chìa đã chết — phải **đăng nhập lại**, chờ không khỏi. Lý do nguyên văn.
+   *
+   * Không có trường này thì triệu chứng duy nhất là cánh tay 401 im lặng lúc
+   * một nhân viên đang làm việc — xa nguyên nhân, và câu 401 nói *"chìa sai"*
+   * chứ không nói *"chìa chết"*.
+   */
+  dead?: string;
 }
 
 /**
@@ -418,6 +469,22 @@ export interface InstalledArm {
    * văn phòng khác không phải điền lại gì. → `company.ts §reuseArm`
    */
   secrets: string[];
+  /**
+   * Nấc quyền. Giao diện vẽ **huy hiệu** từ đây, KHÔNG từ chuỗi tên.
+   *
+   * ⚠ Nhét mức quyền vào `label` thì một cú đổi tên tạo ra được *"Notion (ghi
+   * được)"* trên một cánh tay chỉ đọc — nhãn nói dối về đặc quyền. → §6j
+   */
+  level?: 'read' | 'add' | 'full';
+  /**
+   * Tên WORKSPACE cánh tay này nối tới — server tra từ `arms[].secrets` ra kho
+   * OAuth. Không đọc chuỗi `label`: nhãn là của người dùng và đổi tự do, còn
+   * workspace là sự thật thuộc về cấu hình. Vắng ⇒ không dùng OAuth, hoặc
+   * workspace đã bị gỡ; cả hai đều là "không biết" ⇒ không vẽ gì.
+   */
+  via?: string;
+  /** Số việc đã cấp — hiện cạnh huy hiệu để nhãn kiểm được bằng mắt. */
+  toolCount: number;
   usedBy: { office: string; role: string }[];
   /**
    * Không văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
@@ -433,6 +500,14 @@ export interface InstalledArm {
  */
 export interface ProbeResult {
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  /**
+   * Nấc quyền ĐÁNG hiện, kèm số việc — **tính ở server**, không suy lại ở đây.
+   *
+   * ⚠ Luật *"chỉ hiện nếu thêm ≥1 việc so với nấc dưới"* có ca biên tinh tế
+   * (server toàn tool đọc ⇒ ba nấc bằng nhau ⇒ hai nấc dưới là noise). Dựng bản
+   * thứ hai của luật đó ở giao diện là dựng một bản sẽ quên một điều kiện.
+   */
+  tiers?: { tier: 'read' | 'add' | 'full'; count: number }[];
   serverName?: string;
   serverVersion?: string;
   /** NGUYÊN VĂN câu lỗi của server — chuỗi duy nhất copy đi hỏi chỗ khác được. */

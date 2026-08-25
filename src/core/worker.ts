@@ -36,12 +36,27 @@ import {
   type Usage,
 } from './types.js';
 import { effectiveTools } from './types.js';
+import { splitArmTool } from './audit.js';
 
 export interface WorkerDeps {
   office: LoadedOffice;
   /** Gọi trước khi bắn request; scheduler dùng để chặn cache priming gate. */
   acquireCacheSlot?(cacheKey: string): Promise<() => void>;
   onProgress?(say: string): void;
+  /**
+   * MỘT lời gọi MCP đã xảy ra — cho nhật ký kiểm toán. → `core/audit.ts`
+   *
+   * ⚠ Bắn cho **mọi** lời gọi, không phải cái đầu tiên như `onProgress`. Bỏ sót
+   * một lời gọi thì nó không còn là kiểm toán.
+   */
+  onArmCall?(call: {
+    server: string;
+    tool: string;
+    role: string;
+    plan_id?: string;
+    task_id?: string;
+    args: unknown;
+  }): void;
   /**
    * Trao tay cầm để NGẮT GIỮA CHỪNG. Scheduler giữ nó, `Esc` / `/stop` gọi tới.
    * → docs/SPEC-tools-approval.md §3b
@@ -124,6 +139,29 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
    * │ `mcp__.*` (khối `hooks` bên dưới) thì **mở một cửa ghi vào `roles/` và  │
    * │ đọc `.state/`** — đúng hai lỗ vừa vá 23/08, qua một cửa khác.           │
    * │ Ba phần này KHÔNG tách được. → docs/SPEC-arms.md §5g                    │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ KHOÁ `mcpServers` GIỮ NGUYÊN BĂM. (user chốt 26/08, và chốt đúng)      │
+   * │                                                                        │
+   * │ Bản trước tôi đổi khoá thành slug từ nhãn (`mcp__fpt__…`) để model phân │
+   * │ biệt được hai cánh tay Notion. User đề nghị ngược lại: **giữ băm, và    │
+   * │ để dòng danh bạ trỏ tới tên**. Ba lý do nó tốt hơn:                     │
+   * │                                                                        │
+   * │  ① Cầu nối ở danh bạ **vẫn cần trong mọi trường hợp** — nhãn phi-Latin  │
+   * │    ra slug rỗng, nhãn trùng thì cả hai phải về băm. Nên slug chỉ là     │
+   * │    tối ưu MỘT PHẦN chồng lên một cơ chế ĐÃ ĐỦ. Hai cơ chế, một việc.    │
+   * │  ② Slug đẻ ra **ba điểm quy đổi** (`armGrants` · `armLabels` · nhật ký),│
+   * │    và cái đầu hỏng theo chiều **cấp thừa quyền**: tra `arms[]` bằng     │
+   * │    slug thì `tools` luôn `undefined` ⇒ cấp CẢ SERVER cho cánh tay       │
+   * │    "chỉ đọc". Một tối ưu hiển thị không được mở nổi một lỗ đặc quyền.   │
+   * │  ③ Codebase này bị cắn nhiều lần vì *"hai đường cho một việc"*. Băm ở   │
+   * │    mọi nơi nghĩa là `armGrants`, `describeCall` và nhật ký nói **cùng   │
+   * │    một thứ tiếng** — không còn phép quy đổi nào để quên.                │
+   * │                                                                        │
+   * │ ⇒ Model bắc cầu bằng DÒNG DANH BẠ (`assistant.ts §armReach`), thứ nêu   │
+   * │ thẳng `gọi bằng mcp__<băm>__*` khi vai trò có từ hai cánh tay trở lên.  │
    * └────────────────────────────────────────────────────────────────────────┘
    */
   const mcpServers = role.mcp.length ? pickMcp(office, role) : undefined;
@@ -393,6 +431,35 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
           // Cùng một luồng `tool_use`, thêm hai thứ quan sát được và không tốn
           // gì: có lặp thao tác không, và đã chạm tài liệu nào trong tủ.
           observeCall(watch, call);
+          /**
+           * ┌────────────────────────────────────────────────────────────────┐
+           * │ NHẬT KÝ KIỂM TOÁN — **MỌI** lời gọi MCP, kèm THAM SỐ.          │
+           * │                                                                │
+           * │ ⚠ Nằm trong vòng lặp `for`, KHÔNG dùng `calls[0]` như dòng     │
+           * │ trạng thái ngay trên. Dòng trạng thái chỉ cần một cái để hiện;  │
+           * │ kiểm toán mà bỏ sót một lời gọi thì nó **không còn là kiểm      │
+           * │ toán** — chính chỗ `calls[0]` đó là lý do ca 26/08 không tra    │
+           * │ lại được nó đã ghi gì vào Notion.                              │
+           * │                                                                │
+           * │ Ghi ở đây chứ không ở `canUseTool`: cổng đó không nổ cho tool   │
+           * │ nằm trong `allowedTools` (đo 26/08) — mà cánh tay thì luôn nằm  │
+           * │ trong đó. Luồng `tool_use` là chỗ DUY NHẤT thấy được mọi lời    │
+           * │ gọi, bất kể quyền.                                             │
+           * └────────────────────────────────────────────────────────────────┘
+           */
+          const arm = splitArmTool(call.name);
+          if (arm) {
+            deps.onArmCall?.({
+              server: arm.server,
+              tool: arm.tool,
+              role: role.id,
+              // `brief` chỉ mang `task_id`; `plan_id` là của scheduler, nó gắn
+              // vào ở chỗ gọi. Ghép ở đây bằng một trường không tồn tại là kiểu
+              // hỏng im lặng — để chỗ BIẾT nó tự điền.
+              ...(brief.task_id ? { task_id: brief.task_id } : {}),
+              args: call.input,
+            });
+          }
         }
       }
 

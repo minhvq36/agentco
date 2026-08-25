@@ -8,6 +8,7 @@
 
 import type {
   ArchivedAgent,
+  ArmCall,
   ArtifactRecord,
   CanvasState,
   CatalogArm,
@@ -17,6 +18,7 @@ import type {
   CompanyView,
   KnowledgeEntry,
   LibraryDoc,
+  OAuthAccount,
   OfficeDetail,
   OfficeSummary,
   PlanRecord,
@@ -114,8 +116,39 @@ export const api = {
       catalogId?: string;
       folders?: string[];
       secrets?: Record<string, string>;
+      /** Tên chìa OAuth của tài khoản đã chọn. → `oauth.ts §accountName` */
+      account?: string;
+      /** Nấc quyền. Đi vào băm ở server — xem `addArm`. */
+      level?: 'read' | 'add' | 'full';
     },
   ) => call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
+
+  // ── đăng nhập một dịch vụ (OAuth). → docs/SPEC-arms.md §5h
+  /**
+   * Mở một lượt đăng nhập. Trả về **URL cho TA tự mở**, daemon không spawn gì.
+   *
+   * ⚠ Đó là cả điểm của thiết kế: trình duyệt người dùng đang ngồi có sẵn phiên
+   * Notion; trình duyệt mặc định của máy thì chưa chắc — user gặp đúng ca đó
+   * ngay lượt thử đầu 24/08.
+   */
+  oauthStart: (catalogId: string) =>
+    call<{ authUrl: string; state: string }>('/api/oauth/start', {
+      method: 'POST',
+      body: JSON.stringify({ catalogId }),
+    }),
+
+  /** Workspace đã nối cho một mục danh mục. TÊN + NHÃN, không token. */
+  oauthAccounts: (forCatalog?: string) =>
+    call<{ accounts: OAuthAccount[] }>(
+      `/api/oauth/accounts${forCatalog ? `?for=${enc(forCatalog)}` : ''}`,
+    ),
+
+  /**
+   * Gỡ một workspace. Server thu hồi ở phía dịch vụ (nếu dịch vụ nhận) rồi xoá
+   * chìa ở máy này — và **từ chối** nếu còn kết nối nào đang dùng nó.
+   */
+  oauthForget: (name: string) =>
+    call<{ accounts: OAuthAccount[] }>(`/api/oauth/accounts/${enc(name)}`, { method: 'DELETE' }),
 
   /**
    * Cắm một cánh tay. KHÔNG gửi `id` — danh tính là **băm cấu hình**, do server
@@ -131,6 +164,13 @@ export const api = {
     catalogId?: string;
     folders?: string[];
     secrets?: Record<string, string>;
+    /** Tài khoản OAuth đã chọn — tên chìa, mang `workspace_id`. */
+    account?: string;
+    /**
+     * Nấc quyền. **Đi vào `armHash`** ⇒ đổi nấc là một cánh tay KHÁC, và đó
+     * chính là thứ làm cho "đổi mức ở văn phòng này" không đụng văn phòng khác.
+     */
+    level?: 'read' | 'add' | 'full';
     office?: string;
     /** Giao cho ai — đi CÙNG request với việc cắm, xem `Office.grantArm`. */
     grantTo?: string[];
@@ -345,6 +385,16 @@ export const api = {
     call<{ removed: number; artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?all=1`, {
       method: 'DELETE',
     }),
+
+  /**
+   * NHẬT KÝ KIỂM TOÁN của MỘT cánh tay — mọi lời gọi MCP, kèm tham số.
+   * → `core/audit.ts` · SPEC-arms §6k
+   *
+   * Đây là thứ **thay** cho cổng duyệt từng lần: bỏ cổng thì log phải đủ, nếu
+   * không ta vừa bỏ cả hai.
+   */
+  armLog: (id: string, server: string) =>
+    call<{ calls: ArmCall[] }>(`/api/office/${enc(id)}/arm-log?server=${enc(server)}`),
 
   plans: (id: string) => call<{ plans: PlanRecord[] }>(`/api/office/${enc(id)}/plans`),
 

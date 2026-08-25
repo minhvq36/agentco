@@ -10,6 +10,7 @@ import { isAbsolute } from 'node:path';
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
 import { existsOnDisk, resolveInput, safeJoin } from './paths.js';
+import { armDirIndex } from './catalog.js';
 import { addUsage, filesOnDisk, runWorker, straysOnDisk, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
@@ -41,6 +42,13 @@ export interface SchedulerDeps {
   emit(event: AgentEventBody): void;
   /** Kiểm tra giữa các task — người dùng bấm Dừng thì thoát sạch. */
   shouldStop?(): boolean;
+  /**
+   * Nhật ký kiểm toán cánh tay. Vắng ⇒ không ghi (ca test, ca chạy lẻ).
+   *
+   * ⚠ Tuỳ chọn có chủ ý: mất nhật ký **không được** làm hỏng một ca đang chạy.
+   * Cùng luật với `appendChat` — xem `core/audit.ts §append`.
+   */
+  audit?: { append(call: Record<string, unknown> & { server: string; tool: string; role: string; args: unknown }): void };
 }
 
 export interface RunResult {
@@ -63,6 +71,8 @@ export class Scheduler {
   private concurrency: number;
   private readonly maxConcurrency: number;
   private smoothRun = 0;
+  /** Mã kế hoạch của ca đang chạy — chỉ dùng để gắn vào nhật ký kiểm toán. */
+  private planId: string | undefined;
   private readonly runningByTier = new Map<Tier, number>();
   /**
    * Tay cầm của những worker ĐANG chạy. Không có nó thì `stop()` chỉ là một cờ
@@ -151,7 +161,13 @@ export class Scheduler {
    * │ → docs/TEST-WALKTHROUGH.md §Bài 9b                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  static validate(plan: Plan, knownRoles: ReadonlySet<string>, officeDir?: string): string[] {
+  static validate(
+    plan: Plan,
+    knownRoles: ReadonlySet<string>,
+    officeDir?: string,
+    /** Tên cánh tay → thư mục thật. Thiếu ⇒ "Musics" bị chặn. → `catalog.ts §armDirIndex` */
+    armDirs?: Record<string, string>,
+  ): string[] {
     const problems: string[] = [];
     const ids = new Set(plan.tasks.map((t) => t.task_id));
     const writers = new Map<string, string>();
@@ -210,7 +226,7 @@ export class Scheduler {
           // Thư mục mà một task khác đang ghi vào cũng là "sẽ có" — xem `contains`.
           if (produced.has(want) || [...produced].some((p) => contains(want, p))) continue;
 
-          const abs = resolveInput(officeDir, i.path);
+          const abs = resolveInput(officeDir, i.path, armDirs);
           if (abs && existsOnDisk(abs)) continue;
 
           // Hai câu khác nhau vì hai chuyện khác nhau. "Không việc nào tạo ra
@@ -249,6 +265,14 @@ export class Scheduler {
   //  `./artifacts/x.md`, `artifacts\x.md` hay `artifacts/x.md`.)
 
   async run(plan: Plan): Promise<RunResult> {
+    /**
+     * Mã kế hoạch của ca ĐANG chạy — chỉ để gắn vào nhật ký kiểm toán.
+     *
+     * `TaskBrief` cố ý không mang `plan_id` (nó là đơn vị việc, không phải đơn
+     * vị ca), nên worker không biết. Giữ ở đây, nơi BIẾT, thay vì nhét một
+     * trường mới vào brief chỉ để chuyển tiếp một chuỗi. → `core/audit.ts`
+     */
+    this.planId = plan.plan_id;
     const receipts = new Map<string, Receipt>();
     const remaining = new Map(plan.tasks.map((t) => [t.task_id, t]));
     const failed = new Set<string>();
@@ -422,9 +446,12 @@ export class Scheduler {
    * hai, và người dùng nhận một câu từ chối cho thứ hệ thống vừa duyệt.
    */
   private missingInputs(brief: TaskBrief): string[] {
+    // ⚠ CÙNG bảng cánh tay mà `validate` dùng. Lệch một chỗ là kế hoạch qua
+    // được cửa một rồi chết ở cửa hai — đúng thứ khối chú thích trên cảnh báo.
+    const armDirs = armDirIndex(this.deps.office.company.arms, this.deps.office.company.mcpServers);
     const out: string[] = [];
     for (const i of brief.inputs) {
-      const abs = resolveInput(this.deps.office.dir, i.path);
+      const abs = resolveInput(this.deps.office.dir, i.path, armDirs);
       if (!abs || !existsOnDisk(abs)) out.push(i.path);
     }
     return out;
@@ -575,6 +602,15 @@ export class Scheduler {
           acquireCacheSlot: (key) => this.gate.acquire(key),
           onProgress: (say) =>
             this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
+          /**
+           * MỌI lời gọi MCP xuống nhật ký kiểm toán, kèm tham số. → `core/audit.ts`
+           *
+           * ⚠ `plan_id` ghép ở ĐÂY, không ở worker: worker chỉ cầm `TaskBrief`,
+           * và brief cố ý không mang mã kế hoạch. Ghép ở nơi biết thì không phải
+           * thêm một trường chỉ để chuyển tiếp một chuỗi.
+           */
+          onArmCall: (c) =>
+            this.deps.audit?.append({ ...c, ...(this.planId ? { plan_id: this.planId } : {}) }),
           // Đăng ký tay cầm để `stop()` với tới được worker ĐANG chạy.
           onStart: (h) => {
             handle = h;
