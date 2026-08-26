@@ -63,18 +63,27 @@ function parseBody(text: string): { result?: unknown; error?: unknown } | null {
  * server**: nhiều bản triển khai từ chối `tools/list` khi chưa nhận
  * `notifications/initialized`.
  */
-export async function rawAnnotations(
+type Post = (body: unknown) => Promise<{ result?: unknown; error?: unknown } | null>;
+
+/**
+ * Bắt tay xong rồi giao lại một hàm `post` còn nguyên phiên.
+ *
+ * ⚠ Tồn tại vì có **hai** người cần đúng ba bước này (`rawAnnotations` và
+ * `callTool`), và bản thứ hai của một vũ điệu giao thức sẽ lệch vào đúng ngày
+ * ai đó sửa một bản. Cùng lý do `injectSecrets` gộp `pickMcp` với `probeArm`.
+ */
+async function withSession<T>(
   url: string,
   headers: Record<string, string>,
-  timeoutMs = 10_000,
-): Promise<Map<string, RawAnnotations>> {
-  const out = new Map<string, RawAnnotations>();
+  timeoutMs: number,
+  fallback: T,
+  fn: (post: Post) => Promise<T>,
+): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-
   try {
     let session = '';
-    const post = async (body: unknown): Promise<{ result?: unknown; error?: unknown } | null> => {
+    const post: Post = async (body) => {
       const res = await fetch(url, {
         method: 'POST',
         signal: ctrl.signal,
@@ -103,23 +112,82 @@ export async function rawAnnotations(
         clientInfo: { name: 'agentco', version: '1' },
       },
     });
-    if (!init?.result) return out;
+    if (!init?.result) return fallback;
 
     // Thông báo, không phải yêu cầu — không có `id`, không đọc phản hồi.
     await post({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    return await fn(post);
+  } catch {
+    // Mạng chết · server không nói streamable HTTP · quá hạn — trả giá trị lui.
+    return fallback;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
+export async function rawAnnotations(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = 10_000,
+): Promise<Map<string, RawAnnotations>> {
+  const out = new Map<string, RawAnnotations>();
+  return withSession(url, headers, timeoutMs, out, async (post) => {
     const listed = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const tools = (listed?.result as { tools?: { name?: string; annotations?: RawAnnotations }[] })?.tools;
     for (const t of tools ?? []) {
       if (typeof t?.name === 'string' && t.annotations) out.set(t.name, t.annotations);
     }
-  } catch {
-    // Mạng chết · server không nói streamable HTTP · quá hạn — im lặng trả rỗng.
-    // Chỗ gọi rơi về annotations của SDK, tức về đúng hành vi trước 26/08.
-  } finally {
-    clearTimeout(timer);
-  }
-  return out;
+    return out;
+  });
+}
+
+/**
+ * Tên các nhóm việc server THẬT SỰ phát ra — để đối chiếu với nhóm đã xin.
+ *
+ * ⚠ Đo 26/08: gõ sai tên nhóm trong `X-MCP-Toolsets` ⇒ server trả **0 việc và
+ * KHÔNG báo lỗi**. Im lặng bỏ tên lạ, đúng họ [[agentco-silent-allowlist]] —
+ * cùng lớp với ca `tools` đã dựng `warnDroppedTools` để canh. Một cánh tay
+ * "cắm xong, 0 việc" mà không ai kêu là một cánh tay hỏng im lặng.
+ */
+export async function toolCount(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = 10_000,
+): Promise<number> {
+  return withSession(url, headers, timeoutMs, -1, async (post) => {
+    const listed = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    const tools = (listed?.result as { tools?: unknown[] })?.tools;
+    return Array.isArray(tools) ? tools.length : -1;
+  });
+}
+
+/**
+ * Gọi MỘT tool và trả về phần chữ. `null` = không gọi được.
+ *
+ * Dùng cho **bước hỏi danh tính** (§5h·7k): hãng nào không trả tên tài khoản
+ * trong phản hồi token thì ta đi hỏi nó bằng chính giao thức đã có. Không phải
+ * một đường mới — vẫn là MCP, vẫn cùng phiên, vẫn không import SDK hãng nào.
+ */
+export async function callTool(
+  url: string,
+  headers: Record<string, string>,
+  name: string,
+  args: Record<string, unknown> = {},
+  timeoutMs = 10_000,
+): Promise<string | null> {
+  return withSession(url, headers, timeoutMs, null as string | null, async (post) => {
+    const r = await post({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: args } });
+    // `error` = tool không tồn tại ở cửa này (hàng rào). `isError` = tool chạy
+    // rồi hỏng. Cả hai đều không phải dữ liệu, nên cùng trả `null`.
+    if (!r || r.error) return null;
+    const res = r.result as { isError?: boolean; content?: { type?: string; text?: string }[] };
+    if (res?.isError) return null;
+    const text = (res?.content ?? [])
+      .map((c) => (typeof c?.text === 'string' ? c.text : ''))
+      .join('\n')
+      .trim();
+    return text || null;
+  });
 }
 
 /**

@@ -32,6 +32,8 @@ import {
   REFRESH_TICK_MS,
   oauthAccounts,
   oauthCallback,
+  oauthDevicePoll,
+  oauthDeviceStart,
   oauthForget,
   oauthStart,
   redirectBase,
@@ -67,15 +69,26 @@ function armConfig(body: {
   catalogId?: string;
   folders?: string[];
   account?: string;
+  groups?: string[];
+  level?: string;
 }): Record<string, unknown> | undefined {
   if (body.config) return body.config;
   const arm = body.catalogId ? findArm(body.catalogId) : undefined;
-  return arm
-    ? buildConfig(arm.spec, {
-        folders: body.folders ?? [],
-        ...(body.account ? { account: body.account } : {}),
-      })
-    : undefined;
+  if (!arm) return undefined;
+  /**
+   * ⚠ Nhóm nào KHÔNG tick thì không được lọt vào cấu hình, và mục có `groups`
+   * mà client không gửi gì thì rơi về **những nhóm bật sẵn** — KHÔNG rơi về
+   * "cắm cả server". Với GitHub, "cả server" là ≈30 000 token mỗi lượt (§5h·7e):
+   * một mặc định quên tay ở đây là hoá đơn của khách, không phải một chi tiết.
+   */
+  const groups =
+    body.groups ?? (arm.groups ? arm.groups.filter((g) => g.on).map((g) => g.id) : undefined);
+  return buildConfig(arm.spec, {
+    folders: body.folders ?? [],
+    ...(body.account ? { account: body.account } : {}),
+    ...(groups ? { groups } : {}),
+    ...(body.level ? { level: body.level } : {}),
+  });
 }
 
 /**
@@ -102,6 +115,8 @@ function resolveArm(
     account?: string;
     /** Nấc quyền người dùng chọn. Đi vào băm. → §6j */
     level?: Tier;
+    /** Nhóm việc đã tick. Vào `headers` ⇒ vào BĂM. → `catalog.ts §toolsetHeader` */
+    groups?: string[];
   },
 ): {
   config: Record<string, unknown>;
@@ -128,9 +143,19 @@ function resolveArm(
       ...(r.catalog ? { catalog: r.catalog } : {}),
     };
   }
-  const config = armConfig(body);
-  if (!config) return undefined;
   const fromCatalog = body.catalogId ? findArm(body.catalogId) : undefined;
+  /**
+   * ⚠ NẤC PHẢI CHỐT **TRƯỚC** KHI DỰNG CẤU HÌNH, không phải sau.
+   *
+   * Với mục có `readOnlyHeaders`, nấc **đổi chính cấu hình** (thêm header hàng
+   * rào của server). Dựng cấu hình rồi mới suy nấc mặc định ⇒ lượt cắm không
+   * chọn nấc sẽ ghi `level: 'read'` vào sổ mà cấu hình lại **thiếu hàng rào** —
+   * hai nguồn nói hai chuyện về cùng một cánh tay, và nguồn sai là nguồn đang
+   * thi hành. Đúng họ lỗi §15i (*"đọc nhầm cấu hình CHẠY thay vì cấu hình KHAI"*).
+   */
+  const level = fromCatalog?.tiered ? (body.level ?? 'read') : body.level;
+  const config = armConfig({ ...body, ...(level ? { level } : {}) });
+  if (!config) return undefined;
 
   /**
    * Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên biến
@@ -171,7 +196,7 @@ function resolveArm(
   return {
     config,
     // Mục có nấc thì nấc là BẮT BUỘC — mặc định `read`, an toàn khi chưa chọn.
-    ...(fromCatalog?.tiered ? { level: body.level ?? 'read' } : {}),
+    ...(level ? { level } : {}),
     secretNames,
     secrets: { ...env, ...(body.secrets ?? {}) },
     ...(fromCatalog?.readOnly || fromCatalog?.tiered ? {} : { tools: [] }),
@@ -478,6 +503,45 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         for (const c of sseClients) c.write(payload);
       }
       return;
+    }
+    /**
+     * ── ĐĂNG NHẬP BẰNG MÃ THIẾT BỊ — cho hãng không mở đăng ký động. → §5h·7
+     *
+     * ⚠ KHÔNG có `/callback` ở đường này, và đó là điểm mạnh nhất của nó: không
+     * có mã uỷ quyền nào bay về, nên `redirectBase` · `public_url` · nginx ·
+     * Docker · VPS **đều không liên quan**. Cánh tay đi đường này chạy được ở
+     * mọi kiểu triển khai, kể cả nơi daemon không hề mở cổng ra ngoài.
+     */
+    if (url.pathname === '/api/oauth/device/start' && method === 'POST') {
+      const body = await readJson<{ catalogId?: string }>(req);
+      if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
+      return json(res, 200, await oauthDeviceStart(body.catalogId));
+    }
+    /**
+     * Một NHỊP hỏi thăm. Giao diện gọi lặp theo `intervalMs` server trả về.
+     *
+     * ⚠ Vì sao giao diện lặp chứ không phải server giữ một request treo: một
+     * request treo 15 phút chết vì mọi thứ nằm giữa (nginx, proxy công ty,
+     * trình duyệt ngủ), và khi nó chết thì **không có trạng thái nào để kể
+     * lại**. Vòng lặp ngắn thì mất một nhịp là mất một nhịp.
+     *
+     * Phiên sống ở DAEMON, không ở tab — đóng tab không giết lượt đăng nhập.
+     */
+    if (url.pathname === '/api/oauth/device/poll' && method === 'POST') {
+      const body = await readJson<{ state?: string }>(req);
+      if (!body.state) return json(res, 400, { error: 'thiếu "state"' });
+      const r = await oauthDevicePoll(company, body.state);
+      if (r.state === 'done') {
+        // Cùng đường báo với web flow: giao diện đổi trạng thái, không ai F5.
+        const payload = `data: ${JSON.stringify({
+          type: 'company.offices',
+          say: `Đã kết nối ${r.label ?? r.name}.`,
+          office: '',
+          plan_id: null,
+        })}\n\n`;
+        for (const c of sseClients) c.write(payload);
+      }
+      return json(res, 200, r);
     }
     if (url.pathname === '/api/oauth/accounts' && method === 'GET') {
       return json(res, 200, {

@@ -137,6 +137,36 @@ export const api = {
       body: JSON.stringify({ catalogId }),
     }),
 
+  /**
+   * Xin một MÃ THIẾT BỊ. Không có `redirect_uri`, không có tab callback.
+   *
+   * ⚠ Vì thế luồng này chạy được cả khi daemon **không hề mở cổng ra ngoài** —
+   * không có mã uỷ quyền nào bay về đâu cả. → SPEC-arms §5h·7b
+   */
+  oauthDeviceStart: (catalogId: string) =>
+    call<{
+      state: string;
+      userCode: string;
+      verificationUri: string;
+      verificationUriComplete?: string;
+      expiresAt: number;
+      intervalMs: number;
+    }>('/api/oauth/device/start', { method: 'POST', body: JSON.stringify({ catalogId }) }),
+
+  /**
+   * MỘT nhịp hỏi thăm. Giao diện lặp theo `intervalMs` server trả về.
+   *
+   * ⚠ Vì sao giao diện lặp chứ không phải giữ một request treo 15 phút: một
+   * request treo lâu như thế chết vì mọi thứ nằm giữa (nginx, proxy công ty,
+   * tab bị ngủ), và khi nó chết thì **không có trạng thái nào để kể lại**. Mất
+   * một nhịp chỉ là mất một nhịp — phiên vẫn nằm ở daemon.
+   */
+  oauthDevicePoll: (state: string) =>
+    call<
+      | { state: 'pending'; intervalMs: number; expiresAt: number }
+      | { state: 'done'; name: string; label?: string }
+    >('/api/oauth/device/poll', { method: 'POST', body: JSON.stringify({ state }) }),
+
   /** Workspace đã nối cho một mục danh mục. TÊN + NHÃN, không token. */
   oauthAccounts: (forCatalog?: string) =>
     call<{ accounts: OAuthAccount[] }>(

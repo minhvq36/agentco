@@ -19,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, FolderOpen, Loader2, Plug, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, FolderOpen, Loader2, Plug, Trash2, TriangleAlert, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDelete } from '@/components/ui/confirm';
@@ -473,6 +473,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     runRef.current++;
     setTesting(false);
     setSlow(false);
+    /**
+     * ⚠ Lượt đăng nhập bằng mã cũng phải dọn ở ĐÂY, cùng lý do với `runRef`.
+     *
+     * Bỏ sót thì quay lại rồi bấm sang mục khác vẫn thấy một khối mã to đùng của
+     * **mục trước** — và tệ hơn: vòng hỏi thăm vẫn chạy, nên nó có thể "đăng
+     * nhập xong" cho một dịch vụ người dùng không còn đứng ở đó nữa. Đúng luật
+     * đã chốt 26/08: *thứ bạn vừa bấm là thứ bạn đang cấu hình.*
+     */
+    setDevice(null);
+    setLogging(false);
   }
 
   /**
@@ -557,10 +567,125 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       });
   }
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ LƯỢT ĐĂNG NHẬP BẰNG MÃ THIẾT BỊ đang bay. → SPEC-arms §5h·7             │
+   * │                                                                          │
+   * │ ⚠ Ở ĐÂY KHÔNG CÓ BÍ MẬT NÀO. `state` chỉ trỏ tới một phiên nằm ở daemon; │
+   * │ `userCode` là thứ người dùng phải ĐỌC ĐƯỢC và gõ đi. Đó là lý do khối    │
+   * │ này được phép sống trong state của React, khác hẳn `code_verifier` của   │
+   * │ web flow (thứ chưa bao giờ rời khỏi daemon).                             │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const [device, setDevice] = useState<{
+    state: string;
+    userCode: string;
+    verificationUri: string;
+    verificationUriComplete?: string;
+    expiresAt: number;
+    intervalMs: number;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+  /** Đếm ngược, tính lại mỗi giây — mã chết thật, và người dùng phải thấy nó chết. */
+  const [now, setNow] = useState(() => Date.now());
+
+  /**
+   * VÒNG HỎI THĂM — nhịp do SERVER quyết (`intervalMs`), không phải hằng số ở đây.
+   *
+   * ⚠ `slow_down` của RFC 8628 nới nhịp ra, và server trả nhịp mới về trong
+   * từng phản hồi. Ghim một hằng số ở client là bỏ qua lời dặn đó rồi bị hãng
+   * chặn — một lỗi chỉ xuất hiện lúc mạng chậm, tức lúc khó tái lập nhất.
+   */
+  useEffect(() => {
+    if (!device || !pick) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const tick = async (wait: number): Promise<void> => {
+      timer = setTimeout(async () => {
+        if (!alive) return;
+        try {
+          const r = await api.oauthDevicePoll(device.state);
+          if (!alive) return;
+          if (r.state === 'done') {
+            setDevice(null);
+            setLogging(false);
+            await loadAccounts(pick.id);
+            // Tài khoản vừa nối là thứ họ vừa làm ra — chọn sẵn giùm.
+            setAccount(r.name);
+            setProbe(null);
+            return;
+          }
+          void tick(r.intervalMs);
+        } catch (e) {
+          if (!alive) return;
+          /**
+           * 🔴 HỎNG Ở ĐÂY LÀ DỪNG, và phải nói ra — khác hẳn tầng mạng.
+           *
+           * `devicePoll` phía daemon đã nuốt mọi lỗi TẠM thành `pending` (rớt
+           * mạng không được giết một lượt cấp quyền đã thành công, §5h·7g). Nên
+           * thứ leo được tới đây chỉ còn: mã hết hạn, người dùng bấm Từ chối,
+           * hoặc phiên đã bị dọn. Cả ba đều **không tự khỏi** ⇒ im lặng thử lại
+           * là để người dùng nhìn một vòng quay vĩnh viễn.
+           */
+          setDevice(null);
+          setLogging(false);
+          setErr(e instanceof ApiError ? e.message : 'Lượt đăng nhập đã dừng.');
+        }
+      }, wait);
+    };
+    void tick(device.intervalMs);
+
+    // Đếm ngược chạy riêng: nó chỉ vẽ, không được phụ thuộc nhịp hỏi thăm.
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      clearInterval(clock);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device, pick]);
+
+  /**
+   * Hết hạn thì **tự dọn**, không đợi người dùng phát hiện.
+   *
+   * Một mã đã chết mà vẫn hiện trên màn hình là một lời mời gõ vào chỗ vô ích —
+   * và người gõ xong sẽ thấy GitHub báo lỗi, rồi đi tìm nguyên nhân ở phía họ.
+   */
+  useEffect(() => {
+    if (device && now > device.expiresAt) {
+      setDevice(null);
+      setLogging(false);
+      setErr('Mã đăng nhập đã hết hạn — bấm Đăng nhập để lấy mã mới.');
+    }
+  }, [now, device]);
+
   async function login() {
     if (!pick) return;
     setErr('');
     setLogging(true);
+
+    /**
+     * ĐƯỜNG MÃ THIẾT BỊ — cho hãng không mở đăng ký động (GitHub).
+     *
+     * Không `window.open` bắt buộc: người dùng có thể đang ngồi ở một máy khác
+     * với cái điện thoại trong tay, và **đó chính là ca device flow sinh ra để
+     * phục vụ**. Ta hiện mã + một nút mở giúp, không giả định trình duyệt này
+     * là nơi họ sẽ duyệt.
+     */
+    if (pick.deviceLogin) {
+      try {
+        const d = await api.oauthDeviceStart(pick.id);
+        setCopied(false);
+        setNow(Date.now());
+        setDevice(d);
+      } catch (e) {
+        setLogging(false);
+        setErr(e instanceof ApiError ? e.message : 'Không lấy được mã đăng nhập.');
+      }
+      return;
+    }
+
     try {
       const { authUrl } = await api.oauthStart(pick.id);
       /**
@@ -1193,22 +1318,115 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   │ đúng practice — ✕ là thứ người ta tìm.                    │
                   └──────────────────────────────────────────────────────────┘
                 */}
+                {/*
+                  ┌──────────────────────────────────────────────────────────┐
+                  │ MÃ THIẾT BỊ — ba bước ĐÁNH SỐ, vì đây là luồng duy nhất  │
+                  │ bắt người dùng làm việc ở MỘT MÀN HÌNH KHÁC.             │
+                  │                                                          │
+                  │ Web flow chỉ cần "bấm nút, tab tự lo". Ở đây họ phải cầm │
+                  │ một mã đi sang chỗ khác gõ vào — và giữa hai màn hình đó │
+                  │ không có gì nối lại ngoài cái mã. Nên nó phải TO, chép   │
+                  │ được, và có đồng hồ: một mã im lặng chết là người dùng gõ│
+                  │ vào chỗ vô ích rồi đi tìm lỗi ở phía họ.                 │
+                  │                                                          │
+                  │ ⚠ KHÔNG tự `window.open`: ca device flow sinh ra để phục │
+                  │ vụ chính là *người dùng duyệt ở máy/điện thoại khác*.    │
+                  │ Mở giúp thì được, giả định thì không.                    │
+                  └──────────────────────────────────────────────────────────┘
+                */}
+                {device && (
+                  <div className="mt-3 rounded-md border border-accent/40 bg-accent-soft/30 px-3 py-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="text-[13px] font-medium">Gõ mã này ở {pick.name}</div>
+                      {/* Đồng hồ: mã chết THẬT sau 15 phút, và họ phải thấy nó chết. */}
+                      <div className="shrink-0 font-mono text-[11px] text-muted">
+                        còn {Math.floor(Math.max(0, device.expiresAt - now) / 60000)}:
+                        {String(Math.floor((Math.max(0, device.expiresAt - now) % 60000) / 1000)).padStart(2, '0')}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-2">
+                      <code className="flex-1 select-all rounded border border-line bg-bg px-3 py-2 text-center font-mono text-lg tracking-[0.2em]">
+                        {device.userCode}
+                      </code>
+                      <Button
+                        aria-label="Chép mã"
+                        title="Chép mã"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(device.userCode).then(
+                            () => setCopied(true),
+                            // Clipboard bị chặn (http, quyền) ⇒ KHÔNG báo đã chép.
+                            // Mã vẫn `select-all` nên họ bôi đen chép tay được —
+                            // một dấu ✓ sai còn tệ hơn không có dấu nào.
+                            () => setCopied(false),
+                          );
+                        }}
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+
+                    <ol className="mt-2.5 list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
+                      <li>
+                        Mở{' '}
+                        <a
+                          className="underline decoration-dotted hover:text-fg"
+                          href={device.verificationUriComplete ?? device.verificationUri}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                        >
+                          {device.verificationUri.replace(/^https?:\/\//, '')}
+                        </a>{' '}
+                        — ở máy này hay điện thoại đều được.
+                      </li>
+                      <li>Gõ mã ở trên rồi bấm cho phép.</li>
+                      <li>Quay lại đây — màn này tự biết, không cần F5.</li>
+                    </ol>
+
+                    {/*
+                      ⚠ CÂU NÀY PHẢI CÓ, và nó đến từ một ca thật ta tự dẫm khi
+                      đo: trình duyệt đang đăng nhập MỘT TÀI KHOẢN KHÁC thì chìa
+                      lấy về là của người đó, và triệu chứng duy nhất sẽ là
+                      *"cánh tay không thấy gì cả"* — một câu sai cửa dẫn người
+                      ta đi kiểm quyền, kiểm cài đặt, kiểm repo. → §5h·7k
+                    */}
+                    <p className="mt-2 text-xs leading-relaxed text-muted">
+                      ⚠ Trang đó sẽ dùng <b>tài khoản đang đăng nhập trên trình duyệt của bạn</b>. Nếu
+                      đó không phải tài khoản bạn muốn nối, mở nó bằng cửa sổ ẩn danh.
+                    </p>
+                  </div>
+                )}
+
                 <div className="mt-2 flex gap-1.5">
                   <Button className="flex-1" onClick={() => void login()}>
                     {logging ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                     {logging
-                      ? 'Đang chờ… bấm để mở lại'
+                      ? device
+                        ? 'Đang chờ bạn cho phép…'
+                        : 'Đang chờ… bấm để mở lại'
                       : accounts.length
-                        ? 'Nối thêm một workspace khác'
+                        ? pick.deviceLogin
+                          ? 'Nối thêm một tài khoản khác'
+                          : 'Nối thêm một workspace khác'
                         : `Đăng nhập với ${pick.name}`}
                   </Button>
                   {logging && (
-                    <Button aria-label="Thôi chờ" title="Thôi chờ" onClick={() => setLogging(false)}>
+                    <Button
+                      aria-label="Thôi chờ"
+                      title="Thôi chờ"
+                      onClick={() => {
+                        // Dọn CẢ HAI: để `device` lại là để vòng hỏi thăm chạy
+                        // tiếp sau khi người dùng vừa bảo thôi — đúng họ bug
+                        // "hệ thống nói dối về trạng thái của nó".
+                        setDevice(null);
+                        setLogging(false);
+                      }}
+                    >
                       <X className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
-                {logging && (
+                {logging && !device && (
                   <p className="mt-1.5 text-xs leading-relaxed text-muted">
                     Xong ở tab kia thì đây tự cập nhật. Nếu tab đó báo lỗi (hay bạn đã đóng nó), bấm
                     lại nút trên — mỗi lần bấm là một lượt mới.

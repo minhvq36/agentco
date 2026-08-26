@@ -40,6 +40,16 @@ export interface AsMeta {
   revocation_endpoint?: string;
   scopes_supported?: string[];
   code_challenge_methods_supported?: string[];
+  /**
+   * ⇐ TRƯỜNG QUYẾT ĐỊNH NHÁNH ĐĂNG NHẬP. → §deviceStart
+   *
+   * Có nó ⇒ đi được device flow ⇒ **không cần `client_secret`, không cần
+   * `redirect_uri`**. Đây là thứ cứu những hãng **không mở DCR**: ta không xin
+   * được `client_id` tại chỗ, nhưng `client_id` ship sẵn cộng device flow là đủ
+   * để người dùng gõ **0 chìa**. → SPEC-arms §5h·7
+   */
+  device_authorization_endpoint?: string;
+  grant_types_supported?: string[];
 }
 
 /**
@@ -290,26 +300,113 @@ export function authorizeUrl(
  */
 export class DeadGrantError extends Error {}
 
-async function postToken(meta: AsMeta, form: Record<string, string>): Promise<TokenResponse> {
-  const res = await fetch(meta.token_endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(form).toString(),
-  });
-  const body = await res.text();
-  if (!res.ok) {
-    let code = '';
-    try {
-      code = String((JSON.parse(body) as { error?: unknown }).error ?? '');
-    } catch {
-      /* thân không phải JSON — rơi về mã HTTP */
-    }
-    if (code === 'invalid_grant' || code === 'invalid_client') {
-      throw new DeadGrantError(`Chìa không còn hiệu lực (${code || res.status}).`);
-    }
-    throw new Error(`Đổi chìa hỏng: HTTP ${res.status} — ${body}`);
+/**
+ * Hỏng TẠM — mạng chết, DNS, proxy, 5xx. Thử lại là đúng.
+ *
+ * Tách khỏi mọi lỗi khác vì hai loại này cần **hai xử lý ngược nhau**: tạm thì
+ * im lặng thử lại, chết hẳn thì dừng và bảo người dùng đăng nhập lại. Gộp chúng
+ * là chọn sai ở cả hai (`oauth-routes.ts §refreshDue` đã ghi luật này).
+ */
+export class TransientError extends Error {}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴🔴 BA TIỀN ĐỀ SAI ĐÃ SỐNG TRONG HÀM NÀY — đo 26/08 khi cắm GitHub.     │
+ * │                                                                          │
+ * │ Cả ba đều ĐÚNG với Notion, nên chúng vô hình suốt từ 25/08. Đây là lý do │
+ * │ luật *"một hãng chạy được chứng minh CƠ CHẾ, không chứng minh HÌNH DẠNG   │
+ * │ PHẢN HỒI"* được viết ra. → SPEC-arms §5h·7d                              │
+ * │                                                                          │
+ * │ ① *"server trả JSON"* — GitHub trả **form-urlencoded** trừ khi ta gửi     │
+ * │    `Accept: application/json`. Hàm cũ không gửi ⇒ `JSON.parse` ném ngay   │
+ * │    ở lần đổi mã ĐẦU TIÊN.                                                │
+ * │                                                                          │
+ * │ ② *"hỏng thì `!res.ok`"* — GitHub trả **HTTP 200** kèm thân               │
+ * │    `{"error":"…"}`. Hàm cũ đọc thành THÀNH CÔNG ⇒ `applyToken` dựng một   │
+ * │    account có `access_token: undefined` ⇒ `saveOAuth` **ghi đè một tài    │
+ * │    khoản đang chạy tốt bằng một tài khoản hỏng**. Không ném, không log,   │
+ * │    và nó xảy ra trong **vòng làm mới chạy ngầm** — nơi không ai nhìn.     │
+ * │    ⇒ ② tệ hơn ① dù ① nghe to hơn: ① nổ ngay và có stack trace.           │
+ * │                                                                          │
+ * │ ③ *"chìa chết = `invalid_grant`"* — GitHub trả                            │
+ * │    **`incorrect_client_credentials`**. Không khớp ⇒ xếp thành *hỏng tạm*  │
+ * │    ⇒ cờ `dead` KHÔNG BAO GIỜ bật ⇒ vòng làm mới thử lại mỗi 15 phút vĩnh  │
+ * │    viễn, và giao diện không bao giờ hiện nút *Đăng nhập lại*. Tức cơ chế  │
+ * │    `dead` bị vô hiệu đúng ở hãng cần nó nhất.                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ `step` đi vào mọi câu lỗi: `[đổi mã]` · `[làm mới]` · `[hỏi thăm]`. Ba chỗ
+ * đó sửa bằng ba việc khác nhau, mà một câu `fetch failed` trần thì không nói
+ * được là chỗ nào — đúng lớp lỗi §5m *"chỉ sai cửa"*.
+ */
+async function postToken(
+  meta: AsMeta,
+  form: Record<string, string>,
+  step = 'đổi chìa',
+): Promise<TokenResponse> {
+  let res: Response;
+  try {
+    res = await fetch(meta.token_endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        // ① Thiếu dòng này thì GitHub trả form-urlencoded và `JSON.parse` ném.
+        accept: 'application/json',
+      },
+      body: new URLSearchParams(form).toString(),
+    });
+  } catch (e) {
+    throw new TransientError(`[${step}] không gọi ra được ${meta.token_endpoint}: ${(e as Error).message}`);
   }
-  return JSON.parse(body) as TokenResponse;
+
+  const body = await res.text();
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    /* thân không phải JSON — dưới đây rơi về mã HTTP, và đó là ca đáng kêu */
+  }
+
+  // ② PHÂN LOẠI THEO THÂN TRƯỚC, `res.ok` chỉ là tín hiệu phụ.
+  const code = typeof json?.['error'] === 'string' ? (json['error'] as string) : '';
+  const desc = typeof json?.['error_description'] === 'string' ? (json['error_description'] as string) : '';
+
+  if (code) {
+    /**
+     * ③ Danh sách chìa-đã-chết. `incorrect_client_credentials` là câu của
+     * GitHub cho *"refresh token này đã bị xoay/thu hồi"* — và nó **sai cửa
+     * ngay từ phía hãng**: chữ nghĩa nói về `client_id`/`client_secret`, thứ
+     * hoàn toàn không sai. ⇒ Ta **dịch lại**, không chuyển tiếp nguyên văn.
+     */
+    if (
+      code === 'invalid_grant' ||
+      code === 'invalid_client' ||
+      code === 'incorrect_client_credentials' ||
+      code === 'bad_refresh_token' ||
+      code === 'unauthorized_client'
+    ) {
+      throw new DeadGrantError(`Chìa không còn hiệu lực — cần đăng nhập lại. (${code})`);
+    }
+    // 5xx kèm mã lỗi vẫn là hỏng tạm: server đang trục trặc, không phải chìa chết.
+    if (res.status >= 500) throw new TransientError(`[${step}] dịch vụ đang lỗi (${code}).`);
+    throw new Error(`[${step}] hỏng: ${code}${desc ? ` — ${desc}` : ''}`);
+  }
+
+  if (res.status >= 500) throw new TransientError(`[${step}] dịch vụ trả HTTP ${res.status}.`);
+  if (!json) throw new Error(`[${step}] phản hồi không đọc được (HTTP ${res.status}): ${body.slice(0, 200)}`);
+
+  /**
+   * ⚠ THIẾU `access_token` TRONG MỘT PHẢN HỒI 200 CŨNG LÀ HỎNG.
+   *
+   * Không có dòng này thì ca ② quay lại qua cửa khác: một thân JSON hợp lệ,
+   * không có trường `error`, cũng không có chìa — và hạ nguồn sẽ cất một tài
+   * khoản rỗng đè lên tài khoản đang dùng. Bất biến phải nằm ở ĐÂY, chỗ duy
+   * nhất mọi đường đổi chìa đi qua.
+   */
+  if (typeof json['access_token'] !== 'string' || !json['access_token']) {
+    throw new Error(`[${step}] phản hồi không có access_token (HTTP ${res.status}).`);
+  }
+  return json as unknown as TokenResponse;
 }
 
 /**
@@ -365,12 +462,165 @@ export async function exchangeCode(
 
 export async function refreshAccount(meta: AsMeta, acc: OAuthAccount): Promise<OAuthAccount> {
   if (!acc.refresh_token) throw new Error('Tài khoản này không có chìa làm mới — phải đăng nhập lại.');
-  const t = await postToken(meta, {
-    grant_type: 'refresh_token',
-    refresh_token: acc.refresh_token,
-    client_id: acc.client_id,
-  });
+  const t = await postToken(
+    meta,
+    {
+      grant_type: 'refresh_token',
+      refresh_token: acc.refresh_token,
+      client_id: acc.client_id,
+    },
+    'làm mới',
+  );
   return applyToken(acc, t);
+}
+
+// ───────────────────────────────────────────────── ④ device flow (RFC 8628)
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐƯỜNG THỨ HAI ĐỂ ĐĂNG NHẬP — cho hãng KHÔNG mở DCR. → SPEC-arms §5h·7    │
+ * │                                                                          │
+ * │ Vì sao không dùng lại được luồng của Notion: 🌐 web flow của GitHub bắt   │
+ * │ buộc `client_secret` — **PKCE là thứ THÊM VÀO, không phải thứ THAY CHO**. │
+ * │ Một public client đi đường đó chết ở bước đổi mã, bằng một câu 401 nói    │
+ * │ *"chìa sai"*.                                                            │
+ * │                                                                          │
+ * │ Device flow đổi lại **bỏ được nhiều hơn nó thêm**:                       │
+ * │   · 0 `client_secret` — kể cả lúc LÀM MỚI (🌐 *"Required unless the user  │
+ * │     access token was generated using the device flow"*)                  │
+ * │   · **0 `redirect_uri`** ⇒ toàn bộ §5h·6 (`redirectBase` · `public_url` · │
+ * │     nginx · Docker · VPS) KHÔNG áp dụng cho cánh tay đi đường này         │
+ * │   · 0 `state`, 0 `code_verifier`, 0 map `pending` — không có mã uỷ quyền  │
+ * │     nào bay về đâu cả                                                    │
+ * │                                                                          │
+ * │ Cái giá: người dùng phải **gõ một mã** trên trang của hãng. Một bước tay  │
+ * │ đổi lấy việc xoá cả một lớp triển khai.                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function supportsDevice(meta: AsMeta): boolean {
+  // Đọc từ metadata, KHÔNG dò tên hãng. Đây là điều kiện để mục danh mục vẫn là
+  // DỮ LIỆU (§5h·1): thêm một hãng không-DCR về sau = thêm một object.
+  return Boolean(meta.device_authorization_endpoint);
+}
+
+export interface DeviceStart {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  /** Một số hãng trả kèm URL đã nhúng sẵn mã — dùng được thì đỡ cho người dùng một bước gõ. */
+  verification_uri_complete?: string;
+  expires_at: number;
+  interval_ms: number;
+}
+
+/** Xin một mã thiết bị. `client_id` đến từ **dữ liệu danh mục**, không từ handshake. */
+export async function deviceStart(
+  meta: AsMeta,
+  clientId: string,
+  scope?: string,
+): Promise<DeviceStart> {
+  const url = meta.device_authorization_endpoint;
+  if (!url) throw new Error(`${meta.issuer} không hỗ trợ đăng nhập bằng mã thiết bị.`);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({ client_id: clientId, ...(scope ? { scope } : {}) }).toString(),
+    });
+  } catch (e) {
+    throw new TransientError(`[xin mã] không gọi ra được ${new URL(url).host}: ${(e as Error).message}`);
+  }
+
+  const body = await res.text();
+  let j: Record<string, unknown>;
+  try {
+    j = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    throw new Error(`[xin mã] phản hồi không đọc được (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  }
+  if (typeof j['device_code'] !== 'string') {
+    /**
+     * ⚠ CA THƯỜNG GẶP NHẤT, và câu lỗi phải nói thẳng ra nó: GitHub trả **400**
+     * cho app **chưa tick "Enable Device Flow"**. Không nói ra thì người triển
+     * khai đi kiểm `client_id`, kiểm mạng, kiểm URL — mọi chỗ trừ chỗ hỏng.
+     */
+    throw new Error(
+      `[xin mã] hỏng (HTTP ${res.status}): ${String(j['error'] ?? body.slice(0, 120))}\n` +
+        `Kiểm trước tiên: ứng dụng đã bật "đăng nhập bằng mã thiết bị" ở phía dịch vụ chưa.`,
+    );
+  }
+
+  const expiresIn = typeof j['expires_in'] === 'number' ? j['expires_in'] : 900;
+  const interval = typeof j['interval'] === 'number' ? j['interval'] : 5;
+  return {
+    device_code: j['device_code'],
+    user_code: String(j['user_code'] ?? ''),
+    verification_uri: String(j['verification_uri'] ?? ''),
+    ...(typeof j['verification_uri_complete'] === 'string'
+      ? { verification_uri_complete: j['verification_uri_complete'] }
+      : {}),
+    expires_at: Date.now() + expiresIn * 1000,
+    interval_ms: interval * 1000,
+    };
+}
+
+/** Kết quả một nhịp hỏi thăm. `pending` là trạng thái BÌNH THƯỜNG, không phải lỗi. */
+export type DevicePoll =
+  | { state: 'pending'; interval_ms: number }
+  | { state: 'done'; account: OAuthAccount };
+
+/**
+ * Một nhịp hỏi thăm. **Không tự lặp** — vòng lặp thuộc về người gọi.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Vì sao tách nhịp ra khỏi vòng: người gọi là daemon, và nó phải trả lời    │
+ * │ giao diện *"đang chờ, còn 12 phút"* trong lúc chờ. Một hàm tự lặp thì chỉ │
+ * │ trả về được ở phút cuối, và mọi trạng thái ở giữa **biến mất**.           │
+ * │                                                                          │
+ * │ 🔴 VÀ RỚT MẠNG KHÔNG ĐƯỢC GIẾT LƯỢT ĐĂNG NHẬP (ca thật 26/08): lượt đo   │
+ * │ đầu chết sau ~95 giây vì một cú nấc mạng — trong khi người dùng vừa bấm   │
+ * │ Đồng ý xong. GitHub báo *"đã cấp quyền"*, ta báo *hỏng*: hai màn hình nói │
+ * │ ngược nhau, và màn hình sai là của ta. ⇒ `TransientError` trả về          │
+ * │ `pending`, không ném. Mốc dừng là **hạn của chính cái mã**, không phải số │
+ * │ lần thử ⇒ không có vòng lặp vô hạn. → SPEC-arms §5h·7g                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export async function devicePoll(
+  meta: AsMeta,
+  p: { clientId: string; start: DeviceStart; mcpUrl: string },
+): Promise<DevicePoll> {
+  if (Date.now() > p.start.expires_at) {
+    throw new Error('Mã đăng nhập đã hết hạn — bấm Đăng nhập lại để lấy mã mới.');
+  }
+  try {
+    const t = await postToken(
+      meta,
+      {
+        client_id: p.clientId,
+        device_code: p.start.device_code,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      },
+      'hỏi thăm',
+    );
+    return { state: 'done', account: applyToken({ client_id: p.clientId, mcp_url: p.mcpUrl, issuer: meta.issuer }, t) };
+  } catch (e) {
+    if (e instanceof TransientError) return { state: 'pending', interval_ms: p.start.interval_ms };
+    const msg = (e as Error).message;
+    /**
+     * BA CA "CHƯA XONG" CỦA RFC 8628, và chúng KHÔNG phải lỗi:
+     *   authorization_pending  người dùng chưa bấm — chờ tiếp
+     *   slow_down              ta hỏi quá nhanh — **cộng 5 giây**, không phải thử ngay
+     *   expired_token          hết hạn thật — ca này mới là lỗi
+     * ⚠ `postToken` đã dịch mã lỗi thành câu người đọc, nên khớp theo chuỗi mã
+     * gốc mà nó nhúng vào. Giữ mã gốc trong câu là điều kiện để đoạn này chạy.
+     */
+    if (msg.includes('authorization_pending')) return { state: 'pending', interval_ms: p.start.interval_ms };
+    if (msg.includes('slow_down')) return { state: 'pending', interval_ms: p.start.interval_ms + 5000 };
+    if (msg.includes('access_denied')) throw new Error('Bạn đã từ chối cấp quyền ở trang của dịch vụ.');
+    throw e;
+  }
 }
 
 /**
@@ -411,9 +661,26 @@ export function isAccountName(name: string): boolean {
   return /_OAUTH_[0-9A-F]{8}$/.test(name);
 }
 
-export function accountName(prefix: string, acc: Pick<OAuthAccount, 'issuer' | 'mcp_url' | 'extra'>): string {
+/**
+ * ⚠⚠ `seed` LÀ THỨ CỨU NHỮNG HÃNG KHÔNG TRẢ DANH TÍNH — đo 26/08 với GitHub.
+ *
+ * Notion trả kèm `workspace_id` ngay trong phản hồi token. **GitHub trả rỗng**:
+ * không tên, không id, `scope` cũng rỗng. Không có `seed` thì mọi tài khoản
+ * GitHub rơi về nhánh dự phòng `issuer|mcp_url` — một chuỗi **giống hệt nhau
+ * cho mọi người** ⇒ cùng tên chìa ⇒ **cùng băm** ⇒ hai tài khoản khác nhau bị
+ * gộp thành MỘT cánh tay. Đúng ca §6i, và nó **không có triệu chứng nhìn thấy
+ * được** cho tới khi người thứ hai đăng nhập.
+ *
+ * ⇒ Với hãng như thế, người gọi đi hỏi danh tính (`get_me`) rồi truyền `id` vào
+ * đây. → `catalog.ts §CatalogArm.identity` · SPEC-arms §5h·7k
+ */
+export function accountName(
+  prefix: string,
+  acc: Pick<OAuthAccount, 'issuer' | 'mcp_url' | 'extra'>,
+  seedOverride?: string,
+): string {
   const ws = acc.extra?.['workspace_id'];
-  const seed = typeof ws === 'string' && ws ? ws : `${acc.issuer}|${acc.mcp_url}`;
+  const seed = seedOverride || (typeof ws === 'string' && ws ? ws : `${acc.issuer}|${acc.mcp_url}`);
   const id = crypto.createHash('sha256').update(seed).digest('hex').slice(0, 8).toUpperCase();
   return `${prefix.toUpperCase().replace(/[^A-Z0-9]/g, '')}_OAUTH_${id}`;
 }

@@ -29,11 +29,14 @@ import type { Company } from '../core/company.js';
 import { companyPaths } from '../core/paths.js';
 import { RunError } from '../core/types.js';
 import { findArm } from '../core/catalog.js';
+import { callTool } from '../core/mcp-http.js';
 import { readOAuth, saveOAuth } from '../core/secrets.js';
 import {
   DeadGrantError,
   accountName,
   authorizeUrl,
+  deviceStart,
+  devicePoll,
   discover,
   exchangeCode,
   needsRefresh,
@@ -41,7 +44,9 @@ import {
   randomState,
   refreshAccount,
   register,
+  supportsDevice,
   type AsMeta,
+  type DeviceStart,
   type OAuthAccount,
 } from '../core/oauth.js';
 
@@ -164,6 +169,25 @@ export function redirectBase(opts: { host: string; port: number; publicUrl?: str
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ HAI ĐƯỜNG ĐĂNG NHẬP, VÀ METADATA CHỌN GIÙM — không ai gõ tên hãng.       │
+ * │                                                                          │
+ * │   có DCR          → web flow + PKCE (Notion)     `oauthStart`            │
+ * │   khai device     → mã thiết bị (GitHub)         `oauthDeviceStart`      │
+ * │                                                                          │
+ * │ Mục danh mục khai `auth: {kind:'device'}` thì đi đường hai. Vì sao khai   │
+ * │ trong DỮ LIỆU thay vì tự dò: `client_id` phải có **trước** khi gõ cửa,    │
+ * │ và nó không suy được từ handshake — đúng cùng lý do tên biến chìa phải    │
+ * │ cố định (§5c).                                                           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function loginKind(catalogId: string): 'device' | 'web' | null {
+  const arm = findArm(catalogId);
+  if (!arm || arm.spec.kind !== 'http') return null;
+  return arm.auth?.kind === 'device' ? 'device' : 'web';
+}
+
 /** Mở một lượt đăng nhập. Trả URL cho **web UI** mở, không tự mở. */
 export async function oauthStart(
   catalogId: string,
@@ -257,6 +281,150 @@ export async function oauthCallback(
     page('Đổi chìa không thành', escapeHtml((e as Error).message.slice(0, 200)), false);
     return null;
   }
+}
+
+// ─────────────────────────────────────────────────────────── device flow
+
+/**
+ * Lượt đăng nhập bằng mã thiết bị ĐANG BAY. Trong RAM, cùng lý do `pending`.
+ *
+ * ⚠ Khác `pending` ở một chỗ đáng nói: ở đây **không có bí mật nào**. `device_code`
+ * chỉ có nghĩa khi đi kèm `client_id` công khai, và nó tự chết sau 15 phút. Nên
+ * mất map này khi tắt daemon **không mất gì cả** — cách khôi phục đúng vẫn là
+ * bấm lại nút.
+ */
+interface DevicePending {
+  meta: AsMeta;
+  clientId: string;
+  start: DeviceStart;
+  mcpUrl: string;
+  prefix: string;
+  catalogId: string;
+  at: number;
+}
+const devices = new Map<string, DevicePending>();
+
+export interface DeviceStartResult {
+  state: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  expiresAt: number;
+  intervalMs: number;
+}
+
+/** Mở một lượt đăng nhập bằng mã thiết bị. **Không có `redirect_uri`.** */
+export async function oauthDeviceStart(catalogId: string): Promise<DeviceStartResult> {
+  for (const [k, v] of devices) if (v.at < Date.now() - PENDING_TTL_MS) devices.delete(k);
+
+  const arm = findArm(catalogId);
+  if (!arm || arm.spec.kind !== 'http' || arm.auth?.kind !== 'device') {
+    throw new RunError(`"${catalogId}" không đăng nhập bằng mã thiết bị.`, 'other');
+  }
+  const mcpUrl = arm.spec.url;
+  const meta = await discover(mcpUrl);
+  if (!meta) throw new RunError(`${mcpUrl} không cần đăng nhập — cắm thẳng được.`, 'other');
+  if (!supportsDevice(meta)) {
+    /**
+     * Danh mục khai một đằng, dịch vụ khai một nẻo. Nói thẳng ra là **lời khai
+     * của ta sai**, đừng đổ cho người dùng: họ không chọn cái này, ta ship nó.
+     */
+    throw new RunError(
+      `${meta.issuer} không còn hỗ trợ đăng nhập bằng mã thiết bị — mục danh mục này cần cập nhật.`,
+      'other',
+    );
+  }
+
+  const start = await deviceStart(meta, arm.auth.clientId, arm.auth.scope);
+  const state = randomState();
+  devices.set(state, {
+    meta,
+    clientId: arm.auth.clientId,
+    start,
+    mcpUrl,
+    prefix: catalogId,
+    catalogId,
+    at: Date.now(),
+  });
+
+  return {
+    state,
+    userCode: start.user_code,
+    verificationUri: start.verification_uri,
+    ...(start.verification_uri_complete ? { verificationUriComplete: start.verification_uri_complete } : {}),
+    expiresAt: start.expires_at,
+    intervalMs: start.interval_ms,
+  };
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ HỎI XEM CHÌA NÀY LÀ CỦA AI. → `catalog.ts §ArmIdentity` · SPEC §5h·7k    │
+ * │                                                                          │
+ * │ Hỏng thì **KHÔNG giết lượt đăng nhập** — chìa đã cấp thật rồi, và vứt nó  │
+ * │ đi vì một lời gọi phụ hỏng là bắt người dùng làm lại toàn bộ vì một thứ   │
+ * │ chỉ ảnh hưởng tới cái NHÃN. Rơi về hạt giống mặc định, đúng như trước.    │
+ * │                                                                          │
+ * │ ⚠ Nhưng phải KÊU: rơi về mặc định nghĩa là tài khoản thứ hai của cùng     │
+ * │ hãng sẽ đụng băm. Im lặng ở đây là để dành một lỗi gộp cánh tay cho ngày  │
+ * │ khác.                                                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+async function probeIdentity(
+  arm: NonNullable<ReturnType<typeof findArm>>,
+  token: string,
+): Promise<{ seed?: string; label?: string }> {
+  const id = arm.identity;
+  if (!id) return {};
+  const text = await callTool(id.url, { Authorization: `Bearer ${token}` }, id.tool);
+  if (!text) {
+    process.emitWarning(
+      `Không hỏi được danh tính tài khoản (${arm.name}) — nhãn sẽ để trống, và hai tài khoản ` +
+        `của cùng dịch vụ này có thể đụng nhau.`,
+    );
+    return {};
+  }
+  try {
+    const j = JSON.parse(text) as Record<string, unknown>;
+    const seed = j[id.idField];
+    const label = j[id.labelField];
+    return {
+      // `String()` vì đây là dữ liệu của bên thứ ba: `id` có thể là số.
+      ...(seed !== undefined && seed !== null ? { seed: String(seed) } : {}),
+      ...(typeof label === 'string' && label.trim() ? { label: label.trim() } : {}),
+    };
+  } catch {
+    // Tool trả chữ chứ không trả JSON — vẫn không phải lý do để bỏ chìa đi.
+    return {};
+  }
+}
+
+export type DevicePollResult =
+  | { state: 'pending'; intervalMs: number; expiresAt: number }
+  | { state: 'done'; name: string; label?: string };
+
+/** Một nhịp hỏi thăm. Giao diện gọi lặp; **daemon giữ phiên**, không phải trình duyệt. */
+export async function oauthDevicePoll(company: Company, state: string): Promise<DevicePollResult> {
+  const p = devices.get(state);
+  if (!p) throw new RunError('Lượt đăng nhập đã hết hạn — bấm Đăng nhập lần nữa.', 'other');
+
+  const r = await devicePoll(p.meta, { clientId: p.clientId, start: p.start, mcpUrl: p.mcpUrl });
+  if (r.state === 'pending') {
+    return { state: 'pending', intervalMs: r.interval_ms, expiresAt: p.start.expires_at };
+  }
+
+  // Xong ⇒ dọn NGAY, kể cả khi bước dưới hỏng: một `device_code` đã đổi ra chìa
+  // thì lần hỏi thứ hai không còn nghĩa gì.
+  devices.delete(state);
+
+  const arm = findArm(p.catalogId);
+  const acc = r.account;
+  const who = arm ? await probeIdentity(arm, acc.access_token) : {};
+  if (who.label) acc.label = who.label;
+
+  const name = accountName(p.prefix, acc, who.seed);
+  saveOAuth(companyPaths(company.dir), name, acc);
+  return { state: 'done', name, ...(acc.label ? { label: acc.label } : {}) };
 }
 
 /** Workspace đã nối — **TÊN và NHÃN, không bao giờ token**. */

@@ -408,6 +408,17 @@ export interface CatalogArm {
   tiered?: boolean;
   /** Cần ĐĂNG NHẬP thay vì gõ chìa. Suy từ `spec` ở server, không khai tay. */
   needsLogin?: boolean;
+  /**
+   * Đăng nhập bằng **mã thiết bị** thay vì mở tab rồi chờ tab đó xong.
+   *
+   * Hai luồng khác nhau ở đúng thứ người dùng nhìn thấy, nên giao diện phải
+   * biết: web flow bảo họ *"xong ở tab kia thì đây tự cập nhật"*; mã thiết bị
+   * hiện **một mã ngay tại đây** và tự hỏi thăm. Bày nhầm luồng là bảo người ta
+   * chờ một tab sẽ không bao giờ báo về. → SPEC-arms §5h·7
+   */
+  deviceLogin?: boolean;
+  /** Nhóm việc cho người dùng tick. Không có ⇒ cắm cả server. → §5h·7e */
+  groups?: { id: string; label: string; on?: boolean }[];
   brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
 }
 

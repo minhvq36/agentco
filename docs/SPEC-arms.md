@@ -64,6 +64,20 @@ Luật của dự án này: *"đo N lần chứng minh một CƠ CHẾ, không c
 | 17 | MCP nên là node? | **NODE, và nó đã là node.** Thiếu là **đường sinh ra nó**. Cửa chính = nút `+ Kết nối`; **bỏ kéo-thả**, có lý do. §6e |
 | 18 | Rút MCP thì tri thức mất theo? | **ĐỪNG XOÁ — cho NGỦ.** Cùng kết quả token (0), rẻ hơn hẳn, không xoá byte nào của user. §9d |
 
+### Chốt bổ sung — phiên 26/08 (GitHub, ✅ đo thật)
+
+| # | Câu hỏi | Chốt |
+|---|---|---|
+| 24 | Hãng **không có DCR** thì khách phải tự tạo app? | **KHÔNG.** `client_id` của device flow **không phải bí mật** ⇒ **agentco đứng tên**, ship `client_id` như dữ liệu, khách gõ **0 chìa**. §5h·7h |
+| 25 | Dùng lại được luồng OAuth của Notion không? | **KHÔNG** — web flow GitHub **bắt buộc `client_secret`**, kể cả khi có PKCE. Đi **device flow**, và nó **bỏ luôn `redirect_uri`** ⇒ §5h·6 vô can. §5h·7a–b |
+| 26 | MCP có nhận token của app lạ? | 🟢 **CÓ** — đo 26/08. Câu chặn duy nhất của phương án A đã mở. §5h·7c |
+| 27 | 🔴 Giá token | **≈30 000/lượt** cho endpoint mặc định, **≈60 000** cho `x/all`. ⇒ **lát cắt toolset là ĐIỀU KIỆN TỒN TẠI**, không phải tuỳ chọn. Và lát cắt là **chuỗi URL** ⇒ vẫn là dữ liệu. §5h·7e |
+| 28 | GitHub có mấy nấc quyền? | **HAI** — nấc giữa rỗng ở **mọi** lát cắt (0/89 tool khai đủ hai lời khai). Nấc *chỉ đọc* lấy từ `/readonly` của **server**, mạnh hơn nấc cùng tên của Notion. §5h·7e |
+| 29 | 🔴 `postToken()` có chạy cho GitHub không? | **KHÔNG — ba lỗi chồng nhau**, cả ba vô hình với Notion: thiếu `Accept: application/json` · **HTTP 200 kèm `error`** · `incorrect_client_credentials` không nằm trong danh sách chìa-đã-chết. §5h·7d |
+| 30 | Chủ app có với tới repo khách không? | **Không có đường nào** — miễn là **không bao giờ sinh private key**. Cấm bằng cấu trúc, có luật + ngày rà lại. §5h·7h |
+| 31 | Repo private đọc/ghi được chưa? | ✅ **cả hai** — commit thật vào repo private, và `/readonly` **từ chối ở tầng giao thức** (`-32602`), tức hàng rào thật chứ không phải danh sách. §5h·7j |
+| 32 | Nhãn + danh tính tài khoản GitHub lấy đâu? | 🔴 **không có trong phản hồi token** — phải hỏi `get_me`. Không hỏi ⇒ mọi tài khoản GitHub ra **cùng một băm** ⇒ gộp làm một cánh tay. §5h·7k |
+
 ---
 
 ## 1. "All is MCP" — không, và đây là hệ toạ độ
@@ -357,7 +371,7 @@ Một mục chỉ vào danh mục khi **cả năm** đúng — cùng kỷ luật
 |---|---|---|---|---|---|
 | 1 | **File trên máy** — tham chiếu `filesystem` | stdio | **0** | đường cắm trần · **allowlist thư mục** (§1d) | 🟢 không có bên thứ ba |
 | 2 | **Notion (chỉ đọc)** — hosted chính chủ | **Streamable HTTP** | **1** — chìa OAuth (chặng 1: dán tay) | **HTTP** + **tiêm `headers`** (§5a) + **cánh tay chỉ đọc** + **`ToolSearch`** | 🟡 phải đọc guideline |
-| 3 | 🆕 **GitHub** — remote chính chủ | **Streamable HTTP** | 🔴 **1 OAuth App tự đăng ký** (đo 25/08) | ~~đường HTTP + tiêm `headers`~~ **đã xong ở #2** ⇒ nó không còn mở khoá cơ chế nào | 🟡 phải đọc guideline |
+| 3 | 🆕 **GitHub** — remote chính chủ | **Streamable HTTP** | **0** — ~~1 OAuth App tự đăng ký~~ 🔴 **đính chính 26/08**: app do **agentco** đứng tên, `client_id` là **dữ liệu ship sẵn** ⇒ người dùng gõ **0 chìa** | 🔴 **HAI cơ chế mới, không phải không cái nào**: ① **device flow** (0 secret, **0 redirect_uri**) ② **chọn lát cắt toolset** — vì cắm cả server là ≈30 000 token/lượt (§5h·7e) | 🟡 phải đọc guideline |
 | 4 | **Google** — bộ chính chủ | stdio | **2** + đăng nhập | **OAuth qua `onElicitation`** (§6d) | 🟠 nghiêm nhất |
 
 > **Thứ tự này là thứ tự XÂY, không phải thứ tự quan trọng.** Mỗi mục mở khoá đúng **một** cơ chế
@@ -387,6 +401,21 @@ Một mục chỉ vào danh mục khi **cả năm** đúng — cùng kỷ luật
 >
 > ⇒ **Thứ tự xây theo trục "đăng ký ứng dụng" xếp lại:**
 > **Notion/Linear (0 tay) < GitHub (1 app tay) < Google (app + consent screen + 3 API)**.
+>
+> ### 🔴 ĐÍNH CHÍNH LẦN HAI — 26/08. Cả khối trên đo đúng, nhưng **kết luận sai một bậc**
+>
+> *"Không có DCR ⇒ phải có người tự đăng ký app"* — vế đầu đúng, vế sau **chỉ đúng nếu ta mặc định
+> người đó là KHÁCH HÀNG**. Đo 26/08 (§5h·7): `client_id` của **device flow không phải bí mật**, nên
+> **agentco đứng tên một app và ship `client_id` như dữ liệu** — khách gõ **0 chìa**, đúng bằng Notion.
+>
+> **Vì sao lầm, và nó là biến thể thứ ba của cùng một lớp lỗi:** ta đọc *"không có DCR"* thành *"có
+> một bước tay"* mà **không hỏi bước đó rơi vào tay AI**. Cùng hình dạng với hai lần trước — 25/08 đọc
+> trải nghiệm của Claude Code thành tính chất của GitHub; 24/08 đọc ca Google thành tính chất của
+> OAuth. ⇒ **DCR trả lời câu *"ai đăng ký"*, không trả lời câu *"khách có phải làm gì không"*.**
+> → [[agentco-measurement-vs-conclusion]]
+>
+> ⇒ **Trục "công sức của KHÁCH" xếp lại lần nữa:**
+> **Notion (1 màn hình) < GitHub (2 màn hình: gõ mã + cài app vào repo) < Google (Cloud Console)**.
 
 1. **Nó rẻ hơn Google một bậc.** 🌐 `https://api.githubcopilot.com/mcp/` — không cài gì, không
    `npx`, không đăng ký ứng dụng. GitHub **tự là nhà cung cấp danh tính**, nên bước *"tạo OAuth
@@ -1182,6 +1211,318 @@ cả ba điều này thay vì *"kiểm mạng hoặc URL"*.
 ⏸ **Còn backlog thật sự:** Dockerfile · mẫu nginx · TLS · và **chạy thử một lần trên VPS**. Chừng
 nào chưa chạy thật thì nhánh "có domain" vẫn là **chưa đo** — hai bản vá trên gỡ hai chặn *đã biết*,
 chúng không chứng minh rằng không còn chặn thứ ba.
+
+## 5h·7. ✅ DEVICE FLOW — hãng KHÔNG có DCR, và đường này **dễ hơn** đường Notion
+
+**Ngày:** 26/08/2026 · `scripts/spike-github-device.ts` · **$0 model** · GitHub App `agent-co.app`,
+chủ sở hữu org `@agent-co-app`, client_id `Iv23li95pd8QpYfTGMho`.
+
+> **Chốt của cả mục:** một hãng không mở DCR **không** có nghĩa là người dùng phải gõ chìa.
+> Nó chỉ có nghĩa là **`client_id` phải đến từ dữ liệu thay vì từ handshake**. Và nếu hãng đó khai
+> `device_authorization_endpoint`, thì phần còn lại của luồng **không cần một bí mật nào**.
+
+### 5h·7a. Vì sao KHÔNG dùng lại được luồng của Notion — và đây là chỗ dễ đoán sai nhất
+
+🌐 Tài liệu GitHub, web flow: `client_secret` **"Required."** PKCE ở GitHub là thứ **THÊM VÀO**, không
+phải thứ **THAY CHO** secret — dù metadata có khai `code_challenge_methods_supported: ["S256"]`.
+
+⇒ Luồng public client đang chạy cho Notion (`token_endpoint_auth_method: 'none'`) **chết ở bước đổi
+mã**, và chết bằng một câu **401**. Nếu không đọc trước tài liệu, ta sẽ đi tìm ở phía chìa, phía tài
+khoản, phía workspace — đúng lớp lỗi §5m, và lần này **ta tự tạo ra nó cho chính mình**.
+
+> ⚠ **Luật:** `code_challenge_methods_supported` trong metadata nói *"server nhận PKCE"*. Nó **KHÔNG**
+> nói *"server nhận public client"*. Hai câu đó khác nhau, và RFC 8414 không có trường nào bắt server
+> phải khai câu thứ hai (`token_endpoint_auth_methods_supported` **vắng mặt** ở GitHub). Vắng mặt
+> không phải tín hiệu. → [[agentco-deterministic-vs-signal]]
+
+### 5h·7b. Đổi lại, device flow bỏ được nhiều hơn nó thêm
+
+| | web flow (Notion) | **device flow (GitHub)** |
+|---|---|---|
+| `client_secret` lúc đổi mã | không cần (DCR cấp public client) | ✅ **không cần** |
+| `client_secret` lúc **làm mới** | không cần | ✅ **không cần** — 🌐 *"Required **unless** the user access token was generated using the device flow"* |
+| `redirect_uri` | bắt buộc, khớp từng ký tự | ❌ **KHÔNG TỒN TẠI** |
+| `state` · `code_verifier` · map `pending` | có | ❌ không có |
+| DCR | có | ❌ không — `client_id` từ dữ liệu |
+
+🔴 **Hệ quả to nhất, và nó ngược trực giác: §5h·6 KHÔNG ÁP DỤNG cho cánh tay này.** `redirectBase()`
+· `public_url` · ba nhánh · bốn phép soi · hai chặn cứng vá 26/08 — **không cái nào liên quan**, vì
+không có mã uỷ quyền nào bay về đâu cả. Docker · VPS · nginx · Cloudflare Access · mạng nội bộ không
+mở cổng: **vô can**. ⇒ Trong bốn mục danh mục v1, GitHub là mục **dễ triển khai nhất**, không phải
+khó nhất — ngược hẳn thứ tự §4e ghi ngày 23/08.
+
+Cái giá, nói ra để thẻ không hứa quá tay: người dùng phải **gõ một mã 8 ký tự** trên trang của GitHub,
+và với GitHub App còn thêm **một bước cài app vào repo**. ⇒ **Hai màn hình của bên thứ ba**, trong khi
+Notion chỉ có một.
+
+### 5h·7c. ✅ SỐ ĐO — năm câu hỏi, bốn đã trả lời
+
+| Q | Câu hỏi | Kết quả |
+|---|---|---|
+| **1** | Device flow chạy với `client_id` trần? | ✅ **CÓ** — 0 secret. Xong sau 200 giây (gồm thời gian người dùng thao tác) |
+| **2a** | Có `refresh_token`? | ✅ `ghu_…` (40 ký tự) hạn **8,0 giờ** · `ghr_…` (80 ký tự) hạn **4 416 giờ = 6 tháng** |
+| **2b** | Làm mới không secret? Có **xoay**? | ✅ chạy · 🔴 **CÓ XOAY**, và chìa cũ **chết ngay** khi thử lại |
+| **3** | 🔴 MCP có nhận token của **app lạ** không? | 🟢 **CÓ** — `github-mcp-server/remote-6e886500…`. **Phương án A sống.** Changelog GA ghi *"more third-party host apps coming soon"* làm ta lo hụt: đó là câu về **tích hợp sẵn trong IDE**, không phải về danh sách trắng client |
+| **4** | Repo **private** với tới được? | ✅ **CÓ** — đọc ✅ và **ghi ✅**: commit thật vào `minhvq36/test` (private), tác giả là chính người đăng nhập. Xem 5h·7j |
+| **5** | Giá token từng lát cắt | 🔴 xem 5h·7e — **đây là ràng buộc chi phối cả thiết kế** |
+| **6** | Chìa này là **của ai**? | 🔴 GitHub **không trả tên tài khoản** trong phản hồi token ⇒ phải đi hỏi `get_me`. Xem 5h·7k |
+| **7** | Nhiều lát cắt trong **một** cánh tay? | ✅ header `X-MCP-Toolsets` chạy — **một node, không phải ba**. Xem 5h·7e |
+
+`scope` trả về **rỗng** ⇒ xác nhận đây là **GitHub App** thật (đi bằng permissions), không phải OAuth
+App (đi bằng scope). Hai loại này khai cùng một `issuer` nên **không phân biệt được từ metadata** —
+chỉ phân biệt được **sau khi có chìa trong tay**.
+
+### 5h·7d. 🔴🔴 BA LỖI TRONG `postToken()` — cả ba VÔ HÌNH với Notion, cả ba NỔ với GitHub
+
+Đây là phần đắt nhất của spike, và nó không nằm trong câu hỏi nào của spike. Cùng **một hàm**
+(`core/oauth.ts §postToken`), ba tiền đề sai, mỗi tiền đề đúng-với-Notion:
+
+| # | Tiền đề đang ẩn trong mã | GitHub làm gì | Hỏng ra sao |
+|---|---|---|---|
+| **①** | *"server trả JSON"* | trả **form-urlencoded** trừ khi có `Accept: application/json` — mà `postToken` **không gửi** header đó | `JSON.parse` ném ngay ở lần đổi mã **đầu tiên**. Hỏng to, dễ thấy |
+| **②** | *"hỏng thì `!res.ok`"* | trả **HTTP 200** kèm thân `{"error": …}` (đo được) | `postToken` đọc thành **thành công** ⇒ `applyToken` dựng account với `access_token: undefined` ⇒ `saveOAuth` **ghi đè một tài khoản đang chạy tốt bằng một tài khoản hỏng**. 🔴 **Hỏng IM LẶNG**, và nó xảy ra trong **vòng làm mới chạy ngầm** |
+| **③** | *"chìa chết = `invalid_grant` \| `invalid_client`"* | trả **`incorrect_client_credentials`** | không khớp ⇒ xếp thành *hỏng tạm* ⇒ cờ `dead` **không bao giờ bật** ⇒ vòng làm mới thử lại **mỗi 15 phút, vĩnh viễn**, và giao diện **không bao giờ** hiện nút *Đăng nhập lại*. Tức cơ chế `dead` bị vô hiệu **đúng ở hãng cần nó nhất** |
+
+> **② tệ hơn ① dù ① nghe to hơn.** ① nổ ngay, có stack trace, sửa trong 5 phút. ② **không nổ** — nó
+> ghi một file đúng cú pháp với nội dung sai, ở một vòng chạy nền lúc không ai nhìn. Đúng hình dạng đã
+> ghi ở §5s: *"đường ghi hay chạy nhất là vòng làm mới"*.
+
+🔴 **Và ③ còn kèm một câu lỗi sai cửa của chính GitHub:**
+`"The client_id and/or client_secret passed are incorrect."` — trong khi sự thật là **refresh token đã
+bị xoay**. Hiện nguyên văn chuỗi đó cho người dùng là đẩy họ đi kiểm `client_id`, thứ **không hề sai**.
+⇒ Ta phải **dịch lại**, không được chuyển tiếp. → [[agentco-wrong-door-errors]]
+
+**Bản vá bắt buộc, ba dòng ở một chỗ** — và luật rút ra thì rộng hơn bản vá:
+
+1. Gửi `accept: application/json` ở **mọi** lời gọi token.
+2. Đọc thân JSON **trước**, phân loại theo `body.error` **trước**, `res.ok` chỉ là tín hiệu phụ.
+3. Danh sách chìa-đã-chết phải gồm `invalid_grant` · `invalid_client` · **`incorrect_client_credentials`** ·
+   `bad_refresh_token`, và **thiếu `access_token` trong một phản hồi 200 cũng là hỏng**, không phải thành công.
+
+> ⚠⚠ **Luật, và nó đáng hơn cả ba bản vá:** *một luồng OAuth đã chạy đúng với MỘT hãng thì mới chứng
+> minh được **cơ chế**, chưa chứng minh được **hình dạng phản hồi**.* Ba lỗi trên đều là chỗ ta đọc
+> thói quen của Notion thành đặc tính của giao thức — **lần thứ ba** trong ba phiên (trước đó: *"OAuth
+> ⇒ scope hẹp"* §5h·3, *"GitHub tự là nhà cung cấp danh tính"* §5h·5).
+> ⇒ [[agentco-measurement-vs-conclusion]] · [[agentco-catch-hides-premises]]
+
+### 5h·7e. 🔴 GIÁ TOKEN — ràng buộc chi phối, và nó lớn hơn mọi thứ khác trong mục này
+
+Đo bằng byte của `tools/list` thô (⚠ **ước lượng ÷4**, không phải `getContextUsage()` — dùng để **so
+các lát cắt với nhau**, tuyệt đối không đem đi hứa tiền; hai nguồn từng lệch 27%, §9b ③):
+
+| endpoint | việc | ≈token | ba nấc |
+|---|---|---|---|
+| `/mcp/x/all` | **89** | **≈60 000** | 👁60 ✍0 🔴29 |
+| `/mcp/` (mặc định) | 44 | ≈30 000 | 👁27 ✍0 🔴17 |
+| `/mcp/readonly` | 27 | ≈18 000 | 👁27 ✍0 🔴0 |
+| `/mcp/x/repos` | 19 | ≈10 000 | 👁13 ✍0 🔴6 |
+| `/mcp/x/pull_requests` | 10 | ≈8 300 | 👁3 ✍0 🔴7 |
+| `/mcp/x/issues` | 9 | ≈8 000 | 👁6 ✍0 🔴3 |
+| `/mcp/x/repos/readonly` | 13 | ≈7 000 | 👁13 ✍0 🔴0 |
+| `/mcp/x/context` | 3 | ≈1 500 | 👁3 ✍0 🔴0 |
+
+**Ba kết luận, và cái thứ hai đổi thiết kế:**
+
+1. **Cắm nguyên `/mcp/` là chuyện không làm được.** Sàn tool definition của agentco đã ~13 200 token
+   (`SPEC-token-economy` §2); một cánh tay ≈30 000 token là **hơn gấp đôi toàn bộ nền**, mỗi lượt.
+   `x/all` ≈60 000 thì khỏi bàn. So sánh: `filesystem` đo được **2 185**, Notion 28 việc.
+2. ⇒ **Lát cắt KHÔNG phải tuỳ chọn nâng cao — nó là điều kiện để mục này tồn tại.** Và may mắn là
+   toàn bộ lát cắt đều là **chuỗi URL**: `/x/<toolset>` và hậu tố `/readonly`. **0 dòng mã cho mỗi
+   lát**, đúng bất biến §5h·1 (*danh mục là dữ liệu*).
+3. **`/readonly` vừa là hàng rào vừa là GIẢM GIÁ.** `x/repos` 19 việc ≈10 000 → `x/repos/readonly`
+   13 việc ≈7 000. Nấc "chỉ đọc" ở đây **rẻ hơn 30%**, và đó là lần đầu trong dự án một nấc quyền có
+   **giá đo được** để hiện lên thẻ.
+
+🔴 **Nấc GIỮA rỗng ở MỌI lát cắt** (`✍0` khắp bảng): 0/89 tool khai `readOnlyHint:false` **kèm**
+`destructiveHint:false`. Không phải lỗi đọc — **44/44 và 19/19 đều CÓ khai annotations**, chỉ là không
+tool nào rơi vào tổ hợp của nấc 2. ⇒ Theo luật *"nấc rỗng không được tồn tại"* (§6j), **cánh tay
+GitHub có ĐÚNG HAI nấc**: *Chỉ đọc* và *Toàn quyền*.
+
+> Và nấc *Chỉ đọc* của GitHub **mạnh hơn** nấc cùng tên của Notion về bản chất: Notion cắt ở phía ta
+> (lọc `allowedTools`), GitHub cắt ở **phía server** (`/readonly` — 27 việc thay vì 44, server không
+> phát ra tool ghi nào cả). Hai lá chắn khác tầng ⇒ **dùng cả hai**, không thay thế nhau.
+
+### 5h·7f. `404` là câu lỗi sai cửa của GitHub — và ta phải dịch lại
+
+Gọi `get_file_contents` lên một repo private **chưa cài app** trả:
+`failed to get repository info: GET https://api.github.com/repos/…: 404 Not Found`
+
+GitHub cố ý trả **404 chứ không phải 403** cho repo private không có quyền (để không lộ sự tồn tại của
+repo). Nhưng với người dùng agentco, 404 đọc lên là *"gõ sai tên repo"* — họ sẽ đi kiểm chính tả, kiểm
+nhánh, kiểm đường dẫn file. **Sự thật là chưa cài app vào repo đó.**
+
+⇒ Bắt buộc: khi một tool GitHub trả 404 trên `repos/{owner}/{repo}`, giao diện **không** chuyển tiếp
+nguyên văn, mà nói: *"agentco chưa được cài vào repo này — mở `github.com/apps/<slug>/installations/new`
+để thêm nó."* Cùng khuôn với §5m: **ta biết trước một nguyên nhân mà server không đủ dữ kiện để biết.**
+
+### 5h·7g. Vòng chờ device flow **phải chịu được rớt mạng** (ca thật, 26/08)
+
+Lượt đo đầu tiên chết sau ~95 giây với đúng hai chữ `fetch failed` — một cú nấc mạng trong lúc hỏi
+thăm, và vòng lặp **bỏ cuộc**.
+
+Hậu quả lệch hẳn so với nguyên nhân, và đó là lý do nó vào spec: **người dùng lúc đó đang đứng trước
+trang GitHub và vừa bấm Đồng ý.** GitHub báo *"đã cấp quyền"*, agentco báo *hỏng*. Hai màn hình nói
+ngược nhau, và màn hình sai là của ta — trong khi chìa thì **đã cấp thật**.
+
+⇒ Áp đúng luật đã chốt cho `refreshDue`: **hai loại hỏng, hai xử lý ngược nhau.** Mạng nấc ⇒ im lặng
+thử lại; `access_denied` / `expired_token` ⇒ dừng và nói. Mốc dừng là **hạn của chính cái mã** (15
+phút), không phải số lần thử ⇒ không có vòng lặp vô hạn. Và câu lỗi phải mang **nhãn bước**
+(`[xin mã]` · `[hỏi thăm]` · `[làm mới]`) — `fetch failed` trần không nói được gãy ở đâu, mà ba chỗ đó
+sửa bằng ba việc khác nhau.
+
+### 5h·7h. ✅ CHỦ APP LÀ AGENTCO (user chốt 26/08) — và vì sao điều đó **không** cho ta đường vào repo khách
+
+> User hỏi thẳng: *"account agentco đó của tôi giờ được mời quyền vào rất nhiều repo của khách hàng,
+> nghe có ghê quá không?"*
+
+**Không — và chỗ lệch nằm ở một khái niệm:** `client_id` là **danh tính của PHẦN MỀM**, không phải một
+tài khoản người dùng. Không có lời mời nào, không có collaborator nào, danh sách repo của chủ app
+không mọc thêm một dòng. Chìa được cấp **thẳng cho daemon chạy trên máy khách**, và **agentco không có
+máy chủ** — không tồn tại hạ tầng nào để chìa đi qua.
+
+Nhưng ba rủi ro **có thật**, và cái thứ ba mới đáng gọi tên:
+
+| | Rủi ro | Xử lý |
+|---|---|---|
+| a | Tên chủ app hiện trên màn hình đồng ý của mọi khách; ta chịu ToS API của GitHub | chuyện bình thường của việc phát hành phần mềm |
+| b | **Điểm chết chung** — một khách lạm dụng ⇒ GitHub treo app ⇒ **mọi khách gãy cùng lúc** | ô "dùng `client_id` của bạn", xem dưới |
+| c | 🔴 **Chủ GitHub App sinh được private key bất cứ lúc nào**, và private key mint được installation token ⇒ với tới repo đã cài app | **luật dưới đây** |
+
+> ### 🔴 LUẬT: GITHUB APP CỦA AGENTCO **KHÔNG BAO GIỜ CÓ PRIVATE KEY**
+> Không có key ⇒ **không tồn tại** đường mint installation token ⇒ (c) không phải một lời hứa mà là
+> một **sự vắng mặt kiểm chứng được**. Cùng hình dạng với bất biến §5b (*"không có API nào đọc được
+> giá trị chìa"*): cấm bằng **cấu trúc**, không bằng kỷ luật.
+> Cũng **không tạo `client_secret`** — device flow không dùng tới nó ở bất kỳ bước nào.
+> ⚠ Nếu GitHub chặn không cho **cài** app khi chưa có key: sinh key → cài → **xoá key ngay**, và ghi
+> ngày làm việc đó vào đây. Trạng thái cuối vẫn phải là *không có key nào tồn tại*.
+> 📌 **Rà lại mỗi lần đụng vào mục GitHub.**
+
+**Và ô "dùng `client_id` của bạn" là công dân hạng nhất, không phải chế độ ẩn.** Cùng một trường dữ
+liệu `auth.clientId`: mặc định điền sẵn của ta, xoá đi dán của họ ⇒ **0 dòng mã thêm**. Nó vá cả (b)
+lẫn (c) cùng lúc, và nó là câu trả lời tử tế nhất cho khách doanh nghiệp hỏi *"sao tôi phải tin
+agentco"*: **"anh không phải tin — đây là ô để anh không cần tin."**
+
+### 5h·7j. ✅ ĐẦU-CUỐI ĐÃ CHẠY THẬT — đọc, ghi, và **hàng rào là hàng rào thật**
+
+| Phép đo | Kết quả |
+|---|---|
+| Đọc file trong repo **private** (`minhvq36/test`) | ✅ `get_file_contents` trả nội dung |
+| **Ghi** file vào repo private | ✅ commit `55c55869…`, tác giả **`minhvq36`** — tức nó ghi **danh nghĩa người đăng nhập**, không phải danh nghĩa một bot |
+| Cùng lời gọi ghi, nhưng qua `/x/repos/readonly` | 🟢 **BỊ TỪ CHỐI Ở TẦNG GIAO THỨC**: `-32602 unknown tool "create_or_update_file"` |
+
+> **Dòng thứ ba là dòng đáng tiền.** `/readonly` không chỉ **giấu** tool khỏi `tools/list` — nó **từ
+> chối lời gọi**. Đó là khác biệt giữa *một danh sách* và *một hàng rào*, và nó nằm ở **phía server
+> GitHub**, ngoài tầm với của mọi thứ chạy trên máy khách. Nấc *Chỉ đọc* của GitHub vì thế **mạnh hơn
+> nấc cùng tên của Notion** (vốn cắt bằng `allowedTools` phía ta).
+> ⇒ Vẫn giữ **cả hai lớp**: lọc phía ta **và** endpoint `/readonly`. Hai lá chắn khác tầng.
+
+⚠ **Một chi tiết vận hành, đừng bỏ:** commit mang tên và email của **người đăng nhập**. Nghĩa là mọi
+việc nhân viên agentco làm trên GitHub đều **quy về đúng con người đã cấp quyền** — hợp với §6k
+(*"quy câu nói về đúng người nói"*), nhưng cũng có nghĩa là lịch sử repo của khách sẽ có commit mang
+tên họ mà **không phải họ gõ**. Thẻ phải nói ra điều đó.
+
+### 5h·7k. 🔴 DANH TÍNH KHÔNG NẰM TRONG PHẢN HỒI TOKEN — phải đi HỎI
+
+Notion trả kèm `workspace_id` + `workspace_name` ngay trong phản hồi token; `accountName()` dùng
+`workspace_id` làm hạt giống băm và `workspace_name` làm nhãn. **GitHub trả rỗng cả hai** — không tên,
+không id, `scope` cũng rỗng.
+
+⇒ `accountName()` sẽ rơi về nhánh dự phòng `issuer|mcp_url`, mà chuỗi đó **giống hệt nhau cho mọi tài
+khoản GitHub** ⇒ hai tài khoản khác nhau ra **cùng một tên chìa** ⇒ **cùng một băm** ⇒ **gộp thành một
+cánh tay**. Đúng ca §6i sinh ra để chặn, chỉ khác hãng — và lần này nó **không có triệu chứng nhìn
+thấy được** cho tới khi người thứ hai đăng nhập.
+
+**Bản vá: một bước "hỏi danh tính" sau khi đăng nhập**, là **dữ liệu** chứ không phải nhánh mã:
+
+```ts
+identity: { tool: 'get_me', idField: 'id', labelField: 'login',
+            url: 'https://api.githubcopilot.com/mcp/x/context' }
+```
+
+Đo được: `get_me` trả `{"login":"minhvq36","id":139192424,…}` — đủ cả hạt giống băm (`id`, ổn định,
+không đổi khi đổi tên) lẫn nhãn (`login`). Mục nào **có** danh tính trong phản hồi token (Notion) thì
+bỏ trống trường này; luồng chung đọc *"có `identity` thì hỏi, không có thì thôi"*.
+
+> 🎯 **Và nó vá luôn một cái bẫy UX mà chính ta vừa dẫm:** lượt đăng nhập đầu tiên của phiên này lấy
+> nhầm chìa của **`agent-co-dev`** (tài khoản chủ app) thay vì `minhvq36`, vì trình duyệt đang đăng
+> nhập tài khoản đó. Không có bước hỏi danh tính thì triệu chứng duy nhất là *"cánh tay không thấy repo
+> nào"* — một câu **sai cửa** dẫn người ta đi kiểm quyền, kiểm cài đặt, kiểm repo.
+> ⇒ Màn hình sau khi đăng nhập **phải hiện `@login`**, và nút *"Không phải tôi — đăng nhập lại"* ngay
+> cạnh. **Chủ app ≠ người dùng app**, và trình duyệt hay đang đăng nhập nhầm người.
+
+### 5h·7l. 🔴 PHẠM VI REPO **KHÔNG** VÀO BĂM — và đó là một loại phạm vi khác hẳn thư mục
+
+> User hỏi 27/08: *"repo khác nhau tính là server khác nhau theo băm? Còn all repo thì sao, được
+> tính là 1? nhưng liệu nó có cập nhật theo realtime không?"*
+
+**Đáp: không vào băm · một cánh tay · và CÓ, cập nhật tức thì.** Lý do nằm ở chỗ *phạm vi được giữ ở
+đâu*:
+
+| | **Thư mục** (File trên máy) | **Repo** (GitHub) |
+|---|---|---|
+| Phạm vi nằm ở đâu | trong `args` của cấu hình — **ở phía ta** | trong **bản cài đặt app**, ở phía GitHub |
+| Có vào `armHash` không | ✅ **CÓ** | ❌ **KHÔNG** |
+| Đổi phạm vi = | **một cánh tay khác** (phải cắm lại) | **không đổi gì ở phía ta** |
+| Ai thi hành | `mcpServers.args` lúc khởi động | GitHub, **từng lời gọi một** |
+| Cập nhật tức thì | ❌ phải cắm lại | ✅ **có** — lời gọi kế tiếp đã thấy |
+
+⇒ Một cánh tay GitHub = **(tài khoản + nhóm việc + nấc)**. Cài 1 repo hay `All repositories` đều ra
+**đúng một** băm; thêm/bớt repo trên GitHub **không** đẻ cánh tay mới, không cần đăng nhập lại,
+không cần cắm lại — vì chìa của ta là **user token**, và quyền được GitHub tính lại ở **mỗi request**.
+
+> ### ⚠ ĐÍNH CHÍNH: *"chọn repo giống chọn thư mục"* — SAI, và sai ở trục quan trọng nhất
+>
+> Câu đó viết ngày 26/08 lúc bày UI, và nó đúng về **hình dạng màn hình** (một danh sách để tick).
+> Nhưng nó **sai về sở hữu**: thư mục là **cấu hình của ta**, repo là **trạng thái sống của hãng**.
+> Nhầm hai thứ đó dẫn tới đúng một quyết định hỏng: **cache danh sách repo vào `company.yaml`** —
+> và một danh sách như thế **già đi mà không ai biết**, tức một lời nói dối có ngày hết hạn.
+
+**Ba hệ quả bắt buộc:**
+
+1. **Bảng chi tiết cánh tay GitHub KHÔNG được liệt kê repo.** Cánh tay `filesystem` hiện thư mục vì
+   thư mục nằm trong cấu hình nó đang chạy (§6i, 24/08). Ở đây không có gì tương đương để hiện — chỉ
+   một dòng *"Phạm vi repo do GitHub giữ"* + đường tới trang cài đặt. Hiện một danh sách đọc-về-rồi-
+   cất là dựng lại đúng ca §15i (*đọc cấu hình KHAI thay vì cấu hình CHẠY*), lần này lệch theo thời gian.
+2. 🔴 **Bất đối xứng với luật nấc quyền, phải nói ra:** *"đổi nấc ở VP này không đụng VP khác"* đứng
+   được **vì nấc nằm trong băm**. Phạm vi repo thì ngược — nó là tài sản **cấp tài khoản**, nên thêm
+   một repo là thêm cho **mọi văn phòng** đang dùng chìa đó, cùng lúc, không có gì ở phía ta canh được.
+   Cùng hình dạng với **giá trị chìa** (§QUYẾT ĐỊNH SẢN PHẨM 25/08): sửa từ một VP là đổi im lặng cho
+   mọi VP ⇒ cửa duy nhất phải nằm **ngoài** agentco, và ở đây nó nằm trên chính GitHub.
+3. **Muốn hai phạm vi repo khác nhau ⇒ phải hai TÀI KHOẢN khác nhau**, không phải hai cánh tay. Đó là
+   giới hạn thật của mô hình, và thẻ phải nói ra thay vì để người dùng tự phát hiện.
+
+### 5h·7i. Hình dạng chốt của mục danh mục
+
+```ts
+{
+  id: 'github',
+  price: 'login',
+  auth: { kind: 'device', clientId: 'Iv23li95pd8QpYfTGMho' },   // ← DỮ LIỆU công khai
+  identity: { url: '…/mcp/x/context', tool: 'get_me',           // ← §5h·7k
+              idField: 'id', labelField: 'login' },
+  spec: {
+    kind: 'http',
+    url: 'https://api.githubcopilot.com/mcp/',
+    headers: {
+      Authorization: 'Bearer ${OAUTH}',
+      'X-MCP-Toolsets': '${TOOLSETS}',      // ← ô tick của người dùng, MỘT cánh tay
+      // nấc "chỉ đọc" thêm 'X-MCP-Readonly': 'true' — đã đo là hàng rào thật (§5h·7j)
+    },
+  },
+  groups: ['context', 'repos', 'pull_requests', 'issues', 'actions'],  // 5 ô tick
+}
+```
+
+⚠ **`X-MCP-Toolsets` sai tên nhóm ⇒ server trả 0 việc, KHÔNG báo lỗi** (đo 26/08, do chính ta gõ hỏng
+qua PowerShell). Im lặng bỏ, đúng họ [[agentco-silent-allowlist]] ⇒ **phải đối chiếu số nhóm xin với
+số nhóm nhận** và kêu lên, cùng cơ chế `warnDroppedTools` đã dựng cho `tools`.
+
+Ba thứ **không đổi một dòng** so với Notion: `discover` · `applyToken` · `refreshAccount` ·
+`accountName` · `injectSecrets` · `armHash` · `role.secrets` · `probeArm` · ba nấc · log kiểm toán.
+Thứ **mới** đúng hai: `deviceStart`/`devicePoll` (đọc `device_authorization_endpoint` từ metadata,
+**0 tên hãng**) và **bước chọn lát cắt** trên giao diện.
+
+---
 
 ## 5m. 🔴 CHÌA THIẾU BỊ BÁO THÀNH CHÌA SAI — user bắt 25/08 bằng một câu hỏi
 

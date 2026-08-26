@@ -52,6 +52,30 @@ export type ArmSpec =
        * `company.yaml`; giá trị thật không bao giờ nằm trong file này.
        */
       headers?: Record<string, string>;
+      /**
+       * Tên header chở DANH SÁCH NHÓM VIỆC người dùng tick. → §5h·7e
+       *
+       * ⚠ CỐ Ý KHÔNG dùng ô trống `${TOOLSETS}`: cú pháp `${…}` trong dự án này
+       * có đúng một nghĩa — **một cái tên chìa** — và `missingSecretRefs()` quét
+       * cả cấu hình để tìm ô trống còn sót. Mượn cú pháp đó cho một thứ không
+       * phải chìa là đẻ ra câu *"Thiếu chìa: TOOLSETS"*, tức một câu lỗi **chỉ
+       * sai cửa** ngay trong bản vá cho câu lỗi sai cửa. `buildConfig` ghi thẳng
+       * giá trị thật vào đây.
+       */
+      toolsetHeader?: string;
+      /**
+       * Header thêm vào ở nấc **chỉ đọc** — hàng rào do CHÍNH SERVER dựng.
+       *
+       * Đo 26/08 (§5h·7j): gọi `create_or_update_file` qua cửa chỉ-đọc bị từ
+       * chối ở **tầng giao thức** (`-32602 unknown tool`), chứ không phải "tool
+       * chạy rồi trả lỗi". Đó là khác biệt giữa **một danh sách** và **một hàng
+       * rào**, và hàng rào này nằm ngoài tầm với của mọi thứ chạy trên máy khách.
+       *
+       * ⚠ KHÔNG thay cho việc lọc `allowedTools` phía ta — hai lá chắn khác
+       * tầng, dùng cả hai. Hãng nào không có thì bỏ trống, nấc `read` vẫn chạy
+       * bằng lớp của ta như cũ.
+       */
+      readOnlyHeaders?: Record<string, string>;
     };
 
 /**
@@ -77,7 +101,7 @@ const OAUTH_SLOT = '${OAUTH}';
 /** MỘT hàm dựng cho mọi mục. Thêm hãng = thêm dữ liệu, không thêm nhánh. */
 export function buildConfig(
   spec: ArmSpec,
-  input: { folders: string[]; account?: string },
+  input: { folders: string[]; account?: string; groups?: string[]; level?: string },
 ): Record<string, unknown> {
   if (spec.kind === 'http') {
     let headers = spec.headers;
@@ -86,6 +110,19 @@ export function buildConfig(
       headers = Object.fromEntries(
         Object.entries(headers).map(([k, v]) => [k, v.split(OAUTH_SLOT).join(slot)]),
       );
+    }
+    /**
+     * Nhóm việc → một header. **SẮP XẾP** trước khi nối, vì chuỗi này đi vào
+     * `armHash`: tick cùng ba nhóm theo hai thứ tự khác nhau mà ra hai băm khác
+     * nhau thì luật *"cùng cấu hình ⇒ cùng cánh tay"* thủng ngay. Cùng lý do
+     * `armHash` sắp khoá JSON trước khi băm.
+     */
+    if (spec.toolsetHeader && input.groups?.length) {
+      headers = { ...(headers ?? {}), [spec.toolsetHeader]: [...input.groups].sort().join(',') };
+    }
+    // Nấc chỉ-đọc: thêm hàng rào của server lên trên lớp lọc của ta. → §5h·7j
+    if (spec.readOnlyHeaders && input.level === 'read') {
+      headers = { ...(headers ?? {}), ...spec.readOnlyHeaders };
     }
     return { type: 'http', url: spec.url, ...(headers ? { headers } : {}) };
   }
@@ -98,6 +135,70 @@ export function buildConfig(
 /** Mục này cần đăng nhập chứ không cần gõ chìa? Suy từ `spec`, không khai lại. */
 export function needsOAuth(a: CatalogArm): boolean {
   return a.spec.kind === 'http' && JSON.stringify(a.spec.headers ?? {}).includes(OAUTH_SLOT);
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CÁCH ĐĂNG NHẬP — cho hãng **KHÔNG mở đăng ký động (DCR)**. → §5h·7       │
+ * │                                                                          │
+ * │ Notion cho ta xin `client_id` tại chỗ, nên nó **không cần trường này**.   │
+ * │ GitHub thì không: phải có sẵn một `client_id`. Và vì device flow **không  │
+ * │ dùng `client_secret` ở bất kỳ bước nào** (kể cả lúc làm mới), `client_id` │
+ * │ là **DỮ LIỆU CÔNG KHAI** — ship thẳng trong mã như `gh` CLI, VS Code,     │
+ * │ Vercel vẫn làm. Nhờ vậy khách gõ **0 chìa**, đúng bằng Notion.            │
+ * │                                                                          │
+ * │ ⚠ `clientId` ở đây **ghi đè được từ giao diện** và đó là chủ ý, không     │
+ * │ phải tính năng thừa: nó là đường thoát cho hai rủi ro của việc agentco    │
+ * │ đứng tên (§5h·7h) — ① app của ta bị hãng treo thì MỌI khách gãy cùng lúc; │
+ * │ ② khách doanh nghiệp không muốn đi qua danh tính của ta. Cùng một trường  │
+ * │ dữ liệu, **0 dòng mã thêm**, và nó là câu trả lời tử tế nhất cho câu       │
+ * │ *"sao tôi phải tin agentco"*: **"anh không phải tin."**                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface ArmAuth {
+  kind: 'device';
+  clientId: string;
+  /** Vài hãng đòi scope ngay ở bước xin mã. GitHub App thì không (đo: rỗng). */
+  scope?: string;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ HỎI XEM CHÌA NÀY LÀ CỦA AI — cho hãng KHÔNG trả danh tính. → §5h·7k      │
+ * │                                                                          │
+ * │ Notion trả kèm `workspace_id` + `workspace_name` ngay trong phản hồi      │
+ * │ token. **GitHub trả rỗng cả hai.** Không có trường này thì `accountName()`│
+ * │ rơi về `issuer|mcp_url` — một chuỗi **giống hệt nhau cho mọi tài khoản**  │
+ * │ ⇒ cùng tên chìa ⇒ **cùng băm** ⇒ hai tài khoản GitHub khác nhau bị gộp    │
+ * │ thành MỘT cánh tay. Đúng ca §6i, và nó không có triệu chứng nhìn thấy     │
+ * │ được cho tới khi người thứ hai đăng nhập.                                 │
+ * │                                                                          │
+ * │ ⇒ Ta đi hỏi, bằng chính giao thức đã có (`mcp-http.ts §callTool`).        │
+ * │ `idField` làm hạt giống băm (chọn thứ **không đổi khi đổi tên**),         │
+ * │ `labelField` làm nhãn hiển thị.                                          │
+ * │                                                                          │
+ * │ 🎯 Và nó vá luôn một cái bẫy UX ta tự dẫm khi đo: lượt đăng nhập đầu lấy  │
+ * │ nhầm chìa của **tài khoản chủ app** vì trình duyệt đang đăng nhập tài     │
+ * │ khoản đó. Không hiện `@login` ra thì triệu chứng duy nhất là *"cánh tay   │
+ * │ không thấy repo nào"* — một câu sai cửa dẫn người ta đi kiểm quyền.       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface ArmIdentity {
+  /** Cửa để hỏi. Thường là lát cắt rẻ nhất, không phải endpoint đầy đủ. */
+  url: string;
+  tool: string;
+  /** Khoá làm HẠT GIỐNG BĂM — phải ổn định qua việc đổi tên. */
+  idField: string;
+  /** Khoá làm NHÃN người đọc. */
+  labelField: string;
+}
+
+/** Một nhóm việc người dùng tick. Nhóm là **của hãng**, không phải của ta. */
+export interface ArmGroup {
+  id: string;
+  label: string;
+  /** Bật sẵn khi mở hộp thoại. Ít thôi — mỗi nhóm là token mỗi lượt. */
+  on?: boolean;
 }
 
 export interface ArmSecretField {
@@ -143,6 +244,19 @@ export interface CatalogArm {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   spec: ArmSpec;
+  /** Không khai ⇒ đăng ký động (DCR) + web flow, đúng như Notion. → §5h·7 */
+  auth?: ArmAuth;
+  /** Không khai ⇒ danh tính đọc từ phản hồi token (Notion). → §5h·7k */
+  identity?: ArmIdentity;
+  /**
+   * Nhóm việc cho người dùng tick. Không khai ⇒ cắm cả server.
+   *
+   * 🔴 Với GitHub đây **không phải tuỳ chọn nâng cao, nó là điều kiện tồn tại**:
+   * cắm nguyên endpoint mặc định là **≈30 000 token MỖI LƯỢT** (89 việc ở
+   * `x/all` thì ≈60 000), trong khi sàn tool của cả hệ thống mới ~13 200 và một
+   * cánh tay `filesystem` đo được 2 185. → §5h·7e
+   */
+  groups?: ArmGroup[];
   secrets: ArmSecretField[];
   /** Cánh tay cần một danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
   folders?: { label: string; help: string };
@@ -305,6 +419,74 @@ export const CATALOG: CatalogArm[] = [
     // ❓ `checkedOn: null` = CHƯA ai đọc quy tắc thương hiệu của Notion. Ô trống
     // nghĩa là KHÔNG dùng logo — cấu trúc, không phải kỷ luật. → SPEC-arms §11c
     brand: { owner: 'Notion Labs, Inc.', guidelineUrl: null, checkedOn: null },
+  },
+  {
+    id: 'github',
+    name: 'GitHub',
+    icon: '🐙',
+    /**
+     * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho đẹp:
+     *
+     * ① **Nó không phải `git`.** Không clone, không pull, không push, không bản
+     *    sao trên máy — sửa file là **commit thẳng lên repo cloud**. Đó là một
+     *    mô hình làm việc khác, không phải một phiên bản gọn của `git`.
+     * ② **Commit mang tên người đăng nhập** (đo 26/08: tác giả là chính tài
+     *    khoản cấp quyền, không phải một bot). Lịch sử repo của họ sẽ có commit
+     *    mang tên họ mà **không phải họ gõ**.
+     * ③ Nó với tới **repo private**, nhưng chỉ những repo họ **cài app vào**.
+     */
+    blurb:
+      'Đọc và sửa file trong repo GitHub — kể cả repo riêng tư. Sửa là commit thẳng lên GitHub, ' +
+      'không tải repo về máy.',
+    price: 'login',
+    /**
+     * 🔴 `auth` tồn tại vì GitHub **không mở DCR** (đo 25/08, xác nhận lại
+     * 26/08). Nhưng "không DCR" **không** kéo theo "khách phải tự đăng ký app" —
+     * đó là bước suy sai đã ghi ở §4e. Device flow không cần bí mật nào, nên
+     * agentco đứng tên một app và ship `client_id` như dữ liệu.
+     *
+     * GitHub App `agent-co.app` · org `@agent-co-app` · tạo 26/08/2026.
+     * 📌 **KHÔNG có client secret. KHÔNG có private key.** Luật + lý do đầy đủ:
+     * SPEC-arms §5h·7h. Không có key ⇒ **không tồn tại** đường mint installation
+     * token ⇒ chủ app không có cửa nào với tới repo của khách. Cấm bằng cấu
+     * trúc, không bằng kỷ luật — cùng khuôn bất biến §5b.
+     */
+    auth: { kind: 'device', clientId: 'Iv23li95pd8QpYfTGMho' },
+    /** GitHub không trả danh tính trong phản hồi token ⇒ phải hỏi. → §5h·7k */
+    identity: {
+      url: 'https://api.githubcopilot.com/mcp/x/context',
+      tool: 'get_me',
+      // `id` chứ không phải `login`: người dùng đổi tên tài khoản được, và một
+      // hạt giống băm đổi được nghĩa là cánh tay tự nhân đôi sau khi đổi tên.
+      idField: 'id',
+      labelField: 'login',
+    },
+    spec: {
+      kind: 'http',
+      url: 'https://api.githubcopilot.com/mcp/',
+      headers: { Authorization: 'Bearer ${OAUTH}' },
+      toolsetHeader: 'X-MCP-Toolsets',
+      readOnlyHeaders: { 'X-MCP-Readonly': 'true' },
+    },
+    /**
+     * Năm nhóm, hai bật sẵn. Số token đo 26/08 (ước lượng byte÷4, dùng để SO
+     * các lát cắt — số lên giao diện phải là `getContextUsage()`):
+     *   context 3 việc ≈1 500 · repos 19 ≈10 000 · pull_requests 10 ≈8 300
+     *   issues 9 ≈8 000 · actions ?  ·  CẢ SERVER 44 ≈30 000
+     * ⇒ mặc định `context + repos` ≈11 600, và ở nấc chỉ đọc còn ≈8 500.
+     */
+    groups: [
+      { id: 'context', label: 'Biết tôi là ai, repo nào', on: true },
+      { id: 'repos', label: 'Đọc & sửa file trong repo', on: true },
+      { id: 'pull_requests', label: 'Pull request (tạo, xem, gộp)' },
+      { id: 'issues', label: 'Issue' },
+      { id: 'actions', label: 'Actions / CI' },
+    ],
+    tiered: true,
+    /** Rỗng — chìa sinh từ luồng đăng nhập, y hệt Notion. → `price: 'login'` */
+    secrets: [],
+    // ❓ CHƯA đọc quy tắc thương hiệu của GitHub ⇒ KHÔNG logo. → §11c
+    brand: { owner: 'GitHub, Inc.', guidelineUrl: null, checkedOn: null },
   },
 ];
 
@@ -550,9 +732,23 @@ export function swallowsOffice(root: string, officeDir: string, companyDir: stri
  * `JSON.stringify` nuốt nó im lặng. Bỏ `build` đi thì cái lọc đó biến mất theo:
  * mọi trường của một mục giờ đều là dữ liệu, nên **không còn gì để quên lọc**.
  */
-export function catalogForUi(): (CatalogArm & { transport: 'stdio' | 'http'; needsLogin: boolean })[] {
+export function catalogForUi(): (CatalogArm & {
+  transport: 'stdio' | 'http';
+  needsLogin: boolean;
+  deviceLogin: boolean;
+})[] {
   // `needsLogin` suy từ `spec` chứ không khai tay: một mục dùng ô `${OAUTH}` thì
   // nó CẦN đăng nhập, và không có cách nào để hai trường đó nói khác nhau.
-  return CATALOG.map((a) => ({ ...a, transport: transportOf(a), needsLogin: needsOAuth(a) }));
+  //
+  // `deviceLogin` suy từ `auth` — giao diện cần biết vì HAI luồng khác nhau ở
+  // thứ người dùng nhìn thấy: web flow mở một tab rồi chờ tab đó xong; mã thiết
+  // bị thì **hiện một mã ngay tại đây** và tự hỏi thăm. Bày nhầm luồng là bảo
+  // người ta chờ một tab sẽ không bao giờ báo về.
+  return CATALOG.map((a) => ({
+    ...a,
+    transport: transportOf(a),
+    needsLogin: needsOAuth(a),
+    deviceLogin: a.auth?.kind === 'device',
+  }));
 }
 

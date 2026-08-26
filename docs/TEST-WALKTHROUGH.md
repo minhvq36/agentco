@@ -1462,44 +1462,119 @@ Sau khi đã nối **hai** workspace và cắm cả hai (một `chỉ đọc`, m
 
 **Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4–9 **$0** (không lượt suy luận nào)
 
-## Bài 13 — **GitHub**: transport HTTP và cái lỗ `pickMcp` ⛔ *chưa chạy được*
+## Bài 13 — **GitHub**: mã thiết bị, chọn nhóm việc, và hàng rào của server 🆕 *viết lại 27/08*
 
-> **Bài này khác hai bài trên ở TẦNG.** Bài 11 và 12 đều là `stdio` — một tiến trình con, chìa vào
-> `env`. GitHub là **Streamable HTTP** — không tiến trình nào, chìa vào **`headers`**. Và
-> `SPEC-arms.md` §5a ghi: ✅ `pickMcp` (`worker.ts:634`) **chỉ tiêm chìa cho server có `command`**.
+> ### 🔴 BẢN CŨ CỦA BÀI NÀY ĐÃ SAI TỪ TIỀN ĐỀ — giữ lại ghi chú để không ai dựng lại
 >
-> ⇒ **Bài này nhiều khả năng hỏng ngay lần chạy đầu, và đó là mục đích của nó.**
+> Bản 23/08 đo *"cái lỗ `pickMcp` không tiêm chìa cho server HTTP"* và bày hai đường **PAT / OAuth
+> qua `onElicitation`**. Ba thứ đã đổi:
+> ① lỗ `pickMcp` **đã bịt 25/08** (`injectSecrets`) — bài 12 tiêu nó rồi, không còn gì để đo ở đây;
+> ② OAuth **không** đi qua `onElicitation` mà đi **mã thiết bị** — web flow của GitHub bắt buộc
+> `client_secret` (§5h·7a); ③ câu hỏi *"trình duyệt mở ở máy nào"* **biến mất**, vì device flow
+> không mở trình duyệt và **không có `redirect_uri`**.
+>
+> ⇒ Bài mới đo ba thứ khác hẳn: **0 chìa** · **giá token của lát cắt** · **hàng rào ở phía server**.
 
-**Bước 1.** 🖱 **+ Kết nối** → thẻ **🐙 GitHub** → thẻ ghi `đăng nhập` (hoặc `1 chìa` nếu đi PAT)
+**Chuẩn bị (một lần, ~2 phút).** Cài app vào repo bạn muốn: `github.com/apps/agent-co-app/installations/new`
+→ **Only select repositories** → tick ít nhất **một repo riêng tư** → Install.
 
-**Bước 2.** Chọn một trong hai đường và **ghi lại bạn chọn đường nào**:
+> ⚠ Bỏ bước này thì mọi thứ vẫn "chạy" và mọi lời gọi trả **404**. GitHub cố ý trả 404 chứ không
+> phải 403 cho repo private không có quyền (để không lộ repo có tồn tại). Đó là **câu lỗi sai cửa
+> của chính GitHub** — bước 4 dưới đây kiểm xem agentco có dịch lại không.
 
-| Đường | Làm gì | Đo được gì |
+---
+
+### Chặng A — Đăng nhập, **0 chìa** ⭐
+
+**A1.** 🖱 **+ Kết nối** → thẻ **🐙 GitHub**. Thẻ phải ghi `đăng nhập`, **không** có ô nhập chìa nào.
+
+**A2.** 🖱 **Đăng nhập** → hiện **mã 8 ký tự** + nút mở `github.com/login/device`.
+
+**A3.** Gõ mã → Authorize → quay lại agentco.
+
+| # | Đo gì | Hỏng nghĩa là gì |
 |---|---|---|
-| **OAuth** ⭐ | bấm **Đăng nhập** → trình duyệt mở → cho phép | `onElicitation` `mode:'url'` (§6d) — **cùng cơ chế bài 14 cần** |
-| **PAT** | dán Personal Access Token | đường tiêm `headers` thuần, không dính OAuth |
+| A-1 | Có phải gõ chìa nào không? | **Phải là KHÔNG.** Có ô nhập ⇒ mục danh mục khai sai `auth` |
+| A-2 | 🔴 Sau khi xong, giao diện có hiện **`@tên-tài-khoản`** không? | Không hiện ⇒ bước hỏi danh tính hỏng. **Đây là ca thật ta đã dẫm:** trình duyệt đang đăng nhập **tài khoản chủ app** thì chìa lấy về là của người đó, và triệu chứng duy nhất sẽ là *"không thấy repo nào"* — một câu sai cửa |
+| A-3 | Tên hiện ra có đúng tài khoản bạn định nối không? | Sai ⇒ bấm **"Không phải tôi"** → đăng nhập lại bằng cửa sổ ẩn danh |
+| A-4 | Đóng tab agentco giữa lúc chờ rồi mở lại — lượt đăng nhập còn sống không? | Phải **CÒN** — phiên nằm ở daemon, không ở tab |
+| A-5 | Rút mạng ~10 giây giữa lúc chờ rồi cắm lại | Phải **vẫn chờ tiếp**. Báo hỏng ⇒ hồi quy §5h·7g — lỗi đã vá 26/08 |
 
-> 💡 **Chạy PAT trước.** Nó tách được hai thứ: *"tiêm `headers` có chạy không"* và *"OAuth có chạy
-> không"*. Chạy OAuth trước mà hỏng thì bạn không biết hỏng ở đâu — đúng cái sai của bài 9 bản cũ.
+---
 
-**Bước 3.** 🖱 **Thử ngay**
+### Chặng B — Chọn nhóm việc, và **nhìn thấy cái giá** 🔴
 
-**Bước 4.** 🖱 giao cho `Người soi thư mục` → chat:
+**B1.** Ở bước tiếp theo, tick nhóm việc. Mặc định phải là **`Biết tôi là ai` + `Đọc & sửa file`**.
+
+**B2.** Tick thêm `Pull request` rồi bỏ ra, **nhìn con số token đổi theo**.
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| B-1 | Có bày ra **27 nhóm** không? | Phải **KHÔNG** — 5 ô, phần còn lại nằm sau *"Xem tất cả"*. Bày hết là **đổ ập vào**, không phải minh bạch |
+| B-2 | 🔴 Mỗi nhóm có **hiện số token** không? | Không hiện ⇒ vi phạm luật *hiện giá, không chặn* (§9b). Đây là mục đắt nhất trong danh mục: cả server ≈**30 000 token mỗi lượt** |
+| B-3 | Bỏ tick hết ⇒ có cho **Lưu** không? | Phải **KHÔNG** — một cánh tay 0 việc là một cánh tay hỏng im lặng |
+| B-4 | Cắm hai lần, cùng ba nhóm nhưng **tick theo thứ tự khác nhau** | Phải ra **ĐÚNG MỘT** cánh tay. Ra hai ⇒ nhóm việc chưa được sắp xếp trước khi băm |
+
+---
+
+### Chặng C — Đọc repo riêng tư ⭐
+
+**C1.** 🖱 **Thử ngay** → phải `✓` kèm số việc **khớp** với số nhóm đã tick.
+
+**C2.** 🖱 giao cho một nhân viên → chat:
 
 ```
-Trong repo <chủ>/<tên-repo>, liệt kê 5 issue mở gần nhất và tóm tắt mỗi cái một dòng.
+Trong repo <chủ>/<tên-repo>, đọc file README.md và tóm tắt 3 gạch đầu dòng.
 ```
 
-### Đo gì
-
-| # | Câu hỏi | Nếu hỏng thì nghĩa là gì |
+| # | Đo gì | Hỏng nghĩa là gì |
 |---|---|---|
-| 1 | `Thử ngay` có `✓ connected` không? | ✗ + `401`/`403` ⇒ **chìa không tới nơi** ⇒ đúng lỗ §5a. **Không phải bug của GitHub** |
-| 2 | Có tải gì về máy không? | **Phải là KHÔNG** — remote MCP không cài gì. Thấy `npx` chạy ⇒ cắm nhầm gói cộng đồng |
-| 3 | Với OAuth: nút **Đăng nhập** mở trình duyệt ở **máy nào**? | Phải là máy bạn đang ngồi. Nếu daemon ở xa thì phải **chép URL vào clipboard** kèm giải thích — đúng ca nút 📂 (`isLoopback`) |
-| 4 | Hộp thoại đăng nhập có **treo mãi** không? | 📖 `.d.ts` nói elicitation **fail-closed**: trả `null` nhầm là nó treo tới khi server hết giờ. Bấm **Thôi** phải đóng được ngay |
+| C-1 | Có tải gì về máy không? | **Phải KHÔNG** — remote MCP, 0 gói. Thấy `npx` chạy ⇒ cắm nhầm gói cộng đồng |
+| C-2 | Repo **riêng tư** đọc được không? | ✗ ⇒ **chưa cài app vào repo đó** (không phải chìa sai) |
+| C-3 | 🔴 Thử một repo **CHƯA cài app**. Câu báo lỗi nói gì? | Hiện `404 Not Found` trần ⇒ **hỏng bài**. Phải nói *"agentco chưa được cài vào repo này"* kèm link cài — §5h·7f |
 
-**Chi phí:** ~$0.05
+---
+
+### Chặng D — Ghi, và **commit mang tên ai** ⭐
+
+**D1.** Đổi cánh tay sang nấc **Toàn quyền** (nhớ: đổi nấc = **một cánh tay khác**, không phải sửa tại chỗ).
+
+**D2.** Chat: `Tạo file ghi-chu.md trong repo <chủ>/<tên>, nội dung "chào từ agentco".`
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| D-1 | File có lên GitHub thật không? | Mở repo trên web mà kiểm — **đừng tin câu model kể** |
+| D-2 | 🔴 Commit mang tên **ai**? | Phải là **tên bạn**, không phải một bot. Đây là tính chất phải nói ra trên thẻ: lịch sử repo sẽ có commit mang tên họ mà **không phải họ gõ** |
+| D-3 | Có phải clone/pull/push gì không? | **KHÔNG** — ghi thẳng lên cloud. Đây là điểm khác biệt phải hiểu, không phải thiếu sót |
+
+---
+
+### Chặng E — **Hàng rào ở phía server** 🔴 *đây là chặng đáng tiền nhất*
+
+**E1.** Cắm một cánh tay GitHub thứ hai, cùng tài khoản, cùng nhóm việc, nhưng nấc **Chỉ đọc**.
+
+**E2.** Giao cánh tay ĐÓ cho một nhân viên khác → chat: `Tạo file thu-nghiem.md trong repo <chủ>/<tên>.`
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| E-1 | 🔴 Có bị chặn không? | **Phải BỊ CHẶN.** Ghi được ⇒ nấc chỉ đọc không tới nơi |
+| E-2 | Chặn ở **tầng nào**? Xem nhật ký 🔌 | Đúng là `unknown tool` từ **server GitHub** ⇒ hàng rào thật. Nếu chỉ là model tự từ chối ⇒ **một lời hứa, không phải hàng rào** — đúng phép phân biệt bài 15 |
+| E-3 | Cánh tay chỉ-đọc có **ít việc hơn** cánh tay toàn quyền không? | Bằng nhau ⇒ header hàng rào không được gửi |
+| E-4 | Nhân viên ở chặng D còn ghi được không? | Phải **CÒN** — đổi nấc ở cánh tay này không đụng cánh tay kia |
+
+---
+
+### Chặng F — Sống lâu ⏳ *chạy sau ≥ 8 giờ*
+
+**F1.** Để máy chạy qua đêm, hôm sau giao lại một việc đọc.
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| F-1 | Còn chạy không, có phải đăng nhập lại không? | Phải **CÒN**. Chìa sống 8 giờ, vòng làm mới chạy ở mốc 50% |
+| F-2 | 🔴 Sau **hai** lần làm mới (~8 giờ) còn chạy không? | Hỏng đúng ở lần thứ hai ⇒ **bẫy `??`**: chìa làm mới bị XOAY mà ta giữ cái cũ |
+| F-3 | Gỡ app khỏi repo ở phía GitHub ⇒ agentco nói gì? | Phải nói *"chưa được cài vào repo"*, **không** phải *"chìa sai"* |
+
+**Chi phí:** ~$0.05 · **Thời gian:** 15 phút (trừ chặng F)
 
 ---
 
