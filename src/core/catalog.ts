@@ -1,5 +1,10 @@
 ﻿import { createHash } from 'node:crypto';
 
+// Một hằng số, một chỗ khai. `secrets.ts` là nơi ô trống được ĐIỀN, nên nó cũng
+// là nơi giữ chuỗi — file này chỉ dùng nhờ. Chiều import an toàn: `secrets.ts`
+// không import gì từ đây (chỉ `paths` + `oauth`, đều là kiểu).
+import { OFFICE_STATE } from './secrets.js';
+
 /**
  * DANH MỤC CÁNH TAY — thứ người dùng "rút ra xài được ngay".
  * → docs/SPEC-arms.md §4e · §5c · §5h·1 · §11c
@@ -42,6 +47,26 @@ export type ArmSpec =
        * để làm — một cờ boolean. Đáng để nhớ khi có người muốn thêm hàm trở lại.
        */
       appendFolders?: boolean;
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ THAM SỐ KHÁC NHAU THEO HỆ ĐIỀU HÀNH — và nó là chuyện DUNG LƯỢNG ĐĨA.│
+       * │                                                                      │
+       * │ Ca đẻ ra nó (đo 29/08): Playwright không khai trình duyệt thì dùng    │
+       * │ **bản đóng gói** — `chromium_headless_shell` **269 MB**, bản đủ        │
+       * │ **415 MB**, và **bản cũ không bao giờ tự bị dọn** (máy đo có 1 340 MB │
+       * │ gồm hai bộ 04/2026 + 07/2026 nằm cạnh nhau). Khai một **channel**     │
+       * │ (`msedge`/`chrome`) thì nó dùng trình duyệt **đã cài sẵn**: 0 byte.   │
+       * │                                                                      │
+       * │ Nhưng tên channel đúng lại khác nhau theo OS ⇒ một mảng `args` tĩnh   │
+       * │ không diễn đạt được. Đây là chỗ cho nó, và nó **tổng quát** — không   │
+       * │ có tên hãng nào trong kiểu này.                                       │
+       * │                                                                      │
+       * │ ⚠ VÀ NÓ VÀO BĂM. Bê một công ty từ Windows sang macOS ⇒ args khác ⇒   │
+       * │ băm khác ⇒ **cắm lại**. Đúng luật "vòng đời có hai động từ", và cũng  │
+       * │ đúng sự thật: đó là một trình duyệt khác trên một máy khác.           │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      argsByOs?: Readonly<Record<string, readonly string[]>>;
     }
   | {
       kind: 'http';
@@ -101,7 +126,27 @@ const OAUTH_SLOT = '${OAUTH}';
 /** MỘT hàm dựng cho mọi mục. Thêm hãng = thêm dữ liệu, không thêm nhánh. */
 export function buildConfig(
   spec: ArmSpec,
-  input: { folders: string[]; account?: string; groups?: string[]; level?: string },
+  input: {
+    folders: string[];
+    account?: string;
+    groups?: string[];
+    level?: string;
+    /**
+     * Hệ điều hành đang chạy — tham số chứ không đọc thẳng `process.platform`,
+     * để test dựng được cấu hình của **cả ba OS** trên một máy. Đúng luật đã
+     * dẫm năm lần: *"đúng trên máy dev, sai ở chỗ khác"*.
+     */
+    platform?: string;
+    /**
+     * Chế độ người dùng chọn — **đã giải sẵn** thành đối tượng, không phải một id.
+     *
+     * Giải ở chỗ gọi (nơi biết mục danh mục và biết request đến từ đâu) chứ không
+     * ở đây, vì cổng `loopbackOnly` cần **địa chỉ socket** — thứ hàm dựng cấu hình
+     * không được biết tới. Một hàm thuần thì phải nhận kết quả của quyết định,
+     * không tự đi lấy dữ kiện để tự quyết.
+     */
+    options?: readonly ArmOption[];
+  },
 ): Record<string, unknown> {
   if (spec.kind === 'http') {
     let headers = spec.headers;
@@ -126,10 +171,59 @@ export function buildConfig(
     }
     return { type: 'http', url: spec.url, ...(headers ? { headers } : {}) };
   }
+  /**
+   * Thứ tự nối: `args` chung → `argsByOs` → thư mục người dùng chọn.
+   *
+   * ⚠ Thư mục phải đứng CUỐI (nhiều CLI coi phần đuôi là tham số vị trí), và
+   * `argsByOs` phải đứng TRƯỚC nó vì nó vẫn là cờ có tên.
+   */
+  const os = input.platform ?? process.platform;
+  const extra = spec.argsByOs?.[os] ?? [];
+
+  /**
+   * Thư mục của chế độ. Thiếu `stateDir` mà chế độ lại đòi thư mục ⇒ **ném**,
+   * không phải bỏ qua: bỏ qua thì `--user-data-dir` biến mất và cánh tay lặng lẽ
+   * tụt về chế độ sạch — tức người dùng chọn "giữ đăng nhập" và nhận về một thứ
+   * **không giữ gì**, không một câu lỗi nào. Hỏng im lặng theo chiều **thu hẹp**
+   * vẫn là hỏng im lặng.
+   */
+  const on = input.options ?? [];
+  const add: string[] = [];
+  const drop = new Set<string>();
+  for (const o of on) {
+    add.push(...(o.args ?? []));
+    for (const r of o.remove ?? []) drop.add(r);
+    /**
+     * 🔴 GHI **Ô TRỐNG**, KHÔNG GHI ĐƯỜNG DẪN THẬT. → `secrets.ts §OFFICE_STATE`
+     *
+     * Đường dẫn thật chỉ tồn tại lúc spawn. Ghi nó vào đây là ghi nó vào `args`
+     * ⇒ vào băm ⇒ chỗ cất dữ liệu thành danh tính cánh tay: cùng một mục cắm ở
+     * hai văn phòng ra hai băm, và đổi chỗ thư mục công ty là đổi mọi băm.
+     */
+    for (const d of o.dirs ?? []) add.push(d.flag, `${OFFICE_STATE}/${d.sub}`);
+  }
+
   return {
     command: spec.command,
-    args: spec.appendFolders ? [...spec.args, ...input.folders] : [...spec.args],
+    // `drop` áp lên CẢ `spec.args` lẫn `argsByOs` — một cờ gỡ được ở chỗ này mà
+    // không gỡ được ở chỗ kia là một cái bẫy chờ ngày có mục thứ hai dùng tới.
+    args: [
+      ...[...spec.args, ...extra].filter((a) => !drop.has(a)),
+      ...add,
+      ...(spec.appendFolders ? input.folders : []),
+    ],
   };
+}
+
+/**
+ * Lựa chọn bật sẵn của một mục — dùng khi người dùng chưa tick gì.
+ *
+ * ⚠ Trả **mảng**, kể cả rỗng: mặc định là một quyết định phải viết ra bằng `on`,
+ * không phải một thứ suy từ thứ tự khai — thứ đổi im lặng vào ngày ai đó sắp lại
+ * danh sách.
+ */
+export function defaultOptions(arm: CatalogArm): readonly ArmOption[] {
+  return (arm.options ?? []).filter((o) => o.on);
 }
 
 /**
@@ -441,6 +535,93 @@ export interface CatalogArm {
    * mục "chỉ đọc cứng" nên là một quyết định có lý do viết ra, không phải mặc định.
    */
   tiered?: boolean;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VIỆC KHÔNG BAO GIỜ ĐƯỢC CẤP — kể cả ở nấc toàn quyền. (29/08)            │
+   * │                                                                          │
+   * │ ⚠ CHỈ CẮT, KHÔNG BAO GIỜ THÊM — nên nó **không đụng** luật một chiều đã   │
+   * │ chốt 25/08 (*"không biết ⇒ leo thang, không bao giờ hạ cấp"*). Hạ cấp là  │
+   * │ nói một việc nguy hiểm thành an toàn; cái này nói một việc **không được   │
+   * │ dùng**. Hai chiều ngược nhau, và chỉ chiều này là an toàn khi ta sai.     │
+   * │                                                                          │
+   * │ Vì sao cần: `browser_run_code_unsafe` và `browser_evaluate` chạy **JS     │
+   * │ tuỳ ý** trong trang. Annotations của chúng đúng (`destructive: true`) nên │
+   * │ `tierOf` xếp vào `full` — hoàn toàn hợp lệ, và hoàn toàn không đủ. Nấc    │
+   * │ toàn quyền nghĩa là *"được ghi"*, không nghĩa là *"được chạy mã tuỳ ý     │
+   * │ dưới phiên đăng nhập của bạn"*.                                          │
+   * │                                                                          │
+   * │ ⚠ Đây là danh sách của TA, nằm trong danh mục ⇒ nó là **DỮ LIỆU**, và nó  │
+   * │ là **ảnh chụp lúc cắm** giống `tools`. Hãng thêm một tool nguy hiểm mới   │
+   * │ thì danh sách này **không tự biết** — cùng giới hạn đã ghi ở `readOnly`.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  neverTools?: readonly string[];
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CHẾ ĐỘ — một lựa chọn LOẠI TRỪ NHAU, khác `groups` (tick nhiều).         │
+   * │                                                                          │
+   * │ Sinh ra vì mục trình duyệt có hai bán kính **khác hẳn nhau**, và người    │
+   * │ dùng phải **thấy mình đang chọn cái nào**: một trình duyệt sạch mỗi lượt, │
+   * │ hay một trình duyệt **nhớ đăng nhập của bạn**. Giấu cái thứ hai vào một ô │
+   * │ tick trong Nâng cao là bán một bán kính rộng bằng một cú bấm vô thức.     │
+   * │                                                                          │
+   * │ ⚠ `args` của chế độ đi vào cấu hình ⇒ **vào băm** ⇒ đổi chế độ là **một   │
+   * │ cánh tay khác**, không phải một lần sửa. Đúng luật "cắm và rút".          │
+   * │                                                                          │
+   * │ `loopbackOnly` — chế độ chỉ chọn được khi trình duyệt và daemon **cùng    │
+   * │ máy**. Cửa sổ trình duyệt mở trên máy chạy daemon, nên bấm ở Hà Nội mà    │
+   * │ cửa sổ bật trên server Singapore là đúng con bug nút 📂. Cổng phải đo bằng│
+   * │ `isLoopback(req.socket.remoteAddress)` — **địa chỉ socket**, không phải   │
+   * │ `Host` (client giả được).                                                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  options?: readonly ArmOption[];
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 ĐÂY LÀ HAI Ô TICK ĐỘC LẬP, KHÔNG PHẢI MỘT DANH SÁCH BA NẤC.           │
+ * │ (user bắt 29/08, và user đúng)                                           │
+ * │                                                                          │
+ * │ Bản đầu tôi gom "hiện cửa sổ" và "nhớ đăng nhập" thành ba lựa chọn loại   │
+ * │ trừ nhau. Sai: chúng là **hai cờ độc lập của Playwright**, đủ bốn tổ hợp, │
+ * │ và bản đó **đánh rơi mất một tổ hợp có thật**: *hiện cửa sổ nhưng không   │
+ * │ lưu gì* — tức ca "xem nhân viên đang làm gì", thứ user hỏi từ đầu.        │
+ * │                                                                          │
+ * │ Nguyên nhân: tôi đếm **kịch bản** thay vì đếm **cơ chế**. Danh sách curate│
+ * │ theo kịch bản luôn thiếu đúng cái kịch bản chưa ai kể.                    │
+ * │ → [[agentco-count-mechanisms]]                                           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface ArmOption {
+  id: string;
+  /** Tiếng người, hiện thẳng lên ô tick. */
+  label: string;
+  /** Một câu nói ra **BÁN KÍNH**, không phải nói ra cấu hình. */
+  help: string;
+  /** Bật sẵn khi người dùng chưa chọn gì. Nhiều ô cùng bật sẵn được. */
+  on?: boolean;
+  /** Cờ thêm vào `args` khi ô này được tick. */
+  args?: readonly string[];
+  /**
+   * Cờ **gỡ khỏi** `args` khi ô này được tick.
+   *
+   * Có nó vì một số lựa chọn là **sự vắng mặt** của một cờ: "hiện cửa sổ" chính
+   * là *không* `--headless`. Không có đường gỡ thì phải để `--headless` xuống
+   * từng tổ hợp, và mỗi tổ hợp mới là một chỗ để quên.
+   */
+  remove?: readonly string[];
+  /**
+   * Thư mục runtime cần chở vào `args`: `<flag> <stateDir>/<sub>`.
+   *
+   * ⚠ CỐ Ý KHÔNG dùng cú pháp `${…}` — trong dự án này chuỗi đó có **đúng một
+   * nghĩa: tên một cái chìa**, và `missingSecretRefs()` quét cả cấu hình để tìm
+   * ô trống còn sót. Mượn nó cho một đường dẫn là tự đẻ ra câu *"Thiếu chìa:
+   * OFFICE"* — một câu lỗi chỉ sai cửa, đúng thứ §5m sinh ra để tránh.
+   */
+  dirs?: readonly { flag: string; sub: string }[];
+  /** Chỉ hiện/nhận khi trình duyệt và daemon cùng máy. */
+  loopbackOnly?: boolean;
 }
 
 /** Giao diện nói "stdio hay http" bằng tiếng người — suy từ `spec`, không khai lại. */
@@ -467,6 +648,7 @@ export function transportOf(a: CatalogArm): 'stdio' | 'http' {
  */
 export { CATALOG } from './arms/index.js';
 export { FILES_ARM } from './arms/files.js';
+export { BROWSER_ARM } from './arms/browser.js';
 export { NOTION_ARM } from './arms/notion.js';
 export { GITHUB_ARM } from './arms/github.js';
 

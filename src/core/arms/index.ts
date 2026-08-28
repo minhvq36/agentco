@@ -21,8 +21,14 @@
 
 import type { CatalogArm } from '../catalog.js';
 
+import { BROWSER_ARM } from './browser.js';
 import { FILES_ARM } from './files.js';
 import { GITHUB_ARM } from './github.js';
 import { NOTION_ARM } from './notion.js';
 
-export const CATALOG: CatalogArm[] = [FILES_ARM, NOTION_ARM, GITHUB_ARM];
+/**
+ * ⚠ `browser` đứng **thứ hai**, không đứng cuối — thứ tự này là thứ tự XÂY (§4e:
+ * 0 chìa → chìa tĩnh → OAuth sẵn → OAuth tự đăng ký), và mục này gõ **0 chìa**
+ * đúng bằng `files`. Xếp nó sau `github` là xếp theo ngày viết, không theo luật.
+ */
+export const CATALOG: CatalogArm[] = [FILES_ARM, BROWSER_ARM, NOTION_ARM, GITHUB_ARM];

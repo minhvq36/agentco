@@ -372,7 +372,37 @@ Một mục chỉ vào danh mục khi **cả năm** đúng — cùng kỷ luật
 | 1 | **File trên máy** — tham chiếu `filesystem` | stdio | **0** | đường cắm trần · **allowlist thư mục** (§1d) | 🟢 không có bên thứ ba |
 | 2 | **Notion (chỉ đọc)** — hosted chính chủ | **Streamable HTTP** | **1** — chìa OAuth (chặng 1: dán tay) | **HTTP** + **tiêm `headers`** (§5a) + **cánh tay chỉ đọc** + **`ToolSearch`** | 🟡 phải đọc guideline |
 | 3 | 🆕 **GitHub** — remote chính chủ | **Streamable HTTP** | **0** — ~~1 OAuth App tự đăng ký~~ 🔴 **đính chính 26/08**: app do **agentco** đứng tên, `client_id` là **dữ liệu ship sẵn** ⇒ người dùng gõ **0 chìa** | 🔴 **HAI cơ chế mới, không phải không cái nào**: ① **device flow** (0 secret, **0 redirect_uri**) ② **chọn lát cắt toolset** — vì cắm cả server là ≈30 000 token/lượt (§5h·7e) | 🟡 phải đọc guideline |
-| 4 | **Google** — bộ chính chủ | stdio | **2** + đăng nhập | **OAuth qua `onElicitation`** (§6d) | 🟠 nghiêm nhất |
+| 4 | **Google Calendar** | ~~stdio~~ **Streamable HTTP** | ~~2~~ **0** (đường A) | ~~`onElicitation`~~ **confidential client** (`client_secret` bắt buộc) | 🟠 nghiêm nhất |
+
+> ## 🔴 DÒNG SỐ 4 ĐÃ SAI BA CHỖ — đo thật 28/08, giữ nguyên văn ở trên làm mốc đối chứng
+>
+> Spike `scripts/spike-google-calendar.ts` chạy với chìa thật, tài khoản thật:
+>
+> **Sai ① transport.** Không phải `stdio`. MCP chính chủ là **Streamable HTTP** —
+> `https://calendarmcp.googleapis.com/mcp/v1`, 9 việc. Mỗi sản phẩm Google **một host riêng**
+> (`gmailmcp` 23 việc · `drivemcp` 8 · `sheetsmcp` 6 · `docsmcp` 2 · `chatmcp` 4).
+>
+> **Sai ② số chìa.** Đường A (app do agentco đứng tên, giống GitHub) ⇒ khách gõ **0 chìa**.
+> Con số **2** chỉ đúng với đường B (khách tự tạo app — ca có domain riêng).
+> ⚠ Nhưng `client_secret` thì **agentco bắt buộc phải ship**: đo hai lượt, cả đổi mã lẫn làm
+> mới đều trả `invalid_request — client_secret is missing`, **kể cả client kiểu Desktop có
+> PKCE**. Lời khai 🌐 *"obviously not treated as a secret"* đúng về ý định, sai về cơ chế.
+> ⇒ Khác GitHub device flow (0 bí mật) — đây là **thế đứng yếu hơn**, phải nói ra.
+>
+> **Sai ③ cơ chế.** Không phải `onElicitation`. Là **authorization code + PKCE + loopback**,
+> cộng hai tham số phương ngữ Google mà `authorizeUrl()` hôm nay **không có**:
+> `access_type=offline` (thiếu ⇒ **không có refresh token nào cả**, mà cắm xong vẫn xanh,
+> chết sau ~1 giờ) và `prompt=consent` (thiếu ⇒ ca **"gỡ rồi cắm lại"** không có chìa làm mới).
+>
+> **Và một chặn KHÔNG nằm trong bảng này:** MCP Workspace đòi Cloud project **ghi danh
+> Developer Preview Program** (bắt buộc tài khoản Workspace), điều khoản cấm dùng trong ứng
+> dụng công khai trước GA ⇒ **không ship được hôm nay**. Cộng **~24 900 token/lượt, sáu phép
+> đo cùng một con số, không lát cắt nào cắt được** (van `X-MCP-Toolsets` của GitHub **không
+> tồn tại ở đây**).
+>
+> ⇒ **Mục này GÁC LẠI** (user chốt 28/08), hướng khi quay lại là **connector REST trên
+> Calendar API v3**. Toàn bộ hồ sơ, số đo, trạng thái Cloud project và điều kiện mở lại:
+> `SESSIONS_MEMORY` §5u. Triển khai · nợ Docker · sổ hằng số đối ngoại: `SPEC-deploy.md`.
 
 > **Thứ tự này là thứ tự XÂY, không phải thứ tự quan trọng.** Mỗi mục mở khoá đúng **một** cơ chế
 > mới và **không mục nào mở hai**. Làm đúng thứ tự thì mỗi mục là một bước nhỏ; làm ngược thì mục

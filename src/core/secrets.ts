@@ -308,6 +308,19 @@ export function secretNames(paths: CompanyPaths): string[] {
 const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
 
 /**
+ * Ô trống ĐƯỜNG DẪN — `<văn phòng>/.state/browser` điền vào lúc spawn.
+ *
+ * ⚠ Ngoặc nhọn chứ không phải `${…}`, và đó là **cố ý**: hai cú pháp, hai nghĩa,
+ * hai đường điền. `missingSecretRefs()` quét `${…}` để tìm chìa còn thiếu — một
+ * ô trống đường dẫn lọt vào lưới đó sẽ báo *"Thiếu chìa: OFFICE_STATE"*, tức một
+ * câu lỗi **chỉ sai cửa** ngay trong cơ chế sinh ra để tránh câu lỗi sai cửa.
+ *
+ * Xuất ra để `catalog.ts` dùng đúng một chuỗi này — hai bản của cùng một hằng số
+ * là chuyện đã đốt dự án này một lần (`agentSlot` vs `arrange`).
+ */
+export const OFFICE_STATE = '<OFFICE_STATE>';
+
+/**
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ Ô TRỐNG NÀO CÒN SÓT SAU KHI ĐÃ TIÊM — tức CHÌA THIẾU. (bug user 25/08)   │
  * │                                                                          │
@@ -345,6 +358,7 @@ export function missingSecretRefs(config: unknown): string[] {
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ TIÊM CHÌA VÀO MỘT CẤU HÌNH MCP — MỘT HÀM, HAI NƠI GỌI. → SPEC-arms §5a   │
+ * │ (từ 29/08 nó điền thêm **ô trống đường dẫn** — xem tham số `dirs`)        │
  * │                                                                          │
  * │ 🔴 LỖ ĐANG VÁ: tới 25/08 chìa **chỉ** đi vào server có `command` (tiêm   │
  * │ qua `env`). Server `http`/`sse` nhận **không gì cả** — nên cánh tay HTTP │
@@ -374,7 +388,34 @@ export function missingSecretRefs(config: unknown): string[] {
  * `${TÊN}` lên server như thể nó là token: server sẽ trả 401, và câu lỗi đó
  * chỉ về "chìa sai" chứ không về "chìa thiếu", tức chỉ sai cửa để đi tìm.
  */
-export function injectSecrets<T>(config: T, env: Record<string, string>): T {
+export function injectSecrets<T>(
+  config: T,
+  env: Record<string, string>,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ Ô TRỐNG THỨ HAI: ĐƯỜNG DẪN. Và nó ở đây vì một lý do về BĂM.             │
+   * │ (user chốt 29/08: *"dữ liệu ở đâu cũng không ảnh hưởng tới băm"*)         │
+   * │                                                                          │
+   * │ Chỗ cất dữ liệu **không phải danh tính của cánh tay**. Nhét đường dẫn     │
+   * │ tuyệt đối vào `args` là nhét nó vào băm, và đổi lấy hai thứ hỏng:         │
+   * │   · cùng một mục cắm ở hai văn phòng ⇒ hai băm ⇒ hai cánh tay, trong khi │
+   * │     mục danh mục là **bản thiết kế** và văn phòng chỉ clone ra;           │
+   * │   · **đổi chỗ thư mục công ty ⇒ MỌI băm đổi** ⇒ thư mục thôi mang đi được.│
+   * │                                                                          │
+   * │ ⇒ Sổ giữ một **ô trống**, đường dẫn thật chỉ tồn tại lúc spawn — đúng     │
+   * │ cách **giá trị chìa** đã được xử lý từ 25/08 (chìa không vào băm).        │
+   * │                                                                          │
+   * │ ⚠ CỐ Ý KHÔNG dùng cú pháp `${…}`: trong dự án này nó có đúng một nghĩa là │
+   * │ **tên một cái chìa**, và `missingSecretRefs()` quét nó. Mượn là tự đẻ ra  │
+   * │ câu *"Thiếu chìa: OFFICE_STATE"* — một câu lỗi chỉ sai cửa.               │
+   * │                                                                          │
+   * │ ⚠ Và nó nằm trong CÙNG hàm với chìa, không phải một hàm thứ hai: `pickMcp`│
+   * │ và `probeArm` phải điền **y hệt nhau**, nếu không thì nút Thử lại kiểm    │
+   * │ một thứ khác thứ sẽ chạy — đúng bất biến khối chú thích ở trên.           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  dirs?: { officeState: string },
+): T {
   if (!config || typeof config !== 'object') return config;
   const cfg = config as Record<string, unknown>;
 
@@ -383,8 +424,20 @@ export function injectSecrets<T>(config: T, env: Record<string, string>): T {
   const keys = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
 
   if (typeof cfg['command'] === 'string') {
-    if (!Object.keys(keys).length) return config;
-    return { ...cfg, env: { ...((cfg['env'] as object) ?? {}), ...keys } } as T;
+    /**
+     * Điền ô trống đường dẫn TRƯỚC, và làm nó độc lập với chìa: một cánh tay có
+     * thể cần đường dẫn mà **không cần chìa nào** (mục trình duyệt là đúng ca đó).
+     * Gộp vào nhánh `if (!keys.length) return` là để nó im lặng không chạy.
+     */
+    const args =
+      dirs && Array.isArray(cfg['args'])
+        ? (cfg['args'] as unknown[]).map((a) =>
+            typeof a === 'string' ? a.split(OFFICE_STATE).join(dirs.officeState) : a,
+          )
+        : cfg['args'];
+    const withArgs = args === cfg['args'] ? cfg : { ...cfg, args };
+    if (!Object.keys(keys).length) return withArgs as T;
+    return { ...withArgs, env: { ...((cfg['env'] as object) ?? {}), ...keys } } as T;
   }
 
   if (typeof cfg['url'] === 'string') {

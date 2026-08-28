@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Client API. Một chỗ duy nhất nói chuyện với daemon.
  *
  * Nguyên tắc xử lý lỗi (tiêu chí "Xử lý lỗi tốt"): backend đã trả về câu tiếng
@@ -115,6 +115,11 @@ export const api = {
       config?: unknown;
       catalogId?: string;
       folders?: string[];
+      /** Nhóm việc + ô tick cách chạy — KHAI RA, đừng để hợp đồng nói dối. */
+      groups?: string[];
+      options?: string[];
+      /** Cần cho ô trống <OFFICE_STATE> — xem chỗ gọi ở ArmDialog. */
+      office?: string;
       secrets?: Record<string, string>;
       /** Tên chìa OAuth của tài khoản đã chọn. → `oauth.ts §accountName` */
       account?: string;
@@ -233,6 +238,8 @@ export const api = {
      */
     level?: 'read' | 'add' | 'full';
     office?: string;
+    groups?: string[];
+    options?: string[];
     /** Giao cho ai — đi CÙNG request với việc cắm, xem `Office.grantArm`. */
     grantTo?: string[];
   }) => call<{ id: string; arms: InstalledArm[]; canvas?: CanvasState }>('/api/arms', {

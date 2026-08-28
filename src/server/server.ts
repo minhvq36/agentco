@@ -24,11 +24,11 @@ import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
-import { buildConfig, catalogForUi, findArm, normRepo } from '../core/catalog.js';
+import { buildConfig, catalogForUi, defaultOptions, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
 import { callTool, httpTarget } from '../core/mcp-http.js';
 import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
-import { companyPaths } from '../core/paths.js';
+import { companyPaths, officeDir, officePaths } from '../core/paths.js';
 import {
   REFRESH_TICK_MS,
   oauthAccounts,
@@ -68,6 +68,47 @@ export function isLoopback(addr: string | undefined): boolean {
  * số là chuyện đã đốt dự án này một lần rồi (`agentSlot` vs `arrange`, xem
  * `layout-geometry.ts`): chúng lệch nhau, và không ai thấy cho tới khi hỏng.
  */
+/**
+ * Dữ kiện **của server** đi kèm một yêu cầu cắm cánh tay — gom vào một chỗ để
+ * hai route không tự tính hai kiểu.
+ *
+ * ⚠ `loopbackOk` đọc từ **địa chỉ socket**, không phải `Host`: client gửi `Host`
+ * gì cũng được, còn địa chỉ socket thì không giả được. Cùng cổng đã dùng cho nút
+ * 📂 (`isLoopback`) — chỗ thứ tư của cùng một sự thật, không phải cơ chế thứ hai.
+ *
+ * 📌 KHÔNG còn `stateDir` ở đây nữa (bỏ 29/08). Đường dẫn **không đi vào cấu
+ * hình** — sổ giữ ô trống `<OFFICE_STATE>`, `injectSecrets` điền lúc spawn. Lý do
+ * đầy đủ ở `secrets.ts §injectSecrets.dirs`. Khối dưới giữ lại vì nó ghi **chỗ
+ * đúng để điền**, thứ vẫn còn hiệu lực:
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Đích = **`<văn phòng>/.state/browser`** — và chỗ này thoả HAI điều        │
+ * │ kiện cùng lúc, đó là lý do nó thắng hai phương án tôi thử trước:          │
+ * │                                                                          │
+ * │  ① **theo VĂN PHÒNG** — mục danh mục là bản thiết kế, văn phòng clone ra  │
+ * │     một bản của mình (user đính chính 29/08). Hai văn phòng cắm cùng một  │
+ * │     mục thì có hai hồ sơ riêng, không giẫm lên nhau.                      │
+ * │  ② **sau `guardedZone`** — `paths.ts §guardedZone` gác **cả** `.state`    │
+ * │     của công ty **lẫn** của văn phòng. Quan trọng vì hồ sơ trình duyệt    │
+ * │     chứa **cookie đăng nhập** của khách: để nó ở chỗ nhân viên đọc được   │
+ * │     là để chìa ngay cạnh ổ khoá.                                          │
+ * │                                                                          │
+ * │ ⚠ CA CÒN HỞ, ghi ra để đừng quên: danh sách **dùng lại** cho phép một văn │
+ * │ phòng nhận một cánh tay do văn phòng khác cắm. Lúc đó cấu hình cũ được    │
+ * │ dùng nguyên (đường `armId` không dựng lại), nên đường dẫn vẫn trỏ về      │
+ * │ **văn phòng cũ**. Chưa vá — cần hoặc loại mục có `dirs` khỏi danh sách    │
+ * │ dùng lại, hoặc dựng lại đường dẫn lúc nhận.                               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function armCtx(req: http.IncomingMessage): { loopbackOk: boolean } {
+  return { loopbackOk: isLoopback(req.socket.remoteAddress) };
+}
+
+/** Đích thật của ô trống `<OFFICE_STATE>` — dùng chung cho probe và lúc chạy. */
+export function officeStateDir(companyDir: string, office: string): string {
+  return path.join(officePaths(officeDir(companyPaths(companyDir), office)).state, 'browser');
+}
+
 export function armConfig(body: {
   config?: Record<string, unknown>;
   catalogId?: string;
@@ -87,7 +128,34 @@ export function armConfig(body: {
    * cách nào viết sai. → `catalog.ts §serverFenced`
    */
   discovery?: boolean;
-}): Record<string, unknown> | undefined {
+  /**
+   * Id các ô tick người dùng bật (`CatalogArm.options`). → `catalog.ts §ArmOption`
+   *
+   * ⚠ `undefined` = *"client không nói gì"* ⇒ rơi về **bật sẵn**. Mảng **rỗng** =
+   * *"người dùng đã bỏ tick hết"* ⇒ tôn trọng, không rơi về mặc định. Gộp hai ca
+   * này là biến một lựa chọn tường minh thành một lần bấm không có tác dụng.
+   */
+  options?: string[];
+}, /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠⚠ THAM SỐ RIÊNG, KHÔNG NHÉT VÀO `body` — và đây là chuyện BẢO MẬT.      │
+   * │                                                                          │
+   * │ `body` đến từ client. Chỗ gọi viết `armConfig({ ...body, … })`, nên bất kỳ│
+   * │ trường nào nằm trong `body` đều **client gửi lên được**. Một cờ           │
+   * │ `loopbackOk` nằm trong đó là một cờ **tự khai**: ai cũng bật được, và cổng│
+   * │ "chỉ cho mở cửa sổ khi cùng máy" thành trang trí.                         │
+   * │                                                                          │
+   * │ Đây đúng lớp lỗi §5t đã dẫm: `...body` **đã mang `body.level` vào rồi**   │
+   * │ nên bản vá tưởng là xoá hoá ra chỉ ghi đè. Chỗ nào client viết được thì   │
+   * │ chỗ đó không giữ được một quyết định của server.                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  ctx: {
+    /** `isLoopback(req.socket.remoteAddress)` — địa chỉ SOCKET, không phải `Host`. */
+    loopbackOk?: boolean;
+    /** Thư mục `.browser` của văn phòng, cho chế độ nào cần ghi hồ sơ. */
+  } = {},
+): Record<string, unknown> | undefined {
   if (body.config) return body.config;
   const arm = body.catalogId ? findArm(body.catalogId) : undefined;
   if (!arm) return undefined;
@@ -101,11 +169,38 @@ export function armConfig(body: {
     body.groups ?? (arm.groups ? arm.groups.filter((g) => g.on).map((g) => g.id) : undefined);
   // Nấc chỉ đi vào cấu hình khi đang dựng bản THI HÀNH. Xem `discovery` ở trên.
   const level = body.discovery ? undefined : body.level;
+
+  /**
+   * Chế độ: id client gửi → đối tượng. Không khớp id nào ⇒ rơi về **mặc định**,
+   * KHÔNG ném — một id lạ là chuyện của giao diện cũ, và mặc định là chế độ hẹp
+   * nhất nên rơi về nó là rơi về phía an toàn.
+   *
+   * 🔴 Nhưng `loopbackOnly` thì NÉM, không rơi: người dùng chọn "hiện cửa sổ" mà
+   * ta lặng lẽ đưa bản chạy ẩn thì họ ngồi đợi một cửa sổ **không bao giờ hiện**,
+   * và không có gì để họ hiểu vì sao. Từ chối kèm lý do là đường duy nhất nói thật.
+   */
+  const options = arm.options
+    ? body.options
+      ? arm.options.filter((o) => body.options?.includes(o.id))
+      : defaultOptions(arm)
+    : undefined;
+
+  for (const o of options ?? []) {
+    if (o.loopbackOnly && !ctx.loopbackOk) {
+      throw new RunError(
+        `"${o.label}" chỉ bật được khi bạn mở agentco trên chính máy đang chạy nó. ` +
+          `Cửa sổ trình duyệt mở trên máy chủ, nên xem từ xa thì không ai nhìn thấy nó.`,
+        'other',
+      );
+    }
+  }
+
   return buildConfig(arm.spec, {
     folders: body.folders ?? [],
     ...(body.account ? { account: body.account } : {}),
     ...(groups ? { groups } : {}),
     ...(level ? { level } : {}),
+    ...(options ? { options } : {}),
   });
 }
 
@@ -149,6 +244,8 @@ function resolveArm(
    * và `scopedTools` lúc lưu vẫn hỏi lại server theo đúng nấc.
    */
   discovery = false,
+  /** Xem khối chú thích cùng tên ở `armConfig` — nó phải là THAM SỐ, không phải trường của `body`. */
+  ctx: { loopbackOk?: boolean } = {},
 ): {
   config: Record<string, unknown>;
   secretNames: string[];
@@ -187,7 +284,7 @@ function resolveArm(
   // Nấc vẫn tính và vẫn vào SỔ như cũ. Việc bỏ nó khỏi CẤU HÌNH lúc khám phá do
   // `armConfig` lo — một cờ, đọc ở đúng một chỗ.
   const level = fromCatalog?.tiered ? (body.level ?? 'read') : body.level;
-  const config = armConfig({ ...body, ...(level ? { level } : {}), discovery });
+  const config = armConfig({ ...body, ...(level ? { level } : {}), discovery }, ctx);
   if (!config) return undefined;
 
   /**
@@ -265,8 +362,16 @@ async function scopedTools(
   config: Record<string, unknown>,
   secrets: Record<string, string> | undefined,
   tier: Tier,
+  /**
+   * Việc bị mục danh mục cấm hẳn — xem `catalog.ts §neverTools`. CHỈ CẮT.
+   * Đặt tham số này **sau** `tier` chứ không trộn vào `tier`: nấc là thứ người
+   * dùng chọn, còn đây là thứ ta quyết hộ, và hai thứ đó không được lẫn vào nhau.
+   */
+  never: readonly string[] = [],
+  /** Đích của ô trống <OFFICE_STATE> — xem probe.ts §probeArm.dirs. */
+  dirs?: { officeState: string },
 ): Promise<string[]> {
-  const r = await probeArm({ arm: config as never }, undefined, secrets);
+  const r = await probeArm({ arm: config as never }, undefined, secrets, dirs);
   if (r.status !== 'connected') {
     throw new RunError(
       `Không nối được để đọc danh sách việc: ${r.error ?? r.status}. ` +
@@ -274,7 +379,7 @@ async function scopedTools(
       'other',
     );
   }
-  const granted = toolsAtTier(r.tools, tier);
+  const granted = toolsAtTier(r.tools, tier).filter((n) => !never.includes(n));
   if (!granted.length) {
     /**
      * 🔴 MẢNG RỖNG LÀ CHIỀU SAI, KHÔNG PHẢI "KHÔNG GIỚI HẠN".
@@ -616,10 +721,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         account?: string;
         level?: Tier;
         groups?: string[];
+        /** Khai ra vì lý do ngay trên: `readJson` ép kiểu chứ không lọc. */
+        office?: string;
+        mode?: string;
       }>(req);
       // `true` = KHÁM PHÁ. Xem tham số `discovery` của `resolveArm` — thiếu nó
       // thì mục có hàng rào server tự khoá mình ở nấc thấp nhất, không câu lỗi.
-      const arm = resolveArm(company, body, true);
+      const arm = resolveArm(company, body, true, armCtx(req));
       if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
       const config = arm.config;
       const base = await baselineTokens();
@@ -629,7 +737,12 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
        * qua `pickMcp`; probe phải nhận cùng bộ đó, nếu không một cánh tay cần
        * chìa sẽ báo ✓ ở đây rồi hỏng lúc làm việc thật.
        */
-      const r = await probeArm({ [body.id || 'thu']: config as never }, base, arm.secrets);
+      const r = await probeArm(
+        { [body.id || 'thu']: config as never },
+        base,
+        arm.secrets,
+        body.office ? { officeState: officeStateDir(company.dir, body.office) } : undefined,
+      );
       return json(res, 200, r);
     }
     /**
@@ -685,13 +798,24 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         account?: string;
         level?: Tier;
         groups?: string[];
+        mode?: string;
       }>(req);
-      const arm = resolveArm(company, body);
+      const arm = resolveArm(company, body, false, armCtx(req));
       if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
       // Giải cờ `readOnly` TRƯỚC khi ghi sổ: hỏng thì ném, và không có cánh tay
       // nào được tạo. Tạo trước rồi giải sau là để lại một cánh tay mang nhãn
       // "chỉ đọc" với `tools: []` — tức cấp CẢ SERVER. Thứ tự ở đây là bảo mật.
-      const tools = arm.tools ?? (await scopedTools(arm.config, arm.secrets, arm.level ?? 'read'));
+      // Danh sách cấm đi theo MỤC DANH MỤC, nên chỉ tra được khi biết mục nào.
+      // Cắm bằng `config` gõ tay (đường B) thì không có mục ⇒ không có lệnh cấm —
+      // đúng: đường đó là người dùng tự khai server, ta không curate hộ.
+      const never = body.catalogId ? (findArm(body.catalogId)?.neverTools ?? []) : [];
+      const tools = arm.tools ?? (await scopedTools(
+          arm.config,
+          arm.secrets,
+          arm.level ?? 'read',
+          never,
+          body.office ? { officeState: officeStateDir(company.dir, body.office) } : undefined,
+        ));
       const id = company.addArm({
         config: arm.config,
         secretNames: arm.secretNames,

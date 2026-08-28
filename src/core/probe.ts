@@ -225,7 +225,17 @@ export async function probeArm(
    * báo ✓, và cánh tay hỏng ở lần đầu một nhân viên dùng nó.
    */
   env?: Record<string, string>,
+  /**
+   * Đích của ô trống `<OFFICE_STATE>`. Phải truyền, cùng lý do `env` phải truyền:
+   * nút "Thử ngay" mà không điền ô trống thì nó kiểm một cấu hình **khác** thứ sẽ
+   * chạy — và ở đây cái khác đó rất cụ thể: trình duyệt sẽ đẻ một thư mục tên
+   * `<OFFICE_STATE>` ngay trong thư mục làm việc của daemon.
+   */
+  dirs?: { officeState: string },
 ): Promise<ProbeResult> {
+  if (dirs) {
+    for (const [name, cfg] of Object.entries(servers)) servers[name] = injectSecrets(cfg, {}, dirs);
+  }
   if (env && Object.keys(env).length) {
     /**
      * ⚠ CÙNG MỘT HÀM `pickMcp` DÙNG — `secrets.ts §injectSecrets`. Đây là bất

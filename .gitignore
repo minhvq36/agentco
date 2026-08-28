@@ -51,3 +51,7 @@ product-decisions-*.md
 BUSINESS.md
 NOTES.md
 notes/
+
+# Playwright MCP tự ghi snapshot/console ra đây (thư mục làm việc của daemon).
+# ⏸ Nợ: --output-dir phải trỏ vào thư mục văn phòng, xem arms/browser.ts
+.playwright-mcp/

@@ -433,6 +433,13 @@ export interface CatalogArm {
    */
   groups?: { id: string; label: string; help?: string; on?: boolean }[];
   /**
+   * Ô tick **cách chạy** — độc lập nhau, hỏi ở mọi nấc. → `catalog.ts §ArmOption`
+   *
+   * `loopbackOnly` = chỉ hiện khi trình duyệt và daemon cùng máy (cửa sổ trình
+   * duyệt mở trên máy chạy daemon). Giao diện ẩn nó; **cổng thật ở server**.
+   */
+  options?: { id: string; label: string; help: string; on?: boolean; loopbackOnly?: boolean }[];
+  /**
    * HÀNG RÀO NGOÀI — phạm vi do HÃNG giữ, ta chỉ mở cửa. → `catalog.ts §scope`
    * Không có ⇒ mục này không có màn hình đồng ý nào để đi tới.
    */

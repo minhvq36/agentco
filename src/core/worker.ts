@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chạy một worker: MỘT LẦT query one-shot, xong là chết.
  *
  * → docs/SPEC-2026-08-14-agentco.md §2, §8
@@ -12,6 +12,7 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
 
 import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { fastLaunch } from './armexec.js';
 import { findArm, folderRoots } from './catalog.js';
@@ -1215,7 +1216,13 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
      * mô tả một **lỗ** (§5a) chứ không phải một quyết định — và lỗ đó nằm im
      * được vì chưa có mục danh mục HTTP nào. Nay có Notion.
      */
-    const withEnv = injectSecrets(cfg, env);
+    /**
+     * ⚠ `dirs` ở đây là chỗ ô trống `<OFFICE_STATE>` được điền — **theo văn phòng
+     * đang chạy**. Chính vì nó điền lúc này mà đường dẫn không phải nằm trong sổ,
+     * và nhờ thế một mục danh mục cắm ở hai văn phòng vẫn là **một băm**.
+     * → `secrets.ts §OFFICE_STATE`
+     */
+    const withEnv = injectSecrets(cfg, env, { officeState: path.join(office.paths.state, 'browser') });
     /**
      * Bỏ `npx` khỏi đường nóng — đo được **~4 giây MỖI task có cánh tay**, vì
      * mỗi `query()` spawn một tiến trình MCP mới. Đồng bộ, không cài gì, và

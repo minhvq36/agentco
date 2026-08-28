@@ -276,6 +276,41 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [groups, setGroups] = useState<string[]>([]);
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ Ô TICK CỦA MỤC — khác `groups` ở HAI chỗ, và cả hai đều cố ý:            │
+   * │                                                                          │
+   * │  ① Nó **có mặc định bật sẵn** (`option.on`), nên state phải được nạp lúc  │
+   * │     chọn mục chứ không để rỗng. Rỗng ở đây KHÔNG có nghĩa "chưa chọn" —  │
+   * │     người dùng bỏ tick hết là một lựa chọn hợp lệ, và phải gửi `[]` lên.  │
+   * │  ② Nó hỏi ở **mọi nấc**, không riêng `full`: hai ô này nói về *cách chạy* │
+   * │     chứ không về *quyền*, nên luật "chỉ hỏi khi được ghi" không áp vào.   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const [options, setOptions] = useState<string[]>([]);
+  /**
+   * Trình duyệt và daemon có cùng máy không — dùng để **ẩn** ô `loopbackOnly`.
+   *
+   * ⚠ Đây CHỈ là chuyện giao diện. Cổng thật nằm ở server và đo bằng **địa chỉ
+   * socket** (`server.ts §armCtx`), thứ client không giả được. Kiểm ở đây để nút
+   * không thành câu đố; kiểm ở kia để nó không thành trang trí.
+   */
+  const sameMachine = /^(127\.|localhost$|\[::1\]$)/i.test(window.location.hostname);
+  /**
+   * Nạp mặc định cho ô tick mỗi khi đổi mục — **theo `pick`, không theo bốn chỗ
+   * reset rải rác**. Bốn chỗ đó là bốn cơ hội quên một chỗ, và chỗ quên sẽ mang
+   * lựa chọn của mục trước sang mục sau, im lặng.
+   *
+   * ⚠ Ô `loopbackOnly` không bao giờ được bật sẵn khi xem từ xa: nó sẽ bị server
+   * từ chối, và người dùng chưa hề tick nó.
+   */
+  useEffect(() => {
+    setOptions(
+      (pick?.options ?? [])
+        .filter((o) => o.on && (sameMachine || !o.loopbackOnly))
+        .map((o) => o.id),
+    );
+  }, [pick, sameMachine]);
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ BẢN CÀI APP — TRA TỰ ĐỘNG, 0 ký tự người dùng gõ. → SPEC-arms §5h·7o     │
    * │ (user chốt 27/08: *"Không gõ chữ gì, bấm thử ngay và thử tự động"*)      │
    * │                                                                          │
@@ -1028,6 +1063,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         account?: string;
         level?: 'read' | 'add' | 'full';
         groups?: string[];
+        options?: string[];
       }
     | null {
     // Dùng lại: chỉ gửi BĂM. Cấu hình, tên chìa và giá trị chìa đều nằm ở server
@@ -1049,6 +1085,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         ...(account ? { account } : {}),
         ...(pick.tiered ? { level: tier } : {}),
         ...(groups.length ? { groups } : {}),
+        /**
+         * ⚠ GỬI KỂ CẢ KHI RỖNG — khác hẳn `groups` ngay trên.
+         *
+         * Server đọc `undefined` = *"client không nói gì"* ⇒ rơi về **bật sẵn**;
+         * mảng rỗng = *"người dùng đã bỏ tick hết"*. Dùng `...(len ? … : {})` ở
+         * đây là biến một lần bỏ tick tường minh thành một cú bấm **không có tác
+         * dụng**, và người dùng sẽ không hiểu vì sao. → `server.ts §armConfig`
+         */
+        ...(pick.options?.length ? { options } : {}),
       };
     }
     const cfg = parsePaste();
@@ -1141,7 +1186,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     const tick = setTimeout(() => setSlow(true), 6_000);
     try {
       const k = filledKeys();
-      const r = await api.testArm('thu', { ...p, ...(Object.keys(k).length ? { secrets: k } : {}) });
+      /**
+       * ⚠ `office` PHẢI ĐI KÈM, dù nút Thử không cắm gì vào văn phòng nào.
+       *
+       * Ô trống `<OFFICE_STATE>` được điền **theo văn phòng** (`server.ts
+       * §officeStateDir`). Thiếu nó thì lượt Thử chạy với đường dẫn còn nguyên ô
+       * trống ⇒ trình duyệt đẻ một thư mục tên `<OFFICE_STATE>` cạnh daemon, và
+       * quan trọng hơn: **nút Thử kiểm một cấu hình khác thứ sẽ chạy** — đúng bất
+       * biến mà `injectSecrets` sinh ra để giữ.
+       */
+      const r = await api.testArm('thu', {
+        ...p,
+        ...(Object.keys(k).length ? { secrets: k } : {}),
+        ...(officeId ? { office: officeId } : {}),
+      });
       // ⚠ CHỐT: cấu hình đã đổi trong lúc lượt này đang bay ⇒ kết quả này nói về
       // một thứ KHÁC với thứ đang trên màn hình. Vứt nó đi, im lặng — lượt mới
       // đã chạy rồi và nó mới là lượt đúng. → `runRef`
@@ -1876,6 +1934,64 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               │ Cùng kỷ luật `runRef` và ô chọn thư mục. → §9b               │
               └──────────────────────────────────────────────────────────────┘
             */}
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ Ô TICK CÁCH CHẠY — hỏi ở MỌI nấc, khác nhóm việc.            │
+              │                                                              │
+              │ Luật *"câu hỏi chỉ có sức nặng khi được GHI"* (27/08) áp cho  │
+              │ nhóm việc vì chúng nói về **quyền**. Hai ô này nói về **cách  │
+              │ chạy** — hiện cửa sổ hay không, nhớ đăng nhập hay không —     │
+              │ nên nấc nào cũng phải hỏi.                                    │
+              │                                                              │
+              │ Đổi tick ⇒ VỨT kết quả thử cũ: nó nói về một cấu hình khác.   │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {!!pick?.options?.length && (
+              <div className="mt-3">
+                <Label>Cách chạy</Label>
+                <div className="mt-1 flex flex-col gap-1">
+                  {pick.options
+                    // Ẩn ô chỉ dùng được khi cùng máy. Bày ra rồi để server từ
+                    // chối là bày một lựa chọn CHẮC CHẮN SAI — cùng lý lẽ với
+                    // việc lọc mục văn phòng đã có ngay ở đầu file.
+                    .filter((o) => sameMachine || !o.loopbackOnly)
+                    .map((o) => (
+                      <label
+                        key={o.id}
+                        className="flex cursor-pointer items-start gap-2 rounded-md border border-line px-3 py-2 text-[13px] hover:border-accent"
+                      >
+                        <input
+                          className="mt-0.5"
+                          type="checkbox"
+                          checked={options.includes(o.id)}
+                          onChange={(e) => {
+                            setOptions((cur) =>
+                              e.target.checked ? [...cur, o.id] : cur.filter((x) => x !== o.id),
+                            );
+                            setProbe(null);
+                          }}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block">{o.label}</span>
+                          <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
+                            {o.help}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                </div>
+                {!sameMachine && pick.options.some((o) => o.loopbackOnly) && (
+                  /*
+                    Nói ra thay vì im lặng bớt một ô: một lựa chọn biến mất không
+                    lý do là một câu đố, và người dùng sẽ đi tìm nó ở chỗ khác.
+                  */
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                    Một lựa chọn bị ẩn vì bạn đang xem từ máy khác — cửa sổ trình duyệt sẽ mở
+                    trên máy chạy agentco, nên từ đây bạn không nhìn thấy nó.
+                  </p>
+                )}
+              </div>
+            )}
             {needGroups() && (
               <div className="mt-3">
                 <Label>Cho làm những nhóm việc nào</Label>
