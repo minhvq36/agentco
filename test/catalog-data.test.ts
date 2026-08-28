@@ -20,7 +20,16 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { CATALOG, buildConfig, catalogForUi, findArm, transportOf } from '../dist/core/catalog.js';
+import {
+  CATALOG,
+  FILES_ARM,
+  GITHUB_ARM,
+  NOTION_ARM,
+  buildConfig,
+  catalogForUi,
+  findArm,
+  transportOf,
+} from '../dist/core/catalog.js';
 
 // ────────────────────────────────────────── luật: dữ liệu, không mã
 
@@ -146,4 +155,71 @@ test('Notion KHÔNG còn phụ thuộc gói npm nào — 0 rủi ro chuỗi cung
   // không cứu được ta khỏi việc đóng băng một thứ không còn ai vá. → §11d
   const notion = findArm('notion');
   assert.equal(JSON.stringify(notion?.spec).includes('npx'), false);
+});
+
+// ═════════════════════════════ MỘT HÃNG = MỘT FILE (tách 28/08) ═════════════
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ngày 25/08 user hỏi *"thay vì phải viết nhiều file như notion.ts,        │
+ * │ github.ts…"* — và câu trả lời lúc đó (một mảng, không hàm dựng riêng)     │
+ * │ VẪN ĐÚNG. Cái tách ra 28/08 là **chỗ ĐỂ dữ liệu**, không phải cách dùng   │
+ * │ nó: vẫn một `CatalogArm`, vẫn một `buildConfig`, vẫn 0 nhánh theo tên     │
+ * │ hãng. Test ngay trên (`tuần tự hoá được`) là thứ canh điều đó, và nó vẫn  │
+ * │ xanh sau khi tách — đó là bằng chứng, không phải lời hứa.                 │
+ * │                                                                          │
+ * │ Ca dưới canh chuyện khác: `arms/index.ts` **đánh rơi một mục** thì im     │
+ * │ lặng — mục biến khỏi giao diện, không lỗi, không test nào khác đỏ.        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 `arms/index.ts` phải gom ĐỦ mọi mục — rơi một cái là im lặng', () => {
+  for (const arm of [FILES_ARM, NOTION_ARM, GITHUB_ARM]) {
+    assert.ok(
+      CATALOG.includes(arm),
+      `${arm.id} có file riêng nhưng KHÔNG có trong CATALOG — nó vừa biến khỏi giao diện`,
+    );
+  }
+  assert.equal(CATALOG.length, new Set(CATALOG.map((a) => a.id)).size, 'id phải là duy nhất');
+});
+
+// ───────────────────────────────── nhóm việc: tên của hãng + câu giải thích
+
+test('🔴 mọi nhóm việc phải có `help` — tên nhóm một mình thì người non-code đoán', () => {
+  /**
+   * User 28/08: *"Cái check đầu tiên: 'Biết tôi là ai, repo nào' tôi nghe không
+   * hiểu"*. Cách chữa SAI là dịch tên nhóm thành một câu — nhãn cũ làm thế và
+   * còn hứa sai bán kính (`context` không có tool nào về repo). Cách chữa đúng:
+   * **giữ tên của hãng**, thêm một câu nói việc làm được. Test này giữ vế thứ
+   * hai, vì vế thứ nhất không ai quên còn vế này thì quên rất dễ.
+   */
+  for (const a of CATALOG) {
+    for (const g of a.groups ?? []) {
+      assert.ok(g.help && g.help.trim().length > 10, `${a.id}/${g.id} thiếu câu giải thích`);
+    }
+  }
+});
+
+// ─────────────────────────────────────────── logo hãng sống trong `brand`
+
+test('🔴 `brand.mark` là ĐƯỜNG DẪN SVG, không phải markup', () => {
+  /**
+   * Đường dẫn bị hỏng thì hình **méo chứ không lỗi** — không có gì kêu lên.
+   * (Đã suýt dẫm 28/08: cắt chuỗi path thành nhiều mảnh rồi nối, nuốt mất một
+   * dấu cách ở chỗ nối.) Ca này bắt lớp hỏng thô: mất chữ `M` mở đầu, lọt thẻ
+   * markup, hoặc ai đó dán nguyên `<svg>` vào.
+   */
+  for (const a of CATALOG) {
+    const m = a.brand.mark;
+    if (!m) continue;
+    assert.match(m, /^[Mm]/, `${a.id}: path phải bắt đầu bằng lệnh moveto`);
+    assert.doesNotMatch(m, /[<>]/, `${a.id}: đây là thuộc tính "d", không phải markup`);
+    assert.ok(m.length > 40, `${a.id}: path ngắn bất thường — nhiều khả năng bị cắt cụt`);
+  }
+});
+
+test('⭐ `catalogForUi` chở `brand.mark` sang giao diện', () => {
+  // Rơi trường này thì logo biến mất **im lặng** ở cả hộp thoại lẫn sơ đồ, và
+  // giao diện ngã về icon theo loại — trông như một quyết định thiết kế.
+  const gh = catalogForUi().find((a) => a.id === 'github');
+  assert.ok(gh?.brand.mark, 'thiếu ⇒ node GitHub trên sơ đồ tụt về hình phích cắm');
 });

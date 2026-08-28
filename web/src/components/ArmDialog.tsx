@@ -18,8 +18,24 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Copy, FolderOpen, Loader2, Plug, Trash2, TriangleAlert, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Check, FolderOpen, Loader2, Trash2, TriangleAlert, X } from 'lucide-react';
+
+import { ArmIcon } from '@/components/ArmIcon';
+/**
+ * KHỐI RIÊNG CỦA TỪNG HÃNG — mỗi cái một file trong `components/arm/`.
+ * (user chốt 28/08: *"custom khá nhiều để khớp với từng provider… sắp xếp lại"*)
+ *
+ * Bốn khối này chỉ hiện khi mục danh mục **khai** thứ tương ứng (`deviceLogin`,
+ * `scope`, `repoScan`) — tức chúng là **dữ liệu quyết định**, không phải nhánh
+ * theo tên hãng. Tách ra để lần sau sửa GitHub thì mở đúng một file, và để hộp
+ * thoại thôi vừa là bộ điều phối vừa là chỗ vẽ mọi thứ.
+ */
+import { DeviceCode } from '@/components/arm/DeviceCode';
+import { OwnClient } from '@/components/arm/OwnClient';
+import { RepoScan } from '@/components/arm/RepoScan';
+import { ScopeBox } from '@/components/arm/ScopeBox';
+import type { DeviceLogin, RepoScanState } from '@/components/arm/types';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDelete } from '@/components/ui/confirm';
@@ -74,7 +90,8 @@ function TypeCard({
   say,
   onClick,
 }: {
-  icon: string;
+  /** Hình, KHÔNG phải emoji: cùng bộ với mọi nấc sau. → `ArmIcon.tsx` */
+  icon: ReactNode;
   name: string;
   say: string;
   onClick(): void;
@@ -85,7 +102,7 @@ function TypeCard({
       onClick={onClick}
       className="rounded-lg border border-line px-3 py-4 text-left transition hover:border-accent hover:bg-accent-soft"
     >
-      <div className="text-2xl">{icon}</div>
+      <div className="text-muted">{icon}</div>
       <div className="mt-1.5 text-[13px] font-medium">{name}</div>
       <div className="mt-0.5 text-[11px] leading-snug text-muted">{say}</div>
     </button>
@@ -139,6 +156,9 @@ function clashingArm(folder: string, installed: InstalledArm[], officeId: string
  *
  * ⚠ MỘT hàm, hai chỗ gọi (lúc mở, và sau khi xoá hẳn). Sắp xếp ở một chỗ rồi
  * quên chỗ kia là danh sách tự sắp lại ngay dưới tay người vừa bấm.
+ *
+ * ⚠ Đây chỉ là thứ tự NỀN. Thứ tự người dùng thật sự nhìn thấy do `byKind` chốt
+ * lúc vẽ, vì nó cần `catalog` — thứ chưa về lúc hàm này chạy.
  */
 function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] {
   return arms
@@ -158,6 +178,47 @@ type Kind = 'files' | 'service' | 'custom';
 function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
   if (!a.catalog) return 'custom';
   return catalog.find((c) => c.id === a.catalog)?.folders ? 'files' : 'service';
+}
+
+/**
+ * Logo hãng của một mục — lấy từ DANH MỤC, không từ một bảng trong thư mục web.
+ *
+ * Ô này rỗng là chuyện bình thường (hãng chưa có logo, hoặc mục không có hãng):
+ * `ArmIcon` ngã về hình theo loại. → `catalog.ts §brand.mark` · §11c
+ */
+function markOf(catalogId: string | undefined, catalog: CatalogArm[]): string | undefined {
+  return catalogId ? catalog.find((c) => c.id === catalogId)?.brand.mark : undefined;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THỨ TỰ TRONG DANH SÁCH DÙNG LẠI: **mồ côi → LOẠI → tên**. (user 27/08)   │
+ * │                                                                          │
+ * │ > *"trash (không được dùng) và không trash cũng order theo thứ tự: chứ   │
+ * │ >  đừng để lộn xộn. sắp xếp theo type provider → file → custom"*         │
+ * │                                                                          │
+ * │ Khoá 1 giữ nguyên luật cũ (đang dùng lên trên, mồ côi xuống đáy — 25/08).│
+ * │ Khoá 2 là thứ vừa thêm: TRONG mỗi nhóm, gom theo loại. Khoá 3 (tên) phải │
+ * │ còn, vì `listArms` đi theo thứ tự khoá trong yaml — thiếu nó thì hai mục │
+ * │ cùng loại đổi chỗ nhau giữa hai lần mở, và danh sách tự nhảy chỗ là thứ  │
+ * │ làm người dùng bấm nhầm.                                                 │
+ * │                                                                          │
+ * │ ⚠ SẮP LÚC VẼ, không sắp lúc tải. `catalog` và `arms` về bằng HAI lượt    │
+ * │ gọi mạng song song, nên sắp ngay sau `api.arms()` là sắp bằng một danh   │
+ * │ mục còn rỗng ⇒ `kindOf` trả `custom` cho tất cả ⇒ đúng cái lộn xộn đang  │
+ * │ phải sửa, và nó sẽ KHÔNG BAO GIỜ tự sắp lại. Vẽ lại thì rẻ; sai thứ tự   │
+ * │ một lần rồi đứng im thì không sửa được.                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const KIND_ORDER: Record<Kind, number> = { service: 0, files: 1, custom: 2 };
+
+function byKind(arms: InstalledArm[], catalog: CatalogArm[]): InstalledArm[] {
+  return [...arms].sort(
+    (a, b) =>
+      Number(a.orphan) - Number(b.orphan) ||
+      KIND_ORDER[kindOf(a, catalog)] - KIND_ORDER[kindOf(b, catalog)] ||
+      a.label.localeCompare(b.label, 'vi'),
+  );
 }
 
 export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
@@ -193,6 +254,59 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * và nó cũng là nấc duy nhất luôn hợp lệ nếu server khai tử tế. → §6j
    */
   const [tier, setTier] = useState<'read' | 'add' | 'full'>('read');
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ NHÓM VIỆC ĐÃ TICK — và **chỉ hỏi ở nấc toàn quyền**. (user chốt 27/08)   │
+   * │                                                                          │
+   * │   *"default là chỉ đọc không cần pick gì, còn chọn toàn quyền thì có 1   │
+   * │    list, default không tick"*                                            │
+   * │                                                                          │
+   * │ Vì sao đúng, chứ không chỉ vì user nói: **câu hỏi chỉ có sức nặng khi    │
+   * │ được GHI**. Bắt người dùng cân nhắc năm ô lúc chỉ đọc là thu tiền chú ý  │
+   * │ cho một quyết định không có hậu quả — họ tick bừa, và ta vừa dạy họ rằng │
+   * │ mấy ô này tick bừa cũng được. Tới lúc nó thật sự nguy hiểm thì thói quen │
+   * │ đã hình thành.                                                           │
+   * │                                                                          │
+   * │ Rỗng ⇒ **không gửi** ⇒ server rơi về nhóm `on: true` của danh mục        │
+   * │ (`server.ts §armConfig`). Cố ý không gửi `[]`: rỗng ở đây nghĩa là "chưa  │
+   * │ chọn", còn `[]` gửi đi lại có nghĩa "cấm hết" — hai chuyện khác nhau, và │
+   * │ trộn chúng là dựng lại đúng ca *ô để trắng ≠ chìa rỗng* ở `filledKeys`.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const [groups, setGroups] = useState<string[]>([]);
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BẢN CÀI APP — TRA TỰ ĐỘNG, 0 ký tự người dùng gõ. → SPEC-arms §5h·7o     │
+   * │ (user chốt 27/08: *"Không gõ chữ gì, bấm thử ngay và thử tự động"*)      │
+   * │                                                                          │
+   * │ Ba trạng thái, và chúng **không gộp được**:                              │
+   * │   `null`               chưa tra (chưa chọn tài khoản)                    │
+   * │   `{failed:true}`      KHÔNG TRA ĐƯỢC → cho qua, nói thật                │
+   * │   `{installed:[…]}`    tra được → rỗng thì CHẶN, có thì cho qua           │
+   * │                                                                          │
+   * │ Gộp `failed` với `installed: []` là hoặc chặn oan người đã cài (mạng      │
+   * │ chập), hoặc thả người chưa cài. Hai chiều hỏng ngược nhau.                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const [scan, setScan] = useState<RepoScanState>(null);
+  const [scanning, setScanning] = useState(false);
+  /**
+   * Người dùng tự khẳng định đã cài, dù ta tra ra rỗng. → đường thoát bắt buộc.
+   *
+   * Vì sao phải có: `search user:<login>` **không thấy repo của tổ chức**, nên
+   * "rỗng" không chứng minh "chưa cài gì cả". Chặn cứng ở đây là giam một người
+   * đã làm đúng, mà giam thì không có đường ra nào khác ngoài đóng app.
+   */
+  const [anyway, setAnyway] = useState(false);
+  /**
+   * Ô "dùng app của bạn". `own` = công ty này đang đi bằng danh tính của HỌ.
+   *
+   * Hai state chứ không một: `clientId` là thứ đang gõ, `own` là thứ đã LƯU.
+   * Suy `own` từ `clientId !== ''` thì huy hiệu "đang bật" sáng lên ngay lúc họ
+   * mới gõ ký tự đầu — một cái nhãn nói về trạng thái chưa tồn tại.
+   */
+  const [clientId, setClientId] = useState('');
+  const [own, setOwn] = useState(false);
   const [label, setLabel] = useState('');
   const [folders, setFolders] = useState('');
   const [keys, setKeys] = useState<Record<string, string>>({});
@@ -244,6 +358,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setReuse(null);
     setPaste('');
     setLabel('');
+    autoLabel.current = '';
     setFolders('');
     setKeys({});
     setProbe(null);
@@ -252,6 +367,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setAccount('');
     setAccounts([]);
     setTier('read');
+    setGroups([]);
     void api.armCatalog().then((r) => setCatalog(r.arms)).catch(() => undefined);
     /**
      * ⚠ LỌC NGAY Ở NGUỒN: chỉ giữ cánh tay văn phòng NÀY chưa có.
@@ -269,17 +385,47 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const pickedAccount = accounts.find((a) => a.name === account);
 
   /**
-   * Tên mặc định KÈM WORKSPACE, ngay khi người dùng chọn xong.
-   *
-   * ⚠ Chỉ khi nhãn vẫn đang là tên mặc định của mục danh mục — người dùng đã gõ
-   * tên riêng thì đừng đè lên. Và **chỉ tên workspace, KHÔNG kèm mức quyền**:
-   * nhãn đổi tự do, nên mức quyền nằm trong đó là một lời hứa gỡ được bằng cách
-   * đổi tên. Mức quyền sống ở huy hiệu, suy từ `level`. → §6j
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 TÊN MẶC ĐỊNH **ĐI THEO** TÀI KHOẢN — đổi tài khoản là đổi tên.        │
+   * │ (bug user bắt 27/08)                                                     │
+   * │                                                                          │
+   * │ > *"Sao tôi đổi workspace account sang minhvuptitd14 mà node mcp server  │
+   * │ >  vẫn tên là GitHub · minhvq36"* … *"bạn lấy được tên workspace mà, lúc │
+   * │ >  tick đổi cái tên không đổi theo mà bị khoá?"*                          │
+   * │                                                                          │
+   * │ Bản cũ so `cur === pick.name` để biết *"nhãn còn là hàng tự sinh không"*. │
+   * │ Phép so đó chỉ đúng ĐÚNG MỘT LẦN: ghi xong thì `cur` là                  │
+   * │ *"GitHub · minhvq36"*, không còn bằng `pick.name` nữa ⇒ mọi lần đổi tài  │
+   * │ khoản sau đều rơi vào nhánh *"người dùng đã tự đặt tên"* và bị bỏ qua.   │
+   * │ Nhãn đóng băng ở tài khoản ĐẦU TIÊN trong khi cấu hình trỏ tài khoản mới │
+   * │ — và trên sơ đồ đó là chỗ DUY NHẤT đọc được tên, nên lời nói dối không   │
+   * │ có gì đối chứng.                                                         │
+   * │                                                                          │
+   * │ ⇒ Sửa bằng cách nhớ **chính chuỗi ta vừa tự ghi** (`autoLabel`) thay vì   │
+   * │ suy ra nó. Còn khớp ⇒ hàng tự sinh, ghi đè thoải mái. Khác ⇒ người dùng  │
+   * │ đã gõ tên riêng, ĐỪNG ĐỘNG VÀO. Cổng vẫn còn, chỉ là nó thôi hết hạn     │
+   * │ sau lần đầu.                                                             │
+   * │                                                                          │
+   * │ ⚠ Vẫn **CHỈ tên tài khoản, KHÔNG kèm mức quyền**: nhãn đổi tự do, nên    │
+   * │ mức quyền nằm trong đó là một lời hứa gỡ được bằng cách đổi tên. Mức     │
+   * │ quyền sống ở huy hiệu, suy từ `level`. → §6j                             │
+   * │                                                                          │
+   * │ ⚠ Và nhãn KHÔNG PHẢI chỗ dựa duy nhất: node trên sơ đồ cắt tên còn 14 ký │
+   * │ tự (*"GitHub · minhv…"*), nên nó vẫn vẽ thêm `via` ở dòng phụ — thứ do   │
+   * │ server tra từ `arms[].secrets` mỗi lần đọc, không lỗi thời được.         │
+   * │ → `canvas/NodeShape.tsx`                                                 │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
+  const autoLabel = useRef('');
   useEffect(() => {
     if (!pick?.needsLogin || !pickedAccount?.label) return;
-    setLabel((cur) => (cur === pick.name ? `${pick.name} · ${pickedAccount.label}` : cur));
-  }, [pick, pickedAccount]);
+    // Người dùng đã gõ tên riêng ⇒ đứng yên. Ghi ref NGOÀI updater của `setLabel`:
+    // updater phải thuần, React gọi nó hai lần ở StrictMode.
+    if (label !== pick.name && label !== autoLabel.current) return;
+    const next = `${pick.name} · ${pickedAccount.label}`;
+    autoLabel.current = next;
+    setLabel(next);
+  }, [pick, pickedAccount, label]);
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -311,7 +457,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   function reuseList(kind?: Kind) {
-    const list = kind ? installed.filter((a) => kindOf(a, catalog) === kind) : installed;
+    const list = byKind(
+      kind ? installed.filter((a) => kindOf(a, catalog) === kind) : installed,
+      catalog,
+    );
     if (!list.length) return null;
     return (
       <>
@@ -359,7 +508,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 }}
                 className="flex flex-1 items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-accent"
               >
-                <Plug className="h-3.5 w-3.5 shrink-0 text-muted" />
+                {/*
+                  Hình theo HÃNG (ngã về LOẠI khi hãng chưa có logo) — cùng hàm
+                  với lưới dịch vụ và thẻ chọn loại, nên một mục giữ nguyên hình
+                  suốt từ màn tiếp đất tới bước 2. → `ArmIcon.tsx`
+                */}
+                <span className="shrink-0 text-muted">
+                  <ArmIcon
+                    mark={markOf(a.catalog, catalog)}
+                    kind={kindOf(a, catalog)}
+                    className="h-4 w-4"
+                  />
+                </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{a.label}</span>
                   {/*
@@ -437,6 +597,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const folderList = () => folders.split('\n').map((s) => s.trim()).filter(Boolean);
 
   /**
+   * Mục này CÓ hỏi nhóm việc ở nấc đang chọn không?
+   *
+   * Chỉ hỏi ở `full`: xem khối chú thích ở state `groups`. Điều kiện `pick.groups`
+   * là DỮ LIỆU của mục, nên mục nào không khai nhóm thì màn này im — không có
+   * nhánh `id === 'github'` nào ở đây.
+   */
+  const needGroups = () => Boolean(pick?.groups?.length) && tier === 'full';
+
+  /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ 🔴 MỘT LỰA CHỌN Ở BƯỚC 1 = MỘT CẤU HÌNH MỚI TINH. (bug user bắt 26/08)  │
    * │                                                                          │
@@ -467,7 +636,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setProbe(null);
     setErr('');
     setTier('read');
+    // Nhóm việc + giới hạn repo cũng là CẤU HÌNH, nên chúng dọn ở đây cùng mọi
+    // thứ khác. Bỏ sót thì bấm sang mục khác vẫn mang theo giới hạn của mục
+    // trước — đúng luật đã chốt 26/08: *thứ bạn vừa bấm là thứ bạn đang cấu hình.*
+    setGroups([]);
     setAccount('');
+    // Nhãn tự sinh của mục TRƯỚC không được tính là "hàng tự sinh" của mục này:
+    // để lại thì một cái tên người dùng đã gõ ở mục cũ có thể bị ghi đè im lặng.
+    autoLabel.current = '';
     // Lượt thử đang bay (nếu có) mất quyền ghi kết quả — xem `runRef`. Không có
     // dòng này thì một lượt cũ vẫn về được và dựng lại đúng cái bug vừa vá.
     runRef.current++;
@@ -486,6 +662,47 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }
 
   /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 ĐỔI TÀI KHOẢN ⇒ DỌN SẠCH MỌI THỨ PHÍA SAU. (user chốt 28/08)          │
+   * │                                                                          │
+   * │ > *"tôi chọn lại 1 account mới mà trên modal vẫn hiện chọn repo, thậm chí │
+   * │ >  còn hiện phần dấu check tool, thì làm sao kiểm soát được quyền ở đâu"* │
+   * │ > *"clear thẳng băng đi cho sạch, buộc người dùng phải chọn lại từ đầu,   │
+   * │ >  chứ chiều người dùng là cái app như nồi cám heo"*                      │
+   * │                                                                          │
+   * │ Và họ đúng ở chỗ nặng nhất: **nấc quyền + nhóm việc** là hai thứ QUYẾT    │
+   * │ ĐỊNH nhân viên được làm gì. Giữ chúng lại qua một lần đổi tài khoản là để │
+   * │ người dùng nhìn thấy một lựa chọn họ đã cân nhắc cho **tài khoản khác**,  │
+   * │ rồi bấm Tiếp — cấp quyền cho một thứ họ chưa hề xem xét.                  │
+   * │                                                                          │
+   * │ Bản cũ chỉ dọn `probe` (và chỉ ở nút radio, không ở đường tự chọn hay     │
+   * │ đường vừa-đăng-nhập-xong) — tức "một nửa cấu hình mới, một nửa cũ", đúng  │
+   * │ lớp lỗi *"thứ bạn vừa bấm là thứ bạn đang cấu hình"* đã chốt 26/08.       │
+   * │                                                                          │
+   * │ ⚠ MỘT hàm, MỌI đường vào (radio · tự chọn · vừa đăng nhập xong). Dọn ở    │
+   * │ một chỗ rồi quên chỗ kia là cách cái bug này ra đời lần đầu.              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  /** Bản gương của `account` cho các hàm có deps rỗng. Xem `loadAccounts`. */
+  const accountRef = useRef('');
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
+
+  const chooseAccount = useCallback((name: string) => {
+    setAccount(name);
+    // Kết quả Thử cũ nói về một CẤU HÌNH KHÁC (ô trống mang tên chìa khác).
+    setProbe(null);
+    // Nấc rơi về thấp nhất — mặc định an toàn khi chưa ai chọn. → §6j
+    setTier('read');
+    setGroups([]);
+    // Bản cài app là của TÀI KHOẢN, nên kết quả tra cũ nói về người khác.
+    setScan(null);
+    setAnyway(false);
+    setErr('');
+  }, []);
+
+  /**
    * Nạp danh sách tài khoản đã đăng nhập cho mục đang chọn, và tự chọn cái đầu.
    *
    * Gọi cả lúc vào bước 2 **lẫn** sau khi đăng nhập xong. Sau đăng nhập, tab
@@ -499,14 +716,92 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       const r = await api.oauthAccounts(catalogId).catch(() => null);
       if (!r) return;
       setAccounts(r.accounts);
-      setAccount((cur) => cur || r.accounts[0]?.name || '');
+      /**
+       * Chỉ tự chọn khi CHƯA có gì được chọn — `chooseAccount` dọn sạch phía sau,
+       * nên gọi nó lên một lựa chọn đã có là xoá cấu hình người dùng đang gõ dở.
+       *
+       * ⚠ Đọc qua `accountRef` chứ không qua state: hàm này có deps rỗng nên
+       * `account` trong closure là bản của lần render đầu. Và ⚠ không nhét phép
+       * kiểm vào trong updater của `setAccount` — updater phải THUẦN, React gọi
+       * nó hai lần ở StrictMode (đúng bẫy đã tránh ở `autoLabel`).
+       */
+      const first = r.accounts[0]?.name;
+      if (first && !accountRef.current) chooseAccount(first);
     },
-    [],
+    [chooseAccount],
   );
 
   useEffect(() => {
     if (step === 2 && pick?.needsLogin) void loadAccounts(pick.id);
   }, [step, pick, loadAccounts]);
+
+  /**
+   * TRA BẢN CÀI APP. → SPEC-arms §5h·7o
+   *
+   * ⚠ `scanRef` cùng khuôn với `runRef`: đổi tài khoản giữa lúc đang tra thì
+   * kết quả của tài khoản CŨ không được ghi lên màn hình đang nói về tài khoản
+   * MỚI. Ở `runRef` cái đó tạo ra một dấu ✓ nói dối; ở đây nó tạo ra một danh
+   * sách repo của người khác — nhìn còn thuyết phục hơn.
+   */
+  /**
+   * Nạp client_id đang dùng cho mục này. Chỉ hiện khi công ty **đã dán** — của
+   * agentco thì để trống, vì bày sẵn nó ra là mời người ta sửa một thứ họ không
+   * nên đụng, và ô có sẵn chữ trông như một trường bắt buộc.
+   */
+  useEffect(() => {
+    if (step !== 2 || !pick?.deviceLogin) return;
+    void api
+      .oauthClient(pick.id)
+      .then((r) => {
+        setOwn(r.own);
+        setClientId(r.own ? r.id : '');
+      })
+      .catch(() => undefined);
+  }, [step, pick]);
+
+  async function saveClientId() {
+    if (!pick) return;
+    try {
+      const r = await api.setOauthClient(pick.id, clientId);
+      setOwn(r.own);
+      setClientId(r.own ? r.id : '');
+      // Đổi danh tính ứng dụng ⇒ chìa đã có thuộc client CŨ. Không dọn gì cả,
+      // chỉ nói ra: chìa cũ vẫn dùng được, nhưng lượt đăng nhập TỚI sẽ đi bằng
+      // client mới. Tự xoá chìa hộ là vứt một thứ đang chạy tốt.
+      setErr(
+        r.own
+          ? 'Đã lưu. Lượt đăng nhập tới sẽ đi bằng app của bạn — tài khoản đã nối trước đó vẫn giữ nguyên.'
+          : 'Đã quay về app của agentco.',
+      );
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Không lưu được Client ID.');
+    }
+  }
+
+  const scanRef = useRef(0);
+  const runScan = useCallback(async () => {
+    if (!pick?.repoScan || !account) return;
+    const mine = ++scanRef.current;
+    setScanning(true);
+    setScan(null);
+    setAnyway(false);
+    const r = await api.armRepos(pick.id, account).catch(() => ({ failed: true }) as const);
+    if (mine !== scanRef.current) return;
+    setScan(r);
+    setScanning(false);
+  }, [pick, account]);
+
+  /**
+   * Tự chạy khi đã có tài khoản — **không** đợi người dùng bấm gì.
+   *
+   * Đây là chỗ user chốt: *"Không gõ chữ gì, bấm thử ngay và thử tự động"*. Nó
+   * chạy sớm hơn nút Thử vì nó chỉ cần CHÌA, không cần cấu hình — nên người dùng
+   * đọc kết quả trong lúc còn đang chọn nấc và nhóm việc.
+   */
+  useEffect(() => {
+    if (step === 2 && pick?.repoScan && account) void runScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, pick, account]);
 
   /**
    * ⚠ NGHE SSE để biết tab callback đã xong. Daemon phát `company.offices` sau
@@ -577,15 +872,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * │ web flow (thứ chưa bao giờ rời khỏi daemon).                             │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  const [device, setDevice] = useState<{
-    state: string;
-    userCode: string;
-    verificationUri: string;
-    verificationUriComplete?: string;
-    expiresAt: number;
-    intervalMs: number;
-  } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [device, setDevice] = useState<DeviceLogin | null>(null);
   /** Đếm ngược, tính lại mỗi giây — mã chết thật, và người dùng phải thấy nó chết. */
   const [now, setNow] = useState(() => Date.now());
 
@@ -611,9 +898,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             setDevice(null);
             setLogging(false);
             await loadAccounts(pick.id);
-            // Tài khoản vừa nối là thứ họ vừa làm ra — chọn sẵn giùm.
-            setAccount(r.name);
-            setProbe(null);
+            // Tài khoản vừa nối là thứ họ vừa làm ra — chọn sẵn giùm, và dọn
+            // sạch mọi thứ đã chọn cho tài khoản TRƯỚC. → `chooseAccount`
+            chooseAccount(r.name);
             return;
           }
           void tick(r.intervalMs);
@@ -664,6 +951,26 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (!pick) return;
     setErr('');
     setLogging(true);
+    /**
+     * ⚠ DỌN NGAY TỪ LÚC BẤM, không đợi đăng nhập xong. (user 28/08)
+     *
+     * *"trong lúc chọn nối thêm 1 tài khoản khác: đề nghị trên modal clear tất cả
+     * các entity phụ thuộc yếu của nó… khi nào select xong xuôi rồi mới hiện"*
+     *
+     * Dọn ở đây thì khối phạm vi / bản cài / nấc / nhóm việc **biến mất ngay khi
+     * họ bấm**, thay vì đứng đó nói về tài khoản cũ suốt lượt đăng nhập. Không có
+     * dòng này thì họ nhìn một màn hình trộn hai tài khoản trong ~30 giây — đúng
+     * lúc câu hỏi *"quyền này của ai"* khó trả lời nhất.
+     *
+     * Cái giá đã cân nhắc: bấm nhầm rồi ✕ thì mất lựa chọn nấc/nhóm đang gõ dở.
+     * Chọn chiều đó vì hai chiều hỏng không cân nhau — mất vài cú bấm thì thấy
+     * ngay, còn cấp quyền cho tài khoản mình chưa xem xét thì không thấy gì cả.
+     */
+    setProbe(null);
+    setTier('read');
+    setGroups([]);
+    setScan(null);
+    setAnyway(false);
 
     /**
      * ĐƯỜNG MÃ THIẾT BỊ — cho hãng không mở đăng ký động (GitHub).
@@ -676,7 +983,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (pick.deviceLogin) {
       try {
         const d = await api.oauthDeviceStart(pick.id);
-        setCopied(false);
+        // Dấu "đã chép" được dọn bằng `key={device.state}` ở chỗ vẽ, không bằng
+        // một `setCopied(false)` ở đây: state đó nay sống trong `DeviceCode`, và
+        // một lượt mới là một `state` mới ⇒ React dựng lại khối, sạch mọi thứ.
         setNow(Date.now());
         setDevice(d);
       } catch (e) {
@@ -718,6 +1027,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         folders?: string[];
         account?: string;
         level?: 'read' | 'add' | 'full';
+        groups?: string[];
       }
     | null {
     // Dùng lại: chỉ gửi BĂM. Cấu hình, tên chìa và giá trị chìa đều nằm ở server
@@ -729,11 +1039,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       // `${OAUTH}` không có tên nào để thay. Trả `null` để nút Thử im, thay vì
       // gửi lên rồi nhận về một câu lỗi kỹ thuật.
       if (pick.needsLogin && !account) return null;
+      // Nấc toàn quyền mà chưa tick nhóm nào ⇒ chưa dựng được cấu hình. Trả
+      // `null` để nút Thử im, y hệt ca "chưa chọn tài khoản" ngay trên — thay vì
+      // gửi lên rồi nhận về một cánh tay rộng hơn thứ người dùng định cắm.
+      if (needGroups() && !groups.length) return null;
       return {
         catalogId: pick.id,
         folders: folderList(),
         ...(account ? { account } : {}),
         ...(pick.tiered ? { level: tier } : {}),
+        ...(groups.length ? { groups } : {}),
       };
     }
     const cfg = parsePaste();
@@ -810,9 +1125,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       setErr(
         pick?.needsLogin && !account
           ? 'Đăng nhập một tài khoản trước đã.'
-          : pick?.folders
-            ? 'Chọn ít nhất một thư mục.'
-            : 'Chưa đọc được cấu hình — kiểm lại khối JSON.',
+          : needGroups() && !groups.length
+            ? 'Tick ít nhất một nhóm việc trước đã.'
+            : pick?.folders
+              ? 'Chọn ít nhất một thư mục.'
+              : 'Chưa đọc được cấu hình — kiểm lại khối JSON.',
       );
       return;
     }
@@ -870,7 +1187,53 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     }
   }
 
-  const ok = probe?.status === 'connected';
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ✓ CHƯA ĐỦ ĐỂ ĐI TIẾP — vế thứ hai là **cấu hình còn hợp lệ không**.      │
+   * │                                                                          │
+   * │ Ca thật: thử ở nấc chỉ đọc (✓), rồi đổi sang **toàn quyền**. Bộ chọn      │
+   * │ nhóm việc hiện ra với 0 ô tick, nhưng dấu ✓ cũ vẫn còn ⇒ nút Tiếp vẫn     │
+   * │ bấm được ⇒ lưu một cánh tay toàn quyền rơi về nhóm MẶC ĐỊNH, tức rộng     │
+   * │ hơn thứ người dùng vừa được hỏi. Hỏng theo chiều **nới quyền**, và không  │
+   * │ có triệu chứng nào trên màn hình.                                        │
+   * │                                                                          │
+   * │ Đúng họ với `runRef`: *một dấu ✓ nói về một cấu hình khác với cấu hình    │
+   * │ đang trên màn hình*. Ở đó nó lệch vài giây, ở đây nó lệch qua một cú bấm. │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const ok =
+    probe?.status === 'connected' &&
+    !probe.warn &&
+    /**
+     * 🔴 THỬ TẦM VỚI HỎNG ⇒ KHÔNG CHO ĐI TIẾP. (user bắt 27/08)
+     *
+     *   *"Hiện tại báo warning 404 nè mà vẫn cho đi Tiếp là sao"*
+     *
+     * Đúng, và nó là một mâu thuẫn tự mình gây ra: màn hình vừa nói *"chưa với
+     * tới repo này"* rồi vừa mở cửa đi tiếp. Người dùng đọc được hai câu ngược
+     * nhau và sẽ tin **cái nút**, không tin dòng chữ — nút là thứ họ bấm được.
+     *
+     * Một cảnh báo mà không chặn gì thì không phải cảnh báo, nó là trang trí,
+     * và nó dạy người dùng bỏ qua mọi cảnh báo khác. Cùng lý lẽ đã dùng cho
+     * nhãn ÔI (*"nhãn kêu bừa thì người dùng học cách bỏ qua nó"*).
+     */
+    /**
+     * 🔴 CHƯA CÀI APP VÀO REPO NÀO ⇒ KHÔNG CHO ĐI TIẾP. (user chốt 27/08)
+     *
+     *   *"Nếu không có hoặc người dùng không cài đặt thì yêu cầu người dùng
+     *    install trước khi được phép đi tiếp"*  ·  *"báo warning 404 nè mà vẫn
+     *    cho đi Tiếp là sao"*
+     *
+     * Chặn **chỉ khi tra được và ra rỗng**. Hai ca còn lại đi qua:
+     *   · `failed`  — không tra được, chặn là chặn oan (mạng chập cũng ra thế)
+     *   · `anyway`  — người dùng khẳng định đã cài, và họ có thể đúng: phép tra
+     *                 mù với repo của TỔ CHỨC.
+     *
+     * Cặp "chặn + đường thoát tường minh" là chỗ đứng giữa hai cái hỏng: cảnh
+     * báo suông thì không ai đọc, còn chặn cứng thì giam người đã làm đúng.
+     */
+    !(scan && !('failed' in scan) && scan.installed.length === 0 && !anyway) &&
+    !(needGroups() && !groups.length);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -880,7 +1243,32 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {step === 1
               ? 'Cắm một kết nối'
               : step === 2
-                ? `Cài đặt · ${pick?.name ?? label ?? ''}`
+                ? /*
+                    Hình đi CÙNG tên ở bước 2 — đây là "xuyên suốt các nấc bên
+                    trong" (user 27/08). Nó cũng là một cái chốt kiểm bằng mắt:
+                    bấm nhầm thẻ ở bước 1 thì thấy ngay từ đây, chứ không phải
+                    đợi tới lúc đọc tên hãng trong một câu dài.
+                  */
+                  (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="text-muted">
+                        <ArmIcon
+                          mark={pick ? pick.brand.mark : markOf(reuse?.catalog, catalog)}
+                          kind={
+                            pick
+                              ? pick.folders
+                                ? 'files'
+                                : 'service'
+                              : reuse
+                                ? kindOf(reuse, catalog)
+                                : 'custom'
+                          }
+                          className="h-4 w-4"
+                        />
+                      </span>
+                      Cài đặt · {pick?.name ?? label ?? ''}
+                    </span>
+                  )
                 : 'Ai được dùng?'}
           </DialogTitle>
           <DialogDescription>
@@ -912,7 +1300,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {pane === 'type' && (
               <div className="grid grid-cols-3 gap-2">
                 <TypeCard
-                  icon="📁"
+                  icon={<ArmIcon kind="files" className="h-6 w-6" />}
                   name="Thư mục trên máy"
                   say="chọn thư mục · không cần chìa"
                   onClick={() => {
@@ -945,13 +1333,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   }}
                 />
                 <TypeCard
-                  icon="🔌"
+                  icon={<ArmIcon kind="service" className="h-6 w-6" />}
                   name="Dịch vụ có sẵn"
                   say={`${catalog.filter((a) => !a.folders).length} dịch vụ · điền chìa`}
                   onClick={() => setPane('catalog')}
                 />
                 <TypeCard
-                  icon="⚙️"
+                  icon={<ArmIcon kind="custom" className="h-6 w-6" />}
                   name="Tự cắm MCP"
                   say="dán cấu hình của bạn"
                   onClick={() => setPane('paste')}
@@ -980,7 +1368,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         }}
                         className="rounded-lg border border-line px-3 py-3 text-left transition hover:border-accent hover:bg-accent-soft"
                       >
-                        <div className="text-2xl">{a.icon}</div>
+                        <div className="text-muted">
+                          <ArmIcon mark={a.brand.mark} kind="service" className="h-6 w-6" />
+                        </div>
                         <div className="mt-1 text-[13px] font-medium">{a.name}</div>
                         {/* CÁI GIÁ, không phải tính năng. → §6f */}
                         <div className="mt-0.5 text-[11px] text-muted">{PRICE_SAY[a.price]}</div>
@@ -1250,12 +1640,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               type="radio"
                               name="oauth-account"
                               checked={account === a.name}
-                              onChange={() => {
-                                setAccount(a.name);
-                                // Đổi workspace là đổi CẤU HÌNH (ô trống mang tên
-                                // chìa khác) ⇒ kết quả Thử cũ nói về một thứ khác.
-                                setProbe(null);
-                              }}
+                              // Đổi workspace ⇒ dọn SẠCH phía sau (nấc, nhóm việc,
+                              // phép thử, bản cài). → `chooseAccount`
+                              onChange={() => chooseAccount(a.name)}
                             />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate">{a.label ?? a.name}</span>
@@ -1318,83 +1705,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   │ đúng practice — ✕ là thứ người ta tìm.                    │
                   └──────────────────────────────────────────────────────────┘
                 */}
-                {/*
-                  ┌──────────────────────────────────────────────────────────┐
-                  │ MÃ THIẾT BỊ — ba bước ĐÁNH SỐ, vì đây là luồng duy nhất  │
-                  │ bắt người dùng làm việc ở MỘT MÀN HÌNH KHÁC.             │
-                  │                                                          │
-                  │ Web flow chỉ cần "bấm nút, tab tự lo". Ở đây họ phải cầm │
-                  │ một mã đi sang chỗ khác gõ vào — và giữa hai màn hình đó │
-                  │ không có gì nối lại ngoài cái mã. Nên nó phải TO, chép   │
-                  │ được, và có đồng hồ: một mã im lặng chết là người dùng gõ│
-                  │ vào chỗ vô ích rồi đi tìm lỗi ở phía họ.                 │
-                  │                                                          │
-                  │ ⚠ KHÔNG tự `window.open`: ca device flow sinh ra để phục │
-                  │ vụ chính là *người dùng duyệt ở máy/điện thoại khác*.    │
-                  │ Mở giúp thì được, giả định thì không.                    │
-                  └──────────────────────────────────────────────────────────┘
-                */}
+                {/* Mã thiết bị: ba bước, đồng hồ, nút chép ⇒ tách file. */}
                 {device && (
-                  <div className="mt-3 rounded-md border border-accent/40 bg-accent-soft/30 px-3 py-3">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <div className="text-[13px] font-medium">Gõ mã này ở {pick.name}</div>
-                      {/* Đồng hồ: mã chết THẬT sau 15 phút, và họ phải thấy nó chết. */}
-                      <div className="shrink-0 font-mono text-[11px] text-muted">
-                        còn {Math.floor(Math.max(0, device.expiresAt - now) / 60000)}:
-                        {String(Math.floor((Math.max(0, device.expiresAt - now) % 60000) / 1000)).padStart(2, '0')}
-                      </div>
-                    </div>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <code className="flex-1 select-all rounded border border-line bg-bg px-3 py-2 text-center font-mono text-lg tracking-[0.2em]">
-                        {device.userCode}
-                      </code>
-                      <Button
-                        aria-label="Chép mã"
-                        title="Chép mã"
-                        onClick={() => {
-                          void navigator.clipboard?.writeText(device.userCode).then(
-                            () => setCopied(true),
-                            // Clipboard bị chặn (http, quyền) ⇒ KHÔNG báo đã chép.
-                            // Mã vẫn `select-all` nên họ bôi đen chép tay được —
-                            // một dấu ✓ sai còn tệ hơn không có dấu nào.
-                            () => setCopied(false),
-                          );
-                        }}
-                      >
-                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      </Button>
-                    </div>
-
-                    <ol className="mt-2.5 list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
-                      <li>
-                        Mở{' '}
-                        <a
-                          className="underline decoration-dotted hover:text-fg"
-                          href={device.verificationUriComplete ?? device.verificationUri}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                        >
-                          {device.verificationUri.replace(/^https?:\/\//, '')}
-                        </a>{' '}
-                        — ở máy này hay điện thoại đều được.
-                      </li>
-                      <li>Gõ mã ở trên rồi bấm cho phép.</li>
-                      <li>Quay lại đây — màn này tự biết, không cần F5.</li>
-                    </ol>
-
-                    {/*
-                      ⚠ CÂU NÀY PHẢI CÓ, và nó đến từ một ca thật ta tự dẫm khi
-                      đo: trình duyệt đang đăng nhập MỘT TÀI KHOẢN KHÁC thì chìa
-                      lấy về là của người đó, và triệu chứng duy nhất sẽ là
-                      *"cánh tay không thấy gì cả"* — một câu sai cửa dẫn người
-                      ta đi kiểm quyền, kiểm cài đặt, kiểm repo. → §5h·7k
-                    */}
-                    <p className="mt-2 text-xs leading-relaxed text-muted">
-                      ⚠ Trang đó sẽ dùng <b>tài khoản đang đăng nhập trên trình duyệt của bạn</b>. Nếu
-                      đó không phải tài khoản bạn muốn nối, mở nó bằng cửa sổ ẩn danh.
-                    </p>
-                  </div>
+                  <DeviceCode key={device.state} name={pick.name} device={device} now={now} />
                 )}
 
                 <div className="mt-2 flex gap-1.5">
@@ -1432,7 +1745,41 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     lại nút trên — mỗi lần bấm là một lượt mới.
                   </p>
                 )}
+
+                {/* Ô client_id của khách: riêng của luồng mã thiết bị ⇒ tách file. */}
+                {pick.deviceLogin && (
+                  <OwnClient
+                    name={pick.name}
+                    own={own}
+                    value={clientId}
+                    onChange={setClientId}
+                    onSave={() => void saveClientId()}
+                  />
+                )}
               </div>
+            )}
+
+            {/*
+              Khối phạm vi + tra bản cài: riêng của hãng ⇒ ở `components/arm/`.
+
+              ⚠ `!logging` — ĐANG đăng nhập thì ẩn cả hai. Chúng nói về **tài
+              khoản đang chọn**, mà lúc đó tài khoản đang chọn sắp không còn là
+              tài khoản người dùng quan tâm. Một khối đúng-về-quá-khứ đứng giữa
+              màn hình là thứ khó phát hiện hơn một khối vắng mặt. (user 28/08)
+            */}
+            {pick?.scope && accounts.length > 0 && !logging && (
+              <ScopeBox name={pick.name} scope={pick.scope} />
+            )}
+            {pick?.repoScan && accounts.length > 0 && account && !logging && (
+              <RepoScan
+                name={pick.name}
+                scope={pick.scope}
+                scan={scan}
+                scanning={scanning}
+                anyway={anyway}
+                onAnyway={setAnyway}
+                onRecheck={() => void runScan()}
+              />
             )}
 
             {/*
@@ -1483,6 +1830,22 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     ({probe.serverName ?? 'Server'} tự khai mức của từng việc.)
                   </span>
                 </p>
+                {/*
+                  ⚠ NÓI RA GIỚI HẠN CỦA CHÍNH CON SỐ. Phép thử chạy **không mang
+                  hàng rào nấc** (nếu mang thì bộ chọn này không bao giờ hiện —
+                  `catalog.ts §serverFenced`), nên con số token đo được là **trần**.
+                  Ở nấc dưới, server cắt bớt việc ghi ngay từ đầu ⇒ tốn ít hơn.
+
+                  Im lặng ở đây là để người dùng đọc một con số đúng cho một cấu
+                  hình họ **không chọn** — và nó lệch theo chiều doạ quá tay, tức
+                  chiều làm họ tắt thứ họ cần. → §9b
+                */}
+                {pick.serverFence && tier !== 'full' && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                    Số token ở trên đo khi <b>mở hết</b>. Ở nấc này {pick.name} cắt bớt việc ghi
+                    ngay từ server, nên thực tế <b>tốn ít hơn</b>.
+                  </p>
+                )}
               </div>
             )}
             {pick?.tiered && probe?.status === 'connected' && probe.tiers?.length === 1 && (
@@ -1491,6 +1854,108 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 {probe.tiers[0]!.count} việc.
               </p>
             )}
+
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ NHÓM VIỆC — chỉ hỏi ở nấc TOÀN QUYỀN. (user chốt 27/08)      │
+              │                                                              │
+              │ Ở nấc chỉ đọc màn này KHÔNG hiện gì, và cấu hình rơi về nhóm │
+              │ bật sẵn của danh mục. Đó là toàn bộ ý của *"chỉ đọc thì không│
+              │ cần pick gì"*: nấc rẻ và không có hậu quả thì đừng thu tiền  │
+              │ chú ý của người dùng.                                        │
+              │                                                              │
+              │ 🔴 CON SỐ ĐI KÈM LÀ SỐ ĐO, KHÔNG PHẢI SỐ SHIP SẴN.          │
+              │ Nó đến từ `probe.tools.length` / `probe.tokens`, tức từ một  │
+              │ lượt bắt tay thật với đúng bộ nhóm đang tick. Ship hằng số   │
+              │ đo ngày 26/08 vào danh mục thì nó **già đi im lặng** ngày    │
+              │ hãng thêm tool — đúng lớp "ảnh chụp gõ tay" mà `catalog.ts`  │
+              │ §readOnly vừa bỏ. Số ở đây có thể xuất hiện MUỘN (sau khi    │
+              │ bấm Thử), và muộn mà đúng thì tốt hơn ngay mà bịa.           │
+              │                                                              │
+              │ Đổi tick ⇒ VỨT kết quả thử cũ: nó nói về một bộ nhóm khác.   │
+              │ Cùng kỷ luật `runRef` và ô chọn thư mục. → §9b               │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {needGroups() && (
+              <div className="mt-3">
+                <Label>Cho làm những nhóm việc nào</Label>
+                <div className="mt-1 flex flex-col gap-1">
+                  {pick!.groups!.map((g) => (
+                    <label
+                      key={g.id}
+                      className="flex cursor-pointer items-start gap-2 rounded-md border border-line px-3 py-2 text-[13px] hover:border-accent"
+                    >
+                      <input
+                        className="mt-0.5"
+                        type="checkbox"
+                        checked={groups.includes(g.id)}
+                        onChange={(e) => {
+                          setGroups((cur) =>
+                            e.target.checked ? [...cur, g.id] : cur.filter((x) => x !== g.id),
+                          );
+                          setProbe(null);
+                        }}
+                      />
+                      {/*
+                        TÊN CỦA HÃNG + MỘT CÂU NÓI VIỆC LÀM ĐƯỢC. (user 28/08)
+
+                        Không thay tên bằng mô tả: tên là thứ người dùng tra được
+                        trong tài liệu của hãng, mô tả là thứ giúp họ quyết định.
+                        Gộp hai vai vào một chuỗi thì mất cả hai — đúng ca nhãn
+                        `context` bị dịch thành *"Biết tôi là ai, repo nào"*,
+                        vừa khó hiểu vừa hứa sai bán kính. → `catalog.ts §ArmGroup`
+                      */}
+                      <span className="min-w-0 flex-1">
+                        <span className="block">{g.label}</span>
+                        {g.help && (
+                          <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
+                            {g.help}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {groups.length === 0 ? (
+                  /*
+                    Một cánh tay 0 việc là một cánh tay hỏng im lặng — nói ra ở
+                    đây thay vì để nút Tiếp xám mà không giải thích. Nút xám
+                    không lý do là câu đố, không phải một lời từ chối. → B-3
+                  */
+                  <p className="mt-1.5 text-xs text-danger">
+                    Tick ít nhất một nhóm. Không nhóm nào thì kết nối này không làm được việc gì cả.
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                    {probe?.status === 'connected' ? (
+                      <>
+                        Đang cấp <b>{probe.tools.length} việc</b>
+                        {probe.tokens ? (
+                          <>
+                            {' · '}
+                            <b className="tabular-nums">~{probe.tokens.toLocaleString('vi')} token</b>{' '}
+                            mỗi lượt của nhân viên được nối
+                          </>
+                        ) : null}
+                        .
+                      </>
+                    ) : (
+                      <>Bấm Thử ngay để biết bộ này cấp bao nhiêu việc và tốn bao nhiêu token.</>
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/*
+              ⚠ ĐÃ BỎ ở đây (27/08 chiều): ô radio `Tất cả repo / Chỉ những repo
+              này` — hàng rào repo của agentco. Nó chạy được và có test, nhưng
+              user bác đúng: phạm vi repo là tài sản **cấp tài khoản của GitHub**,
+              và một hàng rào thứ hai chồng lên chỉ mua được thu-hẹp-theo-cánh-tay
+              với giá gõ tay + đổi-là-cắm-lại. → `SPEC-arms.md` §5h·7m
+
+              Thứ ở lại là ô THỬ ngay dưới. Trông giống, làm việc khác hẳn.
+            */}
 
             {/*
               Đường TỰ CẮM cũng phải nhập chìa được — xem `pastedKeys`. Nhãn ở
@@ -1927,6 +2392,28 @@ function BrowseDialog({
 function ProbeReport({ r }: { r: ProbeResult }) {
   if (r.status === 'connected') {
     const read = r.tools.filter((t) => t.level === 'read').length;
+    /*
+      ┌──────────────────────────────────────────────────────────────────────┐
+      │ NỐI ĐƯỢC MÀ 0 VIỆC — vẽ nó là CẢNH BÁO, không phải là ✓ có ghi chú.  │
+      │                                                                      │
+      │ Đây là ca `X-MCP-Toolsets` gõ sai tên: server bắt tay bình thường,   │
+      │ trả rỗng, không một câu lỗi nào (đo 26/08). Vẽ nó bằng dấu ✓ xanh là │
+      │ giao diện **nói dối thay cho server** — và cái hỏng này im lặng sẵn  │
+      │ rồi, không cần ta im lặng thêm một tầng nữa.                         │
+      │ → `probe.ts §ProbeResult.warn` · [[agentco-silent-allowlist]]        │
+      └──────────────────────────────────────────────────────────────────────┘
+    */
+    if (r.warn) {
+      return (
+        <div className="mt-3 rounded-md border border-warn/40 px-3 py-2 text-[13px]">
+          <div className="flex items-center gap-1.5 font-medium text-warn">
+            <TriangleAlert className="h-4 w-4" />
+            Nối được, nhưng 0 việc
+          </div>
+          <div className="mt-1 text-xs leading-relaxed text-muted">{r.warn}</div>
+        </div>
+      );
+    }
     return (
       <div className="mt-3 rounded-md border border-line bg-accent-soft/40 px-3 py-2 text-[13px]">
         <div className="flex items-center gap-1.5 font-medium">
@@ -1938,6 +2425,21 @@ function ProbeReport({ r }: { r: ProbeResult }) {
           {read} việc chỉ đọc · {r.tools.length - read} việc có ghi
           {r.tokens ? ` · ~${r.tokens.toLocaleString('vi-VN')} token mỗi lượt` : ''}
         </div>
+        {/*
+          ┌──────────────────────────────────────────────────────────────────┐
+          │ KẾT QUẢ THỬ TẦM VỚI — nằm TRONG khối ✓, không thay thế nó.       │
+          │                                                                  │
+          │ `ok: false` KHÔNG làm cả phép thử hỏng: đăng nhập vẫn chạy, cánh  │
+          │ tay vẫn cắm được, thứ chưa xong là **bản cài app** — một việc     │
+          │ người dùng làm ở màn hình của hãng. Nhuộm đỏ cả khối là gộp hai   │
+          │ câu hỏi vào một ô trả lời, đúng lớp lỗi sai cửa mà chính ô thử    │
+          │ này sinh ra để đóng.                                             │
+          │                                                                  │
+          │ Nhưng cũng KHÔNG được vẽ nó xám như một ghi chú: nó là thứ duy    │
+          │ nhất nói cho người dùng biết cánh tay sắp cắm có làm được gì hay  │
+          │ không, và dấu ✓ ngay trên nó thì rất thuyết phục.                 │
+          └──────────────────────────────────────────────────────────────────┘
+        */}
       </div>
     );
   }

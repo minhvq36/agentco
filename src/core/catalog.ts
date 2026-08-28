@@ -132,6 +132,32 @@ export function buildConfig(
   };
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 HÃNG NÀY CẮT VIỆC NGAY Ở SERVER THEO NẤC — và đó là một cái BẪY VÒNG. │
+ * │ (bug user bắt 27/08)                                                     │
+ * │                                                                          │
+ * │ Với mục vừa `tiered` vừa có `readOnlyHeaders`, phép thử ở nấc `read` gửi  │
+ * │ hàng rào lên ⇒ server **chỉ trả về việc đọc** ⇒ `offeredTiers` thấy ba    │
+ * │ nấc bằng nhau ⇒ luật *"chỉ hiện nấc nào thêm ≥1 việc"* thu về **một nấc** │
+ * │ ⇒ bộ chọn nấc KHÔNG HIỆN ⇒ người dùng **không có đường nào lên toàn       │
+ * │ quyền**. Nấc mặc định tự khoá chính nó.                                   │
+ * │                                                                          │
+ * │ Triệu chứng đúng như user tả: *"16 việc chỉ đọc · 0 việc có ghi"* rồi     │
+ * │ *"vẫn không cách nào ra cái này? Làm sao để test?"*. Không có câu lỗi nào │
+ * │ — mọi tầng đều làm đúng phần của mình.                                    │
+ * │                                                                          │
+ * │ ⇒ Luật: **KHÁM PHÁ thì không mang hàng rào; THI HÀNH thì mang.** Nút Thử  │
+ * │ hỏi *"cánh tay này làm được TỐI ĐA những gì"* — trộn phép cưỡng chế vào   │
+ * │ một câu hỏi khám phá là để câu trả lời tự cắt cụt chính nó.                │
+ * │ (Bản lưu vẫn dựng có hàng rào, và `scopedTools` lúc lưu vẫn hỏi lại server│
+ * │ theo đúng nấc — nên danh sách việc được cấp KHÔNG rộng ra tí nào.)        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function serverFenced(a: CatalogArm): boolean {
+  return a.spec.kind === 'http' && Boolean(a.spec.readOnlyHeaders);
+}
+
 /** Mục này cần đăng nhập chứ không cần gõ chìa? Suy từ `spec`, không khai lại. */
 export function needsOAuth(a: CatalogArm): boolean {
   return a.spec.kind === 'http' && JSON.stringify(a.spec.headers ?? {}).includes(OAUTH_SLOT);
@@ -193,10 +219,29 @@ export interface ArmIdentity {
   labelField: string;
 }
 
-/** Một nhóm việc người dùng tick. Nhóm là **của hãng**, không phải của ta. */
+/**
+ * Một nhóm việc người dùng tick. Nhóm là **của hãng**, không phải của ta.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `label` GIỮ TÊN CỦA HÃNG · `help` NÓI VIỆC LÀM ĐƯỢC. (user chốt 28/08)   │
+ * │                                                                          │
+ * │ > *"Cái check đầu tiên: 'Biết tôi là ai, repo nào' tôi nghe không hiểu.  │
+ * │ >  Thà để ngôn ngữ chuyên ngành như issue, action còn dễ hiểu hơn"*      │
+ * │                                                                          │
+ * │ Nhãn cũ dịch `context` thành một câu tiếng người — và dịch **sai bán      │
+ * │ kính**: nó hứa *"biết repo nào"* trong khi `context` chỉ có ba tool về    │
+ * │ tài khoản và tổ chức. Vừa khó hiểu vừa không đúng.                        │
+ * │                                                                          │
+ * │ ⇒ Tên là **địa chỉ** (người dùng tra được nó trong tài liệu của hãng),    │
+ * │ `help` là **mô tả**. Thay địa chỉ bằng mô tả thì mất cả hai: không tra    │
+ * │ được, mà cũng không hiểu thêm. [[agentco-count-mechanisms]]               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 export interface ArmGroup {
   id: string;
   label: string;
+  /** Một câu nói nhóm này CHO LÀM GÌ. Thiếu thì người non-code phải đoán. */
+  help?: string;
   /** Bật sẵn khi mở hộp thoại. Ít thôi — mỗi nhóm là token mỗi lượt. */
   on?: boolean;
 }
@@ -261,10 +306,96 @@ export interface CatalogArm {
   /** Cánh tay cần một danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
   folders?: { label: string; help: string };
   /**
-   * Hồ sơ thương hiệu. Ô trống ⇒ KHÔNG có logo. Cấu trúc, không kỷ luật.
-   * `checkedOn` rỗng nghĩa là **chưa ai đọc quy tắc của hãng đó**.
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HÀNG RÀO NGOÀI — do HÃNG giữ, ta chỉ MỞ CỬA cho người dùng đi tới.       │
+   * │ (user 27/08: *"Tức là ta không thể làm gì?"*)                            │
+   * │                                                                          │
+   * │ Với GitHub, "app được chạm repo nào" nằm trong **bản cài đặt**, và bản    │
+   * │ cài đặt chỉ sửa được trên **màn hình đồng ý của GitHub**. Không API nào   │
+   * │ cho phép phần mềm tự thêm repo cho chính nó — nếu có thì cả cơ chế đồng   │
+   * │ ý vô nghĩa. Nên thứ duy nhất ta làm được, và PHẢI làm, là một cái nút.    │
+   * │                                                                          │
+   * │ 🔴 Không có trường này thì chuỗi đó **không xuất hiện một lần nào trong   │
+   * │ sản phẩm** — nó chỉ nằm trong file walkthrough. Người dùng không đọc      │
+   * │ walkthrough sẽ cắm xong, thấy `✓ 16 việc`, rồi nhận 404 ở mọi lời gọi:    │
+   * │ một cánh tay "chạy" mà không làm được gì, và câu lỗi dẫn họ đi kiểm chìa. │
+   * │ Đúng lớp *sai cửa* mà §5h·7f sinh ra để đóng. → C-2 · F-3 bài 13          │
+   * │                                                                          │
+   * │ ⚠ Một app của ta phục vụ **vô hạn khách**: `client_id` là danh tính PHẦN  │
+   * │ MỀM, mỗi khách cài nó vào tài khoản HỌ và có bản cài riêng mang lựa chọn  │
+   * │ repo riêng. Khách **không tạo app**, không có bước 15 phút nào — đó là     │
+   * │ đường G2 của Google (§5h·4), và GitHub cố ý không phải đường đó.          │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
-  brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
+  scope?: {
+    /** Nút mở ra. Nói HÀNH ĐỘNG, không nói "cấu hình". */
+    say: string;
+    url: string;
+    /** Một câu nói phạm vi này ai giữ — thiếu nó thì cái nút là một câu đố. */
+    help: string;
+  };
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TRA BẢN CÀI APP — tự động, 0 ký tự người dùng gõ. → SPEC-arms §5h·7o     │
+   * │                                                                          │
+   * │ Vì sao cần: `probeArm` gọi `tools/list`, mà `tools/list` **thành công kể  │
+   * │ cả khi chưa cài app vào repo nào** ⇒ dấu ✓ chứng minh *đăng nhập chạy*,   │
+   * │ KHÔNG chứng minh *với tới được gì*. → [[agentco-measurement-vs-conclusion]]│
+   * │                                                                          │
+   * │ 🔴 VÀ ĐÂY LÀ CHỖ TIỀN ĐỀ HIỂN NHIÊN BỊ SỐ ĐO GIẾT (27/08):               │
+   * │ chìa `ghu_` **KHÔNG bị bản cài giới hạn với repo CÔNG KHAI** — đo được:   │
+   * │ `list_branches` chạy trên **cả 16** repo trong khi app chỉ cài **2**.     │
+   * │ ⇒ mọi phép thử kiểu "đọc thử một file" đều ✓ bất kể bản cài, tức nó trả   │
+   * │ lời một câu KHÁC với câu đang hỏi.                                        │
+   * │                                                                          │
+   * │ Thứ phân biệt được là `gateTool`: một tool **CHỈ ĐỌC nhưng đòi quyền      │
+   * │ push**, thứ chỉ tồn tại ở repo đã cài app. Đo 4/4 đúng.                   │
+   * │                                                                          │
+   * │ ⚠ `search` chỉ thấy repo do chính `login` SỞ HỮU — repo của tổ chức không │
+   * │ vào. Nên danh sách rỗng **không chứng minh** "chưa cài gì cả", và giao    │
+   * │ diện phải chừa đường thoát tường minh thay vì chặn cứng.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  repoScan?: {
+    /** Hỏi "tôi là ai" để dựng câu tìm kiếm. Thường trùng `identity.tool`. */
+    meTool: string;
+    loginField: string;
+    searchTool: string;
+    /** `${login}` được thay bằng tên tài khoản. */
+    searchQuery: string;
+    /**
+     * 🔴 Tool CHỈ ĐỌC mà đòi quyền GHI — đó là toàn bộ cơ chế.
+     * Chọn nhầm một tool đọc thường (`list_branches`) là dựng một phép tra
+     * **luôn trả lời CÓ**, tức tệ hơn không tra.
+     */
+    gateTool: string;
+  };
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HỒ SƠ THƯƠNG HIỆU — VÀ LOGO SỐNG NGAY TRONG ĐÓ. (dời về đây 28/08)       │
+   * │                                                                          │
+   * │ `checkedOn` rỗng nghĩa là **chưa ai đọc quy tắc của hãng đó**.            │
+   * │                                                                          │
+   * │ ⚠ `mark` (đường dẫn SVG đơn sắc) đặt ở ĐÂY chứ không ở một bảng ánh xạ   │
+   * │ trong thư mục web, và đó là cả điểm của việc dời:                        │
+   * │                                                                          │
+   * │  ① §11c là luật *"chưa đọc quy tắc ⇒ không logo"*. Luật đó chỉ thi hành  │
+   * │    được nếu **logo và lời khai thương hiệu nhìn thấy nhau**. Ngày 27/08  │
+   * │    ta ship logo GitHub/Notion trong `ArmIcon.tsx` trong khi `checkedOn`   │
+   * │    vẫn `null` ở đây — hai file, không ai đối chiếu, luật thành lời hứa.   │
+   * │  ② Giao diện hết cần biết tên hãng nào: nó vẽ `brand.mark`, chấm hết.    │
+   * │    **0 tên hãng trong mã web** — cùng kỷ luật đã dùng cho `repoScan`.    │
+   * │                                                                          │
+   * │ Rỗng ⇒ vẽ hình theo LOẠI (thư mục · phích cắm · bánh răng), không vẽ bừa.│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  brand: {
+    owner: string | null;
+    guidelineUrl: string | null;
+    checkedOn: string | null;
+    /** Đường dẫn SVG trong khung 24×24, tô bằng `currentColor`. Không màu, không nền. */
+    mark?: string;
+  };
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ CHỈ ĐỌC = MỘT CỜ, KHÔNG PHẢI MỘT DANH SÁCH TÊN TOOL. (user bắt 25/08)    │
@@ -318,180 +449,31 @@ export function transportOf(a: CatalogArm): 'stdio' | 'http' {
 }
 
 /**
- * ⚠ GHIM PHIÊN BẢN, KHÔNG `@latest`. → SPEC-arms.md §11d
- *
- * `npx -y <gói>` tải và chạy mã của người lạ trên máy khách, với quyền của khách,
- * kèm chìa của khách. `@latest` nghĩa là bản cập nhật của người lạ chạy trên máy
- * khách mà không ai duyệt. Xuất hiện trong DANH MỤC CỦA TA thì lời cảnh báo
- * "code người lạ" không còn đủ — **chọn hộ khách là bảo đảm hộ khách**.
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ DỮ LIỆU CỦA TỪNG HÃNG NẰM Ở `arms/`, MỘT FILE MỘT HÃNG. (user 28/08)     │
+ * │                                                                          │
+ * │ File này giữ **kiểu + hàm dựng + phép băm** — thứ dùng chung cho mọi mục.│
+ * │ Thêm một hãng = thêm một file trong `arms/` và một dòng ở `arms/index.ts`│
+ * │ — không đụng gì ở đây.                                                   │
+ * │                                                                          │
+ * │ ⚠ Chiều import chỉ đi MỘT hướng: `arms/*` `import type` từ file này (kiểu │
+ * │ bị xoá lúc dịch ⇒ không có vòng lặp lúc chạy), còn file này import NGƯỢC  │
+ * │ lại đúng một thứ: mảng đã ghép sẵn. Đảo chiều là tạo vòng lặp module —    │
+ * │ thứ chỉ nổ lúc chạy, ở một file không liên quan.                          │
+ * │                                                                          │
+ * │ `catalog.ts` vẫn là **cửa chung duy nhất**: mọi nơi khác trong dự án cứ   │
+ * │ `import { CATALOG, findArm } from './catalog.js'` như cũ.                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
-const FILESYSTEM_PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
+export { CATALOG } from './arms/index.js';
+export { FILES_ARM } from './arms/files.js';
+export { NOTION_ARM } from './arms/notion.js';
+export { GITHUB_ARM } from './arms/github.js';
 
-/**
- * ⚠ Notion KHÔNG còn ở đây, và sự vắng mặt đó là một quyết định. (25/08)
- *
- * Bản cũ ghim `@notionhq/notion-mcp-server@2.5.1` — gói **local, chính chủ**.
- * Nhưng chính chủ đã buông nó: 🌐 *"We may sunset this local MCP server
- * repository"* + *"issues and pull requests here are not actively monitored"*.
- *
- * ⇒ Bài học đáng giữ cho mọi mục về sau: **ghim phiên bản ≠ được bảo trì.**
- * §11d ghim để mã người lạ không tự đổi dưới chân khách; nó không cứu được ta
- * khỏi việc đóng băng một thứ không còn ai vá lỗi. Notion nay đi đường HTTP
- * hosted (xem `build` bên dưới) — 0 gói, 0 rủi ro chuỗi cung ứng.
- */
-
-export const CATALOG: CatalogArm[] = [
-  {
-    id: 'files',
-    name: 'File trên máy',
-    icon: '📁',
-    blurb: 'Đọc file và thư mục trên chính máy này — chỉ những thư mục bạn cho phép.',
-    price: 'none',
-    spec: { kind: 'stdio', command: 'npx', args: ['-y', FILESYSTEM_PKG], appendFolders: true },
-    secrets: [],
-    folders: {
-      label: 'Thư mục được phép',
-      help: 'Nhân viên chỉ với tới được những thư mục trong danh sách này. Chọn đúng thứ cần, đừng chọn cả ổ đĩa.',
-    },
-    // Server tham chiếu của chính MCP ⇒ KHÔNG có thương hiệu bên thứ ba nào.
-    // Đây là mục duy nhất trong danh mục v1 có rủi ro nhãn hiệu bằng 0.
-    brand: { owner: null, guidelineUrl: null, checkedOn: null },
-  },
-  {
-    id: 'notion',
-    name: 'Notion',
-    icon: '📝',
-    /**
-     * ⚠ CÂU NÀY PHẢI NÓI RA BÁN KÍNH, và nó nói ngược với trực giác. → §5h·3
-     *
-     * OAuth của Notion **thừa kế TOÀN BỘ quyền của người đăng nhập**: 🌐
-     * *"MCP tools act with your full Notion permissions"*, và metadata khai
-     * `scopes_supported: ["default"]` — **một** scope, không chia nhỏ được.
-     *
-     * Tức nó **RỘNG HƠN** token tĩnh, thứ mặc định không thấy gì cho tới khi
-     * người dùng tự thêm connection vào từng trang. Giấu chuyện này đi là
-     * **hứa quá tay**, và §11a-bis đã chốt: *doạ quá tay làm người dùng tắt
-     * thứ họ cần; hứa quá tay làm họ bật để mua một thứ không tồn tại — cái
-     * sau tệ hơn*. "chỉ đọc" ở đây là do TA cắt (`tools` bên dưới), không phải
-     * do Notion cấp hẹp.
-     */
-    blurb: 'Tìm, đọc và (nếu bạn cho phép) ghi vào các trang Notion mà tài khoản của bạn xem được.',
-    price: 'login',
-    /**
-     * MCP **hosted chính chủ**, Streamable HTTP. Ba thứ nó bỏ so với bản cũ
-     * (`npx @notionhq/notion-mcp-server`): không tải mã người lạ về máy khách
-     * (rủi ro chuỗi cung ứng §11d = **0**), không `npx` trên đường nóng, và
-     * không phụ thuộc một gói mà chính chủ ghi *"may sunset this repository"*.
-     *
-     * ⚠ `${OAUTH}` là **chỗ trống có tên quy ước**, không phải tên chìa thật.
-     * `buildConfig` thay nó bằng tên tài khoản người dùng vừa đăng nhập
-     * (`NOTION_OAUTH_<8 hex workspace_id>`) — nhờ đó **hai workspace Notion ra
-     * hai băm khác nhau** dù cùng URL. → §OAUTH_SLOT · `oauth.ts §accountName`
-     *
-     * Sau khi thay, `company.yaml` chứa một ô trống bình thường: người dùng ĐỌC
-     * ĐƯỢC chìa đi vào đâu mà không đọc được chìa. → `secrets.ts §injectSecrets`
-     */
-    spec: {
-      kind: 'http',
-      url: 'https://mcp.notion.com/mcp',
-      headers: { Authorization: 'Bearer ${OAUTH}' },
-    },
-    /**
-     * Ba nấc, giải từ `annotations` lúc cắm. Đo 25/08: 28 việc — **14 đọc · 11
-     * thêm · 3 sửa/xoá**, và 28/28 đều khai annotations.
-     *
-     * ⚠ Thay cho `readOnly: true` của bản 25/08. Bản đó đúng nhưng **cứng**:
-     * người dùng muốn Notion ghi được thì không có đường nào ngoài sửa yaml —
-     * một **chuông báo §6a**. Nấc là thứ họ chọn, và nó vào băm nên "đổi nấc"
-     * là một cánh tay khác chứ không phải một lần sửa tại chỗ. → §6j
-     */
-    tiered: true,
-    /**
-     * RỖNG — và đó là toàn bộ điểm của `price: 'login'`.
-     *
-     * Chìa của mục này **sinh ra từ luồng đăng nhập**, không do người dùng gõ.
-     * Tên nó cũng không biết trước được (nó mang `workspace_id`), nên khai ở đây
-     * là khai một chuỗi sẽ sai. Bản 25/08 có một ô dán tay kèm hướng dẫn *"chạy
-     * spike rồi copy access_token"* — nó tồn tại để bài 12 chạy được NGAY, và
-     * đúng như đã ghi lúc đó: **không phải để ở lại**.
-     */
-    secrets: [],
-    // ❓ `checkedOn: null` = CHƯA ai đọc quy tắc thương hiệu của Notion. Ô trống
-    // nghĩa là KHÔNG dùng logo — cấu trúc, không phải kỷ luật. → SPEC-arms §11c
-    brand: { owner: 'Notion Labs, Inc.', guidelineUrl: null, checkedOn: null },
-  },
-  {
-    id: 'github',
-    name: 'GitHub',
-    icon: '🐙',
-    /**
-     * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho đẹp:
-     *
-     * ① **Nó không phải `git`.** Không clone, không pull, không push, không bản
-     *    sao trên máy — sửa file là **commit thẳng lên repo cloud**. Đó là một
-     *    mô hình làm việc khác, không phải một phiên bản gọn của `git`.
-     * ② **Commit mang tên người đăng nhập** (đo 26/08: tác giả là chính tài
-     *    khoản cấp quyền, không phải một bot). Lịch sử repo của họ sẽ có commit
-     *    mang tên họ mà **không phải họ gõ**.
-     * ③ Nó với tới **repo private**, nhưng chỉ những repo họ **cài app vào**.
-     */
-    blurb:
-      'Đọc và sửa file trong repo GitHub — kể cả repo riêng tư. Sửa là commit thẳng lên GitHub, ' +
-      'không tải repo về máy.',
-    price: 'login',
-    /**
-     * 🔴 `auth` tồn tại vì GitHub **không mở DCR** (đo 25/08, xác nhận lại
-     * 26/08). Nhưng "không DCR" **không** kéo theo "khách phải tự đăng ký app" —
-     * đó là bước suy sai đã ghi ở §4e. Device flow không cần bí mật nào, nên
-     * agentco đứng tên một app và ship `client_id` như dữ liệu.
-     *
-     * GitHub App `agent-co.app` · org `@agent-co-app` · tạo 26/08/2026.
-     * 📌 **KHÔNG có client secret. KHÔNG có private key.** Luật + lý do đầy đủ:
-     * SPEC-arms §5h·7h. Không có key ⇒ **không tồn tại** đường mint installation
-     * token ⇒ chủ app không có cửa nào với tới repo của khách. Cấm bằng cấu
-     * trúc, không bằng kỷ luật — cùng khuôn bất biến §5b.
-     */
-    auth: { kind: 'device', clientId: 'Iv23li95pd8QpYfTGMho' },
-    /** GitHub không trả danh tính trong phản hồi token ⇒ phải hỏi. → §5h·7k */
-    identity: {
-      url: 'https://api.githubcopilot.com/mcp/x/context',
-      tool: 'get_me',
-      // `id` chứ không phải `login`: người dùng đổi tên tài khoản được, và một
-      // hạt giống băm đổi được nghĩa là cánh tay tự nhân đôi sau khi đổi tên.
-      idField: 'id',
-      labelField: 'login',
-    },
-    spec: {
-      kind: 'http',
-      url: 'https://api.githubcopilot.com/mcp/',
-      headers: { Authorization: 'Bearer ${OAUTH}' },
-      toolsetHeader: 'X-MCP-Toolsets',
-      readOnlyHeaders: { 'X-MCP-Readonly': 'true' },
-    },
-    /**
-     * Năm nhóm, hai bật sẵn. Số token đo 26/08 (ước lượng byte÷4, dùng để SO
-     * các lát cắt — số lên giao diện phải là `getContextUsage()`):
-     *   context 3 việc ≈1 500 · repos 19 ≈10 000 · pull_requests 10 ≈8 300
-     *   issues 9 ≈8 000 · actions ?  ·  CẢ SERVER 44 ≈30 000
-     * ⇒ mặc định `context + repos` ≈11 600, và ở nấc chỉ đọc còn ≈8 500.
-     */
-    groups: [
-      { id: 'context', label: 'Biết tôi là ai, repo nào', on: true },
-      { id: 'repos', label: 'Đọc & sửa file trong repo', on: true },
-      { id: 'pull_requests', label: 'Pull request (tạo, xem, gộp)' },
-      { id: 'issues', label: 'Issue' },
-      { id: 'actions', label: 'Actions / CI' },
-    ],
-    tiered: true,
-    /** Rỗng — chìa sinh từ luồng đăng nhập, y hệt Notion. → `price: 'login'` */
-    secrets: [],
-    // ❓ CHƯA đọc quy tắc thương hiệu của GitHub ⇒ KHÔNG logo. → §11c
-    brand: { owner: 'GitHub, Inc.', guidelineUrl: null, checkedOn: null },
-  },
-];
+import { CATALOG as ALL } from './arms/index.js';
 
 export function findArm(id: string): CatalogArm | undefined {
-  return CATALOG.find((a) => a.id === id);
+  return ALL.find((a) => a.id === id);
 }
 
 /**
@@ -527,6 +509,28 @@ export function findArm(id: string): CatalogArm | undefined {
  * khoá vẫn phải ra cùng một băm, nếu không thì "trùng lặp không thể xảy ra"
  * lại thành "trùng lặp xảy ra khi gõ khác thứ tự".
  */
+/**
+ * `chủ/tên` ở dạng CHUẨN — chữ thường, không đuôi, không tiền tố.
+ *
+ * Người dùng gõ ô này bằng tay, và họ sẽ dán đủ kiểu: `github.com/a/b`,
+ * `https://github.com/a/b.git`, `A/B`, `/a/b/`. Cả bốn là **cùng một repo**, và
+ * GitHub không phân biệt hoa thường ở cả `owner` lẫn `repo`.
+ *
+ * ⚠ Hàm này đứng ở HAI chỗ trên cùng một trục và **phải là một hàm**: nó chuẩn
+ * hoá thứ đi vào BĂM, và chuẩn hoá thứ hàng rào đem ra SO. Hai bản của cùng một
+ * phép chuẩn hoá lệch nhau nghĩa là một cánh tay tự chặn chính repo nó được
+ * giao — mà triệu chứng chỉ là "404 sao lại 404". → [[agentco-catch-hides-premises]]
+ */
+export function normRepo(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^(www\.)?github\.com\//, '')
+    .replace(/\.git$/, '')
+    .replace(/^\/+|\/+$/g, '');
+}
+
 export function armHash(
   config: unknown,
   secretNames: readonly string[] = [],
@@ -568,6 +572,17 @@ export function armHash(
     }
     return v;
   };
+  /**
+   * ⚠ ĐÃ BỎ tham số thứ tư `repos` (27/08 chiều) — cùng lúc bỏ hàng rào repo.
+   *
+   * 📌 Và đây là câu đáng nhớ nhất về băm của mục GitHub, user tự rút ra:
+   * *"hash github dường như chỉ phụ thuộc account github đó là account nào, còn
+   * chuyện người ta cho phép những gì mình đâu can thiệp được"* — **đúng, và đó
+   * là kết quả đúng.** Băm là vân tay của thứ **agentco cấu hình**, không phải
+   * của thứ cánh tay **với tới được**. Tầm với là tài sản của hãng, thay đổi
+   * ngoài tầm ta, và nhét nó vào băm là hứa một điều ta không giữ được.
+   * ⇒ Một cánh tay GitHub = (tài khoản + nhóm việc + nấc). → §5h·7l
+   */
   const seed = JSON.stringify({ c: stable(config), s: [...secretNames].sort(), l: level });
   return `a${createHash('sha256').update(seed).digest('hex').slice(0, 10)}`;
 }
@@ -736,6 +751,7 @@ export function catalogForUi(): (CatalogArm & {
   transport: 'stdio' | 'http';
   needsLogin: boolean;
   deviceLogin: boolean;
+  serverFence: boolean;
 })[] {
   // `needsLogin` suy từ `spec` chứ không khai tay: một mục dùng ô `${OAUTH}` thì
   // nó CẦN đăng nhập, và không có cách nào để hai trường đó nói khác nhau.
@@ -744,11 +760,16 @@ export function catalogForUi(): (CatalogArm & {
   // thứ người dùng nhìn thấy: web flow mở một tab rồi chờ tab đó xong; mã thiết
   // bị thì **hiện một mã ngay tại đây** và tự hỏi thăm. Bày nhầm luồng là bảo
   // người ta chờ một tab sẽ không bao giờ báo về.
-  return CATALOG.map((a) => ({
+  // `serverFence` để giao diện nói được một câu THẬT về con số token: phép thử
+  // chạy KHÔNG hàng rào (xem `serverFenced`), nên với mục này số đo là **trần**,
+  // và nấc dưới sẽ tốn ít hơn thế. Im lặng ở đây là để người dùng đọc một con số
+  // đúng cho một cấu hình họ không chọn.
+  return ALL.map((a) => ({
     ...a,
     transport: transportOf(a),
     needsLogin: needsOAuth(a),
     deviceLogin: a.auth?.kind === 'device',
+    serverFence: serverFenced(a),
   }));
 }
 

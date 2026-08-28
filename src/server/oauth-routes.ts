@@ -30,7 +30,7 @@ import { companyPaths } from '../core/paths.js';
 import { RunError } from '../core/types.js';
 import { findArm } from '../core/catalog.js';
 import { callTool } from '../core/mcp-http.js';
-import { readOAuth, saveOAuth } from '../core/secrets.js';
+import { readClients, readOAuth, saveClient, saveOAuth } from '../core/secrets.js';
 import {
   DeadGrantError,
   accountName,
@@ -40,6 +40,7 @@ import {
   discover,
   exchangeCode,
   needsRefresh,
+  hasOwnSeed,
   pkce,
   randomState,
   refreshAccount,
@@ -78,13 +79,26 @@ function sweep(): void {
 }
 
 /**
- * `client_id` đã xin cho MỘT (issuer, redirect_uri). Nhớ lại để khỏi DCR mỗi lần.
- *
- * ⚠ Khoá phải gồm `redirect_uri`: `client_id` được cấp **cho đúng URI đã đăng
- * ký**. Đổi cổng daemon mà dùng lại client_id cũ ⇒ `invalid_redirect_uri`, và
- * câu lỗi đó không hề nói ra nguyên nhân thật.
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `client_id` NẰM TRÊN ĐĨA, KHÔNG NẰM TRONG RAM. (truy ra 27/08)        │
+ * │                                                                          │
+ * │ Bản cũ ở đây là `new Map()`. Tắt daemon là mất ⇒ lần bật sau **đăng ký    │
+ * │ một ứng dụng MỚI** ở phía dịch vụ. Người dùng bật/tắt vài chục lần là vài │
+ * │ chục ứng dụng, mỗi cái cầm chìa của một nhóm tài khoản.                   │
+ * │                                                                          │
+ * │ Số đo dẫn tới đây: hai tài khoản Notion chết dùng **chung một `client_id` │
+ * │ cũ**, tài khoản còn sống dùng `client_id` mới nhất — và cả hai client vẫn │
+ * │ tồn tại (`invalid_grant`, không phải `invalid_client`), nên thứ mất là    │
+ * │ **quyền cấp cho ứng dụng cũ**, không phải bản thân chìa.                  │
+ * │                                                                          │
+ * │ ⇒ Luật: **ứng dụng đứng yên, chỉ chìa xoay.** Đó chính là cách một phiên  │
+ * │ web sống được cả năm — thứ người dùng đòi bằng đúng câu *"account         │
+ * │ Facebook, Shopee log cả năm có bị ai đá ra đâu"*.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
-const clients = new Map<string, string>();
+function clientFor(company: Company, key: string): string | undefined {
+  return readClients(companyPaths(company.dir))[key];
+}
 
 export interface StartResult {
   authUrl: string;
@@ -190,6 +204,7 @@ export function loginKind(catalogId: string): 'device' | 'web' | null {
 
 /** Mở một lượt đăng nhập. Trả URL cho **web UI** mở, không tự mở. */
 export async function oauthStart(
+  company: Company,
   catalogId: string,
   origin: string,
 ): Promise<StartResult> {
@@ -205,10 +220,12 @@ export async function oauthStart(
 
   const redirectUri = `${origin}/api/oauth/callback`;
   const ck = `${meta.issuer}|${redirectUri}`;
-  let clientId = clients.get(ck);
+  let clientId = clientFor(company, ck);
   if (!clientId) {
     clientId = await register(meta, redirectUri);
-    clients.set(ck, clientId);
+    // Ghi NGAY, trước khi mở tab: người dùng đóng daemon giữa chừng thì lần sau
+    // vẫn dùng lại đúng ứng dụng này thay vì đăng ký thêm một cái nữa.
+    saveClient(companyPaths(company.dir), ck, clientId);
   }
 
   const { verifier, challenge } = pkce();
@@ -273,6 +290,10 @@ export async function oauthCallback(
       verifier: p.verifier,
       mcpUrl: p.mcpUrl,
     });
+    // Web flow (Notion): danh tính đến từ `workspace_id` trong phản hồi token,
+    // không phải từ một lượt hỏi. Chốt vẫn phải có — vắng mặt không phải tín
+    // hiệu an toàn, và ngày hãng đổi hình dạng phản hồi thì đây là chỗ kêu.
+    mustHaveIdentity(acc, undefined, p.prefix);
     const name = accountName(p.prefix, acc);
     saveOAuth(companyPaths(company.dir), name, acc);
     page('Đã kết nối', `${escapeHtml(acc.label ?? 'Tài khoản của bạn')} giờ dùng được trong agentco.`, true);
@@ -314,7 +335,69 @@ export interface DeviceStartResult {
 }
 
 /** Mở một lượt đăng nhập bằng mã thiết bị. **Không có `redirect_uri`.** */
-export async function oauthDeviceStart(catalogId: string): Promise<DeviceStartResult> {
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CLIENT_ID CỦA CÔNG TY NÀY — của khách nếu họ dán, của ta nếu không.      │
+ * │ → SPEC-arms §5h·7h · `catalog.ts §ArmAuth.clientId`                      │
+ * │                                                                          │
+ * │ ⚠ §5h·7h từng ghi ô này *"là công dân hạng nhất"* trong khi **0 dòng mã** │
+ * │ tồn tại (bắt 27/08). Đây là phần thi hành.                                │
+ * │                                                                          │
+ * │ Vì sao nó không phải tính năng phụ — hai rủi ro của việc agentco đứng tên:│
+ * │   ① app của ta bị hãng treo ⇒ **MỌI khách gãy cùng lúc**                  │
+ * │   ② khách doanh nghiệp không muốn đi qua danh tính của ta                 │
+ * │ Một ô nhập vá cả hai, và nó là câu trả lời tử tế nhất cho *"sao tôi phải  │
+ * │ tin agentco"*: **"anh không phải tin."**                                  │
+ * │                                                                          │
+ * │ Cất ở `$clients` — **cùng kho với client DCR**, và đó là đúng chỗ: cả hai │
+ * │ đều trả lời *"công ty này đi bằng danh tính ứng dụng nào"*. Khác nguồn    │
+ * │ (một cái hãng mint, một cái khách dán), cùng nghĩa. Khoá `device|<mục>`   │
+ * │ vì đường device không có `redirect_uri` để làm khoá như DCR.              │
+ * │                                                                          │
+ * │ ⚠ VÀ ĐÂY LÀ LÚC `OAuthAccount.client_id` KIẾM ĐƯỢC CHỖ ĐỨNG. Trước hôm   │
+ * │ nay nó là bản sao thừa của danh mục (user chỉ ra đúng). Từ giờ có thể tồn │
+ * │ tại hai client cùng lúc — chìa cũ do ta cấp, chìa mới do họ cấp — và làm  │
+ * │ mới **phải dùng đúng client đã cấp**. Đọc từ danh mục là hỏng ở giờ thứ 4.│
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const DEVICE_CLIENT_KEY = (catalogId: string) => `device|${catalogId}`;
+
+export function deviceClientId(company: Company, catalogId: string): { id: string; own: boolean } {
+  const arm = findArm(catalogId);
+  const mine = arm?.auth?.clientId ?? '';
+  const theirs = clientFor(company, DEVICE_CLIENT_KEY(catalogId));
+  return theirs ? { id: theirs, own: true } : { id: mine, own: false };
+}
+
+/** Dán rỗng = **quay về client của agentco**, không phải lưu một chuỗi rỗng. */
+export function setDeviceClientId(company: Company, catalogId: string, clientId: string): void {
+  const v = clientId.trim();
+  const paths = companyPaths(company.dir);
+  if (!v) {
+    saveClient(paths, DEVICE_CLIENT_KEY(catalogId), null);
+    return;
+  }
+  /**
+   * ⚠ CHẶN CHUỖI TRÔNG NHƯ BÍ MẬT. `client_id` là dữ liệu công khai; một chuỗi
+   * dài loằng ngoằng dán vào đây gần như chắc chắn là `client_secret` hoặc một
+   * private key — và ta vừa ghi nó vào một file người dùng commit lên git được.
+   * Cùng luật `SPEC-connectors.md §3c`: *UI phải từ chối lưu nếu phát hiện chuỗi
+   * trông giống token.*
+   */
+  if (v.length > 80 || /\s/.test(v) || /BEGIN|secret|ghp_|gho_|ghs_/i.test(v)) {
+    throw new RunError(
+      'Chuỗi này trông không giống một Client ID. Client ID là dữ liệu công khai và ngắn ' +
+        '(GitHub App: dạng "Iv23li…"). Đừng dán client secret hay private key vào đây.',
+      'other',
+    );
+  }
+  saveClient(paths, DEVICE_CLIENT_KEY(catalogId), v);
+}
+
+export async function oauthDeviceStart(
+  company: Company,
+  catalogId: string,
+): Promise<DeviceStartResult> {
   for (const [k, v] of devices) if (v.at < Date.now() - PENDING_TTL_MS) devices.delete(k);
 
   const arm = findArm(catalogId);
@@ -335,11 +418,13 @@ export async function oauthDeviceStart(catalogId: string): Promise<DeviceStartRe
     );
   }
 
-  const start = await deviceStart(meta, arm.auth.clientId, arm.auth.scope);
+  // Client của CÔNG TY NÀY — của khách nếu họ đã dán, của ta nếu không.
+  const { id: clientId } = deviceClientId(company, catalogId);
+  const start = await deviceStart(meta, clientId, arm.auth.scope);
   const state = randomState();
   devices.set(state, {
     meta,
-    clientId: arm.auth.clientId,
+    clientId,
     start,
     mcpUrl,
     prefix: catalogId,
@@ -370,17 +455,69 @@ export async function oauthDeviceStart(catalogId: string): Promise<DeviceStartRe
  * │ khác.                                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 KHÔNG CÓ DANH TÍNH RIÊNG ⇒ KHÔNG LƯU. Thà bắt đăng nhập lại.          │
+ * │ → `oauth.ts §hasOwnSeed` (lý do đầy đủ + hai hậu quả đã cân)              │
+ * │                                                                          │
+ * │ Tóm tắt: thiếu hạt giống riêng thì `accountName` rơi về `issuer|mcp_url`, │
+ * │ **giống hệt nhau cho mọi tài khoản** ⇒ người thứ hai ghi đè người thứ     │
+ * │ nhất, im lặng. Một cái tên xấu chỉ phiền; cái này thì mất dữ liệu.        │
+ * │                                                                          │
+ * │ Vì sao vứt một chìa vừa đúc là ĐÚNG: nó chưa được lưu ở đâu cả, nên không │
+ * │ có gì hỏng dở. Người dùng bấm lại một lượt — và lượt sau gần như chắc     │
+ * │ chạy vì phiên MCP đã ấm (đúng thứ user quan sát 28/08: *"gỡ đi và làm     │
+ * │ lại… nó ra chính xác tên"*).                                              │
+ * │                                                                          │
+ * │ ⚠ MỘT hàm, gọi ở CẢ HAI đường lưu (web flow + mã thiết bị). Chốt ở một    │
+ * │ cửa rồi để cửa kia mở là kiểu vá đã đốt dự án này nhiều lần.              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function mustHaveIdentity(acc: OAuthAccount, seed: string | undefined, who: string): void {
+  if (hasOwnSeed(acc, seed)) return;
+  throw new RunError(
+    `Đã cấp quyền xong, nhưng chưa lấy được danh tính riêng của tài khoản ${who} nên chưa lưu ` +
+      `được — lưu bây giờ thì tài khoản này sẽ đè lên một tài khoản ${who} khác. ` +
+      `Bấm Đăng nhập một lần nữa; lượt sau thường chạy ngay.`,
+    'other',
+  );
+}
+
 async function probeIdentity(
   arm: NonNullable<ReturnType<typeof findArm>>,
   token: string,
 ): Promise<{ seed?: string; label?: string }> {
   const id = arm.identity;
   if (!id) return {};
-  const text = await callTool(id.url, { Authorization: `Bearer ${token}` }, id.tool);
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THỬ HAI LƯỢT, LƯỢT SAU RỘNG HẠN HƠN. (bug user bắt 28/08)             │
+   * │                                                                          │
+   * │ > *"Lần đầu tiên: tôi chọn 1 account mới, nó ra tên tài khoản là          │
+   * │ >  OAUTH_… viết hoa… Tôi gỡ đi và làm lại, vẫn account đó, nó ra chính    │
+   * │ >  xác tên"*                                                             │
+   * │                                                                          │
+   * │ Lượt hỏi này là lời gọi ĐẦU TIÊN tới MCP của hãng bằng chìa vừa đúc, nên  │
+   * │ nó phải trả cả cái bắt tay phiên. Trần 10 giây của `callTool` là trần cho │
+   * │ một lời gọi **ấm**; lượt lạnh vượt qua được, và lượt thứ hai (đã ấm) thì  │
+   * │ nhanh — đúng thứ user quan sát.                                           │
+   * │                                                                          │
+   * │ ⚠⚠ VÀ HỎNG Ở ĐÂY KHÔNG CHỈ LÀ CÁI TÊN XẤU. Với GitHub, không có `seed`   │
+   * │ thì `accountName` rơi về `issuer|mcp_url` — một chuỗi **giống hệt nhau    │
+   * │ cho mọi tài khoản** ⇒ cùng tên chìa ⇒ **cùng băm** ⇒ hai tài khoản gộp    │
+   * │ thành MỘT cánh tay. Đúng ca §6i mà chú thích ở `accountName` đã cảnh báo, │
+   * │ và nó **không có triệu chứng** cho tới khi người thứ hai đăng nhập.       │
+   * │                                                                          │
+   * │ Nên hai lượt, và người gọi PHẢI xử lý ca vẫn hỏng — xem `oauthDevicePoll`.│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const auth = { Authorization: `Bearer ${token}` };
+  const text =
+    (await callTool(id.url, auth, id.tool)) ?? (await callTool(id.url, auth, id.tool, {}, 25_000));
   if (!text) {
     process.emitWarning(
-      `Không hỏi được danh tính tài khoản (${arm.name}) — nhãn sẽ để trống, và hai tài khoản ` +
-        `của cùng dịch vụ này có thể đụng nhau.`,
+      `Không hỏi được danh tính tài khoản (${arm.name}) sau 2 lượt — KHÔNG lưu chìa, vì thiếu ` +
+        `danh tính thì hai tài khoản của cùng dịch vụ này sẽ gộp làm một.`,
     );
     return {};
   }
@@ -398,6 +535,105 @@ async function probeIdentity(
     return {};
   }
 }
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TRA BẢN CÀI APP — repo nào hãng thật sự cho cánh tay này đụng vào.       │
+ * │ → `catalog.ts §repoScan` · SPEC-arms §5h·7o                              │
+ * │                                                                          │
+ * │ 🔴 CẢ HÀM NÀY ĐỨNG TRÊN MỘT SỐ ĐO, VÀ SỐ ĐO ĐÓ PHẢN TRỰC GIÁC:           │
+ * │ chìa `ghu_` **đọc được repo CÔNG KHAI bất kể app có được cài hay không**  │
+ * │ (`list_branches` ✅ trên cả 16 repo trong khi app chỉ cài 2). Nên mọi     │
+ * │ phép thử kiểu *"thử đọc một file xem có được không"* đều trả lời CÓ, và  │
+ * │ một phép tra luôn trả lời CÓ thì tệ hơn không tra.                        │
+ * │                                                                          │
+ * │ Thứ phân biệt được là `gateTool` — tool **chỉ đọc nhưng đòi quyền push**. │
+ * │ Đo 4/4 đúng với bản cài thật. Đổi tool khác là giết cơ chế, xem chú thích │
+ * │ ở `catalog.ts §repoScan.gateTool`.                                        │
+ * │                                                                          │
+ * │ ⚠ HỎNG THÌ TRẢ `null`, KHÔNG NÉM. Đây là một lời gọi PHỤ: mạng chập hay  │
+ * │ hãng đổi tên tool không phải lý do chặn người dùng cắm cánh tay. Giao     │
+ * │ diện phân biệt được "tra ra rỗng" (chặn) với "không tra được" (cho qua,   │
+ * │ kèm câu nói thật) — hai chuyện khác nhau, hai xử lý khác nhau.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface RepoScan {
+  login: string;
+  /** Repo app THẬT SỰ được cài vào — thứ nhân viên đụng được đầy đủ. */
+  installed: string[];
+  /** Tổng số repo tìm thấy của tài khoản. `installed` là tập con. */
+  seen: number;
+}
+
+export async function scanRepos(
+  company: Company,
+  catalogId: string,
+  account: string,
+): Promise<RepoScan | null> {
+  const arm = findArm(catalogId);
+  const s = arm?.repoScan;
+  if (!arm || !s || arm.spec.kind !== 'http') return null;
+
+  const token = readOAuth(companyPaths(company.dir))[account]?.access_token;
+  if (!token) return null;
+  const url = arm.spec.url;
+  const H = { Authorization: `Bearer ${token}` };
+
+  try {
+    const me = await callTool(url, H, s.meTool, {});
+    if (!me) return null;
+    const login = String((JSON.parse(me) as Record<string, unknown>)[s.loginField] ?? '').trim();
+    if (!login) return null;
+
+    const raw = await callTool(url, H, s.searchTool, {
+      query: s.searchQuery.replace('${login}', login),
+      perPage: SCAN_MAX,
+    });
+    if (!raw) return { login, installed: [], seen: 0 };
+
+    /**
+     * Hình dạng phản hồi là của HÃNG, và nó đổi được. Nhận ba hình dạng đã gặp
+     * rồi thôi — đoán thêm là dựng một bộ phân tích cho một thứ ta không kiểm
+     * soát. Không đọc được ⇒ `seen: 0`, và giao diện nói "không tra được".
+     */
+    const j = JSON.parse(raw) as Record<string, unknown>;
+    const items = (j['items'] ?? j['repositories'] ?? j) as unknown;
+    const names = (Array.isArray(items) ? items : [])
+      .map((r) => {
+        const o = r as Record<string, unknown>;
+        return String(o['full_name'] ?? o['fullName'] ?? '').trim();
+      })
+      .filter((n) => n.includes('/'))
+      .slice(0, SCAN_MAX);
+
+    /**
+     * SONG SONG, có trần. Tuần tự thì 16 repo mất ~15 giây — người dùng đang
+     * đứng nhìn. Trần để không bắn 100 lời gọi cùng lúc vào hãng và ăn 429.
+     */
+    const installed: string[] = [];
+    for (let i = 0; i < names.length; i += SCAN_LANES) {
+      const lot = names.slice(i, i + SCAN_LANES);
+      const got = await Promise.all(
+        lot.map(async (full) => {
+          const [owner, repo] = full.split('/');
+          if (!owner || !repo) return null;
+          const r = await callTool(url, H, s.gateTool, { owner, repo }, SCAN_TIMEOUT_MS);
+          return r === null ? null : full;
+        }),
+      );
+      for (const g of got) if (g) installed.push(g);
+    }
+    return { login, installed, seen: names.length };
+  } catch {
+    // Xem khối chú thích ở trên: lời gọi phụ hỏng không được chặn lượt cắm.
+    return null;
+  }
+}
+
+/** Trần số repo đem đi kiểm — người có 300 repo không đáng chờ 300 lời gọi. */
+const SCAN_MAX = 40;
+const SCAN_LANES = 8;
+const SCAN_TIMEOUT_MS = 8_000;
 
 export type DevicePollResult =
   | { state: 'pending'; intervalMs: number; expiresAt: number }
@@ -421,6 +657,26 @@ export async function oauthDevicePoll(company: Company, state: string): Promise<
   const acc = r.account;
   const who = arm ? await probeIdentity(arm, acc.access_token) : {};
   if (who.label) acc.label = who.label;
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 KHÔNG CÓ DANH TÍNH ⇒ KHÔNG LƯU. Thà bắt đăng nhập lại.                │
+   * │                                                                          │
+   * │ Mục nào KHAI `identity` là mục mà hãng **không** trả danh tính trong phản │
+   * │ hồi token (GitHub). Thiếu `seed` ⇒ `accountName` rơi về `issuer|mcp_url`, │
+   * │ giống hệt nhau cho mọi tài khoản ⇒ tài khoản thứ hai **ghi đè** tài khoản │
+   * │ thứ nhất, im lặng. Một cái tên xấu chỉ phiền; cái này thì mất dữ liệu.    │
+   * │                                                                          │
+   * │ Vì sao vứt một chìa vừa đúc được là ĐÚNG: nó chưa được lưu ở đâu cả, nên  │
+   * │ không có gì hỏng dở. Người dùng bấm lại một lượt device flow — và lượt    │
+   * │ thứ hai gần như chắc chắn chạy, vì phiên MCP giờ đã ấm (đúng thứ user     │
+   * │ quan sát: *"gỡ đi và làm lại… nó ra chính xác tên"*).                     │
+   * │                                                                          │
+   * │ ⚠ Chỉ chặn khi mục CÓ khai `identity`. Notion tự trả `workspace_id` nên   │
+   * │ `who` rỗng là chuyện bình thường ở đó — chặn nó là chặn một ca lành.      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  mustHaveIdentity(acc, who.seed, arm?.name ?? p.prefix);
 
   const name = accountName(p.prefix, acc, who.seed);
   saveOAuth(companyPaths(company.dir), name, acc);

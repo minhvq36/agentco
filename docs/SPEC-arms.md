@@ -1397,10 +1397,29 @@ Nhưng ba rủi ro **có thật**, và cái thứ ba mới đáng gọi tên:
 > ngày làm việc đó vào đây. Trạng thái cuối vẫn phải là *không có key nào tồn tại*.
 > 📌 **Rà lại mỗi lần đụng vào mục GitHub.**
 
-**Và ô "dùng `client_id` của bạn" là công dân hạng nhất, không phải chế độ ẩn.** Cùng một trường dữ
-liệu `auth.clientId`: mặc định điền sẵn của ta, xoá đi dán của họ ⇒ **0 dòng mã thêm**. Nó vá cả (b)
-lẫn (c) cùng lúc, và nó là câu trả lời tử tế nhất cho khách doanh nghiệp hỏi *"sao tôi phải tin
-agentco"*: **"anh không phải tin — đây là ô để anh không cần tin."**
+**Ô "dùng `client_id` của bạn"** vá cả (b) lẫn (c) cùng lúc, và nó là câu trả lời tử tế nhất cho
+khách doanh nghiệp hỏi *"sao tôi phải tin agentco"*: **"anh không phải tin — đây là ô để anh không
+cần tin."**
+
+> ### ⛔ ĐÍNH CHÍNH 27/08 — MỤC NÀY TỪNG NÓI Ô ĐÓ ĐÃ CÓ. **NÓ CHƯA TỒN TẠI.**
+>
+> Nguyên văn bản cũ: *"là **công dân hạng nhất**, không phải chế độ ẩn… xoá đi dán của họ ⇒ **0 dòng
+> mã thêm**."* Đo 27/08, cả hai vế đều sai:
+>
+> | Kiểm | Kết quả |
+> |---|---|
+> | `oauthDeviceStart(catalogId)` có tham số client_id? | ❌ **không** — đọc thẳng `arm.auth.clientId` |
+> | `web/src` có chữ `clientId`? | ❌ **0 lần** |
+> | Có thật là "0 dòng mã thêm"? | ❌ cần: tham số cho `oauthDeviceStart` · chở qua `devices` · chỗ **lưu** bản ghi đè · ô trên giao diện |
+>
+> 🔴 **Đây là lần thứ hai trong một phiên** cùng lớp lỗi (§5h·7f-bis là lần đầu): một mục spec tả
+> kỹ, có lý lẽ, có cả câu khẳng định "đã xong" — mà **0 dòng thi hành**. Và lớp lỗi này **không có
+> chuông**: [[agentco-yaml-step-is-a-bell]] chỉ bắt được ca có bước gõ tay vào file, còn ở đây
+> không có bước nào để tự tố cáo.
+>
+> ⇒ **Luật cho mục danh mục từ nay:** câu nào nói một tính năng *"là công dân hạng nhất"* / *"đã
+> có"* thì phải kèm **tên hàm thi hành** hoặc **tên file test**. Không có thì viết ở thì tương lai.
+> → [[agentco-deterministic-vs-signal]]: *cổng tất định chỉ nói về thứ có mã thi hành.*
 
 ### 5h·7j. ✅ ĐẦU-CUỐI ĐÃ CHẠY THẬT — đọc, ghi, và **hàng rào là hàng rào thật**
 
@@ -1477,6 +1496,30 @@ không cần cắm lại — vì chìa của ta là **user token**, và quyền 
 > Nhầm hai thứ đó dẫn tới đúng một quyết định hỏng: **cache danh sách repo vào `company.yaml`** —
 > và một danh sách như thế **già đi mà không ai biết**, tức một lời nói dối có ngày hết hạn.
 
+> ### ⚠⚠ ĐÍNH CHÍNH THỨ HAI (27/08): mục này nói về **HÀNG RÀO NGOÀI**, và chỉ nó
+>
+> Đọc §5h·7l một mình thì ra kết luận *"agentco không giới hạn repo được"*. **Sai**, và user bác
+> ngay: *"tôi muốn limit nó cho mcp đó chỉ được vào repo đó đấy, không thể cản bởi github, chỉ có
+> thể dùng hàng rào của ta."*
+>
+> Có **hai** hàng rào, hai chủ sở hữu, và cả mục này chỉ nói về cái thứ nhất:
+>
+> | | Ai giữ | Vào băm | Đổi thì | Thi hành ở |
+> |---|---|---|---|---|
+> | **Ngoài** — bản cài app | GitHub | ❌ | tức thì, **mọi** văn phòng | server GitHub, mỗi request |
+> | **Trong** — giới hạn của ta | agentco | ✅ | **một cánh tay khác** | `PreToolUse`, §5h·7m |
+>
+> Trong luôn **hẹp hơn hoặc bằng** ngoài. Ngoài trả lời *"chạm tới được gì"*; trong trả lời *"cánh
+> tay NÀY được chạm gì"*. Ba hệ quả dưới đây vẫn đúng nguyên văn — chúng nói về hàng rào ngoài.
+>
+> Và cửa đi tới hàng rào ngoài là **một cái nút**, không phải một sự bất lực: `catalog.ts §scope`
+> mở `apps/agent-co-app/installations/new`. Ta không dựng lại màn hình đó vì nó là **màn hình đồng
+> ý** — không API nào cho phép phần mềm tự thêm repo cho chính nó, và nếu có thì cả cơ chế đồng ý
+> vô nghĩa. 📌 **Một app phục vụ vô hạn khách**: `client_id` là danh tính PHẦN MỀM, mỗi khách cài
+> nó vào tài khoản HỌ và có bản cài riêng mang lựa chọn repo riêng. Khách **không tạo app**, không
+> có bước 15 phút nào — đó là đường G2 của Google (§5h·4). App đã bật **public** (user xác nhận
+> 27/08); để private thì chỉ tài khoản chủ cài được và khách bấm nút vào ngõ cụt.
+
 **Ba hệ quả bắt buộc:**
 
 1. **Bảng chi tiết cánh tay GitHub KHÔNG được liệt kê repo.** Cánh tay `filesystem` hiện thư mục vì
@@ -1490,6 +1533,168 @@ không cần cắm lại — vì chìa của ta là **user token**, và quyền 
    mọi VP ⇒ cửa duy nhất phải nằm **ngoài** agentco, và ở đây nó nằm trên chính GitHub.
 3. **Muốn hai phạm vi repo khác nhau ⇒ phải hai TÀI KHOẢN khác nhau**, không phải hai cánh tay. Đó là
    giới hạn thật của mô hình, và thẻ phải nói ra thay vì để người dùng tự phát hiện.
+
+### 5h·7f-bis. ✅ DỊCH 404 — **phần THI HÀNH** của §5h·7f (xây 27/08)
+
+> ⚠ **ĐÍNH CHÍNH của chính mục này:** bản viết đầu ghi *"§5h·7f chưa bao giờ được viết"*. **Sai** —
+> nó nằm ngay trên (dòng ~1345) và đã tả đúng ca này từ lâu. Thứ thiếu là **mã**: không một dòng
+> nào trong `src/` bắt ca đó, suốt từ ngày mục kia được viết.
+>
+> Bài học đáng giữ hơn cả bản vá: **một mục spec tả đúng, có ví dụ, có số đo — vẫn có thể 0 dòng
+> thi hành.** Nó trôi lâu vì hàng rào repo (§5h·7m) che mất triệu chứng. Đúng họ
+> [[agentco-yaml-step-is-a-bell]], chỉ khác là chuông ở đây **không kêu** vì không có bước gõ tay
+> nào để tố cáo. → [[agentco-deterministic-vs-signal]]: *cổng tất định chỉ nói về thứ có mã thi hành.*
+
+`worker.ts §githubDoorError`, chạy ở `PostToolUse`. Bốn luật, mỗi luật khoá một chiều hỏng:
+
+| Luật | Vì sao |
+|---|---|
+| **Giữ nguyên câu gốc, chỉ THÊM vào** | nuốt một lời gọi hỏng thành "ổn" là ca Notion `Error:` đã đốt 10 lượt, theo chiều ngược. Sửa CÂU, không sửa KẾT QUẢ |
+| **Chỉ khi có `owner`/`repo`** | 404 ở lời gọi không nói về repo thì nó nói về chuyện khác. Đoán bừa = thay một câu sai cửa bằng một câu sai cửa do **ta** viết |
+| **Kèm đường tới màn cài app** | thiếu vế "đi tiếp bằng cách nào" thì câu dịch cũng là ngõ cụt |
+| **Dặn thẳng *"đừng đoán là repo không tồn tại, đừng dò tên khác"*** | không dặn thì mỗi lần dò là một lượt trả tiền cho cùng một lời từ chối |
+
+URL lấy từ `catalog.scope.url`, tức **dữ liệu** — 0 nhánh `=== 'github'`, và hãng thứ hai có cùng
+kiểu 404 tự được phục vụ.
+
+### 5h·7m. ⛔ HÀNG RÀO REPO CỦA AGENTCO — xây và GỠ trong cùng ngày 27/08. **Đừng dựng lại.**
+
+> Sáng: *"tôi muốn limit nó cho mcp đó chỉ được vào repo đó đấy, không thể cản bởi github, chỉ có
+> thể dùng hàng rào của ta"* → đã xây `armJail`, 17 ca test, chạy đúng.
+>
+> Chiều, cùng user: *"agent co luôn allow tất cả repo mà github của khách hàng cho phép, cách mượt
+> nhất rồi (rất chắc chắn, không phải xử lý case) ⇒ Bỏ hẳn cái screen agent-co allow repo đi?"*
+
+**Đã gỡ.** Ghi lại đầy đủ vì nó là một quyết định dễ bị lật lại bởi chính lý lẽ đã sinh ra nó.
+
+#### Hai lý lẽ user nêu — cả hai KHÔNG đứng được, và phải nói ra
+
+| Lý lẽ | Vì sao không đứng |
+|---|---|
+| *"đổi scope trên git thì ta đâu cập nhật hash được"* | Ngữ nghĩa là **giao**: `tầm với = trong ∩ ngoài`. GitHub thu hẹp ⇒ tầm với thu hẹp ngay ở lời gọi kế tiếp, không cần băm đổi và **không được** để băm đổi. Chạy đúng, không phải chỗ thủng |
+| *"agentco allow nhưng git không allow là case chết rất nổ"* | Ca này tồn tại **y hệt** dù có hàng rào hay không — cả hai đường đều dẫn tới cùng một 404 của GitHub. Hàng rào không **tạo ra** nó, chỉ không chặn được nó |
+
+#### Lý lẽ THẬT để gỡ — user chưa nêu, và nó mạnh hơn cả hai
+
+1. **Giới hạn nằm trong băm ⇒ đổi giới hạn = một cánh tay khác ⇒ cắm lại + nối lại dây trên sơ đồ.**
+   Cho một giá trị người dùng sẽ muốn chỉnh thường xuyên.
+2. **Phải gõ tay.** Ta **không liệt kê được** repo đã cài — không tool MCP nào trả lời câu đó.
+3. **Chỗ hẹp hơn đã có sẵn, do đúng người giữ, cập nhật tức thì**: nút *"Only select repositories"*
+   trên màn cài app. → [[agentco-count-mechanisms]] · [[agentco-domain-vs-boundary]]
+
+#### 🔴 Cái MẤT, phải ghi để lần sau cân lại được
+
+**Thu hẹp theo từng cánh tay biến mất.** Bản cài app là cấp tài khoản, nên hai văn phòng dùng chung
+một tài khoản GitHub thì **chung tầm với**: nhân viên dọn code ở VP A và bot phát hành ở VP B với
+tới cùng một tập repo. Đường lui duy nhất còn lại là §5h·7l ③ — *hai tài khoản*.
+
+Ngày nào có khách thật cần thu hẹp theo nhân viên, **đây là mục phải đọc trước khi dựng lại**, và
+ba cái giá ở trên vẫn còn nguyên.
+
+#### Hai món BÙ, bắt buộc — không có chúng thì gỡ hàng rào là thuần lỗ
+
+| | Món | Trạng thái |
+|---|---|---|
+| ① | **Dịch 404** — §5h·7f | ✅ xây 27/08 |
+| ② | **Nhật ký kiểm toán ghi repo** — *"nó vừa đụng cái gì"* phải trả lời được sau đó | ✅ đã có sẵn: `audit.ts` ghi nguyên `args`, gồm `owner`/`repo` |
+
+#### 📌 Băm của mục GitHub — user tự rút ra, và kết luận đó ĐÚNG
+
+> *"hash github dường như chỉ phụ thuộc account github đó là account nào, còn chuyện người ta cho
+> phép những gì mình đâu can thiệp được"*
+
+**Đúng, và đó là kết quả đúng chứ không phải phần dư.** Băm là vân tay của thứ **agentco cấu hình**,
+không phải của thứ cánh tay **với tới được**. Tầm với là tài sản của hãng, đổi ngoài tầm ta, và nhét
+nó vào băm là **hứa một điều ta không giữ được**. Băm vẫn làm đủ hai việc nó sinh ra để làm: chặn
+trùng lặp, và chặn một văn phòng đổi lén cánh tay của văn phòng khác — cho mọi thứ agentco nắm.
+
+Bất đối xứng còn lại (đổi phạm vi bên hãng là đổi cho mọi văn phòng cùng lúc) **không mới**: nó
+cùng hình dạng với **giá trị chìa**, đã chốt 25/08 — cửa duy nhất nằm **ngoài** agentco.
+
+⇒ **Một cánh tay GitHub = (tài khoản + nhóm việc + nấc).** Chấm hết.
+
+### 5h·7o. 🎯 TRA ĐƯỢC BẢN CÀI APP — đo 27/08, và nó lật hai giả định của chính ta
+
+> User: *"tự vào đó tra đi xem có repo nào github của người dùng đang allow?"* — **làm được**, nhưng
+> không bằng cách nào ai đoán ra, và đường ta đang đi trước đó thì sai.
+
+**Sự thật nền, đo được (đối chứng: app cài trên đúng `test` + `ai-note-knowledge`):**
+
+| Phép gọi | repo công khai **chưa cài** | repo công khai **đã cài** | repo riêng tư **đã cài** |
+|---|---|---|---|
+| `list_branches` | ✅ | ✅ | ✅ |
+| `get_file_contents` | ✅ | ✅ | ✅ |
+| `list_repository_collaborators` | ❌ | ✅ | ✅ |
+
+🔴 **Chìa `ghu_` KHÔNG bị bản cài giới hạn với repo CÔNG KHAI.** `list_branches` chạy trên **cả 16
+repo** trong khi app chỉ cài 2. Bản cài chỉ gác **repo riêng tư** — và (chưa đo) việc **ghi**.
+
+⇒ Hai hệ quả, cả hai đều lật thứ ta vừa viết cùng ngày:
+
+1. **Phép thử tầm với bằng `get_file_contents` là vô nghĩa với repo công khai** — nó ✓ bất kể đã
+   cài hay chưa. §5h·7n dựng trên một tiền đề sai.
+2. **Câu trên thẻ *"chỉ chạm được repo bạn cài agentco vào"* chỉ đúng với repo RIÊNG TƯ.** Phải sửa.
+
+**Đường tra được, và nó là một tool CHỈ ĐỌC:** `list_repository_collaborators` đòi quyền **push**,
+thứ chỉ tồn tại ở repo đã cài app. Phân biệt sạch 4/4 trong phép đo.
+
+```
+get_me → login
+search_repositories "user:<login>"  → danh sách ứng viên
+list_repository_collaborators mỗi cái → ✅ = ĐÃ CÀI
+```
+
+⚠ **Hai giới hạn phải nói ra, không được giấu:**
+
+- **Chỉ thấy repo do chính `login` sở hữu.** `user:<login>` không liệt kê repo của **tổ chức**.
+  ⇒ danh sách rỗng **không chứng minh** "chưa cài gì cả" — nó chỉ chứng minh "không cài repo cá
+  nhân nào". Vì thế phải có đường thoát tường minh, xem dưới. *(Đường mở rộng về sau: `get_teams`
+  trong lát cắt `context` có thể lộ tên tổ chức ⇒ search thêm `org:<tên>`. Chưa đo.)*
+- Suy luận là **"có quyền push" ⇒ "đã cài"**. Đúng với app CỦA TA vì mọi bản cài đều nhận cùng một
+  bộ permission do chính app khai. Ngày ta đổi permission của app, **đo lại**.
+
+### 5h·7n. ⛔ PHÉP THỬ TẦM VỚI BẰNG Ô GÕ TAY — bỏ, chưa kịp ship (27/08)
+
+> Sống được đúng vài tiếng. Giữ lại vì tiền đề sai của nó là thứ đáng nhớ, không phải mã.
+
+Ý ban đầu đúng ở chỗ nhận ra dấu ✓ của `probeArm` **không chứng minh tầm với** (`tools/list` thành
+công kể cả khi chưa cài app vào repo nào) — điều đó vẫn đúng. Sai ở **phép thử được chọn**:
+`get_file_contents` lên một repo công khai ✓ bất kể bản cài, nên nó trả lời một câu khác với câu
+đang hỏi. Và nó bắt người dùng **gõ tay** một thứ họ không nên phải gõ.
+
+⇒ Thay bằng §5h·7o: tra **tự động**, 0 ký tự người dùng gõ.
+→ [[agentco-measurement-vs-conclusion]]: *đo được ≠ kết luận được.*
+
+`probeArm` gọi `tools/list`, và **`tools/list` thành công kể cả khi chưa cài app vào repo nào**. Nên
+màn hình báo `✓ 16 việc` rất tự tin trong khi mọi lời gọi sắp trả 404. Dấu ✓ đó chứng minh **đăng
+nhập chạy**, không chứng minh **với tới được cái gì**. → [[agentco-measurement-vs-conclusion]]
+
+Thứ duy nhất chứng minh bản cài đã ăn là **đi qua đúng cánh cửa công việc thật sẽ đi qua**: đọc một
+file trong một repo thật. `catalog.ts §reachTest` khai tool đó (`get_file_contents`, **không phải**
+`get_me` — `get_me` chạy được với chìa không cài vào repo nào).
+
+⚠ **Nó KHÔNG phải một hàng rào**, và khác nhau ở đúng chỗ đó: gõ vào, bấm Thử, **vứt đi**. Không
+lưu vào `company.yaml`, không vào băm, không ràng buộc gì cánh tay. `save()` lọc nó ra trước khi
+gửi. Ô này trông y hệt ô giới hạn vừa bị gỡ, nên câu help **phải** nói *"không lưu lại"* — người
+dùng không có cách nào tự phân biệt.
+
+⚠ `ok: false` **không** làm cả phép thử hỏng. Đăng nhập vẫn chạy, cánh tay vẫn cắm được; thứ chưa
+xong là bản cài app, một việc làm ở màn hình của hãng. Gộp hai câu hỏi vào một ô trả lời là dựng lại
+đúng lớp lỗi sai cửa mà chính phép thử này sinh ra để đóng.
+
+#### Thứ tự wizard (user chốt 27/08)
+
+```
+đăng nhập → [cùng màn] phạm vi bên GitHub + nút cài → ô gõ repo để thử
+          → Thử → nấc quyền → nhóm việc (chỉ ở nấc toàn quyền)
+```
+
+Cài app **phải xảy ra trước** mọi bước phụ thuộc repo — và vì ta không đọc được bản cài, thứ duy
+nhất đồng bộ được là **thứ tự thao tác**: cài xong rồi mới thử.
+
+⚠ **Ta không hiển thị "đã cài chưa" và không đặt mặc định hộ.** User hỏi thẳng: *"không chọn install
+mà tiếp luôn thì nó có DEFAULT All repositories không?"* — **không, và ta không biết được.** Chưa
+cài lần nào ⇒ **không có quyền gì cả**, không phải "tất cả". Vẽ một trạng thái ở đó là bịa.
 
 ### 5h·7i. Hình dạng chốt của mục danh mục
 
@@ -1794,6 +1999,150 @@ của văn phòng Kế toán, không dây nào, không việc gì.
 đã biến mất. Luật mới **không được nuốt nhánh đó** — *"không còn khai trong `company.yaml`"* và
 *"văn phòng này không dùng"* là **hai chuyện khác hẳn nhau**, và gộp chúng là đúng lỗi
 `catch { exists = false }` ([[agentco-catch-hides-premises]]).
+
+### 6g-bis. 🔴 NHÃN ĐI THEO TÀI KHOẢN — cổng "còn là hàng tự sinh" chỉ đúng một lần (bug 27/08, đã sửa)
+
+> *"Sao tôi đổi workspace account sang minhvuptitd14 mà node mcp server vẫn tên là GitHub ·
+> minhvq36"* … *"bạn lấy được tên workspace mà, lúc tick đổi cái tên không đổi theo mà bị khoá?"*
+
+**Cơ chế của lỗi** — `ArmDialog` ghép `<hãng> · <tài khoản>` vào nhãn, có cổng *"chỉ ghi khi nhãn
+còn đúng bằng tên mục danh mục"* để không đè lên tên người dùng tự gõ. Ý cổng **đúng**; phép so thì
+**hết hạn ngay sau lần dùng đầu tiên**: ghi xong, nhãn là `GitHub · minhvq36` ≠ `GitHub`, nên mọi
+lần đổi tài khoản sau đều bị xếp nhầm vào nhánh *"người dùng đã tự đặt tên"*. Nhãn đóng băng ở tài
+khoản **đầu tiên** trong khi cấu hình trỏ tài khoản mới.
+
+Sơ đồ là chỗ nó đau nhất: node MCP chỉ vẽ `label`, nên **chỗ duy nhất người dùng đọc tên cánh tay
+cũng là chỗ duy nhất nói sai**, và không có gì bên cạnh để đối chiếu.
+
+⇒ **Nhớ chuỗi ta vừa tự ghi (`autoLabel`), đừng suy lại nó.** Còn khớp ⇒ hàng tự sinh, ghi đè. Khác
+⇒ tên của người dùng, đứng yên. Cổng vẫn còn nguyên tác dụng, chỉ là nó thôi hết hạn.
+
+> 🔴 **Lớp lỗi để nhận mặt lần sau:** *"cái này còn ở trạng thái mặc định không?"* trả lời bằng cách
+> **so với giá trị mặc định** thì chỉ đúng cho tới lần ghi đầu tiên. Muốn đúng mãi thì phải **nhớ
+> thứ mình đã ghi**. Cùng họ với `armHash` — danh tính là thứ ta *cất*, không phải thứ ta *đoán lại*.
+
+⚠ **Và nhãn không được là chỗ dựa duy nhất.** Node cắt tên còn 14 ký tự (`GitHub · minhv…`), nên
+dòng phụ đổi từ chữ `kết nối` (lặp lại đúng điều hình phích cắm đã nói) sang **`via`** — tên tài
+khoản, do server tra từ `arms[].secrets` **mỗi lần đọc**, nên không lỗi thời được kể cả khi người
+dùng đã đặt tên riêng.
+
+⚠ `describeNode` từng **cố ý** không tra `via`, lý lẽ ghi trong mã là *"nhãn mặc định đã kèm
+workspace rồi"* — tức nó **dựa vào một cái nhãn đang hỏng**. Nỗi lo đi kèm (đọc đĩa mỗi lần vẽ) vẫn
+được tôn trọng: `canvas()` đọc kho **lười và một lần** — văn phòng không có cánh tay OAuth thì
+không chạm đĩa.
+
+⚠ Vẫn **chỉ tài khoản, không mức quyền** trong nhãn. → §6j
+
+### 6g-quater. 🔴 HÀNG RÀO CỦA SERVER ĂN MẤT BỘ CHỌN NẤC — nấc mặc định tự khoá chính nó (bug 27/08)
+
+> *"Vẫn không cách nào ra cái này? Làm sao để test?"* — người dùng không lên được nấc toàn quyền,
+> và **không có câu lỗi nào**, vì mọi tầng đều làm đúng phần của mình:
+
+```
+nấc mặc định `read`  →  header X-MCP-Readonly: true   (§5h·7j — hàng rào THẬT, tầng giao thức)
+                     →  GitHub chỉ trả về việc ĐỌC
+                     →  offeredTiers() thấy ba nấc BẰNG NHAU
+                     →  luật "chỉ hiện nấc nào thêm ≥1 việc" (§6j) thu về MỘT nấc
+                     →  bộ chọn nấc không vẽ ra
+                     →  kẹt ở `read` vĩnh viễn
+```
+
+**Số đo (27/08, chìa thật, `X-MCP-Toolsets: context,repos`):**
+
+| Phép thử chạy | Việc thấy được | Nấc chào ra |
+|---|---|---|
+| **có** hàng rào (hành vi cũ) | 16 | **1** → `read:16` ⇒ không có gì để bấm |
+| **không** hàng rào (sau khi vá) | **22** | **2** → `read:16` · `full:22` |
+
+⇒ **Luật: KHÁM PHÁ thì không mang hàng rào; THI HÀNH thì mang.** Nút "Thử ngay" hỏi *"cánh tay này
+làm được **tối đa** những gì"*. Trộn phép cưỡng chế vào một câu hỏi khám phá là để câu trả lời tự
+cắt cụt chính nó — rồi ta đọc bản đã cắt như thể đó là toàn bộ sự thật.
+
+⚠ **Không nới quyền một tí nào.** `level` vẫn đi vào sổ, bản LƯU vẫn dựng **có** hàng rào, và
+`scopedTools` lúc lưu vẫn hỏi lại server theo đúng nấc. Chỗ duy nhất đổi là cấu hình **dùng để
+nhìn**. → `server.ts §armConfig(discovery)` · `catalog.ts §serverFenced`
+
+> 🔴 **BẢN VÁ ĐẦU TIÊN CỦA MỤC NÀY KHÔNG ĐỔI GÌ CẢ, và test vẫn xanh.** Ghi lại vì lớp lỗi này rẻ
+> tiền mà đắt thời gian:
+>
+> ```js
+> armConfig({ ...body, ...(discovery ? {} : { level }) })   // ❌ không xoá gì
+> ```
+>
+> `...body` **đã mang `body.level` của client vào rồi**, nên spread có điều kiện chỉ thôi *ghi đè*
+> chứ không *xoá*. Hàng rào vẫn lên; user báo lại y nguyên: *"vẫn không được nè, bạn đã đổi chưa"*.
+>
+> Và ca test viết cùng lượt đó **xanh** vì nó canh `buildConfig` — tầng dưới, vốn chưa bao giờ sai.
+> ⇒ **Canh ở tầng có cờ, với đúng hình dạng dữ liệu mà route thật gửi.** Một ca test ở tầng dưới
+> không thay được ca ở tầng có lỗi; nó chỉ làm bảng điểm trông như đã canh.
+> ⇒ Và cờ phải nằm **ngay cạnh chỗ nấc được dùng** (`armConfig`), không nằm ở chỗ gọi — để chỗ gọi
+> không còn cách nào viết sai. [[agentco-count-mechanisms]]
+
+⚠ **Cái giá phải nói ra:** con số token giờ đo ở trạng thái *mở hết* ⇒ nó là **trần**, nấc dưới tốn
+ít hơn. Mục nào cắt ở server được đánh cờ `serverFence`, và giao diện nói thẳng câu đó dưới bộ chọn
+nấc. Lệch theo chiều **doạ quá tay** — chiều ít hại hơn, theo đúng §11a-bis.
+
+> 🔴 **Lớp lỗi để nhận mặt lần sau:** một cơ chế an toàn (hàng rào) chạy **trước** một cơ chế khám
+> phá (đếm nấc) thì cơ chế thứ hai đo cái bóng của cơ chế thứ nhất. `offeredTiers` **không sai** —
+> nó nói thật về thứ nó được cho xem, và thứ nó được cho xem đã bị cắt trước khi tới tay.
+> [[agentco-measurement-vs-conclusion]] · [[agentco-count-mechanisms]]
+>
+> Chuông: `test/repo-scan.test.ts` khoá cả hai nửa — cấu hình khám phá **không** được mang
+> `X-MCP-Readonly`, và một danh sách toàn việc đọc **phải** thu về đúng một nấc.
+
+### 4e-bis. MỘT HÃNG = MỘT FILE — `src/core/arms/` (user chốt 28/08)
+
+> *"những provider này tôi đang custom khá nhiều để khớp với từng provider đó. Hãy sắp xếp lại?
+> … để sau này có thay đổi gì còn sửa cho dễ. Còn Interface nào xài chung được thì xài chung"*
+
+| Ở đâu | Cái gì |
+|---|---|
+| `core/arms/files.ts` · `notion.ts` · `github.ts` | **dữ liệu của một hãng** — không hàm, không nhánh |
+| `core/arms/index.ts` | đúng một mảng, và **thứ tự người dùng nhìn thấy** |
+| `core/catalog.ts` | kiểu · `buildConfig` · `armHash` · `findArm` — **cửa chung duy nhất** |
+| `web/components/arm/*` | khối UI chỉ hiện khi mục **khai** thứ tương ứng |
+| `web/components/ArmIcon.tsx` | một hàm vẽ hình, dùng ở **5** chỗ, **0 tên hãng** |
+
+⚠ **Chiều import đi một hướng.** `arms/*` dùng `import type` từ `catalog.ts` (kiểu bị xoá lúc dịch
+⇒ không có vòng lặp lúc chạy); `catalog.ts` import ngược lại đúng một thứ: mảng đã ghép. Đảo chiều
+là tạo vòng lặp module — thứ chỉ nổ lúc chạy, ở một file không liên quan.
+
+⚠ **Luật 25/08 vẫn nguyên vẹn, và đây là chỗ dễ hiểu nhầm.** Câu hỏi hôm đó (*"thay vì phải viết
+nhiều file như notion.ts, github.ts…"*) là về **cách DÙNG** dữ liệu — vẫn một `CatalogArm`, một
+`buildConfig`, 0 nhánh theo tên hãng. Cái tách ra 28/08 là **chỗ ĐỂ** dữ liệu. Bằng chứng chứ không
+phải lời hứa: `catalog-data.test.ts` §*"mọi mục tuần tự hoá được"* vẫn xanh sau khi tách.
+
+🔴 **`brand.mark` — logo dời vào hồ sơ thương hiệu, và đó là cả lý do.** §11c chốt *"chưa đọc quy
+tắc hãng ⇒ không dùng logo"*, thi hành bằng ô `brand.checkedOn`. Ngày 27/08 ta ship logo
+GitHub/Notion trong `web/components/ArmIcon.tsx` **trong khi `checkedOn` vẫn `null`** — hai file,
+không ai đối chiếu, và luật im lặng thành lời hứa. Nay đường dẫn SVG nằm **ngay cạnh `checkedOn`**,
+nên ai rà thương hiệu là nhìn thấy nó. **Món nợ vẫn mở**: phải đọc quy tắc của GitHub (github.com/logos)
+và Notion rồi điền `guidelineUrl` + `checkedOn` **trước khi phát hành ra ngoài**.
+
+⚠ `mark` viết thành **một chuỗi liền**, không nối `+`. Nuốt một dấu cách ở chỗ nối (`3 .405` → `3.405`)
+là hình **méo chứ không lỗi** — không có gì kêu lên. (Suýt dẫm đúng ngày tách.)
+
+### 6g-ter. Hình của cánh tay — một hàm, mọi nấc (user chốt 27/08)
+
+> *"Một card cũng có icon phân biệt ở phía trước … áp dụng xuyên suốt vào các nấc bên trong luôn"*
+> · *"folder và bánh răng thì không màu mè rồi. Cố gắng chọn icon của provider cũng không màu mè"*
+
+`web/src/components/ArmIcon.tsx` — **hãng trước, loại sau**: có logo hãng thì vẽ logo, không thì
+ngã về hình theo loại (thư mục · phích cắm · bánh răng). Tất cả `currentColor`, không màu.
+
+Vì sao một hàm chứ không rắc emoji ở từng chỗ vẽ: hộp thoại vẽ cùng một cánh tay ở **bốn** nơi (thẻ
+loại · lưới dịch vụ · danh sách dùng lại · tiêu đề bước 2). Bốn bản của cùng một ánh xạ là bốn chỗ
+để lệch, và lệch thì mất đúng thứ hình vẽ sinh ra để giữ — **nhận ra nó vẫn là nó** khi đổi màn.
+Bảng logo được phép **thiếu**: thêm một dịch vụ vào danh mục không bao giờ bị chặn vì chưa ai vẽ
+logo cho nó.
+
+Emoji cũ (📁 🔌 ⚙️ 📝) bỏ vì chúng mang màu của phông chữ hệ điều hành: cùng một thẻ ra ba màu trên
+ba máy, và không cái nào theo được nền sáng/tối. [[agentco-three-os-always]]
+
+**Thứ tự danh sách "đã cắm ở văn phòng khác"**: `mồ côi → LOẠI (dịch vụ → thư mục → tự cắm) → tên`.
+⚠ Sắp **lúc vẽ**, không lúc tải: `catalog` và `arms` về bằng hai lượt gọi song song, nên sắp ngay
+sau `api.arms()` là sắp bằng một danh mục còn rỗng ⇒ `kindOf` trả `custom` cho tất cả, và nó sẽ
+**không bao giờ tự sắp lại**.
 
 ## 6i. ✅ SỔ CHUNG + BĂM — danh tính tách khỏi tên (user chốt 23/08, đã xây)
 
@@ -2637,6 +2986,211 @@ nằm trọn trong prefix được cache, **vĩnh viễn, mọi lượt**.
 > §5c đã cố ý **không lấy**. Nếu MCP cần nó để rẻ, thì quyết định đó phải được mở lại — với số đo,
 > không phải với lập luận.
 
+### 9e. ✅ KẾT QUẢ QUÁ TO — CLI ĐÃ BÊ GIÙM, TA CHỈ ĐẶT LẠI CHỖ (27/08)
+
+> **Chốt của cả mục:** đừng dựng trần thứ hai. Claude Code **đã** cắt và cất kết
+> quả quá dài ra file — thứ ta thiếu chỉ là **bốn chỗ nó đặt file sai với ta**.
+
+**Ca sinh ra nó:** `notion-fetch` trả **64 146 ký tự**. Nhân viên nuốt xong thì cạn
+trần lượt, đi lạc sang `Grep` ổ đĩa, rồi báo *"quá nhiều bước"*.
+
+Phản xạ đầu là dựng trần của ta (~16 KB) rồi tự bê ra file. ✅ Đo (`spike-spill.ts`)
+lật lại toàn bộ:
+
+| Q | Kết quả |
+|---|---|
+| `PostToolUse` nổ cho tool **MCP**? | ✅ **CÓ** — khác `canUseTool`, thứ bị `allowedTools` che |
+| `updatedToolOutput` thay được thứ model thấy? | ✅ **CÓ** — chứng minh bằng việc model mở **đúng file của ta**, một đường dẫn nó không có cách nào đoán ra |
+| `tool_response` hình dạng gì? | **string**, không phải khối `content[]` |
+| Bản gốc có tính token trước hook không? | **câu hỏi tự tiêu** — CLI cắt trước, 64 KB chưa bao giờ vào ngữ cảnh |
+
+⇒ **Dựng trần thứ hai là hai bản của cùng một luật** — thứ dự án này đã trả giá
+vài lần (`agentSlot` vs `arrange`; `pickMcp` vs `probeArm`). Bốn chỗ phải vá:
+
+| | CLI đặt sai chỗ nào | Hậu quả đã thấy |
+|---|---|---|
+| ① | file nằm **ngoài văn phòng** | mọi lượt đọc bị dán nhãn *"ngoài văn phòng"*, model chuyển sang PowerShell — **10 lượt lạc** |
+| ② | dưới **session-uuid**, đổi mỗi phiên | con trỏ hôm qua thành đường dẫn chết |
+| ③ | người dùng **không thấy** | 64 KB vào máy mà ngăn Kết quả trống trơn |
+| ④ | 🔴 câu mở đầu bằng **`Error:`** | một lượt **thành công** bị mồi thành **thất bại** ⇒ model vào chế độ cứu vãn |
+
+④ rẻ nhất để vá và đắt nhất nếu bỏ qua: **không phải lỗi kỹ thuật, là một từ sai
+trong một câu.**
+
+#### 9e·1 🔴🔴 BÊ VỀ ĐƯỢC ≠ ĐỌC ĐƯỢC — nửa việc còn lại
+
+Bản vá đầu chép nguyên xi, và user thử ngay: `error_max_turns`. Đo ra:
+
+```
+73 530 byte  ·  số dòng: 1
+```
+
+`Read` cắt theo **DÒNG**. File một dòng ⇒ `offset`/`limit` **không cắt được gì** ⇒
+mỗi lượt đọc trả về trọn 73 KB ⇒ lại vượt trần ⇒ CLI lại bê ra file ⇒ **vòng lặp
+tới khi hết lượt**. Và câu con trỏ của **chính ta** dặn *"dùng Read kèm
+offset/limit"* — **một lời dặn không thực hiện được**, ở đúng chỗ model cần chỉ
+đường nhất. Ta tự đẻ ra một câu §5m.
+
+⇒ `readable()`: JSON thì **trải nội dung ra**, không phải `JSON.stringify(v,null,2)`
+— cái đó tách được *phong bì* nhưng trường `text` 60 KB vẫn nằm một dòng, vì `\n`
+bị escape lại. Không phải JSON thì bẻ dòng cứng. Đo trên file thật: **1 → 878
+dòng**. Bất biến có test: **không mất một ký tự nào**.
+
+#### 9e·2 🔴🔴 CHỐT NGUỒN — không có nó thì đây là một lỗ RÚT FILE
+
+`tool_response` là **chuỗi do bên thứ ba viết ra**. Một MCP server chỉ cần trả về
+
+```
+…saved to D:\…\company\.state\secrets.json…
+```
+
+là agentco **tự tay chép kho chìa vào `artifacts/`** — nơi mọi nhân viên đọc được
+và người dùng tải về được. `guardedZone` chặn agent *đọc* `.state/`; bản vá này sẽ
+*khiêng nội dung ra ngoài giùm nó*. Đúng hình dạng `swallowsOffice` đã ghi: **cấm
+cửa tử tế, để cửa sau mở**.
+
+Chốt bằng cấu trúc, ba điều kiện: đường dẫn **tuyệt đối** · thư mục cha tên đúng
+**`tool-results`** · đuôi **`.txt`**. Có test dựng `secrets.json` thật rồi khẳng
+định **không chép được**.
+
+#### 9e·3 Tên và chỗ đặt — user bắt, và cả hai đều sai
+
+```
+a46a7e26403__notion-fetch--mcp-a46a7e26403-notion-fetch-1787778426161.txt
+└─ băm ─┘                    └─ băm lại ─┘              └─ epoch ─┘
+```
+
+**Băm lọt lên màn hình** — mà `audit.ts` đã viết luật từ đầu: *"băm không bao giờ
+lên màn hình"*. Tên tool MCP là `mcp__<băm>__<việc>`, cắt mỗi tiền tố `mcp__` thì
+băm ở lại. Và file rơi **thẳng vào gốc `artifacts/`** trong khi mọi thứ khác nằm
+dưới `artifacts/<plan_id>/<task_id>/` — `ArtifactRecord` suy plan/task **từ đường
+dẫn**, nên nó thành một mục **mồ côi**.
+
+⇒ `artifacts/<plan_id>/<task_id>/notion-fetch.txt`, chống trùng bằng **đếm**
+(`-2`, `-3`) chứ không bằng dấu thời gian: nó đọc lên có nghĩa.
+
+> Câu hỏi *"hay nó là file temp nên kệ"* có đáp án là **KHÔNG**: `artifacts/` là
+> thứ người dùng nhìn thấy và tải về. File tạm thì phải ở `.state/` — mà `.state/`
+> nằm trong `guardedZone` nên nhân viên không đọc được. **Không có đường "để tạm".**
+
+#### 9e·4 Báo — và **chỉ khi có bê**
+
+Ngưỡng làm hành vi đổi theo từng lượt (trang nhỏ đi thẳng, trang to bị bê). Đổi
+hành vi mà không nói là bắt người dùng đoán. Ba chỗ, mỗi chỗ một câu hỏi khác:
+**dòng tiến độ** (*vừa xảy ra gì*) · **nhật ký 🔌** (*hôm qua lấy về những gì*) ·
+**ngăn Kết quả** (*nội dung đâu*).
+
+⚠ **Anti-requirement:** không báo khi không bê. Một thông báo bắn ở mọi lượt là
+thứ người ta học cách bỏ qua — đúng lý lẽ đã dùng để bỏ cổng duyệt. Nó đáng kêu
+**vì nó hiếm**. Và câu đó đến từ **tầng tất định**, không phải từ model.
+
+---
+
+### 9f. ✅ CHẠY TIẾP MỘT VIỆC BỊ CẮT — bỏ việc đoán N (user duyệt 27/08)
+
+**Bài toán:** một việc có **N phần**, mà **N chỉ biết được SAU khi việc bắt đầu**,
+và mỗi phần có thể rất to.
+
+Hôm nay kế hoạch buộc phải đoán N **trước**. Ca thật 27/08:
+
+```
+T-01 vị trí 1–3   → làm thật          5 lượt  $0.16
+T-02 vị trí 4–6   → "chỉ có 1 trang"  3 lượt  $0.04
+T-03 vị trí 7–9   → "chỉ có 1 trang"  3 lượt  $0.04
+T-04 vị trí 10+   → "chỉ có 1 trang"  3 lượt  $0.04
+```
+
+**Ba trong bốn việc vô nghĩa ngay từ lúc sinh ra.** Đây là tính chất của **kiến
+trúc**, không phải một lần model ngơ: kế hoạch lập **trước** khi bất kỳ việc nào
+chạy, nên Trợ lý không đọc được file mà chính nó vừa bảo người khác tạo ra. Đoán
+thừa ⇒ việc rỗng; đoán thiếu ⇒ cháy trần. **Hai đầu của cùng một cây gậy.**
+
+**Chốt: bỏ việc đoán.** Cứ chạy; chạm trần lượt mà **đang có tiến triển** thì xếp
+lại chính việc đó, và **chỗ tiếp đọc từ file có thật trên đĩa**.
+
+> ### Vì sao KHÔNG để Trợ lý "nghĩ lại" (user hỏi thẳng)
+> Nó phải trả **một lượt model nữa**, với **ít dữ kiện hơn hẳn** worker vừa có —
+> nó chỉ thấy một câu `say`, không thấy 15 lượt kia. Một cơ chế *"thử nghĩ cách
+> khác"* ở tầng đó là **đoán**, và đoán ở tầng kế hoạch thì **đẻ thêm việc**.
+> User nói đúng chỗ nguy: *"nếu Trợ lý không đủ context mà cố bắt làm một việc
+> không thể cũng rất dở — tôi thấy đây là rủi ro nhiều hơn."*
+> ⇒ Cơ chế này **tất định · 0 token cho quyết định · dựa trên bằng chứng**.
+> → [[agentco-deterministic-vs-signal]]
+
+**Hai hàng rào — thiếu cái nào là đẻ ra vòng lặp đốt tiền:**
+
+| | Hàng rào | Chặn gì |
+|---|---|---|
+| ① | phải **có file mới** (`landed` khác rỗng) | việc không nhúc nhích mà xếp lại ⇒ mỗi vòng một trần lượt nữa |
+| ② | trần **1 lần** (user chốt), và số đó **hiện ra** | tiến triển có thể THẬT mà rất chậm; và **tất định KHÔNG có nghĩa là rẻ** — mỗi lần tiếp là một lượt worker đầy đủ chạy tới kịch trần |
+
+> **Vì sao 1 chứ không phải 3** (user hỏi thẳng: *"tôi sợ cứ dây dưa mà không xong
+> thì sao? Hay nó không ảnh hưởng lắm vì nó là sự tất định?"*): tất định chỉ bảo
+> đảm **không lặp vô tận**, nó không bảo đảm **rẻ**. Trần 3 nghĩa là một việc có
+> thể tốn tới **4×** ngân sách.
+>
+> Và chưa ai đo một ca dài thật cần mấy vòng — chọn 3 là **đoán một con số**, đúng
+> hình dạng cái trần 2 000 token đã "chặn ngay cánh tay đầu tiên" (§9b). Hai chiều
+> hỏng **không cân nhau**: thấp quá thì việc hỏng sau 2 lượt **kèm câu báo, người
+> dùng thấy ngay** và biết nới `max_turns`; cao quá thì tiền cháy **âm thầm** cho
+> một việc sẽ không bao giờ xong. ⇒ Nâng khi có **một ca dài đo được**, không nâng
+> theo cảm giác. → [[agentco-safe-default-direction]]
+
+Và **chỉ `max_turns`**. `budget` chạy tiếp là **cố tình vượt trần tiền người dùng
+đặt**; `usage_limit`/`auth` là gõ một cánh cửa đã khoá; `stopped` là **làm ngược
+lệnh người dùng vừa bấm**. Có test khoá cả sáu kiểu.
+
+⚠ Câu dặn thêm vào **không mang số thứ tự**. Nhét *"bắt đầu từ phần 4"* là dựng
+lại đúng lỗi vừa đi sửa — đoán vị trí trong một danh sách chưa ai đọc. Và nó cộng
+**một lần**, không phải mỗi vòng một lần: ba dòng giống nhau **dạy model rằng dòng
+đó không quan trọng**. (Test bắt được lỗi này.)
+
+⚠ Token của lượt bị cắt **ghi sổ trước khi chạy tiếp** — `max_turns` theo định
+nghĩa là kiểu hỏng **đắt nhất** (nó chạy tới kịch trần).
+
+#### 9f·1 `error_max_turns` — mã máy lọt ra màn hình, và nó ở tầng TRỢ LÝ
+
+> *"sao trả 1 cái lỗi `error_max_turns` ai biết là gì"* — user 27/08
+
+⚠ **Đính chính một chẩn đoán sai của chính vòng này:** bản vá đầu đặt ở `worker.ts`
+— **nhầm tầng**. Worker vốn đã có câu tiếng người qua `classifyError` từ lâu. Chữ
+người dùng thấy đến từ **`assistant.ts`**:
+
+```ts
+const why = m['result']?.trim() || m['subtype'];   // result RỖNG ⇒ ném thẳng mã máy
+```
+
+⚠⚠ Và bản vá có một cái bẫy: `classifyError` khớp bằng regex `/max_turns/`. **Dịch
+trước rồi mới phân loại** là câu tiếng Việt không khớp gì cả ⇒ mọi lỗi tụt về
+`other` ⇒ tầng trên xử lý sai, **im lặng**. ⇒ Phân loại trên **mã gốc**, dịch sau.
+`sayError()` chỉ dịch khi SDK không đưa câu nào (`^error_[a-z_]+$`) — có câu thật
+thì giữ nguyên, vì thay một câu cụ thể bằng câu chung là **làm mất dữ kiện**.
+
+#### 9f·2 ⛔ ĐÃ CÂN VÀ BỎ: thêm luật vào system prompt của worker
+
+User cân nhắc: *"ưu tiên xem xét khả năng của MCP (nếu có) trước khi dùng shell;
+dùng shell nên có kế hoạch trước thay vì thử nghiệm random"*.
+
+**Bỏ, và lý do là số đo:** ca sáng 27/08 có 9 lượt `Grep` + PowerShell đi lạc; ca
+chiều cùng ngày, sau khi vá §9e, có **0 lượt shell nào**. Nguyên nhân là **cấu
+trúc** (con trỏ ra ngoài văn phòng + chữ `Error:`), đã gỡ.
+
+Thêm một dòng prompt lúc này là **mua một rủi ro im lặng để trị một triệu chứng
+không còn tái hiện** — và nó sẽ ở lại vĩnh viễn vì không ai chứng minh được nó
+thừa. Rủi ro cụ thể: một việc mà shell là đường đúng (đổi tên hàng loạt, chạy
+build) mà model chần chừ thì **không ai thấy** — nó chỉ chậm hơn và vòng vèo hơn.
+
+Cộng thêm luật đã có: **luật trong prompt thua danh sách ví dụ**
+([[agentco-prompt-rules-lose-to-examples]]) — một câu dặn ở đầu prompt là dạng
+yếu nhất, và món nợ 22/08 đã chứng minh vá đúng chỗ là **sửa dữ liệu ở dòng có ví
+dụ**, không phải thêm câu ở đầu khối.
+
+**Cũng bỏ: nút xác nhận kế hoạch.** User: *"thêm 1 nút confirm yes là xong, nhưng
+mà nếu thế thì lại bị… trong flow dễ, thường tôi hay gõ /stop. Thôi đừng làm, LLM
+nó không phân biệt lúc nào cần hỏi lúc nào tự chạy đâu."*
+
+---
+
 ### 9c. ✅ Vì sao Trợ lý **không bao giờ** cầm MCP — đã chốt, nhắc lại vì §7 dễ làm người ta quên
 
 `types.ts:499`: MCP **phá prompt cache khi `resume`** (issue #247) — mất ~**36 000 token quy đổi
@@ -3340,6 +3894,31 @@ vì `task`. `lookup` với `paths: []` là **tra web**, không đọc được t
 đẩy định tuyến sang cửa đó thì đây là một cái giá thật. Nhưng phương sai của `route` vốn đã cao ở cả
 ba bản (bản chưa vá cũng có lượt ra `task`, lượt ra `ask`), nên **chưa đủ số để quy nhân quả.**
 Cần một bài đo riêng, tách khỏi bài này.
+
+## 15l. 🔴 CỔNG THIẾU MỘT CÂY KIM — cánh tay OAuth được nhắc bằng **TÊN TÀI KHOẢN** (ca lọt 28/08)
+
+User gỡ tài khoản `minhvuptitd14`, rồi Trợ lý vẫn hỏi:
+
+> *"Repo 'focus-flow' này nằm trong tài khoản GitHub minhvq36 hay minhvuptitd14 vậy bạn?"*
+
+**Cổng không bắn, và nó không hề sai luật.** Kim của nó là `label` = `"GitHub · minhvuptitd14"`, còn
+câu trên không chứa nguyên chuỗi đó.
+
+⇒ **Bất đối xứng giữa hai loại cánh tay, và §15 sinh ra từ loại kia nên không thấy:**
+
+| | Nhãn | Thứ người ta thật sự nhắc |
+|---|---|---|
+| Thư mục | `D:\Downloads\Programs Installation` | **nguyên vẹn cái nhãn** ⇒ kim cũ trúng |
+| OAuth | `GitHub · minhvuptitd14` | **`minhvuptitd14` đứng một mình** ⇒ kim cũ trượt |
+
+Kim thứ ba là `via` — **không phải trường mới**: nó tra từ `arms[].secrets` ra kho OAuth, và đã đang
+chạy ở danh sách "dùng lại" (26/08) và ở node trên sơ đồ (27/08). Đây là **chỗ thứ ba của cùng một
+sự thật**, không phải cơ chế thứ hai. → [[agentco-count-mechanisms]]
+
+⚠ Kho OAuth đọc **có điều kiện**: cổng chạy ở mọi lượt Trợ lý, nên không có ứng viên bị rút thì
+không chạm đĩa.
+
+⚠ Ranh giới §15e **không đổi**: vẫn bắt TÊN, không bắt CÁCH NÓI VÒNG.
 
 ### 15e. ⚠ RANH GIỚI — ***ĐÃ HẸP LẠI, CHƯA ĐÓNG***
 

@@ -60,6 +60,30 @@ export interface AsMeta {
  * thời điểm không ai ghi lại.
  */
 export interface OAuthAccount {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐÂY LÀ **XUẤT XỨ CỦA CHÌA**, KHÔNG PHẢI DANH TÍNH PHẦN MỀM.             │
+   * │ (user 27/08: *"client_id đi theo phần mềm, không đi theo data người dùng"*)│
+   * │                                                                          │
+   * │ Nguyên tắc đó đúng, và mã theo nó ở hai chỗ:                              │
+   * │   `catalog.ts §auth.clientId`  client ta SHIP     → đi theo phần mềm ✅   │
+   * │   `.state $clients`            client DCR tự mint → dữ liệu công ty ✅    │
+   * │                                                                          │
+   * │ Trường này là chỗ thứ ba, và nó KHÔNG lưu "ứng dụng của agentco là ai".  │
+   * │ Nó lưu *"client NÀO đã cấp đúng chìa này"* — vì OAuth bắt buộc **làm mới  │
+   * │ phải do chính client đã cấp thực hiện**. Đọc từ danh mục lúc làm mới thì  │
+   * │ một chìa do client khác cấp sẽ hỏng, và hỏng ở giờ thứ 4.                 │
+   * │                                                                          │
+   * │ ⚠ THÀNH THẬT VỀ HÔM NAY: chưa có client thứ hai nào (ô *"dùng client_id   │
+   * │ của bạn"* của §5h·7h **chưa được xây** — spec nói đã có, sai). Nên hôm    │
+   * │ nay giá trị này **luôn bằng** giá trị trong danh mục, tức đúng là một bản │
+   * │ sao thừa như user nói. Nó chỉ kiếm được chỗ đứng khi ô ghi đè ra đời.     │
+   * │                                                                          │
+   * │ ⇒ Giữ, vì gỡ rồi phải thêm lại nguyên vẹn ngay khi ô đó ra đời. Nhưng     │
+   * │ **đừng đọc nó như nguồn sự thật về danh tính phần mềm** — nguồn đó là     │
+   * │ `catalog.ts`, và chỉ nó.                                                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
   client_id: string;
   access_token: string;
   refresh_token?: string;
@@ -683,6 +707,53 @@ export function accountName(
   const seed = seedOverride || (typeof ws === 'string' && ws ? ws : `${acc.issuer}|${acc.mcp_url}`);
   const id = crypto.createHash('sha256').update(seed).digest('hex').slice(0, 8).toUpperCase();
   return `${prefix.toUpperCase().replace(/[^A-Z0-9]/g, '')}_OAUTH_${id}`;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 TÊN NÀY CÓ MINT TỪ MỘT DANH TÍNH RIÊNG KHÔNG? (thêm 28/08)            │
+ * │                                                                          │
+ * │ Nhánh dự phòng `issuer|mcp_url` của `accountName` **giống hệt nhau cho    │
+ * │ mọi tài khoản của cùng một dịch vụ** — nó không phải một danh tính, nó là │
+ * │ một địa chỉ. Rơi vào nhánh đó nghĩa là tài khoản thứ hai **ghi đè** tài   │
+ * │ khoản thứ nhất, im lặng, không triệu chứng nào cho tới khi dữ liệu đi     │
+ * │ nhầm chỗ.                                                                │
+ * │                                                                          │
+ * │ Ca thật 28/08 (GitHub): `get_me` quá hạn ở lượt lạnh ⇒ không seed ⇒ rơi   │
+ * │ vào nhánh này. User chỉ thấy *"tên tài khoản là OAUTH_… viết hoa"*.       │
+ * │                                                                          │
+ * │ ⚠ Đặt CẠNH `accountName` theo đúng luật đã dùng cho `isAccountName`: đây  │
+ * │ là hàm mint ra cái tên, nên nó là chỗ duy nhất biết hạt giống đến từ đâu. │
+ * │ Để phép kiểm ở file khác là dựng bản thứ hai của một quy ước.             │
+ * │                                                                          │
+ * │ **Hướng an toàn đã chọn, viết ra cả hai hậu quả:**                        │
+ * │  · Từ chối ⇒ một dịch vụ chỉ-một-tài-khoản không nối được. Triệu chứng    │
+ * │    **thấy ngay**, người dùng báo, ta khai thêm `identity` cho mục đó.     │
+ * │  · Cho qua ⇒ hai tài khoản gộp làm một. **Không triệu chứng nào.**        │
+ * │ Hỏng nhìn thấy được thắng hỏng im lặng. → [[agentco-safe-default-direction]]│
+ * │                                                                          │
+ * │ Hôm nay KHÔNG mục nào bị chặn: GitHub khai `identity`, Notion trả          │
+ * │ `workspace_id` (đối chứng: hai workspace trong kho ra hai tên khác nhau). │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+/**
+ * ⚠⚠ CHỈ HỎI ĐƯỢC LÚC MINT, KHÔNG HỎI ĐƯỢC MỘT TÀI KHOẢN ĐÃ LƯU.
+ *
+ * `applyToken` chỉ giữ `extra` khi phản hồi token CÓ trường lạ. Phản hồi
+ * **làm mới** của Notion không mang `workspace_id`, nên sau lần refresh đầu
+ * tiên `extra` **biến mất khỏi bản ghi**. Đối chứng trong kho thật 28/08: cả
+ * hai tài khoản Notion đều không còn `extra`, trong khi tên của chúng
+ * (`AFAFBCD6` ≠ `084F6A58`) chứng minh lúc mint thì `workspace_id` CÓ.
+ *
+ * ⇒ Gọi hàm này trên một tài khoản đã lưu sẽ trả **false cho một tài khoản hoàn
+ * toàn lành**. Tôi đã suýt đọc nhầm đúng chỗ này khi đo. Nó là chốt cho đường
+ * ĐANG LƯU VÀO, không phải một phép chẩn đoán.
+ * → [[agentco-measurement-vs-conclusion]]
+ */
+export function hasOwnSeed(acc: Pick<OAuthAccount, 'extra'>, seedOverride?: string): boolean {
+  if (seedOverride && seedOverride.trim()) return true;
+  const ws = acc.extra?.['workspace_id'];
+  return typeof ws === 'string' && ws.trim().length > 0;
 }
 
 /**

@@ -79,6 +79,24 @@ export interface ProbeResult {
   tiers?: { tier: Tier; count: number }[];
   /** Token cánh tay này cộng vào prefix mỗi lượt. `undefined` = chưa đo được. */
   tokens?: number;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ NỐI ĐƯỢC MÀ 0 VIỆC — hỏng, và hỏng KHÔNG có câu lỗi nào. → §5h·7e        │
+   * │                                                                          │
+   * │ Đo 26/08: gõ sai tên nhóm trong `X-MCP-Toolsets` ⇒ GitHub trả **0 việc   │
+   * │ và không báo lỗi gì**. Bắt tay ✓, `status: 'connected'` ✓, và cánh tay    │
+   * │ hoàn toàn vô dụng. Đúng họ [[agentco-silent-allowlist]]: allowlist im     │
+   * │ lặng bỏ tên lạ, ở đây là allowlist của HÃNG.                              │
+   * │                                                                          │
+   * │ ⚠ CỐ Ý KHÔNG hỏi *"nhóm nào bị bỏ"*. Server không echo lại danh sách nó  │
+   * │ nhận, nên câu đó không trả lời được — và một cơ chế chỉ chạy khi hãng     │
+   * │ chịu echo là một cơ chế không chạy. Triệu chứng thì TẤT ĐỊNH và không     │
+   * │ cần biết tên hãng nào: **nối được mà không có việc nào**. Một câu hỏi rẻ  │
+   * │ hơn, đúng cho mọi server, và không có tên hãng nào trong mã.              │
+   * │ → [[agentco-count-mechanisms]] · [[agentco-deterministic-vs-signal]]      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  warn?: string;
   /** Mili-giây từ lúc mở query tới lúc rời `pending`. Để giao diện biết nên chờ. */
   connectMs: number;
 }
@@ -383,6 +401,14 @@ export async function probeArm(
     if (out.status === 'connected' && baseline !== undefined) {
       const ctx = (await q.getContextUsage()) as { totalTokens: number };
       out.tokens = Math.max(0, ctx.totalTokens - baseline);
+    }
+
+    // Nối được mà rỗng — xem khối chú thích ở `ProbeResult.warn`. Đặt sau cùng
+    // để nó thấy `out.tools` ở trạng thái cuối, không phải giữa chừng.
+    if (out.status === 'connected' && out.tools.length === 0) {
+      out.warn =
+        'Nối được nhưng server không cấp việc nào. Thường là do một tuỳ chọn gửi lên bị server ' +
+        'lặng lẽ bỏ qua — kiểm lại các nhóm việc đã tick.';
     }
   } catch (e) {
     out.status = 'failed';

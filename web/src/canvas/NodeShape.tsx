@@ -1,5 +1,6 @@
 import { memo } from 'react';
 
+import { ArmIcon } from '@/components/ArmIcon';
 import { agentInk } from '@/lib/colors';
 import { useApp } from '@/lib/store';
 import { sizeOf } from './geometry';
@@ -96,14 +97,53 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
 
       {node.kind === 'mcp' && (
         <>
-          <text className="node-av" x={12} y={s.h / 2 + 6}>
-            🔌
-          </text>
+          {/*
+            ┌────────────────────────────────────────────────────────────────┐
+            │ HÌNH CỦA HÃNG, KHÔNG PHẢI EMOJI PHÍCH CẮM. (user chốt 28/08)   │
+            │                                                                │
+            │ > *"đổi cái biểu tượng phích cắm thành chính đơn giản như vừa  │
+            │ >  đổi (reuse, tôi thấy rất tối giản và đẹp)"*                  │
+            │                                                                │
+            │ Cùng hàm với hộp thoại Kết nối (`ArmIcon`), nên một cánh tay    │
+            │ giữ nguyên hình từ lúc chọn tới lúc nằm trên sơ đồ. Emoji 🔌    │
+            │ vừa mang màu của phông chữ hệ điều hành, vừa nói **loại giao    │
+            │ thức** trong khi thứ người dùng cần phân biệt là **hãng nào**.  │
+            │                                                                │
+            │ ⚠ Vị trí bằng `x`/`y`/`size`, không bằng class: đây là bên      │
+            │ trong `<svg>` của sơ đồ, Tailwind không với tới hệ toạ độ này.  │
+            └────────────────────────────────────────────────────────────────┘
+          */}
+          <g className="node-av-mark">
+            <ArmIcon
+              mark={node.mark}
+              kind={node.armKind ?? 'custom'}
+              x={12}
+              y={s.h / 2 - 9}
+              size={18}
+            />
+          </g>
           <text className="node-nm" x={38} y={s.h / 2 - 3}>
             {cut(node.label, 14)}
           </text>
+          {/*
+            ┌────────────────────────────────────────────────────────────────┐
+            │ DÒNG PHỤ NÓI **TÀI KHOẢN**, không nói "kết nối". (user 27/08)  │
+            │                                                                │
+            │ > *"ra canvas thì không còn phân biệt được nữa"*               │
+            │                                                                │
+            │ Chữ "kết nối" lặp lại đúng thứ hình phích cắm đã nói — nó tốn  │
+            │ một dòng để không thêm gì. Còn thứ người dùng thật sự cần phân │
+            │ biệt (hai cánh tay GitHub của hai tài khoản) thì trước nay chỉ │
+            │ nằm trong `label`, và nhãn thì ĐÓNG BĂNG ở tài khoản đầu tiên. │
+            │                                                                │
+            │ `via` do server tra từ `arms[].secrets` mỗi lần đọc sơ đồ, nên │
+            │ nó không lỗi thời được. Vắng `via` ⇒ mục không dùng OAuth (hay │
+            │ workspace đã bị gỡ) ⇒ quay về câu cũ, KHÔNG bịa một cái tên.   │
+            │ → `ArmDialog.tsx` (chỗ bỏ ghép tài khoản vào nhãn)             │
+            └────────────────────────────────────────────────────────────────┘
+          */}
           <text className="node-sub" x={38} y={s.h / 2 + 13}>
-            {node.missing ? 'không còn cắm' : 'kết nối'}
+            {node.missing ? 'không còn cắm' : node.via ? cut(node.via, 16) : 'kết nối'}
           </text>
         </>
       )}

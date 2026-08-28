@@ -5,7 +5,7 @@
  */
 
 import fs from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
@@ -65,8 +65,77 @@ export interface RunResult {
   wasted: Usage;
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Trần số lần chạy tiếp. **1** (user chốt 27/08) — và con số này HIỆN RA.  │
+ * │                                                                          │
+ * │ Vì sao có trần dù đã đòi "phải có tiến triển": tiến triển có thể **thật   │
+ * │ mà rất chậm** (mỗi lượt ghi thêm một dòng), và **tất định KHÔNG có nghĩa │
+ * │ là rẻ** — mỗi lần chạy tiếp là một lượt worker ĐẦY ĐỦ, chạy tới tận trần │
+ * │ lượt của nó. Trần 3 nghĩa là một việc có thể tốn tới **4×** ngân sách.    │
+ * │                                                                          │
+ * │ ⚠ VÌ SAO 1 CHỨ KHÔNG PHẢI 3: chưa ai đo một ca dài thật cần mấy vòng.    │
+ * │ Chọn 3 là đoán một con số — đúng hình dạng cái trần 2 000 token đã "chặn  │
+ * │ ngay cánh tay đầu tiên" (§9b). Khi chưa biết thì **hướng an toàn là       │
+ * │ THẤP**, vì hai chiều hỏng không cân nhau:                                │
+ * │                                                                          │
+ * │   thấp quá → việc hỏng sau 2 lượt, **có câu báo, người dùng thấy ngay**,  │
+ * │              và họ nới `max_turns` hoặc chia nhỏ yêu cầu — đường đi tiếp  │
+ * │              rõ ràng                                                     │
+ * │   cao quá  → đốt tiền **âm thầm** cho một việc sẽ không bao giờ xong      │
+ * │                                                                          │
+ * │ ⇒ Nâng lên khi có **một ca dài thật đo được**, không nâng theo cảm giác. │
+ * │ → [[agentco-safe-default-direction]]                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const MAX_CONTINUE = 1;
+
+/**
+ * Việc chạy tiếp = **CÙNG một việc**, thêm đúng một câu dặn.
+ *
+ * ⚠ KHÔNG nhét số thứ tự hay "bắt đầu từ phần 4" vào đây. Ta không biết nó đã
+ * làm tới đâu — và đoán hộ là dựng lại đúng cái lỗi vừa đi sửa (Trợ lý chia
+ * *"vị trí 1–3, 4–6"* cho một danh sách nó chưa từng đọc). Chỗ tiếp phải suy từ
+ * **thứ đã có trên đĩa**, và thứ duy nhất biết điều đó là chính worker khi nó
+ * mở thư mục kết quả của mình.
+ */
+/**
+ * CÓ CHẠY TIẾP KHÔNG — hàm thuần, và nó là hàm thuần **có chủ đích**.
+ *
+ * Quyết định này nằm trong một `.catch` giữa `run()` thì không test được nếu
+ * không dựng cả một văn phòng thật. Mà đây đúng là chỗ **phải** có test: hai
+ * hàng rào của nó chặn hai kiểu đốt tiền khác nhau, và cả hai đều im lặng khi
+ * hỏng.
+ */
+export function shouldContinue(p: { kind: FailureKind; tried: number; landed: number }): boolean {
+  if (p.kind !== 'max_turns') return false;
+  // ① Không có gì mới sinh ra ⇒ chạy tiếp là lặp trên một việc không nhúc nhích.
+  if (p.landed <= 0) return false;
+  // ② Tiến triển có thể THẬT mà rất chậm. Không trần thì một việc chia sai vẫn
+  //    bò tới vô tận, và người trả tiền là khách.
+  return p.tried < MAX_CONTINUE;
+}
+
+const CAU_TIEP =
+  'Việc này đã chạy dở ở lượt trước. Xem những file đã có trong thư mục kết quả của chính việc này, ' +
+  'rồi LÀM TIẾP PHẦN CÒN THIẾU — đừng làm lại từ đầu.';
+
+export function continueBrief(brief: TaskBrief): TaskBrief {
+  /**
+   * ⚠ CỘNG THÊM MỘT LẦN, KHÔNG PHẢI MỖI VÒNG MỘT LẦN. (test bắt được)
+   *
+   * Vòng thứ hai nối thêm một dòng y hệt là hai chuyện hỏng cùng lúc: bơm
+   * prefix của worker lên vô ích, và **ba dòng giống nhau dạy model rằng dòng
+   * đó không quan trọng** — đúng cơ chế làm một câu dặn mất tác dụng.
+   */
+  if (brief.constraints.includes(CAU_TIEP)) return brief;
+  return { ...brief, constraints: [...brief.constraints, CAU_TIEP] };
+}
+
 export class Scheduler {
   private readonly gate: CachePrimingGate;
+  /** Đã chạy tiếp mấy lần, theo `task_id`. → `MAX_CONTINUE` */
+  private readonly continued = new Map<string, number>();
   /** AIMD: gặp 429 thì giảm nửa, chạy trơn 10 task thì tăng 1. */
   private concurrency: number;
   private readonly maxConcurrency: number;
@@ -407,6 +476,52 @@ export class Scheduler {
               remaining.set(brief.task_id, brief);
               return;
             }
+            /**
+             * ┌────────────────────────────────────────────────────────────────┐
+             * │ CHẠM TRẦN LƯỢT MÀ ĐANG CÓ TIẾN TRIỂN ⇒ CHẠY TIẾP, KHÔNG BÁO HỎNG│
+             * │ (user duyệt 27/08)                                             │
+             * │                                                                │
+             * │ Ca sinh ra nó: một việc có **N phần**, mà **N chỉ biết được SAU │
+             * │ khi việc bắt đầu**. Trợ lý buộc phải đoán N lúc lập kế hoạch ⇒  │
+             * │ hoặc đoán thừa (27/08: 3/4 việc rỗng, $0,12 cho ba câu *"danh   │
+             * │ sách chỉ có 1 trang"*) hoặc đoán thiếu (một việc cháy trần).    │
+             * │ **Hai lỗi là hai đầu của cùng một cây gậy.**                    │
+             * │                                                                │
+             * │ ⚠ VÌ SAO KHÔNG ĐỂ TRỢ LÝ NGHĨ LẠI: nó phải trả một lượt model   │
+             * │ nữa, với ÍT dữ kiện hơn hẳn worker vừa có (nó chỉ thấy một câu  │
+             * │ `say`, không thấy 15 lượt kia). Một cơ chế "thử nghĩ cách khác" │
+             * │ ở tầng đó là **đoán**, và đoán ở tầng kế hoạch thì đẻ thêm việc.│
+             * │ Ở đây thì ngược: **0 token cho quyết định**, và chỗ tiếp đọc từ │
+             * │ FILE CÓ THẬT trên đĩa. → [[agentco-deterministic-vs-signal]]    │
+             * │                                                                │
+             * │ HAI HÀNG RÀO, thiếu cái nào là đẻ ra vòng lặp đốt tiền:         │
+             * │   ① phải CÓ TIẾN TRIỂN (`landed` không rỗng) — không có thì     │
+             * │      chạy tiếp là lặp vô tận trên một việc không nhúc nhích      │
+             * │   ② trần 3 lần, và số đó HIỆN RA cho người dùng                 │
+             * └────────────────────────────────────────────────────────────────┘
+             */
+            {
+              const daTiep = this.continued.get(brief.task_id) ?? 0;
+              const tienTrien = err instanceof RunError ? (err.observed?.landed.length ?? 0) : 0;
+              if (shouldContinue({ kind, tried: daTiep, landed: tienTrien })) {
+                this.continued.set(brief.task_id, daTiep + 1);
+                // ⚠ GHI SỔ TRƯỚC KHI CHẠY TIẾP — cùng lý do nhánh `rate_limit`:
+                // lượt vừa bị cắt đã tiêu token thật, và `max_turns` theo định
+                // nghĩa là kiểu hỏng ĐẮT NHẤT (nó chạy tới kịch trần).
+                if (err instanceof RunError && err.usage) wasted = addUsage(wasted, err.usage);
+                this.deps.emit({
+                  type: 'task.progress',
+                  task_id: brief.task_id,
+                  role: brief.role,
+                  say: `Việc dài hơn một lượt — đang chạy tiếp (${daTiep + 1}/${MAX_CONTINUE}).`,
+                });
+                remaining.set(brief.task_id, continueBrief(brief));
+                return;
+              }
+              // Không tiến triển, hoặc đã tiếp đủ 3 lần ⇒ báo hỏng THẬT, và câu
+              // báo của `worker.ts` đã nói ra cả phần *"có thể đã đổi thứ gì ở
+              // ngoài"* khi có cánh tay tham gia.
+            }
             if (kind === 'rate_limit') {
               this.onRateLimit();
               // ⚠ GHI SỔ TRƯỚC KHI THỬ LẠI. Lượt vừa hỏng đã tiêu token thật;
@@ -611,6 +726,17 @@ export class Scheduler {
            */
           onArmCall: (c) =>
             this.deps.audit?.append({ ...c, ...(this.planId ? { plan_id: this.planId } : {}) }),
+          /**
+           * Kết quả quá to được bê về ĐÂY — cùng thư mục với file task này làm
+           * ra. → `core/spill.ts`
+           *
+           * ⚠ Ghép ở đây vì cùng một lý do với `plan_id` ngay trên: worker chỉ
+           * cầm `TaskBrief`, mà brief cố ý không mang mã kế hoạch. Dựng đường
+           * dẫn ở nơi BIẾT thì không phải thêm một trường chỉ để chuyển tiếp.
+           */
+          ...(this.planId
+            ? { outDir: join(office.paths.artifacts, this.planId, brief.task_id) }
+            : {}),
           // Đăng ký tay cầm để `stop()` với tới được worker ĐANG chạy.
           onStart: (h) => {
             handle = h;

@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import { fastLaunch } from './armexec.js';
 import { findArm, folderRoots } from './catalog.js';
 import { noteRateLimit } from './energy.js';
+import { isAccountName } from './oauth.js';
 import { companyPaths, guardedZone, safeJoin, type GuardedZone, type GuardMode } from './paths.js';
 import { grantFor, injectSecrets, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
@@ -37,6 +38,7 @@ import {
 } from './types.js';
 import { effectiveTools } from './types.js';
 import { splitArmTool } from './audit.js';
+import { doSpill, planSpill, spillNotice } from './spill.js';
 
 export interface WorkerDeps {
   office: LoadedOffice;
@@ -57,6 +59,18 @@ export interface WorkerDeps {
     task_id?: string;
     args: unknown;
   }): void;
+  /**
+   * Thư mục kết quả của TASK NÀY — `artifacts/<plan_id>/<task_id>/`.
+   *
+   * ⚠ Worker không tự dựng được: `TaskBrief` cố ý **không mang `plan_id`**
+   * (xem `onArmCall`), nên chỗ biết mã kế hoạch là scheduler. Truyền xuống thay
+   * vì thêm một trường vào brief — cùng lý lẽ đã dùng cho `plan_id` của nhật ký.
+   *
+   * Thiếu ⇒ kết quả bê về rơi vào gốc `artifacts/`, tức một mục **mồ côi**
+   * không thuộc kế hoạch nào. Chấp nhận được (không mất dữ liệu), nhưng không
+   * phải hình dạng đúng. → `core/spill.ts §planSpill`
+   */
+  outDir?: string;
   /**
    * Trao tay cầm để NGẮT GIỮA CHỪNG. Scheduler giữ nó, `Esc` / `/stop` gọi tới.
    * → docs/SPEC-tools-approval.md §3b
@@ -245,6 +259,20 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   const armLabels: Record<string, string> = {};
   for (const [id, a] of Object.entries(office.company.arms)) if (a.label) armLabels[id] = a.label;
 
+  /**
+   * Băm → đường tới màn hình cài app của hãng. → `githubDoorError`
+   *
+   * Suy từ `catalog.scope`, tức **dữ liệu**, nên không có nhánh `=== 'github'`
+   * nào ở đây và hãng thứ hai có cùng kiểu 404 sẽ tự được phục vụ. Chỉ dựng cho
+   * cánh tay vai trò NÀY được nối — cùng lý lẽ mọi bảng khác trong hàm này.
+   */
+  const armDoors = new Map<string, string>();
+  for (const id of role.mcp) {
+    const url = findArm(office.company.arms[id]?.catalog ?? '')?.scope?.url;
+    if (url) armDoors.set(id, url);
+  }
+
+
   const model = modelFor(office, role.model_tier);
   // model PHẢI đi vào cacheKey: prompt cache đánh theo (model, prefix).
   const built = buildWorkerPrompt(office, role, { hotKnowledge: input.hotKnowledge, model });
@@ -267,6 +295,8 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
 
   // Ngắt / lỗi / xong đều phải trả về cùng một bộ số đo — gói lại một chỗ để
   // không có nhánh nào lỡ trả receipt thiếu `looped`/`reads`.
+  /** Đã gọi ra một cánh tay chưa — quyết định câu báo khi chạm trần lượt. */
+  let armCalled = false;
   const observed = (): Observed => ({
     landed: [...landed.values()],
     looped: watch.looped,
@@ -383,6 +413,104 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
              * └──────────────────────────────────────────────────────────────┘
              */
             { matcher: 'mcp__.*', hooks: [officeJail(jailDirs, 'arm')] },
+            /*
+              ⚠ ĐÃ BỎ (27/08 chiều): hook thứ hai `armJail` canh giới hạn repo.
+              Đừng dựng lại — lý do đầy đủ ở `SPEC-arms.md` §5h·7m. Tóm tắt:
+              phạm vi repo là **tài sản cấp tài khoản của GitHub**, và một hàng
+              rào thứ hai chồng lên nó chỉ mua được sự thu hẹp theo từng cánh
+              tay, đổi lấy một cơ chế nữa + gõ tay + đổi-là-cắm-lại.
+            */
+          ],
+          /**
+           * ┌────────────────────────────────────────────────────────────────┐
+           * │ KẾT QUẢ TO — ĐƯA VỀ VĂN PHÒNG. → `core/spill.ts` · §9e         │
+           * │                                                                │
+           * │ KHÔNG matcher: nó áp cho **mọi tool**. Claude Code tự cất kết   │
+           * │ quả quá dài ra file cho `Bash`, `WebFetch`, `Read`, và mọi MCP  │
+           * │ — nên bản vá cũng phải phủ hết, nếu không nó chỉ đúng cho hãng  │
+           * │ ta vừa gặp. (user 27/08: *"nó general không phải chỉ mỗi case   │
+           * │ notion này"*)                                                   │
+           * │                                                                │
+           * │ ⚠ HOOK NÀY KHÔNG ĐƯỢC NÉM. Nó chạy sau MỘT lời gọi đã thành    │
+           * │ công; làm hỏng cả lượt vì một thao tác chép file là đổi một mất │
+           * │ mát nhỏ lấy một mất mát lớn — cùng luật với `audit.append`.     │
+           * └────────────────────────────────────────────────────────────────┘
+           */
+          PostToolUse: [
+            {
+              hooks: [
+                async (input: Record<string, unknown>) => {
+                  try {
+                    const ten = String(input['tool_name'] ?? '');
+                    /**
+                     * DỊCH 404 SAI CỬA — trước phép bê, vì hai chuyện độc lập:
+                     * một câu 404 thì ngắn nên chẳng bao giờ bị bê, và nếu có
+                     * thì thứ đáng sửa vẫn là câu chứ không phải chỗ nó nằm.
+                     *
+                     * ⚠ Không `return` sớm khi KHÔNG khớp — dưới còn phép bê.
+                     */
+                    const door = armDoors.get(splitArmTool(ten)?.server ?? '');
+                    if (door && typeof input['tool_response'] === 'string') {
+                      const fixed = githubDoorError(
+                        (input['tool_input'] ?? {}) as Record<string, unknown>,
+                        input['tool_response'],
+                        door,
+                      );
+                      if (fixed) {
+                        return {
+                          hookSpecificOutput: {
+                            hookEventName: 'PostToolUse',
+                            updatedToolOutput: fixed,
+                          },
+                        };
+                      }
+                    }
+                    const plan = planSpill(
+                      input['tool_response'],
+                      ten,
+                      deps.outDir ?? office.paths.artifacts,
+                      office.paths.artifacts,
+                    );
+                    if (!plan || !doSpill(plan)) return {};
+
+                    /**
+                     * BÁO — nhưng **chỉ khi có bê**. (user chốt 27/08)
+                     *
+                     * Ngưỡng làm hành vi đổi theo từng lượt: trang nhỏ đi
+                     * thẳng, trang to bị bê ra file. Đổi hành vi mà không nói
+                     * là bắt người dùng đoán. Nhưng báo ở MỌI lượt thì thành
+                     * thứ người ta học cách bỏ qua — đúng lý lẽ đã dùng để bỏ
+                     * cổng duyệt. Nó đáng kêu **vì nó hiếm**.
+                     *
+                     * Và câu này đến từ tầng TẤT ĐỊNH, không phải từ model —
+                     * bốn lần trong dự án này *"hệ thống đúng, model kể sai"*.
+                     */
+                    deps.onProgress?.(
+                      `kết quả dài — đã lưu vào ${plan.rel} (${Math.round(plan.bytes / 1024)} KB)`,
+                    );
+                    const arm = splitArmTool(ten);
+                    if (arm) {
+                      deps.onArmCall?.({
+                        server: arm.server,
+                        tool: arm.tool,
+                        role: role.id,
+                        ...(brief.task_id ? { task_id: brief.task_id } : {}),
+                        args: { '(kết quả đã lưu)': plan.rel, bytes: plan.bytes },
+                      });
+                    }
+                    return {
+                      hookSpecificOutput: {
+                        hookEventName: 'PostToolUse',
+                        updatedToolOutput: spillNotice(plan),
+                      },
+                    };
+                  } catch {
+                    // Không bê được thì để nguyên câu của CLI: tệ hơn, không sai.
+                    return {};
+                  }
+                },
+              ],
+            },
           ],
         },
         ...(mcpServers ? { mcpServers } : {}),
@@ -449,6 +577,10 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
            */
           const arm = splitArmTool(call.name);
           if (arm) {
+            // Có chạm ra ngoài chưa? Câu báo khi chạm trần lượt **đổi hẳn** theo
+            // biến này: chưa chạm thì chỉ là một việc dở dang trong văn phòng;
+            // đã chạm thì có thể đã đổi thứ gì đó ở Notion/GitHub của người dùng.
+            armCalled = true;
             deps.onArmCall?.({
               server: arm.server,
               tool: arm.tool,
@@ -468,6 +600,41 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         finalText = typeof m['result'] === 'string' ? m['result'] : '';
         if (m['subtype'] === 'error_max_budget_usd') {
           throw new RunError(`Task ${brief.task_id} chạm trần ngân sách $${role.budget.max_usd}`, 'budget');
+        }
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ 🔴 CHẠM TRẦN LƯỢT PHẢI NÓI RA BẰNG TIẾNG NGƯỜI. (user bắt 27/08)   │
+         * │                                                                    │
+         * │   *"thế thì trả câu cú đàng hoàng chứ sao trả 1 cái lỗi            │
+         * │    error_max_turns ai biết là gì"*                                 │
+         * │                                                                    │
+         * │ Nhánh ngân sách ngay trên có câu tử tế từ lâu; nhánh LƯỢT thì rơi  │
+         * │ thẳng ra ngoài dưới dạng mã thô của SDK. Bất đối xứng đó không có  │
+         * │ lý do nào — chỉ là chưa ai viết.                                    │
+         * │                                                                    │
+         * │ ⚠⚠ VÀ CÂU NÀY PHẢI NÓI RA MỘT SỰ THẬT KHÓ CHỊU, chứ không chỉ dịch │
+         * │ mã lỗi: **việc có thể đã làm được MỘT PHẦN.** Đây là món nợ ghi từ  │
+         * │ 26/08 (`SESSIONS_MEMORY` §5s ⏸): một lượt chạm trần đã kịp gọi     │
+         * │ `notion-update-page` rồi mới bị cắt, nhưng báo cáo cuối nói *"chưa │
+         * │ làm được"* — một câu **sai về thế giới bên ngoài**.                 │
+         * │                                                                    │
+         * │ Với file trong văn phòng, nói nhầm là vô hại. Với cánh tay, nó là  │
+         * │ Notion/GitHub của người dùng — và ta KHÔNG có cách nào biết nó đã   │
+         * │ ghi tới đâu. Nên câu đúng là *"không rõ tới đâu, xem nhật ký"*,     │
+         * │ chứ không phải một lời trấn an. → [[agentco-safe-default-direction]]│
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        if (m['subtype'] === 'error_max_turns') {
+          const canhTay = armCalled;
+          throw new RunError(
+            `Việc này cần nhiều bước hơn mức cho phép (${role.budget.max_turns} bước) nên đã dừng giữa chừng.\n` +
+              (canhTay
+                ? `⚠ Nhân viên ĐÃ gọi ra kết nối bên ngoài trước khi dừng — có thể đã thay đổi thứ gì đó ở ` +
+                  `ngoài, và không rõ tới đâu. Xem nhật ký của kết nối để biết chính xác nó đã làm gì.\n`
+                : '') +
+              `Cách đi tiếp: chia việc thành các bước nhỏ hơn, hoặc nâng số bước tối đa của nhân viên này.`,
+            'max_turns',
+          );
         }
       }
     }
@@ -611,6 +778,67 @@ function officeJail(dirs: JailDirs, mode: GuardMode) {
     }
     return {};
   };
+}
+
+/*
+  ⚠ ĐÃ BỎ (27/08 chiều): `armJail` + `repoIn` — hàng rào repo thứ hai của ta.
+  **ĐỪNG DỰNG LẠI** mà không đọc `SPEC-arms.md` §5h·7m trước.
+
+  Nó chạy đúng và có test, nhưng user bác đúng chỗ: phạm vi repo là **tài sản
+  cấp tài khoản của GitHub**, và chồng một hàng rào thứ hai lên nó mua được
+  đúng một thứ — thu hẹp theo TỪNG CÁNH TAY — với ba cái giá:
+    · một cơ chế nữa cho cùng một danh từ ([[agentco-count-mechanisms]])
+    · người dùng phải GÕ TAY tên repo (ta không liệt kê được repo đã cài)
+    · giới hạn nằm trong băm ⇒ đổi giới hạn = cắm lại + nối lại dây
+
+  Chỗ hẹp hơn đã có sẵn, do đúng người giữ, cập nhật tức thì: nút *"Only select
+  repositories"* trên màn hình cài app. → `catalog.ts §scope`
+
+  Thứ THAY nó, và là chốt bù bắt buộc: `githubDoorError` ngay dưới (dịch 404
+  sai cửa của GitHub) + nhật ký kiểm toán đã ghi sẵn `owner`/`repo` trong `args`.
+*/
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ DỊCH CÂU LỖI SAI CỬA CỦA GITHUB. → SPEC-arms §5h·7f                      │
+ * │                                                                          │
+ * │ GitHub cố ý trả **404**, không phải 403, cho repo mà app chưa được cài    │
+ * │ vào — để không lộ repo có tồn tại hay không. Đứng từ phía họ thì đúng;    │
+ * │ đứng từ phía người dùng của ta thì đó là **câu lỗi sai cửa**: `404 Not    │
+ * │ Found` dạy người ta đi kiểm tên repo, kiểm chìa, kiểm quyền — tức mọi     │
+ * │ chỗ TRỪ chỗ đúng, là *"bạn chưa cài agentco vào repo này"*.               │
+ * │                                                                          │
+ * │ 🔴 Trước 27/08 chiều **không có một dòng nào** trong `src/` bắt ca này,   │
+ * │ dù ô C-3 bài 13 đã đòi từ lâu và trỏ tới một mục spec CHƯA TỒN TẠI. Nó    │
+ * │ trôi được lâu vì hàng rào repo che mất — nay bỏ hàng rào, đây là thứ      │
+ * │ **duy nhất** đứng giữa người dùng và một câu đố.                          │
+ * │                                                                          │
+ * │ ⚠ SỬA CÂU, KHÔNG NUỐT LỖI. Lời gọi vẫn hỏng, receipt vẫn ghi hỏng — ta   │
+ * │ chỉ thêm cửa đi tiếp vào cuối. Nuốt nó thành "thành công" là dựng lại ca  │
+ * │ Notion `Error:` đã đốt 10 lượt (một lượt hỏng bị mồi thành thành công, và │
+ * │ chiều ngược lại cũng tệ y như thế).                                       │
+ * │                                                                          │
+ * │ ⚠ CHỈ khi lời gọi có `owner`/`repo` — không có thì 404 nói về chuyện      │
+ * │ khác, và đoán bừa là dựng một câu sai cửa MỚI để thay câu sai cửa cũ.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function githubDoorError(
+  raw: Record<string, unknown>,
+  text: string,
+  installUrl: string,
+): string | null {
+  if (!/\b404\b|not found/i.test(text)) return null;
+  const owner = str(raw['owner']);
+  const repo = str(raw['repo']);
+  if (!owner || !repo) return null;
+  return (
+    `${text}\n\n` +
+    `↳ Với GitHub, 404 ở đây gần như luôn có nghĩa là **agentco chưa được cài vào ` +
+    `"${owner}/${repo}"** — chứ không phải repo đó không tồn tại hay chìa sai. GitHub cố ý ` +
+    `trả 404 thay vì 403 để không lộ repo riêng tư.\n` +
+    `↳ Người dùng cần mở ${installUrl} và thêm repo này vào. Đừng thử lại bằng tên khác, và ` +
+    `đừng đoán là repo không tồn tại.`
+  );
 }
 
 /**
@@ -944,8 +1172,31 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
   const { env, missing } = grantFor(readSecrets(companyPaths(office.companyDir)), role.secrets);
   if (missing.length) {
     process.emitWarning(
-      `Vai trò "${role.id}" khai secrets ${missing.join(', ')} nhưng chưa có trong ` +
-        `.state/secrets.json. Tool cần chìa đó sẽ hỏng — thêm bằng \`agentco secret set <TÊN>\`.`,
+      /**
+       * ⚠ HAI CÂU, vì hai việc phải làm khác hẳn nhau. (user dán câu này 28/08)
+       *
+       * `agentco secret set` **không dùng được cho tài khoản đăng nhập** — không
+       * có chuỗi nào để gõ, chìa sinh ra từ luồng OAuth. Bảo họ chạy lệnh đó là
+       * bảo đi điền một thứ không tồn tại, đúng lớp lỗi §5m mà `probeArm` đã sửa
+       * ở cửa của nó. `isAccountName` sống cạnh `accountName` đúng để phân biệt
+       * được chuyện này ở MỌI cửa, không riêng cửa nào.
+       *
+       * Ca thường gặp nhất (user: *"tôi thường gặp mỗi khi update code"*): họ gỡ
+       * một tài khoản ở giao diện, còn `roles/<id>.yaml` vẫn khai tên chìa cũ.
+       */
+      (() => {
+        const accs = missing.filter((n) => isAccountName(n));
+        const keys = missing.filter((n) => !isAccountName(n));
+        const parts = [`Vai trò "${role.id}" thiếu chìa. Tool cần chúng sẽ hỏng.`];
+        if (accs.length) {
+          parts.push(
+            `${accs.join(', ')}: đây là TÀI KHOẢN ĐĂNG NHẬP, không phải chìa gõ tay — ` +
+              `nối lại ở hộp thoại Kết nối, hoặc bỏ tên đó khỏi roles/${role.id}.yaml nếu không dùng nữa.`,
+          );
+        }
+        if (keys.length) parts.push(`${keys.join(', ')}: thêm bằng \`agentco secret set <TÊN>\`.`);
+        return parts.join(' ');
+      })(),
     );
   }
 
@@ -1376,6 +1627,34 @@ function errorMessage(err: unknown): string {
  * Phân loại lỗi. Rate limit và hết hạn mức subscription là HAI thứ khác nhau,
  * xử lý ngược nhau → docs/SPEC-2026-08-14-agentco.md §9b
  */
+/**
+ * Mã lỗi của SDK → CÂU cho người đọc. → `assistant.ts` chỗ `is_error`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Vì sao là một hàm chứ không phải một chuỗi viết tại chỗ: cùng một mã lỗi │
+ * │ xuất hiện ở **hai đường** (Trợ lý và nhân viên), và hai bản dịch khác     │
+ * │ nhau của cùng một sự cố là thứ dự án này đã trả giá vài lần.             │
+ * │                                                                          │
+ * │ ⚠ CHỈ dịch khi SDK **không** đưa câu nào. Có câu thật thì giữ nguyên —   │
+ * │ thay một câu cụ thể bằng một câu chung là làm mất dữ kiện.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function sayError(raw: string, kind: FailureKind): string {
+  // SDK đã nói gì đó ra hồn (không phải mã máy) ⇒ giữ nguyên.
+  if (!/^error_[a-z_]+$/.test(raw.trim())) return raw;
+  if (kind === 'max_turns') {
+    return (
+      'Việc này cần nhiều bước hơn mức cho phép trong một lượt nên đã dừng giữa chừng. ' +
+      'Thử chia nhỏ yêu cầu, hoặc nói rõ hơn cần làm gì trước làm gì sau.'
+    );
+  }
+  if (kind === 'budget') return 'Lượt này chạm trần chi phí đã đặt cho công việc.';
+  if (kind === 'usage_limit') return 'Tài khoản Claude đã hết hạn mức dùng.';
+  if (kind === 'rate_limit') return 'Claude đang quá tải, thử lại sau ít phút.';
+  if (kind === 'auth') return 'Chưa đăng nhập được vào Claude trên máy này.';
+  return `Claude Code dừng giữa chừng (${raw}).`;
+}
+
 export function classifyError(err: unknown): FailureKind {
   const msg = errorMessage(err);
 

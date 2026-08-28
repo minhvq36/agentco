@@ -47,6 +47,42 @@ export type SecretMap = Record<string, string>;
  */
 const OAUTH_KEY = '$oauth';
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 DANH TÍNH ỨNG DỤNG PHẢI SỐNG LÂU BẰNG CÁI TÀI KHOẢN NÓ CẤP CHÌA.      │
+ * │ (nguyên nhân gốc của hai tài khoản Notion chết — truy 27/08)             │
+ * │                                                                          │
+ * │ Trước: `client_id` xin được bằng đăng ký động (DCR) chỉ nằm trong một     │
+ * │ `Map` **trong RAM**. Tắt daemon là mất ⇒ lần bật sau **đăng ký một ứng    │
+ * │ dụng MỚI** ở phía dịch vụ. Chạy vài hôm là rải ra hàng chục ứng dụng, mỗi │
+ * │ cái cầm chìa của một nhóm tài khoản, và không cái nào được ai dọn.        │
+ * │                                                                          │
+ * │ Số đo 27/08 chỉ thẳng vào đó: hai tài khoản chết dùng CHUNG một           │
+ * │ `client_id` cũ, tài khoản sống dùng `client_id` mới nhất. Cả hai client   │
+ * │ đều còn tồn tại (`invalid_grant` chứ không phải `invalid_client`) ⇒ thứ   │
+ * │ bị thu hồi là **quyền cấp cho ứng dụng cũ**, không phải bản thân chìa.    │
+ * │                                                                          │
+ * │ ⇒ Ứng dụng phải được đăng ký **một lần, giữ mãi**. Đó cũng đúng điều      │
+ * │ người dùng đòi: *"như account Facebook, Shopee — log cả năm có bị ai đá   │
+ * │ ra đâu"*. Phiên web sống lâu được vì **ứng dụng đứng yên**, chỉ có chìa   │
+ * │ xoay. Ta đang làm ngược: xoay cả ứng dụng.                               │
+ * │                                                                          │
+ * │ Khoá `$clients`, cùng file, cùng đường ghi nguyên tử — **không** đẻ thêm  │
+ * │ một kho thứ ba. Cùng lý lẽ đã viết cho `$oauth` ở khối trên.              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const CLIENTS_KEY = '$clients';
+
+/**
+ * Mọi khoá dành riêng. Dùng ở **một** chỗ: `writeSecrets` phải giữ lại tất cả.
+ *
+ * ⚠ Đây là chỗ đã suýt hỏng lần thứ hai. `writeSecrets` dựng lại cả file từ
+ * `{...chìa, $oauth}` — tức bất kỳ khoá dành riêng nào **không được nêu tên
+ * trong đúng dòng đó** sẽ bị xoá lặng lẽ khi người dùng cắm một cánh tay bất kỳ.
+ * Liệt kê một chỗ thì thêm khoá thứ ba về sau không cần nhớ đi sửa nơi khác.
+ */
+const RESERVED = [OAUTH_KEY, CLIENTS_KEY] as const;
+
 /** Tài khoản OAuth theo TÊN CHÌA (`NOTION_OAUTH_A1B2C3D4`). → `oauth.ts` */
 export type OAuthMap = Record<string, OAuthAccount>;
 
@@ -117,6 +153,42 @@ export function saveOAuth(paths: CompanyPaths, name: string, acc: OAuthAccount |
   writeRaw(paths, { ...raw, [OAUTH_KEY]: bag });
 }
 
+/**
+ * `client_id` đã đăng ký, theo `issuer|redirect_uri`. → `$clients`
+ *
+ * ⚠ Khoá phải gồm `redirect_uri`: DCR cấp `client_id` **cho đúng URI đã đăng
+ * ký**. Đổi cổng daemon rồi dùng lại client cũ ⇒ `invalid_redirect_uri`, và câu
+ * lỗi đó không hề nói ra nguyên nhân thật.
+ *
+ * ⚠ `client_id` **không phải bí mật** (public client, `token_endpoint_auth_method:
+ * none`). Nó nằm ở đây vì đây là chỗ dữ liệu **của công ty** sống, không phải vì
+ * nó cần được giấu.
+ */
+export function readClients(paths: CompanyPaths): Record<string, string> {
+  const bag = readRaw(paths)[CLIENTS_KEY];
+  if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+    if (typeof v === 'string' && v) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * `null` = **XOÁ** mục đó, không phải ghi chuỗi rỗng.
+ *
+ * Cần cho ô *"dùng client_id của bạn"*: xoá ô đi nghĩa là **quay về client của
+ * agentco**, và cách duy nhất diễn đạt điều đó là mục ấy biến mất. Ghi `''` thì
+ * `deviceClientId` đọc lên một chuỗi rỗng và gửi nó lên hãng.
+ */
+export function saveClient(paths: CompanyPaths, key: string, clientId: string | null): void {
+  const raw = readRaw(paths);
+  const next = { ...readClients(paths) };
+  if (clientId === null) delete next[key];
+  else next[key] = clientId;
+  writeRaw(paths, { ...raw, [CLIENTS_KEY]: next });
+}
+
 export function writeSecrets(paths: CompanyPaths, map: SecretMap): void {
   /**
    * ⚠ HAI CÁI BẪY Ở ĐÂY, VÀ CẢ HAI ĐẾN TỪ CÙNG MỘT DÒNG CÓ SẴN:
@@ -132,10 +204,22 @@ export function writeSecrets(paths: CompanyPaths, map: SecretMap): void {
    *    (OAuth thắng lúc đọc) nhưng là một quả mìn cho bất kỳ ai đọc file và
    *    tưởng đó là chìa thật.
    */
+  /**
+   * ③ 🔴 VÀ MỌI KHOÁ DÀNH RIÊNG KHÁC CŨNG PHẢI SỐNG SÓT — không riêng `$oauth`.
+   *
+   * Bản trước nêu đích danh `$oauth` trong đúng dòng dựng lại file, nên khoá
+   * dành riêng **thứ hai** (`$clients`) sẽ bị xoá lặng lẽ ở lần cắm cánh tay
+   * tiếp theo — và mất `$clients` nghĩa là lần đăng nhập sau đăng ký một ứng
+   * dụng mới, tức dựng lại **đúng cái lỗi vừa truy ra**. Giữ theo DANH SÁCH
+   * (`RESERVED`), không theo tên gõ tay.
+   */
+  const raw = readRaw(paths);
   const oauth = readOAuth(paths);
   const flat: SecretMap = {};
   for (const [k, v] of Object.entries(map)) if (!(k in oauth)) flat[k] = v;
-  writeRaw(paths, { ...flat, ...(Object.keys(oauth).length ? { [OAUTH_KEY]: oauth } : {}) });
+  const giu: Record<string, unknown> = {};
+  for (const k of RESERVED) if (raw[k] && Object.keys(raw[k] as object).length) giu[k] = raw[k];
+  writeRaw(paths, { ...flat, ...giu, ...(Object.keys(oauth).length ? { [OAUTH_KEY]: oauth } : {}) });
 }
 
 /**
@@ -324,8 +408,12 @@ export function injectSecrets<T>(config: T, env: Record<string, string>): T {
     if (missing.size) {
       // TÊN, không bao giờ GIÁ TRỊ — cùng luật với mọi chỗ khác trong file này.
       process.emitWarning(
+        // ⚠ Cùng luật hai-câu với `worker.ts §pickMcp`: tên dạng `*_OAUTH_xxxxxxxx`
+        // là TÀI KHOẢN ĐĂNG NHẬP, không có chuỗi nào để gõ. Bảo họ `secret set`
+        // là chỉ sai cửa. Nhận dạng bằng chính hình dạng tên — không đoán.
         `Cánh tay HTTP thiếu chìa ${[...missing].join(', ')} — server sẽ trả 401. ` +
-          `Thêm bằng \`agentco secret set <TÊN>\`, đừng đi tìm ở phía server.`,
+          `Tên dạng \`*_OAUTH_xxxxxxxx\` là tài khoản đăng nhập (nối lại ở hộp thoại Kết nối); ` +
+          `tên khác thì thêm bằng \`agentco secret set <TÊN>\`. Đừng đi tìm ở phía server.`,
       );
     }
     return { ...cfg, headers: out } as T;

@@ -18,10 +18,12 @@ import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 import { folderRoots } from './catalog.js';
+import { companyPaths } from './paths.js';
+import { readOAuth } from './secrets.js';
 import type { LoadedOffice } from './config.js';
 import { noteRateLimit } from './energy.js';
 import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
-import { addUsage, classifyError } from './worker.js';
+import { addUsage, classifyError, sayError } from './worker.js';
 import {
   DeliverSchema,
   EMPTY_USAGE,
@@ -91,6 +93,15 @@ const PlanTasksSchema = z.object({
 });
 
 const PlanOutputSchema = z.union([PlanAskSchema, PlanTasksSchema]);
+
+/**
+ * Cửa cứu hộ: một object chỉ có `say`, thiếu mỗi `intent`. → `decideRoute` cửa 4
+ *
+ * ⚠ CỐ Ý KHÔNG `.strict()`. Ca thật gồm cả `{"intent":"answer","say":"…"}` —
+ * model bịa một tên cửa không có trong danh sách. Bắt chặt ở đây là vứt đi đúng
+ * những ca ta dựng cửa này để cứu.
+ */
+const BareSaySchema = z.object({ say: z.string().min(1) });
 
 /**
  * Kế hoạch model vừa viết ra, CHƯA đóng khung đường dẫn và chưa gắn `plan_id`.
@@ -195,7 +206,13 @@ export type RouteDecision = z.infer<typeof RouteSchema>;
  * quên xử lý — xem `decideRoute`.
  */
 export type RouteOutcome =
-  | RouteDecision
+  /**
+   * `salvaged` = đi qua một CỬA CỨU HỘ, không phải cửa chính. Không đổi hành vi
+   * một chút nào — nó chỉ để ghi nhật ký. Một cửa cứu hộ không để lại dấu vết là
+   * một cái phễu êm ái: model quên `intent` mãi mãi mà không ai biết, và ta mất
+   * luôn tín hiệu để đi sửa ở chỗ đúng (prompt), không phải sửa mãi ở đây.
+   */
+  | (RouteDecision & { salvaged?: true })
   /** Model trả nguyên một KẾ HOẠCH thay vì một quyết định định tuyến. */
   | { intent: 'plan'; draft: PlanDraft }
   /** Trả về thứ không dùng được, VÀ không được cho người dùng nhìn thấy. */
@@ -254,10 +271,42 @@ export function decideRoute(text: string): RouteOutcome {
   const asked = extractJson(text, PlanAskSchema);
   if (asked) return { intent: 'ask', say: asked.ask.trim() };
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CỬA 4 — `{"say": "…"}` THIẾU MỖI CHỮ `intent`. (bug user bắt 28/08)   │
+   * │                                                                          │
+   * │ Đây KHÔNG phải giả thuyết. Nguyên văn trong `route-failure.log`, hai lượt │
+   * │ cách nhau 29 giây, sau khi user rút dây cánh tay GitHub:                  │
+   * │                                                                          │
+   * │   {"say":"Kết nối GitHub hiện không còn nữa, nên mình không đọc được      │
+   * │    README của repo toeic-learning lúc này. Bạn cần kết nối lại GitHub…"}  │
+   * │                                                                          │
+   * │ Model trả lời **đúng, đủ, và bằng tiếng người**. Ta vứt nó đi rồi thay    │
+   * │ bằng một câu xin lỗi bảo người dùng gõ lại — và họ gõ lại thì ra y hệt,   │
+   * │ vì model có sai đâu mà đổi. User nói đúng cả ba vế: *"đâu phải lỗi của    │
+   * │ LLM"* · *"rất nguy hiểm cho multilanguage"* · *"có nhắn lại thì kết quả   │
+   * │ cũng ra vậy"*.                                                            │
+   * │                                                                          │
+   * │ `say` là trường của `chat` **và** của `ask`, nên thiếu `intent` là thật   │
+   * │ sự không biết nó muốn cửa nào. Chọn `chat` vì bất đối xứng: `ask` hứa     │
+   * │ *"mình đang chờ bạn trả lời"* — hứa nhầm điều đó tệ hơn là không hứa.     │
+   * │ Cả hai cửa đều chỉ in câu đó ra, nên người dùng không mất gì.             │
+   * │                                                                          │
+   * │ ⚠ Cùng khuôn với hai cửa cứu hộ ngay trên: ta ĐANG CẦM một câu trả lời    │
+   * │ đã trả tiền và đọc được — việc đúng là DÙNG NÓ, không phải bắt người dùng │
+   * │ mua lại lượt nữa.                                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const bare = extractJson(text, BareSaySchema);
+  if (bare) return { intent: 'chat', say: bare.say.trim(), salvaged: true };
+
   const raw = text.trim();
   if (!raw) {
     return {
       intent: 'garbled',
+      // Ca này `route()` cũng thử lại một lượt trước khi câu dưới tới được mặt
+      // người dùng — rỗng thường là chập nhất thời, tức đúng ca một lượt nữa
+      // giải quyết được mà không cần phiền ai.
       say: 'Mình gọi được model nhưng nó không trả về gì cả — lỗi đường truyền, không phải cách bạn nói. Nhắn lại giúp mình nhé.',
       raw: '',
     };
@@ -269,9 +318,22 @@ export function decideRoute(text: string): RouteOutcome {
       // là VĂN XUÔI — đọc được, và chính nó là thông tin. Ở đây nó là JSON: dán
       // một đoạn mã trước mặt người mở tiệm hoa không thêm được gì ngoài hoang
       // mang. Bản nguyên văn đi vào `.state/route-failure.log` cho người sửa lỗi.
+      /**
+       * ⚠ PHAO CUỐI — chỉ tới đây khi **lượt sửa ở `route()` cũng hỏng**.
+       *
+       * Câu cũ ghim ở đây có ba tật, cả ba đã cắn thật (28/08): nó đoán nguyên
+       * nhân (*"lỗi của mình"* trong khi thật ra kết nối đã bị rút), nó ghim
+       * tiếng Việt giữa một dòng chat đáng lẽ theo tiếng người dùng, và nó bảo
+       * *"nhắn lại y nguyên"* — một lời khuyên **tất định sai**: model có sai
+       * đâu mà đổi, gõ lại là ra y hệt.
+       *
+       * Câu mới không đoán gì cả và không đổ lỗi cho ai. Nó nói đúng hai điều ta
+       * BIẾT — chưa làm được, và có một đường đi tiếp khác — vì đó là toàn bộ
+       * thứ có thật ở nhánh này.
+       */
       say:
-        'Mình trả lời sai định dạng nên câu vừa rồi chưa dùng được — lỗi của mình, ' +
-        'không phải cách bạn nói. Bạn nhắn lại y nguyên giúp mình nhé.',
+        'Lượt vừa rồi chưa ra được câu trả lời dùng được. Bạn thử nói lại theo cách khác, ' +
+        'hoặc chia nhỏ yêu cầu ra giúp mình.',
       raw,
     };
   }
@@ -1068,8 +1130,32 @@ export function reachDiff(
  * Luật ba điều kiện và ranh giới của nó nằm ở `Assistant.staleArmMentions`.
  */
 export function staleMentions(input: {
-  /** Sổ cánh tay của công ty — chỉ cần `label`. */
-  arms: Record<string, { label?: string }>;
+  /**
+   * Sổ cánh tay của công ty — `label`, và **tên tài khoản** nếu là cánh tay OAuth.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 `via` THÊM 28/08 VÌ CỔNG NÀY VỪA ĐỂ LỌT MỘT CA THẬT.                  │
+   * │                                                                          │
+   * │ User gỡ tài khoản `minhvuptitd14`, rồi Trợ lý hỏi:                        │
+   * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub minhvq36 hay             │
+   * │    minhvuptitd14 vậy bạn?"*                                              │
+   * │                                                                          │
+   * │ Cổng không bắn, và nó **không sai luật** — nó chỉ so với `label`, tức     │
+   * │ chuỗi `"GitHub · minhvuptitd14"`. Câu trên không chứa nguyên chuỗi đó.    │
+   * │ Cánh tay thư mục không dính lỗ này vì nhãn của chúng THƯỜNG được nhắc     │
+   * │ nguyên vẹn (`D:\Downloads\…`); cánh tay OAuth thì tên tài khoản là thứ    │
+   * │ người ta nhắc, còn phần `"GitHub · "` thì bỏ.                             │
+   * │                                                                          │
+   * │ ⇒ Kim thứ ba: **tên tài khoản đứng một mình**. Nó không phải trường mới — │
+   * │ `via` đã có sẵn, tra từ `arms[].secrets` ra kho OAuth, và đang được dùng  │
+   * │ ở danh sách dùng lại + node trên sơ đồ. Đây là chỗ thứ ba của cùng một    │
+   * │ sự thật, không phải một cơ chế thứ hai. → `company.ts §listArms`          │
+   * │                                                                          │
+   * │ ⚠ RANH GIỚI KHÔNG ĐỔI: vẫn bắt TÊN, không bắt CÁCH NÓI VÒNG. Vẫn hẹp,    │
+   * │ vẫn chưa đóng. [[agentco-deterministic-vs-signal]]                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  arms: Record<string, { label?: string; via?: string }>;
   /** Cấu hình từng cánh tay — `folderRoots` đọc `args` từ đây. */
   servers: Record<string, unknown>;
   /** Id cánh tay ĐANG có ít nhất một nhân viên trực nối vào. */
@@ -1080,7 +1166,7 @@ export function staleMentions(input: {
   const { arms, servers, live, say, userText } = input;
   // Tên/thư mục của những cánh tay CÒN nối — điều kiện 3.
   const liveText = [...live]
-    .flatMap((id) => [arms[id]?.label, ...folderRoots(servers[id])])
+    .flatMap((id) => [arms[id]?.label, arms[id]?.via, ...folderRoots(servers[id])])
     .filter((s): s is string => !!s)
     .join('\n')
     .toLowerCase();
@@ -1096,7 +1182,7 @@ export function staleMentions(input: {
      * chứa chuỗi đó, và cổng sẽ bắn ở mọi lượt. Thà bỏ sót một nhãn hai chữ
      * còn hơn biến cổng thành tiếng ồn — nó vốn đã là lớp thứ hai.
      */
-    const needles = [arms[id]?.label, ...folderRoots(servers[id])].filter(
+    const needles = [arms[id]?.label, arms[id]?.via, ...folderRoots(servers[id])].filter(
       (s): s is string => typeof s === 'string' && s.trim().length >= 4,
     );
     for (const n of needles) {
@@ -1554,8 +1640,26 @@ export class Assistant {
     for (const id of this.assignableRoles()) {
       for (const m of this.office.roles.get(id)?.mcp ?? []) live.add(m);
     }
+    const book = this.office.company.arms;
+    /**
+     * Bù thêm TÊN TÀI KHOẢN cho kim thứ ba. → `staleMentions §arms.via`
+     *
+     * ⚠ Đọc kho OAuth có ĐIỀU KIỆN, không đọc mặc định: cổng này chạy ở **mọi**
+     * lượt Trợ lý, và tuyệt đại đa số văn phòng không có cánh tay nào bị rút.
+     * Không có ứng viên nào ⇒ không chạm đĩa. Cùng khuôn đọc-lười đã dùng ở
+     * `office.ts §canvas`.
+     */
+    const needsOauth = Object.keys(this.office.company.mcpServers).some(
+      (id) => !live.has(id) && (book[id]?.secrets?.length ?? 0) > 0,
+    );
+    const oauth = needsOauth ? readOAuth(companyPaths(this.office.companyDir)) : {};
+    const arms: Record<string, { label?: string; via?: string }> = {};
+    for (const [id, meta] of Object.entries(book)) {
+      const via = (meta.secrets ?? []).map((s) => oauth[s]?.label).find(Boolean);
+      arms[id] = { ...(meta.label ? { label: meta.label } : {}), ...(via ? { via } : {}) };
+    }
     return staleMentions({
-      arms: this.office.company.arms,
+      arms,
       servers: this.office.company.mcpServers,
       live,
       say,
@@ -2032,7 +2136,79 @@ export class Assistant {
     // Quyết định là hàm THUẦN và có test riêng. Ở đây chỉ còn phần có tác dụng
     // phụ: ghi nhật ký ca hỏng. → `decideRoute`
     let value = decideRoute(text);
-    if (value.intent === 'garbled') this.logFailure('route-failure.log', message, value.raw);
+
+    // Cửa cứu hộ có ghi sổ, vì một cửa cứu hộ im lặng là một cái phễu êm ái:
+    // model quên `intent` mãi mà không ai biết. → `RouteOutcome.salvaged`
+    if ('salvaged' in value && value.salvaged) {
+      this.logFailure('route-salvage.log', message, text.trim());
+    }
+
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 CÂU CỨU HỘ PHẢI DO MODEL VIẾT, KHÔNG PHẢI HẰNG SỐ CỦA TA.            │
+     * │ (user chốt 28/08)                                                        │
+     * │                                                                          │
+     * │ > *"fallback vẫn parse qua LLM để nó nói tiếng người lại, nhưng vẫn cần  │
+     * │ >  phải có context chính xác là gì, không thì rất khó đến người cũng     │
+     * │ >  không hiểu được"*                                                     │
+     * │                                                                          │
+     * │ Ba thứ một chuỗi ghim cứng không làm được, và cả ba đều đã cắn:          │
+     * │  ① **Ngôn ngữ.** Nó là tiếng Việt ghim trong mã, nằm giữa một dòng chat  │
+     * │     mà mọi câu khác đều do model viết theo tiếng người dùng đang gõ.     │
+     * │  ② **Nguyên nhân.** Nó đoán *"lỗi của mình"* trong khi ca thật là **kết  │
+     * │     nối đã bị rút** — người dùng đọc xong đi tìm sai chỗ.                │
+     * │  ③ **Lối ra.** Nó bảo *"nhắn lại y nguyên"*, và người dùng làm đúng thế  │
+     * │     rồi nhận lại y hệt. Một lời khuyên tất định sai còn tệ hơn im lặng.  │
+     * │                                                                          │
+     * │ ⚠ NHƯNG "để model nói" KHÔNG được thành "để model tự giải thích hệ       │
+     * │ thống" — luật đã có ở `roster()`, sinh ra từ ca *"văn phòng mình không    │
+     * │ có kết nối tìm kiếm"* (SAI, và nghe rất hợp lý). Nên lượt sửa này đưa    │
+     * │ **nguyên văn thứ nó vừa nói** và bắt nó PHÁT LẠI, không bắt nó chẩn      │
+     * │ đoán. Đó chính là *"cần có context chính xác"* user nói.                  │
+     * │                                                                          │
+     * │ Đúng khuôn cổng `stale` ngay dưới: phát hiện tất định trước, gọi model    │
+     * │ sau, **sửa đúng một lần**. Sạch thì 0 đồng.                               │
+     * └──────────────────────────────────────────────────────────────────────────┘
+     */
+    if (value.intent === 'garbled') {
+      this.logFailure('route-failure.log', message, value.raw);
+      /**
+       * ⚠ NEO VÀO **VIỆC NGƯỜI DÙNG MUỐN**, không neo vào cái hỏng. (user 28/08)
+       *
+       * > *"LUÔN BÁM VÀO MỤC TIÊU CỦA CÂU HỎI USER MUỐN ĐẠT ĐƯỢC LÀ GÌ. Ví dụ:
+       * >  tôi muốn đọc toeic-learning → báo hiện tại không thể kết nối đến mcp
+       * >  github do vừa ngắt kết nối"*
+       *
+       * Mục tiêu VỐN nằm trong lịch sử phiên (`askSession` chạy trên session của
+       * Trợ lý). Nhắc lại nguyên văn ở đây vì một lượt sửa nói về **định dạng**
+       * rất dễ kéo model đi trả lời về định dạng — tức trả lời đúng câu hỏi cuối
+       * cùng nó vừa đọc, và câu đó là câu của TA. Người dùng thì vẫn đang đợi
+       * biết repo kia đọc được hay không.
+       *
+       * Tốn thêm token? Chỉ trên nhánh đã hỏng, và chỉ bằng độ dài câu họ vừa gõ.
+       */
+      const goal =
+        `Việc người dùng đang muốn: "${truncateToTokens(message, 200)}".\n` +
+        `Câu trả lời phải nói về ĐÚNG việc đó — làm được, hay chưa làm được và thiếu gì. ` +
+        `ĐỪNG nói về định dạng hay về lỗi kỹ thuật: người dùng không thấy chuyện đó.\n`;
+      const repair = await this.askSession(
+        value.raw
+          ? `⚠ Lượt vừa rồi bạn trả về thứ hệ thống KHÔNG dùng được. Nguyên văn:\n\n${value.raw}\n\n` +
+              goal +
+              `Nếu trong nguyên văn trên ĐÃ có câu trả lời cho người dùng, hãy PHÁT LẠI ĐÚNG câu đó, ` +
+              `đúng định dạng {"intent":"chat","say":"…"}. Nếu chưa có, tự viết một câu ngắn.\n` +
+              `⚠ ĐỪNG đoán nguyên nhân kỹ thuật. Chỉ nói thứ bạn ĐỌC ĐƯỢC trong danh bạ ở trên ` +
+              `(ví dụ: không còn nhân viên nào nối tới kết nối cần dùng). ` +
+              `Viết bằng đúng thứ tiếng người dùng đang dùng.`
+          : `⚠ Lượt vừa rồi bạn không trả về gì cả.\n` + goal + `Trả lời lại, đúng định dạng JSON như trên.`,
+      );
+      usage = addUsage(usage, repair.usage);
+      const fixed = decideRoute(repair.text);
+      // Lượt sửa cũng hỏng ⇒ mới tới chuỗi ghim cứng. Nó là **phao cuối**, không
+      // phải cửa thường — và giờ nó hiếm tới mức thấy nó là một tín hiệu thật.
+      if (fixed.intent !== 'garbled') value = fixed;
+      else this.logFailure('route-failure.log', `${message}\n[lượt sửa cũng hỏng]`, fixed.raw);
+    }
 
     /**
      * BƯỚC 2 — CỔNG HẬU KIỂM. Đây mới là thứ chặn thật. → `staleArmMentions`
@@ -2278,10 +2454,28 @@ export class Assistant {
             m['is_error'] === true ||
             (typeof m['subtype'] === 'string' && m['subtype'].startsWith('error'));
           if (failed) {
-            const why =
+            /**
+             * ┌──────────────────────────────────────────────────────────────┐
+             * │ 🔴 ĐÂY LÀ CHỖ NGƯỜI DÙNG ĐỌC ĐƯỢC CHỮ `error_max_turns`.     │
+             * │ (user 27/08: *"sao trả 1 cái lỗi error_max_turns ai biết là  │
+             * │  gì"*)                                                       │
+             * │                                                              │
+             * │ SDK trả `subtype: 'error_max_turns'` với `result` RỖNG, nên   │
+             * │ dòng cũ rơi xuống vế thứ hai và ném thẳng **mã máy** ra màn   │
+             * │ hình. Không phải lỗi logic — chỉ là chưa ai dịch.             │
+             * │                                                              │
+             * │ ⚠⚠ PHẢI PHÂN LOẠI TRÊN MÃ GỐC, KHÔNG TRÊN CÂU ĐÃ DỊCH.       │
+             * │ `classifyError` khớp bằng regex `/max_turns/`. Dịch trước rồi │
+             * │ mới phân loại là câu tiếng Việt không khớp gì cả ⇒ mọi lỗi     │
+             * │ tụt về `other` ⇒ tầng trên xử lý sai, **im lặng**. Bản vá cho  │
+             * │ câu chữ mà làm hỏng luồng điều khiển là cái giá không ai thấy. │
+             * └──────────────────────────────────────────────────────────────┘
+             */
+            const raw =
               (typeof m['result'] === 'string' && m['result'].trim()) ||
               (typeof m['subtype'] === 'string' ? m['subtype'] : 'lỗi không rõ từ Claude Code');
-            throw new RunError(why, classifyError(why), { cause: m });
+            const kind = classifyError(raw);
+            throw new RunError(sayError(raw, kind), kind, { cause: m });
           }
           text = typeof m['result'] === 'string' ? m['result'] : '';
         }

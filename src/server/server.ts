@@ -24,9 +24,10 @@ import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
-import { buildConfig, catalogForUi, findArm } from '../core/catalog.js';
+import { buildConfig, catalogForUi, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
-import { grantFor, missingSecretRefs, readSecrets } from '../core/secrets.js';
+import { callTool, httpTarget } from '../core/mcp-http.js';
+import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
 import { companyPaths } from '../core/paths.js';
 import {
   REFRESH_TICK_MS,
@@ -38,6 +39,9 @@ import {
   oauthStart,
   redirectBase,
   refreshDue,
+  scanRepos,
+  deviceClientId,
+  setDeviceClientId,
 } from './oauth-routes.js';
 
 /**
@@ -64,13 +68,25 @@ export function isLoopback(addr: string | undefined): boolean {
  * số là chuyện đã đốt dự án này một lần rồi (`agentSlot` vs `arrange`, xem
  * `layout-geometry.ts`): chúng lệch nhau, và không ai thấy cho tới khi hỏng.
  */
-function armConfig(body: {
+export function armConfig(body: {
   config?: Record<string, unknown>;
   catalogId?: string;
   folders?: string[];
   account?: string;
   groups?: string[];
   level?: string;
+  /**
+   * 🔴 KHÁM PHÁ ⇒ **BỎ NẤC ĐI**, dù `level` có nằm trong `body` hay không.
+   *
+   * Cờ này ở ĐÂY chứ không ở chỗ gọi, và đó là bài học của bản vá hỏng 27/08:
+   * chỗ gọi viết `armConfig({ ...body, ...(discovery ? {} : { level }) })` — mà
+   * `...body` **đã mang `body.level` vào rồi**, nên spread có điều kiện chỉ thôi
+   * *ghi đè*, không hề *xoá*. Bản vá không đổi gì cả và user báo lại y nguyên.
+   *
+   * ⇒ Một cờ, đọc ở đúng một chỗ, ngay cạnh chỗ nấc được dùng. Chỗ gọi không còn
+   * cách nào viết sai. → `catalog.ts §serverFenced`
+   */
+  discovery?: boolean;
 }): Record<string, unknown> | undefined {
   if (body.config) return body.config;
   const arm = body.catalogId ? findArm(body.catalogId) : undefined;
@@ -83,11 +99,13 @@ function armConfig(body: {
    */
   const groups =
     body.groups ?? (arm.groups ? arm.groups.filter((g) => g.on).map((g) => g.id) : undefined);
+  // Nấc chỉ đi vào cấu hình khi đang dựng bản THI HÀNH. Xem `discovery` ở trên.
+  const level = body.discovery ? undefined : body.level;
   return buildConfig(arm.spec, {
     folders: body.folders ?? [],
     ...(body.account ? { account: body.account } : {}),
     ...(groups ? { groups } : {}),
-    ...(body.level ? { level: body.level } : {}),
+    ...(level ? { level } : {}),
   });
 }
 
@@ -118,6 +136,19 @@ function resolveArm(
     /** Nhóm việc đã tick. Vào `headers` ⇒ vào BĂM. → `catalog.ts §toolsetHeader` */
     groups?: string[];
   },
+  /**
+   * 🔴 KHÁM PHÁ, KHÔNG PHẢI THI HÀNH — dựng cấu hình **không mang hàng rào nấc**.
+   *
+   * Chỉ nút "Thử ngay" dùng cờ này. Lý do đầy đủ ở `catalog.ts §serverFenced`;
+   * tóm tắt: nấc `read` gửi `X-MCP-Readonly` lên GitHub ⇒ server chỉ trả việc
+   * đọc ⇒ `offeredTiers` thấy ba nấc bằng nhau ⇒ **bộ chọn nấc không hiện** ⇒
+   * người dùng bị khoá vĩnh viễn ở nấc thấp nhất. Câu hỏi của nút Thử là *"tối
+   * đa làm được gì"*, nên nó phải hỏi khi cửa còn mở.
+   *
+   * ⚠ KHÔNG nới quyền: `level` trả về vẫn nguyên, bản LƯU vẫn dựng có hàng rào,
+   * và `scopedTools` lúc lưu vẫn hỏi lại server theo đúng nấc.
+   */
+  discovery = false,
 ): {
   config: Record<string, unknown>;
   secretNames: string[];
@@ -153,8 +184,10 @@ function resolveArm(
    * hai nguồn nói hai chuyện về cùng một cánh tay, và nguồn sai là nguồn đang
    * thi hành. Đúng họ lỗi §15i (*"đọc nhầm cấu hình CHẠY thay vì cấu hình KHAI"*).
    */
+  // Nấc vẫn tính và vẫn vào SỔ như cũ. Việc bỏ nó khỏi CẤU HÌNH lúc khám phá do
+  // `armConfig` lo — một cờ, đọc ở đúng một chỗ.
   const level = fromCatalog?.tiered ? (body.level ?? 'read') : body.level;
-  const config = armConfig({ ...body, ...(level ? { level } : {}) });
+  const config = armConfig({ ...body, ...(level ? { level } : {}), discovery });
   if (!config) return undefined;
 
   /**
@@ -472,7 +505,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         port: boundPort,
         publicUrl: company.config.runtime.public_url,
       });
-      return json(res, 200, await oauthStart(body.catalogId, origin));
+      return json(res, 200, await oauthStart(company, body.catalogId, origin));
     }
     /**
      * Notion gọi về đây. KHÔNG phải `/api/` theo nghĩa thông thường — nó trả
@@ -515,7 +548,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     if (url.pathname === '/api/oauth/device/start' && method === 'POST') {
       const body = await readJson<{ catalogId?: string }>(req);
       if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
-      return json(res, 200, await oauthDeviceStart(body.catalogId));
+      return json(res, 200, await oauthDeviceStart(company, body.catalogId));
     }
     /**
      * Một NHỊP hỏi thăm. Giao diện gọi lặp theo `intervalMs` server trả về.
@@ -571,8 +604,22 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         catalogId?: string;
         folders?: string[];
         secrets?: Record<string, string>;
+        /**
+         * ⚠ BỐN TRƯỜNG NÀY PHẢI KHAI RA, dù hôm qua chúng vẫn chạy khi không khai.
+         *
+         * `readJson<T>` là một phép ÉP KIỂU, không phải phép lọc — trường lạ vẫn
+         * đi qua lúc chạy. Nên `level` hoạt động suốt từ 26/08 trong khi kiểu ở
+         * đây chưa hề nhắc tới nó: **mã đúng, hợp đồng nói dối**. Đó đúng bằng
+         * cái bẫy đã nuốt `tools` một lần (`company.ts §addArm`), chỉ khác chiều —
+         * và lần sau ai đó thêm một phép lọc theo kiểu thì nó im lặng rụng hết.
+         */
+        account?: string;
+        level?: Tier;
+        groups?: string[];
       }>(req);
-      const arm = resolveArm(company, body);
+      // `true` = KHÁM PHÁ. Xem tham số `discovery` của `resolveArm` — thiếu nó
+      // thì mục có hàng rào server tự khoá mình ở nấc thấp nhất, không câu lỗi.
+      const arm = resolveArm(company, body, true);
       if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
       const config = arm.config;
       const base = await baselineTokens();
@@ -585,6 +632,45 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       const r = await probeArm({ [body.id || 'thu']: config as never }, base, arm.secrets);
       return json(res, 200, r);
     }
+    /**
+     * TRA BẢN CÀI APP — route riêng, KHÔNG gộp vào `/test`. → §5h·7o
+     *
+     * Hai câu hỏi khác nhau, và gộp chúng là buộc câu chậm phải chờ câu nhanh:
+     * `/test` hỏi *"cấu hình này chạy không"* (~8–20 giây, cần cả `baselineTokens`),
+     * còn cái này hỏi *"hãng cho ta đụng repo nào"* (chỉ cần chìa, chạy được ngay
+     * sau khi đăng nhập, trước cả khi người dùng chọn nấc hay nhóm việc).
+     *
+     * Tách ra thì giao diện bắn nó **ngay lúc chọn xong tài khoản** và người dùng
+     * đọc kết quả trong lúc còn đang cấu hình những thứ khác.
+     */
+    /**
+     * Ô "dùng `client_id` của bạn" — đọc và ghi. → SPEC-arms §5h·7h
+     *
+     * GET trả `own` để giao diện biết đang đi bằng danh tính của AI, chứ không
+     * chỉ hiện một ô trống: một ô trống không phân biệt được *"chưa ai dán"* với
+     * *"đã dán rồi nhưng ta không hiện lại"*.
+     */
+    if (url.pathname === '/api/oauth/client' && method === 'GET') {
+      const id = url.searchParams.get('for');
+      if (!id) return json(res, 400, { error: 'thiếu "for"' });
+      return json(res, 200, deviceClientId(company, id));
+    }
+    if (url.pathname === '/api/oauth/client' && method === 'PUT') {
+      const body = await readJson<{ catalogId?: string; clientId?: string }>(req);
+      if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
+      setDeviceClientId(company, body.catalogId, body.clientId ?? '');
+      return json(res, 200, deviceClientId(company, body.catalogId));
+    }
+    if (url.pathname === '/api/arms/repos' && method === 'POST') {
+      const body = await readJson<{ catalogId?: string; account?: string }>(req);
+      if (!body.catalogId || !body.account) {
+        return json(res, 400, { error: 'thiếu "catalogId" hoặc "account"' });
+      }
+      const scan = await scanRepos(company, body.catalogId, body.account);
+      // `null` = KHÔNG TRA ĐƯỢC, khác hẳn "tra ra rỗng". Giao diện xử lý hai ca
+      // này theo hai hướng ngược nhau, nên đừng gộp chúng thành một mảng rỗng.
+      return json(res, 200, scan ?? { failed: true });
+    }
     if (url.pathname === '/api/arms' && method === 'POST') {
       const body = await readJson<{
         label?: string;
@@ -595,6 +681,10 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         secrets?: Record<string, string>;
         office?: string;
         grantTo?: string[];
+        /** Xem khối chú thích cùng tên ở route `/api/arms/test` ngay trên. */
+        account?: string;
+        level?: Tier;
+        groups?: string[];
       }>(req);
       const arm = resolveArm(company, body);
       if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });

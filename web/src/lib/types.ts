@@ -71,6 +71,14 @@ export interface CanvasNode {
   toolCount?: number;
   /** Cánh tay: tên WORKSPACE nó nối tới — tra từ kho OAuth, không đọc `label`. */
   via?: string;
+  /**
+   * Cánh tay: đường dẫn SVG logo hãng + loại — để node vẽ **cùng một hình** với
+   * hộp thoại Kết nối. Server gửi kèm (`office.ts §mark`) chứ canvas không tra
+   * danh mục: sơ đồ vẽ trước khi ai mở hộp thoại, và một node không có hình ở
+   * mỗi lần mở app là cái giá không đáng.
+   */
+  mark?: string;
+  armKind?: 'files' | 'service' | 'custom';
   mcp?: string[];
   /**
    * Cánh tay: thư mục nó với tới, **nguyên văn** như trong `company.yaml`.
@@ -417,9 +425,48 @@ export interface CatalogArm {
    * chờ một tab sẽ không bao giờ báo về. → SPEC-arms §5h·7
    */
   deviceLogin?: boolean;
-  /** Nhóm việc cho người dùng tick. Không có ⇒ cắm cả server. → §5h·7e */
-  groups?: { id: string; label: string; on?: boolean }[];
-  brand: { owner: string | null; guidelineUrl: string | null; checkedOn: string | null };
+  /**
+   * Nhóm việc cho người dùng tick. Không có ⇒ cắm cả server. → §5h·7e
+   *
+   * `label` giữ **tên của hãng** (tra được trong tài liệu hãng), `help` nói việc
+   * làm được. Đừng gộp hai vai vào một chuỗi. → `catalog.ts §ArmGroup`
+   */
+  groups?: { id: string; label: string; help?: string; on?: boolean }[];
+  /**
+   * HÀNG RÀO NGOÀI — phạm vi do HÃNG giữ, ta chỉ mở cửa. → `catalog.ts §scope`
+   * Không có ⇒ mục này không có màn hình đồng ý nào để đi tới.
+   */
+  scope?: { say: string; url: string; help: string };
+  /**
+   * TRA BẢN CÀI APP tự động. → `catalog.ts §repoScan` · SPEC-arms §5h·7o
+   *
+   * Có nó nghĩa là mục này trả lời được câu mà `tools/list` không trả lời được:
+   * *"hãng cho cánh tay này đụng repo nào"*. Giao diện chỉ cần biết CÓ hay
+   * KHÔNG — tên tool nằm ở server, đúng chỗ nó được gọi.
+   */
+  repoScan?: Record<string, never> | object;
+  /**
+   * Hãng này cắt việc **ngay ở server** theo nấc quyền. → `catalog.ts §serverFenced`
+   *
+   * Giao diện cần biết vì con số token đo được là **trần**: phép thử cố ý chạy
+   * không mang hàng rào (mang thì bộ chọn nấc không bao giờ hiện), nên ở nấc dưới
+   * thực tế tốn ít hơn số hiện ra. Không nói ra là để người dùng đọc một con số
+   * đúng cho một cấu hình họ không chọn.
+   */
+  serverFence?: boolean;
+  /**
+   * Hồ sơ thương hiệu — và **logo sống trong đó**. → `catalog.ts §brand`
+   *
+   * `mark` là đường dẫn SVG 24×24 đơn sắc. Nó ở cạnh `checkedOn` để luật §11c
+   * (*"chưa đọc quy tắc hãng ⇒ không dùng logo"*) còn nhìn thấy được thứ nó nói
+   * về — bảng logo để riêng ở thư mục web thì luật thành lời hứa.
+   */
+  brand: {
+    owner: string | null;
+    guidelineUrl: string | null;
+    checkedOn: string | null;
+    mark?: string;
+  };
 }
 
 /**
@@ -526,5 +573,10 @@ export interface ProbeResult {
   tools: { name: string; description?: string; level: 'read' | 'write_external' }[];
   /** Token cộng vào prefix mỗi lượt. `undefined` = chưa đo được, và ô để TRỐNG. */
   tokens?: number;
+  /**
+   * Nối được nhưng server không cấp việc nào — hỏng, và hỏng KHÔNG có câu lỗi.
+   * Ca đã đo: gõ sai tên nhóm trong `X-MCP-Toolsets`. → `probe.ts §ProbeResult.warn`
+   */
+  warn?: string;
   connectMs: number;
 }

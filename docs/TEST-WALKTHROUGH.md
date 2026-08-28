@@ -1455,10 +1455,23 @@ Sau khi đã nối **hai** workspace và cắm cả hai (một `chỉ đọc`, m
 | Danh sách "đã cắm ở văn phòng khác" | mỗi dòng có **dòng phụ**: tên workspace · mức quyền · số việc |
 | Màn cấu hình bước 2 | dưới tên kết nối có huy hiệu **workspace đang chọn** + **mức đang chọn** |
 | Nhãn mặc định lúc tạo | `Notion · <tên workspace>` — **không** kèm mức quyền |
+| Node trên sơ đồ | dòng phụ là **tên workspace**, không phải chữ "kết nối" *(mới 27/08)* |
 | 🖱 Đổi tên thành `"aaa"` → xem lại danh sách | huy hiệu mức quyền **không đổi** theo tên |
+| 🔴 🖱 Ở bước 2 **đổi tài khoản** sang workspace kia | nhãn đổi theo **ngay**; đổi tiếp lần ba, lần tư cũng vậy *(mới 27/08)* |
+| 🔴 🖱 Gõ tên riêng `"aaa"` **rồi** đổi tài khoản | nhãn **giữ nguyên `aaa`** — đã là tên của người dùng |
 
-> 🔴 Ô cuối là ô canh: mức quyền **không được** nằm trong chuỗi tên. Nhét vào thì một cú đổi tên tạo
-> ra được *"Notion (ghi được)"* trên một cánh tay chỉ đọc — nhãn nói dối về đặc quyền. → §6j
+> 🔴 Hai ô cuối canh cùng một lỗi, bắt được ngày 27/08 (user, ở GitHub): *"đổi workspace account
+> sang minhvuptitd14 mà node mcp server vẫn tên là GitHub · minhvq36"*.
+>
+> Cổng *"chỉ ghi khi nhãn còn là tên mặc định"* so nhãn với `pick.name`. Phép so đó **hết hạn ngay
+> sau lần ghi đầu tiên**: nhãn thành `GitHub · minhvq36` ≠ `GitHub`, nên lần đổi tài khoản thứ hai
+> bị xếp nhầm vào *"người dùng đã tự đặt tên"* ⇒ đóng băng ở tài khoản đầu tiên.
+>
+> Nên phải chạy **cả hai ô**: một ô canh *"có đổi theo không"*, ô kia canh *"có ĐỪNG đổi khi không
+> được phép không"*. Sửa một chiều mà quên chiều kia là đổi lỗi này lấy lỗi kia. → §6g-bis
+>
+> Trên sơ đồ, `label` bị cắt còn 14 ký tự (`GitHub · minhv…`) ⇒ tên không đủ để phân biệt kể cả khi
+> nó đúng. Đó là lý do node vẽ thêm `via` ở dòng phụ, tra từ `arms[].secrets` mỗi lần đọc.
 
 **Chi phí:** ~$0,05–0,12 · chặng A **$0** · biến thể 4–9 **$0** (không lượt suy luận nào)
 
@@ -1481,6 +1494,23 @@ Sau khi đã nối **hai** workspace và cắm cả hai (một `chỉ đọc`, m
 > ⚠ Bỏ bước này thì mọi thứ vẫn "chạy" và mọi lời gọi trả **404**. GitHub cố ý trả 404 chứ không
 > phải 403 cho repo private không có quyền (để không lộ repo có tồn tại). Đó là **câu lỗi sai cửa
 > của chính GitHub** — bước 4 dưới đây kiểm xem agentco có dịch lại không.
+>
+> 🆕 **Từ 27/08 bước này KHÔNG còn nằm ngoài sản phẩm.** Hộp thoại cắm có nút **Chọn repo trên
+> GitHub** mở đúng đường dẫn trên. Trước đó chuỗi đó chỉ tồn tại trong file walkthrough này —
+> tức người dùng không đọc walkthrough thì **không bao giờ biết phải cài app**, và triệu chứng duy
+> nhất là 404 ở mọi lời gọi. Ô A-0 dưới đây đo đúng chỗ đó.
+
+> ### 🧭 ĐỌC TRƯỚC: chỉ có MỘT hàng rào repo, và nó không phải của ta
+>
+> Phạm vi repo nằm **trọn** trong bản cài app phía GitHub, tính lại **mỗi request**. agentco luôn
+> cho phép đúng những gì GitHub cho phép — không thêm, không bớt, không có tầng thứ hai.
+>
+> ⚠ Sáng 27/08 từng có một hàng rào repo của agentco (`armJail`), **đã gỡ chiều cùng ngày**. Nếu
+> bạn thấy ô *"Chỉ những repo này"* ở đâu đó thì đó là bản cũ. Lý do gỡ và cái giá phải trả:
+> `SPEC-arms.md` §5h·7m.
+>
+> ⇒ Hệ quả cho người test: **mọi lỗi phạm vi đều hiện ra dưới dạng 404 của GitHub**, và thứ đáng đo
+> không còn là "có bị chặn không" mà là **"câu 404 đó có được dịch lại không"** — chặng G.
 
 ---
 
@@ -1499,21 +1529,59 @@ Sau khi đã nối **hai** workspace và cắm cả hai (một `chỉ đọc`, m
 | A-3 | Tên hiện ra có đúng tài khoản bạn định nối không? | Sai ⇒ bấm **"Không phải tôi"** → đăng nhập lại bằng cửa sổ ẩn danh |
 | A-4 | Đóng tab agentco giữa lúc chờ rồi mở lại — lượt đăng nhập còn sống không? | Phải **CÒN** — phiên nằm ở daemon, không ở tab |
 | A-5 | Rút mạng ~10 giây giữa lúc chờ rồi cắm lại | Phải **vẫn chờ tiếp**. Báo hỏng ⇒ hồi quy §5h·7g — lỗi đã vá 26/08 |
+| A-0 | 🆕 🔴 Ở bước 2 có nút **Chọn repo trên GitHub** không, và bấm nó có mở `installations/new` không? | Không có ⇒ **hỏng bài, và hỏng nặng nhất**: người dùng không đọc file này sẽ **không bao giờ biết phải cài app**, cắm xong thấy `✓ 16 việc` rồi nhận 404 ở mọi lời gọi. Trước 27/08 chuỗi đó không xuất hiện một lần nào trong sản phẩm |
+| A-0b | Cạnh nút có câu nói **phạm vi này AI giữ** không? | Một cái nút không kèm câu giải thích là một câu đố. Phải đại ý *"phạm vi repo do GitHub giữ, đổi ở đó có hiệu lực ngay, không phải cắm lại"* |
 
 ---
 
-### Chặng B — Chọn nhóm việc, và **nhìn thấy cái giá** 🔴
+### Chặng B — Nhóm việc, và **nhìn thấy cái giá** 🔴 *viết lại 27/08 — bản cũ tả một màn hình chưa tồn tại*
 
-**B1.** Ở bước tiếp theo, tick nhóm việc. Mặc định phải là **`Biết tôi là ai` + `Đọc & sửa file`**.
+> **BẢN CŨ CỦA CHẶNG NÀY SAI VỀ SỰ TỒN TẠI.** Nó bảo *"tick thêm `Pull request` rồi bỏ ra, nhìn con
+> số token đổi theo"* — trong khi hộp thoại **không vẽ ô tick nào**. Backend xong từ 26/08
+> (`server.ts §armConfig` nhận `groups` · `catalog.ts` khai đủ 5 nhóm · kiểu đã bay lên client),
+> thiếu đúng phần vẽ. Người test làm theo sẽ đi tìm một thứ không có rồi kết luận sai chỗ.
+>
+> Món nợ này **đã nằm sẵn** trong `SESSIONS_MEMORY §CÒN NỢ`. Một bài test mâu thuẫn với sổ nợ của
+> chính dự án là dấu hiệu file này đang tả **mong muốn** thay vì tả **sản phẩm**.
+> → [[agentco-yaml-step-is-a-bell]]
+>
+> **Và thiết kế đổi luôn (user chốt 27/08):** không bày ô tick ở **mọi** nấc nữa.
 
-**B2.** Tick thêm `Pull request` rồi bỏ ra, **nhìn con số token đổi theo**.
+**B0 — nấc CHỈ ĐỌC không hỏi gì cả.** Vào bước 2, đừng đụng gì, bấm **Thử ngay**.
 
 | # | Đo gì | Hỏng nghĩa là gì |
 |---|---|---|
-| B-1 | Có bày ra **27 nhóm** không? | Phải **KHÔNG** — 5 ô, phần còn lại nằm sau *"Xem tất cả"*. Bày hết là **đổ ập vào**, không phải minh bạch |
-| B-2 | 🔴 Mỗi nhóm có **hiện số token** không? | Không hiện ⇒ vi phạm luật *hiện giá, không chặn* (§9b). Đây là mục đắt nhất trong danh mục: cả server ≈**30 000 token mỗi lượt** |
-| B-3 | Bỏ tick hết ⇒ có cho **Lưu** không? | Phải **KHÔNG** — một cánh tay 0 việc là một cánh tay hỏng im lặng |
-| B-4 | Cắm hai lần, cùng ba nhóm nhưng **tick theo thứ tự khác nhau** | Phải ra **ĐÚNG MỘT** cánh tay. Ra hai ⇒ nhóm việc chưa được sắp xếp trước khi băm |
+| B-0 | Có ô tick nhóm việc nào hiện ra không? | Phải **KHÔNG**. Nấc chỉ đọc rẻ và không có hậu quả — bắt cân nhắc 5 ô ở đây là **thu tiền chú ý cho một quyết định không có hậu quả**, và nó dạy người dùng tick bừa. Tới lúc thật sự nguy hiểm thì thói quen đã hình thành |
+| B-1 | `✓` cấp bao nhiêu việc | **22** với mặc định `context + repos` — phép thử chạy **mở hết** (xem B-1b). Dòng dưới tách ra `16 chỉ đọc · 6 có ghi` |
+| 🔴 B-1b | Bộ chọn nấc có hiện **HAI** dòng không: `Chỉ đọc 16 việc` · `Toàn quyền 22 việc`? | Chỉ thấy *"Kết nối này chỉ đọc · 16 việc"* ⇒ **bug 27/08 đã quay lại**: phép thử đang mang hàng rào `X-MCP-Readonly`, server cắt hết việc ghi, `offeredTiers` thấy ba nấc bằng nhau ⇒ **không có đường nào lên toàn quyền**. → §6g-quater |
+| B-1c | Dưới bộ chọn, ở nấc chỉ đọc, có câu *"số token đo khi mở hết… thực tế tốn ít hơn"* không? | Thiếu ⇒ ta đưa một con số đúng cho một cấu hình người dùng **không chọn** |
+
+> 🔴 **B-1b là ô đắt nhất chặng này, và nó chỉ hỏng khi CẢ HAI cơ chế cùng đúng.** Hàng rào server
+> (§5h·7j) đúng; luật *"nấc nào không thêm việc thì đừng hiện"* (§6j) đúng. Ghép lại thì cơ chế thứ
+> hai đo **cái bóng** của cơ chế thứ nhất, và người dùng bị khoá ở nấc thấp nhất **không một câu
+> lỗi nào**. Số đo 27/08: có hàng rào ⇒ 16 việc / **1 nấc**; không hàng rào ⇒ 22 việc / **2 nấc**.
+
+**B2 — đổi sang TOÀN QUYỀN** ở bộ chọn nấc vừa hiện ra sau khi Thử.
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| B-2 | Giờ mới hiện **5 ô tick**, và **không ô nào tick sẵn** | Tick sẵn ⇒ ta vừa quyết hộ một chuyện có hậu quả GHI |
+| B-3 | 🔴 Không tick gì ⇒ nút **Tiếp** xám, và có **nói lý do** không? | Xám mà im lặng là một câu đố, không phải một lời từ chối. Phải có dòng đỏ *"Tick ít nhất một nhóm…"* |
+| B-3b | 🔴 Thử ở nấc chỉ đọc (`✓`) **rồi mới** đổi sang toàn quyền — nút Tiếp có **xám lại** không? | Còn xanh = **hỏng theo chiều NỚI QUYỀN**: dấu ✓ cũ nói về một cấu hình khác, bấm Tiếp là lưu một cánh tay toàn quyền rơi về nhóm mặc định. Đúng họ `runRef` |
+| B-4 | Tick `Pull request` → **Thử lại** → nhìn dòng số | Phải đổi theo: `N việc · ~M token mỗi lượt`. Đây là §9b *hiện giá, không chặn* |
+| B-5 | Cắm hai lần, cùng ba nhóm nhưng **tick khác thứ tự** | Phải ra **ĐÚNG MỘT** cánh tay. Ra hai ⇒ nhóm chưa được sắp trước khi băm |
+
+> ⚠ **Con số token xuất hiện MUỘN, và đó là cố ý.** Nó đến từ `probe.tokens` — một lượt bắt tay
+> thật với đúng bộ nhóm đang tick — nên phải bấm Thử mới có. Ship hằng số đo 26/08 vào danh mục thì
+> nó **già đi im lặng** ngày GitHub thêm tool, đúng lớp *"ảnh chụp gõ tay"* mà `catalog.ts` §readOnly
+> vừa bỏ. **Muộn mà đúng tốt hơn ngay mà bịa.**
+
+**B6 — ca 0 việc.** Cắm qua đường ⚙️ **Tự cắm MCP** một server không cấp tool nào (hoặc gặp ca
+`X-MCP-Toolsets` gõ sai tên).
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| B-6 | Nối được mà **0 việc** ⇒ hiện gì? | Phải là **cảnh báo vàng** *"Nối được, nhưng 0 việc"* và **không cho Lưu**. Hiện ✓ xanh kèm `0 việc` ⇒ giao diện **nói dối thay cho server** — ca này (server trả rỗng, không báo lỗi) đã im lặng sẵn rồi, đừng im lặng thêm một tầng. → [[agentco-silent-allowlist]] |
 
 ---
 
@@ -1529,15 +1597,56 @@ Trong repo <chủ>/<tên-repo>, đọc file README.md và tóm tắt 3 gạch đ
 
 | # | Đo gì | Hỏng nghĩa là gì |
 |---|---|---|
-| C-1 | Có tải gì về máy không? | **Phải KHÔNG** — remote MCP, 0 gói. Thấy `npx` chạy ⇒ cắm nhầm gói cộng đồng |
+| C-1 | Có tải **GÓI** nào về máy không? | **Phải KHÔNG** — remote MCP, 0 gói. Thấy `npx` chạy ⇒ cắm nhầm gói cộng đồng |
 | C-2 | Repo **riêng tư** đọc được không? | ✗ ⇒ **chưa cài app vào repo đó** (không phải chìa sai) |
 | C-3 | 🔴 Thử một repo **CHƯA cài app**. Câu báo lỗi nói gì? | Hiện `404 Not Found` trần ⇒ **hỏng bài**. Phải nói *"agentco chưa được cài vào repo này"* kèm link cài — §5h·7f |
+| 🆕 C-4 | **README rất dài** (>~60 KB). Nhân viên có nghẹn không? | Phải hiện *"kết quả dài — đã lưu vào artifacts/…"* rồi đọc từng phần. Nghẹn / lặp `Read` tới `error_max_turns` ⇒ phép bê hỏng — §9e |
+
+> ⚠ **C-1 nói về GÓI, không nói về NỘI DUNG** — hai chuyện khác hẳn, và rất dễ đọc nhầm thành một
+> (user hỏi đúng chỗ này 28/08).
+>
+> · **Gói** = mã của người lạ chạy trên máy khách với chìa của khách. Cái đó phải bằng **0**.
+> · **Nội dung** = thứ khách vừa bảo nhân viên đi lấy. Nó ĐƯỢC ghi xuống `artifacts/` của văn
+>   phòng, và đó là **sản phẩm**, không phải phụ thuộc.
+>
+> 🔴 **Và ca README dài KHÔNG cần một dòng mã riêng nào cho GitHub** (user lo đúng: *"tôi e lại
+> phải đẻ 1 custom cho github"*). Hook `PostToolUse` đăng ký **không matcher**, còn `planSpill`
+> khớp theo câu *"saved to …"* do **chính CLI** in ra cho mọi tool. Chuông canh:
+> `spill.test.ts` §*"đổi TÊN TOOL sang GitHub ⇒ hành vi y hệt"* và §*"không tên hãng nào trong mã
+> thi hành"*. → SPEC-arms §9e
 
 ---
 
 ### Chặng D — Ghi, và **commit mang tên ai** ⭐
 
 **D1.** Đổi cánh tay sang nấc **Toàn quyền** (nhớ: đổi nấc = **một cánh tay khác**, không phải sửa tại chỗ).
+
+> ### 🆕 Tick những ô nào? — **`Tài khoản & tổ chức` + `Repo & file`. Chỉ hai ô đó.**
+> *(user hỏi 28/08: *"toàn quyền có tới 5 check ⇒ đẻ ra rất nhiều tổ hợp… hay full luôn?"*)*
+>
+> Đúng hai ô đang bật sẵn — **không tick thêm gì**. Đo 28/08, chìa thật:
+>
+> | Nhóm | Việc | Chặng D–H cần gì ở đây |
+> |---|---|---|
+> | `context` | 3 | `get_me` — chặng G tra bản cài |
+> | `repos` | 19 | `create_or_update_file` (D) · `get_file_contents` (H) · `search_repositories` + `list_repository_collaborators` (G) |
+> | `context + repos` | **22** | **đủ cả bài 13** |
+> | `pull_requests` · `issues` · `actions` | — | **không chặng nào đụng tới** |
+>
+> 🔴 **Đừng "full luôn cho chắc", và lý do KHÔNG phải tiền — nó làm hỏng chặng E.**
+> E-1..E-4 đo hàng rào **theo NẤC**, nên hai cánh tay phải **cùng nhóm việc, khác nấc**. Tick 5 ô ở
+> đây rồi để mặc định 2 ô ở E là biến E-3 (*"cánh tay chỉ-đọc có ít việc hơn không"*) thành phép so
+> giữa hai **bộ nhóm** khác nhau — nó vẫn ra chênh lệch, và chênh lệch đó **không nói gì về hàng
+> rào**. Một ô test vẫn "xanh" trong khi thứ nó định đo chưa hề được đo. → [[agentco-measurement-vs-conclusion]]
+>
+> Và vì checklist đi vào băm (đã xác nhận 28/08), tick 5 ô ở D nghĩa là **ở E phải tick lại đúng 5
+> ô đó** mới là "cùng nhóm việc". Ít ô hơn thì ít chỗ để lệch.
+>
+> Cái giá đi kèm: cả server ≈**30 000 token mỗi lượt** so với ≈11 600 của `context + repos` — trả ở
+> **mọi lượt của mọi nhân viên** được nối, không phải một lần.
+>
+> ⇒ Muốn thử `pull_requests` / `issues` / `actions` thì cắm **một cánh tay riêng** cho chúng. Đó
+> cũng chính là phép thử B-5: cùng tài khoản, khác checklist ⇒ **hai cánh tay khác nhau**.
 
 **D2.** Chat: `Tạo file ghi-chu.md trong repo <chủ>/<tên>, nội dung "chào từ agentco".`
 
@@ -1551,7 +1660,12 @@ Trong repo <chủ>/<tên-repo>, đọc file README.md và tóm tắt 3 gạch đ
 
 ### Chặng E — **Hàng rào ở phía server** 🔴 *đây là chặng đáng tiền nhất*
 
-**E1.** Cắm một cánh tay GitHub thứ hai, cùng tài khoản, cùng nhóm việc, nhưng nấc **Chỉ đọc**.
+**E1.** Cắm một cánh tay GitHub thứ hai, cùng tài khoản, **cùng nhóm việc** (`Tài khoản & tổ chức` +
+`Repo & file` — đúng bộ đã dùng ở D), nhưng nấc **Chỉ đọc**.
+
+> ⚠ **"Cùng nhóm việc" là điều kiện của phép đo, không phải một chi tiết.** Lệch một ô tick là E-3
+> đi so hai bộ nhóm khác nhau thay vì so hai nấc — ô test vẫn ra chênh lệch, và chênh lệch đó không
+> nói gì về hàng rào. Xem khối ở D1.
 
 **E2.** Giao cánh tay ĐÓ cho một nhân viên khác → chat: `Tạo file thu-nghiem.md trong repo <chủ>/<tên>.`
 
@@ -1559,7 +1673,7 @@ Trong repo <chủ>/<tên-repo>, đọc file README.md và tóm tắt 3 gạch đ
 |---|---|---|
 | E-1 | 🔴 Có bị chặn không? | **Phải BỊ CHẶN.** Ghi được ⇒ nấc chỉ đọc không tới nơi |
 | E-2 | Chặn ở **tầng nào**? Xem nhật ký 🔌 | Đúng là `unknown tool` từ **server GitHub** ⇒ hàng rào thật. Nếu chỉ là model tự từ chối ⇒ **một lời hứa, không phải hàng rào** — đúng phép phân biệt bài 15 |
-| E-3 | Cánh tay chỉ-đọc có **ít việc hơn** cánh tay toàn quyền không? | Bằng nhau ⇒ header hàng rào không được gửi |
+| E-3 | Cánh tay chỉ-đọc có **ít việc hơn** cánh tay toàn quyền không? | Số đo 28/08 với `context + repos`: **16 so với 22**. Bằng nhau ⇒ header hàng rào không được gửi. ⚠ Chỉ đọc được ô này nếu **hai cánh tay cùng bộ nhóm** |
 | E-4 | Nhân viên ở chặng D còn ghi được không? | Phải **CÒN** — đổi nấc ở cánh tay này không đụng cánh tay kia |
 
 ---
@@ -1574,7 +1688,69 @@ Trong repo <chủ>/<tên-repo>, đọc file README.md và tóm tắt 3 gạch đ
 | F-2 | 🔴 Sau **hai** lần làm mới (~8 giờ) còn chạy không? | Hỏng đúng ở lần thứ hai ⇒ **bẫy `??`**: chìa làm mới bị XOAY mà ta giữ cái cũ |
 | F-3 | Gỡ app khỏi repo ở phía GitHub ⇒ agentco nói gì? | Phải nói *"chưa được cài vào repo"*, **không** phải *"chìa sai"* |
 
-**Chi phí:** ~$0.05 · **Thời gian:** 15 phút (trừ chặng F)
+---
+
+### Chặng G — **TRA BẢN CÀI APP** 🆕 🔴 *viết lại 27/08 chiều*
+
+> **Số đo lật cả chặng này, và nó phản trực giác.** Đối chứng: app cài trên đúng **2** repo.
+>
+> | | repo công khai **chưa cài** | đã cài |
+> |---|---|---|
+> | `list_branches` · `get_file_contents` | ✅ | ✅ |
+> | `list_repository_collaborators` | ❌ | ✅ |
+>
+> ⇒ Chìa `ghu_` **đọc repo công khai bất kể bản cài** (`list_branches` ✅ trên cả 16 repo). Nên
+> mọi phép thử kiểu *"thử đọc một file"* đều ✓ và **không nói gì về bản cài**.
+> `list_repository_collaborators` đòi quyền **push** ⇒ phân biệt sạch. → §5h·7o
+
+**G1 — tự chạy, 0 ký tự gõ.** Vào bước 2, chọn tài khoản. Không bấm gì thêm.
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| G-1 | Khối **"Repo agentco được phép đụng"** có **tự chạy** không? | Phải tự chạy ngay khi có tài khoản, ~10 giây. Có ô nhập repo nào ⇒ bản cũ |
+| G-2 | Danh sách hiện ra có **khớp bản cài thật** không? | Đối chiếu với `github.com/settings/installations`. Đo được 27/08: **2/2 đúng**, `seen: 16` |
+| G-3 | Có nói ra **giới hạn của chính phép đo** không? | Phải có câu *"repo công khai vẫn đọc được dù chưa cài"*. Thiếu ⇒ người dùng tin danh sách chặt hơn thực tế |
+
+**G4 — tài khoản CHƯA cài gì.** Đăng nhập bằng một tài khoản chưa từng cài app.
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| G-4 | 🔴 Nút **Tiếp** có **xám** không? | Phải xám. Đây đúng là ca *"báo warning mà vẫn cho đi Tiếp"* — một cảnh báo không chặn gì là trang trí, và nó dạy người dùng bỏ qua mọi cảnh báo khác |
+| G-5 | Có nút **cài** + nút **kiểm lại** không? | Chặn mà không chỉ đường là ngõ cụt |
+| G-6 | Có ô tick **"Đã hiểu và tiếp tục"** không? | Phải có. `search user:<login>` **mù với repo của tổ chức**, nên "rỗng" không chứng minh "chưa cài" — chặn cứng là **giam một người đã làm đúng** |
+| G-7 | Rút mạng rồi mở lại hộp thoại | Phải ra ca *"không hỏi được danh sách"* và **CHO đi tiếp**. Chặn ⇒ gộp nhầm *không tra được* với *tra ra rỗng* |
+
+**G8 — ô "dùng GitHub App của riêng bạn"** *(§5h·7h — trước 27/08 spec nói đã có mà 0 dòng mã)*
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| G-8 | Mở phần gập trong khối đăng nhập — có ô **Client ID** không? | Không có ⇒ hồi quy. Đây là đường thoát cho *"app của ta bị treo ⇒ mọi khách gãy"* |
+| G-9 | Dán một chuỗi dài/có khoảng trắng/bắt đầu `ghp_` | Phải **bị từ chối** kèm câu *"đừng dán client secret"*. Nhận ⇒ ta vừa ghi một bí mật vào file commit được |
+| G-10 | Dán Client ID thật → Lưu → nhãn có hiện **"đang bật"** không? | Một chế độ đổi hành vi mà gập kín là một cái bẫy |
+| G-11 | Xoá ô → Lưu | Phải quay về app của agentco, và **tài khoản đã nối vẫn còn** |
+
+---
+
+### Chặng H — **CÂU LỖI 404 LÚC CHẠY THẬT** 🔴 *chặng đáng tiền nhất bài này*
+
+> **Vì sao đáng tiền nhất.** Phép tra ở chặng G chỉ canh **lúc cắm**. Người dùng vẫn sẽ hỏi về một
+> repo chưa cài trong lúc làm việc, và lúc đó thứ duy nhất còn đứng giữa họ và một câu đố là câu
+> dịch này. Ô C-3 đòi nó từ lâu; §5h·7f tả đúng nó từ lâu; **tới 27/08 mới có mã**. → §5h·7f-bis
+
+Giao cánh tay cho một nhân viên, rồi 💬 `Đọc README.md trong repo <chủ>/<một-repo-CHƯA-cài-app>.`
+
+⚠ Phải là repo **RIÊNG TƯ** chưa cài. Repo **công khai** thì đọc được bình thường dù chưa cài app
+(đo 27/08) — chọn nhầm là dựng một ca không bao giờ hỏng rồi kết luận là đã sửa xong.
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| H-1 | 🔴 Nhân viên nói gì lại? | Phải nói **"agentco chưa được cài vào repo này"** kèm đường tới trang cài. Hiện `404 Not Found` trần ⇒ **hỏng bài** |
+| H-2 | Câu đó có **giữ nguyên văn** lỗi gốc của GitHub không? | Phải **CÓ**. Nuốt mất câu gốc là lấy đi chuỗi duy nhất người dùng copy đi hỏi chỗ khác được |
+| H-3 | Lượt đó có bị tính là **thành công** không? | Phải là **hỏng**. Ta sửa CÂU, không sửa KẾT QUẢ — nuốt lỗi thành "ổn" là ca Notion `Error:` đã đốt 10 lượt, theo chiều ngược |
+| H-4 | Nó có **dò lại** bằng repo khác không? | Không được. Câu dịch dặn thẳng *"đừng đoán là repo không tồn tại, đừng thử tên khác"* — thiếu thì mỗi lần dò là một lượt trả tiền cho cùng một lời từ chối |
+| H-5 | 🖱 Nhật ký 🔌 → mở lời gọi đó → xem `args` | Phải thấy `owner` + `repo`. Đây là **chốt bù** cho việc agentco không có hàng rào repo: *"nó vừa đụng cái gì"* phải trả lời được sau đó |
+
+**Chi phí:** ~$0.05 · **Thời gian:** 15 phút (trừ chặng F) · chặng G thêm ~5 phút, ~$0.02
 
 ---
 

@@ -12,10 +12,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 
-import { armDirIndex, folderRoots } from './catalog.js';
+import { armDirIndex, findArm, folderRoots } from './catalog.js';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import {
+  companyPaths,
   ensureOfficeDirs,
   folderId,
   isSafeId,
@@ -24,6 +25,7 @@ import {
   safeJoin,
   slugId,
 } from './paths.js';
+import { readOAuth } from './secrets.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
@@ -119,6 +121,32 @@ export interface CanvasNode extends LayoutNode {
   level?: 'read' | 'add' | 'full';
   /** mcp: số việc đã cấp — để "chỉ đọc" kiểm được bằng mắt, không phải tin nhãn. */
   toolCount?: number;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HÌNH CỦA NODE CÁNH TAY — gửi từ SERVER, không tra ở giao diện.           │
+   * │ (user chốt 28/08: *"đổi cái biểu tượng phích cắm thành … ứng với từng    │
+   * │ loại mcp"*)                                                              │
+   * │                                                                          │
+   * │ `mark` = đường dẫn SVG đơn sắc của hãng, lấy thẳng từ `brand.mark` trong  │
+   * │ danh mục. `armKind` = loại, để rơi về hình chung khi hãng không có logo.  │
+   * │                                                                          │
+   * │ ⚠ Vì sao không để canvas tự tra danh mục: sơ đồ vẽ **trước** khi ai mở    │
+   * │ hộp thoại Kết nối, mà danh mục chỉ được tải trong hộp thoại đó. Bắt       │
+   * │ canvas đi tải thêm một lượt nữa là mua một khoảnh khắc node **không có    │
+   * │ hình** ở mỗi lần mở app. Server đã cầm cả hai dữ kiện — gửi kèm là xong.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  mark?: string;
+  /** mcp: `files` · `service` · `custom` — cùng trục phân loại với hộp thoại. */
+  armKind?: 'files' | 'service' | 'custom';
+  /**
+   * mcp: TÊN TÀI KHOẢN nó nối tới, tra từ kho OAuth chứ không đọc `label`.
+   *
+   * Node vẽ nó ở dòng phụ — đây là thứ DUY NHẤT trên sơ đồ phân biệt được hai
+   * cánh tay cùng hãng khác tài khoản, kể từ khi nhãn thôi ghép tài khoản vào
+   * (27/08). Vắng ⇒ không dùng OAuth, hoặc workspace đã bị gỡ ⇒ không vẽ gì.
+   */
+  via?: string;
   mcp?: string[];
   /**
    * mcp: thư mục cánh tay với tới, nguyên văn như trong `company.yaml`. CHỈ ĐỌC
@@ -1804,7 +1832,7 @@ export class Office {
     const undone = record.steps.filter((s) => s.status !== 'done');
     if (status === 'done' && undone.length > 0 && report.trim()) {
       report +=
-        `\n\n⚠ Nhưng còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
+        `\n\n⚠ Còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
         undone.map((s) => `"${s.title}"`).join(', ') +
         `. Kết quả ở trên chỉ tính phần đã làm.`;
     }
@@ -1936,8 +1964,35 @@ export class Office {
     const notes = this.knowledge.notesByRole();
     const connected = new Set(layout.edges.filter((e) => e.from === ASSISTANT_NODE).map((e) => e.to));
 
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ TÊN TÀI KHOẢN CHO NODE CÁNH TAY — đọc kho OAuth **LƯỜI, một lần**.   │
+     * │                                                                      │
+     * │ ⚠ ĐÍNH CHÍNH 27/08. `describeNode` từng ghi *"KHÔNG tra tên workspace │
+     * │ ở đây … vì nhãn mặc định của cánh tay OAuth ĐÃ kèm tên workspace"*.   │
+     * │ Lý lẽ đó chết cùng ngày: nhãn thôi ghép tài khoản, vì nó đóng băng ở  │
+     * │ tài khoản đầu tiên và nói dối sau lần đổi thứ hai. → `ArmDialog.tsx`  │
+     * │                                                                      │
+     * │ Nỗi lo cũ vẫn đúng và vẫn được tôn trọng: `canvas()` chạy mỗi sự kiện │
+     * │ SSE, nên **một lần đọc cho mỗi node** thì đắt thật. Cách ở đây:       │
+     * │  · lười — văn phòng không có cánh tay OAuth nào ⇒ **không chạm đĩa**; │
+     * │  · một lần cho cả sơ đồ — đúng khuôn `Company.listArms`.              │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    let oauth: ReturnType<typeof readOAuth> | null = null;
+    const viaOf = (server: string): string | undefined => {
+      const names = this.loaded.company.arms[server]?.secrets ?? [];
+      if (!names.length) return undefined;
+      oauth ??= readOAuth(companyPaths(this.loaded.companyDir));
+      // Vắng ⇒ không dùng OAuth, hoặc workspace đã bị gỡ. Cả hai đều là "không
+      // biết" ⇒ không vẽ gì, chứ không bịa một cái tên. (cùng luật §armWorkspace)
+      return names.map((s) => oauth?.[s]?.label).find(Boolean);
+    };
+
     return {
-      nodes: layout.nodes.map((n) => this.describeNode(n, missing.has(n.id), connected.has(n.id), notes)),
+      nodes: layout.nodes.map((n) =>
+        this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf),
+      ),
       edges: layout.edges,
       knowledge: { shared: this.knowledge.countShared(), total: this.knowledge.size },
     };
@@ -3492,6 +3547,8 @@ export class Office {
     missing: boolean,
     connected: boolean,
     notes: Record<string, number>,
+    /** Tra tên tài khoản của một cánh tay. Lười — xem `canvas()`. */
+    viaOf: (server: string) => string | undefined,
   ): CanvasNode {
     const base: CanvasNode = { ...n, label: n.id, missing, connected, removable: true };
     /**
@@ -3501,10 +3558,16 @@ export class Office {
      */
     if (n.kind === 'mcp') {
       const meta = n.server ? this.loaded.company.arms[n.server] : undefined;
+      // Mục danh mục (nếu có) là nguồn của HÌNH. Không có `catalog` ⇒ người dùng
+      // tự dán ⇒ `custom`, y hệt `ArmDialog §kindOf` — một trục phân loại, hai
+      // chỗ đọc, và cả hai đọc từ cùng một dữ kiện.
+      const entry = meta?.catalog ? findArm(meta.catalog) : undefined;
       return {
         ...base,
         label: meta?.label || n.server || n.id,
         avatar: '🔌',
+        armKind: !meta?.catalog ? 'custom' : entry?.folders ? 'files' : 'service',
+        ...(entry?.brand.mark ? { mark: entry.brand.mark } : {}),
         connected: true,
         /**
          * NẤC QUYỀN + SỐ VIỆC — để bảng chi tiết vẽ huy hiệu **từ dữ liệu**, chứ
@@ -3513,18 +3576,21 @@ export class Office {
         ...(meta?.level ? { level: meta.level } : {}),
         ...(meta?.tools?.length ? { toolCount: meta.tools.length } : {}),
         /**
-         * ⚠ KHÔNG tra tên workspace ở đây, dù bảng chi tiết cũng muốn nó.
+         * TÊN TÀI KHOẢN — node vẽ nó ở dòng phụ, thay cho chữ "kết nối".
          *
-         * `describeNode` chạy cho **mọi node, mọi lần đọc canvas** — tra kho
-         * OAuth ở đây là một lần đọc file cho mỗi node, mỗi lần vẽ. Đắt, và đổi
-         * lại gần như không được gì: nhãn mặc định của cánh tay OAuth **đã** kèm
-         * tên workspace (`Notion · Không gian của Minh`), nên node trên sơ đồ
-         * vốn đã nói ra nó rồi.
+         * ⚠ Chỗ này từng cố ý BỎ TRỐNG, với lý lẽ *"nhãn mặc định đã kèm tên
+         * workspace rồi"*. Lý lẽ đó không còn: nhãn thôi ghép tài khoản (nó
+         * đóng băng ở tài khoản đầu tiên), nên nếu đây cũng trống thì sơ đồ
+         * không còn chỗ nào phân biệt hai cánh tay cùng hãng. → `canvas()`
          *
-         * Chỗ THẬT SỰ cần tra là danh sách "đã cắm ở văn phòng khác" — ở đó
-         * người dùng nhìn nhiều mục Notion cạnh nhau và nhãn có thể đã bị đổi.
-         * `Company.listArms` đọc kho **một lần** cho cả danh sách. → §armWorkspace
+         * Suy từ `arms[].secrets` tra ngược kho OAuth, **không** đọc chuỗi
+         * `label`: nhãn là của người dùng và đổi tự do; tài khoản là sự thật
+         * thuộc về cấu hình. Cùng luật với `Company.listArms`. → §armWorkspace
          */
+        ...(() => {
+          const via = n.server ? viaOf(n.server) : undefined;
+          return via ? { via } : {};
+        })(),
         /**
          * THƯ MỤC THẬT của cánh tay — đọc từ `company.yaml`, KHÔNG sửa được ở đây.
          *

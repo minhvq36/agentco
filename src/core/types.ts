@@ -473,6 +473,11 @@ export const CompanyConfigSchema = z.object({
          * khác — xem khối chú thích ở `catalog.ts §armHash`.
          */
         level: z.enum(['read', 'add', 'full']).optional(),
+        /*
+          ⚠ ĐÃ BỎ `repos` (27/08 chiều) — giới hạn repo của agentco. Đừng dựng
+          lại mà chưa đọc `SPEC-arms.md` §5h·7m. Tầm với của một cánh tay GitHub
+          là tài sản của **bản cài app phía hãng**, không phải một trường ta giữ.
+        */
       }),
     )
     .prefault({}),

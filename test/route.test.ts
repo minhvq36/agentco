@@ -357,3 +357,89 @@ test('requestOf: tên việc suy từ goal, nhiều task thì nối lại', () =
     'Dịch doc-1 · Soát lại bản dịch',
   );
 });
+
+// ══════════════ CỬA 4: `{"say"}` THIẾU `intent` — ca thật 28/08 ══════════════
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÂY LÀ NGUYÊN VĂN TRONG `route-failure.log`, không phải ca dựng ra.      │
+ * │                                                                          │
+ * │ User rút dây cánh tay GitHub rồi hỏi lại. Model trả lời **đúng, đủ, bằng │
+ * │ tiếng người** — chỉ quên mỗi chữ `intent`. Ta vứt câu đó đi và thay bằng │
+ * │ một lời xin lỗi bảo họ gõ lại; họ gõ lại (29 giây sau) và ra **y hệt**,  │
+ * │ vì model có sai đâu mà đổi.                                              │
+ * │                                                                          │
+ * │ Ba vế user nói, cả ba đều đúng: *"đâu phải lỗi của LLM"* · *"rất nguy    │
+ * │ hiểm cho multilanguage"* · *"có nhắn lại thì kết quả cũng ra vậy"*.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const CA_THAT =
+  '```json\n{"say":"Kết nối GitHub hiện không còn nữa, nên mình không đọc được README của repo ' +
+  'toeic-learning lúc này. Bạn cần kết nối lại GitHub cho văn phòng thì mình mới làm tiếp được."}\n```';
+
+test('🔴 `{"say"}` thiếu `intent` ⇒ CỨU, không vứt — và giữ NGUYÊN VĂN câu model viết', () => {
+  const r = decideRoute(CA_THAT);
+  assert.equal(r.intent, 'chat', 'phải đi cửa chat, không phải garbled');
+  assert.match((r as { say: string }).say, /Kết nối GitHub hiện không còn nữa/);
+  assert.doesNotMatch((r as { say: string }).say, /định dạng/, 'không được thay bằng câu của TA');
+});
+
+test('⭐ ca cứu hộ phải TỰ KHAI — một cửa cứu hộ im lặng là cái phễu êm ái', () => {
+  // Không có cờ này thì model quên `intent` mãi mãi mà không ai biết, và ta mất
+  // tín hiệu để đi sửa ở chỗ đúng (prompt) thay vì sửa mãi ở parser.
+  assert.equal((decideRoute(CA_THAT) as { salvaged?: true }).salvaged, true);
+  assert.equal(
+    (decideRoute('{"intent":"chat","say":"xin chào"}') as { salvaged?: true }).salvaged,
+    undefined,
+    'cửa CHÍNH thì không đánh dấu — nếu không thì nhật ký đầy tiếng ồn',
+  );
+});
+
+test('⭐ `intent` bịa ra một tên lạ vẫn cứu được', () => {
+  /**
+   * Vì sao `BareSaySchema` cố ý KHÔNG `.strict()`: `{"intent":"answer","say":…}`
+   * là cùng một ca hỏng (model tự nghĩ ra tên cửa), và bắt chặt ở đây là vứt đi
+   * đúng những thứ cửa này dựng ra để cứu.
+   */
+  const r = decideRoute('{"intent":"answer","say":"Mình chưa đọc được repo đó."}');
+  assert.equal(r.intent, 'chat');
+  assert.equal((r as { say: string }).say, 'Mình chưa đọc được repo đó.');
+});
+
+test('🔴 CỬA 4 KHÔNG ĐƯỢC NUỐT KẾ HOẠCH — thứ tự thử là một bất biến', () => {
+  // `PlanTasksSchema` phải chạy TRƯỚC. Đảo thứ tự thì một kế hoạch có `say` ở
+  // đâu đó sẽ tụt xuống thành một câu chat, và **không ai làm việc đó cả** —
+  // đúng cái bug 20/08 mà cả file này sinh ra để canh.
+  // Dùng đúng bộ dựng của file này, KHÔNG gõ tay một khối JSON: gõ tay thì rất
+  // dễ ra một bản nháp thiếu trường, và ca test sẽ xanh/đỏ vì lý do khác hẳn
+  // thứ nó định canh. (Đã dẫm đúng thế lúc viết ca này.)
+  assert.equal(decideRoute(JSON.stringify(draft([draftTask()]))).intent, 'plan');
+});
+
+test('🔴 câu phao cuối KHÔNG bảo người dùng "nhắn lại y nguyên"', () => {
+  /**
+   * Lời khuyên đó **tất định sai**: nhánh này chỉ tới sau khi `route()` đã tự
+   * thử lại một lượt, nên bảo họ gõ lại đúng chữ cũ là mời họ dựng lại y chang
+   * cái hỏng vừa rồi. Và nó không được đoán nguyên nhân — ca thật hôm 28/08,
+   * nguyên nhân là **kết nối bị rút**, không phải "lỗi định dạng của mình".
+   */
+  const r = decideRoute('{"tasks": "không đúng hình dạng nào cả"}');
+  assert.equal(r.intent, 'garbled');
+  const say = (r as { say: string }).say;
+  assert.doesNotMatch(say, /y nguyên/i);
+  assert.doesNotMatch(say, /lỗi của mình/i, 'đừng đoán nguyên nhân — ta không biết nó');
+  assert.match(say, /cách khác|chia nhỏ/i, 'phải chừa một đường đi tiếp KHÁC lần vừa rồi');
+});
+
+test('🔴 JSON hỏng vẫn KHÔNG được lọt nguyên văn ra mặt người dùng', () => {
+  // Luật 20/08 giữ nguyên: một khối JSON không bao giờ là câu nói cho người
+  // dùng. Cửa 4 chỉ nới cho object CÓ `say` đọc được, không nới cho mọi JSON.
+  const r = decideRoute('{"tasks": "không đúng hình dạng nào cả"}');
+  assert.doesNotMatch((r as { say: string }).say, /tasks/);
+});
+
+test('văn xuôi thường vẫn đi cửa chat như cũ', () => {
+  const r = decideRoute('Chào bạn! Mình có thể giúp gì?');
+  assert.equal(r.intent, 'chat');
+  assert.equal((r as { salvaged?: true }).salvaged, undefined);
+});

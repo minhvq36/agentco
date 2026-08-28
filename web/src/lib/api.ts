@@ -167,6 +167,37 @@ export const api = {
       | { state: 'done'; name: string; label?: string }
     >('/api/oauth/device/poll', { method: 'POST', body: JSON.stringify({ state }) }),
 
+  /**
+   * Ô "dùng `client_id` của bạn". → SPEC-arms §5h·7h
+   *
+   * `own: true` = công ty này đang đi bằng danh tính ứng dụng CỦA HỌ, không phải
+   * của agentco. Đường thoát cho hai rủi ro: app của ta bị hãng treo ⇒ mọi khách
+   * gãy cùng lúc · khách doanh nghiệp không muốn đi qua danh tính của ta.
+   */
+  oauthClient: (forCatalog: string) =>
+    call<{ id: string; own: boolean }>(`/api/oauth/client?for=${enc(forCatalog)}`),
+
+  /** Dán rỗng = quay về client của agentco. */
+  setOauthClient: (catalogId: string, clientId: string) =>
+    call<{ id: string; own: boolean }>('/api/oauth/client', {
+      method: 'PUT',
+      body: JSON.stringify({ catalogId, clientId }),
+    }),
+
+  /**
+   * TRA BẢN CÀI APP — repo nào hãng thật sự cho cánh tay này đụng. → §5h·7o
+   *
+   * ⚠ `failed: true` KHÁC `installed: []`, và giao diện phải xử lý ngược nhau:
+   *   `installed: []`  → tra được, và câu trả lời là **chưa cài repo nào** ⇒ chặn
+   *   `failed: true`   → **không tra được** (mạng, hãng đổi tool) ⇒ cho qua, nói thật
+   * Gộp hai ca này là hoặc chặn oan người đã cài, hoặc thả người chưa cài.
+   */
+  armRepos: (catalogId: string, account: string) =>
+    call<{ login: string; installed: string[]; seen: number } | { failed: true }>(
+      '/api/arms/repos',
+      { method: 'POST', body: JSON.stringify({ catalogId, account }) },
+    ),
+
   /** Workspace đã nối cho một mục danh mục. TÊN + NHÃN, không token. */
   oauthAccounts: (forCatalog?: string) =>
     call<{ accounts: OAuthAccount[] }>(

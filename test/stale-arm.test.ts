@@ -161,3 +161,67 @@ test('reachDiff: TRẦN chặn một lần sửa hàng loạt nhét cả bức t
   assert.equal(out.length, 5);
   assert.equal(out[4], 'và 2 thay đổi khác');
 });
+
+// ═══════════ KIM THỨ BA: TÊN TÀI KHOẢN (`via`) — ca lọt thật 28/08 ═══════════
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CỔNG NÀY ĐỂ LỌT MỘT CA, VÀ NÓ KHÔNG SAI LUẬT — NÓ THIẾU MỘT CÂY KIM.    │
+ * │                                                                          │
+ * │ User gỡ tài khoản `minhvuptitd14` rồi Trợ lý vẫn hỏi:                     │
+ * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub minhvq36 hay             │
+ * │    minhvuptitd14 vậy bạn?"*                                              │
+ * │                                                                          │
+ * │ Kim cũ là `label` = `"GitHub · minhvuptitd14"`. Câu trên KHÔNG chứa       │
+ * │ nguyên chuỗi đó ⇒ không khớp ⇒ không bắn.                                 │
+ * │                                                                          │
+ * │ Vì sao cánh tay thư mục không dính: nhãn của chúng thường được nhắc       │
+ * │ nguyên vẹn (`D:\Downloads\…`). Cánh tay OAuth thì thứ người ta nhắc là    │
+ * │ **tên tài khoản đứng một mình** — phần `"GitHub · "` bị bỏ.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const OAUTH_ARMS = {
+  aGhOld: { label: 'GitHub · minhvuptitd14', via: 'minhvuptitd14' },
+  aGhNew: { label: 'GitHub · minhvq36', via: 'minhvq36' },
+};
+const OAUTH_SRV = { aGhOld: { type: 'http' }, aGhNew: { type: 'http' } };
+
+const stale = (say: string, userText = '', live: string[] = ['aGhNew']) =>
+  staleMentions({
+    arms: OAUTH_ARMS,
+    servers: OAUTH_SRV,
+    live: new Set(live),
+    say,
+    userText,
+  });
+
+test('🔴 CA THẬT: tên tài khoản đã gỡ, nhắc TRỐNG KHÔNG (không kèm "GitHub ·")', () => {
+  const hits = stale("Repo 'focus-flow' này nằm trong tài khoản GitHub minhvq36 hay minhvuptitd14 vậy bạn?");
+  assert.deepEqual(hits, ['minhvuptitd14'], 'kim `label` một mình không bắt được ca này');
+});
+
+test('🔴 tài khoản CÒN NỐI thì im — nếu không cổng bắn ở mọi lượt', () => {
+  assert.deepEqual(stale('Mình sẽ đọc repo bằng tài khoản minhvq36 nhé.'), []);
+});
+
+test('🔴 người dùng TỰ nêu tên đó ⇒ trả lời về nó là hành vi ĐÚNG', () => {
+  // Điều kiện 2 của cổng. Thiếu nó thì hỏi "minhvuptitd14 đâu rồi?" sẽ bị chính
+  // cổng chặn mất câu trả lời thật thà *"tài khoản đó không còn nối nữa"*.
+  assert.deepEqual(
+    stale('Tài khoản minhvuptitd14 giờ sao rồi?', 'minhvuptitd14 giờ sao rồi?'),
+    [],
+  );
+});
+
+test('⭐ vắng `via` (cánh tay không OAuth) thì cổng chạy y như cũ', () => {
+  // Trường mới là TUỲ CHỌN. Cánh tay thư mục không có `via`, và hành vi của
+  // chúng phải không đổi một chút nào sau bản vá này.
+  const hits = staleMentions({
+    arms: { aMusic: { label: 'Musics' } },
+    servers: { aMusic: {} },
+    live: new Set<string>(),
+    say: 'Mình đã xem thư mục Musics.',
+    userText: '',
+  });
+  assert.deepEqual(hits, ['Musics']);
+});

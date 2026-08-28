@@ -73,6 +73,41 @@ test('⭐ Notion KHÔNG có auth/identity — hai trường này là NGOẠI L�
   assert.equal(notion.identity, undefined, 'Notion trả workspace_id ngay trong phản hồi token');
 });
 
+// ────────────────────────────────────── hai hàng rào, hai chủ sở hữu
+
+test('🔴 THẺ PHẢI NÓI RA điều kiện — "repo riêng tư" mà không nói phải cài app là nửa sự thật', () => {
+  /**
+   * Chưa cài app vào repo nào thì mọi lời gọi trả **404**, và GitHub cố ý trả
+   * 404 chứ không phải 403 (để không lộ repo có tồn tại). Thẻ im lặng ⇒ người
+   * dùng đi kiểm chìa thay vì đi cài app. §5h·7l ③ bắt buộc thẻ phải nói.
+   */
+  assert.match(gh.blurb, /cài agentco vào/i);
+});
+
+test('⭐ CÓ CỬA đi tới màn hình đồng ý của GitHub — không có nó thì cánh tay "chạy" mà 404 hết', () => {
+  /**
+   * Trước 27/08 chuỗi `installations/new` **không xuất hiện một lần nào trong
+   * sản phẩm** — nó chỉ nằm trong file walkthrough. Người dùng không đọc
+   * walkthrough thì không bao giờ biết phải cài app. → C-2 · F-3 bài 13
+   */
+  assert.match(gh.scope?.url ?? '', /^https:\/\/github\.com\/apps\/[\w-]+\/installations\/new$/);
+  assert.ok(gh.scope?.say, 'nút phải có chữ');
+  assert.match(gh.scope?.help ?? '', /GitHub giữ/, 'phải nói phạm vi này AI giữ');
+});
+
+test('⭐ CHỈ MỘT hàng rào repo, và nó là của GitHub — ta không dựng cái thứ hai', () => {
+  /**
+   * Hàng rào repo phía ta (`limitTo` + `armJail`) tồn tại đúng nửa ngày 27/08.
+   * Gỡ vì phạm vi repo là tài sản **cấp tài khoản của GitHub**: chồng thêm một
+   * hàng rào chỉ mua được thu-hẹp-theo-cánh-tay, đổi lấy một cơ chế nữa + gõ
+   * tay + đổi-là-cắm-lại. → `SPEC-arms.md` §5h·7m · [[agentco-count-mechanisms]]
+   *
+   * Thứ ở lại là `reachTest` — một **phép thử**, không phải một hàng rào.
+   */
+  assert.equal((gh as Record<string, unknown>)['limitTo'], undefined);
+  assert.ok(gh.repoScan, 'nhưng phải TRA được bản cài — dấu ✓ không chứng minh tầm với');
+});
+
 // ─────────────────────────────────────────────────────── ① nhóm việc
 
 test('🔴 nhóm việc phải SẮP XẾP trước khi nối — cùng tick ⇒ cùng băm', () => {
