@@ -125,7 +125,19 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
 
   // Hai thư mục, vì vùng cấm nằm ở CẢ HAI cấp: chìa khoá ở `company/.state/`,
   // file vai trò ở `offices/<id>/roles/`. → paths.ts §guardedZone
-  const jailDirs = { companyDir: office.companyDir, officeDir: office.dir };
+  /**
+   * ⚠ `hasBrowser` giải **một lần ở đây**, không tra lại trong hàng rào.
+   *
+   * `role.mcp` là nguồn duy nhất của *"ai cầm cánh tay nào"*, và `arms[băm]
+   * .catalog` là chỗ duy nhất nói băm đó là mục danh mục nào. Để `guardedZone`
+   * tự đi tra hai bảng ấy là biến một hàm thuần theo đường dẫn thành một thứ
+   * phải dựng cả công ty mới test được. → `paths.ts §guardedZone`
+   */
+  const jailDirs = {
+    companyDir: office.companyDir,
+    officeDir: office.dir,
+    hasBrowser: role.mcp.some((id) => office.company.arms?.[id]?.catalog === 'browser'),
+  };
 
   /**
    * ┌────────────────────────────────────────────────────────────────────────┐
@@ -738,6 +750,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         status: 'failed' as const,
         say: 'Nhân viên trả về kết quả không đọc được. Xem nhật ký chi tiết.',
         answer: '',
+        // Không có sự kiện nào để neo — receipt còn không đọc được. Bịa một câu
+        // tóm tắt ở đây là đưa cho Trợ lý một thứ nghe như dữ kiện mà không phải.
+        gist: '',
         artifacts: [],
         lessons: [],
         blocked_on: `receipt không hợp lệ: ${parsed.problem ?? 'không rõ'}`,
@@ -955,6 +970,18 @@ const JAIL_REASON: Record<GuardedZone, (t: string) => string> = {
     `"${t}" nằm trong thư mục trạng thái nội bộ (.state). Đó là nơi giữ CHÌA KHOÁ và sổ ` +
     `công việc của hệ thống — không nhân viên nào đọc hoặc ghi ở đó, kể cả khi được yêu cầu. ` +
     `Bạn không cần chìa khoá để dùng một công cụ đã được cắm sẵn: cứ gọi tool của nó.`,
+  /**
+   * ⚠ CÂU NÀY PHẢI CHỈ ĐƯỜNG ĐÚNG, không chỉ cấm — cùng lý lẽ với `config`.
+   *
+   * Nhân viên chạm vào đây gần như luôn vì một việc HỢP LỆ: *"trang đó hiện gì"*.
+   * Câu trả lời đúng là **chụp lại trang**, không phải bới log của lượt trước.
+   * Cấm suông thì họ báo `blocked` cho một việc làm được, và người dùng nhận
+   * một câu lỗi nói về thư mục thay vì về việc họ giao.
+   */
+  browser: (t) =>
+    `"${t}" là thư mục log nội bộ của trình duyệt — nó giữ dấu vết phiên đăng nhập của ` +
+    `người dùng, nên không nhân viên nào đọc ở đó. Cần biết một trang đang hiện gì thì ` +
+    `MỞ LẠI trang đó bằng cánh tay trình duyệt và chụp, đừng đọc log của lượt trước.`,
   config: (t) =>
     `"${t}" là file CẤU HÌNH của văn phòng (vai trò, kỹ năng, sơ đồ, kết nối). Nó chỉ được ` +
     `đổi qua giao diện, để mỗi thay đổi có người chịu trách nhiệm và có dấu vết trong nhật ký. ` +
@@ -1082,6 +1109,8 @@ function stoppedReceipt(
     // Người dùng vừa bấm Dừng. Đẩy một câu trả lời dở dang lên chat như thể nó
     // là kết quả hoàn chỉnh là đúng loại nói dối `stoppedReceipt` sinh ra để bỏ.
     answer: '',
+    // Bị ngắt giữa chừng ⇒ chưa ai đọc được kết quả để tóm tắt. → `types.ts §gist`
+    gist: '',
     artifacts: written,
     lessons: [],
     blocked_on: 'người dùng dừng giữa chừng',

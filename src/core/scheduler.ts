@@ -370,6 +370,14 @@ export class Scheduler {
             status: 'blocked',
             say: `Không làm được vì bước trước chưa xong.`,
             answer: '',
+            /**
+             * Receipt do MÃ dựng, không do nhân viên nào chạy ⇒ không có sự kiện
+             * nào để neo. `gist` rỗng là câu trả lời đúng, và Trợ lý sẽ rơi về
+             * nhánh *"không có dòng KẾT QUẢ"* của nó. Bịa một câu ở đây là đưa
+             * cho nó một thứ nghe như dữ kiện mà không ai đo được.
+             * → `types.ts §gist`
+             */
+            gist: '',
             artifacts: [],
             lessons: [],
             blocked_on: reasonFor(stale, receipts),
@@ -635,6 +643,8 @@ export class Scheduler {
       status: 'blocked',
       say,
       answer: '',
+      // Mã dựng, chưa ai chạy ⇒ không có sự kiện. → `types.ts §gist`
+      gist: '',
       artifacts: [],
       lessons: [],
       blocked_on: `${why}: ${missing.join(', ')}`,
@@ -892,6 +902,14 @@ export class Scheduler {
       status: deliveredAll ? 'done' : written.length ? 'blocked' : 'failed',
       say,
       answer: '',
+      /**
+       * ⚠ RỖNG kể cả khi `deliveredAll` — và đó là chỗ dễ đi sai nhất trong bốn
+       * chỗ dựng receipt bằng mã. Ở đây ta biết **file nào đáp xuống**, nhưng
+       * không biết **trong file có gì**: vòng lặp chết trước khi nhân viên kịp
+       * viết receipt, nên không ai đọc nội dung cả. Suy một câu tóm tắt từ tên
+       * file là bịa. `say` ở trên đã nói đúng thứ ta biết. → `types.ts §gist`
+       */
+      gist: '',
       // File có thật trên đĩa, dù ca này đóng ở `failed`. Khai rỗng là nói dối
       // rằng đĩa sạch — đúng lớp lỗi `stoppedReceipt` đã sửa cho nhánh bị ngắt.
       artifacts: written,

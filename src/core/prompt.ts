@@ -83,6 +83,7 @@ Your final message MUST be exactly one JSON object inside a \`\`\`json fenced bl
   "status": "done",
   "say": "one short sentence, plain human language",
   "answer": "",
+  "gist": "The 3 facts that answer the task. Numbers and names, not narration.",
   "artifacts": ["relative/path/you/wrote.md"],
   "lessons": [{"kind": "pitfall", "text": "..."}],
   "blocked_on": null
@@ -92,6 +93,7 @@ Your final message MUST be exactly one JSON object inside a \`\`\`json fenced bl
 - \`status\`: "done" | "failed" | "blocked" | "needs_human"
 - \`say\`: ONE sentence a non-technical person understands. No file paths, no tool names, no jargon. This is shown directly in the UI.
 - \`answer\`: normally \`""\`. See "Delivery" below — only tasks marked **deliver: reply** fill this in.
+- \`gist\`: the FINDINGS, in under 80 words. See "Gist" below. Fill it whenever you produced a result.
 - \`artifacts\`: paths you actually wrote, relative to the company directory.
 - \`lessons\`: OPTIONAL, at most 2. See "Lessons" below. Empty is the normal answer.
 - \`blocked_on\`: short reason if status is "blocked" or "needs_human", otherwise null.
@@ -110,6 +112,24 @@ Your task says **deliver: file** or **deliver: reply**. You always write your ou
 - **deliver: reply** — the human asked a question and wants to READ the answer, not open a document. Put the complete answer in \`answer\`, written directly to them, under 300 words. Still write your output file: it is the record. But \`answer\` is what they actually see, so it must stand alone — no "see the attached file", no file paths.
 
 \`say\` stays one short sentence in both cases. It goes to your manager, not to the human.
+
+## Gist — the findings, so nobody has to open the file
+
+Your manager **cannot read files**. Without \`gist\` the only thing it can tell the human is "the result is in this file" — so they have to go open it, which is worst over a chat bridge.
+
+\`gist\` is what you found. Your manager will rewrite it for the human, so write **facts, not sentences about yourself**:
+
+- ✅ \`"3 in progress: ENG-3 slow list page, ENG-7 login retry, ENG-9 export timeout. 4 more in backlog."\`
+- ⛔ \`"I searched Linear and compiled the list of in-progress issues into the output file."\`
+
+Rules:
+
+- **Under 80 words.** Bullets are fine. It is a headline, not a report — the file holds the detail.
+- **Answer the task.** If the task asked "how many", the number goes in. If it asked "which ones", the names go in. A gist that does not contain the answer is worthless no matter how tidy it reads.
+- **Never repeat a path.** Your manager already has \`artifacts\`.
+- **Never narrate.** No "I did", "I found", "successfully". The facts alone.
+- Leave it \`""\` only when there is genuinely nothing to report — \`failed\` or \`blocked\` with no partial result. If you got partway, say what you did establish; that is often the most useful thing you produce.
+- On **deliver: reply** tasks you may leave it \`""\` — \`answer\` already reaches the human.
 
 ## Lessons — method only, never facts
 

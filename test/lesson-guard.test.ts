@@ -237,6 +237,10 @@ test('enforceCap: answer KHÔNG ăn vào trần của receipt', () => {
       status: 'done',
       say: 'Đã trả lời khách về chính sách bảo hành.',
       answer: long,
+      // ⚠ `gist` PHẢI có: `enforceCap` gọi `.trim()` lên nó. Fixture thiếu một
+      // trường mới thì test nổ ở chỗ chẳng liên quan gì tới thứ nó đang kiểm —
+      // đúng cái đã dẫm với `landed` ngày 29/08.
+      gist: '',
       artifacts: ['artifacts/P-260819-1430-ab12/T-01/tra-loi.md'],
       lessons: [{ kind: 'pitfall', text: 'grep trong library/text/ trước khi trả lời' }],
       blocked_on: null,
@@ -250,6 +254,75 @@ test('enforceCap: answer KHÔNG ăn vào trần của receipt', () => {
   assert.ok(out.say.length > 0);
   assert.ok(out.answer.length > 0);
   assert.ok(out.answer.length < long.length, 'answer vẫn có trần RIÊNG của nó');
+});
+
+// ─────────────────── `gist`: kênh thứ ba, và nó CÓ ăn vào trần (30/08)
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `answer` và `gist` NGƯỢC NHAU Ở ĐÚNG MỘT CÂU HỎI: nó có đi vào ngữ cảnh  │
+ * │ Trợ lý không?                                                            │
+ * │                                                                          │
+ * │   answer  KHÔNG  ⇒ trần riêng, không cạnh tranh với ai                   │
+ * │   gist    CÓ     ⇒ nằm trong `receipt_tokens`, cạnh tranh với `say`      │
+ * │                                                                          │
+ * │ Ai đó "dọn cho gọn" bằng cách miễn trừ `gist` như `answer` sẽ mở đúng    │
+ * │ cái cửa mà cả hai trần sinh ra để đóng: một hoá đơn LẶP LẠI mỗi lượt.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const capFixture = (patch: Record<string, unknown> = {}) => ({
+  status: 'done' as const,
+  say: 'Đã tra xong danh sách việc.',
+  answer: '',
+  gist: '',
+  artifacts: ['artifacts/P-1/T-01/ra.md'],
+  lessons: [] as { kind: 'pitfall'; text: string }[],
+  blocked_on: null,
+  ...patch,
+});
+
+test('enforceCap: `gist` CÓ trần riêng — dài mấy cũng bị cắt', () => {
+  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40);
+  const out = enforceCap(capFixture({ gist: long }), 800);
+  assert.ok(out.gist.length > 0, 'không được bỏ hẳn — Trợ lý cần sự kiện để neo');
+  assert.ok(out.gist.length < long.length, 'nhưng phải bị cắt');
+});
+
+test('🔴 enforceCap: `gist` ĐI VÀO trần receipt — ngược hẳn `answer`', () => {
+  /**
+   * Trần chặt + `gist` dài. Nếu `gist` được miễn trừ như `answer` thì `say`
+   * sống nguyên; vì nó KHÔNG được miễn trừ nên bậc thang hy sinh phải chạy.
+   */
+  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40);
+  const out = enforceCap(capFixture({ gist: long, say: 'x'.repeat(400) }), 120);
+  assert.ok(out.gist.length < long.length);
+  assert.ok(out.say.length < 400, 'trần đã siết thật, không phải chỉ cắt riêng gist');
+});
+
+test('⭐ enforceCap: bậc thang hy sinh — `lessons` chết TRƯỚC `gist`', () => {
+  // Thứ tự này là một quyết định, không phải tình cờ: bài học chỉ đáng giá ở
+  // lượt SAU, còn `gist` là thứ người dùng đọc NGAY BÂY GIỜ.
+  const out = enforceCap(
+    capFixture({
+      gist: 'Ba việc In Progress: AGE-3, AGE-7, AGE-9.',
+      lessons: [{ kind: 'pitfall' as const, text: 'x'.repeat(300) }],
+      say: 'y'.repeat(200),
+    }),
+    90,
+  );
+  assert.equal(out.lessons.length, 0, 'lessons hy sinh trước');
+  assert.ok(out.gist.length > 0, 'gist vẫn còn lại thứ gì đó');
+});
+
+test('⭐ enforceCap: `gist` rỗng thì vẫn rỗng, không bịa', () => {
+  assert.equal(enforceCap(capFixture(), 800).gist, '');
+});
+
+test('📌 enforceCap: `gist` giữ xuống dòng — gạch đầu dòng là một phần nội dung', () => {
+  // User chốt 30/08: *"đôi khi là gạch đầu dòng từng ý"*. `say` gom khoảng trắng
+  // được vì nó chạy trong một dòng trạng thái; `gist` thì không.
+  const out = enforceCap(capFixture({ gist: '- AGE-3 chậm\n- AGE-7 lỗi đăng nhập' }), 800);
+  assert.ok(out.gist.includes('\n'), 'không được gom về một dòng');
 });
 
 // ───────────────────────────────── plan_id đọc được

@@ -101,6 +101,41 @@ export type ArmSpec =
        * bằng lớp của ta như cũ.
        */
       readOnlyHeaders?: Record<string, string>;
+      /**
+       * URL thay thế ở nấc **chỉ đọc** — cùng phận sự `readOnlyHeaders`, khác cơ
+       * chế: hãng cắt bằng ĐỊA CHỈ chứ không bằng header.
+       *
+       * Đo 29/08 (Linear): `…/mcp` **57 việc ≈19 811 token** · `…/mcp/readonly`
+       * **35 việc ≈8 544** — cắt đúng 22 việc ghi, **không mất một việc đọc nào**,
+       * rẻ đi ≈11 267 token mỗi lượt.
+       *
+       * ⚠⚠ THÊM Ô NÀY THÌ PHẢI SỬA `serverFenced()` — nó ở CUỐI FILE, không nằm
+       * cạnh đây, và quên nó là dựng lại nguyên vẹn bug 27/08 (bộ chọn nấc không
+       * hiện, người dùng khoá cứng ở nấc thấp nhất, **không câu lỗi nào**).
+       * Lý do đầy đủ ở khối chú thích của `serverFenced`.
+       *
+       * 📌 Quà kèm theo, không phải chủ ý: URL đi vào `armHash`, nên nấc đọc và
+       * nấc ghi **tự động** là hai cánh tay hai băm — thứ mà bản cắt-bằng-header
+       * phải dựa vào `level` trong băm mới có được.
+       */
+      readOnlyUrl?: string;
+      /**
+       * `scope` xin lúc mở màn Đồng ý. Không khai ⇒ **không gửi tham số nào**,
+       * đúng hành vi từ trước tới nay (Notion · GitHub không đổi một byte).
+       *
+       * 🔴 Có vì *"để hãng tự quyết"* là một giả định không đo được. Notion khai
+       * đúng **một** scope (`default`) nên vắng mặt vô hại; Linear khai **bốn**
+       * (`read` · `write` · `openid` · `email`) và ta **không biết** nó mặc định
+       * cấp cái nào. Mà nấc quyền của mục này đọc từ chìa, nên một scope không
+       * xác định là một hàng rào không xác định.
+       *
+       * ⚠ XIN **RỘNG** Ở ĐÂY, không xin hẹp — kể cả khi người dùng sắp chọn nấc
+       * chỉ đọc. Scope được chốt lúc bấm Đồng ý, tức **trước** khi họ nhìn thấy
+       * bộ chọn nấc; xin hẹp là khoá cửa trước khi người ta biết có cửa, và
+       * `offeredTiers` sẽ thu về đúng một nấc. Đo 29/08 dựng lại y hệt ca đó.
+       * Thu hẹp là việc của lúc LƯU. → `serverFenced` · SESSIONS_MEMORY §5x
+       */
+      authScope?: string;
     };
 
 /**
@@ -169,7 +204,9 @@ export function buildConfig(
     if (spec.readOnlyHeaders && input.level === 'read') {
       headers = { ...(headers ?? {}), ...spec.readOnlyHeaders };
     }
-    return { type: 'http', url: spec.url, ...(headers ? { headers } : {}) };
+    // Cùng luật, cơ chế khác: hãng cắt bằng ĐỊA CHỈ. → `readOnlyUrl` ở trên.
+    const url = spec.readOnlyUrl && input.level === 'read' ? spec.readOnlyUrl : spec.url;
+    return { type: 'http', url, ...(headers ? { headers } : {}) };
   }
   /**
    * Thứ tự nối: `args` chung → `argsByOs` → thư mục người dùng chọn.
@@ -273,10 +310,25 @@ export function activeOptions(arm: CatalogArm, config: unknown): readonly ArmOpt
  * │ một câu hỏi khám phá là để câu trả lời tự cắt cụt chính nó.                │
  * │ (Bản lưu vẫn dựng có hàng rào, và `scopedTools` lúc lưu vẫn hỏi lại server│
  * │ theo đúng nấc — nên danh sách việc được cấp KHÔNG rộng ra tí nào.)        │
+ * │                                                                          │
+ * │ 🆕 29/08 — CÙNG CÁI BẪY, CỬA THỨ HAI: `readOnlyUrl` (Linear cắt bằng ĐỊA │
+ * │ CHỈ, không bằng header). Đo thật: thử ở nấc `read` mà bắn vào             │
+ * │ `/mcp/readonly` ⇒ **35 việc, cả ba nấc bằng nhau, bộ chọn nấc biến mất.** │
+ * │ Hàm này phải nhìn thấy **mọi** cơ chế cắt-ở-server, không chỉ cơ chế đầu  │
+ * │ tiên ta gặp — nó là chỗ DUY NHẤT trả lời *"mục này có tự cắt cụt phép     │
+ * │ khám phá không"*. Thêm một cơ chế mà quên dòng này thì bug quay lại y      │
+ * │ nguyên, và **im lặng**. → [[agentco-finish-completely]]                    │
+ * │                                                                          │
+ * │ ⚠ Còn một cửa THỨ BA đã đo được nhưng KHÔNG sửa được ở đây: **scope của   │
+ * │ chính cái chìa**. Chìa Linear scope `read` gọi vào `/mcp` đầy đủ cũng chỉ │
+ * │ ra 35 việc. Cửa đó nằm ngoài tầm hàm này vì scope được quyết lúc người    │
+ * │ dùng bấm Đồng ý — **trước** khi họ nhìn thấy bộ chọn nấc. Luật đi kèm:    │
+ * │ **lúc đồng ý phải xin RỘNG** (`read write`), rồi thu hẹp lúc LƯU.         │
+ * │ → `oauth.ts §refreshAccount(scope)` · `arms/linear.ts §narrowScope`       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function serverFenced(a: CatalogArm): boolean {
-  return a.spec.kind === 'http' && Boolean(a.spec.readOnlyHeaders);
+  return a.spec.kind === 'http' && Boolean(a.spec.readOnlyHeaders || a.spec.readOnlyUrl);
 }
 
 /** Mục này cần đăng nhập chứ không cần gõ chìa? Suy từ `spec`, không khai lại. */
@@ -562,6 +614,34 @@ export interface CatalogArm {
    * mục "chỉ đọc cứng" nên là một quyết định có lý do viết ra, không phải mặc định.
    */
   tiered?: boolean;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ CÂU GIẢI THÍCH NẤC — GHI ĐÈ ĐƯỢC THEO TỪNG HÃNG. (thêm 30/08)            │
+   * │                                                                          │
+   * │ 🔴 VÌ SAO PHẢI CÓ Ô NÀY, chứ không phải "viết một câu chung khéo hơn":   │
+   * │ câu mặc định của nấc `add` là *"Tạo được trang/mục mới, nhưng không đụng  │
+   * │ tới thứ đã có sẵn"* — **sai với Linear**. Linear không có `create_issue`; │
+   * │ nó dùng `save_issue` (upsert) khai `destructiveHint: true` ⇒ việc tạo    │
+   * │ issue rơi xuống `full`. Nấc `add` của Linear thêm đúng **4 việc** và      │
+   * │ **không tạo được issue** — tức đối tượng chính của cả sản phẩm đó.        │
+   * │                                                                          │
+   * │ ⚠ RANH GIỚI, để ô này không phình thành chỗ vá mọi thứ:                  │
+   * │  · Nó **KHÔNG** đổi việc nào thuộc nấc nào — đó là `probe.ts §tierOf`,    │
+   * │    và `tierOf` chỉ đọc `annotations`. User chốt 29/08: *"cứ tuân theo     │
+   * │    bảng chân trị thôi"*. Vá phép phân nấc cho một hãng là nhét ca đặc     │
+   * │    thù vào lõi. → [[agentco-domain-vs-boundary]]                         │
+   * │  · Nó **KHÔNG** đổi TÊN nấc. Tên là từ vựng chung giữa mọi cánh tay:     │
+   * │    "Đọc + Thêm mới" ở mục này mà tên khác ở mục kia thì người dùng mất    │
+   * │    khả năng so hai cánh tay. Chỉ câu GIẢI THÍCH đổi.                     │
+   * │  · Nó sửa một chuỗi **CỦA TA**, không phải lời khai của hãng — nên nó     │
+   * │    không đụng luật *"giữ tên nhóm của hãng"* (§groups).                  │
+   * │                                                                          │
+   * │ Không khai ⇒ câu mặc định, tức mọi mục hôm nay trừ Linear. Hứa quá tay    │
+   * │ tệ hơn doạ quá tay (§11a-bis) — và một câu hứa *"tạo được"* trên một nấc  │
+   * │ không tạo được chính là loại tệ hơn đó.                                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
   /**
    * Hình dạng để giao diện chọn ICON — cùng khuôn olders ⇒ 'files' đang dùng.
    * Dữ liệu, không phải nhánh mã theo tên hãng.

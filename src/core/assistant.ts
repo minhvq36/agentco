@@ -2135,11 +2135,22 @@ export class Assistant {
      * → [[agentco-prompt-rules-lose-to-examples]] · [[agentco-rule-must-see-what-it-governs]]
      */
     const summary = receipts
-      .map(
-        (r) =>
+      .map((r) => {
+        const head =
           `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}` +
-          (learnable(r) ? '   ⟵ ĐI ĐẾN ĐÍCH dù có vấp: CHỈ việc này được rút bài học' : ''),
-      )
+          (learnable(r) ? '   ⟵ ĐI ĐẾN ĐÍCH dù có vấp: CHỈ việc này được rút bài học' : '');
+        /**
+         * `gist` = SỰ KIỆN nhân viên tìm được. Đây là **thứ duy nhất** Trợ lý có
+         * để trả lời câu hỏi của người dùng: nó không đọc được file (§4.7), nên
+         * không có dòng này thì câu chốt hay nhất nó viết được vẫn là *"kết quả
+         * nằm trong file kia"* — và người dùng phải đi mở, tệ nhất là qua bridge.
+         *
+         * ⚠ Xuống dòng + thụt vào chứ không nối vào `say`: `gist` được phép là
+         * gạch đầu dòng (user chốt 30/08), và ép nó thành một dòng là bóp chết
+         * đúng hình dạng hữu ích nhất của nó.
+         */
+        return r.gist ? `${head}\n    KẾT QUẢ: ${r.gist.replace(/\n/g, '\n    ')}` : head;
+      })
       .join('\n');
 
     const wantLessons = worthLearning(receipts, friction, leaked);
@@ -2161,8 +2172,33 @@ export class Assistant {
     const { text, usage } = await this.askSession(
       `Kế hoạch vừa chạy: ${plan}\n\nKết quả:\n${summary}\n\n` +
         `Trả về đúng một object JSON trong khối \`\`\`json:\n` +
-        `{"say":"<1–3 câu tiếng Việt báo cáo cho người dùng: đã xong gì, có gì cần họ để ý. ` +
-        `Không liệt kê lại từng việc, không dùng thuật ngữ kỹ thuật>"` +
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ TRẢ LỜI CÂU HỎI, KHÔNG BÁO CÁO TIẾN ĐỘ. (user chốt 30/08)         │
+         * │                                                                    │
+         * │ > *"tôi thường xuyên phải vào file để xem kết quả, điều này càng    │
+         * │ >  bất lợi khi dùng qua bridge"* · *"nó chỉ cần neo theo intent     │
+         * │ >  của user là được"*                                              │
+         * │                                                                    │
+         * │ Bản cũ chỉ xin *"đã xong gì, có gì cần để ý"* — và nó cho ra đúng   │
+         * │ *"mình đã ghi danh sách vào file X, bạn mở file đó để xem"*. Câu ấy │
+         * │ **đúng** với thứ nó được hỏi; chỗ sai là câu hỏi.                   │
+         * │                                                                    │
+         * │ ⚠ ĐÂY LÀ NƠI DUY NHẤT NEO ĐƯỢC VÀO Ý ĐỊNH NGƯỜI DÙNG. Nhân viên     │
+         * │ chưa bao giờ thấy câu họ gõ — nó chỉ thấy brief của task. Trợ lý    │
+         * │ thì vẫn còn nguyên câu đó trong phiên. Nên phép chia là: **nhân     │
+         * │ viên cấp SỰ KIỆN, Trợ lý NEO**.                                    │
+         * │                                                                    │
+         * │ ⚠ Và phải cấm bịa ngay tại đây: `gist` là nguồn DUY NHẤT. Một câu   │
+         * │ chốt nghe trôi chảy mà thêm dữ kiện không ai kiểm được thì tệ hơn   │
+         * │ hẳn câu "mở file ra xem".                                          │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        `{"say":"<tiếng Việt, TRẢ LỜI THẲNG câu người dùng vừa hỏi bằng số liệu và tên ` +
+        `lấy từ dòng KẾT QUẢ ở trên — đó là thứ họ hỏi, đừng bắt họ mở file mới biết. ` +
+        `Khoảng 1–3 câu, hoặc vài gạch đầu dòng nếu là danh sách. Nêu luôn thứ cần họ để ý. ` +
+        `KHÔNG thêm bất kỳ dữ kiện nào không có ở dòng KẾT QUẢ. Không có dòng KẾT QUẢ nào ` +
+        `thì nói thẳng đã làm gì và chỉ tới file. Không kể lại tiến độ, không thuật ngữ kỹ thuật>"` +
         (wantLessons
           ? `,\n "lessons":[{"kind":"pitfall","text":"<CÁCH LÀM dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
             (friction > 0
@@ -2272,8 +2308,37 @@ export class Assistant {
         `một địa chỉ, một con số ngoài đời, "X là gì". Khi đó để "paths" là mảng RỖNG.\n` +
         `       ⚠ Danh bạ CÓ người chuyên tìm tin/tra cứu/duyệt web thì mọi câu tra cứu đều về tay ` +
         `họ ("task"), kể cả quán ăn hay tin tức: họ đối chiếu nhiều nguồn và dẫn nguồn, "lookup" thì không.\n` +
+        /**
+         * ⚠ ĐIỀU KIỆN NẰM TRÊN CHÍNH DÒNG CÓ VÍ DỤ — cùng khuôn đã thắng ở
+         * `chạy lệnh: TẮT` và ở nhánh (b) phía trên. Đặt nó thành một câu luật
+         * ở đoạn khác thì model khớp ví dụ rồi dừng, không đọc tới.
+         * → [[agentco-prompt-rules-lose-to-examples]]
+         *
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ 🔴 CA THẬT 30/08: người dùng hỏi *"Việc nào đang giao cho tôi?"*   │
+         * │ Trợ lý viết brief: *"…lọc những việc gán cho người dùng có email    │
+         * │ minh.vu.ptit.d14@gmail.com"* — một email **nó không có cách nào     │
+         * │ biết**, và sai. Nhân viên tra đúng theo brief, không thấy ai, báo   │
+         * │ về. 6 lượt, $0,1409, câu trả lời vô dụng.                          │
+         * │                                                                    │
+         * │ Trợ lý lập kế hoạch TRƯỚC mọi lời gọi cánh tay, nên về mặt cấu     │
+         * │ trúc nó **không thể** biết người dùng là ai bên trong một dịch vụ.  │
+         * │ Mọi định danh nó viết ra đều là phỏng đoán — kể cả khi đoán trúng.  │
+         * │                                                                    │
+         * │ ⚠ Và một định danh GẦN ĐÚNG nguy hiểm hơn một định danh sai rành   │
+         * │ rành: lần này nó hỏng to tiếng (không có user nào mang email đó),   │
+         * │ nhưng nếu cú đoán rơi trúng một người thật khác trong workspace     │
+         * │ thì *"việc của tôi"* trả về việc của người khác — tự tin, gọn      │
+         * │ gàng, kèm một file dẫn chứng, và không ai bắt được.                 │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
         `{"intent":"task","request":"<viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh>","scope":"new"}\n` +
         `  dùng khi: đã đủ rõ để giao cho đội.\n` +
+        `   ⚠ "tôi"/"mình"/"của tôi" thì GIỮ NGUYÊN như thế, đừng thay bằng tên, email hay ID nào — ` +
+        `bạn không có cách nào biết người dùng là ai bên trong dịch vụ đó, và đoán gần đúng còn tệ hơn ` +
+        `đoán sai hẳn. Viết "tài khoản đang đăng nhập của kết nối"; nhân viên hỏi chính cánh tay đó.\n` +
+        `      ✅ "…lọc những việc gán cho tài khoản đang đăng nhập của kết nối Linear"\n` +
+        `      ⛔ "…lọc những việc gán cho người dùng có email an@example.com"\n` +
         /**
          * LUẬT PHÂN CỬA `lookup` vs `task` — một câu, và nó phải đúng TRỤC.
          *

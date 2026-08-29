@@ -137,6 +137,43 @@ test('⭐ hồ sơ trình duyệt NẰM SAU guardedZone — nhân viên không �
   ]) {
     assert.equal(guardedZone(dirs, target, 'read'), 'secrets', `"${target}" lọt qua hàng rào`);
   }
-  // Còn thư mục snapshot thì KHÔNG bị gác — worker phải đọc được, đó là chủ ý.
-  assert.equal(guardedZone(dirs, path.join('.playwright-mcp', 'page-1.yml'), 'read'), undefined);
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `.playwright-mcp` — SIẾT LẠI 30/08, HAI ĐIỀU KIỆN. (user hỏi đúng chỗ)   │
+   * │                                                                          │
+   * │ Bản trước một dòng: *"thư mục snapshot KHÔNG bị gác — worker phải đọc     │
+   * │ được"*. Câu đó bỏ sót hai chuyện, cả hai đo được trên đĩa 30/08:          │
+   * │                                                                          │
+   * │  ① Thư mục có **20 `console-*.log`** cạnh 21 `page-*.yml`, và log giữ     │
+   * │     chìa phiên dạng chữ — chính ca đẻ ra file `redact.ts` này. Kể cả      │
+   * │     người CẦM cánh tay cũng không cần đọc chúng.                         │
+   * │  ② Ảnh chụp trang có **PII thật** (email tự-điền trong form đăng nhập     │
+   * │     Facebook). Nhân viên KHÔNG có cánh tay trình duyệt không có việc gì   │
+   * │     với nó.                                                              │
+   * │                                                                          │
+   * │ ⇒ Mặc định từ chối trong thư mục đó, chừa đúng một lối ra: `page-*.yml`,  │
+   * │   và chỉ cho người cầm cánh tay. Kiểu file mới thêm sau này (trace, har,  │
+   * │   video) **tự động** bị chặn — allowlist, không phải denylist.            │
+   * │   → [[agentco-silent-allowlist]]                                         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const withArm = { ...dirs, hasBrowser: true };
+
+  // ① CÓ cánh tay: đọc được ảnh chụp — thứ nó cần để làm việc.
+  assert.equal(guardedZone(withArm, path.join('.playwright-mcp', 'page-1.yml'), 'read'), undefined);
+
+  // ② CÓ cánh tay nhưng log console vẫn CHẶN — chìa phiên dạng chữ.
+  assert.equal(guardedZone(withArm, path.join('.playwright-mcp', 'console-1.log'), 'read'), 'browser');
+
+  // ③ KHÔNG cánh tay: chặn cả ảnh chụp. Đầu ra của một cánh tay thuộc về người cầm nó.
+  assert.equal(guardedZone(dirs, path.join('.playwright-mcp', 'page-1.yml'), 'read'), 'browser');
+
+  // ④ Không khai `hasBrowser` ⇒ coi như KHÔNG có. Vắng mặt không phải tín hiệu an toàn.
+  assert.equal(guardedZone(dirs, path.join('.playwright-mcp', 'x.trace.zip'), 'read'), 'browser');
+
+  // ⑤ Kiểu file lạ, dù CÓ cánh tay ⇒ vẫn chặn (allowlist, không phải denylist).
+  assert.equal(guardedZone(withArm, path.join('.playwright-mcp', 'x.har'), 'read'), 'browser');
+
+  // ⑥ Ngoài thư mục đó, `page-*.yml` không có đặc quyền gì — tên file không phải hộ chiếu.
+  assert.equal(guardedZone(withArm, path.join('artifacts', 'page-1.yml'), 'read'), undefined);
 });

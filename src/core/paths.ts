@@ -416,7 +416,57 @@ export function resolveInput(
  * │ đó là lời hứa thứ tư sau `canUseTool`, `safeJoin` và §8·0.               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export type GuardedZone = 'secrets' | 'config' | 'outside';
+export type GuardedZone = 'secrets' | 'config' | 'outside' | 'browser';
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `.playwright-mcp` — DẤU CHẤM CHẶN **TÌM THẤY**, KHÔNG CHẶN **ĐỌC**.   │
+ * │ (user hỏi 30/08, đo ra khe hở)                                           │
+ * │                                                                          │
+ * │ > *"tôi lo nó mò vào .playwright-mcp hoặc .state/browser (cái này hình    │
+ * │ >  như bị chặn rất nặng)"*                                               │
+ * │                                                                          │
+ * │ Nửa sau đúng: `.state/browser/profile` (**506 MB** cookie + phiên đăng    │
+ * │ nhập) bị khoá cứng, vì phép kiểm `.state` nằm **trước** dòng cho `read`   │
+ * │ đi qua. Nửa trước thì hở: `.playwright-mcp` là **anh em** của `.state`,   │
+ * │ không nằm dưới nó ⇒ `guardedZone('read')` trả `undefined` ⇒ gõ đúng       │
+ * │ đường dẫn là đọc được.                                                   │
+ * │                                                                          │
+ * │ Dấu chấm đầu tên **là một cơ chế** — `Grep`/`Glob` không duyệt xuống thư  │
+ * │ mục ẩn (đã đo). Nhưng đó là chặn *tìm thấy*, không phải chặn *đọc*, và    │
+ * │ hai thứ đó khác nhau đúng ở chỗ một cái tên bị lộ ra ngoài (log lỗi, câu  │
+ * │ người dùng dán vào, một artifact cũ) là hàng rào hết tác dụng.            │
+ * │                                                                          │
+ * │ Thứ nằm trong đó không vô hại: `redact.ts` sinh ra vì đọc được **chìa      │
+ * │ phiên Facebook dạng chữ** (`fb_dtsg=…&__user=…`) trong `console-*.log`.   │
+ * │ Nó cắt query khỏi URL — **giảm thiểu, không bịt kín**, và chính nó ghi ra │
+ * │ điều đó. Chặn đọc cả thư mục là lá chắn thứ hai, khác tầng.              │
+ * │                                                                          │
+ * │ ⚠ Vì sao một vùng RIÊNG chứ không gộp vào `secrets`: câu lỗi của          │
+ * │ `secrets` nói về `.state` và chìa khoá. Trả câu đó cho một nhân viên vừa  │
+ * │ chạm log trình duyệt là **chỉ sai cửa** — họ đi tìm chìa khoá ở chỗ không │
+ * │ có, còn việc đúng phải làm (chụp lại trang) thì không ai nói.            │
+ * │                                                                          │
+ * │ 🔴🔴 CHẶN CẢ THƯ MỤC LÀ CẮT TAY NHÂN VIÊN TRÌNH DUYỆT. (user hỏi đúng   │
+ * │ lúc, 30/08: *"việc bịt khe .playwright-mcp có ảnh hưởng tới worker đang   │
+ * │ cắm cánh tay trình duyệt không?"* — CÓ, nếu chặn thô.)                   │
+ * │                                                                          │
+ * │ Đo thư mục thật: **20 `console-*.log` + 21 `page-*.yml`**. Cái sau là     │
+ * │ **ảnh chụp trang** — thứ nhân viên ĐỌC để biết trang đang hiện gì, và     │
+ * │ `redact.ts §isConsoleLog` đã ghi sẵn *"Snapshot (`page-*.yml`) không được │
+ * │ đụng — worker đọc nó"*. Một hàng rào chặn luôn nó là biến cánh tay trình  │
+ * │ duyệt thành vô dụng, im lặng, ở đúng lượt người dùng cần nó nhất.         │
+ * │                                                                          │
+ * │ ⇒ Luật: **mặc định từ chối trong thư mục đó, chừa đúng một lối ra**.      │
+ * │ Mặc định-từ-chối vì file kiểu mới thêm vào sau này (trace, har, video)    │
+ * │ đều là dấu vết phiên, và một allowlist thì cái mới **tự động** bị chặn;   │
+ * │ một denylist thì cái mới **tự động lọt**. → [[agentco-silent-allowlist]]  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const BROWSER_OUTPUT = '.playwright-mcp';
+
+/** Lối ra duy nhất: ảnh chụp trang. Mọi thứ khác trong thư mục đó là dấu vết phiên. */
+const isPageSnapshot = (p: string): boolean => /^page-[^\\/]*\.ya?ml$/i.test(path.basename(p));
 
 /**
  * AI đang gọi, và vì thế luật nào áp.
@@ -473,7 +523,16 @@ function within(a: string, b: string): boolean {
  * (`cwd` của worker). Chuỗi rỗng = tool không khai đường dẫn ⇒ cho qua.
  */
 export function guardedZone(
-  dirs: { companyDir: string; officeDir: string },
+  dirs: {
+    companyDir: string;
+    officeDir: string;
+    /**
+     * Vai trò này CÓ cánh tay trình duyệt không — đã giải sẵn từ `role.mcp` lúc
+     * dựng worker. Không khai ⇒ **coi như không có**, tức chặt hơn: vắng mặt
+     * không phải tín hiệu an toàn. → khối ở chỗ dùng nó bên dưới
+     */
+    hasBrowser?: boolean;
+  },
   target: string,
   mode: GuardMode,
 ): GuardedZone | undefined {
@@ -485,6 +544,33 @@ export function guardedZone(
   // nhận một câu giải thích nói về chuyện không liên quan.
   for (const state of [companyPaths(dirs.companyDir).state, officePaths(dirs.officeDir).state]) {
     if (within(abs, state)) return 'secrets';
+  }
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ HAI ĐIỀU KIỆN, MỘT CHỖ — và bỏ vế nào cũng hỏng theo một kiểu.        │
+   * │ (user đề xuất vế ①, 30/08; vế ② là thứ vế ① một mình sẽ đánh rơi)      │
+   * │                                                                        │
+   * │  ① KHÔNG có cánh tay trình duyệt ⇒ chặn **cả thư mục**. Đây là đặc      │
+   * │     quyền tối thiểu nói đúng bằng lời của nó: *đầu ra của một cánh tay  │
+   * │     thuộc về người cầm cánh tay đó*. Nhân viên Linear không có việc gì  │
+   * │     với ảnh chụp trang của lượt trước — mà ảnh chụp **có PII thật**     │
+   * │     (ca 30/08: email tự-điền trong form đăng nhập Facebook).            │
+   * │                                                                        │
+   * │  ② CÓ cánh tay ⇒ vẫn chặn `console-*.log`. Người cầm cánh tay cũng      │
+   * │     **không** cần chìa phiên dạng chữ (`fb_dtsg=…&__user=…`). Gác theo  │
+   * │     mỗi vế ① thì nhân viên trình duyệt được mở cả log — **rộng hơn**    │
+   * │     luật hôm nay, tức một bước LÙI đội lốt bước siết.                   │
+   * │                                                                        │
+   * │ ⚠ `hasBrowser` là một **cờ boolean tính sẵn**, không phải `role` hay    │
+   * │ danh sách cánh tay. Giữ hàm này THUẦN theo đường dẫn + một dữ kiện đã   │
+   * │ giải: nó là hàng rào an ninh, và thứ khó kiểm chứng nhất là hàng rào    │
+   * │ phải tự đi tra cấu hình mới biết mình đang gác gì.                      │
+   * │ `role.mcp` vẫn là nguồn DUY NHẤT của "ai cầm gì" — ta chỉ đọc nó một    │
+   * │ lần lúc dựng worker. → [[agentco-count-mechanisms]]                     │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  if (within(abs, path.join(dirs.officeDir, BROWSER_OUTPUT))) {
+    if (!dirs.hasBrowser || !isPageSnapshot(abs)) return 'browser';
   }
 
   if (mode === 'read') return undefined;

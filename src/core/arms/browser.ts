@@ -54,10 +54,27 @@ export const BROWSER_ARM: CatalogArm = {
    *    trình duyệt thì xịn hơn"*. Số đo đứng về phía đó: một `snapshot` trang tin
    *    ≈47 000 token, còn WebFetch rẻ hơn nhiều lần.
    */
+  /**
+   * ⚠ VẾ THỨ BA THÊM 30/08 — ca thật, và nó là chỗ rò DUY NHẤT không hàng rào
+   * nào bịt được.
+   *
+   * Nhân viên mở `facebook.com`, hồ sơ Chrome **tự điền sẵn** email thật của
+   * người dùng vào ô đăng nhập, và nhân viên chép nguyên vào artifact:
+   * *"Ô 'Email address or mobile number' đã có sẵn giá trị điền trước: …"*.
+   * Từ đó nó đi tiếp vào ngữ cảnh Trợ lý, rồi thành một brief tra cứu Linear
+   * theo đúng email đó — một câu trả lời gần đúng, tự tin, và sai.
+   *
+   * 🔴 Vì sao KHÔNG vá được bằng `redact.ts` hay `guardedZone`: dữ liệu này đi
+   * vào nhân viên qua **kết quả tool inline** của `browser_snapshot`, không qua
+   * file. Không có file nào để cắt, không có đường dẫn nào để chặn. Chỗ duy
+   * nhất còn đứng được là **câu dặn ngay trên dòng của cánh tay**.
+   * ⇒ Giảm thiểu, không bịt kín — đúng như `redact.ts` đã tự khai về chính nó.
+   */
   hint:
-    'trang công khai thì dùng WebFetch/WebSearch cho rẻ; trình duyệt để dành cho trang cần ' +
-    'đăng nhập hoặc phải bấm/điền. Không chờ được người dùng thao tác giữa lượt việc — muốn ' +
-    'đăng nhập tay thì bảo họ bấm "Đăng nhập vào một trang" trong bảng chi tiết của kết nối.',
+    'trang công khai dùng WebFetch/WebSearch cho rẻ; trình duyệt để dành cho trang cần ' +
+    'đăng nhập hoặc phải bấm/điền. Không chờ được người dùng thao tác giữa lượt — muốn đăng ' +
+    'nhập tay thì bảo họ bấm "Đăng nhập vào một trang". Giá trị tự-điền sẵn trong ô form là ' +
+    'của trình duyệt, không phải nội dung trang: đừng chép vào file.',
   /**
    * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho gọn:
    *

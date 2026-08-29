@@ -475,9 +475,43 @@ consent screen + client ID.
 > **niềm tin** — thứ đắt nhất với người non-code (`SESSIONS_MEMORY` §5l ②).
 
 **Bị loại khỏi v1 (ghi ra để không bàn lại):** `Fetch` (trùng `WebFetch` đã bật sẵn — thêm một
-đường thứ hai làm cùng một việc là nhân đôi bề mặt mà không mua gì) · `Slack` (server tham chiếu
-**đã bị archive**, phải tự chọn gói thay thế và **chịu trách nhiệm** — chưa đáng ở v1) ·
-`Postgres` (khách non-code không cầm DSN).
+đường thứ hai làm cùng một việc là nhân đôi bề mặt mà không mua gì) · `Slack` (**xem khối ngay
+dưới — lý do cũ đã hết hạn, lý do mới khác hẳn**) · `Postgres` (khách non-code không cầm DSN).
+
+> ### 🔴 `Slack` — LÝ DO LOẠI ĐÃ ĐƯỢC VIẾT LẠI 29/08. Đừng đọc bản cũ rồi tưởng cửa đã mở.
+>
+> **Bản cũ ghi:** *"server tham chiếu đã bị archive, phải tự chọn gói thay thế và chịu trách
+> nhiệm"*. Câu đó **đúng lúc viết** và **sai từ 17/02/2026**: Slack đã GA một **MCP server chính
+> chủ, Slack tự host** ở `https://mcp.slack.com/mcp` (Streamable HTTP, không SSE). Rủi ro chuỗi
+> cung ứng §11d về **0** — đúng lý do đã bỏ `npx` của Notion. Ai đọc dòng cũ sẽ bác nó trong ba
+> giây và tưởng Slack đã sẵn sàng.
+>
+> **Lý do MỚI, đo 29/08 (`SESSIONS_MEMORY` §5x):**
+>
+> | | số đo |
+> |---|---|
+> | `initialize` chưa có chìa, `clientInfo.name = "agentco"` | **401** + `WWW-Authenticate` đúng sách ⇒ **không** lọc theo tên client (khác Figma) |
+> | `registration_endpoint` | **KHÔNG CÓ** ⇒ không DCR, phải tự tạo Slack app |
+> | `token_endpoint_auth_methods_supported` | `["client_secret_post"]` ⇒ **confidential**, không có nấc `none` |
+> | `scopes_supported` | **30 scope riêng lẻ** — hãng thi hành được nấc quyền, hơn hẳn Notion (`default`, 1 scope) |
+>
+> Cộng một câu trong tài liệu chính chủ: **admin workspace phải duyệt**, và *chỉ app đã publish
+> lên App Directory hoặc app nội bộ* mới được dùng MCP. Chẻ ra hai đường, **một đường chết vì
+> ràng buộc kinh doanh chứ không vì kỹ thuật**:
+>
+> - **A · agentco publish app lên Directory** ⇒ ta phải **ship `client_secret`** trong một sản
+>   phẩm source-available. Không còn là bí mật. Muốn giấu thì phải dựng máy chủ đổi token —
+>   đụng thẳng *"không vốn · $0 hạ tầng · không tự host compute cho khách"*. **Chết.**
+> - **B · khách tạo app nội bộ trong workspace của họ** ⇒ tự phục vụ, không cần Slack duyệt
+>   agentco. Nhưng cần **quyền admin**, phải chọn trong 30 scope. Đây là **đúng hình dạng G2 của
+>   Google**, cộng thêm một nhịp: Google chỉ cần *người dùng* làm Cloud Console, Slack cần
+>   **admin workspace** — mà với khách non-code dùng Slack công ty, người bấm nút thường **không
+>   phải** người dùng agentco.
+>
+> ⇒ **Vẫn loại khỏi v1**, nhưng xếp **sau Google**, không phải "chưa đáng bàn".
+> **Điều kiện mở lại (đo được):** `oauth.ts` làm xong **confidential client** (§4 nợ kỹ thuật —
+> cùng cơ chế Google cần). Lúc đó Slack chỉ còn là một mục danh mục + một màn hình hướng dẫn tạo
+> app nội bộ. Nó là **ứng viên v1.1 mạnh hơn Figma nhiều**, vì Figma không có đường tự phục vụ nào.
 
 ---
 

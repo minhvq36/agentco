@@ -725,6 +725,41 @@ export const ReceiptSchema = z.object({
    */
   answer: z.string().default(''),
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KÊNH THỨ BA — SỰ KIỆN CHO TRỢ LÝ NEO LẠI. (user chốt 30/08)             │
+   * │                                                                          │
+   * │ > *"tôi thường xuyên phải vào file để xem kết quả, điều này càng bất lợi │
+   * │ >  khi dùng qua bridge"* · *"worker trao lại gist và để assistant parse   │
+   * │ >  lại thành human friendly"* · *"nó chỉ cần neo theo intent của user"*   │
+   * │                                                                          │
+   * │ Ba kênh, ba đời sống khác nhau — đừng gộp:                               │
+   * │                                                                          │
+   * │   say     MỘT CÂU trạng thái  → session Trợ lý                           │
+   * │   answer  câu trả lời ĐẦY ĐỦ  → thẳng ra chat, ⛔ KHÔNG vào session Trợ lý│
+   * │   gist    SỰ KIỆN, có trần    → session Trợ lý, để nó SOẠN LẠI            │
+   * │                                                                          │
+   * │ 🔴 VÌ SAO PHẢI LÀ WORKER VIẾT, KHÔNG PHẢI AI KHÁC:                       │
+   * │  · Trợ lý **không đọc được file** (§4.7, chặn cứng có số đo) ⇒ nó không   │
+   * │    có sự kiện nào để tóm tắt, chỉ có `say` và đường dẫn.                  │
+   * │  · Worker ẩn đọc lại file ⇒ một `query()` mới, context lạnh, đọc lại đúng │
+   * │    nội dung vừa nằm trong một context hai giây trước. Trả tiền hai lần    │
+   * │    cho thứ đã cầm, và đẻ thêm một chỗ có thể tóm tắt sai.                 │
+   * │  · Worker vừa ghi file ⇒ nội dung **còn trong context của nó** ⇒ ~0 thêm. │
+   * │                                                                          │
+   * │ 🔴 VÌ SAO TRỢ LÝ VẪN PHẢI SOẠN LẠI, chứ không in thẳng `gist` ra:        │
+   * │ worker **chưa bao giờ thấy câu người dùng gõ** — nó chỉ thấy brief của    │
+   * │ task. Neo vào ý định là việc của Trợ lý, và `report()` **vốn đã là một    │
+   * │ lượt gọi model** có câu hỏi gốc trong phiên ⇒ 0 lượt gọi thêm.            │
+   * │                                                                          │
+   * │ ⚠ SỰ KIỆN, KHÔNG PHẢI TƯỜNG THUẬT. "3 việc: A, B, C" — không phải "tôi   │
+   * │ đã hoàn thành việc tra cứu". Và ⚠ **không phải câu trả lời**: đó là       │
+   * │ `answer`. Để `gist` phình thành câu trả lời là gỡ đúng hàng rào chống trả │
+   * │ tiền hai lần mà luật ⛔ của `answer` dựng lên. Trần cứng: `GIST_TOKENS`.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  gist: z.string().default(''),
+
   artifacts: z.array(z.string()).default([]),
   lessons: z.array(LessonSchema).default([]),
   blocked_on: z.string().nullable().default(null),

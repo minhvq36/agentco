@@ -233,7 +233,15 @@ export async function oauthStart(
   pending.set(state, { meta, clientId, verifier, mcpUrl, prefix: catalogId, redirectUri, at: Date.now() });
 
   return {
-    authUrl: authorizeUrl(meta, { clientId, redirectUri, state, challenge }),
+    // `authScope` không khai ⇒ `authorizeUrl` không gửi tham số `scope` nào,
+    // đúng hành vi cũ. → `catalog.ts §authScope`
+    authUrl: authorizeUrl(meta, {
+      clientId,
+      redirectUri,
+      state,
+      challenge,
+      ...(arm.spec.authScope ? { scope: arm.spec.authScope } : {}),
+    }),
     state,
   };
 }
@@ -244,18 +252,63 @@ export async function oauthCallback(
   params: URLSearchParams,
   res: ServerResponse,
 ): Promise<{ name: string; label?: string } | null> {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TRANG NÀY LÀ THỨ DUY NHẤT NGƯỜI DÙNG THẤY Ở TAB KIA. (viết lại 30/08)    │
+   * │                                                                          │
+   * │ User chốt hình dạng: *"chỉ toàn chữ thôi cũng được, không cần icon, chữ   │
+   * │ thon gọn không to quá, căn giữa màn hình"* + *"font chữ hiện đại"*.       │
+   * │                                                                          │
+   * │ Bản cũ mở đầu bằng một emoji ✅/❌ cỡ 2.5rem. Bỏ, và không chỉ vì thẩm mỹ:│
+   * │ một dấu tích to đùng **nói mạnh hơn thứ ta biết** — ở nhánh hỏng nó đã    │
+   * │ hét lên trước khi người ta kịp đọc câu giải thích, còn ở nhánh thành công │
+   * │ nó hứa "xong hết rồi" trong khi việc còn lại (chọn nấc, kéo dây) vẫn nằm  │
+   * │ ở tab agentco. Chữ nói vừa đúng phần nó biết.                            │
+   * │                                                                          │
+   * │ ⚠ Tự-đóng chỉ chạy ở nhánh THÀNH CÔNG. Nhánh hỏng mà tự đóng sau 1,2 giây│
+   * │ là **xoá mất câu lỗi trước khi người ta đọc xong** — đúng lớp lỗi §5m     │
+   * │ (chuông kêu ở chỗ không ai nghe). Hỏng thì để nguyên, họ tự đóng.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
   const page = (title: string, body: string, ok: boolean) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(
-      `<!doctype html><meta charset="utf-8"><title>${title}</title>` +
-        `<body style="font:15px/1.6 system-ui;margin:0;display:grid;place-items:center;height:100vh;background:#faf9f7">` +
-        `<div style="text-align:center;max-width:26rem;padding:2rem">` +
-        `<div style="font-size:2.5rem">${ok ? '✅' : '❌'}</div>` +
-        `<h1 style="font-size:1.1rem;margin:.75rem 0">${title}</h1>` +
-        `<p style="color:#6b6b6b">${body}</p></div>` +
-        // Tự đóng nếu tab này do `window.open` sinh ra; không thì thôi, câu chữ
-        // ở trên đã đủ để người dùng biết phải làm gì.
-        `<script>setTimeout(()=>window.close(),1200)</script>`,
+      `<!doctype html><meta charset="utf-8">` +
+        `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+        `<title>${title}</title><style>` +
+        // `system-ui` đứng đầu để mỗi HĐH lấy đúng bộ chữ hiện đại của nó
+        // (Segoe UI Variable · SF Pro · Inter), rồi mới tới các bản dự phòng.
+        // Nền TRẮNG, chữ xám, không thẻ — user chốt 30/08: *"không cần màu mè
+        // container. Chỉ có nền trắng + chữ (hết)"*. "Chút gương" nằm ở hai chỗ
+        // rất nhẹ: một vệt sáng xám loang từ mép trên, và tiêu đề tô bằng
+        // gradient dọc (đậm trên, nhạt dưới) — đủ để chữ có chiều sâu mà không
+        // cần một khối hình nào.
+        `*{box-sizing:border-box}` +
+        // ⚠ `height:100%` phải leo tới `html`, không chỉ `body`. Thiếu nó thì
+        // `body` cao bằng nội dung, và "căn giữa" chỉ căn trong đúng khối chữ —
+        // nhìn ra là lệch lên trên. `100dvh` để thanh địa chỉ trên di động
+        // không kéo lệch phần bù.
+        `html,body{height:100%}` +
+        `body{margin:0;min-height:100dvh;padding:1.5rem;display:flex;align-items:center;justify-content:center;` +
+        `background:#fff linear-gradient(180deg,#f3f3f2 0%,#fff 34%) no-repeat;` +
+        `color:#6f6c67;` +
+        `font-family:system-ui,-apple-system,"Segoe UI Variable Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;` +
+        `-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}` +
+        `main{width:min(22rem,calc(100vw - 2.5rem));text-align:center}` +
+        `.tag{margin:0 0 1.1rem;font-size:10.5px;font-weight:500;letter-spacing:.15em;text-transform:uppercase;color:#a7a39e}` +
+        // `color` đặt TRƯỚC làm bản dự phòng: trình duyệt không hiểu
+        // `background-clip:text` thì chữ vẫn hiện, chỉ mất hiệu ứng.
+        `h1{margin:0;font-size:1.0625rem;font-weight:550;letter-spacing:-.012em;line-height:1.4;color:#33312e;` +
+        `background:linear-gradient(180deg,#33312e 12%,#7c7873 100%);` +
+        `-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}` +
+        `p.say{margin:.55rem 0 0;font-size:.8125rem;font-weight:400;line-height:1.7;color:#8a8681}` +
+        `hr{margin:1.3rem auto 0;width:1.5rem;border:0;border-top:1px solid #e6e4e1}` +
+        `</style>` +
+        `<main><p class="tag">agentco</p>` +
+        `<h1>${title}</h1><p class="say">${body}</p><hr></main>` +
+        // Chỉ đóng khi XONG, và chỉ đóng được nếu tab này do `window.open` sinh
+        // ra. Không đóng được thì thôi — câu chữ ở trên đã đủ để biết làm gì.
+        (ok ? `<script>setTimeout(()=>window.close(),1400)</script>` : ''),
     );
   };
 
@@ -282,24 +335,62 @@ export async function oauthCallback(
     return null;
   }
 
+  /**
+   * ⚠ HAI KHỐI `try` RIÊNG, KHÔNG PHẢI MỘT. (tách 30/08 — user báo lỗi)
+   *
+   * Bản cũ bọc cả đổi-chìa lẫn lưu-tài-khoản trong một `try`, và mọi thứ hỏng
+   * bên trong đều hiện ra là **"Đổi chìa không thành"**. Ca thật: đổi chìa
+   * **đã xong**, thứ hỏng là bước hỏi danh tính — nên câu lỗi chỉ **sai cửa**,
+   * và người dùng đi tìm nguyên nhân ở chỗ không có gì. Đúng lớp lỗi §5m, và
+   * lần này chính ta dựng lại nó. → [[agentco-wrong-door-errors]]
+   */
+  let acc: OAuthAccount;
   try {
-    const acc = await exchangeCode(p.meta, {
+    acc = await exchangeCode(p.meta, {
       clientId: p.clientId,
       code,
       redirectUri: p.redirectUri,
       verifier: p.verifier,
       mcpUrl: p.mcpUrl,
     });
-    // Web flow (Notion): danh tính đến từ `workspace_id` trong phản hồi token,
-    // không phải từ một lượt hỏi. Chốt vẫn phải có — vắng mặt không phải tín
-    // hiệu an toàn, và ngày hãng đổi hình dạng phản hồi thì đây là chỗ kêu.
-    mustHaveIdentity(acc, undefined, p.prefix);
-    const name = accountName(p.prefix, acc);
+  } catch (e) {
+    page('Chưa đổi được mã lấy chìa', escapeHtml((e as Error).message.slice(0, 200)), false);
+    return null;
+  }
+
+  try {
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 CỬA NÀY TRƯỚC 30/08 TRUYỀN THẲNG `undefined` — VÀ ĐÓ LÀ BUG.    │
+     * │                                                                    │
+     * │ Chú thích của `mustHaveIdentity` tự dặn: *"MỘT hàm, gọi ở CẢ HAI    │
+     * │ đường lưu… chốt ở một cửa rồi để cửa kia mở là kiểu vá đã đốt dự án │
+     * │ này nhiều lần"*. Hàng rào **đúng là có ở cả hai cửa** — nhưng thứ    │
+     * │ NUÔI nó (`probeIdentity`) thì chỉ có ở đường mã thiết bị. Web flow  │
+     * │ khai `undefined`, tức luôn luôn "không có seed".                    │
+     * │                                                                    │
+     * │ Vô hình suốt vì hai mục web flow đầu tiên đều tự trả danh tính:     │
+     * │ Notion có `workspace_id` trong phản hồi token ⇒ `hasOwnSeed` true    │
+     * │ ⇒ chốt cho qua mà không cần seed. Linear là mục ĐẦU TIÊN vừa khai   │
+     * │ `identity` vừa đi web flow, nên nó là mục đầu tiên đâm vào —        │
+     * │ triệu chứng: *"Đã cấp quyền xong"* rồi hỏng ở bước lưu.             │
+     * │                                                                    │
+     * │ ⇒ Gọi `probeIdentity` y như đường kia. Mục không khai `identity`    │
+     * │ thì nó trả `{}` ngay lập tức (0 vòng mạng), nên Notion không mất gì.│
+     * │ → [[agentco-finish-completely]]                                    │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const arm = findArm(p.prefix);
+    const who = arm ? await probeIdentity(arm, acc.access_token) : {};
+    if (who.label) acc.label = who.label;
+
+    mustHaveIdentity(acc, who.seed, arm?.name ?? p.prefix);
+    const name = accountName(p.prefix, acc, who.seed);
     saveOAuth(companyPaths(company.dir), name, acc);
     page('Đã kết nối', `${escapeHtml(acc.label ?? 'Tài khoản của bạn')} giờ dùng được trong agentco.`, true);
     return { name, ...(acc.label ? { label: acc.label } : {}) };
   } catch (e) {
-    page('Đổi chìa không thành', escapeHtml((e as Error).message.slice(0, 200)), false);
+    page('Chưa lưu được tài khoản', escapeHtml((e as Error).message.slice(0, 200)), false);
     return null;
   }
 }

@@ -418,6 +418,15 @@ export interface CatalogArm {
   folders?: { label: string; help: string };
   /** Cho chọn nấc quyền lúc cắm (Chỉ đọc / +Thêm / Toàn quyền). → §6j */
   tiered?: boolean;
+  /**
+   * Câu giải thích nấc do **mục danh mục** ghi đè. Chỉ câu HELP, không đổi tên nấc.
+   *
+   * Có vì câu mặc định của nấc `add` (*"Tạo được trang/mục mới…"*) **sai với
+   * Linear**: `save_issue` là upsert nên việc mở issue rơi xuống `full`, và nấc
+   * `add` ở đó không mở được issue nào. Lý do đầy đủ + ranh giới của ô này:
+   * `core/catalog.ts §tierSay`. Không khai ⇒ dùng `TIER_SAY` mặc định.
+   */
+  tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
   /** Cần ĐĂNG NHẬP thay vì gõ chìa. Suy từ `spec` ở server, không khai tay. */
   needsLogin?: boolean;
   /**

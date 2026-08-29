@@ -725,6 +725,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     accountRef.current = account;
   }, [account]);
 
+  /**
+   * Ảnh chụp danh sách TRƯỚC lần nạp kế tiếp — để biết cái nào vừa mới xuất hiện.
+   * Cùng lý do `accountRef` tồn tại: `loadAccounts` có deps rỗng nên state trong
+   * closure là bản của lần render đầu.
+   */
+  const accountsRef = useRef<OAuthAccount[]>([]);
+  useEffect(() => {
+    accountsRef.current = accounts;
+  }, [accounts]);
+
   const chooseAccount = useCallback((name: string) => {
     setAccount(name);
     // Kết quả Thử cũ nói về một CẤU HÌNH KHÁC (ô trống mang tên chìa khác).
@@ -748,10 +758,41 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * thái của chính nó.
    */
   const loadAccounts = useCallback(
-    async (catalogId: string) => {
+    /**
+     * `justLoggedIn` — HAI NGƯỜI GỌI, HAI Ý ĐỊNH NGƯỢC NHAU. (bug user bắt 30/08)
+     *
+     * > *"Sao chọn thêm 1 workspace khác ở modal UI thì sau khi chọn thành công
+     * >  không tự chuyển option chọn xuống đó vậy"*
+     *
+     * Bản cũ chỉ có một luật — *"chỉ tự chọn khi CHƯA có gì được chọn"* — và luật
+     * đó **đúng cho người gọi thứ nhất**: vào bước 2 thì không được đá cái người
+     * dùng đang cấu hình dở, vì `chooseAccount` dọn sạch nấc/nhóm/kết quả Thử.
+     *
+     * Nhưng người gọi thứ hai là **vừa đăng nhập xong**, và ở đó ý định không
+     * mơ hồ chút nào: người ta bấm Đăng nhập, chọn workspace, bấm Cho phép —
+     * ba bước, đều nói cùng một điều. Giữ nguyên lựa chọn cũ ở đây là app phớt
+     * lờ đúng việc người dùng vừa làm.
+     *
+     * ⚠ Chọn theo **CÁI MỚI XUẤT HIỆN**, không theo `accounts[0]` hay phần tử
+     * cuối: thứ tự server trả về không phải hợp đồng, và bám vào nó là dựng một
+     * bug im lặng cho ngày ai đó đổi cách sắp xếp.
+     *
+     * 📌 Đăng nhập lại CÙNG workspace ⇒ không có tên nào mới ⇒ rơi về luật cũ,
+     * giữ nguyên lựa chọn. Đúng: không có gì mới để chuyển sang.
+     */
+    async (catalogId: string, justLoggedIn = false) => {
+      const before = new Set(accountsRef.current.map((a) => a.name));
       const r = await api.oauthAccounts(catalogId).catch(() => null);
       if (!r) return;
       setAccounts(r.accounts);
+
+      if (justLoggedIn) {
+        const fresh = r.accounts.find((a) => !before.has(a.name));
+        if (fresh) {
+          chooseAccount(fresh.name);
+          return;
+        }
+      }
       /**
        * Chỉ tự chọn khi CHƯA có gì được chọn — `chooseAccount` dọn sạch phía sau,
        * nên gọi nó lên một lựa chọn đã có là xoá cấu hình người dùng đang gõ dở.
@@ -851,7 +892,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   useEffect(() => {
     if (step === 2 && pick?.needsLogin && logging) {
       setLogging(false);
-      void loadAccounts(pick.id);
+      // `true` = vừa đăng nhập xong ⇒ chuyển sang workspace vừa cấp quyền.
+      // → khối chú thích ở `loadAccounts`
+      void loadAccounts(pick.id, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [armsVersion]);
@@ -1876,7 +1919,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   ))}
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted">
-                  {TIER_SAY[tier].help}
+                  {/*
+                    ⚠ CÂU CỦA MỤC DANH MỤC THẮNG CÂU MẶC ĐỊNH — và chỉ ở câu HELP.
+                    Tên nấc (`TIER_SAY[t].name` ở trên) KHÔNG cho ghi đè: nó là từ
+                    vựng chung để người dùng so hai cánh tay với nhau.
+
+                    Có vì câu mặc định của nấc `add` (*"Tạo được trang/mục mới…"*)
+                    sai với Linear: `save_issue` là upsert nên mở issue rơi xuống
+                    `full`. Hứa quá tay tệ hơn doạ quá tay (§11a-bis).
+                    → `core/catalog.ts §tierSay`
+                  */}
+                  {pick?.tierSay?.[tier] ?? TIER_SAY[tier].help}
                   {/*
                     ⚠ QUY CÂU NÓI VỀ ĐÚNG NGƯỜI NÓI. Ta viết "server khai", không
                     viết "cánh tay này chỉ đọc" — câu sau ta KHÔNG bảo đảm được.

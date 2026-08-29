@@ -24,6 +24,7 @@ import type { CatalogArm } from '../catalog.js';
 import { BROWSER_ARM } from './browser.js';
 import { FILES_ARM } from './files.js';
 import { GITHUB_ARM } from './github.js';
+import { LINEAR_ARM } from './linear.js';
 import { NOTION_ARM } from './notion.js';
 
 /**
@@ -31,4 +32,10 @@ import { NOTION_ARM } from './notion.js';
  * 0 chìa → chìa tĩnh → OAuth sẵn → OAuth tự đăng ký), và mục này gõ **0 chìa**
  * đúng bằng `files`. Xếp nó sau `github` là xếp theo ngày viết, không theo luật.
  */
-export const CATALOG: CatalogArm[] = [FILES_ARM, BROWSER_ARM, NOTION_ARM, GITHUB_ARM];
+/**
+ * ⚠ `linear` đứng **cạnh `notion`**, trước `github` — theo đúng thứ tự XÂY §4e
+ * chứ không theo ngày viết. Đo 29/08: Linear mở DCR và nhận `auth_method: none`
+ * y như Notion ⇒ **cùng bậc "0 tay"**. GitHub tốn một lần tự tạo app nên nó
+ * đứng sau, dù ra đời trước.
+ */
+export const CATALOG: CatalogArm[] = [FILES_ARM, BROWSER_ARM, NOTION_ARM, LINEAR_ARM, GITHUB_ARM];

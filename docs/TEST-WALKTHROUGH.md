@@ -2366,6 +2366,343 @@ cùng một lớp lỗi [[agentco-silent-allowlist]].
 
 ---
 
+## Bài 19 — **Linear**: DCR không cần chìa, và nấc chỉ-đọc do **HÃNG** cắt 🆕 *viết 29/08* · ⛔ *chưa xây*
+
+> Bài này **viết trước khi xây**, giống bài 17 và 18. Nên nếu có ô nào lệch, thứ sai nhiều khả năng
+> là **mã**, không phải bảng.
+>
+> ⚠ **Bài duy nhất có Chặng 0.** User tự khai *"tôi chưa bao giờ sử dụng linear"* — mà một bài đo
+> không có **đáp án biết trước** thì không đo được gì. Chặng 0 dựng đúng 5 việc với nội dung cố
+> định để mọi câu hỏi phía sau có một con số đúng để so.
+
+### Số đo đã có (29/08) — **đừng đo lại**, đây là dữ kiện đầu vào
+
+| | số đo |
+|---|---|
+| `POST /register` `client_name="agentco"` `auth="none"` | **201** — `client_id` cấp ngay, **không** `client_secret`. Thân gửi đi **y hệt** `oauth.ts §register()`, không sửa một chữ |
+| `POST /mcp` chưa có chìa | **401** + `WWW-Authenticate: Bearer realm="OAuth", resource_metadata=…, error="invalid_token"` |
+| `token_endpoint_auth_methods_supported` | `[client_secret_basic, client_secret_post, **none**]` ⇒ public client + PKCE chạy được ⇒ **`oauth.ts` KHÔNG phải sửa gì** |
+| `scopes_supported` | `read` · `write` (+ `openid`, `email`) |
+| endpoint chỉ đọc | 🌐 **`https://mcp.linear.app/mcp/readonly`** — một URL riêng, không phải header |
+| lọc client | **không có** — `client_name="agentco"` được nhận bình thường |
+| gói | Free đủ dùng (250 issue · 2 team). Tài liệu chính chủ **không** nêu ràng buộc gói cho MCP |
+
+### ✅ ĐÃ ĐO XONG BẰNG CHÌA THẬT 29/08 — `scripts/spike-linear-oauth.ts`
+
+> Bản đầu của bài này ghi *"chưa ai biết danh sách việc"*. **Đã có.** Ba lần đăng nhập thật, hai
+> workspace thật. §4d tiêu chí 5 hết chặn.
+
+| | việc | byte | ≈token |
+|---|---|---|---|
+| `/mcp` | **57** | 79 243 | **19 811** |
+| `/mcp/readonly` | **35** | 34 174 | **8 544** |
+| chênh | −22 (**đúng tập việc ghi**, không mất việc đọc nào) | | **−11 267/lượt** |
+
+- **57/57 việc đều khai `annotations`** — không việc nào rơi vào nhánh "mặc định từ chối".
+- **Bộ chọn nấc ra BA nấc**: `read` 35 · `add` 39 · `full` 57. *(Ô B-5 để ngỏ hai nhánh — đáp án là ba.)*
+- Giá nằm giữa GitHub (~30 000) và Google Calendar (24 900); nấc đọc 8 544 ngang nấc đọc GitHub (~8 500). **Ship được.**
+
+> 🔴 **NẤC `add` GẦN NHƯ RỖNG — và đây là thứ số đo lộ ra mà tài liệu không nói.** Linear không có
+> `create_issue`; nó dùng `save_issue` (upsert), mà upsert khai `destructiveHint: true` ⇒ rơi xuống
+> `full`. Nên nấc `add` chỉ thêm **4 việc**: 3 việc đính kèm + `create_issue_label` — **không tạo
+> được issue**. User chốt 29/08: *"cứ tuân theo bảng chân trị thôi"* ⇒ **không** vá `offeredTiers`
+> cho riêng hãng nào.
+>
+> ✅ **ĐÃ TRẢ 30/08** (user: *"cái issue với linear hình như quan trọng đấy"* — đúng, issue **là**
+> đối tượng chính của Linear). Câu `help` là chuỗi **CỦA TA** nên luật "bảng chân trị" không che nó.
+> Thêm ô **`tierSay`** trong danh mục — ghi đè **chỉ câu giải thích**, không đổi tên nấc, không đổi
+> việc nào thuộc nấc nào. Linear ghi đè đúng một nấc:
+>
+> > *"Đính kèm tệp và tạo nhãn mới. ⚠ KHÔNG mở được issue mới — Linear gộp việc tạo và việc sửa
+> > issue vào chung một lệnh, nên mở issue nằm ở nấc Toàn quyền."*
+
+> ⭐ **BA HÀNG RÀO CHỒNG NHAU — Notion có một, và là của ta.** Cả ba đều đo được:
+>
+> | tầng | số đo |
+> |---|---|
+> | **chìa** | chìa scope `read` gọi vào **`/mcp` đầy đủ** → **35 việc** ⇒ scope là hàng rào thật |
+> | **địa chỉ** | `/mcp/readonly` → 35 việc |
+> | **`allowedTools`** | lớp của ta, như mọi mục |
+>
+> Và ⭐ **thu hẹp scope lúc làm mới chìa CHẠY ĐƯỢC** (RFC 6749 §6): `refresh_token` + `scope=read`
+> → HTTP 200, `scope: read`, gọi `/mcp` ra 35 việc. ⇒ Xin **rộng** lúc Đồng ý (để bộ chọn nấc thấy
+> đủ 3 nấc), **thu hẹp** lúc Lưu. Luật *"khám phá không mang hàng rào, thi hành thì mang"* nới được
+> sang cả tầng chìa. ⚠ `refreshAccount` hôm nay **chưa gửi `scope`** — một tham số tuỳ chọn, chưa làm.
+
+### 🧭 Vì sao mục này đáng làm — nó vá đúng chỗ **Notion đang hở**
+
+`notion.ts:63-66` đang tự khai một hạn chế:
+
+> *"KHÔNG có `readOnlyHeaders`: Notion không cắt việc theo header, nên nấc `read` được thi hành bằng
+> lớp `allowedTools` của ta."*
+
+Cộng `notion.ts:22-34`: OAuth Notion khai **một** scope `default`, thừa kế **toàn bộ** quyền người
+đăng nhập. Tức nấc "chỉ đọc" của Notion là **hàng rào của TA**. Chìa vẫn ghi được; ta chỉ không gọi.
+
+Linear cắt ở **hai tầng, cả hai đều của hãng**:
+
+| tầng | thứ chặn |
+|---|---|
+| **chìa** | scope `read` — token nấc đọc *không ghi được*, kể cả khi ai đó gọi thẳng |
+| **địa chỉ** | `/mcp/readonly` — server **không phơi** việc ghi ra để mà gọi |
+
+Và agentco được không một tính chất đẹp: **URL nằm trong băm cấu hình**. Nên *"Linear chỉ đọc"* và
+*"Linear toàn quyền"* **tự động** là hai cánh tay hai băm — thứ mà `notion.ts:60-62` phải giải thích
+dài dòng bằng quy ước, ở đây là hệ quả của địa chỉ. *"Tên là cái nhà, băm là địa chỉ nhà."*
+
+---
+
+### Chặng 0 — **Dựng dữ liệu để đo** ⏱ ~8 phút · 💻 *làm ngoài agentco, chưa đụng gì tới sản phẩm*
+
+**Từ vựng Linear, đủ để đọc hiểu phần còn lại của bài** (không cần học gì thêm):
+
+| chữ | nghĩa | tương đương |
+|---|---|---|
+| **Workspace** | cả không gian của bạn/công ty | workspace Notion · org GitHub |
+| **Team** | nhóm trong workspace, có **tiền tố 3 chữ** | repo |
+| **Issue** | một đầu việc. Mã tự sinh dạng `ENG-1`, `ENG-2` | issue GitHub |
+| **Status** | `Backlog` → `Todo` → `In Progress` → `Done` / `Canceled` | cột kanban |
+| **Priority** | `No priority` · `Low` · `Medium` · `High` · `Urgent` | nhãn mức khẩn |
+| **Label** | nhãn tự đặt (`bug`, `chore`…) | label GitHub |
+| **Project** | gom nhiều issue theo một mục tiêu | milestone |
+| **Assignee** | người được giao | assignee |
+
+**Bước 0.1.** 🌐 `linear.app` → **Sign up**, đăng nhập bằng Google cho nhanh. Gói **Free**, không cần thẻ.
+
+**Bước 0.2.** Nó bắt đặt tên workspace → gõ `agentco-thu`. Nó tạo sẵn một team; đặt tên `Engineering`,
+để nó tự sinh tiền tố **`ENG`**. *(Nếu tiền tố ra khác, thay `ENG` ở mọi chỗ dưới đây bằng cái của bạn.)*
+
+**Bước 0.3.** Tạo đúng **5 issue** dưới đây. Bấm **C** (hoặc nút ✚) để tạo nhanh; điền Title, rồi đặt
+Priority / Status / Label ở thanh dưới.
+
+| Mã | Tiêu đề (gõ **nguyên văn**, có dấu) | Priority | Status | Label |
+|---|---|---|---|---|
+| `ENG-1` | Nút Lưu không phản hồi trên Safari | **Urgent** | Todo | `bug` |
+| `ENG-2` | Viết tài liệu API cho endpoint hoá đơn | Medium | Backlog | — |
+| `ENG-3` | Trang danh sách tải chậm khi hơn 500 dòng | High | **In Progress** | `bug` |
+| `ENG-4` | Đổi màu nút phụ | Low | **Done** | — |
+| `ENG-5` | Gộp hai màn hình cài đặt | No priority | Backlog | — |
+
+**Bước 0.4.** Giao `ENG-3` cho **chính bạn** (Assignee → tên bạn). Bốn issue kia để trống.
+
+> 💡 **Cố ý có tiếng Việt có dấu.** `slugId` từng trả rỗng cho mọi chữ phi-Latin (§5v ⑳) và đó là
+> lớp lỗi **không hiện trên dữ liệu tiếng Anh**. Đây là chỗ rẻ nhất để nó lộ ra lần nữa.
+
+**Đáp án biết trước** — mọi câu hỏi ở chặng C so vào đây:
+
+| hỏi | đáp |
+|---|---|
+| Bao nhiêu việc đang **In Progress**? | **1** (`ENG-3`) |
+| Việc **khẩn cấp nhất**? | `ENG-1` |
+| Bao nhiêu việc gắn nhãn `bug`? | **2** (`ENG-1`, `ENG-3`) |
+| Bao nhiêu việc **chưa xong** (khác Done/Canceled)? | **4** |
+| Việc nào được giao cho bạn? | **đúng 1** — `ENG-3` |
+
+---
+
+### Chặng A — Cắm, **0 chìa** ⭐
+
+**Bước 1.** 🖱 **+ Kết nối** → **Dịch vụ có sẵn** → **Linear**.
+
+| Mong đợi | |
+|---|---|
+| Thẻ ghi **"cần đăng nhập"**, không phải "cần 1 chìa" | `price: 'login'`, y như Notion |
+| **Không có ô nhập chìa nào** | |
+
+**Bước 2.** 🖱 **Đăng nhập với Linear** → chọn workspace → **Authorize**.
+
+| Mong đợi | |
+|---|---|
+| Tab mở **trong chính trình duyệt bạn đang dùng** | bài 17 bước 2 |
+| URL **đầy đủ**, có `client_id`, `state`, `code_challenge` | 🔴 hồi quy 24/08: `cmd /c start` cắt URL ở `&` đầu tiên |
+| 🔴 Màn đồng ý của Linear ghi tên **`agentco`** | ⭐ `client_name` ta gửi lúc DCR — đo 29/08 nó nhận. Ra tên khác ⇒ ai đó ghim `client_id` thay vì đăng ký động |
+| ⭐ Màn Linear **cho chọn workspace** | ĐO 29/08: ba lần đăng nhập ra **hai** workspace id khác nhau ⇒ chìa buộc vào **đúng một** workspace, y mô hình Notion |
+| Hộp thoại **tự** chuyển trạng thái, không phải F5 | |
+| 🔴 Hiện **tên workspace** | ⚠ Tên này **KHÔNG** đến từ phản hồi token — `extra` rỗng hoàn toàn (`workspace_name` là phương ngữ Notion). Nó phải đến từ lượt hỏi `identity.get_workspace`. Ô này trống ⇒ `identity` chưa được nối ⇒ ô Chặng E sẽ hỏng theo, im lặng |
+| 🆕 🔴 **A-5 · HỒI QUY 30/08** — tab callback hiện **"Đã kết nối"**, không phải *"Đã cấp quyền xong, nhưng chưa lấy được danh tính riêng…"* | Bug thật user gặp lượt đầu: web flow gọi `mustHaveIdentity(acc, **undefined**, …)` ⇒ không bao giờ hỏi danh tính. Đường mã thiết bị thì có. **Linear là mục đầu tiên vừa khai `identity` vừa đi web flow** nên nó là mục đầu tiên đâm vào. Đã vá — ô này giữ để nó không quay lại |
+| 🆕 **A-6** | URL đăng nhập có **`scope=read+write`** | `authScope` (30/08). Thiếu ⇒ Linear cấp scope nào ta không biết, mà nấc quyền đọc từ chìa. ⚠ Mở **Notion**/**GitHub** đối chứng: URL của chúng **không** được có tham số `scope` nào |
+| 🆕 **A-7** | Câu lỗi (nếu có) phải nói **đúng cửa** | Bản cũ bọc một `try` quanh cả đổi-chìa lẫn lưu-tài-khoản ⇒ mọi thứ hỏng đều ra *"Đổi chìa không thành"* kể cả khi đổi chìa đã xong. Giờ là hai câu riêng: *"Chưa đổi được mã lấy chìa"* · *"Chưa lưu được tài khoản"* |
+| 🆕 **A-8** | Trang callback: **nền trắng, chỉ chữ xám**, không icon, không khối hình, căn giữa. Nhánh **hỏng KHÔNG tự đóng** | Hình dạng user chốt 30/08. Vế sau là ô đo thật: tự đóng ở nhánh hỏng = xoá câu lỗi trước khi người ta đọc xong |
+| 🆕 **A-9** | **Logo Linear** hiện ở CẢ HAI chỗ: thẻ trong hộp thoại Kết nối **và** node 🔌 trên sơ đồ | Một ô `brand.mark`, 0 dòng TSX — `office.ts` đổ xuống node, `ArmDialog`/`NodeShape` dùng chung `ArmIcon`. Chỉ hiện một chỗ ⇒ một trong hai đường quên truyền `mark`. ⚠ Phải **đơn sắc theo màu chữ**, không màu hãng, không nền |
+| 📝 `.state/secrets.json` → `$oauth` có `access_token` · `refresh_token` · `expires_at` · `client_id` | |
+| 📝 `company.yaml` **không** chứa chuỗi token nào — chỉ `${...}` | |
+
+**Bước 2b — luồng hỏng phải thoát được.** 🖱 Bấm **Đăng nhập** rồi **đóng tab** mà không cho phép.
+
+| Mong đợi | |
+|---|---|
+| Nút **không bị khoá**, bấm lại được ngay | 🔴 hồi quy bug 26/08 |
+| Có nút **✕** để thôi chờ | *"mọi trạng thái đang chờ cần một đường ra KHÔNG đi qua nhánh thành công"* |
+
+---
+
+### Chặng B — Nấc quyền, và ⭐⭐ **CÁI BẪY VÒNG §6g-quater LẶP LẠI Ở ĐÂY**
+
+> ### 🔴 ĐỌC TRƯỚC KHI VIẾT MÃ — đây là ô đắt nhất cả bài
+>
+> `catalog.ts §serverFenced()` hôm nay đọc **đúng một trường**:
+>
+> ```ts
+> return a.spec.kind === 'http' && Boolean(a.spec.readOnlyHeaders);
+> ```
+>
+> Nó tồn tại vì bug user bắt 27/08: mục vừa `tiered` vừa có hàng rào server ⇒ **phép thử ở nấc
+> `read` mang hàng rào lên** ⇒ server chỉ trả việc đọc ⇒ `offeredTiers` thấy ba nấc bằng nhau ⇒
+> luật *"chỉ hiện nấc nào thêm ≥1 việc"* thu về một nấc ⇒ **bộ chọn nấc KHÔNG HIỆN** ⇒ người dùng
+> không có đường lên toàn quyền. Nguyên văn triệu chứng: *"16 việc chỉ đọc · 0 việc có ghi"* rồi
+> *"vẫn không cách nào ra cái này? Làm sao để test?"* — **không một câu lỗi nào**, mọi tầng đều làm
+> đúng phần của mình. Luật rút ra: **KHÁM PHÁ thì không mang hàng rào; THI HÀNH thì mang.**
+>
+> **Linear dựng đúng cái bẫy đó bằng một cơ chế khác: URL thay vì header.** Nên `readOnlyUrl` mới
+> **phải vào `serverFenced()`**, không chỉ vào `buildConfig()`:
+>
+> ```ts
+> return a.spec.kind === 'http' && Boolean(a.spec.readOnlyHeaders || a.spec.readOnlyUrl);
+> ```
+>
+> Quên vế thứ hai ⇒ bug 27/08 **sống lại nguyên vẹn**, và lần này cũng **không có chuông**.
+> [[agentco-finish-completely]] · [[agentco-fence-before-discovery]]
+
+**Bước 3.** 🖱 **Thử ngay** → bộ chọn nấc hiện ra kèm số việc.
+
+| # | Mong đợi | Hỏng nghĩa là gì |
+|---|---|---|
+| ⭐ **B-1** | **Bộ chọn nấc HIỆN RA**, ≥2 nấc, số việc **khác nhau** giữa các nấc | Chỉ thấy một nấc ⇒ `readOnlyUrl` chưa vào `serverFenced()` ⇒ **bug 27/08 sống lại**. Đây là ô số một của cả bài |
+| **B-2** | Phép thử bắn vào `…/mcp` (URL đầy đủ), **KHÔNG** vào `/readonly` | khám phá không mang hàng rào |
+| **B-3** | Mặc định là **Chỉ đọc** | an toàn khi chưa ai chọn |
+| **B-4** | Câu dưới bộ chọn nói **"(Linear tự khai mức của từng việc.)"** | ⭐ **không** được viết *"cánh tay này chỉ đọc"* — §6j |
+| ✅ **B-5** | **Ba nấc: `read` 35 · `add` 39 · `full` 57** | ĐÃ ĐO 29/08. Bản trước để ngỏ hai nhánh (2 hay 3); đáp án là **ba** — Linear có khai `destructiveHint`. ⚠ Nhưng nấc giữa chỉ thêm 4 việc và **không tạo được issue** — xem khối 🔴 ở đầu bài |
+| ✅ **B-6** | Danh sách việc + token: **đã có** (khối đầu bài) | §4d tiêu chí 5 hết chặn. Giữ ô này làm **hồi quy**: chạy lại thấy số khác ⇒ Linear đổi bộ việc, phải đọc lại nấc |
+| 🆕 ⭐ **B-7** | Chọn nấc **Đọc + Thêm mới** ⇒ câu dưới bộ chọn phải nói **"KHÔNG mở được issue mới"** | Ô `tierSay` (30/08). Nếu nó vẫn hiện câu chung *"Tạo được trang/mục mới…"* thì `tierSay` chưa nối tới giao diện — và người dùng sẽ chọn nấc này rồi bảo nhân viên mở việc, **và bị chặn** |
+| 🆕 **B-8** | Mở **Notion** hoặc **GitHub**, chọn nấc `add` ⇒ vẫn là câu chung như cũ | Chốt cho *"đừng làm hỏng notion, github"*. Mục nào không khai `tierSay` phải rơi về `TIER_SAY` y hệt trước 30/08 |
+
+**Bước 4.** 🖱 Chọn **Chỉ đọc** → **Xong** → 📝 mở `company.yaml`.
+
+| Mong đợi | |
+|---|---|
+| `mcpServers.<băm>.url` = **`https://mcp.linear.app/mcp/readonly`** | ⭐ thi hành thì mang hàng rào |
+| `arms.<băm>.level: read` | |
+| Cắm thêm bản **Toàn quyền** cùng workspace ⇒ `url` = `…/mcp` và **băm KHÁC** | ⭐ URL nằm trong băm ⇒ hai nấc thành hai địa chỉ, **không cần quy ước gì thêm** |
+| Huy hiệu suy từ `level`, **không** đọc chuỗi tên hiển thị | 🔴 hồi quy bài 17 bước 7 |
+
+---
+
+### Chặng C — **Đọc thật** (so vào bảng đáp án Chặng 0)
+
+**Bước 5.** Cắm cánh tay **Chỉ đọc** vào một vai trò, rồi giao 5 việc — mỗi câu một lượt:
+
+1. *"Có bao nhiêu việc đang In Progress trong Linear?"* → **1**
+2. *"Việc nào khẩn cấp nhất?"* → **ENG-1**
+3. *"Liệt kê các việc gắn nhãn bug"* → **ENG-1, ENG-3**
+4. *"Còn bao nhiêu việc chưa xong?"* → **4**
+5. *"Việc nào đang giao cho tôi?"* → **ENG-3**
+
+> 🔴 **HỒI QUY 30/08 — ô C-0, chạy TRƯỚC mọi ô khác.** Lượt chạy thật đầu tiên hỏng ở đây: Trợ lý
+> viết *"Tra cứu trong Linear **project** Agent-co-test-2"*, nhân viên gọi `list_issues` (**được 9
+> việc**) rồi đi tìm project, `list_projects` trả `[]`, và **báo thất bại trong khi đã cầm sẵn câu
+> trả lời** — 6 lượt, $0,1409. `Agent-co-test-2` là **tên workspace** (label của cánh tay), không
+> phải project. Đã vá bằng `hint` của mục.
+>
+> **C-0:** trong câu Trợ lý giao việc, **không được có chữ "project"** gắn với tên workspace.
+> Có lại ⇒ `hint` chưa tới được dòng danh bạ.
+
+| # | Mong đợi | Hỏng nghĩa là gì |
+|---|---|---|
+| **C-1** | **5/5 đúng** | sai ⇒ ghi rõ sai ở đâu: gọi nhầm việc · đọc thiếu · hay tự bịa |
+| 🆕 **C-1b** | Câu 1 trả lời xong trong **≤3 lượt** | `list_issues` trả sẵn `status` trong từng việc ⇒ một lời gọi là đủ. Nhiều lượt ⇒ nhân viên đang đi vòng |
+| ⭐ **C-2** | Tiêu đề tiếng Việt **hiện đủ dấu** ở mọi chỗ: câu trả lời · nhật ký · biên nhận | 🔴 lớp lỗi §5v ⑳, không hiện trên dữ liệu tiếng Anh |
+| **C-3** | Nhân viên **không** kéo cả 5 issue về rồi tự đếm, mà dùng bộ lọc của Linear | rẻ hơn nhiều — ghi lại token thật để so |
+| **C-4** | 📝 Chi phí mỗi lượt | so với Notion cùng loại câu hỏi |
+
+---
+
+### Chặng D — **Ghi, và hàng rào ở phía server** ⭐⭐ *chặng đáng tiền nhất*
+
+> Đây là chỗ Linear **hơn Notion**, và cũng là chỗ duy nhất chứng minh được điều đó. Ở bài 17
+> chặng B-bis, nấc ghi của Notion bị chặn bởi **cổng `allowedTools` của ta** — nguyên văn SDK:
+> `Claude requested permissions to use mcp__…__notion-update-page, but you haven't granted it yet.`
+> Đó là hàng rào của TA. Ở đây phải thấy hàng rào của **HÃNG**.
+
+**Bước 6 — nấc CHỈ ĐỌC, thử ghi.** Với cánh tay **Chỉ đọc**, giao: *"Đổi trạng thái ENG-5 sang Todo"*.
+
+| # | Mong đợi | Hỏng nghĩa là gì |
+|---|---|---|
+| ⭐ **D-1** | **Bị chặn** | ghi được ⇒ nấc chỉ-đọc là lời hứa suông |
+| ⭐⭐ **D-2** | Chặn vì **việc đó KHÔNG TỒN TẠI** trong danh sách server trả về — không phải vì cổng ta từ chối | `/mcp/readonly` không phơi việc ghi. Nếu câu lỗi là `you haven't granted it yet` thì URL chỉ-đọc **chưa được áp dụng**, ta đang chặn hộ hãng |
+| **D-3** | 💻 Mở Linear kiểm bằng mắt: `ENG-5` **vẫn Backlog** | |
+| **D-4** | Trợ lý nói đúng nấc khi bị hỏi *"sao không làm được"* | `armReach` — hồi quy bài 17 |
+
+**Bước 6b — 🔬 tách hai tầng ra.** Với **cùng** chìa nấc đọc, gọi thẳng `…/mcp` (URL đầy đủ) bằng
+`scripts/` chứ không qua UI, rồi thử một việc ghi.
+
+| Mong đợi | |
+|---|---|
+| ⭐ Vẫn **bị từ chối**, lần này bởi **scope `read` của chìa** | Đây là ô chứng minh **hai** tầng độc lập. Qua được ⇒ ta đang xin scope `write` cho cả nấc đọc ⇒ tầng chìa **vô hiệu**, chỉ còn tầng URL |
+
+**Bước 7 — nấc TOÀN QUYỀN.** Đổi sang cánh tay toàn quyền, giao: *"Tạo issue mới: Kiểm thử agentco,
+mức Low"* rồi *"Đổi ENG-5 sang Todo"* rồi *"Thêm bình luận vào ENG-1: đã xem"*.
+
+| Mong đợi | |
+|---|---|
+| Cả ba **làm được** | |
+| 💻 Kiểm bằng mắt trong Linear: có `ENG-6`, `ENG-5` đã Todo, `ENG-1` có bình luận | ✅ **tận mắt**, không tin lời khai của nhân viên (§5r: *"hệ thống đúng, model kể sai"*) |
+| Bình luận mang tên **tài khoản bạn** | OAuth user token ⇒ hành động mang danh người dùng, không phải một bot |
+| 📝 Log kiểm toán ghi đủ 3 lời gọi ghi | §5s |
+
+---
+
+### Chặng E — **Hai workspace, hai băm** *(hồi quy bài 12 biến thể 5 + 9)*
+
+> ⭐ **Không cần tài khoản thứ hai.** Đo 29/08: một tài khoản Linear ⇄ N workspace, và màn Đồng ý
+> cho chọn. Cứ tạo workspace thứ hai trong chính tài khoản của bạn (user đã có `Agent-co-test` và
+> `Agent-co-test-2`), rồi đăng nhập hai lần, mỗi lần chọn một cái.
+
+| Mong đợi | |
+|---|---|
+| Nối **cùng** workspace hai lần ⇒ **không** sinh mục trùng | `accountName` tất định theo workspace id |
+| Hai workspace ⇒ **hai băm khác nhau** dù **cùng URL** | ⭐ ca §6i |
+| 🔴🔴 Tên tài khoản hai bên **KHÁC NHAU** | Số đo 29/08 ngoài UI: **không seed** ⇒ cả ba chìa ra `LINEAR_OAUTH_AA1F1EAD` **giống hệt** ⇒ gộp. **Seed = workspace id** ⇒ `…52BA79B8` ≠ `…5C5D1429`. Ô này hỏng là hỏng **im lặng** |
+| ⭐ Cùng workspace nhưng **khác nấc** ⇒ **CÙNG** tên tài khoản, **KHÁC** băm | Hai trục không được lẫn: danh tính là **workspace**, nấc quyền là **băm cánh tay**. Đo được ngoài UI: chìa `read write` và chìa `read` của cùng workspace ra cùng `…52BA79B8` |
+| Cả hai chạy được, không cái nào đá cái nào | |
+| Nhân viên gọi đúng workspace của mình | |
+
+### Chặng F — **Chìa tự sống** ⏳ *chạy sau ≥ 16 giờ*
+
+| Mong đợi | |
+|---|---|
+| Sau **hai** lần làm mới vẫn chạy, không bắt đăng nhập lại | ⭐ giữ nhầm `refresh_token` cũ thì hỏng ở lần **thứ hai**, không hỏng ngay |
+
+---
+
+### 🔬 Biến thể — ba ô rẻ, mỗi cái < 2 phút
+
+| # | Đo gì | Hỏng nghĩa là gì |
+|---|---|---|
+| **V-1** | Gỡ workspace Linear ở màn tài khoản → 💻 Linear → Settings → Applications: `agentco` **không còn** | thu hồi thật, không chỉ quên chìa ở máy (bài 17 bước 4c) |
+| **V-2** | Ngắt mạng rồi giao một việc Linear | phải ra **câu lỗi đọc được**, không phải nhân viên bịa ra một câu trả lời |
+| 🔴 **V-3** | Xoá `access_token` khỏi `secrets.json` (giữ `refresh_token`) rồi chạy | phải **tự làm mới** rồi chạy tiếp. Bắt đăng nhập lại ⇒ luồng refresh chưa nối |
+| **V-4** | 📝 `company.yaml` sau khi cắm cả hai nấc: đọc được **cánh tay đi đâu** mà **không** đọc được chìa | §11a — người dùng non-code phải kiểm được |
+
+---
+
+### Đo gì — **ba con số quyết định mục này có ship được không**
+
+1. ✅ ~~Danh sách việc + token~~ — **đã đo** (khối đầu bài). Giữ làm hồi quy.
+   ⚠ 19 811 token ở nấc `full` là **cao**: nếu ai đó mặc định cắm nấc toàn quyền cho mọi nhân viên
+   thì mỗi lượt đắt hơn cả GitHub mặc định. Nấc `read` (8 544) mới là chỗ mục này rẻ.
+2. ⭐ **D-2: nấc chỉ-đọc bị chặn bởi HÃNG hay bởi TA?** Đo ngoài UI đã trả lời: **bởi hãng, ở hai
+   tầng độc lập** (scope chìa · URL). Ô này giờ đo **đường đi qua giao diện có thật sự dùng cả hai
+   tầng đó không** — dựng đúng nhưng nối sai thì số đo ngoài UI không cứu được gì.
+3. **B-1: bộ chọn nấc có hiện không?** Không hiện ⇒ bug 27/08 sống lại, và nó **im lặng**.
+   *(Đã có chốt tất định: `test/linear-arm.test.ts` ⑤ khoá `serverFenced(linear) === true`.)*
+4. 🆕 **E: hai workspace ra hai băm khác nhau chưa?** Linear **không** trả danh tính trong phản hồi
+   token (`extra` rỗng cả ba lần đăng nhập) ⇒ toàn bộ chuyện này treo vào `identity.get_workspace`.
+   Hỏng ⇒ hai workspace **gộp làm một**, và **không có triệu chứng** cho tới khi dữ liệu đi nhầm chỗ.
+
+**Chi phí dự kiến:** chặng 0–B **$0** (không lượt suy luận nào) · chặng C–D ước ~$0.15–0.40.
+
+---
+
 In ra hoặc copy vào một file, điền trong lúc chạy:
 
 | Bài | Chạy được? | Chi phí thật | Số lượt | Chỗ vấp | Ghi chú |
@@ -2390,6 +2727,7 @@ In ra hoặc copy vào một file, điền trong lúc chạy:
 | **15 🔴 Hai lỗ** | | | | | **A / B hôm nay phải 🔴** · sau vá phải 🟢 · **C+D phải giữ 🟢 cả hai lần** |
 | **16 Rút cánh tay** | | | | | số ghi chú **không được giảm** · chìa còn không? |
 | **18 Trình duyệt web** | | | | | 🔴 có lần nào `browser_snapshot` **không tham số** không (= ~47 000 token)? · nấc chỉ-đọc có **mở được trang** không? · ô "hiện cửa sổ" có ẩn khi xem từ xa không? |
+| **19 Linear** | | | | | 🔴 **tên việc + token mỗi nhóm** (chưa ai biết — không có thì không ship) · ⭐ **D-2**: nấc chỉ-đọc bị chặn bởi HÃNG hay bởi TA? · **B-1**: bộ chọn nấc có hiện không? (không hiện = bug 27/08 sống lại) · dấu tiếng Việt có đủ không? |
 
 **Ba con số đáng quan tâm nhất sau khi chạy hết:**
 
