@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Kiểu khớp với backend. Nguồn sự thật là `src/core/types.ts` và
  * `src/core/office.ts` — file này là bản sao thủ công, không sinh tự động.
  *
@@ -78,7 +78,11 @@ export interface CanvasNode {
    * mỗi lần mở app là cái giá không đáng.
    */
   mark?: string;
-  armKind?: 'files' | 'service' | 'custom';
+  armKind?: 'files' | 'service' | 'custom' | 'browser';
+  /** Nhan cac o tick dang bat - panel ve chip tu day. */
+  optionLabels?: string[];
+  /** Co ho so ben => panel hien nut mo cua so dang nhap. */
+  canLogin?: boolean;
   mcp?: string[];
   /**
    * Cánh tay: thư mục nó với tới, **nguyên văn** như trong `company.yaml`.
@@ -432,6 +436,8 @@ export interface CatalogArm {
    * làm được. Đừng gộp hai vai vào một chuỗi. → `catalog.ts §ArmGroup`
    */
   groups?: { id: string; label: string; help?: string; on?: boolean }[];
+  /** Hinh dang de chon icon - xem catalog.ts shape. */
+  shape?: 'browser';
   /**
    * Ô tick **cách chạy** — độc lập nhau, hỏi ở mọi nấc. → `catalog.ts §ArmOption`
    *

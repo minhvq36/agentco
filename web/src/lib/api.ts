@@ -247,6 +247,16 @@ export const api = {
     body: JSON.stringify(body),
   }),
 
+  /**
+   * Mở cửa sổ trình duyệt THƯỜNG vào hồ sơ của văn phòng, để người dùng tự
+   * đăng nhập. Không đi qua Playwright — xem core/browser-login.ts.
+   */
+  browserLogin: (office: string, url?: string) =>
+    call<{ ok: true; profile: string }>('/api/browser-login', {
+      method: 'POST',
+      body: JSON.stringify({ office, ...(url ? { url } : {}) }),
+    }),
+
   /** Đổi tên — chỉ đụng nhãn trong sổ chung, không đổi khoá, không di trú gì. */
   renameArm: (id: string, label: string) =>
     call<{ label: string }>(`/api/arms/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }),

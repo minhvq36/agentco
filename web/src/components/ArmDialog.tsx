@@ -173,11 +173,12 @@ function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] 
  * `folders` thì nó LÀ cánh tay thư mục, kể cả khi mai ta đổi nó sang HTTP.
  * Không có `catalog` ⇒ người dùng tự dán ⇒ `custom`.
  */
-type Kind = 'files' | 'service' | 'custom';
+type Kind = 'files' | 'service' | 'custom' | 'browser';
 
 function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
   if (!a.catalog) return 'custom';
-  return catalog.find((c) => c.id === a.catalog)?.folders ? 'files' : 'service';
+  const entry = catalog.find((c) => c.id === a.catalog);
+  return entry?.shape === 'browser' ? 'browser' : entry?.folders ? 'files' : 'service';
 }
 
 /**
@@ -210,7 +211,7 @@ function markOf(catalogId: string | undefined, catalog: CatalogArm[]): string | 
  * │ một lần rồi đứng im thì không sửa được.                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-const KIND_ORDER: Record<Kind, number> = { service: 0, files: 1, custom: 2 };
+const KIND_ORDER: Record<Kind, number> = { service: 0, browser: 1, files: 2, custom: 3 };
 
 function byKind(arms: InstalledArm[], catalog: CatalogArm[]): InstalledArm[] {
   return [...arms].sort(
@@ -1427,7 +1428,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         className="rounded-lg border border-line px-3 py-3 text-left transition hover:border-accent hover:bg-accent-soft"
                       >
                         <div className="text-muted">
-                          <ArmIcon mark={a.brand.mark} kind="service" className="h-6 w-6" />
+                          <ArmIcon mark={a.brand.mark} kind={a.shape === 'browser' ? 'browser' : a.folders ? 'files' : 'service'} className="h-6 w-6" />
                         </div>
                         <div className="mt-1 text-[13px] font-medium">{a.name}</div>
                         {/* CÁI GIÁ, không phải tính năng. → §6f */}

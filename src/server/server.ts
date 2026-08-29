@@ -29,6 +29,7 @@ import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.
 import { callTool, httpTarget } from '../core/mcp-http.js';
 import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
 import { companyPaths, officeDir, officePaths } from '../core/paths.js';
+import { endLogin, startLogin } from '../core/browser-login.js';
 import {
   REFRESH_TICK_MS,
   oauthAccounts,
@@ -100,6 +101,36 @@ export function isLoopback(addr: string | undefined): boolean {
  * │ dùng lại, hoặc dựng lại đường dẫn lúc nhận.                               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MỤC NÀY CÓ CẦN GIẢI DANH SÁCH VIỆC KHÔNG — hay cứ cấp cả server?         │
+ * │                                                                          │
+ * │ 🔴 SUÝT SHIP MỘT LỖ 29/08, và nó im lặng hoàn toàn: mục trình duyệt đổi   │
+ * │ sang `tiered: false` (vì nấc `read` không mở nổi một trang — bài 18 C-1). │
+ * │ Điều kiện cũ chỉ hỏi `readOnly || tiered` ⇒ mục này rơi vào nhánh         │
+ * │ `tools: []` = **cấp CẢ SERVER** ⇒ `scopedTools` không chạy ⇒ **`neverTools`│
+ * │ không được áp**, và `browser_evaluate` (chạy JS tuỳ ý) được cấp.          │
+ * │                                                                          │
+ * │ Không có triệu chứng nào: cánh tay chạy tốt hơn trước, chỉ rộng hơn thứ   │
+ * │ ta khai. Đúng họ *"hỏng theo chiều NỚI QUYỀN, không triệu chứng"* (§5t).  │
+ * │                                                                          │
+ * │ ⇒ Hỏi đủ BA vế. Thêm một cơ chế giới hạn mà quên vế của nó ở đây là mở    │
+ * │ lại đúng cái lỗ này bằng một cái tên khác.                                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function needsToolList(arm?: { readOnly?: boolean; tiered?: boolean; neverTools?: readonly string[] }): boolean {
+  return Boolean(arm?.readOnly || arm?.tiered || arm?.neverTools?.length);
+}
+
+/**
+ * Nấc để giải danh sách việc. Mục **có nấc** thì mặc định `read` (an toàn khi
+ * chưa ai chọn); mục **không có nấc** thì không có gì để chọn, nên `full` —
+ * giới hạn của nó đến từ `neverTools`, không đến từ nấc.
+ */
+function tierFor(arm: { tiered?: boolean } | undefined, level?: Tier): Tier {
+  return level ?? (arm?.tiered ? 'read' : 'full');
+}
+
 function armCtx(req: http.IncomingMessage): { loopbackOk: boolean } {
   return { loopbackOk: isLoopback(req.socket.remoteAddress) };
 }
@@ -329,7 +360,7 @@ function resolveArm(
     ...(level ? { level } : {}),
     secretNames,
     secrets: { ...env, ...(body.secrets ?? {}) },
-    ...(fromCatalog?.readOnly || fromCatalog?.tiered ? {} : { tools: [] }),
+    ...(needsToolList(fromCatalog) ? {} : { tools: [] }),
     ...(body.catalogId ? { catalog: body.catalogId } : {}),
   };
 }
@@ -694,6 +725,55 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     if (url.pathname === '/api/arms' && method === 'GET') {
       return json(res, 200, { arms: company.listArms() });
     }
+
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ CỬA ĐĂNG NHẬP BẰNG TAY — mở cửa sổ trình duyệt THƯỜNG vào hồ sơ của  │
+     * │ văn phòng. Không phải một task, không đi qua Playwright.              │
+     * │ → `core/browser-login.ts` (lý do đầy đủ ở đầu file đó)                │
+     * │                                                                      │
+     * │ ⚠ `isLoopback(socket)` — **địa chỉ socket**, không phải `Host`. Cửa sổ│
+     * │ mở trên máy chạy daemon; xem giao diện từ xa mà bấm nút này thì nó bật│
+     * │ ở nơi không ai nhìn. Chỗ thứ **năm** của cùng một sự thật (nút 📂 ·   │
+     * │ redirect OAuth · ô "hiện cửa sổ" · và đây).                           │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    if (url.pathname === '/api/browser-login' && method === 'POST') {
+      const body = await readJson<{ office?: string; url?: string }>(req);
+      // `url` TUỲ CHỌN: mở trình duyệt của văn phòng là đủ, họ tự gõ địa chỉ.
+      if (!body.office) return json(res, 400, { error: 'thiếu "office"' });
+      if (!isLoopback(req.socket.remoteAddress)) {
+        return json(res, 400, {
+          error:
+            'Cửa sổ đăng nhập chỉ mở được khi bạn dùng agentco trên chính máy đang chạy nó — ' +
+            'cửa sổ sẽ bật lên ở máy chủ, nơi bạn không nhìn thấy.',
+        });
+      }
+      let working: boolean;
+      try {
+        working = company.get(body.office).currentState === 'working';
+      } catch {
+        return json(res, 404, { error: 'không có văn phòng này' });
+      }
+      try {
+        const r = startLogin({
+          office: body.office,
+          officeStateDir: officeStateDir(company.dir, body.office),
+          ...(body.url ? { url: body.url } : {}),
+          working,
+        });
+        return json(res, 200, { ok: true, profile: r.profile });
+      } catch (e) {
+        // `LoginError` đã là câu tiếng người — chuyển nguyên văn, đừng gói lại.
+        return json(res, 400, { error: (e as Error).message });
+      }
+    }
+
+    if (url.pathname === '/api/browser-login' && method === 'DELETE') {
+      const office = url.searchParams.get('office');
+      if (!office) return json(res, 400, { error: 'thiếu "office"' });
+      return json(res, 200, { closed: endLogin(office) });
+    }
     /**
      * THỬ NGAY — bắt tay thật với cấu hình chưa lưu.
      *
@@ -812,7 +892,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       const tools = arm.tools ?? (await scopedTools(
           arm.config,
           arm.secrets,
-          arm.level ?? 'read',
+          tierFor(body.catalogId ? findArm(body.catalogId) : undefined, arm.level),
           never,
           body.office ? { officeState: officeStateDir(company.dir, body.office) } : undefined,
         ));

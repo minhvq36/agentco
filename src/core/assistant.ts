@@ -17,12 +17,13 @@ import path from 'node:path';
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
-import { folderRoots } from './catalog.js';
+import { activeOptions, findArm, folderRoots } from './catalog.js';
 import { companyPaths } from './paths.js';
 import { readOAuth } from './secrets.js';
 import type { LoadedOffice } from './config.js';
 import { noteRateLimit } from './energy.js';
 import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
+import { delivered } from './scheduler.js';
 import { addUsage, classifyError, sayError } from './worker.js';
 import {
   DeliverSchema,
@@ -417,9 +418,11 @@ async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
  * │ MỘT dòng `say` của nhân viên. Đó là nghe kể lại, không phải bài học.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ngưỡng: chỉ hỏi khi ca có DẤU VẾT trục trặc — thứ quan sát được, không phải
- * thứ suy đoán. Ca êm đẹp thì kinh nghiệm thật của người dùng vẫn có đường vào
- * kho, và là đường tốt hơn: nói với Trợ lý rồi `/clear` → node GHI NHỚ 0.9.
+ * Ngưỡng: chỉ hỏi khi ca **đi đến đích** VÀ có DẤU VẾT trục trặc trên đường —
+ * cả hai đều quan sát được, không phải thứ suy đoán. Vế "đi đến đích" là vế mới
+ * (29/08) và là vế quan trọng hơn; lý do đầy đủ ở `learnable` ngay dưới.
+ * Ca êm đẹp thì kinh nghiệm thật của người dùng vẫn có đường vào kho, và là
+ * đường tốt hơn: nói với Trợ lý rồi `/clear` → node GHI NHỚ 0.9.
  *
  * ⚠ CỐ Ý KHÔNG dùng SỐ LƯỢT làm dấu hiệu, dù rất cám dỗ.
  *
@@ -477,9 +480,88 @@ async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
  * dòng. Chỉ **lượt lập kế hoạch không ra được kế hoạch** mới là bằng chứng
  * chắc chắn rằng hệ thống đã bắt người dùng nói lại.
  */
-export function worthLearning(receipts: readonly Receipt[], friction = 0): boolean {
+export function worthLearning(
+  receipts: readonly Receipt[],
+  friction = 0,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CA CÒN CẢNH BÁO THÌ CHƯA PHẢI KINH NGHIỆM. (user chốt 29/08)          │
+   * │ > *"nếu 1 công việc còn warning có nghĩa là còn leak, không thể coi đó   │
+   * │ >  là kinh nghiệm được"*                                                 │
+   * │                                                                          │
+   * │ Đây là cảnh báo **cấp CA**, thứ `learnable` không nhìn thấy được vì nó    │
+   * │ chỉ đọc MỘT biên nhận: file đã hứa mà không có trên đĩa (`missingOutputs`)│
+   * │ · kết quả rơi ra ngoài văn phòng (`strays`) · đường dẫn bị kéo về khung   │
+   * │ (`redirected`). Cả ba đều là *"chạy xong rồi nhưng còn rò"* — và một cách │
+   * │ làm còn rò thì chưa phải một cách làm.                                   │
+   * │                                                                          │
+   * │ ⚠ Thứ tự tính TỪNG LÀ CHỖ HỎNG: `missingOutputs` vốn được tính SAU lượt   │
+   * │ `report()` đã hỏi bài học xong, nên nó cảnh báo cho người dùng mà không   │
+   * │ bao giờ chặn được một node nào. → `office.ts` chỗ dựng `leaked`           │
+   * │                                                                          │
+   * │ ⚠ KHÔNG áp cho nhánh `friction`: lớp đó học về **cách con người giao      │
+   * │ việc**, và một cái file rơi sai chỗ không làm câu đó sai đi.              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  leaked = false,
+): boolean {
   if (friction > 0) return true;
-  return receipts.some(agentFault);
+  if (leaked) return false;
+  return receipts.some(learnable);
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 RECEIPT NÀY CÓ ĐƯỢC LÀM **NGUỒN** BÀI HỌC KHÔNG. (user chốt 29/08)    │
+ * │                                                                          │
+ * │ HAI VẾ, và vế ① là vế MỚI — nó lật ngược cổng cũ:                        │
+ * │   ① `delivered`   — **GIAO ĐƯỢC HÀNG**. Điều kiện CẦN, không thương lượng│
+ * │   ② `agentFault`  — **CÓ VẤP**. Ngưỡng cũ, giữ nguyên: đường đi dễ quá   │
+ * │                     thì cũng chưa chắc đáng lưu (user tái xác nhận).     │
+ * │                                                                          │
+ * │ ⚠ Vế ① là `delivered()`, KHÔNG phải `status === 'done'`. (user chốt:     │
+ * │ *"done dựa trên đánh giá neo vào mục tiêu của user đã hoàn thành chưa"*) │
+ * │ `status` là **lời khai của nhân viên**; `delivered` hỏi thêm một câu     │
+ * │ QUAN SÁT ĐƯỢC: *có gì đáp xuống không* (`artifacts` · `landed`). Chính   │
+ * │ kho này đã ghi lại khoảng cách ấy bằng tiếng Việt: *"hai task báo cáo    │
+ * │ 'xong việc' (Facebook, YouTube) nhưng hệ thống đánh dấu failed"*. Học    │
+ * │ từ một lời khai chưa ai kiểm là nhân bản đúng cái nói dối đó vào prefix. │
+ * │ → [[agentco-deterministic-vs-signal]] · `scheduler.ts §delivered`        │
+ * │                                                                          │
+ * │ Cổng cũ chỉ có vế ②, nên nó bắn **đúng lúc ca vừa hỏng** — tức đúng lúc  │
+ * │ bằng chứng yếu nhất. Hậu quả là một **BÁNH CÓC**: ca hỏng đẻ bài học →   │
+ * │ `cold()` kéo đúng nó về ở task cùng chủ đề lần sau → nó **gây ra** lại   │
+ * │ chính triệu chứng đã sinh ra nó → đẻ tiếp.                              │
+ * │                                                                          │
+ * │ ĐO ĐƯỢC 29/08, văn phòng `canh-tay`, 21 bài học của Trợ lý xếp theo      │
+ * │ trạng thái ca đã đẻ ra chúng:                                           │
+ * │                                                                          │
+ * │   blocked  12 mẩu  ← **cả 10 mẩu đã chặn cánh tay trình duyệt nằm đây**  │
+ * │   failed    3 mẩu  ← "đã thất bại 3 lần liên tiếp" — cùng hình dạng      │
+ * │   done      6 mẩu  ← toàn cách-làm-chạy-được                            │
+ * │                                                                          │
+ * │ Ca thật đắt nhất, hai mẩu về cùng một chuyện:                           │
+ * │   từ ca `blocked` 28/08: *"GitHub không merge được nhánh qua PR"*        │
+ * │   từ ca `done`    28/08: *"đã có create_pull_request và merge_pull_..."* │
+ * │ ⇒ Bài học từ ca hỏng không chỉ vô dụng — **nó SAI**. Ca hỏng chứng minh  │
+ * │ *"lần này không xong"*; nó **không bao giờ** chứng minh *"không làm      │
+ * │ được"*. Hai câu đó cách nhau rất xa, và model không phân biệt nổi.       │
+ * │                                                                          │
+ * │ ⚠ THỨ MẤT ĐI, ghi ra để cân lại được: ca hỏng **hẳn** không còn để lại   │
+ * │ gì trong kho. Đó là CỐ Ý — một trục trặc chưa gỡ được là **tin báo cho   │
+ * │ NGƯỜI DÙNG** (câu `blocked_on`, ô chat), không phải kinh nghiệm cho      │
+ * │ nhân viên. Gửi nó vào prefix là gửi sai người đọc, đúng lỗi ① mà         │
+ * │ `agentFault` đã mất công phân loại để tránh.                            │
+ * │                                                                          │
+ * │ ⚠ KHÔNG áp cho GHI NHỚ của Trợ lý (`isMemory`): thẩm quyền của nó đến    │
+ * │ từ **người dùng**, không từ kết quả một ca. Gate nó theo ca chạy nghĩa   │
+ * │ là vứt một quyết định của con người vì một task hỏng.                    │
+ * │ ⚠ KHÔNG áp cho nhánh `friction`: đó là bài học về **cách giao việc**,    │
+ * │ sinh ra từ ca chạy SẠCH, nên nó không dính bánh cóc này.                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function learnable(r: Receipt): boolean {
+  return delivered(r) && agentFault(r);
 }
 
 /**
@@ -953,7 +1035,7 @@ export function shellFlag(tools: readonly string[]): string {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function armReach(
-  arms: Record<string, { label?: string; level?: 'read' | 'add' | 'full' }>,
+  arms: Record<string, { label?: string; level?: 'read' | 'add' | 'full'; catalog?: string }>,
   servers: Record<string, unknown>,
   id: string,
   /**
@@ -1029,12 +1111,43 @@ export function armReach(
    * để nhầm, và dán chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích.
    */
   const bridge = toolKey ? ` · gọi bằng mcp__${toolKey}__*` : '';
-  if (level) {
-    return roots.length
-      ? `${label} — ${level} (đường tắt tới ${roots.join(' · ')})${bridge}`
-      : `${label} — ${level}${bridge}`;
-  }
-  if (bridge) return roots.length ? `${label} (đường tắt tới ${roots.join(' · ')})${bridge}` : `${label}${bridge}`;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CÁCH CHẠY PHẢI NẰM TRÊN DÒNG NÀY — nếu không Trợ lý tả MẶC ĐỊNH CỦA   │
+   * │ DANH MỤC và gọi đó là cấu hình của người dùng. (ca thật 29/08)           │
+   * │                                                                          │
+   * │ User cắm cánh tay trình duyệt **có tick "nhớ đăng nhập"**, rồi hỏi mở một │
+   * │ trang để tự đăng nhập. Trợ lý trả lời, bốn lượt liền, đại ý *"phiên không │
+   * │ được giữ lại, không có cách nào lưu"* — trong khi hồ sơ **đang** được lưu │
+   * │ (bằng chứng: ô email tự điền sẵn, và 142 MB hồ sơ trên đĩa).             │
+   * │                                                                          │
+   * │ Nó không bịa: dữ kiện duy nhất nó có là `blurb` của **mục danh mục**, mà  │
+   * │ blurb tả **mặc định** — *"trình duyệt sạch, không giữ đăng nhập"*. Đúng   │
+   * │ với mục, sai với cánh tay đã cắm.                                        │
+   * │                                                                          │
+   * │ ⚠ Và nó sai **theo chiều TỪ CHỐI**, lần thứ ba của cùng một hình dạng     │
+   * │ (`chạy lệnh: TẮT` · `level` thiếu · và giờ là cách chạy). Cùng bản vá:    │
+   * │ đọc từ **cấu hình đã lưu**, in **trên chính dòng của nhân viên**.         │
+   * │ → `catalog.ts §activeOptions` · [[agentco-prompt-rules-lose-to-examples]] │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const entry = arms[id]?.catalog ? findArm(arms[id]!.catalog!) : undefined;
+  const opts = entry ? activeOptions(entry, servers[id]).map((o) => o.label.toLowerCase()) : [];
+  // Một danh sách, không phải hai câu: nấc quyền và cách chạy cùng trả lời câu
+  // *"cánh tay này LÀM ĐƯỢC GÌ"*, nên chúng đứng cạnh nhau hay đứng riêng đều
+  // đọc được — nhưng gộp thì không có chỗ nào để quên một vế.
+  const bits = [level, ...opts].filter(Boolean) as string[];
+  const shortcut = roots.length ? ` (đường tắt tới ${roots.join(' · ')})` : '';
+  /**
+   * Câu dặn của mục danh mục — ĐỨNG CUỐI, sau cầu nối tên tool.
+   *
+   * Cuối vì nó là câu dài nhất: mắt (và model) đọc nhãn · quyền · cách chạy trước,
+   * rồi mới tới lời dặn. Đặt nó giữa là đẩy `gọi bằng mcp__…__*` — thứ model cần
+   * để **gọi đúng tool** — ra sau một đoạn văn.
+   */
+  const hint = entry?.hint ? ` — ⚠ ${entry.hint}` : '';
+  if (bits.length) return `${label} — ${bits.join(' · ')}${shortcut}${bridge}${hint}`;
+  if (bridge || hint) return `${label}${shortcut}${bridge}${hint}`;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ "ĐƯỜNG TẮT", KHÔNG PHẢI "THƯ MỤC". Một từ, và nó sửa một ca hỏng thật.   │
@@ -1358,12 +1471,57 @@ export class Assistant {
          * └──────────────────────────────────────────────────────────────────┘
          */
         `Trong ngữ cảnh của bạn đã có khối "What the human has decided" — đó là TRÍ NHỚ TỪ TRƯỚC, ` +
-        `và bản bạn viết ra bây giờ sẽ THAY THẾ HẲN nó. Ba luật, theo đúng thứ tự này:\n` +
+        `và bản bạn viết ra bây giờ sẽ THAY THẾ HẲN nó. Bốn luật, theo đúng thứ tự này:\n` +
         `1. CHÉP LẠI mọi mục cũ còn đúng. Bỏ một mục vì "phiên này không nhắc tới" là làm mất ` +
         `một quyết định người dùng đã chốt.\n` +
         `2. Mục cũ nào bị phiên vừa rồi SỬA hoặc HUỶ thì viết ĐÚNG MỘT dòng theo ý MỚI, và bỏ hẳn ý cũ. ` +
         `Tuyệt đối không để hai dòng nói ngược nhau về cùng một chuyện — cái mới thắng, cái cũ biến mất.\n` +
         `3. Mỗi chủ đề một dòng. Nếu phải viết "trước đây X, giờ Y" thì chỉ giữ Y.\n\n` +
+        /**
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ 🔴 LUẬT THỨ TƯ — TRÍ NHỚ CŨNG KHÔNG ĐƯỢC GHI KẾT LUẬN TỪ CA HỎNG.│
+         * │ (user chốt 29/08, và user bắt đúng chỗ tôi đã khuyên SAI)        │
+         * │                                                                  │
+         * │ Tôi từng nói khối GHI NHỚ **không** áp luật `learnable` vì *"thẩm │
+         * │ quyền của nó đến từ người dùng"*. Đúng một nửa, và nửa sai là nửa │
+         * │ đắt: khối này KHÔNG phải thứ người dùng gõ ra — nó là **Trợ lý tự │
+         * │ nén hội thoại của chính nó**, kể cả những lượt nó hỏng. Về nguồn  │
+         * │ gốc, nó cùng lớp với `lessons`; chỉ cái tên nghe giống thẩm quyền.│
+         * │                                                                  │
+         * │ Và nó là kênh NGUY HIỂM NHẤT trong ba kênh, vì hai lý do:         │
+         * │  ① nó nằm trong prefix của **mọi lượt `route()`**, tức trước cả   │
+         * │    lúc lập kế hoạch — nó giết việc ngay ở cửa, không tốn một      │
+         * │    nhân viên nào để lộ ra là có chuyện;                           │
+         * │  ② `supersedes` bắt bản mới **chép lại** bản cũ, nên một câu sai  │
+         * │    được **gia hạn ở mỗi lần nén**, không bao giờ hết hạn.        │
+         * │                                                                  │
+         * │ CA THẬT, đọc được trong `bo-nho-2026-08-29-mb1o`:                 │
+         * │   ⛔ *"báo cáo done của nhân viên trình duyệt web không đáng tin  │
+         * │       tuyệt đối"*                                                │
+         * │   ⛔ *"…không cần giao lại task kiểu 'chờ' nữa"*                  │
+         * │ Hệ quả đo được: Trợ lý **từ chối thử** và tự đề nghị đi đường     │
+         * │ khác — trong khi cánh tay đã chạy tốt trở lại từ lâu.            │
+         * │                                                                  │
+         * │ 📌 Cùng bản ghi nhớ ấy có sẵn câu ĐÚNG, chỉ viết cho GitHub:     │
+         * │   ✅ *"luôn cứ giao việc, để nhân viên tự báo nếu thiếu quyền,    │
+         * │       không tự đoán trước là không làm được"*                     │
+         * │ ⇒ Luật này không dạy nó điều gì mới; nó bắt áp câu đó cho MỌI     │
+         * │ kết nối. Nên ví dụ lấy nguyên văn từ chính kho này — luật trừu    │
+         * │ tượng thua danh sách ví dụ.                                      │
+         * │ → [[agentco-prompt-rules-lose-to-examples]]                       │
+         * └──────────────────────────────────────────────────────────────────┘
+         */
+        `4. KHÔNG ghi kết luận rút ra từ những lần HỎNG. Luật cứng, cùng luật với \`lessons\`:\n` +
+        `   ⛔ "báo cáo done của nhân viên trình duyệt không đáng tin tuyệt đối"\n` +
+        `   ⛔ "việc này đã thử nhiều lần đều hỏng — không cần giao lại nữa"\n` +
+        `   ✅ "cứ giao việc, để nhân viên tự báo nếu thiếu quyền, không tự đoán trước là không làm được"\n` +
+        `   ✅ "với project Notion lớn: liệt kê trang con trước, rồi đọc từng trang — cách này chạy được"\n` +
+        `Một lần hỏng chứng minh "lần đó không xong". Nó KHÔNG chứng minh "không làm được" — và câu ` +
+        `thứ hai chính là câu bạn sẽ đọc lại ở MỌI phiên sau rồi từ chối thử, kể cả khi thứ đó đã ` +
+        `chạy tốt trở lại. Chỉ ghi CÁCH LÀM ĐÃ CHẠY ĐƯỢC, ưu tiên cách phải vấp mới tìm ra.\n` +
+        `⚠ Thứ NGƯỜI DÙNG chốt thì vẫn chép lại theo luật 1, kể cả khi họ chốt "đừng làm X" — đó là ` +
+        `quyết định của họ, không phải kết luận của bạn. Việc còn dở thì ghi là VIỆC CẦN LÀM TIẾP, ` +
+        `không kèm phán đoán vì sao nó chưa xong.\n\n` +
         `Những thứ cần nhớ để phục vụ tiếp:\n` +
         `- người dùng thích gì, không thích gì (giọng văn, độ dài, cách trình bày)\n` +
         `- những gì đã CHỐT và không cần bàn lại\n` +
@@ -1960,13 +2118,31 @@ export class Assistant {
     receipts: Receipt[],
     /** Số lượt lập kế hoạch không ra được kế hoạch trước ca này. → `worthLearning` */
     friction = 0,
+    /** Ca này còn cảnh báo cấp CA không (file hứa mà thiếu · rơi ngoài khung). → `worthLearning` */
+    leaked = false,
   ): Promise<AssistantResult<{ say: string; lessons: Lesson[] }>> {
     const plan = steps.map((s, i) => `${i + 1}. ${s.title}`).join(' · ');
+    /**
+     * ⚠ ĐÁNH DẤU NGAY TRONG BẢNG KẾT QUẢ việc nào được phép làm nguồn bài học.
+     *
+     * Cổng `learnable` là tất định và nó đã chặn ở vế "có hỏi hay không". Nhưng
+     * một ca hỗn hợp (một việc `done`, một việc `blocked`) vẫn mở cổng — và lúc
+     * đó model nhìn thấy CẢ HAI dòng, rồi rút bài học từ đúng dòng hỏng. Đó
+     * chính là hình dạng của ba mẩu độc đo được 29/08.
+     *
+     * Điều kiện phải nằm **trên chính dòng** nó quản, không nằm trong một câu
+     * luật ở đoạn dưới — luật trừu tượng thua danh sách ví dụ.
+     * → [[agentco-prompt-rules-lose-to-examples]] · [[agentco-rule-must-see-what-it-governs]]
+     */
     const summary = receipts
-      .map((r) => `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}`)
+      .map(
+        (r) =>
+          `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}` +
+          (learnable(r) ? '   ⟵ ĐI ĐẾN ĐÍCH dù có vấp: CHỈ việc này được rút bài học' : ''),
+      )
       .join('\n');
 
-    const wantLessons = worthLearning(receipts, friction);
+    const wantLessons = worthLearning(receipts, friction, leaked);
 
     /**
      * Ca ma sát hỏi một câu KHÁC HẲN — và khác là cả điểm của nó.
@@ -1991,8 +2167,13 @@ export class Assistant {
           ? `,\n "lessons":[{"kind":"pitfall","text":"<CÁCH LÀM dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
             (friction > 0
               ? frictionAsk
-              : `Ca này có trục trặc, nên \`lessons\` là chỗ ghi lại thứ giúp lần sau tránh được — ` +
-                `tối đa 2, và vẫn ĐỂ TRỐNG nếu trục trặc đó không dạy được gì dùng lại.\n\n`) +
+              : `Có việc ĐI ĐẾN ĐÍCH dù trên đường có vấp — \`lessons\` là chỗ ghi lại CON ĐƯỜNG ` +
+                `cuối cùng đã chạy được, tối đa 2, và vẫn ĐỂ TRỐNG nếu nó không dạy được gì dùng lại.\n` +
+                `🔴 CHỈ rút từ dòng có dấu ⟵ ở trên. Việc \`blocked\`/\`failed\` KHÔNG được thành bài ` +
+                `học, kể cả khi nó là chuyện đáng nói nhất trong ca: một việc chưa xong chứng minh ` +
+                `"lần này không xong", nó KHÔNG chứng minh "không làm được". Ghi câu đó vào kho là ` +
+                `dạy mọi nhân viên bỏ cuộc sớm ở lần sau — đã đo được đúng ca đó. Trục trặc chưa gỡ ` +
+                `được thì nói trong \`say\` cho người dùng, đó mới là đúng người đọc.\n\n`) +
             `Bài học ghi CÁCH LÀM, tuyệt đối không ghi KIẾN THỨC:\n` +
             `  ✅ "chính sách đổi trả nằm ở library/files/doi-tra.md — grep ở đó trước khi trả lời"\n` +
             `  ⛔ "sản phẩm giảm trên 50% không được đổi trả"\n` +

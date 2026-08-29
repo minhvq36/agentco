@@ -32,6 +32,10 @@ const receipt = (patch: Partial<Receipt> = {}): Receipt =>
     task_id: 'T-01',
     role: 'nguoi-tra-loi',
     reasked: false,
+    // ⚠ `landed` PHẢI có: `learnable` đi qua `delivered()`, và `delivered` hỏi
+    // "có gì đáp xuống không" chứ không tin `status`. Fixture thiếu trường này
+    // thì test nổ ở chỗ chẳng liên quan gì tới thứ nó đang kiểm.
+    landed: [],
     wall_ms: 1000,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: 'haiku', turns: 4 },
     ...patch,
@@ -57,12 +61,24 @@ test('worthLearning: nhiều lượt KHÔNG phải dấu hiệu — đó là thu
   assert.equal(worthLearning([receipt({ usage: { ...receipt().usage, turns: 30 } })]), false);
 });
 
-test('worthLearning: có việc hỏng thì hỏi', () => {
-  assert.equal(worthLearning([receipt(), receipt({ status: 'failed' })]), true);
+/**
+ * ⚠ HAI TEST NÀY ĐÃ BỊ LẬT NGƯỢC 29/08 — trước đó chúng khẳng định điều ngược
+ * lại (*"có việc hỏng thì hỏi"* · *"bị chặn thì hỏi"*). Giữ lại lịch sử ấy ngay
+ * đây, vì cái sai cũ nghe rất hợp lý: ca hỏng đúng là lúc có nhiều chuyện xảy
+ * ra nhất. Thứ nó bỏ qua là **bài học sẽ được đọc lại lúc nào**.
+ * Lý do đầy đủ + số đo: `assistant.ts §learnable`.
+ */
+test('worthLearning: việc HỎNG HẲN thì KHÔNG hỏi — ca hỏng không chứng minh "không làm được"', () => {
+  assert.equal(worthLearning([receipt(), receipt({ status: 'failed' })]), false);
 });
 
-test('worthLearning: bị chặn thì hỏi — đó là lúc thật sự có gì để học', () => {
-  assert.equal(worthLearning([receipt({ status: 'blocked', blocked_on: 'thiếu file' })]), true);
+test('worthLearning: bị chặn thì KHÔNG hỏi — đây đúng là chỗ bánh cóc mọc ra', () => {
+  assert.equal(worthLearning([receipt({ status: 'blocked', blocked_on: 'thiếu file' })]), false);
+});
+
+/** Vế còn lại: đi đến đích NHƯNG có vấp — đó mới là bài học. */
+test('worthLearning: ĐI ĐẾN ĐÍCH dù có vấp thì vẫn hỏi', () => {
+  assert.equal(worthLearning([receipt({ status: 'done', blocked_on: 'thiếu file thuật ngữ' })]), true);
 });
 
 test('worthLearning: phải sửa lại receipt nghĩa là có trục trặc', () => {

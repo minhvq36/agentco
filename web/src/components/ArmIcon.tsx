@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ MỘT CÁNH TAY = MỘT HÌNH, VÀ CÙNG MỘT HÌNH Ở MỌI NƠI. (user chốt 27–28/08)│
  * │                                                                          │
@@ -25,10 +25,10 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import { Cog, Folder, Plug } from 'lucide-react';
+import { Cog, Folder, Globe, Plug } from 'lucide-react';
 
 /** Ba loại cánh tay. Cùng trục phân loại với `ArmDialog §kindOf` và `office.ts §armKind`. */
-export type ArmKind = 'files' | 'service' | 'custom';
+export type ArmKind = 'files' | 'service' | 'custom' | 'browser';
 
 /**
  * Hình của một cánh tay.
@@ -74,7 +74,13 @@ export function ArmIcon({
     );
   }
   // Thư mục ⇒ thư mục; tự cắm ⇒ bánh răng; dịch vụ chưa có logo ⇒ phích cắm.
-  const Fallback = kind === 'files' ? Folder : kind === 'custom' ? Cog : Plug;
+  /**
+   * `browser` vẽ **quả địa cầu**, không vẽ phích cắm. Phích cắm nói *đây là một
+   * kết nối* — đúng, nhưng vô nghĩa khi **mọi** mục đều là kết nối. Hình phải nói
+   * mục này **làm gì**, y như thư mục cho `files`.
+   */
+  const Fallback =
+    kind === 'files' ? Folder : kind === 'browser' ? Globe : kind === 'custom' ? Cog : Plug;
   return (
     <Fallback
       aria-hidden="true"

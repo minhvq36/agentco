@@ -429,10 +429,27 @@ export function injectSecrets<T>(
      * thể cần đường dẫn mà **không cần chìa nào** (mục trình duyệt là đúng ca đó).
      * Gộp vào nhánh `if (!keys.length) return` là để nó im lặng không chạy.
      */
+    /**
+     * ⚠ `path.normalize` SAU KHI THAY — và chỉ với chuỗi CÓ ô trống.
+     *
+     * Danh mục viết `<OFFICE_STATE>/profile` bằng `/` (nó là dữ liệu, phải đọc
+     * được như nhau trên mọi máy), còn `officeState` là đường của **hệ điều hành
+     * đang chạy**. Nối thẳng ra `D:\…\browser/profile` — trộn hai dấu phân cách.
+     * Windows nuốt được, nhưng chuỗi đó rò ra mọi chỗ khác: câu lỗi, log kiểm
+     * toán, và mọi phép so đường dẫn sau này. **Lần thứ sáu** của lớp lỗi *"đúng
+     * trên máy dev, sai ở chỗ khác"* (tên shell theo OS · slug phi-Latin · nút 📂
+     * từ xa · ánh xạ Docker · shell quoting).
+     *
+     * Chỉ chuỗi chứa ô trống mới chuẩn hoá: `--output-max-size 52428800` mà đem
+     * `normalize` thì thành `52428800` (may là không đổi) — nhưng một cờ khác có
+     * thể không may như thế. Đừng đụng vào thứ không phải đường dẫn.
+     */
     const args =
       dirs && Array.isArray(cfg['args'])
         ? (cfg['args'] as unknown[]).map((a) =>
-            typeof a === 'string' ? a.split(OFFICE_STATE).join(dirs.officeState) : a,
+            typeof a === 'string' && a.includes(OFFICE_STATE)
+              ? path.normalize(a.split(OFFICE_STATE).join(dirs.officeState))
+              : a,
           )
         : cfg['args'];
     const withArgs = args === cfg['args'] ? cfg : { ...cfg, args };

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * MỘT MỤC DANH MỤC = MỘT FILE. → `../catalog.ts` · docs/TEST-WALKTHROUGH.md bài 18
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -41,6 +41,23 @@ export const BROWSER_ARM: CatalogArm = {
    */
   name: 'Trình duyệt web',
   icon: '🌐',
+  /** Giao diện vẽ quả địa cầu thay vì phích cắm. → ArmIcon.tsx */
+  shape: 'browser',
+  /**
+   * Hai câu, hai việc khác nhau, và cả hai đều sinh ra từ tiền thật:
+   *
+   * ① *"không chờ được thao tác tay"* — bất khả thi về **cấu trúc** (vòng đời
+   *    trình duyệt = vòng đời một lượt việc), nên phải nói ra **trước khi** lập
+   *    kế hoạch. Đo 29/08: một lượt như thế tốn **$0,0473** rồi báo không làm được.
+   * ② *"trang công khai thì dùng WebFetch/WebSearch"* — user chốt 29/08:
+   *    *"cái nào xài webSearch/webFetch được thì xài, để người dùng đỡ tưởng cắm
+   *    trình duyệt thì xịn hơn"*. Số đo đứng về phía đó: một `snapshot` trang tin
+   *    ≈47 000 token, còn WebFetch rẻ hơn nhiều lần.
+   */
+  hint:
+    'trang công khai thì dùng WebFetch/WebSearch cho rẻ; trình duyệt để dành cho trang cần ' +
+    'đăng nhập hoặc phải bấm/điền. Không chờ được người dùng thao tác giữa lượt việc — muốn ' +
+    'đăng nhập tay thì bảo họ bấm "Đăng nhập vào một trang" trong bảng chi tiết của kết nối.',
   /**
    * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho gọn:
    *
@@ -101,9 +118,18 @@ export const BROWSER_ARM: CatalogArm = {
    * ngữ cảnh, nhưng nó **lớn dần mãi**. Trần này là thứ biến một cái cache thành
    * một cái cache **có đáy** — đúng chỗ user chốt: *"cache không tệ nếu một trang
    * ra vào thường xuyên"*, miễn là nó không nuốt đĩa.
-   * ⏸ CÒN NỢ: `--output-dir` phải trỏ vào thư mục văn phòng. Hôm nay file rơi vào
-   * **thư mục làm việc của daemon** (đo được: nó vừa đẻ `.playwright-mcp/` ngay
-   * trong repo). Cần đường chở một đường dẫn runtime vào `args`, như `appendFolders`.
+   * ✅ ĐÍNH CHÍNH 29/08 — **món nợ `--output-dir` KHÔNG TỒN TẠI.** Worker chạy với
+   * `cwd` = thư mục văn phòng, nên Playwright đẻ `.playwright-mcp/` **ngay trong
+   * văn phòng**: tự đúng chỗ, tự tách theo văn phòng, **0 dòng mã**.
+   * Bằng chứng: `company/offices/canh-tay/.playwright-mcp/` — 26 file, 0,25 MB.
+   * Lần trước tôi thấy nó nằm trong repo là vì **spike chạy từ gốc repo**, tức tôi
+   * đọc `cwd` của phép đo thành `cwd` của sản phẩm.
+   * → [[agentco-measurement-vs-conclusion]]
+   *
+   * 🔴 NHƯNG THƯ MỤC ẤY CHỨA `console-*.log`, VÀ LOG CONSOLE CÓ TOKEN PHIÊN.
+   * Đọc thật một file: URL của Facebook trong đó mang `fb_dtsg=…` và
+   * `__user=100005161517189`. Đó là **chìa phiên đăng nhập nằm dưới dạng chữ**,
+   * trong thư mục văn phòng — nơi nhân viên đọc được. Chưa vá.
    *
    * 🔴 HỆ QUẢ PHẢI BỊT: `tools/list` trả đủ 24 việc **mà chưa khởi động trình
    * duyệt nào** (đo 29/08). Nên một probe chỉ-liệt-kê sẽ báo ✓ **xanh giả** trên
@@ -113,11 +139,6 @@ export const BROWSER_ARM: CatalogArm = {
   spec: {
     kind: 'stdio',
     command: 'npx',
-    /**
-     * ⚠ `--headless` và `--isolated` KHÔNG còn ở đây — chúng đã xuống `modes`,
-     * vì chúng chính là thứ phân biệt ba chế độ. Để lại ở đây thì chế độ "hiện
-     * cửa sổ" mang cả hai cờ mâu thuẫn và Playwright chọn hộ ta cái nào thắng.
-     */
     /**
      * ⚠ `--headless` và `--isolated` nằm ở ĐÂY, còn hai ô tick thì **GỠ** chúng ra
      * (`ArmOption.remove`). Viết ngược lại — base trần, ô tick thêm vào — thì
@@ -159,9 +180,21 @@ export const BROWSER_ARM: CatalogArm = {
        * và trang cần đăng nhập thì vĩnh viễn không vào được.
        */
       on: true,
+      /**
+       * 🔴 CÂU CŨ HỨA QUÁ TAY, user bắt được 29/08: *"cookie của trình duyệt chính
+       * khó mà truyền sang đấy, chưa kể người dùng dùng cả edge và chrome"*.
+       *
+       * Đúng. `--user-data-dir` mở một **hồ sơ RIÊNG, trống trơn** — nó KHÔNG thừa
+       * kế đăng nhập sẵn có trong Chrome/Edge của người dùng (và không có cách nào
+       * thừa kế: hồ sơ đang mở bị khoá, cookie thì mã hoá theo hồ sơ). Câu cũ
+       * *"giữ lại những trang bạn đã đăng nhập"* đọc thành *"dùng lại đăng nhập
+       * của tôi"* — hứa một thứ không tồn tại, đúng lớp lỗi §11a-bis: **hứa quá
+       * tay tệ hơn doạ quá tay**.
+       */
       help:
-        'Giữ lại những trang bạn đã đăng nhập, để lần sau nhân viên vào thẳng. ' +
-        'Hồ sơ này của riêng agentco, mỗi văn phòng một bản.',
+        'Mở một hồ sơ riêng của agentco (trống lúc đầu, KHÔNG dùng lại đăng nhập ' +
+        'sẵn có trong Chrome/Edge của bạn). Bật kèm "hiện cửa sổ" để tự đăng nhập ' +
+        'một lần, từ đó nhân viên vào thẳng.',
       /** Hồ sơ bền và "profile nằm trong RAM" loại trừ nhau — gỡ cái kia ra. */
       remove: ['--isolated'],
       dirs: [{ flag: '--user-data-dir', sub: 'profile' }],
@@ -182,7 +215,30 @@ export const BROWSER_ARM: CatalogArm = {
       loopbackOnly: true,
     },
   ],
-  tiered: true,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 KHÔNG CHIA NẤC — và đây là kết luận của một phép đo, không phải lười.  │
+   * │ (user chạy thật 29/08, đúng ô C-1 bài 18 đã dự đoán)                     │
+   * │                                                                          │
+   * │ `browser_navigate` khai `destructive: true` (cùng `click`, `type`), nên  │
+   * │ `tierOf` xếp nó vào `full`. Hệ quả ở nấc mặc định `read`: `scopedTools`  │
+   * │ cấp đúng 7 việc — `snapshot · find · screenshot · network · console ·    │
+   * │ wait` — **không có việc nào mở được trang**. Triệu chứng user gặp:       │
+   * │                                                                          │
+   * │   *"Claude requested permissions to use mcp__…__browser_navigate,        │
+   * │    but you haven't granted it yet"*                                     │
+   * │                                                                          │
+   * │ ⇒ Một trình duyệt không đi tới đâu được **không phải nấc thấp, nó là đồ  │
+   * │ hỏng**. Và không sửa được bằng cách hạ `navigate` xuống `read`: luật một │
+   * │ chiều (25/08) cấm hạ cấp, và cấm đúng — mở một URL **có** tác dụng phụ.  │
+   * │                                                                          │
+   * │ 📌 Cái MẤT, ghi để cân lại được: không có bản "chỉ xem". Thứ thay thế là │
+   * │ `neverTools` (cắt hai việc chạy JS tuỳ ý) — hàng rào theo **việc**, không│
+   * │ theo **nấc**. Muốn nấc thật thì phải khai nhóm việc bằng dữ liệu như     │
+   * │ GitHub, và đó là việc của bản sau.                                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  tiered: false,
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ HAI VIỆC KHÔNG BAO GIỜ ĐƯỢC CẤP — kể cả nấc toàn quyền. → `catalog.ts`   │

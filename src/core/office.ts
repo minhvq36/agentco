@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 
-import { armDirIndex, findArm, folderRoots } from './catalog.js';
+import { activeOptions, armDirIndex, findArm, folderRoots } from './catalog.js';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import {
@@ -31,8 +31,9 @@ import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
 import { ArtifactStore, isStale } from './artifacts.js';
 import { AuditLog } from './audit.js';
+import { loginOpen } from './browser-login.js';
 import { LayoutStore, ASSISTANT_NODE, agentNodeId, mcpNodeId, type LayoutNode } from './layout.js';
-import { Assistant, newPlanId, requestOf, type PlanDraft } from './assistant.js';
+import { Assistant, learnable, newPlanId, requestOf, type PlanDraft } from './assistant.js';
 import {
   helpText,
   parseInput,
@@ -138,7 +139,11 @@ export interface CanvasNode extends LayoutNode {
    */
   mark?: string;
   /** mcp: `files` · `service` · `custom` — cùng trục phân loại với hộp thoại. */
-  armKind?: 'files' | 'service' | 'custom';
+  armKind?: 'files' | 'service' | 'custom' | 'browser';
+  /** Nhãn các ô tick đang bật — panel vẽ chip từ đây. */
+  optionLabels?: string[];
+  /** Có hồ sơ bền ⇒ panel hiện nút mở cửa sổ đăng nhập. → `browser-login.ts` */
+  canLogin?: boolean;
   /**
    * mcp: TÊN TÀI KHOẢN nó nối tới, tra từ kho OAuth chứ không đọc `label`.
    *
@@ -1408,6 +1413,30 @@ export class Office {
       }
 
       // 3. Chạy
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ CỬA SỔ ĐĂNG NHẬP ĐANG MỞ ⇒ KHÔNG PHÓNG VIỆC. → `browser-login.ts`   │
+       * │                                                                      │
+       * │ Chromium **khoá** `user-data-dir`. Cửa sổ đăng nhập đang giữ hồ sơ mà │
+       * │ worker phóng lên thì Playwright đâm vào hồ sơ bị khoá ⇒ **MCP chết    │
+       * │ lúc spawn** ⇒ nhân viên mất tool và trả lời bằng persona của nó. Đó   │
+       * │ đúng là ca hỏng im lặng đã tốn của user $0,03 và một buổi đi tìm.     │
+       * │                                                                      │
+       * │ ⚠ Chặn ở ĐÂY, không ở `pickMcp`: ở đó thì kế hoạch đã lập, tiền lập  │
+       * │ kế hoạch đã trả, và câu từ chối đến sau khi người dùng đã chờ. Chặn    │
+       * │ trước khi phóng là chặn **trước khi tiêu tiền**.                       │
+       * │                                                                      │
+       * │ Khoá tự lành: người dùng đóng cửa sổ ⇒ `exit` gỡ khoá. Nên câu này    │
+       * │ nói **việc phải làm**, không nói "thử lại sau".                        │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      if (loginOpen(this.id)) {
+        throw new RunError(
+          'Cửa sổ đăng nhập của văn phòng này đang mở, nên nhân viên chưa dùng được trình duyệt. ' +
+            'Đóng cửa sổ đó rồi giao việc lại.',
+          'other',
+        );
+      }
       const scheduler = new Scheduler({
         office: this.loaded,
         knowledge: this.knowledge,
@@ -1431,17 +1460,62 @@ export class Office {
        * `worthLearning` đã cắt nhánh Trợ lý, còn nhân viên thì thường trả về
        * `lessons: []`.
        */
-      const anyLesson = receipts.some((r) => r.lessons.length > 0);
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 CẢNH BÁO CẤP CA PHẢI TÍNH **TRƯỚC** HAI CỬA BÀI HỌC. (user 29/08) │
+       * │ > *"nếu 1 công việc còn warning có nghĩa là còn leak, không thể coi   │
+       * │ >  đó là kinh nghiệm được"*                                          │
+       * │                                                                      │
+       * │ `missingOutputs` vốn được tính ở tít dưới, SAU cả vòng ghi bài học    │
+       * │ của nhân viên VÀ sau lượt `report()` đã hỏi Trợ lý học được gì. Nên   │
+       * │ nó nói được với NGƯỜI DÙNG mà chưa bao giờ chặn được một node nào —   │
+       * │ đúng lớp lỗi *"luật đứng sau thứ nó quản"*.                          │
+       * │ → [[agentco-rule-must-see-what-it-governs]]                           │
+       * │                                                                      │
+       * │ Dời lên đây: cùng một phép tính, cùng một kết quả, chỉ khác chỗ đứng. │
+       * │ Đọc đĩa an toàn ở điểm này — `scheduler.run()` đã xong ở dòng trên.   │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const gone = this.missingOutputs(plan, receipts);
+      const leaked = gone.length > 0 || (plan.redirected?.length ?? 0) > 0;
+
+      const anyLesson = receipts.some((r) => r.lessons.length > 0 && learnable(r) && !leaked);
       let docTexts: string[] | undefined = anyLesson ? this.library.texts() : undefined;
 
       for (const r of receipts) {
         this.saveReceipt(plan.plan_id, r);
         this.recordUsage(r);
         usage = addUsage(usage, r.usage);
-        for (const lesson of r.lessons) {
-          // `r.reads` = tài liệu tủ mà CHÍNH nhân viên này đã mở trong ca. Bài
-          // học của nó sống chết theo đúng những file đó — thực thể yếu.
-          this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? [], r.reads);
+        /**
+         * ┌────────────────────────────────────────────────────────────────┐
+         * │ 🔴 CỬA THỨ HAI CỦA CÙNG MỘT LUẬT. → `assistant.ts §learnable`  │
+         * │                                                                │
+         * │ `worthLearning` gác cửa Trợ lý. Nhân viên thì KHÔNG đi qua cửa  │
+         * │ đó — nó tự khai `lessons` trong biên nhận, và trước 29/08 thứ   │
+         * │ duy nhất chặn là `rejectLesson` (trùng · chép tài liệu · con    │
+         * │ số). Nên vá một cửa là để hở cửa kia, cùng lớp lỗi              │
+         * │ [[agentco-finish-completely]] đã dẫm ba lần.                    │
+         * │                                                                │
+         * │ Ca thật của cửa NÀY, đo 29/08 — bài học của chính vai trò       │
+         * │ `nguoi-soi-thu-muc`, sinh ra từ một ca không xong:              │
+         * │   *"Trước khi gọi browser_navigate … nếu bị từ chối quyền,      │
+         * │    dừng lại và báo blocked ngay thay vì thử lại"*               │
+         * │ Nó nằm trong 10 mẩu đã làm cánh tay trình duyệt ngừng chạy.     │
+         * │                                                                │
+         * │ ⚠ Cổng đặt ở ĐÂY chứ không ở `addLesson`: `addLesson` chỉ nhận  │
+         * │ được `text`, nó không nhìn thấy `status` của ca đã đẻ ra text    │
+         * │ đó — luật phải đứng ở chỗ nhìn thấy thứ nó quản.                │
+         * │ → [[agentco-rule-must-see-what-it-governs]]                     │
+         * └────────────────────────────────────────────────────────────────┘
+         */
+        // ⚠ Bọc vòng lặp chứ KHÔNG `continue`: dưới đây còn chỗ cho việc khác
+        // của mỗi receipt, và một `continue` sẽ lặng lẽ nuốt luôn việc ấy.
+        if (learnable(r) && !leaked) {
+          for (const lesson of r.lessons) {
+            // `r.reads` = tài liệu tủ mà CHÍNH nhân viên này đã mở trong ca. Bài
+            // học của nó sống chết theo đúng những file đó — thực thể yếu.
+            this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? [], r.reads);
+          }
         }
       }
 
@@ -1531,7 +1605,7 @@ export class Office {
           status = 'done';
         } else {
         const summary = await this.mailbox.lock(() =>
-          this.assistant.report(plan.steps, receipts, friction),
+          this.assistant.report(plan.steps, receipts, friction, leaked),
         );
         usage = addUsage(usage, summary.usage);
         this.logAssistantUsage('report', summary.usage);
@@ -1544,7 +1618,8 @@ export class Office {
          * loại nói dối mà `stoppedReceipt` đã sửa cho nhánh bị ngắt; nhánh chạy
          * hết bình thường thì chưa ai kiểm.
          */
-        const gone = this.missingOutputs(plan, receipts);
+        // `gone` đã tính ở trên — nó phải chạy TRƯỚC hai cửa bài học, xem chỗ
+        // dựng `leaked`. Ở đây chỉ còn việc nói ra cho người dùng.
         if (gone.length) {
           status = 'failed';
           /**
@@ -3566,8 +3641,35 @@ export class Office {
         ...base,
         label: meta?.label || n.server || n.id,
         avatar: '🔌',
-        armKind: !meta?.catalog ? 'custom' : entry?.folders ? 'files' : 'service',
+        armKind: !meta?.catalog
+        ? 'custom'
+        : entry?.shape === 'browser'
+          ? 'browser'
+          : entry?.folders
+            ? 'files'
+            : 'service',
         ...(entry?.brand.mark ? { mark: entry.brand.mark } : {}),
+        /**
+         * NHÃN CẤU HÌNH — *"nhìn vào panel là biết đang cấu hình thế nào"* (user
+         * 29/08). Suy từ **cấu hình đã lưu**, không từ một danh sách id cất riêng:
+         * hai nguồn cho cùng một sự thật thì nguồn sai sẽ là nguồn **hiển thị**.
+         * → `catalog.ts §activeOptions`
+         */
+        ...(() => {
+          const cfg = n.server ? this.loaded.company.mcpServers?.[n.server] : undefined;
+          if (!entry || !cfg) return {};
+          const on = activeOptions(entry, cfg);
+          /**
+           * `canLogin` = cánh tay có **hồ sơ bền** để đăng nhập VÀO. Không có
+           * `dirs` thì đăng nhập xong cũng mất theo lượt việc — bày nút ở đó là
+           * bày một cái bẫy, không phải một tính năng.
+           */
+          const login = on.some((o) => o.dirs?.length);
+          return {
+            ...(on.length ? { optionLabels: on.map((o) => o.label) } : {}),
+            ...(login ? { canLogin: true } : {}),
+          };
+        })(),
         connected: true,
         /**
          * NẤC QUYỀN + SỐ VIỆC — để bảng chi tiết vẽ huy hiệu **từ dữ liệu**, chứ

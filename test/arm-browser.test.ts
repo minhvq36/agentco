@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test cho mục danh mục **Trình duyệt web** (Playwright MCP).
  * → `src/core/arms/browser.ts` · docs/TEST-WALKTHROUGH.md bài 18
  *
@@ -18,6 +18,7 @@
  */
 
 import { strict as assert } from 'node:assert';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -30,6 +31,7 @@ import {
   findArm,
 } from '../dist/core/catalog.js';
 import { injectSecrets } from '../dist/core/secrets.js';
+import { needsToolList } from '../dist/server/server.js';
 import { TIERS, tierOf, toolsAtTier } from '../dist/core/probe.js';
 
 /** Dựng `args` cho một bộ ô tick — mọi test dưới đây đi qua đúng cửa này. */
@@ -122,14 +124,14 @@ test('⭐ ô trống được ĐIỀN lúc spawn, mỗi văn phòng một đư�
     options: (BROWSER_ARM.options ?? []).filter((o) => o.id === 'nho-dang-nhap'),
     platform: 'win32',
   });
-  const a = injectSecrets(cfg, {}, { officeState: '/cty/offices/ke-toan/.state/browser' }) as {
-    args: string[];
-  };
-  const b = injectSecrets(cfg, {}, { officeState: '/cty/offices/ban-hang/.state/browser' }) as {
-    args: string[];
-  };
-  assert.ok(a.args.includes('/cty/offices/ke-toan/.state/browser/profile'));
-  assert.ok(b.args.includes('/cty/offices/ban-hang/.state/browser/profile'));
+  // ⚠ Dựng kỳ vọng bằng `path.join`, KHÔNG ghim chuỗi `/…`: đường dẫn được chuẩn
+  // hoá theo OS đang chạy, nên một chuỗi ghim cứng chỉ đúng trên một hệ điều hành.
+  const ke = path.join('cty', 'offices', 'ke-toan', '.state', 'browser');
+  const ban = path.join('cty', 'offices', 'ban-hang', '.state', 'browser');
+  const a = injectSecrets(cfg, {}, { officeState: ke }) as { args: string[] };
+  const b = injectSecrets(cfg, {}, { officeState: ban }) as { args: string[] };
+  assert.ok(a.args.includes(path.join(ke, 'profile')));
+  assert.ok(b.args.includes(path.join(ban, 'profile')));
   assert.notDeepEqual(a.args, b.args, 'hai văn phòng phải ra hai đường dẫn');
   // Và thứ đi vào sổ thì vẫn y nguyên một bản — đó là toàn bộ điểm của ô trống.
   assert.equal(armHash(cfg), armHash(cfg));
@@ -154,6 +156,28 @@ test('⭐ hai ô tick ĐỘC LẬP — đủ bốn tổ hợp, không tổ hợp
   // ⭐ Đúng ô mà bản "ba nấc" đã làm rơi.
   assert.ok(!hien.includes('--headless') && !coHoSo(hien));
   assert.ok(!caHai.includes('--headless') && coHoSo(caHai));
+});
+
+/**
+ * ⭐ BA HỆ ĐIỀU HÀNH, MỘT ĐƯỜNG DẪN. (user nhắc 29/08)
+ *
+ * Danh mục viết ô trống bằng `/` (dữ liệu phải đọc như nhau ở mọi máy), còn đích
+ * là đường của OS đang chạy. Nối thẳng ⇒ `D:\…\browser/profile` — **trộn dấu phân
+ * cách**, và chuỗi đó rò ra câu lỗi, log kiểm toán, mọi phép so đường dẫn về sau.
+ * Lần thứ sáu của lớp lỗi *"đúng trên máy dev, sai ở chỗ khác"*.
+ */
+test('⭐ đường dẫn sau khi điền dùng ĐÚNG dấu phân cách của hệ điều hành', () => {
+  const cfg = buildConfig(BROWSER_ARM.spec, {
+    folders: [],
+    options: (BROWSER_ARM.options ?? []).filter((o) => o.id === 'nho-dang-nhap'),
+    platform: 'win32',
+  });
+  const root = path.join('C:', 'cty', 'offices', 'ke-toan', '.state', 'browser');
+  const { args } = injectSecrets(cfg, {}, { officeState: root }) as { args: string[] };
+  const p = args[args.indexOf('--user-data-dir') + 1]!;
+  assert.equal(p, path.join(root, 'profile'));
+  const la = path.sep === '\\' ? '/' : '\\';
+  assert.ok(!p.includes(la), `còn dấu phân cách của OS khác trong "${p}"`);
 });
 
 test('"nhớ đăng nhập" GỠ `--isolated` — hồ sơ bền và hồ sơ trong RAM loại trừ nhau', () => {
@@ -258,6 +282,44 @@ test('tên mục KHÔNG mang tên hãng — nợ thương hiệu bằng 0, khôn
     assert.ok(!/playwright/i.test(field), `"${field}" lộ tên hãng ra mặt trước`);
   }
   assert.equal('mark' in BROWSER_ARM.brand, false, 'có logo mà chưa đọc quy tắc = đúng lỗ §11c');
+});
+
+/**
+ * ⭐⭐ Canh cái lỗ suýt ship 29/08 — và nó là loại **không có triệu chứng**.
+ *
+ * Mục này đổi sang `tiered: false` (nấc `read` không mở nổi một trang). Điều kiện
+ * cũ ở `resolveArm` chỉ hỏi `readOnly || tiered`, nên nó rơi vào nhánh `tools: []`
+ * = **cấp CẢ SERVER** ⇒ `scopedTools` không chạy ⇒ **`neverTools` không được áp**,
+ * và `browser_evaluate` được cấp. Cánh tay vẫn chạy — chỉ **rộng hơn thứ ta khai**.
+ */
+test('⭐⭐ mục có `neverTools` KHÔNG được rơi vào nhánh "cấp cả server"', () => {
+  assert.equal(needsToolList(BROWSER_ARM), true, 'mục có lệnh cấm mà không giải danh sách việc ⇒ lệnh cấm vô hiệu');
+  // Ba vế, và thiếu vế nào cũng mở lại đúng cái lỗ trên bằng một cái tên khác.
+  assert.equal(needsToolList({ readOnly: true }), true);
+  assert.equal(needsToolList({ tiered: true }), true);
+  assert.equal(needsToolList({ neverTools: ['x'] }), true);
+  // Mục trần thì vẫn cấp cả server như cũ — không đổi hành vi của `files`.
+  assert.equal(needsToolList({}), false);
+  assert.equal(needsToolList(undefined), false);
+  assert.equal(needsToolList(FILES_ARM), false);
+});
+
+/**
+ * ⭐ Câu dặn phải CHỈ ĐƯỜNG, không chỉ nói "không được" — và phải NGẮN, vì nó
+ * vào prefix **mọi lượt** của vai trò có cánh tay này.
+ *
+ * Ca sinh ra nó: user bảo *"mở youtube và chờ tôi login"* → Trợ lý lập kế hoạch →
+ * worker chạy → báo *"không chờ được"*. **$0,0473 cho một việc bất khả thi về cấu
+ * trúc.** Không ai sai: dữ kiện đó không tồn tại ở đâu trong ngữ cảnh.
+ */
+test('⭐ câu dặn của mục: có chỉ đường đi tiếp, và đủ ngắn để trả mỗi lượt', () => {
+  const h = BROWSER_ARM.hint!;
+  assert.ok(h, 'thiếu câu dặn ⇒ Trợ lý sẽ lập kế hoạch cho việc bất khả thi');
+  // Chỉ đường: phải nhắc cái nút, và nhắc hai công cụ rẻ hơn.
+  assert.match(h, /Đăng nhập vào một trang/);
+  assert.match(h, /WebFetch|WebSearch/);
+  // Ngắn: một câu dặn dài ở đây là một hoá đơn dài.
+  assert.ok(h.length < 320, `câu dặn ${h.length} ký tự — quá dài cho prefix mỗi lượt`);
 });
 
 test('mục này KHÔNG có chìa nào — đó là toàn bộ điểm của nó', () => {

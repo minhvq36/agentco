@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { Archive, FileCode2, Pencil, ScrollText, Trash2, X } from 'lucide-react';
+import { Archive, FileCode2, Globe, Pencil, ScrollText, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Textarea } from '@/components/ui/misc';
@@ -169,6 +169,76 @@ function AssistantName({ node }: { node: CanvasNode }) {
       </div>
     </div>
   );
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CỬA ĐĂNG NHẬP BẰNG TAY — mở một cửa sổ trình duyệt THƯỜNG vào đúng hồ sơ │
+ * │ mà nhân viên dùng. → `core/browser-login.ts`                             │
+ * │                                                                          │
+ * │ Ca sinh ra nó (user 29/08, bốn lần thử): *"tui đang đăng nhập dở bằng    │
+ * │ sđt mà, chờ xíu đi"* · *"đến bước setup địa chỉ thì nó lại tắt của tôi"*. │
+ * │ Vòng đời trình duyệt của nhân viên = vòng đời một LƯỢT VIỆC, nên không có │
+ * │ chỗ nào trong đó để một con người thao tác.                              │
+ * │                                                                          │
+ * │ ⚠ Nút này KHÔNG nhận mật khẩu và không bao giờ được nhận: nhận là agentco │
+ * │ thành nơi giữ mật khẩu. Nó chỉ mở đúng một cửa sổ tới đúng một địa chỉ.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function BrowserLogin() {
+  const officeId = useApp((s) => s.officeId);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [opened, setOpened] = useState(false);
+
+  if (!officeId) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-line p-3">
+      <div className="flex items-center gap-2">
+        <Globe className="h-4 w-4 shrink-0 text-muted" />
+        <span className="text-[13px] font-medium">Đăng nhập / thêm cookie</span>
+      </div>
+      <p className="mt-1.5 text-xs leading-relaxed text-muted">
+        {opened ? (
+          <>
+            Cửa sổ đã mở. Dùng như trình duyệt bình thường — đăng nhập, chờ mã SMS, xác minh hai
+            bước, bao lâu cũng được. Xong thì <b>đóng cửa sổ</b>; nhân viên dùng lại phiên đó ở
+            những lượt sau.
+          </>
+        ) : (
+          <>
+            Mở một cửa sổ trình duyệt thường, dùng <b>đúng hồ sơ</b> mà nhân viên dùng. Đăng nhập
+            ở đây một lần là những lượt việc sau vào thẳng được.
+          </>
+        )}
+      </p>
+      {err && <p className="mt-1.5 text-xs text-danger">{err}</p>}
+      <Button
+        size="sm"
+        variant="primary"
+        className="mt-3"
+        disabled={busy}
+        onClick={() => void go()}
+      >
+        {busy ? 'Đang mở…' : opened ? 'Mở lại' : 'Mở trình duyệt'}
+      </Button>
+    </div>
+  );
+
+  async function go() {
+    setBusy(true);
+    setErr('');
+    try {
+      // Không gửi `url`: mở trình duyệt của văn phòng là đủ, người dùng tự gõ
+      // địa chỉ trong cửa sổ. Bắt gõ trước là thêm một bước cho cùng kết quả.
+      await api.browserLogin(officeId!);
+      setOpened(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 }
 
 /**
@@ -670,8 +740,21 @@ function ArmName({ node }: { node: CanvasNode }) {
         │ ngay dưới **không** với tới được nó, và đó là toàn bộ điểm.           │
         └──────────────────────────────────────────────────────────────────────┘
       */}
-      {(node.level || node.via) && (
+      {(node.level || node.via || node.optionLabels?.length) && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {/*
+            CÁCH CHẠY — *"nhìn vào panel là biết đang cấu hình thế nào"* (user 29/08).
+
+            Suy từ **cấu hình đã lưu** (`catalog.ts §activeOptions`), không từ một
+            danh sách id cất riêng: hai nguồn cho cùng một sự thật thì nguồn sai sẽ
+            là nguồn HIỂN THỊ — người dùng đọc một cấu hình không phải cấu hình
+            đang chạy, và đó là kiểu nói dối khó phát hiện nhất.
+          */}
+          {node.optionLabels?.map((t) => (
+            <span key={t} className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">
+              {t}
+            </span>
+          ))}
           {/* Workspace NÀO — user 26/08. Tra từ tên chìa, không đọc chuỗi tên. */}
           {node.via && (
             <span className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">{node.via}</span>
@@ -690,6 +773,14 @@ function ArmName({ node }: { node: CanvasNode }) {
           ) : null}
         </div>
       )}
+      {/*
+        ⚠ ĐỨNG RIÊNG, KHÔNG NẰM CHUNG HÀNG CHIP. (user chốt 29/08)
+
+        Chip là **trạng thái** — thứ để đọc. Nút này là **hành động**, và là hành
+        động duy nhất trong bảng này mở một cửa sổ ra ngoài agentco. Trộn hai loại
+        vào một hàng thì mắt lướt qua nó như lướt qua một cái nhãn.
+      */}
+      {node.canLogin && <BrowserLogin />}
       <label className="text-[11px] uppercase tracking-wide text-muted">Tên hiển thị</label>
       <div className="mt-1 flex gap-1.5">
         <Input value={text} onChange={(e) => setText(e.target.value)} />

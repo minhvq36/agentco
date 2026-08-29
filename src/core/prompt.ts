@@ -122,7 +122,12 @@ The second one is already written down in a document the office owns. Copying it
 
 So: never restate document content, never record numbers, thresholds, prices, or dates. Record the path you took, the trap you fell into, the order that worked.
 
-Leave \`lessons\` empty unless this task actually went wrong. A task that went smoothly teaches nothing, and saying so is the correct answer.
+**A lesson requires that you FINISHED.** Record one only when you are returning \`status: "done"\` AND you had to recover from something along the way — then the lesson is the route that finally worked. Leave \`lessons\` empty in every other case, and \`[]\` is the normal answer:
+
+- Returning \`failed\`, \`blocked\` or \`needs_human\` ⇒ \`lessons\` MUST be \`[]\`. A task you did not finish proves "this attempt did not work". It never proves "this cannot be done" — and that second sentence is what a lesson turns into once it sits in every employee's prompt. Say what stopped you in \`blocked_on\`; that reaches the human, who is the one who can fix it.
+- Finished with no trouble at all ⇒ also \`[]\`. A smooth path teaches nothing.
+
+⚠ Never write a lesson that says a tool, connector or site "cannot" do something. You saw one attempt, not the capability. Employees who read it will stop before trying — which has already cost this office a working browser connector for two hours.
 
 ## What you already have
 

@@ -13,6 +13,7 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
 import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { redactBrowserLogs } from './redact.js';
 
 import { fastLaunch } from './armexec.js';
 import { findArm, folderRoots } from './catalog.js';
@@ -443,6 +444,25 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
                 async (input: Record<string, unknown>) => {
                   try {
                     const ten = String(input['tool_name'] ?? '');
+                    /**
+                     * ┌────────────────────────────────────────────────────────┐
+                     * │ CẮT QUERY KHỎI LOG CONSOLE CỦA TRÌNH DUYỆT.            │
+                     * │ → `redact.ts` (lý do đầy đủ + giới hạn ở đầu file đó)  │
+                     * │                                                        │
+                     * │ Ở ĐÂY chứ không ở chỗ khác: đây là điểm duy nhất chạy  │
+                     * │ **sau mỗi lời gọi tool**, tức sau khi Playwright vừa    │
+                     * │ ghi file. Đặt ở cuối lượt việc thì token nằm phơi suốt  │
+                     * │ cả lượt; đặt trước thì chưa có gì để dọn.              │
+                     * │                                                        │
+                     * │ ⚠ KHÔNG lọc theo tên tool. Một cánh tay trình duyệt tự │
+                     * │ cắm (đường B) không mang tên nào ta biết trước, mà nó   │
+                     * │ vẫn ghi vào cùng thư mục ấy. Điều kiện rẻ nhất và đúng  │
+                     * │ nhất là **thư mục có tồn tại không** — `redactBrowser-  │
+                     * │ Logs` về ngay khi không có, và đó là ca của gần hết     │
+                     * │ văn phòng.                                             │
+                     * └────────────────────────────────────────────────────────┘
+                     */
+                    redactBrowserLogs(office.dir);
                     /**
                      * DỊCH 404 SAI CỬA — trước phép bê, vì hai chuyện độc lập:
                      * một câu 404 thì ngắn nên chẳng bao giờ bị bê, và nếu có

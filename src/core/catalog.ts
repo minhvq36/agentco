@@ -228,6 +228,33 @@ export function defaultOptions(arm: CatalogArm): readonly ArmOption[] {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ô TICK NÀO ĐANG BẬT — ĐỌC TỪ CẤU HÌNH ĐÃ LƯU, không đọc từ trí nhớ.      │
+ * │ (user 29/08: *"nhìn vào panel là biết đang cấu hình thế nào"*)            │
+ * │                                                                          │
+ * │ Suy ngược từ `args` chứ không cất thêm một danh sách id vào sổ, vì hai    │
+ * │ nguồn cho cùng một sự thật là hai nguồn để lệch — và nguồn sai sẽ là      │
+ * │ nguồn **hiển thị**, tức người dùng đọc một cấu hình không phải cấu hình   │
+ * │ đang chạy. Cùng lý lẽ *"đọc từ handshake, không từ câu người dùng gõ"*.   │
+ * │                                                                          │
+ * │ Một ô coi là BẬT khi **cả ba vế** khớp: `args` của nó có mặt · `remove`   │
+ * │ của nó vắng mặt · cờ trong `dirs` có mặt. Hỏi thiếu vế nào thì ô "hiện    │
+ * │ cửa sổ" (chỉ có `remove`) sẽ luôn trông như đang bật.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function activeOptions(arm: CatalogArm, config: unknown): readonly ArmOption[] {
+  const args = (config as { args?: unknown })?.args;
+  if (!Array.isArray(args)) return [];
+  const has = (s: string) => args.includes(s);
+  return (arm.options ?? []).filter(
+    (o) =>
+      (o.args ?? []).every(has) &&
+      (o.remove ?? []).every((r) => !has(r)) &&
+      (o.dirs ?? []).every((d) => has(d.flag)),
+  );
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ 🔴 HÃNG NÀY CẮT VIỆC NGAY Ở SERVER THEO NẤC — và đó là một cái BẪY VÒNG. │
  * │ (bug user bắt 27/08)                                                     │
  * │                                                                          │
@@ -535,6 +562,32 @@ export interface CatalogArm {
    * mục "chỉ đọc cứng" nên là một quyết định có lý do viết ra, không phải mặc định.
    */
   tiered?: boolean;
+  /**
+   * Hình dạng để giao diện chọn ICON — cùng khuôn olders ⇒ 'files' đang dùng.
+   * Dữ liệu, không phải nhánh mã theo tên hãng.
+   */
+  shape?: 'browser';
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MỘT CÂU CHO **MODEL**, đi vào dòng danh bạ của vai trò. → `armReach`     │
+   * │                                                                          │
+   * │ ⚠ KHÔNG phá chốt 27/08 (*"bỏ ý định thêm luật ưu tiên vào system prompt  │
+   * │ worker"*). Chốt đó nói về một **luật chung** dán lên mọi lượt; đây là     │
+   * │ **dữ liệu của một mục**, chỉ xuất hiện khi vai trò có đúng cánh tay ấy,   │
+   * │ và nằm **trên chính dòng của cánh tay** — đúng luật                       │
+   * │ [[agentco-prompt-rules-lose-to-examples]].                               │
+   * │                                                                          │
+   * │ Ca sinh ra nó (đo 29/08): user bảo *"mở youtube và chờ tôi login"*. Trợ   │
+   * │ lý lập kế hoạch, worker chạy, rồi báo *"không chờ được"* — **$0,0473 cho  │
+   * │ một việc bất khả thi về CẤU TRÚC**. Không ai sai cả: dữ kiện đó không tồn │
+   * │ tại ở bất kỳ đâu trong ngữ cảnh.                                          │
+   * │                                                                          │
+   * │ ⚠ Câu này phải NGẮN và phải **chỉ đường đi tiếp**, không chỉ nói "không   │
+   * │ được" — nó vào prefix MỌI lượt của vai trò đó. Một câu dài ở đây là một   │
+   * │ hoá đơn dài. → luật *"câu cứu hộ neo vào MỤC TIÊU"* (28/08)               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  hint?: string;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ VIỆC KHÔNG BAO GIỜ ĐƯỢC CẤP — kể cả ở nấc toàn quyền. (29/08)            │
