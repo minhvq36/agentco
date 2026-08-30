@@ -43,6 +43,23 @@ Mệnh đề của chúng ta ngược lại:
 
 Path A làm trước vì rẻ. Path B là thứ đáng bán.
 
+> ### 🆕 30/08 — CÓ **ĐƯỜNG THỨ BA**, và nó dùng chung khai báo với Path B
+>
+> **Path B′ — bọc một LỆNH CLI.** Cùng file `connectors/<id>.yaml`, khác đúng một trường: `run:`
+> (một mảng **argv**) thay cho `method`/`path`. Mọi thứ còn lại dùng lại nguyên — một action = một
+> tool · `confirm` mặc định bật cho việc ghi · `say` tiếng người · `returns` sinh từ lượt Thử ·
+> chìa chỉ là tên biến · log vào `audit.ts`.
+>
+> Lý do nó thuộc về file này chứ không phải một spec mới: **cùng một bài toán** — *người không biết
+> code mô tả một năng lực, ta sinh MCP*. Chỉ khác nguồn năng lực là một endpoint HTTP hay một binary
+> trên máy.
+>
+> **Thiết kế đầy đủ + 3 ô chưa chốt: `SPEC-arms.md §16`. Bài đo: `TEST-WALKTHROUGH.md` bài 21 (REST)
+> · bài 22 (CLI).**
+>
+> ⚠ Và một trạng thái phải nói thẳng: grep 30/08 — **`createSdkMcpServer` không xuất hiện một lần
+> nào trong `src/`**. Toàn bộ §3–§6 của file này (viết 14/08) đang ở **0% thi hành**.
+
 ---
 
 ## 3. Định dạng connector

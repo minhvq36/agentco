@@ -473,6 +473,37 @@ export const CompanyConfigSchema = z.object({
          * khác — xem khối chú thích ở `catalog.ts §armHash`.
          */
         level: z.enum(['read', 'add', 'full']).optional(),
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ CÁNH TAY NÀY LÀM ĐƯỢC GÌ — bằng TIẾNG NGƯỜI. → `assistant.ts        │
+         * │ §armReach` · docs/SPEC-arms.md §16r                                 │
+         * │                                                                    │
+         * │ 🔴 SINH RA TỪ MỘT CA HỎNG ĐO ĐƯỢC (spike 30/08, 3/3 lượt hỏng).     │
+         * │                                                                    │
+         * │ `CatalogArm.hint` đã là *"một câu cho model, đi vào dòng danh bạ"*  │
+         * │ từ 29/08 — nhưng nó chỉ tới được **qua một mục danh mục**. Cánh tay │
+         * │ tự dán (đường B) và cánh tay CLI **không có `catalog`** ⇒ vĩnh viễn │
+         * │ không có câu nào, và dòng danh bạ của chúng là ĐÚNG MỘT CÁI TÊN.    │
+         * │                                                                    │
+         * │ Đo được chuyện gì xảy ra khi cái tên đó model chưa từng thấy:       │
+         * │   · hỏi tự nhiên   ⇒ Trợ lý **BỊA** kết quả, không giao việc        │
+         * │   · nêu đích danh  ⇒ Trợ lý viết brief *"bằng lệnh shell"* ⇒ blocked│
+         * │                                                                    │
+         * │ Với `Notion`/`GitHub` lỗ này VÔ HÌNH vì cái tên tự nó mang năng lực │
+         * │ (model có tiên nghiệm về hãng). Đó là lý do nó nằm im được 3 tuần.  │
+         * │ → [[agentco-debt-hidden-by-model-priors]]                          │
+         * │                                                                    │
+         * │ ⚠ KHÔNG phải "liệt kê tên tool thô" (§7b cấm, và cấm đúng): đây là  │
+         * │ câu NGƯỜI đọc được (`tung một con xúc xắc`), có TRẦN, và chỉ xuất   │
+         * │ hiện ở vai trò có đúng cánh tay ấy. Với cánh tay tự dựng nó cũng    │
+         * │ KHÔNG phải "lời khai thứ hai" (§7a): chính chuỗi này là thứ đi vào  │
+         * │ `description` của tool MCP, tức nó LÀ handshake.                    │
+         * │                                                                    │
+         * │ ⚠ Vắng ⇒ **không in gì**, không bịa. Mọi cánh tay tạo trước 30/08   │
+         * │ giữ nguyên dòng danh bạ cũ, nguyên băm cũ.                          │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        does: z.array(z.string()).default([]),
         /*
           ⚠ ĐÃ BỎ `repos` (27/08 chiều) — giới hạn repo của agentco. Đừng dựng
           lại mà chưa đọc `SPEC-arms.md` §5h·7m. Tầm với của một cánh tay GitHub

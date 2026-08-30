@@ -1035,7 +1035,10 @@ export function shellFlag(tools: readonly string[]): string {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function armReach(
-  arms: Record<string, { label?: string; level?: 'read' | 'add' | 'full'; catalog?: string }>,
+  arms: Record<
+    string,
+    { label?: string; level?: 'read' | 'add' | 'full'; catalog?: string; does?: string[] }
+  >,
   servers: Record<string, unknown>,
   id: string,
   /**
@@ -1136,7 +1139,37 @@ export function armReach(
   // Một danh sách, không phải hai câu: nấc quyền và cách chạy cùng trả lời câu
   // *"cánh tay này LÀM ĐƯỢC GÌ"*, nên chúng đứng cạnh nhau hay đứng riêng đều
   // đọc được — nhưng gộp thì không có chỗ nào để quên một vế.
-  const bits = [level, ...opts].filter(Boolean) as string[];
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 NĂNG LỰC BẰNG TIẾNG NGƯỜI — nửa còn lại của món nợ ghi 22/08.         │
+   * │ (đo được 30/08, `scripts/spike-cli-arm.ts`, hỏng 3/3 lượt)               │
+   * │                                                                          │
+   * │ `hint` của mục danh mục đã làm đúng việc này từ 29/08, nhưng nó chỉ tới   │
+   * │ được **qua `catalog`**. Cánh tay tự dán và cánh tay CLI không có mục nào  │
+   * │ ⇒ dòng của chúng là ĐÚNG MỘT CÁI TÊN, và với một cái tên model chưa từng  │
+   * │ thấy (`Xưởng lệnh`) thì model **lấp chỗ trống**: một lượt bịa thẳng kết   │
+   * │ quả, một lượt viết brief *"bằng lệnh shell"* rồi worker blocked.          │
+   * │                                                                          │
+   * │ ⚠ VÌ SAO KHÔNG VI PHẠM §7b (*"KHÔNG liệt kê tên tool thô"*): §7b cấm dán  │
+   * │ 15 tên tool máy vào prefix của MỌI lượt chat. Đây là câu NGƯỜI đọc được,  │
+   * │ có **TRẦN 4**, và chỉ hiện ở vai trò có đúng cánh tay ấy. Vắng ⇒ không in │
+   * │ gì ⇒ mọi cánh tay hôm nay giữ nguyên từng ký tự.                          │
+   * │                                                                          │
+   * │ ⚠ Trần 4 + "và N việc khác" là cùng kỷ luật `reachDiff` ràng buộc 2: một  │
+   * │ cánh tay 20 lệnh không được nhét cả bức tường vào prefix mọi lượt.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const DOES_CAP = 4;
+  const all = (arms[id]?.does ?? []).map((s) => s.trim()).filter(Boolean);
+  const does = all.length
+    ? all.length > DOES_CAP
+      ? `${all.slice(0, DOES_CAP).join(' · ')} · và ${all.length - DOES_CAP} việc khác`
+      : all.join(' · ')
+    : undefined;
+  // `does` đứng SAU `level`/`opts`: hai thứ kia trả lời *"được phép tới đâu"*,
+  // `does` trả lời *"làm được gì"*. Quyền trước, việc sau — và đặt nó cuối thì
+  // dòng của mọi cánh tay đang chạy không đổi một ký tự nào (chúng không có `does`).
+  const bits = [level, ...opts, does].filter(Boolean) as string[];
   const shortcut = roots.length ? ` (đường tắt tới ${roots.join(' · ')})` : '';
   /**
    * Câu dặn của mục danh mục — ĐỨNG CUỐI, sau cầu nối tên tool.

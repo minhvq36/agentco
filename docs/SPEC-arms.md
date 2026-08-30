@@ -4006,6 +4006,760 @@ trần (§14 câu còn mở #1, đã biết từ 22/08 — **không phải lỗ 
 
 ---
 
+## 16. CÁNH TAY TỰ DỰNG — REST và CLI về **MỘT** khai báo (bàn 30/08)
+
+> **Nhãn của cả mục này:** phần 16a là **đọc mã 30/08** (kiểm được bằng mắt, **chưa chạy**) — nó
+> không phải ✅ và cũng không phải 📖, nên tôi ghi thẳng *"đọc mã"*. Từ 16b trở đi là **thiết kế
+> chưa xây**, và ba ô còn để ngỏ cho user chốt được đánh dấu ⛔.
+
+### 16a. Đường B (dán JSON) — **đã xây**, và ba lỗ **kiểm được mà chưa ai chạy**
+
+Câu hỏi user 30/08: *"phương pháp copy đoạn json của mcp server vào — hiện nay đã practice chưa?"*
+
+**Đã xây, chưa test một lần nào.** Đọc mã:
+
+| Mảnh | Ở đâu | Làm gì |
+|---|---|---|
+| thẻ **Tự cắm MCP** | `ArmDialog.tsx:1443-1447` | bước 1 → pane `paste` |
+| `parsePaste()` | `ArmDialog.tsx:1170-1186` | nhận **cả hai** hình dạng: khối `{"mcpServers":{…}}` chép nguyên từ README, **và** cấu hình trần. Tự lấy tên server làm nhãn |
+| `pastedKeys()` | `ArmDialog.tsx:1156-1163` | quét `${TÊN}` trong khối vừa dán → **sinh đúng những ô nhập chìa đó** |
+| nguồn tên chìa | `server.ts §resolveArm` (chú thích 245-248) | tên chìa lấy từ **ô trống trong cấu hình**, *không* từ `Object.keys(body.secrets)` — vì `secretNames` đi thẳng vào **BĂM** |
+| chỗ lưu | `company.yaml → mcpServers:` | ✅ đang có 8 mục thật trong `company/company.yaml` |
+| bài test | **không có** | `TEST-WALKTHROUGH` chỉ nhắc đường này làm **bước phụ** của bài 13 (B6) và bài 17 (bước 11). Không bài nào đo chính nó |
+
+⇒ Đúng lớp [[agentco-spec-says-done]]: *"spec nói đã có"* không phải bằng chứng — nhưng ở đây còn
+xa hơn, **mã cũng đã có** và vẫn không ai chạy. Bài 20 sinh ra để đóng đúng chỗ đó.
+
+#### 🔴 Ba lỗ, xếp theo mức độ, và cái thứ ba là lỗ bảo mật
+
+Câu hỏi user: *"cái custom MCP kia nếu yêu cầu chìa như kiểu Notion thì bản chất trong json đó đã có
+rồi hả?"* — **Trong JSON có cái Ô, không có cái CHÌA.** Và ngoài đời cái ô đó có **ba** hình dạng,
+ta mới xử được **một**:
+
+| # | README ngoài đời viết | Ta làm gì hôm nay | |
+|---|---|---|---|
+| ① | `"env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}` | quét ra ô trống → sinh field → chìa vào `secrets.json` | 🟢 chạy |
+| ② | `"env": {"NOTION_TOKEN": ""}` hoặc `"<your-token-here>"` | **không khớp `${…}` ⇒ không sinh field nào** ⇒ dán vào, Thử, 401, **hết đường** | 🔴 ngõ cụt |
+| ③ | `"headers": {"Authorization": "Bearer ntn_abc123"}` | người dùng thay bằng token **thật** rồi bấm Lưu ⇒ **token đi thẳng vào `company.yaml`** | 🔴🔴 |
+
+#### 🔴 ĐÍNH CHÍNH 30/08 — lý do "vì nó lên git" là **SAI**. User bắt, và user đúng.
+
+> *"token vào company.yaml là bình thường, có gì đâu, dữ liệu của khách hàng, khách hàng tự bảo quản?
+> (y hệt 1 cái .env vậy)"* · *"Không lưu vào state/storage trình duyệt thôi, còn đâu lưu vào data của
+> company thoải mái."*
+
+**Đi kiểm `.gitignore` (30/08): `/company/` ĐÃ BỊ IGNORE.** Chỉ `templates/company/` được commit. Câu
+*"`company/` được thiết kế để commit lên git"* ở `SPEC-connectors §3c` **không đúng với repo này**.
+⇒ Lý do git **bị gỡ khỏi lập luận**. Kho `company/` là dữ liệu của khách, đúng như user nói, và đặt
+chìa ở đó là chuyện của khách.
+
+**Luật đúng, viết lại theo lời user, và nó HẸP HƠN hẳn:**
+
+> **Giá trị chìa không được rời máy chủ.** Nó không đi qua HTTP, không vào trình duyệt, không vào
+> prompt. Nằm ở đâu **trên đĩa của khách** thì là chuyện của khách.
+
+Và luật đó — luật **của user** — chính là thứ ca ③ phá. Hai lý do, cả hai đo được bằng mã, không cái
+nào là chuyện git:
+
+**① `config` ĐI QUA HTTP TỚI TRÌNH DUYỆT.** `company.ts §arms()` dòng 860 trả nguyên `config` trong
+danh sách cánh tay. Và ngay tại trường bên cạnh nó, `web/src/lib/types.ts:545-551` **tự khai bất
+biến ngược lại**:
+
+```ts
+config: unknown;
+/** TÊN chìa, không bao giờ giá trị. Giá trị nằm ở `.state/secrets.json` cấp
+ *  CÔNG TY và không bao giờ đi qua HTTP … */
+secrets: string[];
+```
+
+Chìa là literal trong `config` ⇒ nó bay lên trình duyệt ở **mọi lần mở hộp thoại Kết nối** — vào bộ
+nhớ tab, vào tab Network của DevTools, vào mọi thứ đọc được response đó. Đúng cái user vừa nói là
+**không được**. `company.ts:899-900` cũng đã khai đúng bất biến này cho `reuseArm`
+(*"KHÔNG BAO GIỜ được lọt vào một phản hồi HTTP"*) — chỉ là nó canh trường `secrets`, không canh
+trường `config`.
+
+**② `config` ĐI VÀO BĂM.** `catalog.ts §armHash(config, secretNames, level)` — **giá trị chìa nằm
+trong hạt giống băm**. Hệ quả: **xoay chìa = một cánh tay KHÁC**. Mọi `role.mcp` vẫn trỏ băm cũ ⇒
+toàn bộ dây **đứt im lặng**, và cánh tay cũ (chìa đã chết) vẫn còn nguyên trên sơ đồ.
+
+Với `${TÊN}`: cấu hình **đứng yên**, chỉ giá trị trong `secrets.json` đổi ⇒ xoay chìa **vô hình với
+sơ đồ**. `secrets.ts:111` đã ghi đúng ca này từ trước (*"người dùng dán tay một access token vào
+`NOTION_ACCESS_TOKEN` hôm…"*).
+
+> ⇒ **Không phải "cấm để chìa trong yaml". Là "chìa phải đi qua ô `${…}`"** — vì ô đó là thứ giữ chìa
+> ra khỏi HTTP **và** ra khỏi băm. Cùng một cơ chế, hai bất biến. [[agentco-count-mechanisms]]
+>
+> `SPEC-connectors §3c` phải sửa lại: bỏ vế *"vì `company/` commit lên git"*, giữ vế *"chỉ ghi tên
+> biến"*, và ghi lý do thật là hai gạch đầu dòng ở trên.
+
+⚠ Và nó **không** tự lộ ra: dán token thật vào ⇒ cánh tay **chạy tốt**, ✓ xanh. Hỏng chỉ hiện ra vào
+ngày xoay chìa, và lúc đó triệu chứng là *"tự nhiên nhân viên mất kết nối"* — cách xa nguyên nhân
+hàng tuần.
+
+Còn `SPEC-connectors.md §3c` viết từ 14/08 (*"UI phải từ chối lưu nếu phát hiện chuỗi trông giống
+token"*) thì chỗ **thi hành** chỉ tồn tại ở **đúng một nơi**: `oauth-routes.ts:475`, cho ô `client_id`.
+Đường dán MCP **không có phép soi nào**. Luật có, cửa thì không.
+⇒ [[agentco-rule-must-see-what-it-governs]]
+
+### 16b. Form hay dán? — user đúng, nhưng lý do mạnh hơn lý do user nêu
+
+User: *"thay vì paste json, hiện 1 form để điền vào → nhưng cách này không practice vì khá mất thời
+gian, chưa kể còn nhiều định dạng chúng ta không kiểm soát được."*
+
+Vế sau là lý do thật, và nó lớn hơn vế trước. **Một form là một bản chụp schema của người khác.**
+Hình dạng `McpServerConfig` không phải của ta: `command/args/env` cho stdio, `type/url/headers` cho
+HTTP, và nó **đã đổi một lần rồi** (`sse` → Streamable HTTP, §2a). Dựng form là ký đúng cái **CAM
+KẾT** mà §4b cảnh báo — mỗi ô là một thứ hỏng âm thầm ở máy khách vào ngày bên kia đổi.
+
+Dán thì **độ trung thực không suy giảm theo thời gian**: README của hãng là bản mới nhất, luôn.
+
+> **Luật chốt: DÁN thứ người khác viết · ĐIỀN thứ chỉ mình biết.**
+> Cấu hình = dán (không ai ngoài hãng biết nó đúng chưa). Chìa = ô sinh ra (không ai ngoài người dùng
+> biết giá trị). **Không bao giờ trộn hai loại vào một ô.**
+
+Và bản build hôm nay **đã đứng đúng chỗ đó rồi** — `pastedKeys()` chính là vế thứ hai. Nó chỉ chưa
+đủ rộng (lỗ ② và ③ ở trên).
+
+### 16c. Câu hỏi thật của user, tách làm hai — và hai câu có hai đáp án khác nhau
+
+User: *"app chúng ta sẽ thêm 1 dịch vụ nữa là tạo custom MCP local… nhưng làm sao nó có thể chuẩn
+streamable HTTP của mcp được?"*
+
+Hai câu bị gộp làm một:
+
+| | Câu | Đáp |
+|---|---|---|
+| ① | **Ai chạy tiến trình?** | ta — đây là điểm mới, và nó đúng |
+| ② | **Nói chuyện bằng dây gì?** | ❗ **không phải mặc định HTTP** |
+
+📖 SDK nhận **bốn** dạng (§2b), và dạng thứ tư là dạng đang bị bỏ quên ở đây:
+
+```ts
+McpSdkServerConfigWithInstance   // { type:'sdk', name, instance }  ← chạy TRONG tiến trình ta
+```
+
+`SPEC-tools-approval §10a` đã chốt đúng dạng này từ 14/08 (*"runtime tổng hợp thành MCP chạy trong
+tiến trình bằng `createSdkMcpServer` + `tool()`"*). Đọc mã 30/08: **`createSdkMcpServer` không xuất
+hiện một lần nào trong `src/`** — cả đường C chưa có một dòng.
+
+**Vì sao `sdk` thắng HTTP cho ca mặc định**, và cả năm lý do đều là thứ đã trả tiền ở chỗ khác:
+
+| | `type:'sdk'` in-process | shim HTTP cục bộ |
+|---|---|---|
+| Cổng | 0 | phải chọn, phải tránh đụng, phải nhớ |
+| **Ai gọi được nó** | chỉ tiến trình ta | **mọi tiến trình trên máy** ⇒ phải đẻ thêm một tầng chìa cho chính localhost |
+| Chìa của khách | không rời tiến trình | đi qua socket |
+| Ba hệ điều hành | như nhau | Windows hỏi tường lửa, macOS hỏi quyền mạng — [[agentco-three-os-always]] |
+| Vòng đời | theo daemon | thêm một thứ để chết riêng, và chết **im lặng** (§bug 29/08: MCP chết lúc spawn không có chuông) |
+
+⚠ **Cái thứ hai không phải chi tiết.** Một MCP HTTP không chìa trên `127.0.0.1` là **cửa sau đi
+vòng qua toàn bộ §5d–§5f**: ta vừa mất công cấm nhân viên đọc chìa và cấm nó ghi file cấu hình, rồi
+mở một cổng mà *bất kỳ tiến trình nào* — kể cả `Bash` của chính nhân viên đó — gọi thẳng vào được.
+
+#### ⇒ Đường ranh không nằm ở sở thích. Nó nằm ở **binary sống ở đâu**
+
+| Ca | Dây | Vì sao |
+|---|---|---|
+| REST của khách (cloud) | **`sdk`** | ta chỉ là client HTTP, không có gì để spawn |
+| CLI **cùng chỗ** với daemon (desktop app · VPS) | **`sdk`** + `spawn` argv | 0 cổng, 0 chìa phụ |
+| CLI **ngoài** container (daemon trong docker, `gh`/`psql`/script build ở host) | **Streamable HTTP** tới một shim chạy ở host | **ca DUY NHẤT bắt buộc HTTP** — không có đường nào khác |
+
+Và đây chính là §10b đã cảnh báo: *"Docker vỡ tiền đề của tường lửa §1b"*. Ca thứ ba không phải một
+tính năng thêm — nó là **hệ quả của Docker**, và nó cũng là ca duy nhất phải trả tiền cho một tầng
+chìa localhost.
+
+> **Chốt hình dạng: MỘT khai báo, HAI cách phục vụ.** Cùng file yaml, cùng bảng lệnh; `sdk` là mặc
+> định, `--serve` bật thêm cửa HTTP cho ca docker. Đừng đẻ hai khái niệm — cùng luật đã dùng cho danh
+> mục (*"một mục danh mục = đường B với form điền sẵn"*, §5h·1).
+
+### 16d. REST và CLI là **cùng một** khai báo, khác đúng một dòng
+
+`company/connectors/<id>.yaml` của `SPEC-connectors §3` đã đủ chỗ. Thêm `run:` cạnh `method/path`:
+
+```yaml
+id: xuong-build
+display_name: "Xưởng build"
+description: "Chạy build và deploy cho dự án web"
+
+actions:
+  # ── REST: y nguyên SPEC-connectors §3
+  - id: list_invoices
+    say: "xem danh sách hoá đơn"
+    method: GET
+    path: /invoices
+
+  # ── CLI: khác đúng một trường
+  - id: deploy_staging
+    say: "triển khai lên staging"
+    run: ["pnpm", "deploy", "--env", "staging", "--tag", "{tag}"]   # ⚠ ARGV, không phải chuỗi
+    params:
+      - { name: tag, type: string, required: true, pattern: "^[a-z0-9.-]+$" }
+    cwd: "{office}/repo"          # ta giải, model không đụng vào
+    read_only: false
+    confirm: true
+    long: true                    # → đẻ BỘ BA, xem 16g
+    returns: "URL bản vừa triển khai"
+```
+
+Mọi thứ còn lại **dùng lại nguyên**: một action = một tool · `confirm` mặc định bật cho việc ghi ·
+`say` là câu tiếng người · `returns` sinh từ lượt Thử · chìa chỉ là **tên biến** · log vào `audit.ts`.
+
+### 16e. 🔴 ARGV, KHÔNG PHẢI CHUỖI SHELL — luật chịu lực của cả mục
+
+Ba lý do, và lý do thứ ba là lý do **lật một câu của chính spec này**:
+
+1. **Tham số do model sinh.** Chuỗi shell + giá trị model sinh = tiêm lệnh, không phải rủi ro lý
+   thuyết. `argv` thì `; rm -rf /` chỉ là một chuỗi ký tự trong một phần tử.
+2. **Ba OS quote khác nhau.** [[agentco-three-os-always]] — lần thứ sáu. Đi qua shell khi không cần
+   là tự nhận về nguyên lớp lỗi *"đúng trên máy dev"*.
+3. ⭐ **Nó SINH RA cái trường có tên** mà §1b lý do 3 nói shell không có.
+
+> **§1b cần một đính chính, không phải một mâu thuẫn.** §1b viết:
+> *"Lệnh shell nhét đường dẫn lẫn trong chuỗi. Bọc nó vào MCP không sinh ra cái trường đó."*
+>
+> **Đúng cho `Bash` tổng quát. Sai cho một lệnh ĐÃ KHAI.** Khác biệt: ở `Bash`, ta nhận về một chuỗi
+> và phải parse cú pháp shell của ba OS để tìm đường dẫn. Ở một action đã khai, **người dùng đã nói
+> trước chỗ nào là tham số gì** — cái trường đó không phải suy ra, nó được **khai ra**. `officeJail`
+> khớp được `params.path` y hệt cách nó khớp `file_path`.
+>
+> ⇒ **Đừng bọc `Bash`. Bọc `gh pr create --title <T>`.** Bốn lý do của §1b vẫn đứng nguyên cho vế
+> thứ nhất; mục này chỉ nói vế thứ hai là một thứ khác.
+
+**Hai luật con, mỗi luật chặn một cách hỏng đã biết:**
+
+- **Giá trị không được biến thành CỜ.** `tag = "--force"` mà nối vào argv là người dùng vừa cấp một
+  cờ họ chưa bao giờ khai. Mặc định **từ chối giá trị bắt đầu bằng `-`**; muốn khác thì khai
+  `allow_dash: true` một cách tường minh. Cùng khuôn *"tắt được, nhưng phải tắt có ý thức"* của
+  `confirm`.
+- **Chìa vào `env`, KHÔNG vào argv.** argv đọc được từ tiến trình khác trên **cả ba** OS (`ps -ef` ·
+  Task Manager cột Command line · `/proc/<pid>/cmdline`). Một `--token=ntn_…` là chìa phơi ra cho mọi
+  thứ đang chạy trên máy. Đây là lý do kỹ thuật, không phải khẩu hiệu.
+
+### 16f. Bốn thứ CLI KHÔNG có mà MCP đòi — và ai khai chúng
+
+| | MCP đòi | CLI có? | Ai khai |
+|---|---|---|---|
+| schema tham số | ✅ bắt buộc | ❌ | người dùng, lúc dựng |
+| **thành/bại** | ✅ `isError` | ⚠ *một nửa* | mặc định `exit ≠ 0`, **cộng `fail_when:`** |
+| **mức quyền** | `annotations` | ❌ hoàn toàn | ⛔ xem dưới — cần user chốt |
+| kích thước trả về | không giới hạn | ❌ | trần 4 000 token, quá thì ra artifact |
+
+**Ô thứ hai là bẫy đã trả tiền một lần.** `exit 0` **không** đồng nghĩa với thành công: rất nhiều CLI
+in lỗi ra stdout rồi trả 0. Đúng lớp lỗi `postToken()` §5h·7d — ***HTTP 200 kèm `error`***, ba lỗi
+chồng nhau, cả ba vô hình với Notion và cả ba nổ với GitHub. Ở đây nó sẽ nổ theo chiều **tệ hơn**:
+agent tin lệnh đã chạy xong và **đi tiếp**. ⇒ `fail_when:` (chuỗi/regex trên stdout+stderr) phải có
+mặt từ bản đầu, không phải "để sau".
+
+**Ô thứ ba là chỗ tôi phải hỏi, không tự quyết** ⛔:
+
+Luật §6j một chiều: *"không biết ⇒ leo thang, không bao giờ hạ cấp"*. Áp thẳng vào CLI thì **mọi lệnh
+CLI đều rơi vào nấc toàn quyền** — kể cả `git status`. Nấc mất hết ý nghĩa.
+
+Nhưng luật đó sinh ra để phòng **lời khai của BÊN THỨ BA** ([[agentco-safe-default-direction]]:
+*"lời khai bên thứ ba chỉ để leo thang"*). Ở đây người khai là **chủ máy, khai về chính máy mình** —
+đó không phải một *lời khai*, nó là một **quyết định**. Cùng hạng với chuyện họ tự bật
+`allow_private_network` hay tự tắt `confirm`.
+
+> **Đề xuất (chưa chốt):** cho tick `read_only: true` **do người dùng**, và nói thẳng cạnh ô tick —
+> *"Bạn đang tự nhận trách nhiệm câu này. Nếu lệnh có ghi, agentco sẽ không chặn."* Nếu bạn thấy quá
+> rộng thì nhánh còn lại là **bỏ nấc cho cánh tay CLI**, hiện đúng một dòng *"cánh tay này chạy lệnh
+> trên máy bạn"* — thật thà hơn ba nấc giả.
+
+### 16g. *"CLI là 1 chiều, UDP rồi thả trôi"* — định danh lại, vì nó quyết định phải xây gì
+
+User nói đúng cái cảm giác, nhưng chữ *"1 chiều"* chưa trúng: CLI **có** đường về (exit code +
+stdout/stderr). Ba thứ nó thật sự thiếu, và chỉ **một** trong ba là thứ không thư viện nào cho không:
+
+1. **Không có schema** → agent bịa cờ. 16d–16e vá.
+2. **Không có danh tính** → không log được ai chạy, không gán theo vai, không rút ra được. Bọc thành
+   node MCP là vá (§1a: *thứ có danh tính thì là node*).
+3. ⭐ **Không có trạng thái GIỮA CHỪNG.** Đây mới là *"thả trôi"*, và nó là chỗ đắt thật.
+
+Một lệnh chạy 40 phút (build · deploy · train · `docker compose up`): `Bash` hoặc **chặn cả lượt**,
+hoặc bị cắt, và agent không có gì để hỏi. **Đây là chỗ MCP thắng CLI một cách không cãi được** —
+không phải vì nó "chuẩn hơn", mà vì nó có **nhiều lời gọi cho cùng một việc**.
+
+**Hình dạng: `long: true` đẻ BỘ BA, không phải một tool.**
+
+```
+bắt_đầu(tag)        → { job: "j-7f3" }                    trả về NGAY
+tình_hình(job)      → { state: "running", 12 dòng cuối }  agent hỏi khi cần
+đọc_kết_quả(job)    → đường dẫn artifact + tóm tắt        khi xong
+```
+
+Và việc chạy đổ vào một **job có id + artifact** — tức nó **khớp thẳng vào `receipt` + `artifacts` đã
+có**, không đẻ khái niệm mới. Câu của user — *"để worker nắm được tình hình thay vì thả trôi không có
+trách nhiệm"* — thi hành đúng ở đây.
+
+⚠ **Giá của nó:** 3 định nghĩa tool trong prefix **mọi lượt**, kể cả lượt không dùng. ⇒ **chỉ lệnh
+khai `long: true`** mới đẻ bộ ba; lệnh thường vẫn đúng 1 tool.
+
+### 16h. Giá token là ràng buộc chi phối — và nó giết hai ý tưởng nghe rất hợp lý
+
+Số đo đã có, đừng đo lại: filesystem **14 tool = 2 185 token/lượt** (§9b) · GitHub `full` ≈ **30 000**
+· Linear `full` = **19 811**. Tool MCP nằm trong **prefix, mọi lượt**.
+
+**⇒ Ý tưởng chết thứ nhất: "sinh MCP tự động từ `--help`".** `docker --help` ra ~40 lệnh con = một
+cánh tay ~6 000 token thường trực cho một vai chỉ cần `docker ps`. Cộng thêm: `--help` **không có
+schema**, khác nhau giữa các phiên bản, và parse sai thì **sai im lặng** — agent gọi một cờ không tồn
+tại và nhận về một câu lỗi nó không hiểu.
+
+**⇒ Ý tưởng chết thứ hai: "bọc cả cái CLI cho tiện".** Một cánh tay CLI nên **3–8 lệnh**. Cùng kỷ
+luật đã buộc GitHub phải cắt toolset (§5h·7e: *"lát cắt là ĐIỀU KIỆN TỒN TẠI"*).
+
+**Đường đúng là bản CLI của "Copy as cURL":** người dùng **dán một dòng lệnh HỌ ĐÃ CHẠY ĐƯỢC**, ta bóc
+ra argv và hỏi *"chỗ nào thay đổi mỗi lần?"*. Họ không **viết** gì — họ **chép**, y hệt lý do cURL là
+đường chính ở `SPEC-tools-approval §10a`.
+
+### 16i. 🔴🔴 CHỖ NGUY HIỂM NHẤT CỦA CẢ TÍNH NĂNG — nói to, vì nó vô hình
+
+**Một cánh tay CLI là một cái lỗ CÓ CHỦ Ý trên tường lửa shell.** Một vai có `chạy lệnh: TẮT` vẫn
+chạy được binary qua nó. Đó **đúng ý đồ** — nhưng nó kéo theo một ràng buộc không được quên:
+
+> **File khai báo action PHẢI nằm ở vùng CHỈ ĐỌC của `officeJail`.**
+>
+> §5f đã dựng hai vùng vì đúng chuyện này: nhân viên **ghi được** file cấu hình ⇒ tự cấp `tools` /
+> `secrets` / `mcp` cho chính nó. Ở đây hậu quả lớn hơn một bậc: ghi được `connectors/*.yaml` ⇒ tự
+> khai một action `run: ["powershell","-c","{cmd}"]` ⇒ **shell tuỳ ý, qua cửa sau, cho một vai đã
+> tắt shell**. Cùng cái lỗ, cửa mới, và ta đã trả tiền cho nó một lần rồi.
+
+Ba luật đi kèm:
+- `cwd` do **ta** giải, luôn trong văn phòng. Không nhận `cwd` từ tham số model sinh.
+- Lượt Thử của một action CLI **chạy thật một tiến trình** ⇒ phải nói rõ trên UI trước khi bấm, và
+  không được bấm hộ.
+- Mọi lượt gọi vào `audit.ts` kèm **argv đã giải** — đây cũng là thứ duy nhất cho phép trả lời
+  *"nhân viên nào vừa chạy cái gì"* sau sự việc.
+
+### 16j. *"MCP là giao thức duy nhất để hoạt động với agents?"* — không, và trục đúng là cái khác
+
+User: *"MCP chính là giao thức duy nhất để hoạt động với agents? — khắc phục mọi điểm yếu no rest, no cli."*
+
+Đúng ở tầng **giao diện**, sai ở tầng **kinh tế**. Trục quyết định không phải *"có phải MCP không"* mà
+là ***"agent có cần giá trị trả về NGAY TRONG LƯỢT để quyết bước sau không?"***
+
+| Việc | Cửa đúng | Giá |
+|---|---|---|
+| cần giá trị để quyết bước sau (`tra tồn kho` → rồi mới biết viết gì) | **MCP tool** | tool definition, **mọi lượt** |
+| chạy dài, kết quả là file, agent chỉ cần biết xong/chưa | **job + artifact**, MCP chỉ 3 tool mỏng (16g) | 3 định nghĩa |
+| tất định, agent **không có gì để quyết** (chạy lint mỗi sáng, đồng bộ thư mục) | **đừng cho agent gọi** — scheduler/hook chạy thẳng | **0** |
+
+Cửa thứ ba rẻ hơn hai cửa kia đúng 100%, và nó là cửa dễ bỏ quên nhất khi đang phấn khích với MCP.
+⇒ [[agentco-count-mechanisms]]: mỗi tool thêm vào là một cơ chế phải nuôi **mọi lượt**, kể cả lượt
+không ai dùng nó.
+
+### 16k. Thứ tự làm — và ba ô ⛔ cần user chốt trước khi viết mã
+
+| Nấc | Nội dung | Vì sao trước |
+|---|---|---|
+| **0** | **Chạy bài 20** — đo đường B đang có | rẻ nhất, và nó có thể lộ thêm lỗ ta chưa biết |
+| **0b** | Vá lỗ ② và ③ của 16a | ③ là bảo mật, và luật đã tồn tại từ 14/08 |
+| **1** | `createSdkMcpServer` + REST (đường C, bài 21) | ít rủi ro nhất — không spawn gì, không mở cổng |
+| **2** | CLI `sdk` in-process, lệnh ngắn (bài 22 chặng A–C) | cùng bộ khung nấc 1, thêm `spawn` argv |
+| **3** | `long: true` bộ ba job (bài 22 chặng D) | cần artifact + receipt, đã có sẵn |
+| **4** | Shim HTTP cho ca docker | **chỉ khi** đã có ca docker thật, và phải kèm tầng chìa localhost |
+
+### ✅ BA Ô ĐÃ CHỐT — user 30/08
+
+| # | Chốt | Hệ quả phải mang theo |
+|---|---|---|
+| 1 | **BỎ NẤC HẲN cho cánh tay CLI. Toàn quyền.** *"thực hiện theo tờ hướng dẫn sử dụng"* | Cổng còn lại đúng hai cái, và phải **chắc**: **ai được nối dây** + **`confirm` từng action**. Cộng `audit.ts`. Không có nấc thứ ba để đỡ. → 16l |
+| 2 | **Docker: chưa làm, nhưng mã phải CHỜ SẴN** — *"để docker lên rất nhẹ mà không phải đập hết đi xây lại"* | Sáu ràng buộc kiến trúc, phải tuân ngay từ dòng mã đầu tiên. → 16o |
+| 3 | **`fail_when:` VÀO BẢN ĐẦU** | Không có gì thêm |
+
+---
+
+## 16l. Tờ hướng dẫn — **HAI tờ, không phải một**, và chỉ một tờ bất định
+
+User hỏi câu sắc nhất của phiên:
+
+> *"Vấn đề tờ hướng dẫn này là tất định hay bất định (tôi thiên về hướng bất định, vì mcp cũng là
+> bất định mà)"*
+
+**Trực giác đúng, nhưng "MCP bất định" chỉ đúng một nửa — và nửa còn lại là nửa làm nó dùng được.**
+Một tool MCP luôn có **đúng hai** phần:
+
+| Phần | Kiểu | Ai đọc | Ở CLI của ta là gì |
+|---|---|---|---|
+| `description` | **bất định** — văn xuôi | **model** | 📄 **tờ hướng dẫn sử dụng** — user nói đúng |
+| `inputSchema` | **tất định** — JSON Schema | **runtime**, kiểm trước khi gọi | 📋 **tờ khai** — argv · params · types · `cwd` · `timeout` · `fail_when` |
+
+> **Bỏ tờ khai = quay về `Bash`.** Vì lúc đó model lại phải tự dựng dòng lệnh từ văn xuôi — tức
+> **phỏng đoán**, tức đúng cái điểm yếu user vừa chỉ ra. Tờ khai không phải quan liêu; nó **chính
+> là** thứ biến "phỏng đoán" thành "điền vào chỗ trống".
+
+⇒ **Chốt: tờ hướng dẫn bất định, tờ khai tất định, và chúng nằm trong CÙNG một file.** Sau khi bỏ nấc
+(ô ①), tờ hướng dẫn gánh thêm việc: nó là chỗ **duy nhất** nói cho model biết lệnh này nguy hiểm tới
+đâu. Nên nó phải nói ra **hậu quả**, không chỉ công dụng:
+
+```yaml
+- id: deploy_staging
+  say: "triển khai lên staging"
+  # 📄 TỜ HƯỚNG DẪN — model đọc. Bất định.
+  description: |
+    Đẩy nhánh hiện tại lên môi trường staging. Mất 4–7 phút.
+    ⚠ Ghi đè bản đang chạy trên staging — không có bước hoàn tác.
+    Không dùng cho production.
+  # 📋 TỜ KHAI — runtime đọc. Tất định.
+  run: ["pnpm", "deploy", "--env", "staging", "--tag", "{tag}"]
+  params: [{ name: tag, type: string, required: true, pattern: "^[a-z0-9.-]+$" }]
+  cwd: "{office}/repo"
+  timeout: 900
+  fail_when: ["ERROR", "FAILED"]
+  confirm: true
+```
+
+---
+
+## 16m. *"filesystem/Bash cũng là MCP rồi mà"* — đúng, và trục user nêu **tốt hơn trục tôi dùng**
+
+> *"chẳng phải mcp filesystem/bash là 1 dạng MCP rồi sao, chỉ khác là nó là LLM tự phỏng đoán, còn
+> CLI là có instruction rõ ràng"*
+
+**Trục ĐOÁN ↔ KHAI là trục đúng**, và nó tổng quát hơn cặp *"argv vs chuỗi shell"* tôi dùng ở 16e —
+argv chỉ là **cơ chế thi hành** của trục đó. Xếp lại cả bốn loại cánh tay lên một trục:
+
+| | ai quyết **LÀM GÌ** | ai quyết **VỚI THAM SỐ NÀO** | đoán bao nhiêu |
+|---|---|---|---|
+| `Bash` *(không phải MCP, nhưng cùng hình)* | model | model — **cả dòng lệnh là MỘT chuỗi** | tối đa |
+| MCP filesystem | model, chọn trong **14 tool đã khai** | model, điền param **có schema** | vừa: *đường dẫn nào* |
+| **CLI đã khai** | **người dùng** — argv đã cố định sẵn | model, điền **đúng chỗ trống đã khai** | tối thiểu |
+| REST connector | **người dùng** — một action một endpoint | model, điền param | tối thiểu |
+
+⇒ Ba dòng dưới **đã là cùng một loại** rồi. Nên câu *"quy tất cả về MCP cho dễ kiểm soát"* của user
+**không phải một sự đơn giản hoá — nó là mô tả đúng thứ đang có**. `Bash` là ngoại lệ duy nhất, và nó
+là ngoại lệ **có lý do** (§1b bốn lý do vẫn đứng nguyên).
+
+> **Sửa lại phát biểu của §1c cho chính xác:** không phải *"MCP là định dạng dây cho thứ người dùng
+> thêm vào"* mà là **"MCP là định dạng dây cho mọi năng lực ĐƯỢC KHAI"**. `Bash` đứng ngoài không vì
+> nó là builtin, mà vì **nó cố ý không khai gì** — đó chính là công dụng của nó.
+
+---
+
+## 16n. ⭐ *"process chạy 6-7 phút, stream về worker"* — tách chỗ dòng stream KẾT THÚC
+
+> *"CLI thường là 1 process, có thể nó chạy đến 6-7 phút mới xong nha, dù cánh tay có là hình thái
+> gì, vẫn là kiểu process send stream về cho worker"*
+
+Ràng buộc này thật, nhưng chữ *"về cho worker"* gộp **hai đích khác hẳn nhau**, và MCP chỉ làm được một:
+
+| Dòng stream đi tới | Được không | Cơ chế |
+|---|---|---|
+| **daemon của ta** | ✅ **luôn được**, và **không cần MCP** | ta sở hữu tiến trình con: đọc `stdout`/`stderr` từng dòng, ghi vào log của job, đẩy lên UI **live** |
+| **context của model, GIỮA một lời gọi tool** | ❌ **không có cơ chế** | `tools/call` là request → **một** response. MCP có `notifications/progress`, nhưng nó đi tới **client**, không chèn được vào context. ❓ Và SDK có phơi nó ra không thì **chưa ai đo** |
+
+**Hệ quả, và nó gỡ được căng thẳng chứ không phải né nó:**
+
+> **Model KHÔNG cần thấy stream.** Nó không làm gì được với dòng log thứ 300 — và mỗi lượt nó đọc là
+> một lượt có giá. Thứ model cần đúng ba mẩu: **xong chưa · thành hay bại · kết quả ở đâu**.
+> **NGƯỜI DÙNG** mới là người cần stream, và stream đó đi **thẳng lên UI**, không đi qua model.
+
+⇒ Câu *"worker nắm được tình hình thay vì thả trôi"* thi hành đủ mà **không** cần model đọc stream.
+
+### Hai hình dạng, và một phép đo quyết định chọn cái nào
+
+| | ① **tool chặn tới khi xong** | ② **bộ ba** `bắt_đầu`/`tình_hình`/`đọc_kết_quả` |
+|---|---|---|
+| Số tool trong prefix | **1** | **3** |
+| Model | ngồi chờ, không tốn lượt nào | tốn lượt cho mỗi lần hỏi |
+| UI | vẫn thấy stream live *(daemon giữ)* | như nhau |
+| Chết ở đâu | **trần thời gian một `tools/call`** | không có trần |
+| Agent làm việc khác trong lúc chờ | ❌ | ✅ |
+
+> ❓ **PHÉP ĐO CHẶN, PHẢI LÀM TRƯỚC KHI VIẾT MÃ:** **một `tools/call` được phép chạy bao lâu** trước
+> khi SDK/CLI cắt? 📖 `McpStdioServerConfig` có `timeout?` — nhưng **chưa ai biết** nó là timeout
+> *khởi động server* hay *một lời gọi*. Đọc `.d.ts` không đủ (📖 ≠ ✅, và `canUseTool` đã dạy bài đó).
+>
+> **Spike:** một MCP `sdk` tối giản, một tool `sleep(n)`, chạy n = 60 · 300 · 420 · 900 giây, xem nó
+> gãy ở đâu và **gãy bằng câu gì**.
+>
+> - Nếu trần **≥ 10 phút** ⇒ **đi ①** cho v1. Rẻ hơn ② đúng 2 tool/lượt, và hầu hết lệnh CLI thật
+>   nằm dưới 7 phút. ② chỉ mở ra cho `long: true` khi có ca thật vượt trần.
+> - Nếu trần **< 7 phút** ⇒ ② là bắt buộc, và ô `long:` không còn là tuỳ chọn.
+>
+> ⚠ **Đừng xây ② trước khi đo.** Xây bộ ba cho một trần không tồn tại là trả 2 tool/lượt vĩnh viễn
+> cho một bài toán chưa ai chứng minh là có. [[agentco-measurement-vs-conclusion]]
+
+**Dù ra nhánh nào, hai thứ này giống hệt nhau và xây được ngay:** ① tiến trình con đổ `stdout`/`stderr`
+vào **log của job trong thư mục văn phòng** (một artifact, có đường dẫn) · ② UI đọc log đó live.
+Chúng **không phụ thuộc** kết quả phép đo — làm trước, và chúng là phần user nhìn thấy.
+
+---
+
+## 16o. *"CLI của khách có đạt chuẩn không"* — ta KHÔNG kiểm, và không cần kiểm
+
+> *"làm sao biết cli khách hàng viết đạt chuẩn stdio để worker có thể xài nó thuận tiện?"*
+
+**Không có cách nào biết trước, và đó không phải việc của ta.** Đường ra là đường đã chốt cho cURL
+(§10b `SPEC-tools-approval`): **nút Thử chạy thật, hiện nguyên văn**, rồi `returns` sinh từ chính
+lượt chạy đó. Ta không *thẩm định* CLI của khách — ta **chụp lại hành vi thật của nó** một lần, và
+đưa bản chụp đó cho model.
+
+Chuẩn duy nhất ta **ép** là thứ mọi CLI trên cả ba OS đều có sẵn: **exit code · stdout · stderr**.
+Không đòi JSON, không đòi flag nào.
+
+### Nhưng nếu khách **TỰ VIẾT** CLI — thì ta nợ họ một hợp đồng tối thiểu
+
+Đây là tài liệu ta phải viết, và nó **ngắn**:
+
+| Luật | Vì sao — mỗi luật chặn một cách hỏng cụ thể |
+|---|---|
+| **1. Không bao giờ hỏi tương tác** | Tiến trình con **không có stdin**. Một `Bạn chắc chứ? [y/N]` = **treo tới hết timeout**, và câu lỗi sẽ là *"quá hạn"* — sai cửa hoàn toàn |
+| **2. Hỏng thì `exit ≠ 0`** | Đây là tín hiệu **tất định** duy nhất. `fail_when:` là lưới đỡ, không phải đường chính |
+| **3. Lỗi ra `stderr`, kết quả ra `stdout`** | Để ta tách được "tiến độ" khỏi "kết quả" mà không phải đoán |
+| **4. Kết quả lớn thì ghi ra FILE, in đường dẫn** | 4 MB log vào context là tiền thật. In đường dẫn thì model đọc bằng `Read` khi **cần** |
+| **5. Ổn định giữa các lần chạy** | `returns` chụp một lần. Đổi định dạng output là đổi hợp đồng — y hệt hãng đổi API |
+| **6. Nhận tham số qua argv, chìa qua `env`** | argv đọc được từ tiến trình khác trên cả ba OS (§16e) |
+
+⚠ Luật 1 là luật hay bị quên nhất và **hỏng đắt nhất**: nó không hỏng ngay, nó **treo**.
+
+---
+
+## 16p. Docker "chờ sẵn" — sáu ràng buộc, tuân từ dòng mã ĐẦU TIÊN
+
+> *"Tạm thời chưa cần làm docker nhưng code của ta phải chờ sẵn để docker lên rất nhẹ mà không phải
+> đập hết đi xây lại."*
+
+Chấp nhận, và *"chờ sẵn"* phải là **sáu ràng buộc cụ thể**, không phải một lời hứa. Cái đắt của
+Docker không phải viết thêm mã — là **gỡ những giả định đã trộn vào khắp nơi**. Nên chúng phải bị
+cấm ngay từ đầu:
+
+| # | Ràng buộc | Thứ nó chặn |
+|---|---|---|
+| 1 | **Bảng tool là một hàm THUẦN:** `buildTools(decl) → handler[]`. Nó **không biết** mình đang chạy dưới transport nào | ngày thêm HTTP, phần này **không đụng một dòng** |
+| 2 | **Transport là adapter mỏng.** `sdk` hôm nay, `http` sau. Bộ chạy tiến trình **không được** biết nó nằm dưới cái nào | trộn hai thứ ⇒ đúng cái "đập đi xây lại" |
+| 3 | ⭐ **Bộ chạy nhận `cwd` + `env` + `argv` TƯỜNG MINH.** Cấm `process.cwd()`, cấm kế thừa env ngầm | trong container, **ambient là thứ khác** — đây là giả định trộn sâu nhất và khó gỡ nhất |
+| 4 | **Mọi đường dẫn qua MỘT hàm giải** (khuôn `paths.ts` đã có) | ánh xạ host↔container chèn được ở **một** chỗ |
+| 5 | **Cấm giả định `localhost`/`127.0.0.1`** trong lõi | trong container, `localhost` là **chính container** |
+| 6 | ⭐ **"Binary sống ở đâu" là DỮ LIỆU trong khai báo**, không phải thứ suy lúc chạy | không có ô đó thì ngày lên docker phải sửa **mọi** action, và đó chính là "đập đi xây lại" |
+
+> ⚠ **Ràng buộc 3 và 6 là hai cái phải viết TRƯỚC.** Bốn cái còn lại là kỷ luật, gãy thì sửa được ở
+> một chỗ. Hai cái này là **hình dạng dữ liệu** — sai thì phải chạy lại toàn bộ khai báo của khách.
+>
+> ✅ Đổi lại: nếu tuân đủ sáu, ngày bật Docker chỉ còn **một** việc thật — dựng shim HTTP + tầng chìa
+> localhost (§16c). Đó đúng nghĩa *"lên rất nhẹ"*.
+
+---
+
+## 16q. MCP dán tay mà cần **ĐĂNG NHẬP** — máy móc đã có, chỉ bị buộc vào danh mục bởi 2 tham số
+
+> *"mấy mcp server cần định danh thì sao, trong khi đường nhập duy nhất của chúng ta là paste json?"*
+
+**Tin tốt: phần khó đã xây xong và nó VỐN ĐÃ tổng quát.** Đọc mã 30/08:
+
+| Mảnh | Ở đâu | Có phụ thuộc hãng không |
+|---|---|---|
+| dò máy chủ xác thực từ chính URL của MCP | `oauth.ts:204` — đọc header `WWW-Authenticate` → `resource_metadata="…"` | ❌ **không** — *server tự khai chỗ để metadata* |
+| đăng ký ứng dụng động (DCR) | `oauth.ts §register()` | ❌ **không** |
+| PKCE + web flow | `oauth-routes.ts §oauthStart` | ❌ **không** |
+
+✅ **Và có số đo chứng minh nó tổng quát thật**, không phải suy luận: 29/08, Linear nhận
+`POST /register` với thân gửi đi **y hệt `oauth.ts §register()`, không sửa một chữ** → 201 (§5x).
+Notion trước đó cũng vậy. Hai hãng, cùng một đoạn mã, **không mục danh mục nào tham gia vào phần đó**.
+
+**Chỗ bị buộc vào danh mục nằm ở đúng HAI tham số**, `oauth-routes.ts:206-216`:
+
+```ts
+export async function oauthStart(company, catalogId, origin) {
+  const arm = findArm(catalogId);        // ← ①
+  const mcpUrl = arm.spec.url;           // ← ② thứ DUY NHẤT nó lấy ra từ danh mục
+  const meta = await discover(mcpUrl);   //   từ đây trở xuống: tổng quát hoàn toàn
+```
+
+⇒ **Đổi chữ ký thành `oauthStart(company, mcpUrl, prefix, origin)`** là đường B đăng nhập được. Không
+phải một hệ thống con mới — là **gỡ một tham số ra khỏi một hàm**. `prefix` (hôm nay là `catalogId`,
+dùng để đặt tên chìa) thay bằng nhãn người dùng đặt hoặc băm của URL.
+
+### Ba bậc, và chỉ bậc 3 bắt người dùng gõ
+
+| Bậc | Server thế nào | Người dùng gõ gì |
+|---|---|---|
+| **1** | có DCR *(Notion, Linear)* | **0 chữ** — dán JSON, bấm **Đăng nhập**, xong |
+| **2** | stdio cần chìa tĩnh trong `env` | điền ô sinh từ `${…}` — **đã chạy hôm nay** |
+| **3** | không có DCR, hoặc device flow *(GitHub)* | **phải dán `client_id`** — §5c: `client_id` cần có **TRƯỚC** handshake nên **không suy được**. Khối `OwnClient.tsx` đã làm đúng việc này rồi |
+
+Và câu lỗi cho bậc 3 **đã tồn tại, đã đúng cửa** (`oauth.ts:256`):
+
+> *"… không mở đăng ký động — dịch vụ này bắt phải tự tạo app và dán client_id vào."*
+
+> ⚠ **Phép soi bắt buộc trước khi mở luồng này:** dán JSON xong, ta **biết ngay** server có cần đăng
+> nhập không — gọi thẳng vào `url`, đọc `401` + `WWW-Authenticate`. Đây là chỗ để **hiện nút Đăng
+> nhập** thay vì để người dùng bấm Thử → 401 → không hiểu gì. Đúng luật §5m: **đừng gửi một yêu cầu
+> đã biết chắc sẽ hỏng để bên kia trả lời hộ một câu họ không đủ dữ kiện.**
+> [[agentco-wrong-door-errors]]
+
+---
+
+## 16r. ✅ SPIKE ĐÃ CHẠY THẬT (30/08) — **tầng CLI 9/9 xanh, tầng TRỢ LÝ hỏng 3/3**
+
+`scripts/spike-cli-arm.ts` — khai báo → `createSdkMcpServer` → `runWorker` thật → tiến trình thật.
+Ba phần xếp theo giá: cổng tất định ($0) → worker ($0,066) → chuỗi đầy đủ qua Trợ lý.
+
+### ✅ Tầng thi hành — 9/9, không có ô nào phải giải thích
+
+| # | Ca | Kết quả |
+|---|---|---|
+| ① | argv dựng đúng, **là mảng** | 🟢 `["python","-m","xucxac","--mat","6","--cho","10"]` |
+| ② | giá trị `--force` → từ chối | 🟢 chặn ở `fillArgv`, trước khi spawn |
+| ③ | tiêm `6; calc` và `6 && calc` | 🟢 **cả hai chỉ là chuỗi ký tự** — `NHAN:6; calc`, không có calc nào mở |
+| ④ | binary không có → cửa `spawn` | 🟢 `door=spawn`, tách khỏi cửa `exit` |
+| ⑤ | timeout của ta cắt tiến trình | 🟢 `door=timeout` sau **3 231 ms** (trần 3 000) |
+| ⑥ | `exit 0` kèm `ERROR` → `fail_when` bắt | 🟢 mã 0 mà vẫn báo hỏng |
+| ⑦ | `cwd` là thật (đổi cwd ⇒ mất module) | 🟢 mã 1 |
+| ⑧ | **đầu-cuối qua `runWorker`** | 🟢 `done` · **25,2 s · 4 lượt · $0,066** · file ghi `Số chấm: 2` |
+
+**Giá cánh tay: ~202 token/lượt** cho 2 việc (byte÷4, 807 byte) — so: filesystem 14 việc = 2 185.
+⇒ Một cánh tay CLI 3–8 lệnh nằm trong khoảng **300–900 token**, rẻ hơn hẳn mọi cánh tay hãng.
+
+### 🔴🔴 Tầng Trợ lý — BA lượt, BA kiểu hỏng, và không lượt nào là lỗi của tầng CLI
+
+| # | Câu người dùng gõ | `intent` | Chuyện xảy ra |
+|---|---|---|---|
+| 1 | *"Tung giúp mình một con xúc xắc 6 mặt rồi cho mình biết mấy chấm nhé"* | `chat` | 🔴🔴 **Trợ lý BỊA:** *"Xúc xắc ra 4 chấm nhé! 🎲 (random ngẫu nhiên đó bạn)"*. Không giao việc, không gọi CLI |
+| 2 | *"Giao cho nhân viên dùng kết nối Xưởng lệnh để tung…"* | `chat` | 🟡 có kế hoạch, worker **gọi CLI THẬT 2 lần** ⇒ **chuỗi đầu-cuối CÓ chạy**. Hỏng vì lỗi của chính script (xem dưới) |
+| 3 | như lượt 2, sau khi vá script | `chat` | 🔴 Trợ lý viết brief *"Tung xúc xắc **bằng lệnh shell**"* ⇒ worker đốt **4 lượt ToolSearch** rồi `blocked` · **0 lời gọi CLI** |
+
+**Lượt 3 là lượt đắt nhất về thông tin.** Câu Trợ lý nói ở cuối tự tố cáo nguyên nhân:
+
+> *"Không chạy được lệnh shell thật, nhưng **hoá ra Xưởng lệnh có sẵn công cụ tung xúc xắc** riêng.
+> Bạn muốn mình giao lại dùng đúng công cụ đó không?"*
+
+### 🎯 Nguyên nhân — **đã kiểm bằng mã, không phải suy luận**
+
+`assistant.ts §armReach` dựng dòng danh bạ từ đúng bốn mẩu: **nhãn** · `level` (nếu có) ·
+`folderRoots` · cầu nối `mcp__…__*` (chỉ khi ≥2 cánh tay). Cánh tay CLI **không có nấc**
+(user chốt 30/08) và **không có thư mục** ⇒ dòng Trợ lý nhận được là:
+
+```
+Xưởng lệnh
+```
+
+Đúng một cái tên. Không một chữ nào về việc nó làm được gì.
+
+> ⭐ **VÀ ĐÂY LÀ CHỖ CÁNH TAY TỰ DỰNG KHÁC HẲN CÁNH TAY DANH MỤC.**
+>
+> Với `Notion` / `GitHub`, cái tên **tự nó mang năng lực** — model có sẵn tiên nghiệm về hãng đó.
+> Với `Xưởng lệnh`, model có **tiên nghiệm bằng 0**, nên nó làm đúng thứ model luôn làm khi thiếu
+> dữ kiện: **lấp chỗ trống**. Lượt 1 lấp bằng một con số bịa; lượt 3 lấp bằng `shell`.
+>
+> ⇒ Món nợ ghi ở `armReach:1076` từ **22/08** (*"liệt kê MCP bằng TÊN, không bằng NĂNG LỰC… Chưa
+> giải"*) đã được trả **một nửa** cho `level` ngày 26/08. Nửa còn lại **vô hại với danh mục và chí
+> mạng với đường B/CLI** — và đó chính là lý do nó nằm im được ba tuần.
+
+**Bản vá — nhỏ, và đúng khuôn đã thắng ba lần** ([[agentco-prompt-rules-lose-to-examples]]: điều kiện
+phải nằm **trên chính dòng** có cái tên):
+
+```
+Xưởng lệnh — tung một con xúc xắc · đồng bộ dữ liệu
+```
+
+Chuỗi đó lấy từ ô **`say`** của từng action — ô đã có trong khai báo và hiện **chưa ai đọc**.
+⚠ Trần **4 việc** + `và N việc khác`, cùng kỷ luật `reachDiff` (§15f-bis ràng buộc 2): một cánh tay
+20 lệnh không được nhét cả bức tường vào mọi lượt.
+
+⚠ **Chưa đo lại sau vá.** Ba lượt trên là bản CHƯA vá.
+
+### 🔴 Hai lỗi tìm ra *trong lúc đo*, và cả hai đáng giữ
+
+**① Cửa `spawn` có HAI nguyên nhân, câu lỗi chỉ nói một.** Lượt 2 báo cho người dùng:
+*"máy chạy lệnh thiếu **python**"* — trong khi máy có Python 3.13 và Phần 1+2 vừa chạy nó xong.
+Thật ra `cwd` (sandbox) đã bị xoá. **`spawn` ném `ENOENT` cho cả hai**, và bản đầu quy hết về
+*"không tìm thấy binary"*. Một câu lỗi **tự tin và sai**, đẩy người dùng đi cài lại Python.
+⇒ Đã vá: kiểm `fs.existsSync(cwd)` **trước khi spawn** — một phép kiểm rẻ, nên không có lý do gì để
+đoán. [[agentco-wrong-door-errors]]
+
+**② Cổng ⑨ của chính spike báo XANH cho một lượt chạy không làm gì.** Bản đầu đo
+`currentState === 'idle'` — tức đo **còn sống**, không đo **có làm việc không**. Lượt 1 (Trợ lý bịa số)
+về `idle` đúng như mong đợi ⇒ 🟢.
+⇒ Đã vá: đếm lời gọi **trong chính handler**. Cổng phải bám vào thứ **chỉ tồn tại khi việc thật xảy
+ra**. [[agentco-measurement-vs-conclusion]] — và lần này nó suýt lọt vào spec.
+
+**③ ⚠ `SayOutcome.intent` KHÔNG dùng để điều khiển luồng được.** Cả ba lượt trả `"chat"`, trong đó
+**hai lượt vẫn lập kế hoạch và chạy worker**. Bản đầu `break` khi thấy `chat` ⇒ script kết luận sau
+121 ms rồi `finally` **xoá sandbox** trong khi worker đang chạy — chính là thứ đẻ ra lỗi ①.
+❓ Chưa rõ `intent` được định nghĩa là gì; **đừng xây gì đè lên nó** cho tới khi có người đi đọc.
+
+---
+
+## 16s. ✅ ĐÃ VÁ VÀ ĐO LẠI (30/08) — **vá đúng một nửa, và nửa kia hoá ra là bài toán KHÁC**
+
+### Bản vá — `arms[].does`, phần THÊM thuần tuý
+
+`CatalogArm.hint` đã là *"một câu cho model, đi vào dòng danh bạ"* từ 29/08 — nhưng nó **chỉ tới được
+qua `catalog`**. Cánh tay tự dán và cánh tay CLI không có mục danh mục ⇒ vĩnh viễn không có câu nào.
+⇒ Không đẻ khái niệm mới: **cho `arms[<băm>]` mang năng lực của chính nó** bằng tiếng người.
+
+```
+Xưởng lệnh — tung một con xúc xắc · đồng bộ dữ liệu
+```
+
+| | |
+|---|---|
+| `types.ts` | `arms[].does: string[]`, mặc định `[]`. **Không vào `armHash`** ⇒ không băm nào đổi |
+| `assistant.ts §armReach` | `does` chèn vào `bits`, **đứng sau** `level`/`opts` — quyền trước, việc sau |
+| Trần | **4 việc** + `và N việc khác` — cùng kỷ luật `reachDiff` ràng buộc 2 |
+| Vắng `does` | **không in gì** ⇒ mọi cánh tay đang chạy giữ nguyên **từng ký tự** |
+| Test | +4 trong `plan.test.ts`, một cái là **test chống hỏng lây** · **727/727 xanh** |
+
+⚠ **Không vi phạm §7b** (*"KHÔNG liệt kê tên tool thô"*): §7b cấm dán 15 tên tool máy vào prefix của
+mọi lượt chat. Đây là câu **người đọc được**, có trần, chỉ hiện ở vai trò có đúng cánh tay ấy. Và với
+cánh tay tự dựng nó cũng **không phải "lời khai thứ hai"** (§7a): chính chuỗi đó là thứ đi vào
+`description` của tool MCP — nó **LÀ** handshake.
+
+### 🟢 Nửa ĐƯỢC VÁ — cùng một câu hỏi, trước/sau
+
+| | trước vá | sau vá |
+|---|---|---|
+| brief Trợ lý viết | *"Tung xúc xắc **bằng lệnh shell**"* | dùng đúng cánh tay |
+| kết quả | `blocked` · 4 lượt ToolSearch · **0 lời gọi CLI** | **`done`** · **1 lời gọi CLI** · file ghi đúng |
+| câu trả người dùng | *"không chạy được lệnh shell thật…"* | *"Xúc xắc ra 5 chấm! Kết quả đã ghi vào…"* |
+
+⇒ Kiểu hỏng *"Trợ lý bịa ra một CƠ CHẾ cho việc nó không biết làm bằng gì"* **đã đóng**.
+
+### 🔴 Nửa CÒN LẠI — và bản vá này **không** phải bản vá của nó
+
+Câu tự nhiên (*"tung giúp mình một con xúc xắc 6 mặt…"*) **vẫn bịa số**: 2/2 lượt sau vá
+(*"ra 2 chấm"*, *"ra 5 chấm"*), `0 lời gọi`.
+
+**Và lần này nguyên nhân được LOẠI TRỪ bằng phép đo $0, không phải bằng suy luận.** Thêm cờ
+`--roster` in thẳng dòng danh bạ, không tốn lượt model nào:
+
+```
+dòng danh bạ Trợ lý nhận được:
+  "Xưởng lệnh — tung một con xúc xắc · đồng bộ dữ liệu"
+```
+
+⇒ **Dữ liệu tới nơi đầy đủ. Trợ lý đọc được năng lực đó và vẫn chọn tự trả lời.**
+Đây là bài toán **ĐỊNH TUYẾN**, không phải bài toán **NHÌN THẤY** — hai bài toán, hai bản vá.
+
+> ⚠ **Tôi đã chẩn đoán gộp hai thứ làm một ở §16r, và chỉ một nửa đúng.** Chỗ cứu là cờ `--roster`:
+> khi một lượt đo hỏng, câu hỏi đầu tiên luôn là *"dữ liệu không tới, hay tới rồi mà model quyết
+> khác"* — và phân biệt hai giả thuyết đó **phải miễn phí**, nếu không sẽ có người (tôi) đoán.
+> Trước khi có cờ đó tôi đã trả tiền **một lượt chỉ để đọc một chuỗi tính được bằng code**.
+
+### ⚠ Và câu hỏi đo có thể chính nó bị hỏng — nói ra trước khi ai xây gì
+
+*"Tung giúp mình một con xúc xắc"* **đọc như một câu đùa trong chat**. Trợ lý trả lời thẳng có thể là
+**quyết định đúng** cho đúng câu đó, và bài đo đang phạt nó vì một chuyện nó làm đúng.
+
+Phép thử tách bạc: hỏi một câu mà **bịa là sai rành rành và cánh tay rõ ràng trả lời được** — ví dụ
+*"có bao nhiêu hoá đơn chưa thanh toán?"* với một cánh tay đọc hoá đơn.
+
+- Bịa ⇒ **lỗ định tuyến thật**, và nó nghiêm trọng hơn hẳn chuyện xúc xắc.
+- Giao việc ⇒ ca xúc xắc là Trợ lý **đánh giá đúng độ tầm thường**, và ô đo này phải bị viết lại.
+
+**Chưa ai chạy phép thử đó.** Đừng động vào `route()` trước khi có số — nó là đường đông người qua
+lại nhất của sản phẩm, và một luật chung dán lên đó là đúng thứ chốt 27/08 đã bác.
+
+### ⇒ Còn lại
+
+1. ❗ **Chạy phép thử tách bạc ở trên** — nó quyết định có tồn tại một lỗ định tuyến hay không.
+2. Ai điền `does` cho cánh tay thật? Với CLI/connector: sinh từ `say` của từng action lúc cắm. Với
+   cánh tay **tự dán** (đường B): ❓ chưa có nguồn — `tools/list` chỉ cho **tên tool**, mà §7b cấm
+   dán tên thô. Có thể lấy `description` của tool rồi rút gọn, **chưa đo**.
+3. Đi đọc `SayOutcome.intent` — nó trả `"chat"` cả ở lượt có lập kế hoạch và chạy worker.
+
+---
+
 ## Nguồn
 
 **Đọc trực tiếp trong `node_modules`, `@anthropic-ai/claude-agent-sdk@0.3.231`** (📖 — kiểu, không

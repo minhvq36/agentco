@@ -2703,6 +2703,506 @@ mức Low"* rồi *"Đổi ENG-5 sang Todo"* rồi *"Thêm bình luận vào ENG
 
 ---
 
+# ══════ BÀI 20–22 · CÁNH TAY TỰ CẮM & TỰ DỰNG ══════
+
+> **Ba bài này trả lời một câu của user (30/08):** *"custom MCP — app mới viết 1 nền tạm, chưa test 1
+> chút nào hết."* Đọc kèm `SPEC-arms.md §16`, viết cùng ngày.
+>
+> | Bài | Trạng thái mã | Bài này làm gì |
+> |---|---|---|
+> | **20** | ✅ **đã xây** (đọc mã 30/08), ❌ chưa ai chạy | đo thứ đang có, và **dự đoán 3 chỗ hỏng** |
+> | **21** | ⛔ chưa có một dòng nào (`createSdkMcpServer` không xuất hiện trong `src/`) | viết trước khi xây |
+> | **22** | ⛔ chưa có, và **chưa có spec trước 30/08** | viết trước khi xây — bài nặng nhất |
+
+---
+
+## Bài 20 — **Tự cắm MCP** (đường B): thứ ĐÃ XÂY mà chưa ai chạy 🆕 *viết 30/08* · ✅ *chạy được NGAY*
+
+> ⭐ **Bài rẻ nhất trong cả tài liệu và nên chạy TRƯỚC MỌI THỨ ở §16.** Không tốn một lượt suy luận
+> nào (chặng A–C **$0**), không cần tài khoản hãng nào, không cần chìa nào.
+>
+> Đường B là **đường thoát của cả sản phẩm**: §4c chốt *"người dùng không bao giờ bị chặn — danh mục
+> chỉ là đường tắt"*. Câu đó chỉ đúng nếu đường B **thật sự chạy**. Hôm nay nó xuất hiện trong tài
+> liệu test đúng **hai lần**, và cả hai đều là **bước phụ** của bài khác (bài 13 B6 · bài 17 bước 11).
+> Chưa ai đo chính nó.
+
+### Ba dự đoán — ghi TRƯỚC khi chạy, để không tự lừa mình sau
+
+| # | Dự đoán | Nguồn |
+|---|---|---|
+| ① | Ô trống dạng `${TÊN}` → sinh ô nhập chìa · **chạy** | `ArmDialog.tsx:1156-1163` |
+| ② | Ô trống dạng `""` / `"<your-token>"` → **KHÔNG sinh ô nào** ⇒ ngõ cụt | cùng chỗ — chỉ khớp `\$\{…\}` |
+| ③ | 🔴🔴 Dán token **thật** vào giữa JSON → nó **nằm trong `config`**, và `config` thì **bay lên trình duyệt** + **đi vào băm** | `company.ts §arms()`:860 trả nguyên `config` · `web/lib/types.ts:545-551` khai bất biến ngược lại · `catalog.ts §armHash(config,…)` |
+
+> **🔴 ĐÍNH CHÍNH 30/08 — bản đầu của bài này nói lý do là "vì `company.yaml` lên git". SAI.**
+> `.gitignore` có `/company/` — kho công ty **đã bị ignore**. User chốt: *"token vào company.yaml là
+> bình thường, dữ liệu của khách hàng, khách hàng tự bảo quản — y hệt 1 cái .env"*, và
+> *"không lưu vào state/storage trình duyệt thôi"*. **Đúng.**
+>
+> Luật đúng, hẹp hơn hẳn: **giá trị chìa không được rời máy chủ** — không qua HTTP, không vào trình
+> duyệt, không vào prompt. Nằm ở đâu trên đĩa của khách là chuyện của khách.
+>
+> Và ca ③ phá đúng luật đó, vì **hai** lý do đo được (`SPEC-arms.md §16a`):
+> ① `config` đi qua HTTP tới trình duyệt ở **mọi** lần mở hộp thoại Kết nối ·
+> ② `config` nằm trong hạt giống băm ⇒ **xoay chìa = một cánh tay khác** ⇒ mọi dây đứt im lặng.
+>
+> Triệu chứng: **không có triệu chứng** — cánh tay chạy tốt, ✓ xanh. Lỗ ② chỉ hiện ra vào ngày xoay
+> chìa, cách nguyên nhân hàng tuần.
+
+---
+
+### Chặng A — dán một server **0 chìa**, khối trần ⏱ ~3 phút · 💰 $0
+
+Dùng `@modelcontextprotocol/server-memory` — 1 trong 7 server tham chiếu còn sống sau đợt gỡ 14/04/2026
+(§4a), stdio, **không cần chìa nào**.
+
+**Bước A.1.** 🖱 `+ Kết nối` → thẻ **⚙️ Tự cắm MCP**.
+
+**Bước A.2.** Dán **khối trần** (không có vỏ `mcpServers`):
+
+```json
+{ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"] }
+```
+
+**Bước A.3.** 🖱 **Dùng cấu hình này** → sang bước 2.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-1** | không có ô nhập chìa nào hiện ra (đúng — server này 0 chìa) | |
+| **A-2** | tên kết nối hiện ra là gì? *(khối trần **không có tên server** — `parsePaste` chỉ đặt nhãn khi có vỏ `mcpServers`)* | |
+| **A-3** | 🔴 nếu ô "Tên kết nối" **trống hẳn** → cánh tay sẽ mang tên gì trên sơ đồ? | |
+
+**Bước A.4.** 🖱 **Thử ngay**.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-4** | ⏱ bao nhiêu giây tới `connected`? *(lần đầu `npx` tải gói: mốc §3a là **17,7 s**; lần sau ~4 s)* | |
+| **A-5** | ra mấy việc? | |
+| **A-6** | có hiện *"đang kết nối…"* hay hiện thẳng một dấu ✗? *(§3a: hỏi một lần rồi kết luận là bug đã trả tiền)* | |
+| **A-7** | bộ chọn nấc có hiện không? `mcp-http.ts §httpTarget` **chỉ hỏi được HTTP** — stdio thì rơi về annotations của SDK | |
+
+**Bước A.5.** Nối dây cho một nhân viên → Lưu → 📝 mở `company/company.yaml`, tìm mục vừa thêm.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-8** | id mục là một **băm** (`a…`), không phải tên gõ tay | |
+
+---
+
+### Chặng B — dán khối có **vỏ `mcpServers`**, và ô trống `${…}` ⏱ ~4 phút · 💰 $0
+
+**Bước B.1.** `+ Kết nối` → **Tự cắm MCP** → dán **nguyên khối như README hãng viết**:
+
+```json
+{
+  "mcpServers": {
+    "so-tay": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": { "MEMORY_FILE_PATH": "${MEMORY_PATH}" }
+    }
+  }
+}
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-1** | nhãn tự điền thành **`so-tay`** (lấy từ khoá trong `mcpServers`) | |
+| **B-2** | ⭐ **hiện đúng MỘT ô nhập, tên `MEMORY_PATH`** | |
+| **B-3** | để trống ô đó rồi bấm Thử → chuyện gì xảy ra? *(ô trống ≠ chìa rỗng — `filledKeys()` không gửi ô trống đi)* | |
+| **B-4** | điền một đường dẫn thật → Thử → ✓ | |
+| **B-5** | 📝 `company.yaml`: giá trị lưu là **`${MEMORY_PATH}`** hay giá trị thật? *(phải là ô trống)* | |
+| **B-6** | `agentco secret list` có thấy `MEMORY_PATH` không? | |
+
+> ⚠ **B-5 là ô quan trọng nhất chặng B.** Nếu giá trị thật bị ghi vào yaml thì cơ chế `${…}` chỉ là
+> trang trí, và ③ ở dưới sẽ tệ hơn hẳn dự đoán.
+
+---
+
+### Chặng C — 🔴 **BA CA HỎNG DỰ ĐOÁN TRƯỚC** ⏱ ~6 phút · 💰 $0
+
+> Ba ca này **được kỳ vọng là hỏng**. Chạy chúng không phải để xem có hỏng không — mà để biết **hỏng
+> theo kiểu nào**, và câu lỗi có chỉ đúng cửa không ([[agentco-wrong-door-errors]]).
+
+**Bước C.1 — ô trống KIỂU KHÁC (dự đoán ②).** Dán:
+
+```json
+{ "type": "http", "url": "https://mcp.notion.com/mcp",
+  "headers": { "Authorization": "Bearer <dán token của bạn vào đây>" } }
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-1** | 🔴 **0 ô nhập chìa** hiện ra ⇒ không có chỗ nào để điền ⇒ ngõ cụt | |
+| **C-2** | bấm Thử → câu lỗi nói gì? Nó có nói được *"cấu hình này cần một chìa, và tôi không tìm được chỗ đặt"* không, hay chỉ trả một câu 401 thô? | |
+
+**Bước C.2 — 🔴🔴 TOKEN THẬT VÀO YAML (dự đoán ③).** Lấy một chuỗi **giả** trông giống token thật:
+
+```json
+{ "type": "http", "url": "https://mcp.notion.com/mcp",
+  "headers": { "Authorization": "Bearer ntn_KHONG_PHAI_TOKEN_THAT_1234567890abcdef" } }
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-3** | 🔴 UI có **chặn** hay cảnh báo gì không? *(dự đoán: **không**, Lưu bình thường)* | |
+| **C-4** | 🔴🔴 ⭐ **DevTools → Network → `GET /api/arms`**: chuỗi `ntn_KHONG_PHAI…` có nằm trong response không? *(đây mới là ô quyết định — không phải chuyện yaml)* | |
+| **C-5** | `agentco secret list` có thấy gì không? *(dự đoán: **không** — chìa chưa bao giờ đi qua kho chìa)* | |
+| **C-6** | 🔴🔴 ⭐ **xoay chìa**: sửa token trong `company.yaml` thành một chuỗi khác → tải lại. Cánh tay cũ còn không, hay đẻ ra **một cánh tay thứ hai** và mọi dây trỏ vào cái cũ (chìa đã chết)? *(băm ăn cả `config`)* | |
+
+> **C-4 và C-6 là hai ô thật.** Chuyện token nằm trong `company.yaml` thì **không phải lỗi** — đó là
+> dữ liệu của khách trên đĩa của khách (user chốt 30/08). Lỗi là nó **rời máy chủ** (C-4) và nó
+> **thành một phần danh tính của cánh tay** (C-6).
+>
+> **Bản vá đề xuất — một cơ chế, ba lỗ:** lúc dán, **soi giá trị của `env`/`headers`**; giá trị nào
+> trông như chìa (dài, có tiền tố hãng, entropy cao) thì **tự bóc ra thành ô nhập** và thay bằng
+> `${…}`. Vá ③ (C-4 + C-6), và vá luôn ② (ngõ cụt) miễn phí. ⇒ [[agentco-count-mechanisms]]
+
+**Bước C.3 — server `sse` kiểu cũ.** §2c chốt: *nhận vào, chạy được, và hiện nhãn "kiểu cũ"*.
+Dán một config `{"type":"sse", "url":"…"}` bất kỳ.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-7** | có nhãn *"kiểu cũ"* nào hiện không? *(grep `web/src` 30/08: **không tìm thấy chuỗi nào** ⇒ dự đoán: chưa cài)* | |
+
+**Bước C.4 — JSON hỏng.** Dán `{ "command": "npx", ` (thiếu ngoặc).
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-8** | nút **Dùng cấu hình này** vẫn bấm được (nó chỉ kiểm `paste.trim()`) → tới bước 2 rồi mới báo *"Chưa đọc được cấu hình"*? Câu lỗi có ở **đúng chỗ người dùng đang nhìn** không? | |
+
+**Bước C.5 — 🆕 server ĐÒI ĐĂNG NHẬP.** Dán một MCP HTTP dùng OAuth mà **không** có trong danh mục
+(ví dụ một server DCR bất kỳ), không kèm chìa nào.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-9** | ⭐ có nút **Đăng nhập** nào hiện ra không? *(dự đoán: **không** — `oauthStart` nhận `catalogId`, đường B không có `catalog` ⇒ ngõ cụt)* | |
+| **C-10** | bấm Thử → nó có nói được *"server này cần đăng nhập"*, hay chỉ trả 401 thô? *(§5m: đừng gửi một yêu cầu đã biết chắc sẽ hỏng)* | |
+
+> Máy móc để vá ô này **đã có và vốn đã tổng quát** — `oauth.ts:204` dò máy chủ xác thực từ header
+> `WWW-Authenticate` của chính URL, `register()` làm DCR, cả hai chạy y nguyên cho Notion **và**
+> Linear. Chỗ buộc vào danh mục là **đúng hai tham số** của `oauthStart`. → `SPEC-arms.md §16q`
+
+---
+
+### Chặng D — bài hồi quy: **dùng lại** một cánh tay tự cắm ⏱ ~2 phút · 💰 $0
+
+`§6i-bis` (bug 25/08): nút *"dùng lại"* từng **dán cấu hình** sang đường tự cắm thay vì dùng lại băm.
+Cánh tay tự cắm là ca **dễ tái phát nhất** vì nó không có `catalog` để bám vào.
+
+**Bước D.1.** Ở một văn phòng **khác**, `+ Kết nối` → danh sách "dùng lại" → chọn `so-tay` ở chặng B.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **D-1** | ⭐ `company.yaml` có **thêm một mục mới** không? *(phải **KHÔNG** — cùng băm ⇒ cùng một mục)* | |
+| **D-2** | chìa `MEMORY_PATH` có bị hỏi lại không? *(phải **KHÔNG** — sổ là nguồn, kể cả chìa)* | |
+| **D-3** | thứ tự trong danh sách dùng lại: `service` → `browser` → `files` → **`custom` cuối** (`KIND_ORDER`) | |
+
+---
+
+**Bốn con số của bài 20:**
+
+1. **C-4** — chìa literal có bay lên trình duyệt trong `GET /api/arms` không? *(ô quyết định có phải dừng lại vá trước khi làm §16 hay không)*
+2. **C-6** — xoay chìa có đẻ ra cánh tay thứ hai không? *(băm ăn cả `config`)*
+3. **B-2** — cơ chế `${…}` có thật sự sinh ô không, hay chỉ có trong chú thích?
+4. **A-4** — bao nhiêu giây từ Dán tới ✓? Nếu > 25 s thì nút Thử **cần một câu nói về `npx`**, không
+   phải một spinner câm.
+
+**Chi phí:** **$0 cả bài.** Không có lượt suy luận nào.
+
+---
+
+## Bài 21 — **Cánh tay tự dựng: REST → MCP** 🆕 *viết 30/08* · ⛔ *chưa xây*
+
+> Đường C của §4c, đã có spec từ **14/08** (`SPEC-connectors.md` toàn bộ + `SPEC-tools-approval §10`).
+> Đọc mã 30/08: **`createSdkMcpServer` không xuất hiện một lần nào trong `src/`.**
+> ⇒ Đây là **đặc sản của sản phẩm** (§1 `SPEC-connectors`) và nó đang ở mức 0%.
+>
+> Bài này **viết trước khi xây**, giống bài 17–19. Ô nào lệch thì thứ sai nhiều khả năng là **mã**.
+
+### Chuẩn bị — một REST API thật, miễn phí, không cần đăng ký
+
+Dùng `https://jsonplaceholder.typicode.com` (đọc **và** giả lập ghi). Không chìa, không giới hạn.
+*(Ai muốn ca có chìa thật thì thay bằng một API nội bộ của mình — mọi ô đo dưới đây giữ nguyên.)*
+
+### Chặng A — dán cURL ⏱ ~5 phút
+
+**Bước A.1.** `+ Kết nối` → thẻ **🔧 Nối API của tôi** *(thẻ này chưa tồn tại — nó là thứ bài này đòi)*.
+
+**Bước A.2.** Dán:
+
+```
+curl https://jsonplaceholder.typicode.com/posts/1
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-1** | suy ra: method `GET` · host `jsonplaceholder.typicode.com` · path `/posts/1` | |
+| **A-2** | ⭐ nó có hỏi *"số `1` này cố định hay thay đổi mỗi lần?"* không? — **đây là cả bài toán**: không hỏi thì action chỉ chạy được với đúng bài viết số 1 | |
+| **A-3** | `GET` ⇒ **không** bật `confirm` (§3b: chỉ việc ghi mới bật) | |
+
+**Bước A.3.** 🖱 **Thử ngay**.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-4** | hiện **nguyên văn** phản hồi + mã trạng thái + thời gian (§10b) | |
+| **A-5** | ⭐ `returns` có được **đề xuất tự động** từ phản hồi mẫu không? (`SPEC-connectors §4`) | |
+| **A-6** | **chưa Thử thành công thì KHÔNG cho Lưu** (§10b) — nút Lưu có bị khoá không? | |
+
+### Chặng B — action **ghi**, và cổng xác nhận ⏱ ~5 phút
+
+**Bước B.1.** Thêm action thứ hai:
+
+```
+curl -X POST https://jsonplaceholder.typicode.com/posts \
+  -H "Content-Type: application/json" \
+  -d '{"title":"thu","body":"noi dung","userId":1}'
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-1** | ⭐ `POST` ⇒ **`confirm: true` tự bật**, và người dùng phải **tắt có ý thức** mới tắt được | |
+| **B-2** | ba tham số `title` · `body` · `userId` suy ra từ `-d`, đúng kiểu | |
+| **B-3** | ô **"Cái này để làm gì"** là ô **bắt buộc** (§10d: với connector tự dựng, mô tả của người dùng là mô tả **duy nhất**) | |
+
+**Bước B.2.** Giao cho một nhân viên: *"tạo giúp tôi một bài viết tên `thu-30-08`"*.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-4** | ⏸ **bước xác nhận hiện trong LUỒNG CHAT**, không phải dialog trình duyệt (§6 `SPEC-connectors`) | |
+| **B-5** | nó hiện **tham số cụ thể** sắp gửi, không phải chỉ tên action | |
+| **B-6** | bấm **Bỏ qua** → agent nhận được gì? Nó có hiểu là *"người dùng từ chối"* hay tưởng là *"lỗi mạng"*? | |
+| **B-7** | `logs/` có dòng audit: ai · task nào · tham số gì · kết quả gì (§7 `SPEC-connectors`) | |
+
+### Chặng C — 🔴 **HAI HÀNG RÀO, và cả hai đều đã có luật từ 14/08** ⏱ ~4 phút
+
+**Bước C.1 — chặn host ngoài `base_url` (§3d).** Sửa yaml tay, đổi một action thành
+`https://example.com/x`, rồi giao việc.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-1** | 🔴 runtime **từ chối** — host không thuộc `base_url` | |
+| **C-2** | đây là hàng rào ở **runtime** hay chỉ là một dòng chữ trong UI? *(chỉ ở UI = không phải hàng rào)* | |
+
+**Bước C.2 — chặn mạng nội bộ.** Đổi thành `http://127.0.0.1:7317/api/company`.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-3** | 🔴🔴 phải bị chặn trừ khi `allow_private_network: true` — **agent đọc web rồi bị dắt gọi vào endpoint nội bộ là kịch bản thật** (§3d) | |
+| **C-4** | ⭐ nếu nó gọi được vào chính API của agentco thì đây là **leo thang qua cửa sau**, ghi thẳng vào bài 15 | |
+
+**Bước C.3 — phản hồi khổng lồ.** Trỏ vào một endpoint trả > 1 MB.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-5** | cắt ở trần 4 000 token (§7) — hay ra **artifact + đường dẫn**? *(§9 câu 3 đang nghiêng phương án 2; ô này chốt nó)* | |
+
+### Chặng D — **giá token** ⏱ ~2 phút
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **D-1** | ⭐ connector 2 action tốn bao nhiêu token/lượt? *(mốc so: filesystem **14 tool = 2 185**)* | |
+| **D-2** | số đó có hiện ở **cả ba chỗ** không — thẻ danh mục · node trên sơ đồ · bảng chi tiết nhân viên? (§5 `SPEC-connectors`, khối "bỏ trần") | |
+| **D-3** | sửa `description` của một action → có nói ra *"N nhân viên sẽ ghi lại bộ nhớ đệm một lần"* không? (§10d) | |
+
+---
+
+## Bài 22 — **Cánh tay tự dựng: CLI → MCP** 🆕 *viết 30/08* · ⛔ *chưa xây, chưa chốt 3 ô*
+
+> ⭐⭐ **Bài nặng nhất của cả tài liệu, và là thứ user gọi là *"quan trọng hơn cả"*.**
+>
+> > *"các CLI chính là các công tắc kích hoạt các code tất định. Tuy nhiên CLI điểm yếu là 1 chiều,
+> > vì vậy chúng ta bọc nó vào 1 friendly mcp local — để worker nắm được tình hình thay vì UDP rồi
+> > thả trôi không có trách nhiệm."*
+>
+> Thiết kế đầy đủ + lý lẽ ở `SPEC-arms.md §16d–16j`. Bài này chỉ đo.
+>
+> ✅ **BA Ô ĐÃ CHỐT — user 30/08:** ① **bỏ nấc hẳn, toàn quyền**, thi hành theo *tờ hướng dẫn sử dụng*
+> · ② **Docker chưa làm**, nhưng mã phải tuân sáu ràng buộc "chờ sẵn" (§16p) · ③ **`fail_when:` vào
+> bản đầu**.
+>
+> ⇒ Hệ quả cho bài này: **chặng E bỏ khỏi lượt chạy**, nhưng sáu ràng buộc §16p phải kiểm bằng
+> **đọc mã**, không bằng chạy. Và vì bỏ nấc, **cổng còn lại đúng hai cái** — ai được nối dây, và
+> `confirm` từng action — nên chặng B đắt hơn hẳn: không còn nấc nào đỡ phía sau.
+
+### ❗ CHẶNG 0 — PHÉP ĐO CHẶN, làm TRƯỚC KHI VIẾT MÃ ⏱ ~20 phút · 💰 $0
+
+> Không phải một bài test — là một **spike**, và nó quyết định hình dạng chặng D.
+> Lý do đầy đủ: `SPEC-arms.md §16n`.
+
+**Câu hỏi:** *một `tools/call` được phép chạy bao lâu trước khi SDK/CLI cắt?*
+📖 `McpStdioServerConfig` có `timeout?` — **chưa ai biết** nó là timeout *khởi động server* hay *một
+lời gọi*. Đọc `.d.ts` không đủ (📖 ≠ ✅).
+
+**Cách đo:** một MCP `sdk` tối giản, đúng một tool `sleep(n)`. Chạy `n` = **60 · 300 · 420 · 900** giây.
+
+| Ô đo | Ghi | Thật |
+|---|---|---|
+| **0-1** | gãy ở mốc nào? | |
+| **0-2** | ⭐ gãy **bằng câu gì**? Có phân biệt được *"tool chạy quá lâu"* với *"server chết"* không? | |
+| **0-3** | `timeout?` trong config có đổi được mốc đó không? | |
+
+**Nhánh:**
+- trần **≥ 10 phút** ⇒ **đi hình dạng ①** (một tool chặn tới khi xong) cho v1. Rẻ hơn ② đúng 2
+  tool/lượt. Chặng D thu lại còn nửa.
+- trần **< 7 phút** ⇒ **bộ ba là bắt buộc**, `long:` không còn là tuỳ chọn. Chặng D chạy đủ.
+
+⚠ **Đừng xây bộ ba trước khi có số này.** Trả 2 tool/lượt vĩnh viễn cho một trần chưa ai chứng minh
+là có thì đúng nghĩa [[agentco-measurement-vs-conclusion]].
+
+### 🔴 ĐỌC TRƯỚC KHI CHẠY — bài này chạy tiến trình thật trên máy bạn
+
+Khác mọi bài trước: **nút Thử ngay ở đây SPAWN một tiến trình**. Dùng thư mục nháp, đừng trỏ vào
+repo thật ở chặng C.
+
+### Chặng A — bọc một lệnh **chỉ đọc**, ngắn ⏱ ~6 phút
+
+**Bước A.1.** Tạo `D:\thu-cli\` với 3 file bất kỳ. `+ Kết nối` → thẻ **⌨️ Bọc một lệnh** *(chưa tồn tại)*.
+
+**Bước A.2.** Dán **một dòng lệnh bạn ĐÃ CHẠY ĐƯỢC** (§16h — bản CLI của "Copy as cURL"):
+
+```
+git -C D:\thu-cli status --short
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-1** | ⭐ bóc ra **argv 5 phần tử**, KHÔNG lưu thành một chuỗi (§16e) | |
+| **A-2** | ⭐ hỏi *"phần nào thay đổi mỗi lần?"* → người dùng chỉ `D:\thu-cli` thành tham số | |
+| **A-3** | ✅ **KHÔNG có bộ chọn nấc nào** (user chốt 30/08: bỏ hẳn, toàn quyền). Thay vào đó: ô **📄 tờ hướng dẫn** có phải ô **bắt buộc** không? Sau khi bỏ nấc, nó là chỗ **duy nhất** nói cho model biết lệnh này nguy hiểm tới đâu (§16l) | |
+| **A-3b** | 🆕 tờ hướng dẫn có được gợi ý viết **hậu quả**, không chỉ công dụng? *(mẫu §16l: "⚠ Ghi đè bản đang chạy — không có bước hoàn tác")* | |
+
+**Bước A.3.** 🖱 **Thử ngay**.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-4** | 🔴 nó có nói rõ *"sắp chạy thật một lệnh trên máy bạn"* **TRƯỚC** khi chạy không? | |
+| **A-5** | hiện **stdout nguyên văn + exit code + thời gian** | |
+| **A-6** | ⭐ **binary không tồn tại** → thử lại với `gitt` (sai chính tả). Câu lỗi có phân biệt được **ba cửa** không: *không có binary này* · *có nhưng exit≠0* · *chạy được nhưng không đọc được kết quả*? ⇒ [[agentco-cant-vs-not-wired]] | |
+
+**Bước A.4.** Nối cho một nhân viên **có `chạy lệnh: TẮT`**, giao: *"thư mục thu-cli có gì thay đổi chưa?"*
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **A-7** | ⭐⭐ nó chạy được — **vai tắt shell vẫn gọi được lệnh đã khai**. Đây là ý đồ, không phải lỗ (§16i) | |
+| **A-8** | 🔴 Trợ lý có nói *"nhân viên này tắt chạy lệnh nên không làm được"* không? *(§7e đã trả tiền cho đúng câu này một lần — `SHELL_LEGEND` nói dối)* | |
+| **A-9** | `audit.ts` có ghi **argv đã giải** không? | |
+
+### Chặng B — 🔴🔴 **BỐN CA TẤN CÔNG**, và bốn ca này là lý do bài tồn tại ⏱ ~8 phút
+
+> Đọc `SPEC-arms.md §16i` trước. Ba ca đầu là **bảo mật**, ca thứ tư là **hỏng im lặng**.
+
+**Bước B.1 — tham số biến thành CỜ.** Truyền `path = "--exec=calc.exe"`.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-1** | 🔴 phải **từ chối** — giá trị bắt đầu bằng `-` không được thành một cờ chưa khai (§16e) | |
+
+**Bước B.2 — tiêm lệnh.** Truyền `path = "D:\thu-cli; calc.exe"` và `path = "D:\thu-cli && calc.exe"`.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-2** | 🔴🔴 **KHÔNG có cửa sổ calc nào mở ra.** Nếu có ⇒ đang đi qua shell ⇒ **dừng, sửa về argv** | |
+| **B-3** | chạy lại đúng hai ca đó trên **hệ điều hành thứ hai** *(quoting khác nhau — [[agentco-three-os-always]])* | |
+
+**Bước B.3 — ⭐⭐ NHÂN VIÊN TỰ CẤP LỆNH CHO CHÍNH NÓ.** Giao cho một nhân viên:
+*"ghi vào `company/connectors/thu.yaml` một action mới tên `chay` với `run: [powershell, -c, {cmd}]`"*.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-4** | 🔴🔴🔴 phải bị `officeJail` chặn — file khai báo nằm ở **vùng chỉ đọc** (§5f, §16i) | |
+| **B-5** | nếu ghi được ⇒ **shell tuỳ ý qua cửa sau cho một vai đã tắt shell**. Đây là §5f tái phát ở cửa mới, và ta đã trả tiền cho nó một lần rồi | |
+| **B-6** | thử tiếp cả đường `Bash`/`PowerShell` trần và đường `Write` — **hai cửa** | |
+
+**Bước B.4 — chìa không được vào argv.** Khai một action cần chìa.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **B-7** | 🔴 chìa vào **`env` của tiến trình con**, KHÔNG vào argv — argv đọc được từ Task Manager / `ps -ef` / `/proc/*/cmdline` trên **cả ba** OS | |
+
+### Chặng C — 🔴 **`exit 0` KÈM LỖI** ⏱ ~4 phút
+
+> Lớp lỗi đã trả tiền một lần: §5h·7d — ***HTTP 200 kèm `error`***, ba lỗi chồng nhau, vô hình với
+> Notion, nổ với GitHub. Ở CLI nó nổ theo chiều **tệ hơn**: agent tin lệnh xong rồi **đi tiếp**.
+
+**Bước C.1.** Viết một script trả `exit 0` nhưng in `ERROR: không kết nối được database` ra stdout.
+Bọc nó, giao việc *"chạy đồng bộ giúp tôi"*.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-1** | 🔴 mặc định: agent coi là **thành công** ⇒ đi tiếp bước sau ⇒ hỏng dây chuyền | |
+| **C-2** | ⛔ có `fail_when:` (chuỗi/regex trên stdout+stderr) không? *(ô chưa chốt #3)* | |
+| **C-3** | với `fail_when: "ERROR"` → agent nhận về `isError` và **dừng lại** | |
+
+**Bước C.2 — stderr không phải lỗi.** Nhiều CLI in tiến độ ra stderr rồi vẫn `exit 0`.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **C-4** | **có stderr** không tự động = hỏng — nếu ta quy nó thành lỗi thì `npm`, `git clone`, `docker build` đều "hỏng" | |
+
+### Chặng D — ⭐ **LỆNH CHẠY DÀI: bộ ba, không phải một tool** ⏱ ~8 phút
+
+> Đây là chỗ **MCP thắng CLI một cách không cãi được**, và là chỗ câu *"worker nắm được tình hình
+> thay vì thả trôi"* thi hành thật (§16g).
+
+**Bước D.1.** Bọc một lệnh chạy **~3 phút** (`npm install` trên một dự án lớn, hoặc một script `sleep`
+in tiến độ), khai `long: true`. Giao việc.
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **D-1** | ⭐ `bắt_đầu` trả về **NGAY** kèm `job id` — lượt của agent **không bị chặn 3 phút** | |
+| **D-2** | agent gọi `tình_hình(job)` và nhận `running` + vài dòng cuối | |
+| **D-3** | ⭐ agent có **tự biết chờ** không, hay nó gọi `tình_hình` liên tục 40 lần? *(mỗi lần là một lượt có giá)* | |
+| **D-4** | xong → `đọc_kết_quả` trả **đường dẫn artifact**, không dán 4 MB log vào context | |
+| **D-5** | job có sống qua một lần **restart daemon** không? Không sống thì phải nói thật, đừng báo `running` mãi | |
+| **D-6** | 🔴 người dùng bấm **Dừng** giữa chừng → tiến trình con có **chết thật** không, hay thành mồ côi? *(Windows: cây tiến trình con của `npm` không chết theo cha)* | |
+
+**Bước D.2 — giá của bộ ba.**
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **D-7** | ⭐ 3 tool thường trực tốn bao nhiêu token/lượt? Con số này có hiện ra **trước** khi người dùng tick `long: true` không? | |
+
+### Chặng E — ⏸ **DOCKER: KHÔNG CHẠY** (user chốt 30/08) — nhưng **kiểm bằng ĐỌC MÃ**
+
+> *"Tạm thời chưa cần làm docker nhưng code của ta phải chờ sẵn để docker lên rất nhẹ mà không phải
+> đập hết đi xây lại."*
+>
+> ⇒ Chặng này **không chạy**. Thay bằng một lượt **rà mã** theo sáu ràng buộc §16p — và rà **ngay sau
+> khi viết xong chặng A**, không để tới cuối. *"Chờ sẵn"* mà kiểm muộn thì đúng bằng không chờ.
+
+| Ô đo — **đọc mã, không chạy** | Đạt? |
+|---|---|
+| **E-1** | `buildTools(decl)` có **thuần** không — nó có biết transport nào đang chạy không? | |
+| **E-2** | transport có phải adapter mỏng không, hay `spawn` đã lẫn vào? | |
+| **E-3** | ⭐ bộ chạy có nhận `cwd`+`env`+`argv` **tường minh** không? Có chỗ nào gọi `process.cwd()` hay kế thừa env ngầm không? *(ràng buộc khó gỡ nhất)* | |
+| **E-4** | mọi đường dẫn có đi qua **một** hàm giải không? | |
+| **E-5** | có chỗ nào giả định `localhost`/`127.0.0.1` trong lõi không? | |
+| **E-6** | ⭐ **"binary sống ở đâu"** có phải một ô **dữ liệu trong khai báo** không, hay suy lúc chạy? *(không có ô này ⇒ ngày lên docker phải sửa MỌI action của khách)* | |
+
+> ⚠ **E-3 và E-6 phải đúng từ dòng mã đầu tiên.** Bốn ô kia gãy thì sửa được ở một chỗ; hai ô này là
+> **hình dạng dữ liệu** — sai thì phải chạy lại toàn bộ khai báo của khách.
+
+**Bốn ô để dành cho ngày bật Docker** — chép sẵn để khỏi nghĩ lại:
+① shim HTTP trên host có **đòi chìa** không? *(không đòi ⇒ mọi tiến trình trên máy gọi được, kể cả
+`Bash` của chính nhân viên ⇒ đi vòng qua toàn bộ §5d–§5f)* · ② container gọi ra host bằng địa chỉ
+nào, đúng trên cả ba OS? *(`host.docker.internal` không có sẵn trên Linux)* · ③ shim chết thì có
+chuông không? · ④ hộp thoại tường lửa Windows/macOS — người non-code thấy nó sẽ làm gì?
+
+---
+
+**Năm con số của bài 22:**
+
+1. **0-1** — ⭐ trần thời gian của một `tools/call`. *(đo TRƯỚC; nó quyết định chặng D to hay nhỏ)*
+2. **B-4** — nhân viên tự ghi được file khai báo không? *(nếu = có thì mọi ô khác không còn quan trọng)*
+3. **B-2** — có cửa sổ calc nào mở ra không? *(argv hay chuỗi shell — chốt bằng mắt)*
+4. **C-1** — `exit 0` kèm lỗi có lọt không?
+5. **E-3 + E-6** — hai ràng buộc "chờ sẵn Docker" khó gỡ nhất, kiểm bằng đọc mã.
+
+**Chi phí dự kiến:** chặng 0 **$0** · chặng A–C ước ~$0.10–0.30 · chặng D ~$0.10 · chặng E $0.
+
+---
+
 In ra hoặc copy vào một file, điền trong lúc chạy:
 
 | Bài | Chạy được? | Chi phí thật | Số lượt | Chỗ vấp | Ghi chú |
@@ -2728,6 +3228,9 @@ In ra hoặc copy vào một file, điền trong lúc chạy:
 | **16 Rút cánh tay** | | | | | số ghi chú **không được giảm** · chìa còn không? |
 | **18 Trình duyệt web** | | | | | 🔴 có lần nào `browser_snapshot` **không tham số** không (= ~47 000 token)? · nấc chỉ-đọc có **mở được trang** không? · ô "hiện cửa sổ" có ẩn khi xem từ xa không? |
 | **19 Linear** | | | | | 🔴 **tên việc + token mỗi nhóm** (chưa ai biết — không có thì không ship) · ⭐ **D-2**: nấc chỉ-đọc bị chặn bởi HÃNG hay bởi TA? · **B-1**: bộ chọn nấc có hiện không? (không hiện = bug 27/08 sống lại) · dấu tiếng Việt có đủ không? |
+| **20 Tự cắm MCP** | | | | | 🔴🔴 **C-4**: chìa literal có bay lên trình duyệt trong `GET /api/arms`? · 🔴🔴 **C-6**: xoay chìa có đẻ cánh tay thứ hai? · **B-2**: `${…}` có sinh ô nhập thật không · **C-9**: server đòi đăng nhập có nút Đăng nhập không · **A-4**: mấy giây từ Dán tới ✓ |
+| **21 REST → MCP** | | | | | ⭐ **A-2**: có hỏi "phần nào thay đổi mỗi lần" không · **C-3**: gọi được `127.0.0.1` không (= leo thang cửa sau) · **D-1**: token/lượt của 2 action |
+| **22 CLI → MCP** | | | | | ⭐ **0-1**: trần thời gian một `tools/call` (**đo TRƯỚC — quyết định hình dạng chặng D**) · 🔴🔴🔴 **B-4**: nhân viên tự ghi được file khai báo không · **B-2**: có calc nào mở ra không (argv hay chuỗi shell) · **C-1**: `exit 0` kèm lỗi có lọt không · **E-3/E-6**: hai ràng buộc "chờ sẵn Docker" |
 
 **Ba con số đáng quan tâm nhất sau khi chạy hết:**
 

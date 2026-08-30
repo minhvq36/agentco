@@ -631,6 +631,56 @@ test('armReach: cánh tay KHÔNG phải file thì không bịa ra thư mục', (
 });
 
 /**
+ * ⭐ `does` — NĂNG LỰC BẰNG TIẾNG NGƯỜI cho cánh tay KHÔNG có mục danh mục.
+ * → `assistant.ts §armReach` · docs/SPEC-arms.md §16r
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Đo 30/08 (`scripts/spike-cli-arm.ts`), cánh tay CLI tên `Xưởng lệnh`,     │
+ * │ tầng thi hành 9/9 xanh, tầng Trợ lý hỏng **3/3**:                        │
+ * │                                                                          │
+ * │   "tung giúp mình con xúc xắc"  → Trợ lý **BỊA**: "ra 4 chấm nhé 🎲"      │
+ * │   "dùng kết nối Xưởng lệnh…"    → brief "**bằng lệnh shell**" → blocked   │
+ * │                                                                          │
+ * │ Dòng danh bạ khi ấy là đúng chữ `Xưởng lệnh`. Với `Notion`/`GitHub` lỗ    │
+ * │ này VÔ HÌNH vì cái tên tự nó mang năng lực — model có tiên nghiệm về      │
+ * │ hãng. Tên khách tự đặt thì tiên nghiệm bằng 0, và model lấp chỗ trống.    │
+ * │ → [[agentco-debt-hidden-by-model-priors]]                                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('armReach: `does` đưa NĂNG LỰC vào dòng, không đưa tên tool máy', () => {
+  const arms = { cli: { label: 'Xưởng lệnh', does: ['tung một con xúc xắc', 'đồng bộ dữ liệu'] } };
+  const line = armReach(arms, {}, 'cli');
+  assert.equal(line, 'Xưởng lệnh — tung một con xúc xắc · đồng bộ dữ liệu');
+});
+
+test('armReach: `does` có TRẦN 4 — một cánh tay 20 lệnh không nhét cả bức tường vào prefix', () => {
+  // Cùng kỷ luật `reachDiff` ràng buộc 2. Dòng này nằm trong prefix được cache
+  // của Trợ lý và trả ở MỌI lượt gõ phím — không có trần là một hoá đơn mở.
+  const does = ['một', 'hai', 'ba', 'bốn', 'năm', 'sáu'];
+  const line = armReach({ cli: { label: 'X', does } }, {}, 'cli');
+  assert.ok(line.includes('một · hai · ba · bốn'), `phải giữ 4 việc đầu: ${line}`);
+  assert.ok(line.includes('và 2 việc khác'), `phải gộp phần dư: ${line}`);
+  assert.ok(!line.includes('năm'), `việc thứ 5 không được lọt nguyên văn: ${line}`);
+});
+
+test('armReach: VẮNG `does` ⇒ không in gì — mọi cánh tay đang chạy giữ nguyên từng ký tự', () => {
+  // 🔴 Đây là test chống HỎNG LÂY. Bản vá 30/08 chỉ được phép THÊM cho cánh tay
+  // có khai `does`; cánh tay hôm nay (danh mục, thư mục, tự dán) không khai ô đó
+  // và dòng của chúng phải y hệt trước bản vá.
+  assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
+  assert.equal(armReach({ cli: { label: 'X', does: [] } }, {}, 'cli'), 'X');
+  assert.equal(armReach({ cli: { label: 'X' } }, {}, 'cli'), 'X');
+  // và nó không được đẩy `level`/thư mục đi chỗ khác
+  const line = armReach({ a: { label: 'Kho', level: 'read' } }, { a: { args: ['D:\\Kho'] } }, 'a');
+  assert.equal(line, 'Kho — chỉ đọc (đường tắt tới D:\\Kho)');
+});
+
+test('armReach: `does` đứng SAU nấc quyền — quyền trước, việc sau', () => {
+  const line = armReach({ a: { label: 'Kho', level: 'read', does: ['đọc hoá đơn'] } }, {}, 'a');
+  assert.equal(line, 'Kho — chỉ đọc · đọc hoá đơn');
+});
+
+/**
  * ⭐ NÓI RA NĂNG LỰC, KHÔNG CHỈ NÓI TÊN — nợ ghi 22/08, trả 26/08.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
