@@ -308,6 +308,65 @@ export function secretNames(paths: CompanyPaths): string[] {
 const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
 
 /**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴🔴 THAY Ô TRỐNG Ở **MỌI CHỖ** TRONG CẤU HÌNH — không riêng `headers`.   │
+ * │ (bug user bắt 31/08, bài 20 chặng B)                                     │
+ * │                                                                          │
+ * │ Ca thật: dán khối README có `env: { MEMORY_FILE_PATH: "${MEMORY_PATH}" }`,│
+ * │ giao diện **sinh đúng ô nhập** `MEMORY_PATH`, người dùng điền `abcde` →   │
+ * │ vẫn *"Thiếu chìa: MEMORY_PATH"*. Điền lại bao nhiêu lần cũng thế.         │
+ * │                                                                          │
+ * │ ⚠⚠ NGUYÊN NHÂN LÀ MỘT BẤT ĐỐI XỨNG GIỮA HAI HÀM ĐI CHUNG MỘT ĐƯỜNG:      │
+ * │                                                                          │
+ * │   `missingSecretRefs`  quét **cả cấu hình** (JSON.stringify)  ← phát hiện │
+ * │   `injectSecrets`      chỉ thay trong **`headers`** của HTTP  ← điền      │
+ * │                                                                          │
+ * │ Nhánh stdio không thay ô trống bao giờ — nó chỉ **gộp chìa vào `env`      │
+ * │ theo TÊN** (đúng cho danh mục: server đọc `process.env.NOTION_TOKEN`).    │
+ * │ Nên mọi ô trống nằm ngoài `headers` bị **phát hiện mãi mãi, không bao giờ │
+ * │ được điền** ⇒ vòng lặp vô tận, và câu lỗi lại chỉ vào đúng cái ô người    │
+ * │ dùng VỪA ĐIỀN. Câu lỗi sai cửa tệ nhất: nó tố cáo thứ đang đúng.          │
+ * │                                                                          │
+ * │ Chú thích ở `missingSecretRefs` đã tiên đoán đúng ngày này — *"một hàm    │
+ * │ chỉ nhìn `headers` là hàm sẽ đúng cho tới đúng ngày ai đó viết            │
+ * │ `url: 'https://${HOST}/mcp'`"*. Nó chỉ đoán nhầm CHỖ: `env` của stdio đến │
+ * │ trước, và nó đến qua đường B — đường mà danh mục không che được.          │
+ * │                                                                          │
+ * │ ⇒ **BẤT BIẾN PHẢI GIỮ: phạm vi của hàm ĐIỀN = phạm vi của hàm KIỂM.**     │
+ * │ Lệch một chút là đẻ ra một ô trống không ai điền được. Có test canh.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Ô trống không có chìa thì **giữ nguyên** và ghi vào `missing` — để
+ * `missingSecretRefs` phía sau vẫn bắt được và báo đúng câu *"thiếu chìa"*.
+ */
+function fillRefs<T>(node: T, keys: Record<string, string>, missing: Set<string>): T {
+  if (typeof node === 'string') {
+    return node.replace(PLACEHOLDER, (whole, name: string) => {
+      const v = keys[name];
+      if (v === undefined) {
+        missing.add(name);
+        return whole;
+      }
+      return v;
+    }) as T;
+  }
+  if (Array.isArray(node)) return node.map((v) => fillRefs(v, keys, missing)) as T;
+  /**
+   * ⚠ CHỈ đi vào object THUẦN. Một `McpSdkServerConfigWithInstance` chở
+   * `instance` là một object sống (`McpServer`) — đệ quy vào đó là bò qua cả một
+   * cây đối tượng của SDK và dựng lại một bản sao chết. Nhánh gọi đã chặn bằng
+   * cổng `command`/`url`, nhưng hàm này phải tự an toàn: nó là hàm đệ quy, và
+   * người sửa sau sẽ gọi nó ở chỗ thứ ba.
+   */
+  if (node && typeof node === 'object' && Object.getPrototypeOf(node) === Object.prototype) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) out[k] = fillRefs(v, keys, missing);
+    return out as T;
+  }
+  return node;
+}
+
+/**
  * Ô trống ĐƯỜNG DẪN — `<văn phòng>/.state/browser` điền vào lúc spawn.
  *
  * ⚠ Ngoặc nhọn chứ không phải `${…}`, và đó là **cố ý**: hai cú pháp, hai nghĩa,
@@ -454,40 +513,58 @@ export function injectSecrets<T>(
         : cfg['args'];
     const withArgs = args === cfg['args'] ? cfg : { ...cfg, args };
     if (!Object.keys(keys).length) return withArgs as T;
-    return { ...withArgs, env: { ...((cfg['env'] as object) ?? {}), ...keys } } as T;
+
+    /**
+     * ⭐ THAY Ô TRỐNG TRƯỚC, GỘP THEO TÊN SAU — hai cơ chế, cả hai đều cần.
+     * (vá 31/08, xem khối chú thích ở `fillRefs`)
+     *
+     *   thay ô trống   `env: { MEMORY_FILE_PATH: "${MEMORY_PATH}" }`  ← đường B,
+     *                  người dùng dán README của hãng
+     *   gộp theo tên   server đọc thẳng `process.env.NOTION_TOKEN`     ← danh mục
+     *
+     * Bỏ vế thứ hai là làm hỏng mọi mục danh mục stdio; bỏ vế thứ nhất là đúng
+     * cái bug vừa bắt. Gộp sau khi thay nên một chìa vừa được thay vào chỗ khác
+     * vẫn có mặt trong `env` dưới tên gốc — thừa một biến, và thừa thì vô hại.
+     */
+    const gone = new Set<string>();
+    const filled = fillRefs(withArgs as Record<string, unknown>, keys, gone);
+    warnMissing(gone, 'tiến trình sẽ chạy với ô trống chưa được điền.');
+    return { ...filled, env: { ...((filled['env'] as object) ?? {}), ...keys } } as T;
   }
 
   if (typeof cfg['url'] === 'string') {
-    const headers = cfg['headers'];
-    if (!headers || typeof headers !== 'object') return config;
-    const out: Record<string, string> = {};
     const missing = new Set<string>();
+    const filled = fillRefs(cfg, keys, missing);
+    warnMissing(missing, 'server sẽ trả 401.');
+    const headers = filled['headers'];
+    if (!headers || typeof headers !== 'object') return filled as T;
+    /**
+     * ⚠ ÉP CHUỖI CHO HEADER — giữ nguyên hành vi cũ. Một header số (`{N: 5}`)
+     * đi thẳng xuống SDK là một trường sai kiểu ở tận đáy, và câu lỗi ở đó sẽ
+     * không nói gì về cấu hình người dùng vừa dán. Có test canh.
+     */
+    const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
-      out[k] =
-        typeof v === 'string'
-          ? v.replace(PLACEHOLDER, (whole, name: string) => {
-              const val = keys[name];
-              if (val === undefined) {
-                missing.add(name);
-                return whole;
-              }
-              return val;
-            })
-          : String(v);
+      out[k] = typeof v === 'string' ? v : String(v);
     }
-    if (missing.size) {
-      // TÊN, không bao giờ GIÁ TRỊ — cùng luật với mọi chỗ khác trong file này.
-      process.emitWarning(
-        // ⚠ Cùng luật hai-câu với `worker.ts §pickMcp`: tên dạng `*_OAUTH_xxxxxxxx`
-        // là TÀI KHOẢN ĐĂNG NHẬP, không có chuỗi nào để gõ. Bảo họ `secret set`
-        // là chỉ sai cửa. Nhận dạng bằng chính hình dạng tên — không đoán.
-        `Cánh tay HTTP thiếu chìa ${[...missing].join(', ')} — server sẽ trả 401. ` +
-          `Tên dạng \`*_OAUTH_xxxxxxxx\` là tài khoản đăng nhập (nối lại ở hộp thoại Kết nối); ` +
-          `tên khác thì thêm bằng \`agentco secret set <TÊN>\`. Đừng đi tìm ở phía server.`,
-      );
-    }
-    return { ...cfg, headers: out } as T;
+    return { ...filled, headers: out } as T;
   }
 
   return config;
+}
+
+/**
+ * TÊN, không bao giờ GIÁ TRỊ — cùng luật với mọi chỗ khác trong file này.
+ *
+ * ⚠ Luật hai-câu của `worker.ts §pickMcp`: tên dạng `*_OAUTH_xxxxxxxx` là TÀI
+ * KHOẢN ĐĂNG NHẬP, không có chuỗi nào để gõ. Bảo họ `secret set` là chỉ sai cửa.
+ * Nhận dạng bằng chính hình dạng tên — không đoán.
+ */
+function warnMissing(names: Set<string>, consequence: string): void {
+  if (!names.size) return;
+  process.emitWarning(
+    `Cánh tay thiếu chìa ${[...names].join(', ')} — ${consequence} ` +
+      `Tên dạng \`*_OAUTH_xxxxxxxx\` là tài khoản đăng nhập (nối lại ở hộp thoại Kết nối); ` +
+      `tên khác thì thêm bằng \`agentco secret set <TÊN>\`. Đừng đi tìm ở phía server.`,
+  );
 }

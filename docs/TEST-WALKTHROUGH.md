@@ -2769,8 +2769,17 @@ Dùng `@modelcontextprotocol/server-memory` — 1 trong 7 server tham chiếu c�
 | Ô đo | Kỳ vọng | Thật |
 |---|---|---|
 | **A-1** | không có ô nhập chìa nào hiện ra (đúng — server này 0 chìa) | |
-| **A-2** | tên kết nối hiện ra là gì? *(khối trần **không có tên server** — `parsePaste` chỉ đặt nhãn khi có vỏ `mcpServers`)* | |
-| **A-3** | 🔴 nếu ô "Tên kết nối" **trống hẳn** → cánh tay sẽ mang tên gì trên sơ đồ? | |
+| **A-2** | tên kết nối hiện ra là gì? *(khối trần **không có tên server** — `parsePaste` chỉ đặt nhãn khi có vỏ `mcpServers`)* | ✅ 31/08: kết nối được, **tên là một BĂM** — đúng dự đoán |
+| **A-3** | 🔴 nếu ô "Tên kết nối" **trống hẳn** → cánh tay sẽ mang tên gì trên sơ đồ? | băm. Sửa được bằng `renameArm` ở bảng chi tiết ⇒ **không phải ngõ cụt** |
+
+> ⚠ **A-2/A-3 KHÔNG hoàn toàn vô hại, và lý do mới có từ 30/08.** `armReach` dựng dòng danh bạ bằng
+> `arms[id].label?.trim() || id` ⇒ nhãn rỗng thì **Trợ lý nhìn thấy một cái băm** (`a1b2c3d4e5f`) làm
+> tên cánh tay. Đó đúng là ca §16r vừa đo: một cái tên model không có tiên nghiệm nào ⇒ nó lấp chỗ
+> trống. *"Tên là cái nhà, băm là địa chỉ nhà"* — hiện địa chỉ thay cho tên là ngược.
+>
+> **Đề xuất (chưa làm, chờ user chốt):** khối trần thì suy nhãn mặc định từ chính cấu hình — tên gói
+> trong `args` (`@modelcontextprotocol/server-memory` → `server-memory`), hoặc host của `url`. Rẻ,
+> chỉ chạy khi nhãn rỗng, và không đụng cánh tay nào đang có nhãn.
 
 **Bước A.4.** 🖱 **Thử ngay**.
 
@@ -2807,10 +2816,10 @@ Dùng `@modelcontextprotocol/server-memory` — 1 trong 7 server tham chiếu c�
 
 | Ô đo | Kỳ vọng | Thật |
 |---|---|---|
-| **B-1** | nhãn tự điền thành **`so-tay`** (lấy từ khoá trong `mcpServers`) | |
-| **B-2** | ⭐ **hiện đúng MỘT ô nhập, tên `MEMORY_PATH`** | |
+| **B-1** | nhãn tự điền thành **`so-tay`** (lấy từ khoá trong `mcpServers`) | ✅ |
+| **B-2** | ⭐ **hiện đúng MỘT ô nhập, tên `MEMORY_PATH`** | ✅ |
 | **B-3** | để trống ô đó rồi bấm Thử → chuyện gì xảy ra? *(ô trống ≠ chìa rỗng — `filledKeys()` không gửi ô trống đi)* | |
-| **B-4** | điền một đường dẫn thật → Thử → ✓ | |
+| **B-4** | điền một đường dẫn thật → Thử → ✓ | 🔴🔴 **31/08: HỎNG** — điền rồi vẫn *"Thiếu chìa: MEMORY_PATH"*, **thử lại bao nhiêu lần cũng thế**. ✅ **đã vá cùng ngày** → đo lại: `connected · 9 việc · 6 493 ms` |
 | **B-5** | 📝 `company.yaml`: giá trị lưu là **`${MEMORY_PATH}`** hay giá trị thật? *(phải là ô trống)* | |
 | **B-6** | `agentco secret list` có thấy `MEMORY_PATH` không? | |
 

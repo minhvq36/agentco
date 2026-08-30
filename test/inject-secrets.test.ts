@@ -20,7 +20,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { injectSecrets } from '../dist/core/secrets.js';
+import { injectSecrets, missingSecretRefs } from '../dist/core/secrets.js';
 
 // ─────────────────────────────────────────────────────────────── stdio (cũ)
 
@@ -99,6 +99,52 @@ test('không command, không url ⇒ trả nguyên vẹn', () => {
 test('null/không phải object ⇒ không ném', () => {
   assert.equal(injectSecrets(null, { A: '1' }), null);
   assert.equal(injectSecrets('chuỗi', { A: '1' }), 'chuỗi');
+});
+
+// ───────────────────── ô trống NGOÀI `headers` — bug user bắt 31/08, bài 20 B
+//
+// ┌──────────────────────────────────────────────────────────────────────────┐
+// │ Ca thật: dán khối README có `env: { MEMORY_FILE_PATH: "${MEMORY_PATH}" }`,│
+// │ UI sinh đúng ô nhập, người dùng điền `abcde` → vẫn *"Thiếu chìa:          │
+// │ MEMORY_PATH"*, điền lại bao nhiêu lần cũng thế.                          │
+// │                                                                          │
+// │ Nguyên nhân: `missingSecretRefs` quét CẢ cấu hình, `injectSecrets` chỉ    │
+// │ thay trong `headers` của HTTP. Ô trống ngoài `headers` bị **phát hiện     │
+// │ mãi mãi, không bao giờ được điền** ⇒ vòng lặp vô tận, và câu lỗi chỉ vào  │
+// │ đúng cái ô người dùng VỪA ĐIỀN.                                          │
+// │                                                                          │
+// │ ⇒ BẤT BIẾN: phạm vi hàm ĐIỀN = phạm vi hàm KIỂM. Bốn test dưới canh nó.   │
+// └──────────────────────────────────────────────────────────────────────────┘
+
+test('⭐ stdio: ô trống trong `env` ĐƯỢC THAY — ca đường B, bug 31/08', () => {
+  const out = injectSecrets(
+    { command: 'npx', args: ['-y', 'server-memory'], env: { MEMORY_FILE_PATH: '${MEMORY_PATH}' } },
+    { MEMORY_PATH: 'D:\\so-tay.json' },
+  ) as { env: Record<string, string> };
+  assert.equal(out.env['MEMORY_FILE_PATH'], 'D:\\so-tay.json');
+  // và chìa vẫn có mặt dưới tên gốc — vế "gộp theo tên" của danh mục không mất
+  assert.equal(out.env['MEMORY_PATH'], 'D:\\so-tay.json');
+});
+
+test('⭐ stdio: điền xong thì `missingSecretRefs` phải SẠCH — không còn vòng lặp', () => {
+  const cfg = { command: 'x', env: { P: '${A}' } };
+  assert.deepEqual(missingSecretRefs(injectSecrets(cfg, { A: 'v' })), []);
+  // và thiếu thật thì vẫn phải bắt được
+  assert.deepEqual(missingSecretRefs(injectSecrets(cfg, {})), ['A']);
+});
+
+test('stdio: ô trống trong `args` cũng được thay', () => {
+  const out = injectSecrets({ command: 'x', args: ['--token', '${T}'] }, { T: 'abc' }) as {
+    args: string[];
+  };
+  assert.deepEqual(out.args, ['--token', 'abc']);
+});
+
+test('http: ô trống trong `url` cũng được thay — chỗ chú thích cũ đã tiên đoán', () => {
+  const out = injectSecrets({ url: 'https://${HOST}/mcp', headers: {} }, { HOST: 'a.com' }) as {
+    url: string;
+  };
+  assert.equal(out.url, 'https://a.com/mcp');
 });
 
 test('không sửa tại chỗ — cấu hình gốc phải nguyên vẹn', () => {

@@ -4036,9 +4036,55 @@ Câu hỏi user: *"cái custom MCP kia nếu yêu cầu chìa như kiểu Notion
 rồi hả?"* — **Trong JSON có cái Ô, không có cái CHÌA.** Và ngoài đời cái ô đó có **ba** hình dạng,
 ta mới xử được **một**:
 
+> ## 🔴🔴 CHẠY THẬT 31/08 (user, bài 20 chặng B) — **ca ① CŨNG HỎNG**, và hỏng theo kiểu tệ nhất
+>
+> Bảng dưới viết 30/08 đánh dấu ca ① là 🟢. **Sai.** Nó chỉ 🟢 với `headers` của HTTP.
+>
+> User dán đúng khối README, UI **sinh đúng ô nhập** `MEMORY_PATH`, điền `abcde` → vẫn:
+>
+> ```
+> Thiếu chìa: MEMORY_PATH. Chưa gửi yêu cầu nào — …
+> ```
+>
+> *"Dù có thử lại bao nhiêu lần đi chăng nữa."* — **vòng lặp vô tận, và câu lỗi tố cáo đúng cái ô
+> người dùng VỪA ĐIỀN.**
+>
+> ### Nguyên nhân: hai hàm đi chung một đường, nhìn HAI phạm vi khác nhau
+>
+> | | Phạm vi |
+> |---|---|
+> | `missingSecretRefs` — **phát hiện** | **cả cấu hình** (`JSON.stringify`) |
+> | `injectSecrets` — **điền** | chỉ `headers` của HTTP. Nhánh stdio **chưa bao giờ thay ô trống** — nó chỉ **gộp chìa vào `env` theo TÊN** |
+>
+> ⇒ Mọi ô trống nằm **ngoài `headers`** bị phát hiện mãi mãi, không bao giờ được điền.
+>
+> **Vì sao nó nằm im tới hôm nay:** gộp-theo-tên là đúng cho **danh mục** (server đọc thẳng
+> `process.env.NOTION_TOKEN`), và **không mục danh mục stdio nào có `env`** (`files`, `browser` đều
+> không). Ô trống trong `env` chỉ xuất hiện qua **đường B** — đường mà danh mục không che được.
+> ⇒ Cùng họ [[agentco-debt-hidden-by-model-priors]]: lỗ vô hình cho tới khi có loại dữ liệu mới.
+>
+> ⚠ Và chú thích của chính `missingSecretRefs` đã **tiên đoán đúng ngày này** — *"một hàm chỉ nhìn
+> `headers` là hàm sẽ đúng cho tới đúng ngày ai đó viết `url: 'https://${HOST}/mcp'`"*. Nó chỉ đoán
+> nhầm **CHỖ**: `env` của stdio đến trước.
+>
+> ### ✅ ĐÃ VÁ 31/08 — `secrets.ts §fillRefs`
+>
+> Một lượt thay ô trống **đệ quy trên cả cấu hình**, dùng cho **cả hai** nhánh; stdio giữ nguyên vế
+> gộp-theo-tên (thay trước, gộp sau). HTTP giữ nguyên vế ép chuỗi header.
+>
+> > **BẤT BIẾN PHẢI GIỮ: phạm vi hàm ĐIỀN = phạm vi hàm KIỂM.** Lệch một chút là đẻ ra một ô trống
+> > không ai điền được. Có test canh.
+>
+> ⚠ `fillRefs` **chỉ đi vào object thuần** — cấu hình `type:'sdk'` chở `instance` là một `McpServer`
+> sống, đệ quy vào đó là dựng lại một bản sao chết.
+>
+> **Đo lại bằng đúng cấu hình của user** (`probeArm` thật, $0):
+> `status=connected · 9 việc · 6 493 ms` · `missingSecretRefs` sau khi điền = `[]`.
+> Test **731/731 xanh** (+4, gồm một test khoá đúng bất biến trên).
+
 | # | README ngoài đời viết | Ta làm gì hôm nay | |
 |---|---|---|---|
-| ① | `"env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}` | quét ra ô trống → sinh field → chìa vào `secrets.json` | 🟢 chạy |
+| ① | `"env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}` | quét ra ô trống → sinh field → chìa vào `secrets.json` | 🟢 **sau vá 31/08** (trước đó: 🔴 chỉ đúng cho HTTP) |
 | ② | `"env": {"NOTION_TOKEN": ""}` hoặc `"<your-token-here>"` | **không khớp `${…}` ⇒ không sinh field nào** ⇒ dán vào, Thử, 401, **hết đường** | 🔴 ngõ cụt |
 | ③ | `"headers": {"Authorization": "Bearer ntn_abc123"}` | người dùng thay bằng token **thật** rồi bấm Lưu ⇒ **token đi thẳng vào `company.yaml`** | 🔴🔴 |
 
