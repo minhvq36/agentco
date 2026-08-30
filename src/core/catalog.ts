@@ -1067,7 +1067,22 @@ export function catalogForUi(): (CatalogArm & {
   needsLogin: boolean;
   deviceLogin: boolean;
   serverFence: boolean;
+  host?: string;
 })[] {
+  /**
+   * `host` — TÊN MIỀN của endpoint, và nó ở đây vì một ngõ cụt có thật (31/08).
+   *
+   * Người dùng dán `{"type":"http","url":"https://mcp.notion.com/mcp"}` qua
+   * đường tự cắm, server trả `needs-auth`, và màn hình nói *"cần bạn cho phép
+   * trên trình duyệt"* — trong khi đường đó **không có nút Đăng nhập nào**.
+   * Câu đúng phải là *"dịch vụ này có sẵn ở Dịch vụ có sẵn, dùng đường đó"*, mà
+   * muốn nói được câu đó thì giao diện phải **nhận ra** cái URL họ vừa dán.
+   *
+   * ⚠ Chỉ tên miền, không phải cả URL: đủ để nhận ra hãng, và không phải một
+   * lời hứa rằng đường dẫn đầy đủ của ta trùng đường dẫn họ dán.
+   * ⚠ Không có gì bí mật ở đây — nó nằm sẵn trong README của chính hãng.
+   */
+
   // `needsLogin` suy từ `spec` chứ không khai tay: một mục dùng ô `${OAUTH}` thì
   // nó CẦN đăng nhập, và không có cách nào để hai trường đó nói khác nhau.
   //
@@ -1079,12 +1094,24 @@ export function catalogForUi(): (CatalogArm & {
   // chạy KHÔNG hàng rào (xem `serverFenced`), nên với mục này số đo là **trần**,
   // và nấc dưới sẽ tốn ít hơn thế. Im lặng ở đây là để người dùng đọc một con số
   // đúng cho một cấu hình họ không chọn.
-  return ALL.map((a) => ({
-    ...a,
-    transport: transportOf(a),
-    needsLogin: needsOAuth(a),
-    deviceLogin: a.auth?.kind === 'device',
-    serverFence: serverFenced(a),
-  }));
+  return ALL.map((a) => {
+    let host: string | undefined;
+    if (a.spec.kind === 'http') {
+      try {
+        host = new URL(a.spec.url).hostname;
+      } catch {
+        // URL hỏng trong danh mục là lỗi của ta, nhưng nó KHÔNG được làm sập cả
+        // danh mục — mất một gợi ý thì hơn mất cả lưới chọn.
+      }
+    }
+    return {
+      ...a,
+      transport: transportOf(a),
+      needsLogin: needsOAuth(a),
+      deviceLogin: a.auth?.kind === 'device',
+      serverFence: serverFenced(a),
+      ...(host ? { host } : {}),
+    };
+  });
 }
 

@@ -42,6 +42,12 @@ export interface CanvasNode {
   y: number;
   role?: string;
   server?: string;
+  /**
+   * Khoá sắp xếp bãi đỗ cánh tay (`0-files` · `1-<mục>` · `2-custom`).
+   * Server tính — xem `layout.ts §armGroup`. Giao diện chỉ so chuỗi, **không**
+   * tự phân loại lại. → `canvas/geometry.ts §arrange`
+   */
+  armGroup?: string;
   label: string;
   avatar?: string;
   /** Mức model: `eco` | `standard` | `deep`. */
@@ -427,6 +433,12 @@ export interface CatalogArm {
    * `core/catalog.ts §tierSay`. Không khai ⇒ dùng `TIER_SAY` mặc định.
    */
   tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
+  /**
+   * Tên miền của endpoint (chỉ mục `http`). Để nhận ra một URL người dùng dán
+   * qua đường tự cắm là hãng nào ⇒ chỉ được đúng đường thay vì báo một câu
+   * chung chung. → `catalog.ts §catalogForUi` · `ArmDialog §catalogMatch`
+   */
+  host?: string;
   /** Cần ĐĂNG NHẬP thay vì gõ chìa. Suy từ `spec` ở server, không khai tay. */
   needsLogin?: boolean;
   /**

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import YAML from 'yaml';
 
-import { ensureInstalled } from './armexec.js';
+import { defaultArmLabel, ensureInstalled } from './armexec.js';
 import { loadCompanyConfig, loadOffice } from './config.js';
 import {
   companyPaths,
@@ -580,7 +580,28 @@ export class Company {
     doc.setIn(['mcpServers', id], block(doc.createNode(input.config)));
     // Giữ nhãn cũ nếu mục đã có trong sổ — người dùng cắm lại một thứ từng đặt
     // tên thì cái tên đó là của họ, đừng lặng lẽ thay bằng tên mặc định.
-    const label = this.config.arms[id]?.label || input.label?.trim() || id;
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ BỐN NẤC, và thứ tự là thứ tự ĐỘ TIN CẬY của cái tên. (user 31/08)  │
+     * │                                                                    │
+     * │  ① sổ chung   cắm lại thứ từng đặt tên ⇒ tên đó là **của họ**       │
+     * │  ② người gõ   khoá trong `{"mcpServers":{"so-tay":…}}`, hoặc tên    │
+     * │               mục danh mục. Tên **chuẩn**, do một con người viết ra │
+     * │  ③ suy từ cấu hình  `deepwiki.com` · `server-memory` — máy suy, đọc │
+     * │               được, và đúng trong đa số ca                          │
+     * │  ④ băm        thật thà, nhưng vô nghĩa với người đọc                │
+     * │                                                                    │
+     * │ Nấc ③ mới thêm. Trước đó ② rơi thẳng xuống ④, nên khối JSON **trần** │
+     * │ (không có vỏ `mcpServers`) luôn ra một cái băm.                     │
+     * │                                                                    │
+     * │ ⚠ Và từ 30/08 nó KHÔNG còn chỉ là chuyện thẩm mỹ: `armReach` dựng    │
+     * │ dòng danh bạ bằng `label || id`, nên nhãn rỗng nghĩa là **Trợ lý     │
+     * │ nhìn thấy một cái băm làm tên cánh tay** — đúng ca §16r, nơi một cái │
+     * │ tên model không có tiên nghiệm khiến nó **lấp chỗ trống**.          │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const label =
+      this.config.arms[id]?.label || input.label?.trim() || defaultArmLabel(input.config) || id;
     /**
      * ⚠ `tools` cũng phải GHI RA ĐĨA, không chỉ nhận vào tham số. Cắm lại một
      * cánh tay đã biết thì lấy lại danh sách cũ — cùng lý lẽ với `label` ngay

@@ -29,8 +29,42 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { resolveInput } from '../dist/core/paths.js';
+import { isUrlInput, resolveInput } from '../dist/core/paths.js';
 import { armDirIndex } from '../dist/core/catalog.js';
+
+// ───────────────── LOẠI ĐẦU VÀO THỨ TƯ: ĐỊA CHỈ WEB (bug user báo 31/08)
+//
+// Lần thứ BA cùng lớp lỗi ở cùng hàm: 22/08 đường dẫn tuyệt đối · 26/08 tên
+// cánh tay · 31/08 URL. Cả ba lần Trợ lý bị chặn VÌ TUÂN LỆNH.
+
+test('URL KHÔNG bị biến thành đường dẫn rác trong văn phòng', () => {
+  // Trước bản vá: "D:\vp\https:\github.com\x" — rồi tầng kiểm bảo "không có file đó".
+  assert.equal(resolveInput('D:\\vp', 'https://github.com/modelcontextprotocol/servers'), undefined);
+  assert.equal(resolveInput('D:\\vp', 'HTTP://Example.com/a'), undefined);
+});
+
+test('⭐ CHỈ nhận khi có `http(s)://` — không đoán tên miền trần', () => {
+  /**
+   * User hỏi: *"đôi khi người dùng bỏ qua http, chỉ gõ domain như facebook.com"*.
+   * Không đoán, vì hai cái sai KHÔNG đối xứng:
+   *   URL bị coi là file  → chặn kế hoạch: ỒN ÀO, sửa được
+   *   file bị coi là URL  → cổng kiểm IM LẶNG TẮT ⇒ hỏng xa nguyên nhân, tốn tiền
+   * Không chắc thì chọn phía ồn ào. → [[agentco-safe-default-direction]]
+   */
+  assert.equal(isUrlInput('https://x.com/a'), true);
+  assert.equal(isUrlInput('facebook.com'), false, 'tên miền trần KHÔNG được đoán');
+  assert.equal(isUrlInput('bao-cao.md'), false);
+  assert.equal(isUrlInput('data.csv'), false, 'tên file có dấu chấm không được nhầm là tên miền');
+  assert.equal(isUrlInput('v1.2'), false);
+});
+
+test('🔴 CHUỖI RỖNG không được trỏ vào chính thư mục văn phòng', () => {
+  // `safeJoin(office, '')` trả về đúng `office`, mà thư mục đó LUÔN tồn tại ⇒
+  // cổng kiểm im lặng cho qua. `TaskIOSchema.path` không có `.min(1)` nên ca
+  // này tới được thật.
+  assert.equal(resolveInput('D:\\vp', ''), undefined);
+  assert.equal(resolveInput('D:\\vp', '   '), undefined);
+});
 
 const ARMS = { a1: { label: 'Musics' }, a2: { label: 'Hồ sơ công ty' }, http: { label: 'Notion' } };
 const SERVERS = {

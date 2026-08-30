@@ -192,7 +192,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   }, [canvas.nodes, applyView]);
 
   const autoArrange = useCallback(() => {
-    const placed = arrange(canvas.nodes);
+    const placed = arrange(canvas.nodes, canvas.edges);
     for (const [id, p] of placed) posRef.current.set(id, p);
     paintAll();
     fit();

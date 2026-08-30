@@ -9,7 +9,7 @@ import { isAbsolute, join } from 'node:path';
 
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
-import { existsOnDisk, resolveInput, safeJoin } from './paths.js';
+import { existsOnDisk, isUrlInput, resolveInput, safeJoin } from './paths.js';
 import { armDirIndex } from './catalog.js';
 import { addUsage, filesOnDisk, runWorker, straysOnDisk, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
@@ -295,6 +295,10 @@ export class Scheduler {
           // Thư mục mà một task khác đang ghi vào cũng là "sẽ có" — xem `contains`.
           if (produced.has(want) || [...produced].some((p) => contains(want, p))) continue;
 
+          // Một địa chỉ web không phải phụ thuộc FILE — không có gì để tồn tại
+          // trên đĩa, và không việc nào "tạo ra" nó. → `paths.ts §isUrlInput`
+          if (isUrlInput(i.path)) continue;
+
           const abs = resolveInput(officeDir, i.path, armDirs);
           if (abs && existsOnDisk(abs)) continue;
 
@@ -574,6 +578,9 @@ export class Scheduler {
     const armDirs = armDirIndex(this.deps.office.company.arms, this.deps.office.company.mcpServers);
     const out: string[] = [];
     for (const i of brief.inputs) {
+      // ⚠ CÙNG phép loại trừ mà `validate` dùng — nếu không thì kế hoạch qua
+      // được cửa một rồi chết ở cửa hai, đúng thứ khối chú thích trên cảnh báo.
+      if (isUrlInput(i.path)) continue;
       const abs = resolveInput(this.deps.office.dir, i.path, armDirs);
       if (!abs || !existsOnDisk(abs)) out.push(i.path);
     }

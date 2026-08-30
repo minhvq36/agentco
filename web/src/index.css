@@ -24,6 +24,21 @@
   --color-grid: #ece7de;
   --color-wire: #cbc4b8;
 
+  /**
+   * Ô dán JSON — tên trường vs giá trị. → `lib/json-paint.ts` · `ArmDialog §JsonBox`
+   *
+   * ⚠ PHẢI là token của theme, không phải mã màu viết thẳng trong class. Bản
+   * đầu 31/08 dùng `text-[#2f6f6a]` cứng và user báo ngay *"sao mà mờ quá"*:
+   * màu cố định thì ở theme tối nó là chữ tối trên nền tối. Ở đây mỗi màu có
+   * hai giá trị, và khối `prefers-color-scheme: dark` bên dưới đổi cả hai.
+   *
+   * ⚠ Và chúng phải ĐẬM NGANG `ink`. "Trung tính, không nổi bật" (user chốt) là
+   * nói về ĐỘ RỰC, không phải độ tương phản — chữ nhạt hơn chữ thường thì đọc
+   * ra là "bị mờ", không đọc ra là "trung tính".
+   */
+  --color-jkey: #1f5f57;
+  --color-jval: #6b3f1d;
+
   --radius-node: 12px;
 }
 
@@ -42,6 +57,8 @@
     --color-danger-soft: #40201a;
     --color-grid: #221f18;
     --color-wire: #4a4436;
+    --color-jkey: #7fc8bd;
+    --color-jval: #d9a97c;
   }
 }
 

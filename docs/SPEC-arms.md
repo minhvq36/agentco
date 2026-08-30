@@ -4580,6 +4580,53 @@ cấm ngay từ đầu:
 
 > ⚠ **Ràng buộc 3 và 6 là hai cái phải viết TRƯỚC.** Bốn cái còn lại là kỷ luật, gãy thì sửa được ở
 > một chỗ. Hai cái này là **hình dạng dữ liệu** — sai thì phải chạy lại toàn bộ khai báo của khách.
+
+### 16p-bis. 🔴 ĐO 31/08 — `resolveInput` HỎNG TRONG CONTAINER, và **đừng vá bằng phép đoán**
+
+Soi `resolveInput` với đầu vào biên (user hỏi thẳng: *"còn leak nào… ví dụ trong case dùng container
+docker"*). Số đo:
+
+| | `posix.isAbsolute` | `win32.isAbsolute` |
+|---|---|---|
+| `D:\Downloads\Musics` | **false** | true |
+| `\\server\share\x` | **false** | true |
+| `/home/an/anh` | true | true |
+
+⇒ Daemon chạy **Linux trong container**, người dùng gõ một đường Windows: `isAbsolute` trả **false**
+⇒ rơi xuống `safeJoin(officeDir, …)` ⇒ vì trên POSIX dấu `\` là **ký tự tên file hợp lệ**, nó thành
+một file tên quái dị **nằm trong văn phòng** ⇒ không tồn tại ⇒ và câu lỗi bắn ra là nhánh **tương
+đối**: *"không có file đó, và không việc nào tạo ra nó"* — bảo người dùng sửa **kế hoạch**, trong khi
+thứ sai là **đường dẫn thuộc một hệ điều hành khác**.
+
+> ## ⛔ CÁM DỖ PHẢI TỪ CHỐI: `isAbsolute` "theo cả hai hệ điều hành"
+>
+> Một dòng `path.win32.isAbsolute(p) || path.posix.isAbsolute(p)` **chữa được câu lỗi** và **không
+> chữa được vấn đề**. User chỉ ra đúng chỗ đó:
+>
+> > *"nó còn không close đến thiết kế company của ta, cũng không chắc thư mục (3 hệ điều hành) của
+> > user tổ chức thế nào"* · *"hoàn toàn người dùng có thể cài app vào rất sâu hoặc rất nông"*
+>
+> **Trong container, `D:\Downloads\Musics` không phải một đường dẫn SAI CÚ PHÁP — nó là một đường dẫn
+> đúng, trong một không gian tên container không hề nhìn thấy.** Không có phép kiểm cú pháp nào trả
+> lời được câu *"chỗ này có với tới được từ nơi worker chạy không"*.
+>
+> Và không suy ra được bằng vị trí tương đối: **độ sâu cài đặt là tuỳ người dùng** (`C:\agentco` hay
+> `D:\a\b\c\d\cong-ty`), nên mọi mẹo kiểu *"đếm mấy tầng"* hay *"so với thư mục văn phòng"* đều là
+> đoán, và đoán sai ở đây thì **im lặng**.
+>
+> ⇒ **Thứ đóng được lỗ này là một KHAI BÁO ÁNH XẠ host↔container, không phải một phép đoán.** Nó
+> chính là ràng buộc ④ ở bảng trên (*"mọi đường dẫn qua MỘT hàm giải"*) — chỗ để chèn ánh xạ khi
+> Docker bật. Ghi ở đây để **không ai đi vá bằng `isAbsolute` hai hệ** rồi tưởng đã xong.
+
+**Hai lỗ CÙNG ĐỢT, có thật ở hôm nay, đã vá:**
+
+| | Trước | Sau |
+|---|---|---|
+| URL trong `inputs` | `https://github.com/x` → `D:\vp\https:\github.com\x` → *"không có file đó"* | `isUrlInput` ⇒ không phải phụ thuộc file, cho qua |
+| **chuỗi rỗng** | `''` → **đúng thư mục văn phòng** → luôn tồn tại ⇒ **cổng kiểm im lặng cho qua** | `undefined` ⇒ báo lỗi bình thường |
+
+⚠ Ca rỗng tới được thật: `TaskIOSchema.path` là `z.string()` **không có `.min(1)`**.
+⚠ Vá ở `resolveInput` chứ không siết schema — siết schema là **ném cả kế hoạch** vì một ô trống.
 >
 > ✅ Đổi lại: nếu tuân đủ sáu, ngày bật Docker chỉ còn **một** việc thật — dựng shim HTTP + tầng chìa
 > localhost (§16c). Đó đúng nghĩa *"lên rất nhẹ"*.

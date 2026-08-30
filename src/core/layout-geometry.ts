@@ -65,6 +65,99 @@ const MAX_SLOTS = 200;
 const COL_STEP = NODE_SIZE.agent.w + COL_GAP;
 const ROW_STEP = NODE_SIZE.agent.h + ROW_GAP;
 
+export interface ArrangeNode {
+  id: string;
+  kind: NodeKind;
+  /**
+   * Khoá SẮP XẾP cho cánh tay ở bãi đỗ — chuỗi, so bằng `localeCompare`.
+   *
+   * ⚠ Do **chỗ gọi** tính, không phải file này. Hình học không được biết
+   * "Notion" hay "Linear" là gì; phân loại hãng là **dữ liệu của danh mục**.
+   * Quy ước hiện dùng: `0-files` · `1-<mục danh mục>` · `2-custom`
+   * ⇒ filesystem trước, rồi provider (các provider cùng hãng đứng cạnh nhau vì
+   * cùng tiền tố), rồi hàng tự dán. → `layout.ts §armGroup`
+   */
+  armGroup?: string;
+}
+
+export interface ArrangeEdge {
+  from: string;
+  to: string;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BÃI ĐỖ CHO CÁNH TAY KHÔNG NỐI DÂY — bên trái, ngoài sơ đồ. (user 31/08)  │
+ * │                                                                          │
+ * │ Các hằng số dưới đây **lấy từ chính bố cục user đã tự kéo tay** trong     │
+ * │ `offices/canh-tay/layout.json`, không phải bịa ra:                        │
+ * │                                                                          │
+ * │   cột 1  x ≈ −133…−139      cột 2  x ≈ −309…−312   ⇒ bước ≈ 177          │
+ * │   y      0 · 72 · 143 · 217 · 292 · 376 · 459      ⇒ bước ≈ 72, ĐÚNG 7   │
+ * │   y bắt đầu = 0, **cao hơn Trợ lý** (y=40) — user nêu đích danh mốc này  │
+ * │                                                                          │
+ * │ Lấy số từ thứ người dùng đã tự làm thì "sắp xếp lại" không giật cục: nó   │
+ * │ dọn về gần đúng chỗ họ vốn để.                                           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const PARK_PER_COL = 7;
+/** Khe nhìn thấy giữa hai node ở bãi đỗ. Mọi bước dưới đây suy ra từ nó. */
+const PARK_GAP = 20;
+const PARK_ROW_STEP = NODE_SIZE.mcp.h + PARK_GAP; // 72 — đúng bước user đã tự kéo
+const PARK_COL_STEP = NODE_SIZE.mcp.w + PARK_GAP; // 172
+/**
+ * 🔴 KHE NGANG giữa bãi đỗ và sơ đồ chính. **Đây là số cần sửa nếu còn xa/gần.**
+ *
+ * User 31/08: *"gap x hiện tại đang hơi xa, cho nó gần lại với đáy dưới của tam
+ * giác, chắc gap x = gap y nhỉ, cỡ đó"*.
+ *
+ * Trước: cột đầu ở `x = -133` ⇒ mép phải = 19, mà mép trái sơ đồ là `ORIGIN_X`
+ * = 140 ⇒ khe **121px**. Giờ đặt bằng đúng MỘT nhịp dọc của bãi đỗ (72) —
+ * "gap x = gap y" theo nghĩa cùng một bước lưới. Khe 20 (bằng khe giữa hai node)
+ * thì bãi đỗ dính vào sơ đồ và mắt đọc ra là **cùng một hàng**, mất luôn ý
+ * "hàng chưa dùng để riêng một chỗ".
+ */
+const PARK_CLEAR = PARK_ROW_STEP;
+const PARK_X = ORIGIN_X - PARK_CLEAR - NODE_SIZE.mcp.w;
+const PARK_Y = 0;
+
+/** Ô thứ `i` của bãi đỗ: đầy một cột (7) rồi mở cột mới **sang trái**. */
+export function parkSlot(i: number): Point {
+  return {
+    x: PARK_X - Math.floor(i / PARK_PER_COL) * PARK_COL_STEP,
+    y: PARK_Y + (i % PARK_PER_COL) * PARK_ROW_STEP,
+  };
+}
+
+/**
+ * Ô cho một cánh tay MỚI, bám theo chủ của nó.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 BUG user bắt 31/08: *"cứ thêm 1 MCP mới, địa điểm nó chọn rất tệ…      │
+ * │ nó chọn faraway"*.                                                       │
+ * │                                                                          │
+ * │ Thủ phạm: `firstFreeSlot` đi trên **lưới NHÂN VIÊN** cho mọi loại node.   │
+ * │ Bước lưới đó là 202×120 — quá thô cho một node 152×52 — nên nó nhảy qua   │
+ * │ hết mọi khe trống thật rồi rơi ra tận rìa sơ đồ. Với bố cục user đang có  │
+ * │ (nhân viên, hai kho, và một bãi đỗ tự kéo bên trái) thì ô trống đầu tiên  │
+ * │ trên lưới ấy nằm rất xa.                                                  │
+ * │                                                                          │
+ * │ ⇒ Cánh tay phải có LƯỚI RIÊNG: bước bằng chính cỡ nó, quét NGANG ngay     │
+ * │ dưới chủ của nó, toả ra hai bên rồi mới xuống hàng.                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function armSlot(i: number, centerX: number, topY: number): Point {
+  const step = NODE_SIZE.mcp.w + COL_GAP;
+  const perRow = 7;
+  const j = i % perRow;
+  // 0, +1, −1, +2, −2… — toả ra từ trục, cùng khuôn `centeredSlot`.
+  const off = j === 0 ? 0 : j % 2 === 1 ? Math.ceil(j / 2) : -(j / 2);
+  return {
+    x: Math.round(centerX - NODE_SIZE.mcp.w / 2 + off * step),
+    y: topY + Math.floor(i / perRow) * (NODE_SIZE.mcp.h + ROW_GAP),
+  };
+}
+
 /** Ô lưới thứ `i` của hàng nhân viên, đếm từ TRÁI sang. */
 export function agentSlot(i: number): Point {
   return {
@@ -121,18 +214,100 @@ export function centeredSlot(i: number, centerX: number): Point {
  * khác biệt "hệ thống tự học" / "bạn đưa vào" mới đọc được bằng mắt.
  */
 export function arrangeAll(
-  nodes: readonly { id: string; kind: NodeKind }[],
+  nodes: readonly ArrangeNode[],
+  /**
+   * Cạnh `mcp → agent`. Không truyền ⇒ hành vi CŨ (mọi cánh tay xếp một hàng
+   * căn giữa) — mọi chỗ gọi cũ và mọi test cũ giữ nguyên kết quả.
+   */
+  edges: readonly ArrangeEdge[] = [],
 ): Map<string, Point> {
   const out = new Map<string, Point>();
   const agents = nodes.filter((n) => n.kind === 'agent');
   const mcps = nodes.filter((n) => n.kind === 'mcp');
 
-  agents.forEach((n, i) => out.set(n.id, agentSlot(i)));
+  const { owned, parked } = groupArms(agents, mcps, edges);
+  const blocks = edges.length > 0;
 
-  const cols = Math.min(PER_ROW, Math.max(1, agents.length));
-  const width = cols * (NODE_SIZE.agent.w + COL_GAP) - COL_GAP;
-  const mid = ORIGIN_X + width / 2;
-  const rows = Math.max(1, Math.ceil(agents.length / PER_ROW));
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HÀNG CÁNH TAY QUYẾT ĐỊNH CHIỀU NGANG, KHÔNG PHẢI NGƯỢC LẠI. (user 31/08) │
+   * │                                                                          │
+   * │   *"Các worker phải cân đối với các mcp của mình"* ·                     │
+   * │   *"thứ tự sắp xếp phải theo worker (để tránh vướng dây chằng chéo)"*    │
+   * │                                                                          │
+   * │ Bản cũ đặt nhân viên lên lưới trước, rồi rải TẤT CẢ cánh tay thành một   │
+   * │ hàng căn giữa toàn sơ đồ. Hệ quả: cánh tay của người ngoài cùng bên trái │
+   * │ có thể rơi sang phải, và mọi sợi dây cắt chéo qua nhau.                  │
+   * │                                                                          │
+   * │ Đảo lại: mỗi nhân viên có một KHỐI cánh tay của riêng mình, các khối xếp │
+   * │ liền nhau theo đúng thứ tự nhân viên, rồi **nhân viên được căn lên giữa  │
+   * │ khối của mình**. Dây thành những chùm song song, không sợi nào cắt sợi   │
+   * │ nào — vì thứ tự ngang của cánh tay CHÍNH LÀ thứ tự ngang của chủ nó.     │
+   * │                                                                          │
+   * │ ⚠ Vẫn giữ đúng 4 tầng (user chốt: *"mô hình 4 hàng vẫn đúng"*). Quá      │
+   * │ `PER_ROW` nhân viên thì mỗi HÀNG nhân viên có hàng cánh tay riêng ngay   │
+   * │ dưới nó — đó là cách duy nhất giữ "cánh tay nằm dưới chủ nó" mà không    │
+   * │ để hai hàng đè lên nhau.                                                 │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const rowsOf: ArrangeNode[][] = [];
+  for (let i = 0; i < agents.length; i += PER_ROW) rowsOf.push(agents.slice(i, i + PER_ROW));
+  if (!rowsOf.length) rowsOf.push([]);
+
+  const armStep = NODE_SIZE.mcp.w + COL_GAP;
+  /** Bề ngang khối của một nhân viên: rộng bằng cái rộng hơn giữa người và đám cánh tay. */
+  const blockW = (a: ArrangeNode): number => {
+    const n = blocks ? (owned.get(a.id)?.length ?? 0) : 0;
+    return Math.max(NODE_SIZE.agent.w, n ? n * armStep - COL_GAP : 0);
+  };
+
+  /** Bề ngang của hàng rộng nhất — cái này định nghĩa trục giữa của cả sơ đồ. */
+  let widest = 0;
+  for (const row of rowsOf) {
+    const w = row.reduce((s, a) => s + blockW(a), 0) + Math.max(0, row.length - 1) * COL_GAP;
+    widest = Math.max(widest, w);
+  }
+  if (!widest) widest = NODE_SIZE.agent.w;
+  const mid = ORIGIN_X + widest / 2;
+
+  // Đặt từng hàng: khối liền khối, cả hàng căn vào trục giữa.
+  let y = ORIGIN_Y;
+  for (const row of rowsOf) {
+    const rowW = row.reduce((s, a) => s + blockW(a), 0) + Math.max(0, row.length - 1) * COL_GAP;
+    let x = Math.round(mid - rowW / 2);
+    for (const a of row) {
+      const w = blockW(a);
+      out.set(a.id, { x: Math.round(x + w / 2 - NODE_SIZE.agent.w / 2), y });
+      const mine = blocks ? (owned.get(a.id) ?? []) : [];
+      if (mine.length) {
+        const armW = mine.length * armStep - COL_GAP;
+        const armX = Math.round(x + w / 2 - armW / 2);
+        const armY = y + NODE_SIZE.agent.h + ROW_GAP + SHELF_DROP;
+        mine.forEach((m, i) => out.set(m.id, { x: armX + i * armStep, y: armY }));
+      }
+      x += w + COL_GAP;
+    }
+    y += NODE_SIZE.agent.h + ROW_GAP + (blocks ? NODE_SIZE.mcp.h + SHELF_DROP + ROW_GAP : 0);
+  }
+
+  /**
+   * CÁNH TAY KHÔNG NỐI DÂY → BÃI ĐỖ BÊN TRÁI. (user chốt 31/08)
+   *
+   * *"Các mcp không dùng thì xếp thành các hàng dọc bên tay trái xa nhất, mỗi
+   * cột 7 mcp tối đa… sắp xếp theo type (filesystem, provider, custom), trong
+   * provider thì cũng sắp xếp theo provider."*
+   *
+   * ⚠ Thứ tự lấy từ `armGroup` — một chuỗi do **chỗ gọi** tính, không phải ở đây.
+   * File này không được biết "Notion" hay "Linear" là gì: nó là hình học thuần,
+   * còn phân loại hãng là **dữ liệu của danh mục**. Trộn vào là đúng cái
+   * `arms/index.ts` đã dựng hàng rào để chặn.
+   */
+  parked
+    .slice()
+    .sort((a, b) => (a.armGroup ?? '~').localeCompare(b.armGroup ?? '~') || a.id.localeCompare(b.id))
+    .forEach((n, i) => out.set(n.id, parkSlot(i)));
+
+  const rows = rowsOf.length;
 
   /**
    * BỐN TẦNG, và thứ tự này là một CÂU đọc từ trên xuống:
@@ -148,7 +323,14 @@ export function arrangeAll(
    */
   const armRow = mcps.length ? NODE_SIZE.mcp.h + SHELF_DROP : 0;
   const armY = ORIGIN_Y + rows * (NODE_SIZE.agent.h + ROW_GAP) + SHELF_DROP;
-  const shelfY = armY + armRow;
+  /**
+   * Đáy của hai kho: dưới hàng cuối cùng đã đặt.
+   *
+   * Ở chế độ KHỐI, `y` đã chạy qua mọi hàng (mỗi hàng gồm nhân viên + cánh tay
+   * của họ), nên nó chính là mép dưới — không tính lại theo `rows` được nữa.
+   * Chế độ cũ thì giữ nguyên công thức cũ, từng ký tự.
+   */
+  const shelfY = blocks ? y - ROW_GAP + SHELF_DROP : armY + armRow;
   const shelfW = NODE_SIZE.knowledge.w + SHELF_GAP + NODE_SIZE.library.w;
   const shelfX = Math.round(mid - shelfW / 2);
 
@@ -180,14 +362,53 @@ export function arrangeAll(
    * │ tay cùng nằm ở tầng dưới vì chúng cùng là thứ nhân viên VỚI TỚI.         │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  if (mcps.length) {
-    const armStep = NODE_SIZE.mcp.w + COL_GAP;
-    const armW = mcps.length * armStep - COL_GAP;
+  // ⚠ CHỈ chạy ở chế độ cũ (không có cạnh). Có cạnh thì cánh tay đã được đặt
+  // theo khối ở trên, và chạy lại vòng này là xoá sạch việc đó.
+  if (!blocks && mcps.length) {
+    const oneRow = NODE_SIZE.mcp.w + COL_GAP;
+    const armW = mcps.length * oneRow - COL_GAP;
     const armX = Math.round(mid - armW / 2);
-    mcps.forEach((n, i) => out.set(n.id, { x: armX + i * armStep, y: armY }));
+    mcps.forEach((n, i) => out.set(n.id, { x: armX + i * oneRow, y: armY }));
   }
 
   return out;
+}
+
+/**
+ * Cánh tay nào thuộc về nhân viên nào — và cái nào **không của ai**.
+ *
+ * ⚠ CHỦ CHÍNH = người đứng TRÁI NHẤT trong số những người cầm nó. Một cánh tay
+ * dùng chung phải chọn đúng một chỗ đứng; chọn người trái nhất thì sợi dây thứ
+ * hai luôn đi sang PHẢI, cùng chiều với mọi sợi khác — thay vì có sợi rẽ trái,
+ * sợi rẽ phải, và chúng cắt nhau ngay dưới hàng nhân viên.
+ */
+function groupArms(
+  agents: readonly ArrangeNode[],
+  mcps: readonly ArrangeNode[],
+  edges: readonly ArrangeEdge[],
+): { owned: Map<string, ArrangeNode[]>; parked: ArrangeNode[] } {
+  const order = new Map(agents.map((a, i) => [a.id, i]));
+  const holders = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!order.has(e.to)) continue;
+    const list = holders.get(e.from);
+    if (list) list.push(e.to);
+    else holders.set(e.from, [e.to]);
+  }
+  const owned = new Map<string, ArrangeNode[]>();
+  const parked: ArrangeNode[] = [];
+  for (const m of mcps) {
+    const hs = holders.get(m.id);
+    if (!hs?.length) {
+      parked.push(m);
+      continue;
+    }
+    const boss = hs.reduce((best, h) => (order.get(h)! < order.get(best)! ? h : best));
+    const list = owned.get(boss);
+    if (list) list.push(m);
+    else owned.set(boss, [m]);
+  }
+  return { owned, parked };
 }
 
 /** Hai hình chữ nhật có chạm nhau không (đã cộng khoảng hở nhìn được). */

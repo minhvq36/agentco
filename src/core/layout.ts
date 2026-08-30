@@ -28,12 +28,18 @@ import {
   NODE_SIZE,
   SHELF_GAP,
   agentSlot,
+  armSlot,
   arrangeAll,
   clashes,
   firstFreeSlot,
+  parkSlot,
   type NodeKind,
   type Point,
 } from './layout-geometry.js';
+
+/** Khe giữa đáy nhân viên và đỉnh cánh tay của họ. Khớp `arrangeAll`. */
+const ARM_DROP = 74;
+import { findArm } from './catalog.js';
 import { isSafeId } from './paths.js';
 
 export { NODE_SIZE };
@@ -127,7 +133,17 @@ export class LayoutStore {
    * dùng thả file vào tay vẫn thấy nó xuất hiện). Có node mà thiếu file yaml →
    * GIỮ LẠI node, đánh dấu `missing` để canvas hiện đỏ, không xoá âm thầm.
    */
-  read(): { layout: LayoutFile; missing: Set<string> } {
+  /**
+   * `pending` = cạnh `mcp → agent` **sắp được ghi**, do `save()` đưa xuống.
+   *
+   * Chỉ dùng để CHỌN CHỖ cho node chưa có toạ độ. Nó không đi vào file, không
+   * đổi cạnh nào — nguồn sự thật của cạnh mcp vẫn là `roles/*.yaml`.
+   * Vì sao cần: xem khối chú thích trong `spotFor`.
+   */
+  read(pending: readonly { from: string; to: string }[] = []): {
+    layout: LayoutFile;
+    missing: Set<string>;
+  } {
     const raw = this.readRaw();
     const stored = new Map(raw.nodes.map((n) => [n.id, n]));
 
@@ -185,8 +201,23 @@ export class LayoutStore {
     wanted.push({ id: KNOWLEDGE_NODE, kind: 'knowledge', x: 0, y: 0 });
     wanted.push({ id: LIBRARY_NODE, kind: 'library', x: 0, y: 0 });
 
-    // Bố cục sạch, tính bằng ĐÚNG hàm mà nút "Sắp xếp lại sơ đồ" chạy.
-    const tidy = arrangeAll(wanted);
+    /**
+     * Bố cục sạch, tính bằng ĐÚNG hàm mà nút "Sắp xếp lại sơ đồ" chạy.
+     *
+     * ⚠ Cạnh dựng từ `role.mcp` — **nguồn sự thật là yaml**, không phải cạnh
+     * trong `layout.json` (chúng còn chưa được dựng ở đoạn này, và kể cả có thì
+     * cạnh `mcp→agent` cố ý không được lưu ở đó). Cùng dữ liệu mà `arrangeAll`
+     * cần để biết cánh tay nào thuộc về ai.
+     */
+    const links: { from: string; to: string }[] = [];
+    for (const [roleId, role] of this.office.roles) {
+      if (this.office.archivedRoles.has(roleId)) continue;
+      for (const s of role.mcp) links.push({ from: mcpNodeId(s), to: agentNodeId(roleId) });
+    }
+    // Cạnh sắp ghi cũng vào bố cục sạch — nếu không, `tidy` và `spotFor` nhìn
+    // hai sự thật khác nhau về cùng một cánh tay trong cùng một lời gọi.
+    for (const e of pending) if (!links.some((l) => l.from === e.from && l.to === e.to)) links.push(e);
+    const tidy = arrangeAll(wanted.map((n) => ({ ...n, ...this.armGroup(n) })), links);
 
     const nodes: LayoutNode[] = [];
     const seen = new Set<string>();
@@ -274,7 +305,7 @@ export class LayoutStore {
     }
 
     // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho node mới.
-    for (const n of fresh) keep({ ...n, ...this.spotFor(n, nodes, tidy) });
+    for (const n of fresh) keep({ ...n, ...this.spotFor(n, nodes, tidy, pending) });
 
     const byId = new Map(nodes.map((n) => [n.id, n]));
     // Chưa có file = mọi nhân viên đều được giao việc. Đây là phép thử
@@ -308,6 +339,24 @@ export class LayoutStore {
   }
 
   /**
+   * Khoá SẮP XẾP cho cánh tay ở bãi đỗ. → `layout-geometry.ts §ArrangeNode`
+   *
+   *   `0-files`      thư mục trên máy      — nhóm riêng, đứng đầu
+   *   `1-<mục>`      dịch vụ có sẵn        — cùng hãng thì cùng tiền tố ⇒ đứng cạnh nhau
+   *   `2-custom`     tự dán, không có mục
+   *
+   * ⚠ Phân loại bằng `entry.folders` chứ không bằng **tên mục**: đúng cùng luật
+   * `ArmDialog §kindOf` đang dùng cho icon. Một trục phân loại, hai chỗ đọc —
+   * thêm một hãng thư mục nữa thì cả hai tự đúng, không ai phải nhớ gì.
+   */
+  armGroup(n: { kind: NodeKind; server?: string }): { armGroup?: string } {
+    if (n.kind !== 'mcp' || !n.server) return {};
+    const cat = this.office.company.arms[n.server]?.catalog;
+    if (!cat) return { armGroup: '2-custom' };
+    return { armGroup: findArm(cat)?.folders ? '0-files' : `1-${cat}` };
+  }
+
+  /**
    * Chỗ ngồi cho một node CHƯA TỪNG có toạ độ. Ba nước, dừng ở nước đầu chạy được.
    *
    * 1. **Chưa có `layout.json`** = văn phòng mới tinh, chưa ai kéo gì → dùng
@@ -328,7 +377,12 @@ export class LayoutStore {
    *
    * 4. Còn lại: chỗ sạch nếu chỗ đó trống, không thì ô lưới trống đầu tiên.
    */
-  private spotFor(node: LayoutNode, placed: readonly LayoutNode[], tidy: ReadonlyMap<string, Point>): Point {
+  private spotFor(
+    node: LayoutNode,
+    placed: readonly LayoutNode[],
+    tidy: ReadonlyMap<string, Point>,
+    pending: readonly { from: string; to: string }[] = [],
+  ): Point {
     if (!this.exists) return tidy.get(node.id) ?? agentSlot(0);
 
     if (node.kind === 'library' || node.kind === 'knowledge') {
@@ -348,6 +402,75 @@ export class LayoutStore {
       const boss = placed.find((n) => n.kind === 'assistant');
       const centerX = boss ? boss.x + NODE_SIZE.assistant.w / 2 : undefined;
       return firstFreeSlot(placed, 'agent', centerX);
+    }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 CÁNH TAY MỚI BÁM THEO CHỦ CỦA NÓ. (bug user bắt 31/08)          │
+     * │                                                                    │
+     * │   *"cứ thêm 1 MCP kết nối mới: địa điểm nó chọn rất tệ: thay vì     │
+     * │    ngay dưới worker được kết nối còn 1 vài khoảng trống, nó chọn    │
+     * │    faraway"*                                                       │
+     * │                                                                    │
+     * │ Hai lý do chồng nhau, và phải sửa cả hai:                          │
+     * │  ① `tidy` tính cho bố cục SẠCH, mà người dùng đã kéo mọi thứ đi     │
+     * │     chỗ khác ⇒ ô đó gần như luôn `clashes` ⇒ rơi xuống nước hai.    │
+     * │  ② nước hai là `firstFreeSlot` — lưới NHÂN VIÊN, bước 202×120. Quá  │
+     * │     thô cho một node 152×52, nên nó nhảy qua hết khe trống thật.    │
+     * │                                                                    │
+     * │ ⇒ Đi tìm CHỦ trước (`role.mcp` là nguồn sự thật, không phải cạnh    │
+     * │ trong layout.json), rồi quét lưới riêng của cánh tay ngay dưới họ.  │
+     * │ Không ai cầm ⇒ nó là hàng chưa dùng ⇒ **bãi đỗ bên trái**, đúng chỗ │
+     * │ user đã tự kéo chúng tới.                                          │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    if (node.kind === 'mcp' && node.server) {
+      const owners = new Set<string>();
+      for (const [roleId, role] of this.office.roles) {
+        if (role.mcp.includes(node.server)) owners.add(agentNodeId(roleId));
+      }
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 SỢI DÂY SẮP ĐƯỢC GHI CŨNG TÍNH. (bug user bắt 31/08)            │
+       * │                                                                    │
+       * │   *"node mcp vừa kết nối lại canvas, nó lại mọc rất xa ở farleft,  │
+       * │    trong khi nó chỉ cần nối thẳng xuống"*                          │
+       * │                                                                    │
+       * │ Thứ tự trong `grantArm` là: ghi `office.arms` → **đặt chỗ cho node**│
+       * │ → mới ghi sợi dây (`role.mcp`). Nên đúng lúc `spotFor` chạy,        │
+       * │ `role.mcp` **còn rỗng** ⇒ không tìm ra chủ ⇒ coi là hàng chưa dùng  │
+       * │ ⇒ **đỗ bên trái**. Và vì toạ độ đã lưu, `spotFor` không chạy lại    │
+       * │ lần nào nữa: nó nằm đó vĩnh viễn.                                  │
+       * │                                                                    │
+       * │ Bản vá 30/08 đúng về hình học và sai về THỜI ĐIỂM — nó hỏi một      │
+       * │ nguồn sự thật chưa kịp thành sự thật. Cùng lớp §3a: *thứ đo được   │
+       * │ không phải trạng thái, là THỜI ĐIỂM HỎI*.                          │
+       * │                                                                    │
+       * │ ⇒ `save()` đưa xuống chính danh sách cạnh nó **sắp ghi**. Không có │
+       * │ cạnh nào (cắm mà chưa giao cho ai) thì vẫn đỗ bên trái — đúng.     │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      for (const e of pending) {
+        if (e.from === node.id) owners.add(e.to);
+      }
+      const anchors = placed.filter((n) => owners.has(n.id));
+      if (anchors.length) {
+        // Trục = tâm của chủ TRÁI NHẤT. Cùng luật `groupArms`: mọi sợi dây thứ
+        // hai đi sang phải, không sợi nào cắt sợi nào.
+        const boss = anchors.reduce((a, b) => (a.x <= b.x ? a : b));
+        const centerX = boss.x + NODE_SIZE.agent.w / 2;
+        const topY = Math.max(...anchors.map((a) => a.y + NODE_SIZE.agent.h)) + ARM_DROP;
+        for (let i = 0; i < 40; i++) {
+          const spot = armSlot(i, centerX, topY);
+          if (!clashes(spot, 'mcp', placed)) return spot;
+        }
+      } else {
+        const parked = placed.filter((n) => n.kind === 'mcp');
+        for (let i = 0; i < 40; i++) {
+          const spot = parkSlot(i);
+          if (!clashes(spot, 'mcp', parked)) return spot;
+        }
+      }
     }
 
     const want = tidy.get(node.id);
@@ -385,7 +508,19 @@ export class LayoutStore {
    * Trả về danh sách file đã sửa, để caller biết có phải nạp lại không.
    */
   save(input: { nodes?: unknown; edges?: unknown }): { touched: string[] } {
-    const current = this.read().layout;
+    /**
+     * ⭐ ĐƯA CẠNH SẮP GHI XUỐNG `read()` — xem khối chú thích ở `spotFor`.
+     *
+     * Quét thô, KHÔNG qua `sanitizeEdges`: hàm đó cần `byId`, mà `byId` lại đến
+     * từ chính `read()` này — vòng tròn. Ở đây chỉ cần một **gợi ý chỗ ngồi**,
+     * nên một cạnh rác lọt vào cũng chỉ là gợi ý bị bỏ qua, không ghi ra đâu cả.
+     */
+    const hint = Array.isArray(input.edges)
+      ? (input.edges as { from?: unknown; to?: unknown }[])
+          .filter((e) => typeof e?.from === 'string' && typeof e?.to === 'string')
+          .map((e) => ({ from: e.from as string, to: e.to as string }))
+      : [];
+    const current = this.read(hint).layout;
     const byId = new Map(current.nodes.map((n) => [n.id, n]));
 
     /**

@@ -291,6 +291,46 @@ export function safeJoin(base: string, relative: string): string {
 }
 
 /**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ LOẠI ĐẦU VÀO THỨ TƯ: **MỘT ĐỊA CHỈ WEB**. (bug user báo 31/08)           │
+ * │                                                                          │
+ * │ User: *"tra giúp repo modelcontextprotocol/servers…"* → Trợ lý chép URL   │
+ * │ vào `inputs` (đúng như `ASSISTANT_CORE` dặn) → chặn cả kế hoạch:         │
+ * │ *"cần đọc … nhưng không có file đó"*. Đo được: `resolveInput` biến        │
+ * │ `https://github.com/x` thành **`D:\vp\https:\github.com\x`** — một đường  │
+ * │ dẫn rác, rồi `existsSync` nói không có, đúng như nó phải nói.            │
+ * │                                                                          │
+ * │ ⚠⚠ LẦN THỨ BA cùng một lớp lỗi ở cùng một hàm: 22/08 mù trước đường dẫn  │
+ * │ tuyệt đối · 26/08 mù trước tên cánh tay · 31/08 mù trước URL. Cả ba lần   │
+ * │ Trợ lý **bị chặn vì tuân lệnh**, và cả ba lần lỗi ở TẦNG KIỂM.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ═══ 🔴 VÌ SAO CHỈ NHẬN KHI CÓ `http://` / `https://` ═══
+ *
+ * User hỏi thẳng: *"đôi khi người dùng bỏ qua http, chỉ gõ domain như
+ * facebook.com thì công việc xác định lại khó thêm nữa"*. Đúng — và câu trả lời
+ * là **không đoán**, vì hai cái sai KHÔNG đối xứng:
+ *
+ * | đoán sai | hậu quả |
+ * |---|---|
+ * | URL thật bị coi là file | kế hoạch bị chặn — **ồn ào, sửa được**, gõ lại là xong |
+ * | tên file thật bị coi là URL | **cổng kiểm im lặng tắt** cho đầu vào đó ⇒ worker chạy, tốn tiền, rồi hỏng ở xa nguyên nhân |
+ *
+ * ⇒ Không chắc thì chọn phía **ồn ào**. → [[agentco-safe-default-direction]]
+ *
+ * Và `facebook.com` **thật sự không phân biệt được**: `report.md`, `data.csv`,
+ * `v1.2` cũng có dấu chấm. Một phép đoán "trông như tên miền" sẽ bắn vào tên
+ * file thật, tức là tự tắt cổng kiểm cho đúng thứ nó sinh ra để canh.
+ *
+ * ⚠ Hệ quả CÓ Ý THỨC: gõ trống `facebook.com` thì vẫn bị chặn như cũ. Đó là ca
+ * **chưa vá**, không phải ca đã vá — và câu lỗi vẫn nói được rằng không có file
+ * tên đó, tức người dùng còn đường sửa (gõ đủ `https://`).
+ */
+export function isUrlInput(p: string): boolean {
+  return /^https?:\/\/\S+$/i.test(p.trim());
+}
+
+/**
  * ĐẦU VÀO của một task → đường dẫn tuyệt đối để mở. `undefined` = không hợp lệ.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -349,6 +389,26 @@ export function resolveInput(
    */
   armDirs?: Record<string, string>,
 ): string | undefined {
+  /**
+   * 🔴 CHUỖI RỖNG TRỎ VÀO CHÍNH THƯ MỤC VĂN PHÒNG. (soi ra 31/08, đo được)
+   *
+   * `safeJoin(officeDir, '')` trả về **đúng `officeDir`**, mà thư mục đó thì
+   * luôn tồn tại ⇒ `existsOnDisk` nói CÓ ⇒ cổng kiểm đầu vào **im lặng cho
+   * qua**, và worker nhận một đầu vào trỏ vào cả văn phòng.
+   *
+   * Ca này tới được thật: `TaskIOSchema.path` là `z.string()` **không có
+   * `.min(1)`**, nên một `{"kind":"file","path":""}` do model sinh ra đi qua
+   * schema bình thường.
+   *
+   * ⚠ Vá ở đây chứ không siết schema: siết schema là **ném cả kế hoạch** vì một
+   * ô trống, trong khi ở đây nó chỉ thành "đầu vào không hợp lệ" và người dùng
+   * nhận đúng câu lỗi vốn có.
+   */
+  if (!p.trim()) return undefined;
+
+  // Một địa chỉ web KHÔNG phải một đường dẫn. Trả `undefined` thay vì ghép nó
+  // vào thư mục văn phòng — xem `isUrlInput`.
+  if (isUrlInput(p)) return undefined;
   if (path.isAbsolute(p)) return p;
 
   let inOffice: string | undefined;

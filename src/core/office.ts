@@ -2065,9 +2065,13 @@ export class Office {
     };
 
     return {
-      nodes: layout.nodes.map((n) =>
-        this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf),
-      ),
+      nodes: layout.nodes.map((n) => ({
+        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf),
+        // Khoá sắp xếp bãi đỗ — tính ở MỘT chỗ (`layout.ts §armGroup`) rồi gửi
+        // kèm, để nút "Sắp xếp lại" ở trình duyệt xếp y hệt server. Tính lại ở
+        // giao diện là dựng bản mã thứ hai của cùng một luật phân loại.
+        ...this.layout.armGroup(n),
+      })),
       edges: layout.edges,
       knowledge: { shared: this.knowledge.countShared(), total: this.knowledge.size },
     };

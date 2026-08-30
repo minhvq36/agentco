@@ -88,6 +88,58 @@ export function npxSpec(config: ExecConfig): { spec: string; rest: string[] } | 
   return { spec, rest: args.slice(at + 1) };
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ TÊN MẶC ĐỊNH SUY TỪ CHÍNH CẤU HÌNH — thay cho việc hiện một cái BĂM.      │
+ * │ (user chốt 31/08) → `company.ts §addArm`                                 │
+ * │                                                                          │
+ * │ Trả lời thẳng hai câu user hỏi:                                          │
+ * │                                                                          │
+ * │ **① "Có phải custom MCP nào cũng có `url` không?"** — KHÔNG. Chỉ mục      │
+ * │ `http`/`sse`. Mục `stdio` có `command`/`args` và **không có `url` nào**.  │
+ * │ Nên hàm này đọc CẢ HAI hình dạng, không chỉ một.                         │
+ * │                                                                          │
+ * │ **② "Có phải lúc nào cũng cùng depth, hay tìm key `url` any depth?"** —   │
+ * │ **LUÔN Ở TẦNG NGOÀI CÙNG, và tìm-mọi-tầng là SAI.** `McpHttpServerConfig` │
+ * │ của SDK phẳng: `{type, url, headers?, …}`. Chỗ lồng duy nhất là vỏ        │
+ * │ `{"mcpServers": {"<tên>": {…}}}`, mà `parsePaste` đã bóc từ trước — và ca │
+ * │ đó vốn đã CÓ tên rồi (chính cái khoá), nên nó không bao giờ tới đây.      │
+ * │                                                                          │
+ * │ ⚠ Quét mọi tầng thì sẽ vớ phải một `url` nằm trong `env`/`headers` — đó   │
+ * │ là địa chỉ API của hãng, KHÔNG phải endpoint MCP. Đặt tên cánh tay theo   │
+ * │ nó là **sai một cách tự tin**, và người dùng không có cách nào biết.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `undefined` = không suy được ⇒ chỗ gọi rơi về băm như cũ. Hàm này được phép
+ * nói KHÔNG BIẾT; một cái tên bịa tệ hơn một cái băm thật thà.
+ */
+export function defaultArmLabel(config: unknown): string | undefined {
+  if (!config || typeof config !== 'object') return undefined;
+  const c = config as { url?: unknown; command?: unknown };
+
+  if (typeof c.url === 'string') {
+    try {
+      // Bỏ tiền tố kỹ thuật: `mcp.notion.com` → `notion.com`. Nó không mang
+      // thông tin nào cho người đọc, và mọi endpoint MCP đều có nó.
+      const host = new URL(c.url).hostname.replace(/^(www|mcp)\./, '');
+      return host || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // stdio: tên gói, dùng lại ĐÚNG bộ tách của `npxSpec` thay vì viết bản thứ hai.
+  const parsed = npxSpec(config as ExecConfig);
+  if (parsed) return packageName(parsed.spec).split('/').pop() || undefined;
+
+  // Không qua `npx` ⇒ lấy tên chương trình. `path.basename` để một đường dẫn
+  // tuyệt đối không biến thành cái nhãn dài loằng ngoằng.
+  if (typeof c.command === 'string' && c.command.trim()) {
+    return path.basename(c.command.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
+  }
+  return undefined;
+}
+
 /** `@scope/name@1.2.3` → `@scope/name`. `name@1.2.3` → `name`. */
 export function packageName(spec: string): string {
   const at = spec.lastIndexOf('@');

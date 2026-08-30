@@ -2852,12 +2852,30 @@ Dùng `@modelcontextprotocol/server-memory` — 1 trong 7 server tham chiếu c�
   "headers": { "Authorization": "Bearer ntn_KHONG_PHAI_TOKEN_THAT_1234567890abcdef" } }
 ```
 
+> ## 🔴 SỬA BƯỚC NÀY 31/08 — bản trên **KHÔNG ĐO ĐƯỢC THỨ NÓ ĐỊNH ĐO**
+>
+> User chạy và nhận: *"Chưa kết nối được — Server rejected the configured Authorization header
+> (HTTP 401)"*, **không ra node cánh tay nào**.
+>
+> Đó là hành vi **đúng**. Nhưng nó cũng có nghĩa là **C-4 và C-6 không bao giờ chạy tới**: nút Xong
+> bị khoá khi lượt Thử hỏng (`ok` đòi `status === 'connected'`), nên một chìa literal **chỉ vào được
+> `company.yaml` và `GET /api/arms` khi nó HỢP LỆ**.
+>
+> ⇒ **Chuỗi giả không đo được lớp lỗi này.** Muốn đo phải dán một **chìa THẬT, còn sống**, literal,
+> không qua ô `${…}`. Cách rẻ nhất: lấy token của một cánh tay đang chạy trong `.state/secrets.json`
+> rồi dán thẳng vào `headers`.
+>
+> 🎁 **Và tin tốt kèm theo:** hàng rào "chưa Thử được thì không Lưu" **tự nó đã chặn phần lớn ca
+> tệ** — một chìa gõ sai không bao giờ kịp lọt vào đâu cả. Lỗ còn lại hẹp hơn hẳn dự đoán ban đầu:
+> chỉ ca **chìa đúng, dán literal**.
+
 | Ô đo | Kỳ vọng | Thật |
 |---|---|---|
-| **C-3** | 🔴 UI có **chặn** hay cảnh báo gì không? *(dự đoán: **không**, Lưu bình thường)* | |
-| **C-4** | 🔴🔴 ⭐ **DevTools → Network → `GET /api/arms`**: chuỗi `ntn_KHONG_PHAI…` có nằm trong response không? *(đây mới là ô quyết định — không phải chuyện yaml)* | |
-| **C-5** | `agentco secret list` có thấy gì không? *(dự đoán: **không** — chìa chưa bao giờ đi qua kho chìa)* | |
-| **C-6** | 🔴🔴 ⭐ **xoay chìa**: sửa token trong `company.yaml` thành một chuỗi khác → tải lại. Cánh tay cũ còn không, hay đẻ ra **một cánh tay thứ hai** và mọi dây trỏ vào cái cũ (chìa đã chết)? *(băm ăn cả `config`)* | |
+| **C-3** | 🔴 UI có **chặn** hay cảnh báo gì không? | ✅ 31/08: **chặn** — 401, không ra node. Nhưng chặn vì *chìa sai*, không phải vì *chìa nằm sai chỗ* |
+| **C-3b** | 🆕 câu lỗi là **tiếng Anh của SDK** (*"OAuth fallback is disabled when headers.Authorization is set"*). Người không code đọc ra được gì? | 🔴 31/08 |
+| **C-4** | 🔴🔴 ⭐ **cần chìa THẬT** (xem khối trên). DevTools → Network → `GET /api/arms`: chuỗi token có nằm trong response không? | |
+| **C-5** | `agentco secret list` có thấy gì không? *(dự đoán: **không**)* | |
+| **C-6** | 🔴🔴 ⭐ **cần chìa THẬT.** Xoay chìa trong `company.yaml` → tải lại. Đẻ ra **cánh tay thứ hai** không? *(băm ăn cả `config`)* | |
 
 > **C-4 và C-6 là hai ô thật.** Chuyện token nằm trong `company.yaml` thì **không phải lỗi** — đó là
 > dữ liệu của khách trên đĩa của khách (user chốt 30/08). Lỗi là nó **rời máy chủ** (C-4) và nó
@@ -2868,11 +2886,40 @@ Dùng `@modelcontextprotocol/server-memory` — 1 trong 7 server tham chiếu c�
 > `${…}`. Vá ③ (C-4 + C-6), và vá luôn ② (ngõ cụt) miễn phí. ⇒ [[agentco-count-mechanisms]]
 
 **Bước C.3 — server `sse` kiểu cũ.** §2c chốt: *nhận vào, chạy được, và hiện nhãn "kiểu cũ"*.
-Dán một config `{"type":"sse", "url":"…"}` bất kỳ.
+
+> ## 🌐 KHÔNG CÒN SERVER SSE CÔNG KHAI NÀO ĐỂ THỬ — tra + gọi thật 31/08
+>
+> Đi tìm một endpoint SSE thật để chạy ca này, và **không tìm được cái nào còn sống**:
+>
+> | Địa chỉ | Gọi `GET` với `Accept: text/event-stream` |
+> |---|---|
+> | `https://mcp.deepwiki.com/sse` | **410** — `{"error":"SSE transport is deprecated"}` |
+> | `https://mcp.context7.com/sse` | **404** — *"Use /mcp for MCP protocol communication"* |
+> | `https://mcpplaygroundonline.com/…/sse` | **404** |
+>
+> ⚠ Đây **không phải** một phép đo hỏng — nó là **dữ kiện**, và nó xác nhận đúng lập trường §2c
+> (*"SSE là kiểu cũ, không bao giờ đề xuất"*): các hãng đã tự tắt, và deepwiki còn trả hẳn một câu
+> nói thẳng là **deprecated**. ⇒ Nhánh *"nhận vào để tương thích"* của §2c gần như là **mã chết** —
+> đáng ghi lại trước khi ai đó bỏ công đi hoàn thiện nó.
+>
+> **Muốn chạy ca này thì phải dựng một server SSE tại chỗ.** ✅ Đã kiểm 31/08, chạy được:
+>
+> ```
+> # terminal riêng — giữ nó mở
+> PORT=3009 npx -y @modelcontextprotocol/server-everything@latest sse
+> #   Windows PowerShell:  $env:PORT="3009"; npx -y @modelcontextprotocol/server-everything@latest sse
+> #   in ra: "Server is running on port 3009"
+> ```
+>
+> Rồi dán vào ô: `{ "type": "sse", "url": "http://127.0.0.1:3009/sse" }`
+
+Nếu không dựng server, ca dán một URL bừa (`https://local.com`) vẫn cho một dữ kiện: nó hỏng bằng
+`SSE error: Invalid content type, expected "text/event-stream"` — **đúng**, nhưng nó nói về cái URL,
+không nói gì về việc ta có nhận `type: sse` hay không.
 
 | Ô đo | Kỳ vọng | Thật |
 |---|---|---|
-| **C-7** | có nhãn *"kiểu cũ"* nào hiện không? *(grep `web/src` 30/08: **không tìm thấy chuỗi nào** ⇒ dự đoán: chưa cài)* | |
+| **C-7** | có nhãn *"kiểu cũ"* nào hiện không? *(grep `web/src` 30/08: **không tìm thấy chuỗi nào** ⇒ dự đoán: chưa cài)* | 🔴 31/08: **không có nhãn nào**, đúng dự đoán. Ô này **chưa đo được vế "vẫn chạy"** — URL thử (`local.com`) không phải endpoint SSE nên nó hỏng vì lý do khác (*"Invalid content type"*, đúng). Cần một endpoint SSE thật mới kết luận được §2c |
 
 **Bước C.4 — JSON hỏng.** Dán `{ "command": "npx", ` (thiếu ngoặc).
 
@@ -2885,14 +2932,86 @@ Dán một config `{"type":"sse", "url":"…"}` bất kỳ.
 
 | Ô đo | Kỳ vọng | Thật |
 |---|---|---|
-| **C-9** | ⭐ có nút **Đăng nhập** nào hiện ra không? *(dự đoán: **không** — `oauthStart` nhận `catalogId`, đường B không có `catalog` ⇒ ngõ cụt)* | |
-| **C-10** | bấm Thử → nó có nói được *"server này cần đăng nhập"*, hay chỉ trả 401 thô? *(§5m: đừng gửi một yêu cầu đã biết chắc sẽ hỏng)* | |
+| **C-9** | ⭐ có nút **Đăng nhập** nào hiện ra không? *(dự đoán: **không** — `oauthStart` nhận `catalogId`, đường B không có `catalog` ⇒ ngõ cụt)* | 🔴 31/08: **không có** — đúng dự đoán |
+| **C-10** | bấm Thử → nó có nói được *"server này cần đăng nhập"*, hay chỉ trả 401 thô? | ⚠ 31/08: nói được (`needs-auth`), **nhưng nói SAI CỬA** — xem dưới |
+
+> ## 🔴 31/08 — CÂU TRẢ LỜI HỨA MỘT CÁI CỬA KHÔNG TỒN TẠI (user bắt, đã vá)
+>
+> Dán `{"type":"http","url":"https://mcp.notion.com/mcp"}` → `needs-auth` → màn hình nói:
+>
+> > *"Cần đăng nhập một lần — Kết nối được, nhưng dịch vụ này cần bạn cho phép trên trình duyệt."*
+>
+> User bác đúng: *"họ đâu có đường ra… ít nhất là dịch vụ này cần authorize gì đó thì ít ra họ còn
+> đi kiếm cách authorize"*.
+>
+> Câu đó viết cho đường **danh mục**, nơi có nút Đăng nhập ngay bên cạnh. Đường tự cắm **không có nút
+> nào** (C-9). ⇒ **Dạng tệ nhất của câu lỗi sai cửa: nó không mơ hồ, nó SAI.** Người dùng sẽ đi tìm
+> một cái nút không tồn tại.
+>
+> ✅ **Đã vá:** `ProbeReport` nhận `hasLoginButton` — hai đường, hai câu. Đường tự cắm giờ nói đúng
+> hai việc làm được: ① nếu nhận ra tên miền là một mục danh mục (**Notion đúng là một mục**) thì chỉ
+> thẳng *"quay lại chọn nó, chỉ cần bấm Đăng nhập"*; ② nếu không thì đưa **đúng khối JSON cần thêm**
+> (`"Authorization": "Bearer ${TEN_CHIA}"`) và nói rõ ô `${…}` sẽ thành một ô nhập.
+> Thêm `host` vào `catalogForUi` để nhận ra hãng. → `SPEC-arms.md §16q`
+>
+> ⚠ **Đây là bản vá CÂU CHỮ, không phải bản vá CƠ CHẾ.** Đường B vẫn chưa đăng nhập được — bản vá
+> thật là §16q (gỡ `catalogId` khỏi `oauthStart`), vẫn còn nợ.
 
 > Máy móc để vá ô này **đã có và vốn đã tổng quát** — `oauth.ts:204` dò máy chủ xác thực từ header
 > `WWW-Authenticate` của chính URL, `register()` làm DCR, cả hai chạy y nguyên cho Notion **và**
 > Linear. Chỗ buộc vào danh mục là **đúng hai tham số** của `oauthStart`. → `SPEC-arms.md §16q`
 
 ---
+
+### Chặng E — 🌐 **MCP SERVER THẬT, VÀ NHÂN VIÊN LÀM VIỆC ĐƯỢC THẬT** ⏱ ~12 phút · 💰 ~$0.05
+
+> 🆕 **Viết 31/08.** Chặng A–D dùng `server-memory` — nó chạy, nhưng nó không **làm được việc gì
+> người dùng cần**, nên nó không chứng minh được vế cuối: *cắm xong thì nhân viên có dùng được không*.
+>
+> ✅ **Ba địa chỉ dưới đây tôi đã tự gọi thật 31/08** bằng chính `mcp-http.ts` của dự án — số việc là
+> số đo, không phải chép từ trang giới thiệu.
+
+| Server | Địa chỉ | Chìa | Việc (đo 31/08) |
+|---|---|---|---|
+| **DeepWiki** | `https://mcp.deepwiki.com/mcp` | ❌ **không cần** | **3** — `ask_question` · `read_wiki_contents` · `read_wiki_structure` |
+| **Context7** | `https://mcp.context7.com/mcp` | ⚠ chạy được **không chìa**; chìa miễn phí để nới hạn mức | **2** — `resolve-library-id` · `query-docs` |
+| **Playground Complex** | `https://mcpplaygroundonline.com/mcp-complex-server` | ❌ không cần | **4** — schema lồng sâu, tốt để soi ô nhập tham số |
+
+⚠ **Ca "có chìa" đã cân nhắc rồi BỎ:** `https://mcpplaygroundonline.com/mcp-auth-server` trả đúng
+`401` + `WWW-Authenticate` (đo được), nhưng **không có tài liệu nào nói token hợp lệ là gì** ⇒ người
+chạy bài sẽ mắc kẹt ở đúng chỗ bài định vượt qua. Ca "có chìa" chạy trọn vẹn vẫn là **chặng B**
+(`${MEMORY_PATH}` với stdio), hoặc Context7 sau khi tự lấy chìa ở `context7.com`.
+
+**Bước E.1.** `+ Kết nối` → **Tự cắm MCP** → dán:
+
+```json
+{ "type": "http", "url": "https://mcp.deepwiki.com/mcp" }
+```
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **E-1** | Thử ngay → ✓ **3 việc**, không hỏi chìa nào | |
+| **E-2** | bộ chọn nấc có hiện không? *(server HTTP ⇒ `mcp-http.ts` hỏi được `annotations` thật)* | |
+| **E-3** | con số token mỗi lượt hiện ra là bao nhiêu? | |
+
+**Bước E.2.** Nối dây cho một nhân viên → Lưu. 📝 Kiểm `company.yaml`: mục mới **không có chìa nào**.
+
+**Bước E.3 — ⭐ Ô ĐO THẬT SỰ CỦA CẢ BÀI 20.** Vào ô chat của văn phòng đó, nhắn:
+
+> *"Nhờ nhân viên tra giúp mình: repo `modelcontextprotocol/servers` trên GitHub hiện còn giữ lại
+> những MCP server tham chiếu nào? Ghi ra file."*
+
+| Ô đo | Kỳ vọng | Thật |
+|---|---|---|
+| **E-4** | ⭐⭐ Trợ lý **giao việc** thay vì tự trả lời | |
+| **E-5** | ⭐⭐ nhật ký có dòng gọi `mcp__…__ask_question` (hoặc `read_wiki_*`) — **cánh tay chạy thật** | |
+| **E-6** | câu trả lời có **nội dung thật** của repo đó, không phải trí nhớ chung chung của model | |
+| **E-7** | file kết quả nằm trong `artifacts/` của văn phòng | |
+| **E-8** | 🔴 dòng danh bạ Trợ lý nhận được là gì? *(nhãn tự sinh cho khối dán — xem cảnh báo A-2/A-3, và §16r: một cái tên model không có tiên nghiệm thì nó **lấp chỗ trống**)* | |
+
+> **E-4 và E-5 là hai ô khác nhau, đừng gộp.** E-4 hỏi *Trợ lý có định tuyến đúng không*; E-5 hỏi
+> *cánh tay có được gọi thật không*. Ca 30/08 đã cho thấy chúng hỏng độc lập: có lượt Trợ lý bịa
+> thẳng câu trả lời (E-4 ❌, E-5 ❌), có lượt nó giao việc nhưng worker đi sai đường (E-4 ✅, E-5 ❌).
 
 ### Chặng D — bài hồi quy: **dùng lại** một cánh tay tự cắm ⏱ ~2 phút · 💰 $0
 

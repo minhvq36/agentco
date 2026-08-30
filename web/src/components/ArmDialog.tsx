@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input, Label, Textarea } from '@/components/ui/misc';
 import { api, ApiError } from '@/lib/api';
+import { fault, pretty, tokens } from '@/lib/json-paint';
 import { actions, useApp } from '@/lib/store';
 import type { CatalogArm, InstalledArm, OAuthAccount, ProbeResult } from '@/lib/types';
 
@@ -173,6 +174,105 @@ function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] 
  * `folders` thì nó LÀ cánh tay thư mục, kể cả khi mai ta đổi nó sang HTTP.
  * Không có `catalog` ⇒ người dùng tự dán ⇒ `custom`.
  */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ô DÁN JSON — tô màu, in lại cho dễ đọc, và CHỈ ĐÚNG CHỖ HỎNG. (user 31/08)│
+ * │                                                                          │
+ * │ Ba việc, và chỉ việc thứ ba mới báo lỗi được:                            │
+ * │  ① màu    tên trường ≠ giá trị. Trung tính, không "hội chợ" — người dùng  │
+ * │           là dân văn phòng, không phải lập trình viên đọc code cả ngày.   │
+ * │  ② in lại xuống dòng + thụt lề 2. **CHỈ khi JSON hợp lệ** — không có cây  │
+ * │           thì không in lại được, và tự sửa hộ một khối hỏng là cách chắc  │
+ * │           chắn nhất làm họ mất chỗ đang dở.                              │
+ * │  ③ lỗi    `JSON.parse` ném kèm **vị trí** ⇒ dòng/cột + một câu tiếng      │
+ * │           người. Đây mới là thứ chỉ được chỗ hỏng; màu thì không.         │
+ * │                                                                          │
+ * │ ⚠ IN LẠI Ở ĐÂU: lúc **dán** và lúc **rời ô**, KHÔNG phải mỗi lần gõ —     │
+ * │ in lại giữa lúc đang gõ là nhảy con trỏ, và người dùng mất chỗ.           │
+ * │                                                                          │
+ * │ ⚠ VÌ SAO PHẢI PHỦ MỘT LỚP `<pre>`: `<textarea>` không tô màu từng chữ     │
+ * │ được — đó là giới hạn của thẻ, không phải lựa chọn. Nên chữ thật để trong │
+ * │ suốt, lớp màu nằm ngay dưới, hai lớp phải **cùng font, cùng cỡ, cùng      │
+ * │ padding, cùng `white-space`** và cuộn theo nhau. Lệch một thuộc tính là   │
+ * │ chữ và màu rời nhau.                                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const TOK: Record<string, string> = {
+  // Xanh = tên, nâu = giá trị. Token của theme, KHÔNG phải mã màu cứng — xem
+  // khối chú thích ở `index.css §--color-jkey`.
+  key: 'text-jkey',
+  str: 'text-jval',
+  num: 'text-jval',
+  lit: 'text-jval',
+  punc: 'text-muted',
+  ws: '',
+};
+
+function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const back = useRef<HTMLPreElement>(null);
+  const bad = fault(value);
+  const toks = tokens(value);
+
+  const tidy = (): void => {
+    const out = pretty(value);
+    if (out !== null) onChange(out);
+  };
+
+  return (
+    <div>
+      <div className="relative">
+        <pre
+          ref={back}
+          aria-hidden
+          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent px-3 py-2 font-mono text-[12px] leading-[1.5]"
+        >
+          {toks.map((t, i) => (
+            <span key={i} className={TOK[t.t]}>
+              {t.v}
+            </span>
+          ))}
+          {'\n'}
+        </pre>
+        <Textarea
+          rows={8}
+          autoFocus
+          spellCheck={false}
+          onScroll={(e) => {
+            if (back.current) back.current.scrollTop = e.currentTarget.scrollTop;
+          }}
+          /**
+           * 🔴 `caret-ink`, KHÔNG phải `caret-fg`. (bug user bắt 31/08:
+           * *"lúc click vào để edit không thấy con trỏ nhấp nháy"*)
+           *
+           * Theme này khai `--color-ink`, nên **không có** utility `caret-fg` —
+           * class đó bị bỏ qua im lặng, `caret-color` không bao giờ được đặt, và
+           * nó thừa hưởng `color` của chính ô — mà `color` ở đây là
+           * `transparent` (chữ thật phải trong suốt để lớp màu bên dưới hiện ra).
+           * ⇒ **Con trỏ trong suốt.** Một class sai chính tả trong Tailwind
+           * không báo lỗi ở đâu cả; nó chỉ lặng lẽ không tồn tại.
+           */
+          className="relative bg-transparent font-mono text-[12px] leading-[1.5] text-transparent caret-ink"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={tidy}
+          onPaste={() => {
+            // Sau khi trình duyệt đã ghi chữ vào ô. `requestAnimationFrame`
+            // thay `setTimeout(0)`: nó chạy sau lượt vẽ, không đua với React.
+            requestAnimationFrame(() => requestAnimationFrame(tidy));
+          }}
+          placeholder={'Dán khối cấu hình MCP từ README của server, ví dụ:\n{ "command": "npx", "args": ["-y", "..."] }'}
+        />
+      </div>
+      {bad && value.trim() !== '' && (
+        <p className="mt-1 text-xs text-danger">
+          {bad.line > 0 ? `Dòng ${bad.line}, cột ${bad.col}: ` : ''}
+          {bad.say}
+        </p>
+      )}
+    </div>
+  );
+}
+
 type Kind = 'files' | 'service' | 'custom' | 'browser';
 
 function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
@@ -1162,6 +1262,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     return [...seen].sort();
   };
 
+  /**
+   * Mục danh mục cùng TÊN MIỀN với URL người dùng vừa dán.
+   *
+   * Chỉ để **chỉ đường**, không tự chuyển hộ: người dùng cố ý đi đường tự cắm,
+   * và tự nhảy họ sang đường khác là lấy mất quyết định của họ. Một câu gợi ý
+   * thì họ đọc rồi tự chọn.
+   */
+  const catalogMatch = (): CatalogArm | undefined => {
+    const cfg = parsePaste();
+    const url = cfg && typeof cfg['url'] === 'string' ? cfg['url'] : '';
+    if (!url) return undefined;
+    try {
+      const host = new URL(url).hostname;
+      return catalog.find((c) => c.host === host);
+    } catch {
+      return undefined;
+    }
+  };
+
   /** Ô để trắng KHÔNG phải một chìa rỗng — nó là chìa CHƯA ĐIỀN. Đừng gửi đi. */
   const filledKeys = (): Record<string, string> =>
     Object.fromEntries(Object.entries(keys).filter(([, v]) => v.trim() !== ''));
@@ -1500,14 +1619,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <Button size="sm" className="mb-2" onClick={() => setPane('type')}>
                   ← Quay lại
                 </Button>
-                <Textarea
-                  rows={5}
-                  autoFocus
-                  className="font-mono text-[12px]"
-                  value={paste}
-                  onChange={(e) => setPaste(e.target.value)}
-                  placeholder={'Dán khối cấu hình MCP từ README của server, ví dụ:\n{ "command": "npx", "args": ["-y", "..."] }'}
-                />
+                <JsonBox value={paste} onChange={setPaste} />
                 <p className="mt-1 text-xs text-muted">
                   Nhận cả khối <code>{'{"mcpServers": {...}}'}</code> chép nguyên từ tài liệu.
                 </p>
@@ -2227,7 +2339,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               </p>
             )}
 
-            {probe && <ProbeReport r={probe} />}
+            {probe && (
+          <ProbeReport
+            r={probe}
+            // Nút Đăng nhập chỉ tồn tại ở đường danh mục. Truyền sự thật đó
+            // xuống thay vì để `ProbeReport` đoán — nó không có cách nào đoán.
+            hasLoginButton={!!pick?.needsLogin}
+            match={pick ? undefined : catalogMatch()}
+          />
+        )}
             {err && <p className="mt-2 text-xs text-danger">{err}</p>}
 
             <div className="mt-4 flex gap-2">
@@ -2559,7 +2679,17 @@ function BrowseDialog({
  * copy đi hỏi chỗ khác được. Thay nó bằng một câu chung chung của ta là lấy đi
  * thứ hữu ích duy nhất còn lại. → §6c
  */
-function ProbeReport({ r }: { r: ProbeResult }) {
+function ProbeReport({
+  r,
+  /** Màn này CÓ nút Đăng nhập không — đường danh mục thì có, đường tự cắm thì không. */
+  hasLoginButton,
+  /** Mục danh mục cùng tên miền với URL vừa dán, nếu nhận ra được. */
+  match,
+}: {
+  r: ProbeResult;
+  hasLoginButton: boolean;
+  match?: CatalogArm | undefined;
+}) {
   if (r.status === 'connected') {
     const read = r.tools.filter((t) => t.level === 'read').length;
     /*
@@ -2614,13 +2744,78 @@ function ProbeReport({ r }: { r: ProbeResult }) {
     );
   }
   if (r.status === 'needs-auth') {
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 HAI ĐƯỜNG, HAI CÂU — vì hai đường có hai CỬA khác nhau. (31/08)   │
+     * │                                                                      │
+     * │ Ca user gặp: dán `{"type":"http","url":"https://mcp.notion.com/mcp"}`│
+     * │ qua đường tự cắm → `needs-auth` → màn hình nói *"cần bạn cho phép     │
+     * │ trên trình duyệt"*. User bác đúng:                                   │
+     * │                                                                      │
+     * │   *"họ đâu có đường ra… ít nhất là dịch vụ này cần authorize gì đó   │
+     * │    thì ít ra họ còn đi kiếm cách authorize"*                         │
+     * │                                                                      │
+     * │ Câu cũ viết cho đường DANH MỤC, nơi có nút Đăng nhập ngay bên cạnh.   │
+     * │ Đường tự cắm **không có nút nào** (`oauthStart` nhận `catalogId`,     │
+     * │ xem SPEC-arms §16q) ⇒ câu đó **hứa một cái cửa không tồn tại**. Đó là │
+     * │ dạng tệ nhất của câu lỗi sai cửa: nó không mơ hồ, nó SAI.            │
+     * │                                                                      │
+     * │ ⚠ Và đừng chỉ đổi giọng cho mơ hồ đi. Người dùng cần **một việc làm   │
+     * │ được**, nên câu mới nêu đúng hai đường thật: mục danh mục nếu nhận ra │
+     * │ được hãng, còn không thì cách tự cắm chìa vào chính khối JSON.        │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
     return (
       <div className="mt-3 rounded-md border border-line px-3 py-2 text-[13px]">
         <div className="flex items-center gap-1.5 font-medium">
           <TriangleAlert className="h-4 w-4 text-warn" />
-          Cần đăng nhập một lần
+          {hasLoginButton ? 'Cần đăng nhập một lần' : 'Dịch vụ này yêu cầu xác thực'}
         </div>
-        <div className="mt-1 text-xs text-muted">Kết nối được, nhưng dịch vụ này cần bạn cho phép trên trình duyệt.</div>
+        {hasLoginButton ? (
+          <div className="mt-1 text-xs text-muted">
+            Kết nối được, nhưng dịch vụ này cần bạn cho phép trên trình duyệt. Bấm <b>Đăng nhập</b> ở trên.
+          </div>
+        ) : (
+          <div className="mt-1 space-y-1 text-xs leading-relaxed text-muted">
+            <div>
+              Máy chủ trả lời được, nhưng nó từ chối vì chưa có chìa. Đường <b>Tự cắm MCP</b> chưa
+              đăng nhập hộ bạn được — bạn phải tự đưa chìa vào.
+            </div>
+            {match ? (
+              <div>
+                ⭐ <b>{match.name}</b> đã có sẵn ở <b>Dịch vụ có sẵn</b>. Quay lại chọn nó thì chỉ cần
+                bấm Đăng nhập, không phải tự đi lấy chìa.
+              </div>
+            ) : (
+              /**
+               * ⚠⚠ KHÔNG NÓI TÊN HEADER. (user bắt 31/08)
+               *
+               *   *"có phải chỗ nào cũng là Bearer không, rất có thể nhiều
+               *    server khác nó có cấu hình khác"*
+               *
+               * Đúng — và bản trước đã in thẳng `"Authorization": "Bearer …"`
+               * như thể đó là luật chung. Ngoài đời có `X-API-Key`, có `Basic`,
+               * có header riêng của hãng, và stdio thì chìa đi vào `env` chứ
+               * không có header nào cả.
+               *
+               * ⇒ Ranh giới đúng KHÔNG phải *"kỹ hay chung chung"* mà là
+               * **THỨ TA SỞ HỮU vs THỨ HÃNG SỞ HỮU**:
+               *   · ô `${…}` là cơ chế CỦA TA  → nói thật kỹ, luôn đúng
+               *   · tên trường là của HÃNG     → không nói một chữ, trỏ README
+               * Nói kỹ về thứ của mình thì không bao giờ thành nói sai.
+               */
+              <div>
+                Chìa phải nằm trong chính khối JSON này. README của dịch vụ ghi nó đi vào đâu — có
+                thể là một header trong <code>headers</code>, có thể là một biến trong{' '}
+                <code>env</code>, mỗi hãng một khác. Chép đúng chỗ đó, rồi{' '}
+                <b>
+                  thay giá trị thật bằng <code>{'${TEN_CHIA}'}</code>
+                </b>
+                : chỗ đó sẽ thành một ô nhập ở ngay dưới, và chìa không bị ghi vào file cấu hình.
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }

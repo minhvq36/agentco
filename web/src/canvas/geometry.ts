@@ -65,8 +65,19 @@ export function screenToWorld(ev: { clientX: number; clientY: number }, rect: DO
  * bản mã thứ hai, và hai bản đã lệch nhau: văn phòng mới hiện sơ đồ méo, bấm
  * nút này thì nó thẳng lại.
  */
-export function arrange(nodes: readonly CanvasNode[]): Map<string, Point> {
-  return arrangeAll(nodes);
+export function arrange(
+  nodes: readonly CanvasNode[],
+  /**
+   * Cạnh của canvas. Chỉ cạnh `mcp → agent` có tác dụng — `arrangeAll` tự lọc.
+   *
+   * ⚠ PHẢI TRUYỀN. Thiếu nó thì nút "Sắp xếp lại sơ đồ" chạy nhánh CŨ (mọi cánh
+   * tay một hàng căn giữa, không phân biệt đã nối dây hay chưa) — tức là giao
+   * diện và server lại xếp ra hai bố cục khác nhau, đúng lớp lỗi mà cả file
+   * `layout-geometry.ts` sinh ra để đóng.
+   */
+  edges: readonly { from: string; to: string }[] = [],
+): Map<string, Point> {
+  return arrangeAll(nodes, edges);
 }
 
 /** Khung bao mọi node, để tính "vừa khung". */
