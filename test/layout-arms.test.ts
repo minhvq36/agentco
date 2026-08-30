@@ -167,6 +167,31 @@ test('⭐ cánh tay vừa nối dây nằm dưới chủ; cánh tay chưa nối 
   assert.equal(cx(p.get('mcp:moi')!, 'mcp'), cx(p.get('agent:a')!, 'agent'));
 });
 
+/**
+ * 🔴 VĂN PHÒNG MỚI PHẢI CHỪA SẴN CHỖ CHO HÀNG CÁNH TAY. (user bắt 31/08)
+ *
+ * Văn phòng chưa cắm gì ⇒ hai kho ngồi ngay dưới hàng nhân viên ⇒ cắm cánh tay
+ * đầu tiên là **không còn chỗ**, nó trèo ra rìa; bấm "Sắp xếp lại" mới vừa. Tức
+ * hệ thống tự mâu thuẫn — đúng bệnh cả file này sinh ra để chữa.
+ */
+test('⭐ chưa có cánh tay nào, hai kho VẪN phải ngồi đúng chỗ của lúc đã có', () => {
+  const trong = arrangeAll([BOSS, A1, KNOW, LIB], []);
+  const day = arrangeAll([BOSS, A1, mcp('m1'), KNOW, LIB], []);
+  assert.equal(
+    trong.get('knowledge')!.y,
+    day.get('knowledge')!.y,
+    'kho phải ở cùng độ cao dù đã cắm cánh tay hay chưa',
+  );
+  assert.equal(trong.get('library')!.y, day.get('library')!.y);
+});
+
+test('⭐ chỗ chừa sẵn đủ cho một hàng cánh tay, không đè lên kho', () => {
+  const p = arrangeAll([BOSS, A1, mcp('m1'), KNOW, LIB], []);
+  const armBottom = p.get('m1')!.y + NODE_SIZE.mcp.h;
+  assert.ok(armBottom <= p.get('knowledge')!.y, `cánh tay (đáy ${armBottom}) phải nằm TRÊN kho`);
+  assert.ok(p.get('m1')!.y > p.get('agent:a')!.y + NODE_SIZE.agent.h, 'và nằm DƯỚI nhân viên');
+});
+
 test('kim tự tháp vẫn cân: Trợ lý và hai kho cùng một trục với hàng nhân viên', () => {
   const nodes = [BOSS, A1, A2, mcp('m1'), mcp('m2'), KNOW, LIB];
   const p = arrangeAll(nodes, [

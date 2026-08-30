@@ -321,7 +321,31 @@ export function arrangeAll(
    * cùng"*. Và ngoài chuyện thứ bậc, nó còn sai về hình: dây từ cánh tay lên
    * nhân viên phải vòng qua hai kho, nên nó vẽ ra một cái vòng kỳ cục.
    */
-  const armRow = mcps.length ? NODE_SIZE.mcp.h + SHELF_DROP : 0;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CHỪA SẴN HÀNG CÁNH TAY, KỂ CẢ KHI CHƯA CÓ CÁI NÀO. (user bắt 31/08)   │
+   * │                                                                          │
+   * │   *"Khi tạo văn phòng mới: khoảng cách height giữa trợ lý và kho tri     │
+   * │    thức | tủ tài liệu không đủ sẵn cho nhân viên và mcp ⇒ khi tạo MCP    │
+   * │    thì nó không có chỗ, nó phải trèo ra chỗ khác. Sắp xếp lại mới được."*│
+   * │                                                                          │
+   * │ Đo được: văn phòng mới ⇒ 0 cánh tay ⇒ `armRow = 0` ⇒ hai kho ngồi ở      │
+   * │ **y=360**. Nhưng chỗ của hàng cánh tay CŨNG là y=360. Cắm cánh tay đầu   │
+   * │ tiên ⇒ `clashes` với hai kho ⇒ `armSlot` quét mãi rồi rơi ra chỗ khác.   │
+   * │ Sau khi bấm "Sắp xếp lại", hai kho xuống **y=442** và mọi thứ vừa vặn —  │
+   * │ tức hệ thống **tự mâu thuẫn với chính nó**, đúng cái bệnh mà cả file này │
+   * │ sinh ra để chữa (xem khối đầu file: *"người dùng thấy sơ đồ méo, bấm     │
+   * │ Sắp xếp lại thì nó thẳng"*).                                             │
+   * │                                                                          │
+   * │ ⇒ Chừa chỗ **luôn luôn**, không hỏi có cánh tay hay chưa. Cái giá là một │
+   * │ khoảng trắng ~82px ở văn phòng chưa cắm gì; đổi lại, **bố cục lúc tạo     │
+   * │ bằng đúng bố cục sau khi sắp xếp lại** — và đó là bất biến đáng giữ hơn  │
+   * │ vài chục pixel.                                                          │
+   * │                                                                          │
+   * │ ⚠ Nhánh KHỐI (`blocks`) vốn đã chừa sẵn theo từng hàng, nên nó không đổi.│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const armRow = NODE_SIZE.mcp.h + SHELF_DROP;
   const armY = ORIGIN_Y + rows * (NODE_SIZE.agent.h + ROW_GAP) + SHELF_DROP;
   /**
    * Đáy của hai kho: dưới hàng cuối cùng đã đặt.

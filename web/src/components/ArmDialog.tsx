@@ -1640,6 +1640,21 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 >
                   Dùng cấu hình này
                 </Button>
+                {/*
+                  🔴 THIẾU TỪ ĐẦU — hai tab kia có, tab này không. (user bắt 31/08)
+
+                  Luật 26/08 (khối chú thích ở `reuseList`) chốt: *"vào type riêng
+                  mới lọc theo type đó"* — và ba tab đều phải có danh sách dùng
+                  lại của loại mình. `catalog` có `reuseList('service')`, bước 2
+                  của `files` có `reuseList('files')`, còn `paste` thì **không có
+                  dòng nào**. Không phải một quyết định, chỉ là sót.
+
+                  Hậu quả nặng hơn ở đúng tab này: cánh tay tự cắm là loại **duy
+                  nhất** không có thẻ danh mục để bấm lại, nên thiếu danh sách này
+                  thì đường dùng lại của nó là **dán lại cấu hình bằng tay** — tức
+                  là nhân bản, đúng thứ §6i-bis đã mất công gỡ.
+                */}
+                {reuseList('custom')}
               </>
             )}
 
