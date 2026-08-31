@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
+import { compileCliArm, isCliArm } from './cli-arm.js';
+import { injectSecrets } from './secrets.js';
+
 /**
  * BỎ `npx` KHỎI ĐƯỜNG NÓNG. → docs/SPEC-arms.md §5j
  *
@@ -116,6 +119,27 @@ export function npxSpec(config: ExecConfig): { spec: string; rest: string[] } | 
 export function defaultArmLabel(config: unknown): string | undefined {
   if (!config || typeof config !== 'object') return undefined;
   const c = config as { url?: unknown; command?: unknown };
+
+  /**
+   * Tờ khai CLI: lấy **tên chương trình của việc đầu tiên**.
+   *
+   * ⚠ CỐ Ý KHÔNG ghép tên các việc lại (`"đếm hoá đơn · đồng bộ"`): đó là việc
+   * của `does`, và nó đã đi vào dòng danh bạ rồi. Nhãn trả lời câu *"cái này là
+   * cái gì"*, `does` trả lời *"nó làm được gì"* — trộn hai câu vào một chuỗi là
+   * đẻ ra một cái tên dài mà vẫn không nói được nó là cái gì.
+   *
+   * ⚠ Và vẫn được phép trả `undefined`: một cái tên bịa tệ hơn một cái băm thật
+   * thà. `run: []` không thể xảy ra (schema đòi `min(1)`), nhưng hàm này chạy
+   * trên dữ liệu CHƯA qua schema — nó được gọi ở `addArm`, trước mọi phép kiểm.
+   */
+  if (isCliArm(config)) {
+    const first = (config as { actions?: { run?: unknown }[] }).actions?.[0]?.run;
+    const bin = Array.isArray(first) ? first[0] : undefined;
+    if (typeof bin === 'string' && bin.trim()) {
+      return path.basename(bin.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
+    }
+    return undefined;
+  }
 
   if (typeof c.url === 'string') {
     try {
@@ -249,4 +273,85 @@ function run(cmd: string, args: string[]): Promise<void> {
       else reject(new Error(`npm install thoát với mã ${code}`));
     });
   });
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MỘT HÀM DỌN CẤU HÌNH, HAI NƠI GỌI — `pickMcp` (lúc chạy) và `probeArm`   │
+ * │ (nút "Thử ngay"). Đây là BẤT BIẾN, không phải tiện tay.                  │
+ * │                                                                          │
+ * │ `injectSecrets` đã ghi đúng luật này bằng lời từ 25/08: *"nút Thử phải    │
+ * │ kiểm ĐÚNG cấu hình sẽ chạy; lệch một chút là báo ✓ rồi hỏng ở lần đầu    │
+ * │ một nhân viên dùng nó"*. Nhưng hai nơi ấy vẫn tự ghép **ba bước** giống    │
+ * │ nhau bằng tay (điền chìa → điền ô đường dẫn → bỏ `npx`), nên luật được    │
+ * │ giữ bằng KỶ LUẬT chứ không bằng cấu trúc — và hôm nay có bước thứ tư      │
+ * │ (biên dịch tờ khai CLI) sắp phải chép lần thứ ba.                         │
+ * │                                                                          │
+ * │ ⇒ Gộp thành một hàm. Cùng bài học `mustHaveIdentity` 30/08: hàng rào có   │
+ * │ ở cả hai cửa mà **thứ NUÔI nó** chỉ có ở một, thì hàng rào vẫn thủng.     │
+ * │ → [[agentco-finish-completely]]                                           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ THỨ TỰ BA BƯỚC LÀ BẮT BUỘC, không phải khẩu vị:
+ *   ① `injectSecrets` — điền ô trống. Phải TRƯỚC, vì `fillRefs` chỉ đi được vào
+ *      object thuần, mà bước ② đẻ ra một `McpServer` **sống**.
+ *   ② biên dịch CLI — chỉ với `type: 'cli'`.
+ *   ③ `fastLaunch` — bỏ `npx` khỏi đường nóng. Chỉ đụng cấu hình có `command`,
+ *      nên nó tự bỏ qua CLI và HTTP.
+ */
+export function prepareArm(
+  name: string,
+  config: unknown,
+  env: Record<string, string>,
+  dirs?: { officeState: string; officeDir: string },
+): unknown {
+  return finishArm(name, fillArm(config, env, dirs), env, dirs);
+}
+
+/**
+ * BƯỚC ① — điền ô trống. Tách ra vì có một cửa cần chen vào GIỮA hai bước.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 PHÉP KIỂM "CÒN Ô TRỐNG?" PHẢI ĐỨNG GIỮA ĐIỀN VÀ BIÊN DỊCH.            │
+ * │ (bắt được 31/08, ngay lượt chạy `probeArm` đầu tiên trên tờ khai CLI)     │
+ * │                                                                          │
+ * │ `probeArm` gọi `missingSecretRefs`, mà hàm đó soi bằng `JSON.stringify`.  │
+ * │ Sau bước ②, cấu hình chở một `McpServer` **sống** ⇒ *"Converting circular │
+ * │ structure to JSON"*, ném thẳng ra người dùng ở nút "Thử ngay".            │
+ * │                                                                          │
+ * │ ⚠ VÀ ĐỪNG SỬA BẰNG CÁCH LÀM `missingSecretRefs` CHỊU ĐƯỢC VÒNG TRÒN:    │
+ * │ nó sẽ hết ném, rồi trả `[]` cho **mọi** cánh tay CLI — vì sau khi biên    │
+ * │ dịch, ô trống nằm trong closure chứ không còn trong dữ liệu. Cổng "thiếu  │
+ * │ chìa" tắt **im lặng**, và ta quay đúng về bug 25/08 mà nó sinh ra để      │
+ * │ chữa: chìa thiếu bị báo thành chìa sai.                                   │
+ * │ ⇒ Một câu lỗi ồn ào thắng một cổng tắt im lặng.                          │
+ * │ → [[agentco-safe-default-direction]] · [[agentco-catch-hides-premises]]   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function fillArm(
+  config: unknown,
+  env: Record<string, string>,
+  dirs?: { officeState: string; officeDir: string },
+): unknown {
+  return injectSecrets(config, env, dirs ? { officeState: dirs.officeState } : undefined);
+}
+
+/** BƯỚC ②+③ — biên dịch tờ khai CLI, rồi bỏ `npx` khỏi đường nóng. */
+export function finishArm(
+  name: string,
+  filled: unknown,
+  env: Record<string, string>,
+  dirs?: { officeState: string; officeDir: string },
+): unknown {
+  if (isCliArm(filled)) {
+    /**
+     * Không có `dirs` ⇒ không biết văn phòng nào ⇒ **không dựng**. Trả nguyên
+     * tờ khai để cửa gọi tự báo lỗi ở chỗ nó hiểu ngữ cảnh, thay vì ta đoán một
+     * `cwd` rồi cho tiến trình con chạy ở thư mục của daemon.
+     * → [[agentco-safe-default-direction]]
+     */
+    if (!dirs) return filled;
+    return compileCliArm(name, filled, { officeDir: dirs.officeDir, env });
+  }
+  return fastLaunch(filled as Record<string, unknown>);
 }

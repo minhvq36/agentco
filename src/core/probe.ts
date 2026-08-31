@@ -34,8 +34,9 @@
 
 import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
-import { ensureInstalled, fastLaunch } from './armexec.js';
-import { injectSecrets, missingSecretRefs } from './secrets.js';
+import { ensureInstalled, fillArm, finishArm } from './armexec.js';
+import { missingSecretRefs } from './secrets.js';
+import { isCliArm } from './cli-arm.js';
 import { isAccountName } from './oauth.js';
 import { httpTarget, rawAnnotations } from './mcp-http.js';
 
@@ -231,22 +232,36 @@ export async function probeArm(
    * chạy — và ở đây cái khác đó rất cụ thể: trình duyệt sẽ đẻ một thư mục tên
    * `<OFFICE_STATE>` ngay trong thư mục làm việc của daemon.
    */
-  dirs?: { officeState: string },
+  dirs?: { officeState: string; officeDir: string },
 ): Promise<ProbeResult> {
-  if (dirs) {
-    for (const [name, cfg] of Object.entries(servers)) servers[name] = injectSecrets(cfg, {}, dirs);
+  /**
+   * ⚠ CÙNG MỘT HÀM `pickMcp` DÙNG — `armexec.ts §prepareArm`. Đây là bất biến,
+   * không phải tiện tay: nút "Thử ngay" phải kiểm **đúng cấu hình sẽ chạy**.
+   * Bản cũ ở đây bỏ qua server HTTP (lỗ §5a) ⇒ một cánh tay HTTP cần chìa sẽ
+   * báo ✓ ở đây rồi 401 lúc nhân viên đầu tiên dùng nó.
+   *
+   * 🔴 MỘT LƯỢT, KHÔNG PHẢI HAI. Bản trước gọi `injectSecrets` **hai lần** — một
+   * lượt cho `dirs`, một lượt cho `env` — nên cấu hình đi qua hai đường khác
+   * nhau tuỳ ô nào được truyền. Với tờ khai CLI thì đó là bẫy chết người: bước
+   * biên dịch phải chạy **sau khi đã điền xong hết**, mà "xong hết" không xác
+   * định được nếu còn một lượt điền nữa ở phía sau.
+   */
+  /**
+   * ⚠ CHỈ BƯỚC ① Ở ĐÂY. Bước ② (biên dịch) nằm SAU phép kiểm ô trống bên dưới —
+   * xem khối chú thích ở `armexec.ts §fillArm`: một cấu hình đã biên dịch chở
+   * `McpServer` sống, và `missingSecretRefs` soi bằng `JSON.stringify`.
+   */
+  const filled: Record<string, unknown> = {};
+  for (const [name, cfg] of Object.entries(servers)) {
+    filled[name] = fillArm(cfg, env ?? {}, dirs);
+    servers[name] = filled[name] as McpServerConfig;
   }
-  if (env && Object.keys(env).length) {
-    /**
-     * ⚠ CÙNG MỘT HÀM `pickMcp` DÙNG — `secrets.ts §injectSecrets`. Đây là bất
-     * biến, không phải tiện tay: nút "Thử ngay" phải kiểm **đúng cấu hình sẽ
-     * chạy**. Bản cũ ở đây bỏ qua server HTTP (lỗ §5a) ⇒ một cánh tay HTTP cần
-     * chìa sẽ báo ✓ ở đây rồi 401 lúc nhân viên đầu tiên dùng nó.
-     */
-    for (const [name, cfg] of Object.entries(servers)) {
-      servers[name] = injectSecrets(cfg, env);
-    }
-  }
+  /**
+   * Nhớ **TRƯỚC KHI BIÊN DỊCH** đây có phải tờ khai CLI không: sau bước ② nó đã
+   * thành `{type:'sdk'}` và không còn phân biệt được với một MCP bình thường.
+   * Câu trả lời chỉ tồn tại ở đây — hỏi muộn hơn là hỏi một vật khác.
+   */
+  const hasCli = Object.values(filled).some((c) => isCliArm(c));
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ CÒN Ô TRỐNG ⇒ DỪNG Ở ĐÂY. Không bắt tay, không chờ 20 giây, không 401.  │
@@ -309,8 +324,13 @@ export async function probeArm(
   for (const cfg of Object.values(servers)) {
     await ensureInstalled(cfg as Record<string, unknown>);
   }
+  /**
+   * BƯỚC ②+③ — biên dịch tờ khai CLI rồi bỏ `npx`. Đứng ở đây, **sau** phép kiểm
+   * ô trống ở trên, vì bản đã biên dịch không `JSON.stringify` được.
+   * → `armexec.ts §fillArm`
+   */
   for (const [name, cfg] of Object.entries(servers)) {
-    servers[name] = fastLaunch(cfg as Record<string, unknown>) as McpServerConfig;
+    servers[name] = finishArm(name, cfg, env ?? {}, dirs) as McpServerConfig;
   }
 
   const t0 = Date.now();
@@ -403,7 +423,21 @@ export async function probeArm(
           tier: tierOf(ann),
         };
       });
-      if (out.tools.length) out.tiers = offeredTiers(out.tools);
+      /**
+       * ⚠ CÁNH TAY CLI KHÔNG CÓ NẤC — user chốt 30/08, và ở đây phải THI HÀNH
+       * chứ không chỉ ghi trong spec.
+       *
+       * `annotations` của tool CLI là do CHÍNH TA dựng từ ô `read_only`, nên
+       * `offeredTiers` sẽ ngoan ngoãn chào ra `read`/`full`. Bộ chọn nấc hiện
+       * lên là hứa một hàng rào **không có gì thi hành**: `addArm` cho CLI
+       * không truyền `level`, `pickMcp` cấp trọn danh sách việc trong tờ khai.
+       * Đúng loại lời hứa §14 đã mất công gỡ một lần ở bài 11.
+       *
+       * ⇒ Cổng của CLI là hai cái khác: **ai được nối dây** + `confirm` từng
+       * action. Nói thật là "toàn quyền" thì người dùng còn cân nhắc; chào ra
+       * ba nấc giả thì họ yên tâm nhầm.
+       */
+      if (out.tools.length && !hasCli) out.tiers = offeredTiers(out.tools);
     }
 
     // Chỉ đo token khi đã nối được: hỏi lúc `pending` là đo một prefix chưa có

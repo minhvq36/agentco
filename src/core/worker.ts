@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { redactBrowserLogs } from './redact.js';
 
-import { fastLaunch } from './armexec.js';
+import { prepareArm } from './armexec.js';
 import { findArm, folderRoots } from './catalog.js';
 import { noteRateLimit } from './energy.js';
 import { isAccountName } from './oauth.js';
@@ -1271,13 +1271,16 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
      * và nhờ thế một mục danh mục cắm ở hai văn phòng vẫn là **một băm**.
      * → `secrets.ts §OFFICE_STATE`
      */
-    const withEnv = injectSecrets(cfg, env, { officeState: path.join(office.paths.state, 'browser') });
+    const withEnv = prepareArm(n, cfg, env, {
+      officeState: path.join(office.paths.state, 'browser'),
+      officeDir: office.dir,
+    });
     /**
      * Bỏ `npx` khỏi đường nóng — đo được **~4 giây MỖI task có cánh tay**, vì
      * mỗi `query()` spawn một tiến trình MCP mới. Đồng bộ, không cài gì, và
      * không có bản cài sẵn thì trả về đúng cấu hình gốc. → `core/armexec.ts`
      */
-    out[n] = fastLaunch(withEnv as Record<string, unknown>);
+    out[n] = withEnv;
   }
   // Hình dạng do người dùng khai trong company.yaml — SDK tự validate lúc khởi tạo.
   return out as McpServers;

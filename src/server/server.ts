@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Daemon: HTTP + SSE.
  *
  * → docs/SPEC-offices.md §8, docs/SPEC-cli.md §1
@@ -27,6 +27,7 @@ import { browseDirs } from '../core/paths.js';
 import { buildConfig, catalogForUi, defaultOptions, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
 import { callTool, httpTarget } from '../core/mcp-http.js';
+import { cliToolNames, isCliArm } from '../core/cli-arm.js';
 import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
 import { companyPaths, officeDir, officePaths } from '../core/paths.js';
 import { endLogin, startLogin } from '../core/browser-login.js';
@@ -138,6 +139,19 @@ function armCtx(req: http.IncomingMessage): { loopbackOk: boolean } {
 /** Đích thật của ô trống `<OFFICE_STATE>` — dùng chung cho probe và lúc chạy. */
 export function officeStateDir(companyDir: string, office: string): string {
   return path.join(officePaths(officeDir(companyPaths(companyDir), office)).state, 'browser');
+}
+
+/**
+ * Cặp đường dẫn mà `probeArm` và `pickMcp` **cùng** cần — một hàm để hai cửa
+ * không thể lệch nhau. `officeDir` là chỗ tiến trình con của cánh tay CLI được
+ * phép sống; thiếu nó thì `prepareArm` **cố ý không dựng server** thay vì đoán
+ * một `cwd` rồi thả tiến trình con chạy ở thư mục của daemon.
+ */
+export function armDirs(companyDir: string, office: string): { officeState: string; officeDir: string } {
+  return {
+    officeState: officeStateDir(companyDir, office),
+    officeDir: officeDir(companyPaths(companyDir), office),
+  };
 }
 
 export function armConfig(body: {
@@ -399,8 +413,8 @@ async function scopedTools(
    * dùng chọn, còn đây là thứ ta quyết hộ, và hai thứ đó không được lẫn vào nhau.
    */
   never: readonly string[] = [],
-  /** Đích của ô trống <OFFICE_STATE> — xem probe.ts §probeArm.dirs. */
-  dirs?: { officeState: string },
+  /** Đường dẫn `probeArm` cần — xem `server.ts §armDirs`. */
+  dirs?: { officeState: string; officeDir: string },
 ): Promise<string[]> {
   const r = await probeArm({ arm: config as never }, undefined, secrets, dirs);
   if (r.status !== 'connected') {
@@ -821,7 +835,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         { [body.id || 'thu']: config as never },
         base,
         arm.secrets,
-        body.office ? { officeState: officeStateDir(company.dir, body.office) } : undefined,
+        body.office ? armDirs(company.dir, body.office) : undefined,
       );
       return json(res, 200, r);
     }
@@ -889,12 +903,26 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // Cắm bằng `config` gõ tay (đường B) thì không có mục ⇒ không có lệnh cấm —
       // đúng: đường đó là người dùng tự khai server, ta không curate hộ.
       const never = body.catalogId ? (findArm(body.catalogId)?.neverTools ?? []) : [];
-      const tools = arm.tools ?? (await scopedTools(
+      /**
+       * ⚠ TỜ KHAI CLI KHÔNG ĐI QUA `scopedTools` — và đây là quyết định, không
+       * phải đường tắt.
+       *
+       * `scopedTools` tồn tại để hỏi **server của người khác** *"anh có những
+       * việc gì, việc nào chỉ-đọc"* rồi cắt theo nấc. Với CLI thì cả hai vế đều
+       * vô nghĩa: danh sách việc **do chính tờ khai nói ra** (không có nguồn thứ
+       * hai để lệch), và **không có nấc nào** — user chốt 30/08 CLI là toàn
+       * quyền, cổng còn lại là *ai được nối dây* + `confirm` từng action.
+       *
+       * Đi qua nó thì ta trả một lượt `query()` để hỏi một câu đã biết đáp án,
+       * rồi ép kết quả qua `tierFor` — cỗ máy nấc chạy trên một thứ không có nấc
+       * là chỗ đẻ ra nấc giả. → SPEC-arms §16f ô ③
+       */
+      const tools = isCliArm(arm.config) ? cliToolNames(arm.config) : arm.tools ?? (await scopedTools(
           arm.config,
           arm.secrets,
           tierFor(body.catalogId ? findArm(body.catalogId) : undefined, arm.level),
           never,
-          body.office ? { officeState: officeStateDir(company.dir, body.office) } : undefined,
+          body.office ? armDirs(company.dir, body.office) : undefined,
         ));
       const id = company.addArm({
         config: arm.config,

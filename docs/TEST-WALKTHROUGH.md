@@ -3040,7 +3040,14 @@ Cánh tay tự cắm là ca **dễ tái phát nhất** vì nó không có `catal
 
 ---
 
-## Bài 21 — **Cánh tay tự dựng: REST → MCP** 🆕 *viết 30/08* · ⛔ *chưa xây*
+## Bài 21 — ~~**Cánh tay tự dựng: REST → MCP**~~ 🔒 **GÁC 31/08 — REST bỏ khỏi v1**
+
+> **ĐỪNG CHẠY BÀI NÀY.** User chốt 31/08 bỏ REST khỏi v1; lý do + điều kiện mở lại nằm ở khối chốt
+> đầu `SPEC-connectors.md`. Giữ nguyên bài, không xoá: ngày mở lại thì các ô đo vẫn dùng được, và
+> xoá đi là phải nghĩ lại từ đầu.
+>
+> ⚠ Vế *"đặc sản đang ở mức 0%"* dưới đây **đã hết đúng**: đặc sản chuyển sang **bài 22 (CLI)**, và
+> nó đã chạy đầu-cuối 31/08. `createSdkMcpServer` nay **có** trong `src/core/cli-arm.ts`.
 
 > Đường C của §4c, đã có spec từ **14/08** (`SPEC-connectors.md` toàn bộ + `SPEC-tools-approval §10`).
 > Đọc mã 30/08: **`createSdkMcpServer` không xuất hiện một lần nào trong `src/`.**
@@ -3135,7 +3142,74 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 
 ---
 
-## Bài 22 — **Cánh tay tự dựng: CLI → MCP** 🆕 *viết 30/08* · ⛔ *chưa xây, chưa chốt 3 ô*
+## Bài 22 — **Cánh tay tự dựng: CLI → MCP** *viết 30/08* · ✅ **ĐÃ XÂY 31/08 — chạy được NGAY**
+
+> ### 🟢 CẬP NHẬT 31/08 — đọc khối này trước, nó đổi cách chạy bài
+>
+> **Đã xây và đã chạy ngoài UI:** `core/cli-arm.ts` · `secrets.ts` nhánh `type:'cli'` ·
+> `armexec.ts §fillArm/finishArm/prepareArm` · `company.ts §addArm` (ghi cả `tools` và `does`) ·
+> `probe.ts` · `server.ts`. **779/779 test xanh.** Chi tiết: `SPEC-arms.md §16t`.
+>
+> **CHẶNG 0 ĐÃ CÓ SỐ, ĐỪNG CHẠY LẠI:** một `tools/call` chạy **901 giây không bị cắt**, worker `done`,
+> **4 lượt · $0,065** ⇒ **đi hình dạng ①** (một tool chặn tới khi xong). Ô `long:` và bộ ba
+> `bắt_đầu/tình_hình/đọc_kết_quả` **KHÔNG vào bản đầu** ⇒ **chặng D bỏ khỏi lượt chạy này**.
+> ⚠ Số đó chứng minh **≥901s**, không chứng minh "vô hạn".
+>
+> **KHÔNG CÓ PANE RIÊNG.** Cắm qua tab **"Tự cắm MCP"** — `parsePaste` nhận mọi khối JSON, nên tờ khai
+> CLI đi thẳng vào đường đã có. Dán khối này (chạy được trên cả ba OS, không cần cài gì):
+>
+> ```json
+{
+  "type": "cli",
+  "actions": [
+    {
+      "id": "dem_hoa_don",
+      "say": "đếm hoá đơn chưa thanh toán",
+      "description": "Đếm số hoá đơn chưa thanh toán. Chỉ đọc, không đổi gì trên máy.",
+      "run": [
+        "node",
+        "-e",
+        "console.log(23)"
+      ],
+      "read_only": true
+    },
+    {
+      "id": "dong_bo",
+      "say": "đồng bộ dữ liệu",
+      "description": "Đồng bộ dữ liệu về máy. ⚠ Ghi đè dữ liệu đang có, không hoàn tác được.",
+      "run": [
+        "node",
+        "-e",
+        "console.log('xong')"
+      ],
+      "fail_when": [
+        "ERROR"
+      ]
+    }
+  ]
+}
+> ```
+>
+> 🔴 **NHỚ ĐẶT NHÃN** ở ô Tên. Bỏ trống thì `defaultArmLabel` lấy tên chương trình (`node`) — đúng
+> nhưng vô nghĩa với người đọc, và §16r đã đo: **tên không có tiên nghiệm ⇒ model lấp chỗ trống**.
+>
+> ### Ô ĐO MỚI, thay cho chặng D
+>
+> | Ô | Câu hỏi | Đáp án biết trước |
+> |---|---|---|
+> | **F-1** | Bấm Thử → hiện gì? | `connected` · **2 việc** · ~4 s. **Không lệnh nào chạy** — nút Thử chỉ bắt tay và liệt kê |
+> | **F-2** | 🔴 Có hiện **bộ chọn nấc** không? | **KHÔNG.** CLI bỏ nấc hẳn. Hiện ra là bug — ba nấc đó không có gì thi hành |
+> | **F-3** | 🔴 Node trên sơ đồ mọc ở đâu? | ngay dưới chủ nếu đã kéo dây; **bãi đỗ trái** nếu chưa |
+> | **F-4** | Giao *"bên mình còn bao nhiêu hoá đơn chưa thanh toán?"* | Trợ lý **giao việc** (4/4 lượt đo ngoài UI), worker gọi `dem_hoa_don`, trả **23** |
+> | **F-5** | 🔴 Trợ lý có nói đúng **nguồn** không? | Đo được 1 lượt nó khai *"theo dữ liệu từ công cụ"* mà **không gọi** — nếu tái hiện thì đó là nợ đã ghi, không phải phát hiện mới |
+> | **F-6** | Mở `company.yaml`, xem mục vừa cắm | có `does:` (2 câu tiếng người) và `tools:` (2 id). **Thiếu `does` là bug** — nó quyết định F-4 |
+>
+> ### ⏸ CHƯA XÂY, đừng đo
+>
+> Nút **"Thử một action"** (chạy thật một lệnh) · `confirm:` **chưa nối vào cổng duyệt** (ô có trong
+> tờ khai, chưa có ai đọc) · chặn `curl`/`wget` ở `run:`.
+
+<sub>Phần dưới là bản viết 30/08, giữ nguyên làm hồ sơ thiết kế.</sub>
 
 > ⭐⭐ **Bài nặng nhất của cả tài liệu, và là thứ user gọi là *"quan trọng hơn cả"*.**
 >

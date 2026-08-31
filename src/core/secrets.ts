@@ -532,6 +532,32 @@ export function injectSecrets<T>(
     return { ...filled, env: { ...((filled['env'] as object) ?? {}), ...keys } } as T;
   }
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ NHÁNH THỨ BA: TỜ KHAI CLI. → SPEC-arms §16                               │
+   * │                                                                          │
+   * │ Nó không có `command` cũng không có `url` ở tầng ngoài — chìa nằm trong   │
+   * │ `actions[].env`. Thiếu nhánh này thì nó **rơi qua cả hai `if` và trả về   │
+   * │ nguyên xi**: ô trống không bao giờ được điền, còn `missingSecretRefs`     │
+   * │ (quét cả cấu hình) thì tố cáo mãi mãi. Đúng bug 31/08, y hệt hình dạng,   │
+   * │ chỉ khác chỗ đứng.                                                       │
+   * │                                                                          │
+   * │ ⇒ **BẤT BIẾN: phạm vi hàm ĐIỀN = phạm vi hàm KIỂM.** Có test canh.        │
+   * │                                                                          │
+   * │ ⚠ CHỈ điền ô trống, KHÔNG gộp `keys` vào một `env` chung: một action chỉ  │
+   * │ được thấy đúng cái chìa nó khai. Gộp theo tên (nhánh stdio) là đúng cho   │
+   * │ mục danh mục — server của hãng đọc thẳng `process.env.NOTION_TOKEN` — còn │
+   * │ ở đây tiến trình con là binary của KHÁCH, và rót cả chùm chìa của công ty │
+   * │ vào env của nó là mở đúng cái lỗ §5d vừa mất công đóng.                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  if (cfg['type'] === 'cli') {
+    const gone = new Set<string>();
+    const filled = fillRefs(cfg, keys, gone);
+    warnMissing(gone, 'lệnh sẽ chạy với ô trống chưa được điền.');
+    return filled as T;
+  }
+
   if (typeof cfg['url'] === 'string') {
     const missing = new Set<string>();
     const filled = fillRefs(cfg, keys, missing);

@@ -538,7 +538,7 @@ type McpServerConfig =
 |---|---|---|
 | **A · Danh mục có sẵn** | chọn từ danh sách, điền chìa | Notion, Google, Slack… — thứ nổi tiếng, ta gói sẵn cấu hình |
 | **B · Dán cấu hình MCP** | dán khối JSON chuẩn | ai đã có server sẵn |
-| **C · Connector — ĐẶC SẢN** | **mô tả cái API bằng form / dán cURL / dán OpenAPI** | *"POST domain/{id}"* của bạn |
+| **C · Cánh tay tự khai — ĐẶC SẢN** | ~~mô tả cái API bằng form / dán cURL / dán OpenAPI~~ 🔒 **REST bỏ 31/08** ⇒ **bọc một LỆNH đã khai** | `gh pr create --title {T}` trên máy bạn |
 
 **Đường C là câu trả lời cho nỗi lo của bạn.** Nó khả thi vì SDK cho tạo **MCP server chạy ngay trong tiến trình của ta**:
 
@@ -1132,7 +1132,7 @@ Xếp theo *mở khoá được bao nhiêu bài test* trên mỗi đơn vị cô
 | 7 | Cổng duyệt hai tầng (§8) | **bài 10 chặng C**, và mọi việc chạm ra ngoài | lớn |
 | 8 | Cắm MCP trong UI, đường A + B (§6) | bài 10 chặng B | vừa |
 | 9 | Chìa theo connector (§7a) | đi kèm số 8 | nhỏ |
-| 10 | Connector tự sinh, đường C (§6) | **đặc sản** — API riêng của người dùng | lớn |
+| 10 | Cánh tay tự khai, đường C (§6) | **đặc sản** — ✅ **đã xây 31/08 dưới dạng CLI** (`SPEC-arms §16t`); nhánh REST 🔒 bỏ | lớn |
 
 Ba việc đầu cộng lại nhỏ hơn một buổi và xoá được phần lớn chữ ❌ trong `TEST-WALKTHROUGH.md`. Làm trước.
 

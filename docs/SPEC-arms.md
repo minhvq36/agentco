@@ -4845,11 +4845,112 @@ lại nhất của sản phẩm, và một luật chung dán lên đó là đún
 
 ### ⇒ Còn lại
 
-1. ❗ **Chạy phép thử tách bạc ở trên** — nó quyết định có tồn tại một lỗ định tuyến hay không.
-2. Ai điền `does` cho cánh tay thật? Với CLI/connector: sinh từ `say` của từng action lúc cắm. Với
-   cánh tay **tự dán** (đường B): ❓ chưa có nguồn — `tools/list` chỉ cho **tên tool**, mà §7b cấm
-   dán tên thô. Có thể lấy `description` của tool rồi rút gọn, **chưa đo**.
-3. Đi đọc `SayOutcome.intent` — nó trả `"chat"` cả ở lượt có lập kế hoạch và chạy worker.
+1. ~~Chạy phép thử tách bạc~~ — ✅ **XONG 31/08, và nó LẬT kết luận ở trên.** Xem §16t.
+2. ~~Ai điền `does`~~ — ✅ `company.ts §addArm` ghi, nguồn là `say` của từng action, trần 4. Cánh tay
+   **tự dán** (đường B) thì vẫn ❓ chưa có nguồn.
+3. ~~Đi đọc `SayOutcome.intent`~~ — ✅ **XONG, và câu trả lời là CƠ CHẾ chứ không phải hành vi:**
+   `office.ts:574-582` — với **mọi tin nhắn chữ thường**, `say()` bỏ tin vào hòm thư, gọi
+   `void this.pump()` rồi **`return { intent: 'chat', reply: '' }` NGAY**. Định tuyến chạy **sau đó**,
+   bất đồng bộ. ⇒ `intent` không phải quyết định của `route()`; nó là **giá trị mặc định của một hàm
+   trả về TRƯỚC KHI có quyết định**. Ba đường duy nhất nó mang nghĩa thật đều là đường trả lời bằng
+   code (`@đường-dẫn` hỏng · hòm thư đầy · lệnh `/…`).
+   Đã soi cả ba tầng tiêu thụ (`server` · `cli` · `web`): **không chỗ nào rẽ nhánh theo nó** ⇒ không
+   có bug đang sống, thứ có thật là **một trường nói dối trong hợp đồng API**. ⏸ Đổi tên thành
+   `accepted` — chờ user duyệt, vì nó là hình dạng API công khai.
+
+---
+
+## 16t. ✅ 31/08 — **CLI LÊN APP**. Phép đo chặn có số, và kết luận §16s bị lật
+
+> **779/779 xanh** (+25), typecheck + build sạch. Toàn bộ số dưới đây đo bằng máy, không đọc tài liệu.
+
+### ① PHÉP ĐO CHẶN — **đi hình dạng ①, không xây bộ ba `long:`**
+
+`spike-cli-arm.ts --treo=900`: một `tools/call` chạy **901 giây KHÔNG bị cắt**, kết quả về tới nơi,
+worker `done` — **4 lượt · $0,065**.
+
+- ⇒ Đúng ngưỡng §16n đặt **trước** khi đo (≥10 phút ⇒ ①). Tiết kiệm vĩnh viễn **2 định nghĩa tool
+  trong prefix mọi lượt**. Ô `long:` **không vào bản đầu**.
+- ⭐ Lý lẽ mạnh nhất KHÔNG phải đếm tool: **chờ 15 phút tốn 0 lượt**. Bộ ba bắt trả một lượt cho *mỗi*
+  lần hỏi *"xong chưa"* — chờ thì miễn phí, đi hỏi thì có giá.
+- ⚠ Ta chứng minh **≥901s**, **không** chứng minh "vô hạn". Đừng viết vào spec là "không có trần".
+- 📌 Trước đó `--treo=` **khai cái tool mà không có gì gọi nó** — có dụng cụ, không có số. Nấc thứ tư
+  của thang [[agentco-spec-says-done]]: spec nói xong · mã có mặt · có ai bấm chưa · **cái bấm ấy có
+  chạm vào thứ cần đo không**.
+
+### ② 🔴🔴 **KHÔNG CÓ LỖ ĐỊNH TUYẾN** — §16s sai, và thứ hỏng là bộ đo
+
+Phép thử tách bạc (*"còn bao nhiêu hoá đơn chưa thanh toán?"*, số **chỉ máy biết**, đổi mỗi lượt):
+**4/4 lượt Trợ lý giao việc, gọi CLI thật, trả đúng số.**
+
+Nguyên nhân của kết luận sai: bộ đo có **hai bản khai của cùng một cánh tay** — `--roster` đọc bản có
+`does`, `phase3()` gõ lại một bản **thiếu `does`** rồi cho Trợ lý ăn bản đó.
+
+> 🔴 `--roster` sinh ra 30/08 đúng để tách *"dữ liệu không tới"* khỏi *"tới rồi mà model quyết khác"*,
+> và bài học ghi lại là *"phép thử phân biệt phải MIỄN PHÍ"*. Hoá ra **miễn phí vẫn có thể soi nhầm
+> VẬT**. ⇒ Sửa luật: **rẻ không bằng ĐỨNG ĐÚNG CHỖ.**
+
+Và bốn lỗi khác trong chính cổng đo, tất cả đều làm nó **nói dối**: gom cả tin người dùng ⇒ nhánh
+*"hỏi lại"* luôn đúng · rồi lọc `assistant` ⇒ **mất kênh `answer`** của worker · `ok` chỉ đòi con số
+**có mặt** ⇒ xanh cho lượt 0 lời gọi · `\b7546\b` không khớp **"7.546"**. Cộng một lỗi thiết kế: ba
+lượt **cùng một phiên** (con trỏ ở `.state/assistant-session.json` sống qua tiến trình) ⇒ **1 mẫu,
+không phải 3**.
+
+### ③ HÌNH DẠNG ĐÃ XÂY
+
+`type: 'cli'` nằm trong **`company.yaml`, cùng cấp với mọi cánh tay khác** (user chốt 31/08).
+
+> ⭐ **Vì sao KHÔNG đẻ thư mục `commands/` riêng:** §16i đòi tờ khai nằm ở vùng **chỉ đọc** của
+> `officeJail`. Thư mục mới ⇒ phải dựng **hàng rào mới**. `company.yaml` ⇒ hàng rào **đã có** từ §5f.
+> Mua đúng cái nguy hiểm nhất của cả tính năng bằng **0 cơ chế mới**.
+>
+> Và bất biến *"`mcpServers[băm]` đúng hình dạng SDK cần"* **không cấm** chuyện này: mục đích của nó là
+> *đừng nhét metadata của agentco vào `mcpServers`*. Chính `company.yaml` tự bác cách đọc chặt hơn —
+> `${NOTION_OAUTH_…}` và `<OFFICE_STATE>/profile` chứng minh dạng trên đĩa **đã là một cái khuôn có
+> lỗ** từ 25/08.
+
+| Mảnh | Chỗ |
+|---|---|
+| tờ khai + `fillArgv` + `runCommand` **4 cửa** + `buildCliTools` **thuần** + `runs_on` | `core/cli-arm.ts` |
+| điền ô `${…}` trong `actions[].env` | `secrets.ts` nhánh thứ ba |
+| ① điền → ② biên dịch → ③ bỏ `npx` | `armexec.ts §fillArm · finishArm · prepareArm` |
+| danh sách việc + `does` suy từ tờ khai | `company.ts §addArm` |
+| bỏ qua `scopedTools` cho CLI | `server.ts` |
+
+**Ba bước là MỘT hàm dùng chung cho `pickMcp` và `probeArm`** — trước đây luật *"nút Thử phải kiểm đúng
+thứ sẽ chạy"* được giữ bằng **kỷ luật** (hai nơi tự ghép ba bước giống nhau); nay bằng **cấu trúc**.
+
+### ④ 🔴 HAI BUG BẮT ĐƯỢC Ở LƯỢT `probeArm` ĐẦU TIÊN
+
+**a) `Converting circular structure to JSON`.** `probeArm` biên dịch **trước**, quét ô trống **sau**,
+mà bản đã biên dịch chở một `McpServer` sống.
+
+> ⛔ **Cám dỗ phải từ chối:** làm `missingSecretRefs` chịu được vòng tròn. Nó hết ném — rồi trả `[]`
+> cho **mọi** cánh tay CLI, vì sau biên dịch ô trống nằm trong **closure**. Cổng *"thiếu chìa"* tắt
+> **im lặng**, quay đúng về bug 25/08. ⇒ Phép kiểm phải đứng vào **khe giữa ĐIỀN và BIÊN DỊCH**. Một
+> câu lỗi ồn ào thắng một cổng tắt im lặng.
+
+**b) CLI chào ra BỘ CHỌN NẤC** — trái chốt *"CLI bỏ nấc hẳn"*. `annotations` của tool CLI do **chính
+ta** dựng từ ô `read_only` nên `offeredTiers` ngoan ngoãn chào `read`/`full`; mà `addArm` không truyền
+`level` và `pickMcp` cấp trọn danh sách ⇒ ba nấc **không có gì thi hành**. Nói thật *"toàn quyền"* thì
+người dùng còn cân nhắc; ba nấc giả thì họ **yên tâm nhầm**. ⇒ `hasCli` phải nhớ **trước** khi biên
+dịch — sau đó nó đã thành `{type:'sdk'}` và không phân biệt được nữa.
+
+### ⑤ 📌 `does` — TRƯỜNG CÓ SCHEMA, CÓ NGƯỜI ĐỌC, **CHƯA AI GHI** (tới 31/08)
+
+Bản vá 30/08 dựng `types.ts §arms.does` + `armReach` đọc nó rồi dừng: **không cửa nào trong sản phẩm
+ghi trường này**, chỉ spike ghi tay. Không test nào đỏ vì vắng là hợp lệ (`.default([])`).
+Giá đo được ngay: nhãn trần ⇒ Trợ lý **không giao việc**; có `does` ⇒ **4/4** giao việc, gọi thật, đúng số.
+
+### ⏸ CÒN NỢ
+
+- **Chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:`** — bẫy sinh ra từ chốt bỏ REST. Không có shell nên
+  `$TOKEN` không nở ⇒ người dùng buộc phải dán **chìa literal vào argv**, mà argv đọc được từ tiến
+  trình khác trên cả ba OS **và** đi vào băm. Không triệu chứng nào.
+- **Chưa ai chạy bài 22 qua GIAO DIỆN.** Mọi số trên đo ngoài UI.
+- Nút **"Thử một action"** (chạy thật một lệnh, §16i: phải nói rõ trước khi bấm, không bấm hộ) — chưa có.
+  Nút "Thử" hiện tại chỉ bắt tay và liệt kê việc, **không chạy lệnh nào**.
+- `confirm:` đã có trong tờ khai nhưng **chưa nối vào cổng duyệt**.
 
 ---
 

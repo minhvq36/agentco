@@ -15,6 +15,7 @@ import { EventEmitter } from 'node:events';
 import YAML from 'yaml';
 
 import { defaultArmLabel, ensureInstalled } from './armexec.js';
+import { cliSays, cliToolNames } from './cli-arm.js';
 import { loadCompanyConfig, loadOffice } from './config.js';
 import {
   companyPaths,
@@ -607,7 +608,39 @@ export class Company {
      * cánh tay đã biết thì lấy lại danh sách cũ — cùng lý lẽ với `label` ngay
      * trên: cùng băm nghĩa là **cùng cấu hình**, nên tập việc đã giải vẫn đúng.
      */
-    const tools = input.tools?.length ? input.tools : (this.config.arms[id]?.tools ?? []);
+    /**
+     * ⚠ Với tờ khai CLI, danh sách việc suy được **từ chính tờ khai**, không phải
+     * chờ một lượt `probeArm`. Thiếu nó thì `pickMcp` cấp **cả server**
+     * (`mcp__<băm>`) — rộng hơn thứ ta định cấp, và im lặng. Cùng cái lỗ
+     * `arms[].tools` sinh ra để đóng, chỉ khác nguồn dữ liệu.
+     */
+    const tools = input.tools?.length
+      ? input.tools
+      : cliToolNames(input.config).length
+        ? cliToolNames(input.config)
+        : (this.config.arms[id]?.tools ?? []);
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 `does` — TRƯỜNG CÓ SCHEMA, CÓ NGƯỜI ĐỌC, **CHƯA AI GHI** (tới 31/08)│
+     * │                                                                      │
+     * │ Bản vá 30/08 dựng `types.ts §arms.does` và `assistant.ts §armReach`   │
+     * │ đọc nó, rồi dừng ở đó: không cửa nào trong sản phẩm ghi trường này —  │
+     * │ chỉ spike ghi bằng tay. Nên năng lực *"cánh tay tự khai làm được gì"* │
+     * │ **chưa từng chạy trong app một lần nào**, và không có test nào đỏ vì  │
+     * │ trường vắng là hợp lệ (`.default([])`).                              │
+     * │                                                                      │
+     * │ Đo được cái giá của nó ngay hôm nay: cùng một câu hỏi, cùng cánh tay  │
+     * │ — nhãn trần ⇒ Trợ lý **không giao việc**; có `does` ⇒ giao việc, gọi  │
+     * │ thật, đúng số, **4/4 lượt**. → SPEC-arms §16r · §16s                  │
+     * │                                                                      │
+     * │ ⚠ Nguồn là `say` của từng action (câu tiếng người), KHÔNG phải `id`:  │
+     * │ `dem_hoa_don` là tên máy, và §7b cấm dán tên tool thô vào danh bạ.    │
+     * │ Trần 4 việc — dòng danh bạ đi vào prefix **mọi lượt `route()`**.      │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const does = cliSays(input.config).length
+      ? cliSays(input.config)
+      : (this.config.arms[id]?.does ?? []);
     doc.setIn(
       ['arms', id],
       block(
@@ -616,6 +649,7 @@ export class Company {
           ...(input.catalog ? { catalog: input.catalog } : {}),
           secrets: secretNames,
           ...(tools.length ? { tools } : {}),
+          ...(does.length ? { does } : {}),
           // Nấc quyền — đã nằm trong băm, ghi ra để người dùng ĐỌC ĐƯỢC bằng mắt
           // thay vì phải tin cái huy hiệu trên giao diện. → §6j
           ...(input.level ? { level: input.level } : {}),

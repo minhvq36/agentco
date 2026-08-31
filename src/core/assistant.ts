@@ -1468,6 +1468,26 @@ export class Assistant {
     const { text, usage } = await this.askSession(
       `Sắp bắt đầu một cuộc trò chuyện mới. Đây là những việc đã chạy (dữ liệu hệ thống, KHÔNG cần kể lại):\n\n` +
         `${skeleton}\n\n` +
+        Assistant.COMPACT_RULES,
+    );
+    return { value: text.trim(), usage };
+  }
+
+  /** Sau khi nạp lại văn phòng từ đĩa. Giữ nguyên session. */
+  rebind(office: LoadedOffice): void {
+    this.office = office;
+  }
+
+  /**
+   * KHỐI LUẬT CỦA LƯỢT NÉN TRÍ NHỚ — tách khỏi thân hàm để **khoá được bằng test**.
+   *
+   * Không phải để dùng lại ở đâu: nó có đúng một nơi gọi. Lý do là mấy luật này
+   * sinh ra từ những ca hỏng đắt (29/08 · 31/08) và mỗi luật là một dòng văn
+   * xuôi — thứ dễ bị "dọn cho gọn" nhất trong cả codebase, mà xoá đi thì
+   * **không test nào đỏ**, vì đầu ra của lượt nén vốn đã bất định.
+   * → [[agentco-detect-fix-pair-scope]]: khoá bằng test, không bằng chú thích.
+   */
+  static readonly COMPACT_RULES: string =
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
          * │ 🔴 GỘP, KHÔNG PHẢI VIẾT MỚI — bug đã sửa 20/08.                  │
@@ -1504,7 +1524,7 @@ export class Assistant {
          * └──────────────────────────────────────────────────────────────────┘
          */
         `Trong ngữ cảnh của bạn đã có khối "What the human has decided" — đó là TRÍ NHỚ TỪ TRƯỚC, ` +
-        `và bản bạn viết ra bây giờ sẽ THAY THẾ HẲN nó. Bốn luật, theo đúng thứ tự này:\n` +
+        `và bản bạn viết ra bây giờ sẽ THAY THẾ HẲN nó. Năm luật, theo đúng thứ tự này:\n` +
         `1. CHÉP LẠI mọi mục cũ còn đúng. Bỏ một mục vì "phiên này không nhắc tới" là làm mất ` +
         `một quyết định người dùng đã chốt.\n` +
         `2. Mục cũ nào bị phiên vừa rồi SỬA hoặc HUỶ thì viết ĐÚNG MỘT dòng theo ý MỚI, và bỏ hẳn ý cũ. ` +
@@ -1555,6 +1575,57 @@ export class Assistant {
         `⚠ Thứ NGƯỜI DÙNG chốt thì vẫn chép lại theo luật 1, kể cả khi họ chốt "đừng làm X" — đó là ` +
         `quyết định của họ, không phải kết luận của bạn. Việc còn dở thì ghi là VIỆC CẦN LÀM TIẾP, ` +
         `không kèm phán đoán vì sao nó chưa xong.\n\n` +
+        /**
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ 🔴 LUẬT THỨ NĂM — TRÍ NHỚ GIỮ CÁCH LẤY, KHÔNG GIỮ SỐ LIỆU.       │
+         * │ (user chốt 31/08: *"không nén dữ liệu sống, realtime, có thể     │
+         * │  thay đổi vào trí nhớ… cùng lắm thì tôi hài lòng với sự bất      │
+         * │  định"*)                                                         │
+         * │                                                                  │
+         * │ ⚠⚠ ĐỌC KỸ PHẠM VI TRƯỚC KHI TIN LUẬT NÀY ĐÃ ĐÓNG CÁI GÌ.        │
+         * │                                                                  │
+         * │ Ca đo được 31/08 — Trợ lý trả lời *"còn 23 hoá đơn"* ở hai lượt  │
+         * │ **không hề gọi cánh tay**, một lượt còn khai *"theo dữ liệu từ   │
+         * │ công cụ"* — **KHÔNG đi qua cửa này**. Grep cả văn phòng: con số  │
+         * │ nằm ở `chat.jsonl` + biên lai, **không có node ghi nhớ nào**.    │
+         * │ Cửa thật là `.state/assistant-session.json` → `options.resume`:  │
+         * │ ba tiến trình khác nhau vẫn là MỘT hội thoại, và Trợ lý nhắc lại │
+         * │ câu chính nó vừa nói 60 giây trước — thứ đó **hợp lý**.          │
+         * │                                                                  │
+         * │ ⇒ Luật này đóng cửa TRÍ NHỚ, một kênh có thật và đã trả giá một  │
+         * │ lần (29/08). Nó KHÔNG đóng cửa `resume`. Ghi ra để lần sau không │
+         * │ ai đọc bản vá này rồi tưởng ca 31/08 đã được xử lý.              │
+         * │ → [[agentco-easy-reason-beats-true-reason]]                       │
+         * │                                                                  │
+         * │ Vì sao vẫn đáng làm dù ca đo đi cửa khác: sau `/clear`, một con  │
+         * │ số cũ nằm trong khối GHI NHỚ sẽ vào prefix của **mọi lượt         │
+         * │ `route()`** và `supersedes` **gia hạn nó ở mỗi lần nén** — nó     │
+         * │ không bao giờ tự hết hạn. Đúng hai tính chất đã làm luật 4 cần    │
+         * │ thiết, chỉ khác nội dung: lần đó là KẾT LUẬN, lần này là SỐ LIỆU. │
+         * │                                                                  │
+         * │ 🔑 Phép thử được chọn vì nó KHÔNG cần cơ chế mới: *"hỏi lại chỗ  │
+         * │ cũ ngày mai, câu trả lời có thể khác không?"* — model tự trả lời  │
+         * │ được, không phải tra biên lai, không phải thêm trường nào. User   │
+         * │ đã chốt chấp nhận phần bất định của phép thử đó.                  │
+         * │                                                                  │
+         * │ ⭐ Và luật viết theo chiều GIỮ, không theo chiều CẤM: đổi số liệu │
+         * │ thành **cách lấy** thì không mất gì cả — phiên sau vẫn biết phải  │
+         * │ đi hỏi ai, mà lại hỏi lại đúng lúc cần. Một luật chỉ có vế "đừng  │
+         * │ ghi" sẽ bị model chấp hành bằng cách bỏ trắng, và ta mất luôn      │
+         * │ đường về.                                                        │
+         * └──────────────────────────────────────────────────────────────────┘
+         */
+        `5. KHÔNG ghi SỐ LIỆU và TRẠNG THÁI lấy được từ kết nối/file. Ghi CÁCH LẤY, đừng ghi cái đã lấy.\n` +
+        `   Phép thử: hỏi lại chỗ cũ ngày mai mà câu trả lời có thể khác ⇒ đó là số liệu, KHÔNG ghi.\n` +
+        `   ⛔ "hiện còn 23 hoá đơn chưa thanh toán, tổng 41.250.000đ"\n` +
+        `   ⛔ "Linear có 9 việc, 3 việc đang In Progress" · ⛔ "repo X có 7 nhánh"\n` +
+        `   ✅ "số hoá đơn chưa thanh toán: hỏi kết nối Xưởng lệnh, đừng trả lời từ trí nhớ"\n` +
+        `   ✅ "việc đang In Progress: gọi list_issues của Linear, nó trả sẵn status trong từng việc"\n` +
+        `Số liệu cũ nằm trong trí nhớ thì bạn sẽ đọc lại nó ở MỌI phiên sau và trả lời như thể vừa tra — ` +
+        `mà nó đã cũ, và người dùng không có cách nào nhìn ra. Ghi cách lấy thì không mất gì: phiên sau ` +
+        `vẫn biết đi hỏi ai, và hỏi đúng lúc cần.\n` +
+        `⚠ Con số NGƯỜI DÙNG tự chốt thì vẫn chép lại theo luật 1 ("ngân sách mỗi task tối đa $0,5") — ` +
+        `đó là quyết định, không phải số liệu đi lấy về.\n\n` +
         `Những thứ cần nhớ để phục vụ tiếp:\n` +
         `- người dùng thích gì, không thích gì (giọng văn, độ dài, cách trình bày)\n` +
         `- những gì đã CHỐT và không cần bàn lại\n` +
@@ -1569,15 +1640,7 @@ export class Assistant {
         // một phiên chat vặt ("chào bạn") có thể trả về KHÔNG — và tuy nhánh đó
         // không ghi node mới (nên không xoá gì), câu dặn vẫn phải khớp với luật
         // gộp ở trên, nếu không thì hai câu trong cùng một prompt đá nhau.
-        `Nếu KHÔNG có trí nhớ cũ và phiên này cũng không có gì đáng nhớ thì trả về đúng một chữ: KHÔNG`,
-    );
-    return { value: text.trim(), usage };
-  }
-
-  /** Sau khi nạp lại văn phòng từ đĩa. Giữ nguyên session. */
-  rebind(office: LoadedOffice): void {
-    this.office = office;
-  }
+        `Nếu KHÔNG có trí nhớ cũ và phiên này cũng không có gì đáng nhớ thì trả về đúng một chữ: KHÔNG`;
 
   setHotKnowledge(text: string): void {
     this.hotKnowledge = text.trim();
