@@ -268,7 +268,44 @@ export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: f
   }
 
   const r = CliArmSchema.safeParse(input);
-  if (r.success) return { ok: true, arm: r.data };
+  if (r.success) {
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 HAI LỆNH TRÙNG `id`. (user hỏi 01/09, và câu hỏi trúng một lỗ)     │
+     * │                                                                      │
+     * │ ĐÃ ĐO (01/09): SDK **NÉM** — `Tool a is already registered`. Nên tin  │
+     * │ mừng là **không có ca nuốt im lặng**: không đời nào một lệnh "xoá"    │
+     * │ lặng lẽ chiếm chỗ một lệnh "đếm" cùng tên.                           │
+     * │                                                                      │
+     * │ Nhưng nó ném ở `compileCliArm`, tức **lúc Thử hoặc lúc chạy**, bằng   │
+     * │ một câu tiếng Anh nói về "tool" — trong khi người dùng vừa đặt tên    │
+     * │ hai *lệnh* bằng tiếng Việt. Đúng lớp *câu lỗi sai cửa*: đúng sự thật, │
+     * │ sai người nhận. → [[agentco-wrong-door-errors]]                       │
+     * │                                                                      │
+     * │ ⚠ VÀ NÓ TỚI ĐƯỢC TỪ FORM, không cần sửa JSON: `id` do `slugId(say)`   │
+     * │ sinh ra, nên *"đếm hoá đơn"* và *"đếm hoá đơn!"* ra **cùng một** id.  │
+     * │ Đây không phải ca hiếm của người nghịch JSON.                        │
+     * │                                                                      │
+     * │ ⚠ Chỉ chặn Ở CỬA, KHÔNG đưa vào schema: schema dùng chung với cửa nạp │
+     * │ `company.yaml`, mà rớt ở đó thì `cliToolNames` trả `[]` ⇒ `addArm`    │
+     * │ ghi `tools: []` ⇒ **cấp cả server** (đúng lỗ §5t). Cửa nạp cứ để SDK  │
+     * │ ném — tất định, và không nới quyền cho ai.                            │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const seen = new Set<string>();
+    for (const a of r.data.actions) {
+      if (seen.has(a.id)) {
+        return {
+          ok: false,
+          error:
+            `Hai lệnh cùng mã "${a.id}" — mỗi lệnh phải có mã riêng. ` +
+            `Mã suy từ ô Tên, nên hai tên gần giống nhau có thể ra cùng một mã: đổi tên một trong hai.`,
+        };
+      }
+      seen.add(a.id);
+    }
+    return { ok: true, arm: r.data };
+  }
   const first = r.error.issues[0]!;
   const at = first.path.length ? `${first.path.join('.')}: ` : '';
   return { ok: false, error: `${at}${first.message}` };

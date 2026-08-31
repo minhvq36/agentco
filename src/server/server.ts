@@ -650,7 +650,24 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      * Chỉ trả TÊN thư mục, không đọc nội dung gì. → `paths.ts §browseDirs`
      */
     if (url.pathname === '/api/browse' && method === 'GET') {
-      return json(res, 200, browseDirs(url.searchParams.get('path') ?? undefined));
+      /**
+       * ⭐ `?office=<id>` — MỞ Ở THƯ MỤC VĂN PHÒNG. (thêm 01/09 cho tab Lệnh)
+       *
+       * Bộ chọn của tab Lệnh mặc định đứng tại thư mục văn phòng, và **client
+       * không được biết đường dẫn đó**: nó là chuyện của máy chủ, đổi theo hệ
+       * điều hành và theo chỗ cài. Client ghép chuỗi ở đây là dựng lại đúng cái
+       * lỗi *"hai bản của cùng một sự thật"* mà `buildConfig` đã mất công gỡ.
+       *
+       * ⚠ Không tồn tại thì **rơi về gốc**, không ném: một id văn phòng cũ chỉ
+       * nên làm bộ chọn mở ở ổ đĩa, không nên làm hỏng cả hộp thoại.
+       */
+      const at = url.searchParams.get('path');
+      const office = url.searchParams.get('office');
+      if (!at && office) {
+        const dir = officeDir(companyPaths(company.dir), office);
+        if (fs.existsSync(dir)) return json(res, 200, browseDirs(dir));
+      }
+      return json(res, 200, browseDirs(at ?? undefined));
     }
     if (url.pathname === '/api/arms/catalog' && method === 'GET') {
       return json(res, 200, { arms: catalogForUi() });

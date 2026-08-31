@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CẮM MỘT CÁNH TAY — hộp thoại ba bước. → docs/SPEC-arms.md §6e–§6h
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -48,6 +48,23 @@ import {
 } from '@/components/ui/dialog';
 import { Input, Label, Textarea } from '@/components/ui/misc';
 import { api, ApiError } from '@/lib/api';
+import {
+  alignExample,
+  blankAct,
+  cliCount,
+  cliDecl,
+  cliProblems,
+  declToDraft,
+  draftToDecl,
+  dupIds,
+  isCliPaste,
+  safeJson,
+  sampleAct,
+  slots,
+  slugId,
+  toArgv,
+  type CliDraft,
+} from '@/lib/cli-form';
 import { fault, pretty, tokens } from '@/lib/json-paint';
 import { actions, useApp } from '@/lib/store';
 import type { CatalogArm, InstalledArm, OAuthAccount, ProbeResult } from '@/lib/types';
@@ -118,6 +135,19 @@ function TypeCard({
 
 /** Thư mục người dùng rời đi lần trước — bộ chọn mở lại ĐÚNG ĐÓ, không về ổ đĩa. */
 const LAST_DIR = 'agentco.lastBrowseDir';
+
+/**
+ * BỀ RỘNG DÙNG CHUNG của hai hộp thoại ở file này. (user 01/09: bộ chọn thư mục
+ * *"hơi dài"* — nó đang 64rem trong khi hộp thoại mở ra nó chỉ 46rem.)
+ *
+ * ⚠ MỘT hằng số, không phải hai chuỗi giống nhau: bộ chọn **bật ra từ trong**
+ * hộp thoại cắm cánh tay, nên một cái rộng hơn cái kia thì mỗi lần mở là cả
+ * khung nhảy ra rồi thụt vào. Ràng buộc thật ở đây không phải "46rem" — nó là
+ * *"bộ chọn không bao giờ rộng hơn hộp thoại đã mở nó"*, và cách duy nhất giữ
+ * được một ràng buộc giữa hai giá trị là đừng có hai giá trị.
+ * [[agentco-count-mechanisms]]
+ */
+const DIALOG_W = 'w-[min(46rem,94vw)]';
 
 /** So như server: bỏ gạch chéo cuối, thống nhất `/`, bỏ phân biệt hoa thường. */
 const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -254,6 +284,93 @@ const TOK: Record<string, string> = {
  */
 const JSON_TEXT = 'font-mono text-[12px] leading-[1.5] whitespace-pre-wrap break-words px-3 py-2';
 
+/**
+ * MỘT DÒNG CỦA FORM: **nhãn bên trái, ô nhập bên phải**. (user chốt 01/09)
+ *
+ * ⚠ `items-start` + `pt-2` chứ không `items-center`: ô bên phải có thể là một
+ * `Textarea` hai dòng hoặc kéo theo một dãy chip argv, và căn giữa thì nhãn trôi
+ * xuống giữa khối — mắt mất mốc quét dọc, thứ duy nhất làm bố cục hai cột đáng
+ * giá hơn nhãn nằm trên.
+ *
+ * ⚠ Cột nhãn **rộng cố định**, không `auto`: `auto` cho mỗi dòng một bề rộng
+ * theo chữ của chính nó, và khi đó hai cột không còn là hai cột.
+ */
+function Field({
+  label,
+  hint,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  /** Câu phụ dưới nhãn — chỗ nói *vì sao*, để nhãn giữ được một từ. */
+  hint?: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3 grid grid-cols-[150px_1fr] gap-3">
+      <div className="pt-2">
+        <Label htmlFor={htmlFor} className="mb-0 text-ink">
+          {label}
+        </Label>
+        {hint && <div className="mt-0.5 text-[11px] leading-snug text-muted">{hint}</div>}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CÚ PHÁP CHƯA CÓ Ô TRỐNG — so nó với dòng Ví dụ để **CHỈ RA** chỗ nên có. │
+ * │                                                                          │
+ * │ Đây là chỗ ô Ví dụ trả lời được một câu mà không màn hình nào khác trả    │
+ * │ lời được: *"cái nào trong dòng lệnh này là thứ thay đổi mỗi lần?"*        │
+ * │ Người dùng biết câu trả lời — họ vừa chạy hai lần với hai giá trị — nhưng │
+ * │ họ **không biết rằng ta cần biết**. Bắt họ tự nghĩ ra khái niệm "tham số" │
+ * │ rồi tự gõ `{…}` là bắt họ học từ vựng của máy; so hai dòng lệnh thật thì  │
+ * │ không.                                                                   │
+ * │                                                                          │
+ * │ ⚠ Nó CHỈ ĐƯỜNG, không tự sửa. Tự thay `{…}` vào cú pháp hộ là đổi thứ    │
+ * │ người dùng vừa gõ, mà đây là một PHÉP ĐOÁN — cùng luật với `toArgv`:      │
+ * │ đoán thì được, nhưng người dùng phải là người bấm.                       │
+ * │                                                                          │
+ * │ ⚠ Và nó im khi hai dòng giống hệt: một lệnh cố định là chuyện bình        │
+ * │ thường, không phải thiếu sót cần nhắc.                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function ExampleNoSlot({ line, example }: { line: string; example: string }) {
+  if (!example.trim() || !line.trim()) return null;
+  const a = toArgv(line);
+  const b = toArgv(example);
+  if (a.length !== b.length) {
+    return (
+      <p className="mt-1 text-[11px] text-muted">
+        Ví dụ có {b.length} mảnh, cú pháp có {a.length} — hai dòng này không cùng một lệnh.
+      </p>
+    );
+  }
+  const at = a.map((_, i) => i).filter((i) => a[i] !== b[i]);
+  if (!at.length) return null;
+  if (at.length > 1) {
+    return (
+      <p className="mt-1 text-[11px] text-muted">
+        Hai dòng khác nhau ở {at.length} chỗ. Chỗ nào thay đổi mỗi lần chạy thì đổi nó thành{' '}
+        <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code> ở dòng Cú pháp.
+      </p>
+    );
+  }
+  const i = at[0]!;
+  return (
+    <p className="mt-1 text-[11px] text-muted">
+      Khác cú pháp ở <code className="rounded bg-accent-soft px-1">{a[i]}</code> →{' '}
+      <code className="rounded bg-accent-soft px-1">{b[i]}</code>. Nếu đây là chỗ thay đổi mỗi lần
+      chạy, đổi nó thành <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code> ở dòng
+      Cú pháp — nhân viên sẽ điền vào đó.
+    </p>
+  );
+}
+
 function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const back = useRef<HTMLPreElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -330,159 +447,26 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
   );
 }
 
-// ═══════════════════════════ TAB "LỆNH" — soạn tờ khai CLI bằng form (§16)
 
-interface CliDraft {
-  say: string;
-  description: string;
-  /** Người dùng gõ **một dòng lệnh họ đã chạy được**; ta bóc ra argv. */
-  line: string;
-  read_only: boolean;
-  fail_when: string;
-}
-
-const blankAct = (): CliDraft => ({ say: '', description: '', line: '', read_only: false, fail_when: '' });
+type Kind = 'files' | 'service' | 'custom' | 'browser' | 'cli';
 
 /**
- * Chuỗi đang dán có phải tờ khai CLI không.
+ * ⚠ `cli` LÀ MỘT LOẠI RIÊNG, không phải một dạng của `custom`. (user 01/09)
  *
- * ⚠ Chỉ hỏi `type === 'cli'` — **cùng một câu hỏi** `core/cli-arm.ts §isCliArm`
- * hỏi, không phải một luật thứ hai. Nhận theo `type`, không suy theo *"không có
- * `command` cũng không có `url`"*: vắng mặt không phải tín hiệu, và một khối gõ
- * sai không được im lặng bị đọc thành CLI rồi đá sang tab khác.
+ * > *"Bỏ tất cả custom MCP gợi ý ở CLI, chỉ gợi ý CLI, vì bây giờ nó tách ra làm
+ * > 2 trường phái khác nhau rồi"*
+ *
+ * Đúng, và nó là hệ quả bắt buộc của việc tách tab: từ lúc có hai thẻ ở bước 1
+ * thì danh sách "dùng lại" phải tách theo đúng đường đó — bằng không, tab Lệnh
+ * gợi ý một cánh tay HTTP mà chính nó **từ chối dán** ở cửa kia.
+ *
+ * ⚠ Hỏi theo `type === 'cli'` trên **chính cấu hình** — cùng câu hỏi
+ * `core/cli-arm.ts §isCliArm` và `isCliPaste` hỏi, không phải luật thứ ba. Và
+ * hỏi **trước** `a.catalog`: một tờ khai CLI không bao giờ có mục danh mục, nên
+ * thứ tự này không đổi câu trả lời — nó chỉ làm nhánh CLI đọc được thành một dòng.
  */
-function isCliPaste(s: string): boolean {
-  return safeJson(s)?.['type'] === 'cli';
-}
-
-/** `JSON.parse` không ném — ô JSON hỏng thì nút phải mờ đi, không phải nổ. */
-function safeJson(s: string): Record<string, unknown> | null {
-  try {
-    const v: unknown = JSON.parse(s);
-    return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Tên máy suy từ câu tiếng người — người dùng **không bao giờ gõ `id`**.
- *
- * Schema đòi `^[a-z][a-z0-9_]*$`, và bắt một người non-code tự nghĩ ra một chuỗi
- * hợp khuôn đó là bắt họ học một luật của MÁY. Họ gõ *"đếm hoá đơn"*, ta ra
- * `dem_hoa_don`.
- *
- * ⚠ Bỏ dấu bằng `\p{M}` sau `NFD` chứ không bằng bảng tra tay: gõ thẳng dấu tổ
- * hợp vào `[]` thì nó bám lên dấu ngoặc — nhìn giống hệt, chạy sai. Bài học đã
- * trả tiền một lần ở regex tiếng Việt.
- */
-function slugId(say: string): string {
-  const s = say
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/đ/gi, 'd')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return /^[a-z]/.test(s) ? s : `viec_${s || 'moi'}`;
-}
-
-/**
- * Một dòng lệnh → argv.
- *
- * ⚠ ĐÂY KHÔNG PHẢI MỘT SHELL, và không được để nó lớn thành shell. Nó chỉ tách
- * theo khoảng trắng, tôn trọng `"…"` và `'…'` — vừa đủ để nhận một dòng người
- * dùng **chép từ chỗ họ đã chạy**. Không `|`, không `&&`, không biến, không
- * `$(…)`: những thứ đó là **cú pháp shell**, mà §16e cấm đi qua shell.
- *
- * ⭐ Và vì phép tách có thể đoán sai, **giao diện hiện lại từng mảnh argv** ngay
- * bên dưới. Người dùng THẤY thứ sẽ chạy ⇒ đoán sai thì họ sửa, không có ca hỏng
- * im lặng. Đó là cách duy nhất một phép đoán được phép tồn tại ở đây.
- */
-function toArgv(line: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let quote: '"' | "'" | null = null;
-  let has = false;
-  for (const ch of line) {
-    if (quote) {
-      if (ch === quote) quote = null;
-      else cur += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      has = true;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (cur || has) out.push(cur);
-      cur = '';
-      has = false;
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur || has) out.push(cur);
-  return out;
-}
-
-/** Bản nháp → tờ khai. Bỏ việc còn trống, bỏ ô rỗng (mặc định tự điền ở server). */
-function draftToDecl(list: readonly CliDraft[]): { type: 'cli'; actions: Record<string, unknown>[] } {
-  return {
-    type: 'cli',
-    actions: list
-      .filter((a) => a.say.trim() && toArgv(a.line).length)
-      .map((a) => ({
-        id: slugId(a.say),
-        say: a.say.trim(),
-        description: a.description.trim() || a.say.trim(),
-        run: toArgv(a.line),
-        ...(a.read_only ? { read_only: true } : {}),
-        ...(a.fail_when.trim()
-          ? { fail_when: a.fail_when.split(',').map((s) => s.trim()).filter(Boolean) }
-          : {}),
-      })),
-  };
-}
-
-/**
- * Thứ SẼ ĐƯỢC LƯU — dùng cho **cả** nút mờ/sáng lẫn lúc bấm.
- *
- * ⚠ Một hàm, không phải hai biểu thức giống nhau: nút mờ theo một phép tính còn
- * lúc bấm lưu theo một phép tính khác là ca "nút sáng mà bấm không ra gì" (hoặc
- * ngược lại, tệ hơn: nút mờ trong khi cấu hình hợp lệ).
- */
-function cliDecl(list: readonly CliDraft[], json: string | null): Record<string, unknown> {
-  return json === null ? draftToDecl(list) : (safeJson(json) ?? draftToDecl(list));
-}
-
-function cliCount(decl: Record<string, unknown>): number {
-  return Array.isArray(decl['actions']) ? (decl['actions'] as unknown[]).length : 0;
-}
-
-/** Tờ khai → bản nháp, cho chiều JSON → form. Ô lạ rơi mất là ĐÚNG: form chỉ */
-/** biết những ô nó vẽ, và giữ lại một ô nó không hiện là hứa một điều nó không giữ. */
-function declToDraft(decl: unknown): CliDraft[] | null {
-  const acts = (decl as { actions?: unknown })?.actions;
-  if (!Array.isArray(acts) || !acts.length) return null;
-  return acts.map((a) => {
-    const o = a as Record<string, unknown>;
-    const run = Array.isArray(o['run']) ? (o['run'] as unknown[]).map(String) : [];
-    return {
-      say: String(o['say'] ?? ''),
-      description: String(o['description'] ?? ''),
-      // Mảnh có khoảng trắng thì bọc nháy — nếu không, đọc ngược ra một argv khác.
-      line: run.map((s) => (/\s/.test(s) ? JSON.stringify(s) : s)).join(' '),
-      read_only: o['read_only'] === true,
-      fail_when: Array.isArray(o['fail_when']) ? (o['fail_when'] as unknown[]).join(', ') : '',
-    };
-  });
-}
-
-type Kind = 'files' | 'service' | 'custom' | 'browser';
-
 function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
+  if ((a.config as { type?: unknown })?.type === 'cli') return 'cli';
   if (!a.catalog) return 'custom';
   const entry = catalog.find((c) => c.id === a.catalog);
   return entry?.shape === 'browser' ? 'browser' : entry?.folders ? 'files' : 'service';
@@ -518,7 +502,7 @@ function markOf(catalogId: string | undefined, catalog: CatalogArm[]): string | 
  * │ một lần rồi đứng im thì không sửa được.                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-const KIND_ORDER: Record<Kind, number> = { service: 0, browser: 1, files: 2, custom: 3 };
+const KIND_ORDER: Record<Kind, number> = { service: 0, browser: 1, files: 2, cli: 3, custom: 4 };
 
 function byKind(arms: InstalledArm[], catalog: CatalogArm[]): InstalledArm[] {
   return [...arms].sort(
@@ -546,6 +530,64 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [acts, setActs] = useState<CliDraft[]>([blankAct()]);
   /** Xem/sửa dạng JSON. Hai chiều — form là nguồn, JSON dán vào thì đọc ngược. */
   const [cliJson, setCliJson] = useState<string | null>(null);
+  /**
+   * Thư mục CHUNG của cả cánh tay CLI — xem `cli-form.ts §draftToDecl`.
+   * `''` = thư mục văn phòng.
+   */
+  const [cliCwd, setCliCwd] = useState('');
+  /**
+   * Đã qua màn thư mục chưa. Hai state chứ không suy từ `cliCwd !== ''`: **"dùng
+   * thư mục văn phòng"** là một câu trả lời hợp lệ và nó để `cliCwd` rỗng — suy
+   * ra thì người bấm nút đó bị đá về lại đúng màn họ vừa trả lời xong.
+   */
+  const [cliReady, setCliReady] = useState(false);
+  /** Bộ chọn thư mục của tab Lệnh đang mở. */
+  const [browsing, setBrowsing] = useState(false);
+  /**
+   * Tờ khai đang xem ở tab JSON, đọc ngược. `null` = không đang xem JSON, hoặc
+   * JSON hỏng. Dùng cho HAI việc: khoá nút "← Về form" khi `mixed`, và **nói
+   * đúng thư mục** ở thanh trên.
+   */
+  const cliBack = cliJson === null ? null : declToDraft(safeJson(cliJson));
+  const cliMixed = cliBack?.mixed === true;
+  /**
+   * 🔴 THƯ MỤC THANH TRÊN PHẢI ĐỌC TỪ THỨ ĐANG SỬA. (bug user bắt 01/09)
+   *
+   * Ở chế độ JSON, `cliDecl` lấy **khối JSON**, không lấy `cliCwd` — nên vẽ
+   * `cliCwd` ở thanh trên là hiện một giá trị **không có tác dụng gì**, và tệ hơn
+   * là nút "Đổi…" bên cạnh nó sửa đúng cái giá trị vô tác dụng ấy. Đó là giao
+   * diện nói dối về trạng thái của chính nó — đúng lớp lỗi tôi vừa vá ở chỗ khác.
+   */
+  const shownCwd = cliJson === null ? cliCwd : (cliBack?.cwd ?? '');
+  /**
+   * Mã lệnh trùng nhau — tính trên **thứ sẽ được lưu**, nên nó đúng ở cả hai chế
+   * độ (form và JSON) bằng một phép tính, không phải hai.
+   *
+   * ⚠ Đây là **hàng rào thứ nhất trong hai**. Hàng rào thật nằm ở
+   * `server.ts §resolveArm → parseCliArm` — cửa CHUNG của nút Thử và nút Xong,
+   * nên một tab bị treo/đua tay hay một client tự viết vẫn không lọt. Cái ở đây
+   * chỉ để người dùng **thấy trước khi bấm**, không phải để giữ luật.
+   */
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐIỀU KIỆN ĐI TIẾP — MỘT phép tính, dùng cho **cả** nút mờ/sáng lẫn các   │
+   * │ dòng đỏ. (user 01/09: *"phải kiểm tra form khi tất cả các lệnh đều valid │
+   * │ mới cho tiếp tục"*)                                                      │
+   * │                                                                          │
+   * │ Nút mờ theo một phép tính còn dòng đỏ theo một phép tính khác là ca "nút │
+   * │ mờ mà không chỗ nào đỏ" — người dùng phải đi dò từng ô để đoán vì sao.   │
+   * │                                                                          │
+   * │ ⚠ Ở chế độ JSON, hàng để soi là **các lệnh đọc ngược từ khối JSON**, chứ │
+   * │ không phải `acts`: thứ sắp được lưu là khối đó. Soi `acts` ở đó là soi   │
+   * │ một bản nháp không ai lưu.                                               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const cliOut = pane === 'cli' ? cliDecl(acts, cliCwd, cliJson) : null;
+  const cliRows = cliJson === null ? acts : (cliBack?.acts ?? []);
+  const cliBad = pane === 'cli' ? cliProblems(cliRows) : [];
+  const badIds = dupIds(cliOut);
+  /** Đủ điều kiện lưu chưa. `cliOut === null` = khối JSON đang hỏng. */
+  const cliOk = cliCount(cliOut) > 0 && !cliBad.length && !badIds.length;
   const [catalog, setCatalog] = useState<CatalogArm[]>([]);
   const [installed, setInstalled] = useState<InstalledArm[]>([]);
 
@@ -563,6 +605,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [reuse, setReuse] = useState<InstalledArm | null>(null);
   /** Đường B — dán cấu hình MCP. Không mục danh mục nào chặn ai. → §4c */
   const [paste, setPaste] = useState('');
+  /**
+   * Tên các server trong khối đang dán. `parsePaste` chỉ lấy **cái đầu** — khối
+   * chú thích ở chỗ vẽ giải thích vì sao chuyện đó phải hiện lên màn hình.
+   */
+  const pasted = pane === 'paste' ? safeJson(paste) : null;
+  const serverNames =
+    pasted && pasted['mcpServers'] && typeof pasted['mcpServers'] === 'object'
+      ? Object.keys(pasted['mcpServers'] as Record<string, unknown>)
+      : [];
+  const firstServer = serverNames[0] ?? '';
+  const extraServers = serverNames.slice(1);
   /** Tài khoản đã đăng nhập cho mục đang chọn. Tên chìa, không bao giờ token. */
   const [accounts, setAccounts] = useState<OAuthAccount[]>([]);
   const [account, setAccount] = useState('');
@@ -707,6 +760,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (!open) return;
     setStep(1);
     setPane('type');
+    // Bộ chọn thư mục của tab Lệnh: mở lại hộp thoại mà nó còn treo thì người
+    // dùng gặp một modal chồng modal chưa ai gọi.
+    setBrowsing(false);
+    setCliReady(false);
+    setCliCwd('');
     setPick(null);
     setReuse(null);
     setPaste('');
@@ -1511,6 +1569,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       // định dạng — đúng thứ cả §6 sinh ra để tránh.
       const servers = parsed['mcpServers'];
       if (servers && typeof servers === 'object') {
+        /**
+         * ⚠ `[0]` — CHỈ SERVER ĐẦU TIÊN. Đây là một quyết định, và nó phải được
+         * **nói ra ở màn hình** chứ không nằm im trong chú thích: xem `extraServers`.
+         * Một khối README có hai server thì bấm Xong xong người dùng nhận đúng
+         * một cánh tay và **không có triệu chứng nào**.
+         * → [[agentco-silent-allowlist]]
+         */
         const [name, cfg] = Object.entries(servers as Record<string, unknown>)[0] ?? [];
         if (name && !label) setLabel(name);
         return (cfg as Record<string, unknown>) ?? null;
@@ -1675,7 +1740,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      {/*
+        RỘNG HƠN MẶC ĐỊNH — 46rem thay cho 28rem. (user chốt 01/09)
+
+        Không phải chuyện thẩm mỹ: tab Lệnh đặt **nhãn cùng dòng với ô nhập**
+        (`Field`), và ở 28rem thì cột nhãn 150px ăn hết một phần ba, còn ô Cú pháp
+        — thứ chứa một dòng lệnh thật — hẹp tới mức phải cuộn ngang để đọc lại
+        chính cái mình vừa gõ.
+
+        ⚠ Rộng cho CẢ hộp thoại, không riêng tab Lệnh: một modal đổi bề rộng khi
+        chuyển tab là cả trang nhảy dưới tay người đang bấm.
+      */}
+      <DialogContent className={DIALOG_W}>
         <DialogHeader>
           <DialogTitle>
             {step === 1
@@ -1785,6 +1861,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   onClick={() => {
                     setActs([blankAct()]);
                     setCliJson(null);
+                    // Vào tab là vào MÀN THƯ MỤC — xem khối chú thích ở đó.
+                    setCliReady(false);
+                    setCliCwd('');
                     setPane('cli');
                   }}
                 />
@@ -1843,23 +1922,104 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {pane === 'type' && reuseList()}
 
-            {pane === 'cli' && (
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ MÀN THƯ MỤC ĐỨNG TRƯỚC DANH SÁCH LỆNH. (user chốt 01/09)     │
+              │                                                              │
+              │  *"chọn tab → thư mục picker → sau đó tất cả danh sách lệnh  │
+              │   đều được thao tác từ văn phòng đó khi được gọi"*           │
+              │                                                              │
+              │ Vì sao đúng chứ không chỉ vì user nói: một cánh tay CLI **là │
+              │ một dự án**. Thư mục là câu hỏi có **đúng một** câu trả lời  │
+              │ cho cả cánh tay, và hỏi nó ở mỗi lệnh là mời người ta gõ    │
+              │ lệch — rồi lệnh thứ ba không thấy file mà không ai hiểu vì   │
+              │ sao. Hỏi một lần, trả lời một lần.                          │
+              │                                                              │
+              │ ⚠ Và nó phải đứng TRƯỚC: viết xong năm lệnh rồi mới phát     │
+              │ hiện sai thư mục là năm lệnh phải đọc lại.                   │
+              │                                                              │
+              │ 🔴 ĐÍNH CHÍNH 01/09 — bản đầu của tôi có HAI nút: "Chọn thư   │
+              │ mục…" và "Dùng thư mục văn phòng →". User bác, và họ đúng:    │
+              │                                                              │
+              │   *"Chỉ có duy nhất 1 nút Chọn thư mục…, và thư mục default  │
+              │    khi bấm nút đó luôn là thư mục văn phòng"*                │
+              │                                                              │
+              │ Hai nút đó **hỏi cùng một câu hai lần**: nút thứ hai chỉ là   │
+              │ "chọn thư mục văn phòng" viết dưới dạng một lối tắt — và một  │
+              │ lối tắt cho MẶC ĐỊNH thì không tiết kiệm gì, nó chỉ bắt người │
+              │ ta so hai lựa chọn để hiểu ra chúng gần như một.              │
+              │                                                              │
+              │ ⇒ MỘT nút, và **thư mục văn phòng là chỗ bộ chọn ĐỨNG SẴN**.  │
+              │ Muốn nó thì bấm Xong ngay, không phải duyệt đi đâu. Cùng số   │
+              │ cú bấm, ít hơn một quyết định — và `cwd` **luôn được ghi ra**  │
+              │ nên `company.yaml` nói đúng thứ sẽ chạy, không còn ca "trống  │
+              │ nghĩa là ở đâu đó".                                          │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {pane === 'cli' && !cliReady && (
+              <>
+                <Button size="sm" className="mb-3" onClick={() => setPane('type')}>
+                  ← Quay lại
+                </Button>
+                <div className="rounded-lg border border-line p-6 text-center">
+                  <div className="flex justify-center text-muted">
+                    <ArmIcon kind="cli" className="h-8 w-8" />
+                  </div>
+                  <div className="mt-3 text-[15px] font-medium">Các lệnh sẽ chạy trong thư mục nào?</div>
+                  <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
+                    Mọi lệnh của kết nối này đều chạy ở đúng một chỗ — thường là thư mục dự án bạn vẫn
+                    mở terminal trong đó.
+                  </p>
+                  <div className="mt-4 flex justify-center">
+                    <Button variant="primary" onClick={() => setBrowsing(true)}>
+                      <FolderOpen className="h-4 w-4" />
+                      Chọn thư mục…
+                    </Button>
+                  </div>
+                  <p className="mt-3 text-[11px] text-muted">
+                    Bộ chọn mở sẵn ở <b>thư mục văn phòng</b> — bấm Xong ngay nếu lệnh của bạn không
+                    đụng tới file nào.
+                  </p>
+                </div>
+                {reuseList('cli')}
+              </>
+            )}
+
+            {pane === 'cli' && cliReady && (
               <>
                 <div className="mb-2 flex items-center gap-2">
-                  <Button size="sm" onClick={() => setPane('type')}>
-                    ← Quay lại
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      // Về màn thư mục, KHÔNG về màn chọn loại: người bấm "quay
+                      // lại" ở đây gần như luôn muốn đổi thư mục, và thứ họ vừa
+                      // soạn thì còn nguyên.
+                      setCliReady(false);
+                      setCliJson(null);
+                    }}
+                  >
+                    ← Thư mục
                   </Button>
                   {/* Hai chiều, MỘT nguồn: bật JSON thì sinh từ form; tắt thì đọc
                       ngược về form. Không giữ hai ô soạn thảo sống song song —
                       đó là ca "hai giao diện ghi cùng một thứ" đã trả giá ở skills. */}
                   <Button
                     size="sm"
+                    disabled={cliJson !== null && cliMixed}
+                    title={
+                      cliJson !== null && cliMixed
+                        ? 'Tờ khai này đặt thư mục khác nhau cho từng lệnh — form chỉ giữ được một thư mục chung'
+                        : undefined
+                    }
                     onClick={() => {
-                      if (cliJson === null) setCliJson(JSON.stringify(draftToDecl(acts), null, 2));
+                      if (cliJson === null) setCliJson(JSON.stringify(draftToDecl(acts, cliCwd), null, 2));
                       else {
                         try {
                           const back = declToDraft(JSON.parse(cliJson));
-                          if (back) setActs(back);
+                          if (back && !back.mixed) {
+                            setActs(back.acts);
+                            setCliCwd(back.cwd);
+                          }
                         } catch {
                           /* JSON hỏng ⇒ giữ nguyên form, ô đỏ của JsonBox đã nói rồi */
                         }
@@ -1869,20 +2029,107 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   >
                     {cliJson === null ? 'Xem JSON' : '← Về form'}
                   </Button>
+                  {/*
+                    MẪU CHẠY ĐƯỢC NGAY — và nó điền vào **ô đang mở**, không phải
+                    lúc nào cũng vào form. Nút "thêm mẫu" mà nhảy màn hình là bắt
+                    người đang đọc JSON phải quay lại tìm chỗ họ vừa đứng.
+                  */}
+                  <Button
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => {
+                      const one = [sampleAct()];
+                      if (cliJson === null) setActs(one);
+                      else setCliJson(JSON.stringify(draftToDecl(one, cliCwd), null, 2));
+                    }}
+                  >
+                    Điền mẫu chạy thử
+                  </Button>
+                </div>
+
+                {/*
+                  THANH THƯ MỤC — hiện ở MỌI lúc soạn, kể cả khi đang xem JSON.
+                  Nó là thứ duy nhất trên màn hình trả lời câu *"lệnh này chạy ở
+                  đâu"*, và câu đó không được biến mất khi đổi cách xem.
+                */}
+                <div className="mb-3 flex items-center gap-2 rounded-md border border-line bg-panel px-3 py-2">
+                  <FolderOpen className="h-4 w-4 shrink-0 text-muted" />
+                  <div className="min-w-0 flex-1 break-all font-mono text-[12px]">
+                    {/*
+                      ┌──────────────────────────────────────────────────────┐
+                      │ 🔴 Ô TRỐNG PHẢI ĐƯỢC GỌI TÊN. (bug user bắt 01/09:   │
+                      │ *"hiện giờ nó đang trống trơn nên chả biết là gì"*)  │
+                      │                                                      │
+                      │ Đường form không bao giờ để `cwd` rỗng nữa — nhưng   │
+                      │ đường **dán** thì có: một tờ khai không khai `cwd`   │
+                      │ là hợp lệ, và nó **thật sự chạy ở thư mục văn        │
+                      │ phòng**. Trạng thái đó có thật ⇒ màn hình phải nói   │
+                      │ ra, không được vẽ một cái hộp trắng.                 │
+                      │                                                      │
+                      │ ⚠ Và đây KHÔNG mâu thuẫn với việc bỏ nút "Bỏ":       │
+                      │ **hiện một trạng thái ≠ mời người ta vào trạng thái  │
+                      │ đó.** Nút Bỏ là lời mời; nhãn này là lời khai.       │
+                      └──────────────────────────────────────────────────────┘
+                    */}
+                    {cliMixed ? (
+                      <span className="font-sans text-warn">Khác nhau theo từng lệnh</span>
+                    ) : shownCwd ? (
+                      shownCwd
+                    ) : (
+                      <span className="font-sans text-muted">Thư mục văn phòng (mặc định)</span>
+                    )}
+                  </div>
+                  {/*
+                    ⚠ CHỈ "Đổi…", KHÔNG có "Bỏ" (user chốt 01/09). Sau khi màn
+                    thư mục còn một nút, đường form **luôn** đặt `cwd` — nên một
+                    nút "Bỏ" ở đây là mời người ta quay lại đúng cái trạng thái
+                    mà màn hình không nói ra được chỗ lệnh sẽ chạy.
+
+                    ⚠ Và nó BIẾN MẤT ở chế độ JSON: ở đó thứ được lưu là khối
+                    JSON, nên một nút sửa `cliCwd` là một nút không có tác dụng.
+                    `cwd` sửa ngay trong khối.
+                  */}
+                  {cliJson === null ? (
+                    <Button size="sm" onClick={() => setBrowsing(true)}>
+                      Đổi…
+                    </Button>
+                  ) : (
+                    <span className="shrink-0 text-[11px] text-muted">sửa trong JSON</span>
+                  )}
                 </div>
 
                 {cliJson !== null ? (
-                  <JsonBox value={cliJson} onChange={setCliJson} />
+                  <>
+                    <JsonBox value={cliJson} onChange={setCliJson} />
+                    {/*
+                      ⚠ Cờ `mixed` phải NÓI RA, không chỉ làm mờ một cái nút. Một
+                      nút mờ không giải thích được vì sao nó mờ.
+                    */}
+                    {cliMixed && (
+                      <p className="mt-1 text-[11px] text-warn">
+                        Tờ khai này đặt <b>thư mục khác nhau cho từng lệnh</b>. Form chỉ giữ được một
+                        thư mục chung, nên nó không đọc ngược được — sửa tiếp ở đây, hoặc cho các lệnh
+                        về cùng một <code>cwd</code>.
+                      </p>
+                    )}
+                  </>
                 ) : (
                   <div className="space-y-3">
                     {acts.map((a, i) => {
                       const argv = toArgv(a.line);
+                      const names = slots(argv);
+                      // Ví dụ khớp cú pháp không? `null` = KHÔNG — và màn hình
+                      // phải nói ra, chứ không được lặng lẽ bỏ ví dụ đi.
+                      const vals = a.example.trim() ? alignExample(argv, toArgv(a.example)) : undefined;
                       const set = (patch: Partial<CliDraft>): void =>
                         setActs((prev) => prev.map((x, j) => (i === j ? { ...x, ...patch } : x)));
                       return (
                         <div key={i} className="rounded-lg border border-line p-3">
                           <div className="mb-2 flex items-center justify-between">
-                            <span className="text-xs text-muted">Việc {i + 1}</span>
+                            {/* "Lệnh", không phải "Việc" (user 01/09). Ở tab này
+                                đơn vị người dùng đang soạn LÀ một dòng lệnh — gọi
+                                nó là "việc" là mượn từ vựng của tầng khác. */}
+                            <span className="text-xs font-medium">Lệnh {i + 1}</span>
                             {acts.length > 1 && (
                               <button
                                 type="button"
@@ -1893,52 +2140,185 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               </button>
                             )}
                           </div>
-                          <Input
-                            placeholder="Tên việc, viết như nói với người — vd: đếm hoá đơn chưa thanh toán"
-                            value={a.say}
-                            onChange={(e) => set({ say: e.target.value })}
-                          />
-                          <Input
-                            className="mt-2 font-mono text-[12px]"
-                            placeholder={'Dòng lệnh bạn đã chạy được — vd: node -e "console.log(23)"'}
-                            value={a.line}
-                            onChange={(e) => set({ line: e.target.value })}
-                          />
-                          {/* ⭐ HIỆN LẠI ARGV. Phép tách dòng lệnh là một PHÉP ĐOÁN,
-                              và một phép đoán chỉ được phép tồn tại khi người dùng
-                              NHÌN THẤY kết quả của nó. → `toArgv` */}
-                          {argv.length > 0 && (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {argv.map((t, k) => (
-                                <code key={k} className="rounded bg-accent-soft px-1 text-[11px]">
-                                  {t}
-                                </code>
-                              ))}
-                            </div>
-                          )}
-                          <Textarea
-                            rows={2}
-                            className="mt-2 text-[13px]"
-                            placeholder="Hướng dẫn cho nhân viên: nó làm gì, và ⚠ HẬU QUẢ nếu chạy (có ghi đè gì không, hoàn tác được không)"
-                            value={a.description}
-                            onChange={(e) => set({ description: e.target.value })}
-                          />
-                          <div className="mt-2 flex items-center gap-3">
-                            <label className="flex items-center gap-1.5 text-xs text-muted">
+
+                          {/* ⚠ MỌI Ô ĐỀU CÓ NHÃN, và nhãn nằm **cùng dòng** với ô
+                              (user 01/09). Placeholder không phải nhãn: nó biến
+                              mất đúng lúc người ta gõ, nên ai quay lại sửa sẽ
+                              nhìn một ô không tên. → `Field` */}
+                          <Field htmlFor={`cli-say-${i}`} label="Tên">
+                            <Input
+                              id={`cli-say-${i}`}
+                              placeholder="đếm hoá đơn chưa thanh toán"
+                              value={a.say}
+                              onChange={(e) => set({ say: e.target.value })}
+                            />
+                            {/*
+                              🔴 BÁO Ở Ô **TÊN**, không phải ở một ô "mã" nào cả —
+                              vì người dùng không gõ mã, họ gõ tên, và mã do
+                              `slugId(tên)` sinh ra. Báo ở chỗ họ sửa được.
+
+                              ⚠ Và câu chữ nói về **bệnh**, không về triệu chứng:
+                              hai lệnh trùng mã thì nhân viên cũng không phân biệt
+                              được chúng qua `does`. Tự thêm hậu tố `_2` cho xong
+                              là giấu đúng cái phần vẫn còn nguyên. → `dupIds`
+                            */}
+                            {a.say.trim() ? (
+                              badIds.includes(slugId(a.say)) && (
+                                <p className="mt-1 text-[11px] text-danger">
+                                  Trùng tên với một lệnh khác (cùng ra mã{' '}
+                                  <code className="rounded bg-danger-soft px-1">{slugId(a.say)}</code>
+                                  ). Nhân viên sẽ không phân biệt được hai lệnh này — đổi tên một
+                                  trong hai.
+                                </p>
+                              )
+                            ) : (
+                              /* Chỉ đỏ khi có LỆNH KHÁC đang chờ, hoặc người dùng
+                                 đã gõ dở ở ô khác — một form vừa mở mà đã đỏ sẵn
+                                 là mắng người chưa làm gì. */
+                              (acts.length > 1 || a.line.trim() || a.description.trim()) && (
+                                <p className="mt-1 text-[11px] text-danger">Chưa đặt tên cho lệnh này.</p>
+                              )
+                            )}
+                          </Field>
+
+                          <Field
+                            htmlFor={`cli-line-${i}`}
+                            label="Cú pháp"
+                          >
+                            <Input
+                              id={`cli-line-${i}`}
+                              className="font-mono text-[12px]"
+                              placeholder={'node count.js --month {month}'}
+                              value={a.line}
+                              onChange={(e) => set({ line: e.target.value })}
+                            />
+                            {/* ⭐ HIỆN LẠI ARGV. Phép tách dòng lệnh là một PHÉP
+                                ĐOÁN, và một phép đoán chỉ được phép tồn tại khi
+                                người dùng NHÌN THẤY kết quả của nó. → `toArgv` */}
+                            {argv.length > 0 ? (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {argv.map((t, k) => (
+                                  <code key={k} className="rounded bg-accent-soft px-1 text-[11px]">
+                                    {t}
+                                  </code>
+                                ))}
+                              </div>
+                            ) : (
+                              (acts.length > 1 || a.say.trim() || a.description.trim()) && (
+                                <p className="mt-1 text-[11px] text-danger">
+                                  Chưa có dòng lệnh nào để chạy.
+                                </p>
+                              )
+                            )}
+                          </Field>
+
+                          {/*
+                            ┌──────────────────────────────────────────────────┐
+                            │ ⭐ Ô VÍ DỤ **LUÔN HIỆN**. (user 01/09: *"sao Mẫu │
+                            │ có Ví dụ mà trong các trường tự điền lại không   │
+                            │ có Trường Ví dụ?"*)                              │
+                            │                                                  │
+                            │ Bản trước ẩn nó khi cú pháp chưa có ô trống, lý  │
+                            │ lẽ *"không có gì để điền thì ví dụ dạy ai"*. Lý  │
+                            │ lẽ đó đúng **về phía model** và sai **về phía    │
+                            │ người dùng**: một ô tự mọc ra rồi tự biến mất là │
+                            │ thứ không ai đoán được luật — và nó giấu đi đúng │
+                            │ lúc người ta cần nó nhất, tức là lúc chưa biết   │
+                            │ mình cần một ô trống.                            │
+                            │                                                  │
+                            │ ⇒ Luôn hiện, và khi CHƯA có ô trống thì nó **đổi │
+                            │ vai**: so ví dụ với cú pháp để **chỉ ra chỗ đáng │
+                            │ làm ô trống**. Người dùng không phải học khái    │
+                            │ niệm "tham số" trước — họ dán hai dòng lệnh thật │
+                            │ và máy chỉ vào chỗ khác nhau. → `ExampleNoSlot`  │
+                            └──────────────────────────────────────────────────┘
+                          */}
+                          <Field htmlFor={`cli-ex-${i}`} label="Ví dụ">
+                            <Input
+                              id={`cli-ex-${i}`}
+                              className="font-mono text-[12px]"
+                              placeholder="node count.js --month 8"
+                              value={a.example}
+                              onChange={(e) => set({ example: e.target.value })}
+                            />
+                            {/*
+                              ⚠ KHÔI PHỤC 01/09 — bản trên máy vừa gỡ hai dòng
+                              này, và gỡ chúng thì `vals` thành biến không ai
+                              đọc (build đỏ), nhưng đó chưa phải lý do chính:
+
+                              Đây là **bằng chứng nhìn thấy được duy nhất** rằng
+                              ví dụ đã được bóc ra — thứ đi vào prefix của model
+                              chính là `ten = 8`, không phải cả dòng lệnh. Bỏ nó
+                              thì `alignExample` chạy hay không chạy trông y hệt
+                              nhau, và ô đo J-5 mất chỗ để nhìn.
+                              → luật của `toArgv`: đoán thì phải hiện kết quả.
+                            */}
+                            {names.length === 0 ? (
+                              <ExampleNoSlot line={a.line} example={a.example} />
+                            ) : vals === null ? (
+                              <p className="mt-1 text-[11px] text-danger">
+                                Ví dụ không khớp cú pháp — phải cùng số mảnh và giống hệt ở những chỗ
+                                không phải ô trống.
+                              </p>
+                            ) : null}
+                          </Field>
+
+                          <Field
+                            htmlFor={`cli-desc-${i}`}
+                            label="Miêu tả"
+                          >
+                            <Textarea
+                              id={`cli-desc-${i}`}
+                              rows={2}
+                              className="text-[13px]"
+                              placeholder="Nó làm gì, kết quả khi mong đợi chạy, có ghi đè không, hoàn tác được không"
+                              value={a.description}
+                              onChange={(e) => set({ description: e.target.value })}
+                            />
+                          </Field>
+
+                          {/*
+                            ┌──────────────────────────────────────────────────┐
+                            │ "LỆNH CHỈ ĐỌC" — user chốt lại 01/09 sau khi bản  │
+                            │ trước của tôi viết dài thành một câu hỏi.        │
+                            │                                                  │
+                            │ Họ đúng: ở đây nhãn ngắn **đọc được ngay** vì nó │
+                            │ đứng cùng dòng với ô tick, trong một form mà mọi │
+                            │ dòng khác cũng là `nhãn — ô`. Câu hỏi dài phá vỡ  │
+                            │ đúng cái nhịp đó.                                │
+                            │                                                  │
+                            │ ⚠ Giữ nguyên hai điều: mặc định **không tick**    │
+                            │ (`read_only = false`, tức "có thay đổi" — an toàn │
+                            │ đúng chiều khi chưa ai trả lời), và **nói thật    │
+                            │ rằng nó là nhãn chứ không phải khoá**. Sau khi bỏ │
+                            │ nấc quyền cho CLI (30/08), ô này chỉ dựng          │
+                            │ `annotations`; vẽ nó như một cái khoá là để giao  │
+                            │ diện nói dối về thứ nó không thi hành.            │
+                            │ → [[agentco-safe-default-direction]]              │
+                            └──────────────────────────────────────────────────┘
+                          */}
+                          <Field label="Lệnh chỉ đọc?">
+                            <label className="flex cursor-pointer items-center gap-2 py-2 text-[13px]">
                               <input
                                 type="checkbox"
                                 checked={a.read_only}
                                 onChange={(e) => set({ read_only: e.target.checked })}
                               />
-                              Chỉ đọc, không đổi gì
+                              <span className="text-muted">
+                                Để trống nếu không chắc.
+                              </span>
                             </label>
-                            <Input
-                              className="flex-1 text-[12px]"
-                              placeholder="Coi là HỎNG nếu kết quả chứa… (vd: ERROR, FAILED)"
-                              value={a.fail_when}
-                              onChange={(e) => set({ fail_when: e.target.value })}
-                            />
-                          </div>
+                          </Field>
+
+                          {/*
+                            🔴 `fail_when` ĐÃ RA KHỎI FORM (user hỏi 01/09, và câu
+                            hỏi của họ đúng) — xem `SPEC-arms §16v`. Trường vẫn
+                            sống trong tờ khai, vẫn chở qua form nguyên vẹn
+                            (`CliDraft.fail_when`), chỉ soạn được ở tab JSON.
+                            ĐỪNG dựng lại ô này ở đây kèm placeholder
+                            `ERROR, FAILED, Traceback`: đó chính là ba chuỗi hay
+                            xuất hiện nhất trong output LÀNH.
+                          */}
                         </div>
                       );
                     })}
@@ -1956,11 +2336,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   </div>
                 )}
 
+                {/* Ở chế độ JSON không có ô Tên/Cú pháp nào để bôi đỏ, nên đây là
+                    chỗ DUY NHẤT nói ra vì sao nút dưới bị mờ. Một nút mờ không
+                    giải thích được chính nó. */}
+                {cliJson !== null && (badIds.length > 0 || cliBad.length > 0 || cliOut === null) && (
+                  <p className="mt-2 text-[11px] text-danger">
+                    {cliOut === null
+                      ? 'Khối JSON đang hỏng — sửa xong mới lưu được.'
+                      : badIds.length > 0
+                        ? `Hai lệnh cùng mã ${badIds.map((x) => `"${x}"`).join(', ')} — mỗi lệnh phải có mã riêng.`
+                        : `Lệnh ${cliBad[0]!.at + 1}: ${cliBad[0]!.say}`}
+                  </p>
+                )}
                 <Button
                   className="mt-2 w-full"
-                  disabled={!cliCount(cliDecl(acts, cliJson))}
+                  variant="primary"
+                  disabled={!cliOk}
                   onClick={() => {
-                    const decl = cliDecl(acts, cliJson);
+                    const decl = cliOut;
+                    if (!decl) return;
                     setKeys({});
                     setProbe(null);
                     setErr('');
@@ -1973,8 +2367,35 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 >
                   Dùng cấu hình này
                 </Button>
-                {reuseList('custom')}
+                {/* CHỈ cánh tay LỆNH — xem `kindOf`. Gợi ý một cánh tay HTTP ở
+                    đây là gợi ý thứ mà chính tab này từ chối dán. */}
+                {reuseList('cli')}
               </>
+            )}
+
+            {/*
+              MỘT bản `BrowseDialog` cho cả tab Lệnh — dùng cho **cả** màn thư mục
+              đứng trước lẫn nút "Đổi…" ở thanh trên. Hai bản là hai cây thư mục
+              sống song song, và chúng lệch nhau ngay lần mở thứ hai.
+
+              ⚠ `start={cliCwd}`: mở lại ĐÚNG thư mục đang chọn, **không** lấy
+              `LAST_DIR` (user chốt 01/09: *"ngoại trừ phần lấy cache default"*).
+              Cache đó là trí nhớ của cánh tay THƯ MỤC; mượn nó ở đây là mở ra một
+              chỗ chẳng liên quan gì tới cánh tay đang soạn.
+            */}
+            {pane === 'cli' && (
+              <BrowseDialog
+                open={browsing}
+                start={cliCwd}
+                office={officeId}
+                onOpenChange={setBrowsing}
+                onChange={(v) => {
+                  if (!v[0]) return;
+                  setCliCwd(v[0]);
+                  setCliReady(true);
+                  setBrowsing(false);
+                }}
+              />
             )}
 
             {pane === 'paste' && (
@@ -1998,7 +2419,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   └────────────────────────────────────────────────────────────┘
                 */}
                 {isCliPaste(paste) ? (
-                  <div className="mt-1 rounded-md border border-line bg-accent-soft p-2">
+                  <div className="mt-1 rounded-md border border-warn/40 p-2">
                     <p className="text-xs">
                       Đây là tờ khai <b>lệnh</b>, không phải cấu hình MCP — nên tab này không dựng
                       được nó.
@@ -2007,15 +2428,61 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       size="sm"
                       className="mt-2"
                       onClick={() => {
+                        /*
+                          ┌──────────────────────────────────────────────────┐
+                          │ SANG THẲNG **TAB JSON**, không sang form.        │
+                          │ (user 01/09: *"với cơ chế thêm folder thì cái    │
+                          │ chuyển paste json sang cli không còn hiệu        │
+                          │ nghiệm nữa"* — và họ đúng)                       │
+                          │                                                  │
+                          │ Từ hôm nay thư mục là của **cả cánh tay**, nên   │
+                          │ một tờ khai gõ tay đặt `cwd` khác nhau từng lệnh │
+                          │ **không đọc ngược về form được**. Đổ nó vào form │
+                          │ là im lặng dời chỗ chạy của n−1 lệnh.            │
+                          │                                                  │
+                          │ ⇒ Rơi vào **ô JSON của tab Lệnh**: nguyên văn    │
+                          │ sang nguyên văn, không đi qua phép biến đổi nào. │
+                          │ Người dùng muốn về form thì tự bấm — và lúc đó   │
+                          │ nút ấy đã bị khoá nếu `cwd` lệch nhau.           │
+                          └──────────────────────────────────────────────────┘
+                        */
                         const back = declToDraft(safeJson(paste));
-                        setActs(back ?? [blankAct()]);
-                        setCliJson(null);
+                        setActs(back && !back.mixed ? back.acts : [blankAct()]);
+                        setCliCwd(back && !back.mixed ? back.cwd : '');
+                        setCliJson(paste);
+                        setCliReady(true);
                         setPane('cli');
                       }}
                     >
                       Mở tab Lệnh với nội dung này →
                     </Button>
                   </div>
+                ) : extraServers.length > 0 ? (
+                  /*
+                    ┌──────────────────────────────────────────────────────────┐
+                    │ 🔴 KHỐI CÓ NHIỀU SERVER — ta chỉ cắm CÁI ĐẦU. (user hỏi  │
+                    │ 01/09: *"kiểm tra bên custom mcp có bị leak không"* —    │
+                    │ có, và đây là chỗ đó.)                                    │
+                    │                                                          │
+                    │ `parsePaste` lấy `Object.entries(mcpServers)[0]` và bỏ    │
+                    │ phần còn lại **không một câu nào**. README của nhiều hãng │
+                    │ liệt kê 2–3 server trong một khối, nên đây không phải ca  │
+                    │ hiếm: người dùng bấm Xong, thấy ✓, và mất một cánh tay    │
+                    │ mà **không có triệu chứng nào**.                          │
+                    │                                                          │
+                    │ ⚠ KHÔNG chặn — cắm cái đầu là hành vi đúng và hữu ích.   │
+                    │ Thứ thiếu chỉ là **nói ra**: ta lấy cái nào, và những cái │
+                    │ kia cắm bằng cách nào. Cùng luật với `ProbeReport`: hỏng  │
+                    │ im lặng thì ít nhất giao diện đừng im lặng theo.          │
+                    └──────────────────────────────────────────────────────────┘
+                  */
+                  <p className="mt-1 text-xs text-warn">
+                    Khối này có {extraServers.length + 1} server. Chỉ <b>{firstServer}</b> được cắm —
+                    {' '}
+                    {extraServers.map((n) => <code key={n} className="mx-0.5 rounded bg-accent-soft px-1">{n}</code>)}
+                    {' '}
+                    thì dán riêng thành một kết nối nữa.
+                  </p>
                 ) : (
                   <p className="mt-1 text-xs text-muted">
                     Nhận cả khối <code>{'{"mcpServers": {...}}'}</code> chép nguyên từ tài liệu.
@@ -2969,10 +3436,25 @@ function BrowseDialog({
   open,
   onOpenChange,
   onChange,
+  start,
+  office,
 }: {
   open: boolean;
   onOpenChange(v: boolean): void;
   onChange(v: string[]): void;
+  /**
+   * Mở ở đâu. Bỏ trống ⇒ `office` (nếu có) ⇒ `LAST_DIR` ⇒ gốc.
+   *
+   * ⚠ Tab Lệnh truyền thư mục ĐANG CHỌN vào đây và cố ý **không** dùng
+   * `LAST_DIR` (user 01/09): cache đó là trí nhớ của cánh tay thư mục, mượn nó ở
+   * đây là mở ra một chỗ chẳng liên quan gì tới thứ đang soạn.
+   */
+  start?: string;
+  /**
+   * Chưa chọn gì thì đứng ở **thư mục văn phòng**. Gửi **id**, không gửi đường
+   * dẫn — máy chủ giải. → `api.browse`
+   */
+  office?: string | null;
 }) {
   const [cur, setCur] = useState<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>({
     path: '',
@@ -2982,10 +3464,10 @@ function BrowseDialog({
   const [typed, setTyped] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const go = (p?: string) => {
+  const go = (p?: string, at?: string) => {
     setLoading(true);
     void api
-      .browse(p)
+      .browse(p, at)
       .then((r) => {
         setCur(r);
         setTyped(r.path);
@@ -2996,14 +3478,25 @@ function BrowseDialog({
   };
 
   useEffect(() => {
-    if (open) go(localStorage.getItem(LAST_DIR) ?? undefined);
+    if (!open) return;
+    /**
+     * ⚠ `office` đứng TRƯỚC `LAST_DIR` chứ không sau: chỗ nào truyền `office`
+     * (tab Lệnh) là chỗ đã nói rõ mặc định của mình, và rơi tiếp xuống cache của
+     * cánh tay thư mục ở đó là mở ra một chỗ chẳng liên quan.
+     */
+    if (start) go(start);
+    else if (office) go(undefined, office);
+    else go(localStorage.getItem(LAST_DIR) || undefined);
+    // Chỉ theo `open`: đổi `start` giữa lúc modal đang mở là kéo người dùng về
+    // gốc trong khi họ đang duyệt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const here = cur.path;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-5xl">
+      <DialogContent className={DIALOG_W}>
         <DialogHeader>
           <DialogTitle>Chọn thư mục</DialogTitle>
           <DialogDescription>
@@ -3041,10 +3534,13 @@ function BrowseDialog({
           <div className="mt-0.5 break-all font-mono text-[12px]">{here || 'Chọn một ổ đĩa'}</div>
         </div>
 
-        <div className="mt-2 grid max-h-[46vh] grid-cols-4 gap-1 overflow-y-auto rounded-md border border-line p-1">
-          {loading && <div className="col-span-4 px-2 py-2 text-xs text-muted">Đang đọc…</div>}
+        {/* BA cột, không bốn: khung hẹp lại còn 46rem thì bốn cột cắt tên thư
+            mục ngay ở ký tự thứ mười — mà tên thư mục chính là thứ người ta đọc
+            để bấm. */}
+        <div className="mt-2 grid max-h-[46vh] grid-cols-3 gap-1 overflow-y-auto rounded-md border border-line p-1">
+          {loading && <div className="col-span-3 px-2 py-2 text-xs text-muted">Đang đọc…</div>}
           {!loading && cur.dirs.length === 0 && (
-            <div className="col-span-4 px-2 py-2 text-xs text-muted">
+            <div className="col-span-3 px-2 py-2 text-xs text-muted">
               Không có thư mục con nào đọc được ở đây.
             </div>
           )}

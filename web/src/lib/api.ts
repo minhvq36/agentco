@@ -79,9 +79,16 @@ export const api = {
    * tuyệt đối, còn hộp thoại của HĐH thì mở nhầm máy khi daemon ở xa — nên ta
    * tự liệt kê. → `paths.ts §browseDirs`
    */
-  browse: (p?: string) =>
+  /**
+   * `office` = mở ở **thư mục văn phòng** khi chưa có `p`.
+   *
+   * ⚠ Client gửi **id văn phòng**, không gửi đường dẫn: đường dẫn là chuyện của
+   * máy chủ (đổi theo HĐH và theo chỗ cài), và ghép nó ở đây là dựng lại đúng
+   * lớp *"hai bản của cùng một sự thật"*. → `server.ts /api/browse`
+   */
+  browse: (p?: string, office?: string) =>
     call<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>(
-      `/api/browse${p ? `?path=${enc(p)}` : ''}`,
+      `/api/browse${p ? `?path=${enc(p)}` : office ? `?office=${enc(office)}` : ''}`,
     ),
 
   // ── cánh tay (MCP). → docs/SPEC-arms.md §6

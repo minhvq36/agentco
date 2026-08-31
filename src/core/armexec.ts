@@ -121,20 +121,43 @@ export function defaultArmLabel(config: unknown): string | undefined {
   const c = config as { url?: unknown; command?: unknown };
 
   /**
-   * Tờ khai CLI: lấy **tên chương trình của việc đầu tiên**.
-   *
-   * ⚠ CỐ Ý KHÔNG ghép tên các việc lại (`"đếm hoá đơn · đồng bộ"`): đó là việc
-   * của `does`, và nó đã đi vào dòng danh bạ rồi. Nhãn trả lời câu *"cái này là
-   * cái gì"*, `does` trả lời *"nó làm được gì"* — trộn hai câu vào một chuỗi là
-   * đẻ ra một cái tên dài mà vẫn không nói được nó là cái gì.
-   *
-   * ⚠ Và vẫn được phép trả `undefined`: một cái tên bịa tệ hơn một cái băm thật
-   * thà. `run: []` không thể xảy ra (schema đòi `min(1)`), nhưng hàm này chạy
-   * trên dữ liệu CHƯA qua schema — nó được gọi ở `addArm`, trước mọi phép kiểm.
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ Tờ khai CLI: **TÊN THƯ MỤC trước, tên chương trình sau.** (user 01/09)   │
+   * │                                                                          │
+   * │   *"1 cánh tay CLI có thể có nhiều lệnh, tôi nghĩ tên thư mục nhưng logo │
+   * │    >_ cho node là ổn rồi"*                                               │
+   * │                                                                          │
+   * │ Bản trước lấy tên binary, và nó **hỏng đúng ở ca thường nhất**: một cánh │
+   * │ tay CLI là một dự án với nhiều lệnh, mà mọi lệnh của dự án JS đều mở đầu │
+   * │ bằng `node` ⇒ ba dự án khác nhau ra ba node trên sơ đồ tên **"node"**.   │
+   * │ Tên phải phân biệt được, và thứ phân biệt chúng là **thư mục**.          │
+   * │                                                                          │
+   * │ ⚠ Hình `>_` vẫn theo LOẠI (`ArmIcon kind="cli"`), không theo tên — nên   │
+   * │ đổi nhãn ở đây không làm mất dấu hiệu *"đây là một cánh tay lệnh"*.      │
+   * │                                                                          │
+   * │ ⚠ CỐ Ý KHÔNG ghép tên các việc lại (`"đếm hoá đơn · đồng bộ"`): đó là     │
+   * │ việc của `does`, đã đi vào dòng danh bạ. Nhãn trả lời *"cái này là cái   │
+   * │ gì"*, `does` trả lời *"nó làm được gì"*.                                 │
+   * │                                                                          │
+   * │ ⚠ Vẫn được phép trả `undefined`: một cái tên bịa tệ hơn một cái băm thật │
+   * │ thà. Hàm này chạy trên dữ liệu **chưa qua schema** (gọi ở `addArm`,      │
+   * │ trước mọi phép kiểm), nên mọi trường đều có thể vắng hoặc sai kiểu.      │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
   if (isCliArm(config)) {
-    const first = (config as { actions?: { run?: unknown }[] }).actions?.[0]?.run;
-    const bin = Array.isArray(first) ? first[0] : undefined;
+    const first = (config as { actions?: { run?: unknown; cwd?: unknown }[] }).actions?.[0];
+    const cwd = first?.cwd;
+    if (typeof cwd === 'string' && cwd.trim()) {
+      /**
+       * Bỏ gạch chéo cuối TRƯỚC khi lấy `basename`: `D:\Ho so\2026\` cho ra chuỗi
+       * rỗng nếu không bỏ. Và bỏ cả ô trống `{office}` — nó là cú pháp của ta,
+       * không phải một đoạn tên thư mục.
+       */
+      const clean = cwd.trim().split('{office}').join('').replace(/[\\/]+$/, '');
+      const base = clean ? path.basename(clean) : '';
+      if (base) return base;
+    }
+    const bin = Array.isArray(first?.run) ? (first.run as unknown[])[0] : undefined;
     if (typeof bin === 'string' && bin.trim()) {
       return path.basename(bin.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
     }

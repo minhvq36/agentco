@@ -4994,8 +4994,349 @@ duy nhất"*, mà tab 4 có ô JSON hai chiều nên giả định đó biến m
 ⚠ `cliPasteRedirect` đã viết + có test, **chưa nối dây** — nối cùng lúc với tab 4, vì chặn trước là
 không cắm được cánh tay CLI nào.
 
+---
+
+## 16u. ✅ 01/09 — **TAB LỆNH THÀNH SOẠN ĐƯỢC**. Năm câu của user, và một câu lật lại chốt cũ
+
+Bối cảnh: tab 4 đã có nhưng mới là *"gõ một dòng lệnh cố định"*. User dùng thử rồi nêu năm chỗ.
+
+### ① *"Gộp Thư mục và Lệnh thành một loại không?"* — **KHÔNG**, và phép thử là `cwd` bỏ được
+
+Trục phân loại phải là thứ **không bỏ đi được**. Với cánh tay thư mục, thư mục **LÀ** năng lực — bỏ nó
+thì cánh tay rỗng. Với cánh tay CLI, `cwd` là **tuỳ chọn**: bỏ trống ⇒ rơi về thư mục văn phòng, cánh
+tay vẫn chạy. Thư mục ở đây là **trạng từ** (chạy ở đâu), không phải **danh từ** (cấp cái gì).
+
+Gộp còn sai **thứ tự hỏi**: nó đặt câu nguy hiểm nhất (mở một lỗ trên tường lửa shell) **sau** câu dễ
+nhất (chọn folder), và bắt mọi người chỉ muốn đọc file đi ngang qua nó. Cùng luật với `groups` §6j —
+*câu hỏi có hậu quả phải đứng ở chỗ người ta còn chú ý*.
+
+⚠ **Hai cánh tay chung một thư mục là ca THƯỜNG, và nó đúng**: đó là cách duy nhất đọc ra được
+*"đọc cả thư mục"* + *"chạy đúng 3 lệnh trong đó"*. Chỗ user thấy kỳ là **nhãn** (hai node trông như
+nhân bản), không phải **loại** — và thuốc nằm ở `defaultArmLabel`: thư mục lấy tên theo thư mục, CLI
+lấy tên theo binary.
+
+⇒ Bộ chọn thư mục **dùng lại `BrowseDialog`** (một bản dùng chung cho cả tab, không phải mỗi lệnh một
+bản), đặt ở tầng **từng lệnh** vì `cwd` trong schema là của action. **`cwd` vào băm** — đã chốt 31/08.
+
+### ② Nhãn cho mọi ô · *"Việc"* → **"Lệnh"**
+
+Placeholder **không phải nhãn**: nó biến mất đúng lúc người ta gõ, nên ai quay lại sửa nhìn một ô
+không tên. Bốn nhãn: **Tên · Cú pháp · Ví dụ · Miêu tả**, cộng *Chạy trong thư mục* và hai ô cuối.
+
+### ③ 🔴 *"Ô tick Chỉ đọc tối nghĩa quá. Mục tiêu là gì"* — câu hỏi lộ ra rằng nhãn cũ **không nói được mục tiêu**
+
+Nhãn cũ *"Chỉ đọc, không đổi gì"* là một **mô tả**; người dùng cần một **câu hỏi** + một **hậu quả**.
+Mới: *"Lệnh này có đổi gì trên máy không?"* → ☐ **Không — chỉ xem.** Chạy lại bao nhiêu lần cũng an toàn.
+
+⚠ Và **phải nói thật nó làm gì**: sau khi bỏ nấc quyền cho CLI (30/08), ô này dựng `annotations` cho
+nhật ký + cho nhân viên đọc, **nó không khoá lệnh lại**. Vẽ nó như một cái khoá là để giao diện nói dối
+về thứ nó không thi hành. Mặc định không tick = *"có thay đổi"* — an toàn đúng chiều.
+`fail_when` cũng được nhãn + lý do (`exit 0` ≠ thành công), bằng không nó trông như bộ lọc chữ tuỳ hứng.
+
+### ④ ⭐ Ô **VÍ DỤ** quay lại — và cách hoà hai chốt tưởng như mâu thuẫn
+
+- 31/08 chốt: ví dụ phải ở **tầng THAM SỐ** — model không dựng dòng lệnh, nó chỉ điền `{tag}`; và đó là
+  hoá đơn **lặp lại** (prefix mọi lượt, trần 60 ký tự).
+- 01/09 user bác: *"example chẳng phải là 1 lệnh real chạy được thì không phải tốt hơn sao, nó là zero
+  shot"* — đúng ở chỗ **người dùng không kiểm chứng được** một ví dụ rời rạc, còn một dòng lệnh thì họ
+  chạy thử ngay trong terminal của chính họ.
+
+⇒ **Không phải chọn một. Người gõ ở tầng họ kiểm chứng được; model nhận ở tầng nó điều khiển được.**
+`alignExample(run, toArgv(ví_dụ))` khớp từng mảnh argv rồi rút giá trị: `… --thang {thang}` ⨯
+`… --thang 8` → `thang = 8`, và **chỉ `thang=8`** đi vào prefix.
+
+⚠ Đây là một **phép đoán**, nên theo đúng luật của `toArgv`: **hiện lại thứ bóc được**. Lệch số mảnh
+hoặc khác nhau ở mảnh cố định ⇒ trả `null` ⇒ màn hình nói *"ví dụ không khớp cú pháp"*, **không gán bừa**.
+
+⚠ Kéo theo: **ô trống trong Cú pháp là NGUỒN SỰ THẬT của `params`**. Người dùng không khai tham số ở
+đâu cả — gõ `{thang}` là có. Khai hai chỗ là hai chỗ lệch nhau, và chỗ lệch nổ ở `fillArgv`.
+
+### ⑤ Nút **"Điền mẫu chạy thử"** — một cú bấm là chạy được
+
+`node -e "console.log('Xin chào, ' + process.argv[1])" {ten}`, ví dụ `… Minh`. Ba ràng buộc đã đo:
+`node` chắc chắn có (daemon đang chạy bằng nó) · **không cần file, không cần thư mục** (`-e` mang mã
+theo mình, `cwd` để trống) · **có một ô trống** (mẫu không có tham số thì dạy sai đúng nửa quan trọng
+nhất). Nút điền vào **ô đang mở** — form hay JSON — chứ không nhảy màn hình.
+
+### 🔴 Cái bắt được trong lúc làm: form **thả rơi hàng rào của tham số**
+
+Chú thích cũ ghi *"ô lạ rơi mất là ĐÚNG: form chỉ biết những ô nó vẽ"*. Câu đó **chỉ đúng với ô form
+không biết tới**, và `params` không thuộc loại đó: form **tự sinh ra** chúng nhưng chỉ vẽ **một trường**.
+Thả rơi ⇒ ai soạn `pattern`/`allow_dash` ở tab JSON rồi bấm *"← Về form"* là vừa **gỡ một hàng rào mà
+không được báo gì**. → chở nguyên `params`, chỉ ghi đè đúng `example`.
+[[agentco-fallback-throws-away-answers]]
+
+### Tách file + khoá bằng test
+
+Ánh xạ form ↔ tờ khai ra `web/src/lib/cli-form.ts` (**không React, không JSX, không `@/…`**) để
+`test/cli-form.test.ts` chạy thẳng dưới `node --test`. Lời hứa *"1-1 hai chiều"* hỏng theo cách **im
+lặng nhất có thể** — không lỗi, không cảnh báo, chỉ một trường biến mất — nên nó phải được **khoá bằng
+test, không bằng chú thích**. Bài quan trọng nhất: **form không được đẻ ra thứ `parseCliArm` từ chối**,
+vì hai chỗ đó do hai file khác nhau giữ. **14/14 xanh · toàn bộ 800/800 xanh.**
+
+---
+
+## 16v. ✅ 01/09 (vòng 2) — **THƯ MỤC LÊN TẦNG CÁNH TAY**, và `fail_when` rời khỏi form
+
+User dùng thử §16u rồi nêu sáu chỗ. Bốn chỗ là bố cục; hai chỗ đổi mô hình.
+
+### ① 🔴 `cwd` là của **CÁNH TAY**, không phải của từng lệnh
+
+> *"chọn tab → thư mục picker → sau đó tất cả danh sách lệnh đều được thao tác từ văn phòng đó khi
+> được gọi/kích hoạt"*
+
+Một cánh tay CLI **là một dự án**: nhiều lệnh, một thư mục. Thư mục là câu hỏi có **đúng một** câu trả
+lời cho cả cánh tay, và hỏi nó ở mỗi lệnh là mời người ta gõ lệch — rồi lệnh thứ ba không thấy file mà
+không ai hiểu vì sao. Và nó phải đứng **TRƯỚC**: viết xong năm lệnh rồi mới phát hiện sai thư mục là
+năm lệnh phải đọc lại.
+
+⇒ Vào tab Lệnh là vào **màn thư mục**: `[Chọn thư mục…]` hoặc `[Dùng thư mục văn phòng →]`. Đường thứ
+hai **bắt buộc phải còn** — `cwd` là tuỳ chọn trong schema, mẫu hello-world không cần thư mục nào, và
+một màn chặn cứng ở đây giết đúng cái *"một cú bấm là chạy được"*.
+
+⚠ **Schema KHÔNG đổi**: `cwd` vẫn ở tầng action, và form ghi cùng một giá trị vào mọi action. Giao diện
+được phép hẹp hơn tờ khai; tờ khai thì không được hẹp hơn ngoài đời.
+
+⚠ **Hệ quả bắt buộc:** tờ khai gõ tay CÓ THỂ đặt `cwd` khác nhau từng lệnh. Form không giữ được hình đó
+⇒ `declToDraft` trả `mixed: true`, nút **"← Về form" khoá lại** và màn hình nói vì sao. Im lặng lấy
+`cwd` của lệnh đầu là **dời chỗ chạy của n−1 lệnh** — với lệnh ghi dữ liệu thì đó là chạy nhầm thư mục,
+không phải một lỗi hiển thị.
+
+⚠ Bộ chọn mở ở **thư mục đang chọn**, cố ý **không** đọc `LAST_DIR` (user nêu): cache đó là trí nhớ của
+cánh tay THƯ MỤC — mượn nó ở đây là mở ra một chỗ chẳng liên quan gì tới thứ đang soạn.
+
+### ② Nhãn mặc định = **TÊN THƯ MỤC** (`defaultArmLabel`)
+
+> *"1 cánh tay CLI có thể có nhiều lệnh, tôi nghĩ tên thư mục nhưng logo `>_` cho node là ổn rồi"*
+
+Bản trước lấy tên binary, và nó hỏng đúng ở ca thường nhất: mọi lệnh của một dự án JS đều mở đầu bằng
+`node` ⇒ ba dự án ra ba node trên sơ đồ **cùng tên "node"**. Tên phải phân biệt được, và thứ phân biệt
+chúng là thư mục. Hình `>_` vẫn theo **loại**, nên đổi nhãn không làm mất dấu hiệu *"đây là cánh tay
+lệnh"*. Không có `cwd` ⇒ ngã về tên binary như cũ.
+
+### ③ Chặn CLI ở tab *Tự cắm MCP*: **giữ chặn, và đổi cửa ra sang tab JSON**
+
+User đúng khi nói *"với cơ chế thêm folder thì cái chuyển paste json sang cli không còn hiệu nghiệm"*:
+sau ① thì đổ một tờ khai vào **form** có thể im lặng gộp `cwd`. Nhưng **từ chối trần thì thành câu lỗi
+sai cửa** — cửa vẫn còn, chỉ là ở chỗ khác.
+⇒ Nút chuyển giờ đưa nội dung vào **ô JSON của tab Lệnh**: nguyên văn sang nguyên văn, không qua phép
+biến đổi nào. Muốn về form thì tự bấm, và lúc đó nút ấy đã khoá nếu `cwd` lệch.
+
+### ④ Bố cục: hộp thoại **46rem** · nhãn **cùng dòng** với ô nhập · `fail_when` ra khỏi form
+
+Không phải thẩm mỹ: ở 28rem thì cột nhãn 150px ăn một phần ba, và ô **Cú pháp** — thứ chứa một dòng
+lệnh thật — hẹp tới mức phải cuộn ngang để đọc lại chính cái mình vừa gõ. Rộng cho **cả** hộp thoại,
+không riêng tab Lệnh: modal đổi bề rộng khi chuyển tab là cả trang nhảy dưới tay người đang bấm.
+
+### ⑤ Ô tick: **"Lệnh chỉ đọc"**, mặc định không tick
+
+User chốt lại sau khi bản §16u của tôi viết nó thành một câu hỏi dài. Họ đúng: nhãn ngắn **đọc được
+ngay** vì nó đứng cùng dòng với ô tick, trong một form mà mọi dòng khác cũng là `nhãn — ô`; câu hỏi dài
+phá đúng cái nhịp đó. Giữ nguyên hai điều: mặc định `read_only = false` (an toàn đúng chiều), và **nói
+thật rằng nó là nhãn chứ không phải khoá**.
+
+### ⑥ 🔴 *"Có nên bỏ `fail_when` không? Để worker tự xác định?"* — **không bỏ, nhưng nó đang đứng sai chỗ, và LỖI LÀ CỦA TÔI**
+
+User nêu: *"nhiều khi sub cli nó cũng có warning error, traceback gì đó nhưng thực ra kết quả nó vẫn
+làm được"*. Đúng, và hai chiều hỏng **không cân nhau**:
+
+| | Không có `fail_when` | `fail_when` khớp nhầm |
+|---|---|---|
+| Chuyện xảy ra | agent tin `exit 0`, đi tiếp với kết quả không tồn tại | agent tin một lệnh **đã chạy xong** là thất bại |
+| Agent làm gì tiếp | dùng kết quả rỗng | **CHẠY LẠI** |
+| Với lệnh ghi dữ liệu | một bước sai | **ghi đè lần thứ hai** |
+
+Chiều thứ hai tệ hơn: nó biến một lệnh **đã thành công** thành một lệnh có nguy cơ chạy hai lần. Nhưng
+model **đọc được cả output** trong kết quả tool, nên chiều thứ nhất có một lưới đỡ tự nhiên mà chiều
+thứ hai không có.
+
+**⇒ Nhưng cái hỏng thật không phải trường `fail_when`, mà là chỗ tôi đặt nó.** `fail_when` là dụng cụ
+của **người biết CLI của mình** — họ biết `FATAL:` chỉ in ra khi thật sự chết. Người điền form thì
+không biết, và placeholder tôi viết (`ERROR, FAILED, Traceback`) **mời họ gõ đúng ba chuỗi hay xuất
+hiện nhất trong output LÀNH**. Tôi tự chế ra cái bẫy rồi hỏi có nên phá nhà không.
+
+Chốt: **giữ trường + giữ phán quyết cứng trong lõi · BỎ ô khỏi form · chỉ soạn ở tab JSON.**
+Trường vẫn **chở qua form nguyên vẹn** (có test) — cùng luật với `pattern`. Trong thực tế người điền
+form sẽ **không dùng nó**, tức gần đúng thứ user đề nghị, nhưng đường ra vẫn còn cho người biết mình
+làm gì. → [[agentco-domain-vs-boundary]] · [[agentco-no-change-is-a-decision]]
+
+> **Điều kiện mở lại (đo được, không cảm tính):** chạy **chặng H**. Nếu H-1 cho thấy model **tự** kết
+> luận thất bại khi đọc `ERROR: mat ket noi` trong output mà **không cần** `fail_when`, thì trường này
+> mất lý do tồn tại và bỏ hẳn. Chưa ai chạy H ⇒ hôm nay **chưa đủ dữ kiện để bỏ**, và đó là lý do duy
+> nhất tôi giữ. [[agentco-measurement-vs-conclusion]]
+
+**803/803 xanh** (+3 bài: thư mục chung · `mixed` · nhãn theo thư mục).
+
+### ⑦ 🔴 ĐÍNH CHÍNH cùng ngày — màn thư mục có **MỘT** nút, không phải hai
+
+Bản đầu của ① có `[Chọn thư mục…]` **và** `[Dùng thư mục văn phòng →]`. User bác:
+
+> *"Chỉ có duy nhất 1 nút Chọn thư mục…, không có nút Dùng thư mục văn phòng, và thư mục default khi
+> bấm nút đó luôn là thư mục văn phòng ⇒ Screen tiếp theo chỉ có nút Đổi, không có nút Bỏ"*
+
+Họ đúng, và lý do đáng ghi: **hai nút đó hỏi cùng một câu hai lần.** Nút thứ hai chỉ là *"chọn thư mục
+văn phòng"* viết dưới dạng lối tắt — mà một lối tắt cho **mặc định** thì không tiết kiệm gì, nó chỉ bắt
+người ta so hai lựa chọn để hiểu ra chúng gần như một.
+
+⇒ Một nút, và thư mục văn phòng là **chỗ bộ chọn ĐỨNG SẴN**. Muốn nó thì bấm Xong ngay. Cùng số cú
+bấm, **ít hơn một quyết định** — và `cwd` **luôn được ghi ra**, nên `company.yaml` nói đúng thứ sẽ chạy
+thay vì để lại ca *"trống nghĩa là ở đâu đó"*. Kéo theo: thanh trên chỉ còn **Đổi…**, bỏ nút **Bỏ** —
+nút đó sẽ dựng lại đúng cái trạng thái vừa xoá.
+
+⚠ Máy chủ mở thêm `GET /api/browse?office=<id>`: **client gửi id, không gửi đường dẫn.** Đường dẫn văn
+phòng là chuyện của máy chủ (đổi theo HĐH, theo chỗ cài), và ghép nó ở web là dựng lại lớp *"hai bản
+của cùng một sự thật"* mà `buildConfig` đã mất công gỡ.
+
+### ⑧ Danh sách "dùng lại": **`cli` là một LOẠI**, không phải một dạng của `custom`
+
+> *"Bỏ tất cả custom MCP gợi ý ở CLI, chỉ gợi ý CLI, vì bây giờ nó tách ra làm 2 trường phái rồi"*
+
+Hệ quả bắt buộc của việc tách tab: từ lúc có hai thẻ ở bước 1, danh sách dùng lại phải tách theo đúng
+đường đó — bằng không **tab Lệnh gợi ý một cánh tay HTTP mà chính nó từ chối dán ở cửa kia**.
+`kindOf` hỏi `config.type === 'cli'` — cùng câu hỏi `isCliArm`/`isCliPaste` hỏi, không phải luật thứ ba.
+
+### ⑩ Ô **Ví dụ luôn hiện** — và khi chưa có ô trống thì nó **đổi vai**
+
+> *"sao Mẫu có Ví dụ mà trong các trường tự điền lại không có Trường Ví dụ?"*
+
+Bản trước ẩn ô này khi cú pháp chưa có `{ô trống}`, lý lẽ *"không có gì để điền thì ví dụ dạy ai"*.
+Lý lẽ đó **đúng về phía model** và **sai về phía người dùng**: một ô tự mọc ra rồi tự biến mất là thứ
+không ai đoán được luật — và nó giấu đi **đúng lúc người ta cần nó nhất**, tức là lúc chưa biết mình
+cần một ô trống.
+
+⇒ Luôn hiện. Khi chưa có ô trống, nó so ví dụ với cú pháp và **chỉ ra chỗ đáng làm ô trống**
+(`ExampleNoSlot`): *"Khác cú pháp ở `8` → `9` — nếu đây là chỗ thay đổi mỗi lần chạy, đổi nó thành
+`{ten_o_trong}`"*. Đó là chỗ ô này trả lời một câu không màn hình nào khác trả lời được: **"cái nào
+trong dòng lệnh này là thứ thay đổi mỗi lần?"** — người dùng biết câu trả lời (họ vừa chạy hai lần với
+hai giá trị) nhưng **không biết rằng ta cần biết**. Bắt họ tự nghĩ ra khái niệm *tham số* rồi gõ `{…}`
+là bắt họ học từ vựng của máy; so hai dòng lệnh thật thì không.
+
+⚠ Nó **chỉ đường, không tự sửa** — cùng luật với `toArgv`: đoán thì được, nhưng người dùng phải là
+người bấm. Và nó **im** khi hai dòng giống hệt: một lệnh cố định là chuyện bình thường.
+
+⚠ **Tầng của `example` KHÔNG đổi** (vẫn `params[].example`, không vào `description`). User nêu
+*"Claude Code đủ thông minh để nhận ra"* — đúng, và đó **không phải điều tôi phản đối**: tôi không lo
+model nhầm ví dụ với lệnh thật, tôi tính **hoá đơn lặp lại**. Với tham số, `params[].example` đã cho
+model **mọi giá trị nó phải điền**; cả dòng lệnh chỉ thêm những mảnh **cố định mà nó không điều khiển**.
+Không có tham số thì tool không nhận đối số nào — chẳng có gì để zero-shot.
+> **Điều kiện mở lại, đo được:** ô **I-2** của chặng I đã là phép so sẵn có. Nếu có ca thật mà model
+> chọn sai tool trong khi `params[].example` đã đủ, thì đưa cả dòng vào `description` và đo lại giá
+> token mỗi lượt. [[agentco-measurement-vs-conclusion]]
+
+### ⑪ 🔴 Dán CLI vào tab MCP → thanh thư mục **trắng trơn**, và đó là một lời nói dối tôi vừa tự tạo
+
+User bắt: *"cái thư mục default của CLI vẫn là văn phòng? hiện giờ nó đang trống trơn nên chả biết là gì"*.
+
+Hai lỗi cùng chỗ, cả hai đều sinh ra từ ⑦:
+
+1. Bỏ nhãn *"Thư mục văn phòng (mặc định)"* vì **đường form** không bao giờ để `cwd` rỗng nữa — nhưng
+   **đường dán** thì có, và một tờ khai không khai `cwd` **thật sự chạy ở thư mục văn phòng**.
+   ⇒ **Hiện một trạng thái ≠ mời người ta vào trạng thái đó.** Nút *Bỏ* là lời mời (đã xoá, đúng);
+   nhãn là lời khai (phải có).
+2. Ở chế độ JSON, `cliDecl` lấy **khối JSON**, không lấy `cliCwd` — nên thanh trên đang vẽ một giá trị
+   **không có tác dụng gì**, và nút *Đổi…* bên cạnh sửa đúng cái giá trị vô tác dụng ấy.
+   ⇒ Thanh đọc `cwd` **từ chính khối đang sửa**; nút *Đổi…* biến mất, thay bằng chữ *"sửa trong JSON"*.
+   `mixed` thì ghi *"Khác nhau theo từng lệnh"*.
+
+📌 Lớp lỗi, và nó lặp: **xoá một trạng thái ở MỘT đường vào rồi tưởng nó biến mất khỏi hệ thống.**
+Câu hỏi phải hỏi: *"còn đường nào tạo ra trạng thái này nữa không?"* → [[agentco-finish-completely]]
+
+### ⑫ 🔴 **MÃ LỆNH TRÙNG NHAU** — user hỏi, và câu hỏi trúng một lỗ đến từ ĐƯỜNG CHÍNH
+
+> *"khi kiểm tra json của cli, tôi phát hiện ra người dùng có thể sửa id … Điều gì xảy ra nếu id trùng lặp?"*
+
+**Đo trước, kết luận sau (01/09):** `createSdkMcpServer` với hai tool cùng tên **NÉM** —
+`Tool a is already registered`. Tin mừng: **không có ca nuốt im lặng**, không đời nào một lệnh *"xoá"*
+lặng lẽ chiếm chỗ một lệnh *"đếm"* cùng tên.
+
+Nhưng nó ném ở `compileCliArm`, tức **lúc bấm Thử**, bằng một câu tiếng Anh nói về *"tool"* — trong khi
+người dùng vừa đặt tên hai **lệnh** bằng tiếng Việt. Đúng lớp *câu lỗi sai cửa*: đúng sự thật, sai người
+nhận. → [[agentco-wrong-door-errors]]
+
+**⚠ Và nó KHÔNG cần ai sửa JSON.** User hỏi tiếp đúng chỗ đó: *"trường hợp người dùng sử dụng form,
+không điền id thì id được tạo thế nào?"* — `slugId(say)`. Nên *"đếm hoá đơn"* và *"đếm hoá đơn!"* ra
+**cùng một mã**, và lỗ này tới từ **đường chính**, không phải từ người nghịch JSON.
+
+**⚠ Chỗ dễ vá sai tầng, và user chỉ ra trước khi tôi vá:** mã trùng chỉ là **triệu chứng**; bệnh là
+**hai lệnh mà nhân viên không phân biệt được** (`does` liệt kê hai dòng y hệt). Nên **không** tự thêm
+hậu tố `_2` cho xong — làm thế là giấu đúng cái phần vẫn còn nguyên ở phía model.
+
+⇒ Ba tầng, và user chốt đúng cả ba:
+1. **Chặn ở UI bước đầu** — báo tại ô **Tên** (chỗ người dùng sửa được, vì họ không gõ mã), và mờ nút
+   *Dùng cấu hình này*. Ở chế độ JSON thì báo bằng một dòng ngay trên nút.
+2. **Nút Thử vẫn phải chặn** (user nêu: *"nếu dùng trick lỏ race condition"*) — có sẵn:
+   `server.ts §resolveArm → parseCliArm` là cửa **CHUNG** của Thử và Xong, nên tab treo, đua tay, hay
+   một client tự viết đều không lọt. Cửa này giờ trả câu tiếng Việt nêu đúng mã trùng.
+3. **`id` được validate** — `^[a-z][a-z0-9_]*$` đã có trong schema, và `slugId` bảo đảm sinh ra đúng
+   khuôn (có test).
+
+⚠ Phép kiểm nằm ở **`parseCliArm`, KHÔNG ở schema**: schema dùng chung với cửa nạp `company.yaml`, mà
+rớt ở đó thì `cliToolNames` trả `[]` ⇒ `addArm` ghi `tools: []` ⇒ **cấp cả server** — đúng lỗ §5t. Cửa
+nạp cứ để SDK ném: tất định, và không nới quyền cho ai.
+
+### ⑬ 🔴 LEAK BÊN *TỰ CẮM MCP* — khối nhiều server, ta cắm một, **không nói gì**
+
+User hỏi *"tương tự kiểm tra bên custom mcp có bị leak không"*. **Có.** `parsePaste` lấy
+`Object.entries(mcpServers)[0]` và bỏ phần còn lại **không một câu nào**. README của nhiều hãng liệt kê
+2–3 server trong một khối ⇒ người dùng bấm Xong, thấy ✓, và **mất một cánh tay không triệu chứng**.
+
+⇒ **Không chặn** — cắm cái đầu là hành vi đúng và hữu ích. Thứ thiếu chỉ là **nói ra**: khối có mấy
+server, ta lấy cái nào, những cái kia cắm bằng cách nào. → [[agentco-silent-allowlist]]
+
+📌 Hai lỗ này khác nhau ở đúng một chỗ, và chỗ đó quyết định cách vá: mã trùng **không có cách hiểu
+đúng nào** ⇒ chặn; khối nhiều server **có** (cắm cái đầu) ⇒ nói.
+
+### ⑭ 🔴 **BỘ LỌC "LỆNH CÒN DỞ" CHÍNH LÀ BUG** — và nó nặng hơn cái nút user chỉ vào
+
+> *"khi tôi bấm thêm lệnh, chưa điền gì cả, nút button vẫn sáng cho tiếp tục … mà cứ không cho tiếp
+> tục là convert sang json sẽ bị trả về 1 JSON trống? (cái này không chắc, thẩm định thử)"*
+
+**Thẩm định (đo 01/09) — nghi ngờ đúng, và hậu quả nặng hơn:**
+
+| | |
+|---|---|
+| form | **2 lệnh** (1 đủ + 1 vừa bấm *Thêm*) |
+| → `draftToDecl` | **1 action** ← bộ lọc `.filter(say && run.length)` |
+| → `declToDraft` | **1 lệnh** |
+
+⇒ Bấm *Xem JSON* rồi *← Về form* là **mất hẳn một dòng, im lặng**. Và nút vẫn sáng vì `cliCount` đếm
+**sau** khi lọc.
+
+⭐ **Bộ lọc là bug, không phải cái nút.** Nó **xoá dữ liệu người dùng để đầu ra hợp lệ** — hàng giả: cấu
+hình trông hợp lệ vì thứ không hợp lệ đã bị vứt đi, chứ không phải vì người dùng đã điền xong.
+→ [[agentco-fallback-throws-away-answers]]
+
+⇒ Xuất **mọi dòng**. Dòng dở ra tờ khai **không hợp lệ**, và đó là chuyện tốt: `cliProblems` bắt ở giao
+diện (đỏ tại **đúng ô**, không phải một nút mờ câm), `parseCliArm` bắt ở cửa. **Một tờ khai nói thật
+rằng nó chưa xong thì mọi cổng phía sau còn cơ hội làm việc; một tờ khai đã bị dọn sạch thì không.**
+Đo lại sau khi vá: **2 → 2 → 2**.
+
+⚠ Cùng lượt tìm ra **một fallback thứ hai cùng họ**: `cliDecl` ngã về `draftToDecl(list)` khi khối JSON
+hỏng ⇒ nút *"Dùng cấu hình này"* **vẫn sáng trong lúc ô JSON đang đỏ**, và bấm vào thì lưu **bản form**,
+không phải thứ đang hiện trên màn hình. Giờ trả `null` — *"khối này hỏng"* là một **câu trả lời**, không
+phải một lỗi cần che.
+
+⚠ `id: ''` khi chưa có tên, **không** `slugId('')` (ra `viec_moi`): hai dòng trống cùng ra `viec_moi` thì
+`dupIds` sẽ tố *"trùng tên"* trên hai ô còn chưa gõ gì — câu lỗi đúng luật nhưng nói sai chuyện.
+
+**809/809 xanh** (+6).
+
+### ⑨ Bộ chọn thư mục: **64rem → 46rem**, dùng chung một hằng số với hộp thoại mở ra nó
+
+Ràng buộc thật không phải con số mà là *"bộ chọn không bao giờ rộng hơn hộp thoại đã mở nó"* — nó bật
+ra **từ trong** hộp thoại đó, nên lệch nhau là mỗi lần mở cả khung nhảy ra rồi thụt vào. Và cách duy
+nhất giữ một ràng buộc giữa hai giá trị là **đừng có hai giá trị** (`DIALOG_W`). Lưới thư mục xuống 3
+cột: ở 46rem thì 4 cột cắt tên ngay ký tự thứ mười, mà tên thư mục chính là thứ người ta đọc để bấm.
+[[agentco-count-mechanisms]]
+
+---
+
 ### ⏸ CÒN NỢ
 
+- **`fail_when` chỉ soạn được ở tab JSON** — xem §16v ⑥. Mở lại sau **chặng H**.
+- **Tham số nâng cao chỉ soạn được ở tab JSON** — `pattern`/`min`/`max`/`allow_dash`/`integer` **sống sót**
+  một vòng qua form (có test) nhưng form không vẽ chúng. Có ý thức: bốn ô nữa cho mỗi tham số là đánh đổi
+  sai với người non-code. Mở lại khi có ca thật.
 - **Chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:`** — bẫy sinh ra từ chốt bỏ REST. Không có shell nên
   `$TOKEN` không nở ⇒ người dùng buộc phải dán **chìa literal vào argv**, mà argv đọc được từ tiến
   trình khác trên cả ba OS **và** đi vào băm. Không triệu chứng nào.

@@ -3151,10 +3151,15 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 > | Cánh tay CLI chạy được đầu-cuối | ✅ | đã chạy thật qua UI 31/08, xác nhận bằng `mcp-audit.jsonl` |
 > | Cắm qua tab **"Tự cắm MCP"** (dán JSON) | ✅ | `parsePaste` nhận mọi khối JSON |
 > | Cửa dán **bắt khoá gõ sai** (`failWhen`…) | ✅ *(nối 01/09)* | trước đó `parseCliArm` **có test mà không cửa nào gọi** |
-> | **Tab "Lệnh" riêng** (tab 4, form từng trường) | ❌ **CHƯA XÂY** | vẫn dán JSON ở tab *Tự cắm MCP* |
-> | **Cảnh báo khi dán CLI vào tab MCP** | ❌ **cố ý chưa nối** | nối bây giờ là **không cắm được cánh tay CLI nào**, vì tab 4 chưa có |
-> | Nút **"Thử một action"** (chạy thật một lệnh) | ❌ | nút Thử hiện tại chỉ bắt tay + liệt kê việc |
+> | **Tab "Lệnh" riêng** (tab 4, form từng trường) | ✅ *(01/09)* | icon `>_` · **màn thư mục đứng trước** · nhãn cùng dòng với ô · **Xem JSON** hai chiều · **Điền mẫu chạy thử** → **chặng J** |
+> | **Thư mục CHUNG cho cả cánh tay** | ✅ *(01/09)* | một `cwd` ghi vào mọi action; tờ khai đặt `cwd` lệch nhau ⇒ **khoá "← Về form"** (§16v ①) |
+> | Nhãn mặc định = **tên thư mục** | ✅ *(01/09)* | trước đó lấy tên binary ⇒ mọi dự án JS đều ra node tên `node` |
+> | **Cảnh báo khi dán CLI vào tab MCP** | ✅ *(bật 01/09)* | nút Dùng **mờ đi**; nút chuyển đưa sang tab Lệnh **ở chế độ JSON** — nguyên văn, không qua form |
+> | `fail_when` trong **form** | ❌ *(gỡ 01/09, có ý thức)* | chỉ soạn ở tab JSON. Chở qua form nguyên vẹn, có test. Mở lại sau **chặng H** — §16v ⑥ |
+> | Ví dụ = **một dòng lệnh thật**, máy bóc ra từng ô | ✅ *(01/09)* | `alignExample` · lệch cú pháp thì **báo đỏ**, không đoán bừa |
+> | Nút **"Thử một action"** (chạy thật một lệnh) | ❌ | nút Thử hiện tại chỉ bắt tay + liệt kê việc. Còn là **nguồn đúng** của `example` |
 > | `confirm:` nối vào cổng duyệt | ❌ | ô có trong tờ khai, chưa ai đọc |
+> | `pattern`/`min`/`max`/`allow_dash` trong **form** | ❌ *(có ý thức)* | chỉ soạn ở tab JSON; form **chở qua nguyên vẹn**, có test khoá (§16u) |
 >
 > 🔴 **SAU MỖI LẦN TÔI SỬA MÃ, PHẢI `stop` RỒI `start` DAEMON.** Daemon nạp `dist/` **một lần lúc
 > khởi động**. Đây là chỗ đã gây hiểu nhầm thật (01/09: daemon khởi động **01:38**, bản vá build xong
@@ -3172,8 +3177,15 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 > `bắt_đầu/tình_hình/đọc_kết_quả` **KHÔNG vào bản đầu** ⇒ **chặng D bỏ khỏi lượt chạy này**.
 > ⚠ Số đó chứng minh **≥901s**, không chứng minh "vô hạn".
 >
-> **KHÔNG CÓ PANE RIÊNG.** Cắm qua tab **"Tự cắm MCP"** — `parsePaste` nhận mọi khối JSON, nên tờ khai
-> CLI đi thẳng vào đường đã có. Dán khối này (chạy được trên cả ba OS, không cần cài gì):
+> ### 🟢 CẬP NHẬT 01/09 — **ĐÃ CÓ TAB RIÊNG.** Khối dán dưới đây vẫn dùng được, nhưng nó không còn là đường chính
+>
+> Bước 1 giờ có **bốn** thẻ; thẻ thứ ba là **"Lệnh trên máy"** (icon `>_`). Trong đó: form từng ô ·
+> **Xem JSON** hai chiều · **Điền mẫu chạy thử** · bộ chọn thư mục. Dán tờ khai CLI vào tab *Tự cắm MCP*
+> thì nút Dùng **mờ đi** và hiện nút chuyển tab kèm nội dung. → `SPEC-arms.md §16u`
+>
+> ⚠ **Khối JSON vẫn là đường hợp lệ và phải giữ được**: lõi trung lập, sửa tay `company.yaml` vẫn chạy
+> (ô **G-6** canh chuyện đó). Dùng nó cho chặng G/H/I vì chúng đo **cửa dán** và **lúc chạy**, không đo form.
+> Dán khối này (chạy được trên cả ba OS, không cần cài gì):
 
 ```json
 {
@@ -3328,12 +3340,62 @@ máy có đủ Python.
 
 ---
 
+### 🆕 CHẶNG J — **TAB LỆNH: SOẠN BẰNG FORM** ⏱ 10 phút · 💰 **$0** *(01/09, sửa lại cùng ngày theo §16v)*
+
+> Hai mươi mốt ô đầu **không tốn một xu**: chúng đo giao diện, không gọi model. Chỉ **J-22** chạy thật.
+>
+> Vì sao chặng này tồn tại: form và JSON là **ánh xạ 1-1 hai chiều** (user chốt 31/08), và lời hứa đó
+> hỏng theo cách **im lặng nhất có thể** — không lỗi, không cảnh báo, chỉ một trường biến mất.
+> `test/cli-form.test.ts` khoá phần tất định (**14/14 xanh**); chặng này đo phần chỉ mắt người thấy.
+
+| Ô | Làm gì | Đáp án biết trước |
+|---|---|---|
+| **J-1** | Bước 1 → đếm số thẻ | **4** thẻ, thẻ thứ ba icon `>_` = *Lệnh trên máy*. Hộp thoại **rộng ~46rem**, không phải 28rem |
+| **J-2** | Vào tab Lệnh | 🔴 **Màn THƯ MỤC hiện trước**, chưa thấy ô soạn lệnh nào. **Đúng MỘT** nút: *Chọn thư mục…* |
+| **J-3** | Bấm **Chọn thư mục…** → **Xong** ngay | 🔴 bộ chọn phải **đứng sẵn ở thư mục văn phòng** (`…/company/<vp>`), không ở ổ đĩa và không ở thư mục lần trước. Vào danh sách lệnh, thanh trên hiện đúng đường dẫn đó |
+| **J-4** | **Điền mẫu chạy thử** | mọi ô đầy: Tên *nói xin chào* · Cú pháp có `{ten}` · Ví dụ có tên riêng · tick **Lệnh chỉ đọc**. Nhãn nằm **cùng dòng** với ô |
+| **J-5** | Nhìn dòng dưới ô Ví dụ | `ten = <tên trong mẫu>`. 🔴 Không hiện là `alignExample` không chạy — thứ đi vào prefix của model chính là ô này |
+| **J-6** | Sửa ví dụ thành `node -e "khac()" Minh` | **báo đỏ** *"ví dụ không khớp cú pháp"*. Lặng im mà vẫn nhận là bug: nó gán bừa |
+| **J-7** | Bấm **Xem JSON** → **← Về form** → **Xem JSON** | khối JSON **giống hệt** lần đầu, từng ký tự |
+| **J-8** | 🔴 Ở tab JSON thêm `"pattern": "^[A-Z]"` vào `params[0]`, về form, quay lại JSON | `pattern` **còn nguyên**. Mất nó = một cú bấm vừa gỡ hàng rào mà không báo gì |
+| **J-9** | 🔴 Ở tab JSON đặt `"fail_when": ["FATAL:"]`, về form, quay lại JSON | **còn nguyên**. Ô này **không có trong form** từ 01/09 (§16v ⑥) nhưng phải chở qua được |
+| **J-10** | Bấm **Đổi…** ở thanh thư mục | mở ở **thư mục đang chọn**, KHÔNG ở thư mục lần trước của cánh tay thư mục. ⚠ Thanh này **không có nút Bỏ** — `cwd` luôn có giá trị |
+| **J-10b** | Mở bộ chọn thư mục ở **cả** tab Thư mục lẫn tab Lệnh | hai modal **rộng bằng nhau** và bằng hộp thoại mở ra chúng (~46rem), lưới **3 cột** |
+| **J-10c** | Ở tab Lệnh xem danh sách *"Đã cắm ở văn phòng khác"* | 🔴 **chỉ cánh tay LỆNH**. Thấy một cánh tay HTTP/stdio ở đây là bug — tab này từ chối dán chính nó |
+| **J-11** | Thêm lệnh thứ hai, lưu, so `company.yaml` | **cả hai** action có `cwd:` **giống hệt nhau** — thư mục là của cánh tay, không của từng lệnh |
+| **J-12** | Xem tên node trên sơ đồ | **tên THƯ MỤC** (vd `ke-toan`), không phải `node`. Icon vẫn `>_` |
+| **J-13** | 🔴 Ở tab JSON đặt `cwd` **khác nhau** cho hai lệnh | nút **"← Về form" khoá lại** + câu vàng giải thích. Đổ vào form là im lặng dời chỗ chạy của lệnh còn lại |
+| **J-14** | Dán tờ khai CLI vào tab *Tự cắm MCP* | nút Dùng **mờ**; bấm nút chuyển ⇒ sang tab Lệnh **ở chế độ JSON** (không phải form), nội dung nguyên văn |
+| **J-15** | Ví dụ ở lệnh **không có ô trống**: gõ cú pháp `node -e "x" 8`, ví dụ `node -e "x" 9` | ô Ví dụ **vẫn hiện** (trước 01/09 nó ẩn đi), và chỉ ra: *"Khác cú pháp ở `8` → `9` … đổi thành `{ten_o_trong}`"* |
+| **J-16** | 🔴 Đặt **hai lệnh cùng tên** (vd *"đếm hoá đơn"* và *"đếm hoá đơn!"*) | báo đỏ **ở ô Tên của cả hai**, nút *Dùng cấu hình này* **mờ**. Mã do `slugId(Tên)` sinh, nên hai tên gần giống ra cùng một mã |
+| **J-17** | 🔴 Ở tab JSON đặt hai `"id": "a"`, rồi bấm **Thử** | cửa server chặn: *"Hai lệnh cùng mã "a" — mỗi lệnh phải có mã riêng…"*. ⚠ **Không được** là câu tiếng Anh `Tool a is already registered` — đó là SDK ném ở tầng sau, nghĩa là cửa `parseCliArm` không chạy |
+| **J-18** | Ở tab *Tự cắm MCP*, dán khối `{"mcpServers":{"a":{…},"b":{…}}}` | câu vàng: *"Khối này có 2 server. Chỉ **a** được cắm — `b` thì dán riêng…"*. Im lặng ở đây = mất một cánh tay không triệu chứng |
+| **J-19** | 🔴 **+ Thêm lệnh**, không điền gì | nút *Dùng cấu hình này* **mờ**; ô Tên và Cú pháp của lệnh 2 **đỏ** kèm câu nói rõ thiếu gì |
+| **J-20** | 🔴 Với lệnh 2 còn trống, bấm **Xem JSON** → **← Về form** | vẫn **2 lệnh**. Trước 01/09 còn **1** — lệnh dở bị lọc bỏ im lặng, và JSON có 1 action |
+| **J-21** | Ở tab JSON xoá một dấu `}` cho khối hỏng | nút **mờ** + câu *"Khối JSON đang hỏng"*. Trước đó nút vẫn sáng và bấm vào thì lưu **bản form**, không phải khối đang hiện |
+| **J-22** | **Dùng cấu hình này** → Thử → Xong → giao *"chào giúp mình bạn Lan"* | worker gọi `noi_xin_chao`, kết quả `Xin chào, Lan` |
+
+⚠ **J-7 · J-8 · J-9 là ba ô khác nhau, đừng gộp.** J-7 đo thứ form **vẽ**; J-8 và J-9 đo thứ form
+**không vẽ mà vẫn phải chở** — và hai thứ đó rơi mất vì hai lý do khác nhau (`params` thì form tự sinh
+lại, `fail_when` thì form không có ô nào). Chỉ chạy J-7 thì cả hai bug kia vẫn xanh.
+
+⚠ **J-13 là ô đắt nhất của chặng.** Nó là ca duy nhất mà một cú bấm "tiện tay" có thể **đổi thư mục
+chạy của một lệnh ghi dữ liệu** mà không ai được báo.
+
+⚠ **J-3 → J-4 không cần thư mục, không cần cài gì**: `node -e` mang mã theo mình. Nếu J-15 báo *"máy
+này không tìm thấy node"* thì xem ghi chú `PATH` ở cuối chặng I.
+
+---
+
 > ### ⏸ CHƯA XÂY, đừng đo
 >
-> **Tab "Lệnh" riêng** (đang dán qua tab *Tự cắm MCP*) · **`cliPasteRedirect`** (đã viết + có test,
-> **chưa nối dây** — nối cùng tab 4, vì chặn trước là không cắm được cánh tay CLI nào) ·
-> nút **"Thử một action"** (chạy thật một lệnh, và là **nguồn đúng** của `example`) ·
+> Nút **"Thử một action"** (chạy thật một lệnh, và là **nguồn đúng** của `example` — hôm nay ví dụ vẫn
+> là **lời khai** gõ tay, dù `alignExample` đã lấy nó từ một dòng lệnh người dùng chạy được) ·
 > `confirm:` **chưa nối vào cổng duyệt** (ô có trong tờ khai, chưa ai đọc) ·
+> `fail_when` **không có ô trong form** (§16v ⑥ — quyết định, không phải sót; **chặng H là điều kiện
+> mở lại**: nếu model tự kết luận thất bại khi đọc output thì trường này bỏ hẳn) ·
+> `pattern`/`min`/`max`/`allow_dash`/`integer` **chỉ soạn được ở tab JSON** (form chở qua nguyên vẹn,
+> nhưng không vẽ — có ý thức, xem §16u) ·
 > chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:`.
 
 <sub>Phần dưới là bản viết 30/08, giữ nguyên làm hồ sơ thiết kế.</sub>
@@ -3543,7 +3605,11 @@ xác nhận bằng `mcp-audit.jsonl`).
 trong `company.yaml`, nên câu hỏi thành *"nhân viên ghi được `company.yaml` không"*, và câu trả lời
 phải là **không** (§5f). Chưa ai chạy lại sau khi CLI lên app.
 
-**Chi phí dự kiến:** chặng G **$0** · chặng H ~$0,05 · chặng I ~$0,05 · F-2/F-3/F-5 ~$0,05.
+**Chi phí dự kiến:** chặng G **$0** · **chặng J $0 cho J-1…J-21**, ~$0,02 cho J-22 · chặng H ~$0,05 ·
+chặng I ~$0,05 · F-2/F-3/F-5 ~$0,05.
+
+📌 **Thứ tự chạy đề nghị:** **J** (miễn phí, và nó là màn hình mới nhất nên khả năng có bug cao nhất) →
+**H** (cửa duy nhất trong bốn cửa lỗi chưa ai thấy chạy) → **I** → **G** → F-2/F-3/F-5.
 
 ---
 
@@ -3582,3 +3648,4 @@ In ra hoặc copy vào một file, điền trong lúc chạy:
    *Mốc 17/08: tủ tài liệu bỏ bước 📝 khỏi bài 2 · 3 · 5 · 6 · 7 · 8. Mốc 22/08: công tắc `Bash` bỏ nốt bước 📝 của bài 9. **Còn lại đúng HAI chỗ** — skills (bài chưa có) và MCP (bài 10B), cả hai đều cố ý.*
 2. **Tổng chi phí cả 10 bài.** Ước tính $1.5 – $4. Nếu vượt $8 thì có gì đó đang rò rỉ — chạy `agentco cost` và nhìn cột `ghi-cache bất thường`.
 3. **Bài nào bạn thật sự muốn dùng lại tuần sau?** Đó mới là danh sách template nên làm, không phải bảng ở trên.
+
