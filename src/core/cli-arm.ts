@@ -26,8 +26,20 @@
  *   > Ghi được tờ khai ⇒ tự khai `run: ["powershell","-c","{cmd}"]` ⇒ shell tuỳ
  *   > ý, qua cửa sau, cho một vai đã tắt shell. Cùng cái lỗ §5f, cửa mới.
  *
- * Tờ khai sống trong `company.yaml` (user chốt 31/08) nên nó **thừa hưởng hàng
- * rào đã có** từ §5f — không phải dựng hàng rào thứ hai cho một thư mục mới.
+ * Tờ khai sống trong `company.yaml` (user chốt 31/08).
+ *
+ * 🔴 **ĐÍNH CHÍNH 01/09 — TÔI ĐÃ VIẾT SAI Ở ĐÂY.** Câu cũ: *"nên nó thừa hưởng
+ * hàng rào đã có từ §5f, không phải dựng hàng rào thứ hai"*. **Sai:** §5f gác
+ * `OFFICE_CONFIG`, và danh sách đó giải **tương đối với thư mục VĂN PHÒNG** —
+ * `company/company.yaml` nằm một cấp trên và **chưa bao giờ được gác**.
+ *
+ * Chốt chọn `company.yaml` vẫn đúng (một chỗ, một mô hình, không thư mục mới),
+ * nhưng nó **KHÔNG miễn phí** như tôi đã nói: phải thêm `COMPANY_CONFIG` vào
+ * `paths.ts §guardedZone`. Đã vá 01/09, có test.
+ *
+ * ⚠ Lớp lỗi: tôi khẳng định một hàng rào **đã bao** một thứ mà chưa đi đọc danh
+ * sách của nó. Hàng rào có thật, chỉ là nó ở **một cấp khác**.
+ * → [[agentco-rule-must-see-what-it-governs]] · [[agentco-spec-says-done]]
  */
 
 import { spawn } from 'node:child_process';
@@ -63,6 +75,31 @@ export const CliParamSchema = z.object({
   pattern: z.string().optional(),
   min: z.number().optional(),
   max: z.number().optional(),
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÍ DỤ VỀ **CHỖ TRỐNG**, KHÔNG PHẢI VỀ DÒNG LỆNH. (user chốt 31/08)       │
+   * │                                                                          │
+   * │ User hỏi đúng chỗ `inputSchema` yếu: `pattern: "^[a-z0-9.-]+$"` là luật   │
+   * │ cho **runtime**, nó dạy model rất tệ; `ví dụ: v1.2.3` dạy xong một nhịp.  │
+   * │                                                                          │
+   * │ ⚠ Nhưng ví dụ phải ở tầng THAM SỐ, không phải tầng action: **model không │
+   * │ dựng dòng lệnh** — argv đã cố định, nó chỉ điền vào `{tag}`. Cho nó xem   │
+   * │ trọn `pnpm deploy --env staging --tag v1.2.3` là đưa thông tin về một     │
+   * │ tầng nó không điều khiển, rồi bắt nó khớp ngược xem chữ nào là tham số.   │
+   * │                                                                          │
+   * │ Đo 31/08: `.describe()` → `description` của ĐÚNG property đó trong        │
+   * │ `inputSchema`, tức nằm ngay cạnh cái ô model đang điền.                   │
+   * │                                                                          │
+   * │ ⚠ TRẦN 60 KÝ TỰ, và nó là hoá đơn LẶP LẠI: tool definition nằm trong      │
+   * │ prefix **mọi lượt**. Cùng lớp `hint` (trần 320) và `does` (trần 4).       │
+   * │                                                                          │
+   * │ 🎯 Nguồn ĐÚNG là **lượt Thử**, không phải gõ tay — khuôn `returns` đã chốt │
+   * │ 14/08: *chạy thật → chụp lại hành vi thật*. Một ví dụ gõ tay là một LỜI   │
+   * │ KHAI (sai từ đầu cũng không ai biết); một ví dụ chụp từ lần chạy được thì │
+   * │ đúng **theo cấu tạo**. Ô này nhận cả hai, nhưng đường chính là nút Thử.   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  example: z.string().max(60, 'ví dụ phải ngắn — nó nằm trong prefix mọi lượt').optional(),
   /**
    * 🔴 GIÁ TRỊ KHÔNG ĐƯỢC BIẾN THÀNH CỜ. → §16e
    *
@@ -144,6 +181,113 @@ export type CliArm = z.infer<typeof CliArmSchema>;
 export function isCliArm(config: unknown): boolean {
   return !!config && typeof config === 'object' && (config as { type?: unknown }).type === 'cli';
 }
+
+/** Mọi khoá ta khai — nguồn của gợi ý "ý bạn là…". Một danh sách, không phải ba. */
+const KNOWN_KEYS = [
+  ...Object.keys(CliArmSchema.shape),
+  ...Object.keys(CliActionSchema.shape),
+  ...Object.keys(CliParamSchema.shape),
+];
+
+/**
+ * Khoá gần đúng nhất, hoặc `undefined`.
+ *
+ * ⚠ Bắt **họ camelCase trước** bằng phép chuẩn hoá (bỏ `_`, hạ chữ thường) chứ
+ * không dựa vào khoảng cách sửa: `readOnly` → `read_only` lệch 2 phép, còn
+ * `timeoutMs` → `timeout_ms` lệch 3 — một ngưỡng đủ rộng để bắt cả hai sẽ bắt
+ * luôn những thứ không liên quan. Chuẩn hoá thì **tất định** và không cần ngưỡng.
+ */
+function nearestKey(bad: string): string | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/_/g, '');
+  const hit = KNOWN_KEYS.find((k) => norm(k) === norm(bad));
+  if (hit) return hit;
+  // Còn lại là gõ thiếu/thừa một ký tự: `runs` → `run`, `sayy` → `say`.
+  return KNOWN_KEYS.find((k) => {
+    const [a, b] = k.length > bad.length ? [k, bad] : [bad, k];
+    if (a!.length - b!.length !== 1) return false;
+    const at = [...a!].findIndex((c, i) => c !== b![i]);
+    return at < 0 || a!.slice(0, at) + a!.slice(at + 1) === b;
+  });
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CỬA DÁN: STRICT. CỬA NẠP `company.yaml`: LỎNG. **HAI LUẬT, CỐ Ý.**       │
+ * │ (user chốt 31/08 sau khi đo: zod mặc định NUỐT IM LẶNG khoá lạ)          │
+ * │                                                                          │
+ * │ Vì sao strict ở đây: **khoá dễ gõ sai nhất chính là khoá AN TOÀN.** Người │
+ * │ dán JSON gõ camelCase ở lần đầu, và ba cái hay nhất đều có bản snake:     │
+ * │   `readOnly`  → annotation thành destructive, sai chiều                  │
+ * │   `timeoutMs` → rơi về 120s, người dùng tin là đã đặt                    │
+ * │   `failWhen`  → 🔴 lưới đỡ `exit 0` kèm lỗi BIẾN MẤT, không tín hiệu nào  │
+ * │ Dòng cuối mở lại đúng cái lỗ §5h·7d mà `fail_when` sinh ra để chặn.       │
+ * │                                                                          │
+ * │ Hai chiều hỏng không cân nhau: từ chối nhầm ⇒ người dùng đang đứng đó,    │
+ * │ sửa trong 3 giây (ỒN ÀO, RẺ). Nhận nhầm ⇒ KHÔNG TRIỆU CHỨNG NÀO.         │
+ * │ → [[agentco-safe-default-direction]] · [[agentco-silent-allowlist]]       │
+ * │                                                                          │
+ * │ ⚠ VÀ VÌ SAO CỬA NẠP PHẢI LỎNG: không ai đứng đó. Siết cửa nạp là ngày     │
+ * │ nâng cấp thêm một trường thì **mọi cánh tay cũ thành mồ côi**. Ai "dọn    │
+ * │ cho gọn" bằng cách gộp hai cửa sẽ phá đúng một trong hai. Có test canh.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Gợi ý khoá gần đúng là thứ biến **hàng rào thành biển chỉ đường** — đó mới
+ * là câu trả lời cho *"rào hay linh hoạt"*: linh hoạt không nằm ở chỗ nhận bừa,
+ * nó nằm ở chỗ nói cho người ta biết phải sửa gì.
+ */
+export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: false; error: string } {
+  /**
+   * ⚠ Quét khoá lạ bằng MỘT lượt đi bộ, KHÔNG bằng `z.strictObject`.
+   *
+   * Bản đầu 31/08 làm cả ba schema `strictObject` — và test bắt ngay: nó siết
+   * **cả cửa nạp**, tức phá đúng bất biến vừa viết ở khối trên. Schema là **một
+   * hàm dùng chung cho hai cửa**, nên độ chặt không được sống trong schema; nó
+   * phải sống ở **cửa**. Một hàm quét ở đây rẻ hơn hẳn hai bộ schema song song —
+   * và hai bộ schema thì sớm muộn cũng lệch nhau.
+   */
+  const bad: string[] = [];
+  const scan = (obj: unknown, allowed: readonly string[]) => {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+    for (const k of Object.keys(obj)) if (!allowed.includes(k)) bad.push(k);
+  };
+  scan(input, Object.keys(CliArmSchema.shape));
+  const acts = (input as { actions?: unknown })?.actions;
+  if (Array.isArray(acts)) {
+    for (const a of acts) {
+      scan(a, Object.keys(CliActionSchema.shape));
+      const ps = (a as { params?: unknown })?.params;
+      if (Array.isArray(ps)) for (const p of ps) scan(p, Object.keys(CliParamSchema.shape));
+    }
+  }
+  if (bad.length) {
+    const say = [...new Set(bad)].map((k) => {
+      const near = nearestKey(k);
+      return near ? `"${k}" — ý bạn là "${near}"?` : `"${k}" không có trong tờ khai`;
+    });
+    return { ok: false, error: `Khoá không nhận ra: ${say.join(' · ')}` };
+  }
+
+  const r = CliArmSchema.safeParse(input);
+  if (r.success) return { ok: true, arm: r.data };
+  const first = r.error.issues[0]!;
+  const at = first.path.length ? `${first.path.join('.')}: ` : '';
+  return { ok: false, error: `${at}${first.message}` };
+}
+
+/**
+ * ⚠ `cliPasteRedirect` ĐÃ CHUYỂN SANG WEB (01/09) — **đừng dựng lại ở đây.**
+ *
+ * Nó là một **affordance của giao diện** (*"anh dán nhầm tab, mở tab Lệnh nhé"*),
+ * không phải một luật của lõi. Hai lý do, và lý do thứ hai là lý do cứng:
+ *
+ *  ① Lõi **không được biết** thứ này đến từ màn hình nào. Chặn ở cửa, không chặn
+ *    ở lõi: sửa tay `company.yaml` thêm tờ khai CLI thì nó **vẫn phải chạy** —
+ *    có test khoá. Buộc một KIỂU DỮ LIỆU vào một MÀN HÌNH mới là chỗ vi phạm.
+ *  ② File này `import 'node:child_process'` và SDK ⇒ **không vào được bundle
+ *    trình duyệt**. Một hàm chỉ web gọi mà nằm trong module chỉ server nạp được
+ *    thì mãi mãi là mã không ai gọi — đúng cái bẫy vừa mắc hôm qua.
+ *    → [[agentco-spec-says-done]]
+ */
 
 // ══════════════════ 2 · BỘ CHẠY — mọi thứ TƯỜNG MINH (ràng buộc §16p ③)
 
@@ -302,7 +446,14 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
   return arm.actions.map((a) => {
     const shape: Record<string, z.ZodTypeAny> = {};
     for (const p of a.params ?? []) {
-      const base: z.ZodTypeAny = p.type === 'integer' ? z.number().int() : z.string();
+      let base: z.ZodTypeAny = p.type === 'integer' ? z.number().int() : z.string();
+      /**
+       * Ví dụ đi vào `description` của ĐÚNG property này — đo 31/08:
+       * `.describe()` → `{"tag":{"type":"string","description":"…"}}`.
+       * Vắng `example` ⇒ **không in gì**, nên mọi cánh tay đang chạy không đổi
+       * một ký tự nào trong prefix. (Cùng luật chống-hỏng-lây của `does`.)
+       */
+      if (p.example) base = base.describe(`ví dụ: ${p.example}`);
       shape[p.name] = p.required ? base : base.optional();
     }
 

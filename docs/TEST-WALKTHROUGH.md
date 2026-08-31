@@ -3144,6 +3144,23 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 
 ## Bài 22 — **Cánh tay tự dựng: CLI → MCP** *viết 30/08* · ✅ **ĐÃ XÂY 31/08 — chạy được NGAY**
 
+> ## ⚠ TRẠNG THÁI — ĐỌC BẢNG NÀY TRƯỚC, ĐỪNG ĐI TÌM THỨ CHƯA CÓ
+>
+> | | Có chưa | Ghi chú |
+> |---|---|---|
+> | Cánh tay CLI chạy được đầu-cuối | ✅ | đã chạy thật qua UI 31/08, xác nhận bằng `mcp-audit.jsonl` |
+> | Cắm qua tab **"Tự cắm MCP"** (dán JSON) | ✅ | `parsePaste` nhận mọi khối JSON |
+> | Cửa dán **bắt khoá gõ sai** (`failWhen`…) | ✅ *(nối 01/09)* | trước đó `parseCliArm` **có test mà không cửa nào gọi** |
+> | **Tab "Lệnh" riêng** (tab 4, form từng trường) | ❌ **CHƯA XÂY** | vẫn dán JSON ở tab *Tự cắm MCP* |
+> | **Cảnh báo khi dán CLI vào tab MCP** | ❌ **cố ý chưa nối** | nối bây giờ là **không cắm được cánh tay CLI nào**, vì tab 4 chưa có |
+> | Nút **"Thử một action"** (chạy thật một lệnh) | ❌ | nút Thử hiện tại chỉ bắt tay + liệt kê việc |
+> | `confirm:` nối vào cổng duyệt | ❌ | ô có trong tờ khai, chưa ai đọc |
+>
+> 🔴 **SAU MỖI LẦN TÔI SỬA MÃ, PHẢI `stop` RỒI `start` DAEMON.** Daemon nạp `dist/` **một lần lúc
+> khởi động**. Đây là chỗ đã gây hiểu nhầm thật (01/09: daemon khởi động **01:38**, bản vá build xong
+> **01:45** ⇒ khởi động lại *trước* bản vá thì đương nhiên không thấy gì đổi). Đối chiếu nhanh:
+> `company/.state/daemon.json` → `started_at` **phải mới hơn** `dist/` mới sửa.
+>
 > ### 🟢 CẬP NHẬT 31/08 — đọc khối này trước, nó đổi cách chạy bài
 >
 > **Đã xây và đã chạy ngoài UI:** `core/cli-arm.ts` · `secrets.ts` nhánh `type:'cli'` ·
@@ -3157,8 +3174,8 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 >
 > **KHÔNG CÓ PANE RIÊNG.** Cắm qua tab **"Tự cắm MCP"** — `parsePaste` nhận mọi khối JSON, nên tờ khai
 > CLI đi thẳng vào đường đã có. Dán khối này (chạy được trên cả ba OS, không cần cài gì):
->
-> ```json
+
+```json
 {
   "type": "cli",
   "actions": [
@@ -3188,8 +3205,8 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
     }
   ]
 }
-> ```
->
+```
+
 > 🔴 **NHỚ ĐẶT NHÃN** ở ô Tên. Bỏ trống thì `defaultArmLabel` lấy tên chương trình (`node`) — đúng
 > nhưng vô nghĩa với người đọc, và §16r đã đo: **tên không có tiên nghiệm ⇒ model lấp chỗ trống**.
 >
@@ -3204,10 +3221,120 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 > | **F-5** | 🔴 Trợ lý có nói đúng **nguồn** không? | Đo được 1 lượt nó khai *"theo dữ liệu từ công cụ"* mà **không gọi** — nếu tái hiện thì đó là nợ đã ghi, không phải phát hiện mới |
 > | **F-6** | Mở `company.yaml`, xem mục vừa cắm | có `does:` (2 câu tiếng người) và `tools:` (2 id). **Thiếu `does` là bug** — nó quyết định F-4 |
 >
+> ✅ **F-1 · F-4 · F-6 ĐÃ CHẠY THẬT QUA UI 31/08** — xác nhận bằng `mcp-audit.jsonl`
+> (`server: a8098064377` = băm thật · `tool: dem_hoa_don` · `plan P-260831-2327-j1un`), không bằng
+> câu Trợ lý nói. **Đừng chạy lại ba ô đó.** F-2 · F-3 · F-5 vẫn còn.
+
+---
+
+### 🆕 CHẶNG G — CỬA DÁN STRICT ⏱ 3 phút · 💰 **$0** *(viết 31/08 · ✅ nối dây 01/09)*
+
+> 🔴 **Chặng này viết ra TRƯỚC khi mã được nối dây, và đó là lỗi.** Ngày 31/08 `parseCliArm` có test,
+> có export, và **không cửa nào trong sản phẩm gọi nó** — nên dán `failWhen` vào thì lọt êm, đúng thứ
+> hàm ấy sinh ra để chặn. Nay đã nối ở `server.ts §resolveArm` (cửa CHUNG của **nút Thử và nút Xong**;
+> nối ở một route là vá một cửa để hở cửa kia).
+> ⇒ Bài học ghi lại vì nó lặp: **viết ô đo cho mã chưa ai gọi thì ô đo đó luôn "đạt"** — nó không đo
+> sản phẩm, nó đo một hàm nằm im. [[agentco-spec-says-done]]
+
+> **Vì sao chặng này tồn tại:** đo được `zod` **nuốt im lặng** khoá lạ, và **khoá dễ gõ sai nhất chính
+> là khoá AN TOÀN** — người dán JSON gõ camelCase ở lần đầu. Mất `fail_when` im lặng là mở lại đúng
+> lỗ §5h·7d (`exit 0` **kèm** lỗi), và **không có triệu chứng nào**.
+
+Dán từng khối, **không bấm Thử**, chỉ xem câu báo:
+
+| Ô | Dán gì | Đáp án biết trước |
+|---|---|---|
+| **G-1** | đổi `"read_only"` → `"readOnly"` | `Khoá không nhận ra: "readOnly" — ý bạn là "read_only"?` |
+| **G-2** | đổi `"fail_when"` → `"failWhen"` | gợi ý `"fail_when"`. 🔴 **Lọt qua là bug nặng nhất của cụm này** |
+| **G-3** | thêm `"timeoutMs": 5000` | gợi ý `"timeout_ms"` |
+| **G-4** | thêm `"ghi_chu_cua_toi": "abc"` | *"không có trong tờ khai"* — **không** bịa gợi ý |
+| **G-5** | sửa `"id": "Dem Hoa Don"` | *"id chỉ gồm chữ thường, số và gạch dưới"* |
+
+⚠ **G-6 — ô ngược chiều, đừng bỏ:** mở `company.yaml`, thêm tay một dòng lạ vào mục cánh tay CLI
+(vd `ghi_chu: thu`), khởi động lại daemon. **Cánh tay phải VẪN CHẠY.**
+Cửa dán chặt · **cửa nạp lỏng** — hai luật, cố ý khác nhau: siết cửa nạp là ngày nâng cấp thêm một
+trường thì **mọi cánh tay cũ thành mồ côi**. Ô này là thứ duy nhất canh chuyện đó bằng tay.
+
+---
+
+### 🆕 CHẶNG H — `fail_when`: **`exit 0` KÈM LỖI** ⏱ 5 phút · 💰 ~$0,05 · 🔴 **ƯU TIÊN CAO NHẤT**
+
+> **Cửa đắt nhất của cả tính năng, và chưa ai thấy nó chạy.** Lượt `dong_bo` 31/08 in `xong` ⇒ không
+> khớp `ERROR` ⇒ **nhánh lành**. Ở CLI, lớp lỗi này nổ tệ hơn ở HTTP: agent **tin lệnh đã xong và đi
+> tiếp**, mang một kết quả không tồn tại sang các bước sau.
+
+1. Xoá cánh tay cũ, dán lại với `dong_bo` đổi thành `"console.log('ERROR: mat ket noi')"` — **giữ
+   nguyên `fail_when: ["ERROR"]`**.
+2. Giao: *"dùng xưởng lệnh đồng bộ dữ liệu"*.
+
+| Ô | Câu hỏi | Đáp án biết trước |
+|---|---|---|
+| **H-1** | Worker kết luận gì? | **THẤT BẠI**, dù tiến trình thoát mã **0** |
+| **H-2** | Câu lỗi nói gì? | nêu **chuỗi đã khớp** (`"ERROR"`) và **nguyên văn output** — không nuốt |
+| **H-3** | 🔴 Trợ lý báo lại cho anh thế nào? | phải nói **hỏng**. Nếu nó nói *"đã đồng bộ xong"* thì `isError` không đi hết đường về — nặng hơn H-1 |
+| **H-4** | Có file artifact nào được ghi không? | **không nên có** kết quả giả |
+| **H-5** | Đổi `fail_when` thành `["KHONG_KHOP_GI"]`, chạy lại | quay về **thành công** — chứng minh cổng đọc đúng chuỗi, không phải cứ thấy chữ `ERROR` là chặn |
+
+⚠ **H-5 là ô chống dương-tính-giả.** Không có nó thì H-1 xanh vẫn có thể vì một lý do khác hẳn (vd
+`console.log` in ra stderr, hoặc mã thoát không phải 0 thật) — và ta sẽ tin một cơ chế chưa từng chạy.
+
+---
+
+### 🆕 CHẶNG I — THAM SỐ + `example` ⏱ 5 phút · 💰 ~$0,05
+
+> Hai action ở chặng F **không có tham số nào**, nên `fillArgv` và `params[].example` **chưa từng đi
+> qua giao diện**. Đây là chỗ duy nhất trong tờ khai mà **model phải điền**, và cũng là chỗ duy nhất
+> `example` có nghĩa.
+
+Cắm thêm một cánh tay (nhãn: `Xưởng số`) bằng khối này:
+
+```json
+{
+  "type": "cli",
+  "actions": [
+    {
+      "id": "tung_xuc_xac",
+      "say": "tung một con xúc xắc",
+      "description": "Tung một con xúc xắc và trả về số chấm. Chỉ đọc, không đổi gì trên máy.",
+      "run": ["node", "-e", "console.log(1+Math.floor(Math.random()*Number(process.argv[1])))", "{mat}"],
+      "params": [
+        { "name": "mat", "type": "integer", "required": true, "min": 2, "max": 100, "example": "6" }
+      ],
+      "read_only": true
+    }
+  ]
+}
+```
+
+| Ô | Câu hỏi | Đáp án biết trước |
+|---|---|---|
+| **I-1** | Giao *"tung giúp mình một con xúc xắc 20 mặt"* | worker gọi với `mat: 20`, kết quả **1–20** |
+| **I-2** | Giao *"tung xúc xắc"* (không nói số mặt) | model điền **6** — đó là việc của `example`; thiếu nó thì nó đoán bừa hoặc hỏi lại |
+| **I-3** | 🔴 Giao *"tung con xúc xắc 1 mặt"* | **bị chặn ở `fillArgv`**, câu lỗi nói *"phải ≥ 2"*. Chặn **trước khi spawn**, không phải sau |
+| **I-4** | Dán tờ khai có `"example"` dài hơn 60 ký tự | bị từ chối ở cửa dán — ví dụ nằm trong prefix **mọi lượt**, nó là hoá đơn lặp lại |
+
+📌 **I-2 là ô đáng giá nhất của chặng này**, vì nó đo đúng thứ `example` sinh ra để làm: `pattern`/
+`min`/`max` là luật cho **runtime**, chúng dạy model rất tệ; một giá trị mẫu dạy xong trong một nhịp.
+
+⚠ **Nếu gặp câu *"máy này không tìm thấy `node`"*** thì đó **không phải bug của cánh tay** — là ca
+`PATH`: daemon có thể chạy bằng một node **không nằm trong PATH** (đúng lý do `fastLaunch` dùng
+`process.execPath` chứ không dùng chuỗi `'node'`). Đổi phần tử đầu của `run` thành đường dẫn đầy đủ
+tới `node` là xong. Câu lỗi này **cố ý nói thẳng nó không phải chuyện `cwd`** — `spawn` ném cùng một
+`ENOENT` cho cả hai nguyên nhân, và bản đầu 30/08 đã từng bảo người dùng đi cài lại Python trong khi
+máy có đủ Python.
+
+✅ Đã chạy thử khối này trước khi đưa vào bài (đo 01/09): `argv` ra
+`["node","-e","…","20"]` · `mat=1` bị chặn với *"phải ≥ 2"* · lệnh thật trả một số trong 1–20.
+
+---
+
 > ### ⏸ CHƯA XÂY, đừng đo
 >
-> Nút **"Thử một action"** (chạy thật một lệnh) · `confirm:` **chưa nối vào cổng duyệt** (ô có trong
-> tờ khai, chưa có ai đọc) · chặn `curl`/`wget` ở `run:`.
+> **Tab "Lệnh" riêng** (đang dán qua tab *Tự cắm MCP*) · **`cliPasteRedirect`** (đã viết + có test,
+> **chưa nối dây** — nối cùng tab 4, vì chặn trước là không cắm được cánh tay CLI nào) ·
+> nút **"Thử một action"** (chạy thật một lệnh, và là **nguồn đúng** của `example`) ·
+> `confirm:` **chưa nối vào cổng duyệt** (ô có trong tờ khai, chưa ai đọc) ·
+> chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:`.
 
 <sub>Phần dưới là bản viết 30/08, giữ nguyên làm hồ sơ thiết kế.</sub>
 
@@ -3227,7 +3354,10 @@ curl -X POST https://jsonplaceholder.typicode.com/posts \
 > **đọc mã**, không bằng chạy. Và vì bỏ nấc, **cổng còn lại đúng hai cái** — ai được nối dây, và
 > `confirm` từng action — nên chặng B đắt hơn hẳn: không còn nấc nào đỡ phía sau.
 
-### ❗ CHẶNG 0 — PHÉP ĐO CHẶN, làm TRƯỚC KHI VIẾT MÃ ⏱ ~20 phút · 💰 $0
+### ~~❗ CHẶNG 0 — PHÉP ĐO CHẶN~~ ✅ **ĐÃ CÓ SỐ 31/08 — ĐỪNG CHẠY LẠI**
+
+> **901 giây không bị cắt** · worker `done` · 4 lượt · $0,065 ⇒ đi hình dạng ①.
+> Phần dưới giữ lại làm hồ sơ vì sao câu hỏi này chặn việc viết mã.
 
 > Không phải một bài test — là một **spike**, và nó quyết định hình dạng chặng D.
 > Lý do đầy đủ: `SPEC-arms.md §16n`.
@@ -3393,15 +3523,27 @@ chuông không? · ④ hộp thoại tường lửa Windows/macOS — người n
 
 ---
 
-**Năm con số của bài 22:**
+**Năm con số của bài 22 — viết lại 01/09 theo thứ đã xây:**
 
-1. **0-1** — ⭐ trần thời gian của một `tools/call`. *(đo TRƯỚC; nó quyết định chặng D to hay nhỏ)*
-2. **B-4** — nhân viên tự ghi được file khai báo không? *(nếu = có thì mọi ô khác không còn quan trọng)*
-3. **B-2** — có cửa sổ calc nào mở ra không? *(argv hay chuỗi shell — chốt bằng mắt)*
-4. **C-1** — `exit 0` kèm lỗi có lọt không?
-5. **E-3 + E-6** — hai ràng buộc "chờ sẵn Docker" khó gỡ nhất, kiểm bằng đọc mã.
+1. 🔴 **H-1 + H-3** — `exit 0` **kèm** lỗi có bị bắt không, và có đi hết đường về tới người dùng
+   không? *(cửa đắt nhất, và là thứ DUY NHẤT trong bốn cửa lỗi chưa ai thấy chạy)*
+2. 🔴 **G-2** — dán `failWhen` (camelCase) có bị chặn không? *(lọt = lưới đỡ của ô ① biến mất **im
+   lặng** — hỏng nặng hơn ô ① hỏng, vì ô ① hỏng thì còn thấy)*
+3. **G-6** — sửa tay `company.yaml` thêm một khoá lạ, cánh tay **vẫn chạy**? *(cửa dán chặt · cửa nạp
+   lỏng — ô duy nhất canh được chuyện đó)*
+4. **F-2** — có hiện bộ chọn nấc không? *(phải KHÔNG. Ba nấc giả làm người dùng **yên tâm nhầm**)*
+5. **I-2 + I-3** — model có dùng `example` khi người dùng không nói số, và cổng `min` có chặn
+   **trước khi spawn** không?
 
-**Chi phí dự kiến:** chặng 0 **$0** · chặng A–C ước ~$0.10–0.30 · chặng D ~$0.10 · chặng E $0.
+✅ **Đã có số, không nằm trong danh sách trên nữa:** ~~0-1 trần `tools/call`~~ (901s) ·
+~~B-2 argv hay chuỗi shell~~ (test khoá 5 dạng ký tự shell) · ~~E-3/E-6 ràng buộc Docker~~
+(`runs_on` + `cwd`/`env`/`argv` tường minh, có test) · ~~F-1/F-4/F-6~~ (chạy thật qua UI 31/08,
+xác nhận bằng `mcp-audit.jsonl`).
+⏸ **B-4** (nhân viên tự ghi được file khai báo không) **vẫn còn nguyên giá trị** — tờ khai nay nằm
+trong `company.yaml`, nên câu hỏi thành *"nhân viên ghi được `company.yaml` không"*, và câu trả lời
+phải là **không** (§5f). Chưa ai chạy lại sau khi CLI lên app.
+
+**Chi phí dự kiến:** chặng G **$0** · chặng H ~$0,05 · chặng I ~$0,05 · F-2/F-3/F-5 ~$0,05.
 
 ---
 

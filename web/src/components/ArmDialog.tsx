@@ -208,10 +208,69 @@ const TOK: Record<string, string> = {
   ws: '',
 };
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 MỘT CHUỖI CLASS, HAI THẺ — bug user báo 01/09: *"text area + phủ bị   │
+ * │ lỗi lòi chữ ra ngoài cái khung"*.                                        │
+ * │                                                                          │
+ * │ Ô tô màu là **hai lớp chồng khít**: `<pre>` vẽ màu, `<textarea>` trong    │
+ * │ suốt nằm trên. Chồng khít chỉ đúng khi **mọi thứ quyết định chỗ xuống    │
+ * │ dòng** giống hệt nhau: font · cỡ · leading · padding · viền · bo góc ·   │
+ * │ và **bề rộng vùng chữ**. Bản trước gõ tay hai bộ class ⇒ chúng lệch ở ba │
+ * │ chỗ (`rounded-md` vs `rounded-lg`, `text-sm` của `Textarea` bị đè bằng   │
+ * │ một class khác, và không bên nào chừa chỗ cho thanh cuộn).               │
+ * │                                                                          │
+ * │ ⭐ Thủ phạm chính là vế cuối: khi chữ đủ dài, **textarea mọc thanh cuộn** │
+ * │ ⇒ vùng chữ của nó hẹp lại ~15px, còn `<pre>` thì không ⇒ hai lớp xuống   │
+ * │ dòng ở hai chỗ khác nhau, và độ lệch **cộng dồn theo từng dòng**. Đó là  │
+ * │ thứ nhìn ra thành "chữ lòi khỏi khung". `scrollbar-gutter: stable` chừa  │
+ * │ chỗ sẵn ở CẢ HAI, nên bề rộng không đổi dù có cuộn hay không.            │
+ * │                                                                          │
+ * │ ⇒ Một hằng số cho phần chung. Hai bản gõ tay của cùng một sự thật sớm    │
+ * │ muộn cũng lệch — ở đây "sớm muộn" là ngay lần đầu có người dán một khối  │
+ * │ JSON dài. [[agentco-count-mechanisms]]                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+/**
+ * 🔴 VÒNG HAI (01/09) — bản vá đầu KHÔNG đủ, và lý do đáng nhớ hơn bản vá.
+ *
+ * Bản đầu cho mỗi lớp một `scrollbar-gutter: stable` rồi tin là hai bề rộng sẽ
+ * bằng nhau. Chúng **không** bằng: `<textarea>` là `overflow-y: auto` (một
+ * scroll container thật, có gutter), `<pre>` là `overflow: hidden` — trình duyệt
+ * **không chừa gutter** cho nó. Lệch ~15px, và độ lệch cộng dồn theo từng dòng
+ * ⇒ đúng triệu chứng user tả: *"cái thực edit ngắn hơn một chút"*.
+ *
+ * ⇒ **Bỏ hẳn cuộc đua bề rộng thay vì đi đồng bộ nó: MỘT thanh cuộn, đặt trên
+ * KHUNG CHUNG.** Textarea tự cao bằng nội dung (`overflow: hidden`), `<pre>` cao
+ * theo nội dung, cả hai nằm trong một khung cuộn duy nhất. Bề rộng hai lớp bằng
+ * nhau **theo cấu tạo**, không phải nhờ hai khai báo trùng khớp.
+ *
+ * 🎁 Và nó **xoá luôn một cơ chế**: không còn `onScroll` đồng bộ `scrollTop` —
+ * hai lớp cuộn cùng nhau vì chúng ở trong cùng một khung. Một cơ chế đồng bộ
+ * bị xoá là một chỗ hết lệch được. [[agentco-count-mechanisms]]
+ *
+ * ⚠ `<pre>` để `top-0 inset-x-0` chứ KHÔNG `inset-0`: `bottom-0` ép chiều cao
+ * bằng **phần nhìn thấy** của khung cuộn, nên nội dung dài hơn sẽ bị cắt.
+ */
+const JSON_TEXT = 'font-mono text-[12px] leading-[1.5] whitespace-pre-wrap break-words px-3 py-2';
+
 function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const back = useRef<HTMLPreElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
   const bad = fault(value);
   const toks = tokens(value);
+
+  /**
+   * Textarea cao đúng bằng nội dung — nó KHÔNG được tự cuộn, vì khung ngoài mới
+   * là chỗ cuộn. Đặt `auto` trước khi đọc `scrollHeight`, nếu không nó chỉ tăng
+   * và không bao giờ co lại khi người dùng xoá bớt dòng.
+   */
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
 
   const tidy = (): void => {
     const out = pretty(value);
@@ -220,11 +279,11 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
 
   return (
     <div>
-      <div className="relative">
+      <div className="relative max-h-64 overflow-y-auto rounded-lg border border-line bg-paper focus-within:border-accent">
         <pre
           ref={back}
           aria-hidden
-          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent px-3 py-2 font-mono text-[12px] leading-[1.5]"
+          className={`${JSON_TEXT} pointer-events-none absolute inset-x-0 top-0 m-0`}
         >
           {toks.map((t, i) => (
             <span key={i} className={TOK[t.t]}>
@@ -234,12 +293,10 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
           {'\n'}
         </pre>
         <Textarea
-          rows={8}
+          ref={box}
+          rows={1}
           autoFocus
           spellCheck={false}
-          onScroll={(e) => {
-            if (back.current) back.current.scrollTop = e.currentTarget.scrollTop;
-          }}
           /**
            * 🔴 `caret-ink`, KHÔNG phải `caret-fg`. (bug user bắt 31/08:
            * *"lúc click vào để edit không thấy con trỏ nhấp nháy"*)
@@ -251,7 +308,7 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
            * ⇒ **Con trỏ trong suốt.** Một class sai chính tả trong Tailwind
            * không báo lỗi ở đâu cả; nó chỉ lặng lẽ không tồn tại.
            */
-          className="relative bg-transparent font-mono text-[12px] leading-[1.5] text-transparent caret-ink"
+          className={`${JSON_TEXT} relative block w-full resize-none overflow-hidden rounded-none border-0 bg-transparent text-transparent caret-ink focus:border-0`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={tidy}
@@ -271,6 +328,156 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
       )}
     </div>
   );
+}
+
+// ═══════════════════════════ TAB "LỆNH" — soạn tờ khai CLI bằng form (§16)
+
+interface CliDraft {
+  say: string;
+  description: string;
+  /** Người dùng gõ **một dòng lệnh họ đã chạy được**; ta bóc ra argv. */
+  line: string;
+  read_only: boolean;
+  fail_when: string;
+}
+
+const blankAct = (): CliDraft => ({ say: '', description: '', line: '', read_only: false, fail_when: '' });
+
+/**
+ * Chuỗi đang dán có phải tờ khai CLI không.
+ *
+ * ⚠ Chỉ hỏi `type === 'cli'` — **cùng một câu hỏi** `core/cli-arm.ts §isCliArm`
+ * hỏi, không phải một luật thứ hai. Nhận theo `type`, không suy theo *"không có
+ * `command` cũng không có `url`"*: vắng mặt không phải tín hiệu, và một khối gõ
+ * sai không được im lặng bị đọc thành CLI rồi đá sang tab khác.
+ */
+function isCliPaste(s: string): boolean {
+  return safeJson(s)?.['type'] === 'cli';
+}
+
+/** `JSON.parse` không ném — ô JSON hỏng thì nút phải mờ đi, không phải nổ. */
+function safeJson(s: string): Record<string, unknown> | null {
+  try {
+    const v: unknown = JSON.parse(s);
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tên máy suy từ câu tiếng người — người dùng **không bao giờ gõ `id`**.
+ *
+ * Schema đòi `^[a-z][a-z0-9_]*$`, và bắt một người non-code tự nghĩ ra một chuỗi
+ * hợp khuôn đó là bắt họ học một luật của MÁY. Họ gõ *"đếm hoá đơn"*, ta ra
+ * `dem_hoa_don`.
+ *
+ * ⚠ Bỏ dấu bằng `\p{M}` sau `NFD` chứ không bằng bảng tra tay: gõ thẳng dấu tổ
+ * hợp vào `[]` thì nó bám lên dấu ngoặc — nhìn giống hệt, chạy sai. Bài học đã
+ * trả tiền một lần ở regex tiếng Việt.
+ */
+function slugId(say: string): string {
+  const s = say
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return /^[a-z]/.test(s) ? s : `viec_${s || 'moi'}`;
+}
+
+/**
+ * Một dòng lệnh → argv.
+ *
+ * ⚠ ĐÂY KHÔNG PHẢI MỘT SHELL, và không được để nó lớn thành shell. Nó chỉ tách
+ * theo khoảng trắng, tôn trọng `"…"` và `'…'` — vừa đủ để nhận một dòng người
+ * dùng **chép từ chỗ họ đã chạy**. Không `|`, không `&&`, không biến, không
+ * `$(…)`: những thứ đó là **cú pháp shell**, mà §16e cấm đi qua shell.
+ *
+ * ⭐ Và vì phép tách có thể đoán sai, **giao diện hiện lại từng mảnh argv** ngay
+ * bên dưới. Người dùng THẤY thứ sẽ chạy ⇒ đoán sai thì họ sửa, không có ca hỏng
+ * im lặng. Đó là cách duy nhất một phép đoán được phép tồn tại ở đây.
+ */
+function toArgv(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  let has = false;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      has = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (cur || has) out.push(cur);
+      cur = '';
+      has = false;
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur || has) out.push(cur);
+  return out;
+}
+
+/** Bản nháp → tờ khai. Bỏ việc còn trống, bỏ ô rỗng (mặc định tự điền ở server). */
+function draftToDecl(list: readonly CliDraft[]): { type: 'cli'; actions: Record<string, unknown>[] } {
+  return {
+    type: 'cli',
+    actions: list
+      .filter((a) => a.say.trim() && toArgv(a.line).length)
+      .map((a) => ({
+        id: slugId(a.say),
+        say: a.say.trim(),
+        description: a.description.trim() || a.say.trim(),
+        run: toArgv(a.line),
+        ...(a.read_only ? { read_only: true } : {}),
+        ...(a.fail_when.trim()
+          ? { fail_when: a.fail_when.split(',').map((s) => s.trim()).filter(Boolean) }
+          : {}),
+      })),
+  };
+}
+
+/**
+ * Thứ SẼ ĐƯỢC LƯU — dùng cho **cả** nút mờ/sáng lẫn lúc bấm.
+ *
+ * ⚠ Một hàm, không phải hai biểu thức giống nhau: nút mờ theo một phép tính còn
+ * lúc bấm lưu theo một phép tính khác là ca "nút sáng mà bấm không ra gì" (hoặc
+ * ngược lại, tệ hơn: nút mờ trong khi cấu hình hợp lệ).
+ */
+function cliDecl(list: readonly CliDraft[], json: string | null): Record<string, unknown> {
+  return json === null ? draftToDecl(list) : (safeJson(json) ?? draftToDecl(list));
+}
+
+function cliCount(decl: Record<string, unknown>): number {
+  return Array.isArray(decl['actions']) ? (decl['actions'] as unknown[]).length : 0;
+}
+
+/** Tờ khai → bản nháp, cho chiều JSON → form. Ô lạ rơi mất là ĐÚNG: form chỉ */
+/** biết những ô nó vẽ, và giữ lại một ô nó không hiện là hứa một điều nó không giữ. */
+function declToDraft(decl: unknown): CliDraft[] | null {
+  const acts = (decl as { actions?: unknown })?.actions;
+  if (!Array.isArray(acts) || !acts.length) return null;
+  return acts.map((a) => {
+    const o = a as Record<string, unknown>;
+    const run = Array.isArray(o['run']) ? (o['run'] as unknown[]).map(String) : [];
+    return {
+      say: String(o['say'] ?? ''),
+      description: String(o['description'] ?? ''),
+      // Mảnh có khoảng trắng thì bọc nháy — nếu không, đọc ngược ra một argv khác.
+      line: run.map((s) => (/\s/.test(s) ? JSON.stringify(s) : s)).join(' '),
+      read_only: o['read_only'] === true,
+      fail_when: Array.isArray(o['fail_when']) ? (o['fail_when'] as unknown[]).join(', ') : '',
+    };
+  });
 }
 
 type Kind = 'files' | 'service' | 'custom' | 'browser';
@@ -328,7 +535,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   /** Bước 1 có bốn mặt: chọn LOẠI → thư mục / dịch vụ / dán cấu hình. */
-  const [pane, setPane] = useState<'type' | 'files' | 'catalog' | 'paste'>('type');
+  const [pane, setPane] = useState<'type' | 'files' | 'catalog' | 'paste' | 'cli'>('type');
+  /**
+   * Tab **Lệnh** — soạn tờ khai CLI bằng form. → SPEC-arms §16
+   *
+   * ⚠ Nó KHÔNG đẻ đường lưu mới: form chỉ sinh ra **đúng chuỗi JSON** mà đường
+   * dán đã dùng, rồi đi tiếp bằng chính `paste` + bước 2. Một đường lưu thứ hai
+   * là chỗ hai màn hình sớm muộn lưu ra hai thứ khác nhau.
+   */
+  const [acts, setActs] = useState<CliDraft[]>([blankAct()]);
+  /** Xem/sửa dạng JSON. Hai chiều — form là nguồn, JSON dán vào thì đọc ngược. */
+  const [cliJson, setCliJson] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<CatalogArm[]>([]);
   const [installed, setInstalled] = useState<InstalledArm[]>([]);
 
@@ -1519,7 +1736,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               └──────────────────────────────────────────────────────────────┘
             */}
             {pane === 'type' && (
-              <div className="grid grid-cols-3 gap-2">
+              // Bốn loại từ 01/09 — `grid-cols-2` chứ không phải `cols-4`: bốn thẻ
+              // trên một hàng ở dialog này là bốn cột hẹp, chữ `say` xuống ba dòng.
+              <div className="grid grid-cols-2 gap-2">
                 <TypeCard
                   icon={<ArmIcon kind="files" className="h-6 w-6" />}
                   name="Thư mục trên máy"
@@ -1558,6 +1777,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   name="Dịch vụ có sẵn"
                   say={`${catalog.filter((a) => !a.folders).length} dịch vụ · điền chìa`}
                   onClick={() => setPane('catalog')}
+                />
+                <TypeCard
+                  icon={<ArmIcon kind="cli" className="h-6 w-6" />}
+                  name="CLI"
+                  say="bọc một lệnh bạn đã chạy được"
+                  onClick={() => {
+                    setActs([blankAct()]);
+                    setCliJson(null);
+                    setPane('cli');
+                  }}
                 />
                 <TypeCard
                   icon={<ArmIcon kind="custom" className="h-6 w-6" />}
@@ -1614,18 +1843,187 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {pane === 'type' && reuseList()}
 
+            {pane === 'cli' && (
+              <>
+                <div className="mb-2 flex items-center gap-2">
+                  <Button size="sm" onClick={() => setPane('type')}>
+                    ← Quay lại
+                  </Button>
+                  {/* Hai chiều, MỘT nguồn: bật JSON thì sinh từ form; tắt thì đọc
+                      ngược về form. Không giữ hai ô soạn thảo sống song song —
+                      đó là ca "hai giao diện ghi cùng một thứ" đã trả giá ở skills. */}
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (cliJson === null) setCliJson(JSON.stringify(draftToDecl(acts), null, 2));
+                      else {
+                        try {
+                          const back = declToDraft(JSON.parse(cliJson));
+                          if (back) setActs(back);
+                        } catch {
+                          /* JSON hỏng ⇒ giữ nguyên form, ô đỏ của JsonBox đã nói rồi */
+                        }
+                        setCliJson(null);
+                      }
+                    }}
+                  >
+                    {cliJson === null ? 'Xem JSON' : '← Về form'}
+                  </Button>
+                </div>
+
+                {cliJson !== null ? (
+                  <JsonBox value={cliJson} onChange={setCliJson} />
+                ) : (
+                  <div className="space-y-3">
+                    {acts.map((a, i) => {
+                      const argv = toArgv(a.line);
+                      const set = (patch: Partial<CliDraft>): void =>
+                        setActs((prev) => prev.map((x, j) => (i === j ? { ...x, ...patch } : x)));
+                      return (
+                        <div key={i} className="rounded-lg border border-line p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-xs text-muted">Việc {i + 1}</span>
+                            {acts.length > 1 && (
+                              <button
+                                type="button"
+                                className="text-xs text-muted hover:text-danger"
+                                onClick={() => setActs((p) => p.filter((_, j) => j !== i))}
+                              >
+                                Bỏ
+                              </button>
+                            )}
+                          </div>
+                          <Input
+                            placeholder="Tên việc, viết như nói với người — vd: đếm hoá đơn chưa thanh toán"
+                            value={a.say}
+                            onChange={(e) => set({ say: e.target.value })}
+                          />
+                          <Input
+                            className="mt-2 font-mono text-[12px]"
+                            placeholder={'Dòng lệnh bạn đã chạy được — vd: node -e "console.log(23)"'}
+                            value={a.line}
+                            onChange={(e) => set({ line: e.target.value })}
+                          />
+                          {/* ⭐ HIỆN LẠI ARGV. Phép tách dòng lệnh là một PHÉP ĐOÁN,
+                              và một phép đoán chỉ được phép tồn tại khi người dùng
+                              NHÌN THẤY kết quả của nó. → `toArgv` */}
+                          {argv.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {argv.map((t, k) => (
+                                <code key={k} className="rounded bg-accent-soft px-1 text-[11px]">
+                                  {t}
+                                </code>
+                              ))}
+                            </div>
+                          )}
+                          <Textarea
+                            rows={2}
+                            className="mt-2 text-[13px]"
+                            placeholder="Hướng dẫn cho nhân viên: nó làm gì, và ⚠ HẬU QUẢ nếu chạy (có ghi đè gì không, hoàn tác được không)"
+                            value={a.description}
+                            onChange={(e) => set({ description: e.target.value })}
+                          />
+                          <div className="mt-2 flex items-center gap-3">
+                            <label className="flex items-center gap-1.5 text-xs text-muted">
+                              <input
+                                type="checkbox"
+                                checked={a.read_only}
+                                onChange={(e) => set({ read_only: e.target.checked })}
+                              />
+                              Chỉ đọc, không đổi gì
+                            </label>
+                            <Input
+                              className="flex-1 text-[12px]"
+                              placeholder="Coi là HỎNG nếu kết quả chứa… (vd: ERROR, FAILED)"
+                              value={a.fail_when}
+                              onChange={(e) => set({ fail_when: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <Button size="sm" onClick={() => setActs((p) => [...p, blankAct()])}>
+                      + Thêm lệnh
+                    </Button>
+                    {/* Trần 3–8 lệnh (§16h): mỗi việc là một định nghĩa tool nằm
+                        trong prefix MỌI lượt. Cảnh báo, không chặn — tiền của khách. */}
+                    {acts.length > 8 && (
+                      <p className="text-xs text-muted">
+                        Hơn 8 việc trong một kết nối thì mỗi lượt làm việc đều phải cõng cả danh sách.
+                        Nên tách thành hai kết nối.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <Button
+                  className="mt-2 w-full"
+                  disabled={!cliCount(cliDecl(acts, cliJson))}
+                  onClick={() => {
+                    const decl = cliDecl(acts, cliJson);
+                    setKeys({});
+                    setProbe(null);
+                    setErr('');
+                    setPick(null);
+                    setReuse(null);
+                    // Đi tiếp bằng ĐÚNG đường của tab dán — không đẻ đường lưu thứ hai.
+                    setPaste(JSON.stringify(decl, null, 2));
+                    setStep(2);
+                  }}
+                >
+                  Dùng cấu hình này
+                </Button>
+                {reuseList('custom')}
+              </>
+            )}
+
             {pane === 'paste' && (
               <>
                 <Button size="sm" className="mb-2" onClick={() => setPane('type')}>
                   ← Quay lại
                 </Button>
                 <JsonBox value={paste} onChange={setPaste} />
-                <p className="mt-1 text-xs text-muted">
-                  Nhận cả khối <code>{'{"mcpServers": {...}}'}</code> chép nguyên từ tài liệu.
-                </p>
+                {/*
+                  ┌────────────────────────────────────────────────────────────┐
+                  │ DÁN NHẦM TAB ⇒ CHỈ ĐƯỜNG, VÀ ĐI HỘ LUÔN. (bật 01/09)      │
+                  │                                                            │
+                  │ Cùng cơ chế `ProbeReport(hasLoginButton, match)` 31/08:     │
+                  │ nhận ra thứ vừa dán rồi trỏ đúng cửa, thay vì để họ bấm    │
+                  │ Thử → hỏng → không hiểu gì.                                │
+                  │                                                            │
+                  │ ⚠ Một cái nút ĐƯA HỌ SANG kèm nội dung, chứ không phải một │
+                  │ câu bảo họ tự đi: câu chữ mà bắt người ta dán lại lần nữa  │
+                  │ thì đúng bằng không nói. Và luật này sống ở GIAO DIỆN —     │
+                  │ lõi vẫn nhận tờ khai CLI từ mọi đường. → `cli-arm.ts`       │
+                  └────────────────────────────────────────────────────────────┘
+                */}
+                {isCliPaste(paste) ? (
+                  <div className="mt-1 rounded-md border border-line bg-accent-soft p-2">
+                    <p className="text-xs">
+                      Đây là tờ khai <b>lệnh</b>, không phải cấu hình MCP — nên tab này không dựng
+                      được nó.
+                    </p>
+                    <Button
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => {
+                        const back = declToDraft(safeJson(paste));
+                        setActs(back ?? [blankAct()]);
+                        setCliJson(null);
+                        setPane('cli');
+                      }}
+                    >
+                      Mở tab Lệnh với nội dung này →
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-muted">
+                    Nhận cả khối <code>{'{"mcpServers": {...}}'}</code> chép nguyên từ tài liệu.
+                  </p>
+                )}
                 <Button
                   className="mt-2 w-full"
-                  disabled={!paste.trim()}
+                  disabled={!paste.trim() || isCliPaste(paste)}
                   onClick={() => {
                     // ⚠ KHÔNG `resetConfig()` ở đây: nó xoá luôn `paste`, mà
                     // `paste` chính là thứ người dùng vừa gõ để đi tiếp. Cửa này

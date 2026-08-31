@@ -19,6 +19,7 @@ import test from 'node:test';
 
 import { defaultArmLabel, prepareArm } from '../dist/core/armexec.js';
 import { armHash } from '../dist/core/catalog.js';
+import { guardedZone } from '../dist/core/paths.js';
 import {
   ArgvError,
   CliArmSchema,
@@ -26,6 +27,7 @@ import {
   cliToolNames,
   fillArgv,
   isCliArm,
+  parseCliArm,
   runCommand,
 } from '../dist/core/cli-arm.js';
 import { injectSecrets, missingSecretRefs } from '../dist/core/secrets.js';
@@ -222,6 +224,114 @@ test('có `dirs` ⇒ dựng server SDK thật, và tờ khai không còn lộ ra
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ────────────────── CỬA DÁN STRICT — khoá dễ gõ sai nhất là khoá AN TOÀN
+
+const minimal = (over: Record<string, unknown> = {}) => ({
+  type: 'cli',
+  actions: [{ id: 'a', say: 's', description: 'd', run: ['x'], ...over }],
+});
+
+test('🔴 ba khoá camelCase hay gõ nhất bị TỪ CHỐI kèm gợi ý đúng', () => {
+  for (const [bad, good] of [
+    ['readOnly', 'read_only'],
+    ['timeoutMs', 'timeout_ms'],
+    ['failWhen', 'fail_when'],
+  ] as const) {
+    const r = parseCliArm(minimal({ [bad]: bad === 'failWhen' ? ['ERROR'] : true }));
+    assert.equal(r.ok, false, `"${bad}" lọt qua — lưới đỡ biến mất im lặng`);
+    assert.match((r as { error: string }).error, new RegExp(`"${bad}".*"${good}"`));
+  }
+});
+
+test('gõ thừa/thiếu một ký tự cũng có gợi ý; khoá hoàn toàn lạ thì nói thẳng', () => {
+  const a = parseCliArm(minimal({ runs: ['x'] }));
+  assert.match((a as { error: string }).error, /"runs".*"run"/);
+  const b = parseCliArm(minimal({ hoan_toan_la: 1 }));
+  assert.match((b as { error: string }).error, /không có trong tờ khai/);
+});
+
+test('🔴 CỬA NẠP vẫn LỎNG — siết cả hai là làm mồ côi mọi cánh tay cũ', () => {
+  // `CliArmSchema.parse` (đường nạp/biên dịch) BỎ QUA khoá lạ; chỉ `parseCliArm`
+  // (cửa dán, nơi người dùng đang đứng) mới từ chối. Hai luật, cố ý khác nhau.
+  assert.doesNotThrow(() => CliArmSchema.parse(minimal({ truong_cua_ban_moi_hon: 1 })));
+  assert.equal(parseCliArm(minimal({ truong_cua_ban_moi_hon: 1 })).ok, false);
+});
+
+test('tờ khai đúng thì `parseCliArm` trả arm đã điền mặc định', () => {
+  const r = parseCliArm(minimal());
+  assert.equal(r.ok, true);
+  assert.equal((r as { arm: { runs_on: string } }).arm.runs_on, 'daemon');
+});
+
+// ──────────────────────────── VÍ DỤ — về CHỖ TRỐNG, không về dòng lệnh
+
+test('`params[].example` đi vào description của ĐÚNG property, trần 60 ký tự', () => {
+  const ok = parseCliArm({
+    type: 'cli',
+    actions: [
+      {
+        id: 'a',
+        say: 's',
+        description: 'd',
+        run: ['x', '{tag}'],
+        params: [{ name: 'tag', type: 'string', required: true, example: 'v1.2.3' }],
+      },
+    ],
+  });
+  assert.equal(ok.ok, true);
+  // Quá trần ⇒ chặn: ví dụ nằm trong prefix MỌI lượt, nó là hoá đơn lặp lại.
+  const dai = parseCliArm({
+    type: 'cli',
+    actions: [
+      {
+        id: 'a',
+        say: 's',
+        description: 'd',
+        run: ['x', '{tag}'],
+        params: [{ name: 'tag', type: 'string', example: 'x'.repeat(61) }],
+      },
+    ],
+  });
+  assert.equal(dai.ok, false);
+});
+
+// ─────────────────── CHẶN Ở CỬA, KHÔNG CHẶN Ở LÕI
+
+test('🔴 LÕI TRUNG LẬP: tờ khai CLI đến từ đâu cũng chạy — chặn ở CỬA, không ở LÕI', () => {
+  // Cảnh báo "dán nhầm tab" sống ở giao diện (`ArmDialog`), KHÔNG ở đây: lõi
+  // không được biết thứ này đến từ màn hình nào. Sửa tay `company.yaml` thêm
+  // một tờ khai CLI thì nó VẪN PHẢI CHẠY — đó là ô đo của ranh giới đó.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-core-'));
+  try {
+    const out = prepareArm('a1', minimal(), {}, { officeState: dir, officeDir: dir }) as Record<string, unknown>;
+    assert.equal(out['type'], 'sdk');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ───────── TỜ KHAI PHẢI Ở VÙNG CHỈ ĐỌC — §16i, lỗ vá 01/09
+
+test('🔴 `company.yaml` nằm trong vùng `config` — ghi được là tự khai shell cho vai đã tắt shell', () => {
+  const companyDir = path.join(os.tmpdir(), 'ct-company');
+  const officeDir = path.join(companyDir, 'offices', 'vp');
+  const dirs = { companyDir, officeDir };
+
+  // Trước 01/09 ô này trả `undefined`: `OFFICE_CONFIG` giải tương đối với thư
+  // mục VĂN PHÒNG, nên tệp cấu hình cấp công ty chưa bao giờ được gác.
+  assert.equal(guardedZone(dirs, path.join(companyDir, 'company.yaml'), 'write'), 'config');
+  assert.equal(guardedZone(dirs, path.join(companyDir, 'company.yaml'), 'arm'), 'config');
+  // Cấu hình văn phòng vẫn gác như cũ — chống hỏng lây.
+  assert.equal(guardedZone(dirs, path.join(officeDir, 'office.yaml'), 'write'), 'config');
+  // `.state` vẫn là `secrets`, không bị nhánh mới nuốt mất (nó đứng TRƯỚC).
+  assert.equal(guardedZone(dirs, path.join(companyDir, '.state', 'secrets.json'), 'read'), 'secrets');
+  // Sổ chi phí KHÔNG gác: append-only, người dùng đọc được, gác là tự đẻ một
+  // câu lỗi phải đi giải thích.
+  assert.equal(guardedZone(dirs, path.join(companyDir, 'logs', 'usage.jsonl'), 'read'), undefined);
+  // Artifact trong văn phòng vẫn mở bình thường.
+  assert.equal(guardedZone(dirs, path.join(officeDir, 'artifacts', 'a.md'), 'write'), undefined);
 });
 
 test('nhãn mặc định: tên chương trình của việc ĐẦU, không ghép tên các việc', () => {

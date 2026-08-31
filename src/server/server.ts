@@ -27,7 +27,7 @@ import { browseDirs } from '../core/paths.js';
 import { buildConfig, catalogForUi, defaultOptions, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
 import { callTool, httpTarget } from '../core/mcp-http.js';
-import { cliToolNames, isCliArm } from '../core/cli-arm.js';
+import { cliToolNames, isCliArm, parseCliArm } from '../core/cli-arm.js';
 import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
 import { companyPaths, officeDir, officePaths } from '../core/paths.js';
 import { endLogin, startLogin } from '../core/browser-login.js';
@@ -331,6 +331,27 @@ function resolveArm(
   const level = fromCatalog?.tiered ? (body.level ?? 'read') : body.level;
   const config = armConfig({ ...body, ...(level ? { level } : {}), discovery }, ctx);
   if (!config) return undefined;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CỬA DÁN STRICT CHO TỜ KHAI CLI — nối dây 01/09.                       │
+   * │                                                                          │
+   * │ Trước hôm nay `parseCliArm` **có test, có export, và không cửa nào gọi**  │
+   * │ — tức người dùng dán `failWhen` (camelCase) thì nó lọt êm, đúng thứ hàm   │
+   * │ ấy sinh ra để chặn. Nấc ba của cái thang: *spec nói xong · mã có mặt ·    │
+   * │ ĐÃ CÓ AI BẤM CHƯA*. → [[agentco-spec-says-done]]                          │
+   * │                                                                          │
+   * │ Đặt ở `resolveArm` chứ không ở từng route: đây là cửa CHUNG của **nút Thử │
+   * │ và nút Xong**. Đặt ở một route là vá một cửa rồi để cửa kia giữ hành vi   │
+   * │ cũ — kiểu vá đã đốt dự án này nhiều lần. [[agentco-finish-completely]]    │
+   * │                                                                          │
+   * │ ⚠ CHỈ soi khi `type: 'cli'`. Mọi cấu hình MCP khác đi qua **không đổi một │
+   * │ ký tự** — schema đó là của HÃNG, ta không sở hữu nên không được nói kỹ.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  if (isCliArm(config)) {
+    const parsed = parseCliArm(config);
+    if (!parsed.ok) throw new RunError(parsed.error, 'other');
+  }
 
   /**
    * Tên chìa lấy từ DANH MỤC, không từ client: client gửi giá trị, còn tên biến

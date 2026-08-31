@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ MỘT CÁNH TAY = MỘT HÌNH, VÀ CÙNG MỘT HÌNH Ở MỌI NƠI. (user chốt 27–28/08)│
  * │                                                                          │
@@ -25,10 +25,10 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import { Cog, Folder, Globe, Plug } from 'lucide-react';
+import { Cog, Folder, Globe, Plug, SquareTerminal } from 'lucide-react';
 
-/** Ba loại cánh tay. Cùng trục phân loại với `ArmDialog §kindOf` và `office.ts §armKind`. */
-export type ArmKind = 'files' | 'service' | 'custom' | 'browser';
+/** Các loại cánh tay. Cùng trục phân loại với `ArmDialog §kindOf` và `office.ts §armKind`. */
+export type ArmKind = 'files' | 'service' | 'custom' | 'browser' | 'cli';
 
 /**
  * Hình của một cánh tay.
@@ -80,7 +80,17 @@ export function ArmIcon({
    * mục này **làm gì**, y như thư mục cho `files`.
    */
   const Fallback =
-    kind === 'files' ? Folder : kind === 'browser' ? Globe : kind === 'custom' ? Cog : Plug;
+    kind === 'files'
+      ? Folder
+      : kind === 'browser'
+        ? Globe
+        : // Dòng lệnh: hình `>_`. Người non-code không biết `argv` là gì, nhưng
+          // cái dấu nhắc thì họ đã thấy trong mọi phim có máy tính.
+          kind === 'cli'
+          ? SquareTerminal
+          : kind === 'custom'
+            ? Cog
+            : Plug;
   return (
     <Fallback
       aria-hidden="true"

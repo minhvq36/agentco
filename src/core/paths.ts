@@ -562,6 +562,35 @@ export type GuardMode = 'read' | 'write' | 'arm';
 const OFFICE_CONFIG = ['roles', 'skills', 'connectors', 'office.yaml', 'layout.json'];
 
 /**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 VÙNG `config` CỦA CẤP CÔNG TY — LỖ VÁ 01/09, và nó mở từ trước.       │
+ * │                                                                          │
+ * │ `OFFICE_CONFIG` giải tương đối với thư mục **VĂN PHÒNG**, nên             │
+ * │ `company/company.yaml` (một cấp trên) **chưa bao giờ được gác**. Với      │
+ * │ nhân viên bị nhốt trong văn phòng thì vô hại — họ không với tới. Nhưng    │
+ * │ một vai có cánh tay thư mục trỏ vào chỗ chứa `company/` thì **với tới     │
+ * │ được**, và đó chính là ca `guardedZone` sinh ra để gác: hàng rào thứ hai  │
+ * │ cho thứ nằm NGOÀI văn phòng.                                             │
+ * │                                                                          │
+ * │ Cái nó giữ:                                                              │
+ * │   `mcpServers` + `arms` — sổ chung. Ghi được ⇒ tự cấp cánh tay cho mình. │
+ * │   🔴 và từ 31/08, TỜ KHAI CLI sống ở đây ⇒ ghi được ⇒ tự khai            │
+ * │      `run: ["powershell","-c","{cmd}"]` ⇒ **shell tuỳ ý cho một vai đã   │
+ * │      TẮT shell**. Đúng cái cửa sau §16i nói to, chỉ là tôi đã tưởng nó   │
+ * │      đã được gác sẵn.                                                    │
+ * │                                                                          │
+ * │ ⚠ Tôi viết ở ba chỗ rằng *"để tờ khai trong `company.yaml` thì nó thừa   │
+ * │ hưởng hàng rào §5f, 0 cơ chế mới"*. **Sai** — §5f gác cấu hình VĂN        │
+ * │ PHÒNG. Hàng rào đó có thật, nhưng nó ở một cấp khác.                      │
+ * │ → [[agentco-rule-must-see-what-it-governs]] · [[agentco-spec-says-done]]  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `logs/` cố ý KHÔNG vào đây: sổ chi phí là append-only và người dùng đọc được;
+ * gác nó là chặn một thứ vô hại rồi tự nhận thêm một câu lỗi phải giải thích.
+ */
+const COMPANY_CONFIG = ['company.yaml'];
+
+/**
  * `a` có nằm trong (hoặc chính là) `b` không.
  *
  * ⚠ So bằng chữ THƯỜNG trên MỌI nền tảng, không dò `process.platform`. Trên
@@ -635,6 +664,11 @@ export function guardedZone(
 
   if (mode === 'read') return undefined;
 
+  // Cấp CÔNG TY trước cấp văn phòng — nó nằm ngoài văn phòng nên chỉ tới được
+  // qua một cánh tay thư mục, tức đúng ca hàng rào này tồn tại để chặn.
+  for (const rel of COMPANY_CONFIG) {
+    if (within(abs, path.join(dirs.companyDir, rel))) return 'config';
+  }
   for (const rel of OFFICE_CONFIG) {
     if (within(abs, path.join(dirs.officeDir, rel))) return 'config';
   }

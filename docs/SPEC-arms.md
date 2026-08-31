@@ -4900,9 +4900,19 @@ không phải 3**.
 
 `type: 'cli'` nằm trong **`company.yaml`, cùng cấp với mọi cánh tay khác** (user chốt 31/08).
 
-> ⭐ **Vì sao KHÔNG đẻ thư mục `commands/` riêng:** §16i đòi tờ khai nằm ở vùng **chỉ đọc** của
-> `officeJail`. Thư mục mới ⇒ phải dựng **hàng rào mới**. `company.yaml` ⇒ hàng rào **đã có** từ §5f.
-> Mua đúng cái nguy hiểm nhất của cả tính năng bằng **0 cơ chế mới**.
+> ⭐ **Vì sao KHÔNG đẻ thư mục `commands/` riêng:** một chỗ, một mô hình, không thư mục mới — và mọi
+> thứ hạ nguồn (`armHash` · `arms[băm]` · canvas · `armGrants` · nhật ký) dùng lại nguyên.
+>
+> 🔴 **ĐÍNH CHÍNH 01/09.** Câu cũ ở đây viết *"`company.yaml` ⇒ hàng rào **đã có** từ §5f ⇒ mua cái
+> nguy hiểm nhất bằng 0 cơ chế mới"* — **SAI**. §5f gác `OFFICE_CONFIG`, mà danh sách đó giải **tương
+> đối với thư mục VĂN PHÒNG**; `company/company.yaml` nằm một cấp trên và **chưa bao giờ được gác**.
+> Với nhân viên bị nhốt trong văn phòng thì vô hại, nhưng một vai có **cánh tay thư mục** trỏ vào chỗ
+> chứa `company/` thì với tới được — và đó đúng là ca `guardedZone` sinh ra để chặn.
+> Hậu quả cụ thể sau 31/08: ghi được `company.yaml` ⇒ **tự khai `run: ["powershell","-c","{cmd}"]`**
+> ⇒ shell tuỳ ý cho một vai đã **tắt shell**. Đúng cửa sau §16i nói to.
+> ⇒ Đã thêm `COMPANY_CONFIG = ['company.yaml']` vào `paths.ts §guardedZone`, có test. Chốt không đổi,
+> **nhưng nó không miễn phí như tôi đã nói.**
+> → [[agentco-rule-must-see-what-it-governs]]
 >
 > Và bất biến *"`mcpServers[băm]` đúng hình dạng SDK cần"* **không cấm** chuyện này: mục đích của nó là
 > *đừng nhét metadata của agentco vào `mcpServers`*. Chính `company.yaml` tự bác cách đọc chặt hơn —
@@ -4941,6 +4951,48 @@ dịch — sau đó nó đã thành `{type:'sdk'}` và không phân biệt đư�
 Bản vá 30/08 dựng `types.ts §arms.does` + `armReach` đọc nó rồi dừng: **không cửa nào trong sản phẩm
 ghi trường này**, chỉ spike ghi tay. Không test nào đỏ vì vắng là hợp lệ (`.default([])`).
 Giá đo được ngay: nhãn trần ⇒ Trợ lý **không giao việc**; có `does` ⇒ **4/4** giao việc, gọi thật, đúng số.
+
+### ⑥ ✅ 31/08 (tối) — BA CHỐT SAU KHI USER CHẠY THẬT
+
+**a) `params[].example` — ví dụ về CHỖ TRỐNG, không về DÒNG LỆNH.**
+User hỏi *"example chẳng phải là 1 lệnh real chạy được thì tốt hơn sao, nó là zero shot"* — đúng ở
+nguyên lý (`pattern` là luật cho **runtime**, nó dạy model rất tệ; `ví dụ: v1.2.3` dạy xong một nhịp),
+nhưng chỗ đúng là **tầng tham số**:
+
+> **Model không dựng dòng lệnh.** argv đã cố định, nó chỉ điền `{tag}`. Cho nó xem trọn
+> `pnpm deploy --env staging --tag v1.2.3` là đưa thông tin về một tầng nó **không điều khiển**, rồi
+> bắt nó khớp ngược xem chữ nào là tham số.
+
+Đo qua đường sản phẩm: `.describe()` → `"tag": {"type":"string","description":"ví dụ: v1.2.3"}`, và
+tham số **không khai** thì không in gì ⇒ 0 thay đổi cho mọi cánh tay đang chạy. Trần **60 ký tự** (hoá
+đơn lặp lại, cùng lớp `hint` 320 và `does` 4). Chỉ đáng khi action **có `params`** — hai action của
+bài 22 không có tham số nào, một `example` cho chúng dạy **0 bit** mà vẫn tính tiền mọi lượt.
+🎯 **Nguồn đúng là lượt Thử, không phải gõ tay** (khuôn `returns` 14/08): ví dụ gõ tay là một **lời
+khai**; ví dụ chụp từ lần chạy được thì đúng **theo cấu tạo**.
+
+**b) Cửa dán STRICT, cửa nạp LỎNG — hai luật, cố ý.**
+Đo được: zod mặc định **nuốt im lặng** khoá lạ. Và khoá dễ gõ sai nhất **chính là khoá an toàn** —
+người dán JSON gõ camelCase ở lần đầu: `readOnly` (annotation lật chiều) · `timeoutMs` (rơi về 120s) ·
+🔴 `failWhen` (**lưới đỡ `exit 0` kèm lỗi biến mất, không tín hiệu nào** — mở lại đúng lỗ §5h·7d).
+Hai chiều hỏng không cân: từ chối nhầm ⇒ người dùng đang đứng đó, sửa 3 giây; nhận nhầm ⇒ **không
+triệu chứng**. ⇒ `parseCliArm` quét khoá lạ + **gợi ý khoá gần đúng** (chuẩn hoá bỏ `_`/hạ chữ, không
+dùng ngưỡng khoảng cách). Cửa **nạp `company.yaml` giữ lỏng**: siết là ngày thêm một trường thì mọi
+cánh tay cũ **thành mồ côi**.
+
+> 🔴 **Bản đầu tôi làm cả ba schema `strictObject` và TEST BẮT NGAY:** schema là **một hàm dùng chung
+> cho hai cửa**, nên độ chặt **không được sống trong schema** — nó phải sống ở **cửa**. Một hàm quét
+> rẻ hơn hai bộ schema song song, và hai bộ thì sớm muộn cũng lệch nhau.
+
+**c) Tab "Tự cắm MCP" gặp tờ khai CLI ⇒ CHỈ ĐƯỜNG sang tab Lệnh.**
+User hỏi theo tư duy SOLID và **user đúng** — tôi phản đối chặn với giả định *"đường dán là lối JSON
+duy nhất"*, mà tab 4 có ô JSON hai chiều nên giả định đó biến mất.
+
+> **Ranh giới đúng: CHẶN Ở CỬA, KHÔNG CHẶN Ở LÕI.** `prepareArm` vẫn rẽ nhánh theo `type` trong **dữ
+> liệu** — ai sửa tay `company.yaml` thêm tờ khai CLI thì nó **vẫn phải chạy**. Chặn ở lõi mới là buộc
+> một KIỂU DỮ LIỆU vào một MÀN HÌNH, và đó mới là chỗ vi phạm. Có test khoá cả hai vế.
+
+⚠ `cliPasteRedirect` đã viết + có test, **chưa nối dây** — nối cùng lúc với tab 4, vì chặn trước là
+không cắm được cánh tay CLI nào.
 
 ### ⏸ CÒN NỢ
 
