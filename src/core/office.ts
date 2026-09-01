@@ -13,6 +13,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 
 import { activeOptions, armDirIndex, findArm, folderRoots } from './catalog.js';
+import { isCliArm } from './cli-arm.js';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import {
@@ -138,8 +139,15 @@ export interface CanvasNode extends LayoutNode {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   mark?: string;
-  /** mcp: `files` · `service` · `custom` — cùng trục phân loại với hộp thoại. */
-  armKind?: 'files' | 'service' | 'custom' | 'browser';
+  /**
+   * mcp: `files` · `service` · `custom` · `browser` · `cli` — **cùng trục phân
+   * loại với hộp thoại** (`ArmDialog §kindOf`).
+   *
+   * ⚠ Thêm một giá trị ở đây thì phải thêm ở **cả ba chỗ**: union này,
+   * `web/src/lib/types.ts §CanvasNode.armKind`, và `ArmIcon §ArmKind`. Bỏ sót
+   * một chỗ là node mang hình sai **mà không có gì đỏ** — đúng ca `cli` 01/09.
+   */
+  armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
   /** Nhãn các ô tick đang bật — panel vẽ chip từ đây. */
   optionLabels?: string[];
   /** Có hồ sơ bền ⇒ panel hiện nút mở cửa sổ đăng nhập. → `browser-login.ts` */
@@ -3641,11 +3649,38 @@ export class Office {
       // tự dán ⇒ `custom`, y hệt `ArmDialog §kindOf` — một trục phân loại, hai
       // chỗ đọc, và cả hai đọc từ cùng một dữ kiện.
       const entry = meta?.catalog ? findArm(meta.catalog) : undefined;
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 NHÁNH `cli` — THIẾU Ở ĐÂY tới 01/09. (bug user bắt)               │
+       * │                                                                      │
+       * │ *"Tạo CLI, nhưng node ở canvas vẫn là icon của custom MCP"* — đúng:   │
+       * │ tờ khai CLI không có `catalog`, nên nó rơi vào nhánh `custom` và mang │
+       * │ hình phích cắm suốt từ lúc cắm.                                       │
+       * │                                                                      │
+       * │ ⚠ Chú thích ngay trên khai *"y hệt `ArmDialog §kindOf`"*, và câu đó   │
+       * │ **đã thành sai** đúng lúc tôi thêm `cli` vào một bên mà quên bên này. │
+       * │ Một trục phân loại đọc ở hai chỗ thì thêm một giá trị phải sửa cả     │
+       * │ hai — và chú thích khai "hai chỗ giống nhau" KHÔNG canh được chuyện   │
+       * │ đó. → [[agentco-finish-completely]]                                   │
+       * │                                                                      │
+       * │ ⚠ Hỏi `type === 'cli'` trên **cấu hình thi hành** (`mcpServers`), y   │
+       * │ hệt `isCliArm`. Nửa `arms[]` chỉ giữ nhãn/chìa/việc — nó **không có** │
+       * │ trường nào nói đây là tờ khai lệnh, nên đọc ở đó là đoán.             │
+       * │                                                                      │
+       * │ ⚠ VÀ ĐỨNG TRƯỚC `catalog`: đúng, hôm nay tờ khai CLI không bao giờ có │
+       * │ mục danh mục — nhưng thứ tự này làm nhánh CLI **không phụ thuộc vào   │
+       * │ điều đó**. Ngày ta dựng sẵn một cánh tay CLI trong danh mục (§8 lộ    │
+       * │ trình Google), nó vẫn ra `>_` chứ không lặng lẽ thành `service`.      │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const cfg = n.server ? this.loaded.company.mcpServers[n.server] : undefined;
       return {
         ...base,
         label: meta?.label || n.server || n.id,
         avatar: '🔌',
-        armKind: !meta?.catalog
+        armKind: isCliArm(cfg)
+        ? 'cli'
+        : !meta?.catalog
         ? 'custom'
         : entry?.shape === 'browser'
           ? 'browser'

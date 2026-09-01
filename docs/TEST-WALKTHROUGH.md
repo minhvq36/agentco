@@ -3363,7 +3363,7 @@ máy có đủ Python.
 | **J-10b** | Mở bộ chọn thư mục ở **cả** tab Thư mục lẫn tab Lệnh | hai modal **rộng bằng nhau** và bằng hộp thoại mở ra chúng (~46rem), lưới **3 cột** |
 | **J-10c** | Ở tab Lệnh xem danh sách *"Đã cắm ở văn phòng khác"* | 🔴 **chỉ cánh tay LỆNH**. Thấy một cánh tay HTTP/stdio ở đây là bug — tab này từ chối dán chính nó |
 | **J-11** | Thêm lệnh thứ hai, lưu, so `company.yaml` | **cả hai** action có `cwd:` **giống hệt nhau** — thư mục là của cánh tay, không của từng lệnh |
-| **J-12** | Xem tên node trên sơ đồ | **tên THƯ MỤC** (vd `ke-toan`), không phải `node`. Icon vẫn `>_` |
+| **J-12** | Xem node trên sơ đồ | 🔴 icon **`>_`**, không phải bánh răng của *Tự cắm MCP*. Tên là **tên THƯ MỤC** (vd `ke-toan`), không phải `node` |
 | **J-13** | 🔴 Ở tab JSON đặt `cwd` **khác nhau** cho hai lệnh | nút **"← Về form" khoá lại** + câu vàng giải thích. Đổ vào form là im lặng dời chỗ chạy của lệnh còn lại |
 | **J-14** | Dán tờ khai CLI vào tab *Tự cắm MCP* | nút Dùng **mờ**; bấm nút chuyển ⇒ sang tab Lệnh **ở chế độ JSON** (không phải form), nội dung nguyên văn |
 | **J-15** | Ví dụ ở lệnh **không có ô trống**: gõ cú pháp `node -e "x" 8`, ví dụ `node -e "x" 9` | ô Ví dụ **vẫn hiện** (trước 01/09 nó ẩn đi), và chỉ ra: *"Khác cú pháp ở `8` → `9` … đổi thành `{ten_o_trong}`"* |

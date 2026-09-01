@@ -5319,7 +5319,29 @@ phải một lỗi cần che.
 ⚠ `id: ''` khi chưa có tên, **không** `slugId('')` (ra `viec_moi`): hai dòng trống cùng ra `viec_moi` thì
 `dupIds` sẽ tố *"trùng tên"* trên hai ô còn chưa gõ gì — câu lỗi đúng luật nhưng nói sai chuyện.
 
-**809/809 xanh** (+6).
+### ⑮ 🔴 NODE CLI TRÊN SƠ ĐỒ VẪN MANG **HÌNH PHÍCH CẮM** — và chú thích đã nói dối
+
+> *"Tạo CLI, nhưng node ở canvas vẫn là icon của custom MCP"*
+
+Tôi thêm `'cli'` vào `ArmDialog §kindOf` và `ArmIcon §ArmKind`, rồi **quên `office.ts §armKind`** — chỗ
+**server** quyết định hình cho node. Tờ khai CLI không có `catalog` nên nó rơi vào nhánh `custom`.
+
+⚠ **Điều đáng nhớ nằm ở dòng ngay phía trên chỗ sai**: có một chú thích khai *"y hệt `ArmDialog
+§kindOf` — một trục phân loại, hai chỗ đọc"*. Câu đó **thành sai đúng lúc tôi sửa một bên**.
+**Chú thích khai hai chỗ giống nhau không canh được chuyện hai chỗ lệch nhau** — nó chỉ ghi lại ý định
+lúc viết. Không test nào đỏ, không build nào gãy, node mang hình sai và im lặng.
+
+⇒ Vá ở `office.ts`: hỏi `isCliArm(mcpServers[server])` — **cấu hình thi hành**, y hệt `isCliArm`; nửa
+`arms[]` chỉ giữ nhãn/chìa/việc và **không có** trường nào nói đây là tờ khai lệnh. Đặt **trước** nhánh
+`catalog` để ngày có một cánh tay CLI dựng sẵn trong danh mục, nó vẫn ra `>_` chứ không lặng lẽ thành
+`service`.
+
+⇒ Và khoá bằng `test/arm-kind.test.ts` — **đọc mã nguồn**, so ba union (`office.ts` · `web/types.ts` ·
+`ArmIcon.tsx`) từng giá trị, cộng một bài đòi `office.ts` **thật sự gán** `cli` (union đủ giá trị mà
+không ai gán thì node vẫn sai — nấc ba của cái thang *spec nói xong · mã có mặt · đã có ai gọi chưa*).
+Đã **thử làm nó đỏ**: gỡ `'cli'` khỏi `ArmIcon.tsx` ⇒ **2/3 bài đỏ**, rồi khôi phục.
+
+**812/812 xanh** (+9).
 
 ### ⑨ Bộ chọn thư mục: **64rem → 46rem**, dùng chung một hằng số với hộp thoại mở ra nó
 

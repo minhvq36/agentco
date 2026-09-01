@@ -84,7 +84,8 @@ export interface CanvasNode {
    * mỗi lần mở app là cái giá không đáng.
    */
   mark?: string;
-  armKind?: 'files' | 'service' | 'custom' | 'browser';
+  /** ⚠ Cùng union với `office.ts §armKind` và `ArmIcon §ArmKind` — sửa cả ba. */
+  armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
   /** Nhan cac o tick dang bat - panel ve chip tu day. */
   optionLabels?: string[];
   /** Co ho so ben => panel hien nut mo cua so dang nhap. */
