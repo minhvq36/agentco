@@ -5,11 +5,12 @@
  */
 
 import fs from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
-import { existsOnDisk, resolveInput, safeJoin } from './paths.js';
+import { existsOnDisk, isUrlInput, resolveInput, safeJoin } from './paths.js';
+import { armDirIndex } from './catalog.js';
 import { addUsage, filesOnDisk, runWorker, straysOnDisk, type WorkerHandle } from './worker.js';
 import type { LoadedOffice } from './config.js';
 import type { KnowledgeStore } from '../knowledge/store.js';
@@ -41,6 +42,13 @@ export interface SchedulerDeps {
   emit(event: AgentEventBody): void;
   /** Kiểm tra giữa các task — người dùng bấm Dừng thì thoát sạch. */
   shouldStop?(): boolean;
+  /**
+   * Nhật ký kiểm toán cánh tay. Vắng ⇒ không ghi (ca test, ca chạy lẻ).
+   *
+   * ⚠ Tuỳ chọn có chủ ý: mất nhật ký **không được** làm hỏng một ca đang chạy.
+   * Cùng luật với `appendChat` — xem `core/audit.ts §append`.
+   */
+  audit?: { append(call: Record<string, unknown> & { server: string; tool: string; role: string; args: unknown }): void };
 }
 
 export interface RunResult {
@@ -57,12 +65,83 @@ export interface RunResult {
   wasted: Usage;
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Trần số lần chạy tiếp. **1** (user chốt 27/08) — và con số này HIỆN RA.  │
+ * │                                                                          │
+ * │ Vì sao có trần dù đã đòi "phải có tiến triển": tiến triển có thể **thật   │
+ * │ mà rất chậm** (mỗi lượt ghi thêm một dòng), và **tất định KHÔNG có nghĩa │
+ * │ là rẻ** — mỗi lần chạy tiếp là một lượt worker ĐẦY ĐỦ, chạy tới tận trần │
+ * │ lượt của nó. Trần 3 nghĩa là một việc có thể tốn tới **4×** ngân sách.    │
+ * │                                                                          │
+ * │ ⚠ VÌ SAO 1 CHỨ KHÔNG PHẢI 3: chưa ai đo một ca dài thật cần mấy vòng.    │
+ * │ Chọn 3 là đoán một con số — đúng hình dạng cái trần 2 000 token đã "chặn  │
+ * │ ngay cánh tay đầu tiên" (§9b). Khi chưa biết thì **hướng an toàn là       │
+ * │ THẤP**, vì hai chiều hỏng không cân nhau:                                │
+ * │                                                                          │
+ * │   thấp quá → việc hỏng sau 2 lượt, **có câu báo, người dùng thấy ngay**,  │
+ * │              và họ nới `max_turns` hoặc chia nhỏ yêu cầu — đường đi tiếp  │
+ * │              rõ ràng                                                     │
+ * │   cao quá  → đốt tiền **âm thầm** cho một việc sẽ không bao giờ xong      │
+ * │                                                                          │
+ * │ ⇒ Nâng lên khi có **một ca dài thật đo được**, không nâng theo cảm giác. │
+ * │ → [[agentco-safe-default-direction]]                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const MAX_CONTINUE = 1;
+
+/**
+ * Việc chạy tiếp = **CÙNG một việc**, thêm đúng một câu dặn.
+ *
+ * ⚠ KHÔNG nhét số thứ tự hay "bắt đầu từ phần 4" vào đây. Ta không biết nó đã
+ * làm tới đâu — và đoán hộ là dựng lại đúng cái lỗi vừa đi sửa (Trợ lý chia
+ * *"vị trí 1–3, 4–6"* cho một danh sách nó chưa từng đọc). Chỗ tiếp phải suy từ
+ * **thứ đã có trên đĩa**, và thứ duy nhất biết điều đó là chính worker khi nó
+ * mở thư mục kết quả của mình.
+ */
+/**
+ * CÓ CHẠY TIẾP KHÔNG — hàm thuần, và nó là hàm thuần **có chủ đích**.
+ *
+ * Quyết định này nằm trong một `.catch` giữa `run()` thì không test được nếu
+ * không dựng cả một văn phòng thật. Mà đây đúng là chỗ **phải** có test: hai
+ * hàng rào của nó chặn hai kiểu đốt tiền khác nhau, và cả hai đều im lặng khi
+ * hỏng.
+ */
+export function shouldContinue(p: { kind: FailureKind; tried: number; landed: number }): boolean {
+  if (p.kind !== 'max_turns') return false;
+  // ① Không có gì mới sinh ra ⇒ chạy tiếp là lặp trên một việc không nhúc nhích.
+  if (p.landed <= 0) return false;
+  // ② Tiến triển có thể THẬT mà rất chậm. Không trần thì một việc chia sai vẫn
+  //    bò tới vô tận, và người trả tiền là khách.
+  return p.tried < MAX_CONTINUE;
+}
+
+const CAU_TIEP =
+  'Việc này đã chạy dở ở lượt trước. Xem những file đã có trong thư mục kết quả của chính việc này, ' +
+  'rồi LÀM TIẾP PHẦN CÒN THIẾU — đừng làm lại từ đầu.';
+
+export function continueBrief(brief: TaskBrief): TaskBrief {
+  /**
+   * ⚠ CỘNG THÊM MỘT LẦN, KHÔNG PHẢI MỖI VÒNG MỘT LẦN. (test bắt được)
+   *
+   * Vòng thứ hai nối thêm một dòng y hệt là hai chuyện hỏng cùng lúc: bơm
+   * prefix của worker lên vô ích, và **ba dòng giống nhau dạy model rằng dòng
+   * đó không quan trọng** — đúng cơ chế làm một câu dặn mất tác dụng.
+   */
+  if (brief.constraints.includes(CAU_TIEP)) return brief;
+  return { ...brief, constraints: [...brief.constraints, CAU_TIEP] };
+}
+
 export class Scheduler {
   private readonly gate: CachePrimingGate;
+  /** Đã chạy tiếp mấy lần, theo `task_id`. → `MAX_CONTINUE` */
+  private readonly continued = new Map<string, number>();
   /** AIMD: gặp 429 thì giảm nửa, chạy trơn 10 task thì tăng 1. */
   private concurrency: number;
   private readonly maxConcurrency: number;
   private smoothRun = 0;
+  /** Mã kế hoạch của ca đang chạy — chỉ dùng để gắn vào nhật ký kiểm toán. */
+  private planId: string | undefined;
   private readonly runningByTier = new Map<Tier, number>();
   /**
    * Tay cầm của những worker ĐANG chạy. Không có nó thì `stop()` chỉ là một cờ
@@ -151,7 +230,13 @@ export class Scheduler {
    * │ → docs/TEST-WALKTHROUGH.md §Bài 9b                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  static validate(plan: Plan, knownRoles: ReadonlySet<string>, officeDir?: string): string[] {
+  static validate(
+    plan: Plan,
+    knownRoles: ReadonlySet<string>,
+    officeDir?: string,
+    /** Tên cánh tay → thư mục thật. Thiếu ⇒ "Musics" bị chặn. → `catalog.ts §armDirIndex` */
+    armDirs?: Record<string, string>,
+  ): string[] {
     const problems: string[] = [];
     const ids = new Set(plan.tasks.map((t) => t.task_id));
     const writers = new Map<string, string>();
@@ -210,7 +295,11 @@ export class Scheduler {
           // Thư mục mà một task khác đang ghi vào cũng là "sẽ có" — xem `contains`.
           if (produced.has(want) || [...produced].some((p) => contains(want, p))) continue;
 
-          const abs = resolveInput(officeDir, i.path);
+          // Một địa chỉ web không phải phụ thuộc FILE — không có gì để tồn tại
+          // trên đĩa, và không việc nào "tạo ra" nó. → `paths.ts §isUrlInput`
+          if (isUrlInput(i.path)) continue;
+
+          const abs = resolveInput(officeDir, i.path, armDirs);
           if (abs && existsOnDisk(abs)) continue;
 
           // Hai câu khác nhau vì hai chuyện khác nhau. "Không việc nào tạo ra
@@ -249,6 +338,14 @@ export class Scheduler {
   //  `./artifacts/x.md`, `artifacts\x.md` hay `artifacts/x.md`.)
 
   async run(plan: Plan): Promise<RunResult> {
+    /**
+     * Mã kế hoạch của ca ĐANG chạy — chỉ để gắn vào nhật ký kiểm toán.
+     *
+     * `TaskBrief` cố ý không mang `plan_id` (nó là đơn vị việc, không phải đơn
+     * vị ca), nên worker không biết. Giữ ở đây, nơi BIẾT, thay vì nhét một
+     * trường mới vào brief chỉ để chuyển tiếp một chuỗi. → `core/audit.ts`
+     */
+    this.planId = plan.plan_id;
     const receipts = new Map<string, Receipt>();
     const remaining = new Map(plan.tasks.map((t) => [t.task_id, t]));
     const failed = new Set<string>();
@@ -277,6 +374,14 @@ export class Scheduler {
             status: 'blocked',
             say: `Không làm được vì bước trước chưa xong.`,
             answer: '',
+            /**
+             * Receipt do MÃ dựng, không do nhân viên nào chạy ⇒ không có sự kiện
+             * nào để neo. `gist` rỗng là câu trả lời đúng, và Trợ lý sẽ rơi về
+             * nhánh *"không có dòng KẾT QUẢ"* của nó. Bịa một câu ở đây là đưa
+             * cho nó một thứ nghe như dữ kiện mà không ai đo được.
+             * → `types.ts §gist`
+             */
+            gist: '',
             artifacts: [],
             lessons: [],
             blocked_on: reasonFor(stale, receipts),
@@ -346,7 +451,7 @@ export class Scheduler {
 
         // File CÓ trên đĩa nhưng do một task bị cắt ngang ghi ra — nguy hơn hẳn
         // file thiếu, vì mọi phép kiểm "có tồn tại không" đều cho qua và nhân
-        // viên đọc được thật. Cái thiếu nằm NGOÀI file. → `interruptedInputs`
+        // viên đọc được thật. Cái thiếu nằm ngoài file. → `interruptedInputs`
         const halfDone = this.interruptedInputs(brief);
         if (halfDone.length) {
           failed.add(brief.task_id);
@@ -382,6 +487,52 @@ export class Scheduler {
               stoppedBy = 'auth';
               remaining.set(brief.task_id, brief);
               return;
+            }
+            /**
+             * ┌────────────────────────────────────────────────────────────────┐
+             * │ CHẠM TRẦN LƯỢT MÀ ĐANG CÓ TIẾN TRIỂN ⇒ CHẠY TIẾP, KHÔNG BÁO HỎNG│
+             * │ (user duyệt 27/08)                                             │
+             * │                                                                │
+             * │ Ca sinh ra nó: một việc có **N phần**, mà **N chỉ biết được SAU │
+             * │ khi việc bắt đầu**. Trợ lý buộc phải đoán N lúc lập kế hoạch ⇒  │
+             * │ hoặc đoán thừa (27/08: 3/4 việc rỗng, $0,12 cho ba câu *"danh   │
+             * │ sách chỉ có 1 trang"*) hoặc đoán thiếu (một việc cháy trần).    │
+             * │ **Hai lỗi là hai đầu của cùng một cây gậy.**                    │
+             * │                                                                │
+             * │ ⚠ VÌ SAO KHÔNG ĐỂ TRỢ LÝ NGHĨ LẠI: nó phải trả một lượt model   │
+             * │ nữa, với ÍT dữ kiện hơn hẳn worker vừa có (nó chỉ thấy một câu  │
+             * │ `say`, không thấy 15 lượt kia). Một cơ chế "thử nghĩ cách khác" │
+             * │ ở tầng đó là **đoán**, và đoán ở tầng kế hoạch thì đẻ thêm việc.│
+             * │ Ở đây thì ngược: **0 token cho quyết định**, và chỗ tiếp đọc từ │
+             * │ FILE CÓ THẬT trên đĩa. → [[agentco-deterministic-vs-signal]]    │
+             * │                                                                │
+             * │ HAI HÀNG RÀO, thiếu cái nào là đẻ ra vòng lặp đốt tiền:         │
+             * │   ① phải CÓ TIẾN TRIỂN (`landed` không rỗng) — không có thì     │
+             * │      chạy tiếp là lặp vô tận trên một việc không nhúc nhích      │
+             * │   ② trần 3 lần, và số đó HIỆN RA cho người dùng                 │
+             * └────────────────────────────────────────────────────────────────┘
+             */
+            {
+              const daTiep = this.continued.get(brief.task_id) ?? 0;
+              const tienTrien = err instanceof RunError ? (err.observed?.landed.length ?? 0) : 0;
+              if (shouldContinue({ kind, tried: daTiep, landed: tienTrien })) {
+                this.continued.set(brief.task_id, daTiep + 1);
+                // ⚠ GHI SỔ TRƯỚC KHI CHẠY TIẾP — cùng lý do nhánh `rate_limit`:
+                // lượt vừa bị cắt đã tiêu token thật, và `max_turns` theo định
+                // nghĩa là kiểu hỏng ĐẮT NHẤT (nó chạy tới kịch trần).
+                if (err instanceof RunError && err.usage) wasted = addUsage(wasted, err.usage);
+                this.deps.emit({
+                  type: 'task.progress',
+                  task_id: brief.task_id,
+                  role: brief.role,
+                  say: `Việc dài hơn một lượt — đang chạy tiếp (${daTiep + 1}/${MAX_CONTINUE}).`,
+                });
+                remaining.set(brief.task_id, continueBrief(brief));
+                return;
+              }
+              // Không tiến triển, hoặc đã tiếp đủ 3 lần ⇒ báo hỏng THẬT, và câu
+              // báo của `worker.ts` đã nói ra cả phần *"có thể đã đổi thứ gì ở
+              // ngoài"* khi có cánh tay tham gia.
             }
             if (kind === 'rate_limit') {
               this.onRateLimit();
@@ -422,9 +573,15 @@ export class Scheduler {
    * hai, và người dùng nhận một câu từ chối cho thứ hệ thống vừa duyệt.
    */
   private missingInputs(brief: TaskBrief): string[] {
+    // ⚠ CÙNG bảng cánh tay mà `validate` dùng. Lệch một chỗ là kế hoạch qua
+    // được cửa một rồi chết ở cửa hai — đúng thứ khối chú thích trên cảnh báo.
+    const armDirs = armDirIndex(this.deps.office.company.arms, this.deps.office.company.mcpServers);
     const out: string[] = [];
     for (const i of brief.inputs) {
-      const abs = resolveInput(this.deps.office.dir, i.path);
+      // ⚠ CÙNG phép loại trừ mà `validate` dùng — nếu không thì kế hoạch qua
+      // được cửa một rồi chết ở cửa hai, đúng thứ khối chú thích trên cảnh báo.
+      if (isUrlInput(i.path)) continue;
+      const abs = resolveInput(this.deps.office.dir, i.path, armDirs);
       if (!abs || !existsOnDisk(abs)) out.push(i.path);
     }
     return out;
@@ -493,6 +650,8 @@ export class Scheduler {
       status: 'blocked',
       say,
       answer: '',
+      // Mã dựng, chưa ai chạy ⇒ không có sự kiện. → `types.ts §gist`
+      gist: '',
       artifacts: [],
       lessons: [],
       blocked_on: `${why}: ${missing.join(', ')}`,
@@ -575,6 +734,26 @@ export class Scheduler {
           acquireCacheSlot: (key) => this.gate.acquire(key),
           onProgress: (say) =>
             this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
+          /**
+           * MỌI lời gọi MCP xuống nhật ký kiểm toán, kèm tham số. → `core/audit.ts`
+           *
+           * ⚠ `plan_id` ghép ở ĐÂY, không ở worker: worker chỉ cầm `TaskBrief`,
+           * và brief cố ý không mang mã kế hoạch. Ghép ở nơi biết thì không phải
+           * thêm một trường chỉ để chuyển tiếp một chuỗi.
+           */
+          onArmCall: (c) =>
+            this.deps.audit?.append({ ...c, ...(this.planId ? { plan_id: this.planId } : {}) }),
+          /**
+           * Kết quả quá to được bê về ĐÂY — cùng thư mục với file task này làm
+           * ra. → `core/spill.ts`
+           *
+           * ⚠ Ghép ở đây vì cùng một lý do với `plan_id` ngay trên: worker chỉ
+           * cầm `TaskBrief`, mà brief cố ý không mang mã kế hoạch. Dựng đường
+           * dẫn ở nơi BIẾT thì không phải thêm một trường chỉ để chuyển tiếp.
+           */
+          ...(this.planId
+            ? { outDir: join(office.paths.artifacts, this.planId, brief.task_id) }
+            : {}),
           // Đăng ký tay cầm để `stop()` với tới được worker ĐANG chạy.
           onStart: (h) => {
             handle = h;
@@ -730,6 +909,14 @@ export class Scheduler {
       status: deliveredAll ? 'done' : written.length ? 'blocked' : 'failed',
       say,
       answer: '',
+      /**
+       * ⚠ RỖNG kể cả khi `deliveredAll` — và đó là chỗ dễ đi sai nhất trong bốn
+       * chỗ dựng receipt bằng mã. Ở đây ta biết **file nào đáp xuống**, nhưng
+       * không biết **trong file có gì**: vòng lặp chết trước khi nhân viên kịp
+       * viết receipt, nên không ai đọc nội dung cả. Suy một câu tóm tắt từ tên
+       * file là bịa. `say` ở trên đã nói đúng thứ ta biết. → `types.ts §gist`
+       */
+      gist: '',
       // File có thật trên đĩa, dù ca này đóng ở `failed`. Khai rỗng là nói dối
       // rằng đĩa sạch — đúng lớp lỗi `stoppedReceipt` đã sửa cho nhánh bị ngắt.
       artifacts: written,

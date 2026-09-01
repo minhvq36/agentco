@@ -59,12 +59,24 @@ Bản 22/08 đẩy `lệnh trên máy` vào dòng khả năng **chỉ khi** vai 
 # Employees you can assign to
 
 Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội
-dung, liệt kê tên file. "chạy lệnh" là công tắc riêng của từng người, và là thứ DUY
-NHẤT lấy được kích thước · ngày sửa · dung lượng, hoặc ghi ra ngoài thư mục văn phòng.
+dung, liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: chạy lệnh/script tuỳ ý trên
+máy, và ghi được ra ngoài thư mục văn phòng.
 
 - nguoi-kiem-ke (Người kiểm kê): Chạy lệnh để lấy thông tin về file… [web · chạy lệnh: TẮT]
-- nguoi-viet (Người viết): Viết nội dung tiếng Việt… [Notion · web · chạy lệnh: BẬT]
+- nguoi-viet (Người viết): Viết nội dung… [Notion (đường tắt tới D:\Ho so) · web · chạy lệnh: BẬT]
 ```
+
+> 🔴 **HAI CÂU TRONG KHỐI TRÊN ĐÃ SAI VÀ ĐÃ SỬA — ghi lại để không ai chép lại bản cũ.**
+>
+> **① *"chạy lệnh là thứ DUY NHẤT lấy được kích thước"* — sai theo số đo (24/08).** `Read` builtin
+> tự in kích thước khi đọc PDF: `PDF file read: …\CV_VU QUOC MINH.pdf (411.7KB)`, khớp
+> `Get-ChildItem` tới 0,1 KB. Câu cũ khiến Trợ lý từ chối một việc nó làm được. Bản trong mã
+> (`SHELL_LEGEND`) đã bỏ vế đó; khối trên là bản đồng bộ lại. → `SPEC-arms` §15h
+>
+> **② `armReach` viết `(thư mục: …)` — đã đổi thành `(đường tắt tới …)`.** Chuỗi cũ bị Trợ lý đọc
+> thành **tổng tầm với** của nhân viên rồi từ chối việc nằm ngoài, kể cả khi người đó có shell, kể
+> cả trong một phiên `/clear` sạch tinh. Sự thật ngược lại **đã nằm ngay dòng đầu khối này** nhưng
+> **thua vị trí** — [[agentco-prompt-rules-lose-to-examples]]. → `SPEC-arms` §15j
 
 **Vì sao ý nghĩa gom vào một chỗ (`SHELL_LEGEND`), không nhắc ở từng dòng:** "shell nghĩa là gì" là sự thật về **agentco**, không phải thuộc tính của **một nhân viên** — đặt nó lên dòng của một người là gán nhầm tầng, đúng cái sai (`pitch` vs `tools`) đã sinh ra ca này. Đo: legend **77 token** trả một lần, cờ **6 token**/vai trò; hoà vốn so với phương án lặp-từng-dòng ở **~4 nhân viên**, sau đó gom càng lúc càng thắng.
 
@@ -338,7 +350,7 @@ Câu hỏi thật là *"có phải dặn nó ưu tiên `Read` không"*. Đo vớ
 | việc | tool nó chọn |
 |---|---|
 | đọc một file trong văn phòng | `Glob` → `Read` |
-| đọc một file NGOÀI, đường dẫn tuyệt đối | **`Read`** |
+| đọc một file ngoài, đường dẫn tuyệt đối | **`Read`** |
 | liệt kê thư mục ngoài + kích thước | **`PowerShell`** — `Get-ChildItem -Path …` |
 
 ⇒ Nó chạm tới shell **chỉ khi bộ tool có lỗ thật** (không tool nào trả về kích thước file), và nó tự chọn đúng lệnh cho hệ điều hành mà không ai nói cho nó biết máy chạy gì. **Không cần thêm một dòng dặn nào** — mà thêm cũng là token vĩnh viễn trong prefix để mua một hành vi đã có sẵn.
@@ -526,7 +538,7 @@ type McpServerConfig =
 |---|---|---|
 | **A · Danh mục có sẵn** | chọn từ danh sách, điền chìa | Notion, Google, Slack… — thứ nổi tiếng, ta gói sẵn cấu hình |
 | **B · Dán cấu hình MCP** | dán khối JSON chuẩn | ai đã có server sẵn |
-| **C · Connector — ĐẶC SẢN** | **mô tả cái API bằng form / dán cURL / dán OpenAPI** | *"POST domain/{id}"* của bạn |
+| **C · Cánh tay tự khai — ĐẶC SẢN** | ~~mô tả cái API bằng form / dán cURL / dán OpenAPI~~ 🔒 **REST bỏ 31/08** ⇒ **bọc một LỆNH đã khai** | `gh pr create --title {T}` trên máy bạn |
 
 **Đường C là câu trả lời cho nỗi lo của bạn.** Nó khả thi vì SDK cho tạo **MCP server chạy ngay trong tiến trình của ta**:
 
@@ -548,7 +560,7 @@ Bạn nói: *"đôi khi cái tool ấy chỉ là text miêu tả: hãy vào tran
 
 **Đường giữa, và nó giữ được cả hai:** người dùng vẫn mô tả bằng lời **cộng một mẫu cụ thể** — dán một lệnh cURL, hoặc điền form 4 ô (method · URL · header · ví dụ body). Ta suy ra schema từ mẫu đó. **Lời văn của họ trở thành `description` của tool** — đúng chỗ model cần nó.
 
-Trả lời câu *"có nên strict bắt build MCP không"*: **strict ở BÊN TRONG, không bao giờ strict ở BÊN NGOÀI.** Ta không nuông chiều — ta chuyển chỗ đau từ người dùng sang mã nguồn của mình.
+Trả lời câu *"có nên strict bắt build MCP không"*: **strict ở BÊN TRONG, không bao giờ strict ở BÊN ngoài.** Ta không nuông chiều — ta chuyển chỗ đau từ người dùng sang mã nguồn của mình.
 
 ---
 
@@ -620,7 +632,7 @@ Và tri thức riêng ở bảng phải kia **thuộc về kho tri thức, khôn
 
 ## 8. Cổng duyệt — hai tầng
 
-### 8·0 🔴 LUẬT: mọi đường GHI RA NGOÀI phải qua một tool/MCP TƯỜNG MINH
+### 8·0 🔴 LUẬT: mọi đường GHI RA ngoài phải qua một tool/MCP TƯỜNG MINH
 
 > **Chốt 22/08 (user). ⚠ CHÍNH SÁCH — CHƯA CÓ MÃ NGUỒN THI HÀNH.**
 >
@@ -628,7 +640,9 @@ Và tri thức riêng ở bảng phải kia **thuộc về kho tri thức, khôn
 
 **Nội dung luật:** ra khỏi thư mục văn phòng phải là một **năng lực có TÊN, được khai báo, đọc được trong nhật ký** — tức một tool hoặc MCP người dùng chủ động cắm. Không được là **tác dụng phụ của việc bật một công tắc chung**.
 
-Hệ quả: `Bash` **thôi là "cánh cửa ra ngoài"**. Nó quay về đúng thứ nó độc quyền — metadata file và chạy script.
+Hệ quả: `Bash` **thôi là "cánh cửa ra ngoài"**. Nó quay về đúng thứ nó độc quyền — ~~metadata file và~~ **chạy script và GHI ra ngoài**.
+
+> ⚠ **Sửa 24/08 theo số đo:** metadata **không** còn là độc quyền của `Bash`. `Read` in kèm kích thước khi đọc PDF (`PDF file read: … (411.7KB)`, khớp `Get-ChildItem` tới 0,1 KB), và một cánh tay filesystem có `get_file_info` cho thư mục nó với tới. ❓ Chưa đo: những **loại file nào khác** `Read` in kích thước, và `Glob`/`Grep` có in gì không. Đừng suy rộng câu này bằng lập luận. → `SPEC-arms` §15h · §14 #9
 
 **Vì sao chưa thi hành được, nói thẳng:** hook `PreToolUse` khớp được `Write`/`Edit`/`NotebookEdit` vì đường dẫn nằm ở một **trường có tên**. Với `Bash` thì đường dẫn nằm **lẫn trong chuỗi lệnh** (`… > D:\x.md`), không có trường nào để đọc. Nên chặn `Bash` ghi ra ngoài là bài toán thật sự khó, không phải việc chưa làm.
 
@@ -671,7 +685,42 @@ Mình chia thành 3 việc:
 
 ### 8c. Tầng 2 — chặn từng lần, dùng `canUseTool`
 
-> ## ⚠⚠ ĐỌC TRƯỚC KHI XÂY MỤC NÀY — PHÉP ĐO 19/08 CHƯA XÁC NHẬN CƠ CHẾ
+> ## ✅✅ ĐO 25/08 — **CƠ CHẾ CHẠY ĐƯỢC.** Khối cảnh báo bên dưới đã được GIẢI, giữ lại vì lý do
+>
+> `scripts/spike-canusetool.ts` — 5 ca, mỗi ca một biến. Đây đúng là *"spike 10 phút"* mà mục này
+> đòi từ 19/08 và chưa ai chạy.
+>
+> | Ca | `canUseTool` nổ | file trên đĩa |
+> |---|---|---|
+> | A · mcp **trong** `allowedTools`, không callback | ❌ | đã ghi |
+> | B · mcp **trong** `allowedTools`, **có** callback | ❌ | đã ghi |
+> | **C · mcp NGOÀI `allowedTools`, callback `allow`** | ✅ | đã ghi |
+> | **D · builtin `Write` NGOÀI `allowedTools`, callback `allow`** | ✅ | đã ghi |
+> | **E · mcp NGOÀI `allowedTools`, callback `deny`** | ✅ | **KHÔNG ĐỔI** |
+>
+> **⭐ Bí ẩn 19/08 đã có lời giải, và nó không phải "SDK hỏng": `allowedTools` CHE `canUseTool`.**
+> Phép đo 19/08 gọi `Grep`/`Glob` — hai tool nằm sẵn trong `allowedTools` — nên callback không bao
+> giờ có cửa chạy. Biến thật sự chưa bao giờ là *"tool đọc hay ghi"* mà là **"có nằm trong
+> `allowedTools` hay không"**. Cả một mục spec bị treo 6 ngày vì đọc sai biến.
+>
+> SDK bản đang cài **tự nói ra điều đó** — cảnh báo mới, đáng chép nguyên văn:
+>
+> ```
+> [CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked for: Read, Glob, Grep,
+> mcp__files. Bare allowedTools entries auto-approve the whole tool before the callback is
+> consulted. … remove the bare names from allowedTools so they fall through to canUseTool.
+> ```
+>
+> **Ca E xác nhận nốt nửa còn lại** — nút *[Thôi]* là thật: `deny` **chặn được lệnh ghi** (file trên
+> đĩa không đổi), và câu `message` quay về cho agent **nguyên văn** như một kết quả tool. Lời hứa ở
+> mục 4 dưới đây (*"nó biết vì sao bị từ chối và tự xoay xở"*) có mã thi hành đứng sau.
+>
+> ⚠ Một ca đã đo hỏng rồi đo lại, ghi ra đây vì nó là bài học lặp: ca D lần đầu **vẫn cắm MCP**, nên
+> model lờ `Write` đi để dùng `mcp__files__write_file` ⇒ D đo lại đúng cái C vừa đo và bảng trông
+> như đã trả lời một câu chưa ai hỏi. Cùng lớp lỗi với `--no-browser` hôm 24/08: **phép thử đi vòng
+> qua đúng nhánh nó sinh ra để kiểm.**
+>
+> <details><summary>Khối cảnh báo gốc 19/08 — giữ lại để thấy nó sai ở đâu</summary>
 >
 > Toàn bộ mục 8c dưới đây dựng trên kiểu trong `.d.ts`, **chưa từng chạy thật**. Ngày 19/08 lần đầu có người thử `canUseTool` trong dự án này, và **nó không nổ một lần nào**:
 >
@@ -688,6 +737,8 @@ Mình chia thành 3 việc:
 > **Việc bắt buộc trước khi xây:** một spike 10 phút — cho một vai trò khai `Bash`, giao nó chạy một lệnh, và kiểm `canUseTool` có nổ không. Nếu không nổ thì cả tầng 2 phải thiết kế lại (khả năng cao là bằng **tool MCP tự khai**, nơi ta tự chạy tác vụ nên không phụ thuộc cơ chế duyệt nào).
 >
 > Đây đúng luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*, áp cho một tính năng **chưa viết**: đừng lên lịch dựa trên một cơ chế chưa ai thấy chạy.
+>
+> </details>
 
 Đây là chỗ SDK làm sẵn cho ta, và làm tốt hơn mọi cách tự chế. Kiểm trên `sdk.d.ts@0.3.231`:
 
@@ -713,6 +764,19 @@ type PermissionResult =
 4. **`deny` kèm `message`** quay lại cho agent như một kết quả tool — nó biết vì sao bị từ chối và tự xoay xở, thay vì fail cụt.
 
 **Một thay đổi bắt buộc trong `worker.ts`:** hôm nay ta truyền `allowedTools: role.tools`, mà tool nằm trong `allowedTools` thì **được duyệt tự động và KHÔNG gọi `canUseTool`**. Nên `allowedTools` chỉ được chứa nhóm `read` + `write_local`; mọi thứ từ `write_external` trở lên phải rơi xuống `canUseTool`.
+
+> ✅ **ĐO 25/08 XÁC NHẬN ĐÚNG TỪNG CHỮ** (ca B vs ca C ở trên). Câu này viết ra từ đọc `.d.ts`, và
+> hoá ra nó chính là lời giải cho bí ẩn 19/08 — đã nằm sẵn trong spec suốt 6 ngày mà không ai nối
+> hai đầu lại.
+>
+> 🔴 **Và đây là dòng chặn "Notion ghi được".** `worker.ts` hôm nay đẩy `mcp__<server>` (hoặc
+> `mcp__<server>__<tool>` với cánh tay chỉ-đọc) thẳng vào `allowedTools` ⇒ **tự duyệt, không hỏi
+> ai**. Bật ghi cho Notion trên nền đó nghĩa là agent sửa workspace thật của người dùng mà không một
+> hộp thoại nào — trong khi 3/28 tool của Notion khai `destructive`. Thứ tự bắt buộc là **cổng duyệt
+> TRƯỚC, cánh tay ghi SAU**, không đảo được.
+>
+> ⚠ Đổi `allowedTools` là đổi hành vi của **mọi cánh tay đang chạy**, kể cả `filesystem` của bài 11.
+> Đó là một thay đổi đúng, nhưng không phải một thay đổi im lặng — bài 11 phải chạy lại sau đó.
 
 ### 8d. Luồng đầy đủ
 
@@ -1068,7 +1132,7 @@ Xếp theo *mở khoá được bao nhiêu bài test* trên mỗi đơn vị cô
 | 7 | Cổng duyệt hai tầng (§8) | **bài 10 chặng C**, và mọi việc chạm ra ngoài | lớn |
 | 8 | Cắm MCP trong UI, đường A + B (§6) | bài 10 chặng B | vừa |
 | 9 | Chìa theo connector (§7a) | đi kèm số 8 | nhỏ |
-| 10 | Connector tự sinh, đường C (§6) | **đặc sản** — API riêng của người dùng | lớn |
+| 10 | Cánh tay tự khai, đường C (§6) | **đặc sản** — ✅ **đã xây 31/08 dưới dạng CLI** (`SPEC-arms §16t`); nhánh REST 🔒 bỏ | lớn |
 
 Ba việc đầu cộng lại nhỏ hơn một buổi và xoá được phần lớn chữ ❌ trong `TEST-WALKTHROUGH.md`. Làm trước.
 

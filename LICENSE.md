@@ -9,12 +9,13 @@ FSL-1.1-ALv2
 Copyright 2026 Vũ Quốc Minh
 
 <!--
-  Nếu sau này lập pháp nhân: chuyển quyền và đổi dòng Copyright ở các bản
-  phát hành MỚI. FSL cấp phép theo từng phiên bản — bản cũ giữ licensor cũ.
+  If a legal entity is formed later: assign the rights and change the Copyright
+  line on NEW releases only. FSL licenses each version separately, so already
+  published versions keep the licensor they were published under.
 
-  Text bên dưới là bản canonical lấy từ
+  The text below is the canonical template from
   https://github.com/getsentry/fsl.software/blob/main/FSL-1.1-ALv2.template.md
-  — không sửa gì ngoài dòng Copyright.
+  — unmodified except for the Copyright line.
 -->
 
 ## Terms and Conditions

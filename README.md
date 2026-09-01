@@ -59,12 +59,37 @@ Worker không nói chuyện trực tiếp với nhau — mọi trao đổi qua m
 
 ## License
 
-[FSL-1.1-ALv2](LICENSE.md) — source-available, tự chuyển sang Apache 2.0 sau 2 năm.
+[**FSL-1.1-ALv2**](LICENSE.md) — source-available. Đây **không** phải open source theo định nghĩa
+OSI, và tôi không gọi nó như vậy.
 
-Cá nhân, học tập, nghiên cứu phi thương mại, dùng nội bộ: **miễn phí**. Fork cá nhân và PR: **được**. Cấm: đóng gói thành sản phẩm/dịch vụ cạnh tranh trực tiếp.
+**Bạn được làm ngay hôm nay:** đọc toàn bộ mã · chạy cho bất kỳ mục đích gì, gồm cả thương mại và
+dùng trong công ty · sửa · fork · phát hành bản sửa · dựng sản phẩm nội bộ trên nền nó.
 
-Đây **không** phải open source theo định nghĩa OSI, và chúng tôi không gọi nó như vậy.
+**Đúng một điều bị cấm:** bán một sản phẩm/dịch vụ **cạnh tranh với agentco**. Và lệnh cấm đó có
+hạn dùng — xem dưới.
+
+### Mỗi bản phát hành TỰ trở thành Apache 2.0 sau đúng 2 năm
+
+> *"We hereby **irrevocably** grant you an additional license … under the Apache License, Version
+> 2.0 … effective on the **second anniversary of the date we make the Software available**."*
+
+- **Không huỷ ngang được.** Chữ `irrevocably` nằm trong chính giấy phép. Tôi không có quyền rút lại
+  — kể cả khi đổi ý, kể cả khi dự án được mua lại, kể cả khi tôi biến mất.
+- **Đồng hồ chạy theo TỪNG BẢN.** Phát hành bản mới **không** đẩy lùi bản cũ một ngày nào.
+- **Hệ quả:** một cửa sổ trượt rộng đúng hai năm — mọi thứ già hơn thế **đã là Apache 2.0 hoàn
+  toàn**, không cần ai bấm nút.
+
+📅 Mỗi bản phát hành trên GitHub Releases sẽ ghi **ngày cụ thể** nó thành Apache 2.0 — ghi rõ,
+không nói chung chung. Mập mờ không cản được người muốn copy (họ tự tính ra được từ giấy phép), nó
+chỉ cản người đang phân vân có nên tin dự án này không.
 
 ## Đóng góp
 
-Chưa mở nhận PR (chưa có code). Khi mở, mọi PR phải trả lời được checklist ở cuối [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md) — thay đổi làm xấu chi phí quá 10% ở bất kỳ golden scenario nào sẽ không được merge.
+PR được hoan nghênh — đọc [**CONTRIBUTING.md**](CONTRIBUTING.md) trước.
+
+PR đầu tiên cần ký [CLA](CLA.md) bằng **một dòng** dán vào mô tả PR. Bạn **giữ nguyên bản quyền**
+phần mình viết; giấy phép bạn cấp chính là thứ làm cho lời hứa "tự thành Apache 2.0" ở trên thi
+hành được.
+
+Mọi PR phải trả lời được checklist cuối [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md)
+— thay đổi làm xấu chi phí quá 10% ở bất kỳ golden scenario nào sẽ không được merge.

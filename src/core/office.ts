@@ -12,9 +12,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 
+import { activeOptions, armDirIndex, findArm, folderRoots } from './catalog.js';
+import { isCliArm } from './cli-arm.js';
 import { loadOffice, type LoadedOffice } from './config.js';
 import { energySnapshot, energyVersion, refreshEnergy } from './energy.js';
 import {
+  companyPaths,
   ensureOfficeDirs,
   folderId,
   isSafeId,
@@ -23,12 +26,15 @@ import {
   safeJoin,
   slugId,
 } from './paths.js';
+import { readOAuth } from './secrets.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
 import { ArtifactStore, isStale } from './artifacts.js';
-import { LayoutStore, ASSISTANT_NODE, type LayoutNode } from './layout.js';
-import { Assistant, newPlanId, requestOf, type PlanDraft } from './assistant.js';
+import { AuditLog } from './audit.js';
+import { loginOpen } from './browser-login.js';
+import { LayoutStore, ASSISTANT_NODE, agentNodeId, mcpNodeId, type LayoutNode } from './layout.js';
+import { Assistant, learnable, newPlanId, requestOf, type PlanDraft } from './assistant.js';
 import {
   helpText,
   parseInput,
@@ -109,7 +115,58 @@ export interface CanvasNode extends LayoutNode {
   bash?: boolean;
   /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
   count?: number;
+  /**
+   * mcp: NẤC QUYỀN, và bảng chi tiết vẽ huy hiệu từ đây — **không** từ `label`.
+   * Nhãn là của người dùng và đổi tự do; nhét mức quyền vào chuỗi tên thì một
+   * cú đổi tên tạo ra được một cái nhãn nói dối về đặc quyền. → §6j
+   */
+  level?: 'read' | 'add' | 'full';
+  /** mcp: số việc đã cấp — để "chỉ đọc" kiểm được bằng mắt, không phải tin nhãn. */
+  toolCount?: number;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HÌNH CỦA NODE CÁNH TAY — gửi từ SERVER, không tra ở giao diện.           │
+   * │ (user chốt 28/08: *"đổi cái biểu tượng phích cắm thành … ứng với từng    │
+   * │ loại mcp"*)                                                              │
+   * │                                                                          │
+   * │ `mark` = đường dẫn SVG đơn sắc của hãng, lấy thẳng từ `brand.mark` trong  │
+   * │ danh mục. `armKind` = loại, để rơi về hình chung khi hãng không có logo.  │
+   * │                                                                          │
+   * │ ⚠ Vì sao không để canvas tự tra danh mục: sơ đồ vẽ **trước** khi ai mở    │
+   * │ hộp thoại Kết nối, mà danh mục chỉ được tải trong hộp thoại đó. Bắt       │
+   * │ canvas đi tải thêm một lượt nữa là mua một khoảnh khắc node **không có    │
+   * │ hình** ở mỗi lần mở app. Server đã cầm cả hai dữ kiện — gửi kèm là xong.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  mark?: string;
+  /**
+   * mcp: `files` · `service` · `custom` · `browser` · `cli` — **cùng trục phân
+   * loại với hộp thoại** (`ArmDialog §kindOf`).
+   *
+   * ⚠ Thêm một giá trị ở đây thì phải thêm ở **cả ba chỗ**: union này,
+   * `web/src/lib/types.ts §CanvasNode.armKind`, và `ArmIcon §ArmKind`. Bỏ sót
+   * một chỗ là node mang hình sai **mà không có gì đỏ** — đúng ca `cli` 01/09.
+   */
+  armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
+  /** Nhãn các ô tick đang bật — panel vẽ chip từ đây. */
+  optionLabels?: string[];
+  /** Có hồ sơ bền ⇒ panel hiện nút mở cửa sổ đăng nhập. → `browser-login.ts` */
+  canLogin?: boolean;
+  /**
+   * mcp: TÊN TÀI KHOẢN nó nối tới, tra từ kho OAuth chứ không đọc `label`.
+   *
+   * Node vẽ nó ở dòng phụ — đây là thứ DUY NHẤT trên sơ đồ phân biệt được hai
+   * cánh tay cùng hãng khác tài khoản, kể từ khi nhãn thôi ghép tài khoản vào
+   * (27/08). Vắng ⇒ không dùng OAuth, hoặc workspace đã bị gỡ ⇒ không vẽ gì.
+   */
+  via?: string;
   mcp?: string[];
+  /**
+   * mcp: thư mục cánh tay với tới, nguyên văn như trong `company.yaml`. CHỈ ĐỌC
+   * trên giao diện — đổi thư mục là đổi `armHash`, tức một cánh tay khác. Rỗng =
+   * không phải cánh tay file (Notion, GitHub…).
+   */
+  folders?: string[];
   /** màu đại diện, dùng chung với log */
   hue?: number;
   /** không tìm thấy roles/<id>.yaml hoặc mcp server đã biến khỏi company.yaml */
@@ -176,6 +233,14 @@ export class Office {
   readonly library: LibraryStore;
   /** Kết quả — file nhân viên làm ra. → docs/SPEC-artifacts.md */
   readonly artifacts: ArtifactStore;
+  /**
+   * Nhật ký kiểm toán cánh tay — MỌI lời gọi MCP, kèm tham số.
+   * → `core/audit.ts` · docs/SPEC-arms.md §6k
+   *
+   * Nó là thứ **thay** cho cổng duyệt từng lần (user chốt 25/08), nên nó không
+   * phải một tiện ích: bỏ cổng mà log không đủ thì ta vừa bỏ cả hai.
+   */
+  readonly audit: AuditLog;
   readonly assistant: Assistant;
   readonly layout: LayoutStore;
   readonly plans: PlanStore;
@@ -247,8 +312,10 @@ export class Office {
      */
     this.library.retryUnindexed();
     this.artifacts = new ArtifactStore(loaded.paths);
+    this.audit = new AuditLog(loaded.paths.state);
     this.assistant = new Assistant(loaded);
-    this.assistant.resumeFrom(this.readSessionId());
+    const saved = this.readSession();
+    this.assistant.resumeFrom(saved.id, saved.reach);
     this.layout = new LayoutStore(loaded);
     this.plans = new PlanStore(loaded.paths);
     /**
@@ -657,10 +724,22 @@ export class Office {
      * `inflight` cho mọi lượt, kể cả lượt này.
      */
     if (routed.value.intent === 'lookup') {
+      /**
+       * `paths` RỖNG = câu hỏi tra cứu chung, không đọc tài liệu nào (24/08).
+       *
+       * Phải tách nhánh ở ĐÂY chứ không nới `pickReadable`: hàm đó trả lời câu
+       * *"những đường dẫn model vừa nêu có thật không"*, và với danh sách rỗng
+       * thì câu trả lời đúng là "không có gì để kiểm" — không phải "không tìm
+       * thấy file nào". Gộp hai chuyện đó là đẻ ra câu báo lỗi *"Mình không tìm
+       * thấy … trong tủ tài liệu"* cho một câu hỏi về thời tiết.
+       */
+      const asked = routed.value.paths;
       // Đường dẫn do MODEL sinh ⇒ phải đối chiếu với đĩa trước khi ai đọc gì.
       // → commands.ts `pickReadable`
-      const { ok, missing } = pickReadable(routed.value.paths, this.readablePaths());
-      if (ok.length === 0) {
+      const { ok, missing } = asked.length
+        ? pickReadable(asked, this.readablePaths())
+        : { ok: [] as string[], missing: [] as string[] };
+      if (asked.length > 0 && ok.length === 0) {
         // Trả lời bằng CODE. Ta đang cầm cả hai cái kho trong tay; hỏi model
         // "file này có thật không" là trả tiền để nhận về một phỏng đoán.
         this.emit({
@@ -694,7 +773,9 @@ export class Office {
         role: 'assistant',
         say:
           found.value ||
-          'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.',
+          (asked.length
+            ? 'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.'
+            : 'Mình tra rồi nhưng chưa ra câu trả lời chắc chắn. Bạn hỏi cụ thể hơn một chút nhé.'),
         plan_id: null,
       });
       // ⚠ Một phần đề nghị của Trợ lý không có thật thì NÓI RA, đừng im. Câu
@@ -1250,7 +1331,14 @@ export class Office {
         });
       }
 
-      const problems = Scheduler.validate(plan, onDuty, this.loaded.dir);
+      // ⚠ Truyền bảng cánh tay: thiếu nó thì `inputs: ["Musics"]` bị chặn dù
+      // nhân viên có cánh tay tên Musics trỏ thẳng vào thư mục đó. → `resolveInput`
+      const problems = Scheduler.validate(
+        plan,
+        onDuty,
+        this.loaded.dir,
+        armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers),
+      );
       if (problems.length) {
         // Kế hoạch có ra, nhưng không chạy được — với người dùng thì vẫn là một
         // lượt phải nói lại. Tính là ma sát. → `planFriction`
@@ -1333,15 +1421,43 @@ export class Office {
       }
 
       // 3. Chạy
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ CỬA SỔ ĐĂNG NHẬP ĐANG MỞ ⇒ KHÔNG PHÓNG VIỆC. → `browser-login.ts`   │
+       * │                                                                      │
+       * │ Chromium **khoá** `user-data-dir`. Cửa sổ đăng nhập đang giữ hồ sơ mà │
+       * │ worker phóng lên thì Playwright đâm vào hồ sơ bị khoá ⇒ **MCP chết    │
+       * │ lúc spawn** ⇒ nhân viên mất tool và trả lời bằng persona của nó. Đó   │
+       * │ đúng là ca hỏng im lặng đã tốn của user $0,03 và một buổi đi tìm.     │
+       * │                                                                      │
+       * │ ⚠ Chặn ở ĐÂY, không ở `pickMcp`: ở đó thì kế hoạch đã lập, tiền lập  │
+       * │ kế hoạch đã trả, và câu từ chối đến sau khi người dùng đã chờ. Chặn    │
+       * │ trước khi phóng là chặn **trước khi tiêu tiền**.                       │
+       * │                                                                      │
+       * │ Khoá tự lành: người dùng đóng cửa sổ ⇒ `exit` gỡ khoá. Nên câu này    │
+       * │ nói **việc phải làm**, không nói "thử lại sau".                        │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      if (loginOpen(this.id)) {
+        throw new RunError(
+          'Cửa sổ đăng nhập của văn phòng này đang mở, nên nhân viên chưa dùng được trình duyệt. ' +
+            'Đóng cửa sổ đó rồi giao việc lại.',
+          'other',
+        );
+      }
       const scheduler = new Scheduler({
         office: this.loaded,
         knowledge: this.knowledge,
         emit: (e) => this.onSchedulerEvent(e, plan, record),
         shouldStop: () => this.stopRequested,
+        audit: this.audit,
       });
       this.activeScheduler = scheduler;
 
       const result = await scheduler.run(plan);
+      // Dọn sau MỘT CA, không phải sau mỗi lời gọi: đọc-ghi cả file cho từng
+      // dòng biến một `appendFileSync` thành O(n²). → `audit.ts §trim`
+      this.audit.trim();
       const receipts = [...result.receipts.values()];
 
       /**
@@ -1352,17 +1468,62 @@ export class Office {
        * `worthLearning` đã cắt nhánh Trợ lý, còn nhân viên thì thường trả về
        * `lessons: []`.
        */
-      const anyLesson = receipts.some((r) => r.lessons.length > 0);
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 CẢNH BÁO CẤP CA PHẢI TÍNH **TRƯỚC** HAI CỬA BÀI HỌC. (user 29/08) │
+       * │ > *"nếu 1 công việc còn warning có nghĩa là còn leak, không thể coi   │
+       * │ >  đó là kinh nghiệm được"*                                          │
+       * │                                                                      │
+       * │ `missingOutputs` vốn được tính ở tít dưới, SAU cả vòng ghi bài học    │
+       * │ của nhân viên VÀ sau lượt `report()` đã hỏi Trợ lý học được gì. Nên   │
+       * │ nó nói được với NGƯỜI DÙNG mà chưa bao giờ chặn được một node nào —   │
+       * │ đúng lớp lỗi *"luật đứng sau thứ nó quản"*.                          │
+       * │ → [[agentco-rule-must-see-what-it-governs]]                           │
+       * │                                                                      │
+       * │ Dời lên đây: cùng một phép tính, cùng một kết quả, chỉ khác chỗ đứng. │
+       * │ Đọc đĩa an toàn ở điểm này — `scheduler.run()` đã xong ở dòng trên.   │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const gone = this.missingOutputs(plan, receipts);
+      const leaked = gone.length > 0 || (plan.redirected?.length ?? 0) > 0;
+
+      const anyLesson = receipts.some((r) => r.lessons.length > 0 && learnable(r) && !leaked);
       let docTexts: string[] | undefined = anyLesson ? this.library.texts() : undefined;
 
       for (const r of receipts) {
         this.saveReceipt(plan.plan_id, r);
         this.recordUsage(r);
         usage = addUsage(usage, r.usage);
-        for (const lesson of r.lessons) {
-          // `r.reads` = tài liệu tủ mà CHÍNH nhân viên này đã mở trong ca. Bài
-          // học của nó sống chết theo đúng những file đó — thực thể yếu.
-          this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? [], r.reads);
+        /**
+         * ┌────────────────────────────────────────────────────────────────┐
+         * │ 🔴 CỬA THỨ HAI CỦA CÙNG MỘT LUẬT. → `assistant.ts §learnable`  │
+         * │                                                                │
+         * │ `worthLearning` gác cửa Trợ lý. Nhân viên thì KHÔNG đi qua cửa  │
+         * │ đó — nó tự khai `lessons` trong biên nhận, và trước 29/08 thứ   │
+         * │ duy nhất chặn là `rejectLesson` (trùng · chép tài liệu · con    │
+         * │ số). Nên vá một cửa là để hở cửa kia, cùng lớp lỗi              │
+         * │ [[agentco-finish-completely]] đã dẫm ba lần.                    │
+         * │                                                                │
+         * │ Ca thật của cửa NÀY, đo 29/08 — bài học của chính vai trò       │
+         * │ `nguoi-soi-thu-muc`, sinh ra từ một ca không xong:              │
+         * │   *"Trước khi gọi browser_navigate … nếu bị từ chối quyền,      │
+         * │    dừng lại và báo blocked ngay thay vì thử lại"*               │
+         * │ Nó nằm trong 10 mẩu đã làm cánh tay trình duyệt ngừng chạy.     │
+         * │                                                                │
+         * │ ⚠ Cổng đặt ở ĐÂY chứ không ở `addLesson`: `addLesson` chỉ nhận  │
+         * │ được `text`, nó không nhìn thấy `status` của ca đã đẻ ra text    │
+         * │ đó — luật phải đứng ở chỗ nhìn thấy thứ nó quản.                │
+         * │ → [[agentco-rule-must-see-what-it-governs]]                     │
+         * └────────────────────────────────────────────────────────────────┘
+         */
+        // ⚠ Bọc vòng lặp chứ KHÔNG `continue`: dưới đây còn chỗ cho việc khác
+        // của mỗi receipt, và một `continue` sẽ lặng lẽ nuốt luôn việc ấy.
+        if (learnable(r) && !leaked) {
+          for (const lesson of r.lessons) {
+            // `r.reads` = tài liệu tủ mà CHÍNH nhân viên này đã mở trong ca. Bài
+            // học của nó sống chết theo đúng những file đó — thực thể yếu.
+            this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? [], r.reads);
+          }
         }
       }
 
@@ -1372,7 +1533,7 @@ export class Office {
       if (result.stoppedBy === 'usage_limit') {
         report =
           `Hết lượt dùng Claude. Văn phòng tạm nghỉ, còn ${result.pending.length} việc chưa làm. ` +
-          `Gõ "tiếp tục" khi có lượt lại.`;
+          `Gõ /resume khi có lượt lại.`;
         status = 'paused';
       } else if (result.stoppedBy === 'auth') {
         report = 'Chưa đăng nhập Claude Code. Chạy `claude` một lần để đăng nhập rồi thử lại.';
@@ -1452,7 +1613,7 @@ export class Office {
           status = 'done';
         } else {
         const summary = await this.mailbox.lock(() =>
-          this.assistant.report(plan.steps, receipts, friction),
+          this.assistant.report(plan.steps, receipts, friction, leaked),
         );
         usage = addUsage(usage, summary.usage);
         this.logAssistantUsage('report', summary.usage);
@@ -1465,7 +1626,8 @@ export class Office {
          * loại nói dối mà `stoppedReceipt` đã sửa cho nhánh bị ngắt; nhánh chạy
          * hết bình thường thì chưa ai kiểm.
          */
-        const gone = this.missingOutputs(plan, receipts);
+        // `gone` đã tính ở trên — nó phải chạy TRƯỚC hai cửa bài học, xem chỗ
+        // dựng `leaked`. Ở đây chỉ còn việc nói ra cho người dùng.
         if (gone.length) {
           status = 'failed';
           /**
@@ -1481,7 +1643,7 @@ export class Office {
            */
           const strays = strayFilesOf(receipts);
           report += strays.length
-            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm NGOÀI văn phòng nên panel Kết quả không thấy: ` +
+            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm ngoài văn phòng nên panel Kết quả không thấy: ` +
               `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}. ` +
               `File có thật và dùng được — bạn xem thử rồi bảo mình chép về đúng chỗ, ` +
               `không cần chạy lại từ đầu.`
@@ -1511,7 +1673,7 @@ export class Office {
         });
       }
       /**
-       * Đồng bộ NGOÀI nhánh trên, và đó là chỗ bản nháp đầu suýt sai.
+       * Đồng bộ ngoài nhánh trên, và đó là chỗ bản nháp đầu suýt sai.
        *
        * Nhánh trên chỉ chạy khi có bài học hoặc ca `done`. Nhưng bảng kê kết quả
        * phải cập nhật kể cả khi ca `failed`/`stopped` — nhân viên có thể đã ghi
@@ -1535,7 +1697,7 @@ export class Office {
        *    hoa. File vẫn nằm nguyên trong ngăn Kết quả cho ai cần.
        */
       const shown = status === 'stopped' ? [] : receipts.filter((r) => !r.answer.trim());
-      this.finish(record, status, report, usage, receipts.length, shown);
+      this.finish(record, status, report, usage, receipts.length, shown, plan.redirected ?? []);
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1673,7 +1835,29 @@ export class Office {
       }
     }
     if (servers.size) {
-      lines.push(`Đã ghi ra ngoài qua: ${[...servers].sort().join(', ')}`);
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ HAI CHỖ SAI TRONG MỘT DÒNG, cùng sửa 24/08.                          │
+       * │                                                                      │
+       * │ ① Nó in cái BĂM (`a385afc3ab6`). Người dùng đặt tên cánh tay ở hộp   │
+       * │   thoại và không bao giờ gặp lại cái tên đó. Nhãn nằm sẵn ở          │
+       * │   `company.arms[id].label` — ta đang cầm mà không nói ra.            │
+       * │                                                                      │
+       * │ ② Câu cũ *"Đã ghi ra ngoài qua: …"* KHAI NHIỀU HƠN THỨ TA KIỂM.      │
+       * │   `landingOf` ghi nhận một lời GỌI TOOL, không ghi nhận kết quả —    │
+       * │   và 10/14 tool của cánh tay filesystem là CHỈ ĐỌC. Ca có thật, đo   │
+       * │   được: `P-260824-0355-r3qe` bị deny cả ba lần, không một byte nào   │
+       * │   được ghi, và báo cáo vẫn nói *"Đã ghi ra ngoài qua: a385afc3ab6"*. │
+       * │                                                                      │
+       * │ Câu mới nói ĐÚNG thứ quan sát được — *đã dùng cánh tay này* — rồi    │
+       * │ khoanh vùng phần bất định thành một câu riêng. Cùng luật với          │
+       * │ `kind: 'command'` của `Bash`: khai điều mình biết, dán nhãn phần     │
+       * │ mình không biết, không gộp hai thứ vào một câu khẳng định.           │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const named = [...servers].map((id) => this.loaded.company.arms[id]?.label || id).sort();
+      lines.push(`Có dùng kết nối: ${named.join(', ')}`);
+      lines.push('(kết quả của kết nối có thể nằm ngoài thư mục văn phòng)');
     }
     if (ranCommand) {
       lines.push('Có chạy lệnh trên máy — kết quả có thể nằm ngoài thư mục văn phòng.');
@@ -1699,6 +1883,8 @@ export class Office {
     usage: Usage,
     tasks: number,
     receipts: readonly Receipt[] = [],
+    /** Đường dẫn ngoài văn phòng mà `outputScoper` đã kéo về khung. → `Plan.redirected` */
+    redirected: readonly string[] = [],
   ): void {
     /**
      * ⚠ BÁO CÁO KHÔNG ĐƯỢC MÂU THUẪN VỚI DẢI BƯỚC NGAY BÊN CẠNH NÓ. → §B
@@ -1729,9 +1915,43 @@ export class Office {
     const undone = record.steps.filter((s) => s.status !== 'done');
     if (status === 'done' && undone.length > 0 && report.trim()) {
       report +=
-        `\n\n⚠ Nhưng còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
+        `\n\n⚠ Còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
         undone.map((s) => `"${s.title}"`).join(', ') +
         `. Kết quả ở trên chỉ tính phần đã làm.`;
+    }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ NGƯỜI DÙNG XIN MỘT CHỖ ngoài VĂN PHÒNG — NÓI RA, VÀ CHỈ LỐI ĐI.    │
+     * │                                                                    │
+     * │ Ca 24/08 (`P-260824-0401-q7ma`): họ bảo chép file vào              │
+     * │ `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về    │
+     * │ `artifacts/` (đúng thiết kế), Trợ lý nhìn ra sự lệch đó và tự viết:  │
+     * │                                                                    │
+     * │   *"…nếu cần mình sẽ thử ghi lại đúng vị trí đó."*                  │
+     * │                                                                    │
+     * │ Thử lại bao nhiêu lần cũng vào `artifacts/`: `outputScoper` chạy    │
+     * │ TRƯỚC khi nhân viên được phóng. Đó là một lời mời vào vòng lặp      │
+     * │ không có lối ra, và mỗi vòng đều tính tiền.                         │
+     * │                                                                    │
+     * │ Dòng dưới dựng bằng CODE từ chính chuỗi `outputScoper` vừa viết     │
+     * │ lại — 0 token, model không "quên" được, và nó nói ra ĐƯỜNG ĐI CÓ    │
+     * │ THẬT thay vì một lời hứa: cắm một kết nối trỏ vào thư mục đó.       │
+     * │ Đó chính là luật §8·0 nói bằng tiếng người — *mọi đường ra phải là  │
+     * │ một năng lực CÓ TÊN* — và từ 24/08 nó chạy được thật (SPEC-arms     │
+     * │ §5i, ca B).                                                        │
+     * │                                                                    │
+     * │ ⚠ KHÔNG dán vào ca `stopped`: người vừa bấm Dừng không cần một bài  │
+     * │ giảng về chỗ để file.                                              │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    if (redirected.length && status !== 'stopped' && report.trim()) {
+      const shownPaths = [...new Set(redirected)].slice(0, 3);
+      report +=
+        `\n\nBạn có nhắc tới ${shownPaths.map((p) => `"${p}"`).join(', ')}. ` +
+        `Kế hoạch luôn đặt kết quả trong thư mục văn phòng, nên file nằm ở đường dẫn ghi bên dưới. ` +
+        `Muốn nó nằm thẳng ngoài đó, cắm một kết nối "File trên máy" trỏ vào thư mục ấy rồi giao ` +
+        `cho nhân viên — đó là đường duy nhất ghi ra ngoài mà vẫn vào được nhật ký.`;
     }
 
     const where = this.whereBlock(receipts);
@@ -1827,8 +2047,39 @@ export class Office {
     const notes = this.knowledge.notesByRole();
     const connected = new Set(layout.edges.filter((e) => e.from === ASSISTANT_NODE).map((e) => e.to));
 
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ TÊN TÀI KHOẢN CHO NODE CÁNH TAY — đọc kho OAuth **LƯỜI, một lần**.   │
+     * │                                                                      │
+     * │ ⚠ ĐÍNH CHÍNH 27/08. `describeNode` từng ghi *"KHÔNG tra tên workspace │
+     * │ ở đây … vì nhãn mặc định của cánh tay OAuth ĐÃ kèm tên workspace"*.   │
+     * │ Lý lẽ đó chết cùng ngày: nhãn thôi ghép tài khoản, vì nó đóng băng ở  │
+     * │ tài khoản đầu tiên và nói dối sau lần đổi thứ hai. → `ArmDialog.tsx`  │
+     * │                                                                      │
+     * │ Nỗi lo cũ vẫn đúng và vẫn được tôn trọng: `canvas()` chạy mỗi sự kiện │
+     * │ SSE, nên **một lần đọc cho mỗi node** thì đắt thật. Cách ở đây:       │
+     * │  · lười — văn phòng không có cánh tay OAuth nào ⇒ **không chạm đĩa**; │
+     * │  · một lần cho cả sơ đồ — đúng khuôn `Company.listArms`.              │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    let oauth: ReturnType<typeof readOAuth> | null = null;
+    const viaOf = (server: string): string | undefined => {
+      const names = this.loaded.company.arms[server]?.secrets ?? [];
+      if (!names.length) return undefined;
+      oauth ??= readOAuth(companyPaths(this.loaded.companyDir));
+      // Vắng ⇒ không dùng OAuth, hoặc workspace đã bị gỡ. Cả hai đều là "không
+      // biết" ⇒ không vẽ gì, chứ không bịa một cái tên. (cùng luật §armWorkspace)
+      return names.map((s) => oauth?.[s]?.label).find(Boolean);
+    };
+
     return {
-      nodes: layout.nodes.map((n) => this.describeNode(n, missing.has(n.id), connected.has(n.id), notes)),
+      nodes: layout.nodes.map((n) => ({
+        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf),
+        // Khoá sắp xếp bãi đỗ — tính ở MỘT chỗ (`layout.ts §armGroup`) rồi gửi
+        // kèm, để nút "Sắp xếp lại" ở trình duyệt xếp y hệt server. Tính lại ở
+        // giao diện là dựng bản mã thứ hai của cùng một luật phân loại.
+        ...this.layout.armGroup(n),
+      })),
       edges: layout.edges,
       knowledge: { shared: this.knowledge.countShared(), total: this.knowledge.size },
     };
@@ -1841,6 +2092,132 @@ export class Office {
     this.refreshAssistantContext();
     this.emit({ type: 'layout.changed', say: 'Sơ đồ văn phòng đã cập nhật.', plan_id: null });
     return this.canvas();
+  }
+
+  /**
+   * BỎ HẲN một cánh tay khỏi văn phòng này: xoá `mcp:` khỏi mọi vai trò và khỏi
+   * Trợ lý. Dùng khi cánh tay bị xoá ở cấp công ty.
+   *
+   * ⚠ Phải chạy CẢ KHI server đã biến mất khỏi `company.yaml` — nếu không thì
+   * một vai trò còn khai `mcp: [x]` sẽ giữ node mồ côi trên sơ đồ mãi mãi, và
+   * người dùng bấm "Xoá hẳn" lần nữa chỉ nhận về *"không có cánh tay x"*. Đó
+   * đúng ca user báo 23/08: nút xoá báo lỗi, node không biến mất.
+   *
+   * Trả `true` nếu có gì đó thật sự đổi — caller dùng để quyết có phát sự kiện.
+   */
+  dropArm(server: string): boolean {
+    let touched = false;
+    // Bỏ SỰ CÓ MẶT trước: thiếu bước này thì node vẫn nằm trên sơ đồ dù không
+    // còn sợi dây nào — đúng cái node ma đã mất một vòng mới bắt được.
+    if (this.loaded.config.arms.includes(server)) {
+      this.writeYamlList(
+        this.loaded.paths.configFile,
+        ['arms'],
+        this.loaded.config.arms.filter((s) => s !== server),
+      );
+      touched = true;
+    }
+    for (const [roleId, role] of this.loaded.roles) {
+      if (!role.mcp.includes(server)) continue;
+      this.writeYamlList(
+        path.join(this.loaded.paths.roles, `${roleId}.yaml`),
+        ['mcp'],
+        role.mcp.filter((s) => s !== server),
+      );
+      touched = true;
+    }
+    const forAssistant = this.loaded.config.assistant.mcp;
+    if (forAssistant.includes(server)) {
+      this.writeYamlList(
+        this.loaded.paths.configFile,
+        ['assistant', 'mcp'],
+        forAssistant.filter((s) => s !== server),
+      );
+      touched = true;
+    }
+    if (touched) this.reload();
+    return touched;
+  }
+
+  /** Ghi một mảng chuỗi vào yaml, giữ chú thích. Xoá hẳn khoá khi rỗng. */
+  private writeYamlList(file: string, keyPath: string[], next: string[]): void {
+    const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
+    if (next.length) doc.setIn(keyPath, doc.createNode(next));
+    else doc.deleteIn(keyPath);
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
+  }
+
+  /**
+   * GIAO một cánh tay cho những nhân viên nào. → docs/SPEC-arms.md §6f bước 3
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ BƯỚC NÀY BẮT BUỘC, KHÔNG PHẢI TUỲ CHỌN — và đây là lý do nó có mã nguồn │
+   * │ riêng thay vì để giao diện tự kéo dây.                                   │
+   * │                                                                          │
+   * │ Một node KHÔNG CÓ DÂY là một NODE CHẾT: nó hiện trên sơ đồ, trông như đã │
+   * │ xong, và không ai dùng được. Người dùng non-code vừa bấm "Lưu" và thấy    │
+   * │ dấu ✓ — họ sẽ không đoán ra là còn phải kéo một sợi dây nữa. Đó đúng lớp │
+   * │ lỗi "hệ thống nói dối về trạng thái của chính nó" (§5i·1).                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Cạnh `mcp→agent` là NGUỒN SỰ THẬT cho `role.mcp` — `LayoutStore.save` ghi nó
+   * xuống `roles/<id>.yaml`, không xuống `layout.json`. Nên "kéo dây" và "cấp
+   * quyền dùng" là **cùng một hành động**, không phải hai.
+   */
+  grantArm(server: string, roleIds: string[]): CanvasState {
+    this.assertLive();
+
+    /**
+     * GHI SỰ CÓ MẶT TRƯỚC, nối dây sau — và bước này chạy KỂ CẢ khi `roleIds`
+     * rỗng. Đó là điểm của nó: cắm một cánh tay mà chưa giao cho ai thì node
+     * vẫn phải hiện ra để còn kéo dây. → types.ts §OfficeConfig.arms
+     */
+    if (!this.loaded.config.arms.includes(server)) {
+      this.writeYamlList(this.loaded.paths.configFile, ['arms'], [...this.loaded.config.arms, server]);
+      this.reload();
+    }
+
+    const from = mcpNodeId(server);
+    const cur = this.layout.read().layout.edges;
+    const have = new Set(cur.map((e) => `${e.from} ${e.to}`));
+
+    const add = roleIds
+      .filter((r) => this.loaded.roles.has(r))
+      .map((r) => ({ from, to: agentNodeId(r) }))
+      .filter((e) => !have.has(`${e.from} ${e.to}`));
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 CHÌA PHẢI ĐI THEO SỢI DÂY — nửa này TỪNG THIẾU HẲN.             │
+     * │                                                                    │
+     * │ `pickMcp` (worker.ts) dựng env từ `role.secrets`, nhưng cho tới     │
+     * │ 23/08 **không có chỗ nào GHI `role.secrets`** trong luồng cắm cánh  │
+     * │ tay. Hậu quả: cắm một cánh tay cần chìa thì token vào               │
+     * │ `.state/secrets.json` đúng, `role.mcp` đúng, mà tiến trình MCP khởi │
+     * │ động KHÔNG CÓ BIẾN MÔI TRƯỜNG nào — hỏng lúc chạy thật, sau khi     │
+     * │ giao diện đã báo ✓.                                                 │
+     * │                                                                    │
+     * │ Sổ chung là chỗ trả lời "cánh tay này cần chìa tên gì" (§6i), nên   │
+     * │ nối dây và cấp chìa giờ là MỘT thao tác — đúng chốt §7a của          │
+     * │ SPEC-tools-approval: *"nối dây là xong, chìa đi theo"*.             │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const need = this.loaded.company.arms[server]?.secrets ?? [];
+    if (need.length) {
+      for (const r of roleIds) {
+        const role = this.loaded.roles.get(r);
+        if (!role) continue;
+        const next = [...new Set([...role.secrets, ...need])].sort();
+        if (next.length === role.secrets.length) continue;
+        this.writeYamlList(path.join(this.loaded.paths.roles, `${r}.yaml`), ['secrets'], next);
+      }
+      this.reload();
+    }
+
+    // Không có gì để thêm thì KHÔNG ghi và KHÔNG phát sự kiện: một `layout.changed`
+    // rỗng làm mọi tab vẽ lại sơ đồ để nhận về đúng thứ chúng đang có.
+    if (!add.length) return this.canvas();
+    return this.saveCanvas({ edges: [...cur, ...add] });
   }
 
   /**
@@ -2001,7 +2378,7 @@ export class Office {
        *
        * Công tắc DUY NHẤT trong cả hệ thống về khả năng — mọi tool khác bật sẵn
        * và không tắt được (`BUILTIN_TOOLS`). Nó có công tắc riêng vì nó là thứ
-       * duy nhất chạm được ra NGOÀI thư mục văn phòng.
+       * duy nhất chạm được ra ngoài thư mục văn phòng.
        */
       bash?: boolean;
     },
@@ -2235,6 +2612,9 @@ export class Office {
     this.knowledge.scan();
     this.library.rebind(this.loaded.paths);
     this.artifacts.rebind(this.loaded.paths);
+    // Đổi tên văn phòng làm dời thư mục ⇒ nhật ký phải đi theo. Quên dòng này
+    // là log ghi tiếp vào thư mục cũ, và giao diện đọc chỗ mới thấy trống trơn.
+    this.audit.rebind(this.loaded.paths.state);
     this.refreshAssistantContext();
   }
 
@@ -2715,15 +3095,17 @@ export class Office {
     }
 
     const norm = (p: string): string => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+    const armDirs = armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers);
     for (const t of plan.tasks ?? []) {
       // `mtime` của một input đọc THẲNG từ đĩa: nguồn thường là tài liệu trong
       // tủ, và tủ không nằm trong bảng kê kết quả.
       const srcTimes: string[] = [];
       for (const i of t.inputs ?? []) {
         // `resolveInput` chứ không phải `safeJoin`: đầu vào có thể là một đường
-        // dẫn TUYỆT ĐỐI ngoài văn phòng. Dùng safeJoin thì mọi kết quả dựng từ
-        // nguồn bên ngoài lặng lẽ mất phép kiểm "có ôi không". → paths.ts
-        const abs = resolveInput(this.loaded.dir, i.path);
+        // dẫn TUYỆT ĐỐI ngoài văn phòng, hoặc **tên một cánh tay** (`Musics`).
+        // Dùng safeJoin thì mọi kết quả dựng từ nguồn bên ngoài lặng lẽ mất
+        // phép kiểm "có ôi không" — chỗ thứ BA của cùng một luật. → paths.ts
+        const abs = resolveInput(this.loaded.dir, i.path, armDirs);
         if (!abs) continue;
         try {
           srcTimes.push(fs.statSync(abs).mtime.toISOString());
@@ -2931,6 +3313,21 @@ export class Office {
     if (!this.artifacts.remove(rel)) return false;
     this.refreshAssistantContext();
     return true;
+  }
+
+  /**
+   * DỌN SẠCH ngăn Kết quả. Trả về số file đã xoá.
+   *
+   * ⚠ `refreshAssistantContext()` ở đây KHÔNG phải thủ tục — bảng kê Kết quả nằm
+   * trong prefix của Trợ lý. Bỏ nó là Trợ lý tiếp tục nêu tên hàng chục file vừa
+   * bị xoá, rất tự tin, và người dùng bấm vào từng cái để nhận "không tìm thấy".
+   * Đúng cửa tắt mà §3116 đã đóng một lần rồi.
+   */
+  clearArtifacts(): number {
+    this.assertLive();
+    const n = this.artifacts.removeAll();
+    if (n) this.refreshAssistantContext();
+    return n;
   }
 
   private refreshAssistantContext(): void {
@@ -3237,8 +3634,120 @@ export class Office {
     missing: boolean,
     connected: boolean,
     notes: Record<string, number>,
+    /** Tra tên tài khoản của một cánh tay. Lười — xem `canvas()`. */
+    viaOf: (server: string) => string | undefined,
   ): CanvasNode {
     const base: CanvasNode = { ...n, label: n.id, missing, connected, removable: true };
+    /**
+     * Node cánh tay hiện NHÃN, không hiện băm. `a3f9c2e1b0` là danh tính, không
+     * phải thứ để đọc — sơ đồ mà đầy chuỗi băm thì không ai nhìn ra cái gì.
+     * Rơi về chính băm khi sổ chưa có mục (cấu hình cũ, hoặc dán tay vào yaml).
+     */
+    if (n.kind === 'mcp') {
+      const meta = n.server ? this.loaded.company.arms[n.server] : undefined;
+      // Mục danh mục (nếu có) là nguồn của HÌNH. Không có `catalog` ⇒ người dùng
+      // tự dán ⇒ `custom`, y hệt `ArmDialog §kindOf` — một trục phân loại, hai
+      // chỗ đọc, và cả hai đọc từ cùng một dữ kiện.
+      const entry = meta?.catalog ? findArm(meta.catalog) : undefined;
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 NHÁNH `cli` — THIẾU Ở ĐÂY tới 01/09. (bug user bắt)               │
+       * │                                                                      │
+       * │ *"Tạo CLI, nhưng node ở canvas vẫn là icon của custom MCP"* — đúng:   │
+       * │ tờ khai CLI không có `catalog`, nên nó rơi vào nhánh `custom` và mang │
+       * │ hình phích cắm suốt từ lúc cắm.                                       │
+       * │                                                                      │
+       * │ ⚠ Chú thích ngay trên khai *"y hệt `ArmDialog §kindOf`"*, và câu đó   │
+       * │ **đã thành sai** đúng lúc tôi thêm `cli` vào một bên mà quên bên này. │
+       * │ Một trục phân loại đọc ở hai chỗ thì thêm một giá trị phải sửa cả     │
+       * │ hai — và chú thích khai "hai chỗ giống nhau" KHÔNG canh được chuyện   │
+       * │ đó. → [[agentco-finish-completely]]                                   │
+       * │                                                                      │
+       * │ ⚠ Hỏi `type === 'cli'` trên **cấu hình thi hành** (`mcpServers`), y   │
+       * │ hệt `isCliArm`. Nửa `arms[]` chỉ giữ nhãn/chìa/việc — nó **không có** │
+       * │ trường nào nói đây là tờ khai lệnh, nên đọc ở đó là đoán.             │
+       * │                                                                      │
+       * │ ⚠ VÀ ĐỨNG TRƯỚC `catalog`: đúng, hôm nay tờ khai CLI không bao giờ có │
+       * │ mục danh mục — nhưng thứ tự này làm nhánh CLI **không phụ thuộc vào   │
+       * │ điều đó**. Ngày ta dựng sẵn một cánh tay CLI trong danh mục (§8 lộ    │
+       * │ trình Google), nó vẫn ra `>_` chứ không lặng lẽ thành `service`.      │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const cfg = n.server ? this.loaded.company.mcpServers[n.server] : undefined;
+      return {
+        ...base,
+        label: meta?.label || n.server || n.id,
+        avatar: '🔌',
+        armKind: isCliArm(cfg)
+        ? 'cli'
+        : !meta?.catalog
+        ? 'custom'
+        : entry?.shape === 'browser'
+          ? 'browser'
+          : entry?.folders
+            ? 'files'
+            : 'service',
+        ...(entry?.brand.mark ? { mark: entry.brand.mark } : {}),
+        /**
+         * NHÃN CẤU HÌNH — *"nhìn vào panel là biết đang cấu hình thế nào"* (user
+         * 29/08). Suy từ **cấu hình đã lưu**, không từ một danh sách id cất riêng:
+         * hai nguồn cho cùng một sự thật thì nguồn sai sẽ là nguồn **hiển thị**.
+         * → `catalog.ts §activeOptions`
+         */
+        ...(() => {
+          const cfg = n.server ? this.loaded.company.mcpServers?.[n.server] : undefined;
+          if (!entry || !cfg) return {};
+          const on = activeOptions(entry, cfg);
+          /**
+           * `canLogin` = cánh tay có **hồ sơ bền** để đăng nhập VÀO. Không có
+           * `dirs` thì đăng nhập xong cũng mất theo lượt việc — bày nút ở đó là
+           * bày một cái bẫy, không phải một tính năng.
+           */
+          const login = on.some((o) => o.dirs?.length);
+          return {
+            ...(on.length ? { optionLabels: on.map((o) => o.label) } : {}),
+            ...(login ? { canLogin: true } : {}),
+          };
+        })(),
+        connected: true,
+        /**
+         * NẤC QUYỀN + SỐ VIỆC — để bảng chi tiết vẽ huy hiệu **từ dữ liệu**, chứ
+         * không từ chuỗi tên. Nhãn đổi tự do; cái này thì không. → §6j
+         */
+        ...(meta?.level ? { level: meta.level } : {}),
+        ...(meta?.tools?.length ? { toolCount: meta.tools.length } : {}),
+        /**
+         * TÊN TÀI KHOẢN — node vẽ nó ở dòng phụ, thay cho chữ "kết nối".
+         *
+         * ⚠ Chỗ này từng cố ý BỎ TRỐNG, với lý lẽ *"nhãn mặc định đã kèm tên
+         * workspace rồi"*. Lý lẽ đó không còn: nhãn thôi ghép tài khoản (nó
+         * đóng băng ở tài khoản đầu tiên), nên nếu đây cũng trống thì sơ đồ
+         * không còn chỗ nào phân biệt hai cánh tay cùng hãng. → `canvas()`
+         *
+         * Suy từ `arms[].secrets` tra ngược kho OAuth, **không** đọc chuỗi
+         * `label`: nhãn là của người dùng và đổi tự do; tài khoản là sự thật
+         * thuộc về cấu hình. Cùng luật với `Company.listArms`. → §armWorkspace
+         */
+        ...(() => {
+          const via = n.server ? viaOf(n.server) : undefined;
+          return via ? { via } : {};
+        })(),
+        /**
+         * THƯ MỤC THẬT của cánh tay — đọc từ `company.yaml`, KHÔNG sửa được ở đây.
+         *
+         * Nhãn là thứ người dùng đặt và đổi được; thư mục là **cấu hình**, và
+         * đổi nó nghĩa là đổi `armHash` ⇒ một cánh tay KHÁC. Nên ô này chỉ đọc:
+         * muốn thư mục khác thì cắm một kết nối khác, đúng luật §6i.
+         *
+         * ⚠ KHÔNG dò `process.platform`, và đó là chủ ý — `folderRoots` nhận cả
+         * `D:\…` lẫn `/home/…` ở mọi hệ, vì một văn phòng zip từ máy khác hệ
+         * vẫn phải hiện đúng chuỗi đã ghi trong `company.yaml`. Hiện nguyên văn,
+         * không chuẩn hoá dấu gạch: thứ người dùng đối chiếu với Explorer/Finder
+         * là chuỗi họ đã nhập, không phải bản ta viết lại.
+         */
+        folders: n.server ? folderRoots(this.loaded.company.mcpServers[n.server]) : [],
+      };
+    }
     if (n.kind === 'assistant') {
       const a = this.loaded.config.assistant;
       return {
@@ -3285,9 +3794,6 @@ export class Office {
         connected: true,
         removable: false,
       };
-    }
-    if (n.kind === 'mcp') {
-      return { ...base, label: n.server ?? n.id, avatar: '🔌', connected: true };
     }
     const role = n.role ? this.loaded.roles.get(n.role) : undefined;
     if (!role) return { ...base, label: n.role ?? n.id, avatar: '?', missing: true };
@@ -3464,19 +3970,31 @@ export class Office {
     return path.join(this.loaded.paths.state, 'assistant-session.json');
   }
 
-  private readSessionId(): string | undefined {
+  /**
+   * ⚠ ĐỌC CẢ ẢNH CHỤP DANH BẠ, không chỉ con trỏ phiên. → `Assistant.resumeFrom`
+   *
+   * Hai thứ này là MỘT CẶP: hội thoại cũ (nơi có những câu từ chối cũ) và ảnh
+   * chụp để biết cấu hình đã đổi gì. Lưu một, quên một, thì sau restart lịch sử
+   * còn nguyên mà tín hiệu đính chính thì mất — và model theo lịch sử.
+   */
+  private readSession(): { id?: string; reach?: Record<string, string[]> } {
     try {
-      const raw = JSON.parse(fs.readFileSync(this.sessionFile(), 'utf8')) as { session_id?: string };
-      return raw.session_id;
+      const raw = JSON.parse(fs.readFileSync(this.sessionFile(), 'utf8')) as {
+        session_id?: string;
+        reach?: Record<string, string[]>;
+      };
+      return { id: raw.session_id, reach: raw.reach };
     } catch {
-      return undefined;
+      return {};
     }
   }
 
   private saveSessionId(): void {
     if (!this.assistant.session) return;
+    const reach = this.assistant.reachSnapshot;
     this.writeJson(this.sessionFile(), {
       session_id: this.assistant.session,
+      ...(reach ? { reach } : {}),
       saved: new Date().toISOString(),
     });
   }
@@ -3527,7 +4045,7 @@ function readsOf(receipts: readonly Receipt[]): string[] {
 }
 
 /**
- * File ca này ghi RA NGOÀI thư mục văn phòng, và có thật trên đĩa.
+ * File ca này ghi RA ngoài thư mục văn phòng, và có thật trên đĩa.
  *
  * Dùng ở đúng một chỗ: chọn câu nào để nói khi file đã hứa không có mặt. Không
  * bao giờ đi vào `whereBlock` — "kết quả của bạn nằm ở đây" chỉ được nói về chỗ
@@ -3592,13 +4110,20 @@ use_preset: false
 budget:
   # max_turns là đòn bẩy chi phí lớn nhất: mỗi lượt đọc lại TOÀN BỘ prefix.
   # Vai trò tier eco cần con số CAO HƠN tier standard — model rẻ đi nhiều
-  # bước hơn cho cùng một việc.
-  max_turns: ${tier === 'eco' ? 12 : 6}
+  # bước hơn cho cùng một việc. Tier deep thì ngược lại: mỗi lượt đắt hơn hẳn
+  # nhưng nó đi ít bước hơn.
+  #
+  # ⚠ NỚI 26/08 (user chốt) — 6/12 là con số của thời CHƯA CÓ MCP. Mỗi lời gọi
+  # MCP là MỘT LƯỢT, nên một việc chạm vài trang Notion đốt hết trần trước khi
+  # kịp làm xong. Đo được: xoá một trang con = 9 lượt, chạm trần ở 6, và cái
+  # giá của việc chạm trần là ĐẮT NHẤT trong mọi kiểu hỏng — nó chạy tới kịch
+  # rồi mất trắng.
+  max_turns: ${tier === 'eco' ? 20 : tier === 'deep' ? 10 : 15}
   # Trần chi phí MỘT việc. Đặt 0 = không giới hạn.
   # Số dưới đây RỘNG có chủ ý: chặn giữa chừng là mất trắng số tiền đã tiêu mà
   # không có kết quả. Đo được 21/08 trên bài gộp CSV 200 dòng: eco ~$0.17,
   # standard ~$0.45. Siết xuống khi bạn đã biết việc của mình tốn bao nhiêu.
-  max_usd: ${tier === 'eco' ? '1.0' : '2.0'}
+  max_usd: ${tier === 'eco' ? '2.0' : tier === 'deep' ? '10.0' : '5.0'}
   knowledge_pack: 3000
 `;
 }

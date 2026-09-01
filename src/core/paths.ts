@@ -291,6 +291,46 @@ export function safeJoin(base: string, relative: string): string {
 }
 
 /**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ LOẠI ĐẦU VÀO THỨ TƯ: **MỘT ĐỊA CHỈ WEB**. (bug user báo 31/08)           │
+ * │                                                                          │
+ * │ User: *"tra giúp repo modelcontextprotocol/servers…"* → Trợ lý chép URL   │
+ * │ vào `inputs` (đúng như `ASSISTANT_CORE` dặn) → chặn cả kế hoạch:         │
+ * │ *"cần đọc … nhưng không có file đó"*. Đo được: `resolveInput` biến        │
+ * │ `https://github.com/x` thành **`D:\vp\https:\github.com\x`** — một đường  │
+ * │ dẫn rác, rồi `existsSync` nói không có, đúng như nó phải nói.            │
+ * │                                                                          │
+ * │ ⚠⚠ LẦN THỨ BA cùng một lớp lỗi ở cùng một hàm: 22/08 mù trước đường dẫn  │
+ * │ tuyệt đối · 26/08 mù trước tên cánh tay · 31/08 mù trước URL. Cả ba lần   │
+ * │ Trợ lý **bị chặn vì tuân lệnh**, và cả ba lần lỗi ở TẦNG KIỂM.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ═══ 🔴 VÌ SAO CHỈ NHẬN KHI CÓ `http://` / `https://` ═══
+ *
+ * User hỏi thẳng: *"đôi khi người dùng bỏ qua http, chỉ gõ domain như
+ * facebook.com thì công việc xác định lại khó thêm nữa"*. Đúng — và câu trả lời
+ * là **không đoán**, vì hai cái sai KHÔNG đối xứng:
+ *
+ * | đoán sai | hậu quả |
+ * |---|---|
+ * | URL thật bị coi là file | kế hoạch bị chặn — **ồn ào, sửa được**, gõ lại là xong |
+ * | tên file thật bị coi là URL | **cổng kiểm im lặng tắt** cho đầu vào đó ⇒ worker chạy, tốn tiền, rồi hỏng ở xa nguyên nhân |
+ *
+ * ⇒ Không chắc thì chọn phía **ồn ào**. → [[agentco-safe-default-direction]]
+ *
+ * Và `facebook.com` **thật sự không phân biệt được**: `report.md`, `data.csv`,
+ * `v1.2` cũng có dấu chấm. Một phép đoán "trông như tên miền" sẽ bắn vào tên
+ * file thật, tức là tự tắt cổng kiểm cho đúng thứ nó sinh ra để canh.
+ *
+ * ⚠ Hệ quả CÓ Ý THỨC: gõ trống `facebook.com` thì vẫn bị chặn như cũ. Đó là ca
+ * **chưa vá**, không phải ca đã vá — và câu lỗi vẫn nói được rằng không có file
+ * tên đó, tức người dùng còn đường sửa (gõ đủ `https://`).
+ */
+export function isUrlInput(p: string): boolean {
+  return /^https?:\/\/\S+$/i.test(p.trim());
+}
+
+/**
  * ĐẦU VÀO của một task → đường dẫn tuyệt đối để mở. `undefined` = không hợp lệ.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -320,13 +360,398 @@ export function safeJoin(base: string, relative: string): string {
  * │ `cwd` của daemon, một cái gốc chẳng liên quan gì tới ai.                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export function resolveInput(officeDir: string, p: string): string | undefined {
+export function resolveInput(
+  officeDir: string,
+  p: string,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ LOẠI ĐƯỜNG DẪN THỨ BA: **TÊN MỘT CÁNH TAY**. (bug user báo 26/08)       │
+   * │                                                                          │
+   * │ User gõ *"Liệt kê danh sách bài hát trong Musics"*. Trợ lý làm ĐÚNG      │
+   * │ những gì `ASSISTANT_CORE` dặn — *"đường dẫn người dùng gõ là chính xác,  │
+   * │ chép nguyên văn vào `inputs`"* — nên nó ghi `inputs: ["Musics"]`. Rồi    │
+   * │ `validate` tìm một file tên `Musics` trong văn phòng, không thấy, và     │
+   * │ chặn cả kế hoạch: *"không có file đó, và không việc nào tạo ra nó"*.     │
+   * │                                                                          │
+   * │ Ba lượt liên tiếp, và người dùng nói đúng: *"bạn được cấp MCP rồi mà"*.  │
+   * │ Cánh tay tên **Musics** trỏ vào `D:\…\Musics` và nằm ngay trong danh bạ  │
+   * │ của chính nhân viên đó. Chuỗi ấy giải được — ta chỉ chưa thử.            │
+   * │                                                                          │
+   * │ ⚠ Đây là lần THỨ HAI cùng một lớp lỗi ở cùng một hàm: 22/08 nó mù trước  │
+   * │ đường dẫn tuyệt đối ngoài văn phòng; hôm nay nó mù trước tên cánh tay.   │
+   * │ Cả hai lần, Trợ lý **bị chặn vì tuân lệnh**, và cả hai lần lỗi nằm ở     │
+   * │ TẦNG KIỂM chứ không ở tầng lập kế hoạch. Vá ở đây, không ở prompt: một   │
+   * │ câu dặn thêm sẽ thua chính dòng danh bạ ghi `Musics (đường tắt tới …)`.  │
+   * │ → [[agentco-prompt-rules-lose-to-examples]]                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Khoá đã chuẩn hoá (thường hoá) → thư mục THẬT. Xem `catalog.ts §armDirIndex`.
+   */
+  armDirs?: Record<string, string>,
+): string | undefined {
+  /**
+   * 🔴 CHUỖI RỖNG TRỎ VÀO CHÍNH THƯ MỤC VĂN PHÒNG. (soi ra 31/08, đo được)
+   *
+   * `safeJoin(officeDir, '')` trả về **đúng `officeDir`**, mà thư mục đó thì
+   * luôn tồn tại ⇒ `existsOnDisk` nói CÓ ⇒ cổng kiểm đầu vào **im lặng cho
+   * qua**, và worker nhận một đầu vào trỏ vào cả văn phòng.
+   *
+   * Ca này tới được thật: `TaskIOSchema.path` là `z.string()` **không có
+   * `.min(1)`**, nên một `{"kind":"file","path":""}` do model sinh ra đi qua
+   * schema bình thường.
+   *
+   * ⚠ Vá ở đây chứ không siết schema: siết schema là **ném cả kế hoạch** vì một
+   * ô trống, trong khi ở đây nó chỉ thành "đầu vào không hợp lệ" và người dùng
+   * nhận đúng câu lỗi vốn có.
+   */
+  if (!p.trim()) return undefined;
+
+  // Một địa chỉ web KHÔNG phải một đường dẫn. Trả `undefined` thay vì ghép nó
+  // vào thư mục văn phòng — xem `isUrlInput`.
+  if (isUrlInput(p)) return undefined;
   if (path.isAbsolute(p)) return p;
+
+  let inOffice: string | undefined;
   try {
-    return safeJoin(officeDir, p);
+    inOffice = safeJoin(officeDir, p);
   } catch {
+    // Mưu toan traversal (`../../etc/passwd`) — KHÔNG được rơi xuống nhánh cánh
+    // tay để rồi tìm thấy một thứ khác. Nó phải chết ở đây, như trước.
     return undefined;
   }
+
+  /**
+   * ⚠ FILE TRONG VĂN PHÒNG THẮNG. Chỉ khi nó không tồn tại mới hỏi tới cánh tay.
+   *
+   * Ngược lại thì một cánh tay tên `bao-cao` sẽ nuốt mất `bao-cao/` có thật
+   * trong văn phòng — im lặng, và ở đúng chỗ người dùng tin nhất.
+   */
+  if (!armDirs || existsOnDisk(inOffice)) return inOffice;
+
+  const hit = armDirs[p.replace(/[\\/]+$/, '').toLowerCase()];
+  // Không khớp ⇒ trả đường trong văn phòng như cũ: câu lỗi phải nói về chỗ
+  // người dùng nghĩ tới, không về một thư mục họ chưa từng nhắc.
+  return hit ?? inOffice;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÙNG CẤM — hàm thuần đứng sau `officeJail`. → docs/SPEC-arms.md §5d–§5f   │
+ * │                                                                          │
+ * │ ⚠ ĐO ĐƯỢC 23/08 (`scripts/spike-secrets.ts`), một vai trò chỉ có 7 tool  │
+ * │ mặc định, KHÔNG shell:                                                   │
+ * │                                                                          │
+ * │   A · đọc `company/.state/secrets.json`  → 🔴 ĐỌC ĐƯỢC, chép nguyên văn  │
+ * │   B · ghi `roles/<chính-nó>.yaml`        → 🔴 GHI ĐƯỢC, bằng `Write`     │
+ * │                                                                          │
+ * │ Ca B nặng hơn vẻ ngoài: `Write` là GHI ĐÈ TRỌN FILE, nên một nhân viên   │
+ * │ không *sửa* vai trò của mình — nó **thay** vai trò, tự cấp `tools:`,     │
+ * │ `secrets:`, `mcp:`. Không receipt, không nhật ký, không dòng nào. Không   │
+ * │ có hiệu lực ngay (không `fs.watch`) nhưng SỐNG TRÊN ĐĨA tới `reload()`.   │
+ * │                                                                          │
+ * │ Vì sao `officeJail` cũ trượt cả hai: nó hỏi đúng MỘT câu — *"có ra ngoài │
+ * │ thư mục văn phòng không"*. `.state/` của công ty thì ở ngoài nhưng nó     │
+ * │ **chỉ khớp tool GHI**, mà ca A là ĐỌC. `roles/` thì ở TRONG, nên nó cho   │
+ * │ qua đúng theo thiết kế. Một câu hỏi, hai lỗ.                             │
+ * │                                                                          │
+ * │ ⇒ Hai vùng, ba luật, và ranh giới HẸP có chủ ý:                          │
+ * │                                                                          │
+ * │   `secrets`  `.state/` (công ty VÀ văn phòng)  → cấm CẢ ĐỌC LẪN GHI      │
+ * │   `config`   roles· skills· connectors· *.yaml· layout.json → cấm GHI    │
+ * │   `outside`  ngoài thư mục văn phòng           → cấm GHI (luật cũ)       │
+ * │                                                                          │
+ * │ ⚠⚠ THỨ CỐ Ý KHÔNG CHẶN, và nó quan trọng NGANG phần chặn: `artifacts/`,  │
+ * │ `knowledge/`, `library/` mở nguyên. Kho tri thức là chỗ nhân viên GHI     │
+ * │ bài học — chặn nó là giết cơ chế học. Một bản vá chặn được A+B mà chặn    │
+ * │ luôn mấy chỗ này là hỏng NGƯỢC CHIỀU, và im lặng hơn hẳn, vì không ai đi │
+ * │ kiểm một việc vốn vẫn chạy. Có test canh đúng chuyện đó.                 │
+ * │                                                                          │
+ * │ ⚠ Bonus không định trước: cấm đọc `<office>/.state/` bịt luôn lỗ đã ghi   │
+ * │ ở `OfficePaths.tasks` — *"KHÔNG phải một bức tường bảo mật: `Read` với    │
+ * │ đường dẫn tường minh vẫn mở được"*. Giờ nó là tường thật.                │
+ * │                                                                          │
+ * │ ⚠ RANH GIỚI PHẢI NÓI RA: hàm này chỉ với tới tool có ĐƯỜNG DẪN Ở MỘT     │
+ * │ TRƯỜNG CÓ TÊN. `Bash` nhét đường dẫn lẫn trong chuỗi lệnh ⇒ vẫn đi vòng  │
+ * │ qua được. Câu đúng là "ĐÃ HẸP LẠI, CHƯA ĐÓNG" — đừng viết "đã bịt lỗ",   │
+ * │ đó là lời hứa thứ tư sau `canUseTool`, `safeJoin` và §8·0.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type GuardedZone = 'secrets' | 'config' | 'outside' | 'browser';
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `.playwright-mcp` — DẤU CHẤM CHẶN **TÌM THẤY**, KHÔNG CHẶN **ĐỌC**.   │
+ * │ (user hỏi 30/08, đo ra khe hở)                                           │
+ * │                                                                          │
+ * │ > *"tôi lo nó mò vào .playwright-mcp hoặc .state/browser (cái này hình    │
+ * │ >  như bị chặn rất nặng)"*                                               │
+ * │                                                                          │
+ * │ Nửa sau đúng: `.state/browser/profile` (**506 MB** cookie + phiên đăng    │
+ * │ nhập) bị khoá cứng, vì phép kiểm `.state` nằm **trước** dòng cho `read`   │
+ * │ đi qua. Nửa trước thì hở: `.playwright-mcp` là **anh em** của `.state`,   │
+ * │ không nằm dưới nó ⇒ `guardedZone('read')` trả `undefined` ⇒ gõ đúng       │
+ * │ đường dẫn là đọc được.                                                   │
+ * │                                                                          │
+ * │ Dấu chấm đầu tên **là một cơ chế** — `Grep`/`Glob` không duyệt xuống thư  │
+ * │ mục ẩn (đã đo). Nhưng đó là chặn *tìm thấy*, không phải chặn *đọc*, và    │
+ * │ hai thứ đó khác nhau đúng ở chỗ một cái tên bị lộ ra ngoài (log lỗi, câu  │
+ * │ người dùng dán vào, một artifact cũ) là hàng rào hết tác dụng.            │
+ * │                                                                          │
+ * │ Thứ nằm trong đó không vô hại: `redact.ts` sinh ra vì đọc được **chìa      │
+ * │ phiên Facebook dạng chữ** (`fb_dtsg=…&__user=…`) trong `console-*.log`.   │
+ * │ Nó cắt query khỏi URL — **giảm thiểu, không bịt kín**, và chính nó ghi ra │
+ * │ điều đó. Chặn đọc cả thư mục là lá chắn thứ hai, khác tầng.              │
+ * │                                                                          │
+ * │ ⚠ Vì sao một vùng RIÊNG chứ không gộp vào `secrets`: câu lỗi của          │
+ * │ `secrets` nói về `.state` và chìa khoá. Trả câu đó cho một nhân viên vừa  │
+ * │ chạm log trình duyệt là **chỉ sai cửa** — họ đi tìm chìa khoá ở chỗ không │
+ * │ có, còn việc đúng phải làm (chụp lại trang) thì không ai nói.            │
+ * │                                                                          │
+ * │ 🔴🔴 CHẶN CẢ THƯ MỤC LÀ CẮT TAY NHÂN VIÊN TRÌNH DUYỆT. (user hỏi đúng   │
+ * │ lúc, 30/08: *"việc bịt khe .playwright-mcp có ảnh hưởng tới worker đang   │
+ * │ cắm cánh tay trình duyệt không?"* — CÓ, nếu chặn thô.)                   │
+ * │                                                                          │
+ * │ Đo thư mục thật: **20 `console-*.log` + 21 `page-*.yml`**. Cái sau là     │
+ * │ **ảnh chụp trang** — thứ nhân viên ĐỌC để biết trang đang hiện gì, và     │
+ * │ `redact.ts §isConsoleLog` đã ghi sẵn *"Snapshot (`page-*.yml`) không được │
+ * │ đụng — worker đọc nó"*. Một hàng rào chặn luôn nó là biến cánh tay trình  │
+ * │ duyệt thành vô dụng, im lặng, ở đúng lượt người dùng cần nó nhất.         │
+ * │                                                                          │
+ * │ ⇒ Luật: **mặc định từ chối trong thư mục đó, chừa đúng một lối ra**.      │
+ * │ Mặc định-từ-chối vì file kiểu mới thêm vào sau này (trace, har, video)    │
+ * │ đều là dấu vết phiên, và một allowlist thì cái mới **tự động** bị chặn;   │
+ * │ một denylist thì cái mới **tự động lọt**. → [[agentco-silent-allowlist]]  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const BROWSER_OUTPUT = '.playwright-mcp';
+
+/** Lối ra duy nhất: ảnh chụp trang. Mọi thứ khác trong thư mục đó là dấu vết phiên. */
+const isPageSnapshot = (p: string): boolean => /^page-[^\\/]*\.ya?ml$/i.test(path.basename(p));
+
+/**
+ * AI đang gọi, và vì thế luật nào áp.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `arm` KHÔNG PHẢI "write nhẹ tay hơn" — nó là một PHẬN SỰ KHÁC.           │
+ * │                                                                          │
+ * │   `read`   tool đọc builtin   → chỉ cấm `secrets`                        │
+ * │   `write`  tool ghi builtin   → cấm `secrets` · `config` · `outside`     │
+ * │   `arm`    tool của MCP       → cấm `secrets` · `config`, CHO `outside`  │
+ * │                                                                          │
+ * │ Vì sao `arm` được ra ngoài: đó chính là LÝ DO NÓ TỒN TẠI. Luật §8·0      │
+ * │ (user chốt 22/08) nói *"mọi đường GHI RA ngoài phải qua một tool/MCP     │
+ * │ TƯỜNG MINH — có tên, khai báo được, đọc được trong nhật ký"*. Cấm        │
+ * │ `outside` cho `arm` là cấm đúng con đường tử tế mà luật đó vừa dựng ra,  │
+ * │ và người dùng sẽ quay lại dùng `Bash` — thứ không có biên nào.           │
+ * │                                                                          │
+ * │ Nhưng biên của cánh tay KHÔNG phải là "không có biên": nó bị chặn bởi    │
+ * │ chính MCP server, ở đúng danh sách thư mục người dùng đã khai            │
+ * │ (`roots` = `cwd` + `additionalDirectories`, đo 24/08). Ta chỉ thêm hai   │
+ * │ vùng mà server KHÔNG BAO GIỜ biết là nhạy cảm: kho chìa và file cấu hình.│
+ * │                                                                          │
+ * │ ⚠ `arm` cấm CẢ ĐỌC file cấu hình, trong khi `read` builtin thì cho.      │
+ * │ Cố ý, và lệch về phía an toàn: lúc hook chạy ta chỉ có TÊN TOOL, không   │
+ * │ có cách tất định nào biết `mcp__x__foo` là đọc hay ghi — dò chuỗi tên là │
+ * │ đúng cái class bất định đã loại ở §5n ㉕. Cái giá của phủ định sai ở đây │
+ * │ bằng 0: `Read` builtin vẫn đọc được `roles/*.yaml` như trước.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type GuardMode = 'read' | 'write' | 'arm';
+
+/** Thư mục/file thuộc vùng `config` — tương đối với thư mục VĂN PHÒNG. */
+const OFFICE_CONFIG = ['roles', 'skills', 'connectors', 'office.yaml', 'layout.json'];
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 VÙNG `config` CỦA CẤP CÔNG TY — LỖ VÁ 01/09, và nó mở từ trước.       │
+ * │                                                                          │
+ * │ `OFFICE_CONFIG` giải tương đối với thư mục **VĂN PHÒNG**, nên             │
+ * │ `company/company.yaml` (một cấp trên) **chưa bao giờ được gác**. Với      │
+ * │ nhân viên bị nhốt trong văn phòng thì vô hại — họ không với tới. Nhưng    │
+ * │ một vai có cánh tay thư mục trỏ vào chỗ chứa `company/` thì **với tới     │
+ * │ được**, và đó chính là ca `guardedZone` sinh ra để gác: hàng rào thứ hai  │
+ * │ cho thứ nằm NGOÀI văn phòng.                                             │
+ * │                                                                          │
+ * │ Cái nó giữ:                                                              │
+ * │   `mcpServers` + `arms` — sổ chung. Ghi được ⇒ tự cấp cánh tay cho mình. │
+ * │   🔴 và từ 31/08, TỜ KHAI CLI sống ở đây ⇒ ghi được ⇒ tự khai            │
+ * │      `run: ["powershell","-c","{cmd}"]` ⇒ **shell tuỳ ý cho một vai đã   │
+ * │      TẮT shell**. Đúng cái cửa sau §16i nói to, chỉ là tôi đã tưởng nó   │
+ * │      đã được gác sẵn.                                                    │
+ * │                                                                          │
+ * │ ⚠ Tôi viết ở ba chỗ rằng *"để tờ khai trong `company.yaml` thì nó thừa   │
+ * │ hưởng hàng rào §5f, 0 cơ chế mới"*. **Sai** — §5f gác cấu hình VĂN        │
+ * │ PHÒNG. Hàng rào đó có thật, nhưng nó ở một cấp khác.                      │
+ * │ → [[agentco-rule-must-see-what-it-governs]] · [[agentco-spec-says-done]]  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `logs/` cố ý KHÔNG vào đây: sổ chi phí là append-only và người dùng đọc được;
+ * gác nó là chặn một thứ vô hại rồi tự nhận thêm một câu lỗi phải giải thích.
+ */
+const COMPANY_CONFIG = ['company.yaml'];
+
+/**
+ * `a` có nằm trong (hoặc chính là) `b` không.
+ *
+ * ⚠ So bằng chữ THƯỜNG trên MỌI nền tảng, không dò `process.platform`. Trên
+ * Windows `ROLES\x.yaml` và `roles\x.yaml` là CÙNG một file, nên so phân biệt
+ * hoa thường ở đó là để hở một cửa sau chỉ cần viết hoa là qua. Cái giá ở phía
+ * kia: trên Linux một thư mục tên `Roles` khác `roles` sẽ bị chặn oan — một ca
+ * gần như không tồn tại, và nó lệch về phía an toàn. Đổi một phủ định-sai
+ * hoang đường lấy việc bịt một cửa sau có thật.
+ */
+function within(a: string, b: string): boolean {
+  const rel = path.relative(b.toLowerCase(), a.toLowerCase());
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Lời gọi tool này có chạm vùng cấm không? `undefined` = cho qua.
+ *
+ * `target` là chuỗi model gõ — tuyệt đối hoặc tương đối với thư mục văn phòng
+ * (`cwd` của worker). Chuỗi rỗng = tool không khai đường dẫn ⇒ cho qua.
+ */
+export function guardedZone(
+  dirs: {
+    companyDir: string;
+    officeDir: string;
+    /**
+     * Vai trò này CÓ cánh tay trình duyệt không — đã giải sẵn từ `role.mcp` lúc
+     * dựng worker. Không khai ⇒ **coi như không có**, tức chặt hơn: vắng mặt
+     * không phải tín hiệu an toàn. → khối ở chỗ dùng nó bên dưới
+     */
+    hasBrowser?: boolean;
+  },
+  target: string,
+  mode: GuardMode,
+): GuardedZone | undefined {
+  if (!target) return undefined;
+  const abs = path.resolve(dirs.officeDir, target);
+
+  // `.state` TRƯỚC mọi thứ: nó vừa nằm ngoài văn phòng (bản công ty) vừa nằm
+  // trong (bản văn phòng), nên hỏi sau thì một nửa số ca rơi vào nhánh khác và
+  // nhận một câu giải thích nói về chuyện không liên quan.
+  for (const state of [companyPaths(dirs.companyDir).state, officePaths(dirs.officeDir).state]) {
+    if (within(abs, state)) return 'secrets';
+  }
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ HAI ĐIỀU KIỆN, MỘT CHỖ — và bỏ vế nào cũng hỏng theo một kiểu.        │
+   * │ (user đề xuất vế ①, 30/08; vế ② là thứ vế ① một mình sẽ đánh rơi)      │
+   * │                                                                        │
+   * │  ① KHÔNG có cánh tay trình duyệt ⇒ chặn **cả thư mục**. Đây là đặc      │
+   * │     quyền tối thiểu nói đúng bằng lời của nó: *đầu ra của một cánh tay  │
+   * │     thuộc về người cầm cánh tay đó*. Nhân viên Linear không có việc gì  │
+   * │     với ảnh chụp trang của lượt trước — mà ảnh chụp **có PII thật**     │
+   * │     (ca 30/08: email tự-điền trong form đăng nhập Facebook).            │
+   * │                                                                        │
+   * │  ② CÓ cánh tay ⇒ vẫn chặn `console-*.log`. Người cầm cánh tay cũng      │
+   * │     **không** cần chìa phiên dạng chữ (`fb_dtsg=…&__user=…`). Gác theo  │
+   * │     mỗi vế ① thì nhân viên trình duyệt được mở cả log — **rộng hơn**    │
+   * │     luật hôm nay, tức một bước LÙI đội lốt bước siết.                   │
+   * │                                                                        │
+   * │ ⚠ `hasBrowser` là một **cờ boolean tính sẵn**, không phải `role` hay    │
+   * │ danh sách cánh tay. Giữ hàm này THUẦN theo đường dẫn + một dữ kiện đã   │
+   * │ giải: nó là hàng rào an ninh, và thứ khó kiểm chứng nhất là hàng rào    │
+   * │ phải tự đi tra cấu hình mới biết mình đang gác gì.                      │
+   * │ `role.mcp` vẫn là nguồn DUY NHẤT của "ai cầm gì" — ta chỉ đọc nó một    │
+   * │ lần lúc dựng worker. → [[agentco-count-mechanisms]]                     │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  if (within(abs, path.join(dirs.officeDir, BROWSER_OUTPUT))) {
+    if (!dirs.hasBrowser || !isPageSnapshot(abs)) return 'browser';
+  }
+
+  if (mode === 'read') return undefined;
+
+  // Cấp CÔNG TY trước cấp văn phòng — nó nằm ngoài văn phòng nên chỉ tới được
+  // qua một cánh tay thư mục, tức đúng ca hàng rào này tồn tại để chặn.
+  for (const rel of COMPANY_CONFIG) {
+    if (within(abs, path.join(dirs.companyDir, rel))) return 'config';
+  }
+  for (const rel of OFFICE_CONFIG) {
+    if (within(abs, path.join(dirs.officeDir, rel))) return 'config';
+  }
+  if (within(abs, companyPaths(dirs.companyDir).configFile)) return 'config';
+
+  // Cánh tay DỪNG Ở ĐÂY. Ra ngoài văn phòng là việc của nó, không phải sự cố —
+  // và biên thật của nó do MCP server giữ, ở đúng thư mục người dùng đã khai.
+  if (mode === 'arm') return undefined;
+
+  return within(abs, dirs.officeDir) ? undefined : 'outside';
+}
+
+/**
+ * DUYỆT THƯ MỤC — nguồn của bộ chọn thư mục trong hộp thoại `+ Kết nối`.
+ * → docs/SPEC-arms.md §6f
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG DÙNG HỘP THOẠI CHỌN FILE CỦA HỆ ĐIỀU HÀNH                   │
+ * │                                                                          │
+ * │ Trình duyệt KHÔNG đưa được đường dẫn tuyệt đối: `<input webkitdirectory>` │
+ * │ chỉ trả tên tương đối, File System Access API trả một handle chứ không    │
+ * │ phải chuỗi. Còn mở hộp thoại của HĐH thì nó mở **trên MÁY CHỦ** — đúng ca │
+ * │ nút 📂 đã dẫm (`isLoopback`): bấm ở Hà Nội, cửa sổ bật ở Singapore.       │
+ * │                                                                          │
+ * │ ⇒ Tự liệt kê. Chạy được cả khi daemon ở xa hoặc trong container, và nó    │
+ * │ liệt kê ĐÚNG cái filesystem mà cánh tay sẽ nhìn thấy — không phải cái     │
+ * │ filesystem của người đang ngồi trước màn hình. Với Docker (§10b) đó là    │
+ * │ khác biệt sống còn, và bộ chọn này tự đúng ở đó mà không sửa gì.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ CHỈ ĐỌC TÊN, không đọc nội dung. Nó nói *"có những thư mục nào"*, và đó là
+ * thứ ít nhất cần để chọn được — không hơn.
+ */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+}
+
+export function browseDirs(target?: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
+  // Không truyền gì = gốc. Trên Windows "gốc" là DANH SÁCH Ổ ĐĨA, không phải
+  // một thư mục — bỏ qua chuyện này là người dùng Windows không có đường lên
+  // trên `C:\` và không bao giờ với tới ổ D.
+  if (!target) {
+    if (process.platform === 'win32') {
+      const drives: BrowseEntry[] = [];
+      for (const c of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+        const root = `${c}:\\`;
+        try {
+          if (fs.existsSync(root)) drives.push({ name: root, path: root });
+        } catch {
+          /* ổ mạng đã ngắt thì bỏ qua, đừng làm hỏng cả danh sách */
+        }
+      }
+      return { path: '', parent: null, dirs: drives };
+    }
+    return listDirs('/');
+  }
+  return listDirs(path.resolve(target));
+}
+
+function listDirs(dir: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
+  const up = path.dirname(dir);
+  // `dirname('C:\\')` trả về chính nó ⇒ đã ở gốc ổ. Trả `''` để giao diện quay
+  // về danh sách ổ đĩa thay vì đưa một nút "lên trên" không đi đâu cả.
+  const parent = up === dir ? (process.platform === 'win32' ? '' : null) : up;
+
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // Không đọc được (không quyền, ổ đã rút) — trả rỗng chứ không ném. Người
+    // dùng vẫn bấm "lên trên" được, và đó là đường thoát duy nhất họ cần.
+    return { path: dir, parent, dirs: [] };
+  }
+
+  const dirs = entries
+    // Bỏ thư mục ẩn: chúng là nhiễu với người dùng văn phòng, và `.state/` thì
+    // đằng nào cũng nằm sau hàng rào `guardedZone`.
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => ({ name: e.name, path: path.join(dir, e.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+
+  return { path: dir, parent, dirs };
 }
 
 /**

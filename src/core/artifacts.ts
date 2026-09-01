@@ -261,6 +261,37 @@ export class ArtifactStore {
     }
     return true;
   }
+
+  /**
+   * DỌN SẠCH ngăn Kết quả. Trả về SỐ FILE đã xoá.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ Vì sao có nút này, và vì sao CHỈ ở đây (user chốt 25/08):                │
+   * │   *"chỉ áp dụng cho artifacts kết quả, không áp dụng cho tài liệu hay     │
+   * │    kho tri thức"*                                                        │
+   * │                                                                          │
+   * │ Ranh giới là **DỰNG LẠI ĐƯỢC HAY KHÔNG**, đúng thước đã dùng cho nút xoá │
+   * │ lẻ ngay trên:                                                            │
+   * │   · kết quả    → chạy lại là ra. Mất TIỀN, không mất thứ không thay được.│
+   * │   · tài liệu   → bản gốc trên máy người dùng, nhưng xoá hàng loạt kéo    │
+   * │                  theo kinh nghiệm sống nhờ nó (`depends_on`) — một cú     │
+   * │                  bấm phá hai kho.                                        │
+   * │   · tri thức   → **không dựng lại được bằng tiền**. Không có nút nào.    │
+   * │                                                                          │
+   * │ Và kết quả mới là chỗ file dồn thành hàng chục sau vài ngày, tức chỗ duy │
+   * │ nhất mà xoá-từng-cái là một việc vặt thật sự.                            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ Xoá qua `remove()` từng file chứ không `rm -rf` cả thư mục: `resolve()` là
+   * chỗ duy nhất biết luật "chỉ trong `artifacts/`, không thư mục ẩn, không đi
+   * theo symlink ra ngoài". Một đường tắt ở đây là bản thứ hai của luật đó, và
+   * bản thứ hai luôn là bản quên mất một điều kiện.
+   */
+  removeAll(): number {
+    let n = 0;
+    for (const a of this.list()) if (this.remove(a.path)) n++;
+    return n;
+  }
 }
 
 function walk(root: string, rel: string, depth: number, out: ArtifactRecord[]): void {

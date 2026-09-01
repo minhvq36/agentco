@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CÔNG TY — vỏ chứa các văn phòng, cộng hai thứ dùng chung: tiền và bus sự kiện.
  *
  * → docs/SPEC-offices.md §2
@@ -14,6 +14,8 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import YAML from 'yaml';
 
+import { defaultArmLabel, ensureInstalled } from './armexec.js';
+import { cliSays, cliToolNames } from './cli-arm.js';
 import { loadCompanyConfig, loadOffice } from './config.js';
 import {
   companyPaths,
@@ -30,6 +32,8 @@ import {
   type CompanyPaths,
 } from './paths.js';
 import { Office } from './office.js';
+import { grantFor, readOAuth, readSecrets, writeSecrets } from './secrets.js';
+import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
 import {
   appendRename,
   appendUsage,
@@ -76,6 +80,26 @@ export class Company {
     this.config = config;
     ensureCompanyDirs(this.paths);
     this.loadOffices();
+    this.warmArms();
+  }
+
+  /**
+   * Cài sẵn gói của mọi cánh tay đã cắm — KHÔNG chờ, KHÔNG chặn gì.
+   *
+   * Cánh tay cắm trước bản vá 24/08 chưa có bản cài nhanh nào, nên nếu chỉ dựa
+   * vào nút "Thử ngay" thì chúng trả ~4 giây mỗi task **mãi mãi** (không ai bấm
+   * Thử lại một cánh tay đang chạy tốt). Daemon mở công ty là lúc rẻ nhất để
+   * trả khoản đó: chưa ai chờ gì cả.
+   *
+   * ⚠ `void` có chủ ý và phải giữ: `await` ở đây là chặn daemon khởi động sau
+   * một lời gọi mạng: hỏng đúng lớp "một thao tác dọn dẹp của hệ thống nằm ở
+   * tay người dùng". Cài xong hay không, `fastLaunch` vẫn tự quyết đúng ở lượt
+   * chạy kế tiếp. → `core/armexec.ts`
+   */
+  private warmArms(): void {
+    for (const cfg of Object.values(this.config.mcpServers)) {
+      void ensureInstalled(cfg as Record<string, unknown>);
+    }
   }
 
   static open(dir?: string): Company {
@@ -397,6 +421,575 @@ export class Company {
   }
 
   /**
+   * CẮM MỘT CÁNH TAY. → docs/SPEC-arms.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KHÔNG CẦN RESTART, VÀ KHÔNG CẦN `setMcpServers`.                         │
+   * │                                                                          │
+   * │ 📖 SDK có `Query.setMcpServers()` để cắm/rút giữa phiên. Ta KHÔNG dùng,   │
+   * │ và lý do là kiến trúc chứ không phải lười: **worker là `query()` one-shot │
+   * │ nên lượt sau tự đọc cấu hình mới**, còn phiên dài duy nhất (Trợ lý)       │
+   * │ KHÔNG BAO GIỜ cầm MCP (MCP phá prompt cache khi `resume` — `types.ts:499`).│
+   * │ ⇒ `applyCompanyConfig` là đủ, đúng như `updateModels` ngay trên.          │
+   * │                                                                          │
+   * │ Đây là lý do bước `stop`/`start` ở bài 10 bước B7 biến mất — không phải   │
+   * │ nhờ một API mới, mà nhờ một ràng buộc đã có sẵn từ đầu.                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Bí mật đi vào `.state/secrets.json` (đã gitignore, và từ 23/08 nhân viên
+   * không đọc được — `paths.ts §guardedZone`). Cấu hình đi vào `company.yaml`,
+   * nơi commit lên git được. **Giá trị chìa không bao giờ nằm trong company.yaml.**
+   */
+  addArm(input: {
+    /** Tên hiển thị. KHÔNG phải danh tính — danh tính là băm cấu hình. */
+    label?: string;
+    config: Record<string, unknown>;
+    catalog?: string;
+    /** TÊN chìa cần có. Vào băm, và vào `role.secrets` lúc giao. */
+    secretNames?: string[];
+    secrets?: Record<string, string>;
+    /**
+     * VIỆC ĐƯỢC CẤP, đã giải từ `annotations` lúc cắm. Rỗng/vắng ⇒ cả server.
+     * → `types.ts §arms.tools` · `server.ts §readOnlyTools`
+     *
+     * ⚠ Trường này TỪNG BỊ NUỐT IM LẶNG (bắt 25/08): `server.ts` truyền
+     * `...(tools.length ? { tools } : {})` vào đây trong khi kiểu ở đây chưa
+     * khai nó — và **spread KHÔNG kích hoạt excess-property check** của
+     * TypeScript. Typecheck xanh, test xanh, tính năng **không làm gì cả**.
+     * Cùng lớp bẫy với `SHELL_ALIASES` và `tools` của SDK: *allowlist im lặng
+     * bỏ phần tử lạ*. → [[agentco-silent-allowlist]]
+     */
+    tools?: string[];
+    /**
+     * NẤC QUYỀN, và nó **đi vào băm**. → `catalog.ts §armHash` · §6j
+     *
+     * ⚠ Vắng ⇒ băm y hệt bản trước 26/08. Đó không phải tiện tay: mọi cánh tay
+     * đã tồn tại phải giữ nguyên mã, nếu không một lần nâng cấp làm mồ côi cả
+     * `company.yaml` của người dùng.
+     */
+    level?: 'read' | 'add' | 'full';
+    /** Văn phòng sắp dùng nó — cần cho luật "một thư mục, một cánh tay". */
+    office?: string;
+  }): string {
+    const secretNames = [...new Set(input.secretNames ?? Object.keys(input.secrets ?? {}))].sort();
+    /**
+     * Danh tính do MÁY sinh, không do người gõ. Cùng cấu hình ⇒ cùng khoá ⇒
+     * "cắm trùng" là chuyện KHÔNG THỂ XẢY RA, thay vì chuyện phải nhớ đi kiểm
+     * ở bốn chỗ. → `catalog.ts §armHash`
+     */
+    const id = armHash(input.config, secretNames, input.level);
+    if (!input.config || typeof input.config !== 'object') {
+      throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
+    }
+    /**
+     * ⚠ TRÙNG MÃ = GHI ĐÈ IM LẶNG, và user bắt được ngay lượt test đầu: cắm
+     * `files` cho thư mục A rồi cắm `files` cho thư mục B thì A biến mất, không
+     * một câu nào. Node trên sơ đồ vẫn y nguyên (cùng id), mọi sợi dây vẫn y
+     * nguyên — chỉ thư mục bên dưới đổi. **Không có triệu chứng ở chỗ nó nằm.**
+     *
+     * Từ chối, KHÔNG tự đổi tên hộ: đổi thành `files-2` là ô `viết lại lặng lẽ`
+     * — người dùng gõ một cái tên và nhận về một cái khác. Câu từ chối nêu luôn
+     * hai đường đi tiếp, vì "đã tồn tại" mà không nói làm gì tiếp là bỏ họ ở đó.
+     *
+     * ⚠ Một cánh tay `filesystem` nhận NHIỀU thư mục cùng lúc (đo 23/08:
+     * `connected` với 2 gốc) — nên "hai thư mục" thường KHÔNG cần hai cánh tay.
+     */
+    /**
+     * ĐÃ CÓ TRONG SỔ = tái dùng, KHÔNG phải lỗi.
+     *
+     * Đây là chỗ "cắm lại thì tìm thấy" thành hiện thực: người dùng xoá cánh
+     * tay khỏi văn phòng rồi cắm lại đúng thư mục đó ⇒ cùng băm ⇒ ta lấy lại
+     * nguyên cấu hình + tên + tên chìa, không hỏi lại một câu nào.
+     *
+     * Chỉ chặn khi văn phòng NÀY đang dùng nó rồi — và câu chặn nói ra cách đi
+     * tiếp (kéo dây), vì "đã có" mà không chỉ đường là một ngõ cụt.
+     */
+    if (input.office && this.armInUse(input.office, id)) {
+      const label = this.config.arms[id]?.label || id;
+      throw new RunError(
+        `Văn phòng này đã có kết nối "${label}". Kéo dây từ nó sang nhân viên cần dùng — ` +
+          `một kết nối dùng chung được cho nhiều người.`,
+        'other',
+      );
+    }
+
+    /**
+     * MỘT THƯ MỤC, MỘT CÁNH TAY — trong phạm vi MỘT văn phòng. → `catalog.ts §coveredBy`
+     *
+     * Chỉ so với những cánh tay ĐANG CÓ DÂY ở văn phòng này, không so cả công
+     * ty: hai văn phòng cùng trỏ vào `D:\Ho so` là hợp lệ và có chủ ý (clone
+     * độc lập, user chốt). Ranh giới của luật này là ranh giới của cái sơ đồ.
+     */
+    const want = folderRoots(input.config);
+    if (input.office && want.length) {
+      const office = this.get(input.office);
+
+      // Thư mục văn phòng / công ty: thừa VÀ đi vòng qua hàng rào `.state/`.
+      // → `catalog.ts §swallowsOffice`
+      const bad = want.find((r) => swallowsOffice(r, office.loaded.dir, this.dir));
+      if (bad) {
+        throw new RunError(
+          `"${bad}" chứa chính thư mục làm việc của văn phòng. Nhân viên đã đọc-ghi được ở đó sẵn ` +
+            `mà không tốn token nào, nên cắm thêm là trả tiền cho thứ đang có. Chọn một thư mục bên ngoài.`,
+          'other',
+        );
+      }
+
+      const used = new Set<string>();
+      for (const [roleId, role] of office.loaded.roles) {
+        if (office.loaded.archivedRoles.has(roleId)) continue;
+        for (const s of role.mcp) used.add(s);
+      }
+      const existing = [...used].map((s) => ({ id: s, folders: folderRoots(this.config.mcpServers[s]) }));
+      const clash = coveredBy(existing, want);
+      if (clash) {
+        throw new RunError(
+          `Thư mục này đã nằm trong kết nối "${clash.id}" của văn phòng. ` +
+            `Nối thẳng "${clash.id}" vào nhân viên cần nó — một kết nối dùng chung được cho nhiều người, ` +
+            `và cắm thêm cái thứ hai là trả token hai lần cho cùng một thứ.`,
+          'other',
+        );
+      }
+    }
+
+    // Chìa TRƯỚC cấu hình: nếu ghi cấu hình xong mới hỏng ở bước chìa thì trên
+    // sơ đồ đã có một node trỏ vào một tiến trình không bao giờ khởi động được.
+    const secrets = input.secrets ?? {};
+    if (Object.keys(secrets).length) {
+      const pp = companyPaths(this.dir);
+      writeSecrets(pp, { ...readSecrets(pp), ...secrets });
+    }
+
+    /**
+     * ⚠ `createNode` mặc định ra FLOW style, và flow LÂY từ map cha xuống: cả
+     * cấu hình dồn vào một dòng, đường dẫn Windows không được nháy. `company.yaml`
+     * là file người dùng ĐỌC và commit lên git — nó phải trông như ví dụ đã
+     * comment sẵn ngay phía trên khoá này.
+     *
+     * Ép block cho map ở cả hai tầng. `args` cũng ra block theo — hơi khác ví
+     * dụ đã comment, nhưng đọc tốt hơn với tên gói dài kèm số phiên bản ghim.
+     */
+    const block = (n: unknown) => {
+      if (n && typeof n === 'object') (n as { flow?: boolean }).flow = false;
+      return n;
+    };
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.has('mcpServers')) doc.set('mcpServers', block(doc.createNode({})));
+    if (!doc.has('arms')) doc.set('arms', block(doc.createNode({})));
+    block(doc.get('mcpServers', true));
+    block(doc.get('arms', true));
+    doc.setIn(['mcpServers', id], block(doc.createNode(input.config)));
+    // Giữ nhãn cũ nếu mục đã có trong sổ — người dùng cắm lại một thứ từng đặt
+    // tên thì cái tên đó là của họ, đừng lặng lẽ thay bằng tên mặc định.
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ BỐN NẤC, và thứ tự là thứ tự ĐỘ TIN CẬY của cái tên. (user 31/08)  │
+     * │                                                                    │
+     * │  ① sổ chung   cắm lại thứ từng đặt tên ⇒ tên đó là **của họ**       │
+     * │  ② người gõ   khoá trong `{"mcpServers":{"so-tay":…}}`, hoặc tên    │
+     * │               mục danh mục. Tên **chuẩn**, do một con người viết ra │
+     * │  ③ suy từ cấu hình  `deepwiki.com` · `server-memory` — máy suy, đọc │
+     * │               được, và đúng trong đa số ca                          │
+     * │  ④ băm        thật thà, nhưng vô nghĩa với người đọc                │
+     * │                                                                    │
+     * │ Nấc ③ mới thêm. Trước đó ② rơi thẳng xuống ④, nên khối JSON **trần** │
+     * │ (không có vỏ `mcpServers`) luôn ra một cái băm.                     │
+     * │                                                                    │
+     * │ ⚠ Và từ 30/08 nó KHÔNG còn chỉ là chuyện thẩm mỹ: `armReach` dựng    │
+     * │ dòng danh bạ bằng `label || id`, nên nhãn rỗng nghĩa là **Trợ lý     │
+     * │ nhìn thấy một cái băm làm tên cánh tay** — đúng ca §16r, nơi một cái │
+     * │ tên model không có tiên nghiệm khiến nó **lấp chỗ trống**.          │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const label =
+      this.config.arms[id]?.label || input.label?.trim() || defaultArmLabel(input.config) || id;
+    /**
+     * ⚠ `tools` cũng phải GHI RA ĐĨA, không chỉ nhận vào tham số. Cắm lại một
+     * cánh tay đã biết thì lấy lại danh sách cũ — cùng lý lẽ với `label` ngay
+     * trên: cùng băm nghĩa là **cùng cấu hình**, nên tập việc đã giải vẫn đúng.
+     */
+    /**
+     * ⚠ Với tờ khai CLI, danh sách việc suy được **từ chính tờ khai**, không phải
+     * chờ một lượt `probeArm`. Thiếu nó thì `pickMcp` cấp **cả server**
+     * (`mcp__<băm>`) — rộng hơn thứ ta định cấp, và im lặng. Cùng cái lỗ
+     * `arms[].tools` sinh ra để đóng, chỉ khác nguồn dữ liệu.
+     */
+    const tools = input.tools?.length
+      ? input.tools
+      : cliToolNames(input.config).length
+        ? cliToolNames(input.config)
+        : (this.config.arms[id]?.tools ?? []);
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 `does` — TRƯỜNG CÓ SCHEMA, CÓ NGƯỜI ĐỌC, **CHƯA AI GHI** (tới 31/08)│
+     * │                                                                      │
+     * │ Bản vá 30/08 dựng `types.ts §arms.does` và `assistant.ts §armReach`   │
+     * │ đọc nó, rồi dừng ở đó: không cửa nào trong sản phẩm ghi trường này —  │
+     * │ chỉ spike ghi bằng tay. Nên năng lực *"cánh tay tự khai làm được gì"* │
+     * │ **chưa từng chạy trong app một lần nào**, và không có test nào đỏ vì  │
+     * │ trường vắng là hợp lệ (`.default([])`).                              │
+     * │                                                                      │
+     * │ Đo được cái giá của nó ngay hôm nay: cùng một câu hỏi, cùng cánh tay  │
+     * │ — nhãn trần ⇒ Trợ lý **không giao việc**; có `does` ⇒ giao việc, gọi  │
+     * │ thật, đúng số, **4/4 lượt**. → SPEC-arms §16r · §16s                  │
+     * │                                                                      │
+     * │ ⚠ Nguồn là `say` của từng action (câu tiếng người), KHÔNG phải `id`:  │
+     * │ `dem_hoa_don` là tên máy, và §7b cấm dán tên tool thô vào danh bạ.    │
+     * │ Trần 4 việc — dòng danh bạ đi vào prefix **mọi lượt `route()`**.      │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const does = cliSays(input.config).length
+      ? cliSays(input.config)
+      : (this.config.arms[id]?.does ?? []);
+    doc.setIn(
+      ['arms', id],
+      block(
+        doc.createNode({
+          label,
+          ...(input.catalog ? { catalog: input.catalog } : {}),
+          secrets: secretNames,
+          ...(tools.length ? { tools } : {}),
+          ...(does.length ? { does } : {}),
+          // Nấc quyền — đã nằm trong băm, ghi ra để người dùng ĐỌC ĐƯỢC bằng mắt
+          // thay vì phải tin cái huy hiệu trên giao diện. → §6j
+          ...(input.level ? { level: input.level } : {}),
+        }),
+      ),
+    );
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+
+    this.emit({
+      type: 'company.offices',
+      say: `Đã cắm "${label}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.`,
+      office: '',
+      plan_id: null,
+    });
+    return id;
+  }
+
+  /** Vai trò nào trong văn phòng này đang nối tới cánh tay `id`? */
+  private armInUse(officeId: string, id: string): boolean {
+    const office = this.offices.get(officeId);
+    if (!office) return false;
+    if (office.loaded.config.assistant.mcp.includes(id)) return true;
+    for (const [roleId, role] of office.loaded.roles) {
+      if (office.loaded.archivedRoles.has(roleId)) continue;
+      if (role.mcp.includes(id)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * ĐỔI TÊN một cánh tay. Chỉ đụng `arms[id].label` — không ai tham chiếu tới
+   * nhãn, nên đây là thao tác rẻ nhất trong cả hệ: không đổi khoá, không viết
+   * lại `roles/*.yaml`, không phá cache của ai.
+   *
+   * Đó chính là lý do danh tính phải là BĂM chứ không phải cái tên: hồi `id`
+   * còn là tên người dùng gõ, "đổi tên" là ĐỔI KHOÁ, kéo theo một cuộc di trú
+   * nhỏ qua mọi vai trò của mọi văn phòng — mỗi lần bấm.
+   */
+  renameArm(id: string, label: string): string {
+    const next = label.trim();
+    if (!next) throw new RunError('Tên kết nối không được để trống.', 'other');
+    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.has('arms')) doc.set('arms', doc.createNode({}));
+    doc.setIn(['arms', id, 'label'], next);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+    this.emit({ type: 'company.offices', say: `Kết nối giờ tên là "${next}".`, office: '', plan_id: null });
+    return next;
+  }
+
+  /**
+   * RÚT một cánh tay khỏi công ty.
+   *
+   * ⚠ **Chìa KHÔNG bị xoá theo.** Rút dây ≠ vứt chìa: người dùng hay rút để xoay
+   * token hoặc thử một server khác, và bắt họ đi lấy lại token là phạt một thao
+   * tác vốn vô hại. Muốn xoá chìa thì có đường riêng, có chủ ý.
+   *
+   * Cạnh nối `mcp→agent` sống trong `roles/*.yaml`; `layout.read()` tự bỏ qua
+   * cạnh trỏ tới node không còn tồn tại, nên không cần dọn tay ở đây.
+   */
+  /**
+   * XOÁ một cánh tay KHỎI MỘT VĂN PHÒNG. Sổ chung **không bị đụng**.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ĐỔI NGHĨA 23/08, và nó là thứ xoá được cả khái niệm "lưu trữ".           │
+   * │                                                                          │
+   * │ Bản trước xoá khỏi `company.yaml`, tức mất luôn cấu hình — nên mới cần   │
+   * │ một mức "cất đi" ở giữa để giữ nó lại. Giờ cấu hình sống trong SỔ CHUNG   │
+   * │ và không ai xoá nó, nên "xoá" đã mang đúng tính chất của "cất đi": cắm   │
+   * │ lại cùng thư mục ⇒ cùng băm ⇒ tìm thấy nguyên vẹn.                       │
+   * │                                                                          │
+   * │ ⇒ Một mức thay vì hai. Nhân viên cần hai mức vì họ mang thứ dựng lại     │
+   * │ không được; cánh tay chỉ mang cấu hình. Mượn khái niệm từ chỗ nó xứng    │
+   * │ đáng sang chỗ nó không, là thứ ta vừa gỡ ra.                              │
+   * │                                                                          │
+   * │ Mất một thứ, nói ra: SỢI DÂY. Cắm lại phải nối lại. Với một cánh tay     │
+   * │ phục vụ 1–2 người thì đó là một cú kéo — rẻ hơn hẳn việc nuôi cả một     │
+   * │ khái niệm chỉ để cứu nó.                                                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ IDEMPOTENT: "xoá thứ đã không còn" phải THÀNH CÔNG. Một câu từ chối chỉ
+   * đúng khi người dùng còn đường đi tiếp; ở đây không có đường nào, nên nó sẽ
+   * là một ngõ cụt chứ không phải một lời từ chối.
+   */
+  removeArm(id: string, officeId?: string): void {
+    const targets = officeId ? [this.get(officeId)] : [...this.offices.values()];
+    for (const office of targets) office.dropArm(id);
+
+    const label = this.config.arms[id]?.label || id;
+    this.emit({
+      type: 'company.offices',
+      say: `Đã rút "${label}". Cắm lại lúc nào cũng được — cấu hình và chìa vẫn giữ.`,
+      office: officeId ?? '',
+      plan_id: null,
+    });
+  }
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ XOÁ HẲN khỏi SỔ CHUNG — mức thứ hai, và là mức DUY NHẤT không lấy lại    │
+   * │ được. (user chốt 25/08: *"Người dùng nên chịu trách nhiệm với hành động  │
+   * │ của mình"*)                                                              │
+   * │                                                                          │
+   * │ Vì sao nó cần tồn tại, và lý do mạnh nhất là luật của chính dự án này:   │
+   * │ tới hôm nay, gỡ một mục mồ côi khỏi sổ chỉ làm được bằng cách **mở       │
+   * │ `company.yaml` và sửa tay** — mà một bước "mở file yaml" là **chuông      │
+   * │ báo** (§6a, chốt 22/08). Không có nút này thì `mcpServers:` chỉ có thể   │
+   * │ dài ra, mãi mãi.                                                         │
+   * │                                                                          │
+   * │ ⚠ MỘT MỤC MỒ CÔI KHÔNG TỐN TOKEN — đừng bán tính năng này bằng lý do sai:│
+   * │ `pickMcp` chỉ dựng server có tên trong `role.mcp`. Cái nó tốn là **chỗ   │
+   * │ trong đầu người dùng**: danh sách "đã cắm ở văn phòng khác" dài dần bằng │
+   * │ những thứ không ai còn nhớ là gì.                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠⚠ **CHÌA KHÔNG BỊ XOÁ THEO** — và đây là thứ làm cho quyết định trên rẻ.
+   *
+   * Phần đắt của việc cắm một cánh tay là **đi lấy chìa**, không phải cấu hình.
+   * Cấu hình dựng lại từ danh mục trong ba cú bấm; chìa thì phải sang tận trang
+   * của hãng. Chìa sống ở `.state/secrets.json` **theo TÊN**, độc lập với sổ —
+   * nên xoá nhầm mất cái rẻ, giữ lại cái đắt. Muốn bỏ chìa thì có đường riêng,
+   * có chủ ý: `agentco secret rm <TÊN>`.
+   *
+   * ⚠ Chặn khi còn ai dùng, và "dùng" có HAI nghĩa — thiếu một nghĩa là xoá mất
+   * một node đang nằm trên sơ đồ của ai đó:
+   *   · `role.mcp`        — có sợi dây tới một nhân viên
+   *   · `office.arms`     — **có mặt** trên sơ đồ, chưa nối dây (node chờ)
+   */
+  /**
+   * Văn phòng nào còn giữ cánh tay này — theo CẢ HAI nghĩa của "giữ".
+   *
+   * ⚠ Một hàm, hai chỗ gọi: cái chốt trong `forgetArm` và cái cờ `orphan` mà
+   * giao diện dùng để quyết có hiện nút xoá hẳn hay không. Tách làm hai bản là
+   * mở đúng cửa cho một nút hiện ra rồi bấm vào thì bị từ chối — hoặc tệ hơn,
+   * một nút KHÔNG hiện ra cho thứ đáng lẽ xoá được.
+   */
+  private armHolders(id: string): string[] {
+    const out: string[] = [];
+    for (const office of this.offices.values()) {
+      const wired = [...office.loaded.roles.values()].some((r) => r.mcp.includes(id));
+      if (wired || office.loaded.config.arms.includes(id)) out.push(office.loaded.config.name || office.id);
+    }
+    return out;
+  }
+
+  forgetArm(id: string): void {
+    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+
+    const holders = this.armHolders(id);
+    if (holders.length) {
+      throw new RunError(
+        `"${this.config.arms[id]?.label || id}" vẫn đang ở ${holders.length} văn phòng ` +
+          `(${holders.join(', ')}). Rút khỏi từng chỗ trước đã — xoá hẳn một thứ đang được dùng ` +
+          `là làm hỏng sơ đồ của người khác.`,
+        'other',
+      );
+    }
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    doc.deleteIn(['mcpServers', id]);
+    doc.deleteIn(['arms', id]);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+    const label = this.config.arms[id]?.label || id;
+    this.config = loadCompanyConfig(this.dir);
+    for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
+    /**
+     * ⚠ PHẢI BÁO, y như `removeArm`. Thiếu sự kiện này thì mọi tab khác (và
+     * chính tab đang mở, nếu nó nghe SSE thay vì tự nạp lại) giữ cái mã vừa chết
+     * cho tới khi người dùng F5 — đúng triệu chứng user báo 26/08.
+     */
+    this.emit({
+      type: 'company.offices',
+      say: `Đã xoá hẳn "${label}" khỏi sổ chung. Chìa vẫn được giữ.`,
+      office: '',
+      plan_id: null,
+    });
+  }
+
+  /**
+   * Tên WORKSPACE của một cánh tay — tra `arms[id].secrets` ra kho OAuth.
+   *
+   * Một hàm, hai chỗ gọi (`listArms` cho hộp thoại, `describeNode` cho bảng chi
+   * tiết). Tách làm hai bản là để hai màn hình nói hai chuyện về cùng một cánh
+   * tay — đúng thứ user vừa phàn nàn: *"1 loạt Notion thì biết là Notion nào"*.
+   */
+  armWorkspace(id: string): string | undefined {
+    const names = this.config.arms[id]?.secrets ?? [];
+    if (!names.length) return undefined;
+    const oauth = readOAuth(companyPaths(this.dir));
+    return names.map((s) => oauth[s]?.label).find(Boolean);
+  }
+
+  /** SỔ CHUNG + nơi nào đang dùng. → docs/SPEC-arms.md §6i */
+  listArms(): {
+    id: string;
+    label: string;
+    catalog?: string;
+    config: unknown;
+    /** TÊN chìa, không bao giờ giá trị — để giao diện nói "đã có sẵn, khỏi nhập lại". */
+    secrets: string[];
+    /** Nấc quyền — giao diện vẽ HUY HIỆU từ đây, KHÔNG từ chuỗi tên. → §6j */
+    level?: 'read' | 'add' | 'full';
+    /**
+     * Tên WORKSPACE mà cánh tay này nối tới, tra từ kho OAuth.
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ User 26/08: *"1 loạt Notion thì biết là Notion nào"*.                │
+     * │                                                                      │
+     * │ Suy từ `arms[].secrets` (tên chìa mang `workspace_id`) tra ngược ra   │
+     * │ nhãn trong `$oauth` — **không** đọc chuỗi `label`. Nhãn là của người  │
+     * │ dùng và đổi tự do; workspace là sự thật thuộc về cấu hình.           │
+     * │                                                                      │
+     * │ Vắng khi: cánh tay không dùng OAuth, hoặc workspace đã bị gỡ. Cả hai  │
+     * │ đều là "không biết" ⇒ không vẽ gì, chứ không bịa một cái tên.         │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    via?: string;
+    /** Số việc đã cấp. Hiện cạnh huy hiệu để nhãn "chỉ đọc" kiểm được bằng mắt. */
+    toolCount: number;
+    usedBy: { office: string; role: string }[];
+    /**
+     * KHÔNG văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
+     * dây". Chỉ mục như thế mới hiện nút **xoá hẳn**. Suy từ `usedBy` là sai:
+     * `usedBy` chỉ đếm sợi dây, nên một node đang nằm chờ trên sơ đồ sẽ trông
+     * như mồ côi. → `armHolders`
+     */
+    orphan: boolean;
+  }[] {
+    // Đọc kho MỘT LẦN cho cả danh sách: `readOAuth` parse cả file, mà một công
+    // ty chạy lâu có hàng chục cánh tay — gọi trong vòng lặp là đọc lại cùng
+    // một file hàng chục lần cho mỗi lần mở hộp thoại.
+    const oauth = readOAuth(companyPaths(this.dir));
+    return Object.entries(this.config.mcpServers).map(([id, config]) => {
+      const usedBy: { office: string; role: string }[] = [];
+      for (const office of this.offices.values()) {
+        for (const [roleId, role] of office.loaded.roles) {
+          if (role.mcp.includes(id)) usedBy.push({ office: office.id, role: roleId });
+        }
+      }
+      const meta = this.config.arms[id];
+      return {
+        id,
+        label: meta?.label || id,
+        ...(meta?.catalog ? { catalog: meta.catalog } : {}),
+        config,
+        secrets: meta?.secrets ?? [],
+        ...(meta?.level ? { level: meta.level } : {}),
+        // Chìa nào của cánh tay này là một workspace đã nối ⇒ lấy nhãn của nó.
+        // Không tìm thấy ⇒ không vẽ gì; bịa một cái tên còn tệ hơn để trống.
+        ...(() => {
+          const via = (meta?.secrets ?? []).map((s) => oauth[s]?.label).find(Boolean);
+          return via ? { via } : {};
+        })(),
+        toolCount: meta?.tools?.length ?? 0,
+        usedBy,
+        orphan: this.armHolders(id).length === 0,
+      };
+    });
+  }
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ DÙNG LẠI MỘT CÁNH TAY ĐÃ CÓ TRONG SỔ — trọn gói, kể cả CHÌA. (bug 25/08) │
+   * │                                                                          │
+   * │ User báo: cắm Notion ở *Cánh tay* xong, sang *Trợ lý cá nhân* bấm "dùng  │
+   * │ lại" thì **401**. Và câu hỏi kèm theo là câu đúng:                       │
+   * │   *"Về lý thuyết văn phòng nào cũng có thể xài chung?"* — ĐÚNG, và đây   │
+   * │ là hàm làm cho nó đúng.                                                  │
+   * │                                                                          │
+   * │ Vì sao nó hỏng: nút "dùng lại" cũ **dán cấu hình** sang đường "tự cắm"   │
+   * │ (`setPaste(JSON.stringify(a.config))`). Mà cấu hình trong sổ giữ Ô TRỐNG │
+   * │ `${NOTION_ACCESS_TOKEN}` — chìa nằm ở `.state/secrets.json`, đúng thiết  │
+   * │ kế. Đường "tự cắm" không có mục danh mục ⇒ không hiện ô chìa ⇒ không     │
+   * │ gửi chìa nào ⇒ header bay lên Notion **nguyên văn `Bearer ${…}`** ⇒ 401. │
+   * │                                                                          │
+   * │ Và một hỏng thứ hai, im lặng hơn: `secretNames` khi ấy là `[]`, mà TÊN   │
+   * │ CHÌA NẰM TRONG BĂM (§armHash) ⇒ băm khác ⇒ nó tạo một cánh tay THỨ HAI   │
+   * │ trùng cấu hình thay vì dùng lại cái đã có. "Dùng lại" mà nhân bản.       │
+   * │                                                                          │
+   * │ ⇒ Danh tính đi trọn gói hoặc không đi: cấu hình + tên chìa + việc được   │
+   * │ cấp, cả ba lấy từ SỔ, không cái nào đi vòng qua client.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ `secrets` trong kết quả là GIÁ TRỊ THẬT — chỉ để đưa xuống `probeArm`.
+   * Nó KHÔNG BAO GIỜ được lọt vào một phản hồi HTTP. Cùng luật với `pickMcp`.
+   */
+  reuseArm(id: string): {
+    config: Record<string, unknown>;
+    secretNames: string[];
+    tools: string[];
+    label: string;
+    catalog?: string;
+    level?: 'read' | 'add' | 'full';
+    secrets: Record<string, string>;
+  } {
+    const config = this.config.mcpServers[id];
+    if (!config) {
+      throw new RunError(
+        `Không còn kết nối "${id}" trong sổ chung — có lẽ nó vừa bị gỡ. Đóng hộp thoại rồi mở lại.`,
+        'other',
+      );
+    }
+    const meta = this.config.arms[id];
+    const secretNames = meta?.secrets ?? [];
+    // Chỉ đọc đúng những chìa cánh tay này khai — không bê cả kho. `grantFor`
+    // cũng là chỗ chuỗi rỗng bị tính là THIẾU, nên chìa lưu hỏng lộ ra ở đây
+    // thay vì lộ ra bằng một câu 401 ở Notion.
+    const { env } = grantFor(readSecrets(companyPaths(this.dir)), secretNames);
+    return {
+      config: config as Record<string, unknown>,
+      secretNames,
+      tools: meta?.tools ?? [],
+      label: meta?.label || id,
+      ...(meta?.catalog ? { catalog: meta.catalog } : {}),
+      // Nấc đi theo trọn gói — thiếu nó thì `addArm` băm lại KHÔNG có nấc và ra
+      // một mã khác, tức "dùng lại" lại nhân bản. Đúng bug §6i-bis, cửa thứ hai.
+      ...(meta?.level ? { level: meta.level } : {}),
+      secrets: env,
+    };
+  }
+
+  /**
    * LƯU TRỮ / KHÔI PHỤC một văn phòng (soft delete). → docs/SPEC-offices.md §3.1
    *
    * Chỉ gắn một cờ trong `office.yaml`. Không dời file, không đổi mã, không đụng
@@ -617,3 +1210,6 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
  * khi người dùng lưu lần đầu**. Không có file mặc định nào cả: một file rỗng chỉ
  * để "cho có" là một dòng nữa trong thư mục mà không ai giải thích được.
  */
+
+
+

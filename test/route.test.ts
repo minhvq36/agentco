@@ -81,16 +81,40 @@ test('decideRoute: lookup — worker ẩn, có đường dẫn và câu hỏi', 
 });
 
 /**
- * `paths` RỖNG KHÔNG PHẢI MỘT LOOKUP HỢP LỆ.
+ * 🔄 QUYẾT ĐỊNH ĐÃ ĐỔI 24/08 — test này từng khoá điều NGƯỢC LẠI.
  *
- * Trợ lý đã cầm sẵn bảng kê tủ tài liệu và bảng kê Kết quả trong prefix — đó
- * chính là việc của hai bảng đó. Không nêu được tên file thì đường đúng là hỏi
- * lại, không phải thả một agent đi mò. Schema chặn, nên nó rơi xuống `garbled`
- * và người dùng KHÔNG nhìn thấy khối JSON.
+ * Bản cũ: *"`paths` rỗng KHÔNG phải một lookup hợp lệ — Trợ lý đã cầm sẵn hai
+ * bảng kê, không nêu được tên file thì hỏi lại, đừng thả agent đi mò"*. Đúng
+ * khi thế giới của văn phòng chỉ có tủ tài liệu.
+ *
+ * Nó hỏng ở lượt tiếp xúc đầu tiên với người non-code: hỏi *"thời tiết hôm
+ * nay"*, *"quán ăn"*, *"tin tức"* → không có `paths` nào để nêu → `ask` hoặc
+ * `garbled` → *"văn phòng mình chưa có nhân viên phụ trách"*. User chốt: cho
+ * `lookup` tra web, `paths` rỗng nghĩa là **câu hỏi tra cứu chung**.
+ *
+ * Giữ test này (đổi chiều) thay vì xoá: nó là chỗ ghi rằng đây là một QUYẾT
+ * ĐỊNH đã cân, không phải một chỗ ai đó quên ràng buộc.
  */
-test('decideRoute: lookup thiếu paths thì không lọt qua', () => {
-  const out = decideRoute(fence({ intent: 'lookup', paths: [], question: 'gì đó' }));
-  assert.equal(out.intent, 'garbled');
+test('decideRoute: lookup KHÔNG paths là hợp lệ — đó là câu hỏi tra web', () => {
+  const out = decideRoute(fence({ intent: 'lookup', paths: [], question: 'thời tiết hôm nay' }));
+  assert.equal(out.intent, 'lookup');
+  assert.ok(out.intent === 'lookup');
+  assert.deepEqual(out.paths, []);
+});
+
+test('decideRoute: lookup thiếu HẲN khoá paths cũng hợp lệ, và ra mảng rỗng', () => {
+  // `.default([])` chứ không `.optional()`: mọi nhánh phía sau đọc `.length`,
+  // và một `undefined` lọt xuống đó là một `TypeError` lúc chạy chứ không phải
+  // một nhánh khác. Schema phải trả về hình dạng ổn định, không trả về "có thể".
+  const out = decideRoute(fence({ intent: 'lookup', question: 'tin tức hôm nay' }));
+  assert.ok(out.intent === 'lookup');
+  assert.deepEqual(out.paths, []);
+});
+
+test('decideRoute: lookup THIẾU question vẫn không lọt — câu hỏi là thứ bắt buộc', () => {
+  // Nửa còn lại của bản nới: nới `paths` KHÔNG được nới luôn `question`. Một
+  // lookup không có câu hỏi là một lượt gọi model để hỏi hư không.
+  assert.equal(decideRoute(fence({ intent: 'lookup', paths: [] })).intent, 'garbled');
 });
 
 /**
@@ -332,4 +356,90 @@ test('requestOf: tên việc suy từ goal, nhiều task thì nối lại', () =
     requestOf(draft([draftTask({ goal: 'Dịch doc-1' }), draftTask({ goal: 'Soát lại bản dịch' })])),
     'Dịch doc-1 · Soát lại bản dịch',
   );
+});
+
+// ══════════════ CỬA 4: `{"say"}` THIẾU `intent` — ca thật 28/08 ══════════════
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ĐÂY LÀ NGUYÊN VĂN TRONG `route-failure.log`, không phải ca dựng ra.      │
+ * │                                                                          │
+ * │ User rút dây cánh tay GitHub rồi hỏi lại. Model trả lời **đúng, đủ, bằng │
+ * │ tiếng người** — chỉ quên mỗi chữ `intent`. Ta vứt câu đó đi và thay bằng │
+ * │ một lời xin lỗi bảo họ gõ lại; họ gõ lại (29 giây sau) và ra **y hệt**,  │
+ * │ vì model có sai đâu mà đổi.                                              │
+ * │                                                                          │
+ * │ Ba vế user nói, cả ba đều đúng: *"đâu phải lỗi của LLM"* · *"rất nguy    │
+ * │ hiểm cho multilanguage"* · *"có nhắn lại thì kết quả cũng ra vậy"*.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const CA_THAT =
+  '```json\n{"say":"Kết nối GitHub hiện không còn nữa, nên mình không đọc được README của repo ' +
+  'toeic-learning lúc này. Bạn cần kết nối lại GitHub cho văn phòng thì mình mới làm tiếp được."}\n```';
+
+test('🔴 `{"say"}` thiếu `intent` ⇒ CỨU, không vứt — và giữ NGUYÊN VĂN câu model viết', () => {
+  const r = decideRoute(CA_THAT);
+  assert.equal(r.intent, 'chat', 'phải đi cửa chat, không phải garbled');
+  assert.match((r as { say: string }).say, /Kết nối GitHub hiện không còn nữa/);
+  assert.doesNotMatch((r as { say: string }).say, /định dạng/, 'không được thay bằng câu của TA');
+});
+
+test('⭐ ca cứu hộ phải TỰ KHAI — một cửa cứu hộ im lặng là cái phễu êm ái', () => {
+  // Không có cờ này thì model quên `intent` mãi mãi mà không ai biết, và ta mất
+  // tín hiệu để đi sửa ở chỗ đúng (prompt) thay vì sửa mãi ở parser.
+  assert.equal((decideRoute(CA_THAT) as { salvaged?: true }).salvaged, true);
+  assert.equal(
+    (decideRoute('{"intent":"chat","say":"xin chào"}') as { salvaged?: true }).salvaged,
+    undefined,
+    'cửa CHÍNH thì không đánh dấu — nếu không thì nhật ký đầy tiếng ồn',
+  );
+});
+
+test('⭐ `intent` bịa ra một tên lạ vẫn cứu được', () => {
+  /**
+   * Vì sao `BareSaySchema` cố ý KHÔNG `.strict()`: `{"intent":"answer","say":…}`
+   * là cùng một ca hỏng (model tự nghĩ ra tên cửa), và bắt chặt ở đây là vứt đi
+   * đúng những thứ cửa này dựng ra để cứu.
+   */
+  const r = decideRoute('{"intent":"answer","say":"Mình chưa đọc được repo đó."}');
+  assert.equal(r.intent, 'chat');
+  assert.equal((r as { say: string }).say, 'Mình chưa đọc được repo đó.');
+});
+
+test('🔴 CỬA 4 KHÔNG ĐƯỢC NUỐT KẾ HOẠCH — thứ tự thử là một bất biến', () => {
+  // `PlanTasksSchema` phải chạy TRƯỚC. Đảo thứ tự thì một kế hoạch có `say` ở
+  // đâu đó sẽ tụt xuống thành một câu chat, và **không ai làm việc đó cả** —
+  // đúng cái bug 20/08 mà cả file này sinh ra để canh.
+  // Dùng đúng bộ dựng của file này, KHÔNG gõ tay một khối JSON: gõ tay thì rất
+  // dễ ra một bản nháp thiếu trường, và ca test sẽ xanh/đỏ vì lý do khác hẳn
+  // thứ nó định canh. (Đã dẫm đúng thế lúc viết ca này.)
+  assert.equal(decideRoute(JSON.stringify(draft([draftTask()]))).intent, 'plan');
+});
+
+test('🔴 câu phao cuối KHÔNG bảo người dùng "nhắn lại y nguyên"', () => {
+  /**
+   * Lời khuyên đó **tất định sai**: nhánh này chỉ tới sau khi `route()` đã tự
+   * thử lại một lượt, nên bảo họ gõ lại đúng chữ cũ là mời họ dựng lại y chang
+   * cái hỏng vừa rồi. Và nó không được đoán nguyên nhân — ca thật hôm 28/08,
+   * nguyên nhân là **kết nối bị rút**, không phải "lỗi định dạng của mình".
+   */
+  const r = decideRoute('{"tasks": "không đúng hình dạng nào cả"}');
+  assert.equal(r.intent, 'garbled');
+  const say = (r as { say: string }).say;
+  assert.doesNotMatch(say, /y nguyên/i);
+  assert.doesNotMatch(say, /lỗi của mình/i, 'đừng đoán nguyên nhân — ta không biết nó');
+  assert.match(say, /cách khác|chia nhỏ/i, 'phải chừa một đường đi tiếp KHÁC lần vừa rồi');
+});
+
+test('🔴 JSON hỏng vẫn KHÔNG được lọt nguyên văn ra mặt người dùng', () => {
+  // Luật 20/08 giữ nguyên: một khối JSON không bao giờ là câu nói cho người
+  // dùng. Cửa 4 chỉ nới cho object CÓ `say` đọc được, không nới cho mọi JSON.
+  const r = decideRoute('{"tasks": "không đúng hình dạng nào cả"}');
+  assert.doesNotMatch((r as { say: string }).say, /tasks/);
+});
+
+test('văn xuôi thường vẫn đi cửa chat như cũ', () => {
+  const r = decideRoute('Chào bạn! Mình có thể giúp gì?');
+  assert.equal(r.intent, 'chat');
+  assert.equal((r as { salvaged?: true }).salvaged, undefined);
 });

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
+  Cable,
   Maximize2,
   Minus,
   Network,
@@ -16,6 +17,7 @@ import { Canvas, type CanvasHandle } from '@/canvas/Canvas';
 import { Header } from '@/components/Header';
 import { Inspector } from '@/components/Inspector';
 import { Sidebar } from '@/components/Sidebar';
+import { ArmDialog } from '@/components/ArmDialog';
 import {
   NewAgentDialog,
   NewOfficeDialog,
@@ -38,6 +40,7 @@ export default function App() {
   const [newOffice, setNewOffice] = useState(false);
   const [renameOffice, setRenameOffice] = useState(false);
   const [newAgent, setNewAgent] = useState(false);
+  const [newArm, setNewArm] = useState(false);
   const [promptFor, setPromptFor] = useState<string | null>(null);
   const canvasRef = useRef<CanvasHandle | null>(null);
 
@@ -152,6 +155,7 @@ export default function App() {
                     onDropDocs={actions.dropDocs}
                   />
                   <Toolbar
+                    onAddArm={() => setNewArm(true)}
                     onAddAgent={() => setNewAgent(true)}
                     onArrange={() => canvasRef.current?.autoArrange()}
                     onFit={() => canvasRef.current?.fit()}
@@ -178,6 +182,7 @@ export default function App() {
       <NewOfficeDialog open={newOffice} onOpenChange={setNewOffice} />
       <RenameOfficeDialog open={renameOffice} onOpenChange={setRenameOffice} />
       <NewAgentDialog open={newAgent} onOpenChange={setNewAgent} />
+      <ArmDialog open={newArm} onOpenChange={setNewArm} />
       <PromptDialog who={promptFor} onClose={() => setPromptFor(null)} />
     </TooltipProvider>
   );
@@ -189,11 +194,13 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Toolbar({
   onAddAgent,
+  onAddArm,
   onArrange,
   onFit,
   onZoom,
 }: {
   onAddAgent(): void;
+  onAddArm(): void;
   onArrange(): void;
   onFit(): void;
   onZoom(f: number): void;
@@ -207,6 +214,18 @@ function Toolbar({
         <Button size="sm" className="shadow-sm" onClick={onAddAgent}>
           <UserPlus className="h-4 w-4" />
           Nhân viên
+        </Button>
+      </Tip>
+      {/*
+        Cửa CHÍNH để cắm một cánh tay — cạnh "Nhân viên", cùng ngữ pháp với thứ
+        duy nhất người dùng đã biết cách dùng. Cố ý KHÔNG làm palette kéo-thả:
+        canvas có tự sắp + nút "Sắp xếp lại", nên kéo-thả hứa một quyền mà nút
+        bên cạnh lấy lại. → docs/SPEC-arms.md §6e
+      */}
+      <Tip label="Cắm một kết nối cho nhân viên dùng">
+        <Button size="sm" className="shadow-sm" onClick={onAddArm}>
+          <Cable className="h-4 w-4" />
+          Kết nối
         </Button>
       </Tip>
       <div className="mx-1 h-5 w-px bg-line" />
@@ -348,3 +367,4 @@ function Toast() {
     </div>
   );
 }
+

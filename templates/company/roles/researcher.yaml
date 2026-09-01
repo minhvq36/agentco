@@ -16,5 +16,7 @@ model_tier: standard
 use_preset: false
 
 budget:
-  max_turns: 8
-  max_usd: 0.5
+  # Nới 26/08 theo mặc định chung (standard = 15 lượt · $5). Trần cũ 8/0.5 là
+  # con số của thời chưa có MCP, mà mỗi lời gọi MCP là một lượt. → office.ts §hire
+  max_turns: 15
+  max_usd: 5.0

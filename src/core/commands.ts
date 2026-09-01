@@ -322,6 +322,10 @@ export function pickReadable(
  * giao diện — cùng cách `office.run()` nói "Đang đọc tài liệu X, Y…".
  */
 export function readingNote(paths: readonly string[]): string {
+  // Không có file nào = câu hỏi tra cứu chung (24/08). Dòng trạng thái phải nói
+  // ĐÚNG việc đang chạy: "Đang đọc …" cho một lượt tra web là nói dối về một
+  // chuyện quan sát được, và người dùng sẽ đi tìm cái file không tồn tại đó.
+  if (paths.length === 0) return 'Đang tra trên web…';
   const names = paths.map((p) => p.split('/').pop() ?? p);
   const head = names.slice(0, 2).join(', ');
   const rest = names.length - 2;

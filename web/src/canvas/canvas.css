@@ -62,6 +62,15 @@
 .node-av {
   font-size: 20px;
 }
+/*
+  Hình cánh tay (logo hãng hoặc icon theo loại) — KHÔNG phải emoji, nên nó cần
+  được nói màu. `color` chứ không phải `fill`: logo hãng tô bằng `fill`, còn
+  icon lucide vẽ bằng `stroke`; cả hai đều đọc `currentColor`, nên một dòng
+  phục vụ cả hai. → `ArmIcon.tsx`
+*/
+.node-av-mark {
+  color: var(--color-ink);
+}
 .node-say {
   fill: var(--color-accent);
   font-size: 12px;
@@ -72,6 +81,7 @@
 }
 .node.is-off .node-nm,
 .node.is-off .node-av,
+.node.is-off .node-av-mark,
 .node.is-off .node-sub,
 .node.is-off .node-stripe {
   opacity: 0.45;

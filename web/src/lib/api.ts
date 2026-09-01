@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Client API. Một chỗ duy nhất nói chuyện với daemon.
  *
  * Nguyên tắc xử lý lỗi (tiêu chí "Xử lý lỗi tốt"): backend đã trả về câu tiếng
@@ -8,12 +8,17 @@
 
 import type {
   ArchivedAgent,
+  ArmCall,
   ArtifactRecord,
   CanvasState,
+  CatalogArm,
+  InstalledArm,
+  ProbeResult,
   CompanyModels,
   CompanyView,
   KnowledgeEntry,
   LibraryDoc,
+  OAuthAccount,
   OfficeDetail,
   OfficeSummary,
   PlanRecord,
@@ -68,6 +73,213 @@ const enc = encodeURIComponent;
 
 export const api = {
   company: () => call<CompanyView>('/api/company'),
+
+  /**
+   * Duyệt thư mục trên máy CHẠY DAEMON. Trình duyệt không đưa được đường dẫn
+   * tuyệt đối, còn hộp thoại của HĐH thì mở nhầm máy khi daemon ở xa — nên ta
+   * tự liệt kê. → `paths.ts §browseDirs`
+   */
+  /**
+   * `office` = mở ở **thư mục văn phòng** khi chưa có `p`.
+   *
+   * ⚠ Client gửi **id văn phòng**, không gửi đường dẫn: đường dẫn là chuyện của
+   * máy chủ (đổi theo HĐH và theo chỗ cài), và ghép nó ở đây là dựng lại đúng
+   * lớp *"hai bản của cùng một sự thật"*. → `server.ts /api/browse`
+   */
+  browse: (p?: string, office?: string) =>
+    call<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>(
+      `/api/browse${p ? `?path=${enc(p)}` : office ? `?office=${enc(office)}` : ''}`,
+    ),
+
+  // ── cánh tay (MCP). → docs/SPEC-arms.md §6
+  armCatalog: () => call<{ arms: CatalogArm[] }>('/api/arms/catalog'),
+  arms: () => call<{ arms: InstalledArm[] }>('/api/arms'),
+
+  /**
+   * THỬ NGAY — bắt tay thật, chưa lưu gì.
+   *
+   * ⚠ CHẬM VÀ ĐÓ LÀ BÌNH THƯỜNG. Giao diện phải hiện "đang kết nối…" — coi im
+   * lặng là hỏng thì mọi cánh tay đều trông như hỏng ở lần cắm đầu tiên.
+   *
+   * ĐÍNH CHÍNH 24/08 (`scripts/spike-npx-cost.ts`, 10 lượt): câu cũ ở đây ghi
+   * *"4 giây khi cache npx đã ấm, 17,7 giây lần đầu"*. Số thật, gói đã cache:
+   * **7,7–9,2 giây, lần đầu bằng lần thứ ba** — không có "lần sau nhanh hơn".
+   * ~3,2 s trong đó là phí tự thân của `npx`, đo được bằng cách chạy thẳng
+   * `node <file>` (0,8 s). Cùng khoản đó cũng bị trả ở MỖI task có cánh tay.
+   */
+  testArm: (
+    id: string,
+    body: {
+      /**
+       * DÙNG LẠI một mục đã có trong sổ. Server lấy cấu hình + tên chìa + **giá
+       * trị chìa** từ sổ chung, nên không có gì để client gửi kèm.
+       *
+       * ⚠ Không thay bằng cách dán `config` sang đường "tự cắm": cấu hình trong
+       * sổ giữ ô trống `${…}`, và gửi nó đi mà không có chìa là **401** — đúng
+       * bug user gặp 25/08 khi bê Notion sang văn phòng thứ hai.
+       */
+      armId?: string;
+      config?: unknown;
+      catalogId?: string;
+      folders?: string[];
+      /** Nhóm việc + ô tick cách chạy — KHAI RA, đừng để hợp đồng nói dối. */
+      groups?: string[];
+      options?: string[];
+      /** Cần cho ô trống <OFFICE_STATE> — xem chỗ gọi ở ArmDialog. */
+      office?: string;
+      secrets?: Record<string, string>;
+      /** Tên chìa OAuth của tài khoản đã chọn. → `oauth.ts §accountName` */
+      account?: string;
+      /** Nấc quyền. Đi vào băm ở server — xem `addArm`. */
+      level?: 'read' | 'add' | 'full';
+    },
+  ) => call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
+
+  // ── đăng nhập một dịch vụ (OAuth). → docs/SPEC-arms.md §5h
+  /**
+   * Mở một lượt đăng nhập. Trả về **URL cho TA tự mở**, daemon không spawn gì.
+   *
+   * ⚠ Đó là cả điểm của thiết kế: trình duyệt người dùng đang ngồi có sẵn phiên
+   * Notion; trình duyệt mặc định của máy thì chưa chắc — user gặp đúng ca đó
+   * ngay lượt thử đầu 24/08.
+   */
+  oauthStart: (catalogId: string) =>
+    call<{ authUrl: string; state: string }>('/api/oauth/start', {
+      method: 'POST',
+      body: JSON.stringify({ catalogId }),
+    }),
+
+  /**
+   * Xin một MÃ THIẾT BỊ. Không có `redirect_uri`, không có tab callback.
+   *
+   * ⚠ Vì thế luồng này chạy được cả khi daemon **không hề mở cổng ra ngoài** —
+   * không có mã uỷ quyền nào bay về đâu cả. → SPEC-arms §5h·7b
+   */
+  oauthDeviceStart: (catalogId: string) =>
+    call<{
+      state: string;
+      userCode: string;
+      verificationUri: string;
+      verificationUriComplete?: string;
+      expiresAt: number;
+      intervalMs: number;
+    }>('/api/oauth/device/start', { method: 'POST', body: JSON.stringify({ catalogId }) }),
+
+  /**
+   * MỘT nhịp hỏi thăm. Giao diện lặp theo `intervalMs` server trả về.
+   *
+   * ⚠ Vì sao giao diện lặp chứ không phải giữ một request treo 15 phút: một
+   * request treo lâu như thế chết vì mọi thứ nằm giữa (nginx, proxy công ty,
+   * tab bị ngủ), và khi nó chết thì **không có trạng thái nào để kể lại**. Mất
+   * một nhịp chỉ là mất một nhịp — phiên vẫn nằm ở daemon.
+   */
+  oauthDevicePoll: (state: string) =>
+    call<
+      | { state: 'pending'; intervalMs: number; expiresAt: number }
+      | { state: 'done'; name: string; label?: string }
+    >('/api/oauth/device/poll', { method: 'POST', body: JSON.stringify({ state }) }),
+
+  /**
+   * Ô "dùng `client_id` của bạn". → SPEC-arms §5h·7h
+   *
+   * `own: true` = công ty này đang đi bằng danh tính ứng dụng CỦA HỌ, không phải
+   * của agentco. Đường thoát cho hai rủi ro: app của ta bị hãng treo ⇒ mọi khách
+   * gãy cùng lúc · khách doanh nghiệp không muốn đi qua danh tính của ta.
+   */
+  oauthClient: (forCatalog: string) =>
+    call<{ id: string; own: boolean }>(`/api/oauth/client?for=${enc(forCatalog)}`),
+
+  /** Dán rỗng = quay về client của agentco. */
+  setOauthClient: (catalogId: string, clientId: string) =>
+    call<{ id: string; own: boolean }>('/api/oauth/client', {
+      method: 'PUT',
+      body: JSON.stringify({ catalogId, clientId }),
+    }),
+
+  /**
+   * TRA BẢN CÀI APP — repo nào hãng thật sự cho cánh tay này đụng. → §5h·7o
+   *
+   * ⚠ `failed: true` KHÁC `installed: []`, và giao diện phải xử lý ngược nhau:
+   *   `installed: []`  → tra được, và câu trả lời là **chưa cài repo nào** ⇒ chặn
+   *   `failed: true`   → **không tra được** (mạng, hãng đổi tool) ⇒ cho qua, nói thật
+   * Gộp hai ca này là hoặc chặn oan người đã cài, hoặc thả người chưa cài.
+   */
+  armRepos: (catalogId: string, account: string) =>
+    call<{ login: string; installed: string[]; seen: number } | { failed: true }>(
+      '/api/arms/repos',
+      { method: 'POST', body: JSON.stringify({ catalogId, account }) },
+    ),
+
+  /** Workspace đã nối cho một mục danh mục. TÊN + NHÃN, không token. */
+  oauthAccounts: (forCatalog?: string) =>
+    call<{ accounts: OAuthAccount[] }>(
+      `/api/oauth/accounts${forCatalog ? `?for=${enc(forCatalog)}` : ''}`,
+    ),
+
+  /**
+   * Gỡ một workspace. Server thu hồi ở phía dịch vụ (nếu dịch vụ nhận) rồi xoá
+   * chìa ở máy này — và **từ chối** nếu còn kết nối nào đang dùng nó.
+   */
+  oauthForget: (name: string) =>
+    call<{ accounts: OAuthAccount[] }>(`/api/oauth/accounts/${enc(name)}`, { method: 'DELETE' }),
+
+  /**
+   * Cắm một cánh tay. KHÔNG gửi `id` — danh tính là **băm cấu hình**, do server
+   * sinh. Client chỉ gửi cái tên hiển thị. → `catalog.ts §armHash`
+   */
+  addArm: (body: {
+    label?: string;
+    /** Dùng lại mục đã có trong sổ — xem `testArm`. Nhãn và chìa đều lấy từ sổ. */
+    armId?: string;
+    /** Gửi thẳng cấu hình (đường "tự cắm")… */
+    config?: unknown;
+    /** …hoặc để SERVER dựng từ danh mục — số phiên bản gói chỉ nằm ở một chỗ. */
+    catalogId?: string;
+    folders?: string[];
+    secrets?: Record<string, string>;
+    /** Tài khoản OAuth đã chọn — tên chìa, mang `workspace_id`. */
+    account?: string;
+    /**
+     * Nấc quyền. **Đi vào `armHash`** ⇒ đổi nấc là một cánh tay KHÁC, và đó
+     * chính là thứ làm cho "đổi mức ở văn phòng này" không đụng văn phòng khác.
+     */
+    level?: 'read' | 'add' | 'full';
+    office?: string;
+    groups?: string[];
+    options?: string[];
+    /** Giao cho ai — đi CÙNG request với việc cắm, xem `Office.grantArm`. */
+    grantTo?: string[];
+  }) => call<{ id: string; arms: InstalledArm[]; canvas?: CanvasState }>('/api/arms', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+
+  /**
+   * Mở cửa sổ trình duyệt THƯỜNG vào hồ sơ của văn phòng, để người dùng tự
+   * đăng nhập. Không đi qua Playwright — xem core/browser-login.ts.
+   */
+  browserLogin: (office: string, url?: string) =>
+    call<{ ok: true; profile: string }>('/api/browser-login', {
+      method: 'POST',
+      body: JSON.stringify({ office, ...(url ? { url } : {}) }),
+    }),
+
+  /** Đổi tên — chỉ đụng nhãn trong sổ chung, không đổi khoá, không di trú gì. */
+  renameArm: (id: string, label: string) =>
+    call<{ label: string }>(`/api/arms/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }),
+
+  /** Rút khỏi MỘT văn phòng. Sổ chung giữ nguyên — cắm lại là tìm thấy. */
+  removeArm: (id: string, office: string) =>
+    call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?office=${enc(office)}`, { method: 'DELETE' }),
+
+  /**
+   * XOÁ HẲN khỏi sổ chung — **không lấy lại được**. Chỉ dùng cho mục `orphan`.
+   *
+   * ⚠ Không xoá chìa: chìa sống theo TÊN ở `.state/secrets.json`, độc lập với
+   * sổ. Cắm lại từ danh mục là ba cú bấm; đi lấy lại token thì không.
+   */
+  forgetArm: (id: string) =>
+    call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?forget=1`, { method: 'DELETE' }),
 
   createOffice: (name: string) =>
     call<{ id: string }>('/api/office', { method: 'POST', body: JSON.stringify({ name }) }),
@@ -248,6 +460,26 @@ export const api = {
     call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?path=${enc(p)}`, {
       method: 'DELETE',
     }),
+
+  /**
+   * Dọn sạch ngăn Kết quả. `all=1` là TƯỜNG MINH — server cố ý không suy
+   * "thiếu path" thành "xoá hết". Chỉ ngăn này có nút này; tủ tài liệu và kho
+   * tri thức thì không. → `artifacts.ts §removeAll`
+   */
+  clearArtifacts: (id: string) =>
+    call<{ removed: number; artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?all=1`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * NHẬT KÝ KIỂM TOÁN của MỘT cánh tay — mọi lời gọi MCP, kèm tham số.
+   * → `core/audit.ts` · SPEC-arms §6k
+   *
+   * Đây là thứ **thay** cho cổng duyệt từng lần: bỏ cổng thì log phải đủ, nếu
+   * không ta vừa bỏ cả hai.
+   */
+  armLog: (id: string, server: string) =>
+    call<{ calls: ArmCall[] }>(`/api/office/${enc(id)}/arm-log?server=${enc(server)}`),
 
   plans: (id: string) => call<{ plans: PlanRecord[] }>(`/api/office/${enc(id)}/plans`),
 
