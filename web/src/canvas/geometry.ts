@@ -13,16 +13,44 @@ export function sizeOf(kind: NodeKind): { w: number; h: number } {
   return NODE_SIZE[kind];
 }
 
-/** Cổng vào ở giữa cạnh trên, cổng ra ở giữa cạnh dưới. */
-export function anchor(node: { kind: NodeKind; x: number; y: number }, dir: 'in' | 'out'): Point {
+/**
+ * Cổng của một node trên một sợi dây.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MỖI NODE CÓ HAI CỔNG VÀO, KHÔNG PHẢI MỘT. (đổi 23/08, user bắt được)     │
+ * │                                                                          │
+ * │ Bản trước: `in` = giữa cạnh TRÊN, `out` = giữa cạnh DƯỚI, không phụ thuộc │
+ * │ vào sợi dây nào. Nên dây từ Trợ lý và dây từ cánh tay **chui vào CÙNG một │
+ * │ điểm** trên đỉnh nhân viên — hai quan hệ khác hẳn nhau, một cái cổng.     │
+ * │                                                                          │
+ * │ Hai quan hệ đó ngược chiều nhau, và đó chính là thứ phải nhìn thấy:       │
+ * │   Trợ lý → nhân viên   GIAO VIỆC       đi từ trên xuống                  │
+ * │   cánh tay → nhân viên CẤP NĂNG LỰC    đẩy từ dưới lên                   │
+ * │                                                                          │
+ * │ ⇒ Cổng suy từ CHIỀU của sợi dây, không từ node. `up` = dây đi lên.        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function anchor(
+  node: { kind: NodeKind; x: number; y: number },
+  dir: 'in' | 'out',
+  up = false,
+): Point {
   const s = sizeOf(node.kind);
-  return { x: node.x + s.w / 2, y: dir === 'out' ? node.y + s.h : node.y };
+  // Dây đi lên thì đảo cả hai đầu: nguồn nhả ra ở CẠNH TRÊN, đích nhận ở CẠNH DƯỚI.
+  const bottom = up ? dir === 'in' : dir === 'out';
+  return { x: node.x + s.w / 2, y: bottom ? node.y + s.h : node.y };
 }
 
-/** Bézier dọc. `dy` co giãn theo khoảng cách để dây gần không bị phồng. */
-export function curve(a: Point, b: Point): string {
+/**
+ * Bézier dọc. `dy` co giãn theo khoảng cách để dây gần không bị phồng.
+ *
+ * `up` phải đảo cả hai điểm điều khiển. Giữ nguyên chúng cho dây đi lên thì
+ * đường cong thắt nút ở giữa — nó cố phồng xuống trong khi hai đầu đi lên.
+ */
+export function curve(a: Point, b: Point, up = false): string {
   const dy = Math.max(45, Math.abs(b.y - a.y) / 2);
-  return `M ${a.x} ${a.y} C ${a.x} ${a.y + dy} ${b.x} ${b.y - dy} ${b.x} ${b.y}`;
+  const s = up ? -1 : 1;
+  return `M ${a.x} ${a.y} C ${a.x} ${a.y + dy * s} ${b.x} ${b.y - dy * s} ${b.x} ${b.y}`;
 }
 
 export function screenToWorld(ev: { clientX: number; clientY: number }, rect: DOMRect, view: Viewport): Point {
@@ -37,8 +65,19 @@ export function screenToWorld(ev: { clientX: number; clientY: number }, rect: DO
  * bản mã thứ hai, và hai bản đã lệch nhau: văn phòng mới hiện sơ đồ méo, bấm
  * nút này thì nó thẳng lại.
  */
-export function arrange(nodes: readonly CanvasNode[]): Map<string, Point> {
-  return arrangeAll(nodes);
+export function arrange(
+  nodes: readonly CanvasNode[],
+  /**
+   * Cạnh của canvas. Chỉ cạnh `mcp → agent` có tác dụng — `arrangeAll` tự lọc.
+   *
+   * ⚠ PHẢI TRUYỀN. Thiếu nó thì nút "Sắp xếp lại sơ đồ" chạy nhánh CŨ (mọi cánh
+   * tay một hàng căn giữa, không phân biệt đã nối dây hay chưa) — tức là giao
+   * diện và server lại xếp ra hai bố cục khác nhau, đúng lớp lỗi mà cả file
+   * `layout-geometry.ts` sinh ra để đóng.
+   */
+  edges: readonly { from: string; to: string }[] = [],
+): Map<string, Point> {
+  return arrangeAll(nodes, edges);
 }
 
 /** Khung bao mọi node, để tính "vừa khung". */

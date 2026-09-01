@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { Archive, FileCode2, Pencil, Trash2, X } from 'lucide-react';
+import { Archive, FileCode2, Globe, Pencil, ScrollText, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Textarea } from '@/components/ui/misc';
@@ -11,8 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
-import type { CanvasNode } from '@/lib/types';
+import type { ArmCall, CanvasNode } from '@/lib/types';
 
 /**
  * Sửa hồ sơ nhân viên tại chỗ. → docs/SPEC-tools-approval.md §1
@@ -168,6 +169,189 @@ function AssistantName({ node }: { node: CanvasNode }) {
       </div>
     </div>
   );
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ CỬA ĐĂNG NHẬP BẰNG TAY — mở một cửa sổ trình duyệt THƯỜNG vào đúng hồ sơ │
+ * │ mà nhân viên dùng. → `core/browser-login.ts`                             │
+ * │                                                                          │
+ * │ Ca sinh ra nó (user 29/08, bốn lần thử): *"tui đang đăng nhập dở bằng    │
+ * │ sđt mà, chờ xíu đi"* · *"đến bước setup địa chỉ thì nó lại tắt của tôi"*. │
+ * │ Vòng đời trình duyệt của nhân viên = vòng đời một LƯỢT VIỆC, nên không có │
+ * │ chỗ nào trong đó để một con người thao tác.                              │
+ * │                                                                          │
+ * │ ⚠ Nút này KHÔNG nhận mật khẩu và không bao giờ được nhận: nhận là agentco │
+ * │ thành nơi giữ mật khẩu. Nó chỉ mở đúng một cửa sổ tới đúng một địa chỉ.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function BrowserLogin() {
+  const officeId = useApp((s) => s.officeId);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [opened, setOpened] = useState(false);
+
+  if (!officeId) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-line p-3">
+      <div className="flex items-center gap-2">
+        <Globe className="h-4 w-4 shrink-0 text-muted" />
+        <span className="text-[13px] font-medium">Đăng nhập / thêm cookie</span>
+      </div>
+      <p className="mt-1.5 text-xs leading-relaxed text-muted">
+        {opened ? (
+          <>
+            Cửa sổ đã mở. Dùng như trình duyệt bình thường — đăng nhập, chờ mã SMS, xác minh hai
+            bước, bao lâu cũng được. Xong thì <b>đóng cửa sổ</b>; nhân viên dùng lại phiên đó ở
+            những lượt sau.
+          </>
+        ) : (
+          <>
+            Mở một cửa sổ trình duyệt thường, dùng <b>đúng hồ sơ</b> mà nhân viên dùng. Đăng nhập
+            ở đây một lần là những lượt việc sau vào thẳng được.
+          </>
+        )}
+      </p>
+      {err && <p className="mt-1.5 text-xs text-danger">{err}</p>}
+      <Button
+        size="sm"
+        variant="primary"
+        className="mt-3"
+        disabled={busy}
+        onClick={() => void go()}
+      >
+        {busy ? 'Đang mở…' : opened ? 'Mở lại' : 'Mở trình duyệt'}
+      </Button>
+    </div>
+  );
+
+  async function go() {
+    setBusy(true);
+    setErr('');
+    try {
+      // Không gửi `url`: mở trình duyệt của văn phòng là đủ, người dùng tự gõ
+      // địa chỉ trong cửa sổ. Bắt gõ trước là thêm một bước cho cùng kết quả.
+      await api.browserLogin(officeId!);
+      setOpened(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NHẬT KÝ KIỂM TOÁN — VÀ VÌ SAO NÓ NẰM Ở ĐÂY, không ở một ngăn kéo riêng.  │
+ * │ (user hỏi 26/08: *"nó nên thuộc object nào trên UI?"*)                   │
+ * │                                                                          │
+ * │ Ba ngăn kéo bên trái (Kết quả · Tủ tài liệu · Kho tri thức) đều là **nội  │
+ * │ dung của người dùng**. Một cuốn nhật ký không phải nội dung — thêm ngăn   │
+ * │ thứ tư là bắt MỌI người học một khái niệm nữa, kể cả người sẽ không bao   │
+ * │ giờ mở nó. Đúng thứ user cảnh báo: *"người nocode vào cũng đâu hiểu gì"*. │
+ * │                                                                          │
+ * │ Chỗ đúng là **object sở hữu rủi ro**: cánh tay. Bảng này đã nói *"nó LÀM  │
+ * │ ĐƯỢC gì"* (huy hiệu mức quyền, số việc); nhật ký nói *"nó ĐÃ LÀM gì"*.    │
+ * │ Hai vế của cùng một câu hỏi, nên chúng đứng cạnh nhau.                    │
+ * │                                                                          │
+ * │ Và nó **tự phân tầng người dùng** mà không cần một chế độ "nâng cao" nào: │
+ * │ phải bấm vào một node 🔌 mới thấy, và ai bấm vào node 🔌 thì đã đi qua    │
+ * │ ngưỡng đó rồi.                                                           │
+ * │                                                                          │
+ * │ ⚠ Mặc định ĐÓNG. Nó có thể dài hàng trăm dòng, và bảng chi tiết là chỗ    │
+ * │ người ta vào để đổi tên hoặc rút dây — không phải để đọc log.             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function ArmLog({ server }: { server: string }) {
+  const officeId = useApp((s) => s.officeId);
+  const [open, setOpen] = useState(false);
+  const [calls, setCalls] = useState<ArmCall[] | null>(null);
+
+  // Chỉ nạp khi MỞ: một cánh tay chạy lâu có hàng trăm dòng, và nạp sẵn cho mỗi
+  // lần bấm vào node là trả giá cho một thứ hầu như không ai xem.
+  useEffect(() => {
+    if (!open || !officeId) return;
+    setCalls(null);
+    api
+      .armLog(officeId, server)
+      .then((r) => setCalls(r.calls))
+      .catch(() => setCalls([]));
+  }, [open, officeId, server]);
+
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <button
+        className="flex w-full items-center gap-1.5 text-[13px] text-accent hover:underline"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ScrollText className="h-3.5 w-3.5" />
+        {open ? 'Ẩn nhật ký' : 'Kết nối này đã làm gì?'}
+      </button>
+
+      {open && (
+        <div className="mt-2">
+          {calls === null && <p className="text-xs text-muted">Đang đọc…</p>}
+          {calls?.length === 0 && (
+            <p className="text-xs leading-relaxed text-muted">
+              Chưa có lời gọi nào được ghi. Nhật ký bắt đầu từ lúc kết nối được dùng trong một việc
+              thật — bấm <b>Thử ngay</b> lúc cắm thì không tính.
+            </p>
+          )}
+          {calls?.map((c, i) => (
+            <ArmLogRow key={`${c.ts}-${i}`} call={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Một dòng: **AI · LÀM GÌ · LÚC NÀO**, tham số giấu sau một cú bấm.
+ *
+ * Tham số là thứ đắt nhất của cuốn nhật ký (nó trả lời *"nó đã ghi GÌ vào
+ * Notion"*) và cũng là thứ dài nhất. Bày hết ra thì 20 lời gọi thành một bức
+ * tường JSON và người ta thôi đọc — tức mất luôn cả những dòng đáng đọc.
+ */
+function ArmLogRow({ call }: { call: ArmCall }) {
+  const [show, setShow] = useState(false);
+  const when = new Date(call.ts);
+  const stamp = Number.isNaN(when.getTime())
+    ? call.ts
+    : when.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+  return (
+    <div className="border-b border-line/60 py-1.5 last:border-0">
+      <button className="w-full text-left" onClick={() => setShow((v) => !v)}>
+        <div className="flex items-baseline gap-1.5 text-[12.5px]">
+          {/* Tên việc NGUYÊN VĂN, không qua bảng dịch viết tay: bảng đó đúng cho
+              một hãng và câm cho mọi hãng khác — cùng lý lẽ `describeCall`. */}
+          <span className="min-w-0 flex-1 truncate font-medium">{call.tool.replace(/_/g, ' ')}</span>
+          <span className="flex-none tabular-nums text-[11px] text-muted">{stamp}</span>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-muted">
+          {call.role}
+          {call.task_id ? ` · ${call.task_id}` : ''}
+        </div>
+      </button>
+      {show && (
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-line/40 p-2 text-[11px] leading-relaxed text-ink">
+          {pretty(call.args)}
+          {call.truncated ? '\n\n… (đã cắt bớt — tham số quá dài)' : ''}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** JSON cho dễ đọc; hỏng thì hiện nguyên văn — đừng nuốt thứ duy nhất còn lại. */
+function pretty(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
 }
 
 const TIER_HINT: Record<string, string> = {
@@ -459,6 +643,158 @@ function Note({ children }: { children: React.ReactNode }) {
   return <p className="my-3 text-xs leading-relaxed text-muted">{children}</p>;
 }
 
+/**
+ * CÁNH TAY MỘT NGƯỜI ĐANG CẦM — hiện NHÃN, không hiện BĂM.
+ *
+ * Bản trước in thẳng `node.mcp.join(', ')`, ra `a385afc3ab6, a4fbabd0360`. Đó là
+ * **cùng một con bug** đã vá ở nhật ký công việc 24/08, chỉ khác chỗ nó nằm: băm
+ * là DANH TÍNH, không phải thứ để đọc. Người dùng đặt tên "Musics" thì mọi chỗ
+ * phải nói "Musics" — bảng chi tiết cũng là một chỗ.
+ *
+ * Nhãn tra qua chính node 🔌 trên sơ đồ nên không cần dữ liệu mới. Rơi về băm khi
+ * cánh tay đã biến khỏi `company.yaml`: lúc đó băm là thứ DUY NHẤT còn thật, và
+ * nó khớp với dòng `Không còn khai trong company.yaml` ở panel của node kia.
+ *
+ * Nhãn ô cũ là *"Tool ngoài"* — từ vựng của người viết code. Người dùng kéo dây
+ * từ một node tên **Kết nối**, nên ô này nói cùng thứ tiếng đó.
+ */
+function ArmList({ ids, nodes }: { ids?: string[]; nodes: CanvasNode[] }) {
+  if (!ids?.length) return null;
+  const name = (id: string) => nodes.find((n) => n.kind === 'mcp' && n.server === id)?.label ?? id;
+  return <Row k="Kết nối đang dùng" v={ids.map(name).join(', ')} />;
+}
+
+/**
+ * THƯ MỤC CÁNH TAY — chỉ đọc, và "chỉ đọc" ở đây là một câu về DANH TÍNH.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO KHÔNG PHẢI MỘT Ô NHẬP.                                            │
+ * │                                                                          │
+ * │ Nhãn sửa được vì nhãn không phải danh tính. Thư mục thì NẰM TRONG cấu     │
+ * │ hình, mà danh tính = `armHash(cấu hình)` — nên "sửa thư mục" không phải   │
+ * │ một phép sửa, nó là **một cánh tay khác**. Cho sửa tại chỗ là dựng lại    │
+ * │ đúng ca GHI ĐÈ IM LẶNG mà §6i sinh ra để chặn: node y nguyên, mọi sợi     │
+ * │ dây y nguyên, chỉ thư mục bên dưới đổi — **không có triệu chứng ở chỗ nó  │
+ * │ nằm**. Đường đi đúng là `+ Kết nối` một cái mới rồi rút cái cũ.           │
+ * │                                                                          │
+ * │ Nhưng PHẢI HIỆN: đây là thứ trả lời câu *"nhân viên này với tới đâu"* —   │
+ * │ hôm nay người dùng chỉ đọc được nó bằng cách mở `company.yaml`, mà một    │
+ * │ bước "mở file yaml" là một chuông báo (§6, chốt 22/08).                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Hiện NGUYÊN VĂN, không chuẩn hoá dấu gạch và không dò hệ điều hành. Chuỗi
+ * này để người dùng đối chiếu bằng mắt với Explorer/Finder, nên nó phải là thứ
+ * họ đã nhập — `D:\…` trên Windows, `/home/…` trên Linux/macOS, và một văn phòng
+ * zip từ máy khác hệ vẫn hiện đúng thứ đã ghi. `folderRoots` cố ý nhận cả hai
+ * kiểu ở mọi nền tảng, cùng lý do `SHELL_ALIASES` gửi cả hai tên tool.
+ *
+ * Rỗng ⇒ KHÔNG vẽ gì: cánh tay Notion/GitHub không có thư mục nào, và một ô
+ * trống nói dối rằng cấu hình bị thiếu.
+ */
+function ArmFolders({ folders }: { folders?: string[] }) {
+  if (!folders?.length) return null;
+  return (
+    <div className="border-b border-line py-1.5 text-[13px] last:border-0">
+      <div className="text-ink">Thư mục với tới được</div>
+      <ul className="mt-1 space-y-0.5">
+        {folders.map((f) => (
+          // `break-all`: đường dẫn Windows có khoảng trắng lẫn dấu gạch ngược,
+          // không ngắt dòng được ở chỗ tử tế nào. Thà xuống dòng giữa chừng còn
+          // hơn tràn ngang cả panel.
+          <li key={f} className="select-all break-all font-mono text-xs text-muted">
+            {f}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * ĐỔI TÊN KẾT NỐI — và nó CỐ Ý không có câu cảnh báo nào.
+ *
+ * Nhãn không phải danh tính (danh tính là băm cấu hình), nên đổi nó không đụng
+ * khoá, không viết lại `roles/*.yaml`, không phá cache của ai. Dán một câu
+ * cảnh báo lên đây là dạy người dùng bỏ qua cảnh báo — rồi họ bỏ qua đúng cái
+ * đáng đọc, y như lý do `renameAssistant` không có cảnh báo.
+ */
+function ArmName({ node }: { node: CanvasNode }) {
+  const [text, setText] = useState(node.label);
+  useEffect(() => setText(node.label), [node.label]);
+  const dirty = text.trim() !== node.label && text.trim().length > 0;
+
+  return (
+    <div className="mt-3">
+      {/*
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ HUY HIỆU MỨC QUYỀN — **SUY TỪ `level`, KHÔNG ĐỌC CHUỖI TÊN**.        │
+        │                                                                      │
+        │ User hỏi 25/08 *"thêm quyền vào tên có hơi lủng không"* — có. Nhãn là │
+        │ của người dùng, đổi tự do (§6i). Nhét `· chỉ đọc` vào chuỗi thì một   │
+        │ cú đổi tên tạo ra được **"Notion (ghi được)" trên một cánh tay chỉ    │
+        │ đọc** — nhãn nói dối về ĐẶC QUYỀN, đúng con bug "lời hứa rỗng" đã gỡ  │
+        │ ở bài 11 bước 5.                                                     │
+        │                                                                      │
+        │ Nên: hai lớp. Lớp ngoài (tên) đổi được; lớp trong (huy hiệu) thì      │
+        │ không — nó đọc `arms[băm].level`, thứ nằm trong chính cái băm. Ô nhập │
+        │ ngay dưới **không** với tới được nó, và đó là toàn bộ điểm.           │
+        └──────────────────────────────────────────────────────────────────────┘
+      */}
+      {(node.level || node.via || node.optionLabels?.length) && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {/*
+            CÁCH CHẠY — *"nhìn vào panel là biết đang cấu hình thế nào"* (user 29/08).
+
+            Suy từ **cấu hình đã lưu** (`catalog.ts §activeOptions`), không từ một
+            danh sách id cất riêng: hai nguồn cho cùng một sự thật thì nguồn sai sẽ
+            là nguồn HIỂN THỊ — người dùng đọc một cấu hình không phải cấu hình
+            đang chạy, và đó là kiểu nói dối khó phát hiện nhất.
+          */}
+          {node.optionLabels?.map((t) => (
+            <span key={t} className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">
+              {t}
+            </span>
+          ))}
+          {/* Workspace NÀO — user 26/08. Tra từ tên chìa, không đọc chuỗi tên. */}
+          {node.via && (
+            <span className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">{node.via}</span>
+          )}
+          {node.level && (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                node.level === 'full' ? 'bg-danger-soft text-danger' : 'bg-line/70 text-muted'
+              }`}
+            >
+              {node.level === 'read' ? 'chỉ đọc' : node.level === 'add' ? 'đọc + thêm mới' : 'toàn quyền'}
+            </span>
+          )}
+          {node.toolCount ? (
+            <span className="text-[11px] tabular-nums text-muted">{node.toolCount} việc</span>
+          ) : null}
+        </div>
+      )}
+      {/*
+        ⚠ ĐỨNG RIÊNG, KHÔNG NẰM CHUNG HÀNG CHIP. (user chốt 29/08)
+
+        Chip là **trạng thái** — thứ để đọc. Nút này là **hành động**, và là hành
+        động duy nhất trong bảng này mở một cửa sổ ra ngoài agentco. Trộn hai loại
+        vào một hàng thì mắt lướt qua nó như lướt qua một cái nhãn.
+      */}
+      {node.canLogin && <BrowserLogin />}
+      <label className="text-[11px] uppercase tracking-wide text-muted">Tên hiển thị</label>
+      <div className="mt-1 flex gap-1.5">
+        <Input value={text} onChange={(e) => setText(e.target.value)} />
+        <Button
+          disabled={!dirty}
+          onClick={() => void actions.renameArm(node.server!, text.trim())}
+        >
+          Lưu
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Bảng chi tiết bên phải. Mở khi chọn một node; ✕ để đóng. */
 export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void }) {
   const canvas = useApp((s) => s.canvas);
@@ -517,7 +853,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Row k="Đang trực" v={`${onDuty.length} người`} />
             <Row k="Đang nghỉ" v={`${off.length} người`} />
             <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
-            {node.mcp && node.mcp.length > 0 && <Row k="Tool ngoài" v={node.mcp.join(', ')} />}
+            <ArmList ids={node.mcp} nodes={canvas.nodes} />
             <Note>
               Mỗi người đang trực chiếm một dòng giới thiệu trong ngữ cảnh của Trợ lý, ở <b>mọi</b> lượt trò
               chuyện. Ngắt dây người không dùng đến là tiết kiệm thật, không phải dọn cho gọn.
@@ -547,19 +883,72 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                   .join(', ') || 'chưa ai'
               }
             />
+            <ArmFolders folders={node.folders} />
             {node.missing && (
               <Note>
                 <span className="text-danger">Không còn khai trong company.yaml.</span>
               </Note>
             )}
-            <Note>
-              Nối vào một nhân viên = ghi <code>mcp:</code> vào <code>roles/&lt;id&gt;.yaml</code> của người đó.
-            </Note>
-            <Note>
-              Nối vào Trợ lý = việc vặt Trợ lý tự xử lý. Dây này hiện mới được <b>ghi nhận</b>: nó cần{' '}
-              <code>concierge</code> (M1) mới chạy được — Trợ lý không tự cầm MCP, vì MCP phá prompt cache ở
-              mỗi lượt trò chuyện.
-            </Note>
+            {/*
+              ĐÃ BỎ: *"Nối vào một nhân viên = ghi `mcp:` vào `roles/<id>.yaml`"*.
+
+              Nó mô tả **cách ta lưu**, không mô tả thứ người dùng làm — họ kéo
+              một sợi dây, và cái file yaml là chuyện của ta. Cùng luật với hai
+              khối bên dưới: một dòng chỉ đáng ở lại nếu nó đổi được việc người
+              dùng sắp làm.
+            */}
+
+            {/*
+              HAI MỨC, đúng như nhân viên có "Cho nghỉ" và "Cất đi" — ranh giới
+              là *dựng lại được hay không*:
+
+                Gỡ khỏi văn phòng  cắt mọi sợi dây ở ĐÂY. Cấu hình và chìa còn
+                                   nguyên ở cấp công ty, nên nó quay lại qua
+                                   "đã cắm ở văn phòng khác" trong `+ Kết nối`.
+                Xoá hẳn            bỏ khỏi company.yaml. ⚠ CHÌA VẪN GIỮ — rút
+                                   dây ≠ vứt chìa: người ta hay rút để xoay
+                                   token, bắt đi lấy lại là phạt một thao tác
+                                   vốn vô hại.
+            */}
+            <ArmName node={node} />
+
+            {/*
+              MỘT MỨC, KHÔNG HAI. (user chốt 23/08)
+
+              Nhân viên có "Cất đi" và "Xoá hẳn" vì họ mang thứ dựng lại KHÔNG
+              ĐƯỢC — kỹ năng, giới thiệu, sổ kinh nghiệm. Cánh tay chỉ mang cấu
+              hình, mà cấu hình sống trong SỔ CHUNG và không ai xoá nó. Nên "xoá"
+              ở đây đã có sẵn tính chất của "cất đi": cắm lại đúng thư mục ⇒ cùng
+              băm ⇒ tìm thấy nguyên vẹn, không phải nhập lại gì.
+
+              Mượn một khái niệm từ chỗ nó xứng đáng sang chỗ nó không, là thứ
+              vừa được gỡ ra. → SPEC-arms.md §6i
+            */}
+            {/*
+              ┌──────────────────────────────────────────────────────────────────┐
+              │ HAI KHỐI `Note` ĐÃ BỎ. (user 26/08: *"prune giúp tôi block này,  │
+              │ tôi không ngại nếu prune chúng ở tất cả"*)                       │
+              │                                                                  │
+              │ ① *"Cấu hình và chìa khoá vẫn được giữ…"* — nó lặp lại y hệt câu │
+              │   trong hộp xác nhận, thứ hiện ra **đúng lúc người dùng cần**.   │
+              │   Nói trước một chuyện sẽ được nói lại là bắt họ đọc hai lần.    │
+              │                                                                  │
+              │ ② *"Nối vào Trợ lý = việc vặt… concierge (M1)… phá prompt cache"*│
+              │   — đây là ghi chú cho **người viết code**, không phải cho người │
+              │   dùng: `concierge`, `M1`, `prompt cache` đều là từ vựng của ta. │
+              │                                                                  │
+              │ ⚠ Luật rút ra, áp cho mọi `Note` về sau: một dòng chỉ đáng ở lại │
+              │ nếu nó **đổi được việc người dùng sắp làm**. Chữ nói đúng nhưng  │
+              │ không đổi hành vi là thứ dạy người ta lướt qua mọi chữ khác —    │
+              │ rồi họ lướt qua đúng cái đáng đọc. Cùng lý lẽ đã dùng để KHÔNG   │
+              │ dán cảnh báo lên nút đổi tên (§AssistantName).                   │
+              └──────────────────────────────────────────────────────────────────┘
+            */}
+            <ArmLog server={node.server!} />
+
+            <Button variant="danger" className="mt-4 w-full" onClick={() => setConfirmRemove(node)}>
+              Xoá khỏi văn phòng này
+            </Button>
           </>
         )}
 
@@ -570,7 +959,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Row k="Mã vai trò" v={node.role} />
             <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
             <Row k="Trạng thái" v={node.connected ? 'đang trực' : 'đang nghỉ'} />
-            {node.mcp && node.mcp.length > 0 && <Row k="Tool ngoài" v={node.mcp.join(', ')} />}
+            <ArmList ids={node.mcp} nodes={canvas.nodes} />
             {node.missing && (
               <Note>
                 <span className="text-danger">Không tìm thấy roles/{node.role}.yaml</span>
@@ -611,18 +1000,38 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
       <Dialog open={!!confirmRemove} onOpenChange={(o) => !o && setConfirmRemove(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Xoá hẳn “{confirmRemove?.label}”?</DialogTitle>
+            <DialogTitle>
+              {confirmRemove?.kind === 'mcp'
+                ? `Xoá “${confirmRemove.label}” khỏi văn phòng này?`
+                : `Xoá hẳn “${confirmRemove?.label}”?`}
+            </DialogTitle>
             <DialogDescription>
-              Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết cho
-              người này. <b>Không lấy lại được.</b>
-              <br />
-              <br />
-              Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ —
-              đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
-              <br />
-              <br />
-              Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục được
-              bất cứ lúc nào.
+              {confirmRemove?.kind === 'mcp' ? (
+                <>
+                  Kết nối này biến khỏi sơ đồ, và những nhân viên đang nối tới nó thôi dùng được.{' '}
+                  <b>Chỉ văn phòng này</b> — nơi khác không bị chạm.
+                  <br />
+                  <br />
+                  {/* Không doạ, vì không có gì đáng doạ: sổ chung giữ cấu hình và
+                      chìa, nên đây là thao tác HOÀN TÁC ĐƯỢC. Nói đúng mức độ
+                      của nó là cách giữ cho những cảnh báo THẬT còn sức nặng. */}
+                  Cấu hình và chìa khoá <b>vẫn được giữ</b>. Cắm lại đúng thứ này thì không phải nhập
+                  lại gì — chỉ mất công nối dây.
+                </>
+              ) : (
+                <>
+                  Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết
+                  cho người này. <b>Không lấy lại được.</b>
+                  <br />
+                  <br />
+                  Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ
+                  — đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
+                  <br />
+                  <br />
+                  Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục
+                  được bất cứ lúc nào.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -630,11 +1039,15 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <Button
               variant="danger"
               onClick={() => {
-                if (confirmRemove?.role) void actions.removeAgent(confirmRemove.role);
+                if (confirmRemove?.kind === 'mcp' && confirmRemove.server) {
+                  void actions.removeArm(confirmRemove.server);
+                } else if (confirmRemove?.role) {
+                  void actions.removeAgent(confirmRemove.role);
+                }
                 setConfirmRemove(null);
               }}
             >
-              Xoá hẳn
+              {confirmRemove?.kind === 'mcp' ? 'Xoá khỏi văn phòng' : 'Xoá hẳn'}
             </Button>
           </DialogFooter>
         </DialogContent>

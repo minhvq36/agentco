@@ -6,7 +6,7 @@
  * │ BA CA THẬT, MỘT VĂN PHÒNG, BỐN MƯƠI LĂM PHÚT.                            │
  * │                                                                          │
  * │  P-260821-1805-d6v9  ghi đúng chỗ   → hệ thống nói "xong"      ✅         │
- * │  P-260821-1818-yydi  ghi RA NGOÀI   → hệ thống nói "chưa có gì, làm lại" │
+ * │  P-260821-1818-yydi  ghi RA ngoài   → hệ thống nói "chưa có gì, làm lại" │
  * │  P-260821-1827-m78h  ghi đúng chỗ,                                       │
  * │                      rồi chạm trần  → hệ thống nói "chưa ra kết quả"     │
  * │                                                                          │
@@ -60,7 +60,7 @@ test('landingOf: đường dẫn tuyệt đối TRONG văn phòng vẫn quy về
  * `catch { return undefined }` → `landed` rỗng → Trợ lý nói *"không thấy file
  * trên đĩa"* trong khi bảng kết quả 4236 byte nằm nguyên vẹn cách đó hai thư mục.
  */
-test('landingOf: ghi RA NGOÀI văn phòng → `outside`, KHÔNG phải undefined', () => {
+test('landingOf: ghi RA ngoài văn phòng → `outside`, KHÔNG phải undefined', () => {
   const spot = landingOf(OFFICE, {
     name: 'Write',
     input: { file_path: '../../artifacts/P-260821-1818-yydi/T-01/ket-qua-eco.md' },

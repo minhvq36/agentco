@@ -272,6 +272,24 @@ export const CompanyConfigSchema = z.object({
       cache_ttl: z.enum(['auto', '5m', '1h']).default('auto'),
       /** Chờ tối đa bao lâu ở cache priming gate trước khi thả hết. */
       priming_timeout_ms: z.number().int().positive().default(20_000),
+      /**
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ ĐỊA CHỈ NGƯỜI DÙNG THẬT SỰ GÕ VÀO TRÌNH DUYỆT. Chỉ cần khi daemon    │
+       * │ KHÔNG chạy trên máy người dùng: Docker · VPS · sau nginx · có domain.│
+       * │                                                                      │
+       * │ Vì sao nó không suy được: `Host` header do client gửi nên **giả       │
+       * │ được**, và `redirect_uri` là nơi MÃ UỶ QUYỀN được gửi tới. Suy nó từ  │
+       * │ một header người lạ điều khiển được là mở đúng cửa để lấy trộm mã.   │
+       * │ ⇒ Phải là thứ **người triển khai khai ra**, không phải thứ ta đoán.  │
+       * │                                                                      │
+       * │ Bỏ trống khi chạy trên máy mình (mặc định) — lúc đó `127.0.0.1:<cổng>│
+       * │ vừa đúng vừa an toàn, và đó là ca duy nhất đã test.                  │
+       * │                                                                      │
+       * │ Đặt bằng yaml, hoặc `AGENTCO_RUNTIME_PUBLIC_URL=https://…` (cơ chế    │
+       * │ env override có sẵn — không đẻ thêm khái niệm nào). → SPEC-arms §5h·6│
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      public_url: z.string().default(''),
     })
     .prefault({}),
 
@@ -389,6 +407,113 @@ export const CompanyConfigSchema = z.object({
   mcpServers: z.record(z.string(), z.unknown()).prefault({}),
 
   /**
+   * SỔ CHUNG của cánh tay — nửa của agentco, tách khỏi `mcpServers` là nửa của SDK.
+   * → docs/SPEC-arms.md §6i (user chốt 23/08)
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HAI MAP, CÙNG MỘT KHOÁ (băm cấu hình), HAI PHẬN SỰ KHÁC HẲN NHAU.        │
+   * │                                                                          │
+   * │   `mcpServers[băm]`  ĐÚNG hình dạng SDK cần, không thêm một trường nào.  │
+   * │   `arms[băm]`        thứ agentco cần mà SDK không biết: nhãn, chìa, gốc. │
+   * │                                                                          │
+   * │ Nhét `label`/`secrets` vào `mcpServers` thì chúng đi thẳng xuống SDK như │
+   * │ trường lạ — hôm nay vô hại, ngày SDK siết schema thì hỏng, và ta sẽ đi   │
+   * │ tìm nguyên nhân ở chỗ khác.                                              │
+   * │                                                                          │
+   * │ ⚠ SỔ NÀY KHÔNG BỊ XOÁ KHI RÚT CÁNH TAY. Đó chính là chỗ "cắm lại thì     │
+   * │ tìm thấy": rút ở văn phòng = bỏ `mcp:` trong `roles/*.yaml`, còn cấu     │
+   * │ hình + tên + tên chìa nằm nguyên ở đây. Vì thế mới BỎ HẲN được khái niệm │
+   * │ "lưu trữ" cho cánh tay — nhân viên cần lưu trữ vì họ mang thứ dựng lại   │
+   * │ không được (kỹ năng, sổ kinh nghiệm); cánh tay chỉ mang cấu hình, và sổ  │
+   * │ này giữ đúng thứ đó.                                                     │
+   * │                                                                          │
+   * │ Mục không ai dùng KHÔNG tốn gì: `pickMcp` chỉ dựng server có tên trong   │
+   * │ `role.mcp`, nên chúng không vào prompt của ai.                           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  arms: z
+    .record(
+      z.string(),
+      z.object({
+        /** Tên hiển thị. Đổi tự do — KHÔNG ai tham chiếu tới nó. */
+        label: z.string().default(''),
+        /** Mục danh mục đã dùng để dựng, nếu có. Chỉ để hiện icon và gợi ý. */
+        catalog: z.string().optional(),
+        /**
+         * TÊN chìa (không bao giờ là giá trị). `grantArm` gộp danh sách này vào
+         * `role.secrets` để `pickMcp` tiêm đúng bộ đó vào tiến trình MCP.
+         */
+        secrets: z.array(z.string()).default([]),
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ VIỆC ĐƯỢC CẤP — **đã giải**, không phải chính sách. Rỗng ⇒ cả server│
+         * │                                                                    │
+         * │ Danh mục khai `readOnly: true` (một cờ); `addArm` chạy probe, hỏi   │
+         * │ `annotations` của từng tool, rồi ghi **danh sách đã giải** vào đây. │
+         * │ ⇒ 0 tên tool nằm trong mã nguồn, mà vẫn tất định lúc chạy.          │
+         * │                                                                    │
+         * │ Vì sao nằm ở `arms[]` chứ không tính lại mỗi lần dùng:              │
+         * │  · `pickMcp` là ĐỒNG BỘ (armexec.ts) — hỏi server ở đó là kéo một   │
+         * │    vòng mạng vào đúng đường nóng vừa dọn sạch                       │
+         * │  · người dùng **đọc được** trong `company.yaml` — cánh tay "chỉ đọc"│
+         * │    kiểm tra được bằng mắt, không phải tin lời cái nhãn              │
+         * │  · hãng thêm việc GHI về sau **không tự lọt vào**                   │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        tools: z.array(z.string()).default([]),
+        /**
+         * NẤC QUYỀN người dùng chọn lúc cắm. → docs/SPEC-arms.md §6j
+         *
+         * `read` chỉ đọc · `add` đọc + thêm mới · `full` toàn quyền.
+         * Vắng = cánh tay tạo trước 26/08, hoặc mục không có nấc (thư mục, tự
+         * cắm) — chúng giữ nguyên hành vi cũ và **giữ nguyên băm cũ**.
+         *
+         * ⚠ Trường này đi vào `armHash`. Đổi nấc = **một cánh tay khác**, đó
+         * chính là thứ làm cho "đổi mức ở văn phòng này" không đụng văn phòng
+         * khác — xem khối chú thích ở `catalog.ts §armHash`.
+         */
+        level: z.enum(['read', 'add', 'full']).optional(),
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ CÁNH TAY NÀY LÀM ĐƯỢC GÌ — bằng TIẾNG NGƯỜI. → `assistant.ts        │
+         * │ §armReach` · docs/SPEC-arms.md §16r                                 │
+         * │                                                                    │
+         * │ 🔴 SINH RA TỪ MỘT CA HỎNG ĐO ĐƯỢC (spike 30/08, 3/3 lượt hỏng).     │
+         * │                                                                    │
+         * │ `CatalogArm.hint` đã là *"một câu cho model, đi vào dòng danh bạ"*  │
+         * │ từ 29/08 — nhưng nó chỉ tới được **qua một mục danh mục**. Cánh tay │
+         * │ tự dán (đường B) và cánh tay CLI **không có `catalog`** ⇒ vĩnh viễn │
+         * │ không có câu nào, và dòng danh bạ của chúng là ĐÚNG MỘT CÁI TÊN.    │
+         * │                                                                    │
+         * │ Đo được chuyện gì xảy ra khi cái tên đó model chưa từng thấy:       │
+         * │   · hỏi tự nhiên   ⇒ Trợ lý **BỊA** kết quả, không giao việc        │
+         * │   · nêu đích danh  ⇒ Trợ lý viết brief *"bằng lệnh shell"* ⇒ blocked│
+         * │                                                                    │
+         * │ Với `Notion`/`GitHub` lỗ này VÔ HÌNH vì cái tên tự nó mang năng lực │
+         * │ (model có tiên nghiệm về hãng). Đó là lý do nó nằm im được 3 tuần.  │
+         * │ → [[agentco-debt-hidden-by-model-priors]]                          │
+         * │                                                                    │
+         * │ ⚠ KHÔNG phải "liệt kê tên tool thô" (§7b cấm, và cấm đúng): đây là  │
+         * │ câu NGƯỜI đọc được (`tung một con xúc xắc`), có TRẦN, và chỉ xuất   │
+         * │ hiện ở vai trò có đúng cánh tay ấy. Với cánh tay tự dựng nó cũng    │
+         * │ KHÔNG phải "lời khai thứ hai" (§7a): chính chuỗi này là thứ đi vào  │
+         * │ `description` của tool MCP, tức nó LÀ handshake.                    │
+         * │                                                                    │
+         * │ ⚠ Vắng ⇒ **không in gì**, không bịa. Mọi cánh tay tạo trước 30/08   │
+         * │ giữ nguyên dòng danh bạ cũ, nguyên băm cũ.                          │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        does: z.array(z.string()).default([]),
+        /*
+          ⚠ ĐÃ BỎ `repos` (27/08 chiều) — giới hạn repo của agentco. Đừng dựng
+          lại mà chưa đọc `SPEC-arms.md` §5h·7m. Tầm với của một cánh tay GitHub
+          là tài sản của **bản cài app phía hãng**, không phải một trường ta giữ.
+        */
+      }),
+    )
+    .prefault({}),
+
+  /**
    * Cho phép sửa lớp core prompt. MẶC ĐỊNH FALSE, và UI phải hỏi qua một dialog
    * cảnh báo trước khi bật. → SPEC-offices.md §4.1
    *
@@ -458,6 +583,29 @@ export const OfficeConfigSchema = z.object({
    * không ai đoán được, và tiền là thứ duy nhất người dùng không lấy lại được.
    */
   archived: z.boolean().default(false),
+
+  /**
+   * CÁNH TAY CÓ MẶT TRÊN SƠ ĐỒ VĂN PHÒNG NÀY. → docs/SPEC-arms.md §6i
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ TÁCH "CÓ MẶT" KHỎI "AI ĐƯỢC DÙNG" (user chốt 23/08).                     │
+   * │                                                                          │
+   * │ Bản trước suy sự có mặt từ `role.mcp` — cánh tay chỉ hiện khi đã có ít    │
+   * │ nhất một sợi dây. Hậu quả user gặp: cắm xong mà chưa chọn nhân viên nào  │
+   * │ thì bấm Xong **không có gì xảy ra cả**. Về mặt dữ liệu thì nó đã được     │
+   * │ cắm; về mặt màn hình thì nó không tồn tại.                               │
+   * │                                                                          │
+   * │ Hai chuyện khác nhau và giờ có hai chỗ ghi:                               │
+   * │                                                                          │
+   * │   `office.arms`  cái này NẰM TRÊN SƠ ĐỒ của văn phòng   ← chỗ này        │
+   * │   `role.mcp`     ai được phép dùng nó                    ← sợi dây        │
+   * │                                                                          │
+   * │ Nhờ vậy một node chưa nối dây vẫn hiện ra, và người dùng KÉO ĐƯỢC dây từ │
+   * │ nó — thay vì phải quay lại hộp thoại. Node không dây vẫn vô dụng, nhưng  │
+   * │ nó **nhìn thấy được**, và đó là khác biệt giữa "chưa xong" với "biến mất".│
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  arms: z.array(z.string()).default([]),
 
   assistant: z
     .object({
@@ -608,6 +756,41 @@ export const ReceiptSchema = z.object({
    */
   answer: z.string().default(''),
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KÊNH THỨ BA — SỰ KIỆN CHO TRỢ LÝ NEO LẠI. (user chốt 30/08)             │
+   * │                                                                          │
+   * │ > *"tôi thường xuyên phải vào file để xem kết quả, điều này càng bất lợi │
+   * │ >  khi dùng qua bridge"* · *"worker trao lại gist và để assistant parse   │
+   * │ >  lại thành human friendly"* · *"nó chỉ cần neo theo intent của user"*   │
+   * │                                                                          │
+   * │ Ba kênh, ba đời sống khác nhau — đừng gộp:                               │
+   * │                                                                          │
+   * │   say     MỘT CÂU trạng thái  → session Trợ lý                           │
+   * │   answer  câu trả lời ĐẦY ĐỦ  → thẳng ra chat, ⛔ KHÔNG vào session Trợ lý│
+   * │   gist    SỰ KIỆN, có trần    → session Trợ lý, để nó SOẠN LẠI            │
+   * │                                                                          │
+   * │ 🔴 VÌ SAO PHẢI LÀ WORKER VIẾT, KHÔNG PHẢI AI KHÁC:                       │
+   * │  · Trợ lý **không đọc được file** (§4.7, chặn cứng có số đo) ⇒ nó không   │
+   * │    có sự kiện nào để tóm tắt, chỉ có `say` và đường dẫn.                  │
+   * │  · Worker ẩn đọc lại file ⇒ một `query()` mới, context lạnh, đọc lại đúng │
+   * │    nội dung vừa nằm trong một context hai giây trước. Trả tiền hai lần    │
+   * │    cho thứ đã cầm, và đẻ thêm một chỗ có thể tóm tắt sai.                 │
+   * │  · Worker vừa ghi file ⇒ nội dung **còn trong context của nó** ⇒ ~0 thêm. │
+   * │                                                                          │
+   * │ 🔴 VÌ SAO TRỢ LÝ VẪN PHẢI SOẠN LẠI, chứ không in thẳng `gist` ra:        │
+   * │ worker **chưa bao giờ thấy câu người dùng gõ** — nó chỉ thấy brief của    │
+   * │ task. Neo vào ý định là việc của Trợ lý, và `report()` **vốn đã là một    │
+   * │ lượt gọi model** có câu hỏi gốc trong phiên ⇒ 0 lượt gọi thêm.            │
+   * │                                                                          │
+   * │ ⚠ SỰ KIỆN, KHÔNG PHẢI TƯỜNG THUẬT. "3 việc: A, B, C" — không phải "tôi   │
+   * │ đã hoàn thành việc tra cứu". Và ⚠ **không phải câu trả lời**: đó là       │
+   * │ `answer`. Để `gist` phình thành câu trả lời là gỡ đúng hàng rào chống trả │
+   * │ tiền hai lần mà luật ⛔ của `answer` dựng lên. Trần cứng: `GIST_TOKENS`.  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  gist: z.string().default(''),
+
   artifacts: z.array(z.string()).default([]),
   lessons: z.array(LessonSchema).default([]),
   blocked_on: z.string().nullable().default(null),
@@ -652,7 +835,7 @@ export interface Landing {
    * `external` — gọi một MCP server (`ref` = tên server). Không kiểm được, nhưng
    *              biết chắc là đã gọi.
    * `command`  — chạy `Bash`. Ta KHÔNG biết dữ liệu đi đâu, và phải nói thế.
-   * `outside`  — ghi ra NGOÀI thư mục văn phòng (`ref` = đường dẫn thô model gõ).
+   * `outside`  — ghi ra ngoài thư mục văn phòng (`ref` = đường dẫn thô model gõ).
    *              Xem khối dưới: đây là nhãn cho một sự việc ta biết chắc.
    */
   kind: 'file' | 'external' | 'command' | 'outside';
@@ -660,7 +843,7 @@ export interface Landing {
 }
 
 /**
- * ĐIỂM ĐẾN NGOÀI VĂN PHÒNG PHẢI CÓ TÊN — ĐO ĐƯỢC 21/08.
+ * ĐIỂM ĐẾN ngoài VĂN PHÒNG PHẢI CÓ TÊN — ĐO ĐƯỢC 21/08.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ Ca `P-260821-1818-yydi`: nhân viên `Write` một đường dẫn trỏ lên hai cấp, │
@@ -771,6 +954,33 @@ export interface Plan {
   /** Tối đa 6 bước. */
   steps: PlanStep[];
   tasks: TaskBrief[];
+  /**
+   * Đường dẫn ngoài văn phòng mà `outputScoper` đã kéo về `artifacts/`.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO PHẢI GHI LẠI, THAY VÌ ĐỂ MODEL TỰ NHẬN RA.                        │
+   * │                                                                          │
+   * │ Ca 24/08 (`P-260824-0401-q7ma`): người dùng bảo copy file vào             │
+   * │ `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về          │
+   * │ `artifacts/…` (đúng thiết kế). Trợ lý NHÌN RA sự lệch đó và tự viết:      │
+   * │                                                                          │
+   * │   *"…nếu cần mình sẽ thử ghi lại đúng vị trí đó."*                        │
+   * │                                                                          │
+   * │ **Một lời hứa không giữ được.** Thử lại bao nhiêu lần cũng vào             │
+   * │ `artifacts/` — `outputScoper` chạy TRƯỚC khi nhân viên được phóng, nên     │
+   * │ không lượt nào đi qua đường đó cả. Ta vừa mời người dùng vào một vòng lặp  │
+   * │ không có lối ra, và tính tiền mỗi vòng. Đúng lớp ㉗②.                      │
+   * │                                                                          │
+   * │ Không sửa bằng một câu dặn trong prompt: đây là chuyện CODE biết chắc      │
+   * │ (chính `outputScoper` vừa viết lại chuỗi đó), còn model thì đang đoán.     │
+   * │ Cùng luật với dòng "⚠ còn N/M bước chưa xong" — *model khẳng định một      │
+   * │ điều mà dữ liệu trong tay ta bác bỏ được thì chặn bằng code đối chiếu*.    │
+   * │                                                                          │
+   * │ ⚠ Tuỳ chọn (`?`) có chủ ý: `plan.json` cũ trên đĩa không có khoá này, và  │
+   * │ `/resume` phải đọc lại được chúng.                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  redirected?: string[];
 }
 
 /**

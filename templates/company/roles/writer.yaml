@@ -22,6 +22,15 @@ model_tier: standard
 use_preset: false
 
 budget:
-  max_turns: 6
-  max_usd: 0.4
+  # ⚠ NỚI 26/08 (user chốt). Hai lý do, và lý do thứ hai là một LỖI ĐANG SỐNG:
+  #
+  #  ① Mỗi lời gọi MCP là MỘT LƯỢT. Con số 6 là của thời chưa có MCP — một việc
+  #    chạm vài trang Notion đốt hết trần trước khi kịp xong (đo 26/08: xoá một
+  #    trang con = 9 lượt). Chạm trần là kiểu hỏng ĐẮT NHẤT: chạy tới kịch rồi
+  #    mất trắng.
+  #  ② 🔴 `max_usd: 0.4` THẤP HƠN chi phí đã đo của chính vai trò này
+  #    (~$0.45 cho một việc standard, đo 21/08). Tức trần cũ cắt ngang một việc
+  #    BÌNH THƯỜNG — và triệu chứng của nó trông y hệt "model làm dở".
+  max_turns: 15
+  max_usd: 5.0
   knowledge_pack: 3000

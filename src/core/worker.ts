@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chạy một worker: MỘT LẦT query one-shot, xong là chết.
  *
  * → docs/SPEC-2026-08-14-agentco.md §2, §8
@@ -12,10 +12,15 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
 
 import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';
+import path from 'node:path';
+import { redactBrowserLogs } from './redact.js';
 
+import { prepareArm } from './armexec.js';
+import { findArm, folderRoots } from './catalog.js';
 import { noteRateLimit } from './energy.js';
-import { companyPaths, safeJoin } from './paths.js';
-import { grantFor, readSecrets } from './secrets.js';
+import { isAccountName } from './oauth.js';
+import { companyPaths, guardedZone, safeJoin, type GuardedZone, type GuardMode } from './paths.js';
+import { grantFor, injectSecrets, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
 import { relative } from 'node:path';
@@ -34,12 +39,40 @@ import {
   type Usage,
 } from './types.js';
 import { effectiveTools } from './types.js';
+import { splitArmTool } from './audit.js';
+import { doSpill, planSpill, spillNotice } from './spill.js';
 
 export interface WorkerDeps {
   office: LoadedOffice;
   /** Gọi trước khi bắn request; scheduler dùng để chặn cache priming gate. */
   acquireCacheSlot?(cacheKey: string): Promise<() => void>;
   onProgress?(say: string): void;
+  /**
+   * MỘT lời gọi MCP đã xảy ra — cho nhật ký kiểm toán. → `core/audit.ts`
+   *
+   * ⚠ Bắn cho **mọi** lời gọi, không phải cái đầu tiên như `onProgress`. Bỏ sót
+   * một lời gọi thì nó không còn là kiểm toán.
+   */
+  onArmCall?(call: {
+    server: string;
+    tool: string;
+    role: string;
+    plan_id?: string;
+    task_id?: string;
+    args: unknown;
+  }): void;
+  /**
+   * Thư mục kết quả của TASK NÀY — `artifacts/<plan_id>/<task_id>/`.
+   *
+   * ⚠ Worker không tự dựng được: `TaskBrief` cố ý **không mang `plan_id`**
+   * (xem `onArmCall`), nên chỗ biết mã kế hoạch là scheduler. Truyền xuống thay
+   * vì thêm một trường vào brief — cùng lý lẽ đã dùng cho `plan_id` của nhật ký.
+   *
+   * Thiếu ⇒ kết quả bê về rơi vào gốc `artifacts/`, tức một mục **mồ côi**
+   * không thuộc kế hoạch nào. Chấp nhận được (không mất dữ liệu), nhưng không
+   * phải hình dạng đúng. → `core/spill.ts §planSpill`
+   */
+  outDir?: string;
   /**
    * Trao tay cầm để NGẮT GIỮA CHỪNG. Scheduler giữ nó, `Esc` / `/stop` gọi tới.
    * → docs/SPEC-tools-approval.md §3b
@@ -90,6 +123,170 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
   const { brief, role } = input;
   const started = Date.now();
 
+  // Hai thư mục, vì vùng cấm nằm ở CẢ HAI cấp: chìa khoá ở `company/.state/`,
+  // file vai trò ở `offices/<id>/roles/`. → paths.ts §guardedZone
+  /**
+   * ⚠ `hasBrowser` giải **một lần ở đây**, không tra lại trong hàng rào.
+   *
+   * `role.mcp` là nguồn duy nhất của *"ai cầm cánh tay nào"*, và `arms[băm]
+   * .catalog` là chỗ duy nhất nói băm đó là mục danh mục nào. Để `guardedZone`
+   * tự đi tra hai bảng ấy là biến một hàm thuần theo đường dẫn thành một thứ
+   * phải dựng cả công ty mới test được. → `paths.ts §guardedZone`
+   */
+  const jailDirs = {
+    companyDir: office.companyDir,
+    officeDir: office.dir,
+    hasBrowser: role.mcp.some((id) => office.company.arms?.[id]?.catalog === 'browser'),
+  };
+
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CÁNH TAY: BA THỨ, PHẢI ĐI CÙNG NHAU. (đo 24/08, ca `P-260824-0355`)  │
+   * │                                                                        │
+   * │ Trước bản này, một cánh tay đã cắm và đã nối dây vẫn KHÔNG DÙNG ĐƯỢC.   │
+   * │ Hai lỗ chồng lên nhau, cả hai im lặng:                                  │
+   * │                                                                        │
+   * │  ① `allowedTools` chỉ chứa 7 tool văn phòng (+shell). Tên tool MCP là   │
+   * │    `mcp__<server>__<tool>` ⇒ không nằm trong đó ⇒ SDK coi là "cần hỏi"  │
+   * │    ⇒ không có `canUseTool` ⇒ **deny**. Nguyên văn đo được:              │
+   * │    *"Claude requested permissions to use mcp__files__list_directory_    │
+   * │    with_sizes, but you haven't granted it yet."*                       │
+   * │    Receipt thật: 3 lần gọi, 3 lần bị chặn, `blocked`, $0,0948.          │
+   * │                                                                        │
+   * │  ② Thư mục người dùng khai ở hộp thoại **BỊ BỎ HOÀN TOÀN**.             │
+   * │    `server-filesystem` ưu tiên `roots` của client hơn `args` dòng lệnh, │
+   * │    và Claude Code khai `cwd` (+ `additionalDirectories`) làm roots.     │
+   * │    Đo: giữ nguyên `args`, đổi `cwd` → danh sách thư mục cho phép đổi    │
+   * │    theo `cwd`. ⇒ cánh tay trỏ vào `D:\Downloads\…` thực chất chỉ mở     │
+   * │    được thư mục văn phòng — đúng thứ `Read` trần đã làm được, miễn phí. │
+   * │                                                                        │
+   * │ ⇒ Ta trả **~2 185 token MỖI LƯỢT** (đo 23/08) cho một bộ tool không bao │
+   * │ giờ dùng được. Cánh tay cắm vào để nhìn.                                │
+   * │                                                                        │
+   * │ Vá ① mà quên ② thì cánh tay chạy nhưng mù. Vá ①+② mà quên hook          │
+   * │ `mcp__.*` (khối `hooks` bên dưới) thì **mở một cửa ghi vào `roles/` và  │
+   * │ đọc `.state/`** — đúng hai lỗ vừa vá 23/08, qua một cửa khác.           │
+   * │ Ba phần này KHÔNG tách được. → docs/SPEC-arms.md §5g                    │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ KHOÁ `mcpServers` GIỮ NGUYÊN BĂM. (user chốt 26/08, và chốt đúng)      │
+   * │                                                                        │
+   * │ Bản trước tôi đổi khoá thành slug từ nhãn (`mcp__fpt__…`) để model phân │
+   * │ biệt được hai cánh tay Notion. User đề nghị ngược lại: **giữ băm, và    │
+   * │ để dòng danh bạ trỏ tới tên**. Ba lý do nó tốt hơn:                     │
+   * │                                                                        │
+   * │  ① Cầu nối ở danh bạ **vẫn cần trong mọi trường hợp** — nhãn phi-Latin  │
+   * │    ra slug rỗng, nhãn trùng thì cả hai phải về băm. Nên slug chỉ là     │
+   * │    tối ưu MỘT PHẦN chồng lên một cơ chế ĐÃ ĐỦ. Hai cơ chế, một việc.    │
+   * │  ② Slug đẻ ra **ba điểm quy đổi** (`armGrants` · `armLabels` · nhật ký),│
+   * │    và cái đầu hỏng theo chiều **cấp thừa quyền**: tra `arms[]` bằng     │
+   * │    slug thì `tools` luôn `undefined` ⇒ cấp CẢ SERVER cho cánh tay       │
+   * │    "chỉ đọc". Một tối ưu hiển thị không được mở nổi một lỗ đặc quyền.   │
+   * │  ③ Codebase này bị cắn nhiều lần vì *"hai đường cho một việc"*. Băm ở   │
+   * │    mọi nơi nghĩa là `armGrants`, `describeCall` và nhật ký nói **cùng   │
+   * │    một thứ tiếng** — không còn phép quy đổi nào để quên.                │
+   * │                                                                        │
+   * │ ⇒ Model bắc cầu bằng DÒNG DANH BẠ (`assistant.ts §armReach`), thứ nêu   │
+   * │ thẳng `gọi bằng mcp__<băm>__*` khi vai trò có từ hai cánh tay trở lên.  │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  const mcpServers = role.mcp.length ? pickMcp(office, role) : undefined;
+  /**
+   * Duyệt theo CẢ SERVER (`mcp__<id>`), không theo từng tool (user chốt 24/08).
+   *
+   * Vì cạnh nối trên sơ đồ **LÀ** hành động cấp quyền: kéo dây từ 🔌 xuống một
+   * nhân viên chính là câu "người này được dùng cánh tay này". Duyệt lẻ từng
+   * tool là bắt người dùng trả lời lại cùng một câu hỏi bằng một từ vựng họ
+   * không có (`write_file` vs `edit_file`), và 4/14 tool `write_external` sẽ
+   * deny ra ĐÚNG câu "permission denied" khó hiểu vừa mất một buổi để truy.
+   *
+   * Mức duyệt từng tool là việc của cổng §8 — nơi có CHỦ THỂ bấm nút.
+   */
+  const armGrants = mcpServers
+    ? Object.keys(mcpServers).flatMap((n) => {
+        /**
+         * Cánh tay có TẬP CON việc thì cấp đúng tập con đó, không cấp cả server.
+         * Đây là chỗ *"Notion (chỉ đọc)"* thành thật — vẫn cấp `mcp__<server>`
+         * thì nhãn "chỉ đọc" là một lời hứa **không có gì thi hành**, đúng loại
+         * lời hứa §14 vừa mất công gỡ ở bài 11 bước 5.
+         *
+         * Danh sách đọc từ `arms[băm].tools` — **đã giải sẵn lúc cắm** từ
+         * `annotations` của chính server (`addArm` → `probeArm` → `levelOf`).
+         * Không có tên tool nào trong mã nguồn, và không có vòng mạng nào ở
+         * đây: `pickMcp` phải giữ đồng bộ. → types.ts §arms.tools
+         */
+        const subset = office.company.arms?.[n]?.tools;
+        return subset?.length ? subset.map((t) => `mcp__${n}__${t}`) : [`mcp__${n}`];
+      })
+    : [];
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ `ToolSearch` BUỘC VÀO CÁNH TAY, KHÔNG VÀO NỀN. (user chốt 25/08)       │
+   * │                                                                        │
+   * │ Nó là thứ cho phép SDK **hoãn** schema tool MCP thay vì để chúng nằm   │
+   * │ trong prefix mọi lượt (📖 `alwaysLoad`: *"tools are deferred when tool │
+   * │ search is enabled"*). Đo 25/08: cánh tay Notion **~18 365 token/lượt** │
+   * │ (hiệu chuẩn từ mốc thật §9b: filesystem 12 973 byte = 2 185 token).    │
+   * │                                                                        │
+   * │ ⚠ VÌ SAO KHÔNG NHÉT VÀO `BUILTIN_TOOLS`: vai trò **không có cánh tay** │
+   * │ thì chẳng có gì để hoãn ⇒ lãi **bằng 0**, mà lỗ thì trả đủ — thêm một  │
+   * │ tool vào prefix, và thêm một đường để model đi lạc. §15k đã có ca thật │
+   * │ về cái giá của đi lạc: **9 lượt · $0,2058** rồi chạm trần.             │
+   * │                                                                        │
+   * │ Cùng điều kiện với `armGrants` ngay trên — không đẻ thêm công tắc nào  │
+   * │ cho người dùng phải nhớ.                                               │
+   * │                                                                        │
+   * │ ⚠ CHƯA ĐO LÃI/LỖ THẬT. Con số 18 365 là ước lượng có hiệu chuẩn, và nó │
+   * │ nằm trong prefix nên **được cache** ⇒ tiền tiết kiệm nhỏ hơn con số    │
+   * │ token rất nhiều. Thứ chắc chắn được là **chỗ trong cửa sổ ngữ cảnh**.  │
+   * │ Bài 12 đo cả hai chiều bằng `getContextUsage()`. → SPEC-arms §9b       │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  const searchTools = armGrants.length ? ['ToolSearch'] : [];
+  /**
+   * ⚠ ĐỌC THƯ MỤC TỪ CẤU HÌNH **KHAI**, KHÔNG TỪ CẤU HÌNH **CHẠY**. (vá 24/08)
+   *
+   * `pickMcp` chạy `fastLaunch`, thứ đổi `{command:'npx', args:['-y', <gói>,
+   * <thư mục>]}` thành `{command:<node>, args:[<entry>.js, <thư mục>]}`. Mà
+   * `folderRoots` chỉ hỏi *"tham số này trông như đường dẫn tuyệt đối không"* —
+   * nên nó nhặt luôn cái `…\dist\index.js`, `statSync` bảo không phải thư mục,
+   * và người dùng nhận một cảnh báo **báo động giả** nói rằng cánh tay của họ
+   * khai một thư mục không tồn tại:
+   *
+   *   Cánh tay của vai trò "nguoi-soi-thu-muc" khai thư mục
+   *   "C:\Users\…\server-filesystem\dist\index.js" nhưng không tìm thấy trên máy.
+   *
+   * Không đổi hành vi (file `.js` bị `statSync` loại đúng như trước), nhưng một
+   * cảnh báo sai là thứ dạy người dùng bỏ qua cảnh báo — rồi họ bỏ qua đúng cái
+   * đáng đọc. Sửa ở NGUỒN: `fastLaunch` là chi tiết thi hành, thư mục là thứ
+   * người dùng KHAI, và hai cái đó không được lẫn vào nhau.
+   */
+  const declaredArms: McpServers = {};
+  for (const id of role.mcp) {
+    const cfg = office.company.mcpServers[id];
+    if (cfg) declaredArms[id] = cfg as McpServers[string];
+  }
+  const armDirs = armRoots(role, role.mcp.length ? declaredArms : undefined);
+  /** Băm → tên người dùng đặt. Nhật ký nói tên, không nói băm. → `describeCall` */
+  const armLabels: Record<string, string> = {};
+  for (const [id, a] of Object.entries(office.company.arms)) if (a.label) armLabels[id] = a.label;
+
+  /**
+   * Băm → đường tới màn hình cài app của hãng. → `githubDoorError`
+   *
+   * Suy từ `catalog.scope`, tức **dữ liệu**, nên không có nhánh `=== 'github'`
+   * nào ở đây và hãng thứ hai có cùng kiểu 404 sẽ tự được phục vụ. Chỉ dựng cho
+   * cánh tay vai trò NÀY được nối — cùng lý lẽ mọi bảng khác trong hàm này.
+   */
+  const armDoors = new Map<string, string>();
+  for (const id of role.mcp) {
+    const url = findArm(office.company.arms[id]?.catalog ?? '')?.scope?.url;
+    if (url) armDoors.set(id, url);
+  }
+
+
   const model = modelFor(office, role.model_tier);
   // model PHẢI đi vào cacheKey: prompt cache đánh theo (model, prefix).
   const built = buildWorkerPrompt(office, role, { hotKnowledge: input.hotKnowledge, model });
@@ -112,6 +309,8 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
 
   // Ngắt / lỗi / xong đều phải trả về cùng một bộ số đo — gói lại một chỗ để
   // không có nhánh nào lỡ trả receipt thiếu `looped`/`reads`.
+  /** Đã gọi ra một cánh tay chưa — quyết định câu báo khi chạm trần lượt. */
+  let armCalled = false;
   const observed = (): Observed => ({
     landed: [...landed.values()],
     looped: watch.looped,
@@ -157,8 +356,25 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          * │     thi hành: vai trò không khai `Bash` vẫn với tay tới shell được. │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        tools: effectiveTools(role.tools),
-        allowedTools: effectiveTools(role.tools),
+        tools: [...effectiveTools(role.tools), ...searchTools],
+        /**
+         * ⚠ `tools` KHÔNG liệt kê tool MCP, và đó là CỐ Ý — đo được: truyền
+         * `tools: [7 tool]` mà CLI vẫn cấp đủ 21 (7 + 14 của MCP). `tools` lọc
+         * tool BUILTIN theo tên; tool MCP đi đường khác. Nhét `mcp__files` vào
+         * đó là gửi một chuỗi không phải tên tool nào cả — rơi đúng cái bẫy
+         * "allowlist im lặng bỏ phần tử lạ" của `SHELL_ALIASES`, và lần này nó
+         * có thể vứt CẢ BỘ. `warnDroppedTools` canh phần builtin như cũ.
+         *
+         * ⚠ `ToolSearch` phải có mặt ở CẢ HAI danh sách. `tools` quyết định nó
+         * có được CẤP không; `allowedTools` quyết định nó có được GỌI mà không
+         * hỏi không. Thiếu vế hai thì nó bị chặn ở cổng duyệt và mọi tool MCP
+         * thành **không với tới được** — hỏng im lặng, ở đúng chỗ khó đoán nhất.
+         */
+        allowedTools: [...effectiveTools(role.tools), ...searchTools, ...armGrants],
+        // Thư mục cánh tay được phép chạm. Đây là thứ MCP server thật sự đọc
+        // (`roots`), không phải `args`. Vai trò không có cánh tay ⇒ mảng rỗng ⇒
+        // không truyền gì: đặc quyền tối thiểu giữ nguyên.
+        ...(armDirs.length ? { additionalDirectories: armDirs } : {}),
         /**
          * ┌────────────────────────────────────────────────────────────────────┐
          * │ LUẬT: KẾT QUẢ LUÔN SINH RA BÊN TRONG THƯ MỤC VĂN PHÒNG.            │
@@ -184,9 +400,153 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
          * └────────────────────────────────────────────────────────────────────┘
          */
         hooks: {
-          PreToolUse: [{ matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(office.dir)] }],
+          PreToolUse: [
+            { matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(jailDirs, 'write')] },
+            // Nhánh ĐỌC là mới (23/08). Nó KHÔNG dựng hàng rào đọc tổng quát —
+            // `Read` vẫn mở được mọi file trên máy, đúng như trước. Nó chỉ khoá
+            // đúng `.state/`, tức chìa khoá và sổ công việc. → SPEC-arms.md §5d
+            { matcher: 'Read|Grep|Glob', hooks: [officeJail(jailDirs, 'read')] },
+            /**
+             * ┌──────────────────────────────────────────────────────────────┐
+             * │ NHÁNH CÁNH TAY (24/08) — điều kiện để ① và ② ở trên an toàn.  │
+             * │                                                              │
+             * │ `guardedZone` cũ chỉ khớp tool BUILTIN. Chú thích ở           │
+             * │ `catalog.ts §swallowsOffice` đã ghi trước chuyện này:         │
+             * │ *"tool của MCP mang tên `mcp__x__read_file`, KHÔNG khớp ⇒     │
+             * │ mở lại đúng hai cái lỗ vừa vá, qua một cửa khác"* — và ghi    │
+             * │ kèm *"chưa ai đo là matcher đó có khớp không"*.               │
+             * │                                                              │
+             * │ ĐO RỒI 24/08 (`scripts/spike-mcp-hook.ts`):                   │
+             * │   không hook          → ❌ đọc được `roles/nguoi-viet.yaml`   │
+             * │   matcher `mcp__.*`   → ✅ hook nổ 2 lần, **deny thật**       │
+             * │   matcher `.*`        → ✅ nổ, deny thật                      │
+             * │                                                              │
+             * │ Bằng chứng đây là CƠ CHẾ chứ không phải "model ngoan": nhật   │
+             * │ ký vẫn hiện lời gọi `mcp__files__read_text_file` — model VẪN  │
+             * │ gọi tool, hook chặn nó.                                       │
+             * └──────────────────────────────────────────────────────────────┘
+             */
+            { matcher: 'mcp__.*', hooks: [officeJail(jailDirs, 'arm')] },
+            /*
+              ⚠ ĐÃ BỎ (27/08 chiều): hook thứ hai `armJail` canh giới hạn repo.
+              Đừng dựng lại — lý do đầy đủ ở `SPEC-arms.md` §5h·7m. Tóm tắt:
+              phạm vi repo là **tài sản cấp tài khoản của GitHub**, và một hàng
+              rào thứ hai chồng lên nó chỉ mua được sự thu hẹp theo từng cánh
+              tay, đổi lấy một cơ chế nữa + gõ tay + đổi-là-cắm-lại.
+            */
+          ],
+          /**
+           * ┌────────────────────────────────────────────────────────────────┐
+           * │ KẾT QUẢ TO — ĐƯA VỀ VĂN PHÒNG. → `core/spill.ts` · §9e         │
+           * │                                                                │
+           * │ KHÔNG matcher: nó áp cho **mọi tool**. Claude Code tự cất kết   │
+           * │ quả quá dài ra file cho `Bash`, `WebFetch`, `Read`, và mọi MCP  │
+           * │ — nên bản vá cũng phải phủ hết, nếu không nó chỉ đúng cho hãng  │
+           * │ ta vừa gặp. (user 27/08: *"nó general không phải chỉ mỗi case   │
+           * │ notion này"*)                                                   │
+           * │                                                                │
+           * │ ⚠ HOOK NÀY KHÔNG ĐƯỢC NÉM. Nó chạy sau MỘT lời gọi đã thành    │
+           * │ công; làm hỏng cả lượt vì một thao tác chép file là đổi một mất │
+           * │ mát nhỏ lấy một mất mát lớn — cùng luật với `audit.append`.     │
+           * └────────────────────────────────────────────────────────────────┘
+           */
+          PostToolUse: [
+            {
+              hooks: [
+                async (input: Record<string, unknown>) => {
+                  try {
+                    const ten = String(input['tool_name'] ?? '');
+                    /**
+                     * ┌────────────────────────────────────────────────────────┐
+                     * │ CẮT QUERY KHỎI LOG CONSOLE CỦA TRÌNH DUYỆT.            │
+                     * │ → `redact.ts` (lý do đầy đủ + giới hạn ở đầu file đó)  │
+                     * │                                                        │
+                     * │ Ở ĐÂY chứ không ở chỗ khác: đây là điểm duy nhất chạy  │
+                     * │ **sau mỗi lời gọi tool**, tức sau khi Playwright vừa    │
+                     * │ ghi file. Đặt ở cuối lượt việc thì token nằm phơi suốt  │
+                     * │ cả lượt; đặt trước thì chưa có gì để dọn.              │
+                     * │                                                        │
+                     * │ ⚠ KHÔNG lọc theo tên tool. Một cánh tay trình duyệt tự │
+                     * │ cắm (đường B) không mang tên nào ta biết trước, mà nó   │
+                     * │ vẫn ghi vào cùng thư mục ấy. Điều kiện rẻ nhất và đúng  │
+                     * │ nhất là **thư mục có tồn tại không** — `redactBrowser-  │
+                     * │ Logs` về ngay khi không có, và đó là ca của gần hết     │
+                     * │ văn phòng.                                             │
+                     * └────────────────────────────────────────────────────────┘
+                     */
+                    redactBrowserLogs(office.dir);
+                    /**
+                     * DỊCH 404 SAI CỬA — trước phép bê, vì hai chuyện độc lập:
+                     * một câu 404 thì ngắn nên chẳng bao giờ bị bê, và nếu có
+                     * thì thứ đáng sửa vẫn là câu chứ không phải chỗ nó nằm.
+                     *
+                     * ⚠ Không `return` sớm khi KHÔNG khớp — dưới còn phép bê.
+                     */
+                    const door = armDoors.get(splitArmTool(ten)?.server ?? '');
+                    if (door && typeof input['tool_response'] === 'string') {
+                      const fixed = githubDoorError(
+                        (input['tool_input'] ?? {}) as Record<string, unknown>,
+                        input['tool_response'],
+                        door,
+                      );
+                      if (fixed) {
+                        return {
+                          hookSpecificOutput: {
+                            hookEventName: 'PostToolUse',
+                            updatedToolOutput: fixed,
+                          },
+                        };
+                      }
+                    }
+                    const plan = planSpill(
+                      input['tool_response'],
+                      ten,
+                      deps.outDir ?? office.paths.artifacts,
+                      office.paths.artifacts,
+                    );
+                    if (!plan || !doSpill(plan)) return {};
+
+                    /**
+                     * BÁO — nhưng **chỉ khi có bê**. (user chốt 27/08)
+                     *
+                     * Ngưỡng làm hành vi đổi theo từng lượt: trang nhỏ đi
+                     * thẳng, trang to bị bê ra file. Đổi hành vi mà không nói
+                     * là bắt người dùng đoán. Nhưng báo ở MỌI lượt thì thành
+                     * thứ người ta học cách bỏ qua — đúng lý lẽ đã dùng để bỏ
+                     * cổng duyệt. Nó đáng kêu **vì nó hiếm**.
+                     *
+                     * Và câu này đến từ tầng TẤT ĐỊNH, không phải từ model —
+                     * bốn lần trong dự án này *"hệ thống đúng, model kể sai"*.
+                     */
+                    deps.onProgress?.(
+                      `kết quả dài — đã lưu vào ${plan.rel} (${Math.round(plan.bytes / 1024)} KB)`,
+                    );
+                    const arm = splitArmTool(ten);
+                    if (arm) {
+                      deps.onArmCall?.({
+                        server: arm.server,
+                        tool: arm.tool,
+                        role: role.id,
+                        ...(brief.task_id ? { task_id: brief.task_id } : {}),
+                        args: { '(kết quả đã lưu)': plan.rel, bytes: plan.bytes },
+                      });
+                    }
+                    return {
+                      hookSpecificOutput: {
+                        hookEventName: 'PostToolUse',
+                        updatedToolOutput: spillNotice(plan),
+                      },
+                    };
+                  } catch {
+                    // Không bê được thì để nguyên câu của CLI: tệ hơn, không sai.
+                    return {};
+                  }
+                },
+              ],
+            },
+          ],
         },
-        ...(role.mcp.length ? { mcpServers: pickMcp(office, role) } : {}),
+        ...(mcpServers ? { mcpServers } : {}),
       },
     });
 
@@ -225,13 +585,46 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         // Một tin nhắn có thể chứa nhiều tool_use. Dòng trạng thái chỉ hiện cái
         // ĐẦU (nhiều hơn thì nhấp nháy vô nghĩa), nhưng ĐIỂM ĐẾN thì ghi hết —
         // đây là chỗ ta biết kết quả thật sự đã đi đâu.
-        if (calls[0]) deps.onProgress?.(describeCall(calls[0]));
+        if (calls[0]) deps.onProgress?.(describeCall(calls[0], armLabels));
         for (const call of calls) {
           const spot = landingOf(office.dir, call);
           if (spot) landed.set(`${spot.kind}:${spot.ref}`, spot);
           // Cùng một luồng `tool_use`, thêm hai thứ quan sát được và không tốn
           // gì: có lặp thao tác không, và đã chạm tài liệu nào trong tủ.
           observeCall(watch, call);
+          /**
+           * ┌────────────────────────────────────────────────────────────────┐
+           * │ NHẬT KÝ KIỂM TOÁN — **MỌI** lời gọi MCP, kèm THAM SỐ.          │
+           * │                                                                │
+           * │ ⚠ Nằm trong vòng lặp `for`, KHÔNG dùng `calls[0]` như dòng     │
+           * │ trạng thái ngay trên. Dòng trạng thái chỉ cần một cái để hiện;  │
+           * │ kiểm toán mà bỏ sót một lời gọi thì nó **không còn là kiểm      │
+           * │ toán** — chính chỗ `calls[0]` đó là lý do ca 26/08 không tra    │
+           * │ lại được nó đã ghi gì vào Notion.                              │
+           * │                                                                │
+           * │ Ghi ở đây chứ không ở `canUseTool`: cổng đó không nổ cho tool   │
+           * │ nằm trong `allowedTools` (đo 26/08) — mà cánh tay thì luôn nằm  │
+           * │ trong đó. Luồng `tool_use` là chỗ DUY NHẤT thấy được mọi lời    │
+           * │ gọi, bất kể quyền.                                             │
+           * └────────────────────────────────────────────────────────────────┘
+           */
+          const arm = splitArmTool(call.name);
+          if (arm) {
+            // Có chạm ra ngoài chưa? Câu báo khi chạm trần lượt **đổi hẳn** theo
+            // biến này: chưa chạm thì chỉ là một việc dở dang trong văn phòng;
+            // đã chạm thì có thể đã đổi thứ gì đó ở Notion/GitHub của người dùng.
+            armCalled = true;
+            deps.onArmCall?.({
+              server: arm.server,
+              tool: arm.tool,
+              role: role.id,
+              // `brief` chỉ mang `task_id`; `plan_id` là của scheduler, nó gắn
+              // vào ở chỗ gọi. Ghép ở đây bằng một trường không tồn tại là kiểu
+              // hỏng im lặng — để chỗ BIẾT nó tự điền.
+              ...(brief.task_id ? { task_id: brief.task_id } : {}),
+              args: call.input,
+            });
+          }
         }
       }
 
@@ -240,6 +633,41 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         finalText = typeof m['result'] === 'string' ? m['result'] : '';
         if (m['subtype'] === 'error_max_budget_usd') {
           throw new RunError(`Task ${brief.task_id} chạm trần ngân sách $${role.budget.max_usd}`, 'budget');
+        }
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ 🔴 CHẠM TRẦN LƯỢT PHẢI NÓI RA BẰNG TIẾNG NGƯỜI. (user bắt 27/08)   │
+         * │                                                                    │
+         * │   *"thế thì trả câu cú đàng hoàng chứ sao trả 1 cái lỗi            │
+         * │    error_max_turns ai biết là gì"*                                 │
+         * │                                                                    │
+         * │ Nhánh ngân sách ngay trên có câu tử tế từ lâu; nhánh LƯỢT thì rơi  │
+         * │ thẳng ra ngoài dưới dạng mã thô của SDK. Bất đối xứng đó không có  │
+         * │ lý do nào — chỉ là chưa ai viết.                                    │
+         * │                                                                    │
+         * │ ⚠⚠ VÀ CÂU NÀY PHẢI NÓI RA MỘT SỰ THẬT KHÓ CHỊU, chứ không chỉ dịch │
+         * │ mã lỗi: **việc có thể đã làm được MỘT PHẦN.** Đây là món nợ ghi từ  │
+         * │ 26/08 (`SESSIONS_MEMORY` §5s ⏸): một lượt chạm trần đã kịp gọi     │
+         * │ `notion-update-page` rồi mới bị cắt, nhưng báo cáo cuối nói *"chưa │
+         * │ làm được"* — một câu **sai về thế giới bên ngoài**.                 │
+         * │                                                                    │
+         * │ Với file trong văn phòng, nói nhầm là vô hại. Với cánh tay, nó là  │
+         * │ Notion/GitHub của người dùng — và ta KHÔNG có cách nào biết nó đã   │
+         * │ ghi tới đâu. Nên câu đúng là *"không rõ tới đâu, xem nhật ký"*,     │
+         * │ chứ không phải một lời trấn an. → [[agentco-safe-default-direction]]│
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        if (m['subtype'] === 'error_max_turns') {
+          const canhTay = armCalled;
+          throw new RunError(
+            `Việc này cần nhiều bước hơn mức cho phép (${role.budget.max_turns} bước) nên đã dừng giữa chừng.\n` +
+              (canhTay
+                ? `⚠ Nhân viên ĐÃ gọi ra kết nối bên ngoài trước khi dừng — có thể đã thay đổi thứ gì đó ở ` +
+                  `ngoài, và không rõ tới đâu. Xem nhật ký của kết nối để biết chính xác nó đã làm gì.\n`
+                : '') +
+              `Cách đi tiếp: chia việc thành các bước nhỏ hơn, hoặc nâng số bước tối đa của nhân viên này.`,
+            'max_turns',
+          );
         }
       }
     }
@@ -322,6 +750,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         status: 'failed' as const,
         say: 'Nhân viên trả về kết quả không đọc được. Xem nhật ký chi tiết.',
         answer: '',
+        // Không có sự kiện nào để neo — receipt còn không đọc được. Bịa một câu
+        // tóm tắt ở đây là đưa cho Trợ lý một thứ nghe như dữ kiện mà không phải.
+        gist: '',
         artifacts: [],
         lessons: [],
         blocked_on: `receipt không hợp lệ: ${parsed.problem ?? 'không rõ'}`,
@@ -363,33 +794,203 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
  * là một lượt trả tiền để nhận về một lời từ chối (§5 "`tools` vs
  * `allowedTools`", cái giá thứ 2). Nói luôn chỗ đúng thì nó ghi được ở lượt kế.
  */
-function officeJail(officeDir: string) {
+function officeJail(dirs: JailDirs, mode: GuardMode) {
   return async (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const raw = (input['tool_input'] ?? {}) as Record<string, unknown>;
-    const target = str(raw['file_path']) || str(raw['notebook_path']);
 
-    let inside = true;
-    if (target) {
-      try {
-        safeJoin(officeDir, target);
-      } catch {
-        inside = false;
-      }
+    // MỌI trường, không phải trường đầu tiên tìm thấy. `move_file` của MCP có
+    // HAI đường dẫn (`source` + `destination`) và chỉ một trong hai chạm vùng
+    // cấm là đủ hỏng. Bản trước dùng chuỗi `||` nên nó dừng ở cái đầu tiên.
+    for (const target of pathsIn(raw)) {
+      const zone = guardedZone(dirs, target, mode);
+      if (!zone) continue;
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: JAIL_REASON[zone](target),
+        },
+      };
     }
-    if (inside) return {};
-
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          `Đường dẫn "${target}" nằm ngoài thư mục văn phòng. Mọi kết quả phải ghi BÊN TRONG ` +
-          `thư mục làm việc hiện tại — dùng đường dẫn tương đối như "artifacts/<...>" ` +
-          `và không đi lên cấp trên bằng "..".`,
-      },
-    };
+    return {};
   };
 }
+
+/*
+  ⚠ ĐÃ BỎ (27/08 chiều): `armJail` + `repoIn` — hàng rào repo thứ hai của ta.
+  **ĐỪNG DỰNG LẠI** mà không đọc `SPEC-arms.md` §5h·7m trước.
+
+  Nó chạy đúng và có test, nhưng user bác đúng chỗ: phạm vi repo là **tài sản
+  cấp tài khoản của GitHub**, và chồng một hàng rào thứ hai lên nó mua được
+  đúng một thứ — thu hẹp theo TỪNG CÁNH TAY — với ba cái giá:
+    · một cơ chế nữa cho cùng một danh từ ([[agentco-count-mechanisms]])
+    · người dùng phải GÕ TAY tên repo (ta không liệt kê được repo đã cài)
+    · giới hạn nằm trong băm ⇒ đổi giới hạn = cắm lại + nối lại dây
+
+  Chỗ hẹp hơn đã có sẵn, do đúng người giữ, cập nhật tức thì: nút *"Only select
+  repositories"* trên màn hình cài app. → `catalog.ts §scope`
+
+  Thứ THAY nó, và là chốt bù bắt buộc: `githubDoorError` ngay dưới (dịch 404
+  sai cửa của GitHub) + nhật ký kiểm toán đã ghi sẵn `owner`/`repo` trong `args`.
+*/
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ DỊCH CÂU LỖI SAI CỬA CỦA GITHUB. → SPEC-arms §5h·7f                      │
+ * │                                                                          │
+ * │ GitHub cố ý trả **404**, không phải 403, cho repo mà app chưa được cài    │
+ * │ vào — để không lộ repo có tồn tại hay không. Đứng từ phía họ thì đúng;    │
+ * │ đứng từ phía người dùng của ta thì đó là **câu lỗi sai cửa**: `404 Not    │
+ * │ Found` dạy người ta đi kiểm tên repo, kiểm chìa, kiểm quyền — tức mọi     │
+ * │ chỗ TRỪ chỗ đúng, là *"bạn chưa cài agentco vào repo này"*.               │
+ * │                                                                          │
+ * │ 🔴 Trước 27/08 chiều **không có một dòng nào** trong `src/` bắt ca này,   │
+ * │ dù ô C-3 bài 13 đã đòi từ lâu và trỏ tới một mục spec CHƯA TỒN TẠI. Nó    │
+ * │ trôi được lâu vì hàng rào repo che mất — nay bỏ hàng rào, đây là thứ      │
+ * │ **duy nhất** đứng giữa người dùng và một câu đố.                          │
+ * │                                                                          │
+ * │ ⚠ SỬA CÂU, KHÔNG NUỐT LỖI. Lời gọi vẫn hỏng, receipt vẫn ghi hỏng — ta   │
+ * │ chỉ thêm cửa đi tiếp vào cuối. Nuốt nó thành "thành công" là dựng lại ca  │
+ * │ Notion `Error:` đã đốt 10 lượt (một lượt hỏng bị mồi thành thành công, và │
+ * │ chiều ngược lại cũng tệ y như thế).                                       │
+ * │                                                                          │
+ * │ ⚠ CHỈ khi lời gọi có `owner`/`repo` — không có thì 404 nói về chuyện      │
+ * │ khác, và đoán bừa là dựng một câu sai cửa MỚI để thay câu sai cửa cũ.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function githubDoorError(
+  raw: Record<string, unknown>,
+  text: string,
+  installUrl: string,
+): string | null {
+  if (!/\b404\b|not found/i.test(text)) return null;
+  const owner = str(raw['owner']);
+  const repo = str(raw['repo']);
+  if (!owner || !repo) return null;
+  return (
+    `${text}\n\n` +
+    `↳ Với GitHub, 404 ở đây gần như luôn có nghĩa là **agentco chưa được cài vào ` +
+    `"${owner}/${repo}"** — chứ không phải repo đó không tồn tại hay chìa sai. GitHub cố ý ` +
+    `trả 404 thay vì 403 để không lộ repo riêng tư.\n` +
+    `↳ Người dùng cần mở ${installUrl} và thêm repo này vào. Đừng thử lại bằng tên khác, và ` +
+    `đừng đoán là repo không tồn tại.`
+  );
+}
+
+/**
+ * Mọi đường dẫn khai trong `tool_input` của MỘT lời gọi.
+ *
+ * Sáu tên trường, vì các tool khai đường dẫn ở sáu chỗ khác nhau:
+ *
+ *   `file_path`      Read · Write · Edit
+ *   `notebook_path`  NotebookEdit
+ *   `path`           Grep · Glob · và gần như MỌI tool của server-filesystem
+ *   `source`         move_file
+ *   `destination`    move_file
+ *   `paths[]`        read_multiple_files
+ *
+ * ⚠ Đây lại là một DANH SÁCH TÊN VIẾT TAY, đúng thứ đã đốt sáu ngày ở
+ * `SHELL_ALIASES`. Khác biệt phải nói ra: ở đó sót một tên làm một tính năng
+ * lặng lẽ không tồn tại; ở đây sót một tên **để hở một cửa**. Nên nó phải được
+ * đọc lại mỗi lần danh mục thêm một server mới — `spike-fs-tools.ts` in ra
+ * danh sách tool thật để đối chiếu.
+ */
+export function pathsIn(raw: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const key of ['file_path', 'notebook_path', 'path', 'source', 'destination']) {
+    const v = str(raw[key]);
+    if (v) out.push(v);
+  }
+  const many = raw['paths'];
+  if (Array.isArray(many)) {
+    for (const p of many) {
+      const v = str(p);
+      if (v) out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Thư mục mà cánh tay của vai trò này được phép chạm — thứ đi vào
+ * `additionalDirectories`, tức thứ MCP server THẬT SỰ đọc làm `roots`.
+ *
+ * Suy từ chính `args` đã ghi trong `company.yaml` (`folderRoots`), nên không đẻ
+ * ra trường cấu hình thứ hai phải giữ đồng bộ với cái đầu tiên.
+ *
+ * ⚠ THƯ MỤC KHÔNG CÒN THÌ BỎ, VÀ KÊU. Ổ USB rút ra, thư mục bị xoá, văn phòng
+ * zip sang máy khác — cả ba đều có thật. Hai hậu quả, và chúng không cân nhau:
+ * bỏ đi ⇒ cánh tay hẹp hơn người dùng tưởng, có một dòng cảnh báo; truyền
+ * xuống ⇒ CLI có thể từ chối cả lượt chạy, và mọi việc của vai trò đó chết kèm
+ * một câu lỗi không nói gì về cái ổ USB. → [[agentco-safe-default-direction]]
+ */
+export function armRoots(role: Role, servers: McpServers | undefined): string[] {
+  if (!servers) return [];
+  const out = new Set<string>();
+  for (const cfg of Object.values(servers)) {
+    for (const dir of folderRoots(cfg)) {
+      let there = false;
+      try {
+        there = fs.statSync(dir).isDirectory();
+      } catch {
+        there = false;
+      }
+      if (there) out.add(dir);
+      else if (!warned.has(`dir:${dir}`)) {
+        warned.add(`dir:${dir}`);
+        process.emitWarning(
+          `Cánh tay của vai trò "${role.id}" khai thư mục "${dir}" nhưng không tìm thấy trên máy. ` +
+            `Nhân viên sẽ KHÔNG với tới được thư mục đó — kiểm lại đường dẫn ở nút "+ Kết nối".`,
+        );
+      }
+    }
+  }
+  return [...out];
+}
+
+interface JailDirs {
+  companyDir: string;
+  officeDir: string;
+}
+
+/**
+ * Câu từ chối, mỗi vùng một câu — và cả ba đều CHỈ ĐƯỜNG, không chỉ nói "không".
+ *
+ * Một câu từ chối trống rỗng thì model dò lại bằng một đường dẫn sai khác, và
+ * mỗi lần dò là một lượt trả tiền để nhận về một lời từ chối (§5 "`tools` vs
+ * `allowedTools`", cái giá thứ 2).
+ *
+ * ⚠ `config` cố ý nói ra *cách đúng để làm việc đó* thay vì chỉ cấm: yêu cầu
+ * "đổi cấu hình" hầu như luôn đến từ một việc HỢP LỆ mà người dùng vừa giao.
+ * Cấm mà không chỉ đường thì nhân viên báo `blocked` và người dùng không hiểu
+ * vì sao — trong khi thứ họ cần chỉ là bấm một công tắc trên giao diện.
+ */
+const JAIL_REASON: Record<GuardedZone, (t: string) => string> = {
+  secrets: (t) =>
+    `"${t}" nằm trong thư mục trạng thái nội bộ (.state). Đó là nơi giữ CHÌA KHOÁ và sổ ` +
+    `công việc của hệ thống — không nhân viên nào đọc hoặc ghi ở đó, kể cả khi được yêu cầu. ` +
+    `Bạn không cần chìa khoá để dùng một công cụ đã được cắm sẵn: cứ gọi tool của nó.`,
+  /**
+   * ⚠ CÂU NÀY PHẢI CHỈ ĐƯỜNG ĐÚNG, không chỉ cấm — cùng lý lẽ với `config`.
+   *
+   * Nhân viên chạm vào đây gần như luôn vì một việc HỢP LỆ: *"trang đó hiện gì"*.
+   * Câu trả lời đúng là **chụp lại trang**, không phải bới log của lượt trước.
+   * Cấm suông thì họ báo `blocked` cho một việc làm được, và người dùng nhận
+   * một câu lỗi nói về thư mục thay vì về việc họ giao.
+   */
+  browser: (t) =>
+    `"${t}" là thư mục log nội bộ của trình duyệt — nó giữ dấu vết phiên đăng nhập của ` +
+    `người dùng, nên không nhân viên nào đọc ở đó. Cần biết một trang đang hiện gì thì ` +
+    `MỞ LẠI trang đó bằng cánh tay trình duyệt và chụp, đừng đọc log của lượt trước.`,
+  config: (t) =>
+    `"${t}" là file CẤU HÌNH của văn phòng (vai trò, kỹ năng, sơ đồ, kết nối). Nó chỉ được ` +
+    `đổi qua giao diện, để mỗi thay đổi có người chịu trách nhiệm và có dấu vết trong nhật ký. ` +
+    `Nếu việc này cần một quyền bạn chưa có, hãy DỪNG và nói rõ bạn thiếu gì.`,
+  outside: (t) =>
+    `Đường dẫn "${t}" nằm ngoài thư mục văn phòng. Mọi kết quả phải ghi BÊN TRONG ` +
+    `thư mục làm việc hiện tại — dùng đường dẫn tương đối như "artifacts/<...>" ` +
+    `và không đi lên cấp trên bằng "..".`,
+};
 
 // ─────────────────────────────────────────── lặp thao tác & tài liệu đã chạm
 
@@ -508,6 +1109,8 @@ function stoppedReceipt(
     // Người dùng vừa bấm Dừng. Đẩy một câu trả lời dở dang lên chat như thể nó
     // là kết quả hoàn chỉnh là đúng loại nói dối `stoppedReceipt` sinh ra để bỏ.
     answer: '',
+    // Bị ngắt giữa chừng ⇒ chưa ai đọc được kết quả để tóm tắt. → `types.ts §gist`
+    gist: '',
     artifacts: written,
     lessons: [],
     blocked_on: 'người dùng dừng giữa chừng',
@@ -554,7 +1157,7 @@ export function filesOnDisk(officeDir: string, promised: readonly string[], land
 }
 
 /**
- * File nhân viên ghi RA NGOÀI văn phòng, và thật sự có trên đĩa.
+ * File nhân viên ghi RA ngoài văn phòng, và thật sự có trên đĩa.
  *
  * Kiểm `existsSync` chứ không tin `landed` suông: `landed` chỉ chứng minh model
  * đã GỌI `Write`, không chứng minh cú ghi đó thành công. Ta chỉ nói với người
@@ -619,8 +1222,31 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
   const { env, missing } = grantFor(readSecrets(companyPaths(office.companyDir)), role.secrets);
   if (missing.length) {
     process.emitWarning(
-      `Vai trò "${role.id}" khai secrets ${missing.join(', ')} nhưng chưa có trong ` +
-        `.state/secrets.json. Tool cần chìa đó sẽ hỏng — thêm bằng \`agentco secret set <TÊN>\`.`,
+      /**
+       * ⚠ HAI CÂU, vì hai việc phải làm khác hẳn nhau. (user dán câu này 28/08)
+       *
+       * `agentco secret set` **không dùng được cho tài khoản đăng nhập** — không
+       * có chuỗi nào để gõ, chìa sinh ra từ luồng OAuth. Bảo họ chạy lệnh đó là
+       * bảo đi điền một thứ không tồn tại, đúng lớp lỗi §5m mà `probeArm` đã sửa
+       * ở cửa của nó. `isAccountName` sống cạnh `accountName` đúng để phân biệt
+       * được chuyện này ở MỌI cửa, không riêng cửa nào.
+       *
+       * Ca thường gặp nhất (user: *"tôi thường gặp mỗi khi update code"*): họ gỡ
+       * một tài khoản ở giao diện, còn `roles/<id>.yaml` vẫn khai tên chìa cũ.
+       */
+      (() => {
+        const accs = missing.filter((n) => isAccountName(n));
+        const keys = missing.filter((n) => !isAccountName(n));
+        const parts = [`Vai trò "${role.id}" thiếu chìa. Tool cần chúng sẽ hỏng.`];
+        if (accs.length) {
+          parts.push(
+            `${accs.join(', ')}: đây là TÀI KHOẢN ĐĂNG NHẬP, không phải chìa gõ tay — ` +
+              `nối lại ở hộp thoại Kết nối, hoặc bỏ tên đó khỏi roles/${role.id}.yaml nếu không dùng nữa.`,
+          );
+        }
+        if (keys.length) parts.push(`${keys.join(', ')}: thêm bằng \`agentco secret set <TÊN>\`.`);
+        return parts.join(' ');
+      })(),
     );
   }
 
@@ -631,13 +1257,30 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
       process.emitWarning(`MCP server "${n}" chưa khai trong company.yaml`);
       continue;
     }
-    // Chỉ tiêm vào server chạy bằng tiến trình con (có `command`). Server kiểu
-    // http/sse nhận xác thực theo cách khác, tiêm env vào là vô nghĩa.
-    const isProcess = typeof (cfg as { command?: unknown }).command === 'string';
-    out[n] =
-      isProcess && Object.keys(env).length
-        ? { ...(cfg as object), env: { ...((cfg as { env?: object }).env ?? {}), ...env } }
-        : cfg;
+    /**
+     * ⚠ MỘT HÀM CHUNG VỚI `probeArm` — xem `secrets.ts §injectSecrets`.
+     *
+     * Bản cũ ở đây chỉ tiêm cho server có `command`, và ghi thẳng lý do là
+     * *"server http/sse nhận xác thực theo cách khác"*. Câu đó đúng, nhưng nó
+     * mô tả một **lỗ** (§5a) chứ không phải một quyết định — và lỗ đó nằm im
+     * được vì chưa có mục danh mục HTTP nào. Nay có Notion.
+     */
+    /**
+     * ⚠ `dirs` ở đây là chỗ ô trống `<OFFICE_STATE>` được điền — **theo văn phòng
+     * đang chạy**. Chính vì nó điền lúc này mà đường dẫn không phải nằm trong sổ,
+     * và nhờ thế một mục danh mục cắm ở hai văn phòng vẫn là **một băm**.
+     * → `secrets.ts §OFFICE_STATE`
+     */
+    const withEnv = prepareArm(n, cfg, env, {
+      officeState: path.join(office.paths.state, 'browser'),
+      officeDir: office.dir,
+    });
+    /**
+     * Bỏ `npx` khỏi đường nóng — đo được **~4 giây MỖI task có cánh tay**, vì
+     * mỗi `query()` spawn một tiến trình MCP mới. Đồng bộ, không cài gì, và
+     * không có bản cài sẵn thì trả về đúng cấu hình gốc. → `core/armexec.ts`
+     */
+    out[n] = withEnv;
   }
   // Hình dạng do người dùng khai trong company.yaml — SDK tự validate lúc khởi tạo.
   return out as McpServers;
@@ -772,7 +1415,7 @@ function toolCalls(m: Record<string, unknown>): ToolCall[] {
  * │ Và "dự án" là từ của lập trình viên. Người dùng của ta mở tiệm hoa.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-function describeCall(call: ToolCall): string {
+export function describeCall(call: ToolCall, arms?: Record<string, string>): string {
   const file = typeof call.input['file_path'] === 'string' ? basename(call.input['file_path']) : '';
   switch (call.name) {
     case 'Read':
@@ -783,9 +1426,27 @@ function describeCall(call: ToolCall): string {
     case 'Grep':
     case 'Glob': {
       const what = str(call.input['pattern']);
-      const room = roomOf(str(call.input['path']));
+      /**
+       * ⚠ NƠI TÌM SUY TỪ CẢ `path` LẪN `pattern`, và mặc định KHÔNG được là
+       * "văn phòng". Ca thật 24/08, nhật ký hiện nguyên văn:
+       *
+       *   đang tìm “D:/Downloads/*” trong văn phòng
+       *
+       * Một câu **sai**: lượt đó không tìm trong văn phòng chút nào. `roomOf`
+       * chỉ nhận `path`, mà model hay nhét đường dẫn tuyệt đối thẳng vào
+       * `pattern` và bỏ trống `path` ⇒ `roomOf('')` rơi về mặc định.
+       *
+       * Nhật ký là **cửa sổ duy nhất** người dùng có để biết nhân viên vừa chạm
+       * vào đâu trên máy họ — cùng lý do khối `Bash` bên dưới in ra cả câu lệnh.
+       * Một dòng nhật ký nói sai chỗ thì tệ hơn một dòng không nói gì: nó làm
+       * người dùng tin rằng mọi thứ đang diễn ra bên trong văn phòng.
+       */
+      const where = str(call.input['path']) || what;
       const term = what && what.length <= 40 ? ` “${what}”` : '';
-      return `đang tìm${term} trong ${room}`;
+      // Câu đổi HẲN, không chỉ đổi cái tên phòng: "trong ngoài văn phòng" là
+      // tiếng Việt hỏng, và một dòng nhật ký đọc vấp thì người ta thôi đọc.
+      if (isAbsolutePath(where)) return `đang tìm${term} ngoài văn phòng`;
+      return `đang tìm${term} trong ${roomOf(str(call.input['path']))}`;
     }
     case 'WebSearch':
       return 'đang tìm trên web';
@@ -817,9 +1478,35 @@ function describeCall(call: ToolCall): string {
       if (!cmd) return 'đang chạy lệnh';
       return `đang chạy: ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}`;
     }
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ CÁNH TAY PHẢI CÓ TÊN VÀ CÓ ĐIỂM ĐẾN — hệ quả BẮT BUỘC của bản vá     │
+     * │ 24/08, không phải một cải tiến rời.                                  │
+     * │                                                                      │
+     * │ Luật đã ghi 22/08 khi `Bash` thành mặc định bật: *"mở rộng một quyền │
+     * │ thì phải mở rộng cả ĐƯỜNG NHÌN vào nó, TRONG CÙNG MỘT LẦN SỬA. Tách  │
+     * │ hai việc thì giữa hai lần sẽ có một khoảng thời gian quyền đã rộng   │
+     * │ mà mắt vẫn hẹp — và đó chính xác là hình dạng của mọi sự cố im       │
+     * │ lặng."* Hôm nay cánh tay đi từ "không bao giờ chạy" sang "ghi được   │
+     * │ file lên đĩa của người dùng". Cùng ngày, không phải ngày mai.        │
+     * │                                                                      │
+     * │ Bản trước in `đang làm việc với a385afc3ab6` — một cái BĂM. Người    │
+     * │ dùng đặt tên "Programs Installation 2" ở hộp thoại và không bao giờ  │
+     * │ thấy lại cái tên đó. Nhãn nằm sẵn ở `company.arms[id].label`.        │
+     * │                                                                      │
+     * │ ⚠ Đuôi tên tool in NGUYÊN VĂN (`write_file` → `write file`), KHÔNG   │
+     * │ qua một bảng dịch viết tay. Bảng đó sẽ đúng cho `filesystem` và câm  │
+     * │ cho Notion, GitHub, và mọi server người dùng tự cắm — tức là nó hỏng │
+     * │ ĐÚNG LÚC danh mục lớn lên. Tên thô xấu hơn một chút và đúng mãi mãi. │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
     default: {
       const server = mcpServerOf(call.name);
-      return server ? `đang làm việc với ${server}` : `đang dùng ${call.name}`;
+      if (!server) return `đang dùng ${call.name}`;
+      const who = arms?.[server] || server;
+      const what = call.name.split('__').slice(2).join('__').replace(/_/g, ' ');
+      const where = basename(str(call.input['path']) || str(call.input['destination']) || '');
+      return `${who} · ${what || 'đang làm việc'}${where ? ` → ${where}` : ''}`;
     }
   }
 }
@@ -831,6 +1518,17 @@ function describeCall(call: ToolCall): string {
  * họ vừa thả file vào đó. Ánh xạ thư mục → tên trên giao diện, và mặc định là
  * "văn phòng" chứ không phải "dự án".
  */
+/**
+ * Đường dẫn TUYỆT ĐỐI ở bất kỳ hệ nào — `D:\…`, `D:/…`, `/home/…`.
+ *
+ * Cùng luật với `folderRoots` (`catalog.ts`): nhận cả hai kiểu ở mọi nền, KHÔNG
+ * dò `process.platform`. Một văn phòng zip từ máy khác hệ vẫn phải đọc đúng
+ * chuỗi đã ghi, và nhật ký cũng phải đọc đúng chuỗi model đã gửi.
+ */
+function isAbsolutePath(p: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('/');
+}
+
 function roomOf(searchPath: string): string {
   const p = searchPath.replace(/\\/g, '/');
   if (/(^|\/)library(\/|$)/.test(p)) return 'tủ tài liệu';
@@ -881,7 +1579,7 @@ export function landingOf(officeDir: string, call: ToolCall): Landing | undefine
       return rel ? { kind: 'file', ref: rel } : undefined;
     } catch {
       /**
-       * RA NGOÀI VĂN PHÒNG VẪN LÀ MỘT ĐIỂM ĐẾN — khai đúng tên nó.
+       * RA ngoài VĂN PHÒNG VẪN LÀ MỘT ĐIỂM ĐẾN — khai đúng tên nó.
        *
        * Bản trước trả `undefined`, tức là nói "không có điểm đến nào". Sai:
        * ta biết CHẮC nó vừa ghi, và biết CHẮC ghi ở đâu. Thứ ta không có là
@@ -945,6 +1643,23 @@ export function warnDroppedTools(role: Role, granted: unknown): string[] {
   if (hasShell(role.tools) && !asked.some((t) => EXTERNAL_TOOLS.has(t) && got.has(t))) {
     dropped.push('(tool chạy lệnh)');
   }
+  /**
+   * CÁNH TAY ĐI QUA CÙNG MỘT BẤT BIẾN — thêm 24/08.
+   *
+   * Hàm này sinh ra 22/08 từ đúng một câu: *"thứ tôi xin và thứ tôi nhận không
+   * khớp"*. Cánh tay vừa nện lại đúng hình dạng đó qua một cửa khác — đã nối
+   * dây, đã trả 2 185 token/lượt, và **không một tool nào được cấp** vì server
+   * chết lúc khởi động (`npx` không tải được gói · sai tên gói · máy không có
+   * node). Không lỗi, không cảnh báo, chỉ có nhân viên nói "tôi không làm được"
+   * và một hoá đơn.
+   *
+   * Đây là phép kiểm ở TẦNG ĐÚNG: nó không cần biết cánh tay tên gì hay có bao
+   * nhiêu tool — chỉ cần biết vai trò có khai `mcp:` mà CLI cấp về 0 tool nào
+   * mang tiền tố `mcp__`.
+   */
+  if (role.mcp.length && ![...got].some((t) => t.startsWith('mcp__'))) {
+    dropped.push(`(cánh tay: ${role.mcp.join(', ')})`);
+  }
   if (dropped.length === 0) return [];
 
   const key = `${role.id}:${dropped.join(',')}`;
@@ -971,6 +1686,34 @@ function errorMessage(err: unknown): string {
  * Phân loại lỗi. Rate limit và hết hạn mức subscription là HAI thứ khác nhau,
  * xử lý ngược nhau → docs/SPEC-2026-08-14-agentco.md §9b
  */
+/**
+ * Mã lỗi của SDK → CÂU cho người đọc. → `assistant.ts` chỗ `is_error`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Vì sao là một hàm chứ không phải một chuỗi viết tại chỗ: cùng một mã lỗi │
+ * │ xuất hiện ở **hai đường** (Trợ lý và nhân viên), và hai bản dịch khác     │
+ * │ nhau của cùng một sự cố là thứ dự án này đã trả giá vài lần.             │
+ * │                                                                          │
+ * │ ⚠ CHỈ dịch khi SDK **không** đưa câu nào. Có câu thật thì giữ nguyên —   │
+ * │ thay một câu cụ thể bằng một câu chung là làm mất dữ kiện.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function sayError(raw: string, kind: FailureKind): string {
+  // SDK đã nói gì đó ra hồn (không phải mã máy) ⇒ giữ nguyên.
+  if (!/^error_[a-z_]+$/.test(raw.trim())) return raw;
+  if (kind === 'max_turns') {
+    return (
+      'Việc này cần nhiều bước hơn mức cho phép trong một lượt nên đã dừng giữa chừng. ' +
+      'Thử chia nhỏ yêu cầu, hoặc nói rõ hơn cần làm gì trước làm gì sau.'
+    );
+  }
+  if (kind === 'budget') return 'Lượt này chạm trần chi phí đã đặt cho công việc.';
+  if (kind === 'usage_limit') return 'Tài khoản Claude đã hết hạn mức dùng.';
+  if (kind === 'rate_limit') return 'Claude đang quá tải, thử lại sau ít phút.';
+  if (kind === 'auth') return 'Chưa đăng nhập được vào Claude trên máy này.';
+  return `Claude Code dừng giữa chừng (${raw}).`;
+}
+
 export function classifyError(err: unknown): FailureKind {
   const msg = errorMessage(err);
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Kiểu khớp với backend. Nguồn sự thật là `src/core/types.ts` và
  * `src/core/office.ts` — file này là bản sao thủ công, không sinh tự động.
  *
@@ -42,6 +42,12 @@ export interface CanvasNode {
   y: number;
   role?: string;
   server?: string;
+  /**
+   * Khoá sắp xếp bãi đỗ cánh tay (`0-files` · `1-<mục>` · `2-custom`).
+   * Server tính — xem `layout.ts §armGroup`. Giao diện chỉ so chuỗi, **không**
+   * tự phân loại lại. → `canvas/geometry.ts §arrange`
+   */
+  armGroup?: string;
   label: string;
   avatar?: string;
   /** Mức model: `eco` | `standard` | `deep`. */
@@ -65,7 +71,35 @@ export interface CanvasNode {
    */
   bash?: boolean;
   count?: number;
+  /** Cánh tay: nấc quyền — huy hiệu vẽ từ đây, **KHÔNG** từ `label`. → §6j */
+  level?: 'read' | 'add' | 'full';
+  /** Cánh tay: số việc đã cấp, để nhãn "chỉ đọc" kiểm được bằng mắt. */
+  toolCount?: number;
+  /** Cánh tay: tên WORKSPACE nó nối tới — tra từ kho OAuth, không đọc `label`. */
+  via?: string;
+  /**
+   * Cánh tay: đường dẫn SVG logo hãng + loại — để node vẽ **cùng một hình** với
+   * hộp thoại Kết nối. Server gửi kèm (`office.ts §mark`) chứ canvas không tra
+   * danh mục: sơ đồ vẽ trước khi ai mở hộp thoại, và một node không có hình ở
+   * mỗi lần mở app là cái giá không đáng.
+   */
+  mark?: string;
+  /** ⚠ Cùng union với `office.ts §armKind` và `ArmIcon §ArmKind` — sửa cả ba. */
+  armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
+  /** Nhan cac o tick dang bat - panel ve chip tu day. */
+  optionLabels?: string[];
+  /** Co ho so ben => panel hien nut mo cua so dang nhap. */
+  canLogin?: boolean;
   mcp?: string[];
+  /**
+   * Cánh tay: thư mục nó với tới, **nguyên văn** như trong `company.yaml`.
+   *
+   * CHỈ ĐỌC. Đổi thư mục = đổi `armHash` = một cánh tay khác, nên đường đi đúng
+   * là cắm một kết nối mới chứ không phải sửa ô này. Rỗng = không phải cánh tay
+   * file (Notion, GitHub…) — khi đó đừng vẽ ô nào cả, một ô trống nói dối rằng
+   * cấu hình bị thiếu.
+   */
+  folders?: string[];
   hue?: number;
   missing: boolean;
   connected: boolean;
@@ -321,9 +355,17 @@ export type AgentEvent = EventBase &
  * `agent` cố tình vắng mặt: agent nói chuyện trực tiếp với agent là nguồn đốt
  * token lớn nhất trong mọi hệ multi-agent.
  */
+/**
+ * ⚠ PHẢI KHỚP `src/core/layout.ts §CAN_CONNECT` — server là nơi thi hành thật,
+ * bảng này chỉ để giao diện không vẽ ra thứ server sẽ từ chối.
+ *
+ * `mcp → assistant` đã GỠ 23/08: sợi dây đó không làm gì (`assistant.mcp` chỉ
+ * được ghi rồi đọc lại để vẽ), và nếu có ngày nó chạy thật thì Trợ lý cầm MCP
+ * = ~36 000 token mỗi lượt trò chuyện. Chi tiết ở `layout.ts`.
+ */
 export const CAN_CONNECT: Partial<Record<NodeKind, readonly NodeKind[]>> = {
   assistant: ['agent'],
-  mcp: ['agent', 'assistant'],
+  mcp: ['agent'],
 };
 
 export function canConnect(from: CanvasNode, to: CanvasNode, edges: readonly CanvasEdge[]): boolean {
@@ -360,4 +402,216 @@ export interface Energy {
   /** `pro` · `max` … · `null` khi chạy bằng API key. */
   plan: string | null;
   seenAt: string;
+}
+
+// ─────────────────────────────────────────────────────────── cánh tay (MCP)
+// → docs/SPEC-arms.md §4e · §6
+
+/** Một mục danh mục — thứ người dùng "rút ra xài được ngay". */
+export interface CatalogArm {
+  id: string;
+  name: string;
+  /** Icon TRUNG TÍNH của ta, không phải logo bên thứ ba. → SPEC-arms.md §11c */
+  icon: string;
+  blurb: string;
+  /**
+   * Câu phụ trên thẻ nói CÁI GIÁ, không nói tính năng: người dùng chọn theo
+   * CÔNG SỨC bỏ ra, không theo tên hãng.
+   */
+  price: 'none' | 'keys' | 'login';
+  transport: 'stdio' | 'http';
+  secrets: { name: string; label: string; help: string }[];
+  /** Cánh tay cần danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
+  folders?: { label: string; help: string };
+  /** Cho chọn nấc quyền lúc cắm (Chỉ đọc / +Thêm / Toàn quyền). → §6j */
+  tiered?: boolean;
+  /**
+   * Câu giải thích nấc do **mục danh mục** ghi đè. Chỉ câu HELP, không đổi tên nấc.
+   *
+   * Có vì câu mặc định của nấc `add` (*"Tạo được trang/mục mới…"*) **sai với
+   * Linear**: `save_issue` là upsert nên việc mở issue rơi xuống `full`, và nấc
+   * `add` ở đó không mở được issue nào. Lý do đầy đủ + ranh giới của ô này:
+   * `core/catalog.ts §tierSay`. Không khai ⇒ dùng `TIER_SAY` mặc định.
+   */
+  tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
+  /**
+   * Tên miền của endpoint (chỉ mục `http`). Để nhận ra một URL người dùng dán
+   * qua đường tự cắm là hãng nào ⇒ chỉ được đúng đường thay vì báo một câu
+   * chung chung. → `catalog.ts §catalogForUi` · `ArmDialog §catalogMatch`
+   */
+  host?: string;
+  /** Cần ĐĂNG NHẬP thay vì gõ chìa. Suy từ `spec` ở server, không khai tay. */
+  needsLogin?: boolean;
+  /**
+   * Đăng nhập bằng **mã thiết bị** thay vì mở tab rồi chờ tab đó xong.
+   *
+   * Hai luồng khác nhau ở đúng thứ người dùng nhìn thấy, nên giao diện phải
+   * biết: web flow bảo họ *"xong ở tab kia thì đây tự cập nhật"*; mã thiết bị
+   * hiện **một mã ngay tại đây** và tự hỏi thăm. Bày nhầm luồng là bảo người ta
+   * chờ một tab sẽ không bao giờ báo về. → SPEC-arms §5h·7
+   */
+  deviceLogin?: boolean;
+  /**
+   * Nhóm việc cho người dùng tick. Không có ⇒ cắm cả server. → §5h·7e
+   *
+   * `label` giữ **tên của hãng** (tra được trong tài liệu hãng), `help` nói việc
+   * làm được. Đừng gộp hai vai vào một chuỗi. → `catalog.ts §ArmGroup`
+   */
+  groups?: { id: string; label: string; help?: string; on?: boolean }[];
+  /** Hinh dang de chon icon - xem catalog.ts shape. */
+  shape?: 'browser';
+  /**
+   * Ô tick **cách chạy** — độc lập nhau, hỏi ở mọi nấc. → `catalog.ts §ArmOption`
+   *
+   * `loopbackOnly` = chỉ hiện khi trình duyệt và daemon cùng máy (cửa sổ trình
+   * duyệt mở trên máy chạy daemon). Giao diện ẩn nó; **cổng thật ở server**.
+   */
+  options?: { id: string; label: string; help: string; on?: boolean; loopbackOnly?: boolean }[];
+  /**
+   * HÀNG RÀO NGOÀI — phạm vi do HÃNG giữ, ta chỉ mở cửa. → `catalog.ts §scope`
+   * Không có ⇒ mục này không có màn hình đồng ý nào để đi tới.
+   */
+  scope?: { say: string; url: string; help: string };
+  /**
+   * TRA BẢN CÀI APP tự động. → `catalog.ts §repoScan` · SPEC-arms §5h·7o
+   *
+   * Có nó nghĩa là mục này trả lời được câu mà `tools/list` không trả lời được:
+   * *"hãng cho cánh tay này đụng repo nào"*. Giao diện chỉ cần biết CÓ hay
+   * KHÔNG — tên tool nằm ở server, đúng chỗ nó được gọi.
+   */
+  repoScan?: Record<string, never> | object;
+  /**
+   * Hãng này cắt việc **ngay ở server** theo nấc quyền. → `catalog.ts §serverFenced`
+   *
+   * Giao diện cần biết vì con số token đo được là **trần**: phép thử cố ý chạy
+   * không mang hàng rào (mang thì bộ chọn nấc không bao giờ hiện), nên ở nấc dưới
+   * thực tế tốn ít hơn số hiện ra. Không nói ra là để người dùng đọc một con số
+   * đúng cho một cấu hình họ không chọn.
+   */
+  serverFence?: boolean;
+  /**
+   * Hồ sơ thương hiệu — và **logo sống trong đó**. → `catalog.ts §brand`
+   *
+   * `mark` là đường dẫn SVG 24×24 đơn sắc. Nó ở cạnh `checkedOn` để luật §11c
+   * (*"chưa đọc quy tắc hãng ⇒ không dùng logo"*) còn nhìn thấy được thứ nó nói
+   * về — bảng logo để riêng ở thư mục web thì luật thành lời hứa.
+   */
+  brand: {
+    owner: string | null;
+    guidelineUrl: string | null;
+    checkedOn: string | null;
+    mark?: string;
+  };
+}
+
+/**
+ * Workspace đã nối. **Tên và nhãn, không bao giờ token.**
+ *
+ * "Workspace" chứ không phải "tài khoản": kiến trúc Notion là 1 tài khoản ⇄ N
+ * workspace, và mỗi lần cấp quyền OAuth gắn với **một** workspace.
+ */
+/**
+ * MỘT lời gọi MCP đã xảy ra. → `core/audit.ts` · SPEC-arms §6k
+ *
+ * Bản ghi **kiểm toán**, không phải bản ghi tiến độ: nó có `args`, và `args`
+ * chính là toàn bộ lý do nó tồn tại. Không có tham số thì dòng log chỉ nói
+ * *"đã gọi update_page"* — đúng bằng thứ đã có, và đã thấy là không đủ.
+ */
+export interface ArmCall {
+  ts: string;
+  server: string;
+  tool: string;
+  role: string;
+  plan_id?: string;
+  task_id?: string;
+  args: string;
+  /** Tham số bị cắt vì quá dài — nói ra, đừng để người đọc tưởng đó là tất cả. */
+  truncated?: boolean;
+}
+
+export interface OAuthAccount {
+  name: string;
+  label?: string;
+  expiresAt?: number;
+  /** Cánh tay đang dùng chìa này. Rỗng ⇒ gỡ được ngay, không cần hỏi server. */
+  usedBy: string[];
+  /**
+   * Chìa đã chết — phải **đăng nhập lại**, chờ không khỏi. Lý do nguyên văn.
+   *
+   * Không có trường này thì triệu chứng duy nhất là cánh tay 401 im lặng lúc
+   * một nhân viên đang làm việc — xa nguyên nhân, và câu 401 nói *"chìa sai"*
+   * chứ không nói *"chìa chết"*.
+   */
+  dead?: string;
+}
+
+/**
+ * Một mục trong SỔ CHUNG của công ty. → docs/SPEC-arms.md §6i
+ *
+ * `id` là **băm cấu hình**, không phải tên — nó không bao giờ lên màn hình.
+ * `label` là thứ người dùng đọc và đổi được.
+ */
+export interface InstalledArm {
+  id: string;
+  label: string;
+  catalog?: string;
+  config: unknown;
+  /**
+   * TÊN chìa, không bao giờ giá trị. Giá trị nằm ở `.state/secrets.json` cấp
+   * CÔNG TY và không bao giờ đi qua HTTP — đó chính là lý do "dùng lại" ở một
+   * văn phòng khác không phải điền lại gì. → `company.ts §reuseArm`
+   */
+  secrets: string[];
+  /**
+   * Nấc quyền. Giao diện vẽ **huy hiệu** từ đây, KHÔNG từ chuỗi tên.
+   *
+   * ⚠ Nhét mức quyền vào `label` thì một cú đổi tên tạo ra được *"Notion (ghi
+   * được)"* trên một cánh tay chỉ đọc — nhãn nói dối về đặc quyền. → §6j
+   */
+  level?: 'read' | 'add' | 'full';
+  /**
+   * Tên WORKSPACE cánh tay này nối tới — server tra từ `arms[].secrets` ra kho
+   * OAuth. Không đọc chuỗi `label`: nhãn là của người dùng và đổi tự do, còn
+   * workspace là sự thật thuộc về cấu hình. Vắng ⇒ không dùng OAuth, hoặc
+   * workspace đã bị gỡ; cả hai đều là "không biết" ⇒ không vẽ gì.
+   */
+  via?: string;
+  /** Số việc đã cấp — hiện cạnh huy hiệu để nhãn kiểm được bằng mắt. */
+  toolCount: number;
+  usedBy: { office: string; role: string }[];
+  /**
+   * Không văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
+   * dây". Chỉ mục như thế mới hiện nút **xoá hẳn**. ⚠ Đừng tự suy từ `usedBy`:
+   * nó chỉ đếm sợi dây, nên một node đang nằm chờ sẽ trông như mồ côi.
+   */
+  orphan: boolean;
+}
+
+/**
+ * Kết quả bắt tay. `status` có NĂM giá trị, không phải hai — `needs-auth` KHÔNG
+ * phải lỗi, nó là "bấm nút đăng nhập đi". → SPEC-arms.md §6c
+ */
+export interface ProbeResult {
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  /**
+   * Nấc quyền ĐÁNG hiện, kèm số việc — **tính ở server**, không suy lại ở đây.
+   *
+   * ⚠ Luật *"chỉ hiện nếu thêm ≥1 việc so với nấc dưới"* có ca biên tinh tế
+   * (server toàn tool đọc ⇒ ba nấc bằng nhau ⇒ hai nấc dưới là noise). Dựng bản
+   * thứ hai của luật đó ở giao diện là dựng một bản sẽ quên một điều kiện.
+   */
+  tiers?: { tier: 'read' | 'add' | 'full'; count: number }[];
+  serverName?: string;
+  serverVersion?: string;
+  /** NGUYÊN VĂN câu lỗi của server — chuỗi duy nhất copy đi hỏi chỗ khác được. */
+  error?: string;
+  tools: { name: string; description?: string; level: 'read' | 'write_external' }[];
+  /** Token cộng vào prefix mỗi lượt. `undefined` = chưa đo được, và ô để TRỐNG. */
+  tokens?: number;
+  /**
+   * Nối được nhưng server không cấp việc nào — hỏng, và hỏng KHÔNG có câu lỗi.
+   * Ca đã đo: gõ sai tên nhóm trong `X-MCP-Toolsets`. → `probe.ts §ProbeResult.warn`
+   */
+  warn?: string;
+  connectMs: number;
 }

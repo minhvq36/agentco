@@ -19,7 +19,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { newPlanId, worthLearning } from '../dist/core/assistant.js';
+import { learnable, newPlanId, worthLearning } from '../dist/core/assistant.js';
 import { quotesLibraryNumber } from '../dist/knowledge/store.js';
 import { enforceCap } from '../dist/core/receipt.js';
 
@@ -38,6 +38,8 @@ const receipt = (patch: Partial<Receipt> = {}): Receipt =>
     reasked: false,
     looped: false,
     reads: [],
+    // ⚠ `landed` PHẢI có — `learnable` đi qua `delivered()`. Xem knowledge.test.ts.
+    landed: [],
     wall_ms: 1000,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: 'haiku', turns: 4 },
     ...patch,
@@ -101,15 +103,105 @@ test('worthLearning: ca êm KHÔNG hỏi, dù chạy 9 lượt', () => {
 });
 
 test('worthLearning: LẶP THAO TÁC thì hỏi — đây là "flow bị loop" đo đúng cách', () => {
+  // `receipt()` mặc định `status: 'done'`, nên cả ba dòng dưới đều là ca ĐI ĐẾN
+  // ĐÍCH mà có vấp — đúng hình dạng duy nhất còn được học từ 29/08.
   assert.equal(worthLearning([receipt({ looped: true })]), true);
-  // Vẫn giữ nguyên ba tín hiệu cũ, không cái nào bị `looped` thay thế.
-  assert.equal(worthLearning([receipt({ status: 'failed' })]), true);
   assert.equal(worthLearning([receipt({ reasked: true })]), true);
   assert.equal(worthLearning([receipt({ blocked_on: 'thiếu file' })]), true);
+  // ⚠ Dòng thứ tư ĐÃ ĐỔI DẤU 29/08: `failed` không còn là tín hiệu học.
+  assert.equal(worthLearning([receipt({ status: 'failed' })]), false);
 });
 
 test('worthLearning: chỉ MỘT việc lặp trong cả lô là đủ để hỏi', () => {
   assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02', looped: true })]), true);
+});
+
+// ───────────── luật 5 (29/08): BÁNH CÓC KINH NGHIỆM — chỉ học từ ca ĐI ĐẾN ĐÍCH
+//
+// Ca thật, văn phòng `canh-tay`: cánh tay "Trình duyệt web" chạy được lúc 16:58,
+// rồi ngừng hẳn. MCP vẫn `connected`, vẫn đủ 24 tool — thứ hỏng là KHO KINH
+// NGHIỆM. Trong ~2 giờ, mỗi ca `blocked` lại đẻ một mẩu mô tả chính triệu chứng
+// của nó, và `cold()` kéo đúng mẩu ấy về ở task cùng chủ đề lần sau. Đo bằng
+// `scripts/spike-worker-mcp-init.ts`, cùng brief, chỉ đổi khối kinh nghiệm:
+//
+//   kinh nghiệm rỗng      → ✅ mở YouTube   $0,1097
+//   chỉ HOT (8 mẩu)       → ✅ mở YouTube   $0,1595
+//   chỉ COLD (28 mẩu)     → ❌ blocked      $0,0316
+//   bỏ 10 mẩu phủ định    → ✅ mở YouTube   $0,1002
+//
+// 21 bài học của Trợ lý trong kho ấy, xếp theo trạng thái ca đã đẻ ra chúng:
+// `blocked` 12 · `failed` 3 · `done` 6 — và **cả 10 mẩu độc nằm trong 15 cái
+// đầu**. Cổng dưới đây cắt đúng 15 đó.
+
+test('worthLearning: mọi hình dạng KHÔNG-XONG đều không sinh bài học', () => {
+  for (const s of ['failed', 'blocked', 'needs_human'] as const) {
+    assert.equal(worthLearning([receipt({ status: s, blocked_on: 'không vào được trang' })]), false, s);
+    // Kể cả khi nó vấp rõ ràng — vấp mà không về đích thì vẫn chưa phải kinh nghiệm.
+    assert.equal(worthLearning([receipt({ status: s, looped: true })]), false, `${s} + looped`);
+  }
+});
+
+/**
+ * Ca HỖN HỢP là ca nguy hiểm nhất, vì cổng vẫn MỞ (có một việc xong) mà trong
+ * bảng kết quả vẫn có một dòng hỏng để model nhìn thấy. Cổng chỉ chặn được vế
+ * "có hỏi hay không"; vế "rút từ dòng nào" do dấu ⟵ trong `report()` gánh.
+ */
+test('worthLearning: một việc xong-có-vấp + một việc hỏng → VẪN hỏi (và dấu ⟵ chỉ đúng dòng)', () => {
+  const done = receipt({ task_id: 'T-01', looped: true });
+  const blocked = receipt({ task_id: 'T-02', status: 'blocked', blocked_on: 'thiếu quyền' });
+  assert.equal(worthLearning([done, blocked]), true);
+  assert.equal(learnable(done), true);
+  assert.equal(learnable(blocked), false, 'dòng hỏng KHÔNG được làm nguồn, dù cổng đã mở');
+});
+
+/**
+ * Vế ① của `learnable` là `delivered()`, KHÔNG phải `status === 'done'`.
+ * (user 29/08: *"done dựa trên đánh giá neo vào mục tiêu của user đã hoàn thành chưa"*)
+ *
+ * Ca thật nằm ngay trong kho của văn phòng, Trợ lý tự ghi lại bằng tiếng Việt:
+ * *"hai task báo cáo 'đã đăng nhập sẵn, xong việc' (Facebook, YouTube) nhưng hệ
+ * thống đánh dấu failed"*. `status` là LỜI KHAI; `delivered` hỏi thêm một câu
+ * quan sát được — **có gì đáp xuống không**.
+ */
+test('learnable: tự nhận `done` mà KHÔNG có gì đáp xuống thì không phải kinh nghiệm', () => {
+  const khai = receipt({
+    status: 'done',
+    looped: true,
+    artifacts: ['artifacts/T-01/ket-qua.md'], // hứa có file…
+    landed: [], // …nhưng không có điểm đáp nào quan sát được
+  } as Partial<Receipt>);
+  assert.equal(learnable(khai), true, 'có artifacts khai ra thì vẫn tính — `delivered` chấp nhận một trong hai');
+
+  // Ca thật sự rỗng: không hứa gì, không đáp gì. `delivered` cho qua (không nợ
+  // gì thì không thiếu gì), nên thứ chặn nó là vế ② — phải CÓ VẤP.
+  const rong = receipt({ status: 'done', artifacts: [], landed: [] } as Partial<Receipt>);
+  assert.equal(learnable(rong), false, 'ca sạch trơn không vấp ⇒ không đáng lưu');
+});
+
+// ───────────────────── luật 6 (29/08): CÒN CẢNH BÁO ⇒ CÒN LEAK ⇒ CHƯA PHẢI KINH NGHIỆM
+
+test('worthLearning: ca còn cảnh báo cấp CA thì KHÔNG hỏi, dù có việc xong-có-vấp', () => {
+  const ok = receipt({ looped: true });
+  assert.equal(worthLearning([ok], 0, false), true, 'đối chứng: không rò thì vẫn hỏi');
+  assert.equal(worthLearning([ok], 0, true), false, 'file đã hứa mà thiếu / rơi ngoài khung ⇒ im');
+});
+
+test('worthLearning: cảnh báo KHÔNG chặn nhánh ma sát — lớp đó học về con người', () => {
+  // Một cái file rơi sai chỗ không làm câu "lần sau người dùng nên nói thẳng X"
+  // sai đi. Hai lớp khác nhau thì không dùng chung cổng.
+  assert.equal(worthLearning([receipt()], 3, true), true);
+});
+
+/** Ca thật của cửa NHÂN VIÊN — `office.ts` dùng đúng hàm này để lọc `r.lessons`. */
+test('learnable: bài học nhân viên tự khai từ ca không xong bị chặn ở cổng tất định', () => {
+  // Nguyên văn mẩu đã chặn cánh tay trình duyệt:
+  // "Trước khi gọi browser_navigate … nếu bị từ chối quyền, dừng lại và báo blocked ngay"
+  const r = receipt({
+    status: 'blocked',
+    blocked_on: 'bị từ chối quyền dùng browser_navigate',
+    lessons: [{ kind: 'pitfall', text: 'bị từ chối quyền thì báo blocked ngay thay vì thử lại' }],
+  } as Partial<Receipt>);
+  assert.equal(learnable(r), false, 'nhân viên KHÔNG đi qua worthLearning, nên cổng phải đứng ở đây');
 });
 
 // ─────────────────────── tín hiệu 5: MA SÁT CỦA CON NGƯỜI (20/08)
@@ -145,6 +237,10 @@ test('enforceCap: answer KHÔNG ăn vào trần của receipt', () => {
       status: 'done',
       say: 'Đã trả lời khách về chính sách bảo hành.',
       answer: long,
+      // ⚠ `gist` PHẢI có: `enforceCap` gọi `.trim()` lên nó. Fixture thiếu một
+      // trường mới thì test nổ ở chỗ chẳng liên quan gì tới thứ nó đang kiểm —
+      // đúng cái đã dẫm với `landed` ngày 29/08.
+      gist: '',
       artifacts: ['artifacts/P-260819-1430-ab12/T-01/tra-loi.md'],
       lessons: [{ kind: 'pitfall', text: 'grep trong library/text/ trước khi trả lời' }],
       blocked_on: null,
@@ -158,6 +254,75 @@ test('enforceCap: answer KHÔNG ăn vào trần của receipt', () => {
   assert.ok(out.say.length > 0);
   assert.ok(out.answer.length > 0);
   assert.ok(out.answer.length < long.length, 'answer vẫn có trần RIÊNG của nó');
+});
+
+// ─────────────────── `gist`: kênh thứ ba, và nó CÓ ăn vào trần (30/08)
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `answer` và `gist` NGƯỢC NHAU Ở ĐÚNG MỘT CÂU HỎI: nó có đi vào ngữ cảnh  │
+ * │ Trợ lý không?                                                            │
+ * │                                                                          │
+ * │   answer  KHÔNG  ⇒ trần riêng, không cạnh tranh với ai                   │
+ * │   gist    CÓ     ⇒ nằm trong `receipt_tokens`, cạnh tranh với `say`      │
+ * │                                                                          │
+ * │ Ai đó "dọn cho gọn" bằng cách miễn trừ `gist` như `answer` sẽ mở đúng    │
+ * │ cái cửa mà cả hai trần sinh ra để đóng: một hoá đơn LẶP LẠI mỗi lượt.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const capFixture = (patch: Record<string, unknown> = {}) => ({
+  status: 'done' as const,
+  say: 'Đã tra xong danh sách việc.',
+  answer: '',
+  gist: '',
+  artifacts: ['artifacts/P-1/T-01/ra.md'],
+  lessons: [] as { kind: 'pitfall'; text: string }[],
+  blocked_on: null,
+  ...patch,
+});
+
+test('enforceCap: `gist` CÓ trần riêng — dài mấy cũng bị cắt', () => {
+  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40);
+  const out = enforceCap(capFixture({ gist: long }), 800);
+  assert.ok(out.gist.length > 0, 'không được bỏ hẳn — Trợ lý cần sự kiện để neo');
+  assert.ok(out.gist.length < long.length, 'nhưng phải bị cắt');
+});
+
+test('🔴 enforceCap: `gist` ĐI VÀO trần receipt — ngược hẳn `answer`', () => {
+  /**
+   * Trần chặt + `gist` dài. Nếu `gist` được miễn trừ như `answer` thì `say`
+   * sống nguyên; vì nó KHÔNG được miễn trừ nên bậc thang hy sinh phải chạy.
+   */
+  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40);
+  const out = enforceCap(capFixture({ gist: long, say: 'x'.repeat(400) }), 120);
+  assert.ok(out.gist.length < long.length);
+  assert.ok(out.say.length < 400, 'trần đã siết thật, không phải chỉ cắt riêng gist');
+});
+
+test('⭐ enforceCap: bậc thang hy sinh — `lessons` chết TRƯỚC `gist`', () => {
+  // Thứ tự này là một quyết định, không phải tình cờ: bài học chỉ đáng giá ở
+  // lượt SAU, còn `gist` là thứ người dùng đọc NGAY BÂY GIỜ.
+  const out = enforceCap(
+    capFixture({
+      gist: 'Ba việc In Progress: AGE-3, AGE-7, AGE-9.',
+      lessons: [{ kind: 'pitfall' as const, text: 'x'.repeat(300) }],
+      say: 'y'.repeat(200),
+    }),
+    90,
+  );
+  assert.equal(out.lessons.length, 0, 'lessons hy sinh trước');
+  assert.ok(out.gist.length > 0, 'gist vẫn còn lại thứ gì đó');
+});
+
+test('⭐ enforceCap: `gist` rỗng thì vẫn rỗng, không bịa', () => {
+  assert.equal(enforceCap(capFixture(), 800).gist, '');
+});
+
+test('📌 enforceCap: `gist` giữ xuống dòng — gạch đầu dòng là một phần nội dung', () => {
+  // User chốt 30/08: *"đôi khi là gạch đầu dòng từng ý"*. `say` gom khoảng trắng
+  // được vì nó chạy trong một dòng trạng thái; `gist` thì không.
+  const out = enforceCap(capFixture({ gist: '- AGE-3 chậm\n- AGE-7 lỗi đăng nhập' }), 800);
+  assert.ok(out.gist.includes('\n'), 'không được gom về một dòng');
 });
 
 // ───────────────────────────────── plan_id đọc được

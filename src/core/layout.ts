@@ -28,12 +28,18 @@ import {
   NODE_SIZE,
   SHELF_GAP,
   agentSlot,
+  armSlot,
   arrangeAll,
   clashes,
   firstFreeSlot,
+  parkSlot,
   type NodeKind,
   type Point,
 } from './layout-geometry.js';
+
+/** Khe giữa đáy nhân viên và đỉnh cánh tay của họ. Khớp `arrangeAll`. */
+const ARM_DROP = 74;
+import { findArm } from './catalog.js';
 import { isSafeId } from './paths.js';
 
 export { NODE_SIZE };
@@ -77,9 +83,31 @@ const COORD_LIMIT = 20_000;
 const MAX_NODES = 200;
 
 /** Node kind nào được phép nối RA đâu. Agent cố tình KHÔNG có mặt ở đây. */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `mcp → assistant` ĐÃ GỠ (23/08). Nó là một SỢI DÂY KHÔNG LÀM GÌ CẢ.   │
+ * │                                                                          │
+ * │ Cạnh đó từng được nhận với lý do "việc vặt Trợ lý tự xử lý, cần           │
+ * │ concierge (M1) mới chạy". Nhưng đi soi thì `assistant.mcp` chỉ được GHI   │
+ * │ rồi ĐỌC LẠI ĐỂ VẼ — không mảnh nào nạp nó vào phiên Trợ lý. Concierge     │
+ * │ chưa tồn tại. Nên nó là một lời hứa nữa không có mã nguồn thi hành.       │
+ * │                                                                          │
+ * │ Và nếu có ai nối nó vào thật thì còn tệ hơn im lặng: `types.ts:499` ghi   │
+ * │ Trợ lý KHÔNG BAO GIỜ được cầm MCP — MCP phá prompt cache lúc `resume`,    │
+ * │ mà `route()` resume ở MỌI tin nhắn ⇒ ~36 000 token mỗi lượt trò chuyện.   │
+ * │                                                                          │
+ * │ ⇒ Một cạnh vô hại-vì-chưa-nối-gì, dẫn thẳng tới một cái bẫy đắt nhất hệ.  │
+ * │ Từ khi cắm cánh tay rẻ đi (§6), người dùng SẼ kéo thử. Gỡ khỏi bảng này   │
+ * │ là chặn bằng cấu trúc; ngày concierge có thật thì thêm lại, kèm mã chạy.  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Bảng này có BẢN THỨ HAI ở `web/src/lib/types.ts §CAN_CONNECT`. Hai bản của
+ * cùng một luật đã đốt dự án này một lần (`agentSlot` vs `arrange`) — sửa một
+ * bên thì phải sửa bên kia, và về lâu dài nên nhập chúng lại làm một.
+ */
 const CAN_CONNECT: Partial<Record<NodeKind, ReadonlySet<NodeKind>>> = {
   assistant: new Set<NodeKind>(['agent']),
-  mcp: new Set<NodeKind>(['agent', 'assistant']),
+  mcp: new Set<NodeKind>(['agent']),
 };
 
 export class LayoutStore {
@@ -105,7 +133,17 @@ export class LayoutStore {
    * dùng thả file vào tay vẫn thấy nó xuất hiện). Có node mà thiếu file yaml →
    * GIỮ LẠI node, đánh dấu `missing` để canvas hiện đỏ, không xoá âm thầm.
    */
-  read(): { layout: LayoutFile; missing: Set<string> } {
+  /**
+   * `pending` = cạnh `mcp → agent` **sắp được ghi**, do `save()` đưa xuống.
+   *
+   * Chỉ dùng để CHỌN CHỖ cho node chưa có toạ độ. Nó không đi vào file, không
+   * đổi cạnh nào — nguồn sự thật của cạnh mcp vẫn là `roles/*.yaml`.
+   * Vì sao cần: xem khối chú thích trong `spotFor`.
+   */
+  read(pending: readonly { from: string; to: string }[] = []): {
+    layout: LayoutFile;
+    missing: Set<string>;
+  } {
     const raw = this.readRaw();
     const stored = new Map(raw.nodes.map((n) => [n.id, n]));
 
@@ -122,7 +160,39 @@ export class LayoutStore {
       if (this.office.archivedRoles.has(roleId)) continue;
       wanted.push({ id: agentNodeId(roleId), kind: 'agent', role: roleId, x: 0, y: 0 });
     }
-    for (const server of Object.keys(this.office.company.mcpServers)) {
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ CÁNH TAY CHỈ HIỆN Ở VĂN PHÒNG ĐANG DÙNG NÓ. (đổi 23/08)            │
+     * │                                                                    │
+     * │ Bản trước dựng node cho MỌI khoá trong `company.mcpServers`, ở MỌI  │
+     * │ văn phòng — đúng với ý *"một chỗ cắm, mọi văn phòng thấy"*. Ý đó    │
+     * │ viết khi cắm một MCP tốn 9 bước và không ai có quá một cái.         │
+     * │                                                                    │
+     * │ Hộp thoại `+ Kết nối` làm việc cắm rẻ đi ⇒ TIỀN ĐỀ ĐÓ HẾT ĐÚNG.     │
+     * │ User bắt được ngay lượt test đầu: cắm một cánh tay ở văn phòng này  │
+     * │ thì nó mọc lên sơ đồ của cả sáu văn phòng kia, không dây nào, không │
+     * │ việc gì.                                                           │
+     * │                                                                    │
+     * │ ⇒ Ranh giới đọc được bằng mắt: **cái gì đã cắm** là của CÔNG TY     │
+     * │ (hiện ở khối "đã cắm ở văn phòng khác" trong hộp thoại), **ai được  │
+     * │ dùng** là của VĂN PHÒNG (sợi dây trên sơ đồ này).                   │
+     * │                                                                    │
+     * │ ⚠ Duyệt theo `role.mcp` chứ KHÔNG theo `company.mcpServers`: một    │
+     * │ vai trò còn khai một server đã bị rút phải vẫn thấy node đó — ở     │
+     * │ trạng thái mồ côi, báo đỏ. Gộp hai chuyện *"văn phòng này không     │
+     * │ dùng"* và *"không còn khai trong company.yaml"* là đúng lỗi         │
+     * │ `catch { exists = false }` — hai sự việc khác hẳn nhau, một nhãn.   │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    // `office.arms` = CÓ MẶT trên sơ đồ (kể cả chưa nối dây ai).
+    // `role.mcp`    = AI ĐƯỢC DÙNG. Hợp hai tập, vì một cánh tay còn dây mà
+    // thiếu trong `office.arms` (dữ liệu cũ) vẫn phải hiện. → types.ts §arms
+    const inUse = new Set<string>([...this.office.config.arms, ...this.office.config.assistant.mcp]);
+    for (const [roleId, role] of this.office.roles) {
+      if (this.office.archivedRoles.has(roleId)) continue;
+      for (const s of role.mcp) inUse.add(s);
+    }
+    for (const server of inUse) {
       wanted.push({ id: mcpNodeId(server), kind: 'mcp', server, x: 0, y: 0 });
     }
     // Hai kho đứng cạnh nhau ở hàng dưới cùng: TRÁI = kho tri thức (hệ thống tự
@@ -131,8 +201,23 @@ export class LayoutStore {
     wanted.push({ id: KNOWLEDGE_NODE, kind: 'knowledge', x: 0, y: 0 });
     wanted.push({ id: LIBRARY_NODE, kind: 'library', x: 0, y: 0 });
 
-    // Bố cục sạch, tính bằng ĐÚNG hàm mà nút "Sắp xếp lại sơ đồ" chạy.
-    const tidy = arrangeAll(wanted);
+    /**
+     * Bố cục sạch, tính bằng ĐÚNG hàm mà nút "Sắp xếp lại sơ đồ" chạy.
+     *
+     * ⚠ Cạnh dựng từ `role.mcp` — **nguồn sự thật là yaml**, không phải cạnh
+     * trong `layout.json` (chúng còn chưa được dựng ở đoạn này, và kể cả có thì
+     * cạnh `mcp→agent` cố ý không được lưu ở đó). Cùng dữ liệu mà `arrangeAll`
+     * cần để biết cánh tay nào thuộc về ai.
+     */
+    const links: { from: string; to: string }[] = [];
+    for (const [roleId, role] of this.office.roles) {
+      if (this.office.archivedRoles.has(roleId)) continue;
+      for (const s of role.mcp) links.push({ from: mcpNodeId(s), to: agentNodeId(roleId) });
+    }
+    // Cạnh sắp ghi cũng vào bố cục sạch — nếu không, `tidy` và `spotFor` nhìn
+    // hai sự thật khác nhau về cùng một cánh tay trong cùng một lời gọi.
+    for (const e of pending) if (!links.some((l) => l.from === e.from && l.to === e.to)) links.push(e);
+    const tidy = arrangeAll(wanted.map((n) => ({ ...n, ...this.armGroup(n) })), links);
 
     const nodes: LayoutNode[] = [];
     const seen = new Set<string>();
@@ -180,12 +265,47 @@ export class LayoutStore {
       if (seen.has(n.id)) continue;
       if (n.kind !== 'agent' && n.kind !== 'mcp') continue;
       if (n.role && this.office.archivedRoles.has(n.role)) continue;
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 NODE MCP ĐÃ RÚT HẲN THÌ BIẾN MẤT, KHÔNG "MỒ CÔI VĨNH VIỄN".     │
+       * │                                                                    │
+       * │ Bug user báo 23/08: xoá kết nối xong node `🔌 files` vẫn nằm trên   │
+       * │ sơ đồ với nhãn "không còn cắm", và **không nút nào gỡ được nó** —   │
+       * │ bấm Xoá lần nữa cũng thế, vì `company.yaml` và `roles/*.yaml` đều   │
+       * │ đã sạch từ lâu.                                                    │
+       * │                                                                    │
+       * │ Thủ phạm là chính vòng lặp này: `layout.json` còn lưu node, vòng    │
+       * │ lặp thấy nó "không được muốn nữa" nên **giữ lại + báo đỏ**, rồi     │
+       * │ `save()` ghi `current.nodes` trở lại đĩa ⇒ nó tự tái sinh mãi mãi.  │
+       * │                                                                    │
+       * │ Với AGENT thì giữ lại là ĐÚNG: file `roles/x.yaml` biến mất là một  │
+       * │ sự cố, người dùng cần thấy để còn khôi phục. Với MCP thì không có   │
+       * │ gì để khôi phục — không khai ở công ty, không vai trò nào trỏ tới,  │
+       * │ tức là nó **đã bị rút xong**, và cái node chỉ còn là rác nhìn thấy.  │
+       * │                                                                    │
+       * │ Mồ côi THẬT của MCP là ca khác, và nó vẫn được giữ ở vòng lặp dưới:│
+       * │ vai trò CÒN khai `mcp: [x]` mà `company.yaml` đã sạch.              │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      if (n.kind === 'mcp' && n.server && !inUse.has(n.server)) continue;
       missing.add(n.id);
       keep(n);
     }
+    /**
+     * Mồ côi KIỂU THỨ HAI, và nó chỉ xuất hiện từ 23/08: một vai trò còn khai
+     * `mcp: [x]` trong khi `x` đã bị rút khỏi `company.yaml`.
+     *
+     * Vòng lặp trên không bắt được nó — nó bắt node CÒN TRONG `layout.json` mà
+     * không còn được muốn; ca này thì ngược lại, node ĐANG được muốn (vì role
+     * khai) nhưng thứ nó trỏ tới đã biến mất. Hai hình dạng khác nhau, và gộp
+     * chúng vào một vòng lặp là cách chắc chắn nhất để sót một cái.
+     */
+    for (const server of inUse) {
+      if (!(server in this.office.company.mcpServers)) missing.add(mcpNodeId(server));
+    }
 
     // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho node mới.
-    for (const n of fresh) keep({ ...n, ...this.spotFor(n, nodes, tidy) });
+    for (const n of fresh) keep({ ...n, ...this.spotFor(n, nodes, tidy, pending) });
 
     const byId = new Map(nodes.map((n) => [n.id, n]));
     // Chưa có file = mọi nhân viên đều được giao việc. Đây là phép thử
@@ -219,6 +339,24 @@ export class LayoutStore {
   }
 
   /**
+   * Khoá SẮP XẾP cho cánh tay ở bãi đỗ. → `layout-geometry.ts §ArrangeNode`
+   *
+   *   `0-files`      thư mục trên máy      — nhóm riêng, đứng đầu
+   *   `1-<mục>`      dịch vụ có sẵn        — cùng hãng thì cùng tiền tố ⇒ đứng cạnh nhau
+   *   `2-custom`     tự dán, không có mục
+   *
+   * ⚠ Phân loại bằng `entry.folders` chứ không bằng **tên mục**: đúng cùng luật
+   * `ArmDialog §kindOf` đang dùng cho icon. Một trục phân loại, hai chỗ đọc —
+   * thêm một hãng thư mục nữa thì cả hai tự đúng, không ai phải nhớ gì.
+   */
+  armGroup(n: { kind: NodeKind; server?: string }): { armGroup?: string } {
+    if (n.kind !== 'mcp' || !n.server) return {};
+    const cat = this.office.company.arms[n.server]?.catalog;
+    if (!cat) return { armGroup: '2-custom' };
+    return { armGroup: findArm(cat)?.folders ? '0-files' : `1-${cat}` };
+  }
+
+  /**
    * Chỗ ngồi cho một node CHƯA TỪNG có toạ độ. Ba nước, dừng ở nước đầu chạy được.
    *
    * 1. **Chưa có `layout.json`** = văn phòng mới tinh, chưa ai kéo gì → dùng
@@ -239,7 +377,12 @@ export class LayoutStore {
    *
    * 4. Còn lại: chỗ sạch nếu chỗ đó trống, không thì ô lưới trống đầu tiên.
    */
-  private spotFor(node: LayoutNode, placed: readonly LayoutNode[], tidy: ReadonlyMap<string, Point>): Point {
+  private spotFor(
+    node: LayoutNode,
+    placed: readonly LayoutNode[],
+    tidy: ReadonlyMap<string, Point>,
+    pending: readonly { from: string; to: string }[] = [],
+  ): Point {
     if (!this.exists) return tidy.get(node.id) ?? agentSlot(0);
 
     if (node.kind === 'library' || node.kind === 'knowledge') {
@@ -259,6 +402,75 @@ export class LayoutStore {
       const boss = placed.find((n) => n.kind === 'assistant');
       const centerX = boss ? boss.x + NODE_SIZE.assistant.w / 2 : undefined;
       return firstFreeSlot(placed, 'agent', centerX);
+    }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 CÁNH TAY MỚI BÁM THEO CHỦ CỦA NÓ. (bug user bắt 31/08)          │
+     * │                                                                    │
+     * │   *"cứ thêm 1 MCP kết nối mới: địa điểm nó chọn rất tệ: thay vì     │
+     * │    ngay dưới worker được kết nối còn 1 vài khoảng trống, nó chọn    │
+     * │    faraway"*                                                       │
+     * │                                                                    │
+     * │ Hai lý do chồng nhau, và phải sửa cả hai:                          │
+     * │  ① `tidy` tính cho bố cục SẠCH, mà người dùng đã kéo mọi thứ đi     │
+     * │     chỗ khác ⇒ ô đó gần như luôn `clashes` ⇒ rơi xuống nước hai.    │
+     * │  ② nước hai là `firstFreeSlot` — lưới NHÂN VIÊN, bước 202×120. Quá  │
+     * │     thô cho một node 152×52, nên nó nhảy qua hết khe trống thật.    │
+     * │                                                                    │
+     * │ ⇒ Đi tìm CHỦ trước (`role.mcp` là nguồn sự thật, không phải cạnh    │
+     * │ trong layout.json), rồi quét lưới riêng của cánh tay ngay dưới họ.  │
+     * │ Không ai cầm ⇒ nó là hàng chưa dùng ⇒ **bãi đỗ bên trái**, đúng chỗ │
+     * │ user đã tự kéo chúng tới.                                          │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    if (node.kind === 'mcp' && node.server) {
+      const owners = new Set<string>();
+      for (const [roleId, role] of this.office.roles) {
+        if (role.mcp.includes(node.server)) owners.add(agentNodeId(roleId));
+      }
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 SỢI DÂY SẮP ĐƯỢC GHI CŨNG TÍNH. (bug user bắt 31/08)            │
+       * │                                                                    │
+       * │   *"node mcp vừa kết nối lại canvas, nó lại mọc rất xa ở farleft,  │
+       * │    trong khi nó chỉ cần nối thẳng xuống"*                          │
+       * │                                                                    │
+       * │ Thứ tự trong `grantArm` là: ghi `office.arms` → **đặt chỗ cho node**│
+       * │ → mới ghi sợi dây (`role.mcp`). Nên đúng lúc `spotFor` chạy,        │
+       * │ `role.mcp` **còn rỗng** ⇒ không tìm ra chủ ⇒ coi là hàng chưa dùng  │
+       * │ ⇒ **đỗ bên trái**. Và vì toạ độ đã lưu, `spotFor` không chạy lại    │
+       * │ lần nào nữa: nó nằm đó vĩnh viễn.                                  │
+       * │                                                                    │
+       * │ Bản vá 30/08 đúng về hình học và sai về THỜI ĐIỂM — nó hỏi một      │
+       * │ nguồn sự thật chưa kịp thành sự thật. Cùng lớp §3a: *thứ đo được   │
+       * │ không phải trạng thái, là THỜI ĐIỂM HỎI*.                          │
+       * │                                                                    │
+       * │ ⇒ `save()` đưa xuống chính danh sách cạnh nó **sắp ghi**. Không có │
+       * │ cạnh nào (cắm mà chưa giao cho ai) thì vẫn đỗ bên trái — đúng.     │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      for (const e of pending) {
+        if (e.from === node.id) owners.add(e.to);
+      }
+      const anchors = placed.filter((n) => owners.has(n.id));
+      if (anchors.length) {
+        // Trục = tâm của chủ TRÁI NHẤT. Cùng luật `groupArms`: mọi sợi dây thứ
+        // hai đi sang phải, không sợi nào cắt sợi nào.
+        const boss = anchors.reduce((a, b) => (a.x <= b.x ? a : b));
+        const centerX = boss.x + NODE_SIZE.agent.w / 2;
+        const topY = Math.max(...anchors.map((a) => a.y + NODE_SIZE.agent.h)) + ARM_DROP;
+        for (let i = 0; i < 40; i++) {
+          const spot = armSlot(i, centerX, topY);
+          if (!clashes(spot, 'mcp', placed)) return spot;
+        }
+      } else {
+        const parked = placed.filter((n) => n.kind === 'mcp');
+        for (let i = 0; i < 40; i++) {
+          const spot = parkSlot(i);
+          if (!clashes(spot, 'mcp', parked)) return spot;
+        }
+      }
     }
 
     const want = tidy.get(node.id);
@@ -296,8 +508,45 @@ export class LayoutStore {
    * Trả về danh sách file đã sửa, để caller biết có phải nạp lại không.
    */
   save(input: { nodes?: unknown; edges?: unknown }): { touched: string[] } {
-    const current = this.read().layout;
+    /**
+     * ⭐ ĐƯA CẠNH SẮP GHI XUỐNG `read()` — xem khối chú thích ở `spotFor`.
+     *
+     * Quét thô, KHÔNG qua `sanitizeEdges`: hàm đó cần `byId`, mà `byId` lại đến
+     * từ chính `read()` này — vòng tròn. Ở đây chỉ cần một **gợi ý chỗ ngồi**,
+     * nên một cạnh rác lọt vào cũng chỉ là gợi ý bị bỏ qua, không ghi ra đâu cả.
+     */
+    const hint = Array.isArray(input.edges)
+      ? (input.edges as { from?: unknown; to?: unknown }[])
+          .filter((e) => typeof e?.from === 'string' && typeof e?.to === 'string')
+          .map((e) => ({ from: e.from as string, to: e.to as string }))
+      : [];
+    const current = this.read(hint).layout;
     const byId = new Map(current.nodes.map((n) => [n.id, n]));
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ "NODE HIỆN RA" ≠ "ĐẦU DÂY HỢP LỆ" — và gộp hai cái là một VÒNG LẶP │
+     * │ tự khoá. (bắt được lúc kiểm đầu-cuối 23/08, ngay sau khi viết)      │
+     * │                                                                    │
+     * │ Từ 23/08 `read()` chỉ dựng node mcp cho server ĐANG ĐƯỢC DÙNG ở văn │
+     * │ phòng này (`role.mcp`). Nhưng `role.mcp` lại được ghi TỪ cạnh nối, │
+     * │ mà cạnh nối thì `sanitizeEdges` lọc theo node đang có ⇒ cắm một     │
+     * │ cánh tay mới và giao cho ai đó thì:                                 │
+     * │                                                                    │
+     * │   chưa ai dùng → không có node → cạnh bị loại → không ghi `mcp:`    │
+     * │   → vẫn không ai dùng. Kẹt vĩnh viễn, và **im lặng**.               │
+     * │                                                                    │
+     * │ Hai tập vốn khác nhau và giờ nói ra: HIỆN RA = đang có dây ở văn    │
+     * │ phòng này (chuyện của sơ đồ). HỢP LỆ = có khai trong `company.yaml`  │
+     * │ (chuyện của công ty). Node bù ở đây chỉ sống trong lời gọi này để   │
+     * │ thẩm định cạnh — nó KHÔNG bao giờ vào `layout.json`, vì cạnh mcp    │
+     * │ vốn không được lưu ở đó.                                           │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    for (const server of Object.keys(this.office.company.mcpServers)) {
+      const id = mcpNodeId(server);
+      if (!byId.has(id)) byId.set(id, { id, kind: 'mcp', server, x: 0, y: 0 });
+    }
 
     // Toạ độ: chỉ nhận node đã biết. Client không được tự sinh node bằng PUT.
     if (Array.isArray(input.nodes)) {
@@ -348,6 +597,33 @@ export class LayoutStore {
         touched.push('office');
       }
     }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ SỰ CÓ MẶT CHỈ ĐƯỢC THÊM Ở ĐÂY, KHÔNG BAO GIỜ BỚT.                  │
+     * │                                                                    │
+     * │ Bug user báo 23/08: cắt sợi dây cuối cùng thì node cánh tay BIẾN    │
+     * │ MẤT khỏi sơ đồ. Họ muốn nó ở lại như nhân viên "đang nghỉ" — còn    │
+     * │ đó, chưa nối, nối lại lúc nào cũng được.                            │
+     * │                                                                    │
+     * │ `office.arms` là chỗ ghi sự có mặt, và nó CHỈ bị bớt bởi `dropArm`  │
+     * │ — tức một thao tác XOÁ có chủ ý. Cắt dây là đổi *ai được dùng*,     │
+     * │ không phải đổi *có mặt hay không*: hai chuyện khác nhau, hai chỗ    │
+     * │ ghi, và giờ chúng không còn dẫm lên nhau.                          │
+     * │                                                                    │
+     * │ Thêm ở đây cũng TỰ CHỮA dữ liệu cũ: cánh tay cắm trước khi có       │
+     * │ `office.arms` chỉ tồn tại trong `role.mcp`, nên cắt dây là chúng    │
+     * │ bốc hơi. Lần ghi sơ đồ đầu tiên đưa chúng vào sổ, một lần, im lặng. │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const present = new Set(this.office.config.arms);
+    for (const list of mcpByRole.values()) for (const s of list) present.add(s);
+    for (const s of mcpForAssistant) present.add(s);
+    const nextArms = [...present].sort();
+    if (!sameList(nextArms, this.office.config.arms)) {
+      if (this.writeYamlKey(this.office.paths.configFile, ['arms'], nextArms)) touched.push('office');
+    }
+
     return { touched };
   }
 

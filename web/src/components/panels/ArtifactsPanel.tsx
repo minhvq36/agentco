@@ -50,6 +50,7 @@ export function ArtifactsPanel() {
   const revealRequest = useApp((s) => s.revealArtifact);
   const [items, setItems] = useState<ArtifactRecord[] | null>(null);
   const [confirmDel, setConfirmDel] = useState<ArtifactRecord | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
   const [open, setOpen] = useState<ArtifactRecord | null>(null);
 
   const reload = useCallback(() => {
@@ -118,6 +119,20 @@ export function ArtifactsPanel() {
     }
   }
 
+  async function removeAll() {
+    if (!officeId) return;
+    try {
+      const r = await api.clearArtifacts(officeId);
+      setItems(r.artifacts);
+      setOpen(null);
+      toast(`Đã xoá ${r.removed} kết quả.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Không xoá được.');
+    } finally {
+      setConfirmAll(false);
+    }
+  }
+
   if (items === null || groups === null) {
     return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
   }
@@ -134,6 +149,32 @@ export function ArtifactsPanel() {
 
   return (
     <div className="flex h-full flex-col">
+      {/*
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ XOÁ TẤT CẢ — nút NGUY HIỂM nên nó phải TRÔNG NGUY HIỂM và ĐẾM ĐƯỢC. │
+        │                                                                      │
+        │ Con số nằm ngay trên nút ("12 kết quả") chứ không chỉ trong hộp xác   │
+        │ nhận: người dùng cần biết mình sắp mất bao nhiêu TRƯỚC khi bấm, chứ   │
+        │ không phải sau. Hộp xác nhận đọc lúc tay đã đưa ra rồi thì phần lớn   │
+        │ người ta bấm Enter.                                                   │
+        │                                                                      │
+        │ Không dùng `variant="primary"`: nút chính của một panel phải là việc  │
+        │ người dùng làm hằng ngày, và ở đây việc đó là ĐỌC kết quả.            │
+        └──────────────────────────────────────────────────────────────────────┘
+      */}
+      <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2">
+        <span className="text-xs text-muted">
+          {items.length} kết quả · {formatBytes(items.reduce((n, a) => n + a.bytes, 0))}
+        </span>
+        <button
+          className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-muted transition-colors hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
+          onClick={() => setConfirmAll(true)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Xoá tất cả
+        </button>
+      </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto">
         {groups.map(([planId, list]) => (
           <section key={planId}>
@@ -246,6 +287,27 @@ export function ArtifactsPanel() {
       >
         <b>{confirmDel?.name}</b> sẽ bị xoá hẳn. Đây là <b>bản duy nhất</b> — không có bản sao nào khác
         trên máy bạn, và nhân viên phải chạy lại từ đầu nếu bạn cần nó.
+      </ConfirmDelete>
+
+      {/*
+        Câu này nêu CON SỐ, không nêu "tất cả". "Tất cả" là một từ mà người đọc
+        tự điền vào một lượng họ đang đoán; "37 file" thì không đoán được.
+
+        Nói rõ hai kho KIA không bị đụng — đó là câu hỏi đầu tiên hiện ra trong
+        đầu người dùng khi thấy chữ "xoá tất cả" trong một app có ba cái kho.
+      */}
+      <ConfirmDelete
+        open={confirmAll}
+        title={`Xoá cả ${items.length} kết quả?`}
+        onCancel={() => setConfirmAll(false)}
+        onConfirm={() => void removeAll()}
+      >
+        Toàn bộ <b>{items.length} file</b> trong ngăn này bị xoá hẳn, kể cả của những việc chạy hôm nay.
+        Đây là <b>bản duy nhất</b> — cần lại thì phải chạy lại và trả tiền lại.
+        <br />
+        <span className="text-muted">
+          Tủ tài liệu và Kho tri thức <b>không</b> bị đụng tới.
+        </span>
       </ConfirmDelete>
     </div>
   );

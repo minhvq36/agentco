@@ -21,6 +21,9 @@ use_preset: false
 budget:
   # Model rẻ dò dẫm nhiều lượt hơn VÀ số lượt không ổn định (đo được 9 rồi 10
   # cho cùng một việc). Nên vai trò `eco` cần ngân sách lượt CAO HƠN vai trò
-  # `standard` — ngược trực giác. Để 14 = ~1,5× số lượt đo được.
-  max_turns: 14
-  max_usd: 0.2
+  # `standard` — ngược trực giác.
+  #
+  # Nới 26/08 theo mặc định chung (eco = 20 lượt · $2): 14 vốn đã là ~1,5× số
+  # lượt đo được cho việc KHÔNG có MCP, mà mỗi lời gọi MCP là thêm một lượt.
+  max_turns: 20
+  max_usd: 2.0

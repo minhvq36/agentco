@@ -76,12 +76,35 @@ export function parseReceipt(text: string): ParseResult {
  */
 export const ANSWER_TOKENS = 450;
 
+/**
+ * Trần cho `gist` — NẰM TRONG `receipt_tokens`, ngược hẳn `ANSWER_TOKENS`.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Phép chia trần ở file này chỉ hỏi đúng một câu: **thứ này có đi vào ngữ   │
+ * │ cảnh Trợ lý không?** `answer` KHÔNG ⇒ tách trần riêng. `gist` **CÓ** ⇒ nó │
+ * │ phải cạnh tranh chỗ với `say` và `lessons`, không được miễn trừ.          │
+ * │                                                                          │
+ * │ ⚠ Và nó vào ngữ cảnh Trợ lý **mỗi lượt report**, rồi đi qua nén trí nhớ — │
+ * │ tức nó là một hoá đơn LẶP LẠI, cùng lớp với `hint`. User chốt 30/08:      │
+ * │ *"chấp nhận prefix, và gist đừng có quá bự để cả worker và assistant cùng │
+ * │ mệt mỏi"*. 120 token ≈ 80 từ tiếng Việt: đủ ba câu hoặc bốn gạch đầu      │
+ * │ dòng, và **không đủ** để lén trở thành một câu trả lời đầy đủ.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const GIST_TOKENS = 120;
+
 /** Ép trần CỨNG. Vượt là cắt, không thương lượng. */
 export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody {
   const out: ReceiptBody = { ...receipt };
 
   // `say` là thứ người dùng đọc — ưu tiên giữ, nhưng cũng phải có trần
   out.say = truncateToTokens(out.say.replace(/\s+/g, ' ').trim(), Math.floor(maxTokens * 0.25));
+
+  /**
+   * ⚠ KHÔNG gom khoảng trắng — cùng lý do `answer`: gạch đầu dòng là một phần
+   * của nội dung, và user đã nói thẳng *"đôi khi là gạch đầu dòng từng ý"*.
+   */
+  out.gist = truncateToTokens(out.gist.trim(), GIST_TOKENS);
 
   /**
    * `answer` được cắt TRƯỚC, rồi TÁCH RA khỏi phép đo `estimateJsonTokens`.
@@ -105,10 +128,21 @@ export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody
   out.artifacts = out.artifacts.slice(0, 20);
   if (out.blocked_on) out.blocked_on = truncateToTokens(out.blocked_on, 80);
 
-  // Đo phần ĐI VÀO NGỮ CẢNH TRỢ LÝ. `answer` không thuộc phần đó.
+  // Đo phần ĐI VÀO NGỮ CẢNH TRỢ LÝ. `answer` không thuộc phần đó; `gist` thì CÓ.
   const measured = { ...out, answer: '' };
-  // vẫn quá thì bỏ lessons trước, vì artifacts và say quan trọng hơn
+  /**
+   * Thứ tự hy sinh — hỏi *"mất cái này thì mất gì"*, không hỏi cái nào to nhất:
+   *
+   *   ① lessons — hy sinh trước, vì bài học chỉ đáng giá ở lượt SAU, còn hai
+   *      thứ dưới đây là thứ người dùng đọc ngay bây giờ.
+   *   ② gist    — cắt bớt, không bỏ hẳn: một tóm tắt ngắn hơn vẫn dùng được,
+   *      trong khi rỗng thì Trợ lý mất sạch sự kiện và lại phải bảo "mở file".
+   *   ③ say     — chạm cuối cùng. Nó là dòng trạng thái, mất nó là màn hình câm.
+   */
   if (estimateJsonTokens(measured) > maxTokens) measured.lessons = out.lessons = [];
+  if (estimateJsonTokens(measured) > maxTokens) {
+    measured.gist = out.gist = truncateToTokens(out.gist, Math.floor(GIST_TOKENS / 2));
+  }
   if (estimateJsonTokens(measured) > maxTokens) {
     out.say = truncateToTokens(out.say, Math.floor(maxTokens * 0.5));
   }
@@ -124,7 +158,7 @@ export function repairPrompt(badText: string, problem: string): string {
 
 Convert it into exactly one valid JSON object and output nothing else — no explanation, no code fence:
 
-{"status":"done"|"failed"|"blocked"|"needs_human","say":"<one short sentence>","artifacts":[],"lessons":[],"blocked_on":null}
+{"status":"done"|"failed"|"blocked"|"needs_human","say":"<one short sentence>","gist":"<key facts, or empty>","artifacts":[],"lessons":[],"blocked_on":null}
 
 If the text shows the work failed, use status "failed" and say so honestly. Do not invent artifact paths.
 
@@ -139,6 +173,7 @@ function normalize(r: ReceiptBody): ReceiptBody {
     ...r,
     say: r.say.trim(),
     answer: r.answer.trim(),
+    gist: r.gist.trim(),
     // đường dẫn từ LLM: chuẩn hoá dấu gạch, bỏ ./ đầu, bỏ trùng
     artifacts: [...new Set(r.artifacts.map((a) => a.trim().replace(/\\/g, '/').replace(/^\.\//, '')))].filter(Boolean),
   };

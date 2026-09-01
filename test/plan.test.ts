@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { SHELL_LEGEND, outputScoper, shellFlag } from '../dist/core/assistant.js';
+import { SHELL_LEGEND, armReach, outputScoper, shellFlag } from '../dist/core/assistant.js';
 import { Scheduler, delivered, unmetDeps } from '../dist/core/scheduler.js';
 import { isStale } from '../dist/core/artifacts.js';
 import { existsOnDisk, resolveInput } from '../dist/core/paths.js';
@@ -275,6 +275,44 @@ test('outputScoper: hai task KHÁC NHAU không bao giờ đụng nhau, kể cả
   assert.notEqual(a, b);
 });
 
+// ───────────────────── `onRedirect` — ta viết lại chuỗi người dùng gõ, phải NÓI RA
+//
+// Ca 24/08 (`P-260824-0401-q7ma`): người dùng bảo chép file vào
+// `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về `artifacts/`
+// (đúng thiết kế) và **im lặng**, nên Trợ lý nhìn ra sự lệch rồi tự hứa
+// *"nếu cần mình sẽ thử ghi lại đúng vị trí đó"* — một lời hứa không giữ được:
+// hàm này chạy TRƯỚC khi nhân viên được phóng, nên không lượt nào đi lối đó.
+
+test('onRedirect: đường dẫn tuyệt đối Windows được khai ra NGUYÊN VĂN', () => {
+  const seen: string[] = [];
+  const scope = outputScoper('P-01', 'T-01', (asked) => seen.push(asked));
+  assert.equal(scope('D:\\Downloads\\Programs Installation\\ban-ke.md'), 'artifacts/P-01/T-01/ban-ke.md');
+  // Nguyên văn, không chuẩn hoá: đó là chuỗi người dùng sẽ nhận ra trong câu báo cáo.
+  assert.deepEqual(seen, ['D:\\Downloads\\Programs Installation\\ban-ke.md']);
+});
+
+test('onRedirect: nhánh POSIX cũng khai — nó chỉ ÊM hơn, không đúng hơn', () => {
+  const seen: string[] = [];
+  const scope = outputScoper('P-01', 'T-01', (asked) => seen.push(asked));
+  assert.equal(scope('/home/an/ho-so/x.md'), 'artifacts/P-01/T-01/x.md');
+  assert.deepEqual(seen, ['/home/an/ho-so/x.md']);
+});
+
+test('onRedirect: đường dẫn TRONG văn phòng KHÔNG bắn — nửa ngược chiều', () => {
+  // Dán dòng "cắm kết nối đi" vào mọi ca là biến một lời chỉ đường thành tiếng
+  // ồn, rồi người dùng học cách bỏ qua nó — kể cả lần nó nói thật.
+  const seen: string[] = [];
+  const scope = outputScoper('P-01', 'T-01', (asked) => seen.push(asked));
+  scope('artifacts/vi/doc-1.md');
+  scope('bao-cao.md');
+  scope('../../office.yaml');
+  assert.deepEqual(seen, []);
+});
+
+test('onRedirect: KHÔNG truyền callback thì hành vi y hệt bản cũ', () => {
+  assert.equal(outputScoper('P-01', 'T-01')('D:\\x\\y.md'), 'artifacts/P-01/T-01/y.md');
+});
+
 /*
  * Test cho `withinRoots` đã BỎ cùng với chính hàm đó (19/08).
  *
@@ -445,7 +483,7 @@ test('xong trọn thì KHÔNG nối thêm câu cảnh báo nào', () => {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐẦU VÀO NẰM NGOÀI VĂN PHÒNG — ca thật 22/08, chặn ngay ở bước lập kế hoạch│
+ * │ ĐẦU VÀO NẰM ngoài VĂN PHÒNG — ca thật 22/08, chặn ngay ở bước lập kế hoạch│
  * │                                                                          │
  * │ Người dùng gõ: *"Kiểm kê thư mục D:\Downloads\Programs Installation…"*.   │
  * │ Trợ lý chép đường dẫn vào `inputs` — ĐÚNG như `ASSISTANT_CORE` dặn nó:    │
@@ -554,6 +592,174 @@ test('shellFlag: cờ TỰ ĐỌC ĐƯỢC khi đứng một mình, không cần
  * từ chối cả việc nó làm được, và ca hỏng đó IM LẶNG hơn 9.3 vì không ai thấy
  * việc đã bị từ chối.
  */
+// ───────────────────────── armReach — cánh tay phải nói ra NÓ TRỎ VÀO ĐÂU
+//
+// Ca user 24/08: hỏi "trong thư mục đã cho phép…" ba lượt liên tiếp, Trợ lý ba
+// lượt đòi đường dẫn đầy đủ. Nó không cố chấp — `role.mcp` chỉ là mảng BĂM, nên
+// câu "thư mục đã cho phép" không giải được, trong khi `company.yaml` biết thừa.
+
+const ARMS = { a385afc3ab6: { label: 'Programs Installation 2' }, notion: { label: 'Notion' } };
+const SERVERS = {
+  a385afc3ab6: { command: 'npx', args: ['-y', 'pkg', 'D:\\Downloads\\Programs Installation'] },
+  notion: { command: 'npx', args: ['-y', '@notionhq/notion-mcp-server'] },
+};
+
+test('armReach: cánh tay file nói ra ĐƯỜNG DẪN, không chỉ nói tên', () => {
+  const line = armReach(ARMS, SERVERS, 'a385afc3ab6');
+  assert.ok(line.includes('D:\\Downloads\\Programs Installation'), `thiếu thư mục: ${line}`);
+  assert.ok(line.includes('Programs Installation 2'), `thiếu nhãn người dùng đặt: ${line}`);
+  assert.ok(!line.includes('a385afc3ab6'), `băm không được lộ ra khi đã có nhãn: ${line}`);
+});
+
+test('armReach: dòng tự đọc được, và nói ĐƯỜNG TẮT chứ không nói GIỚI HẠN', () => {
+  // Cùng luật với `chạy lệnh: TẮT`: dòng nằm giữa một khối liệt kê, chú giải thì
+  // ở tận đầu khối. Một mũi tên hay dấu hai chấm trần không tự mang nghĩa.
+  //
+  // 🔴 Từ đổi 24/08 (`thư mục:` → `đường tắt tới`), và test khoá đúng lý do:
+  // `thư mục:` bị Trợ lý đọc thành TỔNG TẦM VỚI của nhân viên rồi từ chối việc
+  // nằm ngoài — kể cả khi người đó có shell, kể cả trong phiên `/clear` sạch.
+  // Sự thật ngược lại đã nằm sẵn ở `SHELL_LEGEND` đầu danh bạ nhưng THUA VỊ TRÍ.
+  // ⇒ [[agentco-prompt-rules-lose-to-examples]]: điều kiện phải nằm trên chính
+  // dòng có ví dụ. User chốt: cánh tay là thư mục ĐƯỢC CẮM, không phải onlyAllows.
+  const line = armReach(ARMS, SERVERS, 'a385afc3ab6');
+  assert.ok(/đường tắt tới/.test(line), `dòng phải tự nói nó là đường tắt: ${line}`);
+  assert.ok(!/thư mục:/.test(line), `"thư mục:" đọc thành giới hạn — đừng quay lại: ${line}`);
+});
+
+test('armReach: cánh tay KHÔNG phải file thì không bịa ra thư mục', () => {
+  assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
+});
+
+/**
+ * ⭐ `does` — NĂNG LỰC BẰNG TIẾNG NGƯỜI cho cánh tay KHÔNG có mục danh mục.
+ * → `assistant.ts §armReach` · docs/SPEC-arms.md §16r
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Đo 30/08 (`scripts/spike-cli-arm.ts`), cánh tay CLI tên `Xưởng lệnh`,     │
+ * │ tầng thi hành 9/9 xanh, tầng Trợ lý hỏng **3/3**:                        │
+ * │                                                                          │
+ * │   "tung giúp mình con xúc xắc"  → Trợ lý **BỊA**: "ra 4 chấm nhé 🎲"      │
+ * │   "dùng kết nối Xưởng lệnh…"    → brief "**bằng lệnh shell**" → blocked   │
+ * │                                                                          │
+ * │ Dòng danh bạ khi ấy là đúng chữ `Xưởng lệnh`. Với `Notion`/`GitHub` lỗ    │
+ * │ này VÔ HÌNH vì cái tên tự nó mang năng lực — model có tiên nghiệm về      │
+ * │ hãng. Tên khách tự đặt thì tiên nghiệm bằng 0, và model lấp chỗ trống.    │
+ * │ → [[agentco-debt-hidden-by-model-priors]]                                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('armReach: `does` đưa NĂNG LỰC vào dòng, không đưa tên tool máy', () => {
+  const arms = { cli: { label: 'Xưởng lệnh', does: ['tung một con xúc xắc', 'đồng bộ dữ liệu'] } };
+  const line = armReach(arms, {}, 'cli');
+  assert.equal(line, 'Xưởng lệnh — tung một con xúc xắc · đồng bộ dữ liệu');
+});
+
+test('armReach: `does` có TRẦN 4 — một cánh tay 20 lệnh không nhét cả bức tường vào prefix', () => {
+  // Cùng kỷ luật `reachDiff` ràng buộc 2. Dòng này nằm trong prefix được cache
+  // của Trợ lý và trả ở MỌI lượt gõ phím — không có trần là một hoá đơn mở.
+  const does = ['một', 'hai', 'ba', 'bốn', 'năm', 'sáu'];
+  const line = armReach({ cli: { label: 'X', does } }, {}, 'cli');
+  assert.ok(line.includes('một · hai · ba · bốn'), `phải giữ 4 việc đầu: ${line}`);
+  assert.ok(line.includes('và 2 việc khác'), `phải gộp phần dư: ${line}`);
+  assert.ok(!line.includes('năm'), `việc thứ 5 không được lọt nguyên văn: ${line}`);
+});
+
+test('armReach: VẮNG `does` ⇒ không in gì — mọi cánh tay đang chạy giữ nguyên từng ký tự', () => {
+  // 🔴 Đây là test chống HỎNG LÂY. Bản vá 30/08 chỉ được phép THÊM cho cánh tay
+  // có khai `does`; cánh tay hôm nay (danh mục, thư mục, tự dán) không khai ô đó
+  // và dòng của chúng phải y hệt trước bản vá.
+  assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
+  assert.equal(armReach({ cli: { label: 'X', does: [] } }, {}, 'cli'), 'X');
+  assert.equal(armReach({ cli: { label: 'X' } }, {}, 'cli'), 'X');
+  // và nó không được đẩy `level`/thư mục đi chỗ khác
+  const line = armReach({ a: { label: 'Kho', level: 'read' } }, { a: { args: ['D:\\Kho'] } }, 'a');
+  assert.equal(line, 'Kho — chỉ đọc (đường tắt tới D:\\Kho)');
+});
+
+test('armReach: `does` đứng SAU nấc quyền — quyền trước, việc sau', () => {
+  const line = armReach({ a: { label: 'Kho', level: 'read', does: ['đọc hoá đơn'] } }, {}, 'a');
+  assert.equal(line, 'Kho — chỉ đọc · đọc hoá đơn');
+});
+
+/**
+ * ⭐ NÓI RA NĂNG LỰC, KHÔNG CHỈ NÓI TÊN — nợ ghi 22/08, trả 26/08.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Ca user 26/08, nguyên văn hai lượt **giống hệt nhau**:                   │
+ * │                                                                          │
+ * │   > Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".            │
+ * │   > — chỉ đọc được Notion, không tạo hay ghi trang mới…      ✅ đúng      │
+ * │   (đổi cánh tay sang TOÀN QUYỀN)                                         │
+ * │   > Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".            │
+ * │   > — chỉ đọc được Notion, không tạo hay ghi trang mới…      🔴 sai      │
+ * │                                                                          │
+ * │ Trợ lý **không cố chấp** — dòng danh bạ chỉ ghi một cái TÊN, mà một cái   │
+ * │ tên thì không nói gì về quyền. Nó không có dữ kiện nào để biết khác đi.  │
+ * │                                                                          │
+ * │ ⚠ Và nợ này đắt gấp đôi vì nó đoán **theo chiều TỪ CHỐI** — cùng hình     │
+ * │ dạng với ca `chạy lệnh: TẮT`: *nói dối theo chiều làm Trợ lý từ chối một │
+ * │ việc vốn chạy được*. Lần thứ hai, thấp hơn một tầng.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const TIERED = {
+  n_read: { label: 'Notion · Cá nhân', level: 'read' as const },
+  n_add: { label: 'Notion · Nhóm', level: 'add' as const },
+  n_full: { label: 'Notion · Công ty', level: 'full' as const },
+};
+
+test('⭐ armReach: nấc quyền nằm TRÊN CHÍNH DÒNG của nhân viên', () => {
+  // Không phải thêm một câu dặn ở đầu khối — câu dặn ở đầu khối đã thua vị trí
+  // hai lần rồi. → [[agentco-prompt-rules-lose-to-examples]]
+  assert.match(armReach(TIERED, {}, 'n_read'), /chỉ đọc/);
+  assert.match(armReach(TIERED, {}, 'n_full'), /ghi/);
+  assert.match(armReach(TIERED, {}, 'n_full'), /sửa\/xoá/);
+});
+
+test('⭐ armReach: BA nấc cho BA dòng khác nhau — đổi nấc là đổi prompt', () => {
+  // Nếu hai nấc ra cùng một chuỗi thì đổi nấc không sinh tín hiệu nào, và
+  // `reachDiff` cũng không có gì để báo ⇒ ca user gặp tái diễn y nguyên.
+  const lines = new Set(['n_read', 'n_add', 'n_full'].map((id) => armReach(TIERED, {}, id)));
+  assert.equal(lines.size, 3);
+});
+
+test('armReach: nấc `add` phải nói RÕ nó KHÔNG sửa/xoá', () => {
+  // "Đọc + thêm mới" một mình dễ bị đọc thành "ghi được" ⇒ Trợ lý giao một việc
+  // sửa trang cho người chỉ tạo được trang mới. Vế phủ định phải nằm ngay đó.
+  assert.match(armReach(TIERED, {}, 'n_add'), /không sửa\/xoá/);
+});
+
+test('armReach: KHÔNG có `level` ⇒ không bịa ra năng lực nào', () => {
+  /**
+   * Cánh tay thư mục và cánh tay tự cắm không có nấc. Bịa "toàn quyền" cho
+   * chúng là dựng lại đúng cái lỗi vừa vá, chỉ đảo chiều: đoán hộ một năng lực
+   * từ một thứ không khai nó. → `probe.ts §levelOf`, luật một chiều.
+   */
+  assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
+  assert.ok(!/chỉ đọc|toàn quyền|sửa\/xoá/.test(armReach(ARMS, SERVERS, 'a385afc3ab6')));
+});
+
+test('armReach: có CẢ nấc lẫn thư mục thì nói cả hai, không nuốt cái nào', () => {
+  const arms = { x: { label: 'Kho', level: 'full' as const } };
+  const line = armReach(arms, { x: { args: ['D:\\Kho'] } }, 'x');
+  assert.match(line, /sửa\/xoá/);
+  assert.match(line, /D:\\Kho/);
+});
+
+test('armReach: chưa có nhãn thì rơi về băm — thà xấu còn hơn im', () => {
+  assert.equal(armReach({}, {}, 'a1b2c3'), 'a1b2c3');
+});
+
+test('SHELL_LEGEND: dạy dùng LUÔN thư mục đã in ra, và HẸP đúng chỗ đó', () => {
+  // Nửa còn lại của `armReach`: biết đường dẫn mà vẫn hỏi lại thì bản vá vô nghĩa.
+  assert.ok(/thư mục:/.test(SHELL_LEGEND), 'legend phải giải thích nhãn "thư mục:"');
+  assert.ok(/đừng hỏi lại/.test(SHELL_LEGEND), 'phải nói thẳng: đừng hỏi lại đường dẫn');
+  // ⚠ Và phải HẸP: viết rộng thành "đừng hỏi đường dẫn" là dạy Trợ lý đoán bừa
+  // một đường dẫn nó chưa từng thấy — hỏng ngược chiều, và im lặng hơn.
+  assert.ok(
+    /trong danh sách|ĐÃ được cấp quyền/.test(SHELL_LEGEND),
+    'câu phải giới hạn vào thư mục đã in ra ở dòng nhân viên',
+  );
+});
+
 test('SHELL_LEGEND: nêu quyền ĐỌC, và không phủ định rộng ra cả việc với tới máy', () => {
   assert.ok(/MỞ ĐƯỢC file trên máy/.test(SHELL_LEGEND), 'phải nói ra quyền đọc');
   for (const doi of ['không với tới', 'không đọc được', 'không truy cập']) {
@@ -570,6 +776,42 @@ test('SHELL_LEGEND: nêu quyền ĐỌC, và không phủ định rộng ra cả
  *
  * Bất biến thay thế nói về ĐỊNH DẠNG, không về thế giới, nên nó tự đúng mãi.
  */
+/**
+ * 🔴🔴 TEST NÀY XANH SUỐT TRONG KHI LỖI VẪN SỐNG — và đó là bài học của nó.
+ *
+ * Bản 22/08 gỡ chữ "DUY NHẤT" khỏi `SHELL_LEGEND` rồi viết test dưới đây để canh.
+ * Nhưng nó **giữ nguyên vế nhân quả**: *'"chạy lệnh: BẬT" thì có thêm: kích
+ * thước · ngày sửa · dung lượng của file'*. Sửa CHỮ, không sửa MỆNH ĐỀ.
+ *
+ * Ca user 24/08, cánh tay filesystem cắm đàng hoàng, shell TẮT:
+ *   *"Nhân viên phụ trách thư mục Musics đang tắt chế độ chạy lệnh nên không
+ *    lấy được dung lượng file… Bạn có thể bật chế độ chạy lệnh không?"*
+ *
+ * Đo được là SAI: `spike-arm-e2e` ca A chạy với `role.tools = []` (shell tắt
+ * hoàn toàn) và vẫn ra bảng kích thước — `list_directory_with_sizes` là 1 trong
+ * 14 tool của cánh tay. Trợ lý từ chối một việc vốn chạy được, **và đòi người
+ * dùng bật một công tắc an toàn để đổi lấy thứ họ đã có**.
+ *
+ * ⇒ Test mới canh MỆNH ĐỀ, không canh một danh sách từ cấm.
+ */
+test('SHELL_LEGEND: KHÔNG gán metadata file cho shell — cánh tay cũng lấy được', () => {
+  for (const gan of ['kích thước', 'ngày sửa', 'dung lượng']) {
+    assert.ok(
+      !SHELL_LEGEND.includes(gan),
+      `"${gan}" nằm cạnh "chạy lệnh: BẬT" là dạy Trợ lý rằng không có shell thì không có ` +
+        `metadata — sai từ ngày một MCP filesystem được cắm, và sai theo chiều TỪ CHỐI việc`,
+    );
+  }
+});
+
+test('SHELL_LEGEND: dặn thẳng ĐỪNG ĐOÁN HỘ nhân viên là họ không làm được', () => {
+  // Nửa khẳng định của cùng bản vá: gỡ mệnh đề sai mới chỉ thôi nói dối. Ca
+  // user là Trợ lý TỪ CHỐI TRƯỚC thay cho nhân viên, nên phải có câu chặn đúng
+  // hành vi đó — nhân viên biết bộ tool của chính nó, Trợ lý thì không.
+  assert.ok(/ĐỪNG đoán hộ/.test(SHELL_LEGEND), 'phải cấm việc đoán hộ năng lực của nhân viên');
+  assert.ok(/kết nối/.test(SHELL_LEGEND), 'phải nói ra rằng kết nối mang khả năng riêng');
+});
+
 test('SHELL_LEGEND: không khẳng định độc quyền — câu phải sống sót khi MCP có mặt', () => {
   for (const dong of ['DUY NHẤT', 'duy nhất', 'chỉ có thể', 'cách duy nhất']) {
     assert.ok(

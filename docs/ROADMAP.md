@@ -63,11 +63,18 @@ Nếu ngày 4 thấy trễ: bỏ luôn hạng mục 6 (tri thức), ship với r
 
 ## M1 — Tiết kiệm & bền + Connector (2–3 tuần sau golive)
 
-**Connector** (`SPEC-connectors.md`) — đây là đặc sản, ưu tiên ngang với phần tiết kiệm:
+**Cánh tay tự dựng** — đây là đặc sản, ưu tiên ngang với phần tiết kiệm.
+**⚠ Viết lại 31/08: REST bị BỎ khỏi v1** (lý do + điều kiện mở lại: khối chốt đầu `SPEC-connectors.md`).
+Đặc sản **không phải REST**, nó là *"người không biết code KHAI một năng lực, ta sinh MCP"* — và khách
+hàng đầu tiên của câu đó là **CLI**, đã chạy đầu-cuối 31/08.
 
-- Path A: dán MCP config + nút Test + gán theo role
-- Path B: form tay định nghĩa REST action + nút Test + `confirm` khi ghi dữ liệu
-- Trần token connector theo role (2 000), chặn host ngoài `base_url`, token chỉ ở env
+- ✅ Path A: dán MCP config + nút Test + gán theo role — **đã xây**
+- ✅ **Path B′: bọc một lệnh CLI** (`SPEC-arms §16`) — **đã xây**, còn nợ nút "Thử một action" và nối
+  `confirm` vào cổng duyệt
+- ~~Path B: form tay định nghĩa REST action~~ 🔒 **bỏ**
+- ~~Trần token connector (2 000)~~ đã bỏ từ 23/08 (số đo giết nó) · ~~chặn host ngoài `base_url`~~ đi
+  theo REST · **token chỉ ghi TÊN biến** thì giữ, và đó là luật của cả sản phẩm
+- 🔴 **Chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:`** — bẫy sinh ra từ chính chốt bỏ REST
 
 Phần tiết kiệm & bền:
 
@@ -88,7 +95,9 @@ Phần tiết kiệm & bền:
 
 - License key Ed25519 ký offline (đã thiết kế xong ở `product-decisions-2026-08-03.md` §5 — dùng lại nguyên)
 - Gumroad/Polar cho thanh toán, không tự làm backend
-- **Connector: dán cURL, dán OpenAPI/Swagger, quản lý token trong UI** — đây là thứ biến "đặc sản" thành thứ người non-code dùng được thật
+- ~~**Connector: dán cURL, dán OpenAPI/Swagger**~~ 🔒 **BỎ 31/08** cùng với REST. Thứ thay chỗ nó:
+  **bản CLI của "Copy as cURL"** — người dùng dán một dòng lệnh **họ đã chạy được**, ta bóc argv và
+  hỏi *"chỗ nào thay đổi mỗi lần?"*. Họ **chép**, không **viết**. (`SPEC-arms §16h`)
 - Thư viện role mẫu theo ngành (nội dung, ecommerce, freelance dev)
 - Nạp tài liệu tay → tự chia node
 - Trình duyệt đồ thị tri thức

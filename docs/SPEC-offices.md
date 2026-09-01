@@ -495,6 +495,74 @@ Assistant định tuyến mỗi câu người dùng gõ thành một trong bốn
 
 Phân biệt `new` với `refine` do Assistant quyết trên session của nó (nó có cả lịch sử hội thoại), không suy ra bằng heuristic ở client. Sai lệch về phía `new` — hai plan độc lập chỉ tốn thêm một lần lập kế hoạch, còn gắn nhầm vào plan cũ thì làm hỏng cả việc đang chạy.
 
+Cửa thứ năm là `lookup` (worker ẩn) — xem §6c ngay dưới.
+
+### 6c. `lookup` — worker ẩn, và **nó tra được cả web** (nới 24/08, user chốt)
+
+`lookup` là làn *"trả lời một câu hỏi, không bàn giao gì"*: một `query()` one-shot, prompt tí xíu,
+không sinh Plan, không sinh artifact, `persistSession: false`.
+
+**Luật cũ:** `paths` bắt buộc ≥ 1 — *"không nêu được tên file thì hỏi lại, đừng thả agent đi mò"*.
+Đúng khi thế giới của văn phòng chỉ có tủ tài liệu.
+
+**Nó hỏng ở lượt tiếp xúc đầu tiên.** Văn phòng mới tinh, người dùng hỏi *"thời tiết hôm nay"*,
+*"quán ăn"*, *"tin tức"* → không có `paths` nào để nêu → *"văn phòng mình chưa có nhân viên phụ
+trách mảng này"*. User bác bằng một câu không cãi được: *"một người non-code bán hoa có vào tạo nhân
+viên chuyên nghiệp không, hay họ sẽ hỏi vu vơ kiểu quán ăn, thời tiết, tin tức?"* — và sổ đã ghi sẵn
+thứ tự lo: rủi ro thật là **không có người dùng (~90%)**, không phải kiến trúc chưa sạch (~1%).
+
+**Chốt:** `paths` thành **tuỳ chọn**. Rỗng = câu hỏi tra cứu chung → worker ẩn tra web.
+Worker ẩn nhận `['Read','Grep','Glob','WebSearch','WebFetch']`.
+
+| | |
+|---|---:|
+| prefix worker ẩn trước | 2 828 |
+| sau khi thêm hai tool web | 3 820 |
+| **web thêm vào** | **+992 token**, chỉ trả khi lookup CHẠY |
+| một câu hỏi web thật (sonnet) | 29,8 s · **$0,0827** |
+| cùng việc qua plan→worker | $0,13–0,14 · 30–40 s |
+
+**Vì sao KHÔNG đẻ intent thứ năm:** `route()` chạy ở MỌI tin nhắn ⇒ mỗi intent là token vĩnh viễn
+trong prefix hội thoại. `lookup` vốn đã là làn này; cho nó tra web là **nới một làn đã có**.
+
+⚠ **RANH GIỚI, và đây là rủi ro thật của bản nới:** ***`lookup` TRẢ LỜI, không BÀN GIAO.*** Thứ
+người dùng giữ lại (file, báo cáo, bảng) luôn là `task` + nhân viên. Điều đó được giữ bằng **NĂNG
+LỰC chứ không bằng lời dặn**: cả 5 tool đều chỉ-đọc, worker ẩn không ghi được file kể cả khi Trợ lý
+định tuyến sai.
+
+⚠ **Phần KHÔNG chặn được, nói ra:** `WebFetch` là một đường dữ liệu ĐI RA, và giờ nó với tới được
+trong một văn phòng **0 nhân viên, 0 cấu hình**. Mọi nhân viên vốn đã có nó nên rủi ro tăng thêm là
+nhỏ — nhưng nó đổi từ *"phải dựng văn phòng trước"* sang *"mở app là có"*.
+
+#### Luật ƯU TIÊN — và một danh sách ví dụ suýt vô hiệu hoá nó
+
+User chốt: *"cho phép cả lookup cả nhân viên, Trợ lý tự định tuyến, nhưng **ưu tiên nhân viên** nếu
+nhân viên là người chuyên nghiệp và làm chính xác việc đó"*. Trục cũ giữ nguyên (*"người khác làm
+thì kết quả có khác không"*); luật này phá **thế hoà**. Bất đối xứng: chọn nhầm `task` tốn thêm tiền
+và thời gian; chọn nhầm `lookup` thì người dùng **mất một góc nhìn chuyên môn họ cố ý dựng ra** —
+và không ai thấy là đã mất, vì câu trả lời vẫn trôi chảy.
+
+> 🔴 **Bản đầu của luật này KHÔNG chạy, và lý do đáng nhớ.** Dòng mô tả `lookup` liệt kê thẳng
+> *"quán ăn, thời tiết, tin tức"*, còn luật ưu tiên nằm cách đó bốn dòng. Đo trên văn phòng CÓ
+> `nguoi-tim-tin` (*"duyệt web, đối chiếu nhiều nguồn, dẫn nguồn"*): **1/4 đúng cửa** — model khớp
+> danh sách ví dụ rồi dừng, không đọc tới luật.
+> **⇒ Danh sách ví dụ thắng luật trừu tượng. Điều kiện phải nằm TRÊN CHÍNH DÒNG có ví dụ.**
+
+Sau khi chuyển điều kiện lên dòng ví dụ (`scripts/spike-route-ambiguous.ts`):
+
+| văn phòng | "5 quán cà phê quận 1" | "tin tức công nghệ" | "hôm nay thứ mấy" | "tổng hợp giá … ghi ra file" |
+|---|---|---|---|---|
+| có `nguoi-tim-tin` | `task` ✅ | `task` ✅ | `chat` ✅ | `task` ✅ |
+| **rỗng, không có ai** | `lookup` ✅ | `lookup` ✅ | — | — |
+| **chỉ có `nguoi-dich`** | `lookup` ✅ | `lookup` ✅ | — | — |
+
+**8/8.** Nửa dưới của bảng quan trọng ngang nửa trên: kéo luật ưu tiên quá tay thì văn phòng không
+có người tra cứu lại đẩy mọi câu vu vơ sang `task`, và người non-code nhận đúng câu *"chưa có nhân
+viên phụ trách"* đã sinh ra cả bản vá này.
+
+⚠ Đây là **HÀNH VI của model, không phải hàng rào**. Bảng đẹp chỉ nói cửa mới không nuốt cửa cũ ở
+những ca dễ thấy nhất.
+
 ### `deliver` — kết quả rơi xuống ĐÂU, là trục THỨ HAI (chốt 19/08)
 
 #### Đề bài, và vì sao chẩn đoán đầu tiên sai
