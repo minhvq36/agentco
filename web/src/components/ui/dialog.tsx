@@ -3,6 +3,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { t } from '@i18n';
 
 /**
  * Dialog dựng trên Radix. Lý do không tự viết: focus trap, khoá scroll, Escape,
@@ -33,7 +34,7 @@ export const DialogContent = React.forwardRef<
       {children}
       <DialogPrimitive.Close
         className="absolute right-4 top-4 rounded-md p-1 text-muted transition-colors hover:bg-line/60 hover:text-ink"
-        aria-label="Đóng"
+        aria-label={t('common.close')}
       >
         <X className="h-4 w-4" />
       </DialogPrimitive.Close>

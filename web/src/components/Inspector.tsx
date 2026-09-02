@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Archive, FileCode2, Globe, Pencil, ScrollText, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ import {
 import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
 import type { ArmCall, CanvasNode } from '@/lib/types';
+import { plural, t, type MessageKey } from '@i18n';
+import { formatDateTime } from '@i18n/fmt';
 
 /**
  * Sửa hồ sơ nhân viên tại chỗ. → docs/SPEC-tools-approval.md §1
@@ -48,7 +50,7 @@ function AgentProfile({ node }: { node: CanvasNode }) {
           onClick={() => setOpen(true)}
         >
           <Pencil className="h-3.5 w-3.5" />
-          Sửa hồ sơ
+          {t('inspector.editProfile')}
         </button>
       </>
     );
@@ -56,17 +58,17 @@ function AgentProfile({ node }: { node: CanvasNode }) {
 
   return (
     <div className="mb-3 rounded-lg border border-line p-3">
-      <Label htmlFor="ag-name">Tên hiển thị</Label>
+      <Label htmlFor="ag-name">{t('inspector.displayName')}</Label>
       <Input id="ag-name" value={name} onChange={(e) => setName(e.target.value)} />
 
       <Label htmlFor="ag-pitch" className="mt-3">
-        Giới thiệu
+        {t('inspector.pitch')}
       </Label>
       <Textarea id="ag-pitch" rows={3} value={pitch} onChange={(e) => setPitch(e.target.value)} />
 
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
-          Thôi
+          {t('common.cancel')}
         </Button>
         <Button
           size="sm"
@@ -82,7 +84,7 @@ function AgentProfile({ node }: { node: CanvasNode }) {
             if (ok) setOpen(false);
           }}
         >
-          {busy ? 'Đang lưu…' : 'Lưu'}
+          {busy ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>
@@ -124,29 +126,29 @@ function AssistantName({ node }: { node: CanvasNode }) {
         onClick={() => setOpen(true)}
       >
         <Pencil className="h-3.5 w-3.5" />
-        Đổi tên Trợ lý
+        {t('inspector.renameAssistant')}
       </button>
     );
   }
 
   return (
     <div className="mb-3 rounded-lg border border-line p-3">
-      <Label htmlFor="as-name">Tên hiển thị</Label>
+      <Label htmlFor="as-name">{t('inspector.displayName')}</Label>
       <Input
         id="as-name"
         autoFocus
         maxLength={40}
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Ví dụ: Quản lý, Chị Lan, Điều phối viên"
+        placeholder={t('inspector.assistantNamePlaceholder')}
       />
       <p className="mt-1.5 text-xs leading-relaxed text-muted">
-        Chỉ là cái tên trên sơ đồ và trong khung chat. Trợ lý <b>vẫn nhớ nguyên</b> mọi thứ đã nói, và
-        không có gì phải chạy lại.
+        {t('inspector.assistantNameNoteBefore')} <b>{t('inspector.assistantNameNoteBold')}</b>{' '}
+        {t('inspector.assistantNameNoteAfter')}
       </p>
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
-          Thôi
+          {t('common.cancel')}
         </Button>
         <Button
           size="sm"
@@ -159,7 +161,7 @@ function AssistantName({ node }: { node: CanvasNode }) {
             if (ok) setOpen(false);
           }}
         >
-          {busy ? 'Đang lưu…' : 'Lưu'}
+          {busy ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>
@@ -191,19 +193,18 @@ function BrowserLogin() {
     <div className="mb-3 rounded-lg border border-line p-3">
       <div className="flex items-center gap-2">
         <Globe className="h-4 w-4 shrink-0 text-muted" />
-        <span className="text-[13px] font-medium">Đăng nhập / thêm cookie</span>
+        <span className="text-[13px] font-medium">{t('inspector.browserLoginTitle')}</span>
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-muted">
         {opened ? (
           <>
-            Cửa sổ đã mở. Dùng như trình duyệt bình thường — đăng nhập, chờ mã SMS, xác minh hai
-            bước. <b>Đóng cửa sổ</b> khi hoàn tất; nhân viên ghi nhớ lại phiên đó ở
-            những lượt sau.
+            {t('inspector.browserOpenedBefore')} <b>{t('inspector.browserOpenedBold')}</b>{' '}
+            {t('inspector.browserOpenedAfter')}
           </>
         ) : (
           <>
-            Mở một cửa sổ trình duyệt thường, dùng <b>đúng hồ sơ</b> mà nhân viên dùng. Đăng nhập
-            ở đây một lần là những lượt việc sau nhân viên vào thẳng được.
+            {t('inspector.browserIdleBefore')} <b>{t('inspector.browserIdleBold')}</b>{' '}
+            {t('inspector.browserIdleAfter')}
           </>
         )}
       </p>
@@ -215,7 +216,11 @@ function BrowserLogin() {
         disabled={busy}
         onClick={() => void go()}
       >
-        {busy ? 'Đang mở…' : opened ? 'Mở lại' : 'Mở trình duyệt'}
+        {busy
+          ? t('inspector.browserOpening')
+          : opened
+            ? t('inspector.browserReopen')
+            : t('inspector.browserOpen')}
       </Button>
     </div>
   );
@@ -281,16 +286,16 @@ function ArmLog({ server }: { server: string }) {
         onClick={() => setOpen((v) => !v)}
       >
         <ScrollText className="h-3.5 w-3.5" />
-        {open ? 'Ẩn nhật ký' : 'Kết nối này đã làm gì?'}
+        {open ? t('inspector.hideLog') : t('inspector.showLog')}
       </button>
 
       {open && (
         <div className="mt-2">
-          {calls === null && <p className="text-xs text-muted">Đang đọc…</p>}
+          {calls === null && <p className="text-xs text-muted">{t('common.reading')}</p>}
           {calls?.length === 0 && (
             <p className="text-xs leading-relaxed text-muted">
-              Chưa có lời gọi nào được ghi. Nhật ký bắt đầu từ lúc kết nối được dùng trong một việc
-              thật — bấm <b>Thử ngay</b> lúc cắm thì không tính.
+              {t('inspector.noCallsBefore')} <b>{t('inspector.noCallsBold')}</b>{' '}
+              {t('inspector.noCallsAfter')}
             </p>
           )}
           {calls?.map((c, i) => (
@@ -312,9 +317,7 @@ function ArmLog({ server }: { server: string }) {
 function ArmLogRow({ call }: { call: ArmCall }) {
   const [show, setShow] = useState(false);
   const when = new Date(call.ts);
-  const stamp = Number.isNaN(when.getTime())
-    ? call.ts
-    : when.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const stamp = Number.isNaN(when.getTime()) ? call.ts : formatDateTime(when);
 
   return (
     <div className="border-b border-line/60 py-1.5 last:border-0">
@@ -333,7 +336,7 @@ function ArmLogRow({ call }: { call: ArmCall }) {
       {show && (
         <pre className="mt-1 max-h-48 overflow-auto rounded bg-line/40 p-2 text-[11px] leading-relaxed text-ink">
           {pretty(call.args)}
-          {call.truncated ? '\n\n… (đã cắt bớt — tham số quá dài)' : ''}
+          {call.truncated ? t('inspector.argsTruncated') : ''}
         </pre>
       )}
     </div>
@@ -349,10 +352,11 @@ function pretty(raw: string): string {
   }
 }
 
-const TIER_HINT: Record<string, string> = {
-  eco: 'eco — rẻ nhất, chậm hơn và cần nhiều lượt hơn',
-  standard: 'standard — cân bằng',
-  deep: 'deep — chỉ cho việc thật khó, đắt hơn nhiều',
+/** Keys, not sentences — a module-level string would freeze the load-time locale. */
+const TIER_HINT: Record<string, MessageKey> = {
+  eco: 'inspector.tier.eco',
+  standard: 'inspector.tier.standard',
+  deep: 'inspector.tier.deep',
 };
 
 /**
@@ -401,21 +405,26 @@ function ModelPicker({ node }: { node: CanvasNode }) {
     return (
       <>
         <Row
-          k="Mức model"
+          k={t('inspector.modelTier')}
           v={
             <>
               {node.tier}
             </>
           }
         />
-        <Row k="Model" v={<span className="font-mono text-[11.5px]">{node.model}</span>} />
+        <Row
+          k={t('inspector.model')}
+          v={<span className="font-mono text-[11.5px]">{node.model}</span>}
+        />
         {!isAssistant && (
           <Row
-            k="Giới hạn một việc"
+            k={t('inspector.perJobLimit')}
             v={
               <>
-                {node.maxUsd ? `tối đa $${node.maxUsd}` : 'không giới hạn tiền'}
-                {` · ${node.maxTurns ?? 6} bước`}
+                {node.maxUsd
+                  ? t('inspector.maxUsd', { n: node.maxUsd })
+                  : t('inspector.noMoneyLimit')}
+                {` · ${plural('inspector.stepCount', node.maxTurns ?? 6)}`}
               </>
             }
           />
@@ -425,7 +434,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
           onClick={() => setOpen(true)}
         >
           <Pencil className="h-3.5 w-3.5" />
-          {isAssistant ? 'Đổi model' : 'Đổi model & giới hạn'}
+          {isAssistant ? t('inspector.changeModel') : t('inspector.changeModelLimits')}
         </button>
       </>
     );
@@ -433,17 +442,19 @@ function ModelPicker({ node }: { node: CanvasNode }) {
 
   return (
     <div className="my-3 rounded-lg border border-line p-3">
-      <Label htmlFor="tier-pick">Mức model</Label>
+      <Label htmlFor="tier-pick">{t('inspector.modelTier')}</Label>
       <Select
         id="tier-pick"
         className="w-full"
         value={tier}
         onChange={(e) => setTier(e.target.value)}
       >
-        {isAssistant && <option value="">theo mặc định công ty ({companyDefault})</option>}
-        <option value="eco">{TIER_HINT['eco']}</option>
-        <option value="standard">{TIER_HINT['standard']}</option>
-        <option value="deep">{TIER_HINT['deep']}</option>
+        {isAssistant && (
+          <option value="">{t('inspector.companyDefault', { default: companyDefault })}</option>
+        )}
+        <option value="eco">{t(TIER_HINT['eco']!)}</option>
+        <option value="standard">{t(TIER_HINT['standard']!)}</option>
+        <option value="deep">{t(TIER_HINT['deep']!)}</option>
       </Select>
       {models && (
         <p className="mt-1.5 font-mono text-[11.5px] text-muted">
@@ -458,7 +469,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
       */}
       {!isAssistant && (
         <div className="mt-4 border-t border-line pt-3">
-          <Label htmlFor="lim-usd">Giới hạn cho MỘT việc</Label>
+          <Label htmlFor="lim-usd">{t('inspector.limitOneJob')}</Label>
           <div className="mt-1.5 flex gap-2">
             <div className="flex-1">
               <Input
@@ -469,7 +480,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
                 value={usd}
                 onChange={(e) => setUsd(e.target.value)}
               />
-              <p className="mt-1 text-[11.5px] text-muted">tiền tối đa ($) · 0 = không giới hạn</p>
+              <p className="mt-1 text-[11.5px] text-muted">{t('inspector.maxSpendHint')}</p>
             </div>
             <div className="flex-1">
               <Input
@@ -480,7 +491,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
                 value={turns}
                 onChange={(e) => setTurns(e.target.value)}
               />
-              <p className="mt-1 text-[11.5px] text-muted">số bước tối đa</p>
+              <p className="mt-1 text-[11.5px] text-muted">{t('inspector.maxStepsHint')}</p>
             </div>
           </div>
         </div>
@@ -488,7 +499,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
 
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
-          Thôi
+          {t('common.cancel')}
         </Button>
         <Button
           size="sm"
@@ -507,7 +518,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
             if (ok) setOpen(false);
           }}
         >
-          {busy ? 'Đang lưu…' : 'Lưu'}
+          {busy ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>
@@ -567,7 +578,7 @@ function BashSwitch({ node }: { node: CanvasNode }) {
           năng đọc trước khi người ta kịp quyết.
         */}
         <span className="min-w-0">
-          <span className="block text-[13px] text-ink">Cho chạy lệnh trên máy</span>
+          <span className="block text-[13px] text-ink">{t('inspector.bashLabel')}</span>
         </span>
       </label>
 
@@ -596,8 +607,8 @@ function BashSwitch({ node }: { node: CanvasNode }) {
       */}
       {on && (
         <p className="mt-2.5 rounded bg-warn-soft px-2 py-1.5 text-xs leading-relaxed text-warn">
-          Lệnh chạy bằng <b>quyền của chính bạn</b> trên máy này. Nhân viên chỉ được giao việc trong
-          thư mục văn phòng, nhưng một câu lệnh thì không có hàng rào.
+          {t('inspector.bashWarnBefore')} <b>{t('inspector.bashWarnBold')}</b>{' '}
+          {t('inspector.bashWarnAfter')}
         </p>
       )}
     </div>
@@ -635,7 +646,7 @@ function Note({ children }: { children: React.ReactNode }) {
 function ArmList({ ids, nodes }: { ids?: string[]; nodes: CanvasNode[] }) {
   if (!ids?.length) return null;
   const name = (id: string) => nodes.find((n) => n.kind === 'mcp' && n.server === id)?.label ?? id;
-  return <Row k="Kết nối đang dùng" v={ids.map(name).join(', ')} />;
+  return <Row k={t('inspector.armsInUse')} v={ids.map(name).join(', ')} />;
 }
 
 /**
@@ -669,7 +680,7 @@ function ArmFolders({ folders }: { folders?: string[] }) {
   if (!folders?.length) return null;
   return (
     <div className="border-b border-line py-1.5 text-[13px] last:border-0">
-      <div className="text-ink">Thư mục với tới được</div>
+      <div className="text-ink">{t('inspector.reachableFolders')}</div>
       <ul className="mt-1 space-y-0.5">
         {folders.map((f) => (
           // `break-all`: đường dẫn Windows có khoảng trắng lẫn dấu gạch ngược,
@@ -739,11 +750,17 @@ function ArmName({ node }: { node: CanvasNode }) {
                 node.level === 'full' ? 'bg-danger-soft text-danger' : 'bg-line/70 text-muted'
               }`}
             >
-              {node.level === 'read' ? 'chỉ đọc' : node.level === 'add' ? 'đọc + thêm mới' : 'toàn quyền'}
+              {node.level === 'read'
+                ? t('inspector.level.read')
+                : node.level === 'add'
+                  ? t('inspector.level.add')
+                  : t('inspector.level.full')}
             </span>
           )}
           {node.toolCount ? (
-            <span className="text-[11px] tabular-nums text-muted">{node.toolCount} việc</span>
+            <span className="text-[11px] tabular-nums text-muted">
+              {plural('inspector.toolCount', node.toolCount)}
+            </span>
           ) : null}
         </div>
       )}
@@ -755,14 +772,16 @@ function ArmName({ node }: { node: CanvasNode }) {
         vào một hàng thì mắt lướt qua nó như lướt qua một cái nhãn.
       */}
       {node.canLogin && <BrowserLogin />}
-      <label className="text-[11px] uppercase tracking-wide text-muted">Tên hiển thị</label>
+      <label className="text-[11px] uppercase tracking-wide text-muted">
+        {t('inspector.displayName')}
+      </label>
       <div className="mt-1 flex gap-1.5">
         <Input value={text} onChange={(e) => setText(e.target.value)} />
         <Button
           disabled={!dirty}
           onClick={() => void actions.renameArm(node.server!, text.trim())}
         >
-          Lưu
+          {t('common.save')}
         </Button>
       </div>
     </div>
@@ -810,7 +829,12 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           {node.label}
         </span>
         <div className="flex-1" />
-        <Button size="iconSm" variant="ghost" aria-label="Đóng" onClick={() => actions.select(null)}>
+        <Button
+          size="iconSm"
+          variant="ghost"
+          aria-label={t('common.close')}
+          onClick={() => actions.select(null)}
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -820,17 +844,20 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           <>
             <AssistantName node={node} />
             <ModelPicker node={node} />
-            <Row k="Đang trực" v={`${onDuty.length} người`} />
-            <Row k="Đang nghỉ" v={`${off.length} người`} />
-            <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
+            <Row k={t('inspector.onDuty')} v={plural('inspector.peopleCount', onDuty.length)} />
+            <Row k={t('inspector.offDuty')} v={plural('inspector.peopleCount', off.length)} />
+            <Row
+              k={t('inspector.ownNotebook')}
+              v={plural('knowledge.noteCount', node.count ?? 0)}
+            />
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
             <Note>
-              Mỗi người đang trực chiếm một dòng giới thiệu trong ngữ cảnh của Trợ lý, ở <b>mọi</b> lượt trò
-              chuyện. Ngắt kết nối nhân viên không dùng đến giúp tiết kiệm.
+              {t('inspector.rosterNoteBefore')} <b>{t('inspector.rosterNoteBold')}</b>{' '}
+              {t('inspector.rosterNoteAfter')}
             </Note>
             <Button className="w-full" onClick={() => onShowPrompt('assistant')}>
               <FileCode2 className="h-4 w-4" />
-              Xem prompt phân lớp
+              {t('inspector.viewPrompt')}
             </Button>
           </>
         )}
@@ -843,20 +870,20 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
 
         {node.kind === 'mcp' && (
           <>
-            <Row k="Loại" v="MCP server" />
+            <Row k={t('inspector.type')} v="MCP server" />
             <Row
-              k="Đang dùng"
+              k={t('inspector.inUseBy')}
               v={
                 canvas.edges
                   .filter((e) => e.from === node.id)
                   .map((e) => canvas.nodes.find((n) => n.id === e.to)?.label ?? e.to)
-                  .join(', ') || 'chưa ai'
+                  .join(', ') || t('inspector.nobody')
               }
             />
             <ArmFolders folders={node.folders} />
             {node.missing && (
               <Note>
-                <span className="text-danger">Không còn khai trong company.yaml.</span>
+                <span className="text-danger">{t('inspector.missingArm')}</span>
               </Note>
             )}
             {/*
@@ -917,7 +944,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <ArmLog server={node.server!} />
 
             <Button variant="danger" className="mt-4 w-full" onClick={() => setConfirmRemove(node)}>
-              Xoá khỏi văn phòng này
+              {t('inspector.removeFromOffice')}
             </Button>
           </>
         )}
@@ -926,40 +953,46 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           <>
             <AgentProfile node={node} />
             <ModelPicker node={node} />
-            <Row k="Mã vai trò" v={node.role} />
-            <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
-            <Row k="Trạng thái" v={node.connected ? 'đang trực' : 'đang nghỉ'} />
+            <Row k={t('inspector.roleId')} v={node.role} />
+            <Row
+              k={t('inspector.ownNotebook')}
+              v={plural('knowledge.noteCount', node.count ?? 0)}
+            />
+            <Row
+              k={t('inspector.status')}
+              v={node.connected ? t('inspector.statusOnDuty') : t('inspector.statusOffDuty')}
+            />
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
             {node.missing && (
               <Note>
-                <span className="text-danger">Không tìm thấy roles/{node.role}.yaml</span>
+                <span className="text-danger">
+                  {t('inspector.missingRole', { role: node.role ?? '' })}
+                </span>
               </Note>
             )}
 
             <div className="mt-4 flex flex-col gap-2">
               <Button onClick={() => onShowPrompt(node.role!)}>
                 <FileCode2 className="h-4 w-4" />
-                Xem prompt phân lớp
+                {t('inspector.viewPrompt')}
               </Button>
               <Button onClick={() => toggleDuty(node)}>
-                {node.connected ? 'Cho nghỉ' : 'Cho trực lại'}
+                {node.connected ? t('inspector.rest') : t('inspector.backOnDuty')}
               </Button>
               {/* "Cho nghỉ" = còn trên sơ đồ, chỉ mất dây → tạm thời.
                   "Cất đi"  = biến khỏi sơ đồ, file còn nguyên → lâu dài.
                   Hai mức khác nhau thật, nên là hai nút, không phải một nút hỏi lại. */}
               <Button onClick={() => void actions.archiveAgent(node.role!, true)}>
                 <Archive className="h-4 w-4" />
-                Cất vào lưu trữ
+                {t('inspector.archive')}
               </Button>
               <Button variant="danger" onClick={() => setConfirmRemove(node)}>
                 <Trash2 className="h-4 w-4" />
-                Xoá hẳn
+                {t('inspector.deleteForGood')}
               </Button>
             </div>
 
-            <Note>
-              Mọi nhân viên đã có sẵn: đọc/ghi file trong văn phòng, và tìm trên web.
-            </Note>
+            <Note>{t('inspector.builtinNote')}</Note>
             <BashSwitch node={node} />
           </>
         )}
@@ -972,40 +1005,42 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           <DialogHeader>
             <DialogTitle>
               {confirmRemove?.kind === 'mcp'
-                ? `Xoá “${confirmRemove.label}” khỏi văn phòng này?`
-                : `Xoá hẳn “${confirmRemove?.label}”?`}
+                ? t('inspector.confirmRemoveArmTitle', { label: confirmRemove.label })
+                : t('inspector.confirmDeleteAgentTitle', { label: confirmRemove?.label ?? '' })}
             </DialogTitle>
             <DialogDescription>
               {confirmRemove?.kind === 'mcp' ? (
                 <>
-                  Kết nối này biến khỏi sơ đồ, và những nhân viên đang nối tới nó thôi dùng được.{' '}
-                  <b>Chỉ văn phòng này</b> — nơi khác không bị chạm.
+                  {t('inspector.armRemoveBody1')} <b>{t('inspector.armRemoveBold')}</b>{' '}
+                  {t('inspector.armRemoveBody2')}
                   <br />
                   <br />
                   {/* Không doạ, vì không có gì đáng doạ: sổ chung giữ cấu hình và
                       chìa, nên đây là thao tác HOÀN TÁC ĐƯỢC. Nói đúng mức độ
                       của nó là cách giữ cho những cảnh báo THẬT còn sức nặng. */}
-                  Cấu hình và chìa khoá <b>vẫn được giữ</b>. Cắm lại đúng thứ này thì không phải nhập
-                  lại gì — chỉ mất công nối dây.
+                  {t('inspector.armRemoveKeep1')} <b>{t('inspector.armRemoveKeepBold')}</b>
+                  {t('inspector.armRemoveKeep2')}
                 </>
               ) : (
                 <>
-                  Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết
-                  cho người này. <b>Không lấy lại được.</b>
+                  {t('inspector.agentDeleteBefore')} <code>roles/{confirmRemove?.role}.yaml</code>{' '}
+                  {t('inspector.agentDeleteMid')} <b>{t('inspector.agentDeleteBold')}</b>
                   <br />
                   <br />
-                  Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ
-                  — đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
+                  {t('inspector.agentNotesBefore')}{' '}
+                  <code>knowledge/agents/{confirmRemove?.role}/</code>{' '}
+                  {t('inspector.agentNotesAfter')}
                   <br />
                   <br />
-                  Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục
-                  được bất cứ lúc nào.
+                  {t('inspector.archiveHintBefore')} <b>{t('common.cancel')}</b>{' '}
+                  {t('inspector.archiveHintMid')} <b>{t('inspector.archive')}</b>{' '}
+                  {t('inspector.archiveHintAfter')}
                 </>
               )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setConfirmRemove(null)}>Thôi</Button>
+            <Button onClick={() => setConfirmRemove(null)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -1017,7 +1052,9 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                 setConfirmRemove(null);
               }}
             >
-              {confirmRemove?.kind === 'mcp' ? 'Xoá khỏi văn phòng' : 'Xoá hẳn'}
+              {confirmRemove?.kind === 'mcp'
+                ? t('inspector.removeFromOfficeShort')
+                : t('inspector.deleteForGood')}
             </Button>
           </DialogFooter>
         </DialogContent>

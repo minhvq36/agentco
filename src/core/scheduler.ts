@@ -7,6 +7,13 @@
 import fs from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
+/**
+ * ⚠ Imported under other names ON PURPOSE. This file already binds `t` to a task
+ * in a dozen loops and `say` to a receipt line, and shadowing either of them
+ * would make `t('key')` compile as a call on a task object. The repo convention
+ * is `t` / `plural`; this is the one file where the names were already taken.
+ */
+import { plural as pluralOf, t as phrase } from '../i18n/index.js';
 import { CachePrimingGate } from './gate.js';
 import { buildWorkerPrompt } from './prompt.js';
 import { existsOnDisk, isUrlInput, resolveInput, safeJoin } from './paths.js';
@@ -116,9 +123,15 @@ export function shouldContinue(p: { kind: FailureKind; tried: number; landed: nu
   return p.tried < MAX_CONTINUE;
 }
 
-const CAU_TIEP =
-  'Việc này đã chạy dở ở lượt trước. Xem những file đã có trong thư mục kết quả của chính việc này, ' +
-  'rồi LÀM TIẾP PHẦN CÒN THIẾU — đừng làm lại từ đầu.';
+/**
+ * ⚠ ENGLISH, and not through `t()`: this is appended to a task BRIEF, which an
+ * employee reads. Prompt scaffolding follows the source-language rule, never the
+ * interface switch. The employee's own reply still follows whatever language the
+ * rest of the brief is written in. → docs/CLAUDE.md §Language
+ */
+const CONTINUE_NOTE =
+  'This task was left half-done on the previous turn. Look at the files already in this task’s own ' +
+  'output folder, then FINISH WHAT IS MISSING — do not start again from scratch.';
 
 export function continueBrief(brief: TaskBrief): TaskBrief {
   /**
@@ -128,8 +141,8 @@ export function continueBrief(brief: TaskBrief): TaskBrief {
    * prefix của worker lên vô ích, và **ba dòng giống nhau dạy model rằng dòng
    * đó không quan trọng** — đúng cơ chế làm một câu dặn mất tác dụng.
    */
-  if (brief.constraints.includes(CAU_TIEP)) return brief;
-  return { ...brief, constraints: [...brief.constraints, CAU_TIEP] };
+  if (brief.constraints.includes(CONTINUE_NOTE)) return brief;
+  return { ...brief, constraints: [...brief.constraints, CONTINUE_NOTE] };
 }
 
 export class Scheduler {
@@ -244,13 +257,13 @@ export class Scheduler {
     for (const t of plan.tasks) for (const o of t.outputs) produced.add(norm(o.path));
 
     for (const t of plan.tasks) {
-      if (!knownRoles.has(t.role)) problems.push(`Task ${t.task_id}: không có vai trò "${t.role}"`);
+      if (!knownRoles.has(t.role)) problems.push(phrase('plan.noSuchRole', { task: t.task_id, role: t.role }));
       for (const d of t.deps) {
-        if (!ids.has(d)) problems.push(`Task ${t.task_id}: phụ thuộc "${d}" không tồn tại`);
+        if (!ids.has(d)) problems.push(phrase('plan.noSuchDep', { task: t.task_id, dep: d }));
       }
       for (const o of t.outputs) {
         const prev = writers.get(o.path);
-        if (prev) problems.push(`Task ${t.task_id} và ${prev} cùng ghi "${o.path}"`);
+        if (prev) problems.push(phrase('plan.twoWriters', { task: t.task_id, other: prev, path: o.path }));
         else writers.set(o.path, t.task_id);
       }
 
@@ -307,8 +320,8 @@ export class Scheduler {
           // hoạch, trong khi thứ cần sửa là đường dẫn họ vừa gõ.
           problems.push(
             isAbsolute(i.path)
-              ? `Task ${t.task_id} cần đọc "${i.path}" nhưng không tìm thấy trên máy — kiểm lại đường dẫn`
-              : `Task ${t.task_id} cần đọc "${i.path}" nhưng không có file đó, và không việc nào tạo ra nó`,
+              ? phrase('plan.inputMissingOnDisk', { task: t.task_id, path: i.path })
+              : phrase('plan.inputMissingUnwritten', { task: t.task_id, path: i.path }),
           );
         }
       }
@@ -320,7 +333,7 @@ export class Scheduler {
     const visit = (id: string, trail: string[]): void => {
       if (state.get(id) === 2) return;
       if (state.get(id) === 1) {
-        problems.push(`Phụ thuộc vòng tròn: ${[...trail, id].join(' → ')}`);
+        problems.push(phrase('plan.cycle', { trail: [...trail, id].join(' → ') }));
         return;
       }
       state.set(id, 1);
@@ -372,7 +385,7 @@ export class Scheduler {
           failed.add(t.task_id);
           const blocked: Receipt = {
             status: 'blocked',
-            say: `Không làm được vì bước trước chưa xong.`,
+            say: phrase('plan.blockedPrevUnfinished'),
             answer: '',
             /**
              * Receipt do MÃ dựng, không do nhân viên nào chạy ⇒ không có sự kiện
@@ -460,8 +473,8 @@ export class Scheduler {
             this.blockedReceipt(
               brief,
               halfDone,
-              'Không làm được vì bước trước bị cắt giữa chừng, kết quả của nó còn thiếu.',
-              'ghi dở, chưa đủ để dùng',
+              phrase('plan.blockedPrevCut'),
+              phrase('plan.whyHalfWritten'),
             ),
           );
           continue;
@@ -525,7 +538,7 @@ export class Scheduler {
                   type: 'task.progress',
                   task_id: brief.task_id,
                   role: brief.role,
-                  say: `Việc dài hơn một lượt — đang chạy tiếp (${daTiep + 1}/${MAX_CONTINUE}).`,
+                  say: phrase('plan.continuing', { n: String(daTiep + 1), max: String(MAX_CONTINUE) }),
                 });
                 remaining.set(brief.task_id, continueBrief(brief));
                 return;
@@ -643,12 +656,12 @@ export class Scheduler {
   private blockedReceipt(
     brief: TaskBrief,
     missing: readonly string[],
-    say = 'Không làm được vì thiếu file cần đọc.',
-    why = 'không có trên đĩa',
+    sayLine = phrase('plan.blockedMissingInput'),
+    why = phrase('plan.whyNotOnDisk'),
   ): Receipt {
     const blocked: Receipt = {
       status: 'blocked',
-      say,
+      say: sayLine,
       answer: '',
       // Mã dựng, chưa ai chạy ⇒ không có sự kiện. → `types.ts §gist`
       gist: '',
@@ -693,7 +706,7 @@ export class Scheduler {
   private async execute(brief: TaskBrief): Promise<Receipt> {
     const { office, knowledge } = this.deps;
     const role = office.roles.get(brief.role);
-    if (!role) throw new RunError(`Không có vai trò "${brief.role}"`, 'other');
+    if (!role) throw new RunError(phrase('plan.roleGone', { role: brief.role }), 'other');
 
     // HOT: nằm trong prefix cache, tính theo role, KHÔNG theo task.
     const hot = knowledge.hot(role.id, role.hot_knowledge_size, office.company.budgets.hot_knowledge_tokens);
@@ -876,10 +889,10 @@ export class Scheduler {
     // với người non-code — họ không biết sửa ở đâu.
     const cause =
       kind === 'max_turns'
-        ? `Việc này cần nhiều bước hơn mức cho phép của ${brief.role}. Nới số bước tối đa trong trang nhân viên, hoặc chia nhỏ yêu cầu.`
+        ? phrase('plan.causeMaxTurns', { role: brief.role })
         : kind === 'budget'
-          ? `Việc này chạm trần chi phí đã đặt cho ${brief.role}. Nới trần chi phí trong trang nhân viên nếu thấy đáng.`
-          : 'Việc này gặp lỗi và không hoàn thành được. Xem nhật ký chi tiết.';
+          ? phrase('plan.causeBudget', { role: brief.role })
+          : phrase('plan.causeError');
 
     /**
      * Câu "đã ghi được gì" đứng TRƯỚC câu "vì sao dừng".
@@ -892,15 +905,17 @@ export class Scheduler {
     const say = deliveredAll
       ? // Giao đủ hàng: báo XONG, và chỉ NHẮC NHẸ về tiền. Đây là ghi chú, không
         // phải cảnh báo — việc đã có kết quả, người dùng không cần làm gì cả.
-        `Đã làm xong và ghi ra ${written.length > 1 ? `${written.length} file` : written[0]}. ` +
+        `${phrase('plan.doneWrote', {
+          what: written.length > 1 ? pluralOf('plan.fileCount', written.length) : (written[0] ?? ''),
+        })} ` +
         (kind === 'budget'
-          ? `Chỉ lưu ý nhỏ: việc này tốn hơn mức chi phí bạn đặt cho ${brief.role}, ` +
-            `nên nếu còn giao việc tương tự thì cân nhắc nới trần lên một chút.`
-          : `Chỉ lưu ý nhỏ: việc này dùng hết số bước tối đa của ${brief.role} — ` +
-            `nếu còn giao việc tương tự thì cân nhắc nới lên một chút.`)
+          ? phrase('plan.asideOverBudget', { role: brief.role })
+          : phrase('plan.asideMaxTurns', { role: brief.role }))
       : written.length
-        ? `Nhân viên đã ghi được ${written.length} file trước khi dừng: ${written.slice(0, 3).join(', ')}` +
-          `${written.length > 3 ? '…' : ''}. Xem thử trước khi quyết chạy lại — có thể đã đủ dùng. ${cause}`
+        ? `${phrase('plan.partialWrote', {
+            n: String(written.length),
+            list: written.slice(0, 3).join(', ') + (written.length > 3 ? '…' : ''),
+          })} ${cause}`
         : cause;
 
     return {
@@ -933,7 +948,7 @@ export class Scheduler {
       blocked_on: deliveredAll
         ? null
         : strays.length
-          ? `${msg.slice(0, 160)} · ghi ra ngoài văn phòng: ${strays.slice(0, 2).join(', ')}`
+          ? `${msg.slice(0, 160)} · ${phrase('plan.wroteOutsideOffice', { list: strays.slice(0, 2).join(', ') })}`
           : msg.slice(0, 200),
       task_id: brief.task_id,
       role: brief.role,
@@ -1070,8 +1085,8 @@ function reasonFor(stale: readonly string[], receipts: ReadonlyMap<string, Recei
   const empty = stale.filter((d) => receipts.get(d)?.status === 'done');
   const broke = stale.filter((d) => !empty.includes(d));
   const parts: string[] = [];
-  if (broke.length) parts.push(`bước trước chưa chạy xong: ${broke.join(', ')}`);
-  if (empty.length) parts.push(`bước trước không tạo ra file nào: ${empty.join(', ')}`);
+  if (broke.length) parts.push(phrase('plan.stalePrevUnfinished', { list: broke.join(', ') }));
+  if (empty.length) parts.push(phrase('plan.stalePrevEmpty', { list: empty.join(', ') }));
   return parts.join(' · ');
 }
 

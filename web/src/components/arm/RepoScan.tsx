@@ -16,6 +16,7 @@ import { Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { ArmScope, RepoScanState } from './types';
+import { t } from '@i18n';
 
 export function RepoScan({
   name,
@@ -37,12 +38,12 @@ export function RepoScan({
 }) {
   return (
     <div className="mt-3 rounded-md border border-line px-3 py-3">
-      <div className="text-[13px] font-medium">Repo agentco được phép đụng</div>
+      <div className="text-[13px] font-medium">{t('arm.repoTitle')}</div>
 
       {scanning ? (
         <div className="mt-1.5 flex items-center gap-2 text-xs text-muted">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Đang hỏi {name} xem app được cài vào những repo nào…
+          {t('arm.repoScanning', { name })}
         </div>
       ) : scan && 'failed' in scan ? (
         /*
@@ -50,15 +51,15 @@ export function RepoScan({
           biết — im lặng ở đây là để người dùng tự tin sai.
         */
         <p className="mt-1 text-xs leading-relaxed text-warn">
-          Không hỏi được danh sách repo lúc này. Vẫn cắm được — nhưng nếu nhân viên báo không tìm
-          thấy repo, hãy quay lại bấm <b>{scope?.say}</b> ở trên.
+          {t('arm.repoScanFailedBefore')} <b>{scope?.say}</b> {t('arm.repoScanFailedAfter')}
         </p>
       ) : scan && scan.installed.length > 0 ? (
         <>
           <p className="mt-1 text-xs leading-relaxed text-muted">
-            Đã cài trên <b>{scan.installed.length}</b> repo của <b>@{scan.login}</b>
+            {t('arm.repoInstalledBefore')} <b>{scan.installed.length}</b>{' '}
+            {t('arm.repoInstalledMid')} <b>@{scan.login}</b>
             {scan.seen > scan.installed.length && (
-              <> — {scan.seen - scan.installed.length} repo khác thì chưa cài</>
+              <> {t('arm.repoNotInstalled', { n: scan.seen - scan.installed.length })}</>
             )}
             .
           </p>
@@ -82,15 +83,14 @@ export function RepoScan({
             tin nó chặt hơn thực tế.
           */}
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-            Repo công khai thì nhân viên vẫn đọc được dù chưa cài — danh sách trên là những repo có
-            quyền <b>đầy đủ</b> (gồm repo riêng tư và quyền ghi).
+            {t('arm.repoPublicNoteBefore')} <b>{t('arm.repoPublicNoteBold')}</b>{' '}
+            {t('arm.repoPublicNoteAfter')}
           </p>
         </>
       ) : scan ? (
         <>
           <p className="mt-1 text-xs leading-relaxed text-danger">
-            <b>@{scan.login}</b> chưa cài agentco vào repo nào. Nhân viên sẽ không đọc được repo
-            riêng tư và không ghi được gì cả.
+            <b>@{scan.login}</b> {t('arm.repoNoneAfter')}
           </p>
           {scope && (
             <Button
@@ -101,7 +101,7 @@ export function RepoScan({
             </Button>
           )}
           <Button size="sm" className="mt-1.5 w-full" onClick={onRecheck}>
-            Cài xong rồi — kiểm lại
+            {t('arm.repoRecheck')}
           </Button>
           {/*
             ĐƯỜNG THOÁT BẮT BUỘC, và nó không phải sự nhân nhượng.
@@ -117,7 +117,7 @@ export function RepoScan({
               onChange={(e) => onAnyway(e.target.checked)}
             />
             <span>
-              Đã hiểu và tiếp tục — <i>repo của tổ chức không hiện ở đây được</i>.
+              {t('arm.repoAnywayBefore')} <i>{t('arm.repoAnywayItalic')}</i>.
             </span>
           </label>
         </>

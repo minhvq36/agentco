@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { companyPaths, officePaths } from './paths.js';
+import { t } from '../i18n/index.js';
 
 const DEFAULT_OFFICE = 'van-phong-chinh';
 
@@ -56,7 +57,7 @@ export function migrateIfNeeded(companyDir: string): void {
     const to = path.join(target, entry);
     if (fs.existsSync(to)) {
       // Đích đã có: xung đột thật. Để nguyên cả hai, báo rõ, không đoán.
-      failed.push(`${entry} (đã có sẵn ở offices/${DEFAULT_OFFICE}/)`);
+      failed.push(`${entry} (already present under offices/${DEFAULT_OFFICE}/)`);
       continue;
     }
     if (!moveWithRetry(from, to)) failed.push(entry);
@@ -82,7 +83,8 @@ export function migrateIfNeeded(companyDir: string): void {
   if (!fs.existsSync(officeCfg)) {
     fs.writeFileSync(
       officeCfg,
-      `id: ${DEFAULT_OFFICE}\nname: "Văn phòng chính"\ncharter_file: charter.md\n\nassistant:\n  display_name: "Trợ lý"\n  avatar: "★"\n  mcp: []\n`,
+      `id: ${DEFAULT_OFFICE}\nname: "${t('seed.mainOfficeName')}"\ncharter_file: charter.md\n\n` +
+        `assistant:\n  display_name: "${t('seed.assistantName')}"\n  avatar: "★"\n  mcp: []\n`,
       'utf8',
     );
   }
@@ -100,17 +102,17 @@ export function migrateIfNeeded(companyDir: string): void {
 
   if (failed.length) {
     process.emitWarning(
-      `Di trú chưa xong. Chưa dời được: ${failed.join(', ')}.\n` +
-        `Thường là do file đang bị khoá (antivirus, hoặc daemon cũ chưa tắt hẳn).\n` +
-        `Chạy \`agentco stop\` rồi mở lại — phần đã dời được giữ nguyên, lần sau đi tiếp từ đó.`,
+      `Migration incomplete. Could not move: ${failed.join(', ')}.\n` +
+        `Usually a locked file (antivirus, or an old daemon still running).\n` +
+        `Run \`agentco stop\` and open it again — whatever moved stays moved, the next run picks up from there.`,
     );
     return;
   }
 
   console.log(
-    `Đã chuyển công ty sang bố cục nhiều văn phòng.\n` +
-      `  Mọi thứ cũ giờ nằm trong offices/${DEFAULT_OFFICE}/\n` +
-      `  Không có nội dung file nào bị sửa.`,
+    `Moved the company onto the multi-office layout.\n` +
+      `  Everything that was there now lives under offices/${DEFAULT_OFFICE}/\n` +
+      `  No file had its contents changed.`,
   );
 }
 
@@ -157,9 +159,9 @@ function migrateTasksIntoState(officesDir: string): void {
       if (fs.readdirSync(from).length === 0) fs.rmdirSync(from);
     } catch (err) {
       process.emitWarning(
-        `Chưa dời được tasks/ của văn phòng "${entry.name}" vào .state/: ${
+        `Could not move tasks/ of office "${entry.name}" into .state/: ${
           err instanceof Error ? err.message : String(err)
-        }. Nhật ký công việc vẫn chạy; chạy lại \`agentco start\` sau khi tắt hẳn daemon cũ.`,
+        }. The work log still runs; rerun \`agentco start\` once the old daemon is fully stopped.`,
       );
     }
   }
@@ -214,8 +216,8 @@ export function migrateCharters(officesDir: string): void {
       pointCharterFileAt(path.join(dir, 'office.yaml'));
     } catch (err) {
       process.emitWarning(
-        `Không dời được charter của văn phòng "${entry.name}": ${(err as Error).message}. ` +
-          `Văn phòng vẫn chạy được; chạy lại \`agentco start\` để thử tiếp.`,
+        `Could not move the charter of office "${entry.name}": ${(err as Error).message}. ` +
+          `The office still runs; rerun \`agentco start\` to try again.`,
       );
     }
   }

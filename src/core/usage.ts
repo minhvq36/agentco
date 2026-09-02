@@ -15,6 +15,8 @@ import path from 'node:path';
 
 import type { CompanyPaths } from './paths.js';
 import type { Usage } from './types.js';
+import { t } from '../i18n/index.js';
+import { formatUSD } from '../i18n/fmt.js';
 
 export interface UsageRecord {
   ts: string;
@@ -307,34 +309,51 @@ export function summarize(records: UsageRecord[]): CostReport {
   return report;
 }
 
-export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
-  if (r.tasks === 0) return 'Chưa có việc nào được ghi nhận.';
+/**
+ * ⚠ `padEnd(28)` COUNTS CODE UNITS, and a translated label does not have the
+ * same length as the one it replaces. That is deliberate and harmless here: the
+ * column only has to look straight, and every label in both catalogues is
+ * plain Latin text under 28 columns. Put a label with a combining mark or an
+ * emoji in the left column and this alignment silently goes wrong — that is the
+ * failure mode `scripts/fix-comment-boxes.ts` exists for, in another place.
+ */
+export function formatReport(r: CostReport, title = t('cost.shift')): string {
+  if (r.tasks === 0) return t('cost.nothingYet');
 
   const n = (x: number) => (x >= 1000 ? `${(x / 1000).toFixed(1)}K` : String(x));
   const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
   const lines: string[] = [];
 
-  lines.push(`${title.padEnd(28)} ${r.tasks} việc`);
+  lines.push(`${title.padEnd(28)} ${t('cost.tasks', { n: String(r.tasks) })}`);
   lines.push(
-    `${'Tổng token'.padEnd(28)} vào ${n(r.totals.input)} · đọc-cache ${n(r.totals.cacheRead)} · ` +
-      `ghi-cache ${n(r.totals.cacheWrite)} · ra ${n(r.totals.output)}`,
+    `${t('cost.totalTokens').padEnd(28)} ` +
+      t('cost.tokenBreakdown', {
+        input: n(r.totals.input),
+        cacheRead: n(r.totals.cacheRead),
+        cacheWrite: n(r.totals.cacheWrite),
+        output: n(r.totals.output),
+      }),
   );
-  lines.push(`${'Chi phí'.padEnd(28)} $${r.totals.costUSD.toFixed(4)}`);
+  lines.push(`${t('cost.spend').padEnd(28)} ${formatUSD(r.totals.costUSD)}`);
 
   const ok = r.cacheHitRatio >= 0.7;
   lines.push(
-    `${'Tỉ lệ dùng lại cache'.padEnd(28)} ${pct(r.cacheHitRatio)}  ${ok ? '✓' : '✗ dưới ngưỡng 70% — prefix đang bị phá'}`,
+    `${t('cost.cacheReuse').padEnd(28)} ${pct(r.cacheHitRatio)}  ${ok ? '✓' : `✗ ${t('cost.cacheBelow')}`}`,
   );
-  lines.push(`${'Token/việc (p50 / p95)'.padEnd(28)} ${n(r.p50Tokens)} / ${n(r.p95Tokens)}`);
+  lines.push(`${t('cost.tokensPerTask').padEnd(28)} ${n(r.p50Tokens)} / ${n(r.p95Tokens)}`);
 
   if (r.perRole.length) {
     lines.push('');
-    lines.push(`  ${'vai trò'.padEnd(12)} ${'model'.padEnd(12)} ${'việc'.padStart(5)} ${'lượt/việc'.padStart(10)} ${'token/việc'.padStart(11)} ${'giây/việc'.padStart(10)} ${'$/việc'.padStart(9)}`);
+    lines.push(
+      `  ${t('cost.colRole').padEnd(12)} ${t('cost.colModel').padEnd(12)} ${t('cost.colTasks').padStart(5)} ` +
+        `${t('cost.colTurns').padStart(10)} ${t('cost.colTokens').padStart(11)} ${t('cost.colSeconds').padStart(10)} ` +
+        `${t('cost.colCost').padStart(9)}`,
+    );
     for (const p of r.perRole) {
       lines.push(
         `  ${p.role.padEnd(12)} ${p.model.replace(/claude-|-\d{8}/g, '').padEnd(12)} ${String(p.tasks).padStart(5)} ` +
           `${(p.turns / p.tasks).toFixed(1).padStart(10)} ${n(Math.round(p.tokens / p.tasks)).padStart(11)} ` +
-          `${(p.ms / p.tasks / 1000).toFixed(1).padStart(10)} ${('$' + (p.cost / p.tasks).toFixed(4)).padStart(9)}`,
+          `${(p.ms / p.tasks / 1000).toFixed(1).padStart(10)} ${formatUSD(p.cost / p.tasks).padStart(9)}`,
       );
     }
     lines.push('');
@@ -342,19 +361,17 @@ export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
 
   if (r.mostExpensive) {
     lines.push(
-      `${'Tốn nhất'.padEnd(28)} ${r.mostExpensive.task_id} (${r.mostExpensive.role}) ` +
-        `${n(r.mostExpensive.tokens)} · $${r.mostExpensive.cost.toFixed(4)}`,
+      `${t('cost.priciest').padEnd(28)} ${r.mostExpensive.task_id} (${r.mostExpensive.role}) ` +
+        `${n(r.mostExpensive.tokens)} · ${formatUSD(r.mostExpensive.cost)}`,
     );
   }
   if (r.reaskCount > 0) {
-    lines.push(
-      `${'Phải hỏi lại định dạng'.padEnd(28)} ${r.reaskCount} lần  ⚠ tốn thêm — xem lại prompt của vai trò đó`,
-    );
+    lines.push(`${t('cost.reask').padEnd(28)} ${t('cost.reaskDetail', { n: String(r.reaskCount) })}`);
   }
   for (const s of r.suspiciousCacheWrites) {
     lines.push(
-      `${'⚠ Ghi cache bất thường'.padEnd(28)} vai trò "${s.role}": ${s.writes} lần ghi cho ${s.keys} khoá — ` +
-        `có ai đang sửa role/tri thức giữa ca?`,
+      `${t('cost.oddCacheWrites').padEnd(28)} ` +
+        t('cost.oddCacheDetail', { role: s.role, writes: String(s.writes), keys: String(s.keys) }),
     );
   }
   return lines.join('\n');
@@ -365,11 +382,17 @@ export function formatRunUsage(u: Usage, tasks: number): string {
   const n = (x: number) => (x >= 1000 ? `${(x / 1000).toFixed(1)}K` : String(x));
   const denominator = u.cacheRead + u.input + u.cacheWrite;
   const ratio = denominator > 0 ? u.cacheRead / denominator : 0;
-  return (
-    `Ca này: ${tasks} việc · $${u.costUSD.toFixed(4)} · ` +
-    `vào ${n(u.input)} · đọc-cache ${n(u.cacheRead)} · ghi-cache ${n(u.cacheWrite)} · ra ${n(u.output)} · ` +
-    `dùng lại cache ${(ratio * 100).toFixed(0)}%`
-  );
+  return t('cost.runLine', {
+    tasks: String(tasks),
+    cost: formatUSD(u.costUSD),
+    breakdown: t('cost.tokenBreakdown', {
+      input: n(u.input),
+      cacheRead: n(u.cacheRead),
+      cacheWrite: n(u.cacheWrite),
+      output: n(u.output),
+    }),
+    reuse: `${(ratio * 100).toFixed(0)}%`,
+  });
 }
 
 function percentile(sorted: number[], p: number): number {

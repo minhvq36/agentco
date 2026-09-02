@@ -38,7 +38,7 @@ export class PlanStore {
       return Array.isArray(raw.plans) ? raw.plans : [];
     } catch {
       // Index hỏng không được làm sập văn phòng — nó là dữ liệu phái sinh.
-      process.emitWarning('tasks/index.json không đọc được, lịch sử công việc bắt đầu lại từ trống.');
+      process.emitWarning('tasks/index.json is unreadable; the work log starts again from empty.');
       return [];
     }
   }

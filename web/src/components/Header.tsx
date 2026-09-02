@@ -4,12 +4,19 @@ import { Button } from '@/components/ui/button';
 import { Select, Tip } from '@/components/ui/misc';
 import { actions, useApp } from '@/lib/store';
 import { api } from '@/lib/api';
+import { plural, t, type MessageKey } from '@i18n';
+import { formatDate, formatTime, formatUSD, formatWeekday } from '@i18n/fmt';
 
-const STATE_LABEL: Record<string, string> = {
-  idle: 'rảnh',
-  working: 'đang làm',
-  paused: 'tạm nghỉ',
-  stopped: 'đã tắt',
+/**
+ * ⚠ These tables hold MESSAGE KEYS, not text. They are module-level, so a
+ * resolved string would freeze at import time and the header would keep the
+ * language the page loaded with. Resolved at render, below.
+ */
+const STATE_LABEL: Record<string, MessageKey> = {
+  idle: 'header.state.idle',
+  working: 'header.state.working',
+  paused: 'header.state.paused',
+  stopped: 'header.state.stopped',
 };
 
 const STATE_DOT: Record<string, string> = {
@@ -28,15 +35,21 @@ const STATE_DOT: Record<string, string> = {
  * câu — *"tôi còn chạy được nữa không, và tới khi nào"*. Mọi con số khác là mời
  * họ đi truy nguyên một thứ họ không sửa được.
  */
-const WINDOW_LABEL: Record<string, string> = {
-  session: 'Phiên',
-  weekly: 'Tuần',
+const WINDOW_LABEL: Record<string, MessageKey> = {
+  session: 'header.window.session',
+  weekly: 'header.window.weekly',
 };
 
-const ENERGY_WORD: Record<string, string> = {
-  allowed: 'còn thoải mái',
-  allowed_warning: 'sắp chạm hạn mức',
-  rejected: 'đã chạm hạn mức',
+const ENERGY_WORD: Record<string, MessageKey> = {
+  allowed: 'header.energy.allowed',
+  allowed_warning: 'header.energy.allowed_warning',
+  rejected: 'header.energy.rejected',
+};
+
+/** Key lookup with the raw server value as the fallback — never a blank cell. */
+const say = (table: Record<string, MessageKey>, code: string): string => {
+  const key = table[code];
+  return key ? t(key) : code;
 };
 
 /**
@@ -148,14 +161,15 @@ function EnergyChip() {
     <Tip
       side="bottom"
       label={
-        `Hạn mức tài khoản Claude${energy.plan ? ` (${energy.plan})` : ''} của bạn — dùng chung với ` +
-        `Claude Code và claude.ai, KHÔNG phải chi phí của văn phòng này. ` +
+        (energy.plan ? t('header.energyTipPlan', { plan: energy.plan }) : t('header.energyTip')) +
         energy.windows
           .map(
             (w) =>
-              `${w.kind === 'session' ? 'Phiên' : 'Tuần'}: ` +
-              (w.utilization === null ? (ENERGY_WORD[w.status] ?? w.status) : `đã dùng ${Math.round(w.utilization)}%`) +
-              (w.resetsAt ? `, làm mới ${resetLabel(w.resetsAt, true)}` : ''),
+              `${say(WINDOW_LABEL, w.kind)}: ` +
+              (w.utilization === null
+                ? say(ENERGY_WORD, w.status)
+                : t('header.energyUsed', { pct: Math.round(w.utilization) })) +
+              (w.resetsAt ? t('header.energyResets', { when: resetLabel(w.resetsAt, true) }) : ''),
           )
           .join(' · ')
       }
@@ -188,10 +202,10 @@ function EnergyChip() {
               {/* CĂN TRÁI: hai nhãn dài khác nhau ("Phiên"/"Tuần") căn phải thì
                   mép chữ nhảy, còn căn trái thì hai dòng có cùng một mốc bắt
                   đầu — mắt đọc xuống theo một đường thẳng. */}
-              <span className="w-8 font-medium text-ink">{WINDOW_LABEL[w.kind] ?? w.kind}</span>
+              <span className="w-8 font-medium text-ink">{say(WINDOW_LABEL, w.kind)}</span>
               {w.utilization === null ? (
                 /* Chưa có % thì nói chữ. Một thanh 0% là nói dối về thứ chưa biết. */
-                <span className="w-[136px] text-muted">{ENERGY_WORD[w.status] ?? w.status}</span>
+                <span className="w-[136px] text-muted">{say(ENERGY_WORD, w.status)}</span>
               ) : (
                 <>
                   {/* Máng: dài (112px) và MỎNG (4px). Dài thì 3% và 8% phân biệt
@@ -232,14 +246,14 @@ function resetLabel(iso: string, long = false): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const now = new Date();
-  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const hm = formatTime(d);
   const sameDay =
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
-  const short = sameDay ? hm : `${d.toLocaleDateString('vi-VN', { weekday: 'short' })} ${hm}`;
+  const short = sameDay ? hm : `${formatWeekday(d)} ${hm}`;
   // Tooltip có chỗ nên nói đủ ngày; trên header thì "T4 10:59" là vừa.
-  return long && !sameDay ? `${d.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })} ${hm}` : short;
+  return long && !sameDay ? `${formatWeekday(d)} ${formatDate(d)} ${hm}` : short;
 }
 
 export function Header({
@@ -260,7 +274,7 @@ export function Header({
 
       {company && company.offices.length > 0 && (
         <Select
-          aria-label="Văn phòng"
+          aria-label={t('header.office')}
           value={officeId ?? ''}
           onChange={(e) => void actions.openOffice(e.target.value)}
           className="max-w-56"
@@ -274,7 +288,7 @@ export function Header({
             .map((o) => (
               <option key={o.id} value={o.id}>
                 {o.avatar} {o.name}
-                {o.archived ? ' (lưu trữ)' : ''}
+                {o.archived ? t('header.archivedSuffix') : ''}
                 {o.error ? ' ⚠' : ''}
               </option>
             ))}
@@ -282,8 +296,8 @@ export function Header({
       )}
 
       {officeId && (
-        <Tip label="Đổi tên văn phòng đang mở">
-          <Button size="iconSm" variant="ghost" aria-label="Đổi tên văn phòng" onClick={onRenameOffice}>
+        <Tip label={t('header.renameTip')}>
+          <Button size="iconSm" variant="ghost" aria-label={t('header.rename')} onClick={onRenameOffice}>
             <Pencil className="h-3.5 w-3.5" />
           </Button>
         </Tip>
@@ -292,7 +306,7 @@ export function Header({
       {officeId && (
         <span className="flex items-center gap-2 text-[13px] text-muted">
           <span className={`h-[7px] w-[7px] rounded-full ${STATE_DOT[officeState] ?? 'bg-muted'}`} />
-          {STATE_LABEL[officeState] ?? officeState}
+          {say(STATE_LABEL, officeState)}
         </span>
       )}
 
@@ -302,18 +316,19 @@ export function Header({
 
       {cost && (
         <span className="text-[13px] tabular-nums text-muted">
-          {cost.tasks} việc · {cost.turns} lượt · ${cost.costUSD.toFixed(4)}
+          {plural('header.taskCount', cost.tasks)} · {plural('header.turnCount', cost.turns)} ·{' '}
+          {formatUSD(cost.costUSD)}
         </span>
       )}
 
-      <Tip label="Tạo văn phòng mới">
+      <Tip label={t('header.newOfficeTip')}>
         <Button size="sm" onClick={onNewOffice}>
           <Plus className="h-4 w-4" />
-          Văn phòng
+          {t('header.newOffice')}
         </Button>
       </Tip>
 
-      <Tip label="Dừng việc đang chạy. Daemon vẫn sống.">
+      <Tip label={t('header.stopTip')}>
         <Button
           size="sm"
           variant="danger"
@@ -321,7 +336,7 @@ export function Header({
           onClick={() => void actions.stop()}
         >
           <Square className="h-3.5 w-3.5" />
-          Dừng
+          {t('header.stop')}
         </Button>
       </Tip>
 
@@ -329,11 +344,9 @@ export function Header({
         <Button
           size="icon"
           variant="ghost"
-          aria-label="Tắt hẳn"
+          aria-label={t('header.shutdown')}
           onClick={() => {
-            const ok = window.confirm(
-              'Tắt hẳn?\n\nCông ty sẽ ngừng lại.',
-            );
+            const ok = window.confirm(t('header.shutdownConfirm'));
             if (ok) void api.shutdown().catch(() => undefined);
           }}
         >

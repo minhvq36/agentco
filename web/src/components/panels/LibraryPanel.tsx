@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, FolderOpen, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,8 @@ import { CopyRef, Empty } from '@/components/ui/misc';
 import { api, ApiError } from '@/lib/api';
 import { actions, toast, useApp } from '@/lib/store';
 import type { DocState, LibraryDoc } from '@/lib/types';
+import { plural, t } from '@i18n';
+import { formatBytes } from '@i18n/fmt';
 
 /**
  * Tủ tài liệu — file NGƯỜI DÙNG đưa vào. → docs/SPEC-library.md
@@ -51,7 +53,7 @@ export function LibraryPanel() {
       .library(officeId)
       .then((r) => setDocs(r.docs))
       .catch((err) => {
-        toast(err instanceof Error ? err.message : 'Không đọc được tủ tài liệu.');
+        toast(err instanceof Error ? err.message : t('library.loadFailed'));
         setDocs([]);
       });
   }, [officeId]);
@@ -79,7 +81,7 @@ export function LibraryPanel() {
           // 409 = trùng tên. Đây là câu HỎI LẠI, không phải lỗi — gom lại rồi
           // hỏi một lần cho cả lô, thay vì bắn năm hộp thoại liên tiếp.
           if (err instanceof ApiError && err.status === 409) clash.push(file);
-          else toast(`${file.name}: ${err instanceof Error ? err.message : 'không tải lên được.'}`);
+          else toast(`${file.name}: ${err instanceof Error ? err.message : t('library.uploadFailed')}`);
         }
       }
     } finally {
@@ -94,7 +96,7 @@ export function LibraryPanel() {
       const r = await api.removeDoc(officeId, doc.name);
       setDocs(r.docs);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không xoá được.');
+      toast(err instanceof Error ? err.message : t('library.deleteFailed'));
     } finally {
       setConfirmDel(null);
     }
@@ -115,13 +117,13 @@ export function LibraryPanel() {
       const r = await api.libraryReextract(officeId, doc.name);
       setDocs(r.docs);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Chưa bóc lại được tài liệu này.');
+      toast(err instanceof Error ? err.message : t('library.reextractFailed'));
     } finally {
       setBusy(false);
     }
   }
 
-  if (docs === null) return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
+  if (docs === null) return <div className="px-4 py-6 text-[13px] text-muted">{t('common.reading')}</div>;
 
   return (
     <div
@@ -150,10 +152,11 @@ export function LibraryPanel() {
         />
         <Button variant="primary" className="w-full" disabled={busy} onClick={() => fileInput.current?.click()}>
           <Upload className="h-4 w-4" />
-          {busy ? 'Đang tải lên…' : 'Thêm tài liệu'}
+          {busy ? t('library.uploading') : t('library.add')}
         </Button>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Kéo thả file vào đây. Hỗ trợ mạnh <b>pdf · md · txt · csv · json · yaml</b>. Có hỗ trợ <b>docx · xlsx · pptx</b> nhưng cân nhắc bị giảm hiệu suất.
+          {t('library.dropHint1')} <b>pdf · md · txt · csv · json · yaml</b>
+          {t('library.dropHint2')} <b>docx · xlsx · pptx</b> {t('library.dropHint3')}
         </p>
         {/*
           Bóc văn bản chạy ngầm. Câu này đứng ở ĐẦU TỦ chứ không ở ô chat: việc
@@ -163,7 +166,7 @@ export function LibraryPanel() {
         */}
         {libraryBusy > 0 && (
           <p className="mt-2 rounded bg-accent-soft px-2 py-1.5 text-xs leading-relaxed text-accent">
-            Đang đọc nội dung {libraryBusy} tài liệu… Nhân viên tìm được bằng từ khoá ngay khi xong.
+            {plural('library.extracting', libraryBusy)}
           </p>
         )}
       </div>
@@ -171,8 +174,8 @@ export function LibraryPanel() {
       {docs.length === 0 ? (
         <Empty
           icon={<FolderOpen className="h-7 w-7" />}
-          title="Tủ tài liệu còn trống"
-          hint="Thả vào đây tài liệu bạn muốn nhân viên đọc: hợp đồng, chính sách, bảng kê, CV. Nội dung được bóc ra một lần lúc thả vào và không tốn thêm chi phí."
+          title={t('library.emptyTitle')}
+          hint={t('library.emptyHint')}
         />
       ) : (
         <ul className="min-h-0 flex-1 overflow-y-auto">
@@ -194,7 +197,9 @@ export function LibraryPanel() {
                         {/* Con số này là để NGƯỜI DÙNG biết tài liệu dài cỡ nào,
                             không bao giờ đi vào prompt của model. Kế toán token
                             là việc của người đứng ngoài đếm. */}
-                        <span className="tabular-nums">~{formatTokens(d.tokens)} token</span>
+                        <span className="tabular-nums">
+                          {t('library.tokensApprox', { n: formatTokens(d.tokens) })}
+                        </span>
                       </>
                     ) : null}
                   </div>
@@ -216,8 +221,8 @@ export function LibraryPanel() {
                       className="rounded p-1.5 text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink disabled:opacity-40"
                       disabled={busy}
                       onClick={() => void reextract(d)}
-                      aria-label={`Bóc lại ${d.name}`}
-                      title="Bóc lại — thử đọc lại tài liệu này"
+                      aria-label={t('library.reextract', { name: d.name })}
+                      title={t('library.reextractTip')}
                     >
                       <RefreshCw className="h-4 w-4" />
                     </button>
@@ -226,14 +231,14 @@ export function LibraryPanel() {
                     href={officeId ? api.docUrl(officeId, d.name) : '#'}
                     download={d.name}
                     className="rounded p-1.5 text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink"
-                    aria-label={`Tải ${d.name}`}
+                    aria-label={t('library.download', { name: d.name })}
                   >
                     <Download className="h-4 w-4" />
                   </a>
                   <button
                     className="rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
                     onClick={() => setConfirmDel(d)}
-                    aria-label={`Xoá ${d.name}`}
+                    aria-label={t('library.delete', { name: d.name })}
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -271,7 +276,8 @@ export function LibraryPanel() {
       */}
       {docs.length > 0 && (
         <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
-          Đây là tài liệu <b>bạn đưa vào</b>. Nội dung được bóc ra một lần lúc thả vào.
+          {t('library.footerBefore')} <b>{t('library.footerBold')}</b>
+          {t('library.footerAfter')}
         </div>
       )}
 
@@ -280,25 +286,23 @@ export function LibraryPanel() {
           Enter = Xoá — xem chú thích ở `ConfirmDelete`. */}
       <ConfirmDelete
         open={!!confirmDel}
-        title="Xoá tài liệu?"
+        title={t('library.confirmDeleteTitle')}
         onCancel={() => setConfirmDel(null)}
         onConfirm={() => confirmDel && void remove(confirmDel)}
       >
-        <b>{confirmDel?.name}</b> sẽ bị xoá khỏi tủ. Bản gốc trên máy bạn
-        không bị ảnh hưởng.
+        <b>{confirmDel?.name}</b> {t('library.confirmDeleteBody')}
       </ConfirmDelete>
 
       <Dialog open={!!askReplace} onOpenChange={(o) => !o && setAskReplace(null)}>
         <DialogContent className="w-[min(30rem,94vw)]">
           <DialogHeader>
-            <DialogTitle>Đã có tài liệu trùng tên</DialogTitle>
+            <DialogTitle>{t('library.clashTitle')}</DialogTitle>
             <DialogDescription>
-              Trong tủ đã có: {askReplace?.map((f) => f.name).join(', ')}. Thay thế sẽ ghi đè bản cũ và
-              đọc lại nội dung từ đầu.
+              {t('library.clashBody', { names: askReplace?.map((f) => f.name).join(', ') ?? '' })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setAskReplace(null)}>Giữ bản cũ</Button>
+            <Button onClick={() => setAskReplace(null)}>{t('library.keepOld')}</Button>
             <Button
               variant="primary"
               onClick={() => {
@@ -307,7 +311,7 @@ export function LibraryPanel() {
                 void upload(files, true);
               }}
             >
-              Thay thế
+              {t('library.replace')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -320,23 +324,23 @@ export function LibraryPanel() {
 function StateChip({ state }: { state: DocState }) {
   if (state === 'ready') return null;
   const map: Record<Exclude<DocState, 'ready'>, { text: string; cls: string }> = {
-    pending: { text: 'đang chờ', cls: 'bg-line/70 text-ink' },
-    extracting: { text: 'đang đọc…', cls: 'bg-accent-soft text-accent' },
-    'image-only': { text: 'bản chụp', cls: 'bg-warn-soft text-warn' },
-    unindexed: { text: 'chưa lập chỉ mục', cls: 'bg-warn-soft text-warn' },
-    failed: { text: 'lỗi', cls: 'bg-danger-soft text-danger' },
+    pending: { text: t('library.state.pending'), cls: 'bg-line/70 text-ink' },
+    extracting: { text: t('library.state.extracting'), cls: 'bg-accent-soft text-accent' },
+    'image-only': { text: t('library.state.imageOnly'), cls: 'bg-warn-soft text-warn' },
+    unindexed: { text: t('library.state.unindexed'), cls: 'bg-warn-soft text-warn' },
+    failed: { text: t('library.state.failed'), cls: 'bg-danger-soft text-danger' },
   };
   const s = map[state];
   return <span className={`rounded px-1.5 font-medium ${s.cls}`}>{s.text}</span>;
 }
 
-/** PHẢI khớp `formatBytes` ở `src/library/names.ts` — hai chỗ hiện cùng một con số. */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
+/**
+ * Rounded to `12K` past a thousand, and NOT localised.
+ *
+ * This is a rough scale for a human — "is this document long?" — not an amount
+ * anyone adds up, so digit grouping would only make it look more precise than
+ * it is. Exact counts go through `formatNumber`.
+ */
 function formatTokens(n: number): string {
   return n < 1000 ? String(n) : `${Math.round(n / 1000)}K`;
 }

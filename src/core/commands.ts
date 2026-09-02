@@ -22,20 +22,30 @@
  * `office.say()`.
  */
 
+import { plural, t, type MessageKey } from '../i18n/index.js';
+
 export type CommandName = 'stop' | 'approve' | 'reject' | 'status' | 'help' | 'clear' | 'resume';
 
 export interface CommandSpec {
   name: CommandName;
   /** Dạng gõ được, kể cả viết tắt. Tất cả đều tiếng Anh. */
   aliases: readonly string[];
-  help: string;
+  /**
+   * A CATALOGUE KEY, not a sentence.
+   *
+   * `COMMANDS` is a module-level constant, so a resolved string here would be
+   * frozen at import to whichever language the process started in and would
+   * never follow the switch afterwards. Holding the key defers the lookup to
+   * `helpText()`, which runs per request. → docs/CLAUDE.md §Language
+   */
+  help: MessageKey;
 }
 
 export const COMMANDS: readonly CommandSpec[] = [
-  { name: 'stop', aliases: ['stop', 'cancel', 's'], help: 'Ngắt việc đang chạy' },
-  { name: 'approve', aliases: ['approve', 'ok', 'y'], help: 'Duyệt thứ đang chờ bạn' },
-  { name: 'reject', aliases: ['reject', 'no', 'n'], help: 'Từ chối thứ đang chờ bạn' },
-  { name: 'status', aliases: ['status', 'st'], help: 'Đang chạy gì, đã tốn bao nhiêu' },
+  { name: 'stop', aliases: ['stop', 'cancel', 's'], help: 'cmd.stop' },
+  { name: 'approve', aliases: ['approve', 'ok', 'y'], help: 'cmd.approve' },
+  { name: 'reject', aliases: ['reject', 'no', 'n'], help: 'cmd.reject' },
+  { name: 'status', aliases: ['status', 'st'], help: 'cmd.status' },
   /**
    * Chạy tiếp ca bị NGẮT — không lập kế hoạch lại, không tốn một lượt model.
    *
@@ -44,7 +54,7 @@ export const COMMANDS: readonly CommandSpec[] = [
    * hành động TƯỜNG MINH của người dùng: tự chạy tiếp lúc bật daemon nghĩa là
    * một lần crash âm thầm tiêu tiền của họ. → SPEC-offices.md §6b
    */
-  { name: 'resume', aliases: ['resume', 'tiep'], help: 'Chạy tiếp việc còn dở của ca vừa bị ngắt' },
+  { name: 'resume', aliases: ['resume', 'tiep'], help: 'cmd.resume' },
   /**
    * Cùng TÊN với `/clear` của Claude Code là có chủ ý: người dùng đã quen phản
    * xạ đó, và ý nghĩa ở đây khớp. Nhưng nó KHÔNG bao giờ đi tới CLI — danh sách
@@ -53,8 +63,8 @@ export const COMMANDS: readonly CommandSpec[] = [
    * Khác một điểm quan trọng so với `/clear` của Claude Code: ta NÉN TRƯỚC KHI
    * QUÊN. Bản nén đi vào sổ tay riêng của Trợ lý, đọc lại được ở ngăn Tri thức.
    */
-  { name: 'clear', aliases: ['clear'], help: 'Dọn cuộc trò chuyện, cất những gì đã chốt vào sổ tay' },
-  { name: 'help', aliases: ['help', 'h', '?'], help: 'Xem danh sách lệnh này' },
+  { name: 'clear', aliases: ['clear'], help: 'cmd.clear' },
+  { name: 'help', aliases: ['help', 'h', '?'], help: 'cmd.help' },
 ];
 
 export type ParsedInput =
@@ -91,7 +101,7 @@ export function parseInput(raw: string): ParsedInput {
 }
 
 /**
- * Câu trả lời cho `/help` và cho lệnh không nhận ra. Tiếng Việt, 0 token.
+ * Câu trả lời cho `/help` và cho lệnh không nhận ra. 0 token — dựng bằng code.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ VÌ SAO XUỐNG DÒNG THAY VÌ CĂN CỘT                                        │
@@ -116,15 +126,15 @@ export function helpText(unknown?: string): string {
     // Viết tắt là thứ người dùng chỉ cần biết MỘT lần, nên nó đi cùng dòng tên
     // lệnh chứ không chiếm dòng riêng.
     const short = c.aliases.slice(1).filter((a) => a.length <= 2);
-    const alias = short.length ? `   (hoặc ${short.map((a) => `/${a}`).join(', ')})` : '';
-    return `/${c.aliases[0]}${alias}\n    ${c.help}`;
+    const alias = short.length
+      ? `   ${t('cmd.orAlias', { list: short.map((a) => `/${a}`).join(', ') })}`
+      : '';
+    return `/${c.aliases[0]}${alias}\n    ${t(c.help)}`;
   });
 
-  const head = unknown
-    ? `Không có lệnh "/${unknown}". Các lệnh dùng được:`
-    : 'Các lệnh dùng được:';
+  const head = unknown ? t('cmd.noSuch', { typed: unknown }) : t('cmd.available');
 
-  return `${head}\n\n${blocks.join('\n\n')}\n\nMuốn nhắn một câu bắt đầu bằng dấu "/" thì gõ hai dấu: //`;
+  return `${head}\n\n${blocks.join('\n\n')}\n\n${t('cmd.escapeHint')}`;
 }
 
 /**
@@ -310,18 +320,17 @@ export function resolveFileRefs(
     if (clash) {
       return {
         text,
-        problem:
-          `Có ${clash.length} file tên "${raw}", mình không đoán bạn muốn cái nào:\n` +
-          clash.map((k) => `  ${k.ref}`).join('\n') +
-          `\nDán lại đường dẫn đầy đủ nhé — nút Chép ở ngăn Tủ tài liệu và Kết quả cho đúng chuỗi đó.`,
+        problem: t('cmd.refClash', {
+          n: String(clash.length),
+          name: raw,
+          list: clash.map((k) => `  ${k.ref}`).join('\n'),
+        }),
       };
     }
     if (!hit) {
       return {
         text,
-        problem:
-          `Mình không tìm thấy "${raw}" trong tủ tài liệu hay ngăn Kết quả. ` +
-          `Kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn.`,
+        problem: t('cmd.refMissing', { name: raw }),
       };
     }
 
@@ -408,9 +417,11 @@ export function readingNote(paths: readonly string[]): string {
   // Không có file nào = câu hỏi tra cứu chung (24/08). Dòng trạng thái phải nói
   // ĐÚNG việc đang chạy: "Đang đọc …" cho một lượt tra web là nói dối về một
   // chuyện quan sát được, và người dùng sẽ đi tìm cái file không tồn tại đó.
-  if (paths.length === 0) return 'Đang tra trên web…';
+  if (paths.length === 0) return t('cmd.lookingUpWeb');
   const names = paths.map((p) => p.split('/').pop() ?? p);
   const head = names.slice(0, 2).join(', ');
   const rest = names.length - 2;
-  return `Đang đọc ${head}${rest > 0 ? ` và ${rest} file nữa` : ''}…`;
+  return rest > 0
+    ? plural('cmd.readingMore', rest, { names: head })
+    : t('cmd.reading', { names: head });
 }

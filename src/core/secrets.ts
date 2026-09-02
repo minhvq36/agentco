@@ -94,7 +94,7 @@ function readRaw(paths: CompanyPaths): Record<string, unknown> {
     return raw as Record<string, unknown>;
   } catch {
     // Bí mật hỏng KHÔNG được làm sập công ty — agent nào cần sẽ tự báo thiếu chìa.
-    process.emitWarning('.state/secrets.json không đọc được. Agent cần chìa sẽ báo thiếu.');
+    process.emitWarning('.state/secrets.json is unreadable; any agent that needs a key will report it missing');
     return {};
   }
 }
@@ -528,7 +528,7 @@ export function injectSecrets<T>(
      */
     const gone = new Set<string>();
     const filled = fillRefs(withArgs as Record<string, unknown>, keys, gone);
-    warnMissing(gone, 'tiến trình sẽ chạy với ô trống chưa được điền.');
+    warnMissing(gone, 'the process will run with an unfilled placeholder.');
     return { ...filled, env: { ...((filled['env'] as object) ?? {}), ...keys } } as T;
   }
 
@@ -554,14 +554,14 @@ export function injectSecrets<T>(
   if (cfg['type'] === 'cli') {
     const gone = new Set<string>();
     const filled = fillRefs(cfg, keys, gone);
-    warnMissing(gone, 'lệnh sẽ chạy với ô trống chưa được điền.');
+    warnMissing(gone, 'the command will run with an unfilled placeholder.');
     return filled as T;
   }
 
   if (typeof cfg['url'] === 'string') {
     const missing = new Set<string>();
     const filled = fillRefs(cfg, keys, missing);
-    warnMissing(missing, 'server sẽ trả 401.');
+    warnMissing(missing, 'the server will answer 401.');
     const headers = filled['headers'];
     if (!headers || typeof headers !== 'object') return filled as T;
     /**
@@ -589,8 +589,9 @@ export function injectSecrets<T>(
 function warnMissing(names: Set<string>, consequence: string): void {
   if (!names.size) return;
   process.emitWarning(
-    `Cánh tay thiếu chìa ${[...names].join(', ')} — ${consequence} ` +
-      `Tên dạng \`*_OAUTH_xxxxxxxx\` là tài khoản đăng nhập (nối lại ở hộp thoại Kết nối); ` +
-      `tên khác thì thêm bằng \`agentco secret set <TÊN>\`. Đừng đi tìm ở phía server.`,
+    `connection is missing key(s) ${[...names].join(', ')} — ${consequence} ` +
+      `A name shaped \`*_OAUTH_xxxxxxxx\` is a sign-in account (reconnect it in the Connections ` +
+      `dialog); any other name is added with \`agentco secret set <NAME>\`. Do not go looking ` +
+      `on the server side.`,
   );
 }

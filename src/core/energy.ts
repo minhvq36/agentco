@@ -229,7 +229,7 @@ async function run(): Promise<void> {
   try {
     const res = await Promise.race([
       q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('quá hạn')), TIMEOUT_MS)),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out')), TIMEOUT_MS)),
     ]);
     apply(res as Record<string, unknown>);
   } catch {

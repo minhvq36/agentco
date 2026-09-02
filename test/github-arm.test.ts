@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { CATALOG, armHash, buildConfig, catalogForUi, findArm, needsOAuth } from '../dist/core/catalog.js';
+import { t } from '../dist/i18n/index.js';
 
 const gh = findArm('github')!;
 const cfg = (input: Parameters<typeof buildConfig>[1]): { headers?: Record<string, string> } =>
@@ -81,7 +82,7 @@ test('🔴 THẺ PHẢI NÓI RA điều kiện — "repo riêng tư" mà không 
    * 404 chứ không phải 403 (để không lộ repo có tồn tại). Thẻ im lặng ⇒ người
    * dùng đi kiểm chìa thay vì đi cài app. §5h·7l ③ bắt buộc thẻ phải nói.
    */
-  assert.match(gh.blurb, /cài agentco vào/i);
+  assert.match(t(gh.blurb), /cài agentco vào/i);
 });
 
 test('⭐ CÓ CỬA đi tới màn hình đồng ý của GitHub — không có nó thì cánh tay "chạy" mà 404 hết', () => {

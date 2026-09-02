@@ -8,17 +8,28 @@ import { agentHue, agentInk, agentWash } from '@/lib/colors';
 import { Markdown } from '@/lib/markdown';
 import { labelFor, toast, useApp } from '@/lib/store';
 import type { AgentEvent, PlanRecord, PlanStatus } from '@/lib/types';
+import { plural, t, type MessageKey } from '@i18n';
+import { formatTime, formatTimeOfDay, formatUSD } from '@i18n/fmt';
 
-const STATUS: Record<PlanStatus, { label: string; cls: string }> = {
-  planning: { label: 'đang lập kế hoạch', cls: 'text-accent' },
-  running: { label: 'đang chạy', cls: 'text-accent' },
-  done: { label: 'xong', cls: 'text-ok' },
-  failed: { label: 'hỏng', cls: 'text-danger' },
-  // `warn` chứ không phải `danger`: chưa có gì hỏng, hệ thống đang chờ NGƯỜI
-  // DÙNG. Tô đỏ một ca chỉ vì Trợ lý hỏi lại là dạy người dùng sợ câu hỏi.
-  blocked: { label: 'bạn trả lời', cls: 'text-warn' },
-  paused: { label: 'tạm nghỉ', cls: 'text-warn' },
-  stopped: { label: 'đã dừng', cls: 'text-muted' },
+/**
+ * Colour is fixed per status; the WORD is looked up per render.
+ *
+ * A module-level `label` would freeze whichever language the page loaded with,
+ * so the table holds the KEY and the call site resolves it. Same reason
+ * `cli-form.ts §hello` became a function.
+ *
+ * `warn` and not `danger` for `blocked`: nothing is broken, the system is
+ * waiting on the person. Painting a question red teaches them to dread being
+ * asked one.
+ */
+const STATUS: Record<PlanStatus, { key: MessageKey; cls: string }> = {
+  planning: { key: 'plans.status.planning', cls: 'text-accent' },
+  running: { key: 'plans.status.running', cls: 'text-accent' },
+  done: { key: 'plans.status.done', cls: 'text-ok' },
+  failed: { key: 'plans.status.failed', cls: 'text-danger' },
+  blocked: { key: 'plans.status.blocked', cls: 'text-warn' },
+  paused: { key: 'plans.status.paused', cls: 'text-warn' },
+  stopped: { key: 'plans.status.stopped', cls: 'text-muted' },
 };
 
 /**
@@ -75,7 +86,7 @@ export function PlansPanel() {
       const res = await api.plans(officeId);
       setPlans(res.plans);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không đọc được lịch sử công việc.');
+      toast(err instanceof Error ? err.message : t('plans.loadFailed'));
       setPlans([]);
     }
   }, [officeId]);
@@ -90,7 +101,7 @@ export function PlansPanel() {
       try {
         setOpen(await api.plan(officeId, planId));
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Không mở được công việc này.');
+        toast(err instanceof Error ? err.message : t('plans.openFailed'));
       }
     },
     [officeId],
@@ -101,15 +112,15 @@ export function PlansPanel() {
   }
 
   if (plans === null) {
-    return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
+    return <div className="px-4 py-6 text-[13px] text-muted">{t('common.reading')}</div>;
   }
 
   if (plans.length === 0) {
     return (
       <Empty
         icon={<ScrollText className="h-7 w-7" />}
-        title="Chưa có công việc nào"
-        hint="Mỗi việc bạn giao sinh ra một bản ghi riêng, có kế hoạch và nhật ký của chính nó."
+        title={t('plans.emptyTitle')}
+        hint={t('plans.emptyHint')}
       />
     );
   }
@@ -136,11 +147,11 @@ export function PlansPanel() {
       {hidden > 0 && (
         <div className="flex flex-none items-center gap-2 border-b border-line px-4 py-2 text-xs text-muted">
           <span className="tabular-nums">
-            {plans.length} việc · {hidden} chưa xong
+            {plural('plans.jobCount', plans.length)} · {t('plans.unfinished', { n: hidden })}
           </span>
           <span className="flex-1" />
           <Button size="sm" variant="ghost" onClick={toggle}>
-            {onlyDone ? 'Hiện tất cả' : 'Chỉ việc xong'}
+            {onlyDone ? t('plans.showAll') : t('plans.onlyDone')}
           </Button>
         </div>
       )}
@@ -151,9 +162,10 @@ export function PlansPanel() {
       */}
       {shown.length === 0 ? (
         <div className="px-4 py-6 text-[13px] text-muted">
-          Chưa có việc nào xong. {plans.length} việc còn lại đang bị bộ lọc ẩn đi —{' '}
+          {t('plans.noneDoneBefore')} {plural('plans.jobCount', plans.length)}{' '}
+          {t('plans.noneDoneAfter')}{' '}
           <button className="text-accent underline underline-offset-2" onClick={toggle}>
-            hiện tất cả
+            {t('plans.showAllInline')}
           </button>
           .
         </div>
@@ -169,20 +181,15 @@ export function PlansPanel() {
                 >
                   <div className="line-clamp-2 text-[13.5px] text-ink">{p.request}</div>
                   <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-                    <span className={st.cls}>{st.label}</span>
+                    <span className={st.cls}>{t(st.key)}</span>
                     <span>·</span>
                     <span className="tabular-nums">
-                      {p.tasks_done}/{p.tasks_total} việc
+                      {p.tasks_done}/{plural('plans.jobCount', p.tasks_total)}
                     </span>
                     <span>·</span>
-                    <span className="tabular-nums">${p.costUSD.toFixed(4)}</span>
+                    <span className="tabular-nums">{formatUSD(p.costUSD)}</span>
                     <span className="flex-1" />
-                    <span>
-                      {new Date(p.started_at).toLocaleTimeString('vi-VN', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
+                    <span>{formatTime(new Date(p.started_at))}</span>
                   </div>
                 </button>
               </li>
@@ -211,7 +218,7 @@ function PlanDetail({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-none items-start gap-2 border-b border-line px-3 py-3">
-        <Button size="iconSm" variant="ghost" onClick={onBack} aria-label="Quay lại danh sách">
+        <Button size="iconSm" variant="ghost" onClick={onBack} aria-label={t('plans.back')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="min-w-0 flex-1">
@@ -238,16 +245,16 @@ function PlanDetail({
             {plan.request}
           </button>
           <div className="mt-1 flex items-center gap-2 text-xs text-muted">
-            <span className={st.cls}>{st.label}</span>
+            <span className={st.cls}>{t(st.key)}</span>
             <span>·</span>
             <span className="tabular-nums">
-              {plan.turns} lượt · ${plan.costUSD.toFixed(4)}
+              {plural('plans.turnCount', plan.turns)} · {formatUSD(plan.costUSD)}
             </span>
           </div>
         </div>
         {live && (
           <Button size="sm" variant="ghost" onClick={onReload}>
-            Tải lại
+            {t('plans.reload')}
           </Button>
         )}
       </div>
@@ -275,7 +282,7 @@ function PlanDetail({
       */}
       <div className="min-h-[8rem] flex-1 overflow-y-auto px-3 py-2">
         {log.length === 0 ? (
-          <div className="px-1 py-4 text-[13px] text-muted">Việc này chưa ghi được sự kiện nào.</div>
+          <div className="px-1 py-4 text-[13px] text-muted">{t('plans.noEvents')}</div>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {collapse(log).map((row, i) => (
@@ -331,13 +338,13 @@ function Report({ text }: { text: string }) {
   return (
     <div className="flex max-h-[40%] flex-none flex-col border-t border-line">
       <div className="flex flex-none items-center gap-2 px-4 pt-2.5">
-        <span className="text-xs font-medium text-muted">Kết quả</span>
+        <span className="text-xs font-medium text-muted">{t('plans.report')}</span>
         <span className="flex-1" />
         <button
           className="rounded px-1.5 py-0.5 text-xs text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink"
           onClick={() => setOpen((v) => !v)}
         >
-          {open ? 'Thu gọn' : 'Xem đầy đủ'}
+          {open ? t('plans.collapse') : t('plans.expand')}
         </button>
       </div>
       {/*
@@ -421,20 +428,21 @@ function TokenPanel({ log }: { log: AgentEvent[] }) {
   return (
     <details className="flex-none border-b border-line px-4 py-2">
       <summary className="cursor-pointer list-none text-xs text-muted marker:hidden">
-        Token: <span className="tabular-nums text-ink">{kilo(total.read)}</span> đọc lại ·{' '}
-        <span className="tabular-nums text-ink">{kilo(total.write)}</span> ghi cache ·{' '}
-        <span className="tabular-nums text-ink">{total.turns}</span> lượt
-        {noisy.length > 0 && <span className="ml-1.5 text-danger">⚠ ghi cache lặp</span>}
-        <span className="float-right">chi tiết</span>
+        {t('plans.tokenLabel')} <span className="tabular-nums text-ink">{kilo(total.read)}</span>{' '}
+        {t('plans.cacheRead')} · <span className="tabular-nums text-ink">{kilo(total.write)}</span>{' '}
+        {t('plans.cacheWrite')} · <span className="tabular-nums text-ink">{total.turns}</span>{' '}
+        {t('plans.turns')}
+        {noisy.length > 0 && <span className="ml-1.5 text-danger">{t('plans.cacheChurnBadge')}</span>}
+        <span className="float-right">{t('plans.details')}</span>
       </summary>
 
       <table className="mt-2 w-full text-[12px]">
         <thead>
           <tr className="text-muted">
-            <th className="pb-1 text-left font-normal">việc</th>
-            <th className="pb-1 text-right font-normal">đọc lại</th>
-            <th className="pb-1 text-right font-normal">ghi cache</th>
-            <th className="pb-1 text-right font-normal">lượt</th>
+            <th className="pb-1 text-left font-normal">{t('plans.colJob')}</th>
+            <th className="pb-1 text-right font-normal">{t('plans.cacheRead')}</th>
+            <th className="pb-1 text-right font-normal">{t('plans.cacheWrite')}</th>
+            <th className="pb-1 text-right font-normal">{t('plans.turns')}</th>
             <th className="pb-1 text-right font-normal">$</th>
           </tr>
         </thead>
@@ -446,7 +454,7 @@ function TokenPanel({ log }: { log: AgentEvent[] }) {
               <td className="py-1 pl-2 text-right tabular-nums text-ink">{kilo(e.usage.cacheWrite)}</td>
               <td className="py-1 pl-2 text-right tabular-nums text-muted">{e.usage.turns}</td>
               <td className="py-1 pl-2 text-right tabular-nums text-muted">
-                ${e.usage.costUSD.toFixed(4)}
+                {formatUSD(e.usage.costUSD)}
               </td>
             </tr>
           ))}
@@ -455,13 +463,11 @@ function TokenPanel({ log }: { log: AgentEvent[] }) {
 
       {noisy.length > 0 ? (
         <p className="mt-2 text-xs leading-relaxed text-danger">
-          ⚠ {noisy.map(([r]) => labelFor(r)).join(', ')} ghi cache nhiều lần trong một ca. Có thứ gì
-          đang phá prefix giữa chừng — sửa skills, đổi model, hoặc bump version lúc đang chạy.
+          {t('plans.churnWarn', { roles: noisy.map(([r]) => labelFor(r)).join(', ') })}
         </p>
       ) : (
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Task đầu của mỗi vai trò <b>ghi cache</b> lớn, các task sau nhỏ — đó là cache priming gate
-          chạy đúng. Cả loạt đều lớn nghĩa là gate hỏng.
+          {t('plans.churnOkBefore')} <b>{t('plans.churnOkBold')}</b> {t('plans.churnOkAfter')}
         </p>
       )}
     </details>
@@ -506,7 +512,7 @@ function LogLine({ event, times = 1 }: { event: AgentEvent; times?: number }) {
   // màu, vì mắt đã quen nối màu với người.
   const who = 'role' in event ? (event as { role: string }).role : 'assistant';
   const hue = agentHue(who);
-  const time = event.ts ? new Date(event.ts).toLocaleTimeString('vi-VN', { hour12: false }) : '';
+  const time = event.ts ? formatTimeOfDay(new Date(event.ts)) : '';
   const text = describe(event);
   if (!text) return null;
 
@@ -532,7 +538,7 @@ function LogLine({ event, times = 1 }: { event: AgentEvent; times?: number }) {
 function describe(e: AgentEvent): string {
   switch (e.type) {
     case 'plan.created':
-      return `lập kế hoạch ${e.steps.length} bước`;
+      return plural('plans.eventPlanned', e.steps.length);
     case 'plan.step':
       return '';
     // CỐ Ý không hiện gì: câu báo cáo đã đi bằng `master.message` ngay trước đó.
@@ -543,7 +549,7 @@ function describe(e: AgentEvent): string {
     case 'task.progress':
       return e.say;
     case 'task.done':
-      return `${e.say}${e.artifacts.length ? ` → ${e.artifacts.join(', ')}` : ''}  ·  ${e.usage.turns} lượt · $${e.usage.costUSD.toFixed(4)}`;
+      return `${e.say}${e.artifacts.length ? ` → ${e.artifacts.join(', ')}` : ''}  ·  ${plural('plans.turnCount', e.usage.turns)} · ${formatUSD(e.usage.costUSD)}`;
     case 'task.blocked':
       return `⚠ ${e.say} (${e.reason})`;
     case 'master.message':
@@ -551,7 +557,7 @@ function describe(e: AgentEvent): string {
     case 'office.state':
       return e.say;
     case 'cost.tick':
-      return `tổng ${e.totals.tasks} việc · ${e.totals.turns} lượt · $${e.totals.costUSD.toFixed(4)}`;
+      return `${t('plans.totalPrefix')} ${plural('plans.jobCount', e.totals.tasks)} · ${plural('plans.turnCount', e.totals.turns)} · ${formatUSD(e.totals.costUSD)}`;
     default:
       return '';
   }

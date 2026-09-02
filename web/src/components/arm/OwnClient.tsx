@@ -15,6 +15,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/misc';
+import { t } from '@i18n';
 
 export function OwnClient({
   name,
@@ -34,11 +35,12 @@ export function OwnClient({
   return (
     <details className="mt-2 border-t border-line/60 pt-2" open={own}>
       <summary className="cursor-pointer text-[11px] text-muted">
-        Dùng {name} App của riêng bạn {own && <span className="text-accent">· đang bật</span>}
+        {t('arm.ownClientSummary', { name })}{' '}
+        {own && <span className="text-accent">{t('arm.ownClientOn')}</span>}
       </summary>
       <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-        Mặc định đăng nhập đi qua app của agentco. Muốn đứng tên chính bạn thì tạo một {name} App rồi
-        dán <b>Client ID</b> vào đây. Để trống = quay về app của agentco.
+        {t('arm.ownClientNoteBefore', { name })} <b>{t('arm.ownClientNoteBold')}</b>{' '}
+        {t('arm.ownClientNoteAfter')}
       </p>
       <div className="mt-1.5 flex gap-1.5">
         <Input
@@ -48,11 +50,12 @@ export function OwnClient({
           placeholder="Iv23li…"
         />
         <Button size="sm" onClick={onSave}>
-          Lưu
+          {t('common.save')}
         </Button>
       </div>
       <p className="mt-1 text-[11px] text-muted">
-        Client ID là <b>dữ liệu công khai</b> — đừng dán client secret hay private key.
+        {t('arm.ownClientWarnBefore')} <b>{t('arm.ownClientWarnBold')}</b>{' '}
+        {t('arm.ownClientWarnAfter')}
       </p>
     </details>
   );

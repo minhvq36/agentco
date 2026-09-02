@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { armHash, buildConfig, findArm, needsOAuth, serverFenced } from '../dist/core/catalog.js';
+import { t } from '../dist/i18n/index.js';
 
 const li = findArm('linear')!;
 const cfg = (input: Parameters<typeof buildConfig>[1]): { url?: string; headers?: Record<string, string> } =>
@@ -126,7 +127,7 @@ test('🔴 nấc `add` phải có câu RIÊNG — câu mặc định hứa "tạ
    * trang/mục mới, nhưng không đụng tới thứ đã có sẵn"* — đọc xong người dùng
    * chọn `add` rồi bảo nhân viên mở việc mới, và bị chặn.
    */
-  const say = li.tierSay?.add ?? '';
+  const say = li.tierSay?.add ? t(li.tierSay.add) : '';
   assert.ok(say.length > 0, 'phải ghi đè');
   assert.match(say, /KHÔNG mở được issue/, 'phải nói ra thứ KHÔNG làm được');
   assert.match(say, /Toàn quyền/, 'và chỉ đường lên nấc làm được');
@@ -156,7 +157,7 @@ test('🔴 HỒI QUY 30/08 — `hint` phải nói nhãn là WORKSPACE, không ph
    */
   const h = li.hint ?? '';
   assert.match(h, /WORKSPACE/, 'phải nói ra nhãn là loại gì');
-  assert.match(h, /không phải project/i);
+  assert.match(h, /not a project/i);
   assert.match(h, /list_issues/, 'và phải CHỈ ĐƯỜNG ĐI TIẾP, không chỉ cấm');
 });
 

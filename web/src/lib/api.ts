@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Client API. Một chỗ duy nhất nói chuyện với daemon.
  *
  * Nguyên tắc xử lý lỗi (tiêu chí "Xử lý lỗi tốt"): backend đã trả về câu tiếng
@@ -24,7 +24,9 @@ import type {
   PlanRecord,
   PromptLayer,
   AgentEvent,
+  Locale,
 } from './types';
+import { t } from '@i18n';
 
 export class ApiError extends Error {
   constructor(
@@ -46,7 +48,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     // Daemon tắt giữa chừng là chuyện SẼ xảy ra (Ctrl+C ở terminal). Nói đúng
     // việc phải làm, đừng để người dùng nhìn "Failed to fetch".
-    throw new ApiError('Mất kết nối tới công ty. Kiểm tra terminal — daemon còn chạy không?', 0);
+    throw new ApiError(t('error.lostDaemon'), 0);
   }
 
   const text = await res.text();
@@ -63,7 +65,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const msg =
       body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
         ? (body as { error: string }).error
-        : `Máy chủ trả về lỗi ${res.status}.`;
+        : t('error.httpStatus', { status: res.status });
     throw new ApiError(msg, res.status);
   }
   return body as T;
@@ -327,6 +329,19 @@ export const api = {
     call<{ models: CompanyModels }>('/api/company', {
       method: 'PATCH',
       body: JSON.stringify({ models }),
+    }),
+
+  /**
+   * Interface language. → docs/CLAUDE.md §Language
+   *
+   * ⚠ Interface only. Nothing here reaches a prompt, and it must stay that way:
+   * the assistant follows the language the user writes in, which this setting
+   * cannot know.
+   */
+  setLanguage: (language: Locale) =>
+    call<{ language: Locale }>('/api/company', {
+      method: 'PATCH',
+      body: JSON.stringify({ language }),
     }),
 
   canvas: (id: string) => call<CanvasState>(`/api/office/${enc(id)}/canvas`),

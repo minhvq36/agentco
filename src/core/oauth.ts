@@ -28,6 +28,8 @@
 
 import crypto from 'node:crypto';
 
+import { t, type MessageKey } from '../i18n/index.js';
+
 /** Tên ta tự khai với server uỷ quyền. Hiện trên màn hình đồng ý của người dùng. */
 export const CLIENT_NAME = 'agentco';
 
@@ -183,20 +185,11 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
    * `HTTPS_PROXY`. Đặt biến đó rồi tưởng xong là một cái bẫy có thật.
    */
   if (!probe) {
-    throw new Error(
-      `Không gọi ra được tới ${mcpUrl}.\n` +
-        `Đây là kết nối ĐI RA từ máy chạy agentco, không phải kết nối vào — nên tường lửa vào, ` +
-        `nginx hay VPN đều không phải chỗ cần sửa.\n` +
-        `Kiểm: máy này có ra internet không · công ty có bắt đi qua proxy không ` +
-        `(Node không tự đọc HTTPS_PROXY, phải bật NODE_USE_ENV_PROXY=1).`,
-    );
+    throw new Error(t('oauth.noEgress', { url: mcpUrl }));
   }
   if (probe.ok) return null;
   if (probe.status !== 401 && probe.status !== 403) {
-    throw new Error(
-      `${mcpUrl} trả HTTP ${probe.status} — không phải cửa MCP, cũng không phải đòi chìa. ` +
-        `Nhiều khả năng sai URL.`,
-    );
+    throw new Error(t('oauth.notMcpDoor', { url: mcpUrl, status: String(probe.status) }));
   }
 
   const u = new URL(mcpUrl);
@@ -234,7 +227,7 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
     const r = await fetch(url).catch(() => null);
     if (r?.ok) return (await r.json()) as AsMeta;
   }
-  throw new Error(`Không đọc được metadata uỷ quyền của ${issuer} (đã thử ${tries.length} đường).`);
+  throw new Error(t('oauth.noMetadata', { issuer, tried: String(tries.length) }));
 }
 
 // ───────────────────────────────────────────────── ② đăng ký động
@@ -252,9 +245,7 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
  */
 export async function register(meta: AsMeta, redirectUri: string): Promise<string> {
   if (!meta.registration_endpoint) {
-    throw new Error(
-      `${meta.issuer} không mở đăng ký động — dịch vụ này bắt phải tự tạo app và dán client_id vào.`,
-    );
+    throw new Error(t('oauth.noDcr', { issuer: meta.issuer }));
   }
   const res = await fetch(meta.registration_endpoint, {
     method: 'POST',
@@ -269,12 +260,15 @@ export async function register(meta: AsMeta, redirectUri: string): Promise<strin
     }),
   });
   const body = await res.text();
-  if (res.status !== 200 && res.status !== 201) throw new Error(`Đăng ký hỏng: HTTP ${res.status} — ${body}`);
+  if (res.status !== 200 && res.status !== 201) {
+    throw new Error(t('oauth.registerFailed', { status: String(res.status), body }));
+  }
   const j = JSON.parse(body) as { client_id: string; client_secret?: string };
   if (j.client_secret) {
     // Không giết luồng, nhưng phải KÊU: nó đổi mô hình bảo mật và đổi cả kho chìa.
+    // Log line, so English literal — we read this, not the person using the app.
     process.emitWarning(
-      `${meta.issuer} cấp client_secret — mô hình public client không còn đúng cho dịch vụ này.`,
+      `${meta.issuer} issued a client_secret — the public-client model no longer holds for this service.`,
     );
   }
   return j.client_id;
@@ -359,15 +353,28 @@ export class TransientError extends Error {}
  * │    `dead` bị vô hiệu đúng ở hãng cần nó nhất.                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ `step` đi vào mọi câu lỗi: `[đổi mã]` · `[làm mới]` · `[hỏi thăm]`. Ba chỗ
- * đó sửa bằng ba việc khác nhau, mà một câu `fetch failed` trần thì không nói
- * được là chỗ nào — đúng lớp lỗi §5m *"chỉ sai cửa"*.
+ * ⚠ `step` đi vào mọi câu lỗi: đổi mã · làm mới · hỏi thăm. Ba chỗ đó sửa bằng
+ * ba việc khác nhau, mà một câu `fetch failed` trần thì không nói được là chỗ
+ * nào — đúng lớp lỗi §5m *"chỉ sai cửa"*.
+ *
+ * A CODE, not a word: the label a person reads follows the interface switch, so
+ * it is looked up per throw rather than passed in already-translated.
  */
+type TokenStep = 'exchange' | 'refresh' | 'poll' | 'deviceStart';
+
+const STEP_KEY: Record<TokenStep, MessageKey> = {
+  exchange: 'oauth.stepExchange',
+  refresh: 'oauth.stepRefresh',
+  poll: 'oauth.stepPoll',
+  deviceStart: 'oauth.stepDeviceStart',
+};
+
 async function postToken(
   meta: AsMeta,
   form: Record<string, string>,
-  step = 'đổi chìa',
+  stepCode: TokenStep = 'exchange',
 ): Promise<TokenResponse> {
+  const step = t(STEP_KEY[stepCode]);
   let res: Response;
   try {
     res = await fetch(meta.token_endpoint, {
@@ -380,7 +387,9 @@ async function postToken(
       body: new URLSearchParams(form).toString(),
     });
   } catch (e) {
-    throw new TransientError(`[${step}] không gọi ra được ${meta.token_endpoint}: ${(e as Error).message}`);
+    throw new TransientError(
+      t('oauth.stepNoReach', { step, url: meta.token_endpoint, reason: (e as Error).message }),
+    );
   }
 
   const body = await res.text();
@@ -409,15 +418,19 @@ async function postToken(
       code === 'bad_refresh_token' ||
       code === 'unauthorized_client'
     ) {
-      throw new DeadGrantError(`Chìa không còn hiệu lực — cần đăng nhập lại. (${code})`);
+      throw new DeadGrantError(t('oauth.grantDead', { code }));
     }
     // 5xx kèm mã lỗi vẫn là hỏng tạm: server đang trục trặc, không phải chìa chết.
-    if (res.status >= 500) throw new TransientError(`[${step}] dịch vụ đang lỗi (${code}).`);
-    throw new Error(`[${step}] hỏng: ${code}${desc ? ` — ${desc}` : ''}`);
+    if (res.status >= 500) throw new TransientError(t('oauth.stepServiceDown', { step, code }));
+    throw new Error(t('oauth.stepFailed', { step, code, desc: desc ? ` — ${desc}` : '' }));
   }
 
-  if (res.status >= 500) throw new TransientError(`[${step}] dịch vụ trả HTTP ${res.status}.`);
-  if (!json) throw new Error(`[${step}] phản hồi không đọc được (HTTP ${res.status}): ${body.slice(0, 200)}`);
+  if (res.status >= 500) throw new TransientError(t('oauth.stepHttp5xx', { step, status: String(res.status) }));
+  if (!json) {
+    throw new Error(
+      t('oauth.stepUnreadable', { step, status: String(res.status), body: body.slice(0, 200) }),
+    );
+  }
 
   /**
    * ⚠ THIẾU `access_token` TRONG MỘT PHẢN HỒI 200 CŨNG LÀ HỎNG.
@@ -428,7 +441,7 @@ async function postToken(
    * nhất mọi đường đổi chìa đi qua.
    */
   if (typeof json['access_token'] !== 'string' || !json['access_token']) {
-    throw new Error(`[${step}] phản hồi không có access_token (HTTP ${res.status}).`);
+    throw new Error(t('oauth.stepNoAccessToken', { step, status: String(res.status) }));
   }
   return json as unknown as TokenResponse;
 }
@@ -469,14 +482,14 @@ export async function exchangeCode(
   meta: AsMeta,
   p: { clientId: string; code: string; redirectUri: string; verifier: string; mcpUrl: string },
 ): Promise<OAuthAccount> {
-  const t = await postToken(meta, {
+  const tok = await postToken(meta, {
     grant_type: 'authorization_code',
     code: p.code,
     redirect_uri: p.redirectUri,
     client_id: p.clientId,
     code_verifier: p.verifier,
   });
-  const acc = applyToken({ client_id: p.clientId, mcp_url: p.mcpUrl, issuer: meta.issuer }, t);
+  const acc = applyToken({ client_id: p.clientId, mcp_url: p.mcpUrl, issuer: meta.issuer }, tok);
   // Tên workspace do server trả — dùng làm nhãn cánh tay. `String()` vì đây là
   // dữ liệu của bên thứ ba: nó có thể là số, null, hoặc không có.
   const name = acc.extra?.['workspace_name'];
@@ -485,17 +498,17 @@ export async function exchangeCode(
 }
 
 export async function refreshAccount(meta: AsMeta, acc: OAuthAccount): Promise<OAuthAccount> {
-  if (!acc.refresh_token) throw new Error('Tài khoản này không có chìa làm mới — phải đăng nhập lại.');
-  const t = await postToken(
+  if (!acc.refresh_token) throw new Error(t('oauth.noRefreshToken'));
+  const tok = await postToken(
     meta,
     {
       grant_type: 'refresh_token',
       refresh_token: acc.refresh_token,
       client_id: acc.client_id,
     },
-    'làm mới',
+    'refresh',
   );
-  return applyToken(acc, t);
+  return applyToken(acc, tok);
 }
 
 // ───────────────────────────────────────────────── ④ device flow (RFC 8628)
@@ -544,7 +557,7 @@ export async function deviceStart(
   scope?: string,
 ): Promise<DeviceStart> {
   const url = meta.device_authorization_endpoint;
-  if (!url) throw new Error(`${meta.issuer} không hỗ trợ đăng nhập bằng mã thiết bị.`);
+  if (!url) throw new Error(t('oauth.noDeviceFlow', { issuer: meta.issuer }));
 
   let res: Response;
   try {
@@ -554,7 +567,13 @@ export async function deviceStart(
       body: new URLSearchParams({ client_id: clientId, ...(scope ? { scope } : {}) }).toString(),
     });
   } catch (e) {
-    throw new TransientError(`[xin mã] không gọi ra được ${new URL(url).host}: ${(e as Error).message}`);
+    throw new TransientError(
+      t('oauth.stepNoReach', {
+        step: t('oauth.stepDeviceStart'),
+        url: new URL(url).host,
+        reason: (e as Error).message,
+      }),
+    );
   }
 
   const body = await res.text();
@@ -562,7 +581,13 @@ export async function deviceStart(
   try {
     j = JSON.parse(body) as Record<string, unknown>;
   } catch {
-    throw new Error(`[xin mã] phản hồi không đọc được (HTTP ${res.status}): ${body.slice(0, 200)}`);
+    throw new Error(
+      t('oauth.stepUnreadable', {
+        step: t('oauth.stepDeviceStart'),
+        status: String(res.status),
+        body: body.slice(0, 200),
+      }),
+    );
   }
   if (typeof j['device_code'] !== 'string') {
     /**
@@ -571,8 +596,10 @@ export async function deviceStart(
      * khai đi kiểm `client_id`, kiểm mạng, kiểm URL — mọi chỗ trừ chỗ hỏng.
      */
     throw new Error(
-      `[xin mã] hỏng (HTTP ${res.status}): ${String(j['error'] ?? body.slice(0, 120))}\n` +
-        `Kiểm trước tiên: ứng dụng đã bật "đăng nhập bằng mã thiết bị" ở phía dịch vụ chưa.`,
+      t('oauth.deviceStartFailed', {
+        status: String(res.status),
+        detail: String(j['error'] ?? body.slice(0, 120)),
+      }),
     );
   }
 
@@ -616,19 +643,22 @@ export async function devicePoll(
   p: { clientId: string; start: DeviceStart; mcpUrl: string },
 ): Promise<DevicePoll> {
   if (Date.now() > p.start.expires_at) {
-    throw new Error('Mã đăng nhập đã hết hạn — bấm Đăng nhập lại để lấy mã mới.');
+    throw new Error(t('oauth.deviceCodeExpired'));
   }
   try {
-    const t = await postToken(
+    const tok = await postToken(
       meta,
       {
         client_id: p.clientId,
         device_code: p.start.device_code,
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
       },
-      'hỏi thăm',
+      'poll',
     );
-    return { state: 'done', account: applyToken({ client_id: p.clientId, mcp_url: p.mcpUrl, issuer: meta.issuer }, t) };
+    return {
+      state: 'done',
+      account: applyToken({ client_id: p.clientId, mcp_url: p.mcpUrl, issuer: meta.issuer }, tok),
+    };
   } catch (e) {
     if (e instanceof TransientError) return { state: 'pending', interval_ms: p.start.interval_ms };
     const msg = (e as Error).message;
@@ -642,7 +672,7 @@ export async function devicePoll(
      */
     if (msg.includes('authorization_pending')) return { state: 'pending', interval_ms: p.start.interval_ms };
     if (msg.includes('slow_down')) return { state: 'pending', interval_ms: p.start.interval_ms + 5000 };
-    if (msg.includes('access_denied')) throw new Error('Bạn đã từ chối cấp quyền ở trang của dịch vụ.');
+    if (msg.includes('access_denied')) throw new Error(t('oauth.accessDenied'));
     throw e;
   }
 }

@@ -51,11 +51,11 @@ export function parseReceipt(text: string): ParseResult {
     // JSON hợp lệ nhưng sai schema — giữ lại lý do, có thể sửa được
     return {
       ok: false,
-      problem: parsed.error.issues.map((i) => `${i.path.join('.') || '(gốc)'}: ${i.message}`).join('; '),
+      problem: parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; '),
     };
   }
 
-  return { ok: false, problem: 'không tìm thấy object JSON nào trong câu trả lời cuối' };
+  return { ok: false, problem: 'no JSON object found in the final answer' };
 }
 
 /**

@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Company } from '../core/company.js';
-import { LibraryError } from '../library/store.js';
+import { LibraryError, docView } from '../library/store.js';
 import { PREVIEW_MAX_BYTES, mimeOf } from '../core/artifacts.js';
 import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
@@ -31,6 +31,7 @@ import { cliToolNames, isCliArm, parseCliArm } from '../core/cli-arm.js';
 import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
 import { companyPaths, officeDir, officePaths } from '../core/paths.js';
 import { endLogin, startLogin } from '../core/browser-login.js';
+import { getLocale, t } from '../i18n/index.js';
 import {
   REFRESH_TICK_MS,
   oauthAccounts,
@@ -232,11 +233,7 @@ export function armConfig(body: {
 
   for (const o of options ?? []) {
     if (o.loopbackOnly && !ctx.loopbackOk) {
-      throw new RunError(
-        `"${o.label}" chỉ bật được khi bạn mở agentco trên chính máy đang chạy nó. ` +
-          `Cửa sổ trình duyệt mở trên máy chủ, nên xem từ xa thì không ai nhìn thấy nó.`,
-        'other',
-      );
+      throw new RunError(t('srv.loopbackOption', { label: t(o.label) }), 'other');
     }
   }
 
@@ -439,11 +436,7 @@ async function scopedTools(
 ): Promise<string[]> {
   const r = await probeArm({ arm: config as never }, undefined, secrets, dirs);
   if (r.status !== 'connected') {
-    throw new RunError(
-      `Không nối được để đọc danh sách việc: ${r.error ?? r.status}. ` +
-        `Cánh tay có giới hạn quyền không cắm được khi chưa biết việc nào thuộc nấc nào.`,
-      'other',
-    );
+    throw new RunError(t('srv.probeListFailed', { reason: r.error ?? r.status }), 'other');
   }
   const granted = toolsAtTier(r.tools, tier).filter((n) => !never.includes(n));
   if (!granted.length) {
@@ -456,11 +449,7 @@ async function scopedTools(
      * việc. Giao diện đáng lẽ đã không cho chọn nấc đó (`offeredTiers`), nhưng
      * chốt thật phải nằm ở đây — client bỏ qua được.
      */
-    throw new RunError(
-      `Server trả ${r.tools.length} việc nhưng KHÔNG việc nào thuộc mức quyền này. ` +
-        `Nhiều khả năng server không khai annotations — chọn mức cao hơn, hoặc tự chọn từng việc.`,
-      'other',
-    );
+    throw new RunError(t('srv.noToolsAtTier', { n: r.tools.length }), 'other');
   }
   return granted;
 }
@@ -514,11 +503,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
   const { company } = opts;
 
   if (host !== '127.0.0.1' && host !== 'localhost' && !opts.token) {
-    throw new Error(
-      `Từ chối bind ${host} khi chưa có token đăng nhập.\n` +
-        `Mở cổng này ra mạng nghĩa là cho người lạ chạy lệnh trên máy bạn.\n` +
-        `Đặt AGENTCO_TOKEN=<chuỗi bí mật> rồi thử lại.`,
-    );
+    throw new Error(t('srv.bindRefused', { host }));
   }
 
   /**
@@ -572,12 +557,12 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     // Host là tên miền đó, không phải localhost. Tên miền THẬT của người triển
     // khai đi qua được nhờ chính khai báo họ đã đặt. → `hostAllowed`
     if (!hostAllowed(req.headers.host, host, publicHost)) {
-      return json(res, 403, { error: 'Host không được phép' });
+      return json(res, 403, { error: t('srv.hostNotAllowed') });
     }
 
     if (opts.token && url.pathname.startsWith('/api/') && url.pathname !== OAUTH_CALLBACK) {
       const given = req.headers['x-agentco-token'] ?? url.searchParams.get('token');
-      if (given !== opts.token) return json(res, 401, { error: 'sai token' });
+      if (given !== opts.token) return json(res, 401, { error: t('srv.badToken') });
     }
 
     // Chặn CSRF. Không có bước này thì BẤT KỲ trang web nào người dùng mở cũng
@@ -585,7 +570,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     // Trình duyệt luôn gửi Sec-Fetch-Site; CLI và bridge thì không gửi gì cả,
     // nên kiểm tra này không ảnh hưởng client không phải trình duyệt.
     if (method !== 'GET' && method !== 'HEAD' && !sameSite(req)) {
-      return json(res, 403, { error: 'yêu cầu đến từ trang khác — đã chặn' });
+      return json(res, 403, { error: t('srv.crossOrigin') });
     }
 
     // ── cấp công ty
@@ -599,17 +584,24 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     }
     if (url.pathname === '/api/company' && method === 'GET') {
       return json(res, 200, {
-        name: company.config.name,
+        // Empty = nobody named it ⇒ the label follows the switch. → types.ts
+        name: company.config.name || t('company.unnamed'),
         offices: company.list(),
         allowCorePromptEdit: company.config.allow_core_prompt_edit,
         // Mức nào là model nào — giao diện cần nói ra, nếu không thì "standard"
         // chỉ là một chữ và người dùng không biết mình đang trả tiền cho cái gì.
         models: company.config.models,
+        // Interface language. NOT the language the assistant replies in — that
+        // follows the human. → docs/CLAUDE.md §Language
+        language: getLocale(),
       });
     }
     if (url.pathname === '/api/company' && method === 'PATCH') {
-      const body = await readJson<{ models?: Record<string, string> }>(req);
-      if (!body.models) return json(res, 400, { error: 'thiếu "models"' });
+      const body = await readJson<{ models?: Record<string, string>; language?: string }>(req);
+      if (body.language !== undefined) {
+        return json(res, 200, { language: company.updateLanguage(body.language) });
+      }
+      if (!body.models) return json(res, 400, { error: t('srv.missingField', { field: 'models' }) });
       return json(res, 200, { models: company.updateModels(body.models) });
     }
     if (url.pathname === '/api/office' && method === 'POST') {
@@ -691,7 +683,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      */
     if (url.pathname === '/api/oauth/start' && method === 'POST') {
       const body = await readJson<{ catalogId?: string }>(req);
-      if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
+      if (!body.catalogId) return json(res, 400, { error: t('srv.missingField', { field: 'catalogId' }) });
       /**
        * `redirect_uri` phải khớp TỪNG KÝ TỰ với thứ đã đăng ký — và nó KHÔNG
        * được suy từ header `Host` (client giả được, mà đây là nơi mã uỷ quyền
@@ -727,7 +719,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
          */
         const payload = `data: ${JSON.stringify({
           type: 'company.offices',
-          say: `Đã kết nối ${done.label ?? done.name}.`,
+          say: t('srv.connected', { name: done.label ?? done.name }),
           office: '',
           plan_id: null,
         })}\n\n`;
@@ -745,7 +737,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      */
     if (url.pathname === '/api/oauth/device/start' && method === 'POST') {
       const body = await readJson<{ catalogId?: string }>(req);
-      if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
+      if (!body.catalogId) return json(res, 400, { error: t('srv.missingField', { field: 'catalogId' }) });
       return json(res, 200, await oauthDeviceStart(company, body.catalogId));
     }
     /**
@@ -760,13 +752,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      */
     if (url.pathname === '/api/oauth/device/poll' && method === 'POST') {
       const body = await readJson<{ state?: string }>(req);
-      if (!body.state) return json(res, 400, { error: 'thiếu "state"' });
+      if (!body.state) return json(res, 400, { error: t('srv.missingField', { field: 'state' }) });
       const r = await oauthDevicePoll(company, body.state);
       if (r.state === 'done') {
         // Cùng đường báo với web flow: giao diện đổi trạng thái, không ai F5.
         const payload = `data: ${JSON.stringify({
           type: 'company.offices',
-          say: `Đã kết nối ${r.label ?? r.name}.`,
+          say: t('srv.connected', { name: r.label ?? r.name }),
           office: '',
           plan_id: null,
         })}\n\n`;
@@ -803,19 +795,17 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     if (url.pathname === '/api/browser-login' && method === 'POST') {
       const body = await readJson<{ office?: string; url?: string }>(req);
       // `url` TUỲ CHỌN: mở trình duyệt của văn phòng là đủ, họ tự gõ địa chỉ.
-      if (!body.office) return json(res, 400, { error: 'thiếu "office"' });
+      if (!body.office) return json(res, 400, { error: t('srv.missingField', { field: 'office' }) });
       if (!isLoopback(req.socket.remoteAddress)) {
         return json(res, 400, {
-          error:
-            'Cửa sổ đăng nhập chỉ mở được khi bạn dùng agentco trên chính máy đang chạy nó — ' +
-            'cửa sổ sẽ bật lên ở máy chủ, nơi bạn không nhìn thấy.',
+          error: t('srv.browserLoginLocalOnly'),
         });
       }
       let working: boolean;
       try {
         working = company.get(body.office).currentState === 'working';
       } catch {
-        return json(res, 404, { error: 'không có văn phòng này' });
+        return json(res, 404, { error: t('srv.noOffice') });
       }
       try {
         const r = startLogin({
@@ -833,7 +823,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
     if (url.pathname === '/api/browser-login' && method === 'DELETE') {
       const office = url.searchParams.get('office');
-      if (!office) return json(res, 400, { error: 'thiếu "office"' });
+      if (!office) return json(res, 400, { error: t('srv.missingField', { field: 'office' }) });
       return json(res, 200, { closed: endLogin(office) });
     }
     /**
@@ -870,7 +860,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // `true` = KHÁM PHÁ. Xem tham số `discovery` của `resolveArm` — thiếu nó
       // thì mục có hàng rào server tự khoá mình ở nấc thấp nhất, không câu lỗi.
       const arm = resolveArm(company, body, true, armCtx(req));
-      if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
+      if (!arm) return json(res, 400, { error: t('srv.armFieldsMissing') });
       const config = arm.config;
       const base = await baselineTokens();
       /**
@@ -907,19 +897,19 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      */
     if (url.pathname === '/api/oauth/client' && method === 'GET') {
       const id = url.searchParams.get('for');
-      if (!id) return json(res, 400, { error: 'thiếu "for"' });
+      if (!id) return json(res, 400, { error: t('srv.missingField', { field: 'for' }) });
       return json(res, 200, deviceClientId(company, id));
     }
     if (url.pathname === '/api/oauth/client' && method === 'PUT') {
       const body = await readJson<{ catalogId?: string; clientId?: string }>(req);
-      if (!body.catalogId) return json(res, 400, { error: 'thiếu "catalogId"' });
+      if (!body.catalogId) return json(res, 400, { error: t('srv.missingField', { field: 'catalogId' }) });
       setDeviceClientId(company, body.catalogId, body.clientId ?? '');
       return json(res, 200, deviceClientId(company, body.catalogId));
     }
     if (url.pathname === '/api/arms/repos' && method === 'POST') {
       const body = await readJson<{ catalogId?: string; account?: string }>(req);
       if (!body.catalogId || !body.account) {
-        return json(res, 400, { error: 'thiếu "catalogId" hoặc "account"' });
+        return json(res, 400, { error: t('srv.catalogOrAccountMissing') });
       }
       const scan = await scanRepos(company, body.catalogId, body.account);
       // `null` = KHÔNG TRA ĐƯỢC, khác hẳn "tra ra rỗng". Giao diện xử lý hai ca
@@ -943,7 +933,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         mode?: string;
       }>(req);
       const arm = resolveArm(company, body, false, armCtx(req));
-      if (!arm) return json(res, 400, { error: 'thiếu "config", "catalogId" hoặc "armId"' });
+      if (!arm) return json(res, 400, { error: t('srv.armFieldsMissing') });
       // Giải cờ `readOnly` TRƯỚC khi ghi sổ: hỏng thì ném, và không có cánh tay
       // nào được tạo. Tạo trước rồi giải sau là để lại một cánh tay mang nhãn
       // "chỉ đọc" với `tools: []` — tức cấp CẢ SERVER. Thứ tự ở đây là bảo mật.
@@ -1203,13 +1193,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'say' && method === 'POST') {
         const body = await readJson<{ message?: string }>(req);
         const message = body.message?.trim();
-        if (!message) return json(res, 400, { error: 'thiếu "message"' });
+        if (!message) return json(res, 400, { error: t('srv.missingField', { field: 'message' }) });
         return json(res, 200, await office.say(message));
       }
       if (rest[0] === 'run' && method === 'POST') {
         const body = await readJson<{ request?: string }>(req);
         const request = body.request?.trim();
-        if (!request) return json(res, 400, { error: 'thiếu "request"' });
+        if (!request) return json(res, 400, { error: t('srv.missingField', { field: 'request' }) });
         // Trả ngay, chạy nền — công việc dài hơn nhiều so với một HTTP request.
         void office.run(request).catch(() => {});
         return json(res, 202, { accepted: true });
@@ -1226,7 +1216,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // muộn cũng có một lớp bị quên.
       if (rest[0] === 'knowledge' && method === 'PATCH') {
         const body = await readJson<{ id?: string; body?: string; remove?: boolean }>(req);
-        if (!body.id) return json(res, 400, { error: 'thiếu "id"' });
+        if (!body.id) return json(res, 400, { error: t('srv.missingField', { field: 'id' }) });
         office.editKnowledge(body.id, { body: body.body, remove: body.remove === true });
         return json(res, 200, { nodes: office.knowledge.list() });
       }
@@ -1248,17 +1238,17 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'plans' && rest[1] && method === 'GET') {
         const planId = decodeURIComponent(rest[1]);
         const record = office.plans.get(planId);
-        if (!record) return json(res, 404, { error: 'không có công việc này' });
+        if (!record) return json(res, 404, { error: t('srv.noPlan') });
         return json(res, 200, { plan: record, log: office.plans.readLog(planId) });
       }
       if (rest[0] === 'prompt' && rest[1] && method === 'GET') {
         const layers = office.describePrompt(decodeURIComponent(rest[1]));
-        if (layers.length === 0) return json(res, 404, { error: 'không có vai trò này' });
+        if (layers.length === 0) return json(res, 404, { error: t('srv.noRole') });
         return json(res, 200, { layers, editable: company.config.allow_core_prompt_edit });
       }
       if (rest[0] === 'prompt' && rest[1] && rest[2] && method === 'PUT') {
         const body = await readJson<{ text?: string }>(req);
-        if (typeof body.text !== 'string') return json(res, 400, { error: 'thiếu "text"' });
+        if (typeof body.text !== 'string') return json(res, 400, { error: t('srv.missingField', { field: 'text' }) });
         return json(res, 200, {
           layers: office.savePromptLayer(
             decodeURIComponent(rest[1]),
@@ -1271,11 +1261,11 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'library' && !rest[1] && method === 'GET') {
         // Quét ở ĐÂY, không dùng watcher: watcher bắn sự kiện giữa lúc một file
         // lớn đang được copy vào và ta bóc phải bản dở. → SPEC-library.md §9.1
-        return json(res, 200, { docs: office.library.scan() });
+        return json(res, 200, { docs: office.library.scan().map(docView) });
       }
       if (rest[0] === 'library' && !rest[1] && method === 'POST') {
         const name = url.searchParams.get('name');
-        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        if (!name) return json(res, 400, { error: t('srv.missingField', { field: 'name' }) });
         const maxBytes = Math.round(company.config.library.max_file_mb * 1024 * 1024);
         // Trần phải chặn THEO DÒNG lúc đang nhận, không phải sau khi đã đệm đủ
         // vào RAM — nếu không thì một file 2GB làm sập daemon trước khi tới được
@@ -1290,7 +1280,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
             replace: url.searchParams.get('replace') === '1',
             maxBytes,
           });
-          return json(res, 201, { doc, docs: office.library.list() });
+          return json(res, 201, { doc: docView(doc), docs: office.library.list().map(docView) });
         } catch (err) {
           if (err instanceof LibraryError) {
             // 409 chỉ dành cho TRÙNG TÊN: giao diện phải phân biệt được "hỏi lại
@@ -1303,19 +1293,19 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // Bóc lại một tài liệu chưa dùng được. → SPEC-library.md §4.5
       if (rest[0] === 'library' && rest[1] === 'reextract' && method === 'POST') {
         const name = url.searchParams.get('name');
-        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        if (!name) return json(res, 400, { error: t('srv.missingField', { field: 'name' }) });
         if (!office.library.reextract(decodeURIComponent(name))) {
-          return json(res, 404, { error: 'không có tài liệu này, hoặc bản gốc đã mất' });
+          return json(res, 404, { error: t('srv.noDocOrOriginal') });
         }
         // Trả danh sách NGAY, chưa đợi bóc xong: tài liệu về `pending` và giao
         // diện hiện "đang đọc…" — bóc chạy ngầm, đúng như lúc mới thả file.
-        return json(res, 202, { docs: office.library.list() });
+        return json(res, 202, { docs: office.library.list().map(docView) });
       }
       if (rest[0] === 'library' && rest[1] === 'file' && method === 'GET') {
         const name = url.searchParams.get('name');
-        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        if (!name) return json(res, 400, { error: t('srv.missingField', { field: 'name' }) });
         const abs = office.library.originalPath(decodeURIComponent(name));
-        if (!abs) return json(res, 404, { error: 'không có tài liệu này' });
+        if (!abs) return json(res, 404, { error: t('srv.noDoc') });
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
           'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(abs))}`,
@@ -1325,13 +1315,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       }
       if (rest[0] === 'library' && !rest[1] && method === 'DELETE') {
         const name = url.searchParams.get('name');
-        if (!name) return json(res, 400, { error: 'thiếu "name"' });
+        if (!name) return json(res, 400, { error: t('srv.missingField', { field: 'name' }) });
         // `office.removeDocument`, KHÔNG phải `library.remove` thẳng: xoá tài
         // liệu phải kéo theo mọi ghi chú sống nhờ nó (`depends_on`). Gọi thẳng
         // vào store là bỏ qua đúng cái ràng buộc đó.
         const gone = office.removeDocument(decodeURIComponent(name));
-        if (!gone.removed) return json(res, 404, { error: 'không có tài liệu này' });
-        return json(res, 200, { docs: office.library.list(), droppedNotes: gone.droppedNotes });
+        if (!gone.removed) return json(res, 404, { error: t('srv.noDoc') });
+        return json(res, 200, { docs: office.library.list().map(docView), droppedNotes: gone.droppedNotes });
       }
 
       /**
@@ -1385,10 +1375,10 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
             capped: after.capped,
           });
         }
-        if (!rel) return json(res, 400, { error: 'thiếu "path"' });
+        if (!rel) return json(res, 400, { error: t('srv.missingField', { field: 'path' }) });
         // Qua `Office` để bảng kê Kết quả trong prefix Trợ lý được nạp lại —
         // nếu không, nó nêu tên một file người dùng vừa xoá. → `removeArtifact`
-        if (!office.removeArtifact(rel)) return json(res, 404, { error: 'không có kết quả này' });
+        if (!office.removeArtifact(rel)) return json(res, 404, { error: t('srv.noArtifact') });
         const after = office.artifactList();
         return json(res, 200, { artifacts: after.items, total: after.total, capped: after.capped });
       }
@@ -1406,16 +1396,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
        */
       if (rest[0] === 'artifacts' && rest[1] === 'file' && method === 'GET') {
         const rel = url.searchParams.get('path');
-        if (!rel) return json(res, 400, { error: 'thiếu "path"' });
+        if (!rel) return json(res, 400, { error: t('srv.missingField', { field: 'path' }) });
         const abs = office.artifacts.resolve(rel);
-        if (!abs) return json(res, 404, { error: 'không có kết quả này' });
+        if (!abs) return json(res, 404, { error: t('srv.noArtifact') });
 
         const ext = path.extname(abs).slice(1);
         const download = url.searchParams.get('download') === '1';
         const stat = fs.statSync(abs);
         if (!download && stat.size > PREVIEW_MAX_BYTES) {
           return json(res, 413, {
-            error: `File nặng ${Math.round(stat.size / 1024 / 1024)}MB, quá lớn để xem trước. Tải về để mở.`,
+            error: t('srv.previewTooBig', { mb: Math.round(stat.size / 1024 / 1024) }),
           });
         }
         res.writeHead(200, {
@@ -1435,7 +1425,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       }
     }
 
-    return json(res, 404, { error: 'không có route này' });
+    return json(res, 404, { error: t('srv.noRoute') });
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -1468,7 +1458,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     void refreshDue(company).catch((e: unknown) => {
       // Vòng nền hỏng KHÔNG được làm sập daemon. Người dùng sẽ thấy hậu quả ở
       // chỗ họ đang nhìn — câu lỗi lúc dùng cánh tay.
-      process.emitWarning(`Vòng làm mới chìa hỏng: ${e instanceof Error ? e.message : String(e)}`);
+      process.emitWarning(`key refresh loop broke: ${e instanceof Error ? e.message : String(e)}`);
     });
   };
   const refreshTimer = setInterval(tick, REFRESH_TICK_MS);
@@ -1546,7 +1536,7 @@ async function readJson<T>(req: http.IncomingMessage): Promise<T> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 1_000_000) throw new Error('body quá lớn');
+    if (size > 1_000_000) throw new Error('request body too large');
     chunks.push(chunk as Buffer);
   }
   const raw = Buffer.concat(chunks).toString('utf8').trim();
@@ -1554,7 +1544,7 @@ async function readJson<T>(req: http.IncomingMessage): Promise<T> {
   try {
     return JSON.parse(raw) as T;
   } catch {
-    throw new RunError('Dữ liệu gửi lên không phải JSON hợp lệ.', 'other');
+    throw new RunError(t('srv.bodyNotJson'), 'other');
   }
 }
 
@@ -1579,11 +1569,7 @@ async function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Bu
     size += (chunk as Buffer).length;
     if (size > maxBytes) {
       req.destroy();
-      throw new RunError(
-        `File vượt trần ${Math.round(maxBytes / 1024 / 1024)}MB. ` +
-          'Đổi trần ở company.yaml (library.max_file_mb) nếu bạn thật sự cần.',
-        'other',
-      );
+      throw new RunError(t('srv.uploadTooBig', { mb: Math.round(maxBytes / 1024 / 1024) }), 'other');
     }
     chunks.push(chunk as Buffer);
   }

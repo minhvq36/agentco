@@ -28,6 +28,7 @@ import type { ServerResponse } from 'node:http';
 import type { Company } from '../core/company.js';
 import { companyPaths } from '../core/paths.js';
 import { RunError } from '../core/types.js';
+import { t } from '../i18n/index.js';
 import { findArm } from '../core/catalog.js';
 import { callTool } from '../core/mcp-http.js';
 import { readClients, readOAuth, saveClient, saveOAuth } from '../core/secrets.js';
@@ -140,11 +141,10 @@ export function redirectBase(opts: { host: string; port: number; publicUrl?: str
   if (!raw) {
     if (loopback) return `http://127.0.0.1:${opts.port}`;
     throw new RunError(
-      `Daemon đang lắng nghe ở "${opts.host}", nên "http://127.0.0.1" KHÔNG phải địa chỉ người dùng ` +
-        `gõ vào trình duyệt — dịch vụ sẽ trả mã uỷ quyền về nhầm máy.\n` +
-        `Khai địa chỉ thật rồi thử lại:\n` +
-        `  AGENTCO_RUNTIME_PUBLIC_URL=https://agentco.cong-ty-cua-ban.com\n` +
-        `hoặc đặt runtime.public_url trong company.yaml.`,
+      t('srv.oauthLoopbackHost', {
+        host: opts.host,
+        hint: '  AGENTCO_RUNTIME_PUBLIC_URL=https://agentco.your-company.com',
+      }),
       'other',
     );
   }
@@ -153,10 +153,10 @@ export function redirectBase(opts: { host: string; port: number; publicUrl?: str
   try {
     u = new URL(raw);
   } catch {
-    throw new RunError(`runtime.public_url không phải URL hợp lệ: "${raw}"`, 'other');
+    throw new RunError(t('srv.oauthPublicUrlInvalid', { raw }), 'other');
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') {
-    throw new RunError(`runtime.public_url phải là http hoặc https, đang là "${u.protocol}"`, 'other');
+    throw new RunError(t('srv.oauthPublicUrlScheme', { scheme: u.protocol }), 'other');
   }
   /**
    * ⚠ `http` chỉ được phép khi đích là chính máy này. Mã uỷ quyền đi qua một
@@ -166,18 +166,13 @@ export function redirectBase(opts: { host: string; port: number; publicUrl?: str
    */
   const targetLoopback = /^(127\.|localhost$|\[::1\]$)/i.test(u.hostname) || u.hostname === '::1';
   if (u.protocol === 'http:' && !targetLoopback) {
-    throw new RunError(
-      `runtime.public_url dùng http:// cho một địa chỉ ngoài máy này ("${u.hostname}").\n` +
-        `Mã uỷ quyền sẽ đi qua mạng ở dạng chữ thường — bất kỳ ai đứng giữa cũng đổi được nó ra chìa.\n` +
-        `Dùng https, hoặc đưa nginx/Caddy lên trước để nó lo TLS.`,
-      'other',
-    );
+    throw new RunError(t('srv.oauthPublicUrlInsecure', { host: u.hostname }), 'other');
   }
   // Query/hash trong một địa chỉ gốc là dấu hiệu dán nhầm cả một URL nào đó.
   // Bỏ qua im lặng thì `redirect_uri` lệch từng ký tự với thứ đã đăng ký, và
   // dịch vụ trả `invalid_redirect_uri` — câu **không hề nói ra nguyên nhân**.
   if (u.search || u.hash) {
-    throw new RunError(`runtime.public_url không được có "?" hay "#": "${raw}"`, 'other');
+    throw new RunError(t('srv.oauthPublicUrlQuery', { raw }), 'other');
   }
   // Giữ path prefix (nginx có thể gắn agentco dưới `/agentco`), bỏ gạch chéo cuối.
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
@@ -211,12 +206,12 @@ export async function oauthStart(
   sweep();
   const arm = findArm(catalogId);
   if (!arm || arm.spec.kind !== 'http') {
-    throw new RunError(`"${catalogId}" không phải dịch vụ đăng nhập được.`, 'other');
+    throw new RunError(t('srv.oauthNotLoginService', { id: catalogId }), 'other');
   }
   const mcpUrl = arm.spec.url;
 
   const meta = await discover(mcpUrl);
-  if (!meta) throw new RunError(`${mcpUrl} không cần đăng nhập — cắm thẳng được.`, 'other');
+  if (!meta) throw new RunError(t('srv.oauthNoLoginNeeded', { url: mcpUrl }), 'other');
 
   const redirectUri = `${origin}/api/oauth/callback`;
   const ck = `${meta.issuer}|${redirectUri}`;
@@ -320,18 +315,18 @@ export async function oauthCallback(
 
   const err = params.get('error');
   if (err) {
-    page('Chưa nối được', `Dịch vụ trả về: ${escapeHtml(err)}. Quay lại agentco và thử lại nhé.`, false);
+    page(t('srv.oauthPageFailedTitle'), t('srv.oauthPageFailedBody', { error: escapeHtml(err) }), false);
     return null;
   }
   if (!p) {
     // `state` không khớp ⇒ mã này không phải của lượt ta mở. Đây là chốt CSRF,
     // và nó cũng bắt luôn ca lành tính: bấm F5 trên trang callback.
-    page('Lượt đăng nhập đã hết hạn', 'Quay lại agentco và bấm Đăng nhập lần nữa.', false);
+    page(t('srv.oauthPageExpiredTitle'), t('srv.oauthPageExpiredBody'), false);
     return null;
   }
   const code = params.get('code');
   if (!code) {
-    page('Thiếu mã uỷ quyền', 'Dịch vụ không gửi mã về. Thử lại từ agentco.', false);
+    page(t('srv.oauthPageNoCodeTitle'), t('srv.oauthPageNoCodeBody'), false);
     return null;
   }
 
@@ -354,7 +349,7 @@ export async function oauthCallback(
       mcpUrl: p.mcpUrl,
     });
   } catch (e) {
-    page('Chưa đổi được mã lấy chìa', escapeHtml((e as Error).message.slice(0, 200)), false);
+    page(t('srv.oauthPageExchangeTitle'), escapeHtml((e as Error).message.slice(0, 200)), false);
     return null;
   }
 
@@ -387,10 +382,16 @@ export async function oauthCallback(
     mustHaveIdentity(acc, who.seed, arm?.name ?? p.prefix);
     const name = accountName(p.prefix, acc, who.seed);
     saveOAuth(companyPaths(company.dir), name, acc);
-    page('Đã kết nối', `${escapeHtml(acc.label ?? 'Tài khoản của bạn')} giờ dùng được trong agentco.`, true);
+    page(
+      t('srv.oauthPageDoneTitle'),
+      t('srv.oauthPageDoneBody', {
+        who: escapeHtml(acc.label ?? t('srv.oauthPageDoneFallbackWho')),
+      }),
+      true,
+    );
     return { name, ...(acc.label ? { label: acc.label } : {}) };
   } catch (e) {
-    page('Chưa lưu được tài khoản', escapeHtml((e as Error).message.slice(0, 200)), false);
+    page(t('srv.oauthPageSaveFailedTitle'), escapeHtml((e as Error).message.slice(0, 200)), false);
     return null;
   }
 }
@@ -477,8 +478,7 @@ export function setDeviceClientId(company: Company, catalogId: string, clientId:
    */
   if (v.length > 80 || /\s/.test(v) || /BEGIN|secret|ghp_|gho_|ghs_/i.test(v)) {
     throw new RunError(
-      'Chuỗi này trông không giống một Client ID. Client ID là dữ liệu công khai và ngắn ' +
-        '(GitHub App: dạng "Iv23li…"). Đừng dán client secret hay private key vào đây.',
+      t('srv.oauthNotAClientId'),
       'other',
     );
   }
@@ -493,18 +493,18 @@ export async function oauthDeviceStart(
 
   const arm = findArm(catalogId);
   if (!arm || arm.spec.kind !== 'http' || arm.auth?.kind !== 'device') {
-    throw new RunError(`"${catalogId}" không đăng nhập bằng mã thiết bị.`, 'other');
+    throw new RunError(t('srv.oauthNoDeviceLogin', { id: catalogId }), 'other');
   }
   const mcpUrl = arm.spec.url;
   const meta = await discover(mcpUrl);
-  if (!meta) throw new RunError(`${mcpUrl} không cần đăng nhập — cắm thẳng được.`, 'other');
+  if (!meta) throw new RunError(t('srv.oauthNoLoginNeeded', { url: mcpUrl }), 'other');
   if (!supportsDevice(meta)) {
     /**
      * Danh mục khai một đằng, dịch vụ khai một nẻo. Nói thẳng ra là **lời khai
      * của ta sai**, đừng đổ cho người dùng: họ không chọn cái này, ta ship nó.
      */
     throw new RunError(
-      `${meta.issuer} không còn hỗ trợ đăng nhập bằng mã thiết bị — mục danh mục này cần cập nhật.`,
+      t('srv.oauthDeviceGone', { issuer: meta.issuer }),
       'other',
     );
   }
@@ -566,12 +566,7 @@ export async function oauthDeviceStart(
  */
 function mustHaveIdentity(acc: OAuthAccount, seed: string | undefined, who: string): void {
   if (hasOwnSeed(acc, seed)) return;
-  throw new RunError(
-    `Đã cấp quyền xong, nhưng chưa lấy được danh tính riêng của tài khoản ${who} nên chưa lưu ` +
-      `được — lưu bây giờ thì tài khoản này sẽ đè lên một tài khoản ${who} khác. ` +
-      `Bấm Đăng nhập một lần nữa; lượt sau thường chạy ngay.`,
-    'other',
-  );
+  throw new RunError(t('srv.oauthNoIdentityYet', { who }), 'other');
 }
 
 async function probeIdentity(
@@ -607,8 +602,7 @@ async function probeIdentity(
     (await callTool(id.url, auth, id.tool)) ?? (await callTool(id.url, auth, id.tool, {}, 25_000));
   if (!text) {
     process.emitWarning(
-      `Không hỏi được danh tính tài khoản (${arm.name}) sau 2 lượt — KHÔNG lưu chìa, vì thiếu ` +
-        `danh tính thì hai tài khoản của cùng dịch vụ này sẽ gộp làm một.`,
+      t('srv.oauthNoIdentityTwice', { name: t(arm.name) }),
     );
     return {};
   }
@@ -733,7 +727,7 @@ export type DevicePollResult =
 /** Một nhịp hỏi thăm. Giao diện gọi lặp; **daemon giữ phiên**, không phải trình duyệt. */
 export async function oauthDevicePoll(company: Company, state: string): Promise<DevicePollResult> {
   const p = devices.get(state);
-  if (!p) throw new RunError('Lượt đăng nhập đã hết hạn — bấm Đăng nhập lần nữa.', 'other');
+  if (!p) throw new RunError(t('srv.oauthSessionExpired'), 'other');
 
   const r = await devicePoll(p.meta, { clientId: p.clientId, start: p.start, mcpUrl: p.mcpUrl });
   if (r.state === 'pending') {
@@ -806,7 +800,7 @@ export function oauthAccounts(company: Company, prefix?: string): {
       ...(a.dead ? { dead: a.dead.why } : {}),
       usedBy: Object.values(company.config.arms)
         .filter((arm) => arm.secrets.includes(name))
-        .map((arm) => arm.label || '(chưa đặt tên)'),
+        .map((arm) => arm.label || t('srv.oauthUnnamed')),
     }));
 }
 
@@ -859,7 +853,7 @@ export async function refreshDue(company: Company): Promise<number> {
       if (e instanceof DeadGrantError) {
         saveOAuth(paths, name, { ...acc, dead: { at: new Date().toISOString(), why: e.message } });
         process.emitWarning(
-          `Chìa "${acc.label ?? name}" không còn hiệu lực — cần đăng nhập lại. ${e.message}`,
+          t('srv.oauthKeyDead', { label: acc.label ?? name, detail: e.message }),
         );
       }
       // Hỏng tạm: KHÔNG được dừng vòng, và không cần kêu. Tick sau thử lại.
@@ -885,7 +879,7 @@ export async function refreshDue(company: Company): Promise<number> {
 export async function oauthForget(company: Company, name: string): Promise<void> {
   const paths = companyPaths(company.dir);
   const acc = readOAuth(paths)[name];
-  if (!acc) throw new RunError(`Không có tài khoản "${name}".`, 'other');
+  if (!acc) throw new RunError(t('srv.oauthNoAccount', { name }), 'other');
 
   /**
    * ⚠ CHẶN KHI CÒN CÁNH TAY DÙNG NÓ — cùng khuôn `Company.forgetArm`.
@@ -896,11 +890,14 @@ export async function oauthForget(company: Company, name: string): Promise<void>
    */
   const users = Object.entries(company.config.arms)
     .filter(([, a]) => a.secrets.includes(name))
-    .map(([, a]) => a.label || '(chưa đặt tên)');
+    .map(([, a]) => a.label || t('srv.oauthUnnamed'));
   if (users.length) {
     throw new RunError(
-      `"${acc.label ?? name}" vẫn đang được ${users.length} kết nối dùng (${users.join(', ')}). ` +
-        `Gỡ những kết nối đó trước — gỡ tài khoản trước là để lại một cánh tay chết im.`,
+      t('srv.oauthAccountInUse', {
+        label: acc.label ?? name,
+        n: users.length,
+        who: users.join(', '),
+      }),
       'other',
     );
   }
@@ -920,7 +917,7 @@ export async function oauthForget(company: Company, name: string): Promise<void>
       });
     }
   } catch {
-    process.emitWarning(`Không thu hồi được chìa "${name}" ở phía dịch vụ — vẫn xoá ở máy này.`);
+    process.emitWarning(`could not revoke key "${name}" on the service side — deleting locally anyway`);
   }
 
   saveOAuth(paths, name, null);

@@ -32,7 +32,7 @@ export function estimateJsonTokens(value: unknown): number {
 /** Cắt text về đúng trần token (ước lượng), thêm dấu hiệu bị cắt. */
 export function truncateToTokens(text: string, maxTokens: number): string {
   if (estimateTokens(text) <= maxTokens) return text;
-  const marker = '…[cắt]';
+  const marker = '…[cut]';
   let lo = 0;
   let hi = text.length;
   while (lo < hi) {

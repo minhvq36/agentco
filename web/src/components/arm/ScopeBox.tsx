@@ -26,11 +26,12 @@
 
 import { Button } from '@/components/ui/button';
 import type { ArmScope } from './types';
+import { t } from '@i18n';
 
 export function ScopeBox({ name, scope }: { name: string; scope: ArmScope }) {
   return (
     <div className="mt-3 rounded-md border border-line px-3 py-3">
-      <div className="text-[13px] font-medium">Chọn phạm vi trên {name}</div>
+      <div className="text-[13px] font-medium">{t('arm.scopeTitle', { name })}</div>
       {/*
         Gọn lại 02/09: còn TIÊU ĐỀ + NÚT. Hai đoạn văn cũ (phạm vi do hãng giữ ·
         chưa cài thì không đọc được repo riêng tư) đã bỏ.

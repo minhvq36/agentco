@@ -1,9 +1,10 @@
-﻿import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 // Một hằng số, một chỗ khai. `secrets.ts` là nơi ô trống được ĐIỀN, nên nó cũng
 // là nơi giữ chuỗi — file này chỉ dùng nhờ. Chiều import an toàn: `secrets.ts`
 // không import gì từ đây (chỉ `paths` + `oauth`, đều là kiểu).
 import { OFFICE_STATE } from './secrets.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 /**
  * DANH MỤC CÁNH TAY — thứ người dùng "rút ra xài được ngay".
@@ -412,9 +413,9 @@ export interface ArmIdentity {
  */
 export interface ArmGroup {
   id: string;
-  label: string;
+  label: MessageKey;
   /** Một câu nói nhóm này CHO LÀM GÌ. Thiếu thì người non-code phải đoán. */
-  help?: string;
+  help?: MessageKey;
   /** Bật sẵn khi mở hộp thoại. Ít thôi — mỗi nhóm là token mỗi lượt. */
   on?: boolean;
 }
@@ -435,7 +436,7 @@ export interface ArmSecretField {
 
 export interface CatalogArm {
   id: string;
-  name: string;
+  name: MessageKey;
   /**
    * Icon TRUNG TÍNH của ta, không phải logo bên thứ ba. → SPEC-arms.md §11c
    *
@@ -444,7 +445,7 @@ export interface CatalogArm {
    * như MỘT HỆ, thay vì nửa logo nửa icon xám.
    */
   icon: string;
-  blurb: string;
+  blurb: MessageKey;
   price: ArmPrice;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -477,7 +478,7 @@ export interface CatalogArm {
   groups?: ArmGroup[];
   secrets: ArmSecretField[];
   /** Cánh tay cần một danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
-  folders?: { label: string; help: string };
+  folders?: { label: MessageKey; help: MessageKey };
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ HÀNG RÀO NGOÀI — do HÃNG giữ, ta chỉ MỞ CỬA cho người dùng đi tới.       │
@@ -511,7 +512,7 @@ export interface CatalogArm {
      * quên cài (§5h·7f-bis). Cả hai nói ĐÚNG LÚC, khác một đoạn văn đọc trước
      * khi người ta kịp hiểu mình đang chọn gì.
      */
-    say: string;
+    say: MessageKey;
     url: string;
   };
   /**
@@ -648,7 +649,7 @@ export interface CatalogArm {
    * │ không tạo được chính là loại tệ hơn đó.                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
+  tierSay?: Partial<Record<'read' | 'add' | 'full', MessageKey>>;
   /**
    * Hình dạng để giao diện chọn ICON — cùng khuôn olders ⇒ 'files' đang dùng.
    * Dữ liệu, không phải nhánh mã theo tên hãng.
@@ -736,9 +737,9 @@ export interface CatalogArm {
 export interface ArmOption {
   id: string;
   /** Tiếng người, hiện thẳng lên ô tick. */
-  label: string;
+  label: MessageKey;
   /** Một câu nói ra **BÁN KÍNH**, không phải nói ra cấu hình. */
-  help: string;
+  help: MessageKey;
   /** Bật sẵn khi người dùng chưa chọn gì. Nhiều ô cùng bật sẵn được. */
   on?: boolean;
   /** Cờ thêm vào `args` khi ô này được tick. */
@@ -1069,7 +1070,53 @@ export function swallowsOffice(root: string, officeDir: string, companyDir: stri
  * `JSON.stringify` nuốt nó im lặng. Bỏ `build` đi thì cái lọc đó biến mất theo:
  * mọi trường của một mục giờ đều là dữ liệu, nên **không còn gì để quên lọc**.
  */
-export function catalogForUi(): (CatalogArm & {
+/**
+ * The catalogue as the UI receives it: same shape, but every text field is the
+ * SENTENCE rather than the catalogue key.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ WHY THE ENTRIES HOLD KEYS AND NOT SENTENCES.                             │
+ * │                                                                          │
+ * │ `arms/*.ts` are module-level constants, so a sentence written there is   │
+ * │ frozen at import time — the interface switch would move every other      │
+ * │ string on the screen and leave these behind. Keys resolve per request.   │
+ * │                                                                          │
+ * │ ⚠ `hint` is NOT touched here. It is read by the model, not by a person,  │
+ * │ so it is an English literal in the entry and stays one. → the two worlds │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type UiArm = Omit<CatalogArm, 'name' | 'blurb' | 'groups' | 'options' | 'folders' | 'scope' | 'tierSay'> & {
+  name: string;
+  blurb: string;
+  groups?: readonly { id: string; label: string; help?: string; on?: boolean }[];
+  options?: readonly (Omit<ArmOption, 'label' | 'help'> & { label: string; help: string })[];
+  folders?: { label: string; help: string };
+  scope?: { say: string; url: string };
+  tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
+};
+
+function localise(a: CatalogArm): UiArm {
+  return {
+    ...a,
+    name: t(a.name),
+    blurb: t(a.blurb),
+    ...(a.groups
+      ? { groups: a.groups.map((g) => ({ ...g, label: t(g.label), ...(g.help ? { help: t(g.help) } : {}) })) }
+      : {}),
+    ...(a.options ? { options: a.options.map((o) => ({ ...o, label: t(o.label), help: t(o.help) })) } : {}),
+    ...(a.folders ? { folders: { label: t(a.folders.label), help: t(a.folders.help) } } : {}),
+    ...(a.scope ? { scope: { say: t(a.scope.say), url: a.scope.url } } : {}),
+    ...(a.tierSay
+      ? {
+          tierSay: Object.fromEntries(
+            Object.entries(a.tierSay).map(([tier, key]) => [tier, t(key)]),
+          ) as Partial<Record<'read' | 'add' | 'full', string>>,
+        }
+      : {}),
+  };
+}
+
+export function catalogForUi(): (UiArm & {
   transport: 'stdio' | 'http';
   needsLogin: boolean;
   deviceLogin: boolean;
@@ -1112,7 +1159,7 @@ export function catalogForUi(): (CatalogArm & {
       }
     }
     return {
-      ...a,
+      ...localise(a),
       transport: transportOf(a),
       needsLogin: needsOAuth(a),
       deviceLogin: a.auth?.kind === 'device',

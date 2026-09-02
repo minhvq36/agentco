@@ -6,6 +6,7 @@ import { Empty, Textarea } from '@/components/ui/misc';
 import { Markdown } from '@/lib/markdown';
 import { hasTable } from '@/lib/markdown-core';
 import { actions, labelFor, useApp } from '@/lib/store';
+import { t } from '@i18n';
 
 /**
  * Ô chat với Trợ lý. Cửa vào DUY NHẤT cho mọi thứ người dùng gõ — Trợ lý tự
@@ -38,13 +39,12 @@ export function ChatPanel() {
         {messages.length === 0 ? (
           <Empty
             icon={<MessageSquare className="h-7 w-7" />}
-            title="Chưa nói gì với Trợ lý"
+            title={t('chat.emptyTitle')}
             hint={
               <>
-                Giao việc, hoặc hỏi han bình thường. Trợ lý tự phân biệt — chào hỏi không tốn token
-                của nhân viên nào.
+                {t('chat.emptyHint')}
                 <br />
-                Gõ <code>/help</code> để xem danh sách lệnh.
+                {t('chat.emptyHintTypeBefore')} <code>/help</code> {t('chat.emptyHintTypeAfter')}
               </>
             }
           />
@@ -161,8 +161,8 @@ export function ChatPanel() {
             e.preventDefault();
             void actions.say();
           }}
-          placeholder="Giao việc, hoặc hỏi Trợ lý…"
-          aria-label="Tin nhắn"
+          placeholder={t('chat.placeholder')}
+          aria-label={t('chat.messageLabel')}
           disabled={sending}
           className="max-h-[7.5rem] min-h-[2.25rem] resize-none py-1.5 leading-relaxed"
           style={{ height: 'auto' }}
@@ -174,7 +174,7 @@ export function ChatPanel() {
             el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
           }}
         />
-        <Button type="submit" variant="primary" size="icon" disabled={sending || !text.trim()} aria-label="Gửi">
+        <Button type="submit" variant="primary" size="icon" disabled={sending || !text.trim()} aria-label={t('chat.send')}>
           <CornerDownLeft className="h-4 w-4" />
         </Button>
       </form>
@@ -234,7 +234,7 @@ function FileLinks({ text, files }: { text: string; files: string[] }) {
               dùng bấm trượt, rồi kết luận là nó không bấm được.
             */
             className="flex w-full items-center gap-1.5 break-all rounded px-1 py-0.5 text-left font-mono text-[12px] text-accent hover:bg-accent-soft"
-            title="Mở xem trước trong ngăn Kết quả"
+            title={t('chat.openPreview')}
           >
             <FileText className="h-3.5 w-3.5 flex-none" aria-hidden />
             <span className="min-w-0">{line.trim()}</span>

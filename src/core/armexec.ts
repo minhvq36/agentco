@@ -242,8 +242,8 @@ export async function ensureInstalled(config: ExecConfig): Promise<boolean> {
     // Không ra được registry · máy không có npm · quyền ghi home. Cả ba đều
     // KHÔNG phải sự cố: cánh tay vẫn chạy bằng `npx` như trước, chỉ chậm hơn.
     process.emitWarning(
-      `Không cài sẵn được "${parsed.spec}" vào kho cánh tay (${(e as Error).message}). ` +
-        `Cánh tay vẫn chạy bình thường qua npx, chỉ chậm hơn ~4 giây mỗi lần khởi động.`,
+      `could not pre-install "${parsed.spec}" into the connection store (${(e as Error).message}); ` +
+        `the connection still runs through npx, only ~4 seconds slower to start`,
     );
     return false;
   }
@@ -284,7 +284,7 @@ function run(cmd: string, args: string[]): Promise<void> {
       } catch {
         /* đã chết */
       }
-      reject(new Error('quá 120 giây'));
+      reject(new Error('npm install exceeded 120 seconds'));
     }, 120_000);
     p.on('error', (e) => {
       clearTimeout(kill);
@@ -293,7 +293,7 @@ function run(cmd: string, args: string[]): Promise<void> {
     p.on('exit', (code) => {
       clearTimeout(kill);
       if (code === 0) resolve();
-      else reject(new Error(`npm install thoát với mã ${code}`));
+      else reject(new Error(`npm install exited with code ${code}`));
     });
   });
 }

@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { t } from '@i18n';
 
 /**
  * Hộp hỏi lại trước khi xoá MỘT FILE — và **Enter chính là nút Xoá**.
@@ -41,7 +42,7 @@ import {
 export function ConfirmDelete({
   open,
   title,
-  confirmLabel = 'Xoá hẳn',
+  confirmLabel,
   onConfirm,
   onCancel,
   children,
@@ -77,11 +78,11 @@ export function ConfirmDelete({
         </DialogHeader>
         <DialogFooter className="items-center">
           <span className="mr-auto text-xs text-muted">
-            <b>Enter</b> để xoá · <b>Esc</b> để thôi
+            <b>Enter</b> {t('confirm.toDelete')} · <b>Esc</b> {t('confirm.toCancel')}
           </span>
-          <Button onClick={onCancel}>Thôi</Button>
+          <Button onClick={onCancel}>{t('common.cancel')}</Button>
           <Button ref={danger} variant="danger" onClick={onConfirm}>
-            {confirmLabel}
+            {confirmLabel ?? t('common.delete')}
           </Button>
         </DialogFooter>
       </DialogContent>

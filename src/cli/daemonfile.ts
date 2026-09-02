@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Theo dõi daemon đang chạy.
  *
  * → docs/SPEC-cli.md §1
@@ -51,9 +51,9 @@ export async function liveDaemon(paths: CompanyPaths): Promise<DaemonInfo | unde
   // PID còn sống chưa chắc là daemon của ta (PID bị tái sử dụng) — hỏi /healthz.
   try {
     const res = await fetch(`${info.url}/healthz`, { signal: AbortSignal.timeout(2_000) });
-    if (!res.ok) throw new Error('healthz không ok');
+    if (!res.ok) throw new Error('healthz did not return ok');
     const body = (await res.json()) as { ok?: boolean };
-    if (!body.ok) throw new Error('healthz trả về không ok');
+    if (!body.ok) throw new Error('healthz body was not ok');
     return info;
   } catch {
     clearDaemonFile(paths);

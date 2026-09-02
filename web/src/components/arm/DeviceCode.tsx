@@ -27,6 +27,7 @@ import { Check, Copy } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { DeviceLogin } from './types';
+import { t } from '@i18n';
 
 export function DeviceCode({
   name,
@@ -45,11 +46,13 @@ export function DeviceCode({
   return (
     <div className="mt-3 rounded-md border border-accent/40 bg-accent-soft/30 px-3 py-3">
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-[13px] font-medium">Gõ mã này ở {name}</div>
+        <div className="text-[13px] font-medium">{t('arm.deviceTitle', { name })}</div>
         {/* Đồng hồ: mã chết THẬT sau 15 phút, và họ phải thấy nó chết. */}
         <div className="shrink-0 font-mono text-[11px] text-muted">
-          còn {Math.floor(left / 60000)}:
-          {String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}
+          {t('arm.deviceLeft', {
+            mm: Math.floor(left / 60000),
+            ss: String(Math.floor((left % 60000) / 1000)).padStart(2, '0'),
+          })}
         </div>
       </div>
 
@@ -58,8 +61,8 @@ export function DeviceCode({
           {device.userCode}
         </code>
         <Button
-          aria-label="Chép mã"
-          title="Chép mã"
+          aria-label={t('arm.copyCode')}
+          title={t('arm.copyCode')}
           onClick={() => {
             void navigator.clipboard?.writeText(device.userCode).then(
               () => setCopied(true),
@@ -76,7 +79,7 @@ export function DeviceCode({
 
       <ol className="mt-2.5 list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
         <li>
-          Mở{' '}
+          {t('arm.deviceStep1Before')}{' '}
           <a
             className="underline decoration-dotted hover:text-fg"
             href={device.verificationUriComplete ?? device.verificationUri}
@@ -85,10 +88,10 @@ export function DeviceCode({
           >
             {device.verificationUri.replace(/^https?:\/\//, '')}
           </a>{' '}
-          — ở máy này hay điện thoại đều được.
+          {t('arm.deviceStep1After')}
         </li>
-        <li>Gõ mã ở trên rồi bấm cho phép.</li>
-        <li>Quay lại đây — màn này tự biết, không cần F5.</li>
+        <li>{t('arm.deviceStep2')}</li>
+        <li>{t('arm.deviceStep3')}</li>
       </ol>
 
       {/*
@@ -98,8 +101,8 @@ export function DeviceCode({
         cửa dẫn người ta đi kiểm quyền, kiểm cài đặt, kiểm repo. → §5h·7k
       */}
       <p className="mt-2 text-xs leading-relaxed text-muted">
-        ⚠ Trang đó sẽ dùng <b>tài khoản đang đăng nhập trên trình duyệt của bạn</b>. Nếu đó không
-        phải tài khoản bạn muốn nối, mở nó bằng cửa sổ ẩn danh.
+        {t('arm.deviceAccountBefore')} <b>{t('arm.deviceAccountBold')}</b>
+        {t('arm.deviceAccountAfter')}
       </p>
     </div>
   );

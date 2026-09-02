@@ -23,7 +23,9 @@ import type {
   PlanStep,
   StepStatus,
   Usage,
+  Locale,
 } from './types';
+import { plural, resolveLocale, setLocale, t } from '@i18n';
 
 export interface ChatMessage {
   id: number;
@@ -54,9 +56,26 @@ export interface LiveAgent {
   say: string;
 }
 
-export type PanelId = 'chat' | 'plans' | 'overview' | 'knowledge' | 'library' | 'artifacts';
+export type PanelId =
+  | 'chat'
+  | 'plans'
+  | 'overview'
+  | 'knowledge'
+  | 'library'
+  | 'artifacts'
+  | 'settings';
 
 export interface AppState {
+  /**
+   * INTERFACE language. Lives in state ONLY so React re-renders on a change —
+   * the real value is `getLocale()` in `src/i18n/`, and the server's
+   * `company.yaml` is what persists it.
+   *
+   * ⚠ Never passed to the backend as part of a task, a message, or anything a
+   * model reads. It says what the screen shows, not what language the user
+   * speaks. → docs/CLAUDE.md §Language
+   */
+  locale: Locale;
   loading: boolean;
   /** Lỗi ở tầng công ty (mất daemon, config hỏng). Chặn cả màn hình. */
   fatal: string | null;
@@ -212,6 +231,7 @@ export interface AppState {
 }
 
 const initial: AppState = {
+  locale: bootLocale(),
   loading: true,
   fatal: null,
   toast: null,
@@ -275,6 +295,44 @@ const draftKey = (officeId: string): string => `agentco:draft:${officeId}`;
  * cụ thể. Hai tab mở hai văn phòng khác nhau là chuyện hợp lệ, và nhét nó lên
  * server thì tab này đá tab kia.
  */
+/**
+ * Interface language, mirrored into the browser SO THE FIRST PAINT IS RIGHT.
+ *
+ * The authority is `company.yaml`, read over `GET /api/company` — but that is a
+ * round trip, and until it lands the app has already drawn a sidebar full of
+ * labels. Without this mirror every reload flashes the default language and
+ * then swaps, which reads as a rendering bug, not as loading.
+ *
+ * Same defensive shape as every other key here: `localStorage` throws when the
+ * browser blocks site data, and a language preference is never worth a white
+ * screen. Missing or unreadable ⇒ fall back and let the fetch correct it.
+ */
+const LOCALE_KEY = 'agentco.locale';
+
+function bootLocale(): Locale {
+  let locale: Locale;
+  try {
+    locale = resolveLocale([localStorage.getItem(LOCALE_KEY), navigator.language], 'vi');
+  } catch {
+    locale = resolveLocale([], 'vi');
+  }
+  // The catalogue is module state, not React state: set it here or the very
+  // first render reads a different language from the one this function chose.
+  setLocale(locale);
+  return locale;
+}
+
+/** Apply a locale everywhere at once: the catalogue, the mirror, and React. */
+function applyLocale(locale: Locale): void {
+  setLocale(locale);
+  try {
+    localStorage.setItem(LOCALE_KEY, locale);
+  } catch {
+    /* blocked storage — the server still knows, so only the first paint suffers */
+  }
+  set({ locale });
+}
+
 const LAST_OFFICE = 'agentco:office';
 
 function readLastOffice(): string | null {
@@ -344,10 +402,12 @@ export function getState(): AppState {
  * `id` để lần ra, nên chỗ nào không tra được thì rơi về `id` chứ không rỗng.
  */
 export function labelFor(roleId: string): string {
-  if (roleId === 'user') return 'bạn';
+  if (roleId === 'user') return t('chat.you');
   if (roleId === 'assistant') {
     const node = state.canvas?.nodes.find((n) => n.kind === 'assistant');
-    return node?.label ?? 'Trợ lý';
+    // The node label is the name THE USER gave their assistant — never
+    // translated. `t()` only supplies the fallback for an office with no canvas.
+    return node?.label ?? t('chat.assistant');
   }
   const node = state.canvas?.nodes.find((n) => n.role === roleId);
   return node?.label ?? roleId;
@@ -386,6 +446,9 @@ export const actions = {
       return;
     }
     set({ company, fatal: null });
+    // `company.yaml` is the authority; the browser mirror was only a guess to
+    // get the first paint right. Correct it now, silently, if they disagree.
+    if (company.language && company.language !== state.locale) applyLocale(company.language);
 
     if (company.offices.length === 0) {
       set({ loading: false, officeId: null, canvas: null });
@@ -625,7 +688,7 @@ export const actions = {
      */
     const r = await api.arms().catch(() => null);
     const n = r?.arms.filter((a) => a.orphan).length ?? 0;
-    if (n > 0) toast(`${n} kết nối giờ không ai dùng — dọn ở Tổng quan → Kết nối.`);
+    if (n > 0) toast(t('toast.unusedArms', { n }));
     return true;
   },
 
@@ -678,7 +741,7 @@ export const actions = {
     if (!next) return;
 
     if (optimistic && next.edges.length < edges.length) {
-      toast('Sơ đồ không nhận sợi dây đó — kiểu nối này không hợp lệ.', 'error');
+      toast(t('toast.badEdge'), 'error');
     }
     set({ canvas: next });
   },
@@ -846,7 +909,7 @@ export const actions = {
      * gõ dài mấy trăm chữ rồi mất trắng vì một cú mạng chập.
      */
     actions.setDraft('');
-    set({ sending: true, activity: 'đang đọc yêu cầu…' });
+    set({ sending: true, activity: t('activity.reading') });
     // KHÔNG tự thêm tin nhắn của mình vào đây: server phát lại nó dưới dạng
     // sự kiện (role: 'user') để mọi tab và Telegram bridge cùng thấy một luồng.
     // `say` giờ trả về NGAY sau khi bỏ tin vào hòm thư — mọi cập nhật tiếp theo
@@ -863,6 +926,21 @@ export const actions = {
     const id = state.officeId;
     if (!id) return;
     await guard(() => api.stop(id));
+  },
+
+  /**
+   * Change the interface language. → docs/CLAUDE.md §Language
+   *
+   * Applied locally FIRST, then persisted. The switch is a pure display change
+   * with nothing to roll back and no work in flight that depends on it, so
+   * waiting for a round trip would only add a beat of nothing happening. If the
+   * write fails, `guard` shows the reason and the next reload reads the file —
+   * which still holds the old value, so the two ends agree again by themselves.
+   */
+  async setLanguage(locale: Locale): Promise<void> {
+    if (locale === state.locale) return;
+    applyLocale(locale);
+    await guard(() => api.setLanguage(locale));
   },
 
   /** Nút trên thanh tab: bấm lại tab đang mở thì ĐÓNG. Đó là hành vi của một tab. */
@@ -980,7 +1058,7 @@ export function connectEvents(): () => void {
   es.onerror = () => {
     // EventSource tự kết nối lại. Chỉ báo khi nó đã đóng hẳn.
     if (es.readyState === EventSource.CLOSED) {
-      set({ fatal: 'Mất kết nối tới công ty. Kiểm tra terminal — daemon còn chạy không?' });
+      set({ fatal: t('error.lostDaemon') });
     }
   };
 
@@ -1121,16 +1199,16 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       }
 
       const bits: string[] = [];
-      if (e.assistant === 'thinking') bits.push('Trợ lý đang nghĩ…');
-      if (e.assistant === 'planning') bits.push('Trợ lý đang lập kế hoạch…');
-      if (e.workers > 0) bits.push(`${e.workers} nhân viên đang làm việc`);
-      if (e.queued > 0) bits.push(`${e.queued} tin chờ`);
-      if (e.jobs > 0) bits.push(`${e.jobs} việc xếp hàng`);
+      if (e.assistant === 'thinking') bits.push(t('activity.assistantThinking'));
+      if (e.assistant === 'planning') bits.push(t('activity.assistantPlanning'));
+      if (e.workers > 0) bits.push(plural('activity.workers', e.workers));
+      if (e.queued > 0) bits.push(plural('activity.queued', e.queued));
+      if (e.jobs > 0) bits.push(plural('activity.jobs', e.jobs));
       // MẠCH KHÔNG ĐƯỢC ĐỨT. Còn `plan_id` nghĩa là còn một công việc đang chạy,
       // nên phải còn một câu gì đó trên màn hình — kể cả ở những nhịp ngắn không
       // ai "bận" theo nghĩa hẹp (vừa lập kế hoạch xong, chưa phóng task đầu).
       // Khoảng im lặng chính là chỗ người dùng tưởng hệ thống chết và bấm lại.
-      if (bits.length === 0 && e.plan_id) bits.push('Đang chạy…');
+      if (bits.length === 0 && e.plan_id) bits.push(t('activity.running'));
       set({ activity: bits.length ? bits.join(' · ') : null });
       break;
     }

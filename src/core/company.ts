@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CÔNG TY — vỏ chứa các văn phòng, cộng hai thứ dùng chung: tiền và bus sự kiện.
  *
  * → docs/SPEC-offices.md §2
@@ -34,6 +34,7 @@ import {
 import { Office } from './office.js';
 import { grantFor, readOAuth, readSecrets, writeSecrets } from './secrets.js';
 import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
+import { isLocale, t } from '../i18n/index.js';
 import {
   appendPurge,
   appendRename,
@@ -128,7 +129,7 @@ export class Company {
         // "Ổn định". Ghi lại lý do để UI hiện được thay vì im lặng biến mất.
         const msg = err instanceof Error ? err.message : String(err);
         this.broken.set(id, msg);
-        process.emitWarning(`Không nạp được văn phòng "${id}": ${msg}`);
+        process.emitWarning(`Could not load office "${id}": ${msg}`);
       }
     }
   }
@@ -170,7 +171,7 @@ export class Company {
     if (!o) {
       const why = this.broken.get(officeId);
       throw new RunError(
-        why ? `Văn phòng "${officeId}" đang lỗi: ${why}` : `Không có văn phòng "${officeId}".`,
+        why ? t('co.officeBroken', { office: officeId, why }) : t('co.noOffice', { office: officeId }),
         'other',
       );
     }
@@ -189,7 +190,7 @@ export class Company {
    * và không dám xoá.
    */
   createOffice(input: { name?: string; id?: string }): Office {
-    const name = normalizeName(input.name ?? '') || 'Văn phòng mới';
+    const name = normalizeName(input.name ?? '') || t('company.unnamedOffice');
     /**
      * `folderId` chứ không phải `slugId`: tên phi-Latin (中文, 日本語, 한국어,
      * ไทย, Русский…) cho slug RỖNG, và bản cũ ném thẳng *"cần có ít nhất một
@@ -200,13 +201,13 @@ export class Company {
      */
     const id = input.id?.trim() ? slugId(input.id.trim()) : folderId(name);
     if (!isSafeId(id)) {
-      throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
+      throw new RunError(t('co.officeNameNeedsAlnum'), 'other');
     }
     if (name.length > 60) {
-      throw new RunError('Tên văn phòng dài quá 60 ký tự.', 'other');
+      throw new RunError(t('co.officeNameTooLong'), 'other');
     }
     if (this.offices.has(id) || this.broken.has(id)) {
-      throw new RunError(`Đã có văn phòng "${id}".`, 'other');
+      throw new RunError(t('co.officeExists', { id }), 'other');
     }
     this.assertNameFree(name, id);
 
@@ -214,7 +215,7 @@ export class Company {
     const pp = officePaths(dir);
     ensureOfficeDirs(pp);
     fs.writeFileSync(pp.configFile, officeTemplate(id, name), 'utf8');
-    fs.writeFileSync(pp.assistantSkills, ASSISTANT_SKILLS_DEFAULT, 'utf8');
+    fs.writeFileSync(pp.assistantSkills, assistantSkillsDefault(), 'utf8');
     /**
      * KHÔNG tạo file charter, và không tạo node tri thức nào.
      *
@@ -233,7 +234,7 @@ export class Company {
     office.onUsage = (rec) => appendUsage(this.paths, rec);
     this.offices.set(id, office);
 
-    this.emit({ type: 'company.offices', say: `Đã tạo văn phòng "${name}".`, office: id, plan_id: null });
+    this.emit({ type: 'company.offices', say: t('co.officeCreated', { name }), office: id, plan_id: null });
     return office;
   }
 
@@ -258,15 +259,14 @@ export class Company {
     const office = this.get(officeId);
     const next = normalizeName(name);
     if (!nameKey(next)) {
-      throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
+      throw new RunError(t('co.officeNameNeedsAlnum'), 'other');
     }
     this.assertNameFree(next, officeId);
 
     const moveTo = this.renameTarget(officeId, next);
     if (moveTo && office.currentState === 'working') {
       throw new RunError(
-        'Văn phòng đang chạy việc, chưa đổi tên thư mục được. Bấm Dừng rồi thử lại — ' +
-          'hoặc đổi tên sau khi việc xong.',
+        t('co.officeBusyRename'),
         'other',
       );
     }
@@ -279,8 +279,8 @@ export class Company {
     this.emit({
       type: 'company.offices',
       say: moveTo
-        ? `Đã đổi tên văn phòng thành "${applied}", và thư mục trên đĩa cũng đổi theo.`
-        : `Đã đổi tên văn phòng thành "${applied}".`,
+        ? t('co.officeRenamedWithFolder', { name: applied })
+        : t('co.officeRenamed', { name: applied }),
       office: moveTo ?? officeId,
       plan_id: null,
     });
@@ -347,7 +347,7 @@ export class Company {
   private moveOffice(officeId: string, nextId: string): void {
     const from = path.join(this.paths.offices, officeId);
     const to = path.join(this.paths.offices, nextId);
-    if (fs.existsSync(to)) throw new RunError(`Thư mục "${nextId}" đã tồn tại.`, 'other');
+    if (fs.existsSync(to)) throw new RunError(t('co.folderExists', { id: nextId }), 'other');
 
     fs.renameSync(from, to);
     appendRename(this.paths, officeId, nextId);
@@ -366,8 +366,7 @@ export class Company {
       if (o.id === exceptId) continue;
       if (nameKey(o.name) === key) {
         throw new RunError(
-          `Đã có văn phòng tên "${o.name}". Hai văn phòng trùng tên thì ô chọn ở đầu ` +
-            `màn hình hiện hai dòng y hệt nhau — đặt tên khác đi.`,
+          t('co.officeNameTaken', { name: o.name }),
           'other',
         );
       }
@@ -389,14 +388,14 @@ export class Company {
   updateModels(patch: Record<string, string>): CompanyConfig['models'] {
     const allowed = new Set(['eco', 'standard', 'deep', 'master', 'planner']);
     const entries = Object.entries(patch).filter(([k]) => allowed.has(k));
-    if (entries.length === 0) throw new RunError('Không có trường model nào hợp lệ.', 'other');
+    if (entries.length === 0) throw new RunError(t('co.noValidModelField'), 'other');
 
     for (const [key, value] of entries) {
       if (typeof value !== 'string' || !value.trim()) {
-        throw new RunError(`Giá trị cho "${key}" không được để trống.`, 'other');
+        throw new RunError(t('co.valueEmpty', { key }), 'other');
       }
       if ((key === 'master' || key === 'planner') && !TIERS.includes(value as never)) {
-        throw new RunError(`"${key}" phải là một MỨC: ${TIERS.join(', ')}.`, 'other');
+        throw new RunError(t('co.mustBeTier', { key, tiers: TIERS.join(', ') }), 'other');
       }
     }
 
@@ -414,11 +413,53 @@ export class Company {
 
     this.emit({
       type: 'company.offices',
-      say: 'Đã đổi model. Việc đang chạy giữ nguyên model cũ cho tới khi xong.',
+      say: t('co.modelsChanged'),
       office: '',
       plan_id: null,
     });
     return this.config.models;
+  }
+
+  /**
+   * Change the INTERFACE language. → `src/i18n/` · docs/CLAUDE.md §Language
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THIS DOES NOT TOUCH A SINGLE PROMPT, AND MUST NOT LEARN TO.           │
+   * │                                                                          │
+   * │ It changes what the screen says. It does NOT change what the assistant   │
+   * │ or the workers write — those follow whatever language the human is       │
+   * │ typing in, which is a different question and one the switch cannot       │
+   * │ answer. A Vietnamese user may well want an English interface.            │
+   * │                                                                          │
+   * │ Two consequences worth stating because they read as bugs otherwise:      │
+   * │  · no `cacheKey` moves, so nothing is re-cached and nothing is re-paid.  │
+   * │    Model config changes cost a prefix rewrite; this one costs nothing.   │
+   * │  · a reply that arrives right after the switch is still in the old       │
+   * │    language if that is the language the human wrote in. Correct.         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Same write shape as `updateModels`: edit through `parseDocument` so the
+   * comments in company.yaml survive, then READ BACK THROUGH THE SCHEMA rather
+   * than patching the in-memory object. `loadCompanyConfig` applies the locale
+   * as it parses, so the daemon's own strings switch on the same line.
+   */
+  updateLanguage(language: string): 'vi' | 'en' {
+    if (!isLocale(language)) {
+      throw new RunError(t('co.unsupportedLanguage', { language }), 'other');
+    }
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    doc.set('language', language);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    // No `applyCompanyConfig` loop: offices hold no interface strings, and a
+    // rebuild would throw away running plans to change a label.
+    return language;
   }
 
   /**
@@ -480,7 +521,7 @@ export class Company {
      */
     const id = armHash(input.config, secretNames, input.level);
     if (!input.config || typeof input.config !== 'object') {
-      throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
+      throw new RunError(t('co.armConfigMissing'), 'other');
     }
     /**
      * ⚠ TRÙNG MÃ = GHI ĐÈ IM LẶNG, và user bắt được ngay lượt test đầu: cắm
@@ -508,8 +549,7 @@ export class Company {
     if (input.office && this.armInUse(input.office, id)) {
       const label = this.config.arms[id]?.label || id;
       throw new RunError(
-        `Văn phòng này đã có kết nối "${label}". Kéo dây từ nó sang nhân viên cần dùng — ` +
-          `một kết nối dùng chung được cho nhiều người.`,
+        t('co.armAlreadyHere', { label }),
         'other',
       );
     }
@@ -530,8 +570,7 @@ export class Company {
       const bad = want.find((r) => swallowsOffice(r, office.loaded.dir, this.dir));
       if (bad) {
         throw new RunError(
-          `"${bad}" chứa chính thư mục làm việc của văn phòng. Nhân viên đã đọc-ghi được ở đó sẵn ` +
-            `mà không tốn token nào, nên cắm thêm là trả tiền cho thứ đang có. Chọn một thư mục bên ngoài.`,
+          t('co.folderIsOfficeItself', { path: bad }),
           'other',
         );
       }
@@ -545,9 +584,7 @@ export class Company {
       const clash = coveredBy(existing, want);
       if (clash) {
         throw new RunError(
-          `Thư mục này đã nằm trong kết nối "${clash.id}" của văn phòng. ` +
-            `Nối thẳng "${clash.id}" vào nhân viên cần nó — một kết nối dùng chung được cho nhiều người, ` +
-            `và cắm thêm cái thứ hai là trả token hai lần cho cùng một thứ.`,
+          t('co.folderAlreadyCovered', { id: clash.id }),
           'other',
         );
       }
@@ -668,7 +705,7 @@ export class Company {
 
     this.emit({
       type: 'company.offices',
-      say: `Đã cắm "${label}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.`,
+      say: t('co.armPlugged', { label }),
       office: '',
       plan_id: null,
     });
@@ -698,8 +735,8 @@ export class Company {
    */
   renameArm(id: string, label: string): string {
     const next = label.trim();
-    if (!next) throw new RunError('Tên kết nối không được để trống.', 'other');
-    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+    if (!next) throw new RunError(t('co.armNameEmpty'), 'other');
+    if (!(id in this.config.mcpServers)) throw new RunError(t('co.noArm', { id }), 'other');
 
     const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
     if (!doc.has('arms')) doc.set('arms', doc.createNode({}));
@@ -711,7 +748,7 @@ export class Company {
     );
     this.config = loadCompanyConfig(this.dir);
     for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
-    this.emit({ type: 'company.offices', say: `Kết nối giờ tên là "${next}".`, office: '', plan_id: null });
+    this.emit({ type: 'company.offices', say: t('co.armRenamed', { name: next }), office: '', plan_id: null });
     return next;
   }
 
@@ -756,7 +793,7 @@ export class Company {
     const label = this.config.arms[id]?.label || id;
     this.emit({
       type: 'company.offices',
-      say: `Đã rút "${label}". Cắm lại lúc nào cũng được — cấu hình và chìa vẫn giữ.`,
+      say: t('co.armUnplugged', { label }),
       office: officeId ?? '',
       plan_id: null,
     });
@@ -811,14 +848,16 @@ export class Company {
   }
 
   forgetArm(id: string): void {
-    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+    if (!(id in this.config.mcpServers)) throw new RunError(t('co.noArm', { id }), 'other');
 
     const holders = this.armHolders(id);
     if (holders.length) {
       throw new RunError(
-        `"${this.config.arms[id]?.label || id}" vẫn đang ở ${holders.length} văn phòng ` +
-          `(${holders.join(', ')}). Rút khỏi từng chỗ trước đã — xoá hẳn một thứ đang được dùng ` +
-          `là làm hỏng sơ đồ của người khác.`,
+        t('co.armStillInUse', {
+          label: this.config.arms[id]?.label || id,
+          n: String(holders.length),
+          offices: holders.join(', '),
+        }),
         'other',
       );
     }
@@ -841,7 +880,7 @@ export class Company {
      */
     this.emit({
       type: 'company.offices',
-      say: `Đã xoá hẳn "${label}" khỏi sổ chung. Chìa vẫn được giữ.`,
+      say: t('co.armDeleted', { label }),
       office: '',
       plan_id: null,
     });
@@ -967,7 +1006,7 @@ export class Company {
     const config = this.config.mcpServers[id];
     if (!config) {
       throw new RunError(
-        `Không còn kết nối "${id}" trong sổ chung — có lẽ nó vừa bị gỡ. Đóng hộp thoại rồi mở lại.`,
+        t('co.armGoneFromList', { id }),
         'other',
       );
     }
@@ -1003,7 +1042,7 @@ export class Company {
   archiveOffice(officeId: string, archived: boolean): void {
     const office = this.get(officeId);
     if (archived && office.currentState === 'working') {
-      throw new RunError('Văn phòng đang chạy việc. Bấm Dừng trước đã.', 'other');
+      throw new RunError(t('co.officeBusyStopFirst'), 'other');
     }
     // Khôi phục xong mà trùng tên với một văn phòng đang sống thì ô chọn hiện
     // hai dòng y hệt nhau. Kiểm ở đây, trước khi ghi.
@@ -1019,8 +1058,8 @@ export class Company {
     this.emit({
       type: 'company.offices',
       say: archived
-        ? `Đã cất văn phòng "${office.name}" vào lưu trữ. Khôi phục được bất cứ lúc nào.`
-        : `Đã khôi phục văn phòng "${office.name}".`,
+        ? t('co.officeArchived', { name: office.name })
+        : t('co.officeRestored', { name: office.name }),
       office: officeId,
       plan_id: null,
     });
@@ -1055,12 +1094,12 @@ export class Company {
   removeOffice(officeId: string): void {
     const office = this.offices.get(officeId);
     if (!office && !this.broken.has(officeId)) {
-      throw new RunError(`Không có văn phòng "${officeId}".`, 'other');
+      throw new RunError(t('co.noOffice', { office: officeId }), 'other');
     }
     if (office?.currentState === 'working') {
-      throw new RunError('Văn phòng đang chạy việc. Bấm Dừng trước đã.', 'other');
+      throw new RunError(t('co.officeBusyStopFirst'), 'other');
     }
-    if (!isSafeId(officeId)) throw new RunError('Mã văn phòng không hợp lệ.', 'other');
+    if (!isSafeId(officeId)) throw new RunError(t('co.officeIdInvalid'), 'other');
 
     this.offices.delete(officeId);
     this.broken.delete(officeId);
@@ -1068,7 +1107,7 @@ export class Company {
     appendPurge(this.paths, officeId);
     this.emit({
       type: 'company.offices',
-      say: `Đã xoá hẳn văn phòng "${officeId}" và các dòng chi phí của nó.`,
+      say: t('co.officeDeleted', { id: officeId }),
       office: officeId,
       plan_id: null,
     });
@@ -1096,7 +1135,7 @@ export class Company {
         type: 'company.offices',
         // Sự kiện cấp CÔNG TY: không thuộc văn phòng nào (`history(id)` lọc theo
         // trường này, nên gắn bừa một id là nó hiện trong nhật ký của người khác).
-        say: `Đã dọn ${out.offices} mục không còn khỏi sổ chi phí.`,
+        say: t('co.ledgerPurged', { n: String(out.offices) }),
         office: '',
         plan_id: null,
       });
@@ -1178,7 +1217,7 @@ export class Company {
           // Nói đúng sự thật cho từng ca: mã cũ đã xoá thì hiện MÃ (manh mối duy
           // nhất còn lại); bản ghi v0 thì nói rõ nó có trước khi tách văn phòng,
           // chứ không gọi là "đã xoá" — không có văn phòng nào bị xoá ở đó cả.
-          name: live?.name ?? (office === LEGACY ? '(trước khi tách văn phòng)' : office),
+          name: live?.name ?? (office === LEGACY ? t('co.beforeOfficesSplit') : office),
           ...v,
           archived: live?.archived ?? false,
           gone: !live,
@@ -1211,20 +1250,13 @@ name: ${JSON.stringify(name)}
 charter_file: charter.md
 
 assistant:
-  display_name: "Trợ lý"
+  ${t('seed.assistantUnnamed')}
   avatar: "★"
 
-  # Kết quả rơi xuống đâu khi yêu cầu không nghiêng hẳn về bên nào:
-  #   file  - người dùng MỞ file (bài viết, báo cáo, bảng, hợp đồng)
-  #   reply - người dùng ĐỌC câu trả lời ngay trong ô chat (hỏi đáp, tra cứu)
-  # Task "reply" VẪN ghi file như thường; nó chỉ thôi bắt người ta đi mở file.
-  # Văn phòng chuyên hỏi-đáp thì đổi dòng này thành reply.
+  ${t('seed.defaultDeliver')}
   default_deliver: file
 
-  # MCP/API mà Trợ lý "dùng được". Thực chất chúng được gắn cho một worker ẩn
-  # chạy phía sau, KHÔNG gắn thẳng vào Trợ lý: Trợ lý là session dài, resume
-  # liên tục, mà MCP phá prompt cache khi resume -> mất rất nhiều token MỖI LƯỢT
-  # trò chuyện. Cắm bằng cách kéo dây trên sơ đồ.
+  ${t('seed.officeMcp')}
   mcp: []
 `;
 }
@@ -1239,16 +1271,21 @@ assistant:
  *
  * Lời giải thích "bạn sửa được cái này" đã chuyển vào bảng prompt phân lớp trên
  * giao diện, nơi người dùng thật sự đọc nó, và nơi nó không tốn token nào.
+ *
+ * ⚠ A FUNCTION, and it goes through the catalogue — unlike every other prompt
+ * text in this repository.
+ *
+ * That is not a contradiction of "the switch never reaches a prompt". This
+ * string is not prompt scaffolding we own: it is the STARTING CONTENT of
+ * `skills/assistant.md`, a file the user owns and edits, written once when the
+ * office is created. It follows the switch exactly the way the seed comments in
+ * `company.yaml` do, and the moment the user saves that file it is their text
+ * and is never translated again. Nothing re-reads the switch afterwards.
+ *
+ * A module constant would also freeze it to whichever language the process
+ * started in, which is the same trap `COMMANDS` and `REFUSED` were holding.
  */
-const ASSISTANT_SKILLS_DEFAULT = `Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.
-
-Khi yêu cầu còn mơ hồ ở chỗ ảnh hưởng tới kết quả (làm cho ai, dài bao nhiêu,
-giọng thế nào, dựa trên tài liệu nào), hỏi lại đúng MỘT câu quan trọng nhất.
-Thà hỏi còn hơn đoán sai rồi làm lại.
-
-Báo cáo bằng lời người thường: đã xong gì, có gì cần để ý. Không nhắc tên tool,
-không nhắc số token, không dùng thuật ngữ kỹ thuật.
-`;
+const assistantSkillsDefault = (): string => t('seed.assistantSkills.body');
 
 /*
  * `charterTemplate()` đã bị BỎ HẲN ngày 17/08 — không thay bằng gì cả.

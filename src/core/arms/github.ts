@@ -10,7 +10,7 @@ import type { CatalogArm } from '../catalog.js';
 
 export const GITHUB_ARM: CatalogArm = {
   id: 'github',
-  name: 'GitHub',
+  name: 'armCat.github.name',
   icon: '🐙',
   /**
    * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho đẹp:
@@ -29,9 +29,7 @@ export const GITHUB_ARM: CatalogArm = {
    * khai bất kể bản cài — bản cài chỉ gác repo **riêng tư**. Nói quá về hàng
    * rào là một kiểu nói dối tệ hơn nói thiếu.
    */
-  blurb:
-    'Đọc và sửa file trong repo GitHub — kể cả repo riêng tư. Sửa là commit thẳng lên GitHub, ' +
-    'không tải repo về máy. Repo riêng tư chỉ với tới được nếu bạn cài agentco vào.',
+  blurb: 'armCat.github.blurb',
   price: 'login',
   /**
    * 🔴 `auth` tồn tại vì GitHub **không mở DCR** (đo 25/08, xác nhận lại
@@ -93,26 +91,26 @@ export const GITHUB_ARM: CatalogArm = {
   groups: [
     {
       id: 'context',
-      label: 'Tài khoản & tổ chức',
-      help: 'Nhân viên biết bạn là ai trên GitHub, ở trong tổ chức và nhóm nào. Không đụng tới repo.',
+      label: 'armCat.github.context.label',
+      help: 'armCat.github.context.help',
       on: true,
     },
     {
       id: 'repos',
-      label: 'Repo & file',
-      help: 'Duyệt repo, đọc file, xem nhánh và commit. Ở nấc toàn quyền thì tạo và sửa file được.',
+      label: 'armCat.github.repos.label',
+      help: 'armCat.github.repos.help',
       on: true,
     },
     {
       id: 'pull_requests',
-      label: 'Pull request',
-      help: 'Xem, bình luận, tạo và gộp pull request.',
+      label: 'armCat.github.pulls.label',
+      help: 'armCat.github.pulls.help',
     },
-    { id: 'issues', label: 'Issue', help: 'Xem, tạo, gán người và đóng issue.' },
+    { id: 'issues', label: 'armCat.github.issues.label', help: 'armCat.github.issues.help' },
     {
       id: 'actions',
-      label: 'Actions / CI',
-      help: 'Xem lượt chạy workflow, đọc log, chạy lại một lượt hỏng.',
+      label: 'armCat.github.actions.label',
+      help: 'armCat.github.actions.help',
     },
   ],
   tiered: true,
@@ -127,7 +125,7 @@ export const GITHUB_ARM: CatalogArm = {
    * không có triệu chứng nào ở phía ta. Rà lại mỗi lần đụng mục GitHub.
    */
   scope: {
-    say: 'Chọn repo trên GitHub',
+    say: 'armCat.github.scopeSay',
     url: 'https://github.com/apps/agent-co-app/installations/new',
   },
   /**

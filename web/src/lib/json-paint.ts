@@ -27,6 +27,9 @@
  *   · `fault`→ **chỉ đúng chỗ hỏng**, bằng dòng/cột và một câu tiếng người
  * Trông cậy vào màu để báo lỗi là đúng lớp *"câu lỗi chỉ sai cửa"*.
  */
+
+import { t } from '@i18n';
+
 export interface JsonFault {
   /** Chỉ số ký tự, 0-based. `-1` = không xác định được. */
   at: number;
@@ -81,30 +84,30 @@ function humanise(msg: string, s: string, at: number): string {
   const brk = count(s, '[') - count(s, ']');
 
   // ① Không phải JSON ngay từ ký tự đầu — nói thẳng, đừng nói về ngoặc.
-  if (!/^[[{]/.test(s)) return 'Đây không phải khối JSON — nó phải mở đầu bằng `{`.';
+  if (!/^[[{]/.test(s)) return t('jsonHint.notJson');
 
   // ② Lệch ngoặc ⇒ dán thiếu. Bắt được ca này KHÔNG cần V8 nói gì.
-  if (open > 0) return `Thiếu ${open} dấu \`}\` ở cuối — có vẻ bạn chưa dán hết.`;
-  if (brk > 0) return `Thiếu ${brk} dấu \`]\` ở cuối — có vẻ bạn chưa dán hết.`;
-  if (open < 0) return `Thừa ${-open} dấu \`}\`.`;
-  if (brk < 0) return `Thừa ${-brk} dấu \`]\`.`;
-  if (count(s, '"') % 2 === 1) return 'Có một dấu nháy kép `"` chưa đóng.';
+  if (open > 0) return t('jsonHint.missingBrace', { n: open });
+  if (brk > 0) return t('jsonHint.missingBracket', { n: brk });
+  if (open < 0) return t('jsonHint.extraBrace', { n: -open });
+  if (brk < 0) return t('jsonHint.extraBracket', { n: -brk });
+  if (count(s, '"') % 2 === 1) return t('jsonHint.unclosedQuote');
 
   // ③ Nhìn thẳng vào ký tự ở chỗ hỏng, và ký tự có nghĩa đứng ngay trước nó.
   const here = at >= 0 ? (s[at] ?? '') : '';
   const before = at >= 0 ? s.slice(0, at).trimEnd().slice(-1) : '';
   if (here === "'" || before === "'") {
-    return "JSON chỉ nhận nháy kép `\"`, không nhận nháy đơn `'`.";
+    return t('jsonHint.singleQuote');
   }
   if (before === ',' && (here === '}' || here === ']')) {
-    return 'Thừa một dấu phẩy — JSON không cho dấu phẩy trước `}` hoặc `]`.';
+    return t('jsonHint.trailingComma');
   }
 
   // ④ Giờ mới tới văn của V8, và tới đây nó đã hết mơ hồ.
-  if (/property name/.test(msg)) return 'Tên trường phải nằm trong dấu nháy kép, ví dụ `"command"`.';
-  if (/after property name|Expected ':'/.test(msg)) return 'Thiếu dấu `:` sau tên trường.';
-  if (/Expected ',' /.test(msg)) return 'Thiếu dấu `,` giữa hai mục.';
-  return here ? `Ký tự \`${here}\` ở đây không hợp lệ.` : 'Chỗ này không đọc được.';
+  if (/property name/.test(msg)) return t('jsonHint.propName');
+  if (/after property name|Expected ':'/.test(msg)) return t('jsonHint.missingColon');
+  if (/Expected ',' /.test(msg)) return t('jsonHint.missingComma');
+  return here ? t('jsonHint.badChar', { char: here }) : t('jsonHint.unreadable');
 }
 
 const count = (s: string, ch: string): number => s.split(ch).length - 1;

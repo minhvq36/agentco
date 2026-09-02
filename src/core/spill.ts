@@ -237,7 +237,7 @@ function longestLine(s: string): number {
 function renderJson(v: unknown, duong: string[] = [], out: string[] = []): string[] {
   if (typeof v === 'string') {
     // Chuỗi dài = nội dung ⇒ in thô, giữ xuống dòng thật.
-    out.push(`── ${duong.join('.') || '(nội dung)'} ──`, v, '');
+    out.push(`── ${duong.join('.') || '(content)'} ──`, v, '');
   } else if (Array.isArray(v)) {
     v.forEach((x, i) => renderJson(x, [...duong, String(i)], out));
   } else if (v && typeof v === 'object') {
@@ -285,13 +285,18 @@ function kb(bytes: number): string {
  * ⚠ Điều kiện phải nằm trên chính dòng có ví dụ, không phải một câu dặn ở đầu
  * prompt — luật đã trả tiền 26/08 (`armReach` in nấc ngay trên dòng nhân viên).
  * Nên câu này tự mang đường dẫn VÀ tên hai tool đọc được nó.
+ *
+ * ⚠⚠ ENGLISH, AND NOT THROUGH `t()`. A worker model reads this, not a person —
+ * so it is prompt text, and the interface switch never reaches a prompt.
+ * The ban on the word "error" survives the translation and is the sharpest
+ * trap in the whole sweep: `test/spill.test.ts` is the code that enforces it.
  */
 export function spillNotice(p: SpillPlan): string {
   return (
-    `Lấy dữ liệu xong. Nội dung dài ${kb(p.bytes)} nên đã lưu vào thư mục làm việc:\n` +
+    `Fetched. The content is ${kb(p.bytes)}, so it was saved into the working directory:\n` +
     `${p.rel}\n` +
-    `Đọc nó bằng Read (kèm offset/limit) hoặc Grep — file đã được tách dòng sẵn để đọc từng phần. ` +
-    `Đây KHÔNG phải lỗi: dữ liệu đã lấy về đầy đủ.`
+    `Read it with Read (using offset/limit) or Grep — the file is already broken into lines so it ` +
+    `can be read piece by piece. This did NOT fail: the data came back in full.`
   );
 }
 

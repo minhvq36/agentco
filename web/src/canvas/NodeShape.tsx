@@ -5,6 +5,7 @@ import { agentInk } from '@/lib/colors';
 import { useApp } from '@/lib/store';
 import { sizeOf } from './geometry';
 import type { CanvasNode } from '@/lib/types';
+import { plural, t } from '@i18n';
 
 /**
  * Ruột của node Tủ tài liệu — tách riêng CHỈ để giữ ràng buộc hiệu năng.
@@ -22,7 +23,7 @@ function LibraryBody({ count }: { count: number }) {
         🗄
       </text>
       <text className="node-nm" x={44} y={30}>
-        Tủ tài liệu
+        {t('node.library')}
       </text>
       {/*
         Câu phụ nói THẲNG cách đưa file vào, vì đây là node duy nhất trên sơ đồ
@@ -30,7 +31,9 @@ function LibraryBody({ count }: { count: number }) {
         không đủ để đoán ra là thả file được.
       */}
       <text className="node-sub" x={44} y={50}>
-        {busy > 0 ? `đang đọc ${busy} tài liệu…` : `${count} tài liệu · thả file vào đây`}
+        {busy > 0
+          ? t('node.libraryBusy', { n: busy })
+          : `${plural('node.libraryCount', count)} · ${t('node.libraryHint')}`}
       </text>
     </>
   );
@@ -80,10 +83,10 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
             📚
           </text>
           <text className="node-nm" x={44} y={30}>
-            Kho tri thức chung
+            {t('node.knowledge')}
           </text>
           <text className="node-sub" x={44} y={50}>
-            {node.count ?? 0} ghi chú · bấm để mở
+            {plural('knowledge.noteCount', node.count ?? 0)} · {t('node.knowledgeHint')}
           </text>
         </>
       )}
@@ -143,7 +146,7 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
             └────────────────────────────────────────────────────────────────┘
           */}
           <text className="node-sub" x={38} y={s.h / 2 + 13}>
-            {node.missing ? 'không còn cắm' : node.via ? cut(node.via, 16) : 'kết nối'}
+            {node.missing ? t('node.armMissing') : node.via ? cut(node.via, 16) : t('node.armFallback')}
           </text>
         </>
       )}
@@ -170,11 +173,11 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
           {/* Câu `say` lúc chạy — canvas ghi thẳng textContent vào đây. */}
           <text className="node-say" x={16} y={s.h - 30} />
           <text className="node-sub" x={16} y={s.h - 12}>
-            {node.missing ? 'không tìm thấy vai trò' : `📒 ${node.count ?? 0}  ·  ${node.tier ?? ''}`}
+            {node.missing ? t('node.roleMissing') : `📒 ${node.count ?? 0}  ·  ${node.tier ?? ''}`}
           </text>
           {!node.connected && (
             <text className="node-sub" x={s.w - 12} y={s.h - 12} textAnchor="end">
-              đang nghỉ
+              {t('node.resting')}
             </text>
           )}
         </>

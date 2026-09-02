@@ -28,16 +28,39 @@ import { fileURLToPath } from 'node:url';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'core', 'oauth.ts');
 
-test('⭐ oauth.ts KHÔNG import gì ngoài `node:` — đường lui còn nguyên', () => {
+/**
+ * ⚠ DANH SÁCH TRẮNG, KHÔNG PHẢI DANH SÁCH CHẶN — và đó là toàn bộ giá trị của
+ * nó. Một danh sách chặn ("không được import SDK của hãng X, Y, Z") bỏ im lặng
+ * mọi cái tên nó chưa từng nghe, tức đúng cái tên sẽ lẻn vào. Ở đây thì bất kỳ
+ * import nào không nằm trong bảng dưới cũng đỏ ngay, và người thêm nó phải mở
+ * file này ra mà viết lý do — đó là chỗ có người nhìn.
+ *
+ * Mỗi mục thêm vào phải trả lời được đúng một câu: *đổi hãng chạy agent thì mục
+ * này có phải sửa không?* Nếu có thì nó không được vào bảng.
+ */
+const ALLOWED_IMPORTS: readonly RegExp[] = [
+  /^node:/,
+  /**
+   * Catalog i18n — module THUẦN của chính repo: không `node:*`, không đụng đĩa,
+   * không `process`, không tên hãng nào. Đổi sang codex/groq thì `src/i18n/`
+   * còn nguyên vẹn, nên đường lui không bị nó chạm tới.
+   *
+   * Nó phải có mặt: 18 câu lỗi OAuth là nhóm câu người dùng gặp nhiều nhất khi
+   * cắm cánh tay, và không có dòng này thì chúng ghim cứng một thứ tiếng.
+   */
+  /^\.\.\/i18n\/index\.js$/,
+];
+
+test('⭐ oauth.ts chỉ import thứ trong danh sách trắng — đường lui còn nguyên', () => {
   const code = fs.readFileSync(SRC, 'utf8');
   const bad: string[] = [];
   // Bắt cả `import x from '…'` lẫn `import('…')` động — nhánh thứ hai là chỗ
   // một phụ thuộc hay lẻn vào nhất, vì nó trông như một lời gọi hàm.
   for (const m of code.matchAll(/(?:^|\s)(?:import|from)\s*\(?\s*['"]([^'"]+)['"]/gm)) {
     const spec = m[1]!;
-    if (!spec.startsWith('node:')) bad.push(spec);
+    if (!ALLOWED_IMPORTS.some((re) => re.test(spec))) bad.push(spec);
   }
-  assert.deepEqual(bad, [], `oauth.ts kéo phụ thuộc ngoài node: ${bad.join(', ')}`);
+  assert.deepEqual(bad, [], `oauth.ts kéo phụ thuộc ngoài danh sách trắng: ${bad.join(', ')}`);
 });
 
 test('oauth.ts không nhắc tên hãng mô hình nào — kể cả trong kiểu', () => {

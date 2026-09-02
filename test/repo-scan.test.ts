@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { CATALOG, buildConfig, findArm, serverFenced } from '../dist/core/catalog.js';
+import { t } from '../dist/i18n/index.js';
 import { offeredTiers, tierOf } from '../dist/core/probe.js';
 import { armConfig } from '../dist/server/server.js';
 
@@ -167,8 +168,10 @@ test('🔴 thẻ KHÔNG được nói quá: repo công khai đọc được dù 
    * về hàng rào tệ hơn nói thiếu — người dùng dựa vào đó để quyết định cho nhân
    * viên đụng cái gì.
    */
-  assert.doesNotMatch(gh.blurb, /chỉ chạm được những repo/i);
-  assert.match(gh.blurb, /riêng tư/i, 'phải nói rõ điều kiện áp cho repo RIÊNG TƯ');
+  // Read it the way the UI does: entries hold catalogue KEYS now, and the
+  // sentence only exists after 	(). → catalog.ts §localise
+  assert.doesNotMatch(t(gh.blurb), /chỉ chạm được những repo/i);
+  assert.match(t(gh.blurb), /riêng tư/i, 'phải nói rõ điều kiện áp cho repo RIÊNG TƯ');
 });
 
 // ──────────────────────────────── ô client_id của khách (§5h·7h)

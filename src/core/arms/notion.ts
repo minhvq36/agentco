@@ -16,7 +16,7 @@ import type { CatalogArm } from '../catalog.js';
 
 export const NOTION_ARM: CatalogArm = {
   id: 'notion',
-  name: 'Notion',
+  name: 'armCat.notion.name',
   icon: '📝',
   /**
    * ⚠ CÂU NÀY PHẢI NÓI RA BÁN KÍNH, và nó nói ngược với trực giác. → §5h·3
@@ -32,7 +32,7 @@ export const NOTION_ARM: CatalogArm = {
    * sau tệ hơn*. "chỉ đọc" ở đây là do TA cắt (nấc quyền), không phải do
    * Notion cấp hẹp.
    */
-  blurb: 'Tìm, đọc và (nếu bạn cho phép) ghi vào các trang Notion mà tài khoản của bạn xem được.',
+  blurb: 'armCat.notion.blurb',
   price: 'login',
   /**
    * MCP **hosted chính chủ**, Streamable HTTP. Ba thứ nó bỏ so với bản cũ:

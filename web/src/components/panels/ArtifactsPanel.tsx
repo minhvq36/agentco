@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, FileCheck2, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,8 @@ import { api } from '@/lib/api';
 import { Markdown } from '@/lib/markdown';
 import { actions, toast, useApp } from '@/lib/store';
 import type { ArtifactRecord, ArtifactView } from '@/lib/types';
+import { plural, t } from '@i18n';
+import { formatBytes, formatDate, formatTime } from '@i18n/fmt';
 
 /**
  * KẾT QUẢ — file NHÂN VIÊN làm ra. → docs/SPEC-artifacts.md
@@ -70,7 +72,7 @@ export function ArtifactsPanel() {
         setTotal(r.total);
       })
       .catch((err) => {
-        toast(err instanceof Error ? err.message : 'Không đọc được danh sách kết quả.');
+        toast(err instanceof Error ? err.message : t('artifacts.loadFailed'));
         setItems([]);
         setTotal(0);
       });
@@ -96,7 +98,7 @@ export function ArtifactsPanel() {
     if (!want) return;
     const found = items.find((a) => a.path === want);
     if (found) setOpen(found);
-    else toast(`Không còn "${want.split('/').pop()}" trong ngăn Kết quả — có lẽ nó đã bị xoá.`);
+    else toast(t('artifacts.gone', { name: want.split('/').pop() ?? want }));
   }, [items, revealRequest]);
 
   /**
@@ -126,7 +128,7 @@ export function ArtifactsPanel() {
       setTotal(r.total);
       if (open?.path === a.path) setOpen(null);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không xoá được.');
+      toast(err instanceof Error ? err.message : t('artifacts.deleteFailed'));
     } finally {
       setConfirmDel(null);
     }
@@ -144,26 +146,26 @@ export function ArtifactsPanel() {
       // người dùng tin ngăn đã trống trong khi nó không trống.
       toast(
         r.total > 0
-          ? `Đã xoá ${r.removed} kết quả — còn ${r.total} file không xoá được.`
-          : `Đã xoá ${r.removed} kết quả.`,
+          ? plural('artifacts.removedWithLeft', r.removed, { total: r.total })
+          : plural('artifacts.removed', r.removed),
       );
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không xoá được.');
+      toast(err instanceof Error ? err.message : t('artifacts.deleteFailed'));
     } finally {
       setConfirmAll(false);
     }
   }
 
   if (items === null || groups === null) {
-    return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
+    return <div className="px-4 py-6 text-[13px] text-muted">{t('common.reading')}</div>;
   }
 
   if (items.length === 0) {
     return (
       <Empty
         icon={<FileCheck2 className="h-7 w-7" />}
-        title="Chưa có kết quả nào"
-        hint="Đây là nơi giữ file nhân viên làm ra qua mỗi việc được giao — xem trước, tải về, hoặc xoá đi."
+        title={t('artifacts.emptyTitle')}
+        hint={t('artifacts.emptyHint')}
       />
     );
   }
@@ -191,15 +193,17 @@ export function ArtifactsPanel() {
         */}
         <span className="text-xs text-muted">
           {total > items.length
-            ? `${total} kết quả · đang hiện ${items.length} mới nhất`
-            : `${items.length} kết quả · ${formatBytes(items.reduce((n, a) => n + a.bytes, 0))}`}
+            ? plural('artifacts.countCapped', total, { shown: items.length })
+            : plural('artifacts.countBytes', items.length, {
+                size: formatBytes(items.reduce((n, a) => n + a.bytes, 0)),
+              })}
         </span>
         <button
           className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-muted transition-colors hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
           onClick={() => setConfirmAll(true)}
         >
           <Trash2 className="h-3.5 w-3.5" />
-          Xoá tất cả
+          {t('artifacts.deleteAll')}
         </button>
       </div>
 
@@ -251,7 +255,9 @@ export function ArtifactsPanel() {
                             <span>·</span>
                             {/* Nói TRƯỚC khi họ bấm. Bấm vào rồi mới biết "không
                                 xem được" là một cú bấm phí và một giây bối rối. */}
-                            <span className="rounded bg-line/70 px-1.5">chỉ tải về</span>
+                            <span className="rounded bg-line/70 px-1.5">
+                              {t('artifacts.downloadOnly')}
+                            </span>
                           </>
                         )}
                       </div>
@@ -264,14 +270,14 @@ export function ArtifactsPanel() {
                         href={officeId ? api.artifactUrl(officeId, a.path, true) : '#'}
                         download={a.name}
                         className="rounded p-1.5 text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink"
-                        aria-label={`Tải ${a.name}`}
+                        aria-label={t('artifacts.downloadFile', { name: a.name })}
                       >
                         <Download className="h-4 w-4" />
                       </a>
                       <button
                         className="rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
                         onClick={() => setConfirmDel(a)}
-                        aria-label={`Xoá ${a.name}`}
+                        aria-label={t('artifacts.delete', { name: a.name })}
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -290,8 +296,8 @@ export function ArtifactsPanel() {
         token vì nằm hoàn toàn ở giao diện.
       */}
       <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
-        Đây là thứ <b>nhân viên làm ra</b>. Không sửa được — muốn thay đổi thì nhắn Trợ lý làm lại.
-        Những tài liệu muốn dùng lâu dài thì thêm vào <b>Tủ tài liệu</b>.
+        {t('artifacts.footerBefore')} <b>{t('artifacts.footerBold1')}</b>
+        {t('artifacts.footerMid')} <b>{t('artifacts.footerBold2')}</b>.
       </div>
 
       <ViewerDialog item={open} officeId={officeId} onClose={() => setOpen(null)} />
@@ -309,12 +315,12 @@ export function ArtifactsPanel() {
       */}
       <ConfirmDelete
         open={!!confirmDel}
-        title="Xoá kết quả?"
+        title={t('artifacts.confirmDeleteTitle')}
         onCancel={() => setConfirmDel(null)}
         onConfirm={() => confirmDel && void remove(confirmDel)}
       >
-        <b>{confirmDel?.name}</b> sẽ bị xoá hẳn. Đây là <b>bản duy nhất</b> — không có bản sao nào khác
-        trên máy bạn, và nhân viên phải chạy lại từ đầu nếu bạn cần nó.
+        <b>{confirmDel?.name}</b> {t('artifacts.confirmDeleteBody1')} <b>{t('artifacts.onlyCopy')}</b>{' '}
+        {t('artifacts.confirmDeleteBody2')}
       </ConfirmDelete>
 
       {/*
@@ -326,15 +332,17 @@ export function ArtifactsPanel() {
       */}
       <ConfirmDelete
         open={confirmAll}
-        title={`Xoá cả ${total} kết quả?`}
+        title={plural('artifacts.confirmAllTitle', total)}
         onCancel={() => setConfirmAll(false)}
         onConfirm={() => void removeAll()}
       >
-        Toàn bộ <b>{total} file</b> trong ngăn này bị xoá hẳn, kể cả của những việc chạy hôm nay.
-        Đây là <b>bản duy nhất</b> — cần lại thì phải chạy lại và trả tiền lại.
+        {t('artifacts.confirmAllBefore')} <b>{plural('artifacts.fileCount', total)}</b>{' '}
+        {t('artifacts.confirmAllMid')} <b>{t('artifacts.onlyCopy')}</b>{' '}
+        {t('artifacts.confirmAllAfter')}
         <br />
         <span className="text-muted">
-          Tủ tài liệu và Kho tri thức <b>không</b> bị đụng tới.
+          {t('artifacts.untouchedBefore')} <b>{t('artifacts.untouchedBold')}</b>{' '}
+          {t('artifacts.untouchedAfter')}
         </span>
       </ConfirmDelete>
     </div>
@@ -356,9 +364,9 @@ function newestOf(list: readonly ArtifactRecord[]): ArtifactRecord {
  * ở một văn phòng chạy lâu, và một tiêu đề trống thì tệ hơn một tiêu đề mờ.
  */
 function planTitle(planId: string, list: readonly ArtifactRecord[]): string {
-  if (planId === LEGACY) return 'Kết quả cũ (trước khi tách theo việc)';
+  if (planId === LEGACY) return t('artifacts.legacyGroup');
   const named = list.find((a) => a.plan_title.trim());
-  return named ? named.plan_title.trim() : `Việc chạy ${when(newestOf(list).mtime)}`;
+  return named ? named.plan_title.trim() : t('artifacts.runAt', { when: when(newestOf(list).mtime) });
 }
 
 /** Ngày giờ ĐẦY ĐỦ có giây — dùng cho tiêu đề nhóm, xem chú thích ở chỗ gọi. */
@@ -411,10 +419,10 @@ function ViewerDialog({
         if (!alive) return;
         // Server trả 413 kèm câu giải thích khi file quá lớn để xem trước — hiện
         // đúng câu đó thay vì một khối JSON thô.
-        if (!r.ok) throw new Error(safeError(body) ?? `Không đọc được (lỗi ${r.status}).`);
+        if (!r.ok) throw new Error(safeError(body) ?? t('artifacts.readFailedStatus', { status: r.status }));
         setText(body);
       })
-      .catch((err) => alive && setError(err instanceof Error ? err.message : 'Không đọc được file.'));
+      .catch((err) => alive && setError(err instanceof Error ? err.message : t('artifacts.readFailed')));
     return () => {
       alive = false;
     };
@@ -438,8 +446,8 @@ function ViewerDialog({
           ) : !item ? null : item.view === 'download' ? (
             <Empty
               icon={<Download className="h-7 w-7" />}
-              title="Định dạng này phải mở bằng ứng dụng gốc"
-              hint="Xem trước một file Word/Excel/PowerPoint bằng cách bóc chữ ra sẽ mất bảng, mất bố cục, mất ảnh — tức là bạn duyệt một thứ khác với thứ sẽ gửi đi. Tải về rồi mở bằng ứng dụng thật."
+              title={t('artifacts.nativeOnlyTitle')}
+              hint={t('artifacts.nativeOnlyHint')}
             />
           ) : item.view === 'image' ? (
             <img src={url} alt={item.name} className="mx-auto max-h-[60vh] max-w-full object-contain" />
@@ -447,10 +455,10 @@ function ViewerDialog({
             <video src={url} controls className="mx-auto max-h-[60vh] max-w-full" />
           ) : item.view === 'pdf' ? (
             <object data={url} type="application/pdf" className="h-[60vh] w-full">
-              <p className="p-3 text-[13px] text-muted">Trình duyệt không mở được PDF ở đây — tải về nhé.</p>
+              <p className="p-3 text-[13px] text-muted">{t('artifacts.pdfFallback')}</p>
             </object>
           ) : text === null ? (
-            <div className="py-6 text-[13px] text-muted">Đang đọc…</div>
+            <div className="py-6 text-[13px] text-muted">{t('common.reading')}</div>
           ) : item.view === 'csv' ? (
             <CsvTable text={text} sep={item.ext === 'tsv' ? '\t' : ','} />
           ) : item.view === 'markdown' ? (
@@ -481,12 +489,12 @@ function ViewerDialog({
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line px-3 text-sm text-ink hover:bg-accent-soft/60"
             >
               <Download className="h-4 w-4" />
-              Tải về
+              {t('artifacts.downloadButton')}
             </a>
           )}
           <Button onClick={onClose}>
             <X className="h-4 w-4" />
-            Đóng
+            {t('common.close')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -512,7 +520,7 @@ function CsvTable({ text, sep }: { text: string; sep: string }) {
       .map((line) => splitRow(line, sep));
   }, [text, sep]);
 
-  if (rows.length === 0) return <div className="py-6 text-[13px] text-muted">File rỗng.</div>;
+  if (rows.length === 0) return <div className="py-6 text-[13px] text-muted">{t('artifacts.emptyFile')}</div>;
   const [head, ...body] = rows;
 
   return (
@@ -548,7 +556,7 @@ function CsvTable({ text, sep }: { text: string; sep: string }) {
         </tbody>
       </table>
       {rows.length >= 500 && (
-        <p className="px-2 py-2 text-xs text-muted">Chỉ hiện 500 dòng đầu. Tải về để xem đủ.</p>
+        <p className="px-2 py-2 text-xs text-muted">{t('artifacts.csvCapped')}</p>
       )}
     </div>
   );
@@ -579,13 +587,6 @@ function splitRow(line: string, sep: string): string[] {
 
 // ──────────────────────────────────────────────────────────── định dạng
 
-/** PHẢI khớp `formatBytes` ở `src/library/names.ts` — nhiều chỗ hiện cùng con số. */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /** Hôm nay thì chỉ hiện giờ — người dùng mở panel này ngay sau khi việc vừa xong. */
 function when(iso: string): string {
   const d = new Date(iso);
@@ -595,9 +596,7 @@ function when(iso: string): string {
     d.getFullYear() === today.getFullYear() &&
     d.getMonth() === today.getMonth() &&
     d.getDate() === today.getDate();
-  return sameDay
-    ? d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  return sameDay ? formatTime(d) : formatDate(d);
 }
 
 function safeError(body: string): string | undefined {

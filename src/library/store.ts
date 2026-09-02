@@ -35,8 +35,12 @@ import {
   extractPptx,
   extractText,
   extractXlsx,
+  shapeEn,
+  shapeSay,
   type Extracted,
+  type StoredShape,
 } from './extract.js';
+import { t } from '../i18n/index.js';
 
 export type DocState =
   /** vừa vào tủ, chưa bóc */
@@ -52,20 +56,70 @@ export type DocState =
   /** file hỏng, có mật khẩu, hoặc không đúng định dạng như đuôi khai */
   | 'failed';
 
+/**
+ * Why the record is NOT `ready`, as a CODE rather than a sentence.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ The same reasoning as `Shape`, and it arrived through the same failure:  │
+ * │ this field is written to `catalog.json`, then read both by `INDEX.md`    │
+ * │ (an employee reads it, so English) and by the document cabinet (a person │
+ * │ reads it, so the interface switch). A stored sentence answers one of     │
+ * │ those and freezes at extraction time besides — flip the switch and every │
+ * │ file already in the cabinet keeps explaining itself in the old language, │
+ * │ for good, because nothing re-extracts on a settings change.              │
+ * │                                                                          │
+ * │ `failed` is the one code carrying free text: the underlying error string │
+ * │ comes from a library and there is no catalogue entry that could hold it. │
+ * │ It is shown as-is, which is honest — a technical line the reader can     │
+ * │ search for beats a translated paraphrase of it.                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type DocNote =
+  | { code: 'extUnknown'; ext: string }
+  | { code: 'pdfReaderMissing' }
+  | { code: 'imageOnly' }
+  | { code: 'passwordProtected' }
+  | { code: 'tooLarge' }
+  | { code: 'corruptZip'; ext: string }
+  | { code: 'unreadable'; detail: string };
+
 export interface DocRecord {
   name: string;
   ext: string;
   bytes: number;
   mtime: string;
   state: DocState;
-  /** "34 trang" · "3 sheet: …" — cho INDEX.md và giao diện. */
-  shape?: string;
+  /**
+   * Cấu trúc quan sát được. `string` là bản ghi có TRƯỚC khi trường này thành
+   * dữ kiện — giữ nguyên câu cũ, không bóc lại (một PDF không phải lượt đọc rẻ).
+   */
+  shape?: StoredShape;
   preview?: string;
   tokens?: number;
   pages?: number;
-  /** Câu nói cho người dùng khi state không phải `ready`. Luôn kèm việc phải làm. */
-  note?: string;
+  /** Vì sao state không phải `ready`. `string` cũng là bản ghi cũ. */
+  note?: DocNote | string;
   extracted_at?: string;
+}
+
+/**
+ * Bản ghi ĐÃ DỰNG CÂU, dành cho giao diện. → `docView`
+ *
+ * Giao diện không bao giờ nhìn thấy `Shape`/`DocNote` thô: dựng câu ở hai nơi
+ * thì hai nơi lệch nhau, và nơi lệch sẽ là nơi ít người mở nhất. Server dựng
+ * một lần, ngay tại cửa ra.
+ */
+export interface DocView extends Omit<DocRecord, 'shape' | 'note'> {
+  shape?: string;
+  note?: string;
+}
+
+/** `DocRecord` (dữ kiện, trên đĩa) → `DocView` (câu, theo công tắc giao diện). */
+export function docView(d: DocRecord): DocView {
+  const { shape, note, ...rest } = d;
+  const said = shapeSay(shape, d.ext);
+  const noted = noteSay(note);
+  return { ...rest, ...(said ? { shape: said } : {}), ...(noted ? { note: noted } : {}) };
 }
 
 /** Ngưỡng phát hiện bản chụp: dưới ngần này ký tự mỗi trang thì coi như không có lớp chữ. */
@@ -180,11 +234,10 @@ export class LibraryStore {
     const checked = safeName(rawName);
     if (!checked.ok) throw new LibraryError(checked.reason);
 
-    if (data.length === 0) throw new LibraryError('File rỗng.');
+    if (data.length === 0) throw new LibraryError(t('lib.fileEmpty'));
     if (data.length > opts.maxBytes) {
       throw new LibraryError(
-        `File nặng ${formatBytes(data.length)}, vượt trần ${formatBytes(opts.maxBytes)}. ` +
-          'Nếu là bản chụp/scan thì nén lại hoặc tách nhỏ trước khi thả vào.',
+        t('lib.fileTooBig', { size: formatBytes(data.length), ceiling: formatBytes(opts.maxBytes) }),
       );
     }
 
@@ -193,7 +246,7 @@ export class LibraryStore {
 
     const dest = path.join(this.filesDir, checked.name);
     if (fs.existsSync(dest) && !opts.replace) {
-      throw new LibraryError(`Đã có tài liệu tên "${checked.name}" trong tủ.`, 'duplicate');
+      throw new LibraryError(t('lib.duplicate', { name: checked.name }), 'duplicate');
     }
 
     /**
@@ -366,19 +419,20 @@ export class LibraryStore {
        * nên hai bên vẫn gặp nhau, chỉ khác lớp.
        */
       const { open, original } = docPaths(d.name, d.ext, d.state);
-      const shape = d.shape ?? d.ext;
+      // English, always: an employee reads this block. → `shapeEn`
+      const shape = shapeEn(d.shape, d.ext);
 
       // Không có đường nào mở được thì ĐỪNG NÊU ĐƯỜNG DẪN. Nêu ra là mời Trợ lý
       // giao một task chắc chắn hỏng — đúng chuyện vừa xảy ra.
-      if (!open) return `- ${d.name} — ${shape} (chưa bóc được, chưa dùng được)`;
+      if (!open) return `- ${d.name} — ${shape} (not extracted, not usable yet)`;
 
       // Nhãn chỉ cho trạng thái BỀN, và chỉ nói ràng buộc thật: cái nào tìm
       // được bằng từ khoá, cái nào không.
       const flag =
         d.state === 'image-only'
-          ? ' (bản chụp — đọc từng trang, KHÔNG tìm được bằng từ khoá)'
+          ? ' (a scan — read it page by page, keyword search will NOT find it)'
           : d.state === 'unindexed'
-            ? ' (chưa bóc — đọc theo trang, KHÔNG tìm được bằng từ khoá)'
+            ? ' (not extracted — read it by page, keyword search will NOT find it)'
             : '';
       const alt = original ? ` (original for exact pages: ${original})` : '';
       return `- ${open} — ${shape}${flag}${alt}`;
@@ -512,7 +566,7 @@ export class LibraryStore {
     const kind: Handling | undefined = HANDLING[rec.ext];
     if (!kind) {
       rec.state = 'failed';
-      rec.note = `Chưa nhận đuôi .${rec.ext}.`;
+      rec.note = { code: 'extUnknown', ext: rec.ext };
       return;
     }
 
@@ -542,14 +596,12 @@ export class LibraryStore {
          * `npm install`, không phải đi tìm tên một gói npm.
          */
         rec.state = 'unindexed';
-        rec.note =
-          'Bộ đọc PDF chưa nạp được nên chưa tìm được bằng từ khoá — nhiều khả năng bản cài thiếu file. ' +
-          'Nhân viên vẫn đọc được nếu bạn nói rõ trang. Chạy lại `npm install` trong thư mục agentco rồi thả lại file.';
-        rec.shape = 'pdf';
+        rec.note = { code: 'pdfReaderMissing' };
+        rec.shape = { kind: 'pdf' };
         return;
       }
       rec.state = 'failed';
-      rec.note = friendlyError(err, rec.ext);
+      rec.note = noteForError(err, rec.ext);
       return;
     }
 
@@ -567,9 +619,7 @@ export class LibraryStore {
      */
     if (rec.pages && out.text.replace(/--- trang \d+ ---/g, '').trim().length < rec.pages * CHARS_PER_PAGE_MIN) {
       rec.state = 'image-only';
-      rec.note =
-        'Bản chụp, không có lớp chữ — tìm bằng từ khoá sẽ không ra. ' +
-        'Nhân viên phải đọc từng trang nên tốn hơn bình thường.';
+      rec.note = { code: 'imageOnly' };
       return;
     }
 
@@ -601,7 +651,7 @@ export class LibraryStore {
     if (docs.length === 0) {
       fs.writeFileSync(
         this.indexFile,
-        '# Tủ tài liệu\n\nChưa có tài liệu nào. Người dùng thả file vào qua giao diện.\n',
+        '# Document cabinet\n\nNo documents yet. The user drops files in through the interface.\n',
         'utf8',
       );
       return;
@@ -611,7 +661,7 @@ export class LibraryStore {
       const note =
         d.state === 'ready'
           ? (d.preview ?? '')
-          : `**${stateLabel(d.state)}** — ${d.note ?? ''} ${d.preview ?? ''}`.trim();
+          : `**${stateEn(d.state)}** — ${noteEn(d.note)} ${d.preview ?? ''}`.trim();
       // Cột "Mở bằng" là cột QUAN TRỌNG NHẤT của bảng này, và trước 20/08 nó
       // không tồn tại — ai đọc INDEX.md phải tự suy ra đường nào mở được, và
       // Trợ lý suy sai. → `docPaths`
@@ -630,33 +680,38 @@ export class LibraryStore {
        */
       const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\r?\n/g, ' ');
       const openCell = d.name.includes('|')
-        ? '— tên file có dấu `|`, đổi tên rồi thả lại'
+        ? '— the file name contains `|`; rename it and drop it again'
         : open
           ? original
-            ? `\`${open}\` + \`${original}\` (đọc kỹ theo trang)`
+            ? `\`${open}\` + \`${original}\` (read those exact pages)`
             : `\`${open}\``
-          : '— chưa dùng được';
-      return `| ${cell(d.name)} | ${cell(d.shape ?? d.ext)} | ${formatBytes(d.bytes)} | ${
+          : '— not usable yet';
+      return `| ${cell(d.name)} | ${cell(shapeEn(d.shape, d.ext))} | ${formatBytes(d.bytes)} | ${
         d.tokens ? formatTokens(d.tokens) : '—'
       } | ${openCell} | ${cell(note)} |`;
     });
 
+    /**
+     * ⚠ ENGLISH, and not through `t()` — an EMPLOYEE reads this file, so it is
+     * prompt scaffolding like every other block that reaches a model.
+     * → docs/CLAUDE.md §Language
+     */
     const lines = [
-      `# Tủ tài liệu — ${docs.length} tài liệu`,
+      `# Document cabinet — ${docs.length} documents`,
       '',
-      '**Dùng đúng đường ở cột "Mở bằng".** Luật khác nhau theo định dạng:',
+      '**Use the exact path in the "Open with" column.** The rules differ by format:',
       '',
-      '- `.md .txt .csv .json .yaml` — bản gốc CHÍNH LÀ văn bản, đọc thẳng `library/files/`.',
-      '- `.docx .xlsx .pptx` — bản gốc là file nén, **không tool nào mở trực tiếp được**.',
-      '  Chỉ dùng bản đã bóc ở `library/text/<tên>.txt`.',
-      '- `.pdf` — dùng CẢ HAI: `Grep` bản text để tìm, thấy dòng nào thì xem mốc',
-      '  `--- trang N ---` gần nhất phía trên, rồi `Read` bản gốc đúng trang đó.',
+      '- `.md .txt .csv .json .yaml` — the original IS the text; read `library/files/` directly.',
+      '- `.docx .xlsx .pptx` — the original is a zip archive, **no tool opens it directly**.',
+      '  Use only the extracted copy at `library/text/<name>.txt`.',
+      '- `.pdf` — use BOTH: `Grep` the text copy to find the passage, then look up to the nearest',
+      '  `--- trang N ---` marker above the hit and `Read` that exact page of the original.',
       '',
-      '| Tên | Loại | Cỡ | ~Token | Mở bằng | Mở đầu / cấu trúc |',
+      '| Name | Type | Size | ~Tokens | Open with | Opening / structure |',
       '|---|---|---|---|---|---|',
       ...rows,
       '',
-      `_Cập nhật ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — dựng bằng code, không qua model._`,
+      `_Updated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — built in code, no model involved._`,
       '',
     ];
     fs.writeFileSync(this.indexFile, lines.join('\n'), 'utf8');
@@ -696,35 +751,108 @@ export class LibraryError extends Error {
   }
 }
 
+/** Nhãn trạng thái cho NGƯỜI DÙNG — theo công tắc giao diện. */
 export function stateLabel(s: DocState): string {
   switch (s) {
     case 'pending':
-      return 'đang chờ';
+      return t('lib.statePending');
     case 'extracting':
-      return 'đang đọc';
+      return t('lib.stateExtracting');
     case 'ready':
-      return 'sẵn sàng';
+      return t('lib.stateReady');
     case 'image-only':
-      return 'bản chụp';
+      return t('lib.stateImageOnly');
     case 'unindexed':
-      return 'chưa lập chỉ mục';
+      return t('lib.stateUnindexed');
     case 'failed':
-      return 'lỗi';
+      return t('lib.stateFailed');
+  }
+}
+
+/** Cùng nhãn đó cho `INDEX.md` — nhân viên đọc, nên tiếng Anh cứng. */
+function stateEn(s: DocState): string {
+  switch (s) {
+    case 'pending':
+      return 'waiting';
+    case 'extracting':
+      return 'reading';
+    case 'ready':
+      return 'ready';
+    case 'image-only':
+      return 'a scan';
+    case 'unindexed':
+      return 'not indexed';
+    case 'failed':
+      return 'failed';
   }
 }
 
 /**
- * Đổi lỗi kỹ thuật thành câu nói được việc phải làm.
+ * Đổi lỗi kỹ thuật thành một MÃ nói được việc phải làm.
  *
  * Tiêu chí "Xử lý lỗi tốt" nói: mọi lỗi phải nói *chuyện gì xảy ra + làm gì
  * tiếp*. Một dòng "Invalid PDF structure" thoả đúng nửa đầu.
+ *
+ * ⚠ Trả về mã chứ không phải câu, vì kết quả đi thẳng xuống `catalog.json` —
+ * xem khối chú thích ở `DocNote`. `unreadable` là ca duy nhất mang chữ tự do,
+ * và chữ đó là nguyên văn của thư viện: nó tra cứu được, một bản dịch thì không.
  */
-function friendlyError(err: unknown, ext: string): string {
+function noteForError(err: unknown, ext: string): DocNote {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/password|encrypt/i.test(msg)) return 'File có mật khẩu — bỏ mật khẩu rồi thả lại.';
-  if (/ZIP64/i.test(msg)) return 'File quá lớn để đọc. Tách nhỏ rồi thả lại.';
-  if (/zip|inflate|nén/i.test(msg)) {
-    return `File .${ext} hỏng hoặc không đúng định dạng. Mở bằng ứng dụng gốc rồi "Lưu thành" một bản mới.`;
+  if (/password|encrypt/i.test(msg)) return { code: 'passwordProtected' };
+  if (/ZIP64/i.test(msg)) return { code: 'tooLarge' };
+  // Every throw in `zip.ts` names ZIP, and `zlib` says "inflate". Matching on
+  // those two words is what keeps a corrupt archive out of the `unreadable`
+  // bucket, where the reader would be handed a library string and no next step.
+  if (/zip|inflate/i.test(msg)) return { code: 'corruptZip', ext };
+  return { code: 'unreadable', detail: msg };
+}
+
+/**
+ * `DocNote` → câu cho NGƯỜI DÙNG. Theo công tắc giao diện.
+ *
+ * Bản ghi cũ mang thẳng chuỗi: đưa lại nguyên văn, không đoán mã từ câu chữ —
+ * đó đúng là bộ dò đội lốt cổng tất định mà `docs/CLAUDE.md` cấm.
+ */
+export function noteSay(note: DocNote | string | undefined): string | undefined {
+  if (note === undefined) return undefined;
+  if (typeof note === 'string') return note;
+  switch (note.code) {
+    case 'extUnknown':
+      return t('lib.extUnknown', { ext: note.ext });
+    case 'pdfReaderMissing':
+      return t('lib.notePdfReaderMissing');
+    case 'imageOnly':
+      return t('lib.noteImageOnly');
+    case 'passwordProtected':
+      return t('lib.notePassword');
+    case 'tooLarge':
+      return t('lib.noteTooLarge');
+    case 'corruptZip':
+      return t('lib.noteCorruptZip', { ext: note.ext });
+    case 'unreadable':
+      return t('lib.noteUnreadable', { detail: note.detail });
   }
-  return `Không đọc được nội dung: ${msg}`;
+}
+
+/** Cùng `DocNote`, nhưng cho `INDEX.md` — nhân viên đọc, nên tiếng Anh cứng. */
+export function noteEn(note: DocNote | string | undefined): string {
+  if (note === undefined) return '';
+  if (typeof note === 'string') return note;
+  switch (note.code) {
+    case 'extUnknown':
+      return `.${note.ext} is not accepted yet.`;
+    case 'pdfReaderMissing':
+      return 'The PDF reader did not load, so keyword search will not find this. Read it by page instead.';
+    case 'imageOnly':
+      return 'A scan with no text layer — keyword search will not find it. Read it page by page.';
+    case 'passwordProtected':
+      return 'The file is password-protected.';
+    case 'tooLarge':
+      return 'The file is too large to read.';
+    case 'corruptZip':
+      return `This .${note.ext} is corrupt or not in the format its extension claims.`;
+    case 'unreadable':
+      return `Could not read the contents: ${note.detail}`;
+  }
 }

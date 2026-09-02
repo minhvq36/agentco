@@ -14,6 +14,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { getLocale, t } from '../i18n/index.js';
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -79,7 +81,7 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse,
   const root = webRoot();
   if (!root) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(NOT_BUILT);
+    res.end(notBuilt());
     return true;
   }
 
@@ -109,8 +111,13 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse,
   return true;
 }
 
-const NOT_BUILT = `<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><title>AgentCo — chưa build giao diện</title>
+/**
+ * A FUNCTION, not a constant: the page is built per request so it follows the
+ * interface language, `lang` attribute included. A module-level template string
+ * would freeze whichever locale happened to be set when this file was imported.
+ */
+const notBuilt = (): string => `<!doctype html>
+<html lang="${getLocale()}"><head><meta charset="utf-8"><title>${t('srv.notBuiltTitle')}</title>
 <style>
  body{margin:0;height:100vh;display:grid;place-items:center;background:#fbfaf8;color:#232019;
       font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -122,9 +129,9 @@ const NOT_BUILT = `<!doctype html>
       margin:.9rem 0;font:13px ui-monospace,Consolas,monospace}
 </style></head>
 <body><main>
- <h1>Giao diện chưa được build</h1>
- <p>Daemon đang chạy bình thường — chỉ thiếu phần giao diện. Chạy một lần:</p>
+ <h1>${t('srv.notBuiltH1')}</h1>
+ <p>${t('srv.notBuiltRun')}</p>
  <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>
- <p>Hoặc từ thư mục gốc: <code style="display:inline;padding:.15rem .4rem">npm run build:all</code></p>
- <p>Rồi tải lại trang này. API vẫn hoạt động, nên <code style="display:inline;padding:.15rem .4rem">agentco run</code> ở terminal dùng được ngay.</p>
+ <p>${t('srv.notBuiltFromRoot')} <code style="display:inline;padding:.15rem .4rem">npm run build:all</code></p>
+ <p>${t('srv.notBuiltReloadBefore')} <code style="display:inline;padding:.15rem .4rem">agentco run</code> ${t('srv.notBuiltReloadAfter')}</p>
 </main></body></html>`;

@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { actions, toast, useApp } from '@/lib/store';
+import { plural, t } from '@i18n';
+import { formatUSD } from '@i18n/fmt';
 
 interface CostRow {
   office: string;
@@ -48,7 +50,7 @@ export function OverviewPanel() {
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto px-4 py-4">
       <section>
-        <SectionTitle className="mb-2">Văn phòng</SectionTitle>
+        <SectionTitle className="mb-2">{t('overview.offices')}</SectionTitle>
         <ul className="flex flex-col gap-1">
           {live.map((o) => (
             <li
@@ -68,7 +70,7 @@ export function OverviewPanel() {
                     {o.error ? (
                       <span className="text-danger">{o.error}</span>
                     ) : (
-                      `${o.onDuty}/${o.agents} người trực · ${o.knowledge} ghi chú`
+                      `${o.onDuty}/${plural('overview.onDutyCount', o.agents)} · ${plural('knowledge.noteCount', o.knowledge)}`
                     )}
                   </span>
                 </span>
@@ -82,11 +84,11 @@ export function OverviewPanel() {
                 có. Với tên phi-Latin còn tệ hơn: thư mục tên `vp-ee6fd8`.
                 Nút này bỏ hẳn nhu cầu biết thư mục tên gì.
               */}
-              <Tip label={`Thư mục trên đĩa — offices/${o.id}/`}>
+              <Tip label={t('overview.folderTip', { id: o.id })}>
                 <Button
                   size="iconSm"
                   variant="ghost"
-                  aria-label={`Thư mục của ${o.name}`}
+                  aria-label={t('overview.folderAria', { name: o.name })}
                   className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                   onClick={async () => {
                     const r = await api.revealOffice(o.id).catch(() => null);
@@ -97,30 +99,30 @@ export function OverviewPanel() {
                       nhìn. Chép đường dẫn vào clipboard là thứ thật sự dùng
                       được ở đó, và câu thông báo phải nói ra vì sao.
                     */
-                    if (r.opened) return toast(`Đã mở: ${r.dir}`);
+                    if (r.opened) return toast(t('overview.opened', { dir: r.dir }));
                     void navigator.clipboard?.writeText(r.dir).catch(() => undefined);
-                    toast(`Đang xem từ máy khác nên không mở được — đã chép đường dẫn: ${r.dir}`);
+                    toast(t('overview.remoteCopied', { dir: r.dir }));
                   }}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
                 </Button>
               </Tip>
-              <Tip label="Lưu trữ">
+              <Tip label={t('overview.archiveTip')}>
                 <Button
                   size="iconSm"
                   variant="ghost"
-                  aria-label={`Cất văn phòng ${o.name} vào lưu trữ`}
+                  aria-label={t('overview.archiveAria', { name: o.name })}
                   className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                   onClick={() => void actions.archiveOffice(o.id, true)}
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </Button>
               </Tip>
-              <Tip label="Xoá">
+              <Tip label={t('overview.deleteTip')}>
                 <Button
                   size="iconSm"
                   variant="ghost"
-                  aria-label={`Xoá hẳn văn phòng ${o.name}`}
+                  aria-label={t('overview.deleteOfficeAria', { name: o.name })}
                   className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                   onClick={() => setConfirm({ id: o.id, name: o.name })}
                 >
@@ -132,14 +134,14 @@ export function OverviewPanel() {
         </ul>
         {live.length === 0 && (
           <div className="flex items-center gap-2 py-2 text-[13px] text-muted">
-            <Building2 className="h-4 w-4" /> chưa có văn phòng nào đang mở
+            <Building2 className="h-4 w-4" /> {t('overview.noOffices')}
           </div>
         )}
       </section>
 
       {archived.length > 0 && (
         <section>
-          <SectionTitle className="mb-2">Trong lưu trữ</SectionTitle>
+          <SectionTitle className="mb-2">{t('overview.archived')}</SectionTitle>
           <ul className="flex flex-col gap-1">
             {archived.map((o) => (
               <li
@@ -149,22 +151,23 @@ export function OverviewPanel() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-muted">{o.name}</span>
                   <span className="block text-xs text-muted">
-                    {o.agents} nhân viên · {o.knowledge} ghi chú · chỉ đọc
+                    {plural('overview.employeeCount', o.agents)} ·{' '}
+                    {plural('knowledge.noteCount', o.knowledge)} · {t('overview.readOnly')}
                   </span>
                 </span>
                 <Button size="sm" onClick={() => void actions.archiveOffice(o.id, false)}>
                   <ArchiveRestore className="h-3.5 w-3.5" />
-                  Khôi phục
+                  {t('overview.restore')}
                 </Button>
                 {/* Xoá hẳn phải với tới được TỪ TRONG lưu trữ. Không có nút này
                     thì muốn dọn sạch phải khôi phục ra rồi mới xoá được — hai
                     bước cho một ý định, và bước giữa là đưa lại vào danh sách
                     đang làm việc đúng cái mình vừa muốn bỏ đi. */}
-                <Tip label="Xoá">
+                <Tip label={t('overview.deleteTip')}>
                   <Button
                     size="iconSm"
                     variant="ghost"
-                    aria-label={`Xoá hẳn văn phòng ${o.name}`}
+                    aria-label={t('overview.deleteOfficeAria', { name: o.name })}
                     onClick={() => setConfirm({ id: o.id, name: o.name })}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -179,16 +182,17 @@ export function OverviewPanel() {
       <ArchivedAgentsSection />
 
       <section>
-        <SectionTitle className="mb-2">Chi phí cả công ty</SectionTitle>
+        <SectionTitle className="mb-2">{t('overview.costTitle')}</SectionTitle>
         {cost === null ? (
-          <div className="text-[13px] text-muted">Đang đọc…</div>
+          <div className="text-[13px] text-muted">{t('common.reading')}</div>
         ) : cost.length === 0 ? (
-          <div className="text-[13px] text-muted">Chưa có việc nào được ghi nhận.</div>
+          <div className="text-[13px] text-muted">{t('overview.noCost')}</div>
         ) : (
           <CostTable rows={cost} onPurged={() => void loadCost()} />
         )}
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Số <b>lượt</b> là đòn bẩy chi phí lớn nhất.
+          {t('overview.turnsNoteBefore')} <b>{t('overview.turnsNoteBold')}</b>{' '}
+          {t('overview.turnsNoteAfter')}
         </p>
       </section>
 
@@ -230,11 +234,20 @@ export function OverviewPanel() {
  * `ArmDialog` vẫn là chỗ **cắm mới**. Ngăn này là chỗ **nhìn và dọn** — hai ý
  * định khác nhau, và cái thứ hai không được phụ thuộc vào việc có văn phòng.
  */
-const LEVEL_SAY: Record<string, string> = {
-  read: 'chỉ đọc',
-  add: 'đọc + thêm mới',
-  full: 'toàn quyền',
-};
+/**
+ * Access level → the word for it.
+ *
+ * The same three words were spelled out in three places before this
+ * (`ArmDialog`, here, and a ternary in `Inspector`), so a fourth level or a
+ * reworded one would have had to be found in three files. One catalogue region
+ * now owns them: `inspector.level.*`.
+ */
+function levelSay(level: string): string {
+  if (level === 'read') return t('inspector.level.read');
+  if (level === 'add') return t('inspector.level.add');
+  if (level === 'full') return t('inspector.level.full');
+  return level;
+}
 
 function ConnectionsSection() {
   const company = useApp((s) => s.company);
@@ -256,7 +269,7 @@ function ConnectionsSection() {
 
   async function forgetArm(a: InstalledArm) {
     if (await actions.forgetArm(a.id)) {
-      toast(`Đã xoá "${a.label}". Chìa vẫn được giữ.`);
+      toast(t('overview.armForgotten', { label: a.label }));
       const r = await api.arms().catch(() => null);
       if (r) setArms(r.arms);
     }
@@ -265,7 +278,7 @@ function ConnectionsSection() {
   async function forgetAccount(acc: OAuthAccount) {
     const name = acc.label ?? acc.name;
     if (await actions.forgetAccount(acc.name)) {
-      toast(`Đã gỡ "${name}".`);
+      toast(t('overview.accountForgotten', { name }));
       const [a, b] = await Promise.all([
         api.arms().catch(() => null),
         api.oauthAccounts().catch(() => null),
@@ -282,7 +295,7 @@ function ConnectionsSection() {
   return (
     <>
       {arms !== null && arms.length > 0 && (
-        <Fold title="Kết nối" count={arms.length}>
+        <Fold title={t('overview.connections')} count={arms.length}>
           <ul className="flex flex-col gap-1">
             {arms.map((a) => {
               // Hai nghĩa của "đang dùng", đúng như `armHolders` ở server: có sợi
@@ -298,23 +311,23 @@ function ConnectionsSection() {
                     <span className="block truncate font-medium text-ink">{a.label}</span>
                     <span className="block truncate text-xs text-muted">
                       {a.via ? `${a.via} · ` : ''}
-                      {a.toolCount} việc
-                      {a.level ? ` · ${LEVEL_SAY[a.level] ?? a.level}` : ''}
+                      {plural('inspector.toolCount', a.toolCount)}
+                      {a.level ? ` · ${levelSay(a.level)}` : ''}
                     </span>
                     <span className="block truncate text-xs text-muted">
                       {wired.length
-                        ? `dùng bởi: ${wired.join(', ')}`
+                        ? t('overview.usedBy', { who: wired.join(', ') })
                         : a.orphan
-                          ? 'không ai dùng'
-                          : 'có trên sơ đồ, chưa nối dây'}
+                          ? t('overview.unused')
+                          : t('overview.onCanvasNotWired')}
                     </span>
                   </span>
                   {a.orphan && (
-                    <Tip label="Xoá hẳn khỏi sổ chung — chìa vẫn được giữ">
+                    <Tip label={t('overview.dropArmTip')}>
                       <Button
                         size="iconSm"
                         variant="ghost"
-                        aria-label={`Xoá hẳn kết nối ${a.label}`}
+                        aria-label={t('overview.dropArmAria', { label: a.label })}
                         onClick={() => setDropArm(a)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -329,7 +342,7 @@ function ConnectionsSection() {
       )}
 
       {accounts !== null && accounts.length > 0 && (
-        <Fold title="Tài khoản đã nối" count={accounts.length}>
+        <Fold title={t('overview.accounts')} count={accounts.length}>
           <ul className="flex flex-col gap-1">
             {accounts.map((acc) => (
               <li
@@ -340,11 +353,11 @@ function ConnectionsSection() {
                   <span className="block truncate text-ink">{acc.label ?? acc.name}</span>
                   <span className="block truncate text-xs text-muted">
                     {acc.dead ? (
-                      <span className="text-danger">chìa đã chết — phải đăng nhập lại</span>
+                      <span className="text-danger">{t('overview.keyDead')}</span>
                     ) : acc.usedBy.length ? (
-                      `dùng bởi: ${acc.usedBy.join(', ')}`
+                      t('overview.usedBy', { who: acc.usedBy.join(', ') })
                     ) : (
-                      'không kết nối nào dùng'
+                      t('overview.accountUnused')
                     )}
                   </span>
                 </span>
@@ -356,8 +369,11 @@ function ConnectionsSection() {
                 <Tip
                   label={
                     acc.usedBy.length
-                      ? `Còn ${acc.usedBy.length} kết nối dùng (${acc.usedBy.join(', ')}) — xoá chúng ở mục Kết nối trước`
-                      : 'Gỡ workspace này — thu hồi quyền ở phía dịch vụ'
+                      ? t('overview.accountBlockedTip', {
+                          n: acc.usedBy.length,
+                          who: acc.usedBy.join(', '),
+                        })
+                      : t('overview.accountDropTip')
                   }
                 >
                   <span>
@@ -365,7 +381,7 @@ function ConnectionsSection() {
                       size="iconSm"
                       variant="ghost"
                       disabled={acc.usedBy.length > 0}
-                      aria-label={`Gỡ workspace ${acc.label ?? acc.name}`}
+                      aria-label={t('overview.accountDropAria', { label: acc.label ?? acc.name })}
                       onClick={() => setDropAcc(acc)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -393,15 +409,18 @@ function ConnectionsSection() {
       <Dialog open={!!dropArm} onOpenChange={(o) => !o && setDropArm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Xoá hẳn kết nối “{dropArm?.label}”?</DialogTitle>
+            <DialogTitle>
+              {t('overview.dropArmTitle', { label: dropArm?.label ?? '' })}
+            </DialogTitle>
             <DialogDescription>
-              Nó rời sổ chung của công ty và <b>không lấy lại được</b> — cắm lại là dựng từ danh mục.
+              {t('overview.dropArmBody1')} <b>{t('overview.dropArmBodyBold')}</b>{' '}
+              {t('overview.dropArmBody2')}
               <br />
-              <b>Chìa vẫn được giữ:</b> cắm lại thì không phải đi lấy token lần nữa.
+              <b>{t('overview.dropArmKeepBold')}</b> {t('overview.dropArmKeepAfter')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setDropArm(null)}>Thôi</Button>
+            <Button onClick={() => setDropArm(null)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -409,7 +428,7 @@ function ConnectionsSection() {
                 setDropArm(null);
               }}
             >
-              Xoá hẳn
+              {t('inspector.deleteForGood')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -418,14 +437,16 @@ function ConnectionsSection() {
       <Dialog open={!!dropAcc} onOpenChange={(o) => !o && setDropAcc(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Gỡ workspace “{dropAcc?.label ?? dropAcc?.name}”?</DialogTitle>
+            <DialogTitle>
+              {t('overview.dropAccTitle', { label: dropAcc?.label ?? dropAcc?.name ?? '' })}
+            </DialogTitle>
             <DialogDescription>
-              Xoá chìa trên máy này. Muốn dùng lại thì phải{' '}
-              <b>đăng nhập lại từ đầu</b> ở trang của hãng.
+              {t('overview.dropAccBody1')} <b>{t('overview.dropAccBodyBold')}</b>{' '}
+              {t('overview.dropAccBody2')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setDropAcc(null)}>Thôi</Button>
+            <Button onClick={() => setDropAcc(null)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -433,7 +454,7 @@ function ConnectionsSection() {
                 setDropAcc(null);
               }}
             >
-              Gỡ
+              {t('overview.drop')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -505,10 +526,10 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
     setBusy(true);
     try {
       const r = await api.purgeGoneCost();
-      toast(`Đã dọn ${r.offices} mục · $${r.costUSD.toFixed(4)}`);
+      toast(t('overview.purged', { n: r.offices, cost: formatUSD(r.costUSD) }));
       onPurged();
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Dọn không thành');
+      toast(e instanceof Error ? e.message : t('overview.purgeFailed'));
     } finally {
       setBusy(false);
     }
@@ -531,9 +552,9 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
               là "văn phòng đã xoá" thì đúng với đa số dòng và sai với phần còn
               lại — mà sổ chi phí thì không được nói sai câu nào. */}
           <summary className="cursor-pointer list-none text-[13px] text-muted marker:hidden">
-            <span className="tabular-nums">{gone.length}</span> mục không còn ·{' '}
-            <span className="tabular-nums">${goneTotal.toFixed(4)}</span>
-            <span className="float-right text-xs">bấm để xem</span>
+            <span className="tabular-nums">{gone.length}</span> {t('overview.goneEntries')}{' '}
+            <span className="tabular-nums">{formatUSD(goneTotal)}</span>
+            <span className="float-right text-xs">{t('overview.tapToSee')}</span>
           </summary>
           <table className="mt-1.5 w-full text-[13px]">
             <tbody>
@@ -548,7 +569,7 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
           <div className="mt-2 flex items-center justify-end">
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAsk(true)}>
               <Trash2 className="h-3.5 w-3.5" />
-              {busy ? 'Đang dọn…' : 'Dọn hết'}
+              {busy ? t('overview.purging') : t('overview.purgeAll')}
             </Button>
           </div>
         </details>
@@ -557,18 +578,18 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
       <Dialog open={ask} onOpenChange={setAsk}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Dọn {gone.length} mục không còn khỏi sổ chi phí?
-            </DialogTitle>
+            <DialogTitle>{t('overview.purgeTitle', { n: gone.length })}</DialogTitle>
             <DialogDescription>
-              {gone.reduce((n, r) => n + r.tasks, 0)} việc · ${goneTotal.toFixed(4)} sẽ biến khỏi mọi
-              báo cáo, và <b>không có nút hoàn tác</b>.
+              {plural('plans.jobCount', gone.reduce((n, r) => n + r.tasks, 0))} ·{' '}
+              {formatUSD(goneTotal)} {t('overview.purgeBodyMid')}{' '}
+              <b>{t('overview.purgeBodyBold')}</b>.
               <br />
-              Văn phòng đang mở và văn phòng trong lưu trữ <b>không</b> bị đụng.
+              {t('overview.purgeUntouchedBefore')} <b>{t('overview.purgeUntouchedBold')}</b>{' '}
+              {t('overview.purgeUntouchedAfter')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setAsk(false)}>Thôi</Button>
+            <Button onClick={() => setAsk(false)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -576,7 +597,7 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
                 void purge();
               }}
             >
-              Dọn hết
+              {t('overview.purgeAll')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -590,11 +611,17 @@ function CostRowView({ row }: { row: CostRow }) {
     <tr className="border-b border-line last:border-0">
       <td className="py-1.5 pr-2 text-ink">
         {row.name}
-        {row.archived && <span className="ml-1.5 text-xs text-muted">(lưu trữ)</span>}
+        {row.archived && (
+          <span className="ml-1.5 text-xs text-muted">{t('overview.archivedSuffix')}</span>
+        )}
       </td>
-      <td className="py-1.5 text-right tabular-nums text-muted">{row.tasks} việc</td>
-      <td className="py-1.5 pl-2 text-right tabular-nums text-muted">{row.turns} lượt</td>
-      <td className="py-1.5 pl-2 text-right tabular-nums text-ink">${row.costUSD.toFixed(4)}</td>
+      <td className="py-1.5 text-right tabular-nums text-muted">
+        {plural('plans.jobCount', row.tasks)}
+      </td>
+      <td className="py-1.5 pl-2 text-right tabular-nums text-muted">
+        {plural('plans.turnCount', row.turns)}
+      </td>
+      <td className="py-1.5 pl-2 text-right tabular-nums text-ink">{formatUSD(row.costUSD)}</td>
     </tr>
   );
 }
@@ -642,7 +669,7 @@ function ArchivedAgentsSection() {
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <SectionTitle>Nhân viên trong lưu trữ</SectionTitle>
+        <SectionTitle>{t('overview.archivedAgents')}</SectionTitle>
         {office && (
           <span className="flex min-w-0 items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
             <span className="flex-none">{office.avatar}</span>
@@ -660,26 +687,26 @@ function ArchivedAgentsSection() {
             <span className="min-w-0 flex-1">
               <span className="block truncate text-muted">{a.label}</span>
               <span className="block truncate text-xs text-muted">
-                {a.notes > 0 ? `${a.notes} ghi chú kinh nghiệm còn giữ` : a.pitch}
+                {a.notes > 0 ? plural('overview.lessonNotesKept', a.notes) : a.pitch}
               </span>
             </span>
             <Tip
               label={
                 office
-                  ? `Trở lại sơ đồ của "${office.name}", đứng ở một chỗ trống — không đè lên ai. Vẫn ở trạng thái NGHỈ cho tới khi bạn nối dây.`
-                  : 'Trở lại sơ đồ, đứng ở một chỗ trống, vẫn ở trạng thái nghỉ.'
+                  ? t('overview.restoreTipOffice', { name: office.name })
+                  : t('overview.restoreTip')
               }
             >
               <Button size="sm" onClick={() => void actions.archiveAgent(a.role, false)}>
                 <ArchiveRestore className="h-3.5 w-3.5" />
-                Đưa trở lại
+                {t('overview.bringBack')}
               </Button>
             </Tip>
-            <Tip label="Xoá hẳn file vai trò — không lấy lại được">
+            <Tip label={t('overview.deleteRoleTip')}>
               <Button
                 size="iconSm"
                 variant="ghost"
-                aria-label={`Xoá hẳn ${a.label}`}
+                aria-label={t('overview.deleteAgentAria', { label: a.label })}
                 onClick={() => setConfirm(a)}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -697,35 +724,37 @@ function ArchivedAgentsSection() {
         → test/layout.test.ts "cất đi rồi đưa trở lại"
       */}
       <p className="mt-2 text-xs leading-relaxed text-muted">
-        Đưa trở lại là họ xuất hiện trên sơ đồ của <b>{office?.name ?? 'văn phòng này'}</b> ở một chỗ
-        trống — không bao giờ nằm đè lên người khác, kể cả khi đã có ai ngồi vào chỗ cũ của họ. Trạng
-        thái vẫn là <b>đang nghỉ</b> cho tới khi bạn nối dây từ Trợ lý.
+        {t('overview.bringBackNoteBefore')} <b>{office?.name ?? t('overview.thisOffice')}</b>{' '}
+        {t('overview.bringBackNoteMid')} <b>{t('overview.bringBackNoteBold')}</b>{' '}
+        {t('overview.bringBackNoteAfter')}
       </p>
 
       <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Xoá hẳn “{confirm?.label}”?</DialogTitle>
+            <DialogTitle>
+              {t('inspector.confirmDeleteAgentTitle', { label: confirm?.label ?? '' })}
+            </DialogTitle>
             <DialogDescription>
-              Mất file <code>roles/{confirm?.role}.yaml</code> và toàn bộ kỹ năng đã viết cho người
-              này. <b>Không lấy lại được.</b>
+              {t('inspector.agentDeleteBefore')} <code>roles/{confirm?.role}.yaml</code>{' '}
+              {t('inspector.agentDeleteMid')} <b>{t('inspector.agentDeleteBold')}</b>
               <br />
               <br />
               {confirm && confirm.notes > 0 ? (
                 <>
-                  <b>{confirm.notes} ghi chú kinh nghiệm</b> ở{' '}
-                  <code>knowledge/agents/{confirm.role}/</code> vẫn được giữ — đó là thứ văn phòng đã
-                  học được, không phải tài sản riêng của một cái tên.
+                  <b>{plural('overview.lessonNotes', confirm.notes)}</b> {t('overview.atPath')}{' '}
+                  <code>knowledge/agents/{confirm.role}/</code> {t('inspector.agentNotesAfter')}
                 </>
               ) : (
                 <>
-                  Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirm?.role}/</code> vẫn được giữ.
+                  {t('inspector.agentNotesBefore')}{' '}
+                  <code>knowledge/agents/{confirm?.role}/</code> {t('overview.notesKeptShort')}
                 </>
               )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setConfirm(null)}>Thôi</Button>
+            <Button onClick={() => setConfirm(null)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -733,7 +762,7 @@ function ArchivedAgentsSection() {
                 setConfirm(null);
               }}
             >
-              Xoá hẳn
+              {t('inspector.deleteForGood')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -772,7 +801,7 @@ function ModelsSection() {
 
   return (
     <section>
-      <SectionTitle className="mb-2">Model của công ty</SectionTitle>
+      <SectionTitle className="mb-2">{t('overview.modelsTitle')}</SectionTitle>
 
       {!open ? (
         <>
@@ -792,7 +821,7 @@ function ModelsSection() {
             className="mt-2 text-[13px] text-accent hover:underline"
             onClick={() => setOpen(true)}
           >
-            Đổi model
+            {t('inspector.changeModel')}
           </button>
         </>
       ) : (
@@ -809,7 +838,7 @@ function ModelsSection() {
             </div>
           ))}
 
-          <Label htmlFor="m-master">Trợ lý chạy mức</Label>
+          <Label htmlFor="m-master">{t('overview.masterTier')}</Label>
           <Select
             id="m-master"
             className="mb-3 w-full"
@@ -821,7 +850,7 @@ function ModelsSection() {
             <option value="deep">deep</option>
           </Select>
 
-          <Label htmlFor="m-planner">Lập kế hoạch chạy mức</Label>
+          <Label htmlFor="m-planner">{t('overview.plannerTier')}</Label>
           <Select
             id="m-planner"
             className="w-full"
@@ -834,13 +863,13 @@ function ModelsSection() {
           </Select>
 
           <p className="mt-3 text-xs leading-relaxed text-muted">
-            Tên model phải đúng như Anthropic đặt (<code>claude-sonnet-5</code>,{' '}
-            <code>claude-haiku-4-5-20251001</code>…). Gõ sai thì việc đầu tiên chạy sau đó sẽ báo lỗi
-            model không tồn tại — không có gì hỏng vĩnh viễn, sửa lại là chạy tiếp.
+            {t('overview.modelNamesBefore')}
+            <code>claude-sonnet-5</code>, <code>claude-haiku-4-5-20251001</code>
+            {t('overview.modelNamesAfter')}
           </p>
           <p className="mt-2 text-xs leading-relaxed text-muted">
-            Đổi ở đây đụng tới <b>mọi văn phòng</b>. Việc đang chạy giữ nguyên model cũ cho tới khi
-            xong; mọi thứ sau đó dùng model mới và phải ghi lại bộ nhớ đệm một lần.
+            {t('overview.modelsWideBefore')} <b>{t('overview.modelsWideBold')}</b>
+            {t('overview.modelsWideAfter')}
           </p>
 
           <div className="mt-3 flex gap-2">
@@ -851,7 +880,7 @@ function ModelsSection() {
                 setOpen(false);
               }}
             >
-              Thôi
+              {t('common.cancel')}
             </Button>
             <Button
               size="sm"
@@ -864,7 +893,7 @@ function ModelsSection() {
                 if (ok) setOpen(false);
               }}
             >
-              {busy ? 'Đang lưu…' : 'Lưu'}
+              {busy ? t('common.saving') : t('common.save')}
             </Button>
           </div>
         </div>
@@ -884,14 +913,14 @@ function RemoveOfficeDialog({
     <Dialog open={!!target} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Xoá hẳn văn phòng “{target?.name}”?</DialogTitle>
+          <DialogTitle>{t('overview.removeOfficeTitle', { name: target?.name ?? '' })}</DialogTitle>
           <DialogDescription>
-            Xoá cả thư mục <code>offices/{target?.id}/</code>: nhân viên, kỹ năng, kho tri thức và mọi
-            kết quả đã làm. <b>Không lấy lại được.</b>
+            {t('overview.removeOfficeBefore')} <code>offices/{target?.id}/</code>
+            {t('overview.removeOfficeAfter')} <b>{t('inspector.agentDeleteBold')}</b>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button onClick={onClose}>Thôi</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
           <Button
             variant="danger"
             onClick={() => {
@@ -899,7 +928,7 @@ function RemoveOfficeDialog({
               onClose();
             }}
           >
-            Xoá hẳn
+            {t('inspector.deleteForGood')}
           </Button>
         </DialogFooter>
       </DialogContent>

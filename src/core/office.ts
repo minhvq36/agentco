@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Một VĂN PHÒNG đang chạy — chỗ mọi thứ gặp nhau.
  *
  * → docs/SPEC-offices.md
@@ -50,6 +50,8 @@ import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
 import { straysOnDisk } from './worker.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
+import { plural, t } from '../i18n/index.js';
+import { formatUSD } from '../i18n/fmt.js';
 import {
   RunError,
   TIERS,
@@ -90,7 +92,17 @@ const CHAT_REPLAY = 200;
 const MANIFEST_PLANS = 5;
 
 /** Khoá gom cho file cũ nằm thẳng dưới `artifacts/<task_id>/` (trước 19/08). */
-const LEGACY_PLAN = '(cũ)';
+/**
+ * Bucket key for artifacts written before plans carried an id.
+ *
+ * ⚠ NOT a catalogue key, and not a displayed string either. It exists only as a
+ * `Map` key inside `manifestArtifacts`, rebuilt from `a.plan_id || LEGACY_PLAN`
+ * on every call — nothing on disk holds it, and nothing compares against a
+ * stored copy. Running it through `t()` would make the grouping depend on the
+ * interface switch, which is how two locales end up with two different buckets
+ * for the same files.
+ */
+const LEGACY_PLAN = '(legacy)';
 
 /** Node đã kèm metadata để vẽ. Không có gì trong đây được ghi vào layout.json. */
 export interface CanvasNode extends LayoutNode {
@@ -213,17 +225,11 @@ export interface SayOutcome {
  */
 export function planProblemsMessage(problems: readonly string[], repeats: number): string {
   const head =
-    'Mình chia việc bị lỗi nên chưa chạy được. Chưa nhân viên nào bắt tay vào làm\n' +
+    t('off.planFailedHead') + '\n' +
     problems.map((p) => `  · ${p}`).join('\n');
 
-  if (repeats < 2) {
-    return `${head}\nBạn nhắn lại yêu cầu rõ hơn một chút, hoặc nói cụ thể tên tài liệu cần dùng nhé.`;
-  }
-  return (
-    `${head}\nĐây là lần thứ ${repeats + 1} mình kẹt y hệt, nên gõ lại lần nữa nhiều khả năng ` +
-    `cũng vậy — vướng nằm ở chỗ mình chia việc, không nằm ở cách bạn diễn đạt. Thử bỏ bớt một ` +
-    `yêu cầu trong câu (nhất là chỗ chỉ định nơi lưu file), hoặc tách ra hai lần nhắn.`
-  );
+  if (repeats < 2) return `${head}\n${t('off.planFailedRetry')}`;
+  return `${head}\n${t('off.planFailedStuck', { n: String(repeats + 1) })}`;
 }
 
 export class Office {
@@ -332,8 +338,7 @@ export class Office {
      * hạ tầng bình thường (cập nhật, reboot), không phải một sự cố.
      */
     this.plans.healStale(
-      'Việc này bị ngắt giữa chừng vì công ty tắt (cập nhật, khởi động lại, hoặc mất điện). ' +
-        'Những phần đã xong vẫn còn trong ngăn Kết quả — nhắn lại để mình làm nốt phần còn lại.',
+      t('off.cutByShutdown'),
     );
     this.refreshAssistantContext();
   }
@@ -370,8 +375,7 @@ export class Office {
   private assertLive(): void {
     if (!this.archived) return;
     throw new RunError(
-      `Văn phòng "${this.name}" đang trong lưu trữ nên chỉ xem được. ` +
-        `Khôi phục nó ở bảng Tổng quan công ty rồi làm tiếp.`,
+      t('off.officeArchivedReadOnly', { name: this.name }),
       'other',
     );
   }
@@ -527,7 +531,7 @@ export class Office {
     // dùng bấm Dừng xong vẫn thấy hệ thống tự làm tiếp — đúng thứ họ vừa bảo đừng.
     const dropped = this.mailbox.clear() + this.deferred.length;
     this.deferred = [];
-    if (this.state === 'working') this.setState('paused', 'Đang dừng…');
+    if (this.state === 'working') this.setState('paused', t('off.stopping'));
     this.emitActivity();
     return { dropped, cutAssistant };
   }
@@ -580,7 +584,7 @@ export class Office {
     // nhau trên cùng một session thì một lượt bị mất trắng khỏi trí nhớ hội
     // thoại. → docs/SPEC-tools-approval.md §11
     if (!this.mailbox.push({ kind: 'user', text: parsed.text, at: Date.now() })) {
-      const say = `Bạn nhắn nhanh quá — mình còn ${this.mailbox.size} tin chưa đọc. Chờ mình xử lý xong đã nhé.`;
+      const say = t('off.mailboxFlooded', { n: String(this.mailbox.size) });
       this.emit({ type: 'master.message', say, role: 'assistant', plan_id: null });
       return { intent: 'chat', reply: say };
     }
@@ -694,7 +698,7 @@ export class Office {
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: err instanceof Error ? err.message : 'Có lỗi khi xử lý tin nhắn của bạn.',
+          say: err instanceof Error ? err.message : t('off.messageFailed'),
           plan_id: null,
         });
       }
@@ -749,8 +753,7 @@ export class Office {
           type: 'master.message',
           role: 'assistant',
           say:
-            `Mình không tìm thấy ${missing.map((m) => `"${m}"`).join(', ')} trong tủ tài liệu hay ngăn Kết quả. ` +
-            `Bạn kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn nhé.`,
+            t('off.refsMissing', { list: missing.map((m) => `"${m}"`).join(', ') }),
           plan_id: null,
         });
         return;
@@ -777,8 +780,8 @@ export class Office {
         say:
           found.value ||
           (asked.length
-            ? 'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.'
-            : 'Mình tra rồi nhưng chưa ra câu trả lời chắc chắn. Bạn hỏi cụ thể hơn một chút nhé.'),
+            ? t('off.lookupNoAnswerFiles')
+            : t('off.lookupNoAnswerWeb')),
         plan_id: null,
       });
       // ⚠ Một phần đề nghị của Trợ lý không có thật thì NÓI RA, đừng im. Câu
@@ -788,7 +791,10 @@ export class Office {
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: `(Mình không tìm thấy ${missing.map((m) => `"${m}"`).join(', ')} nên câu trên chỉ dựa trên ${ok.length} tài liệu còn lại.)`,
+          say: t('off.lookupPartial', {
+            list: missing.map((m) => `"${m}"`).join(', '),
+            n: String(ok.length),
+          }),
           plan_id: null,
         });
       }
@@ -819,7 +825,7 @@ export class Office {
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: 'Mình đang bận một việc rồi. Xong việc này mình làm tiếp việc bạn vừa giao nhé.',
+          say: t('off.busyWillFollow'),
         });
         this.deferred.push({ request: requestOf(draft), at: Date.now() });
         return;
@@ -840,8 +846,8 @@ export class Office {
           role: 'assistant',
           say:
             routed.value.scope === 'refine'
-              ? 'Đã ghi nhận bổ sung. Mình áp dụng ngay khi việc đang chạy xong.'
-              : 'Mình đang bận một việc rồi. Xong việc này mình làm tiếp việc bạn vừa giao nhé.',
+              ? t('off.addendumNoted')
+              : t('off.busyWillFollow'),
         });
         this.deferred.push({ request: routed.value.request, at: Date.now() });
         return;
@@ -942,7 +948,7 @@ export class Office {
          * phải đúng chừng nào việc còn chạy. Thêm `hold_ms` vào đây là tái tạo
          * lại đúng khoảng im lặng vừa vá. → core/types.ts `office.activity`
          */
-        note: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt… (mất vài giây)',
+        note: t('off.clearing'),
         plan_id: null,
       });
       return;
@@ -1040,14 +1046,14 @@ export class Office {
           !this.clearing &&
           this.mailbox.size === 0 &&
           this.deferred.length === 0;
-        if (idle) return reply('Hiện không có việc nào đang chạy.');
+        if (idle) return reply(t('off.nothingRunning'));
         const { dropped, cutAssistant } = this.stop();
         return reply(
-          'Đang dừng tất cả.' +
-            (cutAssistant ? ' Đã cắt lượt Trợ lý đang chạy.' : '') +
-            (dropped ? ` Đã bỏ ${dropped} việc còn trong hàng đợi.` : '') +
+          t('off.stoppingAll') +
+            (cutAssistant ? ` ${t('off.stoppedAssistantTurn')}` : '') +
+            (dropped ? ` ${t('off.droppedQueued', { n: String(dropped) })}` : '') +
             // Cùng lý do với câu ở `finish`: mời `/resume`, đừng mời "nhắn tiếp".
-            ' Việc đã xong vẫn giữ nguyên — gõ /resume để mình làm nốt.',
+            ` ${t('off.finishedWorkKept')}`,
         );
       }
 
@@ -1058,22 +1064,25 @@ export class Office {
       case 'resume': {
         const ready = this.resumable();
         if (!ready) {
-          return reply('Không có việc nào đang dở cả. Nhắn cho mình việc mới nhé.');
+          return reply(t('off.nothingHalfDone'));
         }
         if (this.state === 'working') {
-          return reply('Văn phòng đang bận. Đợi xong ca này rồi gõ /resume nhé.');
+          return reply(t('off.busyResumeLater'));
         }
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: `Chạy tiếp ${ready.left} việc còn dở${ready.request ? ` của "${ready.request}"` : ''}. Mình không chia lại việc — kế hoạch cũ vẫn còn.`,
+          say: t('off.resuming', {
+            n: String(ready.left),
+            of: ready.request ? t('off.resumingOf', { request: ready.request }) : '',
+          }),
         });
         // `void`: lệnh trả lời NGAY, ca chạy nền — y như đường `run()` thường.
         void this.resume().catch((err: unknown) => {
           this.emit({
             type: 'master.message',
             role: 'assistant',
-            say: err instanceof Error ? err.message : 'Chưa chạy tiếp được.',
+            say: err instanceof Error ? err.message : t('off.resumeFailed'),
           });
         });
         return reply('');
@@ -1086,27 +1095,34 @@ export class Office {
             // Ca dở là TRẠNG THÁI của văn phòng, không phải một thông báo đã
             // trôi qua — nên nó phải trả lời được câu "giờ đang thế nào".
             return reply(
-              `Đang rảnh, nhưng còn ${ready.left} việc dở của "${ready.request}". ` +
-                `Gõ /resume để làm nốt — mình không chia lại việc nên không tốn thêm lượt nào.`,
+              t('off.idleWithLeftovers', { n: String(ready.left), request: ready.request }),
             );
           }
           return reply(
-            `Đang rảnh. Văn phòng có ${this.loaded.roles.size} nhân viên, ` +
-              `${this.assistant.assignableRoles().size} người đang trực.`,
+            t('off.idle', {
+              total: String(this.loaded.roles.size),
+              onDuty: String(this.assistant.assignableRoles().size),
+            }),
           );
         }
         const r = this.currentRecord;
         const done = r.steps.filter((s) => s.status === 'done').length;
         return reply(
-          `Đang làm: ${r.request}\n` +
-            `Bước ${done}/${r.steps.length} · ${r.tasks_done}/${r.tasks_total} việc · ` +
-            `${r.turns} lượt · $${r.costUSD.toFixed(4)}`,
+          t('off.statusRunning', {
+            request: r.request,
+            step: String(done),
+            steps: String(r.steps.length),
+            done: String(r.tasks_done),
+            total: String(r.tasks_total),
+            turns: String(r.turns),
+            cost: formatUSD(r.costUSD),
+          }),
         );
       }
 
       case 'clear': {
         if (this.state === 'working') {
-          return reply('Đang có việc chạy dở. Bấm Dừng hoặc chờ xong rồi mình dọn nhé.');
+          return reply(t('off.clearBusy'));
         }
         /**
          * `/clear` KHÔNG PHÁT MỘT `master.message` NÀO. → SPEC-offices.md §4.6
@@ -1141,7 +1157,7 @@ export class Office {
           // này báo một việc ĐÃ KHÔNG xảy ra — ngữ cảnh vẫn còn nguyên.
           .catch(() => {
             this.clearing = false;
-            this.emitNote('Chưa dọn được cuộc trò chuyện. Mình giữ nguyên mọi thứ, thử lại sau nhé.', 8_000);
+            this.emitNote(t('off.clearFailedKept'), 8_000);
           });
         return { intent: 'chat', reply: '' };
       }
@@ -1151,7 +1167,7 @@ export class Office {
       // mà ta chưa hỏi, và họ cần biết là ta chưa hỏi.
       case 'approve':
       case 'reject':
-        return reply('Hiện không có gì đang chờ bạn duyệt.');
+        return reply(t('off.nothingToApprove'));
     }
   }
 
@@ -1179,7 +1195,7 @@ export class Office {
   ): Promise<{ plan_id: string; report: string; usage: Usage }> {
     this.assertLive();
     if (this.state === 'working') {
-      throw new RunError('Văn phòng đang bận. Đợi xong ca này đã.', 'other');
+      throw new RunError(t('off.officeBusyWait'), 'other');
     }
 
     this.stopRequested = false;
@@ -1209,7 +1225,7 @@ export class Office {
     // nhìn, và nó chính là thứ làm cả hai chúng tôi đọc nhầm log ca hd3/hd4.
     this.setState(
       'working',
-      resumePlan ? 'Đang chạy tiếp việc còn dở...' : 'Trợ lý đang lập kế hoạch...',
+      resumePlan ? t('off.stateResuming') : t('off.statePlanning'),
     );
     // Nối mạch NGAY. `run()` được gọi bằng `void` từ `handleUserBatch`, và ngay
     // sau đó `pump()` phát một activity toàn số 0 — nếu ta không phát cái này
@@ -1233,7 +1249,7 @@ export class Office {
        */
       const waitingFor = this.library.busyNames();
       if (waitingFor.length > 0) {
-        this.setState('working', `Đang đọc tài liệu ${waitingFor.slice(0, 2).join(', ')}…`);
+        this.setState('working', t('off.stateReadingDocs', { names: waitingFor.slice(0, 2).join(', ') }));
         await this.library.settled(this.loaded.company.library.extract_timeout_ms);
       }
 
@@ -1242,8 +1258,8 @@ export class Office {
       if (onDuty.size === 0) {
         throw new RunError(
           this.loaded.roles.size === 0
-            ? 'Văn phòng này chưa có nhân viên nào. Bấm "+ Nhân viên" trên sơ đồ để thêm người đầu tiên.'
-            : 'Chưa có nhân viên nào được giao việc. Trên sơ đồ, kéo một sợi dây từ Trợ lý xuống một nhân viên.',
+            ? t('off.noRolesAtAll')
+            : t('off.noRolesWired'),
           'other',
         );
       }
@@ -1330,7 +1346,7 @@ export class Office {
         this.emit({
           type: 'office.state',
           state: 'working',
-          say: `Đã nối ${linked.length} việc phải chạy nối tiếp (${linked.join(', ')}) — chúng dùng chung file.`,
+          say: t('off.linkedTasks', { n: String(linked.length), list: linked.join(', ') }),
         });
       }
 
@@ -1417,9 +1433,9 @@ export class Office {
           type: 'master.message',
           role: 'assistant',
           say:
-            `Mình chia thành ${plan.steps.length} việc:\n` +
+            `${plural('off.splitInto', plan.steps.length)}\n` +
             plan.steps.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n') +
-            `\nBắt đầu nhé.`,
+            `\n${t('off.startingNow')}`,
         });
       }
 
@@ -1443,8 +1459,7 @@ export class Office {
        */
       if (loginOpen(this.id)) {
         throw new RunError(
-          'Cửa sổ đăng nhập của văn phòng này đang mở, nên nhân viên chưa dùng được trình duyệt. ' +
-            'Đóng cửa sổ đó rồi giao việc lại.',
+          t('off.browserLoginOpen'),
           'other',
         );
       }
@@ -1535,11 +1550,10 @@ export class Office {
       let status: PlanStatus;
       if (result.stoppedBy === 'usage_limit') {
         report =
-          `Hết lượt dùng Claude. Văn phòng tạm nghỉ, còn ${result.pending.length} việc chưa làm. ` +
-          `Gõ /resume khi có lượt lại.`;
+          t('off.rateLimited', { n: String(result.pending.length) });
         status = 'paused';
       } else if (result.stoppedBy === 'auth') {
-        report = 'Chưa đăng nhập Claude Code. Chạy `claude` một lần để đăng nhập rồi thử lại.';
+        report = t('off.notSignedIn');
         status = 'paused';
         // `stoppedBy` chỉ được đặt khi scheduler chưa kịp phóng task nào nữa.
         // Nhưng khi ta NGẮT task đang chạy, chúng trả receipt "blocked" một cách
@@ -1556,9 +1570,15 @@ export class Office {
         const finished = receipts.filter((r) => r.status === 'done');
         const left = result.pending.length + receipts.filter((r) => r.status === 'blocked').length;
         report =
-          `Đã dừng. Xong ${finished.length}/${plan.tasks.length} việc, còn ${left} việc chưa làm.` +
+          t('off.stopped', {
+            done: String(finished.length),
+            total: String(plan.tasks.length),
+            left: String(left),
+          }) +
           (finished.length
-            ? `\nĐã có: ${finished.flatMap((r) => r.artifacts).join(', ') || 'kết quả đã lưu'}.`
+            ? `\n${t('off.stoppedHave', {
+                list: finished.flatMap((r) => r.artifacts).join(', ') || t('off.resultsSaved'),
+              })}`
             : '') +
           /**
            * ⚠ MỜI ĐÚNG CON ĐƯỜNG ĐÃ ĐƯỢC BẢO VỆ. → SPEC-offices.md §6b
@@ -1571,8 +1591,7 @@ export class Office {
            * Một câu chữ, và nó đổi hẳn xác suất người dùng rơi vào cửa nào —
            * rẻ hơn mọi hàng rào kỹ thuật dựng ở phía sau.
            */
-          `\nGõ /resume để mình làm nốt — việc nào đã xong trọn thì giữ nguyên, ` +
-          `việc bị cắt giữa chừng sẽ làm lại cho đủ.`;
+          `\n${t('off.stoppedResumeHint')}`;
         status = 'stopped';
       } else {
         /**
@@ -1646,13 +1665,13 @@ export class Office {
            */
           const strays = strayFilesOf(receipts);
           report += strays.length
-            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm ngoài văn phòng nên panel Kết quả không thấy: ` +
-              `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}. ` +
-              `File có thật và dùng được — bạn xem thử rồi bảo mình chép về đúng chỗ, ` +
-              `không cần chạy lại từ đầu.`
-            : `\n\n⚠ Có ${gone.length} file lẽ ra phải được ghi mà không thấy trên đĩa: ` +
-              `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}. ` +
-              `Nhân viên báo xong nhưng kết quả chưa có — nhắn mình làm lại việc này nhé.`;
+            ? `\n\n⚠ ${t('off.wroteOutside', {
+                list: `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}`,
+              })}`
+            : `\n\n⚠ ${t('off.filesMissing', {
+                n: String(gone.length),
+                list: `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}`,
+              })}`;
         }
         // Trợ lý là bên DUY NHẤT được ghi vào kho chung (SPEC-offices.md §4.3):
         // kho chung nằm trong prefix của cả văn phòng, cho ai cũng ghi được thì
@@ -1818,9 +1837,11 @@ export class Office {
       // mình thì đúng về kỹ thuật mà vô dụng với người lần đầu đi tìm.
       const base = `${path.basename(this.loaded.companyDir)}/offices/${this.id}`;
       shown = [...files].sort().slice(0, MAX_LISTED_FILES);
-      lines.push('Kết quả đã lưu tại:');
+      lines.push(t('off.resultsSavedAt'));
       lines.push(...shown.map((p) => `  ${base}/${p}`));
-      if (files.size > shown.length) lines.push(`  …và ${files.size - shown.length} file nữa`);
+      if (files.size > shown.length) {
+        lines.push(`  ${plural('off.andMoreFiles', files.size - shown.length)}`);
+      }
       /**
        * Một câu giải thích cái tiền tố `P-…/T-01/`, CHỈ khi người dùng đã tự đặt
        * thư mục.
@@ -1834,7 +1855,7 @@ export class Office {
        * 0 token — dựng bằng code từ chính đường dẫn đang cầm.
        */
       if (shown.some((p) => p.split('/').length > 4)) {
-        lines.push('(mỗi ca có thư mục riêng để lần chạy sau không đè lên lần này)');
+        lines.push(t('off.perShiftFolder'));
       }
     }
     if (servers.size) {
@@ -1859,11 +1880,11 @@ export class Office {
        * └──────────────────────────────────────────────────────────────────────┘
        */
       const named = [...servers].map((id) => this.loaded.company.arms[id]?.label || id).sort();
-      lines.push(`Có dùng kết nối: ${named.join(', ')}`);
-      lines.push('(kết quả của kết nối có thể nằm ngoài thư mục văn phòng)');
+      lines.push(t('off.usedArms', { list: named.join(', ') }));
+      lines.push(t('off.armResultsMayBeOutside'));
     }
     if (ranCommand) {
-      lines.push('Có chạy lệnh trên máy — kết quả có thể nằm ngoài thư mục văn phòng.');
+      lines.push(t('off.ranShellCommands'));
     }
 
     return {
@@ -1918,9 +1939,12 @@ export class Office {
     const undone = record.steps.filter((s) => s.status !== 'done');
     if (status === 'done' && undone.length > 0 && report.trim()) {
       report +=
-        `\n\n⚠ Còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
+        `\n\n⚠ ${t('off.stepsUnfinishedHead', {
+          n: String(undone.length),
+          total: String(record.steps.length),
+        })}: ` +
         undone.map((s) => `"${s.title}"`).join(', ') +
-        `. Kết quả ở trên chỉ tính phần đã làm.`;
+        `. ${t('off.stepsUnfinishedTail')}`;
     }
 
     /**
@@ -1951,10 +1975,7 @@ export class Office {
     if (redirected.length && status !== 'stopped' && report.trim()) {
       const shownPaths = [...new Set(redirected)].slice(0, 3);
       report +=
-        `\n\nBạn có nhắc tới ${shownPaths.map((p) => `"${p}"`).join(', ')}. ` +
-        `Kế hoạch luôn đặt kết quả trong thư mục văn phòng, nên file nằm ở đường dẫn ghi bên dưới. ` +
-        `Muốn nó nằm thẳng ngoài đó, cắm một kết nối "File trên máy" trỏ vào thư mục ấy rồi giao ` +
-        `cho nhân viên — đó là đường duy nhất ghi ra ngoài mà vẫn vào được nhật ký.`;
+        `\n\n${t('off.pathsMentioned', { list: shownPaths.map((p) => `"${p}"`).join(', ') })}`;
     }
 
     const where = this.whereBlock(receipts);
@@ -2014,8 +2035,11 @@ export class Office {
       // Dựng bằng code từ receipt đã có: 0 token.
       const done = this.lastArtifacts;
       const request = done.length
-        ? `${next.request}\n\n(Việc trước vừa xong, kết quả đã có sẵn ở: ${done.join(', ')}. ` +
-          `Nếu yêu cầu này là chỉnh sửa cho việc đó thì SỬA file có sẵn, đừng làm lại từ đầu.)`
+        ? // ⚠ English, hard-coded: this is glued onto the request the ASSISTANT
+          // reads, so it is prompt scaffolding, not chrome. The user's own words
+          // sit right above it and still set the reply language.
+          `${next.request}\n\n(The previous job just finished; its results are already at: ${done.join(', ')}. ` +
+          `If this request is an edit to that, EDIT the existing files — do not redo it from scratch.)`
         : next.request;
       void this.run(request).catch(() => {
         /* run() đã emit lỗi rồi */
@@ -2034,12 +2058,12 @@ export class Office {
     this.setState(
       status === 'paused' || status === 'stopped' ? 'paused' : 'idle',
       status === 'paused'
-        ? 'Tạm nghỉ.'
+        ? t('off.statePaused')
         : status === 'stopped'
-          ? 'Đã dừng.'
+          ? t('off.stateStopped')
           : status === 'blocked'
-            ? 'Đang chờ bạn trả lời.'
-            : 'Xong việc.',
+            ? t('off.stateWaitingOnYou')
+            : t('off.stateDone'),
     );
   }
 
@@ -2093,7 +2117,7 @@ export class Office {
     const { touched } = this.layout.save(input);
     if (touched.length) this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: 'Sơ đồ văn phòng đã cập nhật.', plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.layoutUpdated'), plan_id: null });
     return this.canvas();
   }
 
@@ -2235,13 +2259,13 @@ export class Office {
     // `folderId` để tên nhân viên phi-Latin không chết ở cửa này. → paths.ts
     const id = input.id?.trim() ? slugId(input.id.trim()) : folderId(name || 'nhan-vien', 'nv');
     if (!isSafeId(id)) {
-      throw new RunError('Mã nhân viên chỉ dùng chữ thường, số, gạch ngang.', 'other');
+      throw new RunError(t('off.roleIdShape'), 'other');
     }
     if (id === 'assistant') {
-      throw new RunError('"assistant" là tên dành riêng cho Trợ lý.', 'other');
+      throw new RunError(t('off.roleIdReserved'), 'other');
     }
     if (this.loaded.roles.has(id)) {
-      throw new RunError(`Văn phòng này đã có nhân viên "${id}".`, 'other');
+      throw new RunError(t('off.roleExists', { id }), 'other');
     }
 
     const tier = input.tier === 'eco' || input.tier === 'deep' ? input.tier : 'standard';
@@ -2260,7 +2284,7 @@ export class Office {
     // cho họ là một thao tác không có kết quả nhìn thấy được.
     this.layout.placeAgent(id, true);
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã thêm "${name || id}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.roleAdded', { name: name || id }), plan_id: null });
     return id;
   }
 
@@ -2289,12 +2313,12 @@ export class Office {
    */
   archiveAgent(roleId: string, archived: boolean): CanvasState {
     this.assertLive();
-    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
+    if (!isSafeId(roleId)) throw new RunError(t('off.roleIdInvalid'), 'other');
     const role = this.loaded.roles.get(roleId);
-    if (!role) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+    if (!role) throw new RunError(t('off.noRole', { id: roleId }), 'other');
 
     const file = this.roleFile(roleId);
-    if (!file) throw new RunError(`Không tìm thấy file roles/${roleId}.yaml.`, 'other');
+    if (!file) throw new RunError(t('off.roleFileMissing', { id: roleId }), 'other');
 
     const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
     if (archived) doc.set('archived', true);
@@ -2313,8 +2337,8 @@ export class Office {
       // Câu này phải nói ra việc CÒN LẠI phải làm. Không nói thì người dùng thấy
       // node hiện lên, tưởng xong, rồi giao việc và Trợ lý bảo không có ai làm.
       say: archived
-        ? `Đã cất "${name}" vào lưu trữ.`
-        : `Đã đưa "${name}" trở lại sơ đồ. Kéo một sợi dây từ Trợ lý xuống nếu muốn giao việc cho họ.`,
+        ? t('off.roleArchived', { name })
+        : t('off.roleRestored', { name }),
       plan_id: null,
     });
     return this.canvas();
@@ -2329,8 +2353,8 @@ export class Office {
    */
   removeAgent(roleId: string): void {
     this.assertLive();
-    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
-    if (!this.loaded.roles.has(roleId)) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+    if (!isSafeId(roleId)) throw new RunError(t('off.roleIdInvalid'), 'other');
+    if (!this.loaded.roles.has(roleId)) throw new RunError(t('off.noRole', { id: roleId }), 'other');
 
     this.layout.dropAgent(roleId);
     for (const ext of ['.yaml', '.yml']) {
@@ -2338,7 +2362,7 @@ export class Office {
     }
     this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã xoá hẳn "${roleId}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.roleDeleted', { id: roleId }), plan_id: null });
   }
 
   /** Nhân viên đang nằm trong lưu trữ — để giao diện cho khôi phục. */
@@ -2387,20 +2411,20 @@ export class Office {
     },
   ): CanvasState {
     this.assertLive();
-    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
+    if (!isSafeId(roleId)) throw new RunError(t('off.roleIdInvalid'), 'other');
     const role = this.loaded.roles.get(roleId);
-    if (!role) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+    if (!role) throw new RunError(t('off.noRole', { id: roleId }), 'other');
 
     const pitch = patch.pitch?.trim();
     if (patch.pitch !== undefined && !pitch) {
-      throw new RunError('Giới thiệu không được để trống — đây là thứ duy nhất Trợ lý thấy.', 'other');
+      throw new RunError(t('off.pitchEmpty'), 'other');
     }
     if (patch.model_tier !== undefined && !TIERS.includes(patch.model_tier as never)) {
-      throw new RunError(`Mức model phải là một trong: ${TIERS.join(', ')}.`, 'other');
+      throw new RunError(t('off.tierMustBe', { tiers: TIERS.join(', ') }), 'other');
     }
 
     const file = this.roleFile(roleId);
-    if (!file) throw new RunError(`Không tìm thấy file roles/${roleId}.yaml.`, 'other');
+    if (!file) throw new RunError(t('off.roleFileMissing', { id: roleId }), 'other');
 
     const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
     if (patch.display_name !== undefined) doc.set('display_name', patch.display_name.trim());
@@ -2420,13 +2444,13 @@ export class Office {
      */
     if (patch.max_usd !== undefined) {
       if (!Number.isFinite(patch.max_usd) || patch.max_usd < 0) {
-        throw new RunError('Trần chi phí phải là số không âm. Đặt 0 nghĩa là không giới hạn.', 'other');
+        throw new RunError(t('off.budgetShape'), 'other');
       }
       doc.setIn(['budget', 'max_usd'], patch.max_usd);
     }
     if (patch.max_turns !== undefined) {
       if (!Number.isInteger(patch.max_turns) || patch.max_turns < 1) {
-        throw new RunError('Số bước tối đa phải là số nguyên từ 1 trở lên.', 'other');
+        throw new RunError(t('off.maxTurnsShape'), 'other');
       }
       doc.setIn(['budget', 'max_turns'], patch.max_turns);
     }
@@ -2470,7 +2494,7 @@ export class Office {
 
     this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã cập nhật hồ sơ "${roleId}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.roleUpdated', { id: roleId }), plan_id: null });
     return this.canvas();
   }
 
@@ -2502,8 +2526,8 @@ export class Office {
   rename(name: string, opts?: { silent?: boolean }): string {
     this.assertLive();
     const next = normalizeName(name);
-    if (!next) throw new RunError('Tên văn phòng không được để trống.', 'other');
-    if (next.length > 60) throw new RunError('Tên văn phòng dài quá 60 ký tự.', 'other');
+    if (!next) throw new RunError(t('off.officeNameEmpty'), 'other');
+    if (next.length > 60) throw new RunError(t('co.officeNameTooLong'), 'other');
     if (next === this.loaded.config.name) return next;
 
     const file = this.loaded.paths.configFile;
@@ -2514,7 +2538,7 @@ export class Office {
     this.reload();
     if (opts?.silent) return next;
     // Tên văn phòng KHÔNG nằm trong prompt của ai — không có gì phải ghi lại cache.
-    this.emit({ type: 'layout.changed', say: `Văn phòng đã đổi tên thành "${next}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.officeRenamed', { name: next }), plan_id: null });
     return next;
   }
 
@@ -2532,7 +2556,7 @@ export class Office {
   setAssistantTier(tier: string | undefined): { tier: string; model: string } {
     this.assertLive();
     if (tier !== undefined && !TIERS.includes(tier as never)) {
-      throw new RunError(`Mức model phải là một trong: ${TIERS.join(', ')}.`, 'other');
+      throw new RunError(t('off.tierMustBe', { tiers: TIERS.join(', ') }), 'other');
     }
 
     const file = this.loaded.paths.configFile;
@@ -2546,7 +2570,7 @@ export class Office {
     this.refreshAssistantContext();
     this.emit({
       type: 'layout.changed',
-      say: `Trợ lý chuyển sang mức "${this.assistant.modelTier}". Áp dụng từ lượt trò chuyện tiếp theo.`,
+      say: t('off.assistantTierChanged', { tier: this.assistant.modelTier }),
       plan_id: null,
     });
     return { tier: this.assistant.modelTier, model: this.assistant.model };
@@ -2574,8 +2598,8 @@ export class Office {
   renameAssistant(name: string): string {
     this.assertLive();
     const next = normalizeName(name);
-    if (!next) throw new RunError('Tên Trợ lý không được để trống.', 'other');
-    if (next.length > 40) throw new RunError('Tên Trợ lý dài quá 40 ký tự.', 'other');
+    if (!next) throw new RunError(t('off.assistantNameEmpty'), 'other');
+    if (next.length > 40) throw new RunError(t('off.assistantNameTooLong'), 'other');
     if (next === this.loaded.config.assistant.display_name) return next;
 
     const file = this.loaded.paths.configFile;
@@ -2587,7 +2611,7 @@ export class Office {
     this.reload();
     // KHÔNG `refreshAssistantContext()`: tên không nằm trong prompt, nên không
     // có gì để làm mới. Gọi thừa ở đây là tự dựng lại prefix cho vui.
-    this.emit({ type: 'layout.changed', say: `Trợ lý giờ tên là "${next}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.assistantRenamed', { name: next }), plan_id: null });
     return next;
   }
 
@@ -2642,11 +2666,10 @@ export class Office {
   savePromptLayer(who: string, layerId: string, text: string): PromptLayer[] {
     this.assertLive();
     const layer = this.describePrompt(who).find((l) => l.id === layerId);
-    if (!layer) throw new RunError(`Không có lớp "${layerId}".`, 'other');
+    if (!layer) throw new RunError(t('off.noLayer', { id: layerId }), 'other');
     if (!layer.editable || !layer.file) {
       throw new RunError(
-        'Lớp này chỉ đọc. Lớp lõi thuộc về mã nguồn — mở khoá bằng ' +
-          '`allow_core_prompt_edit: true` trong company.yaml nếu bạn thật sự cần.',
+        t('off.layerReadOnly'),
         'other',
       );
     }
@@ -2654,8 +2677,7 @@ export class Office {
     const limit = layer.limit;
     if (limit && estimateTokens(text) > limit) {
       throw new RunError(
-        `Dài quá: ${estimateTokens(text)} token, trần là ${limit}. ` +
-          `Khối này nằm trong prefix cache nên mỗi dòng thừa là chi phí thu suốt ca làm việc.`,
+        t('off.layerTooLong', { tokens: String(estimateTokens(text)), limit: String(limit) }),
         'other',
       );
     }
@@ -2687,9 +2709,7 @@ export class Office {
     this.emit({
       type: 'layout.changed',
       say:
-        'Đã lưu và áp dụng ngay — không cần khởi động lại. Nhân viên nhận việc từ giờ dùng bản mới; ' +
-        'việc đang chạy vẫn theo bản cũ cho tới khi xong. Lượt đầu của mỗi nhân viên sẽ tốn thêm ' +
-        'một chút vì phải ghi lại bộ nhớ đệm.',
+        t('off.layerSaved'),
       plan_id: null,
     });
     return this.describePrompt(who);
@@ -2711,7 +2731,7 @@ export class Office {
     const ok = patch.remove
       ? this.knowledge.removeNode(id)
       : this.knowledge.editNode(id, patch.body ?? '');
-    if (!ok) throw new RunError(`Không có ghi chú "${id}".`, 'other');
+    if (!ok) throw new RunError(t('off.noNote', { id }), 'other');
 
     this.knowledge.scan();
     this.refreshAssistantContext();
@@ -2794,7 +2814,7 @@ export class Office {
       const swept = this.finishClear();
       return {
         saved: false,
-        note: swept ? `Chưa có gì mới để nhớ.${swept}` : 'Chưa có gì để nhớ — bắt đầu mới luôn.',
+        note: swept ? `${t('off.nothingNewToRemember')}${swept}` : t('off.nothingToRemember'),
       };
     }
 
@@ -2807,7 +2827,7 @@ export class Office {
       // vào kho là tự đầu độc phần HOT của chính mình ở mọi lượt sau.
       if (body && !/^KHÔNG\.?$/i.test(body)) {
         this.knowledge.addAssistantMemory(
-          `Ghi nhớ tới ${new Date().toISOString().slice(0, 10)}`,
+          t('off.memoryUpTo', { date: new Date().toISOString().slice(0, 10) }),
           body,
           this.knowledge.assistantMemoryIds(),
         );
@@ -2840,16 +2860,16 @@ export class Office {
         return {
           saved: false,
           note:
-            `Chưa nén được trí nhớ (${err instanceof Error ? err.message : 'lỗi'}), ` +
-            'nên mình giữ nguyên cuộc trò chuyện. Bạn thử lại /clear sau nhé.',
+            t('off.compactFailed', {
+              reason: err instanceof Error ? err.message : t('off.anError'),
+            }),
         };
       }
       const swept = this.finishClear();
       return {
         saved: false,
         note:
-          'Mình không đọc lại được cuộc trò chuyện cũ (bản ghi của Claude Code đã bị dọn), ' +
-          `nên không cất lại được gì. Đã dọn ô chat, bắt đầu mới.${swept}`,
+          `${t('off.transcriptGone')}${swept}`,
       };
     }
 
@@ -2858,8 +2878,8 @@ export class Office {
       saved,
       note:
         (saved
-          ? 'Đã dọn cuộc trò chuyện. Những gì bạn đã chốt mình cất vào sổ tay riêng, mở ở ngăn Tri thức xem được.'
-          : 'Đã dọn cuộc trò chuyện.') + tail,
+          ? t('off.clearedWithNotebook')
+          : t('off.cleared')) + tail,
     };
   }
 
@@ -2880,7 +2900,7 @@ export class Office {
     this.clearChatLog();
     // Phát TRƯỚC câu báo kết quả: đây là lệnh "xoá những gì đang hiện", nên câu
     // đi sau nó mới là câu đầu tiên của cuộc trò chuyện mới.
-    this.emit({ type: 'office.cleared', say: 'Đã dọn cuộc trò chuyện.', plan_id: null });
+    this.emit({ type: 'office.cleared', say: t('off.cleared'), plan_id: null });
     this.knowledge.scan();
     this.refreshAssistantContext();
     this.emit({
@@ -2922,7 +2942,7 @@ export class Office {
     // Tự nén còn cần điều đó hơn cả `/clear` — người dùng không hề gõ lệnh gì,
     // nên một bong bóng chat tự mọc ra là thứ họ không giải thích được.
     void this.compactMemory()
-      .then((r) => this.emitNote(`Cuộc trò chuyện đã dài, mình dọn bớt cho nhẹ. ${r.note}`, 6_000))
+      .then((r) => this.emitNote(t('off.autoCompacted', { note: r.note }), 6_000))
       .catch(() => {
         /* Nén hỏng thì giữ nguyên — `compactMemory` không quên khi lỗi. */
       });
@@ -2937,7 +2957,7 @@ export class Office {
    */
   private factSkeleton(): string {
     const plans = this.plans.list().slice(0, 12);
-    if (plans.length === 0) return '(chưa có việc nào chạy)';
+    if (plans.length === 0) return '(no jobs have run yet)';
     return plans
       .map((p) => `- [${p.status}] ${p.request}${p.report ? `\n  → ${p.report.split('\n')[0]}` : ''}`)
       .join('\n');
@@ -2990,9 +3010,9 @@ export class Office {
     // tâm; "ghi chú cũ bị dọn" là mất mát thật. Gộp một câu thì người dùng
     // không biết mình vừa mất gì.
     const parts: string[] = [];
-    if (replaced.length) parts.push(`${replaced.length} bản ghi nhớ cũ đã được thay`);
-    if (aged.length) parts.push(`${aged.length} ghi chú lâu không dùng`);
-    return ` Dọn luôn ${parts.join(' và ')}.`;
+    if (replaced.length) parts.push(plural('off.sweptReplaced', replaced.length));
+    if (aged.length) parts.push(plural('off.sweptAged', aged.length));
+    return ` ${t('off.sweptAlso', { what: parts.join(t('off.sweptAnd')) })}`;
   }
 
   private clearChatLog(): void {
@@ -3200,9 +3220,10 @@ export class Office {
       type: 'master.message',
       role: 'assistant',
       say:
-        `Ca trước còn ${ready.left} việc chưa chạy${ready.request ? ` — "${ready.request}"` : ''}. ` +
-        `Gõ /resume là mình làm nốt, dùng lại kế hoạch cũ nên không tốn thêm lượt chia việc nào. ` +
-        `Hoặc cứ nhắn việc mới, phần đã xong vẫn nằm trong ngăn Kết quả.`,
+        t('off.leftoversOnBoot', {
+          n: String(ready.left),
+          of: ready.request ? ` — "${ready.request}"` : '',
+        }),
       plan_id: null,
     });
   }
@@ -3217,7 +3238,7 @@ export class Office {
    */
   async resume(): Promise<{ plan_id: string; report: string; usage: Usage }> {
     const ready = this.resumable();
-    if (!ready) throw new RunError('Không có việc nào đang dở để chạy tiếp.', 'other');
+    if (!ready) throw new RunError(t('off.nothingToResume'), 'other');
 
     const file = path.join(this.loaded.paths.tasks, `${ready.plan_id}.plan.json`);
     const full = JSON.parse(fs.readFileSync(file, 'utf8')) as Plan;
@@ -3448,7 +3469,9 @@ export class Office {
        * không giúp model quyết gì.
        */
       const title = titles.get(planId);
-      const name = title ? truncateToTokens(title, 30) : '(một việc cũ, không còn tên trong sổ)';
+      // English, hard-coded: this block goes into the ASSISTANT's manifest, next
+      // to the `UNFINISHED` line just below, which was already English.
+      const name = title ? truncateToTokens(title, 30) : '(an older job, no longer named in the log)';
       // Nói bằng SỐ BƯỚC, không bằng tên trạng thái nội bộ: "2/3 bước" nói được
       // cả *"còn dở"* lẫn *"dở tới đâu"*, mà `status: 'blocked'` thì không.
       const progress = unfinished
@@ -3626,7 +3649,7 @@ export class Office {
         plan_id: null,
       });
       this.emitNote(
-        `Đã xoá "${name}" và ${dropped.length} ghi chú chỉ có nghĩa nhờ tài liệu đó.`,
+        t('off.docDeletedWithNotes', { name, n: String(dropped.length) }),
         6_000,
       );
     }
@@ -3727,7 +3750,7 @@ export class Office {
            */
           const login = on.some((o) => o.dirs?.length);
           return {
-            ...(on.length ? { optionLabels: on.map((o) => o.label) } : {}),
+            ...(on.length ? { optionLabels: on.map((o) => t(o.label)) } : {}),
             ...(login ? { canLogin: true } : {}),
           };
         })(),
@@ -3774,7 +3797,8 @@ export class Office {
       const a = this.loaded.config.assistant;
       return {
         ...base,
-        label: a.display_name,
+        // Empty = nobody named it ⇒ the label follows the switch. → types.ts
+        label: a.display_name || t('chat.assistant'),
         avatar: a.avatar,
         // Trước đây trường này mang MODEL ID cho Trợ lý nhưng mang TÊN MỨC cho
         // nhân viên, nên cùng một ô "Model" trên giao diện hiện hai loại giá trị
@@ -3792,7 +3816,7 @@ export class Office {
     if (n.kind === 'knowledge') {
       return {
         ...base,
-        label: 'Kho tri thức chung',
+        label: t('off.sharedKnowledge'),
         avatar: '📚',
         count: this.knowledge.size,
         connected: true,
@@ -3810,7 +3834,7 @@ export class Office {
        */
       return {
         ...base,
-        label: 'Tủ tài liệu',
+        label: t('off.documentCabinet'),
         avatar: '🗄',
         count: this.library.size,
         connected: true,
@@ -4104,47 +4128,23 @@ version: 1
 display_name: ${JSON.stringify(displayName)}
 avatar: "•"
 
-# Đây là THỨ DUY NHẤT Trợ lý nhìn thấy khi lên kế hoạch.
-# Giữ ngắn: nó nằm trong ngữ cảnh của Trợ lý suốt cả ca làm việc.
-pitch: ${JSON.stringify(pitch || `Mô tả việc ${displayName} làm được, viết cho Trợ lý đọc.`)}
+${t('seed.rolePitch')}
+pitch: ${JSON.stringify(pitch || t('seed.rolePitchDefault', { name: displayName }))}
 good_at: []
 not_for: []
 
 skill_level: medium
 skills: {}
 
-# Đọc/ghi file trong văn phòng và tìm trên web đã BẬT SẴN cho mọi nhân viên —
-# không cần khai gì ở đây. Trường này chỉ để thêm thứ nằm ngoài bộ mặc định.
-#
-# Bash = cho phép chạy lệnh trên máy. BẬT SẴN (user chốt 22/08) vì phần lớn
-# việc văn phòng thật sự cần nó: gọi git, đổi định dạng file, nén kết quả,
-# đụng tới thư mục nằm ngoài văn phòng.
-#
-# ⚠ Đây là NGOẠI LỆ DUY NHẤT của luật "kết quả luôn nằm trong thư mục văn
-# phòng" (docs/SPEC-artifacts.md §2.6): hook chặn ghi bậy chỉ khớp được
-# Write/Edit, không khớp được lệnh shell. Người này đọc và ghi được bất cứ
-# đâu trên máy bạn. Xoá dòng dưới, hoặc tắt công tắc trong bảng chi tiết,
-# nếu vai trò này không cần.
+${t('seed.roleTools')}
 tools: [Bash]
 model_tier: ${tier}
 use_preset: false
 
 budget:
-  # max_turns là đòn bẩy chi phí lớn nhất: mỗi lượt đọc lại TOÀN BỘ prefix.
-  # Vai trò tier eco cần con số CAO HƠN tier standard — model rẻ đi nhiều
-  # bước hơn cho cùng một việc. Tier deep thì ngược lại: mỗi lượt đắt hơn hẳn
-  # nhưng nó đi ít bước hơn.
-  #
-  # ⚠ NỚI 26/08 (user chốt) — 6/12 là con số của thời CHƯA CÓ MCP. Mỗi lời gọi
-  # MCP là MỘT LƯỢT, nên một việc chạm vài trang Notion đốt hết trần trước khi
-  # kịp làm xong. Đo được: xoá một trang con = 9 lượt, chạm trần ở 6, và cái
-  # giá của việc chạm trần là ĐẮT NHẤT trong mọi kiểu hỏng — nó chạy tới kịch
-  # rồi mất trắng.
+  ${t('seed.roleMaxTurns')}
   max_turns: ${tier === 'eco' ? 20 : tier === 'deep' ? 10 : 15}
-  # Trần chi phí MỘT việc. Đặt 0 = không giới hạn.
-  # Số dưới đây RỘNG có chủ ý: chặn giữa chừng là mất trắng số tiền đã tiêu mà
-  # không có kết quả. Đo được 21/08 trên bài gộp CSV 200 dòng: eco ~$0.17,
-  # standard ~$0.45. Siết xuống khi bạn đã biết việc của mình tốn bao nhiêu.
+  ${t('seed.roleMaxUsd')}
   max_usd: ${tier === 'eco' ? '2.0' : tier === 'deep' ? '10.0' : '5.0'}
   knowledge_pack: 3000
 `;

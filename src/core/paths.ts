@@ -30,6 +30,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
+import { t } from '../i18n/index.js';
 
 export interface CompanyPaths {
   root: string;
@@ -285,7 +286,7 @@ export function safeJoin(base: string, relative: string): string {
   const target = path.resolve(base, relative);
   const rel = path.relative(base, target);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new Error(`Đường dẫn ra ngoài thư mục: ${relative}`);
+    throw new Error(t('error.pathOutside', { path: relative }));
   }
   return target;
 }

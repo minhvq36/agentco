@@ -10,6 +10,7 @@ import {
 import { canConnect, type CanvasEdge, type CanvasNode, type CanvasState } from '@/lib/types';
 import type { LiveAgent } from '@/lib/store';
 import { NodeShape } from './NodeShape';
+import { t } from '@i18n';
 import {
   anchor,
   arrange,
@@ -473,7 +474,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                     cutEdge(e);
                   }}
                   role="button"
-                  aria-label="Ngắt dây"
+                  aria-label={t('canvas.cutEdge')}
                 >
                   <circle r={9} />
                   <text y={4} textAnchor="middle">

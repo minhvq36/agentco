@@ -40,12 +40,18 @@ Thanh dưới (kế hoạch + chat) của bản v0 biến mất — nó chiếm 
 
 Hai nút `Sắp xếp` / `Vừa khung` đổi thành **icon**, không chữ.
 
-### Sáu tab, và BA KHO đứng liền nhau (19/08)
+### Bảy tab, và BA KHO đứng liền nhau (19/08 · thêm Cài đặt 03/09)
 
 ```
-Nói với Trợ lý · Nhật ký công việc · Tổng quan công ty · Tủ tài liệu · Kết quả · Kho tri thức
+Nói với Trợ lý · Nhật ký công việc · Tổng quan công ty · Tủ tài liệu · Kết quả · Kho tri thức · Cài đặt
                                                         └────────── ba kho ──────────┘
 ```
+
+**Cài đặt hiện CẢ KHI CHƯA CÓ VĂN PHÒNG NÀO** — cùng ngoại lệ với Tổng quan, và cùng lý do: nó là
+cấp **công ty**, không phải cấp văn phòng. Một bản cài mới tiếp đất ở màn hình rỗng, và ngôn ngữ
+giao diện là thứ họ phải chọn được **trước** khi tạo văn phòng đầu tiên — bắt tạo văn phòng rồi mới
+đổi được ngôn ngữ là bắt họ đọc một màn hình bằng thứ tiếng họ không dùng để làm việc đó.
+→ `web/src/components/Sidebar.tsx §tabs` · `docs/CLAUDE.md §Language`
 
 Ba kho là ba khái niệm dễ lẫn nhất trong sản phẩm, phân biệt bằng đúng một câu hỏi: **ai đặt file vào đó?**
 

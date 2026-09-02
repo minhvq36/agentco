@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ĐĂNG NHẬP BẰNG TAY VÀO HỒ SƠ CỦA CÁNH TAY TRÌNH DUYỆT.
  * → docs/TEST-WALKTHROUGH.md bài 18 chặng E · `arms/browser.ts §options`
  *
@@ -36,6 +36,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
+
+import { t } from '../i18n/index.js';
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -150,12 +152,11 @@ export function startLogin(opts: {
 }): { profile: string; browser: string } {
   if (opts.working) {
     throw new LoginError(
-      'Văn phòng đang chạy việc. Đợi xong (hoặc bấm dừng) rồi mở cửa sổ đăng nhập — ' +
-        'trình duyệt chỉ mở được một lần cho mỗi hồ sơ.',
+      t('browserLogin.officeBusy'),
     );
   }
   if (open.has(opts.office)) {
-    throw new LoginError('Cửa sổ đăng nhập của văn phòng này đang mở. Đóng nó rồi thử lại.');
+    throw new LoginError(t('browserLogin.alreadyOpen'));
   }
 
   /**
@@ -172,10 +173,10 @@ export function startLogin(opts: {
     try {
       u = new URL(opts.url);
     } catch {
-      throw new LoginError(`"${opts.url}" không phải một địa chỉ web hợp lệ.`);
+      throw new LoginError(t('browserLogin.badUrl', { url: opts.url }));
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-      throw new LoginError('Chỉ mở được địa chỉ http hoặc https.');
+      throw new LoginError(t('browserLogin.badScheme'));
     }
   }
 
@@ -183,8 +184,7 @@ export function startLogin(opts: {
   const browser = findBrowser(platform);
   if (!browser) {
     throw new LoginError(
-      'Không tìm thấy Microsoft Edge hay Google Chrome trên máy này. ' +
-        'Cài một trong hai rồi thử lại — cánh tay trình duyệt cũng dùng chính nó.',
+      t('browserLogin.noBrowser'),
     );
   }
 

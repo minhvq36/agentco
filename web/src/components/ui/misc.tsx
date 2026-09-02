@@ -3,6 +3,7 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Check, Copy } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { t } from '@i18n';
 
 export const TooltipProvider = TooltipPrimitive.Provider;
 
@@ -141,8 +142,8 @@ export function CopyRef({ path }: { path: string }) {
     <button
       type="button"
       className="rounded p-1.5 text-muted transition-colors hover:bg-accent-soft/60 hover:text-ink"
-      aria-label={`Chép tham chiếu ${path}`}
-      title={`Copy đường dẫn`}
+      aria-label={t('common.copyRef', { path })}
+      title={t('common.copyPath')}
       onClick={() => {
         // `navigator.clipboard` cần secure context. Daemon chạy ở
         // `http://127.0.0.1` — trình duyệt coi localhost là secure, nên đường

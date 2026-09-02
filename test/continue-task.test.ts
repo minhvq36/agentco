@@ -103,9 +103,9 @@ test('🔴 câu dặn KHÔNG mang số thứ tự — chỗ tiếp đọc từ �
    */
   const tiep = continueBrief(brief);
   const them = tiep.constraints.at(-1)!;
-  assert.match(them, /thư mục kết quả/);
-  assert.match(them, /đừng làm lại từ đầu/i);
-  assert.doesNotMatch(them, /\b(vị trí|phần|trang)\s*\d/i, 'không được đoán chỗ tiếp bằng con số');
+  assert.match(them, /output folder/);
+  assert.match(them, /do not start again from scratch/i);
+  assert.doesNotMatch(them, /\b(position|part|section|page)\s*\d/i, 'không được đoán chỗ tiếp bằng con số');
 });
 
 test('⭐ chạy tiếp là CÙNG một việc — không đổi mục tiêu, không đổi id', () => {
@@ -128,6 +128,6 @@ test('⭐ chạy tiếp hai lần KHÔNG chồng câu dặn lên nhau', () => {
   // Mỗi vòng cộng thêm một dòng y hệt là bơm prefix của worker lên vô ích, và
   // ba dòng giống nhau còn dạy model rằng dòng đó không quan trọng.
   const hai = continueBrief(continueBrief(brief));
-  const them = hai.constraints.filter((c) => /thư mục kết quả/.test(c));
+  const them = hai.constraints.filter((c) => /output folder/.test(c));
   assert.equal(them.length, 1, 'câu dặn bị nhân bản');
 });

@@ -693,7 +693,7 @@ export class LayoutStore {
       };
     } catch {
       // layout.json hỏng KHÔNG được làm sập văn phòng — nó chỉ là view state.
-      process.emitWarning('layout.json không đọc được, canvas sẽ tự sắp xếp lại.');
+      process.emitWarning('layout.json is unreadable; the canvas will lay itself out again.');
       return { version: 1, nodes: [], edges: [] };
     }
   }
@@ -740,7 +740,7 @@ export class LayoutStore {
       fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
       return true;
     } catch {
-      process.emitWarning(`Không ghi được ${keyPath.join('.')} vào ${path.basename(file)}`);
+      process.emitWarning(`Could not write ${keyPath.join('.')} into ${path.basename(file)}`);
       return false;
     }
   }

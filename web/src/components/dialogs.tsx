@@ -14,6 +14,7 @@ import { Input, Label, Select, Textarea } from '@/components/ui/misc';
 import { api } from '@/lib/api';
 import { actions, toast, useApp } from '@/lib/store';
 import type { PromptLayer } from '@/lib/types';
+import { plural, t } from '@i18n';
 
 export function NewOfficeDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const [name, setName] = useState('');
@@ -37,24 +38,24 @@ export function NewOfficeDialog({ open, onOpenChange }: { open: boolean; onOpenC
       <DialogContent>
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>Tạo văn phòng</DialogTitle>
+            <DialogTitle>{t('dialog.newOffice.title')}</DialogTitle>
           </DialogHeader>
 
-          <Label htmlFor="office-name">Tên văn phòng</Label>
+          <Label htmlFor="office-name">{t('dialog.newOffice.name')}</Label>
           <Input
             id="office-name"
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Ví dụ: Nội dung, Kế toán, Hỗ trợ khách hàng"
+            placeholder={t('dialog.newOffice.placeholder')}
           />
 
           <DialogFooter>
             <Button type="button" onClick={() => onOpenChange(false)}>
-              Thôi
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={!name.trim() || busy}>
-              {busy ? 'Đang tạo…' : 'Tạo'}
+              {busy ? t('common.creating') : t('common.create')}
             </Button>
           </DialogFooter>
         </form>
@@ -106,14 +107,14 @@ export function RenameOfficeDialog({
       <DialogContent>
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>Đổi tên văn phòng</DialogTitle>
+            <DialogTitle>{t('dialog.renameOffice.title')}</DialogTitle>
             <DialogDescription>
-              Chỉ đổi tên hiển thị. Mã văn phòng <code>{officeId}</code> — cũng là tên thư mục chứa
-              toàn bộ kết quả và lịch sử — giữ nguyên.
+              {t('dialog.renameOffice.descBefore')} <code>{officeId}</code>{' '}
+              {t('dialog.renameOffice.descAfter')}
             </DialogDescription>
           </DialogHeader>
 
-          <Label htmlFor="rename-office">Tên mới</Label>
+          <Label htmlFor="rename-office">{t('dialog.renameOffice.newName')}</Label>
           <Input
             id="rename-office"
             autoFocus
@@ -121,17 +122,14 @@ export function RenameOfficeDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <p className="mt-1 text-xs text-muted">
-            Không được trùng tên với văn phòng khác — hai dòng y hệt nhau trong ô chọn là cách chắc
-            chắn nhất để gõ nhầm chỗ.
-          </p>
+          <p className="mt-1 text-xs text-muted">{t('dialog.renameOffice.unique')}</p>
 
           <DialogFooter>
             <Button type="button" onClick={() => onOpenChange(false)}>
-              Thôi
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={!trimmed || busy}>
-              {busy ? 'Đang lưu…' : 'Lưu'}
+              {busy ? t('common.saving') : t('common.save')}
             </Button>
           </DialogFooter>
         </form>
@@ -168,39 +166,37 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       <DialogContent>
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>Thêm nhân viên</DialogTitle>
+            <DialogTitle>{t('dialog.newAgent.title')}</DialogTitle>
           </DialogHeader>
 
-          <Label htmlFor="agent-name">Tên hiển thị</Label>
+          <Label htmlFor="agent-name">{t('dialog.newAgent.name')}</Label>
           <Input
             id="agent-name"
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Ví dụ: Người dựng bảng tính"
+            placeholder={t('dialog.newAgent.namePlaceholder')}
           />
 
           <Label htmlFor="agent-pitch" className="mt-3">
-            Giới thiệu
+            {t('dialog.newAgent.pitch')}
           </Label>
           <Textarea
             id="agent-pitch"
             rows={3}
             value={pitch}
             onChange={(e) => setPitch(e.target.value)}
-            placeholder="Làm được việc gì, đầu ra là gì"
+            placeholder={t('dialog.newAgent.pitchPlaceholder')}
           />
-          <p className="mt-1 text-xs text-muted">
-            Tip: giữ ngắn gọn.
-          </p>
+          <p className="mt-1 text-xs text-muted">{t('dialog.newAgent.pitchTip')}</p>
 
           <Label htmlFor="agent-tier" className="mt-3">
-            Mức model
+            {t('dialog.newAgent.tier')}
           </Label>
           <Select id="agent-tier" className="w-full" value={tier} onChange={(e) => setTier(e.target.value)}>
-            <option value="standard">standard — cân bằng</option>
-            <option value="eco">eco — rẻ hơn</option>
-            <option value="deep">deep — chỉ cho việc thật khó</option>
+            <option value="standard">{t('dialog.newAgent.tierStandard')}</option>
+            <option value="eco">{t('dialog.newAgent.tierEco')}</option>
+            <option value="deep">{t('dialog.newAgent.tierDeep')}</option>
           </Select>
 
           {/*
@@ -211,10 +207,10 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           */}
           <DialogFooter>
             <Button type="button" onClick={() => onOpenChange(false)}>
-              Thôi
+              {t('common.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={!name.trim() || busy}>
-              {busy ? 'Đang tạo…' : 'Tạo'}
+              {busy ? t('common.creating') : t('common.create')}
             </Button>
           </DialogFooter>
         </form>
@@ -281,7 +277,7 @@ function LayerCard({
       onSaved(res.layers);
       setEditing(false);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không lưu được.');
+      toast(err instanceof Error ? err.message : t('common.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -316,17 +312,20 @@ function LayerCard({
           <Lock className="h-3.5 w-3.5 shrink-0 text-muted" />
         )}
         <span className="text-[13px] font-medium text-ink">{layer.title}</span>
-        <span className="text-xs text-muted">{layer.editable ? 'sửa được' : 'chỉ đọc'}</span>
+        <span className="text-xs text-muted">
+          {layer.editable ? t('promptLayer.editable') : t('promptLayer.readOnly')}
+        </span>
         <div className="flex-1" />
         <span className={`text-xs tabular-nums ${over ? 'text-danger' : 'text-muted'}`}>
-          {tokens}
-          {layer.limit !== undefined ? ` / ${layer.limit}` : ''} token
+          {layer.limit !== undefined
+            ? plural('promptLayer.tokensOfLimit', tokens, { limit: layer.limit })
+            : plural('promptLayer.tokens', tokens)}
         </span>
         {layer.editable && !editing && (
           <Button
             size="iconSm"
             variant="ghost"
-            aria-label={`Sửa ${layer.title}`}
+            aria-label={t('promptLayer.edit', { title: layer.title })}
             // Bút chì = MỞ RA VÀ SỬA LUÔN, một cú bấm. `stopPropagation` để nó
             // không chạm vào cái toggle của thanh rồi tự gập lại ngay.
             onClick={(e) => {
@@ -344,7 +343,7 @@ function LayerCard({
         <p className="mb-2 text-xs leading-relaxed text-muted">{layer.note}</p>
         {layer.file && (
           <p className="mb-2 text-xs text-muted">
-            File: <code className="text-ink">{layer.file}</code>
+            {t('promptLayer.fileLabel')} <code className="text-ink">{layer.file}</code>
           </p>
         )}
 
@@ -362,18 +361,15 @@ function LayerCard({
               value={text}
               onChange={(e) => setText(e.target.value)}
               className="font-mono text-[11.5px] leading-relaxed"
-              placeholder={
-                layer.placeholder ?? 'Để trống cũng được — khối này sẽ biến mất hẳn khỏi prompt.'
-              }
+              placeholder={layer.placeholder ?? t('promptLayer.emptyPlaceholder')}
             />
             {over && (
               <p className="mt-1.5 text-xs text-danger">
-                Vượt trần {layer.limit} token. Khối này nằm trong prefix cache nên mỗi dòng thừa là chi
-                phí thu suốt ca làm việc.
+                {t('promptLayer.overLimit', { limit: layer.limit ?? 0 })}
               </p>
             )}
             <p className="mt-2 text-xs leading-relaxed text-muted">
-              Lưu sẽ làm {affected} nhân viên ghi lại bộ nhớ đệm một lần.
+              {plural('promptLayer.affected', affected)}
             </p>
             <div className="mt-2 flex gap-2">
               <Button
@@ -383,10 +379,10 @@ function LayerCard({
                   setEditing(false);
                 }}
               >
-                Thôi
+                {t('common.cancel')}
               </Button>
               <Button size="sm" variant="primary" disabled={!dirty || over || busy} onClick={() => void save()}>
-                {busy ? 'Đang lưu…' : 'Lưu'}
+                {busy ? t('common.saving') : t('common.save')}
               </Button>
             </div>
           </>
@@ -454,7 +450,7 @@ export function PromptDialog({ who, onClose }: { who: string | null; onClose(): 
       .prompt(officeId, who)
       .then((r) => setLayers(r.layers))
       .catch((err) => {
-        toast(err instanceof Error ? err.message : 'Không đọc được prompt.');
+        toast(err instanceof Error ? err.message : t('promptLayer.loadFailed'));
         closeRef.current();
       });
   }, [who, officeId]);
@@ -465,12 +461,14 @@ export function PromptDialog({ who, onClose }: { who: string | null; onClose(): 
     <Dialog open={!!who} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="w-[min(46rem,94vw)]">
         <DialogHeader>
-          <DialogTitle>Prompt của {who === 'assistant' ? 'Trợ lý' : who}</DialogTitle>
+          <DialogTitle>
+            {t('promptLayer.title', { who: who === 'assistant' ? t('chat.assistant') : (who ?? '') })}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="-mx-1 max-h-[58vh] overflow-y-auto px-1">
           {layers === null ? (
-            <div className="py-6 text-[13px] text-muted">Đang đọc…</div>
+            <div className="py-6 text-[13px] text-muted">{t('common.reading')}</div>
           ) : (
             <div className="flex flex-col gap-3">
               {layers.map((l) => (
@@ -487,7 +485,7 @@ export function PromptDialog({ who, onClose }: { who: string | null; onClose(): 
         </div>
 
         <DialogFooter>
-          <Button onClick={onClose}>Đóng</Button>
+          <Button onClick={onClose}>{t('common.close')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

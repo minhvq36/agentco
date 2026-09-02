@@ -28,7 +28,7 @@ import zlib from 'node:zlib';
  */
 import { docPaths, formatBytes, pageOfLine, safeName, sniffType } from '../dist/library/names.js';
 import { openZip } from '../dist/library/zip.js';
-import { extractDocx, extractText, extractXlsx } from '../dist/library/extract.js';
+import { extractDocx, extractText, extractXlsx, shapeEn, shapeSay } from '../dist/library/extract.js';
 import { migrateCharters } from '../dist/core/migrate.js';
 
 // ────────────────────────────────────────────────────────────── safeName
@@ -266,8 +266,14 @@ test('extractText: CSV nói "hàng đầu", KHÔNG nói "cột"', () => {
   // Ta quan sát được nội dung dòng một; ta không quan sát được rằng đó là dòng
   // tiêu đề. Gọi nó là "cột" là một câu nói dối khi file vào thẳng dữ liệu.
   const out = extractText(Buffer.from('ngay,noi_dung,so_tien\n2026-07-02,GRAB,85000\n'), 'csv');
-  assert.match(out.shape, /hàng đầu: ngay, noi_dung, so_tien/);
-  assert.doesNotMatch(out.shape, /cột/);
+  // `shape` giờ giữ DỮ KIỆN chứ không giữ câu, nên khoá thẳng vào dữ kiện: đây
+  // mới đúng là thứ mệnh đề nói về, và nó không đổi khi câu chữ đổi.
+  assert.deepEqual(out.shape, { kind: 'csv', rows: 2, firstRow: ['ngay', 'noi_dung', 'so_tien'] });
+  // Và cả hai người dựng câu đều phải gọi nó là "hàng đầu", không phải "cột".
+  assert.match(shapeEn(out.shape, 'csv'), /first row: ngay, noi_dung, so_tien/);
+  assert.doesNotMatch(shapeEn(out.shape, 'csv'), /column/i);
+  assert.match(shapeSay(out.shape, 'csv'), /hàng đầu: ngay, noi_dung, so_tien/); // i18n-allow-vietnamese: the vi catalogue is what this asserts on
+  assert.doesNotMatch(shapeSay(out.shape, 'csv'), /cột/); // i18n-allow-vietnamese: the word that must NOT appear
 });
 
 test('extractDocx: lấy chữ, bỏ thẻ, giải mã thực thể', () => {
@@ -285,7 +291,8 @@ test('extractDocx: lấy chữ, bỏ thẻ, giải mã thực thể', () => {
   assert.match(out.text, /Chương 1 & mở đầu/);
   assert.match(out.text, /Điều 7\. Bên B chịu phí\./);
   assert.doesNotMatch(out.text, /<w:/);
-  assert.equal(out.shape, 'docx, 2 đoạn');
+  assert.deepEqual(out.shape, { kind: 'docx', headings: 0, paras: 2 });
+  assert.equal(shapeEn(out.shape, 'docx'), 'docx, 2 paragraphs');
 });
 
 test('extractXlsx: nối tên sheet với file sheet qua r:id, không đoán theo thứ tự', () => {
@@ -320,7 +327,12 @@ test('extractXlsx: nối tên sheet với file sheet qua r:id, không đoán the
   ]);
 
   const out = extractXlsx(book);
-  assert.match(out.shape, /^2 sheet: Tháng 7, Tổng/);
+  assert.deepEqual(out.shape, {
+    kind: 'xlsx',
+    sheets: ['Tháng 7', 'Tổng'], // i18n-allow-vietnamese: sheet names are the fixture's data
+    firstRow: ['doanh thu', '1500'],
+  });
+  assert.match(shapeEn(out.shape, 'xlsx'), /^2 sheets: Tháng 7, Tổng/); // i18n-allow-vietnamese: same fixture names, echoed back
   // "Tháng 7" phải chứa dữ liệu của sheet2.xml, không phải sheet1.xml.
   const thang7 = out.text.split('## Sheet: ')[1] ?? '';
   assert.match(thang7, /doanh thu \| 1500/);

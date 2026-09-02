@@ -23,15 +23,15 @@ const FILESYSTEM_PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
 
 export const FILES_ARM: CatalogArm = {
   id: 'files',
-  name: 'File trên máy',
+  name: 'armCat.files.name',
   icon: '📁',
-  blurb: 'Đọc file và thư mục trên chính máy này — chỉ những thư mục bạn cho phép.',
+  blurb: 'armCat.files.blurb',
   price: 'none',
   spec: { kind: 'stdio', command: 'npx', args: ['-y', FILESYSTEM_PKG], appendFolders: true },
   secrets: [],
   folders: {
-    label: 'Thư mục được phép',
-    help: 'Nhân viên chỉ với tới được những thư mục trong danh sách này. Chọn đúng thứ cần, đừng chọn cả ổ đĩa.',
+    label: 'armCat.files.folders.label',
+    help: 'armCat.files.folders.help',
   },
   // Server tham chiếu của chính MCP ⇒ KHÔNG có thương hiệu bên thứ ba nào.
   // Đây là mục duy nhất trong danh mục v1 có rủi ro nhãn hiệu bằng 0.

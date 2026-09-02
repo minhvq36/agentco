@@ -44,6 +44,7 @@
 import { Fragment } from 'react';
 
 import { blocksOf, spansOf, type Align } from './markdown-core';
+import { t } from '@i18n';
 
 /**
  * Cỡ tiêu đề — CỐ Ý SÁT CỠ CHỮ THƯỜNG.
@@ -232,7 +233,7 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
                   >
                     ✓
                   </span>
-                  <span className="sr-only">{it.done ? 'đã xong: ' : 'chưa xong: '}</span>
+                  <span className="sr-only">{it.done ? t('md.taskDone') : t('md.taskTodo')}</span>
                   {/* Gạch ngang việc đã xong, nhưng KHÔNG làm mờ chữ: người ta
                       vẫn phải đọc lại được thứ mình đã làm. */}
                   <span className={`min-w-0 break-words ${it.done ? 'text-muted line-through' : 'text-ink'}`}>

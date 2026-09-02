@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Assistant — trợ lý của MỘT văn phòng. Session dài, đối thoại với người, chia việc.
  *
  * → docs/SPEC-offices.md §4
@@ -42,6 +42,7 @@ import {
   type Usage,
 } from './types.js';
 import { truncateToTokens } from './tokens.js';
+import { t, tEn } from '../i18n/index.js';
 
 /**
  * Khâu lập kế hoạch KHÔNG chia được việc, và muốn HỎI LẠI. → SPEC-offices.md §6
@@ -1135,7 +1136,11 @@ export function armReach(
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const entry = arms[id]?.catalog ? findArm(arms[id]!.catalog!) : undefined;
-  const opts = entry ? activeOptions(entry, servers[id]).map((o) => o.label.toLowerCase()) : [];
+  /**
+   * `tEn`, not `t`: this clause lands in the assistant's PREFIX, and a prompt
+   * never follows the interface switch. → `i18n/index.ts §tEn` · the two worlds
+   */
+  const opts = entry ? activeOptions(entry, servers[id]).map((o) => tEn(o.label).toLowerCase()) : [];
   // Một danh sách, không phải hai câu: nấc quyền và cách chạy cùng trả lời câu
   // *"cánh tay này LÀM ĐƯỢC GÌ"*, nên chúng đứng cạnh nhau hay đứng riêng đều
   // đọc được — nhưng gộp thì không có chỗ nào để quên một vế.

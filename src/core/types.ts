@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '../i18n/index.js';
 
 // Chỉ KIỂU, và `energy.ts` không import ngược lại đây — không có vòng.
 import type { Energy } from './energy.js';
@@ -255,7 +256,8 @@ export type Role = z.infer<typeof RoleSchema>;
 // ─────────────────────────────────────────────────────────── company config
 
 export const CompanyConfigSchema = z.object({
-  name: z.string().default('Công ty của tôi'),
+  /** Empty = never named. → the note on `assistant.display_name` */
+  name: z.string().default(''),
 
   runtime: z
     .object({
@@ -524,6 +526,33 @@ export const CompanyConfigSchema = z.object({
    * viết skills chống lại chính hệ thống. Nên: luôn xem được, mặc định khoá.
    */
   allow_core_prompt_edit: z.boolean().default(false),
+
+  /**
+   * INTERFACE language. → `src/i18n/` · docs/CLAUDE.md §Language
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THIS FIELD NEVER REACHES A PROMPT. NOT ONE.                       │
+   * │                                                                      │
+   * │ It answers "what do I want to SEE". It cannot answer "what language  │
+   * │ is this person SPEAKING". A Vietnamese user may genuinely prefer an  │
+   * │ English interface — a normal case, not an odd one. Wiring the two    │
+   * │ together forces English answers on someone who wanted English menus. │
+   * │                                                                      │
+   * │ Everything the system PRODUCES — `say`, `answer`, `gist`, `lessons`, │
+   * │ the memory written on `/clear`, the contents of every result file —  │
+   * │ follows the language the human types in, observed by the model. No   │
+   * │ mechanism at all, and that is exactly why a Chinese user gets        │
+   * │ Chinese lessons without one line of code naming Chinese anywhere.    │
+   * │                                                                      │
+   * │ `test/no-pinned-language.test.ts` is the gate that keeps it so.      │
+   * └──────────────────────────────────────────────────────────────────────┘
+   *
+   * OPTIONAL, no `.default()`: absent must stay distinguishable from a real
+   * choice so `resolveLocale` can still consult the OS hint. `agentco init`
+   * writes a value outright, so absent only happens for a config predating
+   * this work — where the correct answer is `vi`.
+   */
+  language: z.enum(['vi', 'en']).optional(),
 });
 export type CompanyConfig = z.infer<typeof CompanyConfigSchema>;
 
@@ -556,7 +585,13 @@ export type Deliver = z.infer<typeof DeliverSchema>;
  */
 export const OfficeConfigSchema = z.object({
   id: z.string().min(1),
-  name: z.string().default('Văn phòng mới'),
+  /**
+   * A FUNCTION default, not a literal one. `z.string().default('…')` captures its
+   * value when the schema object is built — at import — so a literal here would
+   * freeze the label to whichever language the process started in and keep it
+   * after the user switches. The function runs on every parse instead.
+   */
+  name: z.string().default(() => t('company.unnamedOffice')),
   /**
    * Giới thiệu văn phòng — markdown THUẦN, không frontmatter, ở gốc văn phòng.
    *
@@ -609,7 +644,19 @@ export const OfficeConfigSchema = z.object({
 
   assistant: z
     .object({
-      display_name: z.string().default('Trợ lý'),
+      /**
+       * EMPTY means "nobody has named this assistant" — not "the name is blank".
+       *
+       * Same shape a role already uses (`display_name: ''`, read as
+       * `display_name || id`), and it is the difference between OUR label and
+       * THEIR datum: an empty field renders through the interface switch, a
+       * filled one is the name a person chose and is never translated.
+       *
+       * Writing a default here instead would freeze a name from whichever
+       * locale happened to be active at creation — and `company.yaml` has no
+       * rename button, so the switch could never take it back.
+       */
+      display_name: z.string().default(''),
       avatar: z.string().default('★'),
       /**
        * Mức model của Trợ lý VĂN PHÒNG NÀY. Bỏ trống = theo `models.master` của

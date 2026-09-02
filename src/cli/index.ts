@@ -16,6 +16,8 @@ import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
+import { resolveLocale, setLocale, t, type Locale } from '../i18n/index.js';
+import { formatUSD } from '../i18n/fmt.js';
 
 const EXIT = { ok: 0, general: 1, config: 2, noDaemon: 3, auth: 4, taskFail: 5, budget: 6, rateLimit: 7 };
 
@@ -55,7 +57,7 @@ async function main(): Promise<void> {
     case '-h':
       return cmdHelp();
     default:
-      console.error(`Không có lệnh "${command}".\nChạy \`agentco help\` để xem danh sách.`);
+      console.error(t('cli.noCommand', { command }));
       process.exit(EXIT.config);
   }
 }
@@ -68,18 +70,54 @@ async function main(): Promise<void> {
  */
 function cmdInit(): void {
   if (isCompanyDir(companyDir)) {
-    console.log(`Đã có công ty ở ${companyDir}. Không ghi đè.`);
+    console.log(t('cli.alreadyInit', { dir: companyDir }));
     return;
   }
   const pp = companyPaths(companyDir);
   ensureCompanyDirs(pp);
-  fs.writeFileSync(pp.configFile, companyTemplate(), 'utf8');
+  /**
+   * Resolve the interface language HERE, from the OS, and write it down.
+   *
+   * This is the only place the OS hint is allowed to decide anything. A fresh
+   * machine has nothing to preserve, so guessing from the environment is a
+   * kindness; `loadCompanyConfig` must not do the same, because there an absent
+   * field means "an install that predates this field", and those are Vietnamese.
+   *
+   * Fallback `en`, not `vi`: an unmatched tag (`de`, `ar`, `es`) means we ship
+   * no catalogue for that language, which is not evidence for Vietnamese.
+   *
+   * ⚠ `Intl` is in the list because the POSIX variables are NOT SET ON WINDOWS.
+   * Reading only `LANG`/`LC_*` would hand every Windows user `en` regardless of
+   * their machine — the "correct on the dev's box" failure class this project
+   * has now walked into five times. `Intl.DateTimeFormat().resolvedOptions()`
+   * reads the real OS setting on Windows, macOS and Linux alike.
+   */
+  const locale = resolveLocale(
+    [
+      process.env['LC_ALL'],
+      process.env['LC_MESSAGES'],
+      process.env['LANG'],
+      Intl.DateTimeFormat().resolvedOptions().locale,
+    ],
+    'en',
+  );
+  /**
+   * Adopt the resolved locale BEFORE writing the template.
+   *
+   * `companyTemplate` renders seed comments through `t()`, and those comments
+   * land in the user's own file — so they follow the interface language. No
+   * config has been loaded yet at this point, so without this line `t()` would
+   * still be on the default and a machine resolved to `en` would get an English
+   * `language: en` next to Vietnamese comments.
+   */
+  setLocale(locale);
+  fs.writeFileSync(pp.configFile, companyTemplate(locale), 'utf8');
 
-  console.log(`Đã tạo công ty ở ${companyDir}\n`);
-  console.log('  company.yaml   cấu hình chung — trần chi phí và model nằm ở đây');
-  console.log('  offices/       mỗi văn phòng một thư mục, tự chứa đầy đủ\n');
-  console.log('Công ty đang RỖNG — chưa có văn phòng nào. Đó là bình thường.');
-  console.log('Bước tiếp theo:  agentco start   rồi bấm "Tạo văn phòng"');
+  console.log(t('cli.created', { dir: companyDir }));
+  console.log(t('cli.createdCompanyYaml'));
+  console.log(t('cli.createdOffices'));
+  console.log(t('cli.createdEmpty'));
+  console.log(t('cli.createdNext'));
 }
 
 async function cmdStart(): Promise<void> {
@@ -88,7 +126,7 @@ async function cmdStart(): Promise<void> {
   // IDEMPOTENT: đã chạy rồi thì mở trình duyệt vào nó, không báo lỗi port.
   const existing = await liveDaemon(pp);
   if (existing) {
-    console.log(`Công ty đang chạy sẵn ở ${existing.url} (pid ${existing.pid})`);
+    console.log(t('cli.alreadyRunning', { url: existing.url, pid: existing.pid }));
     openBrowser(existing.url);
     return;
   }
@@ -104,7 +142,7 @@ async function cmdStart(): Promise<void> {
     host,
     ...(token ? { token } : {}),
     onShutdown: () => {
-      console.log('\nĐã tắt theo yêu cầu từ giao diện.');
+      console.log(t('cli.shutFromUi'));
       clearDaemonFile(pp);
       process.exit(EXIT.ok);
     },
@@ -119,27 +157,34 @@ async function cmdStart(): Promise<void> {
   });
 
   const offices = company.list();
-  console.log(`${company.config.name} đang chạy`);
+  console.log(t('cli.running', { name: company.config.name || t('company.unnamed') }));
   console.log(`  ${daemon.url}`);
   if (offices.length === 0) {
-    console.log('  chưa có văn phòng nào — mở giao diện rồi bấm "Tạo văn phòng"');
+    console.log(t('cli.noOfficesHint'));
   } else {
     for (const o of offices) {
-      console.log(`  ${o.name.padEnd(20)} ${o.agents} nhân viên · ${o.knowledge} ghi chú${o.error ? '  ⚠ ' + o.error : ''}`);
+      console.log(
+        t('cli.officeLine', {
+          name: o.name.padEnd(20),
+          agents: o.agents,
+          notes: o.knowledge,
+          error: o.error ? '  ⚠ ' + o.error : '',
+        }),
+      );
     }
   }
   if (webBuildStale()) {
-    console.log('\n⚠ Giao diện đang phục vụ bản build CŨ — web/src có thay đổi chưa build.');
-    console.log('  npm run build:web    build lại một lần');
-    console.log('  npm run dev:web      sửa giao diện có hot-reload');
+    console.log(t('cli.staleBuild'));
+    console.log(t('cli.staleBuildFix'));
+    console.log(t('cli.staleBuildDev'));
   }
 
-  console.log(`\nCtrl+C để tắt. Đóng tab trình duyệt KHÔNG tắt công ty.`);
+  console.log(t('cli.ctrlC'));
 
   if (!flags['no-ui']) openBrowser(daemon.url);
 
   const shutdown = async (): Promise<void> => {
-    console.log('\nĐang đóng...');
+    console.log(t('cli.closing'));
     clearDaemonFile(pp);
     await daemon.close();
     process.exit(EXIT.ok);
@@ -151,11 +196,11 @@ async function cmdStart(): Promise<void> {
 async function cmdStop(): Promise<void> {
   const info = await liveDaemon(companyPaths(companyDir));
   if (!info) {
-    console.log('Công ty không chạy.');
+    console.log(t('cli.notRunning'));
     return;
   }
   await fetch(`${info.url}/api/shutdown`, { method: 'POST' }).catch(() => {});
-  console.log(`Đã gửi yêu cầu tắt tới pid ${info.pid}.`);
+  console.log(t('cli.stopSent', { pid: info.pid }));
 }
 
 /**
@@ -170,7 +215,7 @@ async function askDaemon<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(
       typeof body['error'] === 'string'
         ? body['error']
-        : `Daemon trả về lỗi ${res.status}. Nếu bạn vừa nâng cấp agentco, chạy \`agentco stop\` rồi \`agentco start\` lại.`,
+        : t('cli.daemonError', { status: res.status }),
     );
   }
   return body as T;
@@ -185,28 +230,33 @@ async function fetchCompany(url: string): Promise<CompanyView> {
   const c = await askDaemon<Partial<CompanyView>>(`${url}/api/company`);
   if (!Array.isArray(c.offices)) {
     throw new Error(
-      'Daemon đang chạy một phiên bản khác với CLI này.\nChạy:  agentco stop   rồi   agentco start',
+      t('cli.daemonMismatch'),
     );
   }
-  return { name: c.name ?? 'Công ty', offices: c.offices };
+  return { name: c.name ?? t('cli.companyFallback'), offices: c.offices };
 }
 
 async function cmdStatus(): Promise<void> {
   const info = await liveDaemon(companyPaths(companyDir));
   if (!info) {
-    console.log(`Công ty không chạy.\nBật bằng:  agentco start`);
+    console.log(t('cli.notRunningStart'));
     process.exit(EXIT.noDaemon);
   }
   const c = await fetchCompany(info.url);
   console.log(`${c.name}`);
   console.log(`  ${info.url}  (pid ${info.pid})`);
   if (c.offices.length === 0) {
-    console.log('  chưa có văn phòng nào');
+    console.log(t('cli.noOffices'));
     return;
   }
   for (const o of c.offices) {
     console.log(
-      `  ${o.name.padEnd(20)} ${o.state.padEnd(8)} ${o.agents} nhân viên · ${o.knowledge} ghi chú` +
+      t('cli.officeStatusLine', {
+        name: o.name.padEnd(20),
+        state: o.state.padEnd(8),
+        agents: o.agents,
+        notes: o.knowledge,
+      }) +
         (o.error ? `  ⚠ ${o.error}` : ''),
     );
   }
@@ -221,12 +271,12 @@ async function cmdOffice(): Promise<void> {
     if (!info) {
       const company = Company.open(companyDir);
       const offices = company.list();
-      if (offices.length === 0) console.log('Chưa có văn phòng nào.');
+      if (offices.length === 0) console.log(t('cli.noOfficesPlain'));
       for (const o of offices) console.log(`  ${o.id.padEnd(24)} ${o.name}`);
       return;
     }
     const c = await fetchCompany(info.url);
-    if (c.offices.length === 0) console.log('Chưa có văn phòng nào.');
+    if (c.offices.length === 0) console.log(t('cli.noOfficesPlain'));
     for (const o of c.offices) console.log(`  ${o.id.padEnd(24)} ${o.name}`);
     return;
   }
@@ -234,7 +284,7 @@ async function cmdOffice(): Promise<void> {
   if (sub === 'new') {
     const name = argv.slice(2).filter((a) => !a.startsWith('--')).join(' ').trim();
     if (!name) {
-      console.error('Thiếu tên văn phòng.\nVí dụ:  agentco office new "Nội dung"');
+      console.error(t('cli.officeNameMissing'));
       process.exit(EXIT.config);
     }
     // Qua daemon nếu nó đang chạy — nếu không thì hai tiến trình cùng ghi một chỗ.
@@ -244,11 +294,11 @@ async function cmdOffice(): Promise<void> {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name }),
       });
-      console.log(`Đã tạo văn phòng "${name}" (${body.id}).`);
+      console.log(t('cli.officeCreated', { name, id: body.id ?? '' }));
       return;
     }
     const office = Company.open(companyDir).createOffice({ name });
-    console.log(`Đã tạo văn phòng "${name}" (${office.id}).`);
+    console.log(t('cli.officeCreated', { name, id: office.id }));
     return;
   }
 
@@ -263,7 +313,7 @@ async function cmdOffice(): Promise<void> {
   if (sub === 'archive' || sub === 'restore') {
     const id = argv[2];
     if (!id) {
-      console.error(`Thiếu mã văn phòng.\nVí dụ:  agentco office ${sub} noi-dung`);
+      console.error(t('cli.officeIdMissing', { sub }));
       process.exit(EXIT.config);
     }
     const archived = sub === 'archive';
@@ -277,9 +327,7 @@ async function cmdOffice(): Promise<void> {
       Company.open(companyDir).archiveOffice(id, archived);
     }
     console.log(
-      archived
-        ? `Đã cất văn phòng "${id}" vào lưu trữ. Khôi phục: agentco office restore ${id}`
-        : `Đã khôi phục văn phòng "${id}".`,
+      archived ? t('cli.officeArchived', { id }) : t('cli.officeRestored', { id }),
     );
     return;
   }
@@ -287,7 +335,7 @@ async function cmdOffice(): Promise<void> {
   if (sub === 'rm') {
     const id = argv[2];
     if (!id) {
-      console.error('Thiếu mã văn phòng.\nVí dụ:  agentco office rm noi-dung');
+      console.error(t('cli.officeRmMissing'));
       process.exit(EXIT.config);
     }
     // `rm` giờ chỉ còn MỘT nghĩa: xoá hẳn, không lấy lại được. Muốn cất đi thì
@@ -295,10 +343,7 @@ async function cmdOffice(): Promise<void> {
     // và đó là chỗ sai: cái cờ dễ quên nhất lại là cái quyết định mất hay không.
     if (flags['yes'] !== true) {
       console.error(
-        `Xoá hẳn văn phòng "${id}": mất toàn bộ nhân viên, kỹ năng, kho tri thức và kết quả.\n` +
-          `Không lấy lại được.\n\n` +
-          `  Muốn cất đi rồi lấy lại sau:  agentco office archive ${id}\n` +
-          `  Chắc chắn xoá hẳn:            agentco office rm ${id} --yes`,
+        t('cli.officeRmWarn', { id }),
       );
       process.exit(EXIT.config);
     }
@@ -307,13 +352,12 @@ async function cmdOffice(): Promise<void> {
     } else {
       Company.open(companyDir).removeOffice(id);
     }
-    console.log(`Đã xoá hẳn văn phòng "${id}" và toàn bộ file.`);
+    console.log(t('cli.officeRemoved', { id }));
     return;
   }
 
   console.error(
-    `Không có lệnh "office ${sub}".\n` +
-      `Dùng: office list | office new "Tên" | office archive <id> | office restore <id> | office rm <id> --yes`,
+    t('cli.officeNoSub', { sub }),
   );
   process.exit(EXIT.config);
 }
@@ -334,19 +378,19 @@ function cmdSecret(): void {
   if (sub === 'list') {
     const names = secretNames(pp);
     if (names.length === 0) {
-      console.log('Chưa có bí mật nào.\nThêm bằng:  $env:VALUE="..."; agentco secret set TÊN_KHOÁ');
+      console.log(t('cli.noSecrets'));
       return;
     }
-    console.log('Bí mật đã lưu (chỉ hiện TÊN):');
+    console.log(t('cli.secretsHeader'));
     for (const n of names) console.log(`  ${n}`);
-    console.log('\nCấp cho nhân viên bằng cách thêm vào roles/<id>.yaml:  secrets: [TÊN_KHOÁ]');
+    console.log(t('cli.secretsGrant'));
     return;
   }
 
   const name = argv[2];
   if (!name || !/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) {
     console.error(
-      'Tên bí mật phải VIẾT HOA, chỉ chữ/số/gạch dưới.\nVí dụ:  agentco secret set NOTION_TOKEN',
+      t('cli.secretNameShape'),
     );
     process.exit(EXIT.config);
   }
@@ -355,12 +399,12 @@ function cmdSecret(): void {
 
   if (sub === 'rm') {
     if (!(name in all)) {
-      console.log(`Không có bí mật "${name}".`);
+      console.log(t('cli.secretMissing', { name }));
       return;
     }
     delete all[name];
     writeSecrets(pp, all);
-    console.log(`Đã xoá "${name}". Nhân viên nào đang khai nó sẽ báo thiếu chìa ở lần chạy tới.`);
+    console.log(t('cli.secretRemoved', { name }));
     return;
   }
 
@@ -368,26 +412,24 @@ function cmdSecret(): void {
     const value = process.env['VALUE'];
     if (!value) {
       console.error(
-        'Thiếu giá trị. Đặt qua biến môi trường VALUE để nó không lọt vào lịch sử shell:\n' +
-          `  PowerShell:  $env:VALUE="dán-khoá-vào-đây"; agentco secret set ${name}\n` +
-          `  bash:        VALUE='dán-khoá-vào-đây' agentco secret set ${name}`,
+        t('cli.secretNoValue', { name }),
       );
       process.exit(EXIT.config);
     }
     all[name] = value;
     writeSecrets(pp, all);
-    console.log(`Đã lưu "${name}" vào .state/secrets.json (không commit, không đi qua HTTP).`);
+    console.log(t('cli.secretSaved', { name }));
     return;
   }
 
-  console.error(`Không có lệnh "secret ${sub}".\nDùng: secret list | secret set <TÊN> | secret rm <TÊN>`);
+  console.error(t('cli.secretNoSub', { sub }));
   process.exit(EXIT.config);
 }
 
 async function cmdRun(): Promise<void> {
   const request = argv.slice(1).filter((a) => !a.startsWith('--')).join(' ').trim();
   if (!request) {
-    console.error('Thiếu nội dung công việc.\nVí dụ:  agentco run "viết 3 bài giới thiệu sản phẩm X" --office noi-dung');
+    console.error(t('cli.runMissing'));
     process.exit(EXIT.config);
   }
 
@@ -403,7 +445,7 @@ async function cmdRun(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ request }),
     });
-    console.log(`Đã giao việc cho "${officeId}". Theo dõi ở ${info.url}`);
+    console.log(t('cli.runHandedOver', { office: officeId, url: info.url }));
     return;
   }
 
@@ -413,7 +455,7 @@ async function cmdRun(): Promise<void> {
   const office = company.get(officeId);
   company.on((e) => {
     if (e.type === 'plan.created') {
-      console.log(`\nKế hoạch:`);
+      console.log(t('cli.planHeader'));
       e.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s.title}`));
       console.log('');
     }
@@ -431,21 +473,20 @@ async function cmdRun(): Promise<void> {
 
 function pickOffice(offices: Array<{ id: string; name: string }>, wanted?: string): string {
   if (offices.length === 0) {
-    throw new Error('Chưa có văn phòng nào.\nTạo bằng:  agentco office new "Tên văn phòng"');
+    throw new Error(t('cli.noOfficeYet'));
   }
   if (wanted) {
     const found = offices.find((o) => o.id === wanted);
     if (!found) {
       throw new Error(
-        `Không có văn phòng "${wanted}".\nĐang có: ${offices.map((o) => o.id).join(', ')}`,
+        t('cli.noSuchOffice', { wanted, list: offices.map((o) => o.id).join(', ') }),
       );
     }
     return found.id;
   }
   if (offices.length > 1) {
     throw new Error(
-      `Có ${offices.length} văn phòng, cần nói rõ giao cho ai.\n` +
-        `Thêm:  --office <mã>\nĐang có: ${offices.map((o) => o.id).join(', ')}`,
+      t('cli.whichOffice', { n: offices.length, list: offices.map((o) => o.id).join(', ') }),
     );
   }
   return offices[0]!.id;
@@ -462,8 +503,8 @@ function cmdCost(): void {
     const r = company.purgeGoneUsage();
     console.log(
       r.offices === 0
-        ? 'Sổ không có mục nào "không còn" — không phải dọn gì.\n'
-        : `Đã dọn ${r.offices} mục không còn · ${r.tasks} việc · $${r.costUSD.toFixed(4)}\n`,
+        ? t('cli.purgeNothing')
+        : t('cli.purgeDone', { offices: r.offices, tasks: r.tasks, cost: formatUSD(r.costUSD) }),
     );
   }
 
@@ -471,10 +512,15 @@ function cmdCost(): void {
 
   const byOffice = company.costByOffice(since);
   if (byOffice.length > 1) {
-    console.log('\nTheo văn phòng:');
+    console.log(t('cli.costByOffice'));
     for (const o of byOffice) {
       console.log(
-        `  ${o.name.padEnd(20)} ${String(o.tasks).padStart(4)} việc · ${String(o.turns).padStart(5)} lượt · $${o.costUSD.toFixed(4)}`,
+        t('cli.costLine', {
+        name: o.name.padEnd(20),
+        tasks: String(o.tasks).padStart(4),
+        turns: String(o.turns).padStart(5),
+        cost: formatUSD(o.costUSD),
+      }),
       );
     }
   }
@@ -485,7 +531,7 @@ function cmdCost(): void {
     if (!keys.length) continue;
     console.log(`\nPrefix cache — ${o.name}:`);
     for (const k of keys) {
-      console.log(`  ${k.role.padEnd(14)} ${k.key}  ~${k.staticTokens} token tĩnh`);
+      console.log(t('cli.prefixLine', { role: k.role.padEnd(14), key: k.key, tokens: k.staticTokens }));
     }
   }
 }
@@ -494,8 +540,8 @@ async function cmdDoctor(): Promise<void> {
   const checks: Array<[string, boolean, string]> = [];
 
   const major = Number(process.versions.node.split('.')[0]);
-  checks.push(['Node ≥ 22', major >= 22, `đang dùng ${process.versions.node}`]);
-  checks.push(['Thư mục công ty', isCompanyDir(companyDir), companyDir]);
+  checks.push([t('cli.checkNode'), major >= 22, t('cli.checkNodeNote', { version: process.versions.node })]);
+  checks.push([t('cli.checkCompanyDir'), isCompanyDir(companyDir), companyDir]);
 
   let writable = false;
   try {
@@ -504,7 +550,7 @@ async function cmdDoctor(): Promise<void> {
   } catch {
     /* không ghi được */
   }
-  checks.push(['Quyền ghi', writable, companyDir]);
+  checks.push([t('cli.checkWritable'), writable, companyDir]);
 
   if (isCompanyDir(companyDir)) {
     try {
@@ -512,16 +558,24 @@ async function cmdDoctor(): Promise<void> {
       const offices = company.list();
       const broken = offices.filter((o) => o.error);
       checks.push([
-        'Văn phòng',
+        t('cli.checkOffices'),
         broken.length === 0,
         offices.length === 0
-          ? 'chưa có văn phòng nào — tạo trong giao diện'
+          ? t('cli.checkOfficesNone')
           : broken.length
-            ? `${broken.length}/${offices.length} lỗi: ${broken.map((o) => o.id).join(', ')}`
-            : `${offices.length} văn phòng, đều nạp được`,
+            ? t('cli.checkOfficesBroken', {
+                broken: broken.length,
+                total: offices.length,
+                list: broken.map((o) => o.id).join(', '),
+              })
+            : t('cli.checkOfficesOk', { n: offices.length }),
       ]);
     } catch (err) {
-      checks.push(['Văn phòng', false, err instanceof Error ? err.message.slice(0, 90) : 'lỗi không rõ']);
+      checks.push([
+      t('cli.checkOffices'),
+      false,
+      err instanceof Error ? err.message.slice(0, 90) : t('cli.unknownError'),
+    ]);
     }
   }
 
@@ -544,16 +598,20 @@ async function cmdDoctor(): Promise<void> {
       const msg = m as Record<string, unknown>;
       if (msg['type'] === 'result') {
         authOk = msg['subtype'] === 'success';
-        authNote = authOk ? 'gọi thử thành công' : String(msg['subtype']);
+        authNote = authOk ? t('cli.checkAuthOk') : String(msg['subtype']);
       }
     }
   } catch (err) {
-    authNote = err instanceof Error ? err.message.slice(0, 90) : 'lỗi không rõ';
+    authNote = err instanceof Error ? err.message.slice(0, 90) : t('cli.unknownError');
   }
-  checks.push(['Đăng nhập Claude Code', authOk, authNote || 'chạy `claude` một lần để đăng nhập']);
+  checks.push([t('cli.checkAuth'), authOk, authNote || t('cli.checkAuthHint')]);
 
   const info = await liveDaemon(companyPaths(companyDir));
-  checks.push(['Daemon', !!info, info ? `${info.url} (pid ${info.pid})` : 'không chạy — `agentco start`']);
+  checks.push([
+    t('cli.checkDaemon'),
+    !!info,
+    info ? `${info.url} (pid ${info.pid})` : t('cli.checkDaemonNo'),
+  ]);
 
   for (const [name, ok, note] of checks) {
     console.log(`  ${ok ? '✓' : '✗'}  ${name.padEnd(24)} ${note}`);
@@ -562,29 +620,7 @@ async function cmdDoctor(): Promise<void> {
 }
 
 function cmdHelp(): void {
-  console.log(`agentco — một công ty ảo chạy trên máy bạn
-
-  agentco init                   Tạo công ty mới (RỖNG) trong ./company
-  agentco start                  Bật công ty + mở giao diện  (chạy lại là mở lại tab)
-  agentco stop                   Tắt hẳn daemon
-  agentco status                 Xem công ty và các văn phòng
-
-  agentco office list            Liệt kê văn phòng
-  agentco office new "Tên"       Tạo văn phòng mới (kèm Trợ lý, chưa có nhân viên)
-  agentco office rm <mã>         Đóng văn phòng  (thêm --delete-files để xoá hẳn)
-
-  agentco secret list            Xem TÊN các chìa khoá đã lưu (không hiện giá trị)
-  agentco secret set <TÊN>       Lưu một chìa  (giá trị qua biến môi trường VALUE)
-  agentco secret rm <TÊN>        Xoá một chìa
-
-  agentco run "<việc>"           Giao một việc  (--office <mã> khi có nhiều văn phòng)
-  agentco cost [--since 7d]      Xem đã tốn bao nhiêu  (--office <mã> để lọc)
-  agentco cost --purge           Dọn các mục "không còn" khỏi sổ (văn phòng đã xoá)
-  agentco doctor                 Kiểm tra máy đã sẵn sàng chưa
-
-Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
-
-Đóng tab trình duyệt KHÔNG tắt công ty. Muốn tắt hẳn: nút "Tắt hẳn" hoặc \`agentco stop\`.`);
+  console.log(t('cli.help'));
 }
 
 // ─────────────────────────────────────────────────────────── helpers
@@ -594,24 +630,25 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
  * các `const` phía dưới trong module này được khởi tạo. Một hằng chuỗi ở cuối
  * file sẽ ném "Cannot access before initialization" — khai báo hàm thì được hoist.
  */
-function companyTemplate(): string {
-  return `# Cấu hình CÔNG TY. Mọi thứ dính tới tiền nằm ở đây.
-# Người, tri thức, sơ đồ thì thuộc về từng văn phòng: offices/<mã>/
-name: "Công ty của tôi"
+function companyTemplate(locale: Locale): string {
+  return `${t('seed.companyHeader')}
+#
+${t('seed.companyUnnamed')}
+
+${t('seed.language')}
+language: ${locale}
 
 runtime:
   port: 7317
-  # Số nhân viên chạy song song cùng lúc, tính trên toàn công ty.
+  ${t('seed.concurrency')}
   concurrency: 4
 
 budgets:
-  # TRẦN CỨNG. Đây là thứ giữ cho chi phí không âm thầm phình lên.
-  # Nới lên thì tốn tiền hơn, không phải "chạy tốt hơn".
-  # Đọc docs/SPEC-token-economy.md trước khi đổi.
+  ${t('seed.budgets')}
   receipt_tokens: 800
   knowledge_node_tokens: 250
   charter_tokens: 500
-  # Skills của Trợ lý nằm trong prefix của MỌI lượt trò chuyện -> trần chặt hơn.
+  ${t('seed.assistantSkills')}
   assistant_skills_tokens: 400
   cold_knowledge_tokens: 3000
 
@@ -619,22 +656,19 @@ models:
   eco: claude-haiku-4-5-20251001
   standard: claude-sonnet-5
   deep: claude-opus-5
-  # Tier của Trợ lý. PHẢI CỐ ĐỊNH suốt ca — đổi giữa chừng là mất cả ngữ cảnh.
+  ${t('seed.masterTier')}
   master: standard
-  # Lập kế hoạch chạy ở query riêng, nên đặt 'deep' ở đây KHÔNG phá cache Trợ lý.
+  ${t('seed.plannerTier')}
   planner: standard
 
-# MCP server tự cắm thêm. Khai ở đây một lần, rồi kéo dây trên sơ đồ của từng
-# văn phòng để quyết định ai được dùng.
+${t('seed.mcpServers')}
 # mcpServers:
 #   notion:
 #     command: npx
 #     args: ["-y", "@notionhq/notion-mcp-server"]
 mcpServers: {}
 
-# Lớp prompt lõi luôn XEM ĐƯỢC trong giao diện. Bật cái này mới SỬA được nó.
-# Nó thuộc về mã nguồn, không thuộc về việc vận hành doanh nghiệp — sửa sai là
-# phá kiến trúc chi phí. Chỉ bật nếu bạn biết mình đang làm gì.
+${t('seed.allowCoreEdit')}
 allow_core_prompt_edit: false
 `;
 }

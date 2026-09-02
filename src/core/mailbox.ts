@@ -106,13 +106,21 @@ export class Mailbox {
  *
  * Dựng bằng CODE, không phải một lượt gọi LLM để "tóm tắt" — chuyện đó sẽ đúng
  * là mua sự mượt mà bằng token, thứ mà bốn tiêu chí cấm.
+ *
+ * ⚠ The wrapper sentence is ENGLISH and does NOT go through i18n, even though it
+ * sits inside the user's turn. It is prompt scaffolding, not something displayed:
+ * `handleUserBatch` takes it straight to the model and the chat pane never draws
+ * it. Translating it by the interface switch would wire exactly the connection
+ * the language rule forbids — the switch says "what do I want to SEE", while the
+ * reply language has to follow the messages pasted directly below it.
+ * → docs/CLAUDE.md §Language
  */
 export function mergeUserText(items: readonly MailItem[]): string {
   const texts = items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text);
   if (texts.length === 1) return texts[0]!;
   return (
-    `Bạn vừa nhắn ${texts.length} tin liên tiếp trong lúc mình đang bận. ` +
-    `Đọc cả ${texts.length} rồi trả lời như một yêu cầu duy nhất:\n` +
+    `I sent ${texts.length} messages in a row while you were busy. ` +
+    `Read all ${texts.length} and answer them as one request:\n` +
     texts.map((t, i) => `${i + 1}. ${t}`).join('\n')
   );
 }

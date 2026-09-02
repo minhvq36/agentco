@@ -316,7 +316,7 @@ test('⭐ câu dặn của mục: có chỉ đường đi tiếp, và đủ ng�
   const h = BROWSER_ARM.hint!;
   assert.ok(h, 'thiếu câu dặn ⇒ Trợ lý sẽ lập kế hoạch cho việc bất khả thi');
   // Chỉ đường: phải nhắc cái nút, và nhắc hai công cụ rẻ hơn.
-  assert.match(h, /Đăng nhập vào một trang/);
+  assert.match(h, /Sign in \/ add cookies/);
   assert.match(h, /WebFetch|WebSearch/);
   // Ngắn: một câu dặn dài ở đây là một hoá đơn dài.
   assert.ok(h.length < 320, `câu dặn ${h.length} ký tự — quá dài cho prefix mỗi lượt`);

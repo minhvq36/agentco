@@ -39,6 +39,7 @@ import { missingSecretRefs } from './secrets.js';
 import { isCliArm } from './cli-arm.js';
 import { isAccountName } from './oauth.js';
 import { httpTarget, rawAnnotations } from './mcp-http.js';
+import { t } from '../i18n/index.js';
 
 /** Đúng bộ `effectiveTools([])` của một vai trò trần — để số token so sánh được. */
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
@@ -295,20 +296,18 @@ export async function probeArm(
     const parts: string[] = [];
     if (accounts.length) {
       parts.push(
-        `Chưa nối tài khoản, hoặc kết nối đã bị gỡ ở phía dịch vụ. Bấm **Đăng nhập** rồi thử lại — ` +
-          `không có ô chìa nào để điền cho loại này.`,
+        t('probe.noAccount'),
       );
     }
     if (keys.length) {
-      parts.push(`Thiếu chìa: ${keys.join(', ')}.`);
+      parts.push(t('probe.missingKeys', { keys: keys.join(', ') }));
     }
     return {
       status: 'failed',
       tools: [],
       connectMs: 0,
       error:
-        `${parts.join(' ')} Chưa gửi yêu cầu nào — gửi đi thì server chỉ trả về "sai chìa", ` +
-        `và câu đó sẽ dắt bạn đi tìm nhầm chỗ.`,
+        t('probe.notSentBecause', { parts: parts.join(' ') }),
     };
   }
   /**
@@ -450,9 +449,7 @@ export async function probeArm(
     // Nối được mà rỗng — xem khối chú thích ở `ProbeResult.warn`. Đặt sau cùng
     // để nó thấy `out.tools` ở trạng thái cuối, không phải giữa chừng.
     if (out.status === 'connected' && out.tools.length === 0) {
-      out.warn =
-        'Nối được nhưng server không cấp việc nào. Thường là do một tuỳ chọn gửi lên bị server ' +
-        'lặng lẽ bỏ qua — kiểm lại các nhóm việc đã tick.';
+      out.warn = t('probe.zeroTools');
     }
   } catch (e) {
     out.status = 'failed';
@@ -506,7 +503,7 @@ export async function baselineTokens(): Promise<number | undefined> {
   try {
     const ctx = (await Promise.race([
       q.getContextUsage(),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('quá hạn')), 20_000)),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out')), 20_000)),
     ])) as { totalTokens: number };
     baselineCache = ctx.totalTokens;
   } catch {

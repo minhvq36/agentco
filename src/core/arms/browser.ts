@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MỘT MỤC DANH MỤC = MỘT FILE. → `../catalog.ts` · docs/TEST-WALKTHROUGH.md bài 18
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -39,7 +39,7 @@ export const BROWSER_ARM: CatalogArm = {
    * ② nợ nhãn hiệu §11c **biến mất**: ta không dùng tên lẫn logo của Microsoft ở
    *    mặt trước, nên không có gì phải xin phép. Tên gói chỉ nằm trong Nâng cao.
    */
-  name: 'Trình duyệt web',
+  name: 'armCat.browser.name',
   icon: '🌐',
   /** Giao diện vẽ quả địa cầu thay vì phích cắm. → ArmIcon.tsx */
   shape: 'browser',
@@ -71,10 +71,10 @@ export const BROWSER_ARM: CatalogArm = {
    * ⇒ Giảm thiểu, không bịt kín — đúng như `redact.ts` đã tự khai về chính nó.
    */
   hint:
-    'trang công khai dùng WebFetch/WebSearch cho rẻ; trình duyệt để dành cho trang cần ' +
-    'đăng nhập hoặc phải bấm/điền. Không chờ được người dùng thao tác giữa lượt — muốn đăng ' +
-    'nhập tay thì bảo họ bấm "Đăng nhập vào một trang". Giá trị tự-điền sẵn trong ô form là ' +
-    'của trình duyệt, không phải nội dung trang: đừng chép vào file.',
+    'public pages: WebFetch/WebSearch, far cheaper; keep the browser for pages needing a ' +
+    'sign-in or a click. It cannot wait for the user mid-turn — to sign in by hand, tell them ' +
+    'to press "Sign in / add cookies". A value pre-filled in a form field belongs to the ' +
+    'browser, not to the page: never copy it into a file.',
   /**
    * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho gọn:
    *
@@ -84,9 +84,7 @@ export const BROWSER_ARM: CatalogArm = {
    * ③ Nội dung web là **chữ của người lạ**. Nhân viên đọc rồi hành động, nên một
    *    trang có thể cố dắt nó đi chỗ khác — thứ không cắt bằng cấu hình được.
    */
-  blurb:
-    'Mở và đọc trang web như một người dùng thật — kể cả hệ thống nội bộ không có API. ' +
-    'Mặc định dùng trình duyệt sạch, không giữ đăng nhập, và chạy ẩn (không hiện cửa sổ).',
+  blurb: 'armCat.browser.blurb',
   price: 'none',
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -186,7 +184,7 @@ export const BROWSER_ARM: CatalogArm = {
   options: [
     {
       id: 'nho-dang-nhap',
-      label: 'Nhớ đăng nhập',
+      label: 'armCat.browser.keepSession.label',
       /**
        * ⚠ BẬT SẴN, và đó là một quyết định ngược trực giác "mặc định phải hẹp".
        *
@@ -216,15 +214,15 @@ export const BROWSER_ARM: CatalogArm = {
         kính khi TICK ô này, không phải một đoạn văn đọc trước khi hiểu mình
         đang chọn gì.
       */
-      help: 'Lưu session và cookie trình duyệt.',
+      help: 'armCat.browser.keepSession.help',
       /** Hồ sơ bền và "profile nằm trong RAM" loại trừ nhau — gỡ cái kia ra. */
       remove: ['--isolated'],
       dirs: [{ flag: '--user-data-dir', sub: 'profile' }],
     },
     {
       id: 'hien-cua-so',
-      label: 'Hiện cửa sổ trình duyệt',
-      help: 'Mở cửa sổ thật để bạn thấy nhân viên đang làm gì.',
+      label: 'armCat.browser.showWindow.label',
+      help: 'armCat.browser.showWindow.help',
       /** "Hiện cửa sổ" chính là **sự vắng mặt** của `--headless`. → `ArmOption.remove` */
       remove: ['--headless'],
       /**

@@ -14,15 +14,115 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { openZip } from './zip.js';
+import { plural, t } from '../i18n/index.js';
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ WHAT WAS OBSERVED, NOT A SENTENCE ABOUT IT.                              │
+ * │                                                                          │
+ * │ This used to be one `shape: string` — "csv, 12 dòng · hàng đầu: …" — and │
+ * │ that single field was read by two worlds with opposite rules. It goes    │
+ * │ into `INDEX.md`, which an EMPLOYEE reads, so it has to be English like   │
+ * │ every other piece of prompt scaffolding; and it is drawn in the document │
+ * │ cabinet, where it has to follow the interface switch. A stored sentence  │
+ * │ can satisfy exactly one of those, and it is also written to disk, so the │
+ * │ language of a file's description would freeze at whichever moment it was │
+ * │ extracted and never move again.                                          │
+ * │                                                                          │
+ * │ Holding the FACTS instead lets `shapeEn()` build the English line for    │
+ * │ the prompt and `shapeSay()` build the displayed one through `t()`, from  │
+ * │ the same datum, every time either is asked for.                          │
+ * │                                                                          │
+ * │ ⚠ Nothing here comes from a model. Pages, sheet names, the first row —   │
+ * │ all of it is observed in the file itself. → SESSIONS_MEMORY §2           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type Shape =
+  | { kind: 'text'; lines: number }
+  | { kind: 'csv'; rows: number; firstRow: string[] }
+  | { kind: 'docx'; headings: number; paras: number }
+  | { kind: 'xlsx'; sheets: string[]; firstRow: string[] }
+  | { kind: 'pptx'; slides: number }
+  | { kind: 'pdf'; pages?: number };
 
 export interface Extracted {
   text: string;
-  /** Mô tả cấu trúc cho INDEX.md: "34 trang", "3 sheet", "22 slide". */
-  shape: string;
+  /** Cấu trúc quan sát được, dựng thành câu ở `shapeEn` / `shapeSay`. */
+  shape: Shape;
   /** Số trang, chỉ PDF. Dùng để phát hiện bản chụp (§3.2). */
   pages?: number;
   /** Vài chục chữ đầu, để người dùng nhận ra tài liệu mà không phải mở nó. */
   preview: string;
+}
+
+/** A record written before `Shape` existed still holds the old sentence. */
+export type StoredShape = Shape | string;
+
+/**
+ * The line an EMPLOYEE reads in `INDEX.md`. English, hard-coded, never `t()`.
+ *
+ * This is prompt scaffolding: naming a language here would be the wire the
+ * language rule forbids, and it would also make the document cabinet read in
+ * two languages at once for anyone who ever flipped the switch.
+ * → docs/CLAUDE.md §Language
+ */
+export function shapeEn(shape: StoredShape | undefined, fallback: string): string {
+  if (shape === undefined) return fallback;
+  // Pre-`Shape` record: the stored sentence is all we have. Show it as it is
+  // rather than re-extracting the file, which for a PDF is not a cheap read.
+  if (typeof shape === 'string') return shape;
+  switch (shape.kind) {
+    case 'text':
+      return `${shape.lines} lines`;
+    case 'csv':
+      return shape.firstRow.length
+        ? `csv, ${shape.rows} rows · first row: ${shape.firstRow.join(', ')}`
+        : `csv, ${shape.rows} rows`;
+    case 'docx':
+      return shape.headings > 0 ? `docx, ${shape.headings} headings` : `docx, ${shape.paras} paragraphs`;
+    case 'xlsx': {
+      const head = `${shape.sheets.length} sheets: ${shape.sheets.join(', ')}`;
+      return shape.firstRow.length ? `${head} · first row: ${shape.firstRow.join(', ')}` : head;
+    }
+    case 'pptx':
+      return `${shape.slides} slides`;
+    case 'pdf':
+      return shape.pages === undefined ? 'pdf' : `pdf, ${shape.pages} pages`;
+  }
+}
+
+/**
+ * The same datum, for the DOCUMENT CABINET. Follows the interface switch.
+ *
+ * Kept next to `shapeEn` on purpose: two readers of one union drift apart the
+ * moment a `kind` is added and only one of them is updated. Side by side, the
+ * compiler's exhaustiveness check fires for both in the same edit.
+ */
+export function shapeSay(shape: StoredShape | undefined, fallback: string): string {
+  if (shape === undefined) return fallback;
+  if (typeof shape === 'string') return shape;
+  switch (shape.kind) {
+    case 'text':
+      return plural('lib.shapeLines', shape.lines);
+    case 'csv':
+      return shape.firstRow.length
+        ? `${plural('lib.shapeCsv', shape.rows)} · ${t('lib.shapeFirstRow', { cells: shape.firstRow.join(', ') })}`
+        : plural('lib.shapeCsv', shape.rows);
+    case 'docx':
+      return shape.headings > 0
+        ? plural('lib.shapeDocxHeadings', shape.headings)
+        : plural('lib.shapeDocxParas', shape.paras);
+    case 'xlsx': {
+      const head = `${plural('lib.shapeSheets', shape.sheets.length)}: ${shape.sheets.join(', ')}`;
+      return shape.firstRow.length
+        ? `${head} · ${t('lib.shapeFirstRow', { cells: shape.firstRow.join(', ') })}`
+        : head;
+    }
+    case 'pptx':
+      return plural('lib.shapeSlides', shape.slides);
+    case 'pdf':
+      return shape.pages === undefined ? 'pdf' : plural('lib.shapePdfPages', shape.pages);
+  }
 }
 
 /**
@@ -32,7 +132,7 @@ export interface Extracted {
  */
 export class PdfToolMissing extends Error {
   constructor() {
-    super('Không nạp được thư viện đọc PDF');
+    super('could not load the PDF reader');
     this.name = 'PdfToolMissing';
   }
 }
@@ -42,7 +142,7 @@ export class PdfToolMissing extends Error {
 export function extractText(buf: Buffer, ext: string): Extracted {
   const text = buf.toString('utf8').replace(/\r\n/g, '\n');
   const lines = text.split('\n');
-  let shape = `${lines.length} dòng`;
+  let shape: Shape = { kind: 'text', lines: lines.length };
   if (ext === 'csv') {
     /**
      * Gọi là "hàng đầu", KHÔNG gọi là "cột".
@@ -54,7 +154,7 @@ export function extractText(buf: Buffer, ext: string): Extracted {
      * cả những dòng nói thật.
      */
     const first = (lines[0] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-    shape = `csv, ${lines.length - 1} dòng · hàng đầu: ${first.slice(0, 8).join(', ')}`;
+    shape = { kind: 'csv', rows: lines.length - 1, firstRow: first.slice(0, 8) };
   }
   return { text, shape, preview: previewOf(text) };
 }
@@ -64,7 +164,7 @@ export function extractText(buf: Buffer, ext: string): Extracted {
 export function extractDocx(buf: Buffer): Extracted {
   const zip = openZip(buf);
   const xml = zip.read('word/document.xml');
-  if (!xml) throw new Error('File .docx thiếu phần nội dung — có thể đã hỏng.');
+  if (!xml) throw new Error('this .docx has no content part — it may be corrupt');
   const s = xml.toString('utf8');
 
   /**
@@ -87,7 +187,7 @@ export function extractDocx(buf: Buffer): Extracted {
   const paras = (s.match(/<\/w:p>/g) ?? []).length;
   return {
     text,
-    shape: headings > 0 ? `docx, ${headings} mục` : `docx, ${paras} đoạn`,
+    shape: { kind: 'docx', headings, paras },
     preview: previewOf(text),
   };
 }
@@ -153,11 +253,7 @@ export function extractXlsx(buf: Buffer): Extracted {
   }
 
   const text = blocks.join('\n\n');
-  const names = sheets.map((s) => s.name).join(', ');
-  const shape =
-    firstRow.length > 0
-      ? `${sheets.length} sheet: ${names} · hàng đầu: ${firstRow.join(', ')}`
-      : `${sheets.length} sheet: ${names}`;
+  const shape: Shape = { kind: 'xlsx', sheets: sheets.map((s) => s.name), firstRow };
   return { text, shape, preview: previewOf(text) };
 }
 
@@ -237,7 +333,7 @@ export function extractPptx(buf: Buffer): Extracted {
     blocks.push(`## Slide ${slideNo(name)}\n${runs.join('\n')}`);
   }
   const text = blocks.join('\n\n');
-  return { text, shape: `${slides.length} slide`, preview: previewOf(text) };
+  return { text, shape: { kind: 'pptx', slides: slides.length }, preview: previewOf(text) };
 }
 
 function slideNo(name: string): number {
@@ -352,7 +448,12 @@ export async function extractPdf(buf: Buffer): Promise<Extracted> {
   await doc.destroy?.();
 
   const text = parts.join('\n\n');
-  return { text, shape: `pdf, ${doc.numPages} trang`, pages: doc.numPages, preview: previewOf(text) };
+  return {
+    text,
+    shape: { kind: 'pdf', pages: doc.numPages },
+    pages: doc.numPages,
+    preview: previewOf(text),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────── dùng chung

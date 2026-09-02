@@ -12,8 +12,26 @@
  * │                                                                          │
  * │ ⚠ File này **không được import React hay `@/…`** — mất tính chất đó là    │
  * │ mất luôn bộ test, im lặng.                                               │
+ * │                                                                          │
+ * │ ⚠ …and it cannot import `@i18n` AT RUNTIME either. Measured 03/09: node  │
+ * │ loads this file as raw `.ts`, so every specifier has to resolve to a     │
+ * │ real path on disk — there is no alias, and `src/i18n/index.ts` imports   │
+ * │ `./en.js`, which only exists after a build.                              │
+ * │                                                                          │
+ * │ ⇒ the three functions holding words for a human TAKE `t` AS AN ARGUMENT  │
+ * │ instead. `import type` is fine: node erases it before resolving.         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+
+import type { MessageKey } from '@i18n';
+
+/**
+ * The `t` of `@i18n`, handed in rather than imported — see the box above.
+ *
+ * Typed by `MessageKey`, not `string`, so a misspelt key still fails `tsc` at
+ * the call site exactly as a direct `t()` would.
+ */
+export type Translate = (key: MessageKey) => string;
 
 export interface CliDraft {
   say: string;
@@ -72,13 +90,18 @@ export const blankAct = (): CliDraft => ({
  * │ phải cú pháp shell. Mẫu này cố ý có nháy để chỗ đó lộ ra ngay lần đầu.   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export const HELLO = `node -e "console.log('Xin chào, ' + process.argv[1])"`;
-export const sampleAct = (): CliDraft => ({
-  say: 'nói xin chào',
-  description:
-    'In ra một lời chào kèm tên được đưa vào. Chỉ in ra màn hình, không đọc và không ghi file nào — chạy lại bao nhiêu lần cũng an toàn.',
-  line: `${HELLO} {ten}`,
-  example: `${HELLO} Alex`,
+/**
+ * A FUNCTION, not a constant: the greeting inside it is translated, and a
+ * module-level constant would freeze whichever language the page loaded with.
+ * Everything outside the greeting is code and is not translated.
+ */
+export const hello = (t: Translate): string =>
+  `node -e "console.log('${t('cliForm.helloGreeting')}' + process.argv[1])"`;
+export const sampleAct = (t: Translate): CliDraft => ({
+  say: t('cliForm.helloSay'),
+  description: t('cliForm.helloDescription'),
+  line: `${hello(t)} {ten}`,
+  example: `${hello(t)} Alex`,
   read_only: true,
   fail_when: '',
   params: [],
@@ -121,7 +144,7 @@ export function slugId(say: string): string {
   const s = say
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
-    .replace(/đ/gi, 'd')
+    .replace(/đ/gi, 'd') // i18n-allow-vietnamese: `đ` survives NFD, so it needs its own rule
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
@@ -351,11 +374,11 @@ export interface CliProblem {
   say: string;
 }
 
-export function cliProblems(list: readonly CliDraft[]): CliProblem[] {
+export function cliProblems(list: readonly CliDraft[], t: Translate): CliProblem[] {
   const out: CliProblem[] = [];
   list.forEach((a, at) => {
-    if (!a.say.trim()) out.push({ at, field: 'say', say: 'Chưa đặt tên cho lệnh này.' });
-    if (!toArgv(a.line).length) out.push({ at, field: 'line', say: 'Chưa có dòng lệnh nào để chạy.' });
+    if (!a.say.trim()) out.push({ at, field: 'say', say: t('cliForm.noName') });
+    if (!toArgv(a.line).length) out.push({ at, field: 'line', say: t('cliForm.noLine') });
   });
   return out;
 }

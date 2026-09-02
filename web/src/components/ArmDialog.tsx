@@ -67,13 +67,20 @@ import {
 } from '@/lib/cli-form';
 import { fault, pretty, tokens } from '@/lib/json-paint';
 import { actions, useApp } from '@/lib/store';
+import { plural, t, type MessageKey } from '@i18n';
+import { formatNumber } from '@i18n/fmt';
 import type { CatalogArm, InstalledArm, OAuthAccount, ProbeResult } from '@/lib/types';
 
-/** Câu phụ nói CÁI GIÁ — người dùng chọn theo công sức, không theo tên hãng. */
-const PRICE_SAY: Record<CatalogArm['price'], string> = {
-  none: 'không cần chìa',
-  keys: 'cần 1 chìa',
-  login: 'cần đăng nhập',
+/**
+ * Câu phụ nói CÁI GIÁ — người dùng chọn theo công sức, không theo tên hãng.
+ *
+ * Keys, resolved at render: a module-level string would freeze whichever
+ * language the page happened to load with.
+ */
+const PRICE_SAY: Record<CatalogArm['price'], MessageKey> = {
+  none: 'arm.price.none',
+  keys: 'arm.price.keys',
+  login: 'arm.price.login',
 };
 
 /**
@@ -82,23 +89,23 @@ const PRICE_SAY: Record<CatalogArm['price'], string> = {
  * Người dùng không biết `destructiveHint` là gì, và không cần biết. Thứ họ cần
  * quyết là *"nhân viên này có được sửa cái tôi đã viết không"*. → §6j
  */
-/** Bản NGẮN của `TIER_SAY.name` — dùng cho huy hiệu trong danh sách chật. */
-const LEVEL_SAY: Record<'read' | 'add' | 'full', string> = {
-  read: 'chỉ đọc',
-  add: 'đọc + thêm mới',
-  full: 'toàn quyền',
+/**
+ * Bản NGẮN của `TIER_SAY.name` — dùng cho huy hiệu trong danh sách chật.
+ *
+ * Shared with `Inspector` and `OverviewPanel` through the catalogue: the same
+ * three words used to be spelled out in all three files, so adding a level meant
+ * finding three places. → `inspector.level.*`
+ */
+const LEVEL_SAY: Record<'read' | 'add' | 'full', MessageKey> = {
+  read: 'inspector.level.read',
+  add: 'inspector.level.add',
+  full: 'inspector.level.full',
 };
 
-const TIER_SAY: Record<'read' | 'add' | 'full', { name: string; help: string }> = {
-  read: { name: 'Chỉ đọc', help: 'Tìm và đọc. Không tạo, không sửa, không xoá gì cả.' },
-  add: {
-    name: 'Đọc + Thêm mới',
-    help: 'Tạo được trang/mục mới, nhưng không đụng tới thứ đã có sẵn.',
-  },
-  full: {
-    name: 'Toàn quyền',
-    help: '⚠ Sửa và xoá nội dung đang có.',
-  },
+const TIER_SAY: Record<'read' | 'add' | 'full', { name: MessageKey; help: MessageKey }> = {
+  read: { name: 'arm.tier.read.name', help: 'arm.tier.read.help' },
+  add: { name: 'arm.tier.add.name', help: 'arm.tier.add.help' },
+  full: { name: 'arm.tier.full.name', help: 'arm.tier.full.help' },
 };
 
 /** Thẻ chọn LOẠI ở bước 1. Câu phụ nói người dùng phải làm gì tiếp, không nói kỹ thuật. */
@@ -346,7 +353,7 @@ function ExampleNoSlot({ line, example }: { line: string; example: string }) {
   if (a.length !== b.length) {
     return (
       <p className="mt-1 text-[11px] text-muted">
-        Ví dụ có {b.length} mảnh, cú pháp có {a.length} — hai dòng này không cùng một lệnh.
+        {t('arm.exPartsMismatch', { a: a.length, b: b.length })}
       </p>
     );
   }
@@ -355,18 +362,19 @@ function ExampleNoSlot({ line, example }: { line: string; example: string }) {
   if (at.length > 1) {
     return (
       <p className="mt-1 text-[11px] text-muted">
-        Hai dòng khác nhau ở {at.length} chỗ. Chỗ nào thay đổi mỗi lần chạy thì đổi nó thành{' '}
-        <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code> ở dòng Cú pháp.
+        {t('arm.exManyDiffsBefore', { n: at.length })}{' '}
+        <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code>{' '}
+        {t('arm.exManyDiffsAfter')}
       </p>
     );
   }
   const i = at[0]!;
   return (
     <p className="mt-1 text-[11px] text-muted">
-      Khác cú pháp ở <code className="rounded bg-accent-soft px-1">{a[i]}</code> →{' '}
-      <code className="rounded bg-accent-soft px-1">{b[i]}</code>. Nếu đây là chỗ thay đổi mỗi lần
-      chạy, đổi nó thành <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code> ở dòng
-      Cú pháp — nhân viên sẽ điền vào đó.
+      {t('arm.exOneDiff1')} <code className="rounded bg-accent-soft px-1">{a[i]}</code> →{' '}
+      <code className="rounded bg-accent-soft px-1">{b[i]}</code>
+      {t('arm.exOneDiff2')} <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code>{' '}
+      {t('arm.exOneDiff3')}
     </p>
   );
 }
@@ -434,12 +442,12 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
             // thay `setTimeout(0)`: nó chạy sau lượt vẽ, không đua với React.
             requestAnimationFrame(() => requestAnimationFrame(tidy));
           }}
-          placeholder={'Dán khối cấu hình MCP từ README của server, ví dụ:\n{ "command": "npx", "args": ["-y", "..."] }'}
+          placeholder={t('arm.jsonPlaceholder')}
         />
       </div>
       {bad && value.trim() !== '' && (
         <p className="mt-1 text-xs text-danger">
-          {bad.line > 0 ? `Dòng ${bad.line}, cột ${bad.col}: ` : ''}
+          {bad.line > 0 ? t('arm.jsonAt', { line: bad.line, col: bad.col }) : ''}
           {bad.say}
         </p>
       )}
@@ -584,7 +592,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    */
   const cliOut = pane === 'cli' ? cliDecl(acts, cliCwd, cliJson) : null;
   const cliRows = cliJson === null ? acts : (cliBack?.acts ?? []);
-  const cliBad = pane === 'cli' ? cliProblems(cliRows) : [];
+  const cliBad = pane === 'cli' ? cliProblems(cliRows, t) : [];
   const badIds = dupIds(cliOut);
   /** Đủ điều kiện lưu chưa. `cliOut === null` = khối JSON đang hỏng. */
   const cliOk = cliCount(cliOut) > 0 && !cliBad.length && !badIds.length;
@@ -875,7 +883,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (!list.length) return null;
     return (
       <>
-        <div className="mt-4 text-[11px] uppercase tracking-wide text-muted">Đã cắm ở văn phòng khác</div>
+        <div className="mt-4 text-[11px] uppercase tracking-wide text-muted">
+          {t('arm.pluggedElsewhere')}
+        </div>
         {/*
           ĐANG THỬ ⇒ KHOÁ DANH SÁCH. (user đề nghị 26/08)
 
@@ -956,15 +966,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       {a.via && a.level && <span>·</span>}
                       {a.level && (
                         <span className={a.level === 'full' ? 'text-danger' : undefined}>
-                          {LEVEL_SAY[a.level]}
+                          {t(LEVEL_SAY[a.level])}
                         </span>
                       )}
-                      {a.toolCount ? <span className="tabular-nums">· {a.toolCount} việc</span> : null}
+                      {a.toolCount ? (
+                        <span className="tabular-nums">
+                          · {plural('inspector.toolCount', a.toolCount)}
+                        </span>
+                      ) : null}
                     </span>
                   )}
                 </span>
                 <span className="shrink-0 self-start text-[11px] text-muted">
-                  {a.orphan ? 'không ai dùng' : 'dùng lại'}
+                  {a.orphan ? t('overview.unused') : t('arm.reuseIt')}
                 </span>
               </button>
               {/*
@@ -980,8 +994,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               {a.orphan && (
                 <button
                   type="button"
-                  title="Xoá hẳn khỏi sổ chung"
-                  aria-label={`Xoá hẳn ${a.label}`}
+                  title={t('arm.forgetTip')}
+                  aria-label={t('overview.deleteAgentAria', { label: a.label })}
                   onClick={() => setForget(a)}
                   className="shrink-0 rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
                 >
@@ -1222,11 +1236,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       // client mới. Tự xoá chìa hộ là vứt một thứ đang chạy tốt.
       setErr(
         r.own
-          ? 'Đã lưu. Lượt đăng nhập tới sẽ đi bằng app của bạn — tài khoản đã nối trước đó vẫn giữ nguyên.'
-          : 'Đã quay về app của agentco.',
+          ? t('arm.clientSaved')
+          : t('arm.clientCleared'),
       );
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : 'Không lưu được Client ID.');
+      setErr(e instanceof ApiError ? e.message : t('arm.clientSaveFailed'));
     }
   }
 
@@ -1312,7 +1326,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       .then(() => loadAccounts(pick.id))
       .catch((e) => {
         setAccounts(before);
-        setErr(e instanceof ApiError ? e.message : 'Không gỡ được.');
+        setErr(e instanceof ApiError ? e.message : t('arm.dropFailed'));
       });
   }
 
@@ -1371,7 +1385,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
            */
           setDevice(null);
           setLogging(false);
-          setErr(e instanceof ApiError ? e.message : 'Lượt đăng nhập đã dừng.');
+          setErr(e instanceof ApiError ? e.message : t('arm.loginStopped'));
         }
       }, wait);
     };
@@ -1397,7 +1411,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (device && now > device.expiresAt) {
       setDevice(null);
       setLogging(false);
-      setErr('Mã đăng nhập đã hết hạn — bấm Đăng nhập để lấy mã mới.');
+      setErr(t('arm.codeExpired'));
     }
   }, [now, device]);
 
@@ -1444,7 +1458,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         setDevice(d);
       } catch (e) {
         setLogging(false);
-        setErr(e instanceof ApiError ? e.message : 'Không lấy được mã đăng nhập.');
+        setErr(e instanceof ApiError ? e.message : t('arm.codeFailed'));
       }
       return;
     }
@@ -1462,7 +1476,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       window.open(authUrl, '_blank', 'noopener');
     } catch (e) {
       setLogging(false);
-      setErr(e instanceof ApiError ? e.message : 'Không mở được trang đăng nhập.');
+      setErr(e instanceof ApiError ? e.message : t('arm.loginPageFailed'));
     }
   }
 
@@ -1614,12 +1628,12 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (!p) {
       setErr(
         pick?.needsLogin && !account
-          ? 'Đăng nhập một tài khoản trước đã.'
+          ? t('arm.needAccount')
           : needGroups() && !groups.length
-            ? 'Tick ít nhất một nhóm việc trước đã.'
+            ? t('arm.needGroups')
             : pick?.folders
-              ? 'Chọn ít nhất một thư mục.'
-              : 'Chưa đọc được cấu hình — kiểm lại khối JSON.',
+              ? t('arm.needFolder')
+              : t('arm.badConfig'),
       );
       return;
     }
@@ -1652,7 +1666,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       setProbe(r);
     } catch (e) {
       if (mine !== runRef.current) return;
-      setErr(e instanceof ApiError ? e.message : 'Không thử được.');
+      setErr(e instanceof ApiError ? e.message : t('arm.testFailed'));
     } finally {
       // `testing`/`slow` chỉ được tắt bởi lượt MỚI NHẤT: lượt cũ về sau lượt mới
       // mà tắt spinner là màn hình báo "xong" trong khi vẫn đang chờ.
@@ -1684,7 +1698,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       await actions.refreshCanvas();
       onOpenChange(false);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : 'Không lưu được.');
+      setErr(e instanceof ApiError ? e.message : t('common.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -1755,7 +1769,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         <DialogHeader>
           <DialogTitle>
             {step === 1
-              ? 'Cắm một kết nối'
+              ? t('arm.step1Title')
               : step === 2
                 ? /*
                     Hình đi CÙNG tên ở bước 2 — đây là "xuyên suốt các nấc bên
@@ -1780,17 +1794,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                           className="h-4 w-4"
                         />
                       </span>
-                      Cài đặt · {pick?.name ?? label ?? ''}
+                      {t('arm.step2Title', { name: pick?.name ?? label ?? '' })}
                     </span>
                   )
-                : 'Ai được dùng?'}
+                : t('arm.step3Title')}
           </DialogTitle>
           <DialogDescription>
             {step === 1
-              ? 'Chọn một cái có sẵn, dùng lại cái đã cắm, hoặc dán cấu hình của riêng bạn.'
+              ? t('arm.step1Desc')
               : step === 2
-                ? 'Bấm Thử ngay để thử kết nối.'
-                : 'Kết nối chỉ hoạt động với người được nối dây tới nó.'}
+                ? t('arm.step2Desc')
+                : t('arm.step3Desc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -1817,8 +1831,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               <div className="grid grid-cols-2 gap-2">
                 <TypeCard
                   icon={<ArmIcon kind="files" className="h-6 w-6" />}
-                  name="Thư mục trên máy"
-                  say="chọn thư mục · không cần chìa"
+                  name={t('arm.typeFiles')}
+                  say={t('arm.typeFilesSay')}
                   onClick={() => {
                     const files = catalog.find((a) => a.folders);
                     if (!files) return;
@@ -1850,14 +1864,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 />
                 <TypeCard
                   icon={<ArmIcon kind="service" className="h-6 w-6" />}
-                  name="Dịch vụ có sẵn"
-                  say={`${catalog.filter((a) => !a.folders).length} dịch vụ · điền chìa`}
+                  name={t('arm.typeService')}
+                  say={t('arm.typeServiceSay', { n: catalog.filter((a) => !a.folders).length })}
                   onClick={() => setPane('catalog')}
                 />
                 <TypeCard
                   icon={<ArmIcon kind="cli" className="h-6 w-6" />}
                   name="CLI"
-                  say="bọc một lệnh bạn đã chạy được"
+                  say={t('arm.typeCliSay')}
                   onClick={() => {
                     setActs([blankAct()]);
                     setCliJson(null);
@@ -1869,8 +1883,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 />
                 <TypeCard
                   icon={<ArmIcon kind="custom" className="h-6 w-6" />}
-                  name="Tự cắm MCP"
-                  say="dán cấu hình của bạn"
+                  name={t('arm.typeCustom')}
+                  say={t('arm.typeCustomSay')}
                   onClick={() => setPane('paste')}
                 />
               </div>
@@ -1879,7 +1893,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {pane === 'catalog' && (
               <>
                 <Button size="sm" className="mb-2" onClick={() => setPane('type')}>
-                  ← Quay lại
+                  {t('arm.back')}
                 </Button>
                 <div className="grid grid-cols-3 gap-2">
                   {catalog
@@ -1902,12 +1916,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         </div>
                         <div className="mt-1 text-[13px] font-medium">{a.name}</div>
                         {/* CÁI GIÁ, không phải tính năng. → §6f */}
-                        <div className="mt-0.5 text-[11px] text-muted">{PRICE_SAY[a.price]}</div>
+                        <div className="mt-0.5 text-[11px] text-muted">{t(PRICE_SAY[a.price])}</div>
                       </button>
                     ))}
                   {catalog.filter((a) => !a.folders).length === 0 && (
                     <p className="col-span-3 text-[13px] text-muted">
-                      Chưa có dịch vụ dựng sẵn nào. Dùng <b>Tự cắm MCP</b> — nó nhận mọi server.
+                      {t('arm.noCatalogBefore')} <b>{t('arm.noCatalogBold')}</b>{' '}
+                      {t('arm.noCatalogAfter')}
                     </p>
                   )}
                 </div>
@@ -1959,26 +1974,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {pane === 'cli' && !cliReady && (
               <>
                 <Button size="sm" className="mb-3" onClick={() => setPane('type')}>
-                  ← Quay lại
+                  {t('arm.back')}
                 </Button>
                 <div className="rounded-lg border border-line p-6 text-center">
                   <div className="flex justify-center text-muted">
                     <ArmIcon kind="cli" className="h-8 w-8" />
                   </div>
-                  <div className="mt-3 text-[15px] font-medium">Các lệnh sẽ chạy trong thư mục nào?</div>
+                  <div className="mt-3 text-[15px] font-medium">{t('arm.cliCwdTitle')}</div>
                   <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
-                    Mọi lệnh của kết nối này đều chạy ở đúng một chỗ — thường là thư mục dự án bạn vẫn
-                    mở terminal trong đó.
+                    {t('arm.cliCwdBody')}
                   </p>
                   <div className="mt-4 flex justify-center">
                     <Button variant="primary" onClick={() => setBrowsing(true)}>
                       <FolderOpen className="h-4 w-4" />
-                      Chọn thư mục…
+                      {t('arm.pickFolder')}
                     </Button>
                   </div>
                   <p className="mt-3 text-[11px] text-muted">
-                    Bộ chọn mở sẵn ở <b>thư mục văn phòng</b> — bấm Xong ngay nếu lệnh của bạn không
-                    đụng tới file nào.
+                    {t('arm.cliCwdHintBefore')} <b>{t('arm.officeFolder')}</b>{' '}
+                    {t('arm.cliCwdHintAfter')}
                   </p>
                 </div>
                 {reuseList('cli')}
@@ -1998,7 +2012,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       setCliJson(null);
                     }}
                   >
-                    ← Thư mục
+                    {t('arm.backToFolder')}
                   </Button>
                   {/* Hai chiều, MỘT nguồn: bật JSON thì sinh từ form; tắt thì đọc
                       ngược về form. Không giữ hai ô soạn thảo sống song song —
@@ -2008,7 +2022,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     disabled={cliJson !== null && cliMixed}
                     title={
                       cliJson !== null && cliMixed
-                        ? 'Tờ khai này đặt thư mục khác nhau cho từng lệnh — form chỉ giữ được một thư mục chung'
+                        ? t('arm.mixedCwdTip')
                         : undefined
                     }
                     onClick={() => {
@@ -2027,7 +2041,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       }
                     }}
                   >
-                    {cliJson === null ? 'Xem JSON' : '← Về form'}
+                    {cliJson === null ? t('arm.viewJson') : t('arm.backToForm')}
                   </Button>
                   {/*
                     MẪU CHẠY ĐƯỢC NGAY — và nó điền vào **ô đang mở**, không phải
@@ -2038,12 +2052,12 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     size="sm"
                     className="ml-auto"
                     onClick={() => {
-                      const one = [sampleAct()];
+                      const one = [sampleAct(t)];
                       if (cliJson === null) setActs(one);
                       else setCliJson(JSON.stringify(draftToDecl(one, cliCwd), null, 2));
                     }}
                   >
-                    Điền mẫu chạy thử
+                    {t('arm.fillSample')}
                   </Button>
                 </div>
 
@@ -2072,11 +2086,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       └──────────────────────────────────────────────────────┘
                     */}
                     {cliMixed ? (
-                      <span className="font-sans text-warn">Khác nhau theo từng lệnh</span>
+                      <span className="font-sans text-warn">{t('arm.mixedCwd')}</span>
                     ) : shownCwd ? (
                       shownCwd
                     ) : (
-                      <span className="font-sans text-muted">Thư mục văn phòng (mặc định)</span>
+                      <span className="font-sans text-muted">{t('arm.defaultCwd')}</span>
                     )}
                   </div>
                   {/*
@@ -2091,10 +2105,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   */}
                   {cliJson === null ? (
                     <Button size="sm" onClick={() => setBrowsing(true)}>
-                      Đổi…
+                      {t('arm.changeFolder')}
                     </Button>
                   ) : (
-                    <span className="shrink-0 text-[11px] text-muted">sửa trong JSON</span>
+                    <span className="shrink-0 text-[11px] text-muted">{t('arm.editInJson')}</span>
                   )}
                 </div>
 
@@ -2107,9 +2121,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     */}
                     {cliMixed && (
                       <p className="mt-1 text-[11px] text-warn">
-                        Tờ khai này đặt <b>thư mục khác nhau cho từng lệnh</b>. Form chỉ giữ được một
-                        thư mục chung, nên nó không đọc ngược được — sửa tiếp ở đây, hoặc cho các lệnh
-                        về cùng một <code>cwd</code>.
+                        {t('arm.mixedCwdBefore')} <b>{t('arm.mixedCwdBold')}</b>
+                        {t('arm.mixedCwdAfter')} <code>cwd</code>.
                       </p>
                     )}
                   </>
@@ -2129,14 +2142,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             {/* "Lệnh", không phải "Việc" (user 01/09). Ở tab này
                                 đơn vị người dùng đang soạn LÀ một dòng lệnh — gọi
                                 nó là "việc" là mượn từ vựng của tầng khác. */}
-                            <span className="text-xs font-medium">Lệnh {i + 1}</span>
+                            <span className="text-xs font-medium">{t('arm.cliCommandN', { n: i + 1 })}</span>
                             {acts.length > 1 && (
                               <button
                                 type="button"
                                 className="text-xs text-muted hover:text-danger"
                                 onClick={() => setActs((p) => p.filter((_, j) => j !== i))}
                               >
-                                Bỏ
+                                {t('arm.cliDrop')}
                               </button>
                             )}
                           </div>
@@ -2145,10 +2158,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               (user 01/09). Placeholder không phải nhãn: nó biến
                               mất đúng lúc người ta gõ, nên ai quay lại sửa sẽ
                               nhìn một ô không tên. → `Field` */}
-                          <Field htmlFor={`cli-say-${i}`} label="Tên">
+                          <Field htmlFor={`cli-say-${i}`} label={t('arm.cliName')}>
                             <Input
                               id={`cli-say-${i}`}
-                              placeholder="đếm hoá đơn chưa thanh toán"
+                              placeholder={t('arm.cliNamePlaceholder')}
                               value={a.say}
                               onChange={(e) => set({ say: e.target.value })}
                             />
@@ -2165,10 +2178,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             {a.say.trim() ? (
                               badIds.includes(slugId(a.say)) && (
                                 <p className="mt-1 text-[11px] text-danger">
-                                  Trùng tên với một lệnh khác (cùng ra mã{' '}
+                                  {t('arm.cliDupBefore')}{' '}
                                   <code className="rounded bg-danger-soft px-1">{slugId(a.say)}</code>
-                                  ). Nhân viên sẽ không phân biệt được hai lệnh này — đổi tên một
-                                  trong hai.
+                                  {t('arm.cliDupAfter')}
                                 </p>
                               )
                             ) : (
@@ -2176,14 +2188,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                                  đã gõ dở ở ô khác — một form vừa mở mà đã đỏ sẵn
                                  là mắng người chưa làm gì. */
                               (acts.length > 1 || a.line.trim() || a.description.trim()) && (
-                                <p className="mt-1 text-[11px] text-danger">Chưa đặt tên cho lệnh này.</p>
+                                <p className="mt-1 text-[11px] text-danger">{t('cliForm.noName')}</p>
                               )
                             )}
                           </Field>
 
                           <Field
                             htmlFor={`cli-line-${i}`}
-                            label="Cú pháp"
+                            label={t('arm.cliSyntax')}
                           >
                             <Input
                               id={`cli-line-${i}`}
@@ -2205,9 +2217,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               </div>
                             ) : (
                               (acts.length > 1 || a.say.trim() || a.description.trim()) && (
-                                <p className="mt-1 text-[11px] text-danger">
-                                  Chưa có dòng lệnh nào để chạy.
-                                </p>
+                                <p className="mt-1 text-[11px] text-danger">{t('cliForm.noLine')}</p>
                               )
                             )}
                           </Field>
@@ -2233,7 +2243,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             │ và máy chỉ vào chỗ khác nhau. → `ExampleNoSlot`  │
                             └──────────────────────────────────────────────────┘
                           */}
-                          <Field htmlFor={`cli-ex-${i}`} label="Ví dụ">
+                          <Field htmlFor={`cli-ex-${i}`} label={t('arm.cliExample')}>
                             <Input
                               id={`cli-ex-${i}`}
                               className="font-mono text-[12px]"
@@ -2257,21 +2267,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               <ExampleNoSlot line={a.line} example={a.example} />
                             ) : vals === null ? (
                               <p className="mt-1 text-[11px] text-danger">
-                                Ví dụ không khớp cú pháp — phải cùng số mảnh và giống hệt ở những chỗ
-                                không phải ô trống.
+                                {t('arm.cliExampleMismatch')}
                               </p>
                             ) : null}
                           </Field>
 
                           <Field
                             htmlFor={`cli-desc-${i}`}
-                            label="Miêu tả"
+                            label={t('arm.cliDescription')}
                           >
                             <Textarea
                               id={`cli-desc-${i}`}
                               rows={2}
                               className="text-[13px]"
-                              placeholder="Nó làm gì, kết quả khi mong đợi chạy, có ghi đè không, hoàn tác được không"
+                              placeholder={t('arm.cliDescriptionPlaceholder')}
                               value={a.description}
                               onChange={(e) => set({ description: e.target.value })}
                             />
@@ -2297,16 +2306,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             │ → [[agentco-safe-default-direction]]              │
                             └──────────────────────────────────────────────────┘
                           */}
-                          <Field label="Lệnh chỉ đọc?">
+                          <Field label={t('arm.cliReadOnly')}>
                             <label className="flex cursor-pointer items-center gap-2 py-2 text-[13px]">
                               <input
                                 type="checkbox"
                                 checked={a.read_only}
                                 onChange={(e) => set({ read_only: e.target.checked })}
                               />
-                              <span className="text-muted">
-                                Để trống nếu không chắc.
-                              </span>
+                              <span className="text-muted">{t('arm.cliReadOnlyHint')}</span>
                             </label>
                           </Field>
 
@@ -2323,14 +2330,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       );
                     })}
                     <Button size="sm" onClick={() => setActs((p) => [...p, blankAct()])}>
-                      + Thêm lệnh
+                      {t('arm.cliAdd')}
                     </Button>
                     {/* Trần 3–8 lệnh (§16h): mỗi việc là một định nghĩa tool nằm
                         trong prefix MỌI lượt. Cảnh báo, không chặn — tiền của khách. */}
                     {acts.length > 8 && (
                       <p className="text-xs text-muted">
-                        Hơn 8 việc trong một kết nối thì mỗi lượt làm việc đều phải cõng cả danh sách.
-                        Nên tách thành hai kết nối.
+                        {t('arm.cliTooMany')}
                       </p>
                     )}
                   </div>
@@ -2342,10 +2348,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 {cliJson !== null && (badIds.length > 0 || cliBad.length > 0 || cliOut === null) && (
                   <p className="mt-2 text-[11px] text-danger">
                     {cliOut === null
-                      ? 'Khối JSON đang hỏng — sửa xong mới lưu được.'
+                      ? t('arm.cliJsonBroken')
                       : badIds.length > 0
-                        ? `Hai lệnh cùng mã ${badIds.map((x) => `"${x}"`).join(', ')} — mỗi lệnh phải có mã riêng.`
-                        : `Lệnh ${cliBad[0]!.at + 1}: ${cliBad[0]!.say}`}
+                        ? t('arm.cliDupIds', { ids: badIds.map((x) => `"${x}"`).join(', ') })
+                        : t('arm.cliProblemAt', {
+                            n: cliBad[0]!.at + 1,
+                            say: cliBad[0]!.say,
+                          })}
                   </p>
                 )}
                 <Button
@@ -2365,7 +2374,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     setStep(2);
                   }}
                 >
-                  Dùng cấu hình này
+                  {t('arm.useThisConfig')}
                 </Button>
                 {/* CHỈ cánh tay LỆNH — xem `kindOf`. Gợi ý một cánh tay HTTP ở
                     đây là gợi ý thứ mà chính tab này từ chối dán. */}
@@ -2401,7 +2410,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {pane === 'paste' && (
               <>
                 <Button size="sm" className="mb-2" onClick={() => setPane('type')}>
-                  ← Quay lại
+                  {t('arm.back')}
                 </Button>
                 <JsonBox value={paste} onChange={setPaste} />
                 {/*
@@ -2421,8 +2430,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 {isCliPaste(paste) ? (
                   <div className="mt-1 rounded-md border border-warn/40 p-2">
                     <p className="text-xs">
-                      Đây là tờ khai <b>lệnh</b>, không phải cấu hình MCP — nên tab này không dựng
-                      được nó.
+                      {t('arm.pasteIsCliBefore')} <b>{t('arm.pasteIsCliBold')}</b>
+                      {t('arm.pasteIsCliAfter')}
                     </p>
                     <Button
                       size="sm"
@@ -2454,7 +2463,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         setPane('cli');
                       }}
                     >
-                      Mở tab Lệnh với nội dung này →
+                      {t('arm.openCliTab')}
                     </Button>
                   </div>
                 ) : extraServers.length > 0 ? (
@@ -2477,15 +2486,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     └──────────────────────────────────────────────────────────┘
                   */
                   <p className="mt-1 text-xs text-warn">
-                    Khối này có {extraServers.length + 1} server. Chỉ <b>{firstServer}</b> được cắm —
+                    {t('arm.multiServerBefore', { n: extraServers.length + 1 })}{' '}
+                    <b>{firstServer}</b> {t('arm.multiServerMid')}
                     {' '}
                     {extraServers.map((n) => <code key={n} className="mx-0.5 rounded bg-accent-soft px-1">{n}</code>)}
                     {' '}
-                    thì dán riêng thành một kết nối nữa.
+                    {t('arm.multiServerAfter')}
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-muted">
-                    Nhận cả khối <code>{'{"mcpServers": {...}}'}</code> chép nguyên từ tài liệu.
+                    {t('arm.pasteHintBefore')} <code>{'{"mcpServers": {...}}'}</code>{' '}
+                    {t('arm.pasteHintAfter')}
                   </p>
                 )}
                 <Button
@@ -2503,7 +2514,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     setStep(2);
                   }}
                 >
-                  Dùng cấu hình này
+                  {t('arm.useThisConfig')}
                 </Button>
                 {/*
                   🔴 THIẾU TỪ ĐẦU — hai tab kia có, tab này không. (user bắt 31/08)
@@ -2547,7 +2558,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {label && (
               <div className="mb-3 rounded-md border border-line px-3 py-2">
-                <div className="text-[11px] uppercase tracking-wide text-muted">Tên kết nối</div>
+                <div className="text-[11px] uppercase tracking-wide text-muted">{t('arm.connectionName')}</div>
                 <div className="mt-0.5 break-all text-[13px] font-medium">{label}</div>
                 {/*
                   ┌──────────────────────────────────────────────────────────┐
@@ -2580,7 +2591,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                           tier === 'full' ? 'bg-danger-soft text-danger' : 'bg-line/70 text-muted'
                         }`}
                       >
-                        {LEVEL_SAY[tier]}
+                        {t(LEVEL_SAY[tier])}
                       </span>
                     )}
                   </div>
@@ -2611,9 +2622,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     */
                     const dup = list[0] ? clashingArm(list[0], installed, officeId) : undefined;
                     if (dup) {
-                      setErr(
-                        `Thư mục này đã là kết nối trong văn phòng này rồi.`,
-                      );
+                      setErr(t('arm.folderClash'));
                       return;
                     }
                     setErr('');
@@ -2644,7 +2653,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     const leaf = list[0]?.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.trim() ?? '';
                     // Gốc ổ đĩa (`D:\`) không có tên lá — rơi về chính đường dẫn
                     // thay vì để trống, vì để trống là node mang tên băm.
-                    setLabel(leaf || list[0] || 'Thư mục');
+                    setLabel(leaf || list[0] || t('arm.folderFallbackLabel'));
                   }}
                 />
                 {/*
@@ -2664,7 +2673,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 */}
                 <p className="mt-1.5 text-xs text-muted">{pick.folders.help}</p>
                 <p className="mt-1 text-xs text-muted">
-                  Cần nhiều chỗ thì tạo thêm kết nối hoặc chọn thư mục cha.
+                  {t('arm.oneFolderNote')}
                 </p>
                 {/*
                   Danh sách dùng lại ở CHÂN bước 2, không ở một màn riêng — xem
@@ -2707,10 +2716,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               <div className="mt-3 rounded-md border border-line px-3 py-3">
                 {accounts.length === 0 ? (
                   <>
-                    <div className="text-[13px] font-medium">Chưa nối workspace nào</div>
+                    <div className="text-[13px] font-medium">{t('arm.noWorkspaceTitle')}</div>
                     <p className="mt-0.5 text-xs leading-relaxed text-muted">
-                      Bấm nút dưới, chọn workspace rồi bấm <b>Allow</b>. Tab sẽ tự đóng và quay lại
-                      đây. <b>Không cần copy gì cả.</b>
+                      {t('arm.noWorkspaceBefore')} <b>Allow</b>
+                      {t('arm.noWorkspaceMid')} <b>{t('arm.noWorkspaceBold')}</b>
                     </p>
                   </>
                 ) : (
@@ -2723,7 +2732,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       khoản" là dùng từ vựng của ta cho một khái niệm của họ, rồi
                       để người dùng tự dịch.
                     */}
-                    <div className="text-[11px] uppercase tracking-wide text-muted">Dùng workspace</div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted">{t('arm.useWorkspace')}</div>
                     <div className="mt-1.5 flex flex-col gap-1">
                       {accounts.map((a) => (
                         <div key={a.name} className="flex items-center gap-1">
@@ -2747,7 +2756,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               */}
                               {a.dead && (
                                 <span className="mt-0.5 block text-[11px] text-danger">
-                                  ⚠ Hết hiệu lực — bấm <b>Đăng nhập</b> để nối lại
+                                  {t('arm.workspaceExpiredBefore')} <b>{t('arm.signIn')}</b>{' '}
+                                  {t('arm.workspaceExpiredAfter')}
                                 </span>
                               )}
                             </span>
@@ -2765,10 +2775,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             disabled={a.usedBy.length > 0}
                             title={
                               a.usedBy.length
-                                ? `Đang được dùng bởi: ${a.usedBy.join(', ')}. Gỡ kết nối đó trước.`
-                                : 'Gỡ workspace này'
+                                ? t('arm.workspaceInUse', { who: a.usedBy.join(', ') })
+                                : t('arm.workspaceDropTip')
                             }
-                            aria-label={`Gỡ ${a.label ?? a.name}`}
+                            aria-label={t('arm.workspaceDropAria', { label: a.label ?? a.name })}
                             className="shrink-0 rounded p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted"
                             onClick={() => setDropWs(a)}
                           >
@@ -2807,18 +2817,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     {logging ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                     {logging
                       ? device
-                        ? 'Đang chờ bạn cho phép…'
-                        : 'Đang chờ… bấm để mở lại'
+                        ? t('arm.waitingApproval')
+                        : t('arm.waitingClickAgain')
                       : accounts.length
                         ? pick.deviceLogin
-                          ? 'Nối thêm một tài khoản khác'
-                          : 'Nối thêm một workspace khác'
-                        : `Đăng nhập với ${pick.name}`}
+                          ? t('arm.addAnotherAccount')
+                          : t('arm.addAnotherWorkspace')
+                        : t('arm.signInWith', { name: pick.name })}
                   </Button>
                   {logging && (
                     <Button
-                      aria-label="Thôi chờ"
-                      title="Thôi chờ"
+                      aria-label={t('arm.stopWaiting')}
+                      title={t('arm.stopWaiting')}
                       onClick={() => {
                         // Dọn CẢ HAI: để `device` lại là để vòng hỏi thăm chạy
                         // tiếp sau khi người dùng vừa bảo thôi — đúng họ bug
@@ -2833,8 +2843,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </div>
                 {logging && !device && (
                   <p className="mt-1.5 text-xs leading-relaxed text-muted">
-                    Xong ở tab kia thì đây tự cập nhật. Nếu tab đó báo lỗi (hay bạn đã đóng nó), bấm
-                    lại nút trên — mỗi lần bấm là một lượt mới.
+                    {t('arm.tabHint')}
                   </p>
                 )}
 
@@ -2890,21 +2899,24 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {pick?.tiered && probe?.status === 'connected' && (probe.tiers?.length ?? 0) > 1 && (
               <div className="mt-3">
-                <Label>Cho nhân viên làm được gì</Label>
+                <Label>{t('arm.tierLabel')}</Label>
                 <div className="mt-1 flex flex-col gap-1">
-                  {probe.tiers!.map((t) => (
+                  {/* `row`, not `t` — that name is the translator now. */}
+                  {probe.tiers!.map((row) => (
                     <label
-                      key={t.tier}
+                      key={row.tier}
                       className="flex cursor-pointer items-center gap-2 rounded-md border border-line px-3 py-2 text-[13px] hover:border-accent"
                     >
                       <input
                         type="radio"
                         name="tier"
-                        checked={tier === t.tier}
-                        onChange={() => setTier(t.tier)}
+                        checked={tier === row.tier}
+                        onChange={() => setTier(row.tier)}
                       />
-                      <span className="flex-1">{TIER_SAY[t.tier].name}</span>
-                      <span className="shrink-0 tabular-nums text-[11px] text-muted">{t.count} việc</span>
+                      <span className="flex-1">{t(TIER_SAY[row.tier].name)}</span>
+                      <span className="shrink-0 tabular-nums text-[11px] text-muted">
+                        {plural('inspector.toolCount', row.count)}
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -2919,7 +2931,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     `full`. Hứa quá tay tệ hơn doạ quá tay (§11a-bis).
                     → `core/catalog.ts §tierSay`
                   */}
-                  {pick?.tierSay?.[tier] ?? TIER_SAY[tier].help}
+                  {pick?.tierSay?.[tier] ?? t(TIER_SAY[tier].help)}
                   {/*
                     ⚠ QUY CÂU NÓI VỀ ĐÚNG NGƯỜI NÓI. Ta viết "server khai", không
                     viết "cánh tay này chỉ đọc" — câu sau ta KHÔNG bảo đảm được.
@@ -2929,7 +2941,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   */}
                   {' '}
                   <span className="text-muted">
-                    ({probe.serverName ?? 'Server'} tự khai mức của từng việc.)
+                    {t('arm.tierDeclared', { server: probe.serverName ?? 'Server' })}
                   </span>
                 </p>
                 {/*
@@ -2944,16 +2956,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 */}
                 {pick.serverFence && tier !== 'full' && (
                   <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                    Số token ở trên đo khi <b>mở hết</b>. Ở nấc này {pick.name} cắt bớt việc ghi
-                    ngay từ server, nên thực tế <b>tốn ít hơn</b>.
+                    {t('arm.serverFenceBefore')} <b>{t('arm.serverFenceBold')}</b>
+                    {t('arm.serverFenceMid', { name: pick.name })}{' '}
+                    <b>{t('arm.serverFenceBold2')}</b>.
                   </p>
                 )}
               </div>
             )}
             {pick?.tiered && probe?.status === 'connected' && probe.tiers?.length === 1 && (
               <p className="mt-3 rounded-md border border-line px-3 py-2 text-[13px]">
-                Kết nối này <b>{TIER_SAY[probe.tiers[0]!.tier].name.toLowerCase()}</b> ·{' '}
-                {probe.tiers[0]!.count} việc.
+                {t('arm.oneTierBefore')}{' '}
+                <b>{t(TIER_SAY[probe.tiers[0]!.tier].name).toLowerCase()}</b>{' '}
+                {t('arm.oneTierAfter')} {plural('inspector.toolCount', probe.tiers[0]!.count)}.
               </p>
             )}
 
@@ -2992,7 +3006,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {!!pick?.options?.length && (
               <div className="mt-3">
-                <Label>Cách chạy</Label>
+                <Label>{t('arm.howItRuns')}</Label>
                 <div className="mt-1 flex flex-col gap-1">
                   {pick.options
                     // Ẩn ô chỉ dùng được khi cùng máy. Bày ra rồi để server từ
@@ -3030,15 +3044,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     lý do là một câu đố, và người dùng sẽ đi tìm nó ở chỗ khác.
                   */
                   <p className="mt-1.5 text-xs leading-relaxed text-muted">
-                    Một lựa chọn bị ẩn vì bạn đang xem từ máy khác — cửa sổ trình duyệt sẽ mở
-                    trên máy chạy agentco, nên từ đây bạn không nhìn thấy nó.
+                    {t('arm.remoteHiddenOption')}
                   </p>
                 )}
               </div>
             )}
             {needGroups() && (
               <div className="mt-3">
-                <Label>Cho làm những nhóm việc nào</Label>
+                <Label>{t('arm.groupsLabel')}</Label>
                 <div className="mt-1 flex flex-col gap-1">
                   {pick!.groups!.map((g) => (
                     <label
@@ -3083,24 +3096,27 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     không lý do là câu đố, không phải một lời từ chối. → B-3
                   */
                   <p className="mt-1.5 text-xs text-danger">
-                    Tick ít nhất một nhóm. Không nhóm nào thì kết nối này không làm được việc gì cả.
+                    {t('arm.groupsRequired')}
                   </p>
                 ) : (
                   <p className="mt-1.5 text-xs leading-relaxed text-muted">
                     {probe?.status === 'connected' ? (
                       <>
-                        Đang cấp <b>{probe.tools.length} việc</b>
+                        {t('arm.grantingBefore')}{' '}
+                        <b>{plural('inspector.toolCount', probe.tools.length)}</b>
                         {probe.tokens ? (
                           <>
                             {' · '}
-                            <b className="tabular-nums">~{probe.tokens.toLocaleString('vi')} token</b>{' '}
-                            mỗi lượt của nhân viên được nối
+                            <b className="tabular-nums">
+                              {t('arm.tokensPerTurn', { n: formatNumber(probe.tokens) })}
+                            </b>{' '}
+                            {t('arm.grantingAfter')}
                           </>
                         ) : null}
                         .
                       </>
                     ) : (
-                      <>Bấm Thử ngay để biết bộ này cấp bao nhiêu việc và tốn bao nhiêu token.</>
+                      <>{t('arm.grantingUnknown')}</>
                     )}
                   </p>
                 )}
@@ -3132,8 +3148,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   onChange={(e) => setKeys((k) => ({ ...k, [name]: e.target.value }))}
                 />
                 <p className="mt-1 text-xs text-muted">
-                  ↳ Cấu hình bạn dán có ô trống <code>{'${' + name + '}'}</code>. Giá trị lưu trong máy
-                  bạn, không ghi vào <code>company.yaml</code>.
+                  {t('arm.envPlaceholderBefore')} <code>{'${' + name + '}'}</code>
+                  {t('arm.envPlaceholderAfter')} <code>company.yaml</code>.
                 </p>
               </div>
             ))}
@@ -3145,14 +3161,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {reuse && (
               <div className="mt-3 rounded-md border border-line bg-accent-soft/30 px-3 py-2 text-[13px]">
-                <div className="font-medium">Không phải điền lại gì cả</div>
+                <div className="font-medium">{t('arm.reuseNothingTitle')}</div>
                 <div className="mt-1 text-xs leading-relaxed text-muted">
-                  Kết nối này đã cắm ở văn phòng khác. Chìa nằm ở cấp <b>công ty</b>, nên văn phòng nào
-                  cũng dùng chung được — bấm <b>Thử ngay</b> để chắc nó vẫn còn sống.
+                  {t('arm.reuseBody1')} <b>{t('arm.reuseBodyBold1')}</b> {t('arm.reuseBody2')}{' '}
+                  <b>{t('arm.reuseBodyBold2')}</b> {t('arm.reuseBody3')}
                   {reuse.secrets.length > 0 && (
                     <>
                       {' '}
-                      Chìa đang dùng: <code>{reuse.secrets.join(', ')}</code>.
+                      {t('arm.reuseKeysInUse')} <code>{reuse.secrets.join(', ')}</code>.
                     </>
                   )}
                 </div>
@@ -3179,13 +3195,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {(!pick?.folders || probe?.status === 'failed') && (
               <Button className="mt-4 w-full" onClick={() => void test()} disabled={testing}>
                 {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {testing ? 'Đang kết nối…' : probe ? 'Thử lại' : 'Thử ngay'}
+                {testing ? t('arm.connecting') : probe ? t('arm.tryAgain') : t('arm.tryIt')}
               </Button>
             )}
             {pick?.folders && testing && (
               <div className="mt-4 flex items-center gap-2 text-[13px] text-muted">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Đang kiểm tra kết nối…
+                {t('arm.checking')}
               </div>
             )}
             {/*
@@ -3212,8 +3228,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             {testing && slow && (
               <p className="mt-1.5 text-xs text-muted">
-                Bước này mất khoảng 10–25 giây: máy phải khởi động công cụ kết nối rồi hỏi xem nó
-                làm được những gì.
+                {t('arm.slowHint')}
               </p>
             )}
 
@@ -3230,11 +3245,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
             <div className="mt-4 flex gap-2">
               <Button className="flex-1" onClick={() => setStep(1)}>
-                Quay lại
+                {t('arm.goBack')}
               </Button>
               {/* KHÔNG cho đi tiếp khi chưa ✓. → SPEC-tools-approval §10b */}
               <Button variant="primary" className="flex-1" disabled={!ok} onClick={() => setStep(3)}>
-                Tiếp
+                {t('arm.next')}
               </Button>
             </div>
           </div>
@@ -3245,7 +3260,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
           <div className="max-h-[52vh] overflow-y-auto">
             {agents.length === 0 && (
               <p className="text-[13px] text-muted">
-                Văn phòng này chưa có nhân viên nào. Cứ lưu — cắm xong rồi nối dây sau cũng được.
+                {t('arm.noAgentsYet')}
               </p>
             )}
             <div className="flex flex-col gap-1">
@@ -3272,19 +3287,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             */}
             <p className="mt-3 text-xs text-muted">
               {grant.length === 0
-                ? 'Chưa chọn ai thì kết nối này nằm im — không ai dùng được, và nó không tốn token nào.'
-                : `${grant.length} người sẽ dùng được kết nối này ngay ở việc kế tiếp.`}
-              {probe?.tokens ? ` Mỗi người trả thêm ~${probe.tokens.toLocaleString('vi-VN')} token mỗi lượt.` : ''}
+                ? t('arm.grantNobody')
+                : t('arm.grantSome', { n: grant.length })}
+              {probe?.tokens ? t('arm.grantTokens', { n: formatNumber(probe.tokens) }) : ''}
             </p>
 
             {err && <p className="mt-2 text-xs text-danger">{err}</p>}
 
             <div className="mt-4 flex gap-2">
               <Button className="flex-1" onClick={() => setStep(2)}>
-                Quay lại
+                {t('arm.goBack')}
               </Button>
               <Button variant="primary" className="flex-1" disabled={busy} onClick={() => void save()}>
-                {busy ? 'Đang lưu…' : 'Xong'}
+                {busy ? t('common.saving') : t('arm.done')}
               </Button>
             </div>
           </div>
@@ -3300,7 +3315,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         */}
         <ConfirmDelete
           open={!!forget}
-          title="Xoá hẳn khỏi sổ chung?"
+          title={t('arm.forgetTitle')}
           onCancel={() => setForget(null)}
           onConfirm={() => {
             const a = forget;
@@ -3313,17 +3328,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               .forgetArm(a.id)
               .then(() => api.arms())
               .then((r) => setInstalled(forList(r.arms, officeId)))
-              .catch((e) => setErr(e instanceof ApiError ? e.message : 'Không xoá được.'))
+              .catch((e) => setErr(e instanceof ApiError ? e.message : t('artifacts.deleteFailed')))
               .finally(() => setForget(null));
           }}
         >
-          <b>{forget?.label}</b> sẽ biến mất khỏi công ty và <b>không lấy lại được</b>. Không văn phòng
-          nào đang dùng nó.
+          <b>{forget?.label}</b> {t('arm.forgetBody1')} <b>{t('arm.forgetBodyBold')}</b>
+          {t('arm.forgetBody2')}
           <br />
           <span className="text-muted">
             {forget?.secrets.length
-              ? `Chìa (${forget.secrets.join(', ')}) vẫn được giữ — cắm lại thì không phải đi lấy token lần nữa.`
-              : 'Kết nối này không cần chìa nào, nên cắm lại là chọn từ danh mục.'}
+              ? t('arm.forgetKeysKept', { keys: forget.secrets.join(', ') })
+              : t('arm.forgetNoKeys')}
           </span>
         </ConfirmDelete>
 
@@ -3335,17 +3350,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         */}
         <ConfirmDelete
           open={!!dropWs}
-          title="Gỡ workspace này?"
-          confirmLabel="Gỡ"
+          title={t('arm.dropWsTitle')}
+          confirmLabel={t('overview.drop')}
           onCancel={() => setDropWs(null)}
           onConfirm={() => dropNow()}
         >
-          agentco sẽ quên chìa của <b>{dropWs?.label ?? dropWs?.name}</b> và <b>báo cho dịch vụ thu
-          hồi</b> quyền truy cập.
+          {t('arm.dropWsBefore')} <b>{dropWs?.label ?? dropWs?.name}</b> {t('arm.dropWsMid')}{' '}
+          <b>{t('arm.dropWsBold')}</b> {t('arm.dropWsAfter')}
           <br />
-          <span className="text-muted">
-            Không mất gì trong workspace của bạn. Cần lại thì đăng nhập lần nữa.
-          </span>
+          <span className="text-muted">{t('arm.dropWsSafe')}</span>
         </ConfirmDelete>
       </DialogContent>
     </Dialog>
@@ -3386,7 +3399,7 @@ function FolderPicker({
     <>
       <div className="rounded-md border border-line px-3 py-2">
         {chosen.length === 0 ? (
-          <div className="py-1 text-xs text-muted">Chưa chọn thư mục nào.</div>
+          <div className="py-1 text-xs text-muted">{t('arm.noFolderChosen')}</div>
         ) : (
           // Đủ chữ, xuống dòng — xem chú thích ở `BrowseDialog`.
           <div className="break-all font-mono text-[12px]">{chosen[0]}</div>
@@ -3399,7 +3412,11 @@ function FolderPicker({
         */}
         <Button size="sm" className="mt-2 w-full" disabled={busy} onClick={() => setOpen(true)}>
           <FolderOpen className="h-3.5 w-3.5" />
-          {busy ? 'Đang kiểm tra…' : chosen.length ? 'Đổi thư mục…' : 'Chọn thư mục…'}
+          {busy
+            ? t('arm.checkingShort')
+            : chosen.length
+              ? t('arm.changeFolderLong')
+              : t('arm.pickFolder')}
         </Button>
       </div>
       <BrowseDialog open={open} onOpenChange={setOpen} onChange={onChange} />
@@ -3496,9 +3513,9 @@ function BrowseDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={DIALOG_W}>
         <DialogHeader>
-          <DialogTitle>Chọn thư mục</DialogTitle>
+          <DialogTitle>{t('arm.browseTitle')}</DialogTitle>
           <DialogDescription>
-            Đây là các thư mục trên máy đang chạy agentco — không phải máy bạn đang ngồi, nếu hai cái khác nhau.
+            {t('arm.browseDesc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -3510,7 +3527,7 @@ function BrowseDialog({
           <Input
             className="flex-1 font-mono text-[12px]"
             value={typed}
-            placeholder="Hoặc dán đường dẫn rồi Enter"
+            placeholder={t('arm.pathPlaceholder')}
             onChange={(e) => setTyped(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -3528,18 +3545,18 @@ function BrowseDialog({
           quyết định cho một agent quyền đọc chỗ nào.
         */}
         <div className="mt-2 rounded-md border border-line bg-panel px-3 py-2">
-          <div className="text-[11px] uppercase tracking-wide text-muted">Đang ở</div>
-          <div className="mt-0.5 break-all font-mono text-[12px]">{here || 'Chọn một ổ đĩa'}</div>
+          <div className="text-[11px] uppercase tracking-wide text-muted">{t('arm.currentlyAt')}</div>
+          <div className="mt-0.5 break-all font-mono text-[12px]">{here || t('arm.pickADrive')}</div>
         </div>
 
         {/* BA cột, không bốn: khung hẹp lại còn 46rem thì bốn cột cắt tên thư
             mục ngay ở ký tự thứ mười — mà tên thư mục chính là thứ người ta đọc
             để bấm. */}
         <div className="mt-2 grid max-h-[46vh] grid-cols-3 gap-1 overflow-y-auto rounded-md border border-line p-1">
-          {loading && <div className="col-span-3 px-2 py-2 text-xs text-muted">Đang đọc…</div>}
+          {loading && <div className="col-span-3 px-2 py-2 text-xs text-muted">{t('common.reading')}</div>}
           {!loading && cur.dirs.length === 0 && (
             <div className="col-span-3 px-2 py-2 text-xs text-muted">
-              Không có thư mục con nào đọc được ở đây.
+              {t('arm.noSubfolders')}
             </div>
           )}
           {!loading &&
@@ -3562,7 +3579,7 @@ function BrowseDialog({
           Giờ **Xong = chọn thư mục đang mở**, đúng như user đề nghị.
         */}
         <div className="mt-3 flex items-center justify-end gap-2">
-          <Button onClick={() => onOpenChange(false)}>Thôi</Button>
+          <Button onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
           <Button
             variant="primary"
             disabled={!here}
@@ -3571,7 +3588,7 @@ function BrowseDialog({
               onOpenChange(false);
             }}
           >
-            Xong — dùng thư mục này
+            {t('arm.useThisFolder')}
           </Button>
         </div>
       </DialogContent>
@@ -3598,7 +3615,8 @@ function ProbeReport({
   match?: CatalogArm | undefined;
 }) {
   if (r.status === 'connected') {
-    const read = r.tools.filter((t) => t.level === 'read').length;
+    // `tool`, not `t` — `t` is the translator in this file.
+    const read = r.tools.filter((tool) => tool.level === 'read').length;
     /*
       ┌──────────────────────────────────────────────────────────────────────┐
       │ NỐI ĐƯỢC MÀ 0 VIỆC — vẽ nó là CẢNH BÁO, không phải là ✓ có ghi chú.  │
@@ -3615,7 +3633,7 @@ function ProbeReport({
         <div className="mt-3 rounded-md border border-warn/40 px-3 py-2 text-[13px]">
           <div className="flex items-center gap-1.5 font-medium text-warn">
             <TriangleAlert className="h-4 w-4" />
-            Nối được, nhưng 0 việc
+            {t('arm.probeZeroTools')}
           </div>
           <div className="mt-1 text-xs leading-relaxed text-muted">{r.warn}</div>
         </div>
@@ -3625,12 +3643,12 @@ function ProbeReport({
       <div className="mt-3 rounded-md border border-line bg-accent-soft/40 px-3 py-2 text-[13px]">
         <div className="flex items-center gap-1.5 font-medium">
           <Check className="h-4 w-4 text-accent" />
-          Chạy được · {r.tools.length} việc
+          {t('arm.probeOk', { n: plural('inspector.toolCount', r.tools.length) })}
           {r.serverName ? <span className="text-xs font-normal text-muted">· {r.serverName}</span> : null}
         </div>
         <div className="mt-1 text-xs text-muted">
-          {read} việc chỉ đọc · {r.tools.length - read} việc có ghi
-          {r.tokens ? ` · ~${r.tokens.toLocaleString('vi-VN')} token mỗi lượt` : ''}
+          {t('arm.probeSplit', { read, write: r.tools.length - read })}
+          {r.tokens ? ` ${t('arm.tokensPerTurnSuffix', { n: formatNumber(r.tokens) })}` : ''}
         </div>
         {/*
           ┌──────────────────────────────────────────────────────────────────┐
@@ -3676,22 +3694,24 @@ function ProbeReport({
       <div className="mt-3 rounded-md border border-line px-3 py-2 text-[13px]">
         <div className="flex items-center gap-1.5 font-medium">
           <TriangleAlert className="h-4 w-4 text-warn" />
-          {hasLoginButton ? 'Cần đăng nhập một lần' : 'Dịch vụ này yêu cầu xác thực'}
+          {hasLoginButton ? t('arm.probeNeedsLoginTitle') : t('arm.probeAuthTitle')}
         </div>
         {hasLoginButton ? (
           <div className="mt-1 text-xs text-muted">
-            Kết nối được, nhưng dịch vụ này cần bạn cho phép trên trình duyệt. Bấm <b>Đăng nhập</b> ở trên.
+            {t('arm.probeNeedsLoginBefore')} <b>{t('arm.signIn')}</b>{' '}
+            {t('arm.probeNeedsLoginAfter')}
           </div>
         ) : (
           <div className="mt-1 space-y-1 text-xs leading-relaxed text-muted">
             <div>
-              Máy chủ trả lời được, nhưng nó từ chối vì chưa có chìa. Đường <b>Tự cắm MCP</b> chưa
-              đăng nhập hộ bạn được — bạn phải tự đưa chìa vào.
+              {t('arm.probeNoKeyBefore')} <b>{t('arm.probeNoKeyBold')}</b>{' '}
+              {t('arm.probeNoKeyAfter')}
             </div>
             {match ? (
               <div>
-                ⭐ <b>{match.name}</b> đã có sẵn ở <b>Dịch vụ có sẵn</b>. Quay lại chọn nó thì chỉ cần
-                bấm Đăng nhập, không phải tự đi lấy chìa.
+                {t('arm.probeMatchBefore')} <b>{match.name}</b> {t('arm.probeMatchMid')}{' '}
+                <b>{t('arm.probeMatchBold')}</b>
+                {t('arm.probeMatchAfter')}
               </div>
             ) : (
               /**
@@ -3712,13 +3732,13 @@ function ProbeReport({
                * Nói kỹ về thứ của mình thì không bao giờ thành nói sai.
                */
               <div>
-                Chìa phải nằm trong chính khối JSON này. README của dịch vụ ghi nó đi vào đâu — có
-                thể là một header trong <code>headers</code>, có thể là một biến trong{' '}
-                <code>env</code>, mỗi hãng một khác. Chép đúng chỗ đó, rồi{' '}
+                {t('arm.probeKeyHintBefore')} <code>headers</code>
+                {t('arm.probeKeyHintMid')} <code>env</code>
+                {t('arm.probeKeyHintMid2')}{' '}
                 <b>
-                  thay giá trị thật bằng <code>{'${TEN_CHIA}'}</code>
+                  {t('arm.probeKeyHintBold')} <code>{'${TEN_CHIA}'}</code>
                 </b>
-                : chỗ đó sẽ thành một ô nhập ở ngay dưới, và chìa không bị ghi vào file cấu hình.
+                {t('arm.probeKeyHintAfter')}
               </div>
             )}
           </div>
@@ -3728,7 +3748,7 @@ function ProbeReport({
   }
   return (
     <div className="mt-3 rounded-md border border-danger/40 px-3 py-2 text-[13px]">
-      <div className="font-medium text-danger">Chưa kết nối được</div>
+      <div className="font-medium text-danger">{t('arm.probeFailedTitle')}</div>
       {r.error && <pre className="mt-1 whitespace-pre-wrap break-all text-[11px] text-muted">{r.error}</pre>}
     </div>
   );

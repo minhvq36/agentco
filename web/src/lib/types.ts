@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Kiểu khớp với backend. Nguồn sự thật là `src/core/types.ts` và
  * `src/core/office.ts` — file này là bản sao thủ công, không sinh tự động.
  *
@@ -10,6 +10,11 @@
 // sao thủ công. → src/core/layout-geometry.ts
 export { NODE_SIZE } from '@core/layout-geometry';
 export type { NodeKind } from '@core/layout-geometry';
+
+// Same reasoning one step further: the locale union is shared, not copied, so a
+// third language cannot exist on one side of the wire only. → src/i18n/
+import type { Locale } from '@i18n';
+export type { Locale };
 
 import type { NodeKind } from '@core/layout-geometry';
 
@@ -158,6 +163,14 @@ export interface CompanyView {
   offices: OfficeSummary[];
   allowCorePromptEdit: boolean;
   models: CompanyModels;
+  /**
+   * INTERFACE language only. → docs/CLAUDE.md §Language
+   *
+   * ⚠ Not the language the assistant replies in. That follows whatever the user
+   * types, and no setting anywhere controls it — a Vietnamese user with an
+   * English interface still gets Vietnamese answers, on purpose.
+   */
+  language: Locale;
 }
 
 export interface PlanStep {

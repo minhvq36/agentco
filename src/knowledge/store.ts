@@ -394,7 +394,7 @@ export class KnowledgeStore {
     docs: readonly string[] = [],
     dependsOn: readonly string[] = [],
   ): KnowledgeNode | undefined {
-    if (this.rejectLesson(text, docs, `role:${roleId}`, `kinh nghiệm của "${roleId}"`)) return undefined;
+    if (this.rejectLesson(text, docs, `role:${roleId}`, `the lesson from "${roleId}"`)) return undefined;
 
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
     const node: KnowledgeNode = {
@@ -439,8 +439,8 @@ export class KnowledgeStore {
     const digit = quotesLibraryNumber(text, docs);
     if (digit) {
       process.emitWarning(
-        `Bỏ qua ${who} vì nó chép CON SỐ "${digit}" từ tài liệu: ${text.slice(0, 60)}… ` +
-          `Kinh nghiệm ghi CÁCH LÀM, không ghi kiến thức — con số thuộc về tủ tài liệu.`,
+        `Dropped ${who} because it copied the NUMBER "${digit}" out of a document: ${text.slice(0, 60)}… ` +
+          `A lesson records HOW TO WORK, not knowledge — figures belong to the document cabinet.`,
       );
       return true;
     }
@@ -460,7 +460,7 @@ export class KnowledgeStore {
        */
       this.recordHits([twin.id]);
       process.emitWarning(
-        `Bỏ qua ${who} vì trùng ghi chú đã có ("${twin.title}") — đã cộng lượt dùng cho bản cũ.`,
+        `Dropped ${who} as a duplicate of an existing note ("${twin.title}") — counted a hit on the old one instead.`,
       );
       return true;
     }
@@ -468,8 +468,8 @@ export class KnowledgeStore {
     const echo = echoesLibrary(text, docs);
     if (echo) {
       process.emitWarning(
-        `Bỏ qua ${who} vì chép lại tài liệu "${echo}": ${text.slice(0, 60)}… ` +
-          `Nội dung tài liệu ở tủ, không vào kho tri thức.`,
+        `Dropped ${who} because it repeats the document "${echo}": ${text.slice(0, 60)}… ` +
+          `Document contents live in the cabinet, not in the knowledge store.`,
       );
       return true;
     }
@@ -550,7 +550,7 @@ export class KnowledgeStore {
     docs: readonly string[] = [],
     dependsOn: readonly string[] = [],
   ): KnowledgeNode | undefined {
-    if (this.rejectLesson(text, docs, 'shared', 'bài học chung')) return undefined;
+    if (this.rejectLesson(text, docs, 'shared', 'the shared lesson')) return undefined;
 
     const slug = slugify(text).slice(0, 48) || `lesson-${Date.now()}`;
     const node: KnowledgeNode = {
@@ -889,7 +889,7 @@ export function quotesLibraryNumber(text: string, docs: readonly string[]): stri
 
 /** Dòng đầu của bản văn tài liệu là tên file — xem `Office.libraryTexts()`. */
 function docNameOf(doc: string): string {
-  return doc.split('\n', 1)[0]?.trim() || 'tài liệu';
+  return doc.split('\n', 1)[0]?.trim() || 'a document';
 }
 
 function slugify(s: string): string {

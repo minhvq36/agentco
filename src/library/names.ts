@@ -8,6 +8,8 @@
  * những cách chỉ lộ ra khi gặp file thật.
  */
 
+import { t, type MessageKey } from '../i18n/index.js';
+
 /** Đuôi nhận vào và cách xử lý. → SPEC-library.md §4 */
 export type Handling = 'text' | 'zip' | 'pdf';
 
@@ -90,27 +92,31 @@ export function docPaths(name: string, ext: string, state: string): DocPaths {
  *
  * Danh sách này tồn tại để câu từ chối nói được *vì sao*, thay vì một câu
  * "định dạng không hỗ trợ" chung chung khiến người dùng thử lại ba lần.
+ *
+ * ⚠ Holds catalogue KEYS, not sentences. This is a module-level constant, so a
+ * resolved string would be frozen at import to whichever language the process
+ * started in. `safeName()` resolves it per call instead.
  */
-export const REFUSED: Record<string, string> = {
-  jpg: 'Ảnh thì nhân viên không tìm bằng từ khoá được. Nếu ảnh có chữ, hãy xuất ra PDF rồi thả lại.',
-  jpeg: 'Ảnh thì nhân viên không tìm bằng từ khoá được. Nếu ảnh có chữ, hãy xuất ra PDF rồi thả lại.',
-  png: 'Ảnh thì nhân viên không tìm bằng từ khoá được. Nếu ảnh có chữ, hãy xuất ra PDF rồi thả lại.',
-  gif: 'Ảnh thì nhân viên không tìm bằng từ khoá được.',
-  webp: 'Ảnh thì nhân viên không tìm bằng từ khoá được.',
-  heic: 'Ảnh thì nhân viên không tìm bằng từ khoá được.',
-  mp4: 'Video chưa nằm trong phạm vi tủ tài liệu.',
-  mov: 'Video chưa nằm trong phạm vi tủ tài liệu.',
-  avi: 'Video chưa nằm trong phạm vi tủ tài liệu.',
-  mp3: 'Âm thanh chưa nằm trong phạm vi tủ tài liệu.',
-  wav: 'Âm thanh chưa nằm trong phạm vi tủ tài liệu.',
-  zip: 'File nén chưa nhận. Giải nén ra rồi thả từng file vào.',
-  rar: 'File nén chưa nhận. Giải nén ra rồi thả từng file vào.',
-  '7z': 'File nén chưa nhận. Giải nén ra rồi thả từng file vào.',
-  exe: 'Không nhận file chạy được.',
-  dll: 'Không nhận file chạy được.',
-  doc: 'Định dạng Word cũ (.doc) khác hẳn .docx bên trong. Mở bằng Word rồi "Lưu thành" .docx.',
-  xls: 'Định dạng Excel cũ (.xls) khác hẳn .xlsx bên trong. Mở bằng Excel rồi "Lưu thành" .xlsx.',
-  ppt: 'Định dạng PowerPoint cũ (.ppt). Mở rồi "Lưu thành" .pptx.',
+export const REFUSED: Record<string, MessageKey> = {
+  jpg: 'lib.refuseImageText',
+  jpeg: 'lib.refuseImageText',
+  png: 'lib.refuseImageText',
+  gif: 'lib.refuseImage',
+  webp: 'lib.refuseImage',
+  heic: 'lib.refuseImage',
+  mp4: 'lib.refuseVideo',
+  mov: 'lib.refuseVideo',
+  avi: 'lib.refuseVideo',
+  mp3: 'lib.refuseAudio',
+  wav: 'lib.refuseAudio',
+  zip: 'lib.refuseArchive',
+  rar: 'lib.refuseArchive',
+  '7z': 'lib.refuseArchive',
+  exe: 'lib.refuseExecutable',
+  dll: 'lib.refuseExecutable',
+  doc: 'lib.refuseDoc',
+  xls: 'lib.refuseXls',
+  ppt: 'lib.refusePpt',
 };
 
 /** Tên thiết bị Windows chiếm dụng. `CON.txt` cũng hỏng, không chỉ `CON`. */
@@ -141,18 +147,18 @@ export type NameCheck = { ok: true; name: string; ext: string } | { ok: false; r
  */
 export function safeName(input: string): NameCheck {
   const name = input.trim();
-  if (!name) return { ok: false, reason: 'Tên file rỗng.' };
+  if (!name) return { ok: false, reason: t('lib.nameEmpty') };
 
   if (Buffer.byteLength(name, 'utf8') > MAX_NAME_BYTES) {
-    return { ok: false, reason: 'Tên file quá dài. Đổi tên ngắn lại rồi thả lại.' };
+    return { ok: false, reason: t('lib.nameTooLong') };
   }
 
   // Path traversal + phân cách thư mục. `safeJoin` cũng chặn, nhưng chặn ở đây
   // cho ra CÂU GIẢI THÍCH thay vì một exception chung.
   if (name.includes('/') || name.includes('\\')) {
-    return { ok: false, reason: 'Tên file không được chứa dấu / hoặc \\.' };
+    return { ok: false, reason: t('lib.nameHasSlash') };
   }
-  if (name === '.' || name === '..') return { ok: false, reason: 'Tên file không hợp lệ.' };
+  if (name === '.' || name === '..') return { ok: false, reason: t('lib.nameInvalid') };
 
   /**
    * `|` — chặn ở CỬA, vì nó là ký tự chia cột của `INDEX.md`.
@@ -162,13 +168,13 @@ export function safeName(input: string): NameCheck {
    * hàng vỡ ở đó nghĩa là Trợ lý đọc ra một đường dẫn cụt. → `renderIndex`
    */
   if (name.includes('|')) {
-    return { ok: false, reason: 'Tên file không được chứa dấu |. Đổi tên rồi thả lại.' };
+    return { ok: false, reason: t('lib.namePipe') };
   }
 
   // Ký tự điều khiển + NUL. Một tên có \0 cắt đứt chuỗi ở tầng hệ điều hành:
   // kiểm tra thấy "a.txt.exe", ghi ra đĩa thành "a.txt".
   for (let i = 0; i < name.length; i++) {
-    if (name.charCodeAt(i) < 0x20) return { ok: false, reason: 'Tên file chứa ký tự không hợp lệ.' };
+    if (name.charCodeAt(i) < 0x20) return { ok: false, reason: t('lib.nameControlChar') };
   }
 
   /**
@@ -179,7 +185,7 @@ export function safeName(input: string): NameCheck {
    * diện, bóc text thành công, và KHÔNG BAO GIỜ được tìm thấy. Im lặng.
    */
   if (name.startsWith('.')) {
-    return { ok: false, reason: 'Tên file không được bắt đầu bằng dấu chấm — nhân viên sẽ không tìm thấy nó.' };
+    return { ok: false, reason: t('lib.nameLeadingDot') };
   }
 
   /**
@@ -188,23 +194,24 @@ export function safeName(input: string): NameCheck {
    * và thay thế sau đó trượt.
    */
   if (/[. ]$/.test(name)) {
-    return { ok: false, reason: 'Tên file không được kết thúc bằng dấu chấm hoặc khoảng trắng.' };
+    return { ok: false, reason: t('lib.nameTrailingDot') };
   }
 
   const dot = name.lastIndexOf('.');
   if (dot <= 0 || dot === name.length - 1) {
-    return { ok: false, reason: 'File phải có phần đuôi (ví dụ .pdf, .docx).' };
+    return { ok: false, reason: t('lib.nameNoExtension') };
   }
   const ext = name.slice(dot + 1).toLowerCase();
   const stem = name.slice(0, dot);
 
   if (WINDOWS_RESERVED.has(stem.toLowerCase())) {
-    return { ok: false, reason: `"${stem}" là tên thiết bị Windows chiếm dụng. Đổi tên khác.` };
+    return { ok: false, reason: t('lib.nameWindowsDevice', { stem }) };
   }
 
-  if (REFUSED[ext]) return { ok: false, reason: REFUSED[ext] };
+  const refused = REFUSED[ext];
+  if (refused) return { ok: false, reason: t(refused) };
   if (!HANDLING[ext]) {
-    return { ok: false, reason: `Chưa nhận đuôi .${ext}. Nhận: ${Object.keys(HANDLING).join(', ')}.` };
+    return { ok: false, reason: t('lib.extNotAccepted', { ext, list: Object.keys(HANDLING).join(', ') }) };
   }
 
   return { ok: true, name, ext };
@@ -221,14 +228,14 @@ export type SniffResult = { ok: true } | { ok: false; reason: string };
  */
 export function sniffType(head: Buffer, ext: string): SniffResult {
   const kind = HANDLING[ext];
-  if (!kind) return { ok: false, reason: `Chưa nhận đuôi .${ext}.` };
+  if (!kind) return { ok: false, reason: t('lib.extUnknown', { ext }) };
 
   if (kind === 'pdf') {
     // Chuẩn PDF cho phép rác trước header, và nhiều file thật có rác thật.
     // Quét 1KB đầu thay vì so đúng offset 0.
     const idx = head.subarray(0, 1024).indexOf('%PDF-');
     if (idx < 0) {
-      return { ok: false, reason: 'File này không phải PDF thật, dù có đuôi .pdf.' };
+      return { ok: false, reason: t('lib.notRealPdf') };
     }
     return { ok: true };
   }
@@ -236,7 +243,7 @@ export function sniffType(head: Buffer, ext: string): SniffResult {
   if (kind === 'zip') {
     // docx/xlsx/pptx đều là ZIP. `PK\x03\x04` = local file header.
     if (!(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
-      return { ok: false, reason: `File này không phải .${ext} thật (bên trong phải là gói ZIP).` };
+      return { ok: false, reason: t('lib.notRealZip', { ext }) };
     }
     return { ok: true };
   }
@@ -247,7 +254,7 @@ export function sniffType(head: Buffer, ext: string): SniffResult {
    * thì không bao giờ có.
    */
   if (head.subarray(0, 8192).includes(0)) {
-    return { ok: false, reason: `File này là dữ liệu nhị phân, không phải văn bản .${ext}.` };
+    return { ok: false, reason: t('lib.notText', { ext }) };
   }
   return { ok: true };
 }

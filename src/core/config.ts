@@ -25,6 +25,7 @@ import {
 } from './types.js';
 import { companyPaths, officePaths, type CompanyPaths, type OfficePaths } from './paths.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
+import { resolveLocale, setLocale, t } from '../i18n/index.js';
 
 export interface LoadedOffice {
   id: string;
@@ -56,7 +57,7 @@ function readYaml(file: string): unknown {
   try {
     return YAML.parse(fs.readFileSync(file, 'utf8')) ?? {};
   } catch (err) {
-    throw new Error(`${path.basename(file)} không phải YAML hợp lệ: ${(err as Error).message}`);
+    throw new Error(t('cfg.notYaml', { file: path.basename(file), reason: (err as Error).message }));
   }
 }
 
@@ -84,16 +85,32 @@ function applyEnvOverrides(cfg: Record<string, unknown>): void {
 export function loadCompanyConfig(dir: string, overrides: Record<string, unknown> = {}): CompanyConfig {
   const pp = companyPaths(dir);
   if (!fs.existsSync(pp.configFile)) {
-    throw new Error(
-      `Không tìm thấy company.yaml trong ${dir}.\nChạy \`agentco init\` để tạo công ty mới.`,
-    );
+    throw new Error(t('cfg.noCompanyYaml', { dir }));
   }
   const raw = readYaml(pp.configFile) as Record<string, unknown>;
   applyEnvOverrides(raw);
   deepMerge(raw, overrides);
 
   const parsed = CompanyConfigSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`company.yaml sai định dạng:\n${formatZodError(parsed.error)}`);
+  if (!parsed.success) throw new Error(t('cfg.badCompanyYaml', { detail: formatZodError(parsed.error) }));
+
+  /**
+   * Interface language, resolved once per config load. → `src/i18n/`
+   *
+   * A module-level locale is the right shape here and not a shortcut: agentco
+   * is one person on one machine, so there is no second user to disagree with.
+   * A per-request locale would be plumbing that can only ever carry one value.
+   *
+   * ⚠ Fallback `vi`, not the OS hint. Every company.yaml already on disk means
+   * Vietnamese even though it says nothing, so reading the OS here would
+   * re-language existing installs on upgrade. `agentco init` is where the OS
+   * hint belongs — it has nothing to preserve.
+   *
+   * ⚠ This value is for the INTERFACE ONLY and must never be passed to a prompt
+   * builder. See `CompanyConfigSchema.language`.
+   */
+  setLocale(resolveLocale([parsed.data.language], 'vi'));
+
   return parsed.data;
 }
 
@@ -116,7 +133,7 @@ export function loadOffice(
   rawCfg['id'] ??= officeId;
   const parsedCfg = OfficeConfigSchema.safeParse(rawCfg);
   if (!parsedCfg.success) {
-    throw new Error(`offices/${officeId}/office.yaml sai định dạng:\n${formatZodError(parsedCfg.error)}`);
+    throw new Error(t('cfg.badOfficeYaml', { office: officeId, detail: formatZodError(parsedCfg.error) }));
   }
   const config = parsedCfg.data;
 
@@ -133,7 +150,7 @@ export function loadOffice(
         // Một file role hỏng KHÔNG được làm sập cả văn phòng — tiêu chí "Ổn định".
         // Bỏ qua nó, cảnh báo, canvas sẽ hiện node đỏ "không tìm thấy vai trò".
         process.emitWarning(
-          `offices/${officeId}/roles/${file} sai định dạng, đã bỏ qua:\n${formatZodError(r.error)}`,
+          `offices/${officeId}/roles/${file} is malformed and was skipped:\n${formatZodError(r.error)}`,
         );
         continue;
       }
@@ -159,8 +176,8 @@ export function loadOffice(
     const tokens = estimateTokens(charter);
     if (tokens > companyConfig.budgets.charter_tokens) {
       process.emitWarning(
-        `Charter văn phòng "${officeId}" ${tokens} token, vượt trần ${companyConfig.budgets.charter_tokens}. ` +
-          `Đã cắt. Charter nằm trong prefix cache của MỌI agent — giữ nó ngắn.`,
+        `Charter of office "${officeId}" is ${tokens} tokens, over the ${companyConfig.budgets.charter_tokens} ceiling. ` +
+          `Truncated. The charter sits in the prefix cache of EVERY agent — keep it short.`,
       );
       charter = truncateToTokens(charter, companyConfig.budgets.charter_tokens);
     }
@@ -173,9 +190,9 @@ export function loadOffice(
     const tokens = estimateTokens(assistantSkills);
     if (tokens > companyConfig.budgets.assistant_skills_tokens) {
       process.emitWarning(
-        `skills/assistant.md của "${officeId}" ${tokens} token, vượt trần ` +
-          `${companyConfig.budgets.assistant_skills_tokens}. Đã cắt. Khối này nằm trong prefix của ` +
-          `MỌI lượt trò chuyện với Assistant — mỗi dòng thừa là thuế thu suốt ca.`,
+        `skills/assistant.md of "${officeId}" is ${tokens} tokens, over the ` +
+          `${companyConfig.budgets.assistant_skills_tokens} ceiling. Truncated. This block sits in the ` +
+          `prefix of EVERY turn of chat with the assistant — each spare line is a tax charged all shift.`,
       );
       assistantSkills = truncateToTokens(assistantSkills, companyConfig.budgets.assistant_skills_tokens);
     }
@@ -236,7 +253,7 @@ export function loadSkill(office: LoadedOffice, role: Role): string {
     // cấu hình. Đường dự phòng chưa có file là trạng thái bình thường của một
     // nhân viên mới: skills mặc định TRỐNG.
     const declared = role.skills[role.skill_level] ?? role.skills['medium'] ?? role.skills['short'];
-    if (declared) process.emitWarning(`Vai trò "${role.id}": không thấy file skill ${declared}`);
+    if (declared) process.emitWarning(`Role "${role.id}": skill file ${declared} not found`);
     return '';
   }
   return fs.readFileSync(file, 'utf8').trim();
@@ -285,7 +302,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 }
 
 function formatZodError(err: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
-  return err.issues.map((i) => `  ${i.path.join('.') || '(gốc)'}: ${i.message}`).join('\n');
+  return err.issues.map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`).join('\n');
 }
 
 export type { CompanyPaths, OfficePaths };

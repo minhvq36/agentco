@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { agentInk, agentWash, agentHue } from '@/lib/colors';
 import { actions, toast, useApp } from '@/lib/store';
 import type { KnowledgeEntry } from '@/lib/types';
+import { plural, t } from '@i18n';
 
 /**
  * Ngăn kéo tri thức. Tìm kiếm dùng index đã có trên client — **0 token**.
@@ -39,7 +40,7 @@ export function KnowledgePanel() {
       .knowledge(officeId)
       .then((r) => alive && setNodes(r.nodes))
       .catch((err) => {
-        toast(err instanceof Error ? err.message : 'Không đọc được kho tri thức.');
+        toast(err instanceof Error ? err.message : t('knowledge.loadFailed'));
         if (alive) setNodes([]);
       });
     return () => {
@@ -56,7 +57,7 @@ export function KnowledgePanel() {
     );
   }, [nodes, q]);
 
-  if (nodes === null) return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
+  if (nodes === null) return <div className="px-4 py-6 text-[13px] text-muted">{t('common.reading')}</div>;
 
   if (nodes.length === 0) {
     return (
@@ -65,12 +66,10 @@ export function KnowledgePanel() {
       // bỏ đâu?". Không trả lời ở đây thì họ đi tìm nút "thêm ghi chú" không có.
       <Empty
         icon={<BookOpen className="h-7 w-7" />}
-        title="Kho tri thức còn trống"
-        hint="Nhân viên tự ghi vào sổ tay riêng khi rút ra bài học; Trợ lý ghi vào kho chung sau mỗi ca. Không ai phải nhập tay — đây là thứ hệ thống tự học được."
+        title={t('knowledge.emptyTitle')}
+        hint={t('knowledge.emptyHint')}
         action={
-          <Button onClick={() => actions.showPanel('library')}>
-            Tài liệu của bạn thì thả vào Tủ tài liệu
-          </Button>
+          <Button onClick={() => actions.showPanel('library')}>{t('knowledge.toLibrary')}</Button>
         }
       />
     );
@@ -79,7 +78,12 @@ export function KnowledgePanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex-none border-b border-line p-3">
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm trong kho…" aria-label="Tìm" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t('knowledge.search')}
+          aria-label={t('knowledge.searchLabel')}
+        />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {filtered?.map((n) => {
@@ -101,22 +105,24 @@ export function KnowledgePanel() {
                       📒 {own}
                     </span>
                   ) : (
-                    <span className="rounded bg-line/70 px-1.5 font-medium text-ink">chung</span>
+                    <span className="rounded bg-line/70 px-1.5 font-medium text-ink">
+                      {t('knowledge.shared')}
+                    </span>
                   )}
-                  {n.pinned && <span className="text-warn">ghim</span>}
+                  {n.pinned && <span className="text-warn">{t('knowledge.pinned')}</span>}
                   {/* Không có nhãn này thì ba bản "Ghi nhớ" trông y hệt nhau và
                       người dùng tưởng hệ thống đang nhân bản rác. */}
-                  {n.superseded && <span className="text-warn">đã bị bản mới đè</span>}
-                  <span className="tabular-nums">{n.tokens} token</span>
+                  {n.superseded && <span className="text-warn">{t('knowledge.superseded')}</span>}
+                  <span className="tabular-nums">{plural('knowledge.tokens', n.tokens)}</span>
                   <span>·</span>
-                  <span className="tabular-nums">dùng {n.hits} lần</span>
+                  <span className="tabular-nums">{plural('knowledge.hits', n.hits)}</span>
                 </div>
               </button>
             </li>
           );
         })}
         {filtered?.length === 0 && (
-          <li className="px-4 py-6 text-[13px] text-muted">Không có ghi chú nào khớp “{q}”.</li>
+          <li className="px-4 py-6 text-[13px] text-muted">{t('knowledge.noMatch', { q })}</li>
         )}
       </ul>
 
@@ -130,10 +136,10 @@ export function KnowledgePanel() {
         "thêm ghi chú" không có.
       */}
       <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
-        Đây là thứ hệ thống <b>tự rút ra</b>: Trợ lý ghi vào kho chung, nhân viên ghi vào sổ tay riêng (📒
-        trên node của họ, chỉ mình họ đọc). Bạn sửa và xoá được, nhưng không thêm mới —{' '}
+        {t('knowledge.footerBefore')} <b>{t('knowledge.footerBold')}</b>
+        {t('knowledge.footerAfter')}{' '}
         <button className="underline hover:text-ink" onClick={() => actions.showPanel('library')}>
-          tài liệu của bạn thì thả vào Tủ tài liệu
+          {t('knowledge.toLibraryInline')}
         </button>
         .
       </div>
@@ -186,7 +192,7 @@ function NodeDialog({
       const r = await api.editKnowledge(officeId, node.id, remove ? { remove: true } : { body: text });
       onDone(r.nodes);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không lưu được.');
+      toast(err instanceof Error ? err.message : t('common.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -202,11 +208,12 @@ function NodeDialog({
           <DialogDescription>
             {own ? (
               <>
-                Sổ tay riêng của <b>{own}</b> — chỉ mình người này đọc.
+                {t('knowledge.ownBefore')} <b>{own}</b> {t('knowledge.ownAfter')}
               </>
             ) : (
               <>
-                Kho <b>chung</b> — mọi nhân viên trong văn phòng đều đọc, ở mọi việc.
+                {t('knowledge.sharedBefore')} <b>{t('knowledge.shared')}</b>{' '}
+                {t('knowledge.sharedAfter')}
               </>
             )}{' '}
             <code>{node?.file}</code>
@@ -225,8 +232,8 @@ function NodeDialog({
               <>
                 <br />
                 <br />
-                <b className="text-warn">Đã có bản mới thay thế.</b> Bản này không còn đi vào prompt
-                của ai và sẽ được dọn ở lần dọn tới.
+                <b className="text-warn">{t('knowledge.supersededTitle')}</b>{' '}
+                {t('knowledge.supersededBody')}
               </>
             )}
           </DialogDescription>
@@ -239,20 +246,20 @@ function NodeDialog({
           className="font-mono text-[11.5px] leading-relaxed"
         />
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Sửa xong áp dụng ngay cho việc giao <b>từ giờ trở đi</b>; việc đang chạy giữ nguyên bản cũ.
-          Ghi chú nằm trong bộ nhớ đệm nên mỗi lần sửa là một lần ghi lại cache.
+          {t('knowledge.editNoteBefore')} <b>{t('knowledge.editNoteBold')}</b>
+          {t('knowledge.editNoteAfter')}
         </p>
 
         <DialogFooter>
-          <Button onClick={onClose}>Thôi</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
           {confirmDel ? (
             <Button variant="danger" disabled={busy} onClick={() => void apply(true)}>
-              {busy ? 'Đang xoá…' : 'Chắc chắn xoá'}
+              {busy ? t('common.deleting') : t('knowledge.confirmDelete')}
             </Button>
           ) : (
             <Button variant="danger" disabled={busy} onClick={() => setConfirmDel(true)}>
               <Trash2 className="h-4 w-4" />
-              Xoá
+              {t('knowledge.delete')}
             </Button>
           )}
           <Button
@@ -260,7 +267,7 @@ function NodeDialog({
             disabled={busy || text.trim() === (node?.body ?? '').trim()}
             onClick={() => void apply(false)}
           >
-            {busy ? 'Đang lưu…' : 'Lưu'}
+            {busy ? t('common.saving') : t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

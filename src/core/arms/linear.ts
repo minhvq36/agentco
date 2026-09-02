@@ -30,7 +30,7 @@ const MCP_URL = 'https://mcp.linear.app/mcp';
 
 export const LINEAR_ARM: CatalogArm = {
   id: 'linear',
-  name: 'Linear',
+  name: 'armCat.linear.name',
   icon: '📐',
   /**
    * ⚠ CÂU NÀY PHẢI NÓI RA BÁN KÍNH — và ở đây bán kính **hẹp hơn** Notion, nên
@@ -42,9 +42,7 @@ export const LINEAR_ARM: CatalogArm = {
    * dùng chọn trên màn Đồng ý (đo: ba lần đăng nhập ra hai workspace id khác
    * nhau). Nên "chỉ đọc" ở mục này là **chìa thật sự không ghi được**.
    */
-  blurb:
-    'Đọc và (nếu bạn cho phép) ghi vào một workspace Linear — issue, project, tài liệu. ' +
-    'Bạn chọn workspace nào ngay lúc đăng nhập.',
+  blurb: 'armCat.linear.blurb',
   price: 'login',
   /**
    * MCP **hosted chính chủ**, Streamable HTTP. Rủi ro chuỗi cung ứng §11d = **0**:
@@ -121,11 +119,7 @@ export const LINEAR_ARM: CatalogArm = {
    * *"tôi có cần nhân viên mở việc mới không"*, và với Linear câu trả lời đó
    * dẫn thẳng lên nấc Toàn quyền.
    */
-  tierSay: {
-    add:
-      'Đính kèm tệp và tạo nhãn mới. ⚠ KHÔNG mở được issue mới — Linear gộp việc tạo và ' +
-      'việc sửa issue vào chung một lệnh, nên mở issue nằm ở nấc Toàn quyền.',
-  },
+  tierSay: { add: 'armCat.linear.tierAdd' },
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ 🔴 CA THẬT, LƯỢT CHẠY ĐẦU TIÊN QUA UI (user báo 30/08).                  │
@@ -151,8 +145,9 @@ export const LINEAR_ARM: CatalogArm = {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   hint:
-    'Nhãn cánh tay Linear là tên WORKSPACE, không phải project — nhiều workspace không có ' +
-    'project nào. Việc nằm thẳng trong team, và list_issues đã trả sẵn status, lọc luôn trên đó.',
+    'A Linear arm is labelled with a WORKSPACE name, not a project — plenty of workspaces have ' +
+    'no project at all. Issues sit directly in a team, and list_issues already returns status, ' +
+    'so filter on that.',
   /** RỖNG — chìa sinh ra từ luồng đăng nhập, không do người dùng gõ. → `price: 'login'` */
   secrets: [],
   /**

@@ -45,7 +45,7 @@ export interface ZipFile {
 
 export function openZip(buf: Buffer): ZipFile {
   const eocd = findEocd(buf);
-  if (eocd < 0) throw new Error('Không đọc được cấu trúc ZIP (thiếu bản ghi kết thúc).');
+  if (eocd < 0) throw new Error('could not read the ZIP structure (no end-of-central-directory record)');
 
   const centralOffset = buf.readUInt32LE(eocd + 16);
   const count = buf.readUInt16LE(eocd + 10);
@@ -56,9 +56,9 @@ export function openZip(buf: Buffer): ZipFile {
    * thay vì đọc bừa một offset vô nghĩa rồi ném một lỗi không ai hiểu.
    */
   if (centralOffset === 0xffffffff || count === 0xffff) {
-    throw new Error('File nén dạng ZIP64 — quá lớn để đọc.');
+    throw new Error('ZIP64 archive — too large to read');
   }
-  if (centralOffset >= buf.length) throw new Error('Cấu trúc ZIP hỏng.');
+  if (centralOffset >= buf.length) throw new Error('corrupt ZIP structure');
 
   const entries = new Map<string, ZipEntry>();
   let p = centralOffset;
@@ -82,7 +82,7 @@ export function openZip(buf: Buffer): ZipFile {
       const e = entries.get(name);
       if (!e) return undefined;
       if (e.uncompressedSize > MAX_ENTRY_BYTES) {
-        throw new Error(`Mục "${name}" trong file quá lớn.`);
+        throw new Error(`ZIP entry "${name}" is too large`);
       }
 
       /**
@@ -92,7 +92,7 @@ export function openZip(buf: Buffer): ZipFile {
        */
       const lo = e.localOffset;
       if (lo + 30 > buf.length || buf.readUInt32LE(lo) !== SIG_LOCAL) {
-        throw new Error(`Mục "${name}" trong file hỏng.`);
+        throw new Error(`ZIP entry "${name}" is corrupt`);
       }
       const nameLen = buf.readUInt16LE(lo + 26);
       const extraLen = buf.readUInt16LE(lo + 28);
@@ -101,7 +101,7 @@ export function openZip(buf: Buffer): ZipFile {
 
       if (e.method === 0) return Buffer.from(raw);
       if (e.method === 8) return zlib.inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES });
-      throw new Error(`Mục "${name}" dùng kiểu nén chưa hỗ trợ (${e.method}).`);
+      throw new Error(`ZIP entry "${name}" uses an unsupported compression method (${e.method})`);
     },
   };
 }

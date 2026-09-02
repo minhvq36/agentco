@@ -196,7 +196,7 @@ test('⭐ câu con trỏ KHÔNG được dặn một việc không làm được
   // Bản đầu ghi *"dùng Read kèm offset/limit"* cho một file MỘT DÒNG — một lời
   // dặn không thực hiện được, ở đúng chỗ model cần chỉ đường nhất. → §5m
   const s = spillNotice(planSpill(NOTICE, 'mcp__h__notion-fetch', artifacts)!);
-  assert.match(s, /tách dòng sẵn/);
+  assert.match(s, /already broken into lines/);
 });
 
 // ───────────────────────────────────────────────── tên và chỗ đặt
@@ -248,7 +248,7 @@ test('🔴 CÂU THAY THẾ KHÔNG ĐƯỢC MANG CHỮ "Error"', () => {
    */
   const s = spillNotice(planSpill(NOTICE, 'mcp__notion__notion-fetch', artifacts)!);
   assert.doesNotMatch(s, /error/i);
-  assert.match(s, /KHÔNG phải lỗi/);
+  assert.match(s, /did NOT fail/);
 });
 
 test('⭐ câu thay thế nói được VIỆC KẾ TIẾP, ngay trên dòng có đường dẫn', () => {

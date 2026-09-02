@@ -74,7 +74,7 @@ test('🔴 giá trị mở đầu bằng `-` bị TỪ CHỐI — chặn TRƯỚ
 
 test('kiểm TRƯỚC khi thay: `--tag=--force` không lách được luật gạch', () => {
   // Kiểm sau khi ghép thì chuỗi đã lẫn phần cố định và luật mất nghĩa ngay.
-  assert.throws(() => fillArgv(act(), { tag: '--force' }), /gạch/);
+  assert.throws(() => fillArgv(act(), { tag: '--force' }), /starts with a dash/);
 });
 
 test('số nguyên: min · max · không phải số', () => {
@@ -83,20 +83,20 @@ test('số nguyên: min · max · không phải số', () => {
     params: [{ name: 'mat', type: 'integer', required: true, min: 2, max: 100 }],
   });
   assert.deepEqual(fillArgv(a, { mat: 6 }), ['x', '--mat', '6']);
-  assert.throws(() => fillArgv(a, { mat: 1 }), /≥ 2/);
-  assert.throws(() => fillArgv(a, { mat: 999 }), /≤ 100/);
-  assert.throws(() => fillArgv(a, { mat: 'sáu' }), /số nguyên/);
+  assert.throws(() => fillArgv(a, { mat: 1 }), />= 2/);
+  assert.throws(() => fillArgv(a, { mat: 999 }), /<= 100/);
+  assert.throws(() => fillArgv(a, { mat: 'sáu' }), /whole number/);
 });
 
 test('khuôn `pattern` và tham số bắt buộc còn trống', () => {
   const a = act({ params: [{ name: 'tag', type: 'string', required: true, pattern: '^[a-z0-9.-]+$' }] });
-  assert.throws(() => fillArgv(a, { tag: 'Có Dấu' }), /không khớp khuôn/);
-  assert.throws(() => fillArgv(a, {}), /thiếu tham số bắt buộc/);
+  assert.throws(() => fillArgv(a, { tag: 'Có Dấu' }), /does not match the pattern/);
+  assert.throws(() => fillArgv(a, {}), /missing required parameter/);
 });
 
 test('ô trống không có tham số tương ứng ⇒ lỗi, không im lặng để nguyên `{x}`', () => {
   const a = act({ run: ['x', '{khong_khai}'], params: [] });
-  assert.throws(() => fillArgv(a, {}), /không có tham số đó/);
+  assert.throws(() => fillArgv(a, {}), /has no parameter for/);
 });
 
 // ────────────────────────────────────────────────── BỘ CHẠY — bốn cửa lỗi

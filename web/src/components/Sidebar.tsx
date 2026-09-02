@@ -7,6 +7,7 @@ import {
   FolderOpen,
   MessageSquare,
   ScrollText,
+  Settings,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -14,12 +15,14 @@ import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/misc';
 import { actions, useApp, type PanelId } from '@/lib/store';
+import { t, type MessageKey } from '@i18n';
 import { ChatPanel } from './panels/ChatPanel';
 import { PlansPanel } from './panels/PlansPanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { KnowledgePanel } from './panels/KnowledgePanel';
 import { LibraryPanel } from './panels/LibraryPanel';
 import { ArtifactsPanel } from './panels/ArtifactsPanel';
+import { SettingsPanel } from './panels/SettingsPanel';
 
 /**
  * BA KHO ĐỨNG LIỀN NHAU, và thứ tự đó có chủ ý.
@@ -35,14 +38,19 @@ import { ArtifactsPanel } from './panels/ArtifactsPanel';
  * dùng phải nhớ. Đặt "Kết quả" ở GIỮA vì nó là cái duy nhất có cả hai đầu:
  * nhân viên đọc tài liệu ở trên, và học được gì thì thành tri thức ở dưới.
  * → docs/SPEC-library.md §1 · docs/SPEC-artifacts.md
+ *
+ * ⚠ `label` is a MESSAGE KEY, not a string. This table is module-level, so a
+ * resolved string here would be frozen at import time and every tab would keep
+ * the language the page loaded with. The key is resolved at render instead.
  */
-const TABS: Array<{ id: PanelId; icon: LucideIcon; label: string }> = [
-  { id: 'chat', icon: MessageSquare, label: 'Nói với Trợ lý' },
-  { id: 'plans', icon: ScrollText, label: 'Nhật ký công việc' },
-  { id: 'overview', icon: Building2, label: 'Tổng quan công ty' },
-  { id: 'library', icon: FolderOpen, label: 'Tủ tài liệu' },
-  { id: 'artifacts', icon: FileCheck2, label: 'Kết quả' },
-  { id: 'knowledge', icon: BookOpen, label: 'Kho tri thức' },
+const TABS: Array<{ id: PanelId; icon: LucideIcon; label: MessageKey }> = [
+  { id: 'chat', icon: MessageSquare, label: 'sidebar.chat' },
+  { id: 'plans', icon: ScrollText, label: 'sidebar.plans' },
+  { id: 'overview', icon: Building2, label: 'sidebar.overview' },
+  { id: 'library', icon: FolderOpen, label: 'sidebar.library' },
+  { id: 'artifacts', icon: FileCheck2, label: 'sidebar.artifacts' },
+  { id: 'knowledge', icon: BookOpen, label: 'sidebar.knowledge' },
+  { id: 'settings', icon: Settings, label: 'sidebar.settings' },
 ];
 
 const MIN_W = 300;
@@ -92,8 +100,14 @@ export function Sidebar() {
    * văn phòng xong thì kết nối Notion/Linear/GitHub không còn cửa nào để dọn.
    */
   const noOffices = useApp((s) => (s.company?.offices.length ?? 0) === 0);
-  const tabs = noOffices ? TABS.filter((t) => t.id === 'overview') : TABS;
-  const active = tabs.find((t) => t.id === panel);
+  /**
+   * Settings survives the no-offices state alongside Overview, and for the same
+   * reason: it is COMPANY-level. A fresh install lands here with nothing built
+   * yet, and the language of the interface is exactly the thing someone wants
+   * to fix before they start naming their first office in it.
+   */
+  const tabs = noOffices ? TABS.filter((tab) => tab.id === 'overview' || tab.id === 'settings') : TABS;
+  const active = tabs.find((tab) => tab.id === panel);
 
   const paneRef = useRef<HTMLElement | null>(null);
   const [width, setWidth] = useState<number>(() => {
@@ -154,27 +168,28 @@ export function Sidebar() {
   return (
     <div className="flex flex-none border-r border-line bg-panel">
       <nav className="flex w-14 flex-none flex-col items-center gap-1 border-r border-line py-2">
-        {tabs.map((t) => {
-          const Icon = t.icon;
-          const on = panel === t.id;
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const on = panel === tab.id;
+          const label = t(tab.label);
           return (
             /* `side="right"`: rail này XẾP DỌC, nên tooltip mặc định (`top`)
                phủ đúng lên nút phía trên. → chú thích ở `Tip` */
-            <Tip key={t.id} label={t.label} side="right">
+            <Tip key={tab.id} label={label} side="right">
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={t.label}
+                aria-label={label}
                 aria-pressed={on}
                 className={on ? 'bg-accent-soft text-accent' : ''}
-                onClick={() => actions.openPanel(t.id)}
+                onClick={() => actions.openPanel(tab.id)}
               >
                 <span className="relative">
                   <Icon className="h-[18px] w-[18px]" />
-                  {t.id === 'chat' && unread > 0 && !on && (
+                  {tab.id === 'chat' && unread > 0 && !on && (
                     <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent" />
                   )}
-                  {t.id === 'plans' && working && !on && (
+                  {tab.id === 'plans' && working && !on && (
                     <span className="soft-pulse absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent" />
                   )}
                 </span>
@@ -189,18 +204,18 @@ export function Sidebar() {
           ref={paneRef}
           className="relative flex flex-none flex-col"
           style={{ width }}
-          aria-label={active.label}
+          aria-label={t(active.label)}
         >
           <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.09em] text-muted">
-              {active.label}
+              {t(active.label)}
             </span>
             <div className="flex-1" />
-            <Tip label={wide ? 'Thu về bề rộng thường' : 'Mở rộng bảng'}>
+            <Tip label={wide ? t('sidebar.narrowHint') : t('sidebar.widenHint')}>
               <Button
                 size="iconSm"
                 variant="ghost"
-                aria-label={wide ? 'Thu hẹp bảng' : 'Mở rộng bảng'}
+                aria-label={wide ? t('sidebar.narrow') : t('sidebar.widen')}
                 onClick={() => applyWidth(wide ? 336 : WIDE_W)}
               >
                 <ChevronsLeftRight className="h-4 w-4" />
@@ -209,7 +224,7 @@ export function Sidebar() {
             <Button
               size="iconSm"
               variant="ghost"
-              aria-label="Đóng bảng"
+              aria-label={t('sidebar.closePanel')}
               onClick={() => actions.openPanel(null)}
             >
               <X className="h-4 w-4" />
@@ -224,6 +239,7 @@ export function Sidebar() {
             {panel === 'library' && <LibraryPanel />}
             {panel === 'artifacts' && <ArtifactsPanel />}
             {panel === 'knowledge' && <KnowledgePanel />}
+            {panel === 'settings' && <SettingsPanel />}
           </div>
 
           {/* Tay nắm kéo. Vùng bắt rộng 7px nhưng vạch chỉ hiện khi rê tới —
@@ -231,8 +247,8 @@ export function Sidebar() {
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="Kéo để đổi bề rộng bảng"
-            title="Kéo để đổi bề rộng · nhấp đúp để về mặc định"
+            aria-label={t('sidebar.resizeHandle')}
+            title={t('sidebar.resizeHint')}
             onPointerDown={startResize}
             onDoubleClick={() => applyWidth(336)}
             className="absolute -right-[3px] top-0 z-20 h-full w-[7px] cursor-col-resize touch-none

@@ -196,9 +196,19 @@ export function tokenize(text: string): string[] {
   ];
 }
 
+/**
+ * Function words kept out of the keyword index.
+ *
+ * ⚠ This is LINGUISTIC DATA, not interface text — it is pointed at the notes the
+ * user writes, so it has to carry whatever language the user writes in. Today's
+ * store is Vietnamese, so the list holds Vietnamese, and it stays here rather
+ * than moving into `src/i18n/`: the catalogue follows the INTERFACE switch, and
+ * a person's notes do not. The day someone writes notes in German, this list is
+ * the place that needs the addition — not the catalogue.
+ */
 const STOPWORDS = new Set(
-  ('và của có là không cho với những các được người khi này đó thì mà nếu ở từ về ra vào lên xuống ' +
-    'một hai để nên như đã sẽ đang cũng rất nhiều ít hơn nhất bị bởi vì nhưng hoặc tôi bạn chúng ta ' +
+  ('và của có là không cho với những các được người khi này đó thì mà nếu ở từ về ra vào lên xuống ' + // i18n-allow-vietnamese: stopword data for indexing Vietnamese notes, not UI text
+    'một hai để nên như đã sẽ đang cũng rất nhiều ít hơn nhất bị bởi vì nhưng hoặc tôi bạn chúng ta ' + // i18n-allow-vietnamese: same list, continued
     'the and for with that this from you your are was were will have has not but can all any its it')
     .split(/\s+/),
 );

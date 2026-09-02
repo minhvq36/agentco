@@ -41,6 +41,14 @@ import {
 } from '../web/src/lib/cli-form.ts';
 import { parseCliArm } from '../dist/core/cli-arm.js';
 import { defaultArmLabel } from '../dist/core/armexec.js';
+/**
+ * The same `t` the UI uses, from `dist` — `cli-form.ts` TAKES `t` as an argument
+ * rather than importing it (node loads that file as raw `.ts`; see the box at the
+ * top of it). Real strings, not a stub that echoes the key back: the cases below
+ * run through `slugId`, `toArgv` and the paste gate, so only real text measures
+ * what actually ships.
+ */
+import { t } from '../dist/i18n/index.js';
 
 // ═══════════════════════════════════════════════ 1 · Tách và ghép dòng lệnh
 
@@ -206,14 +214,14 @@ test('ô trống trong cú pháp là NGUỒN SỰ THẬT của danh sách tham s
 // ══════════════════════════════════════════════ 4 · Nối với LÕI và với CỬA
 
 test('🔴 form KHÔNG được đẻ ra thứ mà cửa dán từ chối', () => {
-  for (const draft of [full(), sampleAct()]) {
+  for (const draft of [full(), sampleAct(t)]) {
     const r = parseCliArm(draftToDecl([draft]));
     assert.equal(r.ok, true, `cửa dán từ chối: ${r.ok ? '' : r.error}`);
   }
 });
 
 test('mẫu "chạy thử" đầy đủ và tự nhận diện được', () => {
-  const s = sampleAct();
+  const s = sampleAct(t);
   const decl = draftToDecl([s]);
   assert.equal(decl.actions.length, 1, 'mẫu phải qua được bộ lọc "việc còn trống"');
   assert.equal(isCliPaste(JSON.stringify(decl)), true);
@@ -254,23 +262,23 @@ test('🔴 lệnh còn dở KHÔNG bị vứt đi — đo được: 2 lệnh và
    * ⭐ Bộ lọc CHÍNH LÀ bug: nó xoá dữ liệu người dùng để đầu ra hợp lệ — hàng
    * giả. → [[agentco-fallback-throws-away-answers]]
    */
-  const form = [sampleAct(), blankAct()];
+  const form = [sampleAct(t), blankAct()];
   const decl = draftToDecl(form, DIR);
   assert.equal(decl.actions.length, 2, 'lệnh còn dở bị vứt đi');
   assert.equal(declToDraft(decl)!.acts.length, 2, 'đi một vòng JSON là mất dòng');
 });
 
 test('🔴 lệnh còn dở làm nút MỜ — và chỉ đúng dòng, đúng ô', () => {
-  assert.deepEqual(cliProblems([sampleAct()]), [], 'lệnh đủ mà vẫn kêu');
-  const bad = cliProblems([sampleAct(), blankAct()]);
+  assert.deepEqual(cliProblems([sampleAct(t)], t), [], 'lệnh đủ mà vẫn kêu');
+  const bad = cliProblems([sampleAct(t), blankAct()], t);
   assert.deepEqual(
     bad.map((p) => [p.at, p.field]),
     [[1, 'say'], [1, 'line']],
     'phải chỉ đúng dòng 2, đúng hai ô còn trống',
   );
   // Thiếu MỘT ô thôi cũng là chưa xong.
-  assert.deepEqual(cliProblems([{ ...sampleAct(), line: '' }]).map((p) => p.field), ['line']);
-  assert.deepEqual(cliProblems([{ ...sampleAct(), say: '  ' }]).map((p) => p.field), ['say']);
+  assert.deepEqual(cliProblems([{ ...sampleAct(t), line: '' }], t).map((p) => p.field), ['line']);
+  assert.deepEqual(cliProblems([{ ...sampleAct(t), say: '  ' }], t).map((p) => p.field), ['say']);
 });
 
 test('🔴 khối JSON hỏng ⇒ KHÔNG ngã về bản form', () => {
@@ -279,10 +287,10 @@ test('🔴 khối JSON hỏng ⇒ KHÔNG ngã về bản form', () => {
    * trong lúc ô JSON đang đỏ, và bấm vào thì lưu **bản form** — không phải thứ
    * đang hiện trên màn hình.
    */
-  assert.equal(cliDecl([sampleAct()], DIR, '{ hỏng'), null);
+  assert.equal(cliDecl([sampleAct(t)], DIR, '{ hỏng'), null);
   assert.equal(cliCount(null), 0, 'null phải đếm ra 0 để nút mờ');
   // Vẫn phải chạy đúng ở hai nhánh lành.
-  assert.equal(cliCount(cliDecl([sampleAct()], DIR, null)), 1);
+  assert.equal(cliCount(cliDecl([sampleAct(t)], DIR, null)), 1);
   assert.equal(cliCount(cliDecl([], DIR, '{"type":"cli","actions":[{"id":"a"}]}')), 1);
 });
 

@@ -49,6 +49,8 @@ import path from 'node:path';
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
+import { t } from '../i18n/index.js';
+
 // ══════════════════════════════════════════════════ 1 · TỜ KHAI (hai tờ)
 
 /**
@@ -99,7 +101,7 @@ export const CliParamSchema = z.object({
    * │ đúng **theo cấu tạo**. Ô này nhận cả hai, nhưng đường chính là nút Thử.   │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  example: z.string().max(60, 'ví dụ phải ngắn — nó nằm trong prefix mọi lượt').optional(),
+  example: z.string().max(60, t('cliArm.exampleTooLong')).optional(),
   /**
    * 🔴 GIÁ TRỊ KHÔNG ĐƯỢC BIẾN THÀNH CỜ. → §16e
    *
@@ -112,7 +114,7 @@ export const CliParamSchema = z.object({
 });
 
 export const CliActionSchema = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9_]*$/, 'id chỉ gồm chữ thường, số và gạch dưới'),
+  id: z.string().regex(/^[a-z][a-z0-9_]*$/, t('cliArm.badId')),
   /** Câu tiếng người cho UI và cho dòng danh bạ. KHÔNG vào MCP. */
   say: z.string().min(1),
   /** 📄 TỜ HƯỚNG DẪN — vào thẳng `description` của tool. */
@@ -262,9 +264,9 @@ export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: f
   if (bad.length) {
     const say = [...new Set(bad)].map((k) => {
       const near = nearestKey(k);
-      return near ? `"${k}" — ý bạn là "${near}"?` : `"${k}" không có trong tờ khai`;
+      return near ? t('cliArm.didYouMean', { key: k, near }) : t('cliArm.unknownKey', { key: k });
     });
-    return { ok: false, error: `Khoá không nhận ra: ${say.join(' · ')}` };
+    return { ok: false, error: t('cliArm.unknownKeys', { list: say.join(' · ') }) };
   }
 
   const r = CliArmSchema.safeParse(input);
@@ -298,8 +300,7 @@ export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: f
         return {
           ok: false,
           error:
-            `Hai lệnh cùng mã "${a.id}" — mỗi lệnh phải có mã riêng. ` +
-            `Mã suy từ ô Tên, nên hai tên gần giống nhau có thể ra cùng một mã: đổi tên một trong hai.`,
+            t('cliArm.duplicateId', { id: a.id }),
         };
       }
       seen.add(a.id);
@@ -433,29 +434,29 @@ export function fillArgv(a: CliAction, args: Record<string, unknown>): string[] 
 
   const value = (name: string): string => {
     const p = byName.get(name);
-    if (!p) throw new ArgvError(`argv có ô trống "{${name}}" nhưng khai báo không có tham số đó`);
+    if (!p) throw new ArgvError(`argv has a placeholder "{${name}}" that the declaration has no parameter for`);
     const raw = args[name];
     if (raw === undefined || raw === null || raw === '') {
-      if (p.required) throw new ArgvError(`thiếu tham số bắt buộc "${name}"`);
-      throw new ArgvError(`tham số "${name}" chưa có giá trị`);
+      if (p.required) throw new ArgvError(`missing required parameter "${name}"`);
+      throw new ArgvError(`parameter "${name}" has no value`);
     }
     if (p.type === 'integer') {
       const n = Number(raw);
-      if (!Number.isInteger(n)) throw new ArgvError(`"${name}" phải là số nguyên, nhận "${String(raw)}"`);
-      if (p.min !== undefined && n < p.min) throw new ArgvError(`"${name}" phải ≥ ${p.min}`);
-      if (p.max !== undefined && n > p.max) throw new ArgvError(`"${name}" phải ≤ ${p.max}`);
+      if (!Number.isInteger(n)) throw new ArgvError(`"${name}" has to be a whole number, got "${String(raw)}"`);
+      if (p.min !== undefined && n < p.min) throw new ArgvError(`"${name}" has to be >= ${p.min}`);
+      if (p.max !== undefined && n > p.max) throw new ArgvError(`"${name}" has to be <= ${p.max}`);
       return String(n);
     }
     const s = String(raw);
     // 🔴 LUẬT GẠCH — xem chú thích `allow_dash`.
     if (!p.allow_dash && s.startsWith('-')) {
       throw new ArgvError(
-        `"${name}" mở đầu bằng dấu gạch ("${s}") — giá trị không được biến thành một cờ dòng lệnh. ` +
-          `Nếu đây thật sự là ý bạn, khai allow_dash cho tham số này.`,
+        `"${name}" starts with a dash ("${s}") — a value must never be able to turn into a ` +
+          `command-line flag. If that really is what you meant, declare allow_dash on this parameter.`,
       );
     }
     if (p.pattern && !new RegExp(p.pattern).test(s)) {
-      throw new ArgvError(`"${name}" không khớp khuôn ${p.pattern}: "${s}"`);
+      throw new ArgvError(`"${name}" does not match the pattern ${p.pattern}: "${s}"`);
     }
     return s;
   };
@@ -490,7 +491,7 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
        * Vắng `example` ⇒ **không in gì**, nên mọi cánh tay đang chạy không đổi
        * một ký tự nào trong prefix. (Cùng luật chống-hỏng-lây của `does`.)
        */
-      if (p.example) base = base.describe(`ví dụ: ${p.example}`);
+      if (p.example) base = base.describe(`example: ${p.example}`);
       shape[p.name] = p.required ? base : base.optional();
     }
 
@@ -511,7 +512,7 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
           // Cổng chặn TRƯỚC khi spawn. Trả `isError` để model biết nó sai THAM SỐ
           // chứ không phải máy hỏng — hai chuyện, hai cách xử lý khác nhau.
           return {
-            content: [{ type: 'text', text: `Tham số không hợp lệ: ${(e as Error).message}` }],
+            content: [{ type: 'text', text: `Invalid parameter: ${(e as Error).message}` }],
             isError: true,
           };
         }
@@ -543,8 +544,8 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
               {
                 type: 'text',
                 text:
-                  `Không chạy được lệnh — thư mục làm việc "${cwd}" không tồn tại. ` +
-                  `Đây KHÔNG phải chuyện thiếu "${filled[0]}" trên máy; đừng đi cài gì cả.`,
+                  `The command could not run — the working directory "${cwd}" does not exist. ` +
+                  `This is NOT about "${filled[0]}" missing on the machine; do not install anything.`,
               },
             ],
             isError: true,
@@ -570,8 +571,8 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
               {
                 type: 'text',
                 text:
-                  `Không chạy được lệnh — máy này không tìm thấy "${filled[0]}" (hoặc không có quyền chạy nó). ` +
-                  `Đây KHÔNG phải lỗi tham số, và cũng không phải lệnh chạy rồi hỏng.\n${r.stderr}`,
+                  `The command could not run — this machine cannot find "${filled[0]}" (or may not run it). ` +
+                  `This is NOT a parameter problem, and not a command that ran and then failed.\n${r.stderr}`,
               },
             ],
             isError: true,
@@ -582,7 +583,7 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
             content: [
               {
                 type: 'text',
-                text: `Lệnh chạy quá ${a.timeout_ms} ms nên đã bị dừng. Kết quả (nếu có) không đầy đủ.\n${body}`,
+                text: `The command ran past ${a.timeout_ms} ms and was stopped. Any output below is incomplete.\n${body}`,
               },
             ],
             isError: true,
@@ -593,16 +594,16 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
             content: [
               {
                 type: 'text',
-                text: `Lệnh thoát với mã 0 NHƯNG kết quả có dấu hiệu hỏng ("${hit}"). Coi như THẤT BẠI.\n${body}`,
+                text: `The command exited 0 BUT the output carries a failure marker ("${hit}"). Treat this as FAILED.\n${body}`,
               },
             ],
             isError: true,
           };
         }
         if (!r.ok) {
-          return { content: [{ type: 'text', text: `Lệnh thất bại (mã ${r.code}).\n${body}` }], isError: true };
+          return { content: [{ type: 'text', text: `The command failed (exit ${r.code}).\n${body}` }], isError: true };
         }
-        return { content: [{ type: 'text', text: body || '(lệnh chạy xong, không in gì)' }] };
+        return { content: [{ type: 'text', text: body || '(the command finished and printed nothing)' }] };
       },
       {
         // Vẫn khai `annotations` cho ĐÚNG giao thức MCP — nhưng chúng KHÔNG dựng
