@@ -64,11 +64,6 @@ function AgentProfile({ node }: { node: CanvasNode }) {
       </Label>
       <Textarea id="ag-pitch" rows={3} value={pitch} onChange={(e) => setPitch(e.target.value)} />
 
-      <p className="mt-3 text-xs leading-relaxed text-muted">
-        Lưu sẽ làm Trợ lý ghi lại bộ nhớ đệm một lần — giới thiệu nằm trong ngữ cảnh của nó ở mọi lượt
-        trò chuyện.
-      </p>
-
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
           Thôi
@@ -456,22 +451,6 @@ function ModelPicker({ node }: { node: CanvasNode }) {
         </p>
       )}
 
-      {isAssistant ? (
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          Trợ lý <b>vẫn nhớ nguyên</b> cuộc trò chuyện — bản ghi nằm trên đĩa, không thuộc về model.
-          Cái mất là bộ nhớ đệm: lượt sau phải gửi lại toàn bộ ngữ cảnh một lần, nên trò chuyện càng
-          dài thì lần đổi này càng tốn. Sau đó về lại bình thường.
-        </p>
-      ) : (
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          Nhân viên làm xong là quên, nên đổi model <b>không mất gì cả</b> — chỉ ghi lại bộ nhớ đệm
-          một lần cho model mới.
-        </p>
-      )}
-      <p className="mt-2 text-xs leading-relaxed text-muted">
-        Việc đang chạy giữ nguyên model cũ cho tới khi xong. Mức mới áp dụng cho việc giao từ giờ.
-      </p>
-
       {/*
         Giới hạn nằm CHUNG ô với mức model, không tách màn hình riêng: người dùng
         đổi tier là lúc duy nhất họ nghĩ về cái giá, và cùng một việc trên `deep`
@@ -504,10 +483,6 @@ function ModelPicker({ node }: { node: CanvasNode }) {
               <p className="mt-1 text-[11.5px] text-muted">số bước tối đa</p>
             </div>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            Đặt <b>rộng tay</b>. Chạm giới hạn giữa chừng là mất trắng số tiền đã tiêu mà chưa có kết
-            quả — còn việc nào tiêu ít thì vốn dĩ đã chỉ tính tiền phần nó dùng.
-          </p>
         </div>
       )}
 
@@ -585,13 +560,14 @@ function BashSwitch({ node }: { node: CanvasNode }) {
             setBusy(false);
           }}
         />
+        {/*
+          Chỉ còn cái nhãn. Câu tả năng lực đã bỏ 02/09 (app đang toàn chữ) —
+          thứ ở lại là câu CẢNH BÁO ngay dưới, và nó chỉ hiện khi công tắc BẬT.
+          Một câu nói về hậu quả, đúng lúc có hậu quả, đáng hơn ba câu tả tính
+          năng đọc trước khi người ta kịp quyết.
+        */}
         <span className="min-w-0">
           <span className="block text-[13px] text-ink">Cho chạy lệnh trên máy</span>
-          <span className="block text-xs leading-relaxed text-muted">
-            Xem được <b>kích thước · ngày sửa · dung lượng</b> file, chạy script, gọi git — những thứ
-            các tool đọc file thường không lấy được. Kết quả vẫn lưu trong thư mục văn phòng. Tắt khi
-            không cần: bật thì mỗi lượt tốn thêm ~2 700 token.
-          </span>
         </span>
       </label>
 
@@ -621,8 +597,7 @@ function BashSwitch({ node }: { node: CanvasNode }) {
       {on && (
         <p className="mt-2.5 rounded bg-warn-soft px-2 py-1.5 text-xs leading-relaxed text-warn">
           Lệnh chạy bằng <b>quyền của chính bạn</b> trên máy này. Nhân viên chỉ được giao việc trong
-          thư mục văn phòng, nhưng một câu lệnh thì không có hàng rào — nên chỉ bật cho người bạn
-          thật sự cần.
+          thư mục văn phòng, nhưng một câu lệnh thì không có hàng rào.
         </p>
       )}
     </div>
@@ -851,7 +826,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
             <Note>
               Mỗi người đang trực chiếm một dòng giới thiệu trong ngữ cảnh của Trợ lý, ở <b>mọi</b> lượt trò
-              chuyện. Ngắt dây người không dùng đến là tiết kiệm thật, không phải dọn cho gọn.
+              chuyện. Ngắt kết nối nhân viên không dùng đến giúp tiết kiệm.
             </Note>
             <Button className="w-full" onClick={() => onShowPrompt('assistant')}>
               <FileCode2 className="h-4 w-4" />
@@ -983,7 +958,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
             </div>
 
             <Note>
-              Mọi nhân viên đã có sẵn: đọc/ghi file trong văn phòng, và tìm trên web. Không cần bật gì.
+              Mọi nhân viên đã có sẵn: đọc/ghi file trong văn phòng, và tìm trên web.
             </Note>
             <BashSwitch node={node} />
           </>

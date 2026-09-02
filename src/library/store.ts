@@ -108,6 +108,12 @@ export class LibraryStore {
     fs.mkdirSync(this.filesDir, { recursive: true });
     fs.mkdirSync(this.textDir, { recursive: true });
 
+    /**
+     * ⚠ CÓ ĐỔI THẬT KHÔNG — `scan()` chạy ở MỖI `GET /library`, nên nó tuyệt
+     * đối không được báo "đã đổi" khi không có gì đổi. Xem khối chú thích ở
+     * `pump()`: một lần báo thừa ở đây là một vòng lặp vô hạn ở giao diện.
+     */
+    let dirty = false;
     const onDisk = new Map<string, fs.Stats>();
     for (const entry of fs.readdirSync(this.filesDir, { withFileTypes: true })) {
       if (!entry.isFile() || entry.name.startsWith('.')) continue;
@@ -124,6 +130,7 @@ export class LibraryStore {
       if (!onDisk.has(name)) {
         this.docs.delete(name);
         this.dropSidecar(name);
+        dirty = true;
       }
     }
 
@@ -145,9 +152,20 @@ export class LibraryStore {
           ? { state: 'pending' as const }
           : { state: 'failed' as const, note: checked.reason }),
       });
+      dirty = true;
     }
 
     this.save();
+    /**
+     * Chỉ dựng lại INDEX và báo khi CATALOG THẬT SỰ ĐỔI.
+     *
+     * Ca phải giữ: file bị xoá ngoài app ⇒ không có gì để bóc ⇒ `pump()` không
+     * làm gì ⇒ nếu ở đây cũng im thì `INDEX.md` giữ tên một tài liệu đã chết.
+     */
+    if (dirty) {
+      this.renderIndex();
+      this.onChange();
+    }
     void this.pump();
     return this.list();
   }
@@ -447,9 +465,11 @@ export class LibraryStore {
     if (this.working) return;
     this.working = true;
     try {
+      let did = false;
       for (;;) {
         const next = [...this.docs.values()].find((d) => d.state === 'pending');
         if (!next) break;
+        did = true;
         next.state = 'extracting';
         this.save();
         this.onChange();
@@ -457,8 +477,31 @@ export class LibraryStore {
         this.save();
         this.onChange();
       }
-      this.renderIndex();
-      this.onChange();
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 CHỈ BÁO KHI CÓ LÀM GÌ ĐÓ — bug user báo 02/09.                  │
+       * │                                                                    │
+       * │ Bản cũ gọi `renderIndex() + onChange()` **vô điều kiện**, kể cả khi │
+       * │ vòng lặp không bóc file nào. Mà `pump()` chạy ở MỖI `GET /library`  │
+       * │ (qua `scan()`), nên một lượt ĐỌC lại phát ra sự kiện GHI. Vòng lặp: │
+       * │                                                                    │
+       * │   GET /library → scan → pump → `library.changed`                   │
+       * │     → store: libraryVersion+1 **và** refreshCanvas()               │
+       * │     → LibraryPanel `useEffect(reload, [reload, libraryVersion])`   │
+       * │     → GET /library → …                                             │
+       * │                                                                    │
+       * │ Chạy mãi khi ngăn Tủ tài liệu đang mở, và **không có triệu chứng**  │
+       * │ nào ngoài quạt máy — cho tới khi có một thứ khác đọc `canvas`, lúc  │
+       * │ đó nó mới lộ ra (hộp thoại prompt nháy liên tục). → SPEC-library §10│
+       * │                                                                    │
+       * │ 📌 Luật rút ra: **một lượt ĐỌC không được phát sự kiện ĐỔI.** Chỗ    │
+       * │ duy nhất được phát là chỗ thật sự ghi.                              │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      if (did) {
+        this.renderIndex();
+        this.onChange();
+      }
     } finally {
       this.working = false;
     }

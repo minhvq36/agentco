@@ -578,8 +578,7 @@ export function describePrompt(
       editable: coreEditable,
       text: ASSISTANT_CORE,
       note:
-        'Cách Trợ lý nói chuyện với nhân viên và giao thức nhận kết quả. Thuộc về mã nguồn, ' +
-        'không thuộc về việc vận hành doanh nghiệp. Sửa được sẽ phá kiến trúc chi phí.',
+        'Cách Trợ lý nói chuyện với nhân viên và giao thức nhận kết quả.',
     });
     add({
       id: 'charter',
@@ -614,9 +613,7 @@ export function describePrompt(
         'Người đọc là chủ shop, không phải dân kỹ thuật.\n' +
         'Mọi bài viết đều xưng "mình", không dùng từ Hán Việt nặng.',
       note:
-        'Văn phòng này làm gì, cho ai, ràng buộc nào luôn đúng. Mọi NHÂN VIÊN đều đọc, ' +
-        'ở mọi task — nên viết sự thật về công việc, đừng viết lời dặn chung chung. ' +
-        'Đây là chỗ DUY NHẤT sửa nó; nó không nằm trong kho tri thức.',
+        'Văn phòng này làm gì, cho ai, cần quy tắc gì không. Có thể để trống.',
     });
     add({
       id: 'skills',
@@ -630,8 +627,7 @@ export function describePrompt(
         '- Yêu cầu mơ hồ thì hỏi lại đúng MỘT câu quan trọng nhất.\n' +
         '- Báo cáo bằng lời người thường, không nhắc tên tool hay số token.',
       note:
-        'Tính cách, giọng điệu, thói quen của riêng Trợ lý. Để trắng cũng được. Nằm trong ' +
-        'prefix của mọi lượt trò chuyện nên mỗi dòng thừa là một khoản thuế thu suốt ca.',
+        'Tính cách, giọng điệu, thói quen của riêng Trợ lý. Có thể để trống.',
     });
   } else {
     const role = office.roles.get(who);
@@ -642,8 +638,7 @@ export function describePrompt(
       editable: coreEditable,
       text: CORE_PROMPT,
       note:
-        'Giao thức Receipt, kỷ luật số lượt, luật ghi ra file thay vì dán nội dung. ' +
-        'Đây là thứ giữ cho chi phí không phình.',
+        '',
     });
     add({
       id: 'skills',
@@ -659,9 +654,7 @@ export function describePrompt(
         '- Mở đầu bằng kết luận, đừng dẫn dắt.\n' +
         '- Không dùng emoji.',
       note:
-        'Cách làm việc của riêng vai trò này. Để TRỐNG là bình thường: cắm MCP là ' +
-        'agent đã biết nó có thêm cánh tay. Chỉ viết ở đây thứ đúng với MỌI task ' +
-        '— tri thức riêng của từng việc thuộc về kho tri thức.',
+        'Cách làm việc của nhân viên. Để TRỐNG là bình thường',
     });
   }
 
@@ -706,20 +699,17 @@ export function describePrompt(
     editable: false,
     text: hotKnowledge,
     note:
-      'Tự động chọn từ kho tri thức bằng code, KHÔNG tốn token. Đây là thứ agent TỰ RÚT RA ' +
-      'sau mỗi ca — sửa hoặc xoá từng mục ở ngăn kéo Tri thức.',
+      'Tự động hình thành qua quá trình làm việc. Xem thêm tại Kho tri thức',
   });
 
   if (who === 'assistant' && libraryManifest.trim()) {
     add({
       id: 'library',
-      title: 'Tủ tài liệu — bảng kê',
+      title: 'Danh sách tài liệu',
       editable: false,
       text: libraryManifest,
       note:
-        'Tên và hình dạng các tài liệu BẠN đã thả vào tủ, dựng bằng code nên không tốn lượt gọi nào. ' +
-        'Nhờ khối này Trợ lý biết trong tủ có gì TRƯỚC khi chia việc — nó chỉ thẳng file cho nhân viên ' +
-        'thay vì để nhân viên đi mò. Cố ý KHÔNG kèm nội dung: tài liệu không bao giờ vào prompt.',
+        'Tên và hình dạng các tài liệu trong tủ tài liệu.',
     });
   }
 
@@ -733,14 +723,11 @@ export function describePrompt(
   if (who === 'assistant' && artifactManifest.trim()) {
     add({
       id: 'artifacts',
-      title: 'Kết quả các ca trước — bảng kê',
+      title: 'Danh sách file kết quả',
       editable: false,
       text: artifactManifest,
       note:
-        'Tên file NHÂN VIÊN đã làm ra ở các ca trước, dựng bằng code nên không tốn lượt gọi nào. ' +
-        'Nhờ khối này Trợ lý làm tiếp được trên kết quả cũ — trước 20/08 nó không nhìn thấy gì ở ' +
-        'đây và phải hỏi bạn đường dẫn. Cố ý CHỈ có tên: nội dung không bao giờ vào prompt, và ' +
-        'khối này KHÔNG bao giờ vào prompt của nhân viên.',
+        'Tên các file kết quả giúp Trợ lý làm tiếp được trên kết quả cũ.',
     });
   }
 
