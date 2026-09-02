@@ -410,7 +410,6 @@ function ModelPicker({ node }: { node: CanvasNode }) {
           v={
             <>
               {node.tier}
-              {node.tierInherited ? ' · theo công ty' : ''}
             </>
           }
         />
@@ -844,10 +843,6 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {node.kind === 'assistant' && (
           <>
-            <Note>
-              Trợ lý không tự làm việc. Nó chia việc, và chỉ nhìn thấy giới thiệu của những người{' '}
-              <b>có dây nối</b> tới đây.
-            </Note>
             <AssistantName node={node} />
             <ModelPicker node={node} />
             <Row k="Đang trực" v={`${onDuty.length} người`} />

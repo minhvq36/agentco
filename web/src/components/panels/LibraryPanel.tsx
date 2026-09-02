@@ -172,7 +172,7 @@ export function LibraryPanel() {
         <Empty
           icon={<FolderOpen className="h-7 w-7" />}
           title="Tủ tài liệu còn trống"
-          hint="Thả vào đây tài liệu bạn muốn nhân viên đọc: hợp đồng, chính sách, bảng kê, CV. Nội dung được bóc ra một lần lúc thả vào, nên nhân viên tìm được bằng từ khoá mà không tốn thêm chi phí."
+          hint="Thả vào đây tài liệu bạn muốn nhân viên đọc: hợp đồng, chính sách, bảng kê, CV. Nội dung được bóc ra một lần lúc thả vào và không tốn thêm chi phí."
         />
       ) : (
         <ul className="min-h-0 flex-1 overflow-y-auto">
@@ -271,8 +271,7 @@ export function LibraryPanel() {
       */}
       {docs.length > 0 && (
         <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
-          Đây là tài liệu <b>bạn đưa vào</b>. Nội dung được bóc ra một lần lúc thả vào nên nhân viên tìm
-          bằng từ khoá mà không tốn thêm chi phí.
+          Đây là tài liệu <b>bạn đưa vào</b>. Nội dung được bóc ra một lần lúc thả vào.
         </div>
       )}
 
@@ -285,7 +284,7 @@ export function LibraryPanel() {
         onCancel={() => setConfirmDel(null)}
         onConfirm={() => confirmDel && void remove(confirmDel)}
       >
-        <b>{confirmDel?.name}</b> sẽ bị xoá khỏi tủ, cùng phần văn bản đã bóc ra. Bản gốc trên máy bạn
+        <b>{confirmDel?.name}</b> sẽ bị xoá khỏi tủ. Bản gốc trên máy bạn
         không bị ảnh hưởng.
       </ConfirmDelete>
 

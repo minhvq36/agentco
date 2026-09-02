@@ -30,15 +30,20 @@ import type { ArmScope } from './types';
 export function ScopeBox({ name, scope }: { name: string; scope: ArmScope }) {
   return (
     <div className="mt-3 rounded-md border border-line px-3 py-3">
-      <div className="text-[13px] font-medium">Phạm vi bên {name}</div>
-      <p className="mt-0.5 text-xs leading-relaxed text-muted">{scope.help}</p>
+      <div className="text-[13px] font-medium">Chọn phạm vi trên {name}</div>
+      {/*
+        Gọn lại 02/09: còn TIÊU ĐỀ + NÚT. Hai đoạn văn cũ (phạm vi do hãng giữ ·
+        chưa cài thì không đọc được repo riêng tư) đã bỏ.
+
+        ⚠ Thứ chúng cảnh báo thì KHÔNG bỏ theo — nó chuyển sang chỗ nói đúng lúc
+        hơn: `RepoScan` ngay dưới khối này là nơi DUY NHẤT được phép nói "đã cài
+        / chưa cài" (§5h·7o), và câu dịch 404 lúc chạy thật (§5h·7f-bis) bắt
+        đúng người vừa quên cài. Một dòng đọc-trước-khi-hiểu không giữ được ai;
+        hai chỗ kia nói đúng lúc người ta cần.
+      */}
       <Button className="mt-2 w-full" onClick={() => window.open(scope.url, '_blank', 'noopener')}>
         {scope.say}
       </Button>
-      <p className="mt-2 text-xs leading-relaxed text-muted">
-        Chưa cài lần nào thì nhân viên <b>không đọc được repo riêng tư và không ghi được gì</b>. Cài
-        xong quay lại đây — khối ngay bên dưới tự kiểm lại, không phải gõ gì.
-      </p>
     </div>
   );
 }

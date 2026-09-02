@@ -456,6 +456,17 @@ function cmdCost(): void {
   const since = typeof flags['since'] === 'string' ? parseDuration(flags['since']) : undefined;
   const officeId = typeof flags['office'] === 'string' ? flags['office'] : undefined;
 
+  // Dọn rác trước rồi mới in, để con số in ra là con số SAU khi dọn — in trước
+  // rồi dọn thì người dùng cầm một bảng đã hết đúng ngay lúc nhìn.
+  if (flags['purge']) {
+    const r = company.purgeGoneUsage();
+    console.log(
+      r.offices === 0
+        ? 'Sổ không có mục nào "không còn" — không phải dọn gì.\n'
+        : `Đã dọn ${r.offices} mục không còn · ${r.tasks} việc · $${r.costUSD.toFixed(4)}\n`,
+    );
+  }
+
   console.log(company.costText(since, officeId));
 
   const byOffice = company.costByOffice(since);
@@ -568,6 +579,7 @@ function cmdHelp(): void {
 
   agentco run "<việc>"           Giao một việc  (--office <mã> khi có nhiều văn phòng)
   agentco cost [--since 7d]      Xem đã tốn bao nhiêu  (--office <mã> để lọc)
+  agentco cost --purge           Dọn các mục "không còn" khỏi sổ (văn phòng đã xoá)
   agentco doctor                 Kiểm tra máy đã sẵn sàng chưa
 
 Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui

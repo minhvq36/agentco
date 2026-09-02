@@ -36,5 +36,4 @@ export type RepoScanState =
 export interface ArmScope {
   say: string;
   url: string;
-  help: string;
 }

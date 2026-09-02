@@ -35,6 +35,7 @@ import { Office } from './office.js';
 import { grantFor, readOAuth, readSecrets, writeSecrets } from './secrets.js';
 import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
 import {
+  appendPurge,
   appendRename,
   appendUsage,
   formatReport,
@@ -1026,10 +1027,30 @@ export class Company {
   }
 
   /**
-   * XOÁ HẲN: `rm -rf` cả thư mục. Nhân viên, kỹ năng, kho tri thức, kết quả — mất sạch.
+   * XOÁ HẲN: `rm -rf` cả thư mục, **và đóng sổ chi phí của nó**. Nhân viên, kỹ
+   * năng, kho tri thức, kết quả, các dòng tiền — mất sạch khỏi mọi báo cáo.
    *
-   * Không lấy lại được, và sổ chi phí sau đó chỉ còn cái MÃ để lần ra những dòng
-   * tiền của nó. Đó chính là lý do lưu trữ tồn tại và là mức nên dùng.
+   * Không lấy lại được. Muốn giữ lịch sử thì dùng LƯU TRỮ, đó là lý do nó tồn tại.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ VÌ SAO XOÁ VĂN PHÒNG PHẢI ĐÓNG LUÔN SỔ — bug user báo 02/09.            │
+   * │                                                                          │
+   * │ Bản trước chỉ `rm -rf` thư mục và để nguyên `logs/usage.jsonl`. Hai hậu  │
+   * │ quả, và cái thứ hai nặng hơn hẳn:                                        │
+   * │                                                                          │
+   * │  ① Bảng chi phí đọng lại *"14 mục không còn"* — người dùng xoá sạch mọi  │
+   * │    văn phòng mà màn hình vẫn còn tiền của những cái tên đã chết.         │
+   * │                                                                          │
+   * │  ② 🔴 **VĂN PHÒNG MỚI THỪA KẾ SỔ CỦA NGƯỜI CHẾT.** `createOffice` suy id │
+   * │    từ TÊN (`folderId`), nên xoá "Nội dung" rồi lập lại "Nội dung" cho ra │
+   * │    đúng `noi-dung`. Những dòng cũ lập tức khớp lại vào văn phòng mới:    │
+   * │    `gone` tắt, tên hiện thành tên mới, và nó khai sẵn hàng chục lượt +   │
+   * │    một khoản $ mà nó chưa hề tiêu. Không có triệu chứng nào ngoài một    │
+   * │    con số sai — đúng loại nói dối mà cuốn sổ này không được phép.        │
+   * │                                                                          │
+   * │ Không viết lại dòng nào: nối một MỐC (`appendPurge`), người đọc sổ cắt   │
+   * │ theo mốc đó. → `usage.ts §PurgeRecord`                                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
   removeOffice(officeId: string): void {
     const office = this.offices.get(officeId);
@@ -1044,12 +1065,43 @@ export class Company {
     this.offices.delete(officeId);
     this.broken.delete(officeId);
     fs.rmSync(path.join(this.paths.offices, officeId), { recursive: true, force: true });
+    appendPurge(this.paths, officeId);
     this.emit({
       type: 'company.offices',
-      say: `Đã xoá hẳn văn phòng "${officeId}".`,
+      say: `Đã xoá hẳn văn phòng "${officeId}" và các dòng chi phí của nó.`,
       office: officeId,
       plan_id: null,
     });
+  }
+
+  /**
+   * Dọn nốt những mục *"không còn"* đọng lại trong sổ — văn phòng bị xoá TRƯỚC
+   * khi `removeOffice` biết đóng sổ, và khối bản ghi v0 (trước khi có văn phòng).
+   *
+   * Chỉ đụng tới mục **không còn** văn phòng nào sống mang id đó. Văn phòng đang
+   * sống hay đang trong lưu trữ không hề bị chạm — nút này không phải nút "xoá
+   * lịch sử của tôi", nó là cái chổi cho đúng đống rác đang hiện trên màn hình.
+   */
+  purgeGoneUsage(): { offices: number; tasks: number; costUSD: number } {
+    const gone = this.costByOffice().filter((r) => r.gone);
+    const at = new Date();
+    for (const r of gone) appendPurge(this.paths, r.office, at);
+    const out = {
+      offices: gone.length,
+      tasks: gone.reduce((n, r) => n + r.tasks, 0),
+      costUSD: gone.reduce((n, r) => n + r.costUSD, 0),
+    };
+    if (out.offices > 0) {
+      this.emit({
+        type: 'company.offices',
+        // Sự kiện cấp CÔNG TY: không thuộc văn phòng nào (`history(id)` lọc theo
+        // trường này, nên gắn bừa một id là nó hiện trong nhật ký của người khác).
+        say: `Đã dọn ${out.offices} mục không còn khỏi sổ chi phí.`,
+        office: '',
+        plan_id: null,
+      });
+    }
+    return out;
   }
 
   // ── sự kiện

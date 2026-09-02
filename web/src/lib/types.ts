@@ -471,7 +471,7 @@ export interface CatalogArm {
    * HÀNG RÀO NGOÀI — phạm vi do HÃNG giữ, ta chỉ mở cửa. → `catalog.ts §scope`
    * Không có ⇒ mục này không có màn hình đồng ý nào để đi tới.
    */
-  scope?: { say: string; url: string; help: string };
+  scope?: { say: string; url: string };
   /**
    * TRA BẢN CÀI APP tự động. → `catalog.ts §repoScan` · SPEC-arms §5h·7o
    *

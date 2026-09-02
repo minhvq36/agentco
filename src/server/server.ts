@@ -639,6 +639,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         byOffice: company.costByOffice(),
       });
     }
+    /**
+     * Dọn những mục "không còn" khỏi sổ chi phí. → `Company.purgeGoneUsage`
+     *
+     * POST chứ không DELETE: nó KHÔNG xoá tài nguyên nào ở địa chỉ này — nó nối
+     * thêm một mốc vào sổ. Dùng DELETE thì cái động từ đang hứa một chuyện
+     * (`/api/cost` biến mất) mà máy chủ làm chuyện khác.
+     */
+    if (url.pathname === '/api/cost/purge' && method === 'POST') {
+      return json(res, 200, company.purgeGoneUsage());
+    }
     // ── cánh tay (MCP) — cấp CÔNG TY. → docs/SPEC-arms.md §6
     //
     // Ở cấp công ty vì `mcpServers` là cấp công ty: cắm một lần, mọi văn phòng

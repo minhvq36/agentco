@@ -142,7 +142,7 @@ export function ArtifactsPanel() {
       <Empty
         icon={<FileCheck2 className="h-7 w-7" />}
         title="Chưa có kết quả nào"
-        hint="Đây là nơi giữ file nhân viên làm ra. Giao cho Trợ lý một việc, xong là kết quả xuất hiện ở đây — xem trước, tải về, hoặc xoá đi."
+        hint="Đây là nơi giữ file nhân viên làm ra qua mỗi việc được giao — xem trước, tải về, hoặc xoá đi."
       />
     );
   }

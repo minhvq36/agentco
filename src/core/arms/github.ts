@@ -129,9 +129,6 @@ export const GITHUB_ARM: CatalogArm = {
   scope: {
     say: 'Chọn repo trên GitHub',
     url: 'https://github.com/apps/agent-co-app/installations/new',
-    help:
-      'Phạm vi repo do GitHub giữ, không phải agentco. Thêm hoặc bớt repo ở đó là có hiệu lực ' +
-      'ngay ở lời gọi kế tiếp — không phải cắm lại.',
   },
   /**
    * ⚠⚠ `gateTool` PHẢI là `list_repository_collaborators`, không phải một tool

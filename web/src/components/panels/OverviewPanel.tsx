@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Archive, ArchiveRestore, Building2, FolderOpen, Trash2 } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Archive, ArchiveRestore, Building2, ChevronDown, FolderOpen, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Tip } from '@/components/ui/misc';
-import type { ArchivedAgent } from '@/lib/types';
+import type { ArchivedAgent, InstalledArm, OAuthAccount } from '@/lib/types';
 import {
   Dialog,
   DialogContent,
@@ -32,11 +32,14 @@ export function OverviewPanel() {
   const [cost, setCost] = useState<CostRow[] | null>(null);
   const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
 
-  useEffect(() => {
+  const loadCost = () =>
     api
       .cost()
       .then((c) => setCost(c.byOffice))
       .catch(() => setCost([]));
+
+  useEffect(() => {
+    void loadCost();
   }, [officeId]);
 
   const live = company?.offices.filter((o) => !o.archived) ?? [];
@@ -102,7 +105,7 @@ export function OverviewPanel() {
                   <FolderOpen className="h-3.5 w-3.5" />
                 </Button>
               </Tip>
-              <Tip label="Cất vào lưu trữ — khôi phục được">
+              <Tip label="Lưu trữ">
                 <Button
                   size="iconSm"
                   variant="ghost"
@@ -113,7 +116,7 @@ export function OverviewPanel() {
                   <Archive className="h-3.5 w-3.5" />
                 </Button>
               </Tip>
-              <Tip label="Xoá hẳn cả thư mục — không lấy lại được">
+              <Tip label="Xoá">
                 <Button
                   size="iconSm"
                   variant="ghost"
@@ -157,7 +160,7 @@ export function OverviewPanel() {
                     thì muốn dọn sạch phải khôi phục ra rồi mới xoá được — hai
                     bước cho một ý định, và bước giữa là đưa lại vào danh sách
                     đang làm việc đúng cái mình vừa muốn bỏ đi. */}
-                <Tip label="Xoá hẳn cả thư mục — không lấy lại được">
+                <Tip label="Xoá">
                   <Button
                     size="iconSm"
                     variant="ghost"
@@ -170,10 +173,6 @@ export function OverviewPanel() {
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            File còn nguyên chỗ cũ, không đi đâu cả. Văn phòng trong lưu trữ không nhận việc và không
-            trả lời — khôi phục là trở lại nguyên vẹn, kể cả cuộc trò chuyện đang dở.
-          </p>
         </section>
       )}
 
@@ -186,18 +185,292 @@ export function OverviewPanel() {
         ) : cost.length === 0 ? (
           <div className="text-[13px] text-muted">Chưa có việc nào được ghi nhận.</div>
         ) : (
-          <CostTable rows={cost} />
+          <CostTable rows={cost} onPurged={() => void loadCost()} />
         )}
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Số <b>lượt</b> mới là đòn bẩy chi phí lớn nhất — mỗi lượt đọc lại toàn bộ prefix. Việc nhiều lượt
-          đắt hơn việc nhiều token.
+          Số <b>lượt</b> là đòn bẩy chi phí lớn nhất.
         </p>
       </section>
+
+      {/* Dưới Chi phí, và gập lại (user chốt 02/09): đây là hai mục để DỌN khi
+          cần, không phải thứ đọc mỗi ngày. Mở sẵn thì chúng đẩy đúng thứ người
+          ta vào đây để xem — tiền — xuống dưới màn hình. */}
+      <ConnectionsSection />
 
       <ModelsSection />
 
       <RemoveOfficeDialog target={confirm} onClose={() => setConfirm(null)} />
     </div>
+  );
+}
+
+/**
+ * KẾT NỐI + TÀI KHOẢN ĐÃ NỐI — cửa quản lý ở đúng cấp mà dữ liệu đang nằm.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG USER BÁO 02/09: *"kết nối Minh Vu Quoc's Notion không xoá được"*     │
+ * │ (rồi Linear, rồi GitHub — cùng một thế kẹt).                             │
+ * │                                                                          │
+ * │ Xoá theo dây chuyền, mà mỗi khoá lại nằm sau đúng cánh cửa nó đang khoá: │
+ * │                                                                          │
+ * │   workspace ←chặn bởi─ cánh tay ←chặn bởi─ văn phòng                     │
+ * │   `oauthForget`        `forgetArm`         cửa vào: Toolbar của canvas   │
+ * │                                                                          │
+ * │ Hai chốt chặn kia ĐÚNG — chúng ngăn để lại một cánh tay chết im. Cái sai │
+ * │ là **cửa đi tới bước tiếp theo nằm bên trong thứ vừa bị xoá**: 0 văn      │
+ * │ phòng ⇒ 0 canvas ⇒ 0 Toolbar ⇒ không còn đường nào tới sổ chung, dù dữ   │
+ * │ liệu đó là của CÔNG TY chứ không của văn phòng nào.                      │
+ * │                                                                          │
+ * │ Bản vá KHÔNG phải "xoá văn phòng thì dọn luôn kết nối" — làm thế là phá  │
+ * │ đúng tính chất dùng chung (xoá văn phòng A đứt dây văn phòng B), và biến │
+ * │ một nút xoá thành hai hành vi tuỳ số văn phòng còn lại tình cờ là mấy.   │
+ * │ Dữ liệu ở nguyên chỗ; thứ được sửa là CỬA. → SPEC-arms.md §6k            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `ArmDialog` vẫn là chỗ **cắm mới**. Ngăn này là chỗ **nhìn và dọn** — hai ý
+ * định khác nhau, và cái thứ hai không được phụ thuộc vào việc có văn phòng.
+ */
+const LEVEL_SAY: Record<string, string> = {
+  read: 'chỉ đọc',
+  add: 'đọc + thêm mới',
+  full: 'toàn quyền',
+};
+
+function ConnectionsSection() {
+  const company = useApp((s) => s.company);
+  const [arms, setArms] = useState<InstalledArm[] | null>(null);
+  const [accounts, setAccounts] = useState<OAuthAccount[] | null>(null);
+  /** Đang chờ xác nhận xoá — mức duy nhất không hoàn tác được, nên phải hỏi. */
+  const [dropArm, setDropArm] = useState<InstalledArm | null>(null);
+  const [dropAcc, setDropAcc] = useState<OAuthAccount | null>(null);
+
+  /*
+    Nạp lại theo `company`: xoá một văn phòng làm cánh tay thành mồ côi, và cờ
+    `orphan` là thứ quyết định nút 🗑 có hiện hay không. Không nghe theo nó thì
+    người dùng vừa xoá văn phòng xong vẫn thấy "đang dùng" cho tới lần F5.
+  */
+  useEffect(() => {
+    void api.arms().then((r) => setArms(r.arms)).catch(() => setArms([]));
+    void api.oauthAccounts().then((r) => setAccounts(r.accounts)).catch(() => setAccounts([]));
+  }, [company]);
+
+  async function forgetArm(a: InstalledArm) {
+    if (await actions.forgetArm(a.id)) {
+      toast(`Đã xoá "${a.label}". Chìa vẫn được giữ.`);
+      const r = await api.arms().catch(() => null);
+      if (r) setArms(r.arms);
+    }
+  }
+
+  async function forgetAccount(acc: OAuthAccount) {
+    const name = acc.label ?? acc.name;
+    if (await actions.forgetAccount(acc.name)) {
+      toast(`Đã gỡ "${name}".`);
+      const [a, b] = await Promise.all([
+        api.arms().catch(() => null),
+        api.oauthAccounts().catch(() => null),
+      ]);
+      if (a) setArms(a.arms);
+      if (b) setAccounts(b.accounts);
+    }
+  }
+
+  const officeName = (id: string) => company?.offices.find((o) => o.id === id)?.name ?? id;
+
+  if (arms !== null && arms.length === 0 && accounts !== null && accounts.length === 0) return null;
+
+  return (
+    <>
+      {arms !== null && arms.length > 0 && (
+        <Fold title="Kết nối" count={arms.length}>
+          <ul className="flex flex-col gap-1">
+            {arms.map((a) => {
+              // Hai nghĩa của "đang dùng", đúng như `armHolders` ở server: có sợi
+              // dây, HOẶC có mặt trên sơ đồ mà chưa nối. Gộp làm một là hiện nút
+              // xoá cho một node đang nằm trên sơ đồ của ai đó.
+              const wired = [...new Set(a.usedBy.map((u) => officeName(u.office)))];
+              return (
+                <li
+                  key={a.id}
+                  className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-2 text-[13px]"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-ink">{a.label}</span>
+                    <span className="block truncate text-xs text-muted">
+                      {a.via ? `${a.via} · ` : ''}
+                      {a.toolCount} việc
+                      {a.level ? ` · ${LEVEL_SAY[a.level] ?? a.level}` : ''}
+                    </span>
+                    <span className="block truncate text-xs text-muted">
+                      {wired.length
+                        ? `dùng bởi: ${wired.join(', ')}`
+                        : a.orphan
+                          ? 'không ai dùng'
+                          : 'có trên sơ đồ, chưa nối dây'}
+                    </span>
+                  </span>
+                  {a.orphan && (
+                    <Tip label="Xoá hẳn khỏi sổ chung — chìa vẫn được giữ">
+                      <Button
+                        size="iconSm"
+                        variant="ghost"
+                        aria-label={`Xoá hẳn kết nối ${a.label}`}
+                        onClick={() => setDropArm(a)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </Tip>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </Fold>
+      )}
+
+      {accounts !== null && accounts.length > 0 && (
+        <Fold title="Tài khoản đã nối" count={accounts.length}>
+          <ul className="flex flex-col gap-1">
+            {accounts.map((acc) => (
+              <li
+                key={acc.name}
+                className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-2 text-[13px]"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-ink">{acc.label ?? acc.name}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {acc.dead ? (
+                      <span className="text-danger">chìa đã chết — phải đăng nhập lại</span>
+                    ) : acc.usedBy.length ? (
+                      `dùng bởi: ${acc.usedBy.join(', ')}`
+                    ) : (
+                      'không kết nối nào dùng'
+                    )}
+                  </span>
+                </span>
+                {/*
+                  Mờ chứ không ẩn, và tooltip NÊU TÊN kết nối đang giữ nó: đây là
+                  đúng chỗ người dùng bị kẹt hôm 02/09, nên câu giải thích phải
+                  chỉ được bước tiếp theo chứ không chỉ nói "không được".
+                */}
+                <Tip
+                  label={
+                    acc.usedBy.length
+                      ? `Còn ${acc.usedBy.length} kết nối dùng (${acc.usedBy.join(', ')}) — xoá chúng ở mục Kết nối trước`
+                      : 'Gỡ workspace này — thu hồi quyền ở phía dịch vụ'
+                  }
+                >
+                  <span>
+                    <Button
+                      size="iconSm"
+                      variant="ghost"
+                      disabled={acc.usedBy.length > 0}
+                      aria-label={`Gỡ workspace ${acc.label ?? acc.name}`}
+                      onClick={() => setDropAcc(acc)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </span>
+                </Tip>
+              </li>
+            ))}
+          </ul>
+        </Fold>
+      )}
+
+      {/*
+        Hỏi bằng MODAL của app, không `window.confirm`. (user chốt 02/09)
+
+        Hộp thoại của trình duyệt khoá cả tab, không mang được định dạng, và trông
+        không giống phần còn lại của sản phẩm — trong khi hộp thoại lúc TẠO thì
+        đã là modal. Hỏi và tạo là hai đầu của cùng một thao tác, đi hai kiểu là
+        người dùng phải học hai lần.
+
+        Vế **"CHÌA VẪN ĐƯỢC GIỮ"** in đậm chứ không phải một dòng phụ: nó là thứ
+        làm quyết định này rẻ, và không nói ra thì người dùng tưởng mình sắp mất
+        token nên không ai dám bấm — có nút mà như không.
+      */}
+      <Dialog open={!!dropArm} onOpenChange={(o) => !o && setDropArm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xoá hẳn kết nối “{dropArm?.label}”?</DialogTitle>
+            <DialogDescription>
+              Nó rời sổ chung của công ty và <b>không lấy lại được</b> — cắm lại là dựng từ danh mục.
+              <br />
+              <b>Chìa vẫn được giữ:</b> cắm lại thì không phải đi lấy token lần nữa.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setDropArm(null)}>Thôi</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (dropArm) void forgetArm(dropArm);
+                setDropArm(null);
+              }}
+            >
+              Xoá hẳn
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dropAcc} onOpenChange={(o) => !o && setDropAcc(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Gỡ workspace “{dropAcc?.label ?? dropAcc?.name}”?</DialogTitle>
+            <DialogDescription>
+              Xoá chìa trên máy này. Muốn dùng lại thì phải{' '}
+              <b>đăng nhập lại từ đầu</b> ở trang của hãng.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setDropAcc(null)}>Thôi</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (dropAcc) void forgetAccount(dropAcc);
+                setDropAcc(null);
+              }}
+            >
+              Gỡ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * Mục GẬP LẠI ĐƯỢC cho ngăn Tổng quan. (user chốt 02/09)
+ *
+ * Cùng khuôn `<details>` với khối "N mục không còn" của bảng chi phí, nên hai
+ * chỗ gập trong cùng một ngăn mở ra bằng một cử chỉ. Con số nằm ngay ở tiêu đề:
+ * đóng lại rồi thì nó là thứ duy nhất còn nói được là bên trong có gì.
+ *
+ * Mặc định ĐÓNG — đây là ngăn để dọn khi cần, không phải thứ đọc mỗi ngày, và
+ * ba mục kết nối mở sẵn thì đẩy phần Chi phí xuống dưới màn hình.
+ */
+function Fold({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group">
+      <summary className="mb-2 flex cursor-pointer list-none items-center gap-1.5 marker:hidden">
+        <ChevronDown className="h-3.5 w-3.5 text-muted transition-transform group-open:rotate-180" />
+        <SectionTitle>
+          {title} <span className="tabular-nums">({count})</span>
+        </SectionTitle>
+      </summary>
+      {children}
+    </details>
   );
 }
 
@@ -216,11 +489,30 @@ export function OverviewPanel() {
  * │ Danh sách không dài ra, không mất minh bạch, và không cần một dòng code  │
  * │ kế toán nào — chỉ là một cái `<details>`.                                │
  * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Từ 02/09 khối này còn có một cái CHỔI. `removeOffice` giờ tự đóng sổ, nên
+ * khối chỉ còn đọng lại rác từ trước bản vá — nhưng rác cũ thì cũng phải có
+ * đường dọn, và đường đó không được là "mở `usage.jsonl` sửa tay".
  */
-function CostTable({ rows }: { rows: CostRow[] }) {
+function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }) {
   const live = rows.filter((r) => !r.gone);
   const gone = rows.filter((r) => r.gone);
   const goneTotal = gone.reduce((n, r) => n + r.costUSD, 0);
+  const [busy, setBusy] = useState(false);
+  const [ask, setAsk] = useState(false);
+
+  async function purge() {
+    setBusy(true);
+    try {
+      const r = await api.purgeGoneCost();
+      toast(`Đã dọn ${r.offices} mục · $${r.costUSD.toFixed(4)}`);
+      onPurged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Dọn không thành');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <>
@@ -250,8 +542,45 @@ function CostTable({ rows }: { rows: CostRow[] }) {
               ))}
             </tbody>
           </table>
+          {/* Nút nằm ở ĐÁY khối đã bung ra, cố ý: muốn bấm thì phải mở khối lên,
+              tức là đã nhìn thấy đúng những dòng sắp mất. Cùng luật với nút "Xoá
+              tất cả" ở ngăn Kết quả — biết mình sắp mất gì TRƯỚC khi bấm. */}
+          <div className="mt-2 flex items-center justify-end">
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAsk(true)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              {busy ? 'Đang dọn…' : 'Dọn hết'}
+            </Button>
+          </div>
         </details>
       )}
+
+      <Dialog open={ask} onOpenChange={setAsk}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Dọn {gone.length} mục không còn khỏi sổ chi phí?
+            </DialogTitle>
+            <DialogDescription>
+              {gone.reduce((n, r) => n + r.tasks, 0)} việc · ${goneTotal.toFixed(4)} sẽ biến khỏi mọi
+              báo cáo, và <b>không có nút hoàn tác</b>.
+              <br />
+              Văn phòng đang mở và văn phòng trong lưu trữ <b>không</b> bị đụng.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setAsk(false)}>Thôi</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setAsk(false);
+                void purge();
+              }}
+            >
+              Dọn hết
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -459,11 +788,6 @@ function ModelsSection() {
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            Trợ lý mặc định chạy mức <b>{models.master}</b>, khâu lập kế hoạch chạy mức{' '}
-            <b>{models.planner}</b>. Lập kế hoạch chạy ở lượt gọi riêng, nên đặt nó lên{' '}
-            <code>deep</code> <b>không</b> phá bộ nhớ đệm của Trợ lý.
-          </p>
           <button
             className="mt-2 text-[13px] text-accent hover:underline"
             onClick={() => setOpen(true)}
@@ -564,14 +888,6 @@ function RemoveOfficeDialog({
           <DialogDescription>
             Xoá cả thư mục <code>offices/{target?.id}/</code>: nhân viên, kỹ năng, kho tri thức và mọi
             kết quả đã làm. <b>Không lấy lại được.</b>
-            <br />
-            <br />
-            Sau đó những khoản tiền văn phòng này đã tiêu vẫn nằm trong sổ chi phí, nhưng chỉ còn lại
-            cái mã <code>{target?.id}</code> để bạn lần ra — tên và nội dung thì mất.
-            <br />
-            <br />
-            Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi dùng nút <b>Lưu trữ</b> — khôi phục được bất cứ
-            lúc nào, và văn phòng vẫn giữ tên trong sổ.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

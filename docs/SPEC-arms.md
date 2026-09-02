@@ -2683,6 +2683,48 @@ ta thôi đọc, tức mất luôn những dòng đáng đọc.
 ô chìa nào**. Nếu một người non-code không làm nổi mục đó trong 30 giây thì thiết kế §6 sai, và
 biết điều đó **trước khi** xây hai mục còn lại là rẻ nhất.
 
+## 6k. CỬA QUẢN LÝ PHẢI Ở CÙNG CẤP VỚI DỮ LIỆU *(bug user báo 02/09)*
+
+**Triệu chứng:** xoá hết văn phòng xong thì `Minh Vu Quoc's Notion` không gỡ được nữa — rồi Linear, rồi GitHub, cùng một thế kẹt.
+
+**Thế kẹt ba tầng, mỗi khoá nằm sau đúng cánh cửa nó đang khoá:**
+
+```
+workspace  ←chặn bởi─  cánh tay  ←chặn bởi─  văn phòng
+oauthForget()          forgetArm()           cửa vào: Toolbar của canvas
+"vẫn đang được 1       "vẫn đang ở N          0 văn phòng ⇒ 0 canvas
+ kết nối dùng"          văn phòng"            ⇒ 0 Toolbar ⇒ 0 cửa
+```
+
+Hai chốt chặn **đúng** và giữ nguyên — chúng ngăn để lại một cánh tay chết im (`company.ts §forgetArm` · `oauth-routes.ts §oauthForget`). Cái sai là **cửa đi tới bước tiếp theo nằm bên trong thứ vừa bị xoá**.
+
+**Gốc rễ, và nó lớn hơn ca này:** ba thứ ở cấp CÔNG TY mà cả ba cửa quản lý đều nằm TRONG văn phòng.
+
+| Dữ liệu | Trên đĩa | Cửa cũ (mất khi 0 văn phòng) |
+|---|---|---|
+| Sổ chi phí | `logs/usage.jsonl` | Tổng quan → trong Sidebar |
+| Kết nối | `company.yaml` → `mcpServers` + `arms` | **+ Kết nối** → trên Toolbar |
+| Workspace OAuth | `.state/secrets.json` → `$oauth` | **+ Kết nối**, bước 2 |
+
+### ❌ Đường KHÔNG đi: "xoá văn phòng thì dọn luôn kết nối"
+
+1. Phá đúng tính chất dùng chung (§6i): xoá văn phòng A làm đứt dây văn phòng B.
+2. **Một cử chỉ, hai nghĩa** — cùng một nút xoá làm hai việc khác nhau tuỳ số văn phòng còn lại *tình cờ* là mấy.
+3. Vứt đúng phần đắt. Dòng sổ chi phí **nói về** văn phòng đã chết ⇒ chết theo là đúng (`SPEC-offices §3b`). Cánh tay chỉ **được văn phòng tham chiếu** ⇒ nó có nghĩa độc lập với mọi văn phòng.
+
+> **Luật tách hai ca:** xoá thứ nó *nói về*; giữ thứ nó chỉ *mượn*.
+
+### ✅ Đường đã đi: sửa CỬA, không sửa QUYỀN
+
+- **Ngăn "Kết nối" + "Tài khoản đã nối"** trong Tổng quan: mọi cánh tay kèm `via` · số việc · nấc quyền · ai đang dùng, và 🗑 cho mục mồ côi; mọi workspace kèm 🗑 (mờ khi còn kết nối dùng, tooltip **nêu tên** kết nối đó).
+- **Sidebar thu về đúng ngăn Tổng quan khi 0 văn phòng** (`Sidebar §noOffices`), thay vì cả vùng làm việc bị thay bằng màn hình rỗng.
+- `ArmDialog` giữ nguyên vai trò **cắm mới**. Nhìn-và-dọn là ý định khác, và nó không được phụ thuộc vào việc có văn phòng hay không.
+- Xoá văn phòng xong mà có cánh tay thành mồ côi ⇒ **nói ra + chỉ đường**, không chặn. Thêm điều kiện vào nút xoá là chặn một hành động hợp lệ vì một tài sản không thuộc về nó — và vẫn không cứu được ca *"5 văn phòng, không cái nào giữ Notion"*.
+
+⚠ **Đích đến đã chốt:** xoá văn phòng ⇒ workspace **vẫn còn**, nhưng **luôn xoá được**. Thu hồi một lượt cấp quyền OAuth là hành động trên tài khoản của người dùng ở dịch vụ khác; giữ nhầm thì một cú bấm là xong, xoá nhầm thì phải đăng nhập lại từ đầu ở trang của hãng.
+
+**Chốt:** `test/arm-reach.test.ts` — 0 văn phòng ⇒ `orphan === true` (cờ mà giao diện dựa vào để hiện 🗑) · `forgetArm` chạy được · **kho chìa y nguyên từng byte**. Phần UI không có test tự động; nó nằm ở walkthrough bài 12 biến thể 6.
+
 ---
 
 ## 7. Trợ lý phải biết **NĂNG LỰC**, không phải **TÊN**

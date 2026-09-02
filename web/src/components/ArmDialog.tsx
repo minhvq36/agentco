@@ -97,7 +97,7 @@ const TIER_SAY: Record<'read' | 'add' | 'full', { name: string; help: string }> 
   },
   full: {
     name: 'Toàn quyền',
-    help: '⚠ Sửa và xoá được nội dung đang có. Chỉ chọn khi bạn thật sự cần nhân viên chỉnh sửa.',
+    help: '⚠ Sửa và xoá nội dung đang có.',
   },
 };
 
@@ -1789,7 +1789,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {step === 1
               ? 'Chọn một cái có sẵn, dùng lại cái đã cắm, hoặc dán cấu hình của riêng bạn.'
               : step === 2
-                ? 'Bấm Thử ngay để chắc chắn nó chạy trước khi lưu.'
+                ? 'Bấm Thử ngay để thử kết nối.'
                 : 'Kết nối chỉ hoạt động với người được nối dây tới nó.'}
           </DialogDescription>
         </DialogHeader>
@@ -2585,7 +2585,6 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     )}
                   </div>
                 )}
-                <div className="mt-1 text-xs text-muted">Đổi tên được sau, trong bảng chi tiết của nó.</div>
               </div>
             )}
 
@@ -2665,8 +2664,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 */}
                 <p className="mt-1.5 text-xs text-muted">{pick.folders.help}</p>
                 <p className="mt-1 text-xs text-muted">
-                  Mỗi kết nối trỏ vào <b>một</b> thư mục. Cần nhiều chỗ thì tạo thêm kết nối, hoặc chọn
-                  thư mục cha chung.
+                  Cần nhiều chỗ thì tạo thêm kết nối hoặc chọn thư mục cha.
                 </p>
                 {/*
                   Danh sách dùng lại ở CHÂN bước 2, không ở một màn riêng — xem

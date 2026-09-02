@@ -233,25 +233,6 @@ Chính sách được công bố (dù đang hoãn) nói rõ credit đó bao gồ
 
 **Mệnh đề:** thứ người ta thật sự muốn từ một trợ lý cá nhân gắn tool là **bốn** việc, không phải bốn mươi.
 
-### Giữ — bốn việc chiếm phần lớn giá trị
-
-| Việc | Nhân viên | secrets | Vì sao đáng |
-|---|---|---|---|
-| **Lọc hộp thư & soạn nháp trả lời** | `inbox` (eco) | `GMAIL_TOKEN` | tần suất hằng ngày, đau rõ, kết quả kiểm được ngay |
-| **Tóm tắt lịch + chuẩn bị họp** | `scheduler` (eco) | `GCAL_TOKEN` | rẻ, chạy 30 giây, giá trị thấy liền |
-| **Ghi chú → việc phải làm** | `notetaker` (standard) | `NOTION_TOKEN` | chỗ người ta đã đổ dữ liệu vào sẵn |
-| **Tìm & tóm tắt trên web theo yêu cầu** | `scout` (standard) | — | **không cần MCP nào** — `WebSearch`/`WebFetch` là native tool |
-
-Việc thứ tư đáng chú ý: nó **không cần cắm gì cả**. Trong bốn thứ giá trị nhất, một thứ chạy ngay từ phút đầu.
-
-### Bỏ — làm được nhưng gần như không ai dùng thật
-
-- **Cắm được mọi API trên đời.** Bề rộng tích hợp là thứ đẹp trên trang chủ và chết trong thực tế: người dùng cắm 2–3 thứ rồi dừng. Chi phí bảo trì tuyến tính, giá trị gần như bằng không sau cái thứ ba.
-- **Tự động hoá nhiều bước không có người duyệt.** "Agent tự gửi email cho khách" là tính năng ai cũng tắt sau lần đầu nó gửi nhầm.
-- **Bắt người dùng viết MCP server.** Rào chắn tuyệt đối với nhóm khách chính. Đây đúng là chỗ `SPEC-connectors.md` định chen vào: *mô tả cái API, đừng viết code gọi nó.*
-- **Trợ lý luôn thường trú, nghe mọi thứ.** Tốn token thường trực để đổi lấy một cảm giác. Kiến trúc ở đây cố ý ngược lại: agent đến, làm, chết.
-- **Chuỗi agent tự gọi agent.** Nguồn đốt token lớn nhất, không kiểm soát được — và trên canvas của ta nó **không vẽ ra được**.
-
 ### Khoảng trống kinh tế thật nằm ở đâu — giờ có bằng chứng
 
 Không nằm ở "gắn được nhiều tool hơn" — openclaw đã có 50+ kênh và người ta vẫn bỏ. Nó nằm ở ba chỗ, và cả ba đều **đúng chỗ openclaw đau nhất**:
@@ -280,7 +261,7 @@ Xếp theo thứ tự nên làm, không theo thứ tự use case:
 | 2 | **Lịch chạy định kỳ** | 4, và cả nhóm "theo dõi" | nhỏ |
 | 3 | **Kiểm chứng bằng code, không bằng LLM** | 3, 7 — mọi việc mà sai số là sai hẳn | vừa |
 | 4 | **Chia tài liệu dài** (Librarian) | 2, 6 | vừa |
-| 5 | **`agentco resume`** (`pending.json` đã ghi, chưa ai đọc) | mọi use case dài gặp hết hạn mức | nhỏ |
+| 5 | ~~**`agentco resume`**~~ ✅ **đã có** — lệnh chữ `/resume` (`commands.ts`), đo ở bài 6 bước 7d | mọi use case dài gặp hết hạn mức | nhỏ |
 
 Ba trong năm cái là **nhỏ hoặc vừa**. Không cái nào đòi đổi kiến trúc — đó là tin tốt, và cũng là bằng chứng rằng nền đã đặt đúng chỗ.
 

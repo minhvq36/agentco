@@ -178,7 +178,8 @@ export function Empty({
 }: {
   icon?: React.ReactNode;
   title: string;
-  hint?: string;
+  /** Nhận cả node để chỗ gọi xuống dòng được — không phải chuỗi thuần. */
+  hint?: React.ReactNode;
   action?: React.ReactNode;
 }) {
   return (

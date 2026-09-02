@@ -38,10 +38,6 @@ export function NewOfficeDialog({ open, onOpenChange }: { open: boolean; onOpenC
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Tạo văn phòng</DialogTitle>
-            <DialogDescription>
-              Mỗi văn phòng có Trợ lý riêng, nhân viên riêng và kho tri thức riêng. Chúng không nói chuyện
-              với nhau — nhờ vậy một văn phòng zip lại là một template chạy được ở máy khác.
-            </DialogDescription>
           </DialogHeader>
 
           <Label htmlFor="office-name">Tên văn phòng</Label>
@@ -173,9 +169,6 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Thêm nhân viên</DialogTitle>
-            <DialogDescription>
-              Sẽ tạo một file <code>roles/&lt;mã&gt;.yaml</code> có chú thích, và nối dây từ Trợ lý.
-            </DialogDescription>
           </DialogHeader>
 
           <Label htmlFor="agent-name">Tên hiển thị</Label>
@@ -198,7 +191,7 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             placeholder="Làm được việc gì, đầu ra là gì"
           />
           <p className="mt-1 text-xs text-muted">
-            Giữ ngắn: dòng này nằm trong ngữ cảnh của Trợ lý suốt cả ca làm việc.
+            Tip: giữ ngắn gọn.
           </p>
 
           <Label htmlFor="agent-tier" className="mt-3">
@@ -206,41 +199,16 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           </Label>
           <Select id="agent-tier" className="w-full" value={tier} onChange={(e) => setTier(e.target.value)}>
             <option value="standard">standard — cân bằng</option>
-            <option value="eco">eco — rẻ hơn nhưng chậm gấp đôi, cần nhiều lượt hơn</option>
+            <option value="eco">eco — rẻ hơn</option>
             <option value="deep">deep — chỉ cho việc thật khó</option>
           </Select>
 
           {/*
-            NÓI RA LÚC TẠO, không đợi họ tự đi tìm trong bảng chi tiết. `Bash`
-            bật sẵn (user chốt 22/08) vì phần lớn việc văn phòng cần nó.
-
-            ┌──────────────────────────────────────────────────────────────────┐
-            │ ⚠ VIẾT LẠI 22/08 — BẢN TRƯỚC BÁN MỘT THỨ SẢN PHẨM KHÔNG LÀM.    │
-            │                                                                  │
-            │ Câu cũ: *"đụng tới thư mục ngoài văn phòng"*. Nghe như một năng  │
-            │ lực dùng được, nhưng KHÔNG có đường nào dẫn tới nó: `outputScoper`│
-            │ luôn đóng khung đầu ra về `artifacts/`, nên kế hoạch chưa bao giờ │
-            │ trỏ `Bash` ra ngoài. Ca 22/08 22:06 đi thử lối đó: **7 lượt ·     │
-            │ $0,3158 · blocked**, không ra file nào.                           │
-            │                                                                  │
-            │ Vừa doạ quá tay vừa hứa quá tay — và cái hứa mới là chỗ tệ hơn,   │
-            │ vì người dùng bật công tắc để mua một thứ không tồn tại.          │
-            │                                                                  │
-            │ Câu mới chỉ nêu thứ `Bash` THẬT SỰ mua được, và đã đo được ở      │
-            │ chính ca đó: metadata file (`Get-ChildItem` chạy thật, lấy đủ     │
-            │ kích thước + ngày sửa) và chạy script.                            │
-            │                                                                  │
-            │ "Ghi ra ngoài văn phòng" là chính sách RIÊNG, chốt là KHÔNG, và   │
-            │ sẽ đi qua một tool/MCP tường minh chứ không qua công tắc này.     │
-            │ → SPEC-tools-approval.md §1b, §8                                  │
-            └──────────────────────────────────────────────────────────────────┘
+            KHÔNG giải thích `Bash` ở đây nữa (user chốt 02/09 — app đang toàn
+            chữ). Công tắc *Cho chạy lệnh trên máy* ở bảng chi tiết vẫn là chỗ
+            nói ra năng lực đó, và nó nằm ngay cạnh cái công tắc thật.
+            → SPEC-tools-approval.md §1b, §8
           */}
-          <p className="mt-3 rounded bg-line/50 px-2 py-1.5 text-xs leading-relaxed text-muted">
-            Người này sẽ <b>chạy được lệnh trên máy</b> — xem kích thước · ngày sửa · dung lượng
-            file, chạy script, gọi git. Kết quả vẫn lưu trong thư mục văn phòng. Tắt được bất cứ lúc
-            nào ở bảng chi tiết.
-          </p>
-
           <DialogFooter>
             <Button type="button" onClick={() => onOpenChange(false)}>
               Thôi

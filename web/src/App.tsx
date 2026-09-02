@@ -122,21 +122,32 @@ export default function App() {
         <Header onNewOffice={() => setNewOffice(true)} onRenameOffice={() => setRenameOffice(true)} />
 
         {noOffices ? (
-          <main className="flex flex-1 items-center justify-center">
-            {/* Trạng thái rỗng được THIẾT KẾ, không phải màn hình lỗi.
-                → docs/SPEC-offices.md §3 */}
-            <Empty
-              icon={<Building2 className="h-10 w-10" />}
-              title="Công ty chưa có văn phòng nào"
-              hint="Mỗi văn phòng có Trợ lý riêng, nhân viên riêng và kho tri thức riêng. Tạo cái đầu tiên để bắt đầu."
-              action={
-                <Button variant="primary" onClick={() => setNewOffice(true)}>
-                  <Plus className="h-4 w-4" />
-                  Tạo văn phòng
-                </Button>
-              }
-            />
-          </main>
+          /*
+            Vẫn giữ Sidebar. Nó tự thu về đúng một ngăn "Tổng quan công ty"
+            (→ `Sidebar §noOffices`), vì chi phí · kết nối · workspace là dữ liệu
+            cấp CÔNG TY và chúng sống tiếp sau khi văn phòng cuối cùng bị xoá.
+            Bản trước thay cả vùng làm việc bằng màn hình rỗng ⇒ ba thứ đó mất
+            luôn cửa quản lý, và người dùng kẹt cứng không gỡ nổi một kết nối
+            không ai dùng. → bug 02/09, SPEC-arms.md §6k
+          */
+          <div className="flex min-h-0 flex-1">
+            <Sidebar />
+            <main className="flex flex-1 items-center justify-center">
+              {/* Trạng thái rỗng được THIẾT KẾ, không phải màn hình lỗi.
+                  → docs/SPEC-offices.md §3 */}
+              <Empty
+                icon={<Building2 className="h-10 w-10" />}
+                title="Công ty chưa có văn phòng nào"
+                hint="Mỗi văn phòng có Trợ lý riêng, nhân viên riêng và kho tri thức riêng. Tạo cái đầu tiên để bắt đầu."
+                action={
+                  <Button variant="primary" onClick={() => setNewOffice(true)}>
+                    <Plus className="h-4 w-4" />
+                    Tạo văn phòng
+                  </Button>
+                }
+              />
+            </main>
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1">
             <Sidebar />

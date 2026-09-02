@@ -501,11 +501,18 @@ export interface CatalogArm {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   scope?: {
-    /** Nút mở ra. Nói HÀNH ĐỘNG, không nói "cấu hình". */
+    /**
+     * Nút mở ra. Nói HÀNH ĐỘNG, không nói "cấu hình" — và nó là thứ DUY NHẤT
+     * khối này vẽ, nên câu chữ phải tự đủ nghĩa.
+     *
+     * Trường `help` đi kèm đã bỏ 02/09 (app đang toàn chữ). Thứ nó cảnh báo
+     * không mất: `repoScan` ngay dưới là chỗ duy nhất được phép nói *"đã cài /
+     * chưa cài"* (§5h·7o), và câu dịch 404 lúc chạy thật bắt đúng người vừa
+     * quên cài (§5h·7f-bis). Cả hai nói ĐÚNG LÚC, khác một đoạn văn đọc trước
+     * khi người ta kịp hiểu mình đang chọn gì.
+     */
     say: string;
     url: string;
-    /** Một câu nói phạm vi này ai giữ — thiếu nó thì cái nút là một câu đố. */
-    help: string;
   };
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐

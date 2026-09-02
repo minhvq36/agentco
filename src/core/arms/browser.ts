@@ -208,10 +208,15 @@ export const BROWSER_ARM: CatalogArm = {
        * của tôi"* — hứa một thứ không tồn tại, đúng lớp lỗi §11a-bis: **hứa quá
        * tay tệ hơn doạ quá tay**.
        */
-      help:
-        'Mở một hồ sơ riêng của agentco (trống lúc đầu, KHÔNG dùng lại đăng nhập ' +
-        'sẵn có trong Chrome/Edge của bạn). Bật kèm "hiện cửa sổ" để tự đăng nhập ' +
-        'một lần, từ đó nhân viên vào thẳng.',
+      /*
+        ⚠ Câu ngắn lại 02/09 (app đang toàn chữ). Vế *"hồ sơ RIÊNG, sinh ra
+        rỗng"* rời màn hình chứ **không** rời sản phẩm — nó là thứ chặn cách đọc
+        "dùng lại đăng nhập sẵn có trong Chrome của tôi", và cách đọc đó vẫn còn
+        đó. Nếu người dùng lại tưởng thế thì chỗ đúng để nói là câu cảnh báo bán
+        kính khi TICK ô này, không phải một đoạn văn đọc trước khi hiểu mình
+        đang chọn gì.
+      */
+      help: 'Lưu session và cookie trình duyệt.',
       /** Hồ sơ bền và "profile nằm trong RAM" loại trừ nhau — gỡ cái kia ra. */
       remove: ['--isolated'],
       dirs: [{ flag: '--user-data-dir', sub: 'profile' }],
@@ -219,9 +224,7 @@ export const BROWSER_ARM: CatalogArm = {
     {
       id: 'hien-cua-so',
       label: 'Hiện cửa sổ trình duyệt',
-      help:
-        'Mở cửa sổ thật để bạn nhìn thấy nhân viên đang làm gì — và để tự đăng nhập lần đầu ' +
-        'vào những trang cần tài khoản.',
+      help: 'Mở cửa sổ thật để bạn thấy nhân viên đang làm gì.',
       /** "Hiện cửa sổ" chính là **sự vắng mặt** của `--headless`. → `ArmOption.remove` */
       remove: ['--headless'],
       /**

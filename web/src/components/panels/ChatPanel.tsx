@@ -39,7 +39,14 @@ export function ChatPanel() {
           <Empty
             icon={<MessageSquare className="h-7 w-7" />}
             title="Chưa nói gì với Trợ lý"
-            hint="Giao việc, hoặc hỏi han bình thường. Trợ lý tự phân biệt — chào hỏi không tốn token của nhân viên nào."
+            hint={
+              <>
+                Giao việc, hoặc hỏi han bình thường. Trợ lý tự phân biệt — chào hỏi không tốn token
+                của nhân viên nào.
+                <br />
+                Gõ <code>/help</code> để xem danh sách lệnh.
+              </>
+            }
           />
         ) : (
           <div className="flex min-w-0 flex-col gap-3">

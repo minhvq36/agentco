@@ -82,7 +82,18 @@ export function Sidebar() {
   const panel = useApp((s) => s.panel);
   const unread = useApp((s) => s.messages.length - s.seenMessages);
   const working = useApp((s) => s.officeState === 'working');
-  const active = TABS.find((t) => t.id === panel);
+  /**
+   * KHÔNG CÓ VĂN PHÒNG NÀO ⇒ chỉ còn ngăn cấp CÔNG TY. (bug 02/09)
+   *
+   * Năm ngăn kia nói về một văn phòng đang mở nên chúng vô nghĩa ở đây. Nhưng
+   * "Tổng quan công ty" thì nói về công ty — chi phí, kết nối, workspace đều là
+   * dữ liệu cấp công ty, và **chúng vẫn tồn tại khi văn phòng cuối cùng bị xoá**.
+   * Giấu nốt ngăn này là nhốt người dùng ngoài sổ chung của chính họ: xoá hết
+   * văn phòng xong thì kết nối Notion/Linear/GitHub không còn cửa nào để dọn.
+   */
+  const noOffices = useApp((s) => (s.company?.offices.length ?? 0) === 0);
+  const tabs = noOffices ? TABS.filter((t) => t.id === 'overview') : TABS;
+  const active = tabs.find((t) => t.id === panel);
 
   const paneRef = useRef<HTMLElement | null>(null);
   const [width, setWidth] = useState<number>(() => {
@@ -143,7 +154,7 @@ export function Sidebar() {
   return (
     <div className="flex flex-none border-r border-line bg-panel">
       <nav className="flex w-14 flex-none flex-col items-center gap-1 border-r border-line py-2">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const Icon = t.icon;
           const on = panel === t.id;
           return (

@@ -145,9 +145,28 @@ Thi hành bằng **một chốt duy nhất** `Office.assertLive()`, gọi ở đ
 
 > **Vì sao KHÔNG cho chạy:** "đã xoá nhưng vẫn âm thầm tiêu tiền" là hành vi không ai đoán được, và tiền là thứ duy nhất người dùng không lấy lại được.
 
-**Vì sao có mức này:** một văn phòng xoá hẳn để lại những dòng tiền trong `usage.jsonl` mà **không ai giải thích được nữa** — chỉ còn cái mã trần. Lưu trữ giữ được cái tên.
+**Vì sao có mức này:** xoá hẳn thì **mất luôn cả lịch sử chi phí** (xem §3b). Muốn giữ số đo thì lưu trữ, đó là chỗ duy nhất giữ được.
 
 Mức cũ *"chỉ đóng, giữ file"* đã bị bỏ: lưu trữ thay nó và tốt hơn hẳn (khôi phục ngay trong app, không phải đi chép thư mục). `DELETE /api/office/:id` giờ chỉ còn **một** nghĩa là xoá hẳn — hai ý định khác nhau thì không đi chung một động từ với một cờ trên query string, vì cờ đó rất dễ quên và hậu quả không lấy lại được. CLI: `office archive` · `office restore` · `office rm --yes`.
+
+### 3b. XOÁ HẲN ĐÓNG LUÔN SỔ CHI PHÍ *(bug user báo 02/09)*
+
+`removeOffice` nay nối một **mốc** vào `logs/usage.jsonl` (`{kind:"office.purged", office, until}`); người đọc sổ bỏ qua mọi dòng của id đó có `ts ≤ until`. → `usage.ts §PurgeRecord`
+
+**Hai triệu chứng của bản cũ, một nguyên nhân** — sổ nằm ở cấp CÔNG TY nên `rm -rf` thư mục không đụng tới nó:
+
+| | |
+|---|---|
+| ① | Xoá sạch văn phòng mà bảng chi phí vẫn đọng *"14 mục không còn"* |
+| ② 🔴 | **Văn phòng mới TRÙNG TÊN thừa kế sổ của văn phòng đã chết.** `createOffice` suy id từ tên (`folderId`), nên "Nội dung" xoá đi rồi lập lại cho ra đúng `noi-dung`: cờ `gone` tắt, tên hiện thành tên mới, và nó khai sẵn hàng chục lượt + một khoản $ nó chưa hề tiêu |
+
+**Vì sao cắt theo MỐC chứ không theo id:** id quay lại được (nó suy từ tên), nên một cờ *"id này chết rồi"* hoặc giết luôn văn phòng mới, hoặc không giết được gì. Mốc thì phân đôi sạch: trước mốc là đời trước, sau mốc là đời này.
+
+⚠ **Phải đối chiếu mốc theo CẢ HAI danh tính** — id ghi trong dòng, và id sau khi đi hết chuỗi đổi tên. Chỉ một trong hai là hở, và hở im lặng theo hai chiều ngược nhau: chỉ so id thô ⇒ *đổi tên `a→b` rồi xoá `b`* để sót tiền thời `a`; chỉ so id đã giải ⇒ *xoá `a`, lập lại `a`, đổi tên `a→c`* làm tiền người chết chảy sang `c`. Mỗi chiều có một test riêng và **cả hai đã được thử làm đỏ** (`test/usage-purge.test.ts`).
+
+**Nối thêm chứ không xoá dòng**, cùng lý lẽ với `appendRename`: một cuốn sổ sửa được thì hết là bằng chứng. Thứ người dùng muốn mất là con số trên màn hình và số dư mang sang văn phòng sau — không phải mấy dòng JSON họ không đọc. ⇒ đây **không** phải cơ chế xoá dữ liệu vì riêng tư; muốn phi tang thật thì phải nén lại file, và đó là một cơ chế khác, chưa có.
+
+**Dọn rác cũ:** nút **Dọn hết** ở đáy khối *"N mục không còn"* (Tổng quan), hoặc `agentco cost --purge`. Chỉ đụng mục **không còn** văn phòng nào sống mang id đó — văn phòng đang mở và văn phòng trong lưu trữ không bị chạm.
 
 ---
 

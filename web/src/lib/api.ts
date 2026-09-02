@@ -511,5 +511,11 @@ export const api = {
       }>;
     }>('/api/cost'),
 
+  /** Dọn các mục `gone` khỏi sổ chi phí. Trả về đúng thứ vừa mất, để nói ra. */
+  purgeGoneCost: () =>
+    call<{ offices: number; tasks: number; costUSD: number }>('/api/cost/purge', {
+      method: 'POST',
+    }),
+
   shutdown: () => call<{ ok: true }>('/api/shutdown', { method: 'POST' }),
 };

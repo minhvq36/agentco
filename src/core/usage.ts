@@ -74,46 +74,140 @@ export function appendRename(paths: CompanyPaths, from: string, to: string): voi
 }
 
 /**
+ * Bản ghi XOÁ SỔ — *"tiền của `<office>` tiêu trước `<until>` thôi được tính"*.
+ * → `Company.removeOffice` · `Company.purgeGoneUsage`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ VÌ SAO LÀ MỘT DÒNG NỐI THÊM, KHÔNG PHẢI XOÁ DÒNG.                        │
+ * │                                                                          │
+ * │ Cùng lý lẽ với `appendRename`: một cuốn sổ sửa được thì hết là bằng      │
+ * │ chứng. Người dùng muốn *"xoá là xoá hết"* — thứ họ muốn mất là **con số  │
+ * │ hiện trên màn hình và số dư mang sang văn phòng sau**, không phải mấy    │
+ * │ dòng JSON trên đĩa mà họ không đọc. Cắt lúc ĐỌC cho họ đúng thứ đó, và   │
+ * │ vẫn còn một đường lần ra tiền đã đi đâu khi có tranh cãi về hoá đơn.     │
+ * │                                                                          │
+ * │ ⚠ Nên đây KHÔNG phải cơ chế xoá dữ liệu vì riêng tư. Muốn phi tang thật  │
+ * │ thì phải nén lại file — một cơ chế khác, và chưa có.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `until` là MỐC THỜI GIAN chứ không phải một cờ "office này chết rồi", và đó
+ * là toàn bộ bản vá cho bug tái sinh: xoá "Nội dung" rồi lập lại "Nội dung"
+ * cho ra **đúng id cũ** (`folderId` suy từ tên), nên nếu cắt theo id thì văn
+ * phòng mới hoặc thừa kế sổ của người chết, hoặc không bao giờ ghi được sổ.
+ * Cắt theo mốc thì dòng trước mốc là của đời trước, sau mốc là của đời này.
+ */
+export interface PurgeRecord {
+  ts: string;
+  kind: 'office.purged';
+  office: string;
+  until: string;
+}
+
+export function appendPurge(paths: CompanyPaths, office: string, until = new Date()): void {
+  fs.mkdirSync(path.dirname(paths.usageLog), { recursive: true });
+  const rec: PurgeRecord = {
+    ts: new Date().toISOString(),
+    kind: 'office.purged',
+    office,
+    until: until.toISOString(),
+  };
+  fs.appendFileSync(paths.usageLog, JSON.stringify(rec) + '\n', 'utf8');
+}
+
+/** Đọc sổ đúng MỘT lần, tách sẵn ba thứ mọi người đọc sổ đều cần. */
+function scan(paths: CompanyPaths): {
+  rows: Array<UsageRecord & { kind?: string }>;
+  chain: Map<string, string>;
+  cuts: Map<string, number>;
+} {
+  const rows: Array<UsageRecord & { kind?: string }> = [];
+  const chain = new Map<string, string>();
+  const cuts = new Map<string, number>();
+  if (!fs.existsSync(paths.usageLog)) return { rows, chain, cuts };
+
+  for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      /*
+        Đọc bằng một kiểu GỘP các trường có thể có, không phải
+        `Partial<RenameRecord & PurgeRecord>`: hai bản ghi kia có `kind` là hai
+        chuỗi literal khác nhau, nên giao chúng lại cho ra `never` và cả khối
+        này thành không đọc được trường nào.
+      */
+      const r = JSON.parse(line) as UsageRecord & {
+        kind?: string;
+        from?: string;
+        to?: string;
+        until?: string;
+      };
+      if (r.kind === 'office.renamed') {
+        if (!r.from || !r.to) continue;
+        // Trỏ lại MỌI mắt xích cũ về đích mới, nên không ai phải lần chuỗi lúc đọc.
+        for (const [k, v] of chain) if (v === r.from) chain.set(k, r.to);
+        chain.set(r.from, r.to);
+        continue;
+      }
+      if (r.kind === 'office.purged') {
+        // `office` rỗng là hợp lệ: đó là khối bản ghi v0 (trước khi có văn phòng).
+        if (typeof r.office !== 'string' || !r.until) continue;
+        const at = Date.parse(r.until);
+        if (Number.isNaN(at)) continue;
+        cuts.set(r.office, Math.max(cuts.get(r.office) ?? 0, at));
+        continue;
+      }
+      rows.push(r);
+    } catch {
+      /* dòng hỏng thì bỏ qua, không để log hỏng làm sập lệnh cost */
+    }
+  }
+  return { rows, chain, cuts };
+}
+
+/**
  * Bảng `id cũ → id hiện tại`, đã đi hết chuỗi. Đổi tên nhiều lần
  * (`a → b → c`) thì cả `a` lẫn `b` đều trỏ tới `c`.
  */
 export function renameChain(paths: CompanyPaths): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!fs.existsSync(paths.usageLog)) return out;
-  for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
-    if (!line.includes('"office.renamed"')) continue;
-    try {
-      const r = JSON.parse(line) as Partial<RenameRecord>;
-      if (r.kind !== 'office.renamed' || !r.from || !r.to) continue;
-      // Trỏ lại MỌI mắt xích cũ về đích mới, nên không ai phải lần chuỗi lúc đọc.
-      for (const [k, v] of out) if (v === r.from) out.set(k, r.to);
-      out.set(r.from, r.to);
-    } catch {
-      /* dòng hỏng thì bỏ — cùng luật với `readUsage` */
-    }
-  }
-  return out;
+  return scan(paths).chain;
+}
+
+/** `id văn phòng → mốc (ms)`. Dòng của id đó có `ts` ≤ mốc thì thôi được tính. */
+export function purgeCuts(paths: CompanyPaths): Map<string, number> {
+  return scan(paths).cuts;
 }
 
 export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] {
-  if (!fs.existsSync(paths.usageLog)) return [];
   const cutoff = sinceMs ? Date.now() - sinceMs : 0;
+  const { rows, chain, cuts } = scan(paths);
   const out: UsageRecord[] = [];
-  for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const rec = JSON.parse(line) as UsageRecord & { kind?: string };
-      /**
-       * ⚠ Sổ giờ chứa HAI loại dòng. `appendRename` nối vào cùng file (nó phải
-       * nằm cùng chỗ để thứ tự thời gian có nghĩa), nhưng nó KHÔNG phải một
-       * lượt chạy: không `cost_usd`, không `turns`. Lọt vào đây là `tasks` đếm
-       * dư và tổng tiền thành `NaN` — một cuốn sổ nói dối, đúng thứ tệ nhất.
-       */
-      if (rec.kind) continue;
-      if (!cutoff || Date.parse(rec.ts) >= cutoff) out.push(rec);
-    } catch {
-      /* dòng hỏng thì bỏ qua, không để log hỏng làm sập lệnh cost */
-    }
+
+  for (const rec of rows) {
+    /**
+     * ⚠ Sổ chứa BA loại dòng. `appendRename`/`appendPurge` nối vào cùng file
+     * (chúng phải nằm cùng chỗ để thứ tự thời gian có nghĩa), nhưng chúng
+     * KHÔNG phải một lượt chạy: không `cost_usd`, không `turns`. Lọt vào đây
+     * là `tasks` đếm dư và tổng tiền thành `NaN` — một cuốn sổ nói dối.
+     * (`scan` đã lọc, dòng này là lưới thứ hai cho định dạng lạ về sau.)
+     */
+    if (rec.kind) continue;
+    const at = Date.parse(rec.ts);
+    if (cutoff && !(at >= cutoff)) continue;
+
+    /**
+     * Đối chiếu mốc xoá theo CẢ HAI danh tính — id ghi trong dòng, và id sau
+     * khi đi hết chuỗi đổi tên.
+     *
+     * Chỉ so một trong hai là hở, và hở im lặng:
+     *  · chỉ so id thô  ⇒ đổi tên `a→b` rồi xoá `b`: dòng mang `a`, mốc ở `b`.
+     *  · chỉ so id giải ⇒ xoá `a`, lập lại `a`, đổi tên `a→c`: dòng đời trước
+     *    mang `a` nay giải ra `c` ⇒ tiền người chết chảy sang văn phòng sống.
+     */
+    const raw = rec.office ?? '';
+    const resolved = chain.get(raw) ?? raw;
+    const cut = Math.max(cuts.get(raw) ?? 0, cuts.get(resolved) ?? 0);
+    if (cut && at <= cut) continue;
+
+    out.push(rec);
   }
   return out;
 }

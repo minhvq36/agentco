@@ -614,6 +614,18 @@ export const actions = {
     if (!ok) return false;
     if (state.officeId === id) set({ officeId: null });
     await actions.boot();
+    /**
+     * NÓI RA khi vừa có kết nối thành mồ côi — **không chặn**. (02/09)
+     *
+     * Kết nối là tài sản cấp công ty, văn phòng chỉ mượn, nên xoá văn phòng
+     * KHÔNG được đụng vào nó (xoá A mà gỡ kết nối là đứt dây của B). Nhưng im
+     * luôn thì món nợ đó vô hình cho tới ngày người dùng đi tìm chỗ gỡ. Một câu
+     * + chỉ đúng cửa là đủ; thêm điều kiện vào nút xoá thì lại chặn một hành
+     * động hợp lệ vì một thứ không thuộc về nó.
+     */
+    const r = await api.arms().catch(() => null);
+    const n = r?.arms.filter((a) => a.orphan).length ?? 0;
+    if (n > 0) toast(`${n} kết nối giờ không ai dùng — dọn ở Tổng quan → Kết nối.`);
     return true;
   },
 
@@ -783,6 +795,21 @@ export const actions = {
     // không còn trong sổ, và nút "Lưu" của nó gọi `renameArm` — đúng chỗ sinh ra
     // câu "Không có kết nối <id>".
     set({ selected: null });
+    await actions.refreshCanvas();
+    return true;
+  },
+
+  /**
+   * GỠ một workspace đã nối (thu hồi ở phía dịch vụ rồi xoá chìa ở máy này).
+   *
+   * Đi qua `actions` chứ không gọi thẳng `api`, cùng lý do với `forgetArm` ngay
+   * trên: node trên sơ đồ vẽ dòng phụ `via` tra từ kho OAuth, nên gỡ một
+   * workspace mà không vẽ lại canvas là để lại một cái tên đã chết trên màn
+   * hình cho tới lần F5.
+   */
+  async forgetAccount(name: string): Promise<boolean> {
+    const res = await guard(() => api.oauthForget(name));
+    if (!res) return false;
     await actions.refreshCanvas();
     return true;
   },

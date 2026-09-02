@@ -92,7 +92,16 @@ test('⭐ CÓ CỬA đi tới màn hình đồng ý của GitHub — không có 
    */
   assert.match(gh.scope?.url ?? '', /^https:\/\/github\.com\/apps\/[\w-]+\/installations\/new$/);
   assert.ok(gh.scope?.say, 'nút phải có chữ');
-  assert.match(gh.scope?.help ?? '', /GitHub giữ/, 'phải nói phạm vi này AI giữ');
+  /*
+    ⚠ Bỏ 02/09: ô cũ đòi `scope.help` khớp /GitHub giữ/. Trường `help` đã gỡ khỏi
+    danh mục (user chốt — app đang toàn chữ), nên ô đó đang khoá một CÂU CHỮ chứ
+    không khoá bất biến.
+
+    Bất biến thật vẫn nguyên ở hai dòng trên: **có một cửa đi tới màn hình đồng ý
+    của GitHub**. Câu *"phạm vi này ai giữ"* nay được nói ở chỗ đúng lúc hơn —
+    `repoScan` (§5h·7o) và câu dịch 404 lúc chạy thật (§5h·7f-bis), cả hai đều
+    có test riêng.
+  */
 });
 
 test('⭐ CHỈ MỘT hàng rào repo, và nó là của GitHub — ta không dựng cái thứ hai', () => {
