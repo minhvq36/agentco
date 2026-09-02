@@ -173,7 +173,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
    * ┌────────────────────────────────────────────────────────────────────────┐
    * │ KHOÁ `mcpServers` GIỮ NGUYÊN BĂM. (user chốt 26/08, và chốt đúng)      │
    * │                                                                        │
-   * │ Bản trước tôi đổi khoá thành slug từ nhãn (`mcp__fpt__…`) để model phân │
+   * │ Bản trước đổi khoá thành slug từ nhãn (`mcp__acme__…`) để model phân    │
    * │ biệt được hai cánh tay Notion. User đề nghị ngược lại: **giữ băm, và    │
    * │ để dòng danh bạ trỏ tới tên**. Ba lý do nó tốt hơn:                     │
    * │                                                                        │

@@ -800,13 +800,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * │ 🔴 TÊN MẶC ĐỊNH **ĐI THEO** TÀI KHOẢN — đổi tài khoản là đổi tên.        │
    * │ (bug user bắt 27/08)                                                     │
    * │                                                                          │
-   * │ > *"Sao tôi đổi workspace account sang minhvuptitd14 mà node mcp server  │
-   * │ >  vẫn tên là GitHub · minhvq36"* … *"bạn lấy được tên workspace mà, lúc │
+   * │ > *"Sao tôi đổi workspace account sang hubot mà node mcp server          │
+   * │ >  vẫn tên là GitHub · octocat"* … *"bạn lấy được tên workspace mà, lúc  │
    * │ >  tick đổi cái tên không đổi theo mà bị khoá?"*                          │
    * │                                                                          │
    * │ Bản cũ so `cur === pick.name` để biết *"nhãn còn là hàng tự sinh không"*. │
    * │ Phép so đó chỉ đúng ĐÚNG MỘT LẦN: ghi xong thì `cur` là                  │
-   * │ *"GitHub · minhvq36"*, không còn bằng `pick.name` nữa ⇒ mọi lần đổi tài  │
+   * │ *"GitHub · octocat"*, không còn bằng `pick.name` nữa ⇒ mọi lần đổi tài   │
    * │ khoản sau đều rơi vào nhánh *"người dùng đã tự đặt tên"* và bị bỏ qua.   │
    * │ Nhãn đóng băng ở tài khoản ĐẦU TIÊN trong khi cấu hình trỏ tài khoản mới │
    * │ — và trên sơ đồ đó là chỗ DUY NHẤT đọc được tên, nên lời nói dối không   │

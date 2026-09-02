@@ -197,13 +197,13 @@ function BrowserLogin() {
         {opened ? (
           <>
             Cửa sổ đã mở. Dùng như trình duyệt bình thường — đăng nhập, chờ mã SMS, xác minh hai
-            bước, bao lâu cũng được. Xong thì <b>đóng cửa sổ</b>; nhân viên dùng lại phiên đó ở
+            bước. <b>Đóng cửa sổ</b> khi hoàn tất; nhân viên ghi nhớ lại phiên đó ở
             những lượt sau.
           </>
         ) : (
           <>
             Mở một cửa sổ trình duyệt thường, dùng <b>đúng hồ sơ</b> mà nhân viên dùng. Đăng nhập
-            ở đây một lần là những lượt việc sau vào thẳng được.
+            ở đây một lần là những lượt việc sau nhân viên vào thẳng được.
           </>
         )}
       </p>

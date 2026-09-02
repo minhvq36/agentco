@@ -41,7 +41,7 @@ function tmpCompany(): string {
       '    url: https://mcp.notion.com/mcp',
       'arms:',
       '  a354ff2bb34:',
-      '    label: Notion · Minh Vu Quoc',
+      '    label: Notion · Acme Team',
       '    secrets: [NOTION_OAUTH_52BA79B8]',
       '    tools: [notion-search, notion-fetch]',
       '',

@@ -3,8 +3,8 @@
  * → `src/core/assistant.ts §armReach`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Ca thật: một nhân viên cầm hai cánh tay Notion (workspace *FPT* và       │
- * │ *Notion2*). User bảo *"tạo trang ở FPT và ở Notion2"*, model nhìn thấy:  │
+ * │ Ca thật: một nhân viên cầm hai cánh tay Notion (workspace *Acme* và      │
+ * │ *Notion2*). User bảo *"tạo trang ở Acme và ở Notion2"*, model nhìn thấy: │
  * │                                                                          │
  * │     mcp__ad95f16558d__notion-create-pages                               │
  * │     mcp__a46a7e26403__notion-create-pages                               │
@@ -33,10 +33,10 @@ import { armReach } from '../dist/core/assistant.js';
 const SRV = { a1: { type: 'http', url: 'https://x' }, a2: { type: 'http', url: 'https://y' } };
 
 test('⭐ HAI cánh tay ⇒ mỗi dòng nói ra cách gọi, và hai dòng KHÁC nhau', () => {
-  const arms = { a1: { label: 'FPT' }, a2: { label: 'Notion2' } };
+  const arms = { a1: { label: 'Acme' }, a2: { label: 'Notion2' } };
   const l1 = armReach(arms, SRV, 'a1', 'a1');
   const l2 = armReach(arms, SRV, 'a2', 'a2');
-  assert.match(l1, /FPT/);
+  assert.match(l1, /Acme/);
   assert.match(l1, /mcp__a1__/);
   assert.match(l2, /mcp__a2__/);
   assert.notEqual(l1, l2, 'hai dòng giống hệt nhau thì reachDiff cũng không thấy gì');

@@ -208,7 +208,7 @@ export function OverviewPanel() {
  * KẾT NỐI + TÀI KHOẢN ĐÃ NỐI — cửa quản lý ở đúng cấp mà dữ liệu đang nằm.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG USER BÁO 02/09: *"kết nối Minh Vu Quoc's Notion không xoá được"*     │
+ * │ BUG USER BÁO 02/09: *"kết nối Acme Team's Notion không xoá được"*        │
  * │ (rồi Linear, rồi GitHub — cùng một thế kẹt).                             │
  * │                                                                          │
  * │ Xoá theo dây chuyền, mà mỗi khoá lại nằm sau đúng cánh cửa nó đang khoá: │

@@ -37,9 +37,9 @@ const fix = (raw: Record<string, unknown>, text: string) => githubDoorError(raw,
 // ─────────────────────────────────────────────── ① dịch câu 404 sai cửa
 
 test('⭐ 404 kèm owner/repo ⇒ dịch lại thành "chưa cài app vào repo này"', () => {
-  const out = fix({ owner: 'minhvq36', repo: 'test', path: 'README.md' }, 'Error: 404 Not Found');
+  const out = fix({ owner: 'octocat', repo: 'test', path: 'README.md' }, 'Error: 404 Not Found');
   assert.ok(out, 'phải dịch');
-  assert.match(out, /minhvq36\/test/, 'nêu đúng repo');
+  assert.match(out, /octocat\/test/, 'nêu đúng repo');
   assert.match(out, /chưa được cài/i, 'nói ra nguyên nhân thật');
   assert.ok(out.includes(DOOR), 'kèm cửa đi tiếp — thiếu nó thì câu dịch cũng là ngõ cụt');
 });
@@ -64,7 +64,7 @@ test('🔴 KHÔNG có owner/repo ⇒ ĐỨNG YÊN — đừng dựng một câu 
    * 404 ở một lời gọi không nói về repo thì nó nói về chuyện khác. Đoán bừa ở
    * đây là thay một câu sai cửa bằng một câu sai cửa khác, lần này do ta viết.
    */
-  assert.equal(fix({ query: 'user:minhvq36' }, 'Error: 404 Not Found'), null);
+  assert.equal(fix({ query: 'user:octocat' }, 'Error: 404 Not Found'), null);
   assert.equal(fix({ owner: 'a' }, '404 Not Found'), null, 'nửa vế không đủ để kết luận');
 });
 
@@ -129,6 +129,6 @@ test('🔴 băm giữ NGUYÊN như trước khi thêm rồi gỡ giới hạn re
 });
 
 test('normRepo vẫn sống — phép thử cần nó để tách chủ/tên', () => {
-  assert.equal(normRepo('https://github.com/MinhVQ36/Test.git'), 'minhvq36/test');
-  assert.equal(normRepo('  /minhvq36/test/  '), 'minhvq36/test');
+  assert.equal(normRepo('https://github.com/Octocat/Test.git'), 'octocat/test');
+  assert.equal(normRepo('  /octocat/test/  '), 'octocat/test');
 });

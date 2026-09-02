@@ -118,9 +118,9 @@ test('🔴🔴 KHÔNG có seed ⇒ MỌI tài khoản GitHub ra CÙNG một tên
 
 test('⭐ seed tách được hai tài khoản dù mọi thứ khác giống hệt', () => {
   const a = { issuer: 'https://github.com', mcp_url: 'https://x/mcp/', extra: {} };
-  assert.notEqual(accountName('github', a, 'minhvq36-id'), accountName('github', a, 'other-id'));
+  assert.notEqual(accountName('github', a, 'octocat-id'), accountName('github', a, 'other-id'));
   // Cùng seed ⇒ cùng tên: đăng nhập lại KHÔNG được đẻ ra một tài khoản thứ hai.
-  assert.equal(accountName('github', a, 'minhvq36-id'), accountName('github', a, 'minhvq36-id'));
+  assert.equal(accountName('github', a, 'octocat-id'), accountName('github', a, 'octocat-id'));
 });
 
 // ═══════ CHỐT DANH TÍNH RIÊNG — `hasOwnSeed` (thêm 28/08) ═══════
@@ -188,7 +188,7 @@ test('🔴 lượt MINT của Notion CÓ danh tính ⇒ chốt mới không ch�
       token_type: 'Bearer',
       expires_in: 28800,
       workspace_id: 'ws-abc',
-      workspace_name: "Minh Vu Quoc's Notion",
+      workspace_name: "Acme Team's Notion",
     } as never,
   );
   assert.equal(acc.extra?.['workspace_id'], 'ws-abc', 'trường lạ phải rơi vào `extra`');
@@ -214,9 +214,9 @@ test('🔴 lượt LÀM MỚI đánh rơi `extra` — nên ĐỪNG hỏi chốt 
   assert.equal(hasOwnSeed(minted), true);
   assert.equal(hasOwnSeed(refreshed), false, 'đây là ca đọc nhầm, không phải ca hỏng');
   // Nhãn thì PHẢI sống sót — nó là thứ người dùng nhìn thấy ở mọi màn hình.
-  const named = applyToken({ ...minted, label: 'FPT Soft-ware' }, {
+  const named = applyToken({ ...minted, label: 'Acme Soft-ware' }, {
     access_token: 'at3',
     token_type: 'Bearer',
   } as never);
-  assert.equal(named.label, 'FPT Soft-ware');
+  assert.equal(named.label, 'Acme Soft-ware');
 });

@@ -69,7 +69,7 @@ máy, và ghi được ra ngoài thư mục văn phòng.
 > 🔴 **HAI CÂU TRONG KHỐI TRÊN ĐÃ SAI VÀ ĐÃ SỬA — ghi lại để không ai chép lại bản cũ.**
 >
 > **① *"chạy lệnh là thứ DUY NHẤT lấy được kích thước"* — sai theo số đo (24/08).** `Read` builtin
-> tự in kích thước khi đọc PDF: `PDF file read: …\CV_VU QUOC MINH.pdf (411.7KB)`, khớp
+> tự in kích thước khi đọc PDF: `PDF file read: …\CV.pdf (411.7KB)`, khớp
 > `Get-ChildItem` tới 0,1 KB. Câu cũ khiến Trợ lý từ chối một việc nó làm được. Bản trong mã
 > (`SHELL_LEGEND`) đã bỏ vế đó; khối trên là bản đồng bộ lại. → `SPEC-arms` §15h
 >

@@ -5,7 +5,7 @@
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ CA THẬT, ĐỌC ĐƯỢC TRÊN ĐĨA 29/08 — `.playwright-mcp/console-*.log`:      │
  * │                                                                          │
- * │   …/ajax/bnzai?…&fb_dtsg=NAfzqk5dbDDn84_…&__user=100005161517189&…       │
+ * │   …/ajax/bnzai?…&fb_dtsg=AbCdEfGhIjKlMn_…&__user=100000000000001&…       │
  * │                                                                          │
  * │ Đó là **chìa phiên đăng nhập dưới dạng chữ**, nằm trong thư mục văn phòng │
  * │ — nơi nhân viên đọc được bằng `Read`. Trong khi **cookie thì đã được gác**│

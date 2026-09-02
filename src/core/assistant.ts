@@ -1282,12 +1282,12 @@ export function staleMentions(input: {
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ 🔴 `via` THÊM 28/08 VÌ CỔNG NÀY VỪA ĐỂ LỌT MỘT CA THẬT.                  │
    * │                                                                          │
-   * │ User gỡ tài khoản `minhvuptitd14`, rồi Trợ lý hỏi:                        │
-   * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub minhvq36 hay             │
-   * │    minhvuptitd14 vậy bạn?"*                                              │
+   * │ User gỡ tài khoản `hubot`, rồi Trợ lý hỏi:                                │
+   * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub octocat hay              │
+   * │    hubot vậy bạn?"*                                                      │
    * │                                                                          │
    * │ Cổng không bắn, và nó **không sai luật** — nó chỉ so với `label`, tức     │
-   * │ chuỗi `"GitHub · minhvuptitd14"`. Câu trên không chứa nguyên chuỗi đó.    │
+   * │ chuỗi `"GitHub · hubot"`. Câu trên không chứa nguyên chuỗi đó.            │
    * │ Cánh tay thư mục không dính lỗ này vì nhãn của chúng THƯỜNG được nhắc     │
    * │ nguyên vẹn (`D:\Downloads\…`); cánh tay OAuth thì tên tài khoản là thứ    │
    * │ người ta nhắc, còn phần `"GitHub · "` thì bỏ.                             │
@@ -2441,7 +2441,7 @@ export class Assistant {
          * ┌────────────────────────────────────────────────────────────────────┐
          * │ 🔴 CA THẬT 30/08: người dùng hỏi *"Việc nào đang giao cho tôi?"*   │
          * │ Trợ lý viết brief: *"…lọc những việc gán cho người dùng có email    │
-         * │ minh.vu.ptit.d14@gmail.com"* — một email **nó không có cách nào     │
+         * │ an.nguyen@gmail.com"* — một email **nó không có cách nào            │
          * │ biết**, và sai. Nhân viên tra đúng theo brief, không thấy ai, báo   │
          * │ về. 6 lượt, $0,1409, câu trả lời vô dụng.                          │
          * │                                                                    │

@@ -3,7 +3,7 @@
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ Ca thật, đọc được trên đĩa 29/08 trong `.playwright-mcp/console-*.log`:  │
- * │   …/ajax/bnzai?…&fb_dtsg=NAfzqk…&__user=100005161517189&…                │
+ * │   …/ajax/bnzai?…&fb_dtsg=AbCdEf…&__user=100000000000001&…                │
  * │ Chìa phiên đăng nhập dưới dạng chữ, trong thư mục nhân viên đọc được —    │
  * │ trong khi **cookie thì đã được gác** ở `.state/browser/profile`.          │
  * └──────────────────────────────────────────────────────────────────────────┘
@@ -24,10 +24,10 @@ import { guardedZone } from '../dist/core/paths.js';
 
 test('⭐ cắt query — đúng ca thật đã đọc được trên đĩa', () => {
   const truoc =
-    '[ERROR] Failed to load resource @ https://www.facebook.com/ajax/bnzai?__a=1&fb_dtsg=NAfzqk5dbDDn84&__user=100005161517189';
+    '[ERROR] Failed to load resource @ https://www.facebook.com/ajax/bnzai?__a=1&fb_dtsg=AbCdEfGhIjKlMn&__user=100000000000001';
   const sau = cutQuery(truoc);
   assert.ok(!sau.includes('fb_dtsg'), 'còn token trong log');
-  assert.ok(!sau.includes('100005161517189'), 'còn id người dùng trong log');
+  assert.ok(!sau.includes('100000000000001'), 'còn id người dùng trong log');
   // Giữ đủ để gỡ lỗi: biết trang nào, endpoint nào.
   assert.ok(sau.includes('https://www.facebook.com/ajax/bnzai'));
 });

@@ -2,9 +2,9 @@
  * SPIKE — CÁNH TAY CÓ ĐO ĐƯỢC FILE **ngoài** ALLOWLIST KHÔNG? (user đặt 24/08)
  *
  * Ca thật, `P-260824-1850-7u3q`: hỏi *"danh sách thư mục, file, và kích thước
- * trong D:\Works\Profile_Vu Quoc Minh"* — một thư mục **không** cánh tay nào
- * khai. Nhật ký hiện `Programs Installation 2 · get file info → CV_VU QUOC
- * MINH.pdf`, và artifact trả về **kích thước ĐÚNG TỚI 0,1 KB cả ba file**
+ * trong D:\Works\Ho so ca nhan"* — một thư mục **không** cánh tay nào
+ * khai. Nhật ký hiện `Programs Installation 2 · get file info → CV.pdf`, và
+ * artifact trả về **kích thước ĐÚNG TỚI 0,1 KB cả ba file**
  * (411,7 · 425 · 171,7 KB — đối chiếu `Get-ChildItem`: khớp tuyệt đối).
  *
  * Con số đúng tuyệt đối thì KHÔNG phải model đoán. Nên chỉ còn hai khả năng, và
@@ -41,7 +41,7 @@ const officeDir = path.join(companyDir, 'offices', 'canh-tay');
 /** Cánh tay "Programs Installation" — đúng cái nhật ký nói đã gọi. */
 const ARM = 'a385afc3ab6';
 /** Thư mục KHÔNG cánh tay nào khai, và là thứ ca thật đã đo được. */
-const OUTSIDE = 'D:\\Works\\Profile_Vu Quoc Minh\\CV_VU QUOC MINH.pdf';
+const OUTSIDE = 'D:\\Works\\Ho so ca nhan\\CV.pdf';
 
 const cfg = loadCompanyConfig(companyDir);
 const declared = cfg.mcpServers[ARM] as Record<string, unknown> | undefined;

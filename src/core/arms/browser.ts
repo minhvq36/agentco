@@ -145,7 +145,7 @@ export const BROWSER_ARM: CatalogArm = {
    *
    * 🔴 NHƯNG THƯ MỤC ẤY CHỨA `console-*.log`, VÀ LOG CONSOLE CÓ TOKEN PHIÊN.
    * Đọc thật một file: URL của Facebook trong đó mang `fb_dtsg=…` và
-   * `__user=100005161517189`. Đó là **chìa phiên đăng nhập nằm dưới dạng chữ**,
+   * `__user=100000000000001`. Đó là **chìa phiên đăng nhập nằm dưới dạng chữ**,
    * trong thư mục văn phòng — nơi nhân viên đọc được. Chưa vá.
    *
    * 🔴 HỆ QUẢ PHẢI BỊT: `tools/list` trả đủ 24 việc **mà chưa khởi động trình

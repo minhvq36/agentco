@@ -1327,7 +1327,7 @@ Notion chỉ có một.
 | **2a** | Có `refresh_token`? | ✅ `ghu_…` (40 ký tự) hạn **8,0 giờ** · `ghr_…` (80 ký tự) hạn **4 416 giờ = 6 tháng** |
 | **2b** | Làm mới không secret? Có **xoay**? | ✅ chạy · 🔴 **CÓ XOAY**, và chìa cũ **chết ngay** khi thử lại |
 | **3** | 🔴 MCP có nhận token của **app lạ** không? | 🟢 **CÓ** — `github-mcp-server/remote-6e886500…`. **Phương án A sống.** Changelog GA ghi *"more third-party host apps coming soon"* làm ta lo hụt: đó là câu về **tích hợp sẵn trong IDE**, không phải về danh sách trắng client |
-| **4** | Repo **private** với tới được? | ✅ **CÓ** — đọc ✅ và **ghi ✅**: commit thật vào `minhvq36/test` (private), tác giả là chính người đăng nhập. Xem 5h·7j |
+| **4** | Repo **private** với tới được? | ✅ **CÓ** — đọc ✅ và **ghi ✅**: commit thật vào `octocat/test` (private), tác giả là chính người đăng nhập. Xem 5h·7j |
 | **5** | Giá token từng lát cắt | 🔴 xem 5h·7e — **đây là ràng buộc chi phối cả thiết kế** |
 | **6** | Chìa này là **của ai**? | 🔴 GitHub **không trả tên tài khoản** trong phản hồi token ⇒ phải đi hỏi `get_me`. Xem 5h·7k |
 | **7** | Nhiều lát cắt trong **một** cánh tay? | ✅ header `X-MCP-Toolsets` chạy — **một node, không phải ba**. Xem 5h·7e |
@@ -1489,8 +1489,8 @@ cần tin."**
 
 | Phép đo | Kết quả |
 |---|---|
-| Đọc file trong repo **private** (`minhvq36/test`) | ✅ `get_file_contents` trả nội dung |
-| **Ghi** file vào repo private | ✅ commit `55c55869…`, tác giả **`minhvq36`** — tức nó ghi **danh nghĩa người đăng nhập**, không phải danh nghĩa một bot |
+| Đọc file trong repo **private** (`octocat/test`) | ✅ `get_file_contents` trả nội dung |
+| **Ghi** file vào repo private | ✅ commit `55c55869…`, tác giả **`octocat`** — tức nó ghi **danh nghĩa người đăng nhập**, không phải danh nghĩa một bot |
 | Cùng lời gọi ghi, nhưng qua `/x/repos/readonly` | 🟢 **BỊ TỪ CHỐI Ở TẦNG GIAO THỨC**: `-32602 unknown tool "create_or_update_file"` |
 
 > **Dòng thứ ba là dòng đáng tiền.** `/readonly` không chỉ **giấu** tool khỏi `tools/list` — nó **từ
@@ -1522,12 +1522,12 @@ identity: { tool: 'get_me', idField: 'id', labelField: 'login',
             url: 'https://api.githubcopilot.com/mcp/x/context' }
 ```
 
-Đo được: `get_me` trả `{"login":"minhvq36","id":139192424,…}` — đủ cả hạt giống băm (`id`, ổn định,
+Đo được: `get_me` trả `{"login":"octocat","id":98765432,…}` — đủ cả hạt giống băm (`id`, ổn định,
 không đổi khi đổi tên) lẫn nhãn (`login`). Mục nào **có** danh tính trong phản hồi token (Notion) thì
 bỏ trống trường này; luồng chung đọc *"có `identity` thì hỏi, không có thì thôi"*.
 
 > 🎯 **Và nó vá luôn một cái bẫy UX mà chính ta vừa dẫm:** lượt đăng nhập đầu tiên của phiên này lấy
-> nhầm chìa của **`agent-co-dev`** (tài khoản chủ app) thay vì `minhvq36`, vì trình duyệt đang đăng
+> nhầm chìa của **`agent-co-dev`** (tài khoản chủ app) thay vì `octocat`, vì trình duyệt đang đăng
 > nhập tài khoản đó. Không có bước hỏi danh tính thì triệu chứng duy nhất là *"cánh tay không thấy repo
 > nào"* — một câu **sai cửa** dẫn người ta đi kiểm quyền, kiểm cài đặt, kiểm repo.
 > ⇒ Màn hình sau khi đăng nhập **phải hiện `@login`**, và nút *"Không phải tôi — đăng nhập lại"* ngay
@@ -2066,12 +2066,12 @@ của văn phòng Kế toán, không dây nào, không việc gì.
 
 ### 6g-bis. 🔴 NHÃN ĐI THEO TÀI KHOẢN — cổng "còn là hàng tự sinh" chỉ đúng một lần (bug 27/08, đã sửa)
 
-> *"Sao tôi đổi workspace account sang minhvuptitd14 mà node mcp server vẫn tên là GitHub ·
-> minhvq36"* … *"bạn lấy được tên workspace mà, lúc tick đổi cái tên không đổi theo mà bị khoá?"*
+> *"Sao tôi đổi workspace account sang hubot mà node mcp server vẫn tên là GitHub ·
+> octocat"* … *"bạn lấy được tên workspace mà, lúc tick đổi cái tên không đổi theo mà bị khoá?"*
 
 **Cơ chế của lỗi** — `ArmDialog` ghép `<hãng> · <tài khoản>` vào nhãn, có cổng *"chỉ ghi khi nhãn
 còn đúng bằng tên mục danh mục"* để không đè lên tên người dùng tự gõ. Ý cổng **đúng**; phép so thì
-**hết hạn ngay sau lần dùng đầu tiên**: ghi xong, nhãn là `GitHub · minhvq36` ≠ `GitHub`, nên mọi
+**hết hạn ngay sau lần dùng đầu tiên**: ghi xong, nhãn là `GitHub · octocat` ≠ `GitHub`, nên mọi
 lần đổi tài khoản sau đều bị xếp nhầm vào nhánh *"người dùng đã tự đặt tên"*. Nhãn đóng băng ở tài
 khoản **đầu tiên** trong khi cấu hình trỏ tài khoản mới.
 
@@ -2685,7 +2685,7 @@ biết điều đó **trước khi** xây hai mục còn lại là rẻ nhất.
 
 ## 6k. CỬA QUẢN LÝ PHẢI Ở CÙNG CẤP VỚI DỮ LIỆU *(bug user báo 02/09)*
 
-**Triệu chứng:** xoá hết văn phòng xong thì `Minh Vu Quoc's Notion` không gỡ được nữa — rồi Linear, rồi GitHub, cùng một thế kẹt.
+**Triệu chứng:** xoá hết văn phòng xong thì `Acme Team's Notion` không gỡ được nữa — rồi Linear, rồi GitHub, cùng một thế kẹt.
 
 **Thế kẹt ba tầng, mỗi khoá nằm sau đúng cánh cửa nó đang khoá:**
 
@@ -3849,7 +3849,7 @@ xây lên đúng một tiền đề mà §14 #1 **đang định gỡ bỏ**. C�
 
 ## 15h. ✅ "ĐO KÍCH THƯỚC BẰNG GÌ" — builtin `Read`, và nó tự in ra
 
-**Ca thật `P-260824-1850-7u3q`:** hỏi kích thước file trong `D:\Works\Profile_Vu Quoc Minh` — thư mục
+**Ca thật `P-260824-1850-7u3q`:** hỏi kích thước file trong `D:\Works\Ho so ca nhan` — thư mục
 **không cánh tay nào khai**. Artifact trả `411,7 · 425 · 171,7 KB`, đối chiếu `Get-ChildItem`:
 **khớp tuyệt đối cả ba**. Con số đúng tới 0,1 KB thì không phải model đoán.
 
@@ -3860,7 +3860,7 @@ xây lên đúng một tiền đề mà §14 #1 **đang định gỡ bỏ**. C�
 | **A · cánh tay** `list_allowed_directories` | `<thư mục văn phòng>` + `D:\Downloads\Programs Installation` ✅ |
 | **A · cánh tay** `get_file_info` file ngoài | **`Access denied - path outside allowed directories`** ✅ |
 | **B · builtin** `Glob` `D:\Works\**` | liệt kê thoải mái, không hàng rào |
-| **B · builtin** `Read` file PDF | **`PDF file read: …\CV_VU QUOC MINH.pdf (411.7KB)`** |
+| **B · builtin** `Read` file PDF | **`PDF file read: …\CV.pdf (411.7KB)`** |
 
 ⇒ **Allowlist cánh tay CÒN NGUYÊN.** Kích thước đến từ **`Read` builtin**, thứ tự in kèm kích thước
 khi đọc PDF. Nghĩa là §14 #1 **rộng hơn ta vẫn ghi**: `Read` không chỉ lấy được *nội dung* ở mọi
@@ -4003,11 +4003,11 @@ Cần một bài đo riêng, tách khỏi bài này.
 
 ## 15l. 🔴 CỔNG THIẾU MỘT CÂY KIM — cánh tay OAuth được nhắc bằng **TÊN TÀI KHOẢN** (ca lọt 28/08)
 
-User gỡ tài khoản `minhvuptitd14`, rồi Trợ lý vẫn hỏi:
+User gỡ tài khoản `hubot`, rồi Trợ lý vẫn hỏi:
 
-> *"Repo 'focus-flow' này nằm trong tài khoản GitHub minhvq36 hay minhvuptitd14 vậy bạn?"*
+> *"Repo 'focus-flow' này nằm trong tài khoản GitHub octocat hay hubot vậy bạn?"*
 
-**Cổng không bắn, và nó không hề sai luật.** Kim của nó là `label` = `"GitHub · minhvuptitd14"`, còn
+**Cổng không bắn, và nó không hề sai luật.** Kim của nó là `label` = `"GitHub · hubot"`, còn
 câu trên không chứa nguyên chuỗi đó.
 
 ⇒ **Bất đối xứng giữa hai loại cánh tay, và §15 sinh ra từ loại kia nên không thấy:**
@@ -4015,7 +4015,7 @@ câu trên không chứa nguyên chuỗi đó.
 | | Nhãn | Thứ người ta thật sự nhắc |
 |---|---|---|
 | Thư mục | `D:\Downloads\Programs Installation` | **nguyên vẹn cái nhãn** ⇒ kim cũ trúng |
-| OAuth | `GitHub · minhvuptitd14` | **`minhvuptitd14` đứng một mình** ⇒ kim cũ trượt |
+| OAuth | `GitHub · hubot` | **`hubot` đứng một mình** ⇒ kim cũ trượt |
 
 Kim thứ ba là `via` — **không phải trường mới**: nó tra từ `arms[].secrets` ra kho OAuth, và đã đang
 chạy ở danh sách "dùng lại" (26/08) và ở node trên sơ đồ (27/08). Đây là **chỗ thứ ba của cùng một

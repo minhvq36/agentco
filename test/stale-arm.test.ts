@@ -168,11 +168,11 @@ test('reachDiff: TRẦN chặn một lần sửa hàng loạt nhét cả bức t
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ CỔNG NÀY ĐỂ LỌT MỘT CA, VÀ NÓ KHÔNG SAI LUẬT — NÓ THIẾU MỘT CÂY KIM.    │
  * │                                                                          │
- * │ User gỡ tài khoản `minhvuptitd14` rồi Trợ lý vẫn hỏi:                     │
- * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub minhvq36 hay             │
- * │    minhvuptitd14 vậy bạn?"*                                              │
+ * │ User gỡ tài khoản `hubot` rồi Trợ lý vẫn hỏi:                             │
+ * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub octocat hay              │
+ * │    hubot vậy bạn?"*                                                      │
  * │                                                                          │
- * │ Kim cũ là `label` = `"GitHub · minhvuptitd14"`. Câu trên KHÔNG chứa       │
+ * │ Kim cũ là `label` = `"GitHub · hubot"`. Câu trên KHÔNG chứa               │
  * │ nguyên chuỗi đó ⇒ không khớp ⇒ không bắn.                                 │
  * │                                                                          │
  * │ Vì sao cánh tay thư mục không dính: nhãn của chúng thường được nhắc       │
@@ -181,8 +181,8 @@ test('reachDiff: TRẦN chặn một lần sửa hàng loạt nhét cả bức t
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const OAUTH_ARMS = {
-  aGhOld: { label: 'GitHub · minhvuptitd14', via: 'minhvuptitd14' },
-  aGhNew: { label: 'GitHub · minhvq36', via: 'minhvq36' },
+  aGhOld: { label: 'GitHub · hubot', via: 'hubot' },
+  aGhNew: { label: 'GitHub · octocat', via: 'octocat' },
 };
 const OAUTH_SRV = { aGhOld: { type: 'http' }, aGhNew: { type: 'http' } };
 
@@ -196,19 +196,19 @@ const stale = (say: string, userText = '', live: string[] = ['aGhNew']) =>
   });
 
 test('🔴 CA THẬT: tên tài khoản đã gỡ, nhắc TRỐNG KHÔNG (không kèm "GitHub ·")', () => {
-  const hits = stale("Repo 'focus-flow' này nằm trong tài khoản GitHub minhvq36 hay minhvuptitd14 vậy bạn?");
-  assert.deepEqual(hits, ['minhvuptitd14'], 'kim `label` một mình không bắt được ca này');
+  const hits = stale("Repo 'focus-flow' này nằm trong tài khoản GitHub octocat hay hubot vậy bạn?");
+  assert.deepEqual(hits, ['hubot'], 'kim `label` một mình không bắt được ca này');
 });
 
 test('🔴 tài khoản CÒN NỐI thì im — nếu không cổng bắn ở mọi lượt', () => {
-  assert.deepEqual(stale('Mình sẽ đọc repo bằng tài khoản minhvq36 nhé.'), []);
+  assert.deepEqual(stale('Mình sẽ đọc repo bằng tài khoản octocat nhé.'), []);
 });
 
 test('🔴 người dùng TỰ nêu tên đó ⇒ trả lời về nó là hành vi ĐÚNG', () => {
-  // Điều kiện 2 của cổng. Thiếu nó thì hỏi "minhvuptitd14 đâu rồi?" sẽ bị chính
+  // Điều kiện 2 của cổng. Thiếu nó thì hỏi "hubot đâu rồi?" sẽ bị chính
   // cổng chặn mất câu trả lời thật thà *"tài khoản đó không còn nối nữa"*.
   assert.deepEqual(
-    stale('Tài khoản minhvuptitd14 giờ sao rồi?', 'minhvuptitd14 giờ sao rồi?'),
+    stale('Tài khoản hubot giờ sao rồi?', 'hubot giờ sao rồi?'),
     [],
   );
 });
