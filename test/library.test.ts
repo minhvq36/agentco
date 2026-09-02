@@ -49,6 +49,22 @@ test('safeName: chặn path traversal và dấu phân cách', () => {
   }
 });
 
+test('safeName: NHẬN dấu cách, dấu phẩy, `&` — tên tài liệu thật trông như vậy', () => {
+  // Bug 02/09: `Mix, Mingle&Meet.pptx`. Cửa vào chưa bao giờ từ chối cái tên
+  // này (đúng), nên nếu ca này đỏ thì ai đó vừa "dọn dẹp" nhầm chỗ — phần phải
+  // chịu được dấu cách là BỘ GIẢI `@`, không phải cái tên. → test/refs.test.ts
+  const r = safeName('Mix, Mingle&Meet.pptx');
+  assert.equal(r.ok, true);
+  if (r.ok) assert.equal(r.name, 'Mix, Mingle&Meet.pptx');
+});
+
+test('safeName: chặn `|` — nó là ký tự chia cột của INDEX.md', () => {
+  // Windows vốn cấm `|`, nên chặn ở đây không lấy đi cái tên nào dùng được
+  // trên cả ba hệ. Đổi lại bảng kê không thể vỡ hàng, và hàng vỡ ở đó nghĩa
+  // là Trợ lý đọc ra một đường dẫn cụt.
+  assert.equal(safeName('bao|cao.md').ok, false);
+});
+
 test('safeName: chặn tên bắt đầu bằng dấu chấm — Grep sẽ không thấy nó', () => {
   // Lý do thật, không phải thẩm mỹ: ripgrep bỏ qua thư mục/file ẩn khi duyệt.
   // Nhận file này = nó hiện trên giao diện, bóc text thành công, và không bao

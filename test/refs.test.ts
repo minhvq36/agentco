@@ -162,3 +162,69 @@ test('kho RỖNG thì mọi tham chiếu đều bị chặn, không nổ', () =>
   const r = resolveFileRefs('@doc-1.md', []);
   assert.ok(r.problem);
 });
+
+// ───────────────────────────────────────── tên file CÓ DẤU CÁCH (bug 02/09)
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG USER BÁO 02/09 — văn phòng `so-sach`.                                │
+ * │                                                                          │
+ * │   gõ: tóm tắt nội dung file @library/files/Mix, Mingle&Meet.pptx         │
+ * │   ra: Mình không tìm thấy "library/files/Mix" …                         │
+ * │                                                                          │
+ * │ Bộ giải cắt tham chiếu ở khoảng trắng, dựa trên tiền đề *"tên có dấu     │
+ * │ cách thì dùng đường dẫn đủ, mà nút Chép vốn luôn cho đường dẫn đủ"*.     │
+ * │ Tiền đề sai: đường dẫn đủ chứa đúng cái dấu cách ấy. Nút Chép — lối       │
+ * │ thoát mà chính câu báo lỗi mời người dùng bấm — đưa ra một chuỗi bộ giải  │
+ * │ không đọc nổi. Đây là lý do phải test bằng chính CHUỖI NÚT CHÉP SINH RA. │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const MIX = {
+  ref: 'library/files/Mix, Mingle&Meet.pptx',
+  open: 'library/text/Mix, Mingle&Meet.pptx.txt',
+};
+// `anh` — tài liệu KHÔNG có đuôi (README, Makefile…). Nó có mặt ở đây để bẫy
+// đúng cái bẫy của khớp-tiền-tố, xem ca "không được nuốt chữ thường".
+const SPACED = [...KNOWN, MIX, pair('library/files/anh'), pair('library/files/bao-cao.md')];
+
+test('🔴 đường dẫn đủ CÓ DẤU CÁCH — đúng chuỗi nút Chép đưa ra', () => {
+  const r = resolveFileRefs(`tóm tắt nội dung file @${MIX.ref}`, SPACED);
+  assert.equal(r.problem, undefined, 'không được báo "không tìm thấy"');
+  assert.equal(r.text, `tóm tắt nội dung file ${MIX.open}`);
+});
+
+test('🔴 tên trần có dấu cách, và còn chữ phía sau', () => {
+  const r = resolveFileRefs('@Mix, Mingle&Meet.pptx tóm tắt giúp mình', SPACED);
+  assert.equal(r.problem, undefined);
+  assert.equal(r.text, `${MIX.open} tóm tắt giúp mình`);
+});
+
+test('🔴 dấu câu SAU tên có dấu cách vẫn là của câu văn, không của tên file', () => {
+  const r = resolveFileRefs(`đọc @${MIX.ref}, rồi tóm tắt`, SPACED);
+  assert.equal(r.problem, undefined);
+  assert.equal(r.text, `đọc ${MIX.open}, rồi tóm tắt`);
+});
+
+test('khớp tiền tố KHÔNG được nuốt chữ thường — có tài liệu tên `anh`', () => {
+  // Nửa nguy hiểm của bản vá: khớp chuỗi dài nhất mà bỏ hàng rào ranh giới thì
+  // một tài liệu tên ngắn biến mọi từ bắt đầu bằng tên đó thành tham chiếu —
+  // `@anh-khong-co.md` sẽ âm thầm mở `library/files/anh`.
+  const r = resolveFileRefs('@anh-khong-co.md xem giúp', SPACED);
+  assert.ok(r.problem, 'phải chặn vì "anh-khong-co.md", KHÔNG được nở thành "anh"');
+  assert.ok(r.problem.includes('anh-khong-co.md'));
+});
+
+test('trùng tiền tố thì lấy chuỗi DÀI NHẤT', () => {
+  const known = [...SPACED, pair('library/files/bao-cao.md.bak')];
+  const r = resolveFileRefs('@library/files/bao-cao.md.bak', known);
+  assert.equal(r.problem, undefined);
+  assert.equal(r.text, 'library/files/bao-cao.md.bak');
+});
+
+test('CÙNG một tham chiếu gõ hai lần thì thay CẢ HAI', () => {
+  // Bản cũ dùng `String.replace`, luôn thay chỗ xuất hiện đầu tiên — nên lần
+  // thứ hai bị sửa đè lên lần thứ nhất và chỗ sau còn nguyên dấu `@`.
+  const r = resolveFileRefs('@library/files/doc-1.md và @library/files/doc-1.md', SPACED);
+  assert.equal(r.problem, undefined);
+  assert.equal(r.text, 'library/files/doc-1.md và library/files/doc-1.md');
+});

@@ -47,6 +47,23 @@ test('luật 4: KHÔNG ghi kết luận từ ca HỎNG, và có ví dụ ⛔/✅
   assert.match(R, /Thứ NGƯỜI DÙNG chốt thì vẫn chép lại theo luật 1/);
 });
 
+test('🔴 luật 4 phủ cả ca CHƯA CÓ / CHƯA THỬ, không chỉ ca HỎNG (user báo 02/09)', () => {
+  /*
+    Ca thật: hỏi "gửi cho ke-toan@congty.vn", Trợ lý trả lời đúng, rồi `/clear`
+    ghi lại "văn phòng không có kết nối gửi email". Không có lần nào hỏng cả —
+    nên bản luật cũ (chỉ nói về "những lần HỎNG") không chạm tới.
+
+    Mà danh sách cánh tay được dựng lại vào prefix ở MỌI lượt, nên câu đó không
+    thêm một bit nào; nó chỉ đông lạnh một sự thật vốn tươi, và sai ngay hôm
+    người dùng cắm một cánh tay Gmail.
+  */
+  assert.match(R, /CHƯA CÓ \/ CHƯA THỬ/);
+  assert.match(R, /⛔ "văn phòng không có kết nối gửi email/);
+  // Điều kiện phải nằm TRÊN CHÍNH DÒNG có ví dụ, không ở một câu khác.
+  // → [[agentco-prompt-rules-lose-to-examples]]
+  assert.match(R, /danh sách kết nối đã nằm sẵn trong ngữ cảnh ở MỌI lượt/);
+});
+
 test('🔴 luật 5: giữ CÁCH LẤY, không giữ SỐ LIỆU (user chốt 31/08)', () => {
   assert.match(R, /KHÔNG ghi SỐ LIỆU và TRẠNG THÁI lấy được từ kết nối\/file/);
   // Phép thử được chọn vì nó KHÔNG cần cơ chế mới — model tự trả lời được.

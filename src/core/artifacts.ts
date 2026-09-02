@@ -186,7 +186,41 @@ export const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 
 /** Không duyệt sâu quá — thư mục kết quả phẳng, sâu hơn là dấu hiệu có gì đó lạ. */
 const MAX_DEPTH = 4;
-const MAX_FILES = 500;
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ HAI CÁI TRẦN KHÁC NHAU — TRƯỚC 02/09 CHÚNG LÀ MỘT, VÀ ĐÓ LÀ CẢ CÁI BUG.  │
+ * │                                                                          │
+ * │ Bản cũ: `walk()` dừng hẳn ở file thứ 500, rồi `list()` mới sắp theo       │
+ * │ `mtime`. Sắp SAU khi đã cắt thì không cứu được gì — thứ rơi ra không      │
+ * │ phải file cũ nhất mà là **file mà `readdir` chưa kịp đọc tới**.           │
+ * │                                                                          │
+ * │ Và trên NTFS `readdir` trả theo thứ tự tên, mà tên thư mục ca là          │
+ * │ `P-260820-0314-…` — tức là theo NGÀY, cũ trước. Nên vượt 500 file thì     │
+ * │ thứ biến mất là **những kết quả mới nhất**, đúng thứ người dùng đang tìm. │
+ * │ Không một câu báo nào. (ext4 băm tên nên mất một nhóm ngẫu nhiên — khác   │
+ * │ kiểu, cùng mức tệ.)                                                       │
+ * │                                                                          │
+ * │ Tách làm hai: quét HẾT rồi mới cắt, và cắt ở đúng chỗ cần cắt.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+
+/**
+ * Trần HIỂN THỊ — payload gửi cho giao diện, cắt **sau khi đã sắp theo `mtime`**.
+ *
+ * Chỉ ngăn Kết quả dùng trần này. Bảng kê Trợ lý tự có trần riêng (5 ca / 600
+ * token), còn `readablePaths` và `removeAll` thì **không được cắt** — xem `scan`.
+ */
+export const MAX_PANEL_FILES = 500;
+
+/**
+ * Trần QUÉT — việc duy nhất của nó là không để một thư mục bệnh hoạn treo daemon.
+ *
+ * Cao hơn hẳn trần hiển thị vì nó **không phải** thứ quyết định hiện gì: quét
+ * 20 000 rồi cắt còn 500 mới-nhất là đúng; quét 500 rồi cắt là ca hỏng ở trên.
+ * Chạm trần này thì `scan()` NÓI RA (`capped`), không im.
+ */
+const MAX_SCAN = 20_000;
 
 export class ArtifactStore {
   constructor(private paths: OfficePaths) {}
@@ -204,11 +238,57 @@ export class ArtifactStore {
    *
    * Mới nhất lên đầu: người dùng mở panel này ngay sau khi một việc vừa xong,
    * và thứ họ tìm gần như luôn là thứ vừa được tạo ra.
+   *
+   * KHÔNG cắt ở đây. Ba chỗ gọi cần cả danh sách — `readablePaths` (một đường
+   * dẫn cũ người dùng dán vào vẫn phải tra được), `artifactManifest` (con số
+   * tổng phải đúng), `removeAll` (xoá là xoá hết). Chỗ duy nhất cần cắt là
+   * payload gửi giao diện, và nó cắt bằng `MAX_PANEL_FILES` sau khi đã sắp.
    */
   list(): ArtifactRecord[] {
+    return this.scan().items;
+  }
+
+  /**
+   * Một lượt quét, kèm SỰ THẬT VỀ CHÍNH LƯỢT QUÉT ĐÓ.
+   *
+   * ⚠ Sắp bằng so sánh chuỗi trần, không `localeCompare`: `mtime` là ISO-8601
+   * UTC nên thứ tự byte CHÍNH LÀ thứ tự thời gian, và `localeCompare` (đối chiếu
+   * theo locale) đắt hơn hàng chục lần trên vài nghìn bản ghi. Chỉ giữ
+   * `localeCompare` cho nhánh hoà — nó hiếm, và nó cần ổn định giữa các lần chạy.
+   *
+   * Hoà `mtime` là ca THẬT: một ca ghi ba file trong cùng một mili giây. Không
+   * có nhánh phụ thì thứ tự phụ thuộc vào `readdir`, tức là đổi theo hệ điều
+   * hành — và một danh sách nhảy chỗ giữa hai lần mở là một danh sách người ta
+   * không tin được nữa.
+   */
+  /**
+   * CHỈ đường dẫn — không `stat`, không sắp xếp. → `walk`
+   *
+   * Cho hai chỗ không cần biết file to bao nhiêu hay sửa lúc nào:
+   * `Office.readablePaths()` (chạy ở **mỗi tin nhắn**) và `removeAll()`.
+   * Rẻ hơn `scan()` khoảng một bậc — xem số đo ở `walk`.
+   */
+  filePaths(): { items: string[]; capped: boolean } {
+    const rels: string[] = [];
+    walk(this.paths.artifacts, '', 0, rels);
+    return { items: rels.map((r) => `artifacts/${r}`), capped: rels.length >= MAX_SCAN };
+  }
+
+  scan(): { items: ArtifactRecord[]; capped: boolean } {
+    const rels: string[] = [];
+    walk(this.paths.artifacts, '', 0, rels);
     const out: ArtifactRecord[] = [];
-    walk(this.paths.artifacts, '', 0, out);
-    return out.sort((a, b) => b.mtime.localeCompare(a.mtime) || a.path.localeCompare(b.path));
+    for (const rel of rels) {
+      const r = record(this.paths.artifacts, rel);
+      if (r) out.push(r);
+    }
+    out.sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : a.path.localeCompare(b.path)));
+    // `>=` chứ không `>`: quét dừng ĐÚNG lúc chạm trần nên ta không biết còn
+    // file nào nữa không. Câu chữ phía trên vì thế phải nói "từ 20 000 trở lên".
+    //
+    // Đếm trên `rels` chứ không trên `out`: một file biến mất giữa `readdir` và
+    // `stat` làm `out` ngắn đi, mà đó không phải chuyện "chạm trần".
+    return { items: out, capped: rels.length >= MAX_SCAN };
   }
 
   /** Đường dẫn tuyệt đối, hoặc `undefined` nếu không có / nằm ngoài thư mục kết quả. */
@@ -287,15 +367,55 @@ export class ArtifactStore {
    * theo symlink ra ngoài". Một đường tắt ở đây là bản thứ hai của luật đó, và
    * bản thứ hai luôn là bản quên mất một điều kiện.
    */
+  /**
+   * ⚠ QUÉT LẠI CHO TỚI KHI SẠCH — không phải một lượt.
+   *
+   * Bản cũ chạy đúng một lượt `list()`, mà `list()` hồi đó cắt ở 500. Một ngăn
+   * Kết quả 700 file thì *"dọn sạch"* xoá 500, trả về `500`, và giao diện báo
+   * thành công trong khi 200 file vẫn nằm đó. Cùng lớp lỗi với cuốn sổ chi phí
+   * hôm qua: **xoá là phải xoá hết, hoặc nói ra là chưa hết.**
+   *
+   * Trần vòng lặp để một file không xoá nổi (đang bị khoá, quyền sai) không
+   * biến hàm này thành vòng lặp vô tận — hết vòng mà vẫn còn thì trả về số đã
+   * xoá được, và lượt quét sau vẫn thấy phần còn lại.
+   */
   removeAll(): number {
     let n = 0;
-    for (const a of this.list()) if (this.remove(a.path)) n++;
+    for (let round = 0; round < 10; round++) {
+      // `filePaths()` chứ không `scan()`: xoá thì không cần biết file to bao nhiêu.
+      const items = this.filePaths().items;
+      if (items.length === 0) break;
+      let removed = 0;
+      for (const p of items) if (this.remove(p)) removed++;
+      n += removed;
+      if (removed === 0) break; // không xoá nổi cái nào nữa — dừng, đừng quay vòng
+    }
     return n;
   }
 }
 
-function walk(root: string, rel: string, depth: number, out: ArtifactRecord[]): void {
-  if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
+/**
+ * MỘT bộ duyệt duy nhất, và nó KHÔNG `stat`. → `ArtifactStore.paths` · `§scan`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ `stat` LÀ TOÀN BỘ CHI PHÍ, VÀ PHẦN LỚN CHỖ GỌI KHÔNG CẦN NÓ.             │
+ * │                                                                          │
+ * │ Đo trên máy user (Windows, 02/09) — `readdir` + `stat` từng file:        │
+ * │     500 file →  51 ms  ·  2 000 → 230 ms  ·  5 000 → 493 ms              │
+ * │ tức ~0,1 ms mỗi file, gần như toàn bộ nằm ở `statSync`.                   │
+ * │                                                                          │
+ * │ Nhưng `readablePaths()` — chạy ở MỖI tin nhắn người dùng gõ — chỉ cần     │
+ * │ chuỗi đường dẫn. `removeAll()` cũng vậy. Bắt hai chỗ đó trả tiền `stat`   │
+ * │ cho `bytes`/`mtime` mà chúng vứt đi ngay là mua một cái nút cổ chai ở     │
+ * │ đúng đường đi nóng nhất.                                                 │
+ * │                                                                          │
+ * │ Nên: duyệt (rẻ) tách khỏi `stat` (đắt). Một bộ luật đi đường — độ sâu,    │
+ * │ bỏ thư mục ẩn, trần quét — nằm đúng một chỗ, không có bản thứ hai để      │
+ * │ quên mất một điều kiện.                                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function walk(root: string, rel: string, depth: number, out: string[]): void {
+  if (depth > MAX_DEPTH || out.length >= MAX_SCAN) return;
   const dir = rel ? path.join(root, rel) : root;
   let entries: fs.Dirent[];
   try {
@@ -311,26 +431,32 @@ function walk(root: string, rel: string, depth: number, out: ArtifactRecord[]): 
       walk(root, childRel, depth + 1, out);
       continue;
     }
-    if (!entry.isFile() || out.length >= MAX_FILES) continue;
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(path.join(root, childRel));
-    } catch {
-      continue; // biến mất giữa readdir và stat
-    }
-    const parts = childRel.split('/');
-    const ext = path.extname(entry.name).slice(1).toLowerCase();
-    out.push({
-      path: `artifacts/${childRel}`,
-      name: entry.name,
-      ext,
-      bytes: stat.size,
-      mtime: stat.mtime.toISOString(),
-      // `artifacts/<plan_id>/<task_id>/x.md` từ 19/08. File cũ nằm ở
-      // `artifacts/<task_id>/x.md` — vẫn liệt kê được, chỉ không biết kế hoạch nào.
-      plan_id: parts.length >= 3 ? (parts[0] ?? '') : '',
-      task_id: parts.length >= 3 ? (parts[1] ?? '') : (parts[0] ?? ''),
-      view: viewOf(ext),
-    });
+    if (!entry.isFile() || out.length >= MAX_SCAN) continue;
+    out.push(childRel);
   }
+}
+
+/** `stat` đúng một file, gắn vào phần suy được từ chính đường dẫn. */
+function record(root: string, childRel: string): ArtifactRecord | undefined {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(path.join(root, childRel));
+  } catch {
+    return undefined; // biến mất giữa readdir và stat
+  }
+  const parts = childRel.split('/');
+  const name = parts[parts.length - 1] ?? childRel;
+  const ext = path.extname(name).slice(1).toLowerCase();
+  return {
+    path: `artifacts/${childRel}`,
+    name,
+    ext,
+    bytes: stat.size,
+    mtime: stat.mtime.toISOString(),
+    // `artifacts/<plan_id>/<task_id>/x.md` từ 19/08. File cũ nằm ở
+    // `artifacts/<task_id>/x.md` — vẫn liệt kê được, chỉ không biết kế hoạch nào.
+    plan_id: parts.length >= 3 ? (parts[0] ?? '') : '',
+    task_id: parts.length >= 3 ? (parts[1] ?? '') : (parts[0] ?? ''),
+    view: viewOf(ext),
+  };
 }

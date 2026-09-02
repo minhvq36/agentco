@@ -154,6 +154,17 @@ export function safeName(input: string): NameCheck {
   }
   if (name === '.' || name === '..') return { ok: false, reason: 'Tên file không hợp lệ.' };
 
+  /**
+   * `|` — chặn ở CỬA, vì nó là ký tự chia cột của `INDEX.md`.
+   *
+   * Windows vốn đã cấm ký tự này, nên chặn ở đây không lấy đi cái tên nào dùng
+   * được trên cả ba hệ. Đổi lại, bảng kê tủ tài liệu không thể vỡ hàng — và
+   * hàng vỡ ở đó nghĩa là Trợ lý đọc ra một đường dẫn cụt. → `renderIndex`
+   */
+  if (name.includes('|')) {
+    return { ok: false, reason: 'Tên file không được chứa dấu |. Đổi tên rồi thả lại.' };
+  }
+
   // Ký tự điều khiển + NUL. Một tên có \0 cắt đứt chuỗi ở tầng hệ điều hành:
   // kiểm tra thấy "a.txt.exe", ghi ra đĩa thành "a.txt".
   for (let i = 0; i < name.length; i++) {

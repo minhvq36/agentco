@@ -30,7 +30,7 @@ import { readOAuth } from './secrets.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
-import { ArtifactStore, isStale } from './artifacts.js';
+import { ArtifactStore, isStale, MAX_PANEL_FILES } from './artifacts.js';
 import { AuditLog } from './audit.js';
 import { loginOpen } from './browser-login.js';
 import { LayoutStore, ASSISTANT_NODE, agentNodeId, mcpNodeId, type LayoutNode } from './layout.js';
@@ -660,7 +660,10 @@ export class Office {
       // PDF: bản gốc là một đường hợp lệ theo đúng nghĩa của nó, nêu riêng.
       if (original && original !== open) docs.push({ ref: original, open: original });
     }
-    return [...docs, ...this.artifacts.list().map((a) => ({ ref: a.path, open: a.path }))];
+    // `filePaths()` chứ không `list()`: ở đây chỉ cần CHUỖI đường dẫn, mà hàm
+    // này chạy ở mỗi tin nhắn người dùng gõ. `list()` `stat` từng file để lấy
+    // `bytes`/`mtime` rồi ta vứt đi ngay — ~0,1 ms mỗi file, xem `artifacts.ts §walk`.
+    return [...docs, ...this.artifacts.filePaths().items.map((p) => ({ ref: p, open: p }))];
   }
 
   /**
@@ -3563,12 +3566,31 @@ export class Office {
    * Kế hoạch đã rơi khỏi `index.json` (trần 200 bản ghi) thì trả rỗng — giao
    * diện tự rơi về nhãn ngày giờ. Đó là suy giảm êm, không phải lỗi.
    */
-  artifactList(): Array<import('./artifacts.js').ArtifactRecord & { plan_title: string }> {
+  artifactList(): {
+    items: Array<import('./artifacts.js').ArtifactRecord & { plan_title: string }>;
+    total: number;
+    capped: boolean;
+  } {
     // Đọc sổ MỘT LẦN rồi tra bằng Map: `plans.list()` đọc và parse cả file
     // index, mà một ca chạm 20 CV sẽ sinh hàng chục artifact — gọi nó trong
     // vòng lặp là đọc lại cùng một file hàng chục lần cho mỗi lần mở panel.
     const titles = new Map(this.plans.list().map((p) => [p.plan_id, p.request]));
-    return this.artifacts.list().map((a) => ({ ...a, plan_title: titles.get(a.plan_id) ?? '' }));
+    const { items, capped } = this.artifacts.scan();
+    /**
+     * CẮT Ở ĐÂY, SAU KHI ĐÃ SẮP THEO `mtime` — và trả kèm TỔNG THẬT.
+     *
+     * Cắt mà không nói tổng là dựng lại đúng cái bug vừa vá, chỉ khác chỗ: giao
+     * diện hiện 500 dòng và người dùng không có cách nào biết còn 200 dòng nữa.
+     * Hai con số này ta đang cầm trong tay — luật *"thứ gì ta quan sát được thì
+     * đừng để ai đoán"*.
+     */
+    return {
+      items: items
+        .slice(0, MAX_PANEL_FILES)
+        .map((a) => ({ ...a, plan_title: titles.get(a.plan_id) ?? '' })),
+      total: items.length,
+      capped,
+    };
   }
 
   /**

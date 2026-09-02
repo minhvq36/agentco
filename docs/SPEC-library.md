@@ -225,6 +225,7 @@ Cả hai chỉ trỏ được **vì `pdfjs-dist` giờ là phụ thuộc thật*
 - chặn `..`, `/`, `\`, byte NUL, ký tự điều khiển
 - chặn **tên cấm của Windows**: `CON` `PRN` `AUX` `NUL` `COM1`–`COM9` `LPT1`–`LPT9` (kể cả khi có đuôi: `CON.txt`)
 - chặn tên kết thúc bằng dấu chấm hoặc khoảng trắng (Windows lặng lẽ cắt đi → tên trong catalog khác tên trên đĩa)
+- chặn `|` — nó là ký tự chia cột của `INDEX.md`, và một hàng vỡ ở đó nghĩa là Trợ lý đọc ra một đường dẫn cụt. Windows vốn đã cấm ký tự này nên không mất cái tên nào dùng được trên cả ba hệ. `renderIndex` còn thay `|`/xuống dòng trong ô **tên** và **mô tả** (chép tay thẳng vào `library/files/` thì không đi qua cửa này) — nhưng **không** đụng vào ô đường dẫn: một đường dẫn sửa đổi là đường dẫn chết, đắt hơn hẳn một ô trống
 - **KHÔNG slugify.** Người dùng phải nhận ra file của mình. Tiếng Việt có dấu trong tên file là hợp lệ trên NTFS và ext4.
 
 ---
@@ -408,13 +409,16 @@ CLI Claude Code có `@file` khi gõ tay. Nó có chạy trong SDK hay không th�
 
 Nên `resolveFileRefs()` **bóc sạch `@`** trước khi chuỗi tới model. Ta không phụ thuộc vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.
 
-### Ba dạng, và dạng thứ ba là lý do hàm này tồn tại
+### Bốn dạng
 
 ```
-@artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
-@library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
-@doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+@artifacts/P-…/T-01/vi/doc-2.md      đường dẫn đủ → đối chiếu rồi dùng
+@library/files/doc-1.md               đường dẫn đủ → đối chiếu rồi dùng
+@doc-1.md                             tên trần     → tra, và CHẶN nếu trùng
+@library/files/Mix, Mingle&Meet.pptx  CÓ DẤU CÁCH  → khớp chuỗi dài nhất
 ```
+
+Dạng thứ ba là lý do hàm này tồn tại; **dạng thứ tư là lý do nó không được cắt ở khoảng trắng** (sửa 02/09).
 
 Mọi tham chiếu đều **đối chiếu với danh sách đường dẫn có thật** đọc từ đĩa. Ba nhánh trả lời bằng **code, 0 token, tức thì**:
 
@@ -426,7 +430,19 @@ Mọi tham chiếu đều **đối chiếu với danh sách đường dẫn có 
 
 Nhánh cuối đáng nói riêng: giải một nửa nghĩa là model nhận một câu có một đường dẫn thật và một chuỗi `@…` lạ — nó sẽ **tự xoay sở**, và ta mất quyền kiểm soát đúng lúc cần nhất.
 
-> ⚠ Regex này chạy trên chữ **người dùng gõ**, khác hẳn luật cấm dò đường dẫn trong `say` (`SPEC-artifacts.md` §2.5). Ở đó rủi ro là *model bịa*; ở đây người dùng tự chịu trách nhiệm cho thứ họ gõ, và kết quả vẫn phải qua cửa đối chiếu.
+#### Ranh giới của một tham chiếu là `known`, không phải khoảng trắng (sửa 02/09)
+
+Bản 20/08 cắt ở khoảng trắng (`@([^\s@]+)`), viện đúng một lý do ghi thẳng trong chú thích: *"tên có dấu cách thì dùng đường dẫn đủ, mà nút Chép vốn luôn cho đường dẫn đủ"*. **Tiền đề đó sai** — đường dẫn đủ chứa đúng cái dấu cách ấy. Nên với `Mix, Mingle&Meet.pptx`, nút Chép — lối thoát mà chính câu báo lỗi mời người dùng bấm — đưa ra một chuỗi bộ giải không đọc nổi, và câu trả lời là *"không tìm thấy `library/files/Mix`"*.
+
+Cách sửa **không** phải nghĩ ra quy ước trích dẫn (`@"…"`) rồi bắt người dùng học, cũng **không** phải ép tên file phải sạch (tài liệu là của họ). Ta đang **cầm** danh sách đường dẫn có thật đọc từ đĩa, nên không cần đoán ranh giới:
+
+- khớp **chuỗi dài nhất** trong `known` mà đoạn sau `@` bắt đầu bằng nó — dài trước ngắn sau, vì `bao-cao.md` là tiền tố của `bao-cao.md.bak`;
+- kèm **hàng rào ranh giới**: ký tự ngay sau phải là hết chuỗi, khoảng trắng, hoặc dấu câu. Thiếu nó thì một tài liệu tên `anh` biến `@anh-khong-co.md` thành một tham chiếu;
+- không khớp cái nào ⇒ rơi về cắt-ở-khoảng-trắng như cũ, để câu báo lỗi vẫn nêu đúng thứ người ta gõ.
+
+Câu dựng lại bằng **chỉ số**, không phải `String.replace` — `replace` thay chỗ xuất hiện đầu tiên trong cả câu, nên `@a.md rồi lại @a.md` sửa hai lần cùng một chỗ.
+
+> ⚠ Cửa này chạy trên chữ **người dùng gõ**, khác hẳn luật cấm dò đường dẫn trong `say` (`SPEC-artifacts.md` §2.5). Ở đó rủi ro là *model bịa*; ở đây người dùng tự chịu trách nhiệm cho thứ họ gõ, và kết quả vẫn phải qua cửa đối chiếu.
 >
 > Và ta chỉ được phép **bóc `@`**, không được phép **biên tập**: bản đầu nuốt luôn dấu phẩy dính đuôi (`sửa @a/b.md, giữ nguyên…`), tức là sửa chữ người dùng viết mà không nói. Chuyện nhỏ, nhưng là một thói quen sai.
 

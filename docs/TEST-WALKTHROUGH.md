@@ -275,6 +275,13 @@ ghi bảng thuật ngữ ĐÚNG NHƯ ĐÃ DỊCH ra artifacts/vi/doc-2-thuat-ngu
 | `@doc-2.md` (tên trần, trùng hai kho) | *"Có 2 file tên doc-2.md, mình không đoán bạn muốn cái nào:"* + đủ hai đường dẫn |
 | `@library/files/doc-9.md` (không có thật) | *"Mình không tìm thấy … trong tủ tài liệu hay ngăn Kết quả"* |
 
+**4b.** 🖱 thả vào tủ một file **tên có dấu cách và dấu phẩy** (ví dụ `Mix, Mingle&Meet.pptx`) → bấm **Chép** → dán vào chat, gõ `tóm tắt nội dung file <dán>`:
+
+| Mong đợi | |
+|---|---|
+| Trợ lý đọc file và tóm tắt | ✅ |
+| *"Mình không tìm thấy `library/files/Mix`"* (cụt ở dấu cách) | ❌ hồi quy bug 02/09 |
+
 **5.** 💬 phép thử ngược: `gửi cho ke-toan@congty.vn`
 
 | Mong đợi | |

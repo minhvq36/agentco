@@ -433,8 +433,18 @@ export const api = {
   // đường nào từ giao diện đưa một kết quả trở lại làm đầu vào cho nhân viên.
   // Muốn dùng lại thì người dùng tự bàn giao.
 
-  /** Quét thư mục kết quả. Không catalog — file do nhân viên ghi lúc đang chạy. */
-  artifacts: (id: string) => call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts`),
+  /**
+   * Quét thư mục kết quả. Không catalog — file do nhân viên ghi lúc đang chạy.
+   *
+   * `artifacts` là **500 file mới nhất theo `mtime`**, `total` là tổng thật.
+   * Hai con số tách nhau vì server cắt payload chứ không cắt sự thật: giao diện
+   * phải nói được *"đang hiện 500 / 712"*. `capped` = thư mục lớn tới mức lượt
+   * quét cũng phải dừng (≥ 20 000 file) — lúc đó `total` là sàn, không phải tổng.
+   */
+  artifacts: (id: string) =>
+    call<{ artifacts: ArtifactRecord[]; total: number; capped: boolean }>(
+      `/api/office/${enc(id)}/artifacts`,
+    ),
 
   /**
    * Đường dẫn thư mục văn phòng — và server MỞ nó ra nếu trình duyệt đang chạy
@@ -457,9 +467,10 @@ export const api = {
 
   /** Xoá hẳn. Một mức — nhưng khác tủ tài liệu, ĐÂY LÀ BẢN DUY NHẤT. */
   removeArtifact: (id: string, p: string) =>
-    call<{ artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?path=${enc(p)}`, {
-      method: 'DELETE',
-    }),
+    call<{ artifacts: ArtifactRecord[]; total: number; capped: boolean }>(
+      `/api/office/${enc(id)}/artifacts?path=${enc(p)}`,
+      { method: 'DELETE' },
+    ),
 
   /**
    * Dọn sạch ngăn Kết quả. `all=1` là TƯỜNG MINH — server cố ý không suy
@@ -467,9 +478,10 @@ export const api = {
    * tri thức thì không. → `artifacts.ts §removeAll`
    */
   clearArtifacts: (id: string) =>
-    call<{ removed: number; artifacts: ArtifactRecord[] }>(`/api/office/${enc(id)}/artifacts?all=1`, {
-      method: 'DELETE',
-    }),
+    call<{ removed: number; artifacts: ArtifactRecord[]; total: number; capped: boolean }>(
+      `/api/office/${enc(id)}/artifacts?all=1`,
+      { method: 'DELETE' },
+    ),
 
   /**
    * NHẬT KÝ KIỂM TOÁN của MỘT cánh tay — mọi lời gọi MCP, kèm tham số.

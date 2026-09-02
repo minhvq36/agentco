@@ -226,6 +226,23 @@ Kho chung nằm trong prefix của **mọi nhân viên**. Ký ức hội thoại
 
 **4. Nén hỏng thì KHÔNG quên — nhưng chỉ khi hỏng còn SỬA ĐƯỢC.** `compactMemory()` chỉ gọi `forget()` sau khi ghi node xong. Thà giữ một bản ghi dài còn hơn mất trắng. ⚠ Từ 20/08 luật này có ngoại lệ bắt buộc — xem ngay dưới.
 
+#### Ghi cái gì — năm luật, và chúng sống trong `Assistant.COMPACT_RULES`
+
+Văn bản đầy đủ nằm ở code (`assistant.ts §COMPACT_RULES`), chốt bằng `test/compact-rules.test.ts`. Tóm tắt: **1** chép lại mục cũ còn đúng · **2** cái mới thắng khi mâu thuẫn · **3** mỗi chủ đề một dòng · **4** không ghi kết luận từ ca **hỏng** hoặc từ việc **chưa có / chưa thử** · **5** giữ **cách lấy**, không giữ **số liệu**.
+
+Luật 4 và 5 cùng một hình dạng, và đó là hình dạng đáng nhớ: **đừng đông lạnh vào trí nhớ một thứ mà hệ thống vốn đã tính lại tươi ở mọi lượt.**
+
+| ghi vào trí nhớ | thứ vốn đã tươi | sai vào lúc nào |
+|---|---|---|
+| ⛔ *"còn 23 hoá đơn chưa thanh toán"* | hỏi kết nối là ra | ngay hôm sau |
+| ⛔ *"văn phòng không có kết nối gửi email"* | danh sách cánh tay dựng lại từ `company.yaml` **mỗi lượt** | ngay giây phút người dùng cắm cánh tay |
+
+Ca thứ hai là bản nới 02/09 (user báo): Trợ lý trả lời **đúng** cho câu *"gửi cho ke-toan@congty.vn"* rồi `/clear` ghi lại sự **vắng mặt** của một năng lực. Bản luật cũ chỉ nói về *"những lần HỎNG"* nên không chạm tới — mà ở đây không có lần nào hỏng cả. Hậu quả thì y hệt ca cánh tay trình duyệt 29/08: câu đó nằm trong prefix của **mọi lượt `route()`** (giết việc ngay ở cửa) và `supersedes` **gia hạn nó ở mỗi lần nén**, nên nó không bao giờ tự hết hạn.
+
+> ⚠ Chừa đúng một chỗ: thứ **người dùng** chốt thì luật 1 vẫn phải chép lại, kể cả khi họ chốt *"đừng gửi email, tôi tự gửi"*. Luật 4 nhắm vào **suy đoán của Trợ lý về năng lực**, không nhắm vào lời người dùng dặn.
+
+Vá bằng **một cặp ví dụ** trong danh sách ⛔/✅ sẵn có, **không thêm luật thứ sáu** — sáu luật thì luật nào cũng loãng đi, và luật trừu tượng vốn thua danh sách ví dụ nên điều kiện phải nằm **trên chính dòng có ví dụ**. Giá: `COMPACT_RULES` = **946 token**, và nó chỉ đi vào lượt `/clear`, **không** nằm trong prefix thường trực.
+
 #### ⚠ `/clear` KHÔNG ĐƯỢC PHÉP KẸT (bản vá 20/08)
 
 Bản trước gộp **mọi** lỗi nén vào cùng một nhánh *"giữ nguyên cuộc trò chuyện"*. Đúng cho lỗi tạm, **sai hoàn toàn** cho lỗi vĩnh viễn.

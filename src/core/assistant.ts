@@ -1562,16 +1562,44 @@ export class Assistant {
          * │ kết nối. Nên ví dụ lấy nguyên văn từ chính kho này — luật trừu    │
          * │ tượng thua danh sách ví dụ.                                      │
          * │ → [[agentco-prompt-rules-lose-to-examples]]                       │
+         * │                                                                  │
+         * │ ⊕ NỚI 02/09 — "CHƯA CÓ / CHƯA THỬ" cũng phải chặn ở đây.         │
+         * │                                                                  │
+         * │ Ca user báo: hỏi *"gửi cho ke-toan@congty.vn"*, Trợ lý trả lời    │
+         * │ đúng, rồi `/clear` ghi lại ⛔ *"văn phòng không có kết nối gửi    │
+         * │ email; chỉ cung cấp đường dẫn để họ tự gửi"*.                     │
+         * │                                                                  │
+         * │ Bản luật cũ KHÔNG bắt được, vì nó viết về *"những lần HỎNG"* —    │
+         * │ mà ở đây không có lần nào hỏng cả: không thử gì, không vấp gì.    │
+         * │ Trợ lý chỉ ghi lại SỰ VẮNG MẶT của một năng lực.                  │
+         * │                                                                  │
+         * │ Nhưng hậu quả thì y hệt ca 29/08, và tệ hơn ở hạn dùng: danh      │
+         * │ sách cánh tay được dựng lại từ `company.yaml` vào prefix ở MỌI    │
+         * │ lượt, nên câu này **không thêm một bit nào** — nó chỉ là bản      │
+         * │ đông lạnh của một sự thật vốn tươi, và nó sai ngay giây phút      │
+         * │ người dùng cắm một cánh tay Gmail. Cùng hình dạng luật 5 (số      │
+         * │ liệu → cách lấy), chỉ khác nội dung: lần này là NĂNG LỰC.         │
+         * │                                                                  │
+         * │ Vá bằng MỘT CẶP VÍ DỤ trong danh sách sẵn có, không thêm luật     │
+         * │ thứ sáu: sáu luật thì luật nào cũng loãng đi, và `compact-rules`  │
+         * │ đang chốt đúng năm luật đánh số liên tục.                         │
+         * │ → [[agentco-cant-vs-not-wired]] · [[agentco-deterministic-vs-signal]] │
          * └──────────────────────────────────────────────────────────────────┘
          */
-        `4. KHÔNG ghi kết luận rút ra từ những lần HỎNG. Luật cứng, cùng luật với \`lessons\`:\n` +
+        `4. KHÔNG ghi kết luận rút ra từ những lần HỎNG, và cũng không ghi kết luận rút ra từ việc ` +
+        `CHƯA CÓ / CHƯA THỬ. Luật cứng, cùng luật với \`lessons\`:\n` +
         `   ⛔ "báo cáo done của nhân viên trình duyệt không đáng tin tuyệt đối"\n` +
         `   ⛔ "việc này đã thử nhiều lần đều hỏng — không cần giao lại nữa"\n` +
+        `   ⛔ "văn phòng không có kết nối gửi email — chỉ đưa đường dẫn để người dùng tự gửi" ` +
+        `(danh sách kết nối đã nằm sẵn trong ngữ cảnh ở MỌI lượt, nên câu này không thêm gì cả — ` +
+        `nó chỉ đông lạnh một thứ sẽ sai ngay hôm người dùng cắm thêm một cánh tay)\n` +
         `   ✅ "cứ giao việc, để nhân viên tự báo nếu thiếu quyền, không tự đoán trước là không làm được"\n` +
         `   ✅ "với project Notion lớn: liệt kê trang con trước, rồi đọc từng trang — cách này chạy được"\n` +
         `Một lần hỏng chứng minh "lần đó không xong". Nó KHÔNG chứng minh "không làm được" — và câu ` +
         `thứ hai chính là câu bạn sẽ đọc lại ở MỌI phiên sau rồi từ chối thử, kể cả khi thứ đó đã ` +
-        `chạy tốt trở lại. Chỉ ghi CÁCH LÀM ĐÃ CHẠY ĐƯỢC, ưu tiên cách phải vấp mới tìm ra.\n` +
+        `chạy tốt trở lại. "Văn phòng chưa có X" còn ngắn hạn hơn nữa: nó sai ngay lúc người dùng ` +
+        `cắm X vào, mà bạn thì vẫn đọc lại nó ở mọi phiên sau. ` +
+        `Chỉ ghi CÁCH LÀM ĐÃ CHẠY ĐƯỢC, ưu tiên cách phải vấp mới tìm ra.\n` +
         `⚠ Thứ NGƯỜI DÙNG chốt thì vẫn chép lại theo luật 1, kể cả khi họ chốt "đừng làm X" — đó là ` +
         `quyết định của họ, không phải kết luận của bạn. Việc còn dở thì ghi là VIỆC CẦN LÀM TIẾP, ` +
         `không kèm phán đoán vì sao nó chưa xong.\n\n` +

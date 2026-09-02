@@ -148,17 +148,21 @@ export function helpText(unknown?: string): string {
  * │ vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Regex này chạy trên chữ NGƯỜI DÙNG GÕ, không phải chữ model sinh — khác
+ * ⚠ Cửa này chạy trên chữ NGƯỜI DÙNG GÕ, không phải chữ model sinh — khác
  * hẳn luật cấm dò đường dẫn trong `say` (SPEC-artifacts §2.5). Ở đó rủi ro là
  * model bịa ra một đường dẫn nghe rất thật; ở đây người dùng tự chịu trách
  * nhiệm cho thứ họ gõ, VÀ mọi tham chiếu vẫn phải đối chiếu với `known` — danh
  * sách đường dẫn có thật, đọc từ đĩa — trước khi được công nhận.
  *
- * Ba dạng nhận được, và dạng thứ ba là lý do hàm này phải tồn tại:
+ * Bốn dạng nhận được:
  *
- *   @artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
- *   @library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
- *   @doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+ *   @artifacts/P-…/T-01/vi/doc-2.md      đường dẫn đủ → đối chiếu rồi dùng
+ *   @library/files/doc-1.md               đường dẫn đủ → đối chiếu rồi dùng
+ *   @doc-1.md                             tên trần     → tra, và CHẶN nếu trùng
+ *   @library/files/Mix, Mingle&Meet.pptx  CÓ DẤU CÁCH  → khớp chuỗi dài nhất
+ *
+ * Dạng thứ ba là lý do hàm này phải tồn tại; dạng thứ tư là lý do nó không được
+ * cắt ở khoảng trắng. → `typables`
  *
  * Tên trần trùng nhau là ca CÓ THẬT và hai kho được phép trùng: tủ tài liệu có
  * `doc-1.md`, ngăn Kết quả cũng có `doc-1.md`. Đoán bừa một bên là làm sai việc
@@ -188,6 +192,58 @@ export interface ReadableRef {
   open: string;
 }
 
+/** Tên file, bỏ phần thư mục. */
+function base(p: string): string {
+  return p.split('/').pop() ?? p;
+}
+
+/**
+ * MỌI CHUỖI NGƯỜI TA ĐƯỢC PHÉP GÕ SAU `@`, DÀI TRƯỚC NGẮN SAU.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG USER BÁO 02/09 — `@library/files/Mix, Mingle&Meet.pptx` báo *"không   │
+ * │ tìm thấy library/files/Mix"*.                                            │
+ * │                                                                          │
+ * │ Bản cũ cắt tham chiếu ở KHOẢNG TRẮNG (`@([^\s@]+)`), dựa trên một tiền đề │
+ * │ ghi thẳng trong chú thích: *"tên có dấu cách thì dùng đường dẫn đủ, mà    │
+ * │ nút Chép vốn luôn cho đường dẫn đủ"*. Tiền đề đó SAI: đường dẫn đủ cũng   │
+ * │ chứa đúng cái dấu cách ấy. Nên nút Chép — lối thoát mà chính câu báo lỗi  │
+ * │ mời người dùng bấm — đưa ra một chuỗi bộ giải không đọc nổi.              │
+ * │                                                                          │
+ * │ Cách sửa KHÔNG phải là nghĩ ra một quy ước trích dẫn (`@"…"`) rồi bắt     │
+ * │ người dùng học, và cũng không phải là ép tên file phải sạch — tài liệu là │
+ * │ của họ, `Mix, Mingle&Meet.pptx` là một cái tên hợp lệ. Ta đang CẦM danh   │
+ * │ sách đường dẫn có thật đọc từ đĩa, nên không cần đoán ranh giới: khớp     │
+ * │ chuỗi dài nhất trong `known` mà đoạn sau `@` bắt đầu bằng nó. Dấu cách,   │
+ * │ dấu phẩy, `&`, tiếng Việt có dấu — không ký tự nào còn là ranh giới.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Dài trước ngắn sau vì một tên có thể là tiền tố của tên khác: có cả `bao-cao.md`
+ * lẫn `bao-cao.md.bak` thì `@bao-cao.md.bak` phải ra cái thứ hai.
+ */
+function typables(known: readonly ReadableRef[]): string[] {
+  const set = new Set<string>();
+  for (const k of known) {
+    set.add(k.ref);
+    set.add(k.open);
+    set.add(base(k.ref));
+    set.add(base(k.open));
+  }
+  set.delete('');
+  return [...set].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Ký tự đứng ngay sau một tham chiếu khớp đủ.
+ *
+ * ⚠ Không có hàng rào này thì khớp-tiền-tố nuốt cả chữ thường: một tài liệu tên
+ * `a` sẽ làm `@anh xem giúp` khớp thành `a`. Hết chuỗi, khoảng trắng, hoặc dấu
+ * câu — ngoài ra là chữ của người ta, không phải tên file.
+ */
+function endsRef(next: string | undefined): boolean {
+  return next === undefined || /[\s.,;:)\]}]/.test(next);
+}
+
 /** Tra một chuỗi người ta gõ về đúng một tài liệu. Tên trần trùng → `undefined`. */
 function lookupRef(
   raw: string,
@@ -198,7 +254,6 @@ function lookupRef(
   const exact = known.find((k) => k.ref === raw || k.open === raw);
   if (exact) return { hit: exact };
 
-  const base = (p: string): string => p.split('/').pop() ?? p;
   const matches = known.filter((k) => base(k.ref) === raw || base(k.open) === raw);
   // Cùng một tài liệu khớp qua hai cửa thì KHÔNG phải trùng lặp.
   const distinct = [...new Map(matches.map((k) => [k.open, k])).values()];
@@ -211,22 +266,46 @@ export function resolveFileRefs(
   known: readonly ReadableRef[],
 ): { text: string; problem?: string } {
   // `@` phải đứng đầu chuỗi hoặc sau khoảng trắng — `ten@mail.com` không phải
-  // tham chiếu file. Dừng ở khoảng trắng: tên có dấu cách thì dùng đường dẫn
-  // đủ, mà nút Chép vốn luôn cho đường dẫn đủ.
-  const found = [...text.matchAll(/(^|\s)@([^\s@]+)/g)];
-  if (found.length === 0) return { text };
+  // tham chiếu file.
+  if (!/(^|\s)@/.test(text)) return { text };
 
-  let out = text;
-  for (const m of found) {
-    // Bỏ dấu câu dính đuôi: người ta gõ "sửa @a/b.md, giữ nguyên phần đầu".
-    //
-    // ⚠ Phần bị bỏ phải được TRẢ LẠI vào câu. Bản đầu thay cả `m[0]` bằng
-    // đường dẫn sạch, và dấu phẩy biến mất khỏi câu của người dùng — sửa chữ
-    // họ viết mà không nói là chuyện nhỏ ở đây nhưng là một thói quen sai:
-    // ta chỉ được phép bóc `@`, không được phép biên tập.
-    const typed = m[2]!.replace(/\\/g, '/');
-    const tail = /[.,;:)\]}]+$/.exec(typed)?.[0] ?? '';
-    const raw = tail ? typed.slice(0, -tail.length) : typed;
+  const names = typables(known);
+
+  // Dựng lại câu bằng CHỈ SỐ, không phải `String.replace`. `replace` thay chỗ
+  // xuất hiện ĐẦU TIÊN trong cả câu, nên "@a.md rồi lại @a.md" trước đây sửa
+  // hai lần cùng một chỗ và bỏ sót chỗ thứ hai.
+  let out = '';
+  let cursor = 0; // đã ghi ra tới đâu — cũng là mốc "đoạn này đã bị nuốt"
+  const re = /(^|\s)@/g;
+
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const at = m.index + m[1]!.length; // vị trí của chính dấu `@`
+    if (at < cursor) continue; // `@` nằm bên trong một tham chiếu vừa nuốt
+    // `\` → `/` ngay từ đầu: dán từ Explorer là ca thường trên Windows. Thay
+    // một-ăn-một nên mọi chỉ số bên dưới vẫn trỏ đúng vào `text`.
+    const rest = text.slice(at + 1).replace(/\\/g, '/');
+
+    // KHỚP ĐỦ TRƯỚC: chuỗi dài nhất trong `known` mà `rest` bắt đầu bằng nó.
+    // Đây là cửa duy nhất nhận được tên có dấu cách. → `typables`
+    let raw = names.find((n) => rest.startsWith(n) && endsRef(rest[n.length]));
+    let tail = '';
+
+    if (!raw) {
+      // Không khớp cái nào ⇒ cắt tới khoảng trắng như cũ, để câu báo lỗi vẫn
+      // nêu đúng thứ người ta gõ khi họ gõ sai thật.
+      const typed = /^[^\s@]+/.exec(rest)?.[0] ?? '';
+      if (!typed) continue; // `@` trơ trọi, hoặc `@@` — không phải tham chiếu
+      // Bỏ dấu câu dính đuôi: người ta gõ "sửa @a/b.md, giữ nguyên phần đầu".
+      //
+      // ⚠ Phần bị bỏ phải được TRẢ LẠI vào câu. Bản đầu thay cả cụm bằng đường
+      // dẫn sạch, và dấu phẩy biến mất khỏi câu của người dùng — sửa chữ họ
+      // viết mà không nói là chuyện nhỏ ở đây nhưng là một thói quen sai: ta
+      // chỉ được phép bóc `@`, không được phép biên tập.
+      tail = /[.,;:)\]}]+$/.exec(typed)?.[0] ?? '';
+      raw = tail ? typed.slice(0, -tail.length) : typed;
+      if (!raw) continue;
+    }
+
     const { hit, clash } = lookupRef(raw, known);
     if (clash) {
       return {
@@ -245,13 +324,17 @@ export function resolveFileRefs(
           `Kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn.`,
       };
     }
+
     // Bỏ `@`, thay bằng đường NHÂN VIÊN MỞ ĐƯỢC — không nhất thiết là chuỗi họ
     // vừa gõ. `@hd1.docx` ra `library/text/hd1.docx.txt`, vì `.docx` gốc không
     // tool nào mở được và một đường dẫn chết là cách đắt nhất để tôn trọng
     // nguyên văn. → `ReadableRef`
-    out = out.replace(m[0], `${m[1]}${hit.open}${tail}`);
+    out += text.slice(cursor, at) + hit.open + tail;
+    cursor = at + 1 + raw.length + tail.length;
   }
-  return { text: out };
+
+  if (cursor === 0) return { text };
+  return { text: out + text.slice(cursor) };
 }
 
 /**

@@ -1356,7 +1356,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       if (rest[0] === 'artifacts' && !rest[1] && method === 'GET') {
         // Quét đĩa mỗi lần, không catalog: file này do NHÂN VIÊN ghi trong lúc
         // chạy, nên mọi bản lưu sẵn đều lỗi thời ngay giữa một ca.
-        return json(res, 200, { artifacts: office.artifactList() });
+        //
+        // `total`/`capped` đi kèm danh sách, không phải một route riêng: cắt mà
+        // không nói tổng là để giao diện hiện 500 dòng và người dùng không có
+        // cách nào biết còn bao nhiêu nữa. → `Office.artifactList`
+        const listed = office.artifactList();
+        return json(res, 200, {
+          artifacts: listed.items,
+          total: listed.total,
+          capped: listed.capped,
+        });
       }
       if (rest[0] === 'artifacts' && !rest[1] && method === 'DELETE') {
         const rel = url.searchParams.get('path');
@@ -1368,13 +1377,20 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
          */
         if (!rel && url.searchParams.get('all') === '1') {
           const removed = office.clearArtifacts();
-          return json(res, 200, { removed, artifacts: office.artifactList() });
+          const after = office.artifactList();
+          return json(res, 200, {
+            removed,
+            artifacts: after.items,
+            total: after.total,
+            capped: after.capped,
+          });
         }
         if (!rel) return json(res, 400, { error: 'thiếu "path"' });
         // Qua `Office` để bảng kê Kết quả trong prefix Trợ lý được nạp lại —
         // nếu không, nó nêu tên một file người dùng vừa xoá. → `removeArtifact`
         if (!office.removeArtifact(rel)) return json(res, 404, { error: 'không có kết quả này' });
-        return json(res, 200, { artifacts: office.artifactList() });
+        const after = office.artifactList();
+        return json(res, 200, { artifacts: after.items, total: after.total, capped: after.capped });
       }
       /**
        * Đọc một kết quả — XEM hoặc TẢI VỀ.

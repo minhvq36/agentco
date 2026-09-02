@@ -228,6 +228,55 @@ Khối này đổi sau **mỗi ca** → prefix Trợ lý bị ghi lại mỗi ca
 
 Đồng bộ (`refreshAssistantContext`) chạy **ngoài** cổng `status === 'done'`: ca `failed`/`stopped` vẫn có thể đã ghi xong vài file trước lúc hỏng, và đó chính là những file người dùng sẽ nhắc ở câu tiếp theo (*"làm nốt phần còn lại"*).
 
+---
+
+## 2.8 Hai cái trần của `ArtifactStore` — và vì sao chúng phải khác nhau (sửa 02/09)
+
+Câu hỏi user đặt ra: *"danh sách kết quả ngày càng dài, có nên tự prune sau 15 ngày không?"* Câu trả lời là **không**, và lý do là bảng kê vào prefix **vốn đã không dài ra** (§2.4: 5 ca, 600 token). Nhưng rà tới đó thì lộ một ca hỏng thật.
+
+### Ca hỏng: sắp xếp SAU khi đã cắt
+
+```ts
+walk(...)                      // dừng hẳn ở file thứ 500
+return out.sort(theo mtime)    // sắp SAU khi cắt → cứu không kịp
+```
+
+Thứ rơi ra không phải file cũ nhất mà là **file `readdir` chưa đọc tới**. Thư mục ca tên `P-260820-0314-…` — theo **ngày, cũ trước** — nên trên NTFS (readdir theo tên) thứ biến mất chính là **những kết quả mới nhất**, đúng thứ người dùng vừa tạo và đang đi tìm. Trên ext4 (băm tên) là một nhóm ngẫu nhiên. Không câu báo nào.
+
+Kéo theo hai chỗ khác cùng gọi `list()`:
+
+| chỗ | hậu quả |
+|---|---|
+| `removeAll()` | *"dọn sạch"* xoá 500, trả về `500`, giao diện báo thành công — 200 file vẫn nằm đó |
+| `readablePaths()` | `@đường-dẫn` tới file cũ trả *"không tìm thấy"*, trong khi bảng kê vừa hứa với model *"a path from an older job is valid"* |
+
+### Bản vá: tách ba thứ đang bị trộn làm một
+
+| | trần | dùng ở đâu |
+|---|---|---|
+| `MAX_SCAN` | **20 000** — chỉ để một thư mục bệnh hoạn không treo daemon; chạm thì `capped: true`, **không im** | mọi lượt duyệt |
+| `MAX_PANEL_FILES` | **500** — cắt **sau khi đã sắp theo `mtime`**, và trả kèm `total` thật | payload gửi giao diện |
+| *(không có trần)* | | `readablePaths` · `artifactManifest` · `removeAll` |
+
+Trục sắp xếp là **`mtime`**, không phải ngày tạo — user chốt, và không chỉ vì ngữ nghĩa: `birthtime` trên Linux tuỳ hệ thống file mà có hoặc không (Node lấp bằng `ctime` hoặc mốc 1970), nên một cái trần dựa vào nó sẽ chạy khác nhau trên ba hệ điều hành. Hoà `mtime` (một ca ghi ba file trong cùng mili giây) tách bằng đường dẫn, để thứ tự không đổi theo `readdir`.
+
+`removeAll()` quét lại **cho tới khi sạch** (trần 10 vòng), và giao diện nói ra phần còn sót thay vì báo thành công.
+
+### Duyệt (rẻ) tách khỏi `stat` (đắt)
+
+Đo trên máy user, Windows 02/09:
+
+| số file | `scan()` (có `stat`) | `filePaths()` (chỉ `readdir`) |
+|---|---|---|
+| 500 | 54 ms | 7 ms |
+| 2 000 | 142 ms | 8 ms |
+| 5 000 | 415 ms | 17 ms |
+| 20 000 | 1 425 ms | 23 ms |
+
+Gần như toàn bộ chi phí nằm ở `statSync`, mà `bytes`/`mtime` thì **hai chỗ nóng nhất không dùng**: `readablePaths()` chạy ở **mỗi tin nhắn**, `removeAll()` chỉ cần đường dẫn. Nên chúng đi qua `filePaths()`. `scan()` (có `stat`) chỉ chạy theo **sự kiện** — `refreshAssistantContext` và mở panel — nơi 142 ms nằm cạnh một lượt gọi model tính bằng giây.
+
+⇒ Đường đi nóng nhất đi từ ~51 ms xuống ~7 ms **và** hết sai, cùng một bản vá.
+
 ⚠ **Artifact sinh trước bản vá `plan_id` đôi (20/08) mang id mồ côi nên KHÔNG tra được tên ca** — bảng kê hiện *"(một việc cũ, không còn tên trong sổ)"*. Suy giảm êm, không sửa được, và chỉ ảnh hưởng dữ liệu cũ.
 
 ### Phải thêm vào `describePrompt` trong CÙNG một lần sửa

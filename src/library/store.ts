@@ -616,14 +616,29 @@ export class LibraryStore {
       // không tồn tại — ai đọc INDEX.md phải tự suy ra đường nào mở được, và
       // Trợ lý suy sai. → `docPaths`
       const { open, original } = docPaths(d.name, d.ext, d.state);
-      const openCell = open
-        ? original
-          ? `\`${open}\` + \`${original}\` (đọc kỹ theo trang)`
-          : `\`${open}\``
-        : '— chưa dùng được';
-      return `| ${d.name} | ${d.shape ?? d.ext} | ${formatBytes(d.bytes)} | ${
+      /**
+       * ⚠ MỘT DẤU `|` TRONG TÊN FILE LÀ MỘT HÀNG BẢNG VỠ ĐÔI.
+       *
+       * `|` hợp lệ trên ext4/APFS (chỉ Windows cấm), và `scan()` nhận cả file
+       * người ta chép tay thẳng vào `library/files/` — không đi qua `safeName`.
+       * Một cái tên như vậy tách hàng thành hai cột lệch, và cột lệch nhất
+       * chính là cột "Mở bằng": Trợ lý đọc ra một đường dẫn cụt.
+       *
+       * Nên tên và mô tả bị THAY ký tự (chúng chỉ để nhìn), còn đường dẫn thì
+       * KHÔNG — một đường dẫn sửa đổi là đường dẫn chết, và đường dẫn chết đắt
+       * hơn hẳn một ô trống. Tên có `|` ⇒ nói thẳng là chưa dùng được.
+       */
+      const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+      const openCell = d.name.includes('|')
+        ? '— tên file có dấu `|`, đổi tên rồi thả lại'
+        : open
+          ? original
+            ? `\`${open}\` + \`${original}\` (đọc kỹ theo trang)`
+            : `\`${open}\``
+          : '— chưa dùng được';
+      return `| ${cell(d.name)} | ${cell(d.shape ?? d.ext)} | ${formatBytes(d.bytes)} | ${
         d.tokens ? formatTokens(d.tokens) : '—'
-      } | ${openCell} | ${note.replace(/\|/g, '/').replace(/\n/g, ' ')} |`;
+      } | ${openCell} | ${cell(note)} |`;
     });
 
     const lines = [

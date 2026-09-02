@@ -49,6 +49,14 @@ export function ArtifactsPanel() {
   // đổi — nên hiệu ứng phải bám vào chính ô này chứ không vào nội dung của nó.
   const revealRequest = useApp((s) => s.revealArtifact);
   const [items, setItems] = useState<ArtifactRecord[] | null>(null);
+  /**
+   * TỔNG THẬT, tách khỏi `items.length`. → `api.artifacts`
+   *
+   * Server chỉ gửi 500 file mới nhất. Nếu con số trên đầu panel lấy từ
+   * `items.length` thì nó nói "500" trong khi nút ngay cạnh nó xoá 712 — mà cả
+   * lý do con số đó nằm ở đó là để người dùng biết mình sắp mất bao nhiêu.
+   */
+  const [total, setTotal] = useState(0);
   const [confirmDel, setConfirmDel] = useState<ArtifactRecord | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [open, setOpen] = useState<ArtifactRecord | null>(null);
@@ -57,10 +65,14 @@ export function ArtifactsPanel() {
     if (!officeId) return;
     api
       .artifacts(officeId)
-      .then((r) => setItems(r.artifacts))
+      .then((r) => {
+        setItems(r.artifacts);
+        setTotal(r.total);
+      })
       .catch((err) => {
         toast(err instanceof Error ? err.message : 'Không đọc được danh sách kết quả.');
         setItems([]);
+        setTotal(0);
       });
   }, [officeId]);
 
@@ -111,6 +123,7 @@ export function ArtifactsPanel() {
     try {
       const r = await api.removeArtifact(officeId, a.path);
       setItems(r.artifacts);
+      setTotal(r.total);
       if (open?.path === a.path) setOpen(null);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Không xoá được.');
@@ -124,8 +137,16 @@ export function ArtifactsPanel() {
     try {
       const r = await api.clearArtifacts(officeId);
       setItems(r.artifacts);
+      setTotal(r.total);
       setOpen(null);
-      toast(`Đã xoá ${r.removed} kết quả.`);
+      // Còn sót thì NÓI RA. `removeAll` quét lại tới khi sạch, nhưng một file
+      // đang bị khoá (Word đang mở nó) thì vẫn ở lại — im lặng ở đây là để
+      // người dùng tin ngăn đã trống trong khi nó không trống.
+      toast(
+        r.total > 0
+          ? `Đã xoá ${r.removed} kết quả — còn ${r.total} file không xoá được.`
+          : `Đã xoá ${r.removed} kết quả.`,
+      );
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Không xoá được.');
     } finally {
@@ -163,8 +184,15 @@ export function ArtifactsPanel() {
         └──────────────────────────────────────────────────────────────────────┘
       */}
       <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2">
+        {/*
+          Vượt trần thì đổi hẳn câu, KHÔNG cộng thêm một mẩu vào câu cũ: tổng
+          dung lượng của 500 file mà ghi cạnh con số 712 là một con số sai đứng
+          cạnh một con số đúng. Thà nói ít hơn.
+        */}
         <span className="text-xs text-muted">
-          {items.length} kết quả · {formatBytes(items.reduce((n, a) => n + a.bytes, 0))}
+          {total > items.length
+            ? `${total} kết quả · đang hiện ${items.length} mới nhất`
+            : `${items.length} kết quả · ${formatBytes(items.reduce((n, a) => n + a.bytes, 0))}`}
         </span>
         <button
           className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-muted transition-colors hover:border-danger/50 hover:bg-danger-soft hover:text-danger"
@@ -262,8 +290,8 @@ export function ArtifactsPanel() {
         token vì nằm hoàn toàn ở giao diện.
       */}
       <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
-        Đây là thứ <b>nhân viên làm ra</b>. Không sửa được ở đây — muốn đổi thì nhắn Trợ lý làm lại. Muốn
-        dùng một kết quả làm đầu vào cho việc sau thì tự thả nó vào <b>Tủ tài liệu</b>.
+        Đây là thứ <b>nhân viên làm ra</b>. Không sửa được — muốn thay đổi thì nhắn Trợ lý làm lại.
+        Những tài liệu muốn dùng lâu dài thì thêm vào <b>Tủ tài liệu</b>.
       </div>
 
       <ViewerDialog item={open} officeId={officeId} onClose={() => setOpen(null)} />
@@ -298,11 +326,11 @@ export function ArtifactsPanel() {
       */}
       <ConfirmDelete
         open={confirmAll}
-        title={`Xoá cả ${items.length} kết quả?`}
+        title={`Xoá cả ${total} kết quả?`}
         onCancel={() => setConfirmAll(false)}
         onConfirm={() => void removeAll()}
       >
-        Toàn bộ <b>{items.length} file</b> trong ngăn này bị xoá hẳn, kể cả của những việc chạy hôm nay.
+        Toàn bộ <b>{total} file</b> trong ngăn này bị xoá hẳn, kể cả của những việc chạy hôm nay.
         Đây là <b>bản duy nhất</b> — cần lại thì phải chạy lại và trả tiền lại.
         <br />
         <span className="text-muted">
