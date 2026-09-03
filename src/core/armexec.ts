@@ -8,55 +8,60 @@ import { compileCliArm, isCliArm } from './cli-arm.js';
 import { injectSecrets } from './secrets.js';
 
 /**
- * BỎ `npx` KHỎI ĐƯỜNG NÓNG. → docs/SPEC-arms.md §5j
+ * REMOVING `npx` FROM THE HOT PATH. → docs/SPEC-arms.md §5j
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ SỐ ĐO ĐÃ QUYẾT, KHÔNG PHẢI LẬP LUẬN (24/08, `scripts/spike-npx-cost.ts`) │
+ * │ DECIDED BY MEASUREMENT, NOT ARGUMENT (24/08, `scripts/spike-npx-cost.ts`)│
  * │                                                                          │
- * │   npx khởi động server (gói ĐÃ cache)   3,8 – 4,3 s   lần 1 = lần 3      │
- * │   node <file đã cache>                  0,79 – 0,84 s                    │
- * │   đầu-cuối probeArm qua npx             7,7 – 9,2 s                      │
- * │   đầu-cuối probeArm qua node            4,2 – 4,5 s                      │
+ * │   npx starting a server (package ALREADY cached)   3.8–4.3s  run1=run3   │
+ * │   node <cached file>                                0.79 – 0.84 s        │
+ * │   end-to-end probeArm through npx                   7.7 – 9.2 s          │
+ * │   end-to-end probeArm through node                  4.2 – 4.5 s          │
  * │                                                                          │
- * │ Và `npx -y --offline` vẫn mất **3 878 ms** ⇒ khoản đó KHÔNG phải mạng,   │
- * │ không phải tải gói. Nó là phí tự thân của bộ máy resolve của npm, và nó  │
- * │ không bao giờ nhỏ đi.                                                    │
+ * │ And `npx -y --offline` still costs **3,878 ms** ⇒ that cost is NOT the   │
+ * │ network, NOT the package download. It's npm's own resolver overhead, and │
+ * │ it never gets smaller.                                                   │
  * │                                                                          │
- * │ Cái giá thật lớn hơn hộp thoại cắm: mỗi `query()` spawn một tiến trình    │
- * │ MCP mới, nên ~4 s đó bị trả ở **MỖI TASK có cánh tay**, mãi mãi.          │
+ * │ The real cost is bigger than the connect dialog: every `query()` spawns  │
+ * │ a fresh MCP process, so that ~4s is paid on **EVERY TASK with an arm**,  │
+ * │ forever.                                                                 │
  * │                                                                          │
- * │ ⚠ Câu user hỏi khi duyệt: *"một việc bỏ 0 ăn tất thế này có lý do gì mà  │
- * │ không làm?"*. Trả lời thẳng: **không phải bỏ 0.** Nó đẻ ra một tầng quản  │
- * │ lý gói với ba ca hỏng riêng — máy không có `npm` · không ra được registry │
- * │ lần đầu · thư mục cache bị dọn. Cả ba đều được xử bằng MỘT luật:          │
- * │ **nghi ngờ gì thì trả về cấu hình GỐC và để `npx` chạy như cũ.** Bản vá   │
- * │ này chỉ được phép làm nhanh hơn, không bao giờ được phép làm hỏng.        │
+ * │ ⚠ The question the user asked while reviewing this: *"if this is such a  │
+ * │ free lunch, why wasn't it done already?"*. Straight answer: **it isn't   │
+ * │ free.** It spawns a whole package-management layer with three of its own │
+ * │ failure modes — the machine has no `npm` · can't reach the registry the  │
+ * │ first time · the cache directory got cleaned up. All three are handled   │
+ * │ by ONE rule: **any doubt at all, return the ORIGINAL config and let      │
+ * │ `npx` run exactly as before.** This patch is only ever allowed to make   │
+ * │ things faster, never allowed to break anything.                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Hai nửa, cố ý tách:
+ * Two halves, deliberately split:
  *
- *   `fastLaunch`      ĐỒNG BỘ, thuần đọc đĩa. Dùng ở `pickMcp` (mỗi task) và
- *                     `probeArm`. Không cài gì, không chờ gì.
- *   `ensureInstalled` BẤT ĐỒNG BỘ, cài một lần. Gọi lúc cắm cánh tay và lúc
- *                     daemon mở công ty. Hỏng thì im lặng — `fastLaunch` sẽ tự
- *                     trả về `npx` ở lượt sau.
+ *   `fastLaunch`      SYNCHRONOUS, pure disk read. Used in `pickMcp` (every
+ *                     task) and `probeArm`. Installs nothing, waits for nothing.
+ *   `ensureInstalled` ASYNCHRONOUS, installs once. Called when an arm is
+ *                     connected and when the daemon opens a company. Fails
+ *                     silently — `fastLaunch` will just fall back to `npx`
+ *                     on the next run.
  *
- * Tách vì `pickMcp` là đường ĐỒNG BỘ và biến nó thành async là kéo `await` vào
- * đúng chỗ nóng nhất, để đổi lấy một lần cài đáng ra phải xong từ trước.
+ * Split because `pickMcp` is a SYNCHRONOUS path, and turning it async would
+ * pull an `await` into the single hottest spot, all to buy an install that
+ * should already have finished ahead of time.
  */
 
-/** Kho gói của cánh tay. Là CACHE — xoá đi lúc nào cũng được, tự dựng lại. */
+/** The arm package store. Just a CACHE — safe to delete anytime, rebuilds itself. */
 export function armsCacheDir(): string {
   return path.join(os.homedir(), '.agentco', 'arms');
 }
 
 /**
- * Tên file đánh dấu "đã cài xong, và đây là file cần chạy".
+ * The name of the file marking "install finished, and this is the file to run".
  *
- * Ghi ra một marker thay vì đọc lại `bin` trong `package.json` của gói người
- * lạ ở MỖI lần khởi động: `bin` có thể là chuỗi, có thể là object nhiều khoá,
- * và ta chỉ muốn quyết chuyện đó ĐÚNG MỘT LẦN — lúc cài, nơi có thể ném lỗi và
- * ghi log tử tế. Đường nóng thì chỉ đọc một dòng.
+ * Writes out a marker instead of re-reading `bin` from a stranger's package's
+ * `package.json` on EVERY startup: `bin` can be a string, or a multi-key
+ * object, and we only want to decide that EXACTLY ONCE — at install time,
+ * where it's safe to throw and log properly. The hot path just reads one line.
  */
 const MARKER = '.agentco-entry';
 
@@ -67,15 +72,17 @@ export interface ExecConfig {
 }
 
 /**
- * Tách một dòng `npx` thành: gói cần cài + tham số truyền cho server.
+ * Splits an `npx` line into: the package to install + arguments passed to the server.
  *
  * `['-y', '@scope/pkg@1.2.3', 'D:\\x']` → spec `@scope/pkg@1.2.3`, rest `['D:\\x']`
  *
- * Luật: tham số ĐẦU TIÊN không bắt đầu bằng `-` là tên gói; mọi thứ sau nó là
- * của server. Cờ của npx (`-y`, `--offline`, `--package=…`) đều mang dấu `-`.
+ * Rule: the FIRST argument that doesn't start with `-` is the package name;
+ * everything after it belongs to the server. npx's own flags (`-y`,
+ * `--offline`, `--package=…`) all carry a `-`.
  *
- * ⚠ Trả `undefined` cho mọi hình dạng không chắc chắn. Đây là hàm được phép
- * NÓI KHÔNG BIẾT — người gọi rơi về `npx` và mọi thứ chạy y như trước.
+ * ⚠ Returns `undefined` for any shape it isn't sure about. This function is
+ * allowed to SAY IT DOESN'T KNOW — the caller falls back to `npx` and
+ * everything runs exactly as before.
  */
 export function npxSpec(config: ExecConfig): { spec: string; rest: string[] } | undefined {
   if (config.command !== 'npx' && config.command !== 'npx.cmd') return undefined;
@@ -85,36 +92,40 @@ export function npxSpec(config: ExecConfig): { spec: string; rest: string[] } | 
   const at = args.findIndex((a) => !a.startsWith('-'));
   if (at < 0) return undefined;
   const spec = args[at]!;
-  // `--package=x` đổi hẳn nghĩa của tham số vị trí (nó thành TÊN LỆNH, không
-  // phải tên gói). Ca hiếm, và đoán sai ở đây là chạy nhầm gói — nói không biết.
+  // `--package=x` completely changes what the positional argument means (it
+  // becomes the COMMAND NAME, not the package name). A rare case, and guessing
+  // wrong here means running the wrong package — say we don't know.
   if (args.some((a) => a.startsWith('--package'))) return undefined;
   return { spec, rest: args.slice(at + 1) };
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TÊN MẶC ĐỊNH SUY TỪ CHÍNH CẤU HÌNH — thay cho việc hiện một cái BĂM.      │
- * │ (user chốt 31/08) → `company.ts §addArm`                                 │
- * │                                                                          │
- * │ Trả lời thẳng hai câu user hỏi:                                          │
- * │                                                                          │
- * │ **① "Có phải custom MCP nào cũng có `url` không?"** — KHÔNG. Chỉ mục      │
- * │ `http`/`sse`. Mục `stdio` có `command`/`args` và **không có `url` nào**.  │
- * │ Nên hàm này đọc CẢ HAI hình dạng, không chỉ một.                         │
- * │                                                                          │
- * │ **② "Có phải lúc nào cũng cùng depth, hay tìm key `url` any depth?"** —   │
- * │ **LUÔN Ở TẦNG NGOÀI CÙNG, và tìm-mọi-tầng là SAI.** `McpHttpServerConfig` │
- * │ của SDK phẳng: `{type, url, headers?, …}`. Chỗ lồng duy nhất là vỏ        │
- * │ `{"mcpServers": {"<tên>": {…}}}`, mà `parsePaste` đã bóc từ trước — và ca │
- * │ đó vốn đã CÓ tên rồi (chính cái khoá), nên nó không bao giờ tới đây.      │
- * │                                                                          │
- * │ ⚠ Quét mọi tầng thì sẽ vớ phải một `url` nằm trong `env`/`headers` — đó   │
- * │ là địa chỉ API của hãng, KHÔNG phải endpoint MCP. Đặt tên cánh tay theo   │
- * │ nó là **sai một cách tự tin**, và người dùng không có cách nào biết.      │
+ * │ A DEFAULT NAME INFERRED FROM THE CONFIG ITSELF — instead of showing a     │
+ * │ raw HASH. (the user's call, 31/08) → `company.ts §addArm`                 │
+ * │                                                                           │
+ * │ Answers the user's two questions directly:                                │
+ * │                                                                           │
+ * │ **① "Does every custom MCP have a `url`?"** — NO. Only `http`/`sse`       │
+ * │ entries do. A `stdio` entry has `command`/`args` and **no `url` at all**. │
+ * │ So this function reads BOTH shapes, not just one.                         │
+ * │                                                                           │
+ * │ **② "Is it always the same depth, or does it search for a `url` key at    │
+ * │ any depth?"** — **ALWAYS AT THE TOP LEVEL, and searching every depth would│
+ * │ be WRONG.** The SDK's `McpHttpServerConfig` is flat: `{type, url,         │
+ * │ headers?, …}`. The only nesting is the `{"mcpServers": {"<name>": {…}}}`  │
+ * │ wrapper, which `parsePaste` already unwraps beforehand — and that case    │
+ * │ already HAS a name (the key itself), so it never reaches this function.   │
+ * │                                                                           │
+ * │ ⚠ Scanning every depth would eventually catch a `url` sitting inside      │
+ * │ `env`/`headers` — that's the vendor's API address, NOT the MCP endpoint.  │
+ * │ Naming the arm after it would be **confidently wrong**, and the user would│
+ * │ have no way to tell.                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `undefined` = không suy được ⇒ chỗ gọi rơi về băm như cũ. Hàm này được phép
- * nói KHÔNG BIẾT; một cái tên bịa tệ hơn một cái băm thật thà.
+ * `undefined` = couldn't infer one ⇒ the caller falls back to the hash as
+ * before. This function is allowed to say IT DOESN'T KNOW; a made-up name is
+ * worse than an honest hash.
  */
 export function defaultArmLabel(config: unknown): string | undefined {
   if (!config || typeof config !== 'object') return undefined;
@@ -122,26 +133,30 @@ export function defaultArmLabel(config: unknown): string | undefined {
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ Tờ khai CLI: **TÊN THƯ MỤC trước, tên chương trình sau.** (user 01/09)   │
+   * │ A CLI declaration: **FOLDER NAME first, program name second.** (user,    │
+   * │ 01/09)                                                                   │
    * │                                                                          │
-   * │   *"1 cánh tay CLI có thể có nhiều lệnh, tôi nghĩ tên thư mục nhưng logo │
-   * │    >_ cho node là ổn rồi"*                                               │
+   * │   *"one CLI arm can have several commands, I think the folder name with  │
+   * │    the >_ icon for the node is fine"*                                    │
    * │                                                                          │
-   * │ Bản trước lấy tên binary, và nó **hỏng đúng ở ca thường nhất**: một cánh │
-   * │ tay CLI là một dự án với nhiều lệnh, mà mọi lệnh của dự án JS đều mở đầu │
-   * │ bằng `node` ⇒ ba dự án khác nhau ra ba node trên sơ đồ tên **"node"**.   │
-   * │ Tên phải phân biệt được, và thứ phân biệt chúng là **thư mục**.          │
+   * │ The earlier version used the binary name, and it **fails on exactly the  │
+   * │ most common case**: a CLI arm is a project with several commands, and    │
+   * │ every command of a JS project starts with `node` ⇒ three different       │
+   * │ projects produce three nodes on the diagram all named **"node"**. Names  │
+   * │ have to be distinguishable, and what tells them apart is the **folder**. │
    * │                                                                          │
-   * │ ⚠ Hình `>_` vẫn theo LOẠI (`ArmIcon kind="cli"`), không theo tên — nên   │
-   * │ đổi nhãn ở đây không làm mất dấu hiệu *"đây là một cánh tay lệnh"*.      │
+   * │ ⚠ The `>_` icon still follows the TYPE (`ArmIcon kind="cli"`), not the   │
+   * │ name — so changing the label here doesn't lose the signal *"this is a    │
+   * │ command arm"*.                                                           │
    * │                                                                          │
-   * │ ⚠ CỐ Ý KHÔNG ghép tên các việc lại (`"đếm hoá đơn · đồng bộ"`): đó là     │
-   * │ việc của `does`, đã đi vào dòng danh bạ. Nhãn trả lời *"cái này là cái   │
-   * │ gì"*, `does` trả lời *"nó làm được gì"*.                                 │
+   * │ ⚠ DELIBERATELY DOES NOT concatenate task names (`"count invoices ·       │
+   * │ sync"`): that's `does`'s job, already sitting on the directory line. The │
+   * │ label answers *"what is this"*, `does` answers *"what can it do"*.       │
    * │                                                                          │
-   * │ ⚠ Vẫn được phép trả `undefined`: một cái tên bịa tệ hơn một cái băm thật │
-   * │ thà. Hàm này chạy trên dữ liệu **chưa qua schema** (gọi ở `addArm`,      │
-   * │ trước mọi phép kiểm), nên mọi trường đều có thể vắng hoặc sai kiểu.      │
+   * │ ⚠ Still allowed to return `undefined`: a made-up name is worse than an   │
+   * │ honest hash. This function runs on data **not yet validated by a schema**│
+   * │ (called from `addArm`, before any checks), so every field can be missing │
+   * │ or the wrong type.                                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   if (isCliArm(config)) {
@@ -149,9 +164,9 @@ export function defaultArmLabel(config: unknown): string | undefined {
     const cwd = first?.cwd;
     if (typeof cwd === 'string' && cwd.trim()) {
       /**
-       * Bỏ gạch chéo cuối TRƯỚC khi lấy `basename`: `D:\Ho so\2026\` cho ra chuỗi
-       * rỗng nếu không bỏ. Và bỏ cả ô trống `{office}` — nó là cú pháp của ta,
-       * không phải một đoạn tên thư mục.
+       * Strip the trailing slash BEFORE calling `basename`: `D:\Records\2026\`
+       * gives an empty string otherwise. And strip the `{office}` placeholder
+       * too — it's our own syntax, not a piece of a folder name.
        */
       const clean = cwd.trim().split('{office}').join('').replace(/[\\/]+$/, '');
       const base = clean ? path.basename(clean) : '';
@@ -166,8 +181,8 @@ export function defaultArmLabel(config: unknown): string | undefined {
 
   if (typeof c.url === 'string') {
     try {
-      // Bỏ tiền tố kỹ thuật: `mcp.notion.com` → `notion.com`. Nó không mang
-      // thông tin nào cho người đọc, và mọi endpoint MCP đều có nó.
+      // Strip the technical prefix: `mcp.notion.com` → `notion.com`. It
+      // carries no information for a human reader, and every MCP endpoint has one.
       const host = new URL(c.url).hostname.replace(/^(www|mcp)\./, '');
       return host || undefined;
     } catch {
@@ -175,12 +190,12 @@ export function defaultArmLabel(config: unknown): string | undefined {
     }
   }
 
-  // stdio: tên gói, dùng lại ĐÚNG bộ tách của `npxSpec` thay vì viết bản thứ hai.
+  // stdio: the package name, reusing `npxSpec`'s EXACT parser rather than writing a second one.
   const parsed = npxSpec(config as ExecConfig);
   if (parsed) return packageName(parsed.spec).split('/').pop() || undefined;
 
-  // Không qua `npx` ⇒ lấy tên chương trình. `path.basename` để một đường dẫn
-  // tuyệt đối không biến thành cái nhãn dài loằng ngoằng.
+  // Not going through `npx` ⇒ take the program name. `path.basename` so an
+  // absolute path doesn't turn into a long, unwieldy label.
   if (typeof c.command === 'string' && c.command.trim()) {
     return path.basename(c.command.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
   }
@@ -193,16 +208,17 @@ export function packageName(spec: string): string {
   return at > 0 ? spec.slice(0, at) : spec;
 }
 
-/** Thư mục cài của MỘT spec. Băm vì tên gói có `@`, `/` — không hợp lệ làm tên thư mục. */
+/** The install directory for ONE spec. Hashed because package names contain `@`, `/` — invalid in a folder name. */
 function dirFor(spec: string): string {
   return path.join(armsCacheDir(), `${createHash('sha256').update(spec).digest('hex').slice(0, 12)}`);
 }
 
 /**
- * ĐỒNG BỘ, RẺ, VÀ KHÔNG BAO GIỜ ĐƯỢC NÉM.
+ * SYNCHRONOUS, CHEAP, AND MUST NEVER THROW.
  *
- * Có bản cài sẵn thì trả cấu hình chạy thẳng `node`; không thì trả **đúng cấu
- * hình gốc**. Người gọi không cần biết chuyện gì vừa xảy ra.
+ * If already installed, returns a config that runs `node` directly;
+ * otherwise returns **the original config, untouched**. The caller doesn't
+ * need to know what just happened.
  */
 export function fastLaunch<T extends ExecConfig>(config: T): T {
   try {
@@ -212,16 +228,16 @@ export function fastLaunch<T extends ExecConfig>(config: T): T {
     if (!fs.existsSync(marker)) return config;
     const entry = fs.readFileSync(marker, 'utf8').trim();
     if (!entry || !fs.existsSync(entry)) return config;
-    // `process.execPath` chứ không phải chuỗi `'node'`: daemon có thể chạy bằng
-    // một node không nằm trong PATH, và cánh tay phải chạy bằng ĐÚNG node đó.
+    // `process.execPath`, not the literal string `'node'`: the daemon may be
+    // running on a node build that isn't on PATH, and the arm must run on that EXACT node.
     return { ...config, command: process.execPath, args: [entry, ...parsed.rest] };
   } catch {
-    // Đĩa hỏng · quyền · đường dẫn lạ — mọi ca đều rơi về `npx`, đúng thiết kế.
+    // Broken disk · permissions · a strange path — every case falls back to `npx`, by design.
     return config;
   }
 }
 
-/** Đã cài rồi thì không làm gì. Trả `true` nếu sau lời gọi này có bản chạy nhanh. */
+/** Does nothing if already installed. Returns `true` if a fast-launch config exists after this call. */
 export async function ensureInstalled(config: ExecConfig): Promise<boolean> {
   const parsed = npxSpec(config);
   if (!parsed) return false;
@@ -231,16 +247,16 @@ export async function ensureInstalled(config: ExecConfig): Promise<boolean> {
 
   try {
     fs.mkdirSync(dir, { recursive: true });
-    // `--prefix` để npm không đi ngược lên tìm `package.json` của công ty hay của
-    // agentco — cài nhầm vào repo người dùng là một tác dụng phụ không ai đoán.
+    // `--prefix` so npm doesn't walk upward looking for the company's or
+    // agentco's own `package.json` — installing into the user's repo by mistake is a side effect nobody expects.
     await run('npm', ['install', parsed.spec, '--prefix', dir, '--no-audit', '--no-fund', '--loglevel=error']);
     const entry = findEntry(dir, packageName(parsed.spec));
     if (!entry) return false;
     fs.writeFileSync(marker, entry, 'utf8');
     return true;
   } catch (e) {
-    // Không ra được registry · máy không có npm · quyền ghi home. Cả ba đều
-    // KHÔNG phải sự cố: cánh tay vẫn chạy bằng `npx` như trước, chỉ chậm hơn.
+    // Can't reach the registry · machine has no npm · no write permission on
+    // home. None of these are an incident: the arm still runs through `npx` as before, just slower.
     process.emitWarning(
       `could not pre-install "${parsed.spec}" into the connection store (${(e as Error).message}); ` +
         `the connection still runs through npx, only ~4 seconds slower to start`,
@@ -250,12 +266,13 @@ export async function ensureInstalled(config: ExecConfig): Promise<boolean> {
 }
 
 /**
- * File cần chạy, quyết ĐÚNG MỘT LẦN ở đây.
+ * The file to run, decided EXACTLY ONCE, right here.
  *
- * `bin` trong `package.json` có hai hình dạng hợp lệ (chuỗi, hoặc object
- * tên→đường dẫn). Một gói có nhiều `bin` thì lấy cái ĐẦU: cùng thứ `npx <gói>`
- * chọn khi tên lệnh trùng tên gói, và ca nhiều-bin gần như không tồn tại với
- * MCP server. Không đoán được thì trả `undefined` → rơi về npx.
+ * `bin` in `package.json` has two valid shapes (a string, or a
+ * name→path object). A package with multiple `bin` entries takes the FIRST
+ * one: the same thing `npx <package>` picks when the command name matches
+ * the package name, and the multi-bin case barely exists for MCP servers.
+ * Can't figure it out ⇒ returns `undefined` → falls back to npx.
  */
 function findEntry(dir: string, name: string): string | undefined {
   const pkgDir = path.join(dir, 'node_modules', ...name.split('/'));
@@ -275,14 +292,14 @@ function findEntry(dir: string, name: string): string | undefined {
 
 function run(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    // `shell: true` trên Windows vì `npm` là `npm.cmd`; `spawn` không tự giải.
+    // `shell: true` on Windows because `npm` is actually `npm.cmd`; `spawn` doesn't resolve that on its own.
     const p = spawn(cmd, args, { shell: process.platform === 'win32', stdio: 'ignore' });
-    // Trần cứng: một lần cài treo vô hạn sẽ treo luôn cả nút "Thử ngay".
+    // A hard ceiling: an install hanging forever would hang the "Try it" button along with it.
     const kill = setTimeout(() => {
       try {
         p.kill();
       } catch {
-        /* đã chết */
+        /* already dead */
       }
       reject(new Error('npm install exceeded 120 seconds'));
     }, 120_000);
@@ -300,27 +317,31 @@ function run(cmd: string, args: string[]): Promise<void> {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỘT HÀM DỌN CẤU HÌNH, HAI NƠI GỌI — `pickMcp` (lúc chạy) và `probeArm`   │
- * │ (nút "Thử ngay"). Đây là BẤT BIẾN, không phải tiện tay.                  │
- * │                                                                          │
- * │ `injectSecrets` đã ghi đúng luật này bằng lời từ 25/08: *"nút Thử phải    │
- * │ kiểm ĐÚNG cấu hình sẽ chạy; lệch một chút là báo ✓ rồi hỏng ở lần đầu    │
- * │ một nhân viên dùng nó"*. Nhưng hai nơi ấy vẫn tự ghép **ba bước** giống    │
- * │ nhau bằng tay (điền chìa → điền ô đường dẫn → bỏ `npx`), nên luật được    │
- * │ giữ bằng KỶ LUẬT chứ không bằng cấu trúc — và hôm nay có bước thứ tư      │
- * │ (biên dịch tờ khai CLI) sắp phải chép lần thứ ba.                         │
- * │                                                                          │
- * │ ⇒ Gộp thành một hàm. Cùng bài học `mustHaveIdentity` 30/08: hàng rào có   │
- * │ ở cả hai cửa mà **thứ NUÔI nó** chỉ có ở một, thì hàng rào vẫn thủng.     │
- * │ → [[agentco-finish-completely]]                                           │
+ * │ ONE FUNCTION TO PREPARE A CONFIG, TWO CALL SITES — `pickMcp` (at runtime) │
+ * │ and `probeArm` (the "Try it" button). This is an INVARIANT, not a         │
+ * │ convenience.                                                              │
+ * │                                                                           │
+ * │ `injectSecrets` already put this rule into words on 25/08: *"the Test     │
+ * │ button has to check the EXACT config that will run; the slightest drift   │
+ * │ means it reports ✓ and then breaks the first time a worker actually uses  │
+ * │ it"*. But those two call sites still assembled the same **three steps**   │
+ * │ by hand (fill keys → fill the path field → strip `npx`), so the rule was  │
+ * │ held together by DISCIPLINE rather than structure — and today there's a   │
+ * │ fourth step (compiling a CLI declaration) about to be copy-pasted a third │
+ * │ time.                                                                     │
+ * │                                                                           │
+ * │ ⇒ Merged into one function. Same lesson as `mustHaveIdentity`, 30/08: a   │
+ * │ fence that exists at both doors but whose **upkeep** only happens at one  │
+ * │ is still a hole. → [[agentco-finish-completely]]                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ THỨ TỰ BA BƯỚC LÀ BẮT BUỘC, không phải khẩu vị:
- *   ① `injectSecrets` — điền ô trống. Phải TRƯỚC, vì `fillRefs` chỉ đi được vào
- *      object thuần, mà bước ② đẻ ra một `McpServer` **sống**.
- *   ② biên dịch CLI — chỉ với `type: 'cli'`.
- *   ③ `fastLaunch` — bỏ `npx` khỏi đường nóng. Chỉ đụng cấu hình có `command`,
- *      nên nó tự bỏ qua CLI và HTTP.
+ * ⚠ THE ORDER OF THE THREE STEPS IS MANDATORY, not a matter of taste:
+ *   ① `injectSecrets` — fills in blank fields. Must come FIRST, since
+ *      `fillRefs` can only walk a plain object, and step ② produces a
+ *      **live** `McpServer`.
+ *   ② compile CLI — only for `type: 'cli'`.
+ *   ③ `fastLaunch` — removes `npx` from the hot path. Only touches configs
+ *      that have `command`, so it naturally skips CLI and HTTP.
  */
 export function prepareArm(
   name: string,
@@ -332,22 +353,25 @@ export function prepareArm(
 }
 
 /**
- * BƯỚC ① — điền ô trống. Tách ra vì có một cửa cần chen vào GIỮA hai bước.
+ * STEP ① — fills in blank fields. Split out because one gate needs to slot in BETWEEN two steps.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 PHÉP KIỂM "CÒN Ô TRỐNG?" PHẢI ĐỨNG GIỮA ĐIỀN VÀ BIÊN DỊCH.            │
- * │ (bắt được 31/08, ngay lượt chạy `probeArm` đầu tiên trên tờ khai CLI)     │
- * │                                                                          │
- * │ `probeArm` gọi `missingSecretRefs`, mà hàm đó soi bằng `JSON.stringify`.  │
- * │ Sau bước ②, cấu hình chở một `McpServer` **sống** ⇒ *"Converting circular │
- * │ structure to JSON"*, ném thẳng ra người dùng ở nút "Thử ngay".            │
- * │                                                                          │
- * │ ⚠ VÀ ĐỪNG SỬA BẰNG CÁCH LÀM `missingSecretRefs` CHỊU ĐƯỢC VÒNG TRÒN:    │
- * │ nó sẽ hết ném, rồi trả `[]` cho **mọi** cánh tay CLI — vì sau khi biên    │
- * │ dịch, ô trống nằm trong closure chứ không còn trong dữ liệu. Cổng "thiếu  │
- * │ chìa" tắt **im lặng**, và ta quay đúng về bug 25/08 mà nó sinh ra để      │
- * │ chữa: chìa thiếu bị báo thành chìa sai.                                   │
- * │ ⇒ Một câu lỗi ồn ào thắng một cổng tắt im lặng.                          │
+ * │ 🔴 THE "ANY BLANK FIELDS LEFT?" CHECK MUST SIT BETWEEN FILLING AND        │
+ * │ COMPILING. (caught 31/08, on the very first `probeArm` run on a CLI       │
+ * │ declaration)                                                              │
+ * │                                                                           │
+ * │ `probeArm` calls `missingSecretRefs`, and that function inspects things   │
+ * │ via `JSON.stringify`. After step ②, the config carries a **live**         │
+ * │ `McpServer` ⇒ *"Converting circular structure to JSON"*, thrown straight  │
+ * │ at the user from the "Try it" button.                                     │
+ * │                                                                           │
+ * │ ⚠ AND DON'T FIX IT BY MAKING `missingSecretRefs` TOLERATE THE CIRCULAR    │
+ * │ STRUCTURE: it would stop throwing, then return `[]` for **every** CLI     │
+ * │ arm — because after compiling, blank fields live inside a closure and are │
+ * │ no longer part of the data. The "missing key" gate turns off **silently**,│
+ * │ and we land right back on the 25/08 bug it was built to fix: a missing    │
+ * │ key gets reported as a wrong key.                                         │
+ * │ ⇒ A loud error message beats a silently disabled gate.                    │
  * │ → [[agentco-safe-default-direction]] · [[agentco-catch-hides-premises]]   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
@@ -359,7 +383,7 @@ export function fillArm(
   return injectSecrets(config, env, dirs ? { officeState: dirs.officeState } : undefined);
 }
 
-/** BƯỚC ②+③ — biên dịch tờ khai CLI, rồi bỏ `npx` khỏi đường nóng. */
+/** STEPS ②+③ — compiles a CLI declaration, then removes `npx` from the hot path. */
 export function finishArm(
   name: string,
   filled: unknown,
@@ -368,9 +392,10 @@ export function finishArm(
 ): unknown {
   if (isCliArm(filled)) {
     /**
-     * Không có `dirs` ⇒ không biết văn phòng nào ⇒ **không dựng**. Trả nguyên
-     * tờ khai để cửa gọi tự báo lỗi ở chỗ nó hiểu ngữ cảnh, thay vì ta đoán một
-     * `cwd` rồi cho tiến trình con chạy ở thư mục của daemon.
+     * No `dirs` ⇒ no known office ⇒ **do not compile**. Return the
+     * declaration as-is so the caller reports its own error where it
+     * understands the context, instead of us guessing a `cwd` and letting the
+     * child process run in the daemon's own directory.
      * → [[agentco-safe-default-direction]]
      */
     if (!dirs) return filled;

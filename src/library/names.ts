@@ -78,7 +78,7 @@ export function docPaths(name: string, ext: string, state: string): DocPaths {
   if (kind === 'text') return { open: files };
 
   if (state === 'ready') {
-    // pdf: name both — the `--- trang N ---` markers in the extracted text only
+    // pdf: name both — the `--- page N ---` markers in the extracted text only
     // mean something if the employee can reach the original and `Read` that page.
     return kind === 'pdf' ? { open: text, original: files } : { open: text };
   }
@@ -275,7 +275,7 @@ export function pageOfLine(text: string, line: number): number | undefined {
   const lines = text.split('\n');
   let page: number | undefined;
   for (let i = 0; i < Math.min(line, lines.length); i++) {
-    const m = /^--- trang (\d+) ---$/.exec(lines[i] ?? '');
+    const m = /^--- page (\d+) ---$/.exec(lines[i] ?? '');
     if (m) page = Number(m[1]);
   }
   return page;

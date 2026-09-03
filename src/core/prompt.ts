@@ -1,18 +1,18 @@
 /**
- * Phân tầng prompt + cache key. ĐÂY LÀ TRÁI TIM CỦA KIẾN TRÚC CHI PHÍ.
+ * Prompt layering + cache key. THIS IS THE HEART OF THE COST ARCHITECTURE.
  *
  * → docs/SPEC-token-economy.md §2
  *
- *   ┌─ ĐÓNG BĂNG — cache cross-session ────────────────┐
- *   │ L0  CORE (bất biến, không sửa được)              │
- *   │ L1  Role card                                    │
- *   │ L2  User skills (sửa được)                       │
- *   │ L3  Charter công ty (pinned)                     │
- *   │ L4  HOT knowledge                                │
- *   └────── ◄── SYSTEM_PROMPT_DYNAMIC_BOUNDARY ────────┘
- *   ┌─ BIẾN ĐỘNG — trả giá đầy đủ, phải nhỏ ───────────┐
- *   │ L5  COLD knowledge  ┐ nằm trong user message,    │
- *   │ L6  TaskBrief       ┘ không nằm trong systemPrompt│
+ *   ┌─ FROZEN — cross-session cache ────────────────────┐
+ *   │ L0  CORE (immutable, not editable)                │
+ *   │ L1  Role card                                     │
+ *   │ L2  User skills (editable)                        │
+ *   │ L3  Company charter (pinned)                       │
+ *   │ L4  HOT knowledge                                  │
+ *   └────── ◄── SYSTEM_PROMPT_DYNAMIC_BOUNDARY ─────────┘
+ *   ┌─ VOLATILE — paid in full, must stay small ────────┐
+ *   │ L5  COLD knowledge  ┐ lives in the user message,   │
+ *   │ L6  TaskBrief       ┘ not in systemPrompt           │
  *   └──────────────────────────────────────────────────┘
  */
 
@@ -34,15 +34,17 @@ import { estimateTokens, truncateToTokens } from './tokens.js';
 import { t } from '../i18n/index.js';
 
 /**
- * Bump khi CORE_PROMPT hoặc cách dựng prompt thay đổi. Đi vào cacheKey.
+ * Bump this when CORE_PROMPT or how the prompt is built changes. Feeds into the cacheKey.
  *
- * v3 (16/08/2026): thêm `Options.tools` để CẮT THẬT bộ tool, không chỉ tự-duyệt
- * bằng `allowedTools`. Định nghĩa tool đứng TRƯỚC system prompt trong prefix
- * được cache, nên bộ tool đổi = prefix đổi — phải bump, nếu không priming gate
- * tưởng cache còn ấm trong khi nó đã nguội. → worker.ts
+ * v3 (16/08/2026): added `Options.tools` to ACTUALLY TRIM the tool set, not
+ * just self-restrict via `allowedTools`. Tool definitions sit BEFORE the
+ * system prompt in the cached prefix, so a changed tool set = a changed
+ * prefix — must bump, or the priming gate thinks the cache is still warm
+ * while it's actually gone cold. → worker.ts
  *
- * v4 (20/08/2026): `ASSISTANT_CORE` biết về worker ẩn (`lookup`), và bảng kê tủ
- * tài liệu bị hạ xuống cuối cạnh bảng kê kết quả. Cả hai đổi prefix.
+ * v4 (20/08/2026): `ASSISTANT_CORE` now knows about the hidden worker
+ * (`lookup`), and the document cabinet listing was moved down next to the
+ * results listing. Both change the prefix.
  *
  * v5 (03/09/2026): no prompt names a language any more. `BuildPromptOpts.language`
  * is gone, the `roleCard` line and the assistant's closing line say "the language
@@ -53,19 +55,20 @@ import { t } from '../i18n/index.js';
  * reaches the hashed content, so flipping the interface language costs zero
  * `cache_write`. `test/settings-language.test.ts` locks exactly that.
  */
-export const PROMPT_SCHEMA_VERSION = 5;
+export const PROMPT_SCHEMA_VERSION = 6;
 
 /**
- * L0 — LỚP CORE. Người dùng KHÔNG sửa được.
+ * L0 — THE CORE LAYER. NOT editable by the user.
  *
- * Ranh giới core/user (SPEC §3): thứ gì đang thi hành một bất biến trong
- * SPEC-token-economy.md thì là core. Cho sửa không phải trao tự do —
- * là trao cái bẫy: gỡ mất Receipt thì kiến trúc chi phí sụp, rồi người dùng
- * đổ lỗi cho sản phẩm chứ không cho bản sửa của họ.
+ * The core/user boundary (SPEC §3): anything enforcing an invariant from
+ * SPEC-token-economy.md is core. Allowing edits wouldn't be granting
+ * freedom — it would be handing over a trap: strip out the Receipt and the
+ * whole cost architecture collapses, and the user blames the product instead of their own edit.
  *
- * CỐ Ý viết bằng tiếng Anh: khối này nằm trong prefix của MỌI agent, và
- * tiếng Việt có dấu tốn nhiều token hơn đáng kể (~2.6 vs ~4 char/token).
- * Phần người dùng đọc và sửa (skills, charter) thì viết tiếng Việt thoải mái.
+ * DELIBERATELY written in English: this block sits in the prefix of EVERY
+ * agent, and accented Vietnamese text costs noticeably more tokens (~2.6 vs
+ * ~4 chars/token). The parts the user reads and edits (skills, charter) are
+ * written in whatever language they like.
  */
 export const CORE_PROMPT = `You are an employee of a small virtual company. You do one assigned task, then stop.
 
@@ -172,15 +175,16 @@ So: never restate document content, never record numbers, thresholds, prices, or
 Relevant notes from the office knowledge base are already in your prompt — selected for you before you started. Do not go looking for a knowledge folder; there is nothing there you have not been given.`;
 
 /**
- * L0 của ASSISTANT — lớp core, người dùng không sửa được (mặc định) nhưng
- * LUÔN XEM ĐƯỢC. → docs/SPEC-offices.md §4.1
+ * The ASSISTANT's L0 — the core layer, not editable by the user (by default)
+ * but ALWAYS VIEWABLE. → docs/SPEC-offices.md §4.1
  *
- * Đây là "quy cách kết nối": cách Assistant nói chuyện với nhân viên, giao thức
- * Receipt, và luật chia việc. Nó thuộc về mã nguồn, không thuộc về việc vận hành
- * doanh nghiệp — người dùng điều hành công ty của họ, họ không sửa giao thức.
+ * This is the "wiring spec": how the Assistant talks to workers, the Receipt
+ * protocol, and the rules for delegating work. It belongs to the source
+ * code, not to running the business — the user runs their own company, they don't edit the protocol.
  *
- * Cũng viết bằng tiếng Anh vì cùng lý do như CORE_PROMPT: khối này nằm trong
- * prefix của mọi lượt trò chuyện, và tiếng Việt có dấu tốn nhiều token hơn đáng kể.
+ * Also written in English for the same reason as CORE_PROMPT: this block
+ * sits in the prefix of every single conversation turn, and accented
+ * Vietnamese text costs noticeably more tokens.
  */
 export const ASSISTANT_CORE = `You are the assistant running one office of a small virtual company. You talk to the human, and you assign work to the office's employees. You do NOT do the work yourself.
 
@@ -278,33 +282,36 @@ Both kinds still write their output file. \`deliver\` only decides whether the h
 **When the two readings are close, pick \`"reply"\`.** The mistake is not symmetric, and this is the whole reason the tie has a rule: a \`reply\` task still writes its file, so a wrong \`reply\` costs a few extra lines in the chat and nothing else. A wrong \`file\` costs the human a second request — they have to ask again for the thing you already made, and pay for the whole run twice.`;
 
 /**
- * WORKER ẨN — prompt đầy đủ của nó, và nó ngắn đến mức trông như thiếu.
+ * THE HIDDEN WORKER — its complete prompt, short enough to look incomplete.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ KHÔNG CHARTER · KHÔNG KHO TRI THỨC · KHÔNG SKILLS · KHÔNG ROSTER.       │
- * │ VÀ KHÔNG SINH KINH NGHIỆM.                                               │
+ * │ NO CHARTER · NO KNOWLEDGE STORE · NO SKILLS · NO ROSTER.                     │
+ * │ AND NO LESSONS PRODUCED.                                                  │
  * │                                                                          │
- * │ Đây không phải cắt bớt cho rẻ — nó là chỗ DUY NHẤT đúng, vì ba lý do độc │
- * │ lập nhau cùng chỉ về một hướng:                                          │
+ * │ This isn't trimmed down to save money — it's the ONE correct shape, for       │
+ * │ three independent reasons that all point the same direction:                    │
  * │                                                                          │
- * │  1. **Kinh nghiệm chỉ ghi CÁCH LÀM.** Agent này có đúng một cách làm và  │
- * │     nó không bao giờ đổi: đọc file được chỉ, trả lời câu được hỏi. Thứ    │
- * │     duy nhất nó CÓ THỂ "học" được là NỘI DUNG TÀI LIỆU — đúng cái loại   │
- * │     node đã bị cấm (§2, `fact` bị bỏ khỏi enum). Cho nó kho tri thức là   │
- * │     dựng một cái máy chuyên sản xuất đúng thứ hàng cấm.                   │
- * │  2. **`worthLearning` vốn đã trả `false` cho ca chạy sạch**, và một lượt  │
- * │     lookup luôn sạch theo cấu trúc: không file để hỏng, không dep để kẹt. │
- * │  3. Kho tri thức ẩn của một agent người dùng không nhìn thấy là một lỗ    │
- * │     hổng không debug được — chính nỗi lo user nêu ra. **Không có gì ẩn    │
- * │     ở đây, vì không có gì cả.**                                          │
+ * │  1. **A lesson only ever records HOW TO WORK.** This agent has exactly one       │
+ * │     way of working and it never changes: read the file it's pointed at,          │
+ * │     answer the question it's asked. The ONLY thing it COULD "learn" is           │
+ * │     DOCUMENT CONTENT — exactly the node type already banned (§2, `fact`           │
+ * │     removed from the enum). Giving it a knowledge store would be building         │
+ * │     a machine purpose-built to manufacture exactly the forbidden good.           │
+ * │  2. **`worthLearning` already returns `false` for a clean run**, and a           │
+ * │     lookup turn is clean by construction: no file to break, no dependency         │
+ * │     to get stuck on.                                                            │
+ * │  3. A hidden knowledge store for an agent the user can't see would be an          │
+ * │     undebuggable hole — exactly the worry the user raised. **There's             │
+ * │     nothing hidden here, because there's nothing at all.**                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ NÓI THẲNG PHẦN KHÔNG CHẶN ĐƯỢC: `tools` giới hạn nó ở `Read`/`Grep`/`Glob`
- * nên nó **không ghi được file** — đó là cơ chế thật, đo được (§5d). Nhưng
- * *đọc tới đâu* trong thư mục văn phòng thì KHÔNG có cổng nào chặn (§4.7, ba
- * cơ chế đều không nổ). Nó không tệ hơn một nhân viên bình thường — họ cũng
- * chạy với `cwd` là thư mục văn phòng — và khác Trợ lý ở chỗ quyết định: thứ
- * nó đọc **chết cùng lượt gọi**, không nằm lại trong ngữ cảnh nào.
+ * ⚠ STATING THE PART THAT CAN'T BE BLOCKED: `tools` restricts it to
+ * `Read`/`Grep`/`Glob`, so it **cannot write a file** — that's a real,
+ * measured mechanism (§5d). But *how far it reads* inside the office
+ * directory has NO gate blocking it (§4.7, all three mechanisms fired
+ * blank). It's no worse than an ordinary worker — those also run with `cwd`
+ * set to the office directory — and it differs from the Assistant in one
+ * decisive way: what it reads **dies with the same call**, never lingering in any context.
  */
 export const LOOKUP_PROMPT = `You look things up and answer. You do not write files, and you do not do work.
 
@@ -312,22 +319,23 @@ Rules:
 
 0. If your task names documents, the answer is in them — read those. If it names none, the question is a general one: search the web, then answer. Say plainly when an answer came from the web rather than from this office's documents, and name the source. Web results can be stale or wrong; never present a search snippet as a certainty.
 1. Read only the files named in your task. They have already been checked to exist.
-2. A long file: use Grep to find the part that matters, then Read that part. Extracted document text carries page markers like \`--- trang 12 ---\`; use them to Read the right pages of the original when you need detail.
+2. A long file: use Grep to find the part that matters, then Read that part. Extracted document text carries page markers like \`--- page 12 ---\`; use them to Read the right pages of the original when you need detail.
 3. Answer in the language the question was asked in, under 300 words, addressed to the person asking. Plain prose or a small table — no preamble, no "based on the document provided".
 4. Answer only from what you read or found. If neither the files nor the web contain the answer, say exactly that and name what you did find. A confident wrong answer is the worst outcome available to you.
 5. Never mention file paths, task ids, or how you were invoked. The person asked a question; give them the answer.`;
 
 export interface BuiltPrompt {
-  /** Truyền vào Options.systemPrompt của SDK. */
+  /** Passed into the SDK's Options.systemPrompt. */
   systemPrompt: string[] | { type: 'preset'; preset: 'claude_code'; append: string; excludeDynamicSections: true };
   /**
-   * Khoá cache. Băm chính NỘI DUNG tĩnh — mạnh hơn tuple
-   * (software_version, role_id, role_version, knowledge_version) trong spec,
-   * vì nội dung giống nhau thì chắc chắn cùng cache entry, khác thì chắc chắn khác.
-   * Không thể sai do quên bump version.
+   * The cache key. Hashes the static CONTENT itself — stronger than the
+   * spec's tuple (software_version, role_id, role_version,
+   * knowledge_version), since identical content is guaranteed to land on
+   * the same cache entry, and different content is guaranteed not to. Can't
+   * go wrong from forgetting to bump a version.
    */
   cacheKey: string;
-  /** Token ước lượng của phần tĩnh — để cảnh báo prefix phình. */
+  /** Estimated tokens for the static part — used to warn when the prefix bloats. */
   staticTokens: number;
 }
 
@@ -352,13 +360,14 @@ export interface BuiltPrompt {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export interface BuildPromptOpts {
-  /** Nội dung các node tri thức HOT (đã chọn sẵn, nằm TRONG prefix cache). */
+  /** Content of the HOT knowledge nodes (already selected, sits INSIDE the cached prefix). */
   hotKnowledge?: string;
   /**
-   * Model sẽ chạy. BẮT BUỘC đưa vào cacheKey: prompt cache đánh theo
-   * (model, prefix) — hai vai trò prompt giống hệt nhau nhưng khác model thì
-   * KHÔNG dùng chung cache. Thiếu nó thì priming gate tưởng cache đã ấm
-   * trong khi thực ra chưa, và ta trả cache_write mà cứ nghĩ là đang tiết kiệm.
+   * The model that will run. MUST feed into the cacheKey: prompt caching is
+   * keyed on (model, prefix) — two roles with an identical prompt but a
+   * different model do NOT share a cache entry. Without this, the priming
+   * gate thinks the cache is already warm when it isn't, and we pay for a
+   * `cache_write` while believing we're saving money.
    */
   model?: string;
 }
@@ -415,20 +424,21 @@ export function buildWorkerPrompt(
   const staticTokens = blocks.reduce((n, b) => n + estimateTokens(b), 0);
 
   /**
-   * tools/MCP KHÔNG nằm trong systemPrompt, nhưng định nghĩa tool đứng TRƯỚC
-   * system prompt trong prefix mà Anthropic đánh cache. Đổi tool = đổi prefix.
+   * tools/MCP do NOT sit inside systemPrompt, but tool definitions sit
+   * BEFORE the system prompt in the prefix Anthropic caches. A changed tool set = a changed prefix.
    *
-   * Thiếu chúng ở đây là đúng con bug đã sửa cho `model`: cache priming gate
-   * tưởng cache ấm trong khi chưa, rồi ta trả cache_write mà cứ nghĩ đang
-   * tiết kiệm. Canvas cho phép cắm MCP bằng chuột nên bug này sẽ gặp thật.
+   * Missing them here is the exact same bug already fixed for `model`: the
+   * cache priming gate thinks the cache is warm when it isn't, and we pay
+   * for a cache_write while believing we're saving. The canvas lets someone
+   * wire up an MCP with the mouse, so this bug would be hit for real.
    */
   const toolKey = `tools:${[...role.tools].sort().join(',')}|mcp:${[...role.mcp].sort().join(',')}`;
 
   if (role.use_preset) {
-    // Preset của Claude Code: đắt hơn ~6.300 token/call (FINDINGS §2a).
-    // Chỉ dùng cho role thật sự cần hướng dẫn viết code.
-    // excludeDynamicSections: bỏ cwd/auto-memory/git status khỏi system prompt
-    // để prefix đứng yên giữa các máy và các phiên.
+    // Claude Code's preset: ~6,300 tokens/call more expensive (FINDINGS §2a).
+    // Only used for roles that genuinely need coding instructions.
+    // excludeDynamicSections: strips cwd/auto-memory/git status out of the
+    // system prompt so the prefix stays identical across machines and sessions.
     const append = blocks.join('\n\n---\n\n');
     return {
       systemPrompt: { type: 'preset', preset: 'claude_code', append, excludeDynamicSections: true },
@@ -437,9 +447,9 @@ export function buildWorkerPrompt(
     };
   }
 
-  // Marker phải là MỘT PHẦN TỬ RIÊNG của mảng. Mọi block trước nó được
-  // cache cross-session; sau nó thì không. Không có marker = không opt-in
-  // vào global cache scope.
+  // The marker must be ITS OWN ARRAY ELEMENT. Every block before it gets
+  // cached cross-session; anything after does not. No marker = no opt-in
+  // into the global cache scope.
   return {
     systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
     cacheKey: hashKey([model, String(PROMPT_SCHEMA_VERSION), toolKey, ...blocks]),
@@ -448,30 +458,30 @@ export function buildWorkerPrompt(
 }
 
 /**
- * Prompt của Assistant. Cùng cấu trúc phân tầng với worker, cùng cache breakpoint.
+ * The Assistant's prompt. Same layered structure as a worker's, same cache breakpoint.
  *
- * Thứ tự CÓ CHỦ Ý — ổn định nhất lên trước, hay đổi nhất xuống sau, để một thay
- * đổi nhỏ không vứt toàn bộ prefix:
+ * The order is DELIBERATE — most stable first, most volatile last, so a
+ * small change doesn't throw away the entire prefix:
  *
- *   ASSISTANT_CORE   đổi khi nâng phần mềm
- *   charter          đổi hiếm
- *   skills           đổi khi người dùng bấm Lưu
- *   memory           đổi khi `/clear`
- *   HOT knowledge    đổi khi bump knowledge_version
- *   roster           đổi khi kéo dây trên canvas — thao tác DỰNG, làm một lần
- *   bảng kê tủ       đổi khi thêm/xoá tài liệu    ┐ thao tác DÙNG, lặp mãi
- *   bảng kê kết quả  đổi sau MỖI ca               ┘ ← đuôi biến động, liền nhau
+ *   ASSISTANT_CORE   changes on a software upgrade
+ *   charter          changes rarely
+ *   skills           changes when the user clicks Save
+ *   memory           changes on `/clear`
+ *   HOT knowledge    changes when knowledge_version bumps
+ *   roster           changes when a wire gets dragged on the canvas — a BUILD action, done once
+ *   library listing  changes on adding/removing a document   ┐ a USE action, repeats forever
+ *   results listing  changes after EVERY run                 ┘ ← the volatile tail, adjacent
  */
 export function buildAssistantPrompt(
   office: LoadedOffice,
   opts: {
     roster: string;
     hotKnowledge?: string;
-    /** Bản nén trí nhớ hội thoại. Khối RIÊNG, không trộn vào hot. */
+    /** The compressed conversation memory. Its OWN block, never merged into hot. */
     memory?: string;
-    /** Bảng kê tủ tài liệu — tên + hình dạng, dựng bằng code. → SPEC-library.md §8b */
+    /** Document cabinet listing — name + shape, built in code. → SPEC-library.md §8b */
     library?: string;
-    /** Bảng kê KẾT QUẢ các ca trước — tên file, không nội dung. → SPEC-artifacts.md §2.4 */
+    /** Listing of RESULTS from previous runs — file names, not content. → SPEC-artifacts.md §2.4 */
     artifacts?: string;
     /** ⚠ No `language`. → the box on `BuildPromptOpts` */
     model?: string;
@@ -484,27 +494,31 @@ export function buildAssistantPrompt(
 
   const blocks: string[] = [ASSISTANT_CORE];
   /**
-   * MẶC ĐỊNH `deliver` của văn phòng — một dòng, nằm ngay sau lớp lõi.
+   * The office's `deliver` DEFAULT — one line, sitting right after the core layer.
    *
-   * Đặt ở đây chứ không nhét vào `ASSISTANT_CORE` vì nó là cấu hình của NGƯỜI
-   * DÙNG, còn lớp lõi thuộc về mã nguồn. Và đặt TRƯỚC charter vì nó là luật
-   * cứng: charter mô tả văn phòng làm gì, dòng này quyết kết quả rơi xuống đâu.
+   * Placed here rather than folded into `ASSISTANT_CORE` because it's the
+   * USER's own configuration, while the core layer belongs to the source
+   * code. And placed BEFORE the charter because it's a hard rule: the
+   * charter describes what the office does, this line decides where the
+   * result lands.
    *
-   * Đây là thứ thay cho lệnh `/answer` đã bị bác bỏ — nó biến một phép đoán
-   * lặp lại ở MỖI tin nhắn thành một mặc định đúng sẵn, giá 0 token vì nó nằm
-   * trong prefix vốn đã được cache. → SPEC-offices.md §6
+   * This replaces the `/answer` command that was rejected — it turns a
+   * guess repeated on EVERY message into a correct-by-default answer, at 0
+   * tokens since it sits inside a prefix that's already cached. → SPEC-offices.md §6
    *
-   * ⚠ VÀ ĐÂY LÀ GIỚI HẠN CỦA NÓ, đo được 20/08: **một văn phòng có CẢ HAI loại
-   * yêu cầu.** Cùng văn phòng dịch thuật, "dịch doc-4" là `file` còn "nêu cho
-   * tôi 10 thuật ngữ" là `reply` — không con mặc định nào đúng cho cả hai. Mặc
-   * định khử được bất định của ca THƯỜNG GẶP; ca còn lại vẫn phải phân loại
-   * từng lần, nên chốt thật nằm ở luật phá hoà trong `ASSISTANT_CORE` (*"gần
-   * nhau thì chọn reply"*), không nằm ở dòng này.
+   * ⚠ AND HERE IS ITS LIMIT, measured 20/08: **one office can have BOTH kinds
+   * of request.** Within the same translation office, "translate doc-4" is
+   * `file` while "list me 10 terms" is `reply` — no single default is
+   * correct for both. The default removes ambiguity for the COMMON case; the
+   * remaining case still has to be classified every time, so the real
+   * decision lives in the tie-breaking rule inside `ASSISTANT_CORE` (*"when
+   * close, pick reply"*), not in this line.
    *
-   * Hệ quả: **đừng đẻ thêm một nút trên giao diện cho `default_deliver`.** Một
-   * cái nút chỉ đúng một nửa số lượt là bắt người dùng làm việc của bộ phân
-   * loại — và họ sẽ gạt qua gạt lại mãi. Nó ở lại trong `office.yaml`, có chú
-   * thích 0 token ngay cạnh, cho người thật sự có một văn phòng thuần hỏi-đáp.
+   * Consequence: **don't add another interface toggle for
+   * `default_deliver`.** A toggle that's only right half the time makes the
+   * user do the classifier's job — and they'd flip it back and forth
+   * forever. It stays in `office.yaml`, with a 0-token comment right next to
+   * it, for someone who genuinely runs a pure Q&A office.
    */
   blocks.push(
     `# Default delivery for this office\n\n` +
@@ -512,39 +526,43 @@ export function buildAssistantPrompt(
   );
   if (office.charter) blocks.push(`# About this office\n\n${office.charter}`);
   if (office.assistantSkills) blocks.push(`# How you work\n\n${office.assistantSkills}`);
-  // GHI NHỚ đứng TRƯỚC kinh nghiệm, và là khối riêng: nó là thứ người dùng đã
-  // chốt, nên phải thắng khi mâu thuẫn với một bài học agent tự rút ra.
+  // MEMORY sits BEFORE lessons, and is its own block: it's something the
+  // user has already decided, so it must win over any lesson the agent inferred on its own.
   if (memory) blocks.push(`# What the human has decided — follow these\n\n${memory}`);
   if (hot) blocks.push(`# What this office has learned\n\n${hot}`);
   blocks.push(opts.roster);
   /**
-   * ĐUÔI BIẾN ĐỘNG — HAI BẢNG KÊ NẰM LIỀN NHAU, VÀ NẰM CUỐI.
+   * THE VOLATILE TAIL — TWO LISTINGS SITTING NEXT TO EACH OTHER, AT THE VERY END.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BẢNG KÊ TỦ ĐÃ ĐƯỢC HẠ XUỐNG ĐÂY (20/08) — trước đó nó đứng ngay sau      │
-   * │ charter, TRÊN cả memory · hot · roster.                                   │
+   * │ THE CABINET LISTING GOT MOVED DOWN HERE (20/08) — it used to sit right         │
+   * │ after the charter, ABOVE memory · hot · roster.                              │
    * │                                                                          │
-   * │ Lý do cũ: *"tủ đổi hiếm hơn kéo dây trên canvas"*. **Quan sát thật bác bỏ │
-   * │ điều đó.** Kéo dây là thao tác DỰNG VĂN PHÒNG — làm một lần rồi gần như   │
-   * │ không đụng lại. Thả tài liệu vào tủ là thao tác DÙNG sản phẩm, lặp đi lặp │
-   * │ lại suốt đời văn phòng. Xếp nhầm thứ tự nên mỗi lần thêm một file lại ghi │
-   * │ lại luôn cả memory + hot + roster + bảng kê kết quả.                      │
+   * │ The old reasoning: *"the cabinet changes less often than dragging a wire on       │
+   * │ the canvas"*. **Real observation disproves that.** Dragging a wire is a          │
+   * │ BUILDING-THE-OFFICE action — done once and almost never touched again.          │
+   * │ Dropping a document into the cabinet is a USING-THE-PRODUCT action, repeated       │
+   * │ over and over for the office's entire lifetime. The wrong order meant every       │
+   * │ added file also rewrote memory + hot + roster + the results listing.             │
    * │                                                                          │
-   * │ Prompt cache là cache theo TIỀN TỐ, nên gộp hai khối hay đổi nhất vào một │
-   * │ vùng LIỀN NHAU ở cuối: thêm một tài liệu giờ chỉ ghi lại `library` +      │
-   * │ `artifacts` + dòng ngôn ngữ, thay vì sáu khối.                            │
+   * │ Prompt caching is a PREFIX cache, so grouping the two most-frequently-changing      │
+   * │ blocks into one ADJACENT region at the end means: adding a document now only        │
+   * │ rewrites `library` + `artifacts` + the language line, instead of six blocks.        │
    * │                                                                          │
-   * │ ⚠ Đổi thứ tự = đổi prefix = MỘT lần ghi lại cache cho mọi văn phòng. Trả  │
-   * │ một lần, lãi mỗi lần người dùng thả file — đúng hình dạng đánh đổi mà     │
-   * │ luật "HOT phải ổn định" bảo vệ, chỉ khác ở chỗ ở đó cái giá lặp lại MỖI   │
-   * │ TASK, còn ở đây nó là một lần cho một thao tác của con người.             │
+   * │ ⚠ Changing the order = changing the prefix = ONE cache rewrite for every           │
+   * │ office. Paid once, in exchange for savings on every file the user drops in           │
+   * │ afterward — the exact same trade-off shape the "HOT must stay stable" rule           │
+   * │ protects, just that there the cost repeats on EVERY TASK, while here it's one         │
+   * │ cost for one human action.                                                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Bảng kê tủ là mảnh sửa lỗ hổng lớn nhất tìm được 19/08: `INDEX.md` dựng từ
-   * 17/08 để Trợ lý "biết hợp đồng 34 trang trước khi chia việc" nhưng chưa bao
-   * giờ tới tay Trợ lý — nó lập kế hoạch mù và để `inputs` rỗng cho nhân viên mò.
+   * The cabinet listing is the fix for the largest hole found on 19/08:
+   * `INDEX.md` was built on 17/08 so the Assistant would "know about the
+   * 34-page contract before delegating work", but it never actually reached
+   * the Assistant — it planned blind and left `inputs` empty for a worker to grope around.
    *
-   * Bảng kê kết quả đổi sau MỖI ca nên đứng sát cuối cùng. → SPEC-artifacts §2.4
+   * The results listing changes after EVERY run, so it sits at the very
+   * end. → SPEC-artifacts §2.4
    */
   if (library) blocks.push(library);
   if (artifacts) blocks.push(artifacts);
@@ -557,67 +575,73 @@ export function buildAssistantPrompt(
 
   return {
     systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
-    // `model` BẮT BUỘC nằm trong khoá: prompt cache đánh theo (model, prefix).
-    // Đổi model của Trợ lý mà khoá không đổi thì mọi công cụ chẩn đoán sẽ báo
-    // "cache vẫn ấm" trong khi thực tế lượt kế tiếp trả nguyên giá ghi cache.
+    // `model` MUST sit inside the key: prompt caching is keyed on (model,
+    // prefix). Changing the Assistant's model without changing the key
+    // makes every diagnostic tool report "cache still warm" while the next
+    // turn actually pays the full cache-write price.
     cacheKey: hashKey(['assistant', opts.model ?? '', String(PROMPT_SCHEMA_VERSION), ...blocks]),
     staticTokens: blocks.reduce((n, b) => n + estimateTokens(b), 0),
   };
 }
 
-/** Một lớp prompt như UI hiển thị nó. → SPEC-offices.md §8 `/api/office/:id/prompt/:who` */
+/** One prompt layer, as the UI displays it. → SPEC-offices.md §8 `/api/office/:id/prompt/:who` */
 export interface PromptLayer {
   id: string;
   title: string;
-  /** Sửa được không. Lớp core luôn false trừ khi bật allow_core_prompt_edit. */
+  /** Whether it's editable. The core layer is always false unless allow_core_prompt_edit is on. */
   editable: boolean;
-  /** File chứa nó, nếu sửa được. */
+  /** The file holding it, if editable. */
   file?: string;
   text: string;
   tokens: number;
   /**
-   * Chữ mờ trong ô nhập khi lớp này TRỐNG — một ví dụ THẬT về nội dung nên viết.
+   * Placeholder text in the input field when this layer is EMPTY — a REAL example of what to write.
    *
-   * Đây là chỗ đúng cho ví dụ, và lý do rất cụ thể: nội dung mặc định của file
-   * đi vào prefix cache của mọi lượt gọi, nên một dòng hướng dẫn kiểu "hãy viết
-   * vài dòng về văn phòng này" là khoản thuế thu mãi mãi để nói với MODEL một
-   * câu chỉ có nghĩa với NGƯỜI. Placeholder không bao giờ được lưu, không bao
-   * giờ đi vào prompt → 0 token. → SPEC-offices.md §4.1
+   * This is the right place for an example, and the reason is very
+   * specific: a file's default content goes into the cached prefix of every
+   * call, so a generic instruction line like "write a few sentences about
+   * this office" would be a tax collected forever to say something to the
+   * MODEL that only makes sense to a PERSON. A placeholder is never saved,
+   * never enters the prompt → 0 tokens. → SPEC-offices.md §4.1
    */
   placeholder?: string;
-  /** Trần token của lớp này, nếu có. UI cảnh báo khi gõ vượt. */
+  /** This layer's token ceiling, if it has one. The UI warns when typing goes over. */
   limit?: number;
-  /** File này là node tri thức (có YAML frontmatter phải giữ nguyên khi ghi). */
+  /** This file is a knowledge node (has YAML frontmatter that must be preserved on write). */
   frontmatter?: boolean;
   note: string;
 }
 
 /**
- * Bóc prompt thành từng lớp để NGƯỜI XEM ĐƯỢC.
+ * Breaks the prompt into layers so a PERSON CAN SEE THEM.
  *
- * Đây không phải tính năng phụ. Người dùng advanced cần *thấy* lớp core mới tin;
- * giấu đi thì họ đoán, và đoán sai thì họ viết skills chống lại chính hệ thống.
+ * This isn't a side feature. An advanced user needs to *see* the core layer
+ * to trust it; hide it and they'll guess, and a wrong guess means they
+ * write skills that fight the system itself.
  * → SPEC-offices.md §4.1
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 THỨ TỰ Ở ĐÂY PHẢI KHỚP `buildAssistantPrompt` — bug đã sửa 20/08.     │
+ * │ 🔴 THE ORDER HERE MUST MATCH `buildAssistantPrompt` — a bug fixed 20/08.       │
  * │                                                                          │
- * │ Bảng này từng liệt kê `library` và `artifacts` TRƯỚC `memory`/`knowledge`,│
- * │ trong khi prompt thật xếp ngược lại. Với một bảng chỉ để "xem có gì" thì  │
- * │ lệch thứ tự là chuyện nhỏ — nhưng bảng này còn dùng để trả lời câu hỏi    │
- * │ **"đổi khối X thì phải ghi lại bao nhiêu token"**, mà câu đó chỉ có nghĩa │
- * │ khi cache là cache theo TIỀN TỐ. Thứ tự sai ⇒ con số sai ⇒ quyết định     │
- * │ kiến trúc dựa trên nó sai. Đo được 20/08: bảng nói đổi bảng kê tủ tốn     │
- * │ 359 token, thứ tự thật cho ra một con số khác hẳn.                        │
+ * │ This table used to list `library` and `artifacts` BEFORE `memory`/`knowledge`,   │
+ * │ while the real prompt orders them the other way around. For a table that's       │
+ * │ only for "seeing what's there", a mismatched order is a small thing — but this    │
+ * │ table is also used to answer the question **"how many tokens get rewritten if     │
+ * │ block X changes"**, and that question only has meaning when the cache is a         │
+ * │ PREFIX cache. Wrong order ⇒ wrong number ⇒ an architecture decision made on         │
+ * │ top of it is wrong. Measured 20/08: this table claimed changing the cabinet         │
+ * │ listing costs 359 tokens; the real order produces a completely different number.    │
  * │                                                                          │
- * │ Đúng lớp lỗi §5e (khối GHI NHỚ bị đếm hai lần): **prompt đúng mà bảng     │
- * │ xem sai thì bảng đó vô dụng, vì cả điểm của nó là để tin được.**          │
+ * │ Exactly the §5e failure class (the MEMORY block counted twice): **a correct        │
+ * │ prompt with a wrong viewing table makes the table useless, since its whole          │
+ * │ point is to be trustworthy.**                                                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Sửa `buildAssistantPrompt` thì sửa cả đây, TRONG CÙNG MỘT LẦN. Hai hàm mô
- * tả cùng một thứ thì sẽ lệch — đây là bản mã thứ hai của cùng một phép toán,
- * đúng thứ luật 19/08 cảnh báo, và ta giữ nó vì bảng cần thêm `note`/`file`/
- * `limit` mà prompt thật không có.
+ * ⚠ Editing `buildAssistantPrompt` means editing this too, IN THE SAME
+ * CHANGE. Two functions describing the same thing will drift apart — this
+ * is a second copy of the same computation, exactly what the 19/08 rule
+ * warns against, and it's kept anyway because the table needs
+ * `note`/`file`/`limit` fields the real prompt doesn't carry.
  */
 export function describePrompt(
   office: LoadedOffice,
@@ -646,25 +670,27 @@ export function describePrompt(
       title: t('promptLayer.charterTitle'),
       editable: true,
       /**
-       * `charter.md` ở gốc văn phòng — markdown THUẦN, KHÔNG frontmatter.
+       * `charter.md` at the office root — PLAIN markdown, NO frontmatter.
        *
-       * Trước 17/08 nó là `knowledge/shared/_charter.md`, tức là cùng lúc vừa
-       * lớp prompt vừa node tri thức: hai cửa sổ sửa cùng một file, không cửa
-       * nào nhắc tới cửa kia. Người dùng xoá "node" ở ngăn kéo Tri thức (hợp
-       * lý — nó trông như rác agent sinh ra) rồi sửa ở đây, và file được ghi
-       * lại KHÔNG còn frontmatter → nó lặng lẽ thôi là node, mà prompt vẫn
-       * chạy nên không có gì báo. → docs/SPEC-library.md §17
+       * Before 17/08 it was `knowledge/shared/_charter.md`, meaning it was
+       * simultaneously a prompt layer AND a knowledge node: two editing
+       * windows for the same file, neither aware of the other. A user
+       * deletes the "node" in the Knowledge drawer (reasonably — it looks
+       * like agent-generated clutter), then edits it here, and the file
+       * gets saved back WITHOUT frontmatter → it silently stops being a
+       * node, while the prompt keeps working, so nothing reports it. → docs/SPEC-library.md §17
        */
       file: office.config.charter_file,
       /**
-       * Suy ra từ ĐƯỜNG DẪN THẬT, không đóng đinh `false`.
+       * Inferred from the REAL PATH, never hard-coded `false`.
        *
-       * Sau di trú thì charter là `charter.md` thuần và cờ này là `false`. Nhưng
-       * di trú CÓ THỂ hỏng (Windows khoá file, thư mục chỉ đọc, người dùng khôi
-       * phục một bản sao lưu cũ) — và lúc đó file vẫn nằm trong `knowledge/`,
-       * vẫn còn frontmatter, vẫn là một node. Đóng đinh `false` nghĩa là lần lưu
-       * kế tiếp xoá sạch frontmatter và tái tạo đúng cái lỗi ta vừa sửa, ở đúng
-       * những máy mà di trú đã không chạy được.
+       * After migration, the charter is a plain `charter.md` and this flag
+       * is `false`. But migration CAN fail (Windows file locking, a
+       * read-only directory, the user restoring an old backup) — and in
+       * that case the file still sits in `knowledge/`, still carries
+       * frontmatter, is still a node. Hard-coding `false` would mean the
+       * next save strips the frontmatter completely and recreates the exact
+       * bug just fixed, on exactly the machines where migration failed to run.
        */
       frontmatter: office.config.charter_file.replace(/\\/g, '/').startsWith('knowledge/'),
       limit: office.company.budgets.charter_tokens,
@@ -696,8 +722,8 @@ export function describePrompt(
       id: 'skills',
       title: t('promptLayer.skillsTitle'),
       editable: true,
-      // ⚠ PHẢI là đúng file mà `loadSkill` sẽ đọc lại. Khai hai đường dẫn khác
-      // nhau cho cùng một thứ = bấm Lưu xong nội dung biến mất. → config.ts
+      // ⚠ MUST be the exact same file `loadSkill` reads back. Declaring two
+      // different paths for the same thing = click Save and the content vanishes. → config.ts
       file: skillFileFor(office, role),
       text: loadSkill(office, role),
       placeholder: t('promptLayer.roleSkillsPlaceholder'),
@@ -706,27 +732,28 @@ export function describePrompt(
   }
 
   /**
-   * GHI NHỚ tách khỏi KINH NGHIỆM — cùng một kho, hai cách nhìn.
+   * MEMORY is separated from LESSONS — the same store, two different views.
    * → docs/SPEC-offices.md §4.6
    *
-   * Lưu chung `knowledge/` là để dùng lại `supersedes`, lão hoá, ngân sách và
-   * Librarian — không phải để tiện. Nhưng với người dùng đây là hai thứ khác
-   * hẳn nhau, và gộp làm một dòng thì thứ quan trọng hơn bị lẫn mất:
+   * Sharing `knowledge/` for storage reuses `supersedes`, aging, budgets and
+   * the Librarian — not for convenience. But to the user these are two
+   * entirely different things, and merging them into one line loses the more important one:
    *
-   *   kinh nghiệm — AGENT tự rút ra sau khi làm  (confidence 0.6)
-   *   ghi nhớ     — NGƯỜI DÙNG đã chốt           (confidence 0.9)
+   *   a lesson — the AGENT figured it out on its own  (confidence 0.6)
+   *   a memory — the USER has already decided it       (confidence 0.9)
    *
-   * Người dùng phải tìm thấy được "hệ thống đang nhớ gì về tôi" mà không phải
-   * lục kho. Đó là lý do nó là một lớp riêng ở đây, chứ không phải một kho riêng
-   * ở tầng lưu trữ.
+   * A user must be able to find "what does the system remember about me"
+   * without digging through the whole store. That's why it's its own layer
+   * here, rather than its own store at the storage layer.
    */
   /**
-   * Bảng kê tủ tài liệu — PHẢI hiện ở đây, không được là một khối ẩn.
+   * The document cabinet listing — MUST show up here, cannot be a hidden block.
    *
-   * Bảng phân lớp này tồn tại để người dùng tin được con số token. Thêm một khối
-   * vào prompt thật mà không thêm vào bảng thì bảng nói dối — đúng lỗi đã dẫm ở
-   * §5e khi khối GHI NHỚ bị đếm hai lần: prompt vẫn đúng, nhưng cái bảng dùng
-   * để kiểm tra prompt thì sai, mà cả điểm của nó là để tin được.
+   * This layer-viewing table exists so the user can trust the token count.
+   * Adding a block to the real prompt without adding it here makes the
+   * table lie — exactly the bug hit at §5e when the MEMORY block got counted
+   * twice: the prompt itself was correct, but the table used to verify the
+   * prompt was wrong, and the table's whole point is to be trustworthy.
    */
   if (who === 'assistant' && assistantMemory.trim()) {
     add({
@@ -757,11 +784,12 @@ export function describePrompt(
   }
 
   /**
-   * Bảng kê KẾT QUẢ — phải có mặt ở đây vì nó CÓ MẶT trong prompt thật.
+   * The RESULTS listing — has to be present here because it IS present in the real prompt.
    *
-   * Bài học §5e (khối GHI NHỚ bị đếm hai lần): prompt đúng mà bảng xem sai thì
-   * bảng đó vô dụng, vì cả điểm của nó là để tin được. Mỗi khối mới thêm vào
-   * `buildAssistantPrompt` phải thêm một mục ở đây trong cùng một lần sửa.
+   * The §5e lesson (the MEMORY block counted twice): a correct prompt with
+   * a wrong viewing table makes the table useless, since its whole point is
+   * to be trustworthy. Every new block added to `buildAssistantPrompt` must
+   * add an entry here in the same change.
    */
   if (who === 'assistant' && artifactManifest.trim()) {
     add({
@@ -777,10 +805,10 @@ export function describePrompt(
 }
 
 /**
- * Phần BIẾN ĐỘNG: brief + tri thức COLD. Nằm trong user message, không nằm
- * trong systemPrompt, nên không đụng tới cache prefix.
+ * The VOLATILE part: brief + COLD knowledge. Lives in the user message, not
+ * in systemPrompt, so it never touches the cache prefix.
  *
- * BẤT BIẾN: chỉ đưa ĐƯỜNG DẪN của input, tuyệt đối không đưa nội dung file.
+ * INVARIANT: only ever hands over the PATH of an input, never the file's content.
  */
 export function buildTaskMessage(
   brief: TaskBrief,
@@ -796,12 +824,12 @@ export function buildTaskMessage(
   parts.push(`# Your task (${brief.task_id})\n\n${brief.goal}`);
 
   /**
-   * Hình dạng giao hàng, nói TƯỜNG MINH ở mỗi task.
+   * The delivery shape, stated EXPLICITLY on every task.
    *
-   * Nằm trong user message (phần biến động), KHÔNG trong systemPrompt: nó đổi
-   * theo từng task, mà `deliver` đứng trong prefix thì hai task khác `deliver`
-   * của cùng một vai trò sẽ dùng hai cache entry khác nhau — trả tiền ghi cache
-   * hai lần cho cùng một nhân viên.
+   * Lives in the user message (the volatile part), NOT in systemPrompt: it
+   * changes per task, and if `deliver` sat in the prefix, two tasks with
+   * different `deliver` values for the same role would use two different
+   * cache entries — paying for a cache write twice for the same worker.
    */
   parts.push(
     brief.deliver === 'reply'
@@ -832,12 +860,14 @@ function hashKey(parts: string[]): string {
   const h = createHash('sha256');
   for (const p of parts) {
     h.update(p);
-    // Vách ngăn giữa hai phần, viết bằng ESCAPE '\0' chứ không nhúng byte NUL
-    // thật vào file nguồn. Byte thật thì đúng về hành vi nhưng làm Grep xếp cả
-    // file này vào loại BINARY và từ chối tìm trong đó — tức là file prompt quan
-    // trọng nhất dự án thành file duy nhất agent không tra được, đúng lớp lỗi
-    // "thứ gì agent phải Grep thấy thì đừng chôn nó ở chỗ Grep không tới"
-    // (SPEC-library, thư mục dấu chấm).
+    // A separator between two parts, written as the ESCAPE '\0' rather than
+    // embedding a real NUL byte into the source file. A real byte would
+    // behave correctly but would make Grep classify this entire file as
+    // BINARY and refuse to search inside it — turning the single most
+    // important prompt file in the project into the one file an agent
+    // cannot look up. Exactly the failure class "anything an agent must be
+    // able to Grep shouldn't be buried where Grep can't reach it"
+    // (SPEC-library, dot-directories).
     h.update('\0');
   }
   return h.digest('hex').slice(0, 16);

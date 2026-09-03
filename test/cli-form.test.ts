@@ -84,6 +84,11 @@ test('slugId biến câu tiếng Việt thành id hợp khuôn schema', () => {
     assert.match(slugId(say), ok, `id sai khuôn cho "${say}"`);
   }
   assert.equal(slugId('đếm hoá đơn'), 'dem_hoa_don');
+
+  // The fallback prefix is an IDENTIFIER, so it is language-neutral — it used to
+  // be `viec_`/`moi`. `id` feeds `armHash`, so this string is not decoration.
+  assert.equal(slugId('123 việc'), 'job_123_viec');
+  assert.equal(slugId('会计部'), 'job_new');
 });
 
 // ═════════════════════════════════════════ 2 · Ví dụ: dòng lệnh thật → từng ô

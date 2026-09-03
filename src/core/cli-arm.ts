@@ -1,44 +1,51 @@
 /**
- * CÁNH TAY CLI — bọc một lệnh ĐÃ KHAI thành MCP chạy trong tiến trình.
+ * CLI ARM — wraps an ALREADY-DECLARED command into an MCP that runs in-process.
  *
- * → docs/SPEC-arms.md §16 · TEST-WALKTHROUGH.md bài 22
+ * → docs/SPEC-arms.md §16 · TEST-WALKTHROUGH.md test 22
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐỪNG BỌC `Bash`. BỌC `gh pr create --title <T>`.                         │
+ * │ DON'T WRAP `Bash`. WRAP `gh pr create --title <T>`.                       │
  * │                                                                          │
- * │ §1b ra bốn lý do cấm biến shell thành MCP, và chúng vẫn đứng nguyên cho   │
- * │ `Bash`. Nhưng lý do thứ 3 (*"lệnh shell nhét đường dẫn lẫn trong chuỗi,   │
- * │ bọc vào MCP không sinh ra cái trường đó"*) **hết đúng với một lệnh đã     │
- * │ KHAI**: ở đây người dùng đã nói trước chỗ nào là tham số gì, nên cái      │
- * │ trường ấy không phải *suy ra* — nó được *khai ra*. `officeJail` khớp      │
- * │ `params.path` y hệt cách nó khớp `file_path`.                            │
+ * │ §1b lists four reasons that forbid turning a shell into an MCP, and they      │
+ * │ still stand for `Bash`. But reason 3 (*"a shell command buries a path        │
+ * │ inside a string, and wrapping it in an MCP doesn't produce that field"*)      │
+ * │ **stops being true for an ALREADY-DECLARED command**: here the user has        │
+ * │ already stated ahead of time which spot is which parameter, so that field       │
+ * │ isn't *inferred* — it's *declared*. `officeJail` matches `params.path` the       │
+ * │ exact same way it matches `file_path`.                                      │
  * │                                                                          │
- * │ Trục đúng là ĐOÁN ↔ KHAI (user nêu, tốt hơn trục cũ của spec):           │
- * │   `Bash` (model quyết cả dòng lệnh) → filesystem MCP (chọn trong 14 tool)│
- * │   → CLI đã khai (người dùng cố định argv, model chỉ điền chỗ trống)      │
+ * │ The right axis is GUESSED ↔ DECLARED (the user's framing, better than the      │
+ * │ spec's old axis):                                                          │
+ * │   `Bash` (the model decides the whole command line) → a filesystem MCP           │
+ * │   (choosing from 14 tools) → an already-declared CLI (the user fixes argv,       │
+ * │   the model only fills in the blanks)                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * 🔴 CHỖ NGUY HIỂM NHẤT, nói to vì nó vô hình: **một cánh tay CLI là một cái lỗ
- * CÓ CHỦ Ý trên tường lửa shell.** Một vai có `chạy lệnh: TẮT` vẫn chạy được
- * binary qua đây — đúng ý đồ. Kéo theo một ràng buộc không được quên:
+ * 🔴 THE MOST DANGEROUS PART, said out loud because it's invisible: **a CLI arm
+ * is a DELIBERATE hole in the shell firewall.** A role with `run commands: OFF`
+ * can still run a binary through here — that's the intent. It carries one
+ * constraint that must never be forgotten:
  *
- *   > **Tờ khai PHẢI nằm ở vùng CHỈ ĐỌC của `officeJail`.**
- *   > Ghi được tờ khai ⇒ tự khai `run: ["powershell","-c","{cmd}"]` ⇒ shell tuỳ
- *   > ý, qua cửa sau, cho một vai đã tắt shell. Cùng cái lỗ §5f, cửa mới.
+ *   > **The declaration MUST live in the READ-ONLY zone of `officeJail`.**
+ *   > A writable declaration ⇒ self-declare `run:
+ *   > ["powershell","-c","{cmd}"]` ⇒ arbitrary shell, through the back door,
+ *   > for a role that had shell turned off. The exact same hole as §5f, a new door.
  *
- * Tờ khai sống trong `company.yaml` (user chốt 31/08).
+ * The declaration lives in `company.yaml` (the user's call, 31/08).
  *
- * 🔴 **ĐÍNH CHÍNH 01/09 — TÔI ĐÃ VIẾT SAI Ở ĐÂY.** Câu cũ: *"nên nó thừa hưởng
- * hàng rào đã có từ §5f, không phải dựng hàng rào thứ hai"*. **Sai:** §5f gác
- * `OFFICE_CONFIG`, và danh sách đó giải **tương đối với thư mục VĂN PHÒNG** —
- * `company/company.yaml` nằm một cấp trên và **chưa bao giờ được gác**.
+ * 🔴 **CORRECTED 01/09 — I WROTE THIS WRONG HERE.** The old sentence:
+ * *"so it inherits the fence §5f already built, rather than a second fence
+ * needing to be built"*. **Wrong:** §5f guards `OFFICE_CONFIG`, and that list
+ * resolves **relative to the OFFICE directory** — `company/company.yaml` sits
+ * one level up and **was never guarded at all**.
  *
- * Chốt chọn `company.yaml` vẫn đúng (một chỗ, một mô hình, không thư mục mới),
- * nhưng nó **KHÔNG miễn phí** như tôi đã nói: phải thêm `COMPANY_CONFIG` vào
- * `paths.ts §guardedZone`. Đã vá 01/09, có test.
+ * The decision to use `company.yaml` is still correct (one place, one model,
+ * no new directory), but it was **NOT free** the way I claimed: `COMPANY_CONFIG`
+ * had to be added to `paths.ts §guardedZone`. Patched 01/09, with a test.
  *
- * ⚠ Lớp lỗi: tôi khẳng định một hàng rào **đã bao** một thứ mà chưa đi đọc danh
- * sách của nó. Hàng rào có thật, chỉ là nó ở **một cấp khác**.
+ * ⚠ The failure class: I asserted a fence **already covered** something
+ * without going and reading its actual list. The fence was real, just at a
+ * DIFFERENT level.
  * → [[agentco-rule-must-see-what-it-governs]] · [[agentco-spec-says-done]]
  */
 
@@ -51,105 +58,115 @@ import { z } from 'zod';
 
 import { t } from '../i18n/index.js';
 
-// ══════════════════════════════════════════════════ 1 · TỜ KHAI (hai tờ)
+// ══════════════════════════════════════════════════ 1 · DECLARATIONS (two of them)
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HAI TỜ, KHÔNG PHẢI MỘT — và chỉ một tờ bất định. → §16l                  │
+ * │ TWO DOCUMENTS, NOT ONE — and only one of them is non-deterministic. → §16l    │
  * │                                                                          │
- * │ User hỏi *"tờ hướng dẫn này tất định hay bất định?"* và trực giác         │
- * │ *"bất định, vì MCP cũng bất định"* đúng một nửa. Một tool MCP luôn có     │
- * │ ĐÚNG HAI phần, và nửa còn lại là nửa làm nó dùng được:                    │
+ * │ The user asked *"is this instruction sheet deterministic or not?"* and the    │
+ * │ instinct *"non-deterministic, since MCP is non-deterministic too"* is half       │
+ * │ right. An MCP tool always has EXACTLY TWO parts, and the other half is the       │
+ * │ half that makes it usable at all:                                            │
  * │                                                                          │
- * │   `description` bất định — văn xuôi — **model** đọc   → 📄 tờ hướng dẫn  │
- * │   `inputSchema` tất định — schema   — **runtime** kiểm → 📋 tờ khai      │
+ * │   `description` non-deterministic — prose — read by the **model**    → 📄       │
+ * │   instruction sheet                                                          │
+ * │   `inputSchema` deterministic — a schema — checked by the **runtime** → 📋       │
+ * │   declaration                                                               │
  * │                                                                          │
- * │ **Bỏ tờ khai = quay về `Bash`**: model lại phải tự dựng dòng lệnh từ văn  │
- * │ xuôi, tức phỏng đoán. Tờ khai không phải quan liêu — nó CHÍNH LÀ thứ biến │
- * │ "phỏng đoán" thành "điền vào chỗ trống".                                  │
+ * │ **Dropping the declaration = going back to `Bash`**: the model has to build       │
+ * │ the command line from prose again, i.e. guessing. The declaration isn't               │
+ * │ bureaucracy — it IS what turns "guessing" into "filling in a blank".               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const CliParamSchema = z.object({
   name: z.string().min(1),
   type: z.enum(['string', 'integer']),
   required: z.boolean().optional(),
-  /** Chỉ cho `string`. Không khai ⇒ nhận mọi chuỗi, trừ luật gạch dưới đây. */
+  /** Only for `string`. Undeclared ⇒ accepts any string, except for the dash rule below. */
   pattern: z.string().optional(),
   min: z.number().optional(),
   max: z.number().optional(),
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÍ DỤ VỀ **CHỖ TRỐNG**, KHÔNG PHẢI VỀ DÒNG LỆNH. (user chốt 31/08)       │
+   * │ AN EXAMPLE OF **THE BLANK**, NOT OF THE COMMAND LINE. (the user's call, 31/08)   │
    * │                                                                          │
-   * │ User hỏi đúng chỗ `inputSchema` yếu: `pattern: "^[a-z0-9.-]+$"` là luật   │
-   * │ cho **runtime**, nó dạy model rất tệ; `ví dụ: v1.2.3` dạy xong một nhịp.  │
+   * │ The user asked right at `inputSchema`'s weak spot: `pattern:               │
+   * │ "^[a-z0-9.-]+$"` is a rule for the **runtime**, and it teaches the model very     │
+   * │ poorly; `example: v1.2.3` teaches it in one glance.                              │
    * │                                                                          │
-   * │ ⚠ Nhưng ví dụ phải ở tầng THAM SỐ, không phải tầng action: **model không │
-   * │ dựng dòng lệnh** — argv đã cố định, nó chỉ điền vào `{tag}`. Cho nó xem   │
-   * │ trọn `pnpm deploy --env staging --tag v1.2.3` là đưa thông tin về một     │
-   * │ tầng nó không điều khiển, rồi bắt nó khớp ngược xem chữ nào là tham số.   │
+   * │ ⚠ But the example must live at the PARAMETER layer, not the action layer:        │
+   * │ **the model doesn't build the command line** — argv is already fixed, it            │
+   * │ only fills in `{tag}`. Showing it the entire `pnpm deploy --env staging               │
+   * │ --tag v1.2.3` hands it information about a layer it doesn't control, then             │
+   * │ makes it reverse-match which word is the parameter.                                │
    * │                                                                          │
-   * │ Đo 31/08: `.describe()` → `description` của ĐÚNG property đó trong        │
-   * │ `inputSchema`, tức nằm ngay cạnh cái ô model đang điền.                   │
+   * │ Measured 31/08: `.describe()` → the `description` of the EXACT property in        │
+   * │ `inputSchema`, i.e. sitting right next to the field the model is filling in.        │
    * │                                                                          │
-   * │ ⚠ TRẦN 60 KÝ TỰ, và nó là hoá đơn LẶP LẠI: tool definition nằm trong      │
-   * │ prefix **mọi lượt**. Cùng lớp `hint` (trần 320) và `does` (trần 4).       │
+   * │ ⚠ A 60-CHARACTER CEILING, and it's a RECURRING cost: a tool definition lives         │
+   * │ in the prefix on EVERY turn. Same class as `hint` (ceiling 320) and `does`             │
+   * │ (ceiling 4).                                                                    │
    * │                                                                          │
-   * │ 🎯 Nguồn ĐÚNG là **lượt Thử**, không phải gõ tay — khuôn `returns` đã chốt │
-   * │ 14/08: *chạy thật → chụp lại hành vi thật*. Một ví dụ gõ tay là một LỜI   │
-   * │ KHAI (sai từ đầu cũng không ai biết); một ví dụ chụp từ lần chạy được thì │
-   * │ đúng **theo cấu tạo**. Ô này nhận cả hai, nhưng đường chính là nút Thử.   │
+   * │ 🎯 The CORRECT source is **a Test run**, not hand-typing — the pattern            │
+   * │ `returns` already settled on 14/08: *run it for real → capture the real           │
+   * │ behavior*. A hand-typed example is a CLAIM (wrong from the start and nobody           │
+   * │ would know); an example captured from a successful run is correct **by             │
+   * │ construction**. This field accepts either, but the primary path is the Test         │
+   * │ button.                                                                     │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   example: z.string().max(60, t('cliArm.exampleTooLong')).optional(),
   /**
-   * 🔴 GIÁ TRỊ KHÔNG ĐƯỢC BIẾN THÀNH CỜ. → §16e
+   * 🔴 A VALUE MUST NEVER TURN INTO A FLAG. → §16e
    *
-   * `tag = "--force"` nối vào argv là người dùng vừa cấp một cờ họ chưa bao giờ
-   * khai. Mặc định TỪ CHỐI giá trị mở đầu bằng `-`; muốn khác thì bật ô này một
-   * cách tường minh — cùng khuôn *"tắt được, nhưng phải tắt có ý thức"* của
-   * `confirm`.
+   * `tag = "--force"` concatenated into argv means the user just handed
+   * themselves a flag they never declared. The default REJECTS values
+   * starting with `-`; opting out requires turning this checkbox on
+   * explicitly — the same shape as `confirm`'s *"can be turned off, but only deliberately"*.
    */
   allow_dash: z.boolean().optional(),
 });
 
 export const CliActionSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9_]*$/, t('cliArm.badId')),
-  /** Câu tiếng người cho UI và cho dòng danh bạ. KHÔNG vào MCP. */
+  /** A human-readable sentence for the UI and the directory line. Does NOT enter the MCP. */
   say: z.string().min(1),
-  /** 📄 TỜ HƯỚNG DẪN — vào thẳng `description` của tool. */
+  /** 📄 THE INSTRUCTION SHEET — goes straight into the tool's `description`. */
   description: z.string().min(1),
   /**
-   * 📋 argv template. `{ten}` = chỗ trống. **MẢNG, không bao giờ là chuỗi shell.**
+   * 📋 The argv template. `{name}` = a blank. **AN ARRAY, never a shell string.**
    *
-   * Ba lý do (§16e), và lý do ① là lý do an ninh: tham số do MODEL sinh. Chuỗi
-   * shell + giá trị model sinh = tiêm lệnh, không phải rủi ro lý thuyết. Với
-   * argv thì `; rm -rf /` chỉ là một chuỗi ký tự nằm gọn trong một phần tử.
+   * Three reasons (§16e), and reason ① is the security reason: the parameter
+   * is MODEL-generated. A shell string + a model-generated value = command
+   * injection, not a theoretical risk. With argv, `; rm -rf /` is just a
+   * string of characters sitting neatly inside one array element.
    */
   run: z.array(z.string()).min(1),
   params: z.array(CliParamSchema).optional(),
-  /** Ô trống `{office}` do TA giải. Model không đụng vào được. */
+  /** The `{office}` placeholder is resolved by US. The model can't touch it. */
   cwd: z.string().optional(),
   timeout_ms: z.number().int().positive().default(120_000),
   /**
-   * Chuỗi trên stdout+stderr ⇒ coi là HỎNG dù `exit 0`. **Vào bản đầu** (user
-   * chốt 30/08), không phải "để sau".
+   * A string in stdout+stderr ⇒ counted as FAILED even with `exit 0`.
+   * **In the first version** (the user's call, 30/08), not deferred.
    *
-   * `exit 0` KHÔNG đồng nghĩa thành công: rất nhiều CLI in lỗi ra stdout rồi
-   * trả 0. Đúng lớp lỗi §5h·7d (*HTTP 200 kèm `error`*), và ở đây nó nổ theo
-   * chiều TỆ HƠN: agent tin lệnh đã xong và **đi tiếp**.
+   * `exit 0` does NOT mean success: plenty of CLIs print an error to stdout
+   * and still return 0. The exact failure class as §5h·7d (*HTTP 200 with an
+   * `error` field*), and here it fires in the WORSE direction: the agent
+   * believes the command succeeded and **moves on**.
    */
   fail_when: z.array(z.string()).optional(),
   /**
-   * CHỈ để dựng `annotations` cho nhật ký/UI. **Không dựng nấc quyền nào** —
-   * user chốt 30/08: *"BỎ NẤC HẲN cho cánh tay CLI, toàn quyền, thực hiện theo
-   * tờ hướng dẫn sử dụng"*. Cổng còn lại đúng hai: **ai được nối dây** và
-   * **`confirm` từng action**.
+   * ONLY used to build `annotations` for logs/UI. **Builds no permission
+   * tier at all** — the user's call, 30/08: *"DROP TIERS ENTIRELY for CLI
+   * arms, full access, follow the instruction sheet"*. The remaining gates
+   * are exactly two: **who gets wired to it** and **`confirm` per action**.
    */
   read_only: z.boolean().optional(),
-  /** Ghi dữ liệu thì mặc định BẬT. Tắt được, nhưng phải tắt có ý thức. */
+  /** Defaults to ON when writing data. Can be turned off, but only deliberately. */
   confirm: z.boolean().optional(),
-  /** Chìa vào `env`, KHÔNG vào argv — argv đọc được từ tiến trình khác (§16e). */
+  /** Keys go into `env`, NEVER into argv — argv is readable from another process (§16e). */
   env: z.record(z.string(), z.string()).optional(),
 });
 
@@ -157,13 +174,14 @@ export const CliArmSchema = z.object({
   type: z.literal('cli'),
   actions: z.array(CliActionSchema).min(1),
   /**
-   * ⭐ RÀNG BUỘC ⑥ CỦA §16p — *"binary sống ở đâu"* là **DỮ LIỆU trong khai
-   * báo**, không phải thứ suy lúc chạy. Phải có mặt từ dòng mã ĐẦU TIÊN.
+   * ⭐ CONSTRAINT ⑥ OF §16p — *"where does the binary live"* is **DATA inside
+   * the declaration**, not something inferred at runtime. Must exist from the VERY FIRST line of code.
    *
-   * Không có ô này thì ngày bật Docker phải sửa **mọi** action của khách — và
-   * đó chính là *"đập đi xây lại"* mà chốt ② sinh ra để tránh. Hôm nay chỉ có
-   * một giá trị hợp lệ; ngày có shim HTTP thì thêm `'host'` vào enum, **không
-   * đụng khai báo nào đã lưu**.
+   * Without this field, the day Docker gets turned on would require editing
+   * **every** customer's action — exactly the *"tear it down and rebuild"*
+   * that decision ② exists to avoid. Today there's only one valid value; the
+   * day an HTTP shim exists, add `'host'` to the enum, **without touching any
+   * declaration already saved**.
    */
   runs_on: z.literal('daemon').default('daemon'),
 });
@@ -173,18 +191,18 @@ export type CliAction = z.infer<typeof CliActionSchema>;
 export type CliArm = z.infer<typeof CliArmSchema>;
 
 /**
- * Nhận mặt một tờ khai CLI trong `company.yaml`.
+ * Recognizes a CLI declaration inside `company.yaml`.
  *
- * ⚠ Nhận theo `type`, không theo *"không có `command` cũng không có `url`"*:
- * cái sau là suy luận theo vắng mặt, mà vắng mặt không phải tín hiệu — một tờ
- * khai gõ sai sẽ im lặng thành "CLI" rồi hỏng ở chỗ khác.
+ * ⚠ Recognized by `type`, not by *"has no `command` and no `url`"*: the
+ * latter infers from absence, and absence is not a signal — a
+ * mistyped declaration would silently become "CLI" and then fail somewhere else.
  * → [[agentco-deterministic-vs-signal]]
  */
 export function isCliArm(config: unknown): boolean {
   return !!config && typeof config === 'object' && (config as { type?: unknown }).type === 'cli';
 }
 
-/** Mọi khoá ta khai — nguồn của gợi ý "ý bạn là…". Một danh sách, không phải ba. */
+/** Every key we declare — the source for "did you mean…" hints. One list, not three. */
 const KNOWN_KEYS = [
   ...Object.keys(CliArmSchema.shape),
   ...Object.keys(CliActionSchema.shape),
@@ -192,18 +210,19 @@ const KNOWN_KEYS = [
 ];
 
 /**
- * Khoá gần đúng nhất, hoặc `undefined`.
+ * The nearest matching key, or `undefined`.
  *
- * ⚠ Bắt **họ camelCase trước** bằng phép chuẩn hoá (bỏ `_`, hạ chữ thường) chứ
- * không dựa vào khoảng cách sửa: `readOnly` → `read_only` lệch 2 phép, còn
- * `timeoutMs` → `timeout_ms` lệch 3 — một ngưỡng đủ rộng để bắt cả hai sẽ bắt
- * luôn những thứ không liên quan. Chuẩn hoá thì **tất định** và không cần ngưỡng.
+ * ⚠ Catches the **camelCase family first** via normalization (strip `_`,
+ * lowercase) rather than edit distance: `readOnly` → `read_only` is 2 edits
+ * away, while `timeoutMs` → `timeout_ms` is 3 — a threshold wide enough to
+ * catch both would also catch unrelated things. Normalizing is
+ * **deterministic** and needs no threshold at all.
  */
 function nearestKey(bad: string): string | undefined {
   const norm = (s: string) => s.toLowerCase().replace(/_/g, '');
   const hit = KNOWN_KEYS.find((k) => norm(k) === norm(bad));
   if (hit) return hit;
-  // Còn lại là gõ thiếu/thừa một ký tự: `runs` → `run`, `sayy` → `say`.
+  // What's left is a missing/extra character: `runs` → `run`, `sayy` → `say`.
   return KNOWN_KEYS.find((k) => {
     const [a, b] = k.length > bad.length ? [k, bad] : [bad, k];
     if (a!.length - b!.length !== 1) return false;
@@ -214,38 +233,44 @@ function nearestKey(bad: string): string | undefined {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CỬA DÁN: STRICT. CỬA NẠP `company.yaml`: LỎNG. **HAI LUẬT, CỐ Ý.**       │
- * │ (user chốt 31/08 sau khi đo: zod mặc định NUỐT IM LẶNG khoá lạ)          │
+ * │ THE PASTE DOOR: STRICT. THE `company.yaml` LOAD DOOR: LOOSE. **TWO RULES,     │
+ * │ DELIBERATELY.** (the user's call, 31/08, after measuring: zod SILENTLY           │
+ * │ SWALLOWS unknown keys by default)                                          │
  * │                                                                          │
- * │ Vì sao strict ở đây: **khoá dễ gõ sai nhất chính là khoá AN TOÀN.** Người │
- * │ dán JSON gõ camelCase ở lần đầu, và ba cái hay nhất đều có bản snake:     │
- * │   `readOnly`  → annotation thành destructive, sai chiều                  │
- * │   `timeoutMs` → rơi về 120s, người dùng tin là đã đặt                    │
- * │   `failWhen`  → 🔴 lưới đỡ `exit 0` kèm lỗi BIẾN MẤT, không tín hiệu nào  │
- * │ Dòng cuối mở lại đúng cái lỗ §5h·7d mà `fail_when` sinh ra để chặn.       │
+ * │ Why strict here: **the key most likely to be mistyped is exactly the SAFE-       │
+ * │ LOOKING key.** Someone pasting JSON types camelCase the first time, and all       │
+ * │ three of the worst offenders have snake_case versions:                          │
+ * │   `readOnly`  → the annotation becomes destructive, the wrong direction              │
+ * │   `timeoutMs` → falls back to 120s, the user believes they set it                    │
+ * │   `failWhen`  → 🔴 the safety net catching `exit 0` with an error VANISHES,           │
+ * │                 with no signal at all                                             │
+ * │ That last line reopens exactly the §5h·7d hole `fail_when` exists to block.         │
  * │                                                                          │
- * │ Hai chiều hỏng không cân nhau: từ chối nhầm ⇒ người dùng đang đứng đó,    │
- * │ sửa trong 3 giây (ỒN ÀO, RẺ). Nhận nhầm ⇒ KHÔNG TRIỆU CHỨNG NÀO.         │
- * │ → [[agentco-safe-default-direction]] · [[agentco-silent-allowlist]]       │
+ * │ The two failure directions aren't equally bad: a false rejection ⇒ the user       │
+ * │ is standing right there, fixes it in 3 seconds (LOUD, CHEAP). A false             │
+ * │ acceptance ⇒ NO SYMPTOM AT ALL.                                              │
+ * │ → [[agentco-safe-default-direction]] · [[agentco-silent-allowlist]]           │
  * │                                                                          │
- * │ ⚠ VÀ VÌ SAO CỬA NẠP PHẢI LỎNG: không ai đứng đó. Siết cửa nạp là ngày     │
- * │ nâng cấp thêm một trường thì **mọi cánh tay cũ thành mồ côi**. Ai "dọn    │
- * │ cho gọn" bằng cách gộp hai cửa sẽ phá đúng một trong hai. Có test canh.   │
+ * │ ⚠ AND WHY THE LOAD DOOR HAS TO STAY LOOSE: nobody is standing there.              │
+ * │ Tightening the load door means the day a new field ships, **every existing         │
+ * │ arm becomes orphaned**. Anyone "cleaning up" by merging the two doors would         │
+ * │ break exactly one of them. There's a test guarding this.                         │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Gợi ý khoá gần đúng là thứ biến **hàng rào thành biển chỉ đường** — đó mới
- * là câu trả lời cho *"rào hay linh hoạt"*: linh hoạt không nằm ở chỗ nhận bừa,
- * nó nằm ở chỗ nói cho người ta biết phải sửa gì.
+ * ⚠ Suggesting the nearest key is what turns **a fence into a signpost** —
+ * that's the real answer to *"strict or flexible"*: flexibility doesn't come
+ * from accepting anything, it comes from telling someone exactly what to fix.
  */
 export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: false; error: string } {
   /**
-   * ⚠ Quét khoá lạ bằng MỘT lượt đi bộ, KHÔNG bằng `z.strictObject`.
+   * ⚠ Scans for unknown keys with ONE walk, NOT with `z.strictObject`.
    *
-   * Bản đầu 31/08 làm cả ba schema `strictObject` — và test bắt ngay: nó siết
-   * **cả cửa nạp**, tức phá đúng bất biến vừa viết ở khối trên. Schema là **một
-   * hàm dùng chung cho hai cửa**, nên độ chặt không được sống trong schema; nó
-   * phải sống ở **cửa**. Một hàm quét ở đây rẻ hơn hẳn hai bộ schema song song —
-   * và hai bộ schema thì sớm muộn cũng lệch nhau.
+   * The first version, 31/08, made all three schemas `strictObject` — and a
+   * test caught it immediately: it also tightened **the load door**, breaking
+   * exactly the invariant stated in the block above. The schema is **one
+   * function shared by two doors**, so strictness cannot live inside the
+   * schema; it has to live at **the door**. One scanning function here is far
+   * cheaper than two parallel schema sets — and two schema sets always drift apart eventually.
    */
   const bad: string[] = [];
   const scan = (obj: unknown, allowed: readonly string[]) => {
@@ -273,25 +298,28 @@ export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: f
   if (r.success) {
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 HAI LỆNH TRÙNG `id`. (user hỏi 01/09, và câu hỏi trúng một lỗ)     │
+     * │ 🔴 TWO COMMANDS SHARING AN `id`. (the user asked, 01/09, and the question    │
+     * │ hit a real hole)                                                       │
      * │                                                                      │
-     * │ ĐÃ ĐO (01/09): SDK **NÉM** — `Tool a is already registered`. Nên tin  │
-     * │ mừng là **không có ca nuốt im lặng**: không đời nào một lệnh "xoá"    │
-     * │ lặng lẽ chiếm chỗ một lệnh "đếm" cùng tên.                           │
+     * │ MEASURED (01/09): the SDK **THROWS** — `Tool a is already registered`.        │
+     * │ So the good news is **there's no silent-swallow case**: there's no way a       │
+     * │ "delete" command would quietly take over the slot of a "count" command with     │
+     * │ the same name.                                                            │
      * │                                                                      │
-     * │ Nhưng nó ném ở `compileCliArm`, tức **lúc Thử hoặc lúc chạy**, bằng   │
-     * │ một câu tiếng Anh nói về "tool" — trong khi người dùng vừa đặt tên    │
-     * │ hai *lệnh* bằng tiếng Việt. Đúng lớp *câu lỗi sai cửa*: đúng sự thật, │
-     * │ sai người nhận. → [[agentco-wrong-door-errors]]                       │
+     * │ But it throws inside `compileCliArm`, meaning **at Test time or at run          │
+     * │ time**, with an English sentence about a "tool" — while the user just             │
+     * │ named two *commands* in their own language. Exactly the *wrong-door error*         │
+     * │ class: correct fact, wrong recipient. → [[agentco-wrong-door-errors]]              │
      * │                                                                      │
-     * │ ⚠ VÀ NÓ TỚI ĐƯỢC TỪ FORM, không cần sửa JSON: `id` do `slugId(say)`   │
-     * │ sinh ra, nên *"đếm hoá đơn"* và *"đếm hoá đơn!"* ra **cùng một** id.  │
-     * │ Đây không phải ca hiếm của người nghịch JSON.                        │
+     * │ ⚠ AND IT'S REACHABLE FROM THE FORM, no JSON editing required: `id` is             │
+     * │ generated by `slugId(say)`, so *"count invoices"* and *"count invoices!"*           │
+     * │ produce **the same** id. This is not a rare case limited to someone editing JSON.  │
      * │                                                                      │
-     * │ ⚠ Chỉ chặn Ở CỬA, KHÔNG đưa vào schema: schema dùng chung với cửa nạp │
-     * │ `company.yaml`, mà rớt ở đó thì `cliToolNames` trả `[]` ⇒ `addArm`    │
-     * │ ghi `tools: []` ⇒ **cấp cả server** (đúng lỗ §5t). Cửa nạp cứ để SDK  │
-     * │ ném — tất định, và không nới quyền cho ai.                            │
+     * │ ⚠ Blocked ONLY AT THE DOOR, NOT added to the schema: the schema is                │
+     * │ shared with the `company.yaml` load door, and failing there means                 │
+     * │ `cliToolNames` returns `[]` ⇒ `addArm` writes `tools: []` ⇒ **grants the           │
+     * │ entire server** (exactly the §5t hole). The load door just lets the SDK             │
+     * │ throw — deterministic, and grants nobody extra permission.                        │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     const seen = new Set<string>();
@@ -313,21 +341,23 @@ export function parseCliArm(input: unknown): { ok: true; arm: CliArm } | { ok: f
 }
 
 /**
- * ⚠ `cliPasteRedirect` ĐÃ CHUYỂN SANG WEB (01/09) — **đừng dựng lại ở đây.**
+ * ⚠ `cliPasteRedirect` MOVED TO WEB (01/09) — **do not rebuild it here.**
  *
- * Nó là một **affordance của giao diện** (*"anh dán nhầm tab, mở tab Lệnh nhé"*),
- * không phải một luật của lõi. Hai lý do, và lý do thứ hai là lý do cứng:
+ * It's an **interface affordance** (*"you pasted into the wrong tab, try the
+ * Commands tab instead"*), not a core rule. Two reasons, and the second is the hard one:
  *
- *  ① Lõi **không được biết** thứ này đến từ màn hình nào. Chặn ở cửa, không chặn
- *    ở lõi: sửa tay `company.yaml` thêm tờ khai CLI thì nó **vẫn phải chạy** —
- *    có test khoá. Buộc một KIỂU DỮ LIỆU vào một MÀN HÌNH mới là chỗ vi phạm.
- *  ② File này `import 'node:child_process'` và SDK ⇒ **không vào được bundle
- *    trình duyệt**. Một hàm chỉ web gọi mà nằm trong module chỉ server nạp được
- *    thì mãi mãi là mã không ai gọi — đúng cái bẫy vừa mắc hôm qua.
+ *  ① The core **must not know** which screen this came from. Blocked at the
+ *    door, not in the core: hand-editing `company.yaml` to add a CLI
+ *    declaration **still has to work** — there's a test locking this in.
+ *    Tying a DATA TYPE to a SCREEN is exactly the violation.
+ *  ② This file does `import 'node:child_process'` and the SDK ⇒ **cannot enter
+ *    the browser bundle at all**. A function only web code calls, sitting
+ *    inside a module only the server can load, is forever dead code nobody
+ *    can call — exactly the trap hit yesterday.
  *    → [[agentco-spec-says-done]]
  */
 
-// ══════════════════ 2 · BỘ CHẠY — mọi thứ TƯỜNG MINH (ràng buộc §16p ③)
+// ══════════════════ 2 · THE RUNNER — everything EXPLICIT (constraint §16p ③)
 
 export interface RunResult {
   ok: boolean;
@@ -335,24 +365,25 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   ms: number;
-  /** `spawn` · `timeout` · `exit` · `fail_when` — BỐN CỬA, đừng gộp. */
+  /** `spawn` · `timeout` · `exit` · `fail_when` — FOUR DOORS, don't merge them. */
   door?: 'spawn' | 'timeout' | 'exit' | 'fail_when';
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ KHÔNG `process.cwd()`. KHÔNG kế thừa env ngầm. KHÔNG `shell: true`.       │
+ * │ NO `process.cwd()`. NO implicit env inheritance. NO `shell: true`.            │
  * │                                                                          │
- * │ Ba cái đầu là ràng buộc "chờ sẵn Docker" §16p ③ — trong container ambient │
- * │ là thứ khác, và đây là giả định trộn sâu nhất, khó gỡ nhất.               │
+ * │ The first three are the "Docker-ready" constraint §16p ③ — inside a           │
+ * │ container, ambient is a different thing, and this is the most deeply mixed-      │
+ * │ in assumption, the hardest to untangle later.                                  │
  * │                                                                          │
- * │ `shell:false` còn là CỘT CHỊU LỰC AN NINH: nó là thứ làm `; calc` chỉ là  │
- * │ một chuỗi ký tự chứ không phải một lệnh thứ hai. Đo được trong spike:     │
- * │ `6; calc` và `6 && calc` đi qua nguyên vẹn như dữ liệu.                   │
+ * │ `shell:false` is also a SECURITY LOAD-BEARING PILLAR: it's what makes `;       │
+ * │ calc` just a string of characters rather than a second command. Measured in       │
+ * │ the spike: `6; calc` and `6 && calc` pass through intact, as plain data.         │
  * │                                                                          │
- * │ ⚠ GIỚI HẠN ĐÃ BIẾT, ĐÁNH ĐỔI CÓ Ý THỨC: `shell:false` không chạy được    │
- * │ `.cmd`/`.bat` trên Windows (`npx`, `npm`). Muốn bọc một `.cmd` thì khai   │
- * │ đường dẫn đầy đủ tới trình thông dịch — **đừng mở `shell`**.              │
+ * │ ⚠ A KNOWN LIMIT, A DELIBERATE TRADE-OFF: `shell:false` cannot run                 │
+ * │ `.cmd`/`.bat` on Windows (`npx`, `npm`). To wrap a `.cmd`, declare the full           │
+ * │ path to its interpreter instead — **never turn on `shell`**.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function runCommand(opts: {
@@ -381,9 +412,9 @@ export function runCommand(opts: {
     const timer = setTimeout(() => {
       timedOut = true;
       /**
-       * ⚠ `child.kill()` trên Windows KHÔNG giết cây con. Một `python` gọi tiếp
-       * một tiến trình khác thì tiến trình cháu sống sót và thành mồ côi.
-       * `taskkill /T /F` là đường duy nhất đúng ở đây.
+       * ⚠ `child.kill()` on Windows does NOT kill the child's own subtree. A
+       * `python` process that spawns another process leaves that grandchild
+       * alive, orphaned. `taskkill /T /F` is the only correct path here.
        * → [[agentco-three-os-always]]
        */
       try {
@@ -393,12 +424,12 @@ export function runCommand(opts: {
           child.kill('SIGKILL');
         }
       } catch {
-        /* đã chết rồi */
+        /* already dead */
       }
     }, opts.timeoutMs);
 
-    // `error` = KHÔNG spawn được (thiếu binary, không có quyền). Đây là một CỬA
-    // KHÁC HẲN "chạy rồi hỏng" — gộp hai cái là đẻ ra câu lỗi sai cửa.
+    // `error` = FAILED to spawn at all (missing binary, no permission). This
+    // is a DOOR ENTIRELY DIFFERENT from "ran and then failed" — merging the two produces a wrong-door error message.
     child.on('error', (e) => {
       clearTimeout(timer);
       resolve({ ok: false, code: null, stdout: out, stderr: e.message, ms: Date.now() - t0, door: 'spawn' });
@@ -418,16 +449,18 @@ export function runCommand(opts: {
   });
 }
 
-// ═══════════════════════ 3 · ĐIỀN ARGV — chỗ chịu lực AN NINH (§16e)
+// ═══════════════════════ 3 · FILLING ARGV — the SECURITY load-bearing spot (§16e)
 
 export class ArgvError extends Error {}
 
 /**
- * Thay `{ten}` bằng giá trị. **Không nối chuỗi, không qua shell, không tự thêm
- * phần tử nào.** Một tham số ⇒ nằm gọn trong đúng phần tử argv đã khai.
+ * Replaces `{name}` with a value. **No string concatenation, no shell, never
+ * adds an extra element.** One parameter ⇒ sits neatly inside the exact argv
+ * element it was declared in.
  *
- * ⚠ Kiểm giá trị TRƯỚC khi thay, không phải sau: kiểm sau là kiểm một chuỗi đã
- * lẫn với phần cố định, và luật *"mở đầu bằng `-`"* mất nghĩa ngay lập tức.
+ * ⚠ The value is checked BEFORE substitution, not after: checking after
+ * means checking a string already merged with the fixed part, and the
+ * *"starts with `-`"* rule loses its meaning immediately.
  */
 export function fillArgv(a: CliAction, args: Record<string, unknown>): string[] {
   const byName = new Map((a.params ?? []).map((p) => [p.name, p]));
@@ -448,7 +481,7 @@ export function fillArgv(a: CliAction, args: Record<string, unknown>): string[] 
       return String(n);
     }
     const s = String(raw);
-    // 🔴 LUẬT GẠCH — xem chú thích `allow_dash`.
+    // 🔴 THE DASH RULE — see the comment on `allow_dash`.
     if (!p.allow_dash && s.startsWith('-')) {
       throw new ArgvError(
         `"${name}" starts with a dash ("${s}") — a value must never be able to turn into a ` +
@@ -464,21 +497,22 @@ export function fillArgv(a: CliAction, args: Record<string, unknown>): string[] 
   return a.run.map((el) => el.replace(/\{([a-z0-9_]+)\}/gi, (_, n: string) => value(n)));
 }
 
-// ═════════════════ 4 · KHAI BÁO → TOOL. HÀM THUẦN (ràng buộc §16p ①)
+// ═════════════════ 4 · DECLARATION → TOOL. A PURE FUNCTION (constraint §16p ①)
 
-/** Nơi tiến trình con được phép sống. `officeDir` giải ô trống `{office}`. */
+/** Where a child process is allowed to live. `officeDir` resolves the `{office}` placeholder. */
 export interface CliContext {
   officeDir: string;
-  /** Chìa đã được `injectSecrets` điền. Đi vào `env`, KHÔNG vào argv. */
+  /** Keys already filled in by `injectSecrets`. Goes into `env`, NOT into argv. */
   env: Record<string, string>;
-  /** Ghi lại mọi lời gọi — thứ DUY NHẤT trả lời được "ai vừa chạy cái gì". */
+  /** Records every call — the ONLY thing that can answer "who just ran what". */
   onCall?: (rec: { tool: string; argv: string[]; cwd: string; ms: number; ok: boolean }) => void;
 }
 
 /**
- * ⚠ Hàm này **không biết** mình đang chạy dưới transport nào — đó là toàn bộ lý
- * do nó tách khỏi chỗ dựng server. Ngày thêm shim HTTP cho Docker, phần này đi
- * theo nguyên vẹn, **không đụng một dòng**. → §16p ①
+ * ⚠ This function **does not know** which transport it's running under — that's
+ * the entire reason it's split off from where the server gets built. The day an
+ * HTTP shim for Docker gets added, this part carries over intact,
+ * **without touching a single line**. → §16p ①
  */
 export function buildCliTools(arm: CliArm, ctx: CliContext) {
   return arm.actions.map((a) => {
@@ -486,10 +520,11 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
     for (const p of a.params ?? []) {
       let base: z.ZodTypeAny = p.type === 'integer' ? z.number().int() : z.string();
       /**
-       * Ví dụ đi vào `description` của ĐÚNG property này — đo 31/08:
-       * `.describe()` → `{"tag":{"type":"string","description":"…"}}`.
-       * Vắng `example` ⇒ **không in gì**, nên mọi cánh tay đang chạy không đổi
-       * một ký tự nào trong prefix. (Cùng luật chống-hỏng-lây của `does`.)
+       * The example goes into the `description` of THIS EXACT property —
+       * measured 31/08: `.describe()` → `{"tag":{"type":"string","description":"…"}}`.
+       * Missing `example` ⇒ **prints nothing**, so every arm already running
+       * doesn't change a single character in the prefix. (Same
+       * doesn't-break-anyone-else rule as `does`.)
        */
       if (p.example) base = base.describe(`example: ${p.example}`);
       shape[p.name] = p.required ? base : base.optional();
@@ -498,9 +533,10 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
     return tool(
       a.id,
       /**
-       * 📄 TỜ HƯỚNG DẪN đi thẳng vào đây, nguyên văn. Sau khi bỏ nấc quyền, đây
-       * là chỗ **DUY NHẤT** model học được lệnh này làm gì và nguy hiểm tới đâu
-       * — nên nó phải nói ra HẬU QUẢ, không chỉ công dụng. → §16l
+       * 📄 THE INSTRUCTION SHEET goes straight in here, verbatim. Now that
+       * tiers are gone, this is the **ONLY** place the model learns what this
+       * command does and how dangerous it is — so it must state the
+       * CONSEQUENCES, not just the purpose. → §16l
        */
       a.description,
       shape,
@@ -509,8 +545,9 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
         try {
           filled = fillArgv(a, args as Record<string, unknown>);
         } catch (e) {
-          // Cổng chặn TRƯỚC khi spawn. Trả `isError` để model biết nó sai THAM SỐ
-          // chứ không phải máy hỏng — hai chuyện, hai cách xử lý khác nhau.
+          // Blocked at the gate BEFORE spawning. Returns `isError` so the
+          // model knows its PARAMETER was wrong, not that the machine is
+          // broken — two different things, two different next steps.
           return {
             content: [{ type: 'text', text: `Invalid parameter: ${(e as Error).message}` }],
             isError: true,
@@ -518,24 +555,25 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
         }
 
         /**
-         * `cwd` do TA giải, luôn trong văn phòng. **Không nhận `cwd` từ tham số
-         * model sinh** — đó là ràng buộc §16i, không phải khẩu vị.
+         * `cwd` is resolved by US, always inside the office. **Never accepts
+         * `cwd` from a model-generated parameter** — that's constraint §16i, not a preference.
          */
         const cwd = a.cwd ? a.cwd.split('{office}').join(ctx.officeDir) : ctx.officeDir;
 
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
-         * │ 🔴 CỬA `spawn` CÓ HAI NGUYÊN NHÂN, CÂU LỖI CHỈ NÓI MỘT.          │
-         * │ (bắt được 30/08, ngay trong lượt chạy đầu của spike)             │
+         * │ 🔴 THE `spawn` DOOR HAS TWO CAUSES, THE ERROR MESSAGE ONLY STATED ONE.     │
+         * │ (caught 30/08, on the very first spike run)                            │
          * │                                                                  │
-         * │ `spawn` ném **ENOENT** cho CẢ HAI: thiếu binary, VÀ `cwd` không   │
-         * │ tồn tại. Bản đầu quy hết về *"máy này không tìm thấy python"* —   │
-         * │ và nhân viên đã báo nguyên văn câu đó cho người dùng, trong khi   │
-         * │ máy có đủ Python. Một câu lỗi tự tin và sai, dẫn người ta đi cài  │
-         * │ lại thứ họ đang có.                                              │
+         * │ `spawn` throws **ENOENT** for BOTH: a missing binary, AND a `cwd` that      │
+         * │ doesn't exist. The first version attributed everything to *"this machine       │
+         * │ cannot find python"* — and a worker reported that exact sentence to the        │
+         * │ user, while the machine had Python installed just fine. A confident,           │
+         * │ wrong error message that sent someone off to reinstall something they          │
+         * │ already had.                                                              │
          * │                                                                  │
-         * │ Phân biệt được bằng MỘT phép kiểm rẻ ⇒ không có lý do gì để đoán. │
-         * │ → [[agentco-wrong-door-errors]]                                   │
+         * │ Distinguishable with ONE cheap check ⇒ no reason at all to guess.            │
+         * │ → [[agentco-wrong-door-errors]]                                            │
          * └──────────────────────────────────────────────────────────────────┘
          */
         if (!fs.existsSync(cwd)) {
@@ -555,7 +593,7 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
         const r = await runCommand({
           argv: filled,
           cwd,
-          // Chìa của action gộp lên trên chìa chung — action là chỗ hẹp hơn.
+          // The action's own keys are merged on top of the shared keys — the action is the narrower scope.
           env: { ...ctx.env, ...(a.env ?? {}) },
           timeoutMs: a.timeout_ms,
         });
@@ -564,7 +602,7 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
         const body = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n');
         const hit = a.fail_when?.find((s) => body.includes(s));
 
-        // ⚠ BỐN CỬA, BỐN CÂU. Gộp lại là đẻ ra đúng lớp "câu lỗi chỉ sai cửa".
+        // ⚠ FOUR DOORS, FOUR SENTENCES. Merging them produces exactly the "wrong-door error message" class.
         if (r.door === 'spawn') {
           return {
             content: [
@@ -606,8 +644,9 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
         return { content: [{ type: 'text', text: body || '(the command finished and printed nothing)' }] };
       },
       {
-        // Vẫn khai `annotations` cho ĐÚNG giao thức MCP — nhưng chúng KHÔNG dựng
-        // nấc quyền nào (user chốt 30/08). Chúng ở đây để nhật ký và UI đọc được.
+        // Still declares `annotations` to follow the MCP protocol CORRECTLY —
+        // but they build NO permission tier at all (the user's call, 30/08).
+        // They exist here for logs and the UI to read.
         annotations: { readOnlyHint: a.read_only === true, destructiveHint: a.read_only !== true },
       },
     );
@@ -615,12 +654,13 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
 }
 
 /**
- * Tờ khai → cấu hình SDK chạy được.
+ * Declaration → a runnable SDK config.
  *
- * ⚠ Gọi SAU `injectSecrets`, không bao giờ trước: `fillRefs` chỉ đi vào object
- * thuần, mà kết quả của hàm này chở một `McpServer` **sống**. Đảo thứ tự là ô
- * `${CHIA}` trong `env` của action không bao giờ được điền — đúng cái bug 31/08
- * (`missingSecretRefs` phát hiện mãi mãi, `injectSecrets` không bao giờ điền).
+ * ⚠ Called AFTER `injectSecrets`, never before: `fillRefs` can only walk a
+ * plain object, and this function's result carries a **live** `McpServer`.
+ * Reversing the order means an action's `env` `${KEY}` placeholder never gets
+ * filled — exactly the 31/08 bug (`missingSecretRefs` detects it forever,
+ * `injectSecrets` never fills it in).
  * → SPEC-arms §16a ⑧
  */
 export function compileCliArm(name: string, decl: unknown, ctx: CliContext): McpServerConfig {
@@ -628,13 +668,13 @@ export function compileCliArm(name: string, decl: unknown, ctx: CliContext): Mcp
   return createSdkMcpServer({ name, version: '1', tools: buildCliTools(arm, ctx) }) as McpServerConfig;
 }
 
-/** Tên các việc — `arms[băm].tools` cần nó để cấp `mcp__<id>__<tool>`, không cấp cả server. */
+/** Task names — `arms[hash].tools` needs this to grant `mcp__<id>__<tool>`, not the entire server. */
 export function cliToolNames(decl: unknown): string[] {
   const parsed = CliArmSchema.safeParse(decl);
   return parsed.success ? parsed.data.actions.map((a) => a.id) : [];
 }
 
-/** Câu tiếng người cho dòng danh bạ (`arms[băm].does`). Trần 4 — §7b cấm tên tool thô. */
+/** Human-readable sentences for the directory line (`arms[hash].does`). Ceiling 4 — §7b forbids raw tool names. */
 export function cliSays(decl: unknown): string[] {
   const parsed = CliArmSchema.safeParse(decl);
   return parsed.success ? parsed.data.actions.map((a) => a.say).slice(0, 4) : [];

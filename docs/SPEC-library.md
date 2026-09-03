@@ -99,7 +99,7 @@ Hai cột **không đối nhau, chúng bù nhau**:
 File text của PDF **phải** cắm mốc trang:
 
 ```
---- trang 12 ---
+--- page 12 ---
 Điều 7. Bên B chịu mọi chi phí phát sinh...
 ```
 

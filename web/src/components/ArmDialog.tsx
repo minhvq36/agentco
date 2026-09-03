@@ -1,20 +1,22 @@
-/**
- * CẮM MỘT CÁNH TAY — hộp thoại ba bước. → docs/SPEC-arms.md §6e–§6h
+﻿/**
+ * PLUGGING IN AN ARM — a three-step dialog. → docs/SPEC-arms.md §6e–§6h
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO BA BƯỚC, VÀ VÌ SAO BƯỚC 3 BẮT BUỘC                                │
- * │                                                                          │
- * │   1. Chọn        thẻ danh mục hiện SẴN ở màn đầu — đó là toàn bộ nghĩa    │
- * │                  của "rút ra xài được ngay". Không kéo thả: canvas có tự  │
- * │                  sắp + nút "Sắp xếp lại", nên kéo thả HỨA một quyền mà    │
- * │                  nút bên cạnh lấy lại. → §6e                             │
- * │   2. Chìa & Thử  KHÔNG cho Lưu khi chưa Thử thành công một lần. Người     │
- * │                  non-code không cần hiểu MCP — họ cần thấy dấu ✓.        │
- * │   3. Giao cho ai BẮT BUỘC. Node không dây là NODE CHẾT: hiện trên sơ đồ,  │
- * │                  trông như đã xong, không ai dùng được — và người dùng    │
- * │                  vừa bấm Lưu và thấy ✓ sẽ KHÔNG đoán ra là còn phải kéo   │
- * │                  một sợi dây. Đúng lớp lỗi "hệ thống nói dối về trạng     │
- * │                  thái của chính nó".                                     │
+ * │ WHY THREE STEPS, AND WHY STEP 3 IS MANDATORY                              │
+ * │                                                                           │
+ * │   1. Pick       the catalogue cards are ON the first screen — that is     │
+ * │                 the whole meaning of "pull it out and use it". No drag    │
+ * │                 and drop: the canvas auto-arranges and has a "Rearrange"  │
+ * │                 button, so dragging PROMISES a control the button beside  │
+ * │                 it takes back. → §6e                                      │
+ * │   2. Keys+Test  Save stays closed until Test has succeeded once. A        │
+ * │                 non-coder does not need to understand MCP — they need to  │
+ * │                 see a ✓.                                                  │
+ * │   3. Grant      MANDATORY. An unwired node is a DEAD NODE: it sits on the │
+ * │                 diagram looking finished and nobody can use it — and a    │
+ * │                 user who just pressed Save and saw a ✓ will NOT guess     │
+ * │                 there is still a wire to drag. Exactly the "the system    │
+ * │                 lies about its own state" class of bug.                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -23,13 +25,15 @@ import { Check, FolderOpen, Loader2, Trash2, TriangleAlert, X } from 'lucide-rea
 
 import { ArmIcon } from '@/components/ArmIcon';
 /**
- * KHỐI RIÊNG CỦA TỪNG HÃNG — mỗi cái một file trong `components/arm/`.
- * (user chốt 28/08: *"custom khá nhiều để khớp với từng provider… sắp xếp lại"*)
+ * PER-VENDOR BLOCKS — one file each, in `components/arm/`.
+ * (the user's call, 28/08: *"there is a fair amount of custom work to match each
+ * provider… reorganise it"*)
  *
- * Bốn khối này chỉ hiện khi mục danh mục **khai** thứ tương ứng (`deviceLogin`,
- * `scope`, `repoScan`) — tức chúng là **dữ liệu quyết định**, không phải nhánh
- * theo tên hãng. Tách ra để lần sau sửa GitHub thì mở đúng một file, và để hộp
- * thoại thôi vừa là bộ điều phối vừa là chỗ vẽ mọi thứ.
+ * These four only appear when a catalogue entry **declares** the matching field
+ * (`deviceLogin`, `scope`, `repoScan`) — i.e. THE DATA decides, not a branch on
+ * the vendor's name. Split out so that fixing GitHub next time means opening
+ * exactly one file, and so the dialog stops being both the coordinator and the
+ * place everything is drawn.
  */
 import { DeviceCode } from '@/components/arm/DeviceCode';
 import { OwnClient } from '@/components/arm/OwnClient';
@@ -72,7 +76,8 @@ import { formatNumber } from '@i18n/fmt';
 import type { CatalogArm, InstalledArm, OAuthAccount, ProbeResult } from '@/lib/types';
 
 /**
- * Câu phụ nói CÁI GIÁ — người dùng chọn theo công sức, không theo tên hãng.
+ * The sub-line states THE PRICE — people choose by the effort it costs them, not
+ * by the vendor's name.
  *
  * Keys, resolved at render: a module-level string would freeze whichever
  * language the page happened to load with.
@@ -84,13 +89,13 @@ const PRICE_SAY: Record<CatalogArm['price'], MessageKey> = {
 };
 
 /**
- * Ba nấc quyền, nói bằng HẬU QUẢ chứ không bằng từ vựng MCP.
+ * Three access levels, stated as CONSEQUENCES rather than in MCP vocabulary.
  *
- * Người dùng không biết `destructiveHint` là gì, và không cần biết. Thứ họ cần
- * quyết là *"nhân viên này có được sửa cái tôi đã viết không"*. → §6j
+ * The user does not know what `destructiveHint` is, and does not need to. What
+ * they have to decide is *"can this employee change what I wrote"*. → §6j
  */
 /**
- * Bản NGẮN của `TIER_SAY.name` — dùng cho huy hiệu trong danh sách chật.
+ * The SHORT form of `TIER_SAY.name` — for badges in a cramped list.
  *
  * Shared with `Inspector` and `OverviewPanel` through the catalogue: the same
  * three words used to be spelled out in all three files, so adding a level meant
@@ -108,14 +113,14 @@ const TIER_SAY: Record<'read' | 'add' | 'full', { name: MessageKey; help: Messag
   full: { name: 'arm.tier.full.name', help: 'arm.tier.full.help' },
 };
 
-/** Thẻ chọn LOẠI ở bước 1. Câu phụ nói người dùng phải làm gì tiếp, không nói kỹ thuật. */
+/** Step 1's KIND card. The sub-line says what to do next, not what it is technically. */
 function TypeCard({
   icon,
   name,
   say,
   onClick,
 }: {
-  /** Hình, KHÔNG phải emoji: cùng bộ với mọi nấc sau. → `ArmIcon.tsx` */
+  /** A drawn mark, NOT an emoji: the same set as every later step. → `ArmIcon.tsx` */
   icon: ReactNode;
   name: string;
   say: string;
@@ -135,36 +140,37 @@ function TypeCard({
 }
 
 /*
-  `nextFreeId` đã BỎ (23/08). Nó tồn tại để né trùng mã khi mã là do người dùng
-  đặt — giờ mã là BĂM cấu hình, nên "trùng" nghĩa là "đúng cùng một thứ", và
-  câu trả lời không còn là đặt tên khác mà là DÙNG LẠI. → SPEC-arms.md §6i
+  `nextFreeId` was REMOVED (23/08). It existed to dodge id collisions back when
+  the id was chosen by the user — now the id is a HASH of the config, so "collides"
+  means "is exactly the same thing", and the answer is no longer a different name
+  but REUSE. → SPEC-arms.md §6i
 */
 
-/** Thư mục người dùng rời đi lần trước — bộ chọn mở lại ĐÚNG ĐÓ, không về ổ đĩa. */
+/** The directory the user left last time — the picker reopens THERE, not at the drive root. */
 const LAST_DIR = 'agentco.lastBrowseDir';
 
 /**
- * BỀ RỘNG DÙNG CHUNG của hai hộp thoại ở file này. (user 01/09: bộ chọn thư mục
- * *"hơi dài"* — nó đang 64rem trong khi hộp thoại mở ra nó chỉ 46rem.)
+ * THE SHARED WIDTH of both dialogs in this file. (user, 01/09: the folder picker
+ * is *"a bit long"* — it was 64rem while the dialog that opens it is only 46rem.)
  *
- * ⚠ MỘT hằng số, không phải hai chuỗi giống nhau: bộ chọn **bật ra từ trong**
- * hộp thoại cắm cánh tay, nên một cái rộng hơn cái kia thì mỗi lần mở là cả
- * khung nhảy ra rồi thụt vào. Ràng buộc thật ở đây không phải "46rem" — nó là
- * *"bộ chọn không bao giờ rộng hơn hộp thoại đã mở nó"*, và cách duy nhất giữ
- * được một ràng buộc giữa hai giá trị là đừng có hai giá trị.
+ * ⚠ ONE constant, not two identical strings: the picker opens **from inside** the
+ * arm dialog, so if one is wider than the other the whole frame jumps out and back
+ * on every open. The real constraint here is not "46rem" — it is *"the picker is
+ * never wider than the dialog that opened it"*, and the only way to hold a
+ * constraint between two values is to not have two values.
  * [[agentco-count-mechanisms]]
  */
 const DIALOG_W = 'w-[min(46rem,94vw)]';
 
-/** So như server: bỏ gạch chéo cuối, thống nhất `/`, bỏ phân biệt hoa thường. */
+/** Compared the way the server does: drop the trailing slash, normalise to `/`, casefold. */
 const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 /**
- * Thư mục này đã là cánh tay nào của văn phòng NÀY chưa? Trả tên nó.
+ * Is this directory already some arm of THIS office? Returns its name.
  *
- * Bản khách của `catalog.ts §coveredBy`. ⚠ Nó KHÔNG thay chốt server — client
- * bỏ qua được, nên luật thật vẫn phải nằm ở server. Nó chỉ dời câu trả lời từ
- * bước cuối lên bước một.
+ * The client-side twin of `catalog.ts §coveredBy`. ⚠ It does NOT replace the
+ * server's guard — a client can skip it, so the real rule stays on the server. It
+ * only moves the answer from the last step to the first.
  */
 function clashingArm(folder: string, installed: InstalledArm[], officeId: string | null): string | undefined {
   const want = normPath(folder);
@@ -178,25 +184,27 @@ function clashingArm(folder: string, installed: InstalledArm[], officeId: string
 }
 
 /**
- * Danh sách "đã cắm ở văn phòng khác": lọc, rồi **ĐANG DÙNG LÊN TRÊN, MỒ CÔI
- * XUỐNG ĐÁY**. (user chốt 25/08)
+ * The "already plugged in elsewhere" list: filter, then **IN USE ON TOP, ORPHANS
+ * AT THE BOTTOM**. (the user's call, 25/08)
  *
- * > *"để nó phía trên chiếm mất diện tích chú ý"*
+ * > *"leaving it up top steals the attention space"*
  *
- * Đúng cách đọc về danh sách này: nó là chỗ **dùng lại**, không phải chỗ dọn
- * dẹp. Mục không ai dùng chỉ có mặt để còn xoá được — xếp lẫn vào giữa là bắt
- * người dùng lọc bằng mắt mỗi lần cắm.
+ * That is the right reading of this list: it is a place to **reuse**, not a place
+ * to tidy. An entry nobody uses is only present so it can still be deleted —
+ * scattered through the middle it makes the user filter by eye on every plug-in.
  *
- * ⚠ Sắp theo HAI khoá. Thiếu khoá thứ hai thì hai mục cùng nhóm đổi chỗ nhau
- * giữa hai lần mở hộp thoại: `listArms` đi theo thứ tự khoá trong yaml, mà thứ
- * tự đó không có gì bảo đảm — và một danh sách tự nhảy chỗ là thứ làm người
- * dùng bấm nhầm.
+ * ⚠ Sorted by TWO keys. Without the second, two entries in the same group swap
+ * places between two openings of the dialog: `listArms` follows the key order in
+ * the yaml, and nothing guarantees that order — and a list that reshuffles itself
+ * is what makes people click the wrong row.
  *
- * ⚠ MỘT hàm, hai chỗ gọi (lúc mở, và sau khi xoá hẳn). Sắp xếp ở một chỗ rồi
- * quên chỗ kia là danh sách tự sắp lại ngay dưới tay người vừa bấm.
+ * ⚠ ONE function, two call sites (on open, and after a delete-for-good). Sorting
+ * in one and forgetting the other is a list that re-sorts under the hand that just
+ * clicked.
  *
- * ⚠ Đây chỉ là thứ tự NỀN. Thứ tự người dùng thật sự nhìn thấy do `byKind` chốt
- * lúc vẽ, vì nó cần `catalog` — thứ chưa về lúc hàm này chạy.
+ * ⚠ This is only the BASE order. What the user actually sees is settled by
+ * `byKind` at render, because that needs `catalog` — which has not arrived when
+ * this function runs.
  */
 function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] {
   return arms
@@ -205,38 +213,43 @@ function forList(arms: InstalledArm[], officeId: string | null): InstalledArm[] 
 }
 
 /**
- * BA LOẠI, và một cánh tay đã cắm thuộc đúng một loại. → §6e
+ * THREE KINDS, and a plugged-in arm belongs to exactly one. → §6e
  *
- * Suy từ `catalog` chứ không từ hình dạng cấu hình: một mục danh mục có
- * `folders` thì nó LÀ cánh tay thư mục, kể cả khi mai ta đổi nó sang HTTP.
- * Không có `catalog` ⇒ người dùng tự dán ⇒ `custom`.
+ * Derived from `catalog`, not from the config's shape: a catalogue entry with
+ * `folders` IS a file arm, even if we move it to HTTP tomorrow. No `catalog` ⇒ the
+ * user pasted it themselves ⇒ `custom`.
  */
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Ô DÁN JSON — tô màu, in lại cho dễ đọc, và CHỈ ĐÚNG CHỖ HỎNG. (user 31/08)│
- * │                                                                          │
- * │ Ba việc, và chỉ việc thứ ba mới báo lỗi được:                            │
- * │  ① màu    tên trường ≠ giá trị. Trung tính, không "hội chợ" — người dùng  │
- * │           là dân văn phòng, không phải lập trình viên đọc code cả ngày.   │
- * │  ② in lại xuống dòng + thụt lề 2. **CHỈ khi JSON hợp lệ** — không có cây  │
- * │           thì không in lại được, và tự sửa hộ một khối hỏng là cách chắc  │
- * │           chắn nhất làm họ mất chỗ đang dở.                              │
- * │  ③ lỗi    `JSON.parse` ném kèm **vị trí** ⇒ dòng/cột + một câu tiếng      │
- * │           người. Đây mới là thứ chỉ được chỗ hỏng; màu thì không.         │
- * │                                                                          │
- * │ ⚠ IN LẠI Ở ĐÂU: lúc **dán** và lúc **rời ô**, KHÔNG phải mỗi lần gõ —     │
- * │ in lại giữa lúc đang gõ là nhảy con trỏ, và người dùng mất chỗ.           │
- * │                                                                          │
- * │ ⚠ VÌ SAO PHẢI PHỦ MỘT LỚP `<pre>`: `<textarea>` không tô màu từng chữ     │
- * │ được — đó là giới hạn của thẻ, không phải lựa chọn. Nên chữ thật để trong │
- * │ suốt, lớp màu nằm ngay dưới, hai lớp phải **cùng font, cùng cỡ, cùng      │
- * │ padding, cùng `white-space`** và cuộn theo nhau. Lệch một thuộc tính là   │
- * │ chữ và màu rời nhau.                                                     │
+ * │ THE JSON PASTE BOX — colour, reformat, and POINT AT THE BREAK. (user      │
+ * │ 31/08)                                                                    │
+ * │                                                                           │
+ * │ Three jobs, and only the third can report an error:                       │
+ * │  ① colour   field names ≠ values. Neutral, not a funfair — these users    │
+ * │             work in an office, they are not developers reading code all   │
+ * │             day.                                                          │
+ * │  ② reformat line breaks + 2-space indent. **ONLY when the JSON is         │
+ * │             valid** — with no tree there is nothing to reformat, and      │
+ * │             "helpfully" rewriting a broken block is the surest way to     │
+ * │             lose the place they were working in.                          │
+ * │  ③ errors   `JSON.parse` throws with a **position** ⇒ line/column plus a  │
+ * │             human sentence. This is the part that points at the break;    │
+ * │             colour does not.                                              │
+ * │                                                                           │
+ * │ ⚠ WHEN TO REFORMAT: on **paste** and on **blur**, NOT on every keystroke  │
+ * │ — reformatting mid-typing moves the caret and the user loses their place. │
+ * │                                                                           │
+ * │ ⚠ WHY THERE IS A `<pre>` UNDERNEATH: a `<textarea>` cannot colour         │
+ * │ individual characters — that is a limitation of the element, not a        │
+ * │ choice. So the real text is transparent, the coloured layer sits under    │
+ * │ it, and the two must share **the same font, size, padding and             │
+ * │ `white-space`** and scroll together. One property out of step and the     │
+ * │ text separates from its colour.                                           │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const TOK: Record<string, string> = {
-  // Xanh = tên, nâu = giá trị. Token của theme, KHÔNG phải mã màu cứng — xem
-  // khối chú thích ở `index.css §--color-jkey`.
+  // Teal = names, brown = values. Theme tokens, NOT hard-coded colour codes — see
+  // the note at `index.css §--color-jkey`.
   key: 'text-jkey',
   str: 'text-jval',
   num: 'text-jval',
@@ -247,60 +260,66 @@ const TOK: Record<string, string> = {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 MỘT CHUỖI CLASS, HAI THẺ — bug user báo 01/09: *"text area + phủ bị   │
- * │ lỗi lòi chữ ra ngoài cái khung"*.                                        │
+ * │ 🔴 ONE CLASS STRING, TWO ELEMENTS — bug reported 01/09: *"the textarea   │
+ * │ and its overlay break, the text spills outside the box"*.                │
  * │                                                                          │
- * │ Ô tô màu là **hai lớp chồng khít**: `<pre>` vẽ màu, `<textarea>` trong    │
- * │ suốt nằm trên. Chồng khít chỉ đúng khi **mọi thứ quyết định chỗ xuống    │
- * │ dòng** giống hệt nhau: font · cỡ · leading · padding · viền · bo góc ·   │
- * │ và **bề rộng vùng chữ**. Bản trước gõ tay hai bộ class ⇒ chúng lệch ở ba │
- * │ chỗ (`rounded-md` vs `rounded-lg`, `text-sm` của `Textarea` bị đè bằng   │
- * │ một class khác, và không bên nào chừa chỗ cho thanh cuộn).               │
+ * │ The coloured box is **two exactly-aligned layers**: a `<pre>` painting   │
+ * │ the colour, a transparent `<textarea>` on top. They align only while     │
+ * │ **everything that decides where a line wraps** is identical: font · size │
+ * │ · leading · padding · border · radius · and **the text area's width**.   │
+ * │ The previous version typed two sets of classes by hand ⇒ they disagreed  │
+ * │ in three places (`rounded-md` vs `rounded-lg`, `Textarea`'s `text-sm`    │
+ * │ overridden by another class, and neither side reserving scrollbar room). │
  * │                                                                          │
- * │ ⭐ Thủ phạm chính là vế cuối: khi chữ đủ dài, **textarea mọc thanh cuộn** │
- * │ ⇒ vùng chữ của nó hẹp lại ~15px, còn `<pre>` thì không ⇒ hai lớp xuống   │
- * │ dòng ở hai chỗ khác nhau, và độ lệch **cộng dồn theo từng dòng**. Đó là  │
- * │ thứ nhìn ra thành "chữ lòi khỏi khung". `scrollbar-gutter: stable` chừa  │
- * │ chỗ sẵn ở CẢ HAI, nên bề rộng không đổi dù có cuộn hay không.            │
+ * │ ⭐ The main culprit is the last one: once the text is long enough, **the │
+ * │ textarea grows a scrollbar** ⇒ its text area narrows by ~15px while the  │
+ * │ `<pre>` does not ⇒ the two layers wrap in different places, and the      │
+ * │ offset **accumulates line by line**. That is what reads as "text spilling│
+ * │ out of the box". `scrollbar-gutter: stable` reserves the room on BOTH,   │
+ * │ so the width does not change whether it scrolls or not.                  │
  * │                                                                          │
- * │ ⇒ Một hằng số cho phần chung. Hai bản gõ tay của cùng một sự thật sớm    │
- * │ muộn cũng lệch — ở đây "sớm muộn" là ngay lần đầu có người dán một khối  │
- * │ JSON dài. [[agentco-count-mechanisms]]                                    │
+ * │ ⇒ One constant for the shared part. Two hand-typed copies of one truth   │
+ * │ drift sooner or later — here "sooner or later" was the first time anyone │
+ * │ pasted a long JSON block. [[agentco-count-mechanisms]]                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 /**
- * 🔴 VÒNG HAI (01/09) — bản vá đầu KHÔNG đủ, và lý do đáng nhớ hơn bản vá.
+ * 🔴 ROUND TWO (01/09) — the first fix was NOT enough, and the reason is worth
+ * more than the fix.
  *
- * Bản đầu cho mỗi lớp một `scrollbar-gutter: stable` rồi tin là hai bề rộng sẽ
- * bằng nhau. Chúng **không** bằng: `<textarea>` là `overflow-y: auto` (một
- * scroll container thật, có gutter), `<pre>` là `overflow: hidden` — trình duyệt
- * **không chừa gutter** cho nó. Lệch ~15px, và độ lệch cộng dồn theo từng dòng
- * ⇒ đúng triệu chứng user tả: *"cái thực edit ngắn hơn một chút"*.
+ * The first version gave each layer its own `scrollbar-gutter: stable` and trusted
+ * the two widths to match. They do **not**: the `<textarea>` is `overflow-y: auto`
+ * (a real scroll container, so it gets a gutter) while the `<pre>` is
+ * `overflow: hidden` — the browser reserves **no gutter** for it. ~15px apart, and
+ * the offset accumulates per line ⇒ exactly the symptom the user described: *"the
+ * one you actually edit is a bit shorter"*.
  *
- * ⇒ **Bỏ hẳn cuộc đua bề rộng thay vì đi đồng bộ nó: MỘT thanh cuộn, đặt trên
- * KHUNG CHUNG.** Textarea tự cao bằng nội dung (`overflow: hidden`), `<pre>` cao
- * theo nội dung, cả hai nằm trong một khung cuộn duy nhất. Bề rộng hai lớp bằng
- * nhau **theo cấu tạo**, không phải nhờ hai khai báo trùng khớp.
+ * ⇒ **Drop the width race instead of synchronising it: ONE scrollbar, on the
+ * SHARED FRAME.** The textarea grows to its content (`overflow: hidden`), the
+ * `<pre>` grows to its content, and both sit inside a single scrolling frame. The
+ * two widths are equal **by construction**, not by two declarations agreeing.
  *
- * 🎁 Và nó **xoá luôn một cơ chế**: không còn `onScroll` đồng bộ `scrollTop` —
- * hai lớp cuộn cùng nhau vì chúng ở trong cùng một khung. Một cơ chế đồng bộ
- * bị xoá là một chỗ hết lệch được. [[agentco-count-mechanisms]]
+ * 🎁 And it **deletes a mechanism**: no more `onScroll` syncing `scrollTop` — the
+ * layers scroll together because they are in the same frame. A synchronisation
+ * mechanism deleted is a place that can no longer drift.
+ * [[agentco-count-mechanisms]]
  *
- * ⚠ `<pre>` để `top-0 inset-x-0` chứ KHÔNG `inset-0`: `bottom-0` ép chiều cao
- * bằng **phần nhìn thấy** của khung cuộn, nên nội dung dài hơn sẽ bị cắt.
+ * ⚠ The `<pre>` uses `top-0 inset-x-0`, NOT `inset-0`: `bottom-0` would force its
+ * height to the scroll frame's **visible** part, cutting off longer content.
  */
 const JSON_TEXT = 'font-mono text-[12px] leading-[1.5] whitespace-pre-wrap break-words px-3 py-2';
 
 /**
- * MỘT DÒNG CỦA FORM: **nhãn bên trái, ô nhập bên phải**. (user chốt 01/09)
+ * ONE FORM ROW: **label on the left, input on the right**. (the user's call, 01/09)
  *
- * ⚠ `items-start` + `pt-2` chứ không `items-center`: ô bên phải có thể là một
- * `Textarea` hai dòng hoặc kéo theo một dãy chip argv, và căn giữa thì nhãn trôi
- * xuống giữa khối — mắt mất mốc quét dọc, thứ duy nhất làm bố cục hai cột đáng
- * giá hơn nhãn nằm trên.
+ * ⚠ `items-start` + `pt-2`, not `items-center`: the right-hand side may be a
+ * two-line `Textarea` or drag a row of argv chips along with it, and centring
+ * floats the label into the middle of the block — the eye loses the vertical scan
+ * line, which is the only thing that makes a two-column layout worth more than a
+ * label on top.
  *
- * ⚠ Cột nhãn **rộng cố định**, không `auto`: `auto` cho mỗi dòng một bề rộng
- * theo chữ của chính nó, và khi đó hai cột không còn là hai cột.
+ * ⚠ The label column has a **fixed width**, not `auto`: `auto` gives each row a
+ * width set by its own text, and then there are no longer two columns.
  */
 function Field({
   label,
@@ -309,7 +328,7 @@ function Field({
   children,
 }: {
   label: string;
-  /** Câu phụ dưới nhãn — chỗ nói *vì sao*, để nhãn giữ được một từ. */
+  /** The line under the label — where the *why* goes, so the label can stay one word. */
   hint?: string;
   htmlFor?: string;
   children: ReactNode;
@@ -329,21 +348,23 @@ function Field({
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CÚ PHÁP CHƯA CÓ Ô TRỐNG — so nó với dòng Ví dụ để **CHỈ RA** chỗ nên có. │
- * │                                                                          │
- * │ Đây là chỗ ô Ví dụ trả lời được một câu mà không màn hình nào khác trả    │
- * │ lời được: *"cái nào trong dòng lệnh này là thứ thay đổi mỗi lần?"*        │
- * │ Người dùng biết câu trả lời — họ vừa chạy hai lần với hai giá trị — nhưng │
- * │ họ **không biết rằng ta cần biết**. Bắt họ tự nghĩ ra khái niệm "tham số" │
- * │ rồi tự gõ `{…}` là bắt họ học từ vựng của máy; so hai dòng lệnh thật thì  │
- * │ không.                                                                   │
- * │                                                                          │
- * │ ⚠ Nó CHỈ ĐƯỜNG, không tự sửa. Tự thay `{…}` vào cú pháp hộ là đổi thứ    │
- * │ người dùng vừa gõ, mà đây là một PHÉP ĐOÁN — cùng luật với `toArgv`:      │
- * │ đoán thì được, nhưng người dùng phải là người bấm.                       │
- * │                                                                          │
- * │ ⚠ Và nó im khi hai dòng giống hệt: một lệnh cố định là chuyện bình        │
- * │ thường, không phải thiếu sót cần nhắc.                                    │
+ * │ THE SYNTAX HAS NO SLOT YET — compare it with the Example line to **POINT  │
+ * │ AT** where one belongs.                                                   │
+ * │                                                                           │
+ * │ This is where the Example field answers a question no other screen can:   │
+ * │ *"which part of this command line changes each time?"* The user knows the │
+ * │ answer — they just ran it twice with two values — but they **do not know  │
+ * │ that we need to know**. Making them invent the concept "parameter" and    │
+ * │ type `{…}` themselves is making them learn the machine's vocabulary;      │
+ * │ comparing two real command lines is not.                                  │
+ * │                                                                           │
+ * │ ⚠ It POINTS, it does not edit. Substituting `{…}` into the syntax for     │
+ * │ them changes what the user just typed, and this is a GUESS — the same     │
+ * │ rule as `toArgv`: guessing is allowed, but the user has to be the one who │
+ * │ clicks.                                                                   │
+ * │                                                                           │
+ * │ ⚠ And it stays quiet when the two lines are identical: a fixed command is │
+ * │ perfectly normal, not an omission worth mentioning.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ExampleNoSlot({ line, example }: { line: string; example: string }) {
@@ -363,7 +384,7 @@ function ExampleNoSlot({ line, example }: { line: string; example: string }) {
     return (
       <p className="mt-1 text-[11px] text-muted">
         {t('arm.exManyDiffsBefore', { n: at.length })}{' '}
-        <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code>{' '}
+        <code className="rounded bg-accent-soft px-1">{'{slot_name}'}</code>{' '}
         {t('arm.exManyDiffsAfter')}
       </p>
     );
@@ -373,7 +394,7 @@ function ExampleNoSlot({ line, example }: { line: string; example: string }) {
     <p className="mt-1 text-[11px] text-muted">
       {t('arm.exOneDiff1')} <code className="rounded bg-accent-soft px-1">{a[i]}</code> →{' '}
       <code className="rounded bg-accent-soft px-1">{b[i]}</code>
-      {t('arm.exOneDiff2')} <code className="rounded bg-accent-soft px-1">{'{ten_o_trong}'}</code>{' '}
+      {t('arm.exOneDiff2')} <code className="rounded bg-accent-soft px-1">{'{slot_name}'}</code>{' '}
       {t('arm.exOneDiff3')}
     </p>
   );
@@ -386,9 +407,10 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
   const toks = tokens(value);
 
   /**
-   * Textarea cao đúng bằng nội dung — nó KHÔNG được tự cuộn, vì khung ngoài mới
-   * là chỗ cuộn. Đặt `auto` trước khi đọc `scrollHeight`, nếu không nó chỉ tăng
-   * và không bao giờ co lại khi người dùng xoá bớt dòng.
+   * The textarea is exactly as tall as its content — it must NOT scroll itself,
+   * because the outer frame is what scrolls. Set `auto` before reading
+   * `scrollHeight`, otherwise it only ever grows and never shrinks back when the
+   * user deletes lines.
    */
   useEffect(() => {
     const el = box.current;
@@ -423,23 +445,24 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
           autoFocus
           spellCheck={false}
           /**
-           * 🔴 `caret-ink`, KHÔNG phải `caret-fg`. (bug user bắt 31/08:
-           * *"lúc click vào để edit không thấy con trỏ nhấp nháy"*)
+           * 🔴 `caret-ink`, NOT `caret-fg`. (bug caught 31/08: *"clicking in to
+           * edit, there is no blinking cursor"*)
            *
-           * Theme này khai `--color-ink`, nên **không có** utility `caret-fg` —
-           * class đó bị bỏ qua im lặng, `caret-color` không bao giờ được đặt, và
-           * nó thừa hưởng `color` của chính ô — mà `color` ở đây là
-           * `transparent` (chữ thật phải trong suốt để lớp màu bên dưới hiện ra).
-           * ⇒ **Con trỏ trong suốt.** Một class sai chính tả trong Tailwind
-           * không báo lỗi ở đâu cả; nó chỉ lặng lẽ không tồn tại.
+           * This theme declares `--color-ink`, so the `caret-fg` utility **does
+           * not exist** — the class was dropped silently, `caret-color` was never
+           * set, and it inherited the box's own `color`, which here is
+           * `transparent` (the real text must be transparent for the coloured
+           * layer beneath to show). ⇒ **A transparent caret.** A misspelt Tailwind
+           * class reports nothing anywhere; it quietly does not exist.
            */
           className={`${JSON_TEXT} relative block w-full resize-none overflow-hidden rounded-none border-0 bg-transparent text-transparent caret-ink focus:border-0`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={tidy}
           onPaste={() => {
-            // Sau khi trình duyệt đã ghi chữ vào ô. `requestAnimationFrame`
-            // thay `setTimeout(0)`: nó chạy sau lượt vẽ, không đua với React.
+            // After the browser has written the text into the box.
+            // `requestAnimationFrame` rather than `setTimeout(0)`: it runs after
+            // the paint, so it does not race React.
             requestAnimationFrame(() => requestAnimationFrame(tidy));
           }}
           placeholder={t('arm.jsonPlaceholder')}
@@ -459,19 +482,20 @@ function JsonBox({ value, onChange }: { value: string; onChange: (v: string) => 
 type Kind = 'files' | 'service' | 'custom' | 'browser' | 'cli';
 
 /**
- * ⚠ `cli` LÀ MỘT LOẠI RIÊNG, không phải một dạng của `custom`. (user 01/09)
+ * ⚠ `cli` IS ITS OWN KIND, not a flavour of `custom`. (user, 01/09)
  *
- * > *"Bỏ tất cả custom MCP gợi ý ở CLI, chỉ gợi ý CLI, vì bây giờ nó tách ra làm
- * > 2 trường phái khác nhau rồi"*
+ * > *"Drop all the custom-MCP suggestions in CLI, suggest only CLI, because these
+ * > have now split into two different schools"*
  *
- * Đúng, và nó là hệ quả bắt buộc của việc tách tab: từ lúc có hai thẻ ở bước 1
- * thì danh sách "dùng lại" phải tách theo đúng đường đó — bằng không, tab Lệnh
- * gợi ý một cánh tay HTTP mà chính nó **từ chối dán** ở cửa kia.
+ * Right, and it is the forced consequence of splitting the tabs: once step 1 has
+ * two cards, the "reuse" list has to split along the same line — otherwise the
+ * Commands tab suggests an HTTP arm that the same tab **refuses to accept** when
+ * pasted.
  *
- * ⚠ Hỏi theo `type === 'cli'` trên **chính cấu hình** — cùng câu hỏi
- * `core/cli-arm.ts §isCliArm` và `isCliPaste` hỏi, không phải luật thứ ba. Và
- * hỏi **trước** `a.catalog`: một tờ khai CLI không bao giờ có mục danh mục, nên
- * thứ tự này không đổi câu trả lời — nó chỉ làm nhánh CLI đọc được thành một dòng.
+ * ⚠ Asked as `type === 'cli'` on **the config itself** — the same question
+ * `core/cli-arm.ts §isCliArm` and `isCliPaste` ask, not a third rule. And asked
+ * **before** `a.catalog`: a CLI declaration never has a catalogue entry, so the
+ * order does not change the answer — it only lets the CLI branch read as one line.
  */
 function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
   if ((a.config as { type?: unknown })?.type === 'cli') return 'cli';
@@ -481,10 +505,11 @@ function kindOf(a: InstalledArm, catalog: CatalogArm[]): Kind {
 }
 
 /**
- * Logo hãng của một mục — lấy từ DANH MỤC, không từ một bảng trong thư mục web.
+ * An entry's vendor logo — from THE CATALOGUE, never from a table in the web
+ * directory.
  *
- * Ô này rỗng là chuyện bình thường (hãng chưa có logo, hoặc mục không có hãng):
- * `ArmIcon` ngã về hình theo loại. → `catalog.ts §brand.mark` · §11c
+ * Empty is normal (no logo for that vendor yet, or the entry has no vendor):
+ * `ArmIcon` falls back to the mark for its kind. → `catalog.ts §brand.mark` · §11c
  */
 function markOf(catalogId: string | undefined, catalog: CatalogArm[]): string | undefined {
   return catalogId ? catalog.find((c) => c.id === catalogId)?.brand.mark : undefined;
@@ -492,22 +517,22 @@ function markOf(catalogId: string | undefined, catalog: CatalogArm[]): string | 
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ THỨ TỰ TRONG DANH SÁCH DÙNG LẠI: **mồ côi → LOẠI → tên**. (user 27/08)   │
+ * │ ORDER IN THE REUSE LIST: **orphan → KIND → name**. (user, 27/08)         │
  * │                                                                          │
- * │ > *"trash (không được dùng) và không trash cũng order theo thứ tự: chứ   │
- * │ >  đừng để lộn xộn. sắp xếp theo type provider → file → custom"*         │
+ * │ > *"trashed (unused) and not-trashed should be ordered too — don't leave │
+ * │ >  it messy. sort by type: provider → file → custom"*                    │
  * │                                                                          │
- * │ Khoá 1 giữ nguyên luật cũ (đang dùng lên trên, mồ côi xuống đáy — 25/08).│
- * │ Khoá 2 là thứ vừa thêm: TRONG mỗi nhóm, gom theo loại. Khoá 3 (tên) phải │
- * │ còn, vì `listArms` đi theo thứ tự khoá trong yaml — thiếu nó thì hai mục │
- * │ cùng loại đổi chỗ nhau giữa hai lần mở, và danh sách tự nhảy chỗ là thứ  │
- * │ làm người dùng bấm nhầm.                                                 │
+ * │ Key 1 keeps the earlier rule (in use on top, orphans at the bottom —     │
+ * │ 25/08). Key 2 is the new part: WITHIN each group, cluster by kind. Key 3 │
+ * │ (name) has to stay, because `listArms` follows the key order in the yaml │
+ * │ — without it two entries of the same kind swap places between openings,  │
+ * │ and a list that reshuffles itself is what makes people click wrong.      │
  * │                                                                          │
- * │ ⚠ SẮP LÚC VẼ, không sắp lúc tải. `catalog` và `arms` về bằng HAI lượt    │
- * │ gọi mạng song song, nên sắp ngay sau `api.arms()` là sắp bằng một danh   │
- * │ mục còn rỗng ⇒ `kindOf` trả `custom` cho tất cả ⇒ đúng cái lộn xộn đang  │
- * │ phải sửa, và nó sẽ KHÔNG BAO GIỜ tự sắp lại. Vẽ lại thì rẻ; sai thứ tự   │
- * │ một lần rồi đứng im thì không sửa được.                                  │
+ * │ ⚠ SORT AT RENDER, not at load. `catalog` and `arms` arrive on TWO        │
+ * │ parallel requests, so sorting right after `api.arms()` sorts against an  │
+ * │ empty catalogue ⇒ `kindOf` returns `custom` for everything ⇒ exactly the │
+ * │ mess being fixed, and it would NEVER re-sort itself. Re-rendering is     │
+ * │ cheap; being wrong once and then standing still cannot be repaired.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const KIND_ORDER: Record<Kind, number> = { service: 0, browser: 1, files: 2, cli: 3, custom: 4 };
@@ -526,96 +551,97 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const canvas = useApp((s) => s.canvas);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  /** Bước 1 có bốn mặt: chọn LOẠI → thư mục / dịch vụ / dán cấu hình. */
+  /** Step 1 has four faces: pick a KIND → folder / service / paste a config. */
   const [pane, setPane] = useState<'type' | 'files' | 'catalog' | 'paste' | 'cli'>('type');
   /**
-   * Tab **Lệnh** — soạn tờ khai CLI bằng form. → SPEC-arms §16
+   * The **Commands** tab — composing a CLI declaration through a form.
+   * → SPEC-arms §16
    *
-   * ⚠ Nó KHÔNG đẻ đường lưu mới: form chỉ sinh ra **đúng chuỗi JSON** mà đường
-   * dán đã dùng, rồi đi tiếp bằng chính `paste` + bước 2. Một đường lưu thứ hai
-   * là chỗ hai màn hình sớm muộn lưu ra hai thứ khác nhau.
+   * ⚠ It adds NO new save path: the form produces **exactly the JSON string** the
+   * paste path already used, then continues through `paste` + step 2. A second
+   * save path is where two screens eventually save two different things.
    */
   const [acts, setActs] = useState<CliDraft[]>([blankAct()]);
-  /** Xem/sửa dạng JSON. Hai chiều — form là nguồn, JSON dán vào thì đọc ngược. */
+  /** View/edit as JSON. Two-way — the form is the source; pasted JSON is read back. */
   const [cliJson, setCliJson] = useState<string | null>(null);
   /**
-   * Thư mục CHUNG của cả cánh tay CLI — xem `cli-form.ts §draftToDecl`.
-   * `''` = thư mục văn phòng.
+   * The SHARED directory for the whole CLI arm — see `cli-form.ts §draftToDecl`.
+   * `''` = the office directory.
    */
   const [cliCwd, setCliCwd] = useState('');
   /**
-   * Đã qua màn thư mục chưa. Hai state chứ không suy từ `cliCwd !== ''`: **"dùng
-   * thư mục văn phòng"** là một câu trả lời hợp lệ và nó để `cliCwd` rỗng — suy
-   * ra thì người bấm nút đó bị đá về lại đúng màn họ vừa trả lời xong.
+   * Has the directory screen been passed. Its own state rather than inferring
+   * `cliCwd !== ''`: **"use the office directory"** is a valid answer and it leaves
+   * `cliCwd` empty — inferred, whoever presses that button is thrown back to the
+   * screen they just answered.
    */
   const [cliReady, setCliReady] = useState(false);
-  /** Bộ chọn thư mục của tab Lệnh đang mở. */
   const [browsing, setBrowsing] = useState(false);
   /**
-   * Tờ khai đang xem ở tab JSON, đọc ngược. `null` = không đang xem JSON, hoặc
-   * JSON hỏng. Dùng cho HAI việc: khoá nút "← Về form" khi `mixed`, và **nói
-   * đúng thư mục** ở thanh trên.
+   * The declaration currently shown on the JSON tab, read back. `null` = not
+   * viewing JSON, or the JSON is broken. Used for TWO things: locking "← Back to
+   * form" when `mixed`, and **naming the right directory** in the top bar.
    */
   const cliBack = cliJson === null ? null : declToDraft(safeJson(cliJson));
   const cliMixed = cliBack?.mixed === true;
   /**
-   * 🔴 THƯ MỤC THANH TRÊN PHẢI ĐỌC TỪ THỨ ĐANG SỬA. (bug user bắt 01/09)
+   * 🔴 THE TOP BAR'S DIRECTORY MUST BE READ FROM WHAT IS BEING EDITED. (bug caught
+   * 01/09)
    *
-   * Ở chế độ JSON, `cliDecl` lấy **khối JSON**, không lấy `cliCwd` — nên vẽ
-   * `cliCwd` ở thanh trên là hiện một giá trị **không có tác dụng gì**, và tệ hơn
-   * là nút "Đổi…" bên cạnh nó sửa đúng cái giá trị vô tác dụng ấy. Đó là giao
-   * diện nói dối về trạng thái của chính nó — đúng lớp lỗi tôi vừa vá ở chỗ khác.
+   * In JSON mode `cliDecl` takes **the JSON block**, not `cliCwd` — so drawing
+   * `cliCwd` in the top bar shows a value that **does nothing**, and worse, the
+   * "Change…" button beside it edits that very inert value. That is the interface
+   * lying about its own state — the same class of bug just fixed elsewhere.
    */
   const shownCwd = cliJson === null ? cliCwd : (cliBack?.cwd ?? '');
   /**
-   * Mã lệnh trùng nhau — tính trên **thứ sẽ được lưu**, nên nó đúng ở cả hai chế
-   * độ (form và JSON) bằng một phép tính, không phải hai.
-   *
-   * ⚠ Đây là **hàng rào thứ nhất trong hai**. Hàng rào thật nằm ở
-   * `server.ts §resolveArm → parseCliArm` — cửa CHUNG của nút Thử và nút Xong,
-   * nên một tab bị treo/đua tay hay một client tự viết vẫn không lọt. Cái ở đây
-   * chỉ để người dùng **thấy trước khi bấm**, không phải để giữ luật.
-   */
-  /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐIỀU KIỆN ĐI TIẾP — MỘT phép tính, dùng cho **cả** nút mờ/sáng lẫn các   │
-   * │ dòng đỏ. (user 01/09: *"phải kiểm tra form khi tất cả các lệnh đều valid │
-   * │ mới cho tiếp tục"*)                                                      │
+   * │ THE CONDITION TO PROCEED — ONE computation, driving **both** the button's│
+   * │ lit/dim state and the red lines. (user, 01/09: *"it has to check the form│
+   * │ and only continue when every command is valid"*)                         │
    * │                                                                          │
-   * │ Nút mờ theo một phép tính còn dòng đỏ theo một phép tính khác là ca "nút │
-   * │ mờ mà không chỗ nào đỏ" — người dùng phải đi dò từng ô để đoán vì sao.   │
+   * │ Dimming by one computation while the red lines follow another is the "the│
+   * │ button is dim and nothing is red" case — the user has to hunt field by   │
+   * │ field to guess why.                                                      │
    * │                                                                          │
-   * │ ⚠ Ở chế độ JSON, hàng để soi là **các lệnh đọc ngược từ khối JSON**, chứ │
-   * │ không phải `acts`: thứ sắp được lưu là khối đó. Soi `acts` ở đó là soi   │
-   * │ một bản nháp không ai lưu.                                               │
+   * │ ⚠ In JSON mode the rows to inspect are **the commands read back out of   │
+   * │ the JSON block**, not `acts`: the block is what will be saved. Inspecting│
+   * │ `acts` there inspects a draft nobody is saving.                          │
+   * │                                                                          │
+   * │ ⚠ Duplicate ids are the **first of two fences**. The real one is in      │
+   * │ `server.ts §resolveArm → parseCliArm` — the SHARED door behind both Test │
+   * │ and Done, so a stale tab, a race or a hand-written client still cannot   │
+   * │ get past. This one exists to be **seen before the click**, not to hold   │
+   * │ the rule.                                                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const cliOut = pane === 'cli' ? cliDecl(acts, cliCwd, cliJson) : null;
   const cliRows = cliJson === null ? acts : (cliBack?.acts ?? []);
   const cliBad = pane === 'cli' ? cliProblems(cliRows, t) : [];
   const badIds = dupIds(cliOut);
-  /** Đủ điều kiện lưu chưa. `cliOut === null` = khối JSON đang hỏng. */
+  /** `cliOut === null` = the JSON block is broken. */
   const cliOk = cliCount(cliOut) > 0 && !cliBad.length && !badIds.length;
   const [catalog, setCatalog] = useState<CatalogArm[]>([]);
   const [installed, setInstalled] = useState<InstalledArm[]>([]);
 
   const [pick, setPick] = useState<CatalogArm | null>(null);
   /**
-   * DÙNG LẠI một mục đã có trong sổ chung — mục thứ ba, ngang hàng với `pick`
-   * và `paste`, chứ KHÔNG phải "dán cấu hình của nó rồi đi đường tự cắm".
+   * REUSE an entry already in the shared ledger — a third option, a peer of `pick`
+   * and `paste`, NOT "paste its config and go down the custom path".
    *
-   * Bản cũ làm đúng cái sau, và nó hỏng ngay ở cánh tay HTTP đầu tiên (user
-   * 25/08: Notion chạy ở *Cánh tay*, bấm dùng lại ở *Trợ lý cá nhân* → **401**).
-   * Cấu hình trong sổ giữ ô trống `${NOTION_ACCESS_TOKEN}`; đường tự cắm không
-   * biết nó là mục danh mục nào nên không hiện ô chìa nào; header bay đi nguyên
-   * văn `Bearer ${…}`. → `company.ts §reuseArm`
+   * The old version did exactly the latter, and it broke on the very first HTTP arm
+   * (user, 25/08: Notion working in *Arms*, press reuse in *Personal assistant* →
+   * **401**). The config in the ledger keeps the `${NOTION_ACCESS_TOKEN}`
+   * placeholder; the custom path does not know which catalogue entry it is so it
+   * shows no key field; the header goes out as the literal `Bearer ${…}`.
+   * → `company.ts §reuseArm`
    */
   const [reuse, setReuse] = useState<InstalledArm | null>(null);
-  /** Đường B — dán cấu hình MCP. Không mục danh mục nào chặn ai. → §4c */
+  /** Path B — paste an MCP config. No catalogue entry stands in anyone's way. → §4c */
   const [paste, setPaste] = useState('');
   /**
-   * Tên các server trong khối đang dán. `parsePaste` chỉ lấy **cái đầu** — khối
-   * chú thích ở chỗ vẽ giải thích vì sao chuyện đó phải hiện lên màn hình.
+   * The server names in the pasted block. `parsePaste` takes only **the first** —
+   * the note at the render site explains why that has to be shown on screen.
    */
   const pasted = pane === 'paste' ? safeJson(paste) : null;
   const serverNames =
@@ -624,62 +650,71 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       : [];
   const firstServer = serverNames[0] ?? '';
   const extraServers = serverNames.slice(1);
-  /** Tài khoản đã đăng nhập cho mục đang chọn. Tên chìa, không bao giờ token. */
+  /** Accounts signed in for the selected entry. Key names, never tokens. */
   const [accounts, setAccounts] = useState<OAuthAccount[]>([]);
   const [account, setAccount] = useState('');
   const [logging, setLogging] = useState(false);
   /**
-   * Nấc quyền người dùng chọn. Mặc định **thấp nhất** — an toàn khi chưa ai chọn,
-   * và nó cũng là nấc duy nhất luôn hợp lệ nếu server khai tử tế. → §6j
+   * The access level the user picked. Defaults to **the lowest** — safe before
+   * anyone has chosen, and the only level that is always valid if the server
+   * declares itself properly. → §6j
    */
   const [tier, setTier] = useState<'read' | 'add' | 'full'>('read');
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ NHÓM VIỆC ĐÃ TICK — và **chỉ hỏi ở nấc toàn quyền**. (user chốt 27/08)   │
+   * │ THE TICKED TASK GROUPS — and they are **only asked at the full level**.  │
+   * │ (the user's call, 27/08)                                                 │
    * │                                                                          │
-   * │   *"default là chỉ đọc không cần pick gì, còn chọn toàn quyền thì có 1   │
-   * │    list, default không tick"*                                            │
+   * │   *"read-only is the default and needs no picking; choose full access and│
+   * │    you get a list, nothing ticked by default"*                           │
    * │                                                                          │
-   * │ Vì sao đúng, chứ không chỉ vì user nói: **câu hỏi chỉ có sức nặng khi    │
-   * │ được GHI**. Bắt người dùng cân nhắc năm ô lúc chỉ đọc là thu tiền chú ý  │
-   * │ cho một quyết định không có hậu quả — họ tick bừa, và ta vừa dạy họ rằng │
-   * │ mấy ô này tick bừa cũng được. Tới lúc nó thật sự nguy hiểm thì thói quen │
-   * │ đã hình thành.                                                           │
+   * │ Why that is right, not merely because the user said so: **a question only│
+   * │ has weight when it is WRITTEN**. Making someone weigh five checkboxes at │
+   * │ read-only charges attention for a decision with no consequence — they    │
+   * │ tick at random, and we have just taught them these boxes can be ticked at│
+   * │ random. By the time it is genuinely dangerous the habit is formed.       │
    * │                                                                          │
-   * │ Rỗng ⇒ **không gửi** ⇒ server rơi về nhóm `on: true` của danh mục        │
-   * │ (`server.ts §armConfig`). Cố ý không gửi `[]`: rỗng ở đây nghĩa là "chưa  │
-   * │ chọn", còn `[]` gửi đi lại có nghĩa "cấm hết" — hai chuyện khác nhau, và │
-   * │ trộn chúng là dựng lại đúng ca *ô để trắng ≠ chìa rỗng* ở `filledKeys`.  │
+   * │ Empty ⇒ **send nothing** ⇒ the server falls back to the catalogue's      │
+   * │ `on: true` groups (`server.ts §armConfig`). Deliberately skips `[]`:     │
+   * │ empty here means "not chosen", while a sent `[]` means "forbid           │
+   * │ everything" — two different things, and merging them rebuilds exactly the│
+   * │ *blank field ≠ empty key* case from `filledKeys`.                        │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const [groups, setGroups] = useState<string[]>([]);
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ Ô TICK CỦA MỤC — khác `groups` ở HAI chỗ, và cả hai đều cố ý:            │
-   * │                                                                          │
-   * │  ① Nó **có mặc định bật sẵn** (`option.on`), nên state phải được nạp lúc  │
-   * │     chọn mục chứ không để rỗng. Rỗng ở đây KHÔNG có nghĩa "chưa chọn" —  │
-   * │     người dùng bỏ tick hết là một lựa chọn hợp lệ, và phải gửi `[]` lên.  │
-   * │  ② Nó hỏi ở **mọi nấc**, không riêng `full`: hai ô này nói về *cách chạy* │
-   * │     chứ không về *quyền*, nên luật "chỉ hỏi khi được ghi" không áp vào.   │
+   * │ THE ENTRY'S CHECKBOXES — different from `groups` in TWO ways, both        │
+   * │ deliberate:                                                               │
+   * │                                                                           │
+   * │  ① They **have defaults that are on** (`option.on`), so the state has to  │
+   * │     be loaded when the entry is picked rather than left empty. Empty here │
+   * │     does NOT mean "not chosen" — unticking everything is a valid choice,  │
+   * │     and it has to be sent as `[]`.                                        │
+   * │  ② They are asked at **every level**, not only `full`: these say *how it  │
+   * │     runs*, not *what it may do*, so the "only ask when it is written"     │
+   * │     rule does not apply.                                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const [options, setOptions] = useState<string[]>([]);
   /**
-   * Trình duyệt và daemon có cùng máy không — dùng để **ẩn** ô `loopbackOnly`.
+   * Are the browser and the daemon on the same machine — used to **hide** a
+   * `loopbackOnly` checkbox.
    *
-   * ⚠ Đây CHỈ là chuyện giao diện. Cổng thật nằm ở server và đo bằng **địa chỉ
-   * socket** (`server.ts §armCtx`), thứ client không giả được. Kiểm ở đây để nút
-   * không thành câu đố; kiểm ở kia để nó không thành trang trí.
+   * ⚠ This is ONLY about the interface. The real gate is on the server and is
+   * measured from the **socket address** (`server.ts §armCtx`), which a client
+   * cannot fake. Checking here keeps the button from being a riddle; checking
+   * there keeps it from being decoration.
    */
   const sameMachine = /^(127\.|localhost$|\[::1\]$)/i.test(window.location.hostname);
   /**
-   * Nạp mặc định cho ô tick mỗi khi đổi mục — **theo `pick`, không theo bốn chỗ
-   * reset rải rác**. Bốn chỗ đó là bốn cơ hội quên một chỗ, và chỗ quên sẽ mang
-   * lựa chọn của mục trước sang mục sau, im lặng.
+   * Load the checkbox defaults whenever the entry changes — **keyed on `pick`, not
+   * spread across four reset sites**. Those four are four chances to forget one,
+   * and the forgotten one carries the previous entry's choices into the next,
+   * silently.
    *
-   * ⚠ Ô `loopbackOnly` không bao giờ được bật sẵn khi xem từ xa: nó sẽ bị server
-   * từ chối, và người dùng chưa hề tick nó.
+   * ⚠ A `loopbackOnly` box is never pre-ticked over a remote connection: the server
+   * would refuse it, and the user never ticked it.
    */
   useEffect(() => {
     setOptions(
@@ -690,34 +725,39 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [pick, sameMachine]);
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BẢN CÀI APP — TRA TỰ ĐỘNG, 0 ký tự người dùng gõ. → SPEC-arms §5h·7o     │
-   * │ (user chốt 27/08: *"Không gõ chữ gì, bấm thử ngay và thử tự động"*)      │
+   * │ THE APP INSTALLATION — LOOKED UP AUTOMATICALLY, 0 characters typed.      │
+   * │ → SPEC-arms §5h·7o (the user's call, 27/08: *"type nothing, just press   │
+   * │ test and have it test automatically"*)                                   │
    * │                                                                          │
-   * │ Ba trạng thái, và chúng **không gộp được**:                              │
-   * │   `null`               chưa tra (chưa chọn tài khoản)                    │
-   * │   `{failed:true}`      KHÔNG TRA ĐƯỢC → cho qua, nói thật                │
-   * │   `{installed:[…]}`    tra được → rỗng thì CHẶN, có thì cho qua           │
+   * │ Three states, and they **cannot be merged**:                             │
+   * │   `null`               not looked up yet (no account chosen)             │
+   * │   `{failed:true}`      COULD NOT LOOK UP → let through, say so honestly  │
+   * │   `{installed:[…]}`    looked up → empty BLOCKS, non-empty passes        │
    * │                                                                          │
-   * │ Gộp `failed` với `installed: []` là hoặc chặn oan người đã cài (mạng      │
-   * │ chập), hoặc thả người chưa cài. Hai chiều hỏng ngược nhau.                │
+   * │ Merging `failed` with `installed: []` either wrongly blocks someone who  │
+   * │ did install (a network blip) or waves through someone who did not. The   │
+   * │ two failures run in opposite directions.                                 │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const [scan, setScan] = useState<RepoScanState>(null);
   const [scanning, setScanning] = useState(false);
   /**
-   * Người dùng tự khẳng định đã cài, dù ta tra ra rỗng. → đường thoát bắt buộc.
+   * The user asserting they did install, despite an empty lookup. → a required
+   * escape hatch.
    *
-   * Vì sao phải có: `search user:<login>` **không thấy repo của tổ chức**, nên
-   * "rỗng" không chứng minh "chưa cài gì cả". Chặn cứng ở đây là giam một người
-   * đã làm đúng, mà giam thì không có đường ra nào khác ngoài đóng app.
+   * Why it has to exist: `search user:<login>` **cannot see an organisation's
+   * repos**, so "empty" does not prove "nothing installed". Hard-blocking here
+   * imprisons someone who did everything right, and there is no way out of that
+   * except closing the app.
    */
   const [anyway, setAnyway] = useState(false);
   /**
-   * Ô "dùng app của bạn". `own` = công ty này đang đi bằng danh tính của HỌ.
+   * The "use your own app" field. `own` = this company travels under THEIR
+   * identity.
    *
-   * Hai state chứ không một: `clientId` là thứ đang gõ, `own` là thứ đã LƯU.
-   * Suy `own` từ `clientId !== ''` thì huy hiệu "đang bật" sáng lên ngay lúc họ
-   * mới gõ ký tự đầu — một cái nhãn nói về trạng thái chưa tồn tại.
+   * Two states, not one: `clientId` is what is being typed, `own` is what was
+   * SAVED. Infer `own` from `clientId !== ''` and the "active" badge lights up on
+   * the first keystroke — a label describing a state that does not exist yet.
    */
   const [clientId, setClientId] = useState('');
   const [own, setOwn] = useState(false);
@@ -726,35 +766,37 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [keys, setKeys] = useState<Record<string, string>>({});
 
   const [testing, setTesting] = useState(false);
-  /** Đã chờ quá 6 giây — mốc để GIẢI THÍCH, không phải để đoán trước. */
+  /** Past 6 seconds — a threshold for EXPLAINING, not for predicting. */
   const [slow, setSlow] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [err, setErr] = useState('');
   const [grant, setGrant] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  /** Mục mồ côi đang chờ xác nhận **xoá hẳn** — mức duy nhất không lấy lại được. */
+  /** An orphan awaiting **delete-for-good** confirmation — the one irreversible step. */
   const [forget, setForget] = useState<InstalledArm | null>(null);
-  /** Workspace đang chờ xác nhận GỠ. Server thu hồi chìa ở phía dịch vụ luôn. */
+  /** A workspace awaiting FORGET confirmation. The server also revokes at the service. */
   const [dropWs, setDropWs] = useState<OAuthAccount | null>(null);
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ XOÁ CHÌA KHỎI BỘ NHỚ NGAY KHI ĐÓNG — không đợi tới lần mở sau.           │
-   * │ (user hỏi 26/08: *"đảm bảo nó không lưu bất cứ dấu vết gì trên FE"*)     │
+   * │ WIPE THE KEYS FROM MEMORY ON CLOSE — not on the next open.               │
+   * │ (the user asked 26/08: *"make sure it keeps no trace at all on the FE"*) │
    * │                                                                          │
-   * │ Bản trước chỉ dọn lúc MỞ, nên giá trị chìa nằm lại trong state của React │
-   * │ suốt cả phiên làm việc sau khi người dùng đã bấm Xong và đi làm việc      │
-   * │ khác. Không có lý do nào để nó ở đó — hộp thoại đã gửi xong rồi.          │
+   * │ The previous version only cleared on OPEN, so a key's value sat in React │
+   * │ state for the rest of the working session after the user pressed Done    │
+   * │ and moved on. There is no reason for it to be there — the dialog has     │
+   * │ already sent it.                                                         │
    * │                                                                          │
-   * │ ⚠ Nói cho đúng phạm vi, đừng bán quá lời: cái này KHÔNG chặn được kẻ đã  │
-   * │ chạy mã trong tab của bạn (lúc đó họ đọc thẳng được ô input). Thứ nó thu │
-   * │ hẹp là **cửa sổ thời gian** một chuỗi bí mật còn nằm trong heap và trong │
-   * │ mọi bản chụp heap / công cụ dev / báo cáo lỗi tự động.                    │
+   * │ ⚠ State the scope honestly, do not oversell: this does NOT stop someone  │
+   * │ already running code in your tab (they can read the input directly). What│
+   * │ it narrows is the **time window** in which a secret string sits in the   │
+   * │ heap — and therefore in every heap snapshot, devtools session and        │
+   * │ automatic crash report.                                                  │
    * │                                                                          │
-   * │ Hàng rào THẬT nằm ở phía server và đã có: `listArms` trả **tên** chìa,   │
-   * │ không bao giờ trả giá trị; `company.yaml` chỉ chứa ô trống `${TÊN}`; và  │
-   * │ giá trị chỉ đi MỘT chiều — từ trình duyệt xuống `.state/secrets.json`,   │
-   * │ không có route nào đọc ngược lên.                                        │
+   * │ The REAL fence is on the server and already exists: `listArms` returns   │
+   * │ key **names**, never values; `company.yaml` holds only `${NAME}`         │
+   * │ placeholders; and values travel ONE way — from the browser down to       │
+   * │ `.state/secrets.json`, with no route reading back up.                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   useEffect(() => {
@@ -768,8 +810,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     if (!open) return;
     setStep(1);
     setPane('type');
-    // Bộ chọn thư mục của tab Lệnh: mở lại hộp thoại mà nó còn treo thì người
-    // dùng gặp một modal chồng modal chưa ai gọi.
+    // The Commands tab's folder picker: reopen the dialog with it still up and the
+    // user meets a modal on top of a modal that nobody asked for.
     setBrowsing(false);
     setCliReady(false);
     setCliCwd('');
@@ -789,57 +831,59 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setGroups([]);
     void api.armCatalog().then((r) => setCatalog(r.arms)).catch(() => undefined);
     /**
-     * ⚠ LỌC NGAY Ở NGUỒN: chỉ giữ cánh tay văn phòng NÀY chưa có.
+     * ⚠ FILTER AT THE SOURCE: keep only arms THIS office does not already have.
      *
-     * Bản trước liệt kê cả sổ chung, nên mục văn phòng đang dùng vẫn hiện ra —
-     * bấm vào thì đi qua chọn → thử ~20 giây → giao cho ai → rồi mới bị từ chối.
-     * Bày ra một lựa chọn CHẮC CHẮN SAI rồi để người dùng đâm vào nó là tệ hơn
-     * mọi câu báo lỗi viết khéo.
+     * The previous version listed the whole ledger, so an entry this office was
+     * already using still appeared — click it and you go through pick → a ~20
+     * second test → grant → and only then get refused. Displaying a choice that is
+     * CERTAIN to fail and letting the user walk into it is worse than any
+     * well-written error message.
      */
     void api.arms().then((r) => setInstalled(forList(r.arms, officeId))).catch(() => undefined);
   }, [open, officeId]);
 
   const agents = (canvas?.nodes ?? []).filter((n) => n.kind === 'agent' && n.role);
-  /** Workspace đang chọn — để màn cấu hình nói ra nó, chứ không chỉ ghi "Notion". */
+  /** The selected workspace — so the config screen names it rather than just saying "Notion". */
   const pickedAccount = accounts.find((a) => a.name === account);
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 TÊN MẶC ĐỊNH **ĐI THEO** TÀI KHOẢN — đổi tài khoản là đổi tên.        │
-   * │ (bug user bắt 27/08)                                                     │
+   * │ 🔴 THE DEFAULT NAME **FOLLOWS** THE ACCOUNT — change account, change     │
+   * │ name. (bug caught 27/08)                                                 │
    * │                                                                          │
-   * │ > *"Sao tôi đổi workspace account sang hubot mà node mcp server          │
-   * │ >  vẫn tên là GitHub · octocat"* … *"bạn lấy được tên workspace mà, lúc  │
-   * │ >  tick đổi cái tên không đổi theo mà bị khoá?"*                          │
+   * │ > *"Why does switching the workspace account to hubot leave the mcp      │
+   * │ >  server node still called GitHub · octocat"* … *"you can read the      │
+   * │ >  workspace name — when I switch, why is the name frozen?"*              │
    * │                                                                          │
-   * │ Bản cũ so `cur === pick.name` để biết *"nhãn còn là hàng tự sinh không"*. │
-   * │ Phép so đó chỉ đúng ĐÚNG MỘT LẦN: ghi xong thì `cur` là                  │
-   * │ *"GitHub · octocat"*, không còn bằng `pick.name` nữa ⇒ mọi lần đổi tài   │
-   * │ khoản sau đều rơi vào nhánh *"người dùng đã tự đặt tên"* và bị bỏ qua.   │
-   * │ Nhãn đóng băng ở tài khoản ĐẦU TIÊN trong khi cấu hình trỏ tài khoản mới │
-   * │ — và trên sơ đồ đó là chỗ DUY NHẤT đọc được tên, nên lời nói dối không   │
-   * │ có gì đối chứng.                                                         │
+   * │ The old version compared `cur === pick.name` to decide *"is the label     │
+   * │ still auto-generated"*. That comparison is true EXACTLY ONCE: after the  │
+   * │ first write `cur` is *"GitHub · octocat"* and no longer equals           │
+   * │ `pick.name` ⇒ every later account change falls into the *"the user named │
+   * │ it themselves"* branch and is skipped. The label freezes on the FIRST    │
+   * │ account while the config points at the new one — and on the diagram that │
+   * │ label is the ONLY readable name, so the lie has nothing contradicting it.│
    * │                                                                          │
-   * │ ⇒ Sửa bằng cách nhớ **chính chuỗi ta vừa tự ghi** (`autoLabel`) thay vì   │
-   * │ suy ra nó. Còn khớp ⇒ hàng tự sinh, ghi đè thoải mái. Khác ⇒ người dùng  │
-   * │ đã gõ tên riêng, ĐỪNG ĐỘNG VÀO. Cổng vẫn còn, chỉ là nó thôi hết hạn     │
-   * │ sau lần đầu.                                                             │
+   * │ ⇒ Fixed by remembering **the exact string we wrote** (`autoLabel`)        │
+   * │ instead of inferring it. Still matching ⇒ auto-generated, overwrite      │
+   * │ freely. Different ⇒ the user typed their own name, DO NOT TOUCH. The     │
+   * │ gate is still there; it just stopped expiring after the first use.       │
    * │                                                                          │
-   * │ ⚠ Vẫn **CHỈ tên tài khoản, KHÔNG kèm mức quyền**: nhãn đổi tự do, nên    │
-   * │ mức quyền nằm trong đó là một lời hứa gỡ được bằng cách đổi tên. Mức     │
-   * │ quyền sống ở huy hiệu, suy từ `level`. → §6j                             │
+   * │ ⚠ Still **ONLY the account name, NEVER the access level**: labels change │
+   * │ freely, so a level inside one is a promise a rename can revoke. The      │
+   * │ level lives in the badge, derived from `level`. → §6j                    │
    * │                                                                          │
-   * │ ⚠ Và nhãn KHÔNG PHẢI chỗ dựa duy nhất: node trên sơ đồ cắt tên còn 14 ký │
-   * │ tự (*"GitHub · minhv…"*), nên nó vẫn vẽ thêm `via` ở dòng phụ — thứ do   │
-   * │ server tra từ `arms[].secrets` mỗi lần đọc, không lỗi thời được.         │
-   * │ → `canvas/NodeShape.tsx`                                                 │
+   * │ ⚠ And the label is NOT the only support: the diagram node truncates to   │
+   * │ 14 characters (*"GitHub · minhv…"*), so it also draws `via` on a second  │
+   * │ line — resolved by the server from `arms[].secrets` on every read, so it │
+   * │ cannot go stale. → `canvas/NodeShape.tsx`                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const autoLabel = useRef('');
   useEffect(() => {
     if (!pick?.needsLogin || !pickedAccount?.label) return;
-    // Người dùng đã gõ tên riêng ⇒ đứng yên. Ghi ref NGOÀI updater của `setLabel`:
-    // updater phải thuần, React gọi nó hai lần ở StrictMode.
+    // The user typed their own name ⇒ stand still. The ref is written OUTSIDE the
+    // `setLabel` updater: an updater has to be pure, and React calls it twice under
+    // StrictMode.
     if (label !== pick.name && label !== autoLabel.current) return;
     const next = `${pick.name} · ${pickedAccount.label}`;
     autoLabel.current = next;
@@ -848,31 +892,33 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ DANH SÁCH "DÙNG LẠI" — **THEO ĐÚNG LOẠI CỦA TAB ĐANG MỞ**. (bug 26/08)   │
+   * │ THE "REUSE" LIST — **FILTERED TO THE OPEN TAB'S KIND**. (bug 26/08)      │
    * │                                                                          │
-   * │ User báo: *"vào tab Dịch vụ có sẵn mà nó cũng đề xuất cánh tay đang cắm  │
-   * │ ở văn phòng khác của các loại khác. Custom cũng vậy."*                    │
+   * │ Reported: *"I go into the Services tab and it still suggests arms of     │
+   * │ other kinds plugged in elsewhere. Same on Custom."*                      │
    * │                                                                          │
-   * │ Bản cũ để khối này NGOÀI mọi nhánh `pane`, nên nó hiện ở cả ba màn cùng  │
-   * │ một nội dung — người đang tìm Notion phải lướt qua bốn cánh tay thư mục. │
-   * │ Một danh sách "gợi ý" mà không lọc theo ngữ cảnh thì không phải gợi ý,   │
-   * │ nó là nhiễu có nhãn.                                                     │
+   * │ The old version left this block OUTSIDE every `pane` branch, so it showed│
+   * │ the same content on all three screens — someone looking for Notion had to│
+   * │ scroll past four folder arms. A "suggestion" list that does not filter by│
+   * │ context is not a suggestion, it is labelled noise.                       │
    * │                                                                          │
-   * │ ⚠ Mồ côi của **loại đó** vẫn phải hiện (user nêu rõ) — nó tụt xuống đáy  │
-   * │ và mang thùng rác, chứ không bị giấu đi: đây là chỗ **duy nhất** dọn      │
-   * │ được chúng mà không phải mở `company.yaml`.                              │
+   * │ ⚠ Orphans **of that kind** still have to appear (the user said so        │
+   * │ explicitly) — they sink to the bottom and carry a bin icon rather than   │
+   * │ being hidden: this is the **only** place they can be cleared without     │
+   * │ opening `company.yaml`.                                                  │
    * │                                                                          │
-   * │ ⚠ ĐÍNH CHÍNH 26/08 — user bác, và bác đúng:                              │
-   * │   *"trong modal có 3 lựa chọn đúng không, vẫn đề xuất hết như cũ (full   │
-   * │    all mcp). Vào type riêng mới lọc theo type đó."*                      │
+   * │ ⚠ CORRECTION 26/08 — the user pushed back, and was right:                │
+   * │   *"the modal has 3 choices, right — keep suggesting everything there    │
+   * │    (all MCPs). Only filter by type once you're inside a type."*          │
    * │                                                                          │
-   * │ Bản trước tôi cắt sạch danh sách khỏi màn chọn LOẠI với lý lẽ *"ba thẻ   │
-   * │ là toàn bộ câu hỏi"*. Sai ở chỗ: màn đó là **màn tiếp đất**, và người    │
-   * │ quay lại cắm cái họ đã có không nên phải đoán xem nó nằm trong tab nào.  │
-   * │ Lọc là để **thu hẹp khi đã biết mình tìm gì**, không phải để giấu.       │
+   * │ I had cut the list from the KIND screen entirely, arguing *"three cards  │
+   * │ are the whole question"*. What that missed: that screen is the **landing │
+   * │ screen**, and someone coming back to plug in what they already have      │
+   * │ should not have to guess which tab it is under. Filtering is for         │
+   * │ **narrowing once you know what you are looking for**, not for hiding.    │
    * │                                                                          │
-   * │ ⇒ `kind` bỏ trống = hiện tất cả (màn tiếp đất). Có `kind` = đã vào một   │
-   * │ loại, chỉ hiện loại đó.                                                  │
+   * │ ⇒ No `kind` = show everything (the landing screen). With `kind` = already│
+   * │ inside a kind, show only that one.                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   function reuseList(kind?: Kind) {
@@ -887,14 +933,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
           {t('arm.pluggedElsewhere')}
         </div>
         {/*
-          ĐANG THỬ ⇒ KHOÁ DANH SÁCH. (user đề nghị 26/08)
+          TESTING ⇒ LOCK THE LIST. (the user's suggestion, 26/08)
 
-          `runRef` đã lo phần đúng-sai (kết quả cũ không đè được kết quả mới).
-          Khối này lo phần **đừng để người dùng rơi vào đó**: một danh sách bấm
-          được trong lúc màn hình đang quay là một lời mời vào đúng cái bẫy.
+          `runRef` already handles correctness (an old result cannot overwrite a
+          new one). This block handles **not letting the user fall into it**: a
+          clickable list while the screen is spinning is an invitation into exactly
+          that trap.
 
-          Làm mờ chứ không ẩn: ẩn thì bố cục nhảy, và cái nhảy đó xảy ra đúng
-          lúc người dùng đang nhìn chỗ khác chờ kết quả.
+          Dimmed, not hidden: hiding makes the layout jump, and that jump happens
+          precisely while the user is looking elsewhere waiting for a result.
         */}
         <div
           className={`mt-1.5 flex flex-col gap-1 transition-opacity ${
@@ -907,19 +954,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 type="button"
                 onClick={() => {
                   /*
-                    DÙNG LẠI ĐÚNG MỤC ĐÓ, không nhân bản cấu hình.
+                    REUSE THAT EXACT ENTRY; do not clone the config.
 
-                    Danh tính là băm cấu hình, nên "chép sang một mã mới" không
-                    còn nghĩa gì: cùng cấu hình ⇒ cùng băm ⇒ vẫn là nó. Cái
-                    "clone" user muốn nằm ở tầng khác — SỰ HIỆN DIỆN theo từng
-                    văn phòng (`role.mcp`), không phải bản sao cấu hình. → §6i
+                    Identity is the config hash, so "copy it to a new id" is
+                    meaningless: same config ⇒ same hash ⇒ still the same thing.
+                    The "clone" the user wants lives at another layer — PRESENCE
+                    per office (`role.mcp`), not a copy of the config. → §6i
 
-                    ⚠ VÀ ĐÓ CHÍNH LÀ THỨ BẢN CŨ Ở ĐÂY PHÁ HỎNG. Nó gọi
-                    `setPaste(JSON.stringify(a.config))` — đẩy mục này sang
-                    đường "TỰ CẮM", nơi không ai biết nó cần chìa gì. Cánh tay
-                    stdio chưa lộ (chìa đi qua `env`, `filesystem` không cần
-                    chìa); cánh tay HTTP đầu tiên thì hỏng ngay — ô trống bay
-                    lên Notion nguyên văn → 401. → §6i-bis
+                    ⚠ AND THAT IS EXACTLY WHAT THE OLD VERSION HERE BROKE. It
+                    called `setPaste(JSON.stringify(a.config))` — pushing the entry
+                    down the "CUSTOM" path, where nothing knows which key it needs.
+                    stdio arms did not expose it (the key travels via `env`, and
+                    `filesystem` needs none); the first HTTP arm broke immediately
+                    — the placeholder went to Notion verbatim → 401. → §6i-bis
                   */
                   resetConfig();
                   setPick(null);
@@ -930,9 +977,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 className="flex flex-1 items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-[13px] hover:border-accent"
               >
                 {/*
-                  Hình theo HÃNG (ngã về LOẠI khi hãng chưa có logo) — cùng hàm
-                  với lưới dịch vụ và thẻ chọn loại, nên một mục giữ nguyên hình
-                  suốt từ màn tiếp đất tới bước 2. → `ArmIcon.tsx`
+                  The VENDOR's mark (falling back to the KIND when the vendor has
+                  no logo) — the same function as the services grid and the kind
+                  cards, so one entry keeps one mark from the landing screen all
+                  the way to step 2. → `ArmIcon.tsx`
                 */}
                 <span className="shrink-0 text-muted">
                   <ArmIcon
@@ -945,19 +993,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   <span className="block truncate">{a.label}</span>
                   {/*
                     ┌────────────────────────────────────────────────────────┐
-                    │ DÒNG PHỤ: WORKSPACE + MỨC QUYỀN. (user 26/08)         │
+                    │ THE SECOND LINE: WORKSPACE + LEVEL. (user, 26/08)     │
                     │                                                        │
-                    │   *"1 loạt Notion thì biết là Notion nào"*             │
+                    │   *"with a row of Notions you need to know which one"* │
                     │                                                        │
-                    │ Cả hai đều SUY TỪ DỮ LIỆU, không đọc chuỗi tên:        │
-                    │  · `via`   ← server tra `arms[].secrets` ra tên         │
-                    │              workspace trong kho OAuth                 │
-                    │  · `level` ← `arms[].level`, thứ nằm trong chính băm    │
+                    │ Both are DERIVED FROM DATA, never read off the name:   │
+                    │  · `via`   ← the server resolves `arms[].secrets` to    │
+                    │              the workspace name in the OAuth store     │
+                    │  · `level` ← `arms[].level`, which lives in the hash    │
                     │                                                        │
-                    │ Vì sao không nhét vào `label`: nhãn là của người dùng   │
-                    │ và đổi tự do — nhét mức quyền vào chuỗi thì một cú đổi  │
-                    │ tên tạo ra được "Notion (ghi được)" trên một cánh tay   │
-                    │ chỉ đọc. Nhãn nói dối về đặc quyền. → §6j              │
+                    │ Why not fold them into `label`: the label belongs to    │
+                    │ the user and changes freely — put the level in the      │
+                    │ string and one rename produces "Notion (writable)" on   │
+                    │ a read-only arm. A label lying about privilege. → §6j  │
                     └────────────────────────────────────────────────────────┘
                   */}
                   {(a.via || a.level) && (
@@ -982,14 +1030,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </span>
               </button>
               {/*
-                XOÁ HẲN — chỉ hiện cho mục KHÔNG VĂN PHÒNG NÀO GIỮ. Tới hôm nay,
-                gỡ một mục mồ côi khỏi sổ chỉ làm được bằng cách **mở
-                `company.yaml` sửa tay** — một CHUÔNG BÁO (§6a).
+                DELETE FOR GOOD — shown only for an entry NO OFFICE HOLDS. Until
+                today, removing an orphan from the ledger could only be done by
+                **opening `company.yaml` and editing it by hand** — an ALARM BELL
+                (§6a).
 
-                Điều kiện `a.orphan` đến từ SERVER, không tự suy từ `usedBy`:
-                `usedBy` chỉ đếm sợi dây, nên một node đang nằm chờ trên sơ đồ
-                ai đó sẽ trông như mồ côi. Server chặn lần nữa — nút này chỉ để
-                không bày ra một lựa chọn chắc chắn bị từ chối.
+                The `a.orphan` condition comes from the SERVER, never inferred from
+                `usedBy`: `usedBy` counts wires only, so a node sitting unwired on
+                someone's diagram would look orphaned. The server checks again —
+                this button only avoids displaying a choice certain to be refused.
               */}
               {a.orphan && (
                 <button
@@ -1010,48 +1059,51 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }
 
   /**
-   * Cánh tay thư mục TỰ THỬ ngay khi chọn xong — người dùng không phải bấm gì.
-   * Xem khối chú thích ở nút Thử để biết vì sao phép thử vẫn phải chạy.
+   * A folder arm TESTS ITSELF as soon as the folder is chosen — the user presses
+   * nothing. See the note on the Test button for why the test still has to run.
    */
   useEffect(() => {
     if (step === 2 && pick?.folders && folders.trim() && !probe && !testing) void test();
-    // Chỉ theo `folders`: thêm `probe`/`testing` vào đây là tự gọi lại chính mình.
+    // Keyed on `folders` alone: adding `probe`/`testing` here makes it call itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folders, step]);
 
   const folderList = () => folders.split('\n').map((s) => s.trim()).filter(Boolean);
 
   /**
-   * Mục này CÓ hỏi nhóm việc ở nấc đang chọn không?
+   * Does this entry ask about task groups at the level currently chosen?
    *
-   * Chỉ hỏi ở `full`: xem khối chú thích ở state `groups`. Điều kiện `pick.groups`
-   * là DỮ LIỆU của mục, nên mục nào không khai nhóm thì màn này im — không có
-   * nhánh `id === 'github'` nào ở đây.
+   * Asked at `full` only: see the note on the `groups` state. The `pick.groups`
+   * condition is the entry's own DATA, so an entry that declares no groups keeps
+   * this screen quiet — there is no `id === 'github'` branch here.
    */
   const needGroups = () => Boolean(pick?.groups?.length) && tier === 'full';
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 MỘT LỰA CHỌN Ở BƯỚC 1 = MỘT CẤU HÌNH MỚI TINH. (bug user bắt 26/08)  │
+   * │ 🔴 A CHOICE AT STEP 1 = A BRAND-NEW CONFIG. (bug caught 26/08)           │
    * │                                                                          │
-   * │ Luồng họ dựng lại: chọn thư mục A → thử ✓ → bấm một mục trong danh sách  │
-   * │ gợi ý → **Quay lại** → bấm "Thư mục trên máy" ⇒ **nó tự thử lại thư mục  │
-   * │ A**. Người dùng không chọn A ở lượt này, mà máy vẫn đi thử A.            │
+   * │ The flow they reconstructed: pick folder A → test ✓ → click an entry in  │
+   * │ the suggestion list → **Back** → click "Folder on this machine" ⇒ **it   │
+   * │ re-tests folder A by itself**. The user chose no A this time round, and  │
+   * │ the machine went and tested A.                                           │
    * │                                                                          │
-   * │ Gốc rễ: `folders` (và `keys`, `tier`, `account`, `paste`) là state của cả │
-   * │ hộp thoại, còn `setPick`/`setReuse` chỉ đổi ĐƯỜNG. Quay lại rồi vào lại   │
-   * │ thì cấu hình cũ vẫn nằm nguyên đó, và `useEffect` tự-thử thấy đủ điều     │
-   * │ kiện nên bắn.                                                            │
+   * │ Root cause: `folders` (and `keys`, `tier`, `account`, `paste`) is state  │
+   * │ of the whole dialog, while `setPick`/`setReuse` only change the PATH.    │
+   * │ Go back and come in again and the old config is still sitting there, and │
+   * │ the self-test `useEffect` sees its condition met and fires.              │
    * │                                                                          │
-   * │ ⚠ USER CHO HAI PHƯƠNG ÁN, và tôi chọn (1) — "coi như chưa chọn gì":      │
-   * │   (2) giữ lại kết quả thử cũ nghe tiện, nhưng nó là **đúng cái lớp lỗi**  │
-   * │   vừa vá bằng `runRef`: một dấu ✓ nói về một cấu hình khác với cấu hình   │
-   * │   đang trên màn hình. Ở đó nó lệch vài giây; ở đây nó lệch qua cả một     │
-   * │   vòng điều hướng — khó thấy hơn, không dễ hơn.                          │
+   * │ ⚠ THE USER OFFERED TWO OPTIONS, and I took (1) — "treat it as nothing    │
+   * │   chosen": (2) keeping the old test result sounds convenient, but it is  │
+   * │   **exactly the failure class** just fixed with `runRef`: a ✓ describing │
+   * │   a config other than the one on screen. There it was out of date by a   │
+   * │   few seconds; here it is out of date across a whole navigation loop —   │
+   * │   harder to notice, not easier.                                          │
    * │                                                                          │
-   * │ ⇒ Luật đọc được thành lời: **thứ bạn vừa bấm là thứ bạn đang cấu hình.**  │
-   * │ Dọn ở MỘT hàm, gọi từ mọi cửa vào bước 1 — vá từng nút là để lần sau      │
-   * │ thêm cửa thứ năm thì quên đúng cửa đó.                                    │
+   * │ ⇒ The rule, said out loud: **what you just clicked is what you are       │
+   * │ configuring.** Cleared in ONE function called from every entrance to     │
+   * │ step 1 — patching button by button is how the fifth entrance added later │
+   * │ becomes the one that is forgotten.                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   function resetConfig() {
@@ -1061,26 +1113,30 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setProbe(null);
     setErr('');
     setTier('read');
-    // Nhóm việc + giới hạn repo cũng là CẤU HÌNH, nên chúng dọn ở đây cùng mọi
-    // thứ khác. Bỏ sót thì bấm sang mục khác vẫn mang theo giới hạn của mục
-    // trước — đúng luật đã chốt 26/08: *thứ bạn vừa bấm là thứ bạn đang cấu hình.*
+    // Task groups and repo limits are CONFIG too, so they are cleared here with
+    // everything else. Miss one and clicking another entry carries the previous
+    // entry's limits along — the rule settled 26/08: *what you just clicked is what
+    // you are configuring.*
     setGroups([]);
     setAccount('');
-    // Nhãn tự sinh của mục TRƯỚC không được tính là "hàng tự sinh" của mục này:
-    // để lại thì một cái tên người dùng đã gõ ở mục cũ có thể bị ghi đè im lặng.
+    // The PREVIOUS entry's auto-label must not count as this entry's "auto" value:
+    // left behind, a name the user typed for the old entry can be silently
+    // overwritten.
     autoLabel.current = '';
-    // Lượt thử đang bay (nếu có) mất quyền ghi kết quả — xem `runRef`. Không có
-    // dòng này thì một lượt cũ vẫn về được và dựng lại đúng cái bug vừa vá.
+    // Any test in flight loses the right to write its result — see `runRef`.
+    // Without this line an old run still lands and rebuilds the bug just fixed.
     runRef.current++;
     setTesting(false);
     setSlow(false);
     /**
-     * ⚠ Lượt đăng nhập bằng mã cũng phải dọn ở ĐÂY, cùng lý do với `runRef`.
+     * ⚠ A device-code sign-in has to be cleared HERE too, for the same reason as
+     * `runRef`.
      *
-     * Bỏ sót thì quay lại rồi bấm sang mục khác vẫn thấy một khối mã to đùng của
-     * **mục trước** — và tệ hơn: vòng hỏi thăm vẫn chạy, nên nó có thể "đăng
-     * nhập xong" cho một dịch vụ người dùng không còn đứng ở đó nữa. Đúng luật
-     * đã chốt 26/08: *thứ bạn vừa bấm là thứ bạn đang cấu hình.*
+     * Miss it and going back then clicking another entry still shows a large code
+     * belonging to **the previous entry** — and worse: the poll keeps running, so
+     * it can "finish signing in" for a service the user is no longer standing in
+     * front of. The rule settled 26/08: *what you just clicked is what you are
+     * configuring.*
      */
     setDevice(null);
     setLogging(false);
@@ -1088,36 +1144,39 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 ĐỔI TÀI KHOẢN ⇒ DỌN SẠCH MỌI THỨ PHÍA SAU. (user chốt 28/08)          │
-   * │                                                                          │
-   * │ > *"tôi chọn lại 1 account mới mà trên modal vẫn hiện chọn repo, thậm chí │
-   * │ >  còn hiện phần dấu check tool, thì làm sao kiểm soát được quyền ở đâu"* │
-   * │ > *"clear thẳng băng đi cho sạch, buộc người dùng phải chọn lại từ đầu,   │
-   * │ >  chứ chiều người dùng là cái app như nồi cám heo"*                      │
-   * │                                                                          │
-   * │ Và họ đúng ở chỗ nặng nhất: **nấc quyền + nhóm việc** là hai thứ QUYẾT    │
-   * │ ĐỊNH nhân viên được làm gì. Giữ chúng lại qua một lần đổi tài khoản là để │
-   * │ người dùng nhìn thấy một lựa chọn họ đã cân nhắc cho **tài khoản khác**,  │
-   * │ rồi bấm Tiếp — cấp quyền cho một thứ họ chưa hề xem xét.                  │
-   * │                                                                          │
-   * │ Bản cũ chỉ dọn `probe` (và chỉ ở nút radio, không ở đường tự chọn hay     │
-   * │ đường vừa-đăng-nhập-xong) — tức "một nửa cấu hình mới, một nửa cũ", đúng  │
-   * │ lớp lỗi *"thứ bạn vừa bấm là thứ bạn đang cấu hình"* đã chốt 26/08.       │
-   * │                                                                          │
-   * │ ⚠ MỘT hàm, MỌI đường vào (radio · tự chọn · vừa đăng nhập xong). Dọn ở    │
-   * │ một chỗ rồi quên chỗ kia là cách cái bug này ra đời lần đầu.              │
+   * │ 🔴 CHANGING ACCOUNT ⇒ CLEAR EVERYTHING DOWNSTREAM. (the user's call,      │
+   * │ 28/08)                                                                    │
+   * │                                                                           │
+   * │ > *"I pick a new account and the modal still shows the repo selection,    │
+   * │ >  even the ticked tools — how am I supposed to control permissions?"*    │
+   * │ > *"just clear it outright, make the user choose again from the start;    │
+   * │ >  pampering the user is how an app turns into slop"*                     │
+   * │                                                                           │
+   * │ And they are right where it matters most: **the access level and the      │
+   * │ task groups** are the two things that DECIDE what an employee may do.     │
+   * │ Carrying them across an account change shows the user a choice they       │
+   * │ weighed for **a different account**, and then they press Next — granting  │
+   * │ permissions they never considered.                                        │
+   * │                                                                           │
+   * │ The old version cleared only `probe` (and only on the radio, not on the   │
+   * │ auto-select path or the just-signed-in path) — i.e. "half a new config,   │
+   * │ half an old one", precisely the *what you just clicked is what you are    │
+   * │ configuring* class settled on 26/08.                                      │
+   * │                                                                           │
+   * │ ⚠ ONE function, EVERY entrance (radio · auto-select · just signed in).    │
+   * │ Clearing in one place and forgetting the other is how this bug was born.  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  /** Bản gương của `account` cho các hàm có deps rỗng. Xem `loadAccounts`. */
+  /** A mirror of `account` for the functions with empty deps. See `loadAccounts`. */
   const accountRef = useRef('');
   useEffect(() => {
     accountRef.current = account;
   }, [account]);
 
   /**
-   * Ảnh chụp danh sách TRƯỚC lần nạp kế tiếp — để biết cái nào vừa mới xuất hiện.
-   * Cùng lý do `accountRef` tồn tại: `loadAccounts` có deps rỗng nên state trong
-   * closure là bản của lần render đầu.
+   * A snapshot of the list BEFORE the next load — so we can tell what just
+   * appeared. The same reason `accountRef` exists: `loadAccounts` has empty deps,
+   * so the state in its closure is the first render's copy.
    */
   const accountsRef = useRef<OAuthAccount[]>([]);
   useEffect(() => {
@@ -1126,48 +1185,51 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   const chooseAccount = useCallback((name: string) => {
     setAccount(name);
-    // Kết quả Thử cũ nói về một CẤU HÌNH KHÁC (ô trống mang tên chìa khác).
+    // The old Test result describes a DIFFERENT CONFIG (a placeholder carrying a
+    // different key name).
     setProbe(null);
-    // Nấc rơi về thấp nhất — mặc định an toàn khi chưa ai chọn. → §6j
+    // The level drops to the lowest — the safe default before anyone chooses. → §6j
     setTier('read');
     setGroups([]);
-    // Bản cài app là của TÀI KHOẢN, nên kết quả tra cũ nói về người khác.
+    // An app installation belongs to an ACCOUNT, so an old lookup is about someone
+    // else.
     setScan(null);
     setAnyway(false);
     setErr('');
   }, []);
 
   /**
-   * Nạp danh sách tài khoản đã đăng nhập cho mục đang chọn, và tự chọn cái đầu.
+   * Load the accounts signed in for the selected entry, and auto-select the first.
    *
-   * Gọi cả lúc vào bước 2 **lẫn** sau khi đăng nhập xong. Sau đăng nhập, tab
-   * callback đã đóng và người dùng đang nhìn lại hộp thoại này — nếu nó không tự
-   * nạp lại thì họ thấy đúng cái màn hình *"chưa đăng nhập"* mà họ vừa xử lý xong,
-   * và cách duy nhất đi tiếp là F5. Đó là hình dạng của một app nói dối về trạng
-   * thái của chính nó.
+   * Called both on entering step 2 **and** after a sign-in completes. After a
+   * sign-in the callback tab has closed and the user is looking at this dialog
+   * again — if it does not reload itself they see the very *"not signed in"*
+   * screen they just dealt with, and the only way forward is F5. That is the shape
+   * of an app lying about its own state.
    */
   const loadAccounts = useCallback(
     /**
-     * `justLoggedIn` — HAI NGƯỜI GỌI, HAI Ý ĐỊNH NGƯỢC NHAU. (bug user bắt 30/08)
+     * `justLoggedIn` — TWO CALLERS, TWO OPPOSITE INTENTS. (bug caught 30/08)
      *
-     * > *"Sao chọn thêm 1 workspace khác ở modal UI thì sau khi chọn thành công
-     * >  không tự chuyển option chọn xuống đó vậy"*
+     * > *"Why, when I add another workspace through the modal, does the selection
+     * >  not move to it after it succeeds?"*
      *
-     * Bản cũ chỉ có một luật — *"chỉ tự chọn khi CHƯA có gì được chọn"* — và luật
-     * đó **đúng cho người gọi thứ nhất**: vào bước 2 thì không được đá cái người
-     * dùng đang cấu hình dở, vì `chooseAccount` dọn sạch nấc/nhóm/kết quả Thử.
+     * The old version had one rule — *"auto-select only when nothing is selected"*
+     * — and that rule is **right for the first caller**: entering step 2 must not
+     * kick out what the user is half-configuring, because `chooseAccount` clears
+     * the level, the groups and the Test result.
      *
-     * Nhưng người gọi thứ hai là **vừa đăng nhập xong**, và ở đó ý định không
-     * mơ hồ chút nào: người ta bấm Đăng nhập, chọn workspace, bấm Cho phép —
-     * ba bước, đều nói cùng một điều. Giữ nguyên lựa chọn cũ ở đây là app phớt
-     * lờ đúng việc người dùng vừa làm.
+     * But the second caller is **just signed in**, and there the intent is not
+     * ambiguous at all: they pressed Sign in, chose a workspace, pressed Allow —
+     * three steps all saying the same thing. Keeping the old selection there is the
+     * app ignoring exactly what the user just did.
      *
-     * ⚠ Chọn theo **CÁI MỚI XUẤT HIỆN**, không theo `accounts[0]` hay phần tử
-     * cuối: thứ tự server trả về không phải hợp đồng, và bám vào nó là dựng một
-     * bug im lặng cho ngày ai đó đổi cách sắp xếp.
+     * ⚠ Select by **WHAT NEWLY APPEARED**, not by `accounts[0]` or the last
+     * element: the server's ordering is not a contract, and depending on it builds
+     * a silent bug for the day someone changes the sort.
      *
-     * 📌 Đăng nhập lại CÙNG workspace ⇒ không có tên nào mới ⇒ rơi về luật cũ,
-     * giữ nguyên lựa chọn. Đúng: không có gì mới để chuyển sang.
+     * 📌 Signing in again to the SAME workspace ⇒ no new name ⇒ falls back to the
+     * old rule and keeps the selection. Correct: there is nothing new to move to.
      */
     async (catalogId: string, justLoggedIn = false) => {
       const before = new Set(accountsRef.current.map((a) => a.name));
@@ -1183,13 +1245,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         }
       }
       /**
-       * Chỉ tự chọn khi CHƯA có gì được chọn — `chooseAccount` dọn sạch phía sau,
-       * nên gọi nó lên một lựa chọn đã có là xoá cấu hình người dùng đang gõ dở.
+       * Auto-select only when NOTHING is selected — `chooseAccount` clears
+       * everything downstream, so calling it over an existing selection deletes the
+       * config the user is halfway through typing.
        *
-       * ⚠ Đọc qua `accountRef` chứ không qua state: hàm này có deps rỗng nên
-       * `account` trong closure là bản của lần render đầu. Và ⚠ không nhét phép
-       * kiểm vào trong updater của `setAccount` — updater phải THUẦN, React gọi
-       * nó hai lần ở StrictMode (đúng bẫy đã tránh ở `autoLabel`).
+       * ⚠ Read through `accountRef`, not through state: this function has empty
+       * deps, so `account` in its closure is the first render's copy. And ⚠ do not
+       * put the check inside a `setAccount` updater — an updater must be PURE, and
+       * React calls it twice under StrictMode (the same trap avoided in
+       * `autoLabel`).
        */
       const first = r.accounts[0]?.name;
       if (first && !accountRef.current) chooseAccount(first);
@@ -1202,17 +1266,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [step, pick, loadAccounts]);
 
   /**
-   * TRA BẢN CÀI APP. → SPEC-arms §5h·7o
+   * LOOK UP THE APP INSTALLATION. → SPEC-arms §5h·7o
    *
-   * ⚠ `scanRef` cùng khuôn với `runRef`: đổi tài khoản giữa lúc đang tra thì
-   * kết quả của tài khoản CŨ không được ghi lên màn hình đang nói về tài khoản
-   * MỚI. Ở `runRef` cái đó tạo ra một dấu ✓ nói dối; ở đây nó tạo ra một danh
-   * sách repo của người khác — nhìn còn thuyết phục hơn.
+   * ⚠ `scanRef` follows `runRef`'s shape: change account mid-lookup and the OLD
+   * account's result must not be written onto a screen now describing the NEW one.
+   * In `runRef` that produced a lying ✓; here it produces somebody else's list of
+   * repos — which looks even more convincing.
    */
   /**
-   * Nạp client_id đang dùng cho mục này. Chỉ hiện khi công ty **đã dán** — của
-   * agentco thì để trống, vì bày sẵn nó ra là mời người ta sửa một thứ họ không
-   * nên đụng, và ô có sẵn chữ trông như một trường bắt buộc.
+   * Load the client_id in use for this entry. Shown only when the company **has
+   * pasted one** — agentco's own is left blank, because displaying it invites
+   * people to edit something they should not touch, and a pre-filled field looks
+   * like a required one.
    */
   useEffect(() => {
     if (step !== 2 || !pick?.deviceLogin) return;
@@ -1231,9 +1296,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
       const r = await api.setOauthClient(pick.id, clientId);
       setOwn(r.own);
       setClientId(r.own ? r.id : '');
-      // Đổi danh tính ứng dụng ⇒ chìa đã có thuộc client CŨ. Không dọn gì cả,
-      // chỉ nói ra: chìa cũ vẫn dùng được, nhưng lượt đăng nhập TỚI sẽ đi bằng
-      // client mới. Tự xoá chìa hộ là vứt một thứ đang chạy tốt.
+      // Changing the application identity means existing keys belong to the OLD
+      // client. Nothing is cleared, only stated: the old keys still work, but the
+      // NEXT sign-in travels under the new client. Deleting keys on their behalf
+      // throws away something that is working.
       setErr(
         r.own
           ? t('arm.clientSaved')
@@ -1258,11 +1324,12 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [pick, account]);
 
   /**
-   * Tự chạy khi đã có tài khoản — **không** đợi người dùng bấm gì.
+   * Runs by itself once there is an account — it waits for **no** click.
    *
-   * Đây là chỗ user chốt: *"Không gõ chữ gì, bấm thử ngay và thử tự động"*. Nó
-   * chạy sớm hơn nút Thử vì nó chỉ cần CHÌA, không cần cấu hình — nên người dùng
-   * đọc kết quả trong lúc còn đang chọn nấc và nhóm việc.
+   * This is the user's call: *"type nothing, just press test and have it test
+   * automatically"*. It runs earlier than the Test button because it only needs a
+   * KEY, not a config — so the user reads the result while still choosing the level
+   * and the task groups.
    */
   useEffect(() => {
     if (step === 2 && pick?.repoScan && account) void runScan();
@@ -1270,19 +1337,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [step, pick, account]);
 
   /**
-   * ⚠ NGHE SSE để biết tab callback đã xong. Daemon phát `company.offices` sau
-   * khi lưu chìa — `armsVersion` của store bump theo, và hiệu ứng này bám vào nó.
+   * ⚠ LISTEN TO SSE to learn the callback tab finished. The daemon emits
+   * `company.offices` after saving the key — the store's `armsVersion` bumps with
+   * it, and this effect watches that.
    *
-   * Không dùng `window.open(...).onclose` hay polling: tab callback là một
-   * origin khác về mặt điều hướng, và người dùng có thể đóng nó bằng tay trước
-   * khi ta kịp thấy. Sự kiện từ server là thứ DUY NHẤT biết chắc chìa đã lưu.
+   * Not `window.open(...).onclose` and not polling: the callback tab is a separate
+   * navigation, and the user can close it by hand before we would ever see it. The
+   * server's event is the ONLY thing that knows for certain the key was saved.
    */
   const armsVersion = useApp((s) => s.armsVersion);
   useEffect(() => {
     if (step === 2 && pick?.needsLogin && logging) {
       setLogging(false);
-      // `true` = vừa đăng nhập xong ⇒ chuyển sang workspace vừa cấp quyền.
-      // → khối chú thích ở `loadAccounts`
+      // `true` = just signed in ⇒ move to the workspace that was just authorised.
+      // → the note on `loadAccounts`
       void loadAccounts(pick.id, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1290,21 +1358,22 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ GỠ WORKSPACE — OPTIMISTIC UI. (user 26/08: *"hơi khựng á"*)              │
+   * │ FORGETTING A WORKSPACE — OPTIMISTIC UI. (user, 26/08: *"it stalls"*)     │
    * │                                                                          │
-   * │ Bỏ khỏi danh sách NGAY, gọi server sau. Thu hồi chìa ở phía dịch vụ là   │
-   * │ một vòng mạng thật (`revocation_endpoint`), nên chờ nó xong rồi mới vẽ   │
-   * │ lại là bắt người dùng nhìn một cái nút đứng im vì một việc **không liên  │
-   * │ quan gì tới thứ họ đang nhìn**.                                          │
+   * │ Removed from the list AT ONCE, the server called after. Revoking at the  │
+   * │ service is a real network round trip (`revocation_endpoint`), so waiting │
+   * │ for it before repainting makes the user watch a frozen button for work   │
+   * │ that has **nothing to do with what they are looking at**.                │
    * │                                                                          │
-   * │ ⚠ VÌ SAO LẠC QUAN Ở ĐÂY LÀ THÀNH THẬT, còn ở chỗ khác thì không:        │
-   * │ nút chỉ bấm được khi `usedBy` rỗng, mà đó là **lý do từ chối duy nhất**  │
-   * │ của server. Thứ còn lại chỉ là mạng chết. Lạc quan đúng nghĩa là "gần    │
-   * │ như chắc chắn thành công", không phải "kệ, hỏng thì hoàn tác" — một danh │
-   * │ sách hay nhấp nháy vì rollback thì tệ hơn hẳn một nút khựng nửa giây.    │
+   * │ ⚠ WHY OPTIMISM IS HONEST HERE AND NOT ELSEWHERE: the button is only      │
+   * │ clickable while `usedBy` is empty, and that is the server's **only       │
+   * │ reason to refuse**. What remains is a dead network. Optimistic properly  │
+   * │ means "almost certain to succeed", not "never mind, roll back on         │
+   * │ failure" — a list that flickers from rollbacks is far worse than a       │
+   * │ button that stalls for half a second.                                    │
    * │                                                                          │
-   * │ ⚠ VÀ VẪN PHẢI HOÀN TÁC ĐƯỢC. "Gần như chắc chắn" không phải "chắc chắn", │
-   * │ và một giao diện nói dối về việc đã xoá thì tệ hơn mọi khoản chờ.        │
+   * │ ⚠ AND IT STILL HAS TO ROLL BACK. "Almost certain" is not "certain", and  │
+   * │ an interface lying about a deletion is worse than any amount of waiting. │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   function dropNow(): void {
@@ -1314,15 +1383,17 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
     setDropWs(null);
     setAccounts((list) => list.filter((x) => x.name !== a.name));
-    // Đang chọn chính nó thì bỏ chọn — nếu không, `payload()` gửi lên một tên
-    // chìa vừa bị xoá và người dùng nhận câu lỗi cho việc họ vừa chủ động làm.
+    // If it is the current selection, deselect — otherwise `payload()` sends a key
+    // name that was just deleted and the user gets an error for the thing they
+    // deliberately did.
     setAccount((cur) => (cur === a.name ? '' : cur));
     setProbe(null);
 
     void api
       .oauthForget(a.name)
-      // Nạp lại từ server sau khi xong: `usedBy` của những mục CÒN LẠI có thể đã
-      // khác, và bản lạc quan chỉ biết đúng cái vừa bỏ.
+      // Reload from the server afterwards: the `usedBy` of the REMAINING entries
+      // may have changed, and the optimistic version only knows about the one just
+      // removed.
       .then(() => loadAccounts(pick.id))
       .catch((e) => {
         setAccounts(before);
@@ -1332,24 +1403,26 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ LƯỢT ĐĂNG NHẬP BẰNG MÃ THIẾT BỊ đang bay. → SPEC-arms §5h·7             │
+   * │ A DEVICE-CODE SIGN-IN in flight. → SPEC-arms §5h·7                      │
    * │                                                                          │
-   * │ ⚠ Ở ĐÂY KHÔNG CÓ BÍ MẬT NÀO. `state` chỉ trỏ tới một phiên nằm ở daemon; │
-   * │ `userCode` là thứ người dùng phải ĐỌC ĐƯỢC và gõ đi. Đó là lý do khối    │
-   * │ này được phép sống trong state của React, khác hẳn `code_verifier` của   │
-   * │ web flow (thứ chưa bao giờ rời khỏi daemon).                             │
+   * │ ⚠ THERE IS NO SECRET HERE. `state` only points at a session living in the│
+   * │ daemon; `userCode` is the thing the user has to BE ABLE TO READ and type │
+   * │ elsewhere. That is why this block is allowed to live in React state,     │
+   * │ unlike the web flow's `code_verifier` (which never leaves the daemon).   │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const [device, setDevice] = useState<DeviceLogin | null>(null);
-  /** Đếm ngược, tính lại mỗi giây — mã chết thật, và người dùng phải thấy nó chết. */
+  /** A countdown, recomputed every second — the code really does die, and the user must see it. */
   const [now, setNow] = useState(() => Date.now());
 
   /**
-   * VÒNG HỎI THĂM — nhịp do SERVER quyết (`intervalMs`), không phải hằng số ở đây.
+   * THE POLL LOOP — the interval is THE SERVER'S (`intervalMs`), not a constant
+   * here.
    *
-   * ⚠ `slow_down` của RFC 8628 nới nhịp ra, và server trả nhịp mới về trong
-   * từng phản hồi. Ghim một hằng số ở client là bỏ qua lời dặn đó rồi bị hãng
-   * chặn — một lỗi chỉ xuất hiện lúc mạng chậm, tức lúc khó tái lập nhất.
+   * ⚠ RFC 8628's `slow_down` widens the interval, and the server returns the new
+   * one in each response. Pinning a constant on the client ignores that instruction
+   * and gets you blocked by the vendor — a bug that only appears on a slow network,
+   * i.e. exactly when it is hardest to reproduce.
    */
   useEffect(() => {
     if (!device || !pick) return;
@@ -1366,8 +1439,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             setDevice(null);
             setLogging(false);
             await loadAccounts(pick.id);
-            // Tài khoản vừa nối là thứ họ vừa làm ra — chọn sẵn giùm, và dọn
-            // sạch mọi thứ đã chọn cho tài khoản TRƯỚC. → `chooseAccount`
+            // The account just linked is the thing they just made — select it, and
+            // clear everything chosen for the PREVIOUS one. → `chooseAccount`
             chooseAccount(r.name);
             return;
           }
@@ -1375,13 +1448,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         } catch (e) {
           if (!alive) return;
           /**
-           * 🔴 HỎNG Ở ĐÂY LÀ DỪNG, và phải nói ra — khác hẳn tầng mạng.
+           * 🔴 A FAILURE HERE STOPS, and has to be said — unlike the network layer.
            *
-           * `devicePoll` phía daemon đã nuốt mọi lỗi TẠM thành `pending` (rớt
-           * mạng không được giết một lượt cấp quyền đã thành công, §5h·7g). Nên
-           * thứ leo được tới đây chỉ còn: mã hết hạn, người dùng bấm Từ chối,
-           * hoặc phiên đã bị dọn. Cả ba đều **không tự khỏi** ⇒ im lặng thử lại
-           * là để người dùng nhìn một vòng quay vĩnh viễn.
+           * The daemon's `devicePoll` already swallows every TEMPORARY error into
+           * `pending` (a dropped connection must not kill an authorisation that
+           * succeeded, §5h·7g). So what reaches here is only: the code expired, the
+           * user pressed Deny, or the session was cleared. None of the three **heal
+           * themselves** ⇒ retrying quietly leaves the user watching a spinner
+           * forever.
            */
           setDevice(null);
           setLogging(false);
@@ -1391,7 +1465,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     };
     void tick(device.intervalMs);
 
-    // Đếm ngược chạy riêng: nó chỉ vẽ, không được phụ thuộc nhịp hỏi thăm.
+    // The countdown runs on its own: it only draws, and must not depend on the poll
+    // interval.
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
@@ -1402,10 +1477,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }, [device, pick]);
 
   /**
-   * Hết hạn thì **tự dọn**, không đợi người dùng phát hiện.
+   * On expiry it **clears itself**, rather than waiting for the user to notice.
    *
-   * Một mã đã chết mà vẫn hiện trên màn hình là một lời mời gõ vào chỗ vô ích —
-   * và người gõ xong sẽ thấy GitHub báo lỗi, rồi đi tìm nguyên nhân ở phía họ.
+   * A dead code still on screen is an invitation to type it somewhere for nothing —
+   * and whoever types it gets an error from GitHub and starts looking for the cause
+   * on their own side.
    */
   useEffect(() => {
     if (device && now > device.expiresAt) {
@@ -1420,19 +1496,21 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setErr('');
     setLogging(true);
     /**
-     * ⚠ DỌN NGAY TỪ LÚC BẤM, không đợi đăng nhập xong. (user 28/08)
+     * ⚠ CLEAR ON THE CLICK, not when the sign-in finishes. (user, 28/08)
      *
-     * *"trong lúc chọn nối thêm 1 tài khoản khác: đề nghị trên modal clear tất cả
-     * các entity phụ thuộc yếu của nó… khi nào select xong xuôi rồi mới hiện"*
+     * *"while adding another account: the modal should clear all its weakly
+     * dependent entities… only show them again once the selection is settled"*
      *
-     * Dọn ở đây thì khối phạm vi / bản cài / nấc / nhóm việc **biến mất ngay khi
-     * họ bấm**, thay vì đứng đó nói về tài khoản cũ suốt lượt đăng nhập. Không có
-     * dòng này thì họ nhìn một màn hình trộn hai tài khoản trong ~30 giây — đúng
-     * lúc câu hỏi *"quyền này của ai"* khó trả lời nhất.
+     * Clearing here makes the scope block, the installation, the level and the task
+     * groups **disappear the moment they click**, instead of sitting there
+     * describing the old account for the whole sign-in. Without this they stare at
+     * a screen mixing two accounts for ~30 seconds — precisely when *"whose
+     * permission is this"* is hardest to answer.
      *
-     * Cái giá đã cân nhắc: bấm nhầm rồi ✕ thì mất lựa chọn nấc/nhóm đang gõ dở.
-     * Chọn chiều đó vì hai chiều hỏng không cân nhau — mất vài cú bấm thì thấy
-     * ngay, còn cấp quyền cho tài khoản mình chưa xem xét thì không thấy gì cả.
+     * The price, weighed: mis-click then ✕ and a half-made level/group choice is
+     * lost. That direction was chosen because the two failures are not equal —
+     * losing a few clicks is visible immediately, while granting permissions for an
+     * account you never examined is visible not at all.
      */
     setProbe(null);
     setTier('read');
@@ -1441,19 +1519,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     setAnyway(false);
 
     /**
-     * ĐƯỜNG MÃ THIẾT BỊ — cho hãng không mở đăng ký động (GitHub).
+     * THE DEVICE-CODE PATH — for vendors with no dynamic registration (GitHub).
      *
-     * Không `window.open` bắt buộc: người dùng có thể đang ngồi ở một máy khác
-     * với cái điện thoại trong tay, và **đó chính là ca device flow sinh ra để
-     * phục vụ**. Ta hiện mã + một nút mở giúp, không giả định trình duyệt này
-     * là nơi họ sẽ duyệt.
+     * No mandatory `window.open`: the user may be sitting at another machine with a
+     * phone in their hand, and **that is exactly the case the device flow exists
+     * for**. We show the code plus a button that opens it for them, without
+     * assuming this browser is where they will approve.
      */
     if (pick.deviceLogin) {
       try {
         const d = await api.oauthDeviceStart(pick.id);
-        // Dấu "đã chép" được dọn bằng `key={device.state}` ở chỗ vẽ, không bằng
-        // một `setCopied(false)` ở đây: state đó nay sống trong `DeviceCode`, và
-        // một lượt mới là một `state` mới ⇒ React dựng lại khối, sạch mọi thứ.
+        // The "copied" mark is cleared by `key={device.state}` at the render site,
+        // not by a `setCopied(false)` here: that state now lives inside
+        // `DeviceCode`, and a new attempt is a new `state` ⇒ React rebuilds the
+        // block, clean.
         setNow(Date.now());
         setDevice(d);
       } catch (e) {
@@ -1466,12 +1545,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     try {
       const { authUrl } = await api.oauthStart(pick.id);
       /**
-       * MỞ TAB TỪ ĐÂY, không để daemon `spawn` trình duyệt.
+       * OPEN THE TAB FROM HERE; never let the daemon `spawn` a browser.
        *
-       * 🔴 Hai lớp lỗi bị xoá cùng lúc: (1) trình duyệt mặc định của máy có thể
-       * chưa đăng nhập dịch vụ, còn cái đang mở agentco thì có — user gặp ngay
-       * lượt đầu 24/08; (2) `cmd /c start` trên Windows cắt URL ở dấu `&` đầu
-       * tiên, mà URL OAuth thì **luôn** có `&`. Không qua shell ⇒ không có gì để cắt.
+       * 🔴 Two failure classes deleted at once: (1) the machine's default browser
+       * may not be signed in to the service while the one showing agentco is — the
+       * user hit that on their first attempt, 24/08; (2) `cmd /c start` on Windows
+       * truncates a URL at the first `&`, and an OAuth URL **always** has one. No
+       * shell ⇒ nothing to truncate.
        */
       window.open(authUrl, '_blank', 'noopener');
     } catch (e) {
@@ -1481,11 +1561,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }
 
   /**
-   * Thứ gửi lên server. Mục danh mục thì gửi **`catalogId` + thư mục** và để
-   * SERVER dựng — client không ghép chuỗi `npx …@phiên-bản` nữa.
+   * What goes to the server. A catalogue entry sends **`catalogId` + folders** and
+   * lets THE SERVER build it — the client no longer assembles an
+   * `npx …@version` string.
    *
-   * Bản trước client tự ghép, tức số phiên bản gói ghim ở HAI chỗ. Hai bản của
-   * cùng một hằng số đã đốt dự án này một lần (`agentSlot` vs `arrange`).
+   * The previous version assembled it client-side, which pinned the package version
+   * in TWO places. Two copies of one constant have burned this project once already
+   * (`agentSlot` vs `arrange`).
    */
   function payload():
     | {
@@ -1499,18 +1581,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         options?: string[];
       }
     | null {
-    // Dùng lại: chỉ gửi BĂM. Cấu hình, tên chìa và giá trị chìa đều nằm ở server
-    // rồi — gửi lại bản sao của chúng qua HTTP là mở đường cho hai bản lệch nhau.
+    // Reuse: send only the HASH. The config, the key name and the key value are all
+    // on the server already — sending copies of them over HTTP opens the door to two
+    // versions drifting apart.
     if (reuse) return { armId: reuse.id };
     if (pick) {
       if (pick.folders && folderList().length === 0) return null;
-      // Cần đăng nhập mà chưa chọn tài khoản ⇒ chưa dựng được cấu hình: ô trống
-      // `${OAUTH}` không có tên nào để thay. Trả `null` để nút Thử im, thay vì
-      // gửi lên rồi nhận về một câu lỗi kỹ thuật.
+      // Needs a sign-in but no account chosen ⇒ the config cannot be built: the
+      // `${OAUTH}` placeholder has no name to substitute. Return `null` so the Test
+      // button stays quiet, rather than sending it and receiving a technical error.
       if (pick.needsLogin && !account) return null;
-      // Nấc toàn quyền mà chưa tick nhóm nào ⇒ chưa dựng được cấu hình. Trả
-      // `null` để nút Thử im, y hệt ca "chưa chọn tài khoản" ngay trên — thay vì
-      // gửi lên rồi nhận về một cánh tay rộng hơn thứ người dùng định cắm.
+      // Full access with no group ticked ⇒ the config cannot be built. Return `null`
+      // so the Test button stays quiet, exactly like the "no account" case above —
+      // rather than sending it and getting back an arm wider than the user intended.
       if (needGroups() && !groups.length) return null;
       return {
         catalogId: pick.id,
@@ -1519,12 +1602,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         ...(pick.tiered ? { level: tier } : {}),
         ...(groups.length ? { groups } : {}),
         /**
-         * ⚠ GỬI KỂ CẢ KHI RỖNG — khác hẳn `groups` ngay trên.
+         * ⚠ SENT EVEN WHEN EMPTY — the opposite of `groups` just above.
          *
-         * Server đọc `undefined` = *"client không nói gì"* ⇒ rơi về **bật sẵn**;
-         * mảng rỗng = *"người dùng đã bỏ tick hết"*. Dùng `...(len ? … : {})` ở
-         * đây là biến một lần bỏ tick tường minh thành một cú bấm **không có tác
-         * dụng**, và người dùng sẽ không hiểu vì sao. → `server.ts §armConfig`
+         * The server reads `undefined` as *"the client said nothing"* ⇒ falls back
+         * to **the defaults that are on**; an empty array means *"the user unticked
+         * everything"*. Using `...(len ? … : {})` here turns a deliberate untick
+         * into a click that **does nothing**, and the user will not understand why.
+         * → `server.ts §armConfig`
          */
         ...(pick.options?.length ? { options } : {}),
       };
@@ -1534,13 +1618,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   }
 
   /**
-   * Ô TRỐNG `${TÊN}` trong cấu hình người dùng DÁN → sinh ô nhập chìa cho đúng
-   * chúng. Bản khách của `secrets.ts §missingSecretRefs`.
+   * `${NAME}` placeholders in a PASTED config → generate key fields for exactly
+   * those. The client-side twin of `secrets.ts §missingSecretRefs`.
    *
-   * Trước đây đường "tự cắm" không có ô chìa nào, nên mọi server HTTP cần token
-   * đều là ngõ cụt: dán vào, thử, 401, hết đường. Danh mục thì khai sẵn tên chìa
-   * — nhưng tên đó không phải bí mật gì, nó nằm ngay trong cấu hình họ vừa dán.
-   * Đọc ra là đủ, và nó chạy cho MỌI hãng mà ta không cần biết trước hãng nào.
+   * The custom path used to have no key fields at all, so every HTTP server needing
+   * a token was a dead end: paste, test, 401, nowhere to go. A catalogue entry
+   * declares its key names — but those names are not secret, they are right there in
+   * the config the user just pasted. Reading them out is enough, and it works for
+   * EVERY vendor without our knowing which vendor in advance.
    */
   const pastedKeys = (): string[] => {
     if (pick || reuse) return [];
@@ -1552,11 +1637,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   };
 
   /**
-   * Mục danh mục cùng TÊN MIỀN với URL người dùng vừa dán.
+   * The catalogue entry sharing a HOSTNAME with the URL just pasted.
    *
-   * Chỉ để **chỉ đường**, không tự chuyển hộ: người dùng cố ý đi đường tự cắm,
-   * và tự nhảy họ sang đường khác là lấy mất quyết định của họ. Một câu gợi ý
-   * thì họ đọc rồi tự chọn.
+   * Only to **point the way**, never to switch for them: the user chose the custom
+   * path deliberately, and jumping them somewhere else takes their decision away. A
+   * suggestion is read, and then they choose.
    */
   const catalogMatch = (): CatalogArm | undefined => {
     const cfg = parsePaste();
@@ -1570,24 +1655,24 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     }
   };
 
-  /** Ô để trắng KHÔNG phải một chìa rỗng — nó là chìa CHƯA ĐIỀN. Đừng gửi đi. */
+  /** A blank field is NOT an empty key — it is a key NOT YET FILLED IN. Do not send it. */
   const filledKeys = (): Record<string, string> =>
     Object.fromEntries(Object.entries(keys).filter(([, v]) => v.trim() !== ''));
 
-  /** Khối JSON người dùng dán. `null` = chưa đọc được. */
+  /** The JSON block the user pasted. `null` = not readable yet. */
   function parsePaste(): Record<string, unknown> | null {
     try {
       const parsed = JSON.parse(paste) as Record<string, unknown>;
-      // Nhận cả hai hình dạng: khối `{"mcpServers":{"ten":{…}}}` chép nguyên từ
-      // README, và khối cấu hình trần. Bắt người dùng bóc tay là bắt họ hiểu một
-      // định dạng — đúng thứ cả §6 sinh ra để tránh.
+      // Accept both shapes: a `{"mcpServers":{"name":{…}}}` block copied straight
+      // from a README, and a bare config block. Making the user unwrap it by hand
+      // makes them understand a format — exactly what all of §6 exists to avoid.
       const servers = parsed['mcpServers'];
       if (servers && typeof servers === 'object') {
         /**
-         * ⚠ `[0]` — CHỈ SERVER ĐẦU TIÊN. Đây là một quyết định, và nó phải được
-         * **nói ra ở màn hình** chứ không nằm im trong chú thích: xem `extraServers`.
-         * Một khối README có hai server thì bấm Xong xong người dùng nhận đúng
-         * một cánh tay và **không có triệu chứng nào**.
+         * ⚠ `[0]` — THE FIRST SERVER ONLY. This is a decision, and it has to be
+         * **said on screen** rather than sitting quietly in a comment: see
+         * `extraServers`. A README block with two servers otherwise means the user
+         * presses Done, receives exactly one arm, and gets **no symptom at all**.
          * → [[agentco-silent-allowlist]]
          */
         const [name, cfg] = Object.entries(servers as Record<string, unknown>)[0] ?? [];
@@ -1602,23 +1687,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 SỐ THỨ TỰ LƯỢT THỬ — chặn PHẢN HỒI CŨ ĐÈ LÊN PHẢN HỒI MỚI.           │
-   * │ (bug user bắt 26/08)                                                     │
+   * │ 🔴 A RUN SEQUENCE NUMBER — stops an OLD RESPONSE OVERWRITING A NEW ONE.  │
+   * │ (bug caught 26/08)                                                       │
    * │                                                                          │
-   * │   *"tôi chọn 1 thư mục, nó đang kết nối, tôi nhanh tay chuyển sang 1 thư │
-   * │    mục khác (Music)… lúc này quá trình test là test của cái nào??"*      │
+   * │   *"I pick a folder, it's connecting, I quickly switch to another folder │
+   * │    (Music)… whose test is running now??"*                                │
    * │                                                                          │
-   * │ Của cái ĐẦU. Một lượt thử mất 8–20 giây; đổi thư mục giữa chừng thì lượt │
-   * │ cũ **vẫn đang bay**, và khi nó về, `setProbe` ghi kết quả của thư mục A   │
-   * │ lên màn hình đang cấu hình thư mục B. Người dùng thấy ✓, bấm Xong, và    │
-   * │ cấu hình được lưu là B — **B chưa bao giờ được thử.**                    │
+   * │ The FIRST one's. A test takes 8–20 seconds; change folder midway and the │
+   * │ old run is **still in flight**, and when it lands `setProbe` writes      │
+   * │ folder A's result onto a screen now configuring folder B. The user sees  │
+   * │ a ✓, presses Done, and what gets saved is B — **B was never tested.**    │
    * │                                                                          │
-   * │ Đây đúng lớp lỗi *"hệ thống nói dối về trạng thái của chính nó"*, và nó  │
-   * │ tệ hơn một lỗi thường: dấu ✓ là **toàn bộ** thứ bước 2 tồn tại để bán.   │
+   * │ This is the *"the system lies about its own state"* class, and it is     │
+   * │ worse than an ordinary bug: that ✓ is **the entire** thing step 2 exists │
+   * │ to sell.                                                                 │
    * │                                                                          │
-   * │ ⚠ Không dùng `AbortController` cho việc này: huỷ được request HTTP nhưng │
-   * │ **không** huỷ được phép thử đang chạy ở server (nó đã spawn tiến trình   │
-   * │ MCP). Thứ ta cần không phải "dừng lượt cũ" mà là **"đừng nghe lượt cũ"**.│
+   * │ ⚠ `AbortController` is not the tool for this: it cancels the HTTP request│
+   * │ but **not** the test running on the server (which has already spawned an │
+   * │ MCP process). What is needed is not "stop the old run" but **"stop       │
+   * │ listening to the old run"**.                                             │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const runRef = useRef(0);
@@ -1646,30 +1733,31 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     try {
       const k = filledKeys();
       /**
-       * ⚠ `office` PHẢI ĐI KÈM, dù nút Thử không cắm gì vào văn phòng nào.
+       * ⚠ `office` MUST RIDE ALONG, even though Test plugs nothing into any office.
        *
-       * Ô trống `<OFFICE_STATE>` được điền **theo văn phòng** (`server.ts
-       * §officeStateDir`). Thiếu nó thì lượt Thử chạy với đường dẫn còn nguyên ô
-       * trống ⇒ trình duyệt đẻ một thư mục tên `<OFFICE_STATE>` cạnh daemon, và
-       * quan trọng hơn: **nút Thử kiểm một cấu hình khác thứ sẽ chạy** — đúng bất
-       * biến mà `injectSecrets` sinh ra để giữ.
+       * The `<OFFICE_STATE>` placeholder is filled **per office** (`server.ts
+       * §officeStateDir`). Without it the Test run uses a path with the placeholder
+       * still in it ⇒ the browser creates a directory literally named
+       * `<OFFICE_STATE>` beside the daemon, and more importantly: **Test checks a
+       * config other than the one that will run** — the very invariant
+       * `injectSecrets` exists to hold.
        */
-      const r = await api.testArm('thu', {
+      const r = await api.testArm('probe', {
         ...p,
         ...(Object.keys(k).length ? { secrets: k } : {}),
         ...(officeId ? { office: officeId } : {}),
       });
-      // ⚠ CHỐT: cấu hình đã đổi trong lúc lượt này đang bay ⇒ kết quả này nói về
-      // một thứ KHÁC với thứ đang trên màn hình. Vứt nó đi, im lặng — lượt mới
-      // đã chạy rồi và nó mới là lượt đúng. → `runRef`
+      // ⚠ THE GUARD: the config changed while this run was in flight ⇒ this result
+      // describes something OTHER than what is on screen. Drop it, silently — a new
+      // run has already started and that one is the right one. → `runRef`
       if (mine !== runRef.current) return;
       setProbe(r);
     } catch (e) {
       if (mine !== runRef.current) return;
       setErr(e instanceof ApiError ? e.message : t('arm.testFailed'));
     } finally {
-      // `testing`/`slow` chỉ được tắt bởi lượt MỚI NHẤT: lượt cũ về sau lượt mới
-      // mà tắt spinner là màn hình báo "xong" trong khi vẫn đang chờ.
+      // Only the LATEST run may turn `testing`/`slow` off: an old run landing after
+      // a new one and stopping the spinner tells the screen "done" while it waits.
       if (mine === runRef.current) {
         clearTimeout(tick);
         setTesting(false);
@@ -1692,9 +1780,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         ...(officeId ? { office: officeId } : {}),
         ...(grant.length ? { grantTo: grant } : {}),
       });
-      // Đọc lại canvas từ server thay vì vá state tại chỗ: node MCP do
-      // `layout.read()` TÁI TẠO từ `company.mcpServers`, nên nguồn sự thật nằm ở
-      // server. Vá tay là dựng một bản sao thứ hai của cùng một luật.
+      // Re-read the canvas from the server rather than patching state here: MCP
+      // nodes are REBUILT by `layout.read()` from `company.mcpServers`, so the
+      // source of truth is the server. Patching by hand builds a second copy of one
+      // rule.
       await actions.refreshCanvas();
       onOpenChange(false);
     } catch (e) {
@@ -1706,48 +1795,53 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ✓ CHƯA ĐỦ ĐỂ ĐI TIẾP — vế thứ hai là **cấu hình còn hợp lệ không**.      │
-   * │                                                                          │
-   * │ Ca thật: thử ở nấc chỉ đọc (✓), rồi đổi sang **toàn quyền**. Bộ chọn      │
-   * │ nhóm việc hiện ra với 0 ô tick, nhưng dấu ✓ cũ vẫn còn ⇒ nút Tiếp vẫn     │
-   * │ bấm được ⇒ lưu một cánh tay toàn quyền rơi về nhóm MẶC ĐỊNH, tức rộng     │
-   * │ hơn thứ người dùng vừa được hỏi. Hỏng theo chiều **nới quyền**, và không  │
-   * │ có triệu chứng nào trên màn hình.                                        │
-   * │                                                                          │
-   * │ Đúng họ với `runRef`: *một dấu ✓ nói về một cấu hình khác với cấu hình    │
-   * │ đang trên màn hình*. Ở đó nó lệch vài giây, ở đây nó lệch qua một cú bấm. │
+   * │ A ✓ IS NOT ENOUGH TO PROCEED — the second half is **is the config still   │
+   * │ valid**.                                                                  │
+   * │                                                                           │
+   * │ The real case: test at read-only (✓), then switch to **full access**. The │
+   * │ group picker appears with 0 ticked, but the old ✓ is still there ⇒ Next   │
+   * │ stays clickable ⇒ a full-access arm is saved falling back to the DEFAULT  │
+   * │ groups, i.e. wider than what the user was just asked about. It fails in   │
+   * │ the direction of **more permission**, with no symptom on screen.          │
+   * │                                                                           │
+   * │ The same family as `runRef`: *a ✓ describing a config other than the one  │
+   * │ on screen*. There it was stale by seconds; here it is stale by one click. │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const ok =
     probe?.status === 'connected' &&
     !probe.warn &&
     /**
-     * 🔴 THỬ TẦM VỚI HỎNG ⇒ KHÔNG CHO ĐI TIẾP. (user bắt 27/08)
+     * 🔴 A FAILED REACH TEST ⇒ NO PROCEEDING. (caught 27/08)
      *
-     *   *"Hiện tại báo warning 404 nè mà vẫn cho đi Tiếp là sao"*
+     *   *"It's showing a 404 warning right now and still lets me press Next?"*
      *
-     * Đúng, và nó là một mâu thuẫn tự mình gây ra: màn hình vừa nói *"chưa với
-     * tới repo này"* rồi vừa mở cửa đi tiếp. Người dùng đọc được hai câu ngược
-     * nhau và sẽ tin **cái nút**, không tin dòng chữ — nút là thứ họ bấm được.
+     * Right, and it was a contradiction of our own making: the screen said *"cannot
+     * reach this repo"* and opened the door forward in the same breath. The user
+     * reads two opposite statements and will believe **the button**, not the text —
+     * the button is the thing they can press.
      *
-     * Một cảnh báo mà không chặn gì thì không phải cảnh báo, nó là trang trí,
-     * và nó dạy người dùng bỏ qua mọi cảnh báo khác. Cùng lý lẽ đã dùng cho
-     * nhãn ÔI (*"nhãn kêu bừa thì người dùng học cách bỏ qua nó"*).
+     * A warning that blocks nothing is not a warning, it is decoration, and it
+     * teaches the user to skip every other warning. The same argument used for the
+     * stale badge (*"a label that cries wolf teaches people to ignore it"*).
      */
     /**
-     * 🔴 CHƯA CÀI APP VÀO REPO NÀO ⇒ KHÔNG CHO ĐI TIẾP. (user chốt 27/08)
+     * 🔴 NO APP INSTALLED ON ANY REPO ⇒ NO PROCEEDING. (the user's call, 27/08)
      *
-     *   *"Nếu không có hoặc người dùng không cài đặt thì yêu cầu người dùng
-     *    install trước khi được phép đi tiếp"*  ·  *"báo warning 404 nè mà vẫn
-     *    cho đi Tiếp là sao"*
+     *   *"If there is none, or the user hasn't installed it, require them to
+     *    install before being allowed to continue"*  ·  *"it shows a 404 warning
+     *    and still lets me press Next?"*
      *
-     * Chặn **chỉ khi tra được và ra rỗng**. Hai ca còn lại đi qua:
-     *   · `failed`  — không tra được, chặn là chặn oan (mạng chập cũng ra thế)
-     *   · `anyway`  — người dùng khẳng định đã cài, và họ có thể đúng: phép tra
-     *                 mù với repo của TỔ CHỨC.
+     * Blocks **only when the lookup worked and came back empty**. The other two
+     * cases pass:
+     *   · `failed`  — the lookup did not work, so blocking blocks the innocent (a
+     *                 network blip looks the same)
+     *   · `anyway`  — the user asserts they installed it, and they may be right:
+     *                 the lookup is blind to an ORGANISATION's repos.
      *
-     * Cặp "chặn + đường thoát tường minh" là chỗ đứng giữa hai cái hỏng: cảnh
-     * báo suông thì không ai đọc, còn chặn cứng thì giam người đã làm đúng.
+     * The "block + explicit escape hatch" pair is the ground between two failures:
+     * a bare warning nobody reads, and a hard block that imprisons someone who did
+     * everything right.
      */
     !(scan && !('failed' in scan) && scan.installed.length === 0 && !anyway) &&
     !(needGroups() && !groups.length);
@@ -1755,15 +1849,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/*
-        RỘNG HƠN MẶC ĐỊNH — 46rem thay cho 28rem. (user chốt 01/09)
+        WIDER THAN THE DEFAULT — 46rem instead of 28rem. (the user's call, 01/09)
 
-        Không phải chuyện thẩm mỹ: tab Lệnh đặt **nhãn cùng dòng với ô nhập**
-        (`Field`), và ở 28rem thì cột nhãn 150px ăn hết một phần ba, còn ô Cú pháp
-        — thứ chứa một dòng lệnh thật — hẹp tới mức phải cuộn ngang để đọc lại
-        chính cái mình vừa gõ.
+        Not cosmetic: the Commands tab puts **the label on the same line as the
+        input** (`Field`), and at 28rem the 150px label column eats a third of it
+        while the Syntax field — which holds a real command line — is narrow enough
+        to need horizontal scrolling to re-read what you just typed.
 
-        ⚠ Rộng cho CẢ hộp thoại, không riêng tab Lệnh: một modal đổi bề rộng khi
-        chuyển tab là cả trang nhảy dưới tay người đang bấm.
+        ⚠ Wider for the WHOLE dialog, not just the Commands tab: a modal that
+        changes width on a tab switch is a page jumping under the hand pressing it.
       */}
       <DialogContent className={DIALOG_W}>
         <DialogHeader>
@@ -1772,10 +1866,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               ? t('arm.step1Title')
               : step === 2
                 ? /*
-                    Hình đi CÙNG tên ở bước 2 — đây là "xuyên suốt các nấc bên
-                    trong" (user 27/08). Nó cũng là một cái chốt kiểm bằng mắt:
-                    bấm nhầm thẻ ở bước 1 thì thấy ngay từ đây, chứ không phải
-                    đợi tới lúc đọc tên hãng trong một câu dài.
+                    The icon travels WITH the name at step 2 — this is "carried
+                    through the inner steps" (user, 27/08). It's also a visual
+                    lock: pick the wrong card at step 1 and you see it right
+                    here, instead of only catching it once you read the brand
+                    name buried in a long sentence.
                   */
                   (
                     <span className="inline-flex items-center gap-2">
@@ -1808,26 +1903,29 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
           </DialogDescription>
         </DialogHeader>
 
-        {/* ─────────────────────────────────────────────── BƯỚC 1 · Chọn */}
+        {/* ─────────────────────────────────────────────── Step 1 · Choose */}
         {step === 1 && (
           <div className="max-h-[52vh] overflow-y-auto">
             {/*
               ┌──────────────────────────────────────────────────────────────┐
-              │ CHỌN LOẠI TRƯỚC, chọn dịch vụ sau. (user chốt 23/08)         │
+              │ TYPE FIRST, service second. (the user's call, 23/08)         │
               │                                                              │
-              │ Bản trước bày thẳng thẻ danh mục: "File trên máy" đứng ngang │
-              │ hàng với "Notion". Sai tầng — người dùng nghĩ *"cho nó đọc    │
-              │ thư mục này"*, họ KHÔNG nghĩ *"cài một MCP server"*. Chuyện   │
-              │ thư mục được thi hành BẰNG một MCP là việc của ta, không phải│
-              │ của họ, và bày nó ra là bắt họ học từ vựng của mình.          │
+              │ The previous version laid out catalog cards flat: "Local     │
+              │ files" sat level with "Notion". Wrong layer — the user       │
+              │ thinks *"let it read this folder"*, not *"install            │
+              │ an MCP server"*. That a folder gets served BY an MCP is our  │
+              │ business, not theirs, and showing it makes them learn our    │
+              │ vocabulary.                                                  │
               │                                                              │
-              │ Ba loại này khác nhau ở thứ NGƯỜI DÙNG phải làm tiếp, không  │
-              │ ở thứ chạy bên dưới — đó mới là trục phân loại đúng.          │
+              │ These three types differ in what the USER has to do next,    │
+              │ not in what runs underneath — that's the axis that actually  │
+              │ sorts them.                                                  │
               └──────────────────────────────────────────────────────────────┘
             */}
             {pane === 'type' && (
-              // Bốn loại từ 01/09 — `grid-cols-2` chứ không phải `cols-4`: bốn thẻ
-              // trên một hàng ở dialog này là bốn cột hẹp, chữ `say` xuống ba dòng.
+              // Four types as of 01/09 — `grid-cols-2`, not `cols-4`: four cards
+              // on one row in this dialog means four narrow columns, and the
+              // `say` text wraps to three lines.
               <div className="grid grid-cols-2 gap-2">
                 <TypeCard
                   icon={<ArmIcon kind="files" className="h-6 w-6" />}
@@ -1838,25 +1936,30 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     if (!files) return;
                     /*
                       ┌──────────────────────────────────────────────────────┐
-                      │ ĐI THẲNG VÀO BƯỚC 2 — không màn trung gian nào.      │
-                      │ (user 26/08, và tôi đồng ý vì một lý do khác họ nêu) │
+                      │ GO STRAIGHT TO STEP 2 — no intermediate screen.      │
+                      │ (user, 26/08, and I agree for a second reason they   │
+                      │ didn't name)                                         │
                       │                                                      │
-                      │ Họ nói *"kiểu đem lại cảm giác phải bấm Chọn thư mục │
-                      │ 2 lần"*. Gốc rễ không phải số cú bấm — **cái nút nói │
-                      │ dối**: "Chọn một thư mục khác…" không mở bộ chọn nào  │
-                      │ cả, nó chỉ chuyển màn. Một nút gọi tên hành động mà  │
-                      │ lại đi điều hướng thì cảm giác "bấm hai lần" là ĐÚNG.│
+                      │ They said *"it feels like you have to click Choose   │
+                      │ folder twice"*. The root isn't the click count —     │
+                      │ **the button lied**: "Choose a different folder…"    │
+                      │ doesn't open any picker, it just switches screens. A │
+                      │ button named after an action that actually navigates │
+                      │ will always feel like "two clicks", correctly.       │
                       │                                                      │
-                      │ Sửa nhãn cũng được, nhưng bỏ hẳn màn thì tốt hơn:    │
-                      │ ba loại còn lại đều có gì đó để CHỌN ở bước 1 (dịch  │
-                      │ vụ nào / dán gì), riêng thư mục thì thẻ đã là lựa    │
-                      │ chọn rồi. Danh sách dùng lại xuống chân bước 2.      │
+                      │ Relabeling would work too, but dropping the screen   │
+                      │ entirely is better: the other three types all have   │
+                      │ something to CHOOSE at step 1 (which service / what  │
+                      │ to paste), while for folders the card already is the │
+                      │ choice. The reuse list moves down to the foot of     │
+                      │ step 2.                                              │
                       └──────────────────────────────────────────────────────┘
                     */
                     resetConfig();
                     setPick(files);
-                    // Ba đường LOẠI TRỪ NHAU. Quay lại rồi chọn đường khác mà
-                    // không xoá đường cũ là để `payload()` im lặng chọn hộ.
+                    // Three paths are MUTUALLY EXCLUSIVE. Going back and picking
+                    // a different one without clearing the old one lets
+                    // `payload()` silently choose on the user's behalf.
                     setReuse(null);
                     setLabel(files.name);
                     setStep(2);
@@ -1875,7 +1978,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   onClick={() => {
                     setActs([blankAct()]);
                     setCliJson(null);
-                    // Vào tab là vào MÀN THƯ MỤC — xem khối chú thích ở đó.
+                    // Entering the tab enters the FOLDER SCREEN — see the
+                    // comment block there.
                     setCliReady(false);
                     setCliCwd('');
                     setPane('cli');
@@ -1915,7 +2019,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                           <ArmIcon mark={a.brand.mark} kind={a.shape === 'browser' ? 'browser' : a.folders ? 'files' : 'service'} className="h-6 w-6" />
                         </div>
                         <div className="mt-1 text-[13px] font-medium">{a.name}</div>
-                        {/* CÁI GIÁ, không phải tính năng. → §6f */}
+                        {/* THE PRICE, not the feature. → §6f */}
                         <div className="mt-0.5 text-[11px] text-muted">{t(PRICE_SAY[a.price])}</div>
                       </button>
                     ))}
@@ -1931,44 +2035,50 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             )}
 
             {/*
-              MÀN TIẾP ĐẤT: đề xuất **tất cả**, không lọc. Người quay lại cắm
-              cái họ đã có không nên phải đoán nó nằm trong tab nào. Lọc là để
-              thu hẹp khi đã biết mình tìm gì — không phải để giấu. (user 26/08)
+              THE LANDING SCREEN: suggest **everything**, unfiltered. Someone
+              coming back to plug in what they already have shouldn't have to
+              guess which tab it lives under. Filtering is for narrowing once
+              you already know what you're looking for — not for hiding.
+              (user, 26/08)
             */}
             {pane === 'type' && reuseList()}
 
             {/*
               ┌──────────────────────────────────────────────────────────────┐
-              │ MÀN THƯ MỤC ĐỨNG TRƯỚC DANH SÁCH LỆNH. (user chốt 01/09)     │
+              │ THE FOLDER SCREEN COMES BEFORE THE COMMAND LIST.             │
+              │ (the user's call, 01/09)                                     │
               │                                                              │
-              │  *"chọn tab → thư mục picker → sau đó tất cả danh sách lệnh  │
-              │   đều được thao tác từ văn phòng đó khi được gọi"*           │
+              │  *"pick tab → folder picker → and after that every command   │
+              │   in the list operates from that office once it runs"*       │
               │                                                              │
-              │ Vì sao đúng chứ không chỉ vì user nói: một cánh tay CLI **là │
-              │ một dự án**. Thư mục là câu hỏi có **đúng một** câu trả lời  │
-              │ cho cả cánh tay, và hỏi nó ở mỗi lệnh là mời người ta gõ    │
-              │ lệch — rồi lệnh thứ ba không thấy file mà không ai hiểu vì   │
-              │ sao. Hỏi một lần, trả lời một lần.                          │
+              │ Why this is right, not just because the user said so: a CLI  │
+              │ arm **is a project**. The folder is a question with          │
+              │ **exactly one** right answer for the whole arm, and asking   │
+              │ it per command invites drift — then the third command can't  │
+              │ find a file and nobody knows why. Ask once, answer once.     │
               │                                                              │
-              │ ⚠ Và nó phải đứng TRƯỚC: viết xong năm lệnh rồi mới phát     │
-              │ hiện sai thư mục là năm lệnh phải đọc lại.                   │
+              │ ⚠ And it must come FIRST: writing five commands and only     │
+              │ then discovering the wrong folder means re-reading all five. │
               │                                                              │
-              │ 🔴 ĐÍNH CHÍNH 01/09 — bản đầu của tôi có HAI nút: "Chọn thư   │
-              │ mục…" và "Dùng thư mục văn phòng →". User bác, và họ đúng:    │
+              │ 🔴 CORRECTION 01/09 — my first draft had TWO buttons: "Choose│
+              │ folder…" and "Use office folder →". The user rejected it,    │
+              │ and they were right:                                         │
               │                                                              │
-              │   *"Chỉ có duy nhất 1 nút Chọn thư mục…, và thư mục default  │
-              │    khi bấm nút đó luôn là thư mục văn phòng"*                │
+              │   *"There's only ONE Choose folder… button, and the folder   │
+              │    that button defaults to is always the office folder"*     │
               │                                                              │
-              │ Hai nút đó **hỏi cùng một câu hai lần**: nút thứ hai chỉ là   │
-              │ "chọn thư mục văn phòng" viết dưới dạng một lối tắt — và một  │
-              │ lối tắt cho MẶC ĐỊNH thì không tiết kiệm gì, nó chỉ bắt người │
-              │ ta so hai lựa chọn để hiểu ra chúng gần như một.              │
+              │ Those two buttons **ask the same question twice**: the       │
+              │ second one is just "choose the office folder" spelled as a   │
+              │ shortcut — and a shortcut for the DEFAULT saves nothing, it  │
+              │ just makes someone compare two choices to realize they're    │
+              │ nearly the same thing.                                       │
               │                                                              │
-              │ ⇒ MỘT nút, và **thư mục văn phòng là chỗ bộ chọn ĐỨNG SẴN**.  │
-              │ Muốn nó thì bấm Xong ngay, không phải duyệt đi đâu. Cùng số   │
-              │ cú bấm, ít hơn một quyết định — và `cwd` **luôn được ghi ra**  │
-              │ nên `company.yaml` nói đúng thứ sẽ chạy, không còn ca "trống  │
-              │ nghĩa là ở đâu đó".                                          │
+              │ ⇒ ONE button, and **the office folder is where the picker    │
+              │ already STANDS**. Want it? Hit Done right away, no browsing  │
+              │ required. Same number of clicks, one fewer decision — and    │
+              │ `cwd` **is always written out**, so `company.yaml` says      │
+              │ exactly what will run, with no more "empty means somewhere"  │
+              │ case.                                                        │
               └──────────────────────────────────────────────────────────────┘
             */}
             {pane === 'cli' && !cliReady && (
@@ -2005,18 +2115,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   <Button
                     size="sm"
                     onClick={() => {
-                      // Về màn thư mục, KHÔNG về màn chọn loại: người bấm "quay
-                      // lại" ở đây gần như luôn muốn đổi thư mục, và thứ họ vừa
-                      // soạn thì còn nguyên.
+                      // Back to the folder screen, NOT the type screen: someone
+                      // clicking "back" here almost always wants to change the
+                      // folder, and whatever they've drafted stays intact.
                       setCliReady(false);
                       setCliJson(null);
                     }}
                   >
                     {t('arm.backToFolder')}
                   </Button>
-                  {/* Hai chiều, MỘT nguồn: bật JSON thì sinh từ form; tắt thì đọc
-                      ngược về form. Không giữ hai ô soạn thảo sống song song —
-                      đó là ca "hai giao diện ghi cùng một thứ" đã trả giá ở skills. */}
+                  {/* Two directions, ONE source of truth: switching to JSON
+                      generates it from the form; switching back reads it back
+                      into the form. No two live editors kept in parallel — that's
+                      the "two UIs writing the same thing" case that already cost
+                      us at skills. */}
                   <Button
                     size="sm"
                     disabled={cliJson !== null && cliMixed}
@@ -2035,7 +2147,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             setCliCwd(back.cwd);
                           }
                         } catch {
-                          /* JSON hỏng ⇒ giữ nguyên form, ô đỏ của JsonBox đã nói rồi */
+                          /* Broken JSON ⇒ keep the form as-is, JsonBox's red box already said so */
                         }
                         setCliJson(null);
                       }
@@ -2044,9 +2156,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     {cliJson === null ? t('arm.viewJson') : t('arm.backToForm')}
                   </Button>
                   {/*
-                    MẪU CHẠY ĐƯỢC NGAY — và nó điền vào **ô đang mở**, không phải
-                    lúc nào cũng vào form. Nút "thêm mẫu" mà nhảy màn hình là bắt
-                    người đang đọc JSON phải quay lại tìm chỗ họ vừa đứng.
+                    A SAMPLE THAT RUNS AS-IS — and it fills **whichever pane is
+                    open**, not always the form. An "add sample" button that jumps
+                    screens forces someone reading JSON to go find where they
+                    were standing.
                   */}
                   <Button
                     size="sm"
@@ -2062,27 +2175,30 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </div>
 
                 {/*
-                  THANH THƯ MỤC — hiện ở MỌI lúc soạn, kể cả khi đang xem JSON.
-                  Nó là thứ duy nhất trên màn hình trả lời câu *"lệnh này chạy ở
-                  đâu"*, và câu đó không được biến mất khi đổi cách xem.
+                  THE FOLDER BAR — shown at ALL times while editing, even while
+                  viewing JSON. It's the only thing on screen that answers *"where
+                  does this command run"*, and that answer must not disappear
+                  when the view changes.
                 */}
                 <div className="mb-3 flex items-center gap-2 rounded-md border border-line bg-panel px-3 py-2">
                   <FolderOpen className="h-4 w-4 shrink-0 text-muted" />
                   <div className="min-w-0 flex-1 break-all font-mono text-[12px]">
                     {/*
                       ┌──────────────────────────────────────────────────────┐
-                      │ 🔴 Ô TRỐNG PHẢI ĐƯỢC GỌI TÊN. (bug user bắt 01/09:   │
-                      │ *"hiện giờ nó đang trống trơn nên chả biết là gì"*)  │
+                      │ 🔴 AN EMPTY BOX MUST BE NAMED. (bug the user caught, │
+                      │ 01/09: *"right now it's just blank so I have no idea │
+                      │ what it is"*)                                        │
                       │                                                      │
-                      │ Đường form không bao giờ để `cwd` rỗng nữa — nhưng   │
-                      │ đường **dán** thì có: một tờ khai không khai `cwd`   │
-                      │ là hợp lệ, và nó **thật sự chạy ở thư mục văn        │
-                      │ phòng**. Trạng thái đó có thật ⇒ màn hình phải nói   │
-                      │ ra, không được vẽ một cái hộp trắng.                 │
+                      │ The form path never leaves `cwd` empty anymore — but │
+                      │ the **paste** path still can: a declaration that     │
+                      │ doesn't state `cwd` is valid, and it **really does   │
+                      │ run in the office folder**. That state is real ⇒ the │
+                      │ screen must say so, not draw a blank box.            │
                       │                                                      │
-                      │ ⚠ Và đây KHÔNG mâu thuẫn với việc bỏ nút "Bỏ":       │
-                      │ **hiện một trạng thái ≠ mời người ta vào trạng thái  │
-                      │ đó.** Nút Bỏ là lời mời; nhãn này là lời khai.       │
+                      │ ⚠ And this does NOT contradict dropping the "Clear"  │
+                      │ button: **showing a state ≠ inviting someone into    │
+                      │ that state.** The Clear button was an invitation;    │
+                      │ this label is a statement of fact.                   │
                       └──────────────────────────────────────────────────────┘
                     */}
                     {cliMixed ? (
@@ -2094,14 +2210,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     )}
                   </div>
                   {/*
-                    ⚠ CHỈ "Đổi…", KHÔNG có "Bỏ" (user chốt 01/09). Sau khi màn
-                    thư mục còn một nút, đường form **luôn** đặt `cwd` — nên một
-                    nút "Bỏ" ở đây là mời người ta quay lại đúng cái trạng thái
-                    mà màn hình không nói ra được chỗ lệnh sẽ chạy.
+                    ⚠ ONLY "Change…", NO "Clear" (the user's call, 01/09). Now
+                    that the folder screen is down to one button, the form path
+                    **always** sets `cwd` — so a "Clear" button here would only
+                    invite someone back into the exact state where the screen
+                    can't say where the command will run.
 
-                    ⚠ Và nó BIẾN MẤT ở chế độ JSON: ở đó thứ được lưu là khối
-                    JSON, nên một nút sửa `cliCwd` là một nút không có tác dụng.
-                    `cwd` sửa ngay trong khối.
+                    ⚠ And it DISAPPEARS in JSON mode: there, what's actually
+                    saved is the JSON block, so a button that edits `cliCwd`
+                    would do nothing. `cwd` gets edited right inside the block.
                   */}
                   {cliJson === null ? (
                     <Button size="sm" onClick={() => setBrowsing(true)}>
@@ -2116,8 +2233,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   <>
                     <JsonBox value={cliJson} onChange={setCliJson} />
                     {/*
-                      ⚠ Cờ `mixed` phải NÓI RA, không chỉ làm mờ một cái nút. Một
-                      nút mờ không giải thích được vì sao nó mờ.
+                      ⚠ The `mixed` flag must SAY SO, not just grey out a button.
+                      A greyed-out button can't explain why it's greyed out.
                     */}
                     {cliMixed && (
                       <p className="mt-1 text-[11px] text-warn">
@@ -2131,17 +2248,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     {acts.map((a, i) => {
                       const argv = toArgv(a.line);
                       const names = slots(argv);
-                      // Ví dụ khớp cú pháp không? `null` = KHÔNG — và màn hình
-                      // phải nói ra, chứ không được lặng lẽ bỏ ví dụ đi.
+                      // Does the example match the syntax? `null` = NO — and the
+                      // screen must say so, not silently drop the example.
                       const vals = a.example.trim() ? alignExample(argv, toArgv(a.example)) : undefined;
                       const set = (patch: Partial<CliDraft>): void =>
                         setActs((prev) => prev.map((x, j) => (i === j ? { ...x, ...patch } : x)));
                       return (
                         <div key={i} className="rounded-lg border border-line p-3">
                           <div className="mb-2 flex items-center justify-between">
-                            {/* "Lệnh", không phải "Việc" (user 01/09). Ở tab này
-                                đơn vị người dùng đang soạn LÀ một dòng lệnh — gọi
-                                nó là "việc" là mượn từ vựng của tầng khác. */}
+                            {/* "Command", not "Task" (user, 01/09). On this tab
+                                the unit the user is drafting IS a command line —
+                                calling it a "task" borrows another layer's
+                                vocabulary. */}
                             <span className="text-xs font-medium">{t('arm.cliCommandN', { n: i + 1 })}</span>
                             {acts.length > 1 && (
                               <button
@@ -2154,10 +2272,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             )}
                           </div>
 
-                          {/* ⚠ MỌI Ô ĐỀU CÓ NHÃN, và nhãn nằm **cùng dòng** với ô
-                              (user 01/09). Placeholder không phải nhãn: nó biến
-                              mất đúng lúc người ta gõ, nên ai quay lại sửa sẽ
-                              nhìn một ô không tên. → `Field` */}
+                          {/* ⚠ EVERY FIELD HAS A LABEL, and the label sits **on
+                              the same line** as the field (user, 01/09). A
+                              placeholder is not a label: it vanishes the moment
+                              someone types, so whoever comes back to edit sees
+                              an unnamed field. → `Field` */}
                           <Field htmlFor={`cli-say-${i}`} label={t('arm.cliName')}>
                             <Input
                               id={`cli-say-${i}`}
@@ -2166,14 +2285,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               onChange={(e) => set({ say: e.target.value })}
                             />
                             {/*
-                              🔴 BÁO Ở Ô **TÊN**, không phải ở một ô "mã" nào cả —
-                              vì người dùng không gõ mã, họ gõ tên, và mã do
-                              `slugId(tên)` sinh ra. Báo ở chỗ họ sửa được.
+                              🔴 WARN ON THE **NAME** FIELD, not on some separate
+                              "id" field — the user doesn't type an id, they type
+                              a name, and the id is generated by `slugId(name)`.
+                              Warn where they can actually fix it.
 
-                              ⚠ Và câu chữ nói về **bệnh**, không về triệu chứng:
-                              hai lệnh trùng mã thì nhân viên cũng không phân biệt
-                              được chúng qua `does`. Tự thêm hậu tố `_2` cho xong
-                              là giấu đúng cái phần vẫn còn nguyên. → `dupIds`
+                              ⚠ And the copy talks about **the disease**, not the
+                              symptom: two commands with the same id also can't be
+                              told apart by the worker via `does`. Auto-appending a
+                              `_2` suffix to make it pass just hides the part
+                              that's still broken. → `dupIds`
                             */}
                             {a.say.trim() ? (
                               badIds.includes(slugId(a.say)) && (
@@ -2184,9 +2305,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                                 </p>
                               )
                             ) : (
-                              /* Chỉ đỏ khi có LỆNH KHÁC đang chờ, hoặc người dùng
-                                 đã gõ dở ở ô khác — một form vừa mở mà đã đỏ sẵn
-                                 là mắng người chưa làm gì. */
+                              /* Only turn red when ANOTHER COMMAND is pending, or
+                                 the user has already started typing in another
+                                 field — a freshly opened form that's already red
+                                 scolds someone who hasn't done anything yet. */
                               (acts.length > 1 || a.line.trim() || a.description.trim()) && (
                                 <p className="mt-1 text-[11px] text-danger">{t('cliForm.noName')}</p>
                               )
@@ -2204,9 +2326,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               value={a.line}
                               onChange={(e) => set({ line: e.target.value })}
                             />
-                            {/* ⭐ HIỆN LẠI ARGV. Phép tách dòng lệnh là một PHÉP
-                                ĐOÁN, và một phép đoán chỉ được phép tồn tại khi
-                                người dùng NHÌN THẤY kết quả của nó. → `toArgv` */}
+                            {/* ⭐ ECHO THE ARGV BACK. Splitting a command line is
+                                a GUESS, and a guess only gets to exist when the
+                                user can SEE its result. → `toArgv` */}
                             {argv.length > 0 ? (
                               <div className="mt-1 flex flex-wrap gap-1">
                                 {argv.map((t, k) => (
@@ -2224,23 +2346,27 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
                           {/*
                             ┌──────────────────────────────────────────────────┐
-                            │ ⭐ Ô VÍ DỤ **LUÔN HIỆN**. (user 01/09: *"sao Mẫu │
-                            │ có Ví dụ mà trong các trường tự điền lại không   │
-                            │ có Trường Ví dụ?"*)                              │
+                            │ ⭐ THE EXAMPLE FIELD **ALWAYS SHOWS**. (user,    │
+                            │ 01/09: *"why does the Sample have an Example but │
+                            │ the auto-filled fields don't have an Example     │
+                            │ field?"*)                                        │
                             │                                                  │
-                            │ Bản trước ẩn nó khi cú pháp chưa có ô trống, lý  │
-                            │ lẽ *"không có gì để điền thì ví dụ dạy ai"*. Lý  │
-                            │ lẽ đó đúng **về phía model** và sai **về phía    │
-                            │ người dùng**: một ô tự mọc ra rồi tự biến mất là │
-                            │ thứ không ai đoán được luật — và nó giấu đi đúng │
-                            │ lúc người ta cần nó nhất, tức là lúc chưa biết   │
-                            │ mình cần một ô trống.                            │
+                            │ The earlier version hid it until the syntax had  │
+                            │ a slot, on the logic *"nothing to fill means the │
+                            │ example teaches no one"*. That logic is right    │
+                            │ **from the model's side** and wrong **from the   │
+                            │ user's side**: a field that grows and vanishes on│
+                            │ its own follows a rule no one predicts — and it  │
+                            │ hides right when someone needs it most, which is │
+                            │ before they know they need a slot at all.        │
                             │                                                  │
-                            │ ⇒ Luôn hiện, và khi CHƯA có ô trống thì nó **đổi │
-                            │ vai**: so ví dụ với cú pháp để **chỉ ra chỗ đáng │
-                            │ làm ô trống**. Người dùng không phải học khái    │
-                            │ niệm "tham số" trước — họ dán hai dòng lệnh thật │
-                            │ và máy chỉ vào chỗ khác nhau. → `ExampleNoSlot`  │
+                            │ ⇒ Always show it, and when there's NO slot yet it│
+                            │ **switches roles**: comparing the example against│
+                            │ the syntax to **point at where a slot belongs**. │
+                            │ The user doesn't have to learn the concept of a  │
+                            │ "parameter" first — they paste two real command  │
+                            │ lines and the machine points at the difference.  │
+                            │ → `ExampleNoSlot`                                │
                             └──────────────────────────────────────────────────┘
                           */}
                           <Field htmlFor={`cli-ex-${i}`} label={t('arm.cliExample')}>
@@ -2252,16 +2378,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               onChange={(e) => set({ example: e.target.value })}
                             />
                             {/*
-                              ⚠ KHÔI PHỤC 01/09 — bản trên máy vừa gỡ hai dòng
-                              này, và gỡ chúng thì `vals` thành biến không ai
-                              đọc (build đỏ), nhưng đó chưa phải lý do chính:
+                              ⚠ RESTORED 01/09 — the working copy had just
+                              removed these two lines, and removing them turns
+                              `vals` into a variable nobody reads (red build),
+                              but that isn't the main reason:
 
-                              Đây là **bằng chứng nhìn thấy được duy nhất** rằng
-                              ví dụ đã được bóc ra — thứ đi vào prefix của model
-                              chính là `ten = 8`, không phải cả dòng lệnh. Bỏ nó
-                              thì `alignExample` chạy hay không chạy trông y hệt
-                              nhau, và ô đo J-5 mất chỗ để nhìn.
-                              → luật của `toArgv`: đoán thì phải hiện kết quả.
+                              This is the **only visible proof** that the
+                              example has been parsed apart — what actually goes
+                              into the model's prefix is `name = 8`, not the
+                              whole command line. Drop it and whether
+                              `alignExample` runs or not looks identical, and the
+                              J-5 measurement loses a place to look.
+                              → `toArgv`'s rule: a guess must show its result.
                             */}
                             {names.length === 0 ? (
                               <ExampleNoSlot line={a.line} example={a.example} />
@@ -2288,21 +2416,24 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
                           {/*
                             ┌──────────────────────────────────────────────────┐
-                            │ "LỆNH CHỈ ĐỌC" — user chốt lại 01/09 sau khi bản  │
-                            │ trước của tôi viết dài thành một câu hỏi.        │
-                            │                                                  │
-                            │ Họ đúng: ở đây nhãn ngắn **đọc được ngay** vì nó │
-                            │ đứng cùng dòng với ô tick, trong một form mà mọi │
-                            │ dòng khác cũng là `nhãn — ô`. Câu hỏi dài phá vỡ  │
-                            │ đúng cái nhịp đó.                                │
-                            │                                                  │
-                            │ ⚠ Giữ nguyên hai điều: mặc định **không tick**    │
-                            │ (`read_only = false`, tức "có thay đổi" — an toàn │
-                            │ đúng chiều khi chưa ai trả lời), và **nói thật    │
-                            │ rằng nó là nhãn chứ không phải khoá**. Sau khi bỏ │
-                            │ nấc quyền cho CLI (30/08), ô này chỉ dựng          │
-                            │ `annotations`; vẽ nó như một cái khoá là để giao  │
-                            │ diện nói dối về thứ nó không thi hành.            │
+                            │ "READ-ONLY COMMAND" — the user's final call,      │
+                            │ 01/09, after my earlier draft spelled it out as a │
+                            │ long question.                                    │
+                            │                                                   │
+                            │ They're right: a short label **reads instantly**  │
+                            │ here because it sits on the same line as the      │
+                            │ checkbox, in a form where every other line is also│
+                            │ `label — field`. A long question breaks that exact│
+                            │ rhythm.                                           │
+                            │                                                   │
+                            │ ⚠ Two things stay as they are: the default is     │
+                            │ **unchecked** (`read_only = false`, i.e. "makes   │
+                            │ changes" — the safe direction when no one has     │
+                            │ answered yet), and it **honestly says it's a      │
+                            │ label, not a lock**. After removing the permission│
+                            │ tier for CLI (30/08), this field only ever feeds  │
+                            │ `annotations`; drawing it as a lock would let the │
+                            │ UI lie about something it doesn't enforce.        │
                             │ → [[agentco-safe-default-direction]]              │
                             └──────────────────────────────────────────────────┘
                           */}
@@ -2318,13 +2449,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                           </Field>
 
                           {/*
-                            🔴 `fail_when` ĐÃ RA KHỎI FORM (user hỏi 01/09, và câu
-                            hỏi của họ đúng) — xem `SPEC-arms §16v`. Trường vẫn
-                            sống trong tờ khai, vẫn chở qua form nguyên vẹn
-                            (`CliDraft.fail_when`), chỉ soạn được ở tab JSON.
-                            ĐỪNG dựng lại ô này ở đây kèm placeholder
-                            `ERROR, FAILED, Traceback`: đó chính là ba chuỗi hay
-                            xuất hiện nhất trong output LÀNH.
+                            🔴 `fail_when` HAS BEEN TAKEN OUT OF THE FORM (the
+                            user asked, 01/09, and their question was right) —
+                            see `SPEC-arms §16v`. The field still lives in the
+                            declaration and still carries through the form
+                            intact (`CliDraft.fail_when`), it's just only
+                            editable on the JSON tab. DO NOT rebuild this field
+                            here with a placeholder like
+                            `ERROR, FAILED, Traceback`: those are exactly the
+                            three strings most likely to show up in HEALTHY
+                            output.
                           */}
                         </div>
                       );
@@ -2332,8 +2466,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     <Button size="sm" onClick={() => setActs((p) => [...p, blankAct()])}>
                       {t('arm.cliAdd')}
                     </Button>
-                    {/* Trần 3–8 lệnh (§16h): mỗi việc là một định nghĩa tool nằm
-                        trong prefix MỌI lượt. Cảnh báo, không chặn — tiền của khách. */}
+                    {/* Cap of 3–8 commands (§16h): each task is a tool definition
+                        that sits in the prefix of EVERY turn. Warn, don't block —
+                        it's the customer's money. */}
                     {acts.length > 8 && (
                       <p className="text-xs text-muted">
                         {t('arm.cliTooMany')}
@@ -2342,9 +2477,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   </div>
                 )}
 
-                {/* Ở chế độ JSON không có ô Tên/Cú pháp nào để bôi đỏ, nên đây là
-                    chỗ DUY NHẤT nói ra vì sao nút dưới bị mờ. Một nút mờ không
-                    giải thích được chính nó. */}
+                {/* In JSON mode there's no Name/Syntax field to turn red, so this
+                    is the ONLY place that says why the button below is greyed
+                    out. A greyed-out button can't explain itself. */}
                 {cliJson !== null && (badIds.length > 0 || cliBad.length > 0 || cliOut === null) && (
                   <p className="mt-2 text-[11px] text-danger">
                     {cliOut === null
@@ -2369,28 +2504,32 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     setErr('');
                     setPick(null);
                     setReuse(null);
-                    // Đi tiếp bằng ĐÚNG đường của tab dán — không đẻ đường lưu thứ hai.
+                    // Proceed through the EXACT same path as the paste tab — don't
+                    // grow a second save path.
                     setPaste(JSON.stringify(decl, null, 2));
                     setStep(2);
                   }}
                 >
                   {t('arm.useThisConfig')}
                 </Button>
-                {/* CHỈ cánh tay LỆNH — xem `kindOf`. Gợi ý một cánh tay HTTP ở
-                    đây là gợi ý thứ mà chính tab này từ chối dán. */}
+                {/* ONLY command arms — see `kindOf`. Suggesting an HTTP arm here
+                    would suggest exactly what this tab refuses to accept as a
+                    paste. */}
                 {reuseList('cli')}
               </>
             )}
 
             {/*
-              MỘT bản `BrowseDialog` cho cả tab Lệnh — dùng cho **cả** màn thư mục
-              đứng trước lẫn nút "Đổi…" ở thanh trên. Hai bản là hai cây thư mục
-              sống song song, và chúng lệch nhau ngay lần mở thứ hai.
+              ONE `BrowseDialog` for the whole Commands tab — used for **both**
+              the leading folder screen and the "Change…" button on the top bar.
+              Two instances would be two folder trees living in parallel, and
+              they'd drift apart the second time either one opens.
 
-              ⚠ `start={cliCwd}`: mở lại ĐÚNG thư mục đang chọn, **không** lấy
-              `LAST_DIR` (user chốt 01/09: *"ngoại trừ phần lấy cache default"*).
-              Cache đó là trí nhớ của cánh tay THƯ MỤC; mượn nó ở đây là mở ra một
-              chỗ chẳng liên quan gì tới cánh tay đang soạn.
+              ⚠ `start={cliCwd}`: reopen at the EXACT folder currently selected,
+              **not** `LAST_DIR` (the user's call, 01/09: *"except for the part
+              that reads the default from cache"*). That cache is the memory of
+              the FOLDER arm; borrowing it here would open a location with
+              nothing to do with the arm being drafted.
             */}
             {pane === 'cli' && (
               <BrowseDialog
@@ -2415,16 +2554,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <JsonBox value={paste} onChange={setPaste} />
                 {/*
                   ┌────────────────────────────────────────────────────────────┐
-                  │ DÁN NHẦM TAB ⇒ CHỈ ĐƯỜNG, VÀ ĐI HỘ LUÔN. (bật 01/09)      │
+                  │ PASTED INTO THE WRONG TAB ⇒ POINT THE WAY, AND CARRY THE   │
+                  │ CONTENT OVER. (added 01/09)                                │
                   │                                                            │
-                  │ Cùng cơ chế `ProbeReport(hasLoginButton, match)` 31/08:     │
-                  │ nhận ra thứ vừa dán rồi trỏ đúng cửa, thay vì để họ bấm    │
-                  │ Thử → hỏng → không hiểu gì.                                │
+                  │ Same mechanism as `ProbeReport(hasLoginButton, match)`,    │
+                  │ 31/08: recognize what was just pasted and point at the     │
+                  │ right door, instead of letting them click Test → fail →    │
+                  │ understand nothing.                                        │
                   │                                                            │
-                  │ ⚠ Một cái nút ĐƯA HỌ SANG kèm nội dung, chứ không phải một │
-                  │ câu bảo họ tự đi: câu chữ mà bắt người ta dán lại lần nữa  │
-                  │ thì đúng bằng không nói. Và luật này sống ở GIAO DIỆN —     │
-                  │ lõi vẫn nhận tờ khai CLI từ mọi đường. → `cli-arm.ts`       │
+                  │ ⚠ A button that CARRIES THEM OVER along with the content,  │
+                  │ not a sentence telling them to go paste it again — copy    │
+                  │ that makes someone paste a second time is worth exactly    │
+                  │ as much as saying nothing. And this rule lives in the UI — │
+                  │ the core still accepts a CLI declaration from every path.  │
+                  │ → `cli-arm.ts`                                             │
                   └────────────────────────────────────────────────────────────┘
                 */}
                 {isCliPaste(paste) ? (
@@ -2439,20 +2582,22 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       onClick={() => {
                         /*
                           ┌──────────────────────────────────────────────────┐
-                          │ SANG THẲNG **TAB JSON**, không sang form.        │
-                          │ (user 01/09: *"với cơ chế thêm folder thì cái    │
-                          │ chuyển paste json sang cli không còn hiệu        │
-                          │ nghiệm nữa"* — và họ đúng)                       │
+                          │ GO STRAIGHT TO THE **JSON TAB**, not the form.   │
+                          │ (user, 01/09: *"with the new per-arm folder, the │
+                          │ paste-json-to-cli conversion no longer holds up"*│
+                          │ — and they're right)                             │
                           │                                                  │
-                          │ Từ hôm nay thư mục là của **cả cánh tay**, nên   │
-                          │ một tờ khai gõ tay đặt `cwd` khác nhau từng lệnh │
-                          │ **không đọc ngược về form được**. Đổ nó vào form │
-                          │ là im lặng dời chỗ chạy của n−1 lệnh.            │
+                          │ As of today the folder belongs to the **whole    │
+                          │ arm**, so a hand-written declaration that sets a │
+                          │ different `cwd` per command **can't be read back │
+                          │ into the form**. Dumping it into the form would  │
+                          │ silently relocate where n−1 commands run.        │
                           │                                                  │
-                          │ ⇒ Rơi vào **ô JSON của tab Lệnh**: nguyên văn    │
-                          │ sang nguyên văn, không đi qua phép biến đổi nào. │
-                          │ Người dùng muốn về form thì tự bấm — và lúc đó   │
-                          │ nút ấy đã bị khoá nếu `cwd` lệch nhau.           │
+                          │ ⇒ Land in the **JSON box of the Commands tab**:  │
+                          │ verbatim to verbatim, with no transformation in  │
+                          │ between. If the user wants to go back to the form│
+                          │ they click for it themselves — and by then that  │
+                          │ button is already locked if the `cwd`s disagree. │
                           └──────────────────────────────────────────────────┘
                         */
                         const back = declToDraft(safeJson(paste));
@@ -2469,20 +2614,21 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 ) : extraServers.length > 0 ? (
                   /*
                     ┌──────────────────────────────────────────────────────────┐
-                    │ 🔴 KHỐI CÓ NHIỀU SERVER — ta chỉ cắm CÁI ĐẦU. (user hỏi  │
-                    │ 01/09: *"kiểm tra bên custom mcp có bị leak không"* —    │
-                    │ có, và đây là chỗ đó.)                                    │
-                    │                                                          │
-                    │ `parsePaste` lấy `Object.entries(mcpServers)[0]` và bỏ    │
-                    │ phần còn lại **không một câu nào**. README của nhiều hãng │
-                    │ liệt kê 2–3 server trong một khối, nên đây không phải ca  │
-                    │ hiếm: người dùng bấm Xong, thấy ✓, và mất một cánh tay    │
-                    │ mà **không có triệu chứng nào**.                          │
-                    │                                                          │
-                    │ ⚠ KHÔNG chặn — cắm cái đầu là hành vi đúng và hữu ích.   │
-                    │ Thứ thiếu chỉ là **nói ra**: ta lấy cái nào, và những cái │
-                    │ kia cắm bằng cách nào. Cùng luật với `ProbeReport`: hỏng  │
-                    │ im lặng thì ít nhất giao diện đừng im lặng theo.          │
+                    │ 🔴 A BLOCK WITH MULTIPLE SERVERS — we only wire up THE    │
+                    │ FIRST ONE. (user asked, 01/09: *"check whether custom mcp │
+                    │ is leaking anything"* — it was, and this is where.)       │
+                    │                                                           │
+                    │ `parsePaste` takes `Object.entries(mcpServers)[0]` and    │
+                    │ drops the rest **without a single word about it**. Many   │
+                    │ vendors' READMEs list 2–3 servers in one block, so this   │
+                    │ isn't a rare case: the user clicks Done, sees ✓, and loses│
+                    │ an arm with **zero symptoms**.                            │
+                    │                                                           │
+                    │ ⚠ NOT a block — wiring up the first one is correct and    │
+                    │ useful behavior. What's missing is just **saying so**:    │
+                    │ which one we took, and how to wire up the others. Same    │
+                    │ rule as `ProbeReport`: if it fails silently, the UI must  │
+                    │ not fail silently along with it.                          │
                     └──────────────────────────────────────────────────────────┘
                   */
                   <p className="mt-1 text-xs text-warn">
@@ -2503,9 +2649,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   className="mt-2 w-full"
                   disabled={!paste.trim() || isCliPaste(paste)}
                   onClick={() => {
-                    // ⚠ KHÔNG `resetConfig()` ở đây: nó xoá luôn `paste`, mà
-                    // `paste` chính là thứ người dùng vừa gõ để đi tiếp. Cửa này
-                    // là cửa duy nhất mà cấu hình được nhập NGAY TẠI bước 1.
+                    // ⚠ NO `resetConfig()` here: it would also clear `paste`, and
+                    // `paste` is exactly what the user just typed to proceed.
+                    // This is the only path where the config is entered RIGHT AT
+                    // step 1.
                     setKeys({});
                     setProbe(null);
                     setErr('');
@@ -2517,44 +2664,51 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   {t('arm.useThisConfig')}
                 </Button>
                 {/*
-                  🔴 THIẾU TỪ ĐẦU — hai tab kia có, tab này không. (user bắt 31/08)
+                  🔴 MISSING FROM THE START — the other two tabs have it, this one
+                  doesn't. (the user caught it, 31/08)
 
-                  Luật 26/08 (khối chú thích ở `reuseList`) chốt: *"vào type riêng
-                  mới lọc theo type đó"* — và ba tab đều phải có danh sách dùng
-                  lại của loại mình. `catalog` có `reuseList('service')`, bước 2
-                  của `files` có `reuseList('files')`, còn `paste` thì **không có
-                  dòng nào**. Không phải một quyết định, chỉ là sót.
+                  The 26/08 rule (comment block at `reuseList`) settled it:
+                  *"entering a specific type filters by that type"* — and all
+                  three tabs are supposed to carry a reuse list for their own
+                  type. `catalog` has `reuseList('service')`, `files`'s step 2 has
+                  `reuseList('files')`, and `paste` had **no line at all**. Not a
+                  decision, just an oversight.
 
-                  Hậu quả nặng hơn ở đúng tab này: cánh tay tự cắm là loại **duy
-                  nhất** không có thẻ danh mục để bấm lại, nên thiếu danh sách này
-                  thì đường dùng lại của nó là **dán lại cấu hình bằng tay** — tức
-                  là nhân bản, đúng thứ §6i-bis đã mất công gỡ.
+                  The consequence is worse on exactly this tab: a custom-pasted
+                  arm is the **only** type with no catalog card to click back
+                  onto, so without this list its only reuse path is **pasting the
+                  same config in by hand again** — a duplicate, exactly what §6i-bis
+                  went to the trouble of removing.
                 */}
                 {reuseList('custom')}
               </>
             )}
 
-            {/* Bước 1 cũng cần chỗ nói lỗi: nút "xoá hẳn" sống ở đây, và server
-                từ chối được (mục vẫn còn ai đó giữ). Nuốt câu đó là bấm xong
-                không thấy gì xảy ra. */}
+            {/* Step 1 also needs somewhere to say an error: the "delete for good"
+                button lives here, and the server can refuse it (someone still
+                holds the item). Swallowing that message means clicking it and
+                seeing nothing happen. */}
             {err && <p className="mt-2 text-xs text-danger">{err}</p>}
           </div>
         )}
 
-        {/* ─────────────────────────────────────── BƯỚC 2 · Chìa & Thử ngay */}
+        {/* ─────────────────────────────────── Step 2 · Keys & Test now */}
         {step === 2 && (
           <div className="max-h-[52vh] overflow-y-auto">
             {/*
-              ⚠ TÊN Ở ĐÂY CHỈ ĐỂ ĐỌC — ô sửa đã BỎ (user bắt được: "cũng có edit
-              được đâu, đã test").
+              ⚠ THE NAME HERE IS READ-ONLY — the edit field was REMOVED (the user
+              caught it: "it's not even editable here, tested it").
 
-              Ô cũ nói dối thật: `addArm` giữ nhãn đã có trong sổ chung nếu mục
-              đó từng tồn tại (*"cắm lại một thứ từng đặt tên thì cái tên đó là
-              của họ"*), nên gõ tên mới vào lúc CẮM LẠI bị bỏ qua âm thầm.
+              The old field genuinely lied: `addArm` keeps the label already in
+              the shared registry if that entry existed before (*"reconnecting
+              something that was already named means that name belongs to
+              them"*), so typing a new name during a RECONNECT was silently
+              ignored.
 
-              Sửa theo hướng thật thà hơn: tên lúc tạo là TỰ SINH, và đổi tên là
-              một việc riêng ở bảng chi tiết — nơi nó chạy thật, và nơi user đã
-              chỉ định từ đầu (*"không phải ở bước tạo mà là sau đó"*).
+              Fixed toward the more honest direction: the name at creation time
+              is AUTO-GENERATED, and renaming is its own action on the detail
+              panel — where it actually takes effect, and where the user pointed
+              us from the start (*"not at the creation step but afterward"*).
             */}
             {label && (
               <div className="mb-3 rounded-md border border-line px-3 py-2">
@@ -2562,20 +2716,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <div className="mt-0.5 break-all text-[13px] font-medium">{label}</div>
                 {/*
                   ┌──────────────────────────────────────────────────────────┐
-                  │ NÓI RA WORKSPACE + MỨC QUYỀN NGAY Ở ĐÂY. (user 26/08)    │
+                  │ STATE THE WORKSPACE + PERMISSION LEVEL RIGHT HERE.       │
+                  │ (user, 26/08)                                            │
                   │                                                          │
-                  │   *"ít nhất phải cho biết tên workspace, quyền hiện tại"*│
+                  │   *"at minimum it should show the workspace name, the    │
+                  │   current permission"*                                   │
                   │                                                          │
-                  │ Màn này trước chỉ ghi "Notion" — đúng nhưng vô dụng khi  │
-                  │ người dùng có ba workspace. Hai mẩu này đến từ state của │
-                  │ chính màn (`account`, `tier`), nên chúng **luôn khớp** với│
-                  │ thứ nút Xong sắp gửi đi.                                 │
+                  │ This screen used to just say "Notion" — correct but      │
+                  │ useless once the user has three workspaces. Both pieces  │
+                  │ come from the screen's own state (`account`, `tier`), so │
+                  │ they **always match** exactly what the Done button is    │
+                  │ about to send.                                           │
                   │                                                          │
-                  │ ⚠ TRẢ LỜI CÂU USER LO — *"hay lại giả edit tiếp?"*: KHÔNG.│
-                  │ Đây là màn **TẠO MỚI**, nên mức quyền ở đây là một lựa    │
-                  │ chọn thật. Thứ không sửa được là mức của một cánh tay ĐÃ │
-                  │ cắm — và cách đổi nó vẫn là cắm một cái mới rồi rút cái   │
-                  │ cũ (§6j). Hai màn khác nhau, hai câu trả lời khác nhau.  │
+                  │ ⚠ ANSWERING THE USER'S WORRY — *"is this pretending to   │
+                  │ be an edit again?"*: NO. This is the **creation** screen,│
+                  │ so the permission level here is a real choice. What can't│
+                  │ be edited is the level of an arm that's ALREADY connected│
+                  │ — and changing that still means connecting a new one and │
+                  │ pulling the old one (§6j). Two different screens, two    │
+                  │ different answers.                                       │
                   └──────────────────────────────────────────────────────────┘
                 */}
                 {(pickedAccount || (pick?.tiered && probe?.status === 'connected')) && (
@@ -2608,16 +2767,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   onChange={(list) => {
                     /*
                       ┌──────────────────────────────────────────────────────┐
-                      │ BÁO TRÙNG NGAY LÚC CHỌN, KHÔNG ĐỢI TỚI LÚC LƯU.      │
+                      │ FLAG A CLASH RIGHT AT SELECTION, NOT AT SAVE TIME.   │
                       │                                                      │
-                      │ Chốt server vẫn là chốt THẬT (client bỏ qua được),   │
-                      │ nhưng để nó bắn ở cuối thì người dùng đã đi qua: chọn│
-                      │ → chờ thử ~20 giây → giao cho ai → bấm Xong → RỒI    │
-                      │ MỚI bị từ chối. Bốn bước phí cho một chuyện biết      │
-                      │ được ngay ở bước một.                                │
+                      │ The server-side check is still the REAL gate (a      │
+                      │ client can be bypassed), but firing it only at the   │
+                      │ end means the user has already gone through: select  │
+                      │ → wait ~20s for the test → hand it to someone → click│
+                      │ Done → and ONLY THEN get rejected. Four wasted steps │
+                      │ for something knowable at step one.                  │
                       │                                                      │
-                      │ ⚠ Chỉ so với cánh tay ĐANG DÙNG Ở VĂN PHÒNG NÀY —    │
-                      │ khác văn phòng là clone độc lập, hợp lệ.             │
+                      │ ⚠ Only compare against arms ALREADY IN USE AT THIS   │
+                      │ OFFICE — a different office is an independent clone, │
+                      │ and that's fine.                                     │
                       └──────────────────────────────────────────────────────┘
                     */
                     const dup = list[0] ? clashingArm(list[0], installed, officeId) : undefined;
@@ -2627,48 +2788,55 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                     }
                     setErr('');
                     setFolders(list.join('\n'));
-                    // Đổi thư mục thì kết quả Thử cũ nói về một cấu hình KHÁC.
-                    // Giữ dấu ✓ lại là cho Lưu một thứ chưa ai thử.
+                    // Changing the folder means the old Test result describes a
+                    // DIFFERENT config. Keeping the ✓ would let Save go through
+                    // on something nobody has tested.
                     setProbe(null);
                     /*
                       ┌──────────────────────────────────────────────────────┐
-                      │ NHÃN LÀ CHỮ NGƯỜI ĐỌC — KHÔNG SLUG, GIỮ NGUYÊN UNICODE│
-                      │                                                      │
-                      │ Bản trước chạy `leaf` qua bộ slug rồi dùng slug làm  │
-                      │ CỔNG (`if (slug) setLabel(leaf)`). Với chữ phi-Latin  │
-                      │ — 文档 · 会계 · документы — slug ra RỖNG, nên nhãn    │
-                      │ không bao giờ được đặt, và node hiện nguyên cái BĂM   │
-                      │ `a5e5e1306bf` lên sơ đồ.                             │
-                      │                                                      │
-                      │ Đúng họ với `slugId` trả rỗng cho mọi chữ phi-Latin   │
-                      │ (SESSIONS_MEMORY ⑳) — một hàm chuẩn hoá viết cho      │
-                      │ tiếng Việt TRÔNG NHƯ viết cho mọi ngôn ngữ.          │
-                      │                                                      │
-                      │ Ở đây không cần slug chút nào: nhãn không phải tên   │
-                      │ thư mục, không phải khoá yaml, không phải id — danh   │
-                      │ tính đã là băm, và băm luôn là `a`+hex dù đường dẫn   │
-                      │ viết bằng chữ gì.                                    │
+                      │ THE LABEL IS TEXT FOR A HUMAN — NO SLUG, KEEP UNICODE │
+                      │ AS-IS                                                 │
+                      │                                                       │
+                      │ The earlier version ran `leaf` through the slugger    │
+                      │ and used the slug as a GATE (`if (slug) setLabel      │
+                      │ (leaf)`). For non-Latin script — 文档 · 회계 ·        │
+                      │ документы — the slug comes out EMPTY, so the label    │
+                      │ never gets set, and the node shows the raw HASH       │
+                      │ `a5e5e1306bf` on the diagram instead.                 │
+                      │                                                       │
+                      │ Same family as `slugId` returning empty for every     │
+                      │ non-Latin script (SESSIONS_MEMORY ⑳) — a normalizer   │
+                      │ written for Vietnamese that LOOKS like it was written │
+                      │ for every language.                                   │
+                      │                                                       │
+                      │ No slug is needed here at all: the label isn't a      │
+                      │ folder name, isn't a yaml key, isn't an id — identity │
+                      │ is already the hash, and the hash is always `a`+hex   │
+                      │ regardless of what script the path is written in.     │
                       └──────────────────────────────────────────────────────┘
                     */
                     const leaf = list[0]?.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.trim() ?? '';
-                    // Gốc ổ đĩa (`D:\`) không có tên lá — rơi về chính đường dẫn
-                    // thay vì để trống, vì để trống là node mang tên băm.
+                    // A drive root (`D:\`) has no leaf name — fall back to the
+                    // full path instead of leaving it empty, since empty is
+                    // exactly what leaves the node carrying the hash.
                     setLabel(leaf || list[0] || t('arm.folderFallbackLabel'));
                   }}
                 />
                 {/*
                   ┌────────────────────────────────────────────────────────────┐
-                  │ MỘT KẾT NỐI = MỘT THƯ MỤC. (user chốt 23/08)               │
+                  │ ONE CONNECTION = ONE FOLDER. (the user's call, 23/08)      │
                   │                                                            │
-                  │ Server `filesystem` NHẬN nhiều gốc (đã đo), nhưng ta cố ý   │
-                  │ chỉ cho một, và lý do là ĐẶC QUYỀN TỐI THIỂU: gộp A+B vào  │
-                  │ một cổng thì nhân viên chỉ cần A vẫn nhận cả B, và không   │
-                  │ có cách nào tách ra sau này ngoài dựng lại từ đầu.         │
+                  │ The `filesystem` server DOES ACCEPT multiple roots (we     │
+                  │ measured it), but we deliberately allow only one, and the  │
+                  │ reason is LEAST PRIVILEGE: merging A+B into one grant means│
+                  │ a worker needing only A also gets B, with no way to split  │
+                  │ them apart later short of rebuilding from scratch.         │
                   │                                                            │
-                  │ Đổi lại: nhân viên cần ba thư mục thì trả ~3× token. Đó là │
-                  │ cái giá THẤY ĐƯỢC (hiện ngay dưới đây), và lối thoát tự    │
-                  │ nhiên là chọn thư mục CHA chung — một quyết định người dùng │
-                  │ tự cân được, khác hẳn một ràng buộc họ không gỡ nổi.       │
+                  │ In exchange: a worker that needs three folders pays ~3×    │
+                  │ tokens. That's a VISIBLE cost (shown right below), and the │
+                  │ natural way out is picking a shared PARENT folder — a      │
+                  │ decision the user can weigh themselves, unlike a constraint│
+                  │ they can't undo.                                           │
                   └────────────────────────────────────────────────────────────┘
                 */}
                 <p className="mt-1.5 text-xs text-muted">{pick.folders.help}</p>
@@ -2676,19 +2844,20 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   {t('arm.oneFolderNote')}
                 </p>
                 {/*
-                  Danh sách dùng lại ở CHÂN bước 2, không ở một màn riêng — xem
-                  khối chú thích ở thẻ "Thư mục trên máy". Đây là chỗ duy nhất
-                  cánh tay thư mục dùng lại được sau khi bỏ màn trung gian, và
-                  bỏ luôn nó là làm mất một đường vốn đã có dữ liệu sẵn trong sổ.
+                  The reuse list sits at the FOOT of step 2, not on its own
+                  screen — see the comment block on the "Local files" card. This
+                  is the only place a folder arm can be reused after dropping the
+                  intermediate screen, and removing it too would lose a path that
+                  already has data sitting in the registry.
                 */}
                 {reuseList('files')}
               </>
             )}
 
             {/*
-              Ô chìa được SINH RA từ danh mục — người dùng không bao giờ gõ tên
-              biến. Tên đó không suy được từ giao thức: nó cần TRƯỚC handshake.
-              → §5c
+              Key fields are GENERATED from the catalog — the user never types a
+              variable name. That name can't be inferred from the protocol: it's
+              needed BEFORE the handshake. → §5c
             */}
             {pick?.secrets.map((s) => (
               <div key={s.name} className="mt-3">
@@ -2705,11 +2874,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
             {/*
               ┌──────────────────────────────────────────────────────────────┐
-              │ ĐĂNG NHẬP — 0 lần gõ chìa, và nút nằm ở ĐÂY (web UI).        │
+              │ SIGN IN — 0 keys typed, and the button lives HERE (the web   │
+              │ UI).                                                         │
               │                                                              │
-              │ Trình duyệt bạn đang ngồi đã có sẵn phiên Notion; daemon thì │
-              │ không biết gì về nó. Đó là lý do nút này ở giao diện chứ      │
-              │ không phải một lệnh CLI mở trình duyệt hộ. (bài học 24/08)   │
+              │ The browser you're sitting in already has a Notion session;  │
+              │ the daemon knows nothing about it. That's why this button    │
+              │ lives in the UI instead of a CLI command that opens a browser│
+              │ on its behalf. (lesson from 24/08)                           │
               └──────────────────────────────────────────────────────────────┘
             */}
             {pick?.needsLogin && (
@@ -2725,12 +2896,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 ) : (
                   <>
                     {/*
-                      "WORKSPACE", không phải "tài khoản" — user chỉ ra 26/08 và
-                      đúng: kiến trúc Notion là **1 tài khoản ⇄ N workspace**, và
-                      mỗi lần cấp quyền OAuth gắn với **một workspace** (token
-                      mang `workspace_id`/`workspace_name`). Gọi nó là "tài
-                      khoản" là dùng từ vựng của ta cho một khái niệm của họ, rồi
-                      để người dùng tự dịch.
+                      "Workspace", not "account" — the user pointed this out,
+                      26/08, and they're right: Notion's architecture is **1
+                      account ⇄ N workspaces**, and each OAuth grant attaches to
+                      **one workspace** (the token carries `workspace_id`/
+                      `workspace_name`). Calling it "account" uses our vocabulary
+                      for their concept, and leaves the user to translate it
+                      themselves.
                     */}
                     <div className="text-[11px] uppercase tracking-wide text-muted">{t('arm.useWorkspace')}</div>
                     <div className="mt-1.5 flex flex-col gap-1">
@@ -2741,18 +2913,19 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               type="radio"
                               name="oauth-account"
                               checked={account === a.name}
-                              // Đổi workspace ⇒ dọn SẠCH phía sau (nấc, nhóm việc,
-                              // phép thử, bản cài). → `chooseAccount`
+                              // Switching workspace ⇒ CLEAR everything downstream
+                              // (tier, task group, test, install). → `chooseAccount`
                               onChange={() => chooseAccount(a.name)}
                             />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate">{a.label ?? a.name}</span>
                               {/*
-                                Chìa chết ⇒ NÓI RA NGAY ĐÂY, cạnh cái tên. Không
-                                nói thì triệu chứng duy nhất là cánh tay 401 im
-                                lặng lúc một nhân viên đang làm việc — xa nguyên
-                                nhân, và câu 401 nói "chìa sai" chứ không nói
-                                "chìa chết, bấm Đăng nhập". → §5m, tầng vòng đời.
+                                A dead key ⇒ SAY SO RIGHT HERE, next to the name.
+                                Without it, the only symptom is a silent 401 on
+                                the arm while some worker is mid-task — far from
+                                the cause, and a 401 says "wrong key" rather than
+                                "dead key, click Sign in". → §5m, the lifecycle
+                                layer.
                               */}
                               {a.dead && (
                                 <span className="mt-0.5 block text-[11px] text-danger">
@@ -2763,12 +2936,13 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                             </span>
                           </label>
                           {/*
-                            ⚠ CÒN CÁNH TAY DÙNG ⇒ KHOÁ NÚT, kèm lý do — đừng bày
-                            ra một lựa chọn chắc chắn bị từ chối (§6e). Và nó mua
-                            thêm một thứ: khi mọi lần bấm đều chắc chắn thành
-                            công thì **Optimistic UI mới thành thật** — xem
-                            `dropNow`. Lạc quan mà hay phải hoàn tác thì tệ hơn
-                            khựng: mục biến mất rồi hiện lại kèm câu lỗi.
+                            ⚠ STILL IN USE BY AN ARM ⇒ LOCK THE BUTTON, with a
+                            reason — don't offer a choice that's guaranteed to be
+                            rejected (§6e). And it buys something else: once
+                            every click is guaranteed to succeed, **optimistic UI
+                            becomes honest** — see `dropNow`. Optimism that
+                            frequently has to roll back is worse than a stall: the
+                            item vanishes and then reappears with an error.
                           */}
                           <button
                             type="button"
@@ -2791,23 +2965,28 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 )}
                 {/*
                   ┌──────────────────────────────────────────────────────────┐
-                  │ 🔴 NÚT KHÔNG ĐƯỢC KHOÁ KHI ĐANG CHỜ. (bug user báo 26/08)│
+                  │ 🔴 THE BUTTON MUST NOT BE LOCKED WHILE WAITING. (bug the │
+                  │ user reported, 26/08)                                    │
                   │                                                          │
-                  │ *"do flow không thành công, nó cứ quay vòng vòng vậy đó… │
-                  │  phải F5 lại mới hết, hay là nên có X nhỏ bên phải?"*     │
+                  │ *"because the flow didn't succeed, it just spins         │
+                  │  forever… you have to hit F5 to clear it, or should there│
+                  │  be a small X on the right?"*                            │
                   │                                                          │
-                  │ Bản cũ `disabled={logging}` và chỉ bỏ chờ khi SSE báo    │
-                  │ THÀNH CÔNG. Nhưng luồng OAuth hỏng ở phía dịch vụ thì    │
-                  │ **không có sự kiện nào cả** — Notion trả lỗi trong tab    │
-                  │ kia, còn tab này chờ mãi. Ta để trạng thái chờ phụ thuộc │
-                  │ vào một tín hiệu **chỉ tồn tại ở nhánh thành công**.     │
+                  │ The old version had `disabled={logging}` and only cleared│
+                  │ the wait once SSE reported SUCCESS. But when the OAuth   │
+                  │ flow fails on the service's side, **no event ever        │
+                  │ arrives** — Notion returns an error in the other tab,    │
+                  │ while this tab waits forever. We'd made the wait state   │
+                  │ depend on a signal **that only exists on the success     │
+                  │ branch**.                                                │
                   │                                                          │
-                  │ ⇒ Hai đường ra, và cả hai đều không cần F5: bấm lại nút  │
-                  │ (mở lượt mới, `state` mới) hoặc ✕ để thôi chờ. User đoán │
-                  │ đúng practice — ✕ là thứ người ta tìm.                    │
+                  │ ⇒ Two ways out, neither needs F5: click the button again │
+                  │ (opens a new attempt, new `state`) or ✕ to stop waiting. │
+                  │ The user's instinct was right — ✕ is what people go      │
+                  │ looking for.                                             │
                   └──────────────────────────────────────────────────────────┘
                 */}
-                {/* Mã thiết bị: ba bước, đồng hồ, nút chép ⇒ tách file. */}
+                {/* Device code: three steps, a clock, a copy button ⇒ split into its own file. */}
                 {device && (
                   <DeviceCode key={device.state} name={pick.name} device={device} now={now} />
                 )}
@@ -2830,9 +3009,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       aria-label={t('arm.stopWaiting')}
                       title={t('arm.stopWaiting')}
                       onClick={() => {
-                        // Dọn CẢ HAI: để `device` lại là để vòng hỏi thăm chạy
-                        // tiếp sau khi người dùng vừa bảo thôi — đúng họ bug
-                        // "hệ thống nói dối về trạng thái của nó".
+                        // Clear BOTH: leaving `device` set would let the polling
+                        // loop keep running right after the user just said stop —
+                        // exactly the "the system lies about its own state" bug.
                         setDevice(null);
                         setLogging(false);
                       }}
@@ -2847,7 +3026,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   </p>
                 )}
 
-                {/* Ô client_id của khách: riêng của luồng mã thiết bị ⇒ tách file. */}
+                {/* The customer's client_id field: specific to the device-code flow ⇒ split into its own file. */}
                 {pick.deviceLogin && (
                   <OwnClient
                     name={pick.name}
@@ -2861,12 +3040,14 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             )}
 
             {/*
-              Khối phạm vi + tra bản cài: riêng của hãng ⇒ ở `components/arm/`.
+              The scope block + install-scan block: brand-specific ⇒ live in
+              `components/arm/`.
 
-              ⚠ `!logging` — ĐANG đăng nhập thì ẩn cả hai. Chúng nói về **tài
-              khoản đang chọn**, mà lúc đó tài khoản đang chọn sắp không còn là
-              tài khoản người dùng quan tâm. Một khối đúng-về-quá-khứ đứng giữa
-              màn hình là thứ khó phát hiện hơn một khối vắng mặt. (user 28/08)
+              ⚠ `!logging` — hide both WHILE signing in. They describe the
+              **currently selected account**, and mid-login the currently
+              selected account is about to stop being the one the user cares
+              about. A block that's correct-about-the-past sitting mid-screen is
+              harder to catch than a block that's simply absent. (user, 28/08)
             */}
             {pick?.scope && accounts.length > 0 && !logging && (
               <ScopeBox name={pick.name} scope={pick.scope} />
@@ -2885,16 +3066,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
             {/*
               ┌──────────────────────────────────────────────────────────────┐
-              │ BA NẤC QUYỀN — và **CON SỐ VIỆC** là thứ làm nó thật thà.    │
+              │ THREE PERMISSION TIERS — and the **TASK COUNT** is what makes│
+              │ it honest.                                                   │
               │                                                              │
-              │ Danh sách nấc đến từ SERVER (`probe.tiers`), không tự suy ở  │
-              │ đây: luật *"chỉ hiện nếu THÊM ≥1 việc so với nấc dưới"* có   │
-              │ ca biên tinh tế (server toàn tool đọc ⇒ ba nấc bằng nhau ⇒   │
-              │ hai nấc dưới là noise), và dựng bản thứ hai của luật đó là   │
-              │ dựng một bản sẽ quên mất một điều kiện. → §6j                │
+              │ The tier list comes from the SERVER (`probe.tiers`), not     │
+              │ inferred here: the rule *"only show if it ADDS ≥1 task versus│
+              │ the tier below"* has a subtle edge case (an all-read-tool    │
+              │ server ⇒ all three tiers equal ⇒ the lower two are noise),   │
+              │ and building a second copy of that rule means building a     │
+              │ copy that will forget a condition. → §6j                     │
               │                                                              │
-              │ Chỉ còn MỘT nấc ⇒ không vẽ bộ chọn: một lựa chọn duy nhất    │
-              │ không phải một câu hỏi.                                      │
+              │ Only ONE tier left ⇒ skip the picker: a single option is     │
+              │ not a question.                                              │
               └──────────────────────────────────────────────────────────────┘
             */}
             {pick?.tiered && probe?.status === 'connected' && (probe.tiers?.length ?? 0) > 1 && (
@@ -2922,22 +3105,25 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted">
                   {/*
-                    ⚠ CÂU CỦA MỤC DANH MỤC THẮNG CÂU MẶC ĐỊNH — và chỉ ở câu HELP.
-                    Tên nấc (`TIER_SAY[t].name` ở trên) KHÔNG cho ghi đè: nó là từ
-                    vựng chung để người dùng so hai cánh tay với nhau.
+                    ⚠ THE CATALOG ENTRY'S COPY WINS OVER THE DEFAULT — and only in
+                    the HELP text. The tier name (`TIER_SAY[t].name` above) does
+                    NOT allow overriding: it's shared vocabulary so the user can
+                    compare two arms against each other.
 
-                    Có vì câu mặc định của nấc `add` (*"Tạo được trang/mục mới…"*)
-                    sai với Linear: `save_issue` là upsert nên mở issue rơi xuống
-                    `full`. Hứa quá tay tệ hơn doạ quá tay (§11a-bis).
+                    This exists because the `add` tier's default copy
+                    (*"Can create new pages/items…"*) is wrong for Linear:
+                    `save_issue` is an upsert, so reopening an issue falls under
+                    `full`. Overpromising is worse than overwarning (§11a-bis).
                     → `core/catalog.ts §tierSay`
                   */}
                   {pick?.tierSay?.[tier] ?? t(TIER_SAY[tier].help)}
                   {/*
-                    ⚠ QUY CÂU NÓI VỀ ĐÚNG NGƯỜI NÓI. Ta viết "server khai", không
-                    viết "cánh tay này chỉ đọc" — câu sau ta KHÔNG bảo đảm được.
-                    `annotations` là **gợi ý của server**; nếu nó khai ẩu hoặc
-                    khai sai thì không client nào phát hiện được. Câu này vẫn
-                    đúng kể cả khi điều đó xảy ra. → §6j
+                    ⚠ ATTRIBUTE THE CLAIM TO WHO ACTUALLY SAID IT. We write "the
+                    server declares", not "this arm is read-only" — we can NOT
+                    guarantee the latter. `annotations` is **the server's own
+                    claim**; if it declares carelessly or wrongly, no client can
+                    detect that. This sentence stays true even when that
+                    happens. → §6j
                   */}
                   {' '}
                   <span className="text-muted">
@@ -2945,14 +3131,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                   </span>
                 </p>
                 {/*
-                  ⚠ NÓI RA GIỚI HẠN CỦA CHÍNH CON SỐ. Phép thử chạy **không mang
-                  hàng rào nấc** (nếu mang thì bộ chọn này không bao giờ hiện —
-                  `catalog.ts §serverFenced`), nên con số token đo được là **trần**.
-                  Ở nấc dưới, server cắt bớt việc ghi ngay từ đầu ⇒ tốn ít hơn.
+                  ⚠ STATE THE LIMIT OF THE NUMBER ITSELF. The test runs **without
+                  the tier fence applied** (if it did, this picker would never
+                  show at all — `catalog.ts §serverFenced`), so the measured token
+                  count is a **ceiling**. At a lower tier, the server strips write
+                  tools from the start ⇒ it costs less.
 
-                  Im lặng ở đây là để người dùng đọc một con số đúng cho một cấu
-                  hình họ **không chọn** — và nó lệch theo chiều doạ quá tay, tức
-                  chiều làm họ tắt thứ họ cần. → §9b
+                  Staying silent here would mean the user reads an accurate number
+                  for a config they **did not choose** — and it skews toward
+                  overwarning, i.e. toward talking them out of something they
+                  need. → §9b
                 */}
                 {pick.serverFence && tier !== 'full' && (
                   <p className="mt-1 text-[11px] leading-relaxed text-muted">
@@ -2973,35 +3161,43 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
             {/*
               ┌──────────────────────────────────────────────────────────────┐
-              │ NHÓM VIỆC — chỉ hỏi ở nấc TOÀN QUYỀN. (user chốt 27/08)      │
+              │ TASK GROUPS — only asked at the FULL-ACCESS tier. (the user's│
+              │ call, 27/08)                                                 │
               │                                                              │
-              │ Ở nấc chỉ đọc màn này KHÔNG hiện gì, và cấu hình rơi về nhóm │
-              │ bật sẵn của danh mục. Đó là toàn bộ ý của *"chỉ đọc thì không│
-              │ cần pick gì"*: nấc rẻ và không có hậu quả thì đừng thu tiền  │
-              │ chú ý của người dùng.                                        │
+              │ At the read-only tier this screen shows NOTHING, and the     │
+              │ config falls back to the catalog's default-enabled groups.   │
+              │ That's the entire point of *"read-only shouldn't need any    │
+              │ picking"*: a cheap, consequence-free tier shouldn't tax the  │
+              │ user's attention.                                            │
               │                                                              │
-              │ 🔴 CON SỐ ĐI KÈM LÀ SỐ ĐO, KHÔNG PHẢI SỐ SHIP SẴN.          │
-              │ Nó đến từ `probe.tools.length` / `probe.tokens`, tức từ một  │
-              │ lượt bắt tay thật với đúng bộ nhóm đang tick. Ship hằng số   │
-              │ đo ngày 26/08 vào danh mục thì nó **già đi im lặng** ngày    │
-              │ hãng thêm tool — đúng lớp "ảnh chụp gõ tay" mà `catalog.ts`  │
-              │ §readOnly vừa bỏ. Số ở đây có thể xuất hiện MUỘN (sau khi    │
-              │ bấm Thử), và muộn mà đúng thì tốt hơn ngay mà bịa.           │
+              │ 🔴 THE ACCOMPANYING NUMBER IS MEASURED, NOT SHIPPED AS A     │
+              │ CONSTANT. Read from `probe.tools.length` / `probe.tokens`,   │
+              │ i.e. from a real handshake with exactly the group set that's │
+              │ currently checked. Shipping a constant measured on 26/08 into│
+              │ the catalog means it **silently goes stale** once the vendor │
+              │ adds a tool — the same "hand-typed snapshot" class of problem│
+              │ that `catalog.ts §readOnly` just removed. The number here can│
+              │ show up LATE (after clicking Test) — late-but-correct beats  │
+              │ immediate-but-made-up.                                       │
               │                                                              │
-              │ Đổi tick ⇒ VỨT kết quả thử cũ: nó nói về một bộ nhóm khác.   │
-              │ Cùng kỷ luật `runRef` và ô chọn thư mục. → §9b               │
+              │ Change a checkbox ⇒ DISCARD the old test result: it describes│
+              │ a different group set. Same discipline as `runRef` and the   │
+              │ folder picker. → §9b                                         │
               └──────────────────────────────────────────────────────────────┘
             */}
             {/*
               ┌──────────────────────────────────────────────────────────────┐
-              │ Ô TICK CÁCH CHẠY — hỏi ở MỌI nấc, khác nhóm việc.            │
-              │                                                              │
-              │ Luật *"câu hỏi chỉ có sức nặng khi được GHI"* (27/08) áp cho  │
-              │ nhóm việc vì chúng nói về **quyền**. Hai ô này nói về **cách  │
-              │ chạy** — hiện cửa sổ hay không, nhớ đăng nhập hay không —     │
-              │ nên nấc nào cũng phải hỏi.                                    │
-              │                                                              │
-              │ Đổi tick ⇒ VỨT kết quả thử cũ: nó nói về một cấu hình khác.   │
+              │ THE "HOW IT RUNS" CHECKBOXES — asked at EVERY tier, unlike    │
+              │ task groups.                                                  │
+              │                                                               │
+              │ The rule *"a question only carries weight when it's RECORDED"*│
+              │ (27/08) applies to task groups because they're about          │
+              │ **permission**. These two checkboxes are about **how it runs**│
+              │ — whether a window pops up, whether login is remembered — so  │
+              │ every tier has to ask.                                        │
+              │                                                               │
+              │ Change a checkbox ⇒ DISCARD the old test result: it describes │
+              │ a different config.                                           │
               └──────────────────────────────────────────────────────────────┘
             */}
             {!!pick?.options?.length && (
@@ -3009,9 +3205,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 <Label>{t('arm.howItRuns')}</Label>
                 <div className="mt-1 flex flex-col gap-1">
                   {pick.options
-                    // Ẩn ô chỉ dùng được khi cùng máy. Bày ra rồi để server từ
-                    // chối là bày một lựa chọn CHẮC CHẮN SAI — cùng lý lẽ với
-                    // việc lọc mục văn phòng đã có ngay ở đầu file.
+                    // Hide options only usable on the same machine. Showing one
+                    // and letting the server reject it would offer a choice
+                    // that's GUARANTEED WRONG — same logic as filtering office
+                    // entries right at the top of this file.
                     .filter((o) => sameMachine || !o.loopbackOnly)
                     .map((o) => (
                       <label
@@ -3040,8 +3237,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </div>
                 {!sameMachine && pick.options.some((o) => o.loopbackOnly) && (
                   /*
-                    Nói ra thay vì im lặng bớt một ô: một lựa chọn biến mất không
-                    lý do là một câu đố, và người dùng sẽ đi tìm nó ở chỗ khác.
+                    Say so instead of silently dropping an option: a choice that
+                    vanishes with no explanation is a puzzle, and the user will go
+                    looking for it somewhere else.
                   */
                   <p className="mt-1.5 text-xs leading-relaxed text-muted">
                     {t('arm.remoteHiddenOption')}
@@ -3070,13 +3268,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                         }}
                       />
                       {/*
-                        TÊN CỦA HÃNG + MỘT CÂU NÓI VIỆC LÀM ĐƯỢC. (user 28/08)
+                        THE VENDOR'S NAME + A SENTENCE ABOUT WHAT IT CAN DO.
+                        (user, 28/08)
 
-                        Không thay tên bằng mô tả: tên là thứ người dùng tra được
-                        trong tài liệu của hãng, mô tả là thứ giúp họ quyết định.
-                        Gộp hai vai vào một chuỗi thì mất cả hai — đúng ca nhãn
-                        `context` bị dịch thành *"Biết tôi là ai, repo nào"*,
-                        vừa khó hiểu vừa hứa sai bán kính. → `catalog.ts §ArmGroup`
+                        Don't replace the name with a description: the name is
+                        what the user can look up in the vendor's docs, the
+                        description is what helps them decide. Merging both roles
+                        into one string loses both — exactly the case where the
+                        `context` label got translated into *"Knows who I am,
+                        which repo"*, both confusing and overpromising its
+                        scope. → `catalog.ts §ArmGroup`
                       */}
                       <span className="min-w-0 flex-1">
                         <span className="block">{g.label}</span>
@@ -3091,9 +3292,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                 </div>
                 {groups.length === 0 ? (
                   /*
-                    Một cánh tay 0 việc là một cánh tay hỏng im lặng — nói ra ở
-                    đây thay vì để nút Tiếp xám mà không giải thích. Nút xám
-                    không lý do là câu đố, không phải một lời từ chối. → B-3
+                    An arm with 0 tasks is a silently broken arm — say so here
+                    instead of leaving the Next button greyed out with no
+                    explanation. A greyed-out button with no reason is a puzzle,
+                    not a refusal. → B-3
                   */
                   <p className="mt-1.5 text-xs text-danger">
                     {t('arm.groupsRequired')}
@@ -3124,19 +3326,22 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             )}
 
             {/*
-              ⚠ ĐÃ BỎ ở đây (27/08 chiều): ô radio `Tất cả repo / Chỉ những repo
-              này` — hàng rào repo của agentco. Nó chạy được và có test, nhưng
-              user bác đúng: phạm vi repo là tài sản **cấp tài khoản của GitHub**,
-              và một hàng rào thứ hai chồng lên chỉ mua được thu-hẹp-theo-cánh-tay
-              với giá gõ tay + đổi-là-cắm-lại. → `SPEC-arms.md` §5h·7m
+              ⚠ REMOVED here (afternoon of 27/08): the `All repos / Only these
+              repos` radio — agentco's own repo fence. It worked and had a test,
+              but the user was right to reject it: repo scope is a
+              **GitHub-account-level** asset, and a second fence stacked on top
+              only buys per-arm narrowing at the price of hand-typing it and
+              reconnecting to change it. → `SPEC-arms.md` §5h·7m
 
-              Thứ ở lại là ô THỬ ngay dưới. Trông giống, làm việc khác hẳn.
+              What's left is the TEST box right below. Looks similar, does a
+              completely different job.
             */}
 
             {/*
-              Đường TỰ CẮM cũng phải nhập chìa được — xem `pastedKeys`. Nhãn ở
-              đây là chính tên biến, và đó là đúng: người dùng vừa TỰ GÕ nó vào
-              khối cấu hình, nên nó là từ vựng của họ chứ không phải của ta.
+              The CUSTOM-PASTE path also needs to accept keys — see
+              `pastedKeys`. The label here is the variable name itself, and
+              that's correct: the user just TYPED it themselves into the config
+              block, so it's their vocabulary, not ours.
             */}
             {pastedKeys().map((name) => (
               <div key={name} className="mt-3">
@@ -3155,9 +3360,10 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             ))}
 
             {/*
-              DÙNG LẠI: không có ô nào để điền, và phải NÓI RA vì sao — một bước
-              "Cài đặt" trống trơn trông như app quên vẽ. Câu này cũng là chỗ trả
-              lời câu hỏi user hỏi thẳng: *"văn phòng nào cũng xài chung được?"*
+              REUSE: no field to fill in, and we have to SAY WHY — a blank
+              "Setup" step looks like the app forgot to render something. This
+              copy is also where we answer the question the user asked directly:
+              *"can any office share this?"*
             */}
             {reuse && (
               <div className="mt-3 rounded-md border border-line bg-accent-soft/30 px-3 py-2 text-[13px]">
@@ -3176,21 +3382,24 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             )}
 
             {/*
-              ⚠ GIỮ PHÉP THỬ, BỎ CÁI NÚT. (user: *"bỏ nút Thử ngay khi là thư
-              mục được không, tôi khá chắc nó là tất định"*)
+              ⚠ KEEP THE TEST, DROP THE BUTTON. (user: *"can we drop the Test
+              button for folders, I'm fairly sure it's deterministic"*)
 
-              Cấu hình thì tất định thật, nhưng thứ hỏng KHÔNG nằm ở cấu hình —
-              nó nằm ở MÔI TRƯỜNG, và đã đo được cả ba: máy không có `npx` ·
-              không ra được npm (proxy công ty) · thư mục không đọc được. Cả ba
-              cho `failed`, và cả ba là thứ người non-code không tự chẩn được.
+              The config really is deterministic, but what fails is NOT the
+              config — it's the ENVIRONMENT, and we've measured all three: the
+              machine has no `npx` · can't reach npm (a corporate proxy) · the
+              folder isn't readable. All three yield `failed`, and all three are
+              things a non-technical person can't diagnose on their own.
 
-              Lý do mạnh hơn: lần đầu phải TẢI GÓI ~22 giây. Khoản chờ đó không
-              biến mất khi bỏ phép thử — nó chỉ **dời sang giữa một việc đang
-              chạy**, lúc người dùng đã bỏ đi. Thử ở đây là trả nó vào đúng lúc
-              họ còn đứng đó và làm được gì đó.
+              A stronger reason: the first run has to DOWNLOAD THE PACKAGE,
+              ~22 seconds. Removing the test doesn't make that wait disappear —
+              it just **moves it to the middle of a task already running**, once
+              the user has walked away. Testing here puts it back at the moment
+              they're still present and can actually do something.
 
-              ⇒ Bỏ một cú bấm, giữ phép kiểm: thử TỰ CHẠY ngay khi chọn xong
-              thư mục. Nút chỉ còn cho đường "tự cắm" và cho ca thử lại.
+              ⇒ Drop one click, keep the check: the test now runs
+              AUTOMATICALLY as soon as a folder is chosen. The button only
+              remains for the "custom paste" path and for retrying.
             */}
             {(!pick?.folders || probe?.status === 'failed') && (
               <Button className="mt-4 w-full" onClick={() => void test()} disabled={testing}>
@@ -3205,26 +3414,29 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               </div>
             )}
             {/*
-              ĐỪNG ĐOÁN TRƯỚC — GIẢI THÍCH KHI ĐÃ THẤY.
+              DON'T PREDICT UP FRONT — EXPLAIN ONCE IT'S ALREADY VISIBLE.
 
-              Câu cũ hứa sẵn *"lần đầu 20–30 giây vì phải tải công cụ"* ngay khi
-              bắt đầu thử. Nó SAI ở ca dùng lại một cấu hình đã có: gói đã nằm
-              trong cache `npx`, chẳng tải gì cả, và người dùng đọc được một câu
-              rõ ràng không đúng với thứ họ đang làm.
-              → Chỉ nói khi phép chờ đã THẬT SỰ lâu.
+              The old copy promised *"first run 20–30 seconds because it has to
+              download the tool"* the moment the test starts. That's WRONG for
+              the case of reusing a config that already exists: the package is
+              already in the `npx` cache, nothing downloads, and the user reads
+              a sentence that's clearly not true for what's actually happening.
+              → Only say it once the wait has ACTUALLY turned out to be long.
             */}
             {/*
-              ⚠ ĐÍNH CHÍNH 24/08 — câu cũ hứa *"Những lần sau sẽ nhanh"*, và đó
-              là một lời hứa sản phẩm KHÔNG GIỮ ĐƯỢC.
+              ⚠ CORRECTED 24/08 — the old copy promised *"Later runs will be
+              fast"*, and that's a product promise we CANNOT KEEP.
 
-              Đo 10 lần (`scripts/spike-npx-cost.ts`) với gói đã nằm sẵn trong
-              cache `_npx`: đầu-cuối **7,7–9,2 giây**, lần đầu bằng lần thứ ba.
-              Phần lớn là phí tự thân của `npx` (~3,2 s mỗi lần khởi động, không
-              phải tải gói). User dùng thật và báo đúng: *"lần nào cũng lâu,
-              chưa thấy lần 4 giây nào"*.
+              Measured 10 times (`scripts/spike-npx-cost.ts`) with the package
+              already sitting in the `_npx` cache: end-to-end **7.7–9.2
+              seconds**, the first run the same as the third. Most of it is
+              `npx`'s own overhead (~3.2s per startup, not package download). A
+              real user hit this and reported it correctly: *"it's slow every
+              single time, I've never seen a 4-second run"*.
 
-              Câu mới chỉ nói thứ đo được, và KHÔNG hứa lần sau — hứa nhanh rồi
-              vẫn chậm là dạy người dùng thôi tin mọi câu khác trên màn hình.
+              The new copy only states what's measured, and does NOT promise a
+              faster next time — promising fast and staying slow teaches the
+              user to stop trusting every other sentence on the screen.
             */}
             {testing && slow && (
               <p className="mt-1.5 text-xs text-muted">
@@ -3235,8 +3447,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             {probe && (
           <ProbeReport
             r={probe}
-            // Nút Đăng nhập chỉ tồn tại ở đường danh mục. Truyền sự thật đó
-            // xuống thay vì để `ProbeReport` đoán — nó không có cách nào đoán.
+            // The Sign in button only exists on the catalog path. Pass that
+            // fact down instead of letting `ProbeReport` guess — it has no way
+            // to guess it.
             hasLoginButton={!!pick?.needsLogin}
             match={pick ? undefined : catalogMatch()}
           />
@@ -3247,7 +3460,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
               <Button className="flex-1" onClick={() => setStep(1)}>
                 {t('arm.goBack')}
               </Button>
-              {/* KHÔNG cho đi tiếp khi chưa ✓. → SPEC-tools-approval §10b */}
+              {/* Do NOT allow proceeding without a ✓. → SPEC-tools-approval §10b */}
               <Button variant="primary" className="flex-1" disabled={!ok} onClick={() => setStep(3)}>
                 {t('arm.next')}
               </Button>
@@ -3255,7 +3468,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
           </div>
         )}
 
-        {/* ────────────────────────────────────── BƯỚC 3 · Giao cho ai (BẮT BUỘC) */}
+        {/* ────────────────────────── Step 3 · Grant to whom (REQUIRED) */}
         {step === 3 && (
           <div className="max-h-[52vh] overflow-y-auto">
             {agents.length === 0 && (
@@ -3282,8 +3495,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             </div>
 
             {/*
-              Nói ra hậu quả của việc KHÔNG chọn ai — KÈM mặt tốt của nó. Người
-              muốn cắm sẵn để đó vẫn có đường đi mà không thấy mình làm sai.
+              State the consequence of choosing NOBODY — ALONG WITH its upside.
+              Someone who wants to connect it now and grant access later still
+              has a path forward without feeling like they did something wrong.
             */}
             <p className="mt-3 text-xs text-muted">
               {grant.length === 0
@@ -3306,12 +3520,15 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         )}
 
         {/*
-          Câu xác nhận nói ra ĐÚNG hai chuyện, vì chúng là hai chuyện khác nhau
-          và người dùng đang sợ nhầm cái thứ hai:
-            · cấu hình  → MẤT HẲN, nhưng dựng lại từ danh mục là ba cú bấm
-            · chìa      → **KHÔNG mất**, đó mới là phần đắt (phải sang trang hãng)
-          Không nói vế thứ hai là để họ tưởng mình vừa mất token, rồi không ai
-          dám bấm — tức có nút mà như không.
+          The confirmation copy states EXACTLY two facts, because they're two
+          different things and the user is at risk of confusing the second one:
+            · the config → GONE FOR GOOD, but rebuilding it from the catalog is
+              three clicks
+            · the key    → **NOT lost**, and that's the expensive part (means
+              going back to the vendor's site)
+          Not stating the second one would let them think they just lost a
+          token, and then nobody dares click it — a button that exists in name
+          only.
         */}
         <ConfirmDelete
           open={!!forget}
@@ -3320,10 +3537,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
           onConfirm={() => {
             const a = forget;
             if (!a) return;
-            // ⚠ Đi qua `actions`, KHÔNG gọi thẳng `api` — xem khối chú thích ở
-            // `store.ts §forgetArm`. Bản gọi thẳng chỉ cập nhật danh sách trong
-            // hộp thoại này, để `selected`/`canvas` giữ một mã đã chết cho tới
-            // khi người dùng F5. (bug user báo 26/08)
+            // ⚠ Go through `actions`, do NOT call `api` directly — see the
+            // comment block at `store.ts §forgetArm`. Calling it directly would
+            // only update the list inside this dialog, leaving `selected`/
+            // `canvas` holding a dead id until the user hits F5. (bug the user
+            // reported, 26/08)
             void actions
               .forgetArm(a.id)
               .then(() => api.arms())
@@ -3343,10 +3561,11 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
         </ConfirmDelete>
 
         {/*
-          Gỡ workspace — nói ra CẢ HAI vế, vì vế thứ hai là thứ người dùng thật
-          sự muốn: agentco không chỉ quên chìa, nó còn **báo cho Notion thu hồi**.
-          Xoá mỗi bản sao của mình mà để chìa còn sống ở phía họ là làm đúng một
-          nửa việc, và nửa còn lại là nửa họ quan tâm.
+          Dropping a workspace — state BOTH halves, because the second half is
+          what the user actually wants: agentco doesn't just forget the key, it
+          also **tells Notion to revoke it**. Deleting only our own copy while
+          the key stays alive on their end does exactly half the job, and the
+          other half is the half they actually care about.
         */}
         <ConfirmDelete
           open={!!dropWs}
@@ -3366,22 +3585,26 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 }
 
 /**
- * BỘ CHỌN THƯ MỤC — duyệt và bấm, không gõ tay.
+ * FOLDER PICKER — browse and click, no typing.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO NÓ THAY HẲN Ô GÕ TAY, chứ không đứng cạnh làm "tiện ích thêm"     │
+ * │ WHY IT FULLY REPLACES THE TEXT FIELD, rather than sitting next to it as  │
+ * │ an "extra convenience"                                                   │
  * │                                                                          │
- * │ Ô gõ tay đẩy BỐN bài toán sang người dùng, và cả bốn đều không phải việc │
- * │ của họ: gõ sai một ký tự · `\` hay `/` · thư mục có dấu cách · và câu    │
- * │ hỏi "đường dẫn này là trên MÁY NÀO" khi daemon chạy ở VPS.               │
+ * │ A text field pushes FOUR problems onto the user, and none of them are    │
+ * │ their job: mistyping one character · `\` vs `/` · a folder with spaces   │
+ * │ in its name · and the question "which MACHINE is this path on" once the  │
+ * │ daemon runs on a VPS.                                                    │
  * │                                                                          │
- * │ Duyệt-và-bấm xoá cả bốn cùng lúc: chuỗi do MÁY CHỦ sinh ra, đúng định    │
- * │ dạng của chính nó, đúng cái filesystem mà cánh tay sẽ nhìn thấy.         │
+ * │ Browse-and-click removes all four at once: the string is generated by    │
+ * │ the SERVER, in its own correct format, on the exact filesystem the arm   │
+ * │ will actually see.                                                       │
  * │                                                                          │
- * │ ⚠ Và một chuyện đã ĐO: `args` đi vào `spawn` dạng MẢNG, không qua shell. │
- * │ Nên thư mục có dấu cách chạy trần bình thường, còn **bọc dấu nháy vào là │
- * │ HỎNG** (`failed · MCP error -32000`) — dấu nháy trở thành một phần của   │
- * │ tên thư mục. Bộ chọn làm câu hỏi đó biến mất luôn.                       │
+ * │ ⚠ And one thing we MEASURED: `args` goes into `spawn` as an ARRAY, never │
+ * │ through a shell. So a folder with spaces just works as-is, while         │
+ * │ **wrapping it in quotes BREAKS it** (`failed · MCP error -32000`) — the  │
+ * │ quotes become part of the folder name. The picker makes that question    │
+ * │ disappear entirely.                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function FolderPicker({
@@ -3391,7 +3614,7 @@ function FolderPicker({
 }: {
   chosen: string[];
   onChange(v: string[]): void;
-  /** Đang chạy một lượt thử — khoá nút đổi thư mục. Xem chú thích ở nút. */
+  /** A test is currently running — locks the change-folder button. See the comment on the button. */
   busy?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -3401,14 +3624,15 @@ function FolderPicker({
         {chosen.length === 0 ? (
           <div className="py-1 text-xs text-muted">{t('arm.noFolderChosen')}</div>
         ) : (
-          // Đủ chữ, xuống dòng — xem chú thích ở `BrowseDialog`.
+          // Show the full text, wrap it — see the comment at `BrowseDialog`.
           <div className="break-all font-mono text-[12px]">{chosen[0]}</div>
         )}
         {/*
-          ĐANG THỬ ⇒ KHOÁ luôn nút đổi thư mục. Đây chính là cửa user đi vào khi
-          bắt được bug 26/08: chọn thư mục A → đang kết nối → nhanh tay đổi sang
-          Music. `runRef` giữ cho kết quả không lệch; nút này giữ cho họ không
-          phải rơi vào tình huống ấy ngay từ đầu.
+          TESTING ⇒ LOCK the change-folder button too. This is exactly the door
+          the user walked through when they caught the 26/08 bug: pick folder A
+          → connecting → quickly switch to Music. `runRef` keeps the result from
+          drifting; this button keeps them from ever getting into that situation
+          in the first place.
         */}
         <Button size="sm" className="mt-2 w-full" disabled={busy} onClick={() => setOpen(true)}>
           <FolderOpen className="h-3.5 w-3.5" />
@@ -3425,26 +3649,30 @@ function FolderPicker({
 }
 
 /**
- * MODAL DUYỆT THƯ MỤC — tách hẳn khỏi hộp thoại `+ Kết nối`.
+ * FOLDER-BROWSE MODAL — fully separate from the `+ Connect` dialog.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG DÙNG HỘP THOẠI CHỌN THƯ MỤC CỦA HỆ ĐIỀU HÀNH — user hỏi     │
- * │ thẳng, và câu trả lời là: TRÌNH DUYỆT KHÔNG ĐƯA ĐƯỢC ĐƯỜNG DẪN TUYỆT ĐỐI.│
+ * │ WHY NOT USE THE OS'S NATIVE FOLDER PICKER — the user asked directly, and │
+ * │ the answer is: THE BROWSER CANNOT HAND BACK AN ABSOLUTE PATH.            │
  * │                                                                          │
- * │   `<input webkitdirectory>`  → chỉ trả tên TƯƠNG ĐỐI trong thư mục đã     │
- * │                                chọn, không có gốc                        │
- * │   `showDirectoryPicker()`    → trả một HANDLE, cố ý không lộ đường dẫn    │
- * │                                (đó là tính năng bảo mật, không phải sót)  │
+ * │   `<input webkitdirectory>`  → only returns names RELATIVE to the chosen │
+ * │                                folder, with no root                      │
+ * │   `showDirectoryPicker()`    → returns a HANDLE, deliberately withholding│
+ * │                                the path (that's a security feature, not  │
+ * │                                an oversight)                             │
  * │                                                                          │
- * │ Cả hai đều là hàng rào có chủ ý của trình duyệt, không phải thứ vá được.  │
- * │ Và kể cả vá được thì vẫn sai: nó liệt kê máy của NGƯỜI ĐANG NGỒI, trong  │
- * │ khi cánh tay chạy trên máy của DAEMON — khác nhau ngay khi lên VPS hoặc  │
- * │ vào container (§10b). Bộ chọn tự liệt kê nên tự đúng ở cả hai chỗ.       │
+ * │ Both are deliberate browser fences, not something patchable. And even if │
+ * │ it were patchable it would still be wrong: it would list the machine the │
+ * │ PERSON IS SITTING AT, while the arm runs on the DAEMON's machine — they  │
+ * │ diverge the moment either one is on a VPS or in a container (§10b). A    │
+ * │ picker that lists itself is correct in both cases automatically.         │
  * │                                                                          │
- * │ Ba thứ bù lại cho việc mất hộp thoại quen thuộc, và user đòi cả ba:      │
- * │  · mở lại ĐÚNG thư mục rời đi lần trước, không quay về ổ đĩa             │
- * │  · GÕ/DÁN thẳng đường dẫn — nhanh hơn mọi cú click khi đã biết chỗ       │
- * │  · modal RIÊNG, rộng, không chen trong hộp thoại đang dở                 │
+ * │ Three things make up for losing the familiar native dialog, and the user │
+ * │ asked for all three:                                                     │
+ * │  · reopen at the EXACT folder left last time, not back at the drive root │
+ * │  · TYPE/PASTE a path directly — faster than any click once you already   │
+ * │    know where you're going                                               │
+ * │  · a SEPARATE, wide modal, not squeezed inside the in-progress dialog    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function BrowseDialog({
@@ -3458,16 +3686,17 @@ function BrowseDialog({
   onOpenChange(v: boolean): void;
   onChange(v: string[]): void;
   /**
-   * Mở ở đâu. Bỏ trống ⇒ `office` (nếu có) ⇒ `LAST_DIR` ⇒ gốc.
+   * Where to open. Empty ⇒ `office` (if given) ⇒ `LAST_DIR` ⇒ root.
    *
-   * ⚠ Tab Lệnh truyền thư mục ĐANG CHỌN vào đây và cố ý **không** dùng
-   * `LAST_DIR` (user 01/09): cache đó là trí nhớ của cánh tay thư mục, mượn nó ở
-   * đây là mở ra một chỗ chẳng liên quan gì tới thứ đang soạn.
+   * ⚠ The Commands tab passes the CURRENTLY SELECTED folder here and
+   * deliberately does **not** use `LAST_DIR` (user, 01/09): that cache is the
+   * memory of the folder arm, and borrowing it here would open a location
+   * with nothing to do with what's being drafted.
    */
   start?: string;
   /**
-   * Chưa chọn gì thì đứng ở **thư mục văn phòng**. Gửi **id**, không gửi đường
-   * dẫn — máy chủ giải. → `api.browse`
+   * With nothing chosen yet, stand at the **office folder**. Send its **id**,
+   * not a path — the server resolves it. → `api.browse`
    */
   office?: string | null;
 }) {
@@ -3495,15 +3724,16 @@ function BrowseDialog({
   useEffect(() => {
     if (!open) return;
     /**
-     * ⚠ `office` đứng TRƯỚC `LAST_DIR` chứ không sau: chỗ nào truyền `office`
-     * (tab Lệnh) là chỗ đã nói rõ mặc định của mình, và rơi tiếp xuống cache của
-     * cánh tay thư mục ở đó là mở ra một chỗ chẳng liên quan.
+     * ⚠ `office` comes BEFORE `LAST_DIR`, not after: wherever `office` is
+     * passed in (the Commands tab), that caller has already stated its own
+     * default, and falling further down to the folder arm's cache there would
+     * open a location with nothing to do with it.
      */
     if (start) go(start);
     else if (office) go(undefined, office);
     else go(localStorage.getItem(LAST_DIR) || undefined);
-    // Chỉ theo `open`: đổi `start` giữa lúc modal đang mở là kéo người dùng về
-    // gốc trong khi họ đang duyệt.
+    // Depend only on `open`: changing `start` while the modal is already open
+    // would yank the user back to the root while they're mid-browse.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -3523,7 +3753,7 @@ function BrowseDialog({
           <Button size="sm" disabled={cur.parent === null} onClick={() => go(cur.parent ?? undefined)}>
             ↑
           </Button>
-          {/* Gõ/dán thẳng: khi đã biết chỗ thì đây nhanh hơn mọi cú click. */}
+          {/* Type/paste directly: once you know where you're going, this beats any amount of clicking. */}
           <Input
             className="flex-1 font-mono text-[12px]"
             value={typed}
@@ -3539,19 +3769,20 @@ function BrowseDialog({
         </div>
 
         {/*
-          ⚠ ĐƯỜNG DẪN HIỆN ĐỦ, XUỐNG DÒNG CHỨ KHÔNG CẮT. Một đường dẫn bị cắt
-          giữa chừng là chỗ hiểu nhầm rẻ nhất có thể mua: `D:\Ho so\2025\…` và
-          `D:\Ho so\2026\…` trông y hệt nhau sau ba dấu chấm, và người dùng vừa
-          quyết định cho một agent quyền đọc chỗ nào.
+          ⚠ SHOW THE FULL PATH, WRAPPED, NEVER TRUNCATED. A path cut off
+          mid-way is the cheapest possible misunderstanding to buy:
+          `D:\Records\2025\…` and `D:\Records\2026\…` look identical after
+          three dots, and the user is about to decide where an agent gets read
+          access.
         */}
         <div className="mt-2 rounded-md border border-line bg-panel px-3 py-2">
           <div className="text-[11px] uppercase tracking-wide text-muted">{t('arm.currentlyAt')}</div>
           <div className="mt-0.5 break-all font-mono text-[12px]">{here || t('arm.pickADrive')}</div>
         </div>
 
-        {/* BA cột, không bốn: khung hẹp lại còn 46rem thì bốn cột cắt tên thư
-            mục ngay ở ký tự thứ mười — mà tên thư mục chính là thứ người ta đọc
-            để bấm. */}
+        {/* THREE columns, not four: at a 46rem-wide box, four columns truncate
+            folder names right around the tenth character — and the folder name
+            is exactly what someone reads before clicking. */}
         <div className="mt-2 grid max-h-[46vh] grid-cols-3 gap-1 overflow-y-auto rounded-md border border-line p-1">
           {loading && <div className="col-span-3 px-2 py-2 text-xs text-muted">{t('common.reading')}</div>}
           {!loading && cur.dirs.length === 0 && (
@@ -3574,9 +3805,10 @@ function BrowseDialog({
         </div>
 
         {/*
-          MỘT NÚT, KHÔNG HAI. Bản trước có "Chọn thư mục này" rồi "Xong" — hai
-          nút cho một ý định, và người dùng phải đoán cái nào mới thật sự chọn.
-          Giờ **Xong = chọn thư mục đang mở**, đúng như user đề nghị.
+          ONE BUTTON, NOT TWO. The earlier version had "Select this folder" and
+          then "Done" — two buttons for one intent, forcing the user to guess
+          which one actually made the selection. Now **Done = select the
+          currently open folder**, exactly as the user suggested.
         */}
         <div className="mt-3 flex items-center justify-end gap-2">
           <Button onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
@@ -3597,17 +3829,17 @@ function BrowseDialog({
 }
 
 /**
- * Kết quả bắt tay. `status` có NĂM giá trị — `needs-auth` KHÔNG phải lỗi.
+ * Handshake result. `status` has FIVE values — `needs-auth` is NOT an error.
  *
- * ⚠ `failed` hiện NGUYÊN VĂN `error` của server: đó là chuỗi duy nhất người dùng
- * copy đi hỏi chỗ khác được. Thay nó bằng một câu chung chung của ta là lấy đi
- * thứ hữu ích duy nhất còn lại. → §6c
+ * ⚠ `failed` shows the server's `error` VERBATIM: it's the only string the
+ * user can actually copy and go ask someone else about. Replacing it with one
+ * of our own generic sentences would take away the one useful thing left. → §6c
  */
 function ProbeReport({
   r,
-  /** Màn này CÓ nút Đăng nhập không — đường danh mục thì có, đường tự cắm thì không. */
+  /** Does this screen HAVE a Sign in button — yes on the catalog path, no on the custom-paste path. */
   hasLoginButton,
-  /** Mục danh mục cùng tên miền với URL vừa dán, nếu nhận ra được. */
+  /** The catalog entry sharing a domain with the URL just pasted, if one was recognized. */
   match,
 }: {
   r: ProbeResult;
@@ -3619,12 +3851,13 @@ function ProbeReport({
     const read = r.tools.filter((tool) => tool.level === 'read').length;
     /*
       ┌──────────────────────────────────────────────────────────────────────┐
-      │ NỐI ĐƯỢC MÀ 0 VIỆC — vẽ nó là CẢNH BÁO, không phải là ✓ có ghi chú.  │
+      │ CONNECTED BUT 0 TOOLS — draw as a WARNING, not a ✓ with a footnote.  │
       │                                                                      │
-      │ Đây là ca `X-MCP-Toolsets` gõ sai tên: server bắt tay bình thường,   │
-      │ trả rỗng, không một câu lỗi nào (đo 26/08). Vẽ nó bằng dấu ✓ xanh là │
-      │ giao diện **nói dối thay cho server** — và cái hỏng này im lặng sẵn  │
-      │ rồi, không cần ta im lặng thêm một tầng nữa.                         │
+      │ This is the `X-MCP-Toolsets` mistyped-name case: the server          │
+      │ handshakes normally, returns empty, with not a single error string   │
+      │ (measured 26/08). Drawing a green ✓ here would make the UI **lie on  │
+      │ the server's behalf** — and this failure is already silent by itself,│
+      │ it doesn't need us adding a second layer of silence on top.          │
       │ → `probe.ts §ProbeResult.warn` · [[agentco-silent-allowlist]]        │
       └──────────────────────────────────────────────────────────────────────┘
     */
@@ -3652,17 +3885,19 @@ function ProbeReport({
         </div>
         {/*
           ┌──────────────────────────────────────────────────────────────────┐
-          │ KẾT QUẢ THỬ TẦM VỚI — nằm TRONG khối ✓, không thay thế nó.       │
-          │                                                                  │
-          │ `ok: false` KHÔNG làm cả phép thử hỏng: đăng nhập vẫn chạy, cánh  │
-          │ tay vẫn cắm được, thứ chưa xong là **bản cài app** — một việc     │
-          │ người dùng làm ở màn hình của hãng. Nhuộm đỏ cả khối là gộp hai   │
-          │ câu hỏi vào một ô trả lời, đúng lớp lỗi sai cửa mà chính ô thử    │
-          │ này sinh ra để đóng.                                             │
-          │                                                                  │
-          │ Nhưng cũng KHÔNG được vẽ nó xám như một ghi chú: nó là thứ duy    │
-          │ nhất nói cho người dùng biết cánh tay sắp cắm có làm được gì hay  │
-          │ không, và dấu ✓ ngay trên nó thì rất thuyết phục.                 │
+          │ REACH-TEST RESULT — lives INSIDE the ✓ block, doesn't replace it. │
+          │                                                                   │
+          │ `ok: false` does NOT make the whole test a failure: sign-in still │
+          │ works, the arm still connects, what's unfinished is the **app     │
+          │ install** — something the user does on the vendor's own screen.   │
+          │ Painting the whole block red would merge two different questions  │
+          │ into one answer slot, exactly the wrong-door class of failure this│
+          │ reach test exists to close.                                       │
+          │                                                                   │
+          │ But it must also NOT be drawn grey like a footnote: it's the only │
+          │ thing telling the user whether the arm they're about to connect   │
+          │ can actually do anything, and the ✓ sitting right above it is very│
+          │ convincing.                                                       │
           └──────────────────────────────────────────────────────────────────┘
         */}
       </div>
@@ -3671,23 +3906,28 @@ function ProbeReport({
   if (r.status === 'needs-auth') {
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 HAI ĐƯỜNG, HAI CÂU — vì hai đường có hai CỬA khác nhau. (31/08)   │
+     * │ 🔴 TWO PATHS, TWO SENTENCES — because the two paths lead to two      │
+     * │ different DOORS. (31/08)                                             │
      * │                                                                      │
-     * │ Ca user gặp: dán `{"type":"http","url":"https://mcp.notion.com/mcp"}`│
-     * │ qua đường tự cắm → `needs-auth` → màn hình nói *"cần bạn cho phép     │
-     * │ trên trình duyệt"*. User bác đúng:                                   │
+     * │ What the user hit: pasting                                           │
+     * │ `{"type":"http","url":"https://mcp.notion.com/mcp"}` through the     │
+     * │ custom-paste path → `needs-auth` → the screen says *"you need to     │
+     * │ grant access in the browser"*. The user rejected it, correctly:      │
      * │                                                                      │
-     * │   *"họ đâu có đường ra… ít nhất là dịch vụ này cần authorize gì đó   │
-     * │    thì ít ra họ còn đi kiếm cách authorize"*                         │
+     * │   *"there's no way out for them… at minimum, if this service needs   │
+     * │    some kind of authorization, they should at least be able to go go │
+     * │    find how to authorize it"*                                        │
      * │                                                                      │
-     * │ Câu cũ viết cho đường DANH MỤC, nơi có nút Đăng nhập ngay bên cạnh.   │
-     * │ Đường tự cắm **không có nút nào** (`oauthStart` nhận `catalogId`,     │
-     * │ xem SPEC-arms §16q) ⇒ câu đó **hứa một cái cửa không tồn tại**. Đó là │
-     * │ dạng tệ nhất của câu lỗi sai cửa: nó không mơ hồ, nó SAI.            │
+     * │ The old copy was written for the CATALOG path, where a Sign in button│
+     * │ sits right next to it. The custom-paste path has **no button at all**│
+     * │ (`oauthStart` takes a `catalogId`, see SPEC-arms §16q) ⇒ that        │
+     * │ sentence **promises a door that doesn't exist**. That's the worst    │
+     * │ wrong-door error message: it isn't vague, it's WRONG.                │
      * │                                                                      │
-     * │ ⚠ Và đừng chỉ đổi giọng cho mơ hồ đi. Người dùng cần **một việc làm   │
-     * │ được**, nên câu mới nêu đúng hai đường thật: mục danh mục nếu nhận ra │
-     * │ được hãng, còn không thì cách tự cắm chìa vào chính khối JSON.        │
+     * │ ⚠ And don't just soften the wording into vagueness. The user needs a │
+     * │ **task they can actually do**, so the new copy states the two real   │
+     * │ paths: the catalog entry if the vendor was recognized, otherwise how │
+     * │ to paste a key directly into the JSON block itself.                  │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     return (
@@ -3715,21 +3955,24 @@ function ProbeReport({
               </div>
             ) : (
               /**
-               * ⚠⚠ KHÔNG NÓI TÊN HEADER. (user bắt 31/08)
+               * ⚠⚠ DON'T NAME THE HEADER. (the user caught this, 31/08)
                *
-               *   *"có phải chỗ nào cũng là Bearer không, rất có thể nhiều
-               *    server khác nó có cấu hình khác"*
+               *   *"is it Bearer everywhere, it seems quite likely that other
+               *    servers have a different setup"*
                *
-               * Đúng — và bản trước đã in thẳng `"Authorization": "Bearer …"`
-               * như thể đó là luật chung. Ngoài đời có `X-API-Key`, có `Basic`,
-               * có header riêng của hãng, và stdio thì chìa đi vào `env` chứ
-               * không có header nào cả.
+               * Right — and the earlier version printed
+               * `"Authorization": "Bearer …"` outright, as if that were a
+               * universal rule. In the wild there's `X-API-Key`, there's
+               * `Basic`, there are vendor-specific headers, and stdio puts the
+               * key into `env` with no header involved at all.
                *
-               * ⇒ Ranh giới đúng KHÔNG phải *"kỹ hay chung chung"* mà là
-               * **THỨ TA SỞ HỮU vs THỨ HÃNG SỞ HỮU**:
-               *   · ô `${…}` là cơ chế CỦA TA  → nói thật kỹ, luôn đúng
-               *   · tên trường là của HÃNG     → không nói một chữ, trỏ README
-               * Nói kỹ về thứ của mình thì không bao giờ thành nói sai.
+               * ⇒ The right line isn't *"detailed vs. vague"* but
+               * **SOMETHING WE OWN vs. SOMETHING THE VENDOR OWNS**:
+               *   · the `${…}` placeholder is OUR OWN mechanism → describe it
+               *     in full detail, it's always correct
+               *   · the field name belongs to the VENDOR → say nothing about
+               *     it, point at their README instead
+               * Being detailed about what's ours can never turn into being wrong.
                */
               <div>
                 {t('arm.probeKeyHintBefore')} <code>headers</code>

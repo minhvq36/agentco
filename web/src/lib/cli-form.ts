@@ -158,7 +158,26 @@ export function slugId(say: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return /^[a-z]/.test(s) ? s : `viec_${s || 'moi'}`;
+  /**
+   * ⚠ THE PREFIX IS CODE, SO IT IS LANGUAGE-NEUTRAL. (changed 03/09)
+   *
+   * It used to be `viec_${s || 'moi'}` — Vietnamese baked into an identifier the
+   * schema, the tool registry and `armHash` all carry. No diacritics, so
+   * `check-language` never saw it.
+   *
+   * ⚠ `id` FEEDS `armHash`, so this is not a free rename: `draftToDecl`
+   * regenerates every `id` from `say`, meaning an affected arm re-saved through
+   * the form becomes a DIFFERENT arm (new hash, old entry orphaned, wires in
+   * `roles/*.yaml` dropped). Nothing on disk changes on its own, and only the
+   * fallback branch is affected — a name that slugifies to something not starting
+   * with `[a-z]`. `đếm hoá đơn` → `dem_hoa_don` never reaches this line. // i18n-allow-vietnamese: repeating the example
+   *
+   * The empty case still yields ONE id for every non-Latin name, so two commands
+   * named in Chinese collide and `dupIds` blocks them. That is the same
+   * non-Latin blind spot as `paths.ts §slugId`, and this rename does not pretend
+   * to fix it.
+   */
+  return /^[a-z]/.test(s) ? s : `job_${s || 'new'}`;
 }
 
 /**
@@ -348,7 +367,7 @@ export function paramsFor(a: CliDraft): Record<string, unknown>[] {
  * │ job; one that has been tidied up does not.                                │
  * │                                                                           │
  * │ ⚠ `id: ''` while there is no name — NOT `slugId('')` (which yields        │
- * │ `viec_moi`). Two empty rows both yielding `viec_moi` would have `dupIds`  │
+ * │ `job_new`). Two empty rows both yielding `job_new` would have `dupIds`    │
  * │ shouting *"duplicate name"* over two fields nobody has typed in yet — an  │
  * │ error that follows the rule and describes the wrong thing.                │
  * └──────────────────────────────────────────────────────────────────────────┘

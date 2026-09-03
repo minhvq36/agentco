@@ -1,74 +1,79 @@
 /**
- * MỘT MỤC DANH MỤC = MỘT FILE. → `../catalog.ts` · docs/TEST-WALKTHROUGH.md bài 18
+ * ONE CATALOG ENTRY = ONE FILE. → `../catalog.ts` · docs/TEST-WALKTHROUGH.md test 18
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỤC DUY NHẤT KHÔNG CẦN BÊN KIA HỢP TÁC.                                  │
- * │                                                                          │
- * │ Mọi mục khác đòi hãng kia có API và chịu cấp chìa. Mục này chạy với **bất │
- * │ kỳ hệ thống nào có giao diện web** — kể cả phần mềm nội bộ 15 năm tuổi    │
- * │ không có API, thứ `SPEC-connectors` không với tới được vì nó cần một API  │
- * │ để mô tả. Đây là câu trả lời cho câu khách hỏi nhiều nhất: *"hệ thống của │
- * │ tôi không có API thì sao?"*                                              │
+ * │ THE ONLY ENTRY THAT NEEDS NO COOPERATION FROM THE OTHER SIDE.
+ * │
+ * │ Every other entry demands the vendor have an API and be willing to grant a
+ * │ key. This entry works with **any system that has a web interface** — even
+ * │ 15-year-old internal software with no API, something `SPEC-connectors`
+ * │ can't reach because it needs an API to describe. This is the answer to the
+ * │ question customers ask most: *"what if my system has no API?"*
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 import type { CatalogArm } from '../catalog.js';
 
 /**
- * ⚠ GHIM PHIÊN BẢN, KHÔNG `@latest`. → SPEC-arms.md §11d
+ * ⚠ PIN THE VERSION, DON'T USE `@latest`. → SPEC-arms.md §11d
  *
- * 🔴 VÀ ĐÂY LÀ MỘT CÁI BẪY ĐỌC SỐ, ghi lại để lần sau không ai dẫm:
- * lúc bắt tay, server tự khai `version: "1.63.0-alpha-2026-08-05"` và tôi suýt
- * kết luận *"`@latest` trả về bản alpha"*. **Sai.** `dist-tags.latest` của gói là
- * **`0.0.79`, bản ổn định**; chuỗi `1.63.0-alpha` là phiên bản **lõi Playwright**
- * mà gói đó nhúng. Hai con số khác nhau hiện ở cùng một chỗ.
+ * 🔴 AND THIS IS A NUMBER-READING TRAP, recorded so nobody trips on it again:
+ * at handshake, the server declares `version: "1.63.0-alpha-2026-08-05"`, and I
+ * nearly concluded *"`@latest` returns an alpha build"*. **Wrong.** The
+ * package's `dist-tags.latest` is **`0.0.79`, a stable release**; the string
+ * `1.63.0-alpha` is the version of the **Playwright core** that package embeds.
+ * Two different numbers showing up in the same place.
  *
- * 📌 Thứ đáng mang theo: **gói ổn định đang nhúng một lõi alpha.** Không phải lỗi,
- * nhưng phải biết trước khi hứa với khách chữ "ổn định".
+ * 📌 The thing worth carrying forward: **a stable package can embed an alpha
+ * core.** Not a bug, but something to know before promising a customer the
+ * word "stable".
  */
 const PLAYWRIGHT_MCP_PKG = '@playwright/mcp@0.0.79';
 
 export const BROWSER_ARM: CatalogArm = {
   id: 'browser',
   /**
-   * ⚠ TÊN ĐẶT THEO VIỆC, KHÔNG THEO HÃNG — đúng cách "File trên máy" đang làm.
+   * ⚠ NAMED AFTER THE TASK, NOT THE VENDOR — the same approach "Local files" already takes.
    *
-   * Hai lý do, và lý do thứ hai là lý do chốt:
-   * ① người không biết code **không biết Playwright là gì**, nên tên hãng vừa vô
-   *    nghĩa với họ vừa làm thẻ khó đọc;
-   * ② nợ nhãn hiệu §11c **biến mất**: ta không dùng tên lẫn logo của Microsoft ở
-   *    mặt trước, nên không có gì phải xin phép. Tên gói chỉ nằm trong Nâng cao.
+   * Two reasons, and the second is the deciding one:
+   * ① someone with no coding background **doesn't know what Playwright is**,
+   *    so the vendor name is both meaningless to them and makes the card harder to read;
+   * ② the §11c trademark debt **disappears**: we use neither Microsoft's name
+   *    nor its logo on the front, so there's nothing to ask permission for.
+   *    The package name only appears under Advanced.
    */
   name: 'armCat.browser.name',
   icon: '🌐',
-  /** Giao diện vẽ quả địa cầu thay vì phích cắm. → ArmIcon.tsx */
+  /** The interface draws a globe instead of a plug icon. → ArmIcon.tsx */
   shape: 'browser',
   /**
-   * Hai câu, hai việc khác nhau, và cả hai đều sinh ra từ tiền thật:
+   * Two sentences, two different jobs, and both grew out of real money spent:
    *
-   * ① *"không chờ được thao tác tay"* — bất khả thi về **cấu trúc** (vòng đời
-   *    trình duyệt = vòng đời một lượt việc), nên phải nói ra **trước khi** lập
-   *    kế hoạch. Đo 29/08: một lượt như thế tốn **$0,0473** rồi báo không làm được.
-   * ② *"trang công khai thì dùng WebFetch/WebSearch"* — user chốt 29/08:
-   *    *"cái nào xài webSearch/webFetch được thì xài, để người dùng đỡ tưởng cắm
-   *    trình duyệt thì xịn hơn"*. Số đo đứng về phía đó: một `snapshot` trang tin
-   *    ≈47 000 token, còn WebFetch rẻ hơn nhiều lần.
+   * ① *"cannot wait for a manual action"* — structurally impossible (a
+   *    browser's lifecycle = the lifecycle of one task run), so it has to be
+   *    stated **before** planning happens. Measured 29/08: a turn like that
+   *    cost **$0.0473** before reporting it couldn't be done.
+   * ② *"public pages should use WebFetch/WebSearch"* — the user's call,
+   *    29/08: *"whatever can use webSearch/webFetch should, so the user
+   *    doesn't assume connecting a browser is somehow fancier"*. The
+   *    measurements back that up: a `snapshot` of a news page is ≈47,000
+   *    tokens, while WebFetch is many times cheaper.
    */
   /**
-   * ⚠ VẾ THỨ BA THÊM 30/08 — ca thật, và nó là chỗ rò DUY NHẤT không hàng rào
-   * nào bịt được.
+   * ⚠ A THIRD CLAUSE ADDED 30/08 — a real case, and it's the ONE leak no fence can close.
    *
-   * Nhân viên mở `facebook.com`, hồ sơ Chrome **tự điền sẵn** email thật của
-   * người dùng vào ô đăng nhập, và nhân viên chép nguyên vào artifact:
-   * *"Ô 'Email address or mobile number' đã có sẵn giá trị điền trước: …"*.
-   * Từ đó nó đi tiếp vào ngữ cảnh Trợ lý, rồi thành một brief tra cứu Linear
-   * theo đúng email đó — một câu trả lời gần đúng, tự tin, và sai.
+   * A worker opens `facebook.com`, the Chrome profile **auto-fills** the
+   * user's real email into the sign-in field, and the worker copies it
+   * verbatim into an artifact: *"The 'Email address or mobile number' field
+   * already has a pre-filled value: …"*. From there it flows on into the
+   * Assistant's context, and becomes a Linear lookup brief keyed on that exact
+   * email — a confident, plausible, wrong answer.
    *
-   * 🔴 Vì sao KHÔNG vá được bằng `redact.ts` hay `guardedZone`: dữ liệu này đi
-   * vào nhân viên qua **kết quả tool inline** của `browser_snapshot`, không qua
-   * file. Không có file nào để cắt, không có đường dẫn nào để chặn. Chỗ duy
-   * nhất còn đứng được là **câu dặn ngay trên dòng của cánh tay**.
-   * ⇒ Giảm thiểu, không bịt kín — đúng như `redact.ts` đã tự khai về chính nó.
+   * 🔴 Why this CANNOT be patched with `redact.ts` or `guardedZone`: this data
+   * reaches the worker through `browser_snapshot`'s **inline tool result**,
+   * not through a file. There's no file to strip, no path to block. The only
+   * remaining place to stand is **an instruction right on the arm's own line**.
+   * ⇒ Reduce, don't eliminate — exactly what `redact.ts` already admits about itself.
    */
   hint:
     'public pages: WebFetch/WebSearch, far cheaper; keep the browser for pages needing a ' +
@@ -76,89 +81,104 @@ export const BROWSER_ARM: CatalogArm = {
     'to press "Sign in / add cookies". A value pre-filled in a form field belongs to the ' +
     'browser, not to the page: never copy it into a file.',
   /**
-   * ⚠ CÂU NÀY PHẢI NÓI RA BA THỨ, và cả ba đều dễ bị giấu đi cho gọn:
+   * ⚠ THIS SENTENCE MUST STATE THREE THINGS, and all three are easy to trim away for brevity:
    *
-   * ① Nó **mở trang trên máy chạy agentco**, không phải trên máy người đang xem.
-   * ② Mặc định phiên **không được giữ** — mỗi lượt là một trình duyệt sạch, nên
-   *    trang cần đăng nhập sẽ **không** vào được cho tới khi bật chế độ giữ phiên.
-   * ③ Nội dung web là **chữ của người lạ**. Nhân viên đọc rồi hành động, nên một
-   *    trang có thể cố dắt nó đi chỗ khác — thứ không cắt bằng cấu hình được.
+   * ① It **opens the page on the machine running agentco**, not on the machine
+   *    the person is looking at.
+   * ② By default the session is **not kept** — every run is a clean browser,
+   *    so a page needing sign-in **won't** load until the keep-session option is turned on.
+   * ③ Web content is **a stranger's words**. A worker reads it and then acts,
+   *    so a page can try to steer it somewhere else — something no config setting can filter out.
    */
   blurb: 'armCat.browser.blurb',
   price: 'none',
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ HAI CỜ NÀY LÀ **LẬT NGƯỢC MẶC ĐỊNH CỦA HÃNG**, cố ý.                     │
-   * │                                                                          │
-   * │ `--headless`  Playwright mặc định **headed**. Nhân viên chạy nền mà cửa   │
-   * │               sổ bật lên giữa lúc người ta đang làm việc khác là một sản  │
-   * │               phẩm mất lịch sự. Và trên VPS thì headed **không tồn tại**. │
-   * │               ⚠ Ô "hiện cửa sổ" chỉ được phép hiện khi trình duyệt và     │
-   * │               daemon **cùng máy** — đo bằng `isLoopback(socket)`, KHÔNG   │
-   * │               bằng `Host` (giả được). Cùng cổng đã dùng cho nút 📂. Bấm ở │
-   * │               Hà Nội mà cửa sổ bật trên server Singapore là bug đã dẫm.   │
-   * │                                                                          │
-   * │ `--isolated`  profile nằm trong RAM, không chạm đĩa ⇒ không để lại phiên  │
-   * │               đăng nhập của khách. Muốn giữ phiên thì phải khai           │
-   * │               `--user-data-dir` **một cách tường minh**, và lúc đó bán     │
-   * │               kính rộng bằng mọi trang đã đăng nhập trong profile đó.     │
-   * │                                                                          │
-   * │ Cả hai nằm trong `args` ⇒ **vào băm** ⇒ đổi là **một cánh tay khác**, và  │
-   * │ model không nhìn thấy chúng, không đổi được giữa chừng.                   │
+   * │ THESE TWO FLAGS ARE **DELIBERATE REVERSALS OF THE VENDOR'S DEFAULT**.
+   * │
+   * │ `--headless`  Playwright defaults to **headed**. A worker running in the
+   * │               background whose window suddenly pops up while someone is
+   * │               doing something else is a rude product. And on a VPS,
+   * │               headed **doesn't even exist**.
+   * │               ⚠ The "show window" option is only allowed to appear when
+   * │               the browser and the daemon are on **the same machine** —
+   * │               measured with `isLoopback(socket)`, NOT with `Host` (which
+   * │               can be spoofed). The same fence already used for the 📂
+   * │               button. Clicking from Hanoi and having the window pop up
+   * │               on a Singapore server is a bug already hit once.
+   * │
+   * │ `--isolated`  the profile lives in RAM, never touches disk ⇒ leaves no
+   * │               trace of the customer's sign-in session. Wanting to keep a
+   * │               session means declaring `--user-data-dir` **explicitly**,
+   * │               and at that point the blast radius is every page ever
+   * │               signed into within that profile.
+   * │
+   * │ Both live in `args` ⇒ **feed into the hash** ⇒ changing them means **a
+   * │ different arm entirely**, and the model never sees them, never changes
+   * │ them mid-run.
    * └──────────────────────────────────────────────────────────────────────────┘
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 `--browser` LÀ MỘT QUYẾT ĐỊNH VỀ DUNG LƯỢNG ĐĨA, không phải khẩu vị.  │
-   * │ (user dặn 29/08: *"hạn chế tải về làm đầy bộ cứng"*)                     │
-   * │                                                                          │
-   * │ Không khai ⇒ Playwright dùng **bản đóng gói của nó** và **tải về**:       │
-   * │   `chromium_headless_shell` **269 MB** · bản đủ **415 MB**               │
-   * │ và **bản cũ không bao giờ tự bị dọn** — máy đo 29/08 có **1 340 MB** với  │
-   * │ hai bộ (04/2026 và 07/2026) nằm cạnh nhau.                                │
-   * │                                                                          │
-   * │ Khai một **channel** ⇒ dùng trình duyệt **đã cài sẵn** ⇒ **0 byte**.      │
-   * │   win32  `msedge` — Windows 10+ nào cũng có, không phải cài gì            │
-   * │   darwin `chrome` — không có sẵn theo máy, nhưng là thứ gần chắc nhất     │
-   * │   linux  **không khai** — desktop Linux hiếm khi có sẵn cái nào; còn trên │
-   * │          server thì đường đúng là **image Docker chính chủ**, nơi         │
-   * │          Chromium đã nằm trong image (→ `SPEC-deploy.md` §2)              │
-   * │                                                                          │
-   * │ ⚠ Đổi lại: máy **không có** channel đó thì hỏng — nhưng hỏng **nhìn thấy  │
-   * │ được** (câu lỗi nói tên trình duyệt thiếu), thắng kiểu hỏng im lặng là    │
-   * │ ngốn 400 MB đĩa của khách mà không ai hỏi họ một câu.                     │
+   * │ 🔴 `--browser` IS A DECISION ABOUT DISK SPACE, not a matter of taste.
+   * │ (the user's instruction, 29/08: *"limit downloads filling up the hard drive"*)
+   * │
+   * │ Leaving it unset ⇒ Playwright uses **its own bundled build** and
+   * │ **downloads it**:
+   * │   `chromium_headless_shell` **269 MB** · the full build **415 MB**
+   * │ and **old builds never get cleaned up on their own** — the machine
+   * │ measured 29/08 had **1,340 MB** with two sets (04/2026 and 07/2026)
+   * │ sitting side by side.
+   * │
+   * │ Declaring a **channel** ⇒ uses the browser **already installed** ⇒ **0 bytes**.
+   * │   win32  `msedge` — every Windows 10+ machine has it, nothing to install
+   * │   darwin `chrome` — not preinstalled by default, but the closest thing to a safe bet
+   * │   linux  **left undeclared** — a Linux desktop rarely has any of them
+   * │          preinstalled; on a server the right path is the **official
+   * │          Docker image**, where Chromium already lives in the image
+   * │          (→ `SPEC-deploy.md` §2)
+   * │
+   * │ ⚠ In exchange: a machine that **doesn't have** that channel fails — but
+   * │ it fails **visibly** (an error naming the missing browser), which beats a
+   * │ silent failure mode that eats 400 MB of a customer's disk without ever asking them.
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * `--output-max-size`: mỗi lần `browser_navigate` **tự ghi snapshot ra file**
-   * (đo 29/08 — đó là lý do navigate chỉ ~118 token thay vì ~47 000). Rất tốt cho
-   * ngữ cảnh, nhưng nó **lớn dần mãi**. Trần này là thứ biến một cái cache thành
-   * một cái cache **có đáy** — đúng chỗ user chốt: *"cache không tệ nếu một trang
-   * ra vào thường xuyên"*, miễn là nó không nuốt đĩa.
-   * ✅ ĐÍNH CHÍNH 29/08 — **món nợ `--output-dir` KHÔNG TỒN TẠI.** Worker chạy với
-   * `cwd` = thư mục văn phòng, nên Playwright đẻ `.playwright-mcp/` **ngay trong
-   * văn phòng**: tự đúng chỗ, tự tách theo văn phòng, **0 dòng mã**.
-   * Bằng chứng: `company/offices/canh-tay/.playwright-mcp/` — 26 file, 0,25 MB.
-   * Lần trước tôi thấy nó nằm trong repo là vì **spike chạy từ gốc repo**, tức tôi
-   * đọc `cwd` của phép đo thành `cwd` của sản phẩm.
+   * `--output-max-size`: every `browser_navigate` call **auto-writes its
+   * snapshot to a file** (measured 29/08 — that's why navigate costs only
+   * ~118 tokens instead of ~47,000). Great for context, but it **grows
+   * forever**. This ceiling is what turns a cache into a cache **with a
+   * floor** — exactly what the user settled on: *"a cache isn't bad if one
+   * page comes and goes frequently"*, as long as it doesn't swallow the disk.
+   * ✅ CORRECTED 29/08 — **the `--output-dir` debt DOES NOT EXIST.** The
+   * worker runs with `cwd` = the office directory, so Playwright creates
+   * `.playwright-mcp/` **right inside the office**: automatically in the
+   * right place, automatically separated per office, **0 lines of code**.
+   * Evidence: `company/offices/canh-tay/.playwright-mcp/` — 26 files, 0.25 MB.
+   * The earlier sighting of it inside the repo happened because **the spike
+   * ran from the repo root**, meaning I mistook the measurement's `cwd` for
+   * the product's `cwd`.
    * → [[agentco-measurement-vs-conclusion]]
    *
-   * 🔴 NHƯNG THƯ MỤC ẤY CHỨA `console-*.log`, VÀ LOG CONSOLE CÓ TOKEN PHIÊN.
-   * Đọc thật một file: URL của Facebook trong đó mang `fb_dtsg=…` và
-   * `__user=100000000000001`. Đó là **chìa phiên đăng nhập nằm dưới dạng chữ**,
-   * trong thư mục văn phòng — nơi nhân viên đọc được. Chưa vá.
+   * 🔴 BUT THAT DIRECTORY CONTAINS `console-*.log`, AND CONSOLE LOGS CARRY
+   * SESSION TOKENS. Read one file for real: a Facebook URL in it carries
+   * `fb_dtsg=…` and `__user=100000000000001`. That's **a sign-in session key
+   * sitting as plain text**, inside the office directory — a place a worker
+   * can read. Not yet patched.
    *
-   * 🔴 HỆ QUẢ PHẢI BỊT: `tools/list` trả đủ 24 việc **mà chưa khởi động trình
-   * duyệt nào** (đo 29/08). Nên một probe chỉ-liệt-kê sẽ báo ✓ **xanh giả** trên
-   * máy không có trình duyệt dùng được, và người dùng chỉ biết khi giao việc thật.
-   * ⇒ Probe của mục này **phải gọi một tool có mở trình duyệt**. → bài 18 ô A-4
+   * 🔴 A CONSEQUENCE THAT MUST BE CLOSED: `tools/list` returns all 24 tools
+   * **without ever launching a browser** (measured 29/08). So a probe that
+   * only lists tools would report a **false-green ✓** on a machine with no
+   * usable browser, and the user would only find out once handing it a real task.
+   * ⇒ This entry's probe **must call a tool that actually opens a browser**. → test 18 box A-4
    */
   spec: {
     kind: 'stdio',
     command: 'npx',
     /**
-     * ⚠ `--headless` và `--isolated` nằm ở ĐÂY, còn hai ô tick thì **GỠ** chúng ra
-     * (`ArmOption.remove`). Viết ngược lại — base trần, ô tick thêm vào — thì
-     * trạng thái an toàn phải do người dùng **nhớ bật**, mà mặc định an toàn thì
-     * không được phụ thuộc vào trí nhớ của ai.
+     * ⚠ `--headless` and `--isolated` live HERE, and the two checkboxes
+     * **REMOVE** them (`ArmOption.remove`). Writing it the other way around —
+     * a bare base, checkboxes adding flags in — would make the safe state
+     * something the user has to **remember to turn on**, and a safe default
+     * must never depend on anyone's memory.
      */
     args: ['-y', PLAYWRIGHT_MCP_PKG, '--headless', '--isolated', '--output-max-size', '52428800'],
     argsByOs: {
@@ -168,17 +188,18 @@ export const BROWSER_ARM: CatalogArm = {
   },
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BA CHẾ ĐỘ, VÀ NGƯỜI DÙNG PHẢI THẤY MÌNH CHỌN CÁI NÀO. (user chốt 29/08)  │
+   * │ THREE MODES, AND THE USER MUST SEE WHICH ONE THEY'RE CHOOSING. (the user's │
+   * │ call, 29/08)                                                              │
    * │                                                                          │
-   * │ Hai chế độ sau mở đúng thứ mà **cả OAuth lẫn connector đều không chạm     │
-   * │ tới**: hệ thống nội bộ không có API, không có OAuth, chỉ có một ô đăng    │
-   * │ nhập. Khách tự tay đăng nhập **một lần** trong cửa sổ thật, phiên nằm     │
-   * │ trong hồ sơ của **văn phòng đó**, rồi nhân viên dùng lại — và từ lần sau  │
-   * │ chạy ẩn được.                                                            │
+   * │ The next two modes open up exactly what **neither OAuth nor a connector    │
+   * │ can reach**: internal software with no API, no OAuth, just a sign-in field.  │
+   * │ The customer signs in by hand **once**, in a real window; the session lives  │
+   * │ in that **office's own profile**, and the worker reuses it — headless from    │
+   * │ then on.                                                                   │
    * │                                                                          │
-   * │ ⚠ Đổi lại, bán kính rộng bằng **mọi trang đã đăng nhập trong hồ sơ đó**.  │
-   * │ Nên `help` của hai chế độ sau phải nói ra điều đó bằng tiếng người, chứ   │
-   * │ không tả cấu hình.                                                       │
+   * │ ⚠ In exchange, the blast radius equals **every page ever signed into in       │
+   * │ that profile**. So the `help` copy for the next two modes has to state that     │
+   * │ in plain language, not describe the config.                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   options: [
@@ -186,36 +207,40 @@ export const BROWSER_ARM: CatalogArm = {
       id: 'nho-dang-nhap',
       label: 'armCat.browser.keepSession.label',
       /**
-       * ⚠ BẬT SẴN, và đó là một quyết định ngược trực giác "mặc định phải hẹp".
+       * ⚠ ON BY DEFAULT, a decision that runs against the instinct that "the default should be narrow".
        *
-       * Hồ sơ này là hồ sơ **riêng của agentco, sinh ra RỖNG** — không phải trình
-       * duyệt cá nhân của người dùng. Nên bật sẵn **không mở rộng bán kính ngay**:
-       * nó chỉ lớn lên đúng bằng những lần **chính người dùng tự đăng nhập** vào
-       * đó. Còn tắt đi thì mỗi lượt vứt sạch cả cache — tốn mạng, tốn thời gian,
-       * và trang cần đăng nhập thì vĩnh viễn không vào được.
+       * This profile is **agentco's own, created EMPTY** — not the user's
+       * personal browser. So defaulting to on **does not widen the blast
+       * radius immediately**: it only grows by exactly as much as the **user
+       * themselves signs into** there. Leaving it off instead throws away the
+       * entire cache every run — costs bandwidth, costs time, and a page
+       * needing sign-in never loads at all.
        */
       on: true,
       /**
-       * 🔴 CÂU CŨ HỨA QUÁ TAY, user bắt được 29/08: *"cookie của trình duyệt chính
-       * khó mà truyền sang đấy, chưa kể người dùng dùng cả edge và chrome"*.
+       * 🔴 THE OLD COPY OVERPROMISED, the user caught it 29/08: *"cookies from
+       * my main browser can't really transfer over there, not to mention I use
+       * both edge and chrome"*.
        *
-       * Đúng. `--user-data-dir` mở một **hồ sơ RIÊNG, trống trơn** — nó KHÔNG thừa
-       * kế đăng nhập sẵn có trong Chrome/Edge của người dùng (và không có cách nào
-       * thừa kế: hồ sơ đang mở bị khoá, cookie thì mã hoá theo hồ sơ). Câu cũ
-       * *"giữ lại những trang bạn đã đăng nhập"* đọc thành *"dùng lại đăng nhập
-       * của tôi"* — hứa một thứ không tồn tại, đúng lớp lỗi §11a-bis: **hứa quá
-       * tay tệ hơn doạ quá tay**.
+       * Right. `--user-data-dir` opens a **SEPARATE, empty profile** — it does
+       * NOT inherit the sign-ins already sitting in the user's Chrome/Edge (and
+       * there's no way it could: an open profile is locked, and cookies are
+       * encrypted per profile). The old copy, *"keeps the pages you've signed
+       * into"*, reads as *"reuses my own sign-ins"* — promising something that
+       * doesn't exist, exactly the §11a-bis failure class: **overpromising is
+       * worse than overwarning**.
        */
       /*
-        ⚠ Câu ngắn lại 02/09 (app đang toàn chữ). Vế *"hồ sơ RIÊNG, sinh ra
-        rỗng"* rời màn hình chứ **không** rời sản phẩm — nó là thứ chặn cách đọc
-        "dùng lại đăng nhập sẵn có trong Chrome của tôi", và cách đọc đó vẫn còn
-        đó. Nếu người dùng lại tưởng thế thì chỗ đúng để nói là câu cảnh báo bán
-        kính khi TICK ô này, không phải một đoạn văn đọc trước khi hiểu mình
-        đang chọn gì.
+        ⚠ Shortened 02/09 (the app is all text right now). The clause *"a
+        SEPARATE profile, created empty"* left the screen but did **not** leave
+        the product — it's what blocks the misreading "reuses the sign-ins
+        already in my Chrome", and that misreading is still possible. If a
+        user falls into it again, the right place to say so is the blast-radius
+        warning shown when this box gets TICKED, not a paragraph read before
+        anyone understands what they're even choosing.
       */
       help: 'armCat.browser.keepSession.help',
-      /** Hồ sơ bền và "profile nằm trong RAM" loại trừ nhau — gỡ cái kia ra. */
+      /** A persistent profile and "profile lives in RAM" are mutually exclusive — remove the other one. */
       remove: ['--isolated'],
       dirs: [{ flag: '--user-data-dir', sub: 'profile' }],
     },
@@ -223,65 +248,73 @@ export const BROWSER_ARM: CatalogArm = {
       id: 'hien-cua-so',
       label: 'armCat.browser.showWindow.label',
       help: 'armCat.browser.showWindow.help',
-      /** "Hiện cửa sổ" chính là **sự vắng mặt** của `--headless`. → `ArmOption.remove` */
+      /** "Show window" is simply the **absence** of `--headless`. → `ArmOption.remove` */
       remove: ['--headless'],
       /**
-       * Cửa sổ mở trên **máy chạy daemon**. Xem giao diện từ máy khác mà tick ô
-       * này thì cửa sổ bật ở nơi không ai nhìn — đúng con bug nút 📂 (*"bấm ở Hà
-       * Nội, cửa sổ bật trên server Singapore"*). Cùng cổng, chỗ thứ tư.
+       * The window opens on the **machine running the daemon**. Viewing the
+       * interface from a different machine and ticking this box means the
+       * window pops up somewhere nobody's looking — the exact 📂-button bug
+       * (*"clicked from Hanoi, window popped up on a Singapore server"*). Same
+       * fence, fourth place it's applied.
        */
       loopbackOnly: true,
     },
   ],
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 KHÔNG CHIA NẤC — và đây là kết luận của một phép đo, không phải lười.  │
-   * │ (user chạy thật 29/08, đúng ô C-1 bài 18 đã dự đoán)                     │
+   * │ 🔴 NO TIERING — and this is the conclusion of a measurement, not laziness. │
+   * │ (the user ran this for real, 29/08, exactly the box C-1 that test 18 predicted) │
    * │                                                                          │
-   * │ `browser_navigate` khai `destructive: true` (cùng `click`, `type`), nên  │
-   * │ `tierOf` xếp nó vào `full`. Hệ quả ở nấc mặc định `read`: `scopedTools`  │
-   * │ cấp đúng 7 việc — `snapshot · find · screenshot · network · console ·    │
-   * │ wait` — **không có việc nào mở được trang**. Triệu chứng user gặp:       │
+   * │ `browser_navigate` declares `destructive: true` (same as `click`,          │
+   * │ `type`), so `tierOf` sorts it into `full`. The consequence at the default   │
+   * │ `read` tier: `scopedTools` grants exactly 7 tools — `snapshot · find ·      │
+   * │ screenshot · network · console · wait` — **none of which can open a page**.  │
+   * │ What the user actually hit:                                                │
    * │                                                                          │
-   * │   *"Claude requested permissions to use mcp__…__browser_navigate,        │
-   * │    but you haven't granted it yet"*                                     │
+   * │   *"Claude requested permissions to use mcp__…__browser_navigate,           │
+   * │    but you haven't granted it yet"*                                       │
    * │                                                                          │
-   * │ ⇒ Một trình duyệt không đi tới đâu được **không phải nấc thấp, nó là đồ  │
-   * │ hỏng**. Và không sửa được bằng cách hạ `navigate` xuống `read`: luật một │
-   * │ chiều (25/08) cấm hạ cấp, và cấm đúng — mở một URL **có** tác dụng phụ.  │
+   * │ ⇒ A browser that can't navigate anywhere is **not a low tier, it's broken**.  │
+   * │ And it can't be fixed by downgrading `navigate` to `read`: the one-way        │
+   * │ rule (25/08) forbids downgrades, and forbids it correctly — opening a URL       │
+   * │ **does** have side effects.                                                 │
    * │                                                                          │
-   * │ 📌 Cái MẤT, ghi để cân lại được: không có bản "chỉ xem". Thứ thay thế là │
-   * │ `neverTools` (cắt hai việc chạy JS tuỳ ý) — hàng rào theo **việc**, không│
-   * │ theo **nấc**. Muốn nấc thật thì phải khai nhóm việc bằng dữ liệu như     │
-   * │ GitHub, và đó là việc của bản sau.                                       │
+   * │ 📌 What's LOST, recorded so it can be weighed later: there's no "view-only"   │
+   * │ version. The substitute is `neverTools` (cuts the two arbitrary-JS-execution    │
+   * │ tools) — a fence by **tool**, not by **tier**. A real tier would need this        │
+   * │ vendor's tools declared as data-driven groups the way GitHub's are, and that's    │
+   * │ later work.                                                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   tiered: false,
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ HAI VIỆC KHÔNG BAO GIỜ ĐƯỢC CẤP — kể cả nấc toàn quyền. → `catalog.ts`   │
+   * │ TWO TOOLS NEVER GRANTED — even at the full-access tier. → `catalog.ts`     │
    * │                                                                          │
-   * │ Cả hai chạy **JavaScript tuỳ ý** trong trang. Annotations của chúng khai  │
-   * │ đúng (`destructive: true`) nên `tierOf` xếp vào `full` — hợp lệ, và không │
-   * │ đủ: *"toàn quyền"* nghĩa là **được ghi**, không nghĩa là **được chạy mã   │
-   * │ tuỳ ý dưới phiên đăng nhập của bạn**. Một trang độc dắt được nhân viên     │
-   * │ gọi `browser_evaluate` là dắt được nó làm mọi thứ trang đó làm được.      │
+   * │ Both run **arbitrary JavaScript** on the page. Their annotations declare      │
+   * │ it correctly (`destructive: true`), so `tierOf` sorts them into `full` —       │
+   * │ valid, and not enough: *"full access"* means **allowed to write**, not          │
+   * │ **allowed to run arbitrary code under your signed-in session**. A malicious       │
+   * │ page that gets a worker to call `browser_evaluate` gets it to do everything        │
+   * │ that page itself could do.                                                  │
    * │                                                                          │
-   * │ ⚠ Danh sách này CHỈ CẮT ⇒ không đụng luật một chiều (25/08). Và nó là     │
-   * │ **ảnh chụp lúc cắm**: hãng thêm một tool nguy hiểm mới thì nó không tự     │
-   * │ biết — cùng giới hạn đã ghi cho `readOnly`.                               │
+   * │ ⚠ This list ONLY REMOVES ⇒ doesn't touch the one-way rule (25/08). And it's      │
+   * │ a **snapshot taken at connect time**: if the vendor adds a new dangerous          │
+   * │ tool, this doesn't automatically know — the same limitation already recorded       │
+   * │ for `readOnly`.                                                             │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   neverTools: ['browser_run_code_unsafe', 'browser_evaluate'],
-  /** Rỗng — mục này không có chìa nào. Đó là toàn bộ điểm của `price: 'none'`. */
+  /** Empty — this entry has no keys at all. That's the entire point of `price: 'none'`. */
   secrets: [],
   /**
-   * ⚠ `mark` BỎ TRỐNG, và đó là một quyết định chứ không phải một ô chưa điền.
+   * ⚠ `mark` LEFT BLANK, and that's a decision, not an unfilled field.
    *
-   * §11c chốt: chưa đọc quy tắc thương hiệu thì không dùng logo. Ở đây ta **không
-   * cần** logo — tên mục đã đặt theo việc, nên không có bề mặt nào dùng tới nhãn
-   * hiệu của Microsoft. Giao diện vẽ hình theo LOẠI, y như "File trên máy".
-   * ⇒ Mục này ra mắt với **nợ thương hiệu bằng 0**, không phải nợ hoãn lại.
+   * §11c settled it: without having read the brand guidelines, don't use the
+   * logo. Here we **don't need** one — the entry is named after the task, so
+   * nothing about it uses Microsoft's trademark. The interface draws an icon
+   * by TYPE, same as "Local files".
+   * ⇒ This entry ships with **zero brand debt**, not deferred debt.
    */
   brand: { owner: 'Microsoft Corporation', guidelineUrl: null, checkedOn: null },
 };

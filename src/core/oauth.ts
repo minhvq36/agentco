@@ -1,39 +1,41 @@
 /**
- * OAuth 2.1 + PKCE + đăng ký động (DCR) cho cánh tay MCP. → docs/SPEC-arms.md §5h
+ * OAuth 2.1 + PKCE + Dynamic Client Registration (DCR) for MCP arms. → docs/SPEC-arms.md §5h
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ⚠⚠ FILE NÀY KHÔNG ĐƯỢC IMPORT SDK CỦA BẤT KỲ HÃNG NÀO. Đây là ĐƯỜNG LUI. │
+ * │ ⚠⚠ THIS FILE MUST NEVER IMPORT ANY VENDOR'S SDK. This is the ESCAPE ROUTE.       │
  * │                                                                          │
- * │ User chốt 24/08: *"nhớ chừa đường lui nếu sau này tôi cho phép người dùng│
- * │ đổi hệ thống dùng codex, antigravity, groq"*. Một câu như thế chỉ có      │
- * │ thật khi có **mã nguồn thi hành nó** — và đây là mã đó: node builtin +    │
- * │ `fetch`, không gì khác. Đổi hãng chạy agent thì file này đi theo nguyên   │
- * │ vẹn, vì OAuth là chuyện giữa agentco và **hãng dịch vụ** (Notion), không  │
- * │ phải chuyện giữa agentco và hãng **mô hình**.                            │
+ * │ The user's call, 24/08: *"remember to leave an escape route in case I later        │
+ * │ let users switch the underlying system to codex, antigravity, groq"*. A            │
+ * │ statement like that is only real once there's **code that enforces it** — and       │
+ * │ this is that code: built-in node + `fetch`, nothing else. Swapping which agent       │
+ * │ vendor runs, this file carries over intact, because OAuth is a matter between        │
+ * │ agentco and the **service vendor** (Notion), not between agentco and the             │
+ * │ **model vendor**.                                                             │
  * │                                                                          │
- * │ Có test canh: `test/oauth-neutral.test.ts` đọc chính file này và bắt lỗi  │
- * │ nếu một dòng `import` nào trỏ ra ngoài `node:`.                           │
+ * │ There's a test guarding this: `test/oauth-neutral.test.ts` reads this exact file    │
+ * │ and fails if any `import` line points outside `node:`.                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ba bước, **không bước nào ghim tên hãng**:
- *   ① `discover`  — gõ cửa không chìa, đọc câu server trả lời (RFC 9728 → 8414)
- *   ② `register`  — xin `client_id` tại chỗ (RFC 7591). Đo 25/08: Notion trả 201
- *   ③ `exchange`/`refresh` — đổi mã lấy chìa, và làm mới trước khi hết hạn
+ * Three steps, **none of them pinning a vendor name**:
+ *   ① `discover`  — knock without a key, read what the server answers (RFC 9728 → 8414)
+ *   ② `register`  — request a `client_id` on the spot (RFC 7591). Measured 25/08: Notion returns 201
+ *   ③ `exchange`/`refresh` — trade a code for a key, and refresh before it expires
  *
- * ⚠ Đo được 25/08 và nó quyết định hình dạng của kho chìa: **refresh token XOAY**
- * — mỗi lần làm mới trả về **cả access lẫn refresh mới**. Không ghi đè cái mới là
- * tự khoá mình ra ngoài ở lần làm mới **thứ hai**, tức hỏng sau ~8 giờ chứ không
- * hỏng ngay. Xem `applyToken`.
+ * ⚠ Measured 25/08, and it decides the shape of the key store: **refresh
+ * tokens ROTATE** — every refresh returns BOTH a new access token AND a new
+ * refresh token. Not overwriting the new one locks you out on the
+ * **second** refresh, meaning it breaks after ~8 hours rather than
+ * immediately. See `applyToken`.
  */
 
 import crypto from 'node:crypto';
 
 import { t, type MessageKey } from '../i18n/index.js';
 
-/** Tên ta tự khai với server uỷ quyền. Hiện trên màn hình đồng ý của người dùng. */
+/** The name we declare to the authorization server. Shown on the user's consent screen. */
 export const CLIENT_NAME = 'agentco';
 
-/** Metadata của máy chủ uỷ quyền (RFC 8414). Chỉ giữ trường ta thật sự dùng. */
+/** Authorization server metadata (RFC 8414). Only keeps the fields we actually use. */
 export interface AsMeta {
   issuer: string;
   authorization_endpoint: string;
@@ -43,47 +45,50 @@ export interface AsMeta {
   scopes_supported?: string[];
   code_challenge_methods_supported?: string[];
   /**
-   * ⇐ TRƯỜNG QUYẾT ĐỊNH NHÁNH ĐĂNG NHẬP. → §deviceStart
+   * ⇐ THE FIELD THAT DECIDES THE SIGN-IN BRANCH. → §deviceStart
    *
-   * Có nó ⇒ đi được device flow ⇒ **không cần `client_secret`, không cần
-   * `redirect_uri`**. Đây là thứ cứu những hãng **không mở DCR**: ta không xin
-   * được `client_id` tại chỗ, nhưng `client_id` ship sẵn cộng device flow là đủ
-   * để người dùng gõ **0 chìa**. → SPEC-arms §5h·7
+   * Present ⇒ the device flow works ⇒ **no `client_secret` needed, no
+   * `redirect_uri` needed**. This is what saves vendors that **don't open
+   * DCR**: we can't get a `client_id` on the spot, but a shipped-in
+   * `client_id` plus the device flow is enough for the user to type **0 keys**.
+   * → SPEC-arms §5h·7
    */
   device_authorization_endpoint?: string;
   grant_types_supported?: string[];
 }
 
 /**
- * Một tài khoản đã đăng nhập. Đây là thứ nằm trong `.state/secrets.json`.
+ * One signed-in account. This is what lives inside `.state/secrets.json`.
  *
- * ⚠ `expires_at` là **mốc tuyệt đối (ms)**, không phải `expires_in`. Cất
- * `expires_in` là cất một con số vô nghĩa ngay sau khi tắt máy — nó đo từ một
- * thời điểm không ai ghi lại.
+ * ⚠ `expires_at` is an **absolute timestamp (ms)**, not `expires_in`.
+ * Storing `expires_in` would store a number that becomes meaningless the
+ * moment the machine restarts — it's measured from a moment nobody recorded.
  */
 export interface OAuthAccount {
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐÂY LÀ **XUẤT XỨ CỦA CHÌA**, KHÔNG PHẢI DANH TÍNH PHẦN MỀM.             │
-   * │ (user 27/08: *"client_id đi theo phần mềm, không đi theo data người dùng"*)│
+   * │ THIS IS THE **ORIGIN OF THE KEY**, NOT THE SOFTWARE'S IDENTITY.                │
+   * │ (the user, 27/08: *"client_id follows the software, not the user's data"*)        │
    * │                                                                          │
-   * │ Nguyên tắc đó đúng, và mã theo nó ở hai chỗ:                              │
-   * │   `catalog.ts §auth.clientId`  client ta SHIP     → đi theo phần mềm ✅   │
-   * │   `.state $clients`            client DCR tự mint → dữ liệu công ty ✅    │
+   * │ That principle is correct, and the code follows it in two places:               │
+   * │   `catalog.ts §auth.clientId`  the client WE ship       → follows the software ✅ │
+   * │   `.state $clients`            a client DCR mints itself → company data ✅         │
    * │                                                                          │
-   * │ Trường này là chỗ thứ ba, và nó KHÔNG lưu "ứng dụng của agentco là ai".  │
-   * │ Nó lưu *"client NÀO đã cấp đúng chìa này"* — vì OAuth bắt buộc **làm mới  │
-   * │ phải do chính client đã cấp thực hiện**. Đọc từ danh mục lúc làm mới thì  │
-   * │ một chìa do client khác cấp sẽ hỏng, và hỏng ở giờ thứ 4.                 │
+   * │ This field is a third place, and it does NOT store "which app is agentco".        │
+   * │ It stores *"WHICH client issued exactly this key"* — because OAuth requires        │
+   * │ that **the refresh must come from the exact client that issued it**. Reading         │
+   * │ from the catalog at refresh time means a key issued by a different client            │
+   * │ would break, and break at hour 4.                                              │
    * │                                                                          │
-   * │ ⚠ THÀNH THẬT VỀ HÔM NAY: chưa có client thứ hai nào (ô *"dùng client_id   │
-   * │ của bạn"* của §5h·7h **chưa được xây** — spec nói đã có, sai). Nên hôm    │
-   * │ nay giá trị này **luôn bằng** giá trị trong danh mục, tức đúng là một bản │
-   * │ sao thừa như user nói. Nó chỉ kiếm được chỗ đứng khi ô ghi đè ra đời.     │
+   * │ ⚠ HONEST ABOUT TODAY: there's no second client yet (the *"use your own              │
+   * │ client_id"* field from §5h·7h **hasn't been built** — the spec claims it has,       │
+   * │ which is wrong). So today this value **always equals** the catalog value,           │
+   * │ meaning it genuinely is a redundant copy, exactly as the user said. It only         │
+   * │ earns its place once the override field exists.                                 │
    * │                                                                          │
-   * │ ⇒ Giữ, vì gỡ rồi phải thêm lại nguyên vẹn ngay khi ô đó ra đời. Nhưng     │
-   * │ **đừng đọc nó như nguồn sự thật về danh tính phần mềm** — nguồn đó là     │
-   * │ `catalog.ts`, và chỉ nó.                                                  │
+   * │ ⇒ Kept, because removing it would mean adding it back intact the moment that         │
+   * │ field exists. But **never read it as the source of truth for software                │
+   * │ identity** — that source is `catalog.ts`, and only that.                          │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   client_id: string;
@@ -92,31 +97,32 @@ export interface OAuthAccount {
   expires_at?: number;
   token_type: string;
   scope?: string;
-  /** URL MCP mà chìa này mở được — để làm mới thì biết hỏi ai. */
+  /** The MCP URL this key unlocks — so a refresh knows who to ask. */
   mcp_url: string;
   issuer: string;
-  /** Tên người dùng đọc (Notion trả `workspace_name`). Chỉ để hiện. */
+  /** A human-readable name (Notion returns `workspace_name`). Display only. */
   label?: string;
-  /** Server trả kèm gì thì giữ nguyên — để ĐỌC, không để TIN. */
+  /** Whatever else the server returns, kept as-is — to READ, not to TRUST. */
   extra?: Record<string, unknown>;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ CHÌA ĐÃ CHẾT HẲN — phải ĐĂNG NHẬP LẠI, không phải thử lại.               │
+   * │ A KEY THAT'S FULLY DEAD — needs SIGNING IN AGAIN, not a retry.                  │
    * │                                                                          │
-   * │ Ba đường tới đây, và cả ba đều KHÔNG tự khỏi:                            │
-   * │  · người dùng thu hồi ở phía dịch vụ                                     │
-   * │  · tiến trình chết đúng khe giữa lúc dịch vụ XOAY chìa và lúc ta ghi     │
-   * │    xuống đĩa — chìa mới nằm trong một phản hồi HTTP đã mất               │
-   * │  · dịch vụ hết hạn chìa làm mới                                          │
+   * │ Three paths reach this state, and NONE of them self-heal:                      │
+   * │  · the user revoked it on the service's side                                    │
+   * │  · the process died in the exact gap between the service ROTATING the key         │
+   * │    and us writing it to disk — the new key sits inside an HTTP response that       │
+   * │    is now lost                                                                 │
+   * │  · the service's refresh key itself expired                                     │
    * │                                                                          │
-   * │ ⚠ VÌ SAO CẦN MỘT CỜ chứ không để nó tự lộ: không có cờ thì triệu chứng   │
-   * │ duy nhất là cánh tay **401 im lặng lúc một nhân viên đang làm việc** —   │
-   * │ xa nguyên nhân, và câu 401 nói *"chìa sai"* chứ không nói *"chìa chết,   │
-   * │ bấm Đăng nhập"*. Đúng lớp lỗi §5m, ở tầng vòng đời.                      │
+   * │ ⚠ WHY A FLAG IS NEEDED rather than letting it surface on its own: without one,      │
+   * │ the only symptom is an arm returning a **silent 401 while a worker is mid-task**   │
+   * │ — far from the cause, and a 401 says *"wrong key"* rather than *"dead key, click    │
+   * │ Sign in"*. Exactly the §5m failure class, at the lifecycle layer.                 │
    * │                                                                          │
-   * │ Có cờ thì vòng làm mới **thôi thử lại mỗi 15 phút** (vô ích, và mỗi lần  │
-   * │ là một lời gọi mạng), giao diện hiện được nút Đăng nhập lại, và câu lỗi  │
-   * │ lúc dùng nói đúng việc phải làm.                                         │
+   * │ With the flag, the refresh loop **stops retrying every 15 minutes** (pointless,     │
+   * │ and each attempt is a network call), the interface can show a Sign-in-again          │
+   * │ button, and the error shown at use time states the correct next action.            │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   dead?: { at: string; why: string };
@@ -131,25 +137,25 @@ interface TokenResponse {
   [k: string]: unknown;
 }
 
-// ───────────────────────────────────────────────── ① khám phá
+// ───────────────────────────────────────────────── ① discovery
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HỎI SERVER NÓ XÁC THỰC KIỂU GÌ — ĐỪNG ĐOÁN. RFC 9728 → RFC 8414.        │
+ * │ ASK THE SERVER HOW IT AUTHENTICATES — DON'T GUESS. RFC 9728 → RFC 8414.       │
  * │                                                                          │
- * │ Bản đầu ĐOÁN metadata nằm ở `{origin}/.well-known/…`. Đo 25/08 với 7     │
- * │ server: **đúng 5, sai 2**, và hai ca sai nói ra vì sao đoán là sai về    │
- * │ NGUYÊN TẮC chứ không phải sai vì thiếu may mắn:                          │
+ * │ The first version GUESSED metadata lived at `{origin}/.well-known/…`.           │
+ * │ Measured 25/08 against 7 servers: **5 correct, 2 wrong**, and the two wrong        │
+ * │ cases show WHY guessing is wrong on PRINCIPLE, not just from bad luck:              │
  * │                                                                          │
- * │   GitHub      metadata ở đường CÓ PATH, và issuer ở **host khác hẳn**    │
- * │               (`https://github.com/login/oauth`). Đoán từ origin của MCP │
- * │               URL thì không đời nào ra được chuỗi đó.                    │
- * │   Cloudflare  HTTP **200** — không cần chìa. Đoán kiểu cũ báo "404,      │
- * │               hỏng"; sự thật là "không có gì để làm".                    │
+ * │   GitHub      metadata sits at a path WITH A SUB-PATH, and the issuer is at an       │
+ * │               **entirely different host** (`https://github.com/login/oauth`).       │
+ * │               Guessing from the MCP URL's origin could never produce that string.    │
+ * │   Cloudflare  HTTP **200** — no key needed at all. The old guessing logic            │
+ * │               reported "404, broken"; the truth was "nothing to do".               │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `null` = server **không cần chìa**. Ném = không hiểu nổi, và câu ném nói ra
- * mã HTTP thật thay vì đoán hộ.
+ * `null` = the server **needs no key**. Throws = couldn't make sense of it,
+ * and the thrown message states the real HTTP code rather than guessing on its behalf.
  */
 export async function discover(mcpUrl: string): Promise<AsMeta | null> {
   const probe = await fetch(mcpUrl, {
@@ -164,25 +170,27 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
   }).catch(() => null);
 
   /**
-   * 🔴 BA KẾT CỤC, KHÔNG PHẢI HAI. Bản trước gộp mất một cái.
+   * 🔴 THREE OUTCOMES, NOT TWO. The earlier version conflated one away.
    *
-   * Câu cũ `if (status !== 401 && status !== 403) return null` đọc **mọi thứ
-   * không phải 401** thành "không cần chìa". Đo với `gmailmcp.googleapis.com`:
-   * nó trả **404**, và hàm báo 🟢 *"cắm thẳng được"*. Báo xanh giả — chiều nguy
-   * nhất, vì người dùng đi tìm nguyên nhân ở chỗ khác. Cùng hình dạng với
-   * `catch` nuốt tiền đề. → [[agentco-catch-hides-premises]]
+   * The old line `if (status !== 401 && status !== 403) return null` read
+   * **anything that isn't 401** as "no key needed". Measured against
+   * `gmailmcp.googleapis.com`: it returns **404**, and the function reported
+   * 🟢 *"connects directly"*. A false green — the most dangerous direction,
+   * since the user goes looking for the cause somewhere else. The same
+   * shape as a `catch` swallowing a premise. → [[agentco-catch-hides-premises]]
    */
   /**
-   * ⚠ CHIỀU RA, không phải chiều vào. Câu lỗi phải nói ra điều đó.
+   * ⚠ THE OUTBOUND direction, not inbound. The error message has to state that.
    *
-   * Ba lời gọi của luồng OAuth (`discover` · `register` · đổi/làm mới chìa) là
-   * **daemon → dịch vụ**, không phải dịch vụ → daemon. Trên một VPS công ty
-   * khoá egress hoặc bắt đi qua proxy, chúng chết ở đây — trong khi mọi thứ
-   * khác (giao diện, nginx, đăng nhập SSO) vẫn chạy, nên người đi tìm sẽ soi
-   * chiều VÀO và không thấy gì cả.
+   * All three OAuth flow calls (`discover` · `register` · exchange/refresh
+   * a key) go **daemon → service**, not service → daemon. On a corporate
+   * VPS with egress locked down or forced through a proxy, they die right
+   * here — while everything else (the interface, nginx, SSO login) keeps
+   * working, so whoever's debugging checks the INBOUND direction and finds nothing.
    *
-   * ⚠ Và một chi tiết dễ mất cả buổi: `fetch` của Node **KHÔNG** tự đọc
-   * `HTTPS_PROXY`. Đặt biến đó rồi tưởng xong là một cái bẫy có thật.
+   * ⚠ And a detail that can burn a whole afternoon: Node's `fetch` does
+   * **NOT** automatically read `HTTPS_PROXY`. Setting that variable and
+   * assuming it's handled is a real trap.
    */
   if (!probe) {
     throw new Error(t('oauth.noEgress', { url: mcpUrl }));
@@ -193,13 +201,13 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
   }
 
   const u = new URL(mcpUrl);
-  // Server TỰ KHAI chỗ để metadata. Đây là thứ thay cho việc ta đoán.
+  // The server STATES where its metadata lives on its own. This replaces us guessing.
   const declared = probe.headers.get('www-authenticate')?.match(/resource_metadata="([^"]+)"/)?.[1];
 
   let issuer: string | null = null;
   for (const url of [
     declared,
-    // RFC 9728: path của tài nguyên được CHÈN VÀO SAU well-known, không bỏ đi.
+    // RFC 9728: the resource's path is INSERTED AFTER well-known, never dropped.
     `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`,
     `${u.origin}/.well-known/oauth-protected-resource`,
   ].filter(Boolean) as string[]) {
@@ -213,8 +221,8 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
   }
   if (!issuer) issuer = u.origin;
 
-  // Issuer CÓ THỂ mang path (GitHub có), nên thử cả dạng chèn-path lẫn dạng gốc,
-  // cộng đường OIDC. Bốn đường, không đường nào biết đó là hãng nào.
+  // The issuer CAN carry a path (GitHub's does), so both the path-inserted
+  // and bare forms are tried, plus the OIDC path. Four paths, none of which know which vendor this is.
   const iss = new URL(issuer);
   const p = iss.pathname.replace(/\/$/, '');
   const tries = [
@@ -230,18 +238,19 @@ export async function discover(mcpUrl: string): Promise<AsMeta | null> {
   throw new Error(t('oauth.noMetadata', { issuer, tried: String(tries.length) }));
 }
 
-// ───────────────────────────────────────────────── ② đăng ký động
+// ───────────────────────────────────────────────── ② dynamic registration
 
 /**
- * Xin `client_id` tại chỗ (RFC 7591) — không đăng ký tay, không allowlist.
+ * Requests a `client_id` on the spot (RFC 7591) — no manual registration, no allowlist.
  *
- * 🟢 ĐO 25/08: Notion trả **201**, `token_endpoint_auth_method: "none"`. Câu hỏi
- * *"Notion có rào app custom không?"* đã có đáp: **KHÔNG RÀO** — ta được đối xử
- * như mọi client khác. Linear · Sentry · Asana · Atlassian cũng mở DCR.
- * GitHub thì **không** có `registration_endpoint` ⇒ phải xin `client_id` tay.
+ * 🟢 MEASURED 25/08: Notion returns **201**, `token_endpoint_auth_method:
+ * "none"`. The question *"does Notion fence off custom apps?"* has an
+ * answer: **NO FENCE** — we're treated the same as any other client.
+ * Linear · Sentry · Asana · Atlassian also have DCR open.
+ * GitHub does **not** have a `registration_endpoint` ⇒ its `client_id` must be requested by hand.
  *
- * ⚠ `none` = **public client**: không có `client_secret` để giấu, nên PKCE không
- * phải tuỳ chọn — nó là thứ duy nhất chặn kẻ chen vào giữa mã trao đổi.
+ * ⚠ `none` = **a public client**: no `client_secret` to hide, so PKCE isn't
+ * optional — it's the only thing blocking someone from intercepting the code exchange.
  */
 export async function register(meta: AsMeta, redirectUri: string): Promise<string> {
   if (!meta.registration_endpoint) {
@@ -265,7 +274,7 @@ export async function register(meta: AsMeta, redirectUri: string): Promise<strin
   }
   const j = JSON.parse(body) as { client_id: string; client_secret?: string };
   if (j.client_secret) {
-    // Không giết luồng, nhưng phải KÊU: nó đổi mô hình bảo mật và đổi cả kho chìa.
+    // Doesn't kill the flow, but it must MAKE NOISE: it changes the security model AND the key store's shape.
     // Log line, so English literal — we read this, not the person using the app.
     process.emitWarning(
       `${meta.issuer} issued a client_secret — the public-client model no longer holds for this service.`,
@@ -274,11 +283,11 @@ export async function register(meta: AsMeta, redirectUri: string): Promise<strin
   return j.client_id;
 }
 
-// ───────────────────────────────────────────────── ③ PKCE + đổi chìa
+// ───────────────────────────────────────────────── ③ PKCE + code exchange
 
 const b64url = (b: Buffer): string => b.toString('base64url');
 
-/** S256. `plain` cố ý không có đường nào chọn được — nó không chặn được gì cả. */
+/** S256. `plain` is deliberately unreachable — it protects against nothing at all. */
 export function pkce(): { verifier: string; challenge: string } {
   const verifier = b64url(crypto.randomBytes(32));
   return { verifier, challenge: b64url(crypto.createHash('sha256').update(verifier).digest()) };
@@ -288,7 +297,7 @@ export function randomState(): string {
   return b64url(crypto.randomBytes(16));
 }
 
-/** URL để mở trên trình duyệt người dùng. */
+/** The URL to open in the user's browser. */
 export function authorizeUrl(
   meta: AsMeta,
   p: { clientId: string; redirectUri: string; state: string; challenge: string; scope?: string },
@@ -307,55 +316,61 @@ export function authorizeUrl(
 }
 
 /**
- * Chìa đã CHẾT HẲN, hay chỉ tạm hỏng? Hai ca cần hai xử lý ngược nhau.
+ * Is the key FULLY DEAD, or just temporarily broken? Two cases needing two opposite handlings.
  *
- * `invalid_grant` là câu chuẩn của OAuth 2 cho *"chìa này không còn dùng được"*
- * — thu hồi, hết hạn, hoặc đã bị xoay mất. Thử lại **không bao giờ** khỏi.
- * Mọi thứ khác (mạng chết, 500, quá hạn) thì thử lại là đúng.
+ * `invalid_grant` is OAuth 2's standard phrase for *"this key can no longer
+ * be used"* — revoked, expired, or already rotated away. Retrying **never**
+ * fixes it. Everything else (dead network, 500, a timeout) is correctly
+ * handled by retrying.
  *
- * ⚠ Đọc cả `error` trong thân JSON lẫn mã HTTP: RFC 6749 quy định `invalid_grant`
- * đi kèm **400**, nhưng có dịch vụ trả 401. Chỉ nhìn mã số là đọc sót ở một nửa.
+ * ⚠ Reads both the `error` inside the JSON body and the HTTP status: RFC
+ * 6749 specifies `invalid_grant` comes with **400**, but some services
+ * return 401. Looking only at the status code misses half the cases.
  */
 export class DeadGrantError extends Error {}
 
 /**
- * Hỏng TẠM — mạng chết, DNS, proxy, 5xx. Thử lại là đúng.
+ * TEMPORARILY broken — dead network, DNS, a proxy, 5xx. Retrying is correct.
  *
- * Tách khỏi mọi lỗi khác vì hai loại này cần **hai xử lý ngược nhau**: tạm thì
- * im lặng thử lại, chết hẳn thì dừng và bảo người dùng đăng nhập lại. Gộp chúng
- * là chọn sai ở cả hai (`oauth-routes.ts §refreshDue` đã ghi luật này).
+ * Separated from every other error because these two kinds need **opposite
+ * handling**: temporary means retry silently, fully dead means stop and
+ * tell the user to sign in again. Conflating them gets both wrong
+ * (`oauth-routes.ts §refreshDue` already states this rule).
  */
 export class TransientError extends Error {}
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴🔴 BA TIỀN ĐỀ SAI ĐÃ SỐNG TRONG HÀM NÀY — đo 26/08 khi cắm GitHub.     │
+ * │ 🔴🔴 THREE WRONG PREMISES WERE LIVING INSIDE THIS FUNCTION — measured 26/08     │
+ * │ when connecting GitHub.                                                    │
  * │                                                                          │
- * │ Cả ba đều ĐÚNG với Notion, nên chúng vô hình suốt từ 25/08. Đây là lý do │
- * │ luật *"một hãng chạy được chứng minh CƠ CHẾ, không chứng minh HÌNH DẠNG   │
- * │ PHẢN HỒI"* được viết ra. → SPEC-arms §5h·7d                              │
+ * │ All three were TRUE for Notion, so they stayed invisible ever since 25/08. This    │
+ * │ is why the rule *"one working vendor proves the MECHANISM, not the RESPONSE          │
+ * │ SHAPE"* was written. → SPEC-arms §5h·7d                                       │
  * │                                                                          │
- * │ ① *"server trả JSON"* — GitHub trả **form-urlencoded** trừ khi ta gửi     │
- * │    `Accept: application/json`. Hàm cũ không gửi ⇒ `JSON.parse` ném ngay   │
- * │    ở lần đổi mã ĐẦU TIÊN.                                                │
+ * │ ① *"the server returns JSON"* — GitHub returns **form-urlencoded** unless we         │
+ * │    send `Accept: application/json`. The old function didn't send it ⇒                │
+ * │    `JSON.parse` threw on the VERY FIRST code exchange.                             │
  * │                                                                          │
- * │ ② *"hỏng thì `!res.ok`"* — GitHub trả **HTTP 200** kèm thân               │
- * │    `{"error":"…"}`. Hàm cũ đọc thành THÀNH CÔNG ⇒ `applyToken` dựng một   │
- * │    account có `access_token: undefined` ⇒ `saveOAuth` **ghi đè một tài    │
- * │    khoản đang chạy tốt bằng một tài khoản hỏng**. Không ném, không log,   │
- * │    và nó xảy ra trong **vòng làm mới chạy ngầm** — nơi không ai nhìn.     │
- * │    ⇒ ② tệ hơn ① dù ① nghe to hơn: ① nổ ngay và có stack trace.           │
+ * │ ② *"broken means `!res.ok`"* — GitHub returns **HTTP 200** with a body of            │
+ * │    `{"error":"…"}`. The old function read that as SUCCESS ⇒ `applyToken` built an     │
+ * │    account with `access_token: undefined` ⇒ `saveOAuth` **overwrote a perfectly       │
+ * │    healthy account with a broken one**. No throw, no log, and it happened inside      │
+ * │    the **background refresh loop** — where nobody is watching.                     │
+ * │    ⇒ ② is worse than ① even though ① sounds louder: ① fails immediately with a         │
+ * │    stack trace.                                                                 │
  * │                                                                          │
- * │ ③ *"chìa chết = `invalid_grant`"* — GitHub trả                            │
- * │    **`incorrect_client_credentials`**. Không khớp ⇒ xếp thành *hỏng tạm*  │
- * │    ⇒ cờ `dead` KHÔNG BAO GIỜ bật ⇒ vòng làm mới thử lại mỗi 15 phút vĩnh  │
- * │    viễn, và giao diện không bao giờ hiện nút *Đăng nhập lại*. Tức cơ chế  │
- * │    `dead` bị vô hiệu đúng ở hãng cần nó nhất.                             │
+ * │ ③ *"a dead key = `invalid_grant`"* — GitHub returns                              │
+ * │    **`incorrect_client_credentials`**. No match ⇒ classified as *temporarily          │
+ * │    broken* ⇒ the `dead` flag NEVER fires ⇒ the refresh loop retries every 15           │
+ * │    minutes forever, and the interface never shows the *Sign in again* button.          │
+ * │    Meaning the `dead` mechanism gets disabled at exactly the vendor that needs it       │
+ * │    most.                                                                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ `step` đi vào mọi câu lỗi: đổi mã · làm mới · hỏi thăm. Ba chỗ đó sửa bằng
- * ba việc khác nhau, mà một câu `fetch failed` trần thì không nói được là chỗ
- * nào — đúng lớp lỗi §5m *"chỉ sai cửa"*.
+ * ⚠ `step` feeds into every error message: exchange · refresh · poll. Those
+ * three spots are fixed with three different actions, and a bare `fetch
+ * failed` can't say which one — exactly the §5m *"wrong door"* failure class.
  *
  * A CODE, not a word: the label a person reads follows the interface switch, so
  * it is looked up per throw rather than passed in already-translated.
@@ -381,7 +396,7 @@ async function postToken(
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        // ① Thiếu dòng này thì GitHub trả form-urlencoded và `JSON.parse` ném.
+        // ① Without this line, GitHub returns form-urlencoded and `JSON.parse` throws.
         accept: 'application/json',
       },
       body: new URLSearchParams(form).toString(),
@@ -397,19 +412,20 @@ async function postToken(
   try {
     json = JSON.parse(body) as Record<string, unknown>;
   } catch {
-    /* thân không phải JSON — dưới đây rơi về mã HTTP, và đó là ca đáng kêu */
+    /* the body isn't JSON — falls back to the HTTP code below, and that's worth flagging */
   }
 
-  // ② PHÂN LOẠI THEO THÂN TRƯỚC, `res.ok` chỉ là tín hiệu phụ.
+  // ② CLASSIFY BY THE BODY FIRST, `res.ok` is only a secondary signal.
   const code = typeof json?.['error'] === 'string' ? (json['error'] as string) : '';
   const desc = typeof json?.['error_description'] === 'string' ? (json['error_description'] as string) : '';
 
   if (code) {
     /**
-     * ③ Danh sách chìa-đã-chết. `incorrect_client_credentials` là câu của
-     * GitHub cho *"refresh token này đã bị xoay/thu hồi"* — và nó **sai cửa
-     * ngay từ phía hãng**: chữ nghĩa nói về `client_id`/`client_secret`, thứ
-     * hoàn toàn không sai. ⇒ Ta **dịch lại**, không chuyển tiếp nguyên văn.
+     * ③ The dead-key list. `incorrect_client_credentials` is GitHub's own
+     * phrase for *"this refresh token has been rotated/revoked"* — and it's
+     * **the wrong door on the vendor's own part**: the wording talks about
+     * `client_id`/`client_secret`, which are completely fine. ⇒ We
+     * **rewrite it**, never pass the raw wording through.
      */
     if (
       code === 'invalid_grant' ||
@@ -420,7 +436,8 @@ async function postToken(
     ) {
       throw new DeadGrantError(t('oauth.grantDead', { code }));
     }
-    // 5xx kèm mã lỗi vẫn là hỏng tạm: server đang trục trặc, không phải chìa chết.
+    // A 5xx with an error code is still a temporary failure: the server is
+    // having trouble, not the key being dead.
     if (res.status >= 500) throw new TransientError(t('oauth.stepServiceDown', { step, code }));
     throw new Error(t('oauth.stepFailed', { step, code, desc: desc ? ` — ${desc}` : '' }));
   }
@@ -433,12 +450,12 @@ async function postToken(
   }
 
   /**
-   * ⚠ THIẾU `access_token` TRONG MỘT PHẢN HỒI 200 CŨNG LÀ HỎNG.
+   * ⚠ A MISSING `access_token` INSIDE A 200 RESPONSE IS ALSO BROKEN.
    *
-   * Không có dòng này thì ca ② quay lại qua cửa khác: một thân JSON hợp lệ,
-   * không có trường `error`, cũng không có chìa — và hạ nguồn sẽ cất một tài
-   * khoản rỗng đè lên tài khoản đang dùng. Bất biến phải nằm ở ĐÂY, chỗ duy
-   * nhất mọi đường đổi chìa đi qua.
+   * Without this line, case ② returns through a different door: a valid
+   * JSON body, no `error` field, and no key either — and downstream would
+   * save an empty account right on top of the one currently working. The
+   * invariant has to live HERE, the one place every key-exchange path passes through.
    */
   if (typeof json['access_token'] !== 'string' || !json['access_token']) {
     throw new Error(t('oauth.stepNoAccessToken', { step, status: String(res.status) }));
@@ -447,19 +464,22 @@ async function postToken(
 }
 
 /**
- * Gộp phản hồi token vào một tài khoản. Dùng cho **cả** lần đầu lẫn lần làm mới.
+ * Merges a token response into an account. Used for **both** the first
+ * sign-in and every subsequent refresh.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `refresh_token ?? cũ` — DẤU `??` NÀY LÀ CẢ MỘT LỚP LỖI.               │
+ * │ 🔴 `refresh_token ?? old` — THIS `??` IS AN ENTIRE FAILURE CLASS BY ITSELF.       │
  * │                                                                          │
- * │ Đo 25/08: Notion **XOAY** refresh token — mỗi lần làm mới trả về cả       │
- * │ access LẪN refresh mới, và cái cũ chết ngay. Nên:                        │
- * │   · không ghi đè cái mới ⇒ tự khoá mình ra ngoài ở lần làm mới **THỨ     │
- * │     HAI**, tức hỏng sau ~8 giờ, không hỏng ngay ⇒ không ai nối được       │
- * │     nguyên nhân với triệu chứng                                          │
- * │   · nhưng server KHÁC có thể **không** trả refresh mới ⇒ ghi đè bằng      │
- * │     `undefined` là vứt mất cái đang dùng được                            │
- * │ ⇒ Chỉ thay khi server **có gửi**. Một dấu `??`, hai chiều hỏng.          │
+ * │ Measured 25/08: Notion **ROTATES** the refresh token — every refresh returns       │
+ * │ BOTH a new access AND a new refresh token, and the old one dies immediately.       │
+ * │ So:                                                                        │
+ * │   · not overwriting the new one ⇒ locks yourself out on the **SECOND**            │
+ * │     refresh, meaning it breaks after ~8 hours rather than immediately ⇒ nobody     │
+ * │     can connect the cause to the symptom                                       │
+ * │   · but a DIFFERENT server might **not** return a new refresh token ⇒            │
+ * │     overwriting with `undefined` would throw away the one that still works        │
+ * │ ⇒ Only replaced when the server **actually sends one**. One `??`, two failure       │
+ * │ directions.                                                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function applyToken(prev: Partial<OAuthAccount>, t: TokenResponse): OAuthAccount {
@@ -490,8 +510,8 @@ export async function exchangeCode(
     code_verifier: p.verifier,
   });
   const acc = applyToken({ client_id: p.clientId, mcp_url: p.mcpUrl, issuer: meta.issuer }, tok);
-  // Tên workspace do server trả — dùng làm nhãn cánh tay. `String()` vì đây là
-  // dữ liệu của bên thứ ba: nó có thể là số, null, hoặc không có.
+  // The workspace name the server returns — used as the arm's label.
+  // `String()` because this is third-party data: it could be a number, null, or absent.
   const name = acc.extra?.['workspace_name'];
   if (typeof name === 'string' && name.trim()) acc.label = name.trim();
   return acc;
@@ -515,28 +535,27 @@ export async function refreshAccount(meta: AsMeta, acc: OAuthAccount): Promise<O
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐƯỜNG THỨ HAI ĐỂ ĐĂNG NHẬP — cho hãng KHÔNG mở DCR. → SPEC-arms §5h·7    │
+ * │ A SECOND SIGN-IN PATH — for vendors that DON'T open DCR. → SPEC-arms §5h·7        │
  * │                                                                          │
- * │ Vì sao không dùng lại được luồng của Notion: 🌐 web flow của GitHub bắt   │
- * │ buộc `client_secret` — **PKCE là thứ THÊM VÀO, không phải thứ THAY CHO**. │
- * │ Một public client đi đường đó chết ở bước đổi mã, bằng một câu 401 nói    │
- * │ *"chìa sai"*.                                                            │
+ * │ Why Notion's flow can't be reused: 🌐 GitHub's web flow REQUIRES a               │
+ * │ `client_secret` — **PKCE is an ADDITION, not a REPLACEMENT**. A public client        │
+ * │ going down that path dies at the exchange step, with a 401 saying *"wrong key"*.     │
  * │                                                                          │
- * │ Device flow đổi lại **bỏ được nhiều hơn nó thêm**:                       │
- * │   · 0 `client_secret` — kể cả lúc LÀM MỚI (🌐 *"Required unless the user  │
- * │     access token was generated using the device flow"*)                  │
- * │   · **0 `redirect_uri`** ⇒ toàn bộ §5h·6 (`redirectBase` · `public_url` · │
- * │     nginx · Docker · VPS) KHÔNG áp dụng cho cánh tay đi đường này         │
- * │   · 0 `state`, 0 `code_verifier`, 0 map `pending` — không có mã uỷ quyền  │
- * │     nào bay về đâu cả                                                    │
+ * │ The device flow, in exchange, **removes more than it adds**:                      │
+ * │   · 0 `client_secret` — even at REFRESH time (🌐 *"Required unless the user           │
+ * │     access token was generated using the device flow"*)                          │
+ * │   · **0 `redirect_uri`** ⇒ all of §5h·6 (`redirectBase` · `public_url` · nginx ·      │
+ * │     Docker · VPS) DOES NOT APPLY to an arm taking this path                        │
+ * │   · 0 `state`, 0 `code_verifier`, 0 `pending` map — no authorization code ever        │
+ * │     flies anywhere                                                             │
  * │                                                                          │
- * │ Cái giá: người dùng phải **gõ một mã** trên trang của hãng. Một bước tay  │
- * │ đổi lấy việc xoá cả một lớp triển khai.                                   │
+ * │ The cost: the user has to **type a code** on the vendor's own page. One manual        │
+ * │ step in exchange for removing an entire implementation layer.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function supportsDevice(meta: AsMeta): boolean {
-  // Đọc từ metadata, KHÔNG dò tên hãng. Đây là điều kiện để mục danh mục vẫn là
-  // DỮ LIỆU (§5h·1): thêm một hãng không-DCR về sau = thêm một object.
+  // Read from metadata, NEVER by matching a vendor name. This is the
+  // condition that keeps a catalog entry DATA (§5h·1): adding a non-DCR vendor later = adding one object.
   return Boolean(meta.device_authorization_endpoint);
 }
 
@@ -544,13 +563,13 @@ export interface DeviceStart {
   device_code: string;
   user_code: string;
   verification_uri: string;
-  /** Một số hãng trả kèm URL đã nhúng sẵn mã — dùng được thì đỡ cho người dùng một bước gõ. */
+  /** Some vendors return a URL with the code already embedded — when usable, it saves the user a typing step. */
   verification_uri_complete?: string;
   expires_at: number;
   interval_ms: number;
 }
 
-/** Xin một mã thiết bị. `client_id` đến từ **dữ liệu danh mục**, không từ handshake. */
+/** Requests a device code. `client_id` comes from **catalog data**, never from the handshake. */
 export async function deviceStart(
   meta: AsMeta,
   clientId: string,
@@ -591,9 +610,10 @@ export async function deviceStart(
   }
   if (typeof j['device_code'] !== 'string') {
     /**
-     * ⚠ CA THƯỜNG GẶP NHẤT, và câu lỗi phải nói thẳng ra nó: GitHub trả **400**
-     * cho app **chưa tick "Enable Device Flow"**. Không nói ra thì người triển
-     * khai đi kiểm `client_id`, kiểm mạng, kiểm URL — mọi chỗ trừ chỗ hỏng.
+     * ⚠ THE MOST COMMON CASE, and the error message must state it plainly:
+     * GitHub returns **400** for an app that **hasn't checked "Enable
+     * Device Flow"**. Without saying so, whoever's deploying it checks
+     * `client_id`, checks the network, checks the URL — everywhere except the actual broken spot.
      */
     throw new Error(
       t('oauth.deviceStartFailed', {
@@ -617,25 +637,27 @@ export async function deviceStart(
     };
 }
 
-/** Kết quả một nhịp hỏi thăm. `pending` là trạng thái BÌNH THƯỜNG, không phải lỗi. */
+/** The result of one poll. `pending` is a NORMAL state, not an error. */
 export type DevicePoll =
   | { state: 'pending'; interval_ms: number }
   | { state: 'done'; account: OAuthAccount };
 
 /**
- * Một nhịp hỏi thăm. **Không tự lặp** — vòng lặp thuộc về người gọi.
+ * One poll. **Does not loop by itself** — looping belongs to the caller.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Vì sao tách nhịp ra khỏi vòng: người gọi là daemon, và nó phải trả lời    │
- * │ giao diện *"đang chờ, còn 12 phút"* trong lúc chờ. Một hàm tự lặp thì chỉ │
- * │ trả về được ở phút cuối, và mọi trạng thái ở giữa **biến mất**.           │
+ * │ Why the poll is split from the loop: the caller is the daemon, and it has to        │
+ * │ answer the interface *"still waiting, 12 minutes left"* while it waits. A            │
+ * │ self-looping function could only return at the very end, and every state in           │
+ * │ between would **disappear**.                                                   │
  * │                                                                          │
- * │ 🔴 VÀ RỚT MẠNG KHÔNG ĐƯỢC GIẾT LƯỢT ĐĂNG NHẬP (ca thật 26/08): lượt đo   │
- * │ đầu chết sau ~95 giây vì một cú nấc mạng — trong khi người dùng vừa bấm   │
- * │ Đồng ý xong. GitHub báo *"đã cấp quyền"*, ta báo *hỏng*: hai màn hình nói │
- * │ ngược nhau, và màn hình sai là của ta. ⇒ `TransientError` trả về          │
- * │ `pending`, không ném. Mốc dừng là **hạn của chính cái mã**, không phải số │
- * │ lần thử ⇒ không có vòng lặp vô hạn. → SPEC-arms §5h·7g                   │
+ * │ 🔴 AND A DROPPED NETWORK CONNECTION MUST NOT KILL THE SIGN-IN ATTEMPT (a real       │
+ * │ case, 26/08): the first measured run died after ~95 seconds from a network             │
+ * │ hiccup — right after the user had just clicked Approve. GitHub reports *"access         │
+ * │ granted"*, we report *broken*: two screens saying opposite things, and the wrong        │
+ * │ screen is ours. ⇒ `TransientError` returns `pending`, never throws. The                │
+ * │ stopping point is **the code's own expiration**, not a retry count ⇒ no infinite        │
+ * │ loop. → SPEC-arms §5h·7g                                                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export async function devicePoll(
@@ -663,12 +685,13 @@ export async function devicePoll(
     if (e instanceof TransientError) return { state: 'pending', interval_ms: p.start.interval_ms };
     const msg = (e as Error).message;
     /**
-     * BA CA "CHƯA XONG" CỦA RFC 8628, và chúng KHÔNG phải lỗi:
-     *   authorization_pending  người dùng chưa bấm — chờ tiếp
-     *   slow_down              ta hỏi quá nhanh — **cộng 5 giây**, không phải thử ngay
-     *   expired_token          hết hạn thật — ca này mới là lỗi
-     * ⚠ `postToken` đã dịch mã lỗi thành câu người đọc, nên khớp theo chuỗi mã
-     * gốc mà nó nhúng vào. Giữ mã gốc trong câu là điều kiện để đoạn này chạy.
+     * THE THREE "NOT DONE YET" CASES OF RFC 8628, and they are NOT errors:
+     *   authorization_pending  the user hasn't clicked yet — keep waiting
+     *   slow_down              we're asking too fast — **add 5 seconds**, don't retry immediately
+     *   expired_token          genuinely expired — this one really is an error
+     * ⚠ `postToken` has already rewritten the error code into a human-readable
+     * sentence, so this matches against the original code string embedded
+     * inside it. Keeping the original code inside that sentence is the condition for this to work.
      */
     if (msg.includes('authorization_pending')) return { state: 'pending', interval_ms: p.start.interval_ms };
     if (msg.includes('slow_down')) return { state: 'pending', interval_ms: p.start.interval_ms + 5000 };
@@ -678,37 +701,41 @@ export async function devicePoll(
 }
 
 /**
- * TÊN CHÌA của một tài khoản — máy sinh, tất định, và **`[A-Z0-9_]+`**.
+ * The KEY NAME for an account — machine-generated, deterministic, and **`[A-Z0-9_]+`**.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Vì sao tên phải mang DANH TÍNH TÀI KHOẢN chứ không phải chỉ tên hãng:    │
+ * │ Why the name must carry ACCOUNT IDENTITY, not just the vendor name:              │
  * │                                                                          │
- * │ Tên chìa đi vào `secretNames` ⇒ đi vào **`armHash`**. Hai workspace       │
- * │ Notion có **cùng URL** `https://mcp.notion.com/mcp` — nếu cả hai cùng    │
- * │ dùng tên `NOTION_TOKEN` thì chúng ra **cùng một băm**, tức hai không gian│
- * │ làm việc khác nhau bị gộp thành một cánh tay. §6i đã cảnh báo đúng ca     │
- * │ này từ 23/08, và đây là chỗ nó được giải.                                 │
+ * │ A key's name feeds into `secretNames` ⇒ feeds into **`armHash`**. Two Notion       │
+ * │ workspaces share the **SAME URL** `https://mcp.notion.com/mcp` — if both used       │
+ * │ the name `NOTION_TOKEN`, they'd produce the **same hash**, meaning two different      │
+ * │ workspaces get merged into one arm. §6i already warned about exactly this case         │
+ * │ back on 23/08, and this is where it's resolved.                                  │
  * │                                                                          │
- * │ Khoá định danh là `workspace_id` (Notion trả kèm token). Không có thì rơi │
- * │ về `issuer + mcp_url` — vẫn tất định, chỉ là một tài khoản mỗi server.    │
+ * │ The identifying key is `workspace_id` (Notion returns it with the token). Without      │
+ * │ one, it falls back to `issuer + mcp_url` — still deterministic, just one account       │
+ * │ per server.                                                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Băm rồi mới cắt, KHÔNG lấy thẳng `workspace_id`: id thật chứa dấu `-` và
- * chữ thường, mà `PLACEHOLDER` chỉ nhận `[A-Z0-9_]`. Lấy thẳng thì ô trống
- * `${...}` **không khớp** và chìa lặng lẽ không được tiêm — đúng ca §5m.
+ * ⚠ Hashed and then truncated, NEVER taking `workspace_id` directly: real
+ * ids contain `-` and lowercase letters, while `PLACEHOLDER` only accepts
+ * `[A-Z0-9_]`. Taking it directly would make the `${...}` placeholder
+ * **not match**, and the key would silently fail to be injected — exactly the §5m case.
  */
 /**
- * Tên này có phải một TÀI KHOẢN ĐĂNG NHẬP không (thay vì một chìa gõ tay)?
+ * Is this name a SIGNED-IN ACCOUNT (rather than a hand-typed key)?
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Vì sao cần: câu lỗi *"Thiếu chìa: NOTION_OAUTH_AFAFBCD6"* bảo người dùng │
- * │ đi điền một thứ **không tồn tại** — Notion không có chìa nào để gõ, và    │
- * │ user nói thẳng 26/08: *"bản thân human đọc sẽ rất là khó hiểu"*.          │
+ * │ Why this is needed: the error *"Missing key: NOTION_OAUTH_AFAFBCD6"* tells         │
+ * │ the user to go fill in something that **doesn't exist** — Notion has no key           │
+ * │ to type at all, and the user said it plainly, 26/08: *"a human reading that            │
+ * │ would find it really confusing"*.                                                │
  * │                                                                          │
- * │ Đặt CẠNH `accountName` chứ không ở nơi hiển thị: đây là hàm mint ra cái   │
- * │ tên, nên nó là chỗ duy nhất biết hình dạng của tên. Để phép nhận dạng ở   │
- * │ một file khác là dựng bản thứ hai của một quy ước — và bản thứ hai sẽ     │
- * │ lệch vào đúng ngày ai đó đổi tiền tố.                                     │
+ * │ Placed RIGHT NEXT TO `accountName` rather than at a display site: this is the        │
+ * │ function that mints the name, so it's the one place that knows the name's             │
+ * │ shape. Putting the recognition logic in a different file would build a second          │
+ * │ copy of one convention — and a second copy drifts apart the exact day someone          │
+ * │ changes the prefix.                                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function isAccountName(name: string): boolean {
@@ -716,17 +743,17 @@ export function isAccountName(name: string): boolean {
 }
 
 /**
- * ⚠⚠ `seed` LÀ THỨ CỨU NHỮNG HÃNG KHÔNG TRẢ DANH TÍNH — đo 26/08 với GitHub.
+ * ⚠⚠ `seed` IS WHAT SAVES VENDORS THAT RETURN NO IDENTITY — measured 26/08 with GitHub.
  *
- * Notion trả kèm `workspace_id` ngay trong phản hồi token. **GitHub trả rỗng**:
- * không tên, không id, `scope` cũng rỗng. Không có `seed` thì mọi tài khoản
- * GitHub rơi về nhánh dự phòng `issuer|mcp_url` — một chuỗi **giống hệt nhau
- * cho mọi người** ⇒ cùng tên chìa ⇒ **cùng băm** ⇒ hai tài khoản khác nhau bị
- * gộp thành MỘT cánh tay. Đúng ca §6i, và nó **không có triệu chứng nhìn thấy
- * được** cho tới khi người thứ hai đăng nhập.
+ * Notion returns `workspace_id` right inside the token response. **GitHub
+ * returns nothing**: no name, no id, `scope` empty too. Without `seed`,
+ * every GitHub account falls back to `issuer|mcp_url` — a string
+ * **identical for everyone** ⇒ the same key name ⇒ **the same hash** ⇒ two
+ * different accounts get merged into ONE arm. Exactly the §6i case, and it
+ * has **no visible symptom** until a second person signs in.
  *
- * ⇒ Với hãng như thế, người gọi đi hỏi danh tính (`get_me`) rồi truyền `id` vào
- * đây. → `catalog.ts §CatalogArm.identity` · SPEC-arms §5h·7k
+ * ⇒ For a vendor like this, the caller queries identity (`get_me`) and
+ * passes the `id` in here. → `catalog.ts §CatalogArm.identity` · SPEC-arms §5h·7k
  */
 export function accountName(
   prefix: string,
@@ -741,43 +768,47 @@ export function accountName(
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 TÊN NÀY CÓ MINT TỪ MỘT DANH TÍNH RIÊNG KHÔNG? (thêm 28/08)            │
+ * │ 🔴 WAS THIS NAME MINTED FROM ITS OWN IDENTITY? (added 28/08)                    │
  * │                                                                          │
- * │ Nhánh dự phòng `issuer|mcp_url` của `accountName` **giống hệt nhau cho    │
- * │ mọi tài khoản của cùng một dịch vụ** — nó không phải một danh tính, nó là │
- * │ một địa chỉ. Rơi vào nhánh đó nghĩa là tài khoản thứ hai **ghi đè** tài   │
- * │ khoản thứ nhất, im lặng, không triệu chứng nào cho tới khi dữ liệu đi     │
- * │ nhầm chỗ.                                                                │
+ * │ `accountName`'s fallback branch, `issuer|mcp_url`, is **identical for every        │
+ * │ account of the same service** — it isn't an identity, it's an address.             │
+ * │ Falling into that branch means the second account **overwrites** the first,          │
+ * │ silently, with no symptom until data ends up in the wrong place.                   │
  * │                                                                          │
- * │ Ca thật 28/08 (GitHub): `get_me` quá hạn ở lượt lạnh ⇒ không seed ⇒ rơi   │
- * │ vào nhánh này. User chỉ thấy *"tên tài khoản là OAUTH_… viết hoa"*.       │
+ * │ A real case, 28/08 (GitHub): `get_me` timed out on a cold run ⇒ no seed ⇒          │
+ * │ fell into this branch. The user only saw *"the account name is an uppercase           │
+ * │ OAUTH_…"*.                                                                       │
  * │                                                                          │
- * │ ⚠ Đặt CẠNH `accountName` theo đúng luật đã dùng cho `isAccountName`: đây  │
- * │ là hàm mint ra cái tên, nên nó là chỗ duy nhất biết hạt giống đến từ đâu. │
- * │ Để phép kiểm ở file khác là dựng bản thứ hai của một quy ước.             │
+ * │ ⚠ Placed RIGHT NEXT TO `accountName`, the same rule already used for                │
+ * │ `isAccountName`: this is the function that mints the name, so it's the one           │
+ * │ place that knows where the seed came from. Putting the check in a different            │
+ * │ file would build a second copy of one convention.                                  │
  * │                                                                          │
- * │ **Hướng an toàn đã chọn, viết ra cả hai hậu quả:**                        │
- * │  · Từ chối ⇒ một dịch vụ chỉ-một-tài-khoản không nối được. Triệu chứng    │
- * │    **thấy ngay**, người dùng báo, ta khai thêm `identity` cho mục đó.     │
- * │  · Cho qua ⇒ hai tài khoản gộp làm một. **Không triệu chứng nào.**        │
- * │ Hỏng nhìn thấy được thắng hỏng im lặng. → [[agentco-safe-default-direction]]│
+ * │ **The safe direction chosen, with both consequences written out:**                 │
+ * │  · Rejecting ⇒ a single-account-only service can't connect. **Immediately             │
+ * │    visible** symptom, the user reports it, we add `identity` for that entry.          │
+ * │  · Allowing it ⇒ two accounts merge into one. **No symptom at all.**                 │
+ * │ A visible failure beats a silent one. → [[agentco-safe-default-direction]]           │
  * │                                                                          │
- * │ Hôm nay KHÔNG mục nào bị chặn: GitHub khai `identity`, Notion trả          │
- * │ `workspace_id` (đối chứng: hai workspace trong kho ra hai tên khác nhau). │
+ * │ Today NO entry is blocked: GitHub declares `identity`, Notion returns                │
+ * │ `workspace_id` (verified: two workspaces in the store produce two different            │
+ * │ names).                                                                         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 /**
- * ⚠⚠ CHỈ HỎI ĐƯỢC LÚC MINT, KHÔNG HỎI ĐƯỢC MỘT TÀI KHOẢN ĐÃ LƯU.
+ * ⚠⚠ ONLY ANSWERABLE AT MINT TIME, NOT FOR AN ALREADY-SAVED ACCOUNT.
  *
- * `applyToken` chỉ giữ `extra` khi phản hồi token CÓ trường lạ. Phản hồi
- * **làm mới** của Notion không mang `workspace_id`, nên sau lần refresh đầu
- * tiên `extra` **biến mất khỏi bản ghi**. Đối chứng trong kho thật 28/08: cả
- * hai tài khoản Notion đều không còn `extra`, trong khi tên của chúng
- * (`AFAFBCD6` ≠ `084F6A58`) chứng minh lúc mint thì `workspace_id` CÓ.
+ * `applyToken` only keeps `extra` when the token response HAS an unknown
+ * field. Notion's **refresh** response doesn't carry `workspace_id`, so
+ * after the first refresh `extra` **disappears from the record**. Verified
+ * against the real store, 28/08: both Notion accounts had lost `extra`,
+ * while their names (`AFAFBCD6` ≠ `084F6A58`) prove `workspace_id` WAS
+ * present at mint time.
  *
- * ⇒ Gọi hàm này trên một tài khoản đã lưu sẽ trả **false cho một tài khoản hoàn
- * toàn lành**. Tôi đã suýt đọc nhầm đúng chỗ này khi đo. Nó là chốt cho đường
- * ĐANG LƯU VÀO, không phải một phép chẩn đoán.
+ * ⇒ Calling this function on an already-saved account returns **false for a
+ * perfectly healthy account**. I nearly misread exactly this while
+ * measuring. It's a gate for the path CURRENTLY BEING SAVED, not a
+ * diagnostic tool.
  * → [[agentco-measurement-vs-conclusion]]
  */
 export function hasOwnSeed(acc: Pick<OAuthAccount, 'extra'>, seedOverride?: string): boolean {
@@ -787,26 +818,29 @@ export function hasOwnSeed(acc: Pick<OAuthAccount, 'extra'>, seedOverride?: stri
 }
 
 /**
- * Sắp hết hạn chưa? Làm mới ở **50% tuổi thọ**, không phải lúc còn 1 phút.
+ * Is it close to expiring? Refreshed at **50% of its lifetime**, not with 1 minute left.
  *
- * Chìa Notion sống 8 giờ ⇒ mốc là 4 giờ. Vì sao rộng thế: một task chạy dài có
- * thể bắt đầu lúc chìa còn 3 phút và kết thúc sau khi nó chết — làm mới sát nút
- * chỉ dời chỗ hỏng chứ không xoá nó. Và làm mới sớm **không tốn gì**: chìa cũ
- * vẫn còn hạn lúc ta xin cái mới.
+ * A Notion key lives 8 hours ⇒ the threshold is 4 hours. Why so wide: a
+ * long-running task could start with 3 minutes left on the key and finish
+ * after it dies — refreshing right at the edge only moves the failure
+ * rather than removing it. And refreshing early **costs nothing**: the old
+ * key is still valid at the moment the new one is requested.
  *
- * Không có `expires_at` ⇒ **false**: chìa không khai hạn thì ta không có cơ sở
- * nào để nói nó sắp chết, và làm mới bừa là vứt một chìa đang chạy tốt.
+ * No `expires_at` ⇒ **false**: a key with no stated expiration gives no
+ * basis to claim it's about to die, and refreshing blindly would throw away a key that's working fine.
  */
 export function needsRefresh(acc: OAuthAccount, now = Date.now(), lifetimeFraction = 0.5): boolean {
-  // Đã chết hẳn ⇒ thôi thử. Mỗi 15 phút một lời gọi mạng chắc chắn hỏng là đốt
-  // pin, đốt log, và che mất những lần hỏng THẬT đáng đọc. → `OAuthAccount.dead`
+  // Already fully dead ⇒ stop trying. A guaranteed-to-fail network call
+  // every 15 minutes burns battery, burns logs, and buries the real
+  // failures worth reading. → `OAuthAccount.dead`
   if (acc.dead) return false;
   if (!acc.expires_at) return false;
   if (!acc.refresh_token) return false;
   const left = acc.expires_at - now;
   if (left <= 0) return true;
-  // Không biết tuổi thọ gốc, nên suy từ chính khoảng còn lại so với một mốc hợp
-  // lý: hết hạn trong vòng `fraction` của 8 giờ là sắp hết. Server nào cấp chìa
-  // ngắn hơn thì mốc này rộng hơn tỉ lệ — vẫn đúng chiều, chỉ làm mới sớm hơn.
+  // The original lifetime is unknown, so it's inferred from the remaining
+  // time against a reasonable reference: expiring within `fraction` of 8
+  // hours counts as close. A server issuing shorter-lived keys makes this
+  // threshold proportionally wider — still the correct direction, just refreshing earlier.
   return left < 8 * 3600_000 * lifetimeFraction;
 }

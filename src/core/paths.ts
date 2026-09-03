@@ -1,30 +1,33 @@
 /**
- * Bố cục thư mục: CÔNG TY chứa nhiều VĂN PHÒNG.
+ * Directory layout: a COMPANY holds many OFFICES.
  *
  * → docs/SPEC-offices.md §2
  *
  * ```
  * company/
- * ├─ company.yaml        cấu hình chung
- * ├─ logs/usage.jsonl    chi phí TOÀN công ty, mỗi dòng có cột office
+ * ├─ company.yaml        shared config
+ * ├─ logs/usage.jsonl    cost for the WHOLE company, every line has an office column
  * ├─ .state/             daemon.json, secrets.json
- * └─ offices/<id>/       văn phòng — TỰ CHỨA, zip lại là một template
+ * └─ offices/<id>/       an office — SELF-CONTAINED, zipping it up makes a template
  *    ├─ office.yaml · layout.json · roles/ · skills/
  *    ├─ knowledge/{shared,agents}/ · library/{files,text}/
  *    └─ artifacts/ · .state/tasks/
  * ```
  *
- * Dấu chấm ở `.state/` là một CƠ CHẾ, không phải quy ước đặt tên: `Grep`/`Glob`
- * không duyệt xuống thư mục ẩn (đã đo). Thứ agent phải tìm thấy (`library/`,
- * `artifacts/`, `knowledge/`) nằm ngoài; thứ agent không được lạc vào
- * (`tasks/` — kế hoạch, log, receipt của nhau) nằm trong. → `OfficePaths.tasks`
+ * The dot in `.state/` is a MECHANISM, not a naming convention: `Grep`/`Glob`
+ * don't walk into hidden directories (measured). What an agent must be able to
+ * find (`library/`, `artifacts/`, `knowledge/`) sits outside it; what an agent
+ * must not stumble into (`tasks/` — each other's plans, logs, receipts) sits
+ * inside it. → `OfficePaths.tasks`
  *
- * Vì sao chi phí ở cấp công ty mà tri thức ở cấp văn phòng: tiền là thứ người
- * dùng muốn nhìn TỔNG (một hoá đơn Claude), còn tri thức nằm trong prefix cache
- * nên phải nằm ở phạm vi hẹp nhất có thể. → SPEC-offices.md §2
+ * Why cost lives at the company level while knowledge lives at the office
+ * level: money is what the user wants to see TOTALED (one Claude bill), while
+ * knowledge sits in the prefix cache and so has to live in the narrowest scope
+ * possible. → SPEC-offices.md §2
  *
- * Ràng buộc container (docs/SPEC-cli.md §4) không đổi: không đường dẫn tuyệt đối
- * nào hard-code, toàn bộ state trong đúng một thư mục để mount 1 volume là đủ.
+ * The container constraint (docs/SPEC-cli.md §4) still holds: no hard-coded
+ * absolute paths, all state under a single directory so mounting one volume is
+ * enough.
  */
 
 import path from 'node:path';
@@ -57,36 +60,43 @@ export interface OfficePaths {
   knowledgeIndex: string;
   artifacts: string;
   /**
-   * Tủ tài liệu — file NGƯỜI DÙNG đưa vào. → docs/SPEC-library.md
+   * The document cabinet — files the USER brought in. → docs/SPEC-library.md
    *
-   * ⚠ KHÔNG được đặt dưới `.state/` hay bất kỳ thư mục nào bắt đầu bằng dấu
-   * chấm: `Grep` bỏ qua thư mục ẩn khi duyệt xuống (đã đo — SPEC-library.md
-   * §2.1), nên giấu nó đi là làm cả cơ chế truy xuất chết im lặng.
+   * ⚠ Must NOT sit under `.state/` or any directory starting with a dot:
+   * `Grep` skips hidden directories when walking (measured — SPEC-library.md
+   * §2.1), so hiding it there would silently kill the whole retrieval
+   * mechanism.
    */
   library: string;
   libraryFiles: string;
   libraryText: string;
   /**
-   * Kế hoạch · log · receipt. **Nằm SAU dấu chấm, và đó là cả cơ chế.**
+   * Plans · logs · receipts. **Sits BEHIND the dot, and that's the whole
+   * mechanism.**
    *
    * ┌─────────────────────────────────────────────────────────────────────────┐
-   * │ ĐẢO CHIỀU CỦA LUẬT NGAY TRÊN, VÀ DÙNG CHUNG MỘT SỰ THẬT ĐÃ ĐO.          │
+   * │ THE MIRROR IMAGE OF THE RULE RIGHT ABOVE, RUNNING ON THE SAME MEASURED   │
+   * │ FACT.                                                                    │
    * │                                                                         │
-   * │ `library/` không được ẩn vì agent PHẢI `Grep` thấy. `tasks/` thì ngược   │
-   * │ lại: agent KHÔNG được thấy, nên nó phải ẩn.                             │
+   * │ `library/` must NOT be hidden because an agent MUST be able to `Grep`   │
+   * │ it. `tasks/` is the opposite: an agent must NOT see it, so it has to be │
+   * │ hidden.                                                                 │
    * │                                                                         │
-   * │ Đo được 20/08 (`P-260820-2219-5ltb`): `cwd` của worker là cả thư mục     │
-   * │ văn phòng, nên `nguoi-gop` lạc đường đã Glob quét sạch cây thư mục rồi   │
-   * │ ĐỌC `P-…plan.json` và `P-…log.jsonl`. File log chứa receipt của task     │
-   * │ khác ⇒ một cửa sau của giao thức *"Receipt trần 800 token — Trợ lý       │
-   * │ không bao giờ đọc transcript worker"*. Nó cũng đọc được cả DAG.          │
+   * │ Measured on 08/20 (`P-260820-2219-5ltb`): a worker's `cwd` is the whole  │
+   * │ office directory, so a stray `nguoi-gop` Globbed the entire tree clean   │
+   * │ and READ `P-…plan.json` and `P-…log.jsonl`. The log file held another    │
+   * │ task's receipt ⇒ a backdoor around the protocol *"receipts are capped   │
+   * │ at 800 tokens — the Assistant never reads a worker's transcript"*. It    │
+   * │ could read the whole DAG too.                                          │
    * │                                                                         │
-   * │ Chặn bằng CẤU TRÚC, không bằng kỷ luật: `Grep`/`Glob` không duyệt xuống  │
-   * │ thư mục bắt đầu bằng dấu chấm (đã đo — SPEC-library.md §2.1). Không cần  │
-   * │ `canUseTool`, không cần danh sách cấm, không cần ai nhớ gì.              │
+   * │ Blocked by STRUCTURE, not by discipline: `Grep`/`Glob` don't walk into   │
+   * │ directories starting with a dot (measured — SPEC-library.md §2.1). No    │
+   * │ `canUseTool` needed, no denylist needed, nobody has to remember          │
+   * │ anything.                                                               │
    * │                                                                         │
-   * │ ⚠ Đây KHÔNG phải một bức tường bảo mật — `Read` với đường dẫn tường minh │
-   * │ vẫn mở được. Nó chặn đúng con đường có thật: **đi lạc rồi vấp phải.**    │
+   * │ ⚠ This is NOT a security wall — `Read` with an explicit path still opens │
+   * │ it. It blocks the actual path that happens: **wandering off and         │
+   * │ stumbling into it.**                                                    │
    * └─────────────────────────────────────────────────────────────────────────┘
    */
   tasks: string;
@@ -174,7 +184,7 @@ export function isCompanyDir(dir: string): boolean {
   return fs.existsSync(path.join(dir, 'company.yaml'));
 }
 
-/** Danh sách id văn phòng, theo thứ tự tên thư mục. Rỗng là hợp lệ — xem §3. */
+/** List of office IDs, in directory-name order. Empty is valid — see §3. */
 export function listOfficeIds(pp: CompanyPaths): string[] {
   if (!fs.existsSync(pp.offices)) return [];
   return fs
@@ -185,72 +195,79 @@ export function listOfficeIds(pp: CompanyPaths): string[] {
 }
 
 /**
- * id văn phòng và id vai trò đều được dùng làm TÊN THƯ MỤC/FILE và đều đến từ
- * chữ người dùng gõ. Siết chặt tại một chỗ.
+ * Both office IDs and role IDs get used as DIRECTORY/FILE NAMES, and both come
+ * from text the user typed. Locked down in one place.
  */
 export function isSafeId(id: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,39}$/.test(id);
 }
 
 /**
- * Tên hiển thị người dùng gõ: bỏ khoảng trắng thừa ở hai đầu VÀ ở giữa.
+ * A display name as the user typed it: strip extra whitespace at both ends
+ * AND in the middle.
  *
- * Gộp khoảng trắng giữa là phần hay bị quên. "Nội  dung" và "Nội dung" nhìn
- * giống hệt nhau trong ô chọn văn phòng nhưng là hai chuỗi khác nhau — người
- * dùng sẽ thấy hai dòng y hệt và không biết mình đang mở cái nào.
+ * Collapsing interior whitespace is the part that's easy to forget. "Content "
+ * and "Content" look identical in the office picker but are two different
+ * strings — the user would see two identical-looking rows and not know which
+ * one they're opening.
  */
 export function normalizeName(input: string): string {
   return input.replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Khoá so trùng TÊN. Cố ý dùng lại `slugId`: hai văn phòng không được có tên
- * trùng nhau theo đúng cái nghĩa mà hệ thống đã dùng để đặt tên thư mục.
+ * The key used to compare names for duplicates. Deliberately reuses `slugId`:
+ * two offices must not have the same name, using exactly the meaning the
+ * system already uses to name their directories.
  *
- * Nhờ vậy chỉ có MỘT định nghĩa "trùng": "Nội dung", "nội  dung", "Noi Dung"
- * đều ra `noi-dung`. Nếu so bằng chuỗi thô thì `createOffice` (so theo slug) và
- * `rename` (so theo chuỗi) sẽ bất đồng, và đổi tên trở thành cửa sau để tạo ra
- * đúng cái trùng lặp mà lúc tạo mới đã bị chặn.
+ * That gives a SINGLE definition of "duplicate": "Content", "content ", "Noi
+ * Dung" all reduce to `noi-dung`. Comparing raw strings instead would make
+ * `createOffice` (compares by slug) and `rename` (compares by string)
+ * disagree, and renaming would become a backdoor for creating exactly the
+ * duplicate that creation-time blocked.
  */
 export function nameKey(input: string): string {
   const name = normalizeName(input);
   /**
-   * ⚠ RƠI VỀ CHÍNH CÁI TÊN khi slug rỗng — nếu không thì MỌI tên phi-Latin
-   * cùng khoá `""`, và `assertNameFree` coi 会计部 với 人力资源 là **trùng tên**.
-   * Đo được 22/08: Trung, Nhật, Hàn, Thái, Nga, Ả Rập, Hy Lạp đều ra `""`.
+   * ⚠ FALLS BACK TO THE NAME ITSELF when the slug is empty — otherwise EVERY
+   * non-Latin name would share the key `""`, and `assertNameFree` would treat
+   * 会计部 and 人力资源 as **the same name**. Measured 08/22: Chinese, Japanese,
+   * Korean, Thai, Russian, Arabic, Greek all reduce to `""`.
    */
   return slugId(name) || name.toLowerCase();
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TÊN THƯ MỤC — `slugId` KHÔNG ĐỦ, VÀ ĐÓ LÀ MỘT BỨC TƯỜNG CHẶN CẢ THỊ      │
- * │ TRƯỜNG. (sửa 22/08)                                                      │
+ * │ DIRECTORY NAMES — `slugId` ISN'T ENOUGH, AND THAT'S A WALL BLOCKING AN    │
+ * │ ENTIRE MARKET. (fixed 08/22)                                             │
  * │                                                                          │
- * │ `slugId` bóc dấu tổ hợp rồi giữ lại `[a-z0-9]`. Với tiếng Việt nó hoàn   │
- * │ hảo. Với mọi chữ viết KHÔNG phải Latin thì nó trả về **chuỗi rỗng** —    │
- * │ `NFD` không phân rã chữ Hán/Kana/Hangul/Thái/Kirin thành ASCII được:     │
+ * │ `slugId` strips combining marks and keeps `[a-z0-9]`. For Vietnamese     │
+ * │ it's perfect. For any NON-Latin script it returns an **empty string** —  │
+ * │ `NFD` can't decompose Han/Kana/Hangul/Thai/Cyrillic into ASCII:          │
  * │                                                                          │
  * │   "会计部" → ""    "経理部" → ""    "회계팀" → ""                          │
  * │   "แผนกบัญชี" → ""  "Бухгалтерия" → ""  "Λογιστήριο" → ""                  │
  * │                                                                          │
- * │ Hậu quả CŨ: `isSafeId('')` false → `createOffice` ném                    │
- * │ *"Tên văn phòng cần có ít nhất một chữ cái hoặc số"*. Dữ liệu không hỏng │
- * │ (chốt chặn làm đúng việc), nhưng người dùng Trung Quốc gõ 会计部 và nhận  │
- * │ một câu bảo họ *"hãy dùng chữ cái"* — trong khi với họ đó CHÍNH LÀ chữ.  │
- * │ Không có đường đi tiếp. Cả một thị trường dừng ở màn hình tạo văn phòng. │
+ * │ The OLD consequence: `isSafeId('')` false → `createOffice` throws        │
+ * │ *"An office name needs at least one letter or digit"*. Data wasn't       │
+ * │ corrupted (the guard did its job), but a user in China typing 会计部     │
+ * │ got told to *"use letters"* — when to them, that IS letters. No path      │
+ * │ forward. An entire market stalls at the office-creation screen.          │
  * │                                                                          │
- * │ ⚠ VÌ SAO KHÔNG CHO UNICODE THẲNG VÀO TÊN THƯ MỤC — nghe hợp lý mà bẫy:   │
- * │ macOS chuẩn hoá tên file về NFD còn Linux/Windows giữ NFC. Cùng một cái  │
- * │ tên gõ ra hai chuỗi byte khác nhau tuỳ máy, nên `id` thôi khớp ngay khi  │
- * │ một văn phòng được zip từ máy này sang máy kia — đúng thứ lời hứa        │
- * │ "zip lại là chạy được ở máy khác" cấm.                                   │
+ * │ ⚠ WHY NOT LET UNICODE STRAIGHT INTO THE DIRECTORY NAME — sounds          │
+ * │ reasonable but it's a trap: macOS normalizes filenames to NFD while      │
+ * │ Linux/Windows keep NFC. The same name types out to two different byte    │
+ * │ strings depending on the machine, so `id` alone stops matching the        │
+ * │ moment an office gets zipped from one machine to another — exactly what  │
+ * │ the promise "zip it up and it runs on another machine" forbids.          │
  * │                                                                          │
- * │ ⇒ Rơi về một id ASCII **ổn định, suy từ chính cái tên**. Thư mục trông   │
- * │   vô nghĩa (`vp-3f8a1c`) nhưng: tên thật nằm trong `office.yaml` ngay     │
- * │   bên trong, giao diện không bao giờ hiện id này, và người dùng có nút    │
- * │   mở thẳng thư mục. Đánh đổi đúng chiều — thà một cái tên xấu mà mở được │
- * │   còn hơn một câu từ chối không có đường đi tiếp.                        │
+ * │ ⇒ Fall back to a **stable ASCII id derived from the name itself**. The    │
+ * │   directory looks meaningless (`vp-3f8a1c`) but: the real name lives in   │
+ * │   `office.yaml` right inside it, the UI never shows this id, and the      │
+ * │   user has a button that opens the directory directly. The tradeoff      │
+ * │   points the right way — an ugly name that opens beats a rejection with  │
+ * │   no path forward.                                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function folderId(input: string, prefix = 'vp'): string {
@@ -258,8 +275,9 @@ export function folderId(input: string, prefix = 'vp'): string {
   const slug = slugId(name);
   if (slug) return slug;
   if (!name) return '';
-  // Băm CHÍNH cái tên: cùng một tên luôn ra cùng một thư mục, kể cả sau khi
-  // xoá đi tạo lại. `toLowerCase` để "会计部 " và "会计部" không thành hai chỗ.
+  // Hash the name ITSELF: the same name always produces the same directory,
+  // even after being deleted and recreated. `toLowerCase` so "会计部 " and
+  // "会计部" don't become two different places.
   const h = createHash('sha256').update(name.toLowerCase()).digest('hex').slice(0, 6);
   return `${prefix}-${h}`;
 }
@@ -267,11 +285,12 @@ export function folderId(input: string, prefix = 'vp'): string {
 export function slugId(input: string): string {
   return input
     .normalize('NFD')
-    // \p{M} = mọi dấu tổ hợp. Đừng viết lớp ký tự bằng tay: gõ thẳng dấu tổ hợp
-    // vào trong [] thì nó bám lên chính dấu ngoặc và regex thành thứ khác hẳn,
-    // mà nhìn trên màn hình vẫn giống hệt.
+    // \p{M} = every combining mark. Don't hand-write the character class:
+    // typing a combining mark directly inside [] makes it latch onto the
+    // bracket itself and turns the regex into something else entirely —
+    // while looking identical on screen.
     .replace(/\p{M}/gu, '')
-    .replace(/đ/gi, 'd')
+    .replace(/đ/gi, 'd') // i18n-allow-vietnamese: transliterating actual Vietnamese input, not UI text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
@@ -279,8 +298,8 @@ export function slugId(input: string): string {
 }
 
 /**
- * Chặn path traversal. Artifact path đến từ LLM nên không được tin.
- * Trả về đường dẫn tuyệt đối đã kiểm, hoặc ném lỗi.
+ * Blocks path traversal. An artifact path comes from the LLM, so it can't be
+ * trusted. Returns a checked absolute path, or throws.
  */
 export function safeJoin(base: string, relative: string): string {
   const target = path.resolve(base, relative);
@@ -293,72 +312,83 @@ export function safeJoin(base: string, relative: string): string {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ LOẠI ĐẦU VÀO THỨ TƯ: **MỘT ĐỊA CHỈ WEB**. (bug user báo 31/08)           │
+ * │ A FOURTH KIND OF INPUT: **A WEB ADDRESS**. (bug reported by the user      │
+ * │ 08/31)                                                                   │
  * │                                                                          │
- * │ User: *"tra giúp repo modelcontextprotocol/servers…"* → Trợ lý chép URL   │
- * │ vào `inputs` (đúng như `ASSISTANT_CORE` dặn) → chặn cả kế hoạch:         │
- * │ *"cần đọc … nhưng không có file đó"*. Đo được: `resolveInput` biến        │
- * │ `https://github.com/x` thành **`D:\vp\https:\github.com\x`** — một đường  │
- * │ dẫn rác, rồi `existsSync` nói không có, đúng như nó phải nói.            │
+ * │ User: *"look up the repo modelcontextprotocol/servers…"* → the Assistant  │
+ * │ copies the URL into `inputs` (exactly as `ASSISTANT_CORE` instructs) →    │
+ * │ blocks the whole plan: *"needs to read … but that file doesn't exist"*.   │
+ * │ Measured: `resolveInput` turns `https://github.com/x` into                │
+ * │ **`D:\vp\https:\github.com\x`** — a garbage path, and then `existsSync`   │
+ * │ correctly says it doesn't exist.                                        │
  * │                                                                          │
- * │ ⚠⚠ LẦN THỨ BA cùng một lớp lỗi ở cùng một hàm: 22/08 mù trước đường dẫn  │
- * │ tuyệt đối · 26/08 mù trước tên cánh tay · 31/08 mù trước URL. Cả ba lần   │
- * │ Trợ lý **bị chặn vì tuân lệnh**, và cả ba lần lỗi ở TẦNG KIỂM.           │
+ * │ ⚠⚠ THIRD TIME the same failure class hits the same function: 08/22 blind  │
+ * │ to absolute paths · 08/26 blind to arm names · 08/31 blind to URLs. All   │
+ * │ three times the Assistant **got blocked for following instructions**,    │
+ * │ and all three times the bug sat at the VALIDATION LAYER.                 │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ═══ 🔴 VÌ SAO CHỈ NHẬN KHI CÓ `http://` / `https://` ═══
+ * ═══ 🔴 WHY ONLY ACCEPT IT WITH `http://` / `https://` ═══
  *
- * User hỏi thẳng: *"đôi khi người dùng bỏ qua http, chỉ gõ domain như
- * facebook.com thì công việc xác định lại khó thêm nữa"*. Đúng — và câu trả lời
- * là **không đoán**, vì hai cái sai KHÔNG đối xứng:
+ * The user asked directly: *"sometimes a user skips http and just types a
+ * domain like facebook.com, which makes classification even harder"*. True —
+ * and the answer is **don't guess**, because the two mistakes are NOT
+ * symmetric:
  *
- * | đoán sai | hậu quả |
+ * | wrong guess | consequence |
  * |---|---|
- * | URL thật bị coi là file | kế hoạch bị chặn — **ồn ào, sửa được**, gõ lại là xong |
- * | tên file thật bị coi là URL | **cổng kiểm im lặng tắt** cho đầu vào đó ⇒ worker chạy, tốn tiền, rồi hỏng ở xa nguyên nhân |
+ * | a real URL treated as a file | the plan gets blocked — **noisy, fixable**, retyping it is all it takes |
+ * | a real filename treated as a URL | the validation gate **silently turns off** for that input ⇒ the worker runs, costs money, then breaks far from the actual cause |
  *
- * ⇒ Không chắc thì chọn phía **ồn ào**. → [[agentco-safe-default-direction]]
+ * ⇒ When unsure, pick the **noisy** side. → [[agentco-safe-default-direction]]
  *
- * Và `facebook.com` **thật sự không phân biệt được**: `report.md`, `data.csv`,
- * `v1.2` cũng có dấu chấm. Một phép đoán "trông như tên miền" sẽ bắn vào tên
- * file thật, tức là tự tắt cổng kiểm cho đúng thứ nó sinh ra để canh.
+ * And `facebook.com` **genuinely can't be told apart**: `report.md`,
+ * `data.csv`, `v1.2` also have a dot. A "looks like a domain" heuristic would
+ * misfire on a real filename, which is exactly turning off the gate for the
+ * very thing it exists to guard.
  *
- * ⚠ Hệ quả CÓ Ý THỨC: gõ trống `facebook.com` thì vẫn bị chặn như cũ. Đó là ca
- * **chưa vá**, không phải ca đã vá — và câu lỗi vẫn nói được rằng không có file
- * tên đó, tức người dùng còn đường sửa (gõ đủ `https://`).
+ * ⚠ A DELIBERATE consequence: typing bare `facebook.com` still gets blocked as
+ * before. That's an **unpatched** case, not a patched one — and the error
+ * message can still correctly say no file by that name exists, so the user
+ * has a path to fix it (type the full `https://`).
  */
 export function isUrlInput(p: string): boolean {
   return /^https?:\/\/\S+$/i.test(p.trim());
 }
 
 /**
- * ĐẦU VÀO của một task → đường dẫn tuyệt đối để mở. `undefined` = không hợp lệ.
+ * A task's INPUT → an absolute path to open. `undefined` = invalid.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỘT LUẬT, MỘT CHỖ. Đây là hàm sinh ra vì đã có BA chỗ tự suy ra nó.      │
+ * │ ONE RULE, ONE PLACE. This function exists because THREE places had        │
+ * │ already reinvented it.                                                   │
  * │                                                                          │
- * │ `inputs` có HAI loại đường dẫn, và trước 22/08 code chỉ biết một:         │
+ * │ `inputs` has TWO kinds of paths, and before 08/22 the code only knew      │
+ * │ one:                                                                     │
  * │                                                                          │
- * │   · TƯƠNG ĐỐI với thư mục văn phòng — tài liệu trong tủ, kết quả ca      │
- * │     trước. `safeJoin` nhốt chúng lại, và phải giữ nguyên như thế.        │
- * │   · TUYỆT ĐỐI, nằm ngoài văn phòng — thứ người dùng gõ thẳng vào ô chat  │
- * │     (`D:\Downloads\…`, `/home/an/anh`). Hợp lệ từ ngày `Bash` bật sẵn.   │
+ * │   · RELATIVE to the office directory — a document in the cabinet, a       │
+ * │     previous task's output. `safeJoin` locks these in, and must keep      │
+ * │     doing so.                                                           │
+ * │   · ABSOLUTE, outside the office — something the user typed straight     │
+ * │     into the chat box (`D:\Downloads\…`, `/home/an/photo`). Valid since   │
+ * │     the day `Bash` shipped enabled by default.                          │
  * │                                                                          │
- * │ Ba chỗ tự viết lại phép phân biệt này: `Scheduler.validate`,             │
- * │ `Scheduler.missingInputs`, và phép kiểm "kết quả có ôi không" ở          │
- * │ `Office`. Cả ba đều viết đúng MỘT nửa — `try { safeJoin } catch { coi    │
- * │ như không có }` — nên cả ba cùng mù trước loại thứ hai. Ca đo được       │
- * │ 22/08: người dùng gõ một thư mục có thật trên máy và bị chặn ở bước lập  │
- * │ kế hoạch với câu *"không việc nào tạo ra nó"*.                           │
+ * │ Three places had reinvented this distinction: `Scheduler.validate`,       │
+ * │ `Scheduler.missingInputs`, and the "did the result come out stale" check  │
+ * │ in `Office`. All three wrote exactly HALF of it —                        │
+ * │ `try { safeJoin } catch { treat as missing }` — so all three were         │
+ * │ equally blind to the second kind. Measured 08/22: a user typed a          │
+ * │ directory that genuinely exists on their machine and got blocked at       │
+ * │ planning time with *"no task produces it"*.                              │
  * │                                                                          │
- * │ Sửa ba chỗ bằng ba miếng vá là mời lỗi quay lại ở chỗ thứ tư. Một hàm    │
- * │ thì chỗ thứ tư tự đúng.                                                  │
+ * │ Patching three places with three fixes just invites the bug back at a     │
+ * │ fourth. One function makes the fourth place correct automatically.       │
  * │                                                                          │
- * │ ⚠ Phân biệt bằng `isAbsolute`, KHÔNG bằng "safeJoin có ném không". Một   │
- * │ đường dẫn tương đối leo ra ngoài (`../../etc/passwd`) cũng làm safeJoin  │
- * │ ném, nhưng nó là mưu toan traversal — nó phải trả `undefined`, không     │
- * │ được rơi vào nhánh "ngoài văn phòng" rồi được đem đi `existsSync` theo   │
- * │ `cwd` của daemon, một cái gốc chẳng liên quan gì tới ai.                  │
+ * │ ⚠ Distinguished by `isAbsolute`, NOT by "did safeJoin throw". A relative   │
+ * │ path that climbs outside (`../../etc/passwd`) also makes safeJoin throw,  │
+ * │ but that's a traversal attempt — it must return `undefined`, not fall    │
+ * │ into the "outside the office" branch and get `existsSync`'d against the   │
+ * │ daemon's `cwd`, a root that has nothing to do with anyone.               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function resolveInput(
@@ -366,49 +396,57 @@ export function resolveInput(
   p: string,
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ LOẠI ĐƯỜNG DẪN THỨ BA: **TÊN MỘT CÁNH TAY**. (bug user báo 26/08)       │
+   * │ A THIRD KIND OF PATH: **AN ARM'S NAME**. (bug reported by the user       │
+   * │ 08/26)                                                                   │
    * │                                                                          │
-   * │ User gõ *"Liệt kê danh sách bài hát trong Musics"*. Trợ lý làm ĐÚNG      │
-   * │ những gì `ASSISTANT_CORE` dặn — *"đường dẫn người dùng gõ là chính xác,  │
-   * │ chép nguyên văn vào `inputs`"* — nên nó ghi `inputs: ["Musics"]`. Rồi    │
-   * │ `validate` tìm một file tên `Musics` trong văn phòng, không thấy, và     │
-   * │ chặn cả kế hoạch: *"không có file đó, và không việc nào tạo ra nó"*.     │
+   * │ User typed *"List the songs in Musics"*. The Assistant did EXACTLY what  │
+   * │ `ASSISTANT_CORE` instructs — *"the path the user typed is exact, copy it │
+   * │ verbatim into `inputs`"* — so it wrote `inputs: ["Musics"]`. Then         │
+   * │ `validate` looked for a file named `Musics` inside the office, found      │
+   * │ none, and blocked the whole plan: *"that file doesn't exist, and no       │
+   * │ task produces it"*.                                                     │
    * │                                                                          │
-   * │ Ba lượt liên tiếp, và người dùng nói đúng: *"bạn được cấp MCP rồi mà"*.  │
-   * │ Cánh tay tên **Musics** trỏ vào `D:\…\Musics` và nằm ngay trong danh bạ  │
-   * │ của chính nhân viên đó. Chuỗi ấy giải được — ta chỉ chưa thử.            │
+   * │ Three turns in a row, and the user was right: *"you already have an      │
+   * │ MCP for that"*. An arm named **Musics** points at `D:\…\Musics` and       │
+   * │ sits right in that very worker's roster. That string was resolvable —    │
+   * │ we just hadn't tried.                                                    │
    * │                                                                          │
-   * │ ⚠ Đây là lần THỨ HAI cùng một lớp lỗi ở cùng một hàm: 22/08 nó mù trước  │
-   * │ đường dẫn tuyệt đối ngoài văn phòng; hôm nay nó mù trước tên cánh tay.   │
-   * │ Cả hai lần, Trợ lý **bị chặn vì tuân lệnh**, và cả hai lần lỗi nằm ở     │
-   * │ TẦNG KIỂM chứ không ở tầng lập kế hoạch. Vá ở đây, không ở prompt: một   │
-   * │ câu dặn thêm sẽ thua chính dòng danh bạ ghi `Musics (đường tắt tới …)`.  │
+   * │ ⚠ This is the SECOND time the same failure class hits the same function:  │
+   * │ 08/22 it was blind to absolute paths outside the office; today it's       │
+   * │ blind to an arm's name. Both times, the Assistant **got blocked for       │
+   * │ following instructions**, and both times the bug sat at the VALIDATION    │
+   * │ LAYER, not the planning layer. Fix it here, not in the prompt: one more    │
+   * │ instruction would lose to the roster line itself reading                  │
+   * │ `Musics (shortcut to …)`.                                                │
    * │ → [[agentco-prompt-rules-lose-to-examples]]                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Khoá đã chuẩn hoá (thường hoá) → thư mục THẬT. Xem `catalog.ts §armDirIndex`.
+   * A normalized (lowercased) key → the REAL directory. See `catalog.ts §armDirIndex`.
    */
   armDirs?: Record<string, string>,
 ): string | undefined {
   /**
-   * 🔴 CHUỖI RỖNG TRỎ VÀO CHÍNH THƯ MỤC VĂN PHÒNG. (soi ra 31/08, đo được)
+   * 🔴 AN EMPTY STRING POINTS AT THE OFFICE DIRECTORY ITSELF. (spotted and
+   * measured 08/31)
    *
-   * `safeJoin(officeDir, '')` trả về **đúng `officeDir`**, mà thư mục đó thì
-   * luôn tồn tại ⇒ `existsOnDisk` nói CÓ ⇒ cổng kiểm đầu vào **im lặng cho
-   * qua**, và worker nhận một đầu vào trỏ vào cả văn phòng.
+   * `safeJoin(officeDir, '')` returns **exactly `officeDir`**, and that
+   * directory always exists ⇒ `existsOnDisk` says YES ⇒ the input validation
+   * gate **silently passes it**, and a worker receives an input pointing at
+   * the entire office.
    *
-   * Ca này tới được thật: `TaskIOSchema.path` là `z.string()` **không có
-   * `.min(1)`**, nên một `{"kind":"file","path":""}` do model sinh ra đi qua
-   * schema bình thường.
+   * This case is genuinely reachable: `TaskIOSchema.path` is `z.string()`
+   * **with no `.min(1)`**, so a `{"kind":"file","path":""}` produced by the
+   * model sails through the schema normally.
    *
-   * ⚠ Vá ở đây chứ không siết schema: siết schema là **ném cả kế hoạch** vì một
-   * ô trống, trong khi ở đây nó chỉ thành "đầu vào không hợp lệ" và người dùng
-   * nhận đúng câu lỗi vốn có.
+   * ⚠ Patched here rather than tightening the schema: tightening the schema
+   * **throws out the whole plan** over one empty field, whereas here it just
+   * becomes "invalid input" and the user gets the error message that was
+   * already there.
    */
   if (!p.trim()) return undefined;
 
-  // Một địa chỉ web KHÔNG phải một đường dẫn. Trả `undefined` thay vì ghép nó
-  // vào thư mục văn phòng — xem `isUrlInput`.
+  // A web address is NOT a path. Return `undefined` instead of joining it into
+  // the office directory — see `isUrlInput`.
   if (isUrlInput(p)) return undefined;
   if (path.isAbsolute(p)) return p;
 
@@ -416,190 +454,214 @@ export function resolveInput(
   try {
     inOffice = safeJoin(officeDir, p);
   } catch {
-    // Mưu toan traversal (`../../etc/passwd`) — KHÔNG được rơi xuống nhánh cánh
-    // tay để rồi tìm thấy một thứ khác. Nó phải chết ở đây, như trước.
+    // A traversal attempt (`../../etc/passwd`) — must NOT fall through to the
+    // arm branch and find something else there. It has to die right here, as
+    // before.
     return undefined;
   }
 
   /**
-   * ⚠ FILE TRONG VĂN PHÒNG THẮNG. Chỉ khi nó không tồn tại mới hỏi tới cánh tay.
+   * ⚠ A FILE INSIDE THE OFFICE WINS. Only ask about an arm when it doesn't
+   * exist.
    *
-   * Ngược lại thì một cánh tay tên `bao-cao` sẽ nuốt mất `bao-cao/` có thật
-   * trong văn phòng — im lặng, và ở đúng chỗ người dùng tin nhất.
+   * Otherwise an arm named `bao-cao` would swallow a real `bao-cao/` inside
+   * the office — silently, and in exactly the place the user trusts most.
    */
   if (!armDirs || existsOnDisk(inOffice)) return inOffice;
 
   const hit = armDirs[p.replace(/[\\/]+$/, '').toLowerCase()];
-  // Không khớp ⇒ trả đường trong văn phòng như cũ: câu lỗi phải nói về chỗ
-  // người dùng nghĩ tới, không về một thư mục họ chưa từng nhắc.
+  // No match ⇒ return the in-office path as before: the error message has to
+  // talk about the place the user was thinking of, not a directory they never
+  // mentioned.
   return hit ?? inOffice;
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÙNG CẤM — hàm thuần đứng sau `officeJail`. → docs/SPEC-arms.md §5d–§5f   │
+ * │ FORBIDDEN ZONES — a pure function that sits behind `officeJail`.          │
+ * │ → docs/SPEC-arms.md §5d–§5f                                             │
  * │                                                                          │
- * │ ⚠ ĐO ĐƯỢC 23/08 (`scripts/spike-secrets.ts`), một vai trò chỉ có 7 tool  │
- * │ mặc định, KHÔNG shell:                                                   │
+ * │ ⚠ MEASURED 08/23 (`scripts/spike-secrets.ts`), a role with just the 7      │
+ * │ default tools, NO shell:                                                │
  * │                                                                          │
- * │   A · đọc `company/.state/secrets.json`  → 🔴 ĐỌC ĐƯỢC, chép nguyên văn  │
- * │   B · ghi `roles/<chính-nó>.yaml`        → 🔴 GHI ĐƯỢC, bằng `Write`     │
+ * │   A · read `company/.state/secrets.json`  → 🔴 COULD READ, verbatim copy │
+ * │   B · write `roles/<itself>.yaml`          → 🔴 COULD WRITE, via `Write`  │
  * │                                                                          │
- * │ Ca B nặng hơn vẻ ngoài: `Write` là GHI ĐÈ TRỌN FILE, nên một nhân viên   │
- * │ không *sửa* vai trò của mình — nó **thay** vai trò, tự cấp `tools:`,     │
- * │ `secrets:`, `mcp:`. Không receipt, không nhật ký, không dòng nào. Không   │
- * │ có hiệu lực ngay (không `fs.watch`) nhưng SỐNG TRÊN ĐĨA tới `reload()`.   │
+ * │ Case B is heavier than it looks: `Write` is a WHOLE-FILE OVERWRITE, so a  │
+ * │ worker doesn't *edit* its own role — it **replaces** the role, granting   │
+ * │ itself `tools:`, `secrets:`, `mcp:`. No receipt, no log, not one line.    │
+ * │ Not effective immediately (no `fs.watch`) but LIVES ON DISK until          │
+ * │ `reload()`.                                                             │
  * │                                                                          │
- * │ Vì sao `officeJail` cũ trượt cả hai: nó hỏi đúng MỘT câu — *"có ra ngoài │
- * │ thư mục văn phòng không"*. `.state/` của công ty thì ở ngoài nhưng nó     │
- * │ **chỉ khớp tool GHI**, mà ca A là ĐỌC. `roles/` thì ở TRONG, nên nó cho   │
- * │ qua đúng theo thiết kế. Một câu hỏi, hai lỗ.                             │
+ * │ Why the old `officeJail` missed both: it asked exactly ONE question —     │
+ * │ *"does this go outside the office directory"*. The company's `.state/`    │
+ * │ sits outside, but it **only matched WRITE tools**, while case A was READ. │
+ * │ `roles/` sits INSIDE, so it was let through, by design. One question,     │
+ * │ two holes.                                                              │
  * │                                                                          │
- * │ ⇒ Hai vùng, ba luật, và ranh giới HẸP có chủ ý:                          │
+ * │ ⇒ Two zones, three rules, and the boundary is DELIBERATELY narrow:        │
  * │                                                                          │
- * │   `secrets`  `.state/` (công ty VÀ văn phòng)  → cấm CẢ ĐỌC LẪN GHI      │
- * │   `config`   roles· skills· connectors· *.yaml· layout.json → cấm GHI    │
- * │   `outside`  ngoài thư mục văn phòng           → cấm GHI (luật cũ)       │
+ * │   `secrets`  `.state/` (company AND office)     → bans BOTH READ AND WRITE│
+ * │   `config`   roles· skills· connectors· *.yaml· layout.json → bans WRITE  │
+ * │   `outside`  outside the office directory        → bans WRITE (old rule)  │
  * │                                                                          │
- * │ ⚠⚠ THỨ CỐ Ý KHÔNG CHẶN, và nó quan trọng NGANG phần chặn: `artifacts/`,  │
- * │ `knowledge/`, `library/` mở nguyên. Kho tri thức là chỗ nhân viên GHI     │
- * │ bài học — chặn nó là giết cơ chế học. Một bản vá chặn được A+B mà chặn    │
- * │ luôn mấy chỗ này là hỏng NGƯỢC CHIỀU, và im lặng hơn hẳn, vì không ai đi │
- * │ kiểm một việc vốn vẫn chạy. Có test canh đúng chuyện đó.                 │
+ * │ ⚠⚠ WHAT'S DELIBERATELY NOT BLOCKED matters JUST AS MUCH as what is:       │
+ * │ `artifacts/`, `knowledge/`, `library/` stay wide open. The knowledge      │
+ * │ store is where a worker WRITES lessons — blocking it kills the learning    │
+ * │ mechanism. A patch that blocks A+B but also blocks these is a regression   │
+ * │ in the OPPOSITE direction, and a much quieter one, because nobody checks    │
+ * │ something that still appears to work. A test guards exactly this.        │
  * │                                                                          │
- * │ ⚠ Bonus không định trước: cấm đọc `<office>/.state/` bịt luôn lỗ đã ghi   │
- * │ ở `OfficePaths.tasks` — *"KHÔNG phải một bức tường bảo mật: `Read` với    │
- * │ đường dẫn tường minh vẫn mở được"*. Giờ nó là tường thật.                │
+ * │ ⚠ An unplanned bonus: banning reads under `<office>/.state/` also seals    │
+ * │ the gap noted in `OfficePaths.tasks` — *"NOT a security wall: `Read` with  │
+ * │ an explicit path still opens it"*. Now it's an actual wall.               │
  * │                                                                          │
- * │ ⚠ RANH GIỚI PHẢI NÓI RA: hàm này chỉ với tới tool có ĐƯỜNG DẪN Ở MỘT     │
- * │ TRƯỜNG CÓ TÊN. `Bash` nhét đường dẫn lẫn trong chuỗi lệnh ⇒ vẫn đi vòng  │
- * │ qua được. Câu đúng là "ĐÃ HẸP LẠI, CHƯA ĐÓNG" — đừng viết "đã bịt lỗ",   │
- * │ đó là lời hứa thứ tư sau `canUseTool`, `safeJoin` và §8·0.               │
+ * │ ⚠ THE BOUNDARY HAS TO BE SPOKEN: this function only reaches tools that     │
+ * │ carry a PATH IN A NAMED FIELD. `Bash` buries a path inside a command       │
+ * │ string ⇒ it still routes around this. The honest claim is "NARROWED,       │
+ * │ NOT CLOSED" — don't write "sealed the hole", that would be the fourth       │
+ * │ broken promise after `canUseTool`, `safeJoin`, and §8·0.                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export type GuardedZone = 'secrets' | 'config' | 'outside' | 'browser';
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `.playwright-mcp` — DẤU CHẤM CHẶN **TÌM THẤY**, KHÔNG CHẶN **ĐỌC**.   │
- * │ (user hỏi 30/08, đo ra khe hở)                                           │
+ * │ 🔴 `.playwright-mcp` — THE DOT BLOCKS **BEING FOUND**, NOT **BEING READ**. │
+ * │ (user asked 08/30, measurement found the gap)                            │
  * │                                                                          │
- * │ > *"tôi lo nó mò vào .playwright-mcp hoặc .state/browser (cái này hình    │
- * │ >  như bị chặn rất nặng)"*                                               │
+ * │ > *"I'm worried it wanders into .playwright-mcp or .state/browser (I      │
+ * │ >  thought that one was locked down hard)"*                              │
  * │                                                                          │
- * │ Nửa sau đúng: `.state/browser/profile` (**506 MB** cookie + phiên đăng    │
- * │ nhập) bị khoá cứng, vì phép kiểm `.state` nằm **trước** dòng cho `read`   │
- * │ đi qua. Nửa trước thì hở: `.playwright-mcp` là **anh em** của `.state`,   │
- * │ không nằm dưới nó ⇒ `guardedZone('read')` trả `undefined` ⇒ gõ đúng       │
- * │ đường dẫn là đọc được.                                                   │
+ * │ The second half was right: `.state/browser/profile` (**506 MB** of        │
+ * │ cookies + login sessions) is hard-locked, because the `.state` check       │
+ * │ sits **before** the line that lets `read` through. The first half had a    │
+ * │ gap: `.playwright-mcp` is a **sibling** of `.state`, not nested under it   │
+ * │ ⇒ `guardedZone('read')` returned `undefined` ⇒ typing the exact path       │
+ * │ would read it.                                                          │
  * │                                                                          │
- * │ Dấu chấm đầu tên **là một cơ chế** — `Grep`/`Glob` không duyệt xuống thư  │
- * │ mục ẩn (đã đo). Nhưng đó là chặn *tìm thấy*, không phải chặn *đọc*, và    │
- * │ hai thứ đó khác nhau đúng ở chỗ một cái tên bị lộ ra ngoài (log lỗi, câu  │
- * │ người dùng dán vào, một artifact cũ) là hàng rào hết tác dụng.            │
+ * │ A leading dot **is a mechanism** — `Grep`/`Glob` don't walk into hidden    │
+ * │ directories (measured). But that blocks *being found*, not *being read*,  │
+ * │ and the two differ exactly at the point where a name leaks out (an error   │
+ * │ log, text the user pastes in, an old artifact) — at which point the        │
+ * │ barrier stops doing anything.                                           │
  * │                                                                          │
- * │ Thứ nằm trong đó không vô hại: `redact.ts` sinh ra vì đọc được **chìa      │
- * │ phiên Facebook dạng chữ** (`fb_dtsg=…&__user=…`) trong `console-*.log`.   │
- * │ Nó cắt query khỏi URL — **giảm thiểu, không bịt kín**, và chính nó ghi ra │
- * │ điều đó. Chặn đọc cả thư mục là lá chắn thứ hai, khác tầng.              │
+ * │ What lives in there isn't harmless: `redact.ts` exists because it could    │
+ * │ read a **plaintext Facebook session token** (`fb_dtsg=…&__user=…`) inside  │
+ * │ `console-*.log`. It strips the query string off URLs — **mitigation, not   │
+ * │ a seal**, and it says so itself. Blocking reads to the whole directory is  │
+ * │ a second, different-layer shield.                                       │
  * │                                                                          │
- * │ ⚠ Vì sao một vùng RIÊNG chứ không gộp vào `secrets`: câu lỗi của          │
- * │ `secrets` nói về `.state` và chìa khoá. Trả câu đó cho một nhân viên vừa  │
- * │ chạm log trình duyệt là **chỉ sai cửa** — họ đi tìm chìa khoá ở chỗ không │
- * │ có, còn việc đúng phải làm (chụp lại trang) thì không ai nói.            │
+ * │ ⚠ Why its OWN zone instead of folding it into `secrets`: the `secrets`     │
+ * │ error message talks about `.state` and credentials. Handing that message   │
+ * │ to a worker that just touched a browser log is **the wrong-door failure**  │
+ * │ — they go looking for credentials where there are none, and nobody tells   │
+ * │ them the actual right move (re-take the snapshot).                        │
  * │                                                                          │
- * │ 🔴🔴 CHẶN CẢ THƯ MỤC LÀ CẮT TAY NHÂN VIÊN TRÌNH DUYỆT. (user hỏi đúng   │
- * │ lúc, 30/08: *"việc bịt khe .playwright-mcp có ảnh hưởng tới worker đang   │
- * │ cắm cánh tay trình duyệt không?"* — CÓ, nếu chặn thô.)                   │
+ * │ 🔴🔴 BLOCKING THE WHOLE DIRECTORY CUTS OFF THE BROWSER WORKER'S HANDS.     │
+ * │ (the user asked at exactly the right moment, 08/30: *"does sealing the      │
+ * │ .playwright-mcp gap affect a worker with the browser arm attached?"* —      │
+ * │ YES, if blocked crudely.)                                               │
  * │                                                                          │
- * │ Đo thư mục thật: **20 `console-*.log` + 21 `page-*.yml`**. Cái sau là     │
- * │ **ảnh chụp trang** — thứ nhân viên ĐỌC để biết trang đang hiện gì, và     │
- * │ `redact.ts §isConsoleLog` đã ghi sẵn *"Snapshot (`page-*.yml`) không được │
- * │ đụng — worker đọc nó"*. Một hàng rào chặn luôn nó là biến cánh tay trình  │
- * │ duyệt thành vô dụng, im lặng, ở đúng lượt người dùng cần nó nhất.         │
+ * │ Measured the real directory: **20 `console-*.log` + 21 `page-*.yml`**.     │
+ * │ The latter are **page snapshots** — what a worker READS to know what the   │
+ * │ page currently shows, and `redact.ts §isConsoleLog` already says so:       │
+ * │ *"Snapshots (`page-*.yml`) must not be touched — the worker reads them"*.  │
+ * │ A guard that blocks those too makes the browser arm silently useless, at    │
+ * │ exactly the moment the user needs it most.                              │
  * │                                                                          │
- * │ ⇒ Luật: **mặc định từ chối trong thư mục đó, chừa đúng một lối ra**.      │
- * │ Mặc định-từ-chối vì file kiểu mới thêm vào sau này (trace, har, video)    │
- * │ đều là dấu vết phiên, và một allowlist thì cái mới **tự động** bị chặn;   │
- * │ một denylist thì cái mới **tự động lọt**. → [[agentco-silent-allowlist]]  │
+ * │ ⇒ Rule: **deny by default inside that directory, leave exactly one exit**. │
+ * │ Deny-by-default because a new file type added later (trace, har, video)    │
+ * │ is always going to be session residue, and with an allowlist a new one     │
+ * │ gets blocked **automatically**; with a denylist a new one leaks through     │
+ * │ **automatically**. → [[agentco-silent-allowlist]]                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const BROWSER_OUTPUT = '.playwright-mcp';
 
-/** Lối ra duy nhất: ảnh chụp trang. Mọi thứ khác trong thư mục đó là dấu vết phiên. */
+/** The single exit: page snapshots. Everything else in that directory is session residue. */
 const isPageSnapshot = (p: string): boolean => /^page-[^\\/]*\.ya?ml$/i.test(path.basename(p));
 
 /**
- * AI đang gọi, và vì thế luật nào áp.
+ * WHO is calling, and therefore which rules apply.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `arm` KHÔNG PHẢI "write nhẹ tay hơn" — nó là một PHẬN SỰ KHÁC.           │
+ * │ `arm` is NOT "write, but a little gentler" — it's a DIFFERENT ROLE.       │
  * │                                                                          │
- * │   `read`   tool đọc builtin   → chỉ cấm `secrets`                        │
- * │   `write`  tool ghi builtin   → cấm `secrets` · `config` · `outside`     │
- * │   `arm`    tool của MCP       → cấm `secrets` · `config`, CHO `outside`  │
+ * │   `read`   a builtin read tool   → bans only `secrets`                   │
+ * │   `write`  a builtin write tool  → bans `secrets` · `config` · `outside` │
+ * │   `arm`    an MCP tool           → bans `secrets` · `config`, ALLOWS `outside` │
  * │                                                                          │
- * │ Vì sao `arm` được ra ngoài: đó chính là LÝ DO NÓ TỒN TẠI. Luật §8·0      │
- * │ (user chốt 22/08) nói *"mọi đường GHI RA ngoài phải qua một tool/MCP     │
- * │ TƯỜNG MINH — có tên, khai báo được, đọc được trong nhật ký"*. Cấm        │
- * │ `outside` cho `arm` là cấm đúng con đường tử tế mà luật đó vừa dựng ra,  │
- * │ và người dùng sẽ quay lại dùng `Bash` — thứ không có biên nào.           │
+ * │ Why `arm` gets to go outside: that's the ENTIRE REASON it exists. Rule    │
+ * │ §8·0 (user settled 08/22) states *"every path that WRITES outward must     │
+ * │ go through an EXPLICIT tool/MCP — named, declarable, visible in the       │
+ * │ log"*. Banning `outside` for `arm` would ban the exact well-behaved path   │
+ * │ that rule just built, and the user would go back to `Bash` — which has     │
+ * │ no boundary at all.                                                     │
  * │                                                                          │
- * │ Nhưng biên của cánh tay KHÔNG phải là "không có biên": nó bị chặn bởi    │
- * │ chính MCP server, ở đúng danh sách thư mục người dùng đã khai            │
- * │ (`roots` = `cwd` + `additionalDirectories`, đo 24/08). Ta chỉ thêm hai   │
- * │ vùng mà server KHÔNG BAO GIỜ biết là nhạy cảm: kho chìa và file cấu hình.│
+ * │ But an arm's boundary is NOT "no boundary": it's constrained by the MCP    │
+ * │ server itself, against the exact directory list the user has declared     │
+ * │ (`roots` = `cwd` + `additionalDirectories`, measured 08/24). We're only    │
+ * │ adding two zones the server would NEVER know are sensitive: the           │
+ * │ credential store and config files.                                      │
  * │                                                                          │
- * │ ⚠ `arm` cấm CẢ ĐỌC file cấu hình, trong khi `read` builtin thì cho.      │
- * │ Cố ý, và lệch về phía an toàn: lúc hook chạy ta chỉ có TÊN TOOL, không   │
- * │ có cách tất định nào biết `mcp__x__foo` là đọc hay ghi — dò chuỗi tên là │
- * │ đúng cái class bất định đã loại ở §5n ㉕. Cái giá của phủ định sai ở đây │
- * │ bằng 0: `Read` builtin vẫn đọc được `roles/*.yaml` như trước.            │
+ * │ ⚠ `arm` bans even READING config files, while the builtin `read` allows    │
+ * │ it. Deliberate, and erring toward safety: at the point the hook runs we    │
+ * │ only have a TOOL NAME, with no deterministic way to know whether           │
+ * │ `mcp__x__foo` reads or writes — guessing from the name string is exactly   │
+ * │ the class of nondeterminism ruled out in §5n ㉕. The cost of a false        │
+ * │ positive here is zero: the builtin `Read` still reads `roles/*.yaml` as    │
+ * │ before.                                                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export type GuardMode = 'read' | 'write' | 'arm';
 
-/** Thư mục/file thuộc vùng `config` — tương đối với thư mục VĂN PHÒNG. */
+/** Directories/files belonging to the `config` zone — relative to the OFFICE directory. */
 const OFFICE_CONFIG = ['roles', 'skills', 'connectors', 'office.yaml', 'layout.json'];
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 VÙNG `config` CỦA CẤP CÔNG TY — LỖ VÁ 01/09, và nó mở từ trước.       │
+ * │ 🔴 THE COMPANY-LEVEL `config` ZONE — A GAP PATCHED 09/01, AND IT HAD       │
+ * │ BEEN OPEN THE WHOLE TIME.                                                │
  * │                                                                          │
- * │ `OFFICE_CONFIG` giải tương đối với thư mục **VĂN PHÒNG**, nên             │
- * │ `company/company.yaml` (một cấp trên) **chưa bao giờ được gác**. Với      │
- * │ nhân viên bị nhốt trong văn phòng thì vô hại — họ không với tới. Nhưng    │
- * │ một vai có cánh tay thư mục trỏ vào chỗ chứa `company/` thì **với tới     │
- * │ được**, và đó chính là ca `guardedZone` sinh ra để gác: hàng rào thứ hai  │
- * │ cho thứ nằm NGOÀI văn phòng.                                             │
+ * │ `OFFICE_CONFIG` resolves relative to the **OFFICE** directory, so          │
+ * │ `company/company.yaml` (one level up) had **never been guarded**. For a    │
+ * │ worker locked inside the office this was harmless — it can't reach that     │
+ * │ far. But a role with a directory arm pointing at the folder containing      │
+ * │ `company/` **can reach it**, and that's exactly the case `guardedZone`      │
+ * │ exists to guard: the second barrier for anything OUTSIDE the office.       │
  * │                                                                          │
- * │ Cái nó giữ:                                                              │
- * │   `mcpServers` + `arms` — sổ chung. Ghi được ⇒ tự cấp cánh tay cho mình. │
- * │   🔴 và từ 31/08, TỜ KHAI CLI sống ở đây ⇒ ghi được ⇒ tự khai            │
- * │      `run: ["powershell","-c","{cmd}"]` ⇒ **shell tuỳ ý cho một vai đã   │
- * │      TẮT shell**. Đúng cái cửa sau §16i nói to, chỉ là tôi đã tưởng nó   │
- * │      đã được gác sẵn.                                                    │
+ * │ What it holds:                                                          │
+ * │   `mcpServers` + `arms` — the shared roster. Writable ⇒ grant yourself an  │
+ * │      arm.                                                               │
+ * │   🔴 and since 08/31, the CLI DECLARATION lives here ⇒ writable ⇒ declare  │
+ * │      `run: ["powershell","-c","{cmd}"]` ⇒ **arbitrary shell for a role      │
+ * │      that had shell TURNED OFF**. Exactly the backdoor §16i warned about,   │
+ * │      except I had assumed it was already guarded.                        │
  * │                                                                          │
- * │ ⚠ Tôi viết ở ba chỗ rằng *"để tờ khai trong `company.yaml` thì nó thừa   │
- * │ hưởng hàng rào §5f, 0 cơ chế mới"*. **Sai** — §5f gác cấu hình VĂN        │
- * │ PHÒNG. Hàng rào đó có thật, nhưng nó ở một cấp khác.                      │
+ * │ ⚠ I wrote in three places that *"putting the declaration in                │
+ * │ `company.yaml` means it inherits the §5f guard, 0 new mechanism"*.         │
+ * │ **Wrong** — §5f guards OFFICE config. That guard is real, but it lives at   │
+ * │ a different level.                                                      │
  * │ → [[agentco-rule-must-see-what-it-governs]] · [[agentco-spec-says-done]]  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `logs/` cố ý KHÔNG vào đây: sổ chi phí là append-only và người dùng đọc được;
- * gác nó là chặn một thứ vô hại rồi tự nhận thêm một câu lỗi phải giải thích.
+ * `logs/` is deliberately NOT in here: the cost ledger is append-only and the
+ * user can read it; guarding it would block something harmless and add an
+ * error message that now needs explaining.
  */
 const COMPANY_CONFIG = ['company.yaml'];
 
 /**
- * `a` có nằm trong (hoặc chính là) `b` không.
+ * Is `a` inside (or exactly) `b`.
  *
- * ⚠ So bằng chữ THƯỜNG trên MỌI nền tảng, không dò `process.platform`. Trên
- * Windows `ROLES\x.yaml` và `roles\x.yaml` là CÙNG một file, nên so phân biệt
- * hoa thường ở đó là để hở một cửa sau chỉ cần viết hoa là qua. Cái giá ở phía
- * kia: trên Linux một thư mục tên `Roles` khác `roles` sẽ bị chặn oan — một ca
- * gần như không tồn tại, và nó lệch về phía an toàn. Đổi một phủ định-sai
- * hoang đường lấy việc bịt một cửa sau có thật.
+ * ⚠ Compares in LOWERCASE on EVERY platform, without checking
+ * `process.platform`. On Windows, `ROLES\x.yaml` and `roles\x.yaml` are the
+ * SAME file, so a case-sensitive comparison there would leave a backdoor
+ * that's beaten by just capitalizing something. The cost on the other side:
+ * on Linux, a directory named `Roles` different from `roles` would get
+ * wrongly blocked — a case that's nearly nonexistent, and it errs toward
+ * safety. Trading a far-fetched false positive for closing a real backdoor.
  */
 function within(a: string, b: string): boolean {
   const rel = path.relative(b.toLowerCase(), a.toLowerCase());
@@ -607,19 +669,21 @@ function within(a: string, b: string): boolean {
 }
 
 /**
- * Lời gọi tool này có chạm vùng cấm không? `undefined` = cho qua.
+ * Does this tool call touch a forbidden zone? `undefined` = let it through.
  *
- * `target` là chuỗi model gõ — tuyệt đối hoặc tương đối với thư mục văn phòng
- * (`cwd` của worker). Chuỗi rỗng = tool không khai đường dẫn ⇒ cho qua.
+ * `target` is the string the model typed — absolute or relative to the office
+ * directory (the worker's `cwd`). An empty string = the tool didn't declare a
+ * path ⇒ let it through.
  */
 export function guardedZone(
   dirs: {
     companyDir: string;
     officeDir: string;
     /**
-     * Vai trò này CÓ cánh tay trình duyệt không — đã giải sẵn từ `role.mcp` lúc
-     * dựng worker. Không khai ⇒ **coi như không có**, tức chặt hơn: vắng mặt
-     * không phải tín hiệu an toàn. → khối ở chỗ dùng nó bên dưới
+     * Does this role HAVE a browser arm — already resolved from `role.mcp`
+     * when the worker was built. Not declared ⇒ **treated as absent**, i.e.
+     * stricter: absence is not a safety signal. → see the block below where
+     * it's used
      */
     hasBrowser?: boolean;
   },
@@ -629,34 +693,38 @@ export function guardedZone(
   if (!target) return undefined;
   const abs = path.resolve(dirs.officeDir, target);
 
-  // `.state` TRƯỚC mọi thứ: nó vừa nằm ngoài văn phòng (bản công ty) vừa nằm
-  // trong (bản văn phòng), nên hỏi sau thì một nửa số ca rơi vào nhánh khác và
-  // nhận một câu giải thích nói về chuyện không liên quan.
+  // `.state` comes BEFORE everything else: it exists both outside the office
+  // (the company copy) and inside it (the office copy), so checking it later
+  // would send half the cases down a different branch and hand back an
+  // explanation about something unrelated.
   for (const state of [companyPaths(dirs.companyDir).state, officePaths(dirs.officeDir).state]) {
     if (within(abs, state)) return 'secrets';
   }
   /**
    * ┌────────────────────────────────────────────────────────────────────────┐
-   * │ HAI ĐIỀU KIỆN, MỘT CHỖ — và bỏ vế nào cũng hỏng theo một kiểu.        │
-   * │ (user đề xuất vế ①, 30/08; vế ② là thứ vế ① một mình sẽ đánh rơi)      │
+   * │ TWO CONDITIONS, ONE PLACE — and dropping either one breaks a different   │
+   * │ way. (the user proposed clause ①, 08/30; clause ② is what clause ① alone  │
+   * │ would drop)                                                             │
    * │                                                                        │
-   * │  ① KHÔNG có cánh tay trình duyệt ⇒ chặn **cả thư mục**. Đây là đặc      │
-   * │     quyền tối thiểu nói đúng bằng lời của nó: *đầu ra của một cánh tay  │
-   * │     thuộc về người cầm cánh tay đó*. Nhân viên Linear không có việc gì  │
-   * │     với ảnh chụp trang của lượt trước — mà ảnh chụp **có PII thật**     │
-   * │     (ca 30/08: email tự-điền trong form đăng nhập Facebook).            │
+   * │  ① NO browser arm ⇒ block **the whole directory**. This is least        │
+   * │     privilege stated in its own plain words: *the output of an arm       │
+   * │     belongs to whoever holds that arm*. A Linear worker has no business  │
+   * │     with a previous turn's page snapshot — and a snapshot **can carry     │
+   * │     real PII** (08/30 case: an autofilled email in a Facebook login       │
+   * │     form).                                                              │
    * │                                                                        │
-   * │  ② CÓ cánh tay ⇒ vẫn chặn `console-*.log`. Người cầm cánh tay cũng      │
-   * │     **không** cần chìa phiên dạng chữ (`fb_dtsg=…&__user=…`). Gác theo  │
-   * │     mỗi vế ① thì nhân viên trình duyệt được mở cả log — **rộng hơn**    │
-   * │     luật hôm nay, tức một bước LÙI đội lốt bước siết.                   │
+   * │  ② HAS the arm ⇒ still block `console-*.log`. Even the holder of the     │
+   * │     arm has **no** need for a plaintext session token                    │
+   * │     (`fb_dtsg=…&__user=…`). Guarding on clause ① alone would leave a       │
+   * │     browser worker's log wide open — **wider** than today's rule, i.e.    │
+   * │     a step BACKWARD disguised as tightening.                             │
    * │                                                                        │
-   * │ ⚠ `hasBrowser` là một **cờ boolean tính sẵn**, không phải `role` hay    │
-   * │ danh sách cánh tay. Giữ hàm này THUẦN theo đường dẫn + một dữ kiện đã   │
-   * │ giải: nó là hàng rào an ninh, và thứ khó kiểm chứng nhất là hàng rào    │
-   * │ phải tự đi tra cấu hình mới biết mình đang gác gì.                      │
-   * │ `role.mcp` vẫn là nguồn DUY NHẤT của "ai cầm gì" — ta chỉ đọc nó một    │
-   * │ lần lúc dựng worker. → [[agentco-count-mechanisms]]                     │
+   * │ ⚠ `hasBrowser` is a **precomputed boolean flag**, not a `role` or a list   │
+   * │ of arms. Keeps this function PURE, driven by a path plus one already-      │
+   * │ resolved fact: it's a security guard, and the hardest thing to audit is    │
+   * │ a guard that has to go look up config on its own to know what it's        │
+   * │ guarding. `role.mcp` remains the SOLE source of "who holds what" — we      │
+   * │ only read it once, when the worker gets built. → [[agentco-count-mechanisms]] │
    * └────────────────────────────────────────────────────────────────────────┘
    */
   if (within(abs, path.join(dirs.officeDir, BROWSER_OUTPUT))) {
@@ -665,8 +733,9 @@ export function guardedZone(
 
   if (mode === 'read') return undefined;
 
-  // Cấp CÔNG TY trước cấp văn phòng — nó nằm ngoài văn phòng nên chỉ tới được
-  // qua một cánh tay thư mục, tức đúng ca hàng rào này tồn tại để chặn.
+  // COMPANY level before office level — it sits outside the office so it can
+  // only be reached through a directory arm, exactly the case this guard
+  // exists to block.
   for (const rel of COMPANY_CONFIG) {
     if (within(abs, path.join(dirs.companyDir, rel))) return 'config';
   }
@@ -675,33 +744,36 @@ export function guardedZone(
   }
   if (within(abs, companyPaths(dirs.companyDir).configFile)) return 'config';
 
-  // Cánh tay DỪNG Ở ĐÂY. Ra ngoài văn phòng là việc của nó, không phải sự cố —
-  // và biên thật của nó do MCP server giữ, ở đúng thư mục người dùng đã khai.
+  // An arm STOPS HERE. Reaching outside the office is its job, not an
+  // incident — and its real boundary is held by the MCP server, against the
+  // exact directories the user has declared.
   if (mode === 'arm') return undefined;
 
   return within(abs, dirs.officeDir) ? undefined : 'outside';
 }
 
 /**
- * DUYỆT THƯ MỤC — nguồn của bộ chọn thư mục trong hộp thoại `+ Kết nối`.
+ * BROWSE A DIRECTORY — feeds the directory picker in the `+ Connect` dialog.
  * → docs/SPEC-arms.md §6f
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG DÙNG HỘP THOẠI CHỌN FILE CỦA HỆ ĐIỀU HÀNH                   │
+ * │ WHY NOT USE THE OS'S NATIVE FILE PICKER                                  │
  * │                                                                          │
- * │ Trình duyệt KHÔNG đưa được đường dẫn tuyệt đối: `<input webkitdirectory>` │
- * │ chỉ trả tên tương đối, File System Access API trả một handle chứ không    │
- * │ phải chuỗi. Còn mở hộp thoại của HĐH thì nó mở **trên MÁY CHỦ** — đúng ca │
- * │ nút 📂 đã dẫm (`isLoopback`): bấm ở Hà Nội, cửa sổ bật ở Singapore.       │
+ * │ A browser CAN'T hand over an absolute path: `<input webkitdirectory>`      │
+ * │ only returns a relative name, and the File System Access API returns a     │
+ * │ handle, not a string. And opening the OS's own dialog opens it **ON THE    │
+ * │ SERVER MACHINE** — exactly the bug the 📂 button already hit               │
+ * │ (`isLoopback`): click in Hanoi, the window pops up in Singapore.          │
  * │                                                                          │
- * │ ⇒ Tự liệt kê. Chạy được cả khi daemon ở xa hoặc trong container, và nó    │
- * │ liệt kê ĐÚNG cái filesystem mà cánh tay sẽ nhìn thấy — không phải cái     │
- * │ filesystem của người đang ngồi trước màn hình. Với Docker (§10b) đó là    │
- * │ khác biệt sống còn, và bộ chọn này tự đúng ở đó mà không sửa gì.          │
+ * │ ⇒ List it ourselves. Works even when the daemon is remote or in a          │
+ * │ container, and it lists the EXACT filesystem an arm will see — not the     │
+ * │ filesystem of whoever is sitting in front of the screen. With Docker         │
+ * │ (§10b) that's a make-or-break difference, and this picker is already        │
+ * │ correct there with no changes needed.                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ CHỈ ĐỌC TÊN, không đọc nội dung. Nó nói *"có những thư mục nào"*, và đó là
- * thứ ít nhất cần để chọn được — không hơn.
+ * ⚠ READS NAMES ONLY, never content. It answers *"which directories exist"*,
+ * and that's the minimum needed to make a selection — nothing more.
  */
 export interface BrowseEntry {
   name: string;
@@ -709,9 +781,9 @@ export interface BrowseEntry {
 }
 
 export function browseDirs(target?: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
-  // Không truyền gì = gốc. Trên Windows "gốc" là DANH SÁCH Ổ ĐĨA, không phải
-  // một thư mục — bỏ qua chuyện này là người dùng Windows không có đường lên
-  // trên `C:\` và không bao giờ với tới ổ D.
+  // Nothing passed = root. On Windows, "root" is a LIST OF DRIVES, not a
+  // directory — skip this and a Windows user has no way up past `C:\` and can
+  // never reach the D drive.
   if (!target) {
     if (process.platform === 'win32') {
       const drives: BrowseEntry[] = [];
@@ -720,7 +792,7 @@ export function browseDirs(target?: string): { path: string; parent: string | nu
         try {
           if (fs.existsSync(root)) drives.push({ name: root, path: root });
         } catch {
-          /* ổ mạng đã ngắt thì bỏ qua, đừng làm hỏng cả danh sách */
+          /* a disconnected network drive: skip it, don't break the whole list */
         }
       }
       return { path: '', parent: null, dirs: drives };
@@ -732,22 +804,24 @@ export function browseDirs(target?: string): { path: string; parent: string | nu
 
 function listDirs(dir: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
   const up = path.dirname(dir);
-  // `dirname('C:\\')` trả về chính nó ⇒ đã ở gốc ổ. Trả `''` để giao diện quay
-  // về danh sách ổ đĩa thay vì đưa một nút "lên trên" không đi đâu cả.
+  // `dirname('C:\\')` returns itself ⇒ already at the drive root. Return `''`
+  // so the UI goes back to the drive list instead of offering an "up" button
+  // that goes nowhere.
   const parent = up === dir ? (process.platform === 'win32' ? '' : null) : up;
 
   let entries: fs.Dirent[] = [];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    // Không đọc được (không quyền, ổ đã rút) — trả rỗng chứ không ném. Người
-    // dùng vẫn bấm "lên trên" được, và đó là đường thoát duy nhất họ cần.
+    // Can't read it (no permission, drive was ejected) — return empty rather
+    // than throw. The user can still click "up", and that's the only exit
+    // they need.
     return { path: dir, parent, dirs: [] };
   }
 
   const dirs = entries
-    // Bỏ thư mục ẩn: chúng là nhiễu với người dùng văn phòng, và `.state/` thì
-    // đằng nào cũng nằm sau hàng rào `guardedZone`.
+    // Skip hidden directories: they're noise to an office user, and
+    // `.state/` sits behind the `guardedZone` guard anyway.
     .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
     .map((e) => ({ name: e.name, path: path.join(dir, e.name) }))
     .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
@@ -756,10 +830,11 @@ function listDirs(dir: string): { path: string; parent: string | null; dirs: Bro
 }
 
 /**
- * Có thật trên đĩa không. `existsSync` **ném được**, không chỉ trả `false`: ký
- * tự cấm trong tên, hoặc một ổ mạng đã ngắt. Ném ở đây là làm sập cả lượt lập
- * kế hoạch vì một đường dẫn gõ sai — đúng thứ phép kiểm này sinh ra để báo cáo
- * tử tế.
+ * Does it actually exist on disk. `existsSync` **can throw**, not just return
+ * `false`: a forbidden character in the name, or a disconnected network
+ * drive. Throwing here would crash the entire planning turn over one
+ * mistyped path — exactly what this check exists to report gracefully
+ * instead.
  */
 export function existsOnDisk(p: string): boolean {
   try {

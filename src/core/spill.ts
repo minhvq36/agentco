@@ -1,129 +1,142 @@
 /**
- * KẾT QUẢ QUÁ TO — ĐƯA VỀ VĂN PHÒNG THAY VÌ BẮT MODEL NUỐT.
+ * A RESULT TOO BIG — MOVED INTO THE OFFICE INSTEAD OF FORCING THE MODEL TO SWALLOW IT.
  * → docs/SPEC-arms.md §9e · `scripts/spike-spill.ts`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ⚠⚠ FILE NÀY KHÔNG CẮT GÌ CẢ, VÀ ĐÓ LÀ ĐIỂM CHÍNH CỦA NÓ.                 │
- * │                                                                          │
- * │ Ca 27/08: `notion-fetch` trả **64 146 ký tự**. Phản xạ đầu là dựng một    │
- * │ trần của ta (~16 KB) rồi tự bê ra file. Đo xong thì hoá ra **Claude Code  │
- * │ ĐÃ LÀM VIỆC ĐÓ RỒI**: nội dung không hề vào ngữ cảnh, CLI cất nó ra       │
- * │ `~/.claude/projects/<slug>/<session-uuid>/tool-results/*.txt` và trả về   │
- * │ một câu ngắn 1 608 ký tự.                                                │
- * │                                                                          │
- * │ ⇒ Dựng trần thứ hai là **hai bản của cùng một luật** — thứ dự án này đã   │
- * │ trả giá vài lần (`agentSlot` vs `arrange`; `pickMcp` vs `probeArm`).      │
- * │ Nên file này KHÔNG đo kích thước, KHÔNG cắt, KHÔNG quyết định bê hay      │
- * │ không. Nó chỉ sửa **BỐN CHỖ CLI ĐẶT FILE SAI VỚI TA**:                    │
- * │                                                                          │
- * │   ① ngoài văn phòng   ⇒ mọi lượt đọc bị dán nhãn "ngoài văn phòng", và   │
- * │                         model chuyển sang shell (10 lượt lạc, ca 27/08)  │
- * │   ② dưới session-uuid ⇒ đổi mỗi phiên, con trỏ hôm qua thành đường chết  │
- * │   ③ người dùng không thấy ⇒ 64 KB vào máy mà ngăn Kết quả trống trơn      │
- * │   ④ 🔴 câu mở đầu bằng "Error:" ⇒ một lượt THÀNH CÔNG bị mồi thành THẤT   │
- * │      BẠI, và model đọc câu đó trước khi quyết định làm gì tiếp            │
- * │                                                                          │
- * │ ④ rẻ nhất để vá và đắt nhất nếu bỏ qua: nó không phải lỗi kỹ thuật, nó là │
- * │ một từ sai trong một câu.                                                 │
+ * │ ⚠⚠ THIS FILE TRUNCATES NOTHING, AND THAT'S THE WHOLE POINT OF IT.         │
+ * │                                                                           │
+ * │ The 27/08 case: `notion-fetch` returned **64,146 characters**. The first  │
+ * │ instinct is to build our own ceiling (~16 KB) and move it to a file       │
+ * │ ourselves. After measuring, it turned out **Claude Code HAD ALREADY DONE  │
+ * │ THAT**: the content never entered context at all — the CLI had already    │
+ * │ moved it to `~/.claude/projects/<slug>/<session-uuid>/tool-results/*.txt` │
+ * │ and returned a short 1,608-character notice.                              │
+ * │                                                                           │
+ * │ ⇒ Building a second ceiling would be **two copies of the same rule** —    │
+ * │ something this project has already paid for a few times (`agentSlot` vs   │
+ * │ `arrange`; `pickMcp` vs `probeArm`). So this file does NOT measure size,  │
+ * │ does NOT truncate, does NOT decide whether to move a file or not. It only │
+ * │ fixes **FOUR PLACES WHERE THE CLI'S PLACEMENT DOESN'T WORK FOR US**:      │
+ * │                                                                           │
+ * │   ① outside the office  ⇒ every read gets labeled "outside the office",   │
+ * │                            and the model switches to shell (10 wasted     │
+ * │                            turns, the 27/08 case)                         │
+ * │   ② under session-uuid  ⇒ changes every session, yesterday's pointer      │
+ * │                            becomes a dead path                            │
+ * │   ③ invisible to the user ⇒ 64 KB lands on the machine while the Results  │
+ * │                              panel stays empty                            │
+ * │   ④ 🔴 the notice opens with "Error:" ⇒ a SUCCESSFUL turn gets primed as  │
+ * │      a FAILURE, and the model reads that word before deciding what to do  │
+ * │      next                                                                 │
+ * │                                                                           │
+ * │ ④ is the cheapest to fix and the most expensive to skip: it isn't a       │
+ * │ technical bug, it's one wrong word in one sentence.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ✅ ĐO 27/08 (`spike-spill.ts`), và cả ba đều là điều kiện để file này chạy:
- *   · `PostToolUse` **nổ cho tool MCP** — khác `canUseTool`, thứ bị `allowedTools` che
- *   · `tool_response` là **string**, không phải khối `content[]`
- *   · `updatedToolOutput` **thay được thật** — chứng minh bằng việc model mở
- *     đúng file của ta, một đường dẫn nó không có cách nào đoán ra
+ * ✅ MEASURED 27/08 (`spike-spill.ts`), and all three are preconditions for this file to work:
+ *   · `PostToolUse` **fires for MCP tools** — unlike `canUseTool`, which `allowedTools` shadows
+ *   · `tool_response` is a **string**, not a `content[]` block
+ *   · `updatedToolOutput` **genuinely replaces it** — proven by the model opening
+ *     exactly our file, a path it has no way to have guessed
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Câu CLI trả về khi nó đã tự cất kết quả ra file.
+ * The notice the CLI returns once it has already moved the result to a file.
  *
- * ⚠ KHỚP THEO CỤM `saved to <đường dẫn>.txt`, KHÔNG khớp theo chữ `Error:`.
- * Chữ đầu câu là thứ dễ đổi nhất giữa hai bản CLI, và khớp vào nó là dựng một
- * bản vá tự hỏng ở lần nâng cấp — im lặng, vì "không khớp" trông y hệt "không
- * có gì để làm".
+ * ⚠ MATCHED BY THE PHRASE `saved to <path>.txt`, NOT by the word `Error:`.
+ * The opening word of the sentence is the thing most likely to change between
+ * two CLI versions, and matching on it would build a patch that silently
+ * breaks itself at the next upgrade — silently, because "no match" looks
+ * identical to "nothing to do".
  */
 const NOTICE = /saved to\s+(.+?\.txt)/i;
 
 /**
- * Trần khi CHÉP VÀO VĂN PHÒNG. Khác hẳn trần vào ngữ cảnh (CLI giữ).
+ * The ceiling when COPYING INTO THE OFFICE. Entirely separate from the
+ * context ceiling (which the CLI already enforces).
  *
- * Đây là trần của **đĩa khách**, không phải của hoá đơn: một dịch vụ chạy loạn
- * trả về vài GB thì ta không được lấp ổ của họ. 50 MB là con số user nêu, và nó
- * rộng gấp ~800 lần ca thật lớn nhất đã gặp (64 KB) — đủ rộng để không bao giờ
- * cắt ngang một việc bình thường, đủ chặt để có đáy.
+ * This is the **customer's disk** ceiling, not a billing ceiling: a
+ * misbehaving service returning a few GB must not be allowed to fill their
+ * drive. 50 MB is the number the user set, and it's ~800× wider than the
+ * largest real case seen so far (64 KB) — wide enough to never cut off a
+ * normal task, tight enough to have a floor.
  */
 export const MAX_SPILL_BYTES = 50 * 1024 * 1024;
 
 export interface SpillPlan {
-  /** File CLI đã cất. */
+  /** The file the CLI already moved the result to. */
   from: string;
-  /** Nơi ta chép tới, trong `artifacts/` của văn phòng. */
+  /** Where we copy it to, inside the office's `artifacts/`. */
   to: string;
-  /** Đường dẫn tương đối để đưa cho model — nó làm việc theo `cwd` văn phòng. */
+  /** The relative path handed to the model — it works relative to the office's `cwd`. */
   rel: string;
   bytes: number;
 }
 
 /**
- * TÊN FILE — tất định, người đọc được, **không có băm**.
+ * THE FILE NAME — deterministic, human-readable, **no hash**.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 BẢN ĐẦU ĐẺ RA THẾ NÀY, và user bắt được ngay:                         │
+ * │ 🔴 THE FIRST VERSION PRODUCED THIS, and the user caught it immediately:  │
  * │                                                                          │
  * │   a46a7e26403__notion-fetch--mcp-a46a7e26403-notion-fetch-1787778426161  │
  * │                                                                          │
- * │ Ba lỗi trong một cái tên:                                                │
- * │  ① **BĂM LỌT LÊN MÀN HÌNH** — và `audit.ts` đã viết luật từ đầu: *"băm   │
- * │     không bao giờ lên màn hình, giao diện tra ra nhãn"*. Một cái tên file │
- * │     trong ngăn Kết quả **LÀ** màn hình. Băm là ĐỊA CHỈ, không phải TÊN — │
- * │     đúng câu *"tên là cái nhà, băm là địa chỉ nhà"*.                      │
- * │  ② lặp hai lần cùng một thứ, vì tên của CLI đã mang sẵn tên việc          │
- * │  ③ dấu thời gian dạng epoch — máy đọc được, người thì không                │
+ * │ Three mistakes in one name:                                              │
+ * │  ① **A HASH LEAKING ONTO THE SCREEN** — and `audit.ts` stated the rule   │
+ * │     from the start: *"a hash never reaches the screen, the interface     │
+ * │     looks up the label"*. A file name inside the Results panel **IS**    │
+ * │     the screen. A hash is an ADDRESS, not a NAME — exactly the rule      │
+ * │     *"the name is the house, the hash is the street address"*.           │
+ * │  ② the same thing repeated twice, since the CLI's own name already       │
+ * │     carries the tool name                                                │
+ * │  ③ an epoch-style timestamp — readable by a machine, not by a person     │
  * │                                                                          │
- * │ ⚠ Và câu hỏi *"hay nó là file temp nên kệ"* có đáp án là **KHÔNG**: nó    │
- * │ nằm trong `artifacts/`, tức thứ người dùng **nhìn thấy và tải về được**.  │
- * │ File tạm thì phải ở `.state/` — mà `.state/` lại nằm trong `guardedZone`, │
- * │ nên nhân viên không đọc được. ⇒ Không có đường "để tạm": nó là kết quả.   │
+ * │ ⚠ And the question *"is it just a temp file, so who cares"* has the      │
+ * │ answer **NO**: it lives inside `artifacts/`, which the user **sees and   │
+ * │ can download**. A temp file belongs in `.state/` — and `.state/` sits    │
+ * │ inside `guardedZone`, so a worker can't read it. ⇒ There is no "just a   │
+ * │ temp file" path here: it's a result.                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Chống trùng bằng ĐẾM, không bằng dấu thời gian: trong một thư mục task, các
- * lời gọi chạy tuần tự nên `-2`, `-3` là đủ, và nó đọc lên có nghĩa (*"lần gọi
- * thứ hai"*) thay vì một chuỗi 13 chữ số không nói gì.
+ * Deduplicated by COUNTING, not by timestamp: within one task's directory,
+ * calls run sequentially, so `-2`, `-3` is enough, and it reads as meaningful
+ * (*"the second call"*) instead of a 13-digit string that says nothing.
  */
 export function spillName(toolName: string, dir: string): string {
-  // `mcp__<băm>__<việc>` → `<việc>`. Cắt CẢ băm, không chỉ tiền tố `mcp__`.
+  // `mcp__<hash>__<name>` → `<name>`. Strip the ENTIRE hash, not just the `mcp__` prefix.
   const raw = toolName.replace(/^mcp__/, '');
   const cut = raw.indexOf('__');
-  const viec = (cut >= 0 ? raw.slice(cut + 2) : raw).replace(/[^a-zA-Z0-9_-]/g, '-') || 'ket-qua';
+  const taskName = (cut >= 0 ? raw.slice(cut + 2) : raw).replace(/[^a-zA-Z0-9_-]/g, '-') || 'result';
 
   for (let i = 1; i < 1000; i++) {
-    const ten = i === 1 ? `${viec}.txt` : `${viec}-${i}.txt`;
-    if (!fs.existsSync(path.join(dir, ten))) return ten;
+    const candidate = i === 1 ? `${taskName}.txt` : `${taskName}-${i}.txt`;
+    if (!fs.existsSync(path.join(dir, candidate))) return candidate;
   }
-  // 1000 lần gọi cùng một việc trong một task là chuyện không nên xảy ra; nếu
-  // xảy ra thì ghi đè cái cuối còn hơn ném giữa một ca đang chạy.
-  return `${viec}-999.txt`;
+  // Calling the same tool 1000 times in one task shouldn't happen; if it does,
+  // overwriting the last one is better than throwing mid-run.
+  return `${taskName}-999.txt`;
 }
 
 /**
- * Đọc câu của CLI ⇒ kế hoạch chép. `undefined` = không có gì để làm.
+ * Reads the CLI's notice ⇒ a copy plan. `undefined` = nothing to do.
  *
- * ⚠ KHÔNG ném khi file không tồn tại hay quá to. Đây chạy giữa một ca đang làm
- * việc: một lỗi ở đây phải làm hỏng **đúng phần trang trí**, không phải cả lượt.
- * Chỗ gọi nhận `undefined` và để nguyên câu của CLI — tệ hơn, không sai.
+ * ⚠ Does NOT throw when the file doesn't exist or is too big. This runs in the
+ * middle of an active task: a failure here must break **exactly the
+ * decoration**, not the whole turn. The caller receives `undefined` and
+ * leaves the CLI's own notice as-is — worse, not wrong.
  */
 /**
- * @param outDir Thư mục kết quả **CỦA TASK NÀY** (`artifacts/<plan>/<task>/`).
+ * @param outDir The results directory **FOR THIS TASK** (`artifacts/<plan>/<task>/`).
  *
- * ⚠ KHÔNG phải gốc `artifacts/`. Mọi file khác trong văn phòng đều nằm dưới
- * `artifacts/<plan_id>/<task_id>/`, và `ArtifactRecord` **suy `plan_id`/`task_id`
- * TỪ ĐƯỜNG DẪN**. Thả một file phẳng ở gốc là tạo một mục không thuộc kế hoạch
- * nào, không thuộc việc nào — ngăn Kết quả hiện nó mồ côi, và nó không được dọn
- * theo kế hoạch như mọi thứ khác.
- * @param rootDir Gốc `artifacts/` — chỉ để tính đường dẫn tương đối cho model.
+ * ⚠ NOT the `artifacts/` root. Every other file in the office lives under
+ * `artifacts/<plan_id>/<task_id>/`, and `ArtifactRecord` **derives
+ * `plan_id`/`task_id` FROM THE PATH**. Dropping a flat file at the root
+ * creates an entry that belongs to no plan and no task — the Results panel
+ * shows it orphaned, and it doesn't get cleaned up with the rest of its plan.
+ * @param rootDir The `artifacts/` root — used only to compute the relative path for the model.
  */
 export function planSpill(
   toolResponse: unknown,
@@ -137,27 +150,34 @@ export function planSpill(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴🔴 CHỐT NGUỒN — KHÔNG CÓ DÒNG NÀY THÌ ĐÂY LÀ MỘT LỖ RÚT FILE.          │
-   * │                                                                          │
-   * │ `toolResponse` là **chuỗi do bên thứ ba viết ra**: một MCP server trả về  │
-   * │ gì cũng được. Không chốt nguồn thì một server chỉ cần trả đúng câu        │
-   * │                                                                          │
-   * │     "…saved to D:\…\company\.state\secrets.json…"                        │
-   * │                                                                          │
-   * │ là ta **tự tay chép kho chìa vào `artifacts/`** — nơi mọi nhân viên đọc   │
-   * │ được và người dùng tải về được. Hàng rào `guardedZone` chặn agent ĐỌC     │
-   * │ `.state/`, và bản vá này sẽ khiêng nội dung đó ra ngoài giùm nó.          │
-   * │                                                                          │
-   * │ Cùng hình dạng lỗ đã ghi ở `catalog.ts §swallowsOffice`: *"cấm cửa tử tế, │
-   * │ để cửa sau mở"*. Và cùng lớp với ca `Musics` — **tin một chuỗi model/hãng │
-   * │ đưa vào rồi đem đi mở file**.                                            │
-   * │                                                                          │
-   * │ Chốt bằng CẤU TRÚC, ba điều kiện, không điều kiện nào dựa vào thiện chí:  │
-   * │   ① đường dẫn phải **tuyệt đối** — tương đối thì `statSync` giải theo cwd │
-   * │      của daemon, tức trỏ vào một chỗ hoàn toàn khác chỗ ta tưởng          │
-   * │   ② thư mục cha phải tên đúng **`tool-results`** — đó là quy ước của CLI, │
-   * │      và không thư mục dữ liệu nào của khách mang tên ấy                   │
-   * │   ③ phải là `.txt` — cùng quy ước                                        │
+   * │ 🔴🔴 VERIFY THE SOURCE — WITHOUT THIS LINE, THIS IS A FILE-EXFILTRATION   │
+   * │ HOLE.                                                                     │
+   * │                                                                           │
+   * │ `toolResponse` is **a string written by a third party**: an MCP server    │
+   * │ can return whatever it wants. Without verifying the source, a server      │
+   * │ only has to return exactly the sentence                                   │
+   * │                                                                           │
+   * │     "…saved to D:\…\company\.state\secrets.json…"                         │
+   * │                                                                           │
+   * │ and we would **copy the key store into `artifacts/` with our own hands**  │
+   * │ — a place every worker can read and the user can download. The            │
+   * │ `guardedZone` fence blocks an agent from READING `.state/`, and this      │
+   * │ patch would carry that content back out on its behalf.                    │
+   * │                                                                           │
+   * │ Same shape of hole recorded at `catalog.ts §swallowsOffice`: *"lock the   │
+   * │ front door properly, leave the back door open"*. And the same class as    │
+   * │ the `Musics` case — **trusting a string handed in by a model/vendor and   │
+   * │ then using it to open a file**.                                           │
+   * │                                                                           │
+   * │ Verified by STRUCTURE, three conditions, none of them relying on good     │
+   * │ faith:                                                                    │
+   * │   ① the path must be **absolute** — a relative one gets resolved by       │
+   * │      `statSync` against the daemon's cwd, i.e. it points somewhere        │
+   * │      completely different from what we'd expect                           │
+   * │   ② the parent directory must be named exactly **`tool-results`** — that's│
+   * │      the CLI's own convention, and no customer data directory carries     │
+   * │      that name                                                            │
+   * │   ③ must be `.txt` — same convention                                      │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   if (!path.isAbsolute(from)) return undefined;
@@ -180,10 +200,11 @@ export function planSpill(
   const name = spillName(toolName, outDir);
   const to = path.join(outDir, name);
   /**
-   * Đường tương đối tính từ THƯ MỤC VĂN PHÒNG, vì đó là `cwd` của nhân viên —
-   * `Read`/`Grep` của nó nhận đường dẫn theo gốc ấy. Đưa đường tuyệt đối cũng
-   * chạy, nhưng nó dài, lộ cây thư mục máy khách, và không giống một dòng nào
-   * khác model từng thấy trong văn phòng.
+   * The relative path is computed from the OFFICE DIRECTORY, since that's the
+   * worker's `cwd` — its `Read`/`Grep` accept paths relative to that root. An
+   * absolute path would also work, but it's long, exposes the customer's own
+   * directory tree, and doesn't resemble any other line the model has ever
+   * seen in this office.
    */
   const root = rootDir ?? outDir;
   const rel = `artifacts/${path.relative(root, to).replace(/\\/g, '/')}`;
@@ -192,28 +213,31 @@ export function planSpill(
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 BÊ VỀ ĐƯỢC ≠ ĐỌC ĐƯỢC. Ca thật 27/08, user bắt.                       │
+ * │ 🔴 BEING MOVED ≠ BEING READABLE. A real case, 27/08, caught by the user. │
  * │                                                                          │
- * │ File bê về: **73 530 byte trên ĐÚNG MỘT DÒNG.** `Read` cắt theo DÒNG, nên│
- * │ `offset`/`limit` không cắt được gì: mỗi lượt đọc trả về trọn 73 KB ⇒ lại │
- * │ vượt trần ⇒ CLI lại bê ra file ⇒ lại trả con trỏ ⇒ **lặp tới khi hết      │
- * │ lượt** (`error_max_turns`).                                              │
+ * │ The moved file: **73,530 bytes on EXACTLY ONE LINE.** `Read` slices by   │
+ * │ LINE, so `offset`/`limit` cut nothing at all: every read returns the     │
+ * │ full 73 KB ⇒ blows the ceiling again ⇒ the CLI moves it to a file again  │
+ * │ ⇒ hands back another pointer again ⇒ **repeats until turns run out**     │
+ * │ (`error_max_turns`).                                                     │
  * │                                                                          │
- * │ Và câu con trỏ của chính ta bảo nó *"dùng Read kèm offset/limit"* — một   │
- * │ lời dặn KHÔNG THỰC HIỆN ĐƯỢC với file một dòng. Ta tự đẻ ra một câu sai   │
- * │ cửa ở đúng chỗ model cần chỉ đường nhất. → §5m                           │
+ * │ And our own pointer notice told it *"use Read with offset/limit"* — an   │
+ * │ instruction that's IMPOSSIBLE TO FOLLOW on a one-line file. We produced  │
+ * │ our own wrong-door error message at exactly the point where the model    │
+ * │ needs the clearest direction. → §5m                                      │
  * │                                                                          │
- * │ ⇒ Bê về mà không xuống dòng thì mới làm được **một nửa việc**, và nửa còn │
- * │ lại là nửa người dùng nhìn thấy.                                         │
+ * │ ⇒ Moving the file without adding line breaks only does **half the job**, │
+ * │ and the other half is the half the user actually sees.                   │
  * │                                                                          │
- * │ ⚠ ĐÂY LÀ BẢN ĐỂ ĐỌC, KHÔNG PHẢI BẢN GỐC — nói ra chứ đừng giấu. Bản      │
- * │ nguyên văn vẫn nằm nguyên ở chỗ CLI cất (ta CHÉP, không DI CHUYỂN).       │
+ * │ ⚠ THIS IS A READING COPY, NOT THE ORIGINAL — state that rather than hide │
+ * │ it. The verbatim original still sits exactly where the CLI put it (we    │
+ * │ COPY, we do not MOVE it).                                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const LINE_MAX = 2_000;
 const WRAP_AT = 800;
 
-/** Dòng dài nhất — thước duy nhất quyết định file có đọc được từng phần không. */
+/** The longest line — the sole measure deciding whether the file can be read piece by piece. */
 function longestLine(s: string): number {
   let max = 0;
   let start = 0;
@@ -226,29 +250,30 @@ function longestLine(s: string): number {
 }
 
 /**
- * JSON → chữ đọc được. **Không có tên hãng nào trong hàm này.**
+ * JSON → readable text. **No vendor names anywhere in this function.**
  *
- * Vì sao không `JSON.stringify(v, null, 2)` cho xong: nó tách được cái *phong
- * bì* nhưng **không tách được nội dung** — một trường `text` dài 60 KB vẫn nằm
- * trên một dòng, vì `\n` bị escape lại thành `\\n`. Mà nội dung mới là thứ cần
- * đọc. `JSON.parse` đã biến `\n` thành xuống dòng thật; việc của ta là **giữ
- * nguyên** nó thay vì escape lần nữa.
+ * Why not just `JSON.stringify(v, null, 2)` and be done: it separates the
+ * *envelope* but **does not separate the content** — a 60 KB `text` field
+ * still sits on one line, because `\n` gets escaped back into `\\n`. And the
+ * content is exactly what needs to be readable. `JSON.parse` already turned
+ * `\n` into a real line break; our job is to **keep it that way** rather than
+ * escape it again.
  */
-function renderJson(v: unknown, duong: string[] = [], out: string[] = []): string[] {
+function renderJson(v: unknown, keyPath: string[] = [], out: string[] = []): string[] {
   if (typeof v === 'string') {
-    // Chuỗi dài = nội dung ⇒ in thô, giữ xuống dòng thật.
-    out.push(`── ${duong.join('.') || '(content)'} ──`, v, '');
+    // A long string = content ⇒ print it raw, keep real line breaks.
+    out.push(`── ${keyPath.join('.') || '(content)'} ──`, v, '');
   } else if (Array.isArray(v)) {
-    v.forEach((x, i) => renderJson(x, [...duong, String(i)], out));
+    v.forEach((x, i) => renderJson(x, [...keyPath, String(i)], out));
   } else if (v && typeof v === 'object') {
-    for (const [k, x] of Object.entries(v)) renderJson(x, [...duong, k], out);
+    for (const [k, x] of Object.entries(v)) renderJson(x, [...keyPath, k], out);
   } else {
-    out.push(`${duong.join('.')}: ${String(v)}`);
+    out.push(`${keyPath.join('.')}: ${String(v)}`);
   }
   return out;
 }
 
-/** Bẻ cứng những dòng còn quá dài. Lưới an toàn cuối, không phải đường chính. */
+/** Force-wraps lines that are still too long. A last-resort safety net, not the primary path. */
 function wrapLong(s: string): string {
   return s
     .split('\n')
@@ -257,10 +282,11 @@ function wrapLong(s: string): string {
 }
 
 /**
- * Làm cho nội dung ĐỌC ĐƯỢC TỪNG PHẦN. Trả `changed` để câu con trỏ nói thật.
+ * Makes content READABLE PIECE BY PIECE. Returns `changed` so the pointer
+ * notice tells the truth.
  *
- * Hai bước, và bước một đủ cho gần hết ca thật: JSON thì trải ra; không phải
- * JSON thì bẻ dòng. Cả hai đều tất định — **không có LLM ở đây**.
+ * Two steps, and the first covers nearly every real case: JSON gets expanded;
+ * non-JSON gets wrapped. Both are deterministic — **no LLM involved here**.
  */
 export function readable(raw: string): { text: string; changed: boolean } {
   if (longestLine(raw) <= LINE_MAX) return { text: raw, changed: false };
@@ -272,7 +298,7 @@ export function readable(raw: string): { text: string; changed: boolean } {
   }
 }
 
-/** KB đọc được cho người, không phải cho máy. */
+/** KB formatted for a person to read, not a machine. */
 function kb(bytes: number): string {
   return bytes >= 1024 * 1024
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -280,11 +306,12 @@ function kb(bytes: number): string {
 }
 
 /**
- * Câu thay thế. **Không có chữ "Error"**, và nói được việc kế tiếp.
+ * The replacement notice. **Contains no word "Error"**, and states the next step.
  *
- * ⚠ Điều kiện phải nằm trên chính dòng có ví dụ, không phải một câu dặn ở đầu
- * prompt — luật đã trả tiền 26/08 (`armReach` in nấc ngay trên dòng nhân viên).
- * Nên câu này tự mang đường dẫn VÀ tên hai tool đọc được nó.
+ * ⚠ The condition has to sit right on the line with the example, not as a
+ * rule stated once at the top of the prompt — a lesson already paid for on
+ * 26/08 (`armReach` printing the tier directly on the worker's own line). So
+ * this sentence carries both the path AND the names of the two tools that can read it.
  *
  * ⚠⚠ ENGLISH, AND NOT THROUGH `t()`. A worker model reads this, not a person —
  * so it is prompt text, and the interface switch never reaches a prompt.
@@ -301,23 +328,24 @@ export function spillNotice(p: SpillPlan): string {
 }
 
 /**
- * Chép thật. Trả `true` nếu xong.
+ * Actually copies the file. Returns `true` on success.
  *
- * ⚠ Chép chứ KHÔNG di chuyển: file gốc thuộc về CLI, và nó có thể còn tham
- * chiếu tới đó trong cùng phiên. Xoá thứ của người khác để dọn gọn là đổi một
- * chỗ rác lấy một lớp lỗi.
+ * ⚠ Copies, does NOT move: the original file belongs to the CLI, and it may
+ * still reference it within the same session. Deleting someone else's file
+ * just to tidy up would trade one piece of clutter for a whole class of bugs.
  */
 export function doSpill(p: SpillPlan): boolean {
   try {
     fs.mkdirSync(path.dirname(p.to), { recursive: true });
     /**
-     * ĐỌC → TÁCH DÒNG → GHI, chứ không `copyFileSync`.
+     * READ → SPLIT INTO LINES → WRITE, rather than `copyFileSync`.
      *
-     * Bản đầu chép nguyên xi, và với một file 73 KB **một dòng** thì nó bê về
-     * được một thứ **không đọc nổi từng phần** — mỗi lượt `Read` lại nổ trần,
-     * lại bê ra file, lặp tới `error_max_turns`. → §readable
+     * The first version copied it verbatim, and for a 73 KB file that's
+     * **one line**, that meant moving over something **unreadable piece by
+     * piece** — every `Read` blows the ceiling again, gets moved to a file
+     * again, repeating until `error_max_turns`. → §readable
      *
-     * ⚠ Bản gốc KHÔNG mất: ta chép từ chỗ CLI cất và không đụng vào nó.
+     * ⚠ The original is NOT lost: we copy from where the CLI put it and never touch it.
      */
     const { text } = readable(fs.readFileSync(p.from, 'utf8'));
     fs.writeFileSync(p.to, text, 'utf8');

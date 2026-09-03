@@ -1,26 +1,28 @@
 /**
- * KẾT QUẢ — file NHÂN VIÊN tạo ra. → docs/SPEC-artifacts.md
+ * RESULTS — files the WORKER creates. → docs/SPEC-artifacts.md
  *
- * Cột thứ ba, đứng cạnh hai cột đã có, và ba cột KHÁC NHAU ở chỗ AI GHI:
+ * The third column, standing next to the two that already exist, and all
+ * three columns differ in WHO WRITES:
  *
- *   kho tri thức   agent tự rút ra   · vào prefix, trả tiền mỗi lượt
- *   tủ tài liệu    người dùng đưa vào · không vào prefix, tìm bằng Grep
- *   KẾT QUẢ        nhân viên làm ra   · không vào prefix, người dùng lấy về
+ *   knowledge store  the agent extracts it   · enters the prefix, paid every turn
+ *   document cabinet the user drops it in    · never enters the prefix, found via Grep
+ *   RESULTS          the worker produces it  · never enters the prefix, the user picks it up
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐÂY KHÔNG PHẢI TỦ TÀI LIỆU THỨ HAI, VÀ RANH GIỚI ĐÓ LÀ CÓ CHỦ Ý.        │
+ * │ THIS IS NOT A SECOND DOCUMENT CABINET, AND THAT LINE IS DELIBERATE.       │
  * │                                                                          │
- * │ Không có đường nào từ giao diện đưa một kết quả trở lại làm đầu vào cho  │
- * │ nhân viên: không nút "gửi cái này cho nhân viên", không ô chọn artifact  │
- * │ làm input. Muốn dùng lại thì người dùng tự bàn giao — chép nội dung vào  │
- * │ ô chat, hoặc thả file vào tủ tài liệu.                                   │
+ * │ There is no path from the interface that feeds a result back in as a       │
+ * │ worker's input: no "send this to a worker" button, no field for picking an  │
+ * │ artifact as input. Reusing one means the user hands it over themselves —      │
+ * │ pasting the content into the chat box, or dropping the file into the           │
+ * │ document cabinet.                                                        │
  * │                                                                          │
- * │ Phân biệt với thứ VẪN ĐƯỢC PHÉP và không đổi: trong MỘT kế hoạch nhiều  │
- * │ bước, task sau đọc artifact của task trước qua `inputs`. Đó là dây nối   │
- * │ bên trong một việc, không phải một cái kho để lấy ra.                    │
+ * │ Distinct from what's STILL ALLOWED and unchanged: within ONE multi-step        │
+ * │ plan, a later task reads an earlier task's artifact through `inputs`. That's    │
+ * │ a wire internal to one job, not a store to pull from.                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Không có `add()`. Không có editor. Người dùng XEM · TẢI VỀ · XOÁ.
+ * No `add()`. No editor. The user VIEWS · DOWNLOADS · DELETES.
  */
 
 import fs from 'node:fs';
@@ -29,34 +31,40 @@ import path from 'node:path';
 import type { OfficePaths } from './paths.js';
 
 /**
- * VIỆC DỞ DANG HIỆN RA NHƯ MỘT ĐẦU VÀO BÌNH THƯỜNG. → SPEC-artifacts.md §2.6
+ * UNFINISHED WORK SHOWS UP AS A NORMAL INPUT. → SPEC-artifacts.md §2.6
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG LÀM "TỰ NHẬN RA ĐÂY LÀ VIỆC CŨ" (user chốt 20/08 tối).      │
+ * │ WHY THIS DOESN'T "AUTO-RECOGNIZE THIS AS OLD WORK" (the user's call, the      │
+ * │ evening of 20/08).                                                        │
  * │                                                                          │
- * │ Để tự khớp một yêu cầu mới với một ca hỏng cũ, hệ thống phải đoán ba lần │
- * │ chồng nhau: *có phải cùng việc không* · *file cũ còn đúng không* · *task  │
- * │ nào ứng với task nào* (kế hoạch mới chia việc khác đi thì `task_id` không │
- * │ mang nghĩa gì qua hai lần chạy). Hai trong ba không quan sát được.        │
+ * │ To automatically match a new request against an old failed run, the system    │
+ * │ would have to guess three stacked things at once: *is this the same task* ·     │
+ * │ *is the old file still correct* · *which task corresponds to which* (a new       │
+ * │ plan that splits work differently means `task_id` carries no meaning across       │
+ * │ two runs). Two of the three aren't observable at all.                          │
  * │                                                                          │
- * │ Và kiểu hỏng KHÔNG phải tốn tiền — mà là: nhân viên tách hợp đồng cũ ra   │
- * │ 12 điều khoản · người dùng thay `hd1.docx` bằng bản mới · hệ thống "thông │
- * │ minh" dùng lại 12 file cũ và trả về một checklist hoàn hảo, thuyết phục,  │
- * │ **nói về một hợp đồng đã không còn tồn tại.** Cùng gốc với luật *"kho tri │
- * │ thức không bao giờ chứa nội dung tài liệu"*: bản sao cũ THẮNG bản gốc.    │
+ * │ And the failure mode isn't about wasted money — it's this: a worker breaks       │
+ * │ an old contract into 12 clauses · the user replaces `contract1.docx` with a       │
+ * │ new version · a "smart" system reuses the 12 old files and returns a perfect,      │
+ * │ convincing checklist **about a contract that no longer exists.** Same root as       │
+ * │ the rule *"the knowledge store never holds document content"*: a stale copy         │
+ * │ WINS over the original.                                                    │
  * │                                                                          │
- * │ ⇒ Không đoán "cùng một việc". Chỉ NÓI RA thứ đang nằm trên đĩa, kèm nhãn  │
- * │   ôi/tươi, rồi để đường lập kế hoạch bình thường quyết định — nó vốn đã   │
- * │   làm đúng việc đó mỗi ngày, và nó có trong tay câu người dùng vừa gõ.    │
+ * │ ⇒ Don't guess "this is the same task". Just STATE what's sitting on disk,        │
+ * │   with a stale/fresh label, and let the normal planning path decide — it        │
+ * │   already does exactly that job every day, and it has the user's freshly-typed    │
+ * │   request in hand.                                                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * "Ôi" là thứ QUAN SÁT ĐƯỢC, không phải phỏng đoán: `plan.json` ghi rõ task nào
- * đọc file nào và ghi ra file nào, nên so `mtime` hai đầu là xong. Nguồn mới hơn
- * sản phẩm ⇒ sản phẩm đã ôi. 0 token, tất định.
+ * "Stale" is something OBSERVED, not guessed: `plan.json` records exactly which
+ * task reads which file and writes which file, so comparing `mtime` on both
+ * ends settles it. Source newer than the product ⇒ the product is stale.
+ * 0 tokens, deterministic.
  *
- * ⚠ So `>` chứ không `>=`: ghi xong trong cùng một giây là chuyện thường trên
- * đĩa, và đánh ôi nhầm thì mọi kết quả vừa sinh đều mang nhãn cảnh báo — người
- * dùng học cách bỏ qua nhãn đó, rồi bỏ qua luôn lần nó nói thật.
+ * ⚠ Compared with `>`, not `>=`: writing both within the same second is normal
+ * on disk, and marking things stale by mistake would tag every freshly
+ * produced result with a warning label — the user learns to ignore that
+ * label, and then ignores it the one time it's telling the truth.
  */
 export function isStale(artifactMtime: string, inputMtimes: readonly string[]): boolean {
   if (inputMtimes.length === 0) return false;
@@ -69,42 +77,43 @@ export function isStale(artifactMtime: string, inputMtimes: readonly string[]): 
 }
 
 export interface ArtifactRecord {
-  /** Đường dẫn tương đối với thư mục văn phòng: `artifacts/<plan_id>/<task_id>/x.md`. */
+  /** Path relative to the office directory: `artifacts/<plan_id>/<task_id>/x.md`. */
   path: string;
   name: string;
   ext: string;
   bytes: number;
   mtime: string;
-  /** Kế hoạch sinh ra nó. Rỗng với file cũ nằm thẳng dưới `artifacts/T-01/`. */
+  /** The plan that produced it. Empty for old files sitting directly under `artifacts/T-01/`. */
   plan_id: string;
   task_id: string;
-  /** Xem thẳng trong trình duyệt được không, và bằng cách nào. → `viewOf` */
+  /** Can it be viewed directly in the browser, and how. → `viewOf` */
   view: ArtifactView;
 }
 
 /**
- * Cách xem một kết quả. Quyết theo ĐUÔI FILE, không theo nội dung.
+ * How to view a result. Decided by FILE EXTENSION, not content.
  *
- * `office` là quyết định sản phẩm, không phải thiếu sót kỹ thuật: `extract.ts`
- * đã bóc được `.docx/.xlsx/.pptx` với 0 phụ thuộc, nên dựng preview cho chúng
- * là rẻ. Nhưng preview bóc-text của một file Word là một LỜI NÓI DỐI — mất
- * bảng, mất bố cục, mất ảnh. Ở tủ tài liệu, văn bản bóc ra là để `Grep` TÌM và
- * không ai nhìn nó; ở đây người dùng NHÌN để duyệt trước khi gửi cho khách.
- * Cùng một kỹ thuật, một chỗ đúng và một chỗ sai.
+ * `office` is a product decision, not a technical gap: `extract.ts` already
+ * extracts `.docx/.xlsx/.pptx` at 0 dependency cost, so building a preview for
+ * them is cheap. But an extracted-text preview of a Word file is a LIE — it
+ * loses tables, loses layout, loses images. In the document cabinet, extracted
+ * text exists for `Grep` to FIND and nobody ever looks at it directly; here
+ * the user LOOKS at it to review before sending it to a customer. Same
+ * technique, right in one place and wrong in the other.
  */
 export type ArtifactView =
-  /** Văn bản thuần — hiện thẳng. */
+  /** Plain text — shown as-is. */
   | 'text'
-  /** Markdown — hiện có định dạng. */
+  /** Markdown — shown formatted. */
   | 'markdown'
-  /** Bảng — hiện thành bảng. */
+  /** Table — shown as a table. */
   | 'csv'
-  /** Cấu trúc — hiện có thụt lề, tô cú pháp. */
+  /** Structured — shown indented, syntax-highlighted. */
   | 'code'
   | 'image'
   | 'pdf'
   | 'video'
-  /** Không xem được trong trình duyệt: tải về, mở bằng ứng dụng gốc. */
+  /** Not viewable in the browser: download it, open with the native app. */
   | 'download';
 
 const VIEW: Record<string, ArtifactView> = {
@@ -125,13 +134,14 @@ const VIEW: Record<string, ArtifactView> = {
   gif: 'image',
   webp: 'image',
   /**
-   * `.svg` CỐ Ý không phải `image`.
+   * `.svg` is DELIBERATELY NOT `image`.
    *
-   * SVG là XML và nó chạy được JavaScript. File này do MODEL sinh ra, còn
-   * daemon phục vụ nó ở cùng origin với giao diện điều khiển công ty — thứ
-   * không có xác thực nào ngoài "cùng máy". Hiện nó bằng `<img>` là mời nó
-   * chạy trong nhà. Server cũng ép `application/octet-stream` cho đuôi này,
-   * nên đặt `image` ở đây chỉ tạo ra một ô ảnh vỡ. → server.ts `RISKY`
+   * SVG is XML and it can run JavaScript. This file is generated by a MODEL,
+   * and the daemon serves it from the same origin as the company's control
+   * interface — which has no authentication beyond "same machine". Rendering
+   * it through `<img>` would invite it to run in the house. The server also
+   * forces `application/octet-stream` for this extension, so setting `image`
+   * here would only produce a broken image icon. → server.ts `RISKY`
    */
   svg: 'download',
   pdf: 'pdf',
@@ -143,7 +153,7 @@ export function viewOf(ext: string): ArtifactView {
   return VIEW[ext.toLowerCase()] ?? 'download';
 }
 
-/** Kiểu MIME để trình duyệt tự hiển thị đúng. */
+/** MIME type so the browser renders it correctly on its own. */
 const MIME: Record<string, string> = {
   md: 'text/markdown; charset=utf-8',
   markdown: 'text/markdown; charset=utf-8',
@@ -175,50 +185,55 @@ export function mimeOf(ext: string): string {
 }
 
 /**
- * Trần cho phần XEM TRƯỚC. Vượt trần thì vẫn tải về được, chỉ không hiện.
+ * Ceiling for the PREVIEW portion. Past this ceiling it's still downloadable, just not rendered.
  *
- * `readArtifact` cũ không có trần nào: một `.csv` 50MB do nhân viên sinh ra sẽ
- * được nạp trọn vào bộ nhớ daemon rồi đẩy trọn sang trình duyệt. Không ai gặp
- * hôm nay vì mọi kết quả đều là markdown vài trăm byte — đó chính là lúc rẻ
- * nhất để đặt cái trần.
+ * The old `readArtifact` had no ceiling at all: a 50MB `.csv` generated by a
+ * worker would be loaded entirely into the daemon's memory and pushed
+ * entirely to the browser. Nobody hits this today since every result is a
+ * markdown file a few hundred bytes — which is exactly the cheapest moment to put a ceiling in place.
  */
 export const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 
-/** Không duyệt sâu quá — thư mục kết quả phẳng, sâu hơn là dấu hiệu có gì đó lạ. */
+/** Don't traverse too deep — the results directory is flat, deeper than this is a sign something odd is going on. */
 const MAX_DEPTH = 4;
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HAI CÁI TRẦN KHÁC NHAU — TRƯỚC 02/09 CHÚNG LÀ MỘT, VÀ ĐÓ LÀ CẢ CÁI BUG.  │
+ * │ TWO DIFFERENT CEILINGS — BEFORE 02/09 THEY WERE ONE, AND THAT WAS THE ENTIRE BUG. │
  * │                                                                          │
- * │ Bản cũ: `walk()` dừng hẳn ở file thứ 500, rồi `list()` mới sắp theo       │
- * │ `mtime`. Sắp SAU khi đã cắt thì không cứu được gì — thứ rơi ra không      │
- * │ phải file cũ nhất mà là **file mà `readdir` chưa kịp đọc tới**.           │
+ * │ The old version: `walk()` stopped outright at the 500th file, and only      │
+ * │ THEN did `list()` sort by `mtime`. Sorting AFTER truncating saves nothing —   │
+ * │ what falls out isn't the oldest file, it's **whatever `readdir` hadn't gotten  │
+ * │ to yet**.                                                                 │
  * │                                                                          │
- * │ Và trên NTFS `readdir` trả theo thứ tự tên, mà tên thư mục ca là          │
- * │ `P-260820-0314-…` — tức là theo NGÀY, cũ trước. Nên vượt 500 file thì     │
- * │ thứ biến mất là **những kết quả mới nhất**, đúng thứ người dùng đang tìm. │
- * │ Không một câu báo nào. (ext4 băm tên nên mất một nhóm ngẫu nhiên — khác   │
- * │ kiểu, cùng mức tệ.)                                                       │
+ * │ And on NTFS, `readdir` returns entries in NAME order, and this project's       │
+ * │ directory names are `P-260820-0314-…` — meaning ordered by DATE, oldest         │
+ * │ first. So past 500 files, what disappears is **the newest results**, exactly    │
+ * │ what the user is looking for. No error message at all. (ext4 hashes names,     │
+ * │ so it loses a random cluster instead — different mechanism, equally bad.)       │
  * │                                                                          │
- * │ Tách làm hai: quét HẾT rồi mới cắt, và cắt ở đúng chỗ cần cắt.            │
+ * │ Split into two: scan EVERYTHING first, then truncate, and truncate at the       │
+ * │ spot that actually needs it.                                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 /**
- * Trần HIỂN THỊ — payload gửi cho giao diện, cắt **sau khi đã sắp theo `mtime`**.
+ * The DISPLAY ceiling — the payload sent to the interface, truncated
+ * **after already sorting by `mtime`**.
  *
- * Chỉ ngăn Kết quả dùng trần này. Bảng kê Trợ lý tự có trần riêng (5 ca / 600
- * token), còn `readablePaths` và `removeAll` thì **không được cắt** — xem `scan`.
+ * Only the Results panel uses this ceiling. The Assistant's own listing has
+ * its own separate ceiling (5 items / 600 tokens), while `readablePaths` and
+ * `removeAll` are **never truncated** — see `scan`.
  */
 export const MAX_PANEL_FILES = 500;
 
 /**
- * Trần QUÉT — việc duy nhất của nó là không để một thư mục bệnh hoạn treo daemon.
+ * The SCAN ceiling — its only job is keeping a pathological directory from hanging the daemon.
  *
- * Cao hơn hẳn trần hiển thị vì nó **không phải** thứ quyết định hiện gì: quét
- * 20 000 rồi cắt còn 500 mới-nhất là đúng; quét 500 rồi cắt là ca hỏng ở trên.
- * Chạm trần này thì `scan()` NÓI RA (`capped`), không im.
+ * Set far higher than the display ceiling because it is **not** what decides
+ * what's shown: scanning 20,000 and then keeping the 500 newest is correct;
+ * scanning only 500 and then truncating is the bug described above. Hitting
+ * this ceiling makes `scan()` SAY SO (`capped`), never silently.
  */
 const MAX_SCAN = 20_000;
 
@@ -230,43 +245,46 @@ export class ArtifactStore {
   }
 
   /**
-   * Quét thư mục thật mỗi lần đọc — không catalog, không watcher.
+   * Scans the real directory on every read — no catalog, no watcher.
    *
-   * Cùng lý do với tủ tài liệu (SPEC-library §9.1) và mạnh hơn ở đây: file này
-   * do NHÂN VIÊN ghi trong lúc chạy, nên bất kỳ bản catalog nào cũng lỗi thời
-   * ngay giữa một ca. `readdir` + `stat` vài mili giây thì luôn đúng.
+   * Same reasoning as the document cabinet (SPEC-library §9.1), and stronger
+   * here: this file is written by a WORKER while it runs, so any catalog
+   * would already be stale mid-task. A few milliseconds of `readdir` + `stat` is always correct.
    *
-   * Mới nhất lên đầu: người dùng mở panel này ngay sau khi một việc vừa xong,
-   * và thứ họ tìm gần như luôn là thứ vừa được tạo ra.
+   * Newest first: the user opens this panel right after a task just
+   * finished, and what they're looking for is almost always whatever was just created.
    *
-   * KHÔNG cắt ở đây. Ba chỗ gọi cần cả danh sách — `readablePaths` (một đường
-   * dẫn cũ người dùng dán vào vẫn phải tra được), `artifactManifest` (con số
-   * tổng phải đúng), `removeAll` (xoá là xoá hết). Chỗ duy nhất cần cắt là
-   * payload gửi giao diện, và nó cắt bằng `MAX_PANEL_FILES` sau khi đã sắp.
+   * NOT truncated here. Three call sites need the full list — `readablePaths`
+   * (an old path the user pasted in still has to resolve), `artifactManifest`
+   * (the total count has to be accurate), `removeAll` (deleting means deleting
+   * everything). The only place that needs truncation is the payload sent to
+   * the interface, and that's truncated with `MAX_PANEL_FILES` after sorting.
    */
   list(): ArtifactRecord[] {
     return this.scan().items;
   }
 
   /**
-   * Một lượt quét, kèm SỰ THẬT VỀ CHÍNH LƯỢT QUÉT ĐÓ.
+   * One scan, along with THE TRUTH ABOUT THAT SCAN ITSELF.
    *
-   * ⚠ Sắp bằng so sánh chuỗi trần, không `localeCompare`: `mtime` là ISO-8601
-   * UTC nên thứ tự byte CHÍNH LÀ thứ tự thời gian, và `localeCompare` (đối chiếu
-   * theo locale) đắt hơn hàng chục lần trên vài nghìn bản ghi. Chỉ giữ
-   * `localeCompare` cho nhánh hoà — nó hiếm, và nó cần ổn định giữa các lần chạy.
-   *
-   * Hoà `mtime` là ca THẬT: một ca ghi ba file trong cùng một mili giây. Không
-   * có nhánh phụ thì thứ tự phụ thuộc vào `readdir`, tức là đổi theo hệ điều
-   * hành — và một danh sách nhảy chỗ giữa hai lần mở là một danh sách người ta
-   * không tin được nữa.
+   * ⚠ Sorted with a raw string comparison, not `localeCompare`: `mtime` is
+   * ISO-8601 UTC, so byte order IS chronological order, and `localeCompare`
+   * (locale-aware comparison) is tens of times more expensive across a few
+   * thousand records. `localeCompare` is only kept for the tie-break branch —
+   * rare, and it needs to be stable across runs.
    */
   /**
-   * CHỈ đường dẫn — không `stat`, không sắp xếp. → `walk`
+   * A `mtime` tie is a REAL case: one run writing three files within the same
+   * millisecond. Without a fallback branch, order would depend on `readdir`,
+   * which varies by operating system — and a list that jumps around between
+   * two openings is a list nobody trusts anymore.
+   */
+  /**
+   * ONLY paths — no `stat`, no sorting. → `walk`
    *
-   * Cho hai chỗ không cần biết file to bao nhiêu hay sửa lúc nào:
-   * `Office.readablePaths()` (chạy ở **mỗi tin nhắn**) và `removeAll()`.
-   * Rẻ hơn `scan()` khoảng một bậc — xem số đo ở `walk`.
+   * For the two call sites that don't need to know file size or modification
+   * time: `Office.readablePaths()` (runs on **every message**) and `removeAll()`.
+   * Roughly an order of magnitude cheaper than `scan()` — see the measurement at `walk`.
    */
   filePaths(): { items: string[]; capped: boolean } {
     const rels: string[] = [];
@@ -283,28 +301,28 @@ export class ArtifactStore {
       if (r) out.push(r);
     }
     out.sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : a.path.localeCompare(b.path)));
-    // `>=` chứ không `>`: quét dừng ĐÚNG lúc chạm trần nên ta không biết còn
-    // file nào nữa không. Câu chữ phía trên vì thế phải nói "từ 20 000 trở lên".
+    // `>=`, not `>`: the scan stops EXACTLY when it hits the ceiling, so we
+    // don't know whether more files exist beyond it. The copy above therefore has to say "20,000 or more".
     //
-    // Đếm trên `rels` chứ không trên `out`: một file biến mất giữa `readdir` và
-    // `stat` làm `out` ngắn đi, mà đó không phải chuyện "chạm trần".
+    // Counted on `rels`, not on `out`: a file disappearing between `readdir`
+    // and `stat` makes `out` shorter, and that's not the same thing as "hit the ceiling".
     return { items: out, capped: rels.length >= MAX_SCAN };
   }
 
-  /** Đường dẫn tuyệt đối, hoặc `undefined` nếu không có / nằm ngoài thư mục kết quả. */
+  /** Absolute path, or `undefined` if it doesn't exist / sits outside the results directory. */
   resolve(rel: string): string | undefined {
     const norm = rel.replace(/\\/g, '/').replace(/^\.\//, '');
-    // Chỉ nhận đường dẫn NẰM TRONG artifacts/. `safeJoin` chặn đi ra ngoài văn
-    // phòng, nhưng bên trong văn phòng còn `roles/`, `office.yaml`, `charter.md`
-    // — không có lý do gì một panel tên "Kết quả" đọc được chúng.
+    // Only accept paths INSIDE artifacts/. `safeJoin` blocks escaping the
+    // office, but inside the office there's also `roles/`, `office.yaml`,
+    // `charter.md` — no reason a panel called "Results" should be able to read those.
     if (!norm.startsWith('artifacts/') || norm.includes('..')) return undefined;
-    // Thư mục ẩn: cùng lý do với `readArtifact` cũ — `.state/` nằm BÊN TRONG
-    // văn phòng và nó giữ session id.
+    // Hidden directories: same reasoning as the old `readArtifact` —
+    // `.state/` sits INSIDE the office and holds session ids.
     if (norm.split('/').some((seg) => seg.startsWith('.'))) return undefined;
 
     const abs = path.join(this.paths.root, norm);
-    // Chốt cuối bằng đường dẫn ĐÃ GIẢI: symlink có thể trỏ ra ngoài, và kiểm
-    // chuỗi ở trên không nhìn thấy điều đó.
+    // Final check on the RESOLVED path: a symlink could point outside, and
+    // the string checks above can't see that.
     const root = path.resolve(this.paths.artifacts);
     const real = path.resolve(abs);
     if (real !== root && !real.startsWith(root + path.sep)) return undefined;
@@ -313,15 +331,17 @@ export class ArtifactStore {
   }
 
   /**
-   * Xoá hẳn một kết quả. MỘT mức, không có "lưu trữ".
+   * Permanently deletes one result. ONE tier, no "archive" step.
    *
-   * Cùng lý do với tủ tài liệu (SPEC-library §6): mức lưu trữ đẻ ra một cái kho
-   * thứ hai cũng cần dọn. Khác một điểm quan trọng và giao diện phải nói ra:
-   * tài liệu thì bản gốc còn trên máy người dùng, còn kết quả thì **đây là bản
-   * duy nhất** — xoá là mất thứ đã trả tiền để làm ra.
+   * Same reasoning as the document cabinet (SPEC-library §6): an archive tier
+   * would create a second store that also needs cleaning up. Differs in one
+   * important way the interface has to state: for a document, the original
+   * still sits on the user's own machine, while for a result, **this is the
+   * only copy** — deleting it loses something that was already paid for to produce.
    *
-   * Dọn luôn thư mục rỗng còn lại: `artifacts/<plan_id>/T-01/` trống trơn nằm
-   * lại chỉ để người dùng mở file explorer ra và tự hỏi nó là gì.
+   * Also cleans up any resulting empty directory: an empty
+   * `artifacts/<plan_id>/T-01/` left behind only exists for the user to open
+   * a file explorer and wonder what it is.
    */
   remove(rel: string): boolean {
     const abs = this.resolve(rel);
@@ -343,75 +363,81 @@ export class ArtifactStore {
   }
 
   /**
-   * DỌN SẠCH ngăn Kết quả. Trả về SỐ FILE đã xoá.
+   * WIPES the entire Results panel. Returns the NUMBER of files deleted.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ Vì sao có nút này, và vì sao CHỈ ở đây (user chốt 25/08):                │
-   * │   *"chỉ áp dụng cho artifacts kết quả, không áp dụng cho tài liệu hay     │
-   * │    kho tri thức"*                                                        │
+   * │ Why this button exists, and why ONLY here (the user's call, 25/08):        │
+   * │   *"applies only to result artifacts, not to documents or the knowledge         │
+   * │    store"*                                                                │
    * │                                                                          │
-   * │ Ranh giới là **DỰNG LẠI ĐƯỢC HAY KHÔNG**, đúng thước đã dùng cho nút xoá │
-   * │ lẻ ngay trên:                                                            │
-   * │   · kết quả    → chạy lại là ra. Mất TIỀN, không mất thứ không thay được.│
-   * │   · tài liệu   → bản gốc trên máy người dùng, nhưng xoá hàng loạt kéo    │
-   * │                  theo kinh nghiệm sống nhờ nó (`depends_on`) — một cú     │
-   * │                  bấm phá hai kho.                                        │
-   * │   · tri thức   → **không dựng lại được bằng tiền**. Không có nút nào.    │
+   * │ The line is **CAN IT BE REBUILT OR NOT**, the exact measure already used       │
+   * │ for the single-file delete button right above:                                 │
+   * │   · results        → rerunning produces them again. Costs MONEY, doesn't          │
+   * │                       lose anything irreplaceable.                                │
+   * │   · documents       → the original sits on the user's own machine, but a           │
+   * │                       bulk delete drags along lessons that depend on it            │
+   * │                       (`depends_on`) — one click breaking two stores.              │
+   * │   · knowledge        → **cannot be rebuilt with money**. No button exists           │
+   * │                        for it at all.                                             │
    * │                                                                          │
-   * │ Và kết quả mới là chỗ file dồn thành hàng chục sau vài ngày, tức chỗ duy │
-   * │ nhất mà xoá-từng-cái là một việc vặt thật sự.                            │
+   * │ And results are exactly where files pile up into the dozens after a few         │
+   * │ days — the only place where deleting one-by-one is a genuine chore.             │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Xoá qua `remove()` từng file chứ không `rm -rf` cả thư mục: `resolve()` là
-   * chỗ duy nhất biết luật "chỉ trong `artifacts/`, không thư mục ẩn, không đi
-   * theo symlink ra ngoài". Một đường tắt ở đây là bản thứ hai của luật đó, và
-   * bản thứ hai luôn là bản quên mất một điều kiện.
+   * ⚠ Deletes through `remove()` file by file rather than `rm -rf`-ing the
+   * whole directory: `resolve()` is the only place that knows the rule "only
+   * inside `artifacts/`, no hidden directories, never follow a symlink out".
+   * A shortcut here would be a second copy of that rule, and a second copy
+   * always forgets a condition.
    */
   /**
-   * ⚠ QUÉT LẠI CHO TỚI KHI SẠCH — không phải một lượt.
+   * ⚠ RE-SCANS UNTIL CLEAN — not a single pass.
    *
-   * Bản cũ chạy đúng một lượt `list()`, mà `list()` hồi đó cắt ở 500. Một ngăn
-   * Kết quả 700 file thì *"dọn sạch"* xoá 500, trả về `500`, và giao diện báo
-   * thành công trong khi 200 file vẫn nằm đó. Cùng lớp lỗi với cuốn sổ chi phí
-   * hôm qua: **xoá là phải xoá hết, hoặc nói ra là chưa hết.**
+   * The old version ran exactly one pass of `list()`, and back then `list()`
+   * truncated at 500. A Results panel with 700 files meant *"wipe"* deleted
+   * 500, returned `500`, and the interface reported success while 200 files
+   * still sat there. Same class of bug as yesterday's expense ledger: **a
+   * delete must delete everything, or state that it didn't.**
    *
-   * Trần vòng lặp để một file không xoá nổi (đang bị khoá, quyền sai) không
-   * biến hàm này thành vòng lặp vô tận — hết vòng mà vẫn còn thì trả về số đã
-   * xoá được, và lượt quét sau vẫn thấy phần còn lại.
+   * The loop ceiling exists so a file that can't be deleted (locked, wrong
+   * permissions) doesn't turn this into an infinite loop — if it's still
+   * stuck after the ceiling, it returns how many it managed to delete, and
+   * the next scan will still see what's left.
    */
   removeAll(): number {
     let n = 0;
     for (let round = 0; round < 10; round++) {
-      // `filePaths()` chứ không `scan()`: xoá thì không cần biết file to bao nhiêu.
+      // `filePaths()`, not `scan()`: deleting doesn't need to know file size.
       const items = this.filePaths().items;
       if (items.length === 0) break;
       let removed = 0;
       for (const p of items) if (this.remove(p)) removed++;
       n += removed;
-      if (removed === 0) break; // không xoá nổi cái nào nữa — dừng, đừng quay vòng
+      if (removed === 0) break; // nothing left could be deleted — stop, don't spin
     }
     return n;
   }
 }
 
 /**
- * MỘT bộ duyệt duy nhất, và nó KHÔNG `stat`. → `ArtifactStore.paths` · `§scan`
+ * A SINGLE traversal function, and it does NOT `stat`. → `ArtifactStore.paths` · `§scan`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `stat` LÀ TOÀN BỘ CHI PHÍ, VÀ PHẦN LỚN CHỖ GỌI KHÔNG CẦN NÓ.             │
+ * │ `stat` IS THE ENTIRE COST, AND MOST CALL SITES DON'T NEED IT.               │
  * │                                                                          │
- * │ Đo trên máy user (Windows, 02/09) — `readdir` + `stat` từng file:        │
- * │     500 file →  51 ms  ·  2 000 → 230 ms  ·  5 000 → 493 ms              │
- * │ tức ~0,1 ms mỗi file, gần như toàn bộ nằm ở `statSync`.                   │
+ * │ Measured on the user's machine (Windows, 02/09) — `readdir` + `stat` per       │
+ * │ file:                                                                     │
+ * │     500 files →  51 ms  ·  2,000 → 230 ms  ·  5,000 → 493 ms                  │
+ * │ i.e. ~0.1 ms per file, nearly all of it inside `statSync`.                      │
  * │                                                                          │
- * │ Nhưng `readablePaths()` — chạy ở MỖI tin nhắn người dùng gõ — chỉ cần     │
- * │ chuỗi đường dẫn. `removeAll()` cũng vậy. Bắt hai chỗ đó trả tiền `stat`   │
- * │ cho `bytes`/`mtime` mà chúng vứt đi ngay là mua một cái nút cổ chai ở     │
- * │ đúng đường đi nóng nhất.                                                 │
+ * │ But `readablePaths()` — which runs on EVERY message the user types — only        │
+ * │ needs path strings. So does `removeAll()`. Forcing those two call sites to        │
+ * │ pay for `stat`'s `bytes`/`mtime`, which they immediately discard, would buy a       │
+ * │ bottleneck right on the single hottest path.                                   │
  * │                                                                          │
- * │ Nên: duyệt (rẻ) tách khỏi `stat` (đắt). Một bộ luật đi đường — độ sâu,    │
- * │ bỏ thư mục ẩn, trần quét — nằm đúng một chỗ, không có bản thứ hai để      │
- * │ quên mất một điều kiện.                                                  │
+ * │ So: traversal (cheap) is split from `stat` (expensive). One set of rules for        │
+ * │ the walk — depth, skipping hidden directories, the scan ceiling — lives in           │
+ * │ exactly one place, with no second copy to forget a condition in.                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function walk(root: string, rel: string, depth: number, out: string[]): void {
@@ -421,7 +447,7 @@ function walk(root: string, rel: string, depth: number, out: string[]): void {
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return; // chưa có thư mục artifacts/ — văn phòng chưa chạy việc nào
+    return; // no artifacts/ directory yet — the office hasn't run any task
   }
 
   for (const entry of entries) {
@@ -436,13 +462,13 @@ function walk(root: string, rel: string, depth: number, out: string[]): void {
   }
 }
 
-/** `stat` đúng một file, gắn vào phần suy được từ chính đường dẫn. */
+/** `stat`s exactly one file, attaching it to what can be inferred from the path itself. */
 function record(root: string, childRel: string): ArtifactRecord | undefined {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(path.join(root, childRel));
   } catch {
-    return undefined; // biến mất giữa readdir và stat
+    return undefined; // disappeared between readdir and stat
   }
   const parts = childRel.split('/');
   const name = parts[parts.length - 1] ?? childRel;
@@ -453,8 +479,8 @@ function record(root: string, childRel: string): ArtifactRecord | undefined {
     ext,
     bytes: stat.size,
     mtime: stat.mtime.toISOString(),
-    // `artifacts/<plan_id>/<task_id>/x.md` từ 19/08. File cũ nằm ở
-    // `artifacts/<task_id>/x.md` — vẫn liệt kê được, chỉ không biết kế hoạch nào.
+    // `artifacts/<plan_id>/<task_id>/x.md` since 19/08. Old files sit at
+    // `artifacts/<task_id>/x.md` — still listable, just with no known plan.
     plan_id: parts.length >= 3 ? (parts[0] ?? '') : '',
     task_id: parts.length >= 3 ? (parts[1] ?? '') : (parts[0] ?? ''),
     view: viewOf(ext),

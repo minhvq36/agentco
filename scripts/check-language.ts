@@ -56,7 +56,6 @@ const ALWAYS_ALLOWED = ['src/i18n/vi.ts'];
  * why the list is spelled out by phase rather than as one clever glob.
  */
 const PENDING: { prefix: string; phase: string }[] = [
-  { prefix: 'web/src/', phase: 'P1 + P3' },
   { prefix: 'src/', phase: 'P2 + P3' },
   { prefix: 'test/', phase: 'P4' },
   { prefix: 'scripts/', phase: 'P4' },

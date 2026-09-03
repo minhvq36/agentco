@@ -408,8 +408,8 @@ export function getState(): AppState {
  * A role's display name, so a human can read the log.
  *
  * The user names employees freely; `role.id` is the slugified form used for the
- * filename, so a display name and its id genuinely differ — "Người viết" becomes
- * "nguoi-viet". // i18n-allow-vietnamese: the pair IS the example
+ * filename, so a display name and its id genuinely differ — "Người viết" becomes // i18n-allow-vietnamese: the pair IS the example
+ * "nguoi-viet".
  * The log shows the name the user chose.
  *
  * COLOUR is still hashed from `id`, not from the name: renaming must not change

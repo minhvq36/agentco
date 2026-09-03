@@ -192,7 +192,7 @@ test('sniffType: file nhị phân đội lốt .txt bị chặn bằng byte NUL'
 // ────────────────────────────────────────────────────────────── pageOfLine
 
 test('pageOfLine: nối "Grep ra dòng" với "Read đúng trang"', () => {
-  const text = ['--- trang 1 ---', 'mở đầu', '--- trang 2 ---', 'điều 7 nói rằng', 'tiếp'].join('\n');
+  const text = ['--- page 1 ---', 'mở đầu', '--- page 2 ---', 'điều 7 nói rằng', 'tiếp'].join('\n');
   assert.equal(pageOfLine(text, 2), 1);
   assert.equal(pageOfLine(text, 4), 2);
   assert.equal(pageOfLine(text, 5), 2);

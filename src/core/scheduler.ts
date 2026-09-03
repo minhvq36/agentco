@@ -1,5 +1,5 @@
 ﻿/**
- * Scheduler: chạy DAG task song song.
+ * Scheduler: runs a task DAG in parallel.
  *
  * → docs/SPEC-2026-08-14-agentco.md §7, §9b
  */
@@ -32,7 +32,7 @@ import {
   type Usage,
 } from './types.js';
 
-/** Task không tiêu token nào. Một chỗ định nghĩa, ba receipt dùng chung. */
+/** A task that spends no tokens. Defined in one place, reused by three receipts. */
 const ZERO_USAGE: Usage = {
   input: 0,
   output: 0,
@@ -47,79 +47,85 @@ export interface SchedulerDeps {
   office: LoadedOffice;
   knowledge: KnowledgeStore;
   emit(event: AgentEventBody): void;
-  /** Kiểm tra giữa các task — người dùng bấm Dừng thì thoát sạch. */
+  /** Checked between tasks — the user clicking Stop exits cleanly. */
   shouldStop?(): boolean;
   /**
-   * Nhật ký kiểm toán cánh tay. Vắng ⇒ không ghi (ca test, ca chạy lẻ).
+   * Arm audit log. Absent ⇒ don't write (test runs, one-off runs).
    *
-   * ⚠ Tuỳ chọn có chủ ý: mất nhật ký **không được** làm hỏng một ca đang chạy.
-   * Cùng luật với `appendChat` — xem `core/audit.ts §append`.
+   * ⚠ Deliberately optional: losing the log **must not** break a run in
+   * progress. Same rule as `appendChat` — see `core/audit.ts §append`.
    */
   audit?: { append(call: Record<string, unknown> & { server: string; tool: string; role: string; args: unknown }): void };
 }
 
 export interface RunResult {
   receipts: Map<string, Receipt>;
-  /** Task chưa chạy vì hết hạn mức / bị dừng. Giữ lại để `agentco resume`. */
+  /** Tasks that never ran because of the budget cap / being stopped. Kept for `agentco resume`. */
   pending: TaskBrief[];
   stoppedBy?: 'usage_limit' | 'user' | 'auth';
   /**
-   * Token của những lượt ĐÃ TIÊU nhưng không có receipt nào mang — lượt hỏng vì
-   * 429 rồi được chạy lại từ đầu. Không có trường này thì mỗi lần gặp rate limit
-   * là một khoản chi vô hình, và đúng ca hay gặp 429 mới là ca người dùng cần
-   * nhìn thấy con số. → `RunError.usage`
+   * Tokens from turns that WERE SPENT but no receipt carries — a turn that
+   * failed with a 429 and got retried from scratch. Without this field, every
+   * rate limit hit is an invisible cost, and the exact case that hits 429
+   * often is the one where the user most needs to see the number.
+   * → `RunError.usage`
    */
   wasted: Usage;
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Trần số lần chạy tiếp. **1** (user chốt 27/08) — và con số này HIỆN RA.  │
+ * │ Cap on the number of continuations. **1** (user settled 08/27) — and       │
+ * │ this number IS SURFACED.                                                │
  * │                                                                          │
- * │ Vì sao có trần dù đã đòi "phải có tiến triển": tiến triển có thể **thật   │
- * │ mà rất chậm** (mỗi lượt ghi thêm một dòng), và **tất định KHÔNG có nghĩa │
- * │ là rẻ** — mỗi lần chạy tiếp là một lượt worker ĐẦY ĐỦ, chạy tới tận trần │
- * │ lượt của nó. Trần 3 nghĩa là một việc có thể tốn tới **4×** ngân sách.    │
+ * │ Why a cap exists even though "must show progress" is already required:     │
+ * │ progress can be **real but very slow** (one line added per turn), and       │
+ * │ **deterministic does NOT mean cheap** — every continuation is a FULL         │
+ * │ worker turn, running all the way to its own turn cap. A cap of 3 means         │
+ * │ one task can cost up to **4×** its budget.                                 │
  * │                                                                          │
- * │ ⚠ VÌ SAO 1 CHỨ KHÔNG PHẢI 3: chưa ai đo một ca dài thật cần mấy vòng.    │
- * │ Chọn 3 là đoán một con số — đúng hình dạng cái trần 2 000 token đã "chặn  │
- * │ ngay cánh tay đầu tiên" (§9b). Khi chưa biết thì **hướng an toàn là       │
- * │ THẤP**, vì hai chiều hỏng không cân nhau:                                │
+ * │ ⚠ WHY 1 AND NOT 3: nobody has measured how many rounds a genuinely long     │
+ * │ case needs. Picking 3 would be guessing a number — exactly the shape of      │
+ * │ the 2,000-token cap that "blocked the very first arm" (§9b). When you        │
+ * │ don't know, **the safe direction is LOW**, because the two failure modes      │
+ * │ aren't symmetric:                                                        │
  * │                                                                          │
- * │   thấp quá → việc hỏng sau 2 lượt, **có câu báo, người dùng thấy ngay**,  │
- * │              và họ nới `max_turns` hoặc chia nhỏ yêu cầu — đường đi tiếp  │
- * │              rõ ràng                                                     │
- * │   cao quá  → đốt tiền **âm thầm** cho một việc sẽ không bao giờ xong      │
+ * │   too low  → the task fails after 2 turns, **with a message, the user       │
+ * │              sees it right away**, and they raise `max_turns` or break        │
+ * │              the request into smaller pieces — a clear path forward          │
+ * │   too high → burns money **silently** on a task that will never finish       │
  * │                                                                          │
- * │ ⇒ Nâng lên khi có **một ca dài thật đo được**, không nâng theo cảm giác. │
- * │ → [[agentco-safe-default-direction]]                                     │
+ * │ ⇒ Raise it once there's **one genuinely long, measured case**, not on a       │
+ * │ hunch. → [[agentco-safe-default-direction]]                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const MAX_CONTINUE = 1;
 
 /**
- * Việc chạy tiếp = **CÙNG một việc**, thêm đúng một câu dặn.
+ * A continuation = **THE SAME task**, plus exactly one added instruction.
  *
- * ⚠ KHÔNG nhét số thứ tự hay "bắt đầu từ phần 4" vào đây. Ta không biết nó đã
- * làm tới đâu — và đoán hộ là dựng lại đúng cái lỗi vừa đi sửa (Trợ lý chia
- * *"vị trí 1–3, 4–6"* cho một danh sách nó chưa từng đọc). Chỗ tiếp phải suy từ
- * **thứ đã có trên đĩa**, và thứ duy nhất biết điều đó là chính worker khi nó
- * mở thư mục kết quả của mình.
+ * ⚠ Do NOT stuff a part number or "start from part 4" in here. We don't know
+ * how far it got — and guessing rebuilds the exact bug just fixed (the
+ * Assistant splitting *"items 1–3, 4–6"* for a list it never actually read).
+ * Where to pick up has to be inferred from **what's already on disk**, and
+ * the only thing that knows that is the worker itself, when it opens its own
+ * output folder.
  */
 /**
- * CÓ CHẠY TIẾP KHÔNG — hàm thuần, và nó là hàm thuần **có chủ đích**.
+ * WHETHER TO CONTINUE — a pure function, and pure **on purpose**.
  *
- * Quyết định này nằm trong một `.catch` giữa `run()` thì không test được nếu
- * không dựng cả một văn phòng thật. Mà đây đúng là chỗ **phải** có test: hai
- * hàng rào của nó chặn hai kiểu đốt tiền khác nhau, và cả hai đều im lặng khi
- * hỏng.
+ * This decision sitting inside a `.catch` in the middle of `run()` would be
+ * untestable without standing up a real office. And this is exactly the spot
+ * that **must** have a test: its two guards block two different kinds of
+ * money-burning, and both fail silently when broken.
  */
 export function shouldContinue(p: { kind: FailureKind; tried: number; landed: number }): boolean {
   if (p.kind !== 'max_turns') return false;
-  // ① Không có gì mới sinh ra ⇒ chạy tiếp là lặp trên một việc không nhúc nhích.
+  // ① Nothing new was produced ⇒ continuing would just loop on a task that
+  //    isn't moving.
   if (p.landed <= 0) return false;
-  // ② Tiến triển có thể THẬT mà rất chậm. Không trần thì một việc chia sai vẫn
-  //    bò tới vô tận, và người trả tiền là khách.
+  // ② Progress can be REAL but very slow. Without a cap, a poorly-scoped task
+  //    would crawl on forever, and the customer is the one paying for it.
   return p.tried < MAX_CONTINUE;
 }
 
@@ -135,11 +141,12 @@ const CONTINUE_NOTE =
 
 export function continueBrief(brief: TaskBrief): TaskBrief {
   /**
-   * ⚠ CỘNG THÊM MỘT LẦN, KHÔNG PHẢI MỖI VÒNG MỘT LẦN. (test bắt được)
+   * ⚠ ADD ONCE, NOT ONCE PER ROUND. (caught by a test)
    *
-   * Vòng thứ hai nối thêm một dòng y hệt là hai chuyện hỏng cùng lúc: bơm
-   * prefix của worker lên vô ích, và **ba dòng giống nhau dạy model rằng dòng
-   * đó không quan trọng** — đúng cơ chế làm một câu dặn mất tác dụng.
+   * A second round appending an identical line breaks two things at once:
+   * inflates the worker's prefix for nothing, and **three identical lines
+   * teach the model that line doesn't matter** — exactly the mechanism that
+   * makes an instruction stop working.
    */
   if (brief.constraints.includes(CONTINUE_NOTE)) return brief;
   return { ...brief, constraints: [...brief.constraints, CONTINUE_NOTE] };
@@ -147,19 +154,20 @@ export function continueBrief(brief: TaskBrief): TaskBrief {
 
 export class Scheduler {
   private readonly gate: CachePrimingGate;
-  /** Đã chạy tiếp mấy lần, theo `task_id`. → `MAX_CONTINUE` */
+  /** How many times each has been continued, by `task_id`. → `MAX_CONTINUE` */
   private readonly continued = new Map<string, number>();
-  /** AIMD: gặp 429 thì giảm nửa, chạy trơn 10 task thì tăng 1. */
+  /** AIMD: halve on a 429, add 1 after 10 tasks run smoothly. */
   private concurrency: number;
   private readonly maxConcurrency: number;
   private smoothRun = 0;
-  /** Mã kế hoạch của ca đang chạy — chỉ dùng để gắn vào nhật ký kiểm toán. */
+  /** The plan code for the currently running session — used only to tag the audit log. */
   private planId: string | undefined;
   private readonly runningByTier = new Map<Tier, number>();
   /**
-   * Tay cầm của những worker ĐANG chạy. Không có nó thì `stop()` chỉ là một cờ
-   * kiểm tra GIỮA các task — người dùng bấm Dừng vẫn phải ngồi chờ task hiện
-   * tại chạy hết, có khi cả phút và cả nghìn token.
+   * Handles of the workers CURRENTLY running. Without this, `stop()` would
+   * only be a flag checked BETWEEN tasks — a user clicking Stop would still
+   * have to sit and wait for the current task to run to completion, sometimes
+   * a whole minute and thousands of tokens.
    * → docs/SPEC-tools-approval.md §3b
    */
   private readonly live = new Set<WorkerHandle>();
@@ -172,26 +180,30 @@ export class Scheduler {
   }
 
   /**
-   * NỐI DÂY CÒN THIẾU — sửa, không báo lỗi. Chạy TRƯỚC `validate`.
+   * LINK MISSING WIRES — fix it, don't report an error. Runs BEFORE `validate`.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ TASK ĐỌC KẾT QUẢ CỦA TASK KHÁC MÀ KHÔNG KHAI `deps` = RACE, VÀ NÓ IM.   │
+   * │ A TASK READING ANOTHER TASK'S OUTPUT WITHOUT DECLARING `deps` = A RACE,    │
+   * │ AND IT'S SILENT.                                                        │
    * │                                                                          │
-   * │ `deps` rỗng nghĩa là "chạy song song được" — nên T-02 được phóng cùng    │
-   * │ lúc T-01, rồi đọc một file T-01 chưa kịp ghi. Nhân viên không báo lỗi:   │
-   * │ nó thấy file trống/không có, tự xoay sở, và trả về một kết quả trông     │
-   * │ vẫn hợp lý. Đây đúng loại "conflict" tốn tiền mà không ai nhìn thấy.     │
+   * │ An empty `deps` means "can run in parallel" — so T-02 gets launched at      │
+   * │ the same time as T-01, then reads a file T-01 hasn't finished writing        │
+   * │ yet. The worker doesn't report an error: it sees an empty/missing file,        │
+   * │ improvises, and returns a result that still looks reasonable. Exactly       │
+   * │ the kind of costly "conflict" nobody sees.                                 │
    * │                                                                          │
-   * │ Quan hệ này SUY RA ĐƯỢC: cùng một đường dẫn, một bên khai `outputs`, một │
-   * │ bên khai `inputs`. Ta đang cầm cả hai. Bắt model khai lại cho đúng là     │
-   * │ trả tiền để đổi lấy bất định — sửa thẳng thì tất định và 0 token.        │
+   * │ This relationship is INFERABLE: the same path, one side declares            │
+   * │ `outputs`, the other declares `inputs`. We already hold both. Forcing        │
+   * │ the model to declare it correctly is paying for uncertainty; fixing it       │
+   * │ directly is deterministic and 0 tokens.                                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Trả về những dây đã tự nối, để nhật ký nói ra chứ không sửa lén.
+   * Returns the wires that got auto-linked, so the log can say so instead of
+   * silently patching things.
    *
-   * An toàn với vòng lặp: nếu việc nối dây đẻ ra chu trình (T-01 cũng đọc kết
-   * quả của T-02) thì `validate` chạy ngay sau đây sẽ bắt được — đó là lý do
-   * hàm này phải chạy TRƯỚC, không phải sau.
+   * Safe against loops: if linking produces a cycle (T-01 also reads T-02's
+   * output), `validate` running right after this will catch it — that's why
+   * this function must run BEFORE, not after.
    */
   static linkDeps(plan: Plan): string[] {
     const producer = new Map<string, string>();
@@ -201,9 +213,10 @@ export class Scheduler {
     for (const t of plan.tasks) {
       for (const i of t.inputs) {
         const want = norm(i.path);
-        // Khớp thẳng trước; không có thì hỏi tiếp "có ai ĐANG GHI VÀO thư mục
-        // này không". Một thư mục có thể có nhiều người ghi, nên nối HẾT —
-        // thiếu một dây là task đọc thư mục khi mới có một nửa số file.
+        // Exact match first; if none, ask "is anyone CURRENTLY WRITING INTO
+        // this directory". A directory can have multiple writers, so link ALL
+        // of them — missing one wire means a task reads the directory while
+        // only half its files exist.
         const exact = producer.get(want);
         const from = exact ? [exact] : producersInto(producer, want);
         for (const d of from) {
@@ -217,37 +230,40 @@ export class Scheduler {
   }
 
   /**
-   * Từ chối DAG hỏng NGAY LÚC LẬP KẾ HOẠCH, không đợi lúc chạy mới nổ.
-   * Rẻ hơn nhiều: mới tốn đúng một lượt lập kế hoạch, chưa phóng worker nào.
+   * Reject a broken DAG RIGHT AT PLANNING TIME, without waiting for it to blow
+   * up at runtime. Much cheaper: only costs one planning turn, no worker has
+   * launched yet.
    *
-   * `officeDir` để kiểm `inputs` có thật trên đĩa không. Không truyền thì bỏ
-   * qua kiểm đó — hàm vẫn dùng được trong test mà không cần dựng thư mục.
+   * `officeDir` is used to check whether `inputs` actually exist on disk. Not
+   * passed ⇒ skip that check — the function still works in tests without
+   * standing up a directory.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ⚠ ĐÃ GỠ 22/08: cổng "ghi ra ngoài mà không có shell" — CODE CHẾT.        │
+   * │ ⚠ REMOVED 08/22: the "wrote outside without shell" gate — DEAD CODE.       │
    * │                                                                          │
-   * │ Nó kiểm `isAbsolute(o.path)` trên `outputs`. Nhưng `buildPlan` chạy      │
-   * │ `outputScoper` lên outputs của MỌI task trước đó (`assistant.ts:591`),   │
-   * │ và hàm đó luôn trả `artifacts/<plan>/<task>/…` — không có nhánh nào cho  │
-   * │ đường dẫn tuyệt đối. ⇒ điều kiện KHÔNG BAO GIỜ đúng trong sản phẩm.      │
+   * │ It checked `isAbsolute(o.path)` on `outputs`. But `buildPlan` runs           │
+   * │ `outputScoper` over the outputs of EVERY prior task (`assistant.ts:591`),      │
+   * │ and that function always returns `artifacts/<plan>/<task>/…` — no branch       │
+   * │ for an absolute path. ⇒ the condition was NEVER true in production.          │
    * │                                                                          │
-   * │ 9 test của nó vẫn xanh vì chúng gọi thẳng `validate` với plan tự chế,    │
-   * │ **đi vòng qua `buildPlan`**. Chứng minh cơ chế chạy khi gọi trực tiếp,   │
-   * │ rồi kết luận nó bảo vệ production — [[agentco-measurement-vs-conclusion]]│
-   * │ lần thứ ba trong một phiên.                                              │
+   * │ Its 9 tests still passed because they called `validate` directly with a       │
+   * │ hand-built plan, **routing around `buildPlan`**. Proving the mechanism         │
+   * │ runs when called directly, then concluding it protects production —           │
+   * │ [[agentco-measurement-vs-conclusion]] for the third time in one session.       │
    * │                                                                          │
-   * │ Và nó còn SAI theo thiết kế mới: biên giới đã chốt là *"văn phòng +      │
-   * │ chỗ người dùng gõ ra"*, thi hành ở `officeJail` theo XUẤT XỨ chuỗi.      │
-   * │ Ghi ra ngoài khi đó dùng `Write` — **không cần shell**. Một cổng bắt     │
-   * │ phải-có-shell-mới-được-ghi là chặn ngược chiều.                          │
-   * │ → docs/TEST-WALKTHROUGH.md §Bài 9b                                       │
+   * │ And it was also WRONG under the new design: the settled boundary is           │
+   * │ *"the office + wherever the user typed"*, enforced in `officeJail` by            │
+   * │ string ORIGIN. Writing outward there uses `Write` — **no shell needed**.        │
+   * │ A gate that only fires with-shell-required-to-write blocks in the wrong           │
+   * │ direction.                                                               │
+   * │ → docs/TEST-WALKTHROUGH.md §Test 9b                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   static validate(
     plan: Plan,
     knownRoles: ReadonlySet<string>,
     officeDir?: string,
-    /** Tên cánh tay → thư mục thật. Thiếu ⇒ "Musics" bị chặn. → `catalog.ts §armDirIndex` */
+    /** Arm name → real directory. Missing ⇒ "Musics" gets blocked. → `catalog.ts §armDirIndex` */
     armDirs?: Record<string, string>,
   ): string[] {
     const problems: string[] = [];
@@ -268,56 +284,62 @@ export class Scheduler {
       }
 
       /**
-       * ĐẦU VÀO TRỎ VÀO HƯ KHÔNG — kiểm được, nên phải kiểm.
+       * AN INPUT POINTING AT NOTHING — checkable, so it must be checked.
        *
-       * Trợ lý gõ nhầm một chữ trong tên tài liệu là nhân viên nhận một đường
-       * dẫn chết. Nó không báo lỗi: nó đi TÌM, tốn lượt, rồi hoặc trả `blocked`
-       * hoặc tệ hơn — trả lời bằng thứ nó đoán ra. Cái giá là cả một task.
+       * The Assistant mistyping one character in a document's name means a
+       * worker gets a dead path. It doesn't report an error: it goes
+       * SEARCHING, spends turns, and either returns `blocked` or, worse,
+       * answers with something it made up. The cost is an entire task.
        *
-       * Chỉ báo khi đường dẫn KHÔNG có trên đĩa VÀ không task nào sinh ra nó.
+       * Only flags when the path is NOT on disk AND no task produces it.
        *
        * ┌────────────────────────────────────────────────────────────────────┐
-       * │ HAI LOẠI ĐƯỜNG DẪN, HAI PHÉP KIỂM. (sửa 22/08, ca thật)            │
+       * │ TWO KINDS OF PATHS, TWO CHECKS. (fixed 08/22, a real case)          │
        * │                                                                    │
-       * │ Bản trước chỉ có MỘT phép kiểm — `safeJoin(officeDir, path)` — nên  │
-       * │ nó mang sẵn tiền đề *"mọi đầu vào đều nằm trong văn phòng"*. Tiền   │
-       * │ đề đó đúng cho tới ngày `Bash` bật sẵn, rồi thành sai.              │
+       * │ The previous version had just ONE check — `safeJoin(officeDir,        │
+       * │ path)` — so it carried the built-in premise *"every input lives          │
+       * │ inside the office"*. That premise was true until `Bash` shipped            │
+       * │ enabled by default, and then it became false.                            │
        * │                                                                    │
-       * │ Ca đo được: người dùng gõ *"Kiểm kê thư mục D:\Downloads\..."*.     │
-       * │ `safeJoin` ném (đúng phận sự của nó), `catch` biến cái ném đó thành │
-       * │ `exists = false`, và cả kế hoạch bị chặn với câu **"không có file   │
-       * │ đó, và không việc nào tạo ra nó"** — trong khi thư mục nằm đó, và   │
-       * │ nhân viên có `Bash` để đọc nó.                                      │
+       * │ Measured case: a user typed *"Take inventory of the folder                │
+       * │ D:\Downloads\..."*. `safeJoin` threw (correctly, that's its job),          │
+       * │ the `catch` turned that throw into `exists = false`, and the whole         │
+       * │ plan got blocked with **"that file doesn't exist, and no task              │
+       * │ produces it"** — while the folder was right there, and the worker           │
+       * │ had `Bash` to read it.                                                    │
        * │                                                                    │
-       * │ Nặng hơn: Trợ lý làm ĐÚNG. `ASSISTANT_CORE` dặn *"a path the human │
-       * │ typed is exact — copy it into `inputs` verbatim"*. Nó tuân lệnh và  │
-       * │ bị chặn vì tuân lệnh. Lỗi nằm ở tầng kiểm, không ở tầng lập kế      │
-       * │ hoạch — và một `catch` nuốt lỗi là chỗ nó ẩn mình.                  │
+       * │ Worse: the Assistant did the RIGHT thing. `ASSISTANT_CORE` instructs        │
+       * │ *"a path the human typed is exact — copy it into `inputs`                   │
+       * │ verbatim"*. It followed instructions and got blocked for following          │
+       * │ them. The bug sat at the validation layer, not the planning layer —          │
+       * │ and a `catch` swallowing the error is exactly where it hides.               │
        * │                                                                    │
-       * │ ⚠ Tách theo `isAbsolute`, KHÔNG theo "safeJoin có ném không". Một   │
-       * │ đường dẫn TƯƠNG ĐỐI mà leo ra ngoài (`../../etc/passwd`) cũng làm   │
-       * │ `safeJoin` ném, nhưng nó là mưu toan traversal chứ không phải một   │
-       * │ đường dẫn người dùng gõ — và nếu đem `existsSync` nó thì ta lại đo  │
-       * │ theo `cwd` của daemon, một cái gốc chẳng liên quan gì. Nó phải ở    │
-       * │ lại nhánh lỗi.                                                     │
+       * │ ⚠ Split by `isAbsolute`, NOT by "did safeJoin throw". A RELATIVE           │
+       * │ path that climbs outside (`../../etc/passwd`) also makes `safeJoin`          │
+       * │ throw, but that's a traversal attempt, not something a user typed —          │
+       * │ and running `existsSync` on it would measure it against the                 │
+       * │ daemon's `cwd`, a root with nothing to do with anyone. It must stay          │
+       * │ in the error branch.                                                       │
        * └────────────────────────────────────────────────────────────────────┘
        */
       if (officeDir) {
         for (const i of t.inputs) {
           const want = norm(i.path);
-          // Thư mục mà một task khác đang ghi vào cũng là "sẽ có" — xem `contains`.
+          // A directory another task is currently writing into also counts as
+          // "will exist" — see `contains`.
           if (produced.has(want) || [...produced].some((p) => contains(want, p))) continue;
 
-          // Một địa chỉ web không phải phụ thuộc FILE — không có gì để tồn tại
-          // trên đĩa, và không việc nào "tạo ra" nó. → `paths.ts §isUrlInput`
+          // A web address is not a FILE dependency — nothing to exist on disk,
+          // and no task "produces" it. → `paths.ts §isUrlInput`
           if (isUrlInput(i.path)) continue;
 
           const abs = resolveInput(officeDir, i.path, armDirs);
           if (abs && existsOnDisk(abs)) continue;
 
-          // Hai câu khác nhau vì hai chuyện khác nhau. "Không việc nào tạo ra
-          // nó" vô nghĩa với một thư mục trên máy người dùng — nó gợi ý sửa kế
-          // hoạch, trong khi thứ cần sửa là đường dẫn họ vừa gõ.
+          // Two different messages for two different problems. "No task
+          // produces it" is meaningless for a folder on the user's own
+          // machine — it suggests fixing the plan, when what needs fixing is
+          // the path they just typed.
           problems.push(
             isAbsolute(i.path)
               ? phrase('plan.inputMissingOnDisk', { task: t.task_id, path: i.path })
@@ -327,7 +349,7 @@ export class Scheduler {
       }
     }
 
-    // chu trình
+    // cycles
     const state = new Map<string, 0 | 1 | 2>();
     const byId = new Map(plan.tasks.map((t) => [t.task_id, t]));
     const visit = (id: string, trail: string[]): void => {
@@ -347,16 +369,19 @@ export class Scheduler {
 
   // ────────────────────────────────────────────────────────────
   //
-  // (`norm` ở cuối file: một đường dẫn phải so được với chính nó dù model viết
-  //  `./artifacts/x.md`, `artifacts\x.md` hay `artifacts/x.md`.)
+  // (`norm` at the end of the file: a path must compare equal to itself
+  //  whether the model writes `./artifacts/x.md`, `artifacts\x.md`, or
+  //  `artifacts/x.md`.)
 
   async run(plan: Plan): Promise<RunResult> {
     /**
-     * Mã kế hoạch của ca ĐANG chạy — chỉ để gắn vào nhật ký kiểm toán.
+     * The plan code for the CURRENTLY running session — used only to tag the
+     * audit log.
      *
-     * `TaskBrief` cố ý không mang `plan_id` (nó là đơn vị việc, không phải đơn
-     * vị ca), nên worker không biết. Giữ ở đây, nơi BIẾT, thay vì nhét một
-     * trường mới vào brief chỉ để chuyển tiếp một chuỗi. → `core/audit.ts`
+     * `TaskBrief` deliberately doesn't carry `plan_id` (it's a task-level
+     * unit, not a session-level one), so a worker doesn't know it. Kept here,
+     * where it IS known, instead of adding a new field to the brief just to
+     * pass a string through. → `core/audit.ts`
      */
     this.planId = plan.plan_id;
     const receipts = new Map<string, Receipt>();
@@ -376,8 +401,9 @@ export class Scheduler {
         t.deps.every((d) => receipts.has(d) || failed.has(d)),
       );
 
-      // Dep chưa giao được hàng thì task con không chạy — nhưng KHÔNG đánh
-      // failed âm thầm, trả receipt "blocked" để người dùng thấy vì sao.
+      // A dependency that hasn't delivered means the child task doesn't run —
+      // but WITHOUT silently marking it failed; return a "blocked" receipt so
+      // the user sees why.
       for (const t of ready) {
         const stale = unmetDeps(t, receipts, failed);
         if (stale.length) {
@@ -388,11 +414,11 @@ export class Scheduler {
             say: phrase('plan.blockedPrevUnfinished'),
             answer: '',
             /**
-             * Receipt do MÃ dựng, không do nhân viên nào chạy ⇒ không có sự kiện
-             * nào để neo. `gist` rỗng là câu trả lời đúng, và Trợ lý sẽ rơi về
-             * nhánh *"không có dòng KẾT QUẢ"* của nó. Bịa một câu ở đây là đưa
-             * cho nó một thứ nghe như dữ kiện mà không ai đo được.
-             * → `types.ts §gist`
+             * A receipt built by CODE, not run by any worker ⇒ no event to
+             * anchor it to. An empty `gist` is the correct answer, and the
+             * Assistant will fall back to its own *"no RESULT line"* branch.
+             * Making up a sentence here would hand it something that sounds
+             * like a fact nobody measured. → `types.ts §gist`
              */
             gist: '',
             artifacts: [],
@@ -418,9 +444,9 @@ export class Scheduler {
         }
       }
 
-      // Trần toàn cục VÀ trần theo tier. Trần theo tier quan trọng vì model
-      // đắt (deep/Opus) ăn hạn mức subscription nhanh hơn nhiều — chạy 4 Opus
-      // song song sẽ đốt gói của người dùng rất nhanh.
+      // A global cap AND a per-tier cap. The per-tier cap matters because an
+      // expensive model (deep/Opus) eats the subscription budget far faster —
+      // running 4 Opus in parallel would burn through a user's plan quickly.
       const launchable: TaskBrief[] = [];
       const perTier = new Map(this.runningByTier);
       for (const t of ready) {
@@ -435,7 +461,7 @@ export class Scheduler {
       }
 
       if (launchable.length === 0) {
-        if (running.size === 0) break; // deadlock hoặc hết việc
+        if (running.size === 0) break; // deadlock, or nothing left to do
         await Promise.race(running);
         continue;
       }
@@ -444,16 +470,18 @@ export class Scheduler {
         remaining.delete(brief.task_id);
 
         /**
-         * ĐẦU VÀO PHẢI CÓ THẬT — KIỂM NGAY TRƯỚC KHI PHÓNG, 0 TOKEN.
+         * INPUTS MUST ACTUALLY EXIST — CHECK RIGHT BEFORE LAUNCH, 0 TOKENS.
          *
-         * Đây đúng phép kiểm của `validate`, nhưng chạy ĐÚNG LÚC. `validate`
-         * chạy lúc lập kế hoạch, khi file của bước trước còn chưa được sinh ra,
-         * nên nó buộc phải bỏ qua mọi đường dẫn "sẽ có". Tới đây thì mọi bước
-         * trước đã xong và câu hỏi trở nên trả lời được.
+         * This is exactly `validate`'s check, but run at the RIGHT TIME.
+         * `validate` runs at planning time, while a previous step's files
+         * haven't been produced yet, so it's forced to skip every "will
+         * exist" path. By now every prior step has finished and the question
+         * becomes answerable.
          *
-         * Đo được 20/08: thiếu chốt này thì nhân viên nhận một đường dẫn chết và
-         * ĐI TÌM — `nguoi-soi` 6 lượt (5 lượt Glob), `nguoi-gop` 9 lượt tool rồi
-         * chạm `max_turns`. Cả hai kết luận đúng thứ ta biết miễn phí từ đầu.
+         * Measured 08/20: without this guard, a worker receives a dead path
+         * and GOES SEARCHING — `nguoi-soi` took 6 turns (5 of them Glob),
+         * `nguoi-gop` took 9 tool turns and then hit `max_turns`. Both landed
+         * on exactly what we already knew for free.
          */
         const gone = this.missingInputs(brief);
         if (gone.length) {
@@ -462,9 +490,10 @@ export class Scheduler {
           continue;
         }
 
-        // File CÓ trên đĩa nhưng do một task bị cắt ngang ghi ra — nguy hơn hẳn
-        // file thiếu, vì mọi phép kiểm "có tồn tại không" đều cho qua và nhân
-        // viên đọc được thật. Cái thiếu nằm ngoài file. → `interruptedInputs`
+        // A file that EXISTS on disk but was written by a task that got cut
+        // off mid-way — more dangerous than a missing file, because every
+        // "does it exist" check passes and a worker genuinely can read it.
+        // What's missing lives outside the file. → `interruptedInputs`
         const halfDone = this.interruptedInputs(brief);
         if (halfDone.length) {
           failed.add(brief.task_id);
@@ -491,7 +520,7 @@ export class Scheduler {
           .catch((err: unknown) => {
             const kind = err instanceof RunError ? err.kind : 'other';
             if (kind === 'usage_limit') {
-              // Hết hạn mức: DỪNG CA, không retry. Task chưa chạy giữ nguyên.
+              // Budget exhausted: STOP THE SESSION, no retry. Un-run tasks stay put.
               stoppedBy = 'usage_limit';
               remaining.set(brief.task_id, brief);
               return;
@@ -503,58 +532,65 @@ export class Scheduler {
             }
             /**
              * ┌────────────────────────────────────────────────────────────────┐
-             * │ CHẠM TRẦN LƯỢT MÀ ĐANG CÓ TIẾN TRIỂN ⇒ CHẠY TIẾP, KHÔNG BÁO HỎNG│
-             * │ (user duyệt 27/08)                                             │
+             * │ HITTING THE TURN CAP WHILE MAKING PROGRESS ⇒ CONTINUE, DON'T       │
+             * │ REPORT FAILURE. (user approved 08/27)                             │
              * │                                                                │
-             * │ Ca sinh ra nó: một việc có **N phần**, mà **N chỉ biết được SAU │
-             * │ khi việc bắt đầu**. Trợ lý buộc phải đoán N lúc lập kế hoạch ⇒  │
-             * │ hoặc đoán thừa (27/08: 3/4 việc rỗng, $0,12 cho ba câu *"danh   │
-             * │ sách chỉ có 1 trang"*) hoặc đoán thiếu (một việc cháy trần).    │
-             * │ **Hai lỗi là hai đầu của cùng một cây gậy.**                    │
+             * │ The case that created this: a task has **N parts**, and **N is       │
+             * │ only knowable AFTER the task starts**. The Assistant is forced to      │
+             * │ guess N at planning time ⇒ either overestimates (08/27: 3 of 4         │
+             * │ tasks empty, $0.12 for three *"the list only has 1 page"*                 │
+             * │ replies) or underestimates (a task burns through its cap).             │
+             * │ **Both errors are two ends of the same stick.**                        │
              * │                                                                │
-             * │ ⚠ VÌ SAO KHÔNG ĐỂ TRỢ LÝ NGHĨ LẠI: nó phải trả một lượt model   │
-             * │ nữa, với ÍT dữ kiện hơn hẳn worker vừa có (nó chỉ thấy một câu  │
-             * │ `say`, không thấy 15 lượt kia). Một cơ chế "thử nghĩ cách khác" │
-             * │ ở tầng đó là **đoán**, và đoán ở tầng kế hoạch thì đẻ thêm việc.│
-             * │ Ở đây thì ngược: **0 token cho quyết định**, và chỗ tiếp đọc từ │
-             * │ FILE CÓ THẬT trên đĩa. → [[agentco-deterministic-vs-signal]]    │
+             * │ ⚠ WHY NOT LET THE ASSISTANT RECONSIDER: it would have to pay for         │
+             * │ another model turn, with FAR LESS information than the worker            │
+             * │ just had (it only sees one `say` line, not those other 15                 │
+             * │ turns). A "try a different approach" mechanism at that layer is           │
+             * │ **guessing**, and guessing at the planning layer spawns more              │
+             * │ tasks. Here it's the opposite: **0 tokens for the decision**,             │
+             * │ and where to pick up reads from a FILE THAT ACTUALLY EXISTS ON            │
+             * │ DISK. → [[agentco-deterministic-vs-signal]]                       │
              * │                                                                │
-             * │ HAI HÀNG RÀO, thiếu cái nào là đẻ ra vòng lặp đốt tiền:         │
-             * │   ① phải CÓ TIẾN TRIỂN (`landed` không rỗng) — không có thì     │
-             * │      chạy tiếp là lặp vô tận trên một việc không nhúc nhích      │
-             * │   ② trần 3 lần, và số đó HIỆN RA cho người dùng                 │
+             * │ TWO GUARDS, missing either one spawns a money-burning loop:              │
+             * │   ① there must be PROGRESS (`landed` non-empty) — without it,            │
+             * │      continuing is an infinite loop on a task that isn't moving          │
+             * │   ② capped at 3 continuations, and that number IS SURFACED to             │
+             * │      the user                                                          │
              * └────────────────────────────────────────────────────────────────┘
              */
             {
-              const daTiep = this.continued.get(brief.task_id) ?? 0;
-              const tienTrien = err instanceof RunError ? (err.observed?.landed.length ?? 0) : 0;
-              if (shouldContinue({ kind, tried: daTiep, landed: tienTrien })) {
-                this.continued.set(brief.task_id, daTiep + 1);
-                // ⚠ GHI SỔ TRƯỚC KHI CHẠY TIẾP — cùng lý do nhánh `rate_limit`:
-                // lượt vừa bị cắt đã tiêu token thật, và `max_turns` theo định
-                // nghĩa là kiểu hỏng ĐẮT NHẤT (nó chạy tới kịch trần).
+              const alreadyContinued = this.continued.get(brief.task_id) ?? 0;
+              const progressed = err instanceof RunError ? (err.observed?.landed.length ?? 0) : 0;
+              if (shouldContinue({ kind, tried: alreadyContinued, landed: progressed })) {
+                this.continued.set(brief.task_id, alreadyContinued + 1);
+                // ⚠ RECORD BEFORE CONTINUING — same reason as the `rate_limit`
+                // branch: the turn that just got cut off spent real tokens, and
+                // `max_turns` is by definition the MOST EXPENSIVE failure mode
+                // (it runs all the way to its turn cap).
                 if (err instanceof RunError && err.usage) wasted = addUsage(wasted, err.usage);
                 this.deps.emit({
                   type: 'task.progress',
                   task_id: brief.task_id,
                   role: brief.role,
-                  say: phrase('plan.continuing', { n: String(daTiep + 1), max: String(MAX_CONTINUE) }),
+                  say: phrase('plan.continuing', { n: String(alreadyContinued + 1), max: String(MAX_CONTINUE) }),
                 });
                 remaining.set(brief.task_id, continueBrief(brief));
                 return;
               }
-              // Không tiến triển, hoặc đã tiếp đủ 3 lần ⇒ báo hỏng THẬT, và câu
-              // báo của `worker.ts` đã nói ra cả phần *"có thể đã đổi thứ gì ở
-              // ngoài"* khi có cánh tay tham gia.
+              // No progress, or already continued the full 3 times ⇒ report a
+              // REAL failure, and `worker.ts`'s own message already covers the
+              // *"something outside may have changed"* part when an arm was
+              // involved.
             }
             if (kind === 'rate_limit') {
               this.onRateLimit();
-              // ⚠ GHI SỔ TRƯỚC KHI THỬ LẠI. Lượt vừa hỏng đã tiêu token thật;
-              // task chạy lại từ đầu và tiêu tiếp. Không ghi ở đây thì mỗi lần
-              // gặp 429 là một khoản chi vô hình, và đúng ca hay gặp 429 mới là
-              // ca người dùng cần nhìn thấy con số. → `RunError.usage`
+              // ⚠ RECORD BEFORE RETRYING. The turn that just failed spent real
+              // tokens; the task retries from scratch and spends more. Without
+              // recording it here, every 429 hit is an invisible cost, and the
+              // exact case that hits 429 often is the one where the user most
+              // needs to see the number. → `RunError.usage`
               if (err instanceof RunError && err.usage) wasted = addUsage(wasted, err.usage);
-              remaining.set(brief.task_id, brief); // thử lại vòng sau
+              remaining.set(brief.task_id, brief); // retry next round
               return;
             }
             failed.add(brief.task_id);
@@ -578,21 +614,24 @@ export class Scheduler {
   }
 
   /**
-   * `inputs` không có trên đĩa. Rỗng = phóng được. → `run()`
+   * `inputs` not present on disk. Empty = safe to launch. → `run()`
    *
-   * ⚠ Phải dùng ĐÚNG `resolveInput` mà `validate` dùng. Đây là chốt thứ hai
-   * trên cùng một luật, chạy ngay trước lúc phóng worker — hai chốt hiểu
-   * "đầu vào hợp lệ" khác nhau thì kế hoạch qua được cửa một rồi chết ở cửa
-   * hai, và người dùng nhận một câu từ chối cho thứ hệ thống vừa duyệt.
+   * ⚠ Must use the EXACT SAME `resolveInput` that `validate` uses. This is the
+   * second gate enforcing the same rule, run right before launching a worker
+   * — if the two gates understand "valid input" differently, a plan clears
+   * gate one and then dies at gate two, and the user gets a rejection for
+   * something the system just approved.
    */
   private missingInputs(brief: TaskBrief): string[] {
-    // ⚠ CÙNG bảng cánh tay mà `validate` dùng. Lệch một chỗ là kế hoạch qua
-    // được cửa một rồi chết ở cửa hai — đúng thứ khối chú thích trên cảnh báo.
+    // ⚠ THE SAME arm table that `validate` uses. A mismatch here means a plan
+    // clears gate one and dies at gate two — exactly what the comment block
+    // above warns about.
     const armDirs = armDirIndex(this.deps.office.company.arms, this.deps.office.company.mcpServers);
     const out: string[] = [];
     for (const i of brief.inputs) {
-      // ⚠ CÙNG phép loại trừ mà `validate` dùng — nếu không thì kế hoạch qua
-      // được cửa một rồi chết ở cửa hai, đúng thứ khối chú thích trên cảnh báo.
+      // ⚠ THE SAME exclusion that `validate` uses — otherwise a plan clears
+      // gate one and dies at gate two, exactly what the comment block above
+      // warns about.
       if (isUrlInput(i.path)) continue;
       const abs = resolveInput(this.deps.office.dir, i.path, armDirs);
       if (!abs || !existsOnDisk(abs)) out.push(i.path);
@@ -601,32 +640,35 @@ export class Scheduler {
   }
 
   /**
-   * `inputs` trỏ vào đầu ra của một task BỊ CẮT GIỮA CHỪNG. → SPEC-offices §6b
+   * `inputs` pointing at the output of a task that GOT CUT OFF MID-WAY.
+   * → SPEC-offices §6b
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ HÀNG RÀO CỨNG. Bảng kê giấu đường dẫn là hàng rào MỀM — model vẫn đoán   │
-   * │ ra được, vì `artifacts/<plan>/<task>/…` có quy luật rõ ràng. Và người    │
-   * │ dùng có thể dán thẳng một đường dẫn cũ bằng `@`.                          │
+   * │ A HARD GUARD. Hiding the path in the roster is a SOFT one — a model can       │
+   * │ still guess it, because `artifacts/<plan>/<task>/…` follows a clear             │
+   * │ pattern. And a user can paste an old path directly with `@`.                    │
    * │                                                                          │
-   * │ Chốt này không cần bảng kê, không cần model hợp tác: nó ĐỌC NGƯỢC từ     │
-   * │ chính đường dẫn. `artifacts/P-…/T-01/x.md` tự khai ra kế hoạch nào và    │
-   * │ task nào, nên tra receipt của task đó là xong. Tất định, 0 token.        │
+   * │ This gate needs no roster, no model cooperation: it READS BACKWARD from        │
+   * │ the path itself. `artifacts/P-…/T-01/x.md` declares which plan and              │
+   * │ which task on its own, so looking up that task's receipt is enough.             │
+   * │ Deterministic, 0 tokens.                                                 │
    * │                                                                          │
-   * │ Đo được 21/08, hai lần liên tiếp (hd3 3/5, hd4 4/5): thiếu chốt này thì  │
-   * │ cả chuỗi sau chạy trên một hợp đồng thiếu 20–40% và trả về một bản rà    │
-   * │ soát trông hoàn hảo.                                                      │
+   * │ Measured 08/21, twice in a row (hd3 3/5, hd4 4/5): without this gate, an        │
+   * │ entire downstream chain runs on a contract missing 20–40% and returns a         │
+   * │ review that looks flawless.                                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Chỉ chặn khi receipt NÓI RÕ là chưa giao được hàng. Không có receipt thì
-   * KHÔNG chặn: file có thể tới từ một ca quá cũ đã bị dọn khỏi `tasks/`, và
-   * chặn một thứ ta không biết gì về nó là biến chốt an toàn thành chốt chặn đường.
+   * ⚠ Only blocks when the receipt EXPLICITLY says delivery failed. No receipt
+   * ⇒ do NOT block: the file could come from a session old enough to have been
+   * swept out of `tasks/`, and blocking something we know nothing about turns
+   * a safety gate into a roadblock.
    */
   private interruptedInputs(brief: TaskBrief): string[] {
     const out: string[] = [];
     for (const i of brief.inputs) {
       const parts = norm(i.path).split('/');
-      // `artifacts/<plan_id>/<task_id>/…` — ngắn hơn thì không trỏ vào đầu ra
-      // của task nào cả (tủ tài liệu, file gốc), bỏ qua.
+      // `artifacts/<plan_id>/<task_id>/…` — shorter than that doesn't point at
+      // any task's output (the document cabinet, a root file), skip it.
       if (parts[0] !== 'artifacts' || parts.length < 4) continue;
       const receipt = this.receiptOnDisk(parts[1]!, parts[2]!);
       if (receipt && !delivered(receipt)) out.push(i.path);
@@ -635,11 +677,12 @@ export class Scheduler {
   }
 
   /**
-   * Receipt của một task BẤT KỲ, kể cả của ca khác. Tên file mang cả hai id nên
-   * không cần chỉ mục nào — đọc thẳng, `undefined` nếu không có.
+   * Any task's receipt, even from a different session. The filename carries
+   * both ids, so no index is needed — read it directly, `undefined` if absent.
    *
-   * ⚠ `task_id` đến từ một đường dẫn do model sinh ⇒ phải đi qua `safeJoin`,
-   * nếu không nó là một lỗ đọc file tuỳ ý qua tên receipt.
+   * ⚠ `task_id` comes from a path generated by the model ⇒ must go through
+   * `safeJoin`, or it's an arbitrary-file-read hole disguised as a receipt
+   * filename.
    */
   private receiptOnDisk(planId: string, taskId: string): Receipt | undefined {
     try {
@@ -652,7 +695,7 @@ export class Scheduler {
     }
   }
 
-  /** Task không chạy vì đầu vào không dùng được. 0 lượt, $0, và NÓI RA vì sao. */
+  /** A task that didn't run because its input wasn't usable. 0 turns, $0, and SAYS WHY. */
   private blockedReceipt(
     brief: TaskBrief,
     missing: readonly string[],
@@ -663,7 +706,7 @@ export class Scheduler {
       status: 'blocked',
       say: sayLine,
       answer: '',
-      // Mã dựng, chưa ai chạy ⇒ không có sự kiện. → `types.ts §gist`
+      // Built by code, nobody ran ⇒ no event. → `types.ts §gist`
       gist: '',
       artifacts: [],
       lessons: [],
@@ -691,26 +734,26 @@ export class Scheduler {
     return this.gate.snapshot();
   }
 
-  /** Số nhân viên ĐANG chạy — giao diện hiện "2 nhân viên đang làm việc". */
+  /** Number of workers CURRENTLY running — the UI shows "2 workers active". */
   get runningCount(): number {
     return this.live.size;
   }
 
-  /** Ngắt NGAY mọi worker đang chạy. Gọi từ `Esc` / `/stop`. */
+  /** Interrupt EVERY running worker IMMEDIATELY. Called from `Esc` / `/stop`. */
   async interruptAll(): Promise<void> {
     await Promise.allSettled([...this.live].map((h) => h.interrupt()));
   }
 
-  // ── nội bộ
+  // ── internal
 
   private async execute(brief: TaskBrief): Promise<Receipt> {
     const { office, knowledge } = this.deps;
     const role = office.roles.get(brief.role);
     if (!role) throw new RunError(phrase('plan.roleGone', { role: brief.role }), 'other');
 
-    // HOT: nằm trong prefix cache, tính theo role, KHÔNG theo task.
+    // HOT: sits in the prefix cache, scoped per role, NOT per task.
     const hot = knowledge.hot(role.id, role.hot_knowledge_size, office.company.budgets.hot_knowledge_tokens);
-    // COLD: chọn theo nội dung task, nằm sau breakpoint, trả giá đầy đủ.
+    // COLD: selected by task content, sits after the breakpoint, pays full price.
     const cold = knowledge.cold(
       role.id,
       `${brief.goal} ${brief.constraints.join(' ')}`,
@@ -719,17 +762,17 @@ export class Scheduler {
     );
 
     /**
-     * ⚠ BẤT BIẾN: `say` KHÔNG BAO GIỜ chứa TÊN người nói.
+     * ⚠ INVARIANT: `say` NEVER contains the SPEAKER'S NAME.
      *
-     * Sự kiện đã mang `role`, và mọi chỗ hiển thị đều tự tra tên từ đó
-     * (`labelFor` ở nhật ký và ở dòng trạng thái). Ghép sẵn tên vào đây thì
-     * người dùng đọc được "Người viết: Người viết: Viết 3 đoạn…" — tên hiện
-     * hai lần, ở cả hai nơi.
+     * The event already carries `role`, and every display spot looks up the
+     * name from that on its own (`labelFor`, in both the log and the status
+     * line). Baking the name in here means a user reads "Writer: Writer:
+     * Write 3 paragraphs…" — the name shows up twice, in both places.
      *
-     * Luật này thuộc về giao thức chứ không phải thẩm mỹ: bridge Telegram sau
-     * này cũng là một chỗ hiển thị, và nó cần tự quyết cách gắn tên (in đậm,
-     * emoji, hay bỏ hẳn). Nướng sẵn tên vào chuỗi là tước quyền đó của mọi
-     * client tương lai.
+     * This rule belongs to the protocol, not aesthetics: a future Telegram
+     * bridge is also a display spot, and it needs to decide its own way of
+     * attaching a name (bold, an emoji, or none at all). Baking the name
+     * into the string strips that choice from every future client.
      */
     this.deps.emit({
       type: 'task.started',
@@ -748,26 +791,29 @@ export class Scheduler {
           onProgress: (say) =>
             this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
           /**
-           * MỌI lời gọi MCP xuống nhật ký kiểm toán, kèm tham số. → `core/audit.ts`
+           * EVERY MCP call goes to the audit log, with its arguments.
+           * → `core/audit.ts`
            *
-           * ⚠ `plan_id` ghép ở ĐÂY, không ở worker: worker chỉ cầm `TaskBrief`,
-           * và brief cố ý không mang mã kế hoạch. Ghép ở nơi biết thì không phải
-           * thêm một trường chỉ để chuyển tiếp một chuỗi.
+           * ⚠ `plan_id` is attached HERE, not inside the worker: a worker only
+           * holds a `TaskBrief`, and a brief deliberately doesn't carry the
+           * plan code. Attaching it where it's known avoids adding a field
+           * just to pass a string through.
            */
           onArmCall: (c) =>
             this.deps.audit?.append({ ...c, ...(this.planId ? { plan_id: this.planId } : {}) }),
           /**
-           * Kết quả quá to được bê về ĐÂY — cùng thư mục với file task này làm
-           * ra. → `core/spill.ts`
+           * An oversized result gets spilled HERE — the same directory this
+           * task's own files land in. → `core/spill.ts`
            *
-           * ⚠ Ghép ở đây vì cùng một lý do với `plan_id` ngay trên: worker chỉ
-           * cầm `TaskBrief`, mà brief cố ý không mang mã kế hoạch. Dựng đường
-           * dẫn ở nơi BIẾT thì không phải thêm một trường chỉ để chuyển tiếp.
+           * ⚠ Attached here for the exact same reason as `plan_id` right above:
+           * a worker only holds a `TaskBrief`, and a brief deliberately
+           * doesn't carry the plan code. Building the path where it's KNOWN
+           * avoids adding a field just to pass it through.
            */
           ...(this.planId
             ? { outDir: join(office.paths.artifacts, this.planId, brief.task_id) }
             : {}),
-          // Đăng ký tay cầm để `stop()` với tới được worker ĐANG chạy.
+          // Register the handle so `stop()` can reach the CURRENTLY running worker.
           onStart: (h) => {
             handle = h;
             this.live.add(h);
@@ -780,34 +826,38 @@ export class Scheduler {
     }
 
     /**
-     * ⚠ CHỈ đếm lượt COLD. Đếm cả HOT là một vòng lặp KHÉP KÍN không tự sửa được.
+     * ⚠ ONLY counts COLD hits. Counting HOT too creates a CLOSED LOOP that
+     * can't self-correct.
      *
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ Bản trước: `recordHits([...hot.ids, ...cold.ids])`.                │
+     * │ The previous version: `recordHits([...hot.ids, ...cold.ids])`.       │
      * │                                                                    │
-     * │  · node HOT được +1 ở MỌI task, chỉ vì nó đang ở trong HOT          │
-     * │  · `hot()` lại xếp hạng bằng chính `hits`                           │
-     * │  · `cold()` LOẠI node HOT ra khỏi cuộc thi (`excludeIds: hot.ids`)  │
+     * │  · a HOT node got +1 on EVERY task, just for being in HOT             │
+     * │  · `hot()` then ranks nodes using that same `hits`                    │
+     * │  · `cold()` EXCLUDES HOT nodes from the competition                   │
+     * │    (`excludeIds: hot.ids`)                                          │
      * │                                                                    │
-     * │ ⇒ vào được HOT một lần là ở đó VĨNH VIỄN. Node ngoài HOT chỉ được   │
-     * │ +1 khi khớp từ khoá, không bao giờ đuổi kịp. Số liệu thật của người │
-     * │ dùng cho thấy đúng thế: ba node HOT có hits 6/3/2, mọi node còn lại │
-     * │ đúng bằng 0.                                                        │
+     * │ ⇒ getting into HOT once meant staying there FOREVER. A node outside     │
+     * │ HOT only got +1 on a keyword match, and could never catch up. Real       │
+     * │ user data showed exactly that: three HOT nodes had hits of 6/3/2,        │
+     * │ every other node sat at exactly 0.                                    │
      * │                                                                    │
-     * │ Và nó làm `hits` mất hết ý nghĩa: nó đo "anh ở trong HOT bao lâu",  │
-     * │ không đo "anh có ích không".                                        │
+     * │ And it drained `hits` of all meaning: it measured "how long have you    │
+     * │ been in HOT", not "are you actually useful".                          │
      * └────────────────────────────────────────────────────────────────────┘
      *
-     * Chỉ đếm COLD thì `hits` mang đúng một nghĩa: **bộ chọn từ khoá đã thấy
-     * node này hợp với một việc CÓ THẬT bao nhiêu lần.** Vòng lặp tự sửa:
-     * node COLD leo dần → chen vào HOT → node HOT yếu nhất rơi ra → nó lại
-     * được dự thi COLD và leo lại nếu thật sự có ích.
+     * Counting only COLD gives `hits` exactly one meaning: **how many times
+     * the keyword selector has seen this node match a REAL task.** A
+     * self-correcting loop: a COLD node climbs → earns a spot in HOT → the
+     * weakest HOT node falls out → it competes in COLD again and climbs back
+     * if it's genuinely useful.
      *
-     * Đây cũng là điều kiện để cửa sổ khai tử trong `pruneStale` có nghĩa.
+     * This is also what makes the aging window in `pruneStale` meaningful.
      *
-     * Dùng `cold.matched` chứ không `cold.ids`: `matched` là MỌI node hợp việc,
-     * kể cả node đang nằm trong HOT (chúng bị loại khỏi phần render vì đã có
-     * trong prefix rồi, nhưng vẫn phải được ghi nhận là có ích). → store.ts
+     * Uses `cold.matched`, not `cold.ids`: `matched` is EVERY node that
+     * matched the task, including one already sitting in HOT (excluded from
+     * rendering because it's already in the prefix, but it still needs to be
+     * credited as useful). → store.ts
      */
     knowledge.recordHits(cold.matched);
 
@@ -824,7 +874,7 @@ export class Scheduler {
     return receipt;
   }
 
-  /** Cho phép kiểm tra cacheKey trước khi chạy — dùng ở `agentco status`. */
+  /** Lets the cacheKey be checked before running — used by `agentco status`. */
   cacheKeyFor(roleId: string): string | undefined {
     const role = this.deps.office.roles.get(roleId);
     if (!role) return undefined;
@@ -849,12 +899,13 @@ export class Scheduler {
     const msg = err instanceof Error ? err.message : String(err);
 
     /**
-     * ĐỌC ĐĨA TRƯỚC KHI NÓI "CHƯA RA KẾT QUẢ". → `RunError.observed`
+     * READ THE DISK BEFORE SAYING "NO RESULT YET". → `RunError.observed`
      *
-     * Một lượt hỏng ở lượt thứ N không xoá những gì lượt 1..N-1 đã ghi. Ca
-     * `P-260821-1827-m78h` chạm trần chi phí CHÍN GIÂY SAU khi ghi xong bảng
-     * kết quả đúng và đủ — bản trước ghi cứng `landed: []` ở đây nên người dùng
-     * được mời chạy lại (và trả tiền lại) cho thứ đã nằm sẵn trên đĩa.
+     * A turn that fails on turn N doesn't erase what turns 1..N-1 already
+     * wrote. Case `P-260821-1827-m78h` hit the cost cap NINE SECONDS AFTER
+     * finishing a complete, correct results table — the previous version
+     * hard-coded `landed: []` here, so the user got invited to run it again
+     * (and pay again) for something already sitting on disk.
      */
     const observed = err instanceof RunError ? err.observed : undefined;
     const promised = brief.outputs.map((o) => o.path);
@@ -863,30 +914,34 @@ export class Scheduler {
 
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ GIAO ĐỦ HÀNG ⇒ KHÔNG PHẢI `failed`. (user chốt 21/08)                │
+     * │ FULL DELIVERY ⇒ NOT `failed`. (user settled 08/21)                     │
      * │                                                                      │
-     * │ Đo được cùng ngày, ba lượt liền: `m78h` · `i9h2` · `yap2` đều ghi ra │
-     * │ file đầy đủ — `i9h2` đúng **56/56 nhóm, không sai một con số** — rồi  │
-     * │ chạm trần chi phí SAU đó và bị đóng nhãn "hỏng".                     │
+     * │ Measured the same day, three turns in a row: `m78h` · `i9h2` · `yap2`     │
+     * │ all wrote complete files — `i9h2` got exactly **56/56 groups, not one       │
+     * │ number wrong** — then hit the cost cap AFTERWARD and got labeled            │
+     * │ "failed".                                                              │
      * │                                                                      │
-     * │ Trần dừng lượt gọi; nó không hoá kiếp cái file đã nằm trên đĩa. Lấy   │
-     * │ tín hiệu *"đã tiêu hết tiền cho phép"* làm nhãn cho *"việc có xong    │
-     * │ không"* là dùng thước của câu hỏi này để đo câu hỏi khác.             │
+     * │ A cap stops the call loop; it doesn't undo a file already on disk.          │
+     * │ Using the signal *"the allowed money ran out"* as the label for *"did       │
+     * │ the task finish"* is measuring one question with the ruler of a               │
+     * │ different one.                                                        │
      * │                                                                      │
-     * │ Cái giá thật không phải một chữ xấu xí. Hôm đó hệ thống kêu SAI bốn   │
-     * │ lần và im lặng đúng lần cần kêu (`d6v9` sai 45/51 nhóm, nhãn ✅). Một │
-     * │ cái chuông sai 80% thì người dùng học cách tắt — rồi lần cháy thật    │
-     * │ không ai nghe. Với người non-code đang tin hệ thống, đó là toàn bộ    │
-     * │ vốn liếng uy tín của sản phẩm.                                        │
+     * │ The real cost isn't one ugly word. That same day the system cried            │
+     * │ WOLF four times and stayed silent exactly when it needed to speak up            │
+     * │ (`d6v9` got 45/51 groups wrong, labeled ✅). An alarm that's wrong 80%          │
+     * │ of the time gets learned to be ignored — and then the real fire has no          │
+     * │ listener. For a non-technical user trusting the system, that's the           │
+     * │ product's entire reserve of credibility.                              │
      * │                                                                      │
-     * │ ⚠ Ta KHÔNG hứa nội dung đúng — vẫn chỉ khai đúng thứ `existsSync`     │
-     * │   biết, y như đường chạy thành công. Không thêm một lời nói dối nào.  │
+     * │ ⚠ We're NOT promising the content is correct — still declaring exactly     │
+     * │   what `existsSync` knows, the same as on the success path. Not one         │
+     * │   more lie added.                                                     │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     const deliveredAll = promised.length > 0 && promised.every((p) => written.includes(p));
 
-    // Nói CHUYỆN GÌ XẢY RA + LÀM GÌ TIẾP THEO. "Gặp lỗi" chung chung là vô dụng
-    // với người non-code — họ không biết sửa ở đâu.
+    // Says WHAT HAPPENED + WHAT TO DO NEXT. A generic "an error occurred" is
+    // useless to a non-technical user — they don't know what to fix.
     const cause =
       kind === 'max_turns'
         ? phrase('plan.causeMaxTurns', { role: brief.role })
@@ -895,16 +950,18 @@ export class Scheduler {
           : phrase('plan.causeError');
 
     /**
-     * Câu "đã ghi được gì" đứng TRƯỚC câu "vì sao dừng".
+     * The "what got written" sentence comes BEFORE "why it stopped".
      *
-     * Người dùng non-code đọc câu đầu rồi quyết định. Chôn *"nhưng file có
-     * rồi"* xuống cuối một câu bắt đầu bằng "bị chặn" thì họ đã bấm chạy lại
-     * xong mới đọc tới. Thứ tự câu chữ ở đây là một quyết định sản phẩm, không
-     * phải cách trình bày.
+     * A non-technical user reads the first sentence and decides from there.
+     * Burying *"but the file's already there"* at the end of a sentence that
+     * opens with "blocked" means they'll have already clicked retry before
+     * reading that far. The order of these sentences is a product decision,
+     * not a formatting choice.
      */
     const say = deliveredAll
-      ? // Giao đủ hàng: báo XONG, và chỉ NHẮC NHẸ về tiền. Đây là ghi chú, không
-        // phải cảnh báo — việc đã có kết quả, người dùng không cần làm gì cả.
+      ? // Full delivery: report DONE, and just a GENTLE note about cost. This
+        // is a note, not a warning — the task already has a result, the user
+        // doesn't need to do anything.
         `${phrase('plan.doneWrote', {
           what: written.length > 1 ? pluralOf('plan.fileCount', written.length) : (written[0] ?? ''),
         })} ` +
@@ -919,31 +976,37 @@ export class Scheduler {
         : cause;
 
     return {
-      // Đủ hàng → `done`. Có nhưng thiếu → `blocked` (dở dang, cần bạn quyết).
-      // Trắng tay → `failed`. Ba mức, suy từ đĩa, không suy từ cách vòng lặp chết.
+      // Full delivery → `done`. Some but not all → `blocked` (unfinished,
+      // needs your call). Nothing → `failed`. Three tiers, inferred from disk,
+      // never inferred from how the loop died.
       status: deliveredAll ? 'done' : written.length ? 'blocked' : 'failed',
       say,
       answer: '',
       /**
-       * ⚠ RỖNG kể cả khi `deliveredAll` — và đó là chỗ dễ đi sai nhất trong bốn
-       * chỗ dựng receipt bằng mã. Ở đây ta biết **file nào đáp xuống**, nhưng
-       * không biết **trong file có gì**: vòng lặp chết trước khi nhân viên kịp
-       * viết receipt, nên không ai đọc nội dung cả. Suy một câu tóm tắt từ tên
-       * file là bịa. `say` ở trên đã nói đúng thứ ta biết. → `types.ts §gist`
+       * ⚠ EMPTY even when `deliveredAll` — and this is the easiest place to
+       * get wrong of the four spots that build a receipt in code. Here we
+       * know **which files landed**, but not **what's inside them**: the loop
+       * died before the worker could write a receipt, so nobody read the
+       * content. Inferring a summary sentence from a filename would be making
+       * it up. `say` above already says exactly what we know.
+       * → `types.ts §gist`
        */
       gist: '',
-      // File có thật trên đĩa, dù ca này đóng ở `failed`. Khai rỗng là nói dối
-      // rằng đĩa sạch — đúng lớp lỗi `stoppedReceipt` đã sửa cho nhánh bị ngắt.
+      // Real files on disk, even though this case closes as `failed`.
+      // Declaring it empty would be lying that the disk is clean — exactly
+      // the failure class `stoppedReceipt` fixed for the interrupted branch.
       artifacts: written,
       lessons: [],
       /**
-       * ⚠ Giao đủ hàng thì `blocked_on` phải RỖNG, không chỉ `status` đổi.
+       * ⚠ On full delivery `blocked_on` must be EMPTY, not just `status`
+       * changed.
        *
-       * `worthLearning` đọc `!!blocked_on` như một tín hiệu trục trặc độc lập.
-       * Đổi mỗi `status` mà để lại câu "chạm trần" ở đây thì cửa hỏi-bài-học
-       * vẫn bắn, và ta lại đẻ ra đúng hai node rác đã phải đi dọn. Đây là nửa
-       * còn lại của cùng một bản vá — sửa một nhánh xong phải hỏi *"còn nhánh
-       * nào cùng hình dạng?"*.
+       * `worthLearning` reads `!!blocked_on` as its own independent hiccup
+       * signal. Changing only `status` and leaving a "hit the cap" message
+       * here means the ask-for-a-lesson gate still fires, and we'd spawn
+       * exactly the junk nodes that had to be cleaned up. This is the other
+       * half of the same patch — fixing one branch means asking *"is there
+       * another branch shaped like this one?"*.
        */
       blocked_on: deliveredAll
         ? null
@@ -952,22 +1015,24 @@ export class Scheduler {
           : msg.slice(0, 200),
       task_id: brief.task_id,
       role: brief.role,
-      // Kiểu hỏng dưới dạng DỮ LIỆU, để `agentFault()` quyết được "lỗi của ai"
-      // mà không phải khớp chuỗi trên câu chữ hiển thị. Giao đủ hàng thì không
-      // có kiểu hỏng nào cả — việc đã xong. → `Receipt.failure`
+      // The failure kind as DATA, so `agentFault()` can decide "whose fault"
+      // without matching strings against display text. Full delivery means
+      // there's no failure kind at all — the task is done. → `Receipt.failure`
       ...(deliveredAll ? {} : { failure: kind as FailureKind }),
-      // Token ĐÃ TIÊU trước khi lỗi nổ, không phải số 0 cho tiện. Bản trước ghi
-      // cứng 0 ở đây và đó là chỗ tiền biến mất khỏi sổ — `max_turns` chạy tới
-      // kịch trần lượt rồi báo $0. → `RunError.usage`
+      // Tokens ACTUALLY SPENT before the error hit, not a convenient 0. The
+      // previous version hard-coded 0 here, and that's where money vanished
+      // from the ledger — `max_turns` runs all the way to its turn cap and
+      // then reports $0. → `RunError.usage`
       usage:
         err instanceof RunError && err.usage
           ? err.usage
           : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: '', turns: 0 },
       wall_ms: 0,
       reasked: false,
-      // Task nổ TRƯỚC khi chạy được gì (`observed` undefined) thì mới rỗng —
-      // không quan sát được thao tác nào, nên cũng không được khai là có lặp.
-      // Task nổ GIỮA CHỪNG thì mang theo đúng thứ nó đã kịp làm.
+      // Only empty when the task blew up BEFORE running anything at all
+      // (`observed` undefined) — no operation was observed, so it can't be
+      // declared as looping either. A task that blew up MID-WAY carries
+      // exactly what it managed to do.
       landed: observed?.landed ?? [],
       looped: observed?.looped ?? false,
       reads: observed?.reads ?? [],
@@ -976,9 +1041,9 @@ export class Scheduler {
 }
 
 /**
- * TTL 1 giờ khi đang "trong ca": người dùng nghĩ 7 phút giữa hai câu là chuyện
- * thường, mà TTL 5 phút thì mất trắng cache. Ghi cache TTL 1h đắt hơn ~1.6×
- * nhưng cứu được toàn bộ khoảng nghỉ.
+ * A 1-hour TTL while "in a session": a user thinking for 7 minutes between two
+ * messages is normal, and a 5-minute TTL would lose the cache entirely.
+ * Writing the cache with a 1h TTL costs ~1.6× more but saves the entire pause.
  */
 function ttlMs(setting: 'auto' | '5m' | '1h'): number {
   if (setting === '5m') return 5 * 60_000;
@@ -986,19 +1051,21 @@ function ttlMs(setting: 'auto' | '5m' | '1h'): number {
 }
 
 /**
- * Chuẩn hoá đường dẫn để SO SÁNH — không phải để mở file.
+ * Normalize a path for COMPARISON — not for opening a file.
  *
- * `outputs` của T-01 và `inputs` của T-02 do model viết ở hai chỗ khác nhau
- * trong cùng một khối JSON, nên nó viết `artifacts/x.md` ở đây và
- * `./artifacts/x.md` ở kia là chuyện bình thường. So chuỗi thô thì hai cái đó
- * là hai file khác nhau, và cả cơ chế nối dây tự động im lặng không chạy.
+ * T-01's `outputs` and T-02's `inputs` are written by the model in two
+ * different spots of the same JSON block, so it writing `artifacts/x.md` here
+ * and `./artifacts/x.md` there is completely normal. Comparing raw strings
+ * would treat those as two different files, and the whole auto-linking
+ * mechanism would silently fail to run.
  *
- * ⚠ DẤU GẠCH CUỐI CŨNG LÀ MỘT CA NHƯ THẾ, và nó đã nổ thật (20/08). Ca hợp
- * đồng: T-01 khai `outputs: artifacts/T-01/dieu-khoan/`, T-02 khai `inputs:`
- * đúng chuỗi đó. Nhưng `outputScoper` cắt dấu gạch cuối (nó tách chuỗi rồi bỏ
- * mảnh rỗng) còn `artifactScoper` thì không — nên hai bên bước vào `norm` với
- * `…/dieu-khoan` và `…/dieu-khoan/`, không khớp, và người dùng nhận
- * *"không việc nào tạo ra nó"* cho một thư mục mà T-01 đang tạo ra.
+ * ⚠ A TRAILING SLASH IS ANOTHER CASE LIKE THIS, and it actually happened
+ * (08/20). A contract case: T-01 declares `outputs: artifacts/T-01/dieu-khoan/`,
+ * T-02 declares `inputs:` the exact same string. But `outputScoper` strips the
+ * trailing slash (it splits the string and drops the empty segment) while
+ * `artifactScoper` doesn't — so the two sides enter `norm` with `…/dieu-khoan`
+ * and `…/dieu-khoan/`, don't match, and the user gets *"no task produces it"*
+ * for a directory T-01 is literally creating.
  */
 function norm(p: string): string {
   return p
@@ -1010,21 +1077,24 @@ function norm(p: string): string {
 }
 
 /**
- * `dir` có phải THƯ MỤC CHỨA `file` không (đã chuẩn hoá cả hai).
+ * Is `dir` the DIRECTORY THAT CONTAINS `file` (both already normalized).
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỘT TASK KHÔNG BIẾT TRƯỚC NÓ SẼ ĐẺ RA BAO NHIÊU FILE — VÀ ĐÓ LÀ CA THẬT. │
+ * │ A TASK CAN'T KNOW IN ADVANCE HOW MANY FILES IT WILL PRODUCE — AND THAT'S       │
+ * │ A REAL CASE.                                                            │
  * │                                                                          │
- * │ *"Tách hợp đồng theo điều khoản, mỗi điều một file"*: số file bằng số     │
- * │ điều khoản, mà số điều khoản chỉ biết được sau khi đọc. Nên planner viết  │
- * │ `outputs: […/dieu-khoan/dieu-01.md]` rồi `inputs` của bước sau trỏ vào cả │
- * │ THƯ MỤC — đó là cách khai đúng nhất nó có, không phải một lỗi.            │
+ * │ *"Split the contract by clause, one file per clause"*: the file count            │
+ * │ equals the clause count, and the clause count is only knowable after            │
+ * │ reading it. So the planner writes `outputs: […/dieu-khoan/dieu-01.md]`             │
+ * │ and then the next step's `inputs` points at the WHOLE DIRECTORY — that's           │
+ * │ the most accurate declaration it has, not a mistake.                         │
  * │                                                                          │
- * │ So bằng `===` thì thư mục không bao giờ khớp file, `validate` chặn cả kế  │
- * │ hoạch, và người dùng phải diễn đạt lại một yêu cầu vốn đã rõ ràng.        │
+ * │ Comparing with `===` would mean a directory never matches a file,               │
+ * │ `validate` blocks the whole plan, and the user has to rephrase a request           │
+ * │ that was already clear.                                                  │
  * │                                                                          │
- * │ So bằng tiền tố + `/` chứ không phải `startsWith` trần: `dieu-khoan` là   │
- * │ tiền tố chuỗi của `dieu-khoan-cu.md` nhưng KHÔNG phải thư mục chứa nó.    │
+ * │ Compares by prefix + `/`, not a bare `startsWith`: `dieu-khoan` is a             │
+ * │ string prefix of `dieu-khoan-cu.md` but is NOT the directory containing it.        │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function contains(dir: string, file: string): boolean {
@@ -1034,40 +1104,46 @@ function contains(dir: string, file: string): boolean {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỘT PHỤ THUỘC CHỈ ĐƯỢC COI LÀ XONG KHI NÓ THẬT SỰ GIAO ĐƯỢC HÀNG.        │
+ * │ A DEPENDENCY IS ONLY CONSIDERED DONE WHEN IT ACTUALLY DELIVERED.               │
  * │                                                                          │
- * │ Bản trước lan truyền theo `failed`, mà `Scheduler.run` chỉ `failed.add`   │
- * │ khi `receipt.status === 'failed'`. Một task trả **`blocked`** thì vào     │
- * │ `receipts` và KHÔNG vào `failed` ⇒ nó được tính là "phụ thuộc đã xong".  │
+ * │ The previous version propagated via `failed`, but `Scheduler.run` only          │
+ * │ does `failed.add` when `receipt.status === 'failed'`. A task returning           │
+ * │ **`blocked`** goes into `receipts` and NOT into `failed` ⇒ it counted as         │
+ * │ "the dependency is done".                                               │
  * │                                                                          │
- * │ Đo được 20/08, ca `P-260820-2219-5ltb`: T-01 trả `blocked` lúc 22:20:21   │
- * │ (không đọc nổi `.docx`, không sinh file nào) và T-02 phóng lúc **22:20:21 │
- * │ — cùng một giây**. Rồi T-03. Cả hai đi tìm những file mà hệ thống đã biết │
- * │ chắc là không tồn tại. T-02 còn tự chẩn đoán đúng, bằng tiền người dùng:  │
- * │ *"toàn bộ thư mục artifacts đều trống"*.                                  │
+ * │ Measured 08/20, case `P-260820-2219-5ltb`: T-01 returned `blocked` at            │
+ * │ 22:20:21 (couldn't read the `.docx`, produced no file) and T-02 launched          │
+ * │ at **22:20:21 — the same second**. Then T-03. Both went searching for            │
+ * │ files the system already knew for certain didn't exist. T-02 even                │
+ * │ correctly self-diagnosed, on the user's dime: *"the entire artifacts             │
+ * │ directory is empty"*.                                                    │
  * │                                                                          │
- * │ ⚠ Tách `blocked` ≠ `failed` là ĐÚNG và phải giữ — nhật ký phải phân biệt │
- * │ "hệ thống hỏng" với "đang chờ bạn". Cái sai là dùng `failed` làm TÍN HIỆU │
- * │ LAN TRUYỀN. Tín hiệu đúng quan sát được: **nó có giao được hàng không.**  │
+ * │ ⚠ Keeping `blocked` ≠ `failed` separate is CORRECT and must stay — the log        │
+ * │ has to distinguish "the system broke" from "waiting on you". The mistake         │
+ * │ was using `failed` as the PROPAGATION SIGNAL. The correct, observable            │
+ * │ signal: **did it actually deliver.**                                    │
  * │                                                                          │
- * │ Và "giao được hàng" mạnh hơn `status === 'done'`: một task tự nhận xong   │
- * │ mà `outputs` không có gì đáp xuống thì bước sau vẫn đọc vào hư không.     │
- * │ `missingOutputs` bắt ca đó, nhưng nó chạy SAU khi cả DAG xong — quá muộn  │
- * │ cho việc ngăn task con phóng.                                            │
+ * │ And "delivered" is stronger than `status === 'done'`: a task that                │
+ * │ declares itself done while `outputs` has nothing landed still leaves the         │
+ * │ next step reading nothing. `missingOutputs` catches that case, but it            │
+ * │ runs AFTER the whole DAG finishes — too late to stop a child task from            │
+ * │ launching.                                                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Hàm THUẦN, và cố ý: đây là luật đắt nhất trong `run()` mà `run()` thì gọi
- * thẳng `runWorker` nên không bộ test nào chạm tới được. → SESSIONS_MEMORY §4
+ * A PURE function, deliberately: this is the most expensive rule in `run()`,
+ * and `run()` calls `runWorker` directly, so no test suite can reach it.
+ * → SESSIONS_MEMORY §4
  */
 export function delivered(receipt: Receipt | undefined): boolean {
   if (!receipt || receipt.status !== 'done') return false;
-  // Không hứa gì thì không nợ gì. Task `deliver: reply` vẫn phải khai `outputs`
-  // theo prompt, nhưng luật này không được sập nếu một ngày nào đó có ngoại lệ.
+  // Promise nothing, owe nothing. A `deliver: reply` task still has to
+  // declare `outputs` per the prompt, but this rule must not break if an
+  // exception ever shows up.
   if (receipt.artifacts.length === 0 && receipt.landed.length === 0) return true;
   return receipt.landed.length > 0 || receipt.artifacts.length > 0;
 }
 
-/** Những `deps` của `t` chưa giao được hàng. Rỗng = phóng được. */
+/** Which of `t`'s `deps` haven't delivered. Empty = safe to launch. */
 export function unmetDeps(
   t: TaskBrief,
   receipts: ReadonlyMap<string, Receipt>,
@@ -1077,9 +1153,9 @@ export function unmetDeps(
 }
 
 /**
- * Câu giải thích, TÁCH HAI Ý. "Bước trước hỏng" và "bước trước không tạo ra file
- * nào" dẫn tới hai việc phải làm khác hẳn nhau — gộp lại thành một câu là bắt
- * người dùng tự đoán mình nên sửa gì.
+ * The explanation, SPLIT INTO TWO IDEAS. "The prior step failed" and "the
+ * prior step produced no file" lead to two completely different fixes —
+ * merging them into one sentence forces the user to guess which one applies.
  */
 function reasonFor(stale: readonly string[], receipts: ReadonlyMap<string, Receipt>): string {
   const empty = stale.filter((d) => receipts.get(d)?.status === 'done');
@@ -1090,7 +1166,7 @@ function reasonFor(stale: readonly string[], receipts: ReadonlyMap<string, Recei
   return parts.join(' · ');
 }
 
-/** Mọi task ghi một file NẰM TRONG `dir`. Thứ tự giữ nguyên, không trùng. */
+/** Every task that writes a file INSIDE `dir`. Order preserved, no duplicates. */
 function producersInto(producer: ReadonlyMap<string, string>, dir: string): string[] {
   const out: string[] = [];
   for (const [path, task] of producer) {

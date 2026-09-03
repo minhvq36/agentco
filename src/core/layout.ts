@@ -1,22 +1,24 @@
 /**
- * Canvas: HÌNH DẠNG của một VĂN PHÒNG. → docs/SPEC-canvas.md, SPEC-offices.md §2
+ * The canvas: the SHAPE of an OFFICE. → docs/SPEC-canvas.md, SPEC-offices.md §2
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ BẤT BIẾN SỐ 1: layout.json chỉ chứa TOẠ ĐỘ + CẠNH NỐI, không chứa       │
- * │ NỘI DUNG. `cacheKey` băm nội dung role — nhét toạ độ vào roles/*.yaml   │
- * │ thì MỖI CÚ KÉO CHUỘT vứt ~20K cache_write. Tách file ra thì lỗi đó      │
- * │ KHÔNG THỂ xảy ra, không cần kỷ luật gì.                                 │
+ * │ INVARIANT #1: layout.json holds only COORDINATES + EDGES, never CONTENT.       │
+ * │ `cacheKey` hashes a role's content — putting coordinates inside                │
+ * │ roles/*.yaml would mean EVERY MOUSE DRAG throws away ~20K worth of                │
+ * │ cache_write. Splitting the file out makes that bug IMPOSSIBLE, with no             │
+ * │ discipline required at all.                                                    │
  * │                                                                         │
- * │ Phép thử: xoá layout.json mà văn phòng vẫn chạy y nguyên = ranh giới    │
- * │ đúng. Đó là lý do `assignable()` trả về undefined (= tất cả) khi thiếu  │
- * │ file, và lý do cạnh mcp→agent được ghi vào roles/*.yaml chứ không vào   │
- * │ đây.                                                                    │
+ * │ The test: delete layout.json and the office still runs identically = the         │
+ * │ boundary is correct. That's why `assignable()` returns undefined (= everyone)     │
+ * │ when the file is missing, and why the `mcp→agent` edge is written into            │
+ * │ roles/*.yaml rather than here.                                                 │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
- * Cạnh `assistant → agent` CÓ NGHĨA: "Trợ lý được phép giao việc cho người này".
- * Nó điều khiển trực tiếp `roster()` trong assistant.ts → ngắt dây = bớt `pitch`
- * khỏi ngữ cảnh Trợ lý = tiết kiệm token THẬT. Kéo dây là hành động có hậu quả
- * đo được, không phải trang trí.
+ * An `assistant → agent` edge MEANS SOMETHING: "the Assistant is allowed to
+ * delegate work to this person". It directly drives `roster()` in
+ * assistant.ts → unwiring it = dropping `pitch` out of the Assistant's own
+ * context = a REAL token saving. Dragging a wire is an action with a
+ * measurable consequence, not decoration.
  */
 
 import fs from 'node:fs';
@@ -37,7 +39,7 @@ import {
   type Point,
 } from './layout-geometry.js';
 
-/** Khe giữa đáy nhân viên và đỉnh cánh tay của họ. Khớp `arrangeAll`. */
+/** Gap between the bottom of a worker and the top of their arm. Must match `arrangeAll`. */
 const ARM_DROP = 74;
 import { findArm } from './catalog.js';
 import { isSafeId } from './paths.js';
@@ -50,9 +52,9 @@ export interface LayoutNode {
   kind: NodeKind;
   x: number;
   y: number;
-  /** chỉ với kind=agent — trỏ tới roles/<role>.yaml */
+  /** only for kind=agent — points at roles/<role>.yaml */
   role?: string;
-  /** chỉ với kind=mcp — tên server khai trong company.yaml */
+  /** only for kind=mcp — server name declared in company.yaml */
   server?: string;
 }
 
@@ -70,9 +72,10 @@ export interface LayoutFile {
 export const ASSISTANT_NODE = 'assistant';
 export const KNOWLEDGE_NODE = 'knowledge';
 /**
- * Tủ tài liệu. Đứng CẠNH kho tri thức trên sơ đồ, và đó là cả điểm của nó:
- * hai thứ dễ lẫn nhất trong sản phẩm, nên phải nhìn thấy cùng lúc để phân biệt
- * được — thứ NGƯỜI DÙNG đưa vào, và thứ hệ thống ĐÃ HỌC.
+ * The document cabinet. Sits NEXT TO the knowledge shelf on the diagram, and
+ * that's the entire point: the two easiest things to confuse in the
+ * product, so they must be visible at the same time to tell apart — what
+ * the USER put in, versus what the system HAS LEARNED.
  * → docs/SPEC-library.md §1
  */
 export const LIBRARY_NODE = 'library';
@@ -82,28 +85,32 @@ export const mcpNodeId = (server: string): string => `mcp:${server}`;
 const COORD_LIMIT = 20_000;
 const MAX_NODES = 200;
 
-/** Node kind nào được phép nối RA đâu. Agent cố tình KHÔNG có mặt ở đây. */
+/** Which node kind is allowed to connect OUT to which. Agent is deliberately ABSENT here. */
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `mcp → assistant` ĐÃ GỠ (23/08). Nó là một SỢI DÂY KHÔNG LÀM GÌ CẢ.   │
+ * │ 🔴 `mcp → assistant` REMOVED (23/08). It was a WIRE THAT DID NOTHING AT ALL.    │
  * │                                                                          │
- * │ Cạnh đó từng được nhận với lý do "việc vặt Trợ lý tự xử lý, cần           │
- * │ concierge (M1) mới chạy". Nhưng đi soi thì `assistant.mcp` chỉ được GHI   │
- * │ rồi ĐỌC LẠI ĐỂ VẼ — không mảnh nào nạp nó vào phiên Trợ lý. Concierge     │
- * │ chưa tồn tại. Nên nó là một lời hứa nữa không có mã nguồn thi hành.       │
+ * │ That edge was originally accepted with the reasoning "small tasks the           │
+ * │ Assistant handles itself, needs a concierge (M1) to actually run". But going       │
+ * │ and checking, `assistant.mcp` was only ever WRITTEN and then READ BACK TO         │
+ * │ DRAW — no code anywhere loaded it into the Assistant's own session. The           │
+ * │ concierge doesn't exist yet. So it was one more promise with no code enforcing     │
+ * │ it.                                                                        │
  * │                                                                          │
- * │ Và nếu có ai nối nó vào thật thì còn tệ hơn im lặng: `types.ts:499` ghi   │
- * │ Trợ lý KHÔNG BAO GIỜ được cầm MCP — MCP phá prompt cache lúc `resume`,    │
- * │ mà `route()` resume ở MỌI tin nhắn ⇒ ~36 000 token mỗi lượt trò chuyện.   │
+ * │ And if anyone actually wired it up for real, it would be worse than doing         │
+ * │ nothing: `types.ts:499` states the Assistant must NEVER hold an MCP — an MCP       │
+ * │ breaks the prompt cache on `resume`, and `route()` resumes on EVERY message ⇒       │
+ * │ ~36,000 tokens on every conversation turn.                                    │
  * │                                                                          │
- * │ ⇒ Một cạnh vô hại-vì-chưa-nối-gì, dẫn thẳng tới một cái bẫy đắt nhất hệ.  │
- * │ Từ khi cắm cánh tay rẻ đi (§6), người dùng SẼ kéo thử. Gỡ khỏi bảng này   │
- * │ là chặn bằng cấu trúc; ngày concierge có thật thì thêm lại, kèm mã chạy.  │
+ * │ ⇒ An edge that's harmless-because-nothing's-wired-to-it leads straight to the      │
+ * │ single most expensive trap in the system. Since connecting an arm got cheaper       │
+ * │ (§6), a user WILL try dragging this. Removing it from this table blocks it          │
+ * │ structurally; the day a real concierge exists, add it back with code that runs.     │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Bảng này có BẢN THỨ HAI ở `web/src/lib/types.ts §CAN_CONNECT`. Hai bản của
- * cùng một luật đã đốt dự án này một lần (`agentSlot` vs `arrange`) — sửa một
- * bên thì phải sửa bên kia, và về lâu dài nên nhập chúng lại làm một.
+ * ⚠ This table has a SECOND COPY at `web/src/lib/types.ts §CAN_CONNECT`. Two
+ * copies of one rule have already burned this project once (`agentSlot` vs
+ * `arrange`) — edit one side and the other must also change, and long-term they should merge into one.
  */
 const CAN_CONNECT: Partial<Record<NodeKind, ReadonlySet<NodeKind>>> = {
   assistant: new Set<NodeKind>(['agent']),
@@ -121,24 +128,26 @@ export class LayoutStore {
     return this.office.paths.layoutFile;
   }
 
-  /** File đã từng được ghi chưa. Phân biệt "chưa ai đụng" với "đã ngắt hết dây". */
+  /** Whether the file has ever been written. Tells "nobody's touched this yet" apart from "every wire was cut". */
   get exists(): boolean {
     return fs.existsSync(this.file);
   }
 
   /**
-   * Hình dạng hiện tại, đã đối chiếu với roles/ và company.yaml.
+   * The current shape, reconciled against roles/ and company.yaml.
    *
-   * TỰ PHỤC HỒI: có file yaml mà thiếu node → thêm node vào chỗ trống (người
-   * dùng thả file vào tay vẫn thấy nó xuất hiện). Có node mà thiếu file yaml →
-   * GIỮ LẠI node, đánh dấu `missing` để canvas hiện đỏ, không xoá âm thầm.
+   * SELF-HEALING: a yaml file exists but its node is missing → add the node
+   * into a free slot (a user who hand-drops a file still sees it appear).
+   * A node exists but its yaml file is missing → KEEP the node, flag it
+   * `missing` so the canvas shows it red, never silently delete it.
    */
   /**
-   * `pending` = cạnh `mcp → agent` **sắp được ghi**, do `save()` đưa xuống.
+   * `pending` = `mcp → agent` edges **about to be written**, passed down from `save()`.
    *
-   * Chỉ dùng để CHỌN CHỖ cho node chưa có toạ độ. Nó không đi vào file, không
-   * đổi cạnh nào — nguồn sự thật của cạnh mcp vẫn là `roles/*.yaml`.
-   * Vì sao cần: xem khối chú thích trong `spotFor`.
+   * Only used to CHOOSE A SLOT for a node with no coordinates yet. It never
+   * enters the file, never changes any edge — the source of truth for mcp
+   * edges is still `roles/*.yaml`.
+   * Why this is needed: see the comment block inside `spotFor`.
    */
   read(pending: readonly { from: string; to: string }[] = []): {
     layout: LayoutFile;
@@ -148,12 +157,12 @@ export class LayoutStore {
     const stored = new Map(raw.nodes.map((n) => [n.id, n]));
 
     /**
-     * LƯỢT 0 — danh sách node PHẢI có mặt, chưa cần toạ độ.
+     * PASS 0 — the list of nodes that MUST exist, no coordinates needed yet.
      *
-     * Tách hẳn bước "có những ai" khỏi bước "ai ngồi đâu". Bản trước trộn hai
-     * việc vào một vòng lặp, và đó là lý do toạ độ mặc định phải viết tay từng
-     * con số: lúc đặt Trợ lý thì còn chưa biết văn phòng có bao nhiêu nhân viên
-     * để căn giữa theo.
+     * Fully splits the "who exists" step from the "who sits where" step. The
+     * earlier version mixed both into one loop, and that's why default
+     * coordinates had to be hand-written numbers: placing the Assistant
+     * happened before it was even known how many workers the office had to center against.
      */
     const wanted: LayoutNode[] = [{ id: ASSISTANT_NODE, kind: 'assistant', x: 0, y: 0 }];
     for (const roleId of this.office.roles.keys()) {
@@ -162,31 +171,33 @@ export class LayoutStore {
     }
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ CÁNH TAY CHỈ HIỆN Ở VĂN PHÒNG ĐANG DÙNG NÓ. (đổi 23/08)            │
+     * │ AN ARM ONLY SHOWS IN THE OFFICE THAT'S USING IT. (changed 23/08)         │
      * │                                                                    │
-     * │ Bản trước dựng node cho MỌI khoá trong `company.mcpServers`, ở MỌI  │
-     * │ văn phòng — đúng với ý *"một chỗ cắm, mọi văn phòng thấy"*. Ý đó    │
-     * │ viết khi cắm một MCP tốn 9 bước và không ai có quá một cái.         │
+     * │ The earlier version built a node for EVERY key in `company.mcpServers`,     │
+     * │ in EVERY office — following the idea *"connect it once, every office sees   │
+     * │ it"*. That idea was written when connecting one MCP took 9 steps and no      │
+     * │ one had more than one.                                                 │
      * │                                                                    │
-     * │ Hộp thoại `+ Kết nối` làm việc cắm rẻ đi ⇒ TIỀN ĐỀ ĐÓ HẾT ĐÚNG.     │
-     * │ User bắt được ngay lượt test đầu: cắm một cánh tay ở văn phòng này  │
-     * │ thì nó mọc lên sơ đồ của cả sáu văn phòng kia, không dây nào, không │
-     * │ việc gì.                                                           │
+     * │ The `+ Connect` dialog made connecting cheap ⇒ THAT PREMISE STOPPED HOLDING. │
+     * │ The user caught it on the very first test run: connecting an arm in this      │
+     * │ office made it sprout onto the diagrams of six other offices too, with no      │
+     * │ wire, doing nothing.                                                    │
      * │                                                                    │
-     * │ ⇒ Ranh giới đọc được bằng mắt: **cái gì đã cắm** là của CÔNG TY     │
-     * │ (hiện ở khối "đã cắm ở văn phòng khác" trong hộp thoại), **ai được  │
-     * │ dùng** là của VĂN PHÒNG (sợi dây trên sơ đồ này).                   │
+     * │ ⇒ A visually readable boundary: **what's connected** belongs to the           │
+     * │ COMPANY (shown in the "already connected in another office" block in the      │
+     * │ dialog), **who gets to use it** belongs to the OFFICE (the wire on this        │
+     * │ diagram).                                                                │
      * │                                                                    │
-     * │ ⚠ Duyệt theo `role.mcp` chứ KHÔNG theo `company.mcpServers`: một    │
-     * │ vai trò còn khai một server đã bị rút phải vẫn thấy node đó — ở     │
-     * │ trạng thái mồ côi, báo đỏ. Gộp hai chuyện *"văn phòng này không     │
-     * │ dùng"* và *"không còn khai trong company.yaml"* là đúng lỗi         │
-     * │ `catch { exists = false }` — hai sự việc khác hẳn nhau, một nhãn.   │
+     * │ ⚠ Traverses `role.mcp`, NOT `company.mcpServers`: a role that still           │
+     * │ declares a server that's since been disconnected must still see that node      │
+     * │ — in an orphaned state, flagged red. Conflating *"this office isn't using       │
+     * │ it"* with *"no longer declared in company.yaml"* is exactly the `catch {         │
+     * │ exists = false }` failure — two entirely different facts under one label.       │
      * └────────────────────────────────────────────────────────────────────┘
      */
-    // `office.arms` = CÓ MẶT trên sơ đồ (kể cả chưa nối dây ai).
-    // `role.mcp`    = AI ĐƯỢC DÙNG. Hợp hai tập, vì một cánh tay còn dây mà
-    // thiếu trong `office.arms` (dữ liệu cũ) vẫn phải hiện. → types.ts §arms
+    // `office.arms` = PRESENT on the diagram (even if wired to no one).
+    // `role.mcp`    = WHO GETS TO USE IT. Both sets combined, since an arm
+    // still wired but missing from `office.arms` (old data) must still show. → types.ts §arms
     const inUse = new Set<string>([...this.office.config.arms, ...this.office.config.assistant.mcp]);
     for (const [roleId, role] of this.office.roles) {
       if (this.office.archivedRoles.has(roleId)) continue;
@@ -195,27 +206,28 @@ export class LayoutStore {
     for (const server of inUse) {
       wanted.push({ id: mcpNodeId(server), kind: 'mcp', server, x: 0, y: 0 });
     }
-    // Hai kho đứng cạnh nhau ở hàng dưới cùng: TRÁI = kho tri thức (hệ thống tự
-    // học), PHẢI = tủ tài liệu (người dùng đưa vào). Thứ tự này giờ do
-    // `arrangeAll` giữ, không còn là hai hằng số phải nhớ khớp nhau.
+    // The two shelves sit next to each other on the bottom row: LEFT =
+    // knowledge (self-taught by the system), RIGHT = document cabinet
+    // (fed in by the user). This order is now maintained by `arrangeAll`, no longer two constants that must be kept in sync by hand.
     wanted.push({ id: KNOWLEDGE_NODE, kind: 'knowledge', x: 0, y: 0 });
     wanted.push({ id: LIBRARY_NODE, kind: 'library', x: 0, y: 0 });
 
     /**
-     * Bố cục sạch, tính bằng ĐÚNG hàm mà nút "Sắp xếp lại sơ đồ" chạy.
+     * A clean layout, computed with the EXACT function the "Re-arrange
+     * diagram" button runs.
      *
-     * ⚠ Cạnh dựng từ `role.mcp` — **nguồn sự thật là yaml**, không phải cạnh
-     * trong `layout.json` (chúng còn chưa được dựng ở đoạn này, và kể cả có thì
-     * cạnh `mcp→agent` cố ý không được lưu ở đó). Cùng dữ liệu mà `arrangeAll`
-     * cần để biết cánh tay nào thuộc về ai.
+     * ⚠ Edges built from `role.mcp` — **the yaml is the source of truth**,
+     * not edges in `layout.json` (they haven't even been built at this
+     * point, and even if they had, `mcp→agent` edges are deliberately never
+     * saved there). The same data `arrangeAll` needs to know which arm belongs to whom.
      */
     const links: { from: string; to: string }[] = [];
     for (const [roleId, role] of this.office.roles) {
       if (this.office.archivedRoles.has(roleId)) continue;
       for (const s of role.mcp) links.push({ from: mcpNodeId(s), to: agentNodeId(roleId) });
     }
-    // Cạnh sắp ghi cũng vào bố cục sạch — nếu không, `tidy` và `spotFor` nhìn
-    // hai sự thật khác nhau về cùng một cánh tay trong cùng một lời gọi.
+    // Edges about to be written also go into the clean layout — otherwise
+    // `tidy` and `spotFor` see two different truths about the same arm within the same call.
     for (const e of pending) if (!links.some((l) => l.from === e.from && l.to === e.to)) links.push(e);
     const tidy = arrangeAll(wanted.map((n) => ({ ...n, ...this.armGroup(n) })), links);
 
@@ -229,17 +241,19 @@ export class LayoutStore {
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ Ô CHO NODE MỚI PHẢI LÀ Ô TRỐNG THẬT, KHÔNG PHẢI Ô THỨ i.           │
+     * │ THE SLOT FOR A NEW NODE MUST BE A GENUINELY EMPTY SLOT, NOT SLOT #i.       │
      * │                                                                    │
-     * │ Bản trước dùng `agentSlot(i)` với `i` = thứ tự ALPHABET của vai     │
-     * │ trò, không kiểm ô đó đã có ai ngồi chưa. Thêm một nhân viên tên sắp │
-     * │ xếp TRƯỚC người cũ thì nó rơi ĐÚNG lên trên người cũ, và người dùng │
-     * │ thấy "bấm Thêm mà không có gì xảy ra".                              │
+     * │ The earlier version used `agentSlot(i)` with `i` = the ALPHABETICAL order    │
+     * │ of the role, never checking whether that slot was already occupied.       │
+     * │ Adding a worker whose name sorts BEFORE an existing one drops them RIGHT     │
+     * │ on top of the existing one, and the user sees "clicked Add and nothing        │
+     * │ happened".                                                                │
      * │                                                                    │
-     * │ ⚠ HAI LƯỢT, và đây là nửa dễ làm sai: phải đặt xong MỌI node đã có  │
-     * │ toạ độ rồi mới cấp ô cho node mới. Duyệt một lượt theo alphabet thì │
-     * │ node mới tên "ai-do" được cấp ô TRƯỚC khi "nguoi-viet" kịp vào danh │
-     * │ sách — và ta lại kiểm va chạm với một danh sách còn rỗng.           │
+     * │ ⚠ TWO PASSES, and this is the half that's easy to get wrong: every node       │
+     * │ that already has coordinates must be placed FIRST, before any new node gets    │
+     * │ a slot assigned. Doing it in one alphabetical pass means a new node named       │
+     * │ "ai-do" gets its slot assigned BEFORE "nguoi-viet" has even made it into        │
+     * │ the list — and the collision check runs against a list that's still empty.     │
      * └────────────────────────────────────────────────────────────────────┘
      */
     const fresh: LayoutNode[] = [];
@@ -250,15 +264,16 @@ export class LayoutStore {
     }
 
     /**
-     * Node mồ côi: file yaml / mcp server đã biến mất. Giữ lại + báo đỏ.
+     * Orphaned nodes: the yaml file / mcp server has disappeared. Kept + flagged red.
      *
-     * Xếp TRƯỚC lượt hai chứ không phải sau: chúng đang chiếm chỗ thật trên sơ
-     * đồ, nên node mới phải tránh chúng. Bản trước nối chúng vào cuối, tức là
-     * `firstFreeSlot` không nhìn thấy chúng và có thể đặt người mới đè lên.
+     * Placed BEFORE the second pass, not after: they occupy real space on
+     * the diagram, so new nodes must avoid them. The earlier version
+     * appended them at the end, meaning `firstFreeSlot` never saw them and
+     * could place a new person right on top.
      *
-     * ⚠ Vai trò đã LƯU TRỮ không phải mồ côi. File của nó còn nguyên, chỉ là
-     * người dùng bảo cất đi. Đưa nó vào đây là "cất xong nó hiện lại, màu đỏ" —
-     * tệ hơn cả không cho cất.
+     * ⚠ An ARCHIVED role is not an orphan. Its file is intact, the user
+     * just told it to be put away. Including it here would mean "archive
+     * it and it reappears, in red" — worse than not allowing archiving at all.
      */
     const missing = new Set<string>();
     for (const n of raw.nodes) {
@@ -267,24 +282,25 @@ export class LayoutStore {
       if (n.role && this.office.archivedRoles.has(n.role)) continue;
       /**
        * ┌────────────────────────────────────────────────────────────────────┐
-       * │ 🔴 NODE MCP ĐÃ RÚT HẲN THÌ BIẾN MẤT, KHÔNG "MỒ CÔI VĨNH VIỄN".     │
+       * │ 🔴 A FULLY-DISCONNECTED MCP NODE DISAPPEARS, IT DOES NOT BECOME A            │
+       * │ "PERMANENT ORPHAN".                                                    │
        * │                                                                    │
-       * │ Bug user báo 23/08: xoá kết nối xong node `🔌 files` vẫn nằm trên   │
-       * │ sơ đồ với nhãn "không còn cắm", và **không nút nào gỡ được nó** —   │
-       * │ bấm Xoá lần nữa cũng thế, vì `company.yaml` và `roles/*.yaml` đều   │
-       * │ đã sạch từ lâu.                                                    │
+       * │ Bug the user reported, 23/08: after removing a connection, the `🔌 files`         │
+       * │ node stayed on the diagram labeled "no longer connected", and **no button           │
+       * │ could remove it** — clicking Delete again did nothing, since both                  │
+       * │ `company.yaml` and `roles/*.yaml` had already been clean for a while.               │
        * │                                                                    │
-       * │ Thủ phạm là chính vòng lặp này: `layout.json` còn lưu node, vòng    │
-       * │ lặp thấy nó "không được muốn nữa" nên **giữ lại + báo đỏ**, rồi     │
-       * │ `save()` ghi `current.nodes` trở lại đĩa ⇒ nó tự tái sinh mãi mãi.  │
+       * │ The culprit was this exact loop: `layout.json` still stored the node, the loop        │
+       * │ saw it as "no longer wanted" so it **kept it + flagged it red**, then `save()`         │
+       * │ wrote `current.nodes` right back to disk ⇒ it kept resurrecting itself forever.        │
        * │                                                                    │
-       * │ Với AGENT thì giữ lại là ĐÚNG: file `roles/x.yaml` biến mất là một  │
-       * │ sự cố, người dùng cần thấy để còn khôi phục. Với MCP thì không có   │
-       * │ gì để khôi phục — không khai ở công ty, không vai trò nào trỏ tới,  │
-       * │ tức là nó **đã bị rút xong**, và cái node chỉ còn là rác nhìn thấy.  │
+       * │ For an AGENT, keeping it is CORRECT: a missing `roles/x.yaml` file is an              │
+       * │ incident, the user needs to see it to recover it. For an MCP there's nothing            │
+       * │ to recover — not declared at the company, no role points at it, meaning it's           │
+       * │ **already been fully disconnected**, and the node is now purely visible clutter.        │
        * │                                                                    │
-       * │ Mồ côi THẬT của MCP là ca khác, và nó vẫn được giữ ở vòng lặp dưới:│
-       * │ vai trò CÒN khai `mcp: [x]` mà `company.yaml` đã sạch.              │
+       * │ A REAL MCP orphan is a different case, still caught by the loop below: a role           │
+       * │ that STILL declares `mcp: [x]` while `company.yaml` has gone clean.                    │
        * └────────────────────────────────────────────────────────────────────┘
        */
       if (n.kind === 'mcp' && n.server && !inUse.has(n.server)) continue;
@@ -292,30 +308,31 @@ export class LayoutStore {
       keep(n);
     }
     /**
-     * Mồ côi KIỂU THỨ HAI, và nó chỉ xuất hiện từ 23/08: một vai trò còn khai
-     * `mcp: [x]` trong khi `x` đã bị rút khỏi `company.yaml`.
+     * A SECOND KIND of orphan, and it only appears as of 23/08: a role still
+     * declares `mcp: [x]` while `x` has since been removed from `company.yaml`.
      *
-     * Vòng lặp trên không bắt được nó — nó bắt node CÒN TRONG `layout.json` mà
-     * không còn được muốn; ca này thì ngược lại, node ĐANG được muốn (vì role
-     * khai) nhưng thứ nó trỏ tới đã biến mất. Hai hình dạng khác nhau, và gộp
-     * chúng vào một vòng lặp là cách chắc chắn nhất để sót một cái.
+     * The loop above doesn't catch this — it catches a node STILL IN
+     * `layout.json` that's no longer wanted; this case is the reverse, the
+     * node IS wanted (a role declares it) but what it points at has
+     * disappeared. Two different shapes, and folding them into one loop is
+     * the surest way to miss one of them.
      */
     for (const server of inUse) {
       if (!(server in this.office.company.mcpServers)) missing.add(mcpNodeId(server));
     }
 
-    // LƯỢT HAI: giờ mọi node đã có chỗ đều nằm trong `nodes`, cấp ô cho node mới.
+    // PASS TWO: every node that already had a spot is now in `nodes`, assign slots to new nodes.
     for (const n of fresh) keep({ ...n, ...this.spotFor(n, nodes, tidy, pending) });
 
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    // Chưa có file = mọi nhân viên đều được giao việc. Đây là phép thử
-    // "xoá layout.json mà văn phòng chạy y nguyên".
+    // No file yet = every worker gets delegated to. This is the "delete
+    // layout.json and the office runs identically" test.
     const edges = this.exists
       ? sanitizeEdges(raw.edges, byId)
       : this.activeRoleIds().map((r) => ({ from: ASSISTANT_NODE, to: agentNodeId(r) }));
 
-    // Cạnh mcp→agent KHÔNG được lưu ở đây — nó sống trong roles/<id>.yaml.
-    // Dựng lại lúc đọc để canvas vẽ đúng, nhưng nguồn sự thật vẫn là yaml.
+    // mcp→agent edges are NOT saved here — they live in roles/<id>.yaml.
+    // Rebuilt at read time so the canvas draws correctly, but the source of truth stays the yaml.
     const seenEdge = new Set(edges.map((e) => `${e.from} ${e.to}`));
     for (const [roleId, role] of this.office.roles) {
       for (const server of role.mcp) {
@@ -326,7 +343,7 @@ export class LayoutStore {
         edges.push({ from, to: agentNodeId(roleId) });
       }
     }
-    // Cạnh mcp→assistant cũng là NỘI DUNG: nó sống trong office.yaml.
+    // mcp→assistant edges are also CONTENT: they live in office.yaml.
     for (const server of this.office.config.assistant.mcp) {
       const from = mcpNodeId(server);
       const key = `${from} ${ASSISTANT_NODE}`;
@@ -339,15 +356,16 @@ export class LayoutStore {
   }
 
   /**
-   * Khoá SẮP XẾP cho cánh tay ở bãi đỗ. → `layout-geometry.ts §ArrangeNode`
+   * The SORT key for an arm in the parking area. → `layout-geometry.ts §ArrangeNode`
    *
-   *   `0-files`      thư mục trên máy      — nhóm riêng, đứng đầu
-   *   `1-<mục>`      dịch vụ có sẵn        — cùng hãng thì cùng tiền tố ⇒ đứng cạnh nhau
-   *   `2-custom`     tự dán, không có mục
+   *   `0-files`      a local folder      — its own group, sorts first
+   *   `1-<entry>`     a catalog service   — same vendor ⇒ same prefix ⇒ sit next to each other
+   *   `2-custom`      pasted by hand, no catalog entry
    *
-   * ⚠ Phân loại bằng `entry.folders` chứ không bằng **tên mục**: đúng cùng luật
-   * `ArmDialog §kindOf` đang dùng cho icon. Một trục phân loại, hai chỗ đọc —
-   * thêm một hãng thư mục nữa thì cả hai tự đúng, không ai phải nhớ gì.
+   * ⚠ Classified by `entry.folders`, not by **the entry's name**: the exact
+   * same rule `ArmDialog §kindOf` already uses for the icon. One
+   * classification axis, two places reading it — add one more folder
+   * vendor and both stay correct automatically, with nothing to remember.
    */
   armGroup(n: { kind: NodeKind; server?: string }): { armGroup?: string } {
     if (n.kind !== 'mcp' || !n.server) return {};
@@ -357,25 +375,29 @@ export class LayoutStore {
   }
 
   /**
-   * Chỗ ngồi cho một node CHƯA TỪNG có toạ độ. Ba nước, dừng ở nước đầu chạy được.
+   * A spot for a node that has NEVER had coordinates. Three moves, stopping at the first one that works.
    *
-   * 1. **Chưa có `layout.json`** = văn phòng mới tinh, chưa ai kéo gì → dùng
-   *    nguyên bố cục sạch. Đây là chỗ sửa lỗi "tạo văn phòng mới thì canvas
-   *    lệch": trước đây nhánh này là ba hằng số viết tay không căn theo nhau.
+   * 1. **No `layout.json` yet** = a brand-new office, nobody's dragged
+   *    anything → use the clean layout as-is. This is the fix for "the
+   *    canvas is lopsided when creating a new office": this branch used to
+   *    be three hand-written constants that weren't aligned with each other.
    *
-   * 2. **Kho mọc thêm vào sơ đồ đã có** — ca thật đang nằm trên đĩa: văn phòng
-   *    lưu `layout.json` từ trước khi có node Tủ tài liệu. Bố cục sạch tính
-   *    theo số nhân viên, còn kho anh em thì người dùng đã kéo đi chỗ khác →
-   *    hai kho rơi ra hai nơi, lệch cả hàng. Bám theo ANH EM của nó thì hàng
-   *    dưới luôn thẳng, dù người dùng đã kéo nó đi đâu.
+   * 2. **A shelf grows into an existing diagram** — a real case sitting on
+   *    disk right now: an office saved `layout.json` before the Document
+   *    cabinet node existed. The clean layout is computed from the worker
+   *    count, but the user has already dragged the sibling shelf somewhere
+   *    else → the two shelves land in two different places, the whole row
+   *    misaligned. Anchoring to its SIBLING keeps the bottom row straight, wherever the user dragged it.
    *
-   * 3. **Nhân viên mới** — mọc TOẢ RA hai bên Trợ lý, không nối đuôi sang phải.
-   *    Bố cục sạch ở đây vô dụng: nó căn theo SỐ nhân viên, mà Trợ lý thì đứng
-   *    yên cho tới lúc ai đó bấm "Sắp xếp lại". Bám vào nó thì người thứ ba rơi
-   *    bên phải người thứ hai và sơ đồ nghiêng hẳn — người dùng phải bấm Sắp
-   *    xếp lại mới thấy cân, tức là hệ thống bắt họ dọn hộ mình. → `centeredSlot`
+   * 3. **A new worker** — grows FANNING OUT on both sides of the Assistant,
+   *    not chaining rightward. The clean layout is useless here: it's
+   *    centered on the worker COUNT, while the Assistant stays put until
+   *    someone clicks "Re-arrange". Anchoring to it means the third person
+   *    lands to the right of the second and the diagram visibly tilts — the
+   *    user has to click Re-arrange just to see it balanced, meaning the
+   *    system makes them clean up after it. → `centeredSlot`
    *
-   * 4. Còn lại: chỗ sạch nếu chỗ đó trống, không thì ô lưới trống đầu tiên.
+   * 4. Otherwise: the clean spot if it's free, else the first free grid slot.
    */
   private spotFor(
     node: LayoutNode,
@@ -396,9 +418,9 @@ export class LayoutStore {
     }
 
     if (node.kind === 'agent') {
-      // Trợ lý LUÔN nằm trong `placed` khi tới lượt nhân viên: `wanted` xếp nó
-      // đầu tiên, nên nó được cấp chỗ trước. Vẫn kiểm — thiếu nó thì rơi về
-      // đếm-từ-trái chứ không được ném.
+      // The Assistant is ALWAYS in `placed` by the time a worker's turn
+      // comes: `wanted` lists it first, so it gets a slot first. Still
+      // checked — if it's missing, fall back to counting-from-the-left rather than throwing.
       const boss = placed.find((n) => n.kind === 'assistant');
       const centerX = boss ? boss.x + NODE_SIZE.assistant.w / 2 : undefined;
       return firstFreeSlot(placed, 'agent', centerX);
@@ -406,22 +428,23 @@ export class LayoutStore {
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 CÁNH TAY MỚI BÁM THEO CHỦ CỦA NÓ. (bug user bắt 31/08)          │
+     * │ 🔴 A NEW ARM ANCHORS TO ITS OWNER. (bug the user caught, 31/08)             │
      * │                                                                    │
-     * │   *"cứ thêm 1 MCP kết nối mới: địa điểm nó chọn rất tệ: thay vì     │
-     * │    ngay dưới worker được kết nối còn 1 vài khoảng trống, nó chọn    │
-     * │    faraway"*                                                       │
+     * │   *"every time I add 1 new MCP connection: the spot it picks is terrible:     │
+     * │    instead of right below the connected worker where there's a bit of open     │
+     * │    space, it picks somewhere faraway"*                                       │
      * │                                                                    │
-     * │ Hai lý do chồng nhau, và phải sửa cả hai:                          │
-     * │  ① `tidy` tính cho bố cục SẠCH, mà người dùng đã kéo mọi thứ đi     │
-     * │     chỗ khác ⇒ ô đó gần như luôn `clashes` ⇒ rơi xuống nước hai.    │
-     * │  ② nước hai là `firstFreeSlot` — lưới NHÂN VIÊN, bước 202×120. Quá  │
-     * │     thô cho một node 152×52, nên nó nhảy qua hết khe trống thật.    │
+     * │ Two reasons stacked on top of each other, and both had to be fixed:            │
+     * │  ① `tidy` is computed for the CLEAN layout, but the user has already dragged     │
+     * │     everything elsewhere ⇒ that slot almost always `clashes` ⇒ falls through to    │
+     * │     the second move.                                                       │
+     * │  ② the second move is `firstFreeSlot` — the WORKER grid, step 202×120. Far too    │
+     * │     coarse for a 152×52 node, so it skips right over every real open gap.        │
      * │                                                                    │
-     * │ ⇒ Đi tìm CHỦ trước (`role.mcp` là nguồn sự thật, không phải cạnh    │
-     * │ trong layout.json), rồi quét lưới riêng của cánh tay ngay dưới họ.  │
-     * │ Không ai cầm ⇒ nó là hàng chưa dùng ⇒ **bãi đỗ bên trái**, đúng chỗ │
-     * │ user đã tự kéo chúng tới.                                          │
+     * │ ⇒ Look for the OWNER first (`role.mcp` is the source of truth, not an edge in     │
+     * │ layout.json), then scan the arm's own grid right below them. Nobody holds it ⇒     │
+     * │ it's an unused row ⇒ **the parking area on the left**, exactly where the user       │
+     * │ had already dragged them.                                                    │
      * └────────────────────────────────────────────────────────────────────┘
      */
     if (node.kind === 'mcp' && node.server) {
@@ -431,23 +454,24 @@ export class LayoutStore {
       }
       /**
        * ┌────────────────────────────────────────────────────────────────────┐
-       * │ 🔴 SỢI DÂY SẮP ĐƯỢC GHI CŨNG TÍNH. (bug user bắt 31/08)            │
+       * │ WIRES ABOUT TO BE WRITTEN COUNT TOO. (bug the user caught, 31/08)          │
        * │                                                                    │
-       * │   *"node mcp vừa kết nối lại canvas, nó lại mọc rất xa ở farleft,  │
-       * │    trong khi nó chỉ cần nối thẳng xuống"*                          │
+       * │   *"the mcp node I just connected on the canvas grows way out on the         │
+       * │    farleft, when it should just connect straight down"*                     │
        * │                                                                    │
-       * │ Thứ tự trong `grantArm` là: ghi `office.arms` → **đặt chỗ cho node**│
-       * │ → mới ghi sợi dây (`role.mcp`). Nên đúng lúc `spotFor` chạy,        │
-       * │ `role.mcp` **còn rỗng** ⇒ không tìm ra chủ ⇒ coi là hàng chưa dùng  │
-       * │ ⇒ **đỗ bên trái**. Và vì toạ độ đã lưu, `spotFor` không chạy lại    │
-       * │ lần nào nữa: nó nằm đó vĩnh viễn.                                  │
+       * │ The order inside `grantArm` is: write `office.arms` → **place the node** →     │
+       * │ only then write the wire (`role.mcp`). So exactly when `spotFor` runs,          │
+       * │ `role.mcp` **is still empty** ⇒ no owner found ⇒ treated as an unused row ⇒       │
+       * │ **parked on the left**. And since the coordinates get saved, `spotFor` never      │
+       * │ runs again for it: it sits there permanently.                                  │
        * │                                                                    │
-       * │ Bản vá 30/08 đúng về hình học và sai về THỜI ĐIỂM — nó hỏi một      │
-       * │ nguồn sự thật chưa kịp thành sự thật. Cùng lớp §3a: *thứ đo được   │
-       * │ không phải trạng thái, là THỜI ĐIỂM HỎI*.                          │
+       * │ The 30/08 patch was geometrically correct and wrong about TIMING — it asked      │
+       * │ a source of truth before it had become true yet. Same class as §3a: *what's       │
+       * │ measured isn't a state, it's THE MOMENT ASKED*.                                │
        * │                                                                    │
-       * │ ⇒ `save()` đưa xuống chính danh sách cạnh nó **sắp ghi**. Không có │
-       * │ cạnh nào (cắm mà chưa giao cho ai) thì vẫn đỗ bên trái — đúng.     │
+       * │ ⇒ `save()` passes down the exact list of edges it's **about to write**. No       │
+       * │ edge at all (connected but not yet delegated to anyone) still parks on the left    │
+       * │ — correctly.                                                                  │
        * └────────────────────────────────────────────────────────────────────┘
        */
       for (const e of pending) {
@@ -455,8 +479,8 @@ export class LayoutStore {
       }
       const anchors = placed.filter((n) => owners.has(n.id));
       if (anchors.length) {
-        // Trục = tâm của chủ TRÁI NHẤT. Cùng luật `groupArms`: mọi sợi dây thứ
-        // hai đi sang phải, không sợi nào cắt sợi nào.
+        // Axis = the center of the LEFTMOST owner. Same rule as
+        // `groupArms`: every subsequent wire runs rightward, none crossing another.
         const boss = anchors.reduce((a, b) => (a.x <= b.x ? a : b));
         const centerX = boss.x + NODE_SIZE.agent.w / 2;
         const topY = Math.max(...anchors.map((a) => a.y + NODE_SIZE.agent.h)) + ARM_DROP;
@@ -479,11 +503,11 @@ export class LayoutStore {
   }
 
   /**
-   * Vai trò Trợ lý ĐƯỢC PHÉP giao việc. `undefined` = tất cả.
+   * The roles the Assistant IS ALLOWED to delegate to. `undefined` = everyone.
    *
-   * undefined chứ không phải "toàn bộ danh sách" là có chủ ý: assistant.ts phân
-   * biệt "chưa cấu hình" với "cấu hình cho phép tất cả", và chỉ trường hợp đầu
-   * mới được im lặng bỏ qua khi layout.json vắng mặt.
+   * `undefined` rather than "the entire list" is deliberate: assistant.ts
+   * distinguishes "not configured yet" from "configured to allow everyone",
+   * and only the first case gets silently substituted when layout.json is absent.
    */
   assignable(): Set<string> | undefined {
     if (!this.exists) return undefined;
@@ -498,22 +522,24 @@ export class LayoutStore {
   }
 
   /**
-   * Ghi hình dạng mới.
+   * Writes a new shape.
    *
-   * Cạnh từ node mcp KHÔNG nằm trong layout.json — "agent này dùng được tool
-   * nào" là NỘI DUNG, không phải hình dạng. Nó đã có nhà rồi: `mcp:` trong
-   * roles/<id>.yaml (hoặc office.yaml với Trợ lý). Ghi hai nơi = hai nguồn sự
-   * thật = sớm muộn cũng lệch nhau.
+   * Edges from an mcp node do NOT live in layout.json — "which tools can
+   * this agent use" is CONTENT, not shape. It already has a home: `mcp:`
+   * inside roles/<id>.yaml (or office.yaml for the Assistant). Writing it
+   * in two places = two sources of truth = drifting apart sooner or later.
    *
-   * Trả về danh sách file đã sửa, để caller biết có phải nạp lại không.
+   * Returns the list of files that changed, so the caller knows whether it needs to reload.
    */
   save(input: { nodes?: unknown; edges?: unknown }): { touched: string[] } {
     /**
-     * ⭐ ĐƯA CẠNH SẮP GHI XUỐNG `read()` — xem khối chú thích ở `spotFor`.
+     * ⭐ PASSES THE SOON-TO-BE-WRITTEN EDGE DOWN TO `read()` — see the
+     * comment block at `spotFor`.
      *
-     * Quét thô, KHÔNG qua `sanitizeEdges`: hàm đó cần `byId`, mà `byId` lại đến
-     * từ chính `read()` này — vòng tròn. Ở đây chỉ cần một **gợi ý chỗ ngồi**,
-     * nên một cạnh rác lọt vào cũng chỉ là gợi ý bị bỏ qua, không ghi ra đâu cả.
+     * Scanned raw, WITHOUT going through `sanitizeEdges`: that function
+     * needs `byId`, and `byId` itself comes from this exact `read()` call —
+     * circular. All that's needed here is a **placement hint**, so a
+     * garbage edge slipping in is just a hint that gets ignored, never written anywhere.
      */
     const hint = Array.isArray(input.edges)
       ? (input.edges as { from?: unknown; to?: unknown }[])
@@ -525,22 +551,23 @@ export class LayoutStore {
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ "NODE HIỆN RA" ≠ "ĐẦU DÂY HỢP LỆ" — và gộp hai cái là một VÒNG LẶP │
-     * │ tự khoá. (bắt được lúc kiểm đầu-cuối 23/08, ngay sau khi viết)      │
+     * │ "THE NODE EXISTS" ≠ "A VALID EDGE ENDPOINT" — and conflating the two is a       │
+     * │ SELF-LOCKING LOOP. (caught during end-to-end testing 23/08, right after           │
+     * │ writing it)                                                              │
      * │                                                                    │
-     * │ Từ 23/08 `read()` chỉ dựng node mcp cho server ĐANG ĐƯỢC DÙNG ở văn │
-     * │ phòng này (`role.mcp`). Nhưng `role.mcp` lại được ghi TỪ cạnh nối, │
-     * │ mà cạnh nối thì `sanitizeEdges` lọc theo node đang có ⇒ cắm một     │
-     * │ cánh tay mới và giao cho ai đó thì:                                 │
+     * │ Since 23/08 `read()` only builds an mcp node for a server CURRENTLY IN USE in      │
+     * │ this office (`role.mcp`). But `role.mcp` itself gets written FROM the connecting     │
+     * │ edge, and the edge gets filtered by `sanitizeEdges` against the nodes that           │
+     * │ currently exist ⇒ connecting a new arm and delegating it to someone means:            │
      * │                                                                    │
-     * │   chưa ai dùng → không có node → cạnh bị loại → không ghi `mcp:`    │
-     * │   → vẫn không ai dùng. Kẹt vĩnh viễn, và **im lặng**.               │
+     * │   nobody uses it yet → no node exists → the edge gets dropped → `mcp:` never          │
+     * │   gets written → still nobody uses it. Stuck forever, and **silently**.              │
      * │                                                                    │
-     * │ Hai tập vốn khác nhau và giờ nói ra: HIỆN RA = đang có dây ở văn    │
-     * │ phòng này (chuyện của sơ đồ). HỢP LỆ = có khai trong `company.yaml`  │
-     * │ (chuyện của công ty). Node bù ở đây chỉ sống trong lời gọi này để   │
-     * │ thẩm định cạnh — nó KHÔNG bao giờ vào `layout.json`, vì cạnh mcp    │
-     * │ vốn không được lưu ở đó.                                           │
+     * │ Two sets that were always different, now stated explicitly: EXISTS = currently        │
+     * │ wired in this office (a diagram fact). VALID = declared in `company.yaml` (a          │
+     * │ company fact). The node added back in here lives only for this one call, to           │
+     * │ validate the edge — it NEVER enters `layout.json`, since mcp edges were never          │
+     * │ saved there to begin with.                                                        │
      * └────────────────────────────────────────────────────────────────────┘
      */
     for (const server of Object.keys(this.office.company.mcpServers)) {
@@ -548,7 +575,7 @@ export class LayoutStore {
       if (!byId.has(id)) byId.set(id, { id, kind: 'mcp', server, x: 0, y: 0 });
     }
 
-    // Toạ độ: chỉ nhận node đã biết. Client không được tự sinh node bằng PUT.
+    // Coordinates: only accepted for known nodes. A client can't spawn a new node via PUT.
     if (Array.isArray(input.nodes)) {
       for (const raw of input.nodes.slice(0, MAX_NODES)) {
         const n = raw as Partial<LayoutNode>;
@@ -562,7 +589,7 @@ export class LayoutStore {
 
     const wanted = sanitizeEdges(input.edges, byId);
 
-    // ── tách hai loại cạnh: hình dạng vào layout.json, tool vào yaml
+    // ── splits two kinds of edges: shape goes into layout.json, tools go into yaml
     const mcpByRole = new Map<string, string[]>();
     const mcpForAssistant: string[] = [];
     for (const e of wanted) {
@@ -582,10 +609,10 @@ export class LayoutStore {
 
     const touched: string[] = [];
     for (const [roleId, role] of this.office.roles) {
-      // Vai trò đã lưu trữ KHÔNG có node trên canvas, nên không có cạnh nào trỏ
-      // tới nó. Không bỏ qua ở đây thì mỗi lần ghi sơ đồ là một lần xoá sạch
-      // danh sách `mcp:` của nó — người dùng cất một nhân viên đi rồi khôi phục
-      // lại thấy nó mất hết tool, mà không có thao tác nào nói rằng sẽ mất.
+      // An archived role has NO node on the canvas, so no edge points at it.
+      // Without skipping it here, every diagram save would wipe its `mcp:`
+      // list clean — a user archives a worker, restores them, and finds all
+      // their tools gone, with no action ever saying that would happen.
       if (this.office.archivedRoles.has(roleId)) continue;
       const next = [...new Set(mcpByRole.get(roleId) ?? [])].sort();
       if (sameList(next, role.mcp)) continue;
@@ -600,20 +627,21 @@ export class LayoutStore {
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ SỰ CÓ MẶT CHỈ ĐƯỢC THÊM Ở ĐÂY, KHÔNG BAO GIỜ BỚT.                  │
+     * │ PRESENCE IS ONLY EVER ADDED HERE, NEVER REMOVED.                             │
      * │                                                                    │
-     * │ Bug user báo 23/08: cắt sợi dây cuối cùng thì node cánh tay BIẾN    │
-     * │ MẤT khỏi sơ đồ. Họ muốn nó ở lại như nhân viên "đang nghỉ" — còn    │
-     * │ đó, chưa nối, nối lại lúc nào cũng được.                            │
+     * │ Bug the user reported, 23/08: cutting the last wire made the arm's node          │
+     * │ VANISH from the diagram. They wanted it to stay, like a worker who's "on          │
+     * │ leave" — still there, unwired, reconnectable anytime.                         │
      * │                                                                    │
-     * │ `office.arms` là chỗ ghi sự có mặt, và nó CHỈ bị bớt bởi `dropArm`  │
-     * │ — tức một thao tác XOÁ có chủ ý. Cắt dây là đổi *ai được dùng*,     │
-     * │ không phải đổi *có mặt hay không*: hai chuyện khác nhau, hai chỗ    │
-     * │ ghi, và giờ chúng không còn dẫm lên nhau.                          │
+     * │ `office.arms` is where presence gets recorded, and it can ONLY be reduced by       │
+     * │ `dropArm` — a deliberate DELETE action. Cutting a wire changes *who gets to         │
+     * │ use it*, not *whether it exists*: two different things, two different places        │
+     * │ that record them, and now they no longer step on each other.                     │
      * │                                                                    │
-     * │ Thêm ở đây cũng TỰ CHỮA dữ liệu cũ: cánh tay cắm trước khi có       │
-     * │ `office.arms` chỉ tồn tại trong `role.mcp`, nên cắt dây là chúng    │
-     * │ bốc hơi. Lần ghi sơ đồ đầu tiên đưa chúng vào sổ, một lần, im lặng. │
+     * │ Adding it here also SELF-HEALS old data: an arm connected before                  │
+     * │ `office.arms` existed lived only inside `role.mcp`, so cutting the wire made        │
+     * │ it evaporate. The first diagram save from now on records it into the registry,      │
+     * │ once, silently.                                                              │
      * └────────────────────────────────────────────────────────────────────┘
      */
     const present = new Set(this.office.config.arms);
@@ -627,35 +655,37 @@ export class LayoutStore {
     return { touched };
   }
 
-  /** Vai trò chưa bị lưu trữ. Đây là danh sách canvas và roster nhìn thấy. */
+  /** Roles that aren't archived. This is the list the canvas and roster see. */
   private activeRoleIds(): string[] {
     return [...this.office.roles.keys()].filter((id) => !this.office.archivedRoles.has(id));
   }
 
   /**
-   * Đưa một nhân viên lên sơ đồ: đặt vào ô trống, GHI ĐĨA.
+   * Adds a worker to the diagram: places it in a free slot, WRITES TO DISK.
    *
-   * Luôn `writeRaw`, kể cả khi không có gì để thêm. Bản trước gọi
-   * `connectAssistant` và nó `return` sớm nếu cạnh đã tồn tại — mà cạnh LUÔN tồn
-   * tại khi chưa có layout.json (lúc đó `read()` tự sinh cạnh cho mọi vai trò).
-   * Kết quả: vị trí vừa tính ra không bao giờ được lưu, và mỗi lần đọc lại nó
-   * được tính lại từ đầu.
+   * Always calls `writeRaw`, even when there's nothing new to add. The
+   * earlier version called `connectAssistant`, which returned early if the
+   * edge already existed — and the edge ALWAYS exists when there's no
+   * layout.json yet (at that point `read()` auto-generates an edge for
+   * every role). Result: the position just computed was never saved, and
+   * got recomputed from scratch on every read.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ `connect` PHẢI LÀ QUYẾT ĐỊNH CỦA NGƯỜI GỌI, KHÔNG PHẢI MẶC ĐỊNH.        │
+   * │ `connect` MUST BE THE CALLER'S OWN DECISION, NEVER A DEFAULT.                  │
    * │                                                                          │
-   * │ Nhân viên MỚI thì nối: thêm một người rồi không giao được việc cho họ là │
-   * │ một thao tác không có kết quả, và người dùng không đoán ra là còn thiếu  │
-   * │ một sợi dây.                                                             │
+   * │ A NEW worker gets wired: adding a person and then being unable to delegate       │
+   * │ work to them is an action with no outcome, and the user has no way to guess       │
+   * │ a wire is missing.                                                          │
    * │                                                                          │
-   * │ Nhân viên KHÔI PHỤC từ lưu trữ thì KHÔNG nối. Ba lý do:                  │
-   * │  1. Nối dây = vào roster = vào prefix được cache của MỌI lượt trò chuyện.│
-   * │     Một cú bấm "đưa trở lại" không được phép âm thầm bật lại một khoản   │
-   * │     chi thu suốt ca.                                                     │
-   * │  2. "Đưa trở lại" và "cho nhận việc" là HAI ý định. Một nút không được   │
-   * │     làm hai việc, nhất là khi việc thứ hai tốn tiền.                     │
-   * │  3. Người dùng có thể đã CỐ Ý ngắt dây trước khi cất. Tự nối lại là ghi  │
-   * │     đè lên một quyết định họ đã ra — và ghi đè im lặng.                  │
+   * │ A worker RESTORED from the archive does NOT get wired. Three reasons:            │
+   * │  1. Wiring = joining the roster = entering the cached prefix of EVERY               │
+   * │     conversation turn. Clicking "restore" must never silently re-enable a            │
+   * │     cost that repeats for the entire run.                                        │
+   * │  2. "Restore" and "allow taking work" are TWO different intents. One button        │
+   * │     must not do both, especially when the second one costs money.                 │
+   * │  3. The user may have DELIBERATELY unwired them before archiving. Auto-              │
+   * │     rewiring would overwrite a decision they already made — and overwrite it       │
+   * │     silently.                                                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   placeAgent(roleId: string, connect: boolean): void {
@@ -668,7 +698,7 @@ export class LayoutStore {
     this.writeRaw(layout);
   }
 
-  /** Bỏ node khỏi layout (file yaml có bị xoá hay không là quyết định của caller). */
+  /** Removes a node from the layout (whether the yaml file itself gets deleted is the caller's decision). */
   dropAgent(roleId: string): void {
     if (!this.exists) return;
     const raw = this.readRaw();
@@ -680,7 +710,7 @@ export class LayoutStore {
     });
   }
 
-  // ── nội bộ
+  // ── internal
 
   private readRaw(): LayoutFile {
     if (!this.exists) return { version: 1, nodes: [], edges: [] };
@@ -692,16 +722,16 @@ export class LayoutStore {
         edges: Array.isArray(raw.edges) ? raw.edges.filter(isEdgeShape) : [],
       };
     } catch {
-      // layout.json hỏng KHÔNG được làm sập văn phòng — nó chỉ là view state.
+      // A broken layout.json must NOT crash the office — it's only view state.
       process.emitWarning('layout.json is unreadable; the canvas will lay itself out again.');
       return { version: 1, nodes: [], edges: [] };
     }
   }
 
   /**
-   * Chốt chặn DUY NHẤT ghi ra đĩa. Cạnh từ node mcp bị lọc ở đây, nên không có
-   * đường nào để nó lọt vào layout.json dù caller quên — bất biến "một sự thật
-   * một nơi ở" được giữ bằng cấu trúc, không bằng kỷ luật.
+   * The ONE gate that writes to disk. Edges from an mcp node get filtered
+   * here, so there's no way for one to slip into layout.json even if a
+   * caller forgets — the "one fact, one home" invariant is held by structure, not discipline.
    */
   private writeRaw(layout: LayoutFile): void {
     const kindOf = new Map(layout.nodes.map((n) => [n.id, n.kind]));
@@ -722,11 +752,12 @@ export class LayoutStore {
   }
 
   /**
-   * Sửa đúng một khoá trong một file yaml.
+   * Edits exactly one key inside a yaml file.
    *
-   * Dùng parseDocument chứ không parse+stringify: ghi đè cả file sẽ NUỐT MẤT
-   * chú thích người dùng viết — mà "yaml sửa tay được, git diff đọc được" là
-   * một trong hai lý do không nhét tất cả vào một cục JSON như n8n.
+   * Uses parseDocument rather than parse+stringify: overwriting the whole
+   * file would SWALLOW any comments the user wrote — and "yaml is hand-
+   * editable, git diff stays readable" is one of the two reasons everything
+   * isn't dumped into one JSON blob like n8n does.
    */
   private writeYamlKey(file: string | undefined, keyPath: string[], value: string[]): boolean {
     if (!file || !fs.existsSync(file)) return false;
@@ -734,9 +765,9 @@ export class LayoutStore {
       const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
       if (value.length) doc.setIn(keyPath, value);
       else doc.deleteIn(keyPath);
-      // lineWidth 0: đừng ngắt dòng lại những giá trị ta không đụng tới. Cắm một
-      // MCP mà git diff nhảy 8 dòng thì người dùng mất niềm tin vào việc
-      // "file của tôi vẫn là của tôi".
+      // lineWidth 0: don't re-wrap values that weren't touched. Connecting
+      // one MCP and having git diff jump 8 lines would break the user's
+      // trust that "my file is still my file".
       fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
       return true;
     } catch {
@@ -758,12 +789,12 @@ export class LayoutStore {
 // ─────────────────────────────────────────────────────────── helpers
 
 /**
- * Luật nối dây, thi hành ở SERVER.
+ * The wiring rule, enforced on the SERVER.
  *
- * Canvas làm cho agent→agent BẤT KHẢ THI về mặt vật lý (node agent không có
- * cổng ra). Nhưng UI là client — ai cũng POST thẳng được. Luật kinh tế
- * (agent nói chuyện với agent = nguồn đốt token lớn nhất) phải được giữ ở đây
- * mới thật sự là luật.
+ * The canvas makes agent→agent PHYSICALLY IMPOSSIBLE (an agent node has no
+ * outgoing port). But the UI is just a client — anyone can POST directly.
+ * The economic rule (agent talking to agent = the single biggest token
+ * sink) is only actually a rule once it's enforced here.
  */
 function sanitizeEdges(raw: unknown, byId: ReadonlyMap<string, LayoutNode>): LayoutEdge[] {
   if (!Array.isArray(raw)) return [];
