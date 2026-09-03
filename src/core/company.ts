@@ -1244,19 +1244,22 @@ export class Company {
 
 // ─────────────────────────────────────────────────────────── mẫu
 
+/**
+ * ⚠ NO COMMENTS. → the box on `companyTemplate` in `src/cli/index.ts`
+ *
+ * `display_name` is deliberately absent rather than empty: absent means "nobody
+ * named this assistant", and the interface then shows a label in the chosen
+ * language. The moment a person types a name the key gets written and it is
+ * their datum, never translated again.
+ */
 function officeTemplate(id: string, name: string): string {
   return `id: ${id}
 name: ${JSON.stringify(name)}
 charter_file: charter.md
 
 assistant:
-  ${t('seed.assistantUnnamed')}
   avatar: "★"
-
-  ${t('seed.defaultDeliver')}
   default_deliver: file
-
-  ${t('seed.officeMcp')}
   mcp: []
 `;
 }

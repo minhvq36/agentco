@@ -49,7 +49,7 @@ test('⭐ nhãn PHI-LATIN vẫn bắc được cầu — cái tên không mang �
   const line = armReach(arms, SRV, 'a1', 'a1');
   assert.match(line, /文档/, 'phải giữ nguyên tên người dùng đặt');
   assert.match(line, /mcp__a1__/);
-  assert.match(line, /chỉ đọc/, 'mức quyền không được bị cầu nối nuốt mất');
+  assert.match(line, /read only/, 'mức quyền không được bị cầu nối nuốt mất');
 });
 
 test('⭐ TRÙNG NHÃN vẫn phân biệt được — cầu nối đi qua BĂM, không qua tên', () => {
@@ -73,7 +73,7 @@ test('MỘT cánh tay ⇒ KHÔNG dán cầu nối', () => {
 test('cầu nối KHÔNG phá dòng có mức quyền VÀ thư mục', () => {
   const arms = { a1: { label: 'Kho', level: 'full' as const } };
   const line = armReach(arms, { a1: { args: ['D:\\Kho'] } }, 'a1', 'a1');
-  assert.match(line, /sửa\/xoá/);
+  assert.match(line, /edit\/delete/);
   assert.match(line, /D:\\Kho/);
   assert.match(line, /mcp__a1__/);
 });

@@ -241,7 +241,28 @@ Ca thứ hai là bản nới 02/09 (user báo): Trợ lý trả lời **đúng**
 
 > ⚠ Chừa đúng một chỗ: thứ **người dùng** chốt thì luật 1 vẫn phải chép lại, kể cả khi họ chốt *"đừng gửi email, tôi tự gửi"*. Luật 4 nhắm vào **suy đoán của Trợ lý về năng lực**, không nhắm vào lời người dùng dặn.
 
-Vá bằng **một cặp ví dụ** trong danh sách ⛔/✅ sẵn có, **không thêm luật thứ sáu** — sáu luật thì luật nào cũng loãng đi, và luật trừu tượng vốn thua danh sách ví dụ nên điều kiện phải nằm **trên chính dòng có ví dụ**. Giá: `COMPACT_RULES` = **946 token**, và nó chỉ đi vào lượt `/clear`, **không** nằm trong prefix thường trực.
+Vá bằng **một cặp ví dụ** trong danh sách ⛔/✅ sẵn có, **không thêm luật thứ sáu** — sáu luật thì luật nào cũng loãng đi, và luật trừu tượng vốn thua danh sách ví dụ nên điều kiện phải nằm **trên chính dòng có ví dụ**. Giá sau khi dịch sang tiếng Anh (03/09): `COMPACT_RULES` = **961 token** (3 826 ký tự, 3,98 char/token), và nó chỉ đi vào lượt `/clear`, **không** nằm trong prefix thường trực.
+
+#### 🔴 Khối luật viết bằng tiếng Anh; khối GHI NHỚ nó sinh ra thì KHÔNG (03/09)
+
+Đây là hai thế giới, và không có dây nối giữa chúng — xem `docs/CLAUDE.md §Language`.
+
+| | Khối **LUẬT** (`COMPACT_RULES`) | Khối **GHI NHỚ** (kết quả) |
+|---|---|---|
+| Ai viết | ta | model |
+| Ai đọc | model | **người dùng**, ở ngăn Tri thức |
+| Ngôn ngữ | **tiếng Anh, luôn luôn** | **thứ tiếng của chính cuộc trò chuyện** |
+| Cơ chế | chuỗi gõ thẳng trong mã | **không cơ chế nào** — model quan sát hội thoại nằm ngay trong ngữ cảnh |
+
+Bản trước dặn *"viết gạch đầu dòng **tiếng Việt**"* — ghim cứng trong mã, giữa đúng cái khối là trí
+nhớ của người dùng đọc lại cho họ. Người Anh nhận trí nhớ tiếng Việt; người Đức thì **không có đường
+nào** ra tiếng Đức. Câu mới không nêu tên ngôn ngữ nào, nên nó phủ cả những thứ tiếng ta chưa từng
+khai catalog.
+
+> ⚠ **`NOTHING` là ngoại lệ, và nó không phải văn xuôi.** Nhánh *"không có gì đáng nhớ"* được
+> `office.ts` khớp bằng `/^NOTHING\.?$/i`. Đó là **token giao thức**, cùng loại với một tên trường
+> JSON: dịch nó theo công tắc là làm hỏng im lặng đúng cái nhánh đó, và hậu quả là một node rỗng đi
+> vào phần HOT của mọi lượt sau. `test/compact-rules.test.ts` khoá cặp prompt ↔ code này.
 
 #### ⚠ `/clear` KHÔNG ĐƯỢC PHÉP KẸT (bản vá 20/08)
 

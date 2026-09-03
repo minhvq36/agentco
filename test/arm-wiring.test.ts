@@ -193,7 +193,7 @@ test('describeCall: chưa có nhãn thì rơi về băm — thà xấu còn hơn
 test('warnDroppedTools: có khai `mcp:` mà CLI cấp 0 tool `mcp__` ⇒ KÊU', () => {
   const r = { id: 'nguoi-kiem-ke', tools: [], mcp: ['a385afc3ab6'] } as never;
   const granted = effectiveTools([]); // CLI cấp đủ 7 builtin, không cánh tay nào
-  assert.deepEqual(warnDroppedTools(r, granted), ['(cánh tay: a385afc3ab6)']);
+  assert.deepEqual(warnDroppedTools(r, granted), ['(arms: a385afc3ab6)']);
 });
 
 test('warnDroppedTools: cánh tay lên được thì IM', () => {

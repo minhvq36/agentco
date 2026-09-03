@@ -2823,9 +2823,13 @@ export class Office {
       const result = await this.mailbox.lock(() => this.assistant.compact(this.factSkeleton()));
       this.logAssistantUsage('report', result.usage);
       const body = result.value;
-      // "KHÔNG" là câu trả lời hợp lệ và đáng tôn trọng: ép ghi một node rỗng
-      // vào kho là tự đầu độc phần HOT của chính mình ở mọi lượt sau.
-      if (body && !/^KHÔNG\.?$/i.test(body)) {
+      // "NOTHING" is a valid answer and deserves respect: forcing an empty node
+      // into the store poisons this office's own HOT prefix on every later turn.
+      //
+      // ⚠ The sentinel is ENGLISH in every locale — it is a protocol token the
+      // prompt asks for verbatim (`Assistant.COMPACT_RULES`), not prose. Making
+      // it follow the switch would break this branch the day someone flips it.
+      if (body && !/^NOTHING\.?$/i.test(body)) {
         this.knowledge.addAssistantMemory(
           t('off.memoryUpTo', { date: new Date().toISOString().slice(0, 10) }),
           body,
@@ -4118,9 +4122,18 @@ function addUsage(a: Usage, b: Usage): Usage {
 }
 
 /**
- * Nhân viên mới sinh ra dưới dạng YAML CÓ CHÚ THÍCH, không phải cấu hình trần.
- * File này là chỗ người dùng advanced sẽ mở ra đầu tiên — nó phải tự giải thích
- * được, nhất là hai con số trực tiếp quyết định hoá đơn.
+ * ⚠ NO COMMENTS. → the box on `companyTemplate` in `src/cli/index.ts`
+ *
+ * This file used to carry a paragraph above `tools:` and above each budget
+ * number, on the grounds that it is the first file an advanced user opens and
+ * ought to explain itself. It still ought to — but not from here, because a
+ * comment written at creation time is never rewritten and quietly rots against
+ * the code. `tools: [Bash]` in particular is the ONE exception to "results
+ * always stay inside the office folder", and that warning has to be somewhere
+ * it stays true: the employee detail panel and docs/SPEC-artifacts.md §2.6.
+ *
+ * ⚠ `pitch` is the only thing the assistant sees when planning, so it is never
+ * left blank — an empty pitch means the assistant has nothing to route on.
  */
 function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
   return `id: ${id}
@@ -4128,7 +4141,6 @@ version: 1
 display_name: ${JSON.stringify(displayName)}
 avatar: "•"
 
-${t('seed.rolePitch')}
 pitch: ${JSON.stringify(pitch || t('seed.rolePitchDefault', { name: displayName }))}
 good_at: []
 not_for: []
@@ -4136,15 +4148,12 @@ not_for: []
 skill_level: medium
 skills: {}
 
-${t('seed.roleTools')}
 tools: [Bash]
 model_tier: ${tier}
 use_preset: false
 
 budget:
-  ${t('seed.roleMaxTurns')}
   max_turns: ${tier === 'eco' ? 20 : tier === 'deep' ? 10 : 15}
-  ${t('seed.roleMaxUsd')}
   max_usd: ${tier === 'eco' ? '2.0' : tier === 'deep' ? '10.0' : '5.0'}
   knowledge_pack: 3000
 `;

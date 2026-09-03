@@ -528,6 +528,72 @@ export const en = {
   'off.autoCompacted': 'The conversation had got long, so I trimmed it. {note}',
   'off.sweptAlso': 'Also swept {what}.',
   'off.sweptAnd': ' and ',
+  // ──────────────────────────── the assistant: sentences CODE writes, not the model
+  /**
+   * ⚠ Only the handful of lines `assistant.ts` builds ITSELF. The assistant's
+   * own `say`/`answer` never passes through here — it comes back from the model,
+   * in whatever language the human is writing in, and no locale ever touches it.
+   * Everything in the route/report/compact prompts stays hard-coded English.
+   * → docs/CLAUDE.md §Language
+   */
+  'as.emptyReply':
+    'I reached the model but it returned nothing at all — that is a connection fault, not the way you phrased it. Send it again for me.',
+  'as.emptyReplyPlanning':
+    'I reached the model but it returned nothing at all — that fault is in the connection, not in the way you phrased it. Try again in a moment.',
+  'as.noUsableAnswer':
+    'That turn did not produce a usable answer. Try saying it a different way, or splitting the request up for me.',
+  'as.planTextNotJson':
+    'I could not split this into work. Instead of a plan, the assistant said:\n  "{text}"\nThat should have gone out through the clarifying-question route rather than straight through — so this is my fault, not the way you phrased it. Hand it over again exactly as it was: most cases like this work on the second attempt. If it asked something specific, answer that in the same message.',
+  'as.done': 'Done.',
+  'as.stoppedByUser': 'Stopped as you asked.',
+
+  // ─────────────────────────────────── the employee: status line and stop reasons
+  /**
+   * ⚠ ONLY the half a PERSON reads. The refusals in `JAIL_REASON`, the GitHub
+   * 404 hint and the replacement tool results are handed to the MODEL and stay
+   * hard-coded English in `worker.ts`. Moving one of those in here would put the
+   * interface switch inside a prompt. → docs/CLAUDE.md §Language
+   *
+   * The status line is the ONLY window a person has onto what an employee just
+   * touched on their machine — which is why it names the search term, the room
+   * and the actual shell command rather than saying "working".
+   */
+  'wk.doingRead': 'reading a document',
+  'wk.doingReadFile': 'reading {file}',
+  'wk.doingWrite': 'writing the result',
+  'wk.doingWriteFile': 'writing {file}',
+  'wk.doingSearchIn': 'searching{term} in {room}',
+  'wk.doingSearchOutside': 'searching{term} outside the office',
+  'wk.doingWebSearch': 'searching the web',
+  'wk.doingWebFetch': 'reading a web page',
+  'wk.doingRunCommand': 'running a command',
+  'wk.doingRunning': 'running: {cmd}',
+  'wk.doingUsingTool': 'using {tool}',
+  'wk.doingWorking': 'working',
+  /** Folder → the room a person knows, because they put the files there. */
+  'wk.roomLibrary': 'the document cabinet',
+  'wk.roomArtifacts': 'existing results',
+  'wk.roomKnowledge': 'the knowledge base',
+  'wk.roomOffice': 'the office',
+  'wk.hitBudget': 'Task {task} hit the {ceiling} spend ceiling',
+  'wk.hitMaxTurns':
+    'This needed more steps than allowed ({turns} steps), so it stopped part-way.\n',
+  'wk.hitMaxTurnsWithArm':
+    '⚠ The employee HAD already called an outside connection before stopping — something out there may have changed, and it is not clear how far. Check that connection’s own log to see exactly what it did.\n',
+  'wk.hitMaxTurnsNext':
+    'What to do next: break the work into smaller steps, or raise this employee’s step limit.',
+  'wk.receiptUnreadable': 'The employee returned a result that could not be read. See the detailed log.',
+  'wk.receiptInvalid': 'invalid receipt: {problem}',
+  'wk.stoppedClean': 'Stopped as you asked; nothing was written.',
+  'wk.stoppedByUser': 'the human stopped it part-way',
+  'wk.stopMaxTurns':
+    'This needed more steps than one turn allows, so it stopped part-way. Try splitting the request up, or saying more clearly what comes first.',
+  'wk.stopBudget': 'This turn hit the spend ceiling set for the job.',
+  'wk.stopUsageLimit': 'The Claude account is out of usage.',
+  'wk.stopRateLimit': 'Claude is overloaded; try again in a few minutes.',
+  'wk.stopAuth': 'Could not sign in to Claude on this machine.',
+  'wk.stopOther': 'Claude Code stopped part-way ({raw}).',
+
   'off.leftoversOnBoot':
     'The previous shift left {n} jobs unrun{of}. Type /resume and I will finish them, reusing the old plan so it costs no extra planning turn. Or just send something new — what finished is still in Results.',
   'off.wroteOutside':
@@ -651,24 +717,6 @@ Common options:  --dir <path>  --port <n>  --host <ip>  --no-ui
 
 Closing the browser tab does NOT stop the company. To stop it: the "Shut down" button, or \`agentco stop\`.`,
 
-  // ─────────────────────────────────────────────── company.yaml seed comments
-  'seed.companyHeader':
-    '# COMPANY config. Everything to do with money lives here.\n# People, knowledge and the diagram belong to each office: offices/<code>/',
-  'seed.language':
-    '# INTERFACE language: vi | en. Changeable under Settings.\n# It does NOT change the language the assistant replies in — that always\n# follows whatever language you type.',
-  'seed.concurrency': '# How many employees run at once, across the whole company.',
-  'seed.budgets':
-    '# HARD CEILINGS. This is what keeps cost from quietly creeping up.\n  # Raising them costs more money; it does not "work better".\n  # Read docs/SPEC-token-economy.md before changing anything here.',
-  'seed.assistantSkills':
-    "# The assistant's skills sit in the prefix of EVERY turn of chat -> tighter ceiling.",
-  'seed.masterTier': '# The assistant tier. MUST stay fixed for a whole shift — changing it mid-way loses the context.',
-  'seed.plannerTier':
-    "# Planning runs as its own query, so putting 'deep' here does NOT break the assistant's cache.",
-  'seed.mcpServers':
-    '# MCP servers you plug in yourself. Declare them here once, then draw a wire on\n# each office diagram to decide who may use them.',
-  'seed.allowCoreEdit':
-    '# The core prompt layer is always VISIBLE in the interface. This switch makes it\n# EDITABLE. It belongs to the source code, not to running a business — getting it\n# wrong breaks the cost architecture. Only turn it on if you know what you are doing.',
-
   // ──────────────────────────────────────────────────── daemon / HTTP API
   /**
    * ⚠ These are sentences the DAEMON writes and the UI renders verbatim
@@ -694,28 +742,19 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
    */
   'company.unnamedOffice': 'New office',
   /**
-   * ⚠ SEED COMMENTS ARE NOT SOURCE COMMENTS.
-   *
-   * These lines are written into the USER's `company.yaml` / `office.yaml` and
-   * read by them in their own file — so they are "what gets shown", and they
-   * follow the switch, resolved at the moment the file is written. A comment in
-   * `.ts` is read by us and stays English. → docs/CLAUDE.md §Language
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ EVERY REMAINING `seed.*` KEY IS A VALUE, NEVER A COMMENT. (settled 03/09)│
+   * │                                                                          │
+   * │ There used to be fifteen more here, rendering the explanatory `#` blocks  │
+   * │ written into `company.yaml`, `office.yaml` and `roles/<id>.yaml`. All     │
+   * │ deleted: a generated file carries no comments at all now, in any          │
+   * │ language. → the box on `companyTemplate` in `src/cli/index.ts`           │
+   * │                                                                          │
+   * │ What is left is seed CONTENT — text that becomes the user's own datum the │
+   * │ moment it lands, and is never translated again afterwards. It follows the │
+   * │ switch only at the instant of writing.                                   │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
-  'seed.assistantUnnamed':
-    '# No name yet, so `display_name` is not written here. Absent means "nobody\n  # named this assistant", and the interface shows a label in your chosen\n  # language. Type a name in the detail panel and this key gets written — from\n  # then on it is your name and is never translated.',
-  /**
-   * ⚠ VALUES written into a v0 → multi-office migration, not comments.
-   *
-   * `migrate.ts` only ever runs on a company that already exists, so these are
-   * resolved at the default locale the installation was already running under —
-   * and once written they are the user's data, never translated again. A person
-   * who renames the office in the interface overwrites them and this key is
-   * never consulted for that company again.
-   */
-  'seed.defaultDeliver':
-    '# Where a result lands when the request does not lean either way:\n  #   file  - the person OPENS a file (an article, a report, a sheet, a contract)\n  #   reply - the person READS the answer right there in the chat box (Q&A, lookups)\n  # A "reply" task STILL writes files as usual; it just stops making anyone open one.\n  # An office that mostly answers questions should change this line to reply.',
-  'seed.officeMcp':
-    '# The MCP/API servers the assistant "can use". They are actually attached to a\n  # hidden worker running behind it, NOT to the assistant directly: the assistant is\n  # a long session that resumes constantly, and MCP breaks the prompt cache on resume\n  # -> a large token loss on EVERY turn of chat. Plug them in by drawing a wire on the\n  # diagram.',
   /**
    * The starting content of the user's own `skills/assistant.md`. It follows the
    * switch because it is seed content they will edit, not scaffolding we own —
@@ -731,20 +770,23 @@ Better to ask than to guess wrong and redo it.
 Report in ordinary words: what is done, what needs attention. Do not name tools,
 do not quote token counts, do not use technical jargon.
 `,
-  /** Comments written into the user's own `roles/<id>.yaml`. → `roleTemplate` */
-  'seed.rolePitch':
-    '# This is the ONLY thing the assistant sees when it plans.\n# Keep it short: it stays in the assistant’s context for the whole shift.',
+  /**
+   * The starting `pitch` of a new employee. Never blank: `pitch` is the ONLY
+   * thing the assistant sees when it plans, so an empty one leaves it with
+   * nothing to route on.
+   */
   'seed.rolePitchDefault': 'What {name} can do, written for the assistant to read.',
-  'seed.roleTools':
-    '# Reading and writing files inside the office, and searching the web, are ON for\n# every employee — nothing needs declaring here. This field is only for adding\n# things beyond that default set.\n#\n# Bash = allow running commands on this machine. ON by default (settled 22/08)\n# because most real office work needs it: calling git, converting files,\n# zipping up results, touching folders outside the office.\n#\n# ⚠ This is the ONLY exception to the rule "results always live inside the\n# office folder" (docs/SPEC-artifacts.md §2.6): the hook that blocks stray\n# writes can only match Write/Edit, never a shell command. This person can read\n# and write anywhere on your machine. Delete the line below, or turn the switch\n# off in the detail panel, if this role does not need it.',
-  'seed.roleMaxTurns':
-    '# max_turns is the biggest cost lever there is: every turn re-reads the WHOLE\n  # prefix. An eco-tier role needs a HIGHER number than a standard one — a cheaper\n  # model takes more steps for the same job. A deep-tier role is the reverse: each\n  # turn costs far more, but it takes fewer of them.\n  #\n  # ⚠ RAISED 26/08 (settled) — 6/12 were the numbers from before MCP existed. Every\n  # MCP call is ONE TURN, so a job touching a few Notion pages burns the ceiling\n  # before it can finish. Measured: deleting one sub-page = 9 turns, ceiling hit at\n  # 6, and hitting the ceiling is the MOST EXPENSIVE way to fail — it runs all the\n  # way to the limit and then loses everything.',
-  'seed.roleMaxUsd':
-    '# Spend ceiling for ONE job. 0 = no limit.\n  # The number below is deliberately GENEROUS: being cut off part-way loses every\n  # penny already spent with nothing to show. Measured 21/08 on a 200-row CSV merge:\n  # eco ~$0.17, standard ~$0.45. Tighten it once you know what your work costs.',
+  /**
+   * ⚠ VALUES written during a v0 → multi-office migration.
+   *
+   * `migrate.ts` only ever runs on a company that already exists, so these
+   * resolve at the locale that installation was already running under — and once
+   * written they are the user's data, never translated again. Renaming the
+   * office in the interface overwrites them and these keys are never consulted
+   * for that company again.
+   */
   'seed.mainOfficeName': 'Main office',
   'seed.assistantName': 'Assistant',
-  'seed.companyUnnamed':
-    '# The company has no name yet, so `name` is not written here. Absent means\n# "nobody named it", and the interface shows a label in the language set\n# below. Add a line `name: "Your name"` and it becomes yours — never\n# translated after that.',
   'srv.missingField': 'missing “{field}”',
   'srv.badToken': 'wrong token',
   'srv.hostNotAllowed': 'Host not allowed',
@@ -1621,6 +1663,44 @@ do not quote token counts, do not use technical jargon.
   'promptLayer.overLimit':
     'Over the {limit} token ceiling. This block lives in the prefix cache, so every spare line is a cost charged for the whole shift.',
   'promptLayer.loadFailed': 'Could not read the prompt.',
+  /**
+   * The layer table exists so an advanced user can SEE the core layer and
+   * therefore trust it. Hiding it means they guess, and a wrong guess means
+   * they write skills that fight the system. → SPEC-offices.md §4.1
+   *
+   * ⚠ `placeholder` is a REAL example of what to write, and it never reaches a
+   * prompt — that is the whole point. A default file body would sit in the
+   * prefix cache of every call, so a line like "write a few words about this
+   * office" would be a tax charged forever to tell the MODEL something only a
+   * PERSON needs. Placeholder text is never saved: 0 tokens.
+   */
+  'promptLayer.assistantCoreTitle': 'Connection protocol (core)',
+  'promptLayer.assistantCoreNote':
+    'How the assistant talks to employees, and the protocol it gets results back on.',
+  'promptLayer.workerCoreTitle': 'Working protocol (core)',
+  'promptLayer.charterTitle': 'About this office',
+  'promptLayer.charterPlaceholder':
+    '{office} writes content for small business customers.\nThe reader runs a shop; they are not technical.\nEverything is written in plain words, no heavy jargon.',
+  'promptLayer.charterNote':
+    'What this office does, who for, and any rules it needs. Leaving it empty is fine.',
+  'promptLayer.skillsTitle': 'Skills — you write these',
+  'promptLayer.assistantSkillsPlaceholder':
+    '- Keep it short and plain. Skip the pleasantries.\n- When a request is vague, ask back the ONE question that matters most.\n- Report in ordinary words; do not name tools or quote token counts.',
+  'promptLayer.assistantSkillsNote':
+    'The assistant’s own character, voice and habits. Leaving it empty is fine.',
+  'promptLayer.roleSkillsPlaceholder':
+    'For example:\n- Always write in the second person, short sentences.\n- Open with the conclusion, do not build up to it.\n- No emoji.',
+  'promptLayer.roleSkillsNote': 'How this employee works. EMPTY is perfectly normal',
+  'promptLayer.memoryTitle': 'Memory from the conversation',
+  'promptLayer.memoryNote':
+    'What YOU settled, compacted by the assistant each time the conversation is cleared (`/clear`). Edit or delete it in the Knowledge drawer — a new version replaces the old one, and the old file is still there.',
+  'promptLayer.knowledgeTitle': 'Preloaded lessons',
+  'promptLayer.knowledgeNote': 'Built up automatically through work. See more in the knowledge base',
+  'promptLayer.libraryTitle': 'Document list',
+  'promptLayer.libraryNote': 'The names and shapes of the documents in the cabinet.',
+  'promptLayer.artifactsTitle': 'Result file list',
+  'promptLayer.artifactsNote':
+    'The names of result files, so the assistant can build on earlier results.',
 } as const;
 
 /** Every locale file must satisfy this. Missing or extra key ⇒ `tsc` fails. */
@@ -1676,6 +1756,10 @@ export const enPlural = {
   'off.sweptAged': { one: '{n} note nobody has used in a while', other: '{n} notes nobody has used in a while' },
   'off.andMoreFiles': { one: '…and {n} more file', other: '…and {n} more files' },
   'off.splitInto': { one: 'I split this into {n} job:', other: 'I split this into {n} jobs:' },
+  'wk.stoppedPartial': {
+    one: 'Stopped part-way. {n} file was written incompletely — look at it before using it.',
+    other: 'Stopped part-way. {n} files were written incompletely — look at them before using them.',
+  },
   'activity.workers': { one: '{n} employee is working', other: '{n} employees are working' },
   'activity.queued': { one: '{n} message waiting', other: '{n} messages waiting' },
   'activity.jobs': { one: '{n} job queued', other: '{n} jobs queued' },

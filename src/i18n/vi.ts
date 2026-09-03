@@ -422,6 +422,53 @@ export const vi: Catalog = {
   'off.autoCompacted': 'Cuộc trò chuyện đã dài, mình dọn bớt cho nhẹ. {note}',
   'off.sweptAlso': 'Dọn luôn {what}.',
   'off.sweptAnd': ' và ',
+  // ──────────────────────────── the assistant: sentences CODE writes, not the model
+  'as.emptyReply':
+    'Mình gọi được model nhưng nó không trả về gì cả — lỗi đường truyền, không phải cách bạn nói. Nhắn lại giúp mình nhé.',
+  'as.emptyReplyPlanning':
+    'Mình gọi được model nhưng nó không trả về gì cả — lỗi này nằm ở đường truyền, không phải ở cách bạn nói. Thử lại sau một chút nhé.',
+  'as.noUsableAnswer':
+    'Lượt vừa rồi chưa ra được câu trả lời dùng được. Bạn thử nói lại theo cách khác, hoặc chia nhỏ yêu cầu ra giúp mình.',
+  'as.planTextNotJson':
+    'Mình chưa chia được việc này. Thay vì một kế hoạch, Trợ lý nói:\n  "{text}"\nCâu đó lẽ ra phải đi qua đường hỏi lại chứ không phải viết thẳng ra như vậy — nên đây là lỗi của mình, không phải của cách bạn nói. Cứ giao lại y nguyên: phần lớn ca như thế chạy được ở lần thứ hai. Nếu nó hỏi một điều gì cụ thể thì trả lời luôn trong câu giao việc.',
+  'as.done': 'Đã xong.',
+  'as.stoppedByUser': 'Đã dừng theo yêu cầu của bạn.',
+
+  // ─────────────────────────────────── the employee: status line and stop reasons
+  'wk.doingRead': 'đang đọc tài liệu',
+  'wk.doingReadFile': 'đang đọc {file}',
+  'wk.doingWrite': 'đang viết kết quả',
+  'wk.doingWriteFile': 'đang viết {file}',
+  'wk.doingSearchIn': 'đang tìm{term} trong {room}',
+  'wk.doingSearchOutside': 'đang tìm{term} ngoài văn phòng',
+  'wk.doingWebSearch': 'đang tìm trên web',
+  'wk.doingWebFetch': 'đang đọc một trang web',
+  'wk.doingRunCommand': 'đang chạy lệnh',
+  'wk.doingRunning': 'đang chạy: {cmd}',
+  'wk.doingUsingTool': 'đang dùng {tool}',
+  'wk.doingWorking': 'đang làm việc',
+  'wk.roomLibrary': 'tủ tài liệu',
+  'wk.roomArtifacts': 'kết quả đã có',
+  'wk.roomKnowledge': 'kho tri thức',
+  'wk.roomOffice': 'văn phòng',
+  'wk.hitBudget': 'Task {task} chạm trần ngân sách {ceiling}',
+  'wk.hitMaxTurns': 'Việc này cần nhiều bước hơn mức cho phép ({turns} bước) nên đã dừng giữa chừng.\n',
+  'wk.hitMaxTurnsWithArm':
+    '⚠ Nhân viên ĐÃ gọi ra kết nối bên ngoài trước khi dừng — có thể đã thay đổi thứ gì đó ở ngoài, và không rõ tới đâu. Xem nhật ký của kết nối để biết chính xác nó đã làm gì.\n',
+  'wk.hitMaxTurnsNext':
+    'Cách đi tiếp: chia việc thành các bước nhỏ hơn, hoặc nâng số bước tối đa của nhân viên này.',
+  'wk.receiptUnreadable': 'Nhân viên trả về kết quả không đọc được. Xem nhật ký chi tiết.',
+  'wk.receiptInvalid': 'receipt không hợp lệ: {problem}',
+  'wk.stoppedClean': 'Đã dừng theo yêu cầu của bạn, chưa ghi gì.',
+  'wk.stoppedByUser': 'người dùng dừng giữa chừng',
+  'wk.stopMaxTurns':
+    'Việc này cần nhiều bước hơn mức cho phép trong một lượt nên đã dừng giữa chừng. Thử chia nhỏ yêu cầu, hoặc nói rõ hơn cần làm gì trước làm gì sau.',
+  'wk.stopBudget': 'Lượt này chạm trần chi phí đã đặt cho công việc.',
+  'wk.stopUsageLimit': 'Tài khoản Claude đã hết hạn mức dùng.',
+  'wk.stopRateLimit': 'Claude đang quá tải, thử lại sau ít phút.',
+  'wk.stopAuth': 'Chưa đăng nhập được vào Claude trên máy này.',
+  'wk.stopOther': 'Claude Code dừng giữa chừng ({raw}).',
+
   'off.leftoversOnBoot':
     'Ca trước còn {n} việc chưa chạy{of}. Gõ /resume là mình làm nốt, dùng lại kế hoạch cũ nên không tốn thêm lượt chia việc nào. Hoặc cứ nhắn việc mới, phần đã xong vẫn nằm trong ngăn Kết quả.',
   'off.wroteOutside':
@@ -541,34 +588,10 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
 
 Đóng tab trình duyệt KHÔNG tắt công ty. Muốn tắt hẳn: nút "Tắt hẳn" hoặc \`agentco stop\`.`,
 
-  // ─────────────────────────────────────────────── company.yaml seed comments
-  'seed.companyHeader':
-    '# Cấu hình CÔNG TY. Mọi thứ dính tới tiền nằm ở đây.\n# Người, tri thức, sơ đồ thì thuộc về từng văn phòng: offices/<mã>/',
-  'seed.language':
-    '# Ngôn ngữ GIAO DIỆN: vi | en. Đổi được trong Cài đặt.\n# Nó KHÔNG đổi ngôn ngữ Trợ lý trả lời — cái đó luôn đi theo thứ tiếng bạn gõ.',
-  'seed.concurrency': '# Số nhân viên chạy song song cùng lúc, tính trên toàn công ty.',
-  'seed.budgets':
-    '# TRẦN CỨNG. Đây là thứ giữ cho chi phí không âm thầm phình lên.\n  # Nới lên thì tốn tiền hơn, không phải "chạy tốt hơn".\n  # Đọc docs/SPEC-token-economy.md trước khi đổi.',
-  'seed.assistantSkills':
-    '# Skills của Trợ lý nằm trong prefix của MỌI lượt trò chuyện -> trần chặt hơn.',
-  'seed.masterTier':
-    '# Tier của Trợ lý. PHẢI CỐ ĐỊNH suốt ca — đổi giữa chừng là mất cả ngữ cảnh.',
-  'seed.plannerTier':
-    "# Lập kế hoạch chạy ở query riêng, nên đặt 'deep' ở đây KHÔNG phá cache Trợ lý.",
-  'seed.mcpServers':
-    '# MCP server tự cắm thêm. Khai ở đây một lần, rồi kéo dây trên sơ đồ của từng\n# văn phòng để quyết định ai được dùng.',
-  'seed.allowCoreEdit':
-    '# Lớp prompt lõi luôn XEM ĐƯỢC trong giao diện. Bật cái này mới SỬA được nó.\n# Nó thuộc về mã nguồn, không thuộc về việc vận hành doanh nghiệp — sửa sai là\n# phá kiến trúc chi phí. Chỉ bật nếu bạn biết mình đang làm gì.',
 
   // ──────────────────────────────────────────────────── daemon / HTTP API
   'company.unnamed': 'Công ty của tôi',
   'company.unnamedOffice': 'Văn phòng mới',
-  'seed.assistantUnnamed':
-    '# Chưa đặt tên nên không ghi `display_name` ở đây. Vắng mặt nghĩa là "chưa ai\n  # đặt tên", và giao diện hiện nhãn theo ngôn ngữ bạn chọn. Gõ tên ở bảng chi\n  # tiết là ghi khoá này xuống — từ đó nó là tên của bạn, không dịch nữa.',
-  'seed.defaultDeliver':
-    '# Kết quả rơi xuống đâu khi yêu cầu không nghiêng hẳn về bên nào:\n  #   file  - người dùng MỞ file (bài viết, báo cáo, bảng, hợp đồng)\n  #   reply - người dùng ĐỌC câu trả lời ngay trong ô chat (hỏi đáp, tra cứu)\n  # Task "reply" VẪN ghi file như thường; nó chỉ thôi bắt người ta đi mở file.\n  # Văn phòng chuyên hỏi-đáp thì đổi dòng này thành reply.',
-  'seed.officeMcp':
-    '# MCP/API mà Trợ lý "dùng được". Thực chất chúng được gắn cho một worker ẩn\n  # chạy phía sau, KHÔNG gắn thẳng vào Trợ lý: Trợ lý là session dài, resume\n  # liên tục, mà MCP phá prompt cache khi resume -> mất rất nhiều token MỖI LƯỢT\n  # trò chuyện. Cắm bằng cách kéo dây trên sơ đồ.',
   'seed.assistantSkills.body': `Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.
 
 Khi yêu cầu còn mơ hồ ở chỗ ảnh hưởng tới kết quả (làm cho ai, dài bao nhiêu,
@@ -578,19 +601,9 @@ Thà hỏi còn hơn đoán sai rồi làm lại.
 Báo cáo bằng lời người thường: đã xong gì, có gì cần để ý. Không nhắc tên tool,
 không nhắc số token, không dùng thuật ngữ kỹ thuật.
 `,
-  'seed.rolePitch':
-    '# Đây là THỨ DUY NHẤT Trợ lý nhìn thấy khi lên kế hoạch.\n# Giữ ngắn: nó nằm trong ngữ cảnh của Trợ lý suốt cả ca làm việc.',
   'seed.rolePitchDefault': 'Mô tả việc {name} làm được, viết cho Trợ lý đọc.',
-  'seed.roleTools':
-    '# Đọc/ghi file trong văn phòng và tìm trên web đã BẬT SẴN cho mọi nhân viên —\n# không cần khai gì ở đây. Trường này chỉ để thêm thứ nằm ngoài bộ mặc định.\n#\n# Bash = cho phép chạy lệnh trên máy. BẬT SẴN (user chốt 22/08) vì phần lớn\n# việc văn phòng thật sự cần nó: gọi git, đổi định dạng file, nén kết quả,\n# đụng tới thư mục nằm ngoài văn phòng.\n#\n# ⚠ Đây là NGOẠI LỆ DUY NHẤT của luật "kết quả luôn nằm trong thư mục văn\n# phòng" (docs/SPEC-artifacts.md §2.6): hook chặn ghi bậy chỉ khớp được\n# Write/Edit, không khớp được lệnh shell. Người này đọc và ghi được bất cứ\n# đâu trên máy bạn. Xoá dòng dưới, hoặc tắt công tắc trong bảng chi tiết,\n# nếu vai trò này không cần.',
-  'seed.roleMaxTurns':
-    '# max_turns là đòn bẩy chi phí lớn nhất: mỗi lượt đọc lại TOÀN BỘ prefix.\n  # Vai trò tier eco cần con số CAO HƠN tier standard — model rẻ đi nhiều\n  # bước hơn cho cùng một việc. Tier deep thì ngược lại: mỗi lượt đắt hơn hẳn\n  # nhưng nó đi ít bước hơn.\n  #\n  # ⚠ NỚI 26/08 (user chốt) — 6/12 là con số của thời CHƯA CÓ MCP. Mỗi lời gọi\n  # MCP là MỘT LƯỢT, nên một việc chạm vài trang Notion đốt hết trần trước khi\n  # kịp làm xong. Đo được: xoá một trang con = 9 lượt, chạm trần ở 6, và cái\n  # giá của việc chạm trần là ĐẮT NHẤT trong mọi kiểu hỏng — nó chạy tới kịch\n  # rồi mất trắng.',
-  'seed.roleMaxUsd':
-    '# Trần chi phí MỘT việc. Đặt 0 = không giới hạn.\n  # Số dưới đây RỘNG có chủ ý: chặn giữa chừng là mất trắng số tiền đã tiêu mà\n  # không có kết quả. Đo được 21/08 trên bài gộp CSV 200 dòng: eco ~$0.17,\n  # standard ~$0.45. Siết xuống khi bạn đã biết việc của mình tốn bao nhiêu.',
   'seed.mainOfficeName': 'Văn phòng chính',
   'seed.assistantName': 'Trợ lý',
-  'seed.companyUnnamed':
-    '# Công ty chưa có tên nên không ghi `name` ở đây. Vắng mặt nghĩa là "chưa ai\n# đặt tên", và giao diện hiện nhãn theo ngôn ngữ đặt bên dưới. Thêm một dòng\n# `name: "Tên của bạn"` là nó thành tên của bạn — từ đó không dịch nữa.',
   'srv.missingField': 'thiếu "{field}"',
   'srv.badToken': 'sai token',
   'srv.hostNotAllowed': 'Host không được phép',
@@ -1411,6 +1424,29 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
   'promptLayer.overLimit':
     'Vượt trần {limit} token. Khối này nằm trong prefix cache nên mỗi dòng thừa là chi phí thu suốt ca làm việc.',
   'promptLayer.loadFailed': 'Không đọc được prompt.',
+  'promptLayer.assistantCoreTitle': 'Quy cách kết nối (lõi)',
+  'promptLayer.assistantCoreNote': 'Cách Trợ lý nói chuyện với nhân viên và giao thức nhận kết quả.',
+  'promptLayer.workerCoreTitle': 'Quy cách làm việc (lõi)',
+  'promptLayer.charterTitle': 'Giới thiệu văn phòng',
+  'promptLayer.charterPlaceholder':
+    'Văn phòng {office} làm nội dung cho khách hàng nhỏ ở Việt Nam.\nNgười đọc là chủ shop, không phải dân kỹ thuật.\nMọi bài viết đều xưng "mình", không dùng từ Hán Việt nặng.',
+  'promptLayer.charterNote': 'Văn phòng này làm gì, cho ai, cần quy tắc gì không. Có thể để trống.',
+  'promptLayer.skillsTitle': 'Kỹ năng — bạn viết',
+  'promptLayer.assistantSkillsPlaceholder':
+    '- Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.\n- Yêu cầu mơ hồ thì hỏi lại đúng MỘT câu quan trọng nhất.\n- Báo cáo bằng lời người thường, không nhắc tên tool hay số token.',
+  'promptLayer.assistantSkillsNote': 'Tính cách, giọng điệu, thói quen của riêng Trợ lý. Có thể để trống.',
+  'promptLayer.roleSkillsPlaceholder':
+    'Ví dụ:\n- Luôn viết ở ngôi thứ hai, câu ngắn.\n- Mở đầu bằng kết luận, đừng dẫn dắt.\n- Không dùng emoji.',
+  'promptLayer.roleSkillsNote': 'Cách làm việc của nhân viên. Để TRỐNG là bình thường',
+  'promptLayer.memoryTitle': 'Ghi nhớ từ trò chuyện',
+  'promptLayer.memoryNote':
+    'Những gì BẠN đã chốt, Trợ lý nén lại mỗi khi dọn cuộc trò chuyện (`/clear`). Sửa hoặc xoá ở ngăn kéo Tri thức — bản mới tự đè bản cũ, bản cũ vẫn còn file.',
+  'promptLayer.knowledgeTitle': 'Kinh nghiệm nạp sẵn',
+  'promptLayer.knowledgeNote': 'Tự động hình thành qua quá trình làm việc. Xem thêm tại Kho tri thức',
+  'promptLayer.libraryTitle': 'Danh sách tài liệu',
+  'promptLayer.libraryNote': 'Tên và hình dạng các tài liệu trong tủ tài liệu.',
+  'promptLayer.artifactsTitle': 'Danh sách file kết quả',
+  'promptLayer.artifactsNote': 'Tên các file kết quả giúp Trợ lý làm tiếp được trên kết quả cũ.',
 };
 
 /**
@@ -1464,6 +1500,10 @@ export const viPlural: PluralCatalog = {
   'off.sweptAged': { one: '{n} ghi chú lâu không dùng', other: '{n} ghi chú lâu không dùng' },
   'off.andMoreFiles': { one: '…và {n} file nữa', other: '…và {n} file nữa' },
   'off.splitInto': { one: 'Mình chia thành {n} việc:', other: 'Mình chia thành {n} việc:' },
+  'wk.stoppedPartial': {
+    one: 'Đã dừng giữa chừng. Có {n} file đã ghi dở, xem lại trước khi dùng.',
+    other: 'Đã dừng giữa chừng. Có {n} file đã ghi dở, xem lại trước khi dùng.',
+  },
   'activity.workers': { one: '{n} nhân viên đang làm việc', other: '{n} nhân viên đang làm việc' },
   'activity.queued': { one: '{n} tin chờ', other: '{n} tin chờ' },
   'activity.jobs': { one: '{n} việc xếp hàng', other: '{n} việc xếp hàng' },

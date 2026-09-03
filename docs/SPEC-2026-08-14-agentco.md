@@ -243,6 +243,36 @@ Nói cách khác: **kho tri thức là những câu ngắn đã chắt ra, khôn
 
 Vì sao HOT tồn tại chứ không "khi nào cần mới mò vào": thứ nằm trong prefix được cache trả **~0.1×** sau lần ghi đầu; thứ lấy theo từng task trả **nguyên giá mỗi lần**, và nếu nhét vào prefix thì prefix đổi mỗi task → cache miss 100%, tệ hơn không cache. Hai tầng là để có cả hai.
 
+### 🔴 5·0. `KnowledgeNode` KHÔNG có trường ngôn ngữ — quyết định 03/09, và nó là một quyết định KHÔNG LÀM
+
+Đợt đa ngôn ngữ có đề xuất gắn `lang?: 'vi'|'en'` cho node, suy ra bằng bộ dò dấu tiếng Việt.
+**Đã bỏ.** Lý do không phải "chưa cần" mà là "sai về loại":
+
+1. **Bộ dò đó nhị phân.** Ghi chú tiếng Đức, Tây Ban Nha, Ả Rập đều không mang dấu tiếng Việt ⇒ nó
+   lặng lẽ ghi `en`. Đó là một **tín hiệu đội lốt cổng tất định**, và nó ghi phán đoán **xuống đĩa,
+   vào dữ liệu người dùng** — nơi không lần đọc nào sau đó biết giá trị ấy là đoán.
+2. **Không ai tiêu thụ nó.** `hot()` đã chốt là **không lọc theo ngôn ngữ**: lọc là đổi một phiền
+   toái *nhìn thấy được* (prefix lẫn hai thứ tiếng) lấy một phiền toái *im lặng* (văn phòng quên mất
+   thứ nó đã học, không ai báo). Repo này chọn cái nhìn thấy được, mọi lần.
+
+`hasVietnameseDiacritics` chỉ sống ở `scripts/check-language.ts`, và nó **tất định 100% chỉ ở đó** vì
+nó soi **mã nguồn của chính ta** — thứ có đúng hai khả năng. Chĩa cùng hàm ấy vào văn bản người dùng
+là biến nó thành một phép đoán.
+
+**Điều kiện mở lại — đo được, và chỉ dựng cơ chế khi có một trong hai:**
+
+1. một văn phòng thật tích được ghi chú ở **≥2 ngôn ngữ**, **kèm** một đầu ra sai truy được về chuyện
+   lẫn (không phải "trông kỳ kỳ");
+2. có người thật xin lọc.
+
+Và khi đó cơ chế đúng **không phải bộ dò**: là **model tự khai** ngôn ngữ nó vừa viết, dưới dạng một
+thẻ BCP-47 tự do (`vi` · `en` · `zh-Hans` · `ar` · `de`…), ghi **chỉ cho node sinh ra từ thời điểm đó
+trở đi**. Node cũ **để trống, và trống nghĩa là KHÔNG BIẾT** — không suy diễn.
+
+`test/knowledge-untouched.test.ts` khoá cả ba vế: không trường ngôn ngữ trên node, `hot()` không nhận
+tham số ngôn ngữ, và không bộ dò dấu nào trong `knowledge/`. Nó đỏ vào ngày ai đó thêm một bộ dò "cho
+tiện", và bắt họ đọc mục này trước khi đi tiếp.
+
 ### 5a. BỐN LUẬT SINH KINH NGHIỆM — chốt 19/08/2026
 
 Đề bài do người dùng nêu, và nó là chẩn đoán đúng về một lớp lỗi chứ không phải một bug:

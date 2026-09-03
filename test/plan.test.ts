@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Test cho hai chốt chạy TRƯỚC khi phóng worker đầu tiên (19/08 vòng hai).
  *
  * Cả hai đều thi hành cùng một câu hỏi: *sạn trong kế hoạch có QUAN SÁT ĐƯỢC
@@ -571,8 +571,8 @@ test('missingInputs dùng CHUNG luật với validate: đường dẫn tuyệt �
 test('shellFlag: LUÔN nói ra, cả hai chiều — vắng mặt không phải tín hiệu', () => {
   assert.notEqual(shellFlag([]), '', 'không có shell vẫn PHẢI nói ra');
   assert.notEqual(shellFlag([]), shellFlag(['Bash']), 'hai chiều phải phân biệt được');
-  assert.ok(shellFlag(['Bash']).includes('BẬT'));
-  assert.ok(shellFlag([]).includes('TẮT'));
+  assert.ok(shellFlag(['Bash']).includes('ON'));
+  assert.ok(shellFlag([]).includes('OFF'));
   // Khai bằng tên nền tảng nào cũng tính — xem types.ts §SHELL_ALIASES.
   assert.equal(shellFlag(['PowerShell']), shellFlag(['Bash']));
 });
@@ -580,7 +580,7 @@ test('shellFlag: LUÔN nói ra, cả hai chiều — vắng mặt không phải 
 test('shellFlag: cờ TỰ ĐỌC ĐƯỢC khi đứng một mình, không cần chú giải ở trên', () => {
   // Chú giải nằm đầu khối, cờ nằm ở dòng thứ 9 — khoảng cách là có thật.
   for (const tools of [[], ['Bash']]) {
-    assert.ok(shellFlag(tools).includes('chạy lệnh'), `cờ phải tự mang nghĩa: ${shellFlag(tools)}`);
+    assert.ok(shellFlag(tools).includes('shell'), `cờ phải tự mang nghĩa: ${shellFlag(tools)}`);
   }
 });
 
@@ -622,8 +622,8 @@ test('armReach: dòng tự đọc được, và nói ĐƯỜNG TẮT chứ khôn
   // ⇒ [[agentco-prompt-rules-lose-to-examples]]: điều kiện phải nằm trên chính
   // dòng có ví dụ. User chốt: cánh tay là thư mục ĐƯỢC CẮM, không phải onlyAllows.
   const line = armReach(ARMS, SERVERS, 'a385afc3ab6');
-  assert.ok(/đường tắt tới/.test(line), `dòng phải tự nói nó là đường tắt: ${line}`);
-  assert.ok(!/thư mục:/.test(line), `"thư mục:" đọc thành giới hạn — đừng quay lại: ${line}`);
+  assert.ok(/shortcut to/.test(line), `dòng phải tự nói nó là đường tắt: ${line}`);
+  assert.ok(!/folders:/.test(line), `"thư mục:" đọc thành giới hạn — đừng quay lại: ${line}`);
 });
 
 test('armReach: cánh tay KHÔNG phải file thì không bịa ra thư mục', () => {
@@ -659,7 +659,7 @@ test('armReach: `does` có TRẦN 4 — một cánh tay 20 lệnh không nhét c
   const does = ['một', 'hai', 'ba', 'bốn', 'năm', 'sáu'];
   const line = armReach({ cli: { label: 'X', does } }, {}, 'cli');
   assert.ok(line.includes('một · hai · ba · bốn'), `phải giữ 4 việc đầu: ${line}`);
-  assert.ok(line.includes('và 2 việc khác'), `phải gộp phần dư: ${line}`);
+  assert.ok(line.includes('and 2 more actions'), `phải gộp phần dư: ${line}`);
   assert.ok(!line.includes('năm'), `việc thứ 5 không được lọt nguyên văn: ${line}`);
 });
 
@@ -672,12 +672,12 @@ test('armReach: VẮNG `does` ⇒ không in gì — mọi cánh tay đang chạy
   assert.equal(armReach({ cli: { label: 'X' } }, {}, 'cli'), 'X');
   // và nó không được đẩy `level`/thư mục đi chỗ khác
   const line = armReach({ a: { label: 'Kho', level: 'read' } }, { a: { args: ['D:\\Kho'] } }, 'a');
-  assert.equal(line, 'Kho — chỉ đọc (đường tắt tới D:\\Kho)');
+  assert.equal(line, 'Kho — read only (shortcut to D:\\Kho)');
 });
 
 test('armReach: `does` đứng SAU nấc quyền — quyền trước, việc sau', () => {
   const line = armReach({ a: { label: 'Kho', level: 'read', does: ['đọc hoá đơn'] } }, {}, 'a');
-  assert.equal(line, 'Kho — chỉ đọc · đọc hoá đơn');
+  assert.equal(line, 'Kho — read only · đọc hoá đơn');
 });
 
 /**
@@ -709,9 +709,9 @@ const TIERED = {
 test('⭐ armReach: nấc quyền nằm TRÊN CHÍNH DÒNG của nhân viên', () => {
   // Không phải thêm một câu dặn ở đầu khối — câu dặn ở đầu khối đã thua vị trí
   // hai lần rồi. → [[agentco-prompt-rules-lose-to-examples]]
-  assert.match(armReach(TIERED, {}, 'n_read'), /chỉ đọc/);
-  assert.match(armReach(TIERED, {}, 'n_full'), /ghi/);
-  assert.match(armReach(TIERED, {}, 'n_full'), /sửa\/xoá/);
+  assert.match(armReach(TIERED, {}, 'n_read'), /read only/);
+  assert.match(armReach(TIERED, {}, 'n_full'), /write/);
+  assert.match(armReach(TIERED, {}, 'n_full'), /edit\/delete/);
 });
 
 test('⭐ armReach: BA nấc cho BA dòng khác nhau — đổi nấc là đổi prompt', () => {
@@ -724,7 +724,7 @@ test('⭐ armReach: BA nấc cho BA dòng khác nhau — đổi nấc là đổi
 test('armReach: nấc `add` phải nói RÕ nó KHÔNG sửa/xoá', () => {
   // "Đọc + thêm mới" một mình dễ bị đọc thành "ghi được" ⇒ Trợ lý giao một việc
   // sửa trang cho người chỉ tạo được trang mới. Vế phủ định phải nằm ngay đó.
-  assert.match(armReach(TIERED, {}, 'n_add'), /không sửa\/xoá/);
+  assert.match(armReach(TIERED, {}, 'n_add'), /no editing or deleting/);
 });
 
 test('armReach: KHÔNG có `level` ⇒ không bịa ra năng lực nào', () => {
@@ -734,13 +734,13 @@ test('armReach: KHÔNG có `level` ⇒ không bịa ra năng lực nào', () => 
    * từ một thứ không khai nó. → `probe.ts §levelOf`, luật một chiều.
    */
   assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
-  assert.ok(!/chỉ đọc|toàn quyền|sửa\/xoá/.test(armReach(ARMS, SERVERS, 'a385afc3ab6')));
+  assert.ok(!/read only|full access|edit\/delete/.test(armReach(ARMS, SERVERS, 'a385afc3ab6')));
 });
 
 test('armReach: có CẢ nấc lẫn thư mục thì nói cả hai, không nuốt cái nào', () => {
   const arms = { x: { label: 'Kho', level: 'full' as const } };
   const line = armReach(arms, { x: { args: ['D:\\Kho'] } }, 'x');
-  assert.match(line, /sửa\/xoá/);
+  assert.match(line, /edit\/delete/);
   assert.match(line, /D:\\Kho/);
 });
 
@@ -750,19 +750,19 @@ test('armReach: chưa có nhãn thì rơi về băm — thà xấu còn hơn im'
 
 test('SHELL_LEGEND: dạy dùng LUÔN thư mục đã in ra, và HẸP đúng chỗ đó', () => {
   // Nửa còn lại của `armReach`: biết đường dẫn mà vẫn hỏi lại thì bản vá vô nghĩa.
-  assert.ok(/thư mục:/.test(SHELL_LEGEND), 'legend phải giải thích nhãn "thư mục:"');
-  assert.ok(/đừng hỏi lại/.test(SHELL_LEGEND), 'phải nói thẳng: đừng hỏi lại đường dẫn');
+  assert.ok(/folders:/.test(SHELL_LEGEND), 'legend phải giải thích nhãn "folders:"');
+  assert.ok(/do not ask them for the full path again/.test(SHELL_LEGEND), 'phải nói thẳng: đừng hỏi lại đường dẫn');
   // ⚠ Và phải HẸP: viết rộng thành "đừng hỏi đường dẫn" là dạy Trợ lý đoán bừa
   // một đường dẫn nó chưa từng thấy — hỏng ngược chiều, và im lặng hơn.
   assert.ok(
-    /trong danh sách|ĐÃ được cấp quyền/.test(SHELL_LEGEND),
+    /in that list|ALREADY been granted/.test(SHELL_LEGEND),
     'câu phải giới hạn vào thư mục đã in ra ở dòng nhân viên',
   );
 });
 
 test('SHELL_LEGEND: nêu quyền ĐỌC, và không phủ định rộng ra cả việc với tới máy', () => {
-  assert.ok(/MỞ ĐƯỢC file trên máy/.test(SHELL_LEGEND), 'phải nói ra quyền đọc');
-  for (const doi of ['không với tới', 'không đọc được', 'không truy cập']) {
+  assert.ok(/CAN OPEN files on the human/.test(SHELL_LEGEND), 'phải nói ra quyền đọc');
+  for (const doi of ['cannot reach', 'cannot read', 'no access to']) {
     assert.ok(!SHELL_LEGEND.includes(doi), `câu phủ định rộng "${doi}" là sai sự thật`);
   }
 });
@@ -795,7 +795,7 @@ test('SHELL_LEGEND: nêu quyền ĐỌC, và không phủ định rộng ra cả
  * ⇒ Test mới canh MỆNH ĐỀ, không canh một danh sách từ cấm.
  */
 test('SHELL_LEGEND: KHÔNG gán metadata file cho shell — cánh tay cũng lấy được', () => {
-  for (const gan of ['kích thước', 'ngày sửa', 'dung lượng']) {
+  for (const gan of ['file size', 'modified date', 'disk usage']) {
     assert.ok(
       !SHELL_LEGEND.includes(gan),
       `"${gan}" nằm cạnh "chạy lệnh: BẬT" là dạy Trợ lý rằng không có shell thì không có ` +
@@ -808,18 +808,18 @@ test('SHELL_LEGEND: dặn thẳng ĐỪNG ĐOÁN HỘ nhân viên là họ khôn
   // Nửa khẳng định của cùng bản vá: gỡ mệnh đề sai mới chỉ thôi nói dối. Ca
   // user là Trợ lý TỪ CHỐI TRƯỚC thay cho nhân viên, nên phải có câu chặn đúng
   // hành vi đó — nhân viên biết bộ tool của chính nó, Trợ lý thì không.
-  assert.ok(/ĐỪNG đoán hộ/.test(SHELL_LEGEND), 'phải cấm việc đoán hộ năng lực của nhân viên');
-  assert.ok(/kết nối/.test(SHELL_LEGEND), 'phải nói ra rằng kết nối mang khả năng riêng');
+  assert.ok(/DO NOT decide on their behalf/.test(SHELL_LEGEND), 'phải cấm việc đoán hộ năng lực của nhân viên');
+  assert.ok(/A connection \(🔌\) brings its OWN/.test(SHELL_LEGEND), 'phải nói ra rằng kết nối mang khả năng riêng');
 });
 
 test('SHELL_LEGEND: không khẳng định độc quyền — câu phải sống sót khi MCP có mặt', () => {
-  for (const dong of ['DUY NHẤT', 'duy nhất', 'chỉ có thể', 'cách duy nhất']) {
+  for (const dong of ['the ONLY', 'the only', 'can only', 'only way']) {
     assert.ok(
       !SHELL_LEGEND.includes(dong),
       `"${dong}" là khẳng định về toàn bộ thế giới — hết đúng khi thêm MCP`,
     );
   }
-  assert.ok(/liệt kê ĐỦ/.test(SHELL_LEGEND), 'phải thay bằng bất biến về định dạng');
+  assert.ok(/lists EVERY place they reach/.test(SHELL_LEGEND), 'phải thay bằng bất biến về định dạng');
 });
 
 // ═══════════════════════════════════════════ chặn vòng lặp câu từ chối

@@ -102,13 +102,12 @@ function cmdInit(): void {
     'en',
   );
   /**
-   * Adopt the resolved locale BEFORE writing the template.
+   * Adopt the resolved locale BEFORE anything is written or printed.
    *
-   * `companyTemplate` renders seed comments through `t()`, and those comments
-   * land in the user's own file — so they follow the interface language. No
-   * config has been loaded yet at this point, so without this line `t()` would
-   * still be on the default and a machine resolved to `en` would get an English
-   * `language: en` next to Vietnamese comments.
+   * The template itself no longer contains a single translated string — see the
+   * box on `companyTemplate` — but the five `console.log` lines below it do, and
+   * no config has been loaded at this point. Without this line a machine that
+   * resolved to `en` would write `language: en` and then report it in Vietnamese.
    */
   setLocale(locale);
   fs.writeFileSync(pp.configFile, companyTemplate(locale), 'utf8');
@@ -630,25 +629,37 @@ function cmdHelp(): void {
  * các `const` phía dưới trong module này được khởi tạo. Một hằng chuỗi ở cuối
  * file sẽ ném "Cannot access before initialization" — khai báo hàm thì được hoist.
  */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ A GENERATED FILE CARRIES NO COMMENTS. (settled 03/09)                    │
+ * │                                                                          │
+ * │ This template used to write a block of explanation above almost every    │
+ * │ key, rendered through `t()` so it followed the interface switch. Both    │
+ * │ halves of that are gone, and the reason is the same for both:            │
+ * │                                                                          │
+ * │ A comment written here is frozen at the moment the file is created. It   │
+ * │ is never rewritten — every later save goes through `YAML.parseDocument`  │
+ * │ + `doc.set()` on individual keys, deliberately, so a comment the user    │
+ * │ edited is not clobbered. So the explanation ages in place while the code │
+ * │ it describes moves on, and nothing anywhere reports the drift. This      │
+ * │ repository has a live example: a `company.yaml` seeded 15/08 still       │
+ * │ describes `master:`, `models.cheap` and a pre-migration `charter_file`.  │
+ * │                                                                          │
+ * │ The explanation lives in `docs/SPEC-token-economy.md` and in the layered │
+ * │ prompt dialog instead — both of which get updated with the code.         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 function companyTemplate(locale: Locale): string {
-  return `${t('seed.companyHeader')}
-#
-${t('seed.companyUnnamed')}
-
-${t('seed.language')}
-language: ${locale}
+  return `language: ${locale}
 
 runtime:
   port: 7317
-  ${t('seed.concurrency')}
   concurrency: 4
 
 budgets:
-  ${t('seed.budgets')}
   receipt_tokens: 800
   knowledge_node_tokens: 250
   charter_tokens: 500
-  ${t('seed.assistantSkills')}
   assistant_skills_tokens: 400
   cold_knowledge_tokens: 3000
 
@@ -656,19 +667,11 @@ models:
   eco: claude-haiku-4-5-20251001
   standard: claude-sonnet-5
   deep: claude-opus-5
-  ${t('seed.masterTier')}
   master: standard
-  ${t('seed.plannerTier')}
   planner: standard
 
-${t('seed.mcpServers')}
-# mcpServers:
-#   notion:
-#     command: npx
-#     args: ["-y", "@notionhq/notion-mcp-server"]
 mcpServers: {}
 
-${t('seed.allowCoreEdit')}
 allow_core_prompt_edit: false
 `;
 }

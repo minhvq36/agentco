@@ -1,23 +1,26 @@
 /**
- * MỘT MỤC DANH MỤC = MỘT FILE. → `../catalog.ts` · docs/SPEC-arms.md §4e
+ * ONE CATALOGUE ENTRY = ONE FILE. → `../catalog.ts` · docs/SPEC-arms.md §4e
  *
- * File này là **dữ liệu**, không phải mã: không hàm, không nhánh, không import
- * gì ngoài kiểu. Sửa mục này thì chỉ mở file này — đó là toàn bộ lý do tách ra
- * (user 27/08: *"custom khá nhiều để khớp với từng provider… sắp xếp lại"*).
+ * This file is DATA, not code: no functions, no branches, no imports beyond the
+ * type. Changing this entry means opening this file and nothing else — which is
+ * the entire reason it was split out (user, 27/08: *"I customise these providers
+ * quite a lot to fit each one… rearrange it"*).
  */
 
 import type { CatalogArm } from '../catalog.js';
 
 /**
- * ⚠ GHIM PHIÊN BẢN, KHÔNG `@latest`. → SPEC-arms.md §11d
+ * ⚠ PIN THE VERSION, NEVER `@latest`. → SPEC-arms.md §11d
  *
- * `npx -y <gói>` tải và chạy mã của người lạ trên máy khách, với quyền của khách,
- * kèm chìa của khách. `@latest` nghĩa là bản cập nhật của người lạ chạy trên máy
- * khách mà không ai duyệt. Xuất hiện trong DANH MỤC CỦA TA thì lời cảnh báo
- * "code người lạ" không còn đủ — **chọn hộ khách là bảo đảm hộ khách**.
+ * `npx -y <package>` downloads and runs a stranger's code on the customer's
+ * machine, with the customer's permissions and the customer's keys. `@latest`
+ * means a stranger's update runs there with nobody reviewing it. Once an entry
+ * appears in OUR CATALOGUE, "it is third-party code" stops being a sufficient
+ * warning — CHOOSING ON SOMEONE'S BEHALF IS VOUCHING ON THEIR BEHALF.
  *
- * Hằng số này ở ĐÂY chứ không ở `catalog.ts`: nó chỉ thuộc về mục này, và một
- * hằng số chung mà chỉ một chỗ dùng là một lời mời chỗ thứ hai dùng nhờ.
+ * The constant lives HERE and not in `catalog.ts`: it belongs to this entry
+ * alone, and a shared constant with a single user is an invitation for a second
+ * one to borrow it.
  */
 const FILESYSTEM_PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
 
@@ -33,10 +36,11 @@ export const FILES_ARM: CatalogArm = {
     label: 'armCat.files.folders.label',
     help: 'armCat.files.folders.help',
   },
-  // Server tham chiếu của chính MCP ⇒ KHÔNG có thương hiệu bên thứ ba nào.
-  // Đây là mục duy nhất trong danh mục v1 có rủi ro nhãn hiệu bằng 0.
+  // MCP's own reference server ⇒ NO third-party brand at all. This is the only
+  // entry in the v1 catalogue with zero trademark risk.
   //
-  // `mark` bỏ trống ⇒ giao diện vẽ hình theo LOẠI (thư mục). Đúng ý nghĩa: mục
-  // này không có hãng nào để vẽ logo. → `ArmIcon.tsx`
+  // `mark` left empty ⇒ the interface draws by TYPE (a folder). That is the
+  // right meaning: this entry has no vendor whose logo could be drawn.
+  // → `ArmIcon.tsx`
   brand: { owner: null, guidelineUrl: null, checkedOn: null },
 };

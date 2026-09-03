@@ -40,7 +40,7 @@ test('⭐ 404 kèm owner/repo ⇒ dịch lại thành "chưa cài app vào repo 
   const out = fix({ owner: 'octocat', repo: 'test', path: 'README.md' }, 'Error: 404 Not Found');
   assert.ok(out, 'phải dịch');
   assert.match(out, /octocat\/test/, 'nêu đúng repo');
-  assert.match(out, /chưa được cài/i, 'nói ra nguyên nhân thật');
+  assert.match(out, /is not installed/i, 'nói ra nguyên nhân thật');
   assert.ok(out.includes(DOOR), 'kèm cửa đi tiếp — thiếu nó thì câu dịch cũng là ngõ cụt');
 });
 
@@ -56,7 +56,7 @@ test('🔴 GIỮ NGUYÊN câu gốc, chỉ THÊM vào — không nuốt lỗi', 
 
 test('⭐ dặn model ĐỪNG đoán là repo không tồn tại, và đừng dò tên khác', () => {
   const out = fix({ owner: 'a', repo: 'b' }, '404')!;
-  assert.match(out, /đừng.*(thử lại|đoán)/is, 'không dặn thì mỗi lần dò là một lượt trả tiền');
+  assert.match(out, /do not.*(retry|conclude)/is, 'không dặn thì mỗi lần dò là một lượt trả tiền');
 });
 
 test('🔴 KHÔNG có owner/repo ⇒ ĐỨNG YÊN — đừng dựng một câu sai cửa MỚI', () => {

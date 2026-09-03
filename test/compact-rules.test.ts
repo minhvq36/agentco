@@ -26,25 +26,25 @@ test('đủ NĂM luật, đánh số liên tục — bỏ một luật là gãy 
   for (const n of [1, 2, 3, 4, 5]) {
     assert.ok(new RegExp(`(^|\\n)${n}\\.`, 'm').test(R), `mất luật ${n}`);
   }
-  assert.match(R, /Năm luật/, 'số luật khai ở đầu không khớp với số luật thật');
+  assert.match(R, /Five rules/, 'số luật khai ở đầu không khớp với số luật thật');
 });
 
 test('luật 1–3: GIỮ là mặc định, cái mới thắng, mỗi chủ đề một dòng', () => {
   // Bug 20/08: mỗi `/clear` là một lần tóm tắt lại bản tóm tắt ⇒ quyết định của
   // người dùng bốc hơi sau ba lần dọn, im lặng.
-  assert.match(R, /CHÉP LẠI mọi mục cũ còn đúng/);
-  assert.match(R, /cái mới thắng/);
-  assert.match(R, /Mỗi chủ đề một dòng/);
+  assert.match(R, /CARRY OVER every old entry that still holds/);
+  assert.match(R, /the newer one wins/);
+  assert.match(R, /One line per topic/);
 });
 
 test('luật 4: KHÔNG ghi kết luận từ ca HỎNG, và có ví dụ ⛔/✅ đi kèm', () => {
-  assert.match(R, /KHÔNG ghi kết luận rút ra từ những lần HỎNG/);
+  assert.match(R, /never record a conclusion drawn from a FAILURE/i);
   // Luật trừu tượng thua danh sách ví dụ ⇒ ví dụ phải còn.
   // → [[agentco-prompt-rules-lose-to-examples]]
-  assert.match(R, /⛔ "báo cáo done của nhân viên trình duyệt không đáng tin tuyệt đối"/);
-  assert.match(R, /✅ "cứ giao việc, để nhân viên tự báo nếu thiếu quyền/);
+  assert.match(R, /⛔ "a done report from the browser employee cannot be fully trusted"/);
+  assert.match(R, /✅ "hand the work over anyway; let the employee report a missing permission/);
   // Nửa còn lại: thứ NGƯỜI DÙNG chốt thì vẫn giữ, kể cả khi họ chốt "đừng làm X".
-  assert.match(R, /Thứ NGƯỜI DÙNG chốt thì vẫn chép lại theo luật 1/);
+  assert.match(R, /What the HUMAN settled still gets carried over under rule 1/);
 });
 
 test('🔴 luật 4 phủ cả ca CHƯA CÓ / CHƯA THỬ, không chỉ ca HỎNG (user báo 02/09)', () => {
@@ -57,35 +57,63 @@ test('🔴 luật 4 phủ cả ca CHƯA CÓ / CHƯA THỬ, không chỉ ca HỎN
     thêm một bit nào; nó chỉ đông lạnh một sự thật vốn tươi, và sai ngay hôm
     người dùng cắm một cánh tay Gmail.
   */
-  assert.match(R, /CHƯA CÓ \/ CHƯA THỬ/);
-  assert.match(R, /⛔ "văn phòng không có kết nối gửi email/);
+  assert.match(R, /NOT PRESENT \/ NOT TRIED/);
+  assert.match(R, /⛔ "this office has no email connection/);
   // Điều kiện phải nằm TRÊN CHÍNH DÒNG có ví dụ, không ở một câu khác.
   // → [[agentco-prompt-rules-lose-to-examples]]
-  assert.match(R, /danh sách kết nối đã nằm sẵn trong ngữ cảnh ở MỌI lượt/);
+  assert.match(R, /the list of connections is rebuilt into your context on EVERY turn/);
 });
 
 test('🔴 luật 5: giữ CÁCH LẤY, không giữ SỐ LIỆU (user chốt 31/08)', () => {
-  assert.match(R, /KHÔNG ghi SỐ LIỆU và TRẠNG THÁI lấy được từ kết nối\/file/);
+  assert.match(R, /never record FIGURES or STATE fetched from a connection or a file/i);
   // Phép thử được chọn vì nó KHÔNG cần cơ chế mới — model tự trả lời được.
-  assert.match(R, /hỏi lại chỗ cũ ngày mai mà câu trả lời có thể khác/);
+  assert.match(R, /asking the same place again tomorrow could give a different answer/);
 });
 
 test('🔴 luật 5 phải có CẢ HAI CHIỀU — thiếu vế ✅ thì model bỏ trắng, mất đường về', () => {
   // Một luật chỉ có vế "đừng ghi" được chấp hành bằng cách không ghi gì, và
   // phiên sau không còn biết phải đi hỏi ai. Vế ✅ là thứ giữ lại đường về.
-  assert.match(R, /⛔ "hiện còn 23 hoá đơn chưa thanh toán/);
-  assert.match(R, /✅ "số hoá đơn chưa thanh toán: hỏi kết nối/);
-  assert.match(R, /đừng trả lời từ trí nhớ/);
+  assert.match(R, /⛔ "there are currently 23 unpaid invoices/);
+  assert.match(R, /✅ "number of unpaid invoices: ask the/);
+  assert.match(R, /do not answer from memory/);
 });
 
 test('luật 5 chừa đúng ngoại lệ: con số NGƯỜI DÙNG chốt vẫn được giữ', () => {
   // Không có câu này thì luật 5 nuốt luôn "ngân sách mỗi task tối đa $0,5" —
   // một quyết định, không phải số liệu đi lấy về.
-  assert.match(R, /Con số NGƯỜI DÙNG tự chốt thì vẫn chép lại theo luật 1/);
+  assert.match(R, /A figure the HUMAN themselves settled still gets carried over under rule 1/);
 });
 
 test('khối vẫn nói rõ cách trả lời khi KHÔNG có gì đáng nhớ', () => {
   // Hai câu trong cùng một prompt không được đá nhau: luật gộp bảo "chép lại",
   // nên nhánh KHÔNG phải nêu rõ điều kiện CẢ HAI đều trống.
-  assert.match(R, /Nếu KHÔNG có trí nhớ cũ và phiên này cũng không có gì đáng nhớ/);
+  assert.match(R, /If there is NO earlier memory and nothing in this session is worth keeping/);
+});
+
+/**
+ * 🔴 KHÔNG ĐƯỢC GHIM TÊN MỘT NGÔN NGỮ NÀO VÀO KHỐI NÀY.
+ *
+ * Bản trước dặn *"viết gạch đầu dòng tiếng Việt"* — ghim cứng trong mã, giữa
+ * chính khối trí nhớ của người dùng đọc lại cho họ. Người Anh nhận trí nhớ tiếng
+ * Việt; người Đức thì không có đường nào ra tiếng Đức cả.
+ *
+ * `NOTHING` là ngoại lệ và nó KHÔNG phải văn xuôi: `office.ts` khớp
+ * `/^NOTHING\.?$/i` để bỏ qua nhánh "không có gì đáng nhớ". Nó là token giao
+ * thức, cùng loại với tên trường JSON.
+ */
+test('🔴 khối luật KHÔNG nêu tên một ngôn ngữ cụ thể nào', () => {
+  for (const name of ['Vietnamese', 'tiếng Việt', 'English', 'Chinese', 'tiếng Anh']) {
+    assert.equal(R.includes(name), false, `khối luật ghim ngôn ngữ "${name}"`);
+  }
+  // Và nó vẫn phải NÓI về ngôn ngữ — bỏ hẳn câu này thì model không có gì bám.
+  assert.match(R, /in the language of the conversation/);
+});
+
+test('⭐ sentinel "NOTHING" phải khớp đúng thứ `office.ts` kiểm', () => {
+  // Cặp phát hiện ↔ sửa phải cùng phạm vi: prompt xin một chữ, code khớp một
+  // chữ. Lệch nhau thì nhánh "không có gì đáng nhớ" ghi một node rỗng vào kho,
+  // im lặng. → [[agentco-detect-fix-pair-scope]]
+  assert.match(R, /one word: NOTHING/);
+  assert.match('NOTHING', /^NOTHING\.?$/i);
+  assert.match('Nothing.', /^NOTHING\.?$/i);
 });

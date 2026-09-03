@@ -1,12 +1,12 @@
 /**
- * Màu đại diện của agent. → docs/SPEC-offices.md §6
+ * An agent's colour. → docs/SPEC-offices.md §6
  *
- * BĂM từ id chứ không lưu — bản sao của `agentHue` trong `src/core/plans.ts`.
- * Thêm/bớt người không làm đổi màu người khác, và không sinh thêm một file
- * cấu hình nữa để lệch.
+ * HASHED from the id rather than stored — a copy of `agentHue` in
+ * `src/core/plans.ts`. Adding or removing a person never shifts anyone else's
+ * colour, and it does not create one more config file to drift.
  *
- * Backend cũng gửi `hue` xuống trong canvas; hàm này để dùng cho log, nơi ta chỉ
- * có id vai trò mà không có node.
+ * The backend also sends `hue` down with the canvas; this function is for the
+ * log, where we have a role id and no node.
  */
 export function agentHue(id: string): number {
   let h = 2166136261;
@@ -15,16 +15,16 @@ export function agentHue(id: string): number {
     h = Math.imul(h, 16777619);
   }
   const raw = Math.abs(h) % 335;
-  // Tránh dải 45–70°: vàng trên nền giấy sáng đọc không ra.
+  // Skip the 45–70° band: yellow on a light paper ground is unreadable.
   return raw < 45 ? raw : raw + 25;
 }
 
 /**
- * Màu chữ và nền chip.
+ * Ink and chip-background colours.
  *
- * `light-dark()` chứ không phải một giá trị cố định: một màu đủ tương phản trên
- * giấy sáng sẽ chìm trên nền tối, và ngược lại. Cần `color-scheme: light dark`
- * trên `:root` thì hàm này mới hoạt động (đã đặt trong index.css).
+ * `light-dark()` rather than a fixed value: a colour with enough contrast on
+ * light paper sinks into a dark ground, and the reverse. It needs
+ * `color-scheme: light dark` on `:root` to work at all — set in index.css.
  */
 export function agentInk(hue: number): string {
   return `light-dark(oklch(0.5 0.15 ${hue}), oklch(0.78 0.12 ${hue}))`;

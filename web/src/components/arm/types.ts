@@ -1,16 +1,16 @@
 /**
- * KIỂU DÙNG CHUNG CỦA CÁC KHỐI RIÊNG-CỦA-HÃNG. → `../ArmDialog.tsx`
+ * SHARED TYPES FOR THE PER-VENDOR BLOCKS. → `../ArmDialog.tsx`
  *
- * Đặt ở đây thay vì khai lại trong từng file: mỗi khối là một mảnh của **cùng
- * một hộp thoại**, và ba bản của cùng một hình dạng là ba chỗ để lệch — lớp lỗi
- * đã đốt dự án này nhiều lần (`agentSlot` vs `arrange`).
+ * Here rather than redeclared in each file: every block is a piece of the SAME
+ * dialog, and three copies of one shape are three places to drift — a class of
+ * bug that has burned this project more than once (`agentSlot` vs `arrange`).
  *
- * ⚠ Hình dạng phải khớp `lib/api.ts` — đây là dữ liệu **về đường dây**, không
- * phải mô hình của giao diện. Đổi API mà quên đổi ở đây thì TypeScript kêu ngay
- * tại chỗ gọi, chứ không im lặng.
+ * ⚠ The shape has to match `lib/api.ts` — this is data ABOUT THE WIRE, not a
+ * model of the interface. Change the API and forget this file, and TypeScript
+ * complains at the call site instead of failing quietly.
  */
 
-/** Một lượt đăng nhập bằng mã thiết bị đang chạy. → `api.oauthDeviceStart` */
+/** A device-code sign-in currently in flight. → `api.oauthDeviceStart` */
 export interface DeviceLogin {
   state: string;
   userCode: string;
@@ -21,18 +21,19 @@ export interface DeviceLogin {
 }
 
 /**
- * Kết quả tra bản cài app. → `api.armRepos` · SPEC-arms §5h·7o
+ * The result of checking where the app is installed. → `api.armRepos` · SPEC-arms §5h·7o
  *
- * ⚠ BA trạng thái, không phải hai. `null` = chưa tra; `{ failed }` = **không tra
- * được**; `installed: []` = tra được và câu trả lời là **chưa cài**. Gộp hai ca
- * cuối là hoặc chặn oan người đã cài, hoặc thả người chưa cài.
+ * ⚠ THREE states, not two. `null` = not checked yet; `{ failed }` = COULD NOT
+ * check; `installed: []` = checked, and the answer is NOT INSTALLED. Merging the
+ * last two either blocks someone who has installed it, or waves through someone
+ * who has not.
  */
 export type RepoScanState =
   | { login: string; installed: string[]; seen: number }
   | { failed: true }
   | null;
 
-/** Cửa sang màn hình phạm vi của hãng. → `catalog.ts §scope` */
+/** The door through to the vendor's own scope screen. → `catalog.ts §scope` */
 export interface ArmScope {
   say: string;
   url: string;

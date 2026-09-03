@@ -309,7 +309,7 @@ export function decideRoute(text: string): RouteOutcome {
       // Ca này `route()` cũng thử lại một lượt trước khi câu dưới tới được mặt
       // người dùng — rỗng thường là chập nhất thời, tức đúng ca một lượt nữa
       // giải quyết được mà không cần phiền ai.
-      say: 'Mình gọi được model nhưng nó không trả về gì cả — lỗi đường truyền, không phải cách bạn nói. Nhắn lại giúp mình nhé.',
+      say: t('as.emptyReply'),
       raw: '',
     };
   }
@@ -334,8 +334,7 @@ export function decideRoute(text: string): RouteOutcome {
        * thứ có thật ở nhánh này.
        */
       say:
-        'Lượt vừa rồi chưa ra được câu trả lời dùng được. Bạn thử nói lại theo cách khác, ' +
-        'hoặc chia nhỏ yêu cầu ra giúp mình.',
+        t('as.noUsableAnswer'),
       raw,
     };
   }
@@ -938,9 +937,9 @@ export function requestOf(draft: PlanDraft): string {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const SHELL_LEGEND =
-  'Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội dung, ' +
-  'liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: chạy lệnh/script tuỳ ý trên máy, ' +
-  'và ghi được ra ngoài thư mục văn phòng.\n' +
+  'Every employee CAN OPEN files on the human’s machine given a full path — read the contents, ' +
+  'list file names. "shell: ON" adds: running arbitrary commands or scripts on that machine, ' +
+  'and writing outside the office folder.\n' +
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ 🔴🔴 CÂU NÀY ĐÃ NÓI DỐI, VÀ NÓ TỰ CẢNH BÁO CHÍNH MÌNH TỪ 22/08.          │
@@ -971,10 +970,10 @@ export const SHELL_LEGEND =
    * │   nói một bất biến về ĐỊNH DẠNG, không về thế giới.                      │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  'Một kết nối (🔌) mang thêm khả năng RIÊNG của nó, và nhân viên tự biết mình gọi được gì lúc làm. ' +
-  'ĐỪNG đoán hộ rằng nhân viên KHÔNG làm được một việc chỉ vì "chạy lệnh: TẮT" — cứ giao, ' +
-  'họ sẽ tự báo nếu thiếu tay. Dòng của mỗi người liệt kê ĐỦ nơi họ với tới — ' +
-  'không có gì ngoài danh sách đó.\n' +
+  'A connection (🔌) brings its OWN capabilities, and the employee finds out what it can call at ' +
+  'the moment of doing the work. DO NOT decide on their behalf that an employee CANNOT do something ' +
+  'just because "shell: OFF" — hand it over, and they will report a missing tool themselves. Each ' +
+  'person’s line lists EVERY place they reach; there is nothing beyond that list.\n' +
   /**
    * Nửa còn lại của bản vá `armLine`, và THIẾU NÓ THÌ NỬA KIA VÔ NGHĨA.
    *
@@ -986,9 +985,9 @@ export const SHELL_LEGEND =
    * rộng thành "đừng hỏi đường dẫn" là dạy Trợ lý đoán bừa một đường dẫn nó
    * chưa từng thấy — hỏng ngược chiều, và im lặng hơn.
    */
-  'Thư mục ghi sau "thư mục:" là chỗ nhân viên đó ĐÃ được cấp quyền. Khi người dùng nói ' +
-  '"thư mục đã cho phép" hay gọi tên một thư mục trong danh sách đó, DÙNG LUÔN đường dẫn ấy — ' +
-  'đừng hỏi lại họ đường dẫn đầy đủ.';
+  'A folder written after "folders:" is one that employee has ALREADY been granted. When the human ' +
+  'says "the folder you have access to", or names one of the folders in that list, USE that path ' +
+  'directly — do not ask them for the full path again.';
 
 /**
  * Cờ shell của MỘT vai trò. Tách ra để test được mà không phải dựng văn phòng —
@@ -998,7 +997,7 @@ export const SHELL_LEGEND =
  * LUÔN trả về một chuỗi, không bao giờ trả rỗng. Đó chính là chỗ bản trước sai.
  */
 export function shellFlag(tools: readonly string[]): string {
-  return hasShell(tools) ? 'chạy lệnh: BẬT' : 'chạy lệnh: TẮT';
+  return hasShell(tools) ? 'shell: ON' : 'shell: OFF';
 }
 
 /**
@@ -1103,9 +1102,9 @@ export function armReach(
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const LEVEL: Record<string, string> = {
-    read: 'chỉ đọc',
-    add: 'đọc + thêm mới, không sửa/xoá',
-    full: 'đọc + ghi + sửa/xoá',
+    read: 'read only',
+    add: 'read + create new, no editing or deleting',
+    full: 'read + write + edit/delete',
   };
   const level = arms[id]?.level ? LEVEL[arms[id]!.level!] : undefined;
   const roots = folderRoots(servers[id]);
@@ -1114,7 +1113,7 @@ export function armReach(
    * khi vai trò có **từ hai cánh tay trở lên** — một cánh tay thì không có gì
    * để nhầm, và dán chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích.
    */
-  const bridge = toolKey ? ` · gọi bằng mcp__${toolKey}__*` : '';
+  const bridge = toolKey ? ` · call it with mcp__${toolKey}__*` : '';
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ 🔴 CÁCH CHẠY PHẢI NẰM TRÊN DÒNG NÀY — nếu không Trợ lý tả MẶC ĐỊNH CỦA   │
@@ -1168,14 +1167,14 @@ export function armReach(
   const all = (arms[id]?.does ?? []).map((s) => s.trim()).filter(Boolean);
   const does = all.length
     ? all.length > DOES_CAP
-      ? `${all.slice(0, DOES_CAP).join(' · ')} · và ${all.length - DOES_CAP} việc khác`
+      ? `${all.slice(0, DOES_CAP).join(' · ')} · and ${all.length - DOES_CAP} more actions`
       : all.join(' · ')
     : undefined;
   // `does` đứng SAU `level`/`opts`: hai thứ kia trả lời *"được phép tới đâu"*,
   // `does` trả lời *"làm được gì"*. Quyền trước, việc sau — và đặt nó cuối thì
   // dòng của mọi cánh tay đang chạy không đổi một ký tự nào (chúng không có `does`).
   const bits = [level, ...opts, does].filter(Boolean) as string[];
-  const shortcut = roots.length ? ` (đường tắt tới ${roots.join(' · ')})` : '';
+  const shortcut = roots.length ? ` (shortcut to ${roots.join(' · ')})` : '';
   /**
    * Câu dặn của mục danh mục — ĐỨNG CUỐI, sau cầu nối tên tool.
    *
@@ -1214,7 +1213,7 @@ export function armReach(
    * │ rào đọc) thì từ này phải đổi lại thành một từ chỉ giới hạn, cùng lượt.    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  return roots.length ? `${label} (đường tắt tới ${roots.join(' · ')})` : label;
+  return roots.length ? `${label} (shortcut to ${roots.join(' · ')})` : label;
 }
 
 /**
@@ -1273,7 +1272,7 @@ export function reachDiff(
     for (const r of was) if (!now.has(r)) lines.push(`− ${short(r)} ✗ ${id}`);
   }
   if (lines.length <= cap) return lines;
-  return [...lines.slice(0, cap), `và ${lines.length - cap} thay đổi khác`];
+  return [...lines.slice(0, cap), `and ${lines.length - cap} more changes`];
 }
 
 /**
@@ -1471,7 +1470,7 @@ export class Assistant {
    */
   async compact(skeleton: string): Promise<AssistantResult<string>> {
     const { text, usage } = await this.askSession(
-      `Sắp bắt đầu một cuộc trò chuyện mới. Đây là những việc đã chạy (dữ liệu hệ thống, KHÔNG cần kể lại):\n\n` +
+      `A new conversation is about to start. Here is the work that has run (system data — do NOT recount it):\n\n` +
         `${skeleton}\n\n` +
         Assistant.COMPACT_RULES,
     );
@@ -1528,13 +1527,14 @@ export class Assistant {
          * │ thắng khi mâu thuẫn · mỗi chủ đề đúng một dòng.                   │
          * └──────────────────────────────────────────────────────────────────┘
          */
-        `Trong ngữ cảnh của bạn đã có khối "What the human has decided" — đó là TRÍ NHỚ TỪ TRƯỚC, ` +
-        `và bản bạn viết ra bây giờ sẽ THAY THẾ HẲN nó. Năm luật, theo đúng thứ tự này:\n` +
-        `1. CHÉP LẠI mọi mục cũ còn đúng. Bỏ một mục vì "phiên này không nhắc tới" là làm mất ` +
-        `một quyết định người dùng đã chốt.\n` +
-        `2. Mục cũ nào bị phiên vừa rồi SỬA hoặc HUỶ thì viết ĐÚNG MỘT dòng theo ý MỚI, và bỏ hẳn ý cũ. ` +
-        `Tuyệt đối không để hai dòng nói ngược nhau về cùng một chuyện — cái mới thắng, cái cũ biến mất.\n` +
-        `3. Mỗi chủ đề một dòng. Nếu phải viết "trước đây X, giờ Y" thì chỉ giữ Y.\n\n` +
+        `Your context already holds a "What the human has decided" block — that is the MEMORY SO FAR, ` +
+        `and what you write now REPLACES it entirely. Five rules, in this order:\n` +
+        `1. CARRY OVER every old entry that still holds. Dropping one because "this session did not ` +
+        `mention it" loses a decision the human already made.\n` +
+        `2. Any old entry this session CHANGED or CANCELLED gets EXACTLY ONE line stating the NEW ` +
+        `position, with the old one gone. Never leave two lines contradicting each other about the ` +
+        `same thing — the newer one wins, the older one disappears.\n` +
+        `3. One line per topic. If you find yourself writing "it used to be X, now it is Y", keep only Y.\n\n` +
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
          * │ 🔴 LUẬT THỨ TƯ — TRÍ NHỚ CŨNG KHÔNG ĐƯỢC GHI KẾT LUẬN TỪ CA HỎNG.│
@@ -1591,23 +1591,24 @@ export class Assistant {
          * │ → [[agentco-cant-vs-not-wired]] · [[agentco-deterministic-vs-signal]] │
          * └──────────────────────────────────────────────────────────────────┘
          */
-        `4. KHÔNG ghi kết luận rút ra từ những lần HỎNG, và cũng không ghi kết luận rút ra từ việc ` +
-        `CHƯA CÓ / CHƯA THỬ. Luật cứng, cùng luật với \`lessons\`:\n` +
-        `   ⛔ "báo cáo done của nhân viên trình duyệt không đáng tin tuyệt đối"\n` +
-        `   ⛔ "việc này đã thử nhiều lần đều hỏng — không cần giao lại nữa"\n` +
-        `   ⛔ "văn phòng không có kết nối gửi email — chỉ đưa đường dẫn để người dùng tự gửi" ` +
-        `(danh sách kết nối đã nằm sẵn trong ngữ cảnh ở MỌI lượt, nên câu này không thêm gì cả — ` +
-        `nó chỉ đông lạnh một thứ sẽ sai ngay hôm người dùng cắm thêm một cánh tay)\n` +
-        `   ✅ "cứ giao việc, để nhân viên tự báo nếu thiếu quyền, không tự đoán trước là không làm được"\n` +
-        `   ✅ "với project Notion lớn: liệt kê trang con trước, rồi đọc từng trang — cách này chạy được"\n` +
-        `Một lần hỏng chứng minh "lần đó không xong". Nó KHÔNG chứng minh "không làm được" — và câu ` +
-        `thứ hai chính là câu bạn sẽ đọc lại ở MỌI phiên sau rồi từ chối thử, kể cả khi thứ đó đã ` +
-        `chạy tốt trở lại. "Văn phòng chưa có X" còn ngắn hạn hơn nữa: nó sai ngay lúc người dùng ` +
-        `cắm X vào, mà bạn thì vẫn đọc lại nó ở mọi phiên sau. ` +
-        `Chỉ ghi CÁCH LÀM ĐÃ CHẠY ĐƯỢC, ưu tiên cách phải vấp mới tìm ra.\n` +
-        `⚠ Thứ NGƯỜI DÙNG chốt thì vẫn chép lại theo luật 1, kể cả khi họ chốt "đừng làm X" — đó là ` +
-        `quyết định của họ, không phải kết luận của bạn. Việc còn dở thì ghi là VIỆC CẦN LÀM TIẾP, ` +
-        `không kèm phán đoán vì sao nó chưa xong.\n\n` +
+        `4. NEVER record a conclusion drawn from a FAILURE, and never record one drawn from something ` +
+        `NOT PRESENT / NOT TRIED. Hard rule, the same one \`lessons\` follows:\n` +
+        `   ⛔ "a done report from the browser employee cannot be fully trusted"\n` +
+        `   ⛔ "this has been tried several times and always failed — no need to hand it over again"\n` +
+        `   ⛔ "this office has no email connection — just give the human the path and let them send it" ` +
+        `(the list of connections is rebuilt into your context on EVERY turn, so this line adds nothing — ` +
+        `it only freezes something that goes wrong the day the human plugs in one more arm)\n` +
+        `   ✅ "hand the work over anyway; let the employee report a missing permission rather than ` +
+        `guessing in advance that it cannot be done"\n` +
+        `   ✅ "for a large Notion project: list the sub-pages first, then read them one by one — this works"\n` +
+        `One failure proves "that attempt did not finish". It does NOT prove "this cannot be done" — and ` +
+        `the second sentence is the one you will re-read in EVERY later session and then refuse to try, ` +
+        `even after the thing started working again. "This office does not have X" has an even shorter ` +
+        `shelf life: it is wrong the moment the human plugs X in, and you still re-read it every session. ` +
+        `Record only WAYS OF WORKING THAT WORKED, preferring the ones that took a stumble to find.\n` +
+        `⚠ What the HUMAN settled still gets carried over under rule 1, even when what they settled is ` +
+        `"do not do X" — that is their decision, not your conclusion. Unfinished work is recorded as ` +
+        `WORK STILL TO DO, with no judgement attached about why it did not finish.\n\n` +
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
          * │ 🔴 LUẬT THỨ NĂM — TRÍ NHỚ GIỮ CÁCH LẤY, KHÔNG GIỮ SỐ LIỆU.       │
@@ -1648,32 +1649,56 @@ export class Assistant {
          * │ đường về.                                                        │
          * └──────────────────────────────────────────────────────────────────┘
          */
-        `5. KHÔNG ghi SỐ LIỆU và TRẠNG THÁI lấy được từ kết nối/file. Ghi CÁCH LẤY, đừng ghi cái đã lấy.\n` +
-        `   Phép thử: hỏi lại chỗ cũ ngày mai mà câu trả lời có thể khác ⇒ đó là số liệu, KHÔNG ghi.\n` +
-        `   ⛔ "hiện còn 23 hoá đơn chưa thanh toán, tổng 41.250.000đ"\n` +
-        `   ⛔ "Linear có 9 việc, 3 việc đang In Progress" · ⛔ "repo X có 7 nhánh"\n` +
-        `   ✅ "số hoá đơn chưa thanh toán: hỏi kết nối Xưởng lệnh, đừng trả lời từ trí nhớ"\n` +
-        `   ✅ "việc đang In Progress: gọi list_issues của Linear, nó trả sẵn status trong từng việc"\n` +
-        `Số liệu cũ nằm trong trí nhớ thì bạn sẽ đọc lại nó ở MỌI phiên sau và trả lời như thể vừa tra — ` +
-        `mà nó đã cũ, và người dùng không có cách nào nhìn ra. Ghi cách lấy thì không mất gì: phiên sau ` +
-        `vẫn biết đi hỏi ai, và hỏi đúng lúc cần.\n` +
-        `⚠ Con số NGƯỜI DÙNG tự chốt thì vẫn chép lại theo luật 1 ("ngân sách mỗi task tối đa $0,5") — ` +
-        `đó là quyết định, không phải số liệu đi lấy về.\n\n` +
-        `Những thứ cần nhớ để phục vụ tiếp:\n` +
-        `- người dùng thích gì, không thích gì (giọng văn, độ dài, cách trình bày)\n` +
-        `- những gì đã CHỐT và không cần bàn lại\n` +
-        `- việc đang dở, câu hỏi bạn đã hỏi mà chưa có trả lời\n\n` +
+        `5. NEVER record FIGURES or STATE fetched from a connection or a file. Record HOW TO FETCH IT, ` +
+        `not what was fetched.\n` +
+        `   The test: if asking the same place again tomorrow could give a different answer, it is a ` +
+        `figure — do NOT record it.\n` +
+        `   ⛔ "there are currently 23 unpaid invoices, totalling 41,250,000d"\n` +
+        `   ⛔ "Linear has 9 issues, 3 of them In Progress" · ⛔ "repo X has 7 branches"\n` +
+        `   ✅ "number of unpaid invoices: ask the Command Shop connection, do not answer from memory"\n` +
+        `   ✅ "issues In Progress: call Linear's list_issues, it already returns status on each issue"\n` +
+        `An old figure sitting in memory is one you will re-read in EVERY later session and answer with ` +
+        `as though you had just looked it up — while it has gone stale, and the human has no way to see ` +
+        `that. Recording how to fetch it loses nothing: the next session still knows who to ask, and it ` +
+        `asks at the moment it matters.\n` +
+        `⚠ A figure the HUMAN themselves settled still gets carried over under rule 1 ("budget per task ` +
+        `is at most $0.5") — that is a decision, not a figure fetched from somewhere.\n\n` +
+        `What is worth remembering in order to keep serving them:\n` +
+        `- what the human likes and dislikes (voice, length, how things are laid out)\n` +
+        `- what has been SETTLED and does not need discussing again\n` +
+        `- work still open, and questions you asked that have no answer yet\n\n` +
         // ~500 từ chứ không phải 200: khối này là thứ ĐẮT GIÁ NHẤT trong prefix
         // của Trợ lý — nó nằm trong cache nên trả ~0.1× sau lần ghi đầu, mà mất
         // một quyết định của người dùng thì không mua lại được bằng token nào.
         // Dài hơn một chút mà giữ được đủ ý là lãi.
-        `Viết gạch đầu dòng tiếng Việt, dưới 500 từ, mỗi dòng một ý dùng lại được. ` +
-        `KHÔNG kể lại danh sách việc đã làm. KHÔNG viết lời chào hay lời hứa. ` +
+        /**
+         * ⚠ NAMES NO LANGUAGE, and that is the whole point of this line.
+         *
+         * It used to say "write bullet points in Vietnamese" — pinned in the
+         * source, in the middle of a block that is the human's own memory read
+         * back to them. An English speaker got Vietnamese memory; a German
+         * speaker had no route to German at all.
+         *
+         * The conversation being compacted is right there in context, so the
+         * language signal is as strong as it ever gets. → docs/CLAUDE.md
+         */
+        `Write bullet points in the language of the conversation, under 500 words, one reusable point ` +
+        `per line. Do NOT recount the list of work already done. Do NOT write greetings or promises. ` +
         // "KHÔNG" chỉ hợp lệ khi CẢ HAI đều trống. Bản trước không nói rõ, nên
         // một phiên chat vặt ("chào bạn") có thể trả về KHÔNG — và tuy nhánh đó
         // không ghi node mới (nên không xoá gì), câu dặn vẫn phải khớp với luật
         // gộp ở trên, nếu không thì hai câu trong cùng một prompt đá nhau.
-        `Nếu KHÔNG có trí nhớ cũ và phiên này cũng không có gì đáng nhớ thì trả về đúng một chữ: KHÔNG`;
+        /**
+         * ⚠ `NOTHING` IS A SENTINEL THE CODE MATCHES, not prose.
+         *
+         * `office.ts` tests the reply against `/^NOTHING\.?$/i` and skips
+         * writing a node when it matches. It stays English in every locale for
+         * the same reason a JSON field name does: it is a protocol token, and
+         * translating it would silently break the "nothing to remember" branch
+         * — an empty node poisoning the HOT prefix on every later turn.
+         */
+        `If there is NO earlier memory and nothing in this session is worth keeping, reply with exactly ` +
+        `one word: NOTHING`;
 
   setHotKnowledge(text: string): void {
     this.hotKnowledge = text.trim();
@@ -1881,7 +1906,7 @@ export class Assistant {
        * bật sẵn cho mọi người và không có công tắc — đưa vào đây là một token
        * không bao giờ diff, tức tiếng ồn thuần.
        */
-      if (hasShell(role?.tools ?? [])) caps.push('chạy lệnh');
+      if (hasShell(role?.tools ?? [])) caps.push('shell');
       m.set(id, caps);
     }
     return m;
@@ -1962,7 +1987,7 @@ export class Assistant {
         (r) =>
           `- ${r.id} (${r.display_name || r.id}): ${r.pitch}` +
           this.reach(r) +
-          (r.not_for.length ? ` [không làm: ${r.not_for.join(', ')}]` : ''),
+          (r.not_for.length ? ` [not their job: ${r.not_for.join(', ')}]` : ''),
       );
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
@@ -2002,7 +2027,7 @@ export class Assistant {
         `You can still answer questions yourself through \`lookup\` — including looking things up ` +
         `on the web. What you cannot do is **produce anything the human keeps**: a file, a report, ` +
         `a table. That needs an employee, so when they ask for one, say so plainly and point them ` +
-        `at the "+ Nhân viên" button. **Never describe this as something the product cannot do:** ` +
+        `at the "+ Employee" button. **Never describe this as something the product cannot do:** ` +
         `every employee can search and read the web, and open files on the machine by full path. ` +
         `What is missing is a person to assign to, not a capability.`
       );
@@ -2095,11 +2120,13 @@ export class Assistant {
   async lookup(paths: readonly string[], question: string): Promise<AssistantResult<string>> {
     const { text, usage } = await this.run(
       paths.length
-        ? `Tài liệu cần đọc:\n${paths.map((p) => `- ${p}`).join('\n')}\n\nCâu hỏi: ${question}`
+        ? // ⚠ The question goes in VERBATIM. It is the user's own words, and it is
+          // the language signal `LOOKUP_PROMPT` tells the model to answer in.
+          `Documents to read:\n${paths.map((p) => `- ${p}`).join('\n')}\n\nQuestion: ${question}`
         : // Không nêu tài liệu nào = câu hỏi tra cứu chung. Nói RA điều đó thay vì
-          // gửi một danh sách rỗng — một khối "Tài liệu cần đọc:" trống là thứ
+          // gửi một danh sách rỗng — một khối "Documents to read:" trống là thứ
           // model phải tự diễn giải, và nó sẽ diễn giải khác nhau mỗi lần.
-          `Không có tài liệu nào của văn phòng liên quan tới câu này — tra trên web rồi trả lời.\n\nCâu hỏi: ${question}`,
+          `No document in this office is relevant to this — look it up on the web and answer.\n\nQuestion: ${question}`,
       /**
        * Mức model của CHÍNH TRỢ LÝ, không phải `models.planner` — và cố ý KHÔNG
        * đẻ một knob thứ ba.
@@ -2143,7 +2170,8 @@ export class Assistant {
   async plan(request: string, planId: string): Promise<AssistantResult<PlanOrAsk>> {
     const models = this.office.company.models;
     const { text, usage } = await this.askOneShot(
-      `Lập kế hoạch cho yêu cầu sau. Trả về đúng một object JSON như đã quy định.\n\nYêu cầu: ${request}`,
+      // The request is the user's own words, verbatim — the language signal.
+      `Plan for the request below. Reply with exactly one JSON object, as specified.\n\nRequest: ${request}`,
       models[models.planner],
     );
 
@@ -2204,8 +2232,7 @@ export class Assistant {
 
     if (!raw) {
       return new RunError(
-        'Mình gọi được model nhưng nó không trả về gì cả — lỗi này nằm ở đường truyền, ' +
-          'không phải ở cách bạn nói. Thử lại sau một chút nhé.',
+        t('as.emptyReplyPlanning'),
         'other',
       );
     }
@@ -2223,12 +2250,7 @@ export class Assistant {
      * xuôi không còn là "nó cần hỏi" mà là "nó không dùng cửa đã có".
      */
     return new RunError(
-      'Mình chưa chia được việc này. Thay vì một kế hoạch, Trợ lý nói:\n' +
-        `  "${briefText(raw)}"\n` +
-        'Câu đó lẽ ra phải đi qua đường hỏi lại chứ không phải viết thẳng ra như vậy — ' +
-        'nên đây là lỗi của mình, không phải của cách bạn nói. Cứ giao lại y nguyên: ' +
-        'phần lớn ca như thế chạy được ở lần thứ hai. Nếu nó hỏi một điều gì cụ thể thì ' +
-        'trả lời luôn trong câu giao việc.',
+      t('as.planTextNotJson', { text: briefText(raw) }),
       'other',
     );
   }
@@ -2267,7 +2289,7 @@ export class Assistant {
       .map((r) => {
         const head =
           `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}` +
-          (learnable(r) ? '   ⟵ ĐI ĐẾN ĐÍCH dù có vấp: CHỈ việc này được rút bài học' : '');
+          (learnable(r) ? '   ⟵ REACHED THE GOAL despite stumbling: ONLY this one may yield a lesson' : '');
         /**
          * `gist` = SỰ KIỆN nhân viên tìm được. Đây là **thứ duy nhất** Trợ lý có
          * để trả lời câu hỏi của người dùng: nó không đọc được file (§4.7), nên
@@ -2278,7 +2300,7 @@ export class Assistant {
          * gạch đầu dòng (user chốt 30/08), và ép nó thành một dòng là bóp chết
          * đúng hình dạng hữu ích nhất của nó.
          */
-        return r.gist ? `${head}\n    KẾT QUẢ: ${r.gist.replace(/\n/g, '\n    ')}` : head;
+        return r.gist ? `${head}\n    RESULT: ${r.gist.replace(/\n/g, '\n    ')}` : head;
       })
       .join('\n');
 
@@ -2293,14 +2315,14 @@ export class Assistant {
      * và lần sau nên hỏi thẳng điều gì. → `worthLearning`
      */
     const frictionAsk =
-      `⚠ Người dùng đã phải nói lại ${friction} lần mới giao được việc này — mấy lượt trước ` +
-      `bạn không chia được việc. Ca chạy thì sạch, nên bài học KHÔNG nằm ở kỹ thuật mà nằm ở ` +
-      `chỗ hiểu nhau: câu nào của họ cuối cùng làm việc chạy được, và lần sau gặp yêu cầu ` +
-      `tương tự thì nên hỏi thẳng điều gì ngay từ đầu?\n\n`;
+      `⚠ The human had to restate this ${friction} times before it could be handed over — on the ` +
+      `earlier turns you could not split the work. The run itself was clean, so the lesson is NOT ` +
+      `technical; it is about understanding each other: which of their sentences finally made it ` +
+      `work, and what should you ask outright next time a request looks like this?\n\n`;
 
     const { text, usage } = await this.askSession(
-      `Kế hoạch vừa chạy: ${plan}\n\nKết quả:\n${summary}\n\n` +
-        `Trả về đúng một object JSON trong khối \`\`\`json:\n` +
+      `The plan that just ran: ${plan}\n\nResults:\n${summary}\n\n` +
+        `Reply with exactly one JSON object in a \`\`\`json block:\n` +
         /**
          * ┌────────────────────────────────────────────────────────────────────┐
          * │ TRẢ LỜI CÂU HỎI, KHÔNG BÁO CÁO TIẾN ĐỘ. (user chốt 30/08)         │
@@ -2323,36 +2345,46 @@ export class Assistant {
          * │ hẳn câu "mở file ra xem".                                          │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        `{"say":"<tiếng Việt, TRẢ LỜI THẲNG câu người dùng vừa hỏi bằng số liệu và tên ` +
-        `lấy từ dòng KẾT QUẢ ở trên — đó là thứ họ hỏi, đừng bắt họ mở file mới biết. ` +
-        `Khoảng 1–3 câu, hoặc vài gạch đầu dòng nếu là danh sách. Nêu luôn thứ cần họ để ý. ` +
-        `KHÔNG thêm bất kỳ dữ kiện nào không có ở dòng KẾT QUẢ. Không có dòng KẾT QUẢ nào ` +
-        `thì nói thẳng đã làm gì và chỉ tới file. Không kể lại tiến độ, không thuật ngữ kỹ thuật>"` +
+        /**
+         * ⚠ The language clause here used to read `<tiếng Việt, …>` — a pinned
+         * language sitting in the one field the human reads most often. It is
+         * gone; the human's own words are in this session, so the signal is
+         * already the strongest available. → docs/CLAUDE.md §Language
+         */
+        `{"say":"<in the language the human is writing to you in. ANSWER THEIR QUESTION DIRECTLY, ` +
+        `with the figures and names taken from the RESULT lines above — that is what they asked for; ` +
+        `do not make them open a file to find out. About 1-3 sentences, or a few bullets if it is a ` +
+        `list. Say what they need to watch out for too. Do NOT add any fact that is not in the RESULT ` +
+        `lines. If there are no RESULT lines, say plainly what was done and point at the file. No ` +
+        `progress reports, no technical jargon>"` +
         (wantLessons
-          ? `,\n "lessons":[{"kind":"pitfall","text":"<CÁCH LÀM dùng lại được cho VĂN PHÒNG này, dưới 25 từ>"}]}\n\n` +
+          ? `,\n "lessons":[{"kind":"pitfall","text":"<a reusable WAY OF WORKING for THIS office, under 25 words>"}]}\n\n` +
             (friction > 0
               ? frictionAsk
-              : `Có việc ĐI ĐẾN ĐÍCH dù trên đường có vấp — \`lessons\` là chỗ ghi lại CON ĐƯỜNG ` +
-                `cuối cùng đã chạy được, tối đa 2, và vẫn ĐỂ TRỐNG nếu nó không dạy được gì dùng lại.\n` +
-                `🔴 CHỈ rút từ dòng có dấu ⟵ ở trên. Việc \`blocked\`/\`failed\` KHÔNG được thành bài ` +
-                `học, kể cả khi nó là chuyện đáng nói nhất trong ca: một việc chưa xong chứng minh ` +
-                `"lần này không xong", nó KHÔNG chứng minh "không làm được". Ghi câu đó vào kho là ` +
-                `dạy mọi nhân viên bỏ cuộc sớm ở lần sau — đã đo được đúng ca đó. Trục trặc chưa gỡ ` +
-                `được thì nói trong \`say\` cho người dùng, đó mới là đúng người đọc.\n\n`) +
-            `Bài học ghi CÁCH LÀM, tuyệt đối không ghi KIẾN THỨC:\n` +
-            `  ✅ "chính sách đổi trả nằm ở library/files/doi-tra.md — grep ở đó trước khi trả lời"\n` +
-            `  ⛔ "sản phẩm giảm trên 50% không được đổi trả"\n` +
-            `Câu dưới đã nằm sẵn trong tài liệu của văn phòng. Chép nó vào đây là tạo ra một ` +
-            `bản sao thứ hai KHÔNG AI CẬP NHẬT: ngày người dùng sửa chính sách, tài liệu đổi còn ` +
-            `bài học thì không — và bài học THẮNG, vì nó nằm sẵn trong đầu mọi nhân viên còn tài ` +
-            `liệu thì phải đi tìm.\n` +
-            `Không ghi con số, ngưỡng, giá, ngày tháng. Chỉ ghi con đường đã đi và cái bẫy đã vấp.`
+              : `Some task REACHED ITS GOAL despite stumbling on the way — \`lessons\` is where the ` +
+                `ROUTE that finally worked gets recorded, at most 2, and still LEFT EMPTY if it ` +
+                `teaches nothing reusable.\n` +
+                `🔴 Draw ONLY from a line marked ⟵ above. A \`blocked\`/\`failed\` task must NEVER ` +
+                `become a lesson, even when it is the most notable thing that happened: an ` +
+                `unfinished task proves "it did not finish this time"; it does NOT prove "this ` +
+                `cannot be done". Filing that sentence teaches every later employee to give up ` +
+                `early — measured, on exactly that case. An unresolved snag goes in \`say\` for the ` +
+                `human, who is the right reader for it.\n\n`) +
+            `A lesson records a WAY OF WORKING, never KNOWLEDGE:\n` +
+            `  ✅ "the returns policy is in library/files/doi-tra.md — grep there before answering"\n` +
+            `  ⛔ "items discounted over 50% cannot be returned"\n` +
+            `The second sentence is already in this office's documents. Copying it here creates a ` +
+            `second copy THAT NOBODY UPDATES: the day the human changes the policy, the document ` +
+            `changes and the lesson does not — and the lesson WINS, because it sits in every ` +
+            `employee's head while the document has to be looked up.\n` +
+            `Record no figures, thresholds, prices or dates. Record only the route taken and the ` +
+            `trap stumbled into.`
           : `}`),
     );
 
     const parsed = extractJson(text, ReportSchema);
     // Không đọc được thì vẫn phải có câu báo cáo — người dùng đang chờ.
-    const value = parsed ?? { say: text.trim() || 'Đã xong.', lessons: [] };
+    const value = parsed ?? { say: text.trim() || t('as.done'), lessons: [] };
     // Chốt cuối: không hỏi thì không nhận, kể cả model tự ý gửi kèm.
     return { value: wantLessons ? value : { ...value, lessons: [] }, usage };
   }
@@ -2394,31 +2426,39 @@ export class Assistant {
     const changes =
       this.sessionId !== undefined && this.reachPrev !== undefined ? reachDiff(this.reachPrev, now) : [];
     const reachHint = changes.length
-      ? `\n⚠ Danh bạ vừa đổi: ${changes.join(' · ')}. ` +
-        `Danh sách nhân viên bên trên là bản ĐÚNG — bỏ qua mọi câu bạn đã nói trước đó về ai với tới đâu.`
+      ? `\n⚠ The roster just changed: ${changes.join(' · ')}. ` +
+        `The employee list above is the CORRECT one — disregard anything you said earlier about who reaches what.`
       : '';
     this.reachPrev = now;
 
     const scopeHint = hasActivePlan
-      ? `\nĐang có một công việc chạy dở. Với intent "task", đặt "scope":"refine" nếu câu này BỔ SUNG hoặc SỬA cho việc đang chạy; ` +
-        `đặt "scope":"new" nếu đây là một việc KHÁC HẲN. Khi phân vân, chọn "new" — hai việc tách rời chỉ tốn thêm một lần lập kế hoạch, ` +
-        `còn gắn nhầm vào việc đang chạy thì làm hỏng cả hai.`
-      : `\nHiện không có việc nào đang chạy, nên với intent "task" luôn dùng "scope":"new".`;
+      ? `\nThere is work already running. With intent "task", set "scope":"refine" if this message ADDS TO or CHANGES the running work; ` +
+        `set "scope":"new" if it is a DIFFERENT job. When in doubt, choose "new" — two separate jobs cost one extra planning turn, ` +
+        `while attaching one to the wrong running job ruins both.`
+      : `\nNothing is running right now, so with intent "task" always use "scope":"new".`;
 
     // `let`: cổng hậu kiểm bên dưới có thể cộng thêm một lượt sửa vào đây.
     let { text, usage } = await this.askSession(
-      `Người dùng vừa nhắn: "${message}"\n\n` +
-        `Trả về đúng một object JSON, không có gì khác:\n` +
-        `{"intent":"chat","say":"<trả lời ngắn bằng tiếng Việt>"}\n` +
-        `  dùng khi: chào hỏi, cảm ơn, hỏi về văn phòng, hỏi về việc đã làm, nói chuyện phiếm.\n` +
-        `{"intent":"ask","say":"<một câu hỏi làm rõ, tiếng Việt>"}\n` +
-        `  dùng khi: có vẻ là yêu cầu công việc NHƯNG thiếu thông tin quan trọng ` +
-        `(làm cho ai, dài bao nhiêu, giọng thế nào, dựa trên tài liệu nào). ` +
-        `Hỏi MỘT câu quan trọng nhất thôi. Thà hỏi còn hơn đoán sai rồi làm lại.\n` +
-        `{"intent":"lookup","paths":["library/files/doc-2.md"],"question":"<câu hỏi, giữ nguyên ý người dùng>"}\n` +
-        `  dùng khi: một câu HỎI ĐỂ BIẾT, trả lời xong là xong, không cần bàn giao file nào. Hai kiểu:\n` +
-        `   (a) TRONG TÀI LIỆU CÓ GÌ — tóm tắt, tra một con số, một điều khoản, "file này nói về gì". ` +
-        `Nêu đường dẫn vào "paths", lấy từ hai bảng kê trên HOẶC từ chính câu người dùng vừa gõ. Đừng bịa đường dẫn.\n` +
+      // The message is quoted VERBATIM — it is both the thing to classify and
+      // the language signal for the `say` slots below.
+      `The human just wrote: "${message}"\n\n` +
+        `Reply with exactly one JSON object, nothing else:\n` +
+        /**
+         * ⚠ Both `say` slots used to pin Vietnamese. They are the two lines the
+         * human reads most often in the chat box, and the human's own message
+         * is quoted three lines above — there is no stronger signal anywhere in
+         * the product. → docs/CLAUDE.md §Language
+         */
+        `{"intent":"chat","say":"<a short reply, in the language they wrote to you in>"}\n` +
+        `  use when: greetings, thanks, questions about the office or about work already done, small talk.\n` +
+        `{"intent":"ask","say":"<one clarifying question, in the language they wrote to you in>"}\n` +
+        `  use when: it looks like a work request BUT is missing something that matters ` +
+        `(who it is for, how long, what tone, based on which documents). ` +
+        `Ask the ONE question that matters most. Better to ask than to guess wrong and redo it.\n` +
+        `{"intent":"lookup","paths":["library/files/doc-2.md"],"question":"<the question, keeping the human's own wording>"}\n` +
+        `  use when: it is a QUESTION TO KNOW something; once answered it is done, and no file has to be handed over. Two kinds:\n` +
+        `   (a) WHAT IS IN A DOCUMENT — a summary, one figure, one clause, "what is this file about". ` +
+        `Put the paths in "paths", taken from the two manifests above OR from what the human just typed. Do not invent a path.\n` +
         /**
          * ⚠ DANH SÁCH VÍ DỤ THẮNG LUẬT TRỪU TƯỢNG — đo được 24/08.
          *
@@ -2433,10 +2473,11 @@ export class Assistant {
          * Model khớp danh sách ví dụ rồi dừng, không đọc tới luật. ⇒ **điều kiện
          * phải nằm TRÊN CHÍNH DÒNG có ví dụ**, không nằm ở một câu khác.
          */
-        `   (b) TRA CỨU CHUNG mà KHÔNG nhân viên nào trong danh bạ chuyên về việc đó — thời tiết, ` +
-        `một địa chỉ, một con số ngoài đời, "X là gì". Khi đó để "paths" là mảng RỖNG.\n` +
-        `       ⚠ Danh bạ CÓ người chuyên tìm tin/tra cứu/duyệt web thì mọi câu tra cứu đều về tay ` +
-        `họ ("task"), kể cả quán ăn hay tin tức: họ đối chiếu nhiều nguồn và dẫn nguồn, "lookup" thì không.\n` +
+        `   (b) A GENERAL LOOKUP that NO employee on the roster specialises in — the weather, an ` +
+        `address, a real-world figure, "what is X". Then leave "paths" as an EMPTY array.\n` +
+        `       ⚠ If the roster HAS someone who researches, looks things up or browses the web, every ` +
+        `lookup goes to them ("task"), restaurants and news included: they cross-check several ` +
+        `sources and cite them, which "lookup" does not.\n` +
         /**
          * ⚠ ĐIỀU KIỆN NẰM TRÊN CHÍNH DÒNG CÓ VÍ DỤ — cùng khuôn đã thắng ở
          * `chạy lệnh: TẮT` và ở nhánh (b) phía trên. Đặt nó thành một câu luật
@@ -2461,13 +2502,14 @@ export class Assistant {
          * │ gàng, kèm một file dẫn chứng, và không ai bắt được.                 │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        `{"intent":"task","request":"<viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh>","scope":"new"}\n` +
-        `  dùng khi: đã đủ rõ để giao cho đội.\n` +
-        `   ⚠ "tôi"/"mình"/"của tôi" thì GIỮ NGUYÊN như thế, đừng thay bằng tên, email hay ID nào — ` +
-        `bạn không có cách nào biết người dùng là ai bên trong dịch vụ đó, và đoán gần đúng còn tệ hơn ` +
-        `đoán sai hẳn. Viết "tài khoản đang đăng nhập của kết nối"; nhân viên hỏi chính cánh tay đó.\n` +
-        `      ✅ "…lọc những việc gán cho tài khoản đang đăng nhập của kết nối Linear"\n` +
-        `      ⛔ "…lọc những việc gán cho người dùng có email an@example.com"\n` +
+        `{"intent":"task","request":"<the request rewritten as one clear sentence with enough context>","scope":"new"}\n` +
+        `  use when: it is clear enough to hand to the team.\n` +
+        `   ⚠ Keep "I"/"me"/"my" EXACTLY as they are; never swap in a name, an email or an id — ` +
+        `you have no way of knowing who the human is inside that service, and a near-miss guess is ` +
+        `worse than an obvious one. Write "the account signed in on that connection"; the employee ` +
+        `asks the arm itself.\n` +
+        `      ✅ "…filter the issues assigned to the account signed in on the Linear connection"\n` +
+        `      ⛔ "…filter the issues assigned to the user with email an@example.com"\n` +
         /**
          * LUẬT PHÂN CỬA `lookup` vs `task` — một câu, và nó phải đúng TRỤC.
          *
@@ -2485,10 +2527,11 @@ export class Assistant {
          * nhìn ấy vẫn về tay họ theo đúng luật này. `lookup` chỉ lấy phần mà vai
          * trò không thêm được gì — phần đó vốn không phải việc của ai cả.
          */
-        `Phân biệt "lookup" với "task": hỏi xem NGƯỜI KHÁC làm thì kết quả có khác không. ` +
-        `Dịch, viết, soát, tư vấn — CÓ khác, vì phụ thuộc chuyên môn và giọng của từng nhân viên → "task". ` +
-        `Đọc rồi thuật lại xem tài liệu nói gì — ai đọc cũng ra chừng ấy → "lookup". ` +
-        `Cần ra một FILE để người dùng giữ thì luôn là "task".\n` +
+        `Telling "lookup" from "task": ask whether a DIFFERENT PERSON doing it would give a different ` +
+        `result. Translating, writing, reviewing, advising — YES, different, because it turns on each ` +
+        `employee's expertise and voice → "task". Reading a document and reporting what it says — ` +
+        `anyone reading it lands in the same place → "lookup". ` +
+        `If a FILE has to come out for the human to keep, it is always "task".\n` +
         /**
          * Luật ƯU TIÊN, user chốt 24/08: *"cho phép cả lookup cả nhân viên,
          * assistant tự định tuyến, nhưng ưu tiên nhân viên hơn nếu nhân viên là
@@ -2501,9 +2544,9 @@ export class Assistant {
          * góc nhìn chuyên môn mà họ đã cố ý dựng ra** — và không ai thấy là đã
          * mất, vì câu trả lời vẫn trôi chảy.
          */
-        `Khi hai cửa nhìn ngang nhau, NGHIÊNG VỀ NHÂN VIÊN: nếu trong danh bạ có người mà việc này ` +
-        `đúng chuyên môn của họ, giao cho họ ("task"). "lookup" là cho phần mà không vai trò nào ` +
-        `thêm được gì.` +
+        `When the two look equally good, LEAN TOWARDS AN EMPLOYEE: if someone on the roster has this ` +
+        `as their speciality, give it to them ("task"). "lookup" is for the cases where no role adds ` +
+        `anything.` +
         scopeHint +
         reachHint,
     );
@@ -2563,26 +2606,27 @@ export class Assistant {
        * Tốn thêm token? Chỉ trên nhánh đã hỏng, và chỉ bằng độ dài câu họ vừa gõ.
        */
       const goal =
-        `Việc người dùng đang muốn: "${truncateToTokens(message, 200)}".\n` +
-        `Câu trả lời phải nói về ĐÚNG việc đó — làm được, hay chưa làm được và thiếu gì. ` +
-        `ĐỪNG nói về định dạng hay về lỗi kỹ thuật: người dùng không thấy chuyện đó.\n`;
+        `What the human wants: "${truncateToTokens(message, 200)}".\n` +
+        `Your reply has to be about THAT — either it can be done, or it cannot and here is what is ` +
+        `missing. Do NOT talk about formats or technical errors: the human never sees any of that.\n`;
       const repair = await this.askSession(
         value.raw
-          ? `⚠ Lượt vừa rồi bạn trả về thứ hệ thống KHÔNG dùng được. Nguyên văn:\n\n${value.raw}\n\n` +
+          ? `⚠ Your last turn returned something the system could NOT use. Verbatim:\n\n${value.raw}\n\n` +
               goal +
-              `Nếu trong nguyên văn trên ĐÃ có câu trả lời cho người dùng, hãy PHÁT LẠI ĐÚNG câu đó, ` +
-              `đúng định dạng {"intent":"chat","say":"…"}. Nếu chưa có, tự viết một câu ngắn.\n` +
-              `⚠ ĐỪNG đoán nguyên nhân kỹ thuật. Chỉ nói thứ bạn ĐỌC ĐƯỢC trong danh bạ ở trên ` +
-              `(ví dụ: không còn nhân viên nào nối tới kết nối cần dùng). ` +
-              `Viết bằng đúng thứ tiếng người dùng đang dùng.`
-          : `⚠ Lượt vừa rồi bạn không trả về gì cả.\n` + goal + `Trả lời lại, đúng định dạng JSON như trên.`,
+              `If that verbatim text ALREADY contains an answer for the human, REPEAT THAT EXACT ` +
+              `sentence in the right format, {"intent":"chat","say":"…"}. If it does not, write a ` +
+              `short one yourself.\n` +
+              `⚠ Do NOT guess at a technical cause. Say only what you can READ in the roster above ` +
+              `(for example: no employee is wired to the connection this needs). ` +
+              `Write it in the same language the human is using.`
+          : `⚠ Your last turn returned nothing at all.\n` + goal + `Answer again, in the JSON format above.`,
       );
       usage = addUsage(usage, repair.usage);
       const fixed = decideRoute(repair.text);
       // Lượt sửa cũng hỏng ⇒ mới tới chuỗi ghim cứng. Nó là **phao cuối**, không
       // phải cửa thường — và giờ nó hiếm tới mức thấy nó là một tín hiệu thật.
       if (fixed.intent !== 'garbled') value = fixed;
-      else this.logFailure('route-failure.log', `${message}\n[lượt sửa cũng hỏng]`, fixed.raw);
+      else this.logFailure('route-failure.log', `${message}\n[the repair turn failed too]`, fixed.raw);
     }
 
     /**
@@ -2598,10 +2642,10 @@ export class Assistant {
     const stale = this.staleArmMentions(routeText(value), message);
     if (stale.length) {
       const repair = await this.askSession(
-        `⚠ Câu vừa rồi của bạn nhắc tới ${stale.map((s) => `"${s}"`).join(', ')} — nhưng KHÔNG nhân viên nào ` +
-          `trong danh bạ hiện tại với tới đó nữa. Đó là thông tin CŨ còn sót lại từ hội thoại trước, ` +
-          `không phải trạng thái bây giờ.\n` +
-          `Đọc lại danh sách nhân viên bên trên và trả lời lại câu của người dùng, đúng định dạng JSON như trên.`,
+        `⚠ Your last sentence mentioned ${stale.map((s) => `"${s}"`).join(', ')} — but NO employee on ` +
+          `the current roster reaches that any more. That is STALE information left over from an ` +
+          `earlier conversation, not the state of things now.\n` +
+          `Re-read the employee list above and answer the human again, in the JSON format above.`,
       );
       usage = addUsage(usage, repair.usage);
       const fixed = decideRoute(repair.text);
@@ -2652,7 +2696,7 @@ export class Assistant {
       fs.mkdirSync(this.office.paths.state, { recursive: true });
       fs.appendFileSync(
         path.join(this.office.paths.state, file),
-        `\n=== ${new Date().toISOString()}\n--- yêu cầu\n${request}\n--- model trả về (${raw.length} ký tự)\n${raw || '(RỖNG)'}\n`,
+        `\n=== ${new Date().toISOString()}\n--- request\n${request}\n--- model returned (${raw.length} chars)\n${raw || '(EMPTY)'}\n`,
         'utf8',
       );
     } catch {
@@ -2848,7 +2892,7 @@ export class Assistant {
              */
             const raw =
               (typeof m['result'] === 'string' && m['result'].trim()) ||
-              (typeof m['subtype'] === 'string' ? m['subtype'] : 'lỗi không rõ từ Claude Code');
+              (typeof m['subtype'] === 'string' ? m['subtype'] : 'unknown error from Claude Code');
             const kind = classifyError(raw);
             throw new RunError(sayError(raw, kind), kind, { cause: m });
           }
@@ -2883,7 +2927,7 @@ export class Assistant {
          * lượt đó KHÔNG XẢY RA — không có câu nào được nói, không có gì để nhớ.
          */
         this.sessionId = sessionBefore;
-        throw new RunError('Đã dừng theo yêu cầu của bạn.', 'stopped', { cause: err });
+        throw new RunError(t('as.stoppedByUser'), 'stopped', { cause: err });
       }
       // `RunError` do chính vòng lặp trên ném ra thì ĐI THẲNG: nó đã mang đúng
       // `kind` rồi, bọc lại một lần nữa là chạy `classifyError` trên câu tiếng

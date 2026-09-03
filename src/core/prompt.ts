@@ -23,6 +23,15 @@ import type { LoadedOffice } from './config.js';
 import { loadSkill, skillFileFor } from './config.js';
 import type { Role, TaskBrief } from './types.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
+/**
+ * ⚠ `t()` IS ONLY FOR `describePrompt`, the layer table drawn in the interface.
+ *
+ * Nothing that goes into a prompt may call it: the catalogue follows the
+ * interface switch, and a prompt that follows the switch is exactly the wire
+ * the language rule forbids. `test/settings-language.test.ts` locks that by
+ * comparing `cacheKey` across both locales.
+ */
+import { t } from '../i18n/index.js';
 
 /**
  * Bump khi CORE_PROMPT hoặc cách dựng prompt thay đổi. Đi vào cacheKey.
@@ -34,8 +43,17 @@ import { estimateTokens, truncateToTokens } from './tokens.js';
  *
  * v4 (20/08/2026): `ASSISTANT_CORE` biết về worker ẩn (`lookup`), và bảng kê tủ
  * tài liệu bị hạ xuống cuối cạnh bảng kê kết quả. Cả hai đổi prefix.
+ *
+ * v5 (03/09/2026): no prompt names a language any more. `BuildPromptOpts.language`
+ * is gone, the `roleCard` line and the assistant's closing line say "the language
+ * of your task brief" / "the language they are writing to you in", and the layered
+ * prompt text itself is English throughout.
+ *
+ * ⚠ This is ONE re-write of the cache, not one per language switch: no locale ever
+ * reaches the hashed content, so flipping the interface language costs zero
+ * `cache_write`. `test/settings-language.test.ts` locks exactly that.
  */
-export const PROMPT_SCHEMA_VERSION = 4;
+export const PROMPT_SCHEMA_VERSION = 5;
 
 /**
  * L0 — LỚP CORE. Người dùng KHÔNG sửa được.
@@ -175,7 +193,7 @@ export const ASSISTANT_CORE = `You are the assistant running one office of a sma
 5. Write goals that can be done in ONE pass. Each extra step an employee takes re-sends their whole context, so a vague goal is an expensive goal. Put every decision the employee needs — tone, length, audience, format — into \`constraints\` so they never have to go looking or guess.
 6. Never make an employee "review and then fix". That is two passes. Either ask for the work, or ask for a review — not both in one goal.
 7. You may only assign to employees listed in your roster. If nobody fits, say so plainly instead of inventing an employee.
-8. Results always land inside the office folder. When the human names a folder on their machine, **never promise to write there or to "try again at the right place"** — retrying cannot change it. Say where the file is, and that reaching a folder outside the office needs a **connection** ("File trên máy") pointed at it.
+8. Results always land inside the office folder. When the human names a folder on their machine, **never promise to write there or to "try again at the right place"** — retrying cannot change it. Say where the file is, and that reaching a folder outside the office needs a **connection** (the "Files on this machine" one) pointed at it.
 
 ## Knowledge and documents
 
@@ -202,7 +220,7 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
 
 \`\`\`json
 {
-  "steps": ["Tìm hiểu yêu cầu", "Viết nội dung"],
+  "steps": ["Understand the request", "Write the content"],
   "tasks": [
     {
       "task_id": "T-01",
@@ -313,11 +331,29 @@ export interface BuiltPrompt {
   staticTokens: number;
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THERE IS NO `language` FIELD HERE, AND ADDING ONE IS THE BUG.            │
+ * │                                                                          │
+ * │ It used to exist, defaulting to `'Vietnamese'`, and it was wired to the  │
+ * │ interface switch in `company.yaml`. That switch answers *"what do I want │
+ * │ to SEE"*; it cannot answer *"what language is this person speaking"*.    │
+ * │ A Vietnamese user who prefers an English interface is a normal case, and │
+ * │ the wire forced English answers on exactly that person.                  │
+ * │                                                                          │
+ * │ Naming no language is also what makes the product work in languages we   │
+ * │ have never shipped a catalogue for: a Chinese user gets Chinese replies  │
+ * │ because nothing anywhere names a language. "Reply in X" would break that │
+ * │ permanently, for every language except X.                                │
+ * │                                                                          │
+ * │ Every runner has a signal already — the assistant has the message just   │
+ * │ typed, a worker has its task brief, `lookup` has the question verbatim.  │
+ * │ `test/no-pinned-language.test.ts` fails the day this comes back.         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 export interface BuildPromptOpts {
   /** Nội dung các node tri thức HOT (đã chọn sẵn, nằm TRONG prefix cache). */
   hotKnowledge?: string;
-  /** Ngôn ngữ cho trường `say`. Mặc định tiếng Việt. */
-  language?: string;
   /**
    * Model sẽ chạy. BẮT BUỘC đưa vào cacheKey: prompt cache đánh theo
    * (model, prefix) — hai vai trò prompt giống hệt nhau nhưng khác model thì
@@ -332,7 +368,6 @@ export function buildWorkerPrompt(
   role: Role,
   opts: BuildPromptOpts = {},
 ): BuiltPrompt {
-  const language = opts.language ?? 'Vietnamese';
   const model = opts.model ?? office.company.models[role.model_tier];
 
   const roleCard = [
@@ -340,7 +375,30 @@ export function buildWorkerPrompt(
     role.pitch,
     role.good_at.length ? `Good at: ${role.good_at.join(', ')}` : '',
     role.not_for.length ? `Not your job: ${role.not_for.join(', ')}` : '',
-    `\nWrite the \`say\` field in ${language}.`,
+    /**
+     * ⚠ NAMES NO LANGUAGE, and deliberately still covers only `say`.
+     *
+     * This used to read "in Vietnamese", fed from the interface switch. The
+     * switch is gone; the scope is not widened at the same time, on purpose.
+     *
+     * A receipt carries four prose fields (`say` · `answer` · `gist` ·
+     * `lessons`) plus the output files, and only `say` has ever been specified
+     * — yet the other four come out right today. That is either the model
+     * being good or every signal happening to point the same way, and until
+     * this migration nothing could tell those apart: prompt, charter, skills
+     * and brief were all Vietnamese together. The English prompt over a
+     * Vietnamese brief is the case that separates them, and it has not been
+     * measured yet.
+     *
+     * ⇒ Widening this line to cover all five is a real option, written out in
+     * `docs/SPEC-token-economy.md`, but it costs tokens on EVERY worker turn
+     * forever. It gets added only if the measurement shows a layer slipping —
+     * not to be safe. → SESSIONS_MEMORY "don't patch with an instruction line"
+     *
+     * The brief is the only language signal a worker can observe: the
+     * assistant wrote it, and the assistant was following the human.
+     */
+    '\nWrite the `say` field in the language of your task brief.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -415,11 +473,10 @@ export function buildAssistantPrompt(
     library?: string;
     /** Bảng kê KẾT QUẢ các ca trước — tên file, không nội dung. → SPEC-artifacts.md §2.4 */
     artifacts?: string;
-    language?: string;
+    /** ⚠ No `language`. → the box on `BuildPromptOpts` */
     model?: string;
   },
 ): BuiltPrompt {
-  const language = opts.language ?? 'Vietnamese';
   const hot = opts.hotKnowledge?.trim() ?? '';
   const memory = opts.memory?.trim() ?? '';
   const library = opts.library?.trim() ?? '';
@@ -491,7 +548,12 @@ export function buildAssistantPrompt(
    */
   if (library) blocks.push(library);
   if (artifacts) blocks.push(artifacts);
-  blocks.push(`Always speak to the human in ${language}.`);
+  /**
+   * Names no language — same rule as `roleCard`, same reason. The assistant is
+   * the one runner that always has the human's own words in context, so it has
+   * the strongest signal of anyone and needs the least instruction.
+   */
+  blocks.push('Always speak to the human in the language they are writing to you in.');
 
   return {
     systemPrompt: [...blocks, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
@@ -574,15 +636,14 @@ export function describePrompt(
   if (who === 'assistant') {
     add({
       id: 'core',
-      title: 'Quy cách kết nối (lõi)',
+      title: t('promptLayer.assistantCoreTitle'),
       editable: coreEditable,
       text: ASSISTANT_CORE,
-      note:
-        'Cách Trợ lý nói chuyện với nhân viên và giao thức nhận kết quả.',
+      note: t('promptLayer.assistantCoreNote'),
     });
     add({
       id: 'charter',
-      title: 'Giới thiệu văn phòng',
+      title: t('promptLayer.charterTitle'),
       editable: true,
       /**
        * `charter.md` ở gốc văn phòng — markdown THUẦN, KHÔNG frontmatter.
@@ -608,53 +669,39 @@ export function describePrompt(
       frontmatter: office.config.charter_file.replace(/\\/g, '/').startsWith('knowledge/'),
       limit: office.company.budgets.charter_tokens,
       text: office.charter,
-      placeholder:
-        `Văn phòng ${office.config.name} làm nội dung cho khách hàng nhỏ ở Việt Nam.\n` +
-        'Người đọc là chủ shop, không phải dân kỹ thuật.\n' +
-        'Mọi bài viết đều xưng "mình", không dùng từ Hán Việt nặng.',
-      note:
-        'Văn phòng này làm gì, cho ai, cần quy tắc gì không. Có thể để trống.',
+      placeholder: t('promptLayer.charterPlaceholder', { office: office.config.name }),
+      note: t('promptLayer.charterNote'),
     });
     add({
       id: 'skills',
-      title: 'Kỹ năng — bạn viết',
+      title: t('promptLayer.skillsTitle'),
       editable: true,
       file: 'skills/assistant.md',
       limit: office.company.budgets.assistant_skills_tokens,
       text: office.assistantSkills,
-      placeholder:
-        '- Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.\n' +
-        '- Yêu cầu mơ hồ thì hỏi lại đúng MỘT câu quan trọng nhất.\n' +
-        '- Báo cáo bằng lời người thường, không nhắc tên tool hay số token.',
-      note:
-        'Tính cách, giọng điệu, thói quen của riêng Trợ lý. Có thể để trống.',
+      placeholder: t('promptLayer.assistantSkillsPlaceholder'),
+      note: t('promptLayer.assistantSkillsNote'),
     });
   } else {
     const role = office.roles.get(who);
     if (!role) return [];
     add({
       id: 'core',
-      title: 'Quy cách làm việc (lõi)',
+      title: t('promptLayer.workerCoreTitle'),
       editable: coreEditable,
       text: CORE_PROMPT,
-      note:
-        '',
+      note: '',
     });
     add({
       id: 'skills',
-      title: 'Kỹ năng — bạn viết',
+      title: t('promptLayer.skillsTitle'),
       editable: true,
       // ⚠ PHẢI là đúng file mà `loadSkill` sẽ đọc lại. Khai hai đường dẫn khác
       // nhau cho cùng một thứ = bấm Lưu xong nội dung biến mất. → config.ts
       file: skillFileFor(office, role),
       text: loadSkill(office, role),
-      placeholder:
-        'Ví dụ:\n' +
-        '- Luôn viết ở ngôi thứ hai, câu ngắn.\n' +
-        '- Mở đầu bằng kết luận, đừng dẫn dắt.\n' +
-        '- Không dùng emoji.',
-      note:
-        'Cách làm việc của nhân viên. Để TRỐNG là bình thường',
+      placeholder: t('promptLayer.roleSkillsPlaceholder'),
+      note: t('promptLayer.roleSkillsNote'),
     });
   }
 
@@ -684,32 +731,28 @@ export function describePrompt(
   if (who === 'assistant' && assistantMemory.trim()) {
     add({
       id: 'memory',
-      title: 'Ghi nhớ từ trò chuyện',
+      title: t('promptLayer.memoryTitle'),
       editable: false,
       text: assistantMemory,
-      note:
-        'Những gì BẠN đã chốt, Trợ lý nén lại mỗi khi dọn cuộc trò chuyện (`/clear`). ' +
-        'Sửa hoặc xoá ở ngăn kéo Tri thức — bản mới tự đè bản cũ, bản cũ vẫn còn file.',
+      note: t('promptLayer.memoryNote'),
     });
   }
 
   add({
     id: 'knowledge',
-    title: 'Kinh nghiệm nạp sẵn',
+    title: t('promptLayer.knowledgeTitle'),
     editable: false,
     text: hotKnowledge,
-    note:
-      'Tự động hình thành qua quá trình làm việc. Xem thêm tại Kho tri thức',
+    note: t('promptLayer.knowledgeNote'),
   });
 
   if (who === 'assistant' && libraryManifest.trim()) {
     add({
       id: 'library',
-      title: 'Danh sách tài liệu',
+      title: t('promptLayer.libraryTitle'),
       editable: false,
       text: libraryManifest,
-      note:
-        'Tên và hình dạng các tài liệu trong tủ tài liệu.',
+      note: t('promptLayer.libraryNote'),
     });
   }
 
@@ -723,11 +766,10 @@ export function describePrompt(
   if (who === 'assistant' && artifactManifest.trim()) {
     add({
       id: 'artifacts',
-      title: 'Danh sách file kết quả',
+      title: t('promptLayer.artifactsTitle'),
       editable: false,
       text: artifactManifest,
-      note:
-        'Tên các file kết quả giúp Trợ lý làm tiếp được trên kết quả cũ.',
+      note: t('promptLayer.artifactsNote'),
     });
   }
 

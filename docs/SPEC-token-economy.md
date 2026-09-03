@@ -64,6 +64,34 @@ Suy ra hai luật:
 
 Hệ quả quan trọng: **mọi worker cùng role dùng chung một cache entry.** 5 writer chạy song song = 1 lần ghi cache, 5 lần đọc.
 
+### 🔴 Công tắc ngôn ngữ KHÔNG nằm trong cache key — và đó là một quyết định (03/09)
+
+`company.yaml → language` đổi **giao diện**, không đổi một byte nào của prompt. Không hàm dựng prompt
+nào nhận locale, không chuỗi nào trong prompt nêu tên một ngôn ngữ.
+
+⇒ **Gạt công tắc tốn 0 `cache_write`.** Nếu nối dây ngược lại thì mỗi lần người dùng đổi ngôn ngữ là
+một lần ghi lại prefix cho **mọi vai trò trong mọi văn phòng** — một thao tác giao diện tưởng như vô
+hại lại là khoản đắt nhất trong bảng này. `test/settings-language.test.ts` khoá mệnh đề đó bằng cách
+dựng prompt ở cả hai locale rồi so `cacheKey`; `test/no-pinned-language.test.ts` khoá chiều tĩnh.
+
+### Số đo 03/09 — prompt tĩnh chuyển sang tiếng Anh
+
+Mọi câu quy đổi kiểu *"~450 token ≈ 300 từ tiếng Việt"* trong repo **đã thành sai** kể từ đợt này:
+prompt tĩnh giờ là tiếng Anh, và tỉ lệ char/token khác hẳn.
+
+| Khối | Ký tự | Token | char/token |
+|---|---|---|---|
+| `COMPACT_RULES` | 3 826 | 961 | **3,98** |
+| `SHELL_LEGEND` | 827 | 208 | **3,98** |
+
+Đối chứng trên **cùng một câu**, hai thứ tiếng: `vi` 167 ký tự → **49 token**; `en` 164 ký tự →
+**42 token**. Tức bản tiếng Anh rẻ hơn **~14%** cho cùng nội dung, và tỉ lệ 3,98 char/token khớp con
+số ~4 mà `prompt.ts:48-50` đã nêu từ đầu (tiếng Việt ~2,6).
+
+⇒ Trần token (`receipt_tokens: 800` · `charter_tokens: 500` · `assistant_skills_tokens: 400`) **vẫn
+an toàn và giờ rộng hơn thực chất**: cùng một trần chứa được nhiều chữ hơn. Không nới, không siết —
+chỉ đừng đọc mấy con số đó qua công thức "từ tiếng Việt" nữa.
+
 ### Hot knowledge — hai tầng tri thức
 
 Đây là chỗ dễ làm sai nhất. Nếu nhét toàn bộ tri thức truy xuất theo task vào prefix, prefix đổi mỗi task → **cache miss 100%**, tệ hơn là không cache.

@@ -159,7 +159,7 @@ test('reachDiff: TRẦN chặn một lần sửa hàng loạt nhét cả bức t
   const before = map({ r: ['A', 'B', 'C', 'D', 'E', 'F'] });
   const out = reachDiff(before, map({ r: [] }), 4);
   assert.equal(out.length, 5);
-  assert.equal(out[4], 'và 2 thay đổi khác');
+  assert.equal(out[4], 'and 2 more changes');
 });
 
 // ═══════════ KIM THỨ BA: TÊN TÀI KHOẢN (`via`) — ca lọt thật 28/08 ═══════════

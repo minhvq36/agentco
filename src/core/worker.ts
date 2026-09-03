@@ -41,6 +41,14 @@ import {
 import { effectiveTools } from './types.js';
 import { splitArmTool } from './audit.js';
 import { doSpill, planSpill, spillNotice } from './spill.js';
+/**
+ * ⚠ `t()` here is ONLY for the half a PERSON reads — the status line and the
+ * stop reasons. Everything handed to the MODEL (`JAIL_REASON`, the GitHub 404
+ * hint, replacement tool results) stays a hard-coded English literal: a prompt
+ * that follows the interface switch is the wire the language rule forbids.
+ */
+import { plural, t } from '../i18n/index.js';
+import { formatUSD } from '../i18n/fmt.js';
 
 export interface WorkerDeps {
   office: LoadedOffice;
@@ -519,7 +527,8 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
                      * bốn lần trong dự án này *"hệ thống đúng, model kể sai"*.
                      */
                     deps.onProgress?.(
-                      `kết quả dài — đã lưu vào ${plan.rel} (${Math.round(plan.bytes / 1024)} KB)`,
+                      // Model reads this one: it is the replacement tool result.
+                      `long result — saved to ${plan.rel} (${Math.round(plan.bytes / 1024)} KB)`,
                     );
                     const arm = splitArmTool(ten);
                     if (arm) {
@@ -528,7 +537,7 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
                         tool: arm.tool,
                         role: role.id,
                         ...(brief.task_id ? { task_id: brief.task_id } : {}),
-                        args: { '(kết quả đã lưu)': plan.rel, bytes: plan.bytes },
+                        args: { '(result saved)': plan.rel, bytes: plan.bytes },
                       });
                     }
                     return {
@@ -632,7 +641,10 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         usage = readUsage(m);
         finalText = typeof m['result'] === 'string' ? m['result'] : '';
         if (m['subtype'] === 'error_max_budget_usd') {
-          throw new RunError(`Task ${brief.task_id} chạm trần ngân sách $${role.budget.max_usd}`, 'budget');
+          throw new RunError(
+            t('wk.hitBudget', { task: brief.task_id, ceiling: formatUSD(role.budget.max_usd) }),
+            'budget',
+          );
         }
         /**
          * ┌────────────────────────────────────────────────────────────────────┐
@@ -660,12 +672,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         if (m['subtype'] === 'error_max_turns') {
           const canhTay = armCalled;
           throw new RunError(
-            `Việc này cần nhiều bước hơn mức cho phép (${role.budget.max_turns} bước) nên đã dừng giữa chừng.\n` +
-              (canhTay
-                ? `⚠ Nhân viên ĐÃ gọi ra kết nối bên ngoài trước khi dừng — có thể đã thay đổi thứ gì đó ở ` +
-                  `ngoài, và không rõ tới đâu. Xem nhật ký của kết nối để biết chính xác nó đã làm gì.\n`
-                : '') +
-              `Cách đi tiếp: chia việc thành các bước nhỏ hơn, hoặc nâng số bước tối đa của nhân viên này.`,
+            t('wk.hitMaxTurns', { turns: String(role.budget.max_turns) }) +
+              (canhTay ? t('wk.hitMaxTurnsWithArm') : '') +
+              t('wk.hitMaxTurnsNext'),
             'max_turns',
           );
         }
@@ -715,9 +724,10 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     if (kind === 'max_turns') {
       // Không phải "lỗi" — là nhân viên bị cắt giữa chừng. Nói rõ sửa ở đâu.
       throw fail(
-        `"${role.display_name || role.id}" hết lượt cho phép (${role.budget.max_turns}) khi làm ${brief.task_id}. ` +
-          `Việc này cần nhiều bước hơn: nới max_turns trong roles/${role.id}.yaml, ` +
-          `hoặc chia nhỏ yêu cầu, hoặc viết hướng dẫn rõ hơn để nhân viên bớt dò dẫm.`,
+        // Log line, so English literal — this is `process.emitWarning`.
+        `"${role.display_name || role.id}" ran out of turns (${role.budget.max_turns}) on ${brief.task_id}. ` +
+          `This job needs more steps: raise max_turns in roles/${role.id}.yaml, split the request up, ` +
+          `or write clearer instructions so the employee gropes around less.`,
         'max_turns',
       );
     }
@@ -739,7 +749,8 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     // Call sửa lỗi: model rẻ nhất, system prompt tối giản, KHÔNG kèm context role.
     // Sửa định dạng không cần biết gì về vai trò — kèm vào chỉ tốn tiền.
     reasked = true;
-    const repaired = await repairReceipt(office, finalText, parsed.problem ?? 'không rõ');
+    // `problem` feeds `repairPrompt`, which is English — so this fallback is too.
+    const repaired = await repairReceipt(office, finalText, parsed.problem ?? 'unclear');
     usage = addUsage(usage, repaired.usage);
     parsed = parseReceipt(repaired.text);
   }
@@ -748,14 +759,14 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
     ? parsed.receipt!
     : {
         status: 'failed' as const,
-        say: 'Nhân viên trả về kết quả không đọc được. Xem nhật ký chi tiết.',
+        say: t('wk.receiptUnreadable'),
         answer: '',
         // Không có sự kiện nào để neo — receipt còn không đọc được. Bịa một câu
         // tóm tắt ở đây là đưa cho Trợ lý một thứ nghe như dữ kiện mà không phải.
         gist: '',
         artifacts: [],
         lessons: [],
-        blocked_on: `receipt không hợp lệ: ${parsed.problem ?? 'không rõ'}`,
+        blocked_on: t('wk.receiptInvalid', { problem: parsed.problem ?? 'unclear' }),
       };
 
   const capped = enforceCap(body, office.company.budgets.receipt_tokens);
@@ -869,11 +880,13 @@ export function githubDoorError(
   if (!owner || !repo) return null;
   return (
     `${text}\n\n` +
-    `↳ Với GitHub, 404 ở đây gần như luôn có nghĩa là **agentco chưa được cài vào ` +
-    `"${owner}/${repo}"** — chứ không phải repo đó không tồn tại hay chìa sai. GitHub cố ý ` +
-    `trả 404 thay vì 403 để không lộ repo riêng tư.\n` +
-    `↳ Người dùng cần mở ${installUrl} và thêm repo này vào. Đừng thử lại bằng tên khác, và ` +
-    `đừng đoán là repo không tồn tại.`
+    // ⚠ English, hard-coded: this is a TOOL RESULT handed back to the employee,
+    // not something a person reads. → docs/CLAUDE.md §Language
+    `↳ With GitHub, a 404 here almost always means **agentco is not installed on ` +
+    `"${owner}/${repo}"** — not that the repo is missing or the key is wrong. GitHub returns 404 ` +
+    `instead of 403 on purpose, so a private repo is not revealed.\n` +
+    `↳ The human needs to open ${installUrl} and add this repo. Do not retry under a different ` +
+    `name, and do not conclude the repo does not exist.`
   );
 }
 
@@ -939,8 +952,9 @@ export function armRoots(role: Role, servers: McpServers | undefined): string[] 
       else if (!warned.has(`dir:${dir}`)) {
         warned.add(`dir:${dir}`);
         process.emitWarning(
-          `Cánh tay của vai trò "${role.id}" khai thư mục "${dir}" nhưng không tìm thấy trên máy. ` +
-            `Nhân viên sẽ KHÔNG với tới được thư mục đó — kiểm lại đường dẫn ở nút "+ Kết nối".`,
+          // Log line, so English literal.
+          `The arm on role "${role.id}" declares folder "${dir}", which is not on this machine. ` +
+            `The employee will NOT reach that folder — check the path under "+ Connection".`,
         );
       }
     }
@@ -965,11 +979,14 @@ interface JailDirs {
  * Cấm mà không chỉ đường thì nhân viên báo `blocked` và người dùng không hiểu
  * vì sao — trong khi thứ họ cần chỉ là bấm một công tắc trên giao diện.
  */
+// ⚠ ENGLISH, hard-coded, all four. These are refusals handed to the MODEL, not
+// sentences a person reads — the human sees the employee's own `say`, written in
+// their language, further downstream. → docs/CLAUDE.md §Language
 const JAIL_REASON: Record<GuardedZone, (t: string) => string> = {
   secrets: (t) =>
-    `"${t}" nằm trong thư mục trạng thái nội bộ (.state). Đó là nơi giữ CHÌA KHOÁ và sổ ` +
-    `công việc của hệ thống — không nhân viên nào đọc hoặc ghi ở đó, kể cả khi được yêu cầu. ` +
-    `Bạn không cần chìa khoá để dùng một công cụ đã được cắm sẵn: cứ gọi tool của nó.`,
+    `"${t}" is inside the internal state folder (.state). That is where the KEYS and the system's ` +
+    `own work log live — no employee reads or writes there, even when asked to. You do not need a ` +
+    `key to use a tool that is already plugged in: just call its tool.`,
   /**
    * ⚠ CÂU NÀY PHẢI CHỈ ĐƯỜNG ĐÚNG, không chỉ cấm — cùng lý lẽ với `config`.
    *
@@ -979,17 +996,17 @@ const JAIL_REASON: Record<GuardedZone, (t: string) => string> = {
    * một câu lỗi nói về thư mục thay vì về việc họ giao.
    */
   browser: (t) =>
-    `"${t}" là thư mục log nội bộ của trình duyệt — nó giữ dấu vết phiên đăng nhập của ` +
-    `người dùng, nên không nhân viên nào đọc ở đó. Cần biết một trang đang hiện gì thì ` +
-    `MỞ LẠI trang đó bằng cánh tay trình duyệt và chụp, đừng đọc log của lượt trước.`,
+    `"${t}" is the browser's internal log folder — it holds traces of the human's own sign-in ` +
+    `session, so no employee reads there. To find out what a page is showing, OPEN that page again ` +
+    `with the browser arm and take a snapshot; do not read the previous turn's log.`,
   config: (t) =>
-    `"${t}" là file CẤU HÌNH của văn phòng (vai trò, kỹ năng, sơ đồ, kết nối). Nó chỉ được ` +
-    `đổi qua giao diện, để mỗi thay đổi có người chịu trách nhiệm và có dấu vết trong nhật ký. ` +
-    `Nếu việc này cần một quyền bạn chưa có, hãy DỪNG và nói rõ bạn thiếu gì.`,
+    `"${t}" is one of this office's CONFIG files (roles, skills, the diagram, connections). It is ` +
+    `only changed through the interface, so every change has someone accountable for it and leaves ` +
+    `a trace in the log. If this job needs a permission you do not have, STOP and say what is missing.`,
   outside: (t) =>
-    `Đường dẫn "${t}" nằm ngoài thư mục văn phòng. Mọi kết quả phải ghi BÊN TRONG ` +
-    `thư mục làm việc hiện tại — dùng đường dẫn tương đối như "artifacts/<...>" ` +
-    `và không đi lên cấp trên bằng "..".`,
+    `The path "${t}" is outside the office folder. Every result has to be written INSIDE the ` +
+    `current working folder — use a relative path such as "artifacts/<...>" and do not climb up ` +
+    `with "..".`,
 };
 
 // ─────────────────────────────────────────── lặp thao tác & tài liệu đã chạm
@@ -1104,8 +1121,8 @@ function stoppedReceipt(
   return {
     status: 'blocked',
     say: written.length
-      ? `Đã dừng giữa chừng. Có ${written.length} file đã ghi dở, xem lại trước khi dùng.`
-      : 'Đã dừng theo yêu cầu của bạn, chưa ghi gì.',
+      ? plural('wk.stoppedPartial', written.length)
+      : t('wk.stoppedClean'),
     // Người dùng vừa bấm Dừng. Đẩy một câu trả lời dở dang lên chat như thể nó
     // là kết quả hoàn chỉnh là đúng loại nói dối `stoppedReceipt` sinh ra để bỏ.
     answer: '',
@@ -1113,7 +1130,7 @@ function stoppedReceipt(
     gist: '',
     artifacts: written,
     lessons: [],
-    blocked_on: 'người dùng dừng giữa chừng',
+    blocked_on: t('wk.stoppedByUser'),
     // Người dùng bấm Dừng KHÔNG phải bài học — nhân viên không làm gì sai và
     // không có gì để rút kinh nghiệm. Thiếu dòng này thì `agentFault` đọc
     // `blocked_on` ở trên như lời khai của nhân viên và đi hỏi model "học được
@@ -1237,14 +1254,15 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
       (() => {
         const accs = missing.filter((n) => isAccountName(n));
         const keys = missing.filter((n) => !isAccountName(n));
-        const parts = [`Vai trò "${role.id}" thiếu chìa. Tool cần chúng sẽ hỏng.`];
+        // Log lines, so English literals — the whole block is `emitWarning`.
+        const parts = [`Role "${role.id}" is missing keys. Tools that need them will fail.`];
         if (accs.length) {
           parts.push(
-            `${accs.join(', ')}: đây là TÀI KHOẢN ĐĂNG NHẬP, không phải chìa gõ tay — ` +
-              `nối lại ở hộp thoại Kết nối, hoặc bỏ tên đó khỏi roles/${role.id}.yaml nếu không dùng nữa.`,
+            `${accs.join(', ')}: these are SIGNED-IN ACCOUNTS, not keys typed by hand — ` +
+              `reconnect them in the Connection dialog, or drop the name from roles/${role.id}.yaml.`,
           );
         }
-        if (keys.length) parts.push(`${keys.join(', ')}: thêm bằng \`agentco secret set <TÊN>\`.`);
+        if (keys.length) parts.push(`${keys.join(', ')}: add with \`agentco secret set <NAME>\`.`);
         return parts.join(' ');
       })(),
     );
@@ -1254,7 +1272,7 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
   for (const n of role.mcp) {
     const cfg = office.company.mcpServers[n];
     if (!cfg) {
-      process.emitWarning(`MCP server "${n}" chưa khai trong company.yaml`);
+      process.emitWarning(`MCP server "${n}" is not declared in company.yaml`);
       continue;
     }
     /**
@@ -1419,10 +1437,10 @@ export function describeCall(call: ToolCall, arms?: Record<string, string>): str
   const file = typeof call.input['file_path'] === 'string' ? basename(call.input['file_path']) : '';
   switch (call.name) {
     case 'Read':
-      return file ? `đang đọc ${file}` : 'đang đọc tài liệu';
+      return file ? t('wk.doingReadFile', { file }) : t('wk.doingRead');
     case 'Write':
     case 'Edit':
-      return file ? `đang viết ${file}` : 'đang viết kết quả';
+      return file ? t('wk.doingWriteFile', { file }) : t('wk.doingWrite');
     case 'Grep':
     case 'Glob': {
       const what = str(call.input['pattern']);
@@ -1443,15 +1461,15 @@ export function describeCall(call: ToolCall, arms?: Record<string, string>): str
        */
       const where = str(call.input['path']) || what;
       const term = what && what.length <= 40 ? ` “${what}”` : '';
-      // Câu đổi HẲN, không chỉ đổi cái tên phòng: "trong ngoài văn phòng" là
-      // tiếng Việt hỏng, và một dòng nhật ký đọc vấp thì người ta thôi đọc.
-      if (isAbsolutePath(where)) return `đang tìm${term} ngoài văn phòng`;
-      return `đang tìm${term} trong ${roomOf(str(call.input['path']))}`;
+      // Câu đổi HẲN, không chỉ đổi cái tên phòng: một dòng nhật ký đọc vấp thì
+      // người ta thôi đọc, và bản ghép "trong ngoài văn phòng" đọc đúng như thế.
+      if (isAbsolutePath(where)) return t('wk.doingSearchOutside', { term });
+      return t('wk.doingSearchIn', { term, room: roomOf(str(call.input['path'])) });
     }
     case 'WebSearch':
-      return 'đang tìm trên web';
+      return t('wk.doingWebSearch');
     case 'WebFetch':
-      return 'đang đọc một trang web';
+      return t('wk.doingWebFetch');
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
      * │ NÓI RA LỆNH, KHÔNG CHỈ NÓI "CÓ CHẠY LỆNH".                           │
@@ -1475,8 +1493,8 @@ export function describeCall(call: ToolCall, arms?: Record<string, string>): str
     case 'Bash':
     case 'PowerShell': {
       const cmd = str(call.input['command']).replace(/\s+/g, ' ');
-      if (!cmd) return 'đang chạy lệnh';
-      return `đang chạy: ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}`;
+      if (!cmd) return t('wk.doingRunCommand');
+      return t('wk.doingRunning', { cmd: cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd });
     }
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
@@ -1502,11 +1520,11 @@ export function describeCall(call: ToolCall, arms?: Record<string, string>): str
      */
     default: {
       const server = mcpServerOf(call.name);
-      if (!server) return `đang dùng ${call.name}`;
+      if (!server) return t('wk.doingUsingTool', { tool: call.name });
       const who = arms?.[server] || server;
       const what = call.name.split('__').slice(2).join('__').replace(/_/g, ' ');
       const where = basename(str(call.input['path']) || str(call.input['destination']) || '');
-      return `${who} · ${what || 'đang làm việc'}${where ? ` → ${where}` : ''}`;
+      return `${who} · ${what || t('wk.doingWorking')}${where ? ` → ${where}` : ''}`;
     }
   }
 }
@@ -1531,10 +1549,10 @@ function isAbsolutePath(p: string): boolean {
 
 function roomOf(searchPath: string): string {
   const p = searchPath.replace(/\\/g, '/');
-  if (/(^|\/)library(\/|$)/.test(p)) return 'tủ tài liệu';
-  if (/(^|\/)artifacts(\/|$)/.test(p)) return 'kết quả đã có';
-  if (/(^|\/)knowledge(\/|$)/.test(p)) return 'kho tri thức';
-  return 'văn phòng';
+  if (/(^|\/)library(\/|$)/.test(p)) return t('wk.roomLibrary');
+  if (/(^|\/)artifacts(\/|$)/.test(p)) return t('wk.roomArtifacts');
+  if (/(^|\/)knowledge(\/|$)/.test(p)) return t('wk.roomKnowledge');
+  return t('wk.roomOffice');
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -1641,7 +1659,7 @@ export function warnDroppedTools(role: Role, granted: unknown): string[] {
   const asked = effectiveTools(role.tools);
   const dropped = asked.filter((t) => !got.has(t) && !EXTERNAL_TOOLS.has(t));
   if (hasShell(role.tools) && !asked.some((t) => EXTERNAL_TOOLS.has(t) && got.has(t))) {
-    dropped.push('(tool chạy lệnh)');
+    dropped.push('(the shell tool)');
   }
   /**
    * CÁNH TAY ĐI QUA CÙNG MỘT BẤT BIẾN — thêm 24/08.
@@ -1658,7 +1676,7 @@ export function warnDroppedTools(role: Role, granted: unknown): string[] {
    * mang tiền tố `mcp__`.
    */
   if (role.mcp.length && ![...got].some((t) => t.startsWith('mcp__'))) {
-    dropped.push(`(cánh tay: ${role.mcp.join(', ')})`);
+    dropped.push(`(arms: ${role.mcp.join(', ')})`);
   }
   if (dropped.length === 0) return [];
 
@@ -1666,9 +1684,10 @@ export function warnDroppedTools(role: Role, granted: unknown): string[] {
   if (!warned.has(key)) {
     warned.add(key);
     process.emitWarning(
-      `Vai trò "${role.id}" xin ${dropped.length} tool mà Claude Code không cấp: ${dropped.join(', ')}. ` +
-        `CLI bỏ im lặng tên tool nó không có, nên tính năng này đang KHÔNG chạy. ` +
-        `Kiểm bảng tên ở src/core/types.ts §SHELL_ALIASES.`,
+      // Log line, so English literal.
+      `Role "${role.id}" asked for ${dropped.length} tools Claude Code did not grant: ${dropped.join(', ')}. ` +
+        `The CLI silently drops tool names it does not know, so this feature is NOT running. ` +
+        `Check the name table at src/core/types.ts §SHELL_ALIASES.`,
     );
   }
   return dropped;
@@ -1703,15 +1722,14 @@ export function sayError(raw: string, kind: FailureKind): string {
   if (!/^error_[a-z_]+$/.test(raw.trim())) return raw;
   if (kind === 'max_turns') {
     return (
-      'Việc này cần nhiều bước hơn mức cho phép trong một lượt nên đã dừng giữa chừng. ' +
-      'Thử chia nhỏ yêu cầu, hoặc nói rõ hơn cần làm gì trước làm gì sau.'
+      t('wk.stopMaxTurns')
     );
   }
-  if (kind === 'budget') return 'Lượt này chạm trần chi phí đã đặt cho công việc.';
-  if (kind === 'usage_limit') return 'Tài khoản Claude đã hết hạn mức dùng.';
-  if (kind === 'rate_limit') return 'Claude đang quá tải, thử lại sau ít phút.';
-  if (kind === 'auth') return 'Chưa đăng nhập được vào Claude trên máy này.';
-  return `Claude Code dừng giữa chừng (${raw}).`;
+  if (kind === 'budget') return t('wk.stopBudget');
+  if (kind === 'usage_limit') return t('wk.stopUsageLimit');
+  if (kind === 'rate_limit') return t('wk.stopRateLimit');
+  if (kind === 'auth') return t('wk.stopAuth');
+  return t('wk.stopOther', { raw });
 }
 
 export function classifyError(err: unknown): FailureKind {
