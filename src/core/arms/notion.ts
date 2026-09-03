@@ -1,15 +1,16 @@
 /**
- * MỘT MỤC DANH MỤC = MỘT FILE. → `../catalog.ts` · docs/SPEC-arms.md §4e
+ * ONE CATALOGUE ENTRY = ONE FILE. → `../catalog.ts` · docs/SPEC-arms.md §4e
  *
- * ⚠ Notion KHÔNG còn đi qua `npx` nữa, và sự vắng mặt đó là một quyết định (25/08).
+ * ⚠ Notion NO LONGER goes through `npx`, and that absence is a decision (25/08).
  *
- * Bản cũ ghim `@notionhq/notion-mcp-server@2.5.1` — gói **local, chính chủ**.
- * Nhưng chính chủ đã buông nó: 🌐 *"We may sunset this local MCP server
- * repository"* + *"issues and pull requests here are not actively monitored"*.
+ * The old version pinned `@notionhq/notion-mcp-server@2.5.1` — a LOCAL, FIRST-
+ * PARTY package. But the first party let go of it: 🌐 *"We may sunset this local
+ * MCP server repository"* + *"issues and pull requests here are not actively
+ * monitored"*.
  *
- * ⇒ Bài học đáng giữ cho mọi mục về sau: **ghim phiên bản ≠ được bảo trì.**
- * §11d ghim để mã người lạ không tự đổi dưới chân khách; nó không cứu được ta
- * khỏi việc đóng băng một thứ không còn ai vá lỗi.
+ * ⇒ The lesson worth keeping for every later entry: A PINNED VERSION IS NOT A
+ * MAINTAINED ONE. §11d pins so a stranger's code cannot change under the
+ * customer's feet; it does not save us from freezing something nobody patches.
  */
 
 import type { CatalogArm } from '../catalog.js';
@@ -19,33 +20,36 @@ export const NOTION_ARM: CatalogArm = {
   name: 'armCat.notion.name',
   icon: '📝',
   /**
-   * ⚠ CÂU NÀY PHẢI NÓI RA BÁN KÍNH, và nó nói ngược với trực giác. → §5h·3
+   * ⚠ THIS SENTENCE HAS TO STATE THE RADIUS, and it runs against intuition. → §5h·3
    *
-   * OAuth của Notion **thừa kế TOÀN BỘ quyền của người đăng nhập**: 🌐
-   * *"MCP tools act with your full Notion permissions"*, và metadata khai
-   * `scopes_supported: ["default"]` — **một** scope, không chia nhỏ được.
+   * Notion's OAuth INHERITS THE SIGNED-IN PERSON'S ENTIRE PERMISSIONS: 🌐 *"MCP
+   * tools act with your full Notion permissions"*, and the metadata declares
+   * `scopes_supported: ["default"]` — ONE scope, not divisible.
    *
-   * Tức nó **RỘNG HƠN** token tĩnh, thứ mặc định không thấy gì cho tới khi
-   * người dùng tự thêm connection vào từng trang. Giấu chuyện này đi là
-   * **hứa quá tay**, và §11a-bis đã chốt: *doạ quá tay làm người dùng tắt
-   * thứ họ cần; hứa quá tay làm họ bật để mua một thứ không tồn tại — cái
-   * sau tệ hơn*. "chỉ đọc" ở đây là do TA cắt (nấc quyền), không phải do
-   * Notion cấp hẹp.
+   * So it is WIDER than a static token, which sees nothing by default until
+   * someone adds the connection to each page themselves. Hiding that is
+   * OVER-PROMISING, and §11a-bis settled it: *over-warning makes people switch
+   * off what they need; over-promising makes them switch on to buy something
+   * that does not exist — the second is worse.* "Read only" here is OUR cut (the
+   * permission tier), not a narrow grant from Notion.
    */
   blurb: 'armCat.notion.blurb',
   price: 'login',
   /**
-   * MCP **hosted chính chủ**, Streamable HTTP. Ba thứ nó bỏ so với bản cũ:
-   * không tải mã người lạ về máy khách (rủi ro chuỗi cung ứng §11d = **0**),
-   * không `npx` trên đường nóng, và không phụ thuộc một gói đã bị buông.
+   * FIRST-PARTY HOSTED MCP, Streamable HTTP. Three things it drops versus the
+   * old version: no stranger's code downloaded to the customer's machine
+   * (supply-chain risk §11d = ZERO), no `npx` on the hot path, and no dependency
+   * on a package that has been let go.
    *
-   * ⚠ `${OAUTH}` là **chỗ trống có tên quy ước**, không phải tên chìa thật.
-   * `buildConfig` thay nó bằng tên tài khoản người dùng vừa đăng nhập
-   * (`NOTION_OAUTH_<8 hex workspace_id>`) — nhờ đó **hai workspace Notion ra
-   * hai băm khác nhau** dù cùng URL. → §OAUTH_SLOT · `oauth.ts §accountName`
+   * ⚠ `${OAUTH}` is a NAMED PLACEHOLDER, not a real key name. `buildConfig`
+   * replaces it with the name of the account just signed in
+   * (`NOTION_OAUTH_<8 hex workspace_id>`) — which is how TWO NOTION WORKSPACES
+   * PRODUCE TWO DIFFERENT HASHES despite sharing a URL.
+   * → §OAUTH_SLOT · `oauth.ts §accountName`
    *
-   * Sau khi thay, `company.yaml` chứa một ô trống bình thường: người dùng ĐỌC
-   * ĐƯỢC chìa đi vào đâu mà không đọc được chìa. → `secrets.ts §injectSecrets`
+   * After substitution, `company.yaml` holds an ordinary named slot: the user
+   * CAN READ where a key goes without reading the key.
+   * → `secrets.ts §injectSecrets`
    */
   spec: {
     kind: 'http',
@@ -53,43 +57,46 @@ export const NOTION_ARM: CatalogArm = {
     headers: { Authorization: 'Bearer ${OAUTH}' },
   },
   /**
-   * Ba nấc, giải từ `annotations` lúc cắm. Đo 25/08: 28 việc — **14 đọc · 11
-   * thêm · 3 sửa/xoá**, và 28/28 đều khai annotations.
+   * Three tiers, resolved from `annotations` at plug-in time. Measured 25/08: 28
+   * actions — 14 READ · 11 ADD · 3 EDIT/DELETE, and 28/28 declare annotations.
    *
-   * ⚠ Thay cho `readOnly: true` của bản 25/08. Bản đó đúng nhưng **cứng**:
-   * người dùng muốn Notion ghi được thì không có đường nào ngoài sửa yaml —
-   * một **chuông báo §6a**. Nấc là thứ họ chọn, và nó vào băm nên "đổi nấc"
-   * là một cánh tay khác chứ không phải một lần sửa tại chỗ. → §6j
+   * ⚠ This replaces the `readOnly: true` of the 25/08 version. That was correct
+   * but RIGID: someone wanting Notion to write had no route except editing yaml
+   * — a §6a ALARM BELL. A tier is something they choose, and it goes into the
+   * hash, so "change the tier" is a different arm rather than an edit in
+   * place. → §6j
    *
-   * 📌 KHÔNG có `readOnlyHeaders`: Notion không cắt việc theo header, nên nấc
-   * `read` được thi hành bằng lớp `allowedTools` của ta. Đó cũng là lý do mục
-   * này **không dính** cái bẫy §6g-quater (hàng rào ăn mất bộ chọn nấc).
+   * 📌 NO `readOnlyHeaders`: Notion does not cut actions by header, so the
+   * `read` tier is enforced by our own `allowedTools` layer. That is also why
+   * this entry AVOIDS the §6g-quater trap (a fence eating the tier picker).
    */
   tiered: true,
   /**
-   * RỖNG — và đó là toàn bộ điểm của `price: 'login'`.
+   * EMPTY — and that is the whole point of `price: 'login'`.
    *
-   * Chìa của mục này **sinh ra từ luồng đăng nhập**, không do người dùng gõ.
-   * Tên nó cũng không biết trước được (nó mang `workspace_id`), nên khai ở đây
-   * là khai một chuỗi sẽ sai.
+   * This entry's key IS BORN FROM THE SIGN-IN FLOW; nobody types it. Its name is
+   * not knowable in advance either (it carries the `workspace_id`), so declaring
+   * one here would be declaring a string that turns out wrong.
    */
   secrets: [],
   /**
-   * ⚠⚠ `checkedOn: null` mà `mark` CÓ GIÁ TRỊ = **món nợ đang mở**. → §11c
+   * ⚠⚠ `checkedOn: null` WITH a non-empty `mark` = AN OPEN DEBT. → §11c
    *
-   * §11c chốt: chưa đọc quy tắc thương hiệu thì không dùng logo. User yêu cầu
-   * logo hãng ngày 27/08 (*"cố gắng chọn icon của provider"*) và ta đã ship —
-   * nên món nợ phải **nằm ngay cạnh thứ nó nói về**, chứ không nằm trong một
-   * bảng ánh xạ ở thư mục web nơi không ai đi qua khi rà thương hiệu.
+   * §11c settled it: no logo until the brand guidelines have been read. The
+   * vendor logos were asked for on 27/08 (*"try to use each provider's icon"*)
+   * and we shipped them — so the debt has to sit RIGHT NEXT TO WHAT IT IS ABOUT,
+   * not in a mapping table under the web folder that nobody walks past during a
+   * trademark review.
    *
-   * Đường dẫn là dấu chữ N đơn sắc, `currentColor`, không nền, không màu hãng.
-   * Phải điền `guidelineUrl` + `checkedOn` trước khi phát hành ra ngoài.
+   * The path is a monochrome N glyph, `currentColor`, no background, no brand
+   * colour. `guidelineUrl` + `checkedOn` must be filled in before any public
+   * release.
    */
   brand: {
     owner: 'Notion Labs, Inc.',
     guidelineUrl: null,
     checkedOn: null,
-    // ⚠ MỘT CHUỖI, KHÔNG NỐI — xem lý do ở `github.ts §brand.mark`.
+    // ⚠ ONE STRING, NEVER CONCATENATED — the reason is in `github.ts §brand.mark`.
     // prettier-ignore
     mark: 'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.727l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z',
   },

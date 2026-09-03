@@ -1,44 +1,46 @@
 /**
- * TÔ MÀU + IN LẠI KHỐI JSON NGƯỜI DÙNG DÁN. → `ArmDialog.tsx §pane 'paste'`
+ * COLOURING + REPRINTING A PASTED JSON BLOCK. → `ArmDialog.tsx §pane 'paste'`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO CÓ FILE NÀY, VÀ VÌ SAO NÓ RẺ                                      │
+ * │ WHY THIS FILE EXISTS, AND WHY IT IS CHEAP                                │
  * │                                                                          │
- * │ Đường B là *"dán khối JSON từ README"*, và hôm nay ô dán là một textarea  │
- * │ trần: một khối chữ đen 12px, không xuống dòng, không thụt lề. Người không │
- * │ code nhìn vào đó không phân biệt được **cái tên** với **giá trị**, và một │
- * │ dấu ngoặc thiếu thì không có gì chỉ chỗ.                                  │
+ * │ Route B is *"paste the JSON block from the README"*, and today the paste  │
+ * │ box is a bare textarea: a slab of 12px black text, no wrapping, no        │
+ * │ indentation. Someone who does not code cannot tell **a name** from **a    │
+ * │ value** in there, and a missing brace has nothing pointing at it.         │
  * │                                                                          │
- * │ JSON là ngôn ngữ nhỏ nhất còn được gọi là ngôn ngữ: một bộ tách token đủ  │
- * │ dùng là **một biểu thức chính quy**. Không thư viện, không AST, chạy trên │
- * │ chuỗi vài trăm byte. Đây không phải chỗ tốn hiệu năng.                    │
+ * │ JSON is the smallest thing still worth calling a language: a tokeniser    │
+ * │ good enough for it is **one regular expression**. No library, no AST,     │
+ * │ running over a few hundred bytes. This is not where performance goes.     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 /**
- * ⚠⚠ MÀU KHÔNG CHỈ RA ĐƯỢC ĐIỂM LỖI — và đây là chỗ dễ tin nhầm.
+ * ⚠⚠ COLOUR CANNOT POINT AT THE ERROR — and this is easy to believe wrongly.
  *
- * User hỏi: *"paste 1 chuỗi không phải json, thì cái màu parse giúp khách hàng
- * nhận thấy ngay điểm lỗi?"* — **Không.** Tô màu là một phép **đoán từng token**;
- * nó vẫn tô đẹp một chuỗi sai cú pháp, vì nó không hề biết cấu trúc.
+ * The user asked: *"if you paste a string that isn't json, does the parse
+ * colouring let the customer spot the error straight away?"* — **No.** Colouring
+ * is a **per-token guess**; it will happily paint a syntactically broken string,
+ * because it knows nothing about structure.
  *
- * Thứ BIẾT điểm lỗi là `JSON.parse`: nó ném kèm **vị trí**. Nên phân vai:
- *   · màu    → đọc dễ hơn (tên/giá trị/số/chuỗi khác nhau)
- *   · `fault`→ **chỉ đúng chỗ hỏng**, bằng dòng/cột và một câu tiếng người
- * Trông cậy vào màu để báo lỗi là đúng lớp *"câu lỗi chỉ sai cửa"*.
+ * The thing that KNOWS where the error is, is `JSON.parse`: it throws with a
+ * **position**. So split the roles:
+ *   · colour → easier to read (name/value/number/string look different)
+ *   · `fault`→ **points at the actual break**, by line/column and a human sentence
+ * Leaning on colour to report errors is exactly the *"error at the wrong door"* class.
  */
 
 import { t } from '@i18n';
 
 export interface JsonFault {
-  /** Chỉ số ký tự, 0-based. `-1` = không xác định được. */
+  /** Character index, 0-based. `-1` = could not be determined. */
   at: number;
   line: number;
   col: number;
   say: string;
 }
 
-/** `null` = đọc được. Ngược lại: hỏng ở đâu, và nói bằng tiếng người. */
+/** `null` = it parses. Otherwise: where it broke, said in human words. */
 export function fault(text: string): JsonFault | null {
   const s = text.trim();
   if (!s) return null;
@@ -48,9 +50,10 @@ export function fault(text: string): JsonFault | null {
   } catch (e) {
     const msg = (e as Error).message;
     /**
-     * V8 in vị trí theo hai kiểu tuỳ phiên bản (`at position N` và
-     * `at line L column C`). Bắt cả hai, và **không có thì vẫn phải trả lời** —
-     * `at: -1` để chỗ gọi biết là không trỏ được, chứ không im lặng bỏ qua.
+     * V8 prints the position two ways depending on the version (`at position N`
+     * and `at line L column C`). Catch both, and **answer even when there is
+     * neither** — `at: -1` tells the caller we cannot point, rather than
+     * silently swallowing the case.
      */
     const pos = Number(/position (\d+)/.exec(msg)?.[1] ?? -1);
     const at = Number.isFinite(pos) && pos >= 0 ? Math.min(pos, s.length) : -1;
@@ -62,38 +65,41 @@ export function fault(text: string): JsonFault | null {
 }
 
 /**
- * Dịch câu lỗi của máy sang câu người dùng làm được gì với nó.
+ * Turn the machine's error into a sentence the user can act on.
  *
- * ⚠ Không cố dịch mọi câu: chỉ những ca **thật sự hay gặp khi dán từ README**,
- * và ca nào không chắc thì trả một câu trung tính kèm vị trí. Đoán bừa một
- * nguyên nhân rồi nói chắc nịch là tệ hơn nói *"chỗ này"*.
+ * ⚠ Do not try to translate every message: only the cases **that actually come
+ * up when pasting from a README**, and anything uncertain gets a neutral
+ * sentence plus a position. Guessing a cause and stating it confidently is worse
+ * than saying *"right here"*.
  */
 function humanise(msg: string, s: string, at: number): string {
   /**
-   * ⚠⚠ THỨ TỰ Ở ĐÂY LÀ TOÀN BỘ CHẤT LƯỢNG CỦA HÀM. (sửa 31/08 sau khi đo)
+   * ⚠⚠ THE ORDER HERE IS THE ENTIRE QUALITY OF THIS FUNCTION. (fixed 31/08 after
+   * measuring.)
    *
-   * Bản đầu đọc văn của V8 trước, và **sai 3/5 ca thử**: V8 hiện đại gộp rất
-   * nhiều lỗi khác nhau vào cùng một câu *"Expected property name or '}'"* —
-   * khối bị cắt giữa chừng, thừa dấu phẩy, và tên trường không nháy đều ra
-   * chung câu đó. Nhánh `/property name/` nuốt cả ba.
+   * The first version read V8's prose first, and was **wrong in 3 of 5 trials**:
+   * modern V8 folds a great many different errors into the same sentence,
+   * *"Expected property name or '}'"* — a block cut off midway, a trailing
+   * comma, and an unquoted field name all come out as that one sentence. The
+   * `/property name/` branch swallowed all three.
    *
-   * ⇒ Hỏi **sự thật tự đếm được** trước, văn của V8 sau cùng. Đếm ngoặc là của
-   * ta, tất định, và không đổi theo phiên bản Node.
+   * ⇒ Ask the **facts we can count ourselves** first, V8's prose last. Counting
+   * braces is ours, deterministic, and does not shift with the Node version.
    */
   const open = count(s, '{') - count(s, '}');
   const brk = count(s, '[') - count(s, ']');
 
-  // ① Không phải JSON ngay từ ký tự đầu — nói thẳng, đừng nói về ngoặc.
+  // ① Not JSON from the very first character — say so; do not talk about braces.
   if (!/^[[{]/.test(s)) return t('jsonHint.notJson');
 
-  // ② Lệch ngoặc ⇒ dán thiếu. Bắt được ca này KHÔNG cần V8 nói gì.
+  // ② Unbalanced braces ⇒ an incomplete paste. Caught WITHOUT V8 saying anything.
   if (open > 0) return t('jsonHint.missingBrace', { n: open });
   if (brk > 0) return t('jsonHint.missingBracket', { n: brk });
   if (open < 0) return t('jsonHint.extraBrace', { n: -open });
   if (brk < 0) return t('jsonHint.extraBracket', { n: -brk });
   if (count(s, '"') % 2 === 1) return t('jsonHint.unclosedQuote');
 
-  // ③ Nhìn thẳng vào ký tự ở chỗ hỏng, và ký tự có nghĩa đứng ngay trước nó.
+  // ③ Look straight at the character at the break, and the meaningful one before it.
   const here = at >= 0 ? (s[at] ?? '') : '';
   const before = at >= 0 ? s.slice(0, at).trimEnd().slice(-1) : '';
   if (here === "'" || before === "'") {
@@ -103,7 +109,7 @@ function humanise(msg: string, s: string, at: number): string {
     return t('jsonHint.trailingComma');
   }
 
-  // ④ Giờ mới tới văn của V8, và tới đây nó đã hết mơ hồ.
+  // ④ Only now V8's prose, and by this point it is no longer ambiguous.
   if (/property name/.test(msg)) return t('jsonHint.propName');
   if (/after property name|Expected ':'/.test(msg)) return t('jsonHint.missingColon');
   if (/Expected ',' /.test(msg)) return t('jsonHint.missingComma');
@@ -112,7 +118,7 @@ function humanise(msg: string, s: string, at: number): string {
 
 const count = (s: string, ch: string): number => s.split(ch).length - 1;
 
-/** In lại cho dễ đọc. `null` = chưa hợp lệ nên **không đụng vào chữ của họ**. */
+/** Reprint it readably. `null` = not valid yet, so **do not touch their text**. */
 export function pretty(text: string): string | null {
   const s = text.trim();
   if (!s) return null;
@@ -120,9 +126,9 @@ export function pretty(text: string): string | null {
     const out = JSON.stringify(JSON.parse(s), null, 2);
     return out === text ? null : out;
   } catch {
-    // ⚠ KHÔNG in lại được một khối sai cú pháp — không có cây nào để đi.
-    // Trả `null` để chỗ gọi giữ NGUYÊN VĂN thứ người dùng gõ. Tự ý "sửa hộ"
-    // một khối hỏng là cách chắc chắn nhất để họ mất chỗ đang dở.
+    // ⚠ A syntactically broken block CANNOT be reprinted — there is no tree to
+    // walk. Return `null` so the caller keeps what the user typed VERBATIM.
+    // "Fixing" a broken block for them is the surest way to lose their place.
     return null;
   }
 }
@@ -130,11 +136,11 @@ export function pretty(text: string): string | null {
 export type Tok = { t: 'key' | 'str' | 'num' | 'lit' | 'punc' | 'ws'; v: string };
 
 /**
- * Tách token để tô màu. Cố ý **KHÔNG** kiểm cú pháp — nó phải chạy được trên
- * chuỗi đang gõ dở, nếu không thì màu nhấp nháy mỗi lần gõ một ký tự.
+ * Tokenise for colouring. Deliberately does **NOT** check syntax — it has to run
+ * on a half-typed string, or the colours flicker on every keystroke.
  *
- * `key` = chuỗi đứng ngay trước dấu `:` — đó là toàn bộ mẹo, và nó đủ đúng cho
- * JSON thật vì trong JSON chỉ có chuỗi mới làm tên trường được.
+ * `key` = a string sitting immediately before a `:` — that is the whole trick,
+ * and it is correct enough for real JSON, where only a string can be a field name.
  */
 export function tokens(text: string): Tok[] {
   const out: Tok[] = [];
@@ -151,7 +157,7 @@ export function tokens(text: string): Tok[] {
   }
   if (last < text.length) out.push({ t: 'punc', v: text.slice(last) });
 
-  // Lượt hai: chuỗi nào đứng trước `:` thì là TÊN TRƯỜNG.
+  // Second pass: any string standing before a `:` is a FIELD NAME.
   for (let i = 0; i < out.length; i++) {
     if (out[i]!.t !== 'str') continue;
     let j = i + 1;

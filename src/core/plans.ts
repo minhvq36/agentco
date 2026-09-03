@@ -1,16 +1,16 @@
 /**
- * Lịch sử công việc. → docs/SPEC-offices.md §6
+ * The work log. → docs/SPEC-offices.md §6
  *
- * PLAN LÀ ĐƠN VỊ CÔNG VIỆC, không phải dòng chat. v0 chỉ ghi file plan rời rạc
- * rồi quên chúng đi; hệ quả là không trả lời được "hôm qua làm những gì" và
- * không tách được hai việc chạy chồng nhau trong log.
+ * A PLAN IS THE UNIT OF WORK, not a chat line. v0 wrote loose plan files and
+ * then forgot them; the consequence was being unable to answer "what did we do
+ * yesterday" and unable to separate two overlapping jobs in the log.
  *
- * Hai tầng, có chủ ý:
- *   index.json          gọn, đọc một phát ra cả danh sách — cho sidebar
- *   <plan_id>.log.jsonl từng sự kiện, chỉ đọc khi người dùng mở đúng việc đó
+ * Two tiers, deliberately:
+ *   index.json           compact, one read gives the whole list — for the sidebar
+ *   <plan_id>.log.jsonl  event by event, read only when that job is opened
  *
- * Gộp làm một thì mở sidebar phải đọc toàn bộ log của cả đời văn phòng. Tiêu chí
- * "Hiệu năng" chặn đúng loại thiết kế đó.
+ * Merged into one, opening the sidebar would read the entire log of the office's
+ * lifetime. The "performance" criterion blocks exactly that shape of design.
  */
 
 import fs from 'node:fs';
@@ -21,7 +21,7 @@ import { isSafeId } from './paths.js';
 import type { AgentEvent, PlanRecord } from './types.js';
 
 const MAX_INDEX = 200;
-/** Trần dòng log mỗi việc. Một agent lặp vô hạn không được làm đầy đĩa. */
+/** Log-line ceiling per job. An agent stuck in a loop must not fill the disk. */
 const MAX_LOG_LINES = 5_000;
 
 export class PlanStore {
@@ -37,7 +37,7 @@ export class PlanStore {
       const raw = JSON.parse(fs.readFileSync(this.paths.planIndex, 'utf8')) as { plans?: PlanRecord[] };
       return Array.isArray(raw.plans) ? raw.plans : [];
     } catch {
-      // Index hỏng không được làm sập văn phòng — nó là dữ liệu phái sinh.
+      // A broken index must not take the office down — it is derived data.
       process.emitWarning('tasks/index.json is unreadable; the work log starts again from empty.');
       return [];
     }
@@ -58,7 +58,7 @@ export class PlanStore {
     );
   }
 
-  /** Ghi một sự kiện vào log của đúng việc đó. Sự kiện trò chuyện không vào đây. */
+  /** Append one event to that job's own log. Conversation events do not come here. */
   append(planId: string, event: AgentEvent): void {
     const file = this.logFile(planId);
     if (!file) return;
@@ -67,7 +67,7 @@ export class PlanStore {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n', 'utf8');
     } catch {
-      // Ghi log hỏng KHÔNG được làm hỏng công việc đang chạy.
+      // A failed log write must NEVER break the work that is running.
     }
   }
 
@@ -80,42 +80,41 @@ export class PlanStore {
       try {
         out.push(JSON.parse(line) as AgentEvent & { ts: string });
       } catch {
-        /* dòng hỏng thì bỏ qua */
+        /* skip a corrupt line */
       }
     }
     return out;
   }
 
   /**
-   * CHỮA CA ZOMBIE: bản ghi kẹt ở `planning`/`running` sau khi daemon chết.
-   * Trả về số ca đã chữa. → nợ kỹ thuật #2 · SPEC-offices.md §6
+   * HEAL ZOMBIE RUNS: records stuck at `planning`/`running` after a daemon died.
+   * Returns how many were healed. → tech debt #2 · SPEC-offices.md §6
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO CHỮA CHỨ KHÔNG CHO XOÁ — user hỏi đúng câu, 20/08.                │
+   * │ WHY HEAL RATHER THAN ALLOW DELETE — the right question, asked 20/08.     │
    * │                                                                          │
-   * │ Triệu chứng user nêu: *"nhiều khi hỏng, bị zombie thấy ngứa mắt"*, và    │
-   * │ phản xạ đầu tiên của cả hai bên là **thêm nút Xoá**. Nhưng nhật ký công  │
-   * │ việc là bên DUY NHẤT nối `plan_id` trong `logs/usage.jsonl` với một cái  │
-   * │ TÊN đọc được. Xoá một bản ghi thì tiền vẫn còn trong sổ mà không ai biết │
-   * │ nó của việc gì — và "(không rõ)" trong sổ chi phí từ đó mang HAI nghĩa   │
-   * │ (bản ghi v0, hoặc người dùng đã xoá), tức là **không còn giải thích      │
-   * │ được**. Chính user chặn lại: *"hay là giữ lại log nhỉ, để trace được,    │
-   * │ liên quan cả tiền nong"*.                                                │
+   * │ The symptom raised: *"they break sometimes and the zombies are an        │
+   * │ eyesore"*, and the first reflex on both sides was TO ADD A DELETE        │
+   * │ BUTTON. But the work log is the ONLY thing linking a `plan_id` in        │
+   * │ `logs/usage.jsonl` to a readable NAME. Delete a record and the money is  │
+   * │ still in the ledger with nobody able to say what it bought — and         │
+   * │ "(unknown)" in the ledger then carries TWO meanings (a v0 record, or a   │
+   * │ user deletion), i.e. IT STOPS BEING EXPLAINABLE. The user blocked it:    │
+   * │ *"maybe keep the log so it stays traceable — money is involved"*.        │
    * │                                                                          │
-   * │ Chẩn đoán đúng trục: cái ngứa mắt KHÔNG phải "có quá nhiều dòng", mà là  │
-   * │ **những dòng đó đang NÓI DỐI** — chúng bảo "đang chạy" trong khi không   │
-   * │ có gì chạy cả. Sửa lời nói dối thì cái ngứa mắt biến mất, và không mất   │
-   * │ một dòng lịch sử nào. Thêm nút Xoá là chữa triệu chứng bằng cách đốt      │
-   * │ bằng chứng.                                                              │
+   * │ The right diagnosis: the eyesore is NOT "too many rows", it is that      │
+   * │ THOSE ROWS ARE LYING — they say "running" while nothing runs. Fix the    │
+   * │ lie and the eyesore goes with it, losing no history at all. A delete     │
+   * │ button treats the symptom by burning the evidence.                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Chạy MỘT LẦN lúc dựng `Office`, tức là lúc tiến trình vừa khởi động và
-   * chắc chắn chưa có ca nào đang chạy. Gọi nó ở bất kỳ đâu khác là có ngày
-   * đóng dấu `failed` lên một ca đang chạy thật.
+   * ⚠ Runs ONCE while constructing `Office`, i.e. at process start when nothing
+   * can possibly be running. Calling it anywhere else eventually stamps `failed`
+   * on a job that is genuinely in flight.
    *
-   * ⚠ GIỮ NGUYÊN THỨ TỰ trong index — không dùng `upsert`, vì `upsert` đẩy bản
-   * ghi lên đầu danh sách. Chữa ba con zombie bằng `upsert` là xáo tung lịch sử
-   * theo thứ tự thời gian, đúng thứ nhật ký sinh ra để giữ.
+   * ⚠ PRESERVE THE ORDER in the index — do not use `upsert`, which lifts a
+   * record to the front. Healing three zombies through `upsert` scrambles the
+   * chronological history the log exists to keep.
    */
   healStale(note: string): number {
     const plans = this.list();
@@ -133,7 +132,7 @@ export class PlanStore {
     return healed;
   }
 
-  /** plan_id đến từ URL nên phải kiểm — nó thành tên file. */
+  /** `plan_id` arrives from a URL and becomes a filename, so it must be checked. */
   private logFile(planId: string): string | undefined {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(planId)) return undefined;
     return path.join(this.paths.tasks, `${planId}.log.jsonl`);
@@ -143,7 +142,7 @@ export class PlanStore {
 function lineCount(file: string): number {
   if (!fs.existsSync(file)) return 0;
   try {
-    // Đếm bằng kích thước ước lượng thay vì đọc cả file — log có thể lớn.
+    // Estimate from the file size rather than reading it — logs get large.
     return Math.floor(fs.statSync(file).size / 120);
   } catch {
     return 0;
@@ -151,11 +150,11 @@ function lineCount(file: string): number {
 }
 
 /**
- * Màu đại diện của một agent, băm từ id. → SPEC-offices.md §6
+ * An agent's colour, hashed from its id. → SPEC-offices.md §6
  *
- * BĂM chứ không lưu: thêm/bớt người không làm đổi màu người khác, và không sinh
- * thêm một file cấu hình nữa để lệch. Hue trải đều, tránh dải 45–70° (vàng trên
- * nền sáng đọc không ra).
+ * HASHED rather than stored: adding or removing a person never shifts anyone
+ * else's colour, and it creates no further config file to drift. Hues spread
+ * evenly, skipping the 45–70° band (yellow on a light ground is unreadable).
  */
 export function agentHue(id: string): number {
   let h = 2166136261;

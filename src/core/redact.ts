@@ -1,57 +1,61 @@
 /**
- * CẮT QUERY KHỎI URL TRONG LOG CONSOLE CỦA TRÌNH DUYỆT.
- * → `arms/browser.ts` · docs/TEST-WALKTHROUGH.md bài 18
+ * STRIPPING QUERY STRINGS FROM URLS IN THE BROWSER'S CONSOLE LOG.
+ * → `arms/browser.ts` · docs/TEST-WALKTHROUGH.md walkthrough 18
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CA THẬT, ĐỌC ĐƯỢC TRÊN ĐĨA 29/08 — `.playwright-mcp/console-*.log`:      │
+ * │ A REAL CASE, READ OFF DISK 29/08 — `.playwright-mcp/console-*.log`:      │
  * │                                                                          │
  * │   …/ajax/bnzai?…&fb_dtsg=AbCdEfGhIjKlMn_…&__user=100000000000001&…       │
  * │                                                                          │
- * │ Đó là **chìa phiên đăng nhập dưới dạng chữ**, nằm trong thư mục văn phòng │
- * │ — nơi nhân viên đọc được bằng `Read`. Trong khi **cookie thì đã được gác**│
- * │ (`<văn phòng>/.state/browser/profile`, trong `guardedZone`).              │
+ * │ That is A SESSION KEY IN PLAIN TEXT, sitting inside the office folder —   │
+ * │ where an employee can `Read` it. Meanwhile THE COOKIES ARE GUARDED        │
+ * │ (`<office>/.state/browser/profile`, inside `guardedZone`).                │
  * │                                                                          │
- * │ ⇒ Lớp lỗi để nhận mặt: **thứ phái sinh từ một tài sản nhạy cảm không tự   │
- * │ thừa kế mức bảo vệ của nó.** Kho chìa được gác; bản ghi chép *về* chìa    │
- * │ thì không.                                                               │
+ * │ ⇒ The class of bug to recognise: SOMETHING DERIVED FROM A SENSITIVE       │
+ * │ ASSET DOES NOT INHERIT ITS PROTECTION. The key store is guarded; the      │
+ * │ record ABOUT the keys is not.                                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 CẮT THEO **HÌNH DẠNG**, KHÔNG LỌC THEO TÊN. (user chốt 29/08)         │
- * │                                                                          │
- * │ Một danh sách tên (`fb_dtsg` · `access_token` · `sig` · `sessionid`…) là  │
- * │ **denylist**: nó bỏ **im lặng** mọi tên chưa ai nghĩ ra, và hãng thứ mười │
- * │ một sẽ có một tên như thế. Đúng họ [[agentco-silent-allowlist]].          │
- * │                                                                          │
- * │ *"Giữ scheme + host + path, vứt sạch phần sau"* thì đúng cho **mọi hãng**,│
- * │ không cần biết tham số nào là bí mật. Và về giá trị gỡ lỗi, `…/ajax/bnzai`│
- * │ đã nói đủ — cái query 400 ký tự kia chưa bao giờ giúp ai đọc log.         │
- * │                                                                          │
- * │ ⚠ Cắt từ `?` **HOẶC** `#`, cái nào đến trước: token OAuth kiểu implicit   │
- * │ nằm sau `#`, và một luật chỉ nhìn `?` sẽ bỏ sót đúng loại nguy nhất.      │
+ * │ 🔴 CUT BY SHAPE, NEVER FILTER BY NAME. (settled 29/08)                    │
+ * │                                                                           │
+ * │ A list of names (`fb_dtsg` · `access_token` · `sig` · `sessionid`…) is a  │
+ * │ DENYLIST: it SILENTLY misses every name nobody thought of, and the        │
+ * │ eleventh vendor will have one. The [[agentco-silent-allowlist]] family.   │
+ * │                                                                           │
+ * │ *"Keep scheme + host + path, throw the rest away"* is correct for EVERY   │
+ * │ vendor, with no need to know which parameter is a secret. And for         │
+ * │ debugging value, `…/ajax/bnzai` already says enough — that 400-character  │
+ * │ query never helped anyone read a log.                                     │
+ * │                                                                           │
+ * │ ⚠ Cut at `?` OR `#`, whichever comes first: implicit-flow OAuth tokens    │
+ * │ live after `#`, and a rule that only watches `?` misses the most          │
+ * │ dangerous kind.                                                           │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠⚠ ĐÂY LÀ GIẢM THIỂU, KHÔNG PHẢI BỊT KÍN — và câu này phải ở lại trong mã:
- * token nằm trong **thân** thông điệp (`[LOG] token=abc…`) thì không luật hình
- * dạng nào bắt được. Muốn kín hẳn thì phải xoá cả file, và cái giá là mất khả
- * năng gỡ lỗi trang. Đừng đọc hàm này thành một lời hứa nó không đưa ra.
+ * ⚠⚠ THIS IS MITIGATION, NOT A SEAL — and that sentence has to stay in the code:
+ * a token inside the BODY of a message (`[LOG] token=abc…`) is caught by no
+ * shape rule at all. Sealing it would mean deleting the whole file, at the cost
+ * of being able to debug a page. Do not read this function as a promise it never
+ * made.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * URL trong log console. Dừng ở khoảng trắng và ở vài ký tự bao quanh thường gặp
- * (`"` `'` `<` `>` `)`), vì log là văn bản tự do chứ không phải JSON.
+ * URLs in a console log. Stops at whitespace and at a few common wrapping
+ * characters (`"` `'` `<` `>` `)`), because a log is free text, not JSON.
  */
 const URL_RE = /https?:\/\/[^\s"'<>)]+/g;
 
 /**
- * Cắt query/fragment khỏi mọi URL trong một đoạn văn bản.
+ * Cut the query/fragment off every URL in a block of text.
  *
- * ⚠ **BẤT BIẾN: LUỸ ĐẲNG.** Chạy hai lần phải ra đúng một kết quả — hook có thể
- * quét lại cùng một file, và một hàm dọn không luỹ đẳng sẽ gặm dần nội dung qua
- * mỗi lượt cho tới ngày file rỗng mà không ai biết vì sao.
+ * ⚠ INVARIANT: IDEMPOTENT. Running it twice must give the same result — the hook
+ * can rescan the same file, and a cleaning function that is not idempotent eats
+ * further into the content on each pass until the file is empty and nobody can
+ * say why.
  */
 export function cutQuery(text: string): string {
   return text.replace(URL_RE, (u) => {
@@ -62,32 +66,35 @@ export function cutQuery(text: string): string {
   });
 }
 
-/** Chỉ file log console. Snapshot (`page-*.yml`) **không được đụng** — worker đọc nó. */
+/** Console logs only. Snapshots (`page-*.yml`) MUST NOT be touched — workers read them. */
 const isConsoleLog = (name: string): boolean => name.startsWith('console-') && name.endsWith('.log');
 
 /**
- * Mốc đã quét của từng thư mục — để hook không đọc lại file cũ ở mọi lời gọi tool.
+ * Per-directory scan watermark — so the hook does not re-read old files on every
+ * single tool call.
  *
- * Trong RAM: mất khi khởi động lại daemon, và lần quét đầu sau đó chỉ tốn thêm
- * một lượt đọc các file cũ — rẻ hơn hẳn một file mốc trên đĩa cần cơ chế dọn.
+ * In RAM: lost on daemon restart, and the first scan afterwards costs one extra
+ * pass over the old files — far cheaper than a watermark file on disk that would
+ * need its own cleanup mechanism.
  */
 const seen = new Map<string, number>();
 
-/** Trần đọc một file. Log console lớn hơn mức này thì nó không còn là log để đọc. */
+/** Per-file read ceiling. A console log larger than this is no longer a log anyone reads. */
 const MAX_BYTES = 4 * 1024 * 1024;
 
 /**
- * Dọn thư mục output của trình duyệt trong MỘT văn phòng.
+ * Clean the browser output folder of ONE office.
  *
- * ⚠ RẺ LÀ MỘT YÊU CẦU, không phải mong muốn: hàm này chạy sau **mỗi lời gọi
- * tool**, kể cả những lượt chẳng liên quan gì tới trình duyệt. Bốn tầng chặn,
- * xếp từ rẻ nhất:
- *   ① thư mục không tồn tại ⇒ về ngay (đúng với gần hết văn phòng)
- *   ② chỉ `console-*.log`
- *   ③ chỉ file có `mtime` **mới hơn** lần quét trước
- *   ④ chỉ ghi lại khi nội dung **thật sự đổi**
+ * ⚠ CHEAP IS A REQUIREMENT, not a preference: this runs after EVERY TOOL CALL,
+ * including the many that have nothing to do with a browser. Four gates, cheapest
+ * first:
+ *   ① the directory does not exist ⇒ return immediately (true of almost every office)
+ *   ② `console-*.log` only
+ *   ③ only files whose `mtime` is NEWER than the last scan
+ *   ④ only write back when the content ACTUALLY changed
  *
- * Trả về số file đã sửa — để test đếm được, và để hook có thứ ghi vào log.
+ * Returns how many files were edited — so tests can count, and so the hook has
+ * something to log.
  */
 export function redactBrowserLogs(officeDir: string, now = Date.now()): number {
   const dir = path.join(officeDir, '.playwright-mcp');
@@ -95,7 +102,7 @@ export function redactBrowserLogs(officeDir: string, now = Date.now()): number {
   try {
     names = fs.readdirSync(dir);
   } catch {
-    return 0; // ① không có thư mục — ca thường, và nó rẻ nhất
+    return 0; // ① no directory — the common case, and the cheapest
   }
 
   const since = seen.get(dir) ?? 0;
@@ -114,20 +121,20 @@ export function redactBrowserLogs(officeDir: string, now = Date.now()): number {
       const before = fs.readFileSync(file, 'utf8');
       const after = cutQuery(before);
       if (after !== before) {
-        // ④ ghi đè tại chỗ: file này là log của chính ta, không ai đọc dở nó,
-        // nên không cần đường ghi nguyên tử như kho chìa.
+        // ④ overwrite in place: this is our own log, nobody is mid-read on it,
+        // so it does not need the atomic write path the key store uses.
         fs.writeFileSync(file, after, 'utf8');
         changed++;
       }
     } catch {
-      /* file bị khoá hoặc vừa bị xoá — bỏ qua, lượt sau quét lại */
+      /* file locked or just deleted — skip it; the next scan picks it up */
     }
   }
   seen.set(dir, now);
   return changed;
 }
 
-/** Cho test: quên mốc đã quét. */
+/** For tests: forget the scan watermarks. */
 export function resetRedactMarks(): void {
   seen.clear();
 }

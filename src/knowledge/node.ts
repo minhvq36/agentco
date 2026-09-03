@@ -1,11 +1,11 @@
 /**
- * Node tri thức: markdown + YAML frontmatter.
+ * A knowledge node: markdown + YAML frontmatter.
  *
  * → docs/SPEC-2026-08-14-agentco.md §5
  *
- * Định dạng cố ý chọn để NGƯỜI đọc được và MÁY đọc được cùng lúc: mở bằng
- * bất kỳ editor nào, diff được bằng git, không khoá vào định dạng riêng.
- * Đây là hiện thân của nguyên tắc "sở hữu artifact, không sở hữu prompt".
+ * The format is chosen so a PERSON and a MACHINE can both read it: open it in any
+ * editor, diff it with git, no lock-in to a proprietary format. This is the
+ * "you own the artifacts, not the prompts" principle made concrete.
  */
 
 import fs from 'node:fs';
@@ -22,91 +22,96 @@ export interface KnowledgeNode {
   title: string;
   tags: string[];
   links: string[];
-  /** 'shared' = master ghi, cả công ty đọc. 'role:<id>' = chính agent đó ghi và đọc. */
+  /** 'shared' = the assistant writes, the office reads. 'role:<id>' = that agent alone. */
   scope: string;
   author: string;
   confidence: number;
   hits: number;
   pinned: boolean;
   /**
-   * Node này ĐÈ LÊN những node nào. → docs/SPEC-2026-08-14-agentco.md §5
+   * Which nodes this one SUPERSEDES. → docs/SPEC-2026-08-14-agentco.md §5
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐÂY LÀ MẢNH DUY NHẤT GIỮ CHO KHO TRI THỨC ĐÚNG LÊN, KHÔNG CHỈ CŨ ĐI.    │
+   * │ THE ONLY PIECE THAT KEEPS THE STORE CORRECT, NOT MERELY AGEING.          │
    * │                                                                          │
-   * │ `hits` và `updated` chỉ làm node ít dùng TỤT HẠNG. Chúng không trả lời   │
-   * │ được câu quan trọng nhất: "quyết định này đã bị đảo ngược chưa?" Một     │
-   * │ node sai mà hay được đọc sẽ đứng đầu bảng mãi mãi.                        │
+   * │ `hits` and `updated` only DEMOTE a rarely-used node. They cannot answer  │
+   * │ the question that matters most: "has this decision been reversed?" A     │
+   * │ wrong node that gets read often sits at the top of the table forever.    │
    * │                                                                          │
-   * │ Node bị đè KHÔNG bị xoá — file còn nguyên, đọc lại được để biết vì sao   │
-   * │ ngày xưa mình nghĩ thế. Nó chỉ rời khỏi phần được nạp vào prompt.        │
-   * │ Cùng tinh thần với Lưu trữ: cất đi thì được, xoá dấu vết thì không.      │
+   * │ A superseded node is NOT deleted — the file stays, readable, so you can  │
+   * │ see why you once thought that. It only leaves the part loaded into the   │
+   * │ prompt. Same spirit as archiving: putting something away is fine, wiping │
+   * │ the trace is not.                                                        │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Cố ý là MỘT TRƯỜNG chứ không phải một đồ thị: quan hệ duy nhất kho này thật
-   * sự dùng là "đè lên". Dựng graph engine cho một quan hệ là mua độ phức tạp
-   * trước khi có bài toán.
+   * Deliberately ONE FIELD rather than a graph: the only relation this store
+   * actually uses is "supersedes". Building a graph engine for one relation is
+   * buying complexity before there is a problem.
    */
   supersedes: string[];
   updated: string;
   /**
-   * Lần cuối node này được chọn vì HỢP VỚI MỘT VIỆC (tức là được `cold()` chấm
-   * trúng). Rỗng = chưa lần nào.
+   * The last time this node was chosen for MATCHING A JOB (i.e. scored by
+   * `cold()`). Empty = never.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MỘT NGÀY, KHÔNG PHẢI MỘT MẢNG — và không phải một cơ chế decay.          │
+   * │ ONE DATE, NOT AN ARRAY — and not a decay mechanism.                      │
    * │                                                                          │
-   * │ `hits` cộng dồn và chỉ tăng, nên nó bất tử: một node được dùng đúng một  │
-   * │ lần hai năm trước vẫn `hits > 0` mãi mãi và không bao giờ bị dọn.        │
+   * │ `hits` accumulates and only ever grows, so it is immortal: a node used   │
+   * │ exactly once two years ago still has `hits > 0` forever and is never     │
+   * │ swept.                                                                   │
    * │                                                                          │
-   * │ Lối ra KHÔNG phải cho `hits` tự tiêu hao — decay cần một LỊCH CHẠY (mỗi  │
-   * │ task? mỗi ngày? daemon tắt hai tuần thì sao?), và cái lịch đó sẽ trôi.   │
+   * │ The way out is NOT to make `hits` decay — decay needs A SCHEDULE (per    │
+   * │ task? per day? what if the daemon was off for two weeks?), and that      │
+   * │ schedule drifts.                                                         │
    * │                                                                          │
-   * │ Cửa sổ thì KHÔNG TRẠNG THÁI: chỉ cần biết lần cuối là bao giờ, rồi so    │
-   * │ với hôm nay LÚC ĐỌC. Daemon tắt bao lâu cũng vẫn đúng, không job nền.    │
+   * │ A window is STATELESS: all it needs is when the last use was, compared   │
+   * │ against today AT READ TIME. Correct however long the daemon was down,    │
+   * │ and no background job.                                                   │
    * │                                                                          │
-   * │ Hai chỉ số, hai việc, cố ý không trộn:                                    │
-   * │   `hits`      → XẾP HẠNG vào HOT  (cộng dồn, thưởng cho ích lâu dài)     │
-   * │   `last_used` → KHAI TỬ, kể cả khi hits > 0                              │
+   * │ Two metrics, two jobs, deliberately not mixed:                           │
+   * │   `hits`      → RANKING into HOT (cumulative, rewards long usefulness)   │
+   * │   `last_used` → RETIREMENT, even when hits > 0                           │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Node cũ chưa có trường này thì rơi về `updated` — không cần bảng alias.
+   * An older node without this field falls back to `updated` — no alias table.
    */
   last_used?: string;
 
   /**
-   * Node này SỐNG CHẾT theo những file nào. Rỗng = độc lập, không ai gỡ được nó.
+   * Which files this node LIVES OR DIES BY. Empty = independent, nothing removes it.
    * → docs/SPEC-2026-08-14-agentco.md §5, `KnowledgeStore.dropDependents`
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ THỰC THỂ YẾU: xoá một file trong danh sách là node NÀY BIẾN MẤT.         │
+   * │ A WEAK ENTITY: delete one file in the list and THIS NODE GOES WITH IT.   │
    * │                                                                          │
-   * │ Kinh nghiệm rút ra sau khi đọc `library/files/doi-tra.md` chỉ có nghĩa    │
-   * │ chừng nào file đó còn. Người dùng xoá tài liệu mà node ở lại thì ta giữ  │
-   * │ một lời khuyên trỏ vào hư không, trong prefix của mọi nhân viên, mãi mãi │
-   * │ — và nó nghe vẫn rất tự tin.                                             │
+   * │ A lesson drawn from reading `library/files/doi-tra.md` only means        │
+   * │ anything while that file exists. If the user deletes the document and    │
+   * │ the node stays, we keep advice pointing at nothing, in every employee's  │
+   * │ prefix, forever — and it still sounds perfectly confident.               │
    * │                                                                          │
-   * │ Xoá theo kiểu BẤT KỲ (một file mất là node mất), không phải TẤT CẢ. Bảo  │
-   * │ thủ có chủ ý: một lời khuyên đúng một nửa nguy hiểm hơn không có lời     │
-   * │ khuyên nào, vì không ai biết nửa nào đã hỏng.                            │
+   * │ Removal is ANY (one file gone ⇒ node gone), not ALL. Deliberately        │
+   * │ conservative: advice that is half right is more dangerous than no advice │
+   * │ at all, because nobody can tell which half broke.                        │
    * │                                                                          │
-   * │ ⚠ CHỈ che ca file BỊ XOÁ. Ca file BỊ SỬA (chính sách 50% → 30%) thì cơ   │
-   * │ chế này KHÔNG nổ — file vẫn còn. Ca đó do luật "chỉ ghi CÁCH LÀM, không  │
-   * │ ghi KIẾN THỨC" che (`LessonSchema` bỏ `'fact'` + chốt chặn con số), vì   │
-   * │ một câu về ĐƯỜNG ĐI vẫn đúng dù nội dung file đổi thế nào. Hai luật bù   │
-   * │ nhau; thiếu một là hở một nửa.                                           │
+   * │ ⚠ This ONLY covers a DELETED file. An EDITED file (policy 50% → 30%)     │
+   * │ does not trigger it — the file is still there. That case is covered by   │
+   * │ the "record WAYS OF WORKING, never KNOWLEDGE" rule (`LessonSchema` drops │
+   * │ `'fact'`, plus the figure guard), because a sentence about a ROUTE stays │
+   * │ true however the file's content changes. The two rules complement each   │
+   * │ other; drop one and half the surface is open.                            │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Đường dẫn tương đối với thư mục VĂN PHÒNG (`library/files/x.md`), và nó
-   * đến từ QUAN SÁT — file nhân viên thật sự `Read` trong lúc làm việc
-   * (`receipt.reads`) — chứ không phải từ lời model khai. Cùng luật với `landed`.
+   * Paths are relative to the OFFICE folder (`library/files/x.md`), and they come
+   * from OBSERVATION — files the employee actually `Read` while working
+   * (`receipt.reads`) — never from what the model claims. Same rule as `landed`.
    */
   depends_on?: string[];
 
   source?: string;
   body: string;
   tokens: number;
-  /** đường dẫn file, tương đối với thư mục công ty */
+  /** the file path, relative to the company folder */
   file: string;
 }
 
@@ -179,7 +184,7 @@ export function writeNodeFile(companyDir: string, n: KnowledgeNode): void {
   fs.writeFileSync(abs, serializeNode(n), 'utf8');
 }
 
-/** Từ khoá để chấm điểm truy xuất. Bỏ stopword tiếng Việt hay gặp. */
+/** Keywords for retrieval scoring. Common Vietnamese stopwords are dropped. */
 export function keywordsOf(n: Pick<KnowledgeNode, 'title' | 'tags' | 'body'>): string[] {
   return tokenize(`${n.title} ${n.tags.join(' ')} ${n.body}`);
 }

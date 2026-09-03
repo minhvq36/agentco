@@ -25,18 +25,19 @@ import { ArtifactsPanel } from './panels/ArtifactsPanel';
 import { SettingsPanel } from './panels/SettingsPanel';
 
 /**
- * BA KHO ĐỨNG LIỀN NHAU, và thứ tự đó có chủ ý.
+ * THE THREE STORES SIT TOGETHER, and the order is deliberate.
  *
- * Chúng là ba khái niệm dễ lẫn nhất trong cả sản phẩm, phân biệt bằng đúng một
- * câu hỏi: **AI ĐẶT FILE VÀO ĐÓ?**
+ * They are the three most confusable concepts in the product, separated by
+ * exactly one question: WHO PUT THE FILE THERE?
  *
- *   Tủ tài liệu   NGƯỜI DÙNG đưa vào   → thêm/xoá được, không sửa
- *   Kết quả       NHÂN VIÊN làm ra     → xoá được, không thêm, không sửa
- *   Kho tri thức  AGENT tự rút ra      → sửa/xoá được, không thêm
+ *   Documents   THE USER put it there    → add/delete, never edit
+ *   Results     AN EMPLOYEE made it      → delete only, never add, never edit
+ *   Knowledge   AN AGENT derived it      → edit/delete, never add
  *
- * Đứng cạnh nhau thì khác biệt đó đọc được bằng mắt; rải ra ba chỗ thì người
- * dùng phải nhớ. Đặt "Kết quả" ở GIỮA vì nó là cái duy nhất có cả hai đầu:
- * nhân viên đọc tài liệu ở trên, và học được gì thì thành tri thức ở dưới.
+ * Side by side that difference reads at a glance; spread across three places it
+ * has to be memorised. "Results" sits in the MIDDLE because it is the only one
+ * with both ends: employees read documents above it, and what they learn becomes
+ * knowledge below it.
  * → docs/SPEC-library.md §1 · docs/SPEC-artifacts.md
  *
  * ⚠ `label` is a MESSAGE KEY, not a string. This table is module-level, so a
@@ -57,7 +58,7 @@ const MIN_W = 300;
 const WIDE_W = 720;
 const STORAGE_KEY = 'agentco.panelWidth';
 
-/** Trần theo cửa sổ: canvas phải còn chỗ để nhìn thấy sơ đồ, không chỉ một khe. */
+/** Capped by the window: the canvas needs room to show a diagram, not a slit. */
 function maxWidth(): number {
   return Math.max(MIN_W, Math.min(WIDE_W + 240, window.innerWidth - 420));
 }
@@ -67,23 +68,25 @@ function clampWidth(w: number): number {
 }
 
 /**
- * Sidebar trái. → docs/SPEC-ui.md §0
+ * The left sidebar. → docs/SPEC-ui.md §0
  *
- * Bản v0 có một thanh dock dưới chiếm chỗ VĨNH VIỄN cho chat và kế hoạch —
- * thứ người dùng chỉ cần từng lúc. Ở đây: rail icon luôn thấy, panel mở ra khi
- * bấm và đóng lại được, trả toàn bộ màn hình cho canvas.
+ * v0 had a bottom dock that PERMANENTLY held space for chat and the plan —
+ * things people need only now and then. Here: the icon rail is always visible,
+ * the panel opens on click and closes again, giving the whole screen to the
+ * canvas.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO PANEL KÉO ĐƯỢC                                                    │
+ * │ WHY THE PANEL IS RESIZABLE                                               │
  * │                                                                          │
- * │ 336px là đủ cho một dòng chat, không đủ cho thứ Trợ lý thật sự trả về:   │
- * │ danh sách lệnh, kế hoạch nhiều bước, báo cáo. Nội dung không co lại được │
- * │ — nó chỉ ngắt dòng xấu đi. Nên bề rộng phải là thứ người dùng chỉnh.     │
+ * │ 336px is enough for a line of chat and not enough for what the assistant │
+ * │ actually returns: command lists, multi-step plans, reports. That content │
+ * │ does not shrink — it only wraps worse. So the width has to be theirs.    │
  * │                                                                          │
- * │ Bề rộng lúc ĐANG KÉO đi thẳng vào DOM qua ref, y hệt toạ độ node trên    │
- * │ canvas. Một `setState` mỗi frame kéo là render lại cả cây React 60       │
- * │ lần/giây trong khi SSE vẫn đang bắn sự kiện vào — đúng thứ tiêu chí      │
- * │ "Hiệu năng" cấm. React chỉ biết bề rộng mới khi THẢ CHUỘT.               │
+ * │ The width WHILE DRAGGING goes straight into the DOM through a ref, the   │
+ * │ same as node coordinates on the canvas. One `setState` per drag frame is │
+ * │ re-rendering the whole React tree 60 times a second while SSE is still   │
+ * │ firing events into it — precisely what the "performance" criterion       │
+ * │ forbids. React only learns the new width ON MOUSE RELEASE.               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function Sidebar() {
@@ -91,13 +94,14 @@ export function Sidebar() {
   const unread = useApp((s) => s.messages.length - s.seenMessages);
   const working = useApp((s) => s.officeState === 'working');
   /**
-   * KHÔNG CÓ VĂN PHÒNG NÀO ⇒ chỉ còn ngăn cấp CÔNG TY. (bug 02/09)
+   * NO OFFICES ⇒ only the COMPANY-level drawer remains. (bug 02/09)
    *
-   * Năm ngăn kia nói về một văn phòng đang mở nên chúng vô nghĩa ở đây. Nhưng
-   * "Tổng quan công ty" thì nói về công ty — chi phí, kết nối, workspace đều là
-   * dữ liệu cấp công ty, và **chúng vẫn tồn tại khi văn phòng cuối cùng bị xoá**.
-   * Giấu nốt ngăn này là nhốt người dùng ngoài sổ chung của chính họ: xoá hết
-   * văn phòng xong thì kết nối Notion/Linear/GitHub không còn cửa nào để dọn.
+   * The other five drawers describe an open office, so they are meaningless
+   * here. But "Company overview" describes the company — spending, connections
+   * and workspaces are all company-level data, and THEY OUTLIVE THE LAST OFFICE.
+   * Hiding this drawer too locks people out of their own shared ledger: delete
+   * every office and the Notion/Linear/GitHub connections have no door left to
+   * clean them up through.
    */
   const noOffices = useApp((s) => (s.company?.offices.length ?? 0) === 0);
   /**
@@ -115,8 +119,8 @@ export function Sidebar() {
     return Number.isFinite(saved) && saved > 0 ? clampWidth(saved) : 336;
   });
 
-  // Thu nhỏ cửa sổ có thể làm panel rộng hơn cả màn hình. Kẹp lại, nếu không
-  // canvas biến mất hoàn toàn và không có cách nào lấy lại ngoài xoá localStorage.
+  // Shrinking the window can leave the panel wider than the screen. Clamp it, or
+  // the canvas disappears entirely with no way back except clearing localStorage.
   useEffect(() => {
     const onResize = () => setWidth((w) => clampWidth(w));
     window.addEventListener('resize', onResize);
@@ -132,8 +136,8 @@ export function Sidebar() {
     const startW = pane.getBoundingClientRect().width;
     let next = startW;
 
-    // `setPointerCapture` trên chính tay nắm: chuột đi nhanh ra ngoài phần tử
-    // vẫn không tuột, và không cần bắt sự kiện ở tận `window`.
+    // `setPointerCapture` on the handle itself: a fast pointer leaving the
+    // element does not break the drag, and no `window`-level listener is needed.
     const handle = e.currentTarget;
     handle.setPointerCapture(e.pointerId);
     document.body.style.cursor = 'col-resize';
@@ -173,8 +177,8 @@ export function Sidebar() {
           const on = panel === tab.id;
           const label = t(tab.label);
           return (
-            /* `side="right"`: rail này XẾP DỌC, nên tooltip mặc định (`top`)
-               phủ đúng lên nút phía trên. → chú thích ở `Tip` */
+            /* `side="right"`: this rail is VERTICAL, so the default tooltip
+               (`top`) lands right on the button above. → the note on `Tip` */
             <Tip key={tab.id} label={label} side="right">
               <Button
                 size="icon"
@@ -230,8 +234,8 @@ export function Sidebar() {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          {/* overflow-hidden: mỗi panel tự lo cuộn của nó. Bọc thêm một lớp
-              cuộn ở đây sẽ sinh hai thanh cuộn lồng nhau. */}
+          {/* overflow-hidden: each panel handles its own scrolling. Wrapping
+              another scroll layer here produces two nested scrollbars. */}
           <div className="min-h-0 flex-1 overflow-hidden">
             {panel === 'chat' && <ChatPanel />}
             {panel === 'plans' && <PlansPanel />}
@@ -242,8 +246,8 @@ export function Sidebar() {
             {panel === 'settings' && <SettingsPanel />}
           </div>
 
-          {/* Tay nắm kéo. Vùng bắt rộng 7px nhưng vạch chỉ hiện khi rê tới —
-              một đường kẻ đậm nằm suốt chiều cao màn hình là nhiễu thị giác. */}
+          {/* The drag handle. A 7px hit area, but the line only shows on hover —
+              a solid rule running the full height of the screen is visual noise. */}
           <div
             role="separator"
             aria-orientation="vertical"

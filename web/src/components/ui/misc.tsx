@@ -8,19 +8,19 @@ import { t } from '@i18n';
 export const TooltipProvider = TooltipPrimitive.Provider;
 
 /**
- * Tooltip một dòng. Dùng cho các nút chỉ có icon — không có nó thì icon là câu đố.
+ * A one-line tooltip, for icon-only buttons — without one, an icon is a riddle.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `side` KHÔNG PHẢI CHUYỆN THẨM MỸ — nó quyết định nút KẾ BÊN có bấm được. │
+ * │ `side` IS NOT COSMETIC — it decides whether the NEXT button is clickable.│
  * │                                                                          │
- * │ Mặc định của Radix là `top`. Trong một DÃY DỌC (rail icon bên trái) thì   │
- * │ "trên" chính là chỗ nút kế tiếp đang đứng: rê vào "Kết quả" là chú thích  │
- * │ của nó phủ lên "Tủ tài liệu". Muốn bấm nút bị phủ thì phải rê chuột ra    │
- * │ chỗ khác cho tooltip tắt rồi mới quay lại — mỗi lần đổi ngăn là ba thao   │
- * │ tác thay vì một.                                                          │
+ * │ Radix defaults to `top`. In a VERTICAL strip (the left icon rail), "top"  │
+ * │ is exactly where the next button sits: hovering "Results" covers          │
+ * │ "Documents" with its own tooltip. Clicking the covered button then means  │
+ * │ moving the pointer away to dismiss the tooltip and coming back — three    │
+ * │ actions per drawer change instead of one.                                 │
  * │                                                                          │
- * │ Luật: dãy DỌC thì tooltip ra `right`, dãy NGANG thì `top`/`bottom`. Tức   │
- * │ là luôn đẩy nó ra khỏi trục mà các nút xếp hàng.                          │
+ * │ Rule: a VERTICAL strip puts tooltips `right`, a HORIZONTAL one puts them  │
+ * │ `top`/`bottom`. Always push it off the axis the buttons line up on.       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function Tip({
@@ -39,9 +39,9 @@ export function Tip({
         <TooltipPrimitive.Content
           side={side}
           sideOffset={6}
-          /* `collisionPadding`: sát mép trái màn hình, Radix tự lật sang phía
-             đối diện khi hết chỗ — mà phía đối diện của `right` là `left`, tức
-             là ra ngoài cửa sổ. Chừa lề để nó lật sớm và lật đúng. */
+          /* `collisionPadding`: hard against the left edge, Radix flips to the
+             opposite side when it runs out of room — and the opposite of `right`
+             is `left`, i.e. off-screen. Leave margin so it flips early and correctly. */
           collisionPadding={8}
           className="z-50 rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs text-ink shadow-lg"
         >
@@ -103,7 +103,7 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
   return <label className={cn('mb-1.5 block text-xs text-muted', className)} {...props} />;
 }
 
-/** Nhãn nhỏ chữ hoa dùng làm tiêu đề khu vực. */
+/** A small upper-case label used as a section heading. */
 export function SectionTitle({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
@@ -114,26 +114,28 @@ export function SectionTitle({ className, ...props }: React.HTMLAttributes<HTMLD
 }
 
 /**
- * Nút CHÉP THAM CHIẾU FILE — dùng chung Tủ tài liệu và ngăn Kết quả.
+ * The COPY FILE REFERENCE button — shared by Documents and Results.
  * → docs/SPEC-library.md §8c
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CHÉP ĐƯỜNG DẪN ĐỦ, KHÔNG CHÉP TÊN TRẦN — và đó là cả lý do nút này tồn   │
- * │ tại.                                                                     │
+ * │ COPY THE FULL PATH, NEVER THE BARE NAME — that is the whole reason this  │
+ * │ button exists.                                                           │
  * │                                                                          │
- * │ Hai kho **được phép** có file trùng tên: tủ tài liệu có `doc-1.md`, ngăn │
- * │ Kết quả cũng có `doc-1.md`. Chép tên trần là đẩy sự mập mờ đó sang cho    │
- * │ người dùng gõ lại bằng tay, rồi sang cho model đoán. Đường dẫn đủ         │
- * │ (`library/files/…` vs `artifacts/…`) tự nó là thứ phân biệt.             │
+ * │ The two stores are ALLOWED to hold files with the same name: Documents   │
+ * │ has `doc-1.md` and Results has `doc-1.md`. Copying the bare name hands   │
+ * │ that ambiguity to the user to retype by hand, and then to the model to   │
+ * │ guess at. The full path (`library/files/…` vs `artifacts/…`) is itself   │
+ * │ the thing that distinguishes them.                                       │
  * │                                                                          │
- * │ Tiền tố `@` là quy ước CỦA TA, do `Office.resolveRefs()` bóc ra bằng      │
- * │ code trước khi tới model — KHÔNG phải cú pháp của SDK. Xem chú thích ở    │
- * │ `resolveRefs` để biết vì sao ta còn KHÔNG MUỐN SDK hiểu nó.               │
+ * │ The `@` prefix is OUR convention, unwrapped in code by                   │
+ * │ `Office.resolveRefs()` before anything reaches the model — it is NOT SDK │
+ * │ syntax. See the note on `resolveRefs` for why we actively do NOT want    │
+ * │ the SDK to understand it.                                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Đổi icon sau khi chép và tự trả lại sau 1.2s: clipboard là thao tác duy nhất
- * trong giao diện KHÔNG có phản hồi thị giác nào từ hệ thống, nên người dùng
- * bấm hai lần rồi dán ra hai dòng.
+ * The icon changes on copy and reverts after 1.2s: the clipboard is the one
+ * action in this interface with NO visual feedback from the system, so without
+ * it people press twice and paste two lines.
  */
 export function CopyRef({ path }: { path: string }) {
   const [done, setDone] = React.useState(false);
@@ -145,18 +147,18 @@ export function CopyRef({ path }: { path: string }) {
       aria-label={t('common.copyRef', { path })}
       title={t('common.copyPath')}
       onClick={() => {
-        // `navigator.clipboard` cần secure context. Daemon chạy ở
-        // `http://127.0.0.1` — trình duyệt coi localhost là secure, nên đường
-        // này chạy. Nhưng người dùng có thể mở qua IP LAN (`--host`), và ở đó
-        // API biến mất hoàn toàn: `?.` chứ không phải `try` là vì nó KHÔNG
-        // TỒN TẠI chứ không phải ném lỗi.
+        // `navigator.clipboard` needs a secure context. The daemon runs on
+        // `http://127.0.0.1` and browsers treat localhost as secure, so this
+        // path works. But someone may open it over a LAN IP (`--host`), where
+        // the API disappears entirely: `?.` rather than `try` because it DOES
+        // NOT EXIST, it does not throw.
         void navigator.clipboard?.writeText(`@${path}`).then(
           () => {
             setDone(true);
             setTimeout(() => setDone(false), 1_200);
           },
           () => {
-            /* trình duyệt từ chối — người dùng vẫn đọc được đường dẫn ở tooltip */
+            /* the browser refused — the path is still readable in the tooltip */
           },
         );
       }}
@@ -167,9 +169,9 @@ export function CopyRef({ path }: { path: string }) {
 }
 
 /**
- * Trạng thái rỗng. CÓ COMPONENT RIÊNG là có chủ ý: tiêu chí "Ổn định" đòi mọi
- * trạng thái rỗng phải là màn hình được thiết kế, không phải một khoảng trắng
- * mà người dùng tưởng là hỏng.
+ * The empty state. HAVING ITS OWN COMPONENT is deliberate: the "stable"
+ * criterion requires every empty state to be a designed screen, not a blank area
+ * that reads as breakage.
  */
 export function Empty({
   icon,
@@ -179,7 +181,7 @@ export function Empty({
 }: {
   icon?: React.ReactNode;
   title: string;
-  /** Nhận cả node để chỗ gọi xuống dòng được — không phải chuỗi thuần. */
+  /** Takes a node so the call site can break lines — not a plain string. */
   hint?: React.ReactNode;
   action?: React.ReactNode;
 }) {

@@ -50,19 +50,73 @@
 
 import fs from 'node:fs';
 
+/**
+ * BMP code points that still render two columns.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE FIRST VERSION WIDENED ONLY THE ASTRAL PLANE (`code > 0xffff`), AND   │
+ * │ THAT MISSES EVERY ✅ AND ⛔ IN THE REPOSITORY.                            │
+ * │                                                                          │
+ * │ 🔴 and 🔥 are astral and were counted right; ✅ (U+2705) and ⛔ (U+26D4)  │
+ * │ are not, and they render two columns all the same. Found on 03/09 while  │
+ * │ re-padding `markdown.tsx`, whose rule list puts four ✅ on one line: the  │
+ * │ tool padded it four columns past the border and said it was fine — the   │
+ * │ checker measured it with the same wrong ruler, so nothing complained.    │
+ * │                                                                          │
+ * │ ⚠ Being in this list is NOT the same as being an emoji. `⚠` (U+26A0) and │
+ * │ `✓` (U+2713) default to TEXT presentation and take one column, which is  │
+ * │ why they are absent. What earns a place is East Asian Wide/Fullwidth, or │
+ * │ default emoji presentation — plus anything followed by U+FE0F, handled   │
+ * │ separately below because it upgrades the glyph BEFORE it.                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const WIDE: readonly (readonly [number, number])[] = [
+  // Default-emoji-presentation code points that live in the BMP.
+  [0x231a, 0x231b], [0x23e9, 0x23ec], [0x23f0, 0x23f0], [0x23f3, 0x23f3],
+  [0x25fd, 0x25fe], [0x2614, 0x2615], [0x2648, 0x2653], [0x267f, 0x267f],
+  [0x2693, 0x2693], [0x26a1, 0x26a1], [0x26aa, 0x26ab], [0x26bd, 0x26be],
+  [0x26c4, 0x26c5], [0x26ce, 0x26ce], [0x26d4, 0x26d4], [0x26ea, 0x26ea],
+  [0x26f2, 0x26f3], [0x26f5, 0x26f5], [0x26fa, 0x26fa], [0x26fd, 0x26fd],
+  [0x2705, 0x2705], [0x270a, 0x270b], [0x2728, 0x2728], [0x274c, 0x274c],
+  [0x274e, 0x274e], [0x2753, 0x2755], [0x2757, 0x2757], [0x2795, 0x2797],
+  [0x27b0, 0x27b0], [0x27bf, 0x27bf], [0x2b1b, 0x2b1c], [0x2b50, 0x2b50],
+  [0x2b55, 0x2b55],
+  // East Asian Wide and Fullwidth.
+  [0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf],
+  [0x4e00, 0x9fff], [0xa000, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff],
+  [0xfe10, 0xfe19], [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6],
+];
+
+function isWide(code: number): boolean {
+  return WIDE.some(([lo, hi]) => code >= lo && code <= hi);
+}
+
 /** Columns a string occupies in a monospaced editor. */
 export function displayWidth(text: string): number {
   let width = 0;
+  // Columns the previous glyph contributed — U+FE0F can upgrade it after the fact.
+  let last = 0;
   for (const char of text) {
     const code = char.codePointAt(0) ?? 0;
-    // Astral plane: emoji and the like render two columns wide.
-    if (code > 0xffff) {
-      width += 2;
+    // U+FE0F asks for emoji presentation: the glyph BEFORE it becomes two columns.
+    if (code === 0xfe0f) {
+      if (last === 1) {
+        width += 1;
+        last = 2;
+      }
       continue;
     }
-    // Combining marks and variation selectors hang off the previous glyph.
-    if ((code >= 0x0300 && code <= 0x036f) || (code >= 0xfe00 && code <= 0xfe0f)) continue;
-    width += 1;
+    // Combining marks and the other variation selectors hang off the previous glyph.
+    if (
+      (code >= 0x0300 && code <= 0x036f) ||
+      (code >= 0x20d0 && code <= 0x20ff) ||
+      (code >= 0xfe00 && code <= 0xfe0e)
+    ) {
+      continue;
+    }
+    // Astral plane: emoji and the like render two columns wide.
+    last = code > 0xffff || isWide(code) ? 2 : 1;
+    width += last;
   }
   return width;
 }

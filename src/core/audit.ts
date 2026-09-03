@@ -1,67 +1,71 @@
 /**
- * NHẬT KÝ KIỂM TOÁN CHO CÁNH TAY — mọi lời gọi MCP, **kèm tham số**.
+ * THE AUDIT LOG FOR ARMS — every MCP call, WITH ITS ARGUMENTS.
  * → docs/SPEC-arms.md §6k
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO NÓ TỒN TẠI, và ca thật đã chứng minh nó không phải chuyện lý thuyết│
- * │                                                                          │
- * │ Ca 26/08: một lượt chạy chạm `max_turns` GIỮA CHỪNG. Nhật ký cho thấy nó  │
- * │ đã gọi `notion-update-page` (một lời gọi GHI) trước khi bị cắt, nhưng báo │
- * │ cáo cuối nói *"chưa xoá được"*. Với file trong văn phòng thì câu đó vô     │
- * │ hại; với **Notion của người dùng** thì nó sai về THẾ GIỚI BÊN NGOÀI.      │
- * │                                                                          │
- * │ Và ta **không tra lại được** nó đã ghi gì — nhật ký cũ chỉ giữ `calls[0]` │
- * │ mỗi lượt, không giữ tham số. Nên câu hỏi *"hôm qua nó đã ghi gì vào       │
- * │ Notion của tôi"* là câu **không trả lời được**, ở đúng nơi hậu quả nằm    │
- * │ ngoài tầm với của ta.                                                    │
- * │                                                                          │
- * │ ⚠ Đây là thứ THAY cho cổng duyệt từng lần, không phải bổ sung cho nó.    │
- * │ User chốt 25/08 bỏ tầng 2 (*"mỗi mcp cắm cho nó chính là sandbox, cùng    │
- * │ lắm thì có log"*). Bỏ cổng thì log **phải đủ**, nếu không ta vừa bỏ cả    │
- * │ hai. → §6k                                                               │
+ * │ WHY IT EXISTS, and the real case proving it is not a theoretical concern. │
+ * │                                                                           │
+ * │ 26/08: a run hit `max_turns` PART-WAY THROUGH. The log showed it had      │
+ * │ already called `notion-update-page` (a WRITE) before being cut, while     │
+ * │ the final report said *"could not delete it"*. For a file inside the      │
+ * │ office that sentence is harmless; for THE USER'S NOTION it is wrong       │
+ * │ about THE OUTSIDE WORLD.                                                  │
+ * │                                                                           │
+ * │ And we COULD NOT LOOK UP what it had written — the old log kept only      │
+ * │ `calls[0]` per turn, with no arguments. So *"what did it write into my    │
+ * │ Notion yesterday"* was UNANSWERABLE, in exactly the place where the       │
+ * │ consequences sit beyond our reach.                                        │
+ * │                                                                           │
+ * │ ⚠ This REPLACES a per-call approval gate; it does not supplement one.     │
+ * │ Tier 2 was dropped on 25/08 (*"each mcp we plug in is its own sandbox —   │
+ * │ a log is enough"*). Having dropped the gate, the log HAS TO BE            │
+ * │ SUFFICIENT, or we have dropped both. → §6k                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ghi vào `.state/mcp-audit.jsonl` của TỪNG văn phòng — cùng chỗ, cùng luật với
- * `chat.jsonl`. Không nằm ở cấp công ty: câu hỏi luôn là *"văn phòng này đã làm
- * gì"*, và gộp mọi văn phòng vào một file là bắt người đọc tự lọc.
+ * Written to EACH office's own `.state/mcp-audit.jsonl` — same place, same rule
+ * as `chat.jsonl`. Not at company level: the question is always *"what did THIS
+ * office do"*, and merging every office into one file makes the reader filter.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 export interface ArmCall {
-  /** ISO. Thứ tự trong file đã là thứ tự thời gian, nhưng dòng phải TỰ ĐỌC ĐƯỢC. */
+  /** ISO. File order is already chronological, but a line has to READ ON ITS OWN. */
   ts: string;
-  /** Băm cánh tay. Giao diện tra ra nhãn — băm không bao giờ lên màn hình. */
+  /** The arm's hash. The interface resolves the label — a hash never reaches the screen. */
   server: string;
-  /** Tên việc, đã bỏ tiền tố `mcp__<server>__`. */
+  /** The action name, with the `mcp__<server>__` prefix stripped. */
   tool: string;
-  /** Ai gọi. `''` = không rõ (không nên xảy ra, nhưng đừng bịa). */
+  /** Who called it. `''` = unknown (should not happen, but do not invent one). */
   role: string;
   plan_id?: string;
   task_id?: string;
   /**
-   * THAM SỐ — đây là **toàn bộ lý do** file này tồn tại.
+   * THE ARGUMENTS — the ENTIRE reason this file exists.
    *
-   * ⚠ Ghi tham số là ghi NỘI DUNG người dùng (đoạn văn sắp dán vào Notion, tên
-   * file sắp đọc). Đó là chủ ý: không có nó thì dòng log chỉ nói *"đã gọi
-   * update_page"*, tức đúng bằng thứ ta đã có và đã thấy là không đủ.
+   * ⚠ Recording arguments means recording USER CONTENT (the paragraph about to
+   * be pasted into Notion, the filename about to be read). That is deliberate:
+   * without it a log line says only *"called update_page"*, which is exactly
+   * what we already had and already found insufficient.
    */
   args: string;
-  /** Tham số bị cắt bớt vì quá dài — nói ra, đừng để người đọc tưởng đó là tất cả. */
+  /** Arguments truncated for length — say so; do not let a reader assume that is all. */
   truncated?: boolean;
 }
 
 /**
- * Trần một dòng. Rộng tay có chủ ý — một đoạn văn dán vào Notion dài hơn hẳn
- * một đường dẫn file, và cắt nó đi là làm mất đúng thứ ta cần khi đi truy.
+ * Per-line ceiling. Deliberately generous — a paragraph pasted into Notion is far
+ * longer than a file path, and trimming it away loses exactly what an
+ * investigation needs.
  */
 const MAX_ARGS = 2_000;
 
 /**
- * Trần số dòng giữ lại. `chat.jsonl` không có trần; file này thì cần, vì nó ghi
- * MỖI LỜI GỌI chứ không phải mỗi lượt trò chuyện — một ca chạm 20 trang Notion
- * sinh 20 dòng, và một văn phòng chạy vài tháng thì file phình không có đáy.
+ * How many lines are kept. `chat.jsonl` has no ceiling; this file needs one,
+ * because it records EVERY CALL rather than every turn of conversation — a run
+ * touching 20 Notion pages writes 20 lines, and over a few months of an office's
+ * life the file grows without a floor.
  */
 const MAX_LINES = 2_000;
 
@@ -77,9 +81,9 @@ export class AuditLog {
   }
 
   /**
-   * Ghi một lời gọi. **KHÔNG BAO GIỜ được ném** — nó chạy giữa một ca đang làm
-   * việc, và làm hỏng một ca vì không ghi được nhật ký là đổi một mất mát nhỏ
-   * lấy một mất mát lớn. Cùng luật với `appendChat`.
+   * Record one call. MUST NEVER THROW — it runs in the middle of a job, and
+   * breaking a job because a log write failed trades a small loss for a large
+   * one. Same rule as `appendChat`.
    */
   append(call: Omit<ArmCall, 'ts' | 'args'> & { args: unknown }): void {
     try {
@@ -99,15 +103,15 @@ export class AuditLog {
       fs.mkdirSync(this.stateDir, { recursive: true });
       fs.appendFileSync(this.file(), `${JSON.stringify(line)}\n`, 'utf8');
     } catch {
-      /* Không ghi được nhật ký KHÔNG được làm hỏng ca đang chạy. */
+      /* A failed log write must NOT break the running job. */
     }
   }
 
   /**
-   * Đọc, MỚI NHẤT LÊN ĐẦU. `server` để lọc theo một cánh tay.
+   * Read, NEWEST FIRST. `server` filters to one arm.
    *
-   * ⚠ Dòng hỏng thì BỎ QUA dòng đó, không bỏ cả file: một lần ghi bị cắt giữa
-   * chừng (daemon chết) không được xoá sổ lịch sử của mọi lời gọi trước nó.
+   * ⚠ A corrupt line is SKIPPED, not the whole file: one write cut short by a
+   * dying daemon must not erase the history of every call before it.
    */
   list(opts: { server?: string; limit?: number } = {}): ArmCall[] {
     let raw: string;
@@ -124,7 +128,7 @@ export class AuditLog {
         if (opts.server && rec.server !== opts.server) continue;
         out.push(rec);
       } catch {
-        /* dòng hỏng — bỏ qua đúng dòng đó */
+        /* corrupt line — skip exactly that line */
       }
     }
     out.reverse();
@@ -132,8 +136,9 @@ export class AuditLog {
   }
 
   /**
-   * Cắt bớt phần cũ khi file vượt trần. Gọi sau mỗi ca, không phải sau mỗi dòng:
-   * đọc-ghi cả file cho từng lời gọi là biến một `appendFileSync` thành O(n²).
+   * Trim the old end once the file exceeds its ceiling. Called after each shift,
+   * not after each line: read-writing the whole file per call turns one
+   * `appendFileSync` into O(n²).
    */
   trim(): void {
     try {
@@ -141,18 +146,18 @@ export class AuditLog {
       if (lines.length <= MAX_LINES) return;
       fs.writeFileSync(this.file(), `${lines.slice(-MAX_LINES).join('\n')}\n`, 'utf8');
     } catch {
-      /* không dọn được thì thôi — file to hơn mong muốn vẫn tốt hơn mất log */
+      /* could not trim — a larger file than intended still beats losing the log */
     }
   }
 }
 
-/** `mcp__<server>__<tool>` → hai mảnh. `undefined` = không phải lời gọi MCP. */
+/** `mcp__<server>__<tool>` → two pieces. `undefined` = not an MCP call. */
 export function splitArmTool(name: string): { server: string; tool: string } | undefined {
   if (!name.startsWith('mcp__')) return undefined;
   const rest = name.slice('mcp__'.length);
   const cut = rest.indexOf('__');
-  // `mcp__files` (cấp cả server, không có tên việc) vẫn là một lời gọi hợp lệ
-  // ở dạng khai báo quyền, nhưng KHÔNG bao giờ là tên một lời gọi thật.
+  // `mcp__files` (a whole server, no action name) is still valid as a permission
+  // declaration, but it is NEVER the name of an actual call.
   if (cut < 0) return undefined;
   return { server: rest.slice(0, cut), tool: rest.slice(cut + 2) };
 }

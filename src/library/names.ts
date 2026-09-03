@@ -1,16 +1,16 @@
 /**
- * Kiểm tên file và định dạng — TOÀN HÀM THUẦN.
+ * File name and format checks — ALL PURE FUNCTIONS.
  *
  * → docs/SPEC-library.md §4
  *
- * Tách khỏi phần I/O có chủ ý: đây đúng là lớp hàm mà `SESSIONS_MEMORY.md` §4
- * xếp ưu tiên 0 cho test tự động — biên dịch sạch, đọc thấy hợp lý, và sai theo
- * những cách chỉ lộ ra khi gặp file thật.
+ * Deliberately separated from the I/O: this is exactly the layer that
+ * `SESSIONS_MEMORY.md` §4 ranks priority 0 for automated tests — it compiles
+ * clean, reads plausible, and is wrong in ways that only surface on real files.
  */
 
 import { t, type MessageKey } from '../i18n/index.js';
 
-/** Đuôi nhận vào và cách xử lý. → SPEC-library.md §4 */
+/** Accepted extensions and how each is handled. → SPEC-library.md §4 */
 export type Handling = 'text' | 'zip' | 'pdf';
 
 export const HANDLING: Record<string, Handling> = {
@@ -27,38 +27,42 @@ export const HANDLING: Record<string, Handling> = {
 };
 
 /**
- * ĐƯỜNG DẪN NHÂN VIÊN MỞ ĐƯỢC — hàm thuần, suy từ `(ext, state)`. → SPEC-library §4.4
+ * THE PATH AN EMPLOYEE CAN ACTUALLY OPEN — pure, derived from `(ext, state)`.
+ * → SPEC-library §4.4
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CA HỎNG CÓ THẬT ĐÃ ĐẺ RA HÀM NÀY (20/08, `P-260820-2219-5ltb`).          │
+ * │ A REAL FAILURE PRODUCED THIS FUNCTION (20/08, `P-260820-2219-5ltb`).     │
  * │                                                                          │
- * │ Bảng kê tủ nêu `library/files/hd1.docx` rồi dặn *"put its path in that    │
- * │ task's inputs"*. Trợ lý làm ĐÚNG y lời dặn — và tool `Read` không mở      │
- * │ được `.docx` nhị phân. Cả ca ba bước chết ở bước một, $0.25, trong khi    │
- * │ `library/text/hd1.docx.txt` đã nằm sẵn trên đĩa từ lúc thả file vào.      │
+ * │ The library index listed `library/files/hd1.docx` and then said *"put    │
+ * │ its path in that task's inputs"*. The assistant did EXACTLY as told —    │
+ * │ and the `Read` tool cannot open a binary `.docx`. A three-step job died  │
+ * │ at step one, $0.25, while `library/text/hd1.docx.txt` had been sitting   │
+ * │ on disk since the moment the file was dropped in.                        │
  * │                                                                          │
- * │ ⚠ LUẬT KHÁC NHAU THEO ĐỊNH DẠNG, và bản trước nói như thể nó giống nhau: │
+ * │ ⚠ THE RULE DIFFERS BY FORMAT, and the previous version spoke as though   │
+ * │ it did not:                                                              │
  * │                                                                          │
- * │   text (md/txt/csv/…)  bản gốc CHÍNH LÀ text        → files/             │
- * │   zip  (docx/xlsx/pptx) bản gốc KHÔNG MỞ ĐƯỢC BẰNG GÌ → chỉ text/        │
- * │   pdf                   bản gốc ĐỌC ĐƯỢC theo trang  → text/ + files/    │
+ * │   text (md/txt/csv/…)   the original IS the text      → files/           │
+ * │   zip  (docx/xlsx/pptx) the original OPENS IN NOTHING → text/ only       │
+ * │   pdf                   the original READS by page    → text/ + files/   │
  * │                                                                          │
- * │ Chỉ PDF mới đúng luật "text để TÌM, bản gốc để ĐỌC KỸ" (§3.1). Áp luật   │
- * │ đó cho docx là chỉ nhân viên vào một file nhị phân.                       │
+ * │ Only PDF fits the "text to FIND, original to READ CLOSELY" rule (§3.1).  │
+ * │ Applying that rule to docx points an employee at a binary file.          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * THUẦN được vì `extractOne` chỉ ghi sidecar trên đúng một nhánh: `ready` và
- * `kind !== 'text'`. `image-only`/`unindexed`/`failed` đều `return` trước đó.
- * Nên "sidecar có tồn tại không" suy được từ trạng thái, không cần chạm đĩa —
- * và hai bên không thể lệch nhau vì chỉ có một chỗ định nghĩa.
+ * It can be PURE because `extractOne` writes a sidecar on exactly one branch:
+ * `ready` and `kind !== 'text'`. `image-only`/`unindexed`/`failed` all `return`
+ * before that. So "does a sidecar exist" is derivable from the state without
+ * touching disk — and the two cannot drift, because there is one definition.
  */
 export interface DocPaths {
   /**
-   * Đường nhân viên mở được. **Thiếu = tài liệu chưa dùng được** — và lúc đó
-   * bảng kê KHÔNG được nêu đường dẫn nào, vì nêu ra là mời người ta đâm đầu vào.
+   * The path an employee can open. **Missing = the document is not usable yet**
+   * — and in that case the index must list NO path at all, because listing one
+   * is inviting someone to walk into it.
    */
   open?: string;
-  /** Bản gốc, CHỈ nêu khi nó vừa đọc được vừa có ích THÊM (pdf đã bóc). */
+  /** The original, listed ONLY when it is both readable and ADDS something (an extracted pdf). */
   original?: string;
 }
 
@@ -66,21 +70,21 @@ export function docPaths(name: string, ext: string, state: string): DocPaths {
   const files = `library/files/${name}`;
   const text = `library/text/${name}.txt`;
   const kind = HANDLING[ext];
-  // Đuôi không nhận thì KHÔNG có đường nào. Bỏ nhánh này là mọi đuôi lạ rơi vào
-  // nhánh `zip` và ta nêu một sidecar chưa bao giờ được ghi — test bắt đúng chỗ
-  // này ở vòng đầu.
+  // An extension we do not accept has NO path at all. Drop this branch and every
+  // unknown extension falls through to the `zip` case, where we would name a
+  // sidecar that was never written — a test caught exactly this on the first run.
   if (!kind) return {};
 
   if (kind === 'text') return { open: files };
 
   if (state === 'ready') {
-    // pdf: nêu cả hai — mốc `--- trang N ---` trong bản text chỉ có nghĩa khi
-    // nhân viên với được tới bản gốc để `Read` đúng trang đó.
+    // pdf: name both — the `--- trang N ---` markers in the extracted text only
+    // mean something if the employee can reach the original and `Read` that page.
     return kind === 'pdf' ? { open: text, original: files } : { open: text };
   }
 
-  // Chưa bóc được. Bản gốc PDF vẫn đọc được (model nhìn trang như ảnh); bản gốc
-  // docx/xlsx/pptx thì không có đường nào.
+  // Not extracted yet. A PDF original is still readable (the model sees a page as
+  // an image); a docx/xlsx/pptx original has no way in at all.
   if (kind === 'pdf' && (state === 'image-only' || state === 'unindexed')) {
     return { open: files };
   }
@@ -88,10 +92,10 @@ export function docPaths(name: string, ext: string, state: string): DocPaths {
 }
 
 /**
- * Đuôi bị chặn CÓ CHỦ Ý, kèm câu nói cho người dùng.
+ * Extensions refused ON PURPOSE, each with the sentence to say about it.
  *
- * Danh sách này tồn tại để câu từ chối nói được *vì sao*, thay vì một câu
- * "định dạng không hỗ trợ" chung chung khiến người dùng thử lại ba lần.
+ * The list exists so the refusal can say *why*, instead of one generic "format
+ * not supported" that has the user trying again three times.
  *
  * ⚠ Holds catalogue KEYS, not sentences. This is a module-level constant, so a
  * resolved string would be frozen at import to whichever language the process
@@ -119,7 +123,7 @@ export const REFUSED: Record<string, MessageKey> = {
   ppt: 'lib.refusePpt',
 };
 
-/** Tên thiết bị Windows chiếm dụng. `CON.txt` cũng hỏng, không chỉ `CON`. */
+/** Device names Windows reserves. `CON.txt` breaks too, not just `CON`. */
 const WINDOWS_RESERVED = new Set([
   'con', 'prn', 'aux', 'nul',
   'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
@@ -127,23 +131,23 @@ const WINDOWS_RESERVED = new Set([
 ]);
 
 /**
- * Trần ĐỘ DÀI TÊN tính bằng BYTE, không phải ký tự.
+ * The NAME LENGTH ceiling is in BYTES, not characters.
  *
- * Giới hạn của hệ thống file là ~255 byte. Tiếng Việt có dấu chiếm 2–3 byte mỗi
- * ký tự trong UTF-8, nên một tên 150 "chữ" hoàn toàn có thể vượt trần. Đếm bằng
- * `.length` là đúng với tiếng Anh và sai với đúng nhóm người dùng của ta.
- * Trừ hao cho hậu tố `.txt` mà sidecar sẽ nối thêm.
+ * The filesystem limit is ~255 bytes. An accented Vietnamese character costs 2–3
+ * bytes in UTF-8, so a 150-"letter" name can go over. Counting with `.length` is
+ * right for English and wrong for exactly the users we have. The headroom pays
+ * for the `.txt` suffix a sidecar appends.
  */
 const MAX_NAME_BYTES = 200;
 
 export type NameCheck = { ok: true; name: string; ext: string } | { ok: false; reason: string };
 
 /**
- * Làm sạch và kiểm tên file người dùng đưa lên.
+ * Clean and check a file name the user uploaded.
  *
- * CỐ Ý KHÔNG slugify: người dùng phải nhận ra file của mình trong tủ. Dấu tiếng
- * Việt trong tên file là hợp lệ trên cả NTFS lẫn ext4. Ta chỉ TỪ CHỐI cái nguy
- * hiểm, không viết lại cái hợp lệ.
+ * DELIBERATELY NOT slugified: the user has to recognise their own file in the
+ * library. Vietnamese diacritics in a file name are legal on both NTFS and ext4.
+ * We REFUSE what is dangerous; we do not rewrite what is legal.
  */
 export function safeName(input: string): NameCheck {
   const name = input.trim();
@@ -153,45 +157,46 @@ export function safeName(input: string): NameCheck {
     return { ok: false, reason: t('lib.nameTooLong') };
   }
 
-  // Path traversal + phân cách thư mục. `safeJoin` cũng chặn, nhưng chặn ở đây
-  // cho ra CÂU GIẢI THÍCH thay vì một exception chung.
+  // Path traversal and directory separators. `safeJoin` blocks these too, but
+  // blocking here yields an EXPLANATION instead of a generic exception.
   if (name.includes('/') || name.includes('\\')) {
     return { ok: false, reason: t('lib.nameHasSlash') };
   }
   if (name === '.' || name === '..') return { ok: false, reason: t('lib.nameInvalid') };
 
   /**
-   * `|` — chặn ở CỬA, vì nó là ký tự chia cột của `INDEX.md`.
+   * `|` — blocked AT THE DOOR, because it is the column separator of `INDEX.md`.
    *
-   * Windows vốn đã cấm ký tự này, nên chặn ở đây không lấy đi cái tên nào dùng
-   * được trên cả ba hệ. Đổi lại, bảng kê tủ tài liệu không thể vỡ hàng — và
-   * hàng vỡ ở đó nghĩa là Trợ lý đọc ra một đường dẫn cụt. → `renderIndex`
+   * Windows forbids this character anyway, so blocking it here takes away no name
+   * that works on all three systems. In exchange, a row of the library index
+   * cannot break — and a broken row there means the assistant reads out a dead
+   * path. → `renderIndex`
    */
   if (name.includes('|')) {
     return { ok: false, reason: t('lib.namePipe') };
   }
 
-  // Ký tự điều khiển + NUL. Một tên có \0 cắt đứt chuỗi ở tầng hệ điều hành:
-  // kiểm tra thấy "a.txt.exe", ghi ra đĩa thành "a.txt".
+  // Control characters and NUL. A name containing \0 gets truncated at the OS
+  // layer: the check sees "a.txt.exe", the disk gets "a.txt".
   for (let i = 0; i < name.length; i++) {
     if (name.charCodeAt(i) < 0x20) return { ok: false, reason: t('lib.nameControlChar') };
   }
 
   /**
-   * Tên bắt đầu bằng dấu chấm — CHẶN, và đây không phải chuyện thẩm mỹ.
+   * A leading dot — REFUSED, and this is not about looks.
    *
-   * `Grep` bỏ qua mọi thứ bắt đầu bằng dấu chấm khi duyệt thư mục (đã đo, xem
-   * SPEC-library.md §2.1). Một file `.env.txt` nằm trong tủ sẽ hiện trên giao
-   * diện, bóc text thành công, và KHÔNG BAO GIỜ được tìm thấy. Im lặng.
+   * `Grep` skips everything starting with a dot when it walks a directory
+   * (measured, see SPEC-library.md §2.1). A `.env.txt` in the library shows up in
+   * the interface, extracts fine, and is NEVER found. Silently.
    */
   if (name.startsWith('.')) {
     return { ok: false, reason: t('lib.nameLeadingDot') };
   }
 
   /**
-   * Kết thúc bằng dấu chấm hoặc khoảng trắng: Windows lặng lẽ CẮT ĐI khi tạo
-   * file. Hậu quả là tên trong catalog khác tên trên đĩa, rồi mọi thao tác xoá
-   * và thay thế sau đó trượt.
+   * A trailing dot or space: Windows silently STRIPS it when creating the file.
+   * The name in the catalogue then differs from the name on disk, and every later
+   * delete or replace misses.
    */
   if (/[. ]$/.test(name)) {
     return { ok: false, reason: t('lib.nameTrailingDot') };
@@ -220,19 +225,19 @@ export function safeName(input: string): NameCheck {
 export type SniffResult = { ok: true } | { ok: false; reason: string };
 
 /**
- * Kiểm NỘI DUNG có khớp đuôi không.
+ * Check that the CONTENT matches the extension.
  *
- * Đổi tên `virus.exe` thành `bao-cao.pdf` mất hai giây. Với văn phòng chạy trên
- * VPS thì route upload là một cửa thật, nên đuôi file không đủ làm bằng chứng.
- * Kiểm bằng vài byte đầu — rẻ, tất định, không phụ thuộc gì.
+ * Renaming `virus.exe` to `report.pdf` takes two seconds. For an office running
+ * on a VPS the upload route is a real door, so an extension is not evidence.
+ * Check the first few bytes — cheap, deterministic, no dependency.
  */
 export function sniffType(head: Buffer, ext: string): SniffResult {
   const kind = HANDLING[ext];
   if (!kind) return { ok: false, reason: t('lib.extUnknown', { ext }) };
 
   if (kind === 'pdf') {
-    // Chuẩn PDF cho phép rác trước header, và nhiều file thật có rác thật.
-    // Quét 1KB đầu thay vì so đúng offset 0.
+    // The PDF spec allows junk before the header, and plenty of real files carry
+    // real junk. Scan the first 1KB instead of comparing at offset 0.
     const idx = head.subarray(0, 1024).indexOf('%PDF-');
     if (idx < 0) {
       return { ok: false, reason: t('lib.notRealPdf') };
@@ -241,7 +246,7 @@ export function sniffType(head: Buffer, ext: string): SniffResult {
   }
 
   if (kind === 'zip') {
-    // docx/xlsx/pptx đều là ZIP. `PK\x03\x04` = local file header.
+    // docx/xlsx/pptx are all ZIPs. `PK\x03\x04` = local file header.
     if (!(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
       return { ok: false, reason: t('lib.notRealZip', { ext }) };
     }
@@ -249,9 +254,9 @@ export function sniffType(head: Buffer, ext: string): SniffResult {
   }
 
   /**
-   * Text: không có magic bytes để so, nên kiểm NGƯỢC — file nhị phân đội lốt
-   * `.txt` gần như luôn có byte NUL trong phần đầu, còn văn bản UTF-8 hợp lệ
-   * thì không bao giờ có.
+   * Text: there are no magic bytes to compare, so check the OTHER WAY ROUND — a
+   * binary file wearing a `.txt` almost always has a NUL byte near the start, and
+   * valid UTF-8 text never does.
    */
   if (head.subarray(0, 8192).includes(0)) {
     return { ok: false, reason: t('lib.notText', { ext }) };
@@ -260,10 +265,11 @@ export function sniffType(head: Buffer, ext: string): SniffResult {
 }
 
 /**
- * Trang chứa dòng thứ `line` của file text đã bóc từ PDF.
+ * The page holding line `line` of the text extracted from a PDF.
  *
- * Đây là mảnh nối "Grep tìm ra dòng" với "Read đúng trang" (§3.1). Trả về
- * `undefined` khi file không có mốc trang (mọi định dạng không phải PDF).
+ * This is the piece that joins "Grep found the line" to "Read the right page"
+ * (§3.1). Returns `undefined` when the file has no page markers — every format
+ * that is not a PDF.
  */
 export function pageOfLine(text: string, line: number): number | undefined {
   const lines = text.split('\n');
@@ -275,14 +281,14 @@ export function pageOfLine(text: string, line: number): number | undefined {
   return page;
 }
 
-/** "1.2 MB" — dùng chung giữa INDEX.md và giao diện, để hai chỗ không lệch nhau. */
+/** "1.2 MB" — shared by INDEX.md and the interface so the two cannot drift. */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** "41K" — số token ước lượng, gọn cho bảng. */
+/** "41K" — an estimated token count, short enough for a table cell. */
 export function formatTokens(n: number): string {
   if (n < 1000) return String(n);
   return `${Math.round(n / 1000)}K`;

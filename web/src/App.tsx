@@ -66,14 +66,14 @@ export default function App() {
   }, []);
 
   /**
-   * `Esc` ngắt việc đang chạy — phản xạ của người dùng Claude Code.
-   * Cùng hành vi với lệnh chữ `/stop`, để bridge Telegram dùng lại được.
+   * `Esc` stops the running work — the reflex of a Claude Code user. Same
+   * behaviour as the `/stop` text command, so the Telegram bridge reuses it.
    * → docs/SPEC-tools-approval.md §3b
    */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      // Đang mở dialog thì Esc thuộc về dialog — Radix tự lo, đừng cướp.
+      // With a dialog open, Esc belongs to the dialog — Radix handles it; do not steal it.
       if (document.querySelector('[role="dialog"]')) return;
       if (getState().officeState !== 'working') return;
       e.preventDefault();
@@ -85,16 +85,17 @@ export default function App() {
   }, []);
 
   /**
-   * Ghi hình dạng, gộp nhịp ~700ms. Kéo node bắn ra hàng chục sự kiện mỗi giây;
-   * ghi mỗi lần là ghi đĩa vô nghĩa. Toạ độ chỉ là view state — mất một nhịp
-   * không sao, nhưng phải ghi được nhịp CUỐI, nên hẹn lại chứ không bỏ qua.
+   * Save the layout, debounced at ~700ms. Dragging a node fires dozens of events
+   * per second; writing on each is pointless disk traffic. Coordinates are only
+   * view state — losing one beat is fine, but the LAST beat has to land, so this
+   * reschedules rather than skips.
    */
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const onCommit = useCallback((nodes: CanvasNode[], edges: CanvasEdge[], immediate?: boolean) => {
     clearTimeout(saveTimer.current);
     if (immediate) {
-      // Cạnh nối: gửi NGAY và vẽ lạc quan. Người dùng vừa thả chuột xong, sợi
-      // dây phải xuất hiện trước khi server kịp trả lời.
+      // An edge: send IMMEDIATELY and draw optimistically. They just released the
+      // mouse; the wire has to appear before the server can answer.
       markLocalSave();
       void actions.saveCanvas(nodes, edges, true);
       return;
@@ -139,17 +140,17 @@ export default function App() {
 
         {noOffices ? (
           /*
-            Vẫn giữ Sidebar. Nó tự thu về đúng một ngăn "Tổng quan công ty"
-            (→ `Sidebar §noOffices`), vì chi phí · kết nối · workspace là dữ liệu
-            cấp CÔNG TY và chúng sống tiếp sau khi văn phòng cuối cùng bị xoá.
-            Bản trước thay cả vùng làm việc bằng màn hình rỗng ⇒ ba thứ đó mất
-            luôn cửa quản lý, và người dùng kẹt cứng không gỡ nổi một kết nối
-            không ai dùng. → bug 02/09, SPEC-arms.md §6k
+            The sidebar stays. It collapses to exactly one "Company overview"
+            drawer (→ `Sidebar §noOffices`), because spending · connections ·
+            workspaces are COMPANY-level data and they outlive the last office.
+            The previous version replaced the whole working area with an empty
+            screen ⇒ all three lost their management door, and the user was stuck
+            unable to unplug a connection nobody used. → bug 02/09, SPEC-arms §6k
           */
           <div className="flex min-h-0 flex-1">
             <Sidebar />
             <main className="flex flex-1 items-center justify-center">
-              {/* Trạng thái rỗng được THIẾT KẾ, không phải màn hình lỗi.
+              {/* A DESIGNED empty state, not an error screen.
                   → docs/SPEC-offices.md §3 */}
               <Empty
                 icon={<Building2 className="h-10 w-10" />}
@@ -244,10 +245,11 @@ function Toolbar({
         </Button>
       </Tip>
       {/*
-        Cửa CHÍNH để cắm một cánh tay — cạnh "Nhân viên", cùng ngữ pháp với thứ
-        duy nhất người dùng đã biết cách dùng. Cố ý KHÔNG làm palette kéo-thả:
-        canvas có tự sắp + nút "Sắp xếp lại", nên kéo-thả hứa một quyền mà nút
-        bên cạnh lấy lại. → docs/SPEC-arms.md §6e
+        The MAIN door for plugging in an arm — next to "Employee", the same
+        grammar as the one thing the user already knows how to do. Deliberately
+        NOT a drag-and-drop palette: the canvas auto-arranges and has a
+        "Rearrange" button, so drag-and-drop would promise a control the button
+        beside it takes back. → docs/SPEC-arms.md §6e
       */}
       <Tip label={t('toolbar.armTip')}>
         <Button size="sm" className="shadow-sm" onClick={onAddArm}>
@@ -281,11 +283,12 @@ function Toolbar({
 }
 
 /**
- * Dải kế hoạch, LUÔN THẤY khi có việc đang chạy.
+ * The plan strip — ALWAYS VISIBLE while work is running.
  *
- * Checklist chống hoang mang (`SPEC-ui.md` §6) đòi trả lời được "đang ở bước mấy"
- * mà không cần click. Nhét kế hoạch vào một panel đóng/mở là vi phạm đúng điều đó —
- * nên nó nằm đè lên canvas, mỏng, và bấm vào thì mở nhật ký của chính việc đó.
+ * The anti-bewilderment checklist (`SPEC-ui.md` §6) requires "which step am I
+ * on" to be answerable without a click. Putting the plan inside a collapsible
+ * panel breaks exactly that — so it sits over the canvas, thin, and clicking it
+ * opens that job's own log.
  */
 function PlanStrip() {
   const plan = useApp((s) => s.plan);
@@ -344,8 +347,8 @@ function Hint() {
   const canvas = useApp((s) => s.canvas);
   const plan = useApp((s) => s.plan);
   const hasAgents = (canvas?.nodes.filter((n) => n.kind === 'agent').length ?? 0) > 0;
-  // Dải kế hoạch chiếm đúng chỗ này và quan trọng hơn nhiều. Gợi ý dành cho
-  // người mới, không dành cho lúc đang có việc chạy.
+  // The plan strip occupies this exact spot and matters far more. The hint is
+  // for newcomers, not for while work is running.
   if (!hasAgents || plan) return null;
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-line bg-panel/90 px-2.5 py-1.5 text-xs text-muted backdrop-blur">
@@ -355,18 +358,20 @@ function Hint() {
 }
 
 /**
- * Lỗi thoáng qua. Không chặn gì, tự tắt — nhưng không bao giờ im lặng nuốt lỗi.
+ * A transient error. Blocks nothing, dismisses itself — but never swallows.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ LỖI PHẢI TRÔNG NHƯ LỖI.                                                  │
+ * │ AN ERROR HAS TO LOOK LIKE AN ERROR.                                      │
  * │                                                                          │
- * │ Bản trước dùng nền `bg-panel` — y hệt mọi bảng khác — và chỉ đổi màu một │
- * │ cái icon 16px. Người dùng bấm "Thêm nhân viên", tên trùng, toast hiện    │
- * │ lên trông như một thông báo bình thường, và họ đứng khựng vì tưởng app   │
- * │ đơ chứ không đọc ra rằng vừa có lỗi.                                     │
+ * │ The previous version used `bg-panel` — identical to every other panel —  │
+ * │ and recoloured a single 16px icon. Someone pressed "Add employee", hit a │
+ * │ duplicate name, and the toast that appeared read as an ordinary notice;  │
+ * │ they froze, assuming the app had hung rather than reading that an error  │
+ * │ had just occurred.                                                       │
  * │                                                                          │
- * │ Tiêu chí "Xử lý lỗi tốt" đòi mọi lỗi nói được CHUYỆN GÌ XẢY RA — mà      │
- * │ bước đầu tiên của việc đó là nhìn vào phải biết ngay đây là lỗi.         │
+ * │ The "good error handling" criterion requires every error to say WHAT     │
+ * │ HAPPENED — and the first step of that is being recognisable as an error  │
+ * │ at a glance.                                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function Toast() {

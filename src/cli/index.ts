@@ -2,8 +2,9 @@
 /**
  * CLI. → docs/SPEC-cli.md §2, docs/SPEC-offices.md
  *
- * Nguyên tắc thông báo lỗi: mỗi lỗi in CHUYỆN GÌ XẢY RA + LÀM GÌ TIẾP THEO,
- * một câu mỗi phần. Khách hàng là người non-code — stack trace giấu mặc định.
+ * Error-message rule: every error prints WHAT HAPPENED + WHAT TO DO NEXT, one
+ * sentence each. The customer does not write code — stack traces stay hidden by
+ * default.
  */
 
 import fs from 'node:fs';
@@ -62,10 +63,10 @@ async function main(): Promise<void> {
   }
 }
 
-// ─────────────────────────────────────────────────────────── lệnh
+// ─────────────────────────────────────────────────────────── commands
 
 /**
- * Tạo công ty RỖNG. Không văn phòng mẫu, không nhân viên mẫu.
+ * Create an EMPTY company. No sample office, no sample employees.
  * → SPEC-offices.md §3
  */
 function cmdInit(): void {
@@ -122,7 +123,7 @@ function cmdInit(): void {
 async function cmdStart(): Promise<void> {
   const pp = companyPaths(companyDir);
 
-  // IDEMPOTENT: đã chạy rồi thì mở trình duyệt vào nó, không báo lỗi port.
+  // IDEMPOTENT: already running ⇒ open a browser onto it, not a port error.
   const existing = await liveDaemon(pp);
   if (existing) {
     console.log(t('cli.alreadyRunning', { url: existing.url, pid: existing.pid }));
@@ -203,9 +204,9 @@ async function cmdStop(): Promise<void> {
 }
 
 /**
- * Hỏi daemon. Daemon có thể đang chạy BẢN CŨ sau khi ta nâng cấp code — lúc đó
- * nó trả 404 hoặc một hình dạng khác hẳn. Tin tưởng hình dạng phản hồi là cách
- * chắc chắn nhất để người dùng nhận một stack trace thay vì một câu tiếng Việt.
+ * Ask the daemon. It may be running an OLD BUILD after an upgrade, in which case
+ * it returns a 404 or an entirely different shape. Trusting the response shape is
+ * the surest way to hand someone a stack trace instead of a readable sentence.
  */
 async function askDaemon<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -261,7 +262,7 @@ async function cmdStatus(): Promise<void> {
   }
 }
 
-/** `agentco office` · `office new "Tên"` · `office rm <id>` */
+/** `agentco office` · `office new "Name"` · `office rm <id>` */
 async function cmdOffice(): Promise<void> {
   const sub = argv[1] && !argv[1].startsWith('--') ? argv[1] : 'list';
   const info = await liveDaemon(companyPaths(companyDir));
@@ -286,7 +287,7 @@ async function cmdOffice(): Promise<void> {
       console.error(t('cli.officeNameMissing'));
       process.exit(EXIT.config);
     }
-    // Qua daemon nếu nó đang chạy — nếu không thì hai tiến trình cùng ghi một chỗ.
+    // Go through the daemon when it is up — otherwise two processes write the same place.
     if (info) {
       const body = await askDaemon<{ id?: string }>(`${info.url}/api/office`, {
         method: 'POST',
@@ -305,9 +306,9 @@ async function cmdOffice(): Promise<void> {
    * `office archive <id>` / `office restore <id>` — soft delete.
    * → docs/SPEC-offices.md §3.1
    *
-   * Đây là mức người dùng nên dùng: chỉ gắn một cờ, file không đi đâu cả, và
-   * văn phòng vẫn giữ TÊN trong sổ chi phí. Xoá hẳn thì những dòng tiền của nó
-   * chỉ còn cái mã trần để lần ra.
+   * This is the level people should reach for: it sets a flag, no file moves,
+   * and the office KEEPS ITS NAME in the ledger. Delete it for good and its
+   * spending lines are left with a bare code to trace back from.
    */
   if (sub === 'archive' || sub === 'restore') {
     const id = argv[2];
@@ -337,9 +338,10 @@ async function cmdOffice(): Promise<void> {
       console.error(t('cli.officeRmMissing'));
       process.exit(EXIT.config);
     }
-    // `rm` giờ chỉ còn MỘT nghĩa: xoá hẳn, không lấy lại được. Muốn cất đi thì
-    // dùng `archive`. Cờ `--delete-files` từng là cách phân biệt hai ý định đó,
-    // và đó là chỗ sai: cái cờ dễ quên nhất lại là cái quyết định mất hay không.
+    // `rm` now has ONE meaning: delete for good, unrecoverable. To put something
+    // away, use `archive`. A `--delete-files` flag used to separate those two
+    // intentions, and that was the mistake: the flag easiest to forget was the
+    // one deciding whether anything was lost.
     if (flags['yes'] !== true) {
       console.error(
         t('cli.officeRmWarn', { id }),
@@ -362,13 +364,14 @@ async function cmdOffice(): Promise<void> {
 }
 
 /**
- * `agentco secret list | set <TÊN> | rm <TÊN>` → docs/SPEC-offices.md §5
+ * `agentco secret list | set <NAME> | rm <NAME>` → docs/SPEC-offices.md §5
  *
- * CỐ Ý chỉ có ở CLI, không có API. Bí mật không đi qua HTTP, kể cả HTTP tới
- * localhost — một endpoint đọc được chúng là một endpoint bị lừa gọi được.
+ * CLI-only ON PURPOSE, with no API. Secrets do not travel over HTTP, not even
+ * HTTP to localhost — an endpoint that can read them is an endpoint that can be
+ * tricked into being called.
  *
- * `set` đọc giá trị từ stdin hoặc biến môi trường, KHÔNG nhận từ tham số dòng
- * lệnh: tham số nằm trong lịch sử shell và trong danh sách tiến trình.
+ * `set` reads the value from stdin or an environment variable, NEVER from a
+ * command-line argument: arguments land in shell history and in the process list.
  */
 function cmdSecret(): void {
   const pp = companyPaths(companyDir);
@@ -435,7 +438,8 @@ async function cmdRun(): Promise<void> {
   const info = await liveDaemon(companyPaths(companyDir));
   const wanted = typeof flags['office'] === 'string' ? flags['office'] : undefined;
 
-  // Có daemon thì giao qua daemon — để dùng chung warmSet và session Trợ lý.
+  // With a daemon up, hand over through it — to share the warm set and the
+  // assistant's session.
   if (info) {
     const c = await fetchCompany(info.url);
     const officeId = pickOffice(c.offices, wanted);
@@ -448,7 +452,7 @@ async function cmdRun(): Promise<void> {
     return;
   }
 
-  // Không có daemon thì chạy một lần ngay tại đây.
+  // No daemon: run it once, right here.
   const company = Company.open(companyDir);
   const officeId = pickOffice(company.list(), wanted);
   const office = company.get(officeId);
@@ -465,8 +469,8 @@ async function cmdRun(): Promise<void> {
 
   const out = await office.run(request);
   console.log(`\n${out.report}\n`);
-  // Chi phí của ĐÚNG ca này. `agentco cost` mới là tích luỹ — trộn hai thứ
-  // vào nhau làm người dùng tưởng một việc nhỏ tốn cả trăm nghìn token.
+  // The cost of THIS shift alone. `agentco cost` is the cumulative one — mixing
+  // the two makes a small job look like it burned a hundred thousand tokens.
   console.log(formatRunUsage(out.usage, out.usage.turns > 0 ? 1 : 0));
 }
 
@@ -496,8 +500,8 @@ function cmdCost(): void {
   const since = typeof flags['since'] === 'string' ? parseDuration(flags['since']) : undefined;
   const officeId = typeof flags['office'] === 'string' ? flags['office'] : undefined;
 
-  // Dọn rác trước rồi mới in, để con số in ra là con số SAU khi dọn — in trước
-  // rồi dọn thì người dùng cầm một bảng đã hết đúng ngay lúc nhìn.
+  // Purge first, then print, so the printed number is the one AFTER purging —
+  // print first and they are holding a table that stopped being true as they read it.
   if (flags['purge']) {
     const r = company.purgeGoneUsage();
     console.log(
@@ -547,7 +551,7 @@ async function cmdDoctor(): Promise<void> {
     fs.accessSync(companyDir, fs.constants.W_OK);
     writable = true;
   } catch {
-    /* không ghi được */
+    /* not writable */
   }
   checks.push([t('cli.checkWritable'), writable, companyDir]);
 
@@ -578,7 +582,7 @@ async function cmdDoctor(): Promise<void> {
     }
   }
 
-  // Xác thực: gọi thật một lần cực rẻ. Đây là lỗi hay gặp nhất của người mới.
+  // Auth: one real, very cheap call. This is the most common first-time failure.
   let authOk = false;
   let authNote = '';
   try {
@@ -625,9 +629,10 @@ function cmdHelp(): void {
 // ─────────────────────────────────────────────────────────── helpers
 
 /**
- * HÀM chứ không phải const: `await main()` chạy ở top-level, tức là TRƯỚC khi
- * các `const` phía dưới trong module này được khởi tạo. Một hằng chuỗi ở cuối
- * file sẽ ném "Cannot access before initialization" — khai báo hàm thì được hoist.
+ * A FUNCTION, not a const: `await main()` runs at the top level, i.e. BEFORE the
+ * `const`s further down this module are initialised. A string constant at the
+ * bottom of the file would throw "Cannot access before initialization" — a
+ * function declaration is hoisted.
  */
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐

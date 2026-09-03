@@ -1,13 +1,14 @@
 /**
- * Kiểu khớp với backend. Nguồn sự thật là `src/core/types.ts` và
- * `src/core/office.ts` — file này là bản sao thủ công, không sinh tự động.
+ * Types that mirror the backend. The source of truth is `src/core/types.ts` and
+ * `src/core/office.ts` — this file is a hand-written copy, not generated.
  *
- * Chấp nhận trùng lặp vì hai bên build riêng và không import chéo được.
- * Đổi bên kia thì phải đổi ở đây; `npm run typecheck` của web sẽ không bắt được.
+ * The duplication is accepted because the two sides build separately and cannot
+ * import across. Change the other side and you must change this one; the web
+ * `npm run typecheck` will not catch it for you.
  */
 
-// Kích thước node và phép toán bố cục dùng CHUNG với backend — không còn bản
-// sao thủ công. → src/core/layout-geometry.ts
+// Node sizes and the layout maths are SHARED with the backend — no hand-written
+// copy any more. → src/core/layout-geometry.ts
 export { NODE_SIZE } from '@core/layout-geometry';
 export type { NodeKind } from '@core/layout-geometry';
 
@@ -25,7 +26,7 @@ export type PlanStatus =
   | 'running'
   | 'done'
   | 'failed'
-  /** Chưa THỬ vì Trợ lý còn thiếu thông tin và đã hỏi lại. Khác `failed` (đã thử và hỏng). */
+  /** Never ATTEMPTED: the assistant lacked information and asked back. Not `failed` (tried and broke). */
   | 'blocked'
   | 'paused'
   | 'stopped';
@@ -48,61 +49,63 @@ export interface CanvasNode {
   role?: string;
   server?: string;
   /**
-   * Khoá sắp xếp bãi đỗ cánh tay (`0-files` · `1-<mục>` · `2-custom`).
-   * Server tính — xem `layout.ts §armGroup`. Giao diện chỉ so chuỗi, **không**
-   * tự phân loại lại. → `canvas/geometry.ts §arrange`
+   * The sort key for the arm parking area (`0-files` · `1-<entry>` · `2-custom`).
+   * Computed by the server — see `layout.ts §armGroup`. The interface only
+   * compares strings and does **not** reclassify. → `canvas/geometry.ts §arrange`
    */
   armGroup?: string;
   label: string;
   avatar?: string;
-  /** Mức model: `eco` | `standard` | `deep`. */
+  /** Model tier: `eco` | `standard` | `deep`. */
   tier?: string;
-  /** Model thật sự sẽ chạy ở mức đó, ví dụ `claude-sonnet-5`. */
+  /** The model that tier will actually run, e.g. `claude-sonnet-5`. */
   model?: string;
-  /** Chỉ Trợ lý: mức đang thừa hưởng `models.master` của công ty, không đặt riêng. */
+  /** Assistant only: the tier is inherited from the company's `models.master`, not set here. */
   tierInherited?: boolean;
   pitch?: string;
-  /** Trần chi phí một việc, đơn vị USD. **`0` = không giới hạn.** */
+  /** The per-job cost ceiling, in USD. **`0` = no limit.** */
   maxUsd?: number;
   maxTurns?: number;
   /**
-   * Nhân viên: có `Bash` không.
+   * Employee: does it have `Bash`.
    *
-   * ⚠ KHÔNG mô tả nó là *"tool duy nhất ra được khỏi văn phòng"* (câu cũ). Đọc
-   * thì `Read`/`Glob`/`Grep` cũng ra được, mà ghi thì `outputScoper` luôn kéo
-   * đầu ra về `artifacts/` nên `Bash` chưa bao giờ được trỏ ra ngoài. Thứ nó
-   * thật sự độc quyền: **metadata file** (kích thước · ngày sửa) và chạy script.
+   * ⚠ Do NOT describe it as *"the only tool that can leave the office"* (the old
+   * wording). For reading, `Read`/`Glob`/`Grep` can leave too, and for writing
+   * `outputScoper` always pulls output back into `artifacts/`, so `Bash` has never
+   * been able to point outward. What it really has exclusively: **file metadata**
+   * (size · modified date) and running scripts.
    * → SPEC-tools-approval.md §1a
    */
   bash?: boolean;
   count?: number;
-  /** Cánh tay: nấc quyền — huy hiệu vẽ từ đây, **KHÔNG** từ `label`. → §6j */
+  /** Arm: the access level — the badge is drawn from this, **NOT** from `label`. → §6j */
   level?: 'read' | 'add' | 'full';
-  /** Cánh tay: số việc đã cấp, để nhãn "chỉ đọc" kiểm được bằng mắt. */
+  /** Arm: how many tools were granted, so the "read only" label can be checked by eye. */
   toolCount?: number;
-  /** Cánh tay: tên WORKSPACE nó nối tới — tra từ kho OAuth, không đọc `label`. */
+  /** Arm: the WORKSPACE name it connects to — looked up in the OAuth store, never read off `label`. */
   via?: string;
   /**
-   * Cánh tay: đường dẫn SVG logo hãng + loại — để node vẽ **cùng một hình** với
-   * hộp thoại Kết nối. Server gửi kèm (`office.ts §mark`) chứ canvas không tra
-   * danh mục: sơ đồ vẽ trước khi ai mở hộp thoại, và một node không có hình ở
-   * mỗi lần mở app là cái giá không đáng.
+   * Arm: the vendor logo's SVG path plus its kind — so the node draws **the same
+   * mark** as the Connect dialog. The server sends it along (`office.ts §mark`)
+   * rather than the canvas consulting the catalogue: the diagram is drawn before
+   * anyone opens the dialog, and a node with no mark on every app launch is not a
+   * price worth paying.
    */
   mark?: string;
-  /** ⚠ Cùng union với `office.ts §armKind` và `ArmIcon §ArmKind` — sửa cả ba. */
+  /** ⚠ The same union as `office.ts §armKind` and `ArmIcon §ArmKind` — change all three. */
   armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
-  /** Nhan cac o tick dang bat - panel ve chip tu day. */
+  /** Labels of the checkboxes that are on — the panel draws its chips from this. */
   optionLabels?: string[];
-  /** Co ho so ben => panel hien nut mo cua so dang nhap. */
+  /** There is a browser profile ⇒ the panel shows the "open sign-in window" button. */
   canLogin?: boolean;
   mcp?: string[];
   /**
-   * Cánh tay: thư mục nó với tới, **nguyên văn** như trong `company.yaml`.
+   * Arm: the directories it reaches, **verbatim** as written in `company.yaml`.
    *
-   * CHỈ ĐỌC. Đổi thư mục = đổi `armHash` = một cánh tay khác, nên đường đi đúng
-   * là cắm một kết nối mới chứ không phải sửa ô này. Rỗng = không phải cánh tay
-   * file (Notion, GitHub…) — khi đó đừng vẽ ô nào cả, một ô trống nói dối rằng
-   * cấu hình bị thiếu.
+   * READ ONLY. Changing a directory changes `armHash`, which makes it a different
+   * arm, so the right path is plugging in a new connection rather than editing
+   * this field. Empty = not a file arm (Notion, GitHub…) — and in that case draw
+   * no field at all, because an empty field lies that the config is incomplete.
    */
   folders?: string[];
   hue?: number;
@@ -130,13 +133,13 @@ export interface OfficeSummary {
   agents: number;
   onDuty: number;
   knowledge: number;
-  /** Đã cất vào lưu trữ — đóng băng, chỉ đọc, khôi phục được. */
+  /** Archived — frozen, read-only, restorable. */
   archived: boolean;
   plan_id: string | null;
   error?: string;
 }
 
-/** Nhân viên đang nằm trong lưu trữ. Khôi phục về đúng văn phòng cũ. */
+/** An employee in the archive. Restoring returns them to the same office. */
 export interface ArchivedAgent {
   role: string;
   label: string;
@@ -147,14 +150,14 @@ export interface ArchivedAgent {
 
 export type Tier = 'eco' | 'standard' | 'deep';
 
-/** Mức nào chạy model nào — cấu hình cấp CÔNG TY (một hoá đơn, một chỗ để siết). */
+/** Which tier runs which model — COMPANY-level config (one bill, one place to tighten). */
 export interface CompanyModels {
   eco: string;
   standard: string;
   deep: string;
-  /** Mức mặc định của Trợ lý mọi văn phòng. Văn phòng ghi đè được. */
+  /** The default assistant tier for every office. An office can override it. */
   master: Tier;
-  /** Mức cho khâu lập kế hoạch — chạy ở query riêng nên không phá cache Trợ lý. */
+  /** The tier for planning — it runs in its own query, so it cannot break the assistant's cache. */
   planner: Tier;
 }
 
@@ -200,9 +203,9 @@ export interface PromptLayer {
   file?: string;
   text: string;
   tokens: number;
-  /** Ví dụ THẬT hiện mờ khi lớp trống. Không bao giờ được lưu → 0 token. */
+  /** A REAL example, shown greyed while the layer is empty. Never saved → 0 tokens. */
   placeholder?: string;
-  /** Trần token — UI cảnh báo khi gõ vượt, server từ chối lưu. */
+  /** The token ceiling — the UI warns past it, the server refuses to save. */
   limit?: number;
   frontmatter?: boolean;
   note: string;
@@ -218,16 +221,16 @@ export interface KnowledgeEntry {
   hits: number;
   pinned: boolean;
   confidence: number;
-  /** Đã bị một node mới đè — còn file, không còn đi vào prompt của ai. */
+  /** Superseded by a newer node — the file is still there, but it enters nobody's prompt. */
   superseded: boolean;
   body: string;
   updated: string;
 }
 
 /**
- * Một tài liệu trong tủ. → docs/SPEC-library.md
+ * One document in the library. → docs/SPEC-library.md
  *
- * PHẢI khớp `DocRecord` trong `src/library/store.ts`.
+ * MUST match `DocRecord` in `src/library/store.ts`.
  */
 export type DocState = 'pending' | 'extracting' | 'ready' | 'image-only' | 'unindexed' | 'failed';
 
@@ -237,20 +240,20 @@ export interface LibraryDoc {
   bytes: number;
   mtime: string;
   state: DocState;
-  /** "34 trang" · "3 sheet: Tháng 7, Tổng" — dựng bằng code, không qua model. */
+  /** "34 pages" · "3 sheets: July, Totals" — assembled in code, never by a model. */
   shape?: string;
   preview?: string;
   tokens?: number;
   pages?: number;
-  /** Câu giải thích khi state khác `ready`. Luôn kèm việc phải làm. */
+  /** The explanation whenever `state` is not `ready`. Always names what to do about it. */
   note?: string;
   extracted_at?: string;
 }
 
 /**
- * Một kết quả nhân viên làm ra. → docs/SPEC-artifacts.md
+ * One artifact an employee produced. → docs/SPEC-artifacts.md
  *
- * PHẢI khớp `ArtifactRecord` trong `src/core/artifacts.ts`.
+ * MUST match `ArtifactRecord` in `src/core/artifacts.ts`.
  */
 export type ArtifactView = 'text' | 'markdown' | 'csv' | 'code' | 'image' | 'pdf' | 'video' | 'download';
 
@@ -260,16 +263,17 @@ export interface ArtifactRecord {
   ext: string;
   bytes: number;
   mtime: string;
-  /** Rỗng với kết quả cũ, sinh ra trước khi đường dẫn được đóng khung theo kế hoạch. */
+  /** Empty for older artifacts, written before paths were scoped by plan. */
   plan_id: string;
   task_id: string;
   view: ArtifactView;
   /**
-   * TÊN VIỆC đã sinh ra file này — `PlanRecord.request`, server tra sẵn.
+   * THE JOB NAME that produced this file — `PlanRecord.request`, looked up by the
+   * server.
    *
-   * Rỗng khi kế hoạch đã rơi khỏi `tasks/index.json` (trần 200 bản ghi) hoặc
-   * với kết quả cũ chưa đóng khung theo kế hoạch. Giao diện rơi về nhãn ngày
-   * giờ — suy giảm êm, không phải lỗi. → docs/SPEC-artifacts.md §2.1
+   * Empty when the plan has dropped off `tasks/index.json` (a 200-row cap), or for
+   * older artifacts not scoped by plan. The interface falls back to a date-and-time
+   * label — graceful degradation, not an error. → docs/SPEC-artifacts.md §2.1
    */
   plan_title: string;
 }
@@ -281,16 +285,16 @@ export interface OfficeDetail {
   plan: { plan_id: string; request: string; steps: PlanStep[] } | null;
   pending: number;
   knowledge: number;
-  /** Hội thoại đọc từ đĩa — sống sót qua mọi lần tắt daemon. */
+  /** The conversation read from disk — it survives every daemon restart. */
   chat?: AgentEvent[];
-  /** Vòng đệm trong bộ nhớ của daemon: trạng thái SỐNG, mất khi daemon tắt. */
+  /** The daemon's in-memory ring buffer: LIVE state, lost when the daemon stops. */
   history: AgentEvent[];
 }
 
 interface EventBase {
   office: string;
   plan_id: string | null;
-  /** Chỉ có ở sự kiện đọc từ file log, không có ở sự kiện đến qua SSE. */
+  /** Present only on events read from the log file, absent on events arriving over SSE. */
   ts?: string;
 }
 
@@ -299,11 +303,13 @@ export type AgentEvent = EventBase &
     | { type: 'plan.created'; plan_id: string; request: string; steps: PlanStep[] }
     | { type: 'plan.step'; step: number; status: StepStatus }
     /**
-     * ⚠ CỐ Ý không có `say` — phải khớp `AgentEventBody` ở `src/core/types.ts`.
+     * ⚠ DELIBERATELY no `say` — it must match `AgentEventBody` in
+     * `src/core/types.ts`.
      *
-     * Server KHÔNG BAO GIỜ gửi trường đó (`office.ts` → `finish()`): câu báo cáo
-     * đã đi bằng `master.message` ngay trước đó. Khai `say` ở đây là một kiểu
-     * NÓI DỐI — TypeScript sẽ gật đầu cho `e.say`, và lúc chạy nó là `undefined`.
+     * The server NEVER sends that field (`office.ts` → `finish()`): the closing
+     * sentence already went out as a `master.message` immediately before.
+     * Declaring `say` here is a kind of LIE — TypeScript would nod at `e.say`, and
+     * at run time it is `undefined`.
      */
     | { type: 'plan.finished'; status: PlanStatus; costUSD: number; turns: number }
     | { type: 'task.started'; task_id: string; role: string; say: string }
@@ -319,18 +325,18 @@ export type AgentEvent = EventBase &
       }
     | { type: 'task.blocked'; task_id: string; role: string; say: string; reason: string }
     /**
-     * `role` = 'user' · 'assistant' · **hoặc id một NHÂN VIÊN**.
+     * `role` = 'user' · 'assistant' · **or AN EMPLOYEE's id**.
      *
-     * Nhánh thứ ba là task `deliver: reply`: câu trả lời đi thẳng từ nhân viên
-     * tới người dùng, không qua Trợ lý. `say` không chứa tên người nói — bên
-     * hiển thị tự tra. → docs/SPEC-offices.md §6
+     * The third case is a `deliver: reply` task: the answer goes straight from the
+     * employee to the user, not through the assistant. `say` never contains the
+     * speaker's name — the display side looks it up. → docs/SPEC-offices.md §6
      */
     /**
-     * `files` — đường dẫn kết quả đã xác minh, dạng DỮ LIỆU. → core/types.ts
+     * `files` — verified artifact paths, as DATA. → core/types.ts
      *
-     * Chỉ có mặt ở tin do `whereBlock` dựng bằng code. Đây là danh sách DUY
-     * NHẤT được phép biến thành nút bấm được: dò đường dẫn bằng regex trên
-     * `say` là cho một câu model bịa mượn uy tín của giao diện.
+     * Present only on messages `whereBlock` assembles in code. This is the ONLY
+     * list allowed to become clickable: sniffing paths out of `say` with a regex
+     * lends a sentence the model invented the interface's authority.
      */
     | { type: 'master.message'; say: string; role: string; files?: string[] }
     | { type: 'office.state'; say: string; state: OfficeState }
@@ -341,16 +347,16 @@ export type AgentEvent = EventBase &
         queued: number;
         jobs: number;
         /**
-         * Câu trạng thái TẠM, đè lên dòng dựng từ các con số trên. Tự xoá sau
-         * `hold_ms`. Đây là đường nói chuyện của `/clear`, thay cho hai tin nhắn
-         * cũ. → docs/SPEC-offices.md §4.6
+         * A TEMPORARY status sentence, overriding the line built from the numbers
+         * above. It clears itself after `hold_ms`. This is how `/clear` speaks,
+         * replacing the two messages it used to send. → docs/SPEC-offices.md §4.6
          */
         note?: string;
         hold_ms?: number;
       }
     | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }
-    /** Hạn mức TÀI KHOẢN đổi — không dọn khi đổi văn phòng. Xem `Energy`. */
+    /** The ACCOUNT limit changed — not cleared on an office switch. See `Energy`. */
     | { type: 'energy.tick'; energy: Energy }
     | { type: 'knowledge.changed'; count: number; version: number }
     | { type: 'library.changed'; count: number; busy: number }
@@ -359,22 +365,24 @@ export type AgentEvent = EventBase &
   );
 
 /**
- * Luật nối dây — BẢN SAO của `CAN_CONNECT` trong `src/core/layout.ts`.
+ * The wiring rules — A COPY of `CAN_CONNECT` in `src/core/layout.ts`.
  *
- * Ở client nó phục vụ việc làm cho thao tác sai KHÔNG XẢY RA ĐƯỢC (không vẽ ra
- * được sợi dây trái luật). Server mới là chỗ thi hành thật — client nào cũng
- * POST thẳng được.
+ * On the client its job is to make the wrong action IMPOSSIBLE TO PERFORM (an
+ * illegal wire cannot be drawn). The server is where the rule is actually
+ * enforced — any client can POST directly.
  *
- * `agent` cố tình vắng mặt: agent nói chuyện trực tiếp với agent là nguồn đốt
- * token lớn nhất trong mọi hệ multi-agent.
+ * `agent` is deliberately absent: agents talking directly to agents is the single
+ * largest token burner in every multi-agent system.
  */
 /**
- * ⚠ PHẢI KHỚP `src/core/layout.ts §CAN_CONNECT` — server là nơi thi hành thật,
- * bảng này chỉ để giao diện không vẽ ra thứ server sẽ từ chối.
+ * ⚠ MUST MATCH `src/core/layout.ts §CAN_CONNECT` — the server is where it is
+ * enforced; this table only stops the interface drawing what the server will
+ * refuse.
  *
- * `mcp → assistant` đã GỠ 23/08: sợi dây đó không làm gì (`assistant.mcp` chỉ
- * được ghi rồi đọc lại để vẽ), và nếu có ngày nó chạy thật thì Trợ lý cầm MCP
- * = ~36 000 token mỗi lượt trò chuyện. Chi tiết ở `layout.ts`.
+ * `mcp → assistant` was REMOVED on 23/08: that wire did nothing (`assistant.mcp`
+ * was only written and read back to draw it), and had it ever really run, an
+ * assistant holding an MCP costs ~36,000 tokens per conversational turn. Details
+ * in `layout.ts`.
  */
 export const CAN_CONNECT: Partial<Record<NodeKind, readonly NodeKind[]>> = {
   assistant: ['agent'],
@@ -387,127 +395,138 @@ export function canConnect(from: CanvasNode, to: CanvasNode, edges: readonly Can
   return !edges.some((e) => e.from === from.id && e.to === to.id);
 }
 
-// ─────────────────────────────────────────────────────────── hạn mức tài khoản
+// ────────────────────────────────────────────────────────── the account limit
 
 /**
- * Hạn mức của TÀI KHOẢN Claude, không phải của công ty.
+ * The limit on the Claude ACCOUNT, not on the company.
  * → src/core/energy.ts · docs/SPEC-token-economy.md §5e
  *
- * Cùng cái quota mà Claude Code và claude.ai của chính người dùng đang tiêu.
- * Vì thế nó KHÔNG bị dọn khi đổi văn phòng — khác hẳn `cost`.
+ * The same quota the user's own Claude Code and claude.ai are spending. Which is
+ * why it is NOT cleared on an office switch — unlike `cost`.
  */
 export interface EnergyWindow {
-  /** Chỉ hai — không tách theo model. Xem chú thích ở `energy.ts`. */
+  /** Two only — not split by model. See the note in `energy.ts`. */
   kind: 'session' | 'weekly';
   status: 'allowed' | 'allowed_warning' | 'rejected';
-  /** ISO 8601, hoặc null khi server không gửi. */
+  /** ISO 8601, or null when the server sends none. */
   resetsAt: string | null;
   /**
-   * 0-100. `null` khi chưa lấy được số. Không có số thì **KHÔNG vẽ thanh** —
-   * một cái thanh 0% là nói dối về thứ ta không biết.
+   * 0-100. `null` when the number could not be fetched. With no number, **draw no
+   * bar** — a 0% bar lies about something we do not know.
    */
   utilization: number | null;
 }
 
 export interface Energy {
-  /** Thứ tự CỐ ĐỊNH: phiên rồi tuần. */
+  /** A FIXED order: session, then weekly. */
   windows: EnergyWindow[];
-  /** `pro` · `max` … · `null` khi chạy bằng API key. */
+  /** `pro` · `max` … · `null` when running on an API key. */
   plan: string | null;
   seenAt: string;
 }
 
-// ─────────────────────────────────────────────────────────── cánh tay (MCP)
+// ─────────────────────────────────────────────────────────────── arms (MCP)
 // → docs/SPEC-arms.md §4e · §6
 
-/** Một mục danh mục — thứ người dùng "rút ra xài được ngay". */
+/** A catalogue entry — the thing a user "pulls out and uses right away". */
 export interface CatalogArm {
   id: string;
   name: string;
-  /** Icon TRUNG TÍNH của ta, không phải logo bên thứ ba. → SPEC-arms.md §11c */
+  /** OUR NEUTRAL icon, not a third-party logo. → SPEC-arms.md §11c */
   icon: string;
   blurb: string;
   /**
-   * Câu phụ trên thẻ nói CÁI GIÁ, không nói tính năng: người dùng chọn theo
-   * CÔNG SỨC bỏ ra, không theo tên hãng.
+   * The card's sub-line states THE PRICE, not the features: people choose by the
+   * EFFORT it costs them, not by the vendor's name.
    */
   price: 'none' | 'keys' | 'login';
   transport: 'stdio' | 'http';
   secrets: { name: string; label: string; help: string }[];
-  /** Cánh tay cần danh sách thư mục được phép. Đó CHÍNH LÀ allowlist. */
+  /** This arm needs a list of permitted directories. That list IS the allowlist. */
   folders?: { label: string; help: string };
-  /** Cho chọn nấc quyền lúc cắm (Chỉ đọc / +Thêm / Toàn quyền). → §6j */
+  /** Offer the access-level picker while plugging in (Read only / +Add / Full). → §6j */
   tiered?: boolean;
   /**
-   * Câu giải thích nấc do **mục danh mục** ghi đè. Chỉ câu HELP, không đổi tên nấc.
+   * Level wording overridden by **the catalogue entry**. The HELP text only; it
+   * never renames a level.
    *
-   * Có vì câu mặc định của nấc `add` (*"Tạo được trang/mục mới…"*) **sai với
-   * Linear**: `save_issue` là upsert nên việc mở issue rơi xuống `full`, và nấc
-   * `add` ở đó không mở được issue nào. Lý do đầy đủ + ranh giới của ô này:
-   * `core/catalog.ts §tierSay`. Không khai ⇒ dùng `TIER_SAY` mặc định.
+   * It exists because the default wording for the `add` level (*"can create new
+   * pages/items…"*) is **wrong for Linear**: `save_issue` is an upsert, so opening
+   * an issue falls into `full`, and the `add` level there opens no issue at all.
+   * The full reasoning and this field's boundary: `core/catalog.ts §tierSay`. Not
+   * declared ⇒ the default `TIER_SAY` is used.
    */
   tierSay?: Partial<Record<'read' | 'add' | 'full', string>>;
   /**
-   * Tên miền của endpoint (chỉ mục `http`). Để nhận ra một URL người dùng dán
-   * qua đường tự cắm là hãng nào ⇒ chỉ được đúng đường thay vì báo một câu
-   * chung chung. → `catalog.ts §catalogForUi` · `ArmDialog §catalogMatch`
+   * The endpoint's hostname (`http` entries only). It lets us recognise which
+   * vendor a URL pasted down the custom path belongs to ⇒ we can point at the
+   * right path instead of returning something generic.
+   * → `catalog.ts §catalogForUi` · `ArmDialog §catalogMatch`
    */
   host?: string;
-  /** Cần ĐĂNG NHẬP thay vì gõ chìa. Suy từ `spec` ở server, không khai tay. */
+  /** Needs a SIGN-IN rather than a typed key. Derived from `spec` on the server, never declared by hand. */
   needsLogin?: boolean;
   /**
-   * Đăng nhập bằng **mã thiết bị** thay vì mở tab rồi chờ tab đó xong.
+   * Signing in with a **device code** instead of opening a tab and waiting for it.
    *
-   * Hai luồng khác nhau ở đúng thứ người dùng nhìn thấy, nên giao diện phải
-   * biết: web flow bảo họ *"xong ở tab kia thì đây tự cập nhật"*; mã thiết bị
-   * hiện **một mã ngay tại đây** và tự hỏi thăm. Bày nhầm luồng là bảo người ta
-   * chờ một tab sẽ không bao giờ báo về. → SPEC-arms §5h·7
+   * The two flows differ in exactly what the user sees, so the interface has to
+   * know: the web flow tells them *"finish in the other tab and this updates
+   * itself"*; the device code shows **a code right here** and polls. Showing the
+   * wrong flow tells someone to wait for a tab that will never report back.
+   * → SPEC-arms §5h·7
    */
   deviceLogin?: boolean;
   /**
-   * Nhóm việc cho người dùng tick. Không có ⇒ cắm cả server. → §5h·7e
+   * Task groups for the user to tick. Absent ⇒ plug in the whole server. → §5h·7e
    *
-   * `label` giữ **tên của hãng** (tra được trong tài liệu hãng), `help` nói việc
-   * làm được. Đừng gộp hai vai vào một chuỗi. → `catalog.ts §ArmGroup`
+   * `label` keeps **the vendor's own name** (findable in their docs); `help` says
+   * what it can do. Do not merge the two roles into one string.
+   * → `catalog.ts §ArmGroup`
    */
   groups?: { id: string; label: string; help?: string; on?: boolean }[];
-  /** Hinh dang de chon icon - xem catalog.ts shape. */
+  /** The shape used to pick the icon — see `catalog.ts` §shape. */
   shape?: 'browser';
   /**
-   * Ô tick **cách chạy** — độc lập nhau, hỏi ở mọi nấc. → `catalog.ts §ArmOption`
+   * **How it runs** checkboxes — independent of each other, asked at every level.
+   * → `catalog.ts §ArmOption`
    *
-   * `loopbackOnly` = chỉ hiện khi trình duyệt và daemon cùng máy (cửa sổ trình
-   * duyệt mở trên máy chạy daemon). Giao diện ẩn nó; **cổng thật ở server**.
+   * `loopbackOnly` = shown only when the browser and the daemon are on the same
+   * machine (a browser window opening on the machine running the daemon). The
+   * interface hides it; **the real gate is on the server**.
    */
   options?: { id: string; label: string; help: string; on?: boolean; loopbackOnly?: boolean }[];
   /**
-   * HÀNG RÀO NGOÀI — phạm vi do HÃNG giữ, ta chỉ mở cửa. → `catalog.ts §scope`
-   * Không có ⇒ mục này không có màn hình đồng ý nào để đi tới.
+   * THE OUTER FENCE — the scope THE VENDOR holds; we only open the door.
+   * → `catalog.ts §scope`
+   * Absent ⇒ this entry has no consent screen to send anyone to.
    */
   scope?: { say: string; url: string };
   /**
-   * TRA BẢN CÀI APP tự động. → `catalog.ts §repoScan` · SPEC-arms §5h·7o
+   * AUTOMATIC APP-INSTALLATION LOOKUP. → `catalog.ts §repoScan` · SPEC-arms §5h·7o
    *
-   * Có nó nghĩa là mục này trả lời được câu mà `tools/list` không trả lời được:
-   * *"hãng cho cánh tay này đụng repo nào"*. Giao diện chỉ cần biết CÓ hay
-   * KHÔNG — tên tool nằm ở server, đúng chỗ nó được gọi.
+   * Its presence means this entry can answer a question `tools/list` cannot:
+   * *"which repos does the vendor let this arm touch"*. The interface only needs
+   * to know WHETHER it can — the tool name lives on the server, where it is
+   * called.
    */
   repoScan?: Record<string, never> | object;
   /**
-   * Hãng này cắt việc **ngay ở server** theo nấc quyền. → `catalog.ts §serverFenced`
+   * This vendor cuts capability **at its own server**, by access level.
+   * → `catalog.ts §serverFenced`
    *
-   * Giao diện cần biết vì con số token đo được là **trần**: phép thử cố ý chạy
-   * không mang hàng rào (mang thì bộ chọn nấc không bao giờ hiện), nên ở nấc dưới
-   * thực tế tốn ít hơn số hiện ra. Không nói ra là để người dùng đọc một con số
-   * đúng cho một cấu hình họ không chọn.
+   * The interface needs to know because the measured token figure is a **ceiling**:
+   * the probe deliberately runs without the fence (with it, the level picker would
+   * never appear), so a lower level really costs less than the number shown. Not
+   * saying so leaves the user reading a number that is correct for a config they
+   * did not choose.
    */
   serverFence?: boolean;
   /**
-   * Hồ sơ thương hiệu — và **logo sống trong đó**. → `catalog.ts §brand`
+   * The brand record — and **the logo lives inside it**. → `catalog.ts §brand`
    *
-   * `mark` là đường dẫn SVG 24×24 đơn sắc. Nó ở cạnh `checkedOn` để luật §11c
-   * (*"chưa đọc quy tắc hãng ⇒ không dùng logo"*) còn nhìn thấy được thứ nó nói
-   * về — bảng logo để riêng ở thư mục web thì luật thành lời hứa.
+   * `mark` is a monochrome 24×24 SVG path. It sits next to `checkedOn` so that
+   * rule §11c (*"guidelines unread ⇒ no logo"*) can still see the thing it governs
+   * — keep the logo table off in the web directory and the rule becomes a promise.
    */
   brand: {
     owner: string | null;
@@ -518,17 +537,18 @@ export interface CatalogArm {
 }
 
 /**
- * Workspace đã nối. **Tên và nhãn, không bao giờ token.**
+ * A linked workspace. **Names and labels, never a token.**
  *
- * "Workspace" chứ không phải "tài khoản": kiến trúc Notion là 1 tài khoản ⇄ N
- * workspace, và mỗi lần cấp quyền OAuth gắn với **một** workspace.
+ * "Workspace", not "account": Notion's architecture is 1 account ⇄ N workspaces,
+ * and each OAuth grant is tied to **one** workspace.
  */
 /**
- * MỘT lời gọi MCP đã xảy ra. → `core/audit.ts` · SPEC-arms §6k
+ * ONE MCP call that happened. → `core/audit.ts` · SPEC-arms §6k
  *
- * Bản ghi **kiểm toán**, không phải bản ghi tiến độ: nó có `args`, và `args`
- * chính là toàn bộ lý do nó tồn tại. Không có tham số thì dòng log chỉ nói
- * *"đã gọi update_page"* — đúng bằng thứ đã có, và đã thấy là không đủ.
+ * An **audit** record, not a progress record: it carries `args`, and `args` is
+ * the entire reason it exists. Without the arguments the log line only says
+ * *"called update_page"* — exactly what we already had, and that was measurably
+ * not enough.
  */
 export interface ArmCall {
   ts: string;
@@ -538,7 +558,7 @@ export interface ArmCall {
   plan_id?: string;
   task_id?: string;
   args: string;
-  /** Tham số bị cắt vì quá dài — nói ra, đừng để người đọc tưởng đó là tất cả. */
+  /** The arguments were truncated for length — say so, do not let a reader think that was all. */
   truncated?: boolean;
 }
 
@@ -546,23 +566,24 @@ export interface OAuthAccount {
   name: string;
   label?: string;
   expiresAt?: number;
-  /** Cánh tay đang dùng chìa này. Rỗng ⇒ gỡ được ngay, không cần hỏi server. */
+  /** The arms using this key. Empty ⇒ it can be forgotten right away, no server round-trip. */
   usedBy: string[];
   /**
-   * Chìa đã chết — phải **đăng nhập lại**, chờ không khỏi. Lý do nguyên văn.
+   * The key is dead — it needs **signing in again**; waiting will not fix it. The
+   * reason, verbatim.
    *
-   * Không có trường này thì triệu chứng duy nhất là cánh tay 401 im lặng lúc
-   * một nhân viên đang làm việc — xa nguyên nhân, và câu 401 nói *"chìa sai"*
-   * chứ không nói *"chìa chết"*.
+   * Without this field the only symptom is an arm silently 401-ing while an
+   * employee is mid-task — far from the cause, and a 401 says *"wrong key"*, not
+   * *"dead key"*.
    */
   dead?: string;
 }
 
 /**
- * Một mục trong SỔ CHUNG của công ty. → docs/SPEC-arms.md §6i
+ * One entry in the company's SHARED LEDGER. → docs/SPEC-arms.md §6i
  *
- * `id` là **băm cấu hình**, không phải tên — nó không bao giờ lên màn hình.
- * `label` là thứ người dùng đọc và đổi được.
+ * `id` is a **hash of the config**, not a name — it never reaches the screen.
+ * `label` is what the user reads and can change.
  */
 export interface InstalledArm {
   id: string;
@@ -570,60 +591,67 @@ export interface InstalledArm {
   catalog?: string;
   config: unknown;
   /**
-   * TÊN chìa, không bao giờ giá trị. Giá trị nằm ở `.state/secrets.json` cấp
-   * CÔNG TY và không bao giờ đi qua HTTP — đó chính là lý do "dùng lại" ở một
-   * văn phòng khác không phải điền lại gì. → `company.ts §reuseArm`
+   * Key NAMES, never values. The values live in COMPANY-level
+   * `.state/secrets.json` and never travel over HTTP — which is exactly why
+   * "reuse" in another office requires filling nothing in again.
+   * → `company.ts §reuseArm`
    */
   secrets: string[];
   /**
-   * Nấc quyền. Giao diện vẽ **huy hiệu** từ đây, KHÔNG từ chuỗi tên.
+   * The access level. The interface draws **the badge** from this, NOT from the
+   * name string.
    *
-   * ⚠ Nhét mức quyền vào `label` thì một cú đổi tên tạo ra được *"Notion (ghi
-   * được)"* trên một cánh tay chỉ đọc — nhãn nói dối về đặc quyền. → §6j
+   * ⚠ Put the level into `label` and one rename can produce *"Notion (writable)"*
+   * on a read-only arm — a label lying about privilege. → §6j
    */
   level?: 'read' | 'add' | 'full';
   /**
-   * Tên WORKSPACE cánh tay này nối tới — server tra từ `arms[].secrets` ra kho
-   * OAuth. Không đọc chuỗi `label`: nhãn là của người dùng và đổi tự do, còn
-   * workspace là sự thật thuộc về cấu hình. Vắng ⇒ không dùng OAuth, hoặc
-   * workspace đã bị gỡ; cả hai đều là "không biết" ⇒ không vẽ gì.
+   * The WORKSPACE name this arm connects to — the server resolves it from
+   * `arms[].secrets` against the OAuth store. It never reads the `label` string:
+   * the label belongs to the user and changes freely, while the workspace is a
+   * fact about the config. Absent ⇒ either no OAuth, or the workspace was
+   * forgotten; both mean "unknown" ⇒ draw nothing.
    */
   via?: string;
-  /** Số việc đã cấp — hiện cạnh huy hiệu để nhãn kiểm được bằng mắt. */
+  /** How many tools were granted — shown beside the badge so the label can be checked by eye. */
   toolCount: number;
   usedBy: { office: string; role: string }[];
   /**
-   * Không văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
-   * dây". Chỉ mục như thế mới hiện nút **xoá hẳn**. ⚠ Đừng tự suy từ `usedBy`:
-   * nó chỉ đếm sợi dây, nên một node đang nằm chờ sẽ trông như mồ côi.
+   * No office holds it any more — including the "sits on a diagram but is not
+   * wired" case. Only such an entry gets the **delete for good** button.
+   * ⚠ Do not infer this from `usedBy`: that counts wires only, so a node waiting
+   * on a diagram would look orphaned.
    */
   orphan: boolean;
 }
 
 /**
- * Kết quả bắt tay. `status` có NĂM giá trị, không phải hai — `needs-auth` KHÔNG
- * phải lỗi, nó là "bấm nút đăng nhập đi". → SPEC-arms.md §6c
+ * The result of a handshake. `status` has FIVE values, not two — `needs-auth` is
+ * NOT an error, it means "press the sign-in button". → SPEC-arms.md §6c
  */
 export interface ProbeResult {
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
   /**
-   * Nấc quyền ĐÁNG hiện, kèm số việc — **tính ở server**, không suy lại ở đây.
+   * The access levels WORTH showing, with their tool counts — **computed on the
+   * server**, never re-derived here.
    *
-   * ⚠ Luật *"chỉ hiện nếu thêm ≥1 việc so với nấc dưới"* có ca biên tinh tế
-   * (server toàn tool đọc ⇒ ba nấc bằng nhau ⇒ hai nấc dưới là noise). Dựng bản
-   * thứ hai của luật đó ở giao diện là dựng một bản sẽ quên một điều kiện.
+   * ⚠ The rule *"show it only if it adds ≥1 tool over the level below"* has a
+   * subtle edge case (an all-read server ⇒ all three levels equal ⇒ the lower two
+   * are noise). Building a second copy of that rule in the interface builds one
+   * that will forget a condition.
    */
   tiers?: { tier: 'read' | 'add' | 'full'; count: number }[];
   serverName?: string;
   serverVersion?: string;
-  /** NGUYÊN VĂN câu lỗi của server — chuỗi duy nhất copy đi hỏi chỗ khác được. */
+  /** The server's error, VERBATIM — the one string that can be copied and asked about elsewhere. */
   error?: string;
   tools: { name: string; description?: string; level: 'read' | 'write_external' }[];
-  /** Token cộng vào prefix mỗi lượt. `undefined` = chưa đo được, và ô để TRỐNG. */
+  /** Tokens added to the prefix on every turn. `undefined` = not measured, and the field stays EMPTY. */
   tokens?: number;
   /**
-   * Nối được nhưng server không cấp việc nào — hỏng, và hỏng KHÔNG có câu lỗi.
-   * Ca đã đo: gõ sai tên nhóm trong `X-MCP-Toolsets`. → `probe.ts §ProbeResult.warn`
+   * Connected, but the server granted no tools — broken, and broken WITH NO error
+   * message. Measured case: a mistyped group name in `X-MCP-Toolsets`.
+   * → `probe.ts §ProbeResult.warn`
    */
   warn?: string;
   connectMs: number;

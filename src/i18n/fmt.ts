@@ -54,6 +54,35 @@ export function formatDateTime(date: Date, locale?: Locale): string {
   });
 }
 
+/**
+ * `03/09/2026 14:05:09` — the full stamp, year and seconds included.
+ *
+ * The one place this is needed is an artifact group header, where it answers
+ * "which run was this": re-run the same request twice in a day and the seconds
+ * are the only thing separating the two groups.
+ *
+ * ⚠ This function exists because the artifacts panel had its own hand-rolled
+ * `${p(d.getDate())}/${p(d.getMonth() + 1)}/…` — a `dd/mm/yyyy` frozen into the
+ * code. Under an English interface that renders 3 September as `03/09/2026`,
+ * which an English reader reads as 9 March. The file header above already named
+ * hand-rolled padding as the thing to remove, and this call site survived the
+ * sweep; nothing flagged it, because a hand-built date carries no `'vi-VN'` to
+ * grep for.
+ *
+ * `hour12: false` for the same reason as `formatTimeOfDay`.
+ */
+export function formatStamp(date: Date, locale?: Locale): string {
+  return date.toLocaleString(tag(locale), {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
 /** Weekday, short form. */
 export function formatWeekday(date: Date, locale?: Locale): string {
   return date.toLocaleDateString(tag(locale), { weekday: 'short' });

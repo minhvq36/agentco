@@ -1,11 +1,12 @@
 /**
- * Theo dõi daemon đang chạy.
+ * Tracking the running daemon.
  *
  * → docs/SPEC-cli.md §1
  *
- * `agentco start` phải IDEMPOTENT: daemon đã chạy thì mở trình duyệt vào nó
- * thay vì báo lỗi port. Nghĩa là double-click shortcut LUÔN dẫn tới UI chạy
- * được, dù daemon đang sống hay đã chết.
+ * `agentco start` has to be IDEMPOTENT: when the daemon is already up, open a
+ * browser onto it rather than reporting a port conflict. That means
+ * double-clicking the shortcut ALWAYS lands on a working interface, whether the
+ * daemon was alive or dead.
  */
 
 import fs from 'node:fs';
@@ -31,7 +32,7 @@ export function clearDaemonFile(paths: CompanyPaths): void {
   fs.rmSync(paths.daemonFile, { force: true });
 }
 
-/** Trả về daemon ĐANG SỐNG THẬT, tự dọn file cũ nếu tiến trình đã chết. */
+/** The daemon that is GENUINELY ALIVE; clears a stale file when the process is gone. */
 export async function liveDaemon(paths: CompanyPaths): Promise<DaemonInfo | undefined> {
   if (!fs.existsSync(paths.daemonFile)) return undefined;
 
@@ -48,7 +49,7 @@ export async function liveDaemon(paths: CompanyPaths): Promise<DaemonInfo | unde
     return undefined;
   }
 
-  // PID còn sống chưa chắc là daemon của ta (PID bị tái sử dụng) — hỏi /healthz.
+  // A live PID is not proof it is OUR daemon — PIDs get reused. Ask /healthz.
   try {
     const res = await fetch(`${info.url}/healthz`, { signal: AbortSignal.timeout(2_000) });
     if (!res.ok) throw new Error('healthz did not return ok');
@@ -66,7 +67,7 @@ function processAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    // EPERM = tiến trình tồn tại nhưng khác quyền -> vẫn coi là sống
+    // EPERM = the process exists but under different permissions -> still alive
     return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
@@ -76,22 +77,23 @@ export function openBrowser(url: string): void {
 }
 
 /**
- * Mở một THƯ MỤC bằng trình quản lý file của hệ điều hành.
+ * Open a FOLDER in the operating system's file manager.
  * → docs/SPEC-offices.md §3
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐÂY LÀ LỐI THOÁT CHO "MÃ VĂN PHÒNG KHÔNG ĐỔI THEO TÊN".                 │
+ * │ THIS IS THE ESCAPE HATCH FOR "AN OFFICE CODE DOES NOT FOLLOW ITS NAME".  │
  * │                                                                          │
- * │ `id` là tên thư mục và cố ý KHÔNG đổi khi người dùng đổi tên hiển thị —  │
- * │ đổi nó là dời `artifacts/`, `tasks/`, `.state/` và mọi đường dẫn đã ghi  │
- * │ trong receipt cũ, để đổi một cái nhãn. Nhưng hệ quả thì thật: người dùng │
- * │ đổi "Báo cáo" thành "Kiểm kê" rồi đi tìm thư mục `kiem-ke/` không có.    │
- * │ Với tên phi-Latin còn tệ hơn — thư mục tên `vp-ee6fd8`.                   │
+ * │ `id` is the folder name and deliberately does NOT change when someone    │
+ * │ renames the office — changing it would move `artifacts/`, `tasks/`,      │
+ * │ `.state/` and every path already written into old receipts, all to alter │
+ * │ a label. But the consequence is real: a user renames "Reports" to        │
+ * │ "Stocktake", then goes looking for a `kiem-ke/` folder that is not       │
+ * │ there. With a non-Latin name it is worse — the folder is `vp-ee6fd8`.    │
  * │                                                                          │
- * │ Cách rẻ nhất để hoà giải hai thứ đó không phải là đổi tên thư mục, mà là │
- * │ **bỏ hẳn nhu cầu biết tên thư mục**: một nút mở thẳng nó ra. Người dùng  │
- * │ không bao giờ phải gõ, nhớ, hay đoán cái id nữa — và ta không phải dời   │
- * │ một byte nào.                                                            │
+ * │ The cheapest way to reconcile those two is not to rename the folder but  │
+ * │ to REMOVE THE NEED TO KNOW ITS NAME: one button that opens it. Nobody    │
+ * │ ever has to type, remember or guess the id again — and we move not one   │
+ * │ byte.                                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function openFolder(dir: string): void {
@@ -101,9 +103,9 @@ export function openFolder(dir: string): void {
 function reveal(target: string): void {
   if (process.env['AGENTCO_HEADLESS'] === '1') return;
   /**
-   * ⚠ Windows đi qua `cmd /c start` với đối số thứ hai RỖNG — đó là chỗ tiêu
-   * đề cửa sổ, và bỏ nó đi thì một đường dẫn có dấu ngoặc kép bị `start` hiểu
-   * thành tiêu đề rồi không mở gì cả.
+   * ⚠ Windows goes through `cmd /c start` with an EMPTY second argument — that
+   * slot is the window title, and leaving it out makes `start` read a quoted
+   * path as the title and open nothing at all.
    */
   const [cmd, args] =
     process.platform === 'win32'
@@ -114,6 +116,6 @@ function reveal(target: string): void {
   try {
     spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
   } catch {
-    /* không mở được thì thôi — giao diện vẫn hiện đường dẫn để chép tay */
+    /* could not open it — the interface still shows the path to copy by hand */
   }
 }

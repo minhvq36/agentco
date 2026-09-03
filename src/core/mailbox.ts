@@ -1,28 +1,28 @@
 /**
- * Hòm thư của Trợ lý. → docs/SPEC-tools-approval.md §11
+ * The assistant's mailbox. → docs/SPEC-tools-approval.md §11
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TRỢ LÝ LÀ MỘT NGƯỜI. Một người làm được một việc tại một thời điểm.      │
- * │                                                                          │
- * │ Đây không phải một lựa chọn thiết kế cho đẹp — nó là BẮT BUỘC KỸ THUẬT.  │
- * │ `askSession()` chạy `resume: sessionId` rồi ghi đè `sessionId` bằng id    │
- * │ mới. Hai lượt gọi chồng nhau thì cả hai cùng resume một id, cả hai cùng   │
- * │ ghi đè — và MỘT LƯỢT BỊ MẤT TRẮNG khỏi trí nhớ hội thoại. Người dùng      │
- * │ thấy Trợ lý "quên" câu vừa nói mà không hiểu vì sao.                      │
- * │                                                                          │
- * │ Nhưng NHÂN VIÊN thì chạy song song thoải mái — họ là hàm stateless,      │
- * │ mỗi người một phiên riêng. Hai trạng thái này ĐỘC LẬP, và giao diện phải  │
- * │ nói được cả hai: "Trợ lý đang nghĩ" và "2 nhân viên đang làm".            │
+ * │ THE ASSISTANT IS ONE PERSON. One person does one thing at a time.         │
+ * │                                                                           │
+ * │ That is not a tidy design choice — it is a TECHNICAL REQUIREMENT.         │
+ * │ `askSession()` runs `resume: sessionId` and then overwrites `sessionId`   │
+ * │ with the new one. Two overlapping calls both resume the same id and both  │
+ * │ overwrite it — and ONE TURN IS LOST OUTRIGHT from the conversation's      │
+ * │ memory. The user sees the assistant "forget" what it just said, with no   │
+ * │ way to tell why.                                                          │
+ * │                                                                           │
+ * │ EMPLOYEES, though, run in parallel freely — they are stateless functions, │
+ * │ each with its own session. The two states are INDEPENDENT, and the        │
+ * │ interface has to say both: "the assistant is thinking" and "2 employees   │
+ * │ are working".                                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-/** Tối đa bao nhiêu tin chờ trước khi ta bảo người dùng chậm lại. */
+/** How many messages may queue before we ask the user to slow down. */
 export const MAX_QUEUED = 12;
 
 export type MailItem =
-  /** Người dùng nhắn trong lúc Trợ lý bận. */
   | { kind: 'user'; text: string; at: number }
-  /** Một ca vừa chạy xong, cần Trợ lý tổng kết. */
   | { kind: 'report'; planId: string; at: number };
 
 export class Mailbox {
@@ -37,14 +37,14 @@ export class Mailbox {
     return this.busy;
   }
 
-  /** true nếu nhận được; false nếu hàng đợi đã đầy. */
+  /** true when accepted; false when the queue is full. */
   push(item: MailItem): boolean {
     if (this.items.length >= MAX_QUEUED) return false;
     this.items.push(item);
     return true;
   }
 
-  /** Bỏ hết — dùng khi người dùng `/stop`. Việc đã huỷ thì tin chờ cũng vô nghĩa. */
+  /** Drop everything — for `/stop`. Once the work is cancelled, queued messages mean nothing. */
   clear(): number {
     const n = this.items.length;
     this.items = [];
@@ -52,13 +52,14 @@ export class Mailbox {
   }
 
   /**
-   * Lấy lô tiếp theo. GOM các tin người dùng liên tiếp làm MỘT.
+   * Take the next batch, MERGING consecutive user messages into ONE.
    *
-   * Người dùng gõ ba câu trong lúc Trợ lý bận thì ba câu đó là **một ý** —
-   * xử lý riêng lẻ vừa tốn ba lượt gọi, vừa khiến Trợ lý trả lời câu 1 khi đã
-   * có ngữ cảnh của câu 3. Gom lại: rẻ hơn và đúng hơn.
+   * Three sentences typed while the assistant is busy are ONE THOUGHT. Handling
+   * them separately costs three calls AND makes the assistant answer sentence 1
+   * while already holding the context of sentence 3. Merging is cheaper and more
+   * correct.
    *
-   * Tin `report` KHÔNG gom — mỗi ca một bản tổng kết.
+   * `report` items are NEVER merged — one summary per shift.
    */
   take(): MailItem[] | undefined {
     const first = this.items.shift();
@@ -74,12 +75,12 @@ export class Mailbox {
   private depth = 0;
 
   /**
-   * Khoá Trợ lý — MUTEX THẬT, xếp hàng chứ không phải chỉ một lá cờ.
+   * Lock the assistant — a REAL MUTEX that queues, not just a flag.
    *
-   * Một lá cờ `busy = true/false` không đủ: `run()` gọi `plan()` rồi `report()`
-   * từ một nhánh khác với vòng bơm, hai bên cùng đặt cờ, và bên nào xong trước
-   * cũng gỡ cờ của bên kia — đúng lại cái lỗi hai lượt gọi chồng nhau mà cả
-   * module này sinh ra để tránh.
+   * A `busy = true/false` flag is not enough: `run()` calls `plan()` and then
+   * `report()` from a different branch than the pump loop, both set the flag,
+   * and whichever finishes first clears the other one's — recreating exactly the
+   * overlapping-call bug this whole module exists to prevent.
    */
   lock<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.chain.then(async () => {
@@ -92,7 +93,7 @@ export class Mailbox {
         if (this.depth === 0) this.busy = false;
       }
     });
-    // Giữ chuỗi sống kể cả khi một mắt xích ném lỗi.
+    // Keep the chain alive even when one link throws.
     this.chain = run.then(
       () => undefined,
       () => undefined,
@@ -102,10 +103,10 @@ export class Mailbox {
 }
 
 /**
- * Gộp nhiều tin của người dùng thành một câu cho Trợ lý.
+ * Merge several user messages into one turn for the assistant.
  *
- * Dựng bằng CODE, không phải một lượt gọi LLM để "tóm tắt" — chuyện đó sẽ đúng
- * là mua sự mượt mà bằng token, thứ mà bốn tiêu chí cấm.
+ * Built in CODE, not by an LLM call to "summarise" them — that would be buying
+ * smoothness with tokens, which the four quality criteria forbid.
  *
  * ⚠ The wrapper sentence is ENGLISH and does NOT go through i18n, even though it
  * sits inside the user's turn. It is prompt scaffolding, not something displayed:

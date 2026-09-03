@@ -17,46 +17,51 @@ import { Markdown } from '@/lib/markdown';
 import { actions, toast, useApp } from '@/lib/store';
 import type { ArtifactRecord, ArtifactView } from '@/lib/types';
 import { plural, t } from '@i18n';
-import { formatBytes, formatDate, formatTime } from '@i18n/fmt';
+import { formatBytes, formatDate, formatStamp, formatTime } from '@i18n/fmt';
 
 /**
- * KẾT QUẢ — file NHÂN VIÊN làm ra. → docs/SPEC-artifacts.md
+ * The files EMPLOYEES produce. → docs/SPEC-artifacts.md
  *
- * Tên gọi là "Kết quả" chứ không phải "Artifacts" hay "Sản phẩm", và lý do rất
- * cụ thể: Trợ lý ĐÃ nói câu *"Kết quả đã lưu tại: …"* sau mọi lần chạy. Sản
- * phẩm đã dạy người dùng từ đó rồi. Đặt tên thứ hai cho cùng một thứ là tự tạo
- * ra khái niệm dễ lẫn thứ ba — đã có sẵn hai cái (kho tri thức / tủ tài liệu).
+ * The tab is labelled "Results" in both languages (`sidebar.artifacts`), never
+ * "Artifacts" or "Deliverables", for a concrete reason: the assistant ALREADY
+ * says *"Results saved at: …"* after every run (`off.resultsSavedAt`), so that is
+ * the word the product has taught. Coining a second name for the same thing
+ * invents a third confusable concept — there are already two (the knowledge store
+ * and the library).
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ XEM · TẢI VỀ · XOÁ. KHÔNG SỬA, VÀ KHÔNG CÓ NÚT "GỬI CHO NHÂN VIÊN".      │
+ * │ VIEW · DOWNLOAD · DELETE. NO EDITING, AND NO "SEND TO AN EMPLOYEE".      │
  * │                                                                          │
- * │ Không sửa: cùng lý do với tủ tài liệu — một editor ở đây sẽ là cửa ghi   │
- * │ thứ hai vào cùng một file mà nhân viên đang ghi.                          │
+ * │ No editing: the same reason as the library — an editor here would be a   │
+ * │ second write door onto the very file an employee is writing.             │
  * │                                                                          │
- * │ Không có cửa nạp ngược: nếu panel này đưa được kết quả trở lại làm đầu   │
- * │ vào, nó thành tủ tài liệu thứ hai — hai kho cùng nghĩa, hai luật vòng    │
- * │ đời, và người dùng phải đoán nên bỏ file vào đâu. Muốn dùng lại thì bàn  │
- * │ giao bằng tay: chép nội dung vào ô chat, hoặc thả vào tủ tài liệu.       │
+ * │ No way back in: if this panel could feed an artifact back as an input it │
+ * │ becomes a second library — two stores meaning the same thing, two        │
+ * │ lifecycle rules, and a user guessing which one a file belongs in. To     │
+ * │ reuse something, hand it over by hand: paste the content into the chat,  │
+ * │ or drop it into the library.                                             │
  * │                                                                          │
- * │ ⚠ Không nhầm với thứ VẪN CHẠY và không đổi: trong MỘT kế hoạch nhiều     │
- * │ bước, task sau đọc artifact của task trước qua `inputs`. Đó là dây nối   │
- * │ bên trong một việc, không phải một cái kho để lấy ra.                     │
+ * │ ⚠ Not to be confused with what STILL WORKS and is unchanged: inside ONE  │
+ * │ multi-step plan, a later task reads an earlier task's artifact through   │
+ * │ `inputs`. That is a wire inside one job, not a store to fetch from.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function ArtifactsPanel() {
   const officeId = useApp((s) => s.officeId);
   const artifactsVersion = useApp((s) => s.artifactsVersion);
-  // Đọc để BIẾT có yêu cầu mới, còn lấy giá trị thì qua `takeRevealArtifact()`.
-  // Bấm cùng một đường dẫn hai lần vẫn phải mở lại được, mà giá trị thì không
-  // đổi — nên hiệu ứng phải bám vào chính ô này chứ không vào nội dung của nó.
+  // Read to KNOW a new request arrived; the value itself comes from
+  // `takeRevealArtifact()`. Clicking the same path twice still has to reopen it,
+  // and the value does not change — so the effect depends on this cell itself
+  // rather than on its contents.
   const revealRequest = useApp((s) => s.revealArtifact);
   const [items, setItems] = useState<ArtifactRecord[] | null>(null);
   /**
-   * TỔNG THẬT, tách khỏi `items.length`. → `api.artifacts`
+   * THE REAL TOTAL, kept separate from `items.length`. → `api.artifacts`
    *
-   * Server chỉ gửi 500 file mới nhất. Nếu con số trên đầu panel lấy từ
-   * `items.length` thì nó nói "500" trong khi nút ngay cạnh nó xoá 712 — mà cả
-   * lý do con số đó nằm ở đó là để người dùng biết mình sắp mất bao nhiêu.
+   * The server only sends the newest 500 files. If the number at the top of the
+   * panel came from `items.length` it would say "500" while the button beside it
+   * deletes 712 — and the entire reason that number is there is to tell the user
+   * how much they are about to lose.
    */
   const [total, setTotal] = useState(0);
   const [confirmDel, setConfirmDel] = useState<ArtifactRecord | null>(null);
@@ -81,16 +86,17 @@ export function ArtifactsPanel() {
   useEffect(reload, [reload, artifactsVersion]);
 
   /**
-   * Mở thẳng một kết quả vì người dùng vừa bấm đường dẫn của nó trong ô chat.
+   * Open an artifact directly because the user just clicked its path in the chat.
    * → docs/SPEC-artifacts.md §2.5
    *
-   * Chờ `items` nạp xong rồi mới xử: yêu cầu tới cùng lúc panel vừa mở, mà lúc
-   * đó danh sách còn `null` — làm ngay thì luôn "không tìm thấy".
+   * Wait for `items` to load before acting: the request arrives at the same
+   * moment the panel opens, when the list is still `null` — acting immediately
+   * always means "not found".
    *
-   * ⚠ KHÔNG tìm thấy thì phải NÓI. File có thể đã bị xoá sau khi tin nhắn được
-   * gửi, và đó là chuyện bình thường — nhưng một cú bấm không gây ra chuyện gì
-   * cả thì người dùng chỉ biết là "hỏng", và họ bấm lại. Câu này phân biệt được
-   * "đã xoá" với "app đơ".
+   * ⚠ NOT finding it has to be SAID. The file may have been deleted after the
+   * message was sent, and that is normal — but a click that causes nothing at all
+   * tells the user only that it is "broken", and they click again. This sentence
+   * separates "deleted" from "the app is frozen".
    */
   useEffect(() => {
     if (items === null) return;
@@ -102,11 +108,11 @@ export function ArtifactsPanel() {
   }, [items, revealRequest]);
 
   /**
-   * Gom theo KẾ HOẠCH, không theo `task_id`.
+   * Group by PLAN, not by `task_id`.
    *
-   * `T-01` là số thứ tự trong một kế hoạch và mọi kế hoạch đều bắt đầu từ 1,
-   * nên gom theo nó là trộn tám lần chạy khác nhau vào một rổ — đúng thứ đang
-   * nằm trên đĩa của những văn phòng chạy trước 19/08.
+   * `T-01` is a position within one plan and every plan starts at 1, so grouping
+   * on it tips eight different runs into one basket — exactly what is sitting on
+   * disk in offices that ran before 19/08.
    */
   const groups = useMemo(() => {
     if (!items) return null;
@@ -141,9 +147,9 @@ export function ArtifactsPanel() {
       setItems(r.artifacts);
       setTotal(r.total);
       setOpen(null);
-      // Còn sót thì NÓI RA. `removeAll` quét lại tới khi sạch, nhưng một file
-      // đang bị khoá (Word đang mở nó) thì vẫn ở lại — im lặng ở đây là để
-      // người dùng tin ngăn đã trống trong khi nó không trống.
+      // If anything is left, SAY SO. `removeAll` sweeps until clean, but a file
+      // that is locked (Word has it open) stays — staying quiet here leaves the
+      // user believing the panel is empty when it is not.
       toast(
         r.total > 0
           ? plural('artifacts.removedWithLeft', r.removed, { total: r.total })
@@ -174,22 +180,23 @@ export function ArtifactsPanel() {
     <div className="flex h-full flex-col">
       {/*
         ┌──────────────────────────────────────────────────────────────────────┐
-        │ XOÁ TẤT CẢ — nút NGUY HIỂM nên nó phải TRÔNG NGUY HIỂM và ĐẾM ĐƯỢC. │
-        │                                                                      │
-        │ Con số nằm ngay trên nút ("12 kết quả") chứ không chỉ trong hộp xác   │
-        │ nhận: người dùng cần biết mình sắp mất bao nhiêu TRƯỚC khi bấm, chứ   │
-        │ không phải sau. Hộp xác nhận đọc lúc tay đã đưa ra rồi thì phần lớn   │
-        │ người ta bấm Enter.                                                   │
-        │                                                                      │
-        │ Không dùng `variant="primary"`: nút chính của một panel phải là việc  │
-        │ người dùng làm hằng ngày, và ở đây việc đó là ĐỌC kết quả.            │
+        │ DELETE ALL — a DANGEROUS button, so it must LOOK dangerous and be     │
+        │ COUNTABLE.                                                            │
+        │                                                                       │
+        │ The number sits on the bar itself ("12 artifacts"), not only in the   │
+        │ confirmation: the user needs to know how much they are about to lose  │
+        │ BEFORE the click, not after. A confirmation read with the hand        │
+        │ already committed mostly gets an Enter.                               │
+        │                                                                       │
+        │ No `variant="primary"`: a panel's primary button should be the thing  │
+        │ the user does every day, and here that is READING an artifact.        │
         └──────────────────────────────────────────────────────────────────────┘
       */}
       <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2">
         {/*
-          Vượt trần thì đổi hẳn câu, KHÔNG cộng thêm một mẩu vào câu cũ: tổng
-          dung lượng của 500 file mà ghi cạnh con số 712 là một con số sai đứng
-          cạnh một con số đúng. Thà nói ít hơn.
+          Over the cap, swap the whole sentence — do NOT bolt a fragment onto the
+          old one: the total size of 500 files printed next to the number 712 is a
+          wrong number standing beside a right one. Better to say less.
         */}
         <span className="text-xs text-muted">
           {total > items.length
@@ -212,21 +219,22 @@ export function ArtifactsPanel() {
           <section key={planId}>
             <div className="sticky top-0 z-10 flex items-baseline gap-3 border-b border-line bg-panel px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
               {/*
-                Tên việc CẮT MỘT DÒNG, bản đầy đủ ở tooltip. `request` là câu
-                Trợ lý VIẾT LẠI ("viết lại yêu cầu thành một câu rõ ràng, đủ
-                ngữ cảnh") nên nó dài được — để nó xuống dòng thì tiêu đề dính
-                (`sticky`) chiếm mất nửa panel.
+                The job title is TRUNCATED TO ONE LINE, with the full text in the
+                tooltip. `request` is the assistant's REWRITE ("restate the
+                request as one clear sentence with enough context"), so it can run
+                long — let it wrap and the `sticky` header eats half the panel.
               */}
               <span className="min-w-0 flex-1 truncate normal-case" title={planTitle(planId, list)}>
                 {planTitle(planId, list)}
               </span>
               {/*
-                Thời gian dạng ĐẦY ĐỦ CÓ GIÂY, chỉ ở tiêu đề nhóm.
+                A FULL timestamp WITH SECONDS, only on the group header.
 
-                Tiêu đề là mỏ neo phân biệt "lần chạy nào" — chạy lại CÙNG một
-                yêu cầu trong một ngày thì giây là thứ DUY NHẤT tách được hai
-                nhóm. Dòng file bên trong giữ `when()` rút gọn: nó đã nằm sẵn
-                trong một nhóm đã biết, lặp lại ngày ở đó là nhiễu.
+                The header is the anchor for "which run was this" — re-run the
+                SAME request within a day and the seconds are the ONLY thing that
+                tells the two groups apart. The file rows inside keep the short
+                `when()`: they already sit under a known group, and repeating the
+                date there is noise.
               */}
               {planId !== LEGACY && (
                 <span className="flex-none tabular-nums font-normal">{stamp(newestOf(list).mtime)}</span>
@@ -253,8 +261,9 @@ export function ArtifactsPanel() {
                         {a.view === 'download' && (
                           <>
                             <span>·</span>
-                            {/* Nói TRƯỚC khi họ bấm. Bấm vào rồi mới biết "không
-                                xem được" là một cú bấm phí và một giây bối rối. */}
+                            {/* Say it BEFORE they click. Finding out "no preview"
+                                only after clicking is a wasted click and a second
+                                of confusion. */}
                             <span className="rounded bg-line/70 px-1.5">
                               {t('artifacts.downloadOnly')}
                             </span>
@@ -263,8 +272,9 @@ export function ArtifactsPanel() {
                       </div>
                     </button>
                     <div className="flex flex-none gap-1">
-                      {/* `a.path` đã là đường dẫn đủ tính từ thư mục văn phòng —
-                          đúng chuỗi planner phải ghi vào `inputs`. */}
+                      {/* `a.path` is already the full path relative to the office
+                          directory — exactly the string the planner has to write
+                          into `inputs`. */}
                       <CopyRef path={a.path} />
                       <a
                         href={officeId ? api.artifactUrl(officeId, a.path, true) : '#'}
@@ -291,9 +301,9 @@ export function ArtifactsPanel() {
       </div>
 
       {/*
-        Câu đối xứng với chân hai ngăn kéo kia. Ba kho dễ lẫn nhau, nên mỗi cái
-        phải tự nói mình LÀ GÌ — rẻ nhất trong mọi cách chống nhầm lẫn, và 0
-        token vì nằm hoàn toàn ở giao diện.
+        The mirror of the footers in the other two panels. Three stores are easy
+        to confuse, so each one has to say WHAT IT IS — the cheapest defence
+        against that confusion, and 0 tokens because it lives entirely in the UI.
       */}
       <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
         {t('artifacts.footerBefore')} <b>{t('artifacts.footerBold1')}</b>
@@ -303,15 +313,16 @@ export function ArtifactsPanel() {
       <ViewerDialog item={open} officeId={officeId} onClose={() => setOpen(null)} />
 
       {/*
-        Khác hẳn câu của tủ tài liệu, và khác biệt phải nói ra: tài liệu thì bản
-        gốc còn trên máy người dùng, còn kết quả thì ĐÂY LÀ BẢN DUY NHẤT — xoá là
-        mất thứ đã trả tiền để làm ra.
+        Deliberately different wording from the library, and the difference has to
+        be said out loud: a library document still has its original on the user's
+        machine, but for an artifact THIS IS THE ONLY COPY — deleting it loses
+        something that was paid for.
 
-        Vẫn dùng `ConfirmDelete` (Enter = xoá) dù mất mát ở đây nặng hơn tủ tài
-        liệu: hậu quả vẫn CÓ TRẦN — chạy lại là ra, chỉ tốn tiền — và ngăn này
-        mới là chỗ file dồn lại thành hàng chục sau vài ngày, tức là chỗ cần dọn
-        nhanh nhất. Ranh giới nằm ở "dựng lại được hay không", không ở "tiếc hay
-        không".
+        Still `ConfirmDelete` (Enter = delete) even though the loss is heavier than
+        in the library: the consequence still has a CEILING — run it again and it
+        comes back, it only costs money — and this is the panel where files pile up
+        into dozens within days, i.e. the one that most needs fast tidying. The
+        line is drawn at "can it be rebuilt", not at "would it hurt".
       */}
       <ConfirmDelete
         open={!!confirmDel}
@@ -324,11 +335,12 @@ export function ArtifactsPanel() {
       </ConfirmDelete>
 
       {/*
-        Câu này nêu CON SỐ, không nêu "tất cả". "Tất cả" là một từ mà người đọc
-        tự điền vào một lượng họ đang đoán; "37 file" thì không đoán được.
+        This one names a NUMBER, not "all". "All" is a word the reader fills in
+        with a quantity they are guessing at; "37 files" cannot be guessed at.
 
-        Nói rõ hai kho KIA không bị đụng — đó là câu hỏi đầu tiên hiện ra trong
-        đầu người dùng khi thấy chữ "xoá tất cả" trong một app có ba cái kho.
+        Say plainly that the OTHER two stores are untouched — that is the first
+        question in a user's head when they read "delete all" in an app with three
+        stores.
       */}
       <ConfirmDelete
         open={confirmAll}
@@ -356,12 +368,13 @@ function newestOf(list: readonly ArtifactRecord[]): ArtifactRecord {
 }
 
 /**
- * Nhãn nhóm — TÊN VIỆC THẬT. Không bao giờ hiện mã kế hoạch.
+ * The group label — THE REAL JOB NAME. Never the plan id.
  * → docs/SPEC-artifacts.md §2.1
  *
- * `plan_title` do server tra sẵn từ `tasks/index.json`. Rỗng thì rơi về nhãn
- * ngày giờ cũ: kế hoạch đã rớt khỏi sổ (trần 200 bản ghi) là chuyện bình thường
- * ở một văn phòng chạy lâu, và một tiêu đề trống thì tệ hơn một tiêu đề mờ.
+ * `plan_title` is looked up by the server from `tasks/index.json`. Empty falls
+ * back to the old date-and-time label: a plan dropping off the ledger (a 200-row
+ * cap) is normal in a long-running office, and an empty title is worse than a
+ * vague one.
  */
 function planTitle(planId: string, list: readonly ArtifactRecord[]): string {
   if (planId === LEGACY) return t('artifacts.legacyGroup');
@@ -369,30 +382,30 @@ function planTitle(planId: string, list: readonly ArtifactRecord[]): string {
   return named ? named.plan_title.trim() : t('artifacts.runAt', { when: when(newestOf(list).mtime) });
 }
 
-/** Ngày giờ ĐẦY ĐỦ có giây — dùng cho tiêu đề nhóm, xem chú thích ở chỗ gọi. */
+/** A FULL date and time with seconds — for group headers; see the note at the call site. */
 function stamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return formatStamp(d);
 }
 
-// ──────────────────────────────────────────────────────────── xem trước
+// ──────────────────────────────────────────────────────────────── preview
 
 /**
- * Cửa sổ xem trước.
+ * The preview dialog.
  *
- * Ba nhóm, và ranh giới giữa chúng là một quyết định sản phẩm:
+ * Three groups, and the line between them is a product decision:
  *
- *  · văn bản (md · txt · csv · json · yaml · html) — `fetch` rồi tự vẽ. Đây là
- *    100% kết quả thật hôm nay: nhân viên chỉ có `Write`/`Edit`, tức là chỉ ghi
- *    được văn bản.
- *  · trình duyệt tự lo (ảnh · pdf · video) — vài dòng thẻ native. Chưa có
- *    nhân viên nào sinh ra được chúng, nhưng gần như miễn phí nên làm luôn.
- *  · office (docx · xlsx · pptx) — KHÔNG xem trước. `extract.ts` bóc được
- *    chúng với 0 phụ thuộc, nên đây không phải chuyện nặng codebase: một
- *    preview bóc-text của file Word là một LỜI NÓI DỐI — mất bảng, mất bố cục,
- *    mất ảnh — và người dùng đang nhìn nó để quyết có gửi cho khách hay không.
+ *  · text (md · txt · csv · json · yaml · html) — `fetch` and render it
+ *    ourselves. This is 100% of real artifacts today: employees only have
+ *    `Write`/`Edit`, so text is all they can produce.
+ *  · handled by the browser (images · pdf · video) — a few lines of native tags.
+ *    No employee can produce these yet, but it is nearly free, so it is here.
+ *  · office (docx · xlsx · pptx) — NO preview. `extract.ts` can unpack them with
+ *    0 dependencies, so this is not about codebase weight: a text-extracted
+ *    preview of a Word file is a LIE — the tables, the layout and the images are
+ *    all gone — and the user is looking at it to decide whether to send it to a
+ *    client.
  */
 function ViewerDialog({
   item,
@@ -417,8 +430,8 @@ function ViewerDialog({
       .then(async (r) => {
         const body = await r.text();
         if (!alive) return;
-        // Server trả 413 kèm câu giải thích khi file quá lớn để xem trước — hiện
-        // đúng câu đó thay vì một khối JSON thô.
+        // The server answers 413 with an explanation when a file is too large to
+        // preview — show that sentence rather than a slab of raw JSON.
         if (!r.ok) throw new Error(safeError(body) ?? t('artifacts.readFailedStatus', { status: r.status }));
         setText(body);
       })
@@ -463,13 +476,14 @@ function ViewerDialog({
             <CsvTable text={text} sep={item.ext === 'tsv' ? '\t' : ','} />
           ) : item.view === 'markdown' ? (
             /*
-              `.md` là 100% kết quả thật hôm nay (SPEC-artifacts §3: 14/14), nên
-              đây là màn hình người dùng nhìn nhiều nhất trước khi quyết có gửi
-              cho khách hay không. Hiện `**đậm**` thành đúng hai dấu sao là bắt
-              họ tự dịch markdown trong đầu để đoán xem khách sẽ thấy gì.
+              `.md` is 100% of real artifacts today (SPEC-artifacts §3: 14/14), so
+              this is the screen the user looks at most before deciding whether to
+              send something to a client. Rendering `**bold**` as two literal
+              asterisks makes them translate markdown in their head to guess what
+              the client will see.
 
-              `variant="preview"` nới cỡ tiêu đề thêm một nấc: hộp này rộng 56rem
-              chứ không phải bong bóng chat 330px.
+              `variant="preview"` steps the heading sizes up once: this dialog is
+              56rem wide, not a 330px chat bubble.
             */
             <div className="text-[13.5px] leading-relaxed text-ink">
               <Markdown text={text} variant="preview" />
@@ -505,11 +519,12 @@ function ViewerDialog({
 const TEXTY = new Set<ArtifactView>(['text', 'markdown', 'csv', 'code']);
 
 /**
- * Bảng CSV — parser đủ dùng, có xử lý dấu nháy kép.
+ * A CSV table — a good-enough parser that does handle double quotes.
  *
- * Không kéo thư viện về cho việc này: một bảng chỉ để NHÌN, không sort không
- * lọc không sửa. Ca duy nhất parser này bỏ qua là xuống dòng bên trong ô có
- * nháy — hiếm, và hậu quả là một hàng hiện xấu chứ không phải một con số sai.
+ * No library for this: the table is only there to be LOOKED AT — no sorting, no
+ * filtering, no editing. The one case this parser gets wrong is a newline inside
+ * a quoted cell — rare, and the consequence is one ugly row, not one wrong
+ * number.
  */
 function CsvTable({ text, sep }: { text: string; sep: string }) {
   const rows = useMemo(() => {
@@ -529,9 +544,9 @@ function CsvTable({ text, sep }: { text: string; sep: string }) {
         <thead>
           <tr>
             {/*
-              ⚠ Gọi là "hàng đầu", KHÔNG khẳng định đó là tiêu đề. Ta THẤY nội
-              dung dòng một; ta KHÔNG thấy rằng nó là dòng tiêu đề. Cùng cái bẫy
-              đã dẫm ở INDEX.md của tủ tài liệu.
+              ⚠ Call it "the first row", do NOT assert that it is a header. We can
+              SEE what line one contains; we cannot see that it IS a header line.
+              The same trap already stepped on in the library's INDEX.md.
             */}
             {(head ?? []).map((c, i) => (
               <th
@@ -585,9 +600,9 @@ function splitRow(line: string, sep: string): string[] {
   return out;
 }
 
-// ──────────────────────────────────────────────────────────── định dạng
+// ───────────────────────────────────────────────────────────── formatting
 
-/** Hôm nay thì chỉ hiện giờ — người dùng mở panel này ngay sau khi việc vừa xong. */
+/** Today shows only the time — people open this panel right after a job finishes. */
 function when(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';

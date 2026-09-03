@@ -19,26 +19,28 @@ import { plural, t } from '@i18n';
 import { formatBytes } from '@i18n/fmt';
 
 /**
- * Tủ tài liệu — file NGƯỜI DÙNG đưa vào. → docs/SPEC-library.md
+ * The library — files THE USER puts in. → docs/SPEC-library.md
  *
- * Khác ngăn kéo Tri thức ở đúng chỗ quan trọng nhất, và giao diện phải nói ra
- * được điều đó: kho tri thức là thứ hệ thống ĐÃ HỌC (sửa/xoá được, không thêm
- * được), tủ tài liệu là thứ người dùng ĐƯA VÀO (thêm/xoá được, không sửa được).
+ * It differs from the Knowledge drawer at the point that matters most, and the
+ * interface has to be able to say it: knowledge is what the system HAS LEARNED
+ * (editable/deletable, not addable); the library is what the user HAS BROUGHT IN
+ * (addable/deletable, not editable).
  *
- * Không có editor, và đó là quyết định chứ không phải thiếu sót — sửa .docx
- * trong một textarea là phá nó. Muốn sửa thì sửa ngoài rồi thả lại đè lên.
+ * No editor, and that is a decision rather than an omission — editing a .docx in
+ * a textarea destroys it. To edit, edit outside and drop it back over the top.
  */
 export function LibraryPanel() {
   const officeId = useApp((s) => s.officeId);
-  // Bóc văn bản chạy NGẦM và mất vài giây cho một PDF dày. Không theo con số này
-  // thì dòng "đang đọc…" đứng im cho tới lần người dùng tự bấm mở lại tủ — đúng
-  // lúc họ cần biết nhất thì màn hình im lặng.
+  // Text extraction runs IN THE BACKGROUND and takes seconds on a thick PDF.
+  // Without following this number, the "reading…" line sits frozen until the user
+  // reopens the drawer themselves — the screen goes quiet exactly when they most
+  // need to know.
   const libraryVersion = useApp((s) => s.libraryVersion);
-  // Số tài liệu đang được bóc. Đây là chỗ ĐÚNG của con số này — nó là trạng
-  // thái của cái tủ, không phải của cuộc trò chuyện. Xem `AppState.libraryBusy`.
+  // How many documents are being extracted. This is the RIGHT home for the number
+  // — it is state of the drawer, not of the conversation. See `AppState.libraryBusy`.
   const libraryBusy = useApp((s) => s.libraryBusy);
-  // File vừa thả lên node Tủ tài liệu trên sơ đồ. Canvas chỉ chuyển tay —
-  // toàn bộ luồng tải lên sống ở đây, đúng MỘT bản.
+  // Files just dropped on the Library node in the canvas. The canvas only hands
+  // them over — the whole upload flow lives here, in exactly ONE copy.
   const pendingDocs = useApp((s) => s.pendingDocs);
   const [docs, setDocs] = useState<LibraryDoc[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -63,8 +65,8 @@ export function LibraryPanel() {
   useEffect(() => {
     if (!pendingDocs || !officeId) return;
     void upload(actions.takeDroppedDocs());
-    // `upload` dựng lại mỗi lần render nhưng chỉ đọc `officeId`; đưa nó vào deps
-    // sẽ chạy lại effect mỗi lần render và tải lên lặp.
+    // `upload` is rebuilt on every render but only reads `officeId`; putting it in
+    // the deps would re-run the effect on every render and upload in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDocs, officeId]);
 
@@ -78,8 +80,8 @@ export function LibraryPanel() {
           const r = await api.uploadDoc(officeId, file, replace);
           setDocs(r.docs);
         } catch (err) {
-          // 409 = trùng tên. Đây là câu HỎI LẠI, không phải lỗi — gom lại rồi
-          // hỏi một lần cho cả lô, thay vì bắn năm hộp thoại liên tiếp.
+          // 409 = name clash. This is a QUESTION, not an error — collect them and
+          // ask once for the whole batch, rather than firing five dialogs in a row.
           if (err instanceof ApiError && err.status === 409) clash.push(file);
           else toast(`${file.name}: ${err instanceof Error ? err.message : t('library.uploadFailed')}`);
         }
@@ -103,12 +105,12 @@ export function LibraryPanel() {
   }
 
   /**
-   * Bóc lại một tài liệu chưa dùng được. → SPEC-library.md §4.5
+   * Re-extract a document that is not usable yet. → SPEC-library.md §4.5
    *
-   * KHÔNG hỏi lại: khác `remove`, thao tác này không mất gì cả — bản gốc vẫn
-   * nguyên, chỉ có bản text được dựng lại. Hỏi lại một việc không có hậu quả là
-   * dạy người dùng bấm "Đồng ý" mà không đọc, rồi họ bấm đúng như thế vào hộp
-   * thoại xoá.
+   * NO confirmation: unlike `remove`, this loses nothing — the original is
+   * untouched, only the text copy is rebuilt. Confirming an action with no
+   * consequence teaches the user to click "OK" without reading, and then they
+   * click exactly the same way on the delete dialog.
    */
   async function reextract(doc: LibraryDoc) {
     if (!officeId) return;
@@ -159,10 +161,11 @@ export function LibraryPanel() {
           {t('library.dropHint2')} <b>docx · xlsx · pptx</b> {t('library.dropHint3')}
         </p>
         {/*
-          Bóc văn bản chạy ngầm. Câu này đứng ở ĐẦU TỦ chứ không ở ô chat: việc
-          đang xảy ra với tài liệu thì phải hiện cạnh tài liệu. Và nó biến mất
-          khi `libraryBusy` về 0 — bản trước dùng chung dòng trạng thái của chat
-          rồi không có đường nào tắt.
+          Extraction runs in the background. This line sits AT THE TOP OF THE
+          DRAWER, not in the chat box: what is happening to documents belongs
+          next to the documents. And it disappears when `libraryBusy` hits 0 —
+          the previous version shared the chat status line and then had no way
+          to switch itself off.
         */}
         {libraryBusy > 0 && (
           <p className="mt-2 rounded bg-accent-soft px-2 py-1.5 text-xs leading-relaxed text-accent">
@@ -194,9 +197,9 @@ export function LibraryPanel() {
                     {d.tokens ? (
                       <>
                         <span>·</span>
-                        {/* Con số này là để NGƯỜI DÙNG biết tài liệu dài cỡ nào,
-                            không bao giờ đi vào prompt của model. Kế toán token
-                            là việc của người đứng ngoài đếm. */}
+                        {/* This number is for THE USER, to see how long the
+                            document is; it never enters a model's prompt. Token
+                            accounting is done by whoever is counting from outside. */}
                         <span className="tabular-nums">
                           {t('library.tokensApprox', { n: formatTokens(d.tokens) })}
                         </span>
@@ -205,16 +208,17 @@ export function LibraryPanel() {
                   </div>
                 </div>
                 <div className="flex flex-none gap-1">
-                  {/* Đường dẫn ĐỦ, không phải `d.name`: tủ tài liệu và ngăn Kết
-                      quả được phép có file trùng tên. → ui/misc.tsx `CopyRef` */}
+                  {/* The FULL path, not `d.name`: the library and the Artifacts
+                      drawer are allowed to hold files of the same name.
+                      → ui/misc.tsx `CopyRef` */}
                   <CopyRef path={`library/files/${d.name}`} />
                   {/*
-                    BÓC LẠI — chỉ hiện khi tài liệu CHƯA dùng được.
-                    Trạng thái là bản ghi về quá khứ, còn nguyên nhân thì sửa
-                    được (cài thêm bộ đọc, nâng phiên bản). Thiếu nút này thì
-                    cách duy nhất để thử lại là xoá rồi thả lại chính file của
-                    mình — một thao tác đáng sợ, và người dùng có thể không còn
-                    giữ bản gốc. → SPEC-library.md §4.5
+                    RE-EXTRACT — shown only while a document is NOT usable.
+                    The state is a record of the past, while the cause is fixable
+                    (install another reader, bump a version). Without this button
+                    the only way to retry is to delete and drop your own file back
+                    in — a frightening move, and the user may no longer have the
+                    original. → SPEC-library.md §4.5
                   */}
                   {d.state !== 'ready' && d.state !== 'pending' && d.state !== 'extracting' && (
                     <button
@@ -246,10 +250,10 @@ export function LibraryPanel() {
               </div>
 
               {/*
-                Câu giải thích khi tài liệu KHÔNG ở trạng thái sẵn sàng.
-                Nền danger-soft chỉ dành cho lỗi thật: "bản chụp" và "chưa lập
-                chỉ mục" là thông tin, không phải hỏng — tô đỏ chúng là dạy người
-                dùng bỏ qua màu đỏ.
+                The explanation shown when a document is NOT ready.
+                The danger-soft background is for real errors only: "scanned" and
+                "not indexed" are information, not breakage — painting them red
+                teaches the user to ignore red.
               */}
               {d.note && (
                 <p
@@ -270,9 +274,9 @@ export function LibraryPanel() {
       )}
 
       {/*
-        Câu đối xứng với chân ngăn kéo Tri thức. Hai ngăn kéo mỗi cái nói mình
-        LÀ GÌ và chỉ sang cái kia — đó là cách rẻ nhất để hai khái niệm không
-        nhập làm một, và nó tốn 0 token vì nằm hoàn toàn ở giao diện.
+        The mirror of the footer in the Knowledge drawer. Each drawer says WHAT
+        IT IS and points at the other — the cheapest way to keep the two concepts
+        from merging, and it costs 0 tokens because it lives entirely in the UI.
       */}
       {docs.length > 0 && (
         <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
@@ -281,9 +285,9 @@ export function LibraryPanel() {
         </div>
       )}
 
-      {/* Tên file nằm TRONG câu hỏi, không phải ở đâu đó phía sau hộp thoại:
-          xoá hẳn thì người dùng phải đọc được chính xác cái gì sắp biến mất.
-          Enter = Xoá — xem chú thích ở `ConfirmDelete`. */}
+      {/* The file name lives INSIDE the question, not somewhere behind the dialog:
+          for a permanent delete, the user must be able to read exactly what is
+          about to disappear. Enter = Delete — see the note on `ConfirmDelete`. */}
       <ConfirmDelete
         open={!!confirmDel}
         title={t('library.confirmDeleteTitle')}
@@ -320,7 +324,7 @@ export function LibraryPanel() {
   );
 }
 
-/** Nhãn trạng thái. `ready` KHÔNG có nhãn — trạng thái bình thường không cần nói. */
+/** The state chip. `ready` gets NO chip — the normal state needs no announcement. */
 function StateChip({ state }: { state: DocState }) {
   if (state === 'ready') return null;
   const map: Record<Exclude<DocState, 'ready'>, { text: string; cls: string }> = {

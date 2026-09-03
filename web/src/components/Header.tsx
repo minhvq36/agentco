@@ -27,13 +27,13 @@ const STATE_DOT: Record<string, string> = {
 };
 
 /**
- * Nhãn hai cửa sổ. CHỈ HAI — không tách theo model. (user chốt 22/08)
+ * Labels for the two windows. ONLY TWO — not split by model. (user, 22/08)
  *
- * Server có trả về `seven_day_opus` / `seven_day_sonnet` và cả một loạt rổ tên
- * mã nội bộ, nhưng hạn mức là của cả TÀI KHOẢN: người dùng có thể đã tiêu phần
- * lớn nó vào việc chẳng liên quan gì tới công ty này. Ô này trả lời đúng một
- * câu — *"tôi còn chạy được nữa không, và tới khi nào"*. Mọi con số khác là mời
- * họ đi truy nguyên một thứ họ không sửa được.
+ * The server does return `seven_day_opus` / `seven_day_sonnet` and a run of
+ * internal code-name buckets, but the limit belongs to the whole ACCOUNT: the
+ * user may have spent most of it on something unrelated to this company. This
+ * chip answers exactly one question — *"can I still run, and until when"*. Every
+ * other number invites them to chase something they cannot fix.
  */
 const WINDOW_LABEL: Record<string, MessageKey> = {
   session: 'header.window.session',
@@ -53,15 +53,17 @@ const say = (table: Record<string, MessageKey>, code: string): string => {
 };
 
 /**
- * Ba bộ màu, mỗi bộ là một GRADIENT chứ không phải một màu phẳng.
+ * Three colour sets, each a GRADIENT rather than one flat colour.
  *
- * `[dim, mid, hot]` — dùng chung cho nền thanh VÀ cho tia sét, nên hai thứ luôn
- * cùng tông. Đây là lý do bảng này là mảng màu thật chứ không phải tên class
- * Tailwind: `<linearGradient>` trong SVG cần giá trị màu, không nhận class.
+ * `[dim, mid, hot]` — shared by the bar's fill AND the bolt, so the two are
+ * always in the same key. That is why this table holds real colour values and
+ * not Tailwind class names: an SVG `<linearGradient>` needs colour values and
+ * takes no classes.
  *
- * Xanh ngọc lam cho trạng thái thường: nó KHÔNG trùng với `accent` (màu hành
- * động, dùng cho nút và dây nối) nên thanh này không bị đọc nhầm thành "có gì
- * đó bấm được". Vàng và đỏ thì mượn đúng ngữ nghĩa cảnh báo đã có sẵn.
+ * Teal for the normal state: it does NOT collide with `accent` (the action
+ * colour, used for buttons and wires), so this bar is never misread as "there is
+ * something clickable here". Amber and red borrow the warning semantics we
+ * already have.
  */
 const RAMP: Record<string, [string, string, string]> = {
   allowed: ['#0e7490', '#06b6d4', '#5eead4'],
@@ -70,12 +72,12 @@ const RAMP: Record<string, [string, string, string]> = {
 };
 
 /**
- * Lớp bóng phủ lên thanh. Trắng đậm ở mép trên, tắt dần, rồi hửng lại ở đáy —
- * đúng cách ánh sáng đọng trên một ống thuỷ tinh nằm ngang.
+ * The gloss laid over the bar. Strong white at the top edge, fading out, then
+ * lifting again at the bottom — the way light settles on a horizontal glass tube.
  *
- * Nằm ở lớp RIÊNG chồng lên gradient màu, không trộn vào nó: trộn thì mỗi lần
- * đổi tông màu lại phải tính lại độ sáng, còn tách ra thì một lớp bóng dùng
- * chung cho cả ba trạng thái.
+ * It lives in its OWN layer above the colour gradient rather than being mixed
+ * into it: mixed, every change of hue means recomputing the highlights; kept
+ * separate, one gloss serves all three states.
  */
 const GLOSS =
   'linear-gradient(180deg,rgba(255,255,255,.55) 0%,rgba(255,255,255,.12) 45%,' +
@@ -87,16 +89,16 @@ const fill = (s: string): string => {
 };
 
 /**
- * Tia sét vẽ tay bằng SVG thay vì mượn icon.
+ * The bolt is hand-drawn SVG rather than a borrowed icon.
  *
- * Lý do là một ràng buộc thật, không phải sở thích: icon của thư viện tô bằng
- * `currentColor`, tức là MỘT màu — mà thứ cần ở đây là **đúng cái gradient đang
- * chạy trên thanh**. `<linearGradient>` nội bộ cho phép tia sét và thanh dùng
- * chung một dải màu, nên khi hạn mức chuyển vàng rồi đỏ thì cả hai chuyển cùng
- * nhau, không lệch một nhịp.
+ * The reason is a real constraint, not taste: library icons paint with
+ * `currentColor`, i.e. ONE colour — while what is needed here is **exactly the
+ * gradient running along the bar**. An inline `<linearGradient>` lets the bolt
+ * and the bar share one ramp, so when the limit turns amber and then red, both
+ * turn together, never a beat apart.
  *
- * `id` phải DUY NHẤT trong cả trang: SVG gradient sống trong không gian tên
- * toàn cục của document, hai cái trùng id thì cái sau đè cái trước.
+ * The `id` must be UNIQUE across the page: SVG gradients live in the document's
+ * global namespace, and two with the same id means the later one wins.
  */
 function Bolt({ status }: { status: string }) {
   const [dim, mid, hot] = RAMP[status] ?? RAMP['allowed']!;
@@ -116,40 +118,42 @@ function Bolt({ status }: { status: string }) {
 }
 
 /**
- * HẠN MỨC TÀI KHOẢN CLAUDE. → src/core/energy.ts
+ * THE CLAUDE ACCOUNT LIMIT. → src/core/energy.ts
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐÂY KHÔNG PHẢI HẠN MỨC CỦA CÔNG TY — VÀ CHỮ PHẢI NÓI RA ĐIỀU ĐÓ.        │
- * │                                                                          │
- * │ Nó là quota của tài khoản Claude, dùng chung với Claude Code và           │
- * │ claude.ai của chính người dùng. Một người thấy "sắp chạm hạn mức" ngay    │
- * │ cạnh con số chi phí của văn phòng sẽ đinh ninh agentco vừa tiêu hết —     │
- * │ trong khi có thể họ vừa ngồi code cả sáng ở cửa sổ khác. Tooltip nói rõ.  │
- * │                                                                          │
- * │ ⚠ KHÔNG VẼ THANH KHI KHÔNG CÓ SỐ. Đo 22/08: server gửi `status` và       │
- * │ `resetsAt` nhưng KHÔNG gửi `utilization` — mà `utilization` mới là thứ    │
- * │ vẽ được thanh. Một cái thanh rỗng, hay tệ hơn là một cái thanh 0%, là     │
- * │ nói dối về thứ ta không biết; còn "còn thoải mái · làm mới 21:30" thì     │
- * │ đúng từng chữ. Nhánh `<Bar>` dưới đây nằm sẵn và tự sống dậy đúng ngày   │
- * │ server bắt đầu gửi số — không phải sửa gì.                                │
- * │                                                                          │
- * │ Người dùng chạy bằng API key thì không có hạn mức gói, sự kiện không bao  │
- * │ giờ tới, và ô này biến mất hoàn toàn. Đó là hành vi ĐÚNG, không phải một  │
- * │ trạng thái rỗng cần lấp.                                                  │
+ * │ THIS IS NOT THE COMPANY'S LIMIT — AND THE WORDS MUST SAY SO.              │
+ * │                                                                           │
+ * │ It is the Claude account's quota, shared with the user's own Claude Code  │
+ * │ and claude.ai. Someone who sees "close to the limit" right next to this   │
+ * │ office's cost figure will be certain agentco just spent it all — when     │
+ * │ they may have been coding all morning in another window. The tooltip      │
+ * │ spells it out.                                                            │
+ * │                                                                           │
+ * │ ⚠ DO NOT DRAW A BAR WITH NO NUMBER. Measured 22/08: the server sends      │
+ * │ `status` and `resetsAt` but NOT `utilization` — and `utilization` is the  │
+ * │ only thing a bar can be drawn from. An empty bar, or worse a 0% bar, is   │
+ * │ a lie about something we do not know; "plenty left · resets 21:30" is     │
+ * │ true to the word. The `<Bar>` branch below is already in place and comes  │
+ * │ alive by itself the day the server starts sending numbers — nothing to    │
+ * │ change.                                                                   │
+ * │                                                                           │
+ * │ A user on an API key has no plan limit, the event never arrives, and      │
+ * │ this chip disappears entirely. That is the RIGHT behaviour, not an empty  │
+ * │ state to be filled.                                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function EnergyChip() {
   const energy = useApp((s) => s.energy);
-  // Chưa lấy được số (đang hỏi, hoặc chạy bằng API key nên không có hạn mức
-  // gói) → im hẳn. Một ô rỗng chờ dữ liệu tệ hơn không có ô nào.
+  // No number yet (still asking, or running on an API key so there is no plan
+  // limit) → stay silent. An empty box waiting for data is worse than no box.
   if (!energy || energy.windows.length === 0) return null;
 
   /**
-   * Tia sét lấy màu của cửa sổ CĂNG NHẤT, không phải của cửa sổ đầu tiên.
+   * The bolt takes the colour of the TIGHTEST window, not the first one.
    *
-   * Nó là thứ duy nhất nhìn thấy được khi liếc qua mà không đọc số — nên nó
-   * phải nói về cái sắp chặn bạn. Sét xanh trong khi thanh dưới đã đỏ là một
-   * lời trấn an sai.
+   * It is the only thing visible at a glance without reading the numbers — so it
+   * has to speak about whatever is about to block you. A green bolt above a bar
+   * that has already gone red is false reassurance.
    */
   const rank: Record<string, number> = { rejected: 0, allowed_warning: 1, allowed: 2 };
   const worst = energy.windows.reduce(
@@ -175,16 +179,17 @@ function EnergyChip() {
       }
     >
       {/*
-        MỘT CÁI TAG, hai dòng bên trong.
+        ONE TAG, two rows inside it.
 
-        Viền + nền riêng để nó tách khỏi header thành một khối đọc được bằng một
-        cú liếc — thay vì hai dòng chữ trôi nổi cạnh con số chi phí, thứ mà mắt
-        sẽ gom nhầm thành cùng một nhóm. Chúng KHÔNG cùng một nhóm: một bên là
-        tiền của văn phòng này, một bên là hạn mức của cả tài khoản.
+        Its own border and background so it separates from the header into a
+        block readable at a glance — instead of two lines of text floating next
+        to the cost figure, which the eye would group with it. They are NOT one
+        group: one is this office's money, the other is the whole account's limit.
 
-        Hai thanh XẾP CHỒNG, không rút gọn còn một: "phiên gần hết nhưng tuần
-        còn nhiều" là một quyết định khác hẳn "cả hai đều cạn". Giấu một cái vào
-        tooltip là bắt người dùng hover mỗi lần muốn ra quyết định.
+        Two bars STACKED, not reduced to one: "the session is nearly gone but the
+        week has plenty" is a completely different decision from "both are dry".
+        Hiding one in the tooltip makes the user hover every time they need to
+        decide.
       */}
       <span className="flex items-center gap-2 rounded-lg border border-line bg-paper/60 px-2 py-1">
         <span className="flex flex-none flex-col items-center gap-0.5">
@@ -199,23 +204,24 @@ function EnergyChip() {
         <span className="flex flex-col gap-[3px] text-[11px] leading-none">
           {energy.windows.map((w) => (
             <span key={w.kind} className="flex items-center gap-1.5">
-              {/* CĂN TRÁI: hai nhãn dài khác nhau ("Phiên"/"Tuần") căn phải thì
-                  mép chữ nhảy, còn căn trái thì hai dòng có cùng một mốc bắt
-                  đầu — mắt đọc xuống theo một đường thẳng. */}
+              {/* LEFT-ALIGNED: two labels of different lengths ("Session"/"Week")
+                  right-aligned would make the text edge jump, while left-aligned
+                  gives both rows the same starting mark — the eye reads down a
+                  straight line. */}
               <span className="w-8 font-medium text-ink">{say(WINDOW_LABEL, w.kind)}</span>
               {w.utilization === null ? (
-                /* Chưa có % thì nói chữ. Một thanh 0% là nói dối về thứ chưa biết. */
+                /* No % yet, so say it in words. A 0% bar lies about what we do not know. */
                 <span className="w-[136px] text-muted">{say(ENERGY_WORD, w.status)}</span>
               ) : (
                 <>
-                  {/* Máng: dài (112px) và MỎNG (4px). Dài thì 3% và 8% phân biệt
-                      được bằng mắt; mỏng thì hai thanh chồng nhau vẫn thoáng. */}
+                  {/* The trough: long (112px) and THIN (4px). Long, so 3% and 8%
+                      are visibly different; thin, so two stacked bars still breathe. */}
                   <span className="h-1 w-28 overflow-hidden rounded-full bg-line">
                     <span
                       className="relative block h-full rounded-full"
                       style={{
-                        // Tối thiểu 3% để 1% vẫn thấy một vệt — 0px trông y hệt
-                        // "chưa có dữ liệu", đúng thứ vừa cố tránh ở nhánh trên.
+                        // A 3% floor so 1% still shows a sliver — 0px looks exactly
+                        // like "no data", the very thing the branch above avoids.
                         width: `${Math.max(3, Math.round(w.utilization))}%`,
                         backgroundImage: `${GLOSS},${fill(w.status)}`,
                       }}
@@ -236,11 +242,12 @@ function EnergyChip() {
 }
 
 /**
- * Mốc làm mới. Hôm nay thì chỉ giờ, khác ngày thì kèm thứ.
+ * The reset mark. Today, the time alone; another day, the weekday with it.
  *
- * Người dùng đọc con số này để quyết định "chờ hay chạy tiếp", nên "21:30" trả
- * lời được câu đó còn "còn 2 giờ 47 phút" thì bắt họ tự cộng vào đồng hồ —
- * và nó còn phải tự đếm lùi, tức là một `setInterval` cho một câu không cần.
+ * People read this number to decide "wait or keep going", and "21:30" answers
+ * that, while "2 hours 47 minutes left" makes them add it to the clock
+ * themselves — and it would have to count down, i.e. a `setInterval` for a
+ * sentence nobody needed.
  */
 function resetLabel(iso: string, long = false): string {
   const d = new Date(iso);
@@ -252,7 +259,7 @@ function resetLabel(iso: string, long = false): string {
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
   const short = sameDay ? hm : `${formatWeekday(d)} ${hm}`;
-  // Tooltip có chỗ nên nói đủ ngày; trên header thì "T4 10:59" là vừa.
+  // The tooltip has room for the full date; in the header, "Wed 10:59" is enough.
   return long && !sameDay ? `${formatWeekday(d)} ${formatDate(d)} ${hm}` : short;
 }
 
@@ -279,10 +286,11 @@ export function Header({
           onChange={(e) => void actions.openOffice(e.target.value)}
           className="max-w-56"
         >
-          {/* Văn phòng đã cất vào lưu trữ KHÔNG nằm ở đây — ô này là chỗ chọn
-              nơi làm việc, mà chỗ đã cất đi thì không làm việc được. Chúng nằm
-              ở bảng Tổng quan, kèm nút Khôi phục. Ngoại lệ: nếu đang mở đúng
-              cái vừa bị cất thì vẫn phải hiện, nếu không ô chọn trống trơn. */}
+          {/* Archived offices do NOT belong here — this control picks where to
+              work, and an archived place cannot be worked in. They live in the
+              Overview panel with a Restore button. The exception: if the one
+              currently open is the one just archived, it still has to show, or
+              the select goes blank. */}
           {company.offices
             .filter((o) => !o.archived || o.id === officeId)
             .map((o) => (
@@ -340,7 +348,7 @@ export function Header({
         </Button>
       </Tip>
 
-      <Tip label="Shutdown">
+      <Tip label={t('header.shutdown')}>
         <Button
           size="icon"
           variant="ghost"

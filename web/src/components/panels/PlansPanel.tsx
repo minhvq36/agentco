@@ -33,33 +33,37 @@ const STATUS: Record<PlanStatus, { key: MessageKey; cls: string }> = {
 };
 
 /**
- * Nhật ký. → docs/SPEC-offices.md §6
+ * The log. → docs/SPEC-offices.md §6
  *
- * Log ĐI THEO CÔNG VIỆC, không theo thời gian. Bản v0 là một dòng chảy phẳng:
- * không đọc được khi hai việc chạy chồng nhau, và không trả lời được "việc hôm
- * qua đã làm những gì". Ở đây: danh sách việc → mở một việc → log của đúng nó.
+ * The log follows THE WORK, not the clock. v0 was one flat stream: unreadable
+ * when two jobs overlap, and no answer to "what did yesterday's job actually
+ * do". Here: a list of jobs → open one → the log for exactly that one.
  */
 /**
- * Lọc ở tầng HIỂN THỊ, không xoá ở tầng LƯU TRỮ. → docs/SPEC-offices.md §6
+ * Filter at the DISPLAY layer, never delete at the STORAGE layer.
+ * → docs/SPEC-offices.md §6
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ USER ĐÒI NÚT XOÁ, RỒI TỰ CHẶN LẠI — và câu chặn đó đúng.                │
+ * │ THE USER ASKED FOR A DELETE BUTTON, THEN TALKED THEMSELVES OUT OF IT —   │
+ * │ and they were right to.                                                  │
  * │                                                                          │
- * │ *"nhiều khi hỏng, bị zombie thấy ngứa mắt"* → *"hay là giữ lại log nhỉ,  │
- * │ để trace được, liên quan cả tiền nong các thứ"*.                         │
+ * │ *"things break sometimes, the zombies are an eyesore"* → *"or maybe keep │
+ * │ the log, so it can be traced, money is tied up in it too"*.              │
  * │                                                                          │
- * │ Nhật ký là bên DUY NHẤT nối `plan_id` trong sổ chi phí với một cái tên    │
- * │ đọc được. Xoá một dòng thì tiền vẫn nằm trong sổ mà không ai biết nó của  │
- * │ việc gì. Nhưng nỗi khó chịu thì có thật: 18 việc, 8 trong đó không `done`.│
+ * │ The log is the ONLY thing joining a `plan_id` in the cost ledger to a    │
+ * │ readable name. Delete a row and the money stays in the ledger with       │
+ * │ nobody knowing what it bought. But the irritation is real: 18 jobs, 8 of │
+ * │ them not `done`.                                                         │
  * │                                                                          │
- * │ Đây đúng là ca luật §5e nói tới: **tách ở tầng HIỂN THỊ rẻ, tách ở tầng   │
- * │ LƯU TRỮ đắt — nghi ngờ thì tách chỗ rẻ trước.** Một cái nút lọc cho đúng │
- * │ sự nhẹ nhõm ấy, 0 dòng lịch sử bị mất, và bấm lại là thấy hết.            │
+ * │ This is exactly the case rule §5e names: **separating at the DISPLAY     │
+ * │ layer is cheap, separating at the STORAGE layer is expensive — when in   │
+ * │ doubt, cut at the cheap one first.** One filter button buys that same    │
+ * │ relief, loses 0 rows of history, and shows everything again on a click.  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Mặc định là **TẤT CẢ**, không phải "chỉ việc xong". Nhật ký mở ra mà đã giấu
- * sẵn phần hỏng là nói dối bằng cách im lặng — người dùng phải CHỌN mới được
- * nhìn ít đi.
+ * The default is **EVERYTHING**, not "finished only". A log that opens with the
+ * broken half already hidden lies by staying quiet — the user has to CHOOSE to
+ * see less.
  */
 const FILTER_KEY = 'agentco.plansFilter';
 
@@ -76,8 +80,9 @@ export function PlansPanel() {
   const currentPlanId = useApp((s) => s.plan?.plan_id ?? null);
   const [plans, setPlans] = useState<PlanRecord[] | null>(null);
   const [open, setOpen] = useState<{ plan: PlanRecord; log: AgentEvent[] } | null>(null);
-  // Panel bị unmount khi đổi tab (`{panel === 'plans' && …}`), nên lựa chọn này
-  // phải sống ngoài component — cùng lớp lỗi với bản nháp ô chat.
+  // The panel unmounts on a tab switch (`{panel === 'plans' && …}`), so this
+  // choice has to live outside the component — same failure class as the chat
+  // draft.
   const [onlyDone, setOnlyDone] = useState(readFilter);
 
   const load = useCallback(async () => {
@@ -134,15 +139,16 @@ export function PlansPanel() {
     try {
       localStorage.setItem(FILTER_KEY, next ? 'done' : 'all');
     } catch {
-      /* bị chặn storage thì lựa chọn chỉ sống trong phiên — không sao */
+      /* storage blocked ⇒ the choice lives for this session only — fine */
     }
   };
 
   return (
     <div className="flex h-full flex-col">
       {/*
-        Thanh lọc chỉ hiện khi CÓ gì để lọc. Một cái nút không đổi được gì trên
-        màn hình là nhiễu — và ở văn phòng mới, mọi việc đều `done`.
+        The filter bar only appears when there IS something to filter. A button
+        that changes nothing on screen is noise — and in a new office every job
+        is `done`.
       */}
       {hidden > 0 && (
         <div className="flex flex-none items-center gap-2 border-b border-line px-4 py-2 text-xs text-muted">
@@ -156,9 +162,9 @@ export function PlansPanel() {
         </div>
       )}
       {/*
-        Trạng thái rỗng của một BỘ LỌC khác trạng thái rỗng của cả nhật ký: ở đây
-        dữ liệu vẫn còn nguyên, chỉ là đang bị lọc đi. Nói đúng chuyện đó, kèm
-        đường quay lại — nếu không thì người dùng tưởng nhật ký vừa bị mất.
+        The empty state of a FILTER is not the empty state of the log: here the
+        data is all still there, it is just being filtered out. Say exactly that,
+        with the way back — otherwise the user believes the log was just lost.
       */}
       {shown.length === 0 ? (
         <div className="px-4 py-6 text-[13px] text-muted">
@@ -223,16 +229,18 @@ function PlanDetail({
         </Button>
         <div className="min-w-0 flex-1">
           {/*
-            Câu yêu cầu cũng phải có TRẦN — cùng bệnh với khối báo cáo ở đáy.
-            `request` là câu Trợ lý viết lại "cho rõ, đủ ngữ cảnh" nên nó dài
-            thật: đo được 300+ ký tự, và trong một sidebar hẹp thì nó xuống 6–7
-            dòng rồi đẩy tất cả những thứ bên dưới xuống.
+            The request line needs a CEILING too — the same illness as the report
+            block at the bottom. `request` is the assistant's rewrite "made clear,
+            with enough context", so it really is long: measured at 300+
+            characters, and in a narrow sidebar that runs to 6–7 lines and shoves
+            everything below it down.
 
-            ⚠ KHÔNG thêm nút "Xem đầy đủ" ở đây: hàng này đã có nút "Quay lại"
-            bên trái và "Tải lại" bên phải, nhét nút thứ ba vào là chen chúc và
-            người dùng dễ bấm nhầm. Cho CHÍNH ĐOẠN CHỮ làm nút — nó là thứ duy
-            nhất trong hàng có sẵn diện tích, và "bấm vào chữ bị cắt để xem đủ"
-            là phản xạ người ta đã có. `title` để rê chuột cũng đọc được.
+            ⚠ Do NOT add an "Expand" button here: this row already has "Back" on
+            the left and "Reload" on the right, and a third button makes it
+            crowded enough to mis-tap. Make THE TEXT ITSELF the button — it is the
+            only thing in the row that already has area, and "click the truncated
+            text to see all of it" is a reflex people already have. `title` makes
+            it readable on hover as well.
           */}
           <button
             className={`w-full cursor-pointer text-left text-[13.5px] leading-snug text-ink ${
@@ -273,12 +281,13 @@ function PlanDetail({
       <TokenPanel log={log} />
 
       {/*
-        `min-h-[8rem]` là SÀN, không phải trang trí.
+        `min-h-[8rem]` is a FLOOR, not decoration.
 
-        Khối này là thứ duy nhất co giãn trong cột; mọi khối khác đều `flex-none`.
-        Không có sàn thì bốn khối cứng bên trên + báo cáo bên dưới ép nó xuống
-        vài chục pixel, và người dùng thấy một ô "không cuộn được" — nó CÓ cuộn,
-        chỉ là cửa sổ nhỏ hơn một dòng. Đây đúng triệu chứng user báo 21/08.
+        This block is the only thing in the column that flexes; everything else is
+        `flex-none`. Without the floor, the four rigid blocks above plus the
+        report below squeeze it down to a few dozen pixels, and the user sees a
+        box that "won't scroll" — it DOES scroll, the viewport is just shorter
+        than one line. That is precisely the symptom reported on 21/08.
       */}
       <div className="min-h-[8rem] flex-1 overflow-y-auto px-3 py-2">
         {log.length === 0 ? (
@@ -298,39 +307,40 @@ function PlanDetail({
 }
 
 /**
- * Câu tổng kết của Trợ lý, ở đáy bảng chi tiết một ca.
+ * The assistant's closing summary, at the bottom of a job's detail view.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG UX 21/08 — MỘT CHỮ `flex-none` NUỐT CẢ NHẬT KÝ.                      │
- * │                                                                          │
- * │ Bản trước: `<div className="flex-none …">{plan.report}</div>`. Trong một  │
- * │ cột flex, `flex-none` nghĩa là *"không bao giờ co lại"* — nên một báo cáo │
- * │ dài 30 dòng chiếm 30 dòng, và khối nhật ký (thứ DUY NHẤT co giãn) bị ép   │
- * │ xuống gần bằng không.                                                     │
- * │                                                                          │
- * │ Người dùng báo đúng cảm giác đó: *"không biết các worker trao đổi cái gì, │
- * │ cảm giác như không lăn chuột được — chỉ làm được khi kéo khung rộng ra"*. │
- * │ Kéo rộng ra thì chữ xuống dòng ít hơn ⇒ báo cáo thấp xuống ⇒ nhật ký có   │
- * │ lại chỗ. Tức là bố cục đang bắt người dùng chỉnh cửa sổ để đọc được nội   │
- * │ dung — cùng lớp với luật *"thao tác dọn dẹp của hệ thống không được nằm   │
- * │ ở tay người dùng"*.                                                       │
- * │                                                                          │
- * │ ⚠ Sàn `min-h` cho nhật ký là CHƯA ĐỦ. Sàn chỉ cứu khi khung đủ cao; khung │
- * │ thấp thì hai bên lại tranh nhau. Phải chặn từ phía gây ra: báo cáo KHÔNG  │
- * │ được phép cao hơn một tỉ lệ cố định.                                      │
+ * │ UX BUG 21/08 — ONE `flex-none` SWALLOWED THE WHOLE LOG.                   │
+ * │                                                                           │
+ * │ Before: `<div className="flex-none …">{plan.report}</div>`. In a flex     │
+ * │ column, `flex-none` means *"never shrink"* — so a 30-line report takes    │
+ * │ 30 lines, and the log block (the ONLY thing that flexes) is squeezed to   │
+ * │ almost nothing.                                                           │
+ * │                                                                           │
+ * │ The user reported exactly that feeling: *"no idea what the workers are    │
+ * │ saying to each other, feels like the scroll wheel does nothing — it only  │
+ * │ works if I drag the panel wider"*. Wider means fewer wrapped lines ⇒ a    │
+ * │ shorter report ⇒ the log gets its room back. In other words the layout    │
+ * │ was making the user resize a window to read content — the same class as   │
+ * │ the rule *"the system's own housekeeping must never land in the user's    │
+ * │ hands"*.                                                                  │
+ * │                                                                           │
+ * │ ⚠ A `min-h` floor on the log is NOT ENOUGH. A floor only saves you while  │
+ * │ the panel is tall enough; short, and the two fight again. It has to be    │
+ * │ capped at the cause: the report is NOT allowed past a fixed fraction.     │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ba tầng, và thứ tự có chủ ý:
+ * Three layers, and the order is deliberate:
  *
- *  1. **Mặc định gấp lại 3 dòng.** Nhật ký giữ gần như toàn bộ chiều cao ngay
- *     khi mở ra — đó là thứ người ta mở bảng này để xem.
- *  2. **Mở ra thì trần 40%.** Vẫn còn 60% cho nhật ký kể cả với báo cáo dài
- *     nhất. Cuộn nằm TRONG khối này.
- *  3. Nút bấm nói **"Thu gọn"/"Xem đầy đủ"**, không phải một mũi tên — người
- *     dùng phải biết mình sắp mất chỗ hay được thêm chỗ.
+ *  1. **Folded to 3 lines by default.** The log keeps almost the whole height
+ *     the moment the view opens — that is what people open this view to read.
+ *  2. **Expanded, it is capped at 40%.** 60% is left for the log even with the
+ *     longest report. Scrolling happens INSIDE this block.
+ *  3. The button says **"Collapse"/"Expand"**, not an arrow — the user has to
+ *     know whether they are about to lose room or gain it.
  *
- * Dùng `Markdown` chứ không in chuỗi trần: báo cáo là chữ Trợ lý viết ra và nó
- * có gạch đầu dòng, đường dẫn, đôi khi cả bảng — hệt như trong ô chat.
+ * `Markdown` rather than raw text: the report is written by the assistant and it
+ * has bullets, paths, sometimes a table — exactly like a chat message.
  */
 function Report({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -348,13 +358,13 @@ function Report({ text }: { text: string }) {
         </button>
       </div>
       {/*
-        Lúc gấp lại dùng TRẦN CHIỀU CAO, không dùng `line-clamp`.
+        Folded, it uses a HEIGHT CEILING, not `line-clamp`.
 
-        `line-clamp` chạy trên `-webkit-box` và chỉ đáng tin với MỘT dòng chảy
-        văn bản. Báo cáo đi qua `Markdown` nên bên trong là nhiều khối block
-        (đoạn văn, danh sách việc, đôi khi cả bảng) — clamp lúc đó hoặc không
-        cắt gì, hoặc cắt ở chỗ không ai đoán được. `max-h` thì tất định bất kể
-        bên trong có cấu trúc gì.
+        `line-clamp` runs on `-webkit-box` and is only trustworthy for ONE flow of
+        text. The report goes through `Markdown`, so inside it are several block
+        elements (paragraphs, task lists, sometimes a table) — and clamp then
+        either cuts nothing or cuts somewhere nobody can predict. `max-h` is
+        deterministic whatever the structure inside.
       */}
       <div
         className={`min-h-0 px-4 pb-3 pt-1 text-[13px] text-ink ${
@@ -376,29 +386,31 @@ function kilo(n: number): string {
 }
 
 /**
- * BẢNG TOKEN của một công việc. → docs/SPEC-token-economy.md §5
+ * A job's TOKEN TABLE. → docs/SPEC-token-economy.md §5
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO PHẢI HIỆN, VÀ VÌ SAO MODEL KHÔNG ĐƯỢC BIẾT                        │
- * │                                                                          │
- * │ `SPEC-token-economy.md` §5 gọi cảnh báo "cache write bất thường" là hệ    │
- * │ thống báo động CHÍNH, và nói thẳng: đây là lỗi người dùng sẽ KHÔNG tự     │
- * │ nhìn ra nếu không có dòng này. Nhưng cho tới giờ nó không tồn tại ở đâu   │
- * │ trên giao diện — số liệu vẫn nằm sẵn trong mỗi sự kiện `task.done` và     │
- * │ trong file log, chỉ là chưa ai vẽ ra. Hiện nó lên tốn 0 token.            │
- * │                                                                          │
- * │ Và nó phải là VIỆC CỦA CODE, không bao giờ của model. Ba lý do:           │
- * │  1. Nhân viên không làm gì được với con số đó — nó không tự đổi cách làm  │
- * │     việc vì biết mình vừa ghi 13K cache.                                  │
- * │  2. Nói cho model biết nghĩa là nhét con số vào prompt, tức là trả tiền   │
- * │     ở MỌI lượt để kể một chuyện chỉ có nghĩa với người quan sát.          │
- * │  3. `CORE_PROMPT` đã cấm thuật ngữ kỹ thuật trong `say`. Kế toán là việc  │
- * │     của người đứng ngoài đếm, không phải của người đang làm.              │
+ * │ WHY IT HAS TO BE SHOWN, AND WHY THE MODEL MUST NOT BE TOLD                │
+ * │                                                                           │
+ * │ `SPEC-token-economy.md` §5 calls the "unexpected cache write" warning the │
+ * │ PRIMARY alarm, and says it plainly: this is a bug the user will NOT spot  │
+ * │ on their own without this line. Yet until now it existed nowhere in the   │
+ * │ interface — the numbers were already sitting in every `task.done` event   │
+ * │ and in the log file, nobody had drawn them. Showing them costs 0 tokens.  │
+ * │                                                                           │
+ * │ And it has to be THE CODE'S JOB, never the model's. Three reasons:        │
+ * │  1. An employee can do nothing with that number — it does not change how  │
+ * │     it works because it learns it just wrote 13K of cache.                │
+ * │  2. Telling the model means putting the number in the prompt, i.e. paying │
+ * │     on EVERY turn to tell a story that only means anything to a watcher.  │
+ * │  3. `CORE_PROMPT` already bans technical jargon in `say`. Accounting is   │
+ * │     the job of whoever is counting from outside, not of whoever is        │
+ * │     working.                                                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Đọc bảng này thế nào (bài 1 của TEST-WALKTHROUGH): nhìn cột **ghi cache** —
- * task ĐẦU của mỗi vai trò lớn, các task sau nhỏ. Đó là cache priming gate đang
- * chạy đúng. Cả loạt đều lớn = gate hỏng, và mỗi task đang trả nguyên giá prefix.
+ * How to read this table (exercise 1 of TEST-WALKTHROUGH): look at the **cache
+ * write** column — the FIRST task of each role is large, the ones after it are
+ * small. That is the cache priming gate working. All of them large means the gate
+ * is broken and every task is paying full price for the prefix.
  */
 function TokenPanel({ log }: { log: AgentEvent[] }) {
   const rows = log.filter(
@@ -417,8 +429,9 @@ function TokenPanel({ log }: { log: AgentEvent[] }) {
     { read: 0, write: 0, out: 0, turns: 0, cost: 0 },
   );
 
-  // Cùng một vai trò ghi cache nhiều lần trong MỘT ca = có gì đó đang phá prefix
-  // giữa chừng (bump version, sửa skills, đổi model). Đây là dòng báo động chính.
+  // The same role writing cache several times within ONE run = something is
+  // breaking the prefix mid-flight (a version bump, edited skills, a model
+  // change). This is the primary alarm line.
   const writesByRole = new Map<string, number>();
   for (const e of rows) {
     if (e.usage.cacheWrite > 2000) writesByRole.set(e.role, (writesByRole.get(e.role) ?? 0) + 1);
@@ -475,16 +488,16 @@ function TokenPanel({ log }: { log: AgentEvent[] }) {
 }
 
 /**
- * Gộp những dòng LIÊN TIẾP giống hệt nhau thành một, kèm số lần.
+ * Fold CONSECUTIVE identical lines into one, with a count.
  *
- * Một lượt gọi có nhiều tool chạy song song đến qua SDK thành nhiều tin nhắn
- * riêng, nên bốn lần `Grep` cùng lúc hiện ra bốn dòng y hệt trong cùng một
- * giây. Bốn dòng không nói được gì hơn một dòng, mà chúng đẩy phần còn lại của
- * nhật ký ra khỏi màn hình.
+ * A turn with several tools running in parallel arrives from the SDK as several
+ * separate messages, so four simultaneous `Grep` calls show four identical lines
+ * in the same second. Four lines say nothing that one does not, and they push the
+ * rest of the log off the screen.
  *
- * Chỉ gộp dòng LIỀN KỀ và CÙNG một người: gộp cả những dòng cách xa nhau sẽ
- * giấu mất việc nhân viên lặp lại đúng một thao tác ở hai thời điểm — mà đó
- * chính là dấu hiệu nó đang dò dẫm, thứ ta cần nhìn thấy.
+ * Only ADJACENT lines from the SAME speaker fold: folding lines far apart would
+ * hide an employee repeating exactly one action at two different moments — and
+ * that is the signal it is flailing, which is the thing we need to see.
  */
 function collapse(log: readonly AgentEvent[]): Array<{ event: AgentEvent; times: number }> {
   const out: Array<{ event: AgentEvent; times: number }> = [];
@@ -503,13 +516,13 @@ function sameLine(a: AgentEvent, b: AgentEvent): boolean {
 }
 
 /**
- * Một dòng log. Màu lấy từ id vai trò (băm) — cùng công thức với node trên
- * canvas, nên mắt nối được "dòng này của ai" với "node nào đang sáng".
+ * One log line. The colour is hashed from the role id — the same formula as the
+ * canvas nodes, so the eye joins "whose line is this" to "which node is lit".
  */
 function LogLine({ event, times = 1 }: { event: AgentEvent; times?: number }) {
-  // Màu băm từ `id` (ổn định), nhãn lấy tên người dùng đặt (dễ đọc). Hai thứ
-  // này CỐ Ý lấy từ hai nguồn khác nhau — đổi tên hiển thị không được làm đổi
-  // màu, vì mắt đã quen nối màu với người.
+  // The colour is hashed from `id` (stable), the label is the name the user gave
+  // (readable). The two come from different sources ON PURPOSE — renaming must
+  // not change the colour, because the eye has already tied colour to person.
   const who = 'role' in event ? (event as { role: string }).role : 'assistant';
   const hue = agentHue(who);
   const time = event.ts ? formatTimeOfDay(new Date(event.ts)) : '';
@@ -534,15 +547,16 @@ function LogLine({ event, times = 1 }: { event: AgentEvent; times?: number }) {
   );
 }
 
-/** Mọi sự kiện hướng người dùng đều có `say` — đây là chỗ bất biến đó trả công. */
+/** Every user-facing event carries a `say` — this is where that invariant pays. */
 function describe(e: AgentEvent): string {
   switch (e.type) {
     case 'plan.created':
       return plural('plans.eventPlanned', e.steps.length);
     case 'plan.step':
       return '';
-    // CỐ Ý không hiện gì: câu báo cáo đã đi bằng `master.message` ngay trước đó.
-    // Hiện lại ở đây là hai dòng y hệt nhau nằm cạnh nhau.
+    // Deliberately renders nothing: the closing sentence already went out as a
+    // `master.message` immediately before. Showing it again puts two identical
+    // lines next to each other.
     case 'plan.finished':
       return '';
     case 'task.started':

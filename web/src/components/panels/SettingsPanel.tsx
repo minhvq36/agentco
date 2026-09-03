@@ -30,7 +30,7 @@ import { LOCALES, t, type Locale } from '@i18n';
  *
  * Someone who has landed in a language they cannot read needs to find their own
  * on this list. "Vietnamese" written in Vietnamese is findable by a Vietnamese
- * speaker; "Tiếng Việt" rendered as "Vietnamese" for an English interface is
+ * speaker; that same entry rendered as "Vietnamese" for an English interface is
  * not. This is the one list in the product that must NOT go through `t()`.
  */
 const ENDONYM: Record<Locale, string> = {

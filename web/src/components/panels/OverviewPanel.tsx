@@ -27,7 +27,7 @@ interface CostRow {
   gone: boolean;
 }
 
-/** Tổng quan cả CÔNG TY: các văn phòng, và tiền — thứ duy nhất dùng chung. */
+/** The whole COMPANY at a glance: the offices, and the money — the one thing shared. */
 export function OverviewPanel() {
   const company = useApp((s) => s.company);
   const officeId = useApp((s) => s.officeId);
@@ -76,13 +76,14 @@ export function OverviewPanel() {
                 </span>
               </button>
               {/*
-                MỞ THƯ MỤC — lối thoát cho "mã văn phòng không đổi theo tên".
-                → src/cli/daemonfile.ts §openFolder
+                OPEN FOLDER — the way out of "an office id does not follow its
+                name". → src/cli/daemonfile.ts §openFolder
 
-                `id` là tên thư mục và cố ý không đổi khi đổi tên hiển thị, nên
-                người đổi "Báo cáo" thành "Kiểm kê" sẽ đi tìm `kiem-ke/` không
-                có. Với tên phi-Latin còn tệ hơn: thư mục tên `vp-ee6fd8`.
-                Nút này bỏ hẳn nhu cầu biết thư mục tên gì.
+                `id` is the directory name and deliberately does not change when
+                the display name does, so someone who renames "Reports" to
+                "Inventory" goes looking for an `inventory/` that is not there.
+                With a non-Latin name it is worse: the directory is called
+                `vp-ee6fd8`. This button removes the need to know the name at all.
               */}
               <Tip label={t('overview.folderTip', { id: o.id })}>
                 <Button
@@ -94,10 +95,11 @@ export function OverviewPanel() {
                     const r = await api.revealOffice(o.id).catch(() => null);
                     if (!r) return;
                     /*
-                      Truy cập từ xa (VPS, Docker) thì server CỐ Ý không mở gì —
-                      cửa sổ đó sẽ bật trên máy chủ, không phải máy bạn đang
-                      nhìn. Chép đường dẫn vào clipboard là thứ thật sự dùng
-                      được ở đó, và câu thông báo phải nói ra vì sao.
+                      Over a remote connection (VPS, Docker) the server opens
+                      nothing ON PURPOSE — that window would pop up on the host,
+                      not on the machine you are looking at. Copying the path to
+                      the clipboard is the thing that actually helps there, and
+                      the message has to say why.
                     */
                     if (r.opened) return toast(t('overview.opened', { dir: r.dir }));
                     void navigator.clipboard?.writeText(r.dir).catch(() => undefined);
@@ -159,10 +161,11 @@ export function OverviewPanel() {
                   <ArchiveRestore className="h-3.5 w-3.5" />
                   {t('overview.restore')}
                 </Button>
-                {/* Xoá hẳn phải với tới được TỪ TRONG lưu trữ. Không có nút này
-                    thì muốn dọn sạch phải khôi phục ra rồi mới xoá được — hai
-                    bước cho một ý định, và bước giữa là đưa lại vào danh sách
-                    đang làm việc đúng cái mình vừa muốn bỏ đi. */}
+                {/* Deleting for good has to be reachable FROM INSIDE the
+                    archive. Without this button, clearing one out means
+                    restoring it first — two steps for one intent, and the middle
+                    step puts the very thing you want gone back into the working
+                    list. */}
                 <Tip label={t('overview.deleteTip')}>
                   <Button
                     size="iconSm"
@@ -196,9 +199,10 @@ export function OverviewPanel() {
         </p>
       </section>
 
-      {/* Dưới Chi phí, và gập lại (user chốt 02/09): đây là hai mục để DỌN khi
-          cần, không phải thứ đọc mỗi ngày. Mở sẵn thì chúng đẩy đúng thứ người
-          ta vào đây để xem — tiền — xuống dưới màn hình. */}
+      {/* Below Cost, and folded away (the user's call, 02/09): these are two
+          sections for TIDYING UP when needed, not something read every day. Left
+          open they push the very thing people come here for — the money — off
+          the bottom of the screen. */}
       <ConnectionsSection />
 
       <ModelsSection />
@@ -209,30 +213,35 @@ export function OverviewPanel() {
 }
 
 /**
- * KẾT NỐI + TÀI KHOẢN ĐÃ NỐI — cửa quản lý ở đúng cấp mà dữ liệu đang nằm.
+ * CONNECTIONS + LINKED ACCOUNTS — the management door at the level the data
+ * actually lives at.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG USER BÁO 02/09: *"kết nối Acme Team's Notion không xoá được"*        │
- * │ (rồi Linear, rồi GitHub — cùng một thế kẹt).                             │
+ * │ BUG THE USER REPORTED 02/09: *"the Acme Team's Notion connection cannot  │
+ * │ be removed"* (then Linear, then GitHub — the same trap each time).       │
  * │                                                                          │
- * │ Xoá theo dây chuyền, mà mỗi khoá lại nằm sau đúng cánh cửa nó đang khoá: │
+ * │ Deletion runs down a chain, and each lock sits behind the very door it   │
+ * │ is locking:                                                              │
  * │                                                                          │
- * │   workspace ←chặn bởi─ cánh tay ←chặn bởi─ văn phòng                     │
- * │   `oauthForget`        `forgetArm`         cửa vào: Toolbar của canvas   │
+ * │   workspace ←blocked by─ arm ←blocked by─ office                         │
+ * │   `oauthForget`          `forgetArm`      way in: the canvas Toolbar     │
  * │                                                                          │
- * │ Hai chốt chặn kia ĐÚNG — chúng ngăn để lại một cánh tay chết im. Cái sai │
- * │ là **cửa đi tới bước tiếp theo nằm bên trong thứ vừa bị xoá**: 0 văn      │
- * │ phòng ⇒ 0 canvas ⇒ 0 Toolbar ⇒ không còn đường nào tới sổ chung, dù dữ   │
- * │ liệu đó là của CÔNG TY chứ không của văn phòng nào.                      │
+ * │ Those two guards are RIGHT — they stop you leaving a silently dead arm.  │
+ * │ What was wrong is that **the door to the next step lived inside the      │
+ * │ thing just deleted**: 0 offices ⇒ 0 canvas ⇒ 0 Toolbar ⇒ no route left   │
+ * │ to the shared ledger, even though that data belongs to the COMPANY and   │
+ * │ to no office.                                                            │
  * │                                                                          │
- * │ Bản vá KHÔNG phải "xoá văn phòng thì dọn luôn kết nối" — làm thế là phá  │
- * │ đúng tính chất dùng chung (xoá văn phòng A đứt dây văn phòng B), và biến │
- * │ một nút xoá thành hai hành vi tuỳ số văn phòng còn lại tình cờ là mấy.   │
- * │ Dữ liệu ở nguyên chỗ; thứ được sửa là CỬA. → SPEC-arms.md §6k            │
+ * │ The fix is NOT "deleting an office also clears its connections" — that   │
+ * │ breaks the very sharing that makes them useful (delete office A, cut     │
+ * │ office B's wire) and turns one delete button into two behaviours         │
+ * │ depending on how many offices happen to be left. The data stays where it │
+ * │ is; what was fixed is the DOOR. → SPEC-arms.md §6k                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `ArmDialog` vẫn là chỗ **cắm mới**. Ngăn này là chỗ **nhìn và dọn** — hai ý
- * định khác nhau, và cái thứ hai không được phụ thuộc vào việc có văn phòng.
+ * `ArmDialog` is still where you **plug something in**. This section is where
+ * you **look and tidy** — two different intents, and the second must not depend
+ * on there being an office.
  */
 /**
  * Access level → the word for it.
@@ -253,14 +262,14 @@ function ConnectionsSection() {
   const company = useApp((s) => s.company);
   const [arms, setArms] = useState<InstalledArm[] | null>(null);
   const [accounts, setAccounts] = useState<OAuthAccount[] | null>(null);
-  /** Đang chờ xác nhận xoá — mức duy nhất không hoàn tác được, nên phải hỏi. */
+  /** Waiting on a delete confirmation — the one step with no undo, so it asks. */
   const [dropArm, setDropArm] = useState<InstalledArm | null>(null);
   const [dropAcc, setDropAcc] = useState<OAuthAccount | null>(null);
 
   /*
-    Nạp lại theo `company`: xoá một văn phòng làm cánh tay thành mồ côi, và cờ
-    `orphan` là thứ quyết định nút 🗑 có hiện hay không. Không nghe theo nó thì
-    người dùng vừa xoá văn phòng xong vẫn thấy "đang dùng" cho tới lần F5.
+    Reload on `company`: deleting an office orphans arms, and the `orphan` flag
+    is what decides whether the 🗑 button appears at all. Not listening to it
+    means the user deletes an office and still reads "in use" until they hit F5.
   */
   useEffect(() => {
     void api.arms().then((r) => setArms(r.arms)).catch(() => setArms([]));
@@ -298,9 +307,10 @@ function ConnectionsSection() {
         <Fold title={t('overview.connections')} count={arms.length}>
           <ul className="flex flex-col gap-1">
             {arms.map((a) => {
-              // Hai nghĩa của "đang dùng", đúng như `armHolders` ở server: có sợi
-              // dây, HOẶC có mặt trên sơ đồ mà chưa nối. Gộp làm một là hiện nút
-              // xoá cho một node đang nằm trên sơ đồ của ai đó.
+              // "In use" has two meanings, exactly as `armHolders` on the server
+              // has them: there is a wire, OR it sits on a diagram unwired.
+              // Collapsing the two shows a delete button for a node that is on
+              // somebody's diagram right now.
               const wired = [...new Set(a.usedBy.map((u) => officeName(u.office)))];
               return (
                 <li
@@ -362,9 +372,10 @@ function ConnectionsSection() {
                   </span>
                 </span>
                 {/*
-                  Mờ chứ không ẩn, và tooltip NÊU TÊN kết nối đang giữ nó: đây là
-                  đúng chỗ người dùng bị kẹt hôm 02/09, nên câu giải thích phải
-                  chỉ được bước tiếp theo chứ không chỉ nói "không được".
+                  Dimmed, not hidden, and the tooltip NAMES the connection
+                  holding it: this is the exact spot the user got stuck on 02/09,
+                  so the explanation has to point at the next step instead of
+                  only saying "no".
                 */}
                 <Tip
                   label={
@@ -395,16 +406,18 @@ function ConnectionsSection() {
       )}
 
       {/*
-        Hỏi bằng MODAL của app, không `window.confirm`. (user chốt 02/09)
+        Ask with the app's own MODAL, not `window.confirm`. (the user's call,
+        02/09)
 
-        Hộp thoại của trình duyệt khoá cả tab, không mang được định dạng, và trông
-        không giống phần còn lại của sản phẩm — trong khi hộp thoại lúc TẠO thì
-        đã là modal. Hỏi và tạo là hai đầu của cùng một thao tác, đi hai kiểu là
-        người dùng phải học hai lần.
+        The browser dialog locks the whole tab, carries no formatting, and looks
+        nothing like the rest of the product — while the CREATE dialog is already
+        a modal. Asking and creating are two ends of the same action; two
+        different shapes means the user learns it twice.
 
-        Vế **"CHÌA VẪN ĐƯỢC GIỮ"** in đậm chứ không phải một dòng phụ: nó là thứ
-        làm quyết định này rẻ, và không nói ra thì người dùng tưởng mình sắp mất
-        token nên không ai dám bấm — có nút mà như không.
+        The **"THE KEY IS KEPT"** clause is bold rather than a footnote: it is
+        what makes this decision cheap, and unsaid it leaves the user believing
+        they are about to lose a token, so nobody dares press the button — a
+        button that might as well not exist.
       */}
       <Dialog open={!!dropArm} onOpenChange={(o) => !o && setDropArm(null)}>
         <DialogContent>
@@ -464,14 +477,15 @@ function ConnectionsSection() {
 }
 
 /**
- * Mục GẬP LẠI ĐƯỢC cho ngăn Tổng quan. (user chốt 02/09)
+ * A FOLDABLE section for the Overview panel. (the user's call, 02/09)
  *
- * Cùng khuôn `<details>` với khối "N mục không còn" của bảng chi phí, nên hai
- * chỗ gập trong cùng một ngăn mở ra bằng một cử chỉ. Con số nằm ngay ở tiêu đề:
- * đóng lại rồi thì nó là thứ duy nhất còn nói được là bên trong có gì.
+ * Same `<details>` shape as the "N entries gone" block in the cost table, so the
+ * two foldables in one panel open with one gesture. The count sits in the title:
+ * once closed, it is the only thing still saying what is inside.
  *
- * Mặc định ĐÓNG — đây là ngăn để dọn khi cần, không phải thứ đọc mỗi ngày, và
- * ba mục kết nối mở sẵn thì đẩy phần Chi phí xuống dưới màn hình.
+ * CLOSED by default — this is a panel for tidying when needed, not something
+ * read every day, and three connection entries left open push Cost off the
+ * bottom of the screen.
  */
 function Fold({
   title,
@@ -496,24 +510,26 @@ function Fold({
 }
 
 /**
- * Bảng chi phí. Văn phòng KHÔNG CÒN TỒN TẠI được gom vào một khối đóng/mở.
+ * The cost table. Offices that NO LONGER EXIST are gathered into one foldable
+ * block.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ GỘP ĐỂ HIỂN THỊ, KHÔNG GỘP DỮ LIỆU.                                      │
+ * │ COLLAPSE THE DISPLAY, NEVER THE DATA.                                    │
  * │                                                                          │
- * │ Không gom thì sau vài tháng bảng đầy những cái tên đã chết. Nhưng cộng   │
- * │ chúng thành MỘT dòng "đã xoá · $X" thì cái mã văn phòng mất — mà với một │
- * │ văn phòng đã xoá hẳn, cái mã là manh mối DUY NHẤT còn lại để biết khoản  │
- * │ tiền đó là của việc gì.                                                  │
+ * │ Without the fold, a few months in the table is full of dead names. But   │
+ * │ adding them into ONE "deleted · $X" row loses the office id — and for an │
+ * │ office that is gone for good, that id is the ONLY clue left about what   │
+ * │ the money was spent on.                                                  │
  * │                                                                          │
- * │ Nên: thu gọn thành một dòng tổng, bấm vào bung ra đúng từng dòng thật.   │
- * │ Danh sách không dài ra, không mất minh bạch, và không cần một dòng code  │
- * │ kế toán nào — chỉ là một cái `<details>`.                                │
+ * │ So: fold to a single total row, click to expand the real rows, unchanged.│
+ * │ The list stops growing, nothing becomes less transparent, and it takes   │
+ * │ no accounting code at all — it is a `<details>`.                         │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Từ 02/09 khối này còn có một cái CHỔI. `removeOffice` giờ tự đóng sổ, nên
- * khối chỉ còn đọng lại rác từ trước bản vá — nhưng rác cũ thì cũng phải có
- * đường dọn, và đường đó không được là "mở `usage.jsonl` sửa tay".
+ * Since 02/09 this block also carries a BROOM. `removeOffice` now closes the
+ * ledger itself, so the block only collects debris from before that fix — but
+ * old debris still needs a way out, and that way must not be "open
+ * `usage.jsonl` and edit it by hand".
  */
 function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }) {
   const live = rows.filter((r) => !r.gone);
@@ -547,10 +563,10 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
 
       {gone.length > 0 && (
         <details className="mt-1.5 rounded-lg border border-dashed border-line px-2.5 py-1.5">
-          {/* "mục" chứ không phải "văn phòng": khối này chứa cả văn phòng đã xoá
-              hẳn LẪN bản ghi có từ trước khi có khái niệm văn phòng. Gọi chung
-              là "văn phòng đã xoá" thì đúng với đa số dòng và sai với phần còn
-              lại — mà sổ chi phí thì không được nói sai câu nào. */}
+          {/* "entries", not "offices": this block holds both offices deleted for
+              good AND records from before offices were a concept. Calling the
+              lot "deleted offices" is right for most rows and wrong for the
+              rest — and a cost ledger is not allowed one wrong sentence. */}
           <summary className="cursor-pointer list-none text-[13px] text-muted marker:hidden">
             <span className="tabular-nums">{gone.length}</span> {t('overview.goneEntries')}{' '}
             <span className="tabular-nums">{formatUSD(goneTotal)}</span>
@@ -563,9 +579,10 @@ function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }
               ))}
             </tbody>
           </table>
-          {/* Nút nằm ở ĐÁY khối đã bung ra, cố ý: muốn bấm thì phải mở khối lên,
-              tức là đã nhìn thấy đúng những dòng sắp mất. Cùng luật với nút "Xoá
-              tất cả" ở ngăn Kết quả — biết mình sắp mất gì TRƯỚC khi bấm. */}
+          {/* The button sits at the BOTTOM of the expanded block on purpose: to
+              press it you have to open the block, which means you have already
+              seen the exact rows about to go. Same rule as "Delete all" in the
+              Artifacts panel — know what you are losing BEFORE you press. */}
           <div className="mt-2 flex items-center justify-end">
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAsk(true)}>
               <Trash2 className="h-3.5 w-3.5" />
@@ -627,24 +644,24 @@ function CostRowView({ row }: { row: CostRow }) {
 }
 
 /**
- * Nhân viên đang trong lưu trữ của văn phòng ĐANG MỞ.
+ * Employees in the archive of the office CURRENTLY OPEN.
  *
- * Khôi phục thì họ trở lại đúng văn phòng cũ — vì họ chưa bao giờ rời đi.
- * `roles/<id>.yaml` không hề di chuyển, chỉ có một cờ `archived` được gỡ.
+ * Restore one and they come back to the same office — because they never left.
+ * `roles/<id>.yaml` does not move at all; an `archived` flag is removed.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TÊN VĂN PHÒNG PHẢI HIỆN RA, DÙ DANH SÁCH NÀY CHỈ CÓ MỘT VĂN PHÒNG.       │
+ * │ THE OFFICE NAME HAS TO BE VISIBLE, EVEN THOUGH EVERY ROW IS ONE OFFICE.  │
  * │                                                                          │
- * │ Khối này nằm trong bảng **Tổng quan công ty** — một màn hình mà mọi thứ  │
- * │ khác đều nói về CẢ công ty (danh sách văn phòng, sổ chi phí, model dùng  │
- * │ chung). Một mục "Nhân viên trong lưu trữ" đặt giữa đó thì đọc như là     │
- * │ toàn công ty, và người dùng bấm "Đưa trở lại" xong đi tìm người đó trong │
- * │ một mớ văn phòng.                                                        │
+ * │ This block lives in the **company Overview** — a screen where everything │
+ * │ else speaks about the WHOLE company (the office list, the cost ledger,   │
+ * │ the shared models). An "Archived employees" section dropped in there     │
+ * │ reads as company-wide, and the user presses "Bring back" and then goes   │
+ * │ hunting for that person across a pile of offices.                        │
  * │                                                                          │
- * │ Nhãn ở đây không phải để phân biệt các dòng với nhau — chúng cùng một    │
- * │ văn phòng cả. Nó trả lời câu người dùng thật sự đang hỏi: **"bấm nút này │
- * │ thì người đó xuất hiện ở đâu?"** Nên nhãn nằm ở TIÊU ĐỀ khối, chỗ đọc    │
- * │ trước khi bấm, chứ không rắc vào từng dòng.                              │
+ * │ The label is not there to tell rows apart — they are all the same        │
+ * │ office. It answers the question the user is actually asking: **"if I     │
+ * │ press this, where does that person show up?"** So it belongs in the      │
+ * │ section TITLE, read before the click, not sprinkled over every row.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ArchivedAgentsSection() {
@@ -654,8 +671,8 @@ function ArchivedAgentsSection() {
   const [agents, setAgents] = useState<ArchivedAgent[]>([]);
   const [confirm, setConfirm] = useState<ArchivedAgent | null>(null);
 
-  // Đọc lại mỗi khi canvas đổi: cất hoặc khôi phục một người đều làm canvas đổi,
-  // nên danh sách này không bao giờ lệch với sơ đồ.
+  // Re-read whenever the canvas changes: archiving or restoring someone changes
+  // the canvas, so this list can never drift from the diagram.
   useEffect(() => {
     if (!officeId) return setAgents([]);
     api
@@ -717,11 +734,12 @@ function ArchivedAgentsSection() {
       </ul>
 
       {/*
-        Câu này nói về CHỖ NGỒI, vì đó mới là nỗi lo thật khi bấm "Đưa trở lại":
-        người dùng sợ họ hiện ra ở một chỗ không tìm thấy. Cất đi là node bị XOÁ
-        khỏi layout (`layout.dropAgent`), nên lúc quay lại nó được cấp ô trống
-        đầu tiên như một người mới — kể cả khi ai đó đã ngồi vào chỗ cũ.
-        → test/layout.test.ts "cất đi rồi đưa trở lại"
+        This sentence is about the SEAT, because that is the real worry behind
+        "Bring back": the user is afraid the person reappears somewhere they
+        cannot find. Archiving REMOVES the node from the layout
+        (`layout.dropAgent`), so on the way back it gets the first free slot like
+        a new hire — even if somebody has taken the old seat.
+        → test/layout.test.ts "archive then bring back"
       */}
       <p className="mt-2 text-xs leading-relaxed text-muted">
         {t('overview.bringBackNoteBefore')} <b>{office?.name ?? t('overview.thisOffice')}</b>{' '}
@@ -772,15 +790,16 @@ function ArchivedAgentsSection() {
 }
 
 /**
- * Mức nào chạy model nào — cấu hình cấp CÔNG TY.
+ * Which tier runs which model — COMPANY-level configuration.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO Ở ĐÂY CHỨ KHÔNG PHẢI TRONG TỪNG VĂN PHÒNG                         │
+ * │ WHY HERE AND NOT INSIDE EACH OFFICE                                      │
  * │                                                                          │
- * │ Đây là câu hỏi "một việc mức standard tốn bao nhiêu" — tức là TIỀN, mà   │
- * │ tiền thì chỉ có một hoá đơn Claude và một chỗ để siết. Còn "Trợ lý văn   │
- * │ phòng này chạy mức nào" là câu hỏi CÔNG VIỆC, nên nó nằm ở từng văn      │
- * │ phòng (bảng bên phải, chọn node Trợ lý). Hai câu hỏi khác nhau, hai chỗ. │
+ * │ This is the question "what does a standard-tier job cost" — that is      │
+ * │ MONEY, and money has one Claude bill and one place to tighten it. "Which │
+ * │ tier does this office's assistant run at" is a question about WORK, so   │
+ * │ it lives per office (the right-hand panel, select the assistant node).   │
+ * │ Two different questions, two different places.                           │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ModelsSection() {

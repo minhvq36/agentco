@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils';
 import { t } from '@i18n';
 
 /**
- * Dialog dựng trên Radix. Lý do không tự viết: focus trap, khoá scroll, Escape,
- * và aria-modal đúng chuẩn là những thứ tự viết sẽ sai ở đâu đó — mà tiêu chí
- * "Ổn định" và "Mượt" đo đúng chỗ đó.
+ * Dialogs built on Radix. Why not hand-written: focus trapping, scroll locking,
+ * Escape handling and correct `aria-modal` are things a hand-rolled version gets
+ * wrong somewhere — and "stable" and "smooth" are measured exactly there.
  */
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;

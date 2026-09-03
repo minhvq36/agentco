@@ -65,12 +65,13 @@ export function NewOfficeDialog({ open, onOpenChange }: { open: boolean; onOpenC
 }
 
 /**
- * Đổi tên văn phòng đang mở.
+ * Rename the open office.
  *
- * MÃ văn phòng (tên thư mục) KHÔNG đổi theo, và dialog nói thẳng điều đó. Đổi mã
- * là dời `artifacts/`, `tasks/`, `.state/` và mọi đường dẫn đã ghi trong receipt
- * cũ — để đổi một cái nhãn. Người dùng đổi tên vì cái nhãn đọc sai, không phải
- * vì họ muốn dời nhà; im lặng dời cả thư mục là làm nhiều hơn thứ họ yêu cầu.
+ * The office ID (the folder name) does NOT follow, and the dialog says so
+ * outright. Changing the ID means moving `artifacts/`, `tasks/`, `.state/` and
+ * every path already written into old receipts — to change one label. People
+ * rename because the label reads wrong, not because they want to move house;
+ * silently moving the whole folder is doing more than they asked for.
  */
 export function RenameOfficeDialog({
   open,
@@ -95,8 +96,9 @@ export function RenameOfficeDialog({
     if (!trimmed || busy) return;
     if (trimmed === current) return onOpenChange(false);
     setBusy(true);
-    // Trùng tên do SERVER từ chối, không phải client: một client khác POST thẳng
-    // vào daemon vẫn phải bị chặn. Ở đây chỉ hiện lại câu server trả về.
+    // A name clash is refused by the SERVER, not the client: another client
+    // POSTing straight at the daemon must still be blocked. All we do here is
+    // show the sentence the server sent back.
     const ok = await actions.renameOffice(trimmed);
     setBusy(false);
     if (ok) onOpenChange(false);
@@ -200,9 +202,10 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           </Select>
 
           {/*
-            KHÔNG giải thích `Bash` ở đây nữa (user chốt 02/09 — app đang toàn
-            chữ). Công tắc *Cho chạy lệnh trên máy* ở bảng chi tiết vẫn là chỗ
-            nói ra năng lực đó, và nó nằm ngay cạnh cái công tắc thật.
+            NO explanation of `Bash` here any more (user, 02/09 — the app is all
+            text as it is). The *Allow commands on this machine* switch in the
+            detail panel is still where that capability is spelled out, and it
+            sits right next to the actual switch.
             → SPEC-tools-approval.md §1b, §8
           */}
           <DialogFooter>
@@ -220,17 +223,15 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 }
 
 /**
- * Prompt phân lớp. → docs/SPEC-offices.md §4.1
+ * One prompt layer. An `editable` layer can be edited IN PLACE.
+ * → docs/SPEC-offices.md §4.1
  *
- * Lớp core LUÔN XEM ĐƯỢC, mặc định khoá. Giấu nó đi thì người dùng advanced
- * đoán, và đoán sai thì họ viết skills chống lại chính hệ thống.
- */
-/**
- * Một lớp prompt. Lớp `editable` sửa được TẠI CHỖ.
+ * The core layer is ALWAYS VISIBLE, locked by default. Hide it and advanced
+ * users guess, and when they guess wrong they write skills that fight the system.
  *
- * KHÔNG autosave — nút Lưu tường minh. Mỗi lần lưu là bump cacheKey → trả một
- * lần ghi cache. Autosave theo phím ở đây là churn cache liên tục, đắt và chậm.
- * → docs/SPEC-ui.md §2.2, SPEC-tools-approval.md §4
+ * NO autosave — an explicit Save button. Every save bumps the cacheKey → pays for
+ * one cache write. Autosaving per keystroke here is continuous cache churn:
+ * expensive and slow. → docs/SPEC-ui.md §2.2, SPEC-tools-approval.md §4
  */
 function LayerCard({
   layer,
@@ -245,13 +246,14 @@ function LayerCard({
 }) {
   const officeId = useApp((s) => s.officeId);
   /**
-   * GẬP SẴN, chỉ hiện tiêu đề. (user chốt 02/09)
+   * COLLAPSED BY DEFAULT, title only. (user, 02/09)
    *
-   * Bung cả năm lớp cùng lúc thì hộp thoại thành một bức tường chữ và người
-   * dùng cuộn qua nó chứ không đọc. Tiêu đề + số token đã đủ để chọn lớp cần
-   * xem; phần thân là thứ chỉ có nghĩa sau khi đã chọn.
+   * Expanding all five layers at once turns the dialog into a wall of text that
+   * people scroll past instead of reading. Title + token count is enough to pick
+   * the layer worth opening; the body only means something once you have picked.
    *
-   * `editing` KÉO THEO mở: sửa một khối đang gập là không nhìn thấy thứ mình gõ.
+   * `editing` DRAGS open with it: editing a collapsed block means not seeing what
+   * you type.
    */
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -264,7 +266,7 @@ function LayerCard({
     setEditing(false);
   }, [layer.text, layer.id]);
 
-  // Ước lượng cùng công thức với backend (tokens.ts) để con số không nhảy khi lưu.
+  // Estimated with the backend's formula (tokens.ts) so the number does not jump on save.
   const tokens = editing ? Math.ceil(text.length / 3.2) : layer.tokens;
   const over = layer.limit !== undefined && tokens > layer.limit;
   const dirty = text !== layer.text;
@@ -286,9 +288,10 @@ function LayerCard({
   return (
     <section className="rounded-lg border border-line">
       {/*
-        Cả thanh là vùng bấm. Dùng `div` + `role="button"` chứ không phải `<button>`:
-        nút bút chì nằm BÊN TRONG nó, và một nút lồng trong một nút là HTML không
-        hợp lệ — trình duyệt tự gỡ lồng, rồi cú bấm rơi vào chỗ không ai đoán được.
+        The whole bar is the click target. A `div` + `role="button"` rather than a
+        `<button>`: the pencil button lives INSIDE it, and a button nested in a
+        button is invalid HTML — the browser un-nests it and the click then lands
+        somewhere nobody can predict.
       */}
       <header
         role="button"
@@ -326,8 +329,8 @@ function LayerCard({
             size="iconSm"
             variant="ghost"
             aria-label={t('promptLayer.edit', { title: layer.title })}
-            // Bút chì = MỞ RA VÀ SỬA LUÔN, một cú bấm. `stopPropagation` để nó
-            // không chạm vào cái toggle của thanh rồi tự gập lại ngay.
+            // The pencil = OPEN AND EDIT AT ONCE, in one click. `stopPropagation`
+            // keeps it off the bar's toggle, which would collapse it right back.
             onClick={(e) => {
               e.stopPropagation();
               setOpen(true);
@@ -350,11 +353,11 @@ function LayerCard({
         {editing ? (
           <>
             {/*
-              Placeholder là một VÍ DỤ THẬT, không phải lời dặn "hãy viết gì đó
-              vào đây". Nội dung mặc định của file đi thẳng vào prefix cache của
-              mọi lượt gọi, nên một dòng hướng dẫn nằm trong đó là khoản thuế
-              thu mãi mãi để nói với MODEL một câu chỉ có nghĩa với NGƯỜI.
-              Chỗ đúng của lời hướng dẫn là ở đây — trên giao diện, 0 token.
+              The placeholder is a REAL EXAMPLE, not an instruction saying "write
+              something here". A file's default content goes straight into the
+              prefix cache of every call, so a line of guidance inside it is a tax
+              levied forever to tell THE MODEL a sentence that only means something
+              to A PERSON. Guidance belongs here — in the interface, at 0 tokens.
             */}
             <Textarea
               rows={10}
@@ -391,9 +394,9 @@ function LayerCard({
             {layer.text}
           </pre>
         ) : (
-          /* Trạng thái rỗng được THIẾT KẾ, không phải chữ "(trống)". Lớp trống
-             là lựa chọn hợp lệ và thường là lựa chọn ĐÚNG — nói ra điều đó, rồi
-             cho xem một ví dụ thật để người dùng biết hình dạng thứ cần viết. */
+          /* A DESIGNED empty state, not the word "(empty)". An empty layer is a
+             valid choice and often the RIGHT one — say so, then show a real
+             example so the user can see the shape of what they would write. */
           <div className="rounded border border-dashed border-line bg-paper p-2">
             {layer.placeholder && layer.editable && (
               <pre className="mt-1.5 whitespace-pre-wrap font-mono text-[11.5px] leading-relaxed text-muted opacity-60">
@@ -410,34 +413,37 @@ function LayerCard({
 export function PromptDialog({ who, onClose }: { who: string | null; onClose(): void }) {
   const officeId = useApp((s) => s.officeId);
   /*
-    KHÔNG đọc `allowCorePromptEdit` ở đây. `layer.editable` do server tính và
-    ĐÃ gồm cờ đó (`prompt.ts §PromptLayer.editable`), còn `PUT` thì tự từ chối
-    lớp lõi. Giữ một bản sao ở client là hai chỗ nói về cùng một quyền — kiểu
-    gì cũng có một chỗ bị quên khi luật đổi.
+    Do NOT read `allowCorePromptEdit` here. `layer.editable` is computed by the
+    server and ALREADY folds that flag in (`prompt.ts §PromptLayer.editable`), and
+    `PUT` refuses core layers on its own. Keeping a copy on the client means two
+    places speaking about the same permission — one of them gets forgotten the day
+    the rule changes.
   */
   const agentCount = useApp((s) => s.canvas?.nodes.filter((n) => n.kind === 'agent').length ?? 0);
   const [layers, setLayers] = useState<PromptLayer[] | null>(null);
-  // Charter nằm trong prefix của MỌI nhân viên; skills chỉ của một người.
+  // The charter sits in EVERY employee's prefix; skills belong to one person.
   const affected = who === 'assistant' ? Math.max(1, agentCount) : 1;
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 `onClose` KHÔNG được nằm trong deps — bug user báo 02/09.             │
+   * │ 🔴 `onClose` MUST NOT be in the deps — bug reported by the user 02/09.   │
    * │                                                                          │
-   * │ Chỗ gọi truyền một arrow dựng lại mỗi lần render (`onClose={() =>        │
-   * │ setPromptFor(null)}`), nên **mỗi lần App vẽ lại** là deps đổi ⇒ effect   │
-   * │ chạy lại ⇒ `setLayers(null)` ⇒ hộp thoại nháy về "Đang đọc…" rồi tải     │
-   * │ lại. Người dùng đang sửa dở một lớp thì mất luôn phần vừa gõ.            │
+   * │ The caller passes an arrow rebuilt on every render (`onClose={() =>      │
+   * │ setPromptFor(null)}`), so **every time App re-renders** the deps change  │
+   * │ ⇒ the effect re-runs ⇒ `setLayers(null)` ⇒ the dialog flashes back to    │
+   * │ "Reading…" and reloads. A user halfway through editing a layer loses     │
+   * │ everything they had typed.                                               │
    * │                                                                          │
-   * │ Triệu chứng thấy được cần MỘT thứ vẽ App liên tục, và 02/09 có thật:     │
-   * │ vòng lặp `GET /library` (xem `library/store.ts §pump`). Nhưng bản vá bên  │
-   * │ đó chỉ dập cái máy phát — ô này vẫn phải đúng, vì `canvas` đổi là chuyện  │
-   * │ bình thường (nhân viên bắt đầu chạy, kéo một node…) và không lần nào      │
-   * │ trong số đó được phép xoá thứ người dùng đang gõ.                        │
+   * │ A visible symptom needs SOMETHING re-rendering App continuously, and on  │
+   * │ 02/09 there was one: the `GET /library` loop (see `library/store.ts      │
+   * │ §pump`). But that fix only silenced the generator — this cell still has  │
+   * │ to be right, because `canvas` changing is perfectly normal (an employee  │
+   * │ starts running, a node gets dragged…) and none of those may wipe out     │
+   * │ what the user is typing.                                                 │
    * │                                                                          │
-   * │ ⇒ Effect chỉ phụ thuộc **thứ nó thật sự đọc**: đang xem prompt của AI,   │
-   * │ ở văn phòng nào. `onClose` đi qua ref — nó là đường THOÁT, không phải     │
-   * │ đầu vào của phép tải.                                                    │
+   * │ ⇒ The effect depends only on **what it actually reads**: whose prompt is │
+   * │ open, in which office. `onClose` goes through a ref — it is the way OUT, │
+   * │ not an input to the load.                                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const closeRef = useRef(onClose);
@@ -454,8 +460,6 @@ export function PromptDialog({ who, onClose }: { who: string | null; onClose(): 
         closeRef.current();
       });
   }, [who, officeId]);
-
-  // const total = layers?.reduce((n, l) => n + l.tokens, 0) ?? 0;
 
   return (
     <Dialog open={!!who} onOpenChange={(o) => !o && onClose()}>

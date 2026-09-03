@@ -1,14 +1,14 @@
 /**
- * Giao thức Receipt — hợp đồng cốt lõi giữa worker và master.
+ * The receipt protocol — the core contract between a worker and the assistant.
  *
  * → docs/SPEC-2026-08-14-agentco.md §4
  *
- * BẤT BIẾN: không một byte transcript thô nào của worker được đi vào context
- * của master. Master chỉ thấy đúng object này, trần 800 token.
+ * INVARIANT: not one byte of a worker's raw transcript enters the assistant's
+ * context. The assistant sees exactly this object, capped at 800 tokens.
  *
- * Cùng một cơ chế phục vụ CẢ HAI mục tiêu: tiết kiệm token, và UX
- * "đơn giản mặc định, advanced khi cần" — vì `say` do worker sinh sẵn,
- * không tốn thêm call LLM nào để dịch cho thân thiện.
+ * One mechanism serving BOTH goals: saving tokens, and the "simple by default,
+ * advanced on demand" experience — because `say` is produced by the worker
+ * itself, costing no extra LLM call to make it friendly.
  */
 
 import { ReceiptSchema, type ReceiptBody } from './types.js';
@@ -17,26 +17,26 @@ import { estimateJsonTokens, truncateToTokens } from './tokens.js';
 export interface ParseResult {
   ok: boolean;
   receipt?: ReceiptBody;
-  /** Lý do parse hỏng, dùng làm prompt sửa lỗi. */
+  /** Why parsing failed, used as the repair prompt. */
   problem?: string;
 }
 
 /**
- * Rút JSON receipt ra khỏi văn bản cuối của worker.
- * Thử nhiều chiến lược trước khi bỏ cuộc — mỗi lần bỏ cuộc là một call sửa lỗi tốn tiền.
+ * Pull the receipt JSON out of a worker's final text.
+ * Several strategies before giving up — each surrender costs a paid repair call.
  */
 export function parseReceipt(text: string): ParseResult {
   const candidates: string[] = [];
 
-  // 1. khối ```json ... ``` — lấy khối CUỐI (model hay ví dụ trước rồi mới thật)
+  // 1. a ```json … ``` block — take the LAST one (models often show an example first)
   const fenced = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n?```/g)];
   for (const m of fenced.reverse()) if (m[1]) candidates.push(m[1]);
 
-  // 2. object JSON cân bằng ngoặc cuối cùng trong text
+  // 2. the last brace-balanced JSON object in the text
   const braced = lastBalancedObject(text);
   if (braced) candidates.push(braced);
 
-  // 3. toàn bộ text
+  // 3. the whole text
   candidates.push(text);
 
   for (const raw of candidates) {
@@ -48,7 +48,7 @@ export function parseReceipt(text: string): ParseResult {
     }
     const parsed = ReceiptSchema.safeParse(value);
     if (parsed.success) return { ok: true, receipt: normalize(parsed.data) };
-    // JSON hợp lệ nhưng sai schema — giữ lại lý do, có thể sửa được
+    // Valid JSON but wrong schema — keep the reason; this is repairable
     return {
       ok: false,
       problem: parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; '),
@@ -59,67 +59,75 @@ export function parseReceipt(text: string): ParseResult {
 }
 
 /**
- * Trần cho `answer` — TÍNH RIÊNG, không nằm trong `receipt_tokens`.
+ * The ceiling for `answer` — COUNTED SEPARATELY, outside `receipt_tokens`.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO TÁCH TRẦN, KHÔNG NỚI TRẦN CŨ.                                     │
+ * │ WHY A SEPARATE CEILING RATHER THAN RAISING THE OLD ONE.                  │
  * │                                                                          │
- * │ `receipt_tokens` (mặc định 800) tồn tại để bảo vệ NGỮ CẢNH TRỢ LÝ. Mà    │
- * │ `answer` KHÔNG BAO GIỜ đi vào đó — nó bay thẳng ra chat cho người dùng   │
- * │ (`office.ts`). Nới trần cũ để chứa nó là nới đúng cái trần đang bảo vệ   │
- * │ thứ không cần bảo vệ, và đồng thời làm `say` (thứ THẬT SỰ vào ngữ cảnh   │
- * │ Trợ lý) được phép phình theo. Hai đường đời khác nhau thì hai cái trần.  │
+ * │ `receipt_tokens` (default 800) exists to protect THE ASSISTANT'S         │
+ * │ CONTEXT. And `answer` NEVER enters it — it goes straight out to the chat │
+ * │ for the human (`office.ts`). Raising the old ceiling to fit it would be  │
+ * │ loosening the very guard on something that needs no guarding, and would  │
+ * │ simultaneously let `say` (which DOES enter the assistant's context) grow │
+ * │ with it. Two different lifetimes get two different ceilings.             │
  * │                                                                          │
- * │ ~450 token ≈ 300 từ tiếng Việt: vừa một bong bóng chat, vừa một tin      │
- * │ Telegram, và đủ dài cho một câu trả lời chính sách có dẫn điều kiện.     │
+ * │ ⚠ THE CONVERSION DEPENDS ON THE LANGUAGE, and `answer` follows whatever  │
+ * │ language the human is writing in. Measured 03/09: ~3.98 chars/token in   │
+ * │ English against ~2.6 in Vietnamese, so ~450 tokens is roughly 300        │
+ * │ English words or 200 Vietnamese ones. Either way it fits a chat bubble   │
+ * │ and a Telegram message, and is long enough for a policy answer that      │
+ * │ cites its conditions. → docs/SPEC-token-economy.md                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const ANSWER_TOKENS = 450;
 
 /**
- * Trần cho `gist` — NẰM TRONG `receipt_tokens`, ngược hẳn `ANSWER_TOKENS`.
+ * The ceiling for `gist` — INSIDE `receipt_tokens`, the opposite of `ANSWER_TOKENS`.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Phép chia trần ở file này chỉ hỏi đúng một câu: **thứ này có đi vào ngữ   │
- * │ cảnh Trợ lý không?** `answer` KHÔNG ⇒ tách trần riêng. `gist` **CÓ** ⇒ nó │
- * │ phải cạnh tranh chỗ với `say` và `lessons`, không được miễn trừ.          │
- * │                                                                          │
- * │ ⚠ Và nó vào ngữ cảnh Trợ lý **mỗi lượt report**, rồi đi qua nén trí nhớ — │
- * │ tức nó là một hoá đơn LẶP LẠI, cùng lớp với `hint`. User chốt 30/08:      │
- * │ *"chấp nhận prefix, và gist đừng có quá bự để cả worker và assistant cùng │
- * │ mệt mỏi"*. 120 token ≈ 80 từ tiếng Việt: đủ ba câu hoặc bốn gạch đầu      │
- * │ dòng, và **không đủ** để lén trở thành một câu trả lời đầy đủ.            │
+ * │ Every ceiling in this file answers one question: DOES THIS ENTER THE      │
+ * │ ASSISTANT'S CONTEXT? `answer` does NOT ⇒ its own ceiling. `gist` DOES ⇒   │
+ * │ it competes for room with `say` and `lessons`, with no exemption.         │
+ * │                                                                           │
+ * │ ⚠ And it enters that context ON EVERY REPORT, then passes through memory  │
+ * │ compaction — so it is a RECURRING bill, the same class as `hint`. Settled │
+ * │ 30/08: *"the prefix is accepted, but do not let the gist get so big that  │
+ * │ both worker and assistant get worn out"*. 120 tokens is roughly 80        │
+ * │ English words or 55 Vietnamese ones: enough for three sentences or four   │
+ * │ bullets, and NOT enough to quietly become a full answer.                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const GIST_TOKENS = 120;
 
-/** Ép trần CỨNG. Vượt là cắt, không thương lượng. */
+/** Enforce the ceilings HARD. Over the line means trimmed, no negotiation. */
 export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody {
   const out: ReceiptBody = { ...receipt };
 
-  // `say` là thứ người dùng đọc — ưu tiên giữ, nhưng cũng phải có trần
+  // `say` is what the human reads — favoured, but it still needs a ceiling
   out.say = truncateToTokens(out.say.replace(/\s+/g, ' ').trim(), Math.floor(maxTokens * 0.25));
 
   /**
-   * ⚠ KHÔNG gom khoảng trắng — cùng lý do `answer`: gạch đầu dòng là một phần
-   * của nội dung, và user đã nói thẳng *"đôi khi là gạch đầu dòng từng ý"*.
+   * ⚠ Do NOT collapse whitespace — same reason as `answer`: bullets are part of
+   * the content, and the user said outright *"sometimes it is one bullet per
+   * point"*.
    */
   out.gist = truncateToTokens(out.gist.trim(), GIST_TOKENS);
 
   /**
-   * `answer` được cắt TRƯỚC, rồi TÁCH RA khỏi phép đo `estimateJsonTokens`.
+   * `answer` is trimmed FIRST, then EXCLUDED from the `estimateJsonTokens`
+   * measurement.
    *
-   * Để nó trong phép đo thì một câu trả lời dài sẽ đẩy `lessons` và `say` ra
-   * ngoài trần — tức là câu trả lời cho khách đi ăn cắp chỗ của receipt, trong
-   * khi hai thứ đó chạy trên hai đường hoàn toàn khác nhau.
+   * Leaving it inside the measurement means a long answer pushes `lessons` and
+   * `say` over the ceiling — the customer's answer stealing the receipt's room,
+   * when the two travel completely different routes.
    *
-   * ⚠ KHÔNG gom khoảng trắng như `say`: đây là văn bản người đọc, xuống dòng
-   * và gạch đầu dòng là một phần của nội dung. `say` thì gom được vì nó là một
-   * câu duy nhất chạy trong dòng trạng thái.
+   * ⚠ Do NOT collapse whitespace the way `say` does: this is prose a person
+   * reads, where line breaks and bullets are part of the content. `say` can be
+   * collapsed because it is a single sentence running in a status line.
    */
   const answer = truncateToTokens(out.answer.trim(), ANSWER_TOKENS);
 
-  // lessons là thứ dễ phình nhất: model thích viết dài
+  // `lessons` bloats most easily: models like to write at length
   out.lessons = out.lessons.slice(0, 2).map((l) => ({
     kind: l.kind,
     text: truncateToTokens(l.text.replace(/\s+/g, ' ').trim(), 60),
@@ -128,16 +136,17 @@ export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody
   out.artifacts = out.artifacts.slice(0, 20);
   if (out.blocked_on) out.blocked_on = truncateToTokens(out.blocked_on, 80);
 
-  // Đo phần ĐI VÀO NGỮ CẢNH TRỢ LÝ. `answer` không thuộc phần đó; `gist` thì CÓ.
+  // Measure what ENTERS THE ASSISTANT'S CONTEXT. `answer` does not; `gist` does.
   const measured = { ...out, answer: '' };
   /**
-   * Thứ tự hy sinh — hỏi *"mất cái này thì mất gì"*, không hỏi cái nào to nhất:
+   * Sacrifice order — ask *"what is lost by losing this"*, not which is largest:
    *
-   *   ① lessons — hy sinh trước, vì bài học chỉ đáng giá ở lượt SAU, còn hai
-   *      thứ dưới đây là thứ người dùng đọc ngay bây giờ.
-   *   ② gist    — cắt bớt, không bỏ hẳn: một tóm tắt ngắn hơn vẫn dùng được,
-   *      trong khi rỗng thì Trợ lý mất sạch sự kiện và lại phải bảo "mở file".
-   *   ③ say     — chạm cuối cùng. Nó là dòng trạng thái, mất nó là màn hình câm.
+   *   ① lessons — first to go, because a lesson only pays off on a LATER turn,
+   *      while the two below are what the human reads right now.
+   *   ② gist    — trimmed, never dropped: a shorter summary is still usable,
+   *      while an empty one strips the assistant of every fact and sends it
+   *      back to saying "open the file".
+   *   ③ say     — touched last. It is the status line; losing it means a mute screen.
    */
   if (estimateJsonTokens(measured) > maxTokens) measured.lessons = out.lessons = [];
   if (estimateJsonTokens(measured) > maxTokens) {
@@ -151,7 +160,7 @@ export function enforceCap(receipt: ReceiptBody, maxTokens: number): ReceiptBody
   return out;
 }
 
-/** Prompt cho call sửa lỗi khi worker trả sai định dạng. Cố ý KHÔNG kèm context role — chỉ cần định dạng. */
+/** The repair prompt when a worker returns the wrong shape. Deliberately carries NO role context — only the format matters. */
 export function repairPrompt(badText: string, problem: string): string {
   const excerpt = truncateToTokens(badText, 1_500);
   return `The text below was supposed to be a task receipt in JSON, but it is malformed (${problem}).
@@ -174,7 +183,7 @@ function normalize(r: ReceiptBody): ReceiptBody {
     say: r.say.trim(),
     answer: r.answer.trim(),
     gist: r.gist.trim(),
-    // đường dẫn từ LLM: chuẩn hoá dấu gạch, bỏ ./ đầu, bỏ trùng
+    // paths from the LLM: normalise separators, drop a leading ./, deduplicate
     artifacts: [...new Set(r.artifacts.map((a) => a.trim().replace(/\\/g, '/').replace(/^\.\//, '')))].filter(Boolean),
   };
 }

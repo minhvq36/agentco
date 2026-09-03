@@ -1,9 +1,9 @@
 /**
- * Client API. Một chỗ duy nhất nói chuyện với daemon.
+ * The client API. The single place that talks to the daemon.
  *
- * Nguyên tắc xử lý lỗi (tiêu chí "Xử lý lỗi tốt"): backend đã trả về câu tiếng
- * Việt giải thích được — việc của tầng này là ĐỪNG NUỐT nó. Mọi lỗi ném ra
- * `ApiError` với `message` hiển thị thẳng lên UI được.
+ * The error rule (the "Good error handling" bar): the backend already returned a
+ * sentence that explains itself — this layer's job is to NOT SWALLOW it. Every
+ * error throws an `ApiError` whose `message` can go straight onto the screen.
  */
 
 import type {
@@ -46,8 +46,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
       headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
     });
   } catch {
-    // Daemon tắt giữa chừng là chuyện SẼ xảy ra (Ctrl+C ở terminal). Nói đúng
-    // việc phải làm, đừng để người dùng nhìn "Failed to fetch".
+    // The daemon going away mid-session WILL happen (Ctrl+C in the terminal). Say
+    // what to do about it; do not leave the user looking at "Failed to fetch".
     throw new ApiError(t('error.lostDaemon'), 0);
   }
 
@@ -77,73 +77,78 @@ export const api = {
   company: () => call<CompanyView>('/api/company'),
 
   /**
-   * Duyệt thư mục trên máy CHẠY DAEMON. Trình duyệt không đưa được đường dẫn
-   * tuyệt đối, còn hộp thoại của HĐH thì mở nhầm máy khi daemon ở xa — nên ta
-   * tự liệt kê. → `paths.ts §browseDirs`
+   * Browse directories on the machine RUNNING THE DAEMON. A browser cannot hand
+   * over an absolute path, and the OS dialog opens on the wrong machine when the
+   * daemon is remote — so we list them ourselves. → `paths.ts §browseDirs`
    */
   /**
-   * `office` = mở ở **thư mục văn phòng** khi chưa có `p`.
+   * `office` = start in the **office directory** when there is no `p` yet.
    *
-   * ⚠ Client gửi **id văn phòng**, không gửi đường dẫn: đường dẫn là chuyện của
-   * máy chủ (đổi theo HĐH và theo chỗ cài), và ghép nó ở đây là dựng lại đúng
-   * lớp *"hai bản của cùng một sự thật"*. → `server.ts /api/browse`
+   * ⚠ The client sends an **office id**, never a path: paths are the server's
+   * business (they differ by OS and by install location), and assembling one here
+   * rebuilds exactly the *"two copies of one truth"* class of bug.
+   * → `server.ts /api/browse`
    */
   browse: (p?: string, office?: string) =>
     call<{ path: string; parent: string | null; dirs: { name: string; path: string }[] }>(
       `/api/browse${p ? `?path=${enc(p)}` : office ? `?office=${enc(office)}` : ''}`,
     ),
 
-  // ── cánh tay (MCP). → docs/SPEC-arms.md §6
+  // ── arms (MCP). → docs/SPEC-arms.md §6
   armCatalog: () => call<{ arms: CatalogArm[] }>('/api/arms/catalog'),
   arms: () => call<{ arms: InstalledArm[] }>('/api/arms'),
 
   /**
-   * THỬ NGAY — bắt tay thật, chưa lưu gì.
+   * TEST NOW — a real handshake, nothing saved yet.
    *
-   * ⚠ CHẬM VÀ ĐÓ LÀ BÌNH THƯỜNG. Giao diện phải hiện "đang kết nối…" — coi im
-   * lặng là hỏng thì mọi cánh tay đều trông như hỏng ở lần cắm đầu tiên.
+   * ⚠ SLOW, AND THAT IS NORMAL. The interface has to show "connecting…" — read
+   * the silence as failure and every arm looks broken on its first plug-in.
    *
-   * ĐÍNH CHÍNH 24/08 (`scripts/spike-npx-cost.ts`, 10 lượt): câu cũ ở đây ghi
-   * *"4 giây khi cache npx đã ấm, 17,7 giây lần đầu"*. Số thật, gói đã cache:
-   * **7,7–9,2 giây, lần đầu bằng lần thứ ba** — không có "lần sau nhanh hơn".
-   * ~3,2 s trong đó là phí tự thân của `npx`, đo được bằng cách chạy thẳng
-   * `node <file>` (0,8 s). Cùng khoản đó cũng bị trả ở MỖI task có cánh tay.
+   * CORRECTION 24/08 (`scripts/spike-npx-cost.ts`, 10 runs): the old text here
+   * said *"4 seconds once the npx cache is warm, 17.7 seconds the first time"*.
+   * The real numbers with the package cached: **7.7–9.2 seconds, and the first
+   * run equals the third** — there is no "faster next time". ~3.2s of that is
+   * `npx`'s own overhead, measured by running `node <file>` directly (0.8s). The
+   * same charge is paid on EVERY task that has an arm.
    */
   testArm: (
     id: string,
     body: {
       /**
-       * DÙNG LẠI một mục đã có trong sổ. Server lấy cấu hình + tên chìa + **giá
-       * trị chìa** từ sổ chung, nên không có gì để client gửi kèm.
+       * REUSE an entry already in the ledger. The server takes the config, the
+       * key name and **the key's value** from the shared ledger, so there is
+       * nothing for the client to send along.
        *
-       * ⚠ Không thay bằng cách dán `config` sang đường "tự cắm": cấu hình trong
-       * sổ giữ ô trống `${…}`, và gửi nó đi mà không có chìa là **401** — đúng
-       * bug user gặp 25/08 khi bê Notion sang văn phòng thứ hai.
+       * ⚠ Do not replace this by pasting `config` down the "custom" path: the
+       * config in the ledger keeps its `${…}` placeholders, and sending that
+       * without a key is a **401** — exactly the bug the user hit on 25/08
+       * carrying Notion over to a second office.
        */
       armId?: string;
       config?: unknown;
       catalogId?: string;
       folders?: string[];
-      /** Nhóm việc + ô tick cách chạy — KHAI RA, đừng để hợp đồng nói dối. */
+      /** Task groups + the how-it-runs checkboxes — DECLARED, so the contract cannot lie. */
       groups?: string[];
       options?: string[];
-      /** Cần cho ô trống <OFFICE_STATE> — xem chỗ gọi ở ArmDialog. */
+      /** Needed for the <OFFICE_STATE> placeholder — see the call site in ArmDialog. */
       office?: string;
       secrets?: Record<string, string>;
-      /** Tên chìa OAuth của tài khoản đã chọn. → `oauth.ts §accountName` */
+      /** The OAuth key name of the chosen account. → `oauth.ts §accountName` */
       account?: string;
-      /** Nấc quyền. Đi vào băm ở server — xem `addArm`. */
+      /** Access level. Feeds the hash on the server — see `addArm`. */
       level?: 'read' | 'add' | 'full';
     },
   ) => call<ProbeResult>('/api/arms/test', { method: 'POST', body: JSON.stringify({ id, ...body }) }),
 
-  // ── đăng nhập một dịch vụ (OAuth). → docs/SPEC-arms.md §5h
+  // ── signing in to a service (OAuth). → docs/SPEC-arms.md §5h
   /**
-   * Mở một lượt đăng nhập. Trả về **URL cho TA tự mở**, daemon không spawn gì.
+   * Start a sign-in. Returns a **URL for US to open ourselves**; the daemon spawns
+   * nothing.
    *
-   * ⚠ Đó là cả điểm của thiết kế: trình duyệt người dùng đang ngồi có sẵn phiên
-   * Notion; trình duyệt mặc định của máy thì chưa chắc — user gặp đúng ca đó
-   * ngay lượt thử đầu 24/08.
+   * ⚠ That is the whole point of the design: the browser the user is sitting in
+   * front of already has a Notion session; the machine's default browser might
+   * not — the user hit exactly that case on their first attempt on 24/08.
    */
   oauthStart: (catalogId: string) =>
     call<{ authUrl: string; state: string }>('/api/oauth/start', {
@@ -152,10 +157,10 @@ export const api = {
     }),
 
   /**
-   * Xin một MÃ THIẾT BỊ. Không có `redirect_uri`, không có tab callback.
+   * Request a DEVICE CODE. No `redirect_uri`, no callback tab.
    *
-   * ⚠ Vì thế luồng này chạy được cả khi daemon **không hề mở cổng ra ngoài** —
-   * không có mã uỷ quyền nào bay về đâu cả. → SPEC-arms §5h·7b
+   * ⚠ Which is why this flow works even when the daemon **exposes no port at
+   * all** — no authorization code is flying back anywhere. → SPEC-arms §5h·7b
    */
   oauthDeviceStart: (catalogId: string) =>
     call<{
@@ -168,12 +173,13 @@ export const api = {
     }>('/api/oauth/device/start', { method: 'POST', body: JSON.stringify({ catalogId }) }),
 
   /**
-   * MỘT nhịp hỏi thăm. Giao diện lặp theo `intervalMs` server trả về.
+   * ONE poll. The interface repeats at the `intervalMs` the server returns.
    *
-   * ⚠ Vì sao giao diện lặp chứ không phải giữ một request treo 15 phút: một
-   * request treo lâu như thế chết vì mọi thứ nằm giữa (nginx, proxy công ty,
-   * tab bị ngủ), và khi nó chết thì **không có trạng thái nào để kể lại**. Mất
-   * một nhịp chỉ là mất một nhịp — phiên vẫn nằm ở daemon.
+   * ⚠ Why the interface polls instead of holding one request open for 15 minutes:
+   * a request held that long dies to everything in between (nginx, a corporate
+   * proxy, a sleeping tab), and when it dies there is **no state left to tell the
+   * story**. Losing one poll only loses one poll — the session still lives in the
+   * daemon.
    */
   oauthDevicePoll: (state: string) =>
     call<
@@ -182,16 +188,17 @@ export const api = {
     >('/api/oauth/device/poll', { method: 'POST', body: JSON.stringify({ state }) }),
 
   /**
-   * Ô "dùng `client_id` của bạn". → SPEC-arms §5h·7h
+   * The "use your own `client_id`" field. → SPEC-arms §5h·7h
    *
-   * `own: true` = công ty này đang đi bằng danh tính ứng dụng CỦA HỌ, không phải
-   * của agentco. Đường thoát cho hai rủi ro: app của ta bị hãng treo ⇒ mọi khách
-   * gãy cùng lúc · khách doanh nghiệp không muốn đi qua danh tính của ta.
+   * `own: true` = this company is travelling under THEIR application identity, not
+   * agentco's. The escape hatch for two risks: our app gets suspended by the
+   * vendor ⇒ every customer breaks at once · an enterprise customer does not want
+   * to travel under our identity.
    */
   oauthClient: (forCatalog: string) =>
     call<{ id: string; own: boolean }>(`/api/oauth/client?for=${enc(forCatalog)}`),
 
-  /** Dán rỗng = quay về client của agentco. */
+  /** Paste nothing = back to agentco's own client. */
   setOauthClient: (catalogId: string, clientId: string) =>
     call<{ id: string; own: boolean }>('/api/oauth/client', {
       method: 'PUT',
@@ -199,12 +206,17 @@ export const api = {
     }),
 
   /**
-   * TRA BẢN CÀI APP — repo nào hãng thật sự cho cánh tay này đụng. → §5h·7o
+   * LOOK UP THE APP INSTALLATION — which repos the vendor actually lets this arm
+   * touch. → §5h·7o
    *
-   * ⚠ `failed: true` KHÁC `installed: []`, và giao diện phải xử lý ngược nhau:
-   *   `installed: []`  → tra được, và câu trả lời là **chưa cài repo nào** ⇒ chặn
-   *   `failed: true`   → **không tra được** (mạng, hãng đổi tool) ⇒ cho qua, nói thật
-   * Gộp hai ca này là hoặc chặn oan người đã cài, hoặc thả người chưa cài.
+   * ⚠ `failed: true` is NOT `installed: []`, and the interface must treat them
+   * oppositely:
+   *   `installed: []`  → the lookup worked, and the answer is **no repo installed
+   *                      yet** ⇒ block
+   *   `failed: true`   → **the lookup did not work** (network, the vendor changed
+   *                      the tool) ⇒ let it through and say so honestly
+   * Merging the two either blocks someone who did install, or waves through
+   * someone who did not.
    */
   armRepos: (catalogId: string, account: string) =>
     call<{ login: string; installed: string[]; seen: number } | { failed: true }>(
@@ -212,44 +224,47 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ catalogId, account }) },
     ),
 
-  /** Workspace đã nối cho một mục danh mục. TÊN + NHÃN, không token. */
+  /** Workspaces linked for one catalogue entry. NAME + LABEL, never a token. */
   oauthAccounts: (forCatalog?: string) =>
     call<{ accounts: OAuthAccount[] }>(
       `/api/oauth/accounts${forCatalog ? `?for=${enc(forCatalog)}` : ''}`,
     ),
 
   /**
-   * Gỡ một workspace. Server thu hồi ở phía dịch vụ (nếu dịch vụ nhận) rồi xoá
-   * chìa ở máy này — và **từ chối** nếu còn kết nối nào đang dùng nó.
+   * Forget a workspace. The server revokes at the service (if the service accepts
+   * that) and then deletes the key on this machine — and **refuses** while any
+   * connection is still using it.
    */
   oauthForget: (name: string) =>
     call<{ accounts: OAuthAccount[] }>(`/api/oauth/accounts/${enc(name)}`, { method: 'DELETE' }),
 
   /**
-   * Cắm một cánh tay. KHÔNG gửi `id` — danh tính là **băm cấu hình**, do server
-   * sinh. Client chỉ gửi cái tên hiển thị. → `catalog.ts §armHash`
+   * Plug in an arm. Do NOT send an `id` — the identity is a **hash of the
+   * config**, generated by the server. The client only sends the display name.
+   * → `catalog.ts §armHash`
    */
   addArm: (body: {
     label?: string;
-    /** Dùng lại mục đã có trong sổ — xem `testArm`. Nhãn và chìa đều lấy từ sổ. */
+    /** Reuse an entry already in the ledger — see `testArm`. Label and key both come from it. */
     armId?: string;
-    /** Gửi thẳng cấu hình (đường "tự cắm")… */
+    /** Send the config directly (the "custom" path)… */
     config?: unknown;
-    /** …hoặc để SERVER dựng từ danh mục — số phiên bản gói chỉ nằm ở một chỗ. */
+    /** …or let the SERVER build it from the catalogue — the package version lives in one place. */
     catalogId?: string;
     folders?: string[];
     secrets?: Record<string, string>;
-    /** Tài khoản OAuth đã chọn — tên chìa, mang `workspace_id`. */
+    /** The chosen OAuth account — a key name, carrying the `workspace_id`. */
     account?: string;
     /**
-     * Nấc quyền. **Đi vào `armHash`** ⇒ đổi nấc là một cánh tay KHÁC, và đó
-     * chính là thứ làm cho "đổi mức ở văn phòng này" không đụng văn phòng khác.
+     * Access level. **It feeds `armHash`** ⇒ a different level is a DIFFERENT
+     * arm, and that is precisely what makes "change the level in this office"
+     * leave every other office alone.
      */
     level?: 'read' | 'add' | 'full';
     office?: string;
     groups?: string[];
     options?: string[];
-    /** Giao cho ai — đi CÙNG request với việc cắm, xem `Office.grantArm`. */
+    /** Who it is granted to — in the SAME request as plugging it in, see `Office.grantArm`. */
     grantTo?: string[];
   }) => call<{ id: string; arms: InstalledArm[]; canvas?: CanvasState }>('/api/arms', {
     method: 'POST',
@@ -257,8 +272,8 @@ export const api = {
   }),
 
   /**
-   * Mở cửa sổ trình duyệt THƯỜNG vào hồ sơ của văn phòng, để người dùng tự
-   * đăng nhập. Không đi qua Playwright — xem core/browser-login.ts.
+   * Open an ORDINARY browser window on the office's profile so the user can sign
+   * in themselves. Not through Playwright — see core/browser-login.ts.
    */
   browserLogin: (office: string, url?: string) =>
     call<{ ok: true; profile: string }>('/api/browser-login', {
@@ -266,19 +281,21 @@ export const api = {
       body: JSON.stringify({ office, ...(url ? { url } : {}) }),
     }),
 
-  /** Đổi tên — chỉ đụng nhãn trong sổ chung, không đổi khoá, không di trú gì. */
+  /** Rename — touches only the label in the shared ledger: no key change, no migration. */
   renameArm: (id: string, label: string) =>
     call<{ label: string }>(`/api/arms/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }),
 
-  /** Rút khỏi MỘT văn phòng. Sổ chung giữ nguyên — cắm lại là tìm thấy. */
+  /** Withdraw from ONE office. The shared ledger is untouched — plug it in again and it is there. */
   removeArm: (id: string, office: string) =>
     call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?office=${enc(office)}`, { method: 'DELETE' }),
 
   /**
-   * XOÁ HẲN khỏi sổ chung — **không lấy lại được**. Chỉ dùng cho mục `orphan`.
+   * DELETE FOR GOOD from the shared ledger — **not recoverable**. Only for
+   * `orphan` entries.
    *
-   * ⚠ Không xoá chìa: chìa sống theo TÊN ở `.state/secrets.json`, độc lập với
-   * sổ. Cắm lại từ danh mục là ba cú bấm; đi lấy lại token thì không.
+   * ⚠ It does not delete the key: keys live BY NAME in `.state/secrets.json`,
+   * independent of the ledger. Plugging in again from the catalogue is three
+   * clicks; going back for a token is not.
    */
   forgetArm: (id: string) =>
     call<{ arms: InstalledArm[] }>(`/api/arms/${enc(id)}?forget=1`, { method: 'DELETE' }),
@@ -286,13 +303,13 @@ export const api = {
   createOffice: (name: string) =>
     call<{ id: string }>('/api/office', { method: 'POST', body: JSON.stringify({ name }) }),
 
-  /** XOÁ HẲN cả thư mục. Mức "cất đi" là `patchOffice({ archived: true })`. */
+  /** DELETE the whole directory. The "archive" step is `patchOffice({ archived: true })`. */
   removeOffice: (id: string) => call<{ ok: true }>(`/api/office/${enc(id)}`, { method: 'DELETE' }),
 
   archivedAgents: (id: string) =>
     call<{ agents: ArchivedAgent[] }>(`/api/office/${enc(id)}/archived`),
 
-  /** Cất đi / đưa trở lại một nhân viên. File yaml không đi đâu cả. */
+  /** Archive or bring back an employee. The yaml file does not move. */
   archiveAgent: (id: string, role: string, archived: boolean) =>
     call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}`, {
       method: 'PATCH',
@@ -302,15 +319,16 @@ export const api = {
   office: (id: string) => call<OfficeDetail>(`/api/office/${enc(id)}`),
 
   /**
-   * Đổi tên văn phòng và/hoặc mức model của Trợ lý. Cả hai nằm trong office.yaml.
-   * `assistant_tier: null` = bỏ đặt riêng, quay về mức mặc định của công ty.
+   * Rename the office and/or change the assistant's model tier. Both live in
+   * office.yaml. `assistant_tier: null` = drop the override and fall back to the
+   * company default.
    */
   patchOffice: (
     id: string,
     patch: {
       name?: string;
       assistant_tier?: string | null;
-      /** Tên hiển thị của Trợ lý. Không nằm trong prompt nào → không phá cache. */
+      /** The assistant's display name. In no prompt → it cannot break the cache. */
       assistant_name?: string;
       archived?: boolean;
     },
@@ -324,7 +342,7 @@ export const api = {
       offices: OfficeSummary[];
     }>(`/api/office/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  /** Mức nào chạy model nào — cấp công ty, ảnh hưởng MỌI văn phòng. */
+  /** Which tier runs which model — company-level, affecting EVERY office. */
   updateModels: (models: Partial<CompanyModels>) =>
     call<{ models: CompanyModels }>('/api/company', {
       method: 'PATCH',
@@ -363,10 +381,10 @@ export const api = {
       avatar?: string;
       pitch?: string;
       model_tier?: string;
-      /** `0` = không giới hạn. */
+      /** `0` = no limit. */
       max_usd?: number;
       max_turns?: number;
-      /** Bật `Bash` — mua được metadata file (kích thước · ngày sửa) và chạy script. */
+      /** Turn on `Bash` — buys file metadata (size · modified date) and running scripts. */
       bash?: boolean;
     },
   ) =>
@@ -375,7 +393,7 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
-  /** XOÁ HẲN file roles/<id>.yaml. Mức "cất đi" là `archiveAgent`. */
+  /** DELETE the roles/<id>.yaml file. The "archive" step is `archiveAgent`. */
   removeAgent: (id: string, role: string) =>
     call<{ canvas: CanvasState }>(`/api/office/${enc(id)}/agent/${enc(role)}`, { method: 'DELETE' }),
 
@@ -390,9 +408,9 @@ export const api = {
   knowledge: (id: string) => call<{ nodes: KnowledgeEntry[] }>(`/api/office/${enc(id)}/knowledge`),
 
   /**
-   * Sửa hoặc xoá một ghi chú. Id đi trong BODY chứ không trên đường dẫn —
-   * id có dấu `/` (`k/agents/assistant/…`), nhét vào path thì phải encode
-   * nhiều lớp và sớm muộn cũng có một lớp bị quên.
+   * Edit or delete one note. The id travels in the BODY, not in the path — an id
+   * contains `/` (`k/agents/assistant/…`), and putting that in a path means
+   * several layers of encoding, one of which eventually gets forgotten.
    */
   editKnowledge: (id: string, nodeId: string, patch: { body?: string; remove?: boolean }) =>
     call<{ nodes: KnowledgeEntry[] }>(`/api/office/${enc(id)}/knowledge`, {
@@ -400,20 +418,22 @@ export const api = {
       body: JSON.stringify({ id: nodeId, ...patch }),
     }),
 
-  // ── tủ tài liệu → docs/SPEC-library.md §13
+  // ── the library → docs/SPEC-library.md §13
 
-  /** Quét lại thư mục rồi trả danh sách. Không có watcher — xem SPEC §9.1. */
+  /** Rescan the directory and return the list. No watcher — see SPEC §9.1. */
   library: (id: string) => call<{ docs: LibraryDoc[] }>(`/api/office/${enc(id)}/library`),
 
   /**
-   * Tải một tài liệu lên. Body là nội dung NGUYÊN SI, tên đi trên query string.
+   * Upload one document. The body is the RAW content; the name rides on the query
+   * string.
    *
-   * CỐ Ý không dùng `FormData`/multipart: nó buộc server phải parse biên, mã hoá
-   * tên file và chunk cắt giữa biên — tức là một thư viện nữa, cho một thứ ta
-   * không cần. Ở đây một request là một file, và đó là toàn bộ giao thức.
+   * DELIBERATELY not `FormData`/multipart: that forces the server to parse
+   * boundaries, decode the filename and handle chunks split across a boundary —
+   * i.e. another library, for something we do not need. Here one request is one
+   * file, and that is the entire protocol.
    *
-   * `replace` là quyết định CÓ Ý THỨC của người dùng sau khi thấy câu hỏi lại;
-   * không bao giờ tự bật.
+   * `replace` is a CONSCIOUS decision by the user after seeing the question; it is
+   * never set automatically.
    */
   uploadDoc: (id: string, file: File, replace = false) =>
     call<{ doc: LibraryDoc; docs: LibraryDoc[] }>(
@@ -422,11 +442,12 @@ export const api = {
     ),
 
   /**
-   * Bóc lại một tài liệu chưa dùng được. → SPEC-library.md §4.5
+   * Re-extract a document that is not usable yet. → SPEC-library.md §4.5
    *
-   * Có mặt vì `state` là bản ghi về QUÁ KHỨ, còn nguyên nhân thì sửa được: một
-   * PDF kẹt `chưa lập chỉ mục` vì máy thiếu bộ đọc phải bóc lại được sau khi bộ
-   * đọc có mặt, chứ không bắt người dùng xoá rồi thả lại file của chính họ.
+   * It exists because `state` is a record of THE PAST while the cause is
+   * fixable: a PDF stuck at `unindexed` because the machine had no reader must be
+   * re-extractable once the reader is there, instead of making the user delete
+   * and re-drop their own file.
    */
   libraryReextract: (id: string, name: string) =>
     call<{ docs: LibraryDoc[] }>(
@@ -434,7 +455,7 @@ export const api = {
       { method: 'POST' },
     ),
 
-  /** Xoá hẳn. Một mức duy nhất — tài liệu là file của chính người dùng (SPEC §6). */
+  /** Delete for good. One step only — a document is the user's own file (SPEC §6). */
   removeDoc: (id: string, name: string) =>
     call<{ docs: LibraryDoc[] }>(`/api/office/${enc(id)}/library?name=${enc(name)}`, {
       method: 'DELETE',
@@ -442,19 +463,21 @@ export const api = {
 
   docUrl: (id: string, name: string) => `/api/office/${enc(id)}/library/file?name=${enc(name)}`,
 
-  // ── kết quả (artifacts) → docs/SPEC-artifacts.md
+  // ── artifacts → docs/SPEC-artifacts.md
   //
-  // CỐ Ý không có hàm `upload`. Đây không phải tủ tài liệu thứ hai: không có
-  // đường nào từ giao diện đưa một kết quả trở lại làm đầu vào cho nhân viên.
-  // Muốn dùng lại thì người dùng tự bàn giao.
+  // DELIBERATELY no `upload`. This is not a second library: there is no path from
+  // the interface that turns an artifact back into an input for an employee. To
+  // reuse one, the user hands it over themselves.
 
   /**
-   * Quét thư mục kết quả. Không catalog — file do nhân viên ghi lúc đang chạy.
+   * Scan the artifacts directory. No catalogue — the files are written by
+   * employees while they work.
    *
-   * `artifacts` là **500 file mới nhất theo `mtime`**, `total` là tổng thật.
-   * Hai con số tách nhau vì server cắt payload chứ không cắt sự thật: giao diện
-   * phải nói được *"đang hiện 500 / 712"*. `capped` = thư mục lớn tới mức lượt
-   * quét cũng phải dừng (≥ 20 000 file) — lúc đó `total` là sàn, không phải tổng.
+   * `artifacts` is the **newest 500 by `mtime`**; `total` is the real count. The
+   * two are separate because the server truncates the payload, not the truth: the
+   * interface has to be able to say *"showing 500 of 712"*. `capped` = the
+   * directory is so large that even the scan had to stop (≥ 20,000 files) — at
+   * which point `total` is a floor, not a total.
    */
   artifacts: (id: string) =>
     call<{ artifacts: ArtifactRecord[]; total: number; capped: boolean }>(
@@ -462,25 +485,27 @@ export const api = {
     ),
 
   /**
-   * Đường dẫn thư mục văn phòng — và server MỞ nó ra nếu trình duyệt đang chạy
-   * cùng máy với daemon.
+   * The office directory's path — and the server OPENS it when the browser is on
+   * the same machine as the daemon.
    *
-   * `opened: false` là ca BÌNH THƯỜNG khi truy cập từ xa (VPS, Docker), không
-   * phải lỗi: "mở thư mục" sẽ mở trên MÁY CHỦ chứ không phải máy đang nhìn, nên
-   * server cố ý không làm gì. Giao diện rơi về chép đường dẫn.
+   * `opened: false` is the NORMAL case over a remote connection (VPS, Docker), not
+   * an error: "open the folder" would open it on THE HOST rather than the machine
+   * being looked at, so the server deliberately does nothing. The interface falls
+   * back to copying the path.
    */
   revealOffice: (id: string) =>
     call<{ dir: string; opened: boolean }>(`/api/office/${enc(id)}/reveal`, { method: 'POST' }),
 
   /**
-   * URL của một kết quả. `download` phân biệt XEM với TẢI VỀ, và khác biệt là thật:
-   * xem thì bị chặn theo dung lượng và có `content-type` đúng để trình duyệt tự
-   * hiện; tải về thì luôn `octet-stream` + `content-disposition`.
+   * An artifact's URL. `download` separates VIEWING from DOWNLOADING, and the
+   * difference is real: viewing is size-capped and carries the right
+   * `content-type` so the browser renders it; downloading is always
+   * `octet-stream` + `content-disposition`.
    */
   artifactUrl: (id: string, p: string, download = false) =>
     `/api/office/${enc(id)}/artifacts/file?path=${enc(p)}${download ? '&download=1' : ''}`,
 
-  /** Xoá hẳn. Một mức — nhưng khác tủ tài liệu, ĐÂY LÀ BẢN DUY NHẤT. */
+  /** Delete for good. One step — but unlike the library, THIS IS THE ONLY COPY. */
   removeArtifact: (id: string, p: string) =>
     call<{ artifacts: ArtifactRecord[]; total: number; capped: boolean }>(
       `/api/office/${enc(id)}/artifacts?path=${enc(p)}`,
@@ -488,9 +513,9 @@ export const api = {
     ),
 
   /**
-   * Dọn sạch ngăn Kết quả. `all=1` là TƯỜNG MINH — server cố ý không suy
-   * "thiếu path" thành "xoá hết". Chỉ ngăn này có nút này; tủ tài liệu và kho
-   * tri thức thì không. → `artifacts.ts §removeAll`
+   * Empty the Results panel. `all=1` is EXPLICIT — the server deliberately does
+   * not read "no path" as "delete everything". Only this panel has this button;
+   * the library and the knowledge store do not. → `artifacts.ts §removeAll`
    */
   clearArtifacts: (id: string) =>
     call<{ removed: number; artifacts: ArtifactRecord[]; total: number; capped: boolean }>(
@@ -499,11 +524,11 @@ export const api = {
     ),
 
   /**
-   * NHẬT KÝ KIỂM TOÁN của MỘT cánh tay — mọi lời gọi MCP, kèm tham số.
+   * ONE arm's AUDIT LOG — every MCP call, with its arguments.
    * → `core/audit.ts` · SPEC-arms §6k
    *
-   * Đây là thứ **thay** cho cổng duyệt từng lần: bỏ cổng thì log phải đủ, nếu
-   * không ta vừa bỏ cả hai.
+   * This is what **replaces** per-call approval: drop the gate and the log has to
+   * be complete, or we have just dropped both.
    */
   armLog: (id: string, server: string) =>
     call<{ calls: ArmCall[] }>(`/api/office/${enc(id)}/arm-log?server=${enc(server)}`),
@@ -531,14 +556,14 @@ export const api = {
         tasks: number;
         costUSD: number;
         turns: number;
-        /** Văn phòng còn đó nhưng đang trong lưu trữ. */
+        /** The office is still there, but archived. */
         archived: boolean;
-        /** Văn phòng không còn trên đĩa, hoặc bản ghi có trước khi tách văn phòng. */
+        /** The office is gone from disk, or the record predates offices being separate. */
         gone: boolean;
       }>;
     }>('/api/cost'),
 
-  /** Dọn các mục `gone` khỏi sổ chi phí. Trả về đúng thứ vừa mất, để nói ra. */
+  /** Purge `gone` entries from the cost ledger. Returns exactly what was lost, so it can be said. */
   purgeGoneCost: () =>
     call<{ offices: number; tasks: number; costUSD: number }>('/api/cost/purge', {
       method: 'POST',
