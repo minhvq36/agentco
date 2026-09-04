@@ -1,26 +1,3 @@
-/**
- * ⭐ KHÔNG PROMPT NÀO ĐƯỢC NÊU TÊN MỘT NGÔN NGỮ CỤ THỂ.
- * → `src/core/prompt.ts` · `src/core/assistant.ts` · docs/CLAUDE.md §Language
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO LUẬT NÀY CẦN MÃ THI HÀNH, TRONG KHI NÓ CHỈ LÀ MẤY CHỮ.            │
- * │                                                                          │
- * │ Bốn chỗ ghim `tiếng Việt` sống trong prompt suốt nhiều tuần, và chúng     │
- * │ **không có triệu chứng** — vì mọi người dùng cho tới lúc đó đều gõ tiếng  │
- * │ Việt. Lớp lỗi này chỉ lộ ra ở người dùng thứ hai, và lúc đó nó đã nằm     │
- * │ trong prefix cache của mọi văn phòng.                                    │
- * │                                                                          │
- * │ Thêm lại một dòng *"reply in X"* là chuyện dễ xảy ra nhất trên đời: nó    │
- * │ trông như một bản vá vô hại cho một ca lẻ, và nó phá đúng thứ làm cho     │
- * │ người Trung / người Đức / người Ả Rập nhận được đầu ra bằng tiếng của     │
- * │ họ mà không dòng mã nào phải nhắc tới ba ngôn ngữ đó.                     │
- * │                                                                          │
- * │ Test đọc MÃ NGUỒN dưới dạng văn bản, cùng khuôn `oauth-neutral.test.ts`   │
- * │ đang làm cho tên hãng.                                                   │
- * └──────────────────────────────────────────────────────────────────────────┘
- *
- * Chạy: npm test
- */
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -35,20 +12,6 @@ import { buildAssistantPrompt, buildWorkerPrompt } from '../dist/core/prompt.js'
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'core');
 const read = (f: string): string => fs.readFileSync(path.join(SRC, f), 'utf8');
 
-/**
- * Mọi CHUỖI trong một file, tách bằng trình phân tích thật của TypeScript.
- *
- * ⚠ KHÔNG bóc chú thích bằng regex. Hai lý do, cả hai đều đã cắn:
- *  ① Chú thích ở các file này **cố ý** nêu tên ngôn ngữ để giải thích vì sao
- *    luật tồn tại (*"a Chinese user gets Chinese lessons"*). Cấm cả chú thích là
- *    cấm nhầm, và nó sẽ khiến người sau xoá đúng lời giải thích cần giữ.
- *  ② `src.replace(/^\s*\/\/.*$/gm, '')` bỏ sót chú thích cuối dòng, còn phiên
- *    bản tham lam hơn thì cắt nhầm `https://` bên trong một chuỗi — tức là nó
- *    **giấu** đi đúng loại vi phạm nó sinh ra để bắt.
- *
- * Soi chuỗi cũng là đúng phạm vi của luật: prompt được dựng từ chuỗi, và một
- * tên ngôn ngữ chỉ hại khi nó tới được model.
- */
 function stringsIn(src: string, file: string): string[] {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
   const out: string[] = [];
@@ -68,7 +31,6 @@ function stringsIn(src: string, file: string): string[] {
   return out;
 }
 
-/** Tên ngôn ngữ, cả dạng tiếng Anh lẫn dạng người Việt hay gõ. */
 const LANGUAGE_NAMES = [
   'Vietnamese',
   'English',
@@ -84,27 +46,20 @@ const LANGUAGE_NAMES = [
 ];
 
 for (const file of ['prompt.ts', 'assistant.ts', 'receipt.ts', 'scheduler.ts', 'office.ts', 'mailbox.ts']) {
-  test(`⭐ ${file}: không chuỗi nào nêu tên một ngôn ngữ`, () => {
+  test(`⭐ ${file}: no string names a language`, () => {
     for (const s of stringsIn(read(file), file)) {
       for (const name of LANGUAGE_NAMES) {
         assert.equal(
           s.includes(name),
           false,
-          `${file} ghim ngôn ngữ "${name}" trong một chuỗi — đọc docs/CLAUDE.md §Language trước khi thêm lại`,
+          `${file} pins the language "${name}" inside a string — read docs/CLAUDE.md §Language before adding it back`,
         );
       }
     }
   });
 }
 
-/**
- * ⭐ ĐỐI CHỨNG DƯƠNG — mấy bài trên phải ĐỎ ĐƯỢC.
- *
- * `stringsIn` bỏ chú thích, nên nếu nó lỡ bỏ luôn cả chuỗi thì mọi bài trên vẫn
- * xanh và cổng không canh gì cả. Ném vào nó đúng thứ nó sinh ra để bắt là phép
- * thử rẻ nhất phân biệt được hai chuyện đó. ⇒ [[agentco-free-discriminator]]
- */
-test('⭐ đối chứng: `stringsIn` bắt được tên ngôn ngữ trong chuỗi, và bỏ qua chú thích', () => {
+test('⭐ control: `stringsIn` catches language names inside strings, and skips comments', () => {
   const sample = [
     '// a comment naming Vietnamese on purpose', // i18n-allow-vietnamese: fixture for the gate itself
     '/* a block comment naming German */',
@@ -113,59 +68,34 @@ test('⭐ đối chứng: `stringsIn` bắt được tên ngôn ngữ trong chu�
   ].join('\n');
   const found = stringsIn(sample, 'sample.ts');
   assert.deepEqual(found, ['reply in Vietnamese', 'https://example.com/German']);
-  // Chuỗi có `//` bên trong vẫn nguyên vẹn — đây là ca mà bản bóc-bằng-regex cắt nhầm.
   assert.ok(found.some((s) => s.includes('https://')));
 });
 
-/**
- * 🔴 Ô KHOÁ CHÍNH: không hàm dựng prompt nào NHẬN một locale.
- *
- * Chuỗi có thể tránh được bằng cách nối chuỗi; một tham số thì không. Đây là
- * chỗ cái dây nối sai sẽ mọc lại trước tiên, vì nó trông như một tuỳ chọn hợp lệ.
- */
-test('🔴 `BuildPromptOpts` KHÔNG có trường ngôn ngữ nào', () => {
+test('🔴 `BuildPromptOpts` has NO language field at all', () => {
   const code = read('prompt.ts');
   const iface = /export interface BuildPromptOpts \{([\s\S]*?)\n\}/.exec(code)?.[1] ?? '';
-  assert.ok(iface, 'không tìm thấy BuildPromptOpts — test này đã lỗi thời');
+  assert.ok(iface, 'BuildPromptOpts not found — this test is stale');
   assert.doesNotMatch(withoutComments(iface), /\blanguage\b|\blocale\b|\blang\b/i);
 });
 
-/**
- * Ở HAI test dưới, phạm vi soi là thân một khai báo kiểu — không có chuỗi nào
- * trong đó, nên bóc chú thích bằng regex ở đây là an toàn: không có `https://`
- * để cắt nhầm, và một tên trường thì không nằm trong chuỗi.
- */
 function withoutComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 }
 
-test('🔴 opts của `buildAssistantPrompt` cũng vậy', () => {
+test('🔴 same goes for `buildAssistantPrompt`\'s opts', () => {
   const code = read('prompt.ts');
   const opts = /export function buildAssistantPrompt\([\s\S]*?opts: \{([\s\S]*?)\n  \},/.exec(code)?.[1] ?? '';
-  assert.ok(opts, 'không tìm thấy opts của buildAssistantPrompt — test này đã lỗi thời');
+  assert.ok(opts, "buildAssistantPrompt's opts not found — this test is stale");
   assert.doesNotMatch(withoutComments(opts), /\blanguage\b|\blocale\b|\blang\b/i);
 });
 
-/**
- * ⭐ Và luật vẫn phải NÓI về ngôn ngữ — bỏ hẳn câu dặn là một lớp lỗi khác.
- *
- * Model có tín hiệu, nhưng đây là chỗ duy nhất nói cho nó biết tín hiệu nào là
- * tín hiệu ĐÚNG: worker chỉ nhìn thấy brief, không nhìn thấy câu người dùng gõ.
- */
-test('⭐ prompt vẫn CHỈ ĐƯỜNG tới tín hiệu, chỉ là không nêu tên ngôn ngữ', () => {
+test('⭐ the prompt still POINTS TO the signal, it just does not name a language', () => {
   const code = read('prompt.ts');
   assert.match(code, /in the language of your task brief/);
   assert.match(code, /in the language they are writing to you in/);
 });
 
-/**
- * ⭐ Đo ĐẦU RA THẬT của hàm dựng, không chỉ mã nguồn.
- *
- * Soi mã bắt được chuỗi gõ thẳng; nó không bắt được một cái tên ngôn ngữ đi vào
- * qua `office.charter` hay một khối nối động. Đây là ô khoá thứ hai, và nó đọc
- * đúng thứ model sắp nhận. ⇒ [[agentco-free-discriminator]]
- */
-test('⭐ prompt DỰNG RA không chứa tên ngôn ngữ nào', () => {
+test('⭐ the BUILT prompt contains no language name', () => {
   const office = fakeOffice();
   const worker = buildWorkerPrompt(office, fakeRole(), {});
   const assistant = buildAssistantPrompt(office, { roster: '# Employees\n- none' });
@@ -175,12 +105,11 @@ test('⭐ prompt DỰNG RA không chứa tên ngôn ngữ nào', () => {
       ? built.systemPrompt.join('\n')
       : (built.systemPrompt.append ?? '');
     for (const name of LANGUAGE_NAMES) {
-      assert.equal(text.includes(name), false, `prompt dựng ra có chữ "${name}"`);
+      assert.equal(text.includes(name), false, `the built prompt contains "${name}"`);
     }
   }
 });
 
-// ─────────────────────────────────────────────────────────── đồ giả tối thiểu
 
 function fakeRole() {
   return {

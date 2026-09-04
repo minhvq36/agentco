@@ -1,30 +1,4 @@
-﻿/**
- * Test cho ĐƯỜNG RANH "kết quả đi đâu, và tiền là bao nhiêu" — cả hai đường đều
- * đã nói dối với người dùng trong cùng một buổi chạy thật, 21/08.
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BA CA THẬT, MỘT VĂN PHÒNG, BỐN MƯƠI LĂM PHÚT.                            │
- * │                                                                          │
- * │  P-260821-1805-d6v9  ghi đúng chỗ   → hệ thống nói "xong"      ✅         │
- * │  P-260821-1818-yydi  ghi RA ngoài   → hệ thống nói "chưa có gì, làm lại" │
- * │  P-260821-1827-m78h  ghi đúng chỗ,                                       │
- * │                      rồi chạm trần  → hệ thống nói "chưa ra kết quả"     │
- * │                                                                          │
- * │ Cả ba lượt đều để lại một file đầy đủ trên đĩa. Hệ thống khai đúng MỘT.   │
- * │ Hai câu sai đều mời người dùng chạy lại — tức trả tiền lần hai cho thứ họ │
- * │ đã có. Với người non-code đang tin hệ thống 100%, đó là kiểu hỏng đắt     │
- * │ nhất: không ai đi kiểm một câu mình tin.                                  │
- * └──────────────────────────────────────────────────────────────────────────┘
- *
- * Bốn hàm thuần (hoặc chỉ đụng `fs`), 0 token, 0 lượt LLM:
- *
- *  · `landingOf`     — ghi ra ngoài văn phòng là MỘT SỰ VIỆC, không phải `undefined`
- *  · `readUsage`     — token lấy từ `modelUsage` (tích luỹ), không từ `usage` (một lượt)
- *  · `filesOnDisk`   — mớ dở dang có thật, dùng chung cho MỌI đường ra
- *  · `straysOnDisk`  — file lạc, chỉ khai thứ sờ được
- *
- * Chạy: npm test
- */
+﻿
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -35,86 +9,70 @@ import path from 'node:path';
 import { filesOnDisk, landingOf, straysOnDisk, readUsage, warnDroppedTools } from '../dist/core/worker.js';
 import { BUILTIN_TOOLS, effectiveTools, hasShell } from '../dist/core/types.js';
 
-const OFFICE = path.resolve('/co/offices/bang-tinh');
+const OFFICE = path.resolve('/co/offices/spreadsheet');
 
-// ────────────────────────────────────────────────────────────────── landingOf
 
-test('landingOf: ghi trong văn phòng → điểm đến `file`, đường dẫn tương đối', () => {
+test('landingOf: writing inside the office → `file` destination, relative path', () => {
   const spot = landingOf(OFFICE, {
     name: 'Write',
-    input: { file_path: 'artifacts/P-01/T-01/ket-qua.md' },
+    input: { file_path: 'artifacts/P-01/T-01/result.md' },
   });
-  assert.deepEqual(spot, { kind: 'file', ref: 'artifacts/P-01/T-01/ket-qua.md' });
+  assert.deepEqual(spot, { kind: 'file', ref: 'artifacts/P-01/T-01/result.md' });
 });
 
-test('landingOf: đường dẫn tuyệt đối TRONG văn phòng vẫn quy về tương đối', () => {
-  const abs = path.join(OFFICE, 'artifacts', 'P-01', 'T-01', 'ket-qua.md');
+test('landingOf: an absolute path INSIDE the office still normalizes to relative', () => {
+  const abs = path.join(OFFICE, 'artifacts', 'P-01', 'T-01', 'result.md');
   const spot = landingOf(OFFICE, { name: 'Write', input: { file_path: abs } });
-  assert.deepEqual(spot, { kind: 'file', ref: 'artifacts/P-01/T-01/ket-qua.md' });
+  assert.deepEqual(spot, { kind: 'file', ref: 'artifacts/P-01/T-01/result.md' });
 });
 
-/**
- * CA `P-260821-1818-yydi`, tái hiện y nguyên.
- *
- * Nhân viên `Write` lên hai cấp; file rơi vào `company/artifacts/…`. Bản trước
- * `catch { return undefined }` → `landed` rỗng → Trợ lý nói *"không thấy file
- * trên đĩa"* trong khi bảng kết quả 4236 byte nằm nguyên vẹn cách đó hai thư mục.
- */
-test('landingOf: ghi RA ngoài văn phòng → `outside`, KHÔNG phải undefined', () => {
+test('landingOf: writing OUTSIDE the office → `outside`, NOT undefined', () => {
   const spot = landingOf(OFFICE, {
     name: 'Write',
-    input: { file_path: '../../artifacts/P-260821-1818-yydi/T-01/ket-qua-eco.md' },
+    input: { file_path: '../../artifacts/P-260821-1818-yydi/T-01/result-eco.md' },
   });
-  assert.equal(spot?.kind, 'outside', 'ra ngoài văn phòng vẫn là một điểm đến có thật');
-  assert.match(String(spot?.ref), /ket-qua-eco\.md$/);
+  assert.equal(spot?.kind, 'outside', 'outside the office is still a real destination');
+  assert.match(String(spot?.ref), /result-eco\.md$/);
 });
 
-test('landingOf: `outside` giữ nguyên đường dẫn thô để còn chỉ đường cho người dùng', () => {
-  const spot = landingOf(OFFICE, { name: 'Write', input: { file_path: 'C:\\tmp\\lac.md' } });
-  assert.deepEqual(spot, { kind: 'outside', ref: 'C:/tmp/lac.md' });
+test('landingOf: `outside` keeps the raw path so it can still point the user to it', () => {
+  const spot = landingOf(OFFICE, { name: 'Write', input: { file_path: 'C:\\tmp\\stray.md' } });
+  assert.deepEqual(spot, { kind: 'outside', ref: 'C:/tmp/stray.md' });
 });
 
-test('landingOf: Edit và NotebookEdit đi cùng một cửa với Write', () => {
-  assert.equal(landingOf(OFFICE, { name: 'Edit', input: { file_path: '../ngoai.md' } })?.kind, 'outside');
+test('landingOf: Edit and NotebookEdit go through the same door as Write', () => {
+  assert.equal(landingOf(OFFICE, { name: 'Edit', input: { file_path: '../outside.md' } })?.kind, 'outside');
   assert.equal(
-    landingOf(OFFICE, { name: 'NotebookEdit', input: { notebook_path: '../ngoai.ipynb' } })?.kind,
+    landingOf(OFFICE, { name: 'NotebookEdit', input: { notebook_path: '../outside.ipynb' } })?.kind,
     'outside',
   );
 });
 
-test('landingOf: không có đường dẫn thì KHÔNG bịa ra điểm đến', () => {
+test('landingOf: no path given ⇒ NO destination is invented', () => {
   assert.equal(landingOf(OFFICE, { name: 'Write', input: {} }), undefined);
   assert.equal(landingOf(OFFICE, { name: 'Write', input: { file_path: '' } }), undefined);
 });
 
-test('landingOf: Bash khai "có chạy lệnh" và không khai hơn thế', () => {
+test('landingOf: Bash declares "a command ran" and nothing more than that', () => {
   assert.deepEqual(landingOf(OFFICE, { name: 'Bash', input: { command: 'curl x' } }), {
     kind: 'command',
     ref: '',
   });
 });
 
-test('landingOf: tool MCP khai tên server', () => {
+test('landingOf: an MCP tool declares the server name', () => {
   assert.deepEqual(landingOf(OFFICE, { name: 'mcp__notion__create_page', input: {} }), {
     kind: 'external',
     ref: 'notion',
   });
 });
 
-test('landingOf: Read không phải điểm đến', () => {
+test('landingOf: Read is not a destination', () => {
   assert.equal(landingOf(OFFICE, { name: 'Read', input: { file_path: 'library/files/a.csv' } }), undefined);
 });
 
-// ────────────────────────────────────────────────────────────────── readUsage
 
-/**
- * CA `P-260821-1827-m78h`, tái hiện y nguyên.
- *
- * Sổ ghi `out 59, cacheRead 0` bên cạnh `$0.4248`. `usage` là số của MỘT LƯỢT
- * (sdk.d.ts:4453 — *"per-turn in streaming-input sessions"*), `modelUsage` mới
- * là số tích luỹ. Ta chạy streaming-input mode, nên vế "per-turn" áp dụng.
- */
-test('readUsage: token lấy từ `modelUsage` (tích luỹ), KHÔNG từ `usage` (một lượt)', () => {
+test('readUsage: tokens come from `modelUsage` (cumulative), NOT from `usage` (single turn)', () => {
   const u = readUsage({
     usage: { input_tokens: 2, output_tokens: 59, cache_read_input_tokens: 0, cache_creation_input_tokens: 7699 },
     modelUsage: {
@@ -130,14 +88,14 @@ test('readUsage: token lấy từ `modelUsage` (tích luỹ), KHÔNG từ `usage
     num_turns: 2,
   });
 
-  assert.equal(u.output, 27_800, 'không được lấy 59 của lượt cuối');
-  assert.equal(u.cacheRead, 21_400, 'không được lấy 0 của lượt cuối');
+  assert.equal(u.output, 27_800, 'must not pick up the 59 from the last turn');
+  assert.equal(u.cacheRead, 21_400, 'must not pick up the 0 from the last turn');
   assert.equal(u.cacheWrite, 7_699);
-  assert.equal(u.costUSD, 0.4248467, 'tiền vẫn lấy `total_cost_usd` — cùng thứ tiếng với maxBudgetUsd');
+  assert.equal(u.costUSD, 0.4248467, 'cost still comes from `total_cost_usd` — the same currency as maxBudgetUsd');
   assert.equal(u.turns, 2);
 });
 
-test('readUsage: cộng dồn MỌI model, kể cả lượt phụ trợ nội bộ', () => {
+test('readUsage: sums up EVERY model, including internal auxiliary turns', () => {
   const u = readUsage({
     modelUsage: {
       'claude-sonnet-5': { inputTokens: 10, outputTokens: 1000, cacheReadInputTokens: 500, cacheCreationInputTokens: 200, costUSD: 0.02 },
@@ -152,7 +110,7 @@ test('readUsage: cộng dồn MỌI model, kể cả lượt phụ trợ nội b
   assert.equal(u.cacheWrite, 200);
 });
 
-test('readUsage: model khai là model TIÊU NHIỀU TOKEN NHẤT, không phải khoá đầu tiên', () => {
+test('readUsage: the model reported is the one that BURNED THE MOST TOKENS, not the first key', () => {
   const u = readUsage({
     modelUsage: {
       'claude-haiku-4-5-20251001': { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 0, costUSD: 0 },
@@ -164,12 +122,7 @@ test('readUsage: model khai là model TIÊU NHIỀU TOKEN NHẤT, không phải 
   assert.equal(u.model, 'claude-sonnet-5');
 });
 
-/**
- * Ca crash sớm / SDK đổi hình dạng: thà lấy số của một lượt còn hơn ghi $0 và
- * 0 token. Đây là bản DỰ PHÒNG, không phải đường mặc định — nên nó chỉ được
- * chạy khi `modelUsage` thật sự trống.
- */
-test('readUsage: `modelUsage` trống thì rơi về `usage` chứ không ghi 0', () => {
+test('readUsage: an empty `modelUsage` falls back to `usage` instead of recording 0', () => {
   const u = readUsage({
     usage: { input_tokens: 7, output_tokens: 300, cache_read_input_tokens: 20, cache_creation_input_tokens: 1 },
     modelUsage: {},
@@ -180,14 +133,13 @@ test('readUsage: `modelUsage` trống thì rơi về `usage` chứ không ghi 0'
   assert.equal(u.costUSD, 0.05);
 });
 
-test('readUsage: không có gì cả thì trả 0, không ném', () => {
+test('readUsage: with nothing at all it returns 0, and does not throw', () => {
   const u = readUsage({});
   assert.equal(u.output, 0);
   assert.equal(u.costUSD, 0);
   assert.equal(u.turns, 0);
 });
 
-// ─────────────────────────────────────────────── filesOnDisk & straysOnDisk
 
 function withTempOffice(fn: (dir: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-landing-'));
@@ -198,40 +150,36 @@ function withTempOffice(fn: (dir: string) => void): void {
   }
 }
 
-test('filesOnDisk: chỉ khai file SỜ ĐƯỢC, không khai file model hứa suông', () => {
+test('filesOnDisk: only reports files that are ACTUALLY THERE, not ones the model merely claimed', () => {
   withTempOffice((dir) => {
     fs.mkdirSync(path.join(dir, 'artifacts', 'T-01'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'artifacts', 'T-01', 'co-that.md'), '# co that');
+    fs.writeFileSync(path.join(dir, 'artifacts', 'T-01', 'real.md'), '# real');
 
     const got = filesOnDisk(
       dir,
-      ['artifacts/T-01/co-that.md', 'artifacts/T-01/khong-co.md'],
+      ['artifacts/T-01/real.md', 'artifacts/T-01/missing.md'],
       [],
     );
-    assert.deepEqual(got, ['artifacts/T-01/co-that.md']);
+    assert.deepEqual(got, ['artifacts/T-01/real.md']);
   });
 });
 
-/**
- * File PHỤ nhân viên tự tạo — `brief.outputs` không biết trước, và đây đúng là
- * thứ dễ bị bỏ quên lại trên đĩa nhất.
- */
-test('filesOnDisk: gộp cả file được giao lẫn file quan sát thấy nó ghi', () => {
+test('filesOnDisk: merges both delivered files and files observed being written', () => {
   withTempOffice((dir) => {
     fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'artifacts', 'chinh.md'), 'x');
-    fs.writeFileSync(path.join(dir, 'artifacts', 'phu.csv'), 'y');
+    fs.writeFileSync(path.join(dir, 'artifacts', 'main.md'), 'x');
+    fs.writeFileSync(path.join(dir, 'artifacts', 'side.csv'), 'y');
 
-    const got = filesOnDisk(dir, ['artifacts/chinh.md'], [
-      { kind: 'file', ref: 'artifacts/phu.csv' },
+    const got = filesOnDisk(dir, ['artifacts/main.md'], [
+      { kind: 'file', ref: 'artifacts/side.csv' },
       { kind: 'command', ref: '' },
       { kind: 'external', ref: 'notion' },
     ]);
-    assert.deepEqual(got.sort(), ['artifacts/chinh.md', 'artifacts/phu.csv']);
+    assert.deepEqual(got.sort(), ['artifacts/main.md', 'artifacts/side.csv']);
   });
 });
 
-test('filesOnDisk: trùng giữa hai nguồn chỉ hiện một lần', () => {
+test('filesOnDisk: a file appearing in both sources shows up only once', () => {
   withTempOffice((dir) => {
     fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'artifacts', 'a.md'), 'x');
@@ -240,119 +188,91 @@ test('filesOnDisk: trùng giữa hai nguồn chỉ hiện một lần', () => {
   });
 });
 
-test('filesOnDisk: đường dẫn ra ngoài văn phòng KHÔNG được khai là kết quả', () => {
+test('filesOnDisk: a path outside the office must NOT be reported as a result', () => {
   withTempOffice((dir) => {
-    const got = filesOnDisk(dir, ['../../ngoai.md'], []);
-    assert.deepEqual(got, [], 'safeJoin ném → loại, không sập');
+    const got = filesOnDisk(dir, ['../../outside.md'], []);
+    assert.deepEqual(got, [], 'safeJoin throws → excluded, not crashed');
   });
 });
 
-test('straysOnDisk: khai file lạc CÓ THẬT, bỏ file lạc chỉ được gọi mà không ghi nổi', () => {
+test('straysOnDisk: reports strays that ACTUALLY EXIST, drops strays that were only claimed but never written', () => {
   withTempOffice((dir) => {
-    const that = path.join(dir, 'lac-co-that.md');
-    fs.writeFileSync(that, '# lac');
+    const that = path.join(dir, 'real-stray.md');
+    fs.writeFileSync(that, '# stray');
 
     const got = straysOnDisk([
       { kind: 'outside', ref: that },
-      { kind: 'outside', ref: path.join(dir, 'khong-ghi-noi.md') },
+      { kind: 'outside', ref: path.join(dir, 'never-written.md') },
       { kind: 'file', ref: 'artifacts/a.md' },
     ]);
     assert.deepEqual(got, [that]);
   });
 });
 
-test('straysOnDisk: không có file lạc nào thì rỗng — im lặng đúng lúc nên im', () => {
+test('straysOnDisk: no strays at all ⇒ empty — silence when silence is correct', () => {
   assert.deepEqual(straysOnDisk([{ kind: 'file', ref: 'artifacts/a.md' }]), []);
   assert.deepEqual(straysOnDisk([]), []);
 });
 
-// ──────────────────────────────── tool shell đổi tên theo hệ điều hành
 
-/**
- * Ca thật 22/08: công tắc "cho chạy lệnh" KHÔNG chạy suốt sáu ngày.
- *
- * Trên Windows tool shell tên là `PowerShell`; bộ 29 tool của CLI **không hề
- * có** `Bash`. Mà `tools` là allowlist theo TÊN và **bỏ im lặng** tên không tồn
- * tại — nên `tools: ['Bash']` cấp đúng 0 tool thêm. Hỏi thẳng CLI mới ra:
- *
- *   không truyền `tools` → 29 tool, có `PowerShell`, KHÔNG có `Bash`
- *   `tools: ['Bash']`    → CLI cấp 0 tool
- *   7 mặc định + `PowerShell` → 8 tool, prefix +2 688 token
- *
- * Luật: **config giữ MỘT tên chuẩn** (`Bash`) để một văn phòng zip lại vẫn
- * chạy ở máy khác hệ điều hành; việc dịch sang tên nền tảng làm ở
- * `effectiveTools`, bằng cách gửi CẢ HAI tên và để SDK tự bỏ cái không có.
- */
-test('effectiveTools: khai shell bang MOT ten thi nhan duoc MOI ten nen tang', () => {
+test('effectiveTools: declaring shell with ONE name still yields EVERY platform name', () => {
   const out = effectiveTools(['Bash']);
-  assert.ok(out.includes('Bash'), 'giu ten POSIX');
-  assert.ok(out.includes('PowerShell'), 'thieu ten Windows = cong tac la no-op tren Windows');
+  assert.ok(out.includes('Bash'), 'keeps the POSIX name');
+  assert.ok(out.includes('PowerShell'), 'missing the Windows name = the toggle is a no-op on Windows');
   for (const t of BUILTIN_TOOLS) assert.ok(out.includes(t));
 });
 
-test('effectiveTools: khai bang ten Windows cung nhan du', () => {
+test('effectiveTools: declaring with the Windows name also yields both', () => {
   const out = effectiveTools(['PowerShell']);
   assert.ok(out.includes('Bash') && out.includes('PowerShell'));
 });
 
-test('effectiveTools: KHONG khai shell thi khong ten nao lot vao', () => {
+test('effectiveTools: NOT declaring shell means no shell name sneaks in', () => {
   const out = effectiveTools([]);
   assert.equal(out.includes('Bash'), false);
   assert.equal(out.includes('PowerShell'), false);
   assert.deepEqual(out, [...BUILTIN_TOOLS]);
 });
 
-test('hasShell: nhan ra vai tro co shell du khai bang ten nao', () => {
+test('hasShell: recognizes a role has shell regardless of which name it was declared with', () => {
   assert.equal(hasShell([]), false);
   assert.equal(hasShell(['Read']), false);
   assert.equal(hasShell(['Bash']), true);
   assert.equal(hasShell(['PowerShell']), true);
 });
 
-/**
- * `landingOf` phải khai "có chạy lệnh" cho CẢ HAI tên. Sót một tên là một điểm
- * đến bị GIẤU — người dùng Windows sẽ thấy "không có kết quả nào" cho một lượt
- * chạy vừa gọi shell.
- */
-test('landingOf: ca Bash lan PowerShell deu khai la diem den "command"', () => {
+test('landingOf: both Bash and PowerShell report a "command" destination', () => {
   for (const name of ['Bash', 'PowerShell']) {
     assert.deepEqual(landingOf('/vp', { name, input: { command: 'ls' } }), { kind: 'command', ref: '' });
   }
 });
 
 
-// ──────────────────────── CLI bỏ im lặng tool nó không có → phải kêu
 
-/**
- * Chốt chặn BỀN hơn bảng tên: nó không cần biết tên nào đúng, chỉ cần biết
- * "thứ tôi xin và thứ tôi nhận không khớp". Bảng `SHELL_ALIASES` là do TA viết
- * tay; xuất hiện một nền tảng thứ tư với tên thứ ba thì bảng sai còn phép đối
- * chiếu này vẫn đúng.
- */
 const roleWith = (tools) => ({ id: 'r1', tools, budget: {}, mcp: [] });
 const GRANTED_POSIX = [...BUILTIN_TOOLS, 'Bash'];
 const GRANTED_WIN = [...BUILTIN_TOOLS, 'PowerShell'];
 
-test('warnDroppedTools: POSIX cap Bash, Windows cap PowerShell -> ca hai deu IM', () => {
+test('warnDroppedTools: POSIX grants Bash, Windows grants PowerShell -> both stay SILENT', () => {
   assert.deepEqual(warnDroppedTools(roleWith(['Bash']), GRANTED_POSIX), []);
   assert.deepEqual(warnDroppedTools(roleWith(['Bash']), GRANTED_WIN), []);
 });
 
-test('warnDroppedTools: xin shell ma KHONG duoc cap ten nao -> KEU', () => {
+test('warnDroppedTools: asking for shell but granted with NEITHER name -> WARNS', () => {
   const dropped = warnDroppedTools(roleWith(['Bash']), [...BUILTIN_TOOLS]);
-  assert.ok(dropped.length > 0, 'day chinh la ca no-op suot 6 ngay, phai co tieng');
+  assert.ok(dropped.length > 0, 'this is exactly the no-op that went unnoticed for 6 days — it must make noise');
 });
 
-test('warnDroppedTools: KHONG xin shell thi khong bao gio keu vi shell', () => {
+test('warnDroppedTools: NOT asking for shell never warns about shell', () => {
   assert.deepEqual(warnDroppedTools(roleWith([]), [...BUILTIN_TOOLS]), []);
 });
 
-test('warnDroppedTools: tool thuong bi bo cung phai keu', () => {
+test('warnDroppedTools: an ordinary dropped tool must warn too', () => {
   const dropped = warnDroppedTools(roleWith([]), BUILTIN_TOOLS.filter((t) => t !== 'WebSearch'));
   assert.deepEqual(dropped, ['WebSearch']);
 });
 
-test('warnDroppedTools: granted khong phai mang -> im, dung nem', () => {
+test('warnDroppedTools: granted is not an array -> silent, does not throw', () => {
   assert.deepEqual(warnDroppedTools(roleWith(['Bash']), undefined), []);
   assert.deepEqual(warnDroppedTools(roleWith(['Bash']), 'nope'), []);
 });

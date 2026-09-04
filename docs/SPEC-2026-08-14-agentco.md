@@ -1,217 +1,217 @@
-# SPEC — AgentCo (tên mã tạm)
+# SPEC — AgentCo (temporary codename)
 
-**Ngày:** 14/08/2026
-**Trạng thái:** thiết kế, chưa code
-**Sản phẩm:** P2 — "công ty agents" chạy trên Claude Agent SDK
-**License:** FSL (Functional Source License) — 2 năm → Apache 2.0
+**Date:** 14/08/2026
+**Status:** design, no code yet
+**Product:** P2 — an "agent company" running on the Claude Agent SDK
+**License:** FSL (Functional Source License) — 2 years → Apache 2.0
 
-> `agentco` là **tên mã tạm**, chưa phải tên thương hiệu. Mọi chỗ trong spec dùng nó như placeholder cho tên package/binary.
+> `agentco` is a **temporary codename**, not yet a brand name. Every mention in this spec uses it as a placeholder for the package/binary name.
 
-Đọc kèm:
-- `SPEC-token-economy.md` — **quan trọng nhất**, luật kinh tế token. Mọi quyết định thiết kế phải qua được file này.
-- `SPEC-cli.md` — process model, CLI, khả năng containerize
-- `SPEC-ui.md` — giao diện
-- `ROADMAP.md` — thứ tự làm, mô hình kinh doanh
+Read alongside:
+- `SPEC-token-economy.md` — **the most important one**, the token economics law. Every design decision has to pass through this file.
+- `SPEC-cli.md` — process model, CLI, containerization capability
+- `SPEC-ui.md` — interface
+- `ROADMAP.md` — order of work, business model
 
 ---
 
-## 1. Sản phẩm là gì (một câu)
+## 1. What the product is (one sentence)
 
-Một **công ty ảo chạy trên máy của người dùng**: Claude Code làm giám đốc (master), điều phối một đội agent chuyên môn chạy song song, tích luỹ kinh nghiệm vào một kho tri thức dạng đồ thị, và người dùng ra lệnh bằng tiếng người — qua web UI hoặc qua app chat (Telegram).
+A **virtual company running on the user's own machine**: Claude Code acts as the director (master), coordinating a team of specialized agents running in parallel, accumulating experience into a graph-shaped knowledge store, with the user giving instructions in plain language — through a web UI or through a chat app (Telegram).
 
-**Không phải** framework cho dev. **Không phải** dịch vụ đám mây. Là **phần mềm người dùng tự chạy, bằng subscription Claude của chính họ.**
+**Not** a dev framework. **Not** a cloud service. It's **software the user runs themselves, on their own Claude subscription.**
 
-### Ba nguyên tắc bất di bất dịch
+### Three unshakeable principles
 
-1. **Sở hữu artifact, không sở hữu prompt.** Giá trị nằm ở file trong thư mục công ty của người dùng — tri thức, kế hoạch, sản phẩm đầu ra. Chúng sống độc lập, sống sót qua mọi thay đổi của Claude Code.
-2. **Agent là hàm stateless.** Đến, làm, ghi kết quả ra file, chết. Trí nhớ nằm ở đồ thị tri thức, không nằm trong context window.
-3. **Mỗi token phải có lý do tồn tại.** Xem `SPEC-token-economy.md`.
+1. **Own the artifact, not the prompt.** The value lives in files inside the user's company folder — knowledge, plans, output. They live independently, surviving any change to Claude Code itself.
+2. **An agent is a stateless function.** It arrives, does the work, writes the result to a file, and disappears. Memory lives in the knowledge graph, not in the context window.
+3. **Every token must have a reason to exist.** See `SPEC-token-economy.md`.
 
-### Bốn tiêu chí chất lượng — thêm 15/08/2026
+### Four quality criteria — added 15/08/2026
 
-Ba nguyên tắc trên nói **xây cái gì**. Bốn tiêu chí này nói **xây tới mức nào**, và chúng là điều kiện để gọi một tính năng là "xong". Từ đây trở đi, "chạy được trên máy tôi" không còn là định nghĩa của xong.
+The three principles above say **what to build.** These four criteria say **to what standard**, and they're the condition for calling a feature "done." From here on, "runs on my machine" is no longer the definition of done.
 
-| | Nghĩa cụ thể — kiểm được, không phải khẩu hiệu |
+| | Concrete meaning — checkable, not a slogan |
 |---|---|
-| **Ổn định** | Không có đường nào dẫn tới màn hình trắng. Mọi trạng thái rỗng (chưa có văn phòng, chưa có nhân viên, chưa có việc) đều là màn hình được thiết kế, không phải tai nạn. Sập một văn phòng không được kéo theo văn phòng khác. |
-| **Xử lý lỗi tốt** | Mọi lỗi hiển thị cho người dùng phải trả lời được **chuyện gì xảy ra + làm gì tiếp**. Lỗi mạng/hết hạn mức/file hỏng có đường phục hồi, không chỉ có thông báo. Lỗi của một agent không giết cả ca làm việc. |
-| **Hiệu năng** | Kéo node giữ 60fps kể cả khi công ty đang chạy. Log dài không làm đơ tab. Không lượt gọi LLM nào tồn tại chỉ để phục vụ hiển thị. |
-| **Mượt** | Đổi văn phòng, mở panel, đóng dialog không giật, không nhảy layout. Thao tác kéo/nối phản hồi tức thì trước khi server trả lời. |
+| **Stable** | No path leads to a blank screen. Every empty state (no offices yet, no workers yet, no jobs yet) is a designed screen, not an accident. One office crashing must not drag another office down with it. |
+| **Handles errors well** | Every error shown to the user has to answer **what happened + what to do next.** A network error/rate limit/corrupt file has a recovery path, not just a notice. One agent's error doesn't kill the whole job. |
+| **Performance** | Dragging a node stays 60fps even while the company is running. A long log doesn't freeze the tab. No LLM call exists purely to serve the display. |
+| **Smooth** | Switching offices, opening a panel, closing a dialog — no jank, no layout jump. Drag/wire interactions respond instantly, before the server replies. |
 
-**Ràng buộc chéo với kinh tế token:** không tiêu chí nào ở đây được phép mua bằng token. "Mượt" không bao giờ có nghĩa là gọi thêm LLM cho trơn tru; "xử lý lỗi tốt" không bao giờ có nghĩa là nhờ model diễn giải lỗi. `SPEC-token-economy.md` vẫn là luật cao hơn.
+**Cross-cutting constraint with the token economy:** none of these criteria may ever be bought with tokens. "Smooth" never means calling an extra LLM for polish; "handles errors well" never means asking the model to interpret an error for you. `SPEC-token-economy.md` remains the higher law.
 
 ---
 
-## 2. Mô hình tổ chức
+## 2. Organizational model
 
 ```
                       ┌──────────────┐
-   Human ────────────►│    MASTER    │  session dài, đối thoại, lập kế hoạch
-   (UI / Telegram)    │  (Claude)    │  KHÔNG tự làm việc tay chân
+   Human ────────────►│    MASTER    │  long session, conversational, plans work
+   (UI / Telegram)    │  (Claude)    │  does NOT do the hands-on work itself
                       └──────┬───────┘
                              │ TaskBrief (DAG)
                   ┌──────────┼──────────┬──────────┐
                   ▼          ▼          ▼          ▼
               ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐
               │Worker │  │Worker │  │Worker │  │Worker │   stateless,
-              │       │  │       │  │       │  │       │   song song
+              │       │  │       │  │       │  │       │   parallel
               └───┬───┘  └───┬───┘  └───┬───┘  └───┬───┘
-                  │ Receipt (≤800 token)│          │
+                  │ Receipt (≤800 tokens)│          │
                   └──────────┴──────────┴──────────┘
                              │
                     ┌────────▼─────────┐
                     │  KNOWLEDGE GRAPH │  markdown + frontmatter
-                    │  shared / role   │  người đọc được, máy đọc được
+                    │  shared / role   │  human-readable, machine-readable
                     └──────────────────┘
 ```
 
-Mô hình hình sao — worker **không nói chuyện trực tiếp với nhau**. Mọi trao đổi đi qua master hoặc qua artifact/knowledge. Lý do không phải thẩm mỹ mà là kinh tế: agent-to-agent chat là nguồn đốt token lớn nhất trong mọi hệ multi-agent, và không kiểm soát được.
+A star topology — workers **do not talk to each other directly.** Every exchange goes through the master or through an artifact/knowledge node. The reason isn't aesthetics, it's economics: agent-to-agent chat is the single biggest token sink in every multi-agent system, and it's uncontrollable.
 
-### Master làm gì
+### What the master does
 
-- Đối thoại với người
-- Dịch yêu cầu → **kế hoạch DAG** các task
-- Nhận receipt, quyết định bước tiếp
-- Ghi **kinh nghiệm chung** (`scope: shared`) vào đồ thị
-- Xử lý xung đột, escalate hỏi người khi cần
+- Talks with the human
+- Translates a request → a **DAG plan** of tasks
+- Receives receipts, decides the next step
+- Writes **shared experience** (`scope: shared`) into the graph
+- Handles conflicts, escalates to the human when needed
 
-### Master KHÔNG làm gì
+### What the master does NOT do
 
-- Không đọc raw transcript của worker (chỉ đọc receipt)
-- Không tự đọc file lớn (giao cho worker)
-- Không tự viết code/nội dung
+- Doesn't read a worker's raw transcript (only reads the receipt)
+- Doesn't read large files itself (hands that to a worker)
+- Doesn't write code/content itself
 
 ---
 
-## 3. Vai trò agent (Role)
+## 3. Agent roles (Role)
 
-Một role = một file định nghĩa, versioned. Người dùng sửa được, đây là điểm "modding" chính.
+A role = one definition file, versioned. The user can edit it — this is the primary "modding" surface.
 
 ```yaml
 # roles/researcher.yaml
 id: researcher
 version: 3
-display_name: "Nghiên cứu viên"
+display_name: "Researcher"
 avatar: "🔎"
 
-# Bộ giới thiệu cho MASTER biết — cực ngắn, nằm trong context master
-pitch: "Tìm và tổng hợp thông tin từ web + file dự án. Đầu ra: file markdown có nguồn."
+# The pitch the MASTER sees — very short, lives in the master's context
+pitch: "Finds and synthesizes information from the web + project files. Output: a markdown file with sources."
 good_at: [web-research, doc-summary, fact-check]
-not_for: [viết code, thiết kế]
+not_for: [writing code, design]
 
-# Kỹ năng — 3 mức, người dùng chọn, hoặc dùng mẫu có sẵn
+# Skills — 3 levels, user-selected, or use a preset
 skill_level: medium        # short | medium | formal
 skills:
-  short:  "skills/researcher.short.md"    # ~200 token
-  medium: "skills/researcher.medium.md"   # ~800 token
-  formal: "skills/researcher.formal.md"   # ~2500 token
+  short:  "skills/researcher.short.md"    # ~200 tokens
+  medium: "skills/researcher.medium.md"   # ~800 tokens
+  formal: "skills/researcher.formal.md"   # ~2500 tokens
 
 tools: [Read, Glob, Grep, WebSearch, WebFetch, Write]
-mcp: []                    # người dùng cắm thêm
+mcp: []                    # the user wires in more as needed
 
-model_tier: standard       # eco | standard | deep  → xem switch center
+model_tier: standard       # eco | standard | deep  → see switch center
 budget:
   max_tokens: 60000
   max_turns: 15
-  knowledge_pack: 3000     # trần token tri thức nạp vào
+  knowledge_pack: 3000     # knowledge token cap loaded in
 
-hot_knowledge_size: 8      # số node "nóng" đưa vào prefix cache
+hot_knowledge_size: 8      # number of "hot" nodes fed into the prefix cache
 ```
 
-**`pitch` là thứ duy nhất master thấy** khi lập kế hoạch. Toàn bộ `skills` chỉ nạp vào chính worker khi nó chạy. Đây là lý do kế hoạch của master rẻ.
+**`pitch` is the only thing the master sees** when dividing work. The full `skills` set only loads into the worker itself when it runs. This is why the master's planning stays cheap.
 
-### Skills chia hai lớp — CORE không sửa được
+### Skills split into two layers — CORE is not editable
 
-Người dùng sửa được skills và kinh nghiệm của mọi agent, kể cả master. Nhưng **không phải mọi thứ đều nên sửa được**:
+The user can edit skills and experience for every agent, including the master. But **not everything should be editable**:
 
-| Lớp | Nội dung | Sửa? | Nằm ở đâu |
+| Layer | Content | Editable? | Lives where |
 |---|---|---|---|
-| **Core** | giao thức Receipt, kỷ luật ngân sách, luật "giao việc đừng tự làm", schema đầu ra | ❌ | ship cùng phần mềm, version theo `software_version` |
-| **User** | tính cách, giọng điệu, kiến thức ngành, thói quen làm việc, ưu tiên role nào | ✅ | `skills/*.md` trong thư mục công ty |
+| **Core** | the Receipt protocol, budget discipline, the "delegate, don't do it yourself" rule, output schema | ❌ | ships with the software, versioned by `software_version` |
+| **User** | personality, tone, industry knowledge, work habits, which roles to favor | ✅ | `skills/*.md` in the company folder |
 
-Ranh giới quyết định bằng đúng một câu:
+The boundary is decided by exactly one sentence:
 
-> **Thứ gì đang thi hành một bất biến trong `SPEC-token-economy.md` thì là CORE.**
+> **Whatever enforces an invariant from `SPEC-token-economy.md` is CORE.**
 
-Cho sửa lớp core không phải là trao tự do — là trao cái bẫy. Người dùng gỡ mất giao thức Receipt thì kiến trúc chi phí sụp, rồi họ sẽ đổ lỗi cho sản phẩm chứ không cho bản sửa của mình.
+Letting the user edit the core layer isn't granting freedom — it's handing them a trap. Strip out the Receipt protocol and the cost architecture collapses, and then they'll blame the product, not their own edit.
 
-Trong prompt: core đứng trước, user layer đứng sau, **cả hai đều trước `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`**. Nghĩa là lớp user vẫn được cache — nhưng **mỗi lần lưu là bump cache key**, phải trả một lần cache write rồi mới ổn định lại.
+In the prompt: core comes first, the user layer comes after, **both before `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`.** Meaning the user layer still gets cached — but **every save bumps the cache key**, paying for one cache write before it stabilizes again.
 
-→ **Yêu cầu UI:** ô soạn skills **không được autosave theo từng phím**. Phải có nút Lưu tường minh. (`SPEC-ui.md` §2.2)
+→ **UI requirement:** the skills editing box **must not autosave on every keystroke.** There has to be an explicit Save button. (`SPEC-ui.md` §2.2)
 
-### Bộ role mặc định (ship sẵn)
+### The default role set (shipped)
 
-| Role | Việc | Tier |
+| Role | Job | Tier |
 |---|---|---|
-| `researcher` | tìm & tổng hợp thông tin | standard |
-| `writer` | viết nội dung | standard |
-| `coder` | viết/sửa code | standard |
-| `reviewer` | soát lỗi, kiểm chất lượng | standard |
-| `librarian` | gộp/dọn đồ thị tri thức | **eco** |
-| `analyst` | đọc số liệu, tổng hợp | standard |
-| `concierge` | **việc vặt có MCP** — xem lịch, gửi tin, tra DB, lấy URL | **eco** |
+| `researcher` | find & synthesize information | standard |
+| `writer` | write content | standard |
+| `coder` | write/fix code | standard |
+| `reviewer` | review, quality check | standard |
+| `librarian` | merge/tidy the knowledge graph | **eco** |
+| `analyst` | read data, summarize | standard |
+| `concierge` | **small MCP-backed errands** — check a calendar, send a message, query a DB, fetch a URL | **eco** |
 
-### `concierge` — là TOOL, không phải nhân viên
+### `concierge` — is a TOOL, not a worker
 
-**Master không biết `concierge` tồn tại.** Master chỉ thấy một tool:
+**The master doesn't know `concierge` exists.** The master only sees one tool:
 
 ```
 quick_action(what: string) → { say: string, result: string }
 ```
 
-Runtime nhận lời gọi đó và bung một query one-shot phía sau. Đây là abstraction đúng, không phải mẹo:
+The runtime receives that call and fires off a one-shot query behind the scenes. This is a correct abstraction, not a trick:
 
-- Người dùng sửa skills của master **không thể** làm hỏng — prompt master không hề nhắc `concierge`
-- UI ẩn tự nhiên, không cần case đặc biệt: nó vốn là tool, không phải task
-- Không xuất hiện trong danh sách nhân viên, vì nó không phải nhân viên
-- Khi [#247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247) được sửa: đổi implementation sau đúng tên tool đó, không đụng gì khác
+- A user editing the master's skills **cannot** break it — the master's prompt never mentions `concierge` at all
+- The UI hides it naturally, no special-case code needed: it's a tool, not a task, by nature
+- Doesn't show up in the worker list, because it isn't a worker
+- Once [#247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247) is fixed: swap the implementation behind that exact tool name, nothing else changes
 
-> **Lưu ý:** Agent SDK **không bundle MCP server nào**. Thứ luôn có sẵn không cần key là **native tools** (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebSearch`, `WebFetch`) — chúng không phải MCP. Vì `WebSearch`/`WebFetch`/`Bash` phủ phần lớn việc vặt, **`concierge` thường chạy không cần MCP nào**. MCP chỉ vào cuộc khi người dùng tự cắm (Notion, Calendar, DB của họ).
+> **Note:** the Agent SDK **bundles no MCP server at all.** What's always available with no key required is the **native tools** (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebSearch`, `WebFetch`) — they aren't MCP. Since `WebSearch`/`WebFetch`/`Bash` cover most errands already, **`concierge` usually runs without any MCP at all.** MCP only comes into play when the user wires one in themselves (Notion, Calendar, their own DB).
 
-### Vì sao không treo MCP thẳng vào master
+### Why MCP isn't wired straight into the master
 
-Master là session dài, resume liên tục. Gắn MCP thẳng vào master → [issue #247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247) → cache master vỡ, tốn **~36 000 token quy đổi mỗi lượt nói chuyện**. Một `concierge` one-shot có MCP chỉ tốn **~4 350** trên Haiku — rẻ hơn gần một bậc độ lớn.
+The master is a long session, resuming continuously. Attaching MCP directly to the master → [issue #247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247) → breaks the master's cache, costing **~36,000 token-equivalents on every conversational turn.** A one-shot `concierge` with MCP costs only **~4,350** on Haiku — nearly an order of magnitude cheaper.
 
-**Quan trọng — đây là quyết định UI, không phải quyết định kiến trúc:** trên giao diện, `concierge` **không hiện ra như một task**, không có bước trong kế hoạch, không có thẻ agent. Nó hiện như **chính master đang làm**. Người dùng vẫn thấy "sếp tự xử lý việc nhỏ", đúng như kỳ vọng; chỉ tầng dưới là khác.
+**Important — this is a UI decision, not an architectural one:** in the interface, `concierge` **never appears as a task**, has no step in the plan, no agent card. It shows up as **the master itself working.** The user still sees "the boss handled the small stuff themselves," exactly as expected; only the layer beneath is different.
 
-`master.mcp: false` là **setting** trong `company.yaml`, không hard-code — khi Anthropic sửa #89/#247 thì bật lên là master cầm MCP trực tiếp được.
+`master.mcp: false` is a **setting** in `company.yaml`, not hard-coded — when Anthropic fixes #89/#247, flip it on and the master holds MCP directly.
 
-Người dùng thêm role bằng cách thả file yaml vào `roles/`. Không cần restart (hot reload có kiểm tra version).
+Users add roles by dropping a yaml file into `roles/`. No restart needed (hot reload includes a version check).
 
 ---
 
-## 4. Giao thức Task ↔ Receipt
+## 4. The Task ↔ Receipt protocol
 
-Đây là **hợp đồng cốt lõi**. Nó vừa là tối ưu token, vừa là tính năng UX ("đơn giản mặc định, log advanced khi cần") — cùng một cơ chế phục vụ cả hai.
+This is the **core contract.** It's both a token optimization and a UX feature ("simple by default, advanced logs when you need them") — one mechanism serving both.
 
-### TaskBrief (master → worker) — mục tiêu ≤1500 token
+### TaskBrief (master → worker) — target ≤1500 tokens
 
 ```json
 {
   "task_id": "T-0007",
   "role": "writer",
-  "goal": "Viết caption fanpage giới thiệu sản phẩm X",
+  "goal": "Write a fan-page caption introducing product X",
   "inputs":  [{"kind":"file","path":"artifacts/T-0003/research.md"}],
   "outputs": [{"kind":"file","path":"artifacts/T-0007/caption.md"}],
-  "constraints": ["≤200 từ", "giọng thân thiện", "có CTA"],
+  "constraints": ["≤200 words", "friendly tone", "has a CTA"],
   "knowledge_refs": ["k/shared/brand-voice"],
   "budget": {"max_tokens": 40000, "max_turns": 12, "tier": "standard"},
   "deps": ["T-0003"]
 }
 ```
 
-Master **không** dán nội dung file vào brief — chỉ đưa **đường dẫn**. Worker tự đọc. Nếu master dán nội dung, nội dung đó nằm luôn trong context master mãi mãi → đây là lỗi đốt token số 1 trong các hệ multi-agent.
+The master **does not** paste file content into the brief — only the **path.** The worker reads it itself. If the master pastes content, that content sits in the master's context forever → this is failure mode #1 for token burn in multi-agent systems.
 
-### Receipt (worker → master) — **trần cứng 800 token**
+### Receipt (worker → master) — **hard cap of 800 tokens**
 
 ```json
 {
   "task_id": "T-0007",
   "status": "done",
-  "say": "Xong caption, 180 từ, bám brand voice, có CTA cuối bài.",
+  "say": "Caption done, 180 words, on-brand voice, CTA at the end.",
   "artifacts": ["artifacts/T-0007/caption.md"],
   "lessons": [
-    {"kind":"pitfall","text":"Hook mở bài quá dài thì reach giảm; giữ ≤12 từ."}
+    {"kind":"pitfall","text":"An opening hook over 12 words tanks reach; keep it ≤12."}
   ],
   "blocked_on": null,
   "usage": {"in":1200,"cache_read":9800,"out":650,"tier":"standard"}
@@ -219,309 +219,309 @@ Master **không** dán nội dung file vào brief — chỉ đưa **đường d�
 ```
 
 - `status`: `done | failed | blocked | needs_human`
-- `say`: **câu tiếng người**, hiển thị thẳng lên UI. Không tốn thêm call nào để "dịch cho thân thiện" — worker sinh sẵn.
-- Runtime **validate schema và cắt cứng**. Worker trả văn xuôi → từ chối, hỏi lại đúng 1 lần kèm schema, lần 2 vẫn sai thì đánh `failed`.
+- `say`: a **plain-language sentence**, shown directly in the UI. Costs no extra call to "translate it into something friendly" — the worker generates it as-is.
+- The runtime **validates the schema and hard-truncates.** Worker returns prose instead → rejected, asked once more with the schema attached, wrong a second time → marked `failed`.
 
-**Bất biến:** không một byte transcript thô nào của worker được đi vào context của master. Có test đảm bảo điều này.
+**Invariant:** not one byte of a worker's raw transcript ever enters the master's context. A test guarantees this.
 
 ---
 
-## 5. Đồ thị tri thức
+## 5. The knowledge graph
 
-### ⚠ Node tri thức ≠ tài liệu người dùng tải lên
+### ⚠ A knowledge node ≠ a document the user uploaded
 
-Câu hỏi hay bị hiểu nhầm: *"nạp cả kho vào input à?"* — không, và ranh giới phải nói rõ.
+A question people commonly get wrong: *"so does the whole library get loaded into the input?"* — no, and the boundary needs to be stated clearly.
 
-| | Node tri thức | Tài liệu tải lên |
+| | Knowledge node | Uploaded document |
 |---|---|---|
-| Kích thước | trần **250 token/node**, cảnh báo khi vượt | tuỳ ý, hàng MB |
-| Vào prompt | **HOT** vào prefix (trần `hot_knowledge_tokens: 2000`) · **COLD** chọn theo task | **không bao giờ** |
-| Cách với tới | code chọn sẵn, 0 token | agent tự `Glob`/`Grep`/`Read` khi cần |
-| Ai sinh ra | agent rút ra sau khi làm, hoặc người dùng chốt | khách bỏ vào |
+| Size | capped at **250 tokens/node**, warns if exceeded | unlimited, can be MBs |
+| Enters the prompt | **HOT** into the prefix (cap `hot_knowledge_tokens: 2000`) · **COLD** selected per task | **never** |
+| How it's reached | code picks it, 0 tokens | the agent `Glob`s/`Grep`s/`Read`s it as needed |
+| Who produces it | the agent distills it after working, or the user confirms it | the client puts it in |
 
-Nói cách khác: **kho tri thức là những câu ngắn đã chắt ra, không phải nơi chứa file.** File của khách nằm trong `artifacts/` và được với tới bằng khoá ngoại + `Grep` — xem phụ lục `SPEC-connectors.md`. Trần 250 token/node tồn tại chính là để ranh giới này không bị xoá nhoà theo thời gian.
+In other words: **the knowledge store is short, already-distilled sentences, not a place to hold files.** A client's files live in `artifacts/` and are reached with a foreign key + `Grep` — see appendix `SPEC-connectors.md`. The 250 token/node cap exists precisely so this boundary doesn't blur over time.
 
-Vì sao HOT tồn tại chứ không "khi nào cần mới mò vào": thứ nằm trong prefix được cache trả **~0.1×** sau lần ghi đầu; thứ lấy theo từng task trả **nguyên giá mỗi lần**, và nếu nhét vào prefix thì prefix đổi mỗi task → cache miss 100%, tệ hơn không cache. Hai tầng là để có cả hai.
+Why HOT exists at all, instead of "just look it up when needed": something sitting in the cached prefix costs **~0.1×** after the first write; something fetched per task costs **full price every time**, and stuffing it into the prefix means the prefix changes every task → 100% cache miss, worse than no cache at all. Two tiers exist to get both.
 
-### 🔴 5·0. `KnowledgeNode` KHÔNG có trường ngôn ngữ — quyết định 03/09, và nó là một quyết định KHÔNG LÀM
+### 🔴 5·0. `KnowledgeNode` has NO language field — a decision from 03/09, and it's a decision NOT to do something
 
-Đợt đa ngôn ngữ có đề xuất gắn `lang?: 'vi'|'en'` cho node, suy ra bằng bộ dò dấu tiếng Việt.
-**Đã bỏ.** Lý do không phải "chưa cần" mà là "sai về loại":
+During multilingual work, a proposal came up to attach `lang?: 'vi'|'en'` to a node, inferred from a Vietnamese-diacritic detector.
+**Rejected.** Not because "not needed yet" but because it's "the wrong kind of thing":
 
-1. **Bộ dò đó nhị phân.** Ghi chú tiếng Đức, Tây Ban Nha, Ả Rập đều không mang dấu tiếng Việt ⇒ nó
-   lặng lẽ ghi `en`. Đó là một **tín hiệu đội lốt cổng tất định**, và nó ghi phán đoán **xuống đĩa,
-   vào dữ liệu người dùng** — nơi không lần đọc nào sau đó biết giá trị ấy là đoán.
-2. **Không ai tiêu thụ nó.** `hot()` đã chốt là **không lọc theo ngôn ngữ**: lọc là đổi một phiền
-   toái *nhìn thấy được* (prefix lẫn hai thứ tiếng) lấy một phiền toái *im lặng* (văn phòng quên mất
-   thứ nó đã học, không ai báo). Repo này chọn cái nhìn thấy được, mọi lần.
+1. **That detector is binary.** A note in German, Spanish, or Arabic carries no Vietnamese diacritics either ⇒ it would
+   silently mark it `en`. That's a **signal wearing a deterministic gate's clothes**, and it writes a guess **to
+   disk, into user data** — where no later read can tell that value was a guess.
+2. **Nobody consumes it.** `hot()` already decided it does **not** filter by language: filtering trades a
+   *visible* nuisance (a prefix mixing two languages) for a *silent* one (the office quietly forgetting
+   what it learned, with no one told). This repository picks the visible failure, every time.
 
-`hasVietnameseDiacritics` chỉ sống ở `scripts/check-language.ts`, và nó **tất định 100% chỉ ở đó** vì
-nó soi **mã nguồn của chính ta** — thứ có đúng hai khả năng. Chĩa cùng hàm ấy vào văn bản người dùng
-là biến nó thành một phép đoán.
+`hasVietnameseDiacritics` lives only in `scripts/check-language.ts`, and it's **100% exact only there** because
+it's pointed at **our own source code** — which has exactly two possible states. Pointing that same function at
+user text turns it into a guess.
 
-**Điều kiện mở lại — đo được, và chỉ dựng cơ chế khi có một trong hai:**
+**Conditions to reopen — measurable, and the mechanism is only built when one of these two happens:**
 
-1. một văn phòng thật tích được ghi chú ở **≥2 ngôn ngữ**, **kèm** một đầu ra sai truy được về chuyện
-   lẫn (không phải "trông kỳ kỳ");
-2. có người thật xin lọc.
+1. a real office genuinely accumulates notes in **≥2 languages**, **plus** a wrong output traceable
+   to the mix (not just "looks off");
+2. a real user asks for filtering.
 
-Và khi đó cơ chế đúng **không phải bộ dò**: là **model tự khai** ngôn ngữ nó vừa viết, dưới dạng một
-thẻ BCP-47 tự do (`vi` · `en` · `zh-Hans` · `ar` · `de`…), ghi **chỉ cho node sinh ra từ thời điểm đó
-trở đi**. Node cũ **để trống, và trống nghĩa là KHÔNG BIẾT** — không suy diễn.
+And even then the right mechanism is **not** a detector: it's the **model declaring** the language it just wrote,
+as a free-form BCP-47 tag (`vi` · `en` · `zh-Hans` · `ar` · `de`…), written **only for nodes created from that
+point forward.** Old nodes stay **blank, and blank means UNKNOWN** — never inferred.
 
-`test/knowledge-untouched.test.ts` khoá cả ba vế: không trường ngôn ngữ trên node, `hot()` không nhận
-tham số ngôn ngữ, và không bộ dò dấu nào trong `knowledge/`. Nó đỏ vào ngày ai đó thêm một bộ dò "cho
-tiện", và bắt họ đọc mục này trước khi đi tiếp.
+`test/knowledge-untouched.test.ts` locks all three parts down: no language field on a node, `hot()` takes no
+language parameter, and no diacritic detector anywhere in `knowledge/`. It goes red the day someone adds one "for
+convenience," and forces them to read this section before going any further.
 
-### 5a. BỐN LUẬT SINH KINH NGHIỆM — chốt 19/08/2026
+### 5a. FOUR LAWS OF LESSON GENERATION — locked 19/08/2026
 
-Đề bài do người dùng nêu, và nó là chẩn đoán đúng về một lớp lỗi chứ không phải một bug:
+A premise raised by the user, and it's a correct diagnosis of a whole failure class, not a single bug:
 
-> *"Cơ chế ghi lại kinh nghiệm đang tự tạo một CACHE, và rất có thể cache này **sai khi người dùng update tài liệu**."*
+> *"The lesson-writing mechanism is building its own CACHE, and there's a good chance this cache goes STALE the moment the user edits a document."*
 
-Đúng. Bảng ở §5 trên tuyên bố *"node tri thức ≠ tài liệu"* từ 14/08, nhưng cái làm ranh giới đó vỡ không phải kích thước — mà là **thể loại nội dung**. Một node chép lại *nội dung* tài liệu là một bản sao thứ hai của cùng một sự thật, và **bản sao đó thắng**: nó nằm sẵn trong prefix của mọi nhân viên, còn tài liệu thì phải đi tìm.
+Correct. The table in §5 above declared *"a knowledge node ≠ a document"* back on 14/08, but what actually breaks that boundary isn't size — it's **content type.** A node that copies a document's *content* is a second copy of the same fact, and **the copy wins**: it's already sitting in every worker's prefix, while the document has to be searched for.
 
-| # | luật | che ca nào | thi hành ở đâu |
+| # | law | which case it covers | enforced where |
 |---|---|---|---|
-| 1 | chỉ ghi **CÁCH LÀM**, không ghi **KIẾN THỨC** | tài liệu **bị SỬA** | `LessonSchema` (bỏ `'fact'`) · `quotesLibraryNumber` · `echoesLibrary` |
-| 2 | **thực thể yếu** — file mất thì node mất | tài liệu **bị XOÁ / đổi tên** | `KnowledgeNode.depends_on` · `dropDependents` |
-| 3 | chỉ sinh khi ca có **trục trặc hoặc LẶP** | ca sinh ra từ hư không | `worthLearning` |
-| 4 | không spam bản **na ná nhau** | kho phình vì lặp lại | `findTwin` · `twinScore` |
-| **5** | **chỉ ghi thứ MỘT AGENT SỬA ĐƯỢC** | lỗi của hạ tầng / cấu hình / người dùng | `agentFault` · `Receipt.failure` |
+| 1 | only write **HOW TO DO IT**, never **FACTS** | the document gets **EDITED** | `LessonSchema` (dropped `'fact'`) · `quotesLibraryNumber` · `echoesLibrary` |
+| 2 | **weak entity** — file gone means node gone | the document gets **DELETED / renamed** | `KnowledgeNode.depends_on` · `dropDependents` |
+| 3 | only generate on **trouble or a REPEAT** | a case invented out of nowhere | `worthLearning` |
+| 4 | no spamming **near-duplicates** | the store bloats from repetition | `findTwin` · `twinScore` |
+| **5** | **only record what ONE AGENT CAN FIX** | infrastructure / config / user error | `agentFault` · `Receipt.failure` |
 
-#### 🔴 Luật 5 — CÂU HỎI *"CỦA AI"* PHẢI ĐƯỢC TRẢ LỜI TRƯỚC CÂU HỎI *"HỌC ĐƯỢC GÌ"* (user chốt 21/08)
+#### 🔴 Law 5 — THE QUESTION *"WHOSE FAULT"* MUST BE ANSWERED BEFORE *"WHAT WAS LEARNED"* (user locked this in 21/08)
 
-Ca thật: hai node gần như y hệt nhau, cùng `scope: shared`, cách nhau chín phút.
+A real case: two nearly identical nodes, both `scope: shared`, nine minutes apart.
 
 ```
-"Phan-tich-standard liên tục chạm trần chi phí … nên nới max_usd"
-"Việc nhóm+tổng hợp CSV có thể chạm trần … cân nhắc nới max_usd"
+"phan-tich-standard keeps hitting the cost cap … consider raising max_usd"
+"Grouping+summarizing a CSV can hit the cap … consider raising max_usd"
 ```
 
-Ba thứ hỏng cùng lúc, và cái thứ hai là cái đắt:
+Three things broke at once, and the second is the expensive one:
 
-1. **SAI NGƯỜI ĐỌC.** Kinh nghiệm nằm trong prefix của **mọi worker**. Worker không sửa được `max_usd` — nó không có tay để làm việc đó. Lời khuyên ấy gửi cho **con người**, mà con người không đọc kho tri thức; họ đọc ô chat, nơi câu đó **đã được nói rồi**. Ta trả tiền vĩnh viễn để nhắc lại một câu đã giao đúng cửa.
-2. **TỰ CHUỐC LẤY.** Node vào prefix → prefix dài ra → mỗi lượt đắt lên → **chạm trần dễ hơn**. Một bài học cảnh báo về chạm trần, mà cơ chế tồn tại của nó là làm tăng chi phí. Nó sản xuất ra chính vấn đề nó cảnh báo.
-3. **SẼ SAI.** Ngày người dùng nới trần, node vẫn nói *"hay chạm trần"* — và node **thắng**, vì nó nằm sẵn trong đầu mọi nhân viên. Đúng lớp lỗi luật 1 sinh ra để chặn, chỉ khác là kiến thức bị chép ở đây là **cấu hình của chính hệ thống**, không phải nội dung tài liệu.
+1. **WRONG READER.** The lesson lives in the prefix of **every worker.** A worker can't change `max_usd` — it has no hands to do that. That advice is addressed to a **human**, and a human doesn't read the knowledge store; they read the chat, where that exact sentence **has already been said.** We pay forever to repeat a sentence that already reached the right door.
+2. **SELF-INFLICTED.** A node in the prefix → a longer prefix → every turn more expensive → **cap gets hit more easily.** A lesson warning about hitting the cap, whose very mechanism of existing raises the cost. It produces exactly the problem it warns about.
+3. **WILL BECOME WRONG.** The day the user raises the cap, the node still says *"tends to hit the cap"* — and the node **wins**, because it's already sitting in every worker's head. The exact failure class law 1 exists to block, only this time the knowledge being copied is **the system's own configuration**, not a document's content.
 
-**Vì sao KHÔNG lọc bằng prompt.** Prompt **đã** cấm, bằng hai dòng riêng biệt (*"Không ghi con số, ngưỡng, giá, ngày tháng"* và *"Bài học ghi CÁCH LÀM"*), và model vẫn ghi ra hai node về ngưỡng chi phí. Một luật chỉ sống trong prompt là một **LỜI HỨA**.
+**Why NOT filter this via the prompt.** The prompt **already** forbids it, in two separate lines (*"Don't record numbers, thresholds, prices, or dates"* and *"Lessons record HOW TO WORK"*), and the model still wrote out two nodes about a cost threshold anyway. A rule that lives only in the prompt is a **PROMISE.**
 
-> ⚠ **Và đây là chỗ LLM yếu nhất, nên đừng hỏi nó.** Model không phân biệt nổi *"tôi làm sai"* với *"môi trường quanh tôi chặn tôi lại"* — trong ngữ cảnh của nó, cả hai đều hiện ra y hệt nhau: **một lượt không xong**. Nó không có chỗ đứng để nhìn ra ranh giới đó. Ta thì có, và ta biết chắc **bằng dữ liệu**.
+> ⚠ **And this is exactly where the LLM is weakest, so don't ask it.** The model can't tell *"I got it wrong"* apart from *"my environment blocked me"* — from inside its own context, both look identical: **one turn didn't finish.** It has no vantage point to see that boundary. We do, and we know it **from data.**
 
-`FailureKind` phân hoạch sạch theo *ai sửa được*:
+`FailureKind` partitions cleanly by *who can fix it*:
 
-| kiểu | ai gây ra | agent làm gì được |
+| kind | caused by | can the agent do anything |
 |---|---|---|
-| `budget` · `max_turns` | trần NGƯỜI DÙNG đặt | không — nó không sửa cấu hình |
-| `rate_limit` · `usage_limit` | hạ tầng / gói cước | không |
-| `auth` | cấu hình máy | không |
-| `stopped` | người dùng bấm Dừng | không, và đó không phải trục trặc |
-| `other` | có thể là chính nó | có |
+| `budget` · `max_turns` | a cap the USER set | no — it can't change config |
+| `rate_limit` · `usage_limit` | infrastructure / subscription tier | no |
+| `auth` | machine configuration | no |
+| `stopped` | the user pressed Stop | no, and this isn't trouble at all |
+| `other` | could be its own fault | yes |
 
-⚠ **Nửa dễ làm mất nhất:** `blocked_on` do **nhân viên tự khai** (*"thiếu file thuật ngữ"*) là bài học đắt nhất trong kho; `blocked_on` do **hệ thống ghi** (*"chạm trần $0.4"*) là rác. Hai câu nằm cùng một trường, và `Receipt.failure` là thứ **duy nhất** phân biệt được chúng. Bản vá đầu bỏ luôn `blocked_on` khỏi tín hiệu và làm mất một ca có thật — bộ test bắt được ngay.
+⚠ **The half most easily lost:** `blocked_on` **self-reported by a worker** (*"missing the glossary file"*) is the most valuable lesson in the whole store; `blocked_on` **written by the system** (*"hit the $0.4 cap"*) is noise. Both live in the same field, and `Receipt.failure` is the **only** thing that tells them apart. The first patch dropped `blocked_on` from the signal entirely and lost a real case — the test suite caught it immediately.
 
-⚠ Vì thế `stoppedReceipt` **phải** khai `failure: 'stopped'`. Thiếu dòng đó thì `agentFault` đọc `blocked_on: "người dùng dừng giữa chừng"` như lời khai của nhân viên, rồi đi hỏi model *"học được gì"* cho một việc chính người dùng vừa bảo đừng làm.
+⚠ So `stoppedReceipt` **must** declare `failure: 'stopped'`. Without that line, `agentFault` reads `blocked_on: "user stopped mid-run"` as if the worker itself confessed it, then goes asking the model *"what did you learn"* for a job the user had just told it to abandon.
 
-#### Luật 4 — ngưỡng đã ĐO, và tiền đề cũ là một lời hứa
+#### Law 4 — the threshold was MEASURED, and the old premise was just a promise
 
-`TWIN_RATIO` từ **0.75 → 0.6**. Cặp trùng thật ở trên đo được **0.654** — trượt ngưỡng cũ, hai node cùng sống. Phần lệch nằm gần như trọn vẹn ở từ đệm (*liên tục* ↔ *có thể*, *nên* ↔ *cân nhắc*, *dạng này* ↔ *tương tự*): cùng một câu, hai giọng.
+`TWIN_RATIO` moved from **0.75 → 0.6.** The genuine duplicate pair above measured **0.654** — under the old threshold, so both nodes survived. The gap sat almost entirely in filler words (*constantly* ↔ *may*, *should* ↔ *consider*, *this kind* ↔ *similar*): the same sentence, two voices.
 
-Chú thích cũ biện minh cho 0.75 bằng câu *"bỏ sót thì chỉ tốn một node mà Librarian (M1) gộp lại được sau"*. **Librarian chưa tồn tại.** Nên cái giá thật của bỏ sót không phải "một node chờ gộp" mà là **token trong prefix của mọi worker, mọi lượt, vĩnh viễn** — hai phía không đối xứng như giả định:
-
-```
-chặn nhầm → mất một bài học, hits của bản cũ +1, còn dấu vết
-bỏ sót    → trả token mãi mãi cho một bản sao không ai dọn
-```
-
-> **Quyết định đúng + tiền đề sai = bom hẹn giờ.** Nó vừa nổ.
-
-`twinScore` được **tách ra khỏi `findTwin`** để ngưỡng kiểm được bằng test mà không phải dựng `KnowledgeStore` trên đĩa — trả một nửa nợ 0b, đúng luật *"khi một luật quan trọng nằm trong hàm không test được thì món nợ thật là hình dạng của code"*.
-
-#### ⚠ Luật 1 và luật 2 KHÔNG thay thế nhau — đây là chỗ dễ hiểu nhầm nhất
-
-Trực giác nói *"gắn node vào file là xong"*. Không xong:
+The old comment justified 0.75 with *"if we miss a duplicate, it's just one wasted node the Librarian (M1) can merge later."* **The Librarian doesn't exist.** So the real cost of a miss isn't "one node waiting to be merged" — it's **tokens in every worker's prefix, every turn, forever** — the two sides aren't symmetric the way the assumption pretended:
 
 ```
-doi-tra.md  bị XOÁ   → depends_on nổ  → node biến mất        ✅ luật 2
-doi-tra.md  bị SỬA   → file VẪN CÒN   → depends_on IM LẶNG   ⛔
-                                       → node cũ vẫn sống, vẫn sai
+false block → one real lesson is lost, the old node's hits +1, still leaves a trace
+missed dup  → pays tokens forever for a copy nobody ever cleans up
 ```
 
-Mà ca **bị sửa** mới đúng là ca người dùng lo (*"update tài liệu"*), và nó cũng là ca **thường xuyên hơn** — người ta sửa chính sách nhiều hơn là xoá nó.
+> **Right decision + wrong premise = a time bomb.** It just went off.
 
-Thứ che ca đó là **luật 1**: một câu về *cách làm* vẫn đúng bất kể nội dung file đổi thế nào.
+`twinScore` was **pulled out of `findTwin`** so the threshold can be tested without standing up a `KnowledgeStore` on disk — paying off half the debt from 0b, in line with the rule *"when an important rule lives inside an untestable function, the real debt IS the shape of the code."*
+
+#### ⚠ Laws 1 and 2 do NOT replace each other — this is the easiest place to misread
+
+The instinct says *"link the node to the file and you're done."* You're not:
 
 ```
-✅ "chính sách đổi trả nằm ở library/files/doi-tra.md — grep ở đó trước khi trả lời"
-⛔ "hàng giảm trên 50% không được đổi trả"
+doi-tra.md  gets DELETED  → depends_on fires   → node disappears     ✅ law 2
+doi-tra.md  gets EDITED   → file STILL EXISTS  → depends_on is SILENT ⛔
+                                                → the old node lives on, still wrong
 ```
 
-→ **Vì thế luật 1 phải thi hành bằng CODE, không phải bằng một câu dặn trong prompt.** Nếu nó chỉ là lời khuyên thì luật 2 phải gánh phần nó không gánh nổi.
+And the **edited** case is exactly the one the user was worried about (*"update a document"*), and also the **more frequent** one — people edit a policy far more often than they delete it.
 
-#### Luật 1 — ba lớp, cứng trước mềm sau
+What covers that case is **law 1**: a sentence about *how to do it* stays true regardless of how the file's content changes.
 
-1. **Bỏ `'fact'` khỏi `LessonSchema.kind`.** Chính nó là cái ô để chép kiến thức vào. Còn ô thì model sẽ dùng — bỏ ô đi rẻ hơn và chắc hơn mọi câu dặn. (`NodeType` vẫn giữ `'fact'`: bản GHI NHỚ của Trợ lý dùng nó, và thứ **người dùng** tự chốt thì đúng là fact.)
-2. **`quotesLibraryNumber` — chốt chặn CON SỐ.** Kinh nghiệm chứa số ≥2 chữ số mà con số đó **có mặt trong tài liệu** thì từ chối.
-3. **`echoesLibrary`** — lưới chồng-từ đã có từ trước, giờ là lưới thứ ba chứ không phải lưới chính.
+```
+✅ "the return policy lives at library/files/doi-tra.md — grep it before answering"
+⛔ "items over 50% off can't be returned"
+```
 
-> **Vì sao lớp 2 tồn tại, và nó vá đúng lỗ nào.** Node `k/shared/san-pham-giam-gia-60-…` ngày 19/08 ghi *"giảm 60% **thường** không được đổi trả"* trong khi tài liệu viết *"trên 50% KHÔNG áp dụng"*. Chồng từ **đo được 0.47** — dưới ngưỡng 0.6, **lọt lưới**.
->
-> Quy luật đằng sau: **diễn giải càng xa bản gốc thì lưới chồng-từ càng yếu — mà diễn giải sai mới là thứ nguy hiểm**, vì nó vừa sai vừa không truy được về nguồn. Con số thì ngược lại: nó **sống sót qua mọi cách diễn đạt**. Và một câu về cách làm gần như không bao giờ cần tới ngưỡng, giá hay ngày tháng.
->
-> Chỉ chặn khi con số **nằm sẵn trong tài liệu**: bài học *"hỏi lại tối đa 2 câu rồi bắt tay vào làm"* mang số 2 nhưng đó là số của **cách làm**, phải qua được. Bỏ qua số 1 chữ số vì chúng đụng ngẫu nhiên quá dễ.
+→ **Which means law 1 has to be enforced by CODE, not by a line of prompt advice.** If it's only advice, law 2 has to carry a weight it was never built for.
 
-#### Luật 2 — `depends_on` đến từ QUAN SÁT, không từ lời khai
+#### Law 1 — three layers, hard rules first, soft ones after
 
-Nguồn là `receipt.reads`: file trong `library/` mà nhân viên **thật sự `Read`** trong ca, bóc từ luồng `tool_use`. Cùng luật với `landed` (§6 SPEC-offices): *thứ gì quan sát được thì đừng hỏi model*.
+1. **Drop `'fact'` from `LessonSchema.kind`.** That was exactly the slot people used to copy in facts. As long as the slot exists, the model will use it — removing the slot is cheaper and more reliable than any amount of instruction. (`NodeType` keeps `'fact'`: the Assistant's MEMORY nodes use it, and something the **user** explicitly confirms genuinely is a fact.)
+2. **`quotesLibraryNumber` — the number-blocking gate.** A lesson containing a number with ≥2 digits, where that number **also appears in the source document**, gets rejected.
+3. **`echoesLibrary`** — the pre-existing overlapping-words net, now the third net rather than the main one.
 
-Xoá theo kiểu **BẤT KỲ** (một file mất là node mất), không phải TẤT CẢ — bảo thủ có chủ ý: **một lời khuyên đúng một nửa nguy hiểm hơn không có lời khuyên nào**, vì không ai biết nửa nào đã hỏng.
+> **Why layer 2 exists, and exactly which hole it patches.** On 19/08, node `k/shared/product-60-off-…` wrote *"a 60% discount **usually** can't be returned"* while the document actually said *"OVER 50% is NOT eligible."* Word overlap **measured 0.47** — under the 0.6 threshold, **slipped through the net.**
 
-Cascade chạy ở **`Office.removeDocument`**, ngay lúc người dùng bấm xoá — **không** ở một job quét định kỳ. Job quét nghĩa là có một cửa sổ thời gian mà node mồ côi vẫn nằm trong prefix của mọi nhân viên và vẫn được nghe theo, mà độ dài cửa sổ đó không ai kiểm được.
+> The underlying pattern: **the further a paraphrase drifts from the original, the weaker the word-overlap net gets — but a wrong paraphrase is exactly the dangerous kind**, because it's both wrong and untraceable back to its source. Numbers are the opposite: they **survive any paraphrase.** And a sentence about *how to do something* almost never needs a threshold, a price, or a date anyway.
 
-#### Luật 3 — `looped`, và vì sao KHÔNG phải số lượt
+> Only blocks when the number **already appears in the document**: the lesson *"ask at most 2 clarifying questions, then get to work"* contains the number 2, but that's a number about **process**, and it has to pass through. Single-digit numbers are ignored because they collide with normal text too easily.
 
-Người dùng nói *"chỉ sinh kinh nghiệm khi flow bị **loop**"*. Đúng ý, nhưng phải đo đúng thứ — chi tiết ở `SPEC-offices.md` §6 và `types.ts`. Tóm tắt:
+#### Law 2 — `depends_on` comes from OBSERVATION, not from what's claimed
+
+The source is `receipt.reads`: files in `library/` that the worker **actually `Read`** during the case, extracted from the `tool_use` stream. Same rule as `landed` (§6 SPEC-offices): *if it's observable, don't ask the model.*
+
+Deleted on an **ANY** basis (any one missing file kills the node), not ALL — deliberately conservative: **a half-right piece of advice is more dangerous than no advice at all**, since nobody knows which half broke.
+
+Cascade runs in **`Office.removeDocument`**, right when the user clicks delete — **not** in a periodic scan job. A scan job means there's a window of time where an orphaned node still sits in every worker's prefix and still gets followed, and nobody can verify how long that window is.
+
+#### Law 3 — `looped`, and why it's NOT a turn count
+
+The user said *"only generate a lesson when the flow LOOPS."* Right intent, but the right thing has to be measured — details in `SPEC-offices.md` §6 and `types.ts`. Summary:
 
 | | model-independent? | |
 |---|---|---|
-| `turns >= N` | ❌ | haiku 10 lượt vs sonnet 4 lượt cho **cùng một việc**. Ca 19/08 chạy đúng **9 lượt** → `turns >= 8` cho qua đúng cái ca nó sinh ra để chặn |
-| **lặp thao tác** | ✅ | đọc lại file đã đọc · đọc lại file vừa ghi · gọi lại y nguyên một tool. Cả ba đều là **vi phạm một luật `CORE_PROMPT` đã viết thành lời** |
+| `turns >= N` | ❌ | haiku takes 10 turns vs. sonnet 4 turns for the **same job.** The 19/08 case ran exactly **9 turns** → `turns >= 8` would have let through the exact case it was built to catch |
+| **repeated actions** | ✅ | re-reading a file already read · re-reading a file just written · calling the same tool with identical arguments twice. All three are **violations of a rule already spelled out in `CORE_PROMPT`** |
 
-#### Luật 4 — trùng thì CỘNG PHIẾU, đừng vứt
+#### Law 4 — a duplicate means ADD A VOTE, don't throw it away
 
-Jaccard trên tập từ, **cùng scope**, ngưỡng `TWIN_RATIO = 0.75`. Trùng thì `recordHits` cho node đang sống thay vì ghi node mới.
+Jaccard over the word set, **same scope**, threshold `TWIN_RATIO = 0.75`. A duplicate calls `recordHits` on the surviving node instead of writing a new one.
 
-Bản trùng là **bằng chứng** bài học có thật, không phải rác — mà `hits` chính là thang xếp hạng vào HOT. Nên biến nó thành một lá phiếu vừa chặn spam vừa **đẩy node đúng lên trên**, và (qua `last_used`) làm nó **trẻ lại** để cửa sổ khai tử không dọn mất một bài học vẫn còn đúng.
+A duplicate is **evidence** that the lesson is real, not garbage — and `hits` is exactly the ranking signal for HOT. So turn it into a vote that both blocks spam and **pushes the correct node up**, while (through `last_used`) making it **younger again**, so the expiry window doesn't sweep away a lesson that's still correct.
 
-Chỉ so **trong cùng scope**: một bài học của `nguoi-viet` và một của kho chung nói giống nhau **không phải** trùng — chúng vào prefix của hai tập người khác nhau.
+Only compares **within the same scope**: a lesson from `nguoi-viet` and one from the shared store saying similar things are **not** a duplicate — they enter the prefix of two different audiences.
 
-> ⚠ `0.75` **chưa được đo** trên kho thật; nó là điểm khởi đầu bảo thủ. Lệch về phía **bỏ sót** là lệch đúng hướng: chặn nhầm mất hẳn một bài học thật, còn bỏ sót thì Librarian (M1) gộp lại được sau.
+> ⚠ `0.75` **was never measured** against a real store; it was a conservative starting point. Erring toward **missing duplicates** is erring the right direction: a false block loses a real lesson outright, while a missed duplicate can be merged later by the Librarian (M1).
 
-#### Hệ quả phải nói thẳng: kho này gần như KHÔNG GHI nữa
+#### The consequence has to be said plainly: this store now writes almost NOTHING
 
-Chồng đủ bốn luật thì số kinh nghiệm agent tự sinh tiến về **gần bằng không**. Đó là **kết quả mong muốn**, không phải tác dụng phụ — nhưng phải ghi ra để lần sau không ai tưởng cơ chế hỏng.
+Stack all four laws and the number of agent-distilled lessons converges toward **almost zero.** That is the **intended outcome**, not a side effect — but it needs to be written down so nobody thinks the mechanism is broken later.
 
-Đường lành mạnh vốn không phải đường này: nói với Trợ lý rồi `/clear` → node **GHI NHỚ**, `confidence 0.9`, do **chính người dùng chốt**. So với `0.6` của kinh nghiệm agent tự rút, thang confidence đã nói sẵn cái gì đáng tin hơn.
+The healthy path was never this one anyway: talk to the Assistant, then `/clear` → a **MEMORY** node, `confidence 0.9`, confirmed by the **user themselves.** Compared to the `0.6` confidence of an agent's own distilled lesson, the confidence scale already says which one deserves more trust.
 
-### Cơ chế chọn: HOT xếp hạng, COLD khớp từ khoá
+### Selection mechanism: HOT ranks, COLD keyword-matches
 
-Cả hai đều **tất định, chạy bằng code, 0 token**. Không có lời gọi model nào để "quyết xem nên nhớ gì".
+Both are **deterministic, run in code, 0 tokens.** No model call anywhere to "decide what to remember."
 
 | | HOT | COLD |
 |---|---|---|
-| Đầu vào | chỉ `roleId` | `roleId` **+ nội dung task** (`goal` + `constraints`) |
-| Chọn thế nào | xếp hạng theo `hits` → `confidence` → `id` (phá hoà tất định), lấy top `hot_knowledge_size` | chấm điểm **trùng từ khoá** giữa từ trong task và từ trong node; `tags` nhân đôi; chuẩn hoá theo √(độ dài node) để node dài không tự thắng; nhân `(0.5 + confidence)`; cộng `0.1·log(1+hits)` |
-| Nằm ở đâu | **trong** prefix cache | **sau** cache breakpoint |
-| Đổi theo task? | **KHÔNG** — đổi là vỡ cache | có |
-| Trần | `hot_knowledge_tokens` 2000 | `cold_knowledge_tokens` 3000 |
+| Input | just `roleId` | `roleId` **+ the task's content** (`goal` + `constraints`) |
+| Selection | rank by `hits` → `confidence` → `id` (deterministic tiebreak), take the top `hot_knowledge_size` | score by **keyword overlap** between task words and node words; `tags` count double; normalized by √(node length) so a long node doesn't automatically win; multiplied by `(0.5 + confidence)`; plus `0.1·log(1+hits)` |
+| Lives where | **inside** the prefix cache | **after** the cache breakpoint |
+| Changes per task? | **NO** — changing it would break the cache | yes |
+| Cap | `hot_knowledge_tokens` 2000 | `cold_knowledge_tokens` 3000 |
 
-**Task không "biết" node nào có thông tin nó cần** — nó không chọn gì cả. `cold()` chấm điểm mọi node *nhìn thấy được* dựa trên từ ngữ của chính task, rồi xếp hạng. Không phải grep trên đĩa: là một vòng quét trong bộ nhớ trên `index.json` đã dựng sẵn.
+**A task doesn't "know" which node has the information it needs** — it doesn't choose anything. `cold()` scores every node *it can see* based on the task's own wording, then ranks them. Not a disk grep: it's an in-memory pass over a prebuilt `index.json`.
 
-> ⚠ **Giới hạn phải nói thẳng: đây là khớp TỪ NGỮ, không phải khớp Ý NGHĨA.** Task viết *"bài đăng Facebook"*, node viết *"nội dung mạng xã hội"* → trùng nhau **bằng 0** → node không được chọn. Đây chính là chỗ embedding sẽ có ích, và là chỗ duy nhất. Chưa làm vì chưa đo được là cần.
+> ⚠ **A limitation worth stating plainly: this is a WORD match, not a MEANING match.** A task says *"Facebook post"*, a node says *"social media content"* → overlap of **zero** → the node never gets picked. This is exactly the one place embeddings would help, and the only one. Not built yet because it hasn't been measured as necessary.
 
-#### COLD leo lên thành HOT — có, và đó là vòng tự sửa
+#### COLD climbing into HOT — real, and it's a self-correcting loop
 
-`recordHits` cộng điểm, `hot()` xếp hạng theo `hits`. Node cứ được COLD chọn nhiều lần sẽ leo vào HOT. Không phiêu lưu, vì tín hiệu là **"đã hợp với một việc CÓ THẬT"**, không phải phỏng đoán.
+`recordHits` adds points, `hot()` ranks by `hits`. A node COLD keeps picking will climb into HOT. Not risky, because the signal is **"this has already matched a REAL task,"** not a guess.
 
-> ⚠ **Bug đã sửa — vòng lặp khép kín không tự sửa được.**
-> Bản trước: `recordHits([...hot.ids, ...cold.ids])`. Node HOT được +1 ở **mọi** task chỉ vì nó đang ở trong HOT; `hot()` lại xếp hạng bằng chính `hits`; và `cold()` **loại** node HOT khỏi cuộc thi (`excludeIds: hot.ids`).
-> ⇒ Vào được HOT một lần là ở đó **vĩnh viễn**. Số liệu thật: ba node HOT có `hits` 6/3/2, **mọi** node còn lại đúng bằng 0.
-> Tệ hơn: `hits` mất hết ý nghĩa — nó đo *"anh ở trong HOT bao lâu"*, không đo *"anh có ích không"*. Và vì thế điều kiện `hits === 0` của `pruneStale` cũng vô nghĩa theo.
-> **Sửa: chỉ đếm `cold.ids`.** Giờ `hits` mang đúng một nghĩa: *bộ chọn từ khoá đã thấy node này hợp với một việc có thật bao nhiêu lần*. Vòng tự sửa: COLD leo → chen vào HOT → HOT yếu nhất rơi ra → lại được dự thi COLD.
+> ⚠ **Bug fixed — a closed loop that couldn't self-correct.**
+> The earlier version: `recordHits([...hot.ids, ...cold.ids])`. A HOT node got +1 on **every** task simply for already being in HOT; `hot()` then ranked using that same `hits`; and `cold()` **excluded** HOT nodes from competing at all (`excludeIds: hot.ids`).
+> ⇒ Getting into HOT once meant staying there **forever.** Real numbers: three HOT nodes had `hits` of 6/3/2, and **every** other node sat at zero.
+> Worse: `hits` had lost its meaning entirely — it measured *"how long have you been in HOT"*, not *"are you actually useful."* And so `pruneStale`'s `hits === 0` condition became meaningless too.
+> **Fix: only count `cold.ids`.** Now `hits` carries exactly one meaning: *how many times the keyword selector saw this node match a real task.* The loop self-corrects: COLD climbs → squeezes into HOT → the weakest HOT node falls out → gets to compete in COLD again.
 
-### Chống phình: `supersedes` — squash lúc GHI, không phải lúc ĐỌC
+### Fighting bloat: `supersedes` — squashed at WRITE time, not at READ time
 
-> **Đây là luật quyết định vì sao kho này không cần vector DB.**
+> **This is the decision that determines why this store doesn't need a vector DB.**
 >
-> RAG đẩy vấn đề sang **lúc đọc**: kho phình mãi, rồi retrieve top-k từ một đống hỗn độn — nên nó *buộc* phải có embedding. Nén **lúc ghi** thì kho luôn nhỏ, và việc đọc được phép ngu: chọn bằng code, tất định, **0 token**. Đó đúng là thứ `hot()` đang làm và là lý do nó rẻ.
+> RAG pushes the problem to **read time**: the store grows forever, then top-k retrieval happens over a pile of chaos — which *forces* it to need embeddings. Compressing **at write time** keeps the store permanently small, and reading is allowed to stay dumb: chosen by code, deterministic, **0 tokens.** That's exactly what `hot()` does, and why it's cheap.
 
-`hits` và `updated` chỉ làm node ít dùng **tụt hạng**. Chúng không trả lời được câu quan trọng nhất: *"quyết định này đã bị đảo ngược chưa?"* — một node **sai** mà hay được đọc sẽ đứng đầu bảng mãi mãi.
+`hits` and `updated` only make an unused node **fall in ranking.** They can't answer the most important question: *"has this decision already been overturned?"* — a **wrong** node that still gets read often will stay at the top forever.
 
-`supersedes: [id…]` là mảnh còn thiếu. Bốn tính chất, cả bốn đều có chủ ý:
+`supersedes: [id…]` is the missing piece. Four properties, all deliberate:
 
 | | |
 |---|---|
-| Node bị đè **không bị xoá** | file còn nguyên, đọc lại được để biết vì sao ngày xưa nghĩ thế. Nó chỉ rời khỏi phần nạp vào prompt — cùng tinh thần với Lưu trữ |
-| Quan hệ thuộc về node **MỚI** | xoá node mới đi thì quan hệ tự biến mất và node cũ sống lại; không cần bước dọn dẹp nào |
-| Lọc ở **`visible()`** | một chốt duy nhất, loại khỏi cả HOT lẫn COLD cùng lúc |
-| **Một trường, không phải một đồ thị** | quan hệ duy nhất kho này thật sự dùng là "đè lên". Dựng graph engine cho một quan hệ là mua độ phức tạp trước khi có bài toán |
+| A superseded node is **not deleted** | the file stays intact, still readable to see why the old thinking existed. It only drops out of what gets loaded into the prompt — same spirit as Archive |
+| The relationship belongs to the **NEW** node | delete the new node and the relationship disappears with it, and the old node comes back to life — no cleanup step needed |
+| Filtered at **`visible()`** | one single gate, excluded from both HOT and COLD at once |
+| **One field, not a graph** | the only relationship this store actually needs is "supersedes." Building a graph engine for one relationship is buying complexity before there's a problem for it |
 
-Bốn cơ chế chống phình, xếp theo thứ tự nên dùng: **`supersedes`** (đúng lên) → **`pruneStale`** (dọn rác) → **`pinned`** (không bao giờ tụt) → **Librarian** gộp trùng định kỳ (`librarian.every_n_tasks`).
+Four anti-bloat mechanisms, in the order they should be reached for: **`supersedes`** (correcting) → **`pruneStale`** (cleanup) → **`pinned`** (never demoted) → **Librarian** periodic merge (`librarian.every_n_tasks`).
 
-#### HAI chỉ số, hai việc — cố ý không trộn
+#### TWO metrics, two jobs — deliberately kept separate
 
-| | Dùng để | Tính chất |
+| | Used for | Nature |
 |---|---|---|
-| `hits` | **xếp hạng** vào HOT | cộng dồn, chỉ tăng, thưởng cho ích lâu dài |
-| `last_used` + cửa sổ `prune_after_days` (15) | **khai tử**, kể cả khi `hits > 0` | **không trạng thái**, tính lúc đọc |
+| `hits` | **ranking** into HOT | cumulative, only ever increases, rewards long-term usefulness |
+| `last_used` + a `prune_after_days` (15) window | **expiry**, even when `hits > 0` | **stateless**, computed at read time |
 
-Node 50 hit từ năm ngoái, 15 ngày không ai đụng → **chết**. Node 3 hit, hôm qua vừa dùng → sống, xếp hạng khiêm tốn.
+A node with 50 hits from last year, untouched for 15 days → **dead.** A node with 3 hits, touched yesterday → alive, modestly ranked.
 
-**Vì sao cửa sổ chứ không phải decay:** decay cần một **lịch chạy** — decay lúc nào? mỗi task? mỗi ngày? daemon tắt hai tuần thì sao? Cái lịch đó sẽ trôi. Cửa sổ chỉ cần biết *lần cuối là bao giờ* rồi so với hôm nay **lúc đọc** — daemon tắt bao lâu cũng đúng, không job nền.
+**Why a window, not decay:** decay needs a **running schedule** — decay when? every task? every day? what if the daemon is off for two weeks? That schedule would drift. A window only needs to know *when was it last used*, compared against today **at read time** — works correctly no matter how long the daemon was off, no background job needed.
 
-> Cùng một luật với `supersedes`, chỉ là lật ngược: **squash quyết lúc GHI, decay tính lúc ĐỌC.** Dữ liệu nào bé thì tính lúc đọc; dữ liệu nào lớn thì nén lúc ghi.
+> Same law as `supersedes`, just inverted: **squashing is decided at WRITE time, decay is computed at READ time.** Small data gets computed at read time; large data gets compressed at write time.
 
-Node cũ chưa có `last_used` rơi về `updated` → được ân hạn trọn cửa sổ. Không cần bảng alias.
+An old node with no `last_used` yet falls back to `updated` → gets grace for the full window. No alias table needed.
 
-> ⚠ **`matched` ≠ `ids` — bẫy đã dẫm và đo được.**
-> `cold()` loại node HOT khỏi phần **render** (chúng đã nằm trong prefix rồi). Nếu ghi `last_used` theo danh sách render thì **node trong HOT không bao giờ ghi được gì**.
-> Hậu quả thật: kho 5 node với `hot_knowledge_size: 8` → HOT lấy sạch → COLD render rỗng → không node nào có `last_used` → **15 ngày sau cả kho chết**, kể cả những node đang được nạp vào mọi lượt gọi.
-> Sửa: `cold()` chấm điểm **toàn bộ** node nhìn thấy được, trả về `matched` (hợp việc) tách khỏi `ids` (thật sự render). `recordHits(cold.matched)`.
-> Đo lại: `HOT lấy 2 → COLD render 0 → matched 2 → cả hai ghi được last_used`. Và node HOT **chưa bao giờ** hợp việc nào thì vẫn chết đúng lúc — nó đang ngồi trong prefix của mọi lời gọi mà không đóng góp gì.
+> ⚠ **`matched` ≠ `ids` — a trap that was hit and measured.**
+> `cold()` excludes HOT nodes from the **rendered** set (they're already in the prefix). If `last_used` gets written based on the rendered list, then **a node inside HOT can never get `last_used` written at all.**
+> Real consequence: a 5-node store with `hot_knowledge_size: 8` → HOT takes everything → COLD renders nothing → no node ever gets a `last_used` → **15 days later the entire store dies**, including nodes being fed into every single call.
+> Fix: `cold()` scores **everything** it can see, returns `matched` (relevant to the task) separately from `ids` (actually rendered). `recordHits(cold.matched)`.
+> Re-measured: `HOT takes 2 → COLD renders 0 → matched 2 → both get last_used written.` And a HOT node that has **never** matched anything still correctly dies on schedule — it's been sitting in every single call's prefix contributing nothing.
 
-#### `pruneStale` — và giới hạn của `hits` phải nói thẳng
+#### `pruneStale` — and the limits of `hits`, stated plainly
 
-Mỗi lần nén trí nhớ (`/clear` hoặc tự động), xoá node thoả **TẤT CẢ**: cũ hơn `librarian.prune_after_days` (mặc định 12) **VÀ** `hits === 0` **VÀ** không `pinned` **VÀ** không phải node GHI NHỚ.
+Every memory compaction (`/clear` or automatic), delete a node meeting **ALL** of: older than `librarian.prune_after_days` (default 12) **AND** `hits === 0` **AND** not `pinned` **AND** not a MEMORY node.
 
-> ⚠ **`hits` chỉ đáng tin khi kho ĐÃ LỚN HƠN `hot_knowledge_size`.** Dưới ngưỡng đó, `hot()` lấy *toàn bộ* node mỗi lượt nên `hits` gần như đồng đều — nó không xếp hạng được gì, và lọc theo nó là lọc theo nhiễu.
+> ⚠ **`hits` is only trustworthy once the store is BIGGER than `hot_knowledge_size`.** Below that threshold, `hot()` takes *every* node each time, so `hits` accumulates almost evenly — it isn't ranking anything, and filtering by it is filtering by noise.
 >
-> Đó chính là lý do điều kiện là **VÀ** chứ không phải **HOẶC**: phải vừa **cũ** vừa **chưa từng được dùng**. Ở kho nhỏ, `hits === 0` gần như không bao giờ xảy ra với node còn sống, nên luật này **tự động im lặng** — và đó là hành vi đúng, không phải một khiếm khuyết.
+> That's exactly why the condition is **AND**, not **OR**: it has to be both **old** and **never used.** In a small store, `hits === 0` almost never happens for a node that's still alive, so this rule **stays silent automatically** — which is correct behavior, not a defect.
 
-`supersedes` chỉ xử lý được ca *"quyết định bị đảo ngược"*. Phần lớn rác không bị đảo ngược — nó chỉ **hết liên quan**, và không ai đi tuyên bố điều đó. Hai cơ chế bù cho nhau, không thay nhau.
+`supersedes` only handles the case *"a decision got reversed."* Most junk isn't reversed — it just **stops being relevant**, and nobody ever declares that out loud. The two mechanisms complement each other, they don't substitute for each other.
 
-**Node đã bị đè thì xoá thẳng, không cần chờ đủ tuổi.** Nó đã được thay bằng một node CHỨA nội dung gộp lại; giữ để "tham khảo" chỉ là giữ rác, và người dùng mở ngăn kéo thấy ba bản trông hệt nhau rồi phải tự đoán bản nào còn hiệu lực. An toàn vì `superseded` chỉ được đặt khi node đè **vẫn tồn tại** — nó dựng lại ở mỗi `scan()` từ chính trường `supersedes` của node còn sống.
+**A superseded node is deleted immediately, no age requirement.** It's already been replaced by a node CONTAINING the merged content; keeping it "for reference" is just keeping trash, and the user opens the drawer to see three nearly identical entries and has to guess which one is current. Safe, because `superseded` is only set when the superseding node **still exists** — it gets rebuilt on every `scan()` from the surviving node's own `supersedes` field.
 
-⚠ Việc dọn phải chạy **cả ở đường thoát sớm** (chưa có hội thoại nào để nén). Bản trước `return` thẳng, nên gõ `/clear` lần thứ hai thì không có gì xảy ra — đúng lúc người dùng đang cố dọn thì lệnh dọn im lặng.
+⚠ Cleanup has to run **on the early-exit path too** (no conversation yet to compact). The old version `return`ed immediately, so hitting `/clear` a second time did nothing — exactly the moment the user is trying to clean up, the cleanup command does nothing at all.
 
-### Sửa / xoá ghi chú từ giao diện — tác động 1-1, ngay lập tức
+### Editing/deleting notes from the UI — 1-1 effect, immediate
 
-`PATCH /api/office/:id/knowledge { id, body? , remove? }`. Sửa xong: quét lại kho, dựng lại ngữ cảnh Trợ lý, và **mọi worker phóng SAU đó dùng bản mới**. Worker đang chạy giữ nguyên bản cũ — cùng luật với đổi model.
+`PATCH /api/office/:id/knowledge { id, body? , remove? }`. After editing: rescan the store, rebuild the Assistant's context, and **every worker spawned AFTER that uses the new version.** A running worker keeps the old version — same rule as changing the model.
 
-Trước đây ngăn kéo này **chỉ đọc**, nên muốn sửa một câu sai trong đầu nhân viên thì phải mở đúng file yaml của người đó ra. Người non-code không làm được, và đó cũng là thứ khiến kho tri thức trông như một hộp đen.
+This drawer used to be **read-only**, so fixing one wrong sentence in a worker's head meant opening that person's exact yaml file by hand. A non-coder couldn't do that, and it's also what made the knowledge store feel like a black box.
 
-Node đã bị đè vẫn **hiện trong ngăn kéo, kèm nhãn "đã bị bản mới đè"**. Giấu đi thì người dùng mở thư mục thấy file không có trên giao diện; hiện mà không dán nhãn thì họ thấy ba bản giống hệt nhau và tưởng hệ thống nhân bản rác.
+A superseded node still **shows in the drawer, labeled "superseded by a newer version."** Hiding it means opening the folder shows a file the UI never mentions; showing it without a label makes it look like the system is duplicating garbage.
 
 
 
-### Cấu trúc thư mục (nằm trong thư mục công ty của người dùng)
+### Folder structure (inside the user's company folder)
 
 ```
 company/
-├─ company.yaml            # charter: công ty này làm gì, tông giọng, ràng buộc
-├─ roles/                  # định nghĩa vai trò
-├─ skills/                 # 3 mức mô tả kỹ năng
+├─ company.yaml            # charter: what this company does, tone, constraints
+├─ roles/                  # role definitions
+├─ skills/                 # 3-level skill descriptions
 ├─ knowledge/
-│  ├─ index.json           # runtime tự sinh — index tra cứu 0 token
-│  ├─ shared/              # ← MASTER ghi. Cả công ty đọc.
+│  ├─ index.json           # runtime-generated — a 0-token lookup index
+│  ├─ shared/              # ← written by the MASTER. Read by the whole company.
 │  │  ├─ brand-voice.md
 │  │  └─ audience-profile.md
 │  └─ agents/
-│     ├─ writer/           # ← chính writer ghi. Chỉ writer đọc.
+│     ├─ writer/           # ← written by writer itself. Read only by writer.
 │     │  └─ hook-patterns.md
 │     └─ coder/
-├─ artifacts/              # đầu ra theo task
+├─ artifacts/              # per-task output
 │  └─ T-0007/
-├─ tasks/                  # brief + receipt lưu lại → replay được
-└─ logs/                   # log advanced
+├─ tasks/                  # saved brief + receipt → replayable
+└─ logs/                   # advanced logs
 ```
 
-### Node tri thức
+### A knowledge node
 
 ```markdown
 ---
 id: k/shared/brand-voice
 type: policy          # policy | pitfall | playbook | fact | reference
-title: Giọng thương hiệu
+title: Brand voice
 tags: [content, writing, brand]
 links: [k/shared/audience-profile, k/agents/writer/hook-patterns]
 scope: shared         # shared | role:writer
@@ -529,134 +529,134 @@ author: master        # master | role:writer
 confidence: 0.9
 hits: 42
 pinned: false
-tokens: 180           # runtime đo sẵn — để scheduler tính ngân sách
+tokens: 180           # runtime-measured — used by the scheduler for budgeting
 updated: 2026-08-14
 source: T-0003
 ---
 
-Xưng "mình", gọi khách là "bạn". Không dùng từ hoa mỹ. Mỗi bài
-tối đa một emoji. Không hứa kết quả tuyệt đối.
+Refer to yourself as "we", address the customer as "you". No flowery
+language. At most one emoji per post. Never promise a guaranteed result.
 ```
 
-**Luật cứng: một node ≤ 250 token.** Dài hơn → phải tách. Đây là thứ khiến ngân sách tri thức tính được chính xác thay vì đoán mò, và là lý do prefix cache không phình.
+**Hard rule: one node ≤ 250 tokens.** Longer → must be split. This is what makes the knowledge budget something calculable rather than guessed, and why the prefix cache doesn't bloat.
 
-**Liên kết `[[id]]` trong nội dung** — đúng kiểu wiki, người đọc thấy tự nhiên, máy parse được. Đồ thị = `links` frontmatter + wikilink trong body.
+**`[[id]]` wikilinks in the body** — proper wiki-style, natural for humans to read, parseable for machines. The graph = `links` frontmatter + wikilinks in the body.
 
-### Hai luồng ghi — đúng như bạn muốn
+### Two write streams — exactly as intended
 
-| | Ai ghi | Ai đọc | Khi nào |
+| | Who writes | Who reads | When |
 |---|---|---|---|
-| **shared** | master | tất cả | master rút ra bài học ở tầng công ty (chính sách, hiểu biết về khách, cách phối hợp) |
-| **agents/`<role>`** | chính role đó | chỉ role đó | worker làm sai / tìm ra flow đúng → ghi vào `lessons[]` của receipt |
+| **shared** | master | everyone | the master distills a company-level lesson (policy, an insight about a client, coordination habits) |
+| **agents/`<role>`** | that role itself | only that role | a worker got something wrong / found the right flow → writes to the receipt's `lessons[]` |
 
-### Vì sao lessons phải qua Librarian, không ghi thẳng
+### Why lessons go through the Librarian, not written straight
 
-Nếu mỗi receipt ghi thẳng một node, sau 200 task bạn có 200 node trùng lặp, đồ thị phình, retrieval kém, prefix cache to ra → **chi phí tăng theo thời gian dùng**. Đó là chết chậm.
+If every receipt wrote a node directly, after 200 tasks you'd have 200 duplicate nodes, the graph bloats, retrieval degrades, the prefix cache grows → **cost rises with usage.** That's death by a thousand cuts.
 
-Nên: `lessons[]` vào **hàng đợi** (`knowledge/_inbox/`). Cứ mỗi K task (mặc định 20) hoặc khi rảnh, **Librarian** chạy một lượt bằng model rẻ nhất:
-- gộp trùng, nâng `confidence` nếu lặp lại
-- tách node >250 token
-- hạ `confidence` node lâu không `hits`, archive khi <0.3
-- cập nhật `links` và `index.json`
+So: `lessons[]` go into a **queue** (`knowledge/_inbox/`). Every K tasks (default 20) or whenever idle, the **Librarian** runs one pass on the cheapest model tier:
+- merges duplicates, raises `confidence` on repeats
+- splits any node over 250 tokens
+- lowers `confidence` on nodes long unused, archives below 0.3
+- updates `links` and `index.json`
 
-Đây là một batch job rẻ, không nằm trên đường tới hạn của người dùng.
+This is a cheap batch job, off the user's critical path.
 
-### Truy xuất — **0 token**
+### Retrieval — **0 tokens**
 
-Không dùng embedding ở v1 (thêm API, thêm tiền, thêm phức tạp). Dùng `index.json` + thuật toán deterministic:
+No embeddings in v1 (extra API, extra cost, extra complexity). Uses `index.json` + a deterministic algorithm:
 
-1. Tập ứng viên = `scope: shared` + `scope: role:<role hiện tại>`
-2. Điểm = trùng khớp từ khoá (title/tags/keywords) + 0.3 × độ gần liên kết với node đã dùng ở task cha + 0.1 × log(hits)
-3. Luôn kèm node `pinned: true` (charter công ty, ≤500 token)
-4. Nhồi tham lam đến khi chạm trần `budget.knowledge_pack`
+1. Candidate set = `scope: shared` + `scope: role:<current role>`
+2. Score = keyword overlap (title/tags/keywords) + 0.3 × link proximity to a node used by the parent task + 0.1 × log(hits)
+3. Always includes any `pinned: true` node (the company charter, ≤500 tokens)
+4. Greedy fill until hitting the `budget.knowledge_pack` cap
 
-Embedding local (không qua API) là lựa chọn v2 nếu đo được là keyword không đủ.
+Local (non-API) embeddings are a v2 option if keyword matching is measured to be insufficient.
 
 ---
 
-## 6. Switch center — định tuyến model
+## 6. Switch center — model routing
 
-Bảng thuần code, 0 token, không LLM tham gia.
+A pure-code table, 0 tokens, no LLM involved.
 
-| Tier | Dùng cho | Model |
+| Tier | Used for | Model |
 |---|---|---|
-| `eco` | phân loại, trích xuất, format, gộp trùng, tóm tắt ngắn, librarian | Haiku |
-| `standard` | viết, code, nghiên cứu, phân tích, review | Sonnet |
-| `deep` | lập kế hoạch phức tạp, phân xử xung đột, postmortem | Opus |
+| `eco` | classification, extraction, formatting, dedup, short summaries, librarian | Haiku |
+| `standard` | writing, code, research, analysis, review | Sonnet |
+| `deep` | complex planning, conflict arbitration, postmortems | Opus |
 
-**Master mặc định `standard`**, chỉ nhảy `deep` ở đúng hai loại bước: `plan` (kế hoạch đầu) và `arbitrate` (khi hai receipt mâu thuẫn).
+**Master defaults to `standard`**, only jumping to `deep` for exactly two step types: `plan` (the initial plan) and `arbitrate` (when two receipts conflict).
 
-**Luật leo thang:** task `failed` do chất lượng → chạy lại **một lần** ở tier cao hơn. Tối đa 1 lần leo thang / task. Vượt thì `needs_human`.
+**Escalation rule:** a task `failed` due to quality → retried **once** at a higher tier. Max 1 escalation per task. Beyond that, `needs_human`.
 
-Người dùng override được trong `roles/*.yaml` và `company.yaml`.
+Overridable by the user in `roles/*.yaml` and `company.yaml`.
 
-### ProviderAdapter (chỗ cắm tương lai, v1 không implement)
+### ProviderAdapter (future plug point, not implemented in v1)
 
 ```ts
 interface ProviderAdapter {
   id: string                    // "claude-agent-sdk" | "openrouter" | ...
   run(brief: TaskBrief, ctx: RunContext): AsyncIterable<AgentEvent>
-  supportsPrefixCache: boolean  // false → scheduler tắt cache priming
+  supportsPrefixCache: boolean  // false → scheduler turns off cache priming
 }
 ```
 
-v1 chỉ có `claude-agent-sdk`. Không viết OpenRouter, chỉ chừa interface.
+v1 only has `claude-agent-sdk`. No OpenRouter implementation, just the interface reserved.
 
 ---
 
-## 7. Scheduler — song song
+## 7. Scheduler — running in parallel
 
-Master phát ra DAG. Scheduler chạy nó.
+The master emits a DAG. The scheduler runs it.
 
 ```
 plan = [
   T-01 researcher  deps:[]
-  T-02 researcher  deps:[]          ← T-01, T-02 chạy song song
+  T-02 researcher  deps:[]          ← T-01, T-02 run in parallel
   T-03 writer      deps:[T-01,T-02]
-  T-04 coder       deps:[]          ← song song luôn với T-01/T-02
+  T-04 coder       deps:[]          ← also parallel with T-01/T-02
   T-05 reviewer    deps:[T-03,T-04]
 ]
 ```
 
-Quy tắc:
+Rules:
 
-- **Concurrency cap** mặc định 4, cấu hình được. Có cap riêng cho mỗi tier.
-- **Cache priming gate** — xem `SPEC-token-economy.md` §3. Task đầu tiên của mỗi `(role, version)` chạy một mình để ghi cache; phần còn lại chờ rồi mới bung song song. Không có gate này, N task song song = N lần trả cache-write.
-- **Write lock theo đường dẫn artifact.** Hai task không được cùng ghi một file. Scheduler từ chối DAG vi phạm ngay lúc lập kế hoạch, không đợi runtime nổ.
-- **Rate limit → AIMD.** Gặp 429: backoff mũ + giảm concurrency một nửa; chạy trơn 10 task thì tăng lại 1.
-- **Replay.** Mọi brief+receipt lưu ở `tasks/`. Sửa một task ở giữa → chỉ chạy lại nhánh con của nó, không chạy lại cả DAG. Đây là công cụ tiết kiệm tiền lớn nhất khi người dùng lặp đi lặp lại.
+- **Concurrency cap** defaults to 4, configurable. Separate cap per tier.
+- **Cache priming gate** — see `SPEC-token-economy.md` §3. The first task of each `(role, version)` runs alone to write the cache; the rest wait, then run in parallel. Without this gate, N parallel tasks = N cache-write payments.
+- **Write lock per artifact path.** Two tasks may not write the same file. The scheduler rejects a violating DAG right at planning time, not at runtime.
+- **Rate limit → AIMD.** On 429: exponential backoff + halve concurrency; after 10 clean tasks, increase by 1.
+- **Replay.** Every brief+receipt is saved under `tasks/`. Editing one task in the middle → only its downstream branch reruns, not the whole DAG. This is the single biggest money-saving tool for a user who iterates repeatedly.
 
 ---
 
-## 8. Vòng đời session
+## 8. Session lifecycle
 
 | | Session | Compaction |
 |---|---|---|
-| **Master** | dài, một session cho một "ca làm việc" | khi >60K token: giữ nguyên prefix đóng băng, cuộn các receipt cũ thành một bản tóm tắt, ghi phần bị bỏ ra file `logs/` |
-| **Worker** | ngắn, chết sau mỗi task | không có |
+| **Master** | long, one session per "work session" | at >60K tokens: freeze the prefix as-is, roll old receipts into a summary, write the trimmed-out part to a `logs/` file |
+| **Worker** | short, dies after each task | none |
 
-Compaction của master **tuyệt đối không được chạm vào prefix** (system + tools + charter + pitch các role). Chạm vào là invalidate toàn bộ cache phía sau — đúng trực giác "xoá cache mới, giữ cache thuỷ sinh".
+The master's compaction **must absolutely never touch the prefix** (system + tools + charter + role pitches). Touching it invalidates the entire cache behind it — exactly the intuition of "clear the fresh cache, keep the deep-frozen one" reversed.
 
-Thoát/khởi động lại: master session id lưu ở `company/.state`. Khởi động lại resume được, hoặc bắt đầu ca mới tuỳ người dùng.
+Exit/restart: the master's session id is stored in `company/.state`. On restart, resume works, or start a new session — the user's choice.
 
 ---
 
-## 9. Cầu nối chat (mục tiêu tối thượng)
+## 9. Chat bridge (the ultimate goal)
 
 ```
-Telegram ──long polling──► agentco daemon (máy nhà / VPS) ──► Master
+Telegram ──long polling──► agentco daemon (home machine / VPS) ──► Master
 ```
 
-**Telegram dùng `getUpdates` long-polling → không cần IP public, không cần port forward, không cần domain, không cần VPS.** Chạy được ngay từ máy ở nhà. Đây là bản v1.
+**Telegram uses `getUpdates` long-polling → no public IP needed, no port forwarding, no domain, no VPS.** Runs straight from a home machine. This is the v1 version.
 
-| Kênh | Cần gì | Giai đoạn |
+| Channel | Requires | Phase |
 |---|---|---|
-| Telegram | chỉ bot token | **v1** |
+| Telegram | just a bot token | **v1** |
 | Web UI | localhost | **v1** |
-| Zalo OA / Messenger / WhatsApp | webhook + HTTPS public + duyệt app | v2, gói trả phí |
-| Bất kỳ kênh nào qua tunnel | Cloudflare Tunnel (free) | v2 |
+| Zalo OA / Messenger / WhatsApp | webhook + public HTTPS + app review | v2, paid tier |
+| Any channel via a tunnel | Cloudflare Tunnel (free) | v2 |
 
-Bridge là adapter mỏng:
+The bridge is a thin adapter:
 
 ```ts
 interface ChatBridge {
@@ -666,60 +666,60 @@ interface ChatBridge {
 }
 ```
 
-Quy tắc bảo mật bridge: whitelist `chat_id` bắt buộc. Không whitelist thì bot im lặng. Người lạ nhắn bot = có thể chạy lệnh trên máy bạn — phải chặn mặc định.
+Bridge security rule: `chat_id` whitelisting is mandatory. Without a whitelist, the bot stays silent. A stranger messaging the bot = potential ability to run commands on your machine — must be blocked by default.
 
 ---
 
-## 9b. Hết hạn mức subscription — kịch bản CHẮC CHẮN xảy ra
+## 9b. Running out of subscription usage — a scenario that WILL happen
 
-Spec bản đầu bỏ sót cái này. Khách chạy bằng subscription Claude Code, nên **họ sẽ hết hạn mức giữa chừng** — không phải "nếu", là "khi nào". Với người non-code, đây là lúc sản phẩm dễ mất niềm tin nhất: một công ty đang chạy bỗng đứng im không rõ lý do.
+The first draft of this spec missed this one. Clients run on a Claude Code subscription, so **they will run out of usage mid-run** — it's not "if," it's "when." For a non-coder, this is the moment the product is most likely to lose trust: a company that was running suddenly goes silent for no visible reason.
 
-**Phải phân biệt hai loại lỗi, xử lý ngược nhau:**
+**Two kinds of error need distinguishing, and handled oppositely:**
 
-| | Rate limit (429) | Hết hạn mức subscription |
+| | Rate limit (429) | Subscription usage exhausted |
 |---|---|---|
-| Bản chất | tạm thời, tính bằng giây | đến kỳ reset, tính bằng **giờ** |
-| Xử lý | backoff mũ + AIMD giảm concurrency | **dừng ca làm việc**, không retry |
-| Nói với người dùng | không cần | **bắt buộc**, kèm thời điểm reset nếu biết |
+| Nature | temporary, measured in seconds | until the next reset, measured in **hours** |
+| Handling | exponential backoff + AIMD reducing concurrency | **stop the work session**, no retry |
+| Tell the user | not necessary | **mandatory**, with the reset time if known |
 
-SDK có sẵn `USAGE_LIMIT_ERROR_PREFIXES` và `USAGE_WARNING_PREFIXES` để nhận diện — dùng chúng, đừng tự đoán bằng regex.
+The SDK provides `USAGE_LIMIT_ERROR_PREFIXES` and `USAGE_WARNING_PREFIXES` for detection — use them, don't guess with a regex.
 
-**Hành vi bắt buộc khi hết hạn mức:**
+**Required behavior when usage runs out:**
 
-1. Task đang chạy: để chạy nốt, không giết.
-2. Task chưa bắt đầu: **giữ nguyên trong DAG**, không đánh `failed`.
-3. Ghi toàn bộ trạng thái DAG ra `tasks/` → **`agentco resume` chạy tiếp được**, không làm lại từ đầu.
-4. UI + Telegram báo bằng tiếng người: *"Hết lượt dùng Claude. Công ty tạm nghỉ, còn 3 việc chưa làm. Gõ `tiếp tục` khi có lượt lại."*
-5. **Không tự động retry vòng lặp.** Retry mù khi hết hạn mức chỉ làm người dùng tưởng phần mềm hỏng.
+1. Running task: let it finish, don't kill it.
+2. Not-yet-started task: **keep it in the DAG**, don't mark it `failed`.
+3. Write the entire DAG state to `tasks/` → **`agentco resume` can continue**, no starting over.
+4. UI + Telegram announce it in plain language: *"Out of Claude usage. The company is taking a break, 3 jobs left undone. Type `continue` once usage is back."*
+5. **No automatic retry loop.** Blindly retrying while out of usage just makes the user think the software is broken.
 
-Bắt `USAGE_WARNING_PREFIXES` để cảnh báo **trước** khi hết: *"Sắp hết lượt — còn 2 việc nữa là chạm."* Với người non-code, cảnh báo sớm đáng giá hơn xử lý lỗi đẹp.
-
----
-
-## 10. Kiểm thử — trả lời nỗi lo "TDD có lỗ hổng cả hai không biết"
-
-Bạn nói đúng: unit test cho hệ này không bắt được lớp lỗi nguy hiểm nhất. Lỗi nguy hiểm ở đây **không phải sai logic — là rò rỉ chi phí**, mà rò rỉ chi phí thì test thường không nhìn.
-
-Nên loại test quan trọng nhất là **invariant / budget test**, chạy trên một bộ task mẫu cố định:
-
-```
-✓ receipt_tokens ≤ 800                        (mọi receipt, không ngoại lệ)
-✓ knowledge_pack_tokens ≤ role.budget         (mọi task)
-✓ knowledge node tokens ≤ 250                 (mọi node)
-✓ cache_read / (cache_read+in) ≥ 0.7          (sau task thứ 2 của mỗi role)
-✓ master_context_tokens < 60_000              (trước compaction)
-✓ không transcript worker nào xuất hiện trong messages của master
-✓ cost_per_scenario ≤ ngưỡng đã chốt          (bộ 5 kịch bản mẫu)
-✓ DAG có write-conflict → bị từ chối lúc lập kế hoạch, không lúc chạy
-```
-
-Đây là lưới an toàn thật cho người không phân tích hệ thống được: **bạn không cần hiểu vì sao chi phí tăng, chỉ cần test đỏ khi nó tăng.** Ghim ngưỡng bằng số đo thật ở lần chạy đầu, sau đó mọi thay đổi làm xấu đi sẽ bị chặn.
-
-Bổ sung: mọi thay đổi role/prompt phải chạy lại bộ 5 kịch bản mẫu và in bảng so sánh chi phí trước/sau.
+Catch `USAGE_WARNING_PREFIXES` to warn **before** running out: *"Running low — 2 more jobs and you'll hit the limit."* For a non-coder, an early warning is worth more than a beautifully handled error.
 
 ---
 
-## 11. Cấu trúc mã nguồn
+## 10. Testing — answering the worry "TDD has a blind spot both sides share"
+
+You're right: unit tests for this system don't catch the most dangerous failure class. The danger here **isn't logic bugs — it's cost leaks**, and tests usually don't look there.
+
+So the most important test category is **invariant / budget tests**, run against a fixed sample task set:
+
+```
+✓ receipt_tokens ≤ 800                        (every receipt, no exceptions)
+✓ knowledge_pack_tokens ≤ role.budget         (every task)
+✓ knowledge node tokens ≤ 250                 (every node)
+✓ cache_read / (cache_read+in) ≥ 0.7          (after each role's 2nd task)
+✓ master_context_tokens < 60_000              (before compaction)
+✓ no worker transcript ever appears in the master's messages
+✓ cost_per_scenario ≤ a locked threshold      (a set of 5 sample scenarios)
+✓ a DAG with a write conflict → rejected at planning time, not at runtime
+```
+
+This is a real safety net for someone who can't do systems analysis: **you don't need to understand why cost went up, you just need the test to go red when it does.** Lock the thresholds with real numbers from the first run, and every regression after that gets caught.
+
+Additionally: any role/prompt change must rerun the 5 sample scenarios and print a before/after cost comparison table.
+
+---
+
+## 11. Source structure
 
 ```
 agentco/
@@ -731,25 +731,25 @@ agentco/
 │  ├─ server/         # daemon: HTTP + WS/SSE, local socket
 │  ├─ ui/             # web UI
 │  └─ cli/            # binary `agentco`
-├─ templates/         # company.yaml, roles, skills mẫu
-└─ LICENSE.md         # FSL 1.1, change license Apache-2.0, change date +2 năm
+├─ templates/         # sample company.yaml, roles, skills
+└─ LICENSE.md         # FSL 1.1, change license Apache-2.0, change date +2 years
 ```
 
-Ngôn ngữ: **TypeScript / Node**. Không lệ thuộc native module nặng (để containerize sau dễ).
+Language: **TypeScript / Node.** No heavy native module dependencies (to keep containerization straightforward later).
 
 ---
 
-## 12. Điều đã LOẠI (không mở lại nếu không có lý do mới)
+## 12. Things REJECTED (don't reopen without a new reason)
 
-| Ý | Vì sao loại |
+| Idea | Why rejected |
 |---|---|
-| Session dài cho mỗi worker | mỗi lượt trả lại toàn bộ context; 8 agent × 190K = ~1.5M token/vòng |
-| Agent nói chuyện trực tiếp với nhau | nguồn đốt token lớn nhất, không kiểm soát được |
-| OpenRouter ở v1 | mất prefix cache, thêm bên thứ ba, phá mô hình "chạy bằng sub của khách" |
-| LLM quyết định routing | tốn một call để tiết kiệm một call |
-| Embedding qua API cho retrieval | thêm chi phí thường trực; keyword + graph đủ ở v1 |
-| Bạn tự host compute cho khách | không có tiền, **và gần như chắc chắn vi phạm ToS Anthropic** |
-| Electron/Tauri native ngay từ đầu | phải viết lại toàn bộ khi làm server mode |
-| Một call LLM để "dịch log cho thân thiện" | worker sinh sẵn trường `say`, miễn phí |
-| Gắn MCP thẳng vào session master | issue #247 phá cache master, ~36K token quy đổi dư mỗi lượt. Dùng `concierge` thay thế. |
-| Dùng SDK subagent (`agents`) làm worker | output subagent đi thẳng vào context cha → phá giao thức Receipt. Cache vẫn chung nếu tự viết, nên không mất gì. Vẫn **mượn shape `AgentDefinition`** làm định dạng file role. |
+| A long session per worker | every turn returns the entire context; 8 agents × 190K = ~1.5M tokens/round |
+| Agents talking directly to each other | the single biggest token sink, uncontrollable |
+| OpenRouter in v1 | loses the prefix cache, adds a third party, breaks the "runs on the client's own subscription" model |
+| An LLM deciding routing | spending one call to save one call |
+| Embeddings via API for retrieval | adds a standing cost; keyword + graph is enough for v1 |
+| Hosting compute ourselves for clients | no money for it, **and almost certainly a violation of Anthropic's ToS** |
+| Electron/Tauri native from day one | would need a full rewrite once a server mode ships |
+| An LLM call to "translate the log into something friendly" | the worker already generates a `say` field, for free |
+| Attaching MCP directly to the master session | issue #247 breaks the master's cache, ~36K extra token-equivalents per turn. `concierge` is used instead. |
+| Using the SDK's subagents (`agents`) as workers | a subagent's output flows straight into the parent's context → breaks the Receipt protocol. The cache stays shared anyway if we write it ourselves, so nothing is lost. Still **borrows the `AgentDefinition` shape** as the role file format. |

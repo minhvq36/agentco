@@ -1,53 +1,53 @@
-# SPEC — Canvas: văn phòng dạng node
+# SPEC — Canvas: the office as a node graph
 
-**Trạng thái: ĐÃ CÀI ĐẶT.** Thay thế UI dạng danh sách cũ (`SPEC-ui.md` §2).
+**Status: SHIPPED.** Replaces the old list-based UI (`SPEC-ui.md` §2).
 
-| Phần | Ở đâu |
+| Part | Where |
 |---|---|
-| Đọc/ghi/kiểm tra hình dạng | `src/core/layout.ts` |
-| Thao tác văn phòng (thêm/bớt người, nạp lại) | `src/core/office.ts` |
-| Roster theo cạnh nối | `src/core/assistant.ts` → `setAssignable()` |
+| Read/write/validate the shape | `src/core/layout.ts` |
+| Office operations (add/remove people, reload) | `src/core/office.ts` |
+| Roster from wired edges | `src/core/assistant.ts` → `setAssignable()` |
 | Canvas SVG | `src/server/ui.ts` |
 | API | `src/server/server.ts` |
 
-Đọc kèm `SPEC-2026-08-14-agentco.md` và `SPEC-token-economy.md`.
+Read alongside `SPEC-2026-08-14-agentco.md` and `SPEC-token-economy.md`.
 
 ---
 
-## 1. Vì sao đổi sang canvas
+## 1. Why switch to a canvas
 
-UI hiện tại (danh sách đội ngũ + kế hoạch + log) chạy được nhưng **giấu mất kiến trúc**. Người dùng không thấy công ty của họ có hình dạng gì, không sửa được hình dạng đó, và không mang đi được.
+The current UI (team list + plan + log) works, but it **hides the architecture**. Users can't see the shape of their company, can't edit that shape, and can't take it with them.
 
-Canvas dạng node (kiểu n8n) giải quyết ba thứ cùng lúc:
+A node-based canvas (n8n-style) solves three things at once:
 
-1. **Ràng buộc kiến trúc trở thành nhìn thấy được và bất khả xâm phạm.** Mô hình sao không còn là một dòng trong spec — nó là thứ bạn *không vẽ được* trên canvas.
-2. **Cấu trúc phòng ban thành thứ mang đi được** — lưu, chia sẻ, làm template.
-3. **Xem công ty làm việc theo thời gian thực** — node sáng lên, dây nhấp nháy. Đây là thứ quay video được.
+1. **Architectural constraints become visible and unbreakable.** The star topology stops being one line in a spec — it becomes something you physically *cannot draw* on the canvas.
+2. **The department's structure becomes portable** — saveable, shareable, usable as a template.
+3. **Watch the company work in real time** — nodes light up, wires blink. This is footage that makes for a good video.
 
 ---
 
-## 2. Nguồn sự thật: JSON cho HÌNH DẠNG, không cho NỘI DUNG
+## 2. Source of truth: JSON for SHAPE, not for CONTENT
 
-> **Đây là quyết định quan trọng nhất trong file này. Làm sai là hỏng kiến trúc chi phí.**
+> **This is the single most important decision in this file. Getting it wrong breaks the cost architecture.**
 
 ```
 company/
-├─ layout.json          ← MÁY sở hữu. Vị trí node + cạnh nối. Đổi mỗi lần kéo chuột.
-├─ office.yaml          ← NGƯỜI sở hữu. Tên VP + phần Trợ lý sửa được.
-├─ roles/*.yaml         ← NGƯỜI sở hữu. Định nghĩa nhân viên. ĐI VÀO cacheKey.
-├─ skills/*.md          ← NGƯỜI sở hữu.
-└─ knowledge/**.md      ← cả hai cùng ghi.
+├─ layout.json          ← owned by the MACHINE. Node positions + edges. Changes on every drag.
+├─ office.yaml          ← owned by the PERSON. Office name + the editable Assistant section.
+├─ roles/*.yaml         ← owned by the PERSON. Employee definitions. FEEDS INTO cacheKey.
+├─ skills/*.md          ← owned by the PERSON.
+└─ knowledge/**.md      ← both write here.
 ```
 
-**Vì sao không nhét tất cả vào một file JSON như n8n:**
+**Why not stuff everything into one JSON file like n8n does:**
 
-- `cacheKey` băm **nội dung role**. Nếu toạ độ node nằm chung file với định nghĩa role thì **mỗi cú kéo chuột là một lần vứt cache** của agent đó — trả lại ~20K cache_write cho một thao tác không đổi gì về ngữ nghĩa. Tách file ra thì lỗi này **không thể xảy ra**, không cần kỷ luật gì.
-- Yaml/markdown **sửa tay được**, **git diff đọc được**, mở bằng editor nào cũng được. Một cục JSON thì mất hết — mà "advanced user tự custom" là một trong hai nhóm khách đã chốt.
-- `roles/*.yaml` cố ý mượn hình dạng `AgentDefinition` của Claude Agent SDK. Đổi sang JSON tự chế là vứt lợi thế đó.
+- `cacheKey` hashes **the role's content**. If a node's coordinates lived in the same file as its role definition, **every mouse drag would throw away that agent's cache** — paying back ~20K cache_write for an operation that changes nothing semantically. Split into separate files, that bug **becomes impossible**, without needing any discipline to enforce it.
+- Yaml/markdown can be **hand-edited**, **git-diffed readably**, opened in any editor. A blob of JSON loses all of that — and "the advanced user who customizes things themselves" is one of the two customer segments we've committed to.
+- `roles/*.yaml` deliberately borrows the shape of the Claude Agent SDK's `AgentDefinition`. Switching to a homegrown JSON format throws that advantage away.
 
-`layout.json` là **view state thuần**. Xoá nó đi thì công ty vẫn chạy y nguyên, chỉ mất bố cục (canvas tự sắp lại). Đó là phép thử để biết ranh giới đã đặt đúng.
+`layout.json` is **pure view state**. Delete it and the company still runs exactly the same, it just loses its layout (the canvas re-arranges itself). That's the litmus test for whether the boundary is drawn in the right place.
 
-### Hình dạng `layout.json`
+### Shape of `layout.json`
 
 ```json
 {
@@ -67,203 +67,203 @@ company/
 }
 ```
 
-Node `role` trỏ tới file trong `roles/`. Thiếu file → node hiện đỏ "không tìm thấy vai trò". Có file mà thiếu node → canvas tự thêm node ở chỗ trống (tự phục hồi khi người dùng thả file yaml vào tay).
+The `role` field on a node points at a file under `roles/`. Missing file → node shows red, "role not found." File exists but no node → the canvas adds one in an open spot automatically (self-heals when a user drops a yaml file into the folder by hand).
 
-#### ⚠ "Chỗ trống" phải là chỗ trống THẬT — bug đã dẫm
+#### ⚠ "Open spot" has to be a REAL open spot — a bug we already hit
 
-Bản trước cấp ô bằng `agentSlot(i)` với `i` = **thứ tự alphabet** của vai trò, không kiểm ô đó đã có ai ngồi chưa. Node đã có thì giữ toạ độ đã lưu; node mới thì lấy ô thứ `i`. Thêm một nhân viên tên sắp xếp **trước** người cũ ⇒ nó rơi **đúng lên trên** người cũ.
+The earlier build assigned slots with `agentSlot(i)`, where `i` was the role's **alphabetical position**, without checking whether that slot was already occupied. An existing node kept its saved coordinates; a new node got slot `i`. Adding an employee whose name sorted **before** an existing one meant it landed **exactly on top of** that existing employee.
 
-Người dùng thấy: *"bấm Thêm nhân viên mà không có gì xảy ra"*, rồi bấm **Sắp xếp lại sơ đồ** thì nó hiện ra (vì `arrange()` rải lại toàn bộ). Trông y hệt lỗi mạng ngẫu nhiên — **thực ra tất định 100%**: tên sắp xếp sau mọi tên cũ → ô trống → thấy; trước hoặc giữa → đè lên → không thấy.
+What the user saw: *"I clicked Add Employee and nothing happened,"* then clicking **Rearrange Layout** made it appear (because `arrange()` re-lays out everything from scratch). It looked exactly like a random network glitch — **it was actually 100% deterministic**: a name sorting after all existing names → an empty slot → visible; sorting before or in the middle → overlap → invisible.
 
-Luật thay thế, và **cả hai nửa đều bắt buộc**:
+The replacement rule, and **both halves are mandatory**:
 
-1. **Kiểm va chạm bằng hình chữ nhật thật** (kèm khoảng đệm), không bằng "toạ độ có bằng nhau không" — người dùng kéo node đi đâu tuỳ ý, hai node lệch 10px vẫn là chồng nhau với con mắt. Kiểm với **mọi** loại node, kể cả kho tri thức.
-2. **HAI LƯỢT.** Đặt xong mọi node **đã có toạ độ** rồi mới cấp ô cho node mới. Đây là nửa dễ làm sai: duyệt một lượt theo alphabet thì node mới tên `ai-do` được cấp ô **trước khi** `nguoi-viet` kịp vào danh sách, và ta lại kiểm va chạm với một danh sách còn rỗng — sửa xong mà vẫn chồng đúng như cũ. *(Đã dẫm đúng bẫy này một lần.)*
+1. **Check collisions with an actual rectangle** (padded), not "are the coordinates equal" — users drag nodes anywhere they like, and two nodes 10px apart still look overlapped to the eye. Check against **every** node type, including the knowledge store.
+2. **TWO PASSES.** Place every node that **already has coordinates** first, then assign slots to new nodes. This is the half that's easy to get wrong: iterate alphabetically in a single pass and a new node named `ai-do` gets its slot **before** `nguoi-viet` has even made it onto the list, so the collision check runs against a still-empty list — the fix looks applied but the overlap happens exactly as before. *(We walked into this exact trap once.)*
 
-Kèm theo: `addAgent` phải **ghi vị trí xuống đĩa**. Bản cũ gọi `connectAssistant`, mà hàm đó `return` sớm khi cạnh đã tồn tại — và cạnh **luôn** tồn tại khi chưa có `layout.json` (lúc đó `read()` tự sinh cạnh cho mọi vai trò). Kết quả: toạ độ vừa tính không bao giờ được lưu.
+Also: `addAgent` must **persist the position to disk**. The old code called `connectAssistant`, which `return`s early when the edge already exists — and the edge **always** exists when there's no `layout.json` yet (in that case, `read()` auto-generates an edge for every role). Result: the coordinates just computed were never saved.
 
-#### ⚠⚠ "Ô trống" chưa đủ — nó còn phải là ô ĐÚNG CHỖ (20/08)
+#### ⚠⚠ "An open slot" isn't enough — it also has to be the RIGHT slot (08/20)
 
-Sửa xong bug trên thì node mới không đè ai nữa. Nhưng người dùng quay lại với triệu chứng thứ hai:
+Once that bug was fixed, new nodes stopped overlapping anyone. But a second symptom came back from the user:
 
-> *"Nhân viên số 3 tự lệch phải so với assistant (3 nhân viên về 1 phía) thay vì cân bằng đều so với trợ lý — phải bấm Sắp xếp lại thì nó mới đều."*
+> *"Employee #3 drifts to the right of the assistant (3 employees clustered on one side) instead of balancing evenly around it — I have to click Rearrange to get it centered."*
 
-**Cùng một lớp lỗi, khác một bậc:** node mới được cấp ô mà **không nhìn sơ đồ đang có hình gì**. Lần trước cái bị bỏ qua là *"ô đó có ai ngồi chưa"*; lần này là *"hàng này đang cân quanh cái gì"*.
+**Same class of bug, one level deeper:** a new node gets assigned a slot **without looking at what the layout currently looks like**. Last time, the thing being ignored was *"is this slot already occupied?"*; this time it's *"what is this row currently balanced around?"*
 
-Gốc rễ nằm ở chỗ hai hàm trả lời hai câu hỏi khác nhau và ta dùng nhầm:
+The root cause: two functions answer two different questions, and we were using the wrong one:
 
 | | |
 |---|---|
-| `arrangeAll` | *"cả sơ đồ nên trông thế nào?"* — căn Trợ lý theo **SỐ** nhân viên. Chỉ chạy khi bấm **Sắp xếp lại** hoặc văn phòng chưa có `layout.json` |
-| `firstFreeSlot` | *"người mới ngồi đâu?"* — mà nó đếm **từ trái sang**, nên người thứ ba rơi vào ô thứ ba |
+| `arrangeAll` | *"what should the whole layout look like?"* — centers the Assistant based on the **TOTAL COUNT** of employees. Only runs on **Rearrange** or when the office has no `layout.json` yet |
+| `firstFreeSlot` | *"where does the new person sit?"* — and it counts **left to right**, so the third person lands in the third slot |
 
-Trợ lý thì **đứng yên** suốt quá trình thêm người. Hàng nhân viên mọc sang phải còn trục thì không nhúc nhích ⇒ sơ đồ nghiêng dần, và người dùng phải bấm Sắp xếp lại mới thấy cân.
+The Assistant node **doesn't move** while people are being added. The row of employees grows to the right while the axis stays put ⇒ the layout drifts increasingly off-center, and only clicking Rearrange fixes it.
 
-> **Một thao tác dọn dẹp của hệ thống không được nằm ở tay người dùng.** Nếu có một nút bấm xong thì mọi thứ đúng, thì thứ nút đó làm chính là thứ lẽ ra phải xảy ra sẵn.
+> **A cleanup step the system knows how to do shouldn't be left to the user's hand.** If there's a button that fixes everything when pressed, then whatever that button does is what should have happened automatically in the first place.
 
-**Luật thay thế — `centeredSlot(i, centerX)`:** ô mới mọc **toả ra hai bên** một trục, và trục đó là **tâm node Trợ lý đang nằm ở đâu thật**, không phải chỗ `arrangeAll` nghĩ nó nên nằm.
+**The replacement rule — `centeredSlot(i, centerX)`:** new slots grow **outward from both sides** of an axis, and that axis is **wherever the Assistant node's center actually sits right now**, not wherever `arrangeAll` thinks it should be.
 
-| Người | Lệch cột | Vì sao |
+| Person | Column offset | Why |
 |---|---|---|
-| 1 | `0` | thẳng dưới Trợ lý |
-| 2 | `+1` | số chẵn thì không cân được — đây là lựa chọn bắt buộc, và người dùng cũng gọi nó là hợp lý |
-| 3 | `−1` | hàng ba người cân trở lại quanh Trợ lý |
-| 4 | `+2` | rồi **xuống hàng**, vẫn `PER_ROW` cột mỗi hàng nên sơ đồ không nở ngang vô hạn |
+| 1 | `0` | directly below the Assistant |
+| 2 | `+1` | an even count can't be perfectly centered — this is a forced choice, and the user also called it reasonable |
+| 3 | `−1` | the row of three re-centers around the Assistant |
+| 4 | `+2` | then **wraps to a new row**, still `PER_ROW` columns per row so the layout doesn't grow horizontally forever |
 
-> ⚠ **Vẫn phải BÁM ĐÚNG LƯỚI của `agentSlot`** — `centerX` được làm tròn về chỉ số cột trước khi cộng độ lệch. Không làm thế thì ở ca số nhân viên **chẵn** (trục nằm giữa hai cột) mọi ô mới lệch **nửa cột** và chồng một nửa lên người cũ. Đó là bug 16/08 quay lại qua một cửa khác — và **tệ hơn hẳn** lỗi lệch phải mà ta đang đi sửa.
+> ⚠ **This still has to STAY ON THE SAME GRID as `agentSlot`** — `centerX` gets rounded to a column index before the offset is added. Skip that, and on shifts with an **even** number of employees (where the axis falls between two columns) every new slot ends up **half a column** off and half-overlaps the previous person. That's the 08/16 bug coming back through a different door — and **noticeably worse** than the rightward drift we were fixing.
 
-Hai hàm dùng **chung một lưới**, nên trộn lẫn (một phần node đặt bằng `arrangeAll`, phần sau bằng `centeredSlot`) cũng không đẻ ra node lệch. `firstFreeSlot` vẫn là cửa duy nhất, chỉ nhận thêm tham số `centerX`; thiếu trục thì rơi về đếm-từ-trái như cũ.
+The two functions use **the same grid**, so mixing them (some nodes placed by `arrangeAll`, later ones by `centeredSlot`) doesn't produce misaligned nodes either. `firstFreeSlot` remains the single entry point, just takes an extra `centerX` parameter; without an axis it falls back to counting left-to-right as before.
 
-### Sửa lúc cài đặt: cạnh `mcp → agent` KHÔNG nằm trong layout.json
+### Fixed during implementation: the `mcp → agent` edge does NOT live in layout.json
 
-Bản thiết kế ban đầu để nó ở đây. Sai — vì chính lập luận của §2: "agent này dùng được tool nào" là **NỘI DUNG**, không phải hình dạng. Nó đã có nhà rồi: `mcp:` trong `roles/<id>.yaml`.
+The original design put it here. Wrong — by §2's own argument: "which tools can this agent use" is **CONTENT**, not shape. It already has a home: `mcp:` in `roles/<id>.yaml`.
 
-Để ở cả hai nơi = hai nguồn sự thật = sớm muộn cũng lệch. Nên:
+Living in both places = two sources of truth = eventually drifting apart. So:
 
-- **đọc**: `GET /api/office/:id/canvas` dựng lại cạnh `mcp→agent` từ `roles/*.yaml` để canvas vẽ đúng
-- **ghi**: kéo/ngắt dây đó ghi thẳng vào `roles/<id>.yaml` (dùng `parseDocument` để **giữ nguyên chú thích** người dùng viết; diff đúng hai dòng)
-- `writeRaw()` là chốt chặn duy nhất ghi ra đĩa và nó **lọc bỏ** loại cạnh này, nên không có đường nào để nó lọt vào layout.json dù caller quên
+- **read**: `GET /api/office/:id/canvas` reconstructs the `mcp→agent` edge from `roles/*.yaml` so the canvas draws it correctly
+- **write**: dragging/removing that wire writes straight to `roles/<id>.yaml` (using `parseDocument` to **preserve the user's comments**; a clean two-line diff)
+- `writeRaw()` is the single choke point that writes to disk, and it **filters out** this edge type, so there's no path for it to leak into layout.json even if a caller forgets
 
-Cạnh `mcp → assistant` thì vẫn ở office.yaml (`assistant.mcp`) — cùng lý do — vì chưa có `concierge`, nó chưa tương ứng với nội dung nào cả.
+The `mcp → assistant` edge still lives in office.yaml (`assistant.mcp`) — same reasoning — because without `concierge` yet, it doesn't correspond to any content at all.
 
-### Sửa lúc cài đặt: `tools`/`mcp` phải đi vào `cacheKey`
+### Fixed during implementation: `tools`/`mcp` have to feed into `cacheKey`
 
-Phát sinh trực tiếp từ việc cho cắm MCP bằng chuột. Định nghĩa tool **không** nằm trong systemPrompt, nhưng nó đứng **trước** system prompt trong prefix mà Anthropic đánh cache → đổi tool là đổi prefix.
+A direct consequence of letting people wire up MCP with the mouse. The tool definition is **not** part of the systemPrompt, but it sits **before** the system prompt in the prefix that Anthropic caches → changing a tool changes the prefix.
 
-Đây đúng là con bug đã sửa cho `model` ở phiên trước: thiếu nó thì cache priming gate tưởng cache ấm trong khi chưa, rồi ta trả `cache_write` mà cứ nghĩ đang tiết kiệm. Đã thêm vào `prompt.ts`.
-
----
-
-## 3. Cạnh nối phải CÓ NGHĨA
-
-Nếu Trợ lý luôn nối tới mọi agent thì cạnh nối chỉ là trang trí. Cho nó nghĩa thật:
-
-> **Cạnh `assistant → agent` = "Trợ lý được phép giao việc cho người này".**
-
-Và nó **điều khiển trực tiếp chi phí**: chỉ agent có nối mới được đưa `pitch` vào ngữ cảnh của Trợ lý (`assistant.ts` → `roster()`). Ngắt dây = agent vẫn còn đó, vẫn giữ sổ tay kinh nghiệm riêng, nhưng Trợ lý không thấy nữa.
-
-→ **Kéo một sợi dây là một hành động có hậu quả đo được.** Đây là thứ khiến canvas hơn hẳn một danh sách có checkbox.
-
-Trên node agent bị ngắt: làm mờ, ghi "đang nghỉ".
+This is exactly the bug already fixed for `model` in the prior session: without this, the cache priming gate thinks the cache is warm when it isn't, and we pay `cache_write` while believing we're saving money. Added to `prompt.ts`.
 
 ---
 
-## 4. Bốn loại node
+## 3. Edges have to MEAN something
 
-| Loại | Số lượng | Xoá được? | Nối ra được? | Nhận nối từ |
+If the Assistant is always wired to every agent, the edge is just decoration. Give it real meaning:
+
+> **The `assistant → agent` edge = "the Assistant is allowed to hand this person work."**
+
+And it **directly controls cost**: only an agent that's wired in gets its `pitch` included in the Assistant's context (`assistant.ts` → `roster()`). Cutting the wire = the agent still exists, still keeps its own notebook of experience, but the Assistant no longer sees it.
+
+→ **Dragging a wire is an action with a measurable consequence.** This is what makes the canvas more than a checkbox list.
+
+On a disconnected agent node: dim it, label it "resting."
+
+---
+
+## 4. Four node types
+
+| Type | Count | Deletable? | Can connect out to? | Accepts connections from |
 |---|---|---|---|---|
-| **assistant** | đúng 1, tự có khi tạo văn phòng | ❌ | → agent | mcp |
-| **agent** | 0..n | ✅ | ❌ **không gì cả** | assistant, mcp |
-| **knowledge** | đúng 1, tự có | ❌ | không có dây | không có dây |
+| **assistant** | exactly 1, auto-created with the office | ❌ | → agent | mcp |
+| **agent** | 0..n | ✅ | ❌ **nothing at all** | assistant, mcp |
+| **knowledge** | exactly 1, auto-created | ❌ | no wires | no wires |
 | **mcp** | 0..n | ✅ | → assistant, → agent | — |
 
 ### assistant
 
-Không xoá được: không có Trợ lý thì không ai lập kế hoạch. Hiện: tên, tier model, số người đang trực, và `📒 n` = sổ tay riêng của chính Trợ lý.
+Cannot be deleted: without an Assistant, nobody plans anything. Displays: name, model tier, number of people currently on duty, and `📒 n` = the Assistant's own private notebook.
 
-Click vào nó mở được **prompt phân lớp** — lớp core chỉ đọc nhưng luôn xem được, skills sửa được. → `SPEC-offices.md` §4.1
+Clicking it opens the **tiered prompt** — the core layer is read-only but always viewable, skills are editable. → `SPEC-offices.md` §4.1
 
-### agent — KHÔNG được nối sang agent khác
+### agent — CANNOT connect to another agent
 
-Canvas phải làm cho việc này **bất khả thi về mặt vật lý**, không phải báo lỗi sau khi vẽ xong. Kéo từ agent ra thì không có cổng ra nào để bám vào.
+The canvas has to make this **physically impossible**, not flag an error after the fact. Drag from an agent, and there's no output port to grab onto.
 
-Lý do là kinh tế, không phải thẩm mỹ: agent nói chuyện trực tiếp với nhau là **nguồn đốt token lớn nhất** trong mọi hệ multi-agent và không kiểm soát được. Mọi trao đổi đi qua Trợ lý hoặc qua artifact.
+The reason is economic, not aesthetic: agents talking directly to each other is **the single biggest token drain** in every multi-agent system, and it's uncontrollable. Every exchange has to route through the Assistant or through an artifact.
 
-Trên node agent hiện: avatar, tên, tier, và **`📒 n`** = số ghi chú trong sổ tay riêng của nó.
+An agent node displays: avatar, name, tier, and **`📒 n`** = the number of notes in its own private notebook.
 
-### knowledge — không có dây, cố ý
+### knowledge — no wires, deliberately
 
-Kho chung ở giữa canvas. **Không vẽ dây tới ai cả** — nó là môi trường, không phải quan hệ. Ai cũng tới được, giống cái kệ tài liệu giữa văn phòng.
+The shared store sits in the middle of the canvas. **No wire is drawn to anyone** — it's an environment, not a relationship. Everyone can reach it, like a shelf of documents in the middle of the office.
 
-Nhưng phải thể hiện được **hai loại tri thức** mà hệ thống đã có:
+But it has to represent the **two kinds of knowledge** the system already has:
 
-- **node knowledge ở giữa** = `knowledge/shared/` — Trợ lý ghi, cả văn phòng đọc
-- **`📒 n` trên từng node agent** = `knowledge/agents/<role>/` — chính agent đó ghi khi làm sai hoặc tìm ra cách đúng, **chỉ nó đọc**
+- **the knowledge node in the middle** = `knowledge/shared/` — the Assistant writes, the whole office reads
+- **`📒 n` on each agent node** = `knowledge/agents/<role>/` — that agent writes it when it makes a mistake or figures out the right approach, **only it reads it**
 
-Click node knowledge → mở ngăn kéo tri thức (đã có ở `SPEC-ui.md` §4).
+Clicking the knowledge node → opens the knowledge drawer (already built, `SPEC-ui.md` §4).
 
 ### mcp
 
-Nối vào **agent** → agent đó được dùng MCP đó.
+Connecting to an **agent** → that agent can use that MCP.
 
-Nối vào **Trợ lý** → thực chất gắn cho `concierge` (worker one-shot chạy ngầm), **không** gắn thẳng vào session Trợ lý. Trợ lý resume liên tục, mà MCP phá prompt cache khi resume ([#247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247)) → mất ~36 000 token quy đổi **mỗi lượt trò chuyện**.
+Connecting to the **Assistant** → actually attaches to `concierge` (a one-shot worker running in the background), **not** directly to the Assistant's session. The Assistant resumes constantly, and MCP breaks prompt cache on resume ([#247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247)) → losing ~36,000 effective tokens **per turn of conversation**.
 
-Từ góc nhìn người dùng, "Trợ lý dùng được tool này" là **đúng** — nên không cần giải thích cơ chế trên UI. Chỉ cần một dòng tooltip: *"việc vặt Trợ lý tự xử lý"*.
-
----
-
-## 5. Canvas cũng là màn hình chạy
-
-Đây là chỗ canvas thắng hẳn danh sách. Khi công ty làm việc:
-
-- **Node agent sáng lên** khi nó nhận task, kèm câu `say` ngay dưới tên (*"đang đọc gioi_thieu.md"*)
-- **Dây Trợ lý→agent nhấp nháy** trong lúc task chạy
-- **Node xám lại** khi xong, hiện dấu ✓ thoáng qua
-- Node lỗi → viền đỏ + câu `say` giải thích
-
-Không cần sự kiện SSE mới — dùng đúng bộ đã có (`task.started` / `task.progress` / `task.done` / `task.blocked`), chỉ đổi chỗ hiển thị.
-
-**Thanh dưới giữ nguyên những gì UI hiện tại đang làm tốt:** các bước kế hoạch, ô chat với giám đốc, chi phí, ngăn kéo nhật ký. Không mất gì.
+From the user's point of view, "the Assistant can use this tool" is **correct** — so there's no need to explain the mechanism in the UI. Just a one-line tooltip: *"the Assistant handles small errands itself."*
 
 ---
 
-## 6. Template và chia sẻ — đã có sẵn, chỉ cần lộ ra
+## 5. The canvas doubles as the live-run screen
 
-`company/` **vốn đã** là một phòng ban tự chứa đầy đủ. Nghĩa là ba tính năng này gần như không tốn gì để làm:
+This is where the canvas clearly beats a list. While the company is working:
 
-| Việc | Cách làm |
+- **The agent node lights up** when it receives a task, with the `say` line right under its name (*"reading gioi_thieu.md"*)
+- **The Assistant→agent wire blinks** while the task is running
+- **The node grays out** when finished, briefly flashing a ✓
+- An errored node → red border + a `say` line explaining it
+
+No new SSE events needed — reuses the existing set (`task.started` / `task.progress` / `task.done` / `task.blocked`), just changes where it's displayed.
+
+**The bottom bar keeps everything the current UI already does well:** plan steps, the chat box with the director, cost, the log drawer. Nothing is lost.
+
+---
+
+## 6. Templates and sharing — already there, just needs to surface
+
+`company/` is **already** a fully self-contained department. Which means these three features cost almost nothing to build:
+
+| Feature | How |
 |---|---|
-| Lưu cấu trúc | chính là thư mục đó, không cần làm gì |
-| Template | `agentco init --template <tên>` = copy thư mục |
-| Chia sẻ / reverse | gửi thư mục, hoặc push lên git |
+| Save the structure | it's just that directory, nothing to build |
+| Templates | `agentco init --template <name>` = copy the directory |
+| Sharing / reversing | send the directory, or push it to git |
 
-Cái duy nhất phải cẩn thận khi xuất template: **không mang theo `.state/`** (session, secrets) và **không mang theo `artifacts/`** (kết quả cụ thể của người khác). Mang theo: `company.yaml`, `layout.json`, `roles/`, `skills/`, `knowledge/shared/`.
+The one thing to be careful about when exporting a template: **don't include `.state/`** (session, secrets) and **don't include `artifacts/`** (someone else's specific results). Do include: `company.yaml`, `layout.json`, `roles/`, `skills/`, `knowledge/shared/`.
 
-Có mang theo `knowledge/agents/` không? **Có, nên mang** — đó chính là phần "kinh nghiệm đã tôi luyện" khiến một template đáng giá hơn một thư mục rỗng, và là chỗ chi phí chuyển đổi hình thành.
+Should `knowledge/agents/` be included? **Yes, it should be** — that's exactly the "hard-won experience" that makes a template worth more than an empty folder, and it's where switching-cost value forms.
 
 ---
 
-## 7. Kỹ thuật
+## 7. Implementation
 
-- **SVG + vanilla JS**, không thư viện canvas. Giữ ràng buộc "không build step" của `SPEC-ui.md` §5. Ước chừng 400–600 dòng.
-- Kéo node: cập nhật toạ độ trong bộ nhớ, **debounce ~800ms** rồi mới `PUT /api/layout`. Đừng ghi mỗi frame.
-- Dây: đường Bézier từ cổng dưới của node nguồn tới cổng trên node đích.
-- Tự sắp xếp lần đầu: Trợ lý trên cùng, agent dàn hàng ngang bên dưới, knowledge ở giữa dưới cùng.
-- Canvas **không tự sinh** thứ gì ngoài `layout.json`. Thêm agent trên canvas → ghi `roles/<id>.yaml` từ template; xoá agent → hỏi có xoá luôn file yaml không (mặc định **giữ lại**, chỉ bỏ khỏi layout).
+- **SVG + vanilla JS**, no canvas library. Keeps the "no build step" constraint from `SPEC-ui.md` §5. Roughly 400–600 lines.
+- Dragging a node: update the coordinates in memory, **debounce ~800ms**, then `PUT /api/layout`. Don't write on every frame.
+- Wires: a Bezier curve from the source node's bottom port to the destination node's top port.
+- First-time auto-layout: Assistant on top, agents arranged in a row below, knowledge centered at the bottom.
+- The canvas **auto-generates nothing** other than `layout.json`. Adding an agent on the canvas → writes `roles/<id>.yaml` from a template; deleting an agent → asks whether to also delete the yaml file (default is to **keep it**, only removing it from the layout).
 
-### API mới
+### New API
 
 ```
-GET  /api/layout          → hình dạng + metadata để vẽ (KHÔNG tự ghi file)
-PUT  /api/layout          → ghi đè (debounced 800ms từ client)
-POST /api/agent           → tạo roles/<id>.yaml + nối dây từ Trợ lý
-DELETE /api/agent/:id     → ?keepFile=true|false (mặc định GIỮ file)
-GET  /api/knowledge       → duyệt kho cho ngăn kéo tri thức (0 token)
+GET  /api/layout          → shape + metadata to draw with (does NOT write a file)
+PUT  /api/layout          → overwrite (debounced 800ms client-side)
+POST /api/agent           → creates roles/<id>.yaml + wires it from the Assistant
+DELETE /api/agent/:id     → ?keepFile=true|false (defaults to KEEPING the file)
+GET  /api/knowledge       → browse the store for the knowledge drawer (0 tokens)
 ```
 
-### Luật nối dây thi hành ở SERVER, không chỉ ở canvas
+### The wiring rule is enforced on the SERVER, not just on the canvas
 
-Canvas làm cho agent→agent **bất khả thi về mặt vật lý** (node agent không có cổng ra — đã kiểm: `out: 0`). Nhưng UI là client, ai cũng `PUT` thẳng được. Luật kinh tế phải nằm ở `sanitizeEdges()` mới thật sự là luật. Đã kiểm bằng `PUT` trực tiếp: cạnh agent→agent, agent→assistant, assistant→knowledge đều bị loại âm thầm, chỉ cạnh hợp lệ được ghi.
+The canvas makes agent→agent **physically impossible** (an agent node has no output port — verified: `out: 0`). But the UI is a client, and anyone can `PUT` directly. For the economic rule to actually be a rule, it has to live in `sanitizeEdges()`. Verified with a direct `PUT`: agent→agent, agent→assistant, assistant→knowledge edges all get silently dropped, only valid edges get written.
 
-`POST /api/agent` nhận tên do người dùng gõ và dùng nó làm **tên file** → id phải qua `slugRoleId` + `isSafeRoleId` (`^[a-z0-9][a-z0-9_-]{0,39}$`).
+`POST /api/agent` takes a user-typed name and uses it as a **filename** → the id has to pass through `slugRoleId` + `isSafeRoleId` (`^[a-z0-9][a-z0-9_-]{0,39}$`).
 
-### Ba chốt chặn phải có vì canvas thêm endpoint ghi
+### Three safeguards are mandatory because the canvas adds write endpoints
 
-Daemon bind `127.0.0.1` **không** có nghĩa là chỉ mình bạn gọi được nó: mọi trang web bạn đang mở đều `POST` được vào `localhost`.
+The daemon binding to `127.0.0.1` does **not** mean only you can call it: any web page open in your browser can `POST` to `localhost`.
 
-| Chốt | Chặn gì |
+| Safeguard | Blocks what |
 |---|---|
-| `Sec-Fetch-Site` / `Origin` trên mọi method ghi | trang lạ giao việc đốt token, xoá nhân viên, ngắt sạch dây |
-| `Host` phải là localhost/host đã bind | DNS rebinding (tên miền của kẻ tấn công trỏ về 127.0.0.1) |
-| `ArtifactStore.resolve` nhốt trong `artifacts/`, chặn segment bắt đầu bằng `.`, và so lại bằng đường dẫn ĐÃ GIẢI | `?path=.state/assistant-session.json` — `safeJoin` cho qua vì `.state/` nằm **bên trong** thư mục công ty; và `?path=office.yaml`, `roles/*.yaml` — hàm cũ `readArtifact` cho qua hết vì nó chỉ chặn dấu chấm. → `SPEC-artifacts.md` §6 |
+| `Sec-Fetch-Site` / `Origin` on every write method | a rogue page assigning tasks that burn tokens, deleting employees, cutting every wire |
+| `Host` must be localhost/the bound host | DNS rebinding (an attacker's domain resolving to 127.0.0.1) |
+| `ArtifactStore.resolve` is jailed to `artifacts/`, blocks segments starting with `.`, and compares against the RESOLVED path | `?path=.state/assistant-session.json` — `safeJoin` let this through because `.state/` sits **inside** the company directory; and `?path=office.yaml`, `roles/*.yaml` — the old `readArtifact` let all of these through because it only blocked leading dots. → `SPEC-artifacts.md` §6 |
 
-CLI và Telegram bridge không gửi `Origin`/`Sec-Fetch-Site` nên không bị ảnh hưởng — đã kiểm bằng `agentco stop`.
+The CLI and the Telegram bridge don't send `Origin`/`Sec-Fetch-Site`, so they're unaffected — verified with `agentco stop`.
 
 ---
 
-## 8. Ngoài phạm vi
+## 8. Out of scope
 
-- **Liên văn phòng** (Trợ lý nói chuyện với Trợ lý). Đây là quay lại đúng bài toán agent-to-agent mà kiến trúc cố tránh — cần thiết kế riêng, không phải mở rộng canvas. Ghi vào roadmap M3+.
-- Nhiều Trợ lý trong một văn phòng
-- Vẽ nhân vật / hoạt hoạ nhân vật — **cố ý không làm**. Node là đủ, và rẻ hơn nhiều.
-- Sửa nội dung tri thức bằng kéo thả node
+- **Cross-office** (Assistant talking to Assistant). This is exactly the agent-to-agent problem the architecture is designed to avoid — it needs its own design, not a canvas extension. Logged in the roadmap for M3+.
+- Multiple Assistants in one office
+- Drawing characters / character animation — **deliberately not doing this**. Nodes are enough, and far cheaper.
+- Editing knowledge content by dragging nodes

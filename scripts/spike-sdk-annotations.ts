@@ -1,25 +1,27 @@
 /**
- * SDK ĐƯA CHO TA CÁI GÌ — so với thứ server THẬT SỰ khai.
+ * WHAT THE SDK HANDS US — compared to what the REAL server actually declares.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `spike-notion-annotations.ts` hỏi thẳng Notion bằng JSON-RPC: **14 read ·│
- * │ 11 add · 3 full**, cả ba nấc đều có thật. Nhưng giao diện chỉ hiện HAI    │
- * │ (Chỉ đọc / Toàn quyền) — user bắt 26/08.                                 │
+ * │ `spike-notion-annotations.ts` asks Notion directly via JSON-RPC: **14    │
+ * │ read · 11 add · 3 full**, all three tiers are real. But the UI only      │
+ * │ shows TWO (Read-only / Full access) — user caught this on 08/26.         │
  * │                                                                          │
- * │ Hai phép đo đó hỏi hai thứ khác nhau, và khoảng giữa chúng là **SDK**:    │
- * │   server khai `destructiveHint: false`  →  SDK chuẩn hoá thành `?`       │
+ * │ Those two measurements ask different questions, and the gap between      │
+ * │ them is the **SDK**:                                                     │
+ * │   server declares `destructiveHint: false`  →  SDK normalizes it to `?`  │
  * │                                                                          │
- * │ Nếu SDK bỏ trường `false` đi thì `tierOf` thấy `destructive === undefined`│
- * │ ⇒ theo luật một chiều nó **leo thang** ⇒ 25 tool ghi rơi hết vào `full` ⇒ │
- * │ nấc giữa biến mất. Luật một chiều **không sai**; nó đang xử lý một dữ     │
- * │ kiện đã bị mất trên đường.                                               │
+ * │ If the SDK drops the `false` field, `tierOf` sees `destructive ===       │
+ * │ undefined` ⇒ per the one-way rule it **escalates** ⇒ all 25 write tools  │
+ * │ fall into `full` ⇒ the middle tier vanishes. The one-way rule is **not   │
+ * │ wrong**; it's processing a fact that already got lost along the way.     │
  * │                                                                          │
- * │ ⚠ Đây đúng câu hỏi [[agentco-measurement-vs-conclusion]] bắt phải hỏi:   │
- * │ *"phép đo này có đi qua đúng con đường production đi không?"* — phép đo   │
- * │ JSON-RPC thì KHÔNG: production đọc annotations qua SDK.                   │
+ * │ ⚠ This is exactly the question [[agentco-measurement-vs-conclusion]]     │
+ * │ demands be asked: *"does this measurement travel the same path           │
+ * │ production actually uses?"* — the JSON-RPC measurement does NOT:         │
+ * │ production reads annotations through the SDK.                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Chạy: npx tsx scripts/spike-sdk-annotations.ts   ($0)
+ * Run: npx tsx scripts/spike-sdk-annotations.ts   ($0)
  */
 
 import fs from 'node:fs';
@@ -32,7 +34,7 @@ const raw = JSON.parse(fs.readFileSync(STORE, 'utf8')) as Record<string, unknown
 const accounts = (raw['$oauth'] ?? {}) as Record<string, { access_token?: string; label?: string }>;
 const acc = Object.values(accounts)[0];
 if (!acc?.access_token) {
-  console.error('Chưa có tài khoản Notion — đăng nhập ở giao diện trước.');
+  console.error('No Notion account found — log in from the UI first.');
   process.exit(1);
 }
 
@@ -82,10 +84,10 @@ while (Date.now() < deadline) {
 const s = last?.[0];
 console.log(`status: ${s?.status}${s?.error ? ` — ${s.error}` : ''}`);
 const tools = s?.tools ?? [];
-console.log(`SDK trả ${tools.length} tool\n`);
+console.log(`SDK returned ${tools.length} tools\n`);
 
 const count = { read: 0, add: 0, full: 0 };
-console.log('tool'.padEnd(34), 'annotations SDK đưa cho ta');
+console.log('tool'.padEnd(34), 'annotations the SDK hands us');
 console.log('─'.repeat(78));
 for (const t of [...tools].sort((a, b) => a.name.localeCompare(b.name))) {
   const a = t.annotations as Record<string, unknown> | undefined;
@@ -101,10 +103,10 @@ for (const t of [...tools].sort((a, b) => a.name.localeCompare(b.name))) {
 console.log('─'.repeat(78));
 console.log(`read ${count.read} · add ${count.add} · full ${count.full}`);
 console.log(
-  `\n⇒ So với thứ server khai (14 · 11 · 3): ` +
+  `\n⇒ Compared to what the server declares (14 · 11 · 3): ` +
     (count.read === 14 && count.add === 11 && count.full === 3
-      ? 'KHỚP — lỗi nằm ở chỗ khác.'
-      : '🔴 LỆCH. SDK làm mất dữ kiện trên đường.'),
+      ? 'MATCH — the bug is somewhere else.'
+      : '🔴 MISMATCH. The SDK is losing data along the way.'),
 );
 
 release?.();

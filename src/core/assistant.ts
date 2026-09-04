@@ -1,14 +1,18 @@
 /**
- * Assistant — trợ lý của MỘT văn phòng. Session dài, đối thoại với người, chia việc.
+ * Assistant — the assistant for ONE office. A long-lived session, converses
+ * with the person, splits work into tasks.
  *
  * → docs/SPEC-offices.md §4
  *
- * Assistant KHÔNG tự làm việc tay chân, KHÔNG đọc file lớn, KHÔNG đọc transcript
- * thô của worker. Nó chỉ thấy: pitch của các vai trò ĐANG TRỰC, và receipt.
+ * The Assistant does NOT do hands-on work itself, does NOT read large files,
+ * does NOT read a worker's raw transcript. All it sees is: the pitch of
+ * roles ON DUTY, and receipts.
  *
- * Assistant KHÔNG gắn MCP: nó resume liên tục, mà MCP phá prompt cache khi resume
- * (issue #247) → mất ~36.000 token quy đổi mỗi lượt. Việc vặt cần MCP đi qua
- * worker ẩn `concierge` (M1) — người dùng chỉ thấy "Trợ lý dùng được tool này".
+ * The Assistant holds NO MCP connection: it resumes constantly, and MCP
+ * breaks the prompt cache on resume (issue #247) → costs ~36,000 equivalent
+ * tokens every turn. Any small job needing MCP goes through the hidden
+ * `concierge` worker (M1) — the user only sees "the Assistant can use this
+ * tool".
  */
 
 import fs from 'node:fs';
@@ -45,30 +49,35 @@ import { truncateToTokens } from './tokens.js';
 import { t, tEn } from '../i18n/index.js';
 
 /**
- * Khâu lập kế hoạch KHÔNG chia được việc, và muốn HỎI LẠI. → SPEC-offices.md §6
+ * The planning step COULDN'T split the work, and wants to ASK BACK. →
+ * SPEC-offices.md §6
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TRƯỚC 20/08, KHÂU NÀY CÓ ĐÚNG MỘT CỬA RA — và đó là cả vấn đề.          │
+ * │ BEFORE 08/20, THIS STEP HAD EXACTLY ONE EXIT — and that was the whole      │
+ * │ problem.                                                                 │
  * │                                                                          │
- * │ `route()` có `intent: 'ask'`: Trợ lý ĐƯỢC PHÉP hỏi lại khi trò chuyện.   │
- * │ `plan()` thì không có gì cả — hình dạng hợp lệ duy nhất là một kế hoạch  │
- * │ hoàn chỉnh. Nên khi planner thật sự cần một thông tin, nó KHÔNG CÓ CÁCH  │
- * │ HỢP LỆ để nói ra: nó rơi khỏi giao thức, trả về văn xuôi, và ta gọi cái  │
- * │ rơi đó là "lỗi parse" rồi đổ cho cách người dùng diễn đạt.               │
+ * │ `route()` has `intent: 'ask'`: the Assistant IS ALLOWED to ask back            │
+ * │ during a conversation. `plan()` has nothing at all — the only valid           │
+ * │ shape is a complete plan. So when the planner genuinely needed a piece         │
+ * │ of information, it had NO VALID WAY to say so: it fell out of protocol,        │
+ * │ returned prose, and we called that fall a "parse error" and blamed the         │
+ * │ user's phrasing.                                                        │
  * │                                                                          │
- * │ Nguyên văn đo được 20/08 (`.state/plan-failure.log`):                     │
- * │   *"Bạn cho mình biết bản dịch tiếng Việt đã có trước đó của doc-2.md và │
- * │   doc-3.md đang nằm ở đường dẫn nào không?"*                             │
- * │ Một câu hỏi hoàn toàn hợp lý, bị hệ thống biến thành một lỗi.            │
+ * │ The exact text measured 08/20 (`.state/plan-failure.log`):                    │
+ * │   *"Could you tell me where the existing Vietnamese translation of              │
+ * │   doc-2.md and doc-3.md is located?"*                                    │
+ * │ A completely reasonable question, turned into an error by the system.         │
  * │                                                                          │
- * │ Bảng kê kết quả (§2.4) chữa ĐÚNG ca đó. Cửa này chữa CẢ LỚP: sẽ luôn có  │
- * │ lúc planner cần hỏi, và ta không đoán trước được là lúc nào.             │
+ * │ The output manifest (§2.4) fixes THAT EXACT case. This gate fixes THE          │
+ * │ WHOLE CLASS: there will always be a moment the planner needs to ask, and       │
+ * │ we can't predict when.                                                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `discriminatedUnion` KHÔNG dùng được ở đây — hai nhánh không có khoá chung để
- * phân biệt, và bắt model điền một trường `kind` là thêm một chỗ để nó quên.
- * `union` thử `ask` TRƯỚC: nhánh kế hoạch đòi `tasks` tối thiểu 1 phần tử nên
- * hai nhánh không thể cùng khớp.
+ * `discriminatedUnion` CANNOT be used here — the two branches share no common
+ * key to distinguish them, and making the model fill in a `kind` field is
+ * one more spot for it to forget. `union` tries `ask` FIRST: the plan branch
+ * requires `tasks` to have at least 1 element, so the two branches can never
+ * both match.
  */
 const PlanAskSchema = z.object({ ask: z.string().min(1) });
 
@@ -85,9 +94,10 @@ const PlanTasksSchema = z.object({
         constraints: z.array(z.string()).default([]),
         deps: z.array(z.string()).default([]),
         step: z.number().int().nonnegative().default(0),
-        // Model quên khai thì KHÔNG mặc định cứng ở đây — `plan()` điền bằng
-        // mặc định của văn phòng. Đóng đinh 'file' tại chỗ này là làm cho
-        // `default_deliver: reply` im lặng vô tác dụng đúng lúc model quên.
+        // If the model forgets to declare it, do NOT hardcode a default here
+        // — `plan()` fills it in from the office's own default. Pinning
+        // 'file' at this spot would make `default_deliver: reply` silently
+        // useless exactly when the model forgets.
         deliver: DeliverSchema.optional(),
       }),
     )
@@ -97,95 +107,109 @@ const PlanTasksSchema = z.object({
 const PlanOutputSchema = z.union([PlanAskSchema, PlanTasksSchema]);
 
 /**
- * Cửa cứu hộ: một object chỉ có `say`, thiếu mỗi `intent`. → `decideRoute` cửa 4
+ * Escape hatch: an object with only `say`, missing `intent`. → `decideRoute`
+ * gate 4
  *
- * ⚠ CỐ Ý KHÔNG `.strict()`. Ca thật gồm cả `{"intent":"answer","say":"…"}` —
- * model bịa một tên cửa không có trong danh sách. Bắt chặt ở đây là vứt đi đúng
- * những ca ta dựng cửa này để cứu.
+ * ⚠ DELIBERATELY NOT `.strict()`. Real cases include
+ * `{"intent":"answer","say":"…"}` — the model makes up a gate name that
+ * isn't in the list. Being strict here would throw away exactly the cases
+ * this gate was built to rescue.
  */
 const BareSaySchema = z.object({ say: z.string().min(1) });
 
 /**
- * Kế hoạch model vừa viết ra, CHƯA đóng khung đường dẫn và chưa gắn `plan_id`.
+ * A plan the model just wrote, NOT YET framed to real paths and not yet
+ * carrying a `plan_id`.
  *
- * Tách tên riêng vì nó đi qua HAI cửa: khâu `plan()` bình thường, và cửa cứu hộ
- * ở `route()` khi model trả về một kế hoạch trong lúc lẽ ra phải định tuyến.
+ * Given its own name because it passes through TWO gates: the normal
+ * `plan()` step, and the escape hatch in `route()` when the model returns a
+ * plan while it was supposed to be routing.
  */
 export type PlanDraft = z.infer<typeof PlanTasksSchema>;
 
-/** Kế hoạch đã chia xong, hoặc một câu hỏi ngược lại cho người dùng. */
+/** A finished plan, or a question asked back to the user. */
 export type PlanOrAsk = { kind: 'plan'; plan: Plan } | { kind: 'ask'; say: string };
 
 /**
- * Bốn kết quả định tuyến. → SPEC-offices.md §6
+ * Four routing outcomes. → SPEC-offices.md §6
  *
- * `scope` trên intent `task` là thứ quyết định log đọc được hay không: `new`
- * sinh một Plan độc lập, `refine` gắn vào Plan đang chạy. Assistant quyết trên
- * session của nó (nó có cả lịch sử hội thoại) chứ không suy ra bằng heuristic
- * ở client — client không biết hai câu có cùng một việc hay không.
+ * `scope` on the `task` intent decides whether the log stays readable: `new`
+ * spawns an independent Plan, `refine` attaches to the currently running
+ * Plan. The Assistant decides based on its own session (it has the full
+ * conversation history) rather than a client-side heuristic — the client has
+ * no way to know whether two messages are about the same job.
  */
 const RouteSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('chat'), say: z.string().min(1) }),
   z.object({ intent: z.literal('ask'), say: z.string().min(1) }),
   /**
-   * `lookup` — WORKER ẨN. Đọc để TRẢ LỜI, không tạo ra gì. → SPEC-offices.md §6
+   * `lookup` — a HIDDEN WORKER. Reads to ANSWER, produces nothing. →
+   * SPEC-offices.md §6
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO CÓ CỬA THỨ TƯ, VÀ VÌ SAO NÓ KHÔNG PHẢI MỘT TOOL CỦA TRỢ LÝ.      │
+   * │ WHY A FOURTH GATE EXISTS, AND WHY IT ISN'T A TOOL ON THE ASSISTANT.       │
    * │                                                                          │
-   * │ Ca đo được 20/08: *"nội dung chính của doc-2.md là gì"* → một lượt lập   │
-   * │ kế hoạch + một worker đủ prefix (**sàn ~13 200 token**) để đọc một file   │
-   * │ rồi thuật lại. Người dùng gọi đúng tên: *"Trợ lý khá ngơ"*.               │
+   * │ Case measured 08/20: *"what's the main content of doc-2.md"* → one           │
+   * │ planning turn + a worker with a whole prefix (**floor ~13,200 tokens**)       │
+   * │ just to read a file and report back. The user called it by its real           │
+   * │ name: *"the Assistant is kind of dense"*.                                │
    * │                                                                          │
-   * │ Ba đường, và chỉ đường thứ ba rẻ ở CẢ HAI cột:                            │
+   * │ Three paths, and only the third is cheap on BOTH columns:                    │
    * │                                                                          │
-   * │              tốn NGAY                          tốn MÃI                    │
-   * │   DAG        plan + sàn 13 200                 0                          │
-   * │   Trợ lý grep ~0                               nội dung file × MỌI lượt   │
-   * │   lookup     1 one-shot, prefix tí xíu         0                          │
+   * │              costs NOW                          costs FOREVER              │
+   * │   DAG        plan + floor of 13,200             0                        │
+   * │   Assistant grep ~0                             file content × EVERY turn     │
+   * │   lookup     1 one-shot, tiny prefix            0                        │
    * │                                                                          │
-   * │ Cột thứ hai là lý do KHÔNG trao `Grep` cho Trợ lý: ngữ cảnh Trợ lý là     │
-   * │ thứ DUY NHẤT không bao giờ bị vứt đi. Một PDF 34 trang bóc ra text rơi    │
-   * │ vào đó là 10–20K token bị `cache_read` lại ở mọi lượt cho tới `/clear`.   │
+   * │ The second column is why the Assistant is NEVER given `Grep`: the           │
+   * │ Assistant's context is the ONE thing that's never thrown away. A 34-page      │
+   * │ PDF extracted to text landing in there means 10-20K tokens get              │
+   * │ `cache_read` again on every turn until `/clear`.                           │
    * │                                                                          │
-   * │ Và KHÔNG làm nó thành MCP tool như bản phác thảo `concierge` ban đầu:     │
-   * │ MCP phá prompt cache khi resume (~36K/lượt) mà `route()` resume ở MỌI     │
-   * │ tin nhắn. Là một INTENT thì cùng ý tưởng, 0 đồng cache.                   │
+   * │ And it's NOT turned into an MCP tool the way the original `concierge`         │
+   * │ draft planned: MCP breaks the prompt cache on resume (~36K/turn), and           │
+   * │ `route()` resumes on EVERY message. As an INTENT it's the same idea, for        │
+   * │ $0 in cache cost.                                                        │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ `paths` TỪNG BẮT BUỘC ≥1. NỚI RA 24/08 (user chốt) — và lý do là SẢN     │
-   * │ PHẨM, không phải kiến trúc.                                              │
+   * │ `paths` USED TO REQUIRE ≥1. LOOSENED 08/24 (user settled it) — and the        │
+   * │ reason is PRODUCT, not architecture.                                     │
    * │                                                                          │
-   * │ Luật cũ: *"không nêu được tên file thì dùng `ask`, đừng thả agent đi mò"* │
-   * │ — đúng khi thế giới của văn phòng chỉ có tủ tài liệu. Hậu quả thật ở một  │
-   * │ văn phòng mới tinh: người dùng hỏi *"thời tiết hôm nay"*, *"quán ăn"*,    │
-   * │ *"tin tức"* và nhận về *"văn phòng mình chưa có nhân viên phụ trách"*.    │
+   * │ Old rule: *"if you can't name a file, use `ask`, don't send an agent           │
+   * │ fumbling around"* — correct when the office's whole world was the             │
+   * │ library. The real consequence on a brand-new office: a user asks *"what        │
+   * │'s the weather today"*, *"a restaurant"*, *"the news"* and gets back            │
+   * │ *"this office doesn't have a worker for that yet"*.                        │
    * │                                                                          │
-   * │ User bác bằng một câu không cãi được: *"một người non-code bán hoa có     │
-   * │ vào tạo nhân viên chuyên nghiệp không, hay họ sẽ hỏi vu vơ kiểu quán ăn,  │
-   * │ thời tiết, tin tức?"*. Và sổ đã ghi sẵn thứ tự lo: rủi ro thật là **không │
-   * │ có người dùng (~90%)**, không phải kiến trúc chưa sạch (~1%). Lượt tiếp   │
-   * │ xúc đầu tiên không có lần thứ hai.                                        │
+   * │ The user pushed back with an unanswerable point: *"would a non-technical      │
+   * │ florist go create a dedicated professional worker, or would they just ask     │
+   * │ random things like restaurants, weather, the news?"*. And the log had           │
+   * │ already recorded the priority order: the real risk is **no users at all         │
+   * │ (~90%)**, not slightly unclean architecture (~1%). A first contact has no        │
+   * │ second chance.                                                          │
    * │                                                                          │
-   * │ Vì sao KHÔNG đẻ intent thứ năm: `route()` chạy ở MỌI tin nhắn, nên mỗi    │
-   * │ intent là token vĩnh viễn trong prefix hội thoại. `lookup` vốn đã là làn  │
-   * │ *"trả lời một câu hỏi, không bàn giao gì"* — cho nó tra web là NỚI một    │
-   * │ làn đã có, không mở làn mới. Ba hàng rào giữ nguyên: tool chỉ-đọc ·       │
-   * │ không ghi được file · session chết cùng lượt gọi.                         │
+   * │ Why NOT create a fifth intent instead: `route()` runs on EVERY message,       │
+   * │ so every intent is a permanent token cost in the conversation prefix.          │
+   * │ `lookup` was already the lane for *"answer a question, hand nothing            │
+   * │ over"* — giving it web access WIDENS an existing lane, it doesn't open a         │
+   * │ new one. All three fences stay in place: read-only tools · can't write a         │
+   * │ file · session dies with the call.                                        │
    * │                                                                          │
-   * │ ⚠ RANH GIỚI PHẢI SẮC, và đây là rủi ro thật của bản nới này: **`lookup`   │
-   * │ TRẢ LỜI, không BÀN GIAO.** Thứ người dùng giữ lại (file, báo cáo, bảng)   │
-   * │ luôn là `task` + nhân viên. Định tuyến quá tay sang đây thì họ nhận một   │
-   * │ câu trong ô chat và **không có artifact nào để mở**.                      │
+   * │ ⚠ THE BOUNDARY HAS TO STAY SHARP, and here's the real risk of this             │
+   * │ widening: **`lookup` ANSWERS, it does NOT HAND OFF.** Anything a user            │
+   * │ keeps (a file, a report, a table) always comes from `task` + a worker.          │
+   * │ Over-routing into this lane means they get a sentence in the chat pane          │
+   * │ and **no artifact to open at all**.                                       │
    * │                                                                          │
-   * │ Số đo trước khi nới: prefix worker ẩn 2 828 → 3 820 (**+992 token**, chỉ  │
-   * │ trả khi lookup chạy). Một câu hỏi web thật: 29,8 s · $0,0827, so với      │
-   * │ $0,13–0,14 của đường plan→worker.                                         │
+   * │ Measured before the widening: hidden-worker prefix 2,828 → 3,820             │
+   * │ (**+992 tokens**, only charged when lookup actually runs). One real web         │
+   * │ question: 29.8s · $0.0827, versus $0.13-0.14 for the plan→worker path.          │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * `paths` rỗng = câu hỏi phải tra web. Có `paths` = đọc đúng những file đó
-   * (chúng vẫn được đối chiếu với đĩa ở `Office` trước khi ai đọc gì).
+   * Empty `paths` = a question that requires a web lookup. Non-empty `paths`
+   * = read exactly those files (they still get cross-checked against disk in
+   * `Office` before anyone reads anything).
    */
   z.object({
     intent: z.literal('lookup'),
@@ -201,67 +225,73 @@ const RouteSchema = z.discriminatedUnion('intent', [
 export type RouteDecision = z.infer<typeof RouteSchema>;
 
 /**
- * Năm kết cục của một lượt định tuyến — ba cửa hợp lệ, hai cửa cứu hộ.
+ * Five outcomes of a routing turn — three valid gates, two escape hatches.
  *
- * `plan` và `garbled` KHÔNG phải thứ model được phép trả về; chúng là những gì
- * ta làm khi nó trả về thứ khác. Giữ chúng trong cùng một union để không chỗ nào
- * quên xử lý — xem `decideRoute`.
+ * `plan` and `garbled` are NOT things the model is allowed to return; they
+ * are what we do when it returns something else. Kept in the same union so
+ * no call site forgets to handle one — see `decideRoute`.
  */
 export type RouteOutcome =
   /**
-   * `salvaged` = đi qua một CỬA CỨU HỘ, không phải cửa chính. Không đổi hành vi
-   * một chút nào — nó chỉ để ghi nhật ký. Một cửa cứu hộ không để lại dấu vết là
-   * một cái phễu êm ái: model quên `intent` mãi mãi mà không ai biết, và ta mất
-   * luôn tín hiệu để đi sửa ở chỗ đúng (prompt), không phải sửa mãi ở đây.
+   * `salvaged` = went through a RESCUE GATE, not the main gate. Changes
+   * behavior not at all — it exists purely for logging. A rescue gate that
+   * leaves no trace is a quiet funnel: the model forgets `intent` forever
+   * with nobody noticing, and we lose the exact signal needed to go fix it
+   * at the right spot (the prompt), instead of patching it here forever.
    */
   | (RouteDecision & { salvaged?: true })
-  /** Model trả nguyên một KẾ HOẠCH thay vì một quyết định định tuyến. */
+  /** The model returned an entire PLAN instead of a routing decision. */
   | { intent: 'plan'; draft: PlanDraft }
-  /** Trả về thứ không dùng được, VÀ không được cho người dùng nhìn thấy. */
+  /** Returned something unusable, AND it must never be shown to the user. */
   | { intent: 'garbled'; say: string; raw: string };
 
 /**
- * Model vừa nói gì? Hàm THUẦN — 0 token, và đây là chỗ một bug đã lọt.
+ * What did the model just say? A PURE function — 0 tokens, and this is where
+ * a bug once slipped through.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG ĐÃ SỬA (20/08): KẾ HOẠCH RÒ RA Ô CHAT.                              │
+ * │ BUG FIXED (08/20): A PLAN LEAKED INTO THE CHAT PANE.                     │
  * │                                                                          │
- * │ Bản trước, khi `RouteSchema` không khớp:                                 │
+ * │ The old version, when `RouteSchema` didn't match:                            │
  * │     `parsed ?? { intent: 'chat', say: text.trim() }`                     │
- * │ — tức là **văn bản thô của model đi thẳng lên mặt người dùng**.           │
+ * │ — i.e. **the model's raw text went straight to the user's face**.             │
  * │                                                                          │
- * │ Ca đo được trên máy người dùng: họ hỏi *"nêu cho tôi 10 thuật ngữ"*, Trợ  │
- * │ lý hỏi lại *"lấy từ tài liệu nào"*, họ đáp *"bất kỳ, random cũng được"* — │
- * │ và ô chat nhả ra nguyên một khối `json` với `steps`/`tasks`/`deps`. Model │
- * │ đã trả lời ĐÚNG NỘI DUNG (giao `nguoi-dich`, trỏ đúng file, `deliver:     │
- * │ reply`) nhưng qua SAI CỬA, nên `run()` không bao giờ được gọi và **không  │
- * │ ai làm việc đó cả**. Người dùng trả tiền một lượt để nhận về một đoạn mã. │
+ * │ Case measured on a user's machine: they asked *"give me 10 terms"*, the       │
+ * │ Assistant asked back *"from which document"*, they answered *"any, random     │
+ * │ is fine"* — and the chat pane spat out a raw `json` blob with                  │
+ * │ `steps`/`tasks`/`deps`. The model had answered CORRECTLY IN CONTENT               │
+ * │ (assigned `nguoi-dich`, pointed at the right file, `deliver: reply`) but         │
+ * │ through the WRONG DOOR, so `run()` was never called and **nobody ever did       │
+ * │ that job at all**. The user paid for a turn to get back a code block.          │
  * │                                                                          │
- * │ Vì sao model làm thế: `ASSISTANT_CORE` mang mục "Planning output" trong   │
- * │ prefix của MỌI lượt — `route()` và `plan()` cố ý dùng chung một prefix để │
- * │ chung một cache entry. Ngay sau một câu `ask`, "bất kỳ cũng được" đọc lên │
- * │ giống hệt tín hiệu *"chia việc đi"*. Đây là hệ quả của một đánh đổi đã    │
- * │ chốt, không phải một model tồi.                                          │
+ * │ Why the model did this: `ASSISTANT_CORE` carries a "Planning output"           │
+ * │ section in the prefix of EVERY turn — `route()` and `plan()` deliberately     │
+ * │ share one prefix so they share one cache entry. Right after an `ask`           │
+ * │ sentence, "any is fine" reads exactly like the signal *"go split the           │
+ * │ work"*. This is the consequence of an already-settled trade-off, not a          │
+ * │ bad model.                                                              │
  * │                                                                          │
- * │ Nên chữa bằng CƠ CHẾ, không bằng lời dặn thêm trong prompt: dặn thì tốn   │
- * │ token vĩnh viễn, chỉ là gợi ý, và luật 19/08 đã nói *đừng dặn model đừng  │
- * │ làm*. Ở đây ta không ngăn được nó viết ra — nhưng ta ĐANG CẦM một kế      │
- * │ hoạch hợp lệ đã trả tiền, nên việc đúng là DÙNG NÓ.                       │
+ * │ So it's fixed with a MECHANISM, not an extra prompt instruction:               │
+ * │ instructing costs tokens forever, is only a suggestion, and the 08/19          │
+ * │ rule already said *don't tell the model not to do something*. Here we          │
+ * │ can't stop it from writing this out — but we're ALREADY HOLDING a valid,        │
+ * │ already-paid-for plan, so the right move is to USE IT.                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Thứ tự thử có chủ ý:
+ * The try order is deliberate:
  *
- *  1. `RouteSchema`   — cửa chính, ca thường.
- *  2. `PlanTasksSchema` — nó lập kế hoạch mất rồi → nhặt về, đừng gọi lại.
- *  3. `PlanAskSchema`  — `{"ask":"…"}` là một CÂU HỎI hợp lệ ở khâu lập kế
- *     hoạch; hình dạng khác nhưng ý nghĩa trùng khít `intent: 'ask'`.
- *  4. Còn lại: **có JSON hay không** mới là câu hỏi quyết định.
+ *  1. `RouteSchema`   — the main gate, the usual case.
+ *  2. `PlanTasksSchema` — it already planned → pick it up, don't call again.
+ *  3. `PlanAskSchema`  — `{"ask":"…"}` is a valid QUESTION at the planning
+ *     step; a different shape but identical in meaning to `intent: 'ask'`.
+ *  4. Everything else: **is there JSON or not** is the deciding question.
  *
- * Bước 4 là luật mới, và nó hẹp có chủ ý: **văn xuôi vẫn hiện như cũ**. Model
- * đáp "Chào bạn!" mà lỡ quên bọc JSON thì hiện câu đó vẫn đúng hơn là nuốt đi.
- * Thứ bị chặn chỉ là JSON — một khối JSON KHÔNG BAO GIỜ là câu nói cho người
- * dùng, nó là tin nhắn giao thức đi lạc cửa. Phân biệt được bằng `JSON.parse`,
- * tức là bằng sự việc, không bằng phỏng đoán trên câu chữ.
+ * Step 4 is a new rule, and it's deliberately narrow: **prose still displays
+ * as before**. If the model answers "Hi there!" and forgets to wrap it in
+ * JSON, showing that sentence is still more correct than swallowing it. Only
+ * JSON gets blocked — a JSON blob is NEVER a sentence meant for the user, it's
+ * a protocol message that walked through the wrong door. Distinguished by
+ * `JSON.parse`, i.e. by a fact, not a guess about wording.
  */
 export function decideRoute(text: string): RouteOutcome {
   const routed = extractJson(text, RouteSchema);
@@ -275,28 +305,32 @@ export function decideRoute(text: string): RouteOutcome {
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 CỬA 4 — `{"say": "…"}` THIẾU MỖI CHỮ `intent`. (bug user bắt 28/08)   │
+   * │ 🔴 GATE 4 — `{"say": "…"}` MISSING ONLY THE WORD `intent`. (bug a user         │
+   * │ caught 08/28)                                                           │
    * │                                                                          │
-   * │ Đây KHÔNG phải giả thuyết. Nguyên văn trong `route-failure.log`, hai lượt │
-   * │ cách nhau 29 giây, sau khi user rút dây cánh tay GitHub:                  │
+   * │ This is NOT a hypothesis. Exact text from `route-failure.log`, two turns     │
+   * │ 29 seconds apart, right after a user disconnected the GitHub arm:             │
    * │                                                                          │
-   * │   {"say":"Kết nối GitHub hiện không còn nữa, nên mình không đọc được      │
-   * │    README của repo toeic-learning lúc này. Bạn cần kết nối lại GitHub…"}  │
+   * │   {"say":"The GitHub connection is gone now, so I can't read the                │
+   * │    toeic-learning repo's README at the moment. You'll need to reconnect         │
+   * │    GitHub…"}                                                             │
    * │                                                                          │
-   * │ Model trả lời **đúng, đủ, và bằng tiếng người**. Ta vứt nó đi rồi thay    │
-   * │ bằng một câu xin lỗi bảo người dùng gõ lại — và họ gõ lại thì ra y hệt,   │
-   * │ vì model có sai đâu mà đổi. User nói đúng cả ba vế: *"đâu phải lỗi của    │
-   * │ LLM"* · *"rất nguy hiểm cho multilanguage"* · *"có nhắn lại thì kết quả   │
-   * │ cũng ra vậy"*.                                                            │
+   * │ The model answered **correctly, completely, and in plain human words**.       │
+   * │ We threw it away and replaced it with an apology telling the user to           │
+   * │ type it again — and typing it again produced the exact same thing, because      │
+   * │ the model had nothing wrong to fix. The user made all three points               │
+   * │ correctly: *"that's not the LLM's fault"* · *"very dangerous for                │
+   * │ multilanguage"* · *"asking again just gives the same result"*.                  │
    * │                                                                          │
-   * │ `say` là trường của `chat` **và** của `ask`, nên thiếu `intent` là thật   │
-   * │ sự không biết nó muốn cửa nào. Chọn `chat` vì bất đối xứng: `ask` hứa     │
-   * │ *"mình đang chờ bạn trả lời"* — hứa nhầm điều đó tệ hơn là không hứa.     │
-   * │ Cả hai cửa đều chỉ in câu đó ra, nên người dùng không mất gì.             │
+   * │ `say` is a field of BOTH `chat` and `ask`, so missing `intent` genuinely        │
+   * │ leaves no way to know which gate was meant. `chat` was chosen for the           │
+   * │ asymmetry: `ask` promises *"I'm waiting on your answer"* — a wrong                │
+   * │ promise like that is worse than making none. Both gates just print the           │
+   * │ same sentence, so the user loses nothing.                                 │
    * │                                                                          │
-   * │ ⚠ Cùng khuôn với hai cửa cứu hộ ngay trên: ta ĐANG CẦM một câu trả lời    │
-   * │ đã trả tiền và đọc được — việc đúng là DÙNG NÓ, không phải bắt người dùng │
-   * │ mua lại lượt nữa.                                                        │
+   * │ ⚠ Same pattern as the two rescue gates right above: we're ALREADY HOLDING       │
+   * │ an already-paid-for, readable answer — the right move is to USE IT, not         │
+   * │ make the user pay for another turn.                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const bare = extractJson(text, BareSaySchema);
@@ -306,9 +340,10 @@ export function decideRoute(text: string): RouteOutcome {
   if (!raw) {
     return {
       intent: 'garbled',
-      // Ca này `route()` cũng thử lại một lượt trước khi câu dưới tới được mặt
-      // người dùng — rỗng thường là chập nhất thời, tức đúng ca một lượt nữa
-      // giải quyết được mà không cần phiền ai.
+      // `route()` also retries once for this case before the sentence below
+      // reaches the user's face — an empty response is usually a transient
+      // hiccup, i.e. exactly the case one more turn resolves without
+      // bothering anyone.
       say: t('as.emptyReply'),
       raw: '',
     };
@@ -316,22 +351,27 @@ export function decideRoute(text: string): RouteOutcome {
   if (hasJsonObject(raw)) {
     return {
       intent: 'garbled',
-      // Không trích lời model ở đây, khác hẳn `planFailed`. Ở đó thứ model nói
-      // là VĂN XUÔI — đọc được, và chính nó là thông tin. Ở đây nó là JSON: dán
-      // một đoạn mã trước mặt người mở tiệm hoa không thêm được gì ngoài hoang
-      // mang. Bản nguyên văn đi vào `.state/route-failure.log` cho người sửa lỗi.
+      // Doesn't quote the model here, unlike `planFailed`. There, what the
+      // model said was PROSE — readable, and itself informative. Here it's
+      // JSON: pasting a code block in front of someone running a flower shop
+      // adds nothing but confusion. The raw text goes into
+      // `.state/route-failure.log` for whoever debugs it.
       /**
-       * ⚠ PHAO CUỐI — chỉ tới đây khi **lượt sửa ở `route()` cũng hỏng**.
+       * ⚠ THE LAST RESORT — only reached when **the repair turn inside
+       * `route()` also fails**.
        *
-       * Câu cũ ghim ở đây có ba tật, cả ba đã cắn thật (28/08): nó đoán nguyên
-       * nhân (*"lỗi của mình"* trong khi thật ra kết nối đã bị rút), nó ghim
-       * tiếng Việt giữa một dòng chat đáng lẽ theo tiếng người dùng, và nó bảo
-       * *"nhắn lại y nguyên"* — một lời khuyên **tất định sai**: model có sai
-       * đâu mà đổi, gõ lại là ra y hệt.
+       * The old sentence pinned here had three flaws, and all three actually
+       * bit (08/28): it guessed a cause (*"my own mistake"* when the
+       * connection had actually been disconnected), it pinned Vietnamese into
+       * a chat line that should have followed the user's language, and it said
+       * *"try messaging the exact same thing again"* — advice that's
+       * **deterministically wrong**: the model had nothing wrong to fix,
+       * typing it again produces the exact same thing.
        *
-       * Câu mới không đoán gì cả và không đổ lỗi cho ai. Nó nói đúng hai điều ta
-       * BIẾT — chưa làm được, và có một đường đi tiếp khác — vì đó là toàn bộ
-       * thứ có thật ở nhánh này.
+       * The new sentence guesses nothing and blames nobody. It states exactly
+       * the two things we KNOW — this couldn't be done, and there's a
+       * different way forward — because that's the entirety of what's true on
+       * this branch.
        */
       say:
         t('as.noUsableAnswer'),
@@ -342,15 +382,16 @@ export function decideRoute(text: string): RouteOutcome {
 }
 
 /**
- * Phần CHỮ do model viết ra trong một kết cục định tuyến. Hàm THUẦN, 0 token.
+ * The TEXT part the model wrote in one routing outcome. A PURE function, 0 tokens.
  *
- * Dùng cho cổng hậu kiểm `staleArmMentions`. Ba cửa hợp lệ đều có một trường
- * chữ, và cả ba đều đi tới mặt người dùng hoặc vào `request` của kế hoạch — nên
- * cả ba đều phải soi.
+ * Used by the post-check gate `staleArmMentions`. All three valid gates carry
+ * a text field, and all three end up in front of the user or inside a plan's
+ * `request` — so all three need checking.
  *
- * `garbled` trả rỗng CÓ CHỦ Ý: câu của nó là câu cứu hộ do TA viết, không phải
- * lời model. Soi nó là tự kiểm tra chính mình. `plan` cũng rỗng — draft là cấu
- * trúc, và vai trò trong đó đã được scheduler đối chiếu với `assignableRoles()`.
+ * `garbled` returns empty ON PURPOSE: its sentence is a rescue sentence WE
+ * wrote, not the model's own words. Checking it would be checking ourselves.
+ * `plan` is also empty — a draft is structured data, and the roles in it are
+ * already cross-checked against `assignableRoles()` by the scheduler.
  */
 export function routeText(r: RouteOutcome): string {
   if (r.intent === 'chat' || r.intent === 'ask') return r.say;
@@ -359,7 +400,7 @@ export function routeText(r: RouteOutcome): string {
   return '';
 }
 
-/** Có ít nhất một object JSON parse được trong chuỗi? Sự việc, không phải phỏng đoán. */
+/** Is there at least one parseable JSON object in the string? A fact, not a guess. */
 function hasJsonObject(text: string): boolean {
   const first = text.indexOf('{');
   const last = text.lastIndexOf('}');
@@ -382,11 +423,12 @@ export interface AssistantResult<T> {
 }
 
 /**
- * Bọc một lượt hỏi thành streaming input. Xem khối chú thích ở `run()`.
+ * Wraps one prompt as streaming input. See the comment block on `run()`.
  *
- * Yield đúng MỘT tin rồi kết thúc: SDK nhận đủ đầu vào và đóng stream ngay, nên
- * không có ca treo nào. `session_id` để rỗng — SDK tự điền; con trỏ session
- * thật đi qua `options.resume`.
+ * Yields EXACTLY ONE message then closes: the SDK receives enough input and
+ * closes the stream right away, so there's no hanging case. `session_id` is
+ * left empty — the SDK fills it in itself; the real session pointer travels
+ * through `options.resume`.
  */
 async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
   yield {
@@ -398,109 +440,129 @@ async function* oneShot(text: string): AsyncGenerator<SDKUserMessage> {
 }
 
 /**
- * Ca này có gì để học không? Quyết bằng CODE, trước khi hỏi model.
+ * Is there anything to learn from this run? Decided by CODE, before asking
+ * the model.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐỪNG DẶN MODEL ĐỪNG LÀM — ĐỪNG CHO NÓ CƠ HỘI LÀM.                        │
+ * │ DON'T TELL THE MODEL NOT TO DO SOMETHING — DON'T GIVE IT THE CHANCE TO.    │
  * │                                                                          │
- * │ Bản trước LUÔN kèm trường `lessons` vào mọi báo cáo, kèm câu dặn "Việc    │
- * │ chạy trơn tru không phải bài học". Hỏi một model "bạn học được gì?" thì   │
- * │ nó gần như luôn nặn ra một câu, và lời dặn không cản được.                │
+ * │ The old version ALWAYS attached a `lessons` field to every report, along      │
+ * │ with the instruction "a run that went smoothly is not a lesson". Ask a         │
+ * │ model "what did you learn?" and it will almost always squeeze out a            │
+ * │ sentence, and the instruction doesn't stop it.                            │
  * │                                                                          │
- * │ Ca thật, 19/08: một ca chạy trơn tru hoàn toàn (1 việc, done, không       │
- * │ blocked, không sửa receipt) đẻ ra node `k/shared/san-pham-giam-gia-60-…`. │
- * │ Nội dung của nó là bản diễn giải LỆCH của một câu trong tài liệu người    │
- * │ dùng: chính sách viết "trên 50% không đổi trả", node ghi "giảm 60%        │
- * │ THƯỜNG không được đổi trả". Sai ngưỡng, thêm chữ "thường" mà chính sách   │
- * │ không có, và nằm trong prefix của mọi nhân viên cho tới khi hết hạn.      │
+ * │ Real case, 08/19: a run that went completely smoothly (1 job, done, not        │
+ * │ blocked, no receipt repair) produced the node                                  │
+ * │ `k/shared/san-pham-giam-gia-60-…`. Its content was a DISTORTED                 │
+ * │ interpretation of one sentence in the user's own document: the policy           │
+ * │ said "over 50% off, no returns", the node recorded "60% off USUALLY can't       │
+ * │ be returned". Wrong threshold, an added word "usually" the policy never         │
+ * │ had, sitting in every worker's prefix until it expires.                        │
  * │                                                                          │
- * │ Trợ lý viết được câu đó mà chưa từng đọc tài liệu nào — nó chỉ nhìn thấy  │
- * │ MỘT dòng `say` của nhân viên. Đó là nghe kể lại, không phải bài học.      │
+ * │ The Assistant was able to write that sentence without ever reading the         │
+ * │ document — it only saw ONE `say` line from the worker. That's hearsay, not      │
+ * │ a lesson.                                                               │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ngưỡng: chỉ hỏi khi ca **đi đến đích** VÀ có DẤU VẾT trục trặc trên đường —
- * cả hai đều quan sát được, không phải thứ suy đoán. Vế "đi đến đích" là vế mới
- * (29/08) và là vế quan trọng hơn; lý do đầy đủ ở `learnable` ngay dưới.
- * Ca êm đẹp thì kinh nghiệm thật của người dùng vẫn có đường vào kho, và là
- * đường tốt hơn: nói với Trợ lý rồi `/clear` → node GHI NHỚ 0.9.
+ * The threshold: only asks when the run **reached its destination** AND
+ * there's an OBSERVABLE TRACE of trouble along the way — both are
+ * observable facts, not something inferred. The "reached its destination"
+ * clause is the newer one (08/29) and the more important one; the full
+ * reasoning is in `learnable` right below. On a smooth run, the user's own
+ * real experience still has a path into the store, and it's a better path:
+ * tell the Assistant, then `/clear` → a MEMORY node at 0.9.
  *
- * ⚠ CỐ Ý KHÔNG dùng SỐ LƯỢT làm dấu hiệu, dù rất cám dỗ.
+ * ⚠ DELIBERATELY does NOT use TURN COUNT as a signal, tempting as it is.
  *
- * Bản nháp đầu của hàm này có thêm `usage.turns >= 8`, và bộ test đã bác bỏ nó
- * ngay: ca 19/08 chạy đúng **9 lượt** — tức là điều kiện đó cho qua đúng cái ca
- * nó sinh ra để chặn. Lý do sâu hơn nằm ở §7: *số lượt là thuộc tính của MODEL
- * và độ khó việc*, đo được là haiku 10 lượt vs sonnet 4 lượt cho cùng một việc.
- * Lấy nó làm tín hiệu "có trục trặc" nghĩa là mọi văn phòng chạy `eco` đều bị
- * coi là đang trục trặc, còn `deep` thì không bao giờ.
+ * The first draft of this function had `usage.turns >= 8` added, and the
+ * test suite rejected it immediately: the 08/19 case ran exactly **9
+ * turns** — i.e. that condition would have let through the exact case it
+ * was built to catch. The deeper reason is in §7: *turn count is a property
+ * of the MODEL and the task's difficulty*, measured as haiku 10 turns vs.
+ * sonnet 4 turns for the same job. Using it as a "trouble" signal means
+ * every office running `eco` is treated as perpetually troubled, while
+ * `deep` never is.
  *
- * Bốn dấu hiệu đều KHÔNG phụ thuộc model: việc hỏng, việc bị chặn, receipt phải
- * sửa lại, hoặc nhân viên LẶP THAO TÁC.
+ * Four signals, all MODEL-INDEPENDENT: a failed job, a blocked job, a
+ * receipt needing repair, or a worker REPEATING AN ACTION.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `looped` LÀ CÁCH ĐÚNG ĐỂ BẮT "FLOW BỊ LOOP" — và nó KHÔNG phải số lượt.  │
+ * │ `looped` IS THE CORRECT WAY TO CATCH "THE FLOW GOT STUCK IN A LOOP" — and  │
+ * │ it is NOT turn count.                                                    │
  * │                                                                          │
- * │ Đo bằng LẶP THAO TÁC (đọc lại file đã đọc, đọc lại file vừa ghi, gọi lại │
- * │ y nguyên một tool), suy từ luồng `tool_use` mà worker vốn đã bóc sẵn.    │
- * │ Cả ba đều là vi phạm một luật `CORE_PROMPT` đã viết thành lời, nên đây   │
- * │ không phải heuristic mới — chỉ là đo xem kỷ luật đã tuyên bố có được     │
- * │ tuân thủ không. Và nó model-independent: haiku hay sonnet thì đọc hai    │
- * │ lần vẫn là đọc hai lần. → `worker.ts → observeCall`                      │
+ * │ Measured by REPEATED ACTIONS (rereading an already-read file, rereading a     │
+ * │ file just written, calling the exact same tool again), inferred from the       │
+ * │ `tool_use` stream a worker already unpacks. All three are violations of a       │
+ * │ rule `CORE_PROMPT` states outright, so this isn't a new heuristic — it's        │
+ * │ just measuring whether an already-stated discipline is being followed. And     │
+ * │ it's model-independent: haiku or sonnet, reading something twice is still       │
+ * │ reading it twice. → `worker.ts → observeCall`                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Đánh đổi đã biết và chấp nhận: kho tri thức lớn chậm hẳn lại.
+ * A known, accepted trade-off: a large knowledge store slows things down significantly.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TÍN HIỆU THỨ NĂM: MA SÁT CỦA CON NGƯỜI (20/08).                         │
+ * │ THE FIFTH SIGNAL: HUMAN FRICTION (08/20).                                │
  * │                                                                          │
- * │ Bốn tín hiệu đầu đều đọc từ `receipts` — tức là chúng đo **ĐỘ KHÓ CỦA CỖ │
- * │ MÁY**. Có một hạng ca mà cả bốn đều im: cỗ máy chạy hoàn hảo, còn con     │
- * │ người thì vật lộn.                                                       │
+ * │ The first four signals all read from `receipts` — i.e. they measure how        │
+ * │ HARD THE MACHINE'S JOB WAS. There's a whole class of case where all four        │
+ * │ stay silent: the machine ran perfectly, while the human struggled.             │
  * │                                                                          │
- * │ Ca thật 20/08. Người dùng: *"doc-2, doc-3 thiếu file thuật ngữ"*. Bốn    │
- * │ lượt qua lại — Trợ lý bảo họ đi kiểm đường dẫn, rồi hỏi họ file cũ nằm ở │
- * │ đâu, rồi một lượt lập kế hoạch chết hẳn — cho tới khi người dùng phải tự │
- * │ nghĩ ra giải pháp: *"thì bạn phải kêu người dịch tạo bổ sung đi chứ"*.   │
- * │ Ca chạy sau đó: 2 task, cả hai `done`, receipt sạch bong. **0 bài học.** │
+ * │ Real case 08/20. The user: *"doc-2, doc-3 are missing the terminology           │
+ * │ file"*. Four rounds back and forth — the Assistant told them to check the       │
+ * │ path, then asked where the old file was, then a planning turn died               │
+ * │ completely — until the user had to come up with the fix themselves:            │
+ * │ *"well then you need to tell the translator to create supplementary             │
+ * │ ones"*. The run after that: 2 tasks, both `done`, a spotless receipt. **0        │
+ * │ lessons.**                                                               │
  * │                                                                          │
- * │ Văn phòng vừa học được một điều rất giá trị — *"ở đây, muốn làm tiếp     │
- * │ trên một kết quả cũ thì phải nói thẳng là giao cho ai làm lại"* — và vứt │
- * │ nó đi, vì nó không nằm trong bất kỳ biên nhận nào.                       │
+ * │ The office had just learned something genuinely valuable — *"here,               │
+ * │ continuing work on an existing output means stating outright who it's           │
+ * │ assigned to redo"* — and threw it away, because it never sat inside any          │
+ * │ receipt.                                                                 │
  * │                                                                          │
- * │ `friction` = số lượt lập kế hoạch HỎNG hoặc PHẢI HỎI LẠI kể từ ca chạy   │
- * │ được gần nhất. Vẫn là **sự việc quan sát được**, đếm bằng code, 0 token, │
- * │ không phụ thuộc model — đúng cùng một luật đã bác bỏ `usage.turns`.      │
+ * │ `friction` = the count of planning turns that FAILED or HAD TO ASK BACK        │
+ * │ since the most recent run that actually happened. Still an **observable         │
+ * │ fact**, counted by code, 0 tokens, model-independent — the exact same rule       │
+ * │ that rejected `usage.turns`.                                             │
  * │                                                                          │
- * │ Và nó mở ra một LỚP bài học mới: kinh nghiệm về **cách giao việc trong   │
- * │ văn phòng này**, không phải về nội dung công việc. Đây là lớp duy nhất   │
- * │ học được từ chính người dùng mà không phải hỏi họ một câu nào.           │
+ * │ And it opens up a new CLASS of lesson: experience about **how to hand work      │
+ * │ over in this specific office**, not about the content of the work itself.        │
+ * │ This is the only class learned straight from the user without asking them        │
+ * │ a single question.                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Vì sao KHÔNG đếm số tin nhắn người dùng gõ, dù nghe tự nhiên hơn: người ta
- * nhắn nhiều vì nhiều lý do — nghĩ ra thêm ý, đổi ý, hay chỉ là gõ thành hai
- * dòng. Chỉ **lượt lập kế hoạch không ra được kế hoạch** mới là bằng chứng
- * chắc chắn rằng hệ thống đã bắt người dùng nói lại.
+ * ⚠ Why it does NOT count the number of messages a user types, tempting as
+ * that sounds: people send multiple messages for many reasons — an added
+ * thought, a change of mind, or just splitting one sentence into two lines.
+ * Only **a planning turn that failed to produce a plan** is solid proof that
+ * the system made the user repeat themselves.
  */
 export function worthLearning(
   receipts: readonly Receipt[],
   friction = 0,
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 CA CÒN CẢNH BÁO THÌ CHƯA PHẢI KINH NGHIỆM. (user chốt 29/08)          │
-   * │ > *"nếu 1 công việc còn warning có nghĩa là còn leak, không thể coi đó   │
-   * │ >  là kinh nghiệm được"*                                                 │
+   * │ 🔴 A RUN THAT STILL HAS A WARNING ISN'T YET A LESSON. (user settled            │
+   * │ 08/29)                                                                   │
+   * │ > *"if one job still has a warning, that means there's still a leak, it       │
+   * │ >  can't be counted as a lesson"*                                        │
    * │                                                                          │
-   * │ Đây là cảnh báo **cấp CA**, thứ `learnable` không nhìn thấy được vì nó    │
-   * │ chỉ đọc MỘT biên nhận: file đã hứa mà không có trên đĩa (`missingOutputs`)│
-   * │ · kết quả rơi ra ngoài văn phòng (`strays`) · đường dẫn bị kéo về khung   │
-   * │ (`redirected`). Cả ba đều là *"chạy xong rồi nhưng còn rò"* — và một cách │
-   * │ làm còn rò thì chưa phải một cách làm.                                   │
+   * │ This is a RUN-level warning, something `learnable` can't see because it        │
+   * │ only reads ONE receipt at a time: a promised file missing from disk           │
+   * │ (`missingOutputs`) · output landing outside the office (`strays`) · a path      │
+   * │ pulled back into the frame (`redirected`). All three mean *"finished, but      │
+   * │ still leaking"* — and a way of working that still leaks isn't yet a way of      │
+   * │ working.                                                                 │
    * │                                                                          │
-   * │ ⚠ Thứ tự tính TỪNG LÀ CHỖ HỎNG: `missingOutputs` vốn được tính SAU lượt   │
-   * │ `report()` đã hỏi bài học xong, nên nó cảnh báo cho người dùng mà không   │
-   * │ bao giờ chặn được một node nào. → `office.ts` chỗ dựng `leaked`           │
+   * │ ⚠ The computation ORDER used to be the broken part: `missingOutputs` used to   │
+   * │ be computed AFTER the `report()` turn had already asked for lessons, so it      │
+   * │ could warn the user without ever being able to block a single node. →          │
+   * │ `office.ts`, where `leaked` is built                                     │
    * │                                                                          │
-   * │ ⚠ KHÔNG áp cho nhánh `friction`: lớp đó học về **cách con người giao      │
-   * │ việc**, và một cái file rơi sai chỗ không làm câu đó sai đi.              │
+   * │ ⚠ Does NOT apply to the `friction` branch: that class learns about **how       │
+   * │ humans hand work over**, and a file landing in the wrong place doesn't          │
+   * │ make that sentence wrong.                                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   leaked = false,
@@ -512,52 +574,60 @@ export function worthLearning(
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 RECEIPT NÀY CÓ ĐƯỢC LÀM **NGUỒN** BÀI HỌC KHÔNG. (user chốt 29/08)    │
+ * │ 🔴 CAN THIS RECEIPT BE USED AS A **SOURCE** FOR A LESSON. (user settled        │
+ * │ 08/29)                                                                   │
  * │                                                                          │
- * │ HAI VẾ, và vế ① là vế MỚI — nó lật ngược cổng cũ:                        │
- * │   ① `delivered`   — **GIAO ĐƯỢC HÀNG**. Điều kiện CẦN, không thương lượng│
- * │   ② `agentFault`  — **CÓ VẤP**. Ngưỡng cũ, giữ nguyên: đường đi dễ quá   │
- * │                     thì cũng chưa chắc đáng lưu (user tái xác nhận).     │
+ * │ TWO CONDITIONS, and condition ① is the NEW one — it inverts the old gate:      │
+ * │   ① `delivered`   — **DELIVERED OUTPUT**. A REQUIRED condition, non-negotiable  │
+ * │   ② `agentFault`  — **HIT A SNAG**. The old threshold, kept as-is: a path        │
+ * │                     that was too easy also isn't necessarily worth saving        │
+ * │                     (user reconfirmed).                                    │
  * │                                                                          │
- * │ ⚠ Vế ① là `delivered()`, KHÔNG phải `status === 'done'`. (user chốt:     │
- * │ *"done dựa trên đánh giá neo vào mục tiêu của user đã hoàn thành chưa"*) │
- * │ `status` là **lời khai của nhân viên**; `delivered` hỏi thêm một câu     │
- * │ QUAN SÁT ĐƯỢC: *có gì đáp xuống không* (`artifacts` · `landed`). Chính   │
- * │ kho này đã ghi lại khoảng cách ấy bằng tiếng Việt: *"hai task báo cáo    │
- * │ 'xong việc' (Facebook, YouTube) nhưng hệ thống đánh dấu failed"*. Học    │
- * │ từ một lời khai chưa ai kiểm là nhân bản đúng cái nói dối đó vào prefix. │
- * │ → [[agentco-deterministic-vs-signal]] · `scheduler.ts §delivered`        │
+ * │ ⚠ Condition ① is `delivered()`, NOT `status === 'done'`. (user settled:        │
+ * │ *"done should be judged against whether the user's own goal was actually        │
+ * │ met"*) `status` is the **worker's own claim**; `delivered` asks one more         │
+ * │ OBSERVABLE question: *did anything actually land* (`artifacts` · `landed`).      │
+ * │ This very store already recorded that exact gap in words: *"two tasks           │
+ * │ reported 'job done' (Facebook, YouTube) but the system marked them              │
+ * │ failed"*. Learning from an unverified claim replicates that exact lie          │
+ * │ straight into the prefix. → [[agentco-deterministic-vs-signal]] ·                │
+ * │ `scheduler.ts §delivered`                                                │
  * │                                                                          │
- * │ Cổng cũ chỉ có vế ②, nên nó bắn **đúng lúc ca vừa hỏng** — tức đúng lúc  │
- * │ bằng chứng yếu nhất. Hậu quả là một **BÁNH CÓC**: ca hỏng đẻ bài học →   │
- * │ `cold()` kéo đúng nó về ở task cùng chủ đề lần sau → nó **gây ra** lại   │
- * │ chính triệu chứng đã sinh ra nó → đẻ tiếp.                              │
+ * │ The old gate only had condition ②, so it fired **exactly when a run just         │
+ * │ broke** — i.e. exactly when the evidence is weakest. The result was a           │
+ * │ RATCHET: a broken run produces a lesson → `cold()` pulls it right back in         │
+ * │ on the next task with the same topic → it **causes** the exact symptom that       │
+ * │ produced it → produces another one.                                       │
  * │                                                                          │
- * │ ĐO ĐƯỢC 29/08, văn phòng `canh-tay`, 21 bài học của Trợ lý xếp theo      │
- * │ trạng thái ca đã đẻ ra chúng:                                           │
+ * │ MEASURED 08/29, office `canh-tay`, 21 Assistant lessons sorted by the run's       │
+ * │ status that produced them:                                                │
  * │                                                                          │
- * │   blocked  12 mẩu  ← **cả 10 mẩu đã chặn cánh tay trình duyệt nằm đây**  │
- * │   failed    3 mẩu  ← "đã thất bại 3 lần liên tiếp" — cùng hình dạng      │
- * │   done      6 mẩu  ← toàn cách-làm-chạy-được                            │
+ * │   blocked  12 entries  ← **all 10 entries that had blocked the browser arm      │
+ * │                           sit here**                                       │
+ * │   failed    3 entries  ← "already failed 3 times in a row" — the same shape      │
+ * │   done      6 entries  ← all genuinely-working methods                    │
  * │                                                                          │
- * │ Ca thật đắt nhất, hai mẩu về cùng một chuyện:                           │
- * │   từ ca `blocked` 28/08: *"GitHub không merge được nhánh qua PR"*        │
- * │   từ ca `done`    28/08: *"đã có create_pull_request và merge_pull_..."* │
- * │ ⇒ Bài học từ ca hỏng không chỉ vô dụng — **nó SAI**. Ca hỏng chứng minh  │
- * │ *"lần này không xong"*; nó **không bao giờ** chứng minh *"không làm      │
- * │ được"*. Hai câu đó cách nhau rất xa, và model không phân biệt nổi.       │
+ * │ The single most expensive real case, two entries about the same thing:          │
+ * │   from a `blocked` run 08/28: *"GitHub can't merge the branch via a PR"*         │
+ * │   from a `done` run    08/28: *"create_pull_request and merge_pull_...           │
+ * │   already exist"*                                                         │
+ * │ ⇒ A lesson from a broken run isn't just useless — **it's WRONG**. A broken       │
+ * │ run proves *"didn't finish this time"*; it **never** proves *"can't be           │
+ * │ done"*. Those two statements are far apart, and the model can't tell them        │
+ * │ apart.                                                                    │
  * │                                                                          │
- * │ ⚠ THỨ MẤT ĐI, ghi ra để cân lại được: ca hỏng **hẳn** không còn để lại   │
- * │ gì trong kho. Đó là CỐ Ý — một trục trặc chưa gỡ được là **tin báo cho   │
- * │ NGƯỜI DÙNG** (câu `blocked_on`, ô chat), không phải kinh nghiệm cho      │
- * │ nhân viên. Gửi nó vào prefix là gửi sai người đọc, đúng lỗi ① mà         │
- * │ `agentFault` đã mất công phân loại để tránh.                            │
+ * │ ⚠ WHAT'S LOST, stated outright so it can be weighed: a broken run now            │
+ * │ leaves **absolutely nothing** in the store. That's DELIBERATE — an                │
+ * │ unresolved snag is **a message for the USER** (the `blocked_on` sentence, the     │
+ * │ chat pane), not a lesson for a worker. Sending it into the prefix sends it        │
+ * │ to the wrong reader, exactly the mistake `agentFault` was built to               │
+ * │ classify and avoid.                                                       │
  * │                                                                          │
- * │ ⚠ KHÔNG áp cho GHI NHỚ của Trợ lý (`isMemory`): thẩm quyền của nó đến    │
- * │ từ **người dùng**, không từ kết quả một ca. Gate nó theo ca chạy nghĩa   │
- * │ là vứt một quyết định của con người vì một task hỏng.                    │
- * │ ⚠ KHÔNG áp cho nhánh `friction`: đó là bài học về **cách giao việc**,    │
- * │ sinh ra từ ca chạy SẠCH, nên nó không dính bánh cóc này.                 │
+ * │ ⚠ Does NOT apply to the Assistant's own MEMORY (`isMemory`): its authority        │
+ * │ comes from the **user**, not from a run's outcome. Gating it on a run's           │
+ * │ result would throw away a human decision because of one failed task.            │
+ * │ ⚠ Does NOT apply to the `friction` branch: that's a lesson about **how to      │
+ * │ hand work over**, born from a CLEAN run, so it isn't caught in this ratchet.     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function learnable(r: Receipt): boolean {
@@ -565,103 +635,111 @@ export function learnable(r: Receipt): boolean {
 }
 
 /**
- * TRỤC TRẶC NÀY CÓ PHẢI DO MỘT AGENT TRONG VĂN PHÒNG GÂY RA KHÔNG?
+ * WAS THIS SNAG CAUSED BY AN AGENT INSIDE THE OFFICE?
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CÂU HỎI *"CỦA AI"* PHẢI ĐƯỢC TRẢ LỜI TRƯỚC CÂU HỎI *"HỌC ĐƯỢC GÌ"*.      │
- * │ (user chốt 21/08)                                                        │
+ * │ THE QUESTION *"WHOSE FAULT"* HAS TO BE ANSWERED BEFORE THE QUESTION            │
+ * │ *"WHAT WAS LEARNED"*. (user settled 08/21)                                     │
  * │                                                                          │
- * │ Bản trước bắn khi `status !== 'done'` — BẤT KỂ vì sao. Chạm trần chi phí │
- * │ là `failed`, nên mọi lượt chạm trần đều bị hỏi *"học được gì"*. Model bị  │
- * │ hỏi thì phải trả lời, và nó chỉ có đúng một thứ để kể: cái trần. Sản      │
- * │ phẩm đo được ngày 21/08 — hai node gần như y hệt nhau:                   │
+ * │ The old version fired whenever `status !== 'done'` — REGARDLESS of why. Hitting   │
+ * │ the cost cap counts as `failed`, so every capped turn got asked *"what did        │
+ * │ you learn"*. A model that gets asked has to answer, and it has exactly one         │
+ * │ thing to report: the cap. Measured in production 08/21 — two nearly                │
+ * │ identical nodes:                                                          │
  * │                                                                          │
- * │   "Phan-tich-standard liên tục chạm trần chi phí … nên nới max_usd"      │
- * │   "Việc nhóm+tổng hợp CSV có thể chạm trần … cân nhắc nới max_usd"       │
+ * │   "Phan-tich-standard keeps hitting the cost cap … so raise max_usd"           │
+ * │   "The CSV group+aggregate job may hit the cap … consider raising max_usd"       │
  * │                                                                          │
- * │ Ba thứ hỏng cùng lúc, và cái thứ hai là cái đắt:                         │
+ * │ Three things broken at once, and the second is the expensive one:               │
  * │                                                                          │
- * │  1. SAI NGƯỜI ĐỌC. Kinh nghiệm nằm trong prefix của MỌI worker. Worker   │
- * │     không sửa được `max_usd` — nó không có tay để làm việc đó. Lời khuyên│
- * │     ấy gửi cho CON NGƯỜI, mà con người không đọc kho tri thức; họ đọc ô  │
- * │     chat, nơi câu đó đã được nói rồi. Ta trả tiền vĩnh viễn để nhắc lại  │
- * │     một câu đã giao đúng cửa.                                            │
- * │  2. TỰ CHUỐC LẤY. Node vào prefix → prefix dài ra → mỗi lượt đắt lên →   │
- * │     **chạm trần dễ hơn**. Một bài học cảnh báo về chạm trần, mà cơ chế   │
- * │     tồn tại của nó là làm tăng chi phí. Nó sản xuất ra chính vấn đề nó   │
- * │     cảnh báo.                                                            │
- * │  3. SẼ SAI. Ngày người dùng nới trần, node vẫn nói "hay chạm trần" — và  │
- * │     node THẮNG, vì nó nằm sẵn trong đầu mọi nhân viên. Đúng lớp lỗi mà   │
- * │     luật *"ghi CÁCH LÀM, không ghi KIẾN THỨC"* sinh ra để chặn.          │
+ * │  1. WRONG READER. The lesson sits in the prefix of EVERY worker. A worker         │
+ * │     can't fix `max_usd` — it has no hands to do that with. That advice is         │
+ * │     meant for a HUMAN, and a human doesn't read the knowledge store; they         │
+ * │     read the chat pane, where that sentence was already said. We pay              │
+ * │     forever to repeat a sentence already delivered through the right door.       │
+ * │  2. SELF-INFLICTED. A node enters the prefix → the prefix grows → every turn       │
+ * │     gets more expensive → **hitting the cap gets EASIER**. A lesson warning        │
+ * │     about hitting the cap, whose very existence increases cost. It                │
+ * │     manufactures the exact problem it warns about.                             │
+ * │  3. WILL BECOME WRONG. The day the user raises the cap, the node still says       │
+ * │     "tends to hit the cap" — and the node WINS, because it already sits in         │
+ * │     every worker's head. Exactly the failure class the rule *"record HOW TO       │
+ * │     DO IT, not KNOWLEDGE"* exists to block.                                  │
  * │                                                                          │
- * │ ⚠ VÌ SAO KHÔNG LỌC BẰNG PROMPT: prompt ĐÃ cấm, bằng hai dòng riêng biệt  │
- * │   (*"Không ghi con số, ngưỡng, giá"* và *"ghi CÁCH LÀM"*), và model vẫn  │
- * │   ghi ra hai node về ngưỡng chi phí. Một luật chỉ sống trong prompt là    │
- * │   một LỜI HỨA. Và LLM đặc biệt yếu ở đúng chỗ này — nó không phân biệt   │
- * │   nổi *"tôi làm sai"* với *"môi trường quanh tôi chặn tôi lại"*, vì cả    │
- * │   hai đều hiện ra trong ngữ cảnh của nó y hệt nhau: một lượt không xong. │
- * │   Nên đừng hỏi model câu đó. **Ta biết chắc, bằng dữ liệu.**             │
+ * │ ⚠ WHY NOT FILTER WITH A PROMPT INSTRUCTION: the prompt ALREADY forbids this,      │
+ * │   with two separate lines (*"don't record numbers, thresholds, prices"* and       │
+ * │   *"record HOW TO DO IT"*), and the model still produced two nodes about a          │
+ * │   cost threshold. A rule that only lives in the prompt is a PROMISE. And the       │
+ * │   LLM is uniquely weak at exactly this spot — it can't tell *"I did              │
+ * │   something wrong"* from *"my environment blocked me"*, because both show up       │
+ * │   in its context identically: a turn that didn't finish. So don't ask the         │
+ * │   model that question. **We know for certain, from the data.**                │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `FailureKind` phân hoạch sạch theo *ai sửa được*:
+ * `FailureKind` splits cleanly by *who can fix it*:
  *
- * | kiểu | ai gây ra | agent làm gì được |
+ * | kind | caused by | can the agent do anything |
  * |---|---|---|
- * | `budget` · `max_turns` | trần NGƯỜI DÙNG đặt | không — nó không sửa cấu hình |
- * | `rate_limit` · `usage_limit` | hạ tầng / gói cước | không |
- * | `auth` | cấu hình máy | không |
- * | `stopped` | người dùng bấm Dừng | không, và đó không phải trục trặc |
- * | `other` | có thể là chính nó | có |
+ * | `budget` · `max_turns` | a cap the USER set | no — it can't edit the config |
+ * | `rate_limit` · `usage_limit` | infrastructure / plan tier | no |
+ * | `auth` | machine configuration | no |
+ * | `stopped` | the user hit Stop | no, and that isn't a snag at all |
+ * | `other` | could be its own fault | yes |
  *
- * Còn `reasked` (trả sai định dạng) và `looped` (lặp thao tác) thì luôn là việc
- * của chính agent — quan sát được trong luồng, model-independent.
+ * And `reasked` (wrong output format) and `looped` (repeated actions) are
+ * always the agent's own doing — observable in the stream, model-independent.
  */
 export function agentFault(r: Receipt): boolean {
-  // Quan sát được trong luồng `tool_use`, model-independent, luôn là việc của
-  // chính agent. Đứng trước vì nó chắc chắn nhất.
+  // Observable in the `tool_use` stream, model-independent, always the
+  // agent's own doing. Checked first because it's the most certain.
   if (r.reasked || r.looped) return true;
 
   /**
-   * Có `failure` ⇒ vòng lặp bị cắt TỪ BÊN ngoài, và `blocked_on` lúc đó là câu
-   * của HỆ THỐNG chứ không phải lời khai của nhân viên. Đây chính là chỗ bản
-   * vá đầu của tôi sai: tôi bỏ luôn `blocked_on` khỏi tín hiệu, và làm mất một
-   * ca có thật — nhân viên `done` nhưng tự ghi *"thiếu file thuật ngữ"* thì đó
-   * là bài học đắt nhất trong kho. Hai `blocked_on` khác nguồn, và `failure`
-   * chính là thứ phân biệt được chúng.
+   * A `failure` present ⇒ the loop was cut off from OUTSIDE, and `blocked_on`
+   * at that point is the SYSTEM's own sentence, not the worker's own claim.
+   * This is exactly where my first fix got it wrong: I dropped `blocked_on`
+   * from the signal entirely, and lost a real case — a worker that reported
+   * `done` but wrote *"missing the terminology file"* on its own is the most
+   * valuable lesson in the whole store. Two `blocked_on` values from
+   * different sources, and `failure` is exactly what tells them apart.
    */
   if (r.failure) return r.failure === 'other';
 
-  // Không có `failure` ⇒ vòng lặp chạy hết, mọi thứ dưới đây là NHÂN VIÊN TỰ
-  // KHAI. Lời khai của người trong cuộc, và nó đáng học.
+  // No `failure` ⇒ the loop ran to completion, and everything below is the
+  // WORKER'S OWN CLAIM. The account of someone who was actually there, and
+  // it's worth learning from.
   return r.status !== 'done' || !!r.blocked_on;
 }
 
 /**
- * Đóng khung mọi đường dẫn artifact của kế hoạch này vào thư mục RIÊNG của nó.
+ * Frames every artifact path of this plan into its OWN dedicated directory.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `T-01` LÀ SỐ THỨ TỰ TRONG MỘT KẾ HOẠCH, VÀ MỌI KẾ HOẠCH ĐỀU BẮT ĐẦU TỪ 1.│
+ * │ `T-01` IS A SEQUENCE NUMBER WITHIN ONE PLAN, AND EVERY PLAN STARTS AT 1.       │
  * │                                                                          │
- * │ Nên `artifacts/T-01/` là thư mục dùng CHUNG cho mọi lần chạy. Đo được    │
- * │ trên máy người dùng: văn phòng `noi-dung` có TÁM kế hoạch, cả tám cùng   │
- * │ đổ vào `artifacts/T-01/` — chín file lẫn lộn một chỗ, không có gì cho    │
- * │ biết file nào của lần chạy nào.                                          │
+ * │ So `artifacts/T-01/` is a directory SHARED across every single run.          │
+ * │ Measured on a user's machine: office `noi-dung` had EIGHT plans, and all         │
+ * │ eight dumped into `artifacts/T-01/` — nine files jumbled in one place,          │
+ * │ nothing saying which file belonged to which run.                              │
  * │                                                                          │
- * │ Hôm nay chưa mất gì vì tên file tình cờ khác nhau. Chạy lại một yêu cầu  │
- * │ giống lần trước là kết quả cũ bị GHI ĐÈ, không hỏi, không báo — đúng lớp │
- * │ lỗi "mất việc của người dùng, im lặng" ở §8.                             │
+ * │ Nothing was lost today only because the filenames happened to differ.          │
+ * │ Rerunning a request similar to a previous one means the old output gets         │
+ * │ OVERWRITTEN, with no question and no warning — exactly the "lost the user's      │
+ * │ work, silently" failure class in §8.                                     │
  * │                                                                          │
- * │ `Scheduler.validate` chỉ chặn hai task trong CÙNG một kế hoạch ghi đè    │
- * │ nhau; nó không biết gì về các kế hoạch trước.                            │
+ * │ `Scheduler.validate` only blocks two tasks WITHIN the SAME plan from             │
+ * │ overwriting each other; it knows nothing about previous plans.                 │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Làm bằng CODE, không dặn model: `plan_id` được sinh ra ở đây, model không hề
- * biết nó. Hỏi model tự đặt đường dẫn duy nhất là trả tiền để mua lại đúng sự
- * bất định ta vừa loại bỏ.
+ * Done by CODE, not instructed to the model: `plan_id` is generated right
+ * here, and the model never even knows it. Asking the model to invent a
+ * unique path itself would be paying money to buy back the exact uncertainty
+ * just eliminated.
  *
- * ⚠ CHỈ viết lại đường dẫn trỏ tới task CỦA CHÍNH KẾ HOẠCH NÀY. Người dùng có
- * quyền nói "sửa lại file hôm qua", và lúc đó `inputs` trỏ tới artifact của một
- * kế hoạch cũ — viết lại nó là chỉ nhân viên tới một file không tồn tại.
+ * ⚠ Only rewrites a path pointing to a task OF THIS EXACT PLAN. A user is
+ * allowed to say "edit yesterday's file", and at that point `inputs` points
+ * to an artifact of an older plan — rewriting it would point a worker at a
+ * file that doesn't exist.
  */
 export function artifactScoper(planId: string, taskIds: readonly string[]): (p: string) => string {
   const mine = new Set(taskIds);
@@ -669,55 +747,58 @@ export function artifactScoper(planId: string, taskIds: readonly string[]): (p: 
     const p = raw.replace(/\\/g, '/').replace(/^\.\//, '');
     const parts = p.split('/');
     if (parts[0] !== 'artifacts' || parts.length < 2) return raw;
-    // Đã được đóng khung rồi (đường dẫn cũ do người dùng dán lại) — để nguyên.
+    // Already framed (an old path the user pasted back in) — leave it as-is.
     if (!mine.has(parts[1] ?? '')) return raw;
     return ['artifacts', planId, ...parts.slice(1)].join('/');
   };
 }
 
 /**
- * Đóng khung ĐƯỜNG RA của một task — và GIỮ LẠI phần đuôi người dùng đặt.
+ * Frames a task's OUTPUT path — and KEEPS the suffix the user chose.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO TÁCH KHỎI `artifactScoper` (20/08).                              │
+ * │ WHY THIS IS SPLIT FROM `artifactScoper` (08/20).                         │
  * │                                                                          │
- * │ Hai bên trả lời hai câu hỏi khác nhau, và gộp chúng lại là lý do một ca   │
- * │ hỏng có thật:                                                            │
+ * │ The two sides answer two different questions, and merging them is what           │
+ * │ caused a real broken case:                                                │
  * │                                                                          │
- * │  · `artifactScoper` (đầu VÀO) — "đường dẫn này trỏ tới task của chính kế │
- * │    hoạch này không?" Nếu không thì ĐỂ NGUYÊN, vì người dùng có quyền nói │
- * │    "sửa lại file hôm qua".                                               │
- * │  · `outputScoper` (đầu RA) — "task này ghi ở đâu?" Câu trả lời KHÔNG phụ │
- * │    thuộc vào chuỗi model viết ra: luôn là `artifacts/<plan>/<task>/`.     │
+ * │  · `artifactScoper` (an INPUT) — "does this path point to a task OF THIS         │
+ * │    EXACT PLAN?" If not, LEAVE IT AS-IS, because the user is allowed to say        │
+ * │    "edit yesterday's file".                                              │
+ * │  · `outputScoper` (an OUTPUT) — "where does this task write to?" The answer       │
+ * │    does NOT depend on the string the model wrote: it's always                    │
+ * │    `artifacts/<plan>/<task>/`.                                            │
  * │                                                                          │
- * │ CA HỎNG: người dùng nói *"Lưu vào `artifacts/vi/doc-1.md`"*. Planner ghi  │
- * │ đúng chuỗi đó vào `outputs`, `artifactScoper` thấy `vi` không phải task   │
- * │ id nên để nguyên — và file rơi ra ngoài khung theo ca, mất luôn bảo đảm   │
- * │ "lần chạy sau không đè lần này". Ca đo được trên máy người dùng thì đi    │
- * │ nhánh kia: planner tự bỏ `vi/` để tuân luật trong prompt, nên **yêu cầu  │
- * │ tường minh của người dùng biến mất mà không ai nói một câu nào**.        │
+ * │ THE BROKEN CASE: a user said *"Save it to `artifacts/vi/doc-1.md`"*. The         │
+ * │ planner wrote that exact string into `outputs`, `artifactScoper` saw `vi`         │
+ * │ wasn't a task id and left it as-is — and the file fell outside the per-run        │
+ * │ frame entirely, losing the guarantee that "the next run won't overwrite           │
+ * │ this one". A case measured on a user's machine went down the other branch:        │
+ * │ the planner dropped `vi/` on its own to follow a prompt rule, so **the           │
+ * │ user's explicit request vanished with nobody saying a word**.                 │
  * │                                                                          │
- * │ Cả hai kết cục đều sai, và cả hai đều sinh ra từ việc để MODEL quyết một │
- * │ chuyện thuộc về CODE. Ở đây code quyết phần khung, model giữ phần đuôi:  │
+ * │ Both outcomes are wrong, and both come from letting the MODEL decide             │
+ * │ something that belongs to CODE. Here, code decides the frame, the model          │
+ * │ keeps the suffix:                                                        │
  * │                                                                          │
  * │   artifacts/vi/doc-1.md   →  artifacts/<plan>/<task>/vi/doc-1.md         │
  * │   artifacts/T-01/x.md     →  artifacts/<plan>/T-01/x.md                  │
  * │   bao-cao.md              →  artifacts/<plan>/<task>/bao-cao.md          │
  * │                                                                          │
- * │ Người dùng giữ được cấu trúc thư mục mình muốn, hệ thống giữ được bảo    │
- * │ đảm không ghi đè, và `whereBlock` in ra đường dẫn THẬT nên không ai bị    │
- * │ lừa. → docs/SPEC-artifacts.md                                            │
+ * │ The user keeps the directory structure they wanted, the system keeps its         │
+ * │ no-overwrite guarantee, and `whereBlock` prints the REAL path so nobody is        │
+ * │ misled. → docs/SPEC-artifacts.md                                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Idempotent: gọi lại trên kết quả của chính nó không đóng khung thêm lớp nữa.
+ * Idempotent: calling it again on its own output doesn't frame it a second layer deep.
  */
 export function outputScoper(
   planId: string,
   taskId: string,
   /**
-   * Gọi khi một đường dẫn ngoài văn phòng bị kéo về khung. Người gọi dùng nó để
-   * nói ra chuyện đó với người dùng — xem `Plan.redirected`. Không truyền thì
-   * hành vi y hệt bản cũ.
+   * Called when a path outside the office gets pulled back into the frame.
+   * The caller uses this to tell the user about it — see `Plan.redirected`.
+   * Not passing it keeps behavior identical to the old version.
    */
   onRedirect?: (asked: string) => void,
 ): (p: string) => string {
@@ -725,35 +806,41 @@ export function outputScoper(
   return (raw: string): string => {
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 ĐƯỜNG DẪN TUYỆT ĐỐI → LẤY BASENAME. Bản trước lồng cả nó vào       │
-     * │    trong khung, và đẻ ra một đường dẫn KHÔNG HỢP LỆ.                  │
+     * │ 🔴 AN ABSOLUTE PATH → TAKE THE BASENAME. The old version nested it         │
+     * │    inside the frame too, producing an INVALID path.                    │
      * │                                                                      │
-     * │ Ca thật 22/08 22:06, in nguyên văn từ `P-260822-2206-ajcd.plan.json`: │
+     * │ Real case 08/22 22:06, verbatim from `P-260822-2206-ajcd.plan.json`:        │
      * │                                                                      │
      * │   outputs: artifacts/P-…/T-01/ban-ke.md                               │
      * │          | artifacts/P-…/T-01/D:/Downloads/Programs Installation/…    │
-     * │                                        ↑ chữ `D:` thành một THƯ MỤC   │
+     * │                                        ↑ the letters `D:` become a         │
+     * │                                          DIRECTORY                       │
      * │                                                                      │
-     * │ Trên Windows dấu hai chấm giữa segment là đường dẫn bất hợp lệ, nên   │
-     * │ nhân viên đào **7 lượt · $0,3158** để `mkdir` một thứ không thể tồn   │
-     * │ tại, rồi chết ở trần lượt. Ta không "từ chối một việc chưa hỗ trợ" —  │
-     * │ ta **bịa ra một đường dẫn hỏng rồi giao cho nhân viên như mục tiêu**. │
+     * │ On Windows, a colon mid-segment is an invalid path, so the worker            │
+     * │ burned **7 turns · $0.3158** trying to `mkdir` something that can't            │
+     * │ exist, then died at the turn cap. This isn't "rejecting an unsupported          │
+     * │ job" — we **made up a broken path and handed it to a worker as its             │
+     * │ goal**.                                                              │
      * │                                                                      │
-     * │ Nhánh POSIX cũng sai, chỉ êm hơn: `/home/an/x.md` bị `^\/+` bóc đầu   │
-     * │ rồi thành `artifacts/…/home/an/x.md` — hợp lệ, nhưng sai chỗ và im.   │
+     * │ The POSIX branch is wrong too, just quieter: `/home/an/x.md` gets its         │
+     * │ leading slashes stripped by `^\/+` and becomes                              │
+     * │ `artifacts/…/home/an/x.md` — valid, but in the wrong place and silently        │
+     * │ so.                                                                  │
      * │                                                                      │
-     * │ ⚠ Kiểm CẢ HAI hệ, không dò `process.platform`: một văn phòng zip từ   │
-     * │ máy Windows sang máy Linux vẫn phải đọc đúng chuỗi đã ghi trong kế    │
-     * │ hoạch cũ. Cùng lý do `SHELL_ALIASES` gửi cả hai tên.                  │
+     * │ ⚠ Checks BOTH OS conventions, without checking `process.platform`: an           │
+     * │ office zipped from a Windows machine to a Linux one still has to read           │
+     * │ the exact string written into an old plan. Same reason `SHELL_ALIASES`          │
+     * │ sends both names.                                                     │
      * │                                                                      │
-     * │ Đây KHÔNG phải chỗ cài luật "được ghi ra ngoài hay không" — luật đó   │
-     * │ thuộc `officeJail`, và hiện chốt là KHÔNG (→ SPEC §1b, §8). Ở đây chỉ │
-     * │ đảm bảo: thứ ta giao cho nhân viên luôn là một đường dẫn DÙNG ĐƯỢC.   │
+     * │ This is NOT the place to enforce "is writing outside allowed" — that           │
+     * │ rule belongs to `officeJail`, and today's answer is NO (→ SPEC §1b, §8).        │
+     * │ This function's only job: whatever we hand a worker is always a USABLE          │
+     * │ path.                                                                │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     if (path.win32.isAbsolute(raw) || path.posix.isAbsolute(raw)) {
-      // Ta vừa viết lại thứ người dùng gõ. Đó là một SỰ VIỆC, và giấu nó đi là
-      // cách một hệ thống nói dối về chính mình. → `Plan.redirected`
+      // We just rewrote what the user typed. That's a FACT, and hiding it is
+      // how a system lies about itself. → `Plan.redirected`
       onRedirect?.(raw);
       const base = raw.replace(/\\/g, '/').split('/').filter(Boolean).pop();
       return base ? `${home}/${base}` : `${home}/ket-qua.md`;
@@ -761,12 +848,13 @@ export function outputScoper(
 
     let rest = raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
     if (rest.startsWith('artifacts/')) rest = rest.slice('artifacts/'.length);
-    // Bóc các lớp khung ĐÃ CÓ, đúng thứ tự — đây là chỗ giữ tính idempotent.
+    // Strips layers of framing ALREADY PRESENT, in order — this is what keeps it idempotent.
     if (rest.startsWith(`${planId}/`)) rest = rest.slice(planId.length + 1);
     if (rest.startsWith(`${taskId}/`)) rest = rest.slice(taskId.length + 1);
-    // `..` và `.` bị bỏ chứ không phải bị từ chối: đây là chuỗi do model sinh,
-    // và một đường dẫn đi ngược ra ngoài `artifacts/` là thứ không được tồn tại
-    // dù model có ý gì. Chốt chặn thật vẫn nằm ở `safeJoin`; đây là lớp đầu.
+    // `..` and `.` get dropped rather than rejected: this is a model-generated
+    // string, and a path climbing back out of `artifacts/` must not exist no
+    // matter what the model intended. The real gate still lives in
+    // `safeJoin`; this is only the first layer.
     const tail = rest
       .split('/')
       .filter((s) => s && s !== '.' && s !== '..')
@@ -776,24 +864,26 @@ export function outputScoper(
 }
 
 /**
- * Kế hoạch model vừa viết ra → kế hoạch CHẠY ĐƯỢC. Hàm THUẦN, 0 token, 0 lượt.
+ * A plan the model just wrote → a RUNNABLE plan. A PURE function, 0 tokens, 0 calls.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO TÁCH RA KHỎI `Assistant.plan()` (20/08).                          │
+ * │ WHY THIS IS SPLIT OUT FROM `Assistant.plan()` (08/20).                   │
  * │                                                                          │
- * │ Hai lý do, và lý do thứ hai mới là lý do thật:                            │
+ * │ Two reasons, and the second is the real one:                            │
  * │                                                                          │
- * │  1. Nó là hàm thuần và nó đang giữ BỐN luật đã từng có bug — đóng khung   │
- * │     đầu vào, đóng khung đầu ra, bỏ bước không ai làm, mặc định `deliver`  │
- * │     của văn phòng. Nằm trong một method `async` gọi model thì không có bộ │
- * │     test nào chạm tới được. → §4 nợ kỹ thuật, ưu tiên 0                   │
- * │  2. **Nó có HAI người gọi.** `route()` có một cửa cứu hộ: khi model trả   │
- * │     về nguyên một kế hoạch trong lúc lẽ ra phải định tuyến, ta đang cầm   │
- * │     trong tay một kế hoạch ĐÃ TRẢ TIỀN — và luật "ra bản nháp để sửa còn  │
- * │     hơn viết mới từ đầu" cấm vứt nó đi để gọi lại `plan()`.               │
+ * │  1. It's a pure function holding FOUR rules that have each had a bug           │
+ * │     before — framing inputs, framing outputs, dropping steps nobody does,        │
+ * │     defaulting `deliver` from the office config. Buried inside an `async`        │
+ * │     method that calls the model, no test suite could ever reach it. → §4         │
+ * │     technical debt, priority 0                                            │
+ * │  2. **It has TWO callers.** `route()` has an escape hatch: when the model         │
+ * │     returns an entire plan while it was supposed to be routing, we're            │
+ * │     already holding an ALREADY-PAID-FOR plan — and the rule "a draft worth        │
+ * │     fixing beats starting from scratch" forbids throwing it away just to          │
+ * │     call `plan()` again.                                                  │
  * │                                                                          │
- * │ Hai bản mã cho cùng một phép biến đổi thì sẽ lệch — luật 19/08, và một    │
- * │ dòng chú thích "⚠ phải khớp bên kia" KHÔNG phải một cơ chế.               │
+ * │ Two copies of code for the same transformation will drift — the 08/19 rule,      │
+ * │ and a comment saying "⚠ must match the other side" is NOT a mechanism.          │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function buildPlan(
@@ -806,26 +896,27 @@ export function buildPlan(
   const rawTasks = draft.tasks.map((t) => ({ ...t, step: clampStep(t.step, rawSteps.length) }));
 
   /**
-   * BỎ BƯỚC KHÔNG CÓ TASK NÀO.
+   * DROPS A STEP WITH NO TASK ASSIGNED TO IT.
    *
-   * Model rất hay viết một bước kiểu "Lưu kết quả vào file" rồi không giao
-   * task nào cho nó — vì việc đó đã nằm trong task trước. Bước như thế KHÔNG
-   * AI TICK ĐƯỢC: nó đứng nguyên ở "chưa làm" kể cả khi mọi việc đã xong, và
-   * người dùng nhìn vào tưởng hệ thống bỏ sót.
+   * The model very often writes a step like "Save the results to a file"
+   * then assigns no task to it — because that work is already part of the
+   * previous task. A step like that can NEVER BE TICKED: it stays stuck at
+   * "not done" even after everything else finishes, and the user looking at
+   * it assumes the system missed something.
    *
-   * Lọc bằng code chứ không bằng cách bắt model lập lại kế hoạch: rẻ hơn một
-   * lượt gọi, và deterministic. Prompt cũng đã dặn thêm, nhưng dặn là gợi ý
-   * còn cái này là bảo đảm.
+   * Filtered by code rather than by making the model replan: cheaper than an
+   * extra call, and deterministic. The prompt already asks for this too, but
+   * asking is a suggestion while this is a guarantee.
    */
   const used = new Set(rawTasks.map((t) => t.step));
   const kept = rawSteps.map((title, i) => ({ title, i })).filter((s) => used.has(s.i));
   const remap = new Map(kept.map((s, newIndex) => [s.i, newIndex]));
 
   const steps: PlanStep[] = kept.map((s) => ({ title: s.title, status: 'pending' }));
-  // Đầu VÀO và đầu RA đi qua hai luật khác nhau — xem `outputScoper`.
+  // INPUTS and OUTPUTS go through two different rules — see `outputScoper`.
   const scopeIn = artifactScoper(planId, rawTasks.map((t) => t.task_id));
 
-  /** Đường dẫn ngoài văn phòng đã bị kéo về khung — nói ra ở `finish`. */
+  /** Paths outside the office that got pulled back into the frame — stated in `finish`. */
   const redirected = new Set<string>();
 
   const tasks = rawTasks.map((t) => {
@@ -834,24 +925,27 @@ export function buildPlan(
       ...t,
       inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
       /**
-       * GỘP TRÙNG SAU KHI ĐÓNG KHUNG — hai chuỗi khác nhau có thể quy về một.
+       * DEDUPLICATES AFTER FRAMING — two different strings can resolve to one.
        *
-       * Ca 22/08 22:06: người dùng nói *"ghi vào `D:\…\ban-ke.md`"*, Trợ lý khai
-       * HAI đích (một trong khung, một là đường dẫn người dùng gõ) — đúng phận
-       * sự của nó. Sau `outputScoper` cả hai rút về `…/T-01/ban-ke.md`.
+       * Case 08/22 22:06: the user said *"write it to `D:\…\ban-ke.md`"*, and
+       * the Assistant declared TWO destinations (one already framed, one the
+       * user's own typed path) — exactly doing its job. After `outputScoper`
+       * both collapse to `…/T-01/ban-ke.md`.
        *
-       * Không gộp thì nhân viên nhận một danh sách bảo nó ghi cùng một file hai
-       * lần, và `validate` cũng không bắt: phép kiểm "hai task cùng ghi một
-       * đường dẫn" so GIỮA các task, không so trong lòng một task.
+       * Without deduplicating, a worker gets a list telling it to write the
+       * same file twice, and `validate` doesn't catch it either: the "two
+       * tasks writing the same path" check compares ACROSS tasks, not within
+       * one task's own list.
        */
       outputs: [...new Set(t.outputs.map((o) => scopeOut(o.path)))].map((p) => ({
         kind: 'file' as const,
         path: p,
       })),
       step: remap.get(t.step) ?? 0,
-      // Mặc định VĂN PHÒNG, không phải mặc định của schema. Đây là chỗ cần
-      // gạt tất định thật sự có hiệu lực: model im lặng = đi theo cấu hình
-      // người dùng đã đặt, chứ không rơi về 'file' một cách âm thầm.
+      // The OFFICE's default, not the schema's default. This is the spot
+      // where the deterministic lever actually has to take effect: the model
+      // staying silent means following the config the user already set,
+      // rather than silently falling back to 'file'.
       deliver: t.deliver ?? defaultDeliver,
     });
   });
@@ -866,74 +960,85 @@ export function buildPlan(
 }
 
 /**
- * Câu "việc này là việc gì" cho một bản nháp kế hoạch — SUY TỪ DỮ LIỆU, 0 token.
+ * The "what is this job" sentence for a plan draft — INFERRED FROM DATA, 0 tokens.
  *
- * `PlanRecord.request` là thứ người dùng đọc trong `/status` và trong nhật ký
- * công việc. Ở ca thường nó do `route()` viết ra ("viết lại yêu cầu thành một
- * câu rõ ràng"). Ở cửa cứu hộ ta không có câu đó — nhưng ta có `goal` của từng
- * task, vốn được yêu cầu đúng cùng một hình dạng: *một câu rõ ràng, tiếng của
- * người dùng*. Dùng lại thứ đang cầm thay vì hỏi thêm một lượt.
+ * `PlanRecord.request` is what the user reads in `/status` and in the work
+ * log. In the usual case it's written by `route()` ("rewrite the request as
+ * one clear sentence"). At the escape hatch we don't have that sentence —
+ * but we have each task's `goal`, which is required to have that exact same
+ * shape: *one clear sentence, in the user's own words*. Reuses what's
+ * already in hand instead of asking for another turn.
  *
- * ⚠ KHÔNG dùng chính câu người dùng vừa gõ: câu đó thường là *"ừ, cái nào cũng
- * được"* — đúng nhưng vô nghĩa khi đọc lại trong nhật ký ba ngày sau.
+ * ⚠ Does NOT use the exact sentence the user just typed: that sentence is
+ * often *"sure, any of them is fine"* — correct but meaningless read back in
+ * the log three days later.
  */
 export function requestOf(draft: PlanDraft): string {
   return truncateToTokens(draft.tasks.map((t) => t.goal.trim()).filter(Boolean).join(' · '), 120);
 }
 
 /**
- * Ý NGHĨA của cờ `chạy lệnh`, nói ĐÚNG MỘT LẦN ở đầu danh bạ. → `Assistant.reach`
+ * The MEANING of the `runs commands` flag, stated EXACTLY ONCE at the top of
+ * the directory. → `Assistant.reach`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CÂU NÀY PHẢI HẸP, VÌ MẶT PHỦ ĐỊNH RỘNG LÀ MỘT LỜI NÓI DỐI.               │
+ * │ THIS SENTENCE HAS TO BE NARROW, BECAUSE A BROAD NEGATIVE IS A LIE.            │
  * │                                                                          │
- * │ Ranh giới thật hôm nay (`types.ts §BUILTIN_TOOLS`, đo 22/08):             │
+ * │ The real boundary today (`types.ts §BUILTIN_TOOLS`, measured 08/22):          │
  * │                                                                          │
- * │   ĐỌC   `Read`/`Glob`/`Grep`  → KHÔNG hàng rào, với tới MỌI đường dẫn    │
- * │   GHI   `Write`/`Edit`        → có hàng rào `officeJail`                 │
- * │   LỆNH  `Bash`                → không hàng rào                           │
+ * │   READ    `Read`/`Glob`/`Grep`  → NO fence, reaches ANY path                 │
+ * │   WRITE   `Write`/`Edit`        → has the `officeJail` fence                 │
+ * │   COMMAND `Bash`                → no fence                                 │
  * │                                                                          │
- * │ Nên *"không có shell"* KHÔNG đồng nghĩa *"không với tới máy của bạn"*.   │
- * │ Vai trò trần vẫn mở được `D:\Hồ sơ\hopdong.pdf` bằng `Read`. Viết câu    │
- * │ phủ định rộng là dạy Trợ lý từ chối cả việc nó làm được — hỏng ngược     │
- * │ chiều, và im lặng hơn hẳn ca 9.3 vì không ai thấy việc đã bị từ chối.    │
+ * │ So *"no shell"* does NOT mean *"can't reach your machine"*. A bare role         │
+ * │ can still open `D:\Records\contract.pdf` with `Read`. Writing a broad           │
+ * │ negative teaches the Assistant to refuse work it's actually capable of —        │
+ * │ a failure in the opposite direction, and quieter than case 9.3 because          │
+ * │ nobody even sees the refusal happen.                                     │
  * │                                                                          │
- * │ Bằng chứng nằm ngay trong 9.3: nhân viên báo *"Glob chỉ trả về đường     │
- * │ dẫn file"* — tức là Glob ĐÃ ra tới `D:\Downloads` thành công. Nó thiếu   │
- * │ cột, không phải thiếu đường.                                             │
+ * │ The proof sits right inside 9.3 itself: a worker reported *"Glob only            │
+ * │ returns file paths"* — meaning Glob had ALREADY successfully reached            │
+ * │ `D:\Downloads`. It was missing a column, not a path.                        │
  * │                                                                          │
- * │ ⇒ Chỉ nêu đúng thứ shell thêm vào: metadata file, và ghi ra ngoài.       │
+ * │ ⇒ States exactly what the shell adds: file metadata, and writing outside.       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ⚠ VÌ SAO KHÔNG VIẾT "shell là thứ DUY NHẤT lấy được kích thước".         │
+ * │ ⚠ WHY IT DOESN'T SAY "the shell is the ONLY way to get a file size".          │
  * │                                                                          │
- * │ Bản đầu của câu này viết đúng như vậy. Nó ĐÚNG hôm nay — 7 tool mặc      │
- * │ định không có cái nào trả metadata — nhưng nó là một khẳng định về TOÀN  │
- * │ BỘ THẾ GIỚI, nên nó **hết đúng vào đúng ngày MCP có mặt**: một MCP       │
- * │ filesystem trả `size`/`mtime` là câu này thành nói dối, và nói dối theo  │
- * │ chiều làm Trợ lý TỪ CHỐI một việc vốn chạy được.                         │
+ * │ The first draft of this sentence said exactly that. It's CORRECT today —        │
+ * │ none of the 7 default tools return metadata — but it's a claim about the        │
+ * │ WHOLE WORLD, so it **stops being true the exact day MCP shows up**: an          │
+ * │ MCP filesystem server returning `size`/`mtime` turns this sentence into a         │
+ * │ lie, and lies in the direction of the Assistant REFUSING work it could           │
+ * │ actually do.                                                              │
  * │                                                                          │
- * │ User bắt được lỗ này trước khi MCP kịp tồn tại (22/08): *"worker không   │
- * │ có shell nhưng có nhiều tool khác, mcp khác thì assistant có chủ quan mà │
- * │ chặn không"*. Có. Và nó sẽ chặn IM LẶNG.                                 │
+ * │ A user caught this hole before MCP even existed yet (08/22): *"the worker        │
+ * │ has no shell but has plenty of other tools, other MCPs — does the                │
+ * │ Assistant just assume and block it?"*. Yes. And it would block SILENTLY.         │
  * │                                                                          │
- * │ ⇒ Thay bằng bất biến TỰ ĐÚNG: *"dòng của mỗi người liệt kê ĐỦ nơi họ với │
- * │   tới"*. Đó là khẳng định về ĐỊNH DẠNG, không phải về thế giới — và      │
- * │   `reach()` thi hành nó theo đúng nghĩa đen (`[...role.mcp]` đi đầu).    │
- * │   Thêm bao nhiêu năng lực về sau, câu vẫn đúng, không phải sửa lại.      │
+ * │ ⇒ Replaced with an invariant that's SELF-CORRECTING: *"each person's line        │
+ * │   lists EVERYTHING they can reach"*. That's a claim about FORMAT, not           │
+ * │   about the world — and `reach()` enforces it literally (`[...role.mcp]`         │
+ * │   goes first).                                                            │
+ * │   No matter how many capabilities get added later, the sentence stays          │
+ * │   correct, no edit needed.                                                │
  * │                                                                          │
- * │ ✅ NỢ NÀY ĐÃ TRẢ 26/08 — sau khi user đâm thẳng vào nó.                  │
+ * │ ✅ THIS DEBT WAS PAID 08/26 — after a user ran straight into it.               │
  * │                                                                          │
- * │ Nợ cũ: *"dòng đó liệt kê MCP bằng TÊN (`notion`), không bằng NĂNG LỰC.   │
- * │ Trợ lý biết 'với tới Notion', không biết 'ghi được file'."*               │
+ * │ The old debt: *"that line lists MCP servers by NAME (`notion`), not by          │
+ * │ CAPABILITY. The Assistant knows 'can reach Notion', not 'can write a           │
+ * │ file'."*                                                                 │
  * │                                                                          │
- * │ Ca thật: user đổi cánh tay sang toàn quyền, Trợ lý vẫn từ chối bằng       │
- * │ **đúng câu cũ**. Nó không cố chấp — nó không có dữ kiện nào để biết khác. │
+ * │ Real case: a user switched an arm to full access, and the Assistant still       │
+ * │ refused with **the exact same old sentence**. It wasn't being stubborn —        │
+ * │ it had no fact available to know otherwise.                              │
  * │                                                                          │
- * │ Giải được vì `arms[].level` mới tồn tại từ 26/08. `armReach` giờ in nấc   │
- * │ ngay trên dòng của nhân viên. Vắng `level` (thư mục · tự cắm) ⇒ không in  │
- * │ gì — bịa một năng lực cho thứ không khai nó là dựng lại đúng lỗi này.     │
+ * │ Solvable because `arms[].level` only started existing 08/26. `armReach`         │
+ * │ now prints the tier right above the worker's own line. Missing `level`          │
+ * │ (a folder arm · a hand-pasted one) ⇒ prints nothing — making up a               │
+ * │ capability for something that never declared it would just rebuild this         │
+ * │ exact bug.                                                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const SHELL_LEGEND =
@@ -942,32 +1047,36 @@ export const SHELL_LEGEND =
   'and writing outside the office folder.\n' +
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴🔴 CÂU NÀY ĐÃ NÓI DỐI, VÀ NÓ TỰ CẢNH BÁO CHÍNH MÌNH TỪ 22/08.          │
+   * │ 🔴🔴 THIS SENTENCE WAS A LIE, AND IT WARNED ABOUT ITSELF SINCE 08/22.          │
    * │                                                                          │
-   * │ Bản trước: *'"chạy lệnh: BẬT" thì có thêm: **kích thước · ngày sửa ·      │
-   * │ dung lượng của file**'*. Ca user gặp 24/08, có cánh tay filesystem cắm    │
-   * │ đàng hoàng, shell TẮT:                                                   │
+   * │ The old version: *'"runs commands: ON" adds: **file size · modified date ·      │
+   * │ byte count**'*. A case a user hit 08/24, with a filesystem arm properly          │
+   * │ plugged in, shell OFF:                                                    │
    * │                                                                          │
-   * │   *"Nhân viên phụ trách thư mục Musics đang tắt chế độ chạy lệnh nên     │
-   * │    không lấy được dung lượng file… Bạn có thể bật chế độ chạy lệnh cho   │
-   * │    nhân viên này không?"*                                                │
+   * │   *"The worker in charge of the Musics folder has command-running turned         │
+   * │    off, so it can't get the file size… Could you turn on command-running          │
+   * │    for this worker?"*                                                     │
    * │                                                                          │
-   * │ **Sai, và đo được là sai.** `spike-arm-e2e` ca A chạy với `role.tools`    │
-   * │ ép về `[]` (shell TẮT hoàn toàn) và vẫn ra bảng kích thước đầy đủ:       │
-   * │ `Programs Installation 2 · list directory with sizes` → `done`. Cánh tay │
-   * │ filesystem có **14 tool**, trong đó `list_directory_with_sizes` và       │
-   * │ `get_file_info` trả đúng metadata mà câu trên bảo là độc quyền của shell.│
+   * │ **Wrong, and measurably wrong.** `spike-arm-e2e` case A ran with                │
+   * │ `role.tools` forced to `[]` (shell FULLY OFF) and still produced a               │
+   * │ complete size table: `Programs Installation 2 · list directory with              │
+   * │ sizes` → `done`. The filesystem arm has **14 tools**, and                        │
+   * │ `list_directory_with_sizes` and `get_file_info` return exactly the                │
+   * │ metadata this sentence claimed was the shell's exclusive privilege.              │
    * │                                                                          │
-   * │ ⚠⚠ VÀ ĐÂY MỚI LÀ PHẦN ĐẮT: khối chú thích ngay TRÊN hằng số này, viết    │
-   * │ 22/08, đã nói chính xác chuyện sẽ xảy ra — *"nó hết đúng vào đúng ngày   │
-   * │ MCP có mặt… nói dối theo chiều làm Trợ lý TỪ CHỐI một việc vốn chạy      │
-   * │ được"*. Bản vá hôm đó chỉ gỡ chữ **"DUY NHẤT"** mà **giữ nguyên vế nhân  │
-   * │ quả**. Và có hẳn một test canh chữ "DUY NHẤT" — **test XANH suốt, trong  │
-   * │ khi lỗi vẫn sống**. Sửa chữ, không sửa mệnh đề.                          │
+   * │ ⚠⚠ AND HERE'S THE EXPENSIVE PART: the comment block right ABOVE this             │
+   * │ constant, written 08/22, had stated exactly what would happen — *"it            │
+   * │ stops being true the exact day MCP shows up… lies in the direction of            │
+   * │ the Assistant REFUSING work it could actually do"*. That day's fix only          │
+   * │ removed the word **"ONLY"** while **keeping the causal claim intact**.           │
+   * │ And there was even a test guarding the word "ONLY" — **that test stayed          │
+   * │ GREEN the whole time, while the bug stayed alive**. Fixed the wording, not        │
+   * │ the claim.                                                                │
    * │                                                                          │
-   * │ ⇒ Luật: **đừng liệt kê NĂNG LỰC theo nguồn cấp.** Chỉ nêu thứ shell      │
-   * │   thật sự độc quyền (chạy lệnh tuỳ ý · ghi ra ngoài), rồi để dòng cuối   │
-   * │   nói một bất biến về ĐỊNH DẠNG, không về thế giới.                      │
+   * │ ⇒ Rule: **never list CAPABILITIES by vendor.** State only what the shell         │
+   * │   is genuinely exclusive to (running arbitrary commands · writing outside),      │
+   * │   then let the last line state an invariant about FORMAT, not about the          │
+   * │   world.                                                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   'A connection (🔌) brings its OWN capabilities, and the employee finds out what it can call at ' +
@@ -975,63 +1084,69 @@ export const SHELL_LEGEND =
   'just because "shell: OFF" — hand it over, and they will report a missing tool themselves. Each ' +
   'person’s line lists EVERY place they reach; there is nothing beyond that list.\n' +
   /**
-   * Nửa còn lại của bản vá `armLine`, và THIẾU NÓ THÌ NỬA KIA VÔ NGHĨA.
+   * The other half of the `armLine` fix, and WITHOUT IT THE OTHER HALF MAKES NO SENSE.
    *
-   * Biết đường dẫn mà vẫn hỏi lại là đúng ca user gặp — chỉ khác là lúc đó Trợ
-   * lý không biết, còn từ đây nó biết mà có thể vẫn hỏi cho "chắc". Một vòng
-   * hỏi-đáp thừa với người non-code là một lần họ nghĩ sản phẩm không hiểu mình.
+   * Knowing the path and still asking again is exactly the case a user hit —
+   * only difference is that back then the Assistant genuinely didn't know,
+   * while from here on it knows but might still ask "just to be sure". One
+   * unnecessary round of asking with a non-technical user is one more time
+   * they conclude the product doesn't understand them.
    *
-   * ⚠ Câu này phải HẸP: nó chỉ nói về thư mục ĐÃ IN RA ở dòng nhân viên. Viết
-   * rộng thành "đừng hỏi đường dẫn" là dạy Trợ lý đoán bừa một đường dẫn nó
-   * chưa từng thấy — hỏng ngược chiều, và im lặng hơn.
+   * ⚠ This sentence has to be NARROW: it only talks about a folder ALREADY
+   * PRINTED on the worker's own line. Writing it broadly as "never ask for a
+   * path" would teach the Assistant to guess blindly at a path it's never
+   * seen — a failure in the opposite direction, and quieter.
    */
   'A folder written after "folders:" is one that employee has ALREADY been granted. When the human ' +
   'says "the folder you have access to", or names one of the folders in that list, USE that path ' +
   'directly — do not ask them for the full path again.';
 
 /**
- * Cờ shell của MỘT vai trò. Tách ra để test được mà không phải dựng văn phòng —
- * cùng lý do `resolveInput` từng được rút ra: luật đã sai một lần thì phải gọi
- * được riêng để canh. Xem khối `⚠ ĐÍNH CHÍNH` ở `Assistant.reach`.
+ * A single role's shell flag. Split out so it's testable without building a
+ * whole office — same reason `resolveInput` was once pulled out: a rule that
+ * was wrong once has to be callable on its own to be guarded. See the `⚠
+ * CORRECTED` block on `Assistant.reach`.
  *
- * LUÔN trả về một chuỗi, không bao giờ trả rỗng. Đó chính là chỗ bản trước sai.
+ * ALWAYS returns a string, never empty. That's exactly where the old version was wrong.
  */
 export function shellFlag(tools: readonly string[]): string {
   return hasShell(tools) ? 'shell: ON' : 'shell: OFF';
 }
 
 /**
- * Một cánh tay, nói bằng thứ Trợ lý CẦN — không bằng thứ ta lưu.
+ * One arm, stated in terms the Assistant NEEDS — not in terms of what we store.
  *
- * Hàm THUẦN, tách khỏi `Assistant` vì cùng lý do `shellFlag` từng được rút ra:
- * luật này đã sai một lần thì phải gọi được riêng để canh, không phải dựng cả
- * một văn phòng mới test được.
+ * A PURE function, split out of `Assistant` for the same reason `shellFlag`
+ * was once pulled out: a rule that was wrong once has to be callable on its
+ * own to be guarded, not require building a whole office to test.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 CA USER GẶP 24/08, BA LƯỢT LIÊN TIẾP, KHÔNG THOÁT RA ĐƯỢC:            │
+ * │ 🔴 A CASE A USER HIT 08/24, THREE TURNS IN A ROW, UNABLE TO ESCAPE:            │
  * │                                                                          │
- * │   — "Trong thư mục đã cho phép, tìm 5 file lớn nhất…"                    │
- * │   — "Bạn cho mình xin đường dẫn đầy đủ của thư mục cần soi nhé?"         │
- * │   — "thư mục music"                                                      │
- * │   — "Bạn cho mình xin đường dẫn đầy đủ tới thư mục Music đó nhé?"        │
- * │   — "nhân viên của bạn biết thư mục này rồi"                             │
- * │   — "Mình vẫn cần đường dẫn đầy đủ…"                                     │
+ * │   — "Within the folder I've granted, find the 5 largest files…"               │
+ * │   — "Could you give me the full path of the folder to look through?"           │
+ * │   — "the music folder"                                                    │
+ * │   — "Could you give me the full path to that Music folder?"                    │
+ * │   — "your worker already knows this folder"                                │
+ * │   — "I still need the full path…"                                          │
  * │                                                                          │
- * │ **Trợ lý không cố chấp — nó thật sự KHÔNG BIẾT.** `role.mcp` chỉ là một   │
- * │ mảng BĂM (`a385afc3ab6`), và bản trước đổ thẳng mảng đó vào dòng năng     │
- * │ lực. Băm không nói được nó trỏ vào đâu, nên *"thư mục đã cho phép"* không │
- * │ giải được — trong khi `company.yaml` biết thừa. Người dùng nói đúng:      │
- * │ *"nhân viên của bạn biết thư mục này rồi"*.                               │
+ * │ **The Assistant wasn't being stubborn — it genuinely DIDN'T KNOW.**            │
+ * │ `role.mcp` is just an array of HASHES (`a385afc3ab6`), and the old version       │
+ * │ dumped that array straight into the capability line. A hash can't say            │
+ * │ where it points, so *"the folder I've granted"* was unsolvable — while           │
+ * │ `company.yaml` knew perfectly well. The user was exactly right: *"your          │
+ * │ worker already knows this folder"*.                                        │
  * │                                                                          │
- * │ Đây là món nợ ĐÃ CÓ TÊN từ 22/08 ngay trong file này: *"dòng đó liệt kê   │
- * │ MCP bằng TÊN, không bằng NĂNG LỰC — tên server là LỜI KHAI, danh sách     │
- * │ tool của nó mới là SỰ THẬT"*. Ca này là món nợ đó thu lãi, và may là ở    │
- * │ dạng rẻ nhất để trả: thư mục nằm sẵn trong `args`, `folderRoots` đã có,   │
- * │ 0 lời gọi thêm, ~12 token mỗi cánh tay.                                   │
+ * │ This is debt already NAMED since 08/22 right in this file: *"that line          │
+ * │ lists MCP servers by NAME, not by CAPABILITY — a server name is a CLAIM,        │
+ * │ its own tool list is the TRUTH"*. This case is that debt collecting              │
+ * │ interest, and luckily in the cheapest form to pay off: the folder already        │
+ * │ sits in `args`, `folderRoots` already exists, 0 extra calls, ~12 tokens          │
+ * │ per arm.                                                                 │
  * │                                                                          │
- * │ ⚠ Ghi `thư mục:` chứ không dùng mũi tên hay dấu hai chấm trần — dòng này  │
- * │ nằm giữa một khối liệt kê và phải TỰ ĐỌC ĐƯỢC khi đứng một mình, cùng     │
- * │ luật đã áp cho `chạy lệnh: TẮT`.                                          │
+ * │ ⚠ Writes `folder:` rather than using an arrow or a bare colon — this line        │
+ * │ sits inside a list block and has to be SELF-READABLE standing alone, same        │
+ * │ rule already applied to `runs commands: OFF`.                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function armReach(
@@ -1043,62 +1158,72 @@ export function armReach(
   id: string,
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ CẦU NỐI TỪ TÊN NGƯỜI DÙNG GỌI → TÊN TOOL MODEL THẤY. (user hỏi 26/08)   │
+   * │ THE BRIDGE FROM THE NAME A USER CALLS SOMETHING → THE TOOL NAME THE MODEL       │
+   * │ SEES. (user asked 08/26)                                                 │
    * │                                                                          │
-   * │   *"trong trường hợp đặt tên phi-latin, mà trường tên không ảnh hưởng     │
-   * │    tới băm ⇒ hết cách…"*  · *"bạn đã tính tới case đặt tên trùng chưa"*  │
+   * │   *"what about a non-Latin label — the label field doesn't affect the           │
+   * │    hash ⇒ that's a dead end…"*  · *"have you thought about the case of duplicate │
+   * │    labels?"*                                                             │
    * │                                                                          │
-   * │ Hai câu, một chỗ hỏng: `armKeys` chỉ tạo được khoá đọc được từ nhãn, mà  │
-   * │ nhãn **phi-Latin** (文档 · 회계) ra chuỗi rỗng và nhãn **trùng nhau** thì  │
-   * │ cả hai phải về băm. Cả hai đường đổ về cùng một chỗ: model lại nhìn thấy │
-   * │ `mcp__a46a7e26403__…` và không biết đó là cánh tay nào.                   │
+   * │ Two questions, one shared hole: `armKeys` could only build a readable key       │
+   * │ from a label, and a **non-Latin** label (文档 · 회계) produces an empty        │
+   * │ string, while **duplicate** labels both have to fall back to the hash.          │
+   * │ Both paths land in the same place: the model sees                              │
+   * │ `mcp__a46a7e26403__…` again and has no idea which arm that is.                 │
    * │                                                                          │
-   * │ ⇒ Đường ra KHÔNG nằm ở cái tên — nó nằm ở **dòng danh bạ**. Một cái tên  │
-   * │ không mang được thông tin thì đặt thông tin ngay cạnh nó:                 │
+   * │ ⇒ The way out does NOT live in the name — it lives in the **directory           │
+   * │ line**. When a name can't carry information, put the information right          │
+   * │ next to it:                                                              │
    * │                                                                          │
-   * │     文档 — chỉ đọc · gọi bằng mcp__a46a7e26403__*                        │
+   * │     文档 — read-only · call via mcp__a46a7e26403__*                     │
    * │                                                                          │
-   * │ Đây KHÔNG phải "thêm một câu dặn" (thứ đã thua ba lần). Nó là một **ánh   │
-   * │ xạ nằm trên chính dòng có cái tên** — đúng khuôn đã thắng ở `chạy lệnh:   │
-   * │ TẮT` và `đường tắt tới`. → [[agentco-prompt-rules-lose-to-examples]]      │
+   * │ This is NOT "adding an instruction" (something that's already lost three         │
+   * │ times). It's a **mapping placed on the exact line carrying the name** —          │
+   * │ exactly the pattern that already won for `runs commands: OFF` and                │
+   * │ `shortcut to`. → [[agentco-prompt-rules-lose-to-examples]]                │
    * │                                                                          │
-   * │ ⚠ CHỈ nêu khi cần: khoá **suy được từ nhãn** thì model tự bắc cầu, và     │
-   * │ dán thêm một chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích —    │
-   * │ đồng thời dạy model rằng những chuỗi đó là nhiễu, rồi nó bỏ qua đúng lúc │
-   * │ chuỗi đó có nghĩa.                                                       │
+   * │ ⚠ States it ONLY when needed: when the key **can be inferred from the           │
+   * │ label**, the model bridges it itself, and pasting a technical string onto        │
+   * │ every single line pays tokens for something useless — while also teaching        │
+   * │ the model that such strings are noise, so it skips right past the one            │
+   * │ time the string actually matters.                                          │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   toolKey?: string,
 ): string {
-  // Băm là thứ CUỐI CÙNG dùng tới: nhãn do người dùng đặt là thứ họ nhận ra.
+  // The hash is the LAST resort: a label the user set is what they actually recognize.
   const label = arms[id]?.label?.trim() || id;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 TRẢ MÓN NỢ ĐÃ GHI TỪ 22/08 — và user vừa đâm thẳng vào nó 26/08.      │
+   * │ 🔴 PAYS OFF DEBT RECORDED SINCE 08/22 — and a user just ran straight into        │
+   * │ it 08/26.                                                                │
    * │                                                                          │
-   * │ Nợ, nguyên văn ở `SHELL_LEGEND`: *"dòng đó liệt kê MCP bằng TÊN           │
-   * │ (`notion`), không bằng NĂNG LỰC. Trợ lý biết 'với tới Notion', không biết │
-   * │ 'ghi được file'. Chưa giải."*                                            │
+   * │ The debt, verbatim in `SHELL_LEGEND`: *"that line lists MCP servers by          │
+   * │ NAME (`notion`), not by CAPABILITY. The Assistant knows 'can reach              │
+   * │ Notion', not 'can write a file'. Not yet solved."*                             │
    * │                                                                          │
-   * │ Ca thật: user đổi cánh tay sang **toàn quyền**, rồi hỏi *"tạo giúp tôi    │
-   * │ một trang Notion"* — Trợ lý vẫn trả lời **y hệt câu cũ**: *"chỉ đọc được  │
-   * │ Notion, không tạo hay ghi trang mới"*. Nó không cố chấp: **nó không có    │
-   * │ dữ kiện nào để biết khác đi.** Dòng danh bạ chỉ ghi một cái tên, và một   │
-   * │ cái tên thì không nói gì về quyền.                                       │
+   * │ Real case: a user switched an arm to **full access**, then asked *"create        │
+   * │ a Notion page for me"* — the Assistant answered with **the exact same           │
+   * │ old sentence**: *"can only read Notion, can't create or write new                │
+   * │ pages"*. It wasn't being stubborn: **it had no fact available to know            │
+   * │ otherwise.** The directory line only recorded a name, and a name says            │
+   * │ nothing about permissions.                                                │
    * │                                                                          │
-   * │ ⚠ Và đây là chỗ nợ đó đắt gấp đôi: Trợ lý đoán **theo chiều TỪ CHỐI**.   │
-   * │ Cùng hình dạng với ca `chạy lệnh: TẮT` (§SHELL_LEGEND) — *nói dối theo    │
-   * │ chiều làm Trợ lý từ chối một việc vốn chạy được*, lần thứ hai, thấp hơn   │
-   * │ một tầng.                                                                │
+   * │ ⚠ And here's where that debt costs double: the Assistant guesses **in the       │
+   * │ direction of REFUSAL**. The exact same shape as the `runs commands: OFF`         │
+   * │ case (§SHELL_LEGEND) — *lying in the direction that makes the Assistant           │
+   * │ refuse work it could actually do*, a second time, one layer down.               │
    * │                                                                          │
-   * │ Giải được BÂY GIỜ vì `arms[].level` mới có thật từ 26/08 — trước đó       │
-   * │ không có gì để in ra. Ba chữ, nằm **trên chính dòng của nhân viên** —     │
-   * │ đúng luật [[agentco-prompt-rules-lose-to-examples]]: điều kiện phải nằm   │
-   * │ ở chỗ thua, không phải thêm một câu dặn ở đầu khối.                       │
+   * │ Solvable NOW because `arms[].level` only started really existing 08/26 —         │
+   * │ before that there was nothing to print. Three words, sitting **on the           │
+   * │ worker's own exact line** — exactly the [[agentco-prompt-rules-lose-to-         │
+   * │ examples]] rule: a condition has to sit at the point it loses, not as an         │
+   * │ instruction added at the top of a block.                                  │
    * │                                                                          │
-   * │ ⚠ Vắng `level` ⇒ **không in gì**. Cánh tay thư mục và cánh tay tự cắm     │
-   * │ không có nấc, và bịa "toàn quyền" cho chúng là dựng lại đúng cái lỗi vừa  │
-   * │ vá — đoán hộ một năng lực từ một thứ không khai nó.                       │
+   * │ ⚠ Missing `level` ⇒ **prints nothing**. A folder arm and a hand-pasted           │
+   * │ arm have no tier at all, and making up "full access" for them would just         │
+   * │ rebuild the exact bug just fixed — guessing a capability for something           │
+   * │ that never declared it.                                                   │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const LEVEL: Record<string, string> = {
@@ -1109,29 +1234,34 @@ export function armReach(
   const level = arms[id]?.level ? LEVEL[arms[id]!.level!] : undefined;
   const roots = folderRoots(servers[id]);
   /**
-   * CUỐN DANH BẠ: tên nhà → địa chỉ nhà. Chỉ in khi chỗ gọi đưa `toolKey`, tức
-   * khi vai trò có **từ hai cánh tay trở lên** — một cánh tay thì không có gì
-   * để nhầm, và dán chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích.
+   * THE DIRECTORY: house name → house address. Only printed when the call site
+   * passes `toolKey`, i.e. when a role has **two or more arms** — one arm has
+   * nothing to confuse, and pasting a technical string onto every line pays
+   * tokens for something useless.
    */
   const bridge = toolKey ? ` · call it with mcp__${toolKey}__*` : '';
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 CÁCH CHẠY PHẢI NẰM TRÊN DÒNG NÀY — nếu không Trợ lý tả MẶC ĐỊNH CỦA   │
-   * │ DANH MỤC và gọi đó là cấu hình của người dùng. (ca thật 29/08)           │
+   * │ 🔴 THE ACTUAL LAUNCH MODE HAS TO SIT ON THIS LINE — otherwise the               │
+   * │ Assistant describes the CATALOG'S DEFAULT and calls it the user's own            │
+   * │ config. (real case 08/29)                                                  │
    * │                                                                          │
-   * │ User cắm cánh tay trình duyệt **có tick "nhớ đăng nhập"**, rồi hỏi mở một │
-   * │ trang để tự đăng nhập. Trợ lý trả lời, bốn lượt liền, đại ý *"phiên không │
-   * │ được giữ lại, không có cách nào lưu"* — trong khi hồ sơ **đang** được lưu │
-   * │ (bằng chứng: ô email tự điền sẵn, và 142 MB hồ sơ trên đĩa).             │
+   * │ A user plugged in a browser arm **with "remember sign-in" checked**, then        │
+   * │ asked it to open a page to sign in on its own. The Assistant answered, four       │
+   * │ turns straight, roughly *"the session isn't kept, there's no way to save          │
+   * │ it"* — while the profile **was** being saved (proof: the email field                │
+   * │ auto-filled, and a 142 MB profile sitting on disk).                          │
    * │                                                                          │
-   * │ Nó không bịa: dữ kiện duy nhất nó có là `blurb` của **mục danh mục**, mà  │
-   * │ blurb tả **mặc định** — *"trình duyệt sạch, không giữ đăng nhập"*. Đúng   │
-   * │ với mục, sai với cánh tay đã cắm.                                        │
+   * │ It wasn't making things up: the only fact it had was the **catalog             │
+   * │ entry's** `blurb`, and that blurb describes the DEFAULT — *"a clean               │
+   * │ browser, no sign-in kept"*. True of the catalog entry, false of the arm            │
+   * │ actually plugged in.                                                      │
    * │                                                                          │
-   * │ ⚠ Và nó sai **theo chiều TỪ CHỐI**, lần thứ ba của cùng một hình dạng     │
-   * │ (`chạy lệnh: TẮT` · `level` thiếu · và giờ là cách chạy). Cùng bản vá:    │
-   * │ đọc từ **cấu hình đã lưu**, in **trên chính dòng của nhân viên**.         │
-   * │ → `catalog.ts §activeOptions` · [[agentco-prompt-rules-lose-to-examples]] │
+   * │ ⚠ And it was wrong **in the direction of REFUSAL**, the third time this          │
+   * │ exact shape has happened (`runs commands: OFF` · a missing `level` · and          │
+   * │ now the launch mode). The same fix: read from the **saved config**, print         │
+   * │ it **on the worker's own exact line**.                                     │
+   * │ → `catalog.ts §activeOptions` · [[agentco-prompt-rules-lose-to-examples]]       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const entry = arms[id]?.catalog ? findArm(arms[id]!.catalog!) : undefined;
@@ -1140,27 +1270,31 @@ export function armReach(
    * never follows the interface switch. → `i18n/index.ts §tEn` · the two worlds
    */
   const opts = entry ? activeOptions(entry, servers[id]).map((o) => tEn(o.label).toLowerCase()) : [];
-  // Một danh sách, không phải hai câu: nấc quyền và cách chạy cùng trả lời câu
-  // *"cánh tay này LÀM ĐƯỢC GÌ"*, nên chúng đứng cạnh nhau hay đứng riêng đều
-  // đọc được — nhưng gộp thì không có chỗ nào để quên một vế.
+  // One list, not two sentences: the permission tier and the launch mode both
+  // answer the question *"what CAN this arm do"*, so they read fine standing
+  // side by side or separately — but merging them leaves no spot for either
+  // half to get forgotten.
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 NĂNG LỰC BẰNG TIẾNG NGƯỜI — nửa còn lại của món nợ ghi 22/08.         │
-   * │ (đo được 30/08, `scripts/spike-cli-arm.ts`, hỏng 3/3 lượt)               │
+   * │ 🔴 CAPABILITIES IN PLAIN HUMAN WORDS — the other half of the debt recorded       │
+   * │ 08/22. (measured 08/30, `scripts/spike-cli-arm.ts`, broke 3/3 turns)            │
    * │                                                                          │
-   * │ `hint` của mục danh mục đã làm đúng việc này từ 29/08, nhưng nó chỉ tới   │
-   * │ được **qua `catalog`**. Cánh tay tự dán và cánh tay CLI không có mục nào  │
-   * │ ⇒ dòng của chúng là ĐÚNG MỘT CÁI TÊN, và với một cái tên model chưa từng  │
-   * │ thấy (`Xưởng lệnh`) thì model **lấp chỗ trống**: một lượt bịa thẳng kết   │
-   * │ quả, một lượt viết brief *"bằng lệnh shell"* rồi worker blocked.          │
+   * │ A catalog entry's `hint` had already done this exact job since 08/29, but        │
+   * │ it could only be reached **through `catalog`**. A hand-pasted arm and a           │
+   * │ CLI arm have no catalog entry at all ⇒ their line is EXACTLY ONE NAME, and         │
+   * │ facing a name the model has never seen before (`Command Shop`), the model         │
+   * │ **fills in the gap itself**: one turn made up the result outright, another        │
+   * │ wrote a brief *"via a shell command"* and the worker got blocked.               │
    * │                                                                          │
-   * │ ⚠ VÌ SAO KHÔNG VI PHẠM §7b (*"KHÔNG liệt kê tên tool thô"*): §7b cấm dán  │
-   * │ 15 tên tool máy vào prefix của MỌI lượt chat. Đây là câu NGƯỜI đọc được,  │
-   * │ có **TRẦN 4**, và chỉ hiện ở vai trò có đúng cánh tay ấy. Vắng ⇒ không in │
-   * │ gì ⇒ mọi cánh tay hôm nay giữ nguyên từng ký tự.                          │
+   * │ ⚠ WHY THIS DOESN'T VIOLATE §7b (*"do NOT list raw tool names"*): §7b            │
+   * │ forbids pasting 15 machine tool names into the prefix of EVERY chat turn.        │
+   * │ This is a HUMAN-readable sentence, has a **CAP OF 4**, and only shows up          │
+   * │ for a role that has that exact arm. Absent ⇒ prints nothing ⇒ every arm            │
+   * │ today stays byte-for-byte unchanged.                                       │
    * │                                                                          │
-   * │ ⚠ Trần 4 + "và N việc khác" là cùng kỷ luật `reachDiff` ràng buộc 2: một  │
-   * │ cánh tay 20 lệnh không được nhét cả bức tường vào prefix mọi lượt.        │
+   * │ ⚠ The cap of 4 + "and N more actions" is the same discipline as               │
+   * │ `reachDiff`'s constraint 2: a 20-command arm must not stuff a whole wall           │
+   * │ into the prefix of every turn.                                           │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const DOES_CAP = 4;
@@ -1170,99 +1304,111 @@ export function armReach(
       ? `${all.slice(0, DOES_CAP).join(' · ')} · and ${all.length - DOES_CAP} more actions`
       : all.join(' · ')
     : undefined;
-  // `does` đứng SAU `level`/`opts`: hai thứ kia trả lời *"được phép tới đâu"*,
-  // `does` trả lời *"làm được gì"*. Quyền trước, việc sau — và đặt nó cuối thì
-  // dòng của mọi cánh tay đang chạy không đổi một ký tự nào (chúng không có `does`).
+  // `does` comes AFTER `level`/`opts`: those two answer *"how far is it allowed
+  // to reach"*, `does` answers *"what can it actually do"*. Permission first,
+  // action second — and putting it last means every arm currently running
+  // doesn't change by a single character (they have no `does`).
   const bits = [level, ...opts, does].filter(Boolean) as string[];
   const shortcut = roots.length ? ` (shortcut to ${roots.join(' · ')})` : '';
   /**
-   * Câu dặn của mục danh mục — ĐỨNG CUỐI, sau cầu nối tên tool.
+   * The catalog entry's warning sentence — LAST, after the tool-name bridge.
    *
-   * Cuối vì nó là câu dài nhất: mắt (và model) đọc nhãn · quyền · cách chạy trước,
-   * rồi mới tới lời dặn. Đặt nó giữa là đẩy `gọi bằng mcp__…__*` — thứ model cần
-   * để **gọi đúng tool** — ra sau một đoạn văn.
+   * Last because it's the longest sentence: an eye (and a model) reads the
+   * label · permission · launch mode first, then the warning. Placing it in
+   * the middle would push `call via mcp__…__*` — what the model needs to
+   * **call the right tool** — behind a paragraph.
    */
   const hint = entry?.hint ? ` — ⚠ ${entry.hint}` : '';
   if (bits.length) return `${label} — ${bits.join(' · ')}${shortcut}${bridge}${hint}`;
   if (bridge || hint) return `${label}${shortcut}${bridge}${hint}`;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ "ĐƯỜNG TẮT", KHÔNG PHẢI "THƯ MỤC". Một từ, và nó sửa một ca hỏng thật.   │
-   * │ (user chốt 24/08: *"MCP là thư mục được cắm, không phải onlyAllows"*)     │
+   * │ "SHORTCUT TO", NOT "FOLDER". One word, and it fixes a real broken case.        │
+   * │ (user settled 08/24: *"MCP is a plugged-in folder, not an onlyAllows"*)         │
    * │                                                                          │
-   * │ Bản trước ghi `Musics (thư mục: D:\…\Musics)`. Trợ lý đọc danh sách đó    │
-   * │ thành **tổng tầm với của nhân viên** rồi TỪ CHỐI việc nằm ngoài — kể cả   │
-   * │ khi người đó có `chạy lệnh: BẬT`, kể cả trong một phiên `/clear` sạch     │
-   * │ tinh. Đo được 24/08, tái lập nhiều lần. Nhưng nó SAI: `SHELL_LEGEND` ở    │
-   * │ ngay đầu danh bạ đã nói *"mọi nhân viên đều MỞ ĐƯỢC file trên máy bằng    │
-   * │ đường dẫn đầy đủ"*.                                                      │
+   * │ The old version wrote `Musics (folder: D:\…\Musics)`. The Assistant read         │
+   * │ that list as **the worker's total reach** and REFUSED work outside it —          │
+   * │ even when that person had `runs commands: ON`, even in a totally clean            │
+   * │ `/clear` session. Measured 08/24, reproduced repeatedly. But it was WRONG:        │
+   * │ `SHELL_LEGEND` right at the top of the directory had already stated *"every       │
+   * │ worker CAN open a file on this machine given a full path"*.                     │
    * │                                                                          │
-   * │ ⇒ Prompt KHÔNG thiếu sự thật — sự thật ấy **thua vị trí**. Câu chung nằm  │
-   * │ ở đầu khối, chuỗi trông-như-phạm-vi nằm trên CHÍNH DÒNG của nhân viên, và │
-   * │ dòng thắng. Đúng luật đã trả tiền hai lần rồi:                            │
-   * │ [[agentco-prompt-rules-lose-to-examples]] — *điều kiện phải nằm trên chính │
-   * │ dòng có ví dụ*, và ca `chạy lệnh: TẮT` (§1310) đã học đúng bài này.        │
+   * │ ⇒ The prompt was NOT missing the fact — that fact **lost to position**. The       │
+   * │ general sentence sits at the top of the block, a string that LOOKS like a          │
+   * │ scope limit sits on the worker's OWN LINE, and the line wins. Exactly the         │
+   * │ rule that has already cost us twice:                                        │
+   * │ [[agentco-prompt-rules-lose-to-examples]] — *a condition has to sit on the         │
+   * │ exact line carrying the example*, and the `runs commands: OFF` case (§1310)        │
+   * │ had already learned this lesson.                                          │
    * │                                                                          │
-   * │ Nên bản vá KHÔNG thêm một câu dặn nữa (câu dặn đã có và đã thua). Nó đổi  │
-   * │ **một từ, tại chỗ thua**: `thư mục` → `đường tắt tới`. Cùng cỡ token,      │
-   * │ không có luật mới nào phải nhớ.                                          │
+   * │ So the fix does NOT add yet another instruction (the instruction already          │
+   * │ existed and already lost). It changes **one word, exactly at the losing            │
+   * │ spot**: `folder` → `shortcut to`. Same token cost, no new rule to remember.        │
    * │                                                                          │
-   * │ ⚠ Từ này phải khớp với thứ hệ thống THẬT SỰ làm. Hôm nay cánh tay là      │
-   * │ đường tắt thật: `Read`/`Glob` với tới mọi đường dẫn, `Bash` cũng vậy —    │
-   * │ allowlist của MCP server chỉ bó CHÍNH NÓ. Ngày nào §14 #1 đổi (dựng hàng  │
-   * │ rào đọc) thì từ này phải đổi lại thành một từ chỉ giới hạn, cùng lượt.    │
+   * │ ⚠ This word has to match what the system ACTUALLY does. Today an arm is a          │
+   * │ genuine shortcut: `Read`/`Glob` reach any path, so does `Bash` — an MCP            │
+   * │ server's allowlist only constrains ITSELF. The day §14 #1 changes (building        │
+   * │ a read fence), this word has to change back to one that states a real             │
+   * │ limit, in the same change.                                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   return roots.length ? `${label} (shortcut to ${roots.join(' · ')})` : label;
 }
 
 /**
- * DIFF NĂNG LỰC giữa hai lượt — hàm THUẦN, 0 token. → docs/SPEC-arms.md §15f
+ * CAPABILITY DIFF between two turns — a PURE function, 0 tokens. →
+ * docs/SPEC-arms.md §15f
  *
- * "Năng lực" gồm **cánh tay** và **công tắc shell** — mọi thứ trong dòng năng lực
- * của `roster()` mà người dùng bấm đổi được. Hai thứ này đi chung một đường vì
- * chúng hỏng chung một kiểu: người dùng đổi, prompt đổi theo đúng ngay lượt sau,
- * và model vẫn trả lời bằng câu cũ của chính nó.
+ * "Capability" covers **arms** and the **shell switch** — everything on the
+ * capability line of `roster()` that the user can toggle. These two travel
+ * together because they break the same way: the user changes something, the
+ * prompt updates on the very next turn, and the model still answers with its
+ * own old sentence.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO DIFF THẮNG MỘT DÒNG NHẮC CHUNG CHUNG — và lý do KHÔNG phải        │
- * │ "session nhớ được".                                                      │
+ * │ WHY A DIFF BEATS A GENERIC REMINDER LINE — and the reason is NOT "the           │
+ * │ session remembers it".                                                  │
  * │                                                                          │
- * │ Đo 24/08, ba ca độc lập, cùng một hình dạng:                             │
+ * │ Measured 08/24, three independent cases, the same shape:                       │
  * │                                                                          │
- * │   một dòng XUẤT HIỆN trong danh bạ  → **thắng** lịch sử, mọi lần         │
- * │     · spike L4: cắm thêm `Hoa Don` → gọi thẳng tên ngay lượt sau         │
- * │     · ca 03:43:01 thật: nối dây `Musics` → model **lật ngược BA lượt     │
- * │       từ chối liên tiếp của chính nó**, không cần `/clear`                │
- * │   một dòng BIẾN MẤT                  → **thua** lịch sử (ca 02:34:13)     │
+ * │   a line APPEARS in the directory   → **wins** over history, every time         │
+ * │     · spike L4: plugged in `Hoa Don` → called it by name on the very next        │
+ * │       turn                                                              │
+ * │     · a real case at 03:43:01: wired up `Musics` → the model **reversed          │
+ * │       its own THREE consecutive refusals**, no `/clear` needed                  │
+ * │   a line DISAPPEARS                  → **loses** to history (case 02:34:13)      │
  * │                                                                          │
- * │ ⇒ Bất đối xứng nằm ở HÌNH DẠNG TÍN HIỆU, không ở cache và không ở tốc độ │
- * │ cập nhật. Đúng nghĩa đen [[agentco-deterministic-vs-signal]]: *vắng mặt   │
- * │ không phải một tín hiệu.*                                                │
+ * │ ⇒ The asymmetry is in the SHAPE OF THE SIGNAL, not in caching and not in         │
+ * │ update speed. Literally [[agentco-deterministic-vs-signal]]: *absence is         │
+ * │ not a signal.*                                                          │
  * │                                                                          │
- * │ Nên việc đúng không phải dặn to hơn, mà là **đổi trục**: biến một sự      │
- * │ VẮNG MẶT thành một sự CÓ MẶT. Dòng `− Notion ✗ ho-tro` là một dòng chữ    │
- * │ *xuất hiện* — và thứ xuất hiện thì ta vừa đo được là thắng.               │
+ * │ So the right move isn't a louder instruction, it's **changing the axis**:        │
+ * │ turn an ABSENCE into a PRESENCE. The line `− Notion ✗ ho-tro` is a line of        │
+ * │ text that *appears* — and something that appears is exactly what we just         │
+ * │ measured to win.                                                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ba ràng buộc, mỗi cái chặn một cách hỏng khác nhau:
+ * Three constraints, each blocking a different way this could break:
  *
- *  1. **DELTA, không phải changelog.** Chỉ mô tả thay đổi kể từ lượt trước, và
- *     chỉ chèn đúng một lần vào lượt nó xảy ra. Nghịch canvas 20 lần thì 20 dòng
- *     nằm rải trong transcript — chấp nhận được; một khối 20 dòng gửi lại ở MỌI
- *     lượt sau thì không, và đó đúng là kiểu phình vĩnh viễn cả dự án tránh.
- *  2. **`cap`.** Một lần sửa hàng loạt trên sơ đồ không được nhét cả bức tường
- *     vào phiên.
- *  3. **Rút gọn còn NHÃN.** Danh bạ ngay bên trên đã có đủ thư mục; diff chỉ để
- *     TRỎ, không phải để làm nguồn. Dán lại nguyên đường dẫn vừa bị rút là tự
- *     tay tiêm lại đúng chuỗi ta muốn nó thôi nhắc.
+ *  1. **A DELTA, not a changelog.** Only describes the change since the last
+ *     turn, and inserts it exactly once, on the turn it happened. Fiddling
+ *     with the canvas 20 times means 20 lines scattered through the
+ *     transcript — acceptable; a 20-line block resent on EVERY turn after
+ *     that is not, and that's exactly the permanent-bloat pattern this whole
+ *     project avoids.
+ *  2. **`cap`.** A single mass edit on the diagram must not stuff a whole
+ *     wall into the session.
+ *  3. **Trimmed down to a LABEL.** The directory right above already has the
+ *     full folder path; the diff exists only to POINT, not to be a source.
+ *     Pasting the exact just-trimmed path back in would hand-inject the
+ *     exact string this was built to stop repeating.
  */
 export function reachDiff(
   before: Map<string, readonly string[]>,
   after: Map<string, readonly string[]>,
   cap = 4,
 ): string[] {
-  // `armReach` trả `Nhãn (đường tắt tới …)`. Diff chỉ giữ phần nhãn — ràng buộc 3.
+  // `armReach` returns `Label (shortcut to …)`. The diff keeps only the label — constraint 3.
   const short = (s: string) => s.replace(/\s*\(đường tắt tới .*$/, '').trim();
   const lines: string[] = [];
   for (const id of [...new Set([...before.keys(), ...after.keys()])].sort()) {
@@ -1276,45 +1422,49 @@ export function reachDiff(
 }
 
 /**
- * Phần THUẦN của cổng hậu kiểm — 0 token, tách khỏi class để có test riêng.
- * Luật ba điều kiện và ranh giới của nó nằm ở `Assistant.staleArmMentions`.
+ * The PURE part of the post-check gate — 0 tokens, split from the class to be
+ * independently testable. The three-condition rule and its boundaries live
+ * in `Assistant.staleArmMentions`.
  */
 export function staleMentions(input: {
   /**
-   * Sổ cánh tay của công ty — `label`, và **tên tài khoản** nếu là cánh tay OAuth.
+   * The company's arm ledger — `label`, and the **account name** if it's an
+   * OAuth arm.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 `via` THÊM 28/08 VÌ CỔNG NÀY VỪA ĐỂ LỌT MỘT CA THẬT.                  │
+   * │ 🔴 `via` ADDED 08/28 BECAUSE THIS GATE HAD JUST LET A REAL CASE THROUGH.        │
    * │                                                                          │
-   * │ User gỡ tài khoản `hubot`, rồi Trợ lý hỏi:                                │
-   * │   *"Repo 'focus-flow' nằm trong tài khoản GitHub octocat hay              │
-   * │    hubot vậy bạn?"*                                                      │
+   * │ A user disconnected the `hubot` account, and the Assistant then asked:          │
+   * │   *"Is the 'focus-flow' repo under the octocat GitHub account or                │
+   * │    hubot?"*                                                              │
    * │                                                                          │
-   * │ Cổng không bắn, và nó **không sai luật** — nó chỉ so với `label`, tức     │
-   * │ chuỗi `"GitHub · hubot"`. Câu trên không chứa nguyên chuỗi đó.            │
-   * │ Cánh tay thư mục không dính lỗ này vì nhãn của chúng THƯỜNG được nhắc     │
-   * │ nguyên vẹn (`D:\Downloads\…`); cánh tay OAuth thì tên tài khoản là thứ    │
-   * │ người ta nhắc, còn phần `"GitHub · "` thì bỏ.                             │
+   * │ The gate didn't fire, and it **didn't break any rule** — it only compared        │
+   * │ against `label`, i.e. the string `"GitHub · hubot"`. The sentence above          │
+   * │ doesn't contain that exact string.                                        │
+   * │ Folder arms don't hit this hole because their labels are USUALLY quoted          │
+   * │ verbatim (`D:\Downloads\…`); for an OAuth arm, the account name is what          │
+   * │ people actually mention, while the `"GitHub · "` part gets dropped.             │
    * │                                                                          │
-   * │ ⇒ Kim thứ ba: **tên tài khoản đứng một mình**. Nó không phải trường mới — │
-   * │ `via` đã có sẵn, tra từ `arms[].secrets` ra kho OAuth, và đang được dùng  │
-   * │ ở danh sách dùng lại + node trên sơ đồ. Đây là chỗ thứ ba của cùng một    │
-   * │ sự thật, không phải một cơ chế thứ hai. → `company.ts §listArms`          │
+   * │ ⇒ A third needle: **the account name standing alone**. It's not a new field      │
+   * │ — `via` already exists, looked up from `arms[].secrets` against the OAuth        │
+   * │ store, and is already used in the reuse list + the canvas node. This is a         │
+   * │ third place reading the same fact, not a second mechanism. →                    │
+   * │ `company.ts §listArms`                                                    │
    * │                                                                          │
-   * │ ⚠ RANH GIỚI KHÔNG ĐỔI: vẫn bắt TÊN, không bắt CÁCH NÓI VÒNG. Vẫn hẹp,    │
-   * │ vẫn chưa đóng. [[agentco-deterministic-vs-signal]]                        │
+   * │ ⚠ THE BOUNDARY DOESN'T CHANGE: still catches NAMES, not ROUNDABOUT phrasing.     │
+   * │ Still narrowed, not yet closed. [[agentco-deterministic-vs-signal]]              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   arms: Record<string, { label?: string; via?: string }>;
-  /** Cấu hình từng cánh tay — `folderRoots` đọc `args` từ đây. */
+  /** Each arm's config — `folderRoots` reads `args` from here. */
   servers: Record<string, unknown>;
-  /** Id cánh tay ĐANG có ít nhất một nhân viên trực nối vào. */
+  /** Ids of arms that CURRENTLY have at least one worker wired in. */
   live: Set<string>;
   say: string;
   userText: string;
 }): string[] {
   const { arms, servers, live, say, userText } = input;
-  // Tên/thư mục của những cánh tay CÒN nối — điều kiện 3.
+  // Names/directories of arms that are STILL wired — condition 3.
   const liveText = [...live]
     .flatMap((id) => [arms[id]?.label, arms[id]?.via, ...folderRoots(servers[id])])
     .filter((s): s is string => !!s)
@@ -1327,10 +1477,11 @@ export function staleMentions(input: {
   for (const id of Object.keys(servers)) {
     if (live.has(id)) continue;
     /**
-     * ⚠ Ngưỡng 4 ký tự, và nó là một hàng rào chứ không phải một con số đẹp:
-     * người dùng đặt tên cánh tay là `A` hay `Hs` thì mọi câu tiếng Việt đều
-     * chứa chuỗi đó, và cổng sẽ bắn ở mọi lượt. Thà bỏ sót một nhãn hai chữ
-     * còn hơn biến cổng thành tiếng ồn — nó vốn đã là lớp thứ hai.
+     * ⚠ A 4-character threshold, and it's a fence, not a nice round number: if
+     * a user names an arm `A` or `Hs`, every sentence would contain that
+     * string, and the gate would fire on every single turn. Better to miss a
+     * two-letter label than turn the gate into noise — it's already a second
+     * layer of defense.
      */
     const needles = [arms[id]?.label, arms[id]?.via, ...folderRoots(servers[id])].filter(
       (s): s is string => typeof s === 'string' && s.trim().length >= 4,
@@ -1349,37 +1500,45 @@ export function staleMentions(input: {
 export class Assistant {
   private sessionId: string | undefined;
   /**
-   * Lượt gọi ĐANG BAY — tay cầm để `/stop` ngắt. → SPEC-tools-approval.md §11e
+   * The turn CURRENTLY IN FLIGHT — a handle for `/stop` to interrupt. →
+   * SPEC-tools-approval.md §11e
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ TRƯỚC 20/08 KHÔNG CÓ TAY CẦM NÀO, và người dùng đo được ngay lượt đầu.  │
+   * │ BEFORE 08/20 THERE WAS NO HANDLE AT ALL, and a user measured it on the         │
+   * │ very first try.                                                          │
    * │                                                                          │
-   * │ `Office.stop()` ngắt nhân viên (`Scheduler.interruptAll`), xoá hòm thư,   │
-   * │ bỏ việc hoãn — ba thứ, đúng như §11e viết. Nhưng lượt gọi của CHÍNH Trợ   │
-   * │ lý (`route`/`plan`/`report`) chạy ở `run()` bên dưới, và ở đó không có gì │
-   * │ để ngắt cả. Gõ `/stop` giữa lúc Trợ lý đang nghĩ thì nó vẫn nghĩ nốt, vẫn │
-   * │ trả lời, vẫn tính tiền — sau khi màn hình đã nói "Đang dừng tất cả".      │
+   * │ `Office.stop()` interrupts a worker (`Scheduler.interruptAll`), clears the       │
+   * │ mailbox, drops deferred work — three things, exactly as §11e states. But        │
+   * │ the Assistant's OWN turn (`route`/`plan`/`report`) runs inside `run()`          │
+   * │ below, and there was nothing there to interrupt at all. Typing `/stop`          │
+   * │ while the Assistant is mid-thought lets it finish thinking, reply, and           │
+   * │ still charge money — after the screen has already said "Stopping                │
+   * │ everything".                                                              │
    * │                                                                          │
-   * │ Đây KHÔNG mâu thuẫn với luật *"mặc định để chạy nốt, không giết"* (§11f). │
-   * │ Luật đó bảo vệ BẢN NHÁP ĐÃ TRẢ TIỀN của nhân viên: giết ở 80% là mất      │
-   * │ trắng 80% tiền đã tiêu. Một lượt `route()` không đẻ ra bản nháp nào —     │
-   * │ ngắt nó chỉ mất một câu trả lời, đúng cái người dùng vừa bảo đừng nói.    │
+   * │ This does NOT contradict the rule *"let it finish by default, don't kill        │
+   * │ it"* (§11f). That rule protects a worker's ALREADY-PAID-FOR DRAFT: killing        │
+   * │ it at 80% throws away 80% of the money already spent. A `route()` turn           │
+   * │ produces no draft at all — interrupting it only costs one answer, exactly        │
+   * │ the thing the user just said to stop.                                     │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ `abortController`, KHÔNG phải `Query.interrupt()`. Bài học đã trả tiền một
-   * lần ở `worker.ts` (§8, hai cách ngắt qua `interrupt()` đều hỏng) — chép lại
-   * đúng cơ chế đã đo được thay vì thử lại cái đã biết là không chạy.
+   * ⚠ `abortController`, NOT `Query.interrupt()`. This lesson already cost money
+   * once at `worker.ts` (§8, both ways of interrupting via `interrupt()` are
+   * broken) — copies the exact mechanism already measured to work instead of
+   * retrying something already known not to.
    */
   private inflight: AbortController | undefined;
-  /** Vai trò có dây nối từ Assistant trên canvas. undefined = chưa cấu hình = tất cả. */
+  /** Roles wired from the Assistant on the canvas. undefined = not configured = all of them. */
   private assignable: Set<string> | undefined;
   /**
-   * Ảnh chụp danh bạ ở lượt `route` TRƯỚC. → `reachMap`, `SPEC-arms.md` §15
+   * The directory snapshot from the PREVIOUS `route` turn. → `reachMap`,
+   * `SPEC-arms.md` §15
    *
-   * `undefined` = chưa route lần nào trong phiên này, nên chưa có gì để so.
+   * `undefined` = hasn't routed even once in this session, so there's nothing
+   * to compare against.
    */
   private reachPrev: Map<string, string[]> | undefined;
-  /** Tri thức HOT nạp sẵn vào prefix. Chỉ đổi khi bump knowledge_version. */
+  /** HOT knowledge preloaded into the prefix. Only changes when knowledge_version bumps. */
   private hotKnowledge = '';
 
   constructor(private office: LoadedOffice) {}
@@ -1390,41 +1549,46 @@ export class Assistant {
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 ẢNH CHỤP DANH BẠ PHẢI SỐNG SÓT QUA LẦN TẮT DAEMON — bug 26/08.       │
+   * │ 🔴 THE DIRECTORY SNAPSHOT HAS TO SURVIVE A DAEMON RESTART — bug 08/26.         │
    * │                                                                          │
-   * │ `sessionId` được LƯU RA ĐĨA (`.state/assistant-session.json`) nên hội     │
-   * │ thoại sống qua restart. `reachPrev` thì **chỉ nằm trong RAM**. Hậu quả:   │
+   * │ `sessionId` gets SAVED TO DISK (`.state/assistant-session.json`) so the         │
+   * │ conversation survives a restart. `reachPrev` used to live **ONLY IN RAM**.       │
+   * │ Consequence:                                                             │
    * │                                                                          │
-   * │   restart → lịch sử CÒN NGUYÊN (kèm mọi câu từ chối cũ)                  │
-   * │           → `reachPrev === undefined` ⇒ **diff bị tắt**                  │
-   * │           → model theo lịch sử, y như §15f đã đo                         │
+   * │   restart → history STAYS INTACT (including every old refusal)                 │
+   * │           → `reachPrev === undefined` ⇒ **the diff turns off**                 │
+   * │           → the model follows history, exactly as measured in §15f              │
    * │                                                                          │
-   * │ ⇒ Cơ chế dựng ra để chống *"câu cũ thắng lịch sử"* bị vô hiệu **đúng vào │
-   * │ lúc nó cần nhất**: sau một lần restart, tức đúng lúc cấu hình hay vừa     │
-   * │ đổi nhất. Nó im lặng, vì im lặng chính là hành vi mặc định của nó.       │
+   * │ ⇒ The mechanism built to fight *"the old sentence beats history"* gets            │
+   * │ disabled **at the exact moment it's needed most**: right after a restart,        │
+   * │ i.e. exactly when config is most likely to have just changed. It fails           │
+   * │ silently, because silence is its own default behavior.                        │
    * │                                                                          │
-   * │ Hai thứ đi cùng một cặp thì phải bền cùng một mức. Lệch mức bền là một    │
-   * │ lớp lỗi, không phải một chi tiết.                                        │
+   * │ Two things that travel as a pair have to persist at the same level.             │
+   * │ Mismatched persistence is a failure class, not a detail.                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   resumeFrom(sessionId: string | undefined, reach?: Record<string, string[]>): void {
     this.sessionId = sessionId;
-    // Không có ảnh chụp ⇒ giữ `undefined` (không có gì để so). Có ⇒ dựng lại
-    // đúng hình dạng `reachMap()` trả về, để `reachDiff` so được ngay lượt đầu.
+    // No snapshot ⇒ keep `undefined` (nothing to compare against). One exists
+    // ⇒ rebuild the exact shape `reachMap()` returns, so `reachDiff` can
+    // compare on the very first turn.
     this.reachPrev = reach ? new Map(Object.entries(reach)) : undefined;
   }
 
-  /** Ảnh chụp danh bạ để ghi kèm con trỏ phiên. → `Office.saveSessionId` */
+  /** The directory snapshot, saved alongside the session pointer. → `Office.saveSessionId` */
   get reachSnapshot(): Record<string, string[]> | undefined {
     return this.reachPrev ? Object.fromEntries(this.reachPrev) : undefined;
   }
 
   /**
-   * Ngắt lượt đang bay. Trả về `true` nếu thật sự có cái để ngắt.
+   * Interrupts the in-flight turn. Returns `true` if there was actually
+   * something to interrupt.
    *
-   * Giá trị trả về là thứ `Office.stop()` dùng để nói ĐÚNG chuyện vừa xảy ra —
-   * "đang dừng" khi có ngắt thật, và không hứa gì khi không có. Đoán ở tầng trên
-   * là cách câu trả lời của `/stop` đã sai một lần rồi.
+   * The return value is what `Office.stop()` uses to state EXACTLY what just
+   * happened — "stopping" when there was a real interrupt, and no promise at
+   * all when there wasn't. Guessing at the layer above is exactly how
+   * `/stop`'s reply already got it wrong once.
    */
   abort(): boolean {
     if (!this.inflight) return false;
@@ -1433,40 +1597,45 @@ export class Assistant {
   }
 
   /**
-   * Ngữ cảnh hiện tại to bao nhiêu — đo được, không phải ước.
+   * How big is the current context — measured, not estimated.
    *
-   * Ở một lượt cache ẤM, `cache_read` chính là toàn bộ prefix + bản ghi hội
-   * thoại mà server vừa đọc lại. Đó là con số thật, miễn phí, và là thứ quyết
-   * định khi nào phải nén. Đếm tay số token đã gửi thì vừa sai vừa thừa.
+   * On a WARM cache turn, `cache_read` is exactly the whole prefix + the
+   * conversation record the server just reread. That's a real number, free,
+   * and it's what decides when compaction is needed. Hand-counting tokens
+   * sent would be both wrong and redundant.
    *
-   * ⚠ KHÔNG bao gồm token của nhân viên: worker chạy `persistSession: false` ở
-   * một `query()` riêng, và khâu lập kế hoạch cũng vậy. Chỉ `route()`/`report()`
-   * làm phình bản ghi này.
+   * ⚠ Does NOT include a worker's tokens: a worker runs with
+   * `persistSession: false` in its own separate `query()`, and so does the
+   * planning step. Only `route()`/`report()` grow this record.
    */
   contextTokens = 0;
 
-  /** Quên hội thoại: lượt sau bắt đầu một session mới tinh. */
+  /** Forgets the conversation: the next turn starts a brand-new session. */
   forget(): void {
     this.sessionId = undefined;
     this.contextTokens = 0;
-    // Phiên mới thì lịch sử rỗng ⇒ không có câu cũ nào để đính chính. Giữ lại
-    // ảnh chụp cũ là để lượt đầu của phiên mới bắn một cái diff vô nghĩa.
+    // A new session means empty history ⇒ no old sentence left to correct.
+    // Keeping the old snapshot would make the new session's first turn fire
+    // a meaningless diff.
     this.reachPrev = undefined;
   }
 
   /**
-   * NÉN TRÍ NHỚ: hỏi Trợ lý phần duy nhất chỉ nó biết. → docs/SPEC-offices.md §4.6
+   * COMPACTS MEMORY: asks the Assistant for the one part only it knows. →
+   * docs/SPEC-offices.md §4.6
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ `skeleton` DO CODE DỰNG, KHÔNG HỎI MODEL.                                │
+   * │ `skeleton` IS BUILT BY CODE, NOT ASKED OF THE MODEL.                     │
    * │                                                                          │
-   * │ Việc đã chạy, kết quả ở đâu, tốn bao nhiêu — tất cả nằm trong            │
-   * │ `tasks/index.json` và trong receipt. Bắt model kể lại là trả tiền để     │
-   * │ nhận về một bản sao có thể sai. Ta đưa sự thật vào, và chỉ hỏi thứ       │
-   * │ KHÔNG có ở đâu khác: người dùng thích gì, đã chốt gì, đang dở gì.        │
+   * │ Which jobs ran, where the output is, what it cost — all of that sits in         │
+   * │ `tasks/index.json` and in receipts. Making the model recount it means           │
+   * │ paying money to get back a copy that could be wrong. We feed in the facts,       │
+   * │ and only ask for what exists NOWHERE else: what the user likes, what's           │
+   * │ been decided, what's still in progress.                                   │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Chạy TRÊN session cũ — phải thế, vì cả điểm của nó là đọc bản ghi sắp bỏ.
+   * Runs ON the old session — it has to, since the whole point is reading a
+   * record that's about to be discarded.
    */
   async compact(skeleton: string): Promise<AssistantResult<string>> {
     const { text, usage } = await this.askSession(
@@ -1477,54 +1646,61 @@ export class Assistant {
     return { value: text.trim(), usage };
   }
 
-  /** Sau khi nạp lại văn phòng từ đĩa. Giữ nguyên session. */
+  /** After the office is reloaded from disk. Keeps the session intact. */
   rebind(office: LoadedOffice): void {
     this.office = office;
   }
 
   /**
-   * KHỐI LUẬT CỦA LƯỢT NÉN TRÍ NHỚ — tách khỏi thân hàm để **khoá được bằng test**.
+   * THE RULE BLOCK FOR A MEMORY-COMPACTION TURN — split out of the function
+   * body so it can be **locked down by a test**.
    *
-   * Không phải để dùng lại ở đâu: nó có đúng một nơi gọi. Lý do là mấy luật này
-   * sinh ra từ những ca hỏng đắt (29/08 · 31/08) và mỗi luật là một dòng văn
-   * xuôi — thứ dễ bị "dọn cho gọn" nhất trong cả codebase, mà xoá đi thì
-   * **không test nào đỏ**, vì đầu ra của lượt nén vốn đã bất định.
-   * → [[agentco-detect-fix-pair-scope]]: khoá bằng test, không bằng chú thích.
+   * Not meant to be reused anywhere: it has exactly one call site. The reason
+   * is that these rules were born from expensive real failures (08/29 · 08/31)
+   * and each rule is a line of prose — the single easiest thing in the whole
+   * codebase to "tidy up", and deleting it would turn **no test red**, because
+   * a compaction turn's output is inherently non-deterministic.
+   * → [[agentco-detect-fix-pair-scope]]: lock it down with a test, not a comment.
    */
   static readonly COMPACT_RULES: string =
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
-         * │ 🔴 GỘP, KHÔNG PHẢI VIẾT MỚI — bug đã sửa 20/08.                  │
+         * │ 🔴 MERGE, DON'T REWRITE FROM SCRATCH — bug fixed 08/20.                │
          * │                                                                  │
-         * │ `addAssistantMemory(..., assistantMemoryIds())` cho bản mới       │
-         * │ `supersedes` **TOÀN BỘ** bản ghi nhớ đang sống, rồi `pruneNow()`  │
-         * │ → `dropSuperseded()` **XOÁ HẲN** chúng khỏi đĩa.                  │
+         * │ `addAssistantMemory(..., assistantMemoryIds())` makes the new             │
+         * │ version `supersedes` **EVERY** currently-live memory record, then         │
+         * │ `pruneNow()` → `dropSuperseded()` **PERMANENTLY DELETES** them from        │
+         * │ disk.                                                             │
          * │                                                                  │
-         * │ Bản prompt trước chỉ bảo *"viết lại những thứ bạn cần nhớ"* và    │
-         * │ không nói một chữ nào về khối GHI NHỚ đang có sẵn trong ngữ cảnh. │
-         * │ Nên mỗi `/clear` là một lần **tóm tắt lại bản tóm tắt**: thứ gì    │
-         * │ không được nhắc trong phiên vừa rồi thì model không viết lại, và  │
-         * │ nó **biến mất vĩnh viễn**. Một quyết định người dùng chốt tháng    │
-         * │ trước bị bốc hơi sau ba lần dọn, im lặng, không ai báo.           │
+         * │ The old prompt version only said *"write down what you need to           │
+         * │ remember"* and said not one word about the MEMORY block already          │
+         * │ sitting in context.                                              │
+         * │ So every `/clear` was a round of **summarizing the summary**:           │
+         * │ anything not mentioned in the session just ended never got rewritten     │
+         * │ by the model, and it **vanished permanently**. A decision the user         │
+         * │ settled a month ago evaporates after three clean-ups, silently, with       │
+         * │ nobody told.                                                      │
          * │                                                                  │
-         * │ Đây đúng lớp lỗi mà `supersedes` sinh ra để tránh, chỉ là nó bị   │
-         * │ dùng ngược: `supersedes` để **thay một bản đã cũ**, không phải để │
-         * │ **thay cả trí nhớ bằng lát cắt mới nhất**.                        │
+         * │ This is exactly the failure class `supersedes` exists to prevent, just    │
+         * │ used backwards: `supersedes` is meant to **replace one stale version**,    │
+         * │ not to **replace all of memory with the latest snapshot**.               │
          * │                                                                  │
-         * │ Model ĐÃ nhìn thấy khối GHI NHỚ (nó nằm trong prefix của chính    │
-         * │ lượt này) — thứ thiếu duy nhất là một câu bảo nó giữ lại.         │
+         * │ The model HAS already seen the MEMORY block (it sits in this exact         │
+         * │ turn's own prefix) — the only thing missing was a sentence telling it      │
+         * │ to carry it forward.                                             │
          * │                                                                  │
-         * │ ⚠ NHƯNG "GIỮ LẠI" MỘT MÌNH LÀ NỬA LUẬT, và nửa còn lại nguy hiểm │
-         * │ ngang nửa đầu — user chỉ ra ngay khi đọc bản nháp. Một quyết định │
-         * │ cũ ĐÃ SAI, đã được thay bằng quyết định mới, mà vẫn được chép lại │
-         * │ "vì nó nằm trong trí nhớ cũ", thì kho có HAI dòng nói ngược nhau  │
-         * │ và không ai biết dòng nào thắng. Đó đúng là thứ `supersedes` sinh │
-         * │ ra để chặn ở tầng NODE (*"sau ba tháng kho đầy quyết định mâu     │
-         * │ thuẫn, tệ hơn không nén"*) — ở đây nó tái diễn ở tầng DÒNG, bên    │
-         * │ trong một node.                                                  │
+         * │ ⚠ BUT "CARRY FORWARD" ALONE IS HALF THE RULE, and the other half is        │
+         * │ just as dangerous — a user pointed this out the moment they read the       │
+         * │ draft. An old decision that WAS WRONG, already replaced by a new one,       │
+         * │ still gets copied forward "because it was in old memory", and now the       │
+         * │ store has TWO lines contradicting each other with nobody knowing which      │
+         * │ one wins. That's exactly what `supersedes` exists to block at the NODE      │
+         * │ level (*"after three months the store fills with contradicting              │
+         * │ decisions, worse than not compacting at all"*) — here it recurs at the      │
+         * │ LINE level, inside one single node.                              │
          * │                                                                  │
-         * │ Nên luật phải HAI CHIỀU và CÓ THỨ TỰ: giữ là mặc định · cái mới   │
-         * │ thắng khi mâu thuẫn · mỗi chủ đề đúng một dòng.                   │
+         * │ So the rule has to be TWO-DIRECTIONAL and ORDERED: carrying forward is     │
+         * │ the default · the newer one wins on conflict · one line per topic.        │
          * └──────────────────────────────────────────────────────────────────┘
          */
         `Your context already holds a "What the human has decided" block — that is the MEMORY SO FAR, ` +
@@ -1537,58 +1713,69 @@ export class Assistant {
         `3. One line per topic. If you find yourself writing "it used to be X, now it is Y", keep only Y.\n\n` +
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
-         * │ 🔴 LUẬT THỨ TƯ — TRÍ NHỚ CŨNG KHÔNG ĐƯỢC GHI KẾT LUẬN TỪ CA HỎNG.│
-         * │ (user chốt 29/08, và user bắt đúng chỗ tôi đã khuyên SAI)        │
+         * │ 🔴 RULE FOUR — MEMORY ALSO MUST NOT RECORD A CONCLUSION DRAWN FROM        │
+         * │ A FAILED RUN. (user settled 08/29, and caught the exact spot where I     │
+         * │ had advised WRONG)                                                │
          * │                                                                  │
-         * │ Tôi từng nói khối GHI NHỚ **không** áp luật `learnable` vì *"thẩm │
-         * │ quyền của nó đến từ người dùng"*. Đúng một nửa, và nửa sai là nửa │
-         * │ đắt: khối này KHÔNG phải thứ người dùng gõ ra — nó là **Trợ lý tự │
-         * │ nén hội thoại của chính nó**, kể cả những lượt nó hỏng. Về nguồn  │
-         * │ gốc, nó cùng lớp với `lessons`; chỉ cái tên nghe giống thẩm quyền.│
+         * │ I had once said the MEMORY block does **not** follow the `learnable`      │
+         * │ rule because *"its authority comes from the user"*. Half right, and       │
+         * │ the wrong half is the expensive one: this block is NOT something the      │
+         * │ user typed — it's **the Assistant compacting its own conversation**,      │
+         * │ including turns where it got things wrong. In origin, it belongs to        │
+         * │ the same class as `lessons`; only the name sounds like it carries          │
+         * │ authority.                                                        │
          * │                                                                  │
-         * │ Và nó là kênh NGUY HIỂM NHẤT trong ba kênh, vì hai lý do:         │
-         * │  ① nó nằm trong prefix của **mọi lượt `route()`**, tức trước cả   │
-         * │    lúc lập kế hoạch — nó giết việc ngay ở cửa, không tốn một      │
-         * │    nhân viên nào để lộ ra là có chuyện;                           │
-         * │  ② `supersedes` bắt bản mới **chép lại** bản cũ, nên một câu sai  │
-         * │    được **gia hạn ở mỗi lần nén**, không bao giờ hết hạn.        │
+         * │ And it's the MOST DANGEROUS of the three channels, for two reasons:       │
+         * │  ① it sits in the prefix of **every `route()` turn**, i.e. before          │
+         * │    planning even starts — it kills a job right at the door, without       │
+         * │    a single worker having to run to reveal there's a problem;             │
+         * │  ② `supersedes` makes each new version **copy forward** the old one,       │
+         * │    so a wrong sentence gets **renewed at every compaction**, and           │
+         * │    never expires.                                                 │
          * │                                                                  │
-         * │ CA THẬT, đọc được trong `bo-nho-2026-08-29-mb1o`:                 │
-         * │   ⛔ *"báo cáo done của nhân viên trình duyệt web không đáng tin  │
-         * │       tuyệt đối"*                                                │
-         * │   ⛔ *"…không cần giao lại task kiểu 'chờ' nữa"*                  │
-         * │ Hệ quả đo được: Trợ lý **từ chối thử** và tự đề nghị đi đường     │
-         * │ khác — trong khi cánh tay đã chạy tốt trở lại từ lâu.            │
+         * │ A REAL CASE, readable in `bo-nho-2026-08-29-mb1o`:                 │
+         * │   ⛔ *"a done report from the web-browsing worker cannot be fully           │
+         * │       trusted"*                                                   │
+         * │   ⛔ *"…no need to hand back a 'waiting' task like this again"*           │
+         * │ Measured consequence: the Assistant **refused to try** and proposed        │
+         * │ a workaround on its own — while the arm had already been working           │
+         * │ fine again for a while.                                           │
          * │                                                                  │
-         * │ 📌 Cùng bản ghi nhớ ấy có sẵn câu ĐÚNG, chỉ viết cho GitHub:     │
-         * │   ✅ *"luôn cứ giao việc, để nhân viên tự báo nếu thiếu quyền,    │
-         * │       không tự đoán trước là không làm được"*                     │
-         * │ ⇒ Luật này không dạy nó điều gì mới; nó bắt áp câu đó cho MỌI     │
-         * │ kết nối. Nên ví dụ lấy nguyên văn từ chính kho này — luật trừu    │
-         * │ tượng thua danh sách ví dụ.                                      │
+         * │ 📌 That same memory record already had the CORRECT sentence, written       │
+         * │ only for GitHub:                                                  │
+         * │   ✅ *"always hand over the work anyway, let the worker report a           │
+         * │       missing permission itself, don't assume in advance it can't          │
+         * │       be done"*                                                    │
+         * │ ⇒ This rule doesn't teach it anything new; it just enforces that            │
+         * │ sentence for EVERY connection. So the examples are taken verbatim          │
+         * │ from this exact store — an abstract rule loses to a list of examples.      │
          * │ → [[agentco-prompt-rules-lose-to-examples]]                       │
          * │                                                                  │
-         * │ ⊕ NỚI 02/09 — "CHƯA CÓ / CHƯA THỬ" cũng phải chặn ở đây.         │
+         * │ ⊕ WIDENED 09/02 — "NOT AVAILABLE / NOT TRIED" also has to be blocked        │
+         * │ here.                                                              │
          * │                                                                  │
-         * │ Ca user báo: hỏi *"gửi cho ke-toan@congty.vn"*, Trợ lý trả lời    │
-         * │ đúng, rồi `/clear` ghi lại ⛔ *"văn phòng không có kết nối gửi    │
-         * │ email; chỉ cung cấp đường dẫn để họ tự gửi"*.                     │
+         * │ A case a user reported: asked *"send it to ke-toan@congty.vn"*, the        │
+         * │ Assistant answered correctly, then `/clear` recorded ⛔ *"this office        │
+         * │ has no email-sending connection; only provide the path for them to          │
+         * │ send it themselves"*.                                             │
          * │                                                                  │
-         * │ Bản luật cũ KHÔNG bắt được, vì nó viết về *"những lần HỎNG"* —    │
-         * │ mà ở đây không có lần nào hỏng cả: không thử gì, không vấp gì.    │
-         * │ Trợ lý chỉ ghi lại SỰ VẮNG MẶT của một năng lực.                  │
+         * │ The old rule did NOT catch this, because it was written about              │
+         * │ *"times things BROKE"* — and here nothing broke at all: nothing was         │
+         * │ tried, nothing stumbled. The Assistant just recorded the ABSENCE of a       │
+         * │ capability.                                                        │
          * │                                                                  │
-         * │ Nhưng hậu quả thì y hệt ca 29/08, và tệ hơn ở hạn dùng: danh      │
-         * │ sách cánh tay được dựng lại từ `company.yaml` vào prefix ở MỌI    │
-         * │ lượt, nên câu này **không thêm một bit nào** — nó chỉ là bản      │
-         * │ đông lạnh của một sự thật vốn tươi, và nó sai ngay giây phút      │
-         * │ người dùng cắm một cánh tay Gmail. Cùng hình dạng luật 5 (số      │
-         * │ liệu → cách lấy), chỉ khác nội dung: lần này là NĂNG LỰC.         │
+         * │ But the consequence is identical to the 08/29 case, and worse on its       │
+         * │ shelf life: the arm list gets rebuilt from `company.yaml` into the         │
+         * │ prefix on EVERY turn, so this sentence **adds not a single bit** — it       │
+         * │ is only a frozen copy of a fact that was already live, and it turns         │
+         * │ wrong the instant the user plugs in a Gmail arm. Same shape as rule 5       │
+         * │ (a figure → how to fetch it), just different content: this time it's        │
+         * │ a CAPABILITY.                                                      │
          * │                                                                  │
-         * │ Vá bằng MỘT CẶP VÍ DỤ trong danh sách sẵn có, không thêm luật     │
-         * │ thứ sáu: sáu luật thì luật nào cũng loãng đi, và `compact-rules`  │
-         * │ đang chốt đúng năm luật đánh số liên tục.                         │
-         * │ → [[agentco-cant-vs-not-wired]] · [[agentco-deterministic-vs-signal]] │
+         * │ Fixed with ONE PAIR OF EXAMPLES in the existing list, not a sixth rule:     │
+         * │ six rules would dilute every one of them, and `compact-rules` is             │
+         * │ deliberately settled at exactly five, consecutively numbered.               │
+         * │ → [[agentco-cant-vs-not-wired]] · [[agentco-deterministic-vs-signal]]        │
          * └──────────────────────────────────────────────────────────────────┘
          */
         `4. NEVER record a conclusion drawn from a FAILURE, and never record one drawn from something ` +
@@ -1611,42 +1798,44 @@ export class Assistant {
         `WORK STILL TO DO, with no judgement attached about why it did not finish.\n\n` +
         /**
          * ┌──────────────────────────────────────────────────────────────────┐
-         * │ 🔴 LUẬT THỨ NĂM — TRÍ NHỚ GIỮ CÁCH LẤY, KHÔNG GIỮ SỐ LIỆU.       │
-         * │ (user chốt 31/08: *"không nén dữ liệu sống, realtime, có thể     │
-         * │  thay đổi vào trí nhớ… cùng lắm thì tôi hài lòng với sự bất      │
-         * │  định"*)                                                         │
+         * │ 🔴 RULE FIVE — MEMORY KEEPS HOW TO FETCH IT, NOT THE FIGURE ITSELF.       │
+         * │ (user settled 08/31: *"don't compact live, real-time, changeable          │
+         * │  data into memory… at worst I'd rather accept the uncertainty"*)         │
          * │                                                                  │
-         * │ ⚠⚠ ĐỌC KỸ PHẠM VI TRƯỚC KHI TIN LUẬT NÀY ĐÃ ĐÓNG CÁI GÌ.        │
+         * │ ⚠⚠ READ THE SCOPE CAREFULLY BEFORE TRUSTING WHAT THIS RULE CLOSED.        │
          * │                                                                  │
-         * │ Ca đo được 31/08 — Trợ lý trả lời *"còn 23 hoá đơn"* ở hai lượt  │
-         * │ **không hề gọi cánh tay**, một lượt còn khai *"theo dữ liệu từ   │
-         * │ công cụ"* — **KHÔNG đi qua cửa này**. Grep cả văn phòng: con số  │
-         * │ nằm ở `chat.jsonl` + biên lai, **không có node ghi nhớ nào**.    │
-         * │ Cửa thật là `.state/assistant-session.json` → `options.resume`:  │
-         * │ ba tiến trình khác nhau vẫn là MỘT hội thoại, và Trợ lý nhắc lại │
-         * │ câu chính nó vừa nói 60 giây trước — thứ đó **hợp lý**.          │
+         * │ A case measured 08/31 — the Assistant answered *"23 invoices                │
+         * │ remaining"* on two turns **without calling any arm at all**, one turn      │
+         * │ even claimed *"based on data from the tool"* — **it did NOT go through     │
+         * │ this gate**. Grepping the whole office: the number lived in                │
+         * │ `chat.jsonl` + receipts, **no memory node held it at all**. The real        │
+         * │ door was `.state/assistant-session.json` → `options.resume`: three          │
+         * │ different processes are still ONE conversation, and the Assistant           │
+         * │ was repeating a sentence it had said itself 60 seconds earlier — which      │
+         * │ is **reasonable**.                                                 │
          * │                                                                  │
-         * │ ⇒ Luật này đóng cửa TRÍ NHỚ, một kênh có thật và đã trả giá một  │
-         * │ lần (29/08). Nó KHÔNG đóng cửa `resume`. Ghi ra để lần sau không │
-         * │ ai đọc bản vá này rồi tưởng ca 31/08 đã được xử lý.              │
+         * │ ⇒ This rule closes the MEMORY channel, a real channel that already          │
+         * │ cost money once (08/29). It does NOT close `resume`. Stated outright         │
+         * │ so nobody reading this fix later assumes the 08/31 case was handled.        │
          * │ → [[agentco-easy-reason-beats-true-reason]]                       │
          * │                                                                  │
-         * │ Vì sao vẫn đáng làm dù ca đo đi cửa khác: sau `/clear`, một con  │
-         * │ số cũ nằm trong khối GHI NHỚ sẽ vào prefix của **mọi lượt         │
-         * │ `route()`** và `supersedes` **gia hạn nó ở mỗi lần nén** — nó     │
-         * │ không bao giờ tự hết hạn. Đúng hai tính chất đã làm luật 4 cần    │
-         * │ thiết, chỉ khác nội dung: lần đó là KẾT LUẬN, lần này là SỐ LIỆU. │
+         * │ Why it's still worth doing even though the measured case went through       │
+         * │ a different door: after `/clear`, an old figure sitting in the MEMORY       │
+         * │ block enters the prefix of **every `route()` turn**, and `supersedes`       │
+         * │ **renews it at every compaction** — it never expires on its own. The         │
+         * │ exact two properties that made rule 4 necessary, just different            │
+         * │ content: that one was a CONCLUSION, this one is a FIGURE.                   │
          * │                                                                  │
-         * │ 🔑 Phép thử được chọn vì nó KHÔNG cần cơ chế mới: *"hỏi lại chỗ  │
-         * │ cũ ngày mai, câu trả lời có thể khác không?"* — model tự trả lời  │
-         * │ được, không phải tra biên lai, không phải thêm trường nào. User   │
-         * │ đã chốt chấp nhận phần bất định của phép thử đó.                  │
+         * │ 🔑 This test was chosen because it needs NO new mechanism: *"asking          │
+         * │ the same place again tomorrow — could the answer differ?"* — the            │
+         * │ model can answer that itself, no receipt lookup, no new field. The           │
+         * │ user already accepted the uncertainty that test carries.                    │
          * │                                                                  │
-         * │ ⭐ Và luật viết theo chiều GIỮ, không theo chiều CẤM: đổi số liệu │
-         * │ thành **cách lấy** thì không mất gì cả — phiên sau vẫn biết phải  │
-         * │ đi hỏi ai, mà lại hỏi lại đúng lúc cần. Một luật chỉ có vế "đừng  │
-         * │ ghi" sẽ bị model chấp hành bằng cách bỏ trắng, và ta mất luôn      │
-         * │ đường về.                                                        │
+         * │ ⭐ And the rule is phrased in the direction of KEEPING, not               │
+         * │ FORBIDDING: turning a figure into **how to fetch it** loses nothing —        │
+         * │ the next session still knows who to ask, and asks again exactly when         │
+         * │ it matters. A rule with only a "don't record" clause gets obeyed by           │
+         * │ the model leaving it blank, and we lose the way back entirely.              │
          * └──────────────────────────────────────────────────────────────────┘
          */
         `5. NEVER record FIGURES or STATE fetched from a connection or a file. Record HOW TO FETCH IT, ` +
@@ -1667,10 +1856,11 @@ export class Assistant {
         `- what the human likes and dislikes (voice, length, how things are laid out)\n` +
         `- what has been SETTLED and does not need discussing again\n` +
         `- work still open, and questions you asked that have no answer yet\n\n` +
-        // ~500 từ chứ không phải 200: khối này là thứ ĐẮT GIÁ NHẤT trong prefix
-        // của Trợ lý — nó nằm trong cache nên trả ~0.1× sau lần ghi đầu, mà mất
-        // một quyết định của người dùng thì không mua lại được bằng token nào.
-        // Dài hơn một chút mà giữ được đủ ý là lãi.
+        // ~500 words rather than 200: this block is the MOST VALUABLE thing in
+        // the Assistant's prefix — it sits in the cache so it costs ~0.1× after
+        // the first write, while losing one of the user's own decisions can't
+        // be bought back with any amount of tokens. A bit longer while keeping
+        // full meaning is a net gain.
         /**
          * ⚠ NAMES NO LANGUAGE, and that is the whole point of this line.
          *
@@ -1684,10 +1874,12 @@ export class Assistant {
          */
         `Write bullet points in the language of the conversation, under 500 words, one reusable point ` +
         `per line. Do NOT recount the list of work already done. Do NOT write greetings or promises. ` +
-        // "KHÔNG" chỉ hợp lệ khi CẢ HAI đều trống. Bản trước không nói rõ, nên
-        // một phiên chat vặt ("chào bạn") có thể trả về KHÔNG — và tuy nhánh đó
-        // không ghi node mới (nên không xoá gì), câu dặn vẫn phải khớp với luật
-        // gộp ở trên, nếu không thì hai câu trong cùng một prompt đá nhau.
+        // "NOTHING" is only valid when BOTH are empty. The old version didn't
+        // state this clearly, so a throwaway chat session ("hi there") could
+        // return NOTHING — and while that branch writes no new node (so
+        // nothing gets deleted), the instruction still has to agree with the
+        // merge rule above, otherwise two sentences in the same prompt fight
+        // each other.
         /**
          * ⚠ `NOTHING` IS A SENTINEL THE CODE MATCHES, not prose.
          *
@@ -1704,7 +1896,7 @@ export class Assistant {
     this.hotKnowledge = text.trim();
   }
 
-  /** Bản nén trí nhớ — khối riêng trong prefix, không trộn vào hot. */
+  /** The compacted memory — a dedicated block in the prefix, not merged into hot. */
   private memory = '';
 
   setMemory(text: string): void {
@@ -1712,11 +1904,11 @@ export class Assistant {
   }
 
   /**
-   * Bảng kê tủ tài liệu. → docs/SPEC-library.md §8b
+   * The library manifest. → docs/SPEC-library.md §8b
    *
-   * Nằm trong prefix được cache, KHÔNG phải một lượt gọi tool. Cho Trợ lý một
-   * tool để đi đọc mục lục thì mỗi lần đọc là một lượt, mà `route()` chạy ở MỖI
-   * tin nhắn — đó là đường đông người qua lại nhất của sản phẩm.
+   * Sits in the cached prefix, NOT a tool call. Giving the Assistant a tool to
+   * read the index means every read is a paid turn, and `route()` runs on
+   * EVERY message — that's the busiest road in the whole product.
    */
   private library = '';
 
@@ -1725,12 +1917,13 @@ export class Assistant {
   }
 
   /**
-   * Bảng kê KẾT QUẢ các ca trước. → docs/SPEC-artifacts.md §2.4
+   * The OUTPUT manifest of previous runs. → docs/SPEC-artifacts.md §2.4
    *
-   * Chỉ TÊN FILE. Trợ lý vẫn không đọc được một byte nào của chúng — nó chỉ
-   * biết đủ để ghi đường dẫn vào `inputs` cho nhân viên đi mở. Ranh giới đó
-   * giống hệt tủ tài liệu, và nó là lý do bẻ được luật "artifact vô hình" mà
-   * không mở toang cái cửa luật ấy sinh ra để đóng.
+   * FILENAMES ONLY. The Assistant still can't read a single byte of their
+   * content — it only knows enough to write a path into `inputs` for a worker
+   * to open. That boundary is identical to the library's, and it's what lets
+   * the "artifacts are invisible" rule get bent without tearing open the exact
+   * door that rule exists to close.
    */
   private artifacts = '';
 
@@ -1739,24 +1932,25 @@ export class Assistant {
   }
 
   /**
-   * Ai được giao việc — do cạnh `Assistant → agent` trên canvas quyết định.
+   * Who gets assigned work — decided by the `Assistant → agent` edge on the canvas.
    *
-   * Đây là chỗ kéo một sợi dây thành hậu quả ĐO ĐƯỢC: agent bị ngắt thì `pitch`
-   * của nó biến khỏi ngữ cảnh Assistant. Cái giá đi kèm: roster nằm trong prefix
-   * được cache, nên đổi dây = ghi lại cache một lần. Rẻ (roster vài trăm token)
-   * nhưng KHÔNG miễn phí — đừng gọi hàm này mỗi lần kéo chuột.
+   * This is where dragging one wire turns into a MEASURABLE consequence:
+   * unwiring an agent makes its `pitch` disappear from the Assistant's
+   * context. The cost that comes with it: the roster sits in the cached
+   * prefix, so rewiring = one cache rewrite. Cheap (the roster is a few
+   * hundred tokens) but NOT free — don't call this function on every mouse drag.
    */
   setAssignable(ids: Set<string> | undefined): void {
     this.assignable = ids;
   }
 
   /**
-   * Vai trò Assistant thật sự thấy. Scheduler dùng đúng danh sách này để validate.
+   * Roles the Assistant actually sees. The scheduler uses this exact list to validate.
    *
-   * Vai trò đã LƯU TRỮ bị loại ở đây, không phụ thuộc vào canvas: `assignable`
-   * đến từ cạnh nối, mà cạnh nối chỉ tồn tại khi có layout.json. Văn phòng chưa
-   * có file đó thì `assignable` là undefined = "tất cả" — và "tất cả" phải
-   * không bao gồm người đã cất đi.
+   * An ARCHIVED role is excluded here, independent of the canvas: `assignable`
+   * comes from a wired edge, and an edge only exists once layout.json exists.
+   * An office with no such file yet has `assignable` as undefined = "all of
+   * them" — and "all of them" must never include someone archived.
    */
   assignableRoles(): Set<string> {
     const live = [...this.office.roles.keys()].filter((id) => !this.office.archivedRoles.has(id));
@@ -1765,100 +1959,111 @@ export class Assistant {
   }
 
   /**
-   * Danh bạ — chỉ pitch + một dòng khả năng, KHÔNG kèm skills.
+   * The directory — pitch + one capability line only, WITHOUT skills.
    * → docs/SPEC-tools-approval.md §1
    *
-   * Khả năng TỰ SINH từ connector/MCP đang nối vào agent, không bắt người dùng
-   * viết tay vào `pitch`. Thiếu nó thì Trợ lý chia việc như thể không ai có
-   * tool nào — không thể quyết "giao cho người này vì nó với tới được Notion".
+   * Capabilities are AUTO-GENERATED from the connector/MCP wired to an agent,
+   * rather than making the user hand-write them into `pitch`. Without it, the
+   * Assistant splits work as if nobody had any tools at all — unable to
+   * decide "assign this to them because they can reach Notion".
    *
-   * CỐ Ý chỉ nêu TÊN, không nêu schema: Trợ lý cần biết *với tới được cái gì*,
-   * không cần biết *gọi thế nào*. Nó không gọi tool nào cả.
+   * DELIBERATELY states only the NAME, not the schema: the Assistant needs to
+   * know *what it can reach*, not *how to call it*. It never calls a tool
+   * itself.
    */
   /**
-   * Một cánh tay, nói bằng thứ Trợ lý CẦN, không bằng thứ ta lưu.
+   * One arm, stated in terms the Assistant NEEDS, not in terms of what we store.
    *
    * ┌──────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 CA USER GẶP 24/08, BA LƯỢT LIÊN TIẾP, KHÔNG THOÁT RA ĐƯỢC:        │
+   * │ 🔴 A CASE A USER HIT 08/24, THREE TURNS IN A ROW, UNABLE TO ESCAPE:        │
    * │                                                                      │
-   * │   — "Trong thư mục đã cho phép, tìm 5 file lớn nhất…"                │
-   * │   — "Bạn cho mình xin đường dẫn đầy đủ của thư mục cần soi nhé?"     │
-   * │   — "thư mục music"                                                  │
-   * │   — "Bạn cho mình xin đường dẫn đầy đủ tới thư mục Music đó nhé?"    │
-   * │   — "nhân viên của bạn biết thư mục này rồi"                         │
-   * │   — "Mình vẫn cần đường dẫn đầy đủ…"                                 │
+   * │   — "Within the folder I've granted, find the 5 largest files…"           │
+   * │   — "Could you give me the full path of the folder to look through?"       │
+   * │   — "the music folder"                                                │
+   * │   — "Could you give me the full path to that Music folder?"                │
+   * │   — "your worker already knows this folder"                            │
+   * │   — "I still need the full path…"                                      │
    * │                                                                      │
-   * │ **Trợ lý không cố chấp — nó thật sự KHÔNG BIẾT.** `role.mcp` chỉ là   │
-   * │ một mảng BĂM (`a385afc3ab6`), và bản trước đổ thẳng mảng đó vào dòng  │
-   * │ năng lực. Băm không nói được nó trỏ vào đâu, nên câu *"thư mục đã cho │
-   * │ phép"* không giải được, và người dùng thì tin rằng hệ thống đã biết   │
-   * │ (đúng — `company.yaml` biết, chỉ Trợ lý là không).                    │
+   * │ **The Assistant wasn't being stubborn — it genuinely DIDN'T KNOW.**        │
+   * │ `role.mcp` is just an array of HASHES (`a385afc3ab6`), and the old            │
+   * │ version dumped that array straight into the capability line. A hash          │
+   * │ can't say where it points, so *"the folder I've granted"* was unsolvable,     │
+   * │ and the user assumed the system already knew (true — `company.yaml`          │
+   * │ knew, only the Assistant didn't).                                       │
    * │                                                                      │
-   * │ Đây là món nợ ĐÃ CÓ TÊN trong chính file này từ 22/08: *"dòng đó      │
-   * │ liệt kê MCP bằng TÊN, không bằng NĂNG LỰC — tên server là LỜI KHAI,   │
-   * │ danh sách tool của nó mới là SỰ THẬT"*. Ca này là món nợ đó thu lãi,  │
-   * │ ở dạng rẻ nhất để trả: thư mục nằm sẵn trong `args`, `folderRoots` đã │
-   * │ có sẵn, 0 lời gọi thêm.                                              │
+   * │ This is debt already NAMED in this exact file since 08/22: *"that line       │
+   * │ lists MCP servers by NAME, not by CAPABILITY — a server name is a            │
+   * │ CLAIM, its own tool list is the TRUTH"*. This case is that debt              │
+   * │ collecting interest, in the cheapest form to pay off: the folder already      │
+   * │ sits in `args`, `folderRoots` already exists, 0 extra calls.                │
    * │                                                                      │
-   * │ ⚠ Ghi `thư mục:` chứ không dùng mũi tên hay dấu hai chấm trần — dòng  │
-   * │ này nằm giữa một khối liệt kê và phải TỰ ĐỌC ĐƯỢC khi đứng một mình,  │
-   * │ cùng luật đã áp cho `chạy lệnh: TẮT`.                                 │
+   * │ ⚠ Writes `folder:` rather than using an arrow or a bare colon — this line       │
+   * │ sits inside a list block and has to be SELF-READABLE standing alone, same       │
+   * │ rule already applied to `runs commands: OFF`.                            │
    * └──────────────────────────────────────────────────────────────────────┘
    */
   private reach(role: Role): string {
     /**
-     * ⚠ CHỈ bắc cầu khi vai trò có **từ HAI cánh tay trở lên**.
+     * ⚠ ONLY bridges the name when a role has **TWO OR MORE arms**.
      *
-     * Một cánh tay thì không có gì để nhầm — model gọi cái duy nhất nó thấy.
-     * Dán chuỗi kỹ thuật vào mọi dòng là trả token cho thứ vô ích, và dạy model
-     * rằng những chuỗi đó là nhiễu — rồi nó bỏ qua đúng lúc chuỗi đó có nghĩa.
+     * One arm has nothing to confuse — the model calls the only one it sees.
+     * Pasting a technical string onto every line pays tokens for something
+     * useless, and teaches the model those strings are noise — so it skips
+     * right past the one time the string actually matters.
      */
     const many = role.mcp.length > 1;
     const parts = role.mcp.map((id) =>
       armReach(this.office.company.arms, this.office.company.mcpServers, id, many ? id : undefined),
     );
-    // Web bật sẵn cho mọi nhân viên (BUILTIN_TOOLS) nên luôn nêu — đây là khả
-    // năng thật, và không nêu thì Trợ lý không biết mà giao việc tra cứu.
+    // Web is on by default for every worker (BUILTIN_TOOLS), so it's always
+    // stated — this is a real capability, and not stating it means the
+    // Assistant doesn't know it can assign a web lookup.
     parts.push('web');
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ `pitch` LÀ LỜI KHAI. Khối này là SỰ THẬT. Phải có cả hai.            │
+     * │ `pitch` IS A CLAIM. This block is the TRUTH. Both are needed.        │
      * │                                                                      │
-     * │ Ca đo được 22/08 (bài 9.3): vai trò `nguoi-kiem-ke` có `pitch` ghi    │
-     * │ *"Chạy lệnh để lấy thông tin về file và thư mục trên máy"* — nhưng    │
-     * │ công tắc shell của nó ĐANG TẮT. Trợ lý đọc lời khai đó, giao việc,    │
-     * │ và nhân viên tiêu **4 lượt · $0,1358** để phát hiện ra mình không có  │
-     * │ tay. Rồi task sau đổ theo vì phụ thuộc.                               │
+     * │ Case measured 08/22 (test 9.3): role `nguoi-kiem-ke` had a `pitch`         │
+     * │ reading *"Run commands to get file and folder info on the machine"* —      │
+     * │ but its shell switch was OFF. The Assistant read that claim, assigned       │
+     * │ work, and the worker burned **4 turns · $0.1358** discovering it had no       │
+     * │ hands. Then the next task collapsed too, since it depended on this one.       │
      * │                                                                      │
-     * │ Không ai nói dối cả: `pitch` do người dùng gõ lúc tạo nhân viên, và   │
-     * │ nó mô tả Ý ĐỊNH. Khả năng thì nằm ở `tools`, và trước dòng này Trợ lý │
-     * │ **không có đường nào nhìn thấy `tools`**.                             │
+     * │ Nobody was lying: `pitch` is typed by the user when creating a worker,        │
+     * │ and it describes INTENT. Capability lives in `tools`, and before this          │
+     * │ line the Assistant **had no way at all to see `tools`**.                    │
      * └──────────────────────────────────────────────────────────────────────┘
      *
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ ⚠ ĐÍNH CHÍNH 22/08 (lần chạy lại 9.3) — BẢN CHỈ-KHẲNG-ĐỊNH VÔ HIỆU.  │
+     * │ ⚠ CORRECTED 08/22 (re-running test 9.3) — A CLAIM-ONLY-VERSION IS         │
+     * │ INEFFECTIVE.                                                          │
      * │                                                                      │
-     * │ Bản trước đẩy `lệnh trên máy` vào danh sách CHỈ KHI có shell, với lý  │
-     * │ do *"luật 7 đã lo mặt phủ định"*. Chạy lại 9.3: Trợ lý **vẫn** giao   │
-     * │ việc cho `nguoi-kiem-ke`, vẫn lập đủ 2 bước, vẫn tiêu $0,1380.        │
+     * │ The old version only pushed `runs commands on the machine` into the list      │
+     * │ WHEN shell was on, reasoning *"rule 7 already handles the negative           │
+     * │ case"*. Rerunning 9.3: the Assistant **still** assigned work to                │
+     * │ `nguoi-kiem-ke`, still built the full 2 steps, still spent $0.1380.          │
      * │                                                                      │
-     * │ Vì sao: văn phòng `kiem-ke` KHÔNG AI có shell ⇒ chuỗi `lệnh trên máy` │
-     * │ không xuất hiện ở đâu trong danh bạ ⇒ **vắng mặt không phải tín       │
-     * │ hiệu**. Một dấu hiệu chỉ-khẳng-định chỉ đọc được nhờ TƯƠNG PHẢN, mà   │
-     * │ ở đây không có gì để tương phản. Luật 7 cũng không thể bắn: theo bằng │
-     * │ chứng Trợ lý cầm, `pitch` nói CÓ người hợp.                           │
+     * │ Why: NOBODY in office `kiem-ke` has shell ⇒ the string `runs commands         │
+     * │ on the machine` never appears anywhere in the directory ⇒ **absence is         │
+     * │ not a signal**. A claim-only signal is only readable through CONTRAST,        │
+     * │ and here there's nothing to contrast against. Rule 7 couldn't fire            │
+     * │ either: based on the evidence the Assistant holds, `pitch` says there IS       │
+     * │ a suitable person.                                                    │
      * │                                                                      │
-     * │ ⇒ Cờ phải nêu CẢ HAI chiều (`BẬT`/`TẮT`) thì mỗi dòng mới tự mang     │
-     * │   thông tin, không phụ thuộc vào việc trong phòng có ai khác kiểu.    │
+     * │ ⇒ The flag has to state BOTH directions (`ON`/`OFF`) so every line             │
+     * │   carries information on its own, independent of whether anyone else in       │
+     * │   the office has a different setup.                                     │
      * │                                                                      │
-     * │ Ý NGHĨA của cờ thì gom vào `SHELL_LEGEND`, nói MỘT LẦN. Nó là sự      │
-     * │ thật về agentco, không phải thuộc tính của một nhân viên — đặt nó lên │
-     * │ dòng của từng người là gán nhầm tầng, đúng cái sai đã sinh ra ca này. │
-     * │ Hoà vốn token ở ~3 nhân viên, sau đó gom càng lúc càng thắng.         │
+     * │ The MEANING of the flag is consolidated into `SHELL_LEGEND`, stated ONCE.       │
+     * │ It's a fact about agentco itself, not a property of one worker — putting        │
+     * │ it on every person's own line assigns it to the wrong layer, exactly the         │
+     * │ mistake that caused this case. Breaks even in token cost around ~3               │
+     * │ workers, and wins more and more from there.                               │
      * │                                                                      │
-     * │ ⚠ Cờ vẫn viết `chạy lệnh: TẮT` chứ KHÔNG phải `shell: 0` — chú giải   │
-     * │ nằm ở đầu khối, còn dòng thứ 9 thì đã xa; cờ phải tự đọc được khi     │
-     * │ đứng một mình. 2 token cho việc không phụ thuộc vào khoảng cách.      │
+     * │ ⚠ The flag still writes `runs commands: OFF`, NOT `shell: 0` — the                │
+     * │ explanation sits at the top of the block, while line 9 is far away; the          │
+     * │ flag has to be self-readable standing alone. 2 tokens for something that         │
+     * │ doesn't depend on distance.                                              │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     parts.push(shellFlag(role.tools));
@@ -1866,45 +2071,48 @@ export class Assistant {
   }
 
   /**
-   * ẢNH CHỤP DANH BẠ — ai với tới đâu, tính bằng code, 0 token.
+   * A DIRECTORY SNAPSHOT — who can reach what, computed by code, 0 tokens.
    * → docs/SPEC-arms.md §15
    *
-   * Dựng từ chính chuỗi `armReach` mà `roster()` gửi đi, nên nó bắt đủ **mọi**
-   * đường làm danh bạ khác đi: cắt/nối dây (`role.mcp`), đổi tên cánh tay
-   * (`arms[id].label`), thêm/cất nhân viên (`assignableRoles`). So chuỗi với
-   * chuỗi thay vì kể ra từng ca — thiếu một ca ở đây là im lặng, không phải lỗi.
+   * Built from the exact `armReach` string that `roster()` sends out, so it
+   * catches **every** way the directory could change: wiring/unwiring
+   * (`role.mcp`), renaming an arm (`arms[id].label`), adding/archiving a
+   * worker (`assignableRoles`). Compares string to string instead of
+   * enumerating each case — missing a case here fails silently, not loudly.
    *
-   * ⚠ Băm cấu hình (`armHash`) KHÔNG dùng được cho việc này: nó là danh tính
-   * của một cánh tay, không phải của cái danh bạ. Đổi tên thì băm không đổi.
+   * ⚠ The config hash (`armHash`) CANNOT be used for this: it's the identity
+   * of an arm, not of the directory line. A rename leaves the hash unchanged.
    */
   private reachMap(): Map<string, string[]> {
     const m = new Map<string, string[]>();
     for (const id of [...this.assignableRoles()].sort()) {
       const role = this.office.roles.get(id);
-      // ⚠ CÙNG phép tính với `reach()`. Lệch một chỗ thì `reachDiff` báo "đổi"
-      // cho một dòng không đổi gì — một cảnh báo giả ở mỗi lượt.
+      // ⚠ The EXACT SAME computation as `reach()`. One mismatch and
+      // `reachDiff` reports "changed" for a line that changed nothing — a
+      // false alarm on every single turn.
       const mcp = role?.mcp ?? [];
       const many = mcp.length > 1;
       const caps = mcp.map((x) =>
         armReach(this.office.company.arms, this.office.company.mcpServers, x, many ? x : undefined),
       );
       /**
-       * CÔNG TẮC SHELL ĐI CHUNG MỘT ĐƯỜNG VỚI CÁNH TAY (user chốt 24/08).
+       * THE SHELL SWITCH TRAVELS THE SAME PATH AS AN ARM (user settled 08/24).
        *
        * ┌────────────────────────────────────────────────────────────────────┐
-       * │ Ca thật: user bật `Bash` cho một nhân viên rồi hỏi lại **y hệt**    │
-       * │ câu cũ. Trợ lý đáp *"câu này mình đã thử trước đó rồi và bị chặn"*  │
-       * │ — đúng cùng lớp lỗi với việc rút dây MCP, chỉ khác cái công tắc.    │
+       * │ Real case: a user turned on `Bash` for a worker then asked the             │
+       * │ **exact same** question again. The Assistant answered *"I already            │
+       * │ tried this before and it was blocked"* — the exact same failure class         │
+       * │ as unwiring an MCP arm, just a different switch.                          │
        * │                                                                    │
-       * │ `roster()` **đã** đổi khi công tắc đổi (`shellFlag` nằm trong dòng  │
-       * │ năng lực), nên prompt vốn đã đúng. Thứ thiếu là cái DIFF: bản trước │
-       * │ chỉ chụp `role.mcp`, nên bật/tắt shell không sinh dòng nào và       │
-       * │ lịch sử lại thắng.                                                 │
+       * │ `roster()` **already** changed when the switch changed (`shellFlag`         │
+       * │ sits in the capability line), so the prompt was already correct. What        │
+       * │ was missing was the DIFF: the old version only snapshotted                  │
+       * │ `role.mcp`, so toggling shell produced no line and history won again.       │
        * └────────────────────────────────────────────────────────────────────┘
        *
-       * ⚠ Chỉ chụp thứ ĐỔI ĐƯỢC. `web` cũng nằm trong dòng năng lực nhưng nó
-       * bật sẵn cho mọi người và không có công tắc — đưa vào đây là một token
-       * không bao giờ diff, tức tiếng ồn thuần.
+       * ⚠ Only snapshots things that CAN CHANGE. `web` also sits in the
+       * capability line but it's on by default for everyone with no switch —
+       * including it here would be a token that never diffs, pure noise.
        */
       if (hasShell(role?.tools ?? [])) caps.push('shell');
       m.set(id, caps);
@@ -1913,39 +2121,43 @@ export class Assistant {
   }
 
   /**
-   * HẬU KIỂM TẤT ĐỊNH: câu vừa nói có nhắc tới cánh tay KHÔNG CÒN AI NỐI không?
-   * → docs/SPEC-arms.md §15
+   * A DETERMINISTIC POST-CHECK: does this sentence mention an arm that IS NO
+   * LONGER WIRED to anyone? → docs/SPEC-arms.md §15
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO CẦN CỔNG NÀY DÙ ĐÃ CÓ DÒNG NHẮC TRONG PROMPT.                     │
+   * │ WHY THIS GATE IS NEEDED DESPITE ALREADY HAVING A PROMPT INSTRUCTION.          │
    * │                                                                          │
-   * │ Ca đo được 24/08 (`P` phiên `a425003b`): người dùng gõ **y hệt** một câu │
-   * │ ba lần quanh lúc rút dây, và Trợ lý trả về **giống nhau từng ký tự** cả  │
-   * │ ba, kèm nguyên văn `D:\Downloads\Programs Installation` — một đường dẫn  │
-   * │ ĐÃ KHÔNG CÒN trong prompt của lượt đó (đo bằng cache: lượt 2 `cache_read │
-   * │ = 0` sau 15 giây ⇒ prefix đã dựng lại, danh bạ đã sạch). Model chép lại  │
-   * │ câu của CHÍNH NÓ trong lịch sử `resume`, không đọc lại danh bạ.          │
+   * │ Case measured 08/24 (session `P a425003b`): a user typed the **exact same**    │
+   * │ sentence three times around the moment of unwiring, and the Assistant           │
+   * │ replied **identically, character for character**, all three times, quoting      │
+   * │ `D:\Downloads\Programs Installation` verbatim — a path that was ALREADY           │
+   * │ GONE from that turn's prompt (measured via the cache: turn 2 had `cache_read     │
+   * │ = 0` after 15 seconds ⇒ the prefix had already been rebuilt, the directory        │
+   * │ was already clean). The model was copying its OWN sentence from the `resume`      │
+   * │ history, not rereading the directory.                                    │
    * │                                                                          │
-   * │ Một dòng dặn trong prompt là TÍN HIỆU, không phải cổng — nó không có     │
-   * │ xác suất hỏng bằng 0 và không được ghi vào sổ như một bảo đảm            │
-   * │ ([[agentco-deterministic-vs-signal]]). Cổng này thì tất định: danh sách  │
-   * │ nhãn + thư mục gốc là HỮU HẠN và ta biết hết, nên "có nhắc tới hay       │
-   * │ không" là một phép so chuỗi, không phải một phán đoán.                    │
+   * │ A prompt instruction is a SIGNAL, not a gate — it doesn't have a zero              │
+   * │ failure rate and must never be recorded in the ledger as a guarantee              │
+   * │ ([[agentco-deterministic-vs-signal]]). This gate is deterministic: the             │
+   * │ list of labels + root directories is FINITE and fully known, so "does it          │
+   * │ mention it or not" is a string comparison, not a judgment call.                  │
    * │                                                                          │
-   * │ ⚠ RANH GIỚI, phải giữ nguyên câu này: nó bắt được TÊN, không bắt được    │
-   * │ CÁCH NÓI VÒNG. Spike L2 là ca thoát có thật — model bỏ tên thư mục       │
-   * │ nhưng vẫn nói *"thư mục mà Người soi cài đặt phụ trách"*, không có chuỗi │
-   * │ nào để khớp. ***ĐÃ HẸP LẠI, CHƯA ĐÓNG.***                                │
+   * │ ⚠ A BOUNDARY, this sentence has to stay exactly as stated: it catches            │
+   * │ NAMES, not ROUNDABOUT PHRASING. Spike L2 is a real escape case — the model         │
+   * │ dropped the folder name but still said *"the folder the installation                │
+   * │ inspector is in charge of"*, with no string left to match. ***NARROWED,             │
+   * │ NOT CLOSED.***                                                            │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Ba điều kiện để một chuỗi bị tính là "cũ" — cả ba đều cần, và mỗi cái bịt
-   * một ca dương tính giả đã nghĩ ra trước khi viết:
+   * Three conditions for a string to count as "stale" — all three are
+   * required, and each blocks a false positive thought of before writing this:
    *
-   *  1. Cánh tay đó **không** nằm trong `role.mcp` của bất kỳ ai đang trực.
-   *  2. Chuỗi **không** có trong câu người dùng vừa gõ — họ tự nêu tên thư mục
-   *     rồi Trợ lý trả lời *"không ai với tới đó"* là hành vi ĐÚNG.
-   *  3. Chuỗi **không** là một phần của cánh tay còn sống. `D:\X` bị rút mà
-   *     `D:\X\con` vẫn nối thì nhắc `D:\X` không phải nói bậy.
+   *  1. That arm is **not** in the `role.mcp` of anyone currently on duty.
+   *  2. The string is **not** present in what the user just typed — if they
+   *     name the folder themselves and the Assistant answers *"nobody can
+   *     reach that"*, that's CORRECT behavior.
+   *  3. The string is **not** a substring of a still-live arm. If `D:\X` gets
+   *     unwired while `D:\X\sub` is still wired, mentioning `D:\X` isn't wrong.
    */
   private staleArmMentions(say: string, userText: string): string[] {
     const live = new Set<string>();
@@ -1954,12 +2166,12 @@ export class Assistant {
     }
     const book = this.office.company.arms;
     /**
-     * Bù thêm TÊN TÀI KHOẢN cho kim thứ ba. → `staleMentions §arms.via`
+     * Adds the ACCOUNT NAME as the third needle. → `staleMentions §arms.via`
      *
-     * ⚠ Đọc kho OAuth có ĐIỀU KIỆN, không đọc mặc định: cổng này chạy ở **mọi**
-     * lượt Trợ lý, và tuyệt đại đa số văn phòng không có cánh tay nào bị rút.
-     * Không có ứng viên nào ⇒ không chạm đĩa. Cùng khuôn đọc-lười đã dùng ở
-     * `office.ts §canvas`.
+     * ⚠ Reads the OAuth store CONDITIONALLY, not by default: this gate runs on
+     * **every** Assistant turn, and the vast majority of offices have no
+     * unwired arm at all. No candidate at all ⇒ touches no disk. Same
+     * lazy-read pattern already used in `office.ts §canvas`.
      */
     const needsOauth = Object.keys(this.office.company.mcpServers).some(
       (id) => !live.has(id) && (book[id]?.secrets?.length ?? 0) > 0,
@@ -1991,36 +2203,41 @@ export class Assistant {
       );
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ VĂN PHÒNG RỖNG: NÓI VIỆC PHẢI LÀM, ĐỪNG ĐỂ MODEL TỰ BỊA RA LÝ DO.    │
+     * │ AN EMPTY OFFICE: STATE WHAT'S NEEDED, DON'T LET THE MODEL MAKE UP ITS OWN    │
+     * │ EXCUSE.                                                                │
      * │                                                                      │
-     * │ Ca 24/08 — văn phòng mới tinh, 0 nhân viên. Người dùng hỏi *"tìm      │
-     * │ giúp 5 quán cà phê ở quận 1"*, Trợ lý trả lời:                        │
+     * │ Case 08/24 — a brand-new office, 0 workers. The user asked *"find 5           │
+     * │ coffee shops in district 1 for me"*, and the Assistant answered:              │
      * │                                                                      │
-     * │   *"văn phòng mình không có kết nối tìm kiếm thông tin bên ngoài"*    │
-     * │   *"Mình không có khả năng truy cập internet"*                        │
+     * │   *"this office has no connection for looking up outside information"*        │
+     * │   *"I don't have internet access"*                                     │
      * │                                                                      │
-     * │ Vế thứ hai ĐÚNG (Trợ lý `tools: []`). Vế thứ nhất **SAI**, và sai     │
-     * │ theo chiều đắt nhất: `WebSearch`/`WebFetch` nằm trong `BUILTIN_TOOLS` │
-     * │ nên **mọi nhân viên đều tra web được** — đo 24/08, chạy thật, ra kết  │
-     * │ quả kèm nguồn. Thiếu duy nhất một thứ: văn phòng chưa có ai.          │
+     * │ The second half is CORRECT (the Assistant has `tools: []`). The first          │
+     * │ half is **WRONG**, and wrong in the most expensive direction:                  │
+     * │ `WebSearch`/`WebFetch` are part of `BUILTIN_TOOLS`, so **every worker can       │
+     * │ search the web** — measured 08/24, ran for real, produced results with          │
+     * │ sources. The only thing actually missing: nobody was in the office yet.        │
      * │                                                                      │
-     * │ Dòng cũ `(none — nobody on duty)` chỉ nêu một sự kiện. Model lấp chỗ  │
-     * │ trống bằng một lời giải thích nghe rất hợp lý về SẢN PHẨM — đúng thứ  │
-     * │ luật *"đừng để model tự giải thích hệ thống cho người dùng"* cấm, và  │
-     * │ hậu quả là người dùng tin sản phẩm không làm được việc nó làm được.   │
+     * │ The old line `(none — nobody on duty)` only stated one fact. The model          │
+     * │ filled the gap with a very plausible-sounding explanation about the             │
+     * │ PRODUCT — exactly what the rule *"never let the model explain the                │
+     * │ system to the user on its own"* forbids, and the result was the user             │
+     * │ believing the product couldn't do something it actually could.                │
      * │                                                                      │
-     * │ ⚠ Đoạn này CHỈ tồn tại khi roster rỗng ⇒ token trả đúng lúc nó có     │
-     * │ giá trị, và bằng 0 ở mọi văn phòng đang hoạt động.                    │
+     * │ ⚠ This paragraph ONLY exists when the roster is empty ⇒ tokens are spent        │
+     * │ exactly when they're valuable, and cost 0 in every active office.               │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     if (lines.length === 0) {
       /**
-       * ⚠ ĐÃ ĐỔI CÙNG LÚC với việc `lookup` được tra web (24/08) — và phải cùng
-       * lúc, nếu không thì đúng bệnh *hai bề mặt nói ngược nhau*: một bên trả
-       * lời được câu hỏi, bên kia vẫn khai "không việc gì chạy được".
+       * ⚠ CHANGED AT THE SAME TIME as `lookup` gaining web access (08/24) — and
+       * it had to be simultaneous, otherwise it's exactly the "two surfaces
+       * contradicting each other" sickness: one side can answer the question,
+       * the other still claims "nothing can run".
        *
-       * Bản trước (viết sáng cùng ngày) nói *"No work can run until the human
-       * adds one"*. Đúng lúc đó, nửa sai từ lúc `lookup` biết tra web.
+       * The old version (written the same morning) said *"No work can run until
+       * the human adds one"*. At that exact moment, half wrong, ever since
+       * `lookup` gained web access.
        */
       return (
         `# Employees you can assign to\n\n(none — nobody has been added to this office yet)\n\n` +
@@ -2036,14 +2253,14 @@ export class Assistant {
   }
 
   /**
-   * Mức model của Trợ lý này. Văn phòng có quyền ghi đè `models.master`.
-   * → docs/SPEC-offices.md §4.5
+   * This Assistant's model tier. An office is allowed to override
+   * `models.master`. → docs/SPEC-offices.md §4.5
    */
   get modelTier(): Tier {
     return this.office.config.assistant.model_tier ?? this.office.company.models.master;
   }
 
-  /** Model thật sự sẽ chạy — để giao diện nói ra thay vì bắt người dùng đoán. */
+  /** The actual model that will run — so the UI can state it instead of making the user guess. */
   get model(): string {
     return this.office.company.models[this.modelTier];
   }
@@ -2061,38 +2278,42 @@ export class Assistant {
   }
 
   /**
-   * Lập kế hoạch — chạy ở query ONE-SHOT RIÊNG, KHÔNG nằm trong session Assistant.
+   * Planning — runs in its OWN ONE-SHOT query, NOT inside the Assistant's session.
    *
-   * Lý do: prompt cache đánh theo (model, prefix). Nếu bước này chạy trên session
-   * Assistant bằng một model khác (ví dụ Opus cho chất lượng) thì MỖI LẦN đổi model
-   * là miss toàn bộ ngữ cảnh — đúng cái ~36.000 token quy đổi đã cảnh báo ở vụ MCP.
-   * Tách ra thì đặt `models.planner: deep` thoải mái mà session vẫn ấm nguyên.
+   * Reason: the prompt cache keys off (model, prefix). If this step ran on the
+   * Assistant's session using a different model (e.g. Opus for quality), EVERY
+   * model switch would miss the entire context — exactly the ~36,000 equivalent
+   * tokens already warned about in the MCP case. Splitting it out lets
+   * `models.planner: deep` be set freely while the session stays warm.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ `planId` ĐƯỢC TRUYỀN VÀO, KHÔNG TỰ SINH — bug đã sửa 20/08.              │
+   * │ `planId` IS PASSED IN, NOT SELF-GENERATED — bug fixed 08/20.             │
    * │                                                                          │
-   * │ Bản trước gọi `newPlanId()` ngay tại đây, còn `Office.run()` cũng gọi    │
-   * │ `newPlanId()` cho bản ghi công việc của nó. HAI id cho MỘT ca. Rồi        │
-   * │ `office.ts` ghi đè `plan.plan_id` bằng id của bản ghi — nhưng lúc đó      │
-   * │ `artifactScoper` đã đóng khung xong mọi đường dẫn bằng id KIA.            │
+   * │ The old version called `newPlanId()` right here, while `Office.run()`         │
+   * │ also called `newPlanId()` for its own job record. TWO ids for ONE run.          │
+   * │ Then `office.ts` overwrote `plan.plan_id` with the record's own id — but         │
+   * │ by then `artifactScoper` had already framed every path using the OTHER id.       │
    * │                                                                          │
-   * │ Hậu quả đo được trên máy người dùng: `artifacts/P-260820-0302-ov9e/` tồn  │
-   * │ tại trên đĩa, còn `tasks/index.json` chỉ biết `P-260820-0301-aajq`. Thư   │
-   * │ mục kết quả mang một id MỒ CÔI — không có kế hoạch nào, không có file log │
-   * │ nào tên đó. Người dùng còn nhìn thấy cả hai id trong cùng một tin nhắn    │
-   * │ báo kết quả.                                                             │
+   * │ Measured consequence on a user's machine: `artifacts/P-260820-0302-ov9e/`        │
+   * │ existed on disk, while `tasks/index.json` only knew about                     │
+   * │ `P-260820-0301-aajq`. The output directory carried an ORPHAN id — no plan          │
+   * │ pointed to it, no log file named it. The user even saw both ids in the             │
+   * │ exact same result message.                                                │
    * │                                                                          │
-   * │ Một ca = MỘT id, sinh ở đúng một chỗ (`Office.run`), chảy xuống mọi nơi  │
-   * │ cần. Một id sinh ở hai chỗ thì kiểu gì cũng có ngày lệch.                │
+   * │ One run = ONE id, generated in exactly one place (`Office.run`), flowing         │
+   * │ down to everywhere it's needed. An id generated in two places will drift          │
+   * │ apart eventually, no matter what.                                        │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   /**
-   * Nhận một bản nháp có sẵn thay vì gọi model. → `decideRoute` cửa cứu hộ
+   * Adopts an already-built draft instead of calling the model. →
+   * `decideRoute`'s escape hatch
    *
-   * Mỏng có chủ ý: nó chỉ tiêm `default_deliver` của văn phòng vào `buildPlan`.
-   * Để `Office` tự gọi `buildPlan` thì `Office` phải tự đi lấy con mặc định đó —
-   * và ngày ai đó quên, `default_deliver: reply` im lặng vô tác dụng ở đúng một
-   * trong hai cửa. Một phép biến đổi, một chỗ gọi.
+   * Deliberately thin: it only injects the office's `default_deliver` into
+   * `buildPlan`. Letting `Office` call `buildPlan` itself would mean `Office`
+   * has to go fetch that default on its own — and the day someone forgets,
+   * `default_deliver: reply` would go silently ineffective at exactly one of
+   * the two call sites. One transformation, one call site.
    */
   adopt(draft: PlanDraft, request: string, planId: string): PlanOrAsk {
     return {
@@ -2102,20 +2323,24 @@ export class Assistant {
   }
 
   /**
-   * WORKER ẨN — đọc file đã được xác minh, trả lời thẳng. → `RouteSchema` lookup
+   * A HIDDEN WORKER — reads already-verified files, answers directly. →
+   * `RouteSchema` lookup
    *
-   * Ba tính chất, và cả ba đều do CODE giữ chứ không do lời dặn:
+   * Three properties, all enforced by CODE rather than an instruction:
    *
-   *  · `persistSession: false` — thứ nó đọc **chết cùng lượt gọi**. Đây là cả
-   *    lý do nó tồn tại thay vì trao `Grep` cho Trợ lý.
-   *  · `tools` chỉ đọc — nó **không ghi được file**, nên nó không thể lấn sang
-   *    việc của nhân viên kể cả khi Trợ lý định tuyến sai. Ranh giới "hỏi để
-   *    BIẾT / giao để CÓ" là một giới hạn NĂNG LỰC, không phải một lời hứa.
-   *  · `systemPrompt` là `LOOKUP_PROMPT` trần — không charter, không kho tri
-   *    thức, không skills, không roster. Prefix tí xíu, và **không có gì ẩn**.
+   *  · `persistSession: false` — whatever it reads **dies with the call**.
+   *    This is the whole reason it exists instead of handing `Grep` to the
+   *    Assistant.
+   *  · `tools` is read-only — it **can't write a file**, so it can't
+   *    encroach on a worker's job even if the Assistant routes incorrectly.
+   *    The "ask to KNOW / assign to HAVE" boundary is a CAPABILITY limit, not
+   *    a promise.
+   *  · `systemPrompt` is a bare `LOOKUP_PROMPT` — no charter, no knowledge
+   *    store, no skills, no roster. A tiny prefix, and **nothing hidden**.
    *
-   * `usage` trả về cho `Office` ghi sổ dưới khâu `lookup`: nó có hình dạng chi
-   * phí riêng, gộp vào `route` thì không thấy khâu nào đang phình.
+   * `usage` is returned to `Office` to record under the `lookup` line item:
+   * it has its own cost shape, and merging it into `route` would hide any
+   * line item that's growing.
    */
   async lookup(paths: readonly string[], question: string): Promise<AssistantResult<string>> {
     const { text, usage } = await this.run(
@@ -2123,43 +2348,48 @@ export class Assistant {
         ? // ⚠ The question goes in VERBATIM. It is the user's own words, and it is
           // the language signal `LOOKUP_PROMPT` tells the model to answer in.
           `Documents to read:\n${paths.map((p) => `- ${p}`).join('\n')}\n\nQuestion: ${question}`
-        : // Không nêu tài liệu nào = câu hỏi tra cứu chung. Nói RA điều đó thay vì
-          // gửi một danh sách rỗng — một khối "Documents to read:" trống là thứ
-          // model phải tự diễn giải, và nó sẽ diễn giải khác nhau mỗi lần.
+        : // No document named = a general lookup question. STATES that outright
+          // instead of sending an empty list — an empty "Documents to read:"
+          // block is something the model would have to interpret on its own,
+          // and it would interpret it differently every time.
           `No document in this office is relevant to this — look it up on the web and answer.\n\nQuestion: ${question}`,
       /**
-       * Mức model của CHÍNH TRỢ LÝ, không phải `models.planner` — và cố ý KHÔNG
-       * đẻ một knob thứ ba.
+       * The ASSISTANT's OWN model tier, not `models.planner` — and deliberately
+       * does NOT invent a third knob.
        *
-       * Với người dùng thì đây LÀ Trợ lý đang trả lời; nó chỉ không giữ tài liệu
-       * lại trong đầu. Nên nó phải nói cùng một chất lượng với phần còn lại của
-       * cuộc trò chuyện, và cái knob quyết chuyện đó đã có sẵn:
-       * `assistant.model_tier` của văn phòng.
+       * To the user this IS the Assistant answering; it just doesn't keep the
+       * document in its head. So it has to speak at the same quality as the
+       * rest of the conversation, and the knob that decides that already
+       * exists: the office's `assistant.model_tier`.
        *
-       * `models.planner` thì SAI hẳn trục: người ta đặt nó `deep` để khâu chia
-       * việc nghĩ kỹ, và nếu dùng ở đây thì mỗi câu "file này nói gì" chạy Opus.
+       * `models.planner` would be the WRONG AXIS ENTIRELY: people set it to
+       * `deep` so the planning step thinks carefully, and using it here would
+       * run Opus for every "what does this file say" question.
        */
       this.model,
       false,
       {
         systemPrompt: LOOKUP_PROMPT,
         /**
-         * `Read` để đọc, `Grep` để tìm ĐÚNG CHỖ trong một file dài — luật "text
-         * đã bóc dùng để TÌM, bản gốc dùng để ĐỌC KỸ" (SPEC-library §7). `Glob`
-         * vì một đường dẫn thư mục vẫn hợp lệ trong `paths`.
+         * `Read` to read, `Grep` to find the RIGHT SPOT in a long file — the
+         * rule "extracted text is for SEARCHING, the original is for CLOSE
+         * READING" (SPEC-library §7). `Glob` because a directory path is still
+         * valid inside `paths`.
          *
-         * `WebSearch`/`WebFetch` thêm 24/08 — đo được **+992 token** vào prefix
-         * của lượt lookup (2 828 → 3 820), và chỉ trả khi lookup thật sự chạy.
+         * `WebSearch`/`WebFetch` added 08/24 — measured **+992 tokens** added to
+         * a lookup turn's prefix (2,828 → 3,820), and only charged when a
+         * lookup actually runs.
          *
-         * ⚠ Cả năm đều CHỈ ĐỌC: worker ẩn vẫn không ghi được file, nên ranh giới
-         * *"lookup TRẢ LỜI, không BÀN GIAO"* là một giới hạn NĂNG LỰC chứ không
-         * phải một lời dặn — kể cả khi Trợ lý định tuyến sai.
+         * ⚠ All five are READ-ONLY: the hidden worker still can't write a file,
+         * so the boundary *"lookup ANSWERS, does NOT HAND OFF"* is a CAPABILITY
+         * limit, not an instruction — even if the Assistant routes incorrectly.
          *
-         * ⚠ Phải nói ra phần KHÔNG chặn được: `WebFetch` là một đường dữ liệu
-         * ĐI RA, và giờ nó với tới được trong một văn phòng 0 nhân viên, 0 cấu
-         * hình. Mọi nhân viên vốn đã có nó nên rủi ro tăng thêm là nhỏ — nhưng
-         * nó đổi từ "phải dựng văn phòng trước" sang "mở app là có". Ghi ra để
-         * sau này không ai bảo chưa tính. → SPEC-arms §5e (mô hình đe doạ)
+         * ⚠ Has to state the part that CAN'T be blocked: `WebFetch` is an
+         * OUTBOUND data path, and it's now reachable in an office with 0
+         * workers, 0 config. Every worker already has it, so the added risk is
+         * small — but it changes from "you have to build an office first" to
+         * "open the app and it's already there". Stated outright so nobody
+         * later claims it wasn't considered. → SPEC-arms §5e (threat model)
          */
         tools: ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch'],
       },
@@ -2178,8 +2408,9 @@ export class Assistant {
     const parsed = extractJson(text, PlanOutputSchema);
     if (!parsed) throw this.planFailed(request, text);
 
-    // Nó cần biết thêm một thứ trước khi chia được việc. Đây là một CÂU NÓI,
-    // không phải một lỗi — đi thẳng lên ô chat và không tốn token nhân viên nào.
+    // It needs one more piece of information before it can split the work.
+    // This is a SENTENCE, not an error — it goes straight to the chat pane
+    // and spends no worker tokens at all.
     if ('ask' in parsed) return { value: { kind: 'ask', say: parsed.ask.trim() }, usage };
 
     return {
@@ -2192,39 +2423,45 @@ export class Assistant {
   }
 
   /**
-   * Lập kế hoạch KHÔNG ra JSON — và đây là chỗ hệ thống từng NÓI DỐI.
+   * Planning FAILED to produce JSON — and this is the spot the system used to LIE.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BUG ĐÃ SỬA (20/08): một câu lỗi cho HAI nguyên nhân trái ngược.         │
+   * │ BUG FIXED (08/20): one error sentence for TWO opposite causes.                  │
    * │                                                                          │
-   * │ Bản trước ném đúng một câu cho mọi ca: *"Trợ lý chưa hiểu đủ rõ để chia  │
-   * │ việc. Thử nói cụ thể hơn…"* — một CHẨN ĐOÁN mà code không hề có căn cứ   │
-   * │ để đưa ra. Nó chỉ biết duy nhất một sự thật: `extractJson` trả về rỗng.  │
+   * │ The old version threw the exact same sentence for every case: *"the             │
+   * │ Assistant didn't understand clearly enough to split the work. Try being         │
+   * │ more specific…"* — a DIAGNOSIS the code had no basis at all for making.          │
+   * │ It only knew one single fact: `extractJson` returned empty.                     │
    * │                                                                          │
-   * │ Đo được trên máy người dùng 20/08: ba lượt liên tiếp nhận câu này, trong │
-   * │ khi `route()` ngay trước đó viết lại yêu cầu **rất rõ ràng** (*"Tạo file │
-   * │ ghi chú thuật ngữ riêng cho doc-3.md… lưu tại artifacts/vi/…"*). Người   │
-   * │ dùng đọc câu lỗi rồi diễn đạt lại ba kiểu khác nhau — vô ích, vì diễn    │
-   * │ đạt chưa bao giờ là vấn đề — và cuối cùng đoán *"hết tiền?"*. Trả lời    │
-   * │ sai còn tệ hơn không trả lời: nó gửi người dùng đi sai hướng và tính     │
-   * │ tiền một lượt `route` cho mỗi lần thử.                                   │
+   * │ Measured on a user's machine 08/20: three turns in a row got this sentence,      │
+   * │ while the `route()` step right before it had rewritten the request **very        │
+   * │ clearly** (*"Create a separate terminology note file for doc-3.md… save at        │
+   * │ artifacts/vi/…"*). The user read the error and rephrased three different          │
+   * │ ways — pointlessly, because phrasing was never the problem — and finally           │
+   * │ guessed *"out of money?"*. A wrong answer is worse than no answer: it              │
+   * │ sends the user in the wrong direction and charges for a `route` turn every         │
+   * │ time they try again.                                                      │
    * │                                                                          │
-   * │ Ba nguyên nhân THẬT, cần ba câu khác nhau:                               │
-   * │   · model không trả về gì   → lỗi hạ tầng, diễn đạt lại không cứu được   │
-   * │   · model trả lời bằng VĂN  → nó đang hỏi/từ chối; nội dung câu đó CHÍNH │
-   * │     LÀ thông tin, và bản cũ ném thẳng nó vào thùng rác                    │
-   * │   · JSON sai hình dạng      → lỗi của ta hoặc của model, không của user  │
+   * │ THREE real causes, each needing a different sentence:                          │
+   * │   · the model returned nothing at all → an infrastructure error, rephrasing        │
+   * │     won't fix it                                                          │
+   * │   · the model answered with PROSE      → it's asking / refusing; the content       │
+   * │     of that sentence IS the information, and the old version threw it              │
+   * │     straight in the trash                                                 │
+   * │   · JSON in the wrong shape             → our own bug or the model's, not the       │
+   * │     user's fault                                                          │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Có TRÍCH lời model, và điều đó không phá luật *"đừng để model tự giải
-   * thích hệ thống cho người dùng"*. Luật đó cấm để model **kể về cơ chế** như
-   * thể nó biết. Ở đây câu của nó được đóng ngoặc kép và giới thiệu là *"nó
-   * nói"* — một BẰNG CHỨNG được trích dẫn, không phải một lời giải thích. Và
-   * việc phải làm thì vẫn do code viết ra.
+   * ⚠ It DOES quote the model, and that doesn't break the rule *"never let the
+   * model explain the system to the user on its own"*. That rule forbids the
+   * model **narrating a mechanism** as if it knew one. Here its sentence is
+   * put in quotes and introduced as *"it said"* — a quoted PIECE OF EVIDENCE,
+   * not an explanation. And what to actually do about it is still written by code.
    *
-   * Bản đầy đủ ghi ra `.state/plan-failure.log` — câu trên chat phải ngắn, còn
-   * chẩn đoán một ca hỏng thì cần nguyên văn. Ghi hỏng KHÔNG được nuốt mất lỗi
-   * gốc: người dùng đang chờ một câu trả lời, không phải một lỗi ghi file.
+   * The full text is logged to `.state/plan-failure.log` — the chat sentence
+   * has to stay short, while diagnosing a broken case needs the exact
+   * original. A logging failure must NEVER swallow the underlying error: the
+   * user is waiting for an answer, not a file-write error.
    */
   private planFailed(request: string, text: string): RunError {
     const raw = text.trim();
@@ -2237,17 +2474,19 @@ export class Assistant {
       );
     }
     /**
-     * ⚠ Câu này ĐÃ PHẢI SỬA MỘT LẦN, và đó là bài học đáng giữ.
+     * ⚠ THIS SENTENCE ALREADY HAD TO BE FIXED ONCE, and that's a lesson worth keeping.
      *
-     * Bản đầu (cùng ngày) khuyên: *"Trợ lý chỉ nhìn thấy tủ tài liệu, KHÔNG
-     * nhìn thấy ngăn Kết quả"*. Đúng lúc viết, **sai vài giờ sau** khi bảng kê
-     * kết quả ra đời (SPEC-artifacts §2.4). Một câu lỗi mô tả GIỚI HẠN của hệ
-     * thống là một câu sẽ lạc hậu đúng vào ngày giới hạn đó được gỡ — và không
-     * có test nào bắt được, vì nó chỉ là chữ.
+     * The first version (same day) advised: *"the Assistant can only see the
+     * library, NOT the Output pane"*. True when written, **wrong a few hours
+     * later** once the output manifest was born (SPEC-artifacts §2.4). An
+     * error sentence describing a system LIMITATION is a sentence that goes
+     * stale the exact day that limitation gets lifted — and no test catches
+     * it, because it's just text.
      *
-     * Nên bản này chỉ nói thứ **luôn đúng ở thời điểm chạy**: model đã phá giao
-     * thức. Từ 20/08 nó CÓ cửa hợp lệ để hỏi (`{"ask": "…"}`), nên trả về văn
-     * xuôi không còn là "nó cần hỏi" mà là "nó không dùng cửa đã có".
+     * So this version only states what's **always true at runtime**: the
+     * model broke protocol. Since 08/20 it HAS a valid gate to ask through
+     * (`{"ask": "…"}`), so returning prose is no longer "it needed to ask" —
+     * it's "it didn't use the gate that already exists".
      */
     return new RunError(
       t('as.planTextNotJson', { text: briefText(raw) }),
@@ -2256,33 +2495,35 @@ export class Assistant {
   }
 
   /**
-   * Tổng kết sau khi DAG chạy xong. Chạy TRÊN session Assistant — đây cũng là
-   * cách kế hoạch (vốn lập ở query riêng) được ghi vào trí nhớ hội thoại, ở dạng
-   * nén, để lần sau người dùng hỏi "sao lại làm thế" thì Assistant biết.
+   * The summary after the DAG finishes running. Runs ON the Assistant's
+   * session — this is also how the plan (built in its own separate query)
+   * ends up recorded in conversation memory, in compact form, so that when
+   * the user later asks "why did you do it that way", the Assistant knows.
    *
-   * Thu luôn BÀI HỌC CHUNG ở đây. Assistant là bên duy nhất được ghi vào
-   * `knowledge/shared/` (SPEC-offices.md §4.3), và gộp vào lượt gọi sẵn có nên
-   * KHÔNG tốn thêm lượt nào.
+   * Also collects SHARED LESSONS right here. The Assistant is the only side
+   * allowed to write into `knowledge/shared/` (SPEC-offices.md §4.3), and
+   * folding it into an already-happening call costs NO extra turn.
    */
   async report(
     steps: readonly { title: string }[],
     receipts: Receipt[],
-    /** Số lượt lập kế hoạch không ra được kế hoạch trước ca này. → `worthLearning` */
+    /** How many planning turns failed to produce a plan before this run. → `worthLearning` */
     friction = 0,
-    /** Ca này còn cảnh báo cấp CA không (file hứa mà thiếu · rơi ngoài khung). → `worthLearning` */
+    /** Does this run still have a RUN-level warning (a promised file missing · output landed outside the frame). → `worthLearning` */
     leaked = false,
   ): Promise<AssistantResult<{ say: string; lessons: Lesson[] }>> {
     const plan = steps.map((s, i) => `${i + 1}. ${s.title}`).join(' · ');
     /**
-     * ⚠ ĐÁNH DẤU NGAY TRONG BẢNG KẾT QUẢ việc nào được phép làm nguồn bài học.
+     * ⚠ MARKS RIGHT IN THE RESULTS TABLE which job is allowed to be a lesson source.
      *
-     * Cổng `learnable` là tất định và nó đã chặn ở vế "có hỏi hay không". Nhưng
-     * một ca hỗn hợp (một việc `done`, một việc `blocked`) vẫn mở cổng — và lúc
-     * đó model nhìn thấy CẢ HAI dòng, rồi rút bài học từ đúng dòng hỏng. Đó
-     * chính là hình dạng của ba mẩu độc đo được 29/08.
+     * The `learnable` gate is deterministic and already blocks on the "should
+     * it even ask" question. But a mixed run (one `done` job, one `blocked`
+     * job) still opens the gate — and at that point the model sees BOTH lines,
+     * and can draw a lesson from exactly the broken one. That's the exact
+     * shape of the three poisoned entries measured 08/29.
      *
-     * Điều kiện phải nằm **trên chính dòng** nó quản, không nằm trong một câu
-     * luật ở đoạn dưới — luật trừu tượng thua danh sách ví dụ.
+     * The condition has to sit **on the exact line** it governs, not inside a
+     * rule sentence further down — an abstract rule loses to a list of examples.
      * → [[agentco-prompt-rules-lose-to-examples]] · [[agentco-rule-must-see-what-it-governs]]
      */
     const summary = receipts
@@ -2291,14 +2532,15 @@ export class Assistant {
           `- [${r.status}] ${r.role}: ${r.say}${r.artifacts.length ? ` → ${r.artifacts.join(', ')}` : ''}` +
           (learnable(r) ? '   ⟵ REACHED THE GOAL despite stumbling: ONLY this one may yield a lesson' : '');
         /**
-         * `gist` = SỰ KIỆN nhân viên tìm được. Đây là **thứ duy nhất** Trợ lý có
-         * để trả lời câu hỏi của người dùng: nó không đọc được file (§4.7), nên
-         * không có dòng này thì câu chốt hay nhất nó viết được vẫn là *"kết quả
-         * nằm trong file kia"* — và người dùng phải đi mở, tệ nhất là qua bridge.
+         * `gist` = the EVENT a worker found. This is the **only thing** the
+         * Assistant has to answer the user's question with: it can't read the
+         * file (§4.7), so without this line the best closing sentence it could
+         * write is still *"the result is in that file"* — and the user has to
+         * go open it, at worst through a bridge.
          *
-         * ⚠ Xuống dòng + thụt vào chứ không nối vào `say`: `gist` được phép là
-         * gạch đầu dòng (user chốt 30/08), và ép nó thành một dòng là bóp chết
-         * đúng hình dạng hữu ích nhất của nó.
+         * ⚠ A newline + indent, not appended to `say`: `gist` is allowed to be
+         * bullet points (user settled 08/30), and forcing it onto one line
+         * would strangle its single most useful shape.
          */
         return r.gist ? `${head}\n    RESULT: ${r.gist.replace(/\n/g, '\n    ')}` : head;
       })
@@ -2307,12 +2549,13 @@ export class Assistant {
     const wantLessons = worthLearning(receipts, friction, leaked);
 
     /**
-     * Ca ma sát hỏi một câu KHÁC HẲN — và khác là cả điểm của nó.
+     * A friction run asks a COMPLETELY DIFFERENT question — and being different is the whole point.
      *
-     * Ca trục trặc kỹ thuật hỏi *"cái bẫy đã vấp là gì"*. Ca ma sát thì cỗ máy
-     * chạy sạch, nên hỏi câu đó sẽ nhận về "không có gì" — đúng, và vô dụng.
-     * Thứ đáng học nằm ở phía NGƯỜI DÙNG: câu nào cuối cùng làm việc chạy được,
-     * và lần sau nên hỏi thẳng điều gì. → `worthLearning`
+     * A technical-snag run asks *"what was the trap stumbled into"*. A
+     * friction run has a machine that ran cleanly, so asking that question
+     * gets back "nothing" — correct, and useless. What's worth learning sits
+     * on the HUMAN side: which sentence finally made the job workable, and
+     * what should be asked outright next time. → `worthLearning`
      */
     const frictionAsk =
       `⚠ The human had to restate this ${friction} times before it could be handed over — on the ` +
@@ -2325,28 +2568,29 @@ export class Assistant {
         `Reply with exactly one JSON object in a \`\`\`json block:\n` +
         /**
          * ┌────────────────────────────────────────────────────────────────────┐
-         * │ TRẢ LỜI CÂU HỎI, KHÔNG BÁO CÁO TIẾN ĐỘ. (user chốt 30/08)         │
+         * │ ANSWER THE QUESTION, DON'T REPORT PROGRESS. (user settled 08/30)         │
          * │                                                                    │
-         * │ > *"tôi thường xuyên phải vào file để xem kết quả, điều này càng    │
-         * │ >  bất lợi khi dùng qua bridge"* · *"nó chỉ cần neo theo intent     │
-         * │ >  của user là được"*                                              │
+         * │ > *"I keep having to go into the file to see the result, which is         │
+         * │ >  even worse over a bridge"* · *"it just needs to anchor to the           │
+         * │ >  user's intent"*                                                 │
          * │                                                                    │
-         * │ Bản cũ chỉ xin *"đã xong gì, có gì cần để ý"* — và nó cho ra đúng   │
-         * │ *"mình đã ghi danh sách vào file X, bạn mở file đó để xem"*. Câu ấy │
-         * │ **đúng** với thứ nó được hỏi; chỗ sai là câu hỏi.                   │
+         * │ The old version only asked *"what got done, anything to watch out for"*   │
+         * │ — and it produced exactly *"I saved the list to file X, open that          │
+         * │ file to see it"*. That sentence was **correct** for what it was asked;     │
+         * │ the question was the wrong one.                                    │
          * │                                                                    │
-         * │ ⚠ ĐÂY LÀ NƠI DUY NHẤT NEO ĐƯỢC VÀO Ý ĐỊNH NGƯỜI DÙNG. Nhân viên     │
-         * │ chưa bao giờ thấy câu họ gõ — nó chỉ thấy brief của task. Trợ lý    │
-         * │ thì vẫn còn nguyên câu đó trong phiên. Nên phép chia là: **nhân     │
-         * │ viên cấp SỰ KIỆN, Trợ lý NEO**.                                    │
+         * │ ⚠ THIS IS THE ONLY PLACE THAT CAN ANCHOR TO THE USER'S INTENT. A          │
+         * │ worker has never seen what they typed — it only sees the task brief.       │
+         * │ The Assistant still has that exact sentence in its session. So the         │
+         * │ split is: **a worker supplies the EVENT, the Assistant ANCHORS it**.       │
          * │                                                                    │
-         * │ ⚠ Và phải cấm bịa ngay tại đây: `gist` là nguồn DUY NHẤT. Một câu   │
-         * │ chốt nghe trôi chảy mà thêm dữ kiện không ai kiểm được thì tệ hơn   │
-         * │ hẳn câu "mở file ra xem".                                          │
+         * │ ⚠ And making things up has to be forbidden right here: `gist` is the      │
+         * │ ONLY source. A closing sentence that reads smoothly but adds a fact        │
+         * │ nobody can verify is worse than plain "go open the file".                 │
          * └────────────────────────────────────────────────────────────────────┘
          */
         /**
-         * ⚠ The language clause here used to read `<tiếng Việt, …>` — a pinned
+         * ⚠ The language clause here used to read `<Vietnamese, …>` — a pinned
          * language sitting in the one field the human reads most often. It is
          * gone; the human's own words are in this session, so the signal is
          * already the strongest available. → docs/CLAUDE.md §Language
@@ -2383,44 +2627,52 @@ export class Assistant {
     );
 
     const parsed = extractJson(text, ReportSchema);
-    // Không đọc được thì vẫn phải có câu báo cáo — người dùng đang chờ.
+    // If it can't be parsed, there still has to be a report sentence — the user is waiting.
     const value = parsed ?? { say: text.trim() || t('as.done'), lessons: [] };
-    // Chốt cuối: không hỏi thì không nhận, kể cả model tự ý gửi kèm.
+    // The final gate: no lessons wanted means none accepted, even if the model sends them anyway.
     return { value: wantLessons ? value : { ...value, lessons: [] }, usage };
   }
 
   /**
-   * Quyết định người dùng vừa nói gì: trò chuyện, hỏi thêm, hay giao việc.
+   * Decides what the user just said: chatting, asking a follow-up, or handing
+   * over work.
    *
-   * Chạy TRÊN session Assistant (rẻ: ngữ cảnh chỉ có roster + charter + skills,
-   * đã cache) nên nó nhớ cả cuộc hội thoại. "Chào" không được biến thành một
-   * kế hoạch DAG — đó là lỗi người dùng gặp ngay thao tác đầu tiên.
+   * Runs ON the Assistant's session (cheap: the context is just roster +
+   * charter + skills, already cached), so it remembers the whole
+   * conversation. "Hi" must never turn into a DAG plan — that's an error a
+   * user would hit on their very first action.
    *
-   * `ask` là trường hợp đáng giá nhất: yêu cầu mơ hồ thì HỎI LẠI thay vì lập
-   * kế hoạch sai rồi đốt tiền. Đây đúng là nỗi đau gốc của sản phẩm — người
-   * ngoại đạo hoang mang không biết AI đang dắt mình đi đâu.
+   * `ask` is the single most valuable case: a vague request gets ASKED BACK
+   * instead of being planned wrong and burning money. This is the product's
+   * actual core pain point — a non-technical person lost, not knowing where
+   * the AI is taking them.
    */
   async route(message: string, hasActivePlan: boolean): Promise<AssistantResult<RouteOutcome>> {
     /**
-     * DIFF DANH BẠ khi nó vừa đổi — tín hiệu, **không phải** cổng. → `reachDiff`
+     * A DIRECTORY DIFF right after it changes — a SIGNAL, **not** a gate. → `reachDiff`
      *
-     * Cùng cơ chế `scopeHint` ngay dưới: một dòng có điều kiện, im khi không có
-     * gì đổi. Nó tồn tại vì `resume` mang cả hội thoại cũ, và câu cũ của chính
-     * Trợ lý là một VÍ DỤ — mà ví dụ thì thắng luật trừu tượng
+     * Same mechanism as `scopeHint` right below: a conditional line, silent
+     * when nothing changed. It exists because `resume` carries the old
+     * conversation along, and the Assistant's own old sentence is an EXAMPLE
+     * — and an example beats an abstract rule
      * ([[agentco-prompt-rules-lose-to-examples]]).
      *
-     * ⚠ Bản đầu (24/08 sáng) chỉ nói *"danh bạ vừa đổi, đọc lại bên trên"* —
-     * một lời dặn, và nó đặt cược vào đúng thứ vừa đo được là YẾU: bảo model
-     * chú ý tới một dòng đã **biến mất**. Bản này nêu thẳng thay đổi, nên cái
-     * biến mất trở thành một dòng chữ **xuất hiện**. Đổi trục, không phải dặn
-     * to hơn. Cả số đo nằm ở `reachDiff`.
+     * ⚠ The first version (08/24 morning) only said *"the directory just
+     * changed, reread it above"* — an instruction, and it bet on exactly the
+     * thing just measured to be WEAK: telling the model to pay attention to a
+     * line that had **disappeared**. This version states the change outright,
+     * so the disappearance becomes a line of text that **appears**. Changing
+     * the axis, not a louder instruction. The full measurement lives in
+     * `reachDiff`.
      *
-     * ⚠ Cố ý KHÔNG nhét mã băm vào câu: người dùng không đọc nó, còn model thì
-     * càng có chuỗi lạ càng dễ bịa ra một câu chuyện về chuỗi đó.
+     * ⚠ Deliberately does NOT stuff a hash into the sentence: the user never
+     * reads it, and the more unfamiliar strings the model sees, the easier it
+     * is for it to make up a story about that string.
      *
-     * Chỉ bắn khi ĐANG có phiên: lượt đầu của một phiên mới thì lịch sử rỗng,
-     * không có gì để đính chính, và một dòng cảnh báo về "câu trước" khi không
-     * có câu trước nào là mời model bịa ra một cái.
+     * Only fires when a session is ACTUALLY ongoing: the first turn of a new
+     * session has empty history, nothing to correct, and a warning about "the
+     * previous sentence" when there is no previous sentence just invites the
+     * model to make one up.
      */
     const now = this.reachMap();
     const changes =
@@ -2437,7 +2689,7 @@ export class Assistant {
         `while attaching one to the wrong running job ruins both.`
       : `\nNothing is running right now, so with intent "task" always use "scope":"new".`;
 
-    // `let`: cổng hậu kiểm bên dưới có thể cộng thêm một lượt sửa vào đây.
+    // `let`: the post-check gate below can add a repair turn on top of this.
     let { text, usage } = await this.askSession(
       // The message is quoted VERBATIM — it is both the thing to classify and
       // the language signal for the `say` slots below.
@@ -2460,18 +2712,20 @@ export class Assistant {
         `   (a) WHAT IS IN A DOCUMENT — a summary, one figure, one clause, "what is this file about". ` +
         `Put the paths in "paths", taken from the two manifests above OR from what the human just typed. Do not invent a path.\n` +
         /**
-         * ⚠ DANH SÁCH VÍ DỤ THẮNG LUẬT TRỪU TƯỢNG — đo được 24/08.
+         * ⚠ A LIST OF EXAMPLES BEATS AN ABSTRACT RULE — measured 08/24.
          *
-         * Bản đầu của dòng này liệt kê thẳng *"quán ăn, thời tiết, tin tức"*, và
-         * luật ưu tiên nhân viên nằm cách đó bốn dòng bên dưới. Kết quả trên một
-         * văn phòng CÓ nhân viên `nguoi-tim-tin` (pitch: *"duyệt web, đối chiếu
-         * nhiều nguồn, dẫn nguồn"*):
+         * The first version of this line listed outright *"restaurants,
+         * weather, news"*, with the rule prioritizing a worker sitting four
+         * lines below it. Result, on an office that HAD a `nguoi-tim-tin`
+         * worker (pitch: *"browses the web, cross-checks multiple sources,
+         * cites them"*):
          *
-         *   "Tìm 5 quán cà phê ở quận 1"      → lookup  ❌ (phải là task)
-         *   "Tin tức công nghệ hôm nay"       → lookup  ❌ (phải là task)
+         *   "Find 5 coffee shops in district 1"   → lookup  ❌ (should be task)
+         *   "Today's tech news"                    → lookup  ❌ (should be task)
          *
-         * Model khớp danh sách ví dụ rồi dừng, không đọc tới luật. ⇒ **điều kiện
-         * phải nằm TRÊN CHÍNH DÒNG có ví dụ**, không nằm ở một câu khác.
+         * The model matched the example list and stopped, never reaching the
+         * rule. ⇒ **the condition has to sit ON THE EXACT LINE carrying the
+         * example**, not in a separate sentence.
          */
         `   (b) A GENERAL LOOKUP that NO employee on the roster specialises in — the weather, an ` +
         `address, a real-world figure, "what is X". Then leave "paths" as an EMPTY array.\n` +
@@ -2479,27 +2733,29 @@ export class Assistant {
         `lookup goes to them ("task"), restaurants and news included: they cross-check several ` +
         `sources and cite them, which "lookup" does not.\n` +
         /**
-         * ⚠ ĐIỀU KIỆN NẰM TRÊN CHÍNH DÒNG CÓ VÍ DỤ — cùng khuôn đã thắng ở
-         * `chạy lệnh: TẮT` và ở nhánh (b) phía trên. Đặt nó thành một câu luật
-         * ở đoạn khác thì model khớp ví dụ rồi dừng, không đọc tới.
+         * ⚠ THE CONDITION SITS ON THE EXACT LINE CARRYING THE EXAMPLE — the same
+         * pattern that already won for `runs commands: OFF` and for branch (b)
+         * above. Turning it into a rule sentence elsewhere means the model
+         * matches the example and stops, never reaching it.
          * → [[agentco-prompt-rules-lose-to-examples]]
          *
          * ┌────────────────────────────────────────────────────────────────────┐
-         * │ 🔴 CA THẬT 30/08: người dùng hỏi *"Việc nào đang giao cho tôi?"*   │
-         * │ Trợ lý viết brief: *"…lọc những việc gán cho người dùng có email    │
-         * │ an.nguyen@gmail.com"* — một email **nó không có cách nào            │
-         * │ biết**, và sai. Nhân viên tra đúng theo brief, không thấy ai, báo   │
-         * │ về. 6 lượt, $0,1409, câu trả lời vô dụng.                          │
+         * │ 🔴 A REAL CASE 08/30: a user asked *"which jobs are assigned to me?"*      │
+         * │ The Assistant wrote a brief: *"…filter jobs assigned to the user with       │
+         * │ email an.nguyen@gmail.com"* — an email it **had no way at all to           │
+         * │ know**, and got wrong. The worker searched exactly per the brief,           │
+         * │ found nobody, reported back. 6 turns, $0.1409, a useless answer.           │
          * │                                                                    │
-         * │ Trợ lý lập kế hoạch TRƯỚC mọi lời gọi cánh tay, nên về mặt cấu     │
-         * │ trúc nó **không thể** biết người dùng là ai bên trong một dịch vụ.  │
-         * │ Mọi định danh nó viết ra đều là phỏng đoán — kể cả khi đoán trúng.  │
+         * │ The Assistant plans BEFORE any arm call is made, so structurally it        │
+         * │ **cannot** know who the user is inside a given service. Any identifier      │
+         * │ it writes is a guess — even when the guess happens to be right.            │
          * │                                                                    │
-         * │ ⚠ Và một định danh GẦN ĐÚNG nguy hiểm hơn một định danh sai rành   │
-         * │ rành: lần này nó hỏng to tiếng (không có user nào mang email đó),   │
-         * │ nhưng nếu cú đoán rơi trúng một người thật khác trong workspace     │
-         * │ thì *"việc của tôi"* trả về việc của người khác — tự tin, gọn      │
-         * │ gàng, kèm một file dẫn chứng, và không ai bắt được.                 │
+         * │ ⚠ And a NEAR-CORRECT identifier is more dangerous than an obviously        │
+         * │ wrong one: this time it failed loudly (no user existed with that           │
+         * │ email), but if the guess had happened to land on a different real            │
+         * │ person in the workspace, *"my own work"* would return someone else's        │
+         * │ work — confidently, cleanly, with a supporting file, and nobody would       │
+         * │ catch it.                                                          │
          * └────────────────────────────────────────────────────────────────────┘
          */
         `{"intent":"task","request":"<the request rewritten as one clear sentence with enough context>","scope":"new"}\n` +
@@ -2511,21 +2767,26 @@ export class Assistant {
         `      ✅ "…filter the issues assigned to the account signed in on the Linear connection"\n` +
         `      ⛔ "…filter the issues assigned to the user with email an@example.com"\n` +
         /**
-         * LUẬT PHÂN CỬA `lookup` vs `task` — một câu, và nó phải đúng TRỤC.
+         * THE RULE THAT SPLITS `lookup` FROM `task` — one sentence, and it has
+         * to sit on the right AXIS.
          *
-         * Câu hỏi KHÔNG phải *"ai làm được việc này"* — người dịch hoàn toàn đọc
-         * và tóm tắt được một tài liệu, người dùng đã chứng minh điều đó trên
-         * máy thật. Câu hỏi là *"ai làm thì kết quả có khác không"*.
+         * The question is NOT *"who is capable of doing this"* — a translator
+         * can absolutely read and summarize a document, a user has already
+         * proven that on a real machine. The question is *"would the result
+         * differ depending on who does it"*.
          *
-         * Dịch một tài liệu thì CÓ khác: nó phụ thuộc bảng thuật ngữ, giọng văn,
-         * charter — tức là phụ thuộc `role`. Thuật lại xem tài liệu nói gì thì
-         * KHÔNG: ai đọc cũng ra chừng ấy.
+         * Translating a document DOES differ: it depends on a terminology
+         * table, a voice, a charter — i.e. it depends on `role`. Reporting
+         * back what a document says does NOT: anyone reading it lands in the
+         * same place.
          *
-         * Và đây cũng là câu trả lời cho ca *"người dùng tự tạo một nhân viên
-         * chỉ-đọc rồi thấy Trợ lý tự làm hết"*: nhân viên đó tồn tại vì họ mang
-         * một GÓC NHÌN (soát hợp đồng, kiểm số liệu), nên mọi câu hỏi cần góc
-         * nhìn ấy vẫn về tay họ theo đúng luật này. `lookup` chỉ lấy phần mà vai
-         * trò không thêm được gì — phần đó vốn không phải việc của ai cả.
+         * And this is also the answer to the case *"a user creates a
+         * read-only worker on their own, then finds the Assistant doing
+         * everything itself"*: that worker exists because they bring a
+         * PERSPECTIVE (contract review, figure-checking), so any question
+         * needing that perspective still goes to them under this exact rule.
+         * `lookup` only takes the part where a role adds nothing at all —
+         * that part was never really anyone's job to begin with.
          */
         `Telling "lookup" from "task": ask whether a DIFFERENT PERSON doing it would give a different ` +
         `result. Translating, writing, reviewing, advising — YES, different, because it turns on each ` +
@@ -2533,16 +2794,17 @@ export class Assistant {
         `anyone reading it lands in the same place → "lookup". ` +
         `If a FILE has to come out for the human to keep, it is always "task".\n` +
         /**
-         * Luật ƯU TIÊN, user chốt 24/08: *"cho phép cả lookup cả nhân viên,
-         * assistant tự định tuyến, nhưng ưu tiên nhân viên hơn nếu nhân viên là
-         * người chuyên nghiệp và có thể làm chính xác việc đó"*.
+         * The PRIORITY rule, user settled 08/24: *"allow both lookup and a
+         * worker, let the assistant route on its own, but favor the worker
+         * when that worker is a specialist who can do the job precisely"*.
          *
-         * Nó KHÔNG đổi trục đã có ở câu trên — nó phá thế hoà. Trục là *"người
-         * khác làm thì kết quả có khác không"*; khi hai bên nhìn ngang nhau,
-         * nghiêng về nhân viên. Lý do bất đối xứng: chọn nhầm `task` thì tốn
-         * thêm tiền và thời gian, chọn nhầm `lookup` thì người dùng **mất một
-         * góc nhìn chuyên môn mà họ đã cố ý dựng ra** — và không ai thấy là đã
-         * mất, vì câu trả lời vẫn trôi chảy.
+         * This does NOT change the axis already stated above — it breaks a
+         * tie. The axis is *"would a different person's result differ"*; when
+         * both sides look equal, lean toward the worker. The reason for the
+         * asymmetry: picking `task` wrongly costs extra money and time,
+         * picking `lookup` wrongly means the user **loses a specialist
+         * perspective they deliberately built**, and nobody notices it's
+         * gone, because the answer still reads smoothly.
          */
         `When the two look equally good, LEAN TOWARDS AN EMPLOYEE: if someone on the roster has this ` +
         `as their speciality, give it to them ("task"). "lookup" is for the cases where no role adds ` +
@@ -2551,59 +2813,68 @@ export class Assistant {
         reachHint,
     );
 
-    // Quyết định là hàm THUẦN và có test riêng. Ở đây chỉ còn phần có tác dụng
-    // phụ: ghi nhật ký ca hỏng. → `decideRoute`
+    // The decision is a PURE function with its own test suite. What's left
+    // here is only the side effect: logging a broken case. → `decideRoute`
     let value = decideRoute(text);
 
-    // Cửa cứu hộ có ghi sổ, vì một cửa cứu hộ im lặng là một cái phễu êm ái:
-    // model quên `intent` mãi mà không ai biết. → `RouteOutcome.salvaged`
+    // A rescue gate gets logged, because a silent rescue gate is a quiet
+    // funnel: the model forgets `intent` forever with nobody noticing. →
+    // `RouteOutcome.salvaged`
     if ('salvaged' in value && value.salvaged) {
       this.logFailure('route-salvage.log', message, text.trim());
     }
 
     /**
      * ┌──────────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 CÂU CỨU HỘ PHẢI DO MODEL VIẾT, KHÔNG PHẢI HẰNG SỐ CỦA TA.            │
-     * │ (user chốt 28/08)                                                        │
+     * │ 🔴 A RESCUE SENTENCE HAS TO BE WRITTEN BY THE MODEL, NOT ONE OF OUR OWN         │
+     * │ CONSTANTS. (user settled 08/28)                                           │
      * │                                                                          │
-     * │ > *"fallback vẫn parse qua LLM để nó nói tiếng người lại, nhưng vẫn cần  │
-     * │ >  phải có context chính xác là gì, không thì rất khó đến người cũng     │
-     * │ >  không hiểu được"*                                                     │
+     * │ > *"the fallback still needs to be parsed through the LLM so it speaks           │
+     * │ >  human again, but it needs the exact right context, otherwise even a           │
+     * │ >  person would struggle to understand it"*                                │
      * │                                                                          │
-     * │ Ba thứ một chuỗi ghim cứng không làm được, và cả ba đều đã cắn:          │
-     * │  ① **Ngôn ngữ.** Nó là tiếng Việt ghim trong mã, nằm giữa một dòng chat  │
-     * │     mà mọi câu khác đều do model viết theo tiếng người dùng đang gõ.     │
-     * │  ② **Nguyên nhân.** Nó đoán *"lỗi của mình"* trong khi ca thật là **kết  │
-     * │     nối đã bị rút** — người dùng đọc xong đi tìm sai chỗ.                │
-     * │  ③ **Lối ra.** Nó bảo *"nhắn lại y nguyên"*, và người dùng làm đúng thế  │
-     * │     rồi nhận lại y hệt. Một lời khuyên tất định sai còn tệ hơn im lặng.  │
+     * │ Three things a hardcoded string can't do, and all three had already            │
+     * │ bitten:                                                                    │
+     * │  ① **Language.** It was Vietnamese pinned in the source, sitting in the           │
+     * │     middle of a chat line where every other sentence follows the                  │
+     * │     language the user is typing in.                                        │
+     * │  ② **Cause.** It guessed *"my own mistake"* when the real case was a             │
+     * │     **disconnected connection** — the user read it and looked in the              │
+     * │     wrong place.                                                           │
+     * │  ③ **A way out.** It said *"message the exact same thing again"*, and the         │
+     * │     user did exactly that and got back the exact same thing. A                    │
+     * │     deterministically wrong piece of advice is worse than silence.              │
      * │                                                                          │
-     * │ ⚠ NHƯNG "để model nói" KHÔNG được thành "để model tự giải thích hệ       │
-     * │ thống" — luật đã có ở `roster()`, sinh ra từ ca *"văn phòng mình không    │
-     * │ có kết nối tìm kiếm"* (SAI, và nghe rất hợp lý). Nên lượt sửa này đưa    │
-     * │ **nguyên văn thứ nó vừa nói** và bắt nó PHÁT LẠI, không bắt nó chẩn      │
-     * │ đoán. Đó chính là *"cần có context chính xác"* user nói.                  │
+     * │ ⚠ BUT "let the model speak" must NOT become "let the model explain the           │
+     * │ system on its own" — a rule already established in `roster()`, born from          │
+     * │ the *"this office has no search connection"* case (WRONG, and sounding            │
+     * │ very plausible). So this repair turn hands over **the exact text it just          │
+     * │ said** and makes it RESTATE, not diagnose. That's exactly the "needs the           │
+     * │ exact right context" the user described.                                   │
      * │                                                                          │
-     * │ Đúng khuôn cổng `stale` ngay dưới: phát hiện tất định trước, gọi model    │
-     * │ sau, **sửa đúng một lần**. Sạch thì 0 đồng.                               │
+     * │ The same pattern as the `stale` gate right below: deterministic detection         │
+     * │ first, call the model second, **repair exactly once**. Clean means 0 cost.        │
      * └──────────────────────────────────────────────────────────────────────────┘
      */
     if (value.intent === 'garbled') {
       this.logFailure('route-failure.log', message, value.raw);
       /**
-       * ⚠ NEO VÀO **VIỆC NGƯỜI DÙNG MUỐN**, không neo vào cái hỏng. (user 28/08)
+       * ⚠ ANCHOR TO **WHAT THE USER WANTS**, not to what broke. (user 08/28)
        *
-       * > *"LUÔN BÁM VÀO MỤC TIÊU CỦA CÂU HỎI USER MUỐN ĐẠT ĐƯỢC LÀ GÌ. Ví dụ:
-       * >  tôi muốn đọc toeic-learning → báo hiện tại không thể kết nối đến mcp
-       * >  github do vừa ngắt kết nối"*
+       * > *"ALWAYS STAY ANCHORED TO WHAT GOAL THE USER'S QUESTION IS TRYING TO
+       * >  REACH. Example: I want to read toeic-learning → report that the
+       * >  GitHub MCP connection can't be reached right now because it was
+       * >  just disconnected"*
        *
-       * Mục tiêu VỐN nằm trong lịch sử phiên (`askSession` chạy trên session của
-       * Trợ lý). Nhắc lại nguyên văn ở đây vì một lượt sửa nói về **định dạng**
-       * rất dễ kéo model đi trả lời về định dạng — tức trả lời đúng câu hỏi cuối
-       * cùng nó vừa đọc, và câu đó là câu của TA. Người dùng thì vẫn đang đợi
-       * biết repo kia đọc được hay không.
+       * The goal ALREADY lives in the session history (`askSession` runs on
+       * the Assistant's own session). It's restated verbatim here because a
+       * repair turn talking about **format** very easily pulls the model into
+       * answering about the format — i.e. answering the last question it just
+       * read, and that question is OUR OWN. The user is still waiting to find
+       * out whether that repo can be read.
        *
-       * Tốn thêm token? Chỉ trên nhánh đã hỏng, và chỉ bằng độ dài câu họ vừa gõ.
+       * Extra token cost? Only on the already-broken branch, and only the
+       * length of the sentence they just typed.
        */
       const goal =
         `What the human wants: "${truncateToTokens(message, 200)}".\n` +
@@ -2623,21 +2894,24 @@ export class Assistant {
       );
       usage = addUsage(usage, repair.usage);
       const fixed = decideRoute(repair.text);
-      // Lượt sửa cũng hỏng ⇒ mới tới chuỗi ghim cứng. Nó là **phao cuối**, không
-      // phải cửa thường — và giờ nó hiếm tới mức thấy nó là một tín hiệu thật.
+      // Only when the repair turn ALSO fails does it fall through to a
+      // hardcoded string. That's a **last resort**, not a normal gate — and
+      // by now it's rare enough that seeing it fire is itself a real signal.
       if (fixed.intent !== 'garbled') value = fixed;
       else this.logFailure('route-failure.log', `${message}\n[the repair turn failed too]`, fixed.raw);
     }
 
     /**
-     * BƯỚC 2 — CỔNG HẬU KIỂM. Đây mới là thứ chặn thật. → `staleArmMentions`
+     * STEP 2 — THE POST-CHECK GATE. This is the thing that actually blocks. →
+     * `staleArmMentions`
      *
-     * Sạch thì tốn 0: một phép so chuỗi trên một danh sách hữu hạn. Chỉ khi
-     * TRÚNG mới trả tiền một lượt sửa — cùng hình dạng `repairReceipt` của
-     * worker (`worker.ts:401`): phát hiện tất định trước, gọi model sau.
+     * Clean costs 0: a string comparison against a finite list. Only a HIT
+     * pays for a repair turn — the same pattern as a worker's own
+     * `repairReceipt` (`worker.ts:401`): deterministic detection first, call
+     * the model second.
      *
-     * Sửa đúng MỘT lần. Vòng lặp ở đây là đốt tiền trên một thứ ta vốn đã biết
-     * là không đóng được hoàn toàn.
+     * Repairs exactly ONCE. Looping here would burn money on something
+     * already known to be unclosable completely.
      */
     const stale = this.staleArmMentions(routeText(value), message);
     if (stale.length) {
@@ -2649,11 +2923,13 @@ export class Assistant {
       );
       usage = addUsage(usage, repair.usage);
       const fixed = decideRoute(repair.text);
-      // Bản sửa hỏng định dạng thì GIỮ bản đầu: một câu cũ còn đọc được vẫn hơn
-      // một câu không dùng được. Cùng luật "không trích JSON ra mặt người dùng".
+      // If the repair breaks the format, KEEP the first version: an old
+      // sentence that's still readable beats one that isn't usable at all.
+      // Same rule as "never expose raw JSON to the user".
       if (fixed.intent !== 'garbled') value = fixed;
-      // Vẫn còn nhắc ⇒ đây là ca thoát của cổng, và nó phải để lại dấu vết.
-      // Không có dòng này thì "đã hẹp lại, chưa đóng" là một câu không đo được.
+      // Still mentioned ⇒ this is the gate's own escape case, and it has to
+      // leave a trace. Without this line, "narrowed, not closed" would be a
+      // sentence nobody could measure.
       if (this.staleArmMentions(routeText(value), message).length) {
         this.logFailure('route-stale.log', message, `${stale.join(' · ')}\n${routeText(value)}`);
       }
@@ -2661,35 +2937,39 @@ export class Assistant {
     return { value, usage };
   }
 
-  // `chat()` ĐÃ BỎ (19/08) — nó là mã chết và việc nối nó lại là một lỗi.
+  // `chat()` was REMOVED (08/19) — it was dead code, and wiring it back up
+  // would be a bug.
   //
-  // `route()` đã trả luôn `say` cho cả `chat` lẫn `ask`, và `handleUserBatch`
-  // phát thẳng câu đó. Gọi thêm một hàm `chat()` sau `route()` nghĩa là HAI lượt
-  // model cho một câu chào — trên đúng đường đông người qua lại nhất của sản
-  // phẩm. → docs/SPEC-offices.md §6
+  // `route()` already returns `say` for both `chat` and `ask`, and
+  // `handleUserBatch` emits that sentence directly. Calling a separate
+  // `chat()` function after `route()` would mean TWO model turns for a single
+  // greeting — on the single busiest road in the whole product. →
+  // docs/SPEC-offices.md §6
 
-  // ── nội bộ
+  // ── internal
 
   /**
-   * Trên session Assistant.
+   * On the Assistant's session.
    *
-   * Model đọc lại ở MỖI lượt, cố ý. Trước đây chú thích ở đây ghi "model CỐ
-   * ĐỊNH — không bao giờ đổi giữa ca", nhưng đó là mô tả một giới hạn chứ không
-   * phải một bất biến: người dùng có quyền đổi model của Trợ lý, và cái giá của
-   * việc đó đã biết rõ (SPEC-offices.md §4.5).
+   * The model is reread on EVERY turn, deliberately. A comment here used to
+   * say "the model is FIXED — never changes mid-run", but that described a
+   * limitation, not an invariant: the user is allowed to change the
+   * Assistant's model, and the cost of doing so is already well understood
+   * (SPEC-offices.md §4.5).
    *
-   * Thứ THẬT SỰ bất biến là: đổi model KHÔNG được chạm vào việc đang chạy. Điều
-   * đó đã đúng sẵn — `Office.applyCompanyConfig` dựng một `LoadedOffice` MỚI,
-   * còn Scheduler của ca đang chạy giữ nguyên bản cũ nó cầm từ đầu. Trợ lý thì
-   * mỗi lúc chỉ làm một việc (hòm thư khoá), nên không có lượt nào bị đổi model
-   * giữa chừng.
+   * What's ACTUALLY invariant is: changing the model must NOT touch a
+   * currently running job. That's already true — `Office.applyCompanyConfig`
+   * builds a NEW `LoadedOffice`, while the scheduler of a currently running
+   * job keeps the old object it grabbed from the start. And the Assistant
+   * only does one thing at a time (the mailbox is locked), so no turn ever
+   * gets its model swapped mid-way.
    */
   /**
-   * Nguyên văn thứ model trả về, cho người đi sửa lỗi. KHÔNG cho người dùng.
+   * The model's raw output, for whoever debugs it. NOT for the user.
    *
-   * Câu trên chat phải ngắn và nói việc phải làm; chẩn đoán một ca hỏng thì cần
-   * đủ chữ. Ghi hỏng KHÔNG được nuốt mất ca gốc: người dùng đang chờ một câu trả
-   * lời, không phải một lỗi ghi file.
+   * The chat sentence has to stay short and state what to do; diagnosing a
+   * broken case needs the full text. A logging failure must NEVER swallow the
+   * original case: the user is waiting for an answer, not a file-write error.
    */
   private logFailure(file: string, request: string, raw: string): void {
     try {
@@ -2700,7 +2980,7 @@ export class Assistant {
         'utf8',
       );
     } catch {
-      /* không ghi được nhật ký thì vẫn phải trả lời người dùng */
+      /* Failing to write the log must still let the user get an answer. */
     }
   }
 
@@ -2708,7 +2988,7 @@ export class Assistant {
     return this.run(prompt, this.model, true);
   }
 
-  /** Query độc lập, không đụng session. Đổi model ở đây là an toàn. */
+  /** An independent query, doesn't touch the session. Safe to switch models here. */
   private askOneShot(prompt: string, model: string): Promise<{ text: string; usage: Usage }> {
     return this.run(prompt, model, false);
   }
@@ -2718,44 +2998,48 @@ export class Assistant {
     model: string,
     useSession: boolean,
     /**
-     * Ghi đè cho WORKER ẨN — và cố ý chỉ có ĐÚNG HAI trường.
+     * The override for the HIDDEN WORKER — deliberately EXACTLY TWO fields.
      *
-     * Mọi thứ khác (`abortController`, `settingSources`, `strictMcpConfig`,
-     * `persistSession`) phải giữ nguyên cho mọi lượt. Mở rộng thành một object
-     * options tự do là mời một ngày nào đó có người tắt mất `abortController`
-     * cho một nhánh, rồi `/stop` im lặng thôi tác dụng ở đúng nhánh đó — lớp
-     * lỗi vừa sửa sáng nay.
+     * Everything else (`abortController`, `settingSources`, `strictMcpConfig`,
+     * `persistSession`) has to stay identical for every turn. Widening this
+     * into a free-form options object invites someone, someday, to
+     * accidentally drop `abortController` for one branch, and `/stop` would
+     * silently stop working on exactly that branch — the failure class just
+     * fixed this morning.
      */
     override?: { systemPrompt: string; tools: string[] },
   ): Promise<{ text: string; usage: Usage }> {
     let usage: Usage = { ...EMPTY_USAGE };
     let text = '';
 
-    // Một tay cầm cho MỖI lượt, không dùng lại: một `AbortController` đã abort
-    // thì abort vĩnh viễn, nên tái sử dụng nghĩa là lượt kế tiếp chết ngay khi
-    // vừa sinh ra. Xem `inflight`.
+    // One handle PER TURN, never reused: an `AbortController` that's already
+    // aborted stays aborted forever, so reusing it means the very next turn
+    // dies the instant it's created. See `inflight`.
     const controller = new AbortController();
     this.inflight = controller;
-    // Con trỏ hội thoại TRƯỚC lượt này — xem nhánh `aborted` ở `catch`.
+    // The conversation pointer BEFORE this turn — see the `aborted` branch in `catch`.
     const sessionBefore = this.sessionId;
 
     try {
       for await (const msg of query({
         /**
-         * ⚠ STREAMING INPUT, KHÔNG PHẢI CHUỖI — và đây là điều kiện để
-         * `canUseTool` chạy. Truyền `prompt` là một chuỗi thì SDK **im lặng bỏ
-         * qua `canUseTool`**: không lỗi, không cảnh báo, tool vẫn chạy, cổng
-         * chặn không tồn tại.
+         * ⚠ STREAMING INPUT, NOT A PLAIN STRING — and this is the condition for
+         * `canUseTool` to fire at all. Passing `prompt` as a plain string makes
+         * the SDK **silently skip `canUseTool`**: no error, no warning, the
+         * tool still runs, and the gate simply doesn't exist.
          *
-         * Đã đo 19/08: Trợ lý `Grep` được vào sổ tay của một nhân viên đã bị
-         * ngắt dây, `gate.log` rỗng tuyệt đối. Tệ hơn nữa, khi bị hỏi về một
-         * file ngoài vùng cho phép nó trả lời *"mình không có quyền xem"* —
-         * **model tự diễn theo bản đồ thư mục trong prompt**, trong khi thực
-         * tế nó có toàn quyền. Đúng thứ luật *"đừng để model tự giải thích hệ
-         * thống cho người dùng"* đã cấm: nghe rất hợp lý và sai hoàn toàn.
+         * Measured 08/19: the Assistant could `Grep` into the notebook of a
+         * worker that had already been unwired, `gate.log` was completely
+         * empty. Worse still, when asked about a file outside its allowed
+         * scope it answered *"I don't have permission to view that"* — **the
+         * model was narrating from the directory map in the prompt**, while
+         * actually holding full access. Exactly what the rule *"never let the
+         * model explain the system to the user on its own"* forbids: sounding
+         * very plausible and being completely wrong.
          *
-         * Generator này yield MỘT lần rồi kết thúc, nên stream đóng ngay — khác
-         * hẳn ca DEADLOCK ở §8, vốn do GIỮ MỞ stream để chờ `interrupt()`.
+         * This generator yields ONCE then ends, so the stream closes right
+         * away — the opposite of the DEADLOCK case in §8, which came from
+         * KEEPING the stream open to wait for `interrupt()`.
          */
         prompt: oneShot(prompt),
         options: {
@@ -2767,59 +3051,65 @@ export class Assistant {
           strictMcpConfig: true,
           /**
            * ┌──────────────────────────────────────────────────────────────────┐
-           * │ `tools` GIỚI HẠN. `allowedTools` CHỈ TỰ-DUYỆT. HAI THỨ KHÁC NHAU.│
+           * │ `tools` RESTRICTS. `allowedTools` ONLY AUTO-APPROVES. TWO DIFFERENT     │
+           * │ THINGS.                                                           │
            * │                                                                  │
-           * │ Bản trước chỉ đặt `allowedTools: []` và tưởng thế là "Trợ lý      │
-           * │ không có tool". Không phải — đó chính xác là con rò đã tìm ra ở   │
-           * │ worker ngày 16/08 (§5d): `allowedTools` không cắt tool khỏi ngữ   │
-           * │ cảnh, nên ĐỊNH NGHĨA của toàn bộ bộ tool Claude Code vẫn nằm      │
-           * │ trong prefix — ở đây là prefix của `route()`, thứ chạy ở MỖI TIN  │
-           * │ NHẮN người dùng gõ. Worker được vá 16/08; Trợ lý bị bỏ quên.      │
+           * │ The old version only set `allowedTools: []` and assumed that meant       │
+           * │ "the Assistant has no tools". It didn't — that's the exact hole            │
+           * │ already found in the worker on 08/16 (§5d): `allowedTools` doesn't         │
+           * │ cut a tool out of context, so the DEFINITION of the entire Claude          │
+           * │ Code toolset still sits in the prefix — here, `route()`'s own prefix,       │
+           * │ which runs on EVERY MESSAGE the user types. The worker got fixed          │
+           * │ 08/16; the Assistant got overlooked.                                │
            * │                                                                  │
-           * │ `tools` phải LUÔN được truyền, kể cả khi danh sách rỗng — và ở    │
-           * │ đây nó rỗng THẬT.                                                 │
+           * │ `tools` has to ALWAYS be passed, even when the list is empty — and         │
+           * │ here it's GENUINELY empty.                                          │
            * └──────────────────────────────────────────────────────────────────┘
            *
            * ┌──────────────────────────────────────────────────────────────────┐
-           * │ VÌ SAO TRỢ LÝ KHÔNG CÓ `Grep` — dù ai cũng muốn nó có.           │
+           * │ WHY THE ASSISTANT DOESN'T HAVE `Grep` — even though everyone wants it.   │
            * │                                                                  │
-           * │ Ngày 19/08 đã thử trao `Grep`/`Glob` kèm một cổng chặn theo thư  │
-           * │ mục, để nó không đọc được sổ tay của nhân viên đã bị ngắt dây.   │
-           * │ **Ba cơ chế, không cơ chế nào chặn được:**                        │
+           * │ On 08/19 there was an attempt to grant `Grep`/`Glob` alongside a           │
+           * │ directory-based blocking gate, so it couldn't read the notebook of a       │
+           * │ worker that had been unwired. **Three mechanisms, none of them             │
+           * │ blocked it:**                                                      │
            * │                                                                  │
-           * │   `canUseTool`                     → không nổ lần nào             │
-           * │   `canUseTool` + streaming input   → không nổ lần nào             │
-           * │   hook `PreToolUse` (± `matcher`)  → không nổ lần nào             │
+           * │   `canUseTool`                     → never fired                    │
+           * │   `canUseTool` + streaming input   → never fired                    │
+           * │   `PreToolUse` hook (± `matcher`)  → never fired                    │
            * │                                                                  │
-           * │ Đo bằng cách ghi mọi quyết định ra `.state/gate.log`: file RỖNG   │
-           * │ TUYỆT ĐỐI trong khi `Grep` vẫn chạy và vẫn đọc được file cấm.     │
-           * │ Suy đoán tốt nhất: tool chỉ-đọc được CLI tự duyệt và không đi qua │
-           * │ đường phê duyệt nào cả. Chưa xác nhận được, nên **đừng xây gì lên │
-           * │ phần này** cho tới khi đo lại.                                    │
+           * │ Measured by logging every decision to `.state/gate.log`: the file was     │
+           * │ COMPLETELY EMPTY while `Grep` kept running and kept reading forbidden      │
+           * │ files. Best guess: a read-only tool gets auto-approved by the CLI          │
+           * │ itself and never goes through any approval path at all. Unconfirmed,       │
+           * │ so **don't build anything on top of this** until it's measured again.      │
            * │                                                                  │
-           * │ 🔥 Và đây là lý do phải BỎ HẲN chứ không "tạm chấp nhận": khi bị │
-           * │ hỏi về một file ngoài vùng, Trợ lý trả lời *"mình không có quyền  │
-           * │ xem file cấu hình hệ thống"* — nó DIỄN theo bản đồ thư mục trong  │
-           * │ prompt, trong khi thực tế có toàn quyền. Không hàng rào thì còn   │
-           * │ biết là không có; một hàng rào giả được model thuật lại đầy tự    │
-           * │ tin thì tệ hơn hẳn. Đúng luật "đừng để model tự giải thích hệ     │
-           * │ thống cho người dùng".                                            │
+           * │ 🔥 And here's why it had to be REMOVED ENTIRELY rather than             │
+           * │ "accepted for now": when asked about a file outside its scope, the         │
+           * │ Assistant answered *"I don't have permission to view system config           │
+           * │ files"* — it was NARRATING from the directory map in the prompt,           │
+           * │ while actually holding full access. With no fence at all, at least          │
+           * │ it's known there's none; a fake fence the model narrates back              │
+           * │ confidently is far worse. Exactly the rule "never let the model            │
+           * │ explain the system to the user on its own".                          │
            * │                                                                  │
-           * │ Đường ra CÓ tồn tại — tự khai một tool MCP với `where` là ENUM    │
-           * │ dựng từ `assignableRoles()`, thì thao tác sai không diễn đạt      │
-           * │ được. Nhưng "Trợ lý KHÔNG gắn MCP" là luật cứng: MCP phá prompt   │
-           * │ cache khi resume (~36K token/lượt), mà `route()` resume ở mọi tin │
-           * │ nhắn. Đổi 36K token/lượt lấy một tiện ích là lỗ nặng.             │
+           * │ A real way forward DOES exist — declaring its own MCP tool with a           │
+           * │ `where` ENUM built from `assignableRoles()`, so a wrong call can't          │
+           * │ even be phrased. But "the Assistant holds NO MCP connection" is a           │
+           * │ hard rule: MCP breaks the prompt cache on resume (~36K tokens/turn),        │
+           * │ and `route()` resumes on every message. Trading 36K tokens/turn for a       │
+           * │ convenience is a heavy loss.                                        │
            * │                                                                  │
-           * │ Và cái giá của việc bỏ: ĐO ĐƯỢC LÀ BẰNG KHÔNG. Trong lần chạy    │
-           * │ lại bài 2, Trợ lý không gọi tool nào — bảng kê tủ tài liệu trong  │
-           * │ prefix đã đủ để nó lập kế hoạch đúng.                             │
+           * │ And the cost of removing it: MEASURED AT ZERO. Rerunning test 2, the        │
+           * │ Assistant called no tool at all — the library manifest already in the       │
+           * │ prefix was enough for it to plan correctly.                          │
            * └──────────────────────────────────────────────────────────────────┘
            */
           /**
-           * `tools` GIỚI HẠN — nên worker ẩn nhận đúng ba tool chỉ-đọc và
-           * KHÔNG ghi được file. `allowedTools` đi kèm để chúng không bị hỏi
-           * duyệt: đây là một lượt chạy nền, không có ai ở đó để bấm.
+           * `tools` RESTRICTS — so the hidden worker gets exactly three
+           * read-only tools and CANNOT write a file. `allowedTools` matches it
+           * so they don't trigger an approval prompt: this is a background
+           * turn, with nobody there to click anything.
            */
           tools: override?.tools ?? [],
           allowedTools: override?.tools ?? [],
@@ -2829,20 +3119,22 @@ export class Assistant {
         },
       })) {
         const m = msg as Record<string, unknown>;
-        // Hạn mức tài khoản đi kèm luồng, MIỄN PHÍ. Trợ lý mở query ở MỌI tin
-        // nhắn người dùng gõ, nên đây là nguồn cập nhật dày nhất — kể cả khi
-        // không có nhân viên nào chạy. → `core/energy.ts`
+        // The account usage limit rides along the stream, FOR FREE. The
+        // Assistant opens a query on EVERY message the user types, so this is
+        // the densest update source — even when no worker is running at all.
+        // → `core/energy.ts`
         if (m['type'] === 'rate_limit_event') noteRateLimit(m['rate_limit_info']);
-        // CHỈ ghi nhận session id khi đang chạy TRÊN session Assistant. Query
-        // one-shot (lập kế hoạch) cũng sinh session_id riêng — ghi đè bằng nó
-        // là mất trí nhớ hội thoại.
+        // ONLY records the session id when running ON the Assistant's own
+        // session. A one-shot query (planning) also generates its own
+        // session_id — overwriting with it would lose conversation memory.
         if (useSession && typeof m['session_id'] === 'string' && (m['type'] === 'result' || m['subtype'] === 'init')) {
           this.sessionId = m['session_id'];
         }
         if (m['type'] === 'result') {
           const u = (m['usage'] ?? {}) as Record<string, number>;
-          // Chỉ đo trên session THẬT. Query one-shot (lập kế hoạch) có ngữ cảnh
-          // riêng, lấy số của nó là đo nhầm người.
+          // Only measured on the REAL session. A one-shot query (planning) has
+          // its own separate context, so taking its numbers would measure the
+          // wrong thing.
           if (useSession) {
             this.contextTokens = (u['cache_read_input_tokens'] ?? 0) + (u['cache_creation_input_tokens'] ?? 0);
           }
@@ -2856,18 +3148,20 @@ export class Assistant {
             turns: typeof m['num_turns'] === 'number' ? m['num_turns'] : 0,
           });
           /**
-           * KẾT QUẢ LỖI KHÔNG ĐƯỢC ĐI TIẾP NHƯ MỘT KẾT QUẢ RỖNG (20/08).
+           * AN ERROR RESULT MUST NOT PASS THROUGH AS AN EMPTY RESULT (08/20).
            *
-           * SDK báo lỗi bằng HAI đường: ném exception (bắt ở `catch` dưới), và
-           * — với lỗi xảy ra GIỮA lượt chạy — trả về một message `result` mang
-           * `is_error: true` / `subtype: 'error_*'`. Đường thứ hai không ném gì
-           * cả, nên bản trước để nó rơi xuống `text = ''` rồi đi tiếp như thể
-           * model đã trả lời xong mà không nói gì.
+           * The SDK reports an error TWO ways: throwing an exception (caught
+           * in the `catch` below), and — for an error occurring MID-RUN —
+           * returning a `result` message carrying `is_error: true` /
+           * `subtype: 'error_*'`. The second path throws nothing at all, so
+           * the old version let it fall through to `text = ''` and continued
+           * as if the model had finished answering with nothing to say.
            *
-           * Hậu quả: tầng trên đọc chuỗi rỗng, không parse được JSON, rồi đổ
-           * lỗi cho cách người dùng diễn đạt — trong khi thứ vừa xảy ra là hết
-           * hạn mức, mất mạng, hay hết lượt. `classifyError` mới là thứ phải
-           * quyết, và nó chỉ quyết được nếu lỗi ĐI TỚI được nó.
+           * Consequence: the layer above reads an empty string, fails to
+           * parse JSON, and blames the user's phrasing — while what actually
+           * happened was running out of usage, a lost connection, or hitting
+           * the turn cap. `classifyError` is what's supposed to decide, and
+           * it can only decide if the error actually REACHES it.
            */
           const failed =
             m['is_error'] === true ||
@@ -2875,19 +3169,21 @@ export class Assistant {
           if (failed) {
             /**
              * ┌──────────────────────────────────────────────────────────────┐
-             * │ 🔴 ĐÂY LÀ CHỖ NGƯỜI DÙNG ĐỌC ĐƯỢC CHỮ `error_max_turns`.     │
-             * │ (user 27/08: *"sao trả 1 cái lỗi error_max_turns ai biết là  │
-             * │  gì"*)                                                       │
+             * │ 🔴 THIS IS THE SPOT WHERE A USER COULD READ THE RAW TEXT             │
+             * │ `error_max_turns`. (user 08/27: *"why does it return an                │
+             * │  error_max_turns that nobody understands"*)                       │
              * │                                                              │
-             * │ SDK trả `subtype: 'error_max_turns'` với `result` RỖNG, nên   │
-             * │ dòng cũ rơi xuống vế thứ hai và ném thẳng **mã máy** ra màn   │
-             * │ hình. Không phải lỗi logic — chỉ là chưa ai dịch.             │
+             * │ The SDK returns `subtype: 'error_max_turns'` with an EMPTY `result`,     │
+             * │ so the old line fell through to the second branch and threw the         │
+             * │ **raw machine code** straight onto the screen. Not a logic bug —          │
+             * │ just nobody had translated it yet.                                  │
              * │                                                              │
-             * │ ⚠⚠ PHẢI PHÂN LOẠI TRÊN MÃ GỐC, KHÔNG TRÊN CÂU ĐÃ DỊCH.       │
-             * │ `classifyError` khớp bằng regex `/max_turns/`. Dịch trước rồi │
-             * │ mới phân loại là câu tiếng Việt không khớp gì cả ⇒ mọi lỗi     │
-             * │ tụt về `other` ⇒ tầng trên xử lý sai, **im lặng**. Bản vá cho  │
-             * │ câu chữ mà làm hỏng luồng điều khiển là cái giá không ai thấy. │
+             * │ ⚠⚠ HAS TO CLASSIFY ON THE ORIGINAL CODE, NOT ON THE TRANSLATED           │
+             * │ SENTENCE. `classifyError` matches with the regex `/max_turns/`.          │
+             * │ Translating first and classifying second means the translated            │
+             * │ sentence matches nothing at all ⇒ every error falls back to `other`       │
+             * │ ⇒ the layer above mishandles it, **silently**. A wording fix that          │
+             * │ breaks the control flow is a cost nobody sees.                      │
              * └──────────────────────────────────────────────────────────────┘
              */
             const raw =
@@ -2901,46 +3197,53 @@ export class Assistant {
       }
     } catch (err) {
       /**
-       * NGẮT THEO YÊU CẦU NGƯỜI DÙNG KHÔNG PHẢI LỖI — hỏi TAY CẦM, đừng đọc
-       * câu chữ của lỗi.
+       * A USER-REQUESTED INTERRUPT IS NOT AN ERROR — check the HANDLE, don't
+       * read the error's own wording.
        *
-       * SDK ném ra một `AbortError` khi bị abort, và cám dỗ tự nhiên là so tên
-       * lỗi hoặc dò chữ "abort" trong `message`. Cả hai đều là suy đoán trên
-       * chuỗi do thư viện bên ngoài sinh ra, và sẽ lệch vào ngày nó đổi câu chữ.
-       * `controller.signal.aborted` là SỰ VIỆC ta tự gây ra và tự quan sát được
-       * — cùng đúng một luật đã bác bỏ việc đoán bằng regex ở `landingOf`.
+       * The SDK throws an `AbortError` when aborted, and the natural
+       * temptation is to compare the error name or scan `message` for the
+       * word "abort". Both are guesses on a string generated by an outside
+       * library, and will drift the day it rewords it. `controller.signal.
+       * aborted` is a FACT we caused ourselves and can observe directly —
+       * the exact same rule that already rejected regex-guessing in
+       * `landingOf`.
        *
-       * Phải đứng TRƯỚC nhánh `RunError`: một `usage_limit` ném ra đúng lúc
-       * người dùng bấm Dừng thì thứ vừa xảy ra vẫn là "đã dừng".
+       * Has to come BEFORE the `RunError` branch: a `usage_limit` thrown at
+       * the exact moment the user hits Stop is still, in truth, "stopped".
        */
       if (controller.signal.aborted) {
         /**
-         * TRẢ CON TRỎ HỘI THOẠI VỀ CHỖ CŨ.
+         * RETURNS THE CONVERSATION POINTER TO WHERE IT WAS.
          *
-         * `sessionId` được ghi từ tin `init`, tức là NGAY ĐẦU lượt — trước khi
-         * model nói một chữ nào. Ngắt giữa chừng rồi giữ con trỏ mới nghĩa là
-         * lượt sau `resume` vào một bản ghi VIẾT DỞ, và cái giá của một bản ghi
-         * hỏng là toàn bộ trí nhớ hội thoại — thứ đắt nhất trong sản phẩm.
+         * `sessionId` is recorded from the `init` message, i.e. RIGHT AT THE
+         * START of a turn — before the model has said a single word.
+         * Interrupting mid-run and keeping the new pointer means the next
+         * turn's `resume` lands on a HALF-WRITTEN record, and the cost of a
+         * broken record is the entire conversation memory — the most
+         * expensive thing in the product.
          *
-         * Bản ghi cũ vẫn nằm nguyên trên đĩa (`~/.claude/projects/`, append-only)
-         * nên trả về là an toàn. Ngữ nghĩa cũng đúng: người dùng bấm Dừng thì
-         * lượt đó KHÔNG XẢY RA — không có câu nào được nói, không có gì để nhớ.
+         * The old record still sits intact on disk
+         * (`~/.claude/projects/`, append-only), so reverting is safe. The
+         * meaning is also correct: the user hit Stop, so that turn NEVER
+         * HAPPENED — no sentence was said, nothing to remember.
          */
         this.sessionId = sessionBefore;
         throw new RunError(t('as.stoppedByUser'), 'stopped', { cause: err });
       }
-      // `RunError` do chính vòng lặp trên ném ra thì ĐI THẲNG: nó đã mang đúng
-      // `kind` rồi, bọc lại một lần nữa là chạy `classifyError` trên câu tiếng
-      // Việt của chính mình và có ngày hạ một `usage_limit` xuống `other`.
+      // A `RunError` thrown by the loop above passes THROUGH DIRECTLY: it
+      // already carries the right `kind`, and wrapping it again would run
+      // `classifyError` on its own already-translated sentence and could
+      // someday demote a `usage_limit` down to `other`.
       if (err instanceof RunError) throw err;
       throw new RunError(err instanceof Error ? err.message : String(err), classifyError(err), {
         cause: err,
       });
     } finally {
-      // Chỉ dọn tay cầm CỦA CHÍNH MÌNH. Hòm thư khoá nên hai lượt không chồng
-      // nhau được, nhưng phép so này làm điều đó thành BẢO ĐẢM chứ không phải
-      // một giả định — nếu khoá có ngày hở, xoá nhầm tay cầm của lượt sau nghĩa
-      // là `/stop` im lặng mất tác dụng, đúng lớp lỗi vừa sửa.
+      // Only cleans up ITS OWN handle. The mailbox is locked so two turns
+      // can never overlap, but this comparison turns that into a GUARANTEE
+      // rather than an assumption — if the lock ever leaks, deleting the
+      // wrong turn's handle would mean `/stop` silently stops working,
+      // exactly the failure class just fixed.
       if (this.inflight === controller) this.inflight = undefined;
     }
 
@@ -2953,26 +3256,27 @@ function clampStep(step: number, count: number): number {
 }
 
 /**
- * Mã kế hoạch — ĐỌC ĐƯỢC BẰNG MẮT. → docs/SPEC-artifacts.md §2.1
+ * A plan code — HUMAN-READABLE BY EYE. → docs/SPEC-artifacts.md §2.1
  *
  * ```
- * cũ   P-mt08w0t8-iu50     base36 của Date.now()
- * mới  P-260819-1430-iu50
+ * old   P-mt08w0t8-iu50     base36 of Date.now()
+ * new   P-260819-1430-iu50
  * ```
  *
- * Cùng một lượng thông tin, khác ở chỗ con người đọc được. Mã này thành TÊN THƯ
- * MỤC (`artifacts/<plan_id>/`) và người dùng được bảo đi mở nó trong file
- * explorer, nên "đọc được" không phải chuyện thẩm mỹ.
+ * The same amount of information, differing in that a human can read it. This
+ * code becomes a DIRECTORY NAME (`artifacts/<plan_id>/`) and the user is told
+ * to go open it in a file explorer, so "readable" isn't a cosmetic concern.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ KHÔNG CẦN DI TRÚ, và lý do là CẤU TRÚC chứ không phải may mắn:           │
- * │ `plan_id` KHÔNG BỊ PARSE Ở ĐÂU CẢ. Nó chỉ là một khoá và một đoạn đường  │
- * │ dẫn. Kế hoạch cũ giữ tên cũ, kế hoạch mới nhận tên mới, hai loại sống     │
- * │ chung vô thời hạn. Sắp xếp từ điển vẫn đúng thứ tự thời gian ở cả hai.    │
+ * │ NEEDS NO MIGRATION, and the reason is STRUCTURAL, not luck: `plan_id` is        │
+ * │ NEVER PARSED ANYWHERE. It's only a key and a path segment. Old plans keep       │
+ * │ their old names, new plans get new names, the two shapes coexist            │
+ * │ indefinitely. Lexicographic sorting still matches chronological order for       │
+ * │ both.                                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Bốn ký tự ngẫu nhiên vẫn giữ: phút là độ phân giải thô, và hai kế hoạch trong
- * cùng một phút đụng nhau với xác suất 1/36⁴ ≈ 1/1.680.000.
+ * The four random characters stay: a minute is a coarse resolution, and two
+ * plans in the same minute collide with probability 1/36⁴ ≈ 1/1,680,000.
  */
 export function newPlanId(): string {
   const d = new Date();
@@ -2995,13 +3299,13 @@ function extractJson<T>(text: string, schema: z.ZodType<T>): T | undefined {
       const parsed = schema.safeParse(JSON.parse(raw.trim()));
       if (parsed.success) return parsed.data;
     } catch {
-      /* thử ứng viên tiếp theo */
+      /* try the next candidate */
     }
   }
   return undefined;
 }
 
-/** Dùng khi ghi log — đảm bảo không bao giờ đổ nguyên transcript vào file log nhỏ. */
+/** Used when logging — makes sure a whole transcript never gets dumped into a small log file. */
 export function briefText(s: string): string {
   return truncateToTokens(s.replace(/\s+/g, ' ').trim(), 200);
 }

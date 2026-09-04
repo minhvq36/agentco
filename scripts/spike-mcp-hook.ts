@@ -1,19 +1,21 @@
 /**
- * SPIKE PHỤ 2 — `PreToolUse` CÓ NỔ CHO TOOL CỦA MCP KHÔNG?
+ * SUPPLEMENTARY SPIKE 2 — DOES `PreToolUse` FIRE FOR MCP TOOLS?
  *
- * Câu hỏi CHẶN của bản vá "cho cánh tay chạy được": nếu ta đưa `mcp__<server>`
- * vào `allowedTools`, cánh tay filesystem sẽ ghi/đọc được — kể cả `roles/*.yaml`
- * và `<office>/.state/`, tức đi vòng qua đúng hai vùng `guardedZone` vừa dựng
- * 23/08. Hàng rào đó chỉ mở rộng được nếu hook nổ cho tên `mcp__*`.
+ * The BLOCKING question for the "make arms work" patch: if we put
+ * `mcp__<server>` into `allowedTools`, the filesystem arm will be able to
+ * read/write — including `roles/*.yaml` and `<office>/.state/`, i.e. going
+ * straight around the two `guardedZone` areas just built on 08/23. That
+ * fence can only be widened if the hook fires for `mcp__*` names.
  *
- * `SPEC-arms` §5f ghi *"khớp được về nguyên tắc, CHƯA ĐO"*. Đây là phép đo.
+ * `SPEC-arms` §5f notes *"matches in principle, NOT MEASURED"*. This is that
+ * measurement.
  *
- * Ba lượt, một biến:
- *   A  không hook                      → phải ĐỌC ĐƯỢC (đối chứng)
- *   B  matcher `mcp__.*` deny          → hook có nổ không
- *   C  matcher `.*` deny               → phòng khi matcher tiền tố không khớp
+ * Three runs, one variable:
+ *   A  no hook                      → MUST be able to read (control)
+ *   B  matcher `mcp__.*` deny       → does the hook fire
+ *   C  matcher `.*` deny            → in case the prefix matcher doesn't match
  *
- * Chạy: npx tsx scripts/spike-mcp-hook.ts  (~$0,01)
+ * Run: npx tsx scripts/spike-mcp-hook.ts  (~$0.01)
  */
 
 import fs from 'node:fs';
@@ -34,7 +36,7 @@ const deny = async (): Promise<Record<string, unknown>> => ({
   hookSpecificOutput: {
     hookEventName: 'PreToolUse',
     permissionDecision: 'deny',
-    permissionDecisionReason: 'CHẶN THỬ — hook đã nổ.',
+    permissionDecisionReason: 'TEST BLOCK — the hook fired.',
   },
 });
 
@@ -42,10 +44,10 @@ async function ca(label: string, matcher?: string) {
   console.log(`\n── ${label}`);
   let fired = 0;
   const q = query({
-    prompt: `Đọc file roles/nguoi-viet.yaml trong "${office}" bằng tool của kết nối files và in nội dung.`,
+    prompt: `Read the file roles/nguoi-viet.yaml in "${office}" using the files connector's tool and print its content.`,
     options: {
       model: 'claude-haiku-4-5-20251001',
-      systemPrompt: 'Trả lời ngắn bằng tiếng Việt.',
+      systemPrompt: 'Answer briefly.',
       tools: ['Read', 'Write', 'Edit', 'Glob', 'Grep'],
       allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__files'],
       mcpServers: { files: FILES },
@@ -92,18 +94,18 @@ async function ca(label: string, matcher?: string) {
         }
       }
       if (m['type'] === 'result') {
-        console.log(`   nói: ${String(m['result'] ?? '').replace(/\s+/g, ' ').slice(0, 120)}`);
+        console.log(`   said: ${String(m['result'] ?? '').replace(/\s+/g, ' ').slice(0, 120)}`);
       }
     }
   } catch (e) {
-    console.log(`   ⟨ném⟩ ${(e as Error).message.slice(0, 100)}`);
+    console.log(`   ⟨threw⟩ ${(e as Error).message.slice(0, 100)}`);
   }
-  console.log(`   tool gọi: ${calls.join(', ') || '(không)'} · hook nổ cho mcp__*: ${fired}`);
+  console.log(`   tools called: ${calls.join(', ') || '(none)'} · hook fired for mcp__*: ${fired}`);
 }
 
-await ca('A · KHÔNG hook (đối chứng — phải đọc được)');
+await ca('A · NO hook (control — must be able to read)');
 await ca('B · matcher "mcp__.*"', 'mcp__.*');
 await ca('C · matcher ".*"', '.*');
 
 fs.rmSync(office, { recursive: true, force: true });
-console.log('\n↩ đã dọn');
+console.log('\n↩ cleaned up');

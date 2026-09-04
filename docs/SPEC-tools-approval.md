@@ -1,574 +1,575 @@
-# SPEC — Khả năng, chìa khoá, cổng duyệt, và ngắt giữa chừng
+# SPEC — Capabilities, keys, approval gates, and mid-run interrupt
 
-**Ngày:** 15/08/2026 · **Trạng thái:** thiết kế đã chốt, chưa cài đặt
+**Date:** 15/08/2026 · **Status:** design locked, not yet implemented
 
-Trả lời tám câu hỏi phát sinh khi đóng vai người dùng thường chạy `TEST-WALKTHROUGH.md`. Đọc kèm `SPEC-offices.md` (§4 Trợ lý, §5 worker + secrets) và `SPEC-connectors.md` (đặc sản).
+Answers eight questions that came up while role-playing an ordinary user running `TEST-WALKTHROUGH.md`. Read alongside `SPEC-offices.md` (§4 Assistant, §5 workers + secrets) and `SPEC-connectors.md` (the specialty feature).
 
-Mọi API của SDK trong file này **đã kiểm trực tiếp trên `@anthropic-ai/claude-agent-sdk@0.3.231` đã cài**, không lấy từ tài liệu web — tài liệu web sai ở ít nhất một chỗ (`PermissionResult`).
+Every SDK API cited in this file has been **checked directly against the installed `@anthropic-ai/claude-agent-sdk@0.3.231`**, not taken from the web docs — the web docs are wrong in at least one place (`PermissionResult`).
 
 ---
 
-## 0. Tám quyết định, một bảng
+## 0. Eight decisions, one table
 
-| # | Câu hỏi | Chốt |
+| # | Question | Decision |
 |---|---|---|
-| 1 | Trợ lý thấy gì về nhân viên? | `pitch` **+ một dòng khả năng TỰ SINH**. Skills và tri thức vẫn ẩn. |
-| 2 | Nối/ngắt dây bị trễ | Tách hai đường ghi: toạ độ debounce, **cạnh nối phản hồi ngay** |
-| 3 | Kế hoạch không lên chat · ngắt giữa chừng | Kế hoạch vào chat · `Esc` và `/dừng` đều gọi `interrupt()` |
-| 4 | Skills phải sửa được trong UI | Đồng ý. Bảng prompt phân lớp thành sửa được, **có nút Lưu tường minh** |
-| 5 | Tool hệ thống hiện ở đâu | **Không hiện ở đâu cả** — bật sẵn hết, trừ `Bash`. Xem §5 |
-| 6 | Cắm MCP trong UI | Đồng ý. Ba loại: **stdio · Streamable HTTP · connector tự sinh** |
-| 7 | Chìa khoá theo chùm hay theo tool | **Theo connector/MCP**. Agent không cầm chìa, nó cầm *quyền dùng* |
-| 8 | Cổng duyệt | **Hai tầng**: duyệt kế hoạch một lượt + chặn từng lần việc không hoàn tác được |
+| 1 | What does the Assistant see about a worker? | `pitch` **+ one AUTO-GENERATED capability line**. Skills and knowledge stay hidden. |
+| 2 | Wiring/unwiring feels laggy | Split into two write paths: coordinates debounce, **wire edges reply instantly** |
+| 3 | Plan doesn't appear in chat · mid-run interrupt | Plan goes into chat · both `Esc` and `/stop` call `interrupt()` |
+| 4 | Skills need to be editable in the UI | Agreed. The layered prompt table becomes editable, **with an explicit Save button** |
+| 5 | Where do system tools show up | **Nowhere at all** — enabled by default, except `Bash`. See §5 |
+| 6 | Wiring MCP through the UI | Agreed. Three kinds: **stdio · Streamable HTTP · self-generated connector** |
+| 7 | Keys per bundle or per tool | **Per connector/MCP**. An agent doesn't hold keys, it holds *permission to use* |
+| 8 | Approval gate | **Two tiers**: one-time plan approval + per-instance blocking for irreversible actions |
 
 ---
 
-## 1. Trợ lý thấy gì về một nhân viên
+## 1. What the Assistant sees about a worker
 
-**Đúng: `pitch` là thứ duy nhất Trợ lý thấy khi chia việc.** Đó là lý do lập kế hoạch rẻ — skills, kinh nghiệm, lịch sử đều ở lại với worker.
+**Correct as-is: `pitch` is the only thing the Assistant sees when dividing work.** That's why planning stays cheap — skills, experience, and history all stay with the worker.
 
-### Nhưng có một lỗ hổng thật: khả năng không lộ ra
+### But there's a real gap: capabilities don't surface
 
-Nếu `Người viết` được cắm Notion mà Trợ lý không biết, Trợ lý không thể quyết định "việc này giao cho Người viết vì nó với tới được Notion". Nó sẽ chia việc như thể không ai có tool nào.
+If `Writer` is wired to Notion and the Assistant doesn't know it, the Assistant can't decide "this task should go to Writer because it can reach Notion." It ends up planning as if nobody had any tools at all.
 
-**Sửa: thêm một dòng khả năng, TỰ SINH, không bắt người dùng viết vào `pitch`.**
-
-```
-# Employees you can assign to
-
-- nguoi-viet (Người viết): Viết nội dung tiếng Việt… [với tới: Notion, web]
-- ke-toan (Kế toán): Đọc sao kê, phân loại… [với tới: Google Sheets]
-- nguoi-soat (Người soát): Đọc lại kết quả… [không làm: viết code]
-```
-
-Sinh từ đâu: tên hiển thị của connector/MCP đang nối vào agent đó, cộng `web` nếu nó có `WebSearch`/`WebFetch`. **Không** liệt kê tên tool thô, **không** liệt kê schema — Trợ lý cần biết *với tới được cái gì*, không cần biết *gọi thế nào*.
-
-Giá: ~5–10 token mỗi nhân viên. Đổi lại là Trợ lý chia việc đúng người. Đáng.
-
-**Bắt buộc kèm theo:** dòng này nằm trong roster → nằm trong prefix được cache của Trợ lý. Cắm thêm một MCP = ghi lại cache Trợ lý một lần. Rẻ, nhưng phải biết là có.
-
-### 1a. 🔴 CỜ SHELL PHẢI NÊU CẢ HAI CHIỀU — bản chỉ-khẳng-định đã đo là VÔ HIỆU
-
-Bản 22/08 đẩy `lệnh trên máy` vào dòng khả năng **chỉ khi** vai trò có shell, với lý do *"luật 7 (`không ai hợp thì nói thẳng`) đã lo mặt phủ định"*. **Chạy lại bài 9.3 thì nó nằm im:** Trợ lý vẫn giao việc cho một vai trò có `pitch` hứa chạy lệnh nhưng công tắc TẮT, vẫn lập đủ 2 bước, vẫn tiêu $0,1380 cho 0 kết quả.
-
-**Vì sao:** văn phòng đó không ai có shell ⇒ chuỗi `lệnh trên máy` không xuất hiện ở đâu ⇒ **vắng mặt không phải tín hiệu**. Một dấu hiệu chỉ-khẳng-định chỉ đọc được nhờ TƯƠNG PHẢN. Và luật 7 không thể bắn: theo bằng chứng Trợ lý cầm, `pitch` nói CÓ người hợp.
-
-**Chốt: cờ hai chiều trên từng dòng, ý nghĩa gom một chỗ.**
+**Fix: add one AUTO-GENERATED capability line, without making the user write it into `pitch`.**
 
 ```
 # Employees you can assign to
 
-Mọi nhân viên đều MỞ ĐƯỢC file trên máy người dùng bằng đường dẫn đầy đủ — đọc nội
-dung, liệt kê tên file. "chạy lệnh: BẬT" thì có thêm: chạy lệnh/script tuỳ ý trên
-máy, và ghi được ra ngoài thư mục văn phòng.
-
-- nguoi-kiem-ke (Người kiểm kê): Chạy lệnh để lấy thông tin về file… [web · chạy lệnh: TẮT]
-- nguoi-viet (Người viết): Viết nội dung… [Notion (đường tắt tới D:\Ho so) · web · chạy lệnh: BẬT]
+- nguoi-viet (Writer): Writes Vietnamese content… [reach: Notion, web]
+- ke-toan (Accountant): Reads statements, categorizes… [reach: Google Sheets]
+- nguoi-soat (Reviewer): Reviews results… [does not do: write code]
 ```
 
-> 🔴 **HAI CÂU TRONG KHỐI TRÊN ĐÃ SAI VÀ ĐÃ SỬA — ghi lại để không ai chép lại bản cũ.**
+Generated from: the display name of the connector/MCP wired into that agent, plus `web` if it has `WebSearch`/`WebFetch`. **Do not** list raw tool names, **do not** list schemas — the Assistant needs to know *what it can reach*, not *how to call it*.
+
+Cost: ~5–10 tokens per worker. In exchange, the Assistant assigns work to the right person. Worth it.
+
+**Mandatory corollary:** this line lives in the roster → lives in the Assistant's cached prefix. Wiring in one more MCP = one Assistant cache rewrite. Cheap, but has to be known.
+
+### 1a. 🔴 THE SHELL FLAG MUST STATE BOTH DIRECTIONS — an assert-only-when-true version was MEASURED to be INEFFECTIVE
+
+The 22/08 version only injected `runs commands on your machine` into the capability line **when a role had shell**, on the theory that *"rule 7 (`if nobody fits, say so plainly`) already covers the negative side."* **Rerunning test #9.3 shows it sits there doing nothing:** the Assistant still assigns work to a role whose `pitch` promises shell access but whose switch is OFF, still plans a full 2 steps, still spends $0.1380 for 0 result.
+
+**Why:** in that office nobody has shell ⇒ the phrase `runs commands on your machine` never appears anywhere ⇒ **absence is not a signal.** An assert-only flag is only readable through CONTRAST. And rule 7 can't fire: as far as the evidence in the Assistant's hands goes, the `pitch` says SOMEONE is qualified.
+
+**Decision: a two-way flag on every line, meaning explained once in one place.**
+
+```
+# Employees you can assign to
+
+Every worker can OPEN files on the user's machine by full path — read
+content, list filenames. "runs commands: ON" additionally means: run
+arbitrary commands/scripts on the machine, and write outside the office folder.
+
+- nguoi-kiem-ke (Inventory checker): Runs commands to get file info… [web · runs commands: OFF]
+- nguoi-viet (Writer): Writes content… [Notion (shortcut to D:\Records) · web · runs commands: ON]
+```
+
+> 🔴 **TWO SENTENCES IN THE BLOCK ABOVE WERE WRONG AND HAVE BEEN FIXED — noting this so nobody copies the old version.**
 >
-> **① *"chạy lệnh là thứ DUY NHẤT lấy được kích thước"* — sai theo số đo (24/08).** `Read` builtin
-> tự in kích thước khi đọc PDF: `PDF file read: …\CV.pdf (411.7KB)`, khớp
-> `Get-ChildItem` tới 0,1 KB. Câu cũ khiến Trợ lý từ chối một việc nó làm được. Bản trong mã
-> (`SHELL_LEGEND`) đã bỏ vế đó; khối trên là bản đồng bộ lại. → `SPEC-arms` §15h
+> **① *"running commands is the ONLY way to get a file size"* — wrong per measurement (24/08).** The
+> builtin `Read` prints size on its own when reading a PDF: `PDF file read: …\CV.pdf (411.7KB)`, matching
+> `Get-ChildItem` down to 0.1 KB. The old sentence made the Assistant refuse a task it was able to do. The
+> in-code copy (`SHELL_LEGEND`) had already dropped that clause; the block above is the synced-up version. → `SPEC-arms` §15h
 >
-> **② `armReach` viết `(thư mục: …)` — đã đổi thành `(đường tắt tới …)`.** Chuỗi cũ bị Trợ lý đọc
-> thành **tổng tầm với** của nhân viên rồi từ chối việc nằm ngoài, kể cả khi người đó có shell, kể
-> cả trong một phiên `/clear` sạch tinh. Sự thật ngược lại **đã nằm ngay dòng đầu khối này** nhưng
-> **thua vị trí** — [[agentco-prompt-rules-lose-to-examples]]. → `SPEC-arms` §15j
+> **② `armReach` used to write `(folder: …)` — changed to `(shortcut to …)`.** The old wording got read by
+> the Assistant as a worker's **total reach** and used to justify refusing work outside it, even for
+> someone who did have shell, even in a fresh `/clear` session. The truth was the opposite, and it was
+> **already sitting on the very first line of this block** — but it **lost to positioning**.
+> — [[agentco-prompt-rules-lose-to-examples]] → `SPEC-arms` §15j
 
-**Vì sao ý nghĩa gom vào một chỗ (`SHELL_LEGEND`), không nhắc ở từng dòng:** "shell nghĩa là gì" là sự thật về **agentco**, không phải thuộc tính của **một nhân viên** — đặt nó lên dòng của một người là gán nhầm tầng, đúng cái sai (`pitch` vs `tools`) đã sinh ra ca này. Đo: legend **77 token** trả một lần, cờ **6 token**/vai trò; hoà vốn so với phương án lặp-từng-dòng ở **~4 nhân viên**, sau đó gom càng lúc càng thắng.
+**Why the meaning is gathered in one place (`SHELL_LEGEND`), not repeated per line:** "what shell means" is a fact about **agentco**, not a property of **one worker** — putting it on one person's line is assigning it to the wrong layer, the exact mistake (`pitch` vs `tools`) that caused this case in the first place. Measured: the legend costs **77 tokens** paid once, the flag costs **6 tokens**/role; breaks even against the repeat-per-line approach at **~4 workers**, and wins by more from there on.
 
-⚠ **Cờ viết `chạy lệnh: TẮT`, KHÔNG viết `shell: 0`.** Chú giải nằm đầu khối còn cờ nằm ở dòng thứ 9 — khoảng cách là có thật, nên cờ phải tự đọc được khi đứng một mình. 2 token cho việc không phụ thuộc vào khoảng cách.
+⚠ **The flag reads `runs commands: OFF`, NOT `shell: 0`.** The legend sits at the top of the block while the flag sits on line 9 — the distance is real, so the flag has to read correctly standing alone. 2 tokens for something that doesn't depend on distance.
 
-⚠⚠ **CÂU PHỦ ĐỊNH PHẢI HẸP — mặt phủ định rộng là một lời nói dối.** *"Không có shell"* KHÔNG đồng nghĩa *"không với tới máy của bạn"*: `Read`/`Glob`/`Grep` không có hàng rào nào (§5b), nên vai trò trần vẫn mở được `D:\Hồ sơ\hopdong.pdf`. Viết câu rộng là dạy Trợ lý từ chối cả việc nó làm được — hỏng **ngược chiều**, và im lặng hơn hẳn ca gốc vì không ai thấy việc đã bị từ chối. Có test canh (`plan.test.ts`).
+⚠⚠ **THE NEGATIVE STATEMENT HAS TO BE NARROW — a broad negative is a lie.** *"No shell"* does NOT mean *"cannot reach your machine"*: `Read`/`Glob`/`Grep` have no fence at all (§5b), so even a bare role can still open `D:\Records\contract.pdf`. Writing a broad sentence teaches the Assistant to refuse work it's fully capable of doing — a failure in the **opposite direction**, and quieter than the original case because nobody sees the refusal happen. There's a test guarding this (`plan.test.ts`).
 
-### 1b. 🔴 ĐỔI BIÊN GIỚI TƯỜNG LỬA — chốt 22/08, **chưa cài**
+### 1b. 🔴 CHANGING WHERE THE FIREWALL SITS — locked 22/08, **not yet built**
 
-> **Đã GỠ:** một cổng tất định ở `Scheduler.validate` chặn *"`outputs` tuyệt đối + vai trò không có shell"*. Nó là **code chết**: `buildPlan` chạy `outputScoper` lên outputs của mọi task trước đó (`assistant.ts:591`) và hàm đó luôn trả `artifacts/<plan>/<task>/…` ⇒ `isAbsolute` không bao giờ đúng. 9 test của nó vẫn xanh vì gọi thẳng `validate`, **đi vòng qua `buildPlan`**. Và nó còn sai theo thiết kế dưới đây: ghi ra ngoài **không cần shell**.
+> **REMOVED:** a deterministic gate in `Scheduler.validate` used to block *"absolute `outputs` + a role without shell."* It was **dead code**: `buildPlan` runs `outputScoper` over the outputs of every prior task (`assistant.ts:591`) and that function always returns `artifacts/<plan>/<task>/…` ⇒ `isAbsolute` is never true. Its 9 tests stayed green because they called `validate` directly, **routing around `buildPlan`**. And it was also wrong by design, per below: writing outside the office **doesn't require shell.**
 
-**Nhận định gốc (user, 22/08): vấn đề chưa bao giờ nằm ở shell — nó nằm ở chỗ ta vẽ tường lửa sai chỗ.**
+**Original insight (user, 22/08): the problem was never shell — it's that we drew the firewall in the wrong place.**
 
-Hiện trạng là tổ hợp tệ nhất của hai lựa chọn:
+The current state is the worst combination of two choices:
 
-| đường ra | bị chặn? |
+| exit route | blocked? |
 |---|---|
-| `Write` · `Edit` · `NotebookEdit` | ✅ `officeJail` deny thật |
-| `Bash` | ❌ không hook nào |
+| `Write` · `Edit` · `NotebookEdit` | ✅ `officeJail` really does deny it |
+| `Bash` | ❌ no hook at all |
 | MCP | ❌ |
-| `WebFetch` / `WebSearch` (đường dữ liệu đi RA) | ❌ |
+| `WebFetch` / `WebSearch` (a data-OUT path) | ❌ |
 
-⇒ **Không ngăn được gì** (một dòng `Bash` là vượt), mà **lại chặn đúng con đường dễ đọc–dễ log–dễ kiểm nhất**. Nó không phải hàng rào an toàn; nó là **cái chắn tai nạn** — và ở vai trò đó nó có ích thật (bắt được ca `P-260821-1818-yydi`). Lỗi của nó không phải "chỉ gác ba tool", mà là **chưa phân biệt được "model đi lạc" với "người dùng chỉ đích danh"**.
+⇒ **Nothing is actually contained** (one `Bash` line gets around it), while the **one thing blocked is the easiest route to read, log, and audit.** It isn't a security fence; it's a **guardrail** — and on that particular role it did real good (it caught case `P-260821-1818-yydi`). Its flaw isn't "it only guards three tools," it's that **it never distinguished "the model wandering off" from "the user pointed at this on purpose."**
 
-**Chốt: biên đổi từ *"thư mục văn phòng"* thành *"thư mục văn phòng + những chỗ người dùng đã nói ra"*.**
+**Decision: change the boundary from *"the office folder"* to *"the office folder + wherever the user has said out loud."***
 
-> Một đích đi qua `officeJail` khi **đúng chuỗi đó có mặt trong tin nhắn người dùng vừa gõ** (châm chước `\` ↔ `/`). Áp dụng cho `Write` **và** `Edit`. Mọi trường hợp còn lại hiểu là nằm trong văn phòng.
+> A destination passes through `officeJail` when **that exact string is present in the message the user just typed** (tolerant of `\` ↔ `/`). Applies to both `Write` **and** `Edit`. Everything else is treated as inside the office.
 
-⚠⚠ **Tiêu chí là XUẤT XỨ, không phải hình dạng chuỗi.** "Tuyệt đối" đo nhầm thứ: model **bịa** ra `D:\Reports\x.md` cũng tuyệt đối, còn người dùng **gõ** `Downloads\x.md` thì không. Đây đúng lỗi `pitch` vs `tools` và *"tên MCP vs năng lực MCP"* — **lấy hình dạng thay cho nguồn gốc**, lần thứ tư trong một phiên.
+⚠⚠ **The criterion is PROVENANCE, not string shape.** "Absolute" measures the wrong thing: the model **making up** `D:\Reports\x.md` is just as absolute as the user **typing** `Downloads\x.md`. This is exactly the `pitch` vs `tools` mistake, and *"MCP name vs MCP capability"* — **shape substituted for origin**, the fourth time in one session.
 
-| người dùng gõ | model khai | khớp? | kết quả |
+| user typed | model claims | match? | result |
 |---|---|---|---|
-| `D:\Downloads\…\ban-ke.md` | y nguyên | ✅ | ghi đúng chỗ họ muốn |
-| *"lưu vào Downloads nhé"* | `D:\Users\…\Downloads\x.md` | ❌ | thư mục văn phòng, **và Trợ lý phải nói ra đã để ở đâu** |
+| `D:\Downloads\…\statement.md` | verbatim | ✅ | written exactly where they meant |
+| *"save it to Downloads"* | `D:\Users\…\Downloads\x.md` | ❌ | stays in the office folder, **and the Assistant has to say where it actually went** |
 
-Người dùng nói qua loa thì tự động rơi về mặc định an toàn — **không ca nào phải đoán, nên không ca nào đoán sai**. Model càng "giúp" bằng cách bung đường dẫn đầy đủ thì càng không khớp, và lệch về phía an toàn.
+A vague user request falls back automatically to the safe default — **no case ever needs a guess, so no case ever guesses wrong.** The more the model "helps" by expanding to a full path, the more it fails to match, and the failure leans safe.
 
-⚠ Khớp với **tin nhắn người dùng thật**, KHÔNG với `plan.request` — `request` có lúc do model viết (`requestOf()`, `assistant.ts:619`). Khớp chuỗi model viết là mời lại đúng vòng lặp cũ.
+⚠ Matched against the **real user message**, NOT `plan.request` — `request` is sometimes written by the model (`requestOf()`, `assistant.ts:619`). Matching a model-authored string is inviting back the exact same loop.
 
-**Hệ quả tốt:** ghi ra ngoài khi đó chạy bằng `Write` trần — **có log, có biên nhận, không cần bật shell** — chặt hơn hiện trạng, nơi `Bash` ghi bất kỳ đâu mà không để lại dòng nào trong sổ.
+**A good side effect:** writing outside the office when run via a bare `Write` now — **logged, receipted, no shell required** — is actually tighter than the status quo, where `Bash` writes anywhere without leaving a single line in the record.
 
-Cần đi kèm: `outputScoper` chừa cửa cho đích đã khớp (nếu không thì allowlist không có gì để cho qua), và một **tip trong tài liệu** — *"muốn ghi ra ngoài văn phòng thì gõ đường dẫn tuyệt đối đầy đủ"* — **không đưa lên UI** (user chốt: nhiều chữ quá thì giảm UX).
+Requires: `outputScoper` has to open a lane for a matched destination (otherwise the allowlist has nothing to admit), and a **doc-only tip** — *"want to write outside the office? type the full absolute path"* — **not surfaced in the UI** (user's call: too much text hurts UX).
 
-> **Luật chung vẫn giữ: cái TẤT ĐỊNH chỉ được nói về thứ CÓ MÃ NGUỒN THI HÀNH.** `officeJail` deny thật ⇒ chặn được. *"Việc này có cần shell không"* là câu hỏi ngữ nghĩa ⇒ không bao giờ tất định.
+> **The general rule still holds: DETERMINISTIC claims can only be made about things WITH ENFORCING CODE.** `officeJail` really does deny ⇒ it really blocks. *"Does this task need shell"* is a semantic question ⇒ it can never be deterministic.
 
-**Chưa quyết, để riêng:** hàng rào ĐỌC (`Read` + `WebFetch` là đường dữ liệu đi ra, không cần `Bash` — §5b: dựng được, đã đo, chưa dựng). Nếu jail chỉ là cái chắn tai nạn thì hiện agentco **không có câu chuyện containment nào** — phải chọn có hay không, đừng để mặc định quyết hộ.
+**Undecided, set aside separately:** a READ fence (`Read` + `WebFetch` is a data-out path that doesn't need `Bash` — §5b: buildable, measured, not built). If the jail is only a guardrail, then agentco currently **has no containment story at all** — that has to be a deliberate choice, not one the default makes by accident.
 
-### Chưa có chỗ sửa giới thiệu — đúng, thiếu thật
+### There's still no place to edit the introduction — correct, and really missing
 
-Thêm vào bảng chi tiết: sửa được `display_name`, `avatar`, `pitch`, `not_for`, `model_tier`. Ghi thẳng vào `roles/<id>.yaml` bằng `parseDocument` để giữ chú thích.
+Add to the settings table: editable `display_name`, `avatar`, `pitch`, `not_for`, `model_tier`. Written straight into `roles/<id>.yaml` via `parseDocument` to preserve comments.
 
-⚠ **Sửa `pitch` là bump cacheKey của Trợ lý**, sửa `model_tier` là bump cacheKey của chính agent đó. Nút **Lưu** tường minh, không autosave — giống ràng buộc đã có với skills (`SPEC-ui.md` §2.2).
+⚠ **Editing `pitch` bumps the Assistant's cacheKey**, editing `model_tier` bumps that specific agent's cacheKey. An explicit **Save** button, no autosave — same constraint already applied to skills (`SPEC-ui.md` §2.2).
 
 ---
 
-## 2. Nối/ngắt dây phải phản hồi ngay
+## 2. Wiring/unwiring has to respond instantly
 
-**Chẩn đoán:** hôm nay cạnh nối vẽ ra từ prop `canvas.edges`, mà prop đó chỉ đổi **sau khi server trả lời**. Cộng thêm `onCommit` debounce 700ms. Nên kéo xong một sợi dây phải chờ ~700ms + một vòng mạng mới thấy nó.
+**Diagnosis:** today the wire edges render from the `canvas.edges` prop, which only changes **after the server replies.** Plus `onCommit` debounces at 700ms. So finishing a wire drag means waiting ~700ms + one network round trip before it appears.
 
-**Gốc rễ:** toạ độ và cạnh nối đi chung một đường ghi, trong khi chúng khác hẳn nhau.
+**Root cause:** coordinates and wire edges share one write path, even though they're fundamentally different.
 
-| | Toạ độ | Cạnh nối |
+| | Coordinates | Wire edges |
 |---|---|---|
-| Bản chất | liên tục, ~60 sự kiện/giây | rời rạc, một lần một |
-| Debounce | **cần** — ghi mỗi frame là vô nghĩa | **có hại** — không có gì để gộp |
-| Hậu quả | chỉ là bố cục | đổi roster, đổi tiền |
+| Nature | continuous, ~60 events/second | discrete, one at a time |
+| Debounce | **needed** — writing every frame is pointless | **harmful** — nothing to coalesce |
+| Consequence of a miss | just a layout hiccup | changes the roster, changes money |
 
-**Sửa:**
+**Fix:**
 
-1. Cạnh nối đi đường riêng, **gửi ngay**, không debounce.
-2. Vẽ **lạc quan**: thêm/bớt cạnh vào state ngay khi thả chuột, rồi mới gửi.
-3. Server trả về bản đã lọc → đối chiếu. Nếu server bỏ cạnh đó (sai luật) thì **rút lại và hiện toast giải thích**, đừng im lặng.
+1. Wire edges get their own write path, **sent immediately**, no debounce.
+2. Render **optimistically**: add/remove the edge to state the moment the mouse is released, then send it.
+3. The server returns the filtered result → reconcile. If the server dropped that edge (rule violation), **revert it and show a toast explaining why**, never fail silently.
 
-Tiêu chí "Mượt" nói *thao tác phản hồi trước khi server trả lời* — đây đúng là chỗ đó.
+The "Smooth" criterion says *an interaction responds before the server replies* — this is exactly that spot.
 
 ---
 
-## 3. Kế hoạch vào chat, và ngắt giữa chừng
+## 3. Plan goes into chat, and mid-run interrupt
 
-### 3a. Kế hoạch phải lên chat
+### 3a. The plan has to appear in chat
 
-Hôm nay kế hoạch chỉ hiện ở dải dưới canvas và panel Nhật ký. Qua Telegram thì **không thấy gì cả** — mà bridge là mục tiêu tối thượng.
+Today the plan only shows in the strip under the canvas and the Log panel. Over Telegram it's **completely invisible** — and the bridge is the ultimate goal.
 
-Sửa: `plan.created` sinh một tin nhắn Trợ lý trong luồng hội thoại:
+Fix: `plan.created` generates an Assistant chat message:
 
 ```
-Mình chia thành 3 việc:
-  1. Tìm tư liệu về tiệm hoa
-  2. Viết 3 bản nháp
-  3. Soát giọng văn
-Bắt đầu nhé.
+I'm splitting this into 3 tasks:
+  1. Research the flower shop
+  2. Write 3 drafts
+  3. Review the tone
+Starting now.
 ```
 
-Dựng bằng **code từ `steps` đã có** — 0 token thêm. Với cổng duyệt (§8) thì chính tin nhắn này mang nút duyệt.
+Built with **code from the existing `steps`** — 0 extra tokens. With the approval gate (§8), this exact message also carries the approve button.
 
-### 3b. Ngắt giữa chừng — SDK hỗ trợ đầy đủ
+### 3b. Mid-run interrupt — the SDK supports it fully
 
-Đã kiểm trên `sdk.d.ts`:
+Checked against `sdk.d.ts`:
 
 ```ts
 interface Query extends AsyncGenerator<SDKMessage, void> {
-  interrupt(): Promise<SDKControlInterruptResponse | undefined>;  // CHỈ ở streaming input mode
+  interrupt(): Promise<SDKControlInterruptResponse | undefined>;  // streaming input mode ONLY
   streamInput(stream: AsyncIterable<SDKUserMessage>): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
   close(): void;
 }
-// Options còn có: abortController
+// Options also has: abortController
 ```
 
-⚠ `interrupt()` **chỉ chạy ở streaming input mode** — tức `prompt` phải là `AsyncIterable<SDKUserMessage>`, không phải chuỗi.
+⚠ `interrupt()` **only works in streaming input mode** — meaning `prompt` has to be an `AsyncIterable<SDKUserMessage>`, not a string.
 
-### ⚠⚠ ĐÃ THỬ VÀ HỎNG — `interrupt()` KHÔNG dùng được, đừng thử lại
+### ⚠⚠ TRIED AND FAILED — `interrupt()` DOESN'T WORK, don't try again
 
-Ba lần đo thật, mỗi lần một cách:
+Three real measurements, one approach each:
 
-| Cách | Kết quả đo |
+| Approach | Measured result |
 |---|---|
-| `prompt` là chuỗi + `interrupt()` | không có tác dụng gì. Bấm Dừng xong **cả 3 task vẫn chạy hết**, tiêu thêm **$0.36** |
-| streaming input, stream **đóng ngay** sau khi yield | `interrupt()` gọi vào chỗ trống — vẫn chạy hết, **$0.27** |
-| streaming input, stream **giữ mở** để interrupt có chỗ bám | **DEADLOCK.** Worker ghi file xong rồi không bao giờ trả `result` — SDK ngồi chờ thêm đầu vào. Quá 90 giây không sự kiện nào, phải kill daemon |
+| `prompt` as a string + `interrupt()` | no effect at all. Hitting Stop and **all 3 tasks ran to completion anyway**, spending another **$0.36** |
+| streaming input, stream **closed immediately** after yielding | `interrupt()` fires into an empty space — still ran to completion, **$0.27** |
+| streaming input, stream **kept open** so interrupt has somewhere to attach | **DEADLOCK.** The worker finished writing files and then never returned a `result` — the SDK sat waiting for more input. No event for over 90 seconds, had to kill the daemon |
 
-**Cách chạy được: `abortController` trong `Options`.** Đo: dừng sau **14,5 giây**, tốn **$0.054** thay vì $0.27 — đúng ba receipt `blocked`.
+**What actually works: `abortController` in `Options`.** Measured: stopped after **14.5 seconds**, cost **$0.054** instead of $0.27 — exactly three `blocked` receipts.
 
 ```ts
 const abortController = new AbortController();
 query({ prompt, options: { abortController, /* … */ } });
-// dừng:
+// to stop:
 abortController.abort();
 ```
 
-Giữ streaming input mode vì nó vô hại và là nền sẵn cho lúc CLI hỗ trợ đủ (`interrupt_receipt_v1`).
+Streaming input mode is kept because it's harmless and lays groundwork for whenever the CLI properly supports it (`interrupt_receipt_v1`).
 
-**Bẫy kèm theo, mất một lần đo mới thấy:** tay cầm phải được **đăng ký thật** vào `scheduler.live`. Lần đầu phép thay thế không khớp nên `live` luôn rỗng — `interruptAll()` chạy trên tập rỗng, mọi thứ biên dịch sạch, và không ai dừng được gì. **TypeScript không bắt được loại lỗi này.**
+**A trap that took one more measurement to catch:** the handle has to be **actually registered** in `scheduler.live`. On the first pass, a mismatched substitution left `live` permanently empty — `interruptAll()` ran over an empty set, everything compiled cleanly, and nothing actually stopped. **TypeScript can't catch this class of bug.**
 
-### Hai cửa vào, vì bridge
+### Two entry points, because of the bridge
 
-| Cửa | Ở đâu |
+| Door | Where |
 |---|---|
-| Phím `Esc` | giao diện, khi đang chạy |
-| Lệnh chữ `/dừng` (và `/cancel`) | ô chat — **hoạt động y hệt qua Telegram** |
+| `Esc` key | UI, while something is running |
+| `/stop` text command (and `/cancel`) | the chat box — **works identically over Telegram** |
 
-Mọi lệnh chữ phải đi qua `office.say()` như mọi thứ khác, và bị bắt **trước** khi tới Trợ lý — đây là lệnh điều khiển, không phải câu để hiểu. Ném nó cho model là trả tiền để được trả lời chậm hơn.
+Every text command has to go through `office.say()` like everything else, and gets caught **before** it reaches the Assistant — this is a control command, not a sentence to be understood. Handing it to the model would be paying to get a slower answer.
 
-Bộ lệnh chữ tối thiểu: `/dừng` `/cancel` · `/duyệt` `/ok` · `/từ-chối` `/no` · `/trạng-thái`.
+Minimum command set: `/stop` `/cancel` · `/approve` `/ok` · `/reject` `/no` · `/status`.
 
-### Ngắt xong thì sao — luật ngữ cảnh
+### What happens after an interrupt — a context rule
 
-Đây là phần bạn nói "khá nhạy cảm", và đúng là nhạy cảm.
+This is the part described as "kind of sensitive," and it is.
 
 ```
-Đang chạy: 2/4 bước          → [Esc]
-  ✓ Tìm tư liệu                    ↓
-  ✓ Viết bản nháp              dừng ngay
-  ⟳ Soát giọng   ← ngắt        ô nhập sáng lên
-  ○ Đăng bài                   bạn gõ: "giọng trẻ hơn, đừng đăng vội"
+Running: 2/4 steps          → [Esc]
+  ✓ Research                       ↓
+  ✓ Write draft                stop now
+  ⟳ Review tone   ← interrupted    input box lights up
+  ○ Post                       you type: "make it younger, don't post yet"
                                      ↓
-                               Trợ lý lập kế hoạch MỚI cho phần CÒN LẠI
+                               Assistant plans a NEW step set for what's LEFT
 ```
 
-**Ba luật, và luật thứ ba là luật khó:**
+**Three rules, and the third one is the hard one:**
 
-1. **Việc đã xong giữ nguyên.** Plan cũ đóng ở trạng thái `stopped`, giữ nguyên receipt và artifact của các task đã xong. Không làm lại.
-2. **Plan mới nhận một bản tóm tắt bàn giao**, dựng bằng **code**: câu yêu cầu gốc · các bước đã xong + đường dẫn artifact · bước đang dở · lời mới của bạn. Đây là văn bản ta ghép, **không phải** một lượt gọi LLM.
-3. **Trợ lý KHÔNG được kéo transcript của task đã chết sang.** Nó vốn đã không thấy transcript worker — chỉ thấy receipt (≤800 token). Bàn giao vì thế **tự nhiên đã sạch**: nó thừa hưởng *kết quả*, không thừa hưởng *quá trình*.
+1. **Finished work stays as-is.** The old plan closes in a `stopped` state, keeping the receipts and artifacts of completed tasks. Nothing is redone.
+2. **The new plan receives a handoff summary**, built with **code**: the original request · steps already done + their artifact paths · the step that was interrupted · the new instruction. This is text we assemble, **not** an LLM call.
+3. **The Assistant MUST NOT pull in the transcript** of the dead task. It never saw a worker's transcript anyway — only the receipt (≤800 tokens). The handoff is therefore **naturally clean already**: it inherits the *result*, not the *process*.
 
-> Giao thức Receipt được thiết kế để tiết kiệm token, và hoá ra nó giải luôn bài toán ngữ cảnh sau khi ngắt. Cùng một cơ chế, hai vấn đề — đây là dấu hiệu ranh giới đặt đúng chỗ.
+> The Receipt protocol was designed to save tokens, and it turns out it also solves the context problem after an interrupt for free. One mechanism, two problems — a sign the boundary is drawn in the right place.
 
-Session hội thoại của Trợ lý **giữ nguyên** (nó phải nhớ bạn vừa nói gì). Chỉ *vòng đời công việc* đóng lại.
+The Assistant's conversation session **stays intact** (it has to remember what you just said). Only the *work lifecycle* closes.
 
 ---
 
-## 4. Skills sửa trong UI — đồng ý, không bàn thêm
+## 4. Skills editable in the UI — agreed, no further debate
 
-Bảng prompt phân lớp đã hiện đúng cấu trúc rồi; chỉ cần cho sửa những lớp `editable: true`:
+The layered prompt table already shows the right structure; it just needs to let `editable: true` layers be edited:
 
-| Lớp | |
+| Layer | |
 |---|---|
-| Lõi | 🔒 chỉ đọc (trừ khi `allow_core_prompt_edit`) |
-| Giới thiệu văn phòng (charter) | ✏️ sửa được |
-| Kỹ năng | ✏️ sửa được |
-| Kinh nghiệm nạp sẵn | 🔒 chỉ đọc — sửa ở ngăn kéo Tri thức |
+| Core | 🔒 read-only (unless `allow_core_prompt_edit`) |
+| Office introduction (charter) | ✏️ editable |
+| Skills | ✏️ editable |
+| Preloaded experience | 🔒 read-only — edited from the Knowledge drawer |
 
-**Ba ràng buộc bắt buộc:**
+**Three mandatory constraints:**
 
-1. **Không autosave.** Nút **Lưu** tường minh. Mỗi lần lưu là bump cacheKey → trả một lần ghi cache. Autosave theo phím = churn cache liên tục.
-2. **Hiện số token ngay khi gõ**, và cảnh báo khi vượt trần (`assistant_skills_tokens` 400, `charter_tokens` 500).
-3. **Nói rõ hậu quả ngay cạnh nút Lưu:** *"Lưu sẽ làm mọi nhân viên phải ghi lại bộ nhớ đệm một lần (~X token)."* Người dùng có quyền biết cái nút họ sắp bấm tốn gì.
+1. **No autosave.** An explicit **Save** button. Every save bumps a cacheKey → pays for one cache write. Autosave-on-keystroke would churn the cache constantly.
+2. **Show token count live while typing**, and warn when it goes over the cap (`assistant_skills_tokens` 400, `charter_tokens` 500).
+3. **State the consequence right next to Save:** *"Saving will make every worker rewrite its cache once (~X tokens)."* The user deserves to know what the button they're about to click costs.
 
-API: `PUT /api/office/:id/prompt/:who/:layer` với `{ text }`. Ghi vào đúng `layer.file`.
+API: `PUT /api/office/:id/prompt/:who/:layer` with `{ text }`. Writes into exactly `layer.file`.
 
 ---
 
-## 5. Tool hệ thống: **bật sẵn hết, trừ một cái**
+## 5. System tools: **on by default, except for one**
 
-Bạn phân vân đúng chỗ, và cả hai phương án tôi đưa ra đều sai. Câu trả lời đúng là **không có giao diện nào cả**.
+Both of the options originally proposed here were wrong. The right answer is **no UI at all.**
 
-### Lý do
+### Why
 
-Claude Code viết `Read`/`Write`/`Glob`/`Grep`/`WebSearch`/`WebFetch` rất sạch, và **mọi agent đều cần chúng**. Bắt người dùng bật `WebSearch` cho một nhân viên tên "Người tìm tin" là hỏi một câu chỉ có một đáp án — đó không phải lựa chọn, đó là thủ tục.
+Claude Code implements `Read`/`Write`/`Glob`/`Grep`/`WebSearch`/`WebFetch` very cleanly, and **every agent needs them.** Making the user turn on `WebSearch` for a worker named "Researcher" is asking a question with exactly one correct answer — that's not a choice, that's paperwork.
 
-Bằng chứng từ chính bài test: bài 4 và bài 10A **bắt buộc mở `roles/<id>.yaml` chỉ để thêm `WebSearch`**. Xoá cả lớp thủ tục đó thì hai bài chạy được ngay từ giao diện.
+Evidence from the walkthrough itself: tests #4 and #10A **require opening `roles/<id>.yaml`** just to add `WebSearch`. Remove that whole layer of paperwork and both tests run straight from the UI.
 
-### Chốt
+### Decision
 
-| Tool | Mặc định | Vì sao |
+| Tool | Default | Why |
 |---|---|---|
-| `Read` `Write` `Glob` `Grep` | ✅ **luôn bật, không tắt được** | Đây là *tay* của văn phòng. ⚠ Ô "vì sao" của dòng này từng ghi *"chỉ chạm được `cwd`, `safeJoin` đã chặn"* — **sai, xem §5b**. |
-| `WebSearch` `WebFetch` | ✅ **luôn bật** | Chỉ đọc **từ ngoài vào**. Nhưng `WebFetch` cũng là một đường **đi ra** — xem §5b. |
-| `Bash` | ⚠ **bật sẵn từ 22/08, tắt được bằng một công tắc trong bảng chi tiết** | Cái duy nhất chạm được ra ngoài thư mục văn phòng. Xếp mức `write_external` ở §8. Mặc định đổi từ ❌ sang ⚠ ngày 22/08 — xem ngay dưới. |
+| `Read` `Write` `Glob` `Grep` | ✅ **always on, cannot be disabled** | These are the office's *hands*. ⚠ This row's "why" used to say *"can only touch `cwd`, `safeJoin` blocks the rest"* — **wrong, see §5b**. |
+| `WebSearch` `WebFetch` | ✅ **always on** | Read-only **from outside in.** But `WebFetch` is also an **out** path — see §5b. |
+| `Bash` | ⚠ **on by default since 22/08, toggleable via a switch in the detail panel** | The only thing that reaches outside the office folder. Rated `write_external` in §8. Default changed from ❌ to ⚠ on 22/08 — see right below. |
 
-#### 🔴 5a-bis. TÊN TOOL SHELL ĐỔI THEO HỆ ĐIỀU HÀNH — công tắc là NO-OP suốt 6 ngày
+#### 🔴 5a-bis. THE SHELL TOOL NAME CHANGES BY OS — the switch was a NO-OP for 6 days
 
-Trước khi bàn mặc định, phải sửa một chuyện lớn hơn: **`tools: ['Bash']` trên Windows cấp ĐÚNG 0 tool.**
+Before discussing the default, there's a bigger thing to fix first: **`tools: ['Bash']` grants EXACTLY 0 tools on Windows.**
 
-Hỏi thẳng CLI (`system/init` có trường `tools`), máy Windows:
+Asked the CLI directly (`system/init` has a `tools` field), on a Windows machine:
 
-| truyền vào | CLI thật sự cấp |
+| passed in | CLI actually grants |
 |---|---|
-| *(không truyền `tools`)* | **29 tool**, trong đó có **`PowerShell`** — và **không hề có `Bash`** |
-| `['Bash']` | **0 tool** |
-| 7 mặc định + `['PowerShell']` | 8 tool ✅ |
+| *(no `tools` passed)* | **29 tools**, including **`PowerShell`** — and **no `Bash` at all** |
+| `['Bash']` | **0 tools** |
+| 7 defaults + `['PowerShell']` | 8 tools ✅ |
 
-`tools` là allowlist **theo tên**, và tên không tồn tại trên nền tảng này bị **bỏ im lặng** — không lỗi, không cảnh báo. Nên mọi vai trò khai `Bash` trên Windows nhận đúng bộ mặc định, y như chưa khai gì. Công tắc, giá trị mặc định, và cả bài 9 của walkthrough đều đang nói về một khả năng **không tồn tại**.
+`tools` is an allowlist **matched by name**, and a name that doesn't exist on the current platform is **silently dropped** — no error, no warning. So every role declaring `Bash` on Windows gets exactly the default set, indistinguishable from declaring nothing. The switch, its default value, and walkthrough test #9 were all describing a capability that **did not exist.**
 
-> **Dấu vết đã nằm sẵn trong chính file này suốt sáu ngày.** Ca 16/08 ở dưới ghi: *"`nguoi-viet` … với tay sang **PowerShell** bốn lần"*. Cái tên đúng nằm ngay trong bằng chứng của một bug khác, và không ai đọc ra — vì lúc đó ta đang đi tìm một câu trả lời khác.
+> **The evidence was sitting right in this file for six days.** The 16/08 case below already recorded: *"`nguoi-viet` … reaches for **PowerShell** four times."* The correct name was sitting right there in the evidence for a different bug, and nobody read it that way — because at the time, everyone was looking for a different answer.
 >
-> **Bài học: một allowlist im lặng bỏ phần tử lạ là một cái bẫy.** Nó không bao giờ gây ra triệu chứng ở chỗ nó nằm — nó chỉ khiến một tính năng lặng lẽ không tồn tại. Khi truyền một danh sách tên xuống hệ thống khác, phải **hỏi lại xem nó nhận được gì**, đừng tin là nó nhận đủ.
+> **Lesson: an allowlist that silently drops unrecognized entries is a trap.** It never produces a symptom at the point where it fails — it just makes a feature quietly not exist. When passing a list of names down to another system, you have to **ask what it actually received**, never assume it received everything.
 
-**Sửa:** config giữ **một tên chuẩn** (`Bash`) để một văn phòng zip lại vẫn chạy được ở máy khác hệ điều hành; `effectiveTools()` gửi **cả hai tên** xuống SDK và để CLI tự bỏ cái không có. Không dò `process.platform` — Claude Code trên Windows *có* Git Bash có thể đặt tên khác, mà ta không kiểm soát bảng tên đó. Gửi cả hai là để SDK trả lời câu hỏi của chính nó, không có tiền đề nào để sai. Đo được: **gửi thừa một tên tốn 0 token** (bị bỏ trước khi vào prefix).
+**Fix:** config keeps **one canonical name** (`Bash`) so a zipped-up office still runs on a different OS; `effectiveTools()` sends **both names** down to the SDK and lets the CLI drop the one that doesn't apply. Doesn't sniff `process.platform` — Claude Code on Windows *can* have Git Bash under a different name, and we don't control that naming table. Sending both lets the SDK answer its own question, with no premise left to be wrong about. Measured: **sending an extra name costs 0 tokens** (dropped before entering the prefix).
 
-#### Có bao nhiêu tool shell, và có `WebSearchMacOS` không? — tra ở nguồn có thẩm quyền
+#### How many shell tools are there, and is there a `WebSearchMacOS`? — checked against the authoritative source
 
-Danh sách runtime chỉ nói về **một** hệ điều hành. Nguồn đúng là `sdk-tools.d.ts`, nơi SDK khai schema của **mọi** tool, không phụ thuộc nền tảng:
+A runtime listing only describes **one** OS. The right source is `sdk-tools.d.ts`, where the SDK declares the schema for **every** tool, platform-independent:
 
-- Có đúng **MỘT** schema shell: `BashInput`. **Không có `PowerShellInput`.** Nghĩa là `PowerShell` trên Windows không phải tool thứ hai — nó là **cùng một tool đội tên hiển thị khác**, cùng trường `command`. (Vì thế `describeCall` đọc `input.command` cho cả hai tên là đúng.)
-- Không tool nào khác có biến thể theo nền tảng: đúng một `FileReadInput`, một `FileWriteInput`, một `GlobInput`, một `GrepInput`, một `WebSearchInput`, một `WebFetchInput`. **Không có thứ gì kiểu `WebSearchMacOS`.**
+- There is exactly **ONE** shell schema: `BashInput`. **No `PowerShellInput`.** Meaning `PowerShell` on Windows isn't a second tool — it's **the same tool wearing a different display name**, same `command` field. (Which is why `describeCall` reading `input.command` for both names is correct.)
+- No other tool has a platform-specific variant: exactly one `FileReadInput`, one `FileWriteInput`, one `GlobInput`, one `GrepInput`, one `WebSearchInput`, one `WebFetchInput`. **Nothing like `WebSearchMacOS` exists.**
 
-⇒ `Read` `Write` `Edit` `Glob` `Grep` `WebSearch` `WebFetch` là **tên trung tính, dùng chung ba hệ điều hành**. Shell là ngoại lệ duy nhất.
+⇒ `Read` `Write` `Edit` `Glob` `Grep` `WebSearch` `WebFetch` are **neutral names, shared across all three OSes.** Shell is the one exception.
 
-⚠ Ranh giới của bằng chứng này, đừng suy rộng: danh sách schema chứng minh không có hai *schema*; danh sách runtime Windows chứng minh các *tên* trên Windows. Một cái tên chỉ tồn tại trên macOS thì không xuất hiện ở cả hai. Vì thế mới có chốt dưới đây.
+⚠ The limits of this evidence, don't overreach: the schema list proves there are no two *schemas*; the Windows runtime list proves the Windows *names*. A name that only exists on macOS wouldn't show up in either. That's exactly why the next lock exists.
 
-#### 🔒 Chốt chặn thật KHÔNG phải bảng tên — mà là phép đối chiếu lúc chạy
+#### 🔒 The real enforcement isn't the name table — it's the runtime cross-check
 
-`SHELL_ALIASES` là danh sách **ta viết tay**, mà bảng tên là của SDK. Xuất hiện một nền tảng thứ tư với tên thứ ba thì lỗi cũ quay lại y nguyên, **im lặng y nguyên**.
+`SHELL_ALIASES` is a list **we wrote by hand**, while the name table belongs to the SDK. A fourth platform showing up with a third name would bring the old bug back, **just as silently.**
 
-Nên `worker.ts` §`warnDroppedTools` đối chiếu ngay ở `system/init`: CLI có trường `tools` liệt kê thứ nó **thật sự cấp**. So với thứ ta gửi, khác thì kêu. Nó không cần biết tên nào đúng — chỉ cần biết *"thứ tôi xin và thứ tôi nhận không khớp"*. Đó là bất biến bền hơn hẳn một danh sách chuỗi.
+So `worker.ts` §`warnDroppedTools` cross-checks right at `system/init`: the CLI's `tools` field lists what it **actually granted.** Compare against what we sent, and warn on a mismatch. It doesn't need to know which name is correct — only that *"what I asked for and what I received don't match."* That's a far more durable invariant than any list of strings.
 
-Tên shell tính theo **nhóm**: ta cố ý gửi cả hai và **mong** một cái bị bỏ, nên chỉ kêu khi **không tên nào** được cấp. Cảnh báo ở mức tiến trình, một lần cho mỗi (vai trò × bộ thiếu) — người vận hành tiệm hoa không làm gì được với câu này, người cài đặt hệ thống thì có.
+Shell names are counted as a **group**: we deliberately send both and **expect** one to be dropped, so it only warns when **neither** name got granted. The warning fires at the process level, once per (role × missing set) — a flower-shop operator can't act on this message, but someone setting up the system can.
 
-#### Mặc định đổi từ TẮT sang BẬT (user chốt 22/08) — và giá thật là 2 688 token
+#### Default changed from OFF to ON (user locked this in 22/08) — and the real cost is 2,688 tokens
 
-⚠ **Đính chính.** Bản đầu của mục này ghi *"`Bash` chỉ thêm **1 token**"* và kết luận *"lý lẽ token đã chết"*. **Sai** — phép đo đó đang đo một cái tên bị vứt im lặng, tức là đo một no-op. Đo lại sau khi tool thật sự được cấp (CLI khai 8 tool):
+⚠ **Correction.** The first draft of this section said *"`Bash` only adds **1 token**"* and concluded *"the token argument is dead."* **Wrong** — that measurement was measuring a name being silently thrown away, i.e. measuring a no-op. Re-measured after the tool was actually granted (CLI reported 8 tools):
 
-| | prefix (cache_creation, nonce phá cache) |
+| | prefix (cache_creation, nonce breaking cache) |
 |---|---|
-| 7 tool mặc định | 4 547 |
-| + shell (`PowerShell`) | 7 235 |
-| **shell thêm vào** | **2 688 token / mỗi lượt gọi worker** |
-| + cả `Bash` lẫn `PowerShell` | 7 235 — **tên thừa tốn 0** |
+| 7 default tools | 4,547 |
+| + shell (`PowerShell`) | 7,235 |
+| **shell adds** | **2,688 tokens / every worker call** |
+| + both `Bash` and `PowerShell` | 7,235 — **the extra name costs 0** |
 
-⚠ Phép đo còn một cái bẫy nữa: lần đo thứ hai **ăn cache của lần một** (`cache_read` = đúng `cache_write` lần trước) và cho ra chênh lệch 0. Phải cắm nonce vào system prompt để ép miss cả hai lần.
+⚠ The measurement had one more trap: the second measurement **ate the first one's cache** (`cache_read` = exactly the previous `cache_write`), producing a zero difference. A nonce had to be planted in the system prompt to force a miss both times.
 
-**+2 688 là ~59% trên nền 4 547** — không nhỏ, và trả ở mọi lượt của mọi nhân viên. Nhưng nó là **cache read** sau lần đầu (~0,1× giá vào), nên vẫn nhỏ hơn nhiều so với một lượt chạy thừa vì thiếu tool. Lý lẽ token **không chết, chỉ là không thắng**.
+**+2,688 is ~59% on top of a 4,547 baseline** — not trivial, and paid on every turn of every worker. But it's a **cache read** after the first time (~0.1× the entry price), so it's still much smaller than one wasted run because a tool was missing. The token argument **didn't die, it just didn't win.**
 
-Còn lại là đánh đổi của chủ sản phẩm: phần lớn việc văn phòng thật (liệt kê thư mục kèm kích thước, đổi định dạng file, nén kết quả, gọi `git`) cần shell, mà người dùng non-code không tự biết đi bật.
+The remaining tradeoff belongs to the product owner: most real office work (listing a folder with sizes, converting file formats, zipping results, calling `git`) needs shell, and a non-technical user doesn't know to go turn it on themselves.
 
-#### Worker có tự ưu tiên `Read` thay vì shell không? ĐO RỒI: CÓ
+#### Does a worker actually prefer `Read` over shell? MEASURED: YES
 
-Câu hỏi thật là *"có phải dặn nó ưu tiên `Read` không"*. Đo với vai trò có ĐỦ 8 tool:
+The real question is *"does it need to be told to prefer `Read`?"*. Measured with a role given all 8 tools:
 
-| việc | tool nó chọn |
+| task | tool it chose |
 |---|---|
-| đọc một file trong văn phòng | `Glob` → `Read` |
-| đọc một file ngoài, đường dẫn tuyệt đối | **`Read`** |
-| liệt kê thư mục ngoài + kích thước | **`PowerShell`** — `Get-ChildItem -Path …` |
+| read a file inside the office | `Glob` → `Read` |
+| read an external file, absolute path | **`Read`** |
+| list an external folder + sizes | **`PowerShell`** — `Get-ChildItem -Path …` |
 
-⇒ Nó chạm tới shell **chỉ khi bộ tool có lỗ thật** (không tool nào trả về kích thước file), và nó tự chọn đúng lệnh cho hệ điều hành mà không ai nói cho nó biết máy chạy gì. **Không cần thêm một dòng dặn nào** — mà thêm cũng là token vĩnh viễn trong prefix để mua một hành vi đã có sẵn.
+⇒ It reaches for shell **only when the tool set has a real gap** (no tool returns file size), and it picks the right command for the OS it's running on without anyone telling it what platform it's on. **No extra instruction line is needed** — and adding one would be a permanent tax in the prefix to buy a behavior that already exists.
 
-Điều kiện đi kèm — **nói ra lúc tạo, không đợi họ tự đi tìm**: hộp thoại Thêm nhân viên có một dòng nói thẳng *"người này sẽ chạy được lệnh trên máy"*, và `roleTemplate` ghi `tools: [Bash]` kèm khối chú thích giải thích ngoại lệ. Một mặc định rộng tay mà im lặng thì không phải tiện, là bẫy: người dùng chỉ biết nó tồn tại vào lúc đã muộn.
+Comes with a condition — **say it up front, don't wait for them to discover it**: the Add Worker dialog has a line that says plainly *"this person will be able to run commands on your machine,"* and `roleTemplate` writes `tools: [Bash]` with a comment block explaining the exception. A broad, silent default isn't convenient, it's a trap: the user only finds out it exists once it's already too late.
 
-Kết quả: **một công tắc duy nhất trong toàn hệ thống**, kèm một câu cảnh báo. Không chip, không node, không danh sách.
+Result: **a single switch in the whole system**, with one warning sentence. No chip, no node, no list.
 
-`roles/*.yaml` vẫn giữ khoá `tools:` cho người advanced ghi đè — nhưng người dùng thường không bao giờ chạm tới.
+`roles/*.yaml` still keeps the `tools:` key for advanced users to override — but an ordinary user never touches it.
 
-### ✅ Công tắc đó tồn tại thật từ 22/08/2026 — trước đó nó là dòng thứ hai chưa có mã nguồn
+### ✅ That switch became real on 22/08/2026 — before that it was a second line with no source code behind it
 
-Bảng trên chốt "một công tắc trong bảng chi tiết" từ đầu. Bản thi hành đầu tiên (16/08) chỉ trả nửa còn lại — `tools: effectiveTools(role.tools)` **cắt thật** `Bash` khỏi ngữ cảnh của vai trò không khai nó. Nhưng cách duy nhất để **khai** vẫn là mở `roles/<id>.yaml` gõ tay.
+The table above locked in "one switch in the detail panel" from the start. The first implementation (16/08) delivered only half of it — `tools: effectiveTools(role.tools)` **really did cut** `Bash` from the context of a role that hadn't declared it. But the only way to **declare** it was still opening `roles/<id>.yaml` by hand.
 
-Thứ chỉ ra chỗ hổng không phải một lần đọc lại code, mà một dòng trong tài liệu test: bài 9 của `TEST-WALKTHROUGH.md` có bước 📝 **BẮT BUỘC** bảo người dùng mở file yaml.
+What pointed at the gap wasn't a re-read of the code, but a line in a test document: walkthrough test #9 had a **MANDATORY** 📝 step telling the user to open the yaml file.
 
-> **Bài học đóng gói được, và nó khác bài học 16/08 một nấc:** ở đó một bất biến chỉ có thật khi có mã nguồn thi hành nó. Ở đây — **một tính năng dành cho người non-code chỉ có thật khi có giao diện cho nó.** Cả hai lần, thứ phát hiện ra đều nằm ngoài code: lần trước là một thí nghiệm 5 phút, lần này là một dòng hướng dẫn tự tố cáo chính nó. Một bước "mở file yaml" trong hướng dẫn của sản phẩm này luôn là chuông báo, không bao giờ là chuyện bình thường.
+> **A packageable lesson, one notch different from the 16/08 lesson:** there, an invariant is only real once source code enforces it. Here — **a feature meant for non-technical people is only real once there's a UI for it.** Both times, the thing that found it lay outside the code: last time it was a 5-minute experiment, this time it was one line of documentation confessing on its own. A "go open a yaml file" step in this product's instructions is always an alarm bell, never business as usual.
 
-Thi hành:
+Implementation:
 
 | | |
 |---|---|
-| `Office.editAgent({ bash })` | giữ nguyên tool khác trong `tools:`, xoá hẳn khoá khi rỗng, rồi `reload()` — nên **không cần restart** |
+| `Office.editAgent({ bash })` | keeps other tools in `tools:`, deletes the key entirely when empty, then `reload()` — so **no restart needed** |
 | `CanvasNode.bash` | `role.tools.includes('Bash')` |
-| `Inspector.tsx` §`BashSwitch` | công tắc + câu cảnh báo nói đúng hậu quả |
-| cache | **không cần bump `version`**: `cacheKey` băm chính `toolKey` (`prompt.ts`), nên bộ tool đổi là khoá đổi |
+| `Inspector.tsx` §`BashSwitch` | the switch + a warning sentence that states the real consequence |
+| cache | **no need to bump `version`**: `cacheKey` hashes `toolKey` directly (`prompt.ts`), so a changed tool set is already a changed key |
 
-⚠ Công tắc này là **ngoại lệ duy nhất** của luật "kết quả luôn nằm trong văn phòng" — `officeJail` khớp `Write|Edit|NotebookEdit` và **không thể** khớp `Bash`. → `SPEC-artifacts.md` §2.6.
+⚠ This switch is the **one exception** to the rule "results always stay inside the office" — `officeJail` matches `Write|Edit|NotebookEdit` and **cannot** match `Bash`. → `SPEC-artifacts.md` §2.6.
 
-### Còn Trợ lý và worker ẩn thì KHÔNG, và đó không phải chuyện quên
+### The Assistant and hidden workers still get NO shell, and that's not an oversight
 
-| | `tools` thật sự | vì sao |
+| | actual `tools` | why |
 |---|---|---|
-| **Nhân viên** (worker) | 6 tool mặc định + `Bash` nếu bật | Đây là chỗ việc được làm. Công tắc thuộc về đây. |
-| **Trợ lý** | `[]` — rỗng thật | Nó **không làm việc, nó chia việc**. Trao tool cho nó là tạo đường thứ hai để một việc được thực hiện — đường đó không có receipt, không có kế hoạch, không vào sổ chi phí theo task, và không đi qua bất kỳ giới hạn nào của vai trò. Chưa kể `route()` chạy `resume` ở **mọi tin nhắn**, nên mỗi tool thêm vào là thuế thu ở mọi lượt gõ phím. |
-| **Worker ẩn** trong Trợ lý (`lookup`) | `['Read','Grep','Glob']` — chỉ đọc | Nó tồn tại để trả lời *"trong tủ có gì"* mà không phải phóng một worker thật. Việc đó chỉ cần đọc. Cho nó `Bash` là cho Trợ lý một cánh tay qua cửa sau, đúng thứ vừa từ chối ở dòng trên. |
+| **Worker** | 6 default tools + `Bash` if enabled | This is where work happens. The switch belongs here. |
+| **Assistant** | `[]` — genuinely empty | It **doesn't do work, it divides work.** Giving it tools creates a second path for work to get done — one with no receipt, no plan, no per-task expense ledger, and no role limit of any kind. Also, `route()` runs `resume` on **every message**, so every added tool becomes a tax paid on every keystroke. |
+| **Hidden worker** inside the Assistant (`lookup`) | `['Read','Grep','Glob']` — read-only | It exists to answer *"what's in the library"* without spinning up a real worker. That only requires reading. Giving it `Bash` would give the Assistant a back-door arm — exactly what was just refused on the line above. |
 
-Nói cách khác: **`Bash` gắn vào MỘT NGƯỜI mà bạn nhìn thấy trên sơ đồ và bật bằng tay.** Không có đường nào để một lệnh chạy mà không có một cái tên chịu trách nhiệm cho nó trong nhật ký.
+In other words: **`Bash` attaches to ONE PERSON you see on the diagram and switch on by hand.** There's no route for a command to run without a name accountable for it in the log.
 
-### 5b. 🔴 ĐÍNH CHÍNH 22/08 — HÀNG RÀO ĐỌC KHÔNG TỒN TẠI, VÀ CHƯA BAO GIỜ TỒN TẠI
+### 5b. 🔴 CORRECTION 22/08 — THE READ FENCE DOES NOT EXIST, AND NEVER DID
 
-Bảng trên (và một khối chú thích trong `types.ts`) ghi: *"chúng chỉ chạm được vào thư mục văn phòng (`cwd`) và `safeJoin` đã chặn đi ra ngoài"*.
+The table above (and a comment block in `types.ts`) said: *"they can only reach the office folder (`cwd`), and `safeJoin` blocks anything outside it."*
 
-**Sai.** `safeJoin` là hàm **của ta**, chạy trong **mã của ta** — nó chưa bao giờ đứng giữa model và tool `Read`. `cwd` không phải một bức tường; nó là thư mục làm việc mặc định.
+**Wrong.** `safeJoin` is **our own** function, running in **our own code** — it has never stood between the model and the `Read` tool. `cwd` isn't a wall; it's a default working directory.
 
-**Đo được 22/08** — một vai trò chỉ có bộ mặc định, **không** `Bash`, `cwd` là thư mục văn phòng:
+**Measured on 22/08** — a role with only the default set, **no** `Bash`, `cwd` set to the office folder:
 
 ```
-KHÔNG Bash · đường dẫn tuyệt đối   tool=[Read] → ✅ ĐỌC ĐƯỢC nội dung file ở thư mục khác
+NO Bash · absolute path   tool=[Read] → ✅ READS content from a folder outside the office
 ```
 
-> **Câu cũ đọc rất thuyết phục vì nó NÊU TÊN một hàm có thật.** Chỉ là hàm đó ở nhầm tầng. Đây là biến thể tinh vi nhất của luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"* — lần này mã nguồn tồn tại, chạy đúng, và bảo vệ một thứ khác.
+> **The old sentence read very convincingly because it NAMED a function that really exists.** It's just at the wrong layer. This is the most subtle variant yet of *"an invariant is only real once source code enforces it"* — this time the source code exists, runs correctly, and protects something else entirely.
 
-#### Ranh giới THẬT hôm nay
+#### The REAL boundary today
 
-| | hàng rào | thi hành bởi |
+| | fence | enforced by |
 |---|---|---|
-| **Ghi** — `Write` `Edit` `NotebookEdit` | ✅ có | `officeJail` (`PreToolUse`), đo được là chạy |
-| **Đọc** — `Read` `Glob` `Grep` | ❌ **không có gì** | — |
-| **Web** — `WebFetch` `WebSearch` | ❌ không có | chỉ đọc *từ ngoài vào*, nhưng URL là một đường **đi ra** |
-| **Lệnh** — `Bash` | ❌ không có, và **bật sẵn** từ 22/08 | — |
+| **Write** — `Write` `Edit` `NotebookEdit` | ✅ yes | `officeJail` (`PreToolUse`), measured to actually run |
+| **Read** — `Read` `Glob` `Grep` | ❌ **nothing at all** | — |
+| **Web** — `WebFetch` `WebSearch` | ❌ none | reads *from outside in* only, but a URL is an **out** path |
+| **Commands** — `Bash` | ❌ none, and **on by default** since 22/08 | — |
 
-⇒ **`Read` (bất cứ đâu) + `WebFetch` (URL tuỳ ý) là một đường dữ liệu đi ra hoàn chỉnh, không cần `Bash`.** Nói ra không phải để doạ: nó là điều kiện để bàn đúng chuyện. Với một sản phẩm mà `SPEC-offices.md` §5 dựng cả trường `secrets` theo nguyên tắc đặc quyền tối thiểu, một hàng rào đọc không tồn tại là chỗ nguyên tắc đó hụt chân.
+⇒ **`Read` (anywhere) + `WebFetch` (any URL) is a complete data-exfiltration path, no `Bash` required.** This isn't said to scare anyone — it's the condition for having the right discussion. In a product where `SPEC-offices.md` §5 built an entire `secrets` field around least-privilege, a nonexistent read fence is exactly where that principle falls short.
 
-#### Hàng rào đọc DỰNG ĐƯỢC — đã đo, chưa dựng
+#### A read fence CAN be built — measured, not yet built
 
-Ngày 19/08 từng đo *"hook `PreToolUse` không nổ lần nào"* cho `Grep`/`Glob`, và spec đã cẩn thận ghi kèm *"⚠ ranh giới của phép đo — đừng suy rộng hơn"*. Đo lại 22/08, trong ngữ cảnh **worker** (không phải Trợ lý):
+On 19/08, the finding was *"the `PreToolUse` hook never fires"* for `Grep`/`Glob`, and the spec carefully added *"⚠ don't overreach the boundary of this measurement."* Re-measured on 22/08, in the **worker** context (not the Assistant):
 
-| | hook nổ | kết quả |
+| | hook fired | result |
 |---|---|---|
-| không hook (đối chứng) | — | ❌ đọc được file ngoài |
-| `PreToolUse` matcher `Read` | ✅ `Read` | ✅ **bị chặn** |
-| `PreToolUse` không matcher | ✅ `Read` | ✅ **bị chặn** |
+| no hook (control) | — | ❌ external file readable |
+| `PreToolUse` matcher `Read` | ✅ `Read` | ✅ **blocked** |
+| `PreToolUse` no matcher | ✅ `Read` | ✅ **blocked** |
 
-Nên đường xây **có tồn tại**, và nó cùng một cơ chế với `officeJail` đang chạy. Hình dạng đề xuất: **allowlist suy từ chính bản kế hoạch** — cho đọc trong thư mục văn phòng, **cộng** các đường dẫn tuyệt đối đã khai trong `inputs` của đúng task đó, chặn phần còn lại. Nó biến `inputs` từ một lời khai thành một **hợp đồng ràng buộc**, và biến dòng dặn sẵn có trong prompt nhân viên (*"Do not explore. Open exactly what your inputs list"*) từ **lời dặn** thành **cơ chế**.
+So the road **is buildable**, and it's the same mechanism `officeJail` already uses. Proposed shape: **an allowlist derived from the plan itself** — allow reads inside the office folder, **plus** the absolute paths already declared in that task's `inputs`, block the rest. It turns `inputs` from a claim into an **enforceable contract**, and turns the existing prompt instruction to the worker (*"Do not explore. Open exactly what your inputs list"*) from a **plea** into a **mechanism**.
 
-**Chưa dựng — đang chờ quyết định**, vì nó đổi hành vi lúc chạy của mọi nhân viên và có rủi ro chặn nhầm một lượt đọc hợp lệ.
+**Not built yet — pending a decision**, because it changes every worker's runtime behavior and risks blocking a legitimate read by mistake.
 
-### ⚠ Bảng trên KHÔNG được thi hành cho tới 16/08/2026 — `tools` ≠ `allowedTools`
+### ⚠ The table above WAS NOT ENFORCED until 16/08/2026 — `tools` ≠ `allowedTools`
 
-Ta chỉ truyền `allowedTools` và tưởng thế là giới hạn. `.d.ts` nói ngược lại:
+We only passed `allowedTools` and assumed that meant restriction. The `.d.ts` says the opposite:
 
 > `allowedTools` — *"List of tool names that are **auto-allowed without prompting**… To restrict which tools are available, use the **`tools`** option instead."*
 > `tools` — *"Specify the **base set** of available built-in tools."*
 > `disallowedTools` — *"removed **from the model's context** and cannot be used."*
 
-Nghĩa là **mọi nhân viên vẫn nhìn thấy toàn bộ bộ tool của Claude Code**, kể cả `Bash`. Dòng "Bash tắt, phải bật tường minh" ở bảng trên là một lời hứa chưa từng có mã nguồn đứng sau.
+Meaning **every worker was seeing the entire Claude Code tool set**, `Bash` included. The line "Bash is off, must be turned on explicitly" in the table above was a promise that never had source code behind it.
 
-**Phát hiện ra bằng quan sát, không phải bằng đọc code:** dựng một file chỉ-đọc rồi giao việc ghi vào đó. `nguoi-viet` — vai trò **không khai tool nào ngoài bộ mặc định** — thử `Write` hai lần rồi **với tay sang `PowerShell` bốn lần**.
+**Found by observation, not by reading code:** a read-only file was set up and a worker was assigned to write into it. `nguoi-viet` — a role that **declared no tools beyond the default set** — tried `Write` twice and then **reached for `PowerShell` four times.**
 
-Ba cái giá cùng lúc:
+Three costs, all at once:
 
 | | |
 |---|---|
-| **Token** | định nghĩa của mọi tool nằm trong prefix được cache của MỌI lời gọi worker, vĩnh viễn |
-| **Lượt** | mỗi lần thử một tool bị từ chối là một lượt trả tiền để nhận một lời từ chối |
-| **Kiến trúc** | vai trò không khai `Bash` vẫn với tay tới shell được — bất biến §5 chỉ tồn tại trên giấy |
+| **Tokens** | every tool's definition sits in the cached prefix of EVERY worker call, forever |
+| **Turns** | every attempt at a refused tool is a paid turn spent receiving a refusal |
+| **Architecture** | a role that didn't declare `Bash` could still reach shell — the §5 invariant only existed on paper |
 
-**Sửa:** truyền `tools: effectiveTools(role.tools)` cùng với `allowedTools`. Đo trên cùng một vai trò, cùng 2 lượt, cache đều ấm:
+**Fix:** pass `tools: effectiveTools(role.tools)` alongside `allowedTools`. Measured on the same role, same 2 turns, both cache-warm:
 
 | | cache_read | cache_write | $/task |
 |---|---:|---:|---:|
-| trước | ~34 100 | ~4 320 | $0.051 |
-| **sau** | **13 607** | **1 406** | **$0.0275** |
+| before | ~34,100 | ~4,320 | $0.051 |
+| **after** | **13,607** | **1,406** | **$0.0275** |
 
-**Prefix giảm ~60%, giá một task giảm gần một nửa.** Phần lớn "sàn ~13 200 token mỗi worker call" hoá ra là định nghĩa của những tool ta chưa bao giờ định trao.
+**The prefix drops ~60%, the cost of one task drops by nearly half.** Most of the "~13,200 token floor per worker call" turned out to be definitions of tools we never intended to grant.
 
-> **Bài học đóng gói được: một bất biến chỉ có thật khi có mã nguồn thi hành nó.** Bảng này nằm trong spec từ đầu, đọc rất thuyết phục, và sai suốt. Thứ phát hiện ra nó là một thí nghiệm 5 phút với một file chỉ-đọc — không phải một lần đọc lại code.
+> **A packageable lesson: an invariant is only real once source code enforces it.** This table has been in the spec since the beginning, reads very convincingly, and was wrong the entire time. What found it was a 5-minute experiment with a read-only file — not a re-read of the code.
 
-### 5c. LẤY 8 HAY LẤY HẾT 29? — số đo, rồi lý do kiến trúc (chốt 22/08)
+### 5c. GRAB 8, OR GRAB ALL 29? — measurement first, then the architectural argument (locked 22/08)
 
-Đo cô lập **chỉ phần tool** (cùng một system prompt tí hon, nonce phá cache cả bốn lần):
+Isolated measurement of **just the tool footprint** (same tiny system prompt, nonce breaking the cache all four times):
 
-| bộ tool | CLI cấp | prefix | thêm vào |
+| tool set | CLI grants | prefix | added |
 |---|---:|---:|---:|
-| không tool nào | 0 | 193 | — |
-| 7 tool văn phòng | 7 | 4 547 | +4 354 |
-| **7 + shell (đang chạy)** | **8** | **7 235** | +2 688 |
-| **lấy hết (không truyền `tools`)** | **29** | **13 188** | **+5 953** |
+| no tools | 0 | 193 | — |
+| 7 office tools | 7 | 4,547 | +4,354 |
+| **7 + shell (current)** | **8** | **7,235** | +2,688 |
+| **grab everything (no `tools` passed)** | **29** | **13,188** | **+5,953** |
 
-**Lấy hết = 1,82× prefix hiện tại, cộng 5 953 token vào MỌI lượt gọi worker, vĩnh viễn.**
+**Grabbing everything = 1.82× the current prefix, adding 5,953 tokens to EVERY worker call, forever.**
 
-Nhưng tiền là lý lẽ THỨ HAI. Lý lẽ thứ nhất là kiến trúc — xếp 21 tool còn lại thành bốn nhóm thì thấy ngay:
+But money is the SECOND argument. The first is architecture — sorting the remaining 21 tools into four groups makes it obvious:
 
-| nhóm | tool | vì sao KHÔNG lấy |
+| group | tools | why NOT to grab them |
 |---|---|---|
-| **Điều phối / sub-agent** | `Task` `TaskCreate` `TaskGet` `TaskUpdate` `TaskList` `TaskOutput` `TaskStop` `SendMessage` | agentco **đã có** tầng này: Trợ lý + `Scheduler` + kế hoạch + receipt. Lấy về là có **hai bộ điều phối cạnh tranh** — nhân viên tự đẻ nhân viên, **ngoài sổ chi phí, ngoài nhật ký, ngoài mọi giới hạn vai trò**. Đây không phải chuyện tiền. |
-| **Agent nền / lịch** | `CronCreate` `CronDelete` `CronList` `ScheduleWakeup` `RemoteTrigger` `PushNotification` | Cùng lý do: vòng đời việc là của agentco. Một nhân viên tự đặt cron là một khoản chi lặp lại mà người dùng **không thấy ở đâu cả**. |
-| **Của lập trình viên** | `EnterWorktree` `ExitWorktree` `NotebookEdit` `DesignSync` | Khách mở tiệm hoa không có git worktree, không có Jupyter. |
-| **Nội bộ Claude Code** | `Skill` `ToolSearch` `ReportFindings` `Monitor` | Thuộc về sản phẩm Claude Code, không thuộc về một văn phòng ảo. |
+| **Orchestration / sub-agents** | `Task` `TaskCreate` `TaskGet` `TaskUpdate` `TaskList` `TaskOutput` `TaskStop` `SendMessage` | agentco **already has** this layer: the Assistant + `Scheduler` + the plan + receipts. Grabbing these means **two competing orchestration layers** — a worker spawning its own workers, **off the ledger, off the log, outside every role limit.** This isn't a money question. |
+| **Background agents / scheduling** | `CronCreate` `CronDelete` `CronList` `ScheduleWakeup` `RemoteTrigger` `PushNotification` | Same reason: work lifecycle belongs to agentco. A worker setting its own cron job is a recurring cost **the user never sees anywhere.** |
+| **Developer tooling** | `EnterWorktree` `ExitWorktree` `NotebookEdit` `DesignSync` | A flower-shop client has no git worktree, no Jupyter. |
+| **Claude Code internals** | `Skill` `ToolSearch` `ReportFindings` `Monitor` | Belongs to the Claude Code product, not to a virtual office. |
 
-#### Vì sao Claude Code có nhiều tool đến thế — và bằng chứng nằm ngay trong danh sách
+#### Why Claude Code has so many tools — and the proof is right there in the list
 
-Vì nó là **sản phẩm khác**: một agent lập trình tương tác **cộng** một nền tảng agent chạy nền, cho **một người dùng thành thạo ngồi ở terminal**. agentco là một **sản phẩm cho người không code**, và nó **tự sở hữu tầng điều khiển** — nên chỗ hai bên trùng chức năng, bản của ta phải thắng.
+Because it's a **different product**: an interactive coding agent **plus** a background-running agent platform, **for a technically skilled user sitting at a terminal.** agentco is a **product for non-coders**, and it **owns its own control layer** — so wherever the two overlap in function, ours has to win.
 
-> Bằng chứng mạnh nhất nằm ngay trong chính danh sách đó: **`ToolSearch`**. Đó là cơ chế "tool trả chậm" — nạp tên trước, nạp schema sau khi cần. Nó tồn tại **chính vì** bộ tool đã lớn tới mức không nạp hết được nữa. **Anthropic cũng biết là nhiều, nên họ làm một tool để hoãn những tool khác.** Ta gạn ở đầu nguồn; họ hoãn ở giữa đường. Cùng một nhận định, khác chỗ ra tay.
+> The strongest piece of evidence sits right in that same list: **`ToolSearch`.** It's the "deferred tool" mechanism — load names up front, load schemas only when needed. It exists **precisely because** the tool set had already gotten too big to load all at once. **Anthropic itself knows it's a lot, so they built a tool to defer other tools.** We prune at the source; they defer midstream. Same observation, different point of action.
 
-#### Thước cho mọi đề nghị "thêm tool builtin" sau này
+#### The yardstick for any future "add this builtin tool" proposal
 
-Một tool chỉ được vào bộ mặc định khi **cả ba** đúng:
+A tool only makes it into the default set when **all three** hold:
 
-1. **Không tool nào hiện có làm được việc đó.** (`Bash` từng qua cửa này: không gì khác trả về kích thước file.)
-2. **Nó không nhân đôi một tầng điều khiển agentco đã sở hữu** — điều phối, lịch, chi phí, nhật ký.
-3. **Người dùng văn phòng thật sự cần**, chứ không phải lập trình viên cần.
+1. **No existing tool can already do the job.** (`Bash` passed this gate: nothing else returns a file size.)
+2. **It doesn't duplicate a control layer agentco already owns** — orchestration, scheduling, cost, logging.
+3. **A real office user actually needs it**, not a developer.
 
-Cho 21 tool còn lại đi qua thước này: **không cái nào qua nổi**, và phần lớn trượt ở (2) chứ không phải ở tiền. Nếu chỉ đếm token thì `NotebookEdit` trông "rẻ" — nhưng nó vẫn trượt ở (3).
+Run all 21 remaining tools through this yardstick: **none of them pass**, and most fail at (2), not at cost. Counting tokens alone would make `NotebookEdit` look "cheap" — but it still fails at (3).
 
-⚠ Một chỗ lệch nhỏ đáng ghi: `officeJail` khớp `Write|Edit|NotebookEdit`, mà `NotebookEdit` **không nằm** trong `BUILTIN_TOOLS`. Vô hại (phòng thủ thừa còn hơn thiếu) nhưng nó là một dòng hứa canh một cánh cửa chưa từng tồn tại. Giữ nguyên có chủ ý: ngày nào `NotebookEdit` được thêm vào, hàng rào đã sẵn ở đó.
+⚠ One small mismatch worth noting: `officeJail` matches `Write|Edit|NotebookEdit`, but `NotebookEdit` **is not** in `BUILTIN_TOOLS`. Harmless (over-guarding beats under-guarding) but it's a promissory line guarding a door that has never existed. Kept intentionally: the day `NotebookEdit` gets added, the fence is already there waiting.
 
-### Còn MCP/connector thì vẫn là NODE
+### MCP/connectors are still NODES
 
-Vì chúng là **thực thể có danh tính**: tiến trình riêng, cấu hình riêng, chìa khoá riêng, và **được chia sẻ giữa nhiều agent**. Node + dây là mô tả đúng cho thứ như thế. Tool hệ thống thì là *thuộc tính*, và thuộc tính không đáng có node.
+Because they're **entities with an identity**: their own process, their own configuration, their own key, and **shared across multiple agents.** Node + wire is the correct description for something like that. A system tool is a *property*, and a property doesn't deserve a node.
 
 ---
 
-## 6. Cắm MCP trong UI — và ba loại, không phải một
+## 6. Wiring MCP through the UI — and three kinds, not one
 
-Đây là chỗ nỗi lo của bạn được giải: **người dùng không bao giờ phải viết MCP server.**
+This is where your worry gets resolved: **the user never has to write an MCP server.**
 
-### Chuyện transport, trả lời thẳng
+### On transports, answered directly
 
-Đặc tả MCP hiện định nghĩa **đúng hai** transport:
+The current MCP spec defines **exactly two** transports:
 
-| Transport | Dùng khi | Trạng thái |
+| Transport | Used when | Status |
 |---|---|---|
-| **stdio** | server chạy như tiến trình con trên máy | ✅ chuẩn cho desktop/local — **phần lớn ca dùng của ta** |
-| **Streamable HTTP** | server chạy như dịch vụ mạng sau một URL | ✅ chuẩn cho remote |
-| ~~HTTP+SSE~~ | (bản 2024-11-05) | ❌ **đã bị thay thế, deprecated từ bản 2025-03-26** |
+| **stdio** | the server runs as a local child process | ✅ standard for desktop/local — **most of our use cases** |
+| **Streamable HTTP** | the server runs as a network service behind a URL | ✅ standard for remote |
+| ~~HTTP+SSE~~ | (2024-11-05 spec) | ❌ **superseded, deprecated as of the 2025-03-26 spec** |
 
-Nên: **SSE không còn là "ổn định nhất" — nó là bản cũ.** Đừng dựng server SSE mới. SDK vẫn còn nhận `type: 'sse'` để tương thích ngược, ta vẫn cho cắm, nhưng gắn nhãn *"kiểu cũ"* trong giao diện.
+So: **SSE is no longer "the most stable option" — it's the old one.** Don't build new SSE servers. The SDK still accepts `type: 'sse'` for backward compatibility, we still allow wiring it, but label it *"legacy"* in the UI.
 
-Kiểm trên `sdk.d.ts@0.3.231` — SDK nhận **bốn** dạng:
+Checked against `sdk.d.ts@0.3.231` — the SDK accepts **four** shapes:
 
 ```ts
 type McpServerConfig =
   | McpStdioServerConfig            // { command, args?, env?, timeout? }
-  | McpSSEServerConfig              // { type:'sse',  url, headers? }   ← kiểu cũ
+  | McpSSEServerConfig              // { type:'sse',  url, headers? }   ← legacy
   | McpHttpServerConfig             // { type:'http', url, headers? }   ← Streamable HTTP
-  | McpSdkServerConfigWithInstance  // ← chạy TRONG tiến trình của ta
+  | McpSdkServerConfigWithInstance  // ← runs INSIDE our own process
 ```
 
-### Ba đường cắm, và không đường nào bắt viết MCP server
+### Three routes in, none of them force writing an MCP server
 
-| Đường | Người dùng làm gì | Dành cho |
+| Route | What the user does | For |
 |---|---|---|
-| **A · Danh mục có sẵn** | chọn từ danh sách, điền chìa | Notion, Google, Slack… — thứ nổi tiếng, ta gói sẵn cấu hình |
-| **B · Dán cấu hình MCP** | dán khối JSON chuẩn | ai đã có server sẵn |
-| **C · Cánh tay tự khai — ĐẶC SẢN** | ~~mô tả cái API bằng form / dán cURL / dán OpenAPI~~ 🔒 **REST bỏ 31/08** ⇒ **bọc một LỆNH đã khai** | `gh pr create --title {T}` trên máy bạn |
+| **A · Existing catalog** | pick from a list, fill in a key | Notion, Google, Slack… — well-known things, config already packaged |
+| **B · Paste an MCP config** | paste a standard JSON block | anyone who already has a server |
+| **C · Self-declared arm — the SPECIALTY** | ~~describe the API via a form / paste a cURL / paste OpenAPI~~ 🔒 **REST dropped 31/08** ⇒ **wraps a declared COMMAND** | `gh pr create --title {T}` on your machine |
 
-**Đường C là câu trả lời cho nỗi lo của bạn.** Nó khả thi vì SDK cho tạo **MCP server chạy ngay trong tiến trình của ta**:
+**Route C is the answer to your worry.** It's possible because the SDK lets us create **an MCP server running right inside our own process**:
 
 ```ts
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 ```
 
-Nghĩa là: người dùng mô tả một endpoint HTTP → **ta sinh ra MCP server**. MCP trở thành **định dạng dây nội bộ của ta, không phải định dạng người dùng phải viết**. Không tiến trình con, không npx, không `package.json`.
+Meaning: the user describes an HTTP endpoint → **we generate an MCP server.** MCP becomes **our internal wire format, not something the user has to write.** No child process, no npx, no `package.json`.
 
-> Đây chính xác là mệnh đề `SPEC-connectors.md` đã chốt từ 14/08: **"mô tả cái API, đừng viết code gọi nó."** Giờ nó có đường cài đặt cụ thể.
+> This is exactly the thesis `SPEC-connectors.md` locked in on 14/08: **"describe the API, don't write code that calls it."** Now it has a concrete installation path.
 
-### Nhưng "tool chỉ là lời văn" thì KHÔNG được
+### But "the tool is just prose" DOES NOT work
 
-Bạn nói: *"đôi khi cái tool ấy chỉ là text miêu tả: hãy vào trang web sau, cầm secret sau là bạn đọc ghi được"*. Người non-code làm được bằng lời — đúng. Nhưng làm thế thì agent phải **tự dựng lời gọi HTTP** qua `Bash`/`WebFetch`, và ta mất sạch ba thứ:
+You said: *"sometimes the tool is really just descriptive text: go to this page, grab this secret, then you can read/write."* A non-coder CAN do that with words — true. But doing it that way means the agent has to **construct the HTTP call itself** via `Bash`/`WebFetch`, and we lose three things entirely:
 
-- **schema** → model đoán tên tham số, sai lặng lẽ
-- **cổng duyệt** → không phân biệt được GET với DELETE, §8 sụp
-- **chìa khoá** → secret phải nằm trong prompt để agent gõ ra. **Model đọc được khoá.** Không chấp nhận được.
+- **schema** → the model guesses parameter names, wrong silently
+- **the approval gate** → GET can't be told apart from DELETE, §8 collapses
+- **key handling** → the secret has to sit in the prompt for the agent to type out. **The model can read the key.** Not acceptable.
 
-**Đường giữa, và nó giữ được cả hai:** người dùng vẫn mô tả bằng lời **cộng một mẫu cụ thể** — dán một lệnh cURL, hoặc điền form 4 ô (method · URL · header · ví dụ body). Ta suy ra schema từ mẫu đó. **Lời văn của họ trở thành `description` của tool** — đúng chỗ model cần nó.
+**The middle path, and it keeps both:** the user still describes things in words **plus one concrete sample** — pasting a cURL command, or filling in a 4-field form (method · URL · header · example body). We infer the schema from that sample. **Their prose becomes the tool's `description`** — exactly where the model needs it.
 
-Trả lời câu *"có nên strict bắt build MCP không"*: **strict ở BÊN TRONG, không bao giờ strict ở BÊN ngoài.** Ta không nuông chiều — ta chuyển chỗ đau từ người dùng sang mã nguồn của mình.
+Answering *"should we force strict MCP building?"*: **strict on the INSIDE, never strict on the OUTSIDE.** We don't pamper — we move the pain from the user to our own code.
 
 ---
 
-## 7. Chìa khoá theo connector — và thẩm định câu hỏi kinh điển
+## 7. Keys per connector — and vetting the classic question
 
-### 7a. Chìa gắn vào ổ khoá, không gắn vào người
+### 7a. A key attaches to the lock, not to the person
 
-Bạn thiên về "chìa giấu dưới thảm trước cửa từng nhà" thay vì "chùm chìa khoá". **Đồng ý, và đi xa hơn một bước:** chìa thuộc về **connector**, không thuộc về **agent**.
+You lean toward "hide a key under each door's mat" over "one keyring." **Agreed, and taking it one step further:** a key belongs to the **connector**, not to the **agent**.
 
 ```yaml
 # connectors/notion.yaml
@@ -582,128 +583,128 @@ secrets:
     help: "Notion → Settings → Connections → Develop your own integration"
 ```
 
-Người dùng bấm vào node `🔌 Notion` → hiện đúng những ô cần điền, **kèm hướng dẫn lấy ở đâu**. Điền xong, giá trị vào `.state/secrets.json`; giao diện từ đó chỉ hiện `••••••••`.
+The user clicks the `🔌 Notion` node → sees exactly the fields it needs, **with instructions on where to get them.** Fill them in, the value goes into `.state/secrets.json`; from then on the UI only shows `••••••••`.
 
-**Vì sao tốt hơn `role.secrets` hiện tại:**
+**Why this beats the current `role.secrets`:**
 
-| | Chùm chìa theo agent (hiện tại) | Chìa theo ổ khoá (chốt) |
+| | Keyring per agent (current) | Key per lock (decision) |
 |---|---|---|
-| Người dùng phải nghĩ | *"nhân viên này cầm những khoá nào?"* | *"Notion cần token gì?"* — câu hỏi tự nhiên |
-| Nối dây | phải nhớ khai `secrets:` **riêng**, quên là hỏng lúc chạy | nối dây là xong, chìa đi theo |
-| Đặc quyền tối thiểu | giữ được, nhưng bằng kỷ luật | giữ được **bằng cấu trúc**: không nối = không có chìa |
-| Nhầm lẫn | một chùm cho mọi ổ | một chìa một ổ |
+| What the user has to think about | *"which keys does this worker hold?"* | *"what token does Notion need?"* — the natural question |
+| Wiring | has to remember to declare `secrets:` **separately**, forgetting it breaks at runtime | wiring is the whole action, the key follows along |
+| Least privilege | held together by discipline | held together **by structure**: no wire = no key |
+| Confusion | one keyring for every lock | one key, one lock |
 
-Giữ nguyên hai bất biến đã có: giá trị vào **env của tiến trình MCP, không vào prompt**; **không có API đọc secret** — điền qua giao diện thì daemon ghi thẳng xuống đĩa, không có endpoint nào đọc ngược ra.
+Two existing invariants stay: values go into the **env of the MCP process, never into the prompt**; **no API reads a secret back** — filling it in through the UI writes straight to disk, and no endpoint reads it back out.
 
-> `role.secrets` trở thành **cửa thoát cho người advanced**, không còn là đường chính. Không xoá, chỉ hạ cấp.
+> `role.secrets` becomes the **escape hatch for advanced users**, no longer the main path. Not removed, just demoted.
 
-### 7b. Thẩm định: agent có cần skills nữa không, hay cắm MCP là nó tự biết?
+### 7b. Vetting: does the agent still need skills, or does wiring MCP make it "just know"?
 
-Đây là câu kinh điển, và câu trả lời **không phải một trong hai**.
+This is the classic question, and the answer is **neither, exclusively.**
 
-**Sự thật kỹ thuật:** MCP server công bố `tools/list` gồm **tên · mô tả · JSON schema** của từng tool. Model **thấy hết, tự động**. Nên với câu hỏi *"gọi tool này thế nào"* — skills là **thừa tuyệt đối**. Viết skills dạy cách gọi tool là chép lại thứ đã có, tốn token, và **sẽ lệch** khi server nâng cấp.
+**The technical fact:** an MCP server publishes `tools/list`, containing **name · description · JSON schema** for each tool. The model **sees it all, automatically.** So for the question *"how do I call this tool"* — skills are **entirely redundant.** Writing skills to teach how to call a tool duplicates something that already exists, costs tokens, and **will drift** the moment the server updates.
 
-**Nhưng có một lớp mà `tools/list` không bao giờ chứa được:**
+**But there's one layer `tools/list` can never contain:**
 
-| Thứ MCP đã nói | Thứ MCP không thể biết |
+| What MCP already says | What MCP can never know |
 |---|---|
-| "tool này tạo một page trong Notion" | *cơ sở dữ liệu nào trong 40 cái là chỗ để hoá đơn* |
-| "tham số `title` là chuỗi" | *tiêu đề phải bắt đầu bằng mã số hợp đồng* |
-| "tool này xoá một page" | *ở công ty này không ai xoá, chỉ lưu trữ* |
-| "tham số `date` định dạng ISO" | *năm tài chính bắt đầu từ tháng 4* |
+| "this tool creates a page in Notion" | *which of 40 databases is the right one for invoices* |
+| "parameter `title` is a string" | *the title must start with the contract's reference number* |
+| "this tool deletes a page" | *at this company, nobody deletes, only archives* |
+| "parameter `date` is ISO format" | *the fiscal year starts in April* |
 
-Đó **không phải hướng dẫn dùng tool** — đó là **tri thức riêng của tổ chức**.
+That is **not** tool-usage instruction — it's **the organization's own knowledge.**
 
 ### Verdict
 
-**Skills mặc định để TRỐNG. Cắm MCP là agent biết nó có thêm một cánh tay — không cần viết gì thêm.**
+**Skills default to EMPTY. Wiring an MCP means the agent knows it has an extra arm — nothing needs to be written for that.**
 
-Và tri thức riêng ở bảng phải kia **thuộc về kho tri thức, không thuộc về skills**. Ba lý do, cả ba đều là lý do cấu trúc:
+And the organization-specific knowledge in the right-hand column above **belongs to the knowledge store, not to skills.** Three reasons, all structural:
 
-1. **Agent tự ghi được vào kho, không tự ghi được vào skills.** *"Hoá đơn nằm ở database Kế toán 2026"* là thứ agent phát hiện ra lúc làm việc — để nó tự ghi lại.
-2. **Kho tri thức trả 0 token khi truy xuất** (HOT trong prefix cache, COLD chọn bằng từ khoá). Skills nằm trong prefix **vĩnh viễn**, dù task này có cần hay không.
-3. **Kho chọn theo việc; skills thì luôn có mặt.** Ba mươi quy ước về Notion không nên nằm trong đầu agent lúc nó đang viết một bài blog.
+1. **An agent can write to the knowledge store on its own, but not to skills.** *"Invoices live in the Accounting 2026 database"* is something the agent discovers while working — let it write that down itself.
+2. **The knowledge store costs 0 tokens on retrieval** (HOT in the prefix cache, COLD chosen by keyword). Skills sit in the prefix **permanently**, whether this task needs them or not.
+3. **The knowledge store is chosen per task; skills are always present.** Thirty Notion conventions shouldn't be in the agent's head while it's writing a blog post.
 
-**Vậy skills còn để làm gì?** Đúng một thứ: **cách làm việc ổn định, đúng-với-mọi-task** — giọng văn, thứ tự các bước, định dạng đầu ra. Ngắn. Nếu bạn viết được nó dưới 10 dòng thì nó là skills; dài hơn thì gần như chắc chắn nó là tri thức, viết nhầm chỗ.
+**So what are skills still for?** Exactly one thing: **stable, always-applies-to-every-task working habits** — tone of voice, step order, output format. Short. If you can write it in under 10 lines, it's skills; longer than that, it's almost certainly organizational knowledge, written in the wrong place.
 
-**Với Trợ lý (router) thì càng đúng hơn:** nó không gọi tool nào cả. Nó chỉ cần biết **AI với tới được cái gì** — mà §1 đã lo bằng dòng khả năng tự sinh. Skills của Trợ lý chỉ nên có giọng điệu và kỷ luật hỏi lại.
+**This is even more true for the Assistant (router):** it never calls a tool. All it needs to know is **what it can reach** — and §1 already covers that with the auto-generated capability line. The Assistant's skills should only contain tone and its clarifying-question discipline.
 
 ---
 
-## 8. Cổng duyệt — hai tầng
+## 8. Approval gate — two tiers
 
-### 8·0 🔴 LUẬT: mọi đường GHI RA ngoài phải qua một tool/MCP TƯỜNG MINH
+### 8·0 🔴 RULE: every path that WRITES OUTSIDE has to go through an EXPLICIT, named tool/MCP
 
-> **Chốt 22/08 (user). ⚠ CHÍNH SÁCH — CHƯA CÓ MÃ NGUỒN THI HÀNH.**
+> **Locked 22/08 (user). ⚠ POLICY — NO ENFORCING CODE YET.**
 >
-> Nhãn này bắt buộc phải đứng đây. `types.ts:68` vừa dạy đúng bài đó: *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*, và `worker.ts:177` ghi lại lần đã sập vì đặt luật vào `canUseTool` — một chỗ không bao giờ chạy. Viết luật này mà không dán nhãn là đẻ ra lời hứa thứ ba.
+> This label is mandatory here. `types.ts:68` already taught this exact lesson: *"an invariant is only real once source code enforces it,"* and `worker.ts:177` records a real crash from once putting this rule inside `canUseTool` — a place that never fires. Writing this rule down without the label would be manufacturing a third broken promise.
 
-**Nội dung luật:** ra khỏi thư mục văn phòng phải là một **năng lực có TÊN, được khai báo, đọc được trong nhật ký** — tức một tool hoặc MCP người dùng chủ động cắm. Không được là **tác dụng phụ của việc bật một công tắc chung**.
+**What the rule says:** anything leaving the office folder has to be a **NAMED capability, declared, visible in the log** — i.e. a tool or MCP the user actively wired in. It must **not** be a **side effect of flipping a general-purpose switch.**
 
-Hệ quả: `Bash` **thôi là "cánh cửa ra ngoài"**. Nó quay về đúng thứ nó độc quyền — ~~metadata file và~~ **chạy script và GHI ra ngoài**.
+Consequence: `Bash` **stops being "the door to the outside."** It goes back to being exactly what it uniquely does — ~~file metadata and~~ **running scripts and writing outward.**
 
-> ⚠ **Sửa 24/08 theo số đo:** metadata **không** còn là độc quyền của `Bash`. `Read` in kèm kích thước khi đọc PDF (`PDF file read: … (411.7KB)`, khớp `Get-ChildItem` tới 0,1 KB), và một cánh tay filesystem có `get_file_info` cho thư mục nó với tới. ❓ Chưa đo: những **loại file nào khác** `Read` in kích thước, và `Glob`/`Grep` có in gì không. Đừng suy rộng câu này bằng lập luận. → `SPEC-arms` §15h · §14 #9
+> ⚠ **Corrected 24/08 per measurement:** metadata is **no longer** `Bash`'s exclusive territory. `Read` prints size when reading a PDF (`PDF file read: … (411.7KB)`, matching `Get-ChildItem` to 0.1 KB), and a filesystem arm has `get_file_info` for any folder it can reach. ❓ Not yet measured: what **other file types** `Read` prints size for, and whether `Glob`/`Grep` print anything. Don't over-generalize this. → `SPEC-arms` §15h · §14 #9
 
-**Vì sao chưa thi hành được, nói thẳng:** hook `PreToolUse` khớp được `Write`/`Edit`/`NotebookEdit` vì đường dẫn nằm ở một **trường có tên**. Với `Bash` thì đường dẫn nằm **lẫn trong chuỗi lệnh** (`… > D:\x.md`), không có trường nào để đọc. Nên chặn `Bash` ghi ra ngoài là bài toán thật sự khó, không phải việc chưa làm.
+**Why it isn't enforced yet, said plainly:** the `PreToolUse` hook can match `Write`/`Edit`/`NotebookEdit` because the path sits in a **named field.** With `Bash` the path is **buried inside a command string** (`… > D:\x.md`), no field to read at all. So blocking `Bash` from writing outward is a genuinely hard problem, not just unfinished work.
 
-**Chỗ sẽ thi hành:** `PreToolUse` là tầng **duy nhất** mọi lời gọi tool đều đi qua — kể cả tool MCP (tên dạng `mcp__<server>__<tool>`, matcher khớp được **về nguyên tắc, chưa đo**). `outputScoper` **không phải** chỗ này và chưa bao giờ là: nó nắn *lời khai trong kế hoạch*, không chặn *hành động*.
+**Where it will be enforced:** `PreToolUse` is the **only** layer every tool call passes through — including MCP tools (named `mcp__<server>__<tool>`, the matcher can hit those **in principle, not yet measured**). `outputScoper` is **not** this layer and never has been: it edits *what the plan claims*, it doesn't block *what an action does*.
 
-| tầng | nắn/chặn gì | ai đi qua |
+| layer | edits/blocks what | who passes through it |
 |---|---|---|
-| `outputScoper` | sổ sách trên KẾ HOẠCH | chỉ chuỗi model khai trong `outputs` |
-| `officeJail` (`PreToolUse`) | thi hành trên HÀNH ĐỘNG | `Write` · `Edit` · `NotebookEdit` |
-| `Bash` · MCP · CLI | — | **không qua cái nào** |
+| `outputScoper` | bookkeeping on the PLAN | only the strings the model declares in `outputs` |
+| `officeJail` (`PreToolUse`) | enforcement on the ACTION | `Write` · `Edit` · `NotebookEdit` |
+| `Bash` · MCP · CLI | — | **passes through none of it** |
 
-### 8a. Phân loại theo HẬU QUẢ, không theo tên tool
+### 8a. Classified by CONSEQUENCE, not by tool name
 
-| Mức | Là gì | Xử lý |
+| Level | What it is | Handling |
 |---|---|---|
-| `read` | đọc file trong văn phòng, tra kho tri thức, `WebSearch`/`WebFetch` | **chạy luôn** |
-| `write_local` | ghi vào `artifacts/` của chính văn phòng | **chạy luôn** |
-| `write_external` | ghi ra ngoài qua connector/MCP · `Bash` | **duyệt ở KẾ HOẠCH, một lượt** |
-| `irreversible` | gửi đi · xoá · trả tiền · đăng công khai | **duyệt lại TỪNG LẦN**, kể cả đã duyệt kế hoạch |
+| `read` | reading a file inside the office, querying the knowledge store, `WebSearch`/`WebFetch` | **runs immediately** |
+| `write_local` | writing to the office's own `artifacts/` | **runs immediately** |
+| `write_external` | writing outward via a connector/MCP · `Bash` | **approved at the PLAN stage, once** |
+| `irreversible` | sending · deleting · paying · publishing publicly | **approved EVERY TIME**, even after the plan was approved |
 
-**Ai khai mức nào:** định nghĩa connector khai cho từng tool, hoặc một mức mặc định cho cả server. Không khai thì mặc định `write_external` — **an toàn khi không biết**. Với connector tự sinh (§6 đường C) thì suy từ HTTP method: `GET`/`HEAD` → `read`, `POST`/`PUT`/`PATCH` → `write_external`, `DELETE` → `irreversible`.
+**Who declares which level:** a connector's definition declares it per tool, or a single default for the whole server. Undeclared defaults to `write_external` — **safe when unknown.** For a self-declared connector (§6, route C), it's inferred from the HTTP method: `GET`/`HEAD` → `read`, `POST`/`PUT`/`PATCH` → `write_external`, `DELETE` → `irreversible`.
 
-### 8b. Tầng 1 — duyệt kế hoạch, một lượt
+### 8b. Tier 1 — one-time plan approval
 
-Sau khi Trợ lý lập kế hoạch, nếu **có bất kỳ** task nào chạm `write_external` trở lên:
+After the Assistant builds a plan, if **any** task touches `write_external` or above:
 
 ```
-Mình chia thành 3 việc:
-  1. Đọc bảng giá trong Drive              (chỉ đọc)
-  2. Soạn email báo giá                    (ghi trong văn phòng)
-  3. Gửi email cho khách  ⚠ gửi ra ngoài
-[Cho làm]  [Sửa yêu cầu]  [Thôi]
+I'm splitting this into 3 tasks:
+  1. Read the price list in Drive              (read-only)
+  2. Draft the quote email                     (writes inside the office)
+  3. Send the email to the client  ⚠ sends outward
+[Go ahead]  [Change the request]  [Cancel]
 ```
 
-- **0 token thêm** — kế hoạch đã có sẵn, ta chỉ hiện nó ra và chờ.
-- Đây cũng chính là nút **"Xem trước kế hoạch"** mà `SPEC-ui.md` §2.1 đã đòi từ đầu, và là hiện thân của *"kiểm soát scope"* — nỗi đau gốc của sản phẩm.
-- Qua Telegram: cùng một tin nhắn, trả lời `/duyệt` hoặc `/từ-chối`.
+- **0 extra tokens** — the plan already exists, we're just showing it and waiting.
+- This is also exactly the **"Preview the plan"** button `SPEC-ui.md` §2.1 has been asking for from the start, and the embodiment of *"scope control"* — the product's core pain point.
+- Over Telegram: the same message, reply with `/approve` or `/reject`.
 
-**Auto-confirm** là công tắc theo từng văn phòng, mặc định tắt. Bật thì bỏ tầng 1, **không bao giờ bỏ tầng 2**.
+**Auto-confirm** is a per-office switch, default off. Turning it on skips tier 1, **never tier 2.**
 
-### 8c. Tầng 2 — chặn từng lần, dùng `canUseTool`
+### 8c. Tier 2 — blocking per instance, using `canUseTool`
 
-> ## ✅✅ ĐO 25/08 — **CƠ CHẾ CHẠY ĐƯỢC.** Khối cảnh báo bên dưới đã được GIẢI, giữ lại vì lý do
+> ## ✅✅ MEASURED 25/08 — **THE MECHANISM WORKS.** The warning block below has been RESOLVED, kept for the record
 >
-> `scripts/spike-canusetool.ts` — 5 ca, mỗi ca một biến. Đây đúng là *"spike 10 phút"* mà mục này
-> đòi từ 19/08 và chưa ai chạy.
+> `scripts/spike-canusetool.ts` — 5 cases, one variable each. This is exactly the *"10-minute spike"*
+> this section has been demanding since 19/08 and nobody had run yet.
 >
-> | Ca | `canUseTool` nổ | file trên đĩa |
+> | Case | did `canUseTool` fire | file on disk |
 > |---|---|---|
-> | A · mcp **trong** `allowedTools`, không callback | ❌ | đã ghi |
-> | B · mcp **trong** `allowedTools`, **có** callback | ❌ | đã ghi |
-> | **C · mcp NGOÀI `allowedTools`, callback `allow`** | ✅ | đã ghi |
-> | **D · builtin `Write` NGOÀI `allowedTools`, callback `allow`** | ✅ | đã ghi |
-> | **E · mcp NGOÀI `allowedTools`, callback `deny`** | ✅ | **KHÔNG ĐỔI** |
+> | A · mcp **inside** `allowedTools`, no callback | ❌ | written |
+> | B · mcp **inside** `allowedTools`, **with** callback | ❌ | written |
+> | **C · mcp OUTSIDE `allowedTools`, `allow` callback** | ✅ | written |
+> | **D · builtin `Write` OUTSIDE `allowedTools`, `allow` callback** | ✅ | written |
+> | **E · mcp OUTSIDE `allowedTools`, `deny` callback** | ✅ | **UNCHANGED** |
 >
-> **⭐ Bí ẩn 19/08 đã có lời giải, và nó không phải "SDK hỏng": `allowedTools` CHE `canUseTool`.**
-> Phép đo 19/08 gọi `Grep`/`Glob` — hai tool nằm sẵn trong `allowedTools` — nên callback không bao
-> giờ có cửa chạy. Biến thật sự chưa bao giờ là *"tool đọc hay ghi"* mà là **"có nằm trong
-> `allowedTools` hay không"**. Cả một mục spec bị treo 6 ngày vì đọc sai biến.
+> **⭐ The 19/08 mystery has a solution, and it's not "the SDK is broken": `allowedTools` SHADOWS `canUseTool`.**
+> The 19/08 measurement called `Grep`/`Glob` — two tools already sitting in `allowedTools` — so the
+> callback never had a chance to run. The real variable was never *"is the tool a read or a write"* but
+> **"is it inside `allowedTools` or not."** A whole spec section hung for 6 days over misreading the variable.
 >
-> SDK bản đang cài **tự nói ra điều đó** — cảnh báo mới, đáng chép nguyên văn:
+> The installed SDK **says this itself** — a new warning, worth quoting verbatim:
 >
 > ```
 > [CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked for: Read, Glob, Grep,
@@ -711,36 +712,38 @@ Mình chia thành 3 việc:
 > consulted. … remove the bare names from allowedTools so they fall through to canUseTool.
 > ```
 >
-> **Ca E xác nhận nốt nửa còn lại** — nút *[Thôi]* là thật: `deny` **chặn được lệnh ghi** (file trên
-> đĩa không đổi), và câu `message` quay về cho agent **nguyên văn** như một kết quả tool. Lời hứa ở
-> mục 4 dưới đây (*"nó biết vì sao bị từ chối và tự xoay xở"*) có mã thi hành đứng sau.
+> **Case E confirms the other half** — the *[Cancel]* button is real: `deny` **actually blocks the write**
+> (the file on disk is unchanged), and the `message` goes right back to the agent **verbatim** as a tool
+> result. The promise made in item 4 below (*"it knows why it was refused and improvises"*) now has code
+> behind it.
 >
-> ⚠ Một ca đã đo hỏng rồi đo lại, ghi ra đây vì nó là bài học lặp: ca D lần đầu **vẫn cắm MCP**, nên
-> model lờ `Write` đi để dùng `mcp__files__write_file` ⇒ D đo lại đúng cái C vừa đo và bảng trông
-> như đã trả lời một câu chưa ai hỏi. Cùng lớp lỗi với `--no-browser` hôm 24/08: **phép thử đi vòng
-> qua đúng nhánh nó sinh ra để kiểm.**
+> ⚠ One case measured wrong then re-measured, recorded because it's a repeatable lesson: case D's first
+> run **still had MCP wired in**, so the model ignored `Write` in favor of `mcp__files__write_file` ⇒
+> D's first run accidentally re-measured C, and the table looked like it had answered a question nobody
+> had asked. Same bug class as the `--no-browser` incident on 24/08: **the test routed around the exact
+> branch it was built to check.**
 >
-> <details><summary>Khối cảnh báo gốc 19/08 — giữ lại để thấy nó sai ở đâu</summary>
+> <details><summary>Original 19/08 warning block — kept to show where it went wrong</summary>
 >
-> Toàn bộ mục 8c dưới đây dựng trên kiểu trong `.d.ts`, **chưa từng chạy thật**. Ngày 19/08 lần đầu có người thử `canUseTool` trong dự án này, và **nó không nổ một lần nào**:
+> Everything in section 8c below is built on types from `.d.ts`, **never run for real.** On 19/08, this was the first time anyone in this project actually tried `canUseTool`, and **it did not fire a single time**:
 >
-> | thử | kết quả |
+> | tried | result |
 > |---|---|
-> | `canUseTool` với `allowedTools: []` | không nổ |
-> | `canUseTool` + `prompt` là streaming input | không nổ |
-> | hook `PreToolUse`, có và không có `matcher: '*'` | không nổ |
+> | `canUseTool` with `allowedTools: []` | didn't fire |
+> | `canUseTool` + `prompt` as streaming input | didn't fire |
+> | `PreToolUse` hook, with and without `matcher: '*'` | didn't fire |
 >
-> Đo bằng cách ghi mọi lời gọi ra file: **rỗng tuyệt đối** trong khi tool vẫn chạy bình thường. Chi tiết: `SPEC-offices.md` §4.7.
+> Measured by logging every call to a file: **completely empty**, while the tool still ran normally. Details: `SPEC-offices.md` §4.7.
 >
-> **⚠ Ranh giới của phép đo — đừng suy rộng hơn:** chỉ đo với `Grep`/`Glob`, tức là tool **chỉ-đọc**. Suy đoán tốt nhất là chúng được CLI tự duyệt nên không bao giờ đi qua đường phê duyệt. `Bash` và tool ghi **chưa đo**, nên thiết kế dưới đây **chưa bị bác bỏ**.
+> **⚠ The boundary of this measurement — don't overreach:** only measured with `Grep`/`Glob`, i.e. **read-only** tools. Best guess: they're auto-approved by the CLI itself, so they never even go through the approval path. `Bash` and write tools **haven't been measured**, so the design below **hasn't been disproven.**
 >
-> **Việc bắt buộc trước khi xây:** một spike 10 phút — cho một vai trò khai `Bash`, giao nó chạy một lệnh, và kiểm `canUseTool` có nổ không. Nếu không nổ thì cả tầng 2 phải thiết kế lại (khả năng cao là bằng **tool MCP tự khai**, nơi ta tự chạy tác vụ nên không phụ thuộc cơ chế duyệt nào).
+> **Mandatory before building this:** a 10-minute spike — give a role `Bash`, have it run one command, and check whether `canUseTool` fires. If it doesn't, all of tier 2 has to be redesigned (most likely with a **self-declared MCP tool**, where we run the task ourselves and aren't dependent on any approval mechanism.)
 >
-> Đây đúng luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*, áp cho một tính năng **chưa viết**: đừng lên lịch dựa trên một cơ chế chưa ai thấy chạy.
+> This is exactly the rule *"an invariant is only real once source code enforces it,"* applied to a **not-yet-written** feature: don't schedule work on top of a mechanism nobody has ever seen run.
 >
 > </details>
 
-Đây là chỗ SDK làm sẵn cho ta, và làm tốt hơn mọi cách tự chế. Kiểm trên `sdk.d.ts@0.3.231`:
+This is a place the SDK already handles for us, and better than anything homemade. Checked against `sdk.d.ts@0.3.231`:
 
 ```ts
 type CanUseTool = (
@@ -754,392 +757,393 @@ type PermissionResult =
   | { behavior: 'deny'; message: string; interrupt?: boolean; /* … */ };
 ```
 
-> ⚠ Tài liệu web ghi `{ allow: true }`. **Sai.** Bản đã cài dùng `{ behavior: 'allow' }`. Luôn tin file `.d.ts` trong `node_modules`.
+> ⚠ The web docs say `{ allow: true }`. **Wrong.** The installed version uses `{ behavior: 'allow' }`. Always trust the `.d.ts` file in `node_modules`.
 
-**Vì sao cái này giải bài toán gọn hơn hẳn:**
+**Why this solves the problem far more neatly:**
 
-1. **Worker ĐỨNG CHỜ, không chết.** Promise chưa resolve thì lời gọi tool treo ở đó. Duyệt xong nó chạy tiếp **cùng một phiên, cùng một ngữ cảnh** — **0 token thêm**. Phương án "sinh task mới với payload đã duyệt" tôi từng nghĩ tới sẽ tốn thêm cả một lượt worker.
-2. **Bạn thấy đúng payload thật**, không phải mô tả về payload — nội dung email, không phải chữ "gửi email".
-3. **`updatedInput` cho SỬA trước khi cho qua.** Nút `[Sửa]` trên hộp thoại là thật, không phải trang trí.
-4. **`deny` kèm `message`** quay lại cho agent như một kết quả tool — nó biết vì sao bị từ chối và tự xoay xở, thay vì fail cụt.
+1. **The worker WAITS, it doesn't die.** An unresolved promise leaves the tool call suspended right there. Once approved, it continues **in the same session, same context** — **0 extra tokens.** An approach I once considered — "spawn a new task with the pre-approved payload" — would have cost an entire extra worker turn.
+2. **You see the actual real payload**, not a description of it — the email body, not the words "send an email."
+3. **`updatedInput` lets you EDIT before letting it through.** The `[Edit]` button on the dialog is real, not decoration.
+4. **`deny` carries a `message`** that returns to the agent as a tool result — it knows why it was refused and can improvise, instead of failing dead.
 
-**Một thay đổi bắt buộc trong `worker.ts`:** hôm nay ta truyền `allowedTools: role.tools`, mà tool nằm trong `allowedTools` thì **được duyệt tự động và KHÔNG gọi `canUseTool`**. Nên `allowedTools` chỉ được chứa nhóm `read` + `write_local`; mọi thứ từ `write_external` trở lên phải rơi xuống `canUseTool`.
+**One mandatory change in `worker.ts`:** today we pass `allowedTools: role.tools`, and a tool inside `allowedTools` gets **auto-approved and never calls `canUseTool`.** So `allowedTools` may only contain the `read` + `write_local` groups; everything from `write_external` up has to fall through to `canUseTool`.
 
-> ✅ **ĐO 25/08 XÁC NHẬN ĐÚNG TỪNG CHỮ** (ca B vs ca C ở trên). Câu này viết ra từ đọc `.d.ts`, và
-> hoá ra nó chính là lời giải cho bí ẩn 19/08 — đã nằm sẵn trong spec suốt 6 ngày mà không ai nối
-> hai đầu lại.
+> ✅ **MEASURED 25/08, CONFIRMS THIS WORD FOR WORD** (case B vs. case C above). This sentence was
+> written from reading the `.d.ts`, and it turns out to be the exact answer to the 19/08 mystery — it
+> had been sitting in the spec for 6 days without anyone connecting the two.
 >
-> 🔴 **Và đây là dòng chặn "Notion ghi được".** `worker.ts` hôm nay đẩy `mcp__<server>` (hoặc
-> `mcp__<server>__<tool>` với cánh tay chỉ-đọc) thẳng vào `allowedTools` ⇒ **tự duyệt, không hỏi
-> ai**. Bật ghi cho Notion trên nền đó nghĩa là agent sửa workspace thật của người dùng mà không một
-> hộp thoại nào — trong khi 3/28 tool của Notion khai `destructive`. Thứ tự bắt buộc là **cổng duyệt
-> TRƯỚC, cánh tay ghi SAU**, không đảo được.
+> 🔴 **And this is the line that blocks "Notion can write."** `worker.ts` today pushes `mcp__<server>`
+> (or `mcp__<server>__<tool>` for a read-only arm) straight into `allowedTools` ⇒ **auto-approved, no
+> one asked.** Enabling writes for Notion on top of that means the agent edits the user's real workspace
+> with no dialog whatsoever — while 3 of Notion's 28 tools are marked `destructive`. The mandatory order
+> is **approval gate FIRST, write-capable arm SECOND**, and it can't be reversed.
 >
-> ⚠ Đổi `allowedTools` là đổi hành vi của **mọi cánh tay đang chạy**, kể cả `filesystem` của bài 11.
-> Đó là một thay đổi đúng, nhưng không phải một thay đổi im lặng — bài 11 phải chạy lại sau đó.
+> ⚠ Changing `allowedTools` changes the behavior of **every currently running arm**, including the
+> `filesystem` arm from test #11. That's the right change, but not a silent one — test #11 has to be
+> rerun afterward.
 
-### 8d. Luồng đầy đủ
+### 8d. The full flow
 
 ```
-Agent gọi tool  ──►  canUseTool
+Agent calls a tool  ──►  canUseTool
                       │
-      mức read/write_local ──► { behavior:'allow' }            (không hỏi ai)
-      mức write_external   ──► kế hoạch đã duyệt? ──► allow
-                                    chưa ──► deny + lý do
-      mức irreversible     ──► HỎI NGƯỜI ─┬─ [Cho làm]  ──► allow
-                                          ├─ [Sửa]      ──► allow + updatedInput
-                                          └─ [Thôi]     ──► deny + message
-                                              (hết hạn 10 phút ──► deny)
+      read/write_local level ──► { behavior:'allow' }            (nobody asked)
+      write_external level   ──► plan already approved? ──► allow
+                                    no ──► deny + reason
+      irreversible level     ──► ASK THE USER ─┬─ [Go ahead]  ──► allow
+                                          ├─ [Edit]      ──► allow + updatedInput
+                                          └─ [Cancel]    ──► deny + message
+                                              (expires 10 min ──► deny)
 ```
 
-Sự kiện mới: `approval.requested` (kèm `toolName`, `input`, `plan_id`) và `approval.resolved`. Cả hai mang `office` + `plan_id` như mọi sự kiện khác, nên Telegram bridge dùng lại được nguyên xi.
+New events: `approval.requested` (carrying `toolName`, `input`, `plan_id`) and `approval.resolved`. Both carry `office` + `plan_id` like every other event, so the Telegram bridge reuses them as-is.
 
-**Hết hạn thì từ chối, không phải cho qua.** Người dùng đóng máy đi ngủ thì việc dừng lại — đó là hành vi đúng.
+**On expiry, deny — never let it through by default.** If the user closes the laptop and goes to sleep, the work stops — that's the correct behavior.
 
 ---
 
-## 8e. Bộ lệnh chữ — TIẾNG ANH, và phải chặn TRƯỚC khi tới SDK
+## 8e. The text command set — ENGLISH, and it must be intercepted BEFORE it reaches the SDK
 
-Dự án Việt Nam nhưng đi ra thế giới: **lệnh là tiếng Anh, câu trả lời theo ngôn ngữ người dùng.**
+Vietnamese project, but going global: **commands are in English, replies follow the user's language.**
 
-| Lệnh | Làm gì |
+| Command | Does |
 |---|---|
-| `/stop` | ngắt việc đang chạy (= phím `Esc`) |
-| `/approve` | duyệt thứ đang chờ |
-| `/reject` | từ chối |
-| `/status` | đang chạy gì, tốn bao nhiêu |
-| `/help` | liệt kê chính bảng này |
+| `/stop` | interrupt the running work (= the `Esc` key) |
+| `/approve` | approve whatever is pending |
+| `/reject` | reject it |
+| `/status` | what's running, how much it's cost |
+| `/help` | list this exact table |
 
-### ⚠ Nguy cơ đụng lệnh — và cách chặn
+### ⚠ Risk of colliding with real commands — and how it's blocked
 
-Claude Code có bộ lệnh gạch chéo riêng (`/clear`, `/compact`, `/model`…). Chuỗi ta đưa vào `query({ prompt })` **đi tới chính CLI đó**, nên một câu bắt đầu bằng `/` **có thể bị nó hiểu là lệnh của nó**. `/clear` lọt qua là mất trắng ngữ cảnh hội thoại của Trợ lý mà không ai biết vì sao.
+Claude Code has its own set of slash commands (`/clear`, `/compact`, `/model`…). The string we pass into `query({ prompt })` **goes straight to that same CLI**, so a sentence starting with `/` **could get interpreted as one of its own commands.** `/clear` slipping through wipes the Assistant's conversation context with no explanation to anyone.
 
-**Luật, không có ngoại lệ: mọi chuỗi bắt đầu bằng `/` PHẢI bị chặn ở `office.say()` và KHÔNG BAO GIỜ được chuyển nguyên xuống SDK.**
+**Rule, no exceptions: any string starting with `/` MUST be intercepted at `office.say()` and MUST NEVER be passed down to the SDK unmodified.**
 
 ```
-người dùng gõ ──► office.say()
+user types ──► office.say()
                     │
-     "/stop"        ├─► lệnh của TA      → xử lý bằng code, 0 token
-     "/clear"       ├─► không phải của ta → trả lời "không có lệnh này" + /help
-     "//giá"        ├─► thoát dấu        → gỡ một "/" rồi mới gửi: "/giá"
-     "viết bài…"    └─► văn bản thường   → gửi cho Trợ lý
+     "/stop"        ├─► OUR command      → handled in code, 0 tokens
+     "/clear"       ├─► not ours          → reply "no such command" + /help
+     "//price"      ├─► escaped slash     → strip one "/" then send: "/price"
+     "write a post…" └─► ordinary text    → forwarded to the Assistant
 ```
 
-Ba tính chất của thiết kế này:
+Three properties of this design:
 
-1. **Danh sách trắng, không phải danh sách đen.** Ta không cần biết Claude Code có những lệnh gì, hôm nay hay năm sau — cái gì không phải của ta thì không đi tiếp.
-2. **Lệnh xử lý bằng code, 0 token.** Ném `/stop` cho model là trả tiền để được dừng chậm hơn.
-3. **`//` là cửa thoát** cho người thật sự muốn bắt đầu câu bằng dấu gạch chéo.
+1. **An allowlist, not a blocklist.** We don't need to know what commands Claude Code has today, or will have next year — anything that isn't ours doesn't get forwarded.
+2. **Commands are handled in code, 0 tokens.** Throwing `/stop` at the model is paying to be stopped more slowly.
+3. **`//` is the escape hatch** for someone who genuinely wants a sentence to start with a slash.
 
-Cùng một bộ lệnh dùng được ở giao diện và ở Telegram — vì cả hai đều đi qua `office.say()`.
+The same command set works identically in the UI and on Telegram — because both go through `office.say()`.
 
 ---
 
-## 10. Người không biết gì tự dựng được "cánh tay" — bằng đúng ba đường
+## 10. A total beginner building an "arm" on their own — through exactly three routes
 
-Bạn hỏi đúng câu phải hỏi: *tôi tự tin thế thì chỉ ra người không biết gì họ làm thế nào.*
+You asked the right question: *if you're this confident, walk me through exactly what a total beginner does.*
 
-### 10a. Trình dựng Connector — ba đường vào, một kết quả
+### 10a. The Connector Builder — three entry routes, one output
 
-Cả ba đều sinh ra **cùng một file** `connectors/<tên>.yaml`, và runtime tổng hợp thành MCP chạy trong tiến trình bằng `createSdkMcpServer` + `tool()`.
+All three produce **the same file**, `connectors/<name>.yaml`, and the runtime assembles it into an in-process MCP via `createSdkMcpServer` + `tool()`.
 
-| Đường | Người dùng làm | Ai dùng được |
+| Route | What the user does | Who it's for |
 |---|---|---|
-| **A · Dán cURL** ⭐ | copy một lệnh cURL từ tài liệu API hoặc từ DevTools ("Copy as cURL") rồi dán | **gần như ai cũng làm được** — đây là đường chính |
-| **B · Dán OpenAPI** | dán URL hoặc file `openapi.json` | ai có sẵn tài liệu chuẩn |
-| **C · Điền form** | 4 ô: method · URL · header · ví dụ body | ai không có cURL lẫn OpenAPI |
+| **A · Paste a cURL** ⭐ | copy a cURL command from API docs or DevTools ("Copy as cURL") and paste it | **almost anyone can do this** — the main route |
+| **B · Paste OpenAPI** | paste a URL or an `openapi.json` file | anyone with existing formal docs |
+| **C · Fill in a form** | 4 fields: method · URL · header · example body | anyone with neither cURL nor OpenAPI |
 
-**Vì sao cURL là đường chính:** nó là thứ **đã tồn tại sẵn** ở mọi trang tài liệu API, và mọi trình duyệt đều xuất ra được bằng một cú chuột phải. Người dùng không *viết* gì cả — họ *chép*.
+**Why cURL is the main route:** it's something that **already exists** on almost every API docs page, and every browser can export it with a single right-click. The user isn't *writing* anything — they're *copying.*
 
 ```
-┌─ Cánh tay mới ────────────────────────────────────────┐
-│ Tên       [ Kho hàng của tôi                        ] │
-│ Mô tả     ┌──────────────────────────────────────┐   │
-│           │ Tra tồn kho theo mã sản phẩm. Trả về │   │
-│           │ số lượng còn và giá bán.             │   │
+┌─ New arm ─────────────────────────────────────────────┐
+│ Name       [ My inventory                            ] │
+│ Description ┌──────────────────────────────────────┐   │
+│           │ Look up stock by product code. Returns  │   │
+│           │ quantity in stock and price.             │   │
 │           └──────────────────────────────────────┘   │
 │                                                       │
-│ Dán cURL  ┌──────────────────────────────────────┐   │
+│ Paste cURL  ┌──────────────────────────────────────┐   │
 │           │ curl -X GET \                        │   │
 │           │  https://api.shop.vn/items/{id} \    │   │
 │           │  -H "Authorization: Bearer abc123"   │   │
 │           └──────────────────────────────────────┘   │
 │                                                       │
-│ Suy ra được:                                          │
-│   phương thức  GET      → chỉ đọc, không cần duyệt    │
-│   tham số      id       (bắt buộc, từ {id})           │
-│   chìa khoá    ●●●●●●   → lưu thành SHOP_TOKEN        │
+│ Inferred:                                             │
+│   method       GET      → read-only, no approval needed │
+│   parameter    id       (required, from {id})           │
+│   key          ●●●●●●   → saved as SHOP_TOKEN            │
 │                                                       │
-│         [ Thử ngay ]   [ Lưu ]                        │
+│         [ Try it ]   [ Save ]                        │
 └───────────────────────────────────────────────────────┘
 ```
 
-### 10b. "Không lỗi" đến từ nút **Thử ngay**, không đến từ lời hứa
+### 10b. "No errors" comes from the **Try it** button, not from a promise
 
-Đây là phần quan trọng nhất và cũng là phần rẻ nhất để làm.
+This is the most important part, and also the cheapest to build.
 
-Bấm **Thử ngay** → ta gọi thật một lần với chìa thật → hiện **nguyên văn phản hồi**:
+Click **Try it** → we make one real call with the real key → show the **verbatim response**:
 
 ```
 ✓ 200 OK · 180ms
-{ "id": "SP-102", "name": "Áo thun", "stock": 47, "price": 250000 }
-→ Đã hiểu. Cánh tay này trả về: id, name, stock, price
+{ "id": "SP-102", "name": "T-shirt", "stock": 47, "price": 250000 }
+→ Understood. This arm returns: id, name, stock, price
 ```
 
-hoặc
+or
 
 ```
 ✗ 401 Unauthorized
 { "error": "invalid token" }
-→ Chìa khoá sai hoặc hết hạn. Sửa ở ô Authorization rồi thử lại.
+→ Wrong or expired key. Fix the Authorization field and try again.
 ```
 
-**Không cho Lưu khi chưa Thử thành công một lần.** Người dùng non-code không cần hiểu HTTP — họ chỉ cần thấy dấu ✓. Đây là chỗ biến "hy vọng nó chạy" thành "tôi đã nhìn thấy nó chạy", và nó **loại bỏ gần hết lớp lỗi cấu hình** trước khi lỗi đó kịp gặp một agent.
+**No Save allowed until Try succeeds once.** A non-technical user doesn't need to understand HTTP — they just need to see a ✓. This is the point where "hoping it works" becomes "I watched it work," and it **eliminates almost the entire class of configuration errors** before any of them ever reach an agent.
 
-Thêm: ta lưu luôn phản hồi mẫu đó làm **ví dụ đầu ra** trong `description` của tool. Model biết trước nó sẽ nhận về hình dạng gì.
+Additionally: we save that sample response as the **example output** in the tool's `description`. The model knows in advance what shape it will get back.
 
-### 10c. Ranh giới ngôn ngữ tự nhiên — chỗ nào được, chỗ nào không
+### 10c. Where natural language works, and where it doesn't
 
-| Phần | Dạng | Vì sao |
+| Part | Form | Why |
 |---|---|---|
-| **Cái này để làm gì** | ✅ ngôn ngữ tự nhiên | thành `description` của tool — đúng thứ model cần |
-| **Gọi nó thế nào** | ❌ phải có mẫu (cURL/OpenAPI/form) | thiếu schema thì model đoán tên tham số và **sai lặng lẽ** |
-| **Chìa khoá** | ❌ phải là ô riêng | xem §10e |
+| **What this does** | ✅ natural language | becomes the tool's `description` — exactly what the model needs |
+| **How to call it** | ❌ requires a concrete sample (cURL/OpenAPI/form) | without a schema the model guesses parameter names and **fails silently** |
+| **The key** | ❌ has to be its own field | see §10e |
 
-Người dùng vẫn "mô tả bằng lời" — chỉ là lời của họ đi vào đúng ô mà lời có tác dụng.
+The user still "describes it in words" — just that their words land in exactly the field where words are effective.
 
-### 10d. Description: ai phải viết, và sửa thì có phải dựng lại không
+### 10d. Description: who has to write it, and does editing require a rebuild?
 
-| Loại | Người dùng có phải viết mô tả? | Vì sao |
+| Kind | Does the user have to write a description? | Why |
 |---|---|---|
-| **MCP ngoài sạch sẽ** (Notion, Google…) | ❌ **không** | server đã công bố `tools/list` kèm mô tả từng tool. Ta chỉ xin **tên hiển thị** cho node trên sơ đồ. |
-| **Connector tự dựng** | ✅ **có, và là ô duy nhất** | không có nguồn nào khác. Chính textarea đó thành `description` của tool. |
+| **A clean external MCP** (Notion, Google…) | ❌ **no** | the server already publishes `tools/list` with a description per tool. We only ask for a **display name** for the diagram node. |
+| **A self-built connector** | ✅ **yes, and it's the only field** | there's no other source. That exact textarea becomes the tool's `description`. |
 
-**Có trùng không?** Không. Với connector tự dựng, mô tả của người dùng là mô tả **duy nhất** — không có gì để trùng. Với MCP ngoài, ta **không** thêm mô tả nào vào tool cả; tên hiển thị chỉ dùng cho node và cho dòng khả năng ở §1.
+**Do they overlap?** No. For a self-built connector, the user's description is the **only** description — nothing to duplicate. For an external MCP, we **don't** add any description of our own to the tool; the display name is only used for the node and for the §1 capability line.
 
-**Sửa mô tả thì có phải "dựng lại node" không?**
+**Does editing the description mean "rebuilding" the node?**
 
-Không có bước dựng lại nào cho người dùng — worker vốn là one-shot, lần chạy sau tự dựng server mới. **Nhưng nó không miễn phí:** mô tả tool nằm trong định nghĩa tool, mà định nghĩa tool đứng **trước** system prompt trong prefix được cache. Sửa mô tả = **đổi prefix = ghi lại cache một lần** cho mọi agent đang nối tới connector đó.
+There's no "rebuild" step for the user — a worker is already one-shot, the next run just constructs the server fresh. **But it isn't free:** the tool's description lives inside the tool's definition, which sits **before** the system prompt in the cached prefix. Editing the description = **changing the prefix = one cache rewrite** for every agent wired to that connector.
 
-Nên áp đúng luật của skills: **nút Lưu tường minh, không autosave, và nói ra cái giá ngay cạnh nút** — *"Lưu sẽ làm 2 nhân viên ghi lại bộ nhớ đệm một lần."*
+So the same rule as skills applies: **an explicit Save button, no autosave, and state the cost right next to the button** — *"Saving will make 2 workers rewrite their cache once."*
 
-### 10e. Chìa khoá: **luôn có cấu trúc**, không bao giờ là văn bản tự do
+### 10e. Keys: **always structured**, never free-form text
 
-Trả lời thẳng câu 3 của bạn: **không dùng ngôn ngữ tự nhiên kiểu `ID=... \n KEY=...`.** Ba lý do, lý do đầu là lý do chặn:
+Answering your third question directly: **do not use natural-language input like `ID=... \n KEY=...`.** Three reasons, the first one is the deal-breaker:
 
-1. **Tên biến phải khớp CHÍNH XÁC.** MCP Notion đọc `NOTION_TOKEN`, không đọc `Notion token` hay `TOKEN`. Một ô văn bản tự do sẽ sinh ra hàng chục cách viết sai mà ta không đoán nổi.
-2. **Phân tích văn bản tự do sẽ hỏng** ở dấu `=` trong giá trị, ở khoảng trắng, ở dấu nháy, ở khoá nhiều dòng (private key của Google là nhiều dòng).
-3. **Có cấu trúc mới hướng dẫn được từng ô** — *"lấy ở Notion → Settings → Connections → Develop your own integration"*. Một ô trống không dạy được ai điều gì.
+1. **The variable name has to match EXACTLY.** Notion's MCP reads `NOTION_TOKEN`, not `Notion token` or `TOKEN`. A free-text box would generate dozens of misspellings we can't predict.
+2. **Parsing free text is fragile** at `=` inside a value, at whitespace, at quotes, at a multi-line key (Google's private key is multiple lines).
+3. **Structure is what makes per-field instructions possible** — *"get this from Notion → Settings → Connections → Develop your own integration."* An empty text box teaches nobody anything.
 
-**Nhưng người dùng không phải học định dạng nào cả**, vì form được **sinh ra**:
+**But the user never has to learn any format**, because the form is **generated**:
 
-| Nguồn | Ô hiện ra từ đâu |
+| Source | Where the fields come from |
 |---|---|
-| Danh mục có sẵn (Notion, Google, Slack) | ta ship sẵn danh sách ô + hướng dẫn từng ô |
-| Dán cấu hình MCP | quét `env`/`headers` tìm chỗ trống, hỏi đúng những ô đó |
-| Connector tự dựng | suy từ chính cURL đã dán — `Bearer abc123` → một ô, gợi ý tên `SHOP_TOKEN` |
+| Existing catalog (Notion, Google, Slack) | we ship a fixed list of fields + per-field instructions |
+| Pasted MCP config | scan `env`/`headers` for empty slots, ask only for those |
+| Self-built connector | inferred from the cURL that was pasted — `Bearer abc123` → one field, suggested name `SHOP_TOKEN` |
 
-Trải nghiệm vẫn là **"điền 2 ô"**, không phải "học một định dạng". Khác biệt nằm ở chỗ 2 ô đó do ta sinh ra chứ không do người dùng nghĩ ra.
+The experience is always **"fill in 2 fields"**, never "learn a format." The difference is those 2 fields are generated by us, not invented by the user.
 
-### 10f. stdio vẫn ở lại — bạn đúng
+### 10f. stdio stays — you're right
 
-Streamable HTTP cho remote, **nhưng stdio không phải hàng cũ**: nó là cách duy nhất chạy một cánh tay **trên chính phần cứng của bạn** — đọc file trên máy, gọi thiết bị trong mạng LAN, sau này là trên VPS của bạn. Đó là thứ dịch vụ đám mây không làm được, và nó hợp với nguyên tắc "kết quả nằm trong thư mục của bạn".
+Streamable HTTP is for remote, **but stdio isn't legacy**: it's the only way to run an arm **on your own hardware** — reading a file on your machine, calling a device on your LAN, later on your own VPS. That's something no cloud service can do, and it fits the principle "results live inside your own folder."
 
-Chốt ba loại, không loại nào thay loại nào:
+Three kinds locked in, no one replacing another:
 
-| | Dùng khi | Chìa khoá đi đâu |
+| | Used when | Where the key goes |
 |---|---|---|
-| **stdio** | cánh tay chạy trên máy/VPS của bạn | `env` của tiến trình con |
-| **Streamable HTTP** | dịch vụ có sẵn sau một URL | header `Authorization` |
-| **Connector tự dựng** | một endpoint HTTP lẻ của bạn | header, do ta tiêm |
+| **stdio** | an arm running on your machine/VPS | the `env` of the child process |
+| **Streamable HTTP** | a service already sitting behind a URL | `Authorization` header |
+| **Self-built connector** | your own single HTTP endpoint | header, injected by us |
 
 ---
 
-## 11. Trợ lý là MỘT NGƯỜI — hòm thư và hai trạng thái độc lập
+## 11. The Assistant is ONE PERSON — a mailbox and two independent states
 
-### 11a. Đây không phải lựa chọn thiết kế, nó là bắt buộc kỹ thuật
+### 11a. This isn't a design choice, it's a technical requirement
 
-`askSession()` chạy `resume: sessionId` rồi ghi đè `sessionId` bằng id mới. **Hai lượt gọi chồng nhau thì cả hai cùng resume một id, cả hai cùng ghi đè, và MỘT LƯỢT BỊ MẤT TRẮNG** khỏi trí nhớ hội thoại. Người dùng thấy Trợ lý "quên" câu vừa nói mà không hiểu vì sao.
+`askSession()` runs `resume: sessionId` then overwrites `sessionId` with the new id. **Two overlapping calls both resume the same id, both overwrite it, and ONE TURN IS LOST OUTRIGHT** from the conversation memory. The user sees the Assistant "forget" what they just said and has no idea why.
 
-Nên nguyên tắc sản phẩm *"một người chỉ làm một việc một lúc"* trùng khít với ràng buộc kỹ thuật. Ghi vào spec, và nó đúng ở cả hai tầng.
+So the product principle *"one person does one thing at a time"* lines up exactly with a technical constraint. Written into the spec, and it's correct on both levels.
 
-**Nhưng nhân viên thì chạy song song thoải mái** — họ là hàm stateless, mỗi người một phiên riêng. Đây là hai trạng thái **hoàn toàn độc lập**:
+**But workers run in parallel freely** — they're stateless functions, each with its own session. These are two **entirely independent** states:
 
 ```
-Trợ lý:    idle ─────► thinking ─────► idle
-Nhân viên:      2 đang chạy ────────────► 1 ────► 0
+Assistant: idle ─────► thinking ─────► idle
+Workers:      2 running ────────────► 1 ────► 0
 ```
 
-Giao diện phải nói được **cả hai**, nếu không người dùng thấy im lặng và tưởng hệ thống chết. Sự kiện `office.activity { assistant, workers, queued }`.
+The UI has to communicate **both**, or the user sees silence and assumes the system is dead. Event: `office.activity { assistant, workers, queued }`.
 
-### 11b. Hòm thư — gom, không chặn
+### 11b. Mailbox — batches, doesn't block
 
-| Tình huống | Xử lý |
+| Situation | Handling |
 |---|---|
-| Trợ lý **bận**, người dùng nhắn | vào hòm thư. Nhiều tin liên tiếp → **gom làm MỘT lượt** |
-| Trợ lý **rảnh**, nhân viên đang chạy | trả lời ngay. Đây là "tận dụng khoảng trống thời gian" |
-| Người dùng giao **việc mới** khi đang chạy việc cũ | ghi nhận, xếp vào `deferred`, làm nốt sau khi ca hiện tại xong |
-| Hòm thư đầy (>12 tin) | từ chối lịch sự: *"Bạn nhắn nhanh quá — mình còn N tin chưa đọc"* |
-| Lệnh chữ (`/stop`…) | **vượt hàng đợi**, xử lý bằng code, 0 token |
+| Assistant is **busy**, user sends a message | goes into the mailbox. Several in a row → **batched into ONE turn** |
+| Assistant is **idle**, workers are running | replied to immediately. This is "using the dead time productively" |
+| User assigns **new work** while old work is running | recorded, put into `deferred`, done after the current job finishes |
+| Mailbox full (>12 messages) | politely refused: *"You're sending messages faster than I can read — I still have N unread"* |
+| Text commands (`/stop`…) | **jump the queue**, handled in code, 0 tokens |
 
-**Gom là tiết kiệm thật, không chỉ cho gọn.** Đo được: bắn 4 tin cùng lúc → **2 lượt gọi thay vì 4**. Và nó *đúng hơn*: ba câu gõ liền nhau là một ý, trả lời câu 1 khi đã có ngữ cảnh câu 3 là trả lời sai.
+**Batching is a real saving, not just tidiness.** Measured: firing 4 messages at once → **2 calls instead of 4.** And it's *more correct*: three messages typed in quick succession are one thought — answering message 1 once message 3's context already exists means answering wrong.
 
-Câu gộp dựng bằng **code**, không phải một lượt LLM để "tóm tắt" — chuyện đó đúng là mua sự mượt mà bằng token, thứ bốn tiêu chí cấm.
+The merged message is built with **code**, not an LLM call to "summarize" — that would be buying smoothness with tokens, forbidden by criterion four.
 
-### 11c. Khoá phải là MUTEX THẬT, không phải một lá cờ
+### 11c. The lock has to be a REAL MUTEX, not a flag
 
-Bản đầu dùng `busy = true/false`. Không đủ: `run()` gọi `plan()` rồi `report()` từ một nhánh khác với vòng bơm, hai bên cùng đặt cờ, bên nào xong trước cũng gỡ cờ của bên kia — **đúng lại cái lỗi mà cả cơ chế này sinh ra để tránh**. Phải xếp hàng bằng chuỗi promise, và đếm độ sâu để lồng nhau không gỡ khoá sớm.
+The first version used `busy = true/false`. Not enough: `run()` calls `plan()` then `report()` from a different pumped branch, both set the flag, whichever finishes first clears the other one's flag — **the exact bug this whole mechanism exists to prevent.** It has to queue with a promise chain, and count depth so nesting doesn't release the lock early.
 
-Ba chỗ phải qua khoá: `route()` · `plan()` · `report()`. Giai đoạn DAG chạy thì **không** giữ khoá — đó chính là khoảng Trợ lý rảnh để nói chuyện.
+Three places have to go through the lock: `route()` · `plan()` · `report()`. During the DAG-running stage the lock is **not** held — that's exactly the window where the Assistant is free to talk.
 
-### 11d. Bảng quản lý của Trợ lý — do CODE giữ, không do Trợ lý giữ
+### 11d. The Assistant's tracking table is held by CODE, not by the Assistant
 
-Ý tưởng "Trợ lý cần một cái bảng, có cờ cái nào cũ cái nào chưa xử lý" là đúng — nhưng **cái bảng đó phải nằm trong mã nguồn, không nằm trong prompt**.
+The idea "the Assistant needs a table, with flags for what's stale and what's unprocessed" is right — but **that table has to live in source code, not in the prompt.**
 
-Trợ lý mà phải suy luận trên một danh sách việc tồn đọng thì danh sách đó nằm trong ngữ cảnh **mọi lượt**, và nó dài ra theo thời gian. Thay vào đó: hàng đợi là một cấu trúc dữ liệu thật, code loại tin cũ, và **Trợ lý chỉ bao giờ nhìn thấy đúng lô hiện tại**.
+An Assistant forced to reason over a backlog list carries that list in the context of **every turn**, and it grows over time. Instead: the queue is a real data structure, code drops stale entries, and **the Assistant only ever sees the current batch.**
 
-### 11e. `/stop` dừng CẢ HỆ THỐNG — **BỐN** thứ, không phải ba
+### 11e. `/stop` stops the WHOLE system — **FOUR** things, not three
 
-Ngắt nhân viên đang chạy **+** **ngắt lượt của chính Trợ lý** **+** xoá hòm thư **+** bỏ việc đang hoãn. Giữ lại bất cứ thứ gì trong bốn thứ đó nghĩa là người dùng bấm Dừng xong vẫn thấy hệ thống tự làm tiếp — đúng thứ họ vừa bảo đừng. Câu trả lời nói rõ đã cắt gì và bỏ bao nhiêu việc.
+Interrupts running workers **+** **interrupts the Assistant's own turn** **+** clears the mailbox **+** drops deferred work. Leaving any one of the four in place means the user hits Stop and still sees the system keep going — exactly what they just said not to do. The reply states exactly what was cut and how much work was dropped.
 
-> ⚠ **Thứ thứ hai bị bỏ quên tới 20/08, và bảng này là bằng chứng.** Ba thứ kia có mã nguồn thi hành từ đầu; lượt Trợ lý thì `Assistant.run()` **không có `AbortController` nào** — không tồn tại tay cầm để ngắt. Đúng luật *một bất biến chỉ có thật khi có mã nguồn thi hành nó*: câu "dừng CẢ HỆ THỐNG" đọc rất thuyết phục và sai suốt.
+> ⚠ **The second item was overlooked until 20/08, and this table is the evidence.** The other three had enforcing code from the start; the Assistant's turn had **no `AbortController`** in `Assistant.run()` at all — no handle existed to interrupt it. Exactly the rule *an invariant is only real once source code enforces it*: the sentence "stops the WHOLE system" read very convincingly and was wrong the entire time.
 
-**Ba biến, phải hỏi cả ba trước khi kết luận "đang rảnh":**
+**Three variables, all three have to be checked before concluding "it's idle":**
 
-| | biến | ý nghĩa |
+| | variable | meaning |
 |---|---|---|
-| Plan đang chạy | `office.state === 'working'` | có DAG trên sơ đồ |
-| Trợ lý đang trong một lượt | `mailbox.isBusy` · `clearing` | **không** suy được từ hàng đợi |
-| Còn việc xếp hàng | `mailbox.size` · `deferred.length` | |
+| A plan is running | `office.state === 'working'` | there's a DAG on the diagram |
+| The Assistant is mid-turn | `mailbox.isBusy` · `clearing` | **cannot** be derived from the queue |
+| Work still queued | `mailbox.size` · `deferred.length` | |
 
-Bug đã sửa 20/08: phép kiểm cũ chỉ hỏi `state` + `size` + `deferred`. Lúc Trợ lý đang nghĩ, lô tin đã được `take()` ra khỏi hàng đợi nên `size === 0`, và `state` vẫn `idle` vì chưa có Plan nào ⇒ `/stop` trả *"Hiện không có việc nào đang chạy."* rồi câu trả lời hiện ra ngay sau. **Hệ thống nói dối về trạng thái của chính nó**, ngay thao tác đầu tiên của phiên.
+Bug fixed 20/08: the old check only asked `state` + `size` + `deferred`. While the Assistant was thinking, the batch had already been `take()`n out of the queue so `size === 0`, and `state` was still `idle` since no Plan existed yet ⇒ `/stop` replied *"Nothing is currently running."* right before the actual answer appeared. **The system lied about its own state**, on the very first action of the session.
 
-**Ngắt lượt Trợ lý KHÔNG mâu thuẫn với §11f** (*"mặc định để chạy nốt, không giết"*). Luật đó bảo vệ **bản nháp đã trả tiền** của nhân viên: giết ở 80% là mất trắng 80% tiền đã tiêu. Một lượt `route()` không đẻ ra bản nháp nào — ngắt nó chỉ mất một câu trả lời, đúng cái người dùng vừa bảo đừng nói.
+**`/stop` interrupting the Assistant's turn does NOT contradict §11f** (*"default to letting it finish, don't kill it"*). That rule protects a worker's **already-paid-for draft**: killing it at 80% loses 80% of the money already spent. A `route()` turn produces no draft at all — interrupting it only loses one reply, exactly what the user just asked for.
 
-**Ba hệ quả phải làm cùng lúc, thiếu một là hở:**
+**Three consequences that must happen together, missing one leaves a gap:**
 
-1. `FailureKind` có thêm `'stopped'` — ngắt **không phải lỗi**. Không có nhãn này thì ca đóng ở `failed` và nhật ký ghi *"hệ thống làm sai"* cho một việc người dùng tự bảo đừng làm. Cùng lý do `blocked` đã tách khỏi `failed` (SPEC-offices §6): nhật ký phải phân biệt *ta hỏng* · *ta đang chờ bạn* · *bạn bảo dừng*.
-2. **Đúng MỘT câu báo.** `/stop` đã trả lời rồi, nên `pump()` và `Office.run()` **không** phát thêm tin cho `kind === 'stopped'`.
-3. **Con trỏ session trả về chỗ cũ.** `sessionId` được ghi từ tin `init`, tức là ngay đầu lượt — giữ con trỏ mới sau khi ngắt nghĩa là lượt sau `resume` vào một bản ghi **viết dở**, và cái giá là toàn bộ trí nhớ hội thoại. Bản ghi cũ vẫn nằm nguyên trên đĩa (append-only) nên trả về là an toàn, và ngữ nghĩa cũng đúng: lượt bị dừng thì **không xảy ra**.
+1. `FailureKind` gets a new `'stopped'` value — an interrupt is **not an error.** Without this label, the case closes as `failed` and the log records *"the system got it wrong"* for something the user explicitly asked to stop. Same reasoning that split `blocked` from `failed` (SPEC-offices §6): the log has to distinguish *we messed up* · *we're waiting on you* · *you said stop.*
+2. **Exactly ONE reply.** `/stop` has already replied, so `pump()` and `Office.run()` **must not** send another message for `kind === 'stopped'`.
+3. **The session pointer rolls back.** `sessionId` gets written from the `init` message, i.e. right at the start of a turn — keeping the new pointer after an interrupt means the next turn's `resume` lands on a **half-written** record, and the cost is the entire conversation memory. The old record is still intact on disk (append-only), so rolling back is safe, and it's semantically correct too: an interrupted turn **never happened.**
 
-⚠ Cơ chế là `abortController`, **không** phải `Query.interrupt()` — bài học đã trả tiền một lần ở §8, đừng thử lại.
+⚠ The mechanism is `abortController`, **not** `Query.interrupt()` — a lesson already paid for once in §8, don't try it again.
 
 ---
 
-## 11f. Nhân viên đang chạy mà người dùng đổi ý — ba tầng, ba câu trả lời khác nhau
+## 11f. A worker is running and the user changes their mind — three tiers, three different answers
 
-### Tầng 1 — "nhồi input mới vào worker đang chạy": KHÔNG LÀM ĐƯỢC, và đó là tin tốt
+### Tier 1 — "inject new input into a running worker": NOT POSSIBLE, and that's good news
 
-Worker là một lượt `query()` one-shot. Nó **không có hòm thư**. Không có API nào đưa thêm lời vào giữa chừng — chỉ có **giết** hoặc **để chạy xong**.
+A worker is a one-shot `query()`. It has **no mailbox.** There's no API to feed it another instruction mid-run — only **kill it** or **let it finish.**
 
-Nghe như hạn chế, nhưng nó xoá luôn một câu hỏi khó: *"worker đang bận mà lại cần đúng worker đó thì sao?"* — **không bao giờ xảy ra**. Worker stateless nên một vai trò chạy được nhiều task cùng lúc; không có tranh chấp trên *người*, chỉ có trần concurrency. Quyết định "agent là hàm stateless" từ phiên đầu trả công lần nữa ở đây.
+Sounds limiting, but it erases a hard question entirely: *"the worker is busy but the exact same worker is needed again — now what?"* — **never happens.** A worker is stateless, so one role can run multiple tasks at once; there's no contention over a *person*, only a concurrency cap. The "agent is a stateless function" decision from the first session pays off again here.
 
-### Tầng 2 — giết hay để chạy nốt: kinh tế học quyết định, không phải cảm tính
+### Tier 2 — kill it, or let it finish: economics decides, not gut feeling
 
-`chi phí ≈ số lượt × prefix × 0.1` nghĩa là **worker đã chạy 80% thì đã tiêu 80% tiền của nó**.
+`cost ≈ turns × prefix × 0.1` means **a worker already 80% through has already spent 80% of its money.**
 
-| | Giết ngay | Để chạy nốt rồi sửa |
+| | Kill it now | Let it finish, then fix it |
 |---|---|---|
-| Tiền đã tiêu | **mất trắng** | giữ được |
-| Tiền phải tiêu thêm | làm lại **từ đầu** | 20% còn lại + một task sửa |
-| Đầu vào của bước sau | không có gì | **có bản nháp để SỬA, không phải viết lại** |
+| Money already spent | **lost entirely** | kept |
+| Money still to spend | starts **from zero** again | the remaining 20% + one fix-up task |
+| Input for the next step | nothing | **a draft to EDIT, not write from scratch** |
 
-Task *sửa một bản nháp* rẻ hơn hẳn task *viết mới*. Nên **mặc định: để chạy nốt.** Trùng với đời thực — bảo người viết "giọng trẻ hơn" thì họ chỉnh bản nháp, không xé đi viết lại.
+Fixing a draft is far cheaper than writing a new one. So **default: let it finish.** Matches real life — telling a writer "make it younger" gets you an edit to the draft, not a torn-up page and a fresh start.
 
-**Giết chỉ dành cho `/stop`** — người dùng nói thẳng "sai hướng rồi", đúng lúc mà việc phí tiền đã tiêu là đúng. Không tự động giết vì bất kỳ suy đoán nào.
+**Killing is reserved for `/stop`** — the user explicitly saying "this is going the wrong way," exactly the moment when wasting the money already spent is correct. Never auto-killed based on any guess.
 
-### Tầng 2b — "mớ bầy nhầy" sau khi giết: NÓI RA, đừng xoá
+### Tier 2b — the "mess" left behind after a kill: SAY SO, don't erase it
 
-Worker bị giết có thể đã ghi được một phần các file nó được giao. Bản đầu trả `artifacts: []` — tức là **nói dối rằng đĩa sạch**, rồi lần chạy sau ghi đè mà không ai biết.
+A killed worker may have already written some of the files it was assigned. The first version returned `artifacts: []` — i.e. **lying that the disk is clean**, and the next run would overwrite silently.
 
-Giờ: `stoppedReceipt` quét `brief.outputs`, liệt kê file **thật sự tồn tại**, và nói *"có N file đã ghi dở, xem lại trước khi dùng"*.
+Now: `stoppedReceipt` scans `brief.outputs`, lists files that **actually exist**, and says *"N files were partially written, review before using."*
 
-**Không xoá.** File dở vẫn có thể dùng được, và xoá thứ người dùng chưa kịp nhìn là quyết định của họ chứ không phải của ta.
+**Not deleted.** A partial file can still be useful, and deleting something the user hasn't even looked at yet is their call to make, not ours.
 
-*(Đỡ hơn ta tưởng: `CORE_PROMPT` đã dặn "ghi output trong MỘT lời gọi Write". Nên mớ dở thường là "2 trong 3 file", không phải "nửa file".)*
+*(Better than it sounds: `CORE_PROMPT` already says "write output in ONE `Write` call." So the mess is usually "2 of 3 files done," not "half a file.")*
 
-### Tầng 3 — hai việc độc lập: hàng đợi, một plan một lúc mỗi văn phòng
+### Tier 3 — two independent things: a queue, one plan at a time per office
 
-Trực giác "để command vào job queue rồi bỏ đi" (kiểu channel của goroutine) là đúng. Nhưng hàng đợi phải **nhìn thấy được**, không phải một mảng riêng tư — nên `office.activity` mang thêm `jobs`, và giao diện hiện *"1 việc xếp hàng"*.
+The instinct "put the command in a job queue and walk away" (like a goroutine channel) is correct. But the queue has to be **visible**, not a private array — so `office.activity` carries an added `jobs` field, and the UI shows *"1 job queued."*
 
-**Vì sao KHÔNG chạy hai plan song song trong một văn phòng:**
+**Why NOT run two plans in parallel within one office:**
 
-1. **Trợ lý là một quản lý.** Hai plan chạy cùng lúc thì hai bản tổng kết đan vào nhau, và người dùng không biết câu báo cáo nào thuộc việc nào.
-2. **Đụng file.** `Scheduler.validate` chặn hai task cùng ghi một đường dẫn — nhưng **chỉ trong cùng một plan**. Hai plan song song có thể ghi đè lẫn nhau và ta không phát hiện được.
-3. **Ngân sách concurrency là của cả công ty.** Hai plan cạnh tranh nhau, và cái người dùng đang chờ có thể bị cái chạy nền bỏ đói.
+1. **The Assistant is one manager.** Two plans running at once means two summaries interleaving, and the user can't tell which report belongs to which job.
+2. **File collisions.** `Scheduler.validate` blocks two tasks from writing the same path — but **only within the same plan.** Two parallel plans could overwrite each other with no detection.
+3. **Concurrency budget belongs to the whole company.** Two plans compete with each other, and the one the user is actually waiting on could get starved by one running in the background.
 
-**Muốn song song thì dùng NHIỀU VĂN PHÒNG** — đó chính là lý do văn phòng tồn tại.
+**Want parallelism? Use MULTIPLE OFFICES** — that's exactly why offices exist.
 
-> **Luật: song song GIỮA các văn phòng, tuần tự TRONG một văn phòng.**
+> **Rule: parallel BETWEEN offices, sequential WITHIN one office.**
 
-### Tầng 3b — bàn giao khi tới lượt việc xếp hàng
+### Tier 3b — handoff when a queued job's turn comes
 
-Việc xếp hàng thường là phần tiếp của việc vừa xong (*"giọng trẻ hơn nữa"*). Không nói cho nó biết kết quả vừa rồi nằm ở đâu thì nó **viết lại từ đầu** thay vì sửa — đắt hơn nhiều và vứt luôn bản đã trả tiền.
+Queued work is usually a continuation of what just finished (*"make it younger again"*). Not telling it where the previous result landed means it **rewrites from scratch** instead of editing — much more expensive, and it throws away a draft already paid for.
 
-Nên khi lôi việc ra khỏi hàng đợi, ghép thêm một câu **dựng bằng code, 0 token**:
+So when pulling a job out of the queue, append one sentence **built with code, 0 tokens**:
 
 ```
-(Việc trước vừa xong, kết quả đã có sẵn ở: artifacts/T-01/bai.md.
- Nếu yêu cầu này là chỉnh sửa cho việc đó thì SỬA file có sẵn, đừng làm lại từ đầu.)
+(The previous job just finished, its result is already at: artifacts/T-01/post.md.
+ If this request is a revision of that job, EDIT the existing file, don't start over.)
 ```
 
-Cùng một cơ chế với bàn giao sau khi ngắt (§3b), và cùng một lý do nó rẻ: Trợ lý vốn chỉ thấy **receipt**, nên "kết quả nằm ở đâu" là thông tin ta đã có sẵn trong tay.
+Same mechanism as the post-interrupt handoff (§3b), and it's cheap for the same reason: the Assistant only ever sees the **receipt** anyway, so "where did the result land" is information we already have in hand.
 
 ---
 
-## 12. Bí mật: `.env` là đường chính — đính chính §10e
+## 12. Secrets: `.env` is the main path — correcting §10e
 
-§10e viết rằng bí mật "không bao giờ là văn bản tự do". **Nói quá tay.** `.env` **không phải** văn bản tự do — nó là định dạng theo dòng, có parser đã được kiểm nghiệm rộng rãi. Lập luận "phân tích sẽ hỏng" không áp dụng ở đây.
+§10e said secrets are "never free-form text." **Overstated.** `.env` is **not** free-form text — it's a line-based format with a well-tested parser. The "parsing will break" argument doesn't apply here.
 
-Nên có **hai đường vào, cùng một kho**:
+So there are **two entry paths, one shared store**:
 
-| Đường | Cho ai |
+| Path | For whom |
 |---|---|
-| **Textarea `.env`** ⭐ | người dán từ README của MCP — tên biến đã đúng sẵn |
-| **Form sinh sẵn** | người chọn từ danh mục (Notion, Google…) — không phải gõ tên biến nào |
+| **`.env` textarea** ⭐ | someone pasting from an MCP's README — variable names already correct |
+| **Generated form** | someone picking from the catalog (Notion, Google…) — never has to type a variable name |
 
-### Luật đọc `.env` — phải làm đúng, đây là chỗ dễ sai
+### Rules for reading `.env` — worth getting exactly right, easy to get wrong
 
 ```
 KEY=value            → "value"
-KEY="value"          → "value"          nháy KÉP bị bóc, \n được nội suy
-KEY='value'          → "value"          nháy ĐƠN bị bóc, KHÔNG nội suy
-export KEY=value     → "value"          bỏ tiền tố export
-KEY=value # ghi chú  → "value"          # ngoài nháy là comment
-KEY="a # b"          → "a # b"          # trong nháy là ký tự thường
-# cả dòng            → bỏ qua
-(dòng trống)         → bỏ qua
+KEY="value"          → "value"          DOUBLE quotes stripped, \n interpolated
+KEY='value'          → "value"          SINGLE quotes stripped, NOT interpolated
+export KEY=value     → "value"          strip the export prefix
+KEY=value # comment  → "value"          # outside quotes is a comment
+KEY="a # b"          → "a # b"          # inside quotes is a literal character
+# whole line         → skipped
+(blank line)         → skipped
 ```
 
-**Không có chuẩn nào cấm dấu nháy.** Ngược lại: **bắt buộc phải có nháy** khi giá trị chứa khoảng trắng, `#`, hoặc xuống dòng — private key của Google là ví dụ kinh điển. Thói quen dùng `""` an toàn hơn.
+**No standard forbids quotes.** The opposite, actually: **quotes are required** when a value contains whitespace, `#`, or a newline — Google's private key is the textbook example. Using `""` as a habit is safer.
 
-Cái §10e nói đúng và vẫn giữ: **tên biến phải khớp chính xác**, và ta không suy ra được tên đó từ MCP (giao thức không công bố "tôi cần biến nào" — đó là yêu cầu lúc khởi động tiến trình, xảy ra trước khi bắt tay). Ba tầng giúp người non-code không phải gõ tên biến nào: danh mục curate sẵn → quét config dán vào tìm ô trống → chạy thử rồi đọc stderr.
+What §10e got right and still holds: **the variable name has to match exactly**, and we can't infer that name from the MCP itself (the protocol doesn't publish "what variables I need" — that's a startup requirement of the child process, happening before the handshake even occurs). Three layers help a non-coder avoid ever typing a variable name: a curated catalog → scanning a pasted config for empty slots → running a test call and reading stderr.
 
 ---
 
-## 9. Thứ tự làm
+## 9. Order of work
 
-Xếp theo *mở khoá được bao nhiêu bài test* trên mỗi đơn vị công sức:
+Sorted by *how many walkthrough tests unlock* per unit of effort:
 
-| # | Việc | Mở khoá | Cỡ |
+| # | Item | Unlocks | Size |
 |---|---|---|---|
-| 1 | Tool hệ thống bật sẵn (§5) | bài 4, 9, 10A hết phải mở editor | **rất nhỏ** |
-| 2 | Cạnh nối phản hồi ngay (§2) | cảm giác dùng | **rất nhỏ** |
-| 3 | Kế hoạch vào chat (§3a) | chuẩn bị cho bridge | **rất nhỏ** |
-| 4 | Sửa giới thiệu + skills trong UI (§1, §4) | bài 1, 2, 5, 8 | vừa |
-| 5 | Dòng khả năng tự sinh (§1) | Trợ lý chia việc đúng người | nhỏ |
-| 6 | Ngắt giữa chừng + lệnh chữ (§3b) | phản xạ Claude Code | vừa |
-| 7 | Cổng duyệt hai tầng (§8) | **bài 10 chặng C**, và mọi việc chạm ra ngoài | lớn |
-| 8 | Cắm MCP trong UI, đường A + B (§6) | bài 10 chặng B | vừa |
-| 9 | Chìa theo connector (§7a) | đi kèm số 8 | nhỏ |
-| 10 | Cánh tay tự khai, đường C (§6) | **đặc sản** — ✅ **đã xây 31/08 dưới dạng CLI** (`SPEC-arms §16t`); nhánh REST 🔒 bỏ | lớn |
+| 1 | System tools on by default (§5) | tests 4, 9, 10A no longer need an editor | **very small** |
+| 2 | Wire edges respond instantly (§2) | feel of using the product | **very small** |
+| 3 | Plan goes into chat (§3a) | groundwork for the bridge | **very small** |
+| 4 | Edit intro + skills in the UI (§1, §4) | tests 1, 2, 5, 8 | medium |
+| 5 | Auto-generated capability line (§1) | the Assistant assigns work correctly | small |
+| 6 | Mid-run interrupt + text commands (§3b) | Claude Code muscle memory | medium |
+| 7 | Two-tier approval gate (§8) | **test 10, stage C**, and everything that touches the outside | large |
+| 8 | Wiring MCP in the UI, routes A + B (§6) | test 10, stage B | medium |
+| 9 | Keys per connector (§7a) | ships alongside #8 | small |
+| 10 | Self-declared arm, route C (§6) | **the specialty feature** — ✅ **built 31/08 as a CLI** (`SPEC-arms §16t`); REST branch 🔒 dropped | large |
 
-Ba việc đầu cộng lại nhỏ hơn một buổi và xoá được phần lớn chữ ❌ trong `TEST-WALKTHROUGH.md`. Làm trước.
+The first three items combined are less than a single afternoon and clear out most of the ❌ marks in `TEST-WALKTHROUGH.md`. Do these first.
 
 ---
 
-## Nguồn
+## Sources
 
-API của SDK: đọc trực tiếp `node_modules/@anthropic-ai/claude-agent-sdk/{sdk,agentSdkTypes}.d.ts` phiên bản `0.3.231`.
+SDK API: read directly from `node_modules/@anthropic-ai/claude-agent-sdk/{sdk,agentSdkTypes}.d.ts` version `0.3.231`.
 
-Transport MCP: [Transports — Model Context Protocol](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) · [Claude Agent SDK — TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript)
+MCP transport: [Transports — Model Context Protocol](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) · [Claude Agent SDK — TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript)

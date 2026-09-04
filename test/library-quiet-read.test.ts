@@ -1,29 +1,3 @@
-/**
- * MỘT LƯỢT ĐỌC KHÔNG ĐƯỢC PHÁT SỰ KIỆN ĐỔI. → `library/store.ts §scan · §pump`
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG USER BÁO 02/09 — hộp thoại prompt "nháy chớp liên tục".              │
- * │                                                                          │
- * │ Repro: mở ngăn Tủ tài liệu → bấm Trợ lý → Xem prompt phân lớp.           │
- * │                                                                          │
- * │ `pump()` gọi `renderIndex() + onChange()` VÔ ĐIỀU KIỆN, kể cả khi không   │
- * │ bóc file nào. Mà `pump()` chạy ở mỗi `GET /library` (qua `scan()`), nên:  │
- * │                                                                          │
- * │   GET /library → scan → pump → `library.changed`                         │
- * │     → store: libraryVersion+1 và refreshCanvas()                         │
- * │     → LibraryPanel useEffect(reload, [reload, libraryVersion])           │
- * │     → GET /library → …  (vòng lặp vô hạn)                                │
- * │                                                                          │
- * │ Vòng lặp này KHÔNG có triệu chứng nào cho tới khi có thứ khác đọc         │
- * │ `canvas` — lúc đó nó mới lộ ra thành một hộp thoại nháy. Nghĩa là nó đã   │
- * │ chạy sẵn ở mọi phiên có mở tủ tài liệu, im lặng, đốt CPU và băng thông.   │
- * │                                                                          │
- * │ Đây là chốt cho vế TẤT ĐỊNH của bản vá. Vế giao diện (deps của            │
- * │ `PromptDialog`) không có bộ chạy DOM nên không test được ở đây.           │
- * └──────────────────────────────────────────────────────────────────────────┘
- *
- * Chạy: npm test
- */
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -34,7 +8,6 @@ import path from 'node:path';
 import { LibraryStore } from '../dist/library/store.js';
 import { officePaths } from '../dist/core/paths.js';
 
-/** `pump()` chạy ngầm (`void this.pump()`) — nhường vài nhịp cho nó xong. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
 }
@@ -44,7 +17,7 @@ function tmpOffice(): { dir: string; paths: ReturnType<typeof officePaths> } {
   return { dir, paths: officePaths(dir) };
 }
 
-test('🔴 tủ RỖNG: quét hai lần liên tiếp ⇒ KHÔNG phát một sự kiện nào', async () => {
+test('🔴 an EMPTY library: two scans in a row ⇒ NO event is fired', async () => {
   const { dir, paths } = tmpOffice();
   try {
     let calls = 0;
@@ -55,57 +28,49 @@ test('🔴 tủ RỖNG: quét hai lần liên tiếp ⇒ KHÔNG phát một sự
     lib.scan();
     await settle();
 
-    assert.equal(calls, 0, 'đọc một cái tủ không đổi thì không có gì để báo');
+    assert.equal(calls, 0, 'reading an unchanged library gives nothing to report');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('🔴 CÓ tài liệu, không đổi gì: lần quét THỨ HAI phải im — đây là vòng lặp 02/09', async () => {
+test('🔴 a document EXISTS and nothing changes: the SECOND scan must be silent — this is the 09/02 loop', async () => {
   const { dir, paths } = tmpOffice();
   try {
     let calls = 0;
     const lib = new LibraryStore(paths, () => calls++);
 
     fs.mkdirSync(paths.libraryFiles, { recursive: true });
-    fs.writeFileSync(path.join(paths.libraryFiles, 'ghi-chu.txt'), 'xin chào', 'utf8');
+    fs.writeFileSync(path.join(paths.libraryFiles, 'note.txt'), 'hello', 'utf8');
 
-    lib.scan(); // file mới ⇒ có việc để làm ⇒ ĐƯỢC phép báo
+    lib.scan();
     await settle();
     const afterFirst = calls;
-    assert.ok(afterFirst > 0, 'thả file vào thì phải báo, nếu không giao diện đứng im');
+    assert.ok(afterFirst > 0, 'dropping a file in must be reported, or the UI stays frozen');
 
-    lib.scan(); // y hệt lần trước ⇒ phải IM
+    lib.scan();
     await settle();
-    assert.equal(calls, afterFirst, 'không có gì đổi ⇒ không thêm một sự kiện nào');
+    assert.equal(calls, afterFirst, 'nothing changed ⇒ no additional event');
 
-    // Và lần thứ ba, thứ tư… vẫn im. Vòng lặp cũ chỉ cần MỘT sự kiện thừa mỗi
-    // lượt đọc là đã tự nuôi được chính nó.
     lib.scan();
     await settle();
     lib.scan();
     await settle();
-    assert.equal(calls, afterFirst, 'đọc bao nhiêu lần cũng không đẻ ra sự kiện');
+    assert.equal(calls, afterFirst, 'no number of rereads produces an event');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('🔴 ngược chiều: file bị xoá NGOÀI app ⇒ vẫn PHẢI báo (đừng vá quá tay)', async () => {
-  /*
-    Nửa còn lại của bất biến. Bản vá làm `pump()` im khi không bóc gì — nhưng ca
-    "người dùng xoá file bằng Explorer" cũng không có gì để bóc, mà catalog thì
-    vừa đổi thật và `INDEX.md` đang nêu tên một tài liệu đã chết. Im ở đây là
-    đổi một bug ồn ào lấy một bug im lặng.
-  */
+test('🔴 the reverse case: a file deleted OUTSIDE the app ⇒ still MUST be reported (do not overcorrect)', async () => {
   const { dir, paths } = tmpOffice();
   try {
     let calls = 0;
     const lib = new LibraryStore(paths, () => calls++);
 
     fs.mkdirSync(paths.libraryFiles, { recursive: true });
-    const file = path.join(paths.libraryFiles, 'ghi-chu.txt');
-    fs.writeFileSync(file, 'xin chào', 'utf8');
+    const file = path.join(paths.libraryFiles, 'note.txt');
+    fs.writeFileSync(file, 'hello', 'utf8');
     lib.scan();
     await settle();
     const before = calls;
@@ -114,8 +79,8 @@ test('🔴 ngược chiều: file bị xoá NGOÀI app ⇒ vẫn PHẢI báo (đ
     lib.scan();
     await settle();
 
-    assert.ok(calls > before, 'catalog đổi thật ⇒ phải báo');
-    assert.equal(lib.size, 0, 'và tài liệu phải rời khỏi catalog');
+    assert.ok(calls > before, 'a real catalog change ⇒ must be reported');
+    assert.equal(lib.size, 0, 'and the document must leave the catalog');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

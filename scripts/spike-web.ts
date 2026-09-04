@@ -1,15 +1,17 @@
 /**
- * SPIKE — `WebSearch`/`WebFetch` CÓ THẬT SỰ CHẠY trong bộ tool ta gửi không?
+ * SPIKE — DO `WebSearch`/`WebFetch` ACTUALLY WORK within the tool set we send?
  *
- * Cả hai nằm trong `BUILTIN_TOOLS` từ đầu, nên MỌI nhân viên đã có chúng. Nhưng
- * *"có trong danh sách"* và *"gọi ra kết quả"* là hai chuyện — đúng bài học cánh
- * tay 24/08: `mcp__*` cũng nằm trong `system/init.tools` mà mọi lời gọi bị deny.
+ * Both have been in `BUILTIN_TOOLS` from the start, so EVERY staff member
+ * already has them. But *"is in the list"* and *"actually returns a result"*
+ * are two different things — the exact lesson from the 08/24 arm case:
+ * `mcp__*` was also in `system/init.tools` while every call was being denied.
  *
- * Đo hai thứ, tách bạch:
- *   ① CLI có CẤP hai tool đó không (`system/init.tools`)
- *   ② Gọi thật có ra kết quả không — hỏi một câu mà model KHÔNG thể biết sẵn
+ * Measure two things, kept separate:
+ *   ① Does the CLI actually GRANT those two tools (`system/init.tools`)
+ *   ② Does calling them for real return a result — ask something the model
+ *      COULDN'T already know
  *
- * Chạy: npx tsx scripts/spike-web.ts   (~$0,02)
+ * Run: npx tsx scripts/spike-web.ts   (~$0.02)
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -27,7 +29,7 @@ async function ask(label: string, prompt: string) {
     prompt,
     options: {
       model: 'claude-haiku-4-5-20251001',
-      systemPrompt: 'Bạn là nhân viên tra cứu. Trả lời ngắn gọn bằng tiếng Việt.',
+      systemPrompt: 'You are a lookup assistant. Answer briefly.',
       tools: OFFICE_TOOLS,
       allowedTools: OFFICE_TOOLS,
       maxTurns: 5,
@@ -59,16 +61,16 @@ async function ask(label: string, prompt: string) {
       }
     }
   } catch (e) {
-    text = `⟨ném⟩ ${(e as Error).message.slice(0, 160)}`;
+    text = `⟨threw⟩ ${(e as Error).message.slice(0, 160)}`;
   }
 
-  console.log(`   CLI cấp: ${granted.filter((t) => t.startsWith('Web')).join(', ') || '(KHÔNG có tool Web nào)'}`);
-  console.log(`   tool gọi: ${calls.join(', ') || '(không gọi tool nào)'}`);
-  console.log(`   nói: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+  console.log(`   CLI granted: ${granted.filter((t) => t.startsWith('Web')).join(', ') || '(NO Web tools at all)'}`);
+  console.log(`   tools called: ${calls.join(', ') || '(no tool called)'}`);
+  console.log(`   said: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
   console.log(`   $${cost.toFixed(4)}`);
 }
 
-// Câu hỏi phải là thứ model KHÔNG thể trả lời từ trí nhớ — nếu không, một câu
-// trả lời trôi chảy chứng minh đúng con số 0.
-await ask('① WebSearch', 'Tìm trên web: 3 quán cà phê làm việc được ở Quận 1, TP.HCM. Nêu tên và địa chỉ.');
-await ask('② WebFetch', 'Đọc trang https://example.com và cho biết tiêu đề cùng nội dung chính của nó.');
+// The question must be something the model CANNOT answer from memory — otherwise
+// a fluent-sounding answer would be proof of exactly nothing.
+await ask('① WebSearch', 'Search the web: 3 cafes good for working in District 1, Ho Chi Minh City. Give names and addresses.');
+await ask('② WebFetch', 'Read the page https://example.com and tell me its title and main content.');

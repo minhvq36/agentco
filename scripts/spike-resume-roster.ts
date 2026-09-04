@@ -1,32 +1,39 @@
 /**
- * SPIKE — ĐỔI CẤU HÌNH GIỮA PHIÊN CÓ TỚI ĐƯỢC TRỢ LÝ KHÔNG? (user đặt bài 24/08)
+ * SPIKE — DOES A MID-SESSION CONFIG CHANGE REACH THE ASSISTANT? (user filed 08/24)
  *
- * Ca thật user đo được: hỏi một câu, Trợ lý hỏi lại *"soi thư mục nào: Programs
- * Installation hay Musics?"*. Rút dây khỏi Installation → hỏi lại **cùng câu đó**
- * → **cùng câu trả lời**. Xoá hẳn cánh tay khỏi văn phòng → vẫn **cùng câu**.
- * Cắm thêm một cánh tay mới → cũng không thấy.
+ * The real case the user measured: ask a question, the Assistant asks back
+ * *"which folder should I look in: Programs Installation or Musics?"*.
+ * Unplug the Installation arm → ask **the exact same question** again →
+ * **the exact same answer**. Delete the arm from the office entirely →
+ * **still the same answer**. Attach a brand-new arm → still not showing up.
  *
- * Nghi phạm user nêu: *"cơ chế bảo vệ cache làm việc thêm/xoá không real-time"*.
- * Nghi phạm thứ hai: **`resume` mang cả lịch sử hội thoại**, và câu cũ của chính
- * Trợ lý nằm trong đó — model chép lại câu nó vừa nói thay vì đọc lại danh bạ.
+ * Suspect #1 the user named: *"a cache-protection mechanism means add/remove
+ * isn't real-time"*. Suspect #2: **`resume` carries the whole conversation
+ * history**, and the Assistant's own earlier answer is sitting in it — the
+ * model is echoing what it just said instead of re-reading the roster.
  *
- * HAI NGHI PHẠM NÀY TÁCH ĐƯỢC BẰNG ĐÚNG MỘT PHÉP ĐO — và đó là bài này:
+ * THESE TWO SUSPECTS CAN BE SEPARATED BY EXACTLY ONE MEASUREMENT — and that's
+ * this script:
  *
- *   lượt 2  hỏi Y HỆT câu cũ          → cả hai nghi phạm đều dự đoán "vẫn thấy"
- *   lượt 3  hỏi CÙNG Ý, KHÁC CHỮ      → cache-không-real-time: vẫn thấy
- *                                       lịch sử neo:            hết thấy
- *   lượt 5  phiên MỚI, cùng cấu hình  → cấu hình đúng hay sai, không dính lịch sử
+ *   turn 2  ask the EXACT SAME question    → both suspects predict "still sees it"
+ *   turn 3  SAME MEANING, DIFFERENT WORDS   → non-realtime cache: still sees it
+ *                                              history anchoring:   no longer sees it
+ *   turn 5  a NEW session, same config      → separates "config is wrong" from
+ *                                              "history is the culprit"
  *
- * ⚠ Cấu hình được in ra ở MỖI lượt (`armReach` — đúng hàm dựng dòng năng lực
- *   trong danh bạ), nên bảng dưới so được "thứ ta GỬI" với "thứ model NÓI".
- *   Thiếu cột đó thì lại đo được một hành vi rồi kết luận về một cơ chế.
+ * ⚠ The config is printed at EVERY turn (`armReach` — the exact function that
+ *   builds the capability line in the roster), so the table below can compare
+ *   "what we SENT" against "what the model SAID". Skip that column and you've
+ *   just measured a behavior and then drawn a conclusion about a mechanism you
+ *   never actually looked at.
  *
- * ⚠ Dựng CÔNG TY TẠM trong thư mục tạm — không đụng công ty của user.
- * ⚠ Cánh tay dùng `command: node` (không phải `npx`) nên KHÔNG cài gói, KHÔNG
- *   khởi động tiến trình nào: Trợ lý vốn không bao giờ cầm MCP, bài này chỉ đo
- *   dòng chữ trong danh bạ.
+ * ⚠ Builds a TEMPORARY company in a temp directory — never touches the user's
+ *   real company.
+ * ⚠ The arm uses `command: node` (not `npx`), so it installs NO package and
+ *   starts NO process: the Assistant never actually holds an MCP connection
+ *   here — this script only measures the text in the roster.
  *
- * Chạy: npx tsx scripts/spike-resume-roster.ts   (~$0,08)
+ * Run: npx tsx scripts/spike-resume-roster.ts   (~$0.08)
  */
 
 import fs from 'node:fs';
@@ -45,14 +52,14 @@ const companyDir = path.join(root, 'company');
 fs.cpSync(path.resolve('templates/company'), companyDir, { recursive: true });
 
 const company = Company.open(companyDir);
-const officeId = company.createOffice({ name: 'Canh tay' }).id;
+const officeId = company.createOffice({ name: 'Arms' }).id;
 const officeDir = path.join(companyDir, 'offices', officeId);
 const rolesDir = path.join(officeDir, 'roles');
 
-// ── hai cánh tay, hai thư mục, đúng hình dạng ca thật ────────────────────────
+// ── two arms, two folders, exactly the shape of the real case ───────────────
 const cfgA = { command: 'node', args: ['-e', '0', 'D:\\Fake\\Musics'] };
 const cfgB = { command: 'node', args: ['-e', '0', 'D:\\Fake\\Programs Installation'] };
-const cfgC = { command: 'node', args: ['-e', '0', 'D:\\Fake\\Hoa Don'] };
+const cfgC = { command: 'node', args: ['-e', '0', 'D:\\Fake\\Invoices'] };
 const A = armHash(cfgA);
 const B = armHash(cfgB);
 const C = armHash(cfgC);
@@ -80,84 +87,85 @@ function writeRole(id: string, name: string, pitch: string, mcp: string[]): void
   );
 }
 
-// Khuôn đẻ sẵn vài vai trò — xoá hết để danh bạ chỉ còn thứ bài này dựng.
+// The template ships with a few prebuilt roles — wipe them so the roster only holds what this script builds.
 for (const f of fs.readdirSync(rolesDir)) fs.rmSync(path.join(rolesDir, f));
 
 writeCompanyArms([
   [A, cfgA, 'Musics'],
   [B, cfgB, 'Programs Installation'],
 ]);
-writeRole('nguoi-soi-nhac', 'Người soi nhạc', 'Đọc file và thư mục người dùng chỉ định, tóm tắt nội dung.', [A]);
-writeRole('nguoi-soi-cai-dat', 'Người soi cài đặt', 'Đọc file và thư mục người dùng chỉ định, tóm tắt nội dung.', [B]);
+writeRole('music-scanner', 'Music Scanner', 'Reads files and folders the user points to, and summarizes the contents.', [A]);
+writeRole('installer-scanner', 'Installer Scanner', 'Reads files and folders the user points to, and summarizes the contents.', [B]);
 
 const reload = () => loadOffice(companyDir, loadCompanyConfig(companyDir), officeId);
 let loaded = reload();
 const assistant = new Assistant(loaded);
 
-/** Đúng dòng năng lực mà `Assistant.roster()` dựng — thứ ta THẬT SỰ gửi đi. */
-function guiGi(): string {
+/** The exact capability line that `Assistant.roster()` builds — what we ACTUALLY send. */
+function whatWeSend(): string {
   return [...loaded.roles.values()]
     .map((r) => `${r.id}: [${r.mcp.map((m) => armReach(loaded.company.arms, loaded.company.mcpServers, m)).join(' · ') || '—'}]`)
     .join('\n           ');
 }
 
-const CAU_GOC = 'Trong thư mục đã cho phép, tìm 5 file lớn nhất và tóm tắt xem thư mục đó đang chứa gì.';
-const CAU_KHAC = 'Liệt kê giúp mình 5 tệp nặng nhất ở nơi nhân viên được phép với tới, rồi mô tả nơi đó đựng những gì.';
+const ORIGINAL_Q = 'In the folder you have access to, find the 5 largest files and summarize what that folder contains.';
+const REWORDED_Q = 'Can you list the 5 heaviest files in the place the staff member has access to, then describe what that place holds?';
 
-let tong = 0;
-async function hoi(nhan: string, cau: string, a = assistant): Promise<void> {
-  const r = await a.route(cau, false);
+let total = 0;
+async function ask(label: string, q: string, a = assistant): Promise<void> {
+  const r = await a.route(q, false);
   const v = r.value as Record<string, unknown>;
-  tong += r.usage.costUSD;
-  console.log(`\n── ${nhan}`);
-  console.log(`   gửi đi  : ${guiGi()}`);
-  console.log(`   hỏi     : "${cau.slice(0, 58)}…"`);
-  console.log(`   ra      : ${v['intent']}  ·  $${r.usage.costUSD.toFixed(4)}  ·  ngữ cảnh ${a.contextTokens} token`);
-  // In CẢ BA trường chữ: `ask`/`chat` dùng `say`, `task` dùng `request`, `lookup`
-  // dùng `question`. Bản trước quên `question` nên lượt `lookup` in ra rỗng — và
-  // một ô rỗng đọc thành "không nói gì", trong khi nó có nói. → §3a
-  console.log(`   nói     : ${String(v['say'] ?? v['request'] ?? v['question'] ?? '').slice(0, 200)}`);
+  total += r.usage.costUSD;
+  console.log(`\n── ${label}`);
+  console.log(`   sent    : ${whatWeSend()}`);
+  console.log(`   asked   : "${q.slice(0, 58)}…"`);
+  console.log(`   out     : ${v['intent']}  ·  $${r.usage.costUSD.toFixed(4)}  ·  context ${a.contextTokens} tokens`);
+  // Print ALL THREE text fields: `ask`/`chat` use `say`, `task` uses `request`,
+  // `lookup` uses `question`. The earlier version forgot `question`, so `lookup`
+  // turns printed as empty — and an empty cell reads as "said nothing" when it
+  // actually did say something. → §3a
+  console.log(`   said    : ${String(v['say'] ?? v['request'] ?? v['question'] ?? '').slice(0, 200)}`);
 }
 
-console.log(`\ncông ty tạm: ${companyDir}`);
-console.log(`A=${A} (Musics) · B=${B} (Programs Installation) · C=${C} (Hoa Don)`);
+console.log(`\ntemp company: ${companyDir}`);
+console.log(`A=${A} (Musics) · B=${B} (Programs Installation) · C=${C} (Invoices)`);
 
-// ── L1 · nền: hai cánh tay, hai người ────────────────────────────────────────
-await hoi('L1 · nền (2 cánh tay, phiên MỚI)', CAU_GOC);
+// ── L1 · baseline: two arms, two roles ───────────────────────────────────────
+await ask('L1 · baseline (2 arms, NEW session)', ORIGINAL_Q);
 console.log(`   session : ${assistant.session}`);
 
-// ── L2 · rút DÂY khỏi B, hỏi Y HỆT ───────────────────────────────────────────
-writeRole('nguoi-soi-cai-dat', 'Người soi cài đặt', 'Đọc file và thư mục người dùng chỉ định, tóm tắt nội dung.', []);
+// ── L2 · UNPLUG B, ask the EXACT SAME question ───────────────────────────────
+writeRole('installer-scanner', 'Installer Scanner', 'Reads files and folders the user points to, and summarizes the contents.', []);
 loaded = reload();
 assistant.rebind(loaded);
-await hoi('L2 · đã RÚT DÂY khỏi B — hỏi Y HỆT câu cũ', CAU_GOC);
+await ask('L2 · UNPLUGGED B — asking the EXACT SAME question', ORIGINAL_Q);
 
-// ── L3 · cùng cấu hình, hỏi KHÁC CHỮ ─────────────────────────────────────────
-await hoi('L3 · cùng cấu hình như L2 — hỏi CÙNG Ý, KHÁC CHỮ', CAU_KHAC);
+// ── L3 · same config, DIFFERENT WORDS ────────────────────────────────────────
+await ask('L3 · same config as L2 — SAME MEANING, DIFFERENT WORDS', REWORDED_Q);
 
-// ── L4 · cắm THÊM C, hỏi Y HỆT ───────────────────────────────────────────────
+// ── L4 · attach C on top, ask the EXACT SAME question ────────────────────────
 writeCompanyArms([
   [A, cfgA, 'Musics'],
   [B, cfgB, 'Programs Installation'],
-  [C, cfgC, 'Hoa Don'],
+  [C, cfgC, 'Invoices'],
 ]);
-writeRole('nguoi-soi-cai-dat', 'Người soi cài đặt', 'Đọc file và thư mục người dùng chỉ định, tóm tắt nội dung.', [C]);
+writeRole('installer-scanner', 'Installer Scanner', 'Reads files and folders the user points to, and summarizes the contents.', [C]);
 loaded = reload();
 assistant.rebind(loaded);
-await hoi('L4 · đã CẮM THÊM C (Hoa Don) — hỏi Y HỆT câu cũ', CAU_GOC);
+await ask('L4 · ATTACHED C (Invoices) on top — asking the EXACT SAME question', ORIGINAL_Q);
 
-// ── L5 · ĐỐI CHỨNG: phiên MỚI TINH, đúng cấu hình của L4 ─────────────────────
-const sach = new Assistant(loaded);
-await hoi('L5 · ĐỐI CHỨNG — phiên MỚI TINH, cấu hình y hệt L4', CAU_GOC, sach);
+// ── L5 · CONTROL: BRAND-NEW session, same config as L4 ───────────────────────
+const clean = new Assistant(loaded);
+await ask('L5 · CONTROL — BRAND-NEW session, config identical to L4', ORIGINAL_Q, clean);
 
-console.log(`\n⇒ tổng $${tong.toFixed(4)}`);
+console.log(`\n⇒ total $${total.toFixed(4)}`);
 console.log(
-  `\nCÁCH ĐỌC BẢNG:\n` +
-    `  L2 nhắc B  +  L3 KHÔNG nhắc B      ⇒ LỊCH SỬ HỘI THOẠI neo, cấu hình vẫn tới nơi\n` +
-    `  L2 nhắc B  +  L3 VẪN nhắc B        ⇒ cấu hình KHÔNG tới được phiên đang resume\n` +
-    `  L5 khác L4                          ⇒ chứng minh cấu hình đúng, lỗi nằm ở phiên\n` +
-    `  L5 giống L4                         ⇒ lỗi nằm ở tầng cấu hình, không phải phiên\n`,
+  `\nHOW TO READ THE TABLE:\n` +
+    `  L2 mentions B  +  L3 does NOT mention B    ⇒ CONVERSATION HISTORY is anchoring it; config changes DO reach the model\n` +
+    `  L2 mentions B  +  L3 STILL mentions B      ⇒ config changes do NOT reach a resumed session\n` +
+    `  L5 differs from L4                          ⇒ proves the config is correct; the bug is in the session\n` +
+    `  L5 matches L4                                ⇒ the bug is in the config layer, not the session\n`,
 );
 
 fs.rmSync(root, { recursive: true, force: true });
-console.log('↩ đã xoá công ty tạm');
+console.log('↩ temp company removed');

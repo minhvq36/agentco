@@ -1,196 +1,222 @@
-# SPEC — Triển khai: máy cá nhân · Docker · VPS + domain
+# SPEC — Deployment: personal machine · Docker · VPS + domain
 
-> Tách ra 28/08/2026 khi bàn mục danh mục Google Calendar. Trước đó những điều này
-> nằm rải trong `SPEC-arms.md` §5h·6 · §10d và `SESSIONS_MEMORY` §5o ⑥ · §5s — tức
-> **không ai đọc chúng cùng lúc**, mà chúng chỉ hỏng khi đứng cạnh nhau.
+> Split out 28/08/2026 when discussing the Google Calendar catalog entry. Before that
+> these things were scattered across `SPEC-arms.md` §5h·6 · §10d and `SESSIONS_MEMORY`
+> §5o ⑥ · §5s — meaning **no one read them together**, yet they only break when placed
+> side by side.
 >
-> Đọc kèm `SPEC-arms.md` (cánh tay · OAuth) · `SPEC-tools-approval.md` §5b (containment).
+> Read alongside `SPEC-arms.md` (arms · OAuth) · `SPEC-tools-approval.md` §5b (containment).
 
 ---
 
-## 1. Trục quyết định là MỘT câu, không phải "Docker hay không"
+## 1. The decision axis is ONE question, not "Docker or not"
 
-> **Trình duyệt và daemon có ở cùng một máy không?**
+> **Are the browser and the daemon on the same machine?**
 
-Mọi thứ khác — Docker, nginx, VPS, domain — chỉ là hệ quả của câu đó. Docker **trên máy
-khách** không đổi gì; Docker **trên VPS** đổi tất cả. Đừng xếp hai ca đó chung một tên.
+Everything else — Docker, nginx, VPS, domain — is just a consequence of that answer.
+Docker **on the client machine** changes nothing; Docker **on a VPS** changes
+everything. Don't lump those two cases under one name.
 
-| Hình dạng | Cùng máy? | `redirect_uri` |
+| Shape | Same machine? | `redirect_uri` |
 |---|---|---|
-| Chạy trực tiếp trên máy khách | ✅ | `http://127.0.0.1:<cổng>/api/oauth/callback` |
-| Docker trên máy khách (map cổng ra host) | ✅ | y hệt trên |
-| **Docker trên VPS**, vào bằng SSH tunnel | ✅ *(giả lập)* | y hệt trên — xem §4 |
-| **Docker trên VPS + domain công khai** | ❌ | `https://<domain>/api/oauth/callback` |
+| Running directly on the client machine | ✅ | `http://127.0.0.1:<port>/api/oauth/callback` |
+| Docker on the client machine (port mapped to host) | ✅ | exactly the same |
+| **Docker on a VPS**, reached via SSH tunnel | ✅ *(simulated)* | exactly the same — see §4 |
+| **Docker on a VPS + public domain** | ❌ | `https://<domain>/api/oauth/callback` |
 
 ---
 
-## 2. OAuth theo từng hình dạng × từng hãng
+## 2. OAuth per shape × per provider
 
-| | Cơ chế đăng ký | Máy khách / Docker cục bộ | VPS + domain |
+| | Registration mechanism | Client machine / local Docker | VPS + domain |
 |---|---|---|---|
-| **GitHub** | device flow — **không có `redirect_uri`** | ✅ app của agentco, 0 chìa | ✅ **y hệt** — domain vô can |
-| **Notion** (+ Linear · Sentry · Asana · Atlassian) | **DCR** (RFC 7591) — ta khai redirect, hãng nhận tại chỗ | ✅ app tự đăng ký, 0 chìa | ✅ về cơ chế · ⏸ **chưa chạy thật**, xem §6 |
-| **Google** | **không DCR, device flow không cấp scope Calendar** | ✅ app của agentco (client **Desktop**) ⏸ *chờ Q1 spike* | ❌ **khách phải tự tạo OAuth client kiểu Web** |
+| **GitHub** | device flow — **no `redirect_uri`** | ✅ agentco's app, 0 keys | ✅ **exactly the same** — domain is irrelevant |
+| **Notion** (+ Linear · Sentry · Asana · Atlassian) | **DCR** (RFC 7591) — we declare the redirect, the provider accepts it on the spot | ✅ app self-registers, 0 keys | ✅ mechanism-wise · ⏸ **not yet run for real**, see §6 |
+| **Google** | **no DCR, device flow does not grant the Calendar scope** | ✅ agentco's app (**Desktop** client) ⏸ *waiting on the Q1 spike* | ❌ **the customer must create their own Web-type OAuth client** |
 
-**Vì sao Google là ca duy nhất bắt khách tạo app** — hai luật của Google, nguyên văn:
+**Why Google is the only case that forces the customer to create an app** — Google's
+two rules, verbatim:
 
 > *"Redirect URIs must use the HTTPS scheme, not plain HTTP. Localhost URIs (including
 > localhost IP address URIs) are exempt from this rule."*
 > *"Hosts cannot be raw IP addresses. Localhost IP addresses are exempted from this rule."*
 
-Cộng: không wildcard, khớp **từng ký tự kể cả cổng**. ⇒ Ta không đăng ký trước được
-domain của từng khách, và trỏ thẳng vào `http://<ip>:<cổng>` thì **hỏng hai lần** (vừa
-`http`, vừa IP trần) — Cloud Console không cho lưu.
+Plus: no wildcards, matching is **character-for-character, port included**. ⇒ We can't
+pre-register every customer's domain, and pointing straight at `http://<ip>:<port>`
+**fails twice over** (both plain `http` and a raw IP) — the Cloud Console won't even
+let you save it.
 
-📌 **Client kiểu Desktop KHÔNG có ô redirect nào để điền** — 🌐 *"The console does not
-require any additional information to create OAuth 2.0 credentials for desktop
-applications."* Loopback cổng nào cũng được ⇒ **không có "chọn cổng đẹp/xấu"** ở phía
-Google, và không có gì để xung đột. Cổng duy nhất có thật là **cổng daemon của ta** (§5).
-
----
-
-## 3. Sơ đồ hai container (chốt 28/08 cho VPS)
-
-```
-domain ──nginx──┬── /        → container FRONTEND (file tĩnh)
-                └── /api/    → container BACKEND (daemon agentco)
-```
-
-**Frontend không dính gì tới OAuth.** Điệu nhảy chỉ có: trình duyệt ↔ backend ↔ hãng.
-
-### Ba điều kiện bắt buộc — cả ba là của TA, không phải của hãng
-
-**① `runtime.public_url` phải khai.** Bind ra ngoài mà không khai ⇒ `redirectBase` **từ
-chối**, cố ý: `Host` do client gửi nên giả được, mà `redirect_uri` là nơi **mã uỷ quyền**
-bay về — thứ duy nhất không được phép đoán. Khai báo đó cũng là thứ mở `hostAllowed`
-(`server.ts §hostAllowed`): **một khai báo, hai tác dụng, không có ô thứ hai để lệch.**
-
-**② 🔴 nginx phải route `/api/oauth/callback` về BACKEND.** Chỗ chết dễ nhất của sơ đồ
-hai container. Callback là **điều hướng của trình duyệt** tới một path `/api/…`; nếu
-frontend đặt SPA fallback nuốt mọi path (`try_files $uri /index.html`) thì mã uỷ quyền
-rơi vào `index.html`. **Triệu chứng: "bấm đăng nhập xong quay về trang chủ" — không lỗi,
-không log.**
-
-**③ Cổng token đã miễn đúng path đó** (`server.ts §OAUTH_CALLBACK`), vì điều hướng trình
-duyệt không mang header — xác thực của callback là `state`. Đã vá 26/08, không phải lo.
-
-> ✅ Tính chất của **giao thức**, không phải may mắn: SSO · Cloudflare Access · VPN ·
-> mTLS **không cản** OAuth, vì hãng **không bao giờ gọi vào máy ta**. Chỗ dễ gãy là
-> chiều **egress** — và `fetch` của Node **không tự đọc `HTTPS_PROXY`**
-> (`NODE_USE_ENV_PROXY=1`).
+📌 **A Desktop-type client has no redirect field to fill in at all** — 🌐 *"The console
+does not require any additional information to create OAuth 2.0 credentials for desktop
+applications."* Any loopback port works ⇒ **there is no "pick a good/bad port"** on
+Google's side, and nothing to conflict with. The only port that's real is **our own
+daemon's port** (§5).
 
 ---
 
-## 4. Đường tunnel — giữ được "0 chìa" cho cả VPS
+## 3. Two-container diagram (locked in 28/08 for the VPS)
+
+```
+domain ──nginx──┬── /        → FRONTEND container (static files)
+                └── /api/    → BACKEND container (agentco daemon)
+```
+
+**The frontend has nothing to do with OAuth.** The whole dance is just: browser ↔
+backend ↔ provider.
+
+### Three mandatory conditions — all three are OURS, not the provider's
+
+**① `runtime.public_url` must be declared.** Binding externally without declaring it
+⇒ `redirectBase` **refuses**, on purpose: `Host` is sent by the client and can be
+forged, while `redirect_uri` is where the **authorization code** flies back to — the
+one thing that cannot be allowed to be guessed. That same declaration is also what
+opens up `hostAllowed` (`server.ts §hostAllowed`): **one declaration, two effects, no
+second field for the two to drift apart.**
+
+**② 🔴 nginx must route `/api/oauth/callback` to the BACKEND.** The easiest way for
+this two-container diagram to die. The callback is a **browser navigation** to a
+`/api/…` path; if the frontend's SPA fallback swallows every path
+(`try_files $uri /index.html`), the authorization code falls into `index.html`.
+**Symptom: "clicked login, ended up back on the homepage" — no error, no log.**
+
+**③ The token gate already exempts exactly that path** (`server.ts §OAUTH_CALLBACK`),
+because a browser navigation carries no headers — the callback's authentication is the
+`state` parameter. Already patched on 26/08, nothing to worry about here.
+
+> ✅ This is a property of the **protocol**, not luck: SSO · Cloudflare Access · VPN ·
+> mTLS **don't block** OAuth, because the provider **never calls into our machine**.
+> The fragile direction is **egress** — and Node's `fetch` **doesn't automatically
+> read `HTTPS_PROXY`** (`NODE_USE_ENV_PROXY=1`).
+
+---
+
+## 4. The tunnel route — keeps "0 keys" true even on a VPS
 
 ```
 ssh -L 7317:127.0.0.1:7317  user@vps
 ```
 
-Trình duyệt của người quản trị mở `http://127.0.0.1:7317` → với Google thì `redirect_uri`
-**vẫn là loopback** ⇒ **app của agentco dùng được cho cả VPS**: 0 chìa, 0 domain, 0 dòng
-đăng ký. Đúng cách `gh` · `gcloud` · `code tunnel` vẫn làm.
+The administrator's browser opens `http://127.0.0.1:7317` → for Google, the
+`redirect_uri` **is still loopback** ⇒ **agentco's app works for the VPS case too**:
+0 keys, 0 domain, 0 lines of registration. Exactly how `gh` · `gcloud` · `code tunnel`
+still do it.
 
-Mã hôm nay **đã chạy được đường này**: `redirectBase` kiểm `targetLoopback` trước khi
-chặn `http://`, nên `runtime.public_url: http://127.0.0.1:7317` được nhận
-(`test/redirect-base.test.ts` có sẵn ca `host: '0.0.0.0'` + `publicUrl` loopback).
+Today's code **already handles this route**: `redirectBase` checks `targetLoopback`
+before blocking `http://`, so `runtime.public_url: http://127.0.0.1:7317` is accepted
+(`test/redirect-base.test.ts` already has the `host: '0.0.0.0'` + loopback `publicUrl`
+case).
 
-### ⏸ Nợ: chọn redirect theo CỬA TRÌNH DUYỆT ĐI VÀO, không theo hằng số cấu hình
+### ⏸ Debt: pick the redirect by the BROWSER'S ENTRY DOOR, not by a config constant
 
-Trên VPS thì `public_url` **là domain**, nên đăng nhập qua tunnel vẫn sinh redirect domain
-⇒ tunnel vô dụng. Sửa đúng: trình duyệt vào bằng loopback ⇒ redirect loopback; vào bằng
-domain ⇒ `public_url`.
+On a VPS, `public_url` **is the domain**, so logging in through the tunnel still
+produces a domain redirect ⇒ the tunnel becomes useless. The correct fix: browser
+enters via loopback ⇒ loopback redirect; enters via the domain ⇒ `public_url`.
 
-Đo bằng **`isLoopback(req.socket.remoteAddress)`** — **địa chỉ socket, không phải `Host`**
-(`Host` giả được; địa chỉ socket thì không). Đây là **chỗ thứ ba của cùng một sự thật** đã
-dùng cho nút 📂, **không phải cơ chế thứ hai**.
+Measure it with **`isLoopback(req.socket.remoteAddress)`** — **the socket address,
+not `Host`** (`Host` can be forged; the socket address can't). This is **the third
+place carrying the same fact** already used for the 📂 button, **not a second
+mechanism**.
 
-⚠ Điều kiện phải nói với người triển khai: **số cổng tunnel phải khớp** thứ daemon sinh ra
-trong `redirect_uri`. Lệch ⇒ `redirect_uri_mismatch`, và câu lỗi đó **không nói ra nguyên
-nhân thật** (đã dẫm với Notion 24/08).
-
----
-
-## 5. 🔴 NỢ DOCKER — bốn món, cả bốn hỏng MUỘN và IM LẶNG
-
-> Xếp theo mức im lặng, không theo mức khó. Món ① là món duy nhất phải trả **trước khi**
-> ghi Docker vào tài liệu khuyến nghị cho khách.
-
-### ① Bất biến §1b vỡ tiền đề — ánh xạ đường dẫn host ↔ container
-
-`SPEC-tools-approval` §1b khớp **"chuỗi người dùng vừa gõ"**. User gõ `D:\Downloads\x.md`;
-container thấy `/data/downloads/x.md` ⇒ **không bao giờ khớp** ⇒ chặn ghi-ra-ngoài **im
-lặng không tồn tại** trong Docker. Đúng hình dạng công tắc `Bash` no-op 6 ngày.
-
-Bất biến phải viết lại: *văn phòng + volume đã mount, và tên user nhìn thấy phải là tên
-họ gõ được.* → `SESSIONS_MEMORY` §5o ⑥ (lần thứ tư của lớp lỗi *"đúng trên máy dev, sai ở
-chỗ khác"*).
-
-### ② Volume `company/.state/` không persist ⇒ đăng ký app MỚI mỗi lần deploy
-
-`$clients` khoá theo `${issuer}|${redirectUri}`, nằm trên đĩa. Container không mount ⇒ mỗi
-lần deploy lại là **một app Notion mới** ⇒ chìa cũ thành `invalid_grant`. Đúng bug 26/08
-(`$clients` nằm trong RAM ⇒ hai tài khoản chết), lần này đi vào **qua cửa Docker**.
-
-⚠ **Triệu chứng đến vài giờ sau khi deploy**, nên sẽ không ai nối nó với lần deploy.
-
-### ③ `pending` (state ↔ verifier) nằm trong RAM — `oauth-routes.ts §pending`
-
-Hai ràng buộc **phải viết vào tài liệu triển khai**, không để người ta tự khám phá:
-- **đúng 1 replica backend** — 2 replica sau load balancer ⇒ callback rơi vào bản không
-  giữ `state` ⇒ hỏng ngẫu nhiên, tỉ lệ hỏng **đúng bằng tỉ lệ chia tải**;
-- **đừng restart lúc có người đang đăng nhập** (cửa sổ vài chục giây).
-
-Chấp nhận được vì đăng nhập là việc hiếm và ngắn. Nhưng phải **nói ra**.
-
-### ④ Cánh tay stdio trong image
-
-`npx @modelcontextprotocol/server-filesystem` cần **node/python trong image** + đường ra
-npm. Mục *"File trên máy"* chỉ thấy **volume đã mount**. `TEST-WALKTHROUGH` bài 9 **chết**
-nếu không mount. → `SPEC-arms.md` §10d
-
-### ✅ Đổi lại, Docker cho không thứ ta đang thiếu
-
-Container chỉ thấy volume đã mount ⇒ ba thứ **chưa dựng nổi bằng hook** (hàng rào đọc ·
-chặn `Bash` ghi ra ngoài · che kho chìa) được cấp **bằng kernel**. Đó đúng là containment
-mà `SPEC-tools-approval` §5b ghi là ta đang **không** có.
-
-> 📌 *"Khó mò ra project khác"* **không phải điểm yếu — đó là tính năng.** `mount` là
-> phiên bản Docker của *"khai thư mục"*, và nó là **hàng rào**, không phải danh sách.
+⚠ A condition that must be stated to whoever deploys this: **the tunnel's port number
+must match** whatever the daemon put into the `redirect_uri`. A mismatch ⇒
+`redirect_uri_mismatch`, and that error message **does not tell you the real cause**
+(already stepped on this with Notion on 24/08).
 
 ---
 
-## 6. Sổ đăng ký hằng số ĐỐI NGOẠI
+## 5. 🔴 DOCKER DEBT — four items, all four fail LATE and SILENTLY
 
-> Những chuỗi đã đăng ký **ở phía hãng**, mà ta **không đổi được một mình**. Đổi một dòng
-> ở đây mà quên phía kia = hỏng ở chỗ không có log.
+> Ordered by how silent they are, not by how hard they are. Item ① is the only one
+> that must be paid off **before** Docker goes into the customer-facing recommended
+> deployment docs.
+
+### ① Invariant §1b's premise breaks — host ↔ container path mapping
+
+`SPEC-tools-approval` §1b matches against **"the exact string the user just typed"**.
+The user types `D:\Downloads\x.md`; the container sees `/data/downloads/x.md` ⇒
+**never matches** ⇒ the write-outside-scope block is **silently absent** under Docker.
+The exact shape of the `Bash`-switch no-op that sat quiet for 6 days.
+
+The invariant has to be rewritten: *office + mounted volume, and the name the user
+sees must be the name they can type.* → `SESSIONS_MEMORY` §5o ⑥ (the fourth instance
+of the *"correct on the dev machine, wrong somewhere else"* failure class).
+
+### ② The `company/.state/` volume doesn't persist ⇒ a NEW app gets registered on every deploy
+
+`$clients` is keyed by `${issuer}|${redirectUri}` and lives on disk. If the container
+doesn't mount it ⇒ every deploy is **a brand-new Notion app** ⇒ the old key becomes
+`invalid_grant`. The exact 26/08 bug (`$clients` living in RAM ⇒ two dead accounts),
+this time arriving **through the Docker door**.
+
+⚠ **The symptom shows up hours after the deploy**, so no one will connect it to the
+deploy itself.
+
+### ③ `pending` (state ↔ verifier) lives in RAM — `oauth-routes.ts §pending`
+
+Two constraints that **must go into the deployment docs**, not be left for people to
+discover on their own:
+- **exactly 1 backend replica** — 2 replicas behind a load balancer ⇒ the callback can
+  land on the instance that isn't holding the `state` ⇒ random failures, at a rate
+  **exactly equal to the load-splitting ratio**;
+- **don't restart while someone is mid-login** (a window of a few dozen seconds).
+
+Acceptable, because logging in is rare and short. But it has to be **stated**.
+
+### ④ The stdio arm inside the image
+
+`npx @modelcontextprotocol/server-filesystem` needs **node/python inside the image**
+plus a path out to npm. The "Files on this machine" entry only ever sees the
+**mounted volume**. `TEST-WALKTHROUGH` exercise 9 **dies** if nothing is mounted. →
+`SPEC-arms.md` §10d
+
+### ✅ In exchange, Docker gives us something we're currently missing
+
+A container only sees the volumes it's mounted ⇒ three things **we haven't managed to
+build with hooks** (a read fence · blocking `Bash` from writing outside scope · hiding
+the key store) come **free from the kernel**. That's exactly the containment that
+`SPEC-tools-approval` §5b records us as **not** having.
+
+> 📌 *"Hard to stumble into another project"* **isn't a weakness here — it's a
+> feature.** `mount` is Docker's version of "declaring a directory," and it's a
+> **fence**, not a list.
+
+---
+
+## 6. Registry of EXTERNAL constants
+
+> Strings already registered **on the provider's side**, which we **cannot change
+> unilaterally**. Change one line here and forget the other side = a failure with no
+> log to explain it.
 >
-> Lý do sổ này tồn tại: *URL của hãng chỉ sống trong tài liệu test là một chuông báo* —
-> đã dẫm với cửa cài GitHub App (`installations/new` nằm trong walkthrough suốt nhiều
-> ngày trong khi sản phẩm **không có cái nút nào**).
+> Why this registry exists: *a provider's URL living only in the test docs is an
+> alarm bell* — already stepped on this with the GitHub App install door
+> (`installations/new` sat in the walkthrough for days while the product **had no
+> button for it anywhere**).
 
-| Hằng số | Giá trị | Khai ở đâu trong mã | Ai giữ bản kia |
+| Constant | Value | Declared where in code | Who holds the other copy |
 |---|---|---|---|
-| Cổng daemon (mặc định) | **7317** | `types.ts §runtime.port` · mẫu `cli/index.ts` | — (đổi tự do khi chạy loopback) |
-| Proxy dev của web | `/api` · `/healthz` → `127.0.0.1:7317` | `web/vite.config.ts` | — |
-| Path callback | `/api/oauth/callback` | `server.ts §OAUTH_CALLBACK` | **nginx** của người triển khai |
-| GitHub App | `agent-co.app` · org `@agent-co-app` · tạo 26/08/2026 | `arms/github.ts §auth.clientId` | GitHub — **public**, không secret, không private key |
+| Daemon port (default) | **7317** | `types.ts §runtime.port` · template `cli/index.ts` | — (free to change when running loopback) |
+| Web dev proxy | `/api` · `/healthz` → `127.0.0.1:7317` | `web/vite.config.ts` | — |
+| Callback path | `/api/oauth/callback` | `server.ts §OAUTH_CALLBACK` | the deployer's **nginx** |
+| GitHub App | `agent-co.app` · org `@agent-co-app` · created 26/08/2026 | `arms/github.ts §auth.clientId` | GitHub — **public**, no secret, no private key |
 | GitHub `client_id` | `Iv23li95pd8QpYfTGMho` | `arms/github.ts` | GitHub |
-| GitHub cửa cài | `github.com/apps/agent-co-app/installations/new` | `arms/github.ts §scope.url` | GitHub |
-| GitHub App *Callback URL* | ❓ **chưa ghi lại** | — | GitHub |
-| Google OAuth client (agentco) | ⏸ **chưa tạo** | *(sẽ là `arms/google-calendar.ts`)* | Google |
-| Google redirect (ca domain) | `https://<domain>/api/oauth/callback` | sinh từ `public_url` | **khách tự dán** vào Cloud Console |
+| GitHub install door | `github.com/apps/agent-co-app/installations/new` | `arms/github.ts §scope.url` | GitHub |
+| GitHub App *Callback URL* | ❓ **not recorded yet** | — | GitHub |
+| Google OAuth client (agentco) | ⏸ **not created yet** | *(will be `arms/google-calendar.ts`)* | Google |
+| Google redirect (domain case) | `https://<domain>/api/oauth/callback` | generated from `public_url` | **the customer pastes it in** to the Cloud Console themselves |
 
-⚠ **Ô "GitHub App *Callback URL*"**: GitHub bắt điền ô này lúc tạo app, nhưng **device
-flow không dùng tới nó**. Ghi lại giá trị đã điền để lần sau khỏi tưởng nó có tác dụng —
-một ô có giá trị mà không ai đọc là chỗ để hiểu nhầm sinh sôi.
+⚠ **The "GitHub App *Callback URL*" row**: GitHub forces you to fill this field in
+when creating the app, but **device flow never uses it**. Record whatever value was
+entered so next time no one mistakes it for something that matters — a field holding
+a value nobody reads is exactly where misunderstandings breed.
 
 ---
 
-## 7. Câu lỗi viết cho NGƯỜI DÙNG, không cho nhà phát triển (user chốt 28/08)
+## 7. Error messages written for the USER, not the developer (locked in by the user, 28/08)
 
-Câu lỗi đo được ở Q7 spike, **nguyên văn** — và nó là mẫu vật tốt vì nó *tử tế với nhà
-phát triển*, tức **sai đối tượng** với người dùng của ta:
+The error message below was captured during the Q7 spike, **verbatim** — and it's a
+good specimen precisely because it's *considerate toward a developer*, which makes it
+**the wrong audience** for our user:
 
 ```
 Calendar MCP API has not been used in project 963492906835 before or it is disabled.
@@ -198,49 +224,54 @@ Enable it by visiting https://console.developers.google.com/apis/api/calendarmcp
 then retry. If you enabled this API recently, wait a few minutes for the action to propagate.
 ```
 
-Tiếng Anh · số hiệu project · `console.developers.google.com`. Người không code đọc xong
-**không biết mình phải làm gì**, và tệ hơn: một nửa số người đọc nó **không có quyền** làm
-điều nó bảo.
+English · a project number · `console.developers.google.com`. A non-developer who
+reads this **has no idea what they're supposed to do**, and worse: half the people
+reading it **don't have permission** to do what it's telling them.
 
-### 🔴 CÙNG MỘT MÃ 403, HAI CÂU KHÁC NHAU — chia theo **chìa đến từ đâu**
+### 🔴 SAME 403 CODE, TWO DIFFERENT MESSAGES — split by **where the key came from**
 
-| Chìa đúc từ | Project là của | Câu đúng | Câu SAI |
+| Key minted from | Project belongs to | Correct message | WRONG message |
 |---|---|---|---|
-| **app của agentco** (loopback) | **của ta** | *"Kết nối Google Calendar đang trục trặc ở phía agentco, không phải do bạn. Thử lại sau ít phút."* | mọi câu có chữ *"bật API"* hoặc link Cloud Console — **họ không có quyền vào project đó** |
-| **app của khách** (ca domain) | **của họ** | *"Dự án Google của bạn chưa bật Calendar MCP API."* + **một cái nút** mở đúng URL Google đưa | câu chung chung *"lỗi hệ thống"* — họ **có** quyền sửa, giấu là bắt họ mò |
+| **agentco's app** (loopback) | **us** | *"The Google Calendar connection is having trouble on agentco's side, not because of anything you did. Try again in a few minutes."* | any message containing *"enable the API"* or a Cloud Console link — **they have no access to that project** |
+| **the customer's app** (domain case) | **them** | *"Your Google project hasn't enabled the Calendar MCP API yet."* + **a button** that opens the exact URL Google gave us | a generic *"system error"* — they **do** have permission to fix it, hiding that just makes them go hunting |
 
-⇒ Nhánh không nằm ở tên hãng mà ở **xuất xứ của `client_id`** (`OAuthAccount.client_id` so
-với chìa mặc định trong danh mục) — thứ ta **đã cất từ 27/08** đúng lúc `$clients` cho phép
-hai client cùng tồn tại. Không cần cơ chế mới.
+⇒ The branch isn't keyed on the provider's name but on **where the `client_id`
+originated** (`OAuthAccount.client_id` compared against the default key in the
+catalog) — something we've **already been storing since 27/08**, right from when
+`$clients` started allowing two clients to coexist. No new mechanism needed.
 
-⚠ Đây đúng lớp lỗi §5m — *một câu lỗi chỉ sai cửa còn đắt hơn không có câu nào*: nó đọc như
-một hướng dẫn, nên người ta **làm theo**, và tiêu thời gian ở một nơi không có gì để sửa.
+⚠ This is exactly the §5m failure class — *an error message that sends someone
+through the wrong door is more expensive than no message at all*: it reads like an
+instruction, so people **follow it**, and burn time somewhere there's nothing to fix.
 
-### Luật chung, áp cho mọi mục danh mục
+### General rule, applied to every catalog entry
 
-1. **Không có chuỗi máy nào lọt ra màn hình** — `invalid_grant` · `redirect_uri_mismatch` ·
-   `SERVICE_DISABLED` · `-32602` đều phải có bản dịch. Nhánh `other` của `sayError` hôm nay
-   vẫn để lọt `error_xyz` — món nợ đã biết.
-2. **Tên chìa `GOOGLE_OAUTH_<hex>` là chuỗi nội bộ**, không phải câu cho người dùng. `isAccountName`
-   đã tách được hai loại (vá 28/08 cho `pickMcp` + `injectSecrets`); mục Google phải dùng lại,
-   đừng để nó khuyên `agentco secret set` cho một tài khoản đăng nhập.
-3. **Câu lỗi neo vào MỤC TIÊU của người dùng, không neo vào cái hỏng** (luật 28/08): họ muốn
-   *xem lịch tuần này*, không muốn biết endpoint nào 403.
-4. **URL lấy từ dữ liệu của mục danh mục**, không ghim trong mã thi hành — cùng khuôn
-   `catalog.scope.url` của GitHub ⇒ 0 nhánh tên hãng.
+1. **No machine string leaks onto the screen** — `invalid_grant` ·
+   `redirect_uri_mismatch` · `SERVICE_DISABLED` · `-32602` must all have a translated
+   version. Today the `other` branch of `sayError` still lets `error_xyz` slip through
+   — a known debt.
+2. **The key name `GOOGLE_OAUTH_<hex>` is an internal string**, not something to show
+   the user. `isAccountName` already tells the two kinds apart (patched 28/08 for
+   `pickMcp` + `injectSecrets`); the Google entry must reuse it, rather than let it
+   suggest `agentco secret set` for what's actually a login account.
+3. **Error messages anchor to the user's GOAL, not to what broke** (rule locked in
+   28/08): they want to *see this week's calendar*, not to learn which endpoint
+   returned 403.
+4. **URLs come from the catalog entry's data**, never hardcoded into executable code
+   — the same mold as GitHub's `catalog.scope.url` ⇒ 0 provider-name branches.
 
 ---
 
-## 8. ⏸ CÒN NỢ — kiểm lại từ đây
+## 8. ⏸ STILL OWED — check back starting here
 
-| | Món | Vì sao chưa đóng |
+| | Item | Why it's still open |
 |---|---|---|
-| 🔴 | **§5 ①** ánh xạ đường dẫn Docker | phải trả **trước khi** khuyên khách dùng Docker |
-| 🔴 | **§4** chọn redirect theo `isLoopback(socket)` | thiếu nó thì đường tunnel vô dụng trên VPS |
-| 🔴 | **Chưa ai chạy thật sau một domain** | 26/08 đi kiểm thì lòi ra **hai chặn cứng của chính ta** (`hostAllowed` từ chối mọi tên miền ⇒ 403 mọi request; cổng token chặn `/api/*` ⇒ 401 ở bước cuối). Cả hai đã vá — **bằng suy luận + test đơn vị**. Thứ chưa được kiểm **không phải Notion**, mà là **cả tầng HTTP của ta**; Notion chỉ là hành khách ⇒ chạy thật một lần là Google hưởng luôn |
-| ✅ | ~~Google: Q1 spike~~ | **đã đo 28/08** — Desktop + loopback ✅ · `client_secret` **bắt buộc** ✅ · refresh token ✅ (Google **không xoay**) · danh tính từ `id_token`, 0 lời gọi mạng ✅ |
-| 🔒 | **Mục Google GÁC LẠI** (user chốt 28/08) — MCP đòi ghi danh Developer Preview + ~24 900 token/lượt không cắt được | quay lại bằng **connector REST** trên Calendar API v3. Hồ sơ đầy đủ: `SESSIONS_MEMORY` §5u · `SPEC-arms` §4e |
-| ⏰ | **Phép đo đang chạy sẵn, đừng bỏ lỡ**: app ở `Testing` ⇒ refresh token phải chết **~04/09/2026** | chạy `--refresh` sau ngày đó để **xác nhận mốc 7 ngày bằng số đo của ta**, trước khi Publish |
-| ⏸ | Hồ sơ verification (đường A): trang chủ + **privacy policy cùng domain** + video demo + xác minh domain trong Search Console | trùng khít món *golive* — làm gần cuối, nhưng **bắt đầu sớm vì tốn thời gian CHỜ** |
-| ⏸ | Điền ô *GitHub App Callback URL* vào §6 | |
-| ⏸ | Dockerfile + compose mẫu (2 container + volume `.state` + route `/api`) | chưa viết dòng nào |
+| 🔴 | **§5 ①** Docker path mapping | must be paid off **before** recommending Docker to customers |
+| 🔴 | **§4** picking the redirect via `isLoopback(socket)` | without it, the tunnel route is useless on a VPS |
+| 🔴 | **No one has run this for real behind a domain yet** | checking on 26/08 turned up **two hard blocks of our own making** (`hostAllowed` rejecting every domain name ⇒ 403 on every request; the token gate blocking `/api/*` ⇒ 401 at the last step). Both patched — **by reasoning + unit tests**. What's still unverified **isn't Notion** — it's **our entire HTTP layer**; Notion is just a passenger ⇒ one real run and Google inherits it for free |
+| ✅ | ~~Google: Q1 spike~~ | **measured on 28/08** — Desktop + loopback ✅ · `client_secret` **required** ✅ · refresh token ✅ (Google **doesn't rotate it**) · identity from `id_token`, 0 network calls ✅ |
+| 🔒 | **Google entry SHELVED** (locked in by the user, 28/08) — MCP requires Developer Preview enrollment + an uncappable ~24,900 tokens/turn | come back to it via a **REST connector** on Calendar API v3 instead. Full record: `SESSIONS_MEMORY` §5u · `SPEC-arms` §4e |
+| ⏰ | **A measurement is already running, don't miss it**: the app is in `Testing` ⇒ the refresh token should die **~04/09/2026** | run `--refresh` after that date to **confirm the 7-day mark with our own measurement**, before Publishing |
+| ⏸ | Verification profile (path A): homepage + **privacy policy on the same domain** + demo video + domain verification in Search Console | overlaps exactly with the *golive* item — do it near the end, but **start it early since the WAIT is what costs time** |
+| ⏸ | Fill in the *GitHub App Callback URL* field in §6 | |
+| ⏸ | Sample Dockerfile + compose (2 containers + `.state` volume + `/api` route) | not a single line written yet |

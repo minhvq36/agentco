@@ -1,16 +1,3 @@
-/**
- * Test cho hai chốt chạy TRƯỚC khi phóng worker đầu tiên (19/08 vòng hai).
- *
- * Cả hai đều thi hành cùng một câu hỏi: *sạn trong kế hoạch có QUAN SÁT ĐƯỢC
- * không?* Nếu có thì đừng nhờ model nhìn hộ — và nhất là đừng đợi tới lúc chạy
- * xong mới phát hiện, vì lúc đó tiền đã tiêu rồi.
- *
- *  · `linkDeps`    — task đọc kết quả task khác mà quên `deps` → SỬA
- *  · `validate`    — đầu vào trỏ vào hư không → CHẶN
- *  · `withinRoots` — Trợ lý chỉ được tìm ở nơi nó có quyền
- *
- * Chạy: npm test
- */
 
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';
@@ -44,16 +31,8 @@ const plan = (tasks: unknown[]): Plan =>
 const file = (p: string) => ({ kind: 'file' as const, path: p });
 const ROLES = new Set(['writer', 'reviewer']);
 
-// ────────────────────────────────────────────────────────────── linkDeps
 
-/**
- * ĐÂY LÀ RACE CONDITION IM LẶNG.
- *
- * `deps: []` nghĩa là "chạy song song được", nên T-02 được phóng cùng lúc T-01
- * rồi đọc một file T-01 chưa kịp ghi. Nhân viên không báo lỗi — nó tự xoay sở
- * và trả về thứ trông vẫn hợp lý.
- */
-test('linkDeps: task đọc output của task khác thì tự nối dây', () => {
+test("linkDeps: a task reading another task's output auto-wires the dependency", () => {
   const p = plan([
     task('T-01', { outputs: [file('artifacts/P/T-01/bai.md')] }),
     task('T-02', { inputs: [file('artifacts/P/T-01/bai.md')] }),
@@ -62,10 +41,7 @@ test('linkDeps: task đọc output của task khác thì tự nối dây', () =>
   assert.deepEqual(p.tasks[1]!.deps, ['T-01']);
 });
 
-test('linkDeps: đường dẫn viết khác kiểu vẫn phải khớp', () => {
-  // Model viết `outputs` và `inputs` ở hai chỗ khác nhau trong cùng khối JSON,
-  // nên `./` thừa hay dấu gạch ngược là chuyện thường. So chuỗi thô thì cơ chế
-  // này im lặng không chạy — đúng loại hỏng khó thấy nhất.
+test('linkDeps: paths written in different styles must still match', () => {
   const p = plan([
     task('T-01', { outputs: [file('artifacts/P/T-01/bai.md')] }),
     task('T-02', { inputs: [file('./artifacts\\P\\T-01\\bai.md')] }),
@@ -73,7 +49,7 @@ test('linkDeps: đường dẫn viết khác kiểu vẫn phải khớp', () => 
   assert.equal(Scheduler.linkDeps(p).length, 1);
 });
 
-test('linkDeps: đã khai deps rồi thì không nối lại', () => {
+test('linkDeps: an already-declared dep is not re-wired', () => {
   const p = plan([
     task('T-01', { outputs: [file('a.md')] }),
     task('T-02', { inputs: [file('a.md')], deps: ['T-01'] }),
@@ -81,18 +57,13 @@ test('linkDeps: đã khai deps rồi thì không nối lại', () => {
   assert.deepEqual(Scheduler.linkDeps(p), []);
 });
 
-test('linkDeps: task đọc chính output của mình thì KHÔNG tự phụ thuộc chính nó', () => {
-  // Ca thật: "sửa lại file X" — task vừa đọc vừa ghi cùng một đường dẫn.
+test('linkDeps: a task reading its own output does NOT self-depend', () => {
   const p = plan([task('T-01', { inputs: [file('a.md')], outputs: [file('a.md')] })]);
   assert.deepEqual(Scheduler.linkDeps(p), []);
   assert.deepEqual(p.tasks[0]!.deps, []);
 });
 
-/**
- * Nối dây CÓ THỂ đẻ ra chu trình (hai task đọc kết quả của nhau). Đó là lý do
- * `linkDeps` phải chạy TRƯỚC `validate`, không phải sau — `validate` là chỗ bắt.
- */
-test('linkDeps chạy trước validate: chu trình do nối dây sinh ra vẫn bị bắt', () => {
+test('linkDeps runs before validate: a cycle it wires up is still caught', () => {
   const p = plan([
     task('T-01', { inputs: [file('b.md')], outputs: [file('a.md')] }),
     task('T-02', { inputs: [file('a.md')], outputs: [file('b.md')] }),
@@ -100,20 +71,13 @@ test('linkDeps chạy trước validate: chu trình do nối dây sinh ra vẫn 
   Scheduler.linkDeps(p);
   const problems = Scheduler.validate(p, ROLES);
   assert.ok(
-    problems.some((x) => x.includes('vòng tròn')),
-    `phải bắt được chu trình, nhận: ${problems.join(' | ')}`,
+    problems.some((x) => x.includes('vòng tròn')), // i18n-allow-vietnamese: matches real i18n plan.cycle string (default locale vi)
+    `must catch the cycle, got: ${problems.join(' | ')}`,
   );
 });
 
-// ──────────────────────────────────────── linkDeps: đầu vào là một THƯ MỤC
-//
-// Ca thật 20/08, bài 6 (rà hợp đồng). "Tách theo điều khoản, mỗi điều một file"
-// → số file bằng số điều khoản, chỉ biết được sau khi đọc. Nên bước sau trỏ vào
-// cả THƯ MỤC; đó là cách khai đúng nhất planner có, không phải một lỗi.
-// Kế hoạch bị chặn với câu *"cần đọc … nhưng không có file đó, và không việc
-// nào tạo ra nó"* — cho một thư mục mà T-01 đang tạo ra.
 
-test('linkDeps: đầu vào là thư mục mà task khác ghi vào thì vẫn nối dây', () => {
+test('linkDeps: an input that is a directory another task writes into still wires up', () => {
   const p = plan([
     task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan/dieu-01.md')] }),
     task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan/')] }),
@@ -121,9 +85,7 @@ test('linkDeps: đầu vào là thư mục mà task khác ghi vào thì vẫn n�
   assert.deepEqual(Scheduler.linkDeps(p), ['T-02 → T-01']);
 });
 
-test('linkDeps: dấu gạch CUỐI không được làm lệch phép so — hai bên scoper cắt khác nhau', () => {
-  // `outputScoper` bỏ dấu gạch cuối, `artifactScoper` giữ. Đây chính là chỗ hai
-  // chuỗi của CÙNG một thư mục không khớp nhau.
+test('linkDeps: a trailing slash must not throw off the comparison — the two scopers trim differently', () => {
   const p = plan([
     task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan')] }),
     task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan/')] }),
@@ -131,9 +93,7 @@ test('linkDeps: dấu gạch CUỐI không được làm lệch phép so — hai
   assert.deepEqual(Scheduler.linkDeps(p), ['T-02 → T-01']);
 });
 
-test('linkDeps: thư mục có NHIỀU người ghi thì nối HẾT, không nối mỗi người đầu', () => {
-  // Thiếu một dây là task đọc thư mục khi mới có một nửa số file — đúng loại
-  // hỏng im lặng mà `linkDeps` sinh ra để chặn.
+test('linkDeps: a directory with MULTIPLE writers wires up ALL of them, not just the first', () => {
   const p = plan([
     task('T-01', { outputs: [file('artifacts/P/T-01/soi/a.md')] }),
     task('T-02', { outputs: [file('artifacts/P/T-01/soi/b.md')] }),
@@ -143,10 +103,7 @@ test('linkDeps: thư mục có NHIỀU người ghi thì nối HẾT, không n�
   assert.deepEqual(p.tasks[2]!.deps, ['T-01', 'T-02']);
 });
 
-test('linkDeps: tiền tố chuỗi KHÔNG phải thư mục cha', () => {
-  // `dieu-khoan` là tiền tố của `dieu-khoan-cu.md` nhưng không chứa nó.
-  // `startsWith` trần ở đây là một dây nối sai, và nó xếp hai việc độc lập
-  // thành nối tiếp — chậm hơn mà không ai giải thích được vì sao.
+test('linkDeps: a string prefix is NOT a parent directory', () => {
   const p = plan([
     task('T-01', { outputs: [file('artifacts/P/T-01/dieu-khoan-cu.md')] }),
     task('T-02', { inputs: [file('artifacts/P/T-01/dieu-khoan')] }),
@@ -154,9 +111,8 @@ test('linkDeps: tiền tố chuỗi KHÔNG phải thư mục cha', () => {
   assert.deepEqual(Scheduler.linkDeps(p), []);
 });
 
-// ────────────────────────────────────────────────────────────── validate
 
-test('validate: thư mục do task khác ghi vào thì KHÔNG đòi phải có sẵn trên đĩa', () => {
+test('validate: a directory another task writes into is NOT required to already exist on disk', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     const p = plan([
@@ -169,9 +125,7 @@ test('validate: thư mục do task khác ghi vào thì KHÔNG đòi phải có s
   }
 });
 
-test('validate: thư mục KHÔNG ai ghi vào và không có trên đĩa thì vẫn chặn', () => {
-  // Nới lỏng phép so không được biến thành "cái gì cũng qua": một thư mục không
-  // ai tạo ra vẫn là một đường dẫn chết, và nhân viên vẫn sẽ đi tìm nó.
+test('validate: a directory NOBODY writes into and that does not exist on disk still blocks', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     const p = plan([task('T-01', { inputs: [file('artifacts/P/T-09/dieu-khoan/')] })]);
@@ -181,20 +135,19 @@ test('validate: thư mục KHÔNG ai ghi vào và không có trên đĩa thì v�
   }
 });
 
-test('validate: đầu vào KHÔNG có trên đĩa và không việc nào tạo ra thì chặn', () => {
+test('validate: an input not on disk and produced by no task blocks', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     const p = plan([task('T-01', { inputs: [file('library/files/khong-co.md')] })]);
     const problems = Scheduler.validate(p, ROLES, dir);
     assert.equal(problems.length, 1);
-    // Câu lỗi phải nêu ĐÚNG tên file — không nêu thì người dùng không sửa được.
     assert.ok(problems[0]!.includes('library/files/khong-co.md'));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('validate: đầu vào CÓ trên đĩa thì cho qua', () => {
+test('validate: an input that IS on disk passes', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     fs.mkdirSync(path.join(dir, 'library', 'files'), { recursive: true });
@@ -206,7 +159,7 @@ test('validate: đầu vào CÓ trên đĩa thì cho qua', () => {
   }
 });
 
-test('validate: đầu vào do task KHÁC sinh ra thì không đòi phải có sẵn trên đĩa', () => {
+test('validate: an input produced by ANOTHER task is not required to already exist on disk', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     const p = plan([
@@ -219,88 +172,66 @@ test('validate: đầu vào do task KHÁC sinh ra thì không đòi phải có s
   }
 });
 
-test('validate: không truyền officeDir thì bỏ qua kiểm đĩa, các kiểm khác vẫn chạy', () => {
+test('validate: without an officeDir the disk check is skipped, but the other checks still run', () => {
   const p = plan([task('T-01', { role: 'khong-co-ai' })]);
   assert.equal(Scheduler.validate(p, ROLES).length, 1);
 });
 
-// ─────────────────────────────────────────────────────────── outputScoper
 
-/**
- * Ca hỏng có thật, 20/08: người dùng nói *"Lưu vào `artifacts/vi/doc-1.md`"* và
- * file ra ở `artifacts/P-…/T-01/doc-1.md` — thư mục `vi/` biến mất, không một
- * câu nào giải thích. Đường ra phải giữ ĐƯỢC CẢ HAI: khung theo ca (bảo đảm
- * không ghi đè) và phần đuôi người dùng đặt (ý định của họ).
- */
 const out = outputScoper('P-01', 'T-01');
 
-test('outputScoper: GIỮ phần đuôi người dùng đặt, chỉ bọc thêm khung', () => {
+test("outputScoper: KEEPS the user-chosen tail, only wraps the frame around it", () => {
   assert.equal(out('artifacts/vi/doc-1.md'), 'artifacts/P-01/T-01/vi/doc-1.md');
 });
 
-test('outputScoper: đường dẫn theo đúng luật vẫn ra y nguyên', () => {
+test('outputScoper: a path already following the rule comes out unchanged', () => {
   assert.equal(out('artifacts/T-01/bai.md'), 'artifacts/P-01/T-01/bai.md');
 });
 
-test('outputScoper: IDEMPOTENT — gọi lại không bọc thêm lớp nữa', () => {
-  // Người dùng dán lại một đường dẫn cũ, hay code chạy hai lượt: cả hai đều
-  // không được đẻ ra `artifacts/P-01/T-01/P-01/T-01/...`.
+test('outputScoper: IDEMPOTENT — calling it again does not wrap another layer', () => {
   const once = out('artifacts/vi/doc-1.md');
   assert.equal(out(once), once);
 });
 
-test('outputScoper: tên file trần cũng vào đúng thư mục của task', () => {
+test("outputScoper: a bare filename still lands in the task's own folder", () => {
   assert.equal(out('bao-cao.md'), 'artifacts/P-01/T-01/bao-cao.md');
 });
 
-test('outputScoper: `\\` và `./` không làm lệch khung', () => {
-  // Model viết `outputs` bằng đủ kiểu; khung không được phụ thuộc vào kiểu viết.
+test('outputScoper: `\\` and `./` do not throw off the frame', () => {
   assert.equal(out('.\\artifacts\\vi\\doc-1.md'), 'artifacts/P-01/T-01/vi/doc-1.md');
 });
 
-test('outputScoper: `..` bị BỎ, không có đường đi ra ngoài artifacts/', () => {
+test('outputScoper: `..` is STRIPPED — no path escapes out of artifacts/', () => {
   assert.equal(out('../../office.yaml'), 'artifacts/P-01/T-01/office.yaml');
   assert.equal(out('artifacts/../../roles/x.yaml'), 'artifacts/P-01/T-01/roles/x.yaml');
 });
 
-test('outputScoper: đường dẫn rỗng vẫn ra một file có thật, không ra một thư mục', () => {
-  // `outputs` chỉ có thư mục là một kế hoạch hỏng, nhưng nó không được biến
-  // thành một đường dẫn trỏ vào thư mục — worker sẽ ghi hỏng mà không ai biết.
+test('outputScoper: an empty path still resolves to a real file, not a directory', () => {
   assert.equal(out('artifacts/'), 'artifacts/P-01/T-01/ket-qua.md');
 });
 
-test('outputScoper: hai task KHÁC NHAU không bao giờ đụng nhau, kể cả cùng tên file', () => {
+test('outputScoper: two DIFFERENT tasks never collide, even with the same filename', () => {
   const a = outputScoper('P-01', 'T-01')('artifacts/vi/doc.md');
   const b = outputScoper('P-01', 'T-02')('artifacts/vi/doc.md');
   assert.notEqual(a, b);
 });
 
-// ───────────────────── `onRedirect` — ta viết lại chuỗi người dùng gõ, phải NÓI RA
-//
-// Ca 24/08 (`P-260824-0401-q7ma`): người dùng bảo chép file vào
-// `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về `artifacts/`
-// (đúng thiết kế) và **im lặng**, nên Trợ lý nhìn ra sự lệch rồi tự hứa
-// *"nếu cần mình sẽ thử ghi lại đúng vị trí đó"* — một lời hứa không giữ được:
-// hàm này chạy TRƯỚC khi nhân viên được phóng, nên không lượt nào đi lối đó.
 
-test('onRedirect: đường dẫn tuyệt đối Windows được khai ra NGUYÊN VĂN', () => {
+test('onRedirect: a Windows absolute path is reported VERBATIM', () => {
   const seen: string[] = [];
   const scope = outputScoper('P-01', 'T-01', (asked) => seen.push(asked));
   assert.equal(scope('D:\\Downloads\\Programs Installation\\ban-ke.md'), 'artifacts/P-01/T-01/ban-ke.md');
-  // Nguyên văn, không chuẩn hoá: đó là chuỗi người dùng sẽ nhận ra trong câu báo cáo.
   assert.deepEqual(seen, ['D:\\Downloads\\Programs Installation\\ban-ke.md']);
 });
 
-test('onRedirect: nhánh POSIX cũng khai — nó chỉ ÊM hơn, không đúng hơn', () => {
+test('onRedirect: the POSIX branch reports too — it is just QUIETER, not more correct', () => {
   const seen: string[] = [];
   const scope = outputScoper('P-01', 'T-01', (asked) => seen.push(asked));
   assert.equal(scope('/home/an/ho-so/x.md'), 'artifacts/P-01/T-01/x.md');
   assert.deepEqual(seen, ['/home/an/ho-so/x.md']);
 });
 
-test('onRedirect: đường dẫn TRONG văn phòng KHÔNG bắn — nửa ngược chiều', () => {
-  // Dán dòng "cắm kết nối đi" vào mọi ca là biến một lời chỉ đường thành tiếng
-  // ồn, rồi người dùng học cách bỏ qua nó — kể cả lần nó nói thật.
+test('onRedirect: a path already INSIDE the office does NOT fire — the reverse half of the contract', () => {
   const seen: string[] = [];
   const scope = outputScoper('P-01', 'T-01', (asked) => seen.push(asked));
   scope('artifacts/vi/doc-1.md');
@@ -309,196 +240,131 @@ test('onRedirect: đường dẫn TRONG văn phòng KHÔNG bắn — nửa ngư�
   assert.deepEqual(seen, []);
 });
 
-test('onRedirect: KHÔNG truyền callback thì hành vi y hệt bản cũ', () => {
+test('onRedirect: with NO callback, behavior is identical to the old version', () => {
   assert.equal(outputScoper('P-01', 'T-01')('D:\\x\\y.md'), 'artifacts/P-01/T-01/y.md');
 });
 
-/*
- * Test cho `withinRoots` đã BỎ cùng với chính hàm đó (19/08).
- *
- * Nó canh cổng cho `Grep`/`Glob` của Trợ lý — mà ba cơ chế chặn của SDK đều
- * không nổ, nên khả năng đó bị thu lại và hàm thành mã chết. Giữ test cho mã
- * chết còn tệ hơn không có test: nó báo một vùng an toàn không tồn tại.
- * → SPEC-offices.md §4.7
- */
 
-// ────────────────────── lan truyền chặn: `blocked` KHÔNG phải "đã xong" (§B)
-//
-// Đo được 20/08 (`P-260820-2219-5ltb`): T-01 trả `blocked` lúc 22:20:21 và
-// T-02 phóng lúc 22:20:21 — cùng một giây, trên một nền rỗng. Rồi T-03.
-// Nguyên nhân: `run()` chỉ `failed.add` khi `status === 'failed'`, nên
-// `blocked` lọt vào `receipts` và được tính là phụ thuộc đã xong.
 
 const receipt = (patch: Record<string, unknown> = {}) =>
   ({ status: 'done', artifacts: ['a.md'], landed: ['a.md'], ...patch }) as never;
 
-test('delivered: chỉ `done` MÀ CÓ giao hàng mới tính là xong', () => {
+test('delivered: only `done` WITH something actually landed counts as done', () => {
   assert.equal(delivered(receipt()), true);
-  assert.equal(delivered(receipt({ status: 'blocked' })), false, 'đây là bug 20/08');
+  assert.equal(delivered(receipt({ status: 'blocked' })), false, 'this is the 08/20 bug');
   assert.equal(delivered(receipt({ status: 'failed' })), false);
   assert.equal(delivered(receipt({ status: 'stopped' })), false);
   assert.equal(delivered(undefined), false);
 });
 
-test('delivered: tự nhận `done` mà KHÔNG có file nào đáp xuống thì chưa xong', () => {
-  // `missingOutputs` cũng bắt ca này, nhưng nó chạy SAU khi cả DAG xong — quá
-  // muộn để ngăn task con phóng vào hư không.
-  assert.equal(delivered(receipt({ artifacts: [], landed: [] })), true, 'không hứa thì không nợ');
+test('delivered: self-reporting `done` with NO file having landed is not done yet', () => {
+  assert.equal(delivered(receipt({ artifacts: [], landed: [] })), true, "promising nothing means owing nothing");
   assert.equal(delivered(receipt({ artifacts: ['x.md'], landed: [] })), true);
 });
 
-test('unmetDeps: nêu ĐÍCH DANH bước nào chưa giao được hàng', () => {
+test('unmetDeps: names the EXACT step that never delivered', () => {
   const t = task('T-02', { deps: ['T-01'] }) as never;
   const blocked = new Map([['T-01', receipt({ status: 'blocked' })]]);
   assert.deepEqual(unmetDeps(t, blocked, new Set()), ['T-01']);
   const ok = new Map([['T-01', receipt()]]);
   assert.deepEqual(unmetDeps(t, ok, new Set()), []);
-  assert.deepEqual(unmetDeps(t, ok, new Set(['T-01'])), ['T-01'], 'failed vẫn phải lan truyền');
+  assert.deepEqual(unmetDeps(t, ok, new Set(['T-01'])), ['T-01'], 'a failure must still propagate');
 });
 
-// ────────────────────────── isStale: mớ dở dang còn tươi hay đã ôi (§2.6)
-//
-// User chốt 20/08 tối: KHÔNG tự đoán "đây có phải việc cũ không" (ba phép đoán
-// chồng nhau, và kiểu hỏng là trả về một checklist hoàn hảo nói về một hợp đồng
-// đã bị thay). Chỉ NÓI RA thứ đang có, kèm nhãn ôi/tươi — thứ này quan sát
-// được: plan.json ghi rõ task nào đọc gì và ghi ra gì, so mtime hai đầu là xong.
 
 const t = (iso: string) => new Date(iso).toISOString();
 
-test('isStale: nguồn đổi SAU khi file được ghi → ôi', () => {
+test('isStale: a source changing AFTER the file was written → stale', () => {
   assert.equal(isStale(t('2026-08-20T10:00:00Z'), [t('2026-08-20T11:00:00Z')]), true);
 });
 
-test('isStale: nguồn cũ hơn sản phẩm → còn tươi', () => {
+test('isStale: a source older than the product → still fresh', () => {
   assert.equal(isStale(t('2026-08-20T12:00:00Z'), [t('2026-08-20T11:00:00Z')]), false);
 });
 
-test('isStale: CHỈ MỘT nguồn đổi cũng đủ làm ôi', () => {
+test('isStale: just ONE changed source is enough to go stale', () => {
   const made = t('2026-08-20T12:00:00Z');
   assert.equal(isStale(made, [t('2026-08-20T09:00:00Z'), t('2026-08-20T13:00:00Z')]), true);
 });
 
-test('isStale: ghi cùng lúc KHÔNG phải ôi', () => {
-  // So `>` chứ không `>=`: ghi xong trong cùng một giây là chuyện thường. Đánh
-  // ôi nhầm thì mọi kết quả vừa sinh đều mang nhãn cảnh báo, người dùng học
-  // cách bỏ qua nhãn đó, rồi bỏ qua luôn lần nó nói thật.
+test('isStale: written at the exact same time is NOT stale', () => {
   const same = t('2026-08-20T12:00:00Z');
   assert.equal(isStale(same, [same]), false);
 });
 
-test('isStale: không có nguồn nào thì KHÔNG kết luận gì', () => {
+test('isStale: no source at all → no conclusion either way', () => {
   assert.equal(isStale(t('2026-08-20T12:00:00Z'), []), false);
 });
 
-test('isStale: mtime rác thì im lặng cho qua, không dán nhãn bừa', () => {
-  assert.equal(isStale('rác', [t('2026-08-20T12:00:00Z')]), false);
-  assert.equal(isStale(t('2026-08-20T12:00:00Z'), ['rác']), false);
+test('isStale: garbage mtime is silently ignored, never labeled arbitrarily', () => {
+  assert.equal(isStale('garbage', [t('2026-08-20T12:00:00Z')]), false);
+  assert.equal(isStale(t('2026-08-20T12:00:00Z'), ['garbage']), false);
 });
 
-// ─────────────── resume: "không nằm trong pending" ≠ "đã xong" (bug 21/08)
-//
-// User bấm Dừng lúc `Người đọc` đang tách hợp đồng (4/5 điều khoản), rồi gõ
-// /resume. T-01 vắng mặt trong `pending` vì nó ĐÃ chạy — và trả `blocked`.
-// Bản trước cắt phăng dây `T-02 → T-01` và cả chuỗi sau chạy trên 4/5.
-// Nổ hai lần liên tiếp trên máy user (hd3, hd4).
 
-test('delivered: task bị NGẮT giữa lúc ghi file KHÔNG phải là đã xong', () => {
-  // Đây là ca đúng như trên đĩa: `blocked`, nhưng CÓ file đã đáp xuống — nên
-  // mọi phép kiểm nhìn vào "có file không" đều cho qua. Chỉ `status` cứu được.
+test('delivered: a task interrupted MID-WRITE is not "done"', () => {
   const interrupted = {
     status: 'blocked',
     artifacts: ['a/dieu-01.md', 'a/dieu-02.md'],
     landed: ['a/dieu-01.md', 'a/dieu-02.md'],
   } as never;
-  assert.equal(delivered(interrupted), false, 'CÓ file không có nghĩa là đã xong');
+  assert.equal(delivered(interrupted), false, 'HAVING a file does not mean it is done');
 });
 
-test('resume: task phải chạy lại khi receipt CHƯA giao được hàng', () => {
-  // Mô phỏng đúng phép quyết định của `Office.resume`: `queued` là danh sách
-  // pending, `receipt` là thứ đọc từ đĩa.
+test('resume: a task must re-run when its receipt never delivered', () => {
   const queued = new Set(['T-02', 'T-03']);
   const receipts = new Map([['T-01', { status: 'blocked', artifacts: ['x.md'], landed: ['x.md'] }]]);
   const redo = (id: string) =>
     queued.has(id) || !delivered(receipts.get(id) as never);
 
-  assert.equal(redo('T-01'), true, 'T-01 bị cắt giữa chừng → PHẢI chạy lại');
+  assert.equal(redo('T-01'), true, 'T-01 was cut mid-way → MUST re-run');
   assert.equal(redo('T-02'), true);
 
-  // Ngược lại: T-01 xong hẳn thì bỏ qua, đúng như `/resume` hứa.
   const ok = new Map([['T-01', { status: 'done', artifacts: ['x.md'], landed: ['x.md'] }]]);
   const redoOk = (id: string) => queued.has(id) || !delivered(ok.get(id) as never);
-  assert.equal(redoOk('T-01'), false, 'xong hẳn thì KHÔNG chạy lại — resume phải rẻ');
+  assert.equal(redoOk('T-01'), false, 'truly done means it must NOT re-run — resume has to be cheap');
 });
 
-test('resume: chỉ cắt `deps` tới task THẬT SỰ đã giao hàng', () => {
-  // Cắt nhầm là bỏ qua chốt lan truyền, và task con chạy trên nền dở.
-  const run = new Set(['T-01', 'T-02']); // T-01 phải chạy lại nên vẫn trong kế hoạch
+test('resume: only trims `deps` to a task that ACTUALLY delivered', () => {
+  const run = new Set(['T-01', 'T-02']);
   const deps = ['T-01'].filter((d) => run.has(d));
-  assert.deepEqual(deps, ['T-01'], 'dây phải CÒN thì scheduler mới chặn được T-02');
+  assert.deepEqual(deps, ['T-01'], 'the wire must STILL be there for the scheduler to block T-02');
 });
 
-// ────────── hàng rào CỨNG: đầu vào là đầu ra của một task bị cắt (A2)
-//
-// Bảng kê giấu đường dẫn là hàng rào MỀM — model đoán ra được vì
-// `artifacts/<plan>/<task>/…` có quy luật, và user dán `@` thì cũng lọt.
-// Chốt này đọc NGƯỢC từ chính đường dẫn nên không cần ai hợp tác.
 
-test('đường dẫn artifact tự khai ra plan_id và task_id', () => {
-  // Đây là toàn bộ cơ sở của `interruptedInputs`: không cần chỉ mục nào cả.
+test('an artifact path itself declares its plan_id and task_id', () => {
   const parts = 'artifacts/P-260821-0126-mxzo/T-01/dieu-khoan/dieu-khoan-01.md'.split('/');
   assert.equal(parts[0], 'artifacts');
   assert.equal(parts[1], 'P-260821-0126-mxzo');
   assert.equal(parts[2], 'T-01');
-  assert.ok(parts.length >= 4, 'ngắn hơn 4 mảnh thì không trỏ vào đầu ra của task nào');
+  assert.ok(parts.length >= 4, "fewer than 4 segments and it points at no task's output");
 });
 
-test('đường dẫn KHÔNG phải artifact thì chốt đứng ngoài', () => {
-  // Tủ tài liệu và file gốc không bao giờ là "đầu ra của một task".
+test('a path that is NOT an artifact stays clearly outside', () => {
   for (const p of ['library/text/hd5.pdf.txt', 'library/files/hd5.pdf', 'artifacts/x.md']) {
     const parts = p.split('/');
     assert.ok(parts[0] !== 'artifacts' || parts.length < 4, p);
   }
 });
 
-// ────────── báo cáo không được mâu thuẫn với dải bước (B)
 
-test('còn bước chưa done thì câu báo cáo phải nói ra', () => {
-  // User bắt được 21/08: dải bước hiện ○ ở bước 1, báo cáo nói "Xong rồi!".
-  // Hai bề mặt nói ngược nhau tệ hơn cả thiếu một trong hai.
+test('an undone step must show up in the report', () => {
   const steps = [
-    { title: 'Tách hợp đồng', status: 'pending' },
-    { title: 'Soi điều khoản', status: 'done' },
-    { title: 'Gộp checklist', status: 'done' },
+    { title: 'Split the contract', status: 'pending' },
+    { title: 'Review the terms', status: 'done' },
+    { title: 'Merge the checklist', status: 'done' },
   ];
   const undone = steps.filter((s) => s.status !== 'done');
   assert.equal(undone.length, 1);
-  assert.equal(undone[0].title, 'Tách hợp đồng');
+  assert.equal(undone[0].title, 'Split the contract');
 });
 
-test('xong trọn thì KHÔNG nối thêm câu cảnh báo nào', () => {
-  // Cảnh báo kêu bừa thì người dùng học cách bỏ qua nó — cùng luật với nhãn ôi.
+test('fully done attaches NO warning sentence at all', () => {
   const steps = [{ status: 'done' }, { status: 'done' }];
   assert.equal(steps.filter((s) => s.status !== 'done').length, 0);
 });
 
-/**
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐẦU VÀO NẰM ngoài VĂN PHÒNG — ca thật 22/08, chặn ngay ở bước lập kế hoạch│
- * │                                                                          │
- * │ Người dùng gõ: *"Kiểm kê thư mục D:\Downloads\Programs Installation…"*.   │
- * │ Trợ lý chép đường dẫn vào `inputs` — ĐÚNG như `ASSISTANT_CORE` dặn nó:    │
- * │ *"a path the human typed is exact — copy it into `inputs` verbatim"*.     │
- * │                                                                          │
- * │ Rồi `validate` chặn cả kế hoạch: *"không có file đó, và không việc nào    │
- * │ tạo ra nó"*. Vì phép kiểm chỉ có MỘT đường — `safeJoin(officeDir, …)` —   │
- * │ mang sẵn tiền đề "mọi đầu vào đều nằm trong văn phòng". Tiền đề đó đúng   │
- * │ cho tới ngày `Bash` bật sẵn.                                             │
- * │                                                                          │
- * │ Trợ lý tuân lệnh và bị chặn VÌ tuân lệnh. Đó là hình dạng tệ nhất của     │
- * │ một lỗi: không ai làm sai cả.                                            │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
-test('validate: thư mục TUYỆT ĐỐI ngoài văn phòng, có thật trên máy ⇒ CHO QUA', () => {
+test('validate: an ABSOLUTE directory outside the office that really exists ⇒ PASSES', () => {
   const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-ngoai-'));
   try {
@@ -510,29 +376,23 @@ test('validate: thư mục TUYỆT ĐỐI ngoài văn phòng, có thật trên m
   }
 });
 
-test('validate: đường dẫn tuyệt đối KHÔNG có thật vẫn chặn — và nói đúng lý do', () => {
-  // Nới lỏng không được thành "cái gì tuyệt đối cũng qua": prompt của nhân viên
-  // HỨA rằng inputs vừa được đối chiếu với file thật, và chính lời hứa đó khiến
-  // nó dám dừng ngay thay vì đi mò. Bỏ kiểm là phá lời hứa đó.
+test('validate: an absolute path that does NOT exist still blocks — and states the real reason', () => {
   const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     const ghost = path.join(os.tmpdir(), 'agentco-khong-bao-gio-co-that-9k2');
     const problems = Scheduler.validate(plan([task('T-01', { inputs: [file(ghost)] })]), ROLES, office);
     assert.equal(problems.length, 1);
-    assert.ok(problems[0]!.includes(ghost), 'phải nêu đúng đường dẫn để người dùng sửa được');
+    assert.ok(problems[0]!.includes(ghost), 'must name the exact path so the user can fix it');
     assert.ok(
-      problems[0]!.includes('không tìm thấy trên máy'),
-      'câu "không việc nào tạo ra nó" vô nghĩa với một thư mục ngoài văn phòng',
+      problems[0]!.includes('không tìm thấy trên máy'), // i18n-allow-vietnamese: matches real i18n string (default locale vi)
+      'the "no task produces it" phrasing makes no sense for a directory outside the office',
     );
   } finally {
     fs.rmSync(office, { recursive: true, force: true });
   }
 });
 
-test('validate: đường dẫn TƯƠNG ĐỐI leo ra ngoài vẫn bị chặn — không đi nhánh "ngoài văn phòng"', () => {
-  // Tách theo `isAbsolute`, không theo "safeJoin có ném không". Cả hai đều làm
-  // safeJoin ném, nhưng cái này là mưu toan traversal chứ không phải đường dẫn
-  // người dùng gõ — và đem existsSync nó thì ta đo theo cwd của daemon.
+test('validate: a RELATIVE path climbing outside still blocks — must not take the "outside the office" branch', () => {
   const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   try {
     const p = plan([task('T-01', { inputs: [file('../../../etc/passwd')] })]);
@@ -542,17 +402,15 @@ test('validate: đường dẫn TƯƠNG ĐỐI leo ra ngoài vẫn bị chặn �
   }
 });
 
-test('missingInputs dùng CHUNG luật với validate: đường dẫn tuyệt đối có thật thì phóng được', () => {
-  // Hai chốt trên cùng một luật. Hiểu khác nhau thì kế hoạch qua cửa một rồi
-  // chết ở cửa hai — người dùng nhận một câu từ chối cho thứ vừa được duyệt.
+test('missingInputs SHARES its rule with validate: an absolute path that exists can still be resolved', () => {
   const office = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-plan-'));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-ngoai-'));
   try {
     for (const p of [outside, path.join(office, 'library')]) {
       const abs = resolveInput(office, p);
-      assert.ok(abs, `resolveInput phải nhận "${p}"`);
+      assert.ok(abs, `resolveInput must accept "${p}"`);
     }
-    assert.equal(resolveInput(office, '../../../etc/passwd'), undefined, 'traversal vẫn bị chặn');
+    assert.equal(resolveInput(office, '../../../etc/passwd'), undefined, 'traversal is still blocked');
     assert.ok(existsOnDisk(outside));
     assert.equal(existsOnDisk(path.join(os.tmpdir(), 'khong-bao-gio-co-that-7x1')), false);
   } finally {
@@ -562,41 +420,21 @@ test('missingInputs dùng CHUNG luật với validate: đường dẫn tuyệt �
 });
 
 
-// ═════════════════════════════════════════ cờ BẤT ĐỊNH: hai chiều, và hẹp
-//
-// Bản 22/08 chỉ đẩy `lệnh trên máy` vào danh bạ KHI có shell. Chạy lại 9.3:
-// văn phòng không ai có shell ⇒ chuỗi đó không xuất hiện ở đâu ⇒ vắng mặt không
-// phải tín hiệu, và Trợ lý vẫn giao việc, vẫn tiêu $0,1380.
 
-test('shellFlag: LUÔN nói ra, cả hai chiều — vắng mặt không phải tín hiệu', () => {
-  assert.notEqual(shellFlag([]), '', 'không có shell vẫn PHẢI nói ra');
-  assert.notEqual(shellFlag([]), shellFlag(['Bash']), 'hai chiều phải phân biệt được');
+test('shellFlag: ALWAYS says so, both ways — absence is not a signal', () => {
+  assert.notEqual(shellFlag([]), '', 'having no shell must still be stated');
+  assert.notEqual(shellFlag([]), shellFlag(['Bash']), 'the two states must be distinguishable');
   assert.ok(shellFlag(['Bash']).includes('ON'));
   assert.ok(shellFlag([]).includes('OFF'));
-  // Khai bằng tên nền tảng nào cũng tính — xem types.ts §SHELL_ALIASES.
   assert.equal(shellFlag(['PowerShell']), shellFlag(['Bash']));
 });
 
-test('shellFlag: cờ TỰ ĐỌC ĐƯỢC khi đứng một mình, không cần chú giải ở trên', () => {
-  // Chú giải nằm đầu khối, cờ nằm ở dòng thứ 9 — khoảng cách là có thật.
+test('shellFlag: the flag is SELF-READABLE standing alone, with no caption above it needed', () => {
   for (const tools of [[], ['Bash']]) {
-    assert.ok(shellFlag(tools).includes('shell'), `cờ phải tự mang nghĩa: ${shellFlag(tools)}`);
+    assert.ok(shellFlag(tools).includes('shell'), `the flag must carry its own meaning: ${shellFlag(tools)}`);
   }
 });
 
-/**
- * 🔴 MẶT PHỦ ĐỊNH RỘNG LÀ MỘT LỜI NÓI DỐI, và nó hỏng NGƯỢC CHIỀU.
- *
- * "không có shell" KHÔNG đồng nghĩa "không với tới máy của bạn" — vai trò trần
- * vẫn `Read` được mọi đường dẫn tuyệt đối. Viết câu phủ định rộng là dạy Trợ lý
- * từ chối cả việc nó làm được, và ca hỏng đó IM LẶNG hơn 9.3 vì không ai thấy
- * việc đã bị từ chối.
- */
-// ───────────────────────── armReach — cánh tay phải nói ra NÓ TRỎ VÀO ĐÂU
-//
-// Ca user 24/08: hỏi "trong thư mục đã cho phép…" ba lượt liên tiếp, Trợ lý ba
-// lượt đòi đường dẫn đầy đủ. Nó không cố chấp — `role.mcp` chỉ là mảng BĂM, nên
-// câu "thư mục đã cho phép" không giải được, trong khi `company.yaml` biết thừa.
 
 const ARMS = { a385afc3ab6: { label: 'Programs Installation 2' }, notion: { label: 'Notion' } };
 const SERVERS = {
@@ -604,293 +442,176 @@ const SERVERS = {
   notion: { command: 'npx', args: ['-y', '@notionhq/notion-mcp-server'] },
 };
 
-test('armReach: cánh tay file nói ra ĐƯỜNG DẪN, không chỉ nói tên', () => {
+test('armReach: a file arm states the ACTUAL PATH, not just the name', () => {
   const line = armReach(ARMS, SERVERS, 'a385afc3ab6');
-  assert.ok(line.includes('D:\\Downloads\\Programs Installation'), `thiếu thư mục: ${line}`);
-  assert.ok(line.includes('Programs Installation 2'), `thiếu nhãn người dùng đặt: ${line}`);
-  assert.ok(!line.includes('a385afc3ab6'), `băm không được lộ ra khi đã có nhãn: ${line}`);
+  assert.ok(line.includes('D:\\Downloads\\Programs Installation'), `missing the folder: ${line}`);
+  assert.ok(line.includes('Programs Installation 2'), `missing the user-chosen label: ${line}`);
+  assert.ok(!line.includes('a385afc3ab6'), `the hash must not leak once a label exists: ${line}`);
 });
 
-test('armReach: dòng tự đọc được, và nói ĐƯỜNG TẮT chứ không nói GIỚI HẠN', () => {
-  // Cùng luật với `chạy lệnh: TẮT`: dòng nằm giữa một khối liệt kê, chú giải thì
-  // ở tận đầu khối. Một mũi tên hay dấu hai chấm trần không tự mang nghĩa.
-  //
-  // 🔴 Từ đổi 24/08 (`thư mục:` → `đường tắt tới`), và test khoá đúng lý do:
-  // `thư mục:` bị Trợ lý đọc thành TỔNG TẦM VỚI của nhân viên rồi từ chối việc
-  // nằm ngoài — kể cả khi người đó có shell, kể cả trong phiên `/clear` sạch.
-  // Sự thật ngược lại đã nằm sẵn ở `SHELL_LEGEND` đầu danh bạ nhưng THUA VỊ TRÍ.
-  // ⇒ [[agentco-prompt-rules-lose-to-examples]]: điều kiện phải nằm trên chính
-  // dòng có ví dụ. User chốt: cánh tay là thư mục ĐƯỢC CẮM, không phải onlyAllows.
+test('armReach: the line is self-readable, and says SHORTCUT rather than LIMIT', () => {
   const line = armReach(ARMS, SERVERS, 'a385afc3ab6');
-  assert.ok(/shortcut to/.test(line), `dòng phải tự nói nó là đường tắt: ${line}`);
-  assert.ok(!/folders:/.test(line), `"thư mục:" đọc thành giới hạn — đừng quay lại: ${line}`);
+  assert.ok(/shortcut to/.test(line), `the line must state it is a shortcut: ${line}`);
+  assert.ok(!/folders:/.test(line), `"folders:" reads as a limit — do not regress: ${line}`);
 });
 
-test('armReach: cánh tay KHÔNG phải file thì không bịa ra thư mục', () => {
+test('armReach: an arm that is NOT a file does not invent a folder', () => {
   assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
 });
 
-/**
- * ⭐ `does` — NĂNG LỰC BẰNG TIẾNG NGƯỜI cho cánh tay KHÔNG có mục danh mục.
- * → `assistant.ts §armReach` · docs/SPEC-arms.md §16r
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Đo 30/08 (`scripts/spike-cli-arm.ts`), cánh tay CLI tên `Xưởng lệnh`,     │
- * │ tầng thi hành 9/9 xanh, tầng Trợ lý hỏng **3/3**:                        │
- * │                                                                          │
- * │   "tung giúp mình con xúc xắc"  → Trợ lý **BỊA**: "ra 4 chấm nhé 🎲"      │
- * │   "dùng kết nối Xưởng lệnh…"    → brief "**bằng lệnh shell**" → blocked   │
- * │                                                                          │
- * │ Dòng danh bạ khi ấy là đúng chữ `Xưởng lệnh`. Với `Notion`/`GitHub` lỗ    │
- * │ này VÔ HÌNH vì cái tên tự nó mang năng lực — model có tiên nghiệm về      │
- * │ hãng. Tên khách tự đặt thì tiên nghiệm bằng 0, và model lấp chỗ trống.    │
- * │ → [[agentco-debt-hidden-by-model-priors]]                                │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
-test('armReach: `does` đưa NĂNG LỰC vào dòng, không đưa tên tool máy', () => {
-  const arms = { cli: { label: 'Xưởng lệnh', does: ['tung một con xúc xắc', 'đồng bộ dữ liệu'] } };
+test('armReach: `does` puts CAPABILITY on the line, not the machine tool name', () => {
+  const arms = { cli: { label: 'Command shop', does: ['roll a die', 'sync data'] } };
   const line = armReach(arms, {}, 'cli');
-  assert.equal(line, 'Xưởng lệnh — tung một con xúc xắc · đồng bộ dữ liệu');
+  assert.equal(line, 'Command shop — roll a die · sync data');
 });
 
-test('armReach: `does` có TRẦN 4 — một cánh tay 20 lệnh không nhét cả bức tường vào prefix', () => {
-  // Cùng kỷ luật `reachDiff` ràng buộc 2. Dòng này nằm trong prefix được cache
-  // của Trợ lý và trả ở MỌI lượt gõ phím — không có trần là một hoá đơn mở.
-  const does = ['một', 'hai', 'ba', 'bốn', 'năm', 'sáu'];
+test('armReach: `does` has a CAP of 4 — a 20-command arm does not dump the whole wall into the prefix', () => {
+  const does = ['one', 'two', 'three', 'four', 'five', 'six'];
   const line = armReach({ cli: { label: 'X', does } }, {}, 'cli');
-  assert.ok(line.includes('một · hai · ba · bốn'), `phải giữ 4 việc đầu: ${line}`);
-  assert.ok(line.includes('and 2 more actions'), `phải gộp phần dư: ${line}`);
-  assert.ok(!line.includes('năm'), `việc thứ 5 không được lọt nguyên văn: ${line}`);
+  assert.ok(line.includes('one · two · three · four'), `must keep the first 4 items: ${line}`);
+  assert.ok(line.includes('and 2 more actions'), `must fold the remainder: ${line}`);
+  assert.ok(!line.includes('five'), `the 5th item must not leak verbatim: ${line}`);
 });
 
-test('armReach: VẮNG `does` ⇒ không in gì — mọi cánh tay đang chạy giữ nguyên từng ký tự', () => {
-  // 🔴 Đây là test chống HỎNG LÂY. Bản vá 30/08 chỉ được phép THÊM cho cánh tay
-  // có khai `does`; cánh tay hôm nay (danh mục, thư mục, tự dán) không khai ô đó
-  // và dòng của chúng phải y hệt trước bản vá.
+test('armReach: `does` ABSENT ⇒ prints nothing — every arm already running keeps its exact wording', () => {
   assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
   assert.equal(armReach({ cli: { label: 'X', does: [] } }, {}, 'cli'), 'X');
   assert.equal(armReach({ cli: { label: 'X' } }, {}, 'cli'), 'X');
-  // và nó không được đẩy `level`/thư mục đi chỗ khác
   const line = armReach({ a: { label: 'Kho', level: 'read' } }, { a: { args: ['D:\\Kho'] } }, 'a');
   assert.equal(line, 'Kho — read only (shortcut to D:\\Kho)');
 });
 
-test('armReach: `does` đứng SAU nấc quyền — quyền trước, việc sau', () => {
-  const line = armReach({ a: { label: 'Kho', level: 'read', does: ['đọc hoá đơn'] } }, {}, 'a');
-  assert.equal(line, 'Kho — read only · đọc hoá đơn');
+test('armReach: `does` comes AFTER the permission tier — permission first, capability second', () => {
+  const line = armReach({ a: { label: 'Kho', level: 'read', does: ['read invoices'] } }, {}, 'a');
+  assert.equal(line, 'Kho — read only · read invoices');
 });
 
-/**
- * ⭐ NÓI RA NĂNG LỰC, KHÔNG CHỈ NÓI TÊN — nợ ghi 22/08, trả 26/08.
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Ca user 26/08, nguyên văn hai lượt **giống hệt nhau**:                   │
- * │                                                                          │
- * │   > Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".            │
- * │   > — chỉ đọc được Notion, không tạo hay ghi trang mới…      ✅ đúng      │
- * │   (đổi cánh tay sang TOÀN QUYỀN)                                         │
- * │   > Tạo giúp tôi một trang mới trong Notion tên "thử nghiệm".            │
- * │   > — chỉ đọc được Notion, không tạo hay ghi trang mới…      🔴 sai      │
- * │                                                                          │
- * │ Trợ lý **không cố chấp** — dòng danh bạ chỉ ghi một cái TÊN, mà một cái   │
- * │ tên thì không nói gì về quyền. Nó không có dữ kiện nào để biết khác đi.  │
- * │                                                                          │
- * │ ⚠ Và nợ này đắt gấp đôi vì nó đoán **theo chiều TỪ CHỐI** — cùng hình     │
- * │ dạng với ca `chạy lệnh: TẮT`: *nói dối theo chiều làm Trợ lý từ chối một │
- * │ việc vốn chạy được*. Lần thứ hai, thấp hơn một tầng.                     │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
 const TIERED = {
-  n_read: { label: 'Notion · Cá nhân', level: 'read' as const },
-  n_add: { label: 'Notion · Nhóm', level: 'add' as const },
-  n_full: { label: 'Notion · Công ty', level: 'full' as const },
+  n_read: { label: 'Notion · Personal', level: 'read' as const },
+  n_add: { label: 'Notion · Team', level: 'add' as const },
+  n_full: { label: 'Notion · Company', level: 'full' as const },
 };
 
-test('⭐ armReach: nấc quyền nằm TRÊN CHÍNH DÒNG của nhân viên', () => {
-  // Không phải thêm một câu dặn ở đầu khối — câu dặn ở đầu khối đã thua vị trí
-  // hai lần rồi. → [[agentco-prompt-rules-lose-to-examples]]
+test("⭐ armReach: the permission tier sits ON THE EMPLOYEE'S OWN LINE", () => {
   assert.match(armReach(TIERED, {}, 'n_read'), /read only/);
   assert.match(armReach(TIERED, {}, 'n_full'), /write/);
   assert.match(armReach(TIERED, {}, 'n_full'), /edit\/delete/);
 });
 
-test('⭐ armReach: BA nấc cho BA dòng khác nhau — đổi nấc là đổi prompt', () => {
-  // Nếu hai nấc ra cùng một chuỗi thì đổi nấc không sinh tín hiệu nào, và
-  // `reachDiff` cũng không có gì để báo ⇒ ca user gặp tái diễn y nguyên.
+test('⭐ armReach: THREE tiers produce THREE different lines — changing tier changes the prompt', () => {
   const lines = new Set(['n_read', 'n_add', 'n_full'].map((id) => armReach(TIERED, {}, id)));
   assert.equal(lines.size, 3);
 });
 
-test('armReach: nấc `add` phải nói RÕ nó KHÔNG sửa/xoá', () => {
-  // "Đọc + thêm mới" một mình dễ bị đọc thành "ghi được" ⇒ Trợ lý giao một việc
-  // sửa trang cho người chỉ tạo được trang mới. Vế phủ định phải nằm ngay đó.
+test('armReach: the `add` tier must say CLEARLY it does NOT edit/delete', () => {
   assert.match(armReach(TIERED, {}, 'n_add'), /no editing or deleting/);
 });
 
-test('armReach: KHÔNG có `level` ⇒ không bịa ra năng lực nào', () => {
-  /**
-   * Cánh tay thư mục và cánh tay tự cắm không có nấc. Bịa "toàn quyền" cho
-   * chúng là dựng lại đúng cái lỗi vừa vá, chỉ đảo chiều: đoán hộ một năng lực
-   * từ một thứ không khai nó. → `probe.ts §levelOf`, luật một chiều.
-   */
+test('armReach: NO `level` ⇒ no capability is invented', () => {
   assert.equal(armReach(ARMS, SERVERS, 'notion'), 'Notion');
   assert.ok(!/read only|full access|edit\/delete/.test(armReach(ARMS, SERVERS, 'a385afc3ab6')));
 });
 
-test('armReach: có CẢ nấc lẫn thư mục thì nói cả hai, không nuốt cái nào', () => {
+test('armReach: BOTH a tier and a folder means saying both — neither gets swallowed', () => {
   const arms = { x: { label: 'Kho', level: 'full' as const } };
   const line = armReach(arms, { x: { args: ['D:\\Kho'] } }, 'x');
   assert.match(line, /edit\/delete/);
   assert.match(line, /D:\\Kho/);
 });
 
-test('armReach: chưa có nhãn thì rơi về băm — thà xấu còn hơn im', () => {
+test('armReach: no label yet ⇒ falls back to the hash — ugly beats silent', () => {
   assert.equal(armReach({}, {}, 'a1b2c3'), 'a1b2c3');
 });
 
-test('SHELL_LEGEND: dạy dùng LUÔN thư mục đã in ra, và HẸP đúng chỗ đó', () => {
-  // Nửa còn lại của `armReach`: biết đường dẫn mà vẫn hỏi lại thì bản vá vô nghĩa.
-  assert.ok(/folders:/.test(SHELL_LEGEND), 'legend phải giải thích nhãn "folders:"');
-  assert.ok(/do not ask them for the full path again/.test(SHELL_LEGEND), 'phải nói thẳng: đừng hỏi lại đường dẫn');
-  // ⚠ Và phải HẸP: viết rộng thành "đừng hỏi đường dẫn" là dạy Trợ lý đoán bừa
-  // một đường dẫn nó chưa từng thấy — hỏng ngược chiều, và im lặng hơn.
+test('SHELL_LEGEND: teaches ALWAYS reusing the printed folder, and STAYING within it', () => {
+  assert.ok(/folders:/.test(SHELL_LEGEND), 'the legend must explain the "folders:" label');
+  assert.ok(/do not ask them for the full path again/.test(SHELL_LEGEND), 'must say plainly: do not ask for the path again');
   assert.ok(
     /in that list|ALREADY been granted/.test(SHELL_LEGEND),
-    'câu phải giới hạn vào thư mục đã in ra ở dòng nhân viên',
+    'the sentence must scope itself to the folders printed on the employee line',
   );
 });
 
-test('SHELL_LEGEND: nêu quyền ĐỌC, và không phủ định rộng ra cả việc với tới máy', () => {
-  assert.ok(/CAN OPEN files on the human/.test(SHELL_LEGEND), 'phải nói ra quyền đọc');
+test('SHELL_LEGEND: states READ access, without broadening into a denial of machine reach overall', () => {
+  assert.ok(/CAN OPEN files on the human/.test(SHELL_LEGEND), 'must state the read permission');
   for (const doi of ['cannot reach', 'cannot read', 'no access to']) {
-    assert.ok(!SHELL_LEGEND.includes(doi), `câu phủ định rộng "${doi}" là sai sự thật`);
+    assert.ok(!SHELL_LEGEND.includes(doi), `the broad denial "${doi}" is factually wrong`);
   }
 });
 
-/**
- * 🔴 KHÔNG ĐƯỢC KHẲNG ĐỊNH VỀ TOÀN BỘ THẾ GIỚI — nó hết đúng khi thế giới lớn ra.
- *
- * "shell là thứ DUY NHẤT lấy được kích thước" đúng hôm nay (7 tool mặc định không
- * cái nào trả metadata) và thành NÓI DỐI vào đúng ngày một MCP filesystem có mặt —
- * nói dối theo chiều làm Trợ lý TỪ CHỐI việc vốn chạy được, tức là hỏng im lặng.
- *
- * Bất biến thay thế nói về ĐỊNH DẠNG, không về thế giới, nên nó tự đúng mãi.
- */
-/**
- * 🔴🔴 TEST NÀY XANH SUỐT TRONG KHI LỖI VẪN SỐNG — và đó là bài học của nó.
- *
- * Bản 22/08 gỡ chữ "DUY NHẤT" khỏi `SHELL_LEGEND` rồi viết test dưới đây để canh.
- * Nhưng nó **giữ nguyên vế nhân quả**: *'"chạy lệnh: BẬT" thì có thêm: kích
- * thước · ngày sửa · dung lượng của file'*. Sửa CHỮ, không sửa MỆNH ĐỀ.
- *
- * Ca user 24/08, cánh tay filesystem cắm đàng hoàng, shell TẮT:
- *   *"Nhân viên phụ trách thư mục Musics đang tắt chế độ chạy lệnh nên không
- *    lấy được dung lượng file… Bạn có thể bật chế độ chạy lệnh không?"*
- *
- * Đo được là SAI: `spike-arm-e2e` ca A chạy với `role.tools = []` (shell tắt
- * hoàn toàn) và vẫn ra bảng kích thước — `list_directory_with_sizes` là 1 trong
- * 14 tool của cánh tay. Trợ lý từ chối một việc vốn chạy được, **và đòi người
- * dùng bật một công tắc an toàn để đổi lấy thứ họ đã có**.
- *
- * ⇒ Test mới canh MỆNH ĐỀ, không canh một danh sách từ cấm.
- */
-test('SHELL_LEGEND: KHÔNG gán metadata file cho shell — cánh tay cũng lấy được', () => {
+test('SHELL_LEGEND: does NOT attribute file metadata to the shell — arms can read it too', () => {
   for (const gan of ['file size', 'modified date', 'disk usage']) {
     assert.ok(
       !SHELL_LEGEND.includes(gan),
-      `"${gan}" nằm cạnh "chạy lệnh: BẬT" là dạy Trợ lý rằng không có shell thì không có ` +
-        `metadata — sai từ ngày một MCP filesystem được cắm, và sai theo chiều TỪ CHỐI việc`,
+      `"${gan}" sitting next to "shell: ON" teaches the assistant that no shell means no ` +
+        `metadata — wrong the day any filesystem MCP is connected, and wrong in the direction of REFUSING work`,
     );
   }
 });
 
-test('SHELL_LEGEND: dặn thẳng ĐỪNG ĐOÁN HỘ nhân viên là họ không làm được', () => {
-  // Nửa khẳng định của cùng bản vá: gỡ mệnh đề sai mới chỉ thôi nói dối. Ca
-  // user là Trợ lý TỪ CHỐI TRƯỚC thay cho nhân viên, nên phải có câu chặn đúng
-  // hành vi đó — nhân viên biết bộ tool của chính nó, Trợ lý thì không.
-  assert.ok(/DO NOT decide on their behalf/.test(SHELL_LEGEND), 'phải cấm việc đoán hộ năng lực của nhân viên');
-  assert.ok(/A connection \(🔌\) brings its OWN/.test(SHELL_LEGEND), 'phải nói ra rằng kết nối mang khả năng riêng');
+test('SHELL_LEGEND: states plainly NOT TO GUESS on the employee\'s behalf what they can do', () => {
+  assert.ok(/DO NOT decide on their behalf/.test(SHELL_LEGEND), 'must forbid guessing at an employee\'s capability');
+  assert.ok(/A connection \(🔌\) brings its OWN/.test(SHELL_LEGEND), 'must state that a connection brings its own capability');
 });
 
-test('SHELL_LEGEND: không khẳng định độc quyền — câu phải sống sót khi MCP có mặt', () => {
+test('SHELL_LEGEND: makes no exclusivity claim — the sentence must survive once MCP exists', () => {
   for (const dong of ['the ONLY', 'the only', 'can only', 'only way']) {
     assert.ok(
       !SHELL_LEGEND.includes(dong),
-      `"${dong}" là khẳng định về toàn bộ thế giới — hết đúng khi thêm MCP`,
+      `"${dong}" is a claim about the entire world — stops being true the moment MCP is added`,
     );
   }
-  assert.ok(/lists EVERY place they reach/.test(SHELL_LEGEND), 'phải thay bằng bất biến về định dạng');
+  assert.ok(/lists EVERY place they reach/.test(SHELL_LEGEND), 'must be replaced by an invariant about the format instead');
 });
 
-// ═══════════════════════════════════════════ chặn vòng lặp câu từ chối
-//
-// Ca thật 22/08 (bài 9b): người dùng gõ lại yêu cầu HAI lần, mỗi lần rõ hơn, và
-// nhận về đúng cùng một chuỗi từng byte — vì nguyên nhân nằm ở hai luật trong
-// prompt ép nhau, không nằm ở cách họ diễn đạt. Không lời nào thoát được.
 
-test('planProblemsMessage: lần đầu vẫn khuyên nhắn lại — lời khuyên đó đúng ở lần đầu', () => {
-  const m = planProblemsMessage(['Task T-02 cần đọc "x.md"'], 0);
-  assert.ok(m.includes('nhắn lại yêu cầu rõ hơn'));
-  assert.ok(!m.includes('lần thứ'));
+test("planProblemsMessage: the first time still advises re-messaging — and that advice IS right the first time", () => {
+  const m = planProblemsMessage(['Task T-02 cần đọc "x.md"'], 0); // i18n-allow-vietnamese: fixture problem text + real i18n output (default locale vi)
+  assert.ok(m.includes('nhắn lại yêu cầu rõ hơn')); // i18n-allow-vietnamese: matches real i18n string
+  assert.ok(!m.includes('lần thứ')); // i18n-allow-vietnamese: matches real i18n string
 });
 
-test('planProblemsMessage: từ lần thứ BA thì đổi câu — thôi khuyên một thứ đã đo là vô ích', () => {
-  const m = planProblemsMessage(['Task T-02 cần đọc "x.md"'], 2);
-  assert.ok(m.includes('lần thứ 3'), `phải nói ra là đang kẹt lặp: ${m}`);
+test('planProblemsMessage: from the THIRD time on, the sentence changes — advice already proven useless stops repeating', () => {
+  const m = planProblemsMessage(['Task T-02 cần đọc "x.md"'], 2); // i18n-allow-vietnamese: fixture problem text + real i18n output (default locale vi)
+  assert.ok(m.includes('lần thứ 3'), `must state that it is stuck in a loop: ${m}`); // i18n-allow-vietnamese: matches real i18n string
   assert.ok(
-    !m.includes('nhắn lại yêu cầu rõ hơn'),
-    'không được lặp lại lời khuyên vừa bị chứng minh là vô ích',
+    !m.includes('nhắn lại yêu cầu rõ hơn'), // i18n-allow-vietnamese: matches real i18n string
+    'must not repeat advice just proven useless',
   );
-  // Phải chuyển hướng sang thứ người dùng THẬT SỰ làm được.
-  assert.ok(m.includes('bỏ bớt') || m.includes('tách ra'));
+  assert.ok(m.includes('bỏ bớt') || m.includes('tách ra')); // i18n-allow-vietnamese: matches real i18n string
 });
 
-test('planProblemsMessage: KHÔNG giấu danh sách lỗi đi ở lần lặp', () => {
-  // Nó vẫn là thứ duy nhất nói được chuyện gì đang xảy ra, và người dùng copy
-  // được nó đi hỏi chỗ khác.
+test('planProblemsMessage: never HIDES the error list on a repeat', () => {
   for (const n of [0, 2, 5]) {
-    assert.ok(planProblemsMessage(['Task T-02 cần đọc "x.md"'], n).includes('Task T-02'));
+    assert.ok(planProblemsMessage(['Task T-02 cần đọc "x.md"'], n).includes('Task T-02')); // i18n-allow-vietnamese: fixture problem text (default locale vi)
   }
 });
 
-// ══════════════════════════════ outputScoper: đường dẫn TUYỆT ĐỐI → basename
-//
-// Ca thật 22/08 22:06 (`P-260822-2206-ajcd`). Người dùng nói "ghi vào
-// D:\Downloads\Programs Installation\ban-ke.md". Kế hoạch lưu ra:
-//
-//   outputs: artifacts/P-…/T-01/ban-ke.md
-//          | artifacts/P-…/T-01/D:/Downloads/Programs Installation/ban-ke.md
-//
-// Chữ `D:` thành một đoạn thư mục ⇒ trên Windows là đường dẫn BẤT HỢP LỆ ⇒
-// nhân viên đào 7 lượt · $0,3158 để mkdir một thứ không thể tồn tại.
 
-test('outputScoper: đường dẫn Windows tuyệt đối → basename, KHÔNG lồng ổ đĩa vào khung', () => {
+test('outputScoper: a Windows absolute path → basename, the DRIVE never nests into the frame', () => {
   const s = outputScoper('P-1', 'T-01');
   assert.equal(s('D:\\Downloads\\Programs Installation\\ban-ke.md'), 'artifacts/P-1/T-01/ban-ke.md');
-  assert.ok(!s('D:\\Downloads\\x.md').includes('D:'), 'ổ đĩa không được thành tên thư mục');
+  assert.ok(!s('D:\\Downloads\\x.md').includes('D:'), 'the drive letter must not become a folder name');
 });
 
-test('outputScoper: đường dẫn POSIX tuyệt đối → basename', () => {
-  // Nhánh này hỏng êm hơn (hợp lệ nhưng sai chỗ) nên trước đây không ai thấy.
+test('outputScoper: a POSIX absolute path → basename', () => {
   const s = outputScoper('P-1', 'T-01');
   assert.equal(s('/home/an/bao-cao/ban-ke.md'), 'artifacts/P-1/T-01/ban-ke.md');
 });
 
-test('outputScoper: UNC share cũng là tuyệt đối', () => {
+test('outputScoper: a UNC share is absolute too', () => {
   const s = outputScoper('P-1', 'T-01');
   assert.equal(s('\\\\server\\share\\ban-ke.md'), 'artifacts/P-1/T-01/ban-ke.md');
 });
 
-test('outputScoper: kiểm CẢ HAI hệ, không dò process.platform', () => {
-  // Văn phòng zip từ Windows sang Linux vẫn phải đọc đúng chuỗi trong kế hoạch cũ.
+test('outputScoper: checks BOTH platforms — never sniffs process.platform', () => {
   const s = outputScoper('P-1', 'T-01');
   for (const p of ['D:\\a\\x.md', '/a/x.md']) {
-    assert.equal(s(p), 'artifacts/P-1/T-01/x.md', `phải xử lý được "${p}" trên mọi máy`);
+    assert.equal(s(p), 'artifacts/P-1/T-01/x.md', `must handle "${p}" on every machine`);
   }
 });
 
-test('outputScoper: đường dẫn TƯƠNG ĐỐI giữ nguyên hành vi cũ — vẫn giữ đuôi người dùng đặt', () => {
-  // Nới cho tuyệt đối không được làm hỏng luật "giữ phần người dùng chọn".
+test('outputScoper: a RELATIVE path keeps the old behavior — still keeps the user-chosen tail', () => {
   const s = outputScoper('P-1', 'T-01');
   assert.equal(s('vi/doc-1.md'), 'artifacts/P-1/T-01/vi/doc-1.md');
   assert.equal(s('artifacts/P-1/T-01/vi/doc-1.md'), 'artifacts/P-1/T-01/vi/doc-1.md');

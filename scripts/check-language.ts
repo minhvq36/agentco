@@ -55,14 +55,7 @@ const ALWAYS_ALLOWED = ['src/i18n/vi.ts'];
  * deleting its lines here; that deletion IS the phase's exit criterion, which is
  * why the list is spelled out by phase rather than as one clever glob.
  */
-const PENDING: { prefix: string; phase: string }[] = [
-  { prefix: 'src/', phase: 'P2 + P3' },
-  { prefix: 'test/', phase: 'P4' },
-  { prefix: 'scripts/', phase: 'P4' },
-  { prefix: 'docs/', phase: 'P5' },
-  { prefix: 'README.md', phase: 'P5' },
-  { prefix: 'package.json', phase: 'P5' },
-];
+const PENDING: { prefix: string; phase: string }[] = [{ prefix: 'src/', phase: 'P2 + P3' }];
 
 /** Files already migrated, so they are held to the rule even inside a pending tree. */
 const ENFORCED_EARLY = ['src/i18n/', 'scripts/check-language.ts', 'scripts/fix-comment-boxes.ts', 'docs/CLAUDE.md'];

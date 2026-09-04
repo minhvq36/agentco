@@ -1,26 +1,31 @@
 /**
- * SPIKE — CỜ `dead` CÓ ĐÚNG KHÔNG? Và nếu sai thì CỨU ĐƯỢC KHÔNG?
+ * SPIKE — IS THE `dead` FLAG CORRECT? And if it's wrong, CAN WE RECOVER?
  * → `core/oauth.ts §DeadGrantError` · `server/oauth-routes.ts §refreshDue`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CÂU HỎI CHƯA AI HỎI: khi ta ghi `dead`, ta đang khai một SỰ THẬT VỀ PHÍA │
- * │ NOTION, hay đang khai một KẾT LUẬN của chính ta?                        │
+ * │ THE QUESTION NOBODY'S ASKED YET: when we write `dead`, are we recording  │
+ * │ a FACT about Notion's side, or a CONCLUSION we made up ourselves?        │
  * │                                                                          │
- * │ Cờ đó có hậu quả một chiều: `needsRefresh` trả `false` khi thấy `dead`   │
- * │ ⇒ **không bao giờ thử lại nữa**. Nên một lần dán nhãn sai là một tài      │
- * │ khoản chết vĩnh viễn, dù chìa trên đĩa vẫn còn dùng được.                │
+ * │ That flag has a one-way consequence: `needsRefresh` returns `false`      │
+ * │ once it sees `dead` ⇒ **never retried again**. So one wrong label means  │
+ * │ a permanently dead account, even if the key on disk still works.         │
  * │                                                                          │
- * │ Script này gõ thẳng cửa Notion bằng ĐÚNG chìa đang nằm trên đĩa:          │
- * │   · 200  ⇒ cờ SAI, và ta vừa cứu được tài khoản (ghi chìa mới, xoá cờ)   │
- * │   · invalid_grant ⇒ cờ ĐÚNG, chìa chết thật, phải đăng nhập lại          │
+ * │ This script knocks directly on Notion's door using the EXACT key         │
+ * │ currently on disk:                                                      │
+ * │   · 200 ⇒ the flag was WRONG, and we just recovered the account         │
+ * │     (write the new key, clear the flag)                                 │
+ * │   · invalid_grant ⇒ the flag was RIGHT, the key is really dead, must     │
+ * │     log in again                                                        │
  * │                                                                          │
- * │ ⚠ KHÔNG có chế độ "chỉ xem". Cách duy nhất biết một refresh token còn    │
- * │ sống là DÙNG nó, mà Notion thì XOAY — dùng xong là chìa cũ chết và chìa   │
- * │ mới phải được ghi xuống. Nên script này **luôn ghi** khi thành công, và   │
- * │ ghi qua `saveOAuth` (nguyên tử: temp → fsync → rename).                  │
+ * │ ⚠ There is NO "read-only" mode. The only way to know if a refresh token  │
+ * │ is still alive is to USE it, and Notion ROTATES tokens — using it kills  │
+ * │ the old key and a new one must be written back. So this script          │
+ * │ **always writes** on success, and writes through `saveOAuth`            │
+ * │ (atomic: temp → fsync → rename).                                        │
  * │                                                                          │
- * │ Chạy:  npx tsx scripts/spike-oauth-recover.ts [--all]                    │
- * │        (mặc định chỉ thử tài khoản có cờ `dead`; `--all` thử hết)         │
+ * │ Run:  npx tsx scripts/spike-oauth-recover.ts [--all]                     │
+ * │       (by default only tries accounts flagged `dead`; `--all` tries     │
+ * │       every account)                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -43,46 +48,47 @@ async function main(): Promise<void> {
   const names = Object.keys(store).filter((n) => all || store[n]?.dead);
 
   if (!names.length) {
-    console.log('\nKhông có tài khoản nào mang cờ `dead`. (Dùng --all để thử hết.)\n');
+    console.log('\nNo accounts flagged `dead`. (Use --all to try every account.)\n');
     return;
   }
 
-  console.log(`\n━━ THỬ CỨU ${names.length} tài khoản\n`);
+  console.log(`\n━━ ATTEMPTING RECOVERY for ${names.length} account(s)\n`);
 
   for (const name of names) {
     const acc = store[name]!;
     console.log(`── ${acc.label ?? name}`);
-    console.log(`   cờ dead        ${acc.dead ? `CÓ · ${acc.dead.at} · ${acc.dead.why}` : 'không'}`);
-    console.log(`   refresh trên đĩa ${mask(acc.refresh_token)}`);
+    console.log(`   dead flag        ${acc.dead ? `YES · ${acc.dead.at} · ${acc.dead.why}` : 'no'}`);
+    console.log(`   refresh on disk  ${mask(acc.refresh_token)}`);
 
     if (!acc.refresh_token) {
-      console.log('   ⇒ 🔴 không có chìa làm mới — chỉ còn đường đăng nhập lại.\n');
+      console.log('   ⇒ 🔴 no refresh token at all — re-login is the only path.\n');
       continue;
     }
 
     try {
       const meta = await discover(acc.mcp_url);
       if (!meta) {
-        console.log('   ⇒ ⚠ server không đòi chìa nữa (?), bỏ qua.\n');
+        console.log('   ⇒ ⚠ server no longer requires a token (?), skipping.\n');
         continue;
       }
       const next = await refreshAccount(meta, acc);
       /**
-       * ⚠ XOÁ CỜ TƯỜNG MINH. `refreshAccount` gộp từ `acc`, mà `applyToken`
-       * không mang `dead` sang — nhưng dựa vào việc một hàm khác *tình cờ* bỏ
-       * quên một trường là dựa vào may mắn. Xoá ở đây, chỗ biết vì sao xoá.
+       * ⚠ EXPLICITLY CLEAR THE FLAG. `refreshAccount` merges from `acc`, and
+       * `applyToken` doesn't carry `dead` forward — but relying on another
+       * function *incidentally* dropping a field is relying on luck. Clear
+       * it here, where we know why.
        */
-      const { dead: _bo, ...sach } = next as typeof next & { dead?: unknown };
-      saveOAuth(paths, name, sach as typeof next);
-      console.log(`   ⇒ 🟢 CỨU ĐƯỢC — chìa mới ${mask(sach.access_token)}, cờ dead đã xoá.`);
+      const { dead: _bo, ...clean } = next as typeof next & { dead?: unknown };
+      saveOAuth(paths, name, clean as typeof next);
+      console.log(`   ⇒ 🟢 RECOVERED — new key ${mask(clean.access_token)}, dead flag cleared.`);
       console.log(
-        `      refresh có XOAY: ${next.refresh_token !== acc.refresh_token ? 'CÓ' : 'không'}\n`,
+        `      refresh token ROTATED: ${next.refresh_token !== acc.refresh_token ? 'YES' : 'no'}\n`,
       );
     } catch (e) {
       if (e instanceof DeadGrantError) {
-        console.log(`   ⇒ 🔴 CHẾT THẬT — Notion từ chối chính chìa này. ${e.message}\n`);
+        console.log(`   ⇒ 🔴 REALLY DEAD — Notion rejected this exact key. ${e.message}\n`);
       } else if (e instanceof TransientError) {
-        console.log(`   ⇒ ⚠ hỏng TẠM (mạng/dịch vụ) — chưa kết luận được. ${e.message}\n`);
+        console.log(`   ⇒ ⚠ TEMPORARY failure (network/service) — can't conclude yet. ${e.message}\n`);
       } else {
         console.log(`   ⇒ ❓ ${(e as Error).message}\n`);
       }

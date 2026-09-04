@@ -1,274 +1,398 @@
-# SPEC — Kinh tế token & hiệu năng
+# SPEC — Token economy & performance
 
-**Đây là file quan trọng nhất.** Mọi quyết định thiết kế khác phải qua được các luật ở đây. Nếu một tính năng hay ho nhưng vi phạm §2 hoặc §3, tính năng đó bị loại, không thương lượng.
+**This is the most important file.** Every other design decision has to pass the
+rules laid out here. If a feature is nice but violates §2 or §3, that feature is
+out, no negotiation.
 
-> **Đã thẩm định trên máy 14/08/2026 — xem `FINDINGS-sdk-2026-08-14.md`.** Ba điều chỉnh so với bản gốc:
-> 1. Cache breakpoint **điều khiển được** bằng `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` (cross-session cache). §2 đứng vững.
-> 2. **Sàn cứng ~13 200 token/worker call** — `allowedTools` không làm nhỏ prompt được. Bổ sung ở §4.
-> 3. **Không dùng preset `claude_code` cho role phi-code** — chênh ~6 300 token, giá gấp 5,5 lần.
+> **Verified on-machine 14/08/2026 — see `FINDINGS-sdk-2026-08-14.md`.** Three
+> corrections to the original version:
+> 1. The cache breakpoint **can be controlled** via
+>    `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` (cross-session cache). §2 still holds.
+> 2. **A hard floor of ~13,200 tokens/worker call** — `allowedTools` cannot shrink
+>    the prompt below it. Added in §4.
+> 3. **Do not use the `claude_code` preset for non-coding roles** — a ~6,300 token
+>    gap, at 5.5× the price.
 
 ---
 
-## 1. Chi phí đến từ đâu (xếp theo mức độ nguy hiểm)
+## 1. Where the cost comes from (ranked by danger)
 
-| # | Nguồn đốt token | Mức | Cách chặn |
+| # | Token-burning source | Level | How it's blocked |
 |---|---|---|---|
-| 1 | **Master đọc raw output của worker** | 🔴 chí mạng | Receipt trần 800 token, validate cứng |
-| 2 | **Session dài cho worker** | 🔴 chí mạng | Worker stateless |
-| 3 | **Cache miss do prefix đổi** | 🔴 chí mạng | Kiến trúc phân tầng §2 + priming gate §3 |
-| 4 | **Master dán nội dung file vào brief** | 🟠 nặng | Brief chỉ chứa **đường dẫn**, worker tự đọc |
-| 5 | **Đồ thị tri thức phình theo thời gian** | 🟠 nặng (chết chậm) | Node ≤250 token, Librarian gộp/archive |
-| 6 | **Nạp cả kho tri thức vào mỗi task** | 🟠 nặng | Trần `knowledge_pack`, retrieval có điểm |
-| 7 | **Chạy lại cả DAG khi sửa một bước** | 🟡 vừa | Replay theo nhánh con |
-| 8 | **Dùng model đắt cho việc tầm thường** | 🟡 vừa | Switch center deterministic |
-| 9 | **Agent nói chuyện với nhau** | 🟡 vừa | Cấm hẳn, đi qua master/artifact |
+| 1 | **Master reads a worker's raw output** | 🔴 fatal | Receipt capped at 800 tokens, hard validation |
+| 2 | **A long-lived session for a worker** | 🔴 fatal | Worker is stateless |
+| 3 | **Cache miss from a changed prefix** | 🔴 fatal | Layered architecture §2 + priming gate §3 |
+| 4 | **Master pastes file content into a brief** | 🟠 severe | The brief only carries a **path**, the worker reads it itself |
+| 5 | **The knowledge graph bloats over time** | 🟠 severe (slow death) | Nodes ≤250 tokens, Librarian merges/archives |
+| 6 | **The whole knowledge store gets loaded into every task** | 🟠 severe | `knowledge_pack` cap, scored retrieval |
+| 7 | **Re-running the whole DAG to fix one step** | 🟡 moderate | Replay by subtree |
+| 8 | **Using an expensive model for trivial work** | 🟡 moderate | Deterministic switch center |
+| 9 | **Agents talking to each other** | 🟡 moderate | Banned outright, goes through master/artifact |
 
-Điểm #3 chính là thứ đã giết project fanpage với `claude -p`. Phần còn lại của file này chủ yếu nói về nó.
+Item #3 is exactly what killed the fanpage project with `claude -p`. Most of the
+rest of this file is about it.
 
 ---
 
-## 2. Kiến trúc prefix cache
+## 2. Prefix cache architecture
 
-### Cơ chế thật của Anthropic prompt caching
+### How Anthropic prompt caching actually works
 
-- Cache **server-side**, đánh theo **prefix nội dung** (byte-identical từ đầu prompt).
-- **Process mới vẫn hit cache** nếu prefix y hệt và còn trong TTL. Đây là điều then chốt — cache không chết theo process.
-- TTL: **5 phút** mặc định; có tuỳ chọn **1 giờ**.
-- Giá tương đối: cache **read ≈ 0.1×** input thường. Cache **write ≈ 1.25×** (TTL 5 phút) hoặc **≈ 2×** (TTL 1 giờ).
-- Một byte khác ở đầu prompt → **toàn bộ** phía sau miss.
+- Cache is **server-side**, keyed on **content prefix** (byte-identical from the
+  start of the prompt).
+- **A new process still hits cache** if the prefix is identical and still within
+  TTL. This is the crucial point — the cache doesn't die with the process.
+- TTL: **5 minutes** by default; a **1-hour** option is available.
+- Relative pricing: cache **read ≈ 0.1×** normal input. Cache **write ≈ 1.25×**
+  (5-minute TTL) or **≈ 2×** (1-hour TTL).
+- One differing byte at the start of the prompt → **everything** after it misses.
 
-Suy ra hai luật:
+Two rules follow from this:
 
-> **Luật A — Sắp xếp theo độ ổn định.** Cái gì ít đổi nhất đặt trước, cái gì đổi mỗi lượt đặt sau. Không bao giờ chèn thứ biến động vào giữa.
+> **Rule A — Order by stability.** Whatever changes least goes first, whatever
+> changes every turn goes last. Never insert something volatile in the middle.
 >
-> **Luật B — Cache write phải được khấu hao.** Ghi cache mà chỉ đọc lại 1 lần thì lỗ. Ghi rồi đọc ≥3 lần mới lãi.
+> **Rule B — A cache write must be amortized.** Writing to cache and only reading
+> it back once is a loss. Write, then read ≥3 times to come out ahead.
 
-### Phân tầng prompt (áp dụng cho mọi worker)
+### Prompt layering (applies to every worker)
 
 ```
-┌─ ĐÓNG BĂNG — nằm trong prefix cache ───────────────────────┐
-│ L0  System prompt harness (cố định theo version phần mềm)  │
-│ L1  Định nghĩa tool (cố định theo role)                    │
-│ L2  Role card + skills (cố định theo role.version)         │
-│ L3  Charter công ty (pinned, ≤500 token)                   │
-│ L4  HOT knowledge — top N node hay dùng nhất của role      │
-└──────────────── ◄── CACHE BREAKPOINT Ở ĐÂY ────────────────┘
-┌─ BIẾN ĐỘNG — trả giá đầy đủ, nên phải nhỏ ─────────────────┐
-│ L5  Cold knowledge — node riêng cho task này               │
-│ L6  TaskBrief                                              │
-│ L7  Các lượt hội thoại trong task                          │
+┌─ FROZEN — sits in the prefix cache ────────────────────────┐
+│ L0  Harness system prompt (fixed per software version)     │
+│ L1  Tool definitions (fixed per role)                      │
+│ L2  Role card + skills (fixed per role.version)             │
+│ L3  Company charter (pinned, ≤500 tokens)                  │
+│ L4  HOT knowledge — top N most-used nodes for the role      │
+└──────────────── ◄── CACHE BREAKPOINT HERE ─────────────────┘
+┌─ VOLATILE — pays full price, so must stay small ───────────┐
+│ L5  Cold knowledge — nodes specific to this task            │
+│ L6  TaskBrief                                                │
+│ L7  Conversation turns within the task                       │
 └────────────────────────────────────────────────────────────┘
 ```
 
 **Cache key = `hash(L0..L4)` = `(software_version, role_id, role_version, knowledge_version)`**
 
-Hệ quả quan trọng: **mọi worker cùng role dùng chung một cache entry.** 5 writer chạy song song = 1 lần ghi cache, 5 lần đọc.
+Important consequence: **every worker of the same role shares one cache entry.**
+5 writers running in parallel = 1 cache write, 5 cache reads.
 
-### 🔴 Công tắc ngôn ngữ KHÔNG nằm trong cache key — và đó là một quyết định (03/09)
+### 🔴 The language switch is NOT part of the cache key — and that's a deliberate decision (03/09)
 
-`company.yaml → language` đổi **giao diện**, không đổi một byte nào của prompt. Không hàm dựng prompt
-nào nhận locale, không chuỗi nào trong prompt nêu tên một ngôn ngữ.
+`company.yaml → language` changes the **interface**, not a single byte of the
+prompt. No prompt-builder function accepts a locale, no string in a prompt names
+a language.
 
-⇒ **Gạt công tắc tốn 0 `cache_write`.** Nếu nối dây ngược lại thì mỗi lần người dùng đổi ngôn ngữ là
-một lần ghi lại prefix cho **mọi vai trò trong mọi văn phòng** — một thao tác giao diện tưởng như vô
-hại lại là khoản đắt nhất trong bảng này. `test/settings-language.test.ts` khoá mệnh đề đó bằng cách
-dựng prompt ở cả hai locale rồi so `cacheKey`; `test/no-pinned-language.test.ts` khoá chiều tĩnh.
+⇒ **Flipping the switch costs 0 `cache_write`.** If the two were wired together,
+every time a user changed their interface language it would mean rewriting the
+prefix for **every role in every office** — a UI toggle that looks harmless would
+become the most expensive line item in this table. `test/settings-language.test.ts`
+locks in that claim by building the prompt in both locales and comparing
+`cacheKey`; `test/no-pinned-language.test.ts` locks the static side.
 
-### Số đo 03/09 — prompt tĩnh chuyển sang tiếng Anh
+### Measured 03/09 — the static prompt moved to English
 
-Mọi câu quy đổi kiểu *"~450 token ≈ 300 từ tiếng Việt"* trong repo **đã thành sai** kể từ đợt này:
-prompt tĩnh giờ là tiếng Anh, và tỉ lệ char/token khác hẳn.
+Every conversion sentence of the form *"~450 tokens ≈ 300 Vietnamese words"*
+anywhere in this repo **has become inaccurate** as of this change: the static
+prompt is now English, and the char/token ratio is completely different.
 
-| Khối | Ký tự | Token | char/token |
+| Block | Characters | Tokens | char/token |
 |---|---|---|---|
-| `COMPACT_RULES` | 3 826 | 961 | **3,98** |
-| `SHELL_LEGEND` | 827 | 208 | **3,98** |
+| `COMPACT_RULES` | 3,826 | 961 | **3.98** |
+| `SHELL_LEGEND` | 827 | 208 | **3.98** |
 
-Đối chứng trên **cùng một câu**, hai thứ tiếng: `vi` 167 ký tự → **49 token**; `en` 164 ký tự →
-**42 token**. Tức bản tiếng Anh rẻ hơn **~14%** cho cùng nội dung, và tỉ lệ 3,98 char/token khớp con
-số ~4 mà `prompt.ts:48-50` đã nêu từ đầu (tiếng Việt ~2,6).
+Controlled on **the same sentence**, in two languages: `vi` 167 characters → **49
+tokens**; `en` 164 characters → **42 tokens**. So the English version is **~14%**
+cheaper for the same content, and the 3.98 char/token ratio matches the ~4 figure
+`prompt.ts:48-50` already stated from the start (Vietnamese ~2.6).
 
-⇒ Trần token (`receipt_tokens: 800` · `charter_tokens: 500` · `assistant_skills_tokens: 400`) **vẫn
-an toàn và giờ rộng hơn thực chất**: cùng một trần chứa được nhiều chữ hơn. Không nới, không siết —
-chỉ đừng đọc mấy con số đó qua công thức "từ tiếng Việt" nữa.
+⇒ The token caps (`receipt_tokens: 800` · `charter_tokens: 500` ·
+`assistant_skills_tokens: 400`) **remain safe and are now effectively looser than
+they need to be**: the same cap now holds more actual content. No loosening, no
+tightening — just stop reading those numbers through a "Vietnamese words" formula.
 
-### Hot knowledge — hai tầng tri thức
+### Hot knowledge — two knowledge tiers
 
-Đây là chỗ dễ làm sai nhất. Nếu nhét toàn bộ tri thức truy xuất theo task vào prefix, prefix đổi mỗi task → **cache miss 100%**, tệ hơn là không cache.
+This is the easiest place to get wrong. If all task-retrieved knowledge gets
+stuffed into the prefix, the prefix changes on every task → **100% cache miss**,
+worse than having no cache at all.
 
-Nên tách hai tầng:
+So it splits into two tiers:
 
-| Tầng | Nội dung | Vị trí | Tính lại khi nào |
+| Tier | Contents | Position | Recomputed when |
 |---|---|---|---|
-| **HOT** | top `hot_knowledge_size` node có `hits` cao nhất của role (mặc định 8, trần 2000 token) | trong prefix, **được cache** | chỉ khi bump `knowledge_version` — mặc định 1 lần/ngày hoặc thủ công |
-| **COLD** | node truy xuất riêng cho task này | sau breakpoint, **trả giá đầy đủ** | mỗi task |
+| **HOT** | the top `hot_knowledge_size` nodes with the highest `hits` for the role (default 8, 2,000-token cap) | in the prefix, **cached** | only when `knowledge_version` bumps — default once/day or manually |
+| **COLD** | nodes retrieved specifically for this task | after the breakpoint, **pays full price** | every task |
 
-Tri thức nóng gần như miễn phí. Tri thức lạnh trả tiền — nên trần `knowledge_pack` chỉ tính cho phần COLD.
+Hot knowledge is nearly free. Cold knowledge is paid for — so the
+`knowledge_pack` cap only counts the COLD portion.
 
-> **Không được bump `knowledge_version` mỗi lần Librarian ghi node.** Gom lại, bump theo lô. Mỗi lần bump = mọi role phải ghi lại cache.
+> **Do not bump `knowledge_version` on every node the Librarian writes.** Batch
+> them, bump per batch. Every bump = every role has to rewrite its cache.
 
-### TTL chọn thế nào
+### How to choose the TTL
 
 ```
-Nếu công ty đang "trong ca" (UI đang mở HOẶC bridge đang bật)  → TTL 1 giờ
-Ngược lại (chạy lẻ một task rồi nghỉ)                          → TTL 5 phút
+If the company is "in a run" (UI open OR bridge is active)  → 1-hour TTL
+Otherwise (a one-off task then idle)                          → 5-minute TTL
 ```
 
-Lý do: TTL 1 giờ đắt gấp ~1.6× lúc ghi nhưng cứu được toàn bộ khoảng nghỉ giữa các lượt người dùng gõ phím. Người dùng suy nghĩ 7 phút giữa hai câu là chuyện thường → TTL 5 phút là mất trắng.
+Reason: a 1-hour TTL costs ~1.6× more to write, but it saves every idle gap
+between the user's keystrokes. A user pausing 7 minutes between two messages is
+normal → a 5-minute TTL means that write is wasted.
 
 ---
 
-### 2b. Xếp khối trong prefix: hỏi "DỰNG hay DÙNG", đừng đoán tần suất (chốt 20/08)
+### 2b. Ordering blocks in the prefix: ask "BUILT or USED", don't guess frequency (locked in 20/08)
 
-`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` nằm ở **cuối** mọi khối, nên toàn bộ khối nằm trong vùng được cache — và cache là **theo tiền tố**. Một khối đổi thì mọi khối **phía sau nó** bị ghi lại theo.
+`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` sits at the **end** of every block, so the whole
+block lives in the cached region — and caching is **prefix-based**. If one block
+changes, every block **after it** gets rewritten along with it.
 
-Bảng kê tủ tài liệu từng đứng ngay sau charter, **trên** memory · hot · roster · bảng kê kết quả, với lý do ghi thẳng trong code: *"tủ đổi hiếm hơn kéo dây trên canvas"*. **Quan sát thật bác bỏ:**
+The document-library manifest used to sit right after the charter, **above**
+memory · hot · roster · the results manifest, for a reason written straight into
+the code: *"the library changes less often than wiring on the canvas."*
+**Real observation refutes it:**
 
-| | thao tác | tần suất thật |
+| | action | actual frequency |
 |---|---|---|
-| roster | kéo dây trên canvas | **DỰNG** — một lần, gần như không đụng lại |
-| bảng kê tủ | thả tài liệu vào | **DÙNG** — lặp suốt đời văn phòng |
-| bảng kê kết quả | sinh sau mỗi ca | **DÙNG** — mỗi ca |
+| roster | wiring on the canvas | **BUILT** — once, almost never touched again |
+| library manifest | dropping a document in | **USED** — repeats for the office's whole life |
+| results manifest | generated after every run | **USED** — every run |
 
-Hạ bảng kê tủ xuống sát bảng kê kết quả ⇒ thêm một tài liệu ghi lại **3 khối** thay vì **6**. `PROMPT_SCHEMA_VERSION` 3 → 4.
+Moving the library manifest down next to the results manifest ⇒ adding one
+document now rewrites **3 blocks** instead of **6**. `PROMPT_SCHEMA_VERSION` 3 → 4.
 
-> **Đừng đoán tần suất bằng cảm giác cái nào "nghe có vẻ hiếm hơn".** Câu hỏi cho ra tần suất thật là: *đây là thứ người ta làm lúc DỰNG hệ thống, hay thứ họ làm mỗi ngày khi DÙNG nó?*
+> **Don't guess frequency by which one "sounds rarer."** The question that yields
+> the real frequency is: *is this something people do while SETTING UP the
+> system, or something they do every day while USING it?*
 
-⚠ Phân biệt với luật **"HOT phải ỔN ĐỊNH"** (§2): ở đó cái giá lặp lại **mỗi task** nên nó chết người. Ở đây cái giá là **một lần cho một thao tác của con người** — trả nó để đổi lấy một bảng kê không nói dối là đánh đổi đúng chiều.
+⚠ Distinguish this from the **"HOT must be STABLE"** rule (§2): there, the cost
+repeats **every task**, which is what makes it fatal. Here the cost is **once per
+human action** — paying it to get a manifest that doesn't lie is a trade in the
+right direction.
 
-**Một tiền đề hay nhầm, đã đo:** worker **không** dùng cache của Trợ lý. Prefix worker mở bằng `CORE_PROMPT`, prefix Trợ lý mở bằng `ASSISTANT_CORE` — hai cache entry khác nhau. Cả hai bảng kê đều gác `who === 'assistant'` nên **chưa bao giờ** vào prefix nhân viên. Thêm/xoá tài liệu không đụng một token cache nào của worker.
+**A premise easy to get wrong, already measured:** a worker does **not** use the
+Assistant's cache. The worker's prefix opens with `CORE_PROMPT`, the Assistant's
+prefix opens with `ASSISTANT_CORE` — two different cache entries. Both manifests
+already gate on `who === 'assistant'`, so they've **never** entered an employee's
+prefix. Adding/removing a document doesn't touch a single cache token of any
+worker's.
 
 ## 3. Cache priming gate
 
-**Vấn đề:** bung 5 task cùng role song song khi cache chưa có → cả 5 cùng miss, cả 5 cùng trả cache-write (1.25–2×). Đúng lúc song song đáng lẽ tiết kiệm thì lại đắt nhất.
+**Problem:** launching 5 same-role tasks in parallel before the cache exists →
+all 5 miss together, all 5 pay a cache-write together (1.25–2×). Right when
+parallelism should be saving money, it becomes the most expensive moment.
 
-**Giải:** khoá theo `cache_key`.
+**Fix:** lock by `cache_key`.
 
 ```
-scheduler nhận N task, nhóm theo cache_key
+scheduler receives N tasks, groups them by cache_key
 
-với mỗi cache_key:
-  nếu key ĐÃ ẤM (ghi nhận trong warmSet, chưa quá TTL):
-      → bung toàn bộ song song ngay
-  nếu key CHƯA ẤM:
-      → cho 1 task chạy trước (priming run)
-      → các task còn lại CHỜ
-      → khi priming run nhận được token đầu tiên từ API:
-            đánh dấu key ấm → thả toàn bộ phần còn lại
-      → timeout 20s: thả hết bất kể (thà trả tiền còn hơn treo)
+for each cache_key:
+  if the key is ALREADY WARM (recorded in warmSet, still within TTL):
+      → launch all of them in parallel immediately
+  if the key is NOT WARM:
+      → let 1 task run first (priming run)
+      → the remaining tasks WAIT
+      → once the priming run receives its first token from the API:
+            mark the key warm → release the rest
+      → 20s timeout: release everyone regardless (better to pay than to hang)
 ```
 
-Chi tiết:
-- Không chờ priming run **kết thúc**, chỉ chờ nó **bắt đầu stream**. Cache prefix đã được ghi ở thời điểm đó.
-- `warmSet` là `Map<cache_key, expiresAt>`, tự hết hạn theo TTL đã dùng.
-- Khởi động daemon: `warmSet` rỗng. **Không** chủ động warm bằng call giả — call giả cũng tốn tiền và có thể không bao giờ được dùng lại.
+Details:
+- Don't wait for the priming run to **finish**, only for it to **start
+  streaming**. The cache prefix has already been written by that point.
+- `warmSet` is a `Map<cache_key, expiresAt>`, expiring on its own per the TTL
+  already in use.
+- On daemon startup, `warmSet` starts empty. **Do not** proactively warm it with
+  a dummy call — a dummy call still costs money and might never get reused.
 
 ---
 
-## 4. Ngân sách — con số mặc định
+## 4. Budgets — default numbers
 
-Ghim thành hằng số trong code, override được qua `company.yaml`.
+Pinned as constants in code, overridable via `company.yaml`.
 
-| Hạng mục | Mặc định | Kiểu trần |
+| Item | Default | Cap type |
 |---|---|---|
-| Receipt | 800 token | **cứng** — cắt |
-| Node tri thức | 250 token | **cứng** — từ chối ghi, bắt tách |
-| Charter (pinned) | 500 token | **cứng** |
-| Hot knowledge / role | 2000 token | **cứng** |
-| Cold knowledge / task | 3000 token | **cứng** |
-| TaskBrief | 1500 token | mềm — cảnh báo |
-| Context master trước compaction | 60 000 token | ngưỡng kích hoạt |
-| max_tokens / task | 60 000 | **cứng** — huỷ task |
-| max_turns / task | 15 | **cứng** — huỷ task |
-| Concurrency | 4 | cấu hình |
-| **Sàn overhead / worker call** | **~13 200 token** | **không giảm được** — xem `FINDINGS` §2b |
+| Receipt | 800 tokens | **hard** — truncated |
+| Knowledge node | 250 tokens | **hard** — write rejected, must split |
+| Charter (pinned) | 500 tokens | **hard** |
+| Hot knowledge / role | 2,000 tokens | **hard** |
+| Cold knowledge / task | 3,000 tokens | **hard** |
+| TaskBrief | 1,500 tokens | soft — warns |
+| Master's context before compaction | 60,000 tokens | trigger threshold |
+| max_tokens / task | 60,000 | **hard** — task cancelled |
+| max_turns / task | 15 | **hard** — task cancelled |
+| Concurrency | 4 | configurable |
+| **Overhead floor / worker call** | **~13,200 tokens** | **cannot be reduced** — see `FINDINGS` §2b |
 
-### Chọn tier: luật quyết định, không phải trực giác
+### Choosing a tier: a rule decides, not intuition
 
-Đo thật ngày 14/08/2026 trên **cùng một việc soát lỗi** (2 file input, cùng ràng buộc, cache đã ấm):
+Measured for real on 14/08/2026, on **the same proofreading job** (2 input files,
+same constraints, cache already warm):
 
-| tier | lượt | token | thời gian | tiền |
+| tier | turns | tokens | time | cost |
 |---|---:|---:|---:|---:|
-| `eco` (Haiku) | 10 | 137 372 | 77,9s | **$0.0556** |
-| `standard` (Sonnet) | 4 | 63 350 | 37,0s | $0.0893 |
+| `eco` (Haiku) | 10 | 137,372 | 77.9s | **$0.0556** |
+| `standard` (Sonnet) | 4 | 63,350 | 37.0s | $0.0893 |
 
-Model rẻ **dò dẫm nhiều lượt hơn**, mà mỗi lượt đọc lại toàn bộ prefix. Nên "rẻ trên mỗi token" KHÔNG tự động thành "rẻ trên mỗi việc". Luật:
+The cheaper model **fumbles through more turns**, and each turn re-reads the
+whole prefix. So "cheap per token" does NOT automatically become "cheap per job."
+The rule:
 
-> **`eco` chỉ lãi khi `bội_số_token < tỉ_lệ_giá`.**
-> Ở đây 2,17 < ~3,4 nên vẫn lãi. Nhưng biên mỏng hơn tỉ lệ giá gợi ý rất nhiều — và với việc phức tạp hơn, bội số token sẽ tăng cho tới lúc lỗ.
+> **`eco` only pays off when `token_multiplier < price_ratio`.**
+> Here 2.17 < ~3.4, so it still pays off. But the margin is much thinner than the
+> price ratio suggests — and for a more complex job, the token multiplier will
+> keep rising until it loses money.
 
-**Đo, đừng đoán:** `node bench/tier-compare.mjs` chạy đúng phép so này cho một vai trò bất kỳ.
+**Measure, don't guess:** `node bench/tier-compare.mjs` runs exactly this
+comparison for any given role.
 
-> ⚠ **Bảng này đo ĐƯỜNG ĐI, không đo ĐẦU RA.** Nó ngầm giả định hai tier cho ra cùng một kết quả. Với việc có một đáp án đúng duy nhất thì giả định đó sai, và cả công thức trên vô nghĩa — xem cái giá thứ ba ngay dưới.
+> ⚠ **This table measures the PATH TAKEN, not the OUTPUT.** It implicitly assumes
+> the two tiers produce the same result. For work with a single correct answer,
+> that assumption is false, and the whole formula above is meaningless — see the
+> third cost right below.
 
-### Ba cái giá của `eco` mà bảng tiền không thể hiện
+### The three costs of `eco` that the price table doesn't show
 
-1. **Độ trễ gấp đôi.** 78s so với 37s. Người dùng ngồi chờ — với sản phẩm một người dùng thì đây thường quan trọng hơn 3 cent.
-2. **Số lượt không đoán được.** Haiku: 9 rồi 10 lượt cho cùng một việc. Sonnet: 4 rồi 4. Nghĩa là **vai trò dùng `eco` cần ngân sách `max_turns` CAO HƠN HẲN** vai trò dùng `standard` — ngược với trực giác, và là lý do `reviewer` từng fail ở `max_turns` 4 rồi 6.
+1. **Double the latency.** 78s versus 37s. The user is sitting there waiting —
+   for a single-user product, this usually matters more than 3 cents.
+2. **The turn count is unpredictable.** Haiku: 9, then 10 turns for the same job.
+   Sonnet: 4, then 4. Meaning **an `eco` role needs a MUCH HIGHER** `max_turns`
+   budget than a `standard` role — counter to intuition, and the reason
+   `reviewer` once failed at `max_turns` 4, then again at 6.
 
-> **Luật:** vai trò `eco` đặt `max_turns` ≥ 1,5× số lượt đo được. Vai trò `standard` đặt ≈ 2× là đủ.
+> **Rule:** an `eco` role should set `max_turns` ≥ 1.5× the measured turn count.
+> A `standard` role can get by with ≈ 2×.
 
-3. 🔴 **CÁI GIÁ THỨ BA, ĐO ĐƯỢC 21/08 VÀ NẶNG HƠN HAI CÁI TRÊN CỘNG LẠI: KẾT QUẢ SAI.**
+3. 🔴 **THE THIRD COST, MEASURED 21/08 AND HEAVIER THAN THE OTHER TWO COMBINED:
+   WRONG ANSWERS.**
 
-Bảng so ở §4 trên đo **lượt · token · giây**, tức ngầm giả định *hai tier cho ra cùng một kết quả, chỉ khác đường đi*. Ca `bang-tinh` 21/08 bác bỏ giả định đó. Cùng một việc (gộp CSV 200 dòng theo `Phòng_Ban`×`Thành_Phố`, tổng + trung bình lương và tuổi), cùng một đầu vào, chạy ba lượt:
+The comparison table in §4 above measures **turns · tokens · seconds**, which
+implicitly assumes *both tiers produce the same result, just by a different
+path*. The `spreadsheet` case from 21/08 refutes that assumption. Same job
+(aggregate a 200-row CSV by `Department`×`City`, sum + average of salary and
+age), same input, run three times:
 
-| lượt | tier | tiền (worker) | **số học** |
+| run | tier | cost (worker) | **arithmetic** |
 |---|---|---:|---|
-| `P-260821-1805-d6v9` | `eco` (Haiku) | $0.157 | **sai 45/51 nhóm**, thiếu hẳn 5 nhóm, thừa 1 nhóm không tồn tại |
-| `P-260821-1818-yydi` | `eco` (Haiku) | $0.179 | sai 3/56 nhóm |
-| `P-260821-1827-m78h` | `standard` (Sonnet) | $0.425 | **đúng 56/56 — không sai một con số** |
+| `P-260821-1805-d6v9` | `eco` (Haiku) | $0.157 | **wrong on 45/51 groups**, 5 groups missing entirely, 1 group that doesn't exist |
+| `P-260821-1818-yydi` | `eco` (Haiku) | $0.179 | wrong on 3/56 groups |
+| `P-260821-1827-m78h` | `standard` (Sonnet) | $0.425 | **correct 56/56 — not one number wrong** |
 
-**`eco` ở bài này tiết kiệm ÂM:** $0.336 tiêu cho hai kết quả không dùng được, rồi vẫn phải trả $0.425 để có một kết quả đúng. Tổng $0.761 thay vì $0.425.
+**`eco` was a NEGATIVE saving on this job:** $0.336 spent on two unusable
+results, and then still paying $0.425 to get a correct one. $0.761 total instead
+of $0.425.
 
-Ba điều rút ra, xếp theo mức đáng nhớ:
+Three takeaways, ranked by how much they matter:
 
-- **Sai số KHÔNG ổn định giữa hai lượt cùng tier.** Cùng haiku, cùng đầu vào, hai đáp án sai *khác nhau* (45/51 rồi 3/56). Nên đây không phải một khiếm khuyết đo được một lần rồi trừ hao — nó là **xổ số**, và xổ số thì không có con số nào để đưa vào công thức `bội_số_token < tỉ_lệ_giá`.
-- **Không phải "LLM không biết tính".** Sonnet đúng tuyệt đối **mà không dùng một tool nào**. Vế "chịu thôi, model ngôn ngữ vốn dốt số" bị chính số đo bác bỏ.
-- **Không chốt nào đang có nhìn thấy chuyện này.** `missingOutputs` kiểm file tồn tại; `looped` kiểm lặp thao tác; cả hai đều xanh cho lượt sai 45/51 nhóm. Xem `SESSIONS_MEMORY` §5l ④.
+- **The error rate is NOT stable between two runs of the same tier.** Same
+  Haiku, same input, two *different* wrong answers (45/51, then 3/56). So this
+  isn't a defect you can measure once and discount for — it's a **lottery**, and
+  a lottery has no number to plug into the `token_multiplier < price_ratio`
+  formula.
+- **This is not "an LLM just can't do arithmetic."** Sonnet was perfectly correct
+  **without using a single tool**. The "well, language models are just bad at
+  numbers" excuse is refuted by the measurement itself.
+- **No existing gate sees this happening.** `missingOutputs` checks that files
+  exist; `looped` checks for repeated actions; both stayed green on the run that
+  was wrong on 45/51 groups. See `SESSIONS_MEMORY` §5l ④.
 
-> **Luật:** công thức chọn tier ở §4 chỉ áp dụng cho việc mà **mọi tier đều cho ra kết quả đúng** — soạn thảo, tóm tắt, phân loại, định dạng lại. Với việc có **một đáp án đúng duy nhất** (số học, đối chiếu, trích xuất chính xác), bảng token không nói được gì cả và `eco` phải được **đo trên đầu ra**, không đo trên hoá đơn.
+> **Rule:** the tier-selection formula in §4 only applies to work where **every
+> tier produces a correct result** — drafting, summarizing, classifying,
+> reformatting. For work with **a single correct answer** (arithmetic,
+> reconciliation, precise extraction), the token table says nothing useful, and
+> `eco` must be **measured on output**, not on the bill.
 
-⚠ **Đây KHÔNG phải lý do để agentco tự nâng tier.** Tier là tiền của người dùng và là quyết định của họ (`role.model_tier` trong `roles/<id>.yaml`). Ta không có quyền bỏ phiếu — ta chỉ có nghĩa vụ làm cho lựa chọn đó **sáng mắt thay vì mù**, và mục này tồn tại để được đọc trước khi ai đó gõ `model_tier: eco` cho một vai trò làm việc có đáp án đúng duy nhất. Con đường đúng cho *chất lượng* chuyên môn vẫn là **khách cắm tool/MCP** (`SPEC-connectors.md`), không phải ta vá trong lõi.
+⚠ **This is NOT a reason for agentco to auto-raise the tier.** Tier is the user's
+money and the user's decision (`role.model_tier` in `roles/<id>.yaml`). We don't
+get a vote — our only obligation is making that choice **visible instead of
+blind**, and this section exists to be read before anyone types
+`model_tier: eco` for a role doing work with a single correct answer. The right
+path for professional-grade *quality* is still **the customer plugging in a
+tool/MCP** (`SPEC-connectors.md`), not us patching the core.
 
-> **Luật bổ sung sau khi đo (spec gốc thiếu):**
-> **Ưu tiên ít task lớn hơn nhiều task nhỏ.** Mỗi task gánh ~13K token overhead bất kể việc to hay nhỏ. Chỉ chẻ task khi có **song song thật** hoặc **cần role khác** — không chẻ để nhìn cho gọn. Đây là ràng buộc ngược với §7 `SPEC-2026-08-14-agentco.md` (scheduler); scheduler phải từ chối DAG có task tầm thường và gộp chúng lại.
+> **Additional rule found after measuring (missing from the original spec):**
+> **Prefer fewer, larger tasks over many small ones.** Every task carries ~13K
+> tokens of overhead regardless of whether the work is big or small. Only split a
+> task when there's **real parallelism** or a **different role is needed** — not
+> to make it look tidy. This constraint runs counter to §7 of
+> `SPEC-2026-08-14-agentco.md` (scheduler); the scheduler must reject a DAG with
+> trivial tasks and merge them instead.
 
-### 🔴 `max_usd`: TRẦN LÀ CÁI PHANH CỦA NGƯỜI DÙNG, KHÔNG PHẢI CÁI THƯỚC CỦA TA (user chốt 21/08)
+### 🔴 `max_usd`: THE CAP IS THE USER'S BRAKE, NOT OUR RULER (locked in by the user, 21/08)
 
-> *"Nếu task nào khó thì phải cho nó có trần cao để nó còn hoàn thành job của nó chứ."*
+> *"If a task is hard, it needs a high enough cap to actually finish its job."*
 
-**`0` = không giới hạn, và đó là mặc định của schema.** `newRoleYaml` ghi sẵn một số **rộng** theo tier (`eco: 1.0` · `standard: 2.0`) để người dùng nhìn thấy và tự siết xuống khi đã biết việc của mình tốn bao nhiêu.
+**`0` = unlimited, and that's the schema default.** `newRoleYaml` writes in a
+**generous** number by tier (`eco: 1.0` · `standard: 2.0`) so the user can see it
+and tighten it down themselves once they know what their own work costs.
 
-Vì sao đổi: mặc định cũ là $0.4 ở template và $0.5 ở schema, trong khi đo được cùng ngày, đúng việc mà `pitch` của vai trò quảng cáo (*"đọc CSV, tính tổng hợp theo nhóm"*) tốn **$0.425 · $0.448 · $0.516** trên `standard`. Mặc định của TA nằm **dưới giá của công việc mà vai trò đó tồn tại để làm** — nó bắn trên đường hạnh phúc, mọi lần.
+Why this changed: the old defaults were $0.4 in the template and $0.5 in the
+schema, while a measurement taken the same day, on the exact job the role's own
+advertised `pitch` (*"read a CSV, compute grouped aggregates"*) promises, cost
+**$0.425 · $0.448 · $0.516** on `standard`. OUR default sat **below the price of
+the very job that role exists to do** — it fires on the happy path, every time.
 
-Và một con số cho cả hai tier cũng sai: cùng việc, `eco` tiêu $0.157–0.179 còn `standard` $0.425–0.516 (**~2,7×**). Một trần chung thì vừa quá lỏng cho tier này vừa quá chặt cho tier kia.
+And one number for both tiers is also wrong: for the same job, `eco` spends
+$0.157–0.179 while `standard` spends $0.425–0.516 (**~2.7×**). One shared cap
+would be simultaneously too loose for one tier and too tight for the other.
 
-**Bất đối xứng quyết định hướng lệch:** chặn giữa chừng là **mất trắng** số tiền đã tiêu mà chưa có kết quả; còn đặt trần rộng thì việc nào tiêu ít vẫn chỉ tính tiền phần nó dùng. Lệch về phía rộng là lệch đúng hướng.
+**The asymmetry decides which direction to lean:** blocking mid-way is a **total
+loss** of whatever money was already spent with nothing to show for it; a
+generous cap just means a cheap job still only gets billed for what it uses.
+Leaning wide is leaning the right way.
 
-⚠ `maxBudgetUsd` **không được truyền xuống SDK khi giá trị là 0** — truyền 0 là đặt trần bằng không, tức chặn ngay lượt đầu.
+⚠ `maxBudgetUsd` **must not be passed to the SDK when the value is 0** — passing
+0 sets the cap to zero, blocking on the very first turn.
 
-**Sửa được trên giao diện**, cùng ô với mức model (`Inspector → Đổi model & giới hạn`): người dùng đổi tier là lúc duy nhất họ nghĩ về cái giá, và cùng một việc trên `deep` đắt gấp mấy lần trên `eco`. Tách ra hai màn hình là bắt họ nhớ quay lại sửa lần hai. Trước 21/08 hai con số này **không có mặt ở bất kỳ màn hình nào** — trong khi câu báo lỗi vẫn bảo người dùng *"nới max_usd trong roles/…yaml"*. Không phải nói dối, nhưng là **chỉ sai cửa**: số đó có sửa được, chỉ là không sửa được ở nơi người dùng đang đứng.
+**Editable from the UI**, in the same field as the model tier (`Inspector →
+Change model & limits`): switching tiers is the one moment the user is actually
+thinking about price, and the same job costs several times more on `deep` than on
+`eco`. Splitting these across two screens forces them to remember to come back
+and fix it a second time. Before 21/08, these two numbers **didn't appear on any
+screen at all** — while the error message still told users to *"raise max_usd in
+roles/…yaml"*. Not a lie, but **the wrong door**: the number really is editable,
+just not from where the user was standing.
 
-Khi chạm trần cứng mà **chưa** giao đủ hàng: task chuyển `blocked`, hiện lên UI, hỏi người dùng có nới không. **Không bao giờ tự nới.** Chạm trần mà **đã** giao đủ hàng thì task là `done` — xem `SPEC-offices.md` §6.
+When the hard cap is hit and the goods have **not** been delivered yet: the task
+moves to `blocked`, shows on the UI, and asks the user whether to raise it.
+**Never auto-raised.** Hitting the cap after the goods **have** been delivered
+means the task is `done` — see `SPEC-offices.md` §6.
 
-### Đổi model giữa chừng — cho phép, và đắt ít hơn dự đoán
+### Changing models mid-run — allowed, and cheaper than you'd guess
 
-Chi tiết + bảng số: `SPEC-offices.md` §4.5. Ba điều cần nhớ ở đây:
+Details + a numbers table: `SPEC-offices.md` §4.5. Three things to remember here:
 
-1. **Nhân viên là hàm không trạng thái** → đổi `model_tier` không mất gì. Chỉ ghi cache một lần cho cặp (model mới, prefix).
-2. **Trợ lý chạy `resume`** → trí nhớ hội thoại **không mất** (bản ghi nằm trên đĩa, độc lập với model). Đo được: lượt đổi tốn thêm ~1 000–1 400 token ghi cache, tức **+60–80% của một lượt, một lần**.
-3. **Việc đang chạy giữ nguyên model cũ.** Ép bởi kiến trúc, không bởi kỷ luật: `applyCompanyConfig` dựng `LoadedOffice` mới, Scheduler đang chạy giữ bản cũ.
+1. **An employee is a stateless function** → changing `model_tier` loses nothing.
+   Just one cache write for the (new model, prefix) pair.
+2. **The Assistant runs `resume`** → conversation memory is **not lost** (the
+   record lives on disk, independent of the model). Measured: the turn where the
+   change happens costs an extra ~1,000–1,400 tokens of cache write, i.e.
+   **+60–80% of one turn, once**.
+3. **A run already in progress keeps the old model.** Forced by architecture, not
+   by discipline: `applyCompanyConfig` builds a new `LoadedOffice`; a Scheduler
+   already running keeps the old one.
 
-> ⚠ **Bẫy đã dẫm: đổi tên KHOÁ trong schema cũng phải có alias, không chỉ đổi GIÁ TRỊ.**
-> `TIER_ALIASES` lo `model_tier: cheap` trong `roles/*.yaml`. Nhưng `company.yaml` viết `models.cheap: <model>` thì zod bỏ qua khoá lạ, `eco` rơi về mặc định, và người dùng chạy suốt một model **khác** cái họ đã ghi ra — không lỗi, không cảnh báo, chỉ có hoá đơn không khớp. Im lặng hơn hẳn nửa kia của cùng một bài học.
+> ⚠ **A trap already stepped on: renaming a KEY in the schema also needs an
+> alias, not just a changed VALUE.**
+> `TIER_ALIASES` handles `model_tier: cheap` in `roles/*.yaml`. But if
+> `company.yaml` writes `models.cheap: <model>`, zod silently ignores the unknown
+> key, `eco` falls back to its default, and the user runs an entire session on a
+> **different** model than the one they wrote down — no error, no warning, just a
+> bill that doesn't match. Far more silent than the other half of the same
+> lesson.
 
 ---
 
-## 5. Đo lường — bắt buộc có từ ngày đầu
+## 5. Measurement — mandatory from day one
 
-Không có số đo thì không tối ưu được, và không phát hiện được chết chậm.
+Without measurement there's no optimizing, and no catching a slow death.
 
-Mỗi task ghi một dòng vào `logs/usage.jsonl`:
+Every task writes one line to `logs/usage.jsonl`:
 
 ```json
 {"ts":"...","task_id":"T-0007","role":"writer","role_version":3,
@@ -277,157 +401,255 @@ Mỗi task ghi một dòng vào `logs/usage.jsonl`:
  "wall_ms":8400,"status":"done"}
 ```
 
-CLI `agentco cost` in ra:
+The `agentco cost` CLI prints:
 
 ```
-Ca làm việc hôm nay          42 task
-Tổng token                   in 61K · cache_read 780K · cache_write 24K · out 38K
-Tỉ lệ cache hit (prefix)     0.91   ✓ (ngưỡng 0.70)
-Token / task (p50 / p95)     19.8K / 44.1K
-Tốn nhất                     T-0031 researcher 44.1K
-Cache write bất thường       role=coder 3 lần   ← có ai bump version giữa ca?
+Today's run                   42 tasks
+Total tokens                  in 61K · cache_read 780K · cache_write 24K · out 38K
+Cache hit ratio (prefix)      0.91   ✓ (threshold 0.70)
+Tokens / task (p50 / p95)     19.8K / 44.1K
+Most expensive                T-0031 researcher 44.1K
+Abnormal cache write          role=coder 3 times   ← did someone bump a version mid-run?
 ```
 
-### Sổ phải ghi CẢ lượt của Trợ lý, không chỉ receipt của nhân viên
+### The log must also record the Assistant's turns, not just an employee's receipt
 
-Bản trước chỉ ghi một dòng cho mỗi receipt worker. Hệ quả: `route()` — chạy **mỗi lượt người dùng nhắn** — có `usage` bị vứt thẳng đi, còn `plan()`/`report()` chỉ được cộng vào `cost.tick` trong bộ nhớ. Với văn phòng dùng chủ yếu để trò chuyện, đó là **phần lớn hoá đơn**, và nó vô hình với `agentco cost`.
+The earlier version only wrote one line per worker receipt. Consequence:
+`route()` — which runs **on every user message** — had its `usage` thrown away,
+while `plan()`/`report()` only got added into `cost.tick` in memory. For an
+office used mostly for conversation, that's **most of the bill**, and it was
+invisible to `agentco cost`.
 
-Giờ mỗi lượt Trợ lý ghi một dòng với `role: "assistant"` và `task_id` = tên **khâu**: `route` · `plan` · `report`. Tách khâu chứ không gộp, vì ba khâu có hình dạng chi phí khác hẳn nhau — `route` chạy mỗi lượt nên phải rẻ; `plan` chạy một lần một ca ở query riêng. Gộp lại thì không thấy khâu nào đang phình.
+Now every Assistant turn writes a line with `role: "assistant"` and `task_id` =
+the **stage** name: `route` · `plan` · `report`. Kept separate rather than
+merged, because the three stages have completely different cost shapes — `route`
+runs every turn so it has to stay cheap; `plan` runs once per run, in its own
+query. Merged together, no one can see which stage is actually bloating.
 
-Đây cũng là điều kiện để đánh giá được việc đổi model: **không đo được thì không cân nhắc được cái giá.** Và nó là một nửa của việc `agentco cost` phải trả lời được *"còn bao nhiêu"*, không chỉ *"đã tiêu"* (`USE-CASES.md` §10).
+This is also a precondition for evaluating a model switch: **you can't weigh a
+cost you can't measure.** And it's half of what `agentco cost` needs to answer
+*"how much is left,"* not just *"how much has been spent"* (`USE-CASES.md` §10).
 
-### 🔴 Token lấy từ `modelUsage`, KHÔNG lấy từ `usage` (chốt 21/08, sổ đã lệch 14×)
+### 🔴 Tokens come from `modelUsage`, NOT from `usage` (locked in 21/08, the log was off by 14×)
 
-Đây là một bất biến của **sổ chi phí**, không phải chi tiết cài đặt của SDK — nên nó nằm ở đây, ở luật cao nhất.
+This is an invariant of the **cost log**, not an SDK implementation detail — so it
+belongs here, at the highest-authority level.
 
-`.d.ts` của `@anthropic-ai/claude-agent-sdk` nói thẳng (`sdk.d.ts:4453`, nguyên văn):
+The `.d.ts` for `@anthropic-ai/claude-agent-sdk` states this outright
+(`sdk.d.ts:4453`, verbatim):
 
-> `usage`: **MAIN AGENT LOOP ONLY** — excludes Task subagent, sidechain, and auxiliary model calls, and is **per-turn in streaming-input sessions**. **Prefer `modelUsage` for token/cost accounting.**
+> `usage`: **MAIN AGENT LOOP ONLY** — excludes Task subagent, sidechain, and
+> auxiliary model calls, and is **per-turn in streaming-input sessions**.
+> **Prefer `modelUsage` for token/cost accounting.**
 >
-> `total_cost_usd`: *"Cumulative … each result carries the running total so far, so read the latest result rather than summing across results."*
+> `total_cost_usd`: *"Cumulative … each result carries the running total so far,
+> so read the latest result rather than summing across results."*
 
-`worker.ts` chạy **streaming-input mode** (`oneMessage()`), nên vế *"per-turn"* áp dụng cho ta. Bản trước lấy **token từ `usage`** (một lượt) và **tiền từ `total_cost_usd`** (tích luỹ) — hai đơn vị khác nhau trong cùng một dòng sổ.
+`worker.ts` runs in **streaming-input mode** (`oneMessage()`), so the *"per-turn"*
+clause applies to us. The earlier version took **tokens from `usage`** (one turn)
+and **the dollar amount from `total_cost_usd`** (cumulative) — two different
+units in the same log line.
 
-**Đo được, ca `P-260821-1827-m78h`:** sổ ghi `out 59 · cache_read 0` nằm cạnh `$0.4248`. Với sonnet thì 59 token đầu ra là khoảng $0.001 — **sổ lệch 14×**, và lệch theo hướng làm mọi phép tính `$/lượt` trở thành rác.
+**Measured, run `P-260821-1827-m78h`:** the log recorded `out 59 · cache_read 0`
+right next to `$0.4248`. For Sonnet, 59 output tokens is roughly $0.001 — **the
+log was off by 14×**, and off in the direction that turns every `$/turn`
+calculation into garbage.
 
-Ba hệ quả, và cái thứ ba là cái đau:
+Three consequences, and the third one is the painful one:
 
-1. Số token trên giao diện sai ở mọi ca nhiều lượt.
-2. `cost.tick` cộng dồn những con số không cùng đơn vị.
-3. **Nó lệch to nhất đúng ở ca `budget` và `max_turns`** — tức ca ĐẮT NHẤT, và cũng là ca người dùng cần con số nhất. Ca chạy êm thì lượt cuối tình cờ là lượt lớn nên nhìn "gần đúng"; ca hỏng thì lượt cuối là một câu báo lỗi 59 token.
+1. The token count shown in the UI is wrong on every multi-turn run.
+2. `cost.tick` was accumulating numbers that weren't even the same unit.
+3. **It's most wrong exactly on `budget`- and `max_turns`-limited runs** — i.e.
+   the MOST EXPENSIVE runs, and the exact runs where the user needs the number
+   most. On a run that finishes smoothly, the last turn happens to be a large one
+   so it looks "close enough"; on a failed run, the last turn is a 59-token error
+   message.
 
-> **Luật chung rút ra:** *một trường tên là `usage` không tự động có nghĩa là "tất cả usage".* Trước khi cắm một con số của SDK vào sổ, đọc chú thích của chính trường đó — chi phí nửa phút, và nó chặn đúng loại lỗi **không bao giờ tự lộ ra** vì sổ vẫn in ra một con số trông hợp lý.
+> **General lesson from this:** *a field named `usage` doesn't automatically mean
+> "all usage."* Before wiring an SDK number into a log, read that field's own
+> doc comment — it costs half a minute, and it blocks exactly the kind of bug
+> that **never reveals itself**, because the log still prints a number that looks
+> reasonable.
 
-`total_cost_usd` **giữ nguyên** làm nguồn TIỀN: nó bao cả lượt phụ trợ mà `modelUsage` có thể không kê hết, và `maxBudgetUsd` của SDK đo theo chính con số đó — sổ của ta phải nói cùng thứ tiếng với cái phanh.
+`total_cost_usd` **stays** as the source for DOLLARS: it covers auxiliary calls
+that `modelUsage` might not fully itemize, and the SDK's own `maxBudgetUsd` is
+measured against that exact number — our log has to speak the same language as
+the brake pedal.
 
-→ `worker.ts → readUsage`, test ở `test/landing.test.ts`.
+→ `worker.ts → readUsage`, tested in `test/landing.test.ts`.
 
-### Số liệu token phải HIỆN ĐƯỢC trên giao diện — và model không bao giờ thấy nó
+### Token figures must be VISIBLE in the UI — and the model must never see them
 
-`agentco cost` là công cụ của người biết gõ lệnh. Người dùng chính của ta thì không, nên bảng này phải có mặt trong **Nhật ký công việc**: một khối đóng/mở với `đọc lại · ghi cache · lượt · $` cho từng task.
+`agentco cost` is a tool for someone who knows how to type a command. Our
+primary user doesn't, so this table has to live inside the **Work log**: a
+collapsible block with `read · cache write · turns · $` for each task.
 
-Số liệu **đã nằm sẵn** trong mỗi sự kiện `task.done` và trong file log — vẽ nó ra tốn **0 token**. Không có nó thì bài 1 của `TEST-WALKTHROUGH.md` (*"nhìn `cache_write`: task đầu lớn, hai task sau nhỏ"*) là một bài **không làm được**, vì chữ `cache_write` không xuất hiện ở đâu trên màn hình.
+The figures are **already sitting there** in every `task.done` event and in the
+log file — displaying them costs **0 tokens**. Without it, exercise 1 of
+`TEST-WALKTHROUGH.md` (*"look at `cache_write`: the first task is big, the next
+two are small"*) is an exercise you **cannot complete**, because the word
+`cache_write` doesn't appear anywhere on the screen.
 
-> **Kế toán là việc của người đứng ngoài đếm, không phải của người đang làm.** Nhân viên và Trợ lý KHÔNG BAO GIỜ được biết những con số này. Ba lý do, mỗi lý do tự nó đã đủ:
-> 1. Nhân viên **không làm gì được** với con số đó — nó không tự đổi cách làm việc vì biết mình vừa ghi 13K cache. Đã đo: prompt "kỷ luật số lượt" gần như không ăn thua (§4).
-> 2. Nói cho model biết nghĩa là **nhét con số vào prompt**, tức là trả tiền ở MỌI lượt để kể một chuyện chỉ có nghĩa với người quan sát.
-> 3. `CORE_PROMPT` đã cấm thuật ngữ kỹ thuật trong `say`. Đưa token vào đó là tự mâu thuẫn.
+> **Accounting is a job for the outside observer, not for the one doing the
+> work.** The employee and the Assistant must NEVER know these numbers. Three
+> reasons, and any one of them is enough on its own:
+> 1. The employee **can't do anything** with that number — knowing it just wrote
+>    13K of cache doesn't change how it works. Already measured: a "turn
+>    discipline" prompt barely moved the needle (§4).
+> 2. Telling the model means **putting the number in the prompt**, i.e. paying on
+>    EVERY turn to narrate a fact that only means something to an outside
+>    observer.
+> 3. `CORE_PROMPT` already bans technical jargon inside `say`. Putting token
+>    counts there would directly contradict that.
 
-**Dòng "cache write bất thường" là hệ thống báo động chính.** Cache write lặp lại nhiều lần cho cùng một role trong một ca = có gì đó đang phá prefix. Đó chính xác là lỗi đã xảy ra với `claude -p`, và là lỗi bạn sẽ không tự nhìn ra nếu không có dòng này.
+**The "abnormal cache write" line is the main alarm system.** A cache write
+repeating multiple times for the same role within one run = something is
+breaking the prefix. That's exactly the bug that happened with `claude -p`, and
+it's a bug you will not spot on your own without this line.
 
-### 5e. Hạn mức TÀI KHOẢN — thứ đắt hơn tiền, và ta nhặt được miễn phí (22/08)
+### 5e. ACCOUNT limits — something more expensive than money, and we got it for free (22/08)
 
-`$` là thứ đo được sau khi tiêu. Nhưng thứ **thật sự chặn** người dùng lại giữa chừng không phải tiền — mà là **hạn mức gói Claude**: cửa sổ 5 giờ và cửa sổ 7 ngày, dùng chung với Claude Code và claude.ai của chính họ. Hết hạn mức thì việc dừng, và không có số tiền nào mua lại được cho tới mốc reset.
+`$` is something measured after it's spent. But the thing that **actually stops**
+the user cold isn't money — it's the **Claude plan's usage limit**: a 5-hour
+window and a 7-day window, shared with the user's own Claude Code and claude.ai
+usage. Once the limit is hit, work stops, and no amount of money buys it back
+before the next reset.
 
-#### 🔴 ĐIỀU KIỆN LÀ **CLI PHẢI RẢNH** — và chỗ này đã suýt bị đóng đinh một kết luận sai
+#### 🔴 THE CONDITION IS **THE CLI MUST BE IDLE** — and this nearly got nailed to a wrong conclusion
 
-Nguồn của hai con số `%` là `Query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`, tức là thứ đứng sau lệnh `/usage` của Claude Code. Sáu phép đo:
+The source for the two `%` figures is
+`Query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`, i.e. what
+sits behind Claude Code's `/usage` command. Six measurements:
 
-| probe | gọi lúc | kết quả |
+| probe | called when | result |
 |---|---|---|
-| 1 | sau vòng lặp | `ProcessTransport is not ready` |
-| 2 | tin đầu tiên | `Query closed…` sau 601 ms |
-| 3 | `init`, query sống ~3 s | `Query closed…` sau 3 043 ms |
-| 4 | `init`, **query sống 32 GIÂY** | `Query closed…` sau **27 476 ms** |
-| **5** | **CLI RẢNH** (streaming-input mở, chưa gửi tin nào) | ✅ **3 342 ms**, đủ số |
+| 1 | after the loop | `ProcessTransport is not ready` |
+| 2 | on the first message | `Query closed…` after 601 ms |
+| 3 | on `init`, query alive ~3s | `Query closed…` after 3,043 ms |
+| 4 | on `init`, **query alive for 32 SECONDS** | `Query closed…` after **27,476 ms** |
+| **5** | **CLI IDLE** (streaming-input open, no message sent yet) | ✅ **3,342 ms**, real numbers |
 
-Bốn lần đầu đều gọi **trong lúc CLI đang xử lý một prompt**. Probe 4 bác bỏ giả thuyết dễ chịu nhất ("thua vì query của ta quá ngắn") — nó chờ gần hết đời query rồi chết cùng. Kết luận rút ra lúc đó — *"control request không được trả lời khi vòng lặp chính đang bận"* — **đúng**. Kết luận đi kèm — *"nên không lấy được %"* — **sai**.
+The first four all called it **while the CLI was busy processing a prompt**.
+Probe 4 refutes the most comfortable hypothesis ("failing because our query was
+too short") — it waited almost the query's entire lifetime and still died with
+it. The conclusion drawn at the time — *"a control request goes unanswered while
+the main loop is busy"* — was **correct**. The conclusion that came with it —
+*"so we can't get the %"* — was **wrong**.
 
-Câu hỏi bỏ sót: **vì sao `/usage` gõ tay lại chạy?** Vì lúc người ta gõ thì CLI đang **rảnh**. Và streaming-input dựng lại được đúng trạng thái đó: mở query với một generator **giữ stream mở mà chưa gửi tin nào**.
+The missed question: **why does a manually-typed `/usage` work at all?** Because
+when someone types it, the CLI is **idle**. And streaming-input can recreate
+exactly that state: open a query with a generator that **keeps the stream open
+without sending a message yet**.
 
 ```
 ✅ USAGE OK — 3342ms          subscription_type: pro
    five_hour : 58%  reset 2026-08-22T02:49:59Z
    seven_day : 65%  reset 2026-08-26T03:59:59Z
-   session cost: 0                    ← không tin nhắn nào, không token nào
+   session cost: 0                    ← no message, no tokens
 ```
 
-**Giá: 0 token.** Không tin nhắn nào được gửi, không lượt suy luận nào chạy. Cái phải trả là ~3,3 giây và một tiến trình CLI sống trong khoảnh khắc đó. (`behaviors` trong phản hồi = *"a scan of local transcripts on this machine"* — đắt về **đĩa và thời gian**, không về token. Đó cũng là lý do có tiết lưu 60 giây.)
+**Cost: 0 tokens.** No message sent, no inference turn run. What it costs is
+~3.3 seconds and a live CLI process for that moment. (`behaviors` in the response
+= *"a scan of local transcripts on this machine"* — expensive in **disk and
+time**, not tokens. That's also why there's a 60-second throttle.)
 
-> **⚠ Bài học, và nó đắt hơn tính năng này: "đo bốn lần đều hỏng" chứng minh một CƠ CHẾ, không chứng minh một KẾT LUẬN.** Bốn phép đo đó nói đúng một điều — *"khi bận thì không được"* — còn *"nên bỏ đi"* là suy rộng tự thêm vào. Trước khi tuyên bố một đường là chết, phải hỏi: **thứ tương đương đang chạy được ở đâu đó, và nó khác ta ở chỗ nào?** Ở đây thứ đó là `/usage` gõ tay, và khác biệt là một chữ: *rảnh*.
+> **⚠ A lesson more expensive than this feature itself: "measured four times, all
+> failed" proves a MECHANISM, not a CONCLUSION.** Those four measurements said
+> exactly one thing — *"it doesn't work while busy"* — and *"so give up on it"* was
+> an inference tacked on afterward. Before declaring a path dead, ask: **is the
+> equivalent thing running successfully somewhere else, and how does it differ
+> from us?** Here that thing was a manually-typed `/usage`, and the difference
+> was one word: *idle*.
 >
-> Cùng họ với `tools` ≠ `allowedTools`: một suy luận đọc rất thuyết phục, và sai ở một điều kiện không ai nghĩ tới việc kiểm.
+> Same family as `tools` ≠ `allowedTools`: reasoning that reads very convincingly,
+> and is wrong on one condition nobody thought to check.
 
-#### Vai trò còn lại của `rate_limit_event` — hẹp, rõ, và miễn phí
+#### What's left of `rate_limit_event` — narrow, clear, and free
 
-Nó **không mang `utilization`** (đo 22/08: server không gửi), nên nó không phải nguồn của số. Nhưng nó là thành viên của union `SDKMessage` — đã nằm sẵn trong `for await` của `worker.ts`/`assistant.ts`, **0 token, 0 request** — và nó tới **ngay đầu mỗi query**. Vai trò: **báo đổi trạng thái NGAY GIỮA lượt chạy**. Người dùng bị chặn lúc 14:03 phải thấy lúc 14:03, không chờ refresh kế tiếp.
+It does **not carry `utilization`** (measured 22/08: the server doesn't send
+it), so it isn't a source of the number. But it's a member of the `SDKMessage`
+union — already sitting in the `for await` loop of `worker.ts`/`assistant.ts`,
+**0 tokens, 0 requests** — and it arrives **right at the start of every query**.
+Its role: **announce a status change MID-RUN**. A user blocked at 14:03 needs to
+see that at 14:03, not wait for the next refresh.
 
-⚠ Vì thế nó **chỉ được sửa `status`**. Hai bẫy đã bịt bằng test:
+⚠ Because of that, it's **only allowed to touch `status`**. Two traps already
+sealed off with tests:
 
-| trường | vì sao không cho sự kiện đụng vào |
+| field | why the event can't touch it |
 |---|---|
-| `utilization` | sự kiện không mang % → ghi đè bằng `null` là làm thanh biến mất giữa chừng |
-| `resetsAt` | **hai nguồn lệch 0,23 giây**: sự kiện trả `1787367000` (giây tròn), `usage()` trả `…T02:49:59.770958Z`. Cho ghi đè thì mỗi query lại lật qua lật lại → `bump` thấy "có đổi" → một `energy.tick` **rác bắn lên SSE ở mọi lượt gọi worker** |
+| `utilization` | the event doesn't carry a % → overwriting with `null` would make the bar disappear mid-run |
+| `resetsAt` | **the two sources are 0.23 seconds apart**: the event returns `1787367000` (rounded seconds), `usage()` returns `…T02:49:59.770958Z`. Allowing an overwrite means every query would flip it back and forth → `bump` sees "something changed" → a **garbage `energy.tick`** fires onto SSE on every single worker call |
 
-#### Nhịp refresh: theo SỰ KIỆN, không theo đồng hồ
+#### Refresh cadence: keyed on an EVENT, not a clock
 
-Mở văn phòng (`bindBus`, `force`) và **mỗi lần kế hoạch xong** (`finish`, cạnh `cost.tick`) — đó là lúc DUY NHẤT con số thật sự nhảy. Tiết lưu 60 giây, single-flight, timeout 20 giây, nuốt mọi lỗi. Hẹn giờ định kỳ là mở một tiến trình CLI mỗi phút để nghe cùng một câu trả lời.
+Opening an office (`bindBus`, `force`) and **every time a plan finishes**
+(`finish`, next to `cost.tick`) — those are the ONLY moments the real number
+actually moves. A 60-second throttle, single-flight, a 20-second timeout,
+swallowing every error. A periodic timer would mean spinning up a CLI process
+every minute just to hear the same answer.
 
-#### Chỉ HAI cửa sổ: phiên và tuần (user chốt 22/08)
+#### Only TWO windows: session and week (locked in by the user, 22/08)
 
-Server trả về nhiều rổ hơn — `seven_day_opus`, `seven_day_sonnet`, và một loạt tên mã rõ ràng là cờ tính năng nội bộ (`nimbus_quill`, `iguana_necktie`, `tangelo`…). Trên tài khoản đo được (`pro`) các rổ theo model đều `null`.
+The server returns more buckets than that — `seven_day_opus`, `seven_day_sonnet`,
+and a batch of code-names that are clearly internal feature flags
+(`nimbus_quill`, `iguana_necktie`, `tangelo`…). On the account measured (`pro`),
+every model-specific bucket came back `null`.
 
-Bỏ chúng không phải vì rỗng, mà vì **chúng không phải chuyện của agentco**: hạn mức là của cả tài khoản, và người dùng có thể đã tiêu phần lớn nó vào việc chẳng liên quan gì tới công ty này. Ô này trả lời đúng một câu — *"tôi còn chạy được nữa không, và tới khi nào"*. Mọi con số khác là mời họ đi truy nguyên một thứ họ không sửa được.
+They're dropped not because they're empty, but because **they aren't agentco's
+business**: the limit belongs to the whole account, and the user may have spent
+most of it on something with nothing to do with this company. This field answers
+exactly one question — *"can I still run, and until when"*. Every other number
+just invites them to go trace down something they can't fix anyway.
 
-#### Đường đi lên giao diện: ĐI NHỜ, không có bus riêng
+#### Path to the UI: RIDES ALONG, no dedicated bus
 
-`Office.emit()` đã là chốt duy nhất mọi sự kiện đi qua, và trong lúc chạy thì nó dày đặc. `emit` so `energyVersion()` với lần bắn trước, đổi thì chèn một `energy.tick`. **Không listener nào phải quản** — `energy.ts` là state ở module (hạn mức thuộc TÀI KHOẢN) còn `Office` thì sinh/mất theo thao tác người dùng, nên pub/sub ở đây chỉ đẻ ra bài toán vòng đời và một listener sót lại bắn vào SSE đã đóng.
+`Office.emit()` is already the single choke point every event passes through,
+and it's dense during a run. `emit` compares `energyVersion()` against the
+previous fire, and inserts an `energy.tick` when it changes. **No listener has to
+manage anything** — `energy.ts` is module-level state (the limit belongs to the
+ACCOUNT) while `Office` instances come and go with user actions, so pub/sub here
+would only create lifecycle problems and a stray listener firing into a closed
+SSE connection.
 
-⚠ `energy` **không bị dọn khi đổi văn phòng**, khác hẳn `cost`. Dọn nó là xoá một sự thật vẫn còn đúng.
+⚠ `energy` **is not cleared when switching offices**, unlike `cost`. Clearing it
+would delete a fact that's still true.
 
 ---
 
-## 6. Bộ kịch bản chuẩn (golden scenarios)
+## 6. Golden scenarios
 
-5 kịch bản cố định, chạy được lặp lại, dùng làm thước đo mọi thay đổi:
+5 fixed scenarios, repeatable, used as the measuring stick for every change:
 
-| # | Kịch bản | Kiểm cái gì |
+| # | Scenario | What it checks |
 |---|---|---|
-| S1 | 1 task đơn, 1 role | chi phí sàn, cache write lần đầu |
-| S2 | 3 task cùng role song song | priming gate có ăn không |
-| S3 | DAG 5 task, 3 role, có phụ thuộc | scheduler + song song hỗn hợp |
-| S4 | Hội thoại 10 lượt với master | tăng trưởng context master, compaction |
-| S5 | Chạy lại S3 sau khi sửa 1 task giữa | replay có cắt đúng nhánh không |
+| S1 | 1 single task, 1 role | floor cost, first cache write |
+| S2 | 3 same-role tasks in parallel | does the priming gate actually work |
+| S3 | 5-task DAG, 3 roles, with dependencies | scheduler + mixed parallelism |
+| S4 | 10-turn conversation with the master | master's context growth, compaction |
+| S5 | Re-running S3 after fixing 1 task mid-way | does replay cut the right subtree |
 
-Quy trình bắt buộc trước mỗi lần merge thay đổi role/prompt/kiến trúc:
+Mandatory workflow before merging any role/prompt/architecture change:
 
 ```
-agentco bench --baseline    # đo trước
-<thay đổi>
-agentco bench --compare     # in bảng chênh lệch
+agentco bench --baseline    # measure before
+<change>
+agentco bench --compare     # print the delta table
 ```
 
-Xấu đi >10% ở bất kỳ kịch bản nào mà không giải thích được → không merge.
+A regression >10% on any scenario that can't be explained → do not merge.
 
 ---
 
-## 7. Checklist review — dán vào PR template
+## 7. Review checklist — paste into the PR template
 
-Mỗi thay đổi phải tự trả lời:
+Every change must answer for itself:
 
-- [ ] Có làm đổi nội dung L0–L4 không? Nếu có, đã bump `knowledge_version`/`role.version` đúng chưa?
-- [ ] Có thêm gì vào context của master không? Nếu có, vì sao không để worker gánh?
-- [ ] Có chỗ nào master đọc nội dung file thay vì đường dẫn không?
-- [ ] Có thêm call LLM nào cho việc mà code thuần làm được không?
-- [ ] Node tri thức mới có ≤250 token không?
-- [ ] Đã chạy `agentco bench --compare` chưa? Kết quả?
+- [ ] Does this change the content of L0–L4? If so, was `knowledge_version`/
+      `role.version` bumped correctly?
+- [ ] Does this add anything to the master's context? If so, why can't a worker
+      carry it instead?
+- [ ] Is there anywhere the master reads file content instead of a path?
+- [ ] Does this add an LLM call for something plain code could do?
+- [ ] Is the new knowledge node ≤250 tokens?
+- [ ] Has `agentco bench --compare` been run? What was the result?

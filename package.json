@@ -1,7 +1,7 @@
 {
     "name": "agentco",
     "version": "0.0.1",
-    "description": "Một công ty ảo chạy trên máy bạn: Claude làm giám đốc, điều phối đội agent chuyên môn chạy song song.",
+    "description": "A virtual company that runs on your machine: Claude acts as director, orchestrating a team of specialist agents running in parallel.",
     "license": "SEE LICENSE IN LICENSE.md",
     "type": "module",
     "engines": {

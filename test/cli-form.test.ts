@@ -1,23 +1,3 @@
-/**
- * TAB "LỆNH" — ánh xạ form ↔ tờ khai. `web/src/lib/cli-form.ts`
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ THỨ ĐANG ĐƯỢC KHOÁ Ở ĐÂY LÀ MỘT **LỜI HỨA VỚI NGƯỜI DÙNG**, không phải   │
- * │ một hàm tiện ích.                                                        │
- * │                                                                          │
- * │ User chốt 31/08: *"view Json từ form và ngược lại… nó là ánh xạ 1-1 hai   │
- * │ chiều"*. Một lời hứa dạng "đi vòng rồi về vẫn thế" hỏng theo cách **im    │
- * │ lặng nhất có thể**: không lỗi, không cảnh báo, chỉ là một trường biến     │
- * │ mất sau khi người dùng bấm "← Về form". Và trường dễ mất nhất lại đúng là │
- * │ trường AN TOÀN (`pattern`, `allow_dash`) — cùng lớp lỗi với `failWhen`    │
- * │ camelCase mà `parseCliArm` sinh ra để chặn.                              │
- * │                                                                          │
- * │ ⚠ Bài cuối là bài quan trọng nhất: **form KHÔNG được đẻ ra thứ mà cửa dán │
- * │ từ chối.** Hai chỗ đó do hai file khác nhau giữ, nên không có gì tự bắt   │
- * │ được lúc chúng lệch nhau ngoài một bài đi qua cả hai.                     │
- * │ → [[agentco-detect-fix-pair-scope]] · [[agentco-fallback-throws-away-answers]]
- * └──────────────────────────────────────────────────────────────────────────┘
- */
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -41,122 +21,95 @@ import {
 } from '../web/src/lib/cli-form.ts';
 import { parseCliArm } from '../dist/core/cli-arm.js';
 import { defaultArmLabel } from '../dist/core/armexec.js';
-/**
- * The same `t` the UI uses, from `dist` — `cli-form.ts` TAKES `t` as an argument
- * rather than importing it (node loads that file as raw `.ts`; see the box at the
- * top of it). Real strings, not a stub that echoes the key back: the cases below
- * run through `slugId`, `toArgv` and the paste gate, so only real text measures
- * what actually ships.
- */
 import { t } from '../dist/i18n/index.js';
 
-// ═══════════════════════════════════════════════ 1 · Tách và ghép dòng lệnh
 
-test('toArgv tôn trọng nháy, KHÔNG hiểu cú pháp shell', () => {
+test('toArgv respects quotes, does NOT understand shell syntax', () => {
   assert.deepEqual(toArgv('node -e "console.log(1)"'), ['node', '-e', 'console.log(1)']);
-  // `|`, `&&`, `$()` KHÔNG được xử lý — chúng chỉ là ký tự trong một mảnh argv.
-  // Đây là cột chịu lực an ninh của §16e, không phải một thiếu sót.
   assert.deepEqual(toArgv('ls | rm -rf /'), ['ls', '|', 'rm', '-rf', '/']);
-  // Chuỗi rỗng có nháy vẫn là MỘT mảnh — `--flag ""` khác hẳn `--flag`.
   assert.deepEqual(toArgv('a "" b'), ['a', '', 'b']);
 });
 
-test('joinArgv là NGHỊCH ĐẢO của toArgv, kể cả khi mảnh có nháy', () => {
+test('joinArgv is the INVERSE of toArgv, even when parts contain quotes', () => {
   for (const argv of [
-    ['node', '-e', "console.log('Xin chào, ' + process.argv[1])"],
-    ['git', 'commit', '-m', 'sửa lỗi lòi chữ'],
+    ['node', '-e', "console.log('Hello, ' + process.argv[1])"],
+    ['git', 'commit', '-m', 'fix garbled text bug'],
     ['x', ''],
-    ['echo', 'nói "thế" đi'],
-    ['C:\\Program Files\\x\\y.exe', '--in', 'D:\\Hồ sơ\\2026'],
+    ['echo', 'say "this" already'],
+    ['C:\\Program Files\\x\\y.exe', '--in', 'D:\\Hồ sơ\\2026'], // i18n-allow-vietnamese: fixture — non-ASCII path round-trip
   ]) {
-    assert.deepEqual(toArgv(joinArgv(argv)), argv, `vỡ ở: ${JSON.stringify(argv)}`);
+    assert.deepEqual(toArgv(joinArgv(argv)), argv, `broke on: ${JSON.stringify(argv)}`);
   }
 });
 
-test('slots lấy ô trống theo thứ tự, không lặp', () => {
+test('slots picks up placeholders in order, without duplicates', () => {
   assert.deepEqual(slots(['a', '{x}', '--f={y}', '{x}']), ['x', 'y']);
   assert.deepEqual(slots(['a', 'b']), []);
 });
 
-test('slugId biến câu tiếng Việt thành id hợp khuôn schema', () => {
+test('slugId turns a Vietnamese sentence into a schema-valid id', () => {
   const ok = /^[a-z][a-z0-9_]*$/;
-  for (const say of ['đếm hoá đơn chưa thanh toán', 'Đồng bộ!!!', '123 việc', 'nói xin chào']) {
-    assert.match(slugId(say), ok, `id sai khuôn cho "${say}"`);
+  for (const say of ['đếm hoá đơn chưa thanh toán', 'Đồng bộ!!!', '123 việc', 'nói xin chào']) { // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
+    assert.match(slugId(say), ok, `wrong id shape for "${say}"`);
   }
-  assert.equal(slugId('đếm hoá đơn'), 'dem_hoa_don');
+  assert.equal(slugId('đếm hoá đơn'), 'dem_hoa_don'); // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
 
-  // The fallback prefix is an IDENTIFIER, so it is language-neutral — it used to
-  // be `viec_`/`moi`. `id` feeds `armHash`, so this string is not decoration.
-  assert.equal(slugId('123 việc'), 'job_123_viec');
+  assert.equal(slugId('123 việc'), 'job_123_viec'); // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
   assert.equal(slugId('会计部'), 'job_new');
 });
 
-// ═════════════════════════════════════════ 2 · Ví dụ: dòng lệnh thật → từng ô
 
-test('alignExample bóc giá trị từ một dòng lệnh thật', () => {
+test('alignExample extracts values from a real command line', () => {
   assert.deepEqual(alignExample(['node', 'd.js', '--thang', '{thang}'], ['node', 'd.js', '--thang', '8']), {
     thang: '8',
   });
-  // Ô trống nằm GIỮA một mảnh (`--thang={thang}`) vẫn bóc được.
   assert.deepEqual(alignExample(['x', '--t={t}'], ['x', '--t=8']), { t: '8' });
 });
 
-test('🔴 ví dụ KHÔNG khớp cú pháp thì trả null — không đoán bừa', () => {
-  // Lệch số mảnh ⇒ ví dụ thuộc về một cú pháp khác.
+test('an example that does NOT match the syntax returns null — no wild guessing', () => {
   assert.equal(alignExample(['a', '{x}'], ['a', 'b', 'c']), null);
-  // Mảnh cố định khác nhau ⇒ họ sửa cú pháp mà quên sửa ví dụ.
   assert.equal(alignExample(['node', 'd.js', '{x}'], ['node', 'khac.js', '5']), null);
   assert.equal(alignExample([], []), null);
 });
 
-// ═══════════════════════════════════ 3 · 1-1 HAI CHIỀU (lời hứa với user)
 
-const DIR = 'D:\\Hồ sơ\\2026';
+const DIR = 'D:\\Hồ sơ\\2026'; // i18n-allow-vietnamese: fixture — non-ASCII path
 
 const full = (): CliDraft => ({
-  say: 'đếm hoá đơn chưa thanh toán',
-  description: 'Đếm số hoá đơn còn nợ trong tháng. Chỉ đọc, không sửa gì.',
+  say: 'đếm hoá đơn chưa thanh toán', // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
+  description: 'Count unpaid invoices for the month. Read-only, changes nothing.',
   line: 'node dem.js --thang {thang}',
   example: 'node dem.js --thang 8',
   read_only: true,
-  /** ⚠ Ô này KHÔNG có trong form từ 01/09 — nó phải chở qua được. → §16v */
   fail_when: 'FATAL:',
   params: [],
 });
 
-test('form → JSON → form → JSON không đổi một ký tự', () => {
+test('form -> JSON -> form -> JSON changes not a single character', () => {
   const once = draftToDecl([full()], DIR);
   const back = declToDraft(once);
-  assert.ok(back, 'đọc ngược ra rỗng');
+  assert.ok(back, 'reading it back came out empty');
   assert.equal(back.mixed, false);
   const twice = draftToDecl(back.acts, back.cwd);
   assert.deepEqual(twice, once);
-  // Và vòng thứ hai trên chính bản nháp cũng phải đứng yên.
   assert.deepEqual(declToDraft(twice), back);
 });
 
-test('dòng ví dụ dựng lại được từ JSON — người dùng thấy lại thứ họ đã gõ', () => {
+test('the example line rebuilds from JSON — the user sees back exactly what they typed', () => {
   const back = declToDraft(draftToDecl([full()], DIR))!;
   assert.equal(back.acts[0]!.example, 'node dem.js --thang 8');
   assert.equal(back.acts[0]!.read_only, true);
-  assert.equal(back.cwd, DIR, 'thư mục chung không đọc ngược được');
-  // 🔴 `fail_when` ra khỏi form nhưng PHẢI sống sót — cùng lý lẽ với `pattern`.
+  assert.equal(back.cwd, DIR, 'the shared directory did not read back correctly');
   assert.equal(back.acts[0]!.fail_when, 'FATAL:');
 });
 
-test('thư mục là của CẢ CÁNH TAY — mọi lệnh nhận cùng một `cwd`', () => {
-  const decl = draftToDecl([full(), { ...full(), say: 'việc hai' }], DIR);
+test('the directory belongs to the WHOLE ARM — every command gets the same `cwd`', () => {
+  const decl = draftToDecl([full(), { ...full(), say: 'second task' }], DIR);
   assert.deepEqual(decl.actions.map((a) => a['cwd']), [DIR, DIR]);
-  // Không chọn thư mục ⇒ KHÔNG khai `cwd` ⇒ server rơi về thư mục văn phòng.
   assert.equal(draftToDecl([full()], '').actions[0]!['cwd'], undefined);
 });
 
-test('🔴 `cwd` lệch nhau giữa các lệnh ⇒ `mixed`, KHÔNG tự chọn hộ', () => {
-  /**
-   * Form chỉ giữ được MỘT thư mục. Im lặng lấy cái đầu tiên là dời chỗ chạy của
-   * n−1 lệnh còn lại mà không ai được báo — với một lệnh ghi dữ liệu thì đó là
-   * chạy nhầm thư mục, không phải một lỗi hiển thị.
-   */
+test('`cwd` differs between commands => `mixed`, does NOT silently pick one', () => {
   const decl = {
     type: 'cli',
     actions: [
@@ -166,23 +119,17 @@ test('🔴 `cwd` lệch nhau giữa các lệnh ⇒ `mixed`, KHÔNG tự chọn 
   };
   const back = declToDraft(decl)!;
   assert.equal(back.mixed, true);
-  assert.equal(back.cwd, '', 'không được chọn hộ một trong hai');
+  assert.equal(back.cwd, '', 'must not pick one of the two on the user\'s behalf');
 });
 
-test('🔴 hàng rào của tham số SỐNG SÓT một vòng qua form', () => {
-  /**
-   * Ca thật: người dùng soạn ở tab JSON, đặt `pattern` + `allow_dash`, rồi bấm
-   * "← Về form" xem lại. Form không vẽ hai ô đó. Nếu nó thả rơi chúng thì cú bấm
-   * kia vừa **gỡ một hàng rào** mà không nói gì — và `fillArgv` sau đó nhận mọi
-   * giá trị, kể cả thứ mở đầu bằng dấu gạch.
-   */
+test('parameter guardrails SURVIVE a round trip through the form', () => {
   const decl = {
     type: 'cli',
     actions: [
       {
         id: 'trien_khai',
-        say: 'triển khai',
-        description: 'Đẩy bản mới lên. ⚠ Ghi đè bản đang chạy.',
+        say: 'deploy',
+        description: 'Push the new build. Overwrites the running build.',
         run: ['pnpm', 'deploy', '--tag', '{tag}'],
         params: [
           { name: 'tag', type: 'string', required: true, pattern: '^v[0-9.]+$', allow_dash: false, example: 'v1.2.3' },
@@ -193,164 +140,122 @@ test('🔴 hàng rào của tham số SỐNG SÓT một vòng qua form', () => {
   const back = declToDraft(decl)!;
   const round = draftToDecl(back.acts, back.cwd);
   const p = (round.actions[0]!['params'] as Record<string, unknown>[])[0]!;
-  assert.equal(p['pattern'], '^v[0-9.]+$', 'pattern bị thả rơi');
-  assert.equal(p['allow_dash'], false, 'allow_dash bị thả rơi');
+  assert.equal(p['pattern'], '^v[0-9.]+$', 'pattern was dropped');
+  assert.equal(p['allow_dash'], false, 'allow_dash was dropped');
   assert.equal(p['example'], 'v1.2.3');
 });
 
-test('sửa dòng ví dụ thì example của tham số đi theo', () => {
+test('editing the example line updates the parameter\'s example along with it', () => {
   const d = full();
   d.example = 'node dem.js --thang 12';
   const params = draftToDecl([d]).actions[0]!['params'] as Record<string, unknown>[];
   assert.equal(params[0]!['example'], '12');
 });
 
-test('ô trống trong cú pháp là NGUỒN SỰ THẬT của danh sách tham số', () => {
+test('the placeholders in the syntax are the SOURCE OF TRUTH for the parameter list', () => {
   const d = full();
   d.line = 'node dem.js --thang {thang} --nam {nam}';
   d.example = '';
   const params = draftToDecl([d]).actions[0]!['params'] as Record<string, unknown>[];
   assert.deepEqual(params.map((p) => p['name']), ['thang', 'nam']);
-  // Không có cú pháp ô trống ⇒ không có tham số nào, kể cả khi JSON cũ có.
   d.line = 'node dem.js';
   assert.equal(draftToDecl([d]).actions[0]!['params'], undefined);
 });
 
-// ══════════════════════════════════════════════ 4 · Nối với LÕI và với CỬA
 
-test('🔴 form KHÔNG được đẻ ra thứ mà cửa dán từ chối', () => {
+test('the form must NOT produce anything the paste gate rejects', () => {
   for (const draft of [full(), sampleAct(t)]) {
     const r = parseCliArm(draftToDecl([draft]));
-    assert.equal(r.ok, true, `cửa dán từ chối: ${r.ok ? '' : r.error}`);
+    assert.equal(r.ok, true, `paste gate rejected: ${r.ok ? '' : r.error}`);
   }
 });
 
-test('mẫu "chạy thử" đầy đủ và tự nhận diện được', () => {
+test('the "try it" sample is complete and self-identifies', () => {
   const s = sampleAct(t);
   const decl = draftToDecl([s]);
-  assert.equal(decl.actions.length, 1, 'mẫu phải qua được bộ lọc "việc còn trống"');
+  assert.equal(decl.actions.length, 1, 'the sample must pass the "still-blank task" filter');
   assert.equal(isCliPaste(JSON.stringify(decl)), true);
-  // Mẫu PHẢI có ô trống — không có thì ô "Ví dụ" không hiện, và nó dạy sai
-  // một nửa quan trọng nhất của tab này.
   const params = decl.actions[0]!['params'] as Record<string, unknown>[];
   assert.equal(params.length, 1);
-  // ⚠ So với **mảnh cuối của chính dòng ví dụ trong mẫu**, không với một chuỗi
-  // gõ cứng: bài này khoá CƠ CHẾ bóc ví dụ, không khoá cái tên trong mẫu — đổi
-  // tên mẫu là chuyện thẩm mỹ và không được làm đỏ một bài về `alignExample`.
-  assert.equal(params[0]!['example'], toArgv(s.example).at(-1), 'ví dụ trong mẫu không bóc ra được');
-  assert.ok(params[0]!['example'], 'mẫu phải có ví dụ bóc được');
-  // Không khai `cwd` ⇒ rơi về thư mục văn phòng, thứ luôn tồn tại.
+  assert.equal(params[0]!['example'], toArgv(s.example).at(-1), 'could not extract the example from the sample');
+  assert.ok(params[0]!['example'], 'the sample must have an extractable example');
   assert.equal(decl.actions[0]!['cwd'], undefined);
 });
 
-test('🔴 nhãn mặc định của cánh tay CLI là TÊN THƯ MỤC, không phải tên binary', () => {
-  /**
-   * Ca thường nhất: một cánh tay CLI là một dự án, và mọi lệnh của dự án JS đều
-   * mở đầu bằng `node` ⇒ lấy tên binary thì ba dự án ra ba node cùng tên "node".
-   */
+test('the default label of a CLI arm is the DIRECTORY NAME, not the binary name', () => {
   const withDir = draftToDecl([full()], 'D:\\Works\\ke-toan');
   assert.equal(defaultArmLabel(withDir), 'ke-toan');
-  // Gạch chéo cuối không được biến nhãn thành chuỗi rỗng.
   assert.equal(defaultArmLabel(draftToDecl([full()], 'D:\\Works\\ke-toan\\')), 'ke-toan');
-  // Không có thư mục ⇒ ngã về tên chương trình, chứ không ngã về băm.
   assert.equal(defaultArmLabel(draftToDecl([full()], '')), 'node');
 });
 
-// ═══════════════════════════════ 4b · LỆNH CÒN DỞ — KHÔNG ĐƯỢC LỌC BỎ IM LẶNG
 
-test('🔴 lệnh còn dở KHÔNG bị vứt đi — đo được: 2 lệnh vào, 2 action ra, 2 lệnh về', () => {
-  /**
-   * Bug user bắt 01/09. Bản trước `draftToDecl` lọc bỏ dòng chưa điền cho đầu ra
-   * "sạch", và đo được cái giá: form **2 lệnh** → JSON **1 action** → về form
-   * còn **1 lệnh**. Bấm *Xem JSON* rồi *← Về form* là mất hẳn một dòng, im lặng.
-   *
-   * ⭐ Bộ lọc CHÍNH LÀ bug: nó xoá dữ liệu người dùng để đầu ra hợp lệ — hàng
-   * giả. → [[agentco-fallback-throws-away-answers]]
-   */
+test('an unfinished command is NOT thrown away — measurable: 2 commands in, 2 actions out, 2 commands back', () => {
   const form = [sampleAct(t), blankAct()];
   const decl = draftToDecl(form, DIR);
-  assert.equal(decl.actions.length, 2, 'lệnh còn dở bị vứt đi');
-  assert.equal(declToDraft(decl)!.acts.length, 2, 'đi một vòng JSON là mất dòng');
+  assert.equal(decl.actions.length, 2, 'the unfinished command got thrown away');
+  assert.equal(declToDraft(decl)!.acts.length, 2, 'a JSON round trip lost a row');
 });
 
-test('🔴 lệnh còn dở làm nút MỜ — và chỉ đúng dòng, đúng ô', () => {
-  assert.deepEqual(cliProblems([sampleAct(t)], t), [], 'lệnh đủ mà vẫn kêu');
+test('an unfinished command GREYS OUT the button — and only the right row, the right field', () => {
+  assert.deepEqual(cliProblems([sampleAct(t)], t), [], 'a complete command still complained');
   const bad = cliProblems([sampleAct(t), blankAct()], t);
   assert.deepEqual(
     bad.map((p) => [p.at, p.field]),
     [[1, 'say'], [1, 'line']],
-    'phải chỉ đúng dòng 2, đúng hai ô còn trống',
+    'must point at exactly row 2, exactly the two blank fields',
   );
-  // Thiếu MỘT ô thôi cũng là chưa xong.
   assert.deepEqual(cliProblems([{ ...sampleAct(t), line: '' }], t).map((p) => p.field), ['line']);
   assert.deepEqual(cliProblems([{ ...sampleAct(t), say: '  ' }], t).map((p) => p.field), ['say']);
 });
 
-test('🔴 khối JSON hỏng ⇒ KHÔNG ngã về bản form', () => {
-  /**
-   * Bản trước `cliDecl` ngã về `draftToDecl(list)` khi JSON hỏng ⇒ nút vẫn sáng
-   * trong lúc ô JSON đang đỏ, và bấm vào thì lưu **bản form** — không phải thứ
-   * đang hiện trên màn hình.
-   */
-  assert.equal(cliDecl([sampleAct(t)], DIR, '{ hỏng'), null);
-  assert.equal(cliCount(null), 0, 'null phải đếm ra 0 để nút mờ');
-  // Vẫn phải chạy đúng ở hai nhánh lành.
+test('a broken JSON block => does NOT fall back to the form version', () => {
+  assert.equal(cliDecl([sampleAct(t)], DIR, '{ broken'), null);
+  assert.equal(cliCount(null), 0, 'null must count as 0 so the button greys out');
   assert.equal(cliCount(cliDecl([sampleAct(t)], DIR, null)), 1);
   assert.equal(cliCount(cliDecl([], DIR, '{"type":"cli","actions":[{"id":"a"}]}')), 1);
 });
 
-// ══════════════════════════════════════════════════ 5 · MÃ LỆNH TRÙNG NHAU
 
-/**
- * ĐÃ ĐO 01/09: `createSdkMcpServer` **ném** `Tool a is already registered`.
- * Nên không có ca nuốt im lặng — nhưng nó ném **lúc bấm Thử**, bằng tiếng Anh
- * nói về "tool". Ba bài dưới khoá ba tầng của cùng một chuyện.
- */
-test('🔴 cửa dán TỪ CHỐI hai lệnh trùng mã, và nói bằng tiếng người', () => {
+test('the paste gate REJECTS two commands with the same id, and says so in plain language', () => {
   const decl = {
     type: 'cli',
     actions: [
-      { id: 'a', say: 'một', description: 'đếm, chỉ đọc', run: ['node', '-e', '1'] },
-      { id: 'a', say: 'hai', description: '⚠ xoá sạch', run: ['node', '-e', '2'] },
+      { id: 'a', say: 'one', description: 'count, read-only', run: ['node', '-e', '1'] },
+      { id: 'a', say: 'two', description: '⚠ wipes everything', run: ['node', '-e', '2'] },
     ],
   };
   const r = parseCliArm(decl);
-  assert.equal(r.ok, false, 'lọt qua cửa dán');
+  assert.equal(r.ok, false, 'slipped through the paste gate');
   if (!r.ok) {
-    assert.match(r.error, /"a"/, 'câu lỗi không nêu mã trùng');
-    assert.match(r.error, /mã riêng/, 'câu lỗi không nói phải làm gì');
+    assert.match(r.error, /"a"/, 'the error message does not name the duplicate id');
+    assert.match(r.error, /mã riêng/, 'the error message does not say what to do'); // i18n-allow-vietnamese: matches real i18n error string (default locale vi)
   }
-  // Mã khác nhau thì vẫn qua — bài chống dương-tính-giả.
   decl.actions[1]!.id = 'b';
   assert.equal(parseCliArm(decl).ok, true);
 });
 
-test('🔴 FORM tự sinh ra được mã trùng — hai tên gần giống, một mã', () => {
-  /**
-   * Người dùng **không bao giờ gõ `id`**: nó do `slugId(say)` sinh ra. Nên đây
-   * KHÔNG phải ca hiếm của người nghịch JSON — nó tới từ đường chính.
-   */
-  assert.equal(slugId('đếm hoá đơn'), slugId('đếm hoá đơn!'));
+test('the FORM can itself generate a duplicate id — two near-identical names, one id', () => {
+  assert.equal(slugId('đếm hoá đơn'), slugId('đếm hoá đơn!')); // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
   const decl = draftToDecl(
     [
-      { ...full(), say: 'đếm hoá đơn' },
-      { ...full(), say: 'đếm hoá đơn!' },
+      { ...full(), say: 'đếm hoá đơn' }, // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
+      { ...full(), say: 'đếm hoá đơn!' }, // i18n-allow-vietnamese: fixture — Vietnamese input to slugId
     ],
     DIR,
   );
-  assert.deepEqual(dupIds(decl), ['dem_hoa_don'], 'giao diện không thấy được mã trùng');
-  assert.equal(parseCliArm(decl).ok, false, 'cửa dán phải chặn chính thứ form vừa sinh ra');
+  assert.deepEqual(dupIds(decl), ['dem_hoa_don'], 'the UI failed to see the duplicate id');
+  assert.equal(parseCliArm(decl).ok, false, 'the paste gate must block exactly what the form just generated');
 });
 
-test('dupIds im khi không có gì trùng', () => {
-  assert.deepEqual(dupIds(draftToDecl([full(), { ...full(), say: 'việc hai' }], DIR)), []);
+test('dupIds stays quiet when nothing collides', () => {
+  assert.deepEqual(dupIds(draftToDecl([full(), { ...full(), say: 'second task' }], DIR)), []);
   assert.deepEqual(dupIds({}), []);
 });
 
-test('isCliPaste hỏi ĐÚNG câu isCliArm hỏi — theo `type`, không theo vắng mặt', () => {
+test('isCliPaste asks the SAME question isCliArm asks — by `type`, not by absence', () => {
   assert.equal(isCliPaste('{"type":"cli","actions":[]}'), true);
   assert.equal(isCliPaste('{"command":"npx","args":[]}'), false);
-  // Khối trống rỗng KHÔNG được im lặng thành CLI.
   assert.equal(isCliPaste('{}'), false);
-  assert.equal(isCliPaste('không phải json'), false);
+  assert.equal(isCliPaste('not json'), false);
 });

@@ -1,120 +1,120 @@
 # SPEC — CLI & Process model
 
-Đọc kèm `SPEC-2026-08-14-agentco.md`. File này định nghĩa cách phần mềm **chạy**: tiến trình, lệnh, cấu hình, và đường lên container.
+Read alongside `SPEC-2026-08-14-agentco.md`. This file defines how the software **runs**: the process, the commands, the configuration, and the path to a container.
 
 ---
 
-## 1. Mô hình tiến trình
+## 1. Process model
 
-**Một daemon duy nhất** sở hữu mọi thứ. Không có process phụ trợ nào giữ state.
+**A single daemon** owns everything. No helper process holds any state.
 
 ```
 ┌──────────────────── agentcod (daemon) ─────────────────────┐
 │                                                            │
 │  Claude Agent SDK runtime  ── master session                │
-│                            └─ worker runs (song song)       │
+│                            └─ worker runs (parallel)         │
 │  Scheduler + warmSet cache                                  │
 │  Knowledge index (in-memory, watch file)                    │
 │  HTTP + SSE server        :7317   ← web UI                  │
 │  Control socket           local   ← CLI subcommands         │
-│  Chat bridges (tuỳ chọn)          ← telegram long-poll      │
+│  Chat bridges (optional)          ← telegram long-poll      │
 └────────────────────────────────────────────────────────────┘
                      ▲
-                     │ đọc/ghi
+                     │ read/write
               ┌──────┴───────┐
-              │  company/    │  toàn bộ state nằm ở đây, không DB
+              │  company/    │  all state lives here, no DB
               └──────────────┘
 ```
 
-**Vì sao một daemon:** `warmSet` (bản đồ cache nào đang ấm) và master session **phải sống trong bộ nhớ**. Mỗi lệnh CLI spawn một process riêng là quay lại đúng cái bẫy `claude -p` — mất warmSet, mất session, mất cache.
+**Why a single daemon:** `warmSet` (the map of which cache is currently warm) and the master session **have to live in memory**. Every CLI command spawning its own process is exactly the `claude -p` trap all over again — losing `warmSet`, losing the session, losing the cache.
 
-**CLI = client mỏng.** Mọi lệnh (trừ `start`/`init`) kết nối tới daemon qua control socket. Không có daemon → CLI hỏi "chạy `agentco start` chứ?".
+**CLI = thin client.** Every command (except `start`/`init`) connects to the daemon over the control socket. No daemon running → the CLI asks "run `agentco start`?".
 
 Control socket:
 - Linux/macOS: unix socket `company/.state/agentco.sock`
 - Windows: named pipe `\\.\pipe\agentco-<hash(companyPath)>`
 
-Trạng thái tiến trình ghi ở `company/.state/daemon.json` (`pid`, `port`, `started_at`, `version`). Stale pid → tự dọn.
+Process state is written to `company/.state/daemon.json` (`pid`, `port`, `started_at`, `version`). A stale pid gets cleaned up automatically.
 
 ---
 
-## 2. Lệnh
+## 2. Commands
 
-### Khởi tạo & vòng đời
+### Init & lifecycle
 
 ```bash
-agentco init [dir]              # dựng company/ từ template, hỏi vài câu về công ty
+agentco init [dir]              # scaffold company/ from a template, ask a few questions about the company
 agentco start [--port 7317] [--no-ui] [--daemon]
 agentco stop
-agentco status                  # daemon, agent đang chạy, ca hiện tại, cache ấm
-agentco doctor                  # kiểm tra: node version, auth Claude, quyền ghi, port, bridge
+agentco status                  # daemon, running agents, current shift, warm cache
+agentco doctor                  # checks: node version, Claude auth, write permissions, port, bridges
 ```
 
-`agentco start` mặc định **foreground + tự mở trình duyệt**. `--daemon` để chạy nền (dùng cho VPS).
+`agentco start` defaults to **foreground + auto-opens the browser**. `--daemon` runs it in the background (for VPS use).
 
-### Giao việc
+### Assigning work
 
 ```bash
-agentco run "viết 3 bài fanpage về sản phẩm X"
+agentco run "write 3 fan-page posts about product X"
 agentco run --file brief.md
-agentco run --plan-only        # chỉ ra kế hoạch, không thực thi — xem trước rồi duyệt
-agentco tasks                  # danh sách task ca này + trạng thái
+agentco run --plan-only        # print the plan only, don't execute — preview then approve
+agentco tasks                  # this shift's task list + status
 agentco task T-0007            # brief + receipt + artifact
-agentco task T-0007 --log      # log advanced (transcript thô)
-agentco replay T-0007          # chạy lại T-0007 và toàn bộ nhánh con phụ thuộc nó
+agentco task T-0007 --log      # advanced log (raw transcript)
+agentco replay T-0007          # re-run T-0007 and the whole sub-branch that depends on it
 agentco cancel T-0007
 ```
 
-`agentco run` không kèm gì → vào **chế độ hội thoại** với master ngay trong terminal (giống chat, cho người quen CLI).
+`agentco run` with no arguments → enters **conversation mode** with master right in the terminal (chat-like, for people comfortable with the CLI).
 
-### Đội ngũ
+### Team
 
 ```bash
-agentco agents                 # bảng role: id, pitch, skill level, tier, số task đã làm
-agentco agents add <template>  # copy role mẫu vào roles/ để sửa
-agentco agents test <role>     # chạy role đó với 1 task mẫu, in chi phí
+agentco agents                 # role table: id, pitch, skill level, tier, tasks completed
+agentco agents add <template>  # copy a sample role into roles/ for editing
+agentco agents test <role>     # run that role against a sample task, print the cost
 ```
 
-### Tri thức
+### Knowledge
 
 ```bash
-agentco knowledge              # thống kê: số node, tổng token, theo scope
-agentco knowledge search "..." # tìm bằng index, 0 token
+agentco knowledge              # stats: node count, total tokens, by scope
+agentco knowledge search "..." # search via the index, 0 tokens
 agentco knowledge show <id>
-agentco knowledge tidy         # chạy Librarian ngay (thay vì đợi đủ lô)
-agentco knowledge bump         # bump knowledge_version → tính lại HOT set
+agentco knowledge tidy         # run the Librarian right now (instead of waiting for a full batch)
+agentco knowledge bump         # bump knowledge_version → recompute the HOT set
 ```
 
-### Chi phí — dùng thường xuyên
+### Cost — used often
 
 ```bash
-agentco cost                   # bảng ca hiện tại (xem SPEC-token-economy §5)
+agentco cost                   # current shift's table (see SPEC-token-economy §5)
 agentco cost --since 7d
-agentco bench --baseline       # chạy 5 golden scenario, ghi mốc
-agentco bench --compare        # chạy lại, in chênh lệch so với mốc
+agentco bench --baseline       # run the 5 golden scenarios, record a baseline
+agentco bench --compare        # re-run, print the delta against the baseline
 ```
 
-### Cầu nối chat
+### Chat bridge
 
 ```bash
-agentco bridge telegram setup  # nhập bot token, in mã ghép đôi
+agentco bridge telegram setup  # enter the bot token, print the pairing code
 agentco bridge list
 agentco bridge allow <chat_id>
 agentco bridge off telegram
 ```
 
-**Ghép đôi bắt buộc:** sau `setup`, bot in ra một mã 6 số. Người dùng nhắn mã đó cho bot từ tài khoản của mình → `chat_id` được thêm vào whitelist. Trước khi ghép đôi, bot **im lặng tuyệt đối** với mọi người. Mã hết hạn sau 10 phút.
+**Pairing is mandatory:** after `setup`, the bot prints a 6-digit code. The user sends that code to the bot from their own account → their `chat_id` gets added to the whitelist. Before pairing, the bot stays **completely silent** to everyone. The code expires after 10 minutes.
 
 ---
 
-## 3. Cấu hình
+## 3. Configuration
 
-Thứ tự ưu tiên: **cờ dòng lệnh > biến môi trường > `company.yaml` > mặc định**.
+Priority order: **command-line flag > environment variable > `company.yaml` > default**.
 
 ```yaml
 # company/company.yaml
-name: "Xưởng Nội Dung"
-charter_file: charter.md                     # markdown thuần, ≤500 token → SPEC-library.md §17
+name: "Content Workshop"
+charter_file: charter.md                     # plain markdown, ≤500 tokens → SPEC-library.md §17
 
 runtime:
   port: 7317
@@ -145,52 +145,52 @@ bridges:
     allow: []
 ```
 
-**Bí mật không bao giờ nằm trong yaml.** Token bridge, API key → biến môi trường hoặc `company/.state/secrets.json` (chmod 600, có trong `.gitignore` của template). `company/` được thiết kế để commit lên git được — trừ `.state/`.
+**Secrets never live in yaml.** Bridge tokens, API keys → environment variables or `company/.state/secrets.json` (chmod 600, listed in the template's `.gitignore`). `company/` is designed to be committable to git — except `.state/`.
 
-Biến môi trường: mọi khoá map thành `AGENTCO_<PATH_UPPER>`, ví dụ `AGENTCO_RUNTIME_CONCURRENCY=8`.
-
----
-
-## 4. Sẵn sàng container (chưa làm, nhưng không được chặn đường)
-
-Chưa cần Docker ở v1. Nhưng **năm ràng buộc này phải giữ ngay từ đầu**, vì vi phạm rồi sửa sau rất đắt:
-
-1. **Không đường dẫn tuyệt đối.** Mọi thứ tương đối với `COMPANY_DIR`, đọc từ env, mặc định `./company`.
-2. **Không giả định có màn hình.** `start` phải chạy được với `--no-ui` và không tự mở trình duyệt khi `AGENTCO_HEADLESS=1`.
-3. **Toàn bộ state trong đúng một thư mục** (`company/`) → mount một volume là đủ.
-4. **Không native module bắt buộc.** Nếu cần (ví dụ better-sqlite3), phải có đường lùi thuần JS.
-5. **Có endpoint `/healthz`** trả `{ok, version, master_session, tasks_running}`.
-
-Cộng thêm: log ra stdout dạng JSON lines khi `AGENTCO_LOG_FORMAT=json`, và bắt `SIGTERM` để đóng session sạch (ghi state, không mất task đang chạy).
-
-Khi làm Docker (v2), Dockerfile sẽ chỉ là node-slim + `COPY` + `VOLUME /company` + `EXPOSE 7317`. Không cần thiết kế lại gì.
-
-**Xác thực trong container:** đây là chỗ vướng thật, phải ghi nhận sớm — Claude Code auth theo máy. Chạy trong container/VPS cần đưa credential vào (mount thư mục auth, hoặc dùng API key). `agentco doctor` phải chẩn đoán và nói rõ cho người dùng, không để họ đoán.
+Environment variables: every key maps to `AGENTCO_<PATH_UPPER>`, e.g. `AGENTCO_RUNTIME_CONCURRENCY=8`.
 
 ---
 
-## 5. Mã thoát & lỗi
+## 4. Container-readiness (not built yet, but the path must not be blocked)
+
+Docker isn't needed for v1. But **these five constraints must hold from day one**, because violating them and fixing it later is expensive:
+
+1. **No absolute paths.** Everything is relative to `COMPANY_DIR`, read from env, defaulting to `./company`.
+2. **No assumption of a display.** `start` must run with `--no-ui` and must not auto-open a browser when `AGENTCO_HEADLESS=1`.
+3. **All state lives in exactly one directory** (`company/`) → mounting a single volume is enough.
+4. **No mandatory native module.** If one is needed (e.g. better-sqlite3), there must be a pure-JS fallback.
+5. **A `/healthz` endpoint** returning `{ok, version, master_session, tasks_running}`.
+
+Also: log to stdout as JSON lines when `AGENTCO_LOG_FORMAT=json`, and trap `SIGTERM` to close the session cleanly (write state, don't lose an in-flight task).
+
+When Docker (v2) gets built, the Dockerfile will just be node-slim + `COPY` + `VOLUME /company` + `EXPOSE 7317`. Nothing needs to be redesigned.
+
+**Auth inside a container:** this is a real sticking point that has to be flagged early — Claude Code auth is tied to the machine. Running in a container/VPS requires getting credentials in somehow (mounting the auth directory, or using an API key). `agentco doctor` has to diagnose this and spell it out for the user, not leave them guessing.
+
+---
+
+## 5. Exit codes & errors
 
 ```
 0   ok
-1   lỗi chung
-2   sai cấu hình / thiếu tham số
-3   không có daemon
-4   chưa xác thực Claude
-5   task fail
-6   chạm trần ngân sách (blocked, không phải lỗi)
-7   rate limit sau khi đã backoff hết
+1   general error
+2   bad configuration / missing argument
+3   no daemon running
+4   Claude not authenticated
+5   task failed
+6   hit the budget ceiling (blocked, not an error)
+7   rate limited after exhausting backoff
 ```
 
-Nguyên tắc thông báo lỗi: mỗi lỗi in **chuyện gì xảy ra + làm gì tiếp theo**, một câu mỗi phần. Khách hàng là người non-code — stack trace mặc định giấu, hiện khi `--verbose`.
+Error message principle: every error prints **what happened + what to do next**, one sentence each. The customer is not a coder — stack traces are hidden by default, shown with `--verbose`.
 
 ---
 
-## 6. Cài đặt
+## 6. Installation
 
 ```bash
-npx agentco init            # dùng thử, không cài
-npm i -g agentco            # cài thật
+npx agentco init            # try it out, no install
+npm i -g agentco            # actually install
 ```
 
-V2 cho người sợ terminal: đóng gói Tauri (~5MB) bọc chính daemon + UI này. Double-click là chạy. **Không viết lại gì** — đây là lý do UI phải là web ngay từ đầu.
+V2 for people afraid of the terminal: package it as Tauri (~5MB) wrapping this same daemon + UI. Double-click to run. **Nothing gets rewritten** — this is exactly why the UI has to be a web UI from the start.

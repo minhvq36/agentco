@@ -1,23 +1,3 @@
-/**
- * HÌNH DẠNG PHẢN HỒI CỦA TOKEN ENDPOINT — ba tiền đề sai, đo 26/08 với GitHub.
- * → `src/core/oauth.ts §postToken` · docs/SPEC-arms.md §5h·7d
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO FILE TEST NÀY TỒN TẠI, và vì sao nó không phải "test cho GitHub": │
- * │                                                                          │
- * │ Ba lỗi được vá đều **ĐÚNG với Notion** nên chúng sống ẩn từ 25/08. Chúng  │
- * │ chỉ lộ ra khi cắm hãng thứ hai. ⇒ Thứ cần khoá lại **không phải hành vi   │
- * │ của GitHub**, mà là: *"đừng bao giờ giả định lại hình dạng phản hồi"*.    │
- * │                                                                          │
- * │ Mỗi test dưới đây mô tả MỘT hình dạng phản hồi hợp lệ theo RFC mà một     │
- * │ hãng nào đó ngoài kia đang dùng. Hãng thứ ba sẽ có hình dạng thứ n — và   │
- * │ file này là chỗ nó được thêm vào, không phải một `if` mới trong mã.       │
- * │                                                                          │
- * │ ⚠ Test đắt nhất ở đây là **"200 kèm error"**: lỗi đó KHÔNG NÉM, không     │
- * │ log, và nó ghi đè một tài khoản đang chạy tốt bằng một tài khoản rỗng —   │
- * │ trong vòng làm mới chạy ngầm, lúc không ai nhìn.                          │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
 
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
@@ -54,7 +34,6 @@ after(() => {
   globalThis.fetch = realFetch;
 });
 
-/** Ghi lại lời gọi cuối để soi header — thứ ① của bộ ba lỗi. */
 let lastInit: RequestInit | undefined;
 
 function reply(status: number, body: string, headers: Record<string, string> = {}): void {
@@ -74,9 +53,8 @@ beforeEach(() => {
   lastInit = undefined;
 });
 
-// ──────────────────────────────────────────── ① Accept: application/json
 
-test('⭐ ① LUÔN xin JSON — thiếu header này thì GitHub trả form-urlencoded', async () => {
+test('⭐ ① ALWAYS request JSON — miss this header and GitHub returns form-urlencoded', async () => {
   reply(200, JSON.stringify({ access_token: 'at-moi', refresh_token: 'rt-moi', expires_in: 28800 }));
   await refreshAccount(META, ACC);
 
@@ -84,14 +62,12 @@ test('⭐ ① LUÔN xin JSON — thiếu header này thì GitHub trả form-urle
   assert.equal(
     headers?.['accept'],
     'application/json',
-    'không gửi Accept ⇒ có hãng trả form-urlencoded ⇒ JSON.parse ném ở lần đổi chìa ĐẦU TIÊN',
+    'no Accept header ⇒ some vendors return form-urlencoded ⇒ JSON.parse throws on the VERY FIRST token refresh',
   );
 });
 
-// ──────────────────────────────────────────── ② HTTP 200 kèm error
 
-test('🔴 ② HTTP 200 kèm {"error"} là HỎNG, không phải thành công', async () => {
-  // Đây CHÍNH XÁC thứ GitHub trả khi refresh token đã bị xoay. Đo 26/08.
+test('🔴 ② HTTP 200 with {"error"} IS a failure, not a success', async () => {
   reply(
     200,
     JSON.stringify({
@@ -103,30 +79,27 @@ test('🔴 ② HTTP 200 kèm {"error"} là HỎNG, không phải thành công', 
   await assert.rejects(
     () => refreshAccount(META, ACC),
     DeadGrantError,
-    'đọc 200 thành công ⇒ ghi đè tài khoản đang tốt bằng access_token: undefined, IM LẶNG',
+    'reading a 200 as success ⇒ overwrites a working account with access_token: undefined, SILENTLY',
   );
 });
 
-test('🔴 ② 200 + JSON hợp lệ nhưng THIẾU access_token cũng là hỏng', async () => {
-  // Không có chốt này thì ca ② quay lại qua cửa khác: thân đúng cú pháp, không
-  // có `error`, cũng không có chìa — và hạ nguồn cất một tài khoản rỗng.
+test('🔴 ② 200 + valid JSON but MISSING access_token is also a failure', async () => {
   reply(200, JSON.stringify({ token_type: 'bearer', scope: '' }));
   await assert.rejects(() => refreshAccount(META, ACC), /access_token/);
 });
 
-// ──────────────────────────────────────────── ③ danh sách chìa-đã-chết
 
-test('⭐ ③ incorrect_client_credentials ⇒ CHÌA CHẾT, không phải hỏng tạm', async () => {
+test('⭐ ③ incorrect_client_credentials ⇒ DEAD GRANT, not a transient failure', async () => {
   reply(200, JSON.stringify({ error: 'incorrect_client_credentials' }));
   await assert.rejects(() => refreshAccount(META, ACC), DeadGrantError);
 });
 
-test('⭐ ③ invalid_grant (Notion) vẫn là chìa chết — không hồi quy', async () => {
+test('⭐ ③ invalid_grant (Notion) is still a dead grant — no regression', async () => {
   reply(400, JSON.stringify({ error: 'invalid_grant' }));
   await assert.rejects(() => refreshAccount(META, ACC), DeadGrantError);
 });
 
-test('⭐ ③ câu lỗi KHÔNG chuyển tiếp nguyên văn lời hãng', async () => {
+test('⭐ ③ the error message does NOT forward the vendor\'s wording verbatim', async () => {
   reply(
     200,
     JSON.stringify({
@@ -134,66 +107,56 @@ test('⭐ ③ câu lỗi KHÔNG chuyển tiếp nguyên văn lời hãng', async
       error_description: 'The client_id and/or client_secret passed are incorrect.',
     }),
   );
-  // Chữ của GitHub SAI CỬA ngay từ phía hãng: nó nói về client_id/secret, thứ
-  // hoàn toàn không sai. Người đọc sẽ đi kiểm đúng cái đang đúng.
   const err = await refreshAccount(META, ACC).catch((e: Error) => e);
-  assert.match((err as Error).message, /đăng nhập lại/);
+  assert.match((err as Error).message, /đăng nhập lại/); // i18n-allow-vietnamese: matches real i18n oauth error string (default locale vi)
   assert.doesNotMatch((err as Error).message, /client_secret/);
 });
 
-// ──────────────────────────────────────────── hỏng TẠM ≠ hỏng HẲN
 
-test('⭐ mạng chết ⇒ TransientError (thử lại), KHÔNG phải chìa chết', async () => {
+test('⭐ network down ⇒ TransientError (retry), NOT a dead grant', async () => {
   boom('fetch failed');
   await assert.rejects(() => refreshAccount(META, ACC), TransientError);
 });
 
-test('⭐ 5xx ⇒ TransientError — dịch vụ trục trặc, chìa vẫn sống', async () => {
+test('⭐ 5xx ⇒ TransientError — the service is having trouble, the grant is still alive', async () => {
   reply(503, JSON.stringify({ error: 'server_error' }));
   await assert.rejects(() => refreshAccount(META, ACC), TransientError);
 });
 
-test('🔴 gộp hai loại hỏng là chọn SAI ở cả hai', () => {
-  // Chốt bằng kiểu, không bằng lời dặn: hai lớp lỗi phải phân biệt được ở chỗ
-  // gọi, vì `refreshDue` xử lý chúng NGƯỢC NHAU (đánh dấu dead vs im lặng chờ).
+test('🔴 lumping the two failure kinds together picks the WRONG one for both', () => {
   assert.notEqual(DeadGrantError, TransientError);
   assert.ok(!(new TransientError('x') instanceof DeadGrantError));
   assert.ok(!(new DeadGrantError('x') instanceof TransientError));
 });
 
-// ──────────────────────────────────────────── refresh XOAY
 
-test('⭐ refresh mới ghi đè refresh cũ — cả GitHub lẫn Notion đều XOAY', async () => {
+test('⭐ a new refresh token overwrites the old one — both GitHub and Notion ROTATE it', async () => {
   reply(200, JSON.stringify({ access_token: 'at-moi', refresh_token: 'rt-moi', expires_in: 28800 }));
   const next = await refreshAccount(META, ACC);
-  assert.equal(next.refresh_token, 'rt-moi', 'giữ cái cũ ⇒ tự khoá mình ở lần làm mới THỨ HAI');
+  assert.equal(next.refresh_token, 'rt-moi', 'keeping the old one ⇒ locks itself out on the SECOND refresh');
   assert.equal(next.access_token, 'at-moi');
 });
 
-test('⭐ server KHÔNG trả refresh mới ⇒ GIỮ cái cũ, không ghi đè bằng undefined', async () => {
+test('⭐ the server does NOT return a new refresh token ⇒ KEEP the old one, do not overwrite with undefined', async () => {
   reply(200, JSON.stringify({ access_token: 'at-moi', expires_in: 3600 }));
   const next = await refreshAccount(META, ACC);
-  assert.equal(next.refresh_token, 'rt-cu', 'ghi đè bằng undefined là vứt cái đang dùng được');
+  assert.equal(next.refresh_token, 'rt-cu', 'overwriting with undefined throws away a token that still works');
 });
 
-// ──────────────────────────────────────────── device flow
 
-test('⭐ supportsDevice suy từ METADATA, không dò tên hãng', () => {
+test('⭐ supportsDevice is inferred from METADATA, not by sniffing the vendor name', () => {
   assert.equal(supportsDevice(META), true);
   const { device_authorization_endpoint: _bo, ...khong } = META;
   assert.equal(supportsDevice(khong), false);
 });
 
-test('⭐ deviceStart: thiếu device_code ⇒ câu lỗi CHỈ ĐÚNG CỬA', async () => {
-  // Ca thường gặp nhất trong đời thật: app chưa bật "đăng nhập bằng mã thiết bị"
-  // ⇒ hãng trả 400. Câu lỗi phải nói ra điều đó, nếu không người ta đi kiểm
-  // client_id, kiểm mạng, kiểm URL — mọi chỗ trừ chỗ hỏng.
+test('⭐ deviceStart: missing device_code ⇒ the error message points to the RIGHT cause', async () => {
   reply(400, JSON.stringify({ error: 'device_flow_disabled' }));
   const err = await deviceStart(META, 'Iv23li-vi-du').catch((e: Error) => e);
-  assert.match((err as Error).message, /mã thiết bị/);
+  assert.match((err as Error).message, /mã thiết bị/); // i18n-allow-vietnamese: matches real i18n oauth error string (default locale vi)
 });
 
-test('⭐ deviceStart: quy expires_in thành MỐC TUYỆT ĐỐI', async () => {
+test('⭐ deviceStart: converts expires_in into an ABSOLUTE timestamp', async () => {
   reply(
     200,
     JSON.stringify({
@@ -207,8 +170,7 @@ test('⭐ deviceStart: quy expires_in thành MỐC TUYỆT ĐỐI', async () => 
   const s = await deviceStart(META, 'Iv23li-vi-du');
   assert.equal(s.user_code, 'ABCD-1234');
   assert.equal(s.interval_ms, 5000);
-  // Cất `expires_in` là cất một con số vô nghĩa ngay sau khi tắt máy.
-  assert.ok(s.expires_at > Date.now() + 800_000, 'phải là mốc tuyệt đối, không phải khoảng');
+  assert.ok(s.expires_at > Date.now() + 800_000, 'must be an absolute timestamp, not a duration');
 });
 
 const START = {
@@ -219,29 +181,26 @@ const START = {
   interval_ms: 5000,
 };
 
-test('⭐ authorization_pending là TRẠNG THÁI, không phải lỗi', async () => {
+test('⭐ authorization_pending is a STATE, not an error', async () => {
   reply(200, JSON.stringify({ error: 'authorization_pending' }));
   const r = await devicePoll(META, { clientId: 'c', start: START, mcpUrl: 'https://vi-du.com/mcp' });
   assert.equal(r.state, 'pending');
 });
 
-test('⭐ slow_down ⇒ CỘNG 5 giây, không phải hỏi lại ngay', async () => {
+test('⭐ slow_down ⇒ ADDS 5 seconds, does not poll again immediately', async () => {
   reply(200, JSON.stringify({ error: 'slow_down' }));
   const r = await devicePoll(META, { clientId: 'c', start: START, mcpUrl: 'https://vi-du.com/mcp' });
   assert.equal(r.state, 'pending');
   assert.equal(r.state === 'pending' && r.interval_ms, 10_000);
 });
 
-test('🔴 RỚT MẠNG KHÔNG ĐƯỢC GIẾT LƯỢT ĐĂNG NHẬP (ca thật 26/08)', async () => {
-  // Người dùng lúc đó đang đứng trước trang của hãng và VỪA BẤM ĐỒNG Ý. Hãng
-  // báo "đã cấp quyền", ta báo "hỏng" — hai màn hình nói ngược nhau, và màn
-  // hình sai là của ta. Trong khi chìa thì đã cấp thật.
+test('🔴 A DROPPED CONNECTION MUST NOT KILL THE LOGIN (real case from 08/26)', async () => {
   boom('fetch failed');
   const r = await devicePoll(META, { clientId: 'c', start: START, mcpUrl: 'https://vi-du.com/mcp' });
-  assert.equal(r.state, 'pending', 'một cú nấc mạng không được làm hỏng một lượt cấp quyền đã thành công');
+  assert.equal(r.state, 'pending', 'one network hiccup must not break a login that otherwise succeeded');
 });
 
-test('⭐ hết hạn MÃ ⇒ dừng — mốc là hạn của mã, không phải số lần thử', async () => {
+test('⭐ the CODE expiring ⇒ stops — the deadline is the code\'s expiry, not a retry count', async () => {
   reply(200, JSON.stringify({ error: 'authorization_pending' }));
   await assert.rejects(
     () =>
@@ -250,19 +209,19 @@ test('⭐ hết hạn MÃ ⇒ dừng — mốc là hạn của mã, không phả
         start: { ...START, expires_at: Date.now() - 1 },
         mcpUrl: 'https://vi-du.com/mcp',
       }),
-    /hết hạn/,
+    /hết hạn/, // i18n-allow-vietnamese: matches real i18n oauth error string (default locale vi)
   );
 });
 
-test('⭐ người dùng bấm Từ chối ⇒ nói đúng chuyện đó, không nói "chìa sai"', async () => {
+test('⭐ the user clicks Deny ⇒ says exactly that, not "wrong credentials"', async () => {
   reply(200, JSON.stringify({ error: 'access_denied' }));
   await assert.rejects(
     () => devicePoll(META, { clientId: 'c', start: START, mcpUrl: 'https://vi-du.com/mcp' }),
-    /từ chối/,
+    /từ chối/, // i18n-allow-vietnamese: matches real i18n oauth error string (default locale vi)
   );
 });
 
-test('⭐ xong ⇒ trả về tài khoản gắn đúng mcp_url + issuer', async () => {
+test('⭐ done ⇒ returns an account bound to the right mcp_url + issuer', async () => {
   reply(200, JSON.stringify({ access_token: 'ghu_x', refresh_token: 'ghr_y', expires_in: 28800 }));
   const r = await devicePoll(META, { clientId: 'c', start: START, mcpUrl: 'https://vi-du.com/mcp' });
   assert.equal(r.state, 'done');
@@ -271,6 +230,5 @@ test('⭐ xong ⇒ trả về tài khoản gắn đúng mcp_url + issuer', async
   assert.equal(r.account.refresh_token, 'ghr_y');
   assert.equal(r.account.mcp_url, 'https://vi-du.com/mcp');
   assert.equal(r.account.issuer, META.issuer);
-  // Làm mới ở mốc 50% tuổi thọ ⇒ chìa 8 giờ thì chưa tới hạn ngay.
   assert.ok((r.account.expires_at ?? 0) > Date.now() + 27_000_000);
 });

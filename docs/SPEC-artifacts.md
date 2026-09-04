@@ -1,433 +1,693 @@
-# SPEC — Kết quả: file nhân viên làm ra
+# SPEC — Results: the files an employee produces
 
-> Chốt 19/08/2026. Cài đặt: `src/core/artifacts.ts` · `web/src/components/panels/ArtifactsPanel.tsx`
+> Locked in 19/08/2026. Implementation: `src/core/artifacts.ts` · `web/src/components/panels/ArtifactsPanel.tsx`
 
-## 0. Một câu
+## 0. One sentence
 
-**Kết quả là cột thứ ba, và ba cột khác nhau ở đúng một câu hỏi: AI ĐẶT FILE VÀO ĐÓ?**
+**Results are the third column, and the three columns differ at exactly one
+question: WHO PUTS THE FILE THERE?**
 
-| | ai ghi | người dùng làm được gì | có vào prefix không |
+| | who writes | what the user can do | does it enter the prefix |
 |---|---|---|---|
-| **Tủ tài liệu** | NGƯỜI DÙNG | thêm · xoá | không (bảng kê tên thì có) |
-| **Kết quả** | NHÂN VIÊN | xoá | **không bao giờ** |
-| **Kho tri thức** | AGENT tự rút ra | sửa · xoá | **có** — trả tiền mỗi lượt |
+| **Document library** | THE USER | add · delete | no (though the file listing does) |
+| **Results** | THE EMPLOYEE | delete | **never** |
+| **Knowledge base** | the AGENT extracts it itself | edit · delete | **yes** — paid every turn |
 
-Ba khái niệm này dễ lẫn nhau, nên chúng đứng liền nhau trên sidebar và mỗi cái tự nói mình là gì ở chân ngăn kéo. Đó là cách chống nhầm lẫn rẻ nhất: **0 token**, vì nằm hoàn toàn ở giao diện.
-
----
-
-## 1. ĐÂY KHÔNG PHẢI TỦ TÀI LIỆU THỨ HAI
-
-Đây là ràng buộc quan trọng nhất của cả tính năng, và nó do người dùng nêu ra:
-
-> *"Không nên cho worker đọc artifact làm tăng sự phức tạp, người dùng muốn cải thiện nên tự tay handover cho này chứ đừng làm hệ thống như đống rác."*
-
-**Thi hành:** không có `POST`. Không có nút *"gửi cái này cho nhân viên"*. Không có ô chọn artifact làm input. Muốn dùng lại một kết quả thì người dùng **tự bàn giao** — chép nội dung vào ô chat, hoặc thả file vào tủ tài liệu.
-
-### ⚠ Phân biệt với thứ VẪN CHẠY và không đổi
-
-Trong **một** kế hoạch nhiều bước, task sau đọc artifact của task trước qua `inputs` (`ASSISTANT_CORE` có sẵn ví dụ `artifacts/T-00/notes.md`, và kế hoạch *viết → soát* chạy đúng đường đó). Đó là **dây nối bên trong một việc**, không phải một cái kho để lấy ra.
-
-> **Ranh giới: artifact là DÂY NỐI trong một kế hoạch, không phải KHO để nạp lại.**
-
-Vì sao ranh giới này đáng giữ: có hai kho cùng nghĩa thì có hai luật vòng đời, hai chỗ để dọn, và người dùng phải đoán nên bỏ file vào đâu. Cái thứ hai luôn là cái không ai dọn.
+These three concepts are easy to confuse, so they sit right next to each other in
+the sidebar and each one states what it is at the bottom of its drawer. That's the
+cheapest way to prevent confusion: **0 tokens**, because it lives entirely in the UI.
 
 ---
 
-## 2. Bố cục thư mục — và lỗi mất dữ liệu nó sửa
+## 1. THIS IS NOT A SECOND DOCUMENT LIBRARY
+
+This is the single most important constraint of the whole feature, and it came
+from the user:
+
+> *"We shouldn't let a worker read an artifact — that adds complexity. If a user
+> wants to improve on it, they should hand it over themselves, don't turn the
+> system into a junk pile."*
+
+**Enforcement:** there is no `POST`. There is no *"send this to an employee"*
+button. There is no field for picking an artifact as input. If someone wants to
+reuse a result, they **hand it over themselves** — paste the content into the chat
+box, or drop the file into the document library.
+
+### ⚠ Distinguishing this from what STILL RUNS and is unchanged
+
+Within **one** multi-step plan, a later task reads an earlier task's artifact via
+`inputs` (`ASSISTANT_CORE` already has an example, `artifacts/T-00/notes.md`, and a
+*write → review* plan runs down exactly that path). That's a **wire inside one
+job**, not a store you pull things out of.
+
+> **The line: an artifact is a WIRE inside a plan, not a STORE to load back from.**
+
+Why this line is worth holding: two stores with the same meaning means two
+lifecycle rules, two places to clean up, and a user forced to guess where a file
+should go. The second one is always the one nobody cleans up.
+
+---
+
+## 2. Directory layout — and the data-loss bug it fixes
 
 ```
 offices/<id>/artifacts/
-└─ <plan_id>/            ← MỚI 19/08
+└─ <plan_id>/            ← NEW 19/08
    └─ <task_id>/
-      └─ ket-qua.md
+      └─ result.md
 ```
 
-### `T-01` là số thứ tự TRONG một kế hoạch, và mọi kế hoạch đều bắt đầu từ 1
+### `T-01` is a sequence number WITHIN one plan, and every plan starts at 1
 
-Nên `artifacts/T-01/` là thư mục **dùng chung cho mọi lần chạy**. Đo được trên máy người dùng: văn phòng `noi-dung` có **tám** kế hoạch, cả tám cùng đổ vào `artifacts/T-01/` — chín file lẫn lộn một chỗ, không có gì cho biết file nào của lần chạy nào.
+So `artifacts/T-01/` is a directory **shared across every run**. Measured on a
+user's machine: the `content` office had **eight** plans, all eight landing in
+`artifacts/T-01/` — nine files jumbled into one place, nothing telling you which
+file belongs to which run.
 
-Hôm nay chưa mất gì vì tên file tình cờ khác nhau. **Chạy lại một yêu cầu giống lần trước là kết quả cũ bị ghi đè, không hỏi, không báo** — đúng lớp lỗi *"mất việc của người dùng, im lặng"* ở SESSIONS_MEMORY §8.
+Nothing had been lost so far only because the filenames happened to differ.
+**Re-running a request identical to a previous one silently overwrites the old
+result — no prompt, no notice** — exactly the *"loses the user's work, silently"*
+failure class in SESSIONS_MEMORY §8.
 
-`Scheduler.validate` chỉ chặn hai task **trong cùng một kế hoạch** ghi đè nhau; nó không biết gì về các kế hoạch trước.
+`Scheduler.validate` only blocks two tasks **within the same plan** from
+overwriting each other; it knows nothing about earlier plans.
 
-### Đóng khung bằng CODE, không dặn model
+### Framed by CODE, not by instructing the model
 
-`artifactScoper(planId, taskIds)` viết lại đường dẫn sau khi model trả kế hoạch về. Model không hề biết `plan_id`. Hỏi model tự đặt đường dẫn duy nhất là trả tiền để mua lại đúng sự bất định ta vừa loại bỏ.
+`artifactScoper(planId, taskIds)` rewrites the path after the model returns the
+plan. The model never even knows the `plan_id`. Asking the model to invent a
+unique path itself would mean paying to buy back exactly the indeterminacy we
+just removed.
 
-⚠ **Chỉ viết lại đường dẫn trỏ tới task CỦA CHÍNH KẾ HOẠCH NÀY.** Người dùng có quyền nói *"sửa lại file hôm qua"*, và lúc đó `inputs` trỏ tới artifact của một kế hoạch cũ — viết lại nó là chỉ nhân viên tới một file không tồn tại.
+⚠ **Only rewrite paths pointing at a task WITHIN THIS SAME PLAN.** The user is
+allowed to say *"fix yesterday's file"*, and in that case `inputs` points at an
+artifact from an old plan — rewriting it would just point the employee at a file
+that doesn't exist.
 
-## 2.6 🔴 LUẬT: KẾT QUẢ LUÔN SINH RA BÊN TRONG THƯ MỤC VĂN PHÒNG (user chốt 21/08)
+## 2.6 🔴 RULE: RESULTS ALWAYS LAND INSIDE THE OFFICE DIRECTORY (locked in by the user, 21/08)
 
-> *"Cái này sao lòi ra đứng cùng cấp với office vậy, luôn phải sinh tài liệu inside office, đây là luật."*
+> *"Why did this end up sitting at the same level as the office — files always have
+> to be generated INSIDE the office, this is a rule."*
 
-**Ca đã xảy ra — `P-260821-1818-yydi`.** Nhân viên gọi `Write` với đường dẫn trỏ lên hai cấp. File 4236 byte rơi vào `company/artifacts/<plan_id>/T-01/`, **ngang cấp với `offices/`** — một chỗ không văn phòng nào nhìn thấy, không panel Kết quả nào liệt kê, và `office rm --delete-files` không bao giờ chạm tới.
+**A real case triggered this — `P-260821-1818-yydi`.** An employee called `Write`
+with a path pointing two levels up. A 4,236-byte file landed in
+`company/artifacts/<plan_id>/T-01/`, **at the same level as `offices/`** — a spot no
+office can see, no Results panel lists, and `office rm --delete-files` never
+touches.
 
-### Vì sao `cwd` KHÔNG phải một bức tường
+### Why `cwd` is NOT a wall
 
-Ba thứ trông như đang chặn, và không thứ nào chặn:
+Three things look like they're blocking this, and none of them are:
 
-| | Chặn cái gì | Không chặn cái gì |
+| | Blocks what | Doesn't block what |
 |---|---|---|
-| `cwd: office.dir` | chỗ đường dẫn **tương đối** neo vào | đường dẫn **tuyệt đối** — `Write` nhận thoải mái |
-| `tools` / `allowedTools` | **tool nào** được dùng | ghi **vào đâu** |
-| `artifactScoper` | đường dẫn trong **kế hoạch** | đường dẫn model tự gõ **lúc chạy** |
+| `cwd: office.dir` | where **relative** paths anchor | **absolute** paths — `Write` accepts them freely |
+| `tools` / `allowedTools` | **which tool** can be used | **where** it writes |
+| `artifactScoper` | paths inside the **plan** | a path the model types itself **at runtime** |
 
-`artifactScoper` viết đúng `outputs` vào brief. Nhưng brief là *lời dặn*, và lời dặn không phải cơ chế — model vẫn tự do gõ một đường dẫn khác vào `Write`. Đúng luật 16/08: **một bất biến chỉ có thật khi có mã nguồn thi hành nó.** Luật này nằm trong spec từ đầu dưới dạng bố cục thư mục ở §2, đọc rất thuyết phục, và **chưa từng chạy**.
+`artifactScoper` writes the right `outputs` into the brief. But a brief is an
+*instruction*, and an instruction is not a mechanism — the model is still free to
+type a different path into `Write`. Exactly the 16/08 rule: **an invariant is only
+real once source code enforces it.** This rule had been in the spec from the
+start, as the directory layout in §2, reading very convincingly, and it had
+**never once run**.
 
-### Thi hành: `PreToolUse` hook, không phải `canUseTool`
+### Enforcement: a `PreToolUse` hook, not `canUseTool`
 
 ```ts
 hooks: { PreToolUse: [{ matcher: 'Write|Edit|NotebookEdit', hooks: [officeJail(office.dir)] }] }
 ```
 
-⚠ **Đừng đặt luật này vào `canUseTool`.** Đã đo 19/08: tool nằm trong `allowedTools` thì được tự duyệt và **BỎ QUA `canUseTool`** — mà `Write` nằm trong `allowedTools` của mọi vai trò. Viết luật ở đó là viết một luật không bao giờ chạy, tức đẻ thêm đúng loại **LỜI HỨA** mà nợ 0c sinh ra để đi tìm. `PreToolUse` chạy trước tầng quyền nên `allowedTools` không che được nó.
+⚠ **Do not put this rule in `canUseTool`.** Measured 19/08: a tool listed in
+`allowedTools` is auto-approved and **SKIPS `canUseTool` entirely** — and `Write`
+sits in every role's `allowedTools`. Writing the rule there is writing a rule that
+never runs, i.e. spawning exactly the kind of **PROMISE** that debt item 0c exists
+to go hunt down. `PreToolUse` runs before the permission layer, so `allowedTools`
+can't shield it.
 
-### `deny` kèm chỉ đường, KHÔNG `updatedInput`
+### `deny` with directions, NOT `updatedInput`
 
-`updatedInput` có thể nắn đường dẫn về trong văn phòng, và đó chính xác là ô **`viết lại lặng lẽ`** ở bảng kiểu hỏng của nợ 0c — nguy hơn `từ chối` vì không ai thấy gì. Ta `deny`, và câu từ chối **nói luôn đường dẫn đúng phải dùng**: model ghi lại đúng chỗ ngay lượt sau, nhật ký có dấu vết, và ta không tốn một lượt cho một lời từ chối trống rỗng.
+`updatedInput` could bend the path back into the office, and that's exactly the
+**"silently rewrite"** cell in debt item 0c's failure-mode table — more dangerous
+than an outright refusal because nobody sees anything happen. We `deny`, and the
+refusal message **states the correct path to use**: the model writes to the right
+place on the very next turn, the log carries a trace, and we don't burn a turn on
+an empty refusal.
 
-### Nhãn `outside`: chặn là một chuyện, KHAI RA là chuyện khác
+### The `outside` label: blocking is one thing, DECLARING it is another
 
-`landingOf` trước đây `catch { return undefined }` khi `safeJoin` ném. `undefined` nghĩa là *"không có điểm đến nào"* — nhưng sự thật là *"có điểm đến, và nó nằm ngoài chỗ ta cho phép"*. Hai câu khác hẳn nhau.
+`landingOf` used to `catch { return undefined }` when `safeJoin` threw.
+`undefined` means *"no destination at all"* — but the truth was *"there IS a
+destination, and it's outside what we allow"*. Two entirely different statements.
 
-Cái giá của việc trộn hai câu: Trợ lý nói *"không thấy file trên đĩa — nhắn mình làm lại việc này nhé"* trong khi kết quả nằm nguyên vẹn cách đó hai thư mục. Người dùng **trả tiền lần thứ hai cho thứ họ đã có**, và bỏ lại một file lạc không ai dọn.
+The cost of blending those two: the assistant would say *"I don't see the file on
+disk — tell me to redo this"* while the result sat intact two directories away.
+The user **pays twice for something they already had**, and a stray file gets left
+behind that nobody cleans up.
 
-`Landing.kind` giờ có `outside`, và nó được dùng ở đúng một chỗ: chọn câu nào để nói khi file đã hứa vắng mặt (`office.ts → strayFilesOf`). Nó **không bao giờ** vào `whereBlock` — *"kết quả của bạn nằm ở đây"* chỉ được nói về chỗ hệ thống quản được.
+`Landing.kind` now has `outside`, and it's used in exactly one place: deciding
+which sentence to say when a promised file is missing (`office.ts →
+strayFilesOf`). It **never** goes into `whereBlock` — *"your result is here"* is
+only ever said about a location the system can actually manage.
 
-> Hook chặn ca **từ nay trở đi**; nhãn `outside` cứu ca **đã xảy ra rồi** và mọi ca lọt lưới trong tương lai. Cần cả hai — một cái là cửa, một cái là đèn.
+> The hook blocks the case **from now on**; the `outside` label rescues the case
+> that **already happened**, plus every future case that slips through the net.
+> Both are needed — one is the door, the other is the light.
 
-### 🔴 NGOẠI LỆ DUY NHẤT, VÀ NÓ PHẢI ĐƯỢC KHAI RA: `Bash` (ghi 22/08)
+### 🔴 THE ONE EXCEPTION, AND IT MUST BE DECLARED: `Bash` (written 22/08)
 
-`matcher: 'Write|Edit|NotebookEdit'` **không khớp `Bash`**. Và nó không thể khớp: `officeJail` chặn được vì nó đọc `tool_input.file_path` — một **trường có tên**. Lệnh shell không có trường đó; đường dẫn nằm lẫn trong chuỗi lệnh, cạnh biến, cạnh pipe, cạnh `$()`. Muốn chặn thì phải **phân tích cú pháp shell** để tìm mọi chỗ có thể ghi, trên ba hệ điều hành, và bất kỳ chỗ nào bỏ sót cũng là một luật vẫn nói mình đang chạy.
+`matcher: 'Write|Edit|NotebookEdit'` **doesn't match `Bash`**. And it can't: the
+`officeJail` hook works because it reads `tool_input.file_path` — a **named
+field**. A shell command has no such field; the path is buried inside a command
+string, next to variables, next to pipes, next to `$()`. Blocking it would require
+**parsing shell syntax** to find every place that could write, across three
+operating systems, and any spot missed is still a rule that claims to be running.
 
-⇒ Câu đúng của luật §2.6 là:
+⇒ The correct statement of the §2.6 rule is:
 
-> **Kết quả luôn sinh ra bên trong thư mục văn phòng — TRỪ khi vai trò được bật `Bash`.**
+> **Results always land inside the office directory — EXCEPT when a role has `Bash`
+> turned on.**
 
-Ba hệ quả, và cả ba đã được thi hành:
+Three consequences, and all three have been implemented:
 
 | | |
 |---|---|
-| `Bash` phải **hiện ra được và tắt được**, không bao giờ ngầm | `BUILTIN_TOOLS` không chứa nó (nên nó là một dòng THẤY ĐƯỢC trong `roles/<id>.yaml`); công tắc riêng ở bảng chi tiết (`Inspector.tsx` §`BashSwitch`) |
-| Chỗ bật nó phải nói ra **đúng hậu quả**, không phải một câu "hãy cân nhắc" | *"đọc và ghi được bất cứ đâu trên máy bạn"* + *"ngoại lệ duy nhất của luật…"* |
-| Ta vẫn **khai** rằng đã có lệnh chạy, dù không biết nó ghi đi đâu | `landingOf` → `{ kind: 'command' }`; `describeCall` → *"đang chạy lệnh"* |
+| `Bash` must be **visible and switchable**, never implicit | `BUILTIN_TOOLS` doesn't include it (so it's a VISIBLE line in `roles/<id>.yaml`); its own switch sits in the detail panel (`Inspector.tsx` §`BashSwitch`) |
+| Wherever it gets turned on must state the **actual consequence**, not a soft "please consider" | *"can read and write anywhere on your machine"* + *"the one exception to the rule…"* |
+| We still **declare** that a command ran, even without knowing where it wrote | `landingOf` → `{ kind: 'command' }`; `describeCall` → *"running a command"* |
 
-> Không ghi ngoại lệ này ra thì §2.6 đọc như một bất biến tuyệt đối trong khi nó là một bất biến **có điều kiện** — và người tin vào nó sẽ tin sai đúng ở ca duy nhất mà hậu quả là cả cái máy. Cùng một họ với bài học `tools` ≠ `allowedTools`: một luật viết đúng, đọc thuyết phục, và sai ở một khe không ai nhìn.
+> If this exception isn't written down, §2.6 reads like an absolute invariant when
+> it's actually a **conditional** one — and whoever trusts it will trust it wrong
+> at exactly the one case where the consequence is the whole machine. Same family
+> as the `tools` ≠ `allowedTools` lesson: a rule that's correctly written, reads
+> convincingly, and is wrong in a gap nobody looks at.
 >
-> 🔴 **Và từ 22/08 điều kiện đó là MẶC ĐỊNH BẬT** (user chốt — `SPEC-tools-approval.md` §5). Nghĩa là câu đúng của §2.6 hôm nay là: *"kết quả nằm trong văn phòng với những nhân viên bạn đã tắt `Bash`"*. Đó là một luật yếu hơn hẳn luật hôm 21/08, và **phải đọc đúng độ yếu của nó** — đừng dẫn §2.6 như một bảo đảm nữa. Bù lại: `tools: [Bash]` là một dòng THẤY ĐƯỢC trong file vai trò, công tắc nằm ngay bảng chi tiết, và hộp thoại tạo nhân viên nói thẳng ra. Ngoại lệ được **khai báo**, không phải được **giấu**.
+> 🔴 **And as of 22/08 that condition is ON BY DEFAULT** (locked in by the user —
+> `SPEC-tools-approval.md` §5). So the accurate statement of §2.6 today is:
+> *"results stay in the office, for whichever employees you've turned `Bash` off
+> for."* That's a much weaker rule than the one from 21/08, and **its weakness
+> must be read correctly** — stop citing §2.6 as a guarantee. In exchange:
+> `tools: [Bash]` is a VISIBLE line in the role file, its switch sits right in the
+> detail panel, and the employee-creation dialog states it outright. The exception
+> is **declared**, not **hidden**.
 >
-> **Chưa trả:** cổng duyệt `write_external` (`SPEC-tools-approval.md` §8) là tầng chặn thứ hai đã thiết kế nhưng **chưa cài**. Tới khi có nó, công tắc `Bash` là thứ duy nhất đứng giữa người dùng và cái máy của họ.
+> **Still unpaid:** the `write_external` approval gate (`SPEC-tools-approval.md`
+> §8) is a second blocking layer that's been designed but **not built**. Until it
+> exists, the `Bash` switch is the only thing standing between the user and their
+> own machine.
 
-## 2.2 Đầu VÀO và đầu RA đi qua HAI luật khác nhau (chốt 20/08)
+## 2.2 IN and OUT go through TWO DIFFERENT rules (locked in 20/08)
 
-Trước 20/08 cả `inputs` lẫn `outputs` dùng chung `artifactScoper`. Gộp hai thứ là nguyên nhân của một ca hỏng đo được trên máy người dùng.
+Before 20/08, both `inputs` and `outputs` shared `artifactScoper`. Merging the two
+caused a bug measured on a user's machine.
 
-**Ca hỏng.** Người dùng gõ: *"Dịch doc-1.md… **Lưu vào `artifacts/vi/doc-1.md`**"*. Kết quả ra ở `artifacts/P-…/T-01/doc-1.md` — thư mục `vi/` **biến mất, không một câu nào giải thích**. Nguyên nhân là câu luật trong `CORE_PROMPT` (*"every task must write at least one file under `artifacts/<task_id>/`"*), nên planner tự bỏ phần đuôi để tuân luật. Và nhánh còn lại cũng sai: nếu planner ghi đúng `artifacts/vi/doc-1.md` thì `artifactScoper` thấy `vi` không phải task id nên **để nguyên** — file rơi ra ngoài khung theo ca, mất luôn bảo đảm §2.
+**The bug.** The user typed: *"Translate doc-1.md… **Save it to
+`artifacts/vi/doc-1.md`**"*. The result landed at `artifacts/P-…/T-01/doc-1.md` —
+the `vi/` directory **vanished, with no explanation at all**. The cause was a rule
+sentence in `CORE_PROMPT` (*"every task must write at least one file under
+`artifacts/<task_id>/`"*), so the planner dropped the tail on its own to comply.
+And the other branch was also wrong: if the planner *did* write
+`artifacts/vi/doc-1.md` exactly, `artifactScoper` would see that `vi` isn't a task
+id and **leave it untouched** — the file falls outside the frame case by case,
+losing the §2 guarantee entirely.
 
-**Hai câu hỏi khác nhau, nên hai hàm:**
+**Two different questions, so two functions:**
 
-| | câu hỏi | trả lời |
+| | question | answer |
 |---|---|---|
-| `artifactScoper` (đầu VÀO) | *đường dẫn này trỏ tới task của chính kế hoạch này không?* | không → **để nguyên** |
-| `outputScoper` (đầu RA) | *task này ghi ở đâu?* | **luôn** `artifacts/<plan_id>/<task_id>/` + phần đuôi |
+| `artifactScoper` (INPUT) | *does this path point at a task in this very plan?* | no → **leave it alone** |
+| `outputScoper` (OUTPUT) | *where does this task write?* | **always** `artifacts/<plan_id>/<task_id>/` + the tail |
 
 ```
 artifacts/vi/doc-1.md   →  artifacts/<plan>/<task>/vi/doc-1.md
 artifacts/T-01/x.md     →  artifacts/<plan>/T-01/x.md
-bao-cao.md              →  artifacts/<plan>/<task>/bao-cao.md
+report.md                →  artifacts/<plan>/<task>/report.md
 ```
 
-`outputScoper` **idempotent** (gọi lại không bọc thêm lớp), bỏ `..`/`.` ở lớp đầu (`safeJoin` vẫn là chốt cuối), và `outputs` rỗng rơi về `ket-qua.md` chứ không bao giờ trả về một đường dẫn trỏ vào thư mục.
+`outputScoper` is **idempotent** (calling it again doesn't wrap another layer on),
+strips `..`/`.` at the first layer (`safeJoin` is still the final gate), and an
+empty `outputs` falls back to `result.md` rather than ever returning a path that
+points at a directory.
 
-**Người dùng giữ được cấu trúc thư mục mình muốn; hệ thống giữ được bảo đảm không ghi đè.** Đây là điểm chung với §2.1: khi hai bên cùng có lý, đừng chọn một bên — tìm hình dạng chứa được cả hai.
+**The user keeps the directory structure they wanted; the system keeps the
+no-overwrite guarantee.** This mirrors §2.1: when both sides have a point, don't
+pick a side — find a shape that holds both.
 
-### Và phải NÓI RA, đúng một lần
+### And it has to be STATED, exactly once
 
-`whereBlock` in đường dẫn thật của mọi file đã ghi. Từ 20/08 nó thêm một dòng — **chỉ khi** có đường dẫn sâu hơn `artifacts/<plan>/<task>/`, tức là chỉ khi người dùng thật sự đã tự đặt thư mục:
+`whereBlock` prints the real path of every file written. As of 20/08 it adds one
+line — **only when** the path goes deeper than `artifacts/<plan>/<task>/`, i.e.
+only when the user actually set their own directory:
 
 ```
-(mỗi ca có thư mục riêng để lần chạy sau không đè lên lần này)
+(each run gets its own directory so the next run doesn't overwrite this one)
 ```
 
-Đó đúng là lúc họ đang nhìn đường dẫn của mình bị bọc thêm hai lớp lạ, và cũng là lúc **duy nhất** đáng nói. Dán câu này vào mọi ca là biến một lời giải thích thành tiếng ồn. 0 token — dựng bằng code từ chính đường dẫn đang cầm.
+That's exactly the moment they're looking at their own path getting wrapped in two
+extra layers, and it's the **only** moment worth saying anything. Pasting this
+line onto every case turns an explanation into noise. 0 tokens — built by code
+straight from the path already in hand.
 
-### Prompt cũng phải đổi, và vì sao cả hai đều cần
+### The prompt has to change too, and why both are needed
 
-Code bảo đảm **khung**; prompt quyết **phần đuôi** — code không thể đoán ra người dùng muốn thư mục `vi/` nếu planner không viết nó vào `outputs`. Nên `CORE_PROMPT` thêm hai câu: giữ lại đường dẫn người dùng đặt (nằm *trong* `artifacts/<task_id>/`, không thay thế nó), và *"người dùng đòi file riêng thì ghi file riêng"* — xem §2.3.
+Code guarantees the **frame**; the prompt decides the **tail** — code can't guess
+that the user wants a `vi/` subdirectory if the planner never writes it into
+`outputs`. So `CORE_PROMPT` gains two sentences: preserve any directory the user
+set (*inside* `artifacts/<task_id>/`, not replacing it), and *"if the user asks
+for a separate file, write a separate file"* — see §2.3.
 
-Cái giá: prefix của planner đổi → **ghi lại prompt cache một lần**. Rẻ, và đã biết trước.
+The cost: the planner's prefix changes → **the prompt cache gets rewritten once.**
+Cheap, and already anticipated.
 
-## 2.3 Hình dạng đầu ra phải ỔN ĐỊNH giữa các ca (chốt 20/08)
+## 2.3 Output shape has to be STABLE across runs (locked in 20/08)
 
-Đo được 20/08, ba ca **cùng một câu yêu cầu** (dịch tài liệu + ghi lại thuật ngữ), ba hình dạng khác nhau:
+Measured 20/08: three runs of **the exact same request** (translate a document +
+record the terminology), three different shapes:
 
-| ca | `outputs` planner khai |
+| run | `outputs` the planner declared |
 |---|---|
-| doc-1 | `doc-1.md` **+ `thuat-ngu.md`** |
-| doc-2 | chỉ `doc-2.md`, thuật ngữ nhét vào cuối file |
-| doc-3 | chỉ `doc-3.md`, thuật ngữ nhét vào cuối file |
+| doc-1 | `doc-1.md` **+ `terminology.md`** |
+| doc-2 | just `doc-2.md`, terminology stuffed at the end of the file |
+| doc-3 | just `doc-3.md`, terminology stuffed at the end of the file |
 
-Không có lỗi nào nổ. Nhưng người dùng dịch năm tài liệu **để so sánh chúng với nhau**, và họ vừa mất khả năng đó: ca 1 có bảng ở file riêng, ca 2–3 chôn nó trong bản dịch.
+No error fired. But the user was translating five documents **precisely to
+compare them against each other**, and they'd just lost that ability: run 1 has
+the table in its own file, runs 2–3 bury it inside the translation.
 
-**Không sửa được bằng code** — hình dạng đầu ra là thứ planner quyết từ một câu tiếng Việt. Hai chỗ can thiệp, cả hai đều đã làm:
+**Can't be fixed with code** — output shape is something the planner decides from
+a natural-language sentence. Two places to intervene, both already done:
 
-- `CORE_PROMPT`: *"khi người dùng đòi file riêng thì ghi file riêng… cùng một yêu cầu phải cho cùng một hình dạng mỗi lần chạy"*.
-- `TEST-WALKTHROUGH.md` bài 5: câu mẫu nói thẳng *"ghi bảng thuật ngữ ra một file RIÊNG"*, và có một bước kiểm hình dạng đầu ra.
+- `CORE_PROMPT`: *"when the user asks for a separate file, write a separate
+  file… the same request must produce the same shape every time it runs"*.
+- `TEST-WALKTHROUGH.md` exercise 5: the sample sentence states outright *"write
+  the terminology table to a SEPARATE file"*, with a step checking output shape.
 
-⚠ **Đây là bất định còn lại, không phải bất định đã đóng.** Muốn chắc chắn thì người dùng phải nói rõ, hoặc văn phòng phải có `charter.md` ghi luật đó.
+⚠ **This is remaining indeterminacy, not closed indeterminacy.** To be certain,
+either the user has to spell it out, or the office needs a `charter.md` that
+states the rule.
 
-## 2.4 BẺ luật "artifact vô hình" — bảng kê cho Trợ lý (chốt 20/08)
+## 2.4 BREAKING the "artifacts are invisible" rule — a manifest for the Assistant (locked in 20/08)
 
-> Đây là lần **đảo một quyết định đã ghi trong §1**. Ghi lại đầy đủ vì lý do đảo quan trọng hơn kết luận.
+> This is a case of **reversing a decision already recorded in §1**. Recorded in
+> full because the reason for reversing matters more than the conclusion.
 
-### Ca hỏng buộc phải xem lại
+### The bug that forced a second look
 
-Người dùng: *"doc-2, doc-3 thiếu file thuật ngữ"*. Bốn lượt qua lại:
+The user: *"doc-2, doc-3 are missing the terminology file"*. Four back-and-forths:
 
-1. Trợ lý bảo họ **đi kiểm đường dẫn** — bắt người dùng làm việc mà máy làm hết 1ms, và diễn đạt như thể họ có thể là người nhầm
-2. Người dùng: *"files chưa xuất hiện"*
-3. Khâu lập kế hoạch **chết hẳn** — nó hỏi *"bản dịch tiếng Việt đang nằm ở đường dẫn nào?"*, mà câu hỏi lại không phải hình dạng hợp lệ nên hiện ra thành lỗi (xem `SPEC-offices.md` §6)
-4. Người dùng phải **tự nghĩ ra giải pháp kiến trúc**: *"thì bạn phải kêu người dịch tạo bổ sung đi chứ"*
+1. The assistant told them to **go check the path** — making the user do work the
+   machine could finish in 1ms, and phrasing it as if they might be the one
+   mistaken
+2. User: *"the files haven't shown up"*
+3. The planning stage **flat-out died** — it asked *"where's the Vietnamese
+   translation file located?"*, and that question wasn't a valid response shape
+   so it surfaced as an error (see `SPEC-offices.md` §6)
+4. The user had to **invent the architectural fix themselves**: *"then you have to
+   tell the translator to go create it, don't you?"*
 
-Rồi ca chạy được — và **kết quả của nó SAI**:
+Then the case ran — and **its result was WRONG**:
 
 | `Widget` | |
 |---|---|
-| bản dịch `doc-2.md` thật sự dùng | `Widget` — giữ nguyên |
-| bảng thuật ngữ mới sinh ra ghi | **`Tiện ích (widget)`** |
-| số lần chuỗi `"Tiện ích"` xuất hiện trong bản dịch | **0** |
+| the word `doc-2.md`'s translation actually used | `Widget` — kept as-is |
+| what the newly-generated terminology table recorded | **`Widget` translated as a brand-new Vietnamese word for "utility"** |
+| number of times that new Vietnamese word appears in the translation | **0** |
 
-Vì `inputs` trỏ vào `library/files/doc-2.md` — **bản gốc tiếng Anh**. Người dịch chưa bao giờ nhìn thấy bản dịch, nên khi được bảo *"ghi lại các thuật ngữ và cách ĐÃ CHỌN dịch chúng"* nó **chọn lại từ đầu**. Một tài liệu ghi lại những lựa chọn chưa từng được thực hiện, nhìn rất chuyên nghiệp. Tệ hơn nữa: `doc-2.md` **đã có sẵn** một mục `## Ghi chú thuật ngữ` ở cuối, nên giờ có **hai bảng mâu thuẫn** — và không ai trong cuộc hội thoại biết, vì không ai nhìn được vào ngăn Kết quả.
+Because `inputs` pointed at `library/files/doc-2.md` — **the original English
+source**. The translator had never seen the translation, so when told to *"record
+the terminology and how it WAS translated"* it just **chose all over again**. A
+document faithfully recording choices that were never actually made, and looking
+very professional while doing it. Worse still: `doc-2.md` **already had** a
+`## Terminology notes` section at the end, so now there were **two contradicting
+tables** — and no one in the conversation knew, because no one could see into the
+Results drawer.
 
-### Quyết định cũ ĐÚNG về rủi ro, SAI về phạm vi
+### The old decision was RIGHT about the risk, WRONG about the scope
 
-§1 canh đúng thứ đáng canh: đừng biến ngăn Kết quả thành một cái kho thứ hai người dùng phải quản, và đừng để kết quả cũ trôi vào ngữ cảnh việc mới. Nhưng nó chọn cách canh **thô nhất — vô hình hoàn toàn** — và cái giá là chặn luôn thao tác tự nhiên nhất của cả sản phẩm: *"làm tiếp cái vừa xong"*.
+§1 guarded exactly the thing worth guarding: don't turn the Results drawer into a
+second store the user has to manage, and don't let old results drift into a new
+job's context. But it picked the **crudest** guard available — **total
+invisibility** — and the price was blocking the single most natural action in the
+whole product: *"keep going on what you just finished."*
 
-**Mấu chốt khiến bản vá rẻ hơn nhiều so với vẻ ngoài của nó:**
+**The thing that makes the fix much cheaper than it looks:**
 
-> **Nhân viên ĐÃ đọc được artifact rồi.** Worker có `Read`/`Grep`/`Glob` với `cwd` là thư mục văn phòng — chỉ cần kế hoạch ghi đường dẫn vào `inputs` là nó mở được, ngay hôm nay.
+> **The employee CAN already read an artifact.** A worker already has
+> `Read`/`Grep`/`Glob` with `cwd` set to the office directory — the moment a plan
+> writes the path into `inputs`, it can open it, right now, today.
 
-Nên thứ thiếu **không phải quyền đọc**, mà đúng một thứ: **planner không biết đường dẫn để mà ghi vào `inputs`.** Đây là lỗ hổng **thông tin ở thời điểm lập kế hoạch**, không phải lỗ hổng quyền hạn — nên bản vá cũng chỉ vá đúng chỗ đó.
+So what's missing **isn't read access** — it's exactly one thing: **the planner
+doesn't know the path to write into `inputs`.** This is a gap in **information at
+planning time**, not a gap in permissions — so the fix only needs to patch that
+one spot.
 
-### Năm chốt chống tiếng ồn
+### Five decisions against noise
 
-| # | Chốt | Vì sao |
+| # | Decision | Why |
 |---|---|---|
-| 1 | Chỉ **tên file**, không nội dung | Nội dung đã có `Read` lo, và chỉ khi `inputs` gọi tên |
-| 2 | Gom theo **CA**, kèm một dòng `request` (cắt còn **30 token**) | `P-260820-0314-rab5/T-01/doc-2.md` không nói gì với model; *"ca: dịch doc-2 sang tiếng Việt"* nói tất cả. `briefText` (200 token) là trần của **nhật ký**, không phải của prefix — đo thật: một `request` đầy đủ ăn hơn nửa ngân sách cả bảng |
-| 3 | Chỉ **5 ca** gần nhất + một dòng đếm phần còn lại | Không phải 1: ca người dùng nhắc lại không phải lúc nào cũng là ca vừa xong — ca thật 20/08 cần một kết quả của **25 phút và hai ca trước** |
-| 4 | Trần cứng `budgets.artifacts_manifest_tokens` = **600**, cắt từ ca **cũ nhất** | Cắt nguyên khối bằng `truncateToTokens` sẽ để lại một đường dẫn cụt — mà đường dẫn cụt **tệ hơn không có**: model vẫn điền nó vào `inputs` |
-| 5 | 🔒 **CHỈ Trợ lý. Không bao giờ vào prefix nhân viên.** | Nhân viên nhận đường dẫn qua `inputs`. Nhét bảng kê vào prefix của họ là trả tiền ở **mọi** lượt của **mọi** người để mua một thứ họ không dùng |
+| 1 | **Filename only**, no content | `Read` already handles content, and only when `inputs` names it |
+| 2 | Group by **RUN**, with one `request` line (trimmed to just **30 tokens**) | `P-260820-0314-rab5/T-01/doc-2.md` tells the model nothing; *"run: translate doc-2 into Vietnamese"* tells it everything. `briefText`'s 200-token cap belongs to the **log**, not the prefix — measured for real: one full `request` eats up more than half the whole table's budget |
+| 3 | Only the **5** most recent runs + one line counting the rest | Not 1: a run the user refers back to isn't always the most recent one — a real 20/08 case needed a result from **25 minutes and two runs earlier** |
+| 4 | A hard cap `budgets.artifacts_manifest_tokens` = **600**, trimmed from the **oldest** run | Truncating the raw block with `truncateToTokens` would leave a chopped-off path — and a chopped-off path is **worse than none at all**: the model will still plug it into `inputs` |
+| 5 | 🔒 **Assistant ONLY. Never enters an employee's prefix.** | Employees get paths via `inputs`. Stuffing the manifest into their prefix would mean paying on **every** turn for **every** employee to buy something they don't use |
 
-Đo trên dữ liệu thật (4 ca, 6 file): **192 token**.
+Measured on real data (4 runs, 6 files): **192 tokens**.
 
-### Cái giá, nói thẳng
+### The cost, stated plainly
 
-Khối này đổi sau **mỗi ca** → prefix Trợ lý bị ghi lại mỗi ca. Giảm thiểu bằng **vị trí**: đặt **cuối cùng** trong chuỗi khối của `buildAssistantPrompt`. Prompt cache là cache theo **tiền tố**, nên mọi khối phía trên vẫn trúng cache và chỉ cái đuôi bị viết lại. Ước ~$0.002/ca — **là số ước, chưa đo.**
+This block changes after **every run** → the assistant's prefix gets rewritten
+every run. Minimized by **placement**: put it **last** in the chain of blocks in
+`buildAssistantPrompt`. Prompt caching is a **prefix** cache, so every block above
+it still hits cache and only the tail gets rewritten. Estimated ~$0.002/run —
+**an estimate, not yet measured.**
 
-Đồng bộ (`refreshAssistantContext`) chạy **ngoài** cổng `status === 'done'`: ca `failed`/`stopped` vẫn có thể đã ghi xong vài file trước lúc hỏng, và đó chính là những file người dùng sẽ nhắc ở câu tiếp theo (*"làm nốt phần còn lại"*).
+Syncing (`refreshAssistantContext`) runs **outside** the `status === 'done'` gate:
+a `failed`/`stopped` run may still have written several files before it broke, and
+those are exactly the files the user will bring up next (*"finish the rest of
+it"*).
 
 ---
 
-## 2.8 Hai cái trần của `ArtifactStore` — và vì sao chúng phải khác nhau (sửa 02/09)
+## 2.8 `ArtifactStore`'s two caps — and why they have to differ (fixed 02/09)
 
-Câu hỏi user đặt ra: *"danh sách kết quả ngày càng dài, có nên tự prune sau 15 ngày không?"* Câu trả lời là **không**, và lý do là bảng kê vào prefix **vốn đã không dài ra** (§2.4: 5 ca, 600 token). Nhưng rà tới đó thì lộ một ca hỏng thật.
+The user's question: *"the results list keeps growing — should it auto-prune after
+15 days?"* The answer is **no**, and the reason is that the manifest fed into the
+prefix **doesn't actually grow** in the first place (§2.4: 5 runs, 600 tokens).
+But looking into it turned up a real bug.
 
-### Ca hỏng: sắp xếp SAU khi đã cắt
+### The bug: sorting AFTER truncating
 
 ```ts
-walk(...)                      // dừng hẳn ở file thứ 500
-return out.sort(theo mtime)    // sắp SAU khi cắt → cứu không kịp
+walk(...)                      // stops dead at file #500
+return out.sort(by mtime)      // sorts AFTER truncating → too late to save it
 ```
 
-Thứ rơi ra không phải file cũ nhất mà là **file `readdir` chưa đọc tới**. Thư mục ca tên `P-260820-0314-…` — theo **ngày, cũ trước** — nên trên NTFS (readdir theo tên) thứ biến mất chính là **những kết quả mới nhất**, đúng thứ người dùng vừa tạo và đang đi tìm. Trên ext4 (băm tên) là một nhóm ngẫu nhiên. Không câu báo nào.
+What falls off isn't the oldest file — it's **whatever `readdir` hadn't reached
+yet**. Run directories are named `P-260820-0314-…` — **date first, oldest
+first** — so on NTFS (where `readdir` walks in name order) what disappears is
+exactly the **most recent results**, precisely what the user just made and is
+looking for. On ext4 (hashed names) it's a random cluster. No error message
+anywhere.
 
-Kéo theo hai chỗ khác cùng gọi `list()`:
+This dragged down two other spots that also call `list()`:
 
-| chỗ | hậu quả |
+| spot | consequence |
 |---|---|
-| `removeAll()` | *"dọn sạch"* xoá 500, trả về `500`, giao diện báo thành công — 200 file vẫn nằm đó |
-| `readablePaths()` | `@đường-dẫn` tới file cũ trả *"không tìm thấy"*, trong khi bảng kê vừa hứa với model *"a path from an older job is valid"* |
+| `removeAll()` | *"clear everything"* deletes 500, reports `500`, the UI says success — 200 files are still sitting there |
+| `readablePaths()` | `@path` to an old file returns *"not found"*, right after the manifest just told the model *"a path from an older job is valid"* |
 
-### Bản vá: tách ba thứ đang bị trộn làm một
+### The fix: split apart three things that had been merged into one
 
-| | trần | dùng ở đâu |
+| | cap | used where |
 |---|---|---|
-| `MAX_SCAN` | **20 000** — chỉ để một thư mục bệnh hoạn không treo daemon; chạm thì `capped: true`, **không im** | mọi lượt duyệt |
-| `MAX_PANEL_FILES` | **500** — cắt **sau khi đã sắp theo `mtime`**, và trả kèm `total` thật | payload gửi giao diện |
-| *(không có trần)* | | `readablePaths` · `artifactManifest` · `removeAll` |
+| `MAX_SCAN` | **20,000** — purely so a pathological directory can't hang the daemon; hitting it sets `capped: true`, **never silent** | every scan |
+| `MAX_PANEL_FILES` | **500** — truncated **after sorting by `mtime`**, returned along with the real `total` | payload sent to the UI |
+| *(no cap)* | | `readablePaths` · `artifactManifest` · `removeAll` |
 
-Trục sắp xếp là **`mtime`**, không phải ngày tạo — user chốt, và không chỉ vì ngữ nghĩa: `birthtime` trên Linux tuỳ hệ thống file mà có hoặc không (Node lấp bằng `ctime` hoặc mốc 1970), nên một cái trần dựa vào nó sẽ chạy khác nhau trên ba hệ điều hành. Hoà `mtime` (một ca ghi ba file trong cùng mili giây) tách bằng đường dẫn, để thứ tự không đổi theo `readdir`.
+The sort key is **`mtime`**, not creation date — locked in by the user, and not
+just for semantic reasons: `birthtime` on Linux exists or doesn't depending on the
+filesystem (Node fills it in with `ctime` or the 1970 epoch), so a cap built on it
+would behave differently across the three operating systems. Ties on `mtime` (one
+run writes three files within the same millisecond) are broken by path, so the
+order doesn't shift depending on `readdir`.
 
-`removeAll()` quét lại **cho tới khi sạch** (trần 10 vòng), và giao diện nói ra phần còn sót thay vì báo thành công.
+`removeAll()` re-scans **until clean** (a 10-round cap), and the UI reports
+whatever's left over instead of claiming success.
 
-### Duyệt (rẻ) tách khỏi `stat` (đắt)
+### Scanning (cheap) split from `stat` (expensive)
 
-Đo trên máy user, Windows 02/09:
+Measured on the user's machine, Windows, 02/09:
 
-| số file | `scan()` (có `stat`) | `filePaths()` (chỉ `readdir`) |
+| file count | `scan()` (with `stat`) | `filePaths()` (`readdir` only) |
 |---|---|---|
 | 500 | 54 ms | 7 ms |
-| 2 000 | 142 ms | 8 ms |
-| 5 000 | 415 ms | 17 ms |
-| 20 000 | 1 425 ms | 23 ms |
+| 2,000 | 142 ms | 8 ms |
+| 5,000 | 415 ms | 17 ms |
+| 20,000 | 1,425 ms | 23 ms |
 
-Gần như toàn bộ chi phí nằm ở `statSync`, mà `bytes`/`mtime` thì **hai chỗ nóng nhất không dùng**: `readablePaths()` chạy ở **mỗi tin nhắn**, `removeAll()` chỉ cần đường dẫn. Nên chúng đi qua `filePaths()`. `scan()` (có `stat`) chỉ chạy theo **sự kiện** — `refreshAssistantContext` và mở panel — nơi 142 ms nằm cạnh một lượt gọi model tính bằng giây.
+Almost all the cost sits in `statSync`, and `bytes`/`mtime` are exactly what the
+**two hottest call sites don't use**: `readablePaths()` runs on **every message**,
+`removeAll()` only needs paths. So they now go through `filePaths()`. `scan()`
+(with `stat`) only runs on **events** — `refreshAssistantContext` and opening the
+panel — where 142 ms sits next to a model call measured in seconds.
 
-⇒ Đường đi nóng nhất đi từ ~51 ms xuống ~7 ms **và** hết sai, cùng một bản vá.
+⇒ The hottest path drops from ~51 ms to ~7 ms **and** stops being wrong, in the
+same fix.
 
-⚠ **Artifact sinh trước bản vá `plan_id` đôi (20/08) mang id mồ côi nên KHÔNG tra được tên ca** — bảng kê hiện *"(một việc cũ, không còn tên trong sổ)"*. Suy giảm êm, không sửa được, và chỉ ảnh hưởng dữ liệu cũ.
+⚠ **Artifacts created before the dual-`plan_id` fix (20/08) carry orphaned ids and
+so CANNOT be looked up by run name** — the manifest shows *"(an old job, no longer
+named in the record)"*. A graceful degradation, unfixable, and only touches old
+data.
 
-### Phải thêm vào `describePrompt` trong CÙNG một lần sửa
+### Has to be added to `describePrompt` in the SAME fix
 
-Bài học §5e (`SPEC-offices.md`): prompt đúng mà bảng "Xem prompt phân lớp" sai thì bảng đó vô dụng, vì cả điểm của nó là để tin được. **Mỗi khối mới trong `buildAssistantPrompt` phải có một mục tương ứng ở `describePrompt`.**
+The §5e lesson (`SPEC-offices.md`): a correct prompt paired with a wrong "View
+layered prompt" table makes that table useless, because its entire point is being
+trustworthy. **Every new block in `buildAssistantPrompt` needs a matching entry in
+`describePrompt`.**
 
-## 2.5 Đường dẫn trong ô chat BẤM ĐƯỢC — và chốt chống model bịa (chốt 20/08)
+## 2.5 CLICKABLE paths in the chat box — and the guard against the model making things up (locked in 20/08)
 
-Người dùng: *"`company/offices/ban-dia-hoa/artifacts/P-…/T-01/vi/doc-2-thuat-ngu.md` — cách này bắt người dùng mò vào folder trong máy, hơi bất tiện"*. Đúng: sản phẩm vừa mất công dựng một cửa sổ xem trước, rồi lại đưa người dùng ra file explorer.
+The user: *"`company/offices/business-localization/artifacts/P-…/T-01/vi/doc-2-terminology.md`
+— this makes the user go dig through folders on their machine, kind of
+inconvenient"*. Fair: the product had just gone to the trouble of building a
+preview window, only to send the user back out to a file explorer.
 
-Kèm theo một nỗi lo **đúng chỗ**: *"trường hợp nghe worker bịa thì khá thảm hoạ"*.
+Alongside a **legitimately placed** worry: *"it would be pretty disastrous if this
+turned out to be the worker making things up"*.
 
-### Vì sao ca này AN TOÀN — và nó an toàn từ trước, không phải nhờ bản vá này
+### Why this case is SAFE — and it was safe before this fix, not because of it
 
-Đường dẫn trong khối *"Kết quả đã lưu tại"* **chưa bao giờ là chữ của model**. Nó đã qua **ba cửa**:
+The path inside the *"Result saved to"* block was **never the model's own
+words**. It already passes through **three gates**:
 
-| cửa | ở đâu | chặn gì |
+| gate | where | blocks what |
 |---|---|---|
-| suy từ **tool ĐÃ GỌI** (`receipt.landed`) | `worker.ts → landingOf` | không dùng `receipt.artifacts` — trường đó là thứ model **khai**, và nó bịa được |
-| `safeJoin` | `landingOf` | đường dẫn đi ra ngoài thư mục văn phòng |
-| `existsSync` | `whereBlock` | file model nói đã ghi mà thật ra không có |
+| derived from the tool **THAT WAS ACTUALLY CALLED** (`receipt.landed`) | `worker.ts → landingOf` | doesn't use `receipt.artifacts` — that field is something the model **declares**, and it can make it up |
+| `safeJoin` | `landingOf` | a path escaping the office directory |
+| `existsSync` | `whereBlock` | the model claiming to have written a file that doesn't actually exist |
 
-### Cơ chế: dữ liệu, KHÔNG phải regex trên chữ
+### Mechanism: data, NOT regex on text
 
-`master.message` nhận thêm `files?: string[]` — đường dẫn tính từ thư mục văn phòng, **chỉ** được điền bởi `whereBlock`.
+`master.message` gains `files?: string[]` — paths computed from the office
+directory, **only ever** filled in by `whereBlock`.
 
-> ⛔ **KHÔNG BAO GIỜ dò đường dẫn trong `say` bằng regex.** Một phần tin nhắn trong luồng do model viết (`answer` của nhân viên ở task `deliver: reply`). Dò bằng regex nghĩa là: nhân viên bịa một đường dẫn nghe rất thật, giao diện biến nó thành nút bấm được, người dùng tin tưởng bấm vào. Đó là **cho một câu model đoán mượn uy tín của giao diện**, và người dùng không có cách nào phân biệt.
+> ⛔ **NEVER scan for paths inside `say` with a regex.** Part of that chat message
+> is written by the model (an employee's `answer` on a `deliver: reply` task).
+> Scanning it with regex would mean: an employee makes up a very plausible-looking
+> path, the UI turns it into a clickable link, the user clicks it trusting it.
+> That's **lending the UI's credibility to a sentence the model guessed at**, and
+> the user has no way to tell the difference.
 >
-> Luật gọn: **chỉ đường dẫn do CHÍNH CODE đặt vào mới bấm được.**
+> Rule, in short: **only a path CODE ITSELF placed there gets to be clickable.**
 
-Ghép chữ ↔ dữ liệu bằng **so đuôi chuỗi**, không regex: `say` in đường dẫn có tiền tố `company/offices/<id>/` (cho người mở file explorer), `files` mang đường dẫn tính từ thư mục văn phòng. Hai hệ quy chiếu vì hai người dùng khác nhau — nhưng cả hai đầu do **cùng một hàm** dựng ra nên chúng không thể lệch. `whereBlock` trả đúng `shown` (mảng đã in ra chữ), không trả cả `files`: lệch một cái là giao diện có mục bấm được không ứng với dòng nào, hoặc một dòng không bấm được nằm cạnh dòng bấm được.
+Text and data are joined by **matching string suffixes**, not regex: `say` prints
+the path with a `company/offices/<id>/` prefix (for anyone opening a file
+explorer), `files` carries the path computed from the office directory. Two
+different reference frames for two different audiences — but both ends are built
+by **the same function**, so they can't drift apart. `whereBlock` returns exactly
+`shown` (the array already printed as text), not `files` itself: any mismatch
+would mean a clickable entry in the UI with no matching line, or an unclickable
+line sitting next to a clickable one.
 
-### Bridge (Telegram) không đổi một chữ
+### The bridge (Telegram) doesn't change a single character
 
-`files` là **metadata đi kèm**, không thay thế phần chữ. Bên hiển thị không đọc nó thì thấy `say` nguyên văn y như hôm nay — đường dẫn vẫn đủ, chỉ là không bấm được. Cùng một sự kiện, hai kết cục, đúng luật *"mỗi bên hiển thị tự chọn cách phản ứng"* (giống `hold_ms` ở `SPEC-offices.md` §4.6).
+`files` is **accompanying metadata**, not a replacement for the text. A surface
+that doesn't read it just sees `say` exactly as it reads today — the path is
+still there, just not clickable. Same event, two outcomes, following the same
+rule as *"each surface picks its own way to react"* (like `hold_ms` in
+`SPEC-offices.md` §4.6).
 
-### Luồng bấm
+### The click flow
 
-`actions.revealArtifact(path)` → `panel: 'artifacts'` + đặt ô `revealArtifact` → `ArtifactsPanel` nhận, tra trong danh sách **đã nạp**, mở cửa sổ xem trước.
+`actions.revealArtifact(path)` → `panel: 'artifacts'` + sets the `revealArtifact`
+field → `ArtifactsPanel` receives it, looks it up in the **already-loaded**
+listing, opens the preview window.
 
-- Băng chuyền qua store, cùng khuôn `pendingDocs`: cả luồng xem trước (nạp nội dung, ba nhóm định dạng, trần 2MB, nút tải về) sống ở **đúng một chỗ**.
-- `showPanel` chứ không `openPanel`: bấm đường dẫn thứ hai mà panel đóng lại là một cái bẫy.
-- Hiệu ứng bám vào **ô yêu cầu**, không vào giá trị của nó — bấm cùng một đường dẫn hai lần vẫn phải mở lại được.
-- Không tìm thấy (file đã bị xoá sau khi tin nhắn gửi) thì **nói ra bằng toast**. Một cú bấm không gây ra chuyện gì cả thì người dùng chỉ biết là "hỏng", và họ bấm lại.
-- Ô yêu cầu dọn **ngay** kể cả khi không khớp: giữ lại thì lần sau mở panel Kết quả vì việc khác cũng bị bật lên một cửa sổ họ không yêu cầu.
+- Runs through the store, on the same pattern as `pendingDocs`: the whole preview
+  flow (loading content, three format groups, the 2MB cap, the download button)
+  lives in **exactly one place**.
+- `showPanel`, not `openPanel`: clicking a second path while the panel is closed
+  would be a trap.
+- The effect keys off the **request field**, not its value — clicking the same
+  path twice still has to reopen it.
+- Not found (the file was deleted after the message was sent) is **announced with
+  a toast**. A click that produces nothing tells the user only that "it's
+  broken," and they click again.
+- The request field clears **immediately** even on a mismatch: leaving it set
+  means the next time the Results panel opens for an unrelated reason, it pops
+  open a window nobody asked for.
 
-## 2.1 `plan_id` phải ĐỌC ĐƯỢC — và tên file thì KHÔNG đụng tới (chốt 19/08)
+## 2.1 `plan_id` must be READABLE — and filenames stay UNTOUCHED (locked in 19/08)
 
-Đề bài của người dùng: `artifacts/P-mt08w0t8-iu50/T-01/tra-loi.md` — chuỗi giữa **không nói gì với con người**. Đề xuất ban đầu: thêm tiền tố `yyMMddhhmmss` vào **tên file**, và bỏ thư mục `P-…`.
+The user's example: `artifacts/P-mt08w0t8-iu50/T-01/answer.md` — the middle
+string **says nothing to a human**. The original proposal: prepend a
+`yyMMddhhmmss` prefix to the **filename**, and drop the `P-…` directory.
 
-**Cả hai nhánh đó đều bác bỏ, nhưng vấn đề gốc thì có thật.**
+**Both of those branches were rejected, but the underlying problem is real.**
 
-### Bỏ thư mục `<plan_id>/`: KHÔNG
+### Drop the `<plan_id>/` directory: NO
 
-Nó gánh **bốn** thứ, không phải một: `artifactScoper` (đóng khung), `Scheduler.linkDeps` (dò trùng đường dẫn để nối `deps`), `Scheduler.validate` (chặn hai task cùng ghi), và gom nhóm ở panel. Bỏ nó là **tái tạo đúng lỗi §2** — tám kế hoạch cùng đổ vào `artifacts/T-01/`.
+It carries **four** jobs, not one: `artifactScoper` (framing),
+`Scheduler.linkDeps` (detecting duplicate paths to wire up `deps`),
+`Scheduler.validate` (blocking two tasks from writing to the same place), and
+grouping in the panel. Dropping it would **recreate exactly the §2 bug** — eight
+plans all landing in `artifacts/T-01/`.
 
-### Timestamp vào tên file: KHÔNG
+### Timestamp into the filename: NO
 
-`newPlanId()` là `P-${Date.now().toString(36)}-${rand4}`. Nghĩa là **`mt08w0t8` ĐÃ LÀ một timestamp** — base36 của `Date.now()`, chỉ là ở dạng người không đọc được.
+`newPlanId()` is `P-${Date.now().toString(36)}-${rand4}`. Meaning
+**`mt08w0t8` ALREADY IS a timestamp** — base36 of `Date.now()`, just in a form a
+human can't read.
 
-Thêm ngày giờ vào tên file nữa thì người đọc **thấy thời gian hai lần**, và tên file **thôi mô tả nội dung** — mà đó là việc duy nhất của tên file. Chưa kể timestamp lúc *ghi* không dùng được: `outputs` của T-01 và `inputs` của T-02 do model viết ở hai chỗ trong cùng một khối JSON, chúng phải khớp nhau, nên mọi định danh **phải sinh ra ở lúc LẬP KẾ HOẠCH** — tức là đúng thứ `plan_id` đang làm.
+Adding a date/time to the filename too means the reader **sees the time twice**,
+and the filename **stops describing the content** — which is the one job a
+filename actually has. And beyond that, a timestamp taken at *write* time doesn't
+even work: T-01's `outputs` and T-02's `inputs` are written by the model in two
+separate spots inside the same JSON block, and they need to match each other, so
+every identifier **has to be generated at PLANNING time** — which is exactly what
+`plan_id` already does.
 
-> **Tên file giữ nguyên, đặt là gì cũng được.** Ràng buộc duy nhất vẫn như cũ: hai task **trong cùng một kế hoạch** không được ghi trùng đường dẫn (`validate` chặn). Khác kế hoạch thì thư mục `<plan_id>/` đã lo.
+> **Filenames stay as they are, named however.** The only constraint stays the
+> same as before: two tasks **within the same plan** may not write the same path
+> (`validate` blocks it). Across plans, the `<plan_id>/` directory already handles
+> it.
 
-### Thứ ĐÚNG là vấn đề: đọc không ra. Hai bản vá, tách bạch.
+### The actual problem: it's unreadable. Two fixes, kept separate.
 
-**a. Đổi FORMAT của `plan_id` — không đổi cơ chế.**
+**a. Change the FORMAT of `plan_id` — not the mechanism.**
 
 ```
-cũ   P-mt08w0t8-iu50
-mới  P-260819-1430-iu50
+old   P-mt08w0t8-iu50
+new   P-260819-1430-iu50
 ```
 
-Giữ nguyên mọi bảo đảm: sắp xếp từ điển vẫn đúng thứ tự thời gian, `logFile` regex (`^[A-Za-z0-9_-]{1,64}$`) nhận bình thường, xác suất đụng độ trong cùng một phút là `1/36⁴ ≈ 1/1.680.000`.
+Every guarantee is preserved: lexical sort order still matches time order, the
+`logFile` regex (`^[A-Za-z0-9_-]{1,64}$`) accepts it fine, and the collision
+probability within the same minute is `1/36⁴ ≈ 1/1,680,000`.
 
-**Không cần di trú, và lý do là cấu trúc chứ không phải may mắn: `plan_id` KHÔNG BỊ PARSE Ở ĐÂU CẢ.** Nó chỉ là khoá và là một đoạn đường dẫn. Kế hoạch cũ giữ tên cũ, kế hoạch mới nhận tên mới, hai loại sống chung vô thời hạn.
+**No migration needed, and the reason is structural, not luck: `plan_id` IS NOT
+PARSED ANYWHERE.** It's only a key and a path segment. Old plans keep their old
+names, new plans get new names, and both kinds coexist indefinitely.
 
-**b. Panel hiện TÊN VIỆC THẬT.**
+**b. Have the panel show the REAL job name.**
 
-Đây mới là bản vá ăn tiền, và nó **không đụng gì tới `plan_id`**. Panel vốn đã cố ý **không bao giờ hiện mã kế hoạch** — nhưng thứ nó hiện thay vào là một bản dự phòng mà chú thích trong `ArtifactsPanel.tsx` đã tự thú: *"Chưa có tên việc thì nói ngày giờ"*. Tên việc **có sẵn** ở `tasks/index.json` (`PlanRecord.request`), chỉ là chưa ai nối dây.
+This is the fix that actually matters, and it **touches nothing about
+`plan_id`**. The panel had already deliberately chosen **never to show the plan
+code** — but what it showed instead was a fallback the comment in
+`ArtifactsPanel.tsx` had already confessed to: *"No job name yet, so say the date
+and time."* The job name **already exists**, in `tasks/index.json`
+(`PlanRecord.request`) — nobody had wired it up yet.
 
-| | trước | sau |
+| | before | after |
 |---|---|---|
-| tiêu đề nhóm | `Việc chạy 19/08 15:10` | `Trả lời khách hỏi chính sách bảo hành…` |
-| nguồn | `mtime` mới nhất trong nhóm | `PlanStore.get(plan_id).request` |
+| group title | `Run on 19/08 15:10` | `Answer the customer's warranty policy question…` |
+| source | most recent `mtime` in the group | `PlanStore.get(plan_id).request` |
 
-Hai chi tiết bắt buộc:
+Two mandatory details:
 
-- **`request` là câu Trợ lý VIẾT LẠI** (`route()` trả *"viết lại yêu cầu thành một câu rõ ràng, đủ ngữ cảnh"*), nên nó **dài** được. Cắt một dòng, giữ bản đầy đủ ở `title` tooltip. Nhóm không tra được `request` (kế hoạch đã rơi khỏi `index.json` — trần 200 bản ghi) thì **rơi về nhãn ngày giờ cũ**, đừng hiện chuỗi rỗng.
-- **Thời gian vẫn hiện, ở dạng ĐẦY ĐỦ CÓ GIÂY** (`19/08/2026 15:10:42`), căn phải, `tabular-nums`. Tiêu đề nhóm là mỏ neo phân biệt *"lần chạy nào"* — chạy lại **cùng một yêu cầu** trong một ngày thì **giây là thứ duy nhất tách được hai nhóm**. Dòng file bên trong giữ `when()` rút gọn như hiện tại: nó đã nằm sẵn trong một nhóm đã biết, không cần lặp lại ngày.
+- **`request` is a sentence the Assistant REWRITES** (`route()` returns *"rewrite
+  the request into one clear sentence, with enough context"*), so it can run
+  **long**. Truncate to one line, keep the full text in a `title` tooltip. If a
+  group's `request` can't be looked up (the plan fell out of `index.json` — a
+  200-record cap), it **falls back to the old date/time label** rather than
+  showing an empty string.
+- **The time still shows, in FULL FORM WITH SECONDS** (`08/19/2026 15:10:42`),
+  right-aligned, `tabular-nums`. The group title is the anchor that tells apart
+  *"which run"* — re-running **the exact same request** within one day means the
+  **seconds are the only thing** that can tell the two groups apart. The
+  individual file line inside keeps today's shortened `when()` format: it's
+  already sitting inside a known group, no need to repeat the date.
 
-Lấy `mtime` **mới nhất trong nhóm**, không lấy `PlanRecord.ended_at`: đó là **sự việc quan sát được trên đĩa** (đúng luật *"thứ gì QUAN SÁT ĐƯỢC thì đừng hỏi, đừng suy"* — `SPEC-offices.md` §6), và nó sống sót cả khi `index.json` mất.
+Use the **most recent `mtime` in the group**, not `PlanRecord.ended_at`: that's an
+**observable fact on disk** (following the rule *"if it's OBSERVABLE, don't ask,
+don't infer"* — `SPEC-offices.md` §6), and it survives even if `index.json` is
+lost.
 
-### Không di trú
+### No migration
 
-Dữ liệu cũ là demo, người dùng chốt xoá. Đó là quyết định của người dùng và nó cắt bỏ phần khó nhất của thay đổi này. Panel vẫn **đọc được** file nằm thẳng dưới `artifacts/<task_id>/` và gom chúng vào một nhóm *"Kết quả cũ"* — không ai bị mất màn hình vì một bố cục cũ.
+Old data is demo data, and the user decided to just delete it. That decision cuts
+out the hardest part of this change. The panel can still **read** files sitting
+directly under `artifacts/<task_id>/` and groups them into an *"Older results"*
+bucket — no one loses their screen over an old layout.
 
 ---
 
-## 3. Xem trước: ba nhóm, và ranh giới là quyết định sản phẩm
+## 3. Preview: three groups, and the line is a product decision
 
-| nhóm | đuôi | cách hiện |
+| group | extensions | how it's shown |
 |---|---|---|
-| **văn bản** | `md` `txt` `csv` `tsv` `json` `yaml` `yml` `html` `xml` `log` | `fetch` rồi tự vẽ. md/txt hiện thẳng, csv thành **bảng**, còn lại `<pre>` |
-| **trình duyệt tự lo** | `png` `jpg` `jpeg` `gif` `webp` · `pdf` · `mp4` `webm` | thẻ `<img>` `<object>` `<video>` |
-| **KHÔNG xem trước** | `docx` `xlsx` `pptx` · `svg` · mọi đuôi khác | chỉ tải về, kèm câu giải thích |
+| **text** | `md` `txt` `csv` `tsv` `json` `yaml` `yml` `html` `xml` `log` | `fetch`, then rendered ourselves. md/txt shown directly, csv becomes a **table**, everything else in `<pre>` |
+| **the browser handles it** | `png` `jpg` `jpeg` `gif` `webp` · `pdf` · `mp4` `webm` | `<img>` `<object>` `<video>` tags |
+| **NO preview** | `docx` `xlsx` `pptx` · `svg` · every other extension | download only, with an explanation |
 
-### Vì sao bỏ docx/xlsx/pptx — và lý do "nặng codebase" KHÔNG phải lý do
+### Why docx/xlsx/pptx are excluded — and "it bloats the codebase" is NOT the reason
 
-`src/library/extract.ts` đã bóc được cả ba với **0 phụ thuộc mới**. Copy sang đây là gần như miễn phí. Lý do thật mạnh hơn:
+`src/library/extract.ts` already extracts all three with **0 new dependencies**.
+Copying that here would be nearly free. The real reason is stronger:
 
-> **Preview bóc-text của một file Word là một LỜI NÓI DỐI.** Mất bảng, mất bố cục, mất ảnh.
+> **A text-extracted preview of a Word file is a LIE.** It loses the tables, the
+> layout, the images.
 
-Ở tủ tài liệu, văn bản bóc ra là để `Grep` **TÌM** và không ai nhìn nó. Ở đây người dùng **NHÌN** để quyết có gửi cho khách hay không. Cùng một kỹ thuật, một chỗ đúng và một chỗ sai.
+In the document library, extracted text exists so `Grep` can **FIND** it, and no
+one ever looks at it directly. Here, the user **LOOKS** at it to decide whether to
+send it to a client. Same technique, right in one place and wrong in the other.
 
-→ Không preview vỡ. Một câu nói thẳng: *"tải về rồi mở bằng ứng dụng thật"*.
+→ No broken preview. One plain sentence: *"download it and open it in the real
+app."*
 
-### Vì sao `.svg` nằm ở nhóm cấm
+### Why `.svg` sits in the forbidden group
 
-SVG là XML và **nó chạy được JavaScript**. File này do MODEL sinh ra, còn daemon phục vụ nó ở **cùng origin** với giao diện điều khiển công ty — thứ không có xác thực nào ngoài *"cùng máy"*. Server ép `application/octet-stream` cho `svg` `html` `htm` `xhtml`.
+SVG is XML **and it can run JavaScript**. This file is generated by the MODEL, and
+the daemon serves it at the **same origin** as the company control-panel UI — a
+surface with no authentication beyond *"same machine"*. The server forces
+`application/octet-stream` for `svg` `html` `htm` `xhtml`.
 
-### Thứ tự ưu tiên đến từ dữ liệu thật
+### Priority order comes from real data
 
-Kiểm ngày 19/08: **14/14 artifact trên máy người dùng đều là `.md`**. Đúng về kiến trúc — nhân viên chỉ có `Write`/`Edit` nên **chỉ ghi được văn bản**; không tool nào sinh ra `.jpg`, `.mp4` hay `.pdf` (trừ vai trò khai `Bash`, là ngoại lệ hiếm).
+Checked on 19/08: **14/14 artifacts on a user's machine were all `.md`**.
+Architecturally correct — employees only have `Write`/`Edit`, so they can **only
+write text**; no tool produces a `.jpg`, `.mp4`, or `.pdf` (except a role with
+`Bash` declared, a rare exception).
 
-→ Nhóm văn bản là **100% ca thật**. Nhóm ảnh/pdf/video làm luôn vì nó là vài dòng thẻ native, không phải vì có ai đang cần.
+→ The text group is **100% of real cases**. The image/pdf/video group was built
+anyway because it's a few lines of native tags, not because anyone was asking for
+it.
 
 ---
 
-## 4. Xoá: MỘT mức — nhưng câu hỏi lại KHÁC tủ tài liệu
+## 4. Delete: ONE level — but the question is DIFFERENT from the document library
 
-Cùng luật với tủ tài liệu (SPEC-library §6): một mức, xoá hẳn, hỏi lại **kèm tên file**. Mức "lưu trữ" đẻ ra một cái kho thứ hai cũng cần dọn.
+Same rule as the document library (SPEC-library §6): one level, gone for good,
+confirm with the **filename included**. An "archive" tier would just spawn a
+second store that also needs cleaning up.
 
-**Nhưng câu hỏi lại phải khác, và khác biệt là thật:**
+**But the confirmation question has to differ, and the difference is real:**
 
-| | tủ tài liệu | kết quả |
+| | document library | results |
 |---|---|---|
-| bản gốc | còn trên máy người dùng | **KHÔNG có bản nào khác** |
-| câu hỏi | *"Bản gốc trên máy bạn không bị ảnh hưởng."* | *"Đây là **bản duy nhất** — nhân viên phải chạy lại từ đầu."* |
+| original | still on the user's machine | **there is NO other copy** |
+| the question | *"The original on your machine is unaffected."* | *"This is the **only copy** — the employee would have to redo it from scratch."* |
 
-Dùng lại nguyên câu của tủ tài liệu ở đây là nói dối về mức độ nghiêm trọng.
+Reusing the document library's exact wording here would be lying about how
+serious this is.
 
-Xoá xong thì **dọn luôn thư mục rỗng còn lại** — `artifacts/<plan_id>/T-01/` trống trơn nằm lại chỉ để người dùng mở file explorer ra và tự hỏi nó là gì.
+Once deleted, **also clean up the now-empty directory** — an empty
+`artifacts/<plan_id>/T-01/` left behind just sits there for the user to open a
+file explorer and wonder what it is.
 
 ---
 
-## 5. Không có editor
+## 5. No editor
 
-Cùng lý do với tủ tài liệu, và mạnh hơn: một editor ở đây là **cửa ghi thứ hai** vào cùng một file mà nhân viên đang ghi. Đó đúng là lớp lỗi charter (SPEC-library §17) — hai giao diện ghi cùng một file, không cửa nào biết cửa kia.
+Same reasoning as the document library, and stronger here: an editor here would be
+a **second write door** into a file the employee is already writing to. That's
+exactly the charter failure class (SPEC-library §17) — two interfaces writing the
+same file, neither aware of the other.
 
-Muốn đổi nội dung thì nhắn Trợ lý làm lại. *"Ra bản nháp để sửa còn hơn viết mới từ đầu"* nói rằng sửa rẻ hơn — nhưng sửa bằng **nhân viên**, không phải bằng một textarea.
+To change the content, tell the Assistant to redo it. *"A draft to edit beats
+writing from scratch"* is true — but the editing is done by an **employee**, not a
+textarea.
 
 ---
 
@@ -435,52 +695,80 @@ Muốn đổi nội dung thì nhắn Trợ lý làm lại. *"Ra bản nháp đ�
 
 | | |
 |---|---|
-| `GET /api/office/:id/artifacts` | quét đĩa, trả danh sách. **Không catalog** |
+| `GET /api/office/:id/artifacts` | scan the disk, return the list. **No catalog** |
 | `GET /api/office/:id/artifacts/file?path=…[&download=1]` | stream. `download=1` → `octet-stream` + `content-disposition` |
-| `DELETE /api/office/:id/artifacts?path=…` | xoá hẳn, dọn thư mục rỗng |
+| `DELETE /api/office/:id/artifacts?path=…` | delete for good, clean up empty directories |
 
-### Không catalog, không watcher
+### No catalog, no watcher
 
-Quét `readdir`+`stat` mỗi lần đọc. Cùng lý do với tủ tài liệu (SPEC-library §9.1) và **mạnh hơn ở đây**: file này do nhân viên ghi **trong lúc đang chạy**, nên bất kỳ bản catalog nào cũng lỗi thời ngay giữa một ca.
+Scans `readdir`+`stat` on every read. Same reasoning as the document library
+(SPEC-library §9.1) and **stronger here**: these files are written by the
+employee **while a run is still in progress**, so any catalog would go stale
+mid-run.
 
-### Ba chốt an toàn — và cái thứ nhất sửa một lỗ hổng có thật
+### Three safety gates — and the first one fixes a real hole
 
-1. **Nhốt trong `artifacts/`.** Hàm cũ `Office.readArtifact` đọc được **bất kỳ file nào trong văn phòng**: `roles/*.yaml`, `charter.md`, `office.yaml`. Nó chặn segment bắt đầu bằng dấu chấm (nên `.state/` an toàn) nhưng phần còn lại thì mở. Tên hàm nghe như chỉ đọc artifact, và không ai kiểm lại.
-2. **Giải đường dẫn thật rồi mới so.** Kiểm chuỗi không nhìn thấy symlink.
-3. **Trần xem trước 2MB.** Hàm cũ **không có trần nào** — một `.csv` 50MB nhân viên sinh ra sẽ được nạp trọn vào bộ nhớ daemon rồi đẩy trọn sang trình duyệt. Chưa ai gặp vì mọi kết quả đều là markdown vài trăm byte; đó chính là lúc rẻ nhất để đặt cái trần.
+1. **Locked inside `artifacts/`.** The old `Office.readArtifact` function could
+   read **any file in the office**: `roles/*.yaml`, `charter.md`, `office.yaml`.
+   It blocked segments starting with a dot (so `.state/` was safe) but left
+   everything else open. The function name sounded like it only read artifacts,
+   and no one had double-checked.
+2. **Resolve the real path before comparing.** A string check can't see through a
+   symlink.
+3. **A 2MB preview cap.** The old function had **no cap at all** — a 50MB `.csv`
+   an employee generated would get loaded entirely into the daemon's memory and
+   then pushed whole to the browser. Nobody had hit this yet because every result
+   was a markdown file a few hundred bytes long; that's exactly the cheapest time
+   to put the cap in.
 
-⚠ Hàm cũ cũng luôn `readFileSync(abs, 'utf8')` và luôn trả `text/plain` — **làm hỏng mọi file nhị phân**. Không ai gặp vì chưa có file nhị phân nào.
+⚠ The old function also always did `readFileSync(abs, 'utf8')` and always
+returned `text/plain` — **corrupting every binary file**. Nobody had hit this
+because no binary file had existed yet.
 
 ---
 
-## 7. Cập nhật giao diện: bám SỰ KIỆN, không bám SỐ ĐẾM
+## 7. UI updates: keyed on the EVENT, not on a COUNT
 
-`artifactsVersion` tăng khi có `task.done` mang artifact. **Không thêm sự kiện server mới**: kết quả chỉ sinh ra khi một việc chạy xong, mà `task.done` đã bay tới rồi. Thêm một sự kiện nữa để nói lại cùng một chuyện là thêm một chỗ có thể lệch nhau.
+`artifactsVersion` increments whenever a `task.done` carries an artifact. **No new
+server event added**: results only ever come from a job finishing, and
+`task.done` already fires for that. Adding another event to say the same thing
+twice is one more place for the two to drift apart.
 
-> **Bài học chung, sửa luôn cho kho tri thức:** `KnowledgePanel` trước đây bám vào `canvas.knowledge.total` — tức là **số đếm**. Nó chỉ nạp lại khi số node thay đổi, nên mọi thay đổi giữ nguyên số lượng đều vô hình cho tới khi người dùng bấm F5: sửa nội dung một ghi chú, một node bị đè, dọn một node rồi thêm một node.
+> **General lesson, fixed for the knowledge base at the same time:**
+> `KnowledgePanel` used to key off `canvas.knowledge.total` — i.e. a **count**. It
+> only reloaded when the node count changed, so any change that kept the count the
+> same stayed invisible until the user hit F5: editing a note's content, one node
+> overwriting another, deleting one node and adding another.
 >
-> **Đếm không phải là biết đã đổi.**
+> **A count isn't the same as knowing something changed.**
 
 ---
 
-## 8. Tên tiếng Việt: "Kết quả"
+## 8. The name: "Result"
 
-Không phải *"Artifacts"*, không phải *"Sản phẩm"*, không phải *"Bàn giao"*.
+Not *"Artifacts"*, not *"Product"*, not *"Handover"*.
 
-Lý do: Trợ lý **đã** nói câu này sau mọi lần chạy —
+Reason: the Assistant **already** says this exact sentence after every run —
 
-> *"Kết quả đã lưu tại: company/offices/…/tra-loi.md"*
+> *"Result saved to: company/offices/…/answer.md"*
 
-Sản phẩm đã dạy người dùng từ đó rồi. Đặt tên thứ hai cho cùng một thứ là tự tạo ra khái niệm dễ lẫn **thứ ba**, trong khi đã có sẵn hai cái.
+The product had already taught the user that word. Giving the same thing a second
+name would just create a **third** concept to confuse it with, when there were
+already two.
 
 ---
 
-## 9. Việc phải KIỂM trước khi hứa với khách
+## 9. Things to VERIFY before promising this to customers
 
-- [x] Đường dẫn mới `artifacts/<plan_id>/<task_id>/` — kiểm bằng ca chạy thật 19/08
-- [x] Thoát thư mục (`..`, `office.yaml`, `.state/`) đều trả 404
-- [x] `svg` bị ép `octet-stream`
-- [x] Xoá file cuối cùng thì thư mục cha rỗng tự biến mất, thư mục còn file thì không
-- [x] `csv` nhận `view: csv`, `md` nhận `markdown`, đuôi lạ nhận `download`
-- [ ] **Xem bằng trình duyệt thật** — bảng CSV, ảnh, pdf. Chưa kiểm được (extension Chrome không kết nối)
-- [ ] Kết quả > 2MB: kiểm câu 413 hiện đúng chứ không phải một khối JSON thô
+- [x] The new `artifacts/<plan_id>/<task_id>/` path — verified with a real 19/08
+      run
+- [x] Escaping the directory (`..`, `office.yaml`, `.state/`) all return 404
+- [x] `svg` is forced to `octet-stream`
+- [x] Deleting the last file makes the empty parent directory vanish on its own;
+      a directory with files left doesn't
+- [x] `csv` gets `view: csv`, `md` gets `markdown`, unknown extensions get
+      `download`
+- [ ] **Viewed in a real browser** — CSV table, image, pdf. Not yet verified
+      (the Chrome extension won't connect)
+- [ ] A result > 2MB: verify the 413 message displays correctly, not a raw JSON
+      blob

@@ -1,20 +1,3 @@
-/**
- * Test cho ĐỢT SIẾT KHO TRI THỨC 19/08 — bốn luật, và mỗi luật che một ca khác.
- *
- * Đề bài của người dùng: *"cơ chế ghi lại kinh nghiệm đang tự tạo một cache, và
- * rất có thể cache này SAI khi người dùng update tài liệu."*
- *
- *   1. chỉ ghi CÁCH LÀM, không ghi KIẾN THỨC   → che ca tài liệu BỊ SỬA
- *   2. thực thể yếu (`depends_on`)             → che ca tài liệu BỊ XOÁ
- *   3. chỉ sinh khi ca có trục trặc / LẶP      → che ca "sinh ra từ hư không"
- *   4. không spam bản na ná nhau               → che ca kho phình vì lặp
- *
- * ⚠ Luật 1 và 2 KHÔNG thay thế được nhau, và đó là điểm dễ hiểu nhầm nhất:
- * weak-entity chỉ nổ khi file BIẾN MẤT. File bị SỬA (chính sách 50% → 30%) thì
- * nó im lặng — ca đó chỉ luật 1 cứu được. Bộ test này ghim cả hai nửa.
- *
- * Chạy: npm test
- */
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -28,310 +11,209 @@ type Receipt = Parameters<typeof worthLearning>[0][number];
 const receipt = (patch: Partial<Receipt> = {}): Receipt =>
   ({
     status: 'done',
-    say: 'xong',
+    say: 'done',
     answer: '',
     artifacts: [],
     lessons: [],
     blocked_on: null,
     task_id: 'T-01',
-    role: 'nguoi-tra-loi',
+    role: 'responder',
     reasked: false,
     looped: false,
     reads: [],
-    // ⚠ `landed` PHẢI có — `learnable` đi qua `delivered()`. Xem knowledge.test.ts.
     landed: [],
     wall_ms: 1000,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: 'haiku', turns: 4 },
     ...patch,
   }) as Receipt;
 
-// ───────────────────────────────── luật 1: chốt chặn CON SỐ
 
-/**
- * Bản văn tủ tài liệu thật của văn phòng `ho-tro-khach`, cắt gọn.
- * Con số 50 ở đây là thứ toàn bộ nhóm test này xoay quanh.
- */
-const DOI_TRA =
-  'doi-tra.md\n# Chính Sách Đổi Trả\n' +
-  'Hỗ trợ đổi trả trong vòng 7 ngày kể từ ngày nhận được hàng.\n' +
-  'Lưu ý quan trọng: Hàng giảm giá trên 50% KHÔNG áp dụng chính sách đổi trả.';
+const DOI_TRA = // i18n-allow-vietnamese: library document fixture fed into quotesLibraryNumber's number-matching logic
+  'doi-tra.md\n# Chính Sách Đổi Trả\n' + // i18n-allow-vietnamese: library document fixture
+  'Hỗ trợ đổi trả trong vòng 7 ngày kể từ ngày nhận được hàng.\n' + // i18n-allow-vietnamese: library document fixture
+  'Lưu ý quan trọng: Hàng giảm giá trên 50% KHÔNG áp dụng chính sách đổi trả.'; // i18n-allow-vietnamese: library document fixture
 
-test('CON SỐ: bắt được đúng ca 19/08 mà echoesLibrary đã ĐO ĐƯỢC là lọt', () => {
-  // Câu thật đã chui vào `k/shared/san-pham-giam-gia-60-…`. Chồng từ với tài
-  // liệu chỉ ~0.47 — dưới ngưỡng 0.6 của `echoesLibrary`, nên lưới đó không
-  // bắt được. Nhưng con số thì sống sót qua mọi cách diễn giải.
+test('NUMBER: catches the 19/08 case that echoesLibrary MEASURED as a leak', () => {
   assert.equal(
-    quotesLibraryNumber('sản phẩm giảm 60% thường không được đổi trả cho khách', [DOI_TRA]),
+    quotesLibraryNumber('sản phẩm giảm 60% thường không được đổi trả cho khách', [DOI_TRA]), // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
     undefined,
-    '60 KHÔNG có trong tài liệu — chốt này không được bịa ra một con số để chặn',
+    '60 is NOT in the document — this gate must not make up a number to block on',
   );
-  // …còn bản diễn giải ĐÚNG ngưỡng thì bị chặn thẳng, và đó mới là ca hay gặp.
-  assert.equal(quotesLibraryNumber('hàng giảm trên 50% thì không đổi trả được', [DOI_TRA]), '50');
-  assert.equal(quotesLibraryNumber('nhớ là chỉ đổi trả trong 7 ngày thôi', [DOI_TRA]), undefined,
-    '7 chỉ có MỘT chữ số nên bị bỏ qua — số đếm bước đụng tài liệu quá dễ');
+  assert.equal(quotesLibraryNumber('hàng giảm trên 50% thì không đổi trả được', [DOI_TRA]), '50'); // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
+  assert.equal(quotesLibraryNumber('nhớ là chỉ đổi trả trong 7 ngày thôi', [DOI_TRA]), undefined, // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
+    '7 has only ONE digit so it is skipped — a step counter touching the document too easily');
 });
 
-test('CON SỐ: bài học về CÁCH LÀM mang số riêng của nó thì PHẢI qua được', () => {
-  // Đây là ca chặn nhầm đắt nhất: một bài học thật về cách làm việc bị vứt chỉ
-  // vì nó có chữ số. Ngưỡng "phải nằm sẵn trong tài liệu" tồn tại vì ca này.
+test('NUMBER: a lesson about HOW TO WORK that carries its own number must still pass', () => {
   assert.equal(
-    quotesLibraryNumber('hỏi lại tối đa 2 câu rồi bắt tay vào làm, đừng hỏi vòng', [DOI_TRA]),
+    quotesLibraryNumber('hỏi lại tối đa 2 câu rồi bắt tay vào làm, đừng hỏi vòng', [DOI_TRA]), // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
     undefined,
   );
   assert.equal(
-    quotesLibraryNumber('grep trong library/text/ trước khi trả lời chính sách', [DOI_TRA]),
+    quotesLibraryNumber('grep trong library/text/ trước khi trả lời chính sách', [DOI_TRA]), // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
     undefined,
-    'câu CÁCH LÀM không có số nào — đây là hình dạng bài học ta MUỐN',
+    'a HOW-TO sentence with no number at all — this is the lesson shape we WANT',
   );
 });
 
-test('CON SỐ: ranh giới chữ số — 50 không được khớp vào 150 hay 500', () => {
-  const doc = 'bang-gia.md\nÁo khoác: 500.000đ. Quần: 150000đ.';
-  assert.equal(quotesLibraryNumber('giảm trên 50% thì thôi', [doc]), undefined);
-  assert.equal(quotesLibraryNumber('áo khoác giá 500.000đ', [doc]), '500.000');
+test('NUMBER: digit boundary — 50 must not match inside 150 or 500', () => {
+  const doc = 'bang-gia.md\nÁo khoác: 500.000đ. Quần: 150000đ.'; // i18n-allow-vietnamese: library document fixture fed into quotesLibraryNumber under test
+  assert.equal(quotesLibraryNumber('giảm trên 50% thì thôi', [doc]), undefined); // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
+  assert.equal(quotesLibraryNumber('áo khoác giá 500.000đ', [doc]), '500.000'); // i18n-allow-vietnamese: lesson text fed into quotesLibraryNumber under test
 });
 
-// ───────────────────────────────── luật 3: `looped`, KHÔNG phải số lượt
 
-test('worthLearning: ca êm KHÔNG hỏi, dù chạy 9 lượt', () => {
-  // Ca 19/08 chạy đúng 9 lượt. Bản nháp `turns >= 8` sẽ CHO QUA đúng cái ca nó
-  // sinh ra để chặn — đó là lý do số lượt bị loại khỏi tín hiệu, vĩnh viễn.
+test('worthLearning: a smooth run does NOT ask, even after 9 turns', () => {
   const nineTurns = receipt({
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUSD: 0, model: 'haiku', turns: 9 },
   });
   assert.equal(worthLearning([nineTurns]), false);
 });
 
-test('worthLearning: LẶP THAO TÁC thì hỏi — đây là "flow bị loop" đo đúng cách', () => {
-  // `receipt()` mặc định `status: 'done'`, nên cả ba dòng dưới đều là ca ĐI ĐẾN
-  // ĐÍCH mà có vấp — đúng hình dạng duy nhất còn được học từ 29/08.
+test('worthLearning: a REPEATED ACTION asks — this is the "looped flow" measured correctly', () => {
   assert.equal(worthLearning([receipt({ looped: true })]), true);
   assert.equal(worthLearning([receipt({ reasked: true })]), true);
-  assert.equal(worthLearning([receipt({ blocked_on: 'thiếu file' })]), true);
-  // ⚠ Dòng thứ tư ĐÃ ĐỔI DẤU 29/08: `failed` không còn là tín hiệu học.
+  assert.equal(worthLearning([receipt({ blocked_on: 'missing file' })]), true);
   assert.equal(worthLearning([receipt({ status: 'failed' })]), false);
 });
 
-test('worthLearning: chỉ MỘT việc lặp trong cả lô là đủ để hỏi', () => {
+test('worthLearning: just ONE repeated task in the whole batch is enough to ask', () => {
   assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02', looped: true })]), true);
 });
 
-// ───────────── luật 5 (29/08): BÁNH CÓC KINH NGHIỆM — chỉ học từ ca ĐI ĐẾN ĐÍCH
-//
-// Ca thật, văn phòng `canh-tay`: cánh tay "Trình duyệt web" chạy được lúc 16:58,
-// rồi ngừng hẳn. MCP vẫn `connected`, vẫn đủ 24 tool — thứ hỏng là KHO KINH
-// NGHIỆM. Trong ~2 giờ, mỗi ca `blocked` lại đẻ một mẩu mô tả chính triệu chứng
-// của nó, và `cold()` kéo đúng mẩu ấy về ở task cùng chủ đề lần sau. Đo bằng
-// `scripts/spike-worker-mcp-init.ts`, cùng brief, chỉ đổi khối kinh nghiệm:
-//
-//   kinh nghiệm rỗng      → ✅ mở YouTube   $0,1097
-//   chỉ HOT (8 mẩu)       → ✅ mở YouTube   $0,1595
-//   chỉ COLD (28 mẩu)     → ❌ blocked      $0,0316
-//   bỏ 10 mẩu phủ định    → ✅ mở YouTube   $0,1002
-//
-// 21 bài học của Trợ lý trong kho ấy, xếp theo trạng thái ca đã đẻ ra chúng:
-// `blocked` 12 · `failed` 3 · `done` 6 — và **cả 10 mẩu độc nằm trong 15 cái
-// đầu**. Cổng dưới đây cắt đúng 15 đó.
 
-test('worthLearning: mọi hình dạng KHÔNG-XONG đều không sinh bài học', () => {
+test('worthLearning: every NOT-DONE shape produces no lesson', () => {
   for (const s of ['failed', 'blocked', 'needs_human'] as const) {
-    assert.equal(worthLearning([receipt({ status: s, blocked_on: 'không vào được trang' })]), false, s);
-    // Kể cả khi nó vấp rõ ràng — vấp mà không về đích thì vẫn chưa phải kinh nghiệm.
+    assert.equal(worthLearning([receipt({ status: s, blocked_on: 'could not reach the page' })]), false, s);
     assert.equal(worthLearning([receipt({ status: s, looped: true })]), false, `${s} + looped`);
   }
 });
 
-/**
- * Ca HỖN HỢP là ca nguy hiểm nhất, vì cổng vẫn MỞ (có một việc xong) mà trong
- * bảng kết quả vẫn có một dòng hỏng để model nhìn thấy. Cổng chỉ chặn được vế
- * "có hỏi hay không"; vế "rút từ dòng nào" do dấu ⟵ trong `report()` gánh.
- */
-test('worthLearning: một việc xong-có-vấp + một việc hỏng → VẪN hỏi (và dấu ⟵ chỉ đúng dòng)', () => {
+test('worthLearning: one done-with-a-stumble task + one broken task → STILL asks (and the ⟵ mark points at the right line only)', () => {
   const done = receipt({ task_id: 'T-01', looped: true });
-  const blocked = receipt({ task_id: 'T-02', status: 'blocked', blocked_on: 'thiếu quyền' });
+  const blocked = receipt({ task_id: 'T-02', status: 'blocked', blocked_on: 'missing permission' });
   assert.equal(worthLearning([done, blocked]), true);
   assert.equal(learnable(done), true);
-  assert.equal(learnable(blocked), false, 'dòng hỏng KHÔNG được làm nguồn, dù cổng đã mở');
+  assert.equal(learnable(blocked), false, 'the broken line must NOT be used as a source, even once the gate is open');
 });
 
-/**
- * Vế ① của `learnable` là `delivered()`, KHÔNG phải `status === 'done'`.
- * (user 29/08: *"done dựa trên đánh giá neo vào mục tiêu của user đã hoàn thành chưa"*)
- *
- * Ca thật nằm ngay trong kho của văn phòng, Trợ lý tự ghi lại bằng tiếng Việt:
- * *"hai task báo cáo 'đã đăng nhập sẵn, xong việc' (Facebook, YouTube) nhưng hệ
- * thống đánh dấu failed"*. `status` là LỜI KHAI; `delivered` hỏi thêm một câu
- * quan sát được — **có gì đáp xuống không**.
- */
-test('learnable: tự nhận `done` mà KHÔNG có gì đáp xuống thì không phải kinh nghiệm', () => {
-  const khai = receipt({
+test('learnable: claiming `done` with NOTHING actually landed is not experience', () => {
+  const declared = receipt({
     status: 'done',
     looped: true,
-    artifacts: ['artifacts/T-01/ket-qua.md'], // hứa có file…
-    landed: [], // …nhưng không có điểm đáp nào quan sát được
+    artifacts: ['artifacts/T-01/result.md'], // claims a file exists…
+    landed: [], // …but no landing point is observable
   } as Partial<Receipt>);
-  assert.equal(learnable(khai), true, 'có artifacts khai ra thì vẫn tính — `delivered` chấp nhận một trong hai');
+  assert.equal(learnable(declared), true, 'declaring artifacts still counts — `delivered` accepts either one');
 
-  // Ca thật sự rỗng: không hứa gì, không đáp gì. `delivered` cho qua (không nợ
-  // gì thì không thiếu gì), nên thứ chặn nó là vế ② — phải CÓ VẤP.
-  const rong = receipt({ status: 'done', artifacts: [], landed: [] } as Partial<Receipt>);
-  assert.equal(learnable(rong), false, 'ca sạch trơn không vấp ⇒ không đáng lưu');
+  const empty = receipt({ status: 'done', artifacts: [], landed: [] } as Partial<Receipt>);
+  assert.equal(learnable(empty), false, 'a perfectly clean run with no stumble is not worth saving');
 });
 
-// ───────────────────── luật 6 (29/08): CÒN CẢNH BÁO ⇒ CÒN LEAK ⇒ CHƯA PHẢI KINH NGHIỆM
 
-test('worthLearning: ca còn cảnh báo cấp CA thì KHÔNG hỏi, dù có việc xong-có-vấp', () => {
+test('worthLearning: a run with a CASE-level warning does NOT ask, even with a done-with-a-stumble task', () => {
   const ok = receipt({ looped: true });
-  assert.equal(worthLearning([ok], 0, false), true, 'đối chứng: không rò thì vẫn hỏi');
-  assert.equal(worthLearning([ok], 0, true), false, 'file đã hứa mà thiếu / rơi ngoài khung ⇒ im');
+  assert.equal(worthLearning([ok], 0, false), true, 'control: no leak still asks');
+  assert.equal(worthLearning([ok], 0, true), false, 'a promised file missing / out of scope ⇒ stay quiet');
 });
 
-test('worthLearning: cảnh báo KHÔNG chặn nhánh ma sát — lớp đó học về con người', () => {
-  // Một cái file rơi sai chỗ không làm câu "lần sau người dùng nên nói thẳng X"
-  // sai đi. Hai lớp khác nhau thì không dùng chung cổng.
+test('worthLearning: a warning does NOT block the friction branch — that layer learns about people', () => {
   assert.equal(worthLearning([receipt()], 3, true), true);
 });
 
-/** Ca thật của cửa NHÂN VIÊN — `office.ts` dùng đúng hàm này để lọc `r.lessons`. */
-test('learnable: bài học nhân viên tự khai từ ca không xong bị chặn ở cổng tất định', () => {
-  // Nguyên văn mẩu đã chặn cánh tay trình duyệt:
-  // "Trước khi gọi browser_navigate … nếu bị từ chối quyền, dừng lại và báo blocked ngay"
+test('learnable: a lesson the worker self-reported from an unfinished run is blocked at the deterministic gate', () => {
   const r = receipt({
     status: 'blocked',
-    blocked_on: 'bị từ chối quyền dùng browser_navigate',
-    lessons: [{ kind: 'pitfall', text: 'bị từ chối quyền thì báo blocked ngay thay vì thử lại' }],
+    blocked_on: 'permission denied for browser_navigate',
+    lessons: [{ kind: 'pitfall', text: 'when permission is denied, report blocked right away instead of retrying' }],
   } as Partial<Receipt>);
-  assert.equal(learnable(r), false, 'nhân viên KHÔNG đi qua worthLearning, nên cổng phải đứng ở đây');
+  assert.equal(learnable(r), false, 'a worker never goes through worthLearning, so the gate must stand here');
 });
 
-// ─────────────────────── tín hiệu 5: MA SÁT CỦA CON NGƯỜI (20/08)
 
-test('worthLearning: cỗ máy chạy SẠCH nhưng người dùng phải nói lại → VẪN hỏi', () => {
-  /**
-   * Ca thật 20/08, và nó là lý do tín hiệu này tồn tại.
-   *
-   * Người dùng mất BỐN lượt mới giao được việc ("doc-2, doc-3 thiếu file thuật
-   * ngữ" → Trợ lý bảo họ đi kiểm đường dẫn → hỏi họ file cũ ở đâu → một lượt
-   * lập kế hoạch chết hẳn → họ phải tự nghĩ ra giải pháp). Ca chạy sau đó: 2
-   * task, cả hai `done`, receipt sạch bong.
-   *
-   * Bốn tín hiệu cũ đều đọc từ `receipts` — chúng đo ĐỘ KHÓ CỦA CỖ MÁY. Ở đây
-   * cỗ máy không khó gì cả; con người mới là bên vật lộn.
-   */
-  assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02' })]), false, 'đối chứng: không ma sát thì im');
+test('worthLearning: the machine runs CLEAN but the user has to repeat themselves → STILL asks', () => {
+  assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02' })]), false, 'control: no friction stays quiet');
   assert.equal(worthLearning([receipt(), receipt({ task_id: 'T-02' })], 3), true);
 });
 
-test('worthLearning: ma sát 0 KHÔNG làm đổi hành vi cũ', () => {
-  // Tham số mới phải là bổ sung thuần tuý: mọi ca cũ giữ nguyên kết quả.
+test('worthLearning: friction of 0 does NOT change the old behavior', () => {
   assert.equal(worthLearning([receipt()], 0), false);
   assert.equal(worthLearning([receipt({ looped: true })], 0), true);
 });
 
-// ───────────────────────────────── `deliver`: hai kênh, hai cái trần
 
-test('enforceCap: answer KHÔNG ăn vào trần của receipt', () => {
-  const long = 'Chính sách bảo hành của shop là 12 tháng. '.repeat(40);
+test('enforceCap: answer does NOT eat into the receipt cap', () => {
+  const long = 'Chính sách bảo hành của shop là 12 tháng. '.repeat(40); // i18n-allow-vietnamese: arbitrary long filler content for cap-truncation testing
   const out = enforceCap(
     {
       status: 'done',
-      say: 'Đã trả lời khách về chính sách bảo hành.',
+      say: 'Replied to the customer about the warranty policy.',
       answer: long,
-      // ⚠ `gist` PHẢI có: `enforceCap` gọi `.trim()` lên nó. Fixture thiếu một
-      // trường mới thì test nổ ở chỗ chẳng liên quan gì tới thứ nó đang kiểm —
-      // đúng cái đã dẫm với `landed` ngày 29/08.
       gist: '',
-      artifacts: ['artifacts/P-260819-1430-ab12/T-01/tra-loi.md'],
-      lessons: [{ kind: 'pitfall', text: 'grep trong library/text/ trước khi trả lời' }],
+      artifacts: ['artifacts/P-260819-1430-ab12/T-01/reply.md'],
+      lessons: [{ kind: 'pitfall', text: 'grep in library/text/ before replying' }],
       blocked_on: null,
     },
-    // Trần CHẶT có chủ ý: nếu `answer` nằm trong phép đo thì nó sẽ đẩy `lessons`
-    // và `say` ra ngoài — tức câu trả lời cho khách đi ăn cắp chỗ của receipt,
-    // trong khi hai thứ đó chạy trên hai đường hoàn toàn khác nhau.
     200,
   );
-  assert.equal(out.lessons.length, 1, 'lessons phải sống sót: answer không được tính vào trần');
+  assert.equal(out.lessons.length, 1, 'lessons must survive: answer must not count toward the cap');
   assert.ok(out.say.length > 0);
   assert.ok(out.answer.length > 0);
-  assert.ok(out.answer.length < long.length, 'answer vẫn có trần RIÊNG của nó');
+  assert.ok(out.answer.length < long.length, 'answer still has its OWN cap');
 });
 
-// ─────────────────── `gist`: kênh thứ ba, và nó CÓ ăn vào trần (30/08)
 
-/**
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `answer` và `gist` NGƯỢC NHAU Ở ĐÚNG MỘT CÂU HỎI: nó có đi vào ngữ cảnh  │
- * │ Trợ lý không?                                                            │
- * │                                                                          │
- * │   answer  KHÔNG  ⇒ trần riêng, không cạnh tranh với ai                   │
- * │   gist    CÓ     ⇒ nằm trong `receipt_tokens`, cạnh tranh với `say`      │
- * │                                                                          │
- * │ Ai đó "dọn cho gọn" bằng cách miễn trừ `gist` như `answer` sẽ mở đúng    │
- * │ cái cửa mà cả hai trần sinh ra để đóng: một hoá đơn LẶP LẠI mỗi lượt.    │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
 const capFixture = (patch: Record<string, unknown> = {}) => ({
   status: 'done' as const,
-  say: 'Đã tra xong danh sách việc.',
+  say: 'Finished looking up the task list.',
   answer: '',
   gist: '',
-  artifacts: ['artifacts/P-1/T-01/ra.md'],
+  artifacts: ['artifacts/P-1/T-01/out.md'],
   lessons: [] as { kind: 'pitfall'; text: string }[],
   blocked_on: null,
   ...patch,
 });
 
-test('enforceCap: `gist` CÓ trần riêng — dài mấy cũng bị cắt', () => {
-  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40);
+test('enforceCap: `gist` HAS its own cap — no matter how long, it gets truncated', () => {
+  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40); // i18n-allow-vietnamese: arbitrary long filler content for cap-truncation testing
   const out = enforceCap(capFixture({ gist: long }), 800);
-  assert.ok(out.gist.length > 0, 'không được bỏ hẳn — Trợ lý cần sự kiện để neo');
-  assert.ok(out.gist.length < long.length, 'nhưng phải bị cắt');
+  assert.ok(out.gist.length > 0, 'must not be dropped entirely — the Assistant needs events to anchor on');
+  assert.ok(out.gist.length < long.length, 'but it must be truncated');
 });
 
-test('🔴 enforceCap: `gist` ĐI VÀO trần receipt — ngược hẳn `answer`', () => {
-  /**
-   * Trần chặt + `gist` dài. Nếu `gist` được miễn trừ như `answer` thì `say`
-   * sống nguyên; vì nó KHÔNG được miễn trừ nên bậc thang hy sinh phải chạy.
-   */
-  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40);
+test('🔴 enforceCap: `gist` COUNTS toward the receipt cap — the opposite of `answer`', () => {
+  const long = 'Việc AGE-1 đang chạy, việc AGE-2 chờ duyệt. '.repeat(40); // i18n-allow-vietnamese: arbitrary long filler content for cap-truncation testing
   const out = enforceCap(capFixture({ gist: long, say: 'x'.repeat(400) }), 120);
   assert.ok(out.gist.length < long.length);
-  assert.ok(out.say.length < 400, 'trần đã siết thật, không phải chỉ cắt riêng gist');
+  assert.ok(out.say.length < 400, 'the cap is really enforced, not just trimming gist alone');
 });
 
-test('⭐ enforceCap: bậc thang hy sinh — `lessons` chết TRƯỚC `gist`', () => {
-  // Thứ tự này là một quyết định, không phải tình cờ: bài học chỉ đáng giá ở
-  // lượt SAU, còn `gist` là thứ người dùng đọc NGAY BÂY GIỜ.
+test('⭐ enforceCap: sacrifice ladder — `lessons` dies BEFORE `gist`', () => {
   const out = enforceCap(
     capFixture({
-      gist: 'Ba việc In Progress: AGE-3, AGE-7, AGE-9.',
+      gist: 'Ba việc In Progress: AGE-3, AGE-7, AGE-9.', // i18n-allow-vietnamese: arbitrary filler content for cap-truncation testing
       lessons: [{ kind: 'pitfall' as const, text: 'x'.repeat(300) }],
       say: 'y'.repeat(200),
     }),
     90,
   );
-  assert.equal(out.lessons.length, 0, 'lessons hy sinh trước');
-  assert.ok(out.gist.length > 0, 'gist vẫn còn lại thứ gì đó');
+  assert.equal(out.lessons.length, 0, 'lessons is sacrificed first');
+  assert.ok(out.gist.length > 0, 'gist still has something left');
 });
 
-test('⭐ enforceCap: `gist` rỗng thì vẫn rỗng, không bịa', () => {
+test('⭐ enforceCap: an empty `gist` stays empty, never fabricated', () => {
   assert.equal(enforceCap(capFixture(), 800).gist, '');
 });
 
-test('📌 enforceCap: `gist` giữ xuống dòng — gạch đầu dòng là một phần nội dung', () => {
-  // User chốt 30/08: *"đôi khi là gạch đầu dòng từng ý"*. `say` gom khoảng trắng
-  // được vì nó chạy trong một dòng trạng thái; `gist` thì không.
-  const out = enforceCap(capFixture({ gist: '- AGE-3 chậm\n- AGE-7 lỗi đăng nhập' }), 800);
-  assert.ok(out.gist.includes('\n'), 'không được gom về một dòng');
+test('📌 enforceCap: `gist` keeps line breaks — bullet points are part of the content', () => {
+  const out = enforceCap(capFixture({ gist: '- AGE-3 chậm\n- AGE-7 lỗi đăng nhập' }), 800); // i18n-allow-vietnamese: arbitrary filler content for cap-truncation testing
+  assert.ok(out.gist.includes('\n'), 'must not be collapsed onto a single line');
 });
 
-// ───────────────────────────────── plan_id đọc được
 
-test('newPlanId: dạng đọc được, và sắp xếp từ điển vẫn đúng thứ tự thời gian', () => {
+test('newPlanId: a readable shape, and lexicographic sort still matches time order', () => {
   const id = newPlanId();
-  assert.match(id, /^P-\d{6}-\d{4}-[a-z0-9]{4}$/, `dạng lạ: ${id}`);
-  // Sắp xếp từ điển phải trùng thứ tự thời gian — đây là thứ `PlanStore` và
-  // `walk()` của artifacts đều dựa vào mà không ai khai ra thành lời.
+  assert.match(id, /^P-\d{6}-\d{4}-[a-z0-9]{4}$/, `unexpected shape: ${id}`);
   assert.ok('P-260819-1430-aaaa' < 'P-260819-1431-aaaa');
   assert.ok('P-260819-2359-zzzz' < 'P-260820-0000-aaaa');
 });

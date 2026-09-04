@@ -1,165 +1,165 @@
 # ROADMAP
 
-**Cập nhật:** 14/08/2026
-**Đang làm:** P2 (AgentCo). P1 (lớp điều khiển trực quan Claude Code) **hoãn** — sẽ trở thành "phòng Kỹ thuật" bên trong P2.
+**Updated:** 2026-08-14
+**Currently working on:** P2 (AgentCo). P1 (Claude Code visual control layer) **deferred** — will become the "Engineering room" inside P2.
 
 ---
 
-## 0. Nói thẳng về mốc 1 tuần
+## 0. Being honest about the 1-week milestone
 
-Toàn bộ spec trong `SPEC-2026-08-14-agentco.md` là **1–2 tháng**, không phải 1 tuần. Nếu cầm nguyên spec đó mà làm trong 7 ngày thì ngày thứ 7 sẽ có một hệ thống chạy được 60% — tức là **không golive được**, tức là mất trắng tuần đó.
+The whole spec in `SPEC-2026-08-14-agentco.md` is **1–2 months** of work, not one week. If we tried to build that spec whole in 7 days, day 7 would land us with a system that's 60% working — which means **it can't go live**, which means the whole week is wasted.
 
-Nên tuần 1 có một phạm vi riêng, cắt tàn nhẫn, ở dưới. **Luật: hết ngày 7 là golive dù còn thiếu gì.** Cơ chế bảo vệ deadline là cắt phạm vi, không phải kéo dài thời gian.
+So week 1 gets its own scope, cut ruthlessly, below. **Rule: whatever is or isn't done, we go live at the end of day 7.** The deadline is protected by cutting scope, not by stretching the timeline.
 
 ---
 
-## Tuần 1 — bản golive được (M0)
+## Week 1 — the go-live-able build (M0)
 
-Mục tiêu: **một người lạ tải về, chạy, giao một việc thật, nhìn thấy đội agent làm xong, và nhắn tin cho nó qua Telegram.** Chỉ vậy. Không hơn.
+Goal: **a stranger downloads it, runs it, hands it a real task, watches the agent team finish it, and can message it over Telegram.** That's it. Nothing more.
 
-### Làm
+### In scope
 
-| # | Hạng mục | Ghi chú |
+| # | Item | Note |
 |---|---|---|
 | 1 | Daemon + Claude Agent SDK + master session | `SPEC-cli.md` §1 |
-| 2 | Giao thức TaskBrief / Receipt + validate cứng | trần 800 token — **làm ngay ngày đầu**, gắn sau rất khó |
-| 3 | Scheduler DAG + concurrency + **cache priming gate** | `SPEC-token-economy.md` §3 |
-| 4 | Prompt phân tầng L0–L7 | §2 — sai ở đây là hỏng toàn bộ mục tiêu chi phí |
-| 5 | 4 role: `researcher`, `writer`, `coder`, `reviewer` | mức skill `medium` thôi |
-| 6 | Tri thức v0: markdown + frontmatter, `index.json`, tìm theo từ khoá | **chưa có Librarian, chưa có HOT/COLD hai tầng** |
-| 7 | Web UI: Kế hoạch + Đang diễn ra + Chat + ngăn kéo log | `SPEC-ui.md` §2.1–2.4, bản thô |
-| 8 | Bridge Telegram long-poll + ghép đôi bằng mã | không cần server |
-| 9 | `agentco cost` + `logs/usage.jsonl` | không đo thì không biết mình đang cháy tiền |
-| 10 | `LICENSE.md` (FSL) + README + 1 video 90 giây | golive cần cái này, không phải code |
+| 2 | TaskBrief / Receipt protocol + hard validation | 800-token ceiling — **do this on day one**, retrofitting it later is very hard |
+| 3 | DAG scheduler + concurrency + **cache priming gate** | `SPEC-token-economy.md` §3 |
+| 4 | Tiered prompt L0–L7 | §2 — getting this wrong wrecks the whole cost target |
+| 5 | 4 roles: `researcher`, `writer`, `coder`, `reviewer` | `medium` skill level only |
+| 6 | Knowledge v0: markdown + frontmatter, `index.json`, keyword search | **no Librarian yet, no two-tier HOT/COLD yet** |
+| 7 | Web UI: Plan + In Progress + Chat + log drawer | `SPEC-ui.md` §2.1–2.4, rough cut |
+| 8 | Telegram long-poll bridge + pairing by code | no server needed |
+| 9 | `agentco cost` + `logs/usage.jsonl` | if we're not measuring it, we don't know we're burning money |
+| 10 | `LICENSE.md` (FSL) + README + a 90-second video | go-live needs this too, not just code |
 
-### Phát sinh sau khi thẩm định SDK — xếp vào đâu
+### Items that came up after the SDK evaluation — where do they go
 
-| Hạng mục | Tuần 1? | Vì sao |
+| Item | Week 1? | Why |
 |---|---|---|
-| **Tách skills core / user** | ✅ **CÓ** | Phân tầng prompt sau này mới gắn thì phải viết lại — cùng lý do với Task/Receipt |
-| **Xử lý hết hạn mức subscription** (§9b) | ✅ **CÓ** | Chắc chắn xảy ra với khách thật. Golive mà không có = mất niềm tin ngay lần đầu |
-| `concierge` / `quick_action` | ❌ M1 | Là tối ưu, không phải chức năng. Tuần 1 master gọi worker bình thường cũng chạy được |
-| `use_preset: false` cho role phi-code | ✅ **CÓ** | Một trường trong yaml, tốn 5 phút, tiết kiệm 5,5 lần |
+| **Split core / user skills** | ✅ **YES** | Retrofitting prompt tiering later means rewriting it — same reasoning as Task/Receipt |
+| **Handle subscription quota running out** (§9b) | ✅ **YES** | Will definitely happen to real customers. Going live without this = losing trust on the very first encounter |
+| `concierge` / `quick_action` | ❌ M1 | An optimization, not a feature. Week 1, master calling a regular worker still works fine |
+| `use_preset: false` for non-coding roles | ✅ **YES** | One yaml field, 5 minutes of work, saves 5.5x |
 
-### KHÔNG làm tuần 1
+### NOT doing in week 1
 
-Librarian · HOT knowledge hai tầng · đồ thị trực quan · nạp tài liệu tay · license key Ed25519 · Docker · `bench` · replay · leo thang tier · Zalo/Messenger · thêm role qua UI · Tauri · `concierge`.
+Librarian · two-tier HOT knowledge · visual graph · manual document ingestion · Ed25519 license keys · Docker · `bench` · replay · tier escalation · Zalo/Messenger · adding roles via UI · Tauri · `concierge`.
 
-### Nhịp gợi ý
+### Suggested pace
 
-| Ngày | Việc |
+| Day | Work |
 |---|---|
-| 1 | Daemon + SDK + master chat được qua terminal |
-| 2 | Task/Receipt + 1 worker chạy được end-to-end |
-| 3 | Scheduler DAG + song song + priming gate |
-| 4 | Tri thức v0 + 4 role |
+| 1 | Daemon + SDK + master chattable over the terminal |
+| 2 | Task/Receipt + one worker running end-to-end |
+| 3 | DAG scheduler + parallelism + priming gate |
+| 4 | Knowledge v0 + 4 roles |
 | 5 | Web UI |
 | 6 | Telegram + `cost` |
-| 7 | README, video, license, golive |
+| 7 | README, video, license, go live |
 
-Nếu ngày 4 thấy trễ: bỏ luôn hạng mục 6 (tri thức), ship với role tĩnh. **Tri thức là thứ đáng hy sinh nhất vì nó cải tiến được sau mà không phải viết lại kiến trúc.** Task/Receipt và phân tầng prompt thì không.
-
----
-
-## M1 — Tiết kiệm & bền + Connector (2–3 tuần sau golive)
-
-**Cánh tay tự dựng** — đây là đặc sản, ưu tiên ngang với phần tiết kiệm.
-**⚠ Viết lại 31/08: REST bị BỎ khỏi v1** (lý do + điều kiện mở lại: khối chốt đầu `SPEC-connectors.md`).
-Đặc sản **không phải REST**, nó là *"người không biết code KHAI một năng lực, ta sinh MCP"* — và khách
-hàng đầu tiên của câu đó là **CLI**, đã chạy đầu-cuối 31/08.
-
-- ✅ Path A: dán MCP config + nút Test + gán theo role — **đã xây**
-- ✅ **Path B′: bọc một lệnh CLI** (`SPEC-arms §16`) — **đã xây**, còn nợ nút "Thử một action" và nối
-  `confirm` vào cổng duyệt
-- ~~Path B: form tay định nghĩa REST action~~ 🔒 **bỏ**
-- ~~Trần token connector (2 000)~~ đã bỏ từ 23/08 (số đo giết nó) · ~~chặn host ngoài `base_url`~~ đi
-  theo REST · **token chỉ ghi TÊN biến** thì giữ, và đó là luật của cả sản phẩm
-- 🔴 **Chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:`** — bẫy sinh ra từ chính chốt bỏ REST
-
-Phần tiết kiệm & bền:
-
-- Librarian + hàng đợi `_inbox` + gộp trùng + archive
-- HOT/COLD hai tầng tri thức + `knowledge_version`
-- `agentco bench` + 5 golden scenario + ghim ngưỡng
-- Bộ invariant test (`SPEC-2026-08-14-agentco.md` §10)
-- Replay theo nhánh con
-- Compaction master giữ prefix
-- Leo thang tier khi fail
-- Thêm role qua UI, hot reload
-
-Đây là giai đoạn biến sản phẩm chạy được thành sản phẩm **không đắt lên theo thời gian**.
+If day 4 is running behind: drop item 6 (knowledge) entirely, ship with static roles. **Knowledge is the thing most worth sacrificing, because it can be improved later without rewriting the architecture.** Task/Receipt and prompt tiering cannot be treated that way.
 
 ---
 
-## M2 — Bán được
+## M1 — Efficiency & durability + Connectors (2–3 weeks after go-live)
 
-- License key Ed25519 ký offline (đã thiết kế xong ở `product-decisions-2026-08-03.md` §5 — dùng lại nguyên)
-- Gumroad/Polar cho thanh toán, không tự làm backend
-- ~~**Connector: dán cURL, dán OpenAPI/Swagger**~~ 🔒 **BỎ 31/08** cùng với REST. Thứ thay chỗ nó:
-  **bản CLI của "Copy as cURL"** — người dùng dán một dòng lệnh **họ đã chạy được**, ta bóc argv và
-  hỏi *"chỗ nào thay đổi mỗi lần?"*. Họ **chép**, không **viết**. (`SPEC-arms §16h`)
-- Thư viện role mẫu theo ngành (nội dung, ecommerce, freelance dev)
-- Nạp tài liệu tay → tự chia node
-- Trình duyệt đồ thị tri thức
-- Docker + hướng dẫn VPS
+**Self-built arms** — this is the signature feature, weighted equally with the efficiency work.
+**⚠ Rewritten 08/31: REST DROPPED from v1** (reasons + reopening conditions: pinned block at the top of `SPEC-connectors.md`).
+The signature feature **isn't REST**, it's *"a non-coder DECLARES a capability, we generate the MCP"* — and the
+first customer of that sentence is the **CLI**, which has run end-to-end since 08/31.
+
+- ✅ Path A: paste MCP config + Test button + assign by role — **built**
+- ✅ **Path B′: wrap a CLI command** (`SPEC-arms §16`) — **built**, still owes a "Try one action" button and wiring
+  `confirm` into the approval gate
+- ~~Path B: hand-written form defining a REST action~~ 🔒 **dropped**
+- ~~2,000-token connector cap~~ dropped as of 08/23 (killed by the measurements) · ~~blocking hosts outside `base_url`~~
+  went with REST · **a token only ever holds a variable NAME** stays, and that's a rule for the whole product
+- 🔴 **Block `curl`/`wget`/`Invoke-WebRequest` in `run:`** — a trap that exists precisely because REST was dropped
+
+Efficiency & durability work:
+
+- Librarian + `_inbox` queue + dedup + archive
+- Two-tier HOT/COLD knowledge + `knowledge_version`
+- `agentco bench` + 5 golden scenarios + pinned thresholds
+- Invariant test suite (`SPEC-2026-08-14-agentco.md` §10)
+- Replay by sub-branch
+- Master compaction that preserves the prefix
+- Tier escalation on failure
+- Add roles via UI, hot reload
+
+This is the phase that turns a working product into one that **doesn't get more expensive over time**.
+
+---
+
+## M2 — Sellable
+
+- Ed25519 offline-signed license keys (already designed in `product-decisions-2026-08-03.md` §5 — reused as-is)
+- Gumroad/Polar for payments, no in-house backend
+- ~~**Connector: paste cURL, paste OpenAPI/Swagger**~~ 🔒 **DROPPED 08/31** along with REST. What replaces it:
+  **the CLI version of "Copy as cURL"** — the user pastes a command line **they've already run successfully**, we
+  parse the argv and ask *"which part changes each time?"* They **copy**, they don't **write**. (`SPEC-arms §16h`)
+- Library of sample roles by industry (content, ecommerce, freelance dev)
+- Manual document ingestion → auto-split into nodes
+- Knowledge graph browser
+- Docker + VPS guide
 - Cloudflare Tunnel + Zalo/Messenger bridge
 
 ---
 
-## M3 — P1 quay lại
+## M3 — P1 comes back
 
-"Phòng Kỹ thuật": role `coder` + `reviewer` + `architect` cộng với một view riêng cho dự án phần mềm — spec/plan/tiến độ/bản đồ file. Chính là P1, nhưng nằm trong P2 thay vì là sản phẩm riêng.
+"Engineering room": `coder` + `reviewer` + `architect` roles plus a dedicated view for software projects — spec/plan/progress/file map. This is P1, but living inside P2 instead of being a separate product.
 
-Lý do hoãn: hai sản phẩm trùng nhau ~70–75% hạ tầng, và P2 bán được cho cả người ngoài ngành phần mềm.
+Reason for deferring: the two products share ~70–75% of their infrastructure, and P2 sells to people outside the software industry too.
 
 ---
 
 ## License
 
-**FSL 1.1 → Apache 2.0 sau 2 năm.** Cá nhân, học tập, nội bộ, thử nghiệm: miễn phí. PR và fork cá nhân: được. Cấm: cung cấp sản phẩm cạnh tranh trực tiếp.
+**FSL 1.1 → Apache 2.0 after 2 years.** Personal, educational, internal, evaluation use: free. PRs and personal forks: allowed. Prohibited: offering a directly competing product.
 
-Gọi đúng tên là **source-available**, không phải open source.
+The correct name for this is **source-available**, not open source.
 
-Chi tiết đầy đủ: `LICENSE.md`.
+Full details: `LICENSE.md`.
 
 ---
 
-## Rủi ro kỹ thuật
+## Technical risks
 
-| Rủi ro | Mức | Ứng phó |
+| Risk | Level | Response |
 |---|---|---|
-| **Chi phí token cao khiến trải nghiệm tệ** | cao | Toàn bộ `SPEC-token-economy.md` tồn tại vì cái này |
-| **Auth Claude trong container/VPS vướng** | trung bình | Thử sớm ở M2; `agentco doctor` phải chẩn đoán rõ |
-| **Agent SDK breaking change** | trung bình | `ProviderAdapter` đã tách; ghim version, đọc changelog |
-| **Issue #247 (MCP phá cache) không được sửa** | trung bình | `concierge` đã né được; `master.mcp` để dạng setting |
-| **`sessionStore` còn alpha** | thấp | Không phụ thuộc session resume — mọi giá trị nằm ở artifact |
+| **High token costs make for a bad experience** | high | The whole of `SPEC-token-economy.md` exists because of this |
+| **Claude auth trouble inside a container/VPS** | medium | Try it early in M2; `agentco doctor` must diagnose it clearly |
+| **Agent SDK breaking change** | medium | `ProviderAdapter` already isolates it; pin the version, read the changelog |
+| **Issue #247 (MCP breaks the cache) stays unfixed** | medium | `concierge` already routes around it; `master.mcp` stays a setting |
+| **`sessionStore` is still alpha** | low | Not dependent on session resume — everything of value lives in the artifact |
 
 ---
 
-## Xác minh SDK — ✅ ĐÃ LÀM XONG 14/08/2026
+## SDK verification — ✅ DONE 2026-08-14
 
-Kết quả đầy đủ: **`FINDINGS-sdk-2026-08-14.md`**.
+Full results: **`FINDINGS-sdk-2026-08-14.md`**.
 
-| Câu hỏi | Kết quả |
+| Question | Result |
 |---|---|
-| SDK có tồn tại, dùng được? | ✅ `@anthropic-ai/claude-agent-sdk@0.3.231`, chạy được ngay |
-| Dùng subscription hay bắt buộc API key? | ✅ **Subscription Claude Code trên máy**, không cần API key |
-| Điều khiển được cache breakpoint? | ✅ **`SYSTEM_PROMPT_DYNAMIC_BOUNDARY`** — cross-session cache. Tốt hơn giả định. |
-| Kế toán token có đủ chi tiết? | ✅ `usage` + `modelUsage` có `cache_read`/`cache_creation`/`costUSD` theo model |
-| Giới hạn song song thực tế | ❌ **chưa đo** — chuyển xuống danh sách dưới |
+| Does the SDK exist and actually work? | ✅ `@anthropic-ai/claude-agent-sdk@0.3.231`, works out of the box |
+| Subscription-based, or is an API key required? | ✅ **Local Claude Code subscription**, no API key needed |
+| Can the cache breakpoint be controlled? | ✅ **`SYSTEM_PROMPT_DYNAMIC_BOUNDARY`** — cross-session cache. Better than assumed. |
+| Is token accounting detailed enough? | ✅ `usage` + `modelUsage` carry `cache_read`/`cache_creation`/`costUSD` per model |
+| Real-world parallelism ceiling | ❌ **not yet measured** — moved to the list below |
 
-### Còn phải kiểm — làm trước ngày 3 của tuần 1
+### Still to check — before day 3 of week 1
 
-1. **`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` với tri thức HOT ~2K đặt trước marker có hit cross-process không?** Đây là bài kiểm chứng trực tiếp cho `SPEC-token-economy.md` §2.
-2. ~~`agents` (subagent SDK) vs tự chạy `query()`~~ → **ĐÃ QUYẾT, không cần test.** Tự viết. Lý do phủ quyết: output subagent đi thẳng vào context cha, phá giao thức Receipt. Cache vẫn chung vì cache là thuộc tính của prefix trên server, không phải của cách sinh agent (bằng chứng: probe2, 4 call độc lập đều `cr=10 555`). Mượn shape `AgentDefinition` làm định dạng file role.
-3. Bao nhiêu `query()` đồng thời thì dính 429 → đặt mặc định `concurrency`.
-3b. **`jsonSchema` trong `SDKControlInitializeRequest` có phải structured output không?** Nếu có, Receipt được SDK ép schema **miễn phí** thay vì ta validate rồi hỏi lại (tốn một lượt). Đây là thứ rẻ nhất có thể tìm được — kiểm ngay ngày 2.
-4. **Đo lại overhead với task NHIỀU LƯỢT.** Probe dùng `maxTurns: 1` là trường hợp xấu nhất; khoản `cache_write` ~2 600 khấu hao qua các lượt sau. Cần số thật để tính tiền đúng.
-5. Khoản `cache_write` ~2 600/call lặp lại — ép xuống được không? (để M1)
-6. `sessionStore` (alpha) có dùng được cho chế độ VPS không. (để M2)
+1. **Does `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` with ~2K of HOT knowledge placed before the marker hit cross-process?** This is the direct proof needed for `SPEC-token-economy.md` §2.
+2. ~~`agents` (SDK subagent) vs. hand-running `query()`~~ → **DECIDED, no test needed.** Hand-write it. Veto reason: subagent output flows straight into the parent's context, breaking the Receipt protocol. The cache is still shared, because the cache is a property of the prefix on the server, not of how the agent was spawned (evidence: probe2, 4 independent calls all `cr=10,555`). Borrow `AgentDefinition`'s shape as the role file format.
+3. How many concurrent `query()` calls before hitting a 429 → sets the default `concurrency`.
+3b. **Is `jsonSchema` in `SDKControlInitializeRequest` structured output?** If so, the Receipt schema is enforced by the SDK **for free**, instead of us validating and re-asking (which costs a turn). This is the cheapest possible win to find — check it on day 2.
+4. **Re-measure overhead on a MULTI-TURN task.** The probe used `maxTurns: 1`, the worst case; the ~2,600 `cache_write` amortizes over subsequent turns. Need the real number to price this correctly.
+5. Can the recurring ~2,600/call `cache_write` be pushed down? (for M1)
+6. Is the `sessionStore` (alpha) usable for VPS mode? (for M2)
 
-### Ba điều chỉnh spec phát sinh từ kết quả đo
+### Three spec adjustments that came out of the measurements
 
-- **Role phi-code không dùng preset `claude_code`** — chênh ~6 300 token, giá gấp 5,5 lần. Thêm `use_preset: false` mặc định vào `roles/*.yaml`; chỉ `coder`/`reviewer` bật.
-- **Sàn ~13 200 token/worker call, không giảm được** (`allowedTools` không phải đòn bẩy kích thước) → luật mới: **ít task lớn hơn nhiều task nhỏ**.
-- **Master không gắn MCP.** [Issue #247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247): MCP phá prompt cache khi resume. MCP chỉ gắn cho worker (one-shot, không resume). Điều này **củng cố** thiết kế stateless.
+- **Non-coding roles don't use the `claude_code` preset** — a ~6,300-token gap, 5.5x the price. Add `use_preset: false` as the default in `roles/*.yaml`; only `coder`/`reviewer` turn it on.
+- **A ~13,200-token/worker-call floor that can't be reduced** (`allowedTools` isn't a size lever) → new rule: **fewer, larger tasks over many small ones**.
+- **Master doesn't attach MCP.** [Issue #247](https://github.com/anthropics/claude-agent-sdk-typescript/issues/247): MCP breaks prompt cache on resume. MCP only attaches to workers (one-shot, never resumed). This actually **reinforces** the stateless design.

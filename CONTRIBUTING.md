@@ -62,7 +62,7 @@ change would require collecting signatures again, and one unreachable contributo
 ```bash
 npm install
 npm run build:all     # compile server + web UI
-npm test              # 853 tests, ~20 seconds, 0 tokens, no LLM calls
+npm test              # 875 tests, ~20 seconds, 0 tokens, no LLM calls
 npm run dev           # run the CLI from source
 ```
 
