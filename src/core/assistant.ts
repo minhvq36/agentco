@@ -1409,7 +1409,7 @@ export function reachDiff(
   cap = 4,
 ): string[] {
   // `armReach` returns `Label (shortcut to …)`. The diff keeps only the label — constraint 3.
-  const short = (s: string) => s.replace(/\s*\(đường tắt tới .*$/, '').trim();
+  const short = (s: string) => s.replace(/\s*\(shortcut to .*$/, '').trim();
   const lines: string[] = [];
   for (const id of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     const was = new Set(before.get(id) ?? []);
@@ -2401,7 +2401,46 @@ export class Assistant {
     const models = this.office.company.models;
     const { text, usage } = await this.askOneShot(
       // The request is the user's own words, verbatim — the language signal.
-      `Plan for the request below. Reply with exactly one JSON object, as specified.\n\nRequest: ${request}`,
+      `Plan for the request below. Reply with exactly one JSON object, as specified.\n\n` +
+        `Request: ${request}\n\n` +
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ 🔴 THE LANGUAGE CLAUSE HAD TO SIT HERE, NEXT TO THE REQUEST. (user      │
+         * │ measured 05/09, `P-260905-0100-zquw`)                                  │
+         * │                                                                    │
+         * │ `route()` and `report()` each carry this clause ON THE EXACT LINE       │
+         * │ of the field it governs. `plan()` carried NOTHING — it leaned          │
+         * │ entirely on two sentences sitting in the cached prefix (the JSON        │
+         * │ template's *"in the user's language"*, and the closing line in           │
+         * │ `buildAssistantPrompt`). It lost, and it lost in the worst place:       │
+         * │ `plan()` runs `persistSession: false`, so unlike the other two it       │
+         * │ has NO conversation history — the request quoted above is the only      │
+         * │ signal it holds, against a whole `skills/assistant.md` block.           │
+         * │                                                                    │
+         * │ Measured: an ENGLISH request came back as a Vietnamese plan that        │
+         * │ went further and wrote its own constraint *"write it in <that            │
+         * │ language>"* onto T-02 — so every worker downstream inherited it.        │
+         * │ One decision point, the whole chain hanging off it.                    │
+         * │                                                                    │
+         * │ ⚠ The second sentence is the load-bearing one. The office's own          │
+         * │ skills block is an EXAMPLE written in a language; an abstract rule       │
+         * │ loses to an example every time, so the clause has to say outright       │
+         * │ that it OUTRANKS it rather than just restating itself louder.           │
+         * │ → [[agentco-prompt-rules-lose-to-examples]] ·                           │
+         * │   [[agentco-rule-must-see-what-it-governs]]                             │
+         * │                                                                    │
+         * │ ⚠ NAMES NO LANGUAGE — it points at the request. That is what lets       │
+         * │ someone writing in a language we ship no catalogue for get a plan       │
+         * │ in their own. `test/no-pinned-language.test.ts` guards it.              │
+         * │                                                                    │
+         * │ Costs ~40 tokens per planning turn, and this is a VOLATILE message,     │
+         * │ so it never rewrites the cached prefix. Paid only because there is       │
+         * │ now a measured failure — not to be safe. → SESSIONS_MEMORY §8k          │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        `Write \`steps\`, \`goal\`, \`constraints\` and \`ask\` in the SAME language as that request. ` +
+        `That request outranks every other text in this prompt on the question of language — including ` +
+        `this office's own instructions, however they happen to be written.`,
       models[models.planner],
     );
 

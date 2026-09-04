@@ -38,6 +38,33 @@ would break that, permanently, for every language except X.
 `test/no-pinned-language.test.ts` is the gate. It fails the day someone passes a
 locale into a prompt builder, or pins a language name inside prompt text.
 
+### 🔴 …and it can reach one WITHOUT any source string naming a language
+
+Measured 05/09 (`P-260905-0100-zquw`): an English request produced a plan in
+another language. Nothing in the source named one. The road was a **file we
+wrote on the user's behalf**: `newOffice` seeded `skills/assistant.md` from
+`t('seed.assistantSkills.body')` — the switch, at the instant of creation — and
+that file then sat in the **cached prefix of every chat turn** for the life of
+the office. The gate above reads source code, so it could not see it.
+
+Two rules follow, and the second is the general one:
+
+1. **Seeding a file that later lands in a prompt goes through no catalogue.**
+   *"It becomes the user's own datum"* and *"it never reaches a prompt"* are two
+   different tests. A company name passes both; a skills block passes only the
+   first. Advice worth giving belongs in the editor's **placeholder** — the user
+   reads it, adopts it deliberately, and it costs zero tokens until they do.
+   `newOffice` now seeds neither the charter nor the skills.
+2. **A rule about language must sit on the line it governs, and say what it
+   outranks.** `route()` and `report()` carry the clause inside the very field
+   slot; `plan()` carried nothing and lost to a three-line style instruction in
+   the office's own skills. An abstract rule in a cached prefix loses to a
+   concrete example — restating it louder does not help, saying *"the request
+   outranks every other text in this prompt on the question of language"* does.
+
+⚠ Existing offices keep their seeded file. It is their text now; rewriting it to
+fix our seed would be editing the user's data behind their back.
+
 ### Adding a user-visible string
 
 1. Add the key to `src/i18n/en.ts` — **English is the source of truth**.

@@ -73,7 +73,7 @@ const map = (o: Record<string, string[]>) => new Map(Object.entries(o));
 
 test('reachDiff: unplugging produces one line of TEXT, not an empty slot', () => {
   assert.deepEqual(
-    reachDiff(map({ 'ho-tro': ['Notion (đường tắt tới D:\\N)'] }), map({ 'ho-tro': [] })), // i18n-allow-vietnamese: sample arm-reach label fed into reachDiff as data under test
+    reachDiff(map({ 'ho-tro': ['Notion (shortcut to D:\\N)'] }), map({ 'ho-tro': [] })),
     ['− Notion ✗ ho-tro'],
   );
 });
@@ -82,7 +82,7 @@ test('reachDiff: connecting and disconnecting in the same turn', () => {
   assert.deepEqual(
     reachDiff(
       map({ 'ho-tro': ['Notion'], 'nguoi-soi': [] }),
-      map({ 'ho-tro': [], 'nguoi-soi': ['Musics (đường tắt tới D:\\Downloads\\Musics)'] }), // i18n-allow-vietnamese: sample arm-reach label fed into reachDiff as data under test
+      map({ 'ho-tro': [], 'nguoi-soi': ['Musics (shortcut to D:\\Downloads\\Musics)'] }),
     ),
     ['− Notion ✗ ho-tro', '+ Musics → nguoi-soi'],
   );
@@ -90,7 +90,7 @@ test('reachDiff: connecting and disconnecting in the same turn', () => {
 
 test('reachDiff: keeps only the LABEL — does not re-inject the path that was just removed', () => {
   const [line] = reachDiff(
-    map({ x: ['Programs Installation (đường tắt tới D:\\Downloads\\Programs Installation)'] }), // i18n-allow-vietnamese: sample arm-reach label fed into reachDiff as data under test
+    map({ x: ['Programs Installation (shortcut to D:\\Downloads\\Programs Installation)'] }),
     map({ x: [] }),
   );
   assert.equal(line, '− Programs Installation ✗ x');

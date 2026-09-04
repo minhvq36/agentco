@@ -48,18 +48,6 @@ const SCOPE = ['src', 'web/src', 'test', 'scripts', 'docs', 'README.md', 'packag
 /** The single permanent exemption: the Vietnamese catalogue itself. */
 const ALWAYS_ALLOWED = ['src/i18n/vi.ts'];
 
-/**
- * ⏳ MIGRATION SCAFFOLD — this list only ever shrinks, and P6 deletes it.
- *
- * Each entry is a path prefix still awaiting its phase. Finishing a phase means
- * deleting its lines here; that deletion IS the phase's exit criterion, which is
- * why the list is spelled out by phase rather than as one clever glob.
- */
-const PENDING: { prefix: string; phase: string }[] = [{ prefix: 'src/', phase: 'P2 + P3' }];
-
-/** Files already migrated, so they are held to the rule even inside a pending tree. */
-const ENFORCED_EARLY = ['src/i18n/', 'scripts/check-language.ts', 'scripts/fix-comment-boxes.ts', 'docs/CLAUDE.md'];
-
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.state', 'company']);
 const TEXT_FILE = /\.(ts|tsx|md|json|yaml|yml|css|html)$/;
 
@@ -88,9 +76,7 @@ function walk(target: string, out: string[]): void {
 }
 
 function isExempt(file: string): boolean {
-  if (ALWAYS_ALLOWED.includes(file)) return true;
-  if (ENFORCED_EARLY.some((p) => file === p || file.startsWith(p))) return false;
-  return PENDING.some((p) => file === p.prefix || file.startsWith(p.prefix));
+  return ALWAYS_ALLOWED.includes(file);
 }
 
 const files: string[] = [];
@@ -110,8 +96,7 @@ for (const file of files) {
 const checked = files.filter((f) => !isExempt(f)).length;
 
 if (offences.length === 0) {
-  const waiting = PENDING.map((p) => `${p.prefix} (${p.phase})`).join(', ');
-  console.log(`language: ${checked} files clean${waiting ? ` · still pending: ${waiting}` : ''}`);
+  console.log(`language: ${checked} files clean`);
   process.exit(0);
 }
 

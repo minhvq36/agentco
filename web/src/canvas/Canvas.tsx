@@ -1,4 +1,4 @@
-import {
+﻿import {
   forwardRef,
   useCallback,
   useEffect,
@@ -506,9 +506,17 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
             return (
               <g
                 key={n.id}
+                /*
+                  `is-keydead` — a service refused a credential this arm runs
+                  on, so the office is NOT fully green until someone signs in
+                  again. Its own class rather than reusing `is-error`: that one
+                  is live task state and clears itself, while this one only
+                  clears when a person acts. The server decides it from a fact
+                  it wrote down, never from a guess. → `office.ts §keyDeadOf`
+                */
                 className={`node node-${n.kind}${n.missing ? ' is-missing' : ''}${
-                  n.kind === 'agent' && !n.connected ? ' is-off' : ''
-                }`}
+                  n.keyDead ? ' is-keydead' : ''
+                }${n.kind === 'agent' && !n.connected ? ' is-off' : ''}`}
                 data-node={n.id}
                 transform={`translate(${n.x},${n.y})`}
                 ref={(el) => {

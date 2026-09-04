@@ -148,8 +148,25 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
             │ → `ArmDialog.tsx` (where the account stopped being glued on)   │
             └────────────────────────────────────────────────────────────────┘
           */}
-          <text className="node-sub" x={38} y={s.h / 2 + 13}>
-            {node.missing ? t('node.armMissing') : node.via ? cut(node.via, 16) : t('node.armFallback')}
+          {/*
+            ⚠ A RED BORDER ALONE IS A RIDDLE. The colour says *"something is
+            wrong here"*; only the sub-line says **what**, and that this one is
+            fixable by signing in rather than by editing anything.
+
+            It takes priority over `via` because the two answer different
+            questions and only one of them is urgent: `via` answers *"which
+            account is this"*, this answers *"can it run at all"*. `missing`
+            still wins over both — an arm whose config has vanished cannot be
+            repaired by signing in, so offering that would be the wrong door.
+          */}
+          <text className={`node-sub${node.keyDead && !node.missing ? ' node-sub-alert' : ''}`} x={38} y={s.h / 2 + 13}>
+            {node.missing
+              ? t('node.armMissing')
+              : node.keyDead
+                ? t('node.armKeyDead')
+                : node.via
+                  ? cut(node.via, 16)
+                  : t('node.armFallback')}
           </text>
         </>
       )}

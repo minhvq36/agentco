@@ -699,8 +699,14 @@ Four mandatory consequences:
 
 1. **Still writes a file as before**, even with `deliver: reply`. It's free, and it anchors a later `refine`
    (*"soften the tone of that answer"*) along with an audit trail. Only **stops announcing it**.
-2. **Suppress the `whereBlock` for a `reply` task.** The person just finished reading the answer; pasting a path
-   underneath is repeating the same thing in machine language.
+2. **Suppress the `whereBlock` for a run that is ONLY a reply.** The person just finished reading the answer;
+   pasting a path underneath is repeating the same thing in machine language.
+
+   > 🔴 **Corrected 05/09.** This was implemented as *"drop the receipt of any task carrying an `answer`"*, which
+   > is a different rule and a wrong one. In a MIXED run (`P-260905-0100-zquw`: one `file` task, one `reply` task)
+   > it threw away the reply task's **verified file landing**, so the run reported zero outputs while two files
+   > sat on disk — and the chat had no clickable path at all. The condition is the **shape of the run**
+   > (`soloReply`), not the presence of an `answer` on one receipt. → `office.ts`, the box above `const quiet`
 3. **A Plan with only ONE `reply` task drops `report()` entirely.** The employee's answer **is** the report. This
    is where the "friction" disappears: no more two messages saying the same thing. And it's **one Assistant turn
    cheaper per question** — the support office is exactly where this cost shape repeats the most.

@@ -26,10 +26,11 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
+import fs from 'node:fs';
 import type { ServerResponse } from 'node:http';
 
 import type { Company } from '../core/company.js';
-import { companyPaths } from '../core/paths.js';
+import { companyPaths, type CompanyPaths } from '../core/paths.js';
 import { RunError } from '../core/types.js';
 import { t } from '../i18n/index.js';
 import { findArm } from '../core/catalog.js';
@@ -887,6 +888,7 @@ export async function refreshDue(company: Company): Promise<number> {
        * could lose **the whole store**.
        */
       saveOAuth(paths, name, next);
+      logRefresh(paths, { name, outcome: 'ok', ...(next.expires_at ? { expiresAt: next.expires_at } : {}) });
       n++;
     } catch (e) {
       /**
@@ -902,12 +904,33 @@ export async function refreshDue(company: Company): Promise<number> {
        *    cause, and 401 says "wrong key" rather than "dead key".
        */
       if (e instanceof DeadGrantError) {
-        saveOAuth(paths, name, { ...acc, dead: { at: new Date().toISOString(), why: e.message } });
+        /**
+         * ⚠ RE-READ BEFORE WRITING. `acc` is the copy this sweep started with,
+         * and a refusal is the one moment it is most likely to be out of date:
+         * the most common way to be refused is that someone else already
+         * rotated the credential successfully. → `deadMarkStillApplies`
+         */
+        const onDisk = readOAuth(paths)[name];
+        if (!onDisk || !deadMarkStillApplies(acc, onDisk)) {
+          logRefresh(paths, { name, outcome: 'refused-but-superseded' });
+          continue;
+        }
+        saveOAuth(paths, name, { ...onDisk, dead: { at: new Date().toISOString(), why: e.message } });
+        logRefresh(paths, { name, outcome: 'dead', detail: e.message });
         process.emitWarning(
           t('srv.oauthKeyDead', { label: acc.label ?? name, detail: e.message }),
         );
+      } else {
+        // Transient failure: must NOT stop the loop, and no need to warn — a
+        // warning every 15 minutes for a passing blip teaches people to ignore
+        // the log. It IS written to the refresh log, which nobody reads until
+        // something breaks and then it is the only witness there is.
+        logRefresh(paths, {
+          name,
+          outcome: 'transient',
+          detail: e instanceof Error ? e.message : String(e),
+        });
       }
-      // Transient failure: must NOT stop the loop, and no need to warn. Retry next tick.
     }
   }
   return n;
@@ -978,6 +1001,143 @@ export async function oauthForget(company: Company, name: string): Promise<void>
 
 /** Sweep interval. A Notion key lives 8 hours, the refresh threshold is 4 — 15 minutes is plenty. */
 export const REFRESH_TICK_MS = 15 * 60_000;
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ONE SWEEP AT A TIME — and "one place in the code" was NOT enough.           │
+ * │                                                                          │
+ * │ `refreshDue` already lived at exactly one call site, and the comment there   │
+ * │ concluded *"no lock fixes this — only one worker doing it does"*. Half        │
+ * │ right: one place in SPACE, but `setInterval` gives no guarantee at all in     │
+ * │ TIME. A sweep that outlives its own 15-minute interval (a socket stalled      │
+ * │ across a laptop sleep — the token endpoint has no timeout, deliberately)      │
+ * │ is still running when the next tick starts a second one. Both read the        │
+ * │ same `refresh_token`, both send it, and the service rotates for the first     │
+ * │ ⇒ the second is told the credential is dead. Which is exactly what the        │
+ * │ loop was built to prevent.                                                │
+ * │                                                                          │
+ * │ Measured 09/03: three accounts across THREE different services marked         │
+ * │ dead inside 4 seconds — Notion `invalid_grant`, GitHub twice                  │
+ * │ `incorrect_client_credentials` — while the credentials still had 2h13m        │
+ * │ of life and the refresh token had 180 of its 181 days left. Nothing had       │
+ * │ expired. They were refused.                                                │
+ * │                                                                          │
+ * │ ⚠ DROP the overlapping tick, never queue it. A queued sweep runs against     │
+ * │ a store that has already moved on, which is the same collision one tick      │
+ * │ later. Skipping costs nothing: the credential is refreshed at 50% of its      │
+ * │ life, so there are ~16 more chances before anything is at risk.              │
+ * │                                                                          │
+ * │ ⚠ This guard is per PROCESS. Two daemons on one `company/` folder still      │
+ * │ collide, and no in-process flag can see that. → SESSIONS_MEMORY §8j          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function oneSweepAtATime(sweep: () => Promise<unknown>): () => void {
+  let running = false;
+  const release = (): void => {
+    running = false;
+  };
+  return () => {
+    if (running) return;
+    running = true;
+    /**
+     * ⚠ `then(release, release)`, NOT `finally` — and the difference is the
+     * daemon staying alive.
+     *
+     * `finally` re-throws, so a sweep that rejects becomes an UNHANDLED
+     * REJECTION inside a timer callback, and Node's default for that is to
+     * kill the process. A background credential sweep is the last thing that
+     * should be able to take the whole company down. Caught by
+     * `test/oauth-refresh-race.test.ts` on the first run.
+     *
+     * Swallowing is right *here* and nowhere near here: this function schedules,
+     * it does not decide error policy — the caller already catches and reports
+     * (`server.ts §tick`). What it must guarantee is only that the flag is
+     * released on BOTH paths, including a synchronous throw, or it latches ON
+     * and refreshing goes silent for the life of the daemon — a failure that
+     * looks exactly like *"credentials just quietly stopped renewing"*.
+     */
+    try {
+      void sweep().then(release, release);
+    } catch {
+      release();
+    }
+  };
+}
+
+/**
+ * A refresh was REFUSED — is it safe to record that on this account?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NO, when the store no longer holds what we set out with. That means          │
+ * │ someone else refreshed successfully while this attempt was in flight, and     │
+ * │ the refusal is just the losing half of a race — the account is FINE, and      │
+ * │ the credential now on disk is the good one.                                 │
+ * │                                                                          │
+ * │ Writing `{ ...acc, dead }` in that state does two separate harms with one    │
+ * │ line: it marks a working account dead (`needsRefresh` then returns false      │
+ * │ FOREVER, so nothing retries), and `...acc` is the copy read at the start      │
+ * │ of the losing sweep, so the write ALSO overwrites the freshly rotated        │
+ * │ credential with the stale one. A recoverable stumble becomes a credential     │
+ * │ that only a human can bring back.                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+/**
+ * One line per refresh attempt. Append-only, and **never throws**.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Why it exists at all: on 09/03 three credentials died within 4 seconds,     │
+ * │ and answering *"why"* a day later had to be done by subtracting `expires_at` │
+ * │ from timestamps, because not one attempt had ever been written down. The     │
+ * │ loop only ever spoke when it gave up. Everything before that — the sweeps    │
+ * │ that worked, the ones that stalled, the one that lost a race — left no        │
+ * │ trace at all.                                                             │
+ * │                                                                          │
+ * │ ⚠ NAMES ONLY, NEVER A CREDENTIAL VALUE. This file is plain text a user can   │
+ * │ paste into a bug report. The account name (`NOTION_OAUTH_AFAFBCD6`) is an     │
+ * │ identifier; the token is a key. → `secrets.ts`, same rule everywhere.        │
+ * │                                                                          │
+ * │ ⚠ A BROKEN LOG MUST NOT BREAK REFRESHING. A full disk, a read-only folder,   │
+ * │ a locked file — none of those are a reason to stop keeping credentials       │
+ * │ alive, and swallowing here is the one place a bare `catch` is right: the      │
+ * │ caller's job does not depend on the answer.                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function logRefresh(
+  paths: CompanyPaths,
+  entry: {
+    name: string;
+    /**
+     * `ok` refreshed · `dead` the service refused and we recorded it ·
+     * `refused-but-superseded` refused, but the store had already moved on ⇒ a
+     * lost race, NOT a dead credential · `transient` network or 5xx, retried
+     * next sweep.
+     */
+    outcome: 'ok' | 'dead' | 'refused-but-superseded' | 'transient';
+    detail?: string;
+    expiresAt?: number;
+  },
+): void {
+  try {
+    fs.mkdirSync(paths.logs, { recursive: true });
+    fs.appendFileSync(
+      paths.refreshLog,
+      `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`,
+      'utf8',
+    );
+  } catch {
+    // Deliberately silent — see the box above.
+  }
+}
+
+export function deadMarkStillApplies(
+  readAt: Pick<OAuthAccount, 'access_token' | 'refresh_token'>,
+  onDisk: Pick<OAuthAccount, 'access_token' | 'refresh_token'> | undefined,
+): boolean {
+  // Deleted while we were away ⇒ nothing to mark, and re-creating it would
+  // resurrect an account the user just removed.
+  if (!onDisk) return false;
+  return onDisk.access_token === readAt.access_token && onDisk.refresh_token === readAt.refresh_token;
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);

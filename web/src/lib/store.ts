@@ -28,6 +28,8 @@ import type {
 } from './types';
 import { plural, resolveLocale, setLocale, t } from '@i18n';
 
+import { mergeUserEcho } from './chat-echo';
+
 export interface ChatMessage {
   id: number;
   /**
@@ -51,6 +53,14 @@ export interface ChatMessage {
    * in ChatPanel.
    */
   files?: string[];
+  /**
+   * Drawn before the server confirmed it, and not yet settled by the echo.
+   *
+   * Only ever set on a `role: 'user'` bubble this tab just sent. The key is
+   * REMOVED once the echo arrives, so "pending" is never a stale label sitting
+   * on a message that really did land. → `mergeUserEcho`
+   */
+  pending?: boolean;
 }
 
 /** An agent's live state. Kept outside the DOM so it survives every render. */
@@ -216,6 +226,19 @@ export interface AppState {
   armsVersion: number;
 
   /**
+   * The OAuth account name saved by the sign-in that caused the latest
+   * `armsVersion` bump — `null` when the bump came from anything else
+   * (plugging in, withdrawing, deleting).
+   *
+   * It rides alongside `armsVersion` rather than being derived later because
+   * it is the ONE thing the dialog cannot work out for itself: re-authorising
+   * an account that already exists adds no new name to the list, so a
+   * list-diff cannot tell **which** account was just repaired — and gets it
+   * wrong precisely when someone signs in as a different account by mistake.
+   */
+  linkedAccount: string | null;
+
+  /**
    * Files just dropped onto the library node, waiting for the panel to take them.
    *
    * The canvas does NOT upload. The whole upload flow — asking on a name clash,
@@ -265,6 +288,7 @@ const initial: AppState = {
   knowledgeVersion: 0,
   artifactsVersion: 0,
   armsVersion: 0,
+  linkedAccount: null,
   pendingDocs: null,
   revealArtifact: null,
   panel: null,
@@ -948,17 +972,37 @@ export const actions = {
      * and lose all of it to one network hiccup.
      */
     actions.setDraft('');
-    set({ sending: true, activity: t('activity.reading') });
-    // Do NOT append our own message here: the server replays it as an event
-    // (role: 'user') so every tab and the Telegram bridge see one stream. `say`
-    // now returns AS SOON AS the message is in the mailbox — every later update
+    /**
+     * DRAWN AT ONCE, marked `pending`, settled by the server's echo.
+     *
+     * The echo is still the one stream every tab and the Telegram bridge read —
+     * it is not dropped, it is MATCHED. What changed is that this tab no longer
+     * makes the person watch a round trip to see their own sentence, which is
+     * the one thing on screen the server is not the authority on.
+     * → `mergeUserEcho`
+     */
+    const pendingId = ++msgSeq;
+    const drawn = [...state.messages, { id: pendingId, role: 'user', text, at: Date.now(), pending: true }];
+    set({
+      sending: true,
+      activity: t('activity.reading'),
+      messages: drawn,
+      ...(state.panel === 'chat' ? { seenMessages: drawn.length } : {}),
+    });
+    // `say` returns AS SOON AS the message is in the mailbox — every later update
     // arrives as an `office.activity` event, so do not clear the status line here.
     const ok = await guard(() => api.say(id, text));
     set({ sending: false });
-    // `guard` has already shown the error; the job here is **giving the text back
-    // to the user**. Only if the box is still empty: they may have typed something
-    // else while waiting, and overwriting that loses their work a second time.
-    if (ok === undefined && !state.draft) actions.setDraft(text);
+    if (ok === undefined) {
+      // The send failed, so TAKE THE BUBBLE BACK DOWN. Leaving it would be the
+      // interface asserting something that did not happen — worse than the delay
+      // this whole change exists to remove.
+      set({ messages: state.messages.filter((m) => m.id !== pendingId) });
+      // `guard` has already shown the error; the job here is **giving the text back
+      // to the user**. Only if the box is still empty: they may have typed something
+      // else while waiting, and overwriting that loses their work a second time.
+      if (!state.draft) actions.setDraft(text);
+    }
   },
 
   async stop(): Promise<void> {
@@ -1077,7 +1121,10 @@ export function connectEvents(): () => void {
        * in, and the only way forward is F5 — the exact shape of "the app lies
        * about its own state".
        */
-      set({ armsVersion: state.armsVersion + 1 });
+      // Set BOTH in one write, and always set `linkedAccount` — including to
+      // `null`. Leaving a stale name behind would let the next bump (a withdrawal,
+      // a deletion) look like a sign-in that never happened.
+      set({ armsVersion: state.armsVersion + 1, linkedAccount: e.account ?? null });
       // `e.office` carries the NEW id when a rename moved the directory — forward
       // it as a hint so a tab on the old id goes straight to the right place.
       // → `refreshCompany`
@@ -1165,6 +1212,19 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       break;
 
     case 'master.message': {
+      /**
+       * Our own sentence coming back SETTLES the bubble already on screen — it
+       * never adds a second one. A `role: 'user'` message with no pending match
+       * is a real message from somewhere else (another tab, Telegram, the replay
+       * on reload) and falls through to the append below. → `mergeUserEcho`
+       */
+      if (e.role === 'user') {
+        const settled = mergeUserEcho(state.messages, e.say);
+        if (settled) {
+          set({ messages: settled, ...(state.panel === 'chat' ? { seenMessages: settled.length } : {}) });
+          break;
+        }
+      }
       const messages = [
         ...state.messages,
         {

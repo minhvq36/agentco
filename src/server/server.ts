@@ -41,6 +41,7 @@ import {
   oauthDeviceStart,
   oauthForget,
   oauthStart,
+  oneSweepAtATime,
   redirectBase,
   refreshDue,
   scanRepos,
@@ -791,9 +792,24 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
          * ⚠ Only the NAME and LABEL. A token never travels this path — SSE is
          * a broadcast channel to every listening client.
          */
+        /**
+         * ⚠ `account` carries the name that was ACTUALLY SAVED, and the
+         * interface needs it to be a fact rather than a guess.
+         *
+         * Without it the dialog has to infer which account was just linked by
+         * looking for a name that was not in its list before — and that
+         * inference is silently wrong in the case that matters most: signing in
+         * again to an account that ALREADY EXISTS (repairing a refused
+         * credential) adds no new name, so the selection does not move. The
+         * user presses "sign in again" on account A, authorises as B by
+         * mistake, watches B's warning clear, and is left with A selected and
+         * still dead. The device-code path never had this problem — its poll
+         * result carries the name. → `ArmDialog §loadAccounts`
+         */
         const payload = `data: ${JSON.stringify({
           type: 'company.offices',
           say: t('srv.connected', { name: done.label ?? done.name }),
+          account: done.name,
           office: '',
           plan_id: null,
         })}\n\n`;
@@ -838,6 +854,10 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         const payload = `data: ${JSON.stringify({
           type: 'company.offices',
           say: t('srv.connected', { name: r.label ?? r.name }),
+          // Same field as the web flow, for the same reason — see the callback
+          // route. This path also returns the name to its own caller, so here it
+          // only serves OTHER tabs watching the same company.
+          account: r.name,
           office: '',
           plan_id: null,
         })}\n\n`;
@@ -1589,14 +1609,21 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
    * │ means they hit a broken arm on their very first task.                          │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  const tick = () => {
-    void refreshDue(company).catch((e: unknown) => {
+  /**
+   * ⚠ `oneSweepAtATime` — "one call site" was never the same thing as "one
+   * sweep at a time". A sweep outliving its own interval used to have a second
+   * one start on top of it, both sending the SAME rotating refresh token, and
+   * the service killing the credential for whichever arrived second. Measured
+   * on 09/03, three services, four seconds. → `oauth-routes.ts §oneSweepAtATime`
+   */
+  const tick = oneSweepAtATime(() =>
+    refreshDue(company).catch((e: unknown) => {
       // A broken background loop must NOT crash the daemon. The user will
       // see the consequence where they're actually looking — an error
       // message when using the arm.
       process.emitWarning(`key refresh loop broke: ${e instanceof Error ? e.message : String(e)}`);
-    });
-  };
+    }),
+  );
   const refreshTimer = setInterval(tick, REFRESH_TICK_MS);
   refreshTimer.unref();
   tick();

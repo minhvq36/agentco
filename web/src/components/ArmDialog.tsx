@@ -655,6 +655,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
   const [account, setAccount] = useState('');
   const [logging, setLogging] = useState(false);
   /**
+   * Which account the user pressed **Sign in again** for — `null` for an
+   * ordinary "add another account".
+   *
+   * It exists only to answer one question afterwards: *did they end up
+   * authorising the account they asked to repair?* The store cannot tell us —
+   * from its side both outcomes are simply "an account was saved" — so the
+   * INTENT has to be remembered here, at the click, and compared later.
+   */
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  /**
    * The access level the user picked. Defaults to **the lowest** — safe before
    * anyone has chosen, and the only level that is always valid if the server
    * declares itself properly. → §6j
@@ -1024,6 +1034,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                       ) : null}
                     </span>
                   )}
+                  {/*
+                    A dead credential, on the row itself — so it is read BEFORE
+                    the click, not after. Its own line rather than another item
+                    on the line above: that line answers *"which one is this"*,
+                    this one answers *"can it run at all"*, and merging them
+                    buries the second question inside a row of `·` separators.
+                  */}
+                  {a.keyDead && (
+                    <span className="mt-0.5 block truncate text-[11px] text-danger">
+                      {t('arm.keyDeadShort')}
+                    </span>
+                  )}
                 </span>
                 <span className="shrink-0 self-start text-[11px] text-muted">
                   {a.orphan ? t('overview.unused') : t('arm.reuseIt')}
@@ -1231,12 +1253,37 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
      * 📌 Signing in again to the SAME workspace ⇒ no new name ⇒ falls back to the
      * old rule and keeps the selection. Correct: there is nothing new to move to.
      */
-    async (catalogId: string, justLoggedIn = false) => {
+    async (catalogId: string, justLoggedIn: boolean | string = false) => {
       const before = new Set(accountsRef.current.map((a) => a.name));
       const r = await api.oauthAccounts(catalogId).catch(() => null);
       if (!r) return;
       setAccounts(r.accounts);
 
+      /**
+       * ⚠ A NAME FROM THE SERVER BEATS THE DIFF, and this is not a tidy-up.
+       * (the user asked the question that found it, 09/04)
+       *
+       * *"what if I sign in meaning one account but actually authorise a
+       * different one — does it light up that one and still leave the
+       * un-signed-in one selected?"* — with the diff alone, yes, exactly that.
+       * Re-authorising an account that ALREADY EXISTS adds no new name, so
+       * `fresh` is undefined, and the selection stays on the account the user
+       * pressed the button for — which is still dead. They watch the OTHER
+       * row's warning clear and conclude the one they clicked is fixed.
+       *
+       * The device-code path never had this hole: its poll result names the
+       * saved account. The web flow now carries the same fact through the SSE
+       * event, so both paths select **what was saved** rather than inferring.
+       */
+      if (typeof justLoggedIn === 'string') {
+        if (r.accounts.some((a) => a.name === justLoggedIn)) {
+          chooseAccount(justLoggedIn);
+          return;
+        }
+      }
+
+      // No name came with the event ⇒ fall back to the diff. Still right for
+      // an ordinary "add another account", and never worse than before.
       if (justLoggedIn) {
         const fresh = r.accounts.find((a) => !before.has(a.name));
         if (fresh) {
@@ -1346,12 +1393,32 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * server's event is the ONLY thing that knows for certain the key was saved.
    */
   const armsVersion = useApp((s) => s.armsVersion);
+  const linkedAccount = useApp((s) => s.linkedAccount);
   useEffect(() => {
     if (step === 2 && pick?.needsLogin && logging) {
       setLogging(false);
-      // `true` = just signed in ⇒ move to the workspace that was just authorised.
-      // → the note on `loadAccounts`
-      void loadAccounts(pick.id, true);
+      /**
+       * The account NAME the daemon saved, when the event carried one —
+       * otherwise `true`, which falls back to the list diff.
+       * → the note inside `loadAccounts`
+       */
+      void loadAccounts(pick.id, linkedAccount ?? true);
+      /**
+       * ⚠ SIGNED IN AS SOMEONE ELSE ⇒ SAY IT. The credential store is now
+       * correct either way, but the user's BELIEF is not: they pressed
+       * "sign in again" on one row and a different row is what got repaired.
+       * Staying quiet leaves them thinking the arm they came to fix works.
+       */
+      if (reconnecting && linkedAccount && linkedAccount !== reconnecting) {
+        const who = accountsRef.current.find((a) => a.name === reconnecting);
+        setErr(
+          t('arm.reconnectedOther', {
+            asked: who?.label ?? reconnecting,
+            got: accountsRef.current.find((a) => a.name === linkedAccount)?.label ?? linkedAccount,
+          }),
+        );
+      }
+      setReconnecting(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [armsVersion]);
@@ -1442,6 +1509,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             // The account just linked is the thing they just made — select it, and
             // clear everything chosen for the PREVIOUS one. → `chooseAccount`
             chooseAccount(r.name);
+            /**
+             * ⚠ Same check as the web flow: on this path the service decides
+             * who signs in, and *"repair minhvq36"* can come back as
+             * *"ttminhvq is now fine"*. The selection above is already correct;
+             * what would be wrong is letting the user keep believing the row
+             * they clicked got fixed. → `reconnecting`
+             */
+            if (reconnecting && r.name !== reconnecting) {
+              const asked = accountsRef.current.find((x) => x.name === reconnecting);
+              setErr(t('arm.reconnectedOther', { asked: asked?.label ?? reconnecting, got: r.label ?? r.name }));
+            }
+            setReconnecting(null);
             return;
           }
           void tick(r.intervalMs);
@@ -1491,8 +1570,16 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     }
   }, [now, device]);
 
-  async function login() {
-    if (!pick) return;
+  /**
+   * `entry` defaults to the current selection, and is passed EXPLICITLY by the
+   * one caller that starts a sign-in in the same click that selects the
+   * catalogue entry (reconnecting a dead credential from the reuse panel).
+   * `setPick` has not landed yet at that moment, so reading `pick` from the
+   * closure there would find `null` and the click would do nothing at all —
+   * a button that silently does nothing being the worst of the options.
+   */
+  async function login(entry: CatalogArm | null = pick) {
+    if (!entry) return;
     setErr('');
     setLogging(true);
     /**
@@ -1526,9 +1613,9 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
      * for**. We show the code plus a button that opens it for them, without
      * assuming this browser is where they will approve.
      */
-    if (pick.deviceLogin) {
+    if (entry.deviceLogin) {
       try {
-        const d = await api.oauthDeviceStart(pick.id);
+        const d = await api.oauthDeviceStart(entry.id);
         // The "copied" mark is cleared by `key={device.state}` at the render site,
         // not by a `setCopied(false)` here: that state now lives inside
         // `DeviceCode`, and a new attempt is a new `state` ⇒ React rebuilds the
@@ -1543,7 +1630,7 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
     }
 
     try {
-      const { authUrl } = await api.oauthStart(pick.id);
+      const { authUrl } = await api.oauthStart(entry.id);
       /**
        * OPEN THE TAB FROM HERE; never let the daemon `spawn` a browser.
        *
@@ -2926,15 +3013,72 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                                 the cause, and a 401 says "wrong key" rather than
                                 "dead key, click Sign in". → §5m, the lifecycle
                                 layer.
+
+                                ⚠ It NAMES NO BUTTON any more (fixed 09/04). The
+                                old copy said *"press Sign in to reconnect"* while
+                                the only button on screen read "Sign in another
+                                account" — copy pointing at a control that does
+                                not exist. The button now sits on this very row,
+                                close enough that the sentence does not have to
+                                give directions to it.
                               */}
                               {a.dead && (
                                 <span className="mt-0.5 block text-[11px] text-danger">
-                                  {t('arm.workspaceExpiredBefore')} <b>{t('arm.signIn')}</b>{' '}
-                                  {t('arm.workspaceExpiredAfter')}
+                                  {t('arm.workspaceExpired')}
                                 </span>
                               )}
                             </span>
                           </label>
+                          {/*
+                            ┌────────────────────────────────────────────────┐
+                            │ RECONNECT — ON THE DEAD ROW, next to the bin.  │
+                            │ (user's call, 09/04)                           │
+                            │                                                │
+                            │ The red line under the name used to say *"press│
+                            │ Sign in to reconnect"*, and there was no such   │
+                            │ button anywhere: with accounts already present  │
+                            │ the only button on the screen reads **"Sign in  │
+                            │ another account"**. So the copy sent people     │
+                            │ looking for a control that did not exist, and   │
+                            │ the one they did find promised a DUPLICATE.     │
+                            │ → [[agentco-wrong-door-errors]]                │
+                            │                                                │
+                            │ Shown ONLY on a dead row: a live account has    │
+                            │ nothing to reconnect, and a button that does    │
+                            │ nothing 99% of the time teaches people to stop  │
+                            │ reading the row.                               │
+                            │                                                │
+                            │ It calls the SAME `login()` as the main button. │
+                            │ Signing in as that same user lands on the same  │
+                            │ identity seed ⇒ the same account NAME ⇒ the     │
+                            │ record is overwritten and `dead` disappears     │
+                            │ with it. No "repair" path to build, and every   │
+                            │ arm holding the credential recovers at once —   │
+                            │ `accountName` is what makes that true. → §5h·7k │
+                            └────────────────────────────────────────────────┘
+                          */}
+                          {a.dead && (
+                            <button
+                              type="button"
+                              disabled={logging}
+                              title={t('arm.workspaceReconnectTip', { label: a.label ?? a.name })}
+                              aria-label={t('arm.workspaceReconnectTip', { label: a.label ?? a.name })}
+                              className="shrink-0 rounded px-2 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => {
+                                // Remember WHICH row this was for — the service
+                                // decides who actually authorises, and the two
+                                // can differ. → `reconnecting`
+                                setReconnecting(a.name);
+                                void login();
+                              }}
+                            >
+                              {logging ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                t('arm.signInAgain')
+                              )}
+                            </button>
+                          )}
                           {/*
                             ⚠ STILL IN USE BY AN ARM ⇒ LOCK THE BUTTON, with a
                             reason — don't offer a choice that's guaranteed to be
@@ -3361,23 +3505,91 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
 
             {/*
               REUSE: no field to fill in, and we have to SAY WHY — a blank
-              "Setup" step looks like the app forgot to render something. This
-              copy is also where we answer the question the user asked directly:
-              *"can any office share this?"*
+              "Setup" step looks like the app forgot to render something.
+
+              ⚠ ONE SENTENCE, and that is the whole decision (user, 09/04). The
+              earlier copy also explained that keys sit at company level, told
+              the user to press Test, and printed the key NAME in use — four
+              facts stacked on a step where there is nothing to do. The name in
+              particular (`NOTION_OAUTH_AFAFBCD6`) answers a question nobody
+              asked here and reads like something that needs acting on. What
+              this box is for is removing the *"did it forget to render?"*
+              doubt, and one sentence does that.
             */}
-            {reuse && (
+            {reuse && !reuse.keyDead && (
               <div className="mt-3 rounded-md border border-line bg-accent-soft/30 px-3 py-2 text-[13px]">
                 <div className="font-medium">{t('arm.reuseNothingTitle')}</div>
-                <div className="mt-1 text-xs leading-relaxed text-muted">
-                  {t('arm.reuseBody1')} <b>{t('arm.reuseBodyBold1')}</b> {t('arm.reuseBody2')}{' '}
-                  <b>{t('arm.reuseBodyBold2')}</b> {t('arm.reuseBody3')}
-                  {reuse.secrets.length > 0 && (
-                    <>
-                      {' '}
-                      {t('arm.reuseKeysInUse')} <code>{reuse.secrets.join(', ')}</code>.
-                    </>
-                  )}
+                <div className="mt-1 text-xs leading-relaxed text-muted">{t('arm.reuseBody')}</div>
+              </div>
+            )}
+
+            {/*
+              ┌──────────────────────────────────────────────────────────────┐
+              │ THE CREDENTIAL IS DEAD ⇒ SAY IT HERE, AND PUT THE DOOR HERE  │
+              │ TOO. (real case 09/03, the user's report 09/04)              │
+              │                                                              │
+              │ What happened: three accounts were marked dead on 09/03; on  │
+              │ 09/04 this screen still said *"nothing to fill in again"* and│
+              │ invited the user to press Try it, which came back with the   │
+              │ SDK's raw English 401. The system had KNOWN for a day. It    │
+              │ just never said so at the spot the person was standing.      │
+              │                                                              │
+              │ ⚠ It REPLACES the reuse notice rather than sitting under it: │
+              │ *"nothing to fill in again"* is FALSE once the key is dead — │
+              │ there is exactly one thing to do, and it is a sign-in.       │
+              │                                                              │
+              │ The button does NOT start a second sign-in flow: it hands    │
+              │ over to the catalogue path, which already owns every state   │
+              │ this needs (device code, waiting, ✕ to stop, reload on SSE). │
+              │ Same five lines the services grid uses.                      │
+              │ → [[agentco-count-mechanisms]]                               │
+              │                                                              │
+              │ No catalogue entry (a hand-pasted arm) ⇒ NO button, because  │
+              │ `oauthStart` takes a `catalogId` and there is no door to     │
+              │ point at. Promising one would be the wrong-door error in its │
+              │ worst form: not vague, but WRONG. → the `needs-auth` panel   │
+              └──────────────────────────────────────────────────────────────┘
+            */}
+            {reuse?.keyDead && (
+              <div className="mt-3 rounded-md border border-danger/40 bg-danger/5 px-3 py-2 text-[13px]">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <TriangleAlert className="h-4 w-4 text-danger" />
+                  {t('arm.keyDeadTitle')}
                 </div>
+                <div className="mt-1 text-xs leading-relaxed text-muted">
+                  {t('arm.keyDeadBody', { who: reuse.keyDead })}
+                </div>
+                {(() => {
+                  const entry = catalog.find((c) => c.id === reuse.catalog);
+                  if (!entry) return null;
+                  return (
+                    <Button
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => {
+                        /**
+                          ⚠ NAVIGATE ONLY — the sign-in is NOT started here.
+                          (user's call, 09/04, after trying the version that did)
+
+                          Opening a service's authorisation window is not ours
+                          to trigger on someone's behalf: the list they land on
+                          is also where they may decide to sign in as a
+                          DIFFERENT account, and a flow that has already started
+                          takes that choice away. The row they came for carries
+                          its own Sign in again button, and the ordinary
+                          "another account" button is right there beside it.
+                        */
+                        resetConfig();
+                        setPick(entry);
+                        setReuse(null);
+                        setLabel(entry.name);
+                        setStep(2);
+                      }}
+                    >
+                      {t('arm.signInAgain')}
+                    </Button>
+                  );
+                })()}
               </div>
             )}
 

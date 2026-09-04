@@ -41,6 +41,18 @@ export interface CompanyPaths {
   offices: string;
   logs: string;
   usageLog: string;
+  /**
+   * Every credential-refresh attempt, one line each. Separate from
+   * `usageLog` because it answers a different question and is read at a
+   * different time: cost is read on purpose, this is read only after
+   * something broke — and then it is the only witness there is.
+   *
+   * It exists because of 09/03: three accounts across three services were
+   * refused within 4 seconds, and reconstructing why had to be done from
+   * `expires_at` arithmetic, because not one refresh attempt had ever been
+   * recorded. → `oauth-routes.ts §logRefresh`
+   */
+  refreshLog: string;
   state: string;
   daemonFile: string;
   secretsFile: string;
@@ -118,6 +130,7 @@ export function companyPaths(companyDir: string): CompanyPaths {
     offices: p('offices'),
     logs: p('logs'),
     usageLog: p('logs', 'usage.jsonl'),
+    refreshLog: p('logs', 'oauth-refresh.jsonl'),
     state: p('.state'),
     daemonFile: p('.state', 'daemon.json'),
     secretsFile: p('.state', 'secrets.json'),

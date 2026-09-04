@@ -51,3 +51,31 @@ test('🔴 the server ACTUALLY assigns `cli`, not just declares the type', () =>
   assert.match(src, /armKind:\s*isCliArm\(/, 'office.ts does not assign `cli` for a CLI declaration');
   assert.match(src, /import \{ isCliArm \} from '\.\/cli-arm\.js'/, 'missing import — this will break at build time');
 });
+
+/**
+ * `keyDead` — the ONE condition that paints a node red — travels the same
+ * three-place road as `armKind`, and fails the same silent way: declared on one
+ * side, never assigned or never read on the other, and the diagram simply stays
+ * green while a credential is dead. The `cli` case on 09/01 is what that looks
+ * like when nobody is watching. → `office.ts §keyDeadOf`
+ */
+test('🔴 `keyDead` is declared on BOTH sides of the wire', () => {
+  assert.match(read('src/core/office.ts'), /keyDead\?:\s*string;/, 'missing on the server CanvasNode');
+  assert.match(read('web/src/lib/types.ts'), /keyDead\?:\s*string;/, 'missing on the browser CanvasNode');
+});
+
+test('🔴 the server ACTUALLY assigns `keyDead`, and reads it from the OAuth store', () => {
+  const src = read('src/core/office.ts');
+  // Declaring the field and never filling it in leaves a diagram that can
+  // never go red — the exact third rung of "spec says done · code exists ·
+  // has anyone called it".
+  assert.match(src, /const keyDead = n\.server \? keyDeadOf\(n\.server\)/, 'the node never gets the field');
+  assert.match(src, /oauth\?\.\[s\]\?\.dead/, 'keyDeadOf does not read `dead` from the OAuth store');
+});
+
+test('🔴 the browser ACTUALLY paints it — a field nobody renders is a field that lies', () => {
+  assert.match(read('web/src/canvas/Canvas.tsx'), /is-keydead/, 'no class is put on the node');
+  assert.match(read('web/src/canvas/canvas.css'), /\.node\.is-keydead \.node-box/, 'the class has no style');
+  // The border alone is a riddle: the node has to SAY why it went red.
+  assert.match(read('web/src/canvas/NodeShape.tsx'), /node\.armKeyDead/, 'the node never states the reason');
+});

@@ -909,6 +909,21 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               }
             />
             <ArmFolders folders={node.folders} />
+            {/*
+              The red border on the diagram gets its sentence HERE — the node
+              has room for four words, this panel is where someone comes to
+              find out what to do about it. Naming the account matters: an arm
+              can hold a credential whose label looks nothing like the arm's
+              own name, and *"sign in again"* is unanswerable without knowing
+              sign in as WHOM. → `office.ts §keyDeadOf`
+            */}
+            {node.keyDead && !node.missing && (
+              <Note>
+                <span className="text-danger">
+                  {t('inspector.armKeyDead', { who: node.keyDead })}
+                </span>
+              </Note>
+            )}
             {node.missing && (
               <Note>
                 <span className="text-danger">{t('inspector.missingArm')}</span>

@@ -755,21 +755,21 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
    * │ switch only at the instant of writing.                                   │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  /**
-   * The starting content of the user's own `skills/assistant.md`. It follows the
-   * switch because it is seed content they will edit, not scaffolding we own —
-   * see the note at `assistantSkillsDefault`. Keep it SHORT: it sits in the
-   * prefix cache of every turn of chat, so each line is a tax charged all shift.
+  /*
+   * ⚠ `seed.assistantSkills.body` USED TO LIVE HERE, and its removal on 05/09
+   * is the sharpest example of the box above.
+   *
+   * It was the starting content of `skills/assistant.md`. It qualified as seed
+   * CONTENT under every rule stated above — and it still broke the language
+   * rule, because unlike a company name or an office label, this particular
+   * datum goes on to sit inside a PROMPT for the rest of the office's life.
+   * "Becomes the user's datum" and "never reaches a prompt" are two different
+   * tests, and this key passed the first while failing the second.
+   *
+   * The advice itself is not lost: `promptLayer.assistantSkillsPlaceholder`
+   * still shows it, in the very editor for that file, at zero tokens until the
+   * person chooses to adopt it. → `company.ts §newOffice`
    */
-  'seed.assistantSkills.body': `Keep it short and plain. Skip the pleasantries.
-
-When a request is vague in a way that changes the result (who it is for, how long,
-what tone, based on which documents), ask back the ONE question that matters most.
-Better to ask than to guess wrong and redo it.
-
-Report in ordinary words: what is done, what needs attention. Do not name tools,
-do not quote token counts, do not use technical jargon.
-`,
   /**
    * The starting `pitch` of a new employee. Never blank: `pitch` is the ONLY
    * thing the assistant sees when it plans, so an empty one leaves it with
@@ -892,6 +892,7 @@ do not quote token counts, do not use technical jargon.
   'node.knowledge': 'Shared knowledge base',
   'node.knowledgeHint': 'click to open',
   'node.armMissing': 'no longer plugged in',
+  'node.armKeyDead': 'sign in again',
   'node.armFallback': 'connection',
   'node.roleMissing': 'role not found',
   'node.resting': 'off duty',
@@ -1120,6 +1121,8 @@ do not quote token counts, do not use technical jargon.
   'inspector.inUseBy': 'Used by',
   'inspector.nobody': 'nobody yet',
   'inspector.missingArm': 'No longer declared in company.yaml.',
+  'inspector.armKeyDead':
+    'The service refused the credential for “{who}”. Staff cannot use this connection until you sign in again — open + Connect, pick this service, and press Sign in again on that account’s row.',
   'inspector.removeFromOffice': 'Remove from this office',
   'inspector.removeFromOfficeShort': 'Remove from the office',
   'inspector.roleId': 'Role id',
@@ -1356,8 +1359,10 @@ do not quote token counts, do not use technical jargon.
   'arm.noWorkspaceMid': '. The tab closes itself and comes back here.',
   'arm.noWorkspaceBold': 'Nothing to copy and paste.',
   'arm.useWorkspace': 'Use workspace',
-  'arm.workspaceExpiredBefore': '⚠ Expired — press',
-  'arm.workspaceExpiredAfter': 'to reconnect',
+  'arm.workspaceExpired': '⚠ The service refused this sign-in',
+  'arm.reconnectedOther':
+    'You signed in as “{got}”, so that is the account now selected. “{asked}” was not repaired — press Sign in again on its row and choose that account on the service’s page.',
+  'arm.workspaceReconnectTip': 'Sign in to “{label}” again — every connection using it recovers at once',
   'arm.workspaceInUse': 'In use by: {who}. Remove those connections first.',
   'arm.workspaceDropTip': 'Remove this workspace',
   'arm.workspaceDropAria': 'Remove {label}',
@@ -1390,12 +1395,12 @@ do not quote token counts, do not use technical jargon.
   'arm.envPlaceholderBefore': '↳ The config you pasted has a placeholder',
   'arm.envPlaceholderAfter': '. The value is stored on your machine, not written into',
   'arm.reuseNothingTitle': 'Nothing to fill in again',
-  'arm.reuseBody1': 'This connection is already plugged in at another office. Keys live at',
-  'arm.reuseBodyBold1': 'company',
-  'arm.reuseBody2': 'level, so every office shares them — press',
-  'arm.reuseBodyBold2': 'Try it',
-  'arm.reuseBody3': 'to be sure it is still alive.',
-  'arm.reuseKeysInUse': 'Keys in use:',
+  'arm.reuseBody': 'This connection is already plugged in at another office.',
+  'arm.keyDeadTitle': 'This connection needs signing in again',
+  'arm.keyDeadBody':
+    'The service refused the credential for “{who}”. That happens when a sign-in is revoked, a password changes, or the connection sat unused for too long. Signing in again fixes it — every office using this connection recovers at once.',
+  'arm.keyDeadShort': 'sign-in expired',
+  'arm.signInAgain': 'Sign in again',
   'arm.noFolderChosen': 'No folder chosen yet.',
   'arm.checkingShort': 'Checking…',
   'arm.changeFolderLong': 'Change folder…',

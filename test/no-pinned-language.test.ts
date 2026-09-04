@@ -95,6 +95,69 @@ test('⭐ the prompt still POINTS TO the signal, it just does not name a languag
   assert.match(code, /in the language they are writing to you in/);
 });
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 ALL THREE DOORS THAT PRODUCE TEXT FOR THE HUMAN MUST CARRY THE CLAUSE, │
+ * │ ON THE LINE THEY GOVERN. (measured 05/09, `P-260905-0100-zquw`)          │
+ * │                                                                          │
+ * │ `route()` and `report()` had it. `plan()` had NOTHING and leaned on two   │
+ * │ sentences in the cached prefix — and it is the WEAKEST of the three:      │
+ * │ `persistSession: false`, so it holds no conversation history, only the    │
+ * │ request quoted into it. An English request came back as a plan in         │
+ * │ another language, carrying a constraint that then forced every worker     │
+ * │ downstream. One decision point, the whole chain hanging off it.           │
+ * │                                                                          │
+ * │ The tests above prove no language is NAMED. This one proves the pointer   │
+ * │ to the signal is still THERE — absence of a name is not by itself a       │
+ * │ working rule. → [[agentco-deterministic-vs-signal]]                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 `plan()` states the language rule next to the request it is about', () => {
+  const code = read('assistant.ts');
+  const body = /async plan\(request: string[\s\S]*?models\[models\.planner\],/.exec(code)?.[0] ?? '';
+  assert.ok(body, 'plan() not found — this test is stale');
+  assert.match(body, /Request: \$\{request\}/, 'the request must still be quoted verbatim');
+  assert.match(
+    withoutComments(body),
+    /SAME language as that request/,
+    'plan() names no field-level language rule at all — this is the exact hole measured on 05/09',
+  );
+  assert.match(
+    withoutComments(body),
+    /outranks/,
+    'restating the rule is not enough: it has to say it BEATS the office instructions written in another language',
+  );
+});
+
+test('🔴 the other two doors still carry theirs, on the line they govern', () => {
+  const code = withoutComments(read('assistant.ts'));
+  assert.match(code, /in the language they wrote to you in/, 'route() lost its clause');
+  assert.match(code, /in the language the human is writing to you in/, 'report() lost its clause');
+});
+
+/**
+ * The seed file is how the interface switch got INTO a prompt without any
+ * source string naming a language — it travelled through a file we wrote on
+ * the user's behalf, which then sat in the cached prefix for the life of the
+ * office. A gate reading source code cannot see that road, so it is nailed
+ * shut at the place that used to open it. → `company.ts §newOffice`
+ */
+test('🔴 creating an office writes NO assistant skills file', () => {
+  // Comments stripped: the tombstone explaining WHY it was removed names the
+  // function it removed, and that sentence is the opposite of a regression.
+  const co = withoutComments(fs.readFileSync(path.join(SRC, 'company.ts'), 'utf8'));
+  assert.doesNotMatch(co, /writeFileSync\(pp\.assistantSkills/, 'a new office must start with no language in its prompt');
+  assert.doesNotMatch(co, /assistantSkillsDefault/, 'the seed helper is gone, not just unused');
+  const i18n = path.join(SRC, '..', 'i18n');
+  for (const f of ['en.ts', 'vi.ts']) {
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(i18n, f), 'utf8'),
+      /^\s*'seed\.assistantSkills\.body':/m,
+      `${f} still ships the seed — the catalogue is the switch, so the key is the wire`,
+    );
+  }
+});
+
 test('⭐ the BUILT prompt contains no language name', () => {
   const office = fakeOffice();
   const worker = buildWorkerPrompt(office, fakeRole(), {});

@@ -81,3 +81,74 @@ test('🔴 removing the connection does NOT touch the KEY — the expensive part
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * A DEAD CREDENTIAL HAS TO REACH THE ARM, not only the account list.
+ *
+ * Real case 09/03–09/04: the store had a `dead` mark on the account for a full
+ * day while the connection screen went on saying *"nothing to fill in again"*
+ * and inviting the user to press Try it — which answered with the SDK's raw
+ * English 401. Knowing something and saying it where the person is standing
+ * are two different things. → `company.ts §arms`
+ */
+function writeOAuth(dir: string, account: Record<string, unknown>): void {
+  const keyFile = path.join(dir, '.state', 'secrets.json');
+  fs.mkdirSync(path.dirname(keyFile), { recursive: true });
+  fs.writeFileSync(keyFile, JSON.stringify({ $oauth: { NOTION_OAUTH_52BA79B8: account } }), 'utf8');
+}
+
+const LIVE = {
+  client_id: 'c1',
+  access_token: 'at-1',
+  refresh_token: 'rt-1',
+  token_type: 'Bearer',
+  mcp_url: 'https://mcp.notion.com/mcp',
+  issuer: 'https://mcp.notion.com',
+  label: "Alex's workspace",
+};
+
+test('🔴 a REFUSED credential surfaces on the ARM, named by its account label', () => {
+  const dir = tmpCompany();
+  try {
+    writeOAuth(dir, {
+      ...LIVE,
+      dead: { at: '2026-09-03T04:06:40.864Z', why: 'the key is no longer valid (invalid_grant)' },
+    });
+
+    const arm = Company.open(dir).listArms()[0];
+    assert.equal(
+      arm?.keyDead,
+      "Alex's workspace",
+      'the LABEL, not the credential name — nobody can redo a sign-in they cannot identify',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a healthy credential leaves `keyDead` ABSENT — the field is a claim, not a default', () => {
+  const dir = tmpCompany();
+  try {
+    writeOAuth(dir, LIVE);
+    const arm = Company.open(dir).listArms()[0];
+    assert.equal(arm?.keyDead, undefined);
+    assert.equal(arm?.via, "Alex's workspace", 'the healthy path is untouched');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a dead credential with NO label falls back to the credential NAME, never to blank', () => {
+  const dir = tmpCompany();
+  try {
+    const { label: _drop, ...unlabelled } = LIVE;
+    writeOAuth(dir, { ...unlabelled, dead: { at: '2026-09-03T04:06:40.864Z', why: 'refused' } });
+
+    const arm = Company.open(dir).listArms()[0];
+    // Blank would render as *"the service refused the credential for “”"* — an
+    // error message that has forgotten what it is about.
+    assert.equal(arm?.keyDead, 'NOTION_OAUTH_52BA79B8');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

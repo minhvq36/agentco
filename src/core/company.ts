@@ -223,8 +223,39 @@ export class Company {
     const pp = officePaths(dir);
     ensureOfficeDirs(pp);
     fs.writeFileSync(pp.configFile, officeTemplate(id, name), 'utf8');
-    fs.writeFileSync(pp.assistantSkills, assistantSkillsDefault(), 'utf8');
     /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 DOES NOT SEED `skills/assistant.md` EITHER — removed 05/09.         │
+     * │                                                                      │
+     * │ It used to be written here from `t('seed.assistantSkills.body')`,     │
+     * │ i.e. IN THE INTERFACE LANGUAGE AT THE MOMENT OF CREATION. That was    │
+     * │ argued as safe because seed content becomes the user's own datum the  │
+     * │ instant it lands. It IS their datum — and that is exactly the         │
+     * │ problem: from then on it sits in the cached prefix of every single    │
+     * │ chat turn, and it is the ONLY text in that prefix carrying a          │
+     * │ language. Measured 05/09 (`P-260905-0100-zquw`): an English request   │
+     * │ produced a plan in the seed's language, because the seed did not      │
+     * │ merely happen to be in a language — it gave a STYLE ORDER that can    │
+     * │ only be obeyed in one ("address yourself as X, call the user Y",      │
+     * │ a clause the English seed has no counterpart for at all).             │
+     * │                                                                      │
+     * │ So the interface switch never reached a prompt through the code —     │
+     * │ it reached one through a FILE WE WROTE FOR THE USER. A gate reading   │
+     * │ source code cannot see that road.                                     │
+     * │                                                                      │
+     * │ Nothing of value is lost: the same advice is the PLACEHOLDER of that  │
+     * │ very editor (`promptLayer.assistantSkillsPlaceholder`), where the     │
+     * │ person reads it, adopts it deliberately if they want it, and it       │
+     * │ costs ZERO tokens until they do. → the box on `PromptLayer.placeholder`│
+     * │                                                                      │
+     * │ Same shape, same reasoning as the charter directly below — which was  │
+     * │ removed for the neighbouring reason on 08/17.                         │
+     * │                                                                      │
+     * │ ⚠ Offices that ALREADY have the file keep it untouched. It is their   │
+     * │ text now; rewriting a user's own file to fix our seed would be us      │
+     * │ editing their data behind their back.                                 │
+     * └──────────────────────────────────────────────────────────────────────┘
+     *
      * Does NOT create a charter file, and does not create any knowledge node.
      *
      * The previous version wrote `knowledge/shared/_charter.md` upfront with
@@ -999,6 +1030,27 @@ export class Company {
      * └──────────────────────────────────────────────────────────────────────┘
      */
     via?: string;
+    /**
+     * The account this arm runs on has a DEAD credential — carries that
+     * account's label, so the interface can name it.
+     *
+     * ⚠ Derived from the SAME lookup as `via` (`arms[].secrets` against the
+     * OAuth store), deliberately: one more derived field, not a second
+     * mechanism. → [[agentco-count-mechanisms]]
+     *
+     * Why it has to travel with the arm rather than only with the account
+     * (real case, 09/03): all the interface had at the spot the user was
+     * standing was *"press Try it to be sure it is still alive"*, and Try it
+     * answered with the SDK's raw English 401. The store had known the key was
+     * dead since the day before. Knowing something and saying it at the place
+     * the person is standing are two different things.
+     * → [[agentco-scope-of-door-vs-data]]
+     *
+     * ⚠ Absent ≠ healthy. Only a refresh that a service REFUSED sets this
+     * (`oauth-routes.ts §refreshDue`); a credential revoked but never yet
+     * refreshed still reads as blank here and shows up as a 401 in use.
+     */
+    keyDead?: string;
     /** Number of tools granted. Shown next to the badge so a "read-only" label can be visually verified. */
     toolCount: number;
     usedBy: { office: string; role: string }[];
@@ -1037,6 +1089,14 @@ export class Company {
         ...(() => {
           const via = (meta?.secrets ?? []).map((s) => oauth[s]?.label).find(Boolean);
           return via ? { via } : {};
+        })(),
+        // Same lookup, one field further: which of this arm's credentials a
+        // service has already refused. Named by the account's own label,
+        // falling back to the credential name — an arm cannot be fixed by
+        // someone who does not know WHICH sign-in to redo.
+        ...(() => {
+          const name = (meta?.secrets ?? []).find((s) => oauth[s]?.dead);
+          return name ? { keyDead: oauth[name]?.label ?? name } : {};
         })(),
         toolCount: meta?.tools?.length ?? 0,
         usedBy,
@@ -1360,33 +1420,17 @@ assistant:
 `;
 }
 
-/**
- * The Assistant's default skills — DELIBERATELY very short, and DELIBERATELY
- * says nothing to the user.
+/*
+ * `assistantSkillsDefault()` was REMOVED ENTIRELY on 05/09 — the same fate,
+ * for a neighbouring reason, as `charterTemplate()` below.
  *
- * This block sits in the prefix cache of EVERY conversation turn, so every
- * line here is a tax collected for the whole working session. The first
- * version opened with "This is the part YOU write, feel free to clear it" — a
- * message addressed to the USER, sitting inside a prompt sent to the MODEL.
- * The model can't edit the file, so that sentence was pure paid noise.
- *
- * The "you can edit this" explanation moved into the layered prompt table in
- * the UI, where the user actually reads it, and where it costs zero tokens.
- *
- * ⚠ A FUNCTION, and it goes through the catalogue — unlike every other prompt
- * text in this repository.
- *
- * That is not a contradiction of "the switch never reaches a prompt". This
- * string is not prompt scaffolding we own: it is the STARTING CONTENT of
- * `skills/assistant.md`, a file the user owns and edits, written once when the
- * office is created. It follows the switch exactly the way the seed comments in
- * `company.yaml` do, and the moment the user saves that file it is their text
- * and is never translated again. Nothing re-reads the switch afterwards.
- *
- * A module constant would also freeze it to whichever language the process
- * started in, which is the same trap `COMMANDS` and `REFUSED` were holding.
+ * It read `t('seed.assistantSkills.body')` and wrote the result into the new
+ * office's `skills/assistant.md`. The argument for letting it through the
+ * catalogue was that seed content becomes the user's own datum the moment it
+ * lands. True — and that is precisely why it was the wrong thing to write:
+ * the file it produced then sat in the cached prefix of every chat turn,
+ * holding the only language in the entire prompt. → the box at `newOffice`
  */
-const assistantSkillsDefault = (): string => t('seed.assistantSkills.body');
 
 /*
  * `charterTemplate()` was REMOVED ENTIRELY on 08/17 — not replaced with

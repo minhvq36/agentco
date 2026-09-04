@@ -467,6 +467,22 @@ words**. It already passes through **three gates**:
 | `safeJoin` | `landingOf` | a path escaping the office directory |
 | `existsSync` | `whereBlock` | the model claiming to have written a file that doesn't actually exist |
 
+### The second source: the task's own declared `outputs` (05/09)
+
+`landingOf` recognises `Write` · `Edit` · `NotebookEdit` and nothing else. A worker that builds its file with a
+shell one-liner lands `kind: 'command'`, and one that writes through an arm lands `kind: 'external'` — in both
+cases the file is **real and completely invisible to the interface**. Measured: `P-260905-0100-zquw` T-01 built a
+109-row table with PowerShell; the run reported no output at all.
+
+So `whereBlock` takes a second source — the paths in `plan.tasks[].outputs` **that exist on disk** (`outputStatus`,
+the same walk that computes `missingOutputs`; one loop, two lists, so the two answers cannot drift). This does not
+weaken the doctrine: those paths are built by `outputScoper`, **not** written by the model in prose, and they pass
+the same `safeJoin` + `existsSync` gates. The rule is unchanged — *only a path the code itself put there is
+clickable* — it just now has two code-owned sources instead of one.
+
+Both are merged by `worker.ts → filesOnDisk`, which already answered exactly this question on four scheduler exit
+paths. It is imported, never re-implemented.
+
 ### Mechanism: data, NOT regex on text
 
 `master.message` gains `files?: string[]` — paths computed from the office

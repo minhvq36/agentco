@@ -592,15 +592,12 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   // ──────────────────────────────────────────────────── daemon / HTTP API
   'company.unnamed': 'Công ty của tôi',
   'company.unnamedOffice': 'Văn phòng mới',
-  'seed.assistantSkills.body': `Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.
-
-Khi yêu cầu còn mơ hồ ở chỗ ảnh hưởng tới kết quả (làm cho ai, dài bao nhiêu,
-giọng thế nào, dựa trên tài liệu nào), hỏi lại đúng MỘT câu quan trọng nhất.
-Thà hỏi còn hơn đoán sai rồi làm lại.
-
-Báo cáo bằng lời người thường: đã xong gì, có gì cần để ý. Không nhắc tên tool,
-không nhắc số token, không dùng thuật ngữ kỹ thuật.
-`,
+  /*
+   * `seed.assistantSkills.body` is gone (05/09). Its Vietnamese value opened
+   * with a PRONOUN ORDER that has no counterpart in the English one and can
+   * only be obeyed in one language — which is how the interface switch ended
+   * up steering the assistant's replies. → `en.ts`, same spot
+   */
   'seed.rolePitchDefault': 'Mô tả việc {name} làm được, viết cho Trợ lý đọc.',
   'seed.mainOfficeName': 'Văn phòng chính',
   'seed.assistantName': 'Trợ lý',
@@ -709,6 +706,7 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
   'node.knowledge': 'Kho tri thức chung',
   'node.knowledgeHint': 'bấm để mở',
   'node.armMissing': 'không còn cắm',
+  'node.armKeyDead': 'cần đăng nhập lại',
   'node.armFallback': 'kết nối',
   'node.roleMissing': 'không tìm thấy vai trò',
   'node.resting': 'đang nghỉ',
@@ -921,6 +919,8 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
   'inspector.inUseBy': 'Đang dùng',
   'inspector.nobody': 'chưa ai',
   'inspector.missingArm': 'Không còn khai trong company.yaml.',
+  'inspector.armKeyDead':
+    'Dịch vụ đã từ chối chìa của "{who}". Nhân viên chưa dùng được kết nối này cho tới khi bạn đăng nhập lại — mở + Kết nối, chọn dịch vụ này, rồi bấm Đăng nhập lại ở đúng dòng tài khoản đó.',
   'inspector.removeFromOffice': 'Xoá khỏi văn phòng này',
   'inspector.removeFromOfficeShort': 'Xoá khỏi văn phòng',
   'inspector.roleId': 'Mã vai trò',
@@ -1130,8 +1130,10 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
   'arm.noWorkspaceMid': '. Tab sẽ tự đóng và quay lại đây.',
   'arm.noWorkspaceBold': 'Không cần copy gì cả.',
   'arm.useWorkspace': 'Dùng workspace',
-  'arm.workspaceExpiredBefore': '⚠ Hết hiệu lực — bấm',
-  'arm.workspaceExpiredAfter': 'để nối lại',
+  'arm.workspaceExpired': '⚠ Dịch vụ đã từ chối lượt đăng nhập này',
+  'arm.reconnectedOther':
+    'Bạn vừa đăng nhập bằng "{got}", nên đó là tài khoản đang được chọn. "{asked}" thì CHƯA được nối lại — bấm Đăng nhập lại ở đúng dòng của nó, và chọn đúng tài khoản đó ở trang của dịch vụ.',
+  'arm.workspaceReconnectTip': 'Đăng nhập lại vào "{label}" — mọi kết nối đang dùng nó sống lại cùng lúc',
   'arm.workspaceInUse': 'Đang được dùng bởi: {who}. Gỡ kết nối đó trước.',
   'arm.workspaceDropTip': 'Gỡ workspace này',
   'arm.workspaceDropAria': 'Gỡ {label}',
@@ -1162,12 +1164,12 @@ không nhắc số token, không dùng thuật ngữ kỹ thuật.
   'arm.envPlaceholderBefore': '↳ Cấu hình bạn dán có ô trống',
   'arm.envPlaceholderAfter': '. Giá trị lưu trong máy bạn, không ghi vào',
   'arm.reuseNothingTitle': 'Không phải điền lại gì cả',
-  'arm.reuseBody1': 'Kết nối này đã cắm ở văn phòng khác. Chìa nằm ở cấp',
-  'arm.reuseBodyBold1': 'công ty',
-  'arm.reuseBody2': ', nên văn phòng nào cũng dùng chung được — bấm',
-  'arm.reuseBodyBold2': 'Thử ngay',
-  'arm.reuseBody3': 'để chắc nó vẫn còn sống.',
-  'arm.reuseKeysInUse': 'Chìa đang dùng:',
+  'arm.reuseBody': 'Kết nối này đã cắm ở văn phòng khác.',
+  'arm.keyDeadTitle': 'Kết nối này cần đăng nhập lại',
+  'arm.keyDeadBody':
+    'Dịch vụ đã từ chối chìa của "{who}". Chuyện này xảy ra khi lượt đăng nhập bị thu hồi, bạn đổi mật khẩu, hoặc kết nối để lâu quá không dùng. Đăng nhập lại một lần là xong — mọi văn phòng đang dùng kết nối này sống lại cùng lúc.',
+  'arm.keyDeadShort': 'đăng nhập đã hết hiệu lực',
+  'arm.signInAgain': 'Đăng nhập lại',
   'arm.noFolderChosen': 'Chưa chọn thư mục nào.',
   'arm.checkingShort': 'Đang kiểm tra…',
   'arm.changeFolderLong': 'Đổi thư mục…',

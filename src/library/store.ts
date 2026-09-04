@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The document cabinet: files the USER drops in.
  *
  * → docs/SPEC-library.md

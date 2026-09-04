@@ -2034,6 +2034,154 @@ Test: `test/missing-key.test.ts` (+9). Code: `secrets.ts §missingSecretRefs` ·
 
 ---
 
+## 5n. 🔴 THE REFRESH LOOP KILLED THREE CREDENTIALS BY TRIPPING OVER ITSELF (measured 09/03, patched 09/04)
+
+Three accounts across **three different services** were marked dead within **4 seconds** — Notion
+`invalid_grant`, GitHub twice `incorrect_client_credentials`. The obvious reading (*"the tokens
+expired"*) is **wrong**, and the arithmetic is what says so:
+
+| | |
+|---|---|
+| Notion credential expires | 03/09 06:19:25Z |
+| Marked dead | 03/09 04:06:40Z — **2h13m before** it expired |
+| GitHub refresh token remaining | **180.76 of its 181 days** |
+
+Nothing expired. All three were **refused**. And `incorrect_client_credentials` is not about
+`client_id` — §5h·7d already recorded that it is GitHub's own phrase for *"that refresh token has
+been rotated away"*. So the state behind all of it is one sentence: **we were holding the previous
+version of a credential the service had already killed.**
+
+### Cause: "one place in the code" was never the same as "one sweep at a time"
+
+`setInterval(tick, 15 min)` had **no re-entrancy guard**, and the token endpoint has **no timeout**
+(deliberately — see below). A sweep that stalls mid-request (a socket suspended across a laptop
+sleep) is still in flight when the next tick starts a second one. Both read the same
+`refresh_token`, both send it, the service rotates for whichever arrives first ⇒ the other is told
+its credential is dead.
+
+⚠ The comment at `server.ts` **described this exact hazard** and then concluded *"no lock fixes this
+— only 'exactly one place does it' fixes it."* Half right, and the wrong half is the expensive one:
+one place in **space** guarantees nothing about **time**.
+
+### The patch — three pieces, and the second is the one that turns a stumble into a loss
+
+| | |
+|---|---|
+| `oneSweepAtATime` | Drops an overlapping tick, **never queues it** — a queued sweep is the same collision 15 minutes later. Skipping costs nothing: credentials refresh at 50% of their life, so ~16 chances remain |
+| `deadMarkStillApplies` | **Re-read the store before recording a refusal.** If it moved on, someone else rotated successfully and this is just the losing half of a race — the account is FINE. The old line `saveOAuth(…, {…acc, dead})` did two harms at once: it killed a live account (`needsRefresh` then returns `false` **forever**) *and* wrote the stale credential back over the freshly rotated one |
+| `logRefresh` → `logs/oauth-refresh.jsonl` | One line per attempt (`ok` · `dead` · `refused-but-superseded` · `transient`). It exists because reconstructing 09/03 had to be done by subtracting `expires_at` from timestamps: **not one attempt had ever been recorded.** The loop only ever spoke when it gave up. NAMES only, never a credential value |
+
+`test/oauth-refresh-race.test.ts` (+7) caught a real defect on its first run: the first version used
+`.finally`, which **re-throws** ⇒ a rejected sweep became an unhandled rejection inside a timer
+callback, and Node's default for that is to kill the process. A background credential sweep is the
+last thing that should be able to take the whole company down. → `.then(release, release)`.
+
+### ⛔ A timeout on the OAuth fetches — proposed, then WITHDRAWN
+
+It reads like an obvious safety measure and it is **double-edged**: aborting at 20s while the
+service has *already processed the request and rotated the credential* **manufactures** the very
+state that killed these three — we hold the old token, the new one is gone. Without the timeout we
+wait and receive it.
+
+Reopen only with evidence from `oauth-refresh.jsonl` of a genuinely hung sweep, and then with a
+**wide** ceiling (≥120s), never a tight one.
+
+### ⚠ What is still open, so nobody reads this as closed
+
+**The guard is per PROCESS.** Two daemons pointed at one `company/` folder — two installs, or a
+folder inside OneDrive/Dropbox — still collide exactly as before, and no in-memory flag can see
+that. Closing it needs a **lease on disk**. Not built: no real case yet.
+
+**And no patch can undo a lost rotation.** Once the service has rotated and the response is lost in
+transit, the new credential is gone and the old one is dead — a re-login is genuinely required.
+These three pieces make that window **rare**, stop a single stumble from escalating into a lost
+credential, and make the product say the right thing when it happens. They do **not** promise
+"never sign in again".
+
+### The recovery door has to sit where the failure is REPORTED
+
+The store knew these credentials were dead on 03/09. On 04/09 the connection screen still said
+*"nothing to fill in again"* and invited the user to press Try it, which answered with the SDK's raw
+English 401. Two surfaces, neither of which offered a way back:
+
+| Where it was reported | Door |
+|---|---|
+| Overview → Accounts: *"the key is dead — sign in again"* | ❌ only a **Delete** button, and it is **disabled** while any arm holds the credential |
+| The reuse panel in the Connect dialog | ❌ said *"press Try it to be sure it is still alive"* |
+| The workspace list inside `+ Connect` | ✅ the only place with a Sign in button |
+
+⇒ `arms[].keyDead` now travels with the arm (same lookup as `via` — one more derived field, not a
+second mechanism). The reuse row shows it in red *before* the click, and the panel **replaces**
+*"nothing to fill in again"* — a sentence that becomes **false** the moment the credential dies —
+with the reason plus a **Sign in again** button. The button starts no second sign-in flow: it hands
+over to the catalogue path, which already owns every state involved. A hand-pasted arm has no
+`catalog` ⇒ **no button**, because `oauthStart` needs a `catalogId` and promising a door that does
+not exist is the wrong-door error at its worst.
+
+### 🔴 …and the first version of that door led to a button that does not exist (user caught it same day)
+
+The **Sign in again** button switched to the catalogue screen — where the dead account's row said
+*"⚠ Expired — press **Sign in** to reconnect"* while the only button on the screen read **"Sign in
+another account"** (the label flips as soon as `accounts.length > 0`). So the copy sent the user
+hunting for a control that was never there, and the one they could find promised a **duplicate
+account** instead of a repair. The same failure class this section is about, reintroduced by the fix
+for it.
+
+Three corrections, and the third is the one that makes the flow one click instead of two:
+
+1. **The button sits on the dead ROW**, beside the bin, and **only** when that row is dead — a
+   control that does nothing 99% of the time teaches people to stop reading the row.
+2. **The red line names no button any more.** It states the fact (*"the service refused this
+   sign-in"*); the button is close enough that the sentence does not have to give directions to it.
+3. **The reuse panel's button starts the sign-in in the same click** rather than only navigating.
+   The user had already said what they wanted; landing them in front of a list to say it a second
+   time is the friction, not the sign-in. This is why `login()` now takes its catalogue entry as an
+   argument: inside that handler `setPick` has not landed yet, so reading `pick` from the closure
+   would find `null` and the button would silently do nothing.
+
+Signing in again as the same user resolves to the same identity seed ⇒ the same account **name** ⇒
+the record is overwritten and `dead` goes with it, so **every arm holding that credential recovers
+at once**. There is no per-arm repair to build — `accountName` is what makes that true. → §5h·7k
+
+⚠ **How many clicks it can ever be, per vendor** — this is a property of the vendor, not of our UI:
+Notion and Linear use the web redirect flow ⇒ genuinely **one click** plus approving on their page.
+GitHub cannot: §5h·7a records that its web flow **requires a `client_secret`** and agentco is a
+public client, so the device flow is the only path and RFC 8628 requires approval on a second
+surface. `DeviceCode` already prefers `verification_uri_complete` over `verification_uri`, so when a
+vendor embeds the code in the link there is nothing to type — whether GitHub actually sends that
+field is **not yet measured**, and the next sign-in answers it.
+
+### 🔴 "I meant to repair A but authorised B" — the user asked, and the web flow got it wrong
+
+> *"what if I press sign in for one account but actually authorise a different one — does it light
+> up that one and still leave the un-signed-in one selected?"*
+
+**Yes, on the web flow, exactly that.** After a sign-in the dialog picked the account **whose name
+was not in its list before**. That diff is right for *"add another account"* and silently wrong for
+a repair: re-authorising an account that ALREADY EXISTS adds no new name ⇒ nothing is selected ⇒ the
+selection stays on the row the user pressed the button for, **which is still dead**, while a
+different row's warning quietly clears. The device-code path never had the hole — its poll result
+names the saved account.
+
+⇒ The SSE event now carries `account` = **the name actually saved**, and both paths select that.
+The diff stays only as a fallback for an event without the field. → `ArmDialog §loadAccounts`
+
+⇒ And the mismatch itself is **said out loud**. The store is correct either way; the user's belief
+is not. `reconnecting` records which row the Sign-in-again was pressed on — intent the store cannot
+reconstruct, since from its side both outcomes are just *"an account was saved"* — and if the saved
+account differs, the screen says so and names both.
+
+⛔ **The sign-in is NOT started automatically** when arriving from the reuse panel (tried, then
+withdrawn on the user's call, 09/04). Opening a vendor's authorisation window on someone's behalf
+takes away the choice they may want to make on that very screen: signing in as a **different**
+account. The row carries its own button; that is close enough.
+
+Test: `test/arm-reach.test.ts` (+3) · `test/oauth-refresh-race.test.ts` (+7).
+→ [[agentco-scope-of-door-vs-data]] · [[agentco-wrong-door-errors]] · [[agentco-count-mechanisms]]
+→ [[agentco-deterministic-vs-signal]] — a name from the server is a fact; a list diff is an inference.
+
+---
+
 ## 6. Plugging in through the UI — today there are **three** "open a yaml file" steps, and that's an alarm bell
 
 ### 6a. Counting the bells

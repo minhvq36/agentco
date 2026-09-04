@@ -94,6 +94,16 @@ export interface CanvasNode {
   mark?: string;
   /** ⚠ The same union as `office.ts §armKind` and `ArmIcon §ArmKind` — change all three. */
   armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
+  /**
+   * A service REFUSED a credential this arm runs on — carries the account
+   * label. The ONLY condition that paints a node red on the canvas.
+   *
+   * ⚠ Not "expiring" (the refresh loop renews at 50% of life; red there would
+   * fire on healthy arms daily) and not "probably broken" (unknowable without
+   * a handshake per arm). A fact we wrote ourselves, never an inference.
+   * → `office.ts §keyDeadOf`
+   */
+  keyDead?: string;
   /** Labels of the checkboxes that are on — the panel draws its chips from this. */
   optionLabels?: string[];
   /** There is a browser profile ⇒ the panel shows the "open sign-in window" button. */
@@ -361,7 +371,12 @@ export type AgentEvent = EventBase &
     | { type: 'knowledge.changed'; count: number; version: number }
     | { type: 'library.changed'; count: number; busy: number }
     | { type: 'layout.changed'; say: string }
-    | { type: 'company.offices'; say: string }
+    /**
+     * `account` = the OAuth account name that was just SAVED, when this event
+     * came from a sign-in. A fact from the server, not something the interface
+     * infers by diffing its own list — see `ArmDialog §loadAccounts`.
+     */
+    | { type: 'company.offices'; say: string; account?: string }
   );
 
 /**
@@ -613,6 +628,19 @@ export interface InstalledArm {
    * forgotten; both mean "unknown" ⇒ draw nothing.
    */
   via?: string;
+  /**
+   * The credential this arm runs on has been REFUSED by the service — carries
+   * the account's label so the screen can name which sign-in to redo.
+   *
+   * Why it rides along with the arm and not only with the account (real case,
+   * 09/03): the user was standing on the reuse screen, which said *"press Try
+   * it to be sure it is still alive"*, and Try it answered with the SDK's raw
+   * English 401. The store had known the key was dead since the day before.
+   * → `company.ts §arms`
+   *
+   * ⚠ Absent ≠ healthy: only a REFUSED refresh sets it.
+   */
+  keyDead?: string;
   /** How many tools were granted — shown beside the badge so the label can be checked by eye. */
   toolCount: number;
   usedBy: { office: string; role: string }[];

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * A running OFFICE — the place where everything meets.
  *
  * → docs/SPEC-offices.md
@@ -49,7 +49,7 @@ import { Mailbox, mergeUserText } from './mailbox.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
-import { straysOnDisk } from './worker.js';
+import { filesOnDisk, straysOnDisk } from './worker.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 import { plural, t } from '../i18n/index.js';
 import { formatUSD } from '../i18n/fmt.js';
@@ -79,6 +79,17 @@ export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
  * The overflow gets stated as a single count line.
  */
 const MAX_LISTED_FILES = 8;
+
+/**
+ * Token ceiling for the work listing handed to a memory-compaction turn.
+ *
+ * ⚠ Belongs to `factSkeleton` / `compactMemory` ONLY — the ASSISTANT's memory.
+ * It has nothing to do with a worker's HOT/COLD knowledge selection, which is
+ * a different store, a different budget (`knowledge_pack`) and a different
+ * question. One constant serving two purposes is how a number ends up wrong
+ * for both. → [[agentco-cut-after-sort]]
+ */
+const SKELETON_TOKENS = 1_200;
 
 /** How many messages get replayed when an office is opened. Enough to remember the thread, not a whole lifetime. */
 const CHAT_REPLAY = 200;
@@ -168,6 +179,12 @@ export interface CanvasNode extends LayoutNode {
    * red** — exactly the `cli` case on 09/01.
    */
   armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
+  /**
+   * A credential this arm runs on was **REFUSED by the service** — carries the
+   * account's label so the diagram can name it. The one condition that turns a
+   * node red. → `canvas() §keyDeadOf` for what it deliberately does NOT cover
+   */
+  keyDead?: string;
   /** Labels of the currently-enabled checkboxes — the panel draws chips from this. */
   optionLabels?: string[];
   /** Has a persisted profile ⇒ the panel shows a button to open the sign-in window. → `browser-login.ts` */
@@ -345,6 +362,7 @@ export class Office {
     this.assistant = new Assistant(loaded);
     const saved = this.readSession();
     this.assistant.resumeFrom(saved.id, saved.reach);
+    this.compactedThrough = saved.compactedThrough;
     this.layout = new LayoutStore(loaded);
     this.plans = new PlanStore(loaded.paths);
     /**
@@ -1635,7 +1653,21 @@ export class Office {
        * │ already finished on the line above.                                    │
        * └──────────────────────────────────────────────────────────────────────┘
        */
-      const gone = this.missingOutputs(plan, receipts);
+      /**
+       * `wrote` — the outputs this run PROMISED that are really on disk.
+       *
+       * The second source `whereBlock` needs, and the only one that can see a
+       * file produced by `Bash`/`PowerShell` or by an arm's own write tool:
+       * `landingOf` recognises `Write`/`Edit`/`NotebookEdit` and nothing else,
+       * so a worker that builds its report with a shell one-liner lands
+       * `kind: 'command'` and the file becomes invisible to the interface.
+       * Measured 05/09 — `P-260905-0100-zquw` T-01.
+       *
+       * Still code-owned, so it is still allowed to be clickable: these paths
+       * come from `outputScoper`, not from anything the model wrote in prose,
+       * and they have just passed `safeJoin` + `existsSync` above.
+       */
+      const { gone, landed: wrote } = this.outputStatus(plan, receipts);
       const leaked = gone.length > 0 || (plan.redirected?.length ?? 0) > 0;
 
       const anyLesson = receipts.some((r) => r.lessons.length > 0 && learnable(r) && !leaked);
@@ -1687,6 +1719,12 @@ export class Office {
       // 4. Report
       let report: string;
       let status: PlanStatus;
+      /**
+       * Hoisted out of the branch below because the "saved to" block has to
+       * read it — see the gate at the bottom of this method. It is the ONE
+       * shape where naming the file underneath really is noise.
+       */
+      let soloReply = false;
       if (result.stoppedBy === 'usage_limit') {
         report =
           t('off.rateLimited', { n: String(result.pending.length) });
@@ -1774,7 +1812,7 @@ export class Office {
          * │ asks. For a support office, that's the right trade.                    │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        const soloReply = plan.tasks.length === 1 && answered.length === 1;
+        soloReply = plan.tasks.length === 1 && answered.length === 1;
         if (soloReply) {
           // Empty `report`: `finish()` won't emit any more messages. The
           // answer just emitted above is already what the user needs to read.
@@ -1787,7 +1825,9 @@ export class Office {
         usage = addUsage(usage, summary.usage);
         this.logAssistantUsage('report', summary.usage);
         report = summary.value.say;
-        status = receipts.some((r) => r.status === 'failed') ? 'failed' : 'done';
+        // A task that came back `blocked` must never be written into the work
+        // log as a finished run. → `planStatusOf`, and the box on it
+        status = planStatusOf(receipts);
 
         /**
          * A promised file that isn't on disk → SAY SO, and downgrade the
@@ -1871,14 +1911,43 @@ export class Office {
        * The "saved to" block is BLOCKED on two branches, for two different reasons:
        *
        *  · `stopped` — its own sentence already lists the artifacts (§11f).
-       *  · a `reply` task — the user just FINISHED READING the answer.
+       *  · a SOLO `reply` run — the user just FINISHED READING the answer.
        *    Pasting a path underneath it repeats the same thing in machine
        *    language, and drags `P-260819-1430-…` in front of someone running
        *    a flower shop. The file still sits in the Output pane for anyone
        *    who needs it.
+       *
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 THE SECOND GATE USED TO READ `receipts.filter(r => !r.answer)` —   │
+       * │ i.e. it dropped the whole RECEIPT of any task that answered, not      │
+       * │ just the sentence. (user caught it 05/09)                             │
+       * │                                                                      │
+       * │ In a MIXED run that throws away evidence: `P-260905-0100-zquw` had    │
+       * │ T-01 (`deliver: file`, wrote via PowerShell ⇒ no `file` landing at    │
+       * │ all) and T-02 (`deliver: reply`, landed a real `file`). The filter    │
+       * │ discarded T-02's receipt for having an `answer`, T-01 had nothing to  │
+       * │ give, and the run reported ZERO files while TWO sat on disk — so the  │
+       * │ chat had no clickable path at all, and the only paths on screen were  │
+       * │ ones the model had typed itself, which are deliberately inert.        │
+       * │                                                                      │
+       * │ The intent behind the gate (SPEC-offices §6) was about the run where  │
+       * │ the answer IS the whole report. That is exactly `soloReply`, which    │
+       * │ is now what it asks. A mixed run still prints a report, and naming    │
+       * │ every file it really produced is the point of that report.            │
+       * │ → [[agentco-fallback-throws-away-answers]]                            │
+       * └──────────────────────────────────────────────────────────────────────┘
        */
-      const shown = status === 'stopped' ? [] : receipts.filter((r) => !r.answer.trim());
-      this.finish(record, status, report, usage, receipts.length, shown, plan.redirected ?? []);
+      const quiet = status === 'stopped' || soloReply;
+      this.finish(
+        record,
+        status,
+        report,
+        usage,
+        receipts.length,
+        quiet ? [] : receipts,
+        plan.redirected ?? [],
+        quiet ? [] : wrote,
+      );
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1963,9 +2032,25 @@ export class Office {
    * there's nothing there. `whereBlock` only lists what's REAL, so it stays
    * silent at the exact moment it most needs to speak up.
    */
-  private missingOutputs(plan: Plan, receipts: readonly Receipt[]): string[] {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ONE LOOP, BOTH ANSWERS — `gone` AND `landed`. (05/09)                    │
+   * │                                                                          │
+   * │ This used to be `missingOutputs`, returning only the absent half. The     │
+   * │ present half was needed too (see `whereBlock`), and writing a second      │
+   * │ near-identical loop for it is the "two copies of the same computation"    │
+   * │ trap: the day the `status !== 'done'` gate or the `safeJoin` guard moves, │
+   * │ one copy moves and the other quietly does not. Same walk, two lists.      │
+   * │ → [[agentco-detect-fix-pair-scope]]                                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private outputStatus(
+    plan: Plan,
+    receipts: readonly Receipt[],
+  ): { gone: string[]; landed: string[] } {
     const byTask = new Map(receipts.map((r) => [r.task_id, r]));
     const gone: string[] = [];
+    const landed: string[] = [];
     for (const task of plan.tasks) {
       // Only checks work that SELF-REPORTED as done. A task that was blocked
       // or interrupted mid-run having no file is normal, and it already said
@@ -1973,33 +2058,46 @@ export class Office {
       if (byTask.get(task.task_id)?.status !== 'done') continue;
       for (const out of task.outputs) {
         try {
-          if (!fs.existsSync(safeJoin(this.loaded.dir, out.path))) gone.push(out.path);
+          if (fs.existsSync(safeJoin(this.loaded.dir, out.path))) landed.push(out.path);
+          else gone.push(out.path);
         } catch {
           gone.push(out.path);
         }
       }
     }
-    return gone;
+    return { gone, landed };
   }
 
-  private whereBlock(receipts: readonly Receipt[]): { text: string; files: string[] } {
-    const files = new Set<string>();
+  /**
+   * @param wrote promised outputs verified on disk by `outputStatus` — the
+   *   second source, and the only one that sees a file written through the
+   *   shell or through an arm. Both sources go through the SAME existence
+   *   gate below, so neither can smuggle in a path the other would reject.
+   */
+  private whereBlock(
+    receipts: readonly Receipt[],
+    wrote: readonly string[] = [],
+  ): { text: string; files: string[] } {
     const servers = new Set<string>();
     let ranCommand = false;
+    const landed = receipts.flatMap((r) => r.landed ?? []);
 
-    for (const r of receipts) {
-      for (const spot of r.landed ?? []) {
-        if (spot.kind === 'external') servers.add(spot.ref);
-        else if (spot.kind === 'command') ranCommand = true;
-        else if (spot.kind === 'file') {
-          try {
-            if (fs.existsSync(safeJoin(this.loaded.dir, spot.ref))) files.add(spot.ref);
-          } catch {
-            /* outside the office directory — not reported as the user's output */
-          }
-        }
-      }
+    for (const spot of landed) {
+      if (spot.kind === 'external') servers.add(spot.ref);
+      else if (spot.kind === 'command') ranCommand = true;
     }
+
+    /**
+     * ⚠ `filesOnDisk`, NOT a local `existsSync` loop.
+     *
+     * *"Merge what was PROMISED with what we SAW written, keep only what is
+     * really there"* is the same question the scheduler already asks on four
+     * other exit paths, and that function is exported precisely so a fifth
+     * copy never gets written — its own comment box says so. Writing the loop
+     * again here is the 08/19 rule broken in the very file that cites it.
+     * → `worker.ts §filesOnDisk`
+     */
+    const files = new Set(filesOnDisk(this.loaded.dir, wrote, landed));
 
     const lines: string[] = [];
     let shown: string[] = [];
@@ -2084,6 +2182,8 @@ export class Office {
     receipts: readonly Receipt[] = [],
     /** Paths outside the office that `outputScoper` pulled back into the frame. → `Plan.redirected` */
     redirected: readonly string[] = [],
+    /** Promised outputs verified on disk. → `outputStatus`, and `whereBlock`'s second source */
+    wrote: readonly string[] = [],
   ): void {
     /**
      * ⚠ THE REPORT MUST NOT CONTRADICT THE STEP STRIP RIGHT NEXT TO IT. → §B
@@ -2157,7 +2257,7 @@ export class Office {
         `\n\n${t('off.pathsMentioned', { list: shownPaths.map((p) => `"${p}"`).join(', ') })}`;
     }
 
-    const where = this.whereBlock(receipts);
+    const where = this.whereBlock(receipts, wrote);
     report += where.text;
     record.status = status;
     record.ended_at = new Date().toISOString();
@@ -2290,10 +2390,40 @@ export class Office {
       // (same rule as §armWorkspace)
       return names.map((s) => oauth?.[s]?.label).find(Boolean);
     };
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ THE ONE THING THE DIAGRAM MARKS RED, and the boundary is the point.   │
+     * │                                                                      │
+     * │ It means exactly: **a service REFUSED a credential this arm runs on**,│
+     * │ so a person has to sign in again. Nothing else qualifies:             │
+     * │                                                                      │
+     * │  · *expiring / expired* is NOT a fault — the refresh loop renews at   │
+     * │    50% of the credential's life, and marking that red would light up  │
+     * │    healthy arms several times a day. A warning that is usually wrong  │
+     * │    teaches people to stop reading warnings, and then the real one     │
+     * │    goes unread too. → the false `folderRoots` alarm, §15i             │
+     * │  · *"is the arm actually working"* is NOT knowable here: it takes a   │
+     * │    handshake per arm, seconds and tokens each, on a function that     │
+     * │    runs on EVERY SSE event. Red for a guess is worse than no red.     │
+     * │                                                                      │
+     * │ So this reads a fact we wrote ourselves (`OAuthAccount.dead`), never  │
+     * │ an inference. → [[agentco-deterministic-vs-signal]]                   │
+     * │                                                                      │
+     * │ ⚠ Shares the same lazy `oauth` read as `viaOf` — one read for the     │
+     * │ whole diagram, and an office with no OAuth arm still touches no disk. │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const keyDeadOf = (server: string): string | undefined => {
+      const names = this.loaded.company.arms[server]?.secrets ?? [];
+      if (!names.length) return undefined;
+      oauth ??= readOAuth(companyPaths(this.loaded.companyDir));
+      const dead = names.find((s) => oauth?.[s]?.dead);
+      return dead ? (oauth?.[dead]?.label ?? dead) : undefined;
+    };
 
     return {
       nodes: layout.nodes.map((n) => ({
-        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf),
+        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf, keyDeadOf),
         // The layout/grouping key — computed in ONE place (`layout.ts
         // §armGroup`) and sent along, so the "Rearrange" button on the
         // browser side sorts identically to the server. Recomputing it in
@@ -3052,6 +3182,12 @@ export class Office {
     }
 
     let saved = false;
+    /**
+     * Captured BEFORE the turn, not after: a job that finishes while the
+     * compaction is in flight was not in the listing the model just read, so
+     * marking it as covered would lose it.
+     */
+    const upTo = new Date().toISOString();
     try {
       const result = await this.mailbox.lock(() => this.assistant.compact(this.factSkeleton()));
       this.logAssistantUsage('report', result.usage);
@@ -3112,6 +3248,30 @@ export class Office {
       };
     }
 
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ THE MARKER MOVES ON **SUCCESS**, NOT ON "A NODE WAS WRITTEN".        │
+     * │                                                                      │
+     * │ My first draft tied it to `saved`, which folds `NOTHING` in with a    │
+     * │ crash. The user caught what that costs: `NOTHING` repeated would      │
+     * │ never advance the marker, so the window would grow without bound and  │
+     * │ every later compaction would re-read a longer and longer log.        │
+     * │                                                                      │
+     * │ The two cases are not alike:                                         │
+     * │  · a THROW — the turn never happened, nobody summarised anything, so  │
+     * │    the window must stay open. Both `catch` branches return above      │
+     * │    without touching the marker, including `sessionGone`: the          │
+     * │    transcript is lost, but those jobs are still on disk and the NEXT  │
+     * │    compaction can still record them from the facts.                  │
+     * │  · `NOTHING` — the turn ran and gave its answer: *this stretch of     │
+     * │    work taught nothing worth keeping*. The code already respects that │
+     * │    answer by writing no node; respecting it means consuming the       │
+     * │    window too, or we are just asking the same question again forever. │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    this.compactedThrough = upTo;
+    // `finishClear` persists it — see the note there on why the write lives
+    // inside that function and not on this line.
     const tail = this.finishClear();
     return {
       saved,
@@ -3139,6 +3299,18 @@ export class Office {
     const tail = this.pruneNow();
     this.assistant.forget();
     fs.rmSync(this.sessionFile(), { force: true });
+    /**
+     * ⚠ REWRITES the compaction marker the file just took with it.
+     *
+     * The whole file is removed to drop the session pointer, but the marker is
+     * NOT part of the conversation — it records how far the WORK LOG has been
+     * squashed, which `/clear` does not undo. Sits here rather than at the one
+     * call site that moves it, because all three callers delete this file and
+     * only one of them was thinking about the marker; a second `/clear` would
+     * otherwise wipe it and hand the next compaction the entire log again —
+     * the exact bug this marker exists to close.
+     */
+    this.saveSessionId();
     this.clearChatLog();
     // Fires BEFORE the result sentence: this is the "erase what's currently
     // shown" command, so the sentence that follows it becomes the first
@@ -3201,11 +3373,7 @@ export class Office {
    * has said that lives in no record at all.
    */
   private factSkeleton(): string {
-    const plans = this.plans.list().slice(0, 12);
-    if (plans.length === 0) return '(no jobs have run yet)';
-    return plans
-      .map((p) => `- [${p.status}] ${p.request}${p.report ? `\n  → ${p.report.split('\n')[0]}` : ''}`)
-      .join('\n');
+    return workSkeleton(this.plans.list(), this.compactedThrough);
   }
 
   /**
@@ -3289,7 +3457,7 @@ export class Office {
    * ┌──────────────────────────────────────────────────────────────────────────┐
    * │ THE MOST DANGEROUS FAILURE FOUND SO FAR — measured 08/21.                │
    * │                                                                          │
-   * │ A user hit Stop right as `Người đọc` was splitting a contract into            │
+   * │ A user hit Stop right as `Người đọc` was splitting a contract into            │ // i18n-allow-vietnamese: the real role's actual display name from the recorded incident
    * │ clauses. The contract had **5** clauses; it had managed to write **3**.      │
    * │ The receipt recorded it correctly: `status: 'blocked'`, *"Stopped mid-run.    │
    * │ 4 files were left partially written, review before use."*                    │
@@ -3524,7 +3692,7 @@ export class Office {
      * │ treated all four cases as the first one.                                  │
      * │                                                                      │
      * │ Measured 08/21, twice in a row (hd3, hd4): a user hit Stop while           │
-     * │ `Người đọc` was splitting a contract (4/5 clauses done), then typed          │
+     * │ `Người đọc` was splitting a contract (4/5 clauses done), then typed          │ // i18n-allow-vietnamese: the real role's actual display name from the recorded incident
      * │ `/resume`. T-01 was absent from `pending` because it HAD run — and           │
      * │ returned `blocked`. The `T-02 → T-01` wire got cut, `missingInputs` saw       │
      * │ the directory had 4 files and let it through, and the whole chain after       │
@@ -3662,9 +3830,9 @@ export class Office {
    * │ **had never even seen the translation** yet still wrote out a table of          │
    * │ "terms and how they WERE translated".                                       │
    * │                                                                          │
-   * │ 🔥 Result: the table recorded `Widget → "Tiện ích (widget)"`, while the       │
+   * │ 🔥 Result: the table recorded `Widget → "Tiện ích (widget)"`, while the       │ // i18n-allow-vietnamese: the fabricated string as it literally appeared in the incident
    * │ real translation used `Widget` verbatim and NEVER contained the word            │
-   * │ "Tiện ích" at all. A document recording choices that WERE NEVER ACTUALLY        │
+   * │ "Tiện ích" at all. A document recording choices that WERE NEVER ACTUALLY        │ // i18n-allow-vietnamese: same fabricated string, quoted again
    * │ MADE — looking very professional, and wrong. Exactly the "wrong with            │
    * │ nobody knowing" failure class.                                             │
    * │                                                                          │
@@ -3995,6 +4163,8 @@ export class Office {
     notes: Record<string, number>,
     /** Looks up an arm's account name. Lazy — see `canvas()`. */
     viaOf: (server: string) => string | undefined,
+    /** Looks up a REFUSED credential on that arm. Same lazy read — see `canvas()`. */
+    keyDeadOf: (server: string) => string | undefined,
   ): CanvasNode {
     const base: CanvasNode = { ...n, label: n.id, missing, connected, removable: true };
     /**
@@ -4103,6 +4273,12 @@ export class Office {
         ...(() => {
           const via = n.server ? viaOf(n.server) : undefined;
           return via ? { via } : {};
+        })(),
+        // The only thing that paints a node red, and it is a fact we wrote
+        // ourselves, never a guess. → `canvas() §keyDeadOf`
+        ...(() => {
+          const keyDead = n.server ? keyDeadOf(n.server) : undefined;
+          return keyDead ? { keyDead } : {};
         })(),
         /**
          * The arm's REAL directory — read from `company.yaml`, NOT editable here.
@@ -4364,24 +4540,55 @@ export class Office {
    * the other, and after a restart the history stays intact while the
    * correction signal is lost — and the model follows the history.
    */
-  private readSession(): { id?: string; reach?: Record<string, string[]> } {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HOW FAR THE WORK LOG HAS ALREADY BEEN SQUASHED INTO MEMORY. (user 05/09) │
+   * │                                                                          │
+   * │ Lives HERE, next to the session pointer, for one specific reason: it must │
+   * │ survive the user DELETING their memory. Deleting is them saying *"forget  │
+   * │ every task up to now"* — if the marker lived in the memory node, deleting │
+   * │ it would reset the marker, `factSkeleton` would re-read the whole log,    │
+   * │ and the next compaction would rebuild exactly what they just deleted.     │
+   * │ That is the bug this field exists to close.                              │
+   * │                                                                          │
+   * │ ⚠ Deliberately NOT cleared by `forget()`. `/clear` starts a new           │
+   * │ conversation; it does not un-summarise work already recorded.            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private compactedThrough: string | undefined;
+
+  private readSession(): {
+    id?: string;
+    reach?: Record<string, string[]>;
+    compactedThrough?: string;
+  } {
     try {
       const raw = JSON.parse(fs.readFileSync(this.sessionFile(), 'utf8')) as {
         session_id?: string;
         reach?: Record<string, string[]>;
+        compacted_through?: string;
       };
-      return { id: raw.session_id, reach: raw.reach };
+      return { id: raw.session_id, reach: raw.reach, compactedThrough: raw.compacted_through };
     } catch {
       return {};
     }
   }
 
+  /**
+   * ⚠ Writes when there is a session **or** a marker.
+   *
+   * The old early-return assumed the file only ever holds a session pointer.
+   * After `/clear` there is no session — and that is EXACTLY the moment the
+   * marker has just moved, so returning early there would drop the one write
+   * that matters and hand the next compaction the whole log again.
+   */
   private saveSessionId(): void {
-    if (!this.assistant.session) return;
+    if (!this.assistant.session && !this.compactedThrough) return;
     const reach = this.assistant.reachSnapshot;
     this.writeJson(this.sessionFile(), {
-      session_id: this.assistant.session,
+      ...(this.assistant.session ? { session_id: this.assistant.session } : {}),
       ...(reach ? { reach } : {}),
+      ...(this.compactedThrough ? { compacted_through: this.compactedThrough } : {}),
       saved: new Date().toISOString(),
     });
   }
@@ -4433,6 +4640,127 @@ function sessionGone(err: unknown): boolean {
  */
 function readsOf(receipts: readonly Receipt[]): string[] {
   return [...new Set(receipts.flatMap((r) => r.reads))].sort();
+}
+
+/**
+ * What the WORK LOG records for a finished run, from the receipts it produced.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `blocked` USED TO FALL THROUGH TO `done`. (user caught it 05/09)       │
+ * │                                                                          │
+ * │ The old expression asked only about `failed`, so a run whose ONLY task    │
+ * │ came back `blocked` was written into the log as **done**.                │
+ * │                                                                          │
+ * │ Measured, `P-260905-0237-oq34`:                                          │
+ * │   receipt → status "blocked", blocked_on "No file-system access to the   │
+ * │             human's local machine (D:\Downloads\Musics)…"                │
+ * │   log     → status "done"                                                │
+ * │   request → "Create an empty file named abc.txt in D:\Downloads\Musics"  │
+ * │                                                                          │
+ * │ That line then sits in the results listing, inside the prefix of EVERY   │
+ * │ `route()` turn, reading `- [done] Create an empty file named abc.txt…`.  │
+ * │ The user asked for the file again and was told *"it was already created  │
+ * │ last time"*. The model invented nothing — it read a status WE wrote      │
+ * │ wrong, and had no way to know better.                                    │
+ * │                                                                          │
+ * │ ⚠ Neither existing guard could see it. `missingOutputs` asks *"is the    │
+ * │ promised file on disk"* and the answer was YES: the worker dutifully     │
+ * │ wrote `result.md` holding its explanation of why it could not do the     │
+ * │ job. **A file existing is not a goal being met.**                        │
+ * │                                                                          │
+ * │ Same failure class the note on `missingOutputs` already names — *"the    │
+ * │ worst kind of lie"* — one level up, at the RUN, where nobody was         │
+ * │ looking. And this one SELF-PROPAGATES: a false fact in the log is read   │
+ * │ by every later turn, and the next compaction would squash it into        │
+ * │ memory, where `supersedes` renews it forever.                            │
+ * │ → [[agentco-experience-ratchet]]                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Says nothing about `stopped` or `paused` on purpose: an interrupted or
+ * rate-limited run never reaches this function — those branches are decided
+ * earlier, from `result.stoppedBy`, and folding them in here would give one
+ * function two different questions to answer.
+ */
+export function planStatusOf(
+  receipts: readonly { status: string }[],
+): 'failed' | 'blocked' | 'done' {
+  if (receipts.some((r) => r.status === 'failed')) return 'failed';
+  if (receipts.some((r) => r.status === 'blocked' || r.status === 'needs_human')) return 'blocked';
+  return 'done';
+}
+
+/**
+ * The work listing handed to a memory-compaction turn. PURE, so it can be tested.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 ONLY THE JOBS NOT YET SQUASHED INTO MEMORY. (user 05/09)              │
+ * │                                                                          │
+ * │ This used to read `list().slice(0, 12)` — the last twelve jobs, however   │
+ * │ many of them memory already covered. Two consequences, and the second is  │
+ * │ the real defect:                                                         │
+ * │                                                                          │
+ * │  ① job #13 fell off the end and was NEVER recorded anywhere, with not     │
+ * │    one line saying so. `whereBlock`, in this same file, cuts at 8 and     │
+ * │    always prints "…and N more". Same shape, one of them honest.          │
+ * │  ② A user who EDITS or DELETES their memory is correcting the machine —   │
+ * │    that is the whole point of that pane being editable. But the deleted   │
+ * │    content came straight back at the next `/clear`, rebuilt from a log    │
+ * │    they have no door to. The edit pane was promising an authority it did  │
+ * │    not have. → [[agentco-scope-of-door-vs-data]]                         │
+ * │                                                                          │
+ * │ The recursion was always meant to be                                     │
+ * │     memory(n) = compact( session(n) + memory(n-1) )                      │
+ * │ with memory(n-1) — already in this very prompt, carried over by           │
+ * │ COMPACT_RULES rule 1 — as the truth for everything older. The skeleton's  │
+ * │ job is only the part memory CANNOT hold yet: what has run since. Feeding  │
+ * │ it the whole log made it a second, staler copy of memory, overwriting the │
+ * │ copy the user is allowed to correct.                                     │
+ * │                                                                          │
+ * │ ⚠ Belongs to the ASSISTANT's memory alone. Nothing here touches a         │
+ * │ worker's HOT/COLD knowledge — different store, different budget,          │
+ * │ different question. `factSkeleton` is its only caller.                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Split out of `Office` for the same reason `buildPlan` was: it holds rules
+ * that each cost something to learn — the window, the unfinished-job
+ * exception, the stated overflow — and buried inside a method that awaits the
+ * model, no test can reach any of them. → `assistant.ts §buildPlan`
+ */
+export function workSkeleton(
+  plans: readonly { status: string; request: string; report?: string; ended_at?: string }[],
+  since: string | undefined,
+): string {
+  /**
+   * ⚠ A job with no `ended_at` is KEPT whatever the marker says: unfinished
+   * work is exactly what memory should keep carrying forward, and it stops
+   * repeating by itself the moment the job finishes.
+   */
+  const fresh = plans.filter((p) => !since || !p.ended_at || p.ended_at > since);
+  if (fresh.length === 0) return '(no jobs have run since the last memory was written)';
+
+  /**
+   * Bounded by TOKENS, not by a job count — and the overflow is STATED.
+   *
+   * No arbitrary cap: the marker already makes this exactly one stretch of
+   * work, so the number is right by construction instead of by a guess. This
+   * ceiling is the safety valve for the one pathological session that ran
+   * hundreds of jobs, where the listing would otherwise eat the budget of the
+   * very turn meant to summarise it. `list()` is newest-first, so what gets
+   * dropped is the oldest — and the model is TOLD, because a summary that
+   * silently covers part of a window is worse than one that says which part.
+   */
+  const lines: string[] = [];
+  let spent = 0;
+  for (const p of fresh) {
+    const line = `- [${p.status}] ${p.request}${p.report ? `\n  → ${p.report.split('\n')[0]}` : ''}`;
+    const cost = estimateTokens(line);
+    if (spent + cost > SKELETON_TOKENS && lines.length > 0) break;
+    lines.push(line);
+    spent += cost;
+  }
+  const dropped = fresh.length - lines.length;
+  if (dropped > 0) lines.push(`- (+${dropped} older job(s) in this window, not listed here)`);
+  return lines.join('\n');
 }
 
 /**

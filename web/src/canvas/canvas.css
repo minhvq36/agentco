@@ -60,6 +60,11 @@
   fill: var(--color-muted);
   font-size: 12px;
 }
+/* The sub-line when it is carrying the reason the border went red. */
+.node-sub-alert {
+  fill: var(--color-danger);
+  font-weight: 600;
+}
 .node-av {
   font-size: 20px;
 }
@@ -106,6 +111,27 @@
 .node.is-missing .node-box {
   stroke: var(--color-danger);
   stroke-dasharray: 3 3;
+}
+/*
+ * A REFUSED credential. Solid red, and a faint red ground so the node reads as
+ * "not green" from across the diagram without having to be read.
+ *
+ * Solid, not dashed: dashed already means "nothing is wired here" (the stores)
+ * and "this config points at something absent" (`is-missing`). This arm exists
+ * and is wired correctly — a person simply has to sign in again. Reusing the
+ * dash would say the wrong thing in the existing vocabulary of the diagram.
+ *
+ * Does NOT animate. It can sit there for days until someone deals with it, and
+ * a permanent animation on the canvas is exhausting to work next to.
+ */
+.node.is-keydead .node-box {
+  fill: var(--color-danger-soft);
+  stroke: var(--color-danger);
+  stroke-width: 2;
+}
+/* Selection still has to win: it is the one thing that follows the cursor. */
+.node.is-keydead.is-selected .node-box {
+  stroke: var(--color-accent);
 }
 .node.is-selected .node-box {
   stroke: var(--color-accent);
