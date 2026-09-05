@@ -28,6 +28,7 @@ import test from 'node:test';
 import { Scheduler } from '../dist/core/scheduler.js';
 import { TaskIOSchema } from '../dist/core/types.js';
 import { buildTaskMessage } from '../dist/core/prompt.js';
+import { PlanOutputSchema, buildPlan } from '../dist/core/assistant.js';
 
 type Plan = Parameters<typeof Scheduler.linkDeps>[0];
 
@@ -128,6 +129,79 @@ test('⭐ no roster of wired workers passed ⇒ the connection check stays silen
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE TWO PLACES THAT ATE `kind` BEFORE ANY GATE COULD SEE IT.          │
+ * │                                                                          │
+ * │ Measured 05/09, AFTER `connection` shipped and the daemon was restarted   │
+ * │ on the new build: the same request failed the same way. The schema and    │
+ * │ the validator were both correct; the value never reached them.           │
+ * │                                                                          │
+ * │  ① `PlanTasksSchema` carried a hand-written twin of `TaskIOSchema`        │
+ * │    (`z.object({ path })`). zod strips an undeclared key, so `kind` was    │
+ * │    deleted at parse time, silently.                                      │
+ * │  ② `buildPlan` then hardcoded `kind: 'file'` over whatever survived.      │
+ * │                                                                          │
+ * │ Fixing only ① leaves ② working; fixing only ② leaves ① working. Two       │
+ * │ places holding one fact, and neither is visible to `tsc` — the shapes     │
+ * │ are structurally compatible. → [[agentco-finish-completely]]              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 ① the plan schema does not STRIP `kind` — zod deletes what it never declared', () => {
+  const parsed = PlanOutputSchema.parse({
+    steps: ['read it'],
+    tasks: [
+      {
+        task_id: 'T-01',
+        role: 'scout',
+        goal: 'g',
+        inputs: [{ kind: 'connection', path: 'the agentco page on Notion' }],
+        outputs: [{ path: 'artifacts/T-01/r.md' }],
+      },
+    ],
+  }) as { tasks: { inputs: { kind: string }[] }[] };
+  assert.equal(
+    parsed.tasks[0]!.inputs[0]!.kind,
+    'connection',
+    'a second copy of TaskIOSchema drops it here, and everything downstream then works on a lie',
+  );
+});
+
+test('🔴 ② `buildPlan` carries it through, and does NOT frame a connection as a path', () => {
+  const built = buildPlan(
+    {
+      steps: ['read it'],
+      tasks: [
+        {
+          task_id: 'T-01',
+          role: 'scout',
+          goal: 'g',
+          inputs: [
+            { kind: 'connection', path: 'the agentco page on Notion' },
+            { kind: 'file', path: 'library/files/a.md' },
+          ],
+          outputs: [{ kind: 'file', path: 'r.md' }],
+          constraints: [],
+          deps: [],
+          step: 0,
+        },
+      ],
+    } as never,
+    'req',
+    'P-1',
+    'file',
+  );
+  const io = built.tasks[0]!.inputs;
+  assert.equal(io[0]!.kind, 'connection', '`kind: "file"` hardcoded here undoes the schema fix');
+  assert.equal(
+    io[0]!.path,
+    'the agentco page on Notion',
+    'framing a connection into artifacts/<plan>/<task>/ turns a name into a path to nothing',
+  );
+  assert.equal(io[1]!.kind, 'file', 'a real file must still be framed as before');
+  assert.match(io[1]!.path, /^library\/files\/a\.md$/);
 });
 
 /**

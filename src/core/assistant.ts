@@ -36,6 +36,7 @@ import {
   LessonSchema,
   RunError,
   TaskBriefSchema,
+  TaskIOSchema,
   hasShell,
   type Deliver,
   type Lesson,
@@ -90,8 +91,30 @@ const PlanTasksSchema = z.object({
         task_id: z.string(),
         role: z.string(),
         goal: z.string(),
-        inputs: z.array(z.object({ path: z.string() })).default([]),
-        outputs: z.array(z.object({ path: z.string() })).default([]),
+        /**
+         * ┌────────────────────────────────────────────────────────────────────┐
+         * │ 🔴 `TaskIOSchema`, NOT A SECOND COPY OF IT. (measured 05/09)        │
+         * │                                                                    │
+         * │ This read `z.object({ path: z.string() })` — a hand-written twin of │
+         * │ `TaskIOSchema` that happened to match while `kind` had exactly one  │
+         * │ possible value. The moment `connection` was added, zod did what zod │
+         * │ does with an undeclared key: **stripped it, silently**. The model   │
+         * │ sent `{"kind":"connection","path":"the agentco page on Notion"}`,   │
+         * │ this line deleted `kind`, `buildPlan` stamped `file` back on, and   │
+         * │ the plan was rejected for naming a file that does not exist — the   │
+         * │ exact failure the `connection` kind had just been added to fix.     │
+         * │                                                                    │
+         * │ Two copies of one declaration drift, and the copy that drifts is    │
+         * │ the one nobody remembers exists. The 08/19 rule, and the reason     │
+         * │ `layout-geometry.ts` and `src/i18n/` are each imported rather than  │
+         * │ duplicated.                                                        │
+         * │                                                                    │
+         * │ ⚠ It fails SILENTLY in both directions: the plan parses fine, and   │
+         * │ `tsc` is happy, because the two shapes are structurally compatible. │
+         * └────────────────────────────────────────────────────────────────────┘
+         */
+        inputs: z.array(TaskIOSchema).default([]),
+        outputs: z.array(TaskIOSchema).default([]),
         constraints: z.array(z.string()).default([]),
         deps: z.array(z.string()).default([]),
         step: z.number().int().nonnegative().default(0),
@@ -105,7 +128,13 @@ const PlanTasksSchema = z.object({
     .min(1),
 });
 
-const PlanOutputSchema = z.union([PlanAskSchema, PlanTasksSchema]);
+/**
+ * ⚠ EXPORTED for the test suite alone, for the same reason `buildPlan` was
+ * split out of `plan()`: what this schema DROPS is invisible from outside, and
+ * a copy of it that silently deleted `kind` shipped for exactly that reason.
+ * → the box on `inputs` above
+ */
+export const PlanOutputSchema = z.union([PlanAskSchema, PlanTasksSchema]);
 
 /**
  * Escape hatch: an object with only `say`, missing `intent`. → `decideRoute`
@@ -924,7 +953,23 @@ export function buildPlan(
     const scopeOut = outputScoper(planId, t.task_id, (asked) => redirected.add(asked));
     return TaskBriefSchema.parse({
       ...t,
-      inputs: t.inputs.map((i) => ({ kind: 'file' as const, path: scopeIn(i.path) })),
+      /**
+       * ⚠ A CONNECTION IS CARRIED THROUGH UNTOUCHED — and NOT framed.
+       *
+       * This line used to hardcode `kind: 'file'`, which threw away what the
+       * model had declared even after the schema above stopped stripping it.
+       * Two places, one fact: the second is the one that keeps working after
+       * the first is fixed, so both had to move. → the box on `inputs` above
+       *
+       * `scopeIn` frames a path into `artifacts/<plan>/<task>/…`. A connection
+       * carries a NAME, in the human's own words, and framing it would turn
+       * *"the agentco page on Notion"* into a path to nothing.
+       */
+      inputs: t.inputs.map((i) =>
+        i.kind === 'connection'
+          ? { kind: 'connection' as const, path: i.path }
+          : { kind: 'file' as const, path: scopeIn(i.path) },
+      ),
       /**
        * DEDUPLICATES AFTER FRAMING — two different strings can resolve to one.
        *
@@ -937,6 +982,11 @@ export function buildPlan(
        * same file twice, and `validate` doesn't catch it either: the "two
        * tasks writing the same path" check compares ACROSS tasks, not within
        * one task's own list.
+       *
+       * ⚠ OUTPUTS STAY `file`, deliberately — a `connection` here is forced
+       * back, not honoured. A worker writes into the office and nowhere else;
+       * writing back into a service is a whole feature with its own approval
+       * question, and it must not arrive by way of a field default.
        */
       outputs: [...new Set(t.outputs.map((o) => scopeOut(o.path)))].map((p) => ({
         kind: 'file' as const,
