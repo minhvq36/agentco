@@ -154,9 +154,33 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     }
   }, [open]);
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ BOTH FIELDS, NOT JUST THE NAME. (user 05/09)                         │
+   * │                                                                      │
+   * │ Typing a name and pressing Enter used to create a worker whose        │
+   * │ description was our own placeholder sentence, written in whatever     │
+   * │ interface language was selected at that instant. Two costs: the       │
+   * │ Assistant routes on `pitch`, and that sentence says nothing about     │
+   * │ what the person does — so they were never given work, invisibly; and  │
+   * │ our text became their data inside every cached prompt.                │
+   * │                                                                      │
+   * │ ⚠ NOT a new restriction — the detail panel has always refused an      │
+   * │ empty description (`updateRole` → `off.pitchEmpty`), and              │
+   * │ `RoleSchema` declares `min(1)`. This door was the one exception, and  │
+   * │ it papered over the gap instead of showing it.                       │
+   * │                                                                      │
+   * │ ⚠ The placeholder and the tip below stay exactly as they were: that   │
+   * │ is where advice belongs — read, adopted deliberately, zero tokens     │
+   * │ until it is. What changes is only that it never becomes their data    │
+   * │ on its own. → `office.ts §addAgent`                                   │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  const ready = Boolean(name.trim() && pitch.trim());
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || busy) return;
+    if (!ready || busy) return;
     setBusy(true);
     const ok = await actions.addAgent({ display_name: name.trim(), pitch: pitch.trim(), tier });
     setBusy(false);
@@ -212,7 +236,7 @@ export function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <Button type="button" onClick={() => onOpenChange(false)}>
               {t('common.cancel')}
             </Button>
-            <Button type="submit" variant="primary" disabled={!name.trim() || busy}>
+            <Button type="submit" variant="primary" disabled={!ready || busy}>
               {busy ? t('common.creating') : t('common.create')}
             </Button>
           </DialogFooter>

@@ -598,7 +598,11 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
    * only be obeyed in one language — which is how the interface switch ended
    * up steering the assistant's replies. → `en.ts`, same spot
    */
-  'seed.rolePitchDefault': 'Mô tả việc {name} làm được, viết cho Trợ lý đọc.',
+  /*
+   * `seed.rolePitchDefault` is gone too (05/09), for the same reason one layer
+   * down: it became a worker's `pitch`, which the assistant routes on and which
+   * lives in the cached prefix. → `en.ts`, same spot
+   */
   'seed.mainOfficeName': 'Văn phòng chính',
   'seed.assistantName': 'Trợ lý',
   'srv.missingField': 'thiếu "{field}"',

@@ -725,10 +725,6 @@ export const actions = {
 
   /** Not recoverable — the call site must confirm first. */
   async removeOffice(id: string): Promise<boolean> {
-    const ok = await guard(() => api.removeOffice(id));
-    if (!ok) return false;
-    if (state.officeId === id) set({ officeId: null });
-    await actions.boot();
     /**
      * SAY SO when a connection has just been orphaned — **do not block**. (02/09)
      *
@@ -738,10 +734,44 @@ export const actions = {
      * the user goes looking for somewhere to remove it. One sentence plus the right
      * door is enough; adding a condition to the delete button blocks a legitimate
      * action over something that does not belong to it.
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 THE DELTA, NOT THE TOTAL. (user 05/09)                            │
+     * │                                                                      │
+     * │ This read `arms()` only AFTER the delete and counted every orphan in  │
+     * │ the company. A real company had 19 connections, most never wired to   │
+     * │ anyone — so deleting ANY office announced *"17 connections are now    │
+     * │ unused"*, including when that office had orphaned exactly zero.       │
+     * │                                                                      │
+     * │ The sentence says "**now** unused", so it is a claim about what this  │
+     * │ action just did. Answering it with a standing total is the same       │
+     * │ mismatch class as a `[done]` written over a `blocked` receipt: the    │
+     * │ number is real, it just does not answer the question asked. Worse, a  │
+     * │ toast that fires on every delete teaches the user to ignore the one   │
+     * │ time it matters.                                                     │
+     * │ → [[agentco-detect-fix-pair-scope]]                                  │
+     * │                                                                      │
+     * │ ⚠ Two reads, not one, and the BEFORE read has to happen before the    │
+     * │ delete call — there is no other moment that fact still exists.        │
+     * │ It costs one extra GET on an action the user takes once in a while.   │
+     * └──────────────────────────────────────────────────────────────────────┘
      */
-    const r = await api.arms().catch(() => null);
-    const n = r?.arms.filter((a) => a.orphan).length ?? 0;
-    if (n > 0) toast(t('toast.unusedArms', { n }));
+    const before = await api.arms().catch(() => null);
+    const wasOrphan = new Set(before?.arms.filter((a) => a.orphan).map((a) => a.id) ?? []);
+
+    const ok = await guard(() => api.removeOffice(id));
+    if (!ok) return false;
+    if (state.officeId === id) set({ officeId: null });
+    await actions.boot();
+
+    // `before === null` ⇒ we never learned the starting point, so every orphan
+    // would look new. Say nothing rather than announce a number we cannot stand
+    // behind — a wrong count here is what this whole box is about.
+    if (before) {
+      const r = await api.arms().catch(() => null);
+      const n = r?.arms.filter((a) => a.orphan && !wasOrphan.has(a.id)).length ?? 0;
+      if (n > 0) toast(t('toast.unusedArms', { n }));
+    }
     return true;
   },
 

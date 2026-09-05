@@ -770,12 +770,25 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
    * still shows it, in the very editor for that file, at zero tokens until the
    * person chooses to adopt it. → `company.ts §newOffice`
    */
-  /**
-   * The starting `pitch` of a new employee. Never blank: `pitch` is the ONLY
-   * thing the assistant sees when it plans, so an empty one leaves it with
-   * nothing to route on.
+  /*
+   * ⚠ `seed.rolePitchDefault` USED TO LIVE HERE — deleted 05/09, and it is the
+   * THIRD instance of the wire above, after the charter (17/08) and
+   * `skills/assistant.md` (05/09 the same morning).
+   *
+   * It filled a new employee's `pitch` when the person typed a name and pressed
+   * Enter. `pitch` is what the Assistant routes on and it sits in the cached
+   * prefix of every turn, so this seed failed the "never reaches a prompt" test
+   * as squarely as the skills block did — and it was worse in one way the other
+   * two were not: *"What X can do, written for the assistant to read"* carries
+   * NO information about what X actually does. The Assistant was routing on
+   * noise, and the worker was never picked, for a reason nobody could see.
+   *
+   * There is no replacement value. Creating an employee now REQUIRES a
+   * description, exactly as editing one always has (`updateRole` →
+   * `off.pitchEmpty`, `RoleSchema` → `min(1)`), and the advice stays where
+   * advice belongs: `dialog.newAgent.pitchPlaceholder` and `…pitchTip`, read in
+   * the field itself, at zero tokens. → `office.ts §addAgent`
    */
-  'seed.rolePitchDefault': 'What {name} can do, written for the assistant to read.',
   /**
    * ⚠ VALUES written during a v0 → multi-office migration.
    *

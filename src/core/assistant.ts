@@ -26,6 +26,7 @@ import { companyPaths } from './paths.js';
 import { readOAuth } from './secrets.js';
 import type { LoadedOffice } from './config.js';
 import { noteRateLimit } from './energy.js';
+import { driftRepair, driftsFrom } from './language-drift.js';
 import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
 import { delivered } from './scheduler.js';
 import { addUsage, classifyError, sayError } from './worker.js';
@@ -1538,6 +1539,17 @@ export class Assistant {
    * to compare against.
    */
   private reachPrev: Map<string, string[]> | undefined;
+
+  /**
+   * The human's OWN last sentence, verbatim — the only evidence of how they
+   * write. → `undrift`, `core/language-drift.ts`
+   *
+   * Their words, never ours: our prompts are English by construction, and a
+   * document they uploaded was written by someone else. Empty until they have
+   * actually said something, and an empty one produces no finding rather than
+   * a guess.
+   */
+  private lastHuman = '';
   /** HOT knowledge preloaded into the prefix. Only changes when knowledge_version bumps. */
   private hotKnowledge = '';
 
@@ -2688,6 +2700,13 @@ export class Assistant {
    */
   async route(message: string, hasActivePlan: boolean): Promise<AssistantResult<RouteOutcome>> {
     /**
+     * ⚠ RECORDED HERE AND NOWHERE ELSE — this is the one function that sees
+     * what the human actually typed. `report()` and the `/clear` memory run
+     * long after, on text nobody typed, and would otherwise have no evidence
+     * to check themselves against. → `undrift`
+     */
+    this.lastHuman = message;
+    /**
      * A DIRECTORY DIFF right after it changes — a SIGNAL, **not** a gate. → `reachDiff`
      *
      * Same mechanism as `scopeHint` right below: a conditional line, silent
@@ -3047,6 +3066,12 @@ export class Assistant {
      * fixed this morning.
      */
     override?: { systemPrompt: string; tools: string[] },
+    /**
+     * Set ONLY by `undrift` on its own second turn. Without it the check would
+     * run on its own repair and could loop forever — a gate that pays for a
+     * turn each time round.
+     */
+    repairing = false,
   ): Promise<{ text: string; usage: Usage }> {
     let usage: Usage = { ...EMPTY_USAGE };
     let text = '';
@@ -3286,7 +3311,69 @@ export class Assistant {
       if (this.inflight === controller) this.inflight = undefined;
     }
 
-    return { text, usage };
+    return repairing ? { text, usage } : this.undrift(prompt, text, usage, model, useSession, override);
+  }
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THE ONE CHOKE POINT — every door the Assistant speaks through goes        │
+   * │ past this line. → `core/language-drift.ts` for WHY this is code and not   │
+   * │ a sentence in a prompt.                                                  │
+   * │                                                                          │
+   * │ `route` · `plan` · `report` · the `/clear` memory all reach the model     │
+   * │ through `run()`, so guarding `run()` covers them in one place instead of  │
+   * │ four prompt builders that would drift apart. Four builders is the shape   │
+   * │ that has already cost this repository three times.                       │
+   * │ → [[agentco-finish-completely]]                                          │
+   * │                                                                          │
+   * │ ⚠ `override` is set ONLY by `lookup` and the hidden worker, and both are  │
+   * │ DELIBERATELY EXCLUDED: they report what a document says, so a Vietnamese  │
+   * │ document answered to an English question is CORRECT, and repairing it     │
+   * │ would burn a turn to make the answer worse. The exclusion rides on the    │
+   * │ existing parameter rather than a new flag — there is nothing extra to     │
+   * │ remember, and a future door that passes `override` opts out by itself.    │
+   * │                                                                          │
+   * │ ⚠ Clean costs ZERO: two string scans, no model call. Only a hit pays.     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Repairs exactly ONCE, and KEEPS THE FIRST ANSWER unless the second is
+   * both non-empty and actually fixed. A sentence in the wrong writing system
+   * is still readable; an empty one, or a second wrong one, is not an
+   * improvement worth overwriting a real answer with. Same rule as the stale
+   * gate in `route()`.
+   */
+  private async undrift(
+    prompt: string,
+    text: string,
+    usage: Usage,
+    model: string,
+    useSession: boolean,
+    override?: { systemPrompt: string; tools: string[] },
+  ): Promise<{ text: string; usage: Usage }> {
+    if (override || !driftsFrom(this.lastHuman, text)) return { text, usage };
+    this.logFailure('language-drift.log', this.lastHuman, text);
+
+    /**
+     * A SESSION door repairs on the session — the whole exchange is already
+     * there, so the turn only has to carry the correction.
+     *
+     * A ONE-SHOT door has no history at all, so it gets the original prompt
+     * back plus the exact text it just produced, and is made to RESTATE it.
+     * Handing over its own words rather than describing them is the same rule
+     * the rescue turn in `route()` already runs on.
+     */
+    const fix = await this.run(
+      useSession
+        ? driftRepair(this.lastHuman)
+        : `${prompt}\n\n--- You already answered this, like so:\n${text}\n\n${driftRepair(this.lastHuman)}`,
+      model,
+      useSession,
+      override,
+      true,
+    );
+    const merged = addUsage(usage, fix.usage);
+    const better = fix.text.trim() && !driftsFrom(this.lastHuman, fix.text);
+    return { text: better ? fix.text : text, usage: merged };
   }
 }
 

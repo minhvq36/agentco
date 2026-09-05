@@ -2600,12 +2600,44 @@ export class Office {
     if (this.loaded.roles.has(id)) {
       throw new RunError(t('off.roleExists', { id }), 'other');
     }
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 THE SAME GATE `updateRole` ALREADY HAS. (user 05/09)              │
+     * │                                                                      │
+     * │ Editing a worker has rejected an empty `pitch` all along, and         │
+     * │ `RoleSchema` declares `z.string().min(1)`. Creating one did not —     │
+     * │ it quietly substituted `t('seed.rolePitchDefault')`, so this door     │
+     * │ produced a worker **the editor would refuse to let you type**.        │
+     * │                                                                      │
+     * │ The substituted sentence was worse than nothing: *"What X can do,     │
+     * │ written for the assistant to read"* carries no information about      │
+     * │ what X does, and `pitch` is what the Assistant routes on. So the      │
+     * │ worker sat in the office and was never given work, for a reason       │
+     * │ nobody could see. And being written through the catalogue, it froze   │
+     * │ the INTERFACE LANGUAGE into user data that then sits in the cached    │
+     * │ prefix of every turn — the third time this exact wire was built,      │
+     * │ after the charter (17/08) and `skills/assistant.md` (05/09).          │
+     * │ → docs/CLAUDE.md §Language, [[agentco-seed-file-is-a-wire]]           │
+     * │                                                                      │
+     * │ ⚠ The advice itself is NOT lost — it is the field's placeholder,      │
+     * │ where the person reads it, adopts it deliberately, and it costs zero  │
+     * │ tokens until they do.                                                │
+     * │                                                                      │
+     * │ ⚠ Gated HERE and not only in the dialog: the HTTP door is a door too, │
+     * │ and an empty pitch reaching disk fails `min(1)` on the next load —    │
+     * │ which does not error, it makes the worker VANISH without a word.      │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const pitch = (input.pitch ?? '').trim();
+    if (!pitch) {
+      throw new RunError(t('off.pitchEmpty'), 'other');
+    }
 
     const tier = input.tier === 'eco' || input.tier === 'deep' ? input.tier : 'standard';
     fs.mkdirSync(this.loaded.paths.roles, { recursive: true });
     fs.writeFileSync(
       path.join(this.loaded.paths.roles, `${id}.yaml`),
-      roleTemplate(id, name || id, (input.pitch ?? '').trim(), tier),
+      roleTemplate(id, name || id, pitch, tier),
       'utf8',
     );
 
@@ -4804,6 +4836,9 @@ function addUsage(a: Usage, b: Usage): Usage {
  *
  * ⚠ `pitch` is the only thing the assistant sees when planning, so it is never
  * left blank — an empty pitch means the assistant has nothing to route on.
+ * It arrives non-empty because `addAgent` REFUSES otherwise; this function does
+ * not substitute a default of its own. Writing one here is exactly what put our
+ * interface-language sentence into user data. → the box in `addAgent`
  */
 function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
   return `id: ${id}
@@ -4811,7 +4846,7 @@ version: 1
 display_name: ${JSON.stringify(displayName)}
 avatar: "•"
 
-pitch: ${JSON.stringify(pitch || t('seed.rolePitchDefault', { name: displayName }))}
+pitch: ${JSON.stringify(pitch)}
 good_at: []
 not_for: []
 

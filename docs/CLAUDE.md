@@ -65,6 +65,49 @@ Two rules follow, and the second is the general one:
 ⚠ Existing offices keep their seeded file. It is their text now; rewriting it to
 fix our seed would be editing the user's data behind their back.
 
+### 🔴 …and the third road is not ours at all — the harness names the person
+
+Measured 05/09 with a logging proxy on `ANTHROPIC_BASE_URL`, reading the actual
+request body. The Claude Code CLI prepends its own block as **content[0] of the
+first user message**, ahead of every word we wrote:
+
+> `<system-reminder> … # userEmail`
+> `The user's email address is <the machine owner's address>. …`
+
+An address carries a name and a name carries a language. On a brand-new empty
+office, first turn of a fresh session, an English request, and a prompt holding
+**zero non-English characters anywhere**: 16/19 replies came back in the
+language of the address. The reverse direction is fine — the email agrees there.
+
+Three things follow, and the third is the general one:
+
+1. **`settingSources: []` does not cover this.** That switch turns off CLAUDE.md
+   (`claudemd_disabled` in the CLI's own flags, right beside `has_user_email`).
+   There is no switch for the email. It is not ours and we cannot remove it.
+2. **It lands on the FIRST user message only.** So chat drifts on its opening
+   turn and recovers as turns pile up, while every one-shot door — planning,
+   the report, the `/clear` memory — is turn 1 *every time* and never recovers.
+3. **Six wordings lost, so it is not a wording problem.** Rewording the slot
+   clause, deleting it, deleting the prompt-wide language line, strengthening
+   it, pointing it at the quoted sentence, and a fence sitting directly under
+   the injected block naming exactly what it outranks: 0/5, 4/5, 4/4, 4/4, 5/5,
+   5/5. An identity datum next to the request beats every rule, however loud,
+   however close. The answer is **code**, and it is
+   `core/language-drift.ts` — a script-share comparison between two strings we
+   already hold, plus one second turn that ASKS rather than orders. 5/5 both
+   directions, and $0 on the direction that was never broken.
+
+⚠ A worked example pair *did* move the number (3/5 where every rule scored 0/5)
+and is deliberately **not** shipped: an example has to be written in some
+language, which pins two named languages into the prefix and silently biases
+every user who speaks a third. That is the trade this section forbids.
+
+⚠ `test/no-pinned-language.test.ts` reads source code, and `newOffice` taught us
+it cannot see a file we wrote. This road it cannot see either — the text is not
+in our repository at all. **A prompt gate that reads only what we authored can
+never be complete.** The way to know what the model receives is to capture the
+request, not to grep the source.
+
 ### Adding a user-visible string
 
 1. Add the key to `src/i18n/en.ts` — **English is the source of truth**.
