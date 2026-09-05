@@ -1493,6 +1493,11 @@ export class Office {
         onDuty,
         this.loaded.dir,
         armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers),
+        // ⚠ Who actually holds a connection — the only thing that makes a
+        // `kind: "connection"` input believable, and the only thing stopping
+        // it from being a one-word way around the file gate.
+        // → `Scheduler.validate`, the `connection` branch
+        new Set([...this.loaded.roles].filter(([, r]) => r.mcp.length > 0).map(([id]) => id)),
       );
       if (problems.length) {
         // The plan came out, but it can't run — to the user this is still a
@@ -3583,6 +3588,11 @@ export class Office {
       // library document, and the library isn't part of the output manifest.
       const srcTimes: string[] = [];
       for (const i of t.inputs ?? []) {
+        // A connection has no file, so it has no mtime and can say nothing
+        // about staleness. Skipping is not the same as "fresh": a task with
+        // ONLY connection inputs collects no times, and `srcTimes.length === 0`
+        // below already means "no conclusion", which is the honest answer.
+        if (i.kind === 'connection') continue;
         // `resolveInput`, not `safeJoin`: an input can be an ABSOLUTE path
         // outside the office, or **an arm's name** (`Musics`). Using safeJoin
         // would silently drop the "is it stale" check for any output built

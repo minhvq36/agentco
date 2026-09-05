@@ -230,7 +230,7 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
       "task_id": "T-01",
       "role": "<employee id>",
       "goal": "<one clear sentence, in the user's language>",
-      "inputs": [{"path": "artifacts/T-00/notes.md"}],
+      "inputs": [{"path": "artifacts/T-00/notes.md"}, {"kind": "connection", "path": "the agentco page on Notion"}],
       "outputs": [{"path": "artifacts/T-01/result.md"}],
       "constraints": ["..."],
       "deps": [],
@@ -246,6 +246,7 @@ When asked to plan, reply with exactly one JSON object in a \`\`\`json block, no
 - \`tasks\`: the actual work. \`step\` is the index into \`steps\`.
 - \`deps\`: task_ids that must finish first. Leave empty when tasks can run in parallel — parallel is good.
 - **A path the human typed is exact — copy it into \`inputs\` verbatim.** They picked it from a list in the interface, and it was checked against the real files before it reached you. Do not search for it, do not "correct" it, and never ask them to confirm it exists.
+- **Something that lives inside a connection is \`{"kind": "connection", "path": "<what to fetch, in their words>"}\`** — a Notion page, a Linear issue, a GitHub file. It is NOT a file path and there is nothing to check it against: write the name the human used and give the task to an employee whose line shows that connection. Putting it in as a plain path is the one thing that gets a perfectly good plan rejected, because no such file exists and no task creates one.
 - \`outputs\`: every task must write at least one file under \`artifacts/<task_id>/\`. Two tasks must NEVER write the same path. This holds for **every** task, including \`deliver: "reply"\` ones.
 - **When the human named a path, keep the part they chose.** Their folders and filenames go *inside* \`artifacts/<task_id>/\`, they do not replace it — \`artifacts/vi/doc-1.md\` becomes \`artifacts/<task_id>/vi/doc-1.md\`. Silently flattening what they asked for is how a person ends up hunting for a file that is not where they put it.
 - **When the human asked for separate files, write separate files.** "translate it, and also note the terms you chose" is two outputs, not one file with a section at the bottom. The same request must produce the same shape every time it is run — a person translating five documents one at a time is comparing the results.
@@ -837,9 +838,29 @@ export function buildTaskMessage(
       : `## Delivery: FILE\nLeave \`answer\` empty. The human opens the file.`,
   );
 
-  if (brief.inputs.length) {
+  /**
+   * ⚠ TWO LISTS, because they are reached two different ways — and the worker
+   * must not be told to "read" something that has no path.
+   *
+   * A `file` is opened. A `connection` is a NAME inside a service, fetched by
+   * asking the arm. Folding them into one list would land a connection under
+   * *"read these files yourself"*, and the rule three lines up
+   * (*"if an input will not open, stop"*) would make the worker return
+   * `blocked` on the very thing it was hired to fetch.
+   * → `types.ts §TaskIOSchema`
+   */
+  const files = brief.inputs.filter((i) => i.kind !== 'connection');
+  const viaArm = brief.inputs.filter((i) => i.kind === 'connection');
+  if (files.length) {
+    parts.push(`## Inputs — read these files yourself\n${files.map((i) => `- ${i.path}`).join('\n')}`);
+  }
+  if (viaArm.length) {
     parts.push(
-      `## Inputs — read these files yourself\n${brief.inputs.map((i) => `- ${i.path}`).join('\n')}`,
+      `## Fetch these through your connections\n${viaArm.map((i) => `- ${i.path}`).join('\n')}\n` +
+        `These are NOT files and have no path — they are named the way the human named them. ` +
+        `Find each one through the connections you hold, using their own search or lookup tools. ` +
+        `If a name turns out not to exist there, say so in your receipt and stop; do not substitute ` +
+        `something that looks close.`,
     );
   }
   if (brief.outputs.length) {

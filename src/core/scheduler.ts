@@ -265,6 +265,11 @@ export class Scheduler {
     officeDir?: string,
     /** Arm name → real directory. Missing ⇒ "Musics" gets blocked. → `catalog.ts §armDirIndex` */
     armDirs?: Record<string, string>,
+    /**
+     * Roles holding at least one connection. The ONLY thing that makes a
+     * `kind: "connection"` input believable. → the `connection` branch below
+     */
+    rolesWithArms?: ReadonlySet<string>,
   ): string[] {
     const problems: string[] = [];
     const ids = new Set(plan.tasks.map((t) => t.task_id));
@@ -322,8 +327,41 @@ export class Scheduler {
        * │ in the error branch.                                                       │
        * └────────────────────────────────────────────────────────────────────┘
        */
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ A CONNECTION IS NOT A FILE — and it is checked on a DIFFERENT       │
+       * │ question. (05/09) → `types.ts §TaskIOSchema`                        │
+       * │                                                                    │
+       * │ There is nothing on disk to look for, so the file check below would │
+       * │ always reject it. What IS checkable, and the only thing worth       │
+       * │ checking, is whether the worker this was handed to actually holds a │
+       * │ connection at all.                                                  │
+       * │                                                                    │
+       * │ ⚠ THIS CONDITION IS LOAD-BEARING, not politeness. Without it the    │
+       * │ model has a one-word escape hatch out of the file gate: mark a real │
+       * │ mistyped path `kind: "connection"` and every check stops. That is   │
+       * │ precisely the direction `isUrlInput` refused to guess in —          │
+       * │ *"a real filename treated as a URL ⇒ the gate silently turns off"*. │
+       * │ Tying it to `role.mcp` makes the lie impossible to tell: a worker   │
+       * │ with no connection cannot have meant one.                          │
+       * │ → [[agentco-safe-default-direction]]                                │
+       * │                                                                    │
+       * │ ⚠ It does NOT check that the named thing exists inside that         │
+       * │ service. We cannot know without calling the arm, and calling it     │
+       * │ here would cost a network round trip at planning time to answer a   │
+       * │ question the worker answers for free while doing the work.          │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      for (const i of t.inputs) {
+        if (i.kind !== 'connection') continue;
+        if (!rolesWithArms || rolesWithArms.has(t.role)) continue;
+        problems.push(phrase('plan.connectionNoArm', { task: t.task_id, role: t.role, path: i.path }));
+      }
+
       if (officeDir) {
         for (const i of t.inputs) {
+          // Not a path — handled by the loop above, on its own question.
+          if (i.kind === 'connection') continue;
           const want = norm(i.path);
           // A directory another task is currently writing into also counts as
           // "will exist" — see `contains`.
@@ -629,9 +667,11 @@ export class Scheduler {
     const armDirs = armDirIndex(this.deps.office.company.arms, this.deps.office.company.mcpServers);
     const out: string[] = [];
     for (const i of brief.inputs) {
-      // ⚠ THE SAME exclusion that `validate` uses — otherwise a plan clears
+      // ⚠ THE SAME exclusions that `validate` uses — otherwise a plan clears
       // gate one and dies at gate two, exactly what the comment block above
-      // warns about.
+      // warns about. A connection names a thing inside a service; there is no
+      // path, so "is it on disk" is not a question about it.
+      if (i.kind === 'connection') continue;
       if (isUrlInput(i.path)) continue;
       const abs = resolveInput(this.deps.office.dir, i.path, armDirs);
       if (!abs || !existsOnDisk(abs)) out.push(i.path);

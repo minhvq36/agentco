@@ -324,6 +324,13 @@ export const en = {
     'Task {task} needs to read “{path}”, which is not on this machine — check the path',
   'plan.inputMissingUnwritten':
     'Task {task} needs to read “{path}”, but there is no such file and no task creates it',
+  /**
+   * The ONE check a `kind: "connection"` input gets. Names the employee, not
+   * the connection: the fix is either a different employee or a wire on the
+   * diagram, and both of those are things about a person.
+   */
+  'plan.connectionNoArm':
+    'Task {task} wants to fetch “{path}” through a connection, but “{role}” is not wired to any',
   'plan.cycle': 'Circular dependency: {trail}',
   'plan.blockedPrevUnfinished': 'Could not run: the previous step is not finished.',
   'plan.blockedPrevCut': 'Could not run: the previous step was cut off and its results are incomplete.',

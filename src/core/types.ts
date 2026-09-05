@@ -757,8 +757,41 @@ export type OfficeConfig = z.infer<typeof OfficeConfigSchema>;
 
 // ─────────────────────────────────────────────────────────── task & receipt
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `kind` STOPPED BEING A ONE-VALUE ENUM ON 05/09 — the FOURTH time one   │
+ * │ failure class hit `resolveInput`, and the file had predicted it.          │
+ * │                                                                          │
+ * │ `paths.ts` already recorded three: 08/22 blind to absolute paths · 08/26  │
+ * │ blind to arm names · 08/31 blind to URLs. *"Patching three places with    │
+ * │ three fixes just invites the bug back at a fourth."* Here it is.          │
+ * │                                                                          │
+ * │ Measured 05/09: *"read the agentco page on Notion"*, to a worker holding  │
+ * │ a read-only Notion arm. The Assistant planned it correctly and wrote      │
+ * │ `inputs: [{path: "Notion: agentco"}]` — because `inputs` is the ONLY      │
+ * │ slot for "what this task needs", and the slot could only say **file**.    │
+ * │ The gate then blocked the whole plan: not on disk, no task produces it.   │
+ * │ The Assistant got blocked for doing the right thing, a fourth time, and   │
+ * │ the advice it gave back — *"say which document you mean"* — could not     │
+ * │ work, because nothing the human retyped was ever the problem.             │
+ * │                                                                          │
+ * │ ⚠ The 08/26 fix WAS deterministic, and that is the sharp part: `armDirs`  │
+ * │ maps an arm to a DIRECTORY, so a filesystem arm resolves and Notion,      │
+ * │ Linear and GitHub — which have no directory at all — can never appear in  │
+ * │ that table. A deterministic gate that cannot SEE half of what it governs  │
+ * │ is not a gate over that half. → [[agentco-rule-must-see-what-it-governs]] │
+ * │                                                                          │
+ * │ ⚠ `'connection'` carries a NAME, not a path: what to fetch, in the        │
+ * │ human's own words. Nothing resolves it to disk and nothing opens it —     │
+ * │ the worker asks its own arm at the moment of doing the work, which is     │
+ * │ the only moment anyone knows what that arm can do.                        │
+ * │                                                                          │
+ * │ ⚠ `.default('file')` keeps every plan written before today parsing        │
+ * │ unchanged — including one being resumed mid-run.                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 export const TaskIOSchema = z.object({
-  kind: z.enum(['file']).default('file'),
+  kind: z.enum(['file', 'connection']).default('file'),
   path: z.string(),
 });
 export type TaskIO = z.infer<typeof TaskIOSchema>;

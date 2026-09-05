@@ -242,6 +242,8 @@ export const vi: Catalog = {
     'Task {task} cần đọc "{path}" nhưng không tìm thấy trên máy — kiểm lại đường dẫn',
   'plan.inputMissingUnwritten':
     'Task {task} cần đọc "{path}" nhưng không có file đó, và không việc nào tạo ra nó',
+  'plan.connectionNoArm':
+    'Task {task} muốn lấy "{path}" qua một kết nối, nhưng "{role}" chưa được nối với kết nối nào',
   'plan.cycle': 'Phụ thuộc vòng tròn: {trail}',
   'plan.blockedPrevUnfinished': 'Không làm được vì bước trước chưa xong.',
   'plan.blockedPrevCut': 'Không làm được vì bước trước bị cắt giữa chừng, kết quả của nó còn thiếu.',
