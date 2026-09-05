@@ -1,14 +1,16 @@
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BẢN CÀI APP — TRA TỰ ĐỘNG. → SPEC-arms §5h·7o                            │
- * │                                                                          │
- * │ Không ô nhập nào (user 27/08: *"Không gõ chữ gì, bấm thử ngay và thử tự   │
- * │ động"*). Chọn xong tài khoản là nó tự chạy, và kết quả là **danh sách    │
- * │ repo hãng thật sự cho đụng** — thứ dấu ✓ của `tools/list` không nói được. │
- * │                                                                          │
- * │ ⚠ BA trạng thái, ba câu khác nhau. Đừng gộp `failed` với `installed: []`: │
- * │ một cái là *"không tra được"*, cái kia là *"tra được, và câu trả lời là   │
- * │ chưa cài"*. Gộp lại là hoặc chặn oan người đã cài, hoặc thả người chưa.   │
+ * │ APP INSTALLATION — CHECKED AUTOMATICALLY. → SPEC-arms §5h·7o              │
+ * │                                                                           │
+ * │ No input field at all (user, 27/08: *"no typing — press try and let it    │
+ * │ check by itself"*). Picking the account runs it, and the result is THE    │
+ * │ LIST OF REPOS THE VENDOR ACTUALLY GRANTS — which the ✓ from `tools/list`  │
+ * │ cannot tell you.                                                          │
+ * │                                                                           │
+ * │ ⚠ THREE states, three different sentences. Never merge `failed` with      │
+ * │ `installed: []`: one means *"could not check"*, the other *"checked, and  │
+ * │ the answer is not installed"*. Merging them either blocks someone who     │
+ * │ has installed it, or waves through someone who has not.                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -16,6 +18,7 @@ import { Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { ArmScope, RepoScanState } from './types';
+import { t } from '@i18n';
 
 export function RepoScan({
   name,
@@ -30,35 +33,35 @@ export function RepoScan({
   scope?: ArmScope;
   scan: RepoScanState;
   scanning: boolean;
-  /** Ô thoát đang tick — xem khối chú thích ở cuối file. */
+  /** The escape-hatch checkbox — see the note further down this file. */
   anyway: boolean;
   onAnyway(v: boolean): void;
   onRecheck(): void;
 }) {
   return (
     <div className="mt-3 rounded-md border border-line px-3 py-3">
-      <div className="text-[13px] font-medium">Repo agentco được phép đụng</div>
+      <div className="text-[13px] font-medium">{t('arm.repoTitle')}</div>
 
       {scanning ? (
         <div className="mt-1.5 flex items-center gap-2 text-xs text-muted">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Đang hỏi {name} xem app được cài vào những repo nào…
+          {t('arm.repoScanning', { name })}
         </div>
       ) : scan && 'failed' in scan ? (
         /*
-          KHÔNG TRA ĐƯỢC ≠ CHƯA CÀI. Cho đi tiếp, nhưng nói thật là ta không
-          biết — im lặng ở đây là để người dùng tự tin sai.
+          COULD NOT CHECK ≠ NOT INSTALLED. Let them carry on, but say plainly
+          that we do not know — staying quiet here builds false confidence.
         */
         <p className="mt-1 text-xs leading-relaxed text-warn">
-          Không hỏi được danh sách repo lúc này. Vẫn cắm được — nhưng nếu nhân viên báo không tìm
-          thấy repo, hãy quay lại bấm <b>{scope?.say}</b> ở trên.
+          {t('arm.repoScanFailedBefore')} <b>{scope?.say}</b> {t('arm.repoScanFailedAfter')}
         </p>
       ) : scan && scan.installed.length > 0 ? (
         <>
           <p className="mt-1 text-xs leading-relaxed text-muted">
-            Đã cài trên <b>{scan.installed.length}</b> repo của <b>@{scan.login}</b>
+            {t('arm.repoInstalledBefore')} <b>{scan.installed.length}</b>{' '}
+            {t('arm.repoInstalledMid')} <b>@{scan.login}</b>
             {scan.seen > scan.installed.length && (
-              <> — {scan.seen - scan.installed.length} repo khác thì chưa cài</>
+              <> {t('arm.repoNotInstalled', { n: scan.seen - scan.installed.length })}</>
             )}
             .
           </p>
@@ -76,21 +79,20 @@ export function RepoScan({
             )}
           </div>
           {/*
-            ⚠ NÓI RA GIỚI HẠN CỦA CHÍNH PHÉP ĐO. Repo công khai đọc được **bất
-            kể** bản cài (đo 27/08), nên danh sách này nói về *quyền đầy đủ*,
-            không phải *tất cả những gì đọc được*. Không nói ra là để người dùng
-            tin nó chặt hơn thực tế.
+            ⚠ STATE THE LIMIT OF THE MEASUREMENT ITSELF. Public repos are
+            readable REGARDLESS of the installation (measured 27/08), so this
+            list is about *full access*, not *everything that can be read*. Not
+            saying so lets people believe it is tighter than it is.
           */}
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-            Repo công khai thì nhân viên vẫn đọc được dù chưa cài — danh sách trên là những repo có
-            quyền <b>đầy đủ</b> (gồm repo riêng tư và quyền ghi).
+            {t('arm.repoPublicNoteBefore')} <b>{t('arm.repoPublicNoteBold')}</b>{' '}
+            {t('arm.repoPublicNoteAfter')}
           </p>
         </>
       ) : scan ? (
         <>
           <p className="mt-1 text-xs leading-relaxed text-danger">
-            <b>@{scan.login}</b> chưa cài agentco vào repo nào. Nhân viên sẽ không đọc được repo
-            riêng tư và không ghi được gì cả.
+            <b>@{scan.login}</b> {t('arm.repoNoneAfter')}
           </p>
           {scope && (
             <Button
@@ -101,13 +103,13 @@ export function RepoScan({
             </Button>
           )}
           <Button size="sm" className="mt-1.5 w-full" onClick={onRecheck}>
-            Cài xong rồi — kiểm lại
+            {t('arm.repoRecheck')}
           </Button>
           {/*
-            ĐƯỜNG THOÁT BẮT BUỘC, và nó không phải sự nhân nhượng.
-            `search user:<login>` **không thấy repo của tổ chức**, nên "rỗng"
-            không chứng minh "chưa cài gì". Chặn cứng ở đây là giam một người đã
-            làm đúng — mà giam thì không có đường ra.
+            A MANDATORY ESCAPE HATCH, and not a concession.
+            `search user:<login>` DOES NOT SEE ORGANISATION REPOS, so "empty"
+            does not prove "nothing installed". Hard-blocking here would trap
+            someone who did everything right — and a trap has no way out.
           */}
           <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] leading-relaxed text-muted">
             <input
@@ -117,7 +119,7 @@ export function RepoScan({
               onChange={(e) => onAnyway(e.target.checked)}
             />
             <span>
-              Đã hiểu và tiếp tục — <i>repo của tổ chức không hiện ở đây được</i>.
+              {t('arm.repoAnywayBefore')} <i>{t('arm.repoAnywayItalic')}</i>.
             </span>
           </label>
         </>

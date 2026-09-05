@@ -1,19 +1,20 @@
 /**
- * Kho bí mật cấp CÔNG TY. → docs/SPEC-offices.md §5
+ * The COMPANY-level secrets store. → docs/SPEC-offices.md §5
  *
- * `company/.state/secrets.json` — đã nằm trong .gitignore, và hàm đọc file duy
- * nhất phơi ra HTTP (`ArtifactStore.resolve`) chỉ nhận đường dẫn nằm TRONG
- * `artifacts/`, nên `.state/` không có cửa nào ra ngoài.
+ * `company/.state/secrets.json` — already in .gitignore, and the one
+ * function that exposes a file over HTTP (`ArtifactStore.resolve`) only
+ * accepts paths INSIDE `artifacts/`, so `.state/` has no door out at all.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐẶC QUYỀN TỐI THIỂU. Vai trò khai `secrets: [NOTION_TOKEN]` thì CHỈ khoá  │
- * │ đó được đưa vào môi trường tiến trình MCP của nó. Không có "cho hết cho   │
- * │ tiện": một agent bị prompt injection qua nội dung nó đọc chỉ cầm được     │
- * │ đúng những chìa ta đã trao, và cái giá của sai sót vì thế là hữu hạn.     │
+ * │ LEAST PRIVILEGE. A role that declares `secrets: [NOTION_TOKEN]` gets ONLY       │
+ * │ that key placed into its MCP process's environment. No "just grant everything    │
+ * │ for convenience": an agent hit by prompt injection through content it reads       │
+ * │ only ever holds the exact keys we handed it, so the cost of a mistake stays       │
+ * │ bounded.                                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Giá trị bí mật KHÔNG BAO GIỜ đi vào prompt. Chúng là biến môi trường của tiến
- * trình MCP — model không đọc được chúng, chỉ dùng được tool đã mở khoá sẵn.
+ * Secret values NEVER enter a prompt. They're environment variables of an
+ * MCP process — the model can't read them, it can only use the tool that's already unlocked.
  */
 
 import fs from 'node:fs';
@@ -26,64 +27,67 @@ export type SecretMap = Record<string, string>;
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CHÌA OAUTH LÀ **MỘT LOẠI CHÌA**, KHÔNG PHẢI MỘT HỆ THỐNG THỨ HAI.        │
+ * │ AN OAUTH KEY IS **A KIND OF KEY**, NOT A SECOND SYSTEM.                       │
  * │                                                                          │
- * │ Chìa tĩnh là một chuỗi; chìa OAuth là một object có 4+ trường và tự làm  │
- * │ mới. Cám dỗ là dựng một kho riêng cho nó — và đó là chỗ hỏng: `grantFor`,│
- * │ `injectSecrets`, `armHash`, `role.secrets`, `secret list` đều sẽ phải     │
- * │ mọc thêm một nhánh, tức **năm bản của cùng một luật**.                    │
+ * │ A static key is a string; an OAuth key is an object with 4+ fields that            │
+ * │ refreshes itself. The temptation is to build it a separate store — and that's      │
+ * │ where it breaks: `grantFor`, `injectSecrets`, `armHash`, `role.secrets`,           │
+ * │ `secret list` would ALL need a new branch, i.e. **five copies of the same           │
+ * │ rule**.                                                                     │
  * │                                                                          │
- * │ Thay vào đó: tài khoản OAuth vẫn **có một cái TÊN** như mọi chìa khác,   │
- * │ và `readSecrets` **dàn phẳng** nó thành `access_token` hiện hành. Cả năm │
- * │ chỗ trên không đổi một dòng nào. Thứ duy nhất OAuth thêm vào là *"giá trị│
- * │ này được làm mới ở nền"* — một chuyện về VÒNG ĐỜI, không phải về hình    │
- * │ dạng.                                                                    │
+ * │ Instead: an OAuth account still **has a NAME** like any other key, and             │
+ * │ `readSecrets` **flattens** it down to the current `access_token`. All five         │
+ * │ places above change zero lines. The only thing OAuth adds is *"this value is        │
+ * │ refreshed in the background"* — a matter of LIFECYCLE, not of shape.               │
  * │                                                                          │
- * │ Tên khoá là `$oauth`, và nó **không thể trùng** tên chìa nào: tên chìa   │
- * │ đi qua `PLACEHOLDER` = `[A-Z0-9_]+`, không có `$`. Và bản `readSecrets`  │
- * │ cũ **đã** bỏ qua mọi giá trị không phải chuỗi ⇒ công ty tạo bằng bản cũ  │
- * │ đọc được bản mới và ngược lại, không cần di trú.                         │
+ * │ The key's name is `$oauth`, and it **cannot collide** with any key name: a          │
+ * │ key name passes through `PLACEHOLDER` = `[A-Z0-9_]+`, no `$`. And the old           │
+ * │ `readSecrets` **already** skipped every non-string value ⇒ a company created         │
+ * │ with the old version can read the new one and vice versa, no migration needed.       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const OAUTH_KEY = '$oauth';
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 DANH TÍNH ỨNG DỤNG PHẢI SỐNG LÂU BẰNG CÁI TÀI KHOẢN NÓ CẤP CHÌA.      │
- * │ (nguyên nhân gốc của hai tài khoản Notion chết — truy 27/08)             │
+ * │ 🔴 THE APP'S IDENTITY MUST OUTLIVE THE ACCOUNTS IT ISSUES KEYS TO.               │
+ * │ (root cause of two dead Notion accounts — traced 27/08)                       │
  * │                                                                          │
- * │ Trước: `client_id` xin được bằng đăng ký động (DCR) chỉ nằm trong một     │
- * │ `Map` **trong RAM**. Tắt daemon là mất ⇒ lần bật sau **đăng ký một ứng    │
- * │ dụng MỚI** ở phía dịch vụ. Chạy vài hôm là rải ra hàng chục ứng dụng, mỗi │
- * │ cái cầm chìa của một nhóm tài khoản, và không cái nào được ai dọn.        │
+ * │ Before: the `client_id` obtained through Dynamic Client Registration (DCR)          │
+ * │ lived only in an in-RAM `Map`. Shutting down the daemon lost it ⇒ the next          │
+ * │ startup **registered a BRAND NEW app** with the service. Running for a few           │
+ * │ days scattered dozens of apps, each holding the keys of one batch of                 │
+ * │ accounts, and none of them ever got cleaned up.                                    │
  * │                                                                          │
- * │ Số đo 27/08 chỉ thẳng vào đó: hai tài khoản chết dùng CHUNG một           │
- * │ `client_id` cũ, tài khoản sống dùng `client_id` mới nhất. Cả hai client   │
- * │ đều còn tồn tại (`invalid_grant` chứ không phải `invalid_client`) ⇒ thứ   │
- * │ bị thu hồi là **quyền cấp cho ứng dụng cũ**, không phải bản thân chìa.    │
+ * │ The measurement on 27/08 pointed right at it: the two dead accounts shared          │
+ * │ ONE old `client_id`, while the live account used the newest `client_id`. Both        │
+ * │ clients still exist (`invalid_grant`, not `invalid_client`) ⇒ what got revoked        │
+ * │ was **the grant to the old app**, not the key itself.                              │
  * │                                                                          │
- * │ ⇒ Ứng dụng phải được đăng ký **một lần, giữ mãi**. Đó cũng đúng điều      │
- * │ người dùng đòi: *"như account Facebook, Shopee — log cả năm có bị ai đá   │
- * │ ra đâu"*. Phiên web sống lâu được vì **ứng dụng đứng yên**, chỉ có chìa   │
- * │ xoay. Ta đang làm ngược: xoay cả ứng dụng.                               │
+ * │ ⇒ The app must be registered **once, and kept forever**. That's also exactly        │
+ * │ what the user asked for: *"like a Facebook or Shopee account — you stay             │
+ * │ logged in for a year, nobody kicks you out"*. A web session stays alive             │
+ * │ because **the app stays put**, only the key rotates. We were doing the              │
+ * │ opposite: rotating the app itself.                                                 │
  * │                                                                          │
- * │ Khoá `$clients`, cùng file, cùng đường ghi nguyên tử — **không** đẻ thêm  │
- * │ một kho thứ ba. Cùng lý lẽ đã viết cho `$oauth` ở khối trên.              │
+ * │ The `$clients` key, same file, same atomic write path — **does NOT** spawn a         │
+ * │ third store. Same reasoning already written for `$oauth` in the block above.        │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const CLIENTS_KEY = '$clients';
 
 /**
- * Mọi khoá dành riêng. Dùng ở **một** chỗ: `writeSecrets` phải giữ lại tất cả.
+ * Every reserved key. Used in **one** place: `writeSecrets` must preserve them all.
  *
- * ⚠ Đây là chỗ đã suýt hỏng lần thứ hai. `writeSecrets` dựng lại cả file từ
- * `{...chìa, $oauth}` — tức bất kỳ khoá dành riêng nào **không được nêu tên
- * trong đúng dòng đó** sẽ bị xoá lặng lẽ khi người dùng cắm một cánh tay bất kỳ.
- * Liệt kê một chỗ thì thêm khoá thứ ba về sau không cần nhớ đi sửa nơi khác.
+ * ⚠ This is the spot that nearly broke a second time. `writeSecrets`
+ * rebuilds the whole file from `{...keys, $oauth}` — meaning any reserved
+ * key **not named on that exact line** gets silently wiped the next time
+ * the user connects any arm at all. Listing it in one place means adding a
+ * third key later never requires remembering to edit somewhere else.
  */
 const RESERVED = [OAUTH_KEY, CLIENTS_KEY] as const;
 
-/** Tài khoản OAuth theo TÊN CHÌA (`NOTION_OAUTH_A1B2C3D4`). → `oauth.ts` */
+/** OAuth accounts keyed by KEY NAME (`NOTION_OAUTH_A1B2C3D4`). → `oauth.ts` */
 export type OAuthMap = Record<string, OAuthAccount>;
 
 function readRaw(paths: CompanyPaths): Record<string, unknown> {
@@ -93,8 +97,9 @@ function readRaw(paths: CompanyPaths): Record<string, unknown> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     return raw as Record<string, unknown>;
   } catch {
-    // Bí mật hỏng KHÔNG được làm sập công ty — agent nào cần sẽ tự báo thiếu chìa.
-    process.emitWarning('.state/secrets.json không đọc được. Agent cần chìa sẽ báo thiếu.');
+    // A broken secrets file must NOT crash the company — whichever agent
+    // needs a key will report it as missing on its own.
+    process.emitWarning('.state/secrets.json is unreadable; any agent that needs a key will report it missing');
     return {};
   }
 }
@@ -106,15 +111,16 @@ export function readSecrets(paths: CompanyPaths): SecretMap {
     if (typeof v === 'string') out[k] = v;
   }
   /**
-   * ⚠ OAUTH GHI ĐÈ CHÌA TĨNH CÙNG TÊN, cố ý và theo đúng chiều này.
+   * ⚠ OAUTH OVERRIDES A STATIC KEY OF THE SAME NAME, deliberately, in this exact direction.
    *
-   * Ca thật: người dùng dán tay một access token vào `NOTION_ACCESS_TOKEN` hôm
-   * nay, rồi mai bấm Đăng nhập. Nếu chìa tĩnh thắng thì họ đăng nhập xong mà
-   * hệ thống vẫn dùng cái chuỗi cũ **đã hết hạn 8 tiếng trước** — và triệu
-   * chứng là 401 ngay sau một thao tác vừa báo thành công.
+   * A real case: the user hand-pastes an access token into
+   * `NOTION_ACCESS_TOKEN` today, then clicks Sign in tomorrow. If the
+   * static key won, they'd finish signing in and the system would still
+   * use the old string **that expired 8 hours ago** — and the symptom is a
+   * 401 right after an action that just reported success.
    *
-   * Chiều này an toàn vì OAuth là thứ có VÒNG ĐỜI: nó tự làm mới, còn chuỗi
-   * dán tay thì đứng yên chờ chết.
+   * This direction is safe because OAuth is something with a LIFECYCLE: it
+   * refreshes itself, while a hand-pasted string just sits there waiting to die.
    */
   for (const [name, acc] of Object.entries(readOAuth(paths))) {
     if (acc.access_token) out[name] = acc.access_token;
@@ -122,14 +128,14 @@ export function readSecrets(paths: CompanyPaths): SecretMap {
   return out;
 }
 
-/** Chỉ phần OAuth — cho vòng làm mới ở nền và cho giao diện liệt kê tài khoản. */
+/** Just the OAuth portion — for the background refresh loop and for the interface's account listing. */
 export function readOAuth(paths: CompanyPaths): OAuthMap {
   const bag = readRaw(paths)[OAUTH_KEY];
   if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return {};
   const out: OAuthMap = {};
   for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
-    // Tối thiểu phải có `access_token` — một bản ghi hỏng nửa chừng thì bỏ qua,
-    // đừng để nó dàn phẳng thành `undefined` rồi bay lên server thành `Bearer `.
+    // Must have at least `access_token` — skip a half-broken record rather
+    // than letting it flatten to `undefined` and end up on the server as `Bearer `.
     if (v && typeof v === 'object' && typeof (v as OAuthAccount).access_token === 'string') {
       out[k] = v as OAuthAccount;
     }
@@ -138,12 +144,14 @@ export function readOAuth(paths: CompanyPaths): OAuthMap {
 }
 
 /**
- * Ghi/xoá MỘT tài khoản OAuth. Đọc-sửa-ghi cả file, không ghi đè cả kho.
+ * Writes/deletes ONE OAuth account. Read-modify-write the whole file, never
+ * overwrites the entire store.
  *
- * ⚠ ĐỌC LẠI TỪ ĐĨA NGAY TRƯỚC KHI GHI, không dùng bản đã cầm sẵn trong tay.
- * Vòng làm mới ở nền và người dùng bấm "Đăng nhập" chạy song song được; ghi
- * bằng một bản chụp cũ là xoá mất chìa vừa được cái kia lưu — và mất một
- * `refresh_token` đã XOAY thì không lấy lại được bằng gì ngoài đăng nhập lại.
+ * ⚠ RE-READS FROM DISK RIGHT BEFORE WRITING, never uses a copy already held
+ * in hand. The background refresh loop and the user clicking "Sign in" can
+ * run at the same time; writing from a stale snapshot would wipe out a key
+ * the other one just saved — and losing a `refresh_token` that has already
+ * ROTATED can't be recovered by anything short of signing in again.
  */
 export function saveOAuth(paths: CompanyPaths, name: string, acc: OAuthAccount | null): void {
   const raw = readRaw(paths);
@@ -154,15 +162,15 @@ export function saveOAuth(paths: CompanyPaths, name: string, acc: OAuthAccount |
 }
 
 /**
- * `client_id` đã đăng ký, theo `issuer|redirect_uri`. → `$clients`
+ * A registered `client_id`, keyed by `issuer|redirect_uri`. → `$clients`
  *
- * ⚠ Khoá phải gồm `redirect_uri`: DCR cấp `client_id` **cho đúng URI đã đăng
- * ký**. Đổi cổng daemon rồi dùng lại client cũ ⇒ `invalid_redirect_uri`, và câu
- * lỗi đó không hề nói ra nguyên nhân thật.
+ * ⚠ The key must include `redirect_uri`: DCR issues a `client_id` **for the
+ * exact registered URI**. Changing the daemon's port and reusing the old
+ * client ⇒ `invalid_redirect_uri`, and that error message never states the real cause.
  *
- * ⚠ `client_id` **không phải bí mật** (public client, `token_endpoint_auth_method:
- * none`). Nó nằm ở đây vì đây là chỗ dữ liệu **của công ty** sống, không phải vì
- * nó cần được giấu.
+ * ⚠ `client_id` is **not a secret** (a public client,
+ * `token_endpoint_auth_method: none`). It lives here because this is where
+ * **company-owned** data lives, not because it needs to be hidden.
  */
 export function readClients(paths: CompanyPaths): Record<string, string> {
   const bag = readRaw(paths)[CLIENTS_KEY];
@@ -175,11 +183,12 @@ export function readClients(paths: CompanyPaths): Record<string, string> {
 }
 
 /**
- * `null` = **XOÁ** mục đó, không phải ghi chuỗi rỗng.
+ * `null` = **DELETE** the entry, not write an empty string.
  *
- * Cần cho ô *"dùng client_id của bạn"*: xoá ô đi nghĩa là **quay về client của
- * agentco**, và cách duy nhất diễn đạt điều đó là mục ấy biến mất. Ghi `''` thì
- * `deviceClientId` đọc lên một chuỗi rỗng và gửi nó lên hãng.
+ * Needed for the *"use your own client_id"* field: clearing the field means
+ * **falling back to agentco's own client**, and the only way to express
+ * that is for the entry to disappear. Writing `''` would make
+ * `deviceClientId` read back an empty string and send that to the vendor.
  */
 export function saveClient(paths: CompanyPaths, key: string, clientId: string | null): void {
   const raw = readRaw(paths);
@@ -191,62 +200,66 @@ export function saveClient(paths: CompanyPaths, key: string, clientId: string | 
 
 export function writeSecrets(paths: CompanyPaths, map: SecretMap): void {
   /**
-   * ⚠ HAI CÁI BẪY Ở ĐÂY, VÀ CẢ HAI ĐẾN TỪ CÙNG MỘT DÒNG CÓ SẴN:
-   * `addArm` gọi `writeSecrets({ ...readSecrets(pp), ...secrets })`.
+   * ⚠ TWO TRAPS HERE, AND BOTH COME FROM THE SAME EXISTING LINE: `addArm`
+   * calls `writeSecrets({ ...readSecrets(pp), ...secrets })`.
    *
-   * ① Không giữ `$oauth` lại ⇒ cắm một cánh tay bất kỳ là **xoá sạch mọi tài
-   *    khoản đã đăng nhập**. Mất `refresh_token` đã xoay thì không có đường
-   *    nào lấy lại ngoài đăng nhập lại từ đầu.
+   * ① Not preserving `$oauth` ⇒ connecting any arm at all **wipes out every
+   *    signed-in account**. Losing a `refresh_token` that has rotated leaves
+   *    no way back except signing in again from scratch.
    *
-   * ② `readSecrets` giờ DÀN PHẲNG access_token vào map ⇒ nếu ghi thẳng map ấy
-   *    xuống, ta đúc một **bản sao tĩnh** của một chìa vốn tự làm mới. Bản sao
-   *    đó chết sau 8 giờ và nằm lại trong file dưới dạng chuỗi — vô hại hôm nay
-   *    (OAuth thắng lúc đọc) nhưng là một quả mìn cho bất kỳ ai đọc file và
-   *    tưởng đó là chìa thật.
+   * ② `readSecrets` now FLATTENS access_token into the map ⇒ writing that
+   *    map straight back down would bake a **static copy** of a key that's
+   *    meant to refresh itself. That copy dies after 8 hours and sits in
+   *    the file as a plain string — harmless today (OAuth wins on read) but
+   *    a landmine for anyone reading the file and mistaking it for the real key.
    */
   /**
-   * ③ 🔴 VÀ MỌI KHOÁ DÀNH RIÊNG KHÁC CŨNG PHẢI SỐNG SÓT — không riêng `$oauth`.
+   * ③ 🔴 AND EVERY OTHER RESERVED KEY MUST ALSO SURVIVE — not just `$oauth`.
    *
-   * Bản trước nêu đích danh `$oauth` trong đúng dòng dựng lại file, nên khoá
-   * dành riêng **thứ hai** (`$clients`) sẽ bị xoá lặng lẽ ở lần cắm cánh tay
-   * tiếp theo — và mất `$clients` nghĩa là lần đăng nhập sau đăng ký một ứng
-   * dụng mới, tức dựng lại **đúng cái lỗi vừa truy ra**. Giữ theo DANH SÁCH
-   * (`RESERVED`), không theo tên gõ tay.
+   * The earlier version named `$oauth` explicitly on the very line that
+   * rebuilds the file, so the **second** reserved key (`$clients`) would
+   * get silently wiped the next time an arm gets connected — and losing
+   * `$clients` means the next sign-in registers a new app, recreating
+   * **exactly the bug just traced**. Preserved via the LIST (`RESERVED`), not by hand-typed name.
    */
   const raw = readRaw(paths);
   const oauth = readOAuth(paths);
   const flat: SecretMap = {};
   for (const [k, v] of Object.entries(map)) if (!(k in oauth)) flat[k] = v;
-  const giu: Record<string, unknown> = {};
-  for (const k of RESERVED) if (raw[k] && Object.keys(raw[k] as object).length) giu[k] = raw[k];
-  writeRaw(paths, { ...flat, ...giu, ...(Object.keys(oauth).length ? { [OAUTH_KEY]: oauth } : {}) });
+  const keep: Record<string, unknown> = {};
+  for (const k of RESERVED) if (raw[k] && Object.keys(raw[k] as object).length) keep[k] = raw[k];
+  writeRaw(paths, { ...flat, ...keep, ...(Object.keys(oauth).length ? { [OAUTH_KEY]: oauth } : {}) });
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 GHI NGUYÊN TỬ — vì mất nửa file ở đây là mất **CẢ KHO CHÌA**.         │
- * │ (user 26/08: *"race condition này nguy hiểm vậy cơ à, vá thôi"*)         │
+ * │ 🔴 ATOMIC WRITE — because losing half a file here means losing **THE ENTIRE       │
+ * │ KEY STORE**. (the user, 26/08: *"this race condition is that dangerous?              │
+ * │ let's patch it"*)                                                            │
  * │                                                                          │
- * │ `writeFileSync` **cắt file về 0 byte trước, rồi mới ghi**. Chết giữa hai │
- * │ bước đó (daemon bị kill · máy mất điện · đĩa đầy) để lại một file JSON    │
- * │ cụt ⇒ `readRaw` parse hỏng ⇒ `catch` trả `{}` ⇒ **mọi tài khoản biến     │
- * │ mất**, không riêng cái đang ghi. Người dùng phải đăng nhập lại TẤT CẢ.   │
+ * │ `writeFileSync` **truncates the file to 0 bytes first, then writes**. Dying         │
+ * │ between those two steps (daemon killed · power loss · disk full) leaves a          │
+ * │ truncated JSON file ⇒ `readRaw` fails to parse ⇒ `catch` returns `{}` ⇒            │
+ * │ **every account vanishes**, not just the one being written. The user has to         │
+ * │ sign back into EVERYTHING.                                                    │
  * │                                                                          │
- * │ Và nó đắt gấp đôi vì đường ghi hay chạy nhất là **vòng làm mới chìa** —  │
- * │ chạy ngầm, mỗi 15 phút, khi không ai nhìn.                               │
+ * │ And it's twice as expensive because the most frequently run write path is the       │
+ * │ **key refresh loop** — running in the background, every 15 minutes, when no          │
+ * │ one is watching.                                                              │
  * │                                                                          │
- * │ Ghi tạm rồi `rename`: trên cùng một ổ, `rename` là thao tác **nguyên tử** │
- * │ của hệ điều hành. Mọi lúc, file thật hoặc là bản CŨ nguyên vẹn, hoặc là  │
- * │ bản MỚI nguyên vẹn — không có trạng thái thứ ba.                         │
+ * │ Write to a temp file, then `rename`: on the same drive, `rename` is an **atomic**    │
+ * │ OS operation. At every moment, the real file is either the OLD version intact,       │
+ * │ or the NEW version intact — there's no third state.                                 │
  * │                                                                          │
- * │ ⚠ `fsync` TRƯỚC khi rename, không phải sau. Rename nguyên tử về mặt thư  │
- * │ mục, nhưng nó không hứa rằng NỘI DUNG đã xuống đĩa — mất điện có thể để  │
- * │ lại một tên file mới trỏ vào một khối rỗng.                              │
+ * │ ⚠ `fsync` BEFORE renaming, not after. A rename is atomic at the directory level,      │
+ * │ but it makes no promise that the CONTENT has hit disk — a power loss could leave       │
+ * │ a new file name pointing at an empty block.                                        │
  * │                                                                          │
- * │ ⚠⚠ VÀ ĐÂY LÀ THỨ NÓ **KHÔNG** CỨU ĐƯỢC, phải nói thẳng: nếu tiến trình   │
- * │ chết SAU khi Notion đã xoay chìa mà TRƯỚC khi ta ghi, chìa mới nằm trong │
- * │ một phản hồi HTTP đã mất — không cơ chế lưu trữ nào lấy lại được. Cửa sổ │
- * │ đó vài micro-giây và chỉ mất MỘT tài khoản. Đường ra là `needs_login`.   │
+ * │ ⚠⚠ AND HERE IS WHAT IT **CANNOT** SAVE, stated plainly: if the process dies             │
+ * │ AFTER Notion has already rotated the key but BEFORE we write it, the new key           │
+ * │ lives inside an HTTP response that's now lost — no storage mechanism can recover        │
+ * │ it. That window is a few microseconds and costs at most ONE account. The way out         │
+ * │ is `needs_login`.                                                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function writeRaw(paths: CompanyPaths, obj: Record<string, unknown>): void {
@@ -261,29 +274,31 @@ function writeRaw(paths: CompanyPaths, obj: Record<string, unknown>): void {
     fs.closeSync(fd);
   }
   /**
-   * ⚠ Đặt quyền trên FILE TẠM, trước khi rename — không phải sau.
+   * ⚠ Permissions are set on the TEMP FILE, before renaming — not after.
    *
-   * Sau rename thì đã có một khoảnh khắc file thật nằm đó với quyền mặc định,
-   * và trên máy nhiều người dùng thì khoảnh khắc đó là đủ. Trên POSIX: chỉ chủ
-   * sở hữu đọc được. Trên Windows `chmod` là no-op, ACL thư mục người dùng đã đủ.
+   * After a rename, there's a brief moment where the real file sits there
+   * with default permissions, and on a multi-user machine that moment is
+   * enough. On POSIX: only the owner can read it. On Windows `chmod` is a
+   * no-op, and the user's own directory ACL is already sufficient.
    */
   try {
     fs.chmodSync(tmp, 0o600);
   } catch {
-    /* không đặt được quyền thì thôi */
+    /* couldn't set permissions — fine, move on */
   }
-  // Nguyên tử: sau dòng này, file thật là bản mới HOẶC bản cũ, không có ở giữa.
+  // Atomic: after this line, the real file is the new version OR the old one, never in between.
   fs.renameSync(tmp, paths.secretsFile);
 }
 
 /**
- * Chỉ những chìa vai trò này được khai. Thiếu chìa nào thì trả tên nó ra.
+ * Grants only the keys this role declares. Any missing key has its name returned.
  *
- * ⚠ CHUỖI RỖNG = THIẾU, không phải "có mà rỗng". Ô nhập để trắng gửi lên `''`,
- * và nếu ta coi nó là một chìa hợp lệ thì `Bearer ` bay lên server và quay về
- * 401 — tức người dùng nhận câu *"chìa sai"* cho việc **chưa điền chìa**. Cùng
- * một câu trả lời phải ra từ mọi hàm hỏi "có chìa chưa", nếu không thì hai chỗ
- * trong cùng một luồng tin hai chuyện khác nhau. → §missingSecretRefs
+ * ⚠ AN EMPTY STRING = MISSING, not "present but empty". A blank input field
+ * submits `''`, and treating that as a valid key means `Bearer ` gets sent
+ * to the server and comes back 401 — meaning the user gets told *"wrong
+ * key"* for having **never filled one in**. Every function that asks "is
+ * there a key yet" has to return the same answer, or two spots in the same
+ * flow believe two different things. → §missingSecretRefs
  */
 export function grantFor(
   all: SecretMap,
@@ -299,45 +314,50 @@ export function grantFor(
   return { env, missing };
 }
 
-/** Chỉ TÊN, không bao giờ giá trị — dùng cho giao diện và log. */
+/** NAMES only, never values — used by the interface and logs. */
 export function secretNames(paths: CompanyPaths): string[] {
   return Object.keys(readSecrets(paths)).sort();
 }
 
-/** Chỗ duy nhất biết cú pháp ô trống. Đổi ở đây là đổi mọi nơi. */
+/** The one place that knows the placeholder syntax. Change it here and it changes everywhere. */
 const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴🔴 THAY Ô TRỐNG Ở **MỌI CHỖ** TRONG CẤU HÌNH — không riêng `headers`.   │
- * │ (bug user bắt 31/08, bài 20 chặng B)                                     │
+ * │ 🔴🔴 FILLS PLACEHOLDERS **EVERYWHERE** IN THE CONFIG — not just `headers`.       │
+ * │ (bug the user caught, 31/08, test 20 step B)                                 │
  * │                                                                          │
- * │ Ca thật: dán khối README có `env: { MEMORY_FILE_PATH: "${MEMORY_PATH}" }`,│
- * │ giao diện **sinh đúng ô nhập** `MEMORY_PATH`, người dùng điền `abcde` →   │
- * │ vẫn *"Thiếu chìa: MEMORY_PATH"*. Điền lại bao nhiêu lần cũng thế.         │
+ * │ A real case: pasting a README block with `env: { MEMORY_FILE_PATH:                 │
+ * │ "${MEMORY_PATH}" }`, the interface **generates the correct field** `MEMORY_PATH`,    │
+ * │ the user fills in `abcde` → still *"Missing key: MEMORY_PATH"*. Refilling it            │
+ * │ over and over changes nothing.                                                   │
  * │                                                                          │
- * │ ⚠⚠ NGUYÊN NHÂN LÀ MỘT BẤT ĐỐI XỨNG GIỮA HAI HÀM ĐI CHUNG MỘT ĐƯỜNG:      │
+ * │ ⚠⚠ THE CAUSE IS AN ASYMMETRY BETWEEN TWO FUNCTIONS SHARING ONE PATH:               │
  * │                                                                          │
- * │   `missingSecretRefs`  quét **cả cấu hình** (JSON.stringify)  ← phát hiện │
- * │   `injectSecrets`      chỉ thay trong **`headers`** của HTTP  ← điền      │
+ * │   `missingSecretRefs`  scans **the entire config** (JSON.stringify)  ← detects       │
+ * │   `injectSecrets`      only substitutes inside HTTP's **`headers`**  ← fills          │
  * │                                                                          │
- * │ Nhánh stdio không thay ô trống bao giờ — nó chỉ **gộp chìa vào `env`      │
- * │ theo TÊN** (đúng cho danh mục: server đọc `process.env.NOTION_TOKEN`).    │
- * │ Nên mọi ô trống nằm ngoài `headers` bị **phát hiện mãi mãi, không bao giờ │
- * │ được điền** ⇒ vòng lặp vô tận, và câu lỗi lại chỉ vào đúng cái ô người    │
- * │ dùng VỪA ĐIỀN. Câu lỗi sai cửa tệ nhất: nó tố cáo thứ đang đúng.          │
+ * │ The stdio branch never substitutes placeholders at all — it only **merges keys        │
+ * │ into `env` BY NAME** (correct for a catalog entry: the vendor's server reads           │
+ * │ `process.env.NOTION_TOKEN` directly). So every placeholder outside `headers`            │
+ * │ gets **detected forever, never filled** ⇒ an infinite loop, with the error               │
+ * │ message pointing at the exact field the user JUST FILLED IN. The worst kind of           │
+ * │ wrong-door error: it accuses something that's actually correct.                        │
  * │                                                                          │
- * │ Chú thích ở `missingSecretRefs` đã tiên đoán đúng ngày này — *"một hàm    │
- * │ chỉ nhìn `headers` là hàm sẽ đúng cho tới đúng ngày ai đó viết            │
- * │ `url: 'https://${HOST}/mcp'`"*. Nó chỉ đoán nhầm CHỖ: `env` của stdio đến │
- * │ trước, và nó đến qua đường B — đường mà danh mục không che được.          │
+ * │ The comment at `missingSecretRefs` had already predicted this exact day — *"a           │
+ * │ function that only looks at `headers` will be correct right up until the day             │
+ * │ someone writes `url: 'https://${HOST}/mcp'`"*. It only guessed the wrong SPOT:            │
+ * │ stdio's `env` got there first, arriving through path B — the path a catalog              │
+ * │ entry can't shield against.                                                        │
  * │                                                                          │
- * │ ⇒ **BẤT BIẾN PHẢI GIỮ: phạm vi của hàm ĐIỀN = phạm vi của hàm KIỂM.**     │
- * │ Lệch một chút là đẻ ra một ô trống không ai điền được. Có test canh.      │
+ * │ ⇒ **THE INVARIANT THAT MUST HOLD: the FILLING function's scope = the CHECKING            │
+ * │ function's scope.** The slightest mismatch produces a placeholder nobody can              │
+ * │ ever fill. There's a test guarding this.                                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ô trống không có chìa thì **giữ nguyên** và ghi vào `missing` — để
- * `missingSecretRefs` phía sau vẫn bắt được và báo đúng câu *"thiếu chìa"*.
+ * A placeholder with no matching key is **left as-is** and recorded in
+ * `missing` — so `missingSecretRefs` downstream still catches it and
+ * reports the correct *"missing key"* message.
  */
 function fillRefs<T>(node: T, keys: Record<string, string>, missing: Set<string>): T {
   if (typeof node === 'string') {
@@ -352,11 +372,12 @@ function fillRefs<T>(node: T, keys: Record<string, string>, missing: Set<string>
   }
   if (Array.isArray(node)) return node.map((v) => fillRefs(v, keys, missing)) as T;
   /**
-   * ⚠ CHỈ đi vào object THUẦN. Một `McpSdkServerConfigWithInstance` chở
-   * `instance` là một object sống (`McpServer`) — đệ quy vào đó là bò qua cả một
-   * cây đối tượng của SDK và dựng lại một bản sao chết. Nhánh gọi đã chặn bằng
-   * cổng `command`/`url`, nhưng hàm này phải tự an toàn: nó là hàm đệ quy, và
-   * người sửa sau sẽ gọi nó ở chỗ thứ ba.
+   * ⚠ Only walks into PLAIN objects. A `McpSdkServerConfigWithInstance`
+   * carrying `instance` is a live object (`McpServer`) — recursing into it
+   * would crawl through an entire SDK object tree and rebuild a dead copy
+   * of it. The calling branch already gates on `command`/`url`, but this
+   * function has to be safe on its own: it's recursive, and whoever edits
+   * it later will call it from a third call site.
    */
   if (node && typeof node === 'object' && Object.getPrototypeOf(node) === Object.prototype) {
     const out: Record<string, unknown> = {};
@@ -367,46 +388,51 @@ function fillRefs<T>(node: T, keys: Record<string, string>, missing: Set<string>
 }
 
 /**
- * Ô trống ĐƯỜNG DẪN — `<văn phòng>/.state/browser` điền vào lúc spawn.
+ * The PATH placeholder — filled in with `<office>/.state/browser` at spawn time.
  *
- * ⚠ Ngoặc nhọn chứ không phải `${…}`, và đó là **cố ý**: hai cú pháp, hai nghĩa,
- * hai đường điền. `missingSecretRefs()` quét `${…}` để tìm chìa còn thiếu — một
- * ô trống đường dẫn lọt vào lưới đó sẽ báo *"Thiếu chìa: OFFICE_STATE"*, tức một
- * câu lỗi **chỉ sai cửa** ngay trong cơ chế sinh ra để tránh câu lỗi sai cửa.
+ * ⚠ Angle brackets, not `${…}`, and that's **deliberate**: two syntaxes, two
+ * meanings, two fill paths. `missingSecretRefs()` scans for `${…}` to find
+ * missing keys — a path placeholder that slipped into that net would report
+ * *"Missing key: OFFICE_STATE"*, a **wrong-door error message** produced by
+ * the exact mechanism built to avoid wrong-door error messages.
  *
- * Xuất ra để `catalog.ts` dùng đúng một chuỗi này — hai bản của cùng một hằng số
- * là chuyện đã đốt dự án này một lần (`agentSlot` vs `arrange`).
+ * Exported so `catalog.ts` uses this exact same string — two copies of one
+ * constant is something that has already burned this project once (`agentSlot` vs `arrange`).
  */
 export const OFFICE_STATE = '<OFFICE_STATE>';
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Ô TRỐNG NÀO CÒN SÓT SAU KHI ĐÃ TIÊM — tức CHÌA THIẾU. (bug user 25/08)   │
+ * │ WHICHEVER PLACEHOLDERS STILL REMAIN AFTER INJECTION — i.e. MISSING KEYS.        │
+ * │ (bug reported by the user, 25/08)                                          │
  * │                                                                          │
- * │ Triệu chứng user báo, và nó là một câu hỏi ĐÚNG:                         │
+ * │ The symptom the user reported, and it's the RIGHT question:                     │
  * │                                                                          │
- * │   *"chìa sai khi tạo mới → 401. Nhưng chìa THIẾU (để trắng) nó cũng báo  │
- * │    câu lệnh y hệt mà? Tôi hiểu sai chỗ nào"*                             │
+ * │   *"a wrong key on a fresh connect → 401. But a MISSING key (left blank)              │
+ * │    reports the exact same message? Where am I misunderstanding this"*                │
  * │                                                                          │
- * │ Không hiểu sai chỗ nào cả — **ta báo sai**. Ba nguyên nhân khác hẳn nhau │
- * │ đều rơi vào đúng một câu 401 của Notion:                                 │
+ * │ There's no misunderstanding at all — **we reported it wrong**. Three entirely           │
+ * │ different causes all land on the exact same Notion 401:                              │
  * │                                                                          │
- * │   ① chìa sai thật          → `Bearer ntn_xxx`      → 401  ✔ đúng câu     │
- * │   ② để trắng               → `Bearer ${NOTION_…}`  → 401  ✘ sai cửa      │
- * │   ③ dùng lại ở VP khác     → `Bearer ${NOTION_…}`  → 401  ✘ sai cửa      │
+ * │   ① a genuinely wrong key    → `Bearer ntn_xxx`      → 401  ✔ correct message           │
+ * │   ② left blank               → `Bearer ${NOTION_…}`  → 401  ✘ wrong door                │
+ * │   ③ reused in a different office → `Bearer ${NOTION_…}`  → 401  ✘ wrong door             │
  * │                                                                          │
- * │ ② và ③ ta BIẾT TRƯỚC khi gửi. `injectSecrets` đã giữ ô trống lại và      │
- * │ `emitWarning` — nhưng cảnh báo đó đi ra stderr của daemon, còn người      │
- * │ dùng thì đang nhìn màn hình. Rồi ta **vẫn gửi** cái header có `${…}`.     │
+ * │ We KNOW ② and ③ BEFORE sending. `injectSecrets` already leaves the placeholder          │
+ * │ as-is and calls `emitWarning` — but that warning goes to the daemon's stderr,           │
+ * │ while the user is looking at the screen. And then we **still send** the header           │
+ * │ containing `${…}`.                                                             │
  * │                                                                          │
- * │ ⇒ Đừng gửi một yêu cầu mà ta đã biết chắc sẽ 401. Câu lỗi CHỈ SAI CỬA    │
- * │ đắt hơn câu lỗi không có: người dùng sẽ đi kiểm tài khoản, kiểm quyền,   │
- * │ kiểm workspace — mọi chỗ trừ chỗ hỏng. → SPEC-arms §5m ②                 │
+ * │ ⇒ Don't send a request we already know for certain will 401. A WRONG-DOOR error         │
+ * │ message costs more than no error message at all: the user goes and checks their          │
+ * │ account, checks permissions, checks the workspace — everywhere except the actual          │
+ * │ broken spot. → SPEC-arms §5m ②                                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Quét trên chuỗi JSON của cả cấu hình, không riêng `headers`: `args`, `env`,
- * `url` đều mang ô trống được, và một hàm chỉ nhìn `headers` là hàm sẽ đúng cho
- * tới đúng ngày ai đó viết `url: 'https://${HOST}/mcp'`.
+ * Scanned across the JSON string of the ENTIRE config, not just `headers`:
+ * `args`, `env`, `url` can all carry a placeholder, and a function that
+ * only looks at `headers` will be correct right up until the day someone
+ * writes `url: 'https://${HOST}/mcp'`.
  */
 export function missingSecretRefs(config: unknown): string[] {
   const seen = new Set<string>();
@@ -416,61 +442,70 @@ export function missingSecretRefs(config: unknown): string[] {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TIÊM CHÌA VÀO MỘT CẤU HÌNH MCP — MỘT HÀM, HAI NƠI GỌI. → SPEC-arms §5a   │
- * │ (từ 29/08 nó điền thêm **ô trống đường dẫn** — xem tham số `dirs`)        │
+ * │ INJECTS KEYS INTO AN MCP CONFIG — ONE FUNCTION, TWO CALL SITES. → SPEC-arms §5a  │
+ * │ (as of 29/08 it also fills in **path placeholders** — see the `dirs` parameter)   │
  * │                                                                          │
- * │ 🔴 LỖ ĐANG VÁ: tới 25/08 chìa **chỉ** đi vào server có `command` (tiêm   │
- * │ qua `env`). Server `http`/`sse` nhận **không gì cả** — nên cánh tay HTTP │
- * │ đầu tiên sẽ chạy KHÔNG CHÌA và không ai biết vì sao.                     │
+ * │ 🔴 A HOLE BEING PATCHED: up to 25/08, keys **only** went into servers with a       │
+ * │ `command` (injected via `env`). `http`/`sse` servers received **nothing at         │
+ * │ all** — so the first HTTP arm would run WITH NO KEY and nobody would know why.      │
  * │                                                                          │
- * │ ⚠ VÀ ĐÂY LÀ LÝ DO NÓ PHẢI LÀ MỘT HÀM CHUNG, KHÔNG PHẢI HAI BẢN VÁ:      │
- * │ `pickMcp` (lúc chạy) và `probeArm` (nút "Thử ngay") **phải tiêm y hệt    │
- * │ nhau**. Lệch một chút là nút Thử kiểm một thứ khác với thứ sẽ chạy —     │
- * │ báo ✓ rồi hỏng ở lần đầu một nhân viên dùng nó. `server.ts` đã ghi đúng  │
- * │ bất biến này bằng lời; hàm này làm nó thành **cấu trúc**.                │
+ * │ ⚠ AND THIS IS WHY IT HAS TO BE ONE SHARED FUNCTION, NOT TWO SEPARATE PATCHES:       │
+ * │ `pickMcp` (at runtime) and `probeArm` (the "Try it" button) **must inject exactly    │
+ * │ the same way**. The slightest mismatch means the Try button tests something          │
+ * │ different from what will actually run — reports ✓ and then breaks the first time     │
+ * │ a worker uses it. `server.ts` already stated this invariant in words; this           │
+ * │ function turns it into **structure**.                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Hai đường, chọn theo hình dạng cấu hình chứ không theo tên hãng:
+ * Two paths, chosen by the config's shape, not by vendor name:
  *
- *   có `command`  → gộp vào `env`      (như cũ, không đổi hành vi)
- *   có `url`      → thay ô trống `${TÊN_CHÌA}` trong `headers`
+ *   has `command`  → merged into `env`      (as before, unchanged behavior)
+ *   has `url`      → substitutes the `${KEY_NAME}` placeholder inside `headers`
  *
- * Vì sao ô trống thay vì một trường `inject` riêng: nó là **dữ liệu**, nằm ngay
- * trong `company.yaml` người dùng đọc được — họ THẤY chìa đi vào đâu. Nó cũng
- * chạy luôn cho cấu hình người dùng **tự dán** (đường B), không cần ta biết
- * trước đó là hãng nào. Cùng lý lẽ §5h·1: *danh mục là dữ liệu, không phải mã*.
+ * Why a placeholder instead of a separate `inject` field: it's **data**,
+ * sitting right inside `company.yaml` where the user can read it — they
+ * SEE exactly where the key goes. It also just works for configs the user
+ * **pastes in themselves** (path B), with no need for us to know the
+ * vendor ahead of time. Same reasoning as §5h·1: *a catalog is data, not code*.
  *
  *     headers: { Authorization: 'Bearer ${NOTION_ACCESS_TOKEN}' }
  *
- * ⚠ Chỉ thay bằng những chìa vai trò ĐƯỢC CẤP (`grantFor` lọc trước). Ô trống
- * không có chìa thì **giữ nguyên và cảnh báo** — tuyệt đối không gửi chuỗi
- * `${TÊN}` lên server như thể nó là token: server sẽ trả 401, và câu lỗi đó
- * chỉ về "chìa sai" chứ không về "chìa thiếu", tức chỉ sai cửa để đi tìm.
+ * ⚠ Only substitutes with keys the role was actually GRANTED (`grantFor`
+ * filters beforehand). A placeholder with no matching key is **left as-is,
+ * with a warning** — never send the literal string `${NAME}` to a server as
+ * if it were a real token: the server would return 401, and that error
+ * message would point at "wrong key" instead of "missing key" — the wrong door to go looking at.
  */
 export function injectSecrets<T>(
   config: T,
   env: Record<string, string>,
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ Ô TRỐNG THỨ HAI: ĐƯỜNG DẪN. Và nó ở đây vì một lý do về BĂM.             │
-   * │ (user chốt 29/08: *"dữ liệu ở đâu cũng không ảnh hưởng tới băm"*)         │
+   * │ THE SECOND PLACEHOLDER: A PATH. And it lives here for a reason about the HASH.  │
+   * │ (the user's call, 29/08: *"where the data lives shouldn't affect the hash at        │
+   * │ all"*)                                                                       │
    * │                                                                          │
-   * │ Chỗ cất dữ liệu **không phải danh tính của cánh tay**. Nhét đường dẫn     │
-   * │ tuyệt đối vào `args` là nhét nó vào băm, và đổi lấy hai thứ hỏng:         │
-   * │   · cùng một mục cắm ở hai văn phòng ⇒ hai băm ⇒ hai cánh tay, trong khi │
-   * │     mục danh mục là **bản thiết kế** và văn phòng chỉ clone ra;           │
-   * │   · **đổi chỗ thư mục công ty ⇒ MỌI băm đổi** ⇒ thư mục thôi mang đi được.│
+   * │ Where data is stored is **not part of an arm's identity**. Baking an absolute        │
+   * │ path into `args` bakes it into the hash, in exchange for two broken outcomes:        │
+   * │   · the same catalog entry connected in two offices ⇒ two different hashes ⇒          │
+   * │     two different arms, even though a catalog entry is **the blueprint** and an        │
+   * │     office is just a clone of it;                                                   │
+   * │   · **moving the company directory ⇒ EVERY hash changes** ⇒ the directory can no       │
+   * │     longer be moved at all.                                                        │
    * │                                                                          │
-   * │ ⇒ Sổ giữ một **ô trống**, đường dẫn thật chỉ tồn tại lúc spawn — đúng     │
-   * │ cách **giá trị chìa** đã được xử lý từ 25/08 (chìa không vào băm).        │
+   * │ ⇒ The registry holds a **placeholder**, and the real path only exists at spawn         │
+   * │ time — exactly how **key values** have been handled since 25/08 (keys never enter       │
+   * │ the hash).                                                                       │
    * │                                                                          │
-   * │ ⚠ CỐ Ý KHÔNG dùng cú pháp `${…}`: trong dự án này nó có đúng một nghĩa là │
-   * │ **tên một cái chìa**, và `missingSecretRefs()` quét nó. Mượn là tự đẻ ra  │
-   * │ câu *"Thiếu chìa: OFFICE_STATE"* — một câu lỗi chỉ sai cửa.               │
+   * │ ⚠ DELIBERATELY NOT using `${…}` syntax: in this project that syntax has exactly         │
+   * │ one meaning, **the name of a key**, and `missingSecretRefs()` scans for it.             │
+   * │ Borrowing it would self-produce the message *"Missing key: OFFICE_STATE"* — a           │
+   * │ wrong-door error message.                                                          │
    * │                                                                          │
-   * │ ⚠ Và nó nằm trong CÙNG hàm với chìa, không phải một hàm thứ hai: `pickMcp`│
-   * │ và `probeArm` phải điền **y hệt nhau**, nếu không thì nút Thử lại kiểm    │
-   * │ một thứ khác thứ sẽ chạy — đúng bất biến khối chú thích ở trên.           │
+   * │ ⚠ And it lives in the SAME function as key injection, not a second function:            │
+   * │ `pickMcp` and `probeArm` must fill it in **exactly the same way**, or the Try           │
+   * │ button would test something different from what will actually run — the exact          │
+   * │ invariant stated in the comment block above.                                        │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   dirs?: { officeState: string },
@@ -478,30 +513,34 @@ export function injectSecrets<T>(
   if (!config || typeof config !== 'object') return config;
   const cfg = config as Record<string, unknown>;
 
-  // Chìa rỗng không phải chìa — cùng luật với `grantFor`. Lọc MỘT LẦN ở đây để
-  // cả hai nhánh dưới thấy cùng một sự thật.
+  // An empty key isn't a key — same rule as `grantFor`. Filtered ONCE here
+  // so both branches below see the same fact.
   const keys = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
 
   if (typeof cfg['command'] === 'string') {
     /**
-     * Điền ô trống đường dẫn TRƯỚC, và làm nó độc lập với chìa: một cánh tay có
-     * thể cần đường dẫn mà **không cần chìa nào** (mục trình duyệt là đúng ca đó).
-     * Gộp vào nhánh `if (!keys.length) return` là để nó im lặng không chạy.
+     * Fills in the path placeholder FIRST, and makes it independent from
+     * keys: an arm might need a path with **no key at all** (a browser
+     * entry is exactly this case). Folding it into the `if
+     * (!keys.length) return` branch would make it silently not run.
      */
     /**
-     * ⚠ `path.normalize` SAU KHI THAY — và chỉ với chuỗi CÓ ô trống.
+     * ⚠ `path.normalize` AFTER substitution — and only on strings THAT CONTAIN the placeholder.
      *
-     * Danh mục viết `<OFFICE_STATE>/profile` bằng `/` (nó là dữ liệu, phải đọc
-     * được như nhau trên mọi máy), còn `officeState` là đường của **hệ điều hành
-     * đang chạy**. Nối thẳng ra `D:\…\browser/profile` — trộn hai dấu phân cách.
-     * Windows nuốt được, nhưng chuỗi đó rò ra mọi chỗ khác: câu lỗi, log kiểm
-     * toán, và mọi phép so đường dẫn sau này. **Lần thứ sáu** của lớp lỗi *"đúng
-     * trên máy dev, sai ở chỗ khác"* (tên shell theo OS · slug phi-Latin · nút 📂
-     * từ xa · ánh xạ Docker · shell quoting).
+     * The catalog writes `<OFFICE_STATE>/profile` using `/` (it's data, and
+     * must read identically on every machine), while `officeState` is a
+     * path from the OS **currently running**. Concatenating them directly
+     * gives `D:\…\browser/profile` — mixed separators. Windows tolerates
+     * it, but that string leaks into everywhere else: error messages,
+     * audit logs, and every path comparison afterward. The **sixth** hit
+     * of the *"correct on the dev machine, wrong somewhere else"* failure
+     * class (OS-specific shell names · non-Latin slugs · the remote 📂
+     * button · Docker path mapping · shell quoting).
      *
-     * Chỉ chuỗi chứa ô trống mới chuẩn hoá: `--output-max-size 52428800` mà đem
-     * `normalize` thì thành `52428800` (may là không đổi) — nhưng một cờ khác có
-     * thể không may như thế. Đừng đụng vào thứ không phải đường dẫn.
+     * Only a string containing the placeholder gets normalized:
+     * `--output-max-size 52428800` run through `normalize` becomes
+     * `52428800` (luckily unchanged) — but a different flag might not be
+     * so lucky. Don't touch anything that isn't a path.
      */
     const args =
       dirs && Array.isArray(cfg['args'])
@@ -515,59 +554,63 @@ export function injectSecrets<T>(
     if (!Object.keys(keys).length) return withArgs as T;
 
     /**
-     * ⭐ THAY Ô TRỐNG TRƯỚC, GỘP THEO TÊN SAU — hai cơ chế, cả hai đều cần.
-     * (vá 31/08, xem khối chú thích ở `fillRefs`)
+     * ⭐ FILLS PLACEHOLDERS FIRST, MERGES BY NAME SECOND — two mechanisms, both needed.
+     * (patched 31/08, see the comment block at `fillRefs`)
      *
-     *   thay ô trống   `env: { MEMORY_FILE_PATH: "${MEMORY_PATH}" }`  ← đường B,
-     *                  người dùng dán README của hãng
-     *   gộp theo tên   server đọc thẳng `process.env.NOTION_TOKEN`     ← danh mục
+     *   fill placeholders  `env: { MEMORY_FILE_PATH: "${MEMORY_PATH}" }`  ← path B,
+     *                      the user pastes in a vendor's README
+     *   merge by name       the server reads `process.env.NOTION_TOKEN` directly  ← a catalog entry
      *
-     * Bỏ vế thứ hai là làm hỏng mọi mục danh mục stdio; bỏ vế thứ nhất là đúng
-     * cái bug vừa bắt. Gộp sau khi thay nên một chìa vừa được thay vào chỗ khác
-     * vẫn có mặt trong `env` dưới tên gốc — thừa một biến, và thừa thì vô hại.
+     * Dropping the second half breaks every stdio catalog entry; dropping
+     * the first half is the exact bug just caught. Merging happens after
+     * substitution, so a key that just got substituted elsewhere is still
+     * present in `env` under its original name — an extra unused variable, and harmless.
      */
     const gone = new Set<string>();
     const filled = fillRefs(withArgs as Record<string, unknown>, keys, gone);
-    warnMissing(gone, 'tiến trình sẽ chạy với ô trống chưa được điền.');
+    warnMissing(gone, 'the process will run with an unfilled placeholder.');
     return { ...filled, env: { ...((filled['env'] as object) ?? {}), ...keys } } as T;
   }
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ NHÁNH THỨ BA: TỜ KHAI CLI. → SPEC-arms §16                               │
+   * │ THE THIRD BRANCH: A CLI DECLARATION. → SPEC-arms §16                          │
    * │                                                                          │
-   * │ Nó không có `command` cũng không có `url` ở tầng ngoài — chìa nằm trong   │
-   * │ `actions[].env`. Thiếu nhánh này thì nó **rơi qua cả hai `if` và trả về   │
-   * │ nguyên xi**: ô trống không bao giờ được điền, còn `missingSecretRefs`     │
-   * │ (quét cả cấu hình) thì tố cáo mãi mãi. Đúng bug 31/08, y hệt hình dạng,   │
-   * │ chỉ khác chỗ đứng.                                                       │
+   * │ It has neither `command` nor `url` at the top level — keys live inside              │
+   * │ `actions[].env`. Missing this branch means it **falls through both `if`s and         │
+   * │ returns unchanged**: placeholders never get filled, while `missingSecretRefs`         │
+   * │ (which scans the whole config) keeps flagging it forever. The exact 31/08 bug,        │
+   * │ same shape, just a different location.                                           │
    * │                                                                          │
-   * │ ⇒ **BẤT BIẾN: phạm vi hàm ĐIỀN = phạm vi hàm KIỂM.** Có test canh.        │
+   * │ ⇒ **INVARIANT: the FILLING function's scope = the CHECKING function's scope.**       │
+   * │ There's a test guarding this.                                                     │
    * │                                                                          │
-   * │ ⚠ CHỈ điền ô trống, KHÔNG gộp `keys` vào một `env` chung: một action chỉ  │
-   * │ được thấy đúng cái chìa nó khai. Gộp theo tên (nhánh stdio) là đúng cho   │
-   * │ mục danh mục — server của hãng đọc thẳng `process.env.NOTION_TOKEN` — còn │
-   * │ ở đây tiến trình con là binary của KHÁCH, và rót cả chùm chìa của công ty │
-   * │ vào env của nó là mở đúng cái lỗ §5d vừa mất công đóng.                   │
+   * │ ⚠ ONLY fills placeholders, does NOT merge `keys` into one shared `env`: an           │
+   * │ action must only ever see the exact key it declared. Merging by name (the stdio         │
+   * │ branch) is correct for a catalog entry — the vendor's own server reads                  │
+   * │ `process.env.NOTION_TOKEN` directly — but here the child process is the                 │
+   * │ CUSTOMER's own binary, and pouring the company's entire bundle of keys into its           │
+   * │ env would reopen exactly the §5d hole that was just closed at real cost.                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   if (cfg['type'] === 'cli') {
     const gone = new Set<string>();
     const filled = fillRefs(cfg, keys, gone);
-    warnMissing(gone, 'lệnh sẽ chạy với ô trống chưa được điền.');
+    warnMissing(gone, 'the command will run with an unfilled placeholder.');
     return filled as T;
   }
 
   if (typeof cfg['url'] === 'string') {
     const missing = new Set<string>();
     const filled = fillRefs(cfg, keys, missing);
-    warnMissing(missing, 'server sẽ trả 401.');
+    warnMissing(missing, 'the server will answer 401.');
     const headers = filled['headers'];
     if (!headers || typeof headers !== 'object') return filled as T;
     /**
-     * ⚠ ÉP CHUỖI CHO HEADER — giữ nguyên hành vi cũ. Một header số (`{N: 5}`)
-     * đi thẳng xuống SDK là một trường sai kiểu ở tận đáy, và câu lỗi ở đó sẽ
-     * không nói gì về cấu hình người dùng vừa dán. Có test canh.
+     * ⚠ FORCES HEADERS TO STRINGS — preserves the existing behavior. A
+     * numeric header (`{N: 5}`) passed straight down to the SDK becomes a
+     * type-mismatched field at the very bottom, and the error there would
+     * say nothing about the config the user just pasted. There's a test guarding this.
      */
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
@@ -580,17 +623,19 @@ export function injectSecrets<T>(
 }
 
 /**
- * TÊN, không bao giờ GIÁ TRỊ — cùng luật với mọi chỗ khác trong file này.
+ * NAME, never VALUE — the same rule as everywhere else in this file.
  *
- * ⚠ Luật hai-câu của `worker.ts §pickMcp`: tên dạng `*_OAUTH_xxxxxxxx` là TÀI
- * KHOẢN ĐĂNG NHẬP, không có chuỗi nào để gõ. Bảo họ `secret set` là chỉ sai cửa.
- * Nhận dạng bằng chính hình dạng tên — không đoán.
+ * ⚠ The two-sentence rule from `worker.ts §pickMcp`: a name shaped like
+ * `*_OAUTH_xxxxxxxx` is a SIGNED-IN ACCOUNT, with no string to type in at
+ * all. Telling someone to `secret set` it points at the wrong door.
+ * Recognized purely by the shape of the name — never guessed.
  */
 function warnMissing(names: Set<string>, consequence: string): void {
   if (!names.size) return;
   process.emitWarning(
-    `Cánh tay thiếu chìa ${[...names].join(', ')} — ${consequence} ` +
-      `Tên dạng \`*_OAUTH_xxxxxxxx\` là tài khoản đăng nhập (nối lại ở hộp thoại Kết nối); ` +
-      `tên khác thì thêm bằng \`agentco secret set <TÊN>\`. Đừng đi tìm ở phía server.`,
+    `connection is missing key(s) ${[...names].join(', ')} — ${consequence} ` +
+      `A name shaped \`*_OAUTH_xxxxxxxx\` is a sign-in account (reconnect it in the Connections ` +
+      `dialog); any other name is added with \`agentco secret set <NAME>\`. Do not go looking ` +
+      `on the server side.`,
   );
 }

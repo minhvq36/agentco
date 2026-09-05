@@ -1,24 +1,27 @@
 /**
- * ĐO THẬT: mỗi tool của Notion khai `annotations` GÌ — từng trường một.
+ * REAL MEASUREMENT: exactly WHAT `annotations` each Notion tool declares — field by field.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO CẦN ĐO LẠI: user hỏi 26/08 *"sao bạn nói Notion viết sạch có 3     │
- * │ level mà lúc tạo chỉ có 2 (Chỉ đọc và Toàn quyền)?"*                     │
+ * │ WHY THIS NEEDS REMEASURING: a user asked on 08/26 *"why did you say       │
+ * │ Notion cleanly has 3 levels when the create screen only shows 2           │
+ * │ (Read-only and Full access)?"*                                           │
  * │                                                                          │
- * │ Câu "14 đọc · 11 thêm · 3 sửa" trong spec là một **SUY LUẬN**, không phải │
- * │ số đo: tôi lấy "3 tool có `destructive: true`" rồi kết luận 11 tool còn   │
- * │ lại là `destructive: false`. Nhưng **vắng mặt ≠ false** — và `tierOf` xử  │
- * │ đúng theo luật một chiều (không khai ⇒ leo thang), nên nếu 11 tool đó bỏ  │
- * │ trống `destructiveHint` thì chúng rơi hết vào `full` và nấc giữa BIẾN MẤT.│
+ * │ The "14 read · 11 add · 3 edit" line in the spec is an **INFERENCE**,    │
+ * │ not a measurement: I took "3 tools have `destructive: true`" and         │
+ * │ concluded the other 11 tools were `destructive: false`. But **absence ≠  │
+ * │ false** — and `tierOf` correctly follows the one-way rule (not declared  │
+ * │ ⇒ escalate), so if those 11 tools leave `destructiveHint` blank, they    │
+ * │ all fall into `full` and the middle tier DISAPPEARS.                     │
  * │                                                                          │
- * │ Đúng lớp lỗi [[agentco-measurement-vs-conclusion]], lần thứ tư: số liệu   │
- * │ thật + một bước suy sai, rồi bảng suy sai đó được viết vào spec kèm số.   │
- * │ Giao diện nói 2 nấc là giao diện ĐÚNG; cái sai là dòng trong tài liệu.    │
+ * │ Exactly the [[agentco-measurement-vs-conclusion]] error class, fourth    │
+ * │ time: real data + one wrong inference step, then that wrong table got    │
+ * │ written into the spec alongside the numbers. The UI showing 2 tiers is   │
+ * │ the CORRECT behavior; the mistake was the line in the docs.              │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Không import SDK hãng nào — cùng luật với `core/oauth.ts`.
+ * Doesn't import any vendor SDK — same rule as `core/oauth.ts`.
  *
- * Chạy: npx tsx scripts/spike-notion-annotations.ts   ($0 — không lượt suy luận nào)
+ * Run: npx tsx scripts/spike-notion-annotations.ts   ($0 — no model turns at all)
  */
 
 import fs from 'node:fs';
@@ -31,7 +34,7 @@ const raw = JSON.parse(fs.readFileSync(STORE, 'utf8')) as Record<string, unknown
 const accounts = (raw['$oauth'] ?? {}) as Record<string, { access_token?: string; label?: string }>;
 const first = Object.entries(accounts)[0];
 if (!first?.[1]?.access_token) {
-  console.error('Chưa có tài khoản Notion nào trong company/.state/secrets.json — đăng nhập ở giao diện trước.');
+  console.error('No Notion account found in company/.state/secrets.json — log in through the UI first.');
   process.exit(1);
 }
 console.log(`Workspace: ${first[1].label ?? first[0]}\n`);
@@ -50,7 +53,7 @@ const call = async (method: string, params: unknown, id: number) => {
   const sid = res.headers.get('mcp-session-id');
   if (sid) session = sid;
   const text = await res.text();
-  // Streamable HTTP trả SSE: bóc dòng `data:` đầu tiên.
+  // Streamable HTTP returns SSE: pull out the first `data:` line.
   const line = text.split('\n').find((l) => l.startsWith('data:'));
   return JSON.parse(line ? line.slice(5).trim() : text) as { result?: unknown; error?: unknown };
 };
@@ -76,11 +79,11 @@ await fetch(MCP, {
 const r = await call('tools/list', {}, 2);
 const tools = (r.result as { tools?: { name: string; annotations?: Record<string, unknown> }[] })?.tools ?? [];
 if (!tools.length) {
-  console.error('Không lấy được danh sách tool:', JSON.stringify(r).slice(0, 400));
+  console.error('Failed to fetch the tool list:', JSON.stringify(r).slice(0, 400));
   process.exit(1);
 }
 
-/** Đúng luật `probe.ts §tierOf` — chép ở đây để spike không phụ thuộc build. */
+/** Matches `probe.ts §tierOf` exactly — copied here so the spike has no build dependency. */
 const tierOf = (a?: Record<string, unknown>) => {
   const ro = a?.['readOnlyHint'] ?? a?.['readOnly'];
   const de = a?.['destructiveHint'] ?? a?.['destructive'];
@@ -89,7 +92,7 @@ const tierOf = (a?: Record<string, unknown>) => {
 };
 
 const count = { read: 0, add: 0, full: 0 };
-console.log('tool'.padEnd(34), 'readOnly'.padEnd(10), 'destructive'.padEnd(12), 'nấc');
+console.log('tool'.padEnd(34), 'readOnly'.padEnd(10), 'destructive'.padEnd(12), 'tier');
 console.log('─'.repeat(70));
 for (const t of tools.sort((x, y) => x.name.localeCompare(y.name))) {
   const a = t.annotations ?? {};
@@ -99,22 +102,22 @@ for (const t of tools.sort((x, y) => x.name.localeCompare(y.name))) {
   count[tier]++;
   console.log(
     t.name.padEnd(34),
-    String(ro ?? '(vắng)').padEnd(10),
-    String(de ?? '(vắng)').padEnd(12),
+    String(ro ?? '(absent)').padEnd(10),
+    String(de ?? '(absent)').padEnd(12),
     tier,
   );
 }
 
 console.log('─'.repeat(70));
-console.log(`TỔNG ${tools.length} tool  ·  read ${count.read}  ·  add ${count.add}  ·  full ${count.full}`);
+console.log(`TOTAL ${tools.length} tools  ·  read ${count.read}  ·  add ${count.add}  ·  full ${count.full}`);
 console.log(
-  `\nNấc HIỆN RA trên giao diện (luật "chỉ hiện nếu THÊM ≥1 việc so với nấc dưới"):\n` +
+  `\nTiers that SHOW UP in the UI (rule: "only show if it ADDS ≥1 tool over the tier below"):\n` +
     [
-      ['Chỉ đọc', count.read],
-      ['Đọc + Thêm', count.read + count.add],
-      ['Toàn quyền', count.read + count.add + count.full],
+      ['Read-only', count.read],
+      ['Read + Add', count.read + count.add],
+      ['Full access', count.read + count.add + count.full],
     ]
       .filter(([, n], i, all) => (i === 0 ? (n as number) > 0 : (n as number) > (all[i - 1]![1] as number)))
-      .map(([name, n]) => `  ◦ ${name} — ${n} việc`)
+      .map(([name, n]) => `  ◦ ${name} — ${n} tools`)
       .join('\n'),
 );

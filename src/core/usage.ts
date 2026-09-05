@@ -1,13 +1,13 @@
 /**
- * Kế toán token.
+ * Token accounting.
  *
  * → docs/SPEC-token-economy.md §5
  *
- * "Không có số đo thì không tối ưu được, và không phát hiện được chết chậm."
- * Dòng quan trọng nhất trong báo cáo là CẢNH BÁO CACHE WRITE BẤT THƯỜNG:
- * cùng một vai trò mà phải ghi cache nhiều lần trong một ca nghĩa là có gì đó
- * đang phá prefix. Đó chính xác là lỗi đã xảy ra với `claude -p`, và là lỗi
- * người dùng sẽ KHÔNG tự nhìn ra nếu không có dòng này.
+ * "Without measurement you cannot optimise, and you cannot detect a slow death."
+ * The most important line in the report is the ODD CACHE-WRITE WARNING: one role
+ * writing cache several times within a shift means something is breaking the
+ * prefix. That is exactly the failure that happened with `claude -p`, and it is
+ * one a user will NOT spot on their own without this line.
  */
 
 import fs from 'node:fs';
@@ -15,12 +15,14 @@ import path from 'node:path';
 
 import type { CompanyPaths } from './paths.js';
 import type { Usage } from './types.js';
+import { t } from '../i18n/index.js';
+import { formatUSD } from '../i18n/fmt.js';
 
 export interface UsageRecord {
   ts: string;
-  /** Văn phòng nào tiêu. Sổ chi phí ở cấp công ty — một hoá đơn Claude một sổ. */
+  /** Which office spent it. The ledger is company-level — one Claude bill, one ledger. */
   office: string;
-  /** Việc nào tiêu. Để trả lời "việc đó tốn bao nhiêu" mà không đọc lại log. */
+  /** Which job spent it. Answers "what did that cost" without re-reading the log. */
   plan_id: string;
   task_id: string;
   role: string;
@@ -32,7 +34,7 @@ export interface UsageRecord {
   out: number;
   cost_usd: number;
   wall_ms: number;
-  /** Số lượt API. Chi phí ≈ turns × prefix × 0.1 — đây là đòn bẩy chính. */
+  /** API turns. Cost ≈ turns × prefix × 0.1 — this is the main lever. */
   turns: number;
   status: string;
   reasked: boolean;
@@ -44,20 +46,22 @@ export function appendUsage(paths: CompanyPaths, rec: UsageRecord): void {
 }
 
 /**
- * Bản ghi ĐỔI TÊN văn phòng — nối vào cuối sổ, KHÔNG sửa dòng nào.
+ * An office RENAME record — appended to the ledger, EDITING NOTHING.
  * → `Company.moveOffice`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ SỔ CHI PHÍ LÀ APPEND-ONLY, VÀ ĐÓ LÀ THỨ LÀM NÓ ĐÁNG TIN.                │
+ * │ THE LEDGER IS APPEND-ONLY, AND THAT IS WHAT MAKES IT TRUSTWORTHY.        │
  * │                                                                          │
- * │ Đổi tên thư mục `bao-cao` → `kiem-ke` làm mồ côi 315 dòng mang           │
- * │ `office: "bao-cao"` (sổ nằm ở cấp CÔNG TY nên không đi theo thư mục).    │
- * │ Cách hiển nhiên là đi sửa lại 315 dòng đó — và đó chính là cách phá cuốn │
- * │ sổ: một cuốn sổ sửa được thì hết là bằng chứng.                          │
+ * │ Renaming the folder `bao-cao` → `kiem-ke` orphans 315 rows carrying      │
+ * │ `office: "bao-cao"` (the ledger is COMPANY-level, so it does not travel  │
+ * │ with the folder). The obvious move is to go and edit those 315 rows —    │
+ * │ and that is precisely how you destroy a ledger: one that can be edited   │
+ * │ stops being evidence.                                                    │
  * │                                                                          │
- * │ Thay vào đó nối MỘT dòng nói *"từ giờ `bao-cao` chính là `kiem-ke`"*.    │
- * │ Lịch sử còn nguyên chữ nào chữ nấy, và ai đọc sổ thì đi theo chuỗi alias │
- * │ để gộp. Đổi tên ba lần thì có ba dòng, chuỗi vẫn nối được.                │
+ * │ Instead, append ONE row saying *"from now on `bao-cao` IS `kiem-ke`"*.   │
+ * │ History stays word for word, and whoever reads the ledger follows the    │
+ * │ alias chain to merge. Rename three times and there are three rows; the   │
+ * │ chain still joins up.                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export interface RenameRecord {
@@ -74,46 +78,144 @@ export function appendRename(paths: CompanyPaths, from: string, to: string): voi
 }
 
 /**
- * Bảng `id cũ → id hiện tại`, đã đi hết chuỗi. Đổi tên nhiều lần
- * (`a → b → c`) thì cả `a` lẫn `b` đều trỏ tới `c`.
+ * A PURGE record — *"money `<office>` spent before `<until>` stops counting"*.
+ * → `Company.removeOffice` · `Company.purgeGoneUsage`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ WHY AN APPENDED ROW RATHER THAN DELETED ROWS.                            │
+ * │                                                                          │
+ * │ Same reasoning as `appendRename`: a ledger that can be edited stops      │
+ * │ being evidence. The user wants *"deleted means gone"* — what they want   │
+ * │ gone is THE NUMBER ON THE SCREEN and the balance carried into the next   │
+ * │ office, not JSON rows on disk they never read. Cutting AT READ TIME      │
+ * │ gives them exactly that, and still leaves a trail for where the money    │
+ * │ went when a bill is disputed.                                            │
+ * │                                                                          │
+ * │ ⚠ So this is NOT a privacy deletion mechanism. Genuinely erasing would   │
+ * │ mean compacting the file — a different mechanism, and one we do not have.│
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `until` is A TIMESTAMP, not a "this office is dead" flag, and that is the whole
+ * fix for the reincarnation bug: deleting "Content" and creating "Content" again
+ * produces THE SAME ID (`folderId` is derived from the name), so cutting by id
+ * would make the new office either inherit the dead one's ledger or never be
+ * able to write to it at all. Cutting by timestamp means rows before the mark
+ * belong to the previous life and rows after it to this one.
  */
-export function renameChain(paths: CompanyPaths): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!fs.existsSync(paths.usageLog)) return out;
-  for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
-    if (!line.includes('"office.renamed"')) continue;
-    try {
-      const r = JSON.parse(line) as Partial<RenameRecord>;
-      if (r.kind !== 'office.renamed' || !r.from || !r.to) continue;
-      // Trỏ lại MỌI mắt xích cũ về đích mới, nên không ai phải lần chuỗi lúc đọc.
-      for (const [k, v] of out) if (v === r.from) out.set(k, r.to);
-      out.set(r.from, r.to);
-    } catch {
-      /* dòng hỏng thì bỏ — cùng luật với `readUsage` */
-    }
-  }
-  return out;
+export interface PurgeRecord {
+  ts: string;
+  kind: 'office.purged';
+  office: string;
+  until: string;
 }
 
-export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] {
-  if (!fs.existsSync(paths.usageLog)) return [];
-  const cutoff = sinceMs ? Date.now() - sinceMs : 0;
-  const out: UsageRecord[] = [];
+export function appendPurge(paths: CompanyPaths, office: string, until = new Date()): void {
+  fs.mkdirSync(path.dirname(paths.usageLog), { recursive: true });
+  const rec: PurgeRecord = {
+    ts: new Date().toISOString(),
+    kind: 'office.purged',
+    office,
+    until: until.toISOString(),
+  };
+  fs.appendFileSync(paths.usageLog, JSON.stringify(rec) + '\n', 'utf8');
+}
+
+/** Read the ledger exactly ONCE, splitting out the three things every reader needs. */
+function scan(paths: CompanyPaths): {
+  rows: Array<UsageRecord & { kind?: string }>;
+  chain: Map<string, string>;
+  cuts: Map<string, number>;
+} {
+  const rows: Array<UsageRecord & { kind?: string }> = [];
+  const chain = new Map<string, string>();
+  const cuts = new Map<string, number>();
+  if (!fs.existsSync(paths.usageLog)) return { rows, chain, cuts };
+
   for (const line of fs.readFileSync(paths.usageLog, 'utf8').split('\n')) {
     if (!line.trim()) continue;
     try {
-      const rec = JSON.parse(line) as UsageRecord & { kind?: string };
-      /**
-       * ⚠ Sổ giờ chứa HAI loại dòng. `appendRename` nối vào cùng file (nó phải
-       * nằm cùng chỗ để thứ tự thời gian có nghĩa), nhưng nó KHÔNG phải một
-       * lượt chạy: không `cost_usd`, không `turns`. Lọt vào đây là `tasks` đếm
-       * dư và tổng tiền thành `NaN` — một cuốn sổ nói dối, đúng thứ tệ nhất.
-       */
-      if (rec.kind) continue;
-      if (!cutoff || Date.parse(rec.ts) >= cutoff) out.push(rec);
+      /*
+        Read through a type that UNIONS the possible fields, not
+        `Partial<RenameRecord & PurgeRecord>`: those two records have `kind` set
+        to two different string literals, so intersecting them yields `never`
+        and this whole block can read no field at all.
+      */
+      const r = JSON.parse(line) as UsageRecord & {
+        kind?: string;
+        from?: string;
+        to?: string;
+        until?: string;
+      };
+      if (r.kind === 'office.renamed') {
+        if (!r.from || !r.to) continue;
+        // Repoint EVERY earlier link at the new target, so no reader walks a chain.
+        for (const [k, v] of chain) if (v === r.from) chain.set(k, r.to);
+        chain.set(r.from, r.to);
+        continue;
+      }
+      if (r.kind === 'office.purged') {
+        // An empty `office` is valid: that is the v0 block, from before offices existed.
+        if (typeof r.office !== 'string' || !r.until) continue;
+        const at = Date.parse(r.until);
+        if (Number.isNaN(at)) continue;
+        cuts.set(r.office, Math.max(cuts.get(r.office) ?? 0, at));
+        continue;
+      }
+      rows.push(r);
     } catch {
-      /* dòng hỏng thì bỏ qua, không để log hỏng làm sập lệnh cost */
+      /* skip a corrupt line; a broken log must not take down `cost` */
     }
+  }
+  return { rows, chain, cuts };
+}
+
+/**
+ * A map `old id → current id`, chain already walked. Renamed several times
+ * (`a → b → c`) and both `a` and `b` point at `c`.
+ */
+export function renameChain(paths: CompanyPaths): Map<string, string> {
+  return scan(paths).chain;
+}
+
+/** `office id → cut-off (ms)`. Rows for that id with `ts` ≤ the mark stop counting. */
+export function purgeCuts(paths: CompanyPaths): Map<string, number> {
+  return scan(paths).cuts;
+}
+
+export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] {
+  const cutoff = sinceMs ? Date.now() - sinceMs : 0;
+  const { rows, chain, cuts } = scan(paths);
+  const out: UsageRecord[] = [];
+
+  for (const rec of rows) {
+    /**
+     * ⚠ The ledger holds THREE kinds of row. `appendRename`/`appendPurge` write
+     * into the same file (they have to share it for chronological order to
+     * mean anything), but they are NOT runs: no `cost_usd`, no `turns`. Letting
+     * one through here overcounts `tasks` and turns the total into `NaN` — a
+     * ledger that lies. (`scan` already filters; this is a second net for
+     * shapes added later.)
+     */
+    if (rec.kind) continue;
+    const at = Date.parse(rec.ts);
+    if (cutoff && !(at >= cutoff)) continue;
+
+    /**
+     * Check the purge mark against BOTH identities — the id written in the row,
+     * and the id after walking the rename chain.
+     *
+     * Checking only one leaves a hole, and a silent one:
+     *  · raw id only      ⇒ rename `a→b` then purge `b`: rows carry `a`, the mark is on `b`.
+     *  · resolved id only ⇒ purge `a`, recreate `a`, rename `a→c`: rows from the
+     *    previous life carry `a`, which now resolves to `c` ⇒ a dead office's
+     *    spending flows into a living one.
+     */
+    const raw = rec.office ?? '';
+    const resolved = chain.get(raw) ?? raw;
+    const cut = Math.max(cuts.get(raw) ?? 0, cuts.get(resolved) ?? 0);
+    if (cut && at <= cut) continue;
+
+    out.push(rec);
   }
   return out;
 }
@@ -121,15 +223,15 @@ export function readUsage(paths: CompanyPaths, sinceMs?: number): UsageRecord[] 
 export interface CostReport {
   tasks: number;
   totals: Usage;
-  /** cache_read / (cache_read + in + cache_write). Ngưỡng cảnh báo: 0.70 */
+  /** cache_read / (cache_read + in + cache_write). Warning threshold: 0.70 */
   cacheHitRatio: number;
   p50Tokens: number;
   p95Tokens: number;
   mostExpensive?: { task_id: string; role: string; tokens: number; cost: number };
-  /** Vai trò phải ghi cache >1 lần — dấu hiệu prefix đang bị phá. */
+  /** Roles that wrote cache more than once — a sign the prefix is being broken. */
   suspiciousCacheWrites: Array<{ role: string; writes: number; keys: number }>;
   reaskCount: number;
-  /** Hiệu suất theo vai trò — để so sánh tier model bằng số, không bằng cảm giác. */
+  /** Per-role performance — so model tiers get compared by numbers, not by feel. */
   perRole: Array<RolePerf & { role: string }>;
 }
 
@@ -198,8 +300,8 @@ export function summarize(records: UsageRecord[]): CostReport {
     cacheHitRatio: denominator > 0 ? totals.cacheRead / denominator : 0,
     p50Tokens: percentile(perTask, 0.5),
     p95Tokens: percentile(perTask, 0.95),
-    // Ghi cache nhiều lần cho CÙNG một cacheKey = prefix đang bị phá đâu đó.
-    // Nhiều key khác nhau thì chỉ là có nhiều biến thể role, không đáng lo.
+    // Several cache writes for the SAME cacheKey = something is breaking the
+    // prefix. Many different keys just means several role variants; harmless.
     suspiciousCacheWrites: [...byRole.entries()]
       .filter(([, v]) => v.writes > v.keys.size + 1)
       .map(([role, v]) => ({ role, writes: v.writes, keys: v.keys.size }))
@@ -213,34 +315,51 @@ export function summarize(records: UsageRecord[]): CostReport {
   return report;
 }
 
-export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
-  if (r.tasks === 0) return 'Chưa có việc nào được ghi nhận.';
+/**
+ * ⚠ `padEnd(28)` COUNTS CODE UNITS, and a translated label does not have the
+ * same length as the one it replaces. That is deliberate and harmless here: the
+ * column only has to look straight, and every label in both catalogues is
+ * plain Latin text under 28 columns. Put a label with a combining mark or an
+ * emoji in the left column and this alignment silently goes wrong — that is the
+ * failure mode `scripts/fix-comment-boxes.ts` exists for, in another place.
+ */
+export function formatReport(r: CostReport, title = t('cost.shift')): string {
+  if (r.tasks === 0) return t('cost.nothingYet');
 
   const n = (x: number) => (x >= 1000 ? `${(x / 1000).toFixed(1)}K` : String(x));
   const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
   const lines: string[] = [];
 
-  lines.push(`${title.padEnd(28)} ${r.tasks} việc`);
+  lines.push(`${title.padEnd(28)} ${t('cost.tasks', { n: String(r.tasks) })}`);
   lines.push(
-    `${'Tổng token'.padEnd(28)} vào ${n(r.totals.input)} · đọc-cache ${n(r.totals.cacheRead)} · ` +
-      `ghi-cache ${n(r.totals.cacheWrite)} · ra ${n(r.totals.output)}`,
+    `${t('cost.totalTokens').padEnd(28)} ` +
+      t('cost.tokenBreakdown', {
+        input: n(r.totals.input),
+        cacheRead: n(r.totals.cacheRead),
+        cacheWrite: n(r.totals.cacheWrite),
+        output: n(r.totals.output),
+      }),
   );
-  lines.push(`${'Chi phí'.padEnd(28)} $${r.totals.costUSD.toFixed(4)}`);
+  lines.push(`${t('cost.spend').padEnd(28)} ${formatUSD(r.totals.costUSD)}`);
 
   const ok = r.cacheHitRatio >= 0.7;
   lines.push(
-    `${'Tỉ lệ dùng lại cache'.padEnd(28)} ${pct(r.cacheHitRatio)}  ${ok ? '✓' : '✗ dưới ngưỡng 70% — prefix đang bị phá'}`,
+    `${t('cost.cacheReuse').padEnd(28)} ${pct(r.cacheHitRatio)}  ${ok ? '✓' : `✗ ${t('cost.cacheBelow')}`}`,
   );
-  lines.push(`${'Token/việc (p50 / p95)'.padEnd(28)} ${n(r.p50Tokens)} / ${n(r.p95Tokens)}`);
+  lines.push(`${t('cost.tokensPerTask').padEnd(28)} ${n(r.p50Tokens)} / ${n(r.p95Tokens)}`);
 
   if (r.perRole.length) {
     lines.push('');
-    lines.push(`  ${'vai trò'.padEnd(12)} ${'model'.padEnd(12)} ${'việc'.padStart(5)} ${'lượt/việc'.padStart(10)} ${'token/việc'.padStart(11)} ${'giây/việc'.padStart(10)} ${'$/việc'.padStart(9)}`);
+    lines.push(
+      `  ${t('cost.colRole').padEnd(12)} ${t('cost.colModel').padEnd(12)} ${t('cost.colTasks').padStart(5)} ` +
+        `${t('cost.colTurns').padStart(10)} ${t('cost.colTokens').padStart(11)} ${t('cost.colSeconds').padStart(10)} ` +
+        `${t('cost.colCost').padStart(9)}`,
+    );
     for (const p of r.perRole) {
       lines.push(
         `  ${p.role.padEnd(12)} ${p.model.replace(/claude-|-\d{8}/g, '').padEnd(12)} ${String(p.tasks).padStart(5)} ` +
           `${(p.turns / p.tasks).toFixed(1).padStart(10)} ${n(Math.round(p.tokens / p.tasks)).padStart(11)} ` +
-          `${(p.ms / p.tasks / 1000).toFixed(1).padStart(10)} ${('$' + (p.cost / p.tasks).toFixed(4)).padStart(9)}`,
+          `${(p.ms / p.tasks / 1000).toFixed(1).padStart(10)} ${formatUSD(p.cost / p.tasks).padStart(9)}`,
       );
     }
     lines.push('');
@@ -248,34 +367,38 @@ export function formatReport(r: CostReport, title = 'Ca làm việc'): string {
 
   if (r.mostExpensive) {
     lines.push(
-      `${'Tốn nhất'.padEnd(28)} ${r.mostExpensive.task_id} (${r.mostExpensive.role}) ` +
-        `${n(r.mostExpensive.tokens)} · $${r.mostExpensive.cost.toFixed(4)}`,
+      `${t('cost.priciest').padEnd(28)} ${r.mostExpensive.task_id} (${r.mostExpensive.role}) ` +
+        `${n(r.mostExpensive.tokens)} · ${formatUSD(r.mostExpensive.cost)}`,
     );
   }
   if (r.reaskCount > 0) {
-    lines.push(
-      `${'Phải hỏi lại định dạng'.padEnd(28)} ${r.reaskCount} lần  ⚠ tốn thêm — xem lại prompt của vai trò đó`,
-    );
+    lines.push(`${t('cost.reask').padEnd(28)} ${t('cost.reaskDetail', { n: String(r.reaskCount) })}`);
   }
   for (const s of r.suspiciousCacheWrites) {
     lines.push(
-      `${'⚠ Ghi cache bất thường'.padEnd(28)} vai trò "${s.role}": ${s.writes} lần ghi cho ${s.keys} khoá — ` +
-        `có ai đang sửa role/tri thức giữa ca?`,
+      `${t('cost.oddCacheWrites').padEnd(28)} ` +
+        t('cost.oddCacheDetail', { role: s.role, writes: String(s.writes), keys: String(s.keys) }),
     );
   }
   return lines.join('\n');
 }
 
-/** Chi phí của ĐÚNG ca vừa chạy. Khác `formatReport` — cái kia là tích luỹ cả đời công ty. */
+/** The cost of THIS shift alone. Unlike `formatReport`, which is the company's lifetime total. */
 export function formatRunUsage(u: Usage, tasks: number): string {
   const n = (x: number) => (x >= 1000 ? `${(x / 1000).toFixed(1)}K` : String(x));
   const denominator = u.cacheRead + u.input + u.cacheWrite;
   const ratio = denominator > 0 ? u.cacheRead / denominator : 0;
-  return (
-    `Ca này: ${tasks} việc · $${u.costUSD.toFixed(4)} · ` +
-    `vào ${n(u.input)} · đọc-cache ${n(u.cacheRead)} · ghi-cache ${n(u.cacheWrite)} · ra ${n(u.output)} · ` +
-    `dùng lại cache ${(ratio * 100).toFixed(0)}%`
-  );
+  return t('cost.runLine', {
+    tasks: String(tasks),
+    cost: formatUSD(u.costUSD),
+    breakdown: t('cost.tokenBreakdown', {
+      input: n(u.input),
+      cacheRead: n(u.cacheRead),
+      cacheWrite: n(u.cacheWrite),
+      output: n(u.output),
+    }),
+    reuse: `${(ratio * 100).toFixed(0)}%`,
+  });
 }
 
 function percentile(sorted: number[], p: number): number {

@@ -1,38 +1,40 @@
 /**
- * HỎI THẲNG MỘT MCP SERVER HTTP `tools/list` — chỉ để lấy `annotations` THÔ.
+ * ASK AN HTTP MCP SERVER `tools/list` DIRECTLY — purely to get RAW `annotations`.
  * → docs/SPEC-arms.md §6j · `core/probe.ts`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 VÌ SAO FILE NÀY TỒN TẠI: **SDK VỨT MỌI ANNOTATION CÓ GIÁ TRỊ `false`.**│
- * │ (đo 26/08, `scripts/spike-sdk-annotations.ts` — dứt khoát)               │
+ * │ 🔴 WHY THIS FILE EXISTS: THE SDK DROPS EVERY ANNOTATION WHOSE VALUE IS   │
+ * │ `false`. (measured 26/08, `scripts/spike-sdk-annotations.ts` — decisive) │
  * │                                                                          │
- * │   Notion khai   `{readOnlyHint: false, destructiveHint: false}`          │
- * │   SDK đưa ta    `{}`                                                     │
- * │   Notion khai   `{readOnlyHint: false, destructiveHint: true}`           │
- * │   SDK đưa ta    `{destructive: true}`                                    │
+ * │   Notion declares  `{readOnlyHint: false, destructiveHint: false}`       │
+ * │   the SDK hands us `{}`                                                  │
+ * │   Notion declares  `{readOnlyHint: false, destructiveHint: true}`        │
+ * │   the SDK hands us `{destructive: true}`                                 │
  * │                                                                          │
- * │ ⇒ `destructive: false` **không biểu diễn được** qua SDK. Mà nấc giữa      │
- * │ ("đọc + thêm mới, không sửa/xoá") được định nghĩa **chính bằng** cặp      │
- * │ `readOnly:false + destructive:false` — nên nó vĩnh viễn rỗng, và 11/28    │
- * │ tool Notion vốn chỉ TẠO MỚI bị đẩy vào ô **toàn quyền**.                  │
+ * │ ⇒ `destructive: false` IS NOT REPRESENTABLE through the SDK. And the     │
+ * │ middle tier ("read + create new, no editing or deleting") is defined     │
+ * │ PRECISELY BY the pair `readOnly:false + destructive:false` — so it is    │
+ * │ permanently empty, and 11 of Notion's 28 tools that only CREATE get      │
+ * │ pushed into the FULL-ACCESS bucket.                                      │
  * │                                                                          │
- * │ ⚠⚠ ĐÂY KHÔNG PHẢI CHUYỆN ĐẾM NẤC. Nó là một **hồi quy đặc quyền tối      │
- * │ thiểu**: người dùng muốn *"cho agent tạo trang, đừng cho sửa trang cũ"*   │
- * │ — thứ Notion hỗ trợ chính xác — mà hệ thống buộc họ cấp cả sửa lẫn xoá.   │
- * │ Luật "không biết ⇒ leo thang" **không sai**; nó đang xử lý một dữ kiện    │
- * │ đã bị mất trên đường.                                                    │
+ * │ ⚠⚠ THIS IS NOT ABOUT COUNTING TIERS. It is a LEAST-PRIVILEGE REGRESSION: │
+ * │ the user wants *"let the agent create pages, do not let it edit old      │
+ * │ ones"* — exactly what Notion supports — and the system forces them to    │
+ * │ grant editing and deleting too. The rule "when unknown, escalate" is NOT │
+ * │ wrong; it is acting on a fact that was lost in transit.                  │
  * │                                                                          │
- * │ ⚠ Chỉ dùng cho PHÂN LOẠI, không thay SDK ở bất kỳ chỗ nào khác. Việc gọi │
- * │ tool, vòng đời phiên, quyền — vẫn của SDK. Đây là một lần đọc, một lần,   │
- * │ lúc cắm. Hỏng thì rơi về annotations của SDK: **tệ hơn, nhưng không sai** │
- * │ (rơi về nấc cao = an toàn khi không biết).                               │
+ * │ ⚠ Used for CLASSIFICATION ONLY; it replaces the SDK nowhere else. Tool   │
+ * │ calls, session lifecycle, permissions — all still the SDK's. This is one │
+ * │ read, once, at plug-in time. On failure it falls back to the SDK's       │
+ * │ annotations: WORSE, BUT NOT WRONG (falling back to a higher tier is the  │
+ * │ safe direction when we do not know).                                     │
  * │                                                                          │
- * │ ⚠ Và nó KHÔNG import SDK hãng nào — cùng luật `core/oauth.ts`. Đổi hãng   │
- * │ chạy agent thì file này đi theo nguyên vẹn.                              │
+ * │ ⚠ And it imports NO vendor SDK — the same rule as `core/oauth.ts`. Swap  │
+ * │ the agent runtime and this file travels intact.                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-/** Đúng bốn trường chuẩn của MCP. → `@modelcontextprotocol/sdk §ToolAnnotationsSchema` */
+/** Exactly MCP's four standard fields. → `@modelcontextprotocol/sdk §ToolAnnotationsSchema` */
 export interface RawAnnotations {
   readOnlyHint?: boolean;
   destructiveHint?: boolean;
@@ -43,9 +45,10 @@ export interface RawAnnotations {
 const PROTOCOL = '2025-06-18';
 
 /**
- * Streamable HTTP trả về **SSE**, không phải JSON trần: một khối `event:`/`data:`.
- * Bóc dòng `data:` đầu tiên. Không có thì thử đọc cả body như JSON — vài server
- * trả thẳng JSON khi client không xin `text/event-stream`.
+ * Streamable HTTP returns SSE, not bare JSON: an `event:`/`data:` block. Take the
+ * first `data:` line. If there is none, try reading the whole body as JSON —
+ * some servers answer with plain JSON when the client does not ask for
+ * `text/event-stream`.
  */
 function parseBody(text: string): { result?: unknown; error?: unknown } | null {
   const line = text.split('\n').find((l) => l.startsWith('data:'));
@@ -57,20 +60,22 @@ function parseBody(text: string): { result?: unknown; error?: unknown } | null {
 }
 
 /**
- * `annotations` THÔ theo tên tool. Ném/rỗng ⇒ chỗ gọi phải tự rơi về SDK.
+ * RAW `annotations` keyed by tool name. Throwing or empty ⇒ the caller falls back
+ * to the SDK itself.
  *
- * ⚠ Ba bước, đúng thứ tự giao thức, và **bỏ bước hai là hỏng ở một nửa số
- * server**: nhiều bản triển khai từ chối `tools/list` khi chưa nhận
+ * ⚠ Three steps, in protocol order, and SKIPPING STEP TWO BREAKS HALF THE
+ * SERVERS: many implementations refuse `tools/list` until they have received
  * `notifications/initialized`.
  */
 type Post = (body: unknown) => Promise<{ result?: unknown; error?: unknown } | null>;
 
 /**
- * Bắt tay xong rồi giao lại một hàm `post` còn nguyên phiên.
+ * Complete the handshake, then hand back a `post` that still holds the session.
  *
- * ⚠ Tồn tại vì có **hai** người cần đúng ba bước này (`rawAnnotations` và
- * `callTool`), và bản thứ hai của một vũ điệu giao thức sẽ lệch vào đúng ngày
- * ai đó sửa một bản. Cùng lý do `injectSecrets` gộp `pickMcp` với `probeArm`.
+ * ⚠ It exists because TWO callers need exactly these three steps
+ * (`rawAnnotations` and `callTool`), and a second copy of a protocol dance
+ * drifts on the day somebody fixes one of them. Same reason `injectSecrets`
+ * merges `pickMcp` with `probeArm`.
  */
 async function withSession<T>(
   url: string,
@@ -114,11 +119,11 @@ async function withSession<T>(
     });
     if (!init?.result) return fallback;
 
-    // Thông báo, không phải yêu cầu — không có `id`, không đọc phản hồi.
+    // A notification, not a request — no `id`, no response to read.
     await post({ jsonrpc: '2.0', method: 'notifications/initialized' });
     return await fn(post);
   } catch {
-    // Mạng chết · server không nói streamable HTTP · quá hạn — trả giá trị lui.
+    // Network down · server does not speak streamable HTTP · timeout — fall back.
     return fallback;
   } finally {
     clearTimeout(timer);
@@ -142,12 +147,13 @@ export async function rawAnnotations(
 }
 
 /**
- * Tên các nhóm việc server THẬT SỰ phát ra — để đối chiếu với nhóm đã xin.
+ * The toolset names the server ACTUALLY emits — to compare against what we asked for.
  *
- * ⚠ Đo 26/08: gõ sai tên nhóm trong `X-MCP-Toolsets` ⇒ server trả **0 việc và
- * KHÔNG báo lỗi**. Im lặng bỏ tên lạ, đúng họ [[agentco-silent-allowlist]] —
- * cùng lớp với ca `tools` đã dựng `warnDroppedTools` để canh. Một cánh tay
- * "cắm xong, 0 việc" mà không ai kêu là một cánh tay hỏng im lặng.
+ * ⚠ Measured 26/08: a misspelt toolset name in `X-MCP-Toolsets` makes the server
+ * return ZERO TOOLS AND NO ERROR. Silently dropping an unknown name, the same
+ * family as [[agentco-silent-allowlist]] — the same class as the `tools` case
+ * that `warnDroppedTools` was built to watch. An arm that is "plugged in with 0
+ * actions" and nobody complaining is an arm that failed silently.
  */
 export async function toolCount(
   url: string,
@@ -162,11 +168,11 @@ export async function toolCount(
 }
 
 /**
- * Gọi MỘT tool và trả về phần chữ. `null` = không gọi được.
+ * Call ONE tool and return its text. `null` = the call could not be made.
  *
- * Dùng cho **bước hỏi danh tính** (§5h·7k): hãng nào không trả tên tài khoản
- * trong phản hồi token thì ta đi hỏi nó bằng chính giao thức đã có. Không phải
- * một đường mới — vẫn là MCP, vẫn cùng phiên, vẫn không import SDK hãng nào.
+ * Used for the IDENTITY QUESTION (§5h·7k): when a vendor does not return an
+ * account name in its token response, we ask it over the protocol we already
+ * have. Not a new route — still MCP, still the same session, still no vendor SDK.
  */
 export async function callTool(
   url: string,
@@ -177,8 +183,8 @@ export async function callTool(
 ): Promise<string | null> {
   return withSession(url, headers, timeoutMs, null as string | null, async (post) => {
     const r = await post({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: args } });
-    // `error` = tool không tồn tại ở cửa này (hàng rào). `isError` = tool chạy
-    // rồi hỏng. Cả hai đều không phải dữ liệu, nên cùng trả `null`.
+    // `error` = the tool does not exist at this door (a fence). `isError` = the
+    // tool ran and failed. Neither is data, so both return `null`.
     if (!r || r.error) return null;
     const res = r.result as { isError?: boolean; content?: { type?: string; text?: string }[] };
     if (res?.isError) return null;
@@ -191,9 +197,9 @@ export async function callTool(
 }
 
 /**
- * Cấu hình này hỏi thẳng được không? Chỉ HTTP — stdio phải spawn tiến trình và
- * nói MCP qua đường ống, tức dựng lại nguyên một client thứ hai. Không đáng:
- * cánh tay stdio hôm nay chỉ có `filesystem`, và nó không có nấc.
+ * Can this config be asked directly? HTTP only — stdio would mean spawning a
+ * process and speaking MCP down a pipe, i.e. rebuilding an entire second client.
+ * Not worth it: the only stdio arm today is `filesystem`, and it has no tiers.
  */
 export function httpTarget(
   config: unknown,

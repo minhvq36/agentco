@@ -1,18 +1,19 @@
 /**
- * Ước lượng token.
+ * Token estimation.
  *
- * CỐ Ý dùng heuristic, không gọi API đếm token: đếm chính xác tốn một round-trip
- * mạng cho mỗi lần kiểm tra ngân sách, mà ta kiểm rất nhiều (mỗi node tri thức,
- * mỗi receipt, mỗi brief). Sai số ±15% là chấp nhận được vì đây chỉ dùng để
- * ÉP TRẦN, không dùng để tính tiền.
+ * A heuristic ON PURPOSE, not an API token count: counting exactly costs one
+ * network round-trip per budget check, and we check constantly — every knowledge
+ * node, every receipt, every brief. A ±15% error is fine because this is only
+ * ever used to ENFORCE A CEILING, never to compute money.
  *
- * Số tiền thật luôn lấy từ `usage`/`modelUsage` do API trả về — chính xác tuyệt đối.
+ * Real money always comes from the `usage`/`modelUsage` the API returns, which
+ * is exact.
  */
 
 /**
- * Tiếng Việt có dấu tốn nhiều token hơn tiếng Anh đáng kể (dấu phụ thường
- * tách thành token riêng). Hệ số ~2.6 char/token cho tiếng Việt so với
- * ~4 char/token cho tiếng Anh. Đếm theo tỉ lệ ký tự ngoài ASCII.
+ * Accented Vietnamese costs noticeably more tokens than English — the diacritics
+ * usually split into tokens of their own. Roughly 2.6 chars/token for Vietnamese
+ * against ~4 for English. Interpolate on the ratio of non-ASCII characters.
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
@@ -29,10 +30,10 @@ export function estimateJsonTokens(value: unknown): number {
   return estimateTokens(JSON.stringify(value));
 }
 
-/** Cắt text về đúng trần token (ước lượng), thêm dấu hiệu bị cắt. */
+/** Trim text down to a token ceiling (estimated), leaving a visible cut marker. */
 export function truncateToTokens(text: string, maxTokens: number): string {
   if (estimateTokens(text) <= maxTokens) return text;
-  const marker = '…[cắt]';
+  const marker = '…[cut]';
   let lo = 0;
   let hi = text.length;
   while (lo < hi) {

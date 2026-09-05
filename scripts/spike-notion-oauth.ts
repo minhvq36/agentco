@@ -1,43 +1,45 @@
 /**
- * SPIKE — ĐƯỜNG B: ta tự cầm OAuth của Notion, không nhờ CLI của ai.
- * → SPEC-arms.md §5h (ba loại chìa) · §5a (tiêm `headers`) · §4e #2
+ * SPIKE — PATH B: we hold Notion's OAuth ourselves, without relying on
+ * anyone's CLI.
+ * → SPEC-arms.md §5h (three key types) · §5a (injecting `headers`) · §4e #2
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ FILE NÀY KHÔNG IMPORT `@anthropic-ai/claude-agent-sdk`. CỐ Ý.            │
+ * │ THIS FILE DOES NOT IMPORT `@anthropic-ai/claude-agent-sdk`. ON PURPOSE.  │
  * │                                                                          │
- * │ User chốt 24/08: phải chừa đường lui cho Codex · Antigravity · Groq.     │
- * │ Cách duy nhất để LỜI HỨA ĐÓ CÓ THẬT là chứng minh bằng mã chạy được:     │
- * │ toàn bộ luồng dưới đây dùng **node builtins + fetch**, và kết thúc bằng   │
- * │ một chuỗi `Authorization: Bearer …`. Ai tiêu chuỗi đó cũng được.         │
+ * │ The user locked this in on 08/24: we must leave a way back for Codex ·   │
+ * │ Antigravity · Groq. The only way to make THAT PROMISE REAL is to prove   │
+ * │ it with running code: the entire flow below uses **node builtins +       │
+ * │ fetch**, and ends with an `Authorization: Bearer …` string. Anyone can   │
+ * │ consume that string.                                                    │
  * │                                                                          │
- * │ ⇒ Nếu một ngày file này phải `import` SDK của một hãng nào, thì lời hứa   │
- * │ "đổi được provider" vừa gãy — và gãy ở đúng dòng import đó.              │
+ * │ ⇒ If this file ever has to `import` some vendor's SDK, the "provider is  │
+ * │ swappable" promise just broke — and it broke at that exact import line.  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Nguồn sự thật là TÀI LIỆU NOTION, không phải tài liệu Claude (user chốt):
+ * Source of truth is NOTION'S DOCS, not Claude's docs (user's call):
  *   🌐 developers.notion.com/guides/mcp/get-started-with-mcp
  *   🌐 notion.com/help/notion-mcp
  *
- * Bốn câu hỏi spike này đóng — mỗi câu đều đã có thể GIẾT đường B:
+ * Four questions this spike settles — each one could have KILLED path B:
  *
- *   Q1  Notion có rào app lạ không?          đo 24/08: KHÔNG — /register trả 201
- *   Q2  Refresh token có về không?           ← phải đo, quyết được kiến trúc §4
- *   Q3  Bao nhiêu việc, và schema nặng cỡ nào?
- *   Q4  Nhiều tài khoản Notion cùng lúc được không?
+ *   Q1  Does Notion gate out unfamiliar apps?     measured 08/24: NO — /register returns 201
+ *   Q2  Does a refresh token come back?           ← must measure, decides the §4 architecture
+ *   Q3  How many tools, and how heavy is the schema?
+ *   Q4  Can multiple Notion accounts be logged in at once?
  *
- * ⚠ Notion ghi thẳng: *"We're working on support for non-interactive
- * authorization"* ⇒ HÔM NAY OAuth **bắt buộc có trình duyệt**. Không có đường
- * headless. Đó là ràng buộc thiết kế, không phải thiếu sót của spike.
+ * ⚠ Notion states outright: *"We're working on support for non-interactive
+ * authorization"* ⇒ TODAY OAuth **requires a browser**. There's no headless
+ * path. That's a design constraint, not a gap in this spike.
  *
- * Chạy:
- *   npx tsx scripts/spike-notion-oauth.ts              đăng nhập tài khoản mới
- *   npx tsx scripts/spike-notion-oauth.ts --as cty-b   đăng nhập tài khoản THỨ HAI (Q4)
- *   npx tsx scripts/spike-notion-oauth.ts --refresh    chỉ thử làm mới chìa (Q2)
- *   npx tsx scripts/spike-notion-oauth.ts --tools      chỉ gọi tools/list (Q3)
- *   npx tsx scripts/spike-notion-oauth.ts --revoke     thu hồi rồi chứng minh đã chết
- *   npx tsx scripts/spike-notion-oauth.ts --no-browser in URL ra, tự dán
+ * Run:
+ *   npx tsx scripts/spike-notion-oauth.ts              log in a new account
+ *   npx tsx scripts/spike-notion-oauth.ts --as cty-b   log in a SECOND account (Q4)
+ *   npx tsx scripts/spike-notion-oauth.ts --refresh    only try refreshing the key (Q2)
+ *   npx tsx scripts/spike-notion-oauth.ts --tools      only call tools/list (Q3)
+ *   npx tsx scripts/spike-notion-oauth.ts --revoke     revoke, then prove it's dead
+ *   npx tsx scripts/spike-notion-oauth.ts --no-browser print the URL, paste it yourself
  *
- * Chi phí: **$0** — không gọi model một lần nào.
+ * Cost: **$0** — never calls the model once.
  */
 
 import crypto from 'node:crypto';
@@ -50,45 +52,47 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * ⚠ `/mcp` (Streamable HTTP), KHÔNG phải `/sse`. Notion còn phục vụ `/sse` cho
- * client cũ, nhưng `SPEC-arms` §2 đã chốt: SSE **nhận vào** để tương thích,
- * **không bao giờ đề xuất**. Spike đo đúng thứ ta sẽ ship.
+ * ⚠ `/mcp` (Streamable HTTP), NOT `/sse`. Notion still serves `/sse` for
+ * older clients, but `SPEC-arms` §2 already settled it: SSE is **accepted**
+ * for compatibility, **never proposed**. This spike measures exactly what
+ * we'll ship.
  */
 const MCP_URL = 'https://mcp.notion.com/mcp';
 
 /**
- * Kho chìa của SPIKE — KHÔNG phải kho thật.
+ * The SPIKE's own key store — NOT the real store.
  *
- * Kho thật là `company/.state/secrets.json`, và §4 dưới đây ghi vì sao hình
- * dạng của nó **phải đổi** trước khi nhận được token OAuth. Spike cố tình ghi
- * ra chỗ khác để một lần chạy thử không đụng vào chìa đang dùng thật.
+ * The real store is `company/.state/secrets.json`, and §4 below explains why
+ * its shape **has to change** before it can hold an OAuth token. The spike
+ * deliberately writes elsewhere so a trial run never touches the real keys
+ * in use.
  */
 const STORE = path.join(HERE, '..', '.state-spike', 'notion-oauth.json');
 
-/** Chuỗi này lên màn hình đồng ý của Notion — người dùng sẽ ĐỌC nó. */
+/** This string shows up on Notion's consent screen — the user WILL read it. */
 const CLIENT_NAME = 'agentco';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KHO CHÌA — khoá theo TÀI KHOẢN, không phải một chỗ phẳng (Q4)
+// KEY STORE — keyed by ACCOUNT, not one flat spot (Q4)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Một tài khoản Notion đã đăng nhập.
+ * One logged-in Notion account.
  *
- * ⚠ `client_id` nằm TRONG từng tài khoản, không nằm ngoài — và đó không phải
- * tuỳ tiện: DCR gắn `client_id` với **đúng một `redirect_uri`**. Cổng loopback
- * đổi theo lần chạy ⇒ mỗi lần đăng nhập là một đăng ký mới. Để `client_id`
- * dùng chung là đẻ ra `invalid_redirect_uri` ở lần đăng nhập thứ hai.
+ * ⚠ `client_id` lives INSIDE each account, not outside — and that's not
+ * arbitrary: DCR binds `client_id` to **exactly one `redirect_uri`**. The
+ * loopback port changes every run ⇒ every login is a fresh registration.
+ * Sharing one `client_id` produces `invalid_redirect_uri` on the second login.
  */
 interface Account {
   client_id: string;
   access_token: string;
   refresh_token?: string;
-  /** Mốc HẾT HẠN tuyệt đối (ms). Cất `expires_in` là cất một số vô nghĩa sau khi tắt máy. */
+  /** Absolute EXPIRY timestamp (ms). Storing `expires_in` stores a number that's meaningless after the process restarts. */
   expires_at?: number;
   token_type: string;
   scope?: string;
-  /** Notion trả kèm gì thì giữ nguyên — để đọc, không để tin. */
+  /** Whatever else Notion returns, keep it as-is — to read, not to trust. */
   extra?: Record<string, unknown>;
 }
 
@@ -108,15 +112,15 @@ function writeStore(s: Store): void {
   try {
     fs.chmodSync(STORE, 0o600);
   } catch {
-    /* Windows: chmod là no-op, ACL thư mục người dùng đã đủ */
+    /* Windows: chmod is a no-op, the user-folder ACL is already sufficient */
   }
 }
 
-/** Che chìa trước khi in. Không có hàm này thì spike tự đẻ ra ca ㉔ của chính nó. */
-const mask = (v?: string) => (v ? `${v.slice(0, 8)}…${v.slice(-4)} (${v.length} ký tự)` : '—');
+/** Mask a key before printing it. Without this function the spike would produce its own version of case ㉔. */
+const mask = (v?: string) => (v ? `${v.slice(0, 8)}…${v.slice(-4)} (${v.length} chars)` : '—');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ① KHÁM PHÁ — hỏi server nó xác thực kiểu gì, đừng ghim vào code
+// ① DISCOVERY — ask the server how it authenticates, don't hard-code it
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AsMeta {
@@ -131,26 +135,30 @@ interface AsMeta {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HỎI SERVER NÓ XÁC THỰC KIỂU GÌ — ĐỪNG ĐOÁN. RFC 9728 → RFC 8414.        │
+ * │ ASK THE SERVER HOW IT AUTHENTICATES — DON'T GUESS. RFC 9728 → RFC 8414.  │
  * │                                                                          │
- * │ 🔴 Bản đầu (24/08) ĐOÁN metadata nằm ở `{origin}/.well-known/…`. Đo      │
- * │ 25/08 với 7 server: **đúng 5, sai 2**, và hai ca sai nói ra vì sao đoán  │
- * │ là sai về nguyên tắc chứ không phải sai vì thiếu may mắn:                │
+ * │ 🔴 The first draft (08/24) GUESSED the metadata lived at                 │
+ * │ `{origin}/.well-known/…`. Measured 08/25 against 7 servers: **5 right,   │
+ * │ 2 wrong**, and the two wrong cases show WHY guessing is wrong in         │
+ * │ principle, not just unlucky:                                            │
  * │                                                                          │
- * │   GitHub      metadata nằm ở đường CÓ PATH (`…/oauth-protected-resource/ │
- * │               mcp/`), và issuer ở **HOST KHÁC HẲN**:                     │
- * │               `https://github.com/login/oauth`. Đoán từ origin của MCP   │
- * │               URL thì **không đời nào** ra được chuỗi đó.                │
- * │   Cloudflare  HTTP **200** — server công khai, **không cần chìa**. Đoán  │
- * │               kiểu cũ báo "404, hỏng"; sự thật là "không có gì để làm".  │
+ * │   GitHub      metadata sits at a PATH-BEARING URL (`…/oauth-protected-   │
+ * │               resource/mcp/`), and the issuer is on a **COMPLETELY       │
+ * │               DIFFERENT HOST**: `https://github.com/login/oauth`.        │
+ * │               Guessing from the MCP URL's origin could **never** produce │
+ * │               that string.                                              │
+ * │   Cloudflare  HTTP **200** — a public server, **no key needed**. The old │
+ * │               guessing approach would report "404, broken"; the truth   │
+ * │               is "nothing to do here".                                  │
  * │                                                                          │
- * │ ⇒ Ba kết cục, và cả ba đều KHÁM PHÁ ĐƯỢC, không cái nào cần biết trước  │
- * │ đó là hãng nào:  ① 200 ⇒ không cần chìa   ② 401 ⇒ đi theo               │
- * │ `WWW-Authenticate: … resource_metadata="…"`   ③ không hiểu ⇒ nói thẳng. │
+ * │ ⇒ Three outcomes, and all three are DISCOVERABLE, none require knowing   │
+ * │ ahead of time which vendor it is:  ① 200 ⇒ no key needed   ② 401 ⇒       │
+ * │ follow `WWW-Authenticate: … resource_metadata="…"`   ③ unrecognized ⇒    │
+ * │ say so plainly.                                                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 async function discover(mcpUrl: string): Promise<AsMeta | null> {
-  // ① Gõ cửa KHÔNG chìa. Câu trả lời của server chính là tài liệu.
+  // ① Knock WITHOUT a key. The server's answer is the documentation.
   const probe = await fetch(mcpUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
@@ -168,29 +176,31 @@ async function discover(mcpUrl: string): Promise<AsMeta | null> {
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 BA KẾT CỤC, KHÔNG PHẢI HAI. Bản trước gộp mất một cái. (vá 25/08) │
+   * │ 🔴 THREE OUTCOMES, NOT TWO. The earlier draft collapsed two into one. │
+   * │ (fixed 08/25)                                                         │
    * │                                                                      │
-   * │ Câu cũ: `if (status !== 401 && status !== 403) return null` — tức     │
-   * │ **mọi thứ không phải 401 đều là "không cần chìa"**. Đo với            │
-   * │ `gmailmcp.googleapis.com/mcp`: nó trả **404** (endpoint không tồn     │
-   * │ tại ở đường đó), và hàm này báo 🟢 *"cắm thẳng được"*.                │
+   * │ The old check: `if (status !== 401 && status !== 403) return null` — │
+   * │ meaning **anything other than 401 counts as "no key needed"**.       │
+   * │ Measured against `gmailmcp.googleapis.com/mcp`: it returns **404**   │
+   * │ (the endpoint doesn't exist at that path), and this function         │
+   * │ reported 🟢 *"connect right away"*.                                  │
    * │                                                                      │
-   * │ Đó là **báo xanh giả**, chiều nguy nhất: người dùng cắm một thứ chết  │
-   * │ rồi đi tìm nguyên nhân ở chỗ khác. Cùng hình dạng với `catch` nuốt    │
-   * │ tiền đề — "không phải lỗi tôi ngờ" bị đọc thành "không có lỗi".       │
-   * │ → [[agentco-catch-hides-premises]]                                    │
+   * │ That's a **false green**, the most dangerous direction: the user     │
+   * │ plugs in something dead and goes hunting for the cause elsewhere.    │
+   * │ Same shape as a `catch` swallowing its premise — "not the error I    │
+   * │ expected" gets read as "no error". → [[agentco-catch-hides-premises]] │
    * └──────────────────────────────────────────────────────────────────────┘
    */
-  if (!probe) throw new Error(`Không nối được tới ${mcpUrl} — kiểm mạng hoặc URL.`);
-  if (probe.ok) return null; // 2xx và CHỈ 2xx mới là "không cần chìa"
+  if (!probe) throw new Error(`Could not connect to ${mcpUrl} — check the network or the URL.`);
+  if (probe.ok) return null; // 2xx, and ONLY 2xx, means "no key needed"
   if (probe.status !== 401 && probe.status !== 403) {
     throw new Error(
-      `${mcpUrl} trả HTTP ${probe.status} — không phải cửa MCP, cũng không phải đòi chìa. ` +
-        `Nhiều khả năng sai URL.`,
+      `${mcpUrl} returned HTTP ${probe.status} — not an MCP endpoint, and not asking for a key. ` +
+        `Likely a wrong URL.`,
     );
   }
 
-  // ② Server tự khai chỗ để metadata. Đây là chỗ thay cho việc ta đoán.
+  // ② The server declares where its own metadata is. This replaces guessing.
   const u = new URL(mcpUrl);
   const declared = probe?.headers
     .get('www-authenticate')
@@ -198,7 +208,7 @@ async function discover(mcpUrl: string): Promise<AsMeta | null> {
 
   const prmTries = [
     declared,
-    // RFC 9728: path của tài nguyên được CHÈN VÀO SAU well-known, không bỏ đi.
+    // RFC 9728: the resource's path gets INSERTED AFTER well-known, not dropped.
     `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`,
     `${u.origin}/.well-known/oauth-protected-resource`,
   ].filter(Boolean) as string[];
@@ -215,8 +225,9 @@ async function discover(mcpUrl: string): Promise<AsMeta | null> {
   }
   if (!issuer) issuer = u.origin;
 
-  // ③ Metadata của máy chủ uỷ quyền. Issuer CÓ THỂ có path (GitHub có), nên
-  //    phải thử cả dạng chèn-path lẫn dạng gốc, cộng đường OIDC.
+  // ③ The authorization server's own metadata. The issuer CAN have a path
+  //    (GitHub does), so both the path-inserted and root forms must be
+  //    tried, plus the OIDC path.
   const iss = new URL(issuer);
   const p = iss.pathname.replace(/\/$/, '');
   const asTries = [
@@ -229,33 +240,35 @@ async function discover(mcpUrl: string): Promise<AsMeta | null> {
     const r = await fetch(url).catch(() => null);
     if (r?.ok) return (await r.json()) as AsMeta;
   }
-  throw new Error(`Không đọc được metadata uỷ quyền của ${issuer} (đã thử ${asTries.length} đường)`);
+  throw new Error(`Could not read the authorization metadata for ${issuer} (tried ${asTries.length} paths)`);
 }
 
-/** `discover` trả `null` khi server không cần chìa — mọi chỗ cần OAuth phải nói ra. */
+/** `discover` returns `null` when the server needs no key — every place that needs OAuth must check this. */
 async function needAuth(mcpUrl: string): Promise<AsMeta> {
   const m = await discover(mcpUrl);
-  if (!m) throw new Error(`${mcpUrl} không yêu cầu xác thực — không có gì để đăng nhập.`);
+  if (!m) throw new Error(`${mcpUrl} does not require authentication — nothing to log into.`);
   return m;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ② ĐĂNG KÝ ĐỘNG (DCR, RFC 7591) — câu trả lời cho Q1
+// ② DYNAMIC CLIENT REGISTRATION (DCR, RFC 7591) — the answer to Q1
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 🟢 ĐO 24/08: `POST /register` trả **201** cho `client_name: "agentco"`,
- * `token_endpoint_auth_method: "none"`, redirect loopback. **Không duyệt,
- * không allowlist, không `client_secret`.**
+ * 🟢 MEASURED 08/24: `POST /register` returns **201** for
+ * `client_name: "agentco"`, `token_endpoint_auth_method: "none"`, loopback
+ * redirect. **No approval, no allowlist, no `client_secret`.**
  *
- * ⇒ Câu hỏi *"Notion có rào app custom không, hay chỉ chiều client thực dụng?"*
- * (user hỏi 24/08) đã có đáp: **KHÔNG RÀO.** Ta được đối xử như Claude Code.
+ * ⇒ The question *"does Notion gate out custom apps, or does it treat all
+ * clients the same"* (asked 08/24) is answered: **NO GATE.** We're treated
+ * the same as Claude Code.
  *
- * ⚠ `none` nghĩa là **public client** — không có `client_secret` để giấu, nên
- * PKCE **không phải tuỳ chọn**, nó là thứ duy nhất chặn kẻ chen mã trao đổi.
+ * ⚠ `none` means **public client** — no `client_secret` to hide, so PKCE
+ * **isn't optional**, it's the only thing stopping someone from intercepting
+ * the code exchange.
  */
 async function register(meta: AsMeta, redirectUri: string): Promise<string> {
-  if (!meta.registration_endpoint) throw new Error('Server không mở DCR — phải xin client_id tay.');
+  if (!meta.registration_endpoint) throw new Error('Server does not expose DCR — client_id must be requested manually.');
   const res = await fetch(meta.registration_endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -270,18 +283,18 @@ async function register(meta: AsMeta, redirectUri: string): Promise<string> {
   });
   const body = await res.text();
   if (res.status !== 200 && res.status !== 201) {
-    throw new Error(`DCR hỏng: HTTP ${res.status} — ${body}`);
+    throw new Error(`DCR failed: HTTP ${res.status} — ${body}`);
   }
   const j = JSON.parse(body) as { client_id: string; client_secret?: string };
   if (j.client_secret) {
-    // Không giết spike, nhưng phải KÊU: nó đổi mô hình bảo mật và đổi cả kho chìa.
-    console.warn('⚠ Server cấp client_secret — mô hình public client không còn đúng, đọc lại §5h·2.');
+    // Don't kill the spike over this, but it must be FLAGGED: it changes the security model and the store's shape.
+    console.warn('⚠ Server issued a client_secret — the public-client model no longer applies, re-read §5h·2.');
   }
   return j.client_id;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ③ PKCE + LOOPBACK — đăng nhập
+// ③ PKCE + LOOPBACK — login
 // ─────────────────────────────────────────────────────────────────────────────
 
 const b64url = (b: Buffer) => b.toString('base64url');
@@ -293,21 +306,24 @@ function pkce() {
 }
 
 /**
- * 🔴 KHÔNG DÙNG `cmd /c start` TRÊN WINDOWS. (bug 24/08, user bắt được ngay lượt đầu)
+ * 🔴 DO NOT USE `cmd /c start` ON WINDOWS. (bug from 08/24, a user caught it on the very first run)
  *
- * `cmd.exe` coi `&` là **ký tự nối lệnh**, nên nó cắt URL ở dấu `&` đầu tiên:
+ * `cmd.exe` treats `&` as a **command-chaining character**, so it truncates
+ * the URL at the first `&`:
  *
- *   gửi đi   …/authorize?response_type=code&client_id=…&state=…&code_challenge=…
- *   tới nơi  …/authorize?response_type=code
- *   Notion   {"error":"invalid_request","error_description":"Missing client_id"}
+ *   sent      …/authorize?response_type=code&client_id=…&state=…&code_challenge=…
+ *   arrives   …/authorize?response_type=code
+ *   Notion    {"error":"invalid_request","error_description":"Missing client_id"}
  *
- * Mà URL của OAuth thì **luôn** có `&` — tức đường này hỏng 100% số lần, không
- * phải thỉnh thoảng. `rundll32 url.dll,FileProtocolHandler` nhận URL làm **một
- * tham số nguyên vẹn**, không qua shell nào, nên không có gì để cắt.
+ * And an OAuth URL **always** has `&` in it — meaning this path fails 100%
+ * of the time, not occasionally. `rundll32 url.dll,FileProtocolHandler`
+ * receives the URL as **one intact argument**, never touching a shell, so
+ * there's nothing to truncate.
  *
- * ⚠ Lần thứ NĂM của lớp lỗi *"đúng trên máy dev, sai ở chỗ khác"* (tên shell
- * theo OS · slug phi-Latin · nút 📂 từ xa · ánh xạ đường dẫn Docker · và giờ là
- * shell quoting). Bốn lần trước đã ghi ở `SESSIONS_MEMORY` §5o ⑥.
+ * ⚠ The FIFTH instance of the *"works on the dev machine, breaks elsewhere"*
+ * error class (shell names per OS · non-Latin slugs · the remote 📂 button ·
+ * Docker path mapping · and now shell quoting). The previous four are
+ * logged in `SESSIONS_MEMORY` §5o ⑥.
  */
 function openBrowser(url: string): void {
   const [cmd, args] =
@@ -319,17 +335,18 @@ function openBrowser(url: string): void {
   try {
     spawn(cmd as string, args as string[], { detached: true, stdio: 'ignore' }).unref();
   } catch {
-    /* mở không được thì thôi — URL đã in ra màn hình rồi, tự dán vẫn xong */
+    /* couldn't open it — no big deal, the URL is already printed, pasting it manually still works */
   }
 }
 
 /**
- * Cổng loopback nhận `?code=`.
+ * The loopback port that receives `?code=`.
  *
- * ⚠ Cổng phải mở **TRƯỚC** khi DCR, vì `redirect_uri` phải khớp **từng ký tự**
- * với thứ đã đăng ký, mà số cổng thì chỉ biết sau khi `listen(0)`. Làm ngược
- * thứ tự là đăng ký một cổng rồi nghe ở cổng khác — Notion trả
- * `invalid_redirect_uri` và thông báo đó **không nói ra nguyên nhân thật**.
+ * ⚠ The port must open **BEFORE** DCR, because `redirect_uri` must match
+ * **character-for-character** what was registered, and the port number is
+ * only known after `listen(0)`. Doing it in the reverse order registers one
+ * port and listens on another — Notion returns `invalid_redirect_uri` and
+ * that error message **does not say what actually caused it**.
  */
 function loopback(): Promise<{
   redirectUri: string;
@@ -357,17 +374,17 @@ function loopback(): Promise<{
       };
 
       if (err) {
-        say(`❌ Notion từ chối: ${err}`);
-        fail?.(new Error(`Notion trả error=${err}`));
+        say(`❌ Notion refused: ${err}`);
+        fail?.(new Error(`Notion returned error=${err}`));
         return;
       }
-      // Chống CSRF: `state` không khớp thì mã này không phải của lượt ta mở.
+      // CSRF protection: if `state` doesn't match, this code isn't from the run we started.
       if (!code || state !== expectState) {
-        say('❌ state không khớp — bỏ qua.');
-        fail?.(new Error('state không khớp'));
+        say('❌ state mismatch — ignoring.');
+        fail?.(new Error('state mismatch'));
         return;
       }
-      say('✅ Xong. Đóng tab này và quay lại terminal.');
+      say('✅ Done. Close this tab and go back to the terminal.');
       settle?.(code);
     });
 
@@ -380,10 +397,11 @@ function loopback(): Promise<{
             expectState = state;
             settle = ok;
             fail = no;
-            // 15 phút, không phải 5: người dùng có thể phải ĐĂNG NHẬP NOTION trước
-            // rồi mới tới được màn hình cấp quyền. Đặt hẹn giờ theo ca nhanh nhất
-            // là bắt luồng chết đúng lúc người dùng đang làm đúng việc.
-            setTimeout(() => no(new Error('Hết 15 phút chờ đăng nhập.')), 900_000).unref();
+            // 15 minutes, not 5: the user may need to LOG INTO NOTION first
+            // before reaching the consent screen. Setting the fastest-possible
+            // timeout would kill the flow right while the user is doing exactly
+            // the right thing.
+            setTimeout(() => no(new Error('15-minute login wait expired.')), 900_000).unref();
           }),
         close: () => server.close(),
       });
@@ -425,15 +443,15 @@ function toAccount(client_id: string, t: TokenResponse): Account {
 }
 
 async function login(id: string, noBrowser: boolean): Promise<Account> {
-  console.log(`\n━━ ĐĂNG NHẬP · tài khoản "${id}"`);
+  console.log(`\n━━ LOG IN · account "${id}"`);
 
   const meta = await needAuth(MCP_URL);
   console.log(`   issuer            ${meta.issuer}`);
   console.log(`   scopes_supported  ${JSON.stringify(meta.scopes_supported)}`);
   if (meta.scopes_supported?.length === 1) {
     console.log(
-      '   🔴 ĐÚNG MỘT SCOPE ⇒ không chia nhỏ quyền được. Thẻ trên UI phải nói ra,\n' +
-        '      và §5h·3 dòng "Phạm vi" KHÔNG áp dụng cho Notion. (đính chính 24/08)',
+      '   🔴 EXACTLY ONE SCOPE ⇒ permissions cannot be split up. The UI card must say\n' +
+        '      so, and the §5h·3 "Scope" row does NOT apply to Notion. (correction 08/24)',
     );
   }
 
@@ -441,7 +459,7 @@ async function login(id: string, noBrowser: boolean): Promise<Account> {
   console.log(`   redirect_uri      ${lo.redirectUri}`);
 
   const client_id = await register(meta, lo.redirectUri);
-  console.log(`   ✅ Q1 · DCR       client_id=${client_id}  ⇒ Notion KHÔNG rào app lạ`);
+  console.log(`   ✅ Q1 · DCR       client_id=${client_id}  ⇒ Notion does NOT gate out unfamiliar apps`);
 
   const { verifier, challenge } = pkce();
   const state = b64url(crypto.randomBytes(16));
@@ -457,23 +475,25 @@ async function login(id: string, noBrowser: boolean): Promise<Account> {
   }).toString();
 
   /**
-   * ⚠ IN URL RA **LUÔN**, kể cả khi đã mở được trình duyệt. (user 24/08)
+   * ⚠ PRINT THE URL **ALWAYS**, even when the browser opened successfully. (user, 08/24)
    *
-   * Trình duyệt MẶC ĐỊNH của máy thường **không phải** chỗ người dùng đang đăng
-   * nhập Notion — và khi đó luồng chết ở một màn hình đăng nhập lạ, không ai
-   * hiểu vì sao. Có sẵn URL để dán sang đúng trình duyệt/profile là đường thoát
-   * **rẻ nhất**, và nó cũng cứu luôn ca chặn popup.
+   * The machine's DEFAULT browser is often **not** where the user is logged
+   * into Notion — and in that case the flow dies on an unfamiliar login
+   * screen nobody understands. Having the URL available to paste into the
+   * right browser/profile is the **cheapest** escape hatch, and it also
+   * covers the popup-blocked case.
    *
-   * ⇒ Hệ quả cho SẢN PHẨM, không chỉ cho spike: nút "Đăng nhập" phải nằm ở
-   * **giao diện web của agentco** (vốn ĐANG mở trong trình duyệt của người
-   * dùng, tức đúng phiên đăng nhập của họ), **không** ở daemon. Daemon mở
-   * trình duyệt là daemon đoán hộ người dùng họ đang đăng nhập ở đâu.
+   * ⇒ A consequence for the PRODUCT, not just this spike: the "Log in"
+   * button must live in **agentco's own web UI** (which is ALREADY open in
+   * the user's browser, i.e. their actual logged-in session), **not** in the
+   * daemon. A daemon that opens a browser is a daemon guessing on the
+   * user's behalf where they're logged in.
    */
-  console.log(`\n   Link cấp quyền (dán sang trình duyệt bạn ĐANG đăng nhập Notion nếu cần):\n`);
+  console.log(`\n   Authorization link (paste into whichever browser you're ALREADY logged into Notion with):\n`);
   console.log(`   ${auth}\n`);
   if (!noBrowser) {
-    console.log('   → Đang thử mở trình duyệt mặc định. Chọn workspace rồi bấm cho phép…');
-    console.log('     (chưa đăng nhập Notion ở đó? dán link trên sang Chrome/Edge có sẵn phiên.)\n');
+    console.log('   → Attempting to open the default browser. Pick a workspace and click allow…');
+    console.log("     (not logged into Notion there? paste the link above into a Chrome/Edge session that is.)\n");
     openBrowser(auth.toString());
   }
 
@@ -495,41 +515,45 @@ async function login(id: string, noBrowser: boolean): Promise<Account> {
 
   console.log(`   access_token      ${mask(acc.access_token)}`);
   console.log(
-    `   ✅ Q2 · refresh   ${acc.refresh_token ? mask(acc.refresh_token) : '🔴 KHÔNG CÓ — đọc §4 bên dưới'}`,
+    `   ✅ Q2 · refresh   ${acc.refresh_token ? mask(acc.refresh_token) : '🔴 MISSING — see §4 below'}`,
   );
   console.log(
-    `   hết hạn           ${acc.expires_at ? new Date(acc.expires_at).toLocaleString() : '— (không hết hạn?)'}`,
+    `   expires           ${acc.expires_at ? new Date(acc.expires_at).toLocaleString() : '— (never expires?)'}`,
   );
-  if (acc.extra) console.log(`   Notion trả kèm    ${JSON.stringify(acc.extra)}`);
+  if (acc.extra) console.log(`   Notion also sent  ${JSON.stringify(acc.extra)}`);
   console.log(`   💾 ${STORE}`);
   return acc;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ④ LÀM MỚI CHÌA (Q2) — và đây là chỗ VA CHẠM VỚI KIẾN TRÚC HÔM NAY
+// ④ REFRESHING THE KEY (Q2) — and this is where it COLLIDES WITH TODAY'S ARCHITECTURE
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `pickMcp` (worker.ts:831) là ĐỒNG BỘ — CỐ Ý (armexec.ts §tách hai nửa)│
- * │ Làm mới chìa là BẤT ĐỒNG BỘ. Hai thứ này không ở chung một hàm được.      │
+ * │ 🔴 `pickMcp` (worker.ts:831) is SYNCHRONOUS — ON PURPOSE (armexec.ts     │
+ * │ §split-in-two). Refreshing a key is ASYNCHRONOUS. These two can't live    │
+ * │ in the same function.                                                    │
  * │                                                                          │
- * │ Hai lối, và phải chọn TRƯỚC khi viết mã thật:                            │
+ * │ Two paths, and one must be picked BEFORE writing the real code:          │
  * │                                                                          │
- * │  ⓐ làm mới CHỦ ĐỘNG ở nền  — daemon tick, cùng khuôn `ensureInstalled`.  │
- * │     `pickMcp` vẫn đồng bộ, chỉ đọc chuỗi đã có. **Đề xuất.**             │
- * │     Giá: chìa có thể vừa hết hạn đúng lúc dùng ⇒ cần một lần thử lại.    │
+ * │  ⓐ refresh PROACTIVELY in the background — daemon tick, same pattern as │
+ * │     `ensureInstalled`. `pickMcp` stays synchronous, just reads whatever  │
+ * │     string already exists. **Recommended.**                             │
+ * │     Cost: the key could expire right at the moment of use ⇒ needs one    │
+ * │     retry.                                                               │
  * │                                                                          │
- * │  ⓑ làm mới LÚC CẦN         — `pickMcp` thành async.                      │
- * │     Giá: kéo `await` vào đúng đường nóng mà `fastLaunch` vừa dọn sạch    │
- * │     (đã đo: ~4 giây/task). Trả lại thứ vừa mua.                         │
+ * │  ⓑ refresh ON DEMAND        — `pickMcp` becomes async.                   │
+ * │     Cost: pulls an `await` right into the hot path that `fastLaunch`     │
+ * │     just cleaned up (measured: ~4 seconds/task). Give back what was just │
+ * │     bought.                                                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 async function refresh(id: string): Promise<Account> {
   const store = readStore();
   const acc = store.accounts[id];
-  if (!acc) throw new Error(`Chưa có tài khoản "${id}" — đăng nhập trước.`);
-  if (!acc.refresh_token) throw new Error('Tài khoản này KHÔNG có refresh_token — Q2 trả lời NO.');
+  if (!acc) throw new Error(`No account "${id}" yet — log in first.`);
+  if (!acc.refresh_token) throw new Error('This account has NO refresh_token — Q2 answers NO.');
 
   const meta = await needAuth(MCP_URL);
   const before = acc.access_token;
@@ -540,27 +564,28 @@ async function refresh(id: string): Promise<Account> {
   });
 
   const next = toAccount(acc.client_id, tok);
-  // ⚠ Refresh token XOAY ở nhiều nhà cung cấp: không giữ cái mới là tự khoá
-  // mình ra ngoài ở lần làm mới thứ hai — hỏng SAU một tuần, đúng loại lỗi đắt.
+  // ⚠ Refresh tokens ROTATE at many providers: not keeping the new one locks
+  // us out on the second refresh — breaking a WEEK later, exactly the
+  // expensive kind of bug.
   if (!next.refresh_token) next.refresh_token = acc.refresh_token;
   store.accounts[id] = next;
   writeStore(store);
 
-  console.log(`\n━━ LÀM MỚI · "${id}"`);
-  console.log(`   chìa cũ           ${mask(before)}`);
-  console.log(`   chìa mới          ${mask(next.access_token)}`);
-  console.log(`   đổi chuỗi?        ${before === next.access_token ? '❌ KHÔNG' : '✅ CÓ'}`);
+  console.log(`\n━━ REFRESH · "${id}"`);
+  console.log(`   old key           ${mask(before)}`);
+  console.log(`   new key           ${mask(next.access_token)}`);
+  console.log(`   string changed?   ${before === next.access_token ? '❌ NO' : '✅ YES'}`);
   console.log(
-    `   refresh có xoay?  ${acc.refresh_token === next.refresh_token ? 'không (dùng lại)' : '✅ CÓ — bắt buộc phải ghi đè'}`,
+    `   refresh rotates?  ${acc.refresh_token === next.refresh_token ? 'no (reused)' : '✅ YES — must be overwritten'}`,
   );
   return next;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑤ BẮT TAY MCP BẰNG TAY (Q3) — không mượn SDK của ai
+// ⑤ HAND-ROLLED MCP HANDSHAKE (Q3) — borrowing no one's SDK
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Streamable HTTP trả `application/json` HOẶC `text/event-stream`. Nhận cả hai. */
+/** Streamable HTTP returns `application/json` OR `text/event-stream`. Accept both. */
 async function rpc(
   token: string,
   body: unknown,
@@ -579,12 +604,12 @@ async function rpc(
   });
 
   const sid = res.headers.get('mcp-session-id') ?? sessionId;
-  if (res.status === 202) return { json: null, sessionId: sid }; // notification, không có thân
+  if (res.status === 202) return { json: null, sessionId: sid }; // notification, no body
   const text = await res.text();
   if (!res.ok) throw new Error(`MCP HTTP ${res.status} — ${text.slice(0, 400)}`);
 
   if (res.headers.get('content-type')?.includes('text/event-stream')) {
-    // Nhặt `data:` cuối cùng — đủ cho lời gọi một-hỏi-một-đáp.
+    // Take the last `data:` line — enough for a one-question-one-answer call.
     const last = text
       .split('\n')
       .filter((l) => l.startsWith('data:'))
@@ -597,9 +622,9 @@ async function rpc(
 
 async function listTools(id: string): Promise<void> {
   const acc = readStore().accounts[id];
-  if (!acc) throw new Error(`Chưa có tài khoản "${id}".`);
+  if (!acc) throw new Error(`No account "${id}" yet.`);
 
-  console.log(`\n━━ BẮT TAY MCP · "${id}"  (0 dòng import SDK hãng nào)`);
+  console.log(`\n━━ MCP HANDSHAKE · "${id}"  (0 lines importing any vendor SDK)`);
 
   const init = await rpc(acc.access_token, {
     jsonrpc: '2.0',
@@ -633,25 +658,27 @@ async function listTools(id: string): Promise<void> {
   }[];
 
   /**
-   * ⚠ ĐÂY LÀ SỐ BYTE, KHÔNG PHẢI SỐ TOKEN — và khoảng cách đó có thật.
-   * Con số token thật chỉ lấy được bằng `getContextUsage()` lúc cắm vào một
-   * phiên có model. Ghi byte để có mốc so sánh RẺ; đừng đem byte đi hứa tiền.
-   * §9b đã đo filesystem = **+2 185 token/lượt** — đó mới là đơn vị so được.
+   * ⚠ THIS IS A BYTE COUNT, NOT A TOKEN COUNT — and that gap is real.
+   * The real token number can only be obtained from `getContextUsage()` once
+   * plugged into a session with a model. Byte count is recorded here as a
+   * CHEAP reference point; don't quote bytes as money. §9b already measured
+   * filesystem at **+2,185 tokens/turn** — that's the actual comparable unit.
    */
   const bytes = Buffer.byteLength(JSON.stringify(tools), 'utf8');
-  console.log(`   ✅ Q3 · số việc   ${tools.length}`);
+  console.log(`   ✅ Q3 · tool count   ${tools.length}`);
   console.log(
-    `   schema thô        ${bytes.toLocaleString('vi-VN')} byte  (≈ ${Math.round(bytes / 4).toLocaleString('vi-VN')} token — ƯỚC LƯỢNG, phải đo lại bằng getContextUsage)`,
+    `   raw schema        ${bytes.toLocaleString('en-US')} bytes  (≈ ${Math.round(bytes / 4).toLocaleString('en-US')} tokens — an ESTIMATE, must be remeasured with getContextUsage)`,
   );
 
   /**
-   * ⚠ ĐỌC HAY GHI PHẢI HỎI `annotations`, KHÔNG ĐƯỢC ĐOÁN TỪ TÊN. → §8a
+   * ⚠ READ OR WRITE MUST BE ASKED VIA `annotations`, NEVER GUESSED FROM THE NAME. → §8a
    *
-   * `notion-fetch` nghe như đọc; `notion-convert-page-to-skill` nghe như gì cũng
-   * được. Tên tool là thứ hãng đặt cho người đọc, **không** phải lời khai về
-   * tác dụng. Spike 1 đã đo filesystem: **13/14** tool có annotations — nên câu
-   * hỏi đúng ở đây là *"Notion có khai không"*, và **vắng mặt không phải tín
-   * hiệu an toàn**: thiếu `readOnlyHint` KHÔNG có nghĩa là chỉ đọc.
+   * `notion-fetch` sounds like a read; `notion-convert-page-to-skill` could
+   * sound like anything. A tool's name is what the vendor chose for a human
+   * reader, **not** a declaration of what it does. Spike 1 already measured
+   * the filesystem case: **13/14** tools have annotations — so the right
+   * question here is *"does Notion declare it"*, and **absence is not a
+   * safety signal**: a missing `readOnlyHint` does NOT mean read-only.
    */
   let ro = 0;
   let write = 0;
@@ -660,48 +687,48 @@ async function listTools(id: string): Promise<void> {
     const a = t.annotations;
     const tag =
       a?.readOnlyHint === true
-        ? ((ro += 1), '👁  chỉ đọc')
+        ? ((ro += 1), '👁  read-only')
         : a?.readOnlyHint === false
-          ? ((write += 1), a.destructiveHint ? '🔴 GHI · phá huỷ' : '✍  GHI')
-          : ((unknown += 1), '❓ KHÔNG KHAI');
+          ? ((write += 1), a.destructiveHint ? '🔴 WRITE · destructive' : '✍  WRITE')
+          : ((unknown += 1), '❓ NOT DECLARED');
     console.log(`     ${tag.padEnd(16)} ${t.name}`);
   }
   console.log(
-    `\n   phân loại         👁 ${ro} chỉ đọc · ✍ ${write} có ghi · ❓ ${unknown} không khai`,
+    `\n   breakdown         👁 ${ro} read-only · ✍ ${write} write · ❓ ${unknown} undeclared`,
   );
   if (unknown > 0) {
     console.log(
-      '   ⚠ Có tool KHÔNG khai annotations ⇒ cổng duyệt theo tác dụng (§8a) KHÔNG\n' +
-        '     phủ hết. Vắng mặt ≠ an toàn. [[agentco-deterministic-vs-signal]]',
+      '   ⚠ Some tools do NOT declare annotations ⇒ the effect-based approval gate\n' +
+        '     (§8a) does NOT cover them all. Absence ≠ safe. [[agentco-deterministic-vs-signal]]',
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑥ THU HỒI — "Cho nghỉ" phải giết chìa thật, không chỉ xoá file của ta
+// ⑥ REVOCATION — "letting go" must kill the real key, not just delete our file
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function revoke(id: string): Promise<void> {
   const store = readStore();
   const acc = store.accounts[id];
-  if (!acc) throw new Error(`Chưa có tài khoản "${id}".`);
+  if (!acc) throw new Error(`No account "${id}" yet.`);
   const meta = await needAuth(MCP_URL);
   if (!meta.revocation_endpoint) {
-    console.log('   ⚠ Server không công bố revocation_endpoint — chỉ xoá được phía ta.');
+    console.log('   ⚠ The server does not publish a revocation_endpoint — only our own copy can be deleted.');
   } else {
     const res = await fetch(meta.revocation_endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token: acc.access_token, client_id: acc.client_id }).toString(),
     });
-    console.log(`\n━━ THU HỒI · "${id}" → HTTP ${res.status}`);
+    console.log(`\n━━ REVOKE · "${id}" → HTTP ${res.status}`);
   }
-  // Bằng chứng, không phải lời hứa: gọi lại và mong nó HỎNG.
+  // Proof, not a promise: call it again and expect it to FAIL.
   try {
     await listTools(id);
-    console.log('   🔴 VẪN GỌI ĐƯỢC — thu hồi KHÔNG có tác dụng tức thì. Đừng hứa "10 giây".');
+    console.log('   🔴 STILL WORKS — revocation has NO immediate effect. Never promise "10 seconds".');
   } catch (e) {
-    console.log(`   ✅ đã chết: ${(e as Error).message.slice(0, 120)}`);
+    console.log(`   ✅ confirmed dead: ${(e as Error).message.slice(0, 120)}`);
   }
   delete store.accounts[id];
   writeStore(store);
@@ -715,29 +742,30 @@ async function main(): Promise<void> {
   const id = argv.includes('--as') ? (argv[argv.indexOf('--as') + 1] ?? 'mac-dinh') : 'mac-dinh';
 
   /**
-   * `--discover <url>` — CHỨNG MINH "MỘT HÌNH DẠNG CHUNG", chạy được.
+   * `--discover <url>` — PROVES "one shared shape" actually runs.
    *
-   * User hỏi 25/08: *"phải tự custom code cho từng hình dạng à, hay tất cả
-   * worker đọc một hình dạng chung?"* Câu trả lời không nên là lý lẽ — nó phải
-   * là một lệnh ai cũng chạy lại được với URL bất kỳ, kể cả MCP của cộng đồng
-   * mà ta chưa từng nghe tên. Không hãng nào được ghim tên vào đoạn mã này.
+   * The user asked on 08/25: *"do we need custom code per shape, or does
+   * every worker read one shared shape?"* The answer shouldn't be an
+   * argument — it should be a command anyone can rerun against any URL,
+   * including some community MCP server we've never heard of. No vendor
+   * name may be hard-coded into this piece of code.
    */
   if (flag('--discover')) {
     const url = argv[argv.indexOf('--discover') + 1] ?? MCP_URL;
     const m = await discover(url);
-    console.log(`\n━━ KHÁM PHÁ · ${url}`);
+    console.log(`\n━━ DISCOVERY · ${url}`);
     if (!m) {
-      console.log('   🟢 KHÔNG CẦN CHÌA — cắm thẳng, không có bước đăng nhập nào.');
+      console.log('   🟢 NO KEY NEEDED — connect directly, no login step at all.');
       return;
     }
     console.log(`   issuer            ${m.issuer}`);
-    console.log(`   đăng nhập tại     ${m.authorization_endpoint}`);
-    console.log(`   DCR               ${m.registration_endpoint ?? '🔴 KHÔNG — phải xin client_id tay (ca G2)'}`);
+    console.log(`   login at          ${m.authorization_endpoint}`);
+    console.log(`   DCR               ${m.registration_endpoint ?? '🔴 NONE — client_id must be requested manually (case G2)'}`);
     console.log(`   PKCE              ${JSON.stringify(m.code_challenge_methods_supported ?? null)}`);
-    console.log(`   thu hồi           ${m.revocation_endpoint ?? '— (chỉ xoá được phía ta)'}`);
+    console.log(`   revocation        ${m.revocation_endpoint ?? '— (only our own copy can be deleted)'}`);
     console.log(`   scopes            ${JSON.stringify(m.scopes_supported ?? null)}`);
     console.log(
-      `\n   ⇒ ${m.registration_endpoint ? '🟢 CẮM ĐƯỢC, 0 dòng code riêng cho hãng này' : '🟡 cần một bước tay — đây mới là ca phải viết riêng'}`,
+      `\n   ⇒ ${m.registration_endpoint ? '🟢 PLUGS IN, 0 lines of vendor-specific code' : '🟡 needs one manual step — this is the actual case that needs custom code'}`,
     );
     return;
   }
@@ -753,9 +781,9 @@ async function main(): Promise<void> {
     await login(id, flag('--no-browser'));
     await listTools(id);
     const ids = Object.keys(readStore().accounts);
-    console.log(`\n   ✅ Q4 · tài khoản đang giữ: ${ids.length} — ${ids.join(', ')}`);
+    console.log(`\n   ✅ Q4 · accounts held: ${ids.length} — ${ids.join(', ')}`);
     if (ids.length < 2) {
-      console.log('      (chạy lại với `--as cty-b` bằng một tài khoản Notion KHÁC để đóng Q4)');
+      console.log('      (rerun with `--as cty-b` using a DIFFERENT Notion account to close out Q4)');
     }
   }
 }

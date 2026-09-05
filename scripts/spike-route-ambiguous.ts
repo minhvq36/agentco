@@ -1,20 +1,24 @@
 /**
- * SPIKE — CÂU MÙ MỜ: `lookup` hay NHÂN VIÊN? (user đặt bài 24/08)
+ * SPIKE — AMBIGUOUS QUERIES: `lookup` OR A STAFF MEMBER? (user filed 08/24)
  *
- * Luật ưu tiên vừa chốt: *"cho phép cả hai, Trợ lý tự định tuyến, nhưng ưu tiên
- * nhân viên nếu nhân viên là người chuyên nghiệp và làm chính xác việc đó"*.
- * Bài này dựng đúng thế khó nhất cho luật đó: **một nhân viên chuyên duyệt web
- * và tìm tin**, rồi hỏi những câu mà `lookup` cũng làm được.
+ * The priority rule just settled on: *"allow both, let the Assistant route
+ * itself, but prefer a staff member when that staff member is a specialist
+ * who does exactly that job"*. This script builds the hardest case for that
+ * rule: **a staff member who specializes in browsing the web and finding
+ * news**, then asks the kind of questions `lookup` could also handle.
  *
- * Nếu `lookup` nuốt hết ⇒ người dùng mất góc nhìn chuyên môn họ cố ý dựng ra,
- * **và không ai thấy là đã mất**, vì câu trả lời vẫn trôi chảy. Đó là hỏng
- * NGƯỢC CHIỀU, im lặng hơn hẳn ca ngược lại.
+ * If `lookup` swallows everything ⇒ the user loses the specialist viewpoint
+ * they deliberately built, **and nobody notices it's gone**, because the
+ * answer still reads fine. That's a failure in the OPPOSITE direction, and
+ * far quieter than the reverse case.
  *
- * ⚠ Dựng một CÔNG TY TẠM trong thư mục tạm — không đụng công ty của user.
- * ⚠ Đây là HÀNH VI của model, không phải hàng rào. Một bảng đẹp không chứng
- *   minh luật luôn đúng; nó chỉ nói cửa mới có nuốt cửa cũ hay không.
+ * ⚠ Builds a TEMPORARY company in a temp directory — never touches the
+ *   user's real company.
+ * ⚠ This measures model BEHAVIOR, not a deterministic gate. A clean table
+ *   doesn't prove the rule always holds; it only shows whether the new door
+ *   swallows the old one in these specific cases.
  *
- * Chạy: npx tsx scripts/spike-route-ambiguous.ts   (~$0,15)
+ * Run: npx tsx scripts/spike-route-ambiguous.ts   (~$0.15)
  */
 
 import fs from 'node:fs';
@@ -28,23 +32,23 @@ import { loadCompanyConfig, loadOffice } from '../src/core/config.js';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'route-amb-'));
 const companyDir = path.join(root, 'company');
 
-// Đúng thứ `agentco init` làm: chép nguyên khuôn công ty. Dựng tay `company.yaml`
-// ở đây là đẻ ra một bản sao thứ hai của khuôn, và nó sẽ lệch với bản thật.
+// Exactly what `agentco init` does: copy the company template as-is. Hand-building
+// `company.yaml` here would just produce a second, drifting copy of the template.
 fs.cpSync(path.resolve('templates/company'), companyDir, { recursive: true });
 
 const company = Company.open(companyDir);
-const office = company.createOffice({ name: 'Tin tuc' });
+const office = company.createOffice({ name: 'News' });
 const officeId = office.id;
 
-// Nhân viên CHUYÊN duyệt web — đúng thứ làm câu hỏi trở nên mù mờ.
+// A staff member who SPECIALIZES in browsing the web — exactly what makes the question ambiguous.
 fs.writeFileSync(
-  path.join(companyDir, 'offices', officeId, 'roles', 'nguoi-tim-tin.yaml'),
+  path.join(companyDir, 'offices', officeId, 'roles', 'news-finder.yaml'),
   [
-    'id: nguoi-tim-tin',
+    'id: news-finder',
     'version: 1',
-    'display_name: "Người tìm tin"',
+    'display_name: "News Finder"',
     'avatar: "🔎"',
-    'pitch: "Duyệt web, tìm và đối chiếu thông tin từ nhiều nguồn, viết lại thành bản tóm tắt có dẫn nguồn."',
+    'pitch: "Browses the web, finds and cross-checks information from multiple sources, and writes it up as a sourced summary."',
     'good_at: []',
     'not_for: []',
     'skill_level: medium',
@@ -64,60 +68,62 @@ fs.writeFileSync(
 const loaded = loadOffice(companyDir, loadCompanyConfig(companyDir), officeId);
 const assistant = new Assistant(loaded);
 
-console.log(`\ncông ty tạm: ${companyDir}`);
-console.log(`nhân viên   : ${[...loaded.roles.keys()].join(', ')}\n`);
+console.log(`\ntemp company: ${companyDir}`);
+console.log(`staff       : ${[...loaded.roles.keys()].join(', ')}\n`);
 
-/** `mong` = cửa ĐÚNG theo luật ưu tiên, để đọc bảng không phải tự suy. */
-const cases: { msg: string; mong: 'task' | 'lookup' | 'chat'; vi: string }[] = [
+/** `expect` = the CORRECT door per the priority rule, so reading the table doesn't require guessing. */
+const cases: { msg: string; expect: 'task' | 'lookup' | 'chat'; why: string }[] = [
   {
-    msg: 'Tìm giúp mình 5 quán cà phê làm việc được ở quận 1',
-    mong: 'task',
-    vi: 'có người CHUYÊN tìm tin — đúng chuyên môn của họ',
+    msg: 'Find me 5 cafes good for working in District 1',
+    expect: 'task',
+    why: 'there is a staff member who SPECIALIZES in finding info — exactly their job',
   },
   {
-    msg: 'Tin tức công nghệ hôm nay có gì nổi bật?',
-    mong: 'task',
-    vi: 'cũng là duyệt web + đối chiếu nguồn = việc của họ',
+    msg: "What's notable in tech news today?",
+    expect: 'task',
+    why: 'also web browsing + cross-referencing sources = their job',
   },
   {
-    // ⚠ MONG ĐỢI CỦA TÔI SAI Ở LƯỢT ĐO ĐẦU, KHÔNG PHẢI HỆ THỐNG SAI.
-    // Tôi ghi `lookup`, thực tế ra `chat` và nó trả lời đúng ngay trong ô chat.
-    // `chat` là cửa RẺ NHẤT và đúng: không cần web, không cần ai. Giữ ca này lại
-    // vì nó canh chuyện `lookup` mới KHÔNG được nuốt cả những câu vốn free.
-    msg: 'Hôm nay thứ mấy?',
-    mong: 'chat',
-    vi: 'không cần web, không cần ai — cửa rẻ nhất phải thắng',
+    // ⚠ MY EXPECTATION WAS WRONG ON THE FIRST MEASUREMENT, NOT THE SYSTEM.
+    // I wrote `lookup`, but it actually came out `chat` and answered correctly
+    // right in the chat bubble. `chat` is the CHEAPEST correct door: no web,
+    // no staff member needed. Keeping this case because it guards against the
+    // new `lookup` door swallowing questions that were already free.
+    msg: 'What day is it today?',
+    expect: 'chat',
+    why: 'needs no web, no staff member — the cheapest door must win',
   },
   {
-    msg: 'Tổng hợp giá hoa hồng của 3 shop ở quận 3 rồi ghi ra file cho mình',
-    mong: 'task',
-    vi: 'cần một FILE để giữ ⇒ luôn là task',
+    msg: 'Compile rose prices from 3 shops in District 3 and write it to a file for me',
+    expect: 'task',
+    why: 'needs a FILE to persist ⇒ always a task',
   },
 ];
 
-let dung = 0;
+let correct = 0;
 for (const c of cases) {
   const r = await assistant.route(c.msg, false);
   const v = r.value as Record<string, unknown>;
   const got = String(v['intent']);
-  const hit = got === c.mong;
-  if (hit) dung++;
+  const hit = got === c.expect;
+  if (hit) correct++;
   const extra = got === 'lookup' ? ` paths=${JSON.stringify(v['paths'])}` : got === 'task' ? ` → ${v['scope']}` : '';
   console.log(`${hit ? '✅' : '❌'} "${c.msg.slice(0, 46)}"`);
-  console.log(`     ra: ${got}${extra}   ·   mong: ${c.mong} (${c.vi})   ·   $${r.usage.costUSD.toFixed(4)}`);
+  console.log(`     got: ${got}${extra}   ·   expected: ${c.expect} (${c.why})   ·   $${r.usage.costUSD.toFixed(4)}`);
   if (got === 'ask' || got === 'chat') console.log(`     say: ${String(v['say']).slice(0, 120)}`);
 }
 
-console.log(`\n⇒ ${dung}/${cases.length} đúng cửa\n`);
+console.log(`\n⇒ ${correct}/${cases.length} routed correctly\n`);
 
 /**
- * ══════════ NỬA NGƯỢC CHIỀU — QUAN TRỌNG NGANG NỬA TRÊN ══════════
+ * ══════════ THE OPPOSITE DIRECTION — JUST AS IMPORTANT AS THE ABOVE ══════════
  *
- * Kéo luật ưu tiên quá tay thì văn phòng KHÔNG có người tra cứu sẽ đẩy mọi câu
- * vu vơ sang `task`, và người non-code lại nhận *"chưa có nhân viên phụ trách"*
- * — đúng ca đã sinh ra cả bản vá này. Hai văn phòng, cùng bộ câu hỏi.
+ * Pushing the priority rule too far means an office with NO lookup specialist
+ * would push every casual question to `task`, and a non-technical user gets
+ * *"no staff member is assigned to this"* — the exact case that caused this
+ * fix in the first place. Two offices, same set of questions.
  */
-async function nguocChieu(label: string, roles: { id: string; pitch: string }[]) {
+async function oppositeDirection(label: string, roles: { id: string; pitch: string }[]) {
   const oid = company.createOffice({ name: label }).id;
   for (const r of roles) {
     fs.writeFileSync(
@@ -129,25 +135,26 @@ async function nguocChieu(label: string, roles: { id: string; pitch: string }[])
     );
   }
   const a = new Assistant(loadOffice(companyDir, loadCompanyConfig(companyDir), oid));
-  console.log(`── ${label} (${roles.map((r) => r.id).join(', ') || 'KHÔNG có ai'})`);
-  for (const msg of ['Tìm giúp mình 5 quán cà phê làm việc được ở quận 1', 'Tin tức công nghệ hôm nay có gì?']) {
+  console.log(`── ${label} (${roles.map((r) => r.id).join(', ') || 'NOBODY on staff'})`);
+  for (const msg of ['Find me 5 cafes good for working in District 1', "What's in tech news today?"]) {
     const r = await a.route(msg, false);
     const v = r.value as Record<string, unknown>;
     const ok = v['intent'] === 'lookup';
-    console.log(`   ${ok ? '✅' : '❌'} "${msg.slice(0, 40)}" → ${v['intent']}   (mong: lookup)`);
+    console.log(`   ${ok ? '✅' : '❌'} "${msg.slice(0, 40)}" → ${v['intent']}   (expected: lookup)`);
     if (!ok) console.log(`        say: ${String(v['say'] ?? '').slice(0, 140)}`);
   }
 }
 
-await nguocChieu('Van phong rong', []);
-await nguocChieu('Chi co nguoi dich', [
-  { id: 'nguoi-dich', pitch: 'Dịch tài liệu Anh–Việt, giữ đúng thuật ngữ chuyên ngành.' },
+await oppositeDirection('Empty office', []);
+await oppositeDirection('Translator only', [
+  { id: 'translator', pitch: 'Translates documents English–Vietnamese, keeping specialized terminology accurate.' },
 ]);
 
 console.log(
-  `\n⚠ Ranh giới: đây là HÀNH VI của model, không phải hàng rào. Bảng đẹp chỉ nói\n` +
-    `  rằng cửa mới không nuốt cửa cũ ở những ca dễ thấy nhất.`,
+  `\n⚠ Boundary: this measures model BEHAVIOR, not a deterministic gate. A clean\n` +
+    `  table only shows that the new door doesn't swallow the old one in the\n` +
+    `  most obvious cases.`,
 );
 
 fs.rmSync(root, { recursive: true, force: true });
-console.log('↩ đã xoá công ty tạm');
+console.log('↩ temp company removed');

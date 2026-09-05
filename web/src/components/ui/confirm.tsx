@@ -9,39 +9,42 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { t } from '@i18n';
 
 /**
- * Hộp hỏi lại trước khi xoá MỘT FILE — và **Enter chính là nút Xoá**.
+ * The confirm box before deleting ONE FILE — where **Enter IS the Delete button**.
  * → docs/SPEC-ui.md §2.4
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TỰ ĐƯA TIÊU ĐIỂM VÀO NÚT NGUY HIỂM — CÓ CHỦ Ý, VÀ CÓ RANH GIỚI.          │
+ * │ FOCUSING THE DANGEROUS BUTTON — DELIBERATE, AND BOUNDED.                 │
  * │                                                                          │
- * │ Mặc định Radix đưa tiêu điểm vào phần tử bấm được ĐẦU TIÊN, ở đây là     │
- * │ "Thôi". Nên Enter = huỷ, và dọn mười file là mười lần rời tay khỏi bàn   │
- * │ phím để bấm chuột lần thứ hai vào đúng một nút nhỏ. Đó là lý do ô này    │
- * │ tồn tại: chuột bấm 🗑, tay kia gõ Enter, không nhìn lại.                  │
+ * │ Radix focuses the FIRST focusable element by default, which here is      │
+ * │ "Cancel". So Enter means cancel, and clearing ten files means ten trips  │
+ * │ away from the keyboard to click a second small button. That is why this  │
+ * │ component exists: click 🗑 with the mouse, hit Enter with the other      │
+ * │ hand, never look back.                                                   │
  * │                                                                          │
- * │ Đặt tiêu điểm vào nút phá huỷ thường là điều CẤM, nên phải nói rõ vì sao │
- * │ ở đây thì được:                                                          │
+ * │ Focusing a destructive button is normally FORBIDDEN, so the reason it is │
+ * │ allowed here has to be spelled out:                                      │
  * │                                                                          │
- * │  1. HẬU QUẢ CÓ TRẦN. Một file trong tủ (bản gốc còn trên máy) hoặc một   │
- * │     kết quả (chạy lại được). Không phải cả văn phòng, không phải một     │
- * │     nhân viên kèm kỹ năng đã viết tay.                                    │
- * │  2. NÓI RA RẰNG ENTER ĐANG LÊN CÒ. Một phím tắt phá huỷ mà không ai      │
- * │     thông báo thì không phải tiện, mà là bẫy — dòng gợi ý ở chân hộp là  │
- * │     một phần của tính năng, không phải trang trí.                        │
- * │  3. TÊN FILE NẰM TRONG CÂU HỎI. Bấm nhanh vẫn đọc được cái gì sắp mất.   │
+ * │  1. THE CONSEQUENCE HAS A CEILING. One file in the cabinet (the original │
+ * │     is still on their machine) or one result (which can be rerun). Not   │
+ * │     a whole office, not an employee with hand-written skills.            │
+ * │  2. IT SAYS THAT ENTER IS COCKED. A destructive shortcut nobody          │
+ * │     announces is not convenience, it is a trap — the hint line along the │
+ * │     footer is part of the feature, not decoration.                       │
+ * │  3. THE FILE NAME IS IN THE QUESTION. Even clicking fast, you read what  │
+ * │     is about to go.                                                      │
  * │                                                                          │
- * │ ⚠ ĐỪNG DÙNG Ô NÀY CHO "xoá văn phòng" / "xoá hẳn nhân viên". Chúng mất   │
- * │ thứ không dựng lại được, nên cú bấm thứ hai bằng CHUỘT chính là giá trị: │
- * │ nó buộc người dùng dừng lại một nhịp. Chúng giữ nguyên hộp thoại riêng.  │
+ * │ ⚠ DO NOT USE THIS FOR "delete office" / "delete employee for good".      │
+ * │ Those lose something unrebuildable, so the second click WITH THE MOUSE   │
+ * │ is the point: it forces a pause. They keep their own dialogs.            │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function ConfirmDelete({
   open,
   title,
-  confirmLabel = 'Xoá hẳn',
+  confirmLabel,
   onConfirm,
   onCancel,
   children,
@@ -60,11 +63,11 @@ export function ConfirmDelete({
       <DialogContent
         className="w-[min(30rem,94vw)]"
         /*
-          `preventDefault` rồi tự focus: để Radix chạy mặc định thì tiêu điểm rơi
-          vào "Thôi". Đây là một dòng chứ không phải `autoFocus` trên nút, vì
-          `autoFocus` bên trong FocusScope của Radix không đáng tin — nó phụ
-          thuộc thứ tự mount, và một hành vi bàn phím "đôi khi đúng" thì tệ hơn
-          hẳn không có.
+          `preventDefault` then focus by hand: leaving Radix to its default puts
+          focus on "Cancel". This is a line here rather than `autoFocus` on the
+          button because `autoFocus` inside Radix's FocusScope is not reliable —
+          it depends on mount order, and a keyboard behaviour that is "right
+          sometimes" is worse than none at all.
         */
         onOpenAutoFocus={(e) => {
           e.preventDefault();
@@ -77,11 +80,11 @@ export function ConfirmDelete({
         </DialogHeader>
         <DialogFooter className="items-center">
           <span className="mr-auto text-xs text-muted">
-            <b>Enter</b> để xoá · <b>Esc</b> để thôi
+            <b>Enter</b> {t('confirm.toDelete')} · <b>Esc</b> {t('confirm.toCancel')}
           </span>
-          <Button onClick={onCancel}>Thôi</Button>
+          <Button onClick={onCancel}>{t('common.cancel')}</Button>
           <Button ref={danger} variant="danger" onClick={onConfirm}>
-            {confirmLabel}
+            {confirmLabel ?? t('common.delete')}
           </Button>
         </DialogFooter>
       </DialogContent>

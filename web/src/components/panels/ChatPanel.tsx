@@ -6,24 +6,27 @@ import { Empty, Textarea } from '@/components/ui/misc';
 import { Markdown } from '@/lib/markdown';
 import { hasTable } from '@/lib/markdown-core';
 import { actions, labelFor, useApp } from '@/lib/store';
+import { t } from '@i18n';
 
 /**
- * Ô chat với Trợ lý. Cửa vào DUY NHẤT cho mọi thứ người dùng gõ — Trợ lý tự
- * quyết định đây là trò chuyện, cần hỏi lại, hay là việc phải giao cho đội.
+ * The chat box for the assistant. The ONLY door for anything the user types —
+ * the assistant decides for itself whether this is conversation, a question to
+ * ask back, or work to hand to the team.
  *
- * Gõ "Chào" mà khởi động cả một kế hoạch DAG là lỗi người dùng gặp ngay thao
- * tác đầu tiên; `/say` ở backend tồn tại để chuyện đó không xảy ra nữa.
+ * Typing "Hi" and kicking off a whole DAG plan is the bug a user meets on their
+ * very first action; `/say` on the backend exists so it cannot happen again.
  */
 export function ChatPanel() {
   const messages = useApp((s) => s.messages);
   const sending = useApp((s) => s.sending);
   const activity = useApp((s) => s.activity);
   /**
-   * Bản nháp đọc từ STORE, không phải `useState` của component này.
+   * The draft comes from the STORE, not from this component's `useState`.
    *
-   * Sidebar dựng panel bằng `{panel === 'chat' && <ChatPanel />}` — đổi tab là
-   * unmount, và state của component chết theo. Người dùng gõ dở một yêu cầu
-   * dài, ghé tab Tài liệu chép đường dẫn, quay lại: **trống trơn**. → `AppState.draft`
+   * The sidebar mounts panels with `{panel === 'chat' && <ChatPanel />}` — a tab
+   * switch unmounts, and component state dies with it. The user is halfway
+   * through a long request, hops to the Library tab to copy a path, comes back:
+   * **empty**. → `AppState.draft`
    */
   const text = useApp((s) => s.draft);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -38,54 +41,63 @@ export function ChatPanel() {
         {messages.length === 0 ? (
           <Empty
             icon={<MessageSquare className="h-7 w-7" />}
-            title="Chưa nói gì với Trợ lý"
-            hint="Giao việc, hoặc hỏi han bình thường. Trợ lý tự phân biệt — chào hỏi không tốn token của nhân viên nào."
+            title={t('chat.emptyTitle')}
+            hint={
+              <>
+                {t('chat.emptyHint')}
+                <br />
+                {t('chat.emptyHintTypeBefore')} <code>/help</code> {t('chat.emptyHintTypeAfter')}
+              </>
+            }
           />
         ) : (
           <div className="flex min-w-0 flex-col gap-3">
             {messages.map((m) => (
               <div key={m.id} className={`min-w-0 ${m.role === 'user' ? 'text-right' : ''}`}>
                 {/*
-                  TÊN NGƯỜI TRẢ LỜI — chỉ khi KHÔNG phải Trợ lý.
+                  WHO IS SPEAKING — only when it is NOT the assistant.
 
-                  Từ 19/08, task `deliver: reply` gửi câu trả lời THẲNG từ nhân
-                  viên tới người dùng (SPEC-offices.md §6). Không gắn nhãn thì
-                  người dùng tưởng Trợ lý tự trả lời — mà cả điểm của sản phẩm
-                  là họ thấy được đội mình đang làm việc.
+                  Since 19/08 a `deliver: reply` task sends the answer STRAIGHT
+                  from the employee to the user (SPEC-offices.md §6). Without a
+                  label the user assumes the assistant answered by itself — and
+                  the whole point of the product is watching your team work.
 
-                  Tên tra từ `role`, KHÔNG lấy từ `text`: luật giao thức nói
-                  `say` không bao giờ chứa tên người nói, vì nướng sẵn vào chuỗi
-                  thì tên hiện hai lần và mọi client tương lai mất quyền tự chọn
-                  cách gắn nhãn.
+                  The name is looked up from `role`, NOT taken from `text`: the
+                  protocol says `say` never contains the speaker's name, because
+                  baking it into the string prints it twice and takes the choice
+                  of how to label away from every future client.
                 */}
                 {m.role !== 'user' && m.role !== 'assistant' && (
                   <div className="mb-0.5 text-[11px] font-medium text-muted">{labelFor(m.role)}</div>
                 )}
                 {/*
-                  `whitespace-pre-wrap` là BẮT BUỘC, không phải trang trí.
-                  Backend dựng sẵn bằng code những câu trả lời nhiều dòng —
-                  `/help`, danh sách bước của kế hoạch, báo cáo cuối ca — và
-                  chúng dùng ký tự xuống dòng thật. HTML gộp mọi khoảng trắng
-                  thành một dấu cách, nên nếu không giữ thì `/help` hiện ra
-                  thành một khối chữ liền không đọc nổi.
+                  `whitespace-pre-wrap` is REQUIRED, not decoration. The backend
+                  assembles multi-line replies in code — `/help`, the list of
+                  plan steps, the end-of-shift report — and they use real
+                  newlines. HTML collapses every run of whitespace into one
+                  space, so without this `/help` arrives as one unreadable slab
+                  of text.
 
-                  `break-words`: đường dẫn file và URL dài không có khoảng trắng
-                  để ngắt — thiếu nó thì bong bóng chat tự nong ra và đẩy cả
-                  panel sinh thanh cuộn ngang.
+                  `break-words`: long file paths and URLs have no whitespace to
+                  break at — without it the chat bubble stretches itself and the
+                  whole panel grows a horizontal scrollbar.
                 */}
                 {/*
-                  BỀ RỘNG BONG BÓNG — ba dạng, và dạng thứ ba là vì cái bảng.
+                  BUBBLE WIDTH — three shapes, and the third one exists for the
+                  table.
 
-                  Tin thường co theo nội dung (`inline-block`) vì một bong bóng
-                  chiếm trọn bề ngang cho câu "Đã xong." trông như lỗi bố cục.
+                  An ordinary message shrinks to its content (`inline-block`),
+                  because a bubble spanning the full width for "Done." reads as
+                  a layout bug.
 
-                  Tin CÓ BẢNG thì ngược lại: bảng là thứ duy nhất trong markdown
-                  mà bề rộng mang thông tin, nên nó lấy trọn bề ngang panel. Và
-                  `block w-full` ở đây không chỉ để đẹp — nó cho khối bọc bảng
-                  một BỀ RỘNG XÁC ĐỊNH để bám vào, thứ `inline-block` không có.
-                  Thiếu nó thì `max-w-full` + `overflow-x-auto` bên trong mất
-                  mốc, bảng tự nong bong bóng ra và panel sinh thanh cuộn ngang.
-                  → `Table` trong lib/markdown.tsx
+                  A message WITH A TABLE is the opposite: a table is the one
+                  thing in markdown whose width carries information, so it takes
+                  the panel's full width. And `block w-full` here is not
+                  cosmetic — it gives the table's wrapper a DEFINITE WIDTH to
+                  measure against, which `inline-block` does not have. Without
+                  it the `max-w-full` + `overflow-x-auto` inside lose their
+                  reference, the table stretches the bubble, and the panel grows
+                  a horizontal scrollbar. → `Table` in lib/markdown.tsx
                 */}
                 <div
                   className={
@@ -97,14 +109,16 @@ export function ChatPanel() {
                   }
                 >
                   {/*
-                    Chỉ VẼ markdown cho tin của hệ thống. Tin của NGƯỜI DÙNG giữ
-                    nguyên văn — họ gõ gì thì thấy đúng thứ đó, không bị giao
-                    diện diễn giải lại. Gõ `**` để nhấn giọng mà nó biến mất là
-                    một cách âm thầm để nói với người dùng rằng họ gõ sai.
+                    Only RENDER markdown for messages from the system. A USER's
+                    message stays verbatim — they see exactly what they typed,
+                    with no interface reinterpreting it. Typing `**` for
+                    emphasis and watching it disappear is a quiet way of telling
+                    the user they typed something wrong.
 
-                    `whitespace-pre-wrap` chuyển vào TRONG `Markdown` (từng khối
-                    tự giữ), vì khối code phải cuộn ngang riêng — để ở ngoài thì
-                    một dòng code dài nong rộng cả bong bóng.
+                    `whitespace-pre-wrap` moved INSIDE `Markdown` (each block
+                    keeps its own), because a code block has to scroll
+                    horizontally on its own — left outside, one long line of code
+                    stretches the entire bubble.
                   */}
                   {m.role === 'user' ? (
                     m.text
@@ -131,15 +145,17 @@ export function ChatPanel() {
         }}
       >
         {/*
-          Textarea, KHÔNG phải input: Enter gửi, Shift+Enter xuống dòng.
+          A textarea, NOT an input: Enter sends, Shift+Enter breaks the line.
 
-          Cố ý KHÔNG có dòng hướng dẫn nào trên giao diện, và không có setting.
-          Đây là tổ hợp phím ai cũng đã biết từ mọi ứng dụng chat khác — viết ra
-          là chiếm chỗ vĩnh viễn để dạy một thứ người dùng vốn đã biết.
+          Deliberately NO hint line in the interface, and no setting. This is a
+          key combination everyone already knows from every other chat app —
+          writing it down spends permanent space teaching something the user
+          already knows.
 
-          Cao tự nong theo nội dung, trần ~5 dòng rồi mới cuộn: một yêu cầu dài
-          gõ vào ô cao 36px thì người ta không đọc lại được thứ mình vừa viết,
-          và đó là lúc họ gửi đi một câu thiếu mất nửa cuối.
+          The height grows with the content and starts scrolling at ~5 lines: a
+          long request typed into a 36px box means people cannot re-read what
+          they just wrote, and that is when they send a sentence missing its
+          second half.
         */}
         <Textarea
           value={text}
@@ -147,27 +163,29 @@ export function ChatPanel() {
           onChange={(e) => actions.setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== 'Enter' || e.shiftKey) return;
-            // ⚠ `isComposing` là BẮT BUỘC với tiếng Việt. Bộ gõ (Telex/VNI, và
-            // mọi IME) dùng Enter để chốt ký tự đang dựng — nuốt phím đó là gửi
-            // tin nhắn giữa lúc người dùng mới gõ được nửa chữ.
+            // ⚠ `isComposing` is REQUIRED for Vietnamese. Vietnamese input
+            // methods (Telex/VNI, and every IME) use Enter to commit the
+            // character being composed — swallowing that key sends the message
+            // while the user is halfway through a letter.
             if (e.nativeEvent.isComposing) return;
             e.preventDefault();
             void actions.say();
           }}
-          placeholder="Giao việc, hoặc hỏi Trợ lý…"
-          aria-label="Tin nhắn"
+          placeholder={t('chat.placeholder')}
+          aria-label={t('chat.messageLabel')}
           disabled={sending}
           className="max-h-[7.5rem] min-h-[2.25rem] resize-none py-1.5 leading-relaxed"
           style={{ height: 'auto' }}
           ref={(el) => {
             if (!el) return;
-            // Nong theo nội dung: reset về auto trước khi đo, nếu không
-            // `scrollHeight` chỉ tăng được chứ không co lại khi xoá bớt chữ.
+            // Grow with the content: reset to auto before measuring, otherwise
+            // `scrollHeight` only ever increases and never shrinks back when
+            // text is deleted.
             el.style.height = 'auto';
             el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
           }}
         />
-        <Button type="submit" variant="primary" size="icon" disabled={sending || !text.trim()} aria-label="Gửi">
+        <Button type="submit" variant="primary" size="icon" disabled={sending || !text.trim()} aria-label={t('chat.send')}>
           <CornerDownLeft className="h-4 w-4" />
         </Button>
       </form>
@@ -176,32 +194,35 @@ export function ChatPanel() {
 }
 
 /**
- * Tin nhắn có kèm ĐƯỜNG DẪN KẾT QUẢ — mỗi đường dẫn là một nút mở xem trước.
- * → docs/SPEC-artifacts.md §2.5 · docs/SPEC-ui.md
+ * A message carrying ARTIFACT PATHS — each path becomes a button that opens the
+ * preview. → docs/SPEC-artifacts.md §2.5 · docs/SPEC-ui.md
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO GHÉP THEO `files`, KHÔNG DÒ ĐƯỜNG DẪN TRONG CHỮ.                 │
+ * │ WHY MATCH AGAINST `files` AND NEVER SNIFF PATHS OUT OF THE TEXT.         │
  * │                                                                          │
- * │ Một phần tin nhắn trong luồng do MODEL viết (`answer` của nhân viên ở    │
- * │ task `deliver: reply`). Dò đường dẫn bằng regol trên chữ nghĩa là: nhân  │
- * │ viên bịa ra một đường dẫn nghe rất thật, giao diện biến nó thành nút bấm │
- * │ được, người dùng tin tưởng bấm vào. Đó là **cho một câu model đoán mượn  │
- * │ uy tín của giao diện** — và người dùng không có cách nào phân biệt.      │
+ * │ Part of the message in the stream is written by the MODEL (an employee's │
+ * │ `answer` on a `deliver: reply` task). Finding paths with a regex over    │
+ * │ that text means: an employee invents a very plausible-looking path, the  │
+ * │ interface turns it into a button, and the user clicks it trusting us.    │
+ * │ That is **lending a guessed sentence the interface's authority** — and   │
+ * │ the user has no way to tell the difference.                              │
  * │                                                                          │
- * │ `files` chỉ được điền bởi `whereBlock`, và mỗi đường dẫn trong đó đã qua │
- * │ ba cửa: suy từ tool ĐÃ GỌI (`receipt.landed`, không phải `artifacts` do  │
- * │ model khai) → `safeJoin` chặn ra ngoài văn phòng → `existsSync`.         │
+ * │ `files` is filled only by `whereBlock`, and every path in it has passed  │
+ * │ three doors: derived from a tool that WAS CALLED (`receipt.landed`, not  │
+ * │ the model-declared `artifacts`) → `safeJoin` blocks anything outside the │
+ * │ office → `existsSync`.                                                   │
  * │                                                                          │
- * │ Luật gọn: **chỉ đường dẫn do CHÍNH CODE đặt vào mới bấm được.**          │
+ * │ Short rule: **only a path THE CODE ITSELF put there is clickable.**      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Ghép bằng so ĐUÔI chuỗi, không regex: `say` in đường dẫn có tiền tố
- * `company/offices/<id>/` cho người mở file explorer, còn `files` mang đường
- * dẫn tính từ thư mục văn phòng. Hai hệ quy chiếu, một phép so tất định — và
- * cả hai đầu do cùng một hàm dựng ra nên chúng không thể lệch nhau.
+ * Matching is a SUFFIX comparison, not a regex: `say` prints the path with the
+ * `company/offices/<id>/` prefix so it can be pasted into a file explorer, while
+ * `files` carries the path relative to the office directory. Two frames of
+ * reference, one deterministic comparison — and since the same function builds
+ * both ends, they cannot drift apart.
  *
- * Dòng KHÔNG khớp file nào đi qua `Markdown` như mọi tin khác. Không có nhánh
- * nào ở đây được phép làm hỏng cách hiển thị hiện tại.
+ * A line matching NO file goes through `Markdown` like any other message. No
+ * branch here is allowed to break how things render today.
  */
 function FileLinks({ text, files }: { text: string; files: string[] }) {
   return (
@@ -221,13 +242,13 @@ function FileLinks({ text, files }: { text: string; files: string[] }) {
             type="button"
             onClick={() => actions.revealArtifact(hit)}
             /*
-              `text-left` + `break-all`: đường dẫn dài không có khoảng trắng để
-              ngắt, và một cái nút không xuống dòng được sẽ nong rộng bong bóng.
-              `w-full` để cả dòng là vùng bấm — một mục tiêu 8px cao thì người
-              dùng bấm trượt, rồi kết luận là nó không bấm được.
+              `text-left` + `break-all`: a long path has no whitespace to break
+              at, and a button that cannot wrap stretches the bubble. `w-full`
+              makes the whole line the target — an 8px-tall target gets missed,
+              and the user concludes it is not clickable at all.
             */
             className="flex w-full items-center gap-1.5 break-all rounded px-1 py-0.5 text-left font-mono text-[12px] text-accent hover:bg-accent-soft"
-            title="Mở xem trước trong ngăn Kết quả"
+            title={t('chat.openPreview')}
           >
             <FileText className="h-3.5 w-3.5 flex-none" aria-hidden />
             <span className="min-w-0">{line.trim()}</span>
@@ -239,12 +260,13 @@ function FileLinks({ text, files }: { text: string; files: string[] }) {
 }
 
 /**
- * Dòng "đang làm gì". Không có nó thì từ lúc bấm Gửi tới lúc Trợ lý trả lời là
- * 5–15 giây im lặng hoàn toàn, và người dùng không biết hệ thống có nhận được
- * hay không — khoảng trống đó là chỗ người ta bấm Gửi lần thứ hai.
+ * The "what is happening" line. Without it, the gap between pressing Send and
+ * the assistant replying is 5–15 seconds of complete silence, and the user
+ * cannot tell whether the system received anything — that gap is exactly where
+ * people press Send a second time.
  *
- * Ba chấm là CSS thuần, không phải một lượt gọi LLM nào. Ràng buộc chéo của bốn
- * tiêu chí: "mượt" không bao giờ được mua bằng token.
+ * The three dots are plain CSS, not an LLM call. The cross-constraint of the
+ * four quality bars: "smooth" is never bought with tokens.
  */
 function Activity({ text }: { text: string }) {
   return (

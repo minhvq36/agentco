@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -26,10 +26,26 @@ import {
 } from '@/components/dialogs';
 import { actions, connectEvents, getState, markLocalSave, useApp } from '@/lib/store';
 import type { CanvasEdge, CanvasNode } from '@/lib/types';
+import { t } from '@i18n';
 
 import '@/canvas/canvas.css';
 
 export default function App() {
+  /**
+   * `key={locale}` REMOUNTS THE TREE when the interface language changes.
+   *
+   * Blunt on purpose. `t()` reads a module-level locale, not React state, so a
+   * language change is invisible to React: a memoised component, or a label
+   * pulled from a module-level table, keeps whatever it rendered first. Chasing
+   * that by threading the locale into every component is a lot of wiring to buy
+   * a guarantee this one line already gives.
+   *
+   * The cost is losing local state — an open dialog, a scroll position. That is
+   * acceptable HERE and nowhere else, because this is the one setting a person
+   * changes deliberately, roughly once, and then never again. The chat draft
+   * survives regardless: it lives in the store, not in a component.
+   */
+  const locale = useApp((s) => s.locale);
   const loading = useApp((s) => s.loading);
   const fatal = useApp((s) => s.fatal);
   const company = useApp((s) => s.company);
@@ -50,14 +66,14 @@ export default function App() {
   }, []);
 
   /**
-   * `Esc` ngắt việc đang chạy — phản xạ của người dùng Claude Code.
-   * Cùng hành vi với lệnh chữ `/stop`, để bridge Telegram dùng lại được.
+   * `Esc` stops the running work — the reflex of a Claude Code user. Same
+   * behaviour as the `/stop` text command, so the Telegram bridge reuses it.
    * → docs/SPEC-tools-approval.md §3b
    */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      // Đang mở dialog thì Esc thuộc về dialog — Radix tự lo, đừng cướp.
+      // With a dialog open, Esc belongs to the dialog — Radix handles it; do not steal it.
       if (document.querySelector('[role="dialog"]')) return;
       if (getState().officeState !== 'working') return;
       e.preventDefault();
@@ -69,16 +85,17 @@ export default function App() {
   }, []);
 
   /**
-   * Ghi hình dạng, gộp nhịp ~700ms. Kéo node bắn ra hàng chục sự kiện mỗi giây;
-   * ghi mỗi lần là ghi đĩa vô nghĩa. Toạ độ chỉ là view state — mất một nhịp
-   * không sao, nhưng phải ghi được nhịp CUỐI, nên hẹn lại chứ không bỏ qua.
+   * Save the layout, debounced at ~700ms. Dragging a node fires dozens of events
+   * per second; writing on each is pointless disk traffic. Coordinates are only
+   * view state — losing one beat is fine, but the LAST beat has to land, so this
+   * reschedules rather than skips.
    */
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const onCommit = useCallback((nodes: CanvasNode[], edges: CanvasEdge[], immediate?: boolean) => {
     clearTimeout(saveTimer.current);
     if (immediate) {
-      // Cạnh nối: gửi NGAY và vẽ lạc quan. Người dùng vừa thả chuột xong, sợi
-      // dây phải xuất hiện trước khi server kịp trả lời.
+      // An edge: send IMMEDIATELY and draw optimistically. They just released the
+      // mouse; the wire has to appear before the server can answer.
       markLocalSave();
       void actions.saveCanvas(nodes, edges, true);
       return;
@@ -94,11 +111,11 @@ export default function App() {
       <Shell>
         <Empty
           icon={<AlertTriangle className="h-8 w-8 text-danger" />}
-          title="Mất kết nối tới công ty"
+          title={t('app.fatalTitle')}
           hint={fatal}
           action={
             <Button variant="primary" onClick={() => window.location.reload()}>
-              Thử lại
+              {t('common.retry')}
             </Button>
           }
         />
@@ -109,7 +126,7 @@ export default function App() {
   if (loading && !company) {
     return (
       <Shell>
-        <div className="text-[13px] text-muted">Đang mở công ty…</div>
+        <div className="text-[13px] text-muted">{t('app.openingCompany')}</div>
       </Shell>
     );
   }
@@ -117,26 +134,37 @@ export default function App() {
   const noOffices = !company || company.offices.length === 0;
 
   return (
-    <TooltipProvider delayDuration={400}>
+    <TooltipProvider key={locale} delayDuration={400}>
       <div className="flex h-full flex-col">
         <Header onNewOffice={() => setNewOffice(true)} onRenameOffice={() => setRenameOffice(true)} />
 
         {noOffices ? (
-          <main className="flex flex-1 items-center justify-center">
-            {/* Trạng thái rỗng được THIẾT KẾ, không phải màn hình lỗi.
-                → docs/SPEC-offices.md §3 */}
-            <Empty
-              icon={<Building2 className="h-10 w-10" />}
-              title="Công ty chưa có văn phòng nào"
-              hint="Mỗi văn phòng có Trợ lý riêng, nhân viên riêng và kho tri thức riêng. Tạo cái đầu tiên để bắt đầu."
-              action={
-                <Button variant="primary" onClick={() => setNewOffice(true)}>
-                  <Plus className="h-4 w-4" />
-                  Tạo văn phòng
-                </Button>
-              }
-            />
-          </main>
+          /*
+            The sidebar stays. It collapses to exactly one "Company overview"
+            drawer (→ `Sidebar §noOffices`), because spending · connections ·
+            workspaces are COMPANY-level data and they outlive the last office.
+            The previous version replaced the whole working area with an empty
+            screen ⇒ all three lost their management door, and the user was stuck
+            unable to unplug a connection nobody used. → bug 02/09, SPEC-arms §6k
+          */
+          <div className="flex min-h-0 flex-1">
+            <Sidebar />
+            <main className="flex flex-1 items-center justify-center">
+              {/* A DESIGNED empty state, not an error screen.
+                  → docs/SPEC-offices.md §3 */}
+              <Empty
+                icon={<Building2 className="h-10 w-10" />}
+                title={t('app.noOfficesTitle')}
+                hint={t('app.noOfficesHint')}
+                action={
+                  <Button variant="primary" onClick={() => setNewOffice(true)}>
+                    <Plus className="h-4 w-4" />
+                    {t('app.newOffice')}
+                  </Button>
+                }
+              />
+            </main>
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1">
             <Sidebar />
@@ -167,7 +195,7 @@ export default function App() {
                 </>
               ) : (
                 <div className="flex h-full items-center justify-center text-[13px] text-muted">
-                  Đang mở văn phòng…
+                  {t('app.openingOffice')}
                 </div>
               )}
             </main>
@@ -210,42 +238,43 @@ function Toolbar({
 
   return (
     <div className="absolute left-3 top-3 z-10 flex items-center gap-1.5">
-      <Tip label="Thêm nhân viên vào văn phòng này">
+      <Tip label={t('toolbar.agentTip')}>
         <Button size="sm" className="shadow-sm" onClick={onAddAgent}>
           <UserPlus className="h-4 w-4" />
-          Nhân viên
+          {t('toolbar.agent')}
         </Button>
       </Tip>
       {/*
-        Cửa CHÍNH để cắm một cánh tay — cạnh "Nhân viên", cùng ngữ pháp với thứ
-        duy nhất người dùng đã biết cách dùng. Cố ý KHÔNG làm palette kéo-thả:
-        canvas có tự sắp + nút "Sắp xếp lại", nên kéo-thả hứa một quyền mà nút
-        bên cạnh lấy lại. → docs/SPEC-arms.md §6e
+        The MAIN door for plugging in an arm — next to "Employee", the same
+        grammar as the one thing the user already knows how to do. Deliberately
+        NOT a drag-and-drop palette: the canvas auto-arranges and has a
+        "Rearrange" button, so drag-and-drop would promise a control the button
+        beside it takes back. → docs/SPEC-arms.md §6e
       */}
-      <Tip label="Cắm một kết nối cho nhân viên dùng">
+      <Tip label={t('toolbar.armTip')}>
         <Button size="sm" className="shadow-sm" onClick={onAddArm}>
           <Cable className="h-4 w-4" />
-          Kết nối
+          {t('toolbar.arm')}
         </Button>
       </Tip>
       <div className="mx-1 h-5 w-px bg-line" />
-      <Tip label="Sắp xếp lại sơ đồ">
-        <Button size="icon" className="shadow-sm" aria-label="Sắp xếp lại" onClick={onArrange}>
+      <Tip label={t('toolbar.arrangeTip')}>
+        <Button size="icon" className="shadow-sm" aria-label={t('toolbar.arrange')} onClick={onArrange}>
           <Network className="h-4 w-4" />
         </Button>
       </Tip>
-      <Tip label="Vừa khung">
-        <Button size="icon" className="shadow-sm" aria-label="Vừa khung" onClick={onFit}>
+      <Tip label={t('toolbar.fit')}>
+        <Button size="icon" className="shadow-sm" aria-label={t('toolbar.fit')} onClick={onFit}>
           <Maximize2 className="h-4 w-4" />
         </Button>
       </Tip>
-      <Tip label="Thu nhỏ">
-        <Button size="icon" className="shadow-sm" aria-label="Thu nhỏ" onClick={() => onZoom(0.85)}>
+      <Tip label={t('toolbar.zoomOut')}>
+        <Button size="icon" className="shadow-sm" aria-label={t('toolbar.zoomOut')} onClick={() => onZoom(0.85)}>
           <Minus className="h-4 w-4" />
         </Button>
       </Tip>
-      <Tip label="Phóng to">
-        <Button size="icon" className="shadow-sm" aria-label="Phóng to" onClick={() => onZoom(1.18)}>
+      <Tip label={t('toolbar.zoomIn')}>
+        <Button size="icon" className="shadow-sm" aria-label={t('toolbar.zoomIn')} onClick={() => onZoom(1.18)}>
           <Plus className="h-4 w-4" />
         </Button>
       </Tip>
@@ -254,11 +283,12 @@ function Toolbar({
 }
 
 /**
- * Dải kế hoạch, LUÔN THẤY khi có việc đang chạy.
+ * The plan strip — ALWAYS VISIBLE while work is running.
  *
- * Checklist chống hoang mang (`SPEC-ui.md` §6) đòi trả lời được "đang ở bước mấy"
- * mà không cần click. Nhét kế hoạch vào một panel đóng/mở là vi phạm đúng điều đó —
- * nên nó nằm đè lên canvas, mỏng, và bấm vào thì mở nhật ký của chính việc đó.
+ * The anti-bewilderment checklist (`SPEC-ui.md` §6) requires "which step am I
+ * on" to be answerable without a click. Putting the plan inside a collapsible
+ * panel breaks exactly that — so it sits over the canvas, thin, and clicking it
+ * opens that job's own log.
  */
 function PlanStrip() {
   const plan = useApp((s) => s.plan);
@@ -294,7 +324,7 @@ function PlanStrip() {
       </span>
       <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
         {plan.steps.find((s) => s.status === 'running')?.title ??
-          (officeState === 'working' ? 'đang chạy…' : plan.request)}
+          (officeState === 'working' ? t('app.planRunning') : plan.request)}
       </span>
     </button>
   );
@@ -304,10 +334,9 @@ function NoAgentsHint() {
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
       <div className="pointer-events-auto max-w-sm rounded-xl border border-line bg-panel/95 px-5 py-4 text-center shadow-lg backdrop-blur">
-        <div className="text-sm font-medium text-ink">Văn phòng này chưa có nhân viên</div>
+        <div className="text-sm font-medium text-ink">{t('app.noAgentsTitle')}</div>
         <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
-          Trợ lý không tự làm việc — nó chia việc cho người khác. Thêm người đầu tiên bằng nút{' '}
-          <b>Nhân viên</b> ở góc trên bên trái.
+          {t('app.noAgentsHintBefore')} <b>{t('toolbar.agent')}</b> {t('app.noAgentsHintAfter')}
         </p>
       </div>
     </div>
@@ -318,29 +347,31 @@ function Hint() {
   const canvas = useApp((s) => s.canvas);
   const plan = useApp((s) => s.plan);
   const hasAgents = (canvas?.nodes.filter((n) => n.kind === 'agent').length ?? 0) > 0;
-  // Dải kế hoạch chiếm đúng chỗ này và quan trọng hơn nhiều. Gợi ý dành cho
-  // người mới, không dành cho lúc đang có việc chạy.
+  // The plan strip occupies this exact spot and matters far more. The hint is
+  // for newcomers, not for while work is running.
   if (!hasAgents || plan) return null;
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-line bg-panel/90 px-2.5 py-1.5 text-xs text-muted backdrop-blur">
-      Kéo node để sắp xếp · kết nối Trợ lý và nhân viên để giao quyền
+      {t('app.canvasHint')}
     </div>
   );
 }
 
 /**
- * Lỗi thoáng qua. Không chặn gì, tự tắt — nhưng không bao giờ im lặng nuốt lỗi.
+ * A transient error. Blocks nothing, dismisses itself — but never swallows.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ LỖI PHẢI TRÔNG NHƯ LỖI.                                                  │
+ * │ AN ERROR HAS TO LOOK LIKE AN ERROR.                                      │
  * │                                                                          │
- * │ Bản trước dùng nền `bg-panel` — y hệt mọi bảng khác — và chỉ đổi màu một │
- * │ cái icon 16px. Người dùng bấm "Thêm nhân viên", tên trùng, toast hiện    │
- * │ lên trông như một thông báo bình thường, và họ đứng khựng vì tưởng app   │
- * │ đơ chứ không đọc ra rằng vừa có lỗi.                                     │
+ * │ The previous version used `bg-panel` — identical to every other panel —  │
+ * │ and recoloured a single 16px icon. Someone pressed "Add employee", hit a │
+ * │ duplicate name, and the toast that appeared read as an ordinary notice;  │
+ * │ they froze, assuming the app had hung rather than reading that an error  │
+ * │ had just occurred.                                                       │
  * │                                                                          │
- * │ Tiêu chí "Xử lý lỗi tốt" đòi mọi lỗi nói được CHUYỆN GÌ XẢY RA — mà      │
- * │ bước đầu tiên của việc đó là nhìn vào phải biết ngay đây là lỗi.         │
+ * │ The "good error handling" criterion requires every error to say WHAT     │
+ * │ HAPPENED — and the first step of that is being recognisable as an error  │
+ * │ at a glance.                                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function Toast() {
@@ -359,7 +390,7 @@ function Toast() {
       <span className="text-[13px] leading-snug text-ink">{toast.text}</span>
       <button
         className="mt-0.5 flex-none text-muted hover:text-ink"
-        aria-label="Đóng thông báo"
+        aria-label={t('common.dismissNotice')}
         onClick={actions.dismissToast}
       >
         <X className="h-3.5 w-3.5" />

@@ -1,16 +1,3 @@
-/**
- * Ba câu user hỏi khi test bài 11, mà tôi KHÔNG biết câu trả lời:
- *
- *   A. Thư mục có DẤU CÁCH trong tên — có cần nháy `"` không?
- *   B. Truyền một FILE (không phải thư mục) làm gốc — server nhận không?
- *   C. Truyền NHIỀU thư mục cùng lúc — nhận không?
- *
- * Câu A quan trọng nhất: trực giác "phải bọc nháy" đến từ SHELL, còn `args` đi
- * vào `spawn` dạng MẢNG. Nếu đúng là mảng thì thêm nháy sẽ BIẾN DẤU NHÁY THÀNH
- * MỘT PHẦN CỦA ĐƯỜNG DẪN — tức làm đúng thứ nó định tránh. Phải đo, không đoán.
- *
- * Chạy: npx tsx scripts/spike-fsargs.ts
- */
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -37,20 +24,20 @@ async function ca(label: string, args: string[]) {
   return r;
 }
 
-console.log(`gốc thử: ${root}\n`);
+console.log(`test root: ${root}\n`);
 
-console.log('── A · dấu cách trong tên thư mục');
-await ca('trần (không nháy)', [spaced]);
-await ca('bọc dấu nháy kép', [`"${spaced}"`]);
+console.log('── A · a space in the directory name');
+await ca('bare (no quotes)', [spaced]);
+await ca('wrapped in double quotes', [`"${spaced}"`]);
 
-console.log('\n── B · truyền một FILE làm gốc');
-await ca('một file .txt', [oneFile]);
+console.log('\n── B · passing a FILE as the root');
+await ca('a single .txt file', [oneFile]);
 
-console.log('\n── C · nhiều thư mục');
-await ca('hai thư mục', [plain, spaced]);
+console.log('\n── C · multiple directories');
+await ca('two directories', [plain, spaced]);
 
-console.log('\n── D · dấu gạch chéo kiểu POSIX trên Windows');
-await ca('dùng "/" thay "\\"', [spaced.replace(/\\/g, '/')]);
+console.log('\n── D · POSIX-style slashes on Windows');
+await ca('using "/" instead of "\\"', [spaced.replace(/\\/g, '/')]);
 
 fs.rmSync(root, { recursive: true, force: true });
-console.log('\n↩ đã dọn thư mục thử');
+console.log('\n↩ removed test directory');

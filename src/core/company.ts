@@ -1,12 +1,14 @@
-﻿/**
- * CÔNG TY — vỏ chứa các văn phòng, cộng hai thứ dùng chung: tiền và bus sự kiện.
+/**
+ * COMPANY — the shell holding the offices, plus two things shared across them:
+ * money and the event bus.
  *
  * → docs/SPEC-offices.md §2
  *
- * Công ty CỐ Ý mỏng. Nó không có Trợ lý, không có nhân viên, không có kho tri
- * thức. Mọi thứ đó thuộc về văn phòng, vì mọi thứ đó đi vào prefix cache và
- * prefix phải hẹp nhất có thể. Cái duy nhất công ty giữ là thứ người dùng muốn
- * nhìn TỔNG: một subscription Claude, một hoá đơn, một sổ chi phí.
+ * A company is DELIBERATELY thin. It has no Assistant, no workers, no
+ * knowledge store. All of that belongs to an office, because all of that goes
+ * into the prefix cache and the prefix has to stay as narrow as possible. The
+ * only thing a company holds is what the user wants to see TOTALED: one Claude
+ * subscription, one bill, one cost ledger.
  */
 
 import fs from 'node:fs';
@@ -34,7 +36,9 @@ import {
 import { Office } from './office.js';
 import { grantFor, readOAuth, readSecrets, writeSecrets } from './secrets.js';
 import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
+import { isLocale, t } from '../i18n/index.js';
 import {
+  appendPurge,
   appendRename,
   appendUsage,
   formatReport,
@@ -55,11 +59,11 @@ export interface OfficeSummary {
   agents: number;
   onDuty: number;
   knowledge: number;
-  /** Đã cất vào lưu trữ — đóng băng, chỉ đọc, khôi phục được. */
+  /** Archived — frozen, read-only, restorable. */
   archived: boolean;
-  /** Có việc đang chạy không, và là việc nào. */
+  /** Whether a task is currently running, and which one. */
   plan_id: string | null;
-  /** Văn phòng nạp lỗi — vẫn liệt kê, kèm lý do. Không được biến mất âm thầm. */
+  /** An office that failed to load — still listed, with a reason. Must not silently disappear. */
   error?: string;
 }
 
@@ -69,7 +73,7 @@ export class Company {
   config: CompanyConfig;
 
   private readonly offices = new Map<string, Office>();
-  /** Văn phòng nạp lỗi. Giữ lại để UI hiện được, không im lặng nuốt mất. */
+  /** Offices that failed to load. Kept so the UI can show them, not silently swallowed. */
   private readonly broken = new Map<string, string>();
   private readonly bus = new EventEmitter();
   private readonly recent: AgentEvent[] = [];
@@ -84,17 +88,20 @@ export class Company {
   }
 
   /**
-   * Cài sẵn gói của mọi cánh tay đã cắm — KHÔNG chờ, KHÔNG chặn gì.
+   * Pre-install the package of every already-plugged arm — NO waiting, NO
+   * blocking anything.
    *
-   * Cánh tay cắm trước bản vá 24/08 chưa có bản cài nhanh nào, nên nếu chỉ dựa
-   * vào nút "Thử ngay" thì chúng trả ~4 giây mỗi task **mãi mãi** (không ai bấm
-   * Thử lại một cánh tay đang chạy tốt). Daemon mở công ty là lúc rẻ nhất để
-   * trả khoản đó: chưa ai chờ gì cả.
+   * An arm plugged in before the 08/24 patch has no fast-install yet, so
+   * relying only on the "Try now" button means it pays ~4 seconds per task
+   * **forever** (nobody clicks Retry on an arm that's already working fine).
+   * The moment the daemon opens the company is the cheapest time to pay that
+   * cost: nobody's waiting on anything yet.
    *
-   * ⚠ `void` có chủ ý và phải giữ: `await` ở đây là chặn daemon khởi động sau
-   * một lời gọi mạng: hỏng đúng lớp "một thao tác dọn dẹp của hệ thống nằm ở
-   * tay người dùng". Cài xong hay không, `fastLaunch` vẫn tự quyết đúng ở lượt
-   * chạy kế tiếp. → `core/armexec.ts`
+   * ⚠ The `void` is deliberate and must stay: `await`-ing here would block the
+   * daemon's startup on a network call — exactly the failure class of "a
+   * system housekeeping task sitting in the user's way". Whether the install
+   * finishes or not, `fastLaunch` still makes the correct call on its own at
+   * the next run. → `core/armexec.ts`
    */
   private warmArms(): void {
     for (const cfg of Object.values(this.config.mcpServers)) {
@@ -104,14 +111,14 @@ export class Company {
 
   static open(dir?: string): Company {
     const resolved = resolveCompanyDir(dir);
-    // Di trú TRƯỚC khi nạp: v0 để roles/ ngay dưới company/. Đây là thay đổi
-    // hình dạng thư mục do TA gây ra, không phải quyết định của người dùng,
-    // nên làm tự động và chỉ in ra thông báo. → SPEC-offices.md §7
+    // Migrate BEFORE loading: v0 put roles/ directly under company/. This is a
+    // directory-shape change caused by US, not a decision the user made, so it
+    // runs automatically and just prints a notice. → SPEC-offices.md §7
     migrateIfNeeded(resolved);
     return new Company(resolved, loadCompanyConfig(resolved));
   }
 
-  // ── văn phòng
+  // ── offices
 
   private loadOffices(): void {
     this.offices.clear();
@@ -123,11 +130,12 @@ export class Company {
         office.onUsage = (rec) => appendUsage(this.paths, rec);
         this.offices.set(id, office);
       } catch (err) {
-        // Một văn phòng hỏng KHÔNG được kéo theo văn phòng khác — tiêu chí
-        // "Ổn định". Ghi lại lý do để UI hiện được thay vì im lặng biến mất.
+        // One broken office must NOT take down another — the "Stable"
+        // criterion. Record the reason so the UI can show it instead of it
+        // silently disappearing.
         const msg = err instanceof Error ? err.message : String(err);
         this.broken.set(id, msg);
-        process.emitWarning(`Không nạp được văn phòng "${id}": ${msg}`);
+        process.emitWarning(`Could not load office "${id}": ${msg}`);
       }
     }
   }
@@ -169,7 +177,7 @@ export class Company {
     if (!o) {
       const why = this.broken.get(officeId);
       throw new RunError(
-        why ? `Văn phòng "${officeId}" đang lỗi: ${why}` : `Không có văn phòng "${officeId}".`,
+        why ? t('co.officeBroken', { office: officeId, why }) : t('co.noOffice', { office: officeId }),
         'other',
       );
     }
@@ -181,31 +189,33 @@ export class Company {
   }
 
   /**
-   * Tạo văn phòng mới. Nó ra đời với ĐÚNG một Trợ lý, không nhân viên nào.
+   * Create a new office. It's born with EXACTLY one Assistant, no workers.
    *
-   * Khởi điểm sạch là có chủ ý (SPEC-offices.md §3): người dùng đầu tiên của v0
-   * mở lên thấy ba nhân viên lạ hoắc mà họ không đặt tên, không hiểu vì sao có,
-   * và không dám xoá.
+   * A clean starting point is deliberate (SPEC-offices.md §3): v0's first
+   * users opened it to find three strangers they hadn't named, didn't
+   * understand the presence of, and were afraid to delete.
    */
   createOffice(input: { name?: string; id?: string }): Office {
-    const name = normalizeName(input.name ?? '') || 'Văn phòng mới';
+    const name = normalizeName(input.name ?? '') || t('company.unnamedOffice');
     /**
-     * `folderId` chứ không phải `slugId`: tên phi-Latin (中文, 日本語, 한국어,
-     * ไทย, Русский…) cho slug RỖNG, và bản cũ ném thẳng *"cần có ít nhất một
-     * chữ cái"* — một câu vô nghĩa với người vừa gõ đúng chữ của họ. → paths.ts
+     * `folderId`, not `slugId`: a non-Latin name (中文, 日本語, 한국어, ไทย,
+     * Русский…) produces an EMPTY slug, and the old version threw straight at
+     * *"needs at least one letter"* — a message that's meaningless to someone
+     * who just typed their own script correctly. → paths.ts
      *
-     * `id` người dùng TỰ gõ thì vẫn qua `slugId` như cũ: đó là họ đang chọn
-     * tên thư mục, nên phải nhận đúng thứ mình gõ hoặc bị từ chối rõ ràng.
+     * An `id` the user typed THEMSELVES still goes through `slugId` as before:
+     * that's them choosing the directory name, so it must get exactly what
+     * they typed, or a clear rejection.
      */
     const id = input.id?.trim() ? slugId(input.id.trim()) : folderId(name);
     if (!isSafeId(id)) {
-      throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
+      throw new RunError(t('co.officeNameNeedsAlnum'), 'other');
     }
     if (name.length > 60) {
-      throw new RunError('Tên văn phòng dài quá 60 ký tự.', 'other');
+      throw new RunError(t('co.officeNameTooLong'), 'other');
     }
     if (this.offices.has(id) || this.broken.has(id)) {
-      throw new RunError(`Đã có văn phòng "${id}".`, 'other');
+      throw new RunError(t('co.officeExists', { id }), 'other');
     }
     this.assertNameFree(name, id);
 
@@ -213,18 +223,51 @@ export class Company {
     const pp = officePaths(dir);
     ensureOfficeDirs(pp);
     fs.writeFileSync(pp.configFile, officeTemplate(id, name), 'utf8');
-    fs.writeFileSync(pp.assistantSkills, ASSISTANT_SKILLS_DEFAULT, 'utf8');
     /**
-     * KHÔNG tạo file charter, và không tạo node tri thức nào.
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 DOES NOT SEED `skills/assistant.md` EITHER — removed 05/09.         │
+     * │                                                                      │
+     * │ It used to be written here from `t('seed.assistantSkills.body')`,     │
+     * │ i.e. IN THE INTERFACE LANGUAGE AT THE MOMENT OF CREATION. That was    │
+     * │ argued as safe because seed content becomes the user's own datum the  │
+     * │ instant it lands. It IS their datum — and that is exactly the         │
+     * │ problem: from then on it sits in the cached prefix of every single    │
+     * │ chat turn, and it is the ONLY text in that prefix carrying a          │
+     * │ language. Measured 05/09 (`P-260905-0100-zquw`): an English request   │
+     * │ produced a plan in the seed's language, because the seed did not      │
+     * │ merely happen to be in a language — it gave a STYLE ORDER that can    │
+     * │ only be obeyed in one ("address yourself as X, call the user Y",      │
+     * │ a clause the English seed has no counterpart for at all).             │
+     * │                                                                      │
+     * │ So the interface switch never reached a prompt through the code —     │
+     * │ it reached one through a FILE WE WROTE FOR THE USER. A gate reading   │
+     * │ source code cannot see that road.                                     │
+     * │                                                                      │
+     * │ Nothing of value is lost: the same advice is the PLACEHOLDER of that  │
+     * │ very editor (`promptLayer.assistantSkillsPlaceholder`), where the     │
+     * │ person reads it, adopts it deliberately if they want it, and it       │
+     * │ costs ZERO tokens until they do. → the box on `PromptLayer.placeholder`│
+     * │                                                                      │
+     * │ Same shape, same reasoning as the charter directly below — which was  │
+     * │ removed for the neighbouring reason on 08/17.                         │
+     * │                                                                      │
+     * │ ⚠ Offices that ALREADY have the file keep it untouched. It is their   │
+     * │ text now; rewriting a user's own file to fix our seed would be us      │
+     * │ editing their data behind their back.                                 │
+     * └──────────────────────────────────────────────────────────────────────┘
      *
-     * Bản trước ghi sẵn `knowledge/shared/_charter.md` với frontmatter đầy đủ và
-     * thân rỗng. Hậu quả: mỗi văn phòng mới đẻ ra một node ma trong ngăn kéo Tri
-     * thức mà người dùng không tạo ra, không hiểu, và xoá đi thì hỏng một thứ
-     * khác (xem `charter_file` trong types.ts).
+     * Does NOT create a charter file, and does not create any knowledge node.
      *
-     * Giờ charter là `charter.md` ở gốc văn phòng và **chỉ tồn tại khi người
-     * dùng thật sự viết gì đó** — `savePromptLayer` tạo file ở lần lưu đầu tiên.
-     * Văn phòng mới có kho tri thức RỖNG THẬT, đúng như ngăn kéo đang nói.
+     * The previous version wrote `knowledge/shared/_charter.md` upfront with
+     * full frontmatter and an empty body. The consequence: every new office
+     * spawned a ghost node in the Knowledge drawer that the user didn't
+     * create, didn't understand, and whose deletion broke something else (see
+     * `charter_file` in types.ts).
+     *
+     * The charter is now `charter.md` at the office root and **only exists
+     * once the user actually writes something** — `savePromptLayer` creates
+     * the file on the first save. A new office has a GENUINELY EMPTY
+     * knowledge store, exactly as the drawer claims.
      */
 
     const office = new Office(loadOffice(this.dir, this.config, id));
@@ -232,54 +275,59 @@ export class Company {
     office.onUsage = (rec) => appendUsage(this.paths, rec);
     this.offices.set(id, office);
 
-    this.emit({ type: 'company.offices', say: `Đã tạo văn phòng "${name}".`, office: id, plan_id: null });
+    this.emit({ type: 'company.offices', say: t('co.officeCreated', { name }), office: id, plan_id: null });
     return office;
   }
 
   /**
-   * Đổi tên hiển thị một văn phòng. Mã (thư mục) giữ nguyên — xem `Office.rename`.
+   * Change an office's display name. The code (directory) stays the same —
+   * see `Office.rename`.
    *
-   * Kiểm trùng ở ĐÂY chứ không ở `Office`: chỉ công ty mới nhìn thấy các văn
-   * phòng khác. Office tự chứa và không biết hàng xóm là ai — đó là điều kiện để
-   * zip một thư mục `offices/<id>/` ra thành template chạy được ở máy khác.
+   * Duplicate checking happens HERE, not inside `Office`: only the company can
+   * see the other offices. An office is self-contained and doesn't know who
+   * its neighbors are — that's the condition that lets zipping up an
+   * `offices/<id>/` directory produce a template that runs on another
+   * machine.
    */
   /**
-   * ⚠ TRẢ VỀ CẢ `id`, và người gọi BẮT BUỘC phải dùng nó.
+   * ⚠ RETURNS `id` TOO, and the caller MUST use it.
    *
-   * Đổi tên có thể **dời thư mục và thay hẳn instance `Office`** trong map
-   * (`moveOffice`). Mọi handle lấy TRƯỚC lời gọi này đều thành ma: `office.id`
-   * của nó vẫn là id cũ, và `office.loaded.dir` trỏ vào một thư mục không còn
-   * tồn tại. Bản trước chỉ trả về cái TÊN, nên `server.ts` không có đường nào
-   * biết id đã đổi — nó dựng response từ handle cũ, client thấy `id` cũ, rồi
-   * mọi lời gọi sau đó 404 cho tới khi người dùng F5. → bug user báo 22/08
+   * Renaming can **move the directory and swap out the `Office` instance**
+   * entirely in the map (`moveOffice`). Every handle grabbed BEFORE this call
+   * turns into a ghost: its `office.id` is still the old id, and
+   * `office.loaded.dir` points at a directory that no longer exists. The
+   * previous version only returned the NAME, so `server.ts` had no way to
+   * know the id had changed — it built a response from the stale handle, the
+   * client saw the old `id`, and every call after that 404'd until the user
+   * hit F5. → bug reported by the user 08/22
    */
   renameOffice(officeId: string, name: string): { name: string; id: string } {
     const office = this.get(officeId);
     const next = normalizeName(name);
     if (!nameKey(next)) {
-      throw new RunError('Tên văn phòng cần có ít nhất một chữ cái hoặc số.', 'other');
+      throw new RunError(t('co.officeNameNeedsAlnum'), 'other');
     }
     this.assertNameFree(next, officeId);
 
     const moveTo = this.renameTarget(officeId, next);
     if (moveTo && office.currentState === 'working') {
       throw new RunError(
-        'Văn phòng đang chạy việc, chưa đổi tên thư mục được. Bấm Dừng rồi thử lại — ' +
-          'hoặc đổi tên sau khi việc xong.',
+        t('co.officeBusyRename'),
         'other',
       );
     }
-    // `silent` khi sắp dời: sự kiện của `Office` mang id CŨ, và nó tới tay
-    // trình duyệt SAU khi thư mục đã dời → client đuổi theo một id chết rồi ăn
-    // 404. Ta tự phát một sự kiện mang id MỚI ở cuối hàm. → `Office.rename`
+    // `silent` when a move is about to happen: `Office`'s own event carries
+    // the OLD id, and it reaches the browser AFTER the directory has already
+    // moved → the client chases a dead id and gets a 404. We emit our own
+    // event carrying the NEW id at the end of this function. → `Office.rename`
     const applied = office.rename(next, moveTo ? { silent: true } : undefined);
     if (moveTo) this.moveOffice(officeId, moveTo);
 
     this.emit({
       type: 'company.offices',
       say: moveTo
-        ? `Đã đổi tên văn phòng thành "${applied}", và thư mục trên đĩa cũng đổi theo.`
-        : `Đã đổi tên văn phòng thành "${applied}".`,
+        ? t('co.officeRenamedWithFolder', { name: applied })
+        : t('co.officeRenamed', { name: applied }),
       office: moveTo ?? officeId,
       plan_id: null,
     });
@@ -287,66 +335,75 @@ export class Company {
   }
 
   /**
-   * Id mới nếu đổi tên KÉO THEO cả thư mục, `undefined` nếu giữ nguyên id.
-   * → docs/SPEC-offices.md §3
+   * The new id if renaming DRAGS the directory along with it, `undefined` if
+   * the id stays put. → docs/SPEC-offices.md §3
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MỘT LUẬT, KHÔNG PHẢI MỘT BẢNG ĐIỀU KIỆN. (user chốt 22/08)               │
+   * │ ONE RULE, NOT A CONDITION TABLE. (user settled 08/22)                    │
    * │                                                                          │
-   * │ Bản đề xuất trước là *"chỉ đổi thư mục khi văn phòng còn trắng"*. User   │
-   * │ bác đúng: **một cơ chế lúc chạy lúc không thì người dùng không đoán      │
-   * │ nổi** — tệ hơn cả không có. Luật ở đây chỉ có một câu:                    │
+   * │ The earlier proposal was *"only move the directory while the office is    │
+   * │ still empty"*. The user correctly rejected it: **a mechanism that fires   │
+   * │ sometimes and not others is unguessable to a user** — worse than not      │
+   * │ having it at all. The rule here is one sentence:                         │
    * │                                                                          │
-   * │   **Đổi thư mục khi và chỉ khi tên mới cho ra một slug thật.**            │
+   * │   **Move the directory if and only if the new name produces a real       │
+   * │   slug.**                                                                │
    * │                                                                          │
-   * │ `slugId` chứ KHÔNG phải `folderId` — và đó là cả sự khác biệt. Đổi từ    │
-   * │ "Kế toán" sang "会计部" mà đem băm thì `ke-toan` biến thành `vp-ee6fd8`:  │
-   * │ một cái tên đọc được đổi thành một cái vô nghĩa, để phục vụ đúng con số  │
-   * │ không ai nhìn. `folderId` chỉ dùng lúc TẠO, khi chưa có gì để mất.       │
+   * │ `slugId`, NOT `folderId` — and that's the whole difference. Renaming      │
+   * │ "Accounting" to "会计部" and hashing it would turn `ke-toan` into           │
+   * │ `vp-ee6fd8`: a readable name changed into a meaningless one, to serve a    │
+   * │ number nobody looks at. `folderId` is only for CREATION, when there's     │
+   * │ nothing to lose yet.                                                     │
    * │                                                                          │
-   * │ Hệ quả (user hỏi thẳng, và đúng): tên phi-Latin ⇒ **id đứng yên**, chỉ   │
-   * │ đổi phía nhìn — kể cả khi tên cũ là Latin. Với thị trường dùng chữ       │
-   * │ phi-Latin thì đổi tên thư mục **không đổi gì cả**, và nút 📂 mới là thứ  │
-   * │ phục vụ họ. Hai cơ chế bổ sung nhau, không thay nhau.                    │
+   * │ Consequence (the user asked directly, and was right): a non-Latin name    │
+   * │ ⇒ **the id stays put**, only the display side changes — even when the      │
+   * │ old name was Latin. For a market that writes in non-Latin script,          │
+   * │ renaming the directory **changes nothing**, and the 📂 button is what      │
+   * │ actually serves them. The two mechanisms complement each other, they       │
+   * │ don't replace each other.                                                 │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   private renameTarget(officeId: string, name: string): string | undefined {
     const next = slugId(name);
     if (!next || next === officeId) return undefined;
-    // Trùng với một văn phòng khác (kể cả cái đang hỏng) thì GIỮ NGUYÊN id thay
-    // vì ném: người dùng chỉ muốn đổi cái nhãn, và cái nhãn thì không trùng —
-    // `assertNameFree` đã kiểm rồi. Chặn ở đây là từ chối một việc hợp lệ.
+    // Colliding with another office (even a broken one) means KEEP the id
+    // rather than throwing: the user only wanted to change the label, and the
+    // label itself isn't a duplicate — `assertNameFree` already checked that.
+    // Blocking here would reject a legitimate action.
     if (this.offices.has(next) || this.broken.has(next)) return undefined;
     return next;
   }
 
   /**
-   * Dời `offices/<cũ>/` → `offices/<mới>/` rồi dựng lại Office ở chỗ mới.
+   * Move `offices/<old>/` → `offices/<new>/`, then rebuild the Office in place.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐO TRƯỚC KHI XÂY — hai nỗi lo lớn nhất đều KHÔNG có thật:               │
+   * │ MEASURED BEFORE BUILDING — the two biggest worries turned out to be       │
+   * │ NOT REAL:                                                                │
    * │                                                                          │
-   * │  · **Prompt cache**: `prompt.ts` không chứa `office.dir`/`office.id` ở    │
-   * │    đâu cả, mọi đường dẫn trong prefix đều tương đối. Dời thư mục ⇒ 0 lần │
-   * │    ghi lại cache.                                                        │
-   * │  · **Trí nhớ Trợ lý**: đã thử thật — nói một mã ở `bao-cao`, đổi tên     │
-   * │    thành `kiem-ke`, rồi `resume` cùng session id: nó đọc lại đúng mã.    │
-   * │    `resume` KHÔNG bám theo cwd.                                          │
+   * │  · **Prompt cache**: `prompt.ts` doesn't hold `office.dir`/`office.id`     │
+   * │    anywhere, every path in the prefix is relative. Moving the directory    │
+   * │    ⇒ 0 cache rewrites.                                                    │
+   * │  · **Assistant memory**: actually tested it — mention a code in            │
+   * │    `bao-cao`, rename it to `kiem-ke`, then `resume` with the same           │
+   * │    session id: it reads back the correct code. `resume` does NOT track     │
+   * │    `cwd`.                                                                 │
    * │                                                                          │
-   * │ Nạn nhân duy nhất là `logs/usage.jsonl` — nó nằm ở cấp CÔNG TY (không đi │
-   * │ theo thư mục) và mang `office: "<id>"` ở 315/317 dòng. Giải bằng một bản │
-   * │ ghi ALIAS nối vào cuối sổ: append-only được giữ nguyên, không viết lại   │
-   * │ một dòng lịch sử nào. → `usage.ts`                                       │
+   * │ The only casualty is `logs/usage.jsonl` — it lives at the COMPANY level    │
+   * │ (doesn't follow the directory) and carries `office: "<id>"` on 315/317     │
+   * │ lines. Solved with an ALIAS record appended to the end of the ledger:      │
+   * │ append-only stays intact, no line of history gets rewritten.               │
+   * │ → `usage.ts`                                                             │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Chặn khi đang chạy việc: Windows khoá file đang mở, và một lượt worker
-   * ghi vào `artifacts/` giữa lúc thư mục bị dời là hỏng nửa chừng. Cùng luật
-   * với `archiveOffice`.
+   * ⚠ Blocked while a task is running: Windows locks open files, and a worker
+   * turn writing into `artifacts/` mid-move would corrupt it halfway through.
+   * Same rule as `archiveOffice`.
    */
   private moveOffice(officeId: string, nextId: string): void {
     const from = path.join(this.paths.offices, officeId);
     const to = path.join(this.paths.offices, nextId);
-    if (fs.existsSync(to)) throw new RunError(`Thư mục "${nextId}" đã tồn tại.`, 'other');
+    if (fs.existsSync(to)) throw new RunError(t('co.folderExists', { id: nextId }), 'other');
 
     fs.renameSync(from, to);
     appendRename(this.paths, officeId, nextId);
@@ -358,15 +415,14 @@ export class Company {
     this.offices.set(nextId, office);
   }
 
-  /** Không cho hai văn phòng mang cùng một cái tên. `exceptId` = chính nó khi đổi tên. */
+  /** Don't let two offices carry the same name. `exceptId` = itself, when renaming. */
   private assertNameFree(name: string, exceptId: string): void {
     const key = nameKey(name);
     for (const o of this.offices.values()) {
       if (o.id === exceptId) continue;
       if (nameKey(o.name) === key) {
         throw new RunError(
-          `Đã có văn phòng tên "${o.name}". Hai văn phòng trùng tên thì ô chọn ở đầu ` +
-            `màn hình hiện hai dòng y hệt nhau — đặt tên khác đi.`,
+          t('co.officeNameTaken', { name: o.name }),
           'other',
         );
       }
@@ -374,28 +430,30 @@ export class Company {
   }
 
   /**
-   * Đổi cấu hình model của công ty (mức nào chạy model nào, Trợ lý/lập kế hoạch
-   * chạy mức nào). → docs/SPEC-offices.md §4.5
+   * Change the company's model configuration (which tier runs which model,
+   * which tier the Assistant/planner runs at). → docs/SPEC-offices.md §4.5
    *
-   * Ghi bằng `parseDocument` để giữ nguyên chú thích trong company.yaml, rồi
-   * ĐỌC LẠI QUA SCHEMA thay vì tự vá object trong bộ nhớ — file trên đĩa là
-   * nguồn sự thật, và đọc lại là cách duy nhất chắc chắn hai bên không lệch.
+   * Written through `parseDocument` so comments in company.yaml survive, then
+   * READ BACK THROUGH THE SCHEMA instead of patching the in-memory object —
+   * the file on disk is the source of truth, and reading it back is the only
+   * way to be sure the two sides don't drift apart.
    *
-   * KHÔNG dựng lại các Office: làm thế là vứt mất kế hoạch đang chạy, hòm thư và
-   * scheduler của chúng. Chỉ đưa cấu hình mới vào, và mỗi Office tự dựng một
-   * `LoadedOffice` MỚI (ca đang chạy giữ nguyên bản cũ). → `Office.applyCompanyConfig`
+   * Does NOT rebuild the Offices: doing so would throw away their running
+   * plans, mailboxes, and schedulers. Just feeds in the new config, and each
+   * Office builds itself a NEW `LoadedOffice` (a task already in progress
+   * keeps the old one). → `Office.applyCompanyConfig`
    */
   updateModels(patch: Record<string, string>): CompanyConfig['models'] {
     const allowed = new Set(['eco', 'standard', 'deep', 'master', 'planner']);
     const entries = Object.entries(patch).filter(([k]) => allowed.has(k));
-    if (entries.length === 0) throw new RunError('Không có trường model nào hợp lệ.', 'other');
+    if (entries.length === 0) throw new RunError(t('co.noValidModelField'), 'other');
 
     for (const [key, value] of entries) {
       if (typeof value !== 'string' || !value.trim()) {
-        throw new RunError(`Giá trị cho "${key}" không được để trống.`, 'other');
+        throw new RunError(t('co.valueEmpty', { key }), 'other');
       }
       if ((key === 'master' || key === 'planner') && !TIERS.includes(value as never)) {
-        throw new RunError(`"${key}" phải là một MỨC: ${TIERS.join(', ')}.`, 'other');
+        throw new RunError(t('co.mustBeTier', { key, tiers: TIERS.join(', ') }), 'other');
       }
     }
 
@@ -413,7 +471,7 @@ export class Company {
 
     this.emit({
       type: 'company.offices',
-      say: 'Đã đổi model. Việc đang chạy giữ nguyên model cũ cho tới khi xong.',
+      say: t('co.modelsChanged'),
       office: '',
       plan_id: null,
     });
@@ -421,116 +479,170 @@ export class Company {
   }
 
   /**
-   * CẮM MỘT CÁNH TAY. → docs/SPEC-arms.md §6
+   * Change the INTERFACE language. → `src/i18n/` · docs/CLAUDE.md §Language
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ KHÔNG CẦN RESTART, VÀ KHÔNG CẦN `setMcpServers`.                         │
+   * │ 🔴 THIS DOES NOT TOUCH A SINGLE PROMPT, AND MUST NOT LEARN TO.           │
    * │                                                                          │
-   * │ 📖 SDK có `Query.setMcpServers()` để cắm/rút giữa phiên. Ta KHÔNG dùng,   │
-   * │ và lý do là kiến trúc chứ không phải lười: **worker là `query()` one-shot │
-   * │ nên lượt sau tự đọc cấu hình mới**, còn phiên dài duy nhất (Trợ lý)       │
-   * │ KHÔNG BAO GIỜ cầm MCP (MCP phá prompt cache khi `resume` — `types.ts:499`).│
-   * │ ⇒ `applyCompanyConfig` là đủ, đúng như `updateModels` ngay trên.          │
+   * │ It changes what the screen says. It does NOT change what the assistant   │
+   * │ or the workers write — those follow whatever language the human is       │
+   * │ typing in, which is a different question and one the switch cannot       │
+   * │ answer. A Vietnamese user may well want an English interface.            │
    * │                                                                          │
-   * │ Đây là lý do bước `stop`/`start` ở bài 10 bước B7 biến mất — không phải   │
-   * │ nhờ một API mới, mà nhờ một ràng buộc đã có sẵn từ đầu.                   │
+   * │ Two consequences worth stating because they read as bugs otherwise:      │
+   * │  · no `cacheKey` moves, so nothing is re-cached and nothing is re-paid.  │
+   * │    Model config changes cost a prefix rewrite; this one costs nothing.   │
+   * │  · a reply that arrives right after the switch is still in the old       │
+   * │    language if that is the language the human wrote in. Correct.         │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Bí mật đi vào `.state/secrets.json` (đã gitignore, và từ 23/08 nhân viên
-   * không đọc được — `paths.ts §guardedZone`). Cấu hình đi vào `company.yaml`,
-   * nơi commit lên git được. **Giá trị chìa không bao giờ nằm trong company.yaml.**
+   * Same write shape as `updateModels`: edit through `parseDocument` so the
+   * comments in company.yaml survive, then READ BACK THROUGH THE SCHEMA rather
+   * than patching the in-memory object. `loadCompanyConfig` applies the locale
+   * as it parses, so the daemon's own strings switch on the same line.
+   */
+  updateLanguage(language: string): 'vi' | 'en' {
+    if (!isLocale(language)) {
+      throw new RunError(t('co.unsupportedLanguage', { language }), 'other');
+    }
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    doc.set('language', language);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    // No `applyCompanyConfig` loop: offices hold no interface strings, and a
+    // rebuild would throw away running plans to change a label.
+    return language;
+  }
+
+  /**
+   * PLUG IN AN ARM. → docs/SPEC-arms.md §6
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ NO RESTART NEEDED, AND NO NEED FOR `setMcpServers`.                      │
+   * │                                                                          │
+   * │ 📖 The SDK has `Query.setMcpServers()` to plug/unplug mid-session. We're   │
+   * │ NOT using it, and the reason is architectural, not laziness: **a worker    │
+   * │ is a one-shot `query()`, so the next turn reads the new config on its       │
+   * │ own**, while the one long-lived session (the Assistant) NEVER holds MCP    │
+   * │ (MCP breaks the prompt cache on `resume` — `types.ts:499`).                │
+   * │ ⇒ `applyCompanyConfig` is enough, exactly like `updateModels` right         │
+   * │ above.                                                                    │
+   * │                                                                          │
+   * │ This is why the `stop`/`start` step in the 10-step plan's B7 disappeared   │
+   * │ — not because of a new API, but because of a constraint that was already    │
+   * │ there from the start.                                                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Credentials go into `.state/secrets.json` (gitignored, and since 08/23 a
+   * worker can't read it — `paths.ts §guardedZone`). Config goes into
+   * `company.yaml`, which can be committed to git. **A credential's value is
+   * never in company.yaml.**
    */
   addArm(input: {
-    /** Tên hiển thị. KHÔNG phải danh tính — danh tính là băm cấu hình. */
+    /** Display name. NOT the identity — the identity is a config hash. */
     label?: string;
     config: Record<string, unknown>;
     catalog?: string;
-    /** TÊN chìa cần có. Vào băm, và vào `role.secrets` lúc giao. */
+    /** The credential NAMES needed. Goes into the hash, and into `role.secrets` when assigned. */
     secretNames?: string[];
     secrets?: Record<string, string>;
     /**
-     * VIỆC ĐƯỢC CẤP, đã giải từ `annotations` lúc cắm. Rỗng/vắng ⇒ cả server.
-     * → `types.ts §arms.tools` · `server.ts §readOnlyTools`
+     * TOOLS GRANTED, already resolved from `annotations` at plug-in time.
+     * Empty/absent ⇒ the whole server. → `types.ts §arms.tools` ·
+     * `server.ts §readOnlyTools`
      *
-     * ⚠ Trường này TỪNG BỊ NUỐT IM LẶNG (bắt 25/08): `server.ts` truyền
-     * `...(tools.length ? { tools } : {})` vào đây trong khi kiểu ở đây chưa
-     * khai nó — và **spread KHÔNG kích hoạt excess-property check** của
-     * TypeScript. Typecheck xanh, test xanh, tính năng **không làm gì cả**.
-     * Cùng lớp bẫy với `SHELL_ALIASES` và `tools` của SDK: *allowlist im lặng
-     * bỏ phần tử lạ*. → [[agentco-silent-allowlist]]
+     * ⚠ This field WAS SILENTLY SWALLOWED (caught 08/25): `server.ts` was
+     * passing `...(tools.length ? { tools } : {})` in here while the type
+     * here hadn't declared it — and a **spread does NOT trigger TypeScript's**
+     * excess-property check. Typecheck green, tests green, the feature **did
+     * nothing at all**. Same trap class as `SHELL_ALIASES` and the SDK's
+     * `tools`: *a silent allowlist drops an unrecognized element*.
+     * → [[agentco-silent-allowlist]]
      */
     tools?: string[];
     /**
-     * NẤC QUYỀN, và nó **đi vào băm**. → `catalog.ts §armHash` · §6j
+     * PERMISSION TIER, and it **goes into the hash**. → `catalog.ts §armHash` · §6j
      *
-     * ⚠ Vắng ⇒ băm y hệt bản trước 26/08. Đó không phải tiện tay: mọi cánh tay
-     * đã tồn tại phải giữ nguyên mã, nếu không một lần nâng cấp làm mồ côi cả
-     * `company.yaml` của người dùng.
+     * ⚠ Absent ⇒ hashes identically to before 08/26. That's not convenience:
+     * every already-existing arm must keep its exact code, or a single
+     * upgrade orphans the user's entire `company.yaml`.
      */
     level?: 'read' | 'add' | 'full';
-    /** Văn phòng sắp dùng nó — cần cho luật "một thư mục, một cánh tay". */
+    /** The office about to use it — needed for the "one folder, one arm" rule. */
     office?: string;
   }): string {
     const secretNames = [...new Set(input.secretNames ?? Object.keys(input.secrets ?? {}))].sort();
     /**
-     * Danh tính do MÁY sinh, không do người gõ. Cùng cấu hình ⇒ cùng khoá ⇒
-     * "cắm trùng" là chuyện KHÔNG THỂ XẢY RA, thay vì chuyện phải nhớ đi kiểm
-     * ở bốn chỗ. → `catalog.ts §armHash`
+     * An identity generated by the MACHINE, not typed by a person. Same
+     * config ⇒ same key ⇒ "duplicate plug-in" becomes a thing that CAN'T
+     * HAPPEN, rather than something to remember to check in four places.
+     * → `catalog.ts §armHash`
      */
     const id = armHash(input.config, secretNames, input.level);
     if (!input.config || typeof input.config !== 'object') {
-      throw new RunError('Thiếu cấu hình cho cánh tay này.', 'other');
+      throw new RunError(t('co.armConfigMissing'), 'other');
     }
     /**
-     * ⚠ TRÙNG MÃ = GHI ĐÈ IM LẶNG, và user bắt được ngay lượt test đầu: cắm
-     * `files` cho thư mục A rồi cắm `files` cho thư mục B thì A biến mất, không
-     * một câu nào. Node trên sơ đồ vẫn y nguyên (cùng id), mọi sợi dây vẫn y
-     * nguyên — chỉ thư mục bên dưới đổi. **Không có triệu chứng ở chỗ nó nằm.**
+     * ⚠ A DUPLICATE CODE = A SILENT OVERWRITE, and the user caught it on the
+     * very first test run: plug `files` in for directory A, then plug `files`
+     * in for directory B, and A vanishes without a word. The node on the
+     * diagram stays exactly the same (same id), every connection stays the
+     * same — only the directory underneath changes. **No symptom shows up
+     * where the change actually happened.**
      *
-     * Từ chối, KHÔNG tự đổi tên hộ: đổi thành `files-2` là ô `viết lại lặng lẽ`
-     * — người dùng gõ một cái tên và nhận về một cái khác. Câu từ chối nêu luôn
-     * hai đường đi tiếp, vì "đã tồn tại" mà không nói làm gì tiếp là bỏ họ ở đó.
+     * Reject it, don't silently rename it: renaming to `files-2` falls into
+     * the "silent rewrite" trap — the user typed one name and got a different
+     * one back. The rejection message always states two ways forward, because
+     * "already exists" with no next step just strands them there.
      *
-     * ⚠ Một cánh tay `filesystem` nhận NHIỀU thư mục cùng lúc (đo 23/08:
-     * `connected` với 2 gốc) — nên "hai thư mục" thường KHÔNG cần hai cánh tay.
+     * ⚠ A `filesystem` arm accepts MULTIPLE directories at once (measured
+     * 08/23: `connected` with 2 roots) — so "two directories" usually does
+     * NOT need two arms.
      */
     /**
-     * ĐÃ CÓ TRONG SỔ = tái dùng, KHÔNG phải lỗi.
+     * ALREADY IN THE ROSTER = reuse, NOT an error.
      *
-     * Đây là chỗ "cắm lại thì tìm thấy" thành hiện thực: người dùng xoá cánh
-     * tay khỏi văn phòng rồi cắm lại đúng thư mục đó ⇒ cùng băm ⇒ ta lấy lại
-     * nguyên cấu hình + tên + tên chìa, không hỏi lại một câu nào.
+     * This is where "plug it back in and it's found" becomes real: a user
+     * removes an arm from an office, then plugs the exact same directory back
+     * in ⇒ same hash ⇒ we hand back the exact same config + name + credential
+     * names, with no re-asking of a single question.
      *
-     * Chỉ chặn khi văn phòng NÀY đang dùng nó rồi — và câu chặn nói ra cách đi
-     * tiếp (kéo dây), vì "đã có" mà không chỉ đường là một ngõ cụt.
+     * Only blocked when THIS office is already using it — and the block
+     * message states the next step (wire it up), because "already exists"
+     * with no direction is a dead end.
      */
     if (input.office && this.armInUse(input.office, id)) {
       const label = this.config.arms[id]?.label || id;
       throw new RunError(
-        `Văn phòng này đã có kết nối "${label}". Kéo dây từ nó sang nhân viên cần dùng — ` +
-          `một kết nối dùng chung được cho nhiều người.`,
+        t('co.armAlreadyHere', { label }),
         'other',
       );
     }
 
     /**
-     * MỘT THƯ MỤC, MỘT CÁNH TAY — trong phạm vi MỘT văn phòng. → `catalog.ts §coveredBy`
+     * ONE DIRECTORY, ONE ARM — scoped to ONE office. → `catalog.ts §coveredBy`
      *
-     * Chỉ so với những cánh tay ĐANG CÓ DÂY ở văn phòng này, không so cả công
-     * ty: hai văn phòng cùng trỏ vào `D:\Ho so` là hợp lệ và có chủ ý (clone
-     * độc lập, user chốt). Ranh giới của luật này là ranh giới của cái sơ đồ.
+     * Only compares against arms ACTUALLY WIRED UP in this office, not the
+     * whole company: two offices both pointing at `D:\Records` is valid and
+     * deliberate (independent clones, settled by the user). This rule's
+     * boundary is the diagram's boundary.
      */
     const want = folderRoots(input.config);
     if (input.office && want.length) {
       const office = this.get(input.office);
 
-      // Thư mục văn phòng / công ty: thừa VÀ đi vòng qua hàng rào `.state/`.
-      // → `catalog.ts §swallowsOffice`
+      // The office / company directory itself: redundant AND routes around
+      // the `.state/` guard. → `catalog.ts §swallowsOffice`
       const bad = want.find((r) => swallowsOffice(r, office.loaded.dir, this.dir));
       if (bad) {
         throw new RunError(
-          `"${bad}" chứa chính thư mục làm việc của văn phòng. Nhân viên đã đọc-ghi được ở đó sẵn ` +
-            `mà không tốn token nào, nên cắm thêm là trả tiền cho thứ đang có. Chọn một thư mục bên ngoài.`,
+          t('co.folderIsOfficeItself', { path: bad }),
           'other',
         );
       }
@@ -544,16 +656,15 @@ export class Company {
       const clash = coveredBy(existing, want);
       if (clash) {
         throw new RunError(
-          `Thư mục này đã nằm trong kết nối "${clash.id}" của văn phòng. ` +
-            `Nối thẳng "${clash.id}" vào nhân viên cần nó — một kết nối dùng chung được cho nhiều người, ` +
-            `và cắm thêm cái thứ hai là trả token hai lần cho cùng một thứ.`,
+          t('co.folderAlreadyCovered', { id: clash.id }),
           'other',
         );
       }
     }
 
-    // Chìa TRƯỚC cấu hình: nếu ghi cấu hình xong mới hỏng ở bước chìa thì trên
-    // sơ đồ đã có một node trỏ vào một tiến trình không bao giờ khởi động được.
+    // Credentials BEFORE config: if config gets written first and the
+    // credential step then fails, the diagram already has a node pointing at
+    // a process that can never start.
     const secrets = input.secrets ?? {};
     if (Object.keys(secrets).length) {
       const pp = companyPaths(this.dir);
@@ -561,13 +672,15 @@ export class Company {
     }
 
     /**
-     * ⚠ `createNode` mặc định ra FLOW style, và flow LÂY từ map cha xuống: cả
-     * cấu hình dồn vào một dòng, đường dẫn Windows không được nháy. `company.yaml`
-     * là file người dùng ĐỌC và commit lên git — nó phải trông như ví dụ đã
-     * comment sẵn ngay phía trên khoá này.
+     * ⚠ `createNode` defaults to FLOW style, and flow style is INHERITED from
+     * the parent map downward: the whole config collapses onto one line,
+     * Windows paths go unquoted. `company.yaml` is a file the user READS and
+     * commits to git — it has to look like the commented example right above
+     * this key.
      *
-     * Ép block cho map ở cả hai tầng. `args` cũng ra block theo — hơi khác ví
-     * dụ đã comment, nhưng đọc tốt hơn với tên gói dài kèm số phiên bản ghim.
+     * Force block style at both levels. `args` comes out block-styled too — a
+     * bit different from the commented example, but it reads better with a
+     * long package name plus a pinned version number.
      */
     const block = (n: unknown) => {
       if (n && typeof n === 'object') (n as { flow?: boolean }).flow = false;
@@ -579,40 +692,48 @@ export class Company {
     block(doc.get('mcpServers', true));
     block(doc.get('arms', true));
     doc.setIn(['mcpServers', id], block(doc.createNode(input.config)));
-    // Giữ nhãn cũ nếu mục đã có trong sổ — người dùng cắm lại một thứ từng đặt
-    // tên thì cái tên đó là của họ, đừng lặng lẽ thay bằng tên mặc định.
+    // Keep the old label if the entry is already in the roster — a user
+    // plugging back in something they once named owns that name, don't
+    // silently swap it for a default.
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ BỐN NẤC, và thứ tự là thứ tự ĐỘ TIN CẬY của cái tên. (user 31/08)  │
+     * │ FOUR TIERS, and the order is the order of TRUST in the name.        │
+     * │ (user, 08/31)                                                      │
      * │                                                                    │
-     * │  ① sổ chung   cắm lại thứ từng đặt tên ⇒ tên đó là **của họ**       │
-     * │  ② người gõ   khoá trong `{"mcpServers":{"so-tay":…}}`, hoặc tên    │
-     * │               mục danh mục. Tên **chuẩn**, do một con người viết ra │
-     * │  ③ suy từ cấu hình  `deepwiki.com` · `server-memory` — máy suy, đọc │
-     * │               được, và đúng trong đa số ca                          │
-     * │  ④ băm        thật thà, nhưng vô nghĩa với người đọc                │
+     * │  ① shared roster   plugging back in something once named ⇒ that     │
+     * │                     name is **theirs**                              │
+     * │  ② what they typed  the key in `{"mcpServers":{"notebook":…}}`,       │
+     * │                     or a catalog entry's name. A **proper** name,    │
+     * │                     written by a human being                        │
+     * │  ③ inferred from config  `deepwiki.com` · `server-memory` — machine-   │
+     * │                     inferred, readable, and correct in most cases     │
+     * │  ④ hash             honest, but meaningless to a reader              │
      * │                                                                    │
-     * │ Nấc ③ mới thêm. Trước đó ② rơi thẳng xuống ④, nên khối JSON **trần** │
-     * │ (không có vỏ `mcpServers`) luôn ra một cái băm.                     │
+     * │ Tier ③ is newly added. Before this, ② fell straight through to ④,    │
+     * │ so a **bare** JSON block (with no `mcpServers` wrapper) always        │
+     * │ produced a hash.                                                    │
      * │                                                                    │
-     * │ ⚠ Và từ 30/08 nó KHÔNG còn chỉ là chuyện thẩm mỹ: `armReach` dựng    │
-     * │ dòng danh bạ bằng `label || id`, nên nhãn rỗng nghĩa là **Trợ lý     │
-     * │ nhìn thấy một cái băm làm tên cánh tay** — đúng ca §16r, nơi một cái │
-     * │ tên model không có tiên nghiệm khiến nó **lấp chỗ trống**.          │
+     * │ ⚠ And since 08/30 it's NOT just cosmetic anymore: `armReach` builds    │
+     * │ the roster line with `label || id`, so an empty label means **the      │
+     * │ Assistant sees a hash as the arm's name** — exactly the case in        │
+     * │ §16r, where a model with no prior on a name **fills the gap in for      │
+     * │ itself**.                                                            │
      * └────────────────────────────────────────────────────────────────────┘
      */
     const label =
       this.config.arms[id]?.label || input.label?.trim() || defaultArmLabel(input.config) || id;
     /**
-     * ⚠ `tools` cũng phải GHI RA ĐĨA, không chỉ nhận vào tham số. Cắm lại một
-     * cánh tay đã biết thì lấy lại danh sách cũ — cùng lý lẽ với `label` ngay
-     * trên: cùng băm nghĩa là **cùng cấu hình**, nên tập việc đã giải vẫn đúng.
+     * ⚠ `tools` also has to be WRITTEN TO DISK, not just accepted as a
+     * parameter. Plugging a known arm back in reuses the old list — same
+     * logic as `label` right above: the same hash means **the same config**,
+     * so the previously-resolved tool set is still correct.
      */
     /**
-     * ⚠ Với tờ khai CLI, danh sách việc suy được **từ chính tờ khai**, không phải
-     * chờ một lượt `probeArm`. Thiếu nó thì `pickMcp` cấp **cả server**
-     * (`mcp__<băm>`) — rộng hơn thứ ta định cấp, và im lặng. Cùng cái lỗ
-     * `arms[].tools` sinh ra để đóng, chỉ khác nguồn dữ liệu.
+     * ⚠ For a CLI declaration, the tool list is inferred **from the
+     * declaration itself**, not by waiting for a `probeArm` round trip.
+     * Without this, `pickMcp` grants **the entire server** (`mcp__<hash>`) —
+     * broader than what we meant to grant, and silently so. The same hole
+     * `arms[].tools` was built to close, just a different data source.
      */
     const tools = input.tools?.length
       ? input.tools
@@ -621,21 +742,24 @@ export class Company {
         : (this.config.arms[id]?.tools ?? []);
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 `does` — TRƯỜNG CÓ SCHEMA, CÓ NGƯỜI ĐỌC, **CHƯA AI GHI** (tới 31/08)│
+     * │ 🔴 `does` — A FIELD WITH A SCHEMA, WITH A READER, **NOBODY WRITES IT**  │
+     * │ (as of 08/31)                                                         │
      * │                                                                      │
-     * │ Bản vá 30/08 dựng `types.ts §arms.does` và `assistant.ts §armReach`   │
-     * │ đọc nó, rồi dừng ở đó: không cửa nào trong sản phẩm ghi trường này —  │
-     * │ chỉ spike ghi bằng tay. Nên năng lực *"cánh tay tự khai làm được gì"* │
-     * │ **chưa từng chạy trong app một lần nào**, và không có test nào đỏ vì  │
-     * │ trường vắng là hợp lệ (`.default([])`).                              │
+     * │ The 08/30 patch built `types.ts §arms.does` and `assistant.ts             │
+     * │ §armReach` reads it, then stopped there: no path in the product writes    │
+     * │ this field — only a spike wrote it by hand. So the capability *"an arm     │
+     * │ declares what it can do"* **has never once run inside the app**, and       │
+     * │ no test goes red because an absent field is valid (`.default([])`).       │
      * │                                                                      │
-     * │ Đo được cái giá của nó ngay hôm nay: cùng một câu hỏi, cùng cánh tay  │
-     * │ — nhãn trần ⇒ Trợ lý **không giao việc**; có `does` ⇒ giao việc, gọi  │
-     * │ thật, đúng số, **4/4 lượt**. → SPEC-arms §16r · §16s                  │
+     * │ Measured the cost today: same question, same arm — bare label ⇒ the       │
+     * │ Assistant **doesn't hand out the task**; with `does` ⇒ hands it out,      │
+     * │ calls it for real, correct count, **4/4 turns**. → SPEC-arms §16r ·        │
+     * │ §16s                                                                  │
      * │                                                                      │
-     * │ ⚠ Nguồn là `say` của từng action (câu tiếng người), KHÔNG phải `id`:  │
-     * │ `dem_hoa_don` là tên máy, và §7b cấm dán tên tool thô vào danh bạ.    │
-     * │ Trần 4 việc — dòng danh bạ đi vào prefix **mọi lượt `route()`**.      │
+     * │ ⚠ The source is each action's `say` (a human-language sentence), NOT      │
+     * │ `id`: `dem_hoa_don` is a machine name, and §7b bans pasting raw tool        │
+     * │ names into the roster. Capped at 4 items — the roster line enters the      │
+     * │ prefix on **every `route()` turn**.                                       │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     const does = cliSays(input.config).length
@@ -650,8 +774,9 @@ export class Company {
           secrets: secretNames,
           ...(tools.length ? { tools } : {}),
           ...(does.length ? { does } : {}),
-          // Nấc quyền — đã nằm trong băm, ghi ra để người dùng ĐỌC ĐƯỢC bằng mắt
-          // thay vì phải tin cái huy hiệu trên giao diện. → §6j
+          // Permission tier — already inside the hash, written out so the user
+          // can READ IT WITH THEIR OWN EYES instead of having to trust the
+          // badge in the UI. → §6j
           ...(input.level ? { level: input.level } : {}),
         }),
       ),
@@ -667,14 +792,14 @@ export class Company {
 
     this.emit({
       type: 'company.offices',
-      say: `Đã cắm "${label}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.`,
+      say: t('co.armPlugged', { label }),
       office: '',
       plan_id: null,
     });
     return id;
   }
 
-  /** Vai trò nào trong văn phòng này đang nối tới cánh tay `id`? */
+  /** Which role in this office is connected to arm `id`? */
   private armInUse(officeId: string, id: string): boolean {
     const office = this.offices.get(officeId);
     if (!office) return false;
@@ -687,18 +812,19 @@ export class Company {
   }
 
   /**
-   * ĐỔI TÊN một cánh tay. Chỉ đụng `arms[id].label` — không ai tham chiếu tới
-   * nhãn, nên đây là thao tác rẻ nhất trong cả hệ: không đổi khoá, không viết
-   * lại `roles/*.yaml`, không phá cache của ai.
+   * RENAME an arm. Only touches `arms[id].label` — nothing references the
+   * label, so this is the cheapest operation in the whole system: no key
+   * changes, no rewriting `roles/*.yaml`, no cache broken for anyone.
    *
-   * Đó chính là lý do danh tính phải là BĂM chứ không phải cái tên: hồi `id`
-   * còn là tên người dùng gõ, "đổi tên" là ĐỔI KHOÁ, kéo theo một cuộc di trú
-   * nhỏ qua mọi vai trò của mọi văn phòng — mỗi lần bấm.
+   * That's exactly why the identity has to be a HASH and not the name: back
+   * when `id` was whatever the user typed, "renaming" meant CHANGING THE KEY,
+   * dragging a small migration across every role of every office — on every
+   * click.
    */
   renameArm(id: string, label: string): string {
     const next = label.trim();
-    if (!next) throw new RunError('Tên kết nối không được để trống.', 'other');
-    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+    if (!next) throw new RunError(t('co.armNameEmpty'), 'other');
+    if (!(id in this.config.mcpServers)) throw new RunError(t('co.noArm', { id }), 'other');
 
     const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
     if (!doc.has('arms')) doc.set('arms', doc.createNode({}));
@@ -710,43 +836,50 @@ export class Company {
     );
     this.config = loadCompanyConfig(this.dir);
     for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
-    this.emit({ type: 'company.offices', say: `Kết nối giờ tên là "${next}".`, office: '', plan_id: null });
+    this.emit({ type: 'company.offices', say: t('co.armRenamed', { name: next }), office: '', plan_id: null });
     return next;
   }
 
   /**
-   * RÚT một cánh tay khỏi công ty.
+   * UNPLUG an arm from the company.
    *
-   * ⚠ **Chìa KHÔNG bị xoá theo.** Rút dây ≠ vứt chìa: người dùng hay rút để xoay
-   * token hoặc thử một server khác, và bắt họ đi lấy lại token là phạt một thao
-   * tác vốn vô hại. Muốn xoá chìa thì có đường riêng, có chủ ý.
+   * ⚠ **Credentials are NOT deleted along with it.** Unplugging ≠ throwing
+   * away the credential: users often unplug to rotate a token or try a
+   * different server, and forcing them to re-obtain a token would punish an
+   * otherwise harmless action. Deleting a credential has its own, deliberate,
+   * path.
    *
-   * Cạnh nối `mcp→agent` sống trong `roles/*.yaml`; `layout.read()` tự bỏ qua
-   * cạnh trỏ tới node không còn tồn tại, nên không cần dọn tay ở đây.
+   * The `mcp→agent` edge lives in `roles/*.yaml`; `layout.read()` already
+   * skips an edge pointing at a node that no longer exists, so no manual
+   * cleanup is needed here.
    */
   /**
-   * XOÁ một cánh tay KHỎI MỘT VĂN PHÒNG. Sổ chung **không bị đụng**.
+   * REMOVE an arm FROM ONE OFFICE. The shared roster **is not touched**.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐỔI NGHĨA 23/08, và nó là thứ xoá được cả khái niệm "lưu trữ".           │
+   * │ MEANING CHANGED 08/23, and it's what let the whole "archive" concept get   │
+   * │ deleted.                                                                 │
    * │                                                                          │
-   * │ Bản trước xoá khỏi `company.yaml`, tức mất luôn cấu hình — nên mới cần   │
-   * │ một mức "cất đi" ở giữa để giữ nó lại. Giờ cấu hình sống trong SỔ CHUNG   │
-   * │ và không ai xoá nó, nên "xoá" đã mang đúng tính chất của "cất đi": cắm   │
-   * │ lại cùng thư mục ⇒ cùng băm ⇒ tìm thấy nguyên vẹn.                       │
+   * │ The previous version deleted from `company.yaml`, i.e. lost the config     │
+   * │ entirely — which is why a middle "put it away" tier was needed to keep    │
+   * │ it around. Now config lives in the SHARED ROSTER and nobody deletes it,    │
+   * │ so "remove" already carries the exact nature of "put away": plug the       │
+   * │ same directory back in ⇒ same hash ⇒ found intact.                        │
    * │                                                                          │
-   * │ ⇒ Một mức thay vì hai. Nhân viên cần hai mức vì họ mang thứ dựng lại     │
-   * │ không được; cánh tay chỉ mang cấu hình. Mượn khái niệm từ chỗ nó xứng    │
-   * │ đáng sang chỗ nó không, là thứ ta vừa gỡ ra.                              │
+   * │ ⇒ One tier instead of two. Workers need two tiers because what they        │
+   * │ carry can't be rebuilt; an arm only carries config. Borrowing a concept     │
+   * │ from where it earns its keep to where it doesn't is exactly what just       │
+   * │ got removed.                                                             │
    * │                                                                          │
-   * │ Mất một thứ, nói ra: SỢI DÂY. Cắm lại phải nối lại. Với một cánh tay     │
-   * │ phục vụ 1–2 người thì đó là một cú kéo — rẻ hơn hẳn việc nuôi cả một     │
-   * │ khái niệm chỉ để cứu nó.                                                  │
+   * │ One thing is lost, and it's said out loud: THE WIRE. Plugging back in       │
+   * │ means rewiring. For an arm serving 1–2 people, that's one drag of a          │
+   * │ connection — far cheaper than maintaining an entire concept just to save    │
+   * │ it.                                                                       │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ IDEMPOTENT: "xoá thứ đã không còn" phải THÀNH CÔNG. Một câu từ chối chỉ
-   * đúng khi người dùng còn đường đi tiếp; ở đây không có đường nào, nên nó sẽ
-   * là một ngõ cụt chứ không phải một lời từ chối.
+   * ⚠ IDEMPOTENT: "removing something already gone" must SUCCEED. A rejection
+   * message is only correct when the user still has a path forward; here
+   * there is none, so it would be a dead end rather than a rejection.
    */
   removeArm(id: string, officeId?: string): void {
     const targets = officeId ? [this.get(officeId)] : [...this.offices.values()];
@@ -755,7 +888,7 @@ export class Company {
     const label = this.config.arms[id]?.label || id;
     this.emit({
       type: 'company.offices',
-      say: `Đã rút "${label}". Cắm lại lúc nào cũng được — cấu hình và chìa vẫn giữ.`,
+      say: t('co.armUnplugged', { label }),
       office: officeId ?? '',
       plan_id: null,
     });
@@ -763,42 +896,47 @@ export class Company {
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ XOÁ HẲN khỏi SỔ CHUNG — mức thứ hai, và là mức DUY NHẤT không lấy lại    │
-   * │ được. (user chốt 25/08: *"Người dùng nên chịu trách nhiệm với hành động  │
-   * │ của mình"*)                                                              │
+   * │ PERMANENTLY DELETE from the SHARED ROSTER — the second tier, and the       │
+   * │ ONLY one that can't be undone. (user settled 08/25: *"the user should       │
+   * │ be responsible for their own actions"*)                                    │
    * │                                                                          │
-   * │ Vì sao nó cần tồn tại, và lý do mạnh nhất là luật của chính dự án này:   │
-   * │ tới hôm nay, gỡ một mục mồ côi khỏi sổ chỉ làm được bằng cách **mở       │
-   * │ `company.yaml` và sửa tay** — mà một bước "mở file yaml" là **chuông      │
-   * │ báo** (§6a, chốt 22/08). Không có nút này thì `mcpServers:` chỉ có thể   │
-   * │ dài ra, mãi mãi.                                                         │
+   * │ Why it needs to exist, and the strongest reason is this project's own       │
+   * │ rule: as of today, removing an orphaned entry from the roster can only       │
+   * │ be done by **opening `company.yaml` and hand-editing it** — and an "open      │
+   * │ the yaml file" step is a **warning bell** (§6a, settled 08/22). Without         │
+   * │ this button, `mcpServers:` can only ever grow longer, forever.               │
    * │                                                                          │
-   * │ ⚠ MỘT MỤC MỒ CÔI KHÔNG TỐN TOKEN — đừng bán tính năng này bằng lý do sai:│
-   * │ `pickMcp` chỉ dựng server có tên trong `role.mcp`. Cái nó tốn là **chỗ   │
-   * │ trong đầu người dùng**: danh sách "đã cắm ở văn phòng khác" dài dần bằng │
-   * │ những thứ không ai còn nhớ là gì.                                        │
+   * │ ⚠ AN ORPHANED ENTRY COSTS NO TOKENS — don't sell this feature on the           │
+   * │ wrong reason: `pickMcp` only builds a server whose name appears in            │
+   * │ `role.mcp`. What it costs is **space in the user's head**: a list of            │
+   * │ "already plugged in at another office" grows longer with things nobody           │
+   * │ remembers the purpose of anymore.                                            │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠⚠ **CHÌA KHÔNG BỊ XOÁ THEO** — và đây là thứ làm cho quyết định trên rẻ.
+   * ⚠⚠ **CREDENTIALS ARE NOT DELETED ALONG WITH IT** — and this is what makes
+   * the decision above cheap.
    *
-   * Phần đắt của việc cắm một cánh tay là **đi lấy chìa**, không phải cấu hình.
-   * Cấu hình dựng lại từ danh mục trong ba cú bấm; chìa thì phải sang tận trang
-   * của hãng. Chìa sống ở `.state/secrets.json` **theo TÊN**, độc lập với sổ —
-   * nên xoá nhầm mất cái rẻ, giữ lại cái đắt. Muốn bỏ chìa thì có đường riêng,
-   * có chủ ý: `agentco secret rm <TÊN>`.
+   * The expensive part of plugging in an arm is **going and getting the
+   * credential**, not the config. Config rebuilds from the catalog in three
+   * clicks; a credential means a trip to the provider's own site.
+   * Credentials live in `.state/secrets.json` **by NAME**, independent of the
+   * roster — so deleting the wrong thing here loses the cheap part and keeps
+   * the expensive one. Removing a credential has its own, deliberate, path:
+   * `agentco secret rm <NAME>`.
    *
-   * ⚠ Chặn khi còn ai dùng, và "dùng" có HAI nghĩa — thiếu một nghĩa là xoá mất
-   * một node đang nằm trên sơ đồ của ai đó:
-   *   · `role.mcp`        — có sợi dây tới một nhân viên
-   *   · `office.arms`     — **có mặt** trên sơ đồ, chưa nối dây (node chờ)
+   * ⚠ Blocked while anyone's still using it, and "using" has TWO meanings —
+   * missing one means deleting a node still sitting on someone's diagram:
+   *   · `role.mcp`        — has a wire to a worker
+   *   · `office.arms`     — **present** on the diagram, not wired up yet (a waiting node)
    */
   /**
-   * Văn phòng nào còn giữ cánh tay này — theo CẢ HAI nghĩa của "giữ".
+   * Which offices still hold this arm — under BOTH meanings of "hold".
    *
-   * ⚠ Một hàm, hai chỗ gọi: cái chốt trong `forgetArm` và cái cờ `orphan` mà
-   * giao diện dùng để quyết có hiện nút xoá hẳn hay không. Tách làm hai bản là
-   * mở đúng cửa cho một nút hiện ra rồi bấm vào thì bị từ chối — hoặc tệ hơn,
-   * một nút KHÔNG hiện ra cho thứ đáng lẽ xoá được.
+   * ⚠ One function, two call sites: the gate inside `forgetArm`, and the
+   * `orphan` flag the UI uses to decide whether to show the permanent-delete
+   * button. Splitting it into two copies opens exactly the door where a
+   * button shows up and clicking it gets rejected — or worse, a button
+   * doesn't show up for something that could actually be deleted.
    */
   private armHolders(id: string): string[] {
     const out: string[] = [];
@@ -810,14 +948,16 @@ export class Company {
   }
 
   forgetArm(id: string): void {
-    if (!(id in this.config.mcpServers)) throw new RunError(`Không có kết nối "${id}".`, 'other');
+    if (!(id in this.config.mcpServers)) throw new RunError(t('co.noArm', { id }), 'other');
 
     const holders = this.armHolders(id);
     if (holders.length) {
       throw new RunError(
-        `"${this.config.arms[id]?.label || id}" vẫn đang ở ${holders.length} văn phòng ` +
-          `(${holders.join(', ')}). Rút khỏi từng chỗ trước đã — xoá hẳn một thứ đang được dùng ` +
-          `là làm hỏng sơ đồ của người khác.`,
+        t('co.armStillInUse', {
+          label: this.config.arms[id]?.label || id,
+          n: String(holders.length),
+          offices: holders.join(', '),
+        }),
         'other',
       );
     }
@@ -834,24 +974,27 @@ export class Company {
     this.config = loadCompanyConfig(this.dir);
     for (const office of this.offices.values()) office.applyCompanyConfig(this.config);
     /**
-     * ⚠ PHẢI BÁO, y như `removeArm`. Thiếu sự kiện này thì mọi tab khác (và
-     * chính tab đang mở, nếu nó nghe SSE thay vì tự nạp lại) giữ cái mã vừa chết
-     * cho tới khi người dùng F5 — đúng triệu chứng user báo 26/08.
+     * ⚠ MUST notify, just like `removeArm`. Without this event, every other
+     * tab (and the current one too, if it listens to SSE instead of
+     * self-reloading) keeps the code that just died until the user hits F5 —
+     * exactly the symptom the user reported 08/26.
      */
     this.emit({
       type: 'company.offices',
-      say: `Đã xoá hẳn "${label}" khỏi sổ chung. Chìa vẫn được giữ.`,
+      say: t('co.armDeleted', { label }),
       office: '',
       plan_id: null,
     });
   }
 
   /**
-   * Tên WORKSPACE của một cánh tay — tra `arms[id].secrets` ra kho OAuth.
+   * An arm's WORKSPACE name — looks up `arms[id].secrets` in the OAuth store.
    *
-   * Một hàm, hai chỗ gọi (`listArms` cho hộp thoại, `describeNode` cho bảng chi
-   * tiết). Tách làm hai bản là để hai màn hình nói hai chuyện về cùng một cánh
-   * tay — đúng thứ user vừa phàn nàn: *"1 loạt Notion thì biết là Notion nào"*.
+   * One function, two call sites (`listArms` for the dialog, `describeNode`
+   * for the detail panel). Splitting it into two copies would make two
+   * screens say two different things about the same arm — exactly what the
+   * user just complained about: *"with a bunch of Notion arms, which Notion
+   * is which"*.
    */
   armWorkspace(id: string): string | undefined {
     const names = this.config.arms[id]?.secrets ?? [];
@@ -860,45 +1003,70 @@ export class Company {
     return names.map((s) => oauth[s]?.label).find(Boolean);
   }
 
-  /** SỔ CHUNG + nơi nào đang dùng. → docs/SPEC-arms.md §6i */
+  /** The SHARED ROSTER + who's using each one. → docs/SPEC-arms.md §6i */
   listArms(): {
     id: string;
     label: string;
     catalog?: string;
     config: unknown;
-    /** TÊN chìa, không bao giờ giá trị — để giao diện nói "đã có sẵn, khỏi nhập lại". */
+    /** Credential NAMES, never values — so the UI can say "already set, no need to re-enter". */
     secrets: string[];
-    /** Nấc quyền — giao diện vẽ HUY HIỆU từ đây, KHÔNG từ chuỗi tên. → §6j */
+    /** Permission tier — the UI draws the BADGE from here, NOT from the name string. → §6j */
     level?: 'read' | 'add' | 'full';
     /**
-     * Tên WORKSPACE mà cánh tay này nối tới, tra từ kho OAuth.
+     * The WORKSPACE name this arm connects to, looked up from the OAuth store.
      *
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ User 26/08: *"1 loạt Notion thì biết là Notion nào"*.                │
+     * │ User, 08/26: *"with a bunch of Notion arms, which Notion is which"*.    │
      * │                                                                      │
-     * │ Suy từ `arms[].secrets` (tên chìa mang `workspace_id`) tra ngược ra   │
-     * │ nhãn trong `$oauth` — **không** đọc chuỗi `label`. Nhãn là của người  │
-     * │ dùng và đổi tự do; workspace là sự thật thuộc về cấu hình.           │
+     * │ Inferred from `arms[].secrets` (a credential name carrying              │
+     * │ `workspace_id`), looked back up against the label in `$oauth` —          │
+     * │ **not** reading the `label` string. A label belongs to the user and       │
+     * │ changes freely; a workspace is a fact that belongs to the config.          │
      * │                                                                      │
-     * │ Vắng khi: cánh tay không dùng OAuth, hoặc workspace đã bị gỡ. Cả hai  │
-     * │ đều là "không biết" ⇒ không vẽ gì, chứ không bịa một cái tên.         │
+     * │ Absent when: the arm doesn't use OAuth, or the workspace has been           │
+     * │ disconnected. Both cases are "unknown" ⇒ draw nothing, rather than           │
+     * │ making up a name.                                                        │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     via?: string;
-    /** Số việc đã cấp. Hiện cạnh huy hiệu để nhãn "chỉ đọc" kiểm được bằng mắt. */
+    /**
+     * The account this arm runs on has a DEAD credential — carries that
+     * account's label, so the interface can name it.
+     *
+     * ⚠ Derived from the SAME lookup as `via` (`arms[].secrets` against the
+     * OAuth store), deliberately: one more derived field, not a second
+     * mechanism. → [[agentco-count-mechanisms]]
+     *
+     * Why it has to travel with the arm rather than only with the account
+     * (real case, 09/03): all the interface had at the spot the user was
+     * standing was *"press Try it to be sure it is still alive"*, and Try it
+     * answered with the SDK's raw English 401. The store had known the key was
+     * dead since the day before. Knowing something and saying it at the place
+     * the person is standing are two different things.
+     * → [[agentco-scope-of-door-vs-data]]
+     *
+     * ⚠ Absent ≠ healthy. Only a refresh that a service REFUSED sets this
+     * (`oauth-routes.ts §refreshDue`); a credential revoked but never yet
+     * refreshed still reads as blank here and shows up as a 401 in use.
+     */
+    keyDead?: string;
+    /** Number of tools granted. Shown next to the badge so a "read-only" label can be visually verified. */
     toolCount: number;
     usedBy: { office: string; role: string }[];
     /**
-     * KHÔNG văn phòng nào còn giữ — kể cả kiểu "có mặt trên sơ đồ mà chưa nối
-     * dây". Chỉ mục như thế mới hiện nút **xoá hẳn**. Suy từ `usedBy` là sai:
-     * `usedBy` chỉ đếm sợi dây, nên một node đang nằm chờ trên sơ đồ sẽ trông
-     * như mồ côi. → `armHolders`
+     * NO office holds it anymore — including the "present on the diagram but
+     * not wired up" kind. Only an entry like that shows the **permanent
+     * delete** button. Inferring it from `usedBy` would be wrong: `usedBy`
+     * only counts wires, so a node still waiting on the diagram would look
+     * orphaned. → `armHolders`
      */
     orphan: boolean;
   }[] {
-    // Đọc kho MỘT LẦN cho cả danh sách: `readOAuth` parse cả file, mà một công
-    // ty chạy lâu có hàng chục cánh tay — gọi trong vòng lặp là đọc lại cùng
-    // một file hàng chục lần cho mỗi lần mở hộp thoại.
+    // Read the store ONCE for the whole list: `readOAuth` parses the entire
+    // file, and a long-running company can have dozens of arms — calling it
+    // inside the loop would re-read the same file dozens of times every time
+    // the dialog opens.
     const oauth = readOAuth(companyPaths(this.dir));
     return Object.entries(this.config.mcpServers).map(([id, config]) => {
       const usedBy: { office: string; role: string }[] = [];
@@ -915,11 +1083,20 @@ export class Company {
         config,
         secrets: meta?.secrets ?? [],
         ...(meta?.level ? { level: meta.level } : {}),
-        // Chìa nào của cánh tay này là một workspace đã nối ⇒ lấy nhãn của nó.
-        // Không tìm thấy ⇒ không vẽ gì; bịa một cái tên còn tệ hơn để trống.
+        // If any of this arm's credentials is a connected workspace ⇒ take
+        // its label. Not found ⇒ draw nothing; making up a name is worse than
+        // leaving it blank.
         ...(() => {
           const via = (meta?.secrets ?? []).map((s) => oauth[s]?.label).find(Boolean);
           return via ? { via } : {};
+        })(),
+        // Same lookup, one field further: which of this arm's credentials a
+        // service has already refused. Named by the account's own label,
+        // falling back to the credential name — an arm cannot be fixed by
+        // someone who does not know WHICH sign-in to redo.
+        ...(() => {
+          const name = (meta?.secrets ?? []).find((s) => oauth[s]?.dead);
+          return name ? { keyDead: oauth[name]?.label ?? name } : {};
         })(),
         toolCount: meta?.tools?.length ?? 0,
         usedBy,
@@ -930,29 +1107,36 @@ export class Company {
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ DÙNG LẠI MỘT CÁNH TAY ĐÃ CÓ TRONG SỔ — trọn gói, kể cả CHÌA. (bug 25/08) │
+   * │ REUSE AN ARM ALREADY IN THE ROSTER — the whole package, CREDENTIALS         │
+   * │ included. (bug, 08/25)                                                   │
    * │                                                                          │
-   * │ User báo: cắm Notion ở *Cánh tay* xong, sang *Trợ lý cá nhân* bấm "dùng  │
-   * │ lại" thì **401**. Và câu hỏi kèm theo là câu đúng:                       │
-   * │   *"Về lý thuyết văn phòng nào cũng có thể xài chung?"* — ĐÚNG, và đây   │
-   * │ là hàm làm cho nó đúng.                                                  │
+   * │ User reported: plug Notion in under *Arms*, go to *Personal Assistant*      │
+   * │ and click "reuse", get **401**. And the follow-up question was the right    │
+   * │ one:                                                                     │
+   * │   *"In theory any office should be able to share it?"* — CORRECT, and         │
+   * │ this function is what makes it correct.                                    │
    * │                                                                          │
-   * │ Vì sao nó hỏng: nút "dùng lại" cũ **dán cấu hình** sang đường "tự cắm"   │
-   * │ (`setPaste(JSON.stringify(a.config))`). Mà cấu hình trong sổ giữ Ô TRỐNG │
-   * │ `${NOTION_ACCESS_TOKEN}` — chìa nằm ở `.state/secrets.json`, đúng thiết  │
-   * │ kế. Đường "tự cắm" không có mục danh mục ⇒ không hiện ô chìa ⇒ không     │
-   * │ gửi chìa nào ⇒ header bay lên Notion **nguyên văn `Bearer ${…}`** ⇒ 401. │
+   * │ Why it was broken: the old "reuse" button **pasted the config** into the    │
+   * │ "plug in manually" path (`setPaste(JSON.stringify(a.config))`). But the     │
+   * │ config stored in the roster keeps a PLACEHOLDER                             │
+   * │ `${NOTION_ACCESS_TOKEN}` — the credential lives in                          │
+   * │ `.state/secrets.json`, by design. The "plug in manually" path has no          │
+   * │ catalog entry ⇒ shows no credential field ⇒ sends no credential ⇒ the           │
+   * │ header that reaches Notion is **literally `Bearer ${…}`** ⇒ 401.               │
    * │                                                                          │
-   * │ Và một hỏng thứ hai, im lặng hơn: `secretNames` khi ấy là `[]`, mà TÊN   │
-   * │ CHÌA NẰM TRONG BĂM (§armHash) ⇒ băm khác ⇒ nó tạo một cánh tay THỨ HAI   │
-   * │ trùng cấu hình thay vì dùng lại cái đã có. "Dùng lại" mà nhân bản.       │
+   * │ And a second, quieter break: `secretNames` was `[]` at that point, and         │
+   * │ CREDENTIAL NAMES ARE PART OF THE HASH (§armHash) ⇒ different hash ⇒ it            │
+   * │ creates a SECOND arm with a duplicate config instead of reusing the                │
+   * │ existing one. "Reuse" that duplicates.                                    │
    * │                                                                          │
-   * │ ⇒ Danh tính đi trọn gói hoặc không đi: cấu hình + tên chìa + việc được   │
-   * │ cấp, cả ba lấy từ SỔ, không cái nào đi vòng qua client.                  │
+   * │ ⇒ Identity travels as a whole package or not at all: config + credential      │
+   * │ names + granted tools, all three pulled from the ROSTER, none of them              │
+   * │ routed through the client.                                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ `secrets` trong kết quả là GIÁ TRỊ THẬT — chỉ để đưa xuống `probeArm`.
-   * Nó KHÔNG BAO GIỜ được lọt vào một phản hồi HTTP. Cùng luật với `pickMcp`.
+   * ⚠ `secrets` in the return value is the REAL VALUE — only meant to feed into
+   * `probeArm`. It must NEVER leak into an HTTP response. Same rule as
+   * `pickMcp`.
    */
   reuseArm(id: string): {
     config: Record<string, unknown>;
@@ -966,15 +1150,16 @@ export class Company {
     const config = this.config.mcpServers[id];
     if (!config) {
       throw new RunError(
-        `Không còn kết nối "${id}" trong sổ chung — có lẽ nó vừa bị gỡ. Đóng hộp thoại rồi mở lại.`,
+        t('co.armGoneFromList', { id }),
         'other',
       );
     }
     const meta = this.config.arms[id];
     const secretNames = meta?.secrets ?? [];
-    // Chỉ đọc đúng những chìa cánh tay này khai — không bê cả kho. `grantFor`
-    // cũng là chỗ chuỗi rỗng bị tính là THIẾU, nên chìa lưu hỏng lộ ra ở đây
-    // thay vì lộ ra bằng một câu 401 ở Notion.
+    // Reads only the exact credentials this arm declared — not the whole
+    // store. `grantFor` is also where an empty string counts as MISSING, so a
+    // corrupted stored credential shows up here instead of surfacing as a 401
+    // from Notion.
     const { env } = grantFor(readSecrets(companyPaths(this.dir)), secretNames);
     return {
       config: config as Record<string, unknown>,
@@ -982,30 +1167,32 @@ export class Company {
       tools: meta?.tools ?? [],
       label: meta?.label || id,
       ...(meta?.catalog ? { catalog: meta.catalog } : {}),
-      // Nấc đi theo trọn gói — thiếu nó thì `addArm` băm lại KHÔNG có nấc và ra
-      // một mã khác, tức "dùng lại" lại nhân bản. Đúng bug §6i-bis, cửa thứ hai.
+      // The tier travels with the whole package — without it, `addArm` would
+      // re-hash WITHOUT a tier and produce a different code, i.e. "reuse"
+      // duplicates again. The exact bug §6i-bis, second door.
       ...(meta?.level ? { level: meta.level } : {}),
       secrets: env,
     };
   }
 
   /**
-   * LƯU TRỮ / KHÔI PHỤC một văn phòng (soft delete). → docs/SPEC-offices.md §3.1
+   * ARCHIVE / RESTORE an office (soft delete). → docs/SPEC-offices.md §3.1
    *
-   * Chỉ gắn một cờ trong `office.yaml`. Không dời file, không đổi mã, không đụng
-   * tới `artifacts/` hay session của Trợ lý — nên khôi phục là trở lại nguyên
-   * vẹn, kể cả cuộc hội thoại đang dở.
+   * Only sets a flag in `office.yaml`. No files move, no code changes, nothing
+   * touches `artifacts/` or the Assistant's session — so restoring means
+   * coming back exactly as it was, including a conversation mid-thought.
    *
-   * Văn phòng đang chạy phải Dừng trước: cất một thứ đang tiêu tiền vào kho là
-   * cách chắc chắn nhất để nó tiêu tiếp mà không ai nhìn.
+   * A running office must be Stopped first: archiving something that's
+   * spending money is the surest way to have it keep spending with nobody
+   * watching.
    */
   archiveOffice(officeId: string, archived: boolean): void {
     const office = this.get(officeId);
     if (archived && office.currentState === 'working') {
-      throw new RunError('Văn phòng đang chạy việc. Bấm Dừng trước đã.', 'other');
+      throw new RunError(t('co.officeBusyStopFirst'), 'other');
     }
-    // Khôi phục xong mà trùng tên với một văn phòng đang sống thì ô chọn hiện
-    // hai dòng y hệt nhau. Kiểm ở đây, trước khi ghi.
+    // Restoring into a name collision with a living office would show two
+    // identical-looking rows in the picker. Check here, before writing.
     if (!archived) this.assertNameFree(office.name, officeId);
 
     const file = office.loaded.paths.configFile;
@@ -1018,41 +1205,97 @@ export class Company {
     this.emit({
       type: 'company.offices',
       say: archived
-        ? `Đã cất văn phòng "${office.name}" vào lưu trữ. Khôi phục được bất cứ lúc nào.`
-        : `Đã khôi phục văn phòng "${office.name}".`,
+        ? t('co.officeArchived', { name: office.name })
+        : t('co.officeRestored', { name: office.name }),
       office: officeId,
       plan_id: null,
     });
   }
 
   /**
-   * XOÁ HẲN: `rm -rf` cả thư mục. Nhân viên, kỹ năng, kho tri thức, kết quả — mất sạch.
+   * PERMANENTLY DELETE: `rm -rf` the whole directory, **and closes its cost
+   * ledger too**. Workers, skills, the knowledge store, outputs, cost lines —
+   * gone entirely from every report.
    *
-   * Không lấy lại được, và sổ chi phí sau đó chỉ còn cái MÃ để lần ra những dòng
-   * tiền của nó. Đó chính là lý do lưu trữ tồn tại và là mức nên dùng.
+   * Not recoverable. To keep history, use ARCHIVE — that's why it exists.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ WHY DELETING AN OFFICE MUST ALSO CLOSE ITS LEDGER — bug reported by the      │
+   * │ user 09/02.                                                              │
+   * │                                                                          │
+   * │ The previous version just `rm -rf`'d the directory and left                  │
+   * │ `logs/usage.jsonl` alone. Two consequences, and the second is far heavier:      │
+   * │                                                                          │
+   * │  ① The cost table sat there showing *"14 entries no longer exist"* — a         │
+   * │    user who wiped every office still saw money attributed to dead names.      │
+   * │                                                                          │
+   * │  ② 🔴 **A NEW OFFICE INHERITS A DEAD ONE'S LEDGER.** `createOffice` infers          │
+   * │    the id FROM THE NAME (`folderId`), so deleting "Content" and recreating         │
+   * │    "Content" produces the exact same `noi-dung`. The old lines instantly            │
+   * │    match back onto the new office: `gone` turns off, the name displays as           │
+   * │    the new name, and it arrives pre-loaded with dozens of turns plus a               │
+   * │    dollar amount it never actually spent. No symptom except one wrong                 │
+   * │    number — exactly the kind of lie this ledger is not allowed to tell.               │
+   * │                                                                          │
+   * │ No line gets rewritten: append a CUTOFF (`appendPurge`), and anyone                    │
+   * │ reading the ledger truncates against it. → `usage.ts §PurgeRecord`                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
   removeOffice(officeId: string): void {
     const office = this.offices.get(officeId);
     if (!office && !this.broken.has(officeId)) {
-      throw new RunError(`Không có văn phòng "${officeId}".`, 'other');
+      throw new RunError(t('co.noOffice', { office: officeId }), 'other');
     }
     if (office?.currentState === 'working') {
-      throw new RunError('Văn phòng đang chạy việc. Bấm Dừng trước đã.', 'other');
+      throw new RunError(t('co.officeBusyStopFirst'), 'other');
     }
-    if (!isSafeId(officeId)) throw new RunError('Mã văn phòng không hợp lệ.', 'other');
+    if (!isSafeId(officeId)) throw new RunError(t('co.officeIdInvalid'), 'other');
 
     this.offices.delete(officeId);
     this.broken.delete(officeId);
     fs.rmSync(path.join(this.paths.offices, officeId), { recursive: true, force: true });
+    appendPurge(this.paths, officeId);
     this.emit({
       type: 'company.offices',
-      say: `Đã xoá hẳn văn phòng "${officeId}".`,
+      say: t('co.officeDeleted', { id: officeId }),
       office: officeId,
       plan_id: null,
     });
   }
 
-  // ── sự kiện
+  /**
+   * Sweep up the *"no longer exists"* entries left sitting in the ledger —
+   * offices deleted BEFORE `removeOffice` knew how to close its own ledger,
+   * plus the block of v0 records (from before offices existed).
+   *
+   * Only touches entries where **no living office** carries that id. A living
+   * or archived office is never touched — this button isn't "delete my
+   * history", it's a broom for exactly the junk currently showing on screen.
+   */
+  purgeGoneUsage(): { offices: number; tasks: number; costUSD: number } {
+    const gone = this.costByOffice().filter((r) => r.gone);
+    const at = new Date();
+    for (const r of gone) appendPurge(this.paths, r.office, at);
+    const out = {
+      offices: gone.length,
+      tasks: gone.reduce((n, r) => n + r.tasks, 0),
+      costUSD: gone.reduce((n, r) => n + r.costUSD, 0),
+    };
+    if (out.offices > 0) {
+      this.emit({
+        type: 'company.offices',
+        // A COMPANY-level event: belongs to no office (`history(id)` filters
+        // on this field, so tagging it with some random id would make it show
+        // up in someone else's log).
+        say: t('co.ledgerPurged', { n: String(out.offices) }),
+        office: '',
+        plan_id: null,
+      });
+    }
+    return out;
+  }
+
+  // ── events
 
   on(fn: (e: AgentEvent) => void): () => void {
     this.bus.on('event', fn);
@@ -1065,12 +1308,12 @@ export class Company {
     this.bus.emit('event', e);
   }
 
-  /** Vòng đệm để client kết nối muộn vẫn thấy được chuyện vừa xảy ra. */
+  /** A ring buffer so a client that connects late can still see what just happened. */
   history(officeId?: string): AgentEvent[] {
     return officeId ? this.recent.filter((e) => e.office === officeId) : [...this.recent];
   }
 
-  // ── chi phí: một sổ cho cả công ty
+  // ── cost: one ledger for the whole company
 
   costReport(sinceMs?: number, officeId?: string): CostReport {
     return summarize(this.usageRecords(sinceMs, officeId));
@@ -1081,14 +1324,15 @@ export class Company {
   }
 
   /**
-   * Chi phí tách theo văn phòng — để thấy văn phòng nào đang ăn hết hạn mức.
+   * Cost broken down by office — to see which office is eating the budget.
    *
-   * `gone: true` = văn phòng không còn trên đĩa (xoá hẳn), hoặc bản ghi có từ
-   * TRƯỚC khi có khái niệm văn phòng (v0, cột `office` rỗng). Giao diện gom
-   * những dòng này vào một khối đóng/mở — **gộp để HIỂN THỊ, không gộp DỮ
-   * LIỆU**: danh sách không dài ra theo số văn phòng đã xoá, mà bung ra vẫn thấy
-   * đủ từng dòng và từng cái mã. Cộng chúng lại thành một cục "đã xoá" thì cái
-   * mã mất, và cái mã là manh mối duy nhất còn lại để biết tiền đã đi đâu.
+   * `gone: true` = the office is no longer on disk (permanently deleted), or
+   * the record predates the office concept (v0, empty `office` column). The
+   * UI collapses these lines into a collapsible block — **merged for
+   * DISPLAY, not merged as DATA**: the list doesn't grow with every deleted
+   * office, but expanding it still shows every line and every code
+   * individually. Summing them into one "deleted" blob would lose the code,
+   * and the code is the only remaining clue to where the money went.
    */
   costByOffice(sinceMs?: number): Array<{
     office: string;
@@ -1101,12 +1345,13 @@ export class Company {
   }> {
     const LEGACY = '';
     /**
-     * Gộp qua bảng ĐỔI TÊN trước khi cộng. → `usage.ts §renameChain`
+     * Collapse through the RENAME table before summing. → `usage.ts §renameChain`
      *
-     * Không có dòng này thì đổi tên `bao-cao` → `kiem-ke` làm sổ tách làm hai
-     * mục: một mục "kiem-ke" mới tinh, và một mục "bao-cao" bị đánh dấu `gone`
-     * — tức là giao diện nói với người dùng rằng họ có một văn phòng đã xoá,
-     * trong khi họ chỉ đổi tên. Đúng loại nói dối mà cuốn sổ này không được phép.
+     * Without this line, renaming `bao-cao` → `kiem-ke` would split the ledger
+     * into two entries: a brand-new "kiem-ke" entry, and a "bao-cao" entry
+     * marked `gone` — telling the user they have a deleted office, when all
+     * they did was rename it. Exactly the kind of lie this ledger is not
+     * allowed to tell.
      */
     const chain = renameChain(this.paths);
     const byOffice = new Map<string, { tasks: number; costUSD: number; turns: number }>();
@@ -1123,10 +1368,11 @@ export class Company {
         const live = this.offices.get(office);
         return {
           office,
-          // Nói đúng sự thật cho từng ca: mã cũ đã xoá thì hiện MÃ (manh mối duy
-          // nhất còn lại); bản ghi v0 thì nói rõ nó có trước khi tách văn phòng,
-          // chứ không gọi là "đã xoá" — không có văn phòng nào bị xoá ở đó cả.
-          name: live?.name ?? (office === LEGACY ? '(trước khi tách văn phòng)' : office),
+          // Tell the truth for each case: a deleted old code shows THE CODE
+          // (the only clue left); a v0 record says explicitly that it predates
+          // offices existing, rather than calling it "deleted" — no office was
+          // ever deleted there.
+          name: live?.name ?? (office === LEGACY ? t('co.beforeOfficesSplit') : office),
           ...v,
           archived: live?.archived ?? false,
           gone: !live,
@@ -1136,12 +1382,13 @@ export class Company {
   }
 
   /**
-   * Bản ghi chi phí, lọc theo văn phòng nếu có.
+   * Cost records, filtered by office if given.
    *
-   * ⚠ Lọc phải nhận CẢ id cũ đã đổi tên. Thiếu chỗ này thì
-   * `agentco cost --office kiem-ke` trả về đúng những gì tiêu SAU khi đổi tên,
-   * và toàn bộ lịch sử trước đó biến mất không dấu vết — người dùng thấy văn
-   * phòng chạy hai tháng mà sổ chỉ ghi hai ngày. → `usage.ts §renameChain`
+   * ⚠ The filter must also accept the OLD, renamed-away id. Without this,
+   * `agentco cost --office kiem-ke` would return exactly what was spent AFTER
+   * the rename, with all history before it gone without a trace — a user
+   * sees an office that's run for two months while the ledger shows two days.
+   * → `usage.ts §renameChain`
    */
   private usageRecords(sinceMs?: number, officeId?: string): UsageRecord[] {
     const all = readUsage(this.paths, sinceMs);
@@ -1151,64 +1398,54 @@ export class Company {
   }
 }
 
-// ─────────────────────────────────────────────────────────── mẫu
+// ─────────────────────────────────────────────────────────── templates
 
+/**
+ * ⚠ NO COMMENTS. → the box on `companyTemplate` in `src/cli/index.ts`
+ *
+ * `display_name` is deliberately absent rather than empty: absent means "nobody
+ * named this assistant", and the interface then shows a label in the chosen
+ * language. The moment a person types a name the key gets written and it is
+ * their datum, never translated again.
+ */
 function officeTemplate(id: string, name: string): string {
   return `id: ${id}
 name: ${JSON.stringify(name)}
 charter_file: charter.md
 
 assistant:
-  display_name: "Trợ lý"
   avatar: "★"
-
-  # Kết quả rơi xuống đâu khi yêu cầu không nghiêng hẳn về bên nào:
-  #   file  - người dùng MỞ file (bài viết, báo cáo, bảng, hợp đồng)
-  #   reply - người dùng ĐỌC câu trả lời ngay trong ô chat (hỏi đáp, tra cứu)
-  # Task "reply" VẪN ghi file như thường; nó chỉ thôi bắt người ta đi mở file.
-  # Văn phòng chuyên hỏi-đáp thì đổi dòng này thành reply.
   default_deliver: file
-
-  # MCP/API mà Trợ lý "dùng được". Thực chất chúng được gắn cho một worker ẩn
-  # chạy phía sau, KHÔNG gắn thẳng vào Trợ lý: Trợ lý là session dài, resume
-  # liên tục, mà MCP phá prompt cache khi resume -> mất rất nhiều token MỖI LƯỢT
-  # trò chuyện. Cắm bằng cách kéo dây trên sơ đồ.
   mcp: []
 `;
 }
 
-/**
- * Skills mặc định của Trợ lý — CỐ Ý rất ngắn, và CỐ Ý không nói gì với người dùng.
+/*
+ * `assistantSkillsDefault()` was REMOVED ENTIRELY on 05/09 — the same fate,
+ * for a neighbouring reason, as `charterTemplate()` below.
  *
- * Khối này nằm trong prefix cache của MỌI lượt trò chuyện, nên mỗi dòng ở đây là
- * một khoản thuế thu suốt ca làm việc. Bản đầu tiên mở bằng câu "Đây là phần BẠN
- * viết, xoá sạch cũng được" — một lời nhắn gửi NGƯỜI DÙNG, nằm trong prompt gửi
- * cho MODEL. Model không sửa được file, nên câu đó chỉ là nhiễu có phí.
- *
- * Lời giải thích "bạn sửa được cái này" đã chuyển vào bảng prompt phân lớp trên
- * giao diện, nơi người dùng thật sự đọc nó, và nơi nó không tốn token nào.
+ * It read `t('seed.assistantSkills.body')` and wrote the result into the new
+ * office's `skills/assistant.md`. The argument for letting it through the
+ * catalogue was that seed content becomes the user's own datum the moment it
+ * lands. True — and that is precisely why it was the wrong thing to write:
+ * the file it produced then sat in the cached prefix of every chat turn,
+ * holding the only language in the entire prompt. → the box at `newOffice`
  */
-const ASSISTANT_SKILLS_DEFAULT = `Xưng "mình", gọi người dùng là "bạn". Nói ngắn, không khách sáo.
-
-Khi yêu cầu còn mơ hồ ở chỗ ảnh hưởng tới kết quả (làm cho ai, dài bao nhiêu,
-giọng thế nào, dựa trên tài liệu nào), hỏi lại đúng MỘT câu quan trọng nhất.
-Thà hỏi còn hơn đoán sai rồi làm lại.
-
-Báo cáo bằng lời người thường: đã xong gì, có gì cần để ý. Không nhắc tên tool,
-không nhắc số token, không dùng thuật ngữ kỹ thuật.
-`;
 
 /*
- * `charterTemplate()` đã bị BỎ HẲN ngày 17/08 — không thay bằng gì cả.
+ * `charterTemplate()` was REMOVED ENTIRELY on 08/17 — not replaced with
+ * anything.
  *
- * Nó từng ghi sẵn `knowledge/shared/_charter.md` với frontmatter đầy đủ và thân
- * rỗng, để charter vừa là lớp prompt vừa là node tri thức. Đó chính là gốc của
- * ba lỗi mà người dùng gặp cùng lúc (xem `charter_file` trong `types.ts` và
- * `migrateCharters()` trong `migrate.ts`).
+ * It used to write `knowledge/shared/_charter.md` upfront with full
+ * frontmatter and an empty body, so the charter was both a prompt layer and a
+ * knowledge node at once. That was the root of three bugs the user hit at
+ * once (see `charter_file` in `types.ts` and `migrateCharters()` in
+ * `migrate.ts`).
  *
- * Charter giờ là `charter.md` ở gốc văn phòng, markdown thuần, và **chỉ ra đời
- * khi người dùng lưu lần đầu**. Không có file mặc định nào cả: một file rỗng chỉ
- * để "cho có" là một dòng nữa trong thư mục mà không ai giải thích được.
+ * The charter is now `charter.md` at the office root, plain markdown, and
+ * **only comes into existence once the user saves for the first time**. No
+ * default file at all: an empty file that exists just "to have something
+ * there" is one more line in the directory that nobody can explain.
  */
 
 

@@ -1,339 +1,427 @@
-# SPEC — Connector: nhân viên biết dùng hệ thống của bạn
+# SPEC — Connectors: an employee who knows how to use your systems
 
-> ## Phụ lục: tìm kiếm trong kho tài liệu người dùng tải lên (chưa xây)
+> ## Appendix: search over a user-uploaded document store (not yet built)
 >
-> Chốt hướng để lần sau không bàn lại từ đầu.
+> Locking in the direction so we don't re-litigate this from scratch next time.
 >
-> **1. Khoá ngoại trước, tìm kiếm sau.** Câu hỏi thật của người dùng hiếm khi là *"file nào nói về X"* — thường là *"file này ở đâu ra, ai tạo, từ việc nào"*. Đó là một JSONL phẳng `file · plan_id · task_id · role · nguồn · thời điểm`, và ta **đã có gần đủ**: `receipt.landed` chính là mảnh đó. Cái mà trực giác gọi là "graph" ở đây thực ra là một **phép join**, không phải một graph engine.
+> **1. Foreign key first, search second.** A user's real question is rarely *"which
+> file talks about X"* — it's usually *"where did this file come from, who made it,
+> from which task"*. That's a flat JSONL of `file · plan_id · task_id · role · source ·
+> timestamp`, and we **already have almost all of it**: `receipt.landed` is exactly
+> that piece. What intuition calls a "graph" here is actually a **join**, not a graph
+> engine.
 >
-> **2. `Glob` + `Grep` đi xa hơn tưởng.** Đã bật sẵn cho mọi nhân viên, chạy trên đĩa của chính người dùng, **0 chi phí thường trực**. Với vài nghìn file, grep thắng vector cả về tốc độ lẫn độ chính xác — và không bao giờ trả về thứ "gần giống mà sai".
+> **2. `Glob` + `Grep` go further than you'd think.** Already available to every
+> employee, running on the user's own disk, **0 standing cost**. With a few thousand
+> files, grep beats vector search on both speed and accuracy — and it never returns
+> the "close but wrong" result.
 >
-> **3. Tầng tóm tắt đệm CÓ giá trị — nhưng để ĐỊNH TUYẾN, không để thay thế.** Trực giác "nén tóm tắt ở giữa" đúng một nửa: nó không thay được việc đọc file gốc (kiểu gì cũng phải lấy nội dung thật), nhưng nó trả lời rất tốt câu *"file nào đáng mở"*. Và thứ đó **đã tồn tại**: `knowledge/index.json` + node tri thức chính là tầng đó. Đừng xây tầng thứ hai — hãy để file tải lên sinh ra một node tóm tắt **trỏ về** file gốc.
+> **3. A cushioning summary layer DOES have value — but for ROUTING, not for
+> replacing.** The intuition of "compress a summary in the middle" is half right: it
+> can't replace reading the original file (you always end up needing the real
+> content), but it answers *"which file is worth opening"* very well. And that layer
+> **already exists**: `knowledge/index.json` plus knowledge nodes are exactly that
+> layer. Don't build a second one — have an uploaded file spawn a summary node that
+> **points back** to the original file.
 >
-> **4. Vector để cuối cùng, và chỉ khi ĐO ĐƯỢC là cần** — khi corpus lớn tới mức grep hết đủ. Lúc đó dùng embedding **chạy local**, không qua API, đúng như `store.ts` đã ghi từ đầu.
+> **4. Vector search comes last, and only when MEASUREMENT says it's needed** — once
+> the corpus gets big enough that grep can no longer cover it. At that point, use an
+> embedding model that **runs locally**, not through an API, exactly as `store.ts`
+> already states from the start.
 >
-> **PDF/DOCX:** `Read` của Claude Code đọc được PDF; `.docx`/`.xlsx` thì không. Hướng đúng là **bóc thành text lúc NẠP VÀO**, không phải lúc đọc: một lần, tất định, và file text nằm cạnh file gốc nên `Grep` dùng được ngay. Bóc lúc đọc thì mỗi task trả tiền lại cho cùng một việc. ⚠ Chưa kiểm bằng file thật — thử trước khi hứa với khách.
+> **PDF/DOCX:** Claude Code's `Read` can read PDF; it can't read `.docx`/`.xlsx`. The
+> right move is to **extract to text at INGEST time**, not at read time: once,
+> deterministically, with the text file sitting next to the original so `Grep` can use
+> it immediately. Extracting at read time makes every task pay again for the same
+> work. ⚠ Not yet verified against a real file — try it before promising it to a
+> customer.
 
-> # 🔒 CHỐT 31/08 — **REST BỊ BỎ KHỎI v1.** Đọc khối này trước phần còn lại của file.
+> # 🔒 LOCKED IN 31/08 — **REST DROPPED FROM v1.** Read this block before the rest of
+> the file.
 >
-> User: *"tôi đang tính tới bỏ không làm REST nữa, ai muốn xây REST thì tự xây MCP trước"* · *"Chốt bỏ REST đó."*
+> User: *"I'm thinking of dropping REST entirely — whoever wants to build a REST
+> connector should build the MCP themselves first"* · *"Locked in: REST is dropped."*
 >
-> **§3–§6 của file này KHÔNG được thi hành trong v1.** Chúng vẫn đúng về thiết kế và được giữ nguyên
-> để ngày mở lại không phải nghĩ lại từ đầu — nhưng hôm nay chúng ở **0% thi hành**, và ai đọc file
-> này mà tưởng có mã đứng sau là đọc sai. Nhánh **CLI** (§2 Path B′) thì **đã xây**, xem `SPEC-arms §16`.
+> **§3–§6 of this file are NOT implemented in v1.** They are still correct as design
+> and kept in place so that reopening them one day doesn't mean rethinking from
+> scratch — but today they sit at **0% implementation**, and anyone reading this file
+> and assuming there's code behind it is reading it wrong. The **CLI** branch (§2 Path
+> B′) **has been built** — see `SPEC-arms §16`.
 >
-> ### Lý do — và vế "REST muôn màu" KHÔNG phải lý do
+> ### The reason — and "REST is a thousand shapes" is NOT the reason
 >
-> Sự đa dạng của endpoint chính là thứ **tờ khai** sinh ra để nuốt: `SPEC-arms §16m` xếp REST connector
-> và CLI-đã-khai vào **cùng một ô** trên trục ĐOÁN↔KHAI. Nếu "muôn màu" đủ để loại REST thì nó
-> **loại luôn CLI** — ghi lý do đó vào đây là để lại một quả mìn cho người đọc sau.
+> Endpoint diversity is exactly the thing the **declaration** was built to swallow:
+> `SPEC-arms §16m` places REST connectors and declared-CLI in the **same cell** on the
+> GUESS↔DECLARE axis. If "a thousand shapes" were enough to rule out REST, it would
+> **also rule out CLI** — writing that reasoning down here is left as a landmine for
+> whoever reads it next and reaches for it.
 >
-> **Lý do thật là AUTH, và nó đo được:**
+> **The real reason is AUTH, and it's measurable:**
 >
 > | | Auth |
 > |---|---|
-> | **MCP** | có **giao thức khám phá**: `401` → `WWW-Authenticate` → `resource_metadata` → DCR → PKCE. Đó là lý do `oauth.ts` chạy **nguyên xi cho Notion và Linear, 0 dòng sửa** |
-> | **REST** | **không có gì để dò.** Không DCR, không metadata, mỗi API một bông tuyết |
+> | **MCP** | has a **discovery protocol**: `401` → `WWW-Authenticate` → `resource_metadata` → DCR → PKCE. That's why `oauth.ts` runs **unmodified for both Notion and Linear, 0 lines changed** |
+> | **REST** | **nothing to probe.** No DCR, no metadata, every API is its own snowflake |
 >
-> ⇒ Chi phí của một connector REST tăng theo **SỐ KHÁCH**, không phải trả một lần. Đó là món **duy
-> nhất** trong cả v1 có tính chất đó. Và §9 ① (*"OAuth2 refresh token — M2 hay bỏ hẳn?"*) đã treo
-> không lời đáp từ 14/08 — nay nó là câu trả lời.
+> ⇒ The cost of a REST connector scales with the **NUMBER OF CUSTOMERS**, not a
+> one-time payment. That's the **only** item in all of v1 with that property. And §9 ①
+> (*"OAuth2 refresh token — M2 or drop entirely?"*) had been hanging unanswered since
+> 14/08 — now it has its answer.
 >
-> ### "Đặc sản" chuyển chỗ, KHÔNG biến mất
+> ### The "specialty" moved, it did NOT disappear
 >
-> Đặc sản không phải REST. Nó là ***"người không biết code KHAI một năng lực, ta sinh MCP"*** — và
-> **CLI là khách hàng đầu tiên của đúng câu đó**, đã chạy đầu-cuối 31/08.
+> The specialty was never REST. It's ***"someone who can't code DECLARES a
+> capability, we generate the MCP"*** — and **CLI is the first customer of exactly
+> that sentence**, already running end-to-end as of 31/08.
 >
-> ### Google vẫn có đường — thứ bỏ là "khách tự khai REST", không phải "ta dùng REST"
+> ### Google still has a path — what's dropped is "customer declares their own REST",
+> not "we use REST"
 >
-> Một mục danh mục Google do **TA** viết (`src/core/arms/google.ts`, luật §4e-bis *một hãng một file*),
-> runtime REST-over-`sdk` MCP, **không đi qua file này một dòng nào**, chi phí trả **một lần bởi ta**.
-> Khác hẳn "connector REST" ở đúng chỗ quyết định: **ai trả tiền cho mỗi API mới**.
+> A Google catalog entry written by **US** (`src/core/arms/google.ts`, rule §4e-bis
+> *one provider, one file*), a REST-over-`sdk` MCP runtime, **doesn't touch a single
+> line of this file**, cost paid **once, by us**. Completely different from a "REST
+> connector" at exactly the point that matters for the decision: **who pays for each
+> new API**.
 >
-> ### ⚠ Bẫy sinh ra ngay lúc bỏ REST — phải chặn trước khi nó cắn
+> ### ⚠ A trap born the moment REST is dropped — must be blocked before it bites
 >
-> Người dùng sẽ **bọc `curl` bằng cánh tay CLI**. `run:` là **argv, không qua shell** ⇒ `$TOKEN`
-> **không nở** ⇒ họ buộc phải dán **chìa literal** vào argv ⇒ chìa nằm trong `company.yaml` · **đi vào
-> băm** (xoay chìa = một cánh tay khác) · và **đọc được từ tiến trình khác trên cả ba OS**. Không
-> triệu chứng nào. ⇒ Phải soi `curl`/`wget`/`Invoke-WebRequest` ở `run:` kèm câu chỉ đúng cửa.
+> Users will **wrap `curl` inside a CLI arm**. `run:` is **argv, not shell-expanded**
+> ⇒ `$TOKEN` **doesn't expand** ⇒ they're forced to paste the **literal key** into
+> argv ⇒ the key ends up in `company.yaml` · **goes into the hash** (rotating the key
+> = a different arm) · and is **readable from another process on all three OSes**. No
+> symptom anywhere. ⇒ Must scan for `curl`/`wget`/`Invoke-WebRequest` inside `run:`
+> and pair it with a message pointing to the right door.
 >
-> ### Điều kiện mở lại (đo được, đừng mở vì cảm giác)
+> ### Conditions for reopening (measurable — don't reopen because it feels right)
 >
-> ① **Google Workspace được chốt vào danh mục theo đường REST của KHÁCH** (không phải mục ta viết);
-> **hoặc** ② một khách thật mang API nội bộ tới mà **không có dev** — hôm nay ai có REST API riêng thì
-> trong công ty đó có người viết ra cái API ấy, nên câu *"tự xây MCP trước"* đứng được.
+> ① **Google Workspace gets locked into the catalog via the CUSTOMER's REST path**
+> (not an entry we wrote); **or** ② a real customer brings an internal API with **no
+> developer** — today, whoever has their own REST API has someone in that company who
+> wrote it, so the sentence *"build the MCP yourself first"* still holds.
 
-**Đây là đặc sản của sản phẩm.** Người không biết code tự định nghĩa một nhân viên biết CRUD vào REST API / hệ thống của chính họ.
-*(⚠ Câu trên viết 14/08 và **đã chuyển chỗ** — xem khối chốt 31/08 ngay trên: đặc sản nay là tờ khai,
-mà khách hàng đầu tiên của nó là CLI.)*
+**This is the product's specialty.** Someone who can't code defines for themselves an
+employee that knows how to CRUD against their own REST API / system.
+*(⚠ The line above was written 14/08 and **has since moved** — see the 31/08 lock-in
+block right above: the specialty is now the declaration, and its first customer is
+CLI.)*
 
-Đọc kèm `SPEC-2026-08-14-agentco.md` và `SPEC-token-economy.md`.
+Read alongside `SPEC-2026-08-14-agentco.md` and `SPEC-token-economy.md`.
 
 ---
 
-## 1. Vì sao đây là chỗ khác biệt
+## 1. Why this is the point of difference
 
-Các công cụ orchestration hiện có (openclaw, goclaw…) nhắm dân code: muốn agent gọi API của bạn thì bạn **viết một MCP server**. Đó là rào chắn tuyệt đối với khách hàng của AgentCo.
+Existing orchestration tools (openclaw, goclaw…) target people who code: if you want
+an agent to call your API, you **write an MCP server**. That's an absolute wall for
+AgentCo's customers.
 
-Mệnh đề của chúng ta ngược lại:
+Our proposition is the reverse:
 
-> **Mô tả cái API, đừng viết code gọi nó.** Điền một form, bấm Test, xong — nhân viên của bạn biết dùng hệ thống của bạn.
+> **Describe the API, don't write code that calls it.** Fill in a form, click Test,
+> done — your employee now knows how to use your system.
 
-Đây cũng là chỗ **chi phí chuyển đổi** hình thành: khi khách đã cắm hệ thống hoá đơn / CMS / CRM của họ vào và đội agent đã quen dùng, họ không đi đâu nữa.
+This is also where **switching cost** forms: once a customer has plugged their
+invoicing system / CMS / CRM in and their agent team has grown used to it, they're not
+going anywhere.
 
 ---
 
-## 2. Hai đường vào, khác đối tượng
+## 2. Two entry paths, different audiences
 
 | | Path A — MCP | Path B — REST connector |
 |---|---|---|
-| Dành cho | ai đã có sẵn MCP server (Notion, Slack, Postgres…) | **ai có API riêng và không biết code** |
-| Người dùng làm gì | dán config, bấm Test | điền form / dán cURL / dán link OpenAPI |
-| Ta phải làm gì | UI dán config + kiểm tra kết nối | **toàn bộ mục 3–6 dưới đây** |
-| Độ khác biệt | không (ai cũng làm được) | **đây là đặc sản** |
+| For | anyone who already has an MCP server (Notion, Slack, Postgres…) | **anyone with their own API who can't code** |
+| What the user does | paste config, click Test | fill in a form / paste a cURL / paste an OpenAPI link |
+| What we have to do | a UI to paste config + a connection check | **all of sections 3–6 below** |
+| How differentiated | not at all (anyone can do this) | **this is the specialty** |
 
-Path A làm trước vì rẻ. Path B là thứ đáng bán.
+Path A comes first because it's cheap. Path B is the thing worth selling.
 
-> ### 🆕 30/08 — CÓ **ĐƯỜNG THỨ BA**, và nó dùng chung khai báo với Path B
+> ### 🆕 30/08 — there's now a **THIRD PATH**, and it shares its declaration format
+> with Path B
 >
-> **Path B′ — bọc một LỆNH CLI.** Cùng file `connectors/<id>.yaml`, khác đúng một trường: `run:`
-> (một mảng **argv**) thay cho `method`/`path`. Mọi thứ còn lại dùng lại nguyên — một action = một
-> tool · `confirm` mặc định bật cho việc ghi · `say` tiếng người · `returns` sinh từ lượt Thử ·
-> chìa chỉ là tên biến · log vào `audit.ts`.
+> **Path B′ — wrap a CLI COMMAND.** Same `connectors/<id>.yaml` file, exactly one
+> field different: `run:` (an **argv** array) instead of `method`/`path`. Everything
+> else is reused as-is — one action = one tool · `confirm` defaults on for writes ·
+> `say` in plain language · `returns` generated from a Test run · the key is just a
+> variable name · logged to `audit.ts`.
 >
-> Lý do nó thuộc về file này chứ không phải một spec mới: **cùng một bài toán** — *người không biết
-> code mô tả một năng lực, ta sinh MCP*. Chỉ khác nguồn năng lực là một endpoint HTTP hay một binary
-> trên máy.
+> Why it belongs in this file rather than a new spec: **it's the same problem** —
+> *someone who can't code describes a capability, we generate the MCP*. The only
+> difference is whether the capability's source is an HTTP endpoint or a binary on the
+> machine.
 >
-> **Thiết kế đầy đủ + 3 ô chưa chốt: `SPEC-arms.md §16`. Bài đo: `TEST-WALKTHROUGH.md` bài 21 (REST)
-> · bài 22 (CLI).**
+> **Full design + 3 open cells: `SPEC-arms.md §16`. Measurement exercises:
+> `TEST-WALKTHROUGH.md` exercise 21 (REST) · exercise 22 (CLI).**
 >
-> ⚠ Và một trạng thái phải nói thẳng: grep 30/08 — **`createSdkMcpServer` không xuất hiện một lần
-> nào trong `src/`**. Toàn bộ §3–§6 của file này (viết 14/08) đang ở **0% thi hành**.
+> ⚠ And a state that has to be said plainly: a grep on 30/08 shows —
+> **`createSdkMcpServer` does not appear a single time in `src/`**. All of §3–§6 of
+> this file (written 14/08) currently sits at **0% implementation**.
 
 ---
 
-## 3. Định dạng connector
+## 3. Connector format
 
 ```yaml
 # company/connectors/invoices.yaml
 id: invoices
-display_name: "Hệ thống hoá đơn"
-description: "API hoá đơn nội bộ của công ty"
+display_name: "Invoicing system"
+description: "The company's internal invoicing API"
 
-base_url: https://api.congty-cua-toi.com/v1
+base_url: https://api.my-company.com/v1
 
 auth:
   type: bearer                    # none | bearer | header | basic
-  token_env: INVOICES_TOKEN       # ⚠ CHỈ tên biến môi trường, KHÔNG BAO GIỜ giá trị
+  token_env: INVOICES_TOKEN       # ⚠ ONLY the environment variable name, NEVER the value
 
 actions:
   - id: list_invoices
-    say: "xem danh sách hoá đơn"        # hiển thị lên UI, tiếng người
+    say: "view the list of invoices"        # shown in the UI, plain language
     method: GET
     path: /invoices
     query:
       - { name: status, type: string, enum: [draft, sent, paid] }
       - { name: limit,  type: integer, default: 20, max: 100 }
-    returns: "Mảng hoá đơn: id, khách hàng, số tiền, trạng thái, ngày tạo"
+    returns: "Array of invoices: id, customer, amount, status, created date"
 
   - id: create_invoice
-    say: "tạo hoá đơn mới"
+    say: "create a new invoice"
     method: POST
     path: /invoices
     body:
       - { name: customer, type: string, required: true }
       - { name: amount,   type: number, required: true }
       - { name: note,     type: string }
-    returns: "Hoá đơn vừa tạo, có id"
-    confirm: true                        # ← ghi dữ liệu thì mặc định BẮT BUỘC
+    returns: "The invoice just created, with its id"
+    confirm: true                        # ← writes default to REQUIRED confirmation
 
   - id: delete_invoice
-    say: "xoá hoá đơn"
+    say: "delete an invoice"
     method: DELETE
     path: /invoices/{id}
     params:
       - { name: id, type: string, required: true }
     confirm: true
-    danger: true                         # ← thêm một lớp xác nhận nữa
+    danger: true                         # ← one extra layer of confirmation
 ```
 
-### Bốn luật thiết kế, mỗi luật có lý do cụ thể
+### Four design rules, each with a concrete reason
 
-**a) Mỗi action là MỘT tool riêng. Không có tool `http_request` vạn năng.**
+**a) Each action is ONE dedicated tool. There is no all-purpose `http_request` tool.**
 
-Tool vạn năng buộc agent tự bịa URL, tự đoán tham số, tự đoán định dạng body → sai nhiều, không kiểm soát được, và **không tự sinh được bước xác nhận** (vì ta không biết nó sắp làm gì). Action tường minh thì schema chặt, agent chỉ điền tham số vào chỗ trống.
+An all-purpose tool forces the agent to make up the URL itself, guess the parameters
+itself, guess the body format itself → lots of mistakes, no control, and **no way to
+auto-generate a confirmation step** (because we don't know what it's about to do).
+Explicit actions get a tight schema — the agent just fills the blanks.
 
-**b) Ghi dữ liệu thì mặc định `confirm: true`.**
+**b) Writes default to `confirm: true`.**
 
-`POST` / `PUT` / `PATCH` / `DELETE` tự động bật `confirm` khi tạo connector. Người dùng non-code sẽ giao *"dọn dẹp hoá đơn cũ giùm"* và agent sẽ **xoá thật**. Không được để chuyện đó xảy ra âm thầm. Tắt được, nhưng phải tắt có ý thức.
+`POST` / `PUT` / `PATCH` / `DELETE` automatically turn `confirm` on when the connector
+is created. A non-coder will hand off *"clean up the old invoices for me"* and the
+agent will **actually delete them**. That must never happen silently. It can be turned
+off, but only deliberately.
 
-**c) Token chỉ ghi TÊN BIẾN, không ghi giá trị.**
+**c) A token records only its VARIABLE NAME, never the value.**
 
-⚠ **Lý do cũ SAI, đã sửa 31/08.** Câu *"vì `company/` được thiết kế để commit lên git"* không đúng với
-repo này — `.gitignore` **có `/company/`**, chỉ `templates/company/` được commit. User bác đúng:
-*"token vào company.yaml là bình thường… y hệt một cái `.env`. Không lưu vào state/storage trình duyệt
-thôi."*
+⚠ **The old reasoning was WRONG, fixed 31/08.** The claim *"because `company/` is
+designed to be committed to git"* doesn't hold for this repo — `.gitignore` **does
+have `/company/`** in it; only `templates/company/` gets committed. The user pushed
+back correctly: *"putting a token in company.yaml is normal… exactly like a `.env`.
+Just don't save it into browser state/storage."*
 
-**Luật đúng, hẹp hơn hẳn:** *giá trị chìa không được RỜI MÁY CHỦ* — không qua HTTP, không vào trình
-duyệt, không vào prompt. Nằm ở đâu **trên đĩa của khách** là chuyện của khách. Và hai lý do cơ chế
-(đọc được trong mã, không phải kể chuyện):
+**The actual rule, much narrower:** *the key's value must never LEAVE THE SERVER* — no
+HTTP, no browser, no prompt. Where it lives **on the customer's own disk** is the
+customer's business. And there are two mechanical reasons (readable in the code, not
+just told as a story):
 
-1. `company.ts §arms()` trả **nguyên `config`** qua HTTP tới trình duyệt — trong khi `types.ts` tự khai
-   bất biến ngược lại ở trường bên cạnh (*"TÊN chìa, không bao giờ giá trị"*); cả hai chỗ canh trường
-   `secrets`, **không canh trường `config`**.
-2. `config` **đi vào băm** (`catalog.ts §armHash`) ⇒ xoay chìa = **một cánh tay KHÁC** ⇒ mọi `role.mcp`
-   vẫn trỏ băm cũ, và cánh tay chìa-đã-chết còn nguyên ✓ trên sơ đồ.
+1. `company.ts §arms()` returns the **whole `config`** over HTTP to the browser — while
+   `types.ts` itself declares the opposite invariant on the neighboring field (*"the
+   key's NAME, never its value"*); both places guard the `secrets` field, **not the
+   `config` field**.
+2. `config` **goes into the hash** (`catalog.ts §armHash`) ⇒ rotating a key = **a
+   DIFFERENT arm** ⇒ every `role.mcp` still points at the old hash, and the
+   key-is-dead arm still shows a checkmark on the diagram.
 
-> 🔴 Lớp lỗi của lần viết sai: tôi có **hai** lý do cơ chế nằm sẵn trong mã và đi mượn một lý do **thứ
-> ba, dễ kể hơn, và sai**. Lý do dễ kể thắng lý do đúng vì nó không cần đọc mã — và nó dẫn bản vá đi
-> sai chỗ (giấu yaml, thay vì chặn `config` ra HTTP + tách chìa khỏi băm).
+> 🔴 The failure class behind the earlier wrong write-up: I had **two** mechanical
+> reasons already sitting in the code, and reached instead for a **third, easier to
+> tell, and wrong** one. The easy-to-tell reason beats the true one because it doesn't
+> require reading the code — and it sends the fix to the wrong place (hiding the yaml,
+> instead of blocking `config` from HTTP + separating the key from the hash).
 > → [[agentco-easy-reason-beats-true-reason]]
 
-UI phải từ chối lưu nếu phát hiện chuỗi trông giống token. ⚠ Grep 30/08: chỗ **thi hành** luật này tồn
-tại ở **đúng một nơi** (`oauth-routes.ts`, ô `client_id` của GitHub) — đường dán MCP **chưa có phép soi
-nào**.
+The UI must refuse to save if it detects a string that looks like a token. ⚠ Grep on
+30/08: the **enforcement** of this rule exists in **exactly one place**
+(`oauth-routes.ts`, GitHub's `client_id` field) — the MCP-paste path **has no scanning
+at all yet**.
 
-**d) Chặn host ngoài `base_url`.**
+**d) Block hosts outside `base_url`.**
 
-Agent đọc nội dung web rồi bị dắt gọi vào endpoint nội bộ là kịch bản thật. Runtime chỉ cho gọi host của `base_url`. Muốn gọi `localhost` / IP nội bộ phải bật `allow_private_network: true` một cách tường minh, kèm cảnh báo trên UI.
+An agent reading web content and getting steered into calling an internal endpoint is
+a real scenario. The runtime only allows calls to `base_url`'s host. Calling
+`localhost` / an internal IP requires explicitly turning on
+`allow_private_network: true`, with a warning shown in the UI.
 
 ---
 
-## 4. Người non-code điền cái này bằng cách nào
+## 4. How a non-coder fills this in
 
-Ba đường nhập, xếp theo công sức của người dùng:
+Three input paths, ordered by user effort:
 
-| Đường | Người dùng làm gì | Ta làm gì |
+| Path | What the user does | What we do |
 |---|---|---|
-| **Dán OpenAPI / Swagger** | dán URL hoặc file | parse → sinh sẵn toàn bộ actions → họ tick chọn cái cần |
-| **Dán cURL** | copy từ Postman / DevTools / tài liệu API | parse method, URL, header, body → ra một action |
-| **Điền form** | điền tay từng ô | validate, gợi ý |
+| **Paste OpenAPI / Swagger** | paste a URL or file | parse → pre-generate all actions → they tick which ones they want |
+| **Paste cURL** | copy from Postman / DevTools / API docs | parse method, URL, headers, body → produces one action |
+| **Fill in the form** | fill in each field by hand | validate, suggest |
 
-**Nút `Test` là bắt buộc, không phải tuỳ chọn.** Bấm Test → gọi thật → hiện response thô + bản diễn giải tiếng người. Người non-code không có cách nào khác để biết mình điền đúng chưa. Không có nút này thì cả tính năng vô dụng.
+**The `Test` button is mandatory, not optional.** Click Test → makes a real call →
+shows the raw response plus a plain-language interpretation. A non-coder has no other
+way to know whether they filled it in correctly. Without this button, the whole
+feature is useless.
 
-Sau khi Test thành công, hệ thống **tự đề xuất** `returns` bằng cách đọc response mẫu — người dùng sửa lại nếu muốn.
+After a successful Test, the system **automatically proposes** a `returns` value by
+reading the sample response — the user can edit it if they want.
 
 ---
 
-## 5. Gán cho ai — và cái giá bằng token
+## 5. Who it's assigned to — and the price, in tokens
 
-Connector **không nạp cho cả công ty**. Gán theo role:
+Connectors are **not loaded for the whole company**. They're assigned per role:
 
 ```yaml
 # roles/accountant.yaml
 connectors: [invoices, banking]
 ```
 
-Lý do là kinh tế, không phải phân quyền. **Mỗi action là một tool definition nằm trong prefix của role.** `SPEC-token-economy.md` §2 đã đo: sàn tool definition đã ~13 200 token; mỗi connector cộng thêm vào đó.
+The reason is economic, not access control. **Each action is a tool definition living
+inside that role's prefix.** `SPEC-token-economy.md` §2 already measured this: the
+tool-definition floor is already ~13,200 tokens; each connector adds on top of that.
 
-Ràng buộc bắt buộc:
+Mandatory constraints:
 
-| Hạng mục | Trần | Kiểu |
+| Item | Cap | Kind |
 |---|---|---|
-| ~~Tổng token connector / role~~ | ~~**2 000** cứng~~ | 🔴 **ĐÃ BỎ 23/08** — xem khối dưới |
-| Số action / connector | 20 | mềm — cảnh báo |
-| Mô tả một action | 120 token | cứng |
+| ~~Total connector tokens / role~~ | ~~**2,000** hard cap~~ | 🔴 **DROPPED 23/08** — see block below |
+| Actions / connector | 20 | soft — warns |
+| One action's description | 120 tokens | hard |
 
-> ### 🔴 TRẦN 2 000 ĐÃ BỎ — số đo giết nó, user chốt 23/08
+> ### 🔴 THE 2,000 CAP IS DROPPED — measurement killed it, locked in by the user, 23/08
 >
-> Con số 2 000 viết ngày 14/08, **khi chưa ai đo một cánh tay nào**. Đo 23/08
-> (`scripts/spike-mcp.ts`, `SPEC-arms.md` §9b): **một** MCP `filesystem` 14 tool tốn
-> **2 185 token/lượt**. ⇒ trần đó **chặn ngay cánh tay ĐẦU TIÊN**, trước khi người dùng cắm được
-> thứ gì.
+> The number 2,000 was written on 14/08, **before anyone had measured a single arm**.
+> Measured 23/08 (`scripts/spike-mcp.ts`, `SPEC-arms.md` §9b): **one** `filesystem` MCP
+> with 14 tools costs **2,185 tokens/turn**. ⇒ that cap **blocks the very FIRST arm**,
+> before the user has plugged anything in.
 >
-> **Thay bằng: HIỆN GIÁ, không chặn.**
+> **Replaced with: SHOW THE PRICE, don't block.**
 >
 > ```
-> 🔌 File trên máy      ● hoạt động · 14 việc · ~2 200 token mỗi lượt
+> 🔌 Files on this machine   ● active · 14 actions · ~2,200 tokens per turn
 > ```
 >
-> **Ba lý do, và lý do thứ ba là lý do chốt:**
+> **Three reasons, and the third one is the deciding one:**
 >
-> 1. **Trần cứng ở đây chặn đúng thứ người dùng CỐ Ý muốn.** Họ vừa đi qua ba bước để cắm nó.
-> 2. **Con số thì họ chưa bao giờ được thấy.** Chặn một thứ vô hình rồi báo *"vượt trần"* là câu
->    lỗi không có đường đi tiếp — đúng lớp lỗi *"nới `max_usd` trong `roles/…yaml`"* (§5m ②): không
->    nói dối, nhưng **chỉ sai cửa**.
-> 3. **Tiền là của khách.** Nghĩa vụ của ta là làm lựa chọn đó **sáng mắt thay vì mù**, không phải
->    quyết hộ. Cùng luật đã chốt cho `model_tier` (`SESSIONS_MEMORY` §5l ④): *không dùng số này để
->    agentco tự nâng/hạ — đó là quyết định của khách*.
+> 1. **A hard cap here blocks exactly what the user DELIBERATELY wants.** They just
+>    went through three steps to plug this in.
+> 2. **They've never even seen the number.** Blocking something invisible and then
+>    reporting *"cap exceeded"* is an error message with nowhere to go — exactly the
+>    same failure class as *"raise `max_usd` in `roles/…yaml`"* (§5m ②): it's not a
+>    lie, but it **sends you through the wrong door**.
+> 3. **It's the customer's money.** Our job is to make that choice **visible instead
+>    of blind**, not to decide it for them. Same rule already locked in for
+>    `model_tier` (`SESSIONS_MEMORY` §5l ④): *this number is never used for agentco to
+>    raise/lower anything on its own — that's the customer's call*.
 >
-> ⚠ **"Bỏ trần" KHÔNG có nghĩa "thôi đo".** Số phải hiện ở **ba chỗ**, và thiếu chỗ nào là quay lại
-> đúng cái vô hình vừa bỏ: trên **thẻ danh mục** lúc chọn · trên **node** trên sơ đồ · trong **bảng
-> chi tiết** của nhân viên được nối vào (cộng dồn cả các cánh tay của người đó).
+> ⚠ **"Dropping the cap" does NOT mean "stop measuring."** The number must show up in
+> **three places**, and missing any one of them puts us right back at the same
+> invisibility we just removed: on the **catalog card** at selection time · on the
+> **node** in the diagram · in the **detail table** of whichever employee it's wired
+> into (summed across all of that employee's arms).
 >
-> Nguồn của số: `getContextUsage().mcpTools` — nó phân rã tới từng tool. ⚠ **Không** dùng số của
-> hoá đơn ở đây: hai nguồn lệch 27% và **không đo cùng một thứ** (`SPEC-arms.md` §9b ③).
+> Source of the number: `getContextUsage().mcpTools` — it breaks down to the
+> individual tool. ⚠ **Do not** use the billing number here: the two sources differ by
+> 27% and **do not measure the same thing** (`SPEC-arms.md` §9b ③).
 
-**Tin tốt:** connector nằm trong **static prefix** nên được cache. Trả một lần cache write, sau đó gần như miễn phí. Nhưng vì thế:
+**Good news:** connectors sit in the **static prefix**, so they get cached. Pay one
+cache-write, then it's essentially free after that. But because of that:
 
-> **Sửa connector = bump cache key của mọi role dùng nó.** UI connector **không autosave**, phải có nút Lưu tường minh — cùng kỷ luật với ô soạn skills (`SPEC-ui.md` §2.2).
+> **Editing a connector = bumps the cache key of every role that uses it.** The
+> connector UI does **not** autosave — it needs an explicit Save button, the same
+> discipline as the skills editor (`SPEC-ui.md` §2.2).
 
-`concierge` nhận các action đánh dấu `quick: true` — việc vặt một phát ăn ngay.
+`concierge` receives actions marked `quick: true` — quick chores handled in one shot.
 
 ---
 
-## 6. Giao diện
+## 6. Interface
 
-Ngăn **Kết nối** (ngang hàng với Đội ngũ / Tri thức):
+A **Connections** panel (peer to Team / Knowledge):
 
 ```
-┌─ KẾT NỐI ────────────────────────────────────────────┐
+┌─ CONNECTIONS ────────────────────────────────────────┐
 │                                                      │
-│  🧾 Hệ thống hoá đơn        ● hoạt động   6 việc     │
-│     api.congty-cua-toi.com          dùng bởi: Kế toán│
+│  🧾 Invoicing system        ● active      6 actions │
+│     api.my-company.com              used by: Accounting│
 │                                                      │
-│  📝 Notion (MCP)            ● hoạt động   4 việc     │
-│                                     dùng bởi: Viết   │
+│  📝 Notion (MCP)            ● active      4 actions │
+│                                     used by: Writing │
 │                                                      │
-│  🏦 Ngân hàng               ⚠ token hết hạn          │
-│                                     [Sửa]            │
+│  🏦 Banking                 ⚠ token expired          │
+│                                     [Edit]           │
 │                                                      │
-│  + Thêm kết nối                                      │
+│  + Add connection                                    │
 └──────────────────────────────────────────────────────┘
 ```
 
-Luồng thêm mới: `Dán OpenAPI` / `Dán cURL` / `Điền tay` → chọn actions → **Test** → gán cho nhân viên nào → Lưu.
+Add-new flow: `Paste OpenAPI` / `Paste cURL` / `Fill in by hand` → select actions →
+**Test** → assign to which employee → Save.
 
-Mỗi action hiện dưới dạng câu tiếng người (`say`), không hiện method/path — trừ khi mở Nâng cao.
+Each action shows as a plain-language sentence (`say`), not method/path — unless
+Advanced is opened.
 
-**Bước xác nhận khi ghi dữ liệu** hiện ngay trong luồng chat, không phải dialog trình duyệt:
+**The confirmation step for a write** shows right inside the chat flow, not a browser
+dialog:
 
 ```
-⏸ Kế toán muốn tạo hoá đơn mới
-   Khách: Công ty ABC · Số tiền: 12.000.000đ
-   [Đồng ý]  [Sửa]  [Bỏ qua]
+⏸ Accounting wants to create a new invoice
+   Customer: ABC Corp · Amount: $12,000
+   [Approve]  [Edit]  [Skip]
 ```
 
 ---
 
-## 7. Bảo mật — bắt buộc
+## 7. Security — mandatory
 
-- Token chỉ ở env / `.state/secrets.json`, **không bao giờ** trong `company/` phần commit được
-- Token **không bao giờ** vào prompt. Runtime tự chèn lúc gọi HTTP, agent không nhìn thấy.
-- Chặn host ngoài `base_url`; private network phải bật tường minh
-- Mọi lời gọi ghi dữ liệu vào `logs/` — ai, task nào, tham số gì, kết quả gì. Đây cũng là nền của tính năng **nhật ký kiểm toán** cho khách doanh nghiệp.
-- Response bị cắt trần trước khi vào context agent (mặc định 4 000 token), tránh một endpoint trả 2MB JSON làm nổ ngân sách
-
----
-
-## 8. Lộ trình
-
-| Giai đoạn | Nội dung |
-|---|---|
-**Viết lại 31/08 theo chốt bỏ REST.**
-
-| Giai đoạn | Nội dung |
-|---|---|
-| **v1** | Path A (dán MCP config + Test) ✅ đã xây · **Path B′ CLI** ✅ đã xây → `SPEC-arms §16` · `confirm` từng action · gán theo role |
-| ~~M1/M2 REST~~ | 🔒 **BỎ** — xem khối chốt đầu file. Form tay · dán cURL · dán OpenAPI · tầng `auth:` · chặn host · phân trang: **không làm** |
-| v1.x | Chặn `curl`/`wget`/`Invoke-WebRequest` ở `run:` (bẫy sinh ra từ chính chốt này) · mục danh mục Google chạy REST **do TA viết**, không qua file này |
-| sau | Mở lại REST **chỉ khi** một trong hai điều kiện ở khối chốt thành hiện thực |
+- Tokens live only in env / `.state/secrets.json`, **never** in the committable part
+  of `company/`
+- Tokens **never** go into a prompt. The runtime injects them at HTTP-call time; the
+  agent never sees them.
+- Hosts outside `base_url` are blocked; private network access must be turned on
+  explicitly
+- Every write call is logged to `logs/` — who, which task, what parameters, what
+  result. This also underlies the **audit log** feature for business customers.
+- Responses are capped before entering the agent's context (4,000 tokens by default),
+  so one endpoint returning 2MB of JSON can't blow the budget
 
 ---
 
-## 9. Câu chưa trả lời
+## 8. Roadmap
 
-1. Auth OAuth2 (refresh token) — nhiều SaaS bắt buộc. Phức tạp hơn hẳn bearer tĩnh. **M2 hay bỏ hẳn?**
-2. Endpoint phân trang — để agent tự lặp, hay runtime gom giùm? (Để agent lặp thì tốn lượt; runtime gom thì phải đoán quy ước phân trang.)
-3. Response lớn: cắt cứng, hay lưu ra file rồi đưa agent đường dẫn? *(Nghiêng phương án 2 — đúng nguyên tắc "sở hữu artifact".)*
+**Rewritten 31/08 per the decision to drop REST.**
+
+| Stage | Contents |
+|---|---|
+| **v1** | Path A (paste MCP config + Test) ✅ built · **Path B′ CLI** ✅ built → `SPEC-arms §16` · per-action `confirm` · assignment per role |
+| ~~M1/M2 REST~~ | 🔒 **DROPPED** — see the lock-in block at the top of the file. Manual form · paste cURL · paste OpenAPI · the `auth:` layer · host blocking · pagination: **not being built** |
+| v1.x | Block `curl`/`wget`/`Invoke-WebRequest` inside `run:` (the trap this very decision creates) · Google catalog entry runs REST **written by US**, not through this file |
+| later | Reopen REST **only when** one of the two conditions in the lock-in block becomes real |
+
+---
+
+## 9. Open questions
+
+1. OAuth2 auth (refresh tokens) — many SaaS APIs require it. A lot more complex than a
+   static bearer token. **M2, or drop it entirely?**
+2. Paginated endpoints — let the agent loop itself, or have the runtime collect pages
+   for it? (Letting the agent loop costs turns; runtime collection means guessing at
+   pagination conventions.)
+3. Large responses: hard-truncate, or save to a file and hand the agent a path?
+   *(Leaning toward option 2 — matches the "artifacts own their storage" principle.)*

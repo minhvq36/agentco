@@ -1,28 +1,3 @@
-/**
- * Test cho CỬA RA của một lượt Trợ lý — nơi một bug đã lọt tới mặt người dùng.
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CA THẬT, 20/08 — và nó là lý do file này tồn tại.                        │
- * │                                                                          │
- * │ Người dùng: *"Bạn có thể nêu cho tôi 10 thuật ngữ tiếng anh?"*            │
- * │ Trợ lý:     *"lấy từ tài liệu nào?"*                                      │
- * │ Người dùng: *"uhm, bất kỳ, random cũng đc"*                               │
- * │ Ô chat:     một khối ```json với `steps`/`tasks`/`deps`.                   │
- * │                                                                          │
- * │ Model trả lời ĐÚNG NỘI DUNG nhưng qua SAI CỬA: `RouteSchema` không khớp,  │
- * │ nhánh dự phòng đổ nguyên văn bản thô lên chat, `run()` không bao giờ được │
- * │ gọi. Người dùng trả tiền một lượt để nhận về một đoạn mã, và **không ai   │
- * │ làm việc họ vừa giao**.                                                   │
- * └──────────────────────────────────────────────────────────────────────────┘
- *
- * Ba hàm thuần, 0 token, 0 lượt LLM — đúng thứ §4 xếp ưu tiên 0:
- *
- *  · `decideRoute` — model vừa nói gì, và cái gì được phép lên mặt người dùng
- *  · `buildPlan`   — bản nháp → kế hoạch chạy được (bốn luật đã từng có bug)
- *  · `requestOf`   — tên việc suy từ dữ liệu, không hỏi thêm một lượt
- *
- * Chạy: npm test
- */
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -34,45 +9,44 @@ type Draft = Parameters<typeof buildPlan>[0];
 
 const draftTask = (patch: Record<string, unknown> = {}) => ({
   task_id: 'T-01',
-  role: 'nguoi-dich',
-  goal: 'Liệt kê 10 thuật ngữ',
+  role: 'translator',
+  goal: 'List 10 terms',
   inputs: [] as { path: string }[],
-  outputs: [{ path: 'artifacts/T-01/ket-qua.md' }],
+  outputs: [{ path: 'artifacts/T-01/result.md' }],
   constraints: [] as string[],
   deps: [] as string[],
   step: 0,
   ...patch,
 });
 
-const draft = (tasks: unknown[], steps = ['Làm việc']): Draft =>
+const draft = (tasks: unknown[], steps = ['Work']): Draft =>
   ({ steps, tasks }) as unknown as Draft;
 
 const fence = (o: unknown) => '```json\n' + JSON.stringify(o, null, 2) + '\n```';
 
-// ──────────────────────────────────────────────────────────── decideRoute
 
-test('decideRoute: ba cửa hợp lệ đi thẳng', () => {
-  assert.deepEqual(decideRoute(fence({ intent: 'chat', say: 'Chào bạn!' })), {
+test('decideRoute: the three valid doors pass straight through', () => {
+  assert.deepEqual(decideRoute(fence({ intent: 'chat', say: 'Hello!' })), {
     intent: 'chat',
-    say: 'Chào bạn!',
+    say: 'Hello!',
   });
-  assert.deepEqual(decideRoute(fence({ intent: 'ask', say: 'Lấy từ tài liệu nào?' })), {
+  assert.deepEqual(decideRoute(fence({ intent: 'ask', say: 'Which document should this come from?' })), {
     intent: 'ask',
-    say: 'Lấy từ tài liệu nào?',
+    say: 'Which document should this come from?',
   });
-  assert.deepEqual(decideRoute(fence({ intent: 'task', request: 'Dịch doc-1' })), {
+  assert.deepEqual(decideRoute(fence({ intent: 'task', request: 'Translate doc-1' })), {
     intent: 'task',
-    request: 'Dịch doc-1',
+    request: 'Translate doc-1',
     scope: 'new',
   });
 });
 
-test('decideRoute: lookup — worker ẩn, có đường dẫn và câu hỏi', () => {
+test('decideRoute: lookup — worker hidden, has paths and a question', () => {
   const out = decideRoute(
     fence({
       intent: 'lookup',
       paths: ['library/files/doc-2.md'],
-      question: 'Nội dung chính là gì?',
+      question: 'What is the main content?',
     }),
   );
   assert.equal(out.intent, 'lookup');
@@ -80,61 +54,34 @@ test('decideRoute: lookup — worker ẩn, có đường dẫn và câu hỏi', 
   assert.deepEqual(out.paths, ['library/files/doc-2.md']);
 });
 
-/**
- * 🔄 QUYẾT ĐỊNH ĐÃ ĐỔI 24/08 — test này từng khoá điều NGƯỢC LẠI.
- *
- * Bản cũ: *"`paths` rỗng KHÔNG phải một lookup hợp lệ — Trợ lý đã cầm sẵn hai
- * bảng kê, không nêu được tên file thì hỏi lại, đừng thả agent đi mò"*. Đúng
- * khi thế giới của văn phòng chỉ có tủ tài liệu.
- *
- * Nó hỏng ở lượt tiếp xúc đầu tiên với người non-code: hỏi *"thời tiết hôm
- * nay"*, *"quán ăn"*, *"tin tức"* → không có `paths` nào để nêu → `ask` hoặc
- * `garbled` → *"văn phòng mình chưa có nhân viên phụ trách"*. User chốt: cho
- * `lookup` tra web, `paths` rỗng nghĩa là **câu hỏi tra cứu chung**.
- *
- * Giữ test này (đổi chiều) thay vì xoá: nó là chỗ ghi rằng đây là một QUYẾT
- * ĐỊNH đã cân, không phải một chỗ ai đó quên ràng buộc.
- */
-test('decideRoute: lookup KHÔNG paths là hợp lệ — đó là câu hỏi tra web', () => {
-  const out = decideRoute(fence({ intent: 'lookup', paths: [], question: 'thời tiết hôm nay' }));
+test('decideRoute: lookup with NO paths is still valid — that is a web-search question', () => {
+  const out = decideRoute(fence({ intent: 'lookup', paths: [], question: "today's weather" }));
   assert.equal(out.intent, 'lookup');
   assert.ok(out.intent === 'lookup');
   assert.deepEqual(out.paths, []);
 });
 
-test('decideRoute: lookup thiếu HẲN khoá paths cũng hợp lệ, và ra mảng rỗng', () => {
-  // `.default([])` chứ không `.optional()`: mọi nhánh phía sau đọc `.length`,
-  // và một `undefined` lọt xuống đó là một `TypeError` lúc chạy chứ không phải
-  // một nhánh khác. Schema phải trả về hình dạng ổn định, không trả về "có thể".
-  const out = decideRoute(fence({ intent: 'lookup', question: 'tin tức hôm nay' }));
+test('decideRoute: lookup MISSING the paths key entirely is also valid, and yields an empty array', () => {
+  const out = decideRoute(fence({ intent: 'lookup', question: "today's news" }));
   assert.ok(out.intent === 'lookup');
   assert.deepEqual(out.paths, []);
 });
 
-test('decideRoute: lookup THIẾU question vẫn không lọt — câu hỏi là thứ bắt buộc', () => {
-  // Nửa còn lại của bản nới: nới `paths` KHÔNG được nới luôn `question`. Một
-  // lookup không có câu hỏi là một lượt gọi model để hỏi hư không.
+test('decideRoute: lookup MISSING question still does not get through — the question is mandatory', () => {
   assert.equal(decideRoute(fence({ intent: 'lookup', paths: [] })).intent, 'garbled');
 });
 
-/**
- * ĐÂY LÀ CA ĐÃ ĐO ĐƯỢC — nguyên văn thứ người dùng nhìn thấy trong ô chat.
- *
- * Kế hoạch phải được NHẶT VỀ, không phải hiện ra. Nó đã được trả tiền ở lượt
- * `route()` vừa rồi, và vứt nó đi để gọi `plan()` lần nữa là trả tiền hai lần
- * cho cùng một suy nghĩ — luật "ra bản nháp để sửa còn hơn viết mới từ đầu".
- */
-test('decideRoute: model trả nguyên một KẾ HOẠCH thì nhặt về, không đổ lên chat', () => {
+test('decideRoute: when the model returns a whole PLAN, pick it up — do not dump it onto chat', () => {
   const leaked = fence({
-    steps: ['Lấy 10 thuật ngữ từ bảng đã dịch'],
+    steps: ['Pull 10 terms from the translated table'],
     tasks: [
       {
         task_id: 'T-01',
-        role: 'nguoi-dich',
-        goal: 'Mở bảng thuật ngữ của doc-1 và liệt kê đúng 10 thuật ngữ',
-        inputs: [{ path: 'artifacts/P-260820-0533-mreo/T-01/vi/thuat-ngu-doc-1.md' }],
-        outputs: [{ path: 'artifacts/T-01/10-thuat-ngu.md' }],
-        constraints: ['Giữ đúng định dạng bảng 3 cột'],
+        role: 'translator',
+        goal: 'Open the doc-1 glossary and list exactly 10 terms',
+        inputs: [{ path: 'artifacts/P-260820-0533-mreo/T-01/vi/doc-1-glossary.md' }],
+        outputs: [{ path: 'artifacts/T-01/10-terms.md' }],
+        constraints: ['Keep the 3-column table format'],
         deps: [],
         step: 0,
         deliver: 'reply',
@@ -145,125 +92,92 @@ test('decideRoute: model trả nguyên một KẾ HOẠCH thì nhặt về, khô
   const out = decideRoute(leaked);
   assert.equal(out.intent, 'plan');
   assert.ok(out.intent === 'plan');
-  assert.equal(out.draft.tasks[0]!.role, 'nguoi-dich');
-  // Chuỗi JSON không được có mặt trong bất kỳ câu nào đi tới người dùng.
+  assert.equal(out.draft.tasks[0]!.role, 'translator');
   assert.equal('say' in out, false);
 });
 
-/**
- * `{"ask":…}` là hình dạng hợp lệ của khâu LẬP KẾ HOẠCH. Hình dạng khác
- * `intent: 'ask'` nhưng ý nghĩa trùng khít, nên đừng bắt người dùng chịu một
- * "lỗi định dạng" cho một câu hỏi hoàn toàn hợp lý.
- */
-test('decideRoute: {"ask"} của khâu lập kế hoạch cũng là một câu hỏi hợp lệ', () => {
-  assert.deepEqual(decideRoute(fence({ ask: 'Bạn muốn lấy từ doc mấy?' })), {
+test('decideRoute: an {"ask"} from the planning stage is also a valid question', () => {
+  assert.deepEqual(decideRoute(fence({ ask: 'Which doc do you want this from?' })), {
     intent: 'ask',
-    say: 'Bạn muốn lấy từ doc mấy?',
+    say: 'Which doc do you want this from?',
   });
 });
 
-/**
- * LUẬT HẸP CÓ CHỦ Ý: văn xuôi vẫn hiện như cũ.
- *
- * Model lỡ quên bọc JSON mà vẫn nói một câu tiếng Việt cho người đọc thì hiện
- * câu đó đúng hơn là nuốt đi. Thứ bị chặn CHỈ là JSON — một khối JSON không bao
- * giờ là câu nói cho người dùng.
- */
-test('decideRoute: văn xuôi trần vẫn được hiện', () => {
-  const out = decideRoute('Chào bạn, mình là trợ lý của văn phòng này.');
-  assert.deepEqual(out, { intent: 'chat', say: 'Chào bạn, mình là trợ lý của văn phòng này.' });
+test('decideRoute: plain prose still gets shown', () => {
+  const out = decideRoute('Hi, I am this office\'s assistant.');
+  assert.deepEqual(out, { intent: 'chat', say: 'Hi, I am this office\'s assistant.' });
 });
 
-test('decideRoute: JSON không khớp schema nào thì KHÔNG được lên mặt người dùng', () => {
-  const junk = fence({ intent: 'task' }); // thiếu `request` → không schema nào khớp
+test('decideRoute: JSON matching no schema must NOT surface to the user', () => {
+  const junk = fence({ intent: 'task' });
   const out = decideRoute(junk);
   assert.equal(out.intent, 'garbled');
   assert.ok(out.intent === 'garbled');
-  // Câu cho người đọc do CODE viết: không có dấu ngoặc nhọn nào trong đó.
   assert.equal(/[{}]/.test(out.say), false);
-  // …nhưng nguyên văn KHÔNG bị vứt: nó đi vào `.state/route-failure.log`.
   assert.ok(out.raw.includes('"intent"'));
 });
 
-test('decideRoute: model không trả về gì thì nói đúng là lỗi đường truyền', () => {
+test('decideRoute: when the model returns nothing, correctly report it as a transport failure', () => {
   const out = decideRoute('   ');
   assert.equal(out.intent, 'garbled');
   assert.ok(out.intent === 'garbled');
-  assert.ok(out.say.includes('đường truyền'));
+  assert.ok(out.say.includes('đường truyền')); // i18n-allow-vietnamese: matches real i18n string (default locale vi)
   assert.equal(out.raw, '');
 });
 
-// ──────────────────────────────────────────────────────────────── buildPlan
 
-/**
- * Bước không có task nào thì KHÔNG AI TICK ĐƯỢC — nó đứng ở "chưa làm" vĩnh
- * viễn và người dùng tưởng hệ thống bỏ sót. Bỏ bước thì `step` của các task
- * còn lại phải được ĐÁNH SỐ LẠI, không thì chúng trỏ vào chỗ trống.
- */
-test('buildPlan: bỏ bước không có task, và đánh số lại phần còn lại', () => {
+test('buildPlan: drops steps with no task, and renumbers what remains', () => {
   const p = buildPlan(
-    draft([draftTask({ step: 2 })], ['Chuẩn bị', 'Lưu kết quả', 'Viết bài']),
+    draft([draftTask({ step: 2 })], ['Prepare', 'Save the result', 'Write the article']),
     'r',
     'P-x',
     'file',
   );
   assert.deepEqual(
     p.steps.map((s) => s.title),
-    ['Viết bài'],
+    ['Write the article'],
   );
   assert.equal(p.tasks[0]!.step, 0);
 });
 
-test('buildPlan: `deliver` khuyết thì lấy mặc định của VĂN PHÒNG, không phải của schema', () => {
+test('buildPlan: a missing `deliver` falls back to the OFFICE default, not the schema default', () => {
   const withDefault = buildPlan(draft([draftTask()]), 'r', 'P-x', 'reply');
   assert.equal(withDefault.tasks[0]!.deliver, 'reply');
 
-  // Model khai tường minh thì nó thắng — mặc định chỉ lấp chỗ trống.
   const explicit = buildPlan(draft([draftTask({ deliver: 'file' })]), 'r', 'P-x', 'reply');
   assert.equal(explicit.tasks[0]!.deliver, 'file');
 });
 
-/**
- * Đầu VÀO và đầu RA đi qua hai luật khác nhau, và ca này là lý do chúng phải
- * tách: người dùng có quyền nói "làm tiếp trên kết quả hôm qua".
- */
-test('buildPlan: đầu vào trỏ kế hoạch KHÁC thì để nguyên, đầu ra luôn bị đóng khung', () => {
+test('buildPlan: an input pointing at a DIFFERENT plan is left as-is, outputs are always rewritten', () => {
   const p = buildPlan(
     draft([
       draftTask({
-        inputs: [{ path: 'artifacts/P-cu/T-01/vi/thuat-ngu.md' }],
-        outputs: [{ path: 'artifacts/vi/10-thuat-ngu.md' }],
+        inputs: [{ path: 'artifacts/P-old/T-01/vi/glossary.md' }],
+        outputs: [{ path: 'artifacts/vi/10-terms.md' }],
       }),
     ]),
     'r',
-    'P-moi',
+    'P-new',
     'file',
   );
-  assert.equal(p.tasks[0]!.inputs[0]!.path, 'artifacts/P-cu/T-01/vi/thuat-ngu.md');
-  // Đuôi người dùng đặt (`vi/`) được giữ, khung theo ca thì do CODE quyết.
-  assert.equal(p.tasks[0]!.outputs[0]!.path, 'artifacts/P-moi/T-01/vi/10-thuat-ngu.md');
+  assert.equal(p.tasks[0]!.inputs[0]!.path, 'artifacts/P-old/T-01/vi/glossary.md');
+  assert.equal(p.tasks[0]!.outputs[0]!.path, 'artifacts/P-new/T-01/vi/10-terms.md');
 });
 
-test('buildPlan: đường dẫn trỏ task CỦA CHÍNH kế hoạch này thì được đóng khung', () => {
+test('buildPlan: a path pointing at a task WITHIN this same plan gets rewritten', () => {
   const p = buildPlan(
     draft([
       draftTask({ task_id: 'T-01' }),
-      draftTask({ task_id: 'T-02', inputs: [{ path: 'artifacts/T-01/ket-qua.md' }] }),
+      draftTask({ task_id: 'T-02', inputs: [{ path: 'artifacts/T-01/result.md' }] }),
     ]),
     'r',
-    'P-moi',
+    'P-new',
     'file',
   );
-  assert.equal(p.tasks[1]!.inputs[0]!.path, 'artifacts/P-moi/T-01/ket-qua.md');
+  assert.equal(p.tasks[1]!.inputs[0]!.path, 'artifacts/P-new/T-01/result.md');
 });
 
-// ─────────────────────────────────────────────────────────────── pickReadable
 
-/**
- * Mỗi mục là một CẶP từ 20/08: `ref` = chuỗi hiện trên giao diện · `open` =
- * chuỗi nhân viên mở được. Với `.md` hai cái bằng nhau; `hd1.docx` là ca thật
- * làm chết cả một ca chạy vì bản gốc nén không tool nào mở nổi. → §4.4
- */
 const pair = (p: string) => ({ ref: p, open: p });
 const KNOWN = [
   pair('library/files/doc-1.md'),
@@ -272,9 +186,7 @@ const KNOWN = [
   { ref: 'library/files/hd1.docx', open: 'library/text/hd1.docx.txt' },
 ];
 
-test('pickReadable: worker ẩn `lookup` cũng nhận ĐƯỜNG MỞ ĐƯỢC, không phải bản gốc', () => {
-  // `lookup` chỉ có `Read`/`Grep`/`Glob` — đưa nó một `.docx` là đưa một file
-  // nó không mở nổi, y hệt ca đã giết `P-260820-2219-5ltb`.
+test('pickReadable: the worker-hidden `lookup` also gets the OPENABLE path, not the original', () => {
   assert.deepEqual(pickReadable(['library/files/hd1.docx'], KNOWN), {
     ok: ['library/text/hd1.docx.txt'],
     missing: [],
@@ -285,7 +197,7 @@ test('pickReadable: worker ẩn `lookup` cũng nhận ĐƯỜNG MỞ ĐƯỢC, k
   });
 });
 
-test('pickReadable: đường dẫn đủ thì nhận, tên trần duy nhất cũng nhận', () => {
+test('pickReadable: a full path is accepted, and a unique bare name is too', () => {
   assert.deepEqual(pickReadable(['library/files/doc-2.md'], KNOWN), {
     ok: ['library/files/doc-2.md'],
     missing: [],
@@ -296,150 +208,94 @@ test('pickReadable: đường dẫn đủ thì nhận, tên trần duy nhất c�
   });
 });
 
-/**
- * Tên trần TRÙNG ở hai kho là ca có thật — tủ tài liệu có `doc-1.md`, ngăn Kết
- * quả cũng có. Đoán bừa một bên là đọc nhầm tài liệu rồi trả lời rất thuyết
- * phục: kết cục tệ nhất trong mọi kết cục.
- */
-test('pickReadable: tên trần trùng hai kho thì KHÔNG đoán', () => {
+test('pickReadable: a bare name that collides across two locations is NOT guessed', () => {
   assert.deepEqual(pickReadable(['doc-1.md'], KNOWN), { ok: [], missing: ['doc-1.md'] });
 });
 
-/**
- * Model bịa một đường dẫn là ca phải tính tới — luật SPEC-artifacts §2.5 cấm
- * cho một chuỗi model đoán mượn uy tín của hệ thống.
- *
- * Nhưng khác `resolveFileRefs`: ở đó một đường dẫn hỏng là lỗi người dùng nên
- * dừng cả câu. Ở đây model đề nghị hai file mà một file có thật thì **đọc file
- * đó** — bắt người dùng gõ lại vì model đoán sai là phạt nhầm người.
- */
-test('pickReadable: file bịa bị loại, file có thật vẫn đi tiếp', () => {
-  assert.deepEqual(pickReadable(['library/files/doc-2.md', 'library/files/khong-co.md'], KNOWN), {
+test('pickReadable: a made-up file is dropped, a real one still goes through', () => {
+  assert.deepEqual(pickReadable(['library/files/doc-2.md', 'library/files/does-not-exist.md'], KNOWN), {
     ok: ['library/files/doc-2.md'],
-    missing: ['library/files/khong-co.md'],
+    missing: ['library/files/does-not-exist.md'],
   });
 });
 
-test('pickReadable: trùng lặp và dấu gạch ngược không đẻ ra hai lần đọc', () => {
+test('pickReadable: duplicates and backslashes do not produce two reads', () => {
   assert.deepEqual(pickReadable(['doc-2.md', 'library\\files\\doc-2.md', ' '], KNOWN), {
     ok: ['library/files/doc-2.md'],
     missing: [],
   });
 });
 
-/**
- * Dòng trạng thái chỉ nêu TÊN FILE — `library/files/doc-2.md` trên một dòng
- * trạng thái là ngôn ngữ của máy, và dòng đó bị truncate trong giao diện.
- */
-test('readingNote: nêu tên file, cắt ở 2, đếm phần còn lại', () => {
-  assert.equal(readingNote(['library/files/doc-2.md']), 'Đang đọc doc-2.md…');
+// readingNote runs through the app's i18n catalog (default locale vi), so these assertions match
+// real Vietnamese product output, not stray untranslated source text.
+test('readingNote: names the files, cuts off at 2, counts the rest', () => {
+  assert.equal(readingNote(['library/files/doc-2.md']), 'Đang đọc doc-2.md…'); // i18n-allow-vietnamese: matches real i18n string (default locale vi)
   assert.equal(
     readingNote(['library/files/doc-1.md', 'artifacts/P-01/T-01/vi/doc-1.md']),
-    'Đang đọc doc-1.md, doc-1.md…',
+    'Đang đọc doc-1.md, doc-1.md…', // i18n-allow-vietnamese: matches real i18n string (default locale vi)
   );
   assert.equal(
     readingNote(['a/1.md', 'b/2.md', 'c/3.md', 'd/4.md']),
-    'Đang đọc 1.md, 2.md và 2 file nữa…',
+    'Đang đọc 1.md, 2.md và 2 file nữa…', // i18n-allow-vietnamese: matches real i18n string (default locale vi)
   );
 });
 
-// ──────────────────────────────────────────────────────────────── requestOf
 
-/**
- * Câu người dùng gõ ở cửa cứu hộ thường là *"ừ, cái nào cũng được"* — đúng
- * nhưng vô nghĩa khi đọc lại trong nhật ký ba ngày sau. `goal` thì đã được yêu
- * cầu đúng hình dạng "một câu rõ ràng", nên dùng lại thứ đang cầm.
- */
-test('requestOf: tên việc suy từ goal, nhiều task thì nối lại', () => {
-  assert.equal(requestOf(draft([draftTask({ goal: 'Liệt kê 10 thuật ngữ' })])), 'Liệt kê 10 thuật ngữ');
+test('requestOf: the task name is derived from goal, multiple tasks get joined', () => {
+  assert.equal(requestOf(draft([draftTask({ goal: 'List 10 terms' })])), 'List 10 terms');
   assert.equal(
-    requestOf(draft([draftTask({ goal: 'Dịch doc-1' }), draftTask({ goal: 'Soát lại bản dịch' })])),
-    'Dịch doc-1 · Soát lại bản dịch',
+    requestOf(draft([draftTask({ goal: 'Translate doc-1' }), draftTask({ goal: 'Proofread the translation' })])),
+    'Translate doc-1 · Proofread the translation',
   );
 });
 
-// ══════════════ CỬA 4: `{"say"}` THIẾU `intent` — ca thật 28/08 ══════════════
 
-/**
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐÂY LÀ NGUYÊN VĂN TRONG `route-failure.log`, không phải ca dựng ra.      │
- * │                                                                          │
- * │ User rút dây cánh tay GitHub rồi hỏi lại. Model trả lời **đúng, đủ, bằng │
- * │ tiếng người** — chỉ quên mỗi chữ `intent`. Ta vứt câu đó đi và thay bằng │
- * │ một lời xin lỗi bảo họ gõ lại; họ gõ lại (29 giây sau) và ra **y hệt**,  │
- * │ vì model có sai đâu mà đổi.                                              │
- * │                                                                          │
- * │ Ba vế user nói, cả ba đều đúng: *"đâu phải lỗi của LLM"* · *"rất nguy    │
- * │ hiểm cho multilanguage"* · *"có nhắn lại thì kết quả cũng ra vậy"*.      │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
-const CA_THAT =
-  '```json\n{"say":"Kết nối GitHub hiện không còn nữa, nên mình không đọc được README của repo ' +
-  'toeic-learning lúc này. Bạn cần kết nối lại GitHub cho văn phòng thì mình mới làm tiếp được."}\n```';
+const REAL_CASE =
+  '```json\n{"say":"The GitHub connection no longer exists, so I cannot read the README of the ' +
+  'toeic-learning repo right now. You need to reconnect GitHub for this office before I can continue."}\n```';
 
-test('🔴 `{"say"}` thiếu `intent` ⇒ CỨU, không vứt — và giữ NGUYÊN VĂN câu model viết', () => {
-  const r = decideRoute(CA_THAT);
-  assert.equal(r.intent, 'chat', 'phải đi cửa chat, không phải garbled');
-  assert.match((r as { say: string }).say, /Kết nối GitHub hiện không còn nữa/);
-  assert.doesNotMatch((r as { say: string }).say, /định dạng/, 'không được thay bằng câu của TA');
+test('🔴 `{"say"}` missing `intent` ⇒ SALVAGE it, do not discard — and keep the model\'s wording VERBATIM', () => {
+  const r = decideRoute(REAL_CASE);
+  assert.equal(r.intent, 'chat', 'must go through the chat door, not garbled');
+  assert.match((r as { say: string }).say, /The GitHub connection no longer exists/);
+  assert.doesNotMatch((r as { say: string }).say, /format/, 'must not be replaced with OUR sentence');
 });
 
-test('⭐ ca cứu hộ phải TỰ KHAI — một cửa cứu hộ im lặng là cái phễu êm ái', () => {
-  // Không có cờ này thì model quên `intent` mãi mãi mà không ai biết, và ta mất
-  // tín hiệu để đi sửa ở chỗ đúng (prompt) thay vì sửa mãi ở parser.
-  assert.equal((decideRoute(CA_THAT) as { salvaged?: true }).salvaged, true);
+test('⭐ a salvage case must DECLARE ITSELF — a silent salvage door is a comfortable trap', () => {
+  assert.equal((decideRoute(REAL_CASE) as { salvaged?: true }).salvaged, true);
   assert.equal(
-    (decideRoute('{"intent":"chat","say":"xin chào"}') as { salvaged?: true }).salvaged,
+    (decideRoute('{"intent":"chat","say":"hello"}') as { salvaged?: true }).salvaged,
     undefined,
-    'cửa CHÍNH thì không đánh dấu — nếu không thì nhật ký đầy tiếng ồn',
+    'the MAIN door does not get flagged — otherwise the log fills with noise',
   );
 });
 
-test('⭐ `intent` bịa ra một tên lạ vẫn cứu được', () => {
-  /**
-   * Vì sao `BareSaySchema` cố ý KHÔNG `.strict()`: `{"intent":"answer","say":…}`
-   * là cùng một ca hỏng (model tự nghĩ ra tên cửa), và bắt chặt ở đây là vứt đi
-   * đúng những thứ cửa này dựng ra để cứu.
-   */
-  const r = decideRoute('{"intent":"answer","say":"Mình chưa đọc được repo đó."}');
+test('⭐ a made-up unknown `intent` name is still salvaged', () => {
+  const r = decideRoute('{"intent":"answer","say":"I have not read that repo yet."}');
   assert.equal(r.intent, 'chat');
-  assert.equal((r as { say: string }).say, 'Mình chưa đọc được repo đó.');
+  assert.equal((r as { say: string }).say, 'I have not read that repo yet.');
 });
 
-test('🔴 CỬA 4 KHÔNG ĐƯỢC NUỐT KẾ HOẠCH — thứ tự thử là một bất biến', () => {
-  // `PlanTasksSchema` phải chạy TRƯỚC. Đảo thứ tự thì một kế hoạch có `say` ở
-  // đâu đó sẽ tụt xuống thành một câu chat, và **không ai làm việc đó cả** —
-  // đúng cái bug 20/08 mà cả file này sinh ra để canh.
-  // Dùng đúng bộ dựng của file này, KHÔNG gõ tay một khối JSON: gõ tay thì rất
-  // dễ ra một bản nháp thiếu trường, và ca test sẽ xanh/đỏ vì lý do khác hẳn
-  // thứ nó định canh. (Đã dẫm đúng thế lúc viết ca này.)
+test('🔴 DOOR 4 MUST NOT SWALLOW A PLAN — the try order is an invariant', () => {
   assert.equal(decideRoute(JSON.stringify(draft([draftTask()]))).intent, 'plan');
 });
 
-test('🔴 câu phao cuối KHÔNG bảo người dùng "nhắn lại y nguyên"', () => {
-  /**
-   * Lời khuyên đó **tất định sai**: nhánh này chỉ tới sau khi `route()` đã tự
-   * thử lại một lượt, nên bảo họ gõ lại đúng chữ cũ là mời họ dựng lại y chang
-   * cái hỏng vừa rồi. Và nó không được đoán nguyên nhân — ca thật hôm 28/08,
-   * nguyên nhân là **kết nối bị rút**, không phải "lỗi định dạng của mình".
-   */
-  const r = decideRoute('{"tasks": "không đúng hình dạng nào cả"}');
+test('🔴 the final fallback message must NOT tell the user to "resend the exact same message"', () => {
+  const r = decideRoute('{"tasks": "not shaped like anything we recognize"}');
   assert.equal(r.intent, 'garbled');
   const say = (r as { say: string }).say;
-  assert.doesNotMatch(say, /y nguyên/i);
-  assert.doesNotMatch(say, /lỗi của mình/i, 'đừng đoán nguyên nhân — ta không biết nó');
-  assert.match(say, /cách khác|chia nhỏ/i, 'phải chừa một đường đi tiếp KHÁC lần vừa rồi');
+  assert.doesNotMatch(say, /y nguyên/i); // i18n-allow-vietnamese: checks real i18n string (default locale vi) does not say "resend the exact same message"
+  assert.doesNotMatch(say, /lỗi của bạn/i, 'must not guess at a cause — we do not know it'); // i18n-allow-vietnamese: checks real i18n string (default locale vi)
+  assert.match(say, /theo cách khác|chia nhỏ/i, 'must leave a path forward DIFFERENT from what was just tried'); // i18n-allow-vietnamese: matches real i18n string (default locale vi)
 });
 
-test('🔴 JSON hỏng vẫn KHÔNG được lọt nguyên văn ra mặt người dùng', () => {
-  // Luật 20/08 giữ nguyên: một khối JSON không bao giờ là câu nói cho người
-  // dùng. Cửa 4 chỉ nới cho object CÓ `say` đọc được, không nới cho mọi JSON.
-  const r = decideRoute('{"tasks": "không đúng hình dạng nào cả"}');
+test('🔴 broken JSON must still NOT leak verbatim to the user-facing side', () => {
+  const r = decideRoute('{"tasks": "not shaped like anything we recognize"}');
   assert.doesNotMatch((r as { say: string }).say, /tasks/);
 });
 
-test('văn xuôi thường vẫn đi cửa chat như cũ', () => {
-  const r = decideRoute('Chào bạn! Mình có thể giúp gì?');
+test('ordinary prose still goes through the chat door as before', () => {
+  const r = decideRoute('Hi there! What can I help with?');
   assert.equal(r.intent, 'chat');
   assert.equal((r as { salvaged?: true }).salvaged, undefined);
 });

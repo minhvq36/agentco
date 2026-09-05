@@ -1,12 +1,13 @@
 /**
- * State toàn app. Store tự viết trên `useSyncExternalStore` — không thêm thư viện.
+ * App-wide state. A hand-written store over `useSyncExternalStore` — no library.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ RÀNG BUỘC HIỆU NĂNG: toạ độ node lúc ĐANG KÉO không đi qua store này.    │
- * │ Canvas cập nhật `transform` thẳng trên DOM qua ref, và chỉ commit vào    │
- * │ store một lần khi thả chuột. Một `setState` mỗi frame kéo = render lại   │
- * │ cả cây React 60 lần/giây, và tiêu chí "Hiệu năng" đòi 60fps KỂ CẢ khi    │
- * │ công ty đang chạy (tức là đang có sự kiện SSE bắn vào liên tục).         │
+ * │ THE PERFORMANCE CONSTRAINT: node coordinates DURING A DRAG never pass    │
+ * │ through this store. The canvas writes `transform` straight onto the DOM  │
+ * │ through a ref and commits to the store once, on pointer up. One          │
+ * │ `setState` per drag frame = re-rendering the whole React tree 60 times a │
+ * │ second, and the "Performance" bar asks for 60fps EVEN WHILE the company  │
+ * │ is working (i.e. while SSE events are arriving continuously).            │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -23,44 +24,75 @@ import type {
   PlanStep,
   StepStatus,
   Usage,
+  Locale,
 } from './types';
+import { plural, resolveLocale, setLocale, t } from '@i18n';
+
+import { mergeUserEcho } from './chat-echo';
 
 export interface ChatMessage {
   id: number;
   /**
-   * 'user' · 'assistant' · **hoặc id một NHÂN VIÊN**.
+   * 'user' · 'assistant' · **or AN EMPLOYEE's id**.
    *
-   * Nhánh thứ ba từ 19/08: task `deliver: reply` gửi câu trả lời thẳng từ nhân
-   * viên tới người dùng, không qua Trợ lý. Ô chat chỉ tách 'user' ra một bên;
-   * mọi vai trò còn lại dùng chung bong bóng bên trái, khác nhau ở cái nhãn tên
-   * tra bằng `labelFor(role)`. → docs/SPEC-offices.md §6
+   * The third case since 19/08: a `deliver: reply` task sends the answer straight
+   * from the employee to the user, not through the assistant. The chat panel only
+   * separates 'user' out; every other role shares the left-hand bubble and differs
+   * only in the name label, looked up with `labelFor(role)`.
+   * → docs/SPEC-offices.md §6
    */
   role: string;
   text: string;
   at: number;
   /**
-   * Đường dẫn kết quả ĐÃ XÁC MINH đi kèm tin nhắn (tính từ thư mục văn phòng).
+   * VERIFIED artifact paths riding along with the message (relative to the office
+   * directory).
    *
-   * Chỉ có ở tin do `whereBlock` dựng — tức là do CODE, không phải do model.
-   * Đây là danh sách duy nhất được phép biến thành nút bấm được; xem
-   * `FileLinks` trong ChatPanel.
+   * Present only on messages `whereBlock` assembles — i.e. built by CODE, not by
+   * the model. This is the only list allowed to become clickable; see `FileLinks`
+   * in ChatPanel.
    */
   files?: string[];
+  /**
+   * Drawn before the server confirmed it, and not yet settled by the echo.
+   *
+   * Only ever set on a `role: 'user'` bubble this tab just sent. The key is
+   * REMOVED once the echo arrives, so "pending" is never a stale label sitting
+   * on a message that really did land. → `mergeUserEcho`
+   */
+  pending?: boolean;
 }
 
-/** Trạng thái sống của một agent. Giữ ngoài DOM để sống sót qua mọi lần render. */
+/** An agent's live state. Kept outside the DOM so it survives every render. */
 export interface LiveAgent {
   status: 'working' | 'done' | 'error';
   say: string;
 }
 
-export type PanelId = 'chat' | 'plans' | 'overview' | 'knowledge' | 'library' | 'artifacts';
+export type PanelId =
+  | 'chat'
+  | 'plans'
+  | 'overview'
+  | 'knowledge'
+  | 'library'
+  | 'artifacts'
+  | 'settings';
 
 export interface AppState {
+  /**
+   * INTERFACE language. Lives in state ONLY so React re-renders on a change —
+   * the real value is `getLocale()` in `src/i18n/`, and the server's
+   * `company.yaml` is what persists it.
+   *
+   * ⚠ Never passed to the backend as part of a task, a message, or anything a
+   * model reads. It says what the screen shows, not what language the user
+   * speaks. → docs/CLAUDE.md §Language
+   */
+  locale: Locale;
   loading: boolean;
-  /** Lỗi ở tầng công ty (mất daemon, config hỏng). Chặn cả màn hình. */
+  /** A company-level error (daemon lost, config broken). It blocks the whole screen. */
   fatal: string | null;
-  /** Lỗi thoáng qua — hiện thành toast, không chặn gì. */
+  /** A passing error — shown as a toast, blocking nothing. */
   toast: { text: string; kind: 'error' | 'info' } | null;
 
   company: CompanyView | null;
@@ -71,147 +103,170 @@ export interface AppState {
   plan: { plan_id: string; request: string; steps: PlanStep[] } | null;
 
   messages: ChatMessage[];
-  /** Số tin đã đọc. Chấm "có tin mới" phải nói thật, nếu không thì bỏ hẳn còn hơn. */
+  /** How many messages have been read. The "new message" dot must tell the truth, or drop it entirely. */
   seenMessages: number;
   live: Record<string, LiveAgent>;
   cost: (Usage & { tasks: number }) | null;
   /**
-   * Hạn mức TÀI KHOẢN Claude. → src/core/energy.ts
+   * The Claude ACCOUNT limit. → src/core/energy.ts
    *
-   * ⚠ Nằm ngay cạnh `cost` nhưng có vòng đời NGƯỢC HẲN, và đó là chỗ dễ sai
-   * nhất: `cost` là tiền của một văn phòng trong phiên này nên đổi văn phòng
-   * là dọn; `energy` là hạn mức dùng chung với Claude Code và claude.ai của
-   * chính người dùng, nên đổi văn phòng KHÔNG được dọn. Xoá nó là xoá một sự
-   * thật vẫn còn đúng, rồi để header trống cho tới lượt chạy kế tiếp.
+   * ⚠ It sits right next to `cost` and has the OPPOSITE lifetime, which is where
+   * this goes wrong most easily: `cost` is one office's spend in this session, so
+   * switching offices clears it; `energy` is a limit shared with the user's own
+   * Claude Code and claude.ai, so switching offices must NOT clear it. Clearing it
+   * deletes a fact that is still true and leaves the header blank until the next
+   * run.
    */
   energy: Energy | null;
-  /** Đang chờ Trợ lý trả lời câu vừa gõ. */
   sending: boolean;
 
   /**
-   * BẢN NHÁP đang gõ trong ô chat. SỐNG ngoài component, và có bản sao trên đĩa.
+   * THE DRAFT being typed in the chat box. It LIVES outside the component, and has
+   * a copy on disk.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BUG ĐÃ SỬA (20/08): gõ dở, mở tab Tài liệu xem đường dẫn, quay lại —     │
-   * │ MẤT SẠCH.                                                                │
+   * │ FIXED BUG (20/08): type half a request, open the Library tab to check a  │
+   * │ path, come back — ALL GONE.                                              │
    * │                                                                          │
-   * │ Sidebar dựng panel bằng `{panel === 'chat' && <ChatPanel />}`, nên đổi   │
-   * │ tab là **unmount**, và bản nháp nằm trong `useState` của chính component │
-   * │ đó thì chết theo. Đúng thao tác người ta làm nhiều nhất khi soạn một yêu │
-   * │ cầu dài: đi tra tên file rồi quay lại.                                   │
+   * │ The sidebar mounts panels with `{panel === 'chat' && <ChatPanel />}`, so │
+   * │ a tab switch is an **unmount**, and a draft held in that component's     │
+   * │ `useState` dies with it. That is exactly the thing people do most while  │
+   * │ composing a long request: go look up a filename and come back.           │
    * │                                                                          │
-   * │ Thuộc lớp lỗi tệ nhất của dự án — **mất việc của người dùng, im lặng**.  │
-   * │ Không có thông báo nào, và người ta chỉ phát hiện khi nhìn vào ô trống.  │
+   * │ It belongs to the project's worst class of bug — **losing the user's     │
+   * │ work, silently**. No message of any kind, and they only notice when they │
+   * │ look at the empty box.                                                   │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Sửa ở TẦNG STATE chứ không phải bằng cách giữ panel luôn mounted (`hidden`):
-   * ẩn đi thì mọi panel khác cũng phải sống mãi, và ta đổi một bug lấy sáu cây
-   * component không bao giờ được dọn.
+   * Fixed at the STATE LAYER rather than by keeping the panel mounted
+   * (`hidden`): hiding means every other panel has to live forever too, and we
+   * would have traded one bug for six component trees that are never torn down.
    *
-   * Bản sao `localStorage` lo nốt ca thứ hai — **F5, crash tab, đóng nhầm cửa
-   * sổ**. Cùng một nỗi đau, và nếu chỉ chữa nửa trong bộ nhớ thì người dùng học
-   * được một luật sai ("đổi tab thì an toàn") rồi mất bài lúc lỡ tay tải lại.
+   * The `localStorage` copy covers the second case — **F5, a tab crash, closing
+   * the wrong window**. The same pain, and fixing only the in-memory half teaches
+   * the user a false rule ("switching tabs is safe") until they lose the lot on an
+   * accidental reload.
    */
   draft: string;
   /**
-   * Câu mô tả việc đang diễn ra, hiện ngay trong khung chat.
+   * A sentence describing what is happening, shown inside the chat frame.
    *
-   * Không có nó thì từ lúc bấm Gửi tới lúc Trợ lý trả lời là một khoảng im lặng
-   * 5–15 giây, và người dùng không biết hệ thống có nhận được hay không. Đây là
-   * cùng một thứ mà Telegram gọi là "typing…" — xem SPEC-offices.md §9.
+   * Without it, the gap between pressing Send and the assistant answering is 5–15
+   * seconds of silence and the user cannot tell whether the system received
+   * anything. This is the same thing Telegram calls "typing…" — see
+   * SPEC-offices.md §9.
    */
   activity: string | null;
 
   /**
-   * Tăng mỗi khi tủ tài liệu đổi. → docs/SPEC-library.md §10
+   * Incremented whenever the library changes. → docs/SPEC-library.md §10
    *
-   * Việc bóc văn bản chạy ngầm và mất vài giây cho một PDF dày, nên panel không
-   * thể chỉ nạp một lần lúc mở. Dùng một con số đếm thay vì nhét cả danh sách
-   * vào store: danh sách chỉ có đúng một bên đọc, còn store thì mọi component
-   * đang lắng nghe — đẩy nó vào đây là bắt cả cây render lại vì một dòng đổi
-   * trạng thái.
+   * Text extraction runs in the background and takes seconds for a thick PDF, so
+   * the panel cannot load once on open. A counter rather than the list itself in
+   * the store: the list has exactly one reader, while the store has every
+   * component listening — pushing it in here re-renders the whole tree because one
+   * row changed state.
    */
   libraryVersion: number;
 
   /**
-   * Số tài liệu ĐANG được bóc văn bản. → docs/SPEC-library.md §10
+   * How many documents are being extracted RIGHT NOW. → docs/SPEC-library.md §10
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ TRẠNG THÁI CỦA CÁI TỦ, KHÔNG PHẢI TRẠNG THÁI CỦA CUỘC TRÒ CHUYỆN.       │
+   * │ THE LIBRARY'S STATE, NOT THE CONVERSATION'S STATE.                       │
    * │                                                                          │
-   * │ Bản trước nhét câu "Đang đọc N tài liệu…" vào `activity` — dòng trạng    │
-   * │ thái của ô chat. Hai lỗi cùng lúc:                                        │
+   * │ The previous version put "Reading N documents…" into `activity` — the    │
+   * │ chat box's status line. Two mistakes at once:                            │
    * │                                                                          │
-   * │  1. SAI CHỖ. Người dùng vừa thả file vào tủ, không hỏi Trợ lý câu nào,   │
-   * │     mà ô chat lại báo bận. Việc đang xảy ra ở tủ thì phải hiện ở tủ.     │
-   * │  2. KHÔNG BAO GIỜ TẮT. `busy` về 0 thì nhánh đó không đặt `activity`     │
-   * │     nữa — nó chỉ không ghi gì, nên chuỗi cũ nằm nguyên trên màn hình     │
-   * │     cho tới khi người dùng tình cờ gõ một tin nhắn và ghi đè lên.        │
-   * │     Đúng lớp lỗi "/help ba chấm quay mãi": bật được mà không tắt được.   │
+   * │  1. WRONG PLACE. The user just dropped a file into the library and asked │
+   * │     the assistant nothing, yet the chat box reports itself busy. Work    │
+   * │     happening in the library shows in the library.                       │
+   * │  2. IT NEVER TURNS OFF. When `busy` reaches 0 that branch stops setting  │
+   * │     `activity` — it simply writes nothing, so the old string sits on     │
+   * │     screen until the user happens to send a message and overwrite it.    │
+   * │     The same class as "/help's dots spin forever": switchable on, not    │
+   * │     off.                                                                 │
    * │                                                                          │
-   * │ Một con SỐ chứ không phải một lá cờ: giao diện phải nói được "còn 3 file"│
-   * │ chứ không chỉ "đang bận".                                                │
+   * │ A NUMBER, not a flag: the interface has to be able to say "3 files left" │
+   * │ rather than only "busy".                                                 │
    * │                                                                          │
-   * │ Chỗ chat THẬT SỰ cần biết vẫn còn nguyên và không đi qua đây: khi một ca │
-   * │ chạy phải đứng chờ bóc xong, `office.run()` phát `office.state` riêng    │
-   * │ với câu "Đang đọc tài liệu X…". Đó mới là lúc im lặng gây hiểu nhầm.     │
+   * │ What the chat REALLY needs to know is untouched and does not come        │
+   * │ through here: when a run has to wait for extraction, `office.run()`      │
+   * │ emits its own `office.state` saying "Reading document X…". That is the   │
+   * │ moment where silence misleads.                                           │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   libraryBusy: number;
 
   /**
-   * Tăng mỗi khi kho tri thức đổi.
+   * Incremented whenever the knowledge store changes.
    *
-   * ⚠ Trước 19/08 `KnowledgePanel` bám vào `canvas.knowledge.total` — tức là
-   * SỐ ĐẾM, không phải sự kiện. Nó chỉ nạp lại khi số node thay đổi, nên mọi
-   * thay đổi giữ nguyên số lượng đều vô hình cho tới khi người dùng bấm F5:
-   * sửa nội dung một ghi chú, một node bị đè, dọn một node rồi thêm một node.
-   * Đếm không phải là biết đã đổi.
+   * ⚠ Before 19/08 `KnowledgePanel` watched `canvas.knowledge.total` — a COUNT,
+   * not an event. It only reloaded when the number of nodes changed, so every
+   * change that kept the count was invisible until the user pressed F5: editing a
+   * note's body, one node superseding another, pruning one and adding one.
+   * Counting is not knowing that something changed.
    */
   knowledgeVersion: number;
 
   /**
-   * Tăng mỗi khi có kết quả mới. → docs/SPEC-artifacts.md
+   * Incremented whenever a new artifact appears. → docs/SPEC-artifacts.md
    *
-   * Không cần sự kiện riêng từ server: kết quả chỉ sinh ra khi một việc chạy
-   * xong, mà `task.done` / `plan.finished` đã bay tới rồi. Thêm một sự kiện nữa
-   * để nói lại cùng một chuyện là thêm một chỗ có thể lệch nhau.
+   * No dedicated server event is needed: artifacts only appear when a job
+   * finishes, and `task.done` / `plan.finished` have already arrived. Adding
+   * another event to say the same thing adds another place that can disagree.
    */
   artifactsVersion: number;
 
   /**
-   * Sổ chung cánh tay vừa đổi — cắm · rút · xoá hẳn · **đăng nhập xong**.
-   * Hộp thoại cắm bám vào số này để tự nạp lại danh sách tài khoản OAuth.
+   * The shared arm ledger just changed — plugged in · withdrawn · deleted for good
+   * · **a sign-in completed**. The connect dialog watches this number to reload the
+   * list of OAuth accounts.
    */
   armsVersion: number;
 
   /**
-   * File vừa được thả lên node Tủ tài liệu, đang chờ panel nhận.
+   * The OAuth account name saved by the sign-in that caused the latest
+   * `armsVersion` bump — `null` when the bump came from anything else
+   * (plugging in, withdrawing, deleting).
    *
-   * Canvas KHÔNG tự tải lên. Cả luồng tải lên — hỏi lại khi trùng tên, câu từ
-   * chối cho từng đuôi file, trạng thái bóc text — sống ở đúng MỘT chỗ là
-   * `LibraryPanel`. Ô này là băng chuyền giữa hai cửa vào, không phải bản sao
-   * thứ hai của logic: có hai bản thì đến ngày sửa luật trùng tên sẽ có một bản
-   * được sửa và một bản bị quên.
+   * It rides alongside `armsVersion` rather than being derived later because
+   * it is the ONE thing the dialog cannot work out for itself: re-authorising
+   * an account that already exists adds no new name to the list, so a
+   * list-diff cannot tell **which** account was just repaired — and gets it
+   * wrong precisely when someone signs in as a different account by mistake.
+   */
+  linkedAccount: string | null;
+
+  /**
+   * Files just dropped onto the library node, waiting for the panel to take them.
+   *
+   * The canvas does NOT upload. The whole upload flow — asking on a name clash,
+   * the per-extension refusals, extraction state — lives in exactly ONE place,
+   * `LibraryPanel`. This field is the conveyor between two entrances, not a second
+   * copy of the logic: with two copies, the day the name-clash rule changes one
+   * gets fixed and the other is forgotten.
    */
   pendingDocs: File[] | null;
 
   /**
-   * Kết quả người dùng vừa bấm trong ô chat, đang chờ panel Kết quả mở ra.
+   * An artifact the user just clicked in the chat, waiting for the Results panel to
+   * open it.
    *
-   * Cùng khuôn `pendingDocs` và cùng lý do: cả luồng xem trước — nạp nội dung,
-   * ba nhóm định dạng, trần 2MB, nút tải về — sống ở đúng MỘT chỗ là
-   * `ArtifactsPanel`. Ô này là băng chuyền giữa hai cửa vào, không phải một bản
-   * sao thứ hai của logic đó.
+   * Same shape as `pendingDocs` and for the same reason: the whole preview flow —
+   * fetching the content, three format groups, the 2MB cap, the download button —
+   * lives in exactly ONE place, `ArtifactsPanel`. This field is the conveyor
+   * between two entrances, not a second copy of that logic.
    */
   revealArtifact: string | null;
 
   panel: PanelId | null;
-  /** Node đang chọn trên canvas (id node, không phải id vai trò). */
+  /** The node selected on the canvas (a node id, not a role id). */
   selected: string | null;
 }
 
 const initial: AppState = {
+  locale: bootLocale(),
   loading: true,
   fatal: null,
   toast: null,
@@ -233,6 +288,7 @@ const initial: AppState = {
   knowledgeVersion: 0,
   artifactsVersion: 0,
   armsVersion: 0,
+  linkedAccount: null,
   pendingDocs: null,
   revealArtifact: null,
   panel: null,
@@ -244,37 +300,76 @@ const listeners = new Set<() => void>();
 let msgSeq = 0;
 
 /**
- * Bản nháp trên đĩa — MỖI VĂN PHÒNG MỘT NGĂN.
+ * The draft on disk — ONE SLOT PER OFFICE.
  *
- * Dùng chung một khoá thì soạn dở một yêu cầu ở văn phòng Kế toán, ghé sang Nội
- * dung, và câu đó hiện ra trong ô chat của người khác. Văn phòng độc lập hoàn
- * toàn là luật gốc của sản phẩm; nó phải đúng cả ở những chỗ nhỏ thế này.
+ * Share one key and a half-written request in the Accounting office turns up in
+ * someone else's chat box after a hop to Content. Offices being fully independent
+ * is the product's founding rule; it has to hold in small places like this too.
  *
- * Mọi lời gọi đều nuốt lỗi: `localStorage` ném khi hết quota hoặc khi trình
- * duyệt chặn cookie/storage. Một bản nháp không lưu được là chuyện đáng tiếc;
- * một màn hình trắng vì nó thì không chấp nhận được.
+ * Every call swallows its error: `localStorage` throws when the quota is full or
+ * when the browser blocks cookies/storage. A draft that fails to save is a shame;
+ * a white screen because of one is not acceptable.
  */
 const draftKey = (officeId: string): string => `agentco:draft:${officeId}`;
 
 /**
- * Văn phòng đang mở — nhớ qua F5 và qua mọi lần tắt tab.
+ * The office currently open — remembered across F5 and across closing the tab.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG 21/08: `officeId` chỉ sống trong BỘ NHỚ.                             │
- * │                                                                          │
- * │ `bootstrap` giữ lại lựa chọn cũ (`state.officeId`) — nhưng sau F5 thì     │
- * │ state đã reset, `officeId` là `null`, nên nó luôn rơi về                  │
- * │ `company.offices[0]` = văn phòng đầu tiên theo alphabet. Người dùng thoát │
- * │ ở "Rà hợp đồng", quay lại thấy "Bản địa hoá", mỗi lần.                    │
- * │                                                                          │
- * │ Cùng lớp với bug "model nhớ, màn hình quên": trạng thái sống trong RAM    │
- * │ thì tắt cái là mất, và người dùng không có cách nào biết vì sao.          │
+ * │ BUG 21/08: `officeId` lived only IN MEMORY.                               │
+ * │                                                                           │
+ * │ `bootstrap` keeps the previous choice (`state.officeId`) — but after F5   │
+ * │ the state has reset, `officeId` is `null`, so it always falls back to     │
+ * │ `company.offices[0]` = the alphabetically first office. The user leaves   │
+ * │ from "Contract review" and comes back to "Localisation", every time.      │
+ * │                                                                           │
+ * │ The same class as "the model remembers, the screen forgets": state living │
+ * │ in RAM is gone the moment things close, and the user has no way to know   │
+ * │ why.                                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `localStorage` chứ không phải server: đây là VIEW STATE của một trình duyệt
- * cụ thể. Hai tab mở hai văn phòng khác nhau là chuyện hợp lệ, và nhét nó lên
- * server thì tab này đá tab kia.
+ * `localStorage`, not the server: this is one specific browser's VIEW STATE. Two
+ * tabs open on two different offices is perfectly legal, and putting this on the
+ * server has one tab kicking the other.
  */
+/**
+ * Interface language, mirrored into the browser SO THE FIRST PAINT IS RIGHT.
+ *
+ * The authority is `company.yaml`, read over `GET /api/company` — but that is a
+ * round trip, and until it lands the app has already drawn a sidebar full of
+ * labels. Without this mirror every reload flashes the default language and
+ * then swaps, which reads as a rendering bug, not as loading.
+ *
+ * Same defensive shape as every other key here: `localStorage` throws when the
+ * browser blocks site data, and a language preference is never worth a white
+ * screen. Missing or unreadable ⇒ fall back and let the fetch correct it.
+ */
+const LOCALE_KEY = 'agentco.locale';
+
+function bootLocale(): Locale {
+  let locale: Locale;
+  try {
+    locale = resolveLocale([localStorage.getItem(LOCALE_KEY), navigator.language], 'vi');
+  } catch {
+    locale = resolveLocale([], 'vi');
+  }
+  // The catalogue is module state, not React state: set it here or the very
+  // first render reads a different language from the one this function chose.
+  setLocale(locale);
+  return locale;
+}
+
+/** Apply a locale everywhere at once: the catalogue, the mirror, and React. */
+function applyLocale(locale: Locale): void {
+  setLocale(locale);
+  try {
+    localStorage.setItem(LOCALE_KEY, locale);
+  } catch {
+    /* blocked storage — the server still knows, so only the first paint suffers */
+  }
+  set({ locale });
+}
+
 const LAST_OFFICE = 'agentco:office';
 
 function readLastOffice(): string | null {
@@ -289,7 +384,7 @@ function writeLastOffice(id: string): void {
   try {
     localStorage.setItem(LAST_OFFICE, id);
   } catch {
-    /* hết quota / chế độ riêng tư — mất trí nhớ chỗ này không đáng làm sập gì */
+    /* quota full / private mode — forgetting this is not worth crashing anything */
   }
 }
 
@@ -307,7 +402,7 @@ function writeDraft(officeId: string | null, text: string): void {
     if (text) localStorage.setItem(draftKey(officeId), text);
     else localStorage.removeItem(draftKey(officeId));
   } catch {
-    /* hết chỗ hoặc bị chặn — bản trong bộ nhớ vẫn chạy đúng */
+    /* out of room or blocked — the in-memory copy still works correctly */
   }
 }
 
@@ -334,20 +429,25 @@ export function getState(): AppState {
 }
 
 /**
- * Tên hiển thị của một vai trò, để đọc log bằng mắt người.
+ * A role's display name, so a human can read the log.
  *
- * Người dùng đặt tên nhân viên tuỳ ý ("Người viết"), còn `role.id` là bản slug
- * hoá cho tên file ("nguoi-viet"). Log phải hiện cái người dùng đặt.
+ * The user names employees freely; `role.id` is the slugified form used for the
+ * filename, so a display name and its id genuinely differ — "Người viết" becomes // i18n-allow-vietnamese: the pair IS the example
+ * "nguoi-viet".
+ * The log shows the name the user chose.
  *
- * MÀU thì vẫn băm từ `id`, không từ tên: đổi tên hiển thị không được làm đổi màu
- * — mắt đã quen nối màu với người rồi. Và log cũ của vai trò đã bị xoá vẫn còn
- * `id` để lần ra, nên chỗ nào không tra được thì rơi về `id` chứ không rỗng.
+ * COLOUR is still hashed from `id`, not from the name: renaming must not change
+ * the colour — the eye has already tied colour to person. And old log lines for a
+ * deleted role still carry the `id` to trace, so an unresolvable lookup falls back
+ * to the `id` rather than to nothing.
  */
 export function labelFor(roleId: string): string {
-  if (roleId === 'user') return 'bạn';
+  if (roleId === 'user') return t('chat.you');
   if (roleId === 'assistant') {
     const node = state.canvas?.nodes.find((n) => n.kind === 'assistant');
-    return node?.label ?? 'Trợ lý';
+    // The node label is the name THE USER gave their assistant — never
+    // translated. `t()` only supplies the fallback for an office with no canvas.
+    return node?.label ?? t('chat.assistant');
   }
   const node = state.canvas?.nodes.find((n) => n.role === roleId);
   return node?.label ?? roleId;
@@ -361,9 +461,10 @@ export function toast(text: string, kind: 'error' | 'info' = 'error'): void {
 }
 
 /**
- * Bọc mọi lời gọi API. Backend đã trả câu tiếng Việt giải thích được — việc ở
- * đây là hiện nó ra, không nuốt. Mất daemon thì chặn cả màn hình vì mọi thao
- * tác tiếp theo đều vô nghĩa; lỗi khác thì chỉ báo rồi thôi.
+ * Wraps every API call. The backend already returned a sentence that explains
+ * itself — the job here is to show it, not swallow it. Losing the daemon blocks
+ * the whole screen because every next action is meaningless; any other error is
+ * reported and that is all.
  */
 async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
   try {
@@ -376,7 +477,7 @@ async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
   }
 }
 
-// ─────────────────────────────────────────────────────────── hành động
+// ───────────────────────────────────────────────────────────────── actions
 
 export const actions = {
   async boot(): Promise<void> {
@@ -386,18 +487,22 @@ export const actions = {
       return;
     }
     set({ company, fatal: null });
+    // `company.yaml` is the authority; the browser mirror was only a guess to
+    // get the first paint right. Correct it now, silently, if they disagree.
+    if (company.language && company.language !== state.locale) applyLocale(company.language);
 
     if (company.offices.length === 0) {
       set({ loading: false, officeId: null, canvas: null });
       return;
     }
     /**
-     * Thứ tự ba nước: văn phòng ĐANG mở → văn phòng mở LẦN CUỐI → cái đầu tiên.
+     * Three fallbacks in order: the office OPEN now → the office open LAST →
+     * the first one.
      *
-     * Nước hai là nước mới (21/08) và là nước cứu ca F5: sau khi tải lại trang
-     * thì nước một luôn trượt vì state đã reset. Vẫn phải đối chiếu với danh
-     * sách thật — văn phòng có thể đã bị xoá hoặc cất đi từ phiên trước, và mở
-     * một id không còn tồn tại thì màn hình trắng.
+     * The second is new (21/08) and is what saves the F5 case: after a reload the
+     * first always misses, because state has reset. It still has to be checked
+     * against the real list — an office may have been deleted or archived in a
+     * previous session, and opening an id that no longer exists is a white screen.
      */
     const wanted = [state.officeId, readLastOffice()].find(
       (id) => id && company.offices.some((o) => o.id === id),
@@ -406,10 +511,10 @@ export const actions = {
     set({ loading: false });
   },
 
-  /** Mở một văn phòng. Xoá sạch state của văn phòng cũ — không trộn hai luồng. */
+  /** Open an office. Clears the previous office's state entirely — never mix two streams. */
   async openOffice(id: string): Promise<void> {
-    // Ghi NGAY, không đợi tải xong: người dùng đóng tab giữa lúc đang tải thì
-    // lần sau vẫn phải quay lại đúng chỗ họ vừa chọn.
+    // Write it IMMEDIATELY, before the load finishes: if the user closes the tab
+    // mid-load they must still come back to the office they just chose.
     writeLastOffice(id);
     set({
       officeId: id,
@@ -419,15 +524,15 @@ export const actions = {
       seenMessages: 0,
       live: {},
       cost: null,
-      // ⚠ `energy` CỐ Ý không có ở đây. Hạn mức là của TÀI KHOẢN, không của văn
-      // phòng — dọn nó lúc đổi chỗ làm là xoá một sự thật vẫn còn đúng, rồi để
-      // header trống cho tới lượt chạy kế tiếp. → `AppState.energy`
+      // ⚠ `energy` is DELIBERATELY absent here. The limit belongs to the ACCOUNT,
+      // not to an office — clearing it on a switch deletes a fact that is still
+      // true and leaves the header blank until the next run. → `AppState.energy`
       selected: null,
-      // Tủ tài liệu là của TỪNG văn phòng. Không dọn thì mở văn phòng khác vẫn
-      // thấy "đang đọc 2 tài liệu" của văn phòng vừa rời đi.
+      // The library is PER OFFICE. Without clearing this, opening another office
+      // still shows "reading 2 documents" from the one just left.
       libraryBusy: 0,
-      // Bản nháp cũng của TỪNG văn phòng: đọc lại đúng ngăn của văn phòng vừa
-      // mở, không mang câu đang soạn ở chỗ khác sang đây.
+      // The draft is per office too: read back the slot belonging to the office
+      // just opened, never carry a sentence being composed elsewhere into it.
       draft: readDraft(id),
       activity: null,
       loading: true,
@@ -449,13 +554,15 @@ export const actions = {
       loading: false,
     });
     /**
-     * Phát lại theo ĐÚNG THỨ TỰ NÀY, và hai nguồn không được trộn:
+     * Replay IN EXACTLY THIS ORDER, and never mix the two sources:
      *
-     *  1. `chat`    — hội thoại đọc từ đĩa. Đây là thứ sống sót qua tắt daemon,
-     *                 và là thứ khiến màn hình khớp với những gì Trợ lý còn nhớ.
-     *  2. `history` — vòng đệm trong bộ nhớ của daemon, cho trạng thái SỐNG
-     *                 (kế hoạch đang chạy, ai đang làm gì). Bỏ `master.message`
-     *                 ở đây vì bước 1 đã có, giữ lại sẽ hiện tin nhắn hai lần.
+     *  1. `chat`    — the conversation read from disk. This is what survives the
+     *                 daemon stopping, and what makes the screen match what the
+     *                 assistant still remembers.
+     *  2. `history` — the daemon's in-memory ring buffer, for LIVE state (a plan
+     *                 in flight, who is doing what). `master.message` is dropped
+     *                 here because step 1 already had it; keeping it prints every
+     *                 message twice.
      */
     for (const e of detail.chat ?? []) applyEvent(e, false);
     for (const e of detail.history) {
@@ -465,23 +572,27 @@ export const actions = {
   },
 
   /**
-   * Nạp lại danh sách văn phòng — và TỰ CHỮA nếu văn phòng đang mở biến mất.
+   * Reload the office list — and SELF-HEAL if the open office has vanished.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐÂY LÀ CHỖ CỨU CẢ CA "TAB KHÁC", thứ mà response của PATCH không với tới.│
+   * │ THIS IS WHAT SAVES THE "OTHER TAB" CASE, which a PATCH response cannot   │
+   * │ reach.                                                                   │
    * │                                                                          │
-   * │ Đổi tên văn phòng có thể đổi luôn `id` (thư mục dời theo). Tab BẤM nút   │
-   * │ thì nhận `id` mới trong response và tự cập nhật. Nhưng **tab thứ hai**   │
-   * │ đang mở cùng văn phòng thì không gọi gì cả — nó chỉ nghe SSE, và         │
-   * │ `state.officeId` của nó vẫn là id cũ. Từ đó mọi lời gọi 404, và người    │
-   * │ dùng thấy toast *"Không có văn phòng …"* cho một thao tác đã thành công. │
+   * │ Renaming an office can change its `id` (the directory moves with it). The│
+   * │ tab that PRESSED the button gets the new `id` in the response and updates│
+   * │ itself. But **a second tab** open on the same office calls nothing — it  │
+   * │ only listens to SSE, and its `state.officeId` is still the old id. From  │
+   * │ then on every call 404s, and the user sees a toast *"No such office …"*  │
+   * │ for an action that succeeded.                                            │
    * │                                                                          │
-   * │ Nên bất biến phải là: **`officeId` không bao giờ trỏ tới một id server   │
-   * │ không có.** Kiểm ở đây vì đây là chỗ DUY NHẤT biết danh sách thật vừa    │
-   * │ đổi — và nó chạy cho mọi tab, không chỉ tab vừa bấm.                     │
+   * │ So the invariant has to be: **`officeId` never points at an id the       │
+   * │ server does not have.** Checked here because this is the ONLY place that │
+   * │ knows the real list just changed — and it runs in every tab, not just the│
+   * │ one that clicked.                                                        │
    * │                                                                          │
-   * │ `hint` là `event.office` của `company.offices`: nó mang id MỚI, nên tab  │
-   * │ kia đi thẳng tới đúng văn phòng thay vì rơi về cái đầu danh sách.        │
+   * │ `hint` is `company.offices`'s `event.office`: it carries the NEW id, so  │
+   * │ the other tab goes straight to the right office instead of falling back  │
+   * │ to the first in the list.                                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   async refreshCompany(hint?: string): Promise<void> {
@@ -491,9 +602,9 @@ export const actions = {
 
     const id = state.officeId;
     if (!id || company.offices.some((o) => o.id === id)) return;
-    // Văn phòng đang mở không còn trong danh sách: hoặc vừa đổi id (đổi tên có
-    // dời thư mục), hoặc vừa bị xoá ở tab khác. Cả hai đều phải đi tiếp, không
-    // được đứng lại ở một id chết.
+    // The open office is no longer in the list: either its id just changed (a
+    // rename that moved the directory), or it was deleted in another tab. Both
+    // have to move on; neither may sit on a dead id.
     const next = hint && company.offices.some((o) => o.id === hint) ? hint : company.offices[0]?.id;
     if (next) await actions.openOffice(next);
     else set({ officeId: null, canvas: null });
@@ -516,24 +627,26 @@ export const actions = {
   },
 
   /**
-   * Đổi tên văn phòng.
+   * Rename an office.
    *
-   * Server trả về cả danh sách văn phòng đã cập nhật, nên không cần thêm một
-   * vòng `GET /api/company` nữa; ô chọn ở đầu màn hình đổi tên ngay lập tức.
+   * The server returns the updated office list too, so no extra `GET /api/company`
+   * round trip is needed; the picker at the top of the screen renames immediately.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MÃ VĂN PHÒNG CÓ THỂ ĐỔI THEO — phải bám lấy `res.id`. (22/08)           │
-   * │                                                                          │
-   * │ Từ 22/08, đổi tên mà tên mới cho ra một slug thật thì **thư mục dời theo**│
-   * │ và `id` đổi (`Company.renameTarget`). Bản trước của khối này ghi *"mã giữ │
-   * │ nguyên — không có gì phải mở lại"* và không đụng tới `officeId`.          │
-   * │                                                                          │
-   * │ Không sửa thì `state.officeId` còn trỏ id CŨ: mọi lời gọi sau đó (chat,   │
-   * │ canvas, tủ tài liệu) đi tới một văn phòng không còn tồn tại và trả 404 —  │
-   * │ người dùng vừa đổi tên xong thì màn hình chết, mà không có gì giải thích. │
-   * │                                                                          │
-   * │ `writeLastOffice` cũng phải theo, nếu không mở lại app là quay về đúng    │
-   * │ cái id đã biến mất.                                                       │
+   * │ THE OFFICE ID CAN CHANGE WITH IT — hold on to `res.id`. (22/08)           │
+   * │                                                                           │
+   * │ Since 22/08, a rename whose new name yields a real slug **moves the       │
+   * │ directory** and changes the `id` (`Company.renameTarget`). The previous   │
+   * │ version of this block said *"the id is unchanged — nothing to reopen"*    │
+   * │ and never touched `officeId`.                                             │
+   * │                                                                           │
+   * │ Without the fix, `state.officeId` still points at the OLD id: every call  │
+   * │ after it (chat, canvas, library) goes to an office that no longer exists  │
+   * │ and 404s — the user renames something and the screen dies, with nothing   │
+   * │ explaining why.                                                           │
+   * │                                                                           │
+   * │ `writeLastOffice` has to follow as well, or reopening the app returns to  │
+   * │ the id that just disappeared.                                             │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   async renameOffice(name: string): Promise<boolean> {
@@ -552,10 +665,11 @@ export const actions = {
   },
 
   /**
-   * Đổi mức model của Trợ lý văn phòng này. `null` = theo mặc định của công ty.
+   * Change this office's assistant tier. `null` = follow the company default.
    *
-   * Trí nhớ hội thoại KHÔNG mất: bản ghi session nằm trên đĩa và độc lập với
-   * model. Cái mất là prompt cache — lượt kế tiếp ghi lại một lần.
+   * Conversational memory is NOT lost: the session transcript is on disk and
+   * independent of the model. What is lost is the prompt cache — the next turn
+   * rewrites it once.
    */
   async setAssistantTier(tier: string | null): Promise<boolean> {
     const id = state.officeId;
@@ -567,11 +681,11 @@ export const actions = {
   },
 
   /**
-   * Đổi tên hiển thị của Trợ lý. → `Office.renameAssistant`
+   * Change the assistant's display name. → `Office.renameAssistant`
    *
-   * Khác `setAssistantTier` ở cái giá, dù hai nút nằm cạnh nhau: tên KHÔNG nằm
-   * trong prompt của ai, nên không ghi lại cache, không mất trí nhớ, không đụng
-   * session. Sửa thoải mái.
+   * It differs from `setAssistantTier` in price even though the two buttons sit
+   * side by side: the name is in NOBODY's prompt, so it rewrites no cache, loses
+   * no memory and touches no session. Rename freely.
    */
   async renameAssistant(name: string): Promise<boolean> {
     const id = state.officeId;
@@ -582,7 +696,7 @@ export const actions = {
     return true;
   },
 
-  /** Mức nào chạy model nào — cấp CÔNG TY, đụng tới mọi văn phòng. */
+  /** COMPANY level: this reaches every office. */
   async updateModels(models: Record<string, string>): Promise<boolean> {
     const res = await guard(() => api.updateModels(models as never));
     if (!res) return false;
@@ -591,12 +705,13 @@ export const actions = {
     return true;
   },
 
-  /** Cất đi / đưa trở lại một VĂN PHÒNG. Chỉ gắn cờ, file không đi đâu cả. */
+  /** Only sets a flag; no file moves. */
   async archiveOffice(id: string, archived: boolean): Promise<boolean> {
     const res = await guard(() => api.patchOffice(id, { archived }));
     if (!res) return false;
-    // Cất chính văn phòng đang mở thì phải chuyển sang cái khác — ở lại nghĩa là
-    // mọi thao tác tiếp theo đều báo lỗi "chỉ đọc", và người dùng không hiểu vì sao.
+    // Archiving the office currently open means switching to another one — staying
+    // makes every following action fail with "read only", and the user cannot see
+    // why.
     if (archived && state.officeId === id) {
       set({ company: state.company ? { ...state.company, offices: res.offices } : state.company });
       const next = res.offices.find((o) => !o.archived && !o.error);
@@ -608,16 +723,59 @@ export const actions = {
     return true;
   },
 
-  /** XOÁ HẲN. Không lấy lại được — chỗ gọi phải hỏi xác nhận trước. */
+  /** Not recoverable — the call site must confirm first. */
   async removeOffice(id: string): Promise<boolean> {
+    /**
+     * SAY SO when a connection has just been orphaned — **do not block**. (02/09)
+     *
+     * A connection is company-level property that an office only borrows, so
+     * deleting an office must NOT touch it (delete A, unplug the connection, and
+     * B's wire is cut). But saying nothing leaves that debt invisible until the day
+     * the user goes looking for somewhere to remove it. One sentence plus the right
+     * door is enough; adding a condition to the delete button blocks a legitimate
+     * action over something that does not belong to it.
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 THE DELTA, NOT THE TOTAL. (user 05/09)                            │
+     * │                                                                      │
+     * │ This read `arms()` only AFTER the delete and counted every orphan in  │
+     * │ the company. A real company had 19 connections, most never wired to   │
+     * │ anyone — so deleting ANY office announced *"17 connections are now    │
+     * │ unused"*, including when that office had orphaned exactly zero.       │
+     * │                                                                      │
+     * │ The sentence says "**now** unused", so it is a claim about what this  │
+     * │ action just did. Answering it with a standing total is the same       │
+     * │ mismatch class as a `[done]` written over a `blocked` receipt: the    │
+     * │ number is real, it just does not answer the question asked. Worse, a  │
+     * │ toast that fires on every delete teaches the user to ignore the one   │
+     * │ time it matters.                                                     │
+     * │ → [[agentco-detect-fix-pair-scope]]                                  │
+     * │                                                                      │
+     * │ ⚠ Two reads, not one, and the BEFORE read has to happen before the    │
+     * │ delete call — there is no other moment that fact still exists.        │
+     * │ It costs one extra GET on an action the user takes once in a while.   │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const before = await api.arms().catch(() => null);
+    const wasOrphan = new Set(before?.arms.filter((a) => a.orphan).map((a) => a.id) ?? []);
+
     const ok = await guard(() => api.removeOffice(id));
     if (!ok) return false;
     if (state.officeId === id) set({ officeId: null });
     await actions.boot();
+
+    // `before === null` ⇒ we never learned the starting point, so every orphan
+    // would look new. Say nothing rather than announce a number we cannot stand
+    // behind — a wrong count here is what this whole box is about.
+    if (before) {
+      const r = await api.arms().catch(() => null);
+      const n = r?.arms.filter((a) => a.orphan && !wasOrphan.has(a.id)).length ?? 0;
+      if (n > 0) toast(t('toast.unusedArms', { n }));
+    }
     return true;
   },
 
-  /** Cất đi / đưa trở lại một NHÂN VIÊN. Khôi phục về đúng văn phòng cũ. */
+  /** Restoring returns them to the same office — they never left it. */
   async archiveAgent(role: string, archived: boolean): Promise<boolean> {
     const id = state.officeId;
     if (!id) return false;
@@ -629,17 +787,20 @@ export const actions = {
   },
 
   /**
-   * Ghi hình dạng.
+   * Persist the diagram.
    *
-   * `optimistic` = vẽ ngay rồi mới gửi. Dùng cho CẠNH NỐI: chúng rời rạc, một
-   * lần một, và người dùng vừa thả chuột xong nên phải thấy sợi dây ngay —
-   * chờ một vòng mạng mới hiện là đúng thứ tiêu chí "Mượt" cấm.
+   * `optimistic` = draw first, send after. Used for EDGES: they are discrete, one
+   * at a time, and the user has just released the pointer, so the wire has to
+   * appear immediately — waiting a network round trip to show it is precisely what
+   * the "Smooth" bar forbids.
    *
-   * Toạ độ thì KHÔNG optimistic: chúng đã hiện sẵn trên DOM (canvas tự vẽ khi
-   * kéo), nên gán lại vào store chỉ tổ làm React render thừa.
+   * Coordinates are NOT optimistic: they are already on the DOM (the canvas paints
+   * them while dragging), so writing them back into the store only makes React
+   * render for nothing.
    *
-   * Server có quyền sửa lại (lọc dây sai luật) → luôn nhận bản của nó, và nếu
-   * nó bỏ mất thứ ta vừa vẽ thì NÓI RA chứ không im lặng rút lại.
+   * The server may amend the result (filtering out illegal wires) → always take its
+   * version, and if it drops something we just drew, SAY SO rather than silently
+   * rolling it back.
    */
   async saveCanvas(
     nodes: CanvasState['nodes'],
@@ -666,7 +827,7 @@ export const actions = {
     if (!next) return;
 
     if (optimistic && next.edges.length < edges.length) {
-      toast('Sơ đồ không nhận sợi dây đó — kiểu nối này không hợp lệ.', 'error');
+      toast(t('toast.badEdge'), 'error');
     }
     set({ canvas: next });
   },
@@ -682,11 +843,12 @@ export const actions = {
   },
 
   /**
-   * Sửa hồ sơ nhân viên. KHÔNG autosave — caller gọi từ nút Lưu tường minh.
+   * Edit an employee's profile. NO autosave — the caller comes from an explicit
+   * Save button.
    *
-   * Sửa `pitch` bump cacheKey của Trợ lý (pitch nằm trong roster); sửa
-   * `model_tier` bump cacheKey của chính agent đó. Autosave theo phím ở đây là
-   * churn cache liên tục — cùng lý do với skills (SPEC-ui.md §2.2).
+   * Editing `pitch` bumps the assistant's cacheKey (the pitch is in its roster);
+   * editing `model_tier` bumps that agent's own cacheKey. Autosaving per keystroke
+   * here is continuous cache churn — the same reason as skills (SPEC-ui.md §2.2).
    */
   async editAgent(
     role: string,
@@ -695,10 +857,10 @@ export const actions = {
       avatar?: string;
       pitch?: string;
       model_tier?: string;
-      /** `0` = không giới hạn. */
+      /** `0` = no limit. */
       max_usd?: number;
       max_turns?: number;
-      /** Bật `Bash` — mua được metadata file (kích thước · ngày sửa) và chạy script. */
+      /** Turn on `Bash` — buys file metadata (size · modified date) and running scripts. */
       bash?: boolean;
     },
   ): Promise<boolean> {
@@ -711,7 +873,7 @@ export const actions = {
     return true;
   },
 
-  /** XOÁ HẲN file roles/<id>.yaml. Sổ tay kinh nghiệm vẫn được giữ lại. */
+  /** The notebook of lessons is kept. */
   async removeAgent(role: string): Promise<boolean> {
     const id = state.officeId;
     if (!id) return false;
@@ -723,12 +885,13 @@ export const actions = {
   },
 
   /**
-   * GỠ một cánh tay khỏi văn phòng NÀY — cắt mọi sợi dây ở đây, giữ nguyên cấu
-   * hình và chìa ở cấp công ty. Nó quay lại qua khối "đã cắm ở văn phòng khác".
+   * DETACH an arm from THIS office — cut every wire here, leave the config and the
+   * key intact at company level. It comes back through the "already plugged in
+   * elsewhere" block.
    *
-   * Cắt bằng cách ghi lại `edges` chứ không có route riêng: cạnh `mcp→agent`
-   * sống trong `roles/*.yaml`, và `LayoutStore.save` đã là con đường DUY NHẤT
-   * ghi xuống đó. Thêm một cửa thứ hai là dựng một bản sao của cùng một luật.
+   * The cut happens by rewriting `edges` rather than through a dedicated route: an
+   * `mcp→agent` edge lives in `roles/*.yaml`, and `LayoutStore.save` is already the
+   * ONLY path that writes there. A second door would be a second copy of one rule.
    */
   async detachArm(server: string): Promise<boolean> {
     const c = state.canvas;
@@ -742,8 +905,9 @@ export const actions = {
   },
 
   /**
-   * RÚT một cánh tay khỏi văn phòng NÀY. Sổ chung giữ nguyên cấu hình + chìa,
-   * nên cắm lại đúng thứ đó là tìm thấy — đó là lý do không còn mức "lưu trữ".
+   * WITHDRAW an arm from THIS office. The shared ledger keeps the config and the
+   * key, so plugging the same thing in again finds it — which is why there is no
+   * longer an "archive" step.
    */
   async removeArm(server: string): Promise<boolean> {
     const id = state.officeId;
@@ -756,38 +920,56 @@ export const actions = {
   },
 
   /**
-   * XOÁ HẲN khỏi sổ chung. → `Company.forgetArm`
+   * DELETE FOR GOOD from the shared ledger. → `Company.forgetArm`
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 BUG user báo 26/08: *"xóa MCP không văn phòng nào dùng, nó không ngay │
-   * │ lập tức update state lên FE mà báo không có kết nối <id>. Phải F5 mới     │
-   * │ hết."*                                                                    │
-   * │                                                                          │
-   * │ Nguyên nhân: `ArmDialog` gọi **thẳng `api.forgetArm`**, không đi qua đây. │
-   * │ Nên nó cập nhật đúng MỘT danh sách cục bộ trong hộp thoại, còn `selected` │
-   * │ và `canvas` của store thì giữ nguyên cái mã vừa chết — cú bấm tiếp theo   │
-   * │ chạm vào nó (đổi tên / rút) đi hỏi server một mã không còn tồn tại.       │
-   * │                                                                          │
-   * │ Đây **đúng cái cửa tắt** mà `office.ts` đã ghi lại từ 20/08: *"hai route  │
-   * │ gọi thẳng vào store, hai route đi qua `Office`. Cửa nào đi tắt thì cửa đó │
-   * │ quên."* Tôi dựng lại nó ba ngày sau khi codebase viết ra bài học ấy.      │
-   * │                                                                          │
-   * │ ⇒ Mọi thao tác ĐỔI trạng thái đi qua `actions`, không có ngoại lệ "cái    │
-   * │ này nhỏ mà". `removeArm` ngay trên đã làm đúng — chỉ cần giống nó.        │
+   * │ 🔴 BUG the user reported 26/08: *"deleting an MCP no office uses doesn't  │
+   * │ update the state on the front end straight away — it says there is no     │
+   * │ connection <id>. Only F5 clears it."*                                     │
+   * │                                                                           │
+   * │ The cause: `ArmDialog` called **`api.forgetArm` directly**, bypassing     │
+   * │ this. So it updated exactly ONE local list inside the dialog, while the   │
+   * │ store's `selected` and `canvas` still held the id that had just died —    │
+   * │ and the next click touching it (rename / withdraw) asked the server about │
+   * │ an id that no longer exists.                                              │
+   * │                                                                           │
+   * │ This is **exactly the shortcut** `office.ts` recorded back on 20/08:      │
+   * │ *"two routes call the store directly, two go through `Office`. Whichever  │
+   * │ door takes the shortcut is the door that forgets."* I rebuilt it three    │
+   * │ days after the codebase wrote that lesson down.                           │
+   * │                                                                           │
+   * │ ⇒ Every state-CHANGING operation goes through `actions`, with no "but     │
+   * │ this one is small" exception. `removeArm` just above already does it      │
+   * │ right — this only has to look like it.                                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   async forgetArm(server: string): Promise<boolean> {
     const res = await guard(() => api.forgetArm(server));
     if (!res) return false;
-    // Bỏ chọn TRƯỚC khi vẽ lại: Inspector đang mở trên node đó sẽ đọc một mã
-    // không còn trong sổ, và nút "Lưu" của nó gọi `renameArm` — đúng chỗ sinh ra
-    // câu "Không có kết nối <id>".
+    // Deselect BEFORE repainting: an Inspector open on that node would read an id
+    // no longer in the ledger, and its "Save" button calls `renameArm` — exactly
+    // what produced the "No such connection <id>" message.
     set({ selected: null });
     await actions.refreshCanvas();
     return true;
   },
 
-  /** Đổi tên kết nối. Nhãn không phải danh tính, nên đây là thao tác rẻ nhất hệ. */
+  /**
+   * FORGET a linked workspace (revoke at the service, then delete the key here).
+   *
+   * It goes through `actions` rather than calling `api` directly, for the same
+   * reason as `forgetArm` above: a node on the diagram draws its `via` sub-line
+   * from the OAuth store, so forgetting a workspace without repainting the canvas
+   * leaves a dead name on screen until the next F5.
+   */
+  async forgetAccount(name: string): Promise<boolean> {
+    const res = await guard(() => api.oauthForget(name));
+    if (!res) return false;
+    await actions.refreshCanvas();
+    return true;
+  },
+
+  /** A label is not an identity, so this is the cheapest operation in the system. */
   async renameArm(server: string, label: string): Promise<boolean> {
     const res = await guard(() => api.renameArm(server, label));
     if (!res) return false;
@@ -795,15 +977,15 @@ export const actions = {
     return true;
   },
 
-  /** Người dùng gõ một phím. Ghi cả vào bộ nhớ lẫn đĩa — xem `draft`. */
+  /** Memory and disk both — see `draft`. */
   setDraft(text: string): void {
     set({ draft: text });
     writeDraft(state.officeId, text);
   },
 
   /**
-   * Gửi bản nháp đang có. Không nhận tham số: **ô chat không còn giữ chữ nữa**,
-   * nên nguồn sự thật duy nhất là `state.draft`.
+   * Send whatever the draft holds. It takes no argument: **the chat box no longer
+   * holds the text**, so `state.draft` is the only source of truth.
    */
   async say(): Promise<void> {
     const id = state.officeId;
@@ -811,25 +993,46 @@ export const actions = {
     if (!id || !text || state.sending) return;
 
     /**
-     * XOÁ Ô CHAT NGAY, NHƯNG GIỮ MỘT BẢN ĐỂ TRẢ LẠI NẾU GỬI HỎNG.
+     * CLEAR THE BOX AT ONCE, BUT KEEP A COPY TO HAND BACK IF SENDING FAILS.
      *
-     * Xoá ngay là bắt buộc cho tiêu chí "mượt": thao tác phải phản hồi trước
-     * khi server trả lời. Nhưng bản trước xoá xong là **hết** — mất mạng đúng
-     * lúc bấm Gửi thì câu vừa gõ biến mất và chỉ còn một cái toast đỏ. Người ta
-     * gõ dài mấy trăm chữ rồi mất trắng vì một cú mạng chập.
+     * Clearing immediately is required by the "smooth" bar: an action must respond
+     * before the server does. But the previous version cleared and that was
+     * **that** — lose the network exactly as Send is pressed and the sentence just
+     * typed vanishes, leaving only a red toast. People type several hundred words
+     * and lose all of it to one network hiccup.
      */
     actions.setDraft('');
-    set({ sending: true, activity: 'đang đọc yêu cầu…' });
-    // KHÔNG tự thêm tin nhắn của mình vào đây: server phát lại nó dưới dạng
-    // sự kiện (role: 'user') để mọi tab và Telegram bridge cùng thấy một luồng.
-    // `say` giờ trả về NGAY sau khi bỏ tin vào hòm thư — mọi cập nhật tiếp theo
-    // đến bằng sự kiện `office.activity`, nên đừng tự tắt dòng trạng thái ở đây.
+    /**
+     * DRAWN AT ONCE, marked `pending`, settled by the server's echo.
+     *
+     * The echo is still the one stream every tab and the Telegram bridge read —
+     * it is not dropped, it is MATCHED. What changed is that this tab no longer
+     * makes the person watch a round trip to see their own sentence, which is
+     * the one thing on screen the server is not the authority on.
+     * → `mergeUserEcho`
+     */
+    const pendingId = ++msgSeq;
+    const drawn = [...state.messages, { id: pendingId, role: 'user', text, at: Date.now(), pending: true }];
+    set({
+      sending: true,
+      activity: t('activity.reading'),
+      messages: drawn,
+      ...(state.panel === 'chat' ? { seenMessages: drawn.length } : {}),
+    });
+    // `say` returns AS SOON AS the message is in the mailbox — every later update
+    // arrives as an `office.activity` event, so do not clear the status line here.
     const ok = await guard(() => api.say(id, text));
     set({ sending: false });
-    // `guard` đã hiện lỗi rồi; việc ở đây là **trả lại chữ cho người ta**. Chỉ
-    // trả khi ô còn trống: họ có thể đã gõ câu khác trong lúc chờ, và đè lên
-    // chữ mới là mất việc của người dùng lần thứ hai.
-    if (ok === undefined && !state.draft) actions.setDraft(text);
+    if (ok === undefined) {
+      // The send failed, so TAKE THE BUBBLE BACK DOWN. Leaving it would be the
+      // interface asserting something that did not happen — worse than the delay
+      // this whole change exists to remove.
+      set({ messages: state.messages.filter((m) => m.id !== pendingId) });
+      // `guard` has already shown the error; the job here is **giving the text back
+      // to the user**. Only if the box is still empty: they may have typed something
+      // else while waiting, and overwriting that loses their work a second time.
+      if (!state.draft) actions.setDraft(text);
+    }
   },
 
   async stop(): Promise<void> {
@@ -838,40 +1041,54 @@ export const actions = {
     await guard(() => api.stop(id));
   },
 
-  /** Nút trên thanh tab: bấm lại tab đang mở thì ĐÓNG. Đó là hành vi của một tab. */
+  /**
+   * Change the interface language. → docs/CLAUDE.md §Language
+   *
+   * Applied locally FIRST, then persisted. The switch is a pure display change
+   * with nothing to roll back and no work in flight that depends on it, so
+   * waiting for a round trip would only add a beat of nothing happening. If the
+   * write fails, `guard` shows the reason and the next reload reads the file —
+   * which still holds the old value, so the two ends agree again by themselves.
+   */
+  async setLanguage(locale: Locale): Promise<void> {
+    if (locale === state.locale) return;
+    applyLocale(locale);
+    await guard(() => api.setLanguage(locale));
+  },
+
+  /** Clicking the tab already open CLOSES it. That is what a tab does. */
   openPanel(panel: PanelId | null): void {
     const next = state.panel === panel ? null : panel;
     set({ panel: next, ...(next === 'chat' ? { seenMessages: state.messages.length } : {}) });
   },
 
   /**
-   * Mở một ngăn kéo, KHÔNG đảo trạng thái. Dùng cho lối vào từ sơ đồ.
+   * Opens a drawer WITHOUT toggling. The entrance from the diagram.
    *
-   * Khác `openPanel` ở đúng chỗ quan trọng: bấm node "Tủ tài liệu" hai lần phải
-   * là "mở, rồi vẫn mở" — không phải "mở rồi đóng". Người dùng bấm vào một thứ
-   * cụ thể để tới nơi cụ thể; ý định luôn là MỞ. Chỉ nút tab mới có nghĩa bật/tắt.
+   * It differs from `openPanel` exactly where it matters: clicking the "Library"
+   * node twice must mean "open, and still open" — not "open then close". Someone
+   * clicking a specific thing to reach a specific place always intends OPEN. Only
+   * the tab button means on/off.
    */
   showPanel(panel: PanelId): void {
     if (state.panel === panel) return;
-    // Bảng chi tiết bên phải phải đóng lại: node kho không có gì để hiện ở đó,
-    // và để nó mở là một cột rỗng đứng cạnh ngăn kéo vừa mở.
+    // The inspector on the right has to close: a store node has nothing to show
+    // there, and leaving it open is an empty column beside the drawer just opened.
     set({ panel, selected: null, ...(panel === 'chat' ? { seenMessages: state.messages.length } : {}) });
   },
 
   /**
-   * Thả file lên node Tủ tài liệu trên sơ đồ.
-   *
-   * MỞ PANEL RA luôn, không tải lên im lặng phía sau: người dùng vừa thả một
-   * file và họ cần thấy chuyện gì đang xảy ra với nó — bóc xong chưa, có bị từ
-   * chối không, có trùng tên không. Một thao tác không có phản hồi thị giác thì
-   * lần sau họ thả hai lần.
+   * OPENS THE PANEL rather than uploading quietly in the background: the user has
+   * just dropped a file and needs to see what is happening to it — is it extracted,
+   * was it refused, does the name clash. An action with no visual response gets
+   * performed twice next time.
    */
   dropDocs(files: File[]): void {
     if (files.length === 0) return;
     set({ panel: 'library', selected: null, pendingDocs: files });
   },
 
-  /** Panel nhận lô file rồi dọn ô — nếu không thì mở lại panel là tải lên lần nữa. */
+  /** Clears the slot as it hands over — otherwise reopening the panel uploads again. */
   takeDroppedDocs(): File[] {
     const files = state.pendingDocs ?? [];
     if (files.length) set({ pendingDocs: null });
@@ -879,22 +1096,20 @@ export const actions = {
   },
 
   /**
-   * Bấm một đường dẫn kết quả trong ô chat → mở panel Kết quả và bật xem trước.
    * → docs/SPEC-ui.md · docs/SPEC-artifacts.md §2.5
    *
-   * `showPanel` chứ không `openPanel`: ý định ở đây luôn là MỞ. Bấm hai đường
-   * dẫn liên tiếp mà cái thứ hai đóng panel lại thì đó là một cái bẫy.
+   * Opens, never toggles: the intent here is always OPEN. Clicking two paths in a
+   * row where the second closes the panel is a trap.
    */
   revealArtifact(path: string): void {
     set({ panel: 'artifacts', selected: null, revealArtifact: path });
   },
 
   /**
-   * Panel nhận yêu cầu rồi dọn ô.
-   *
-   * Dọn NGAY cả khi không tìm thấy file: giữ lại thì lần sau người dùng mở panel
-   * Kết quả vì việc khác hẳn cũng bị bật lên một cửa sổ xem trước họ không hề
-   * yêu cầu — và họ sẽ không hiểu nó từ đâu ra.
+   * Clears the slot IMMEDIATELY, even when the file was not found: keeping it means
+   * that the next time the user opens the Results panel for something else
+   * entirely, a preview they never asked for pops open — and they will have no idea
+   * where it came from.
    */
   takeRevealArtifact(): string | null {
     const p = state.revealArtifact;
@@ -929,31 +1144,33 @@ export function connectEvents(): () => void {
     }
     if (e.type === 'company.offices') {
       /**
-       * Bump `armsVersion`: sổ chung vừa đổi (cắm · rút · xoá hẳn · **vừa đăng
-       * nhập xong một tài khoản**). Hộp thoại cắm bám vào số này để tự nạp lại.
-       *
-       * ⚠ Đây là đường DUY NHẤT biết chắc luồng OAuth đã xong: tab callback là
-       * một điều hướng khác, người dùng đóng nó lúc nào cũng được, và không có
-       * sự kiện DOM nào ở tab agentco nói lên chuyện đó. Thiếu dòng này thì sau
-       * khi đăng nhập, hộp thoại vẫn hiện *"chưa đăng nhập"* và đường đi tiếp
-       * duy nhất là F5 — đúng hình dạng "app nói dối về trạng thái của nó".
+       * ⚠ This is the ONLY way to know for certain that an OAuth flow finished:
+       * the callback tab is a separate navigation, the user may close it whenever
+       * they like, and no DOM event in the agentco tab says anything about it.
+       * Without this line the dialog still shows *"not signed in"* after signing
+       * in, and the only way forward is F5 — the exact shape of "the app lies
+       * about its own state".
        */
-      set({ armsVersion: state.armsVersion + 1 });
-      // `e.office` mang id MỚI khi đổi tên làm dời thư mục — chuyển tiếp làm
-      // gợi ý để tab nào đang mở id cũ đi thẳng tới đúng chỗ. → `refreshCompany`
+      // Set BOTH in one write, and always set `linkedAccount` — including to
+      // `null`. Leaving a stale name behind would let the next bump (a withdrawal,
+      // a deletion) look like a sign-in that never happened.
+      set({ armsVersion: state.armsVersion + 1, linkedAccount: e.account ?? null });
+      // `e.office` carries the NEW id when a rename moved the directory — forward
+      // it as a hint so a tab on the old id goes straight to the right place.
+      // → `refreshCompany`
       void actions.refreshCompany(e.office ?? undefined);
       return;
     }
-    // Sự kiện của văn phòng KHÁC không được hiện ở đây. Đây là lý do mọi sự
-    // kiện bắt buộc mang trường office.
+    // Another office's events must not show up here. This is why every event is
+    // required to carry an `office` field.
     if (e.office && e.office !== state.officeId) return;
     applyEvent(e, true);
   };
 
   es.onerror = () => {
-    // EventSource tự kết nối lại. Chỉ báo khi nó đã đóng hẳn.
+    // EventSource reconnects by itself. Only report once it has closed for good.
     if (es.readyState === EventSource.CLOSED) {
-      set({ fatal: 'Mất kết nối tới công ty. Kiểm tra terminal — daemon còn chạy không?' });
+      set({ fatal: t('error.lostDaemon') });
     }
   };
 
@@ -961,11 +1178,12 @@ export function connectEvents(): () => void {
 }
 
 /**
- * Hẹn giờ tắt câu trạng thái TẠM (`office.activity.note`). → SPEC-offices.md §4.6
+ * The timer that clears a TEMPORARY status line (`office.activity.note`).
+ * → SPEC-offices.md §4.6
  *
- * Một biến duy nhất, không phải một bảng: mỗi lúc chỉ có đúng một dòng trạng
- * thái trên màn hình, nên hai câu tạm chồng nhau thì câu sau thắng — và bộ đếm
- * của câu trước phải bị huỷ, nếu không nó sẽ xoá nhầm câu đang hiện.
+ * One variable, not a table: there is only ever one status line on screen, so when
+ * two temporary sentences overlap the later one wins — and the earlier timer has
+ * to be cancelled, or it will clear the sentence now showing.
  */
 let noteTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -993,8 +1211,8 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
     }
 
     case 'plan.finished':
-      // Giữ kế hoạch trên màn hình sau khi xong — người dùng vừa mới đọc nó,
-      // xoá ngay là cướp mất ngữ cảnh.
+      // The plan stays on screen after it finishes — the user was just reading it,
+      // and clearing it immediately steals the context.
       set({ live: {}, activity: null });
       break;
 
@@ -1002,14 +1220,14 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
     case 'task.progress':
       clearTimeout(doneTimers[e.role]);
       setLive(e.role, { status: 'working', say: e.say });
-      // Ai đang làm gì — hiện ngay trong khung chat, không bắt người dùng mở
-      // sang panel khác để biết hệ thống còn sống.
+      // Who is doing what — shown in the chat frame, so nobody has to open another
+      // panel to learn that the system is still alive.
       set({ activity: labelFor(e.role) + ': ' + e.say });
       break;
 
     case 'task.done': {
       const ok = e.status === 'done';
-      // Việc xong = có thể có kết quả mới trên đĩa. Panel Kết quả tự nạp lại.
+      // A finished task may mean new artifacts on disk. The Results panel reloads.
       if (e.artifacts.length) set({ artifactsVersion: state.artifactsVersion + 1 });
       setLive(e.role, { status: ok ? 'done' : 'error', say: e.say });
       clearTimeout(doneTimers[e.role]);
@@ -1024,6 +1242,19 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       break;
 
     case 'master.message': {
+      /**
+       * Our own sentence coming back SETTLES the bubble already on screen — it
+       * never adds a second one. A `role: 'user'` message with no pending match
+       * is a real message from somewhere else (another tab, Telegram, the replay
+       * on reload) and falls through to the append below. → `mergeUserEcho`
+       */
+      if (e.role === 'user') {
+        const settled = mergeUserEcho(state.messages, e.say);
+        if (settled) {
+          set({ messages: settled, ...(state.panel === 'chat' ? { seenMessages: settled.length } : {}) });
+          break;
+        }
+      }
       const messages = [
         ...state.messages,
         {
@@ -1031,14 +1262,14 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
           role: e.role,
           text: e.say,
           at: Date.now(),
-          // Chuyển tiếp NGUYÊN VẸN, không suy diễn thêm gì. Giao diện không bao
-          // giờ tự dò đường dẫn trong `text` — xem chú thích ở `master.message`
-          // trong core/types.ts để biết vì sao đó là luật cứng.
+          // Forwarded INTACT, with nothing inferred. The interface never sniffs
+          // paths out of `text` — see the note on `master.message` in
+          // core/types.ts for why that is a hard rule.
           ...(e.files?.length ? { files: e.files } : {}),
         },
       ];
-      // Panel chat đang mở thì coi như đã đọc ngay — chấm đỏ chỉ dành cho tin
-      // đến lúc người dùng không nhìn.
+      // With the chat panel open it counts as read at once — the dot is only for
+      // messages that arrive while the user is looking elsewhere.
       set({ messages, ...(state.panel === 'chat' ? { seenMessages: messages.length } : {}) });
       break;
     }
@@ -1047,43 +1278,47 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       set({ officeState: e.state });
       break;
 
-    // Trợ lý bận và nhân viên bận là HAI chuyện. Câu hiện ra phải nói đúng cái
-    // đang xảy ra, nếu không người dùng thấy im lặng và tưởng hệ thống chết.
+    // The assistant being busy and an employee being busy are TWO things. The
+    // sentence shown has to name what is actually happening, or the user reads the
+    // silence as a dead system.
     case 'office.activity': {
       /**
-       * `note` ĐÈ LÊN dòng dựng từ con số, rồi tự tắt. → SPEC-offices.md §4.6
+       * `note` OVERRIDES the line built from the numbers, then clears itself.
+       * → SPEC-offices.md §4.6
        *
-       * Đây là chỗ `/clear` nói chuyện. Nó KHÔNG vào `messages`, nên dọn xong
-       * ô chat trắng thật — quá trình hiện rồi biến, chỉ kết quả mới ở lại, y
-       * hệt khuôn `…thinking` → trắng.
+       * This is how `/clear` speaks. It does NOT enter `messages`, so after the
+       * clear the chat box really is empty — the process appears and vanishes, only
+       * the result stays, exactly the `…thinking` → blank shape.
        *
-       * Hẹn giờ được HUỶ nếu một `office.activity` khác tới trước: nếu không,
-       * bộ đếm cũ sẽ xoá mất dòng trạng thái của việc MỚI vừa bắt đầu.
+       * The timer is CANCELLED if another `office.activity` arrives first:
+       * otherwise the old timer clears the status line of the NEW task that just
+       * started.
        */
       if (e.note) {
         if (noteTimer) clearTimeout(noteTimer);
         noteTimer = undefined;
         set({ activity: e.note });
         /**
-         * ⚠ VẮNG `hold_ms` = GIỮ CHO TỚI SỰ KIỆN KẾ TIẾP. KHÔNG có mặc định.
+         * ⚠ NO `hold_ms` = HOLD UNTIL THE NEXT EVENT. There is NO default.
          *
-         * BUG ĐÃ SỬA (20/08): người dùng báo *"/clear vẫn khựng 3–5 giây không
-         * thông báo gì"*. Bản trước đọc "vắng mặt" thành `?? 4_000` — mà nén
-         * trí nhớ mất 5–15 giây, nên dòng "Đang dọn…" **tự tắt lúc 4 giây
-         * trong khi việc vẫn đang chạy**, để lại đúng khoảng im lặng mà cả cơ
-         * chế này sinh ra để lấp.
+         * FIXED BUG (20/08): the user reported *"/clear still stalls 3–5 seconds
+         * saying nothing"*. The previous version read absence as `?? 4_000` — but
+         * memory compaction takes 5–15 seconds, so the "Clearing…" line **turned
+         * itself off at 4 seconds while the work was still running**, leaving
+         * exactly the silence this whole mechanism exists to fill.
          *
-         * Hai loại `note` có vòng đời ngược nhau, và server ĐÃ phân biệt sẵn:
-         * `emitNote()` (kết quả đã xong) luôn gửi `hold_ms`; nhánh `clearing`
-         * (việc đang chạy) không bao giờ gửi. Chỉ client đọc sai.
+         * The two kinds of `note` have opposite lifetimes and the server ALREADY
+         * distinguishes them: `emitNote()` (a finished result) always sends
+         * `hold_ms`; the `clearing` branch (work in flight) never does. Only the
+         * client was reading it wrong.
          *
          * → core/types.ts `office.activity`
          */
         if (e.hold_ms === undefined) break;
         noteTimer = setTimeout(() => {
           noteTimer = undefined;
-          // Chỉ xoá nếu chưa ai ghi đè — tránh nuốt dòng trạng thái của một
-          // việc vừa được giao ngay sau lệnh dọn.
+          // Only clear if nobody has overwritten it — otherwise this swallows the
+          // status line of a task handed out right after the clear.
           if (state.activity === e.note) set({ activity: null });
         }, e.hold_ms);
         break;
@@ -1094,28 +1329,29 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       }
 
       const bits: string[] = [];
-      if (e.assistant === 'thinking') bits.push('Trợ lý đang nghĩ…');
-      if (e.assistant === 'planning') bits.push('Trợ lý đang lập kế hoạch…');
-      if (e.workers > 0) bits.push(`${e.workers} nhân viên đang làm việc`);
-      if (e.queued > 0) bits.push(`${e.queued} tin chờ`);
-      if (e.jobs > 0) bits.push(`${e.jobs} việc xếp hàng`);
-      // MẠCH KHÔNG ĐƯỢC ĐỨT. Còn `plan_id` nghĩa là còn một công việc đang chạy,
-      // nên phải còn một câu gì đó trên màn hình — kể cả ở những nhịp ngắn không
-      // ai "bận" theo nghĩa hẹp (vừa lập kế hoạch xong, chưa phóng task đầu).
-      // Khoảng im lặng chính là chỗ người dùng tưởng hệ thống chết và bấm lại.
-      if (bits.length === 0 && e.plan_id) bits.push('Đang chạy…');
+      if (e.assistant === 'thinking') bits.push(t('activity.assistantThinking'));
+      if (e.assistant === 'planning') bits.push(t('activity.assistantPlanning'));
+      if (e.workers > 0) bits.push(plural('activity.workers', e.workers));
+      if (e.queued > 0) bits.push(plural('activity.queued', e.queued));
+      if (e.jobs > 0) bits.push(plural('activity.jobs', e.jobs));
+      // THE THREAD MUST NOT BREAK. A `plan_id` still present means a job is still
+      // running, so something has to remain on screen — including the short beats
+      // where nobody is "busy" in the narrow sense (planning just finished, the
+      // first task not yet launched). The silence is where a user decides the
+      // system is dead and clicks again.
+      if (bits.length === 0 && e.plan_id) bits.push(t('activity.running'));
       set({ activity: bits.length ? bits.join(' · ') : null });
       break;
     }
 
     /**
-     * Dọn ô chat. Sự kiện này là một MỆNH LỆNH, không phải một câu để đọc —
-     * nên nó không đi vào `messages`.
+     * This event is an INSTRUCTION, not a sentence to read — so it does not enter
+     * `messages`.
      *
-     * Câu báo kết quả đến NGAY SAU nó bằng `master.message`, và vì thế trở
-     * thành dòng đầu tiên của cuộc trò chuyện mới. Người dùng thấy: "Đang
-     * dọn…" → màn hình trắng → "Đã dọn xong". Cảm giác dọn rác là THẬT, vì
-     * bản ghi hội thoại phía sau cũng vừa bị bỏ thật.
+     * The result message arrives IMMEDIATELY AFTER it as a `master.message`, and so
+     * becomes the first line of the new conversation. The user sees: "Clearing…" →
+     * a blank screen → "Cleared". The feeling of clearing out is REAL, because the
+     * transcript behind it really was dropped.
      */
     case 'office.cleared':
       set({ messages: [], seenMessages: 0, activity: null });
@@ -1125,36 +1361,35 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       set({ cost: e.totals });
       break;
 
-    // ⚠ KHÔNG dọn ở chỗ đổi văn phòng — xem chú thích ở `AppState.energy`.
+    // ⚠ NOT cleared on an office switch — see the note on `AppState.energy`.
     case 'energy.tick':
       set({ energy: e.energy });
       break;
 
     case 'knowledge.changed':
-      // Bump LUÔN, kể cả khi phát lại từ log: ngăn kéo Tri thức bám vào con số
-      // này chứ không bám vào số node, nên nó thấy được cả những thay đổi giữ
-      // nguyên số lượng (sửa nội dung, node bị đè, dọn một thêm một).
+      // Bump ALWAYS, replays from the log included: the Knowledge drawer watches
+      // this number rather than the node count, so it sees changes that keep the
+      // count too (an edited body, a superseded node, prune one and add one).
       set({ knowledgeVersion: state.knowledgeVersion + 1 });
       if (fromLive) void actions.refreshCanvas();
       break;
 
     /**
-     * Tủ tài liệu đổi. Chỉ bump một số đếm — panel tự nạp lại danh sách.
-     *
-     * `libraryBusy` GHI MỖI LẦN, kể cả khi bằng 0. Ghi có điều kiện là cách một
-     * dòng trạng thái mắc kẹt trên màn hình vĩnh viễn: nhánh "hết bận" không
-     * ghi gì cả thì giá trị cũ sống mãi. Xem chú thích ở `AppState.libraryBusy`.
+     * `libraryBusy` IS WRITTEN EVERY TIME, including when it is 0. A conditional
+     * write is how a status line gets stuck on screen forever: the "no longer busy"
+     * branch writes nothing, so the old value lives on. See the note on
+     * `AppState.libraryBusy`.
      */
     case 'library.changed':
       set({ libraryVersion: state.libraryVersion + 1, libraryBusy: e.busy });
-      // Node Tủ tài liệu trên sơ đồ hiện SỐ tài liệu — không nạp lại thì con số
-      // đó đứng im và sơ đồ nói sai về chính thứ người dùng vừa làm.
+      // The library node on the diagram shows a document COUNT — without a reload
+      // that number stands still and the diagram lies about what the user just did.
       if (fromLive) void actions.refreshCanvas();
       break;
 
     case 'layout.changed':
-      // Bỏ qua tiếng vọng của chính mình — saveCanvas đã nhận bản mới từ server.
-      // Nhưng tab KHÁC thì vẫn phải thấy. Đánh dấu bằng thời điểm ghi gần nhất.
+      // Ignore our own echo — `saveCanvas` already took the server's version. But
+      // OTHER tabs still have to see it. Distinguished by the last local write.
       if (fromLive && Date.now() - lastLocalSave > 2000) void actions.refreshCanvas();
       break;
   }
@@ -1165,7 +1400,7 @@ export function markLocalSave(): void {
   lastLocalSave = Date.now();
 }
 
-/** Dọn khi hot-reload trong lúc dev. */
+/** Cleanup for hot reload during development. */
 export function resetTimers(): void {
   for (const t of Object.values(doneTimers)) clearTimeout(t);
   doneTimers = {};

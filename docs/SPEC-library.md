@@ -1,519 +1,535 @@
-﻿# SPEC — Tủ tài liệu: file của người dùng, tách khỏi kho tri thức
+# SPEC — Document Library: user files, separated from the knowledge store
 
-**Chốt 17/08/2026.** Đọc kèm `SPEC-token-economy.md` (luật cao nhất), `SPEC-offices.md` §2 (bố cục thư mục), phụ lục `SPEC-connectors.md` (hướng tìm kiếm — spec này *thi hành* nó).
-
----
-
-## 0. Một câu
-
-> **Kho tri thức là những câu ngắn hệ thống ĐÃ HỌC. Tủ tài liệu là file NGƯỜI DÙNG ĐƯA VÀO.**
-> Cái thứ nhất nằm trong prefix và trả tiền mỗi lượt. Cái thứ hai không bao giờ vào prefix và với tới bằng `Glob`/`Grep`.
+**Locked 17/08/2026.** Read alongside `SPEC-token-economy.md` (highest-priority law), `SPEC-offices.md` §2 (folder layout), appendix `SPEC-connectors.md` (search direction — this spec *enforces* it).
 
 ---
 
-## 1. Vì sao tách ở tầng LƯU TRỮ, dù luật chung nói tách ở tầng hiển thị rẻ hơn
+## 0. One sentence
 
-Luật §5e (`SESSIONS_MEMORY`): *tách hiển thị rẻ, tách lưu trữ đắt → nghi ngờ thì tách chỗ rẻ*. Đây là **ngoại lệ**, và lý do phải ghi ra để lần sau không ai gộp lại:
+> **The knowledge store is short sentences the system has LEARNED. The document library is files the USER PUT IN.**
+> The first lives in the prefix and is paid for every turn. The second never enters the prefix and is reached with `Glob`/`Grep`.
 
-| | Kho tri thức | Tủ tài liệu |
+---
+
+## 1. Why the split happens at the STORAGE layer, even though the general rule says splitting at the display layer is cheaper
+
+Law §5e (`SESSIONS_MEMORY`): *splitting display is cheap, splitting storage is expensive → when in doubt, split at the cheap layer*. This is an **exception**, and the reason has to be written down so nobody merges them back later:
+
+| | Knowledge store | Document library |
 |---|---|---|
-| Ai sinh ra | agent tự rút ra (+ người dùng sửa/xoá) | **chỉ người dùng** |
-| Vào prompt prefix? | **CÓ** — mỗi lượt, mỗi worker | **KHÔNG BAO GIỜ** |
-| Đơn vị | node ~250 token, một file `.md` | tài liệu, tính bằng MB |
-| Vòng đời tự động | `supersedes` · `hits` · `last_used` · prune 15 ngày | **không có** |
-| Truy xuất | chấm điểm từ khoá (`KnowledgeStore.hot/cold`) | `Glob`/`Grep` trên đĩa |
-| Xoá nhầm thì sao | mất một bài học agent tự rút ra | **mất file của khách** |
+| Who produces it | the agent distills it (+ the user edits/deletes) | **only the user** |
+| Enters the prompt prefix? | **YES** — every turn, every worker | **NEVER** |
+| Unit | a node ~250 tokens, one `.md` file | a document, measured in MB |
+| Automatic lifecycle | `supersedes` · `hits` · `last_used` · 15-day prune | **none** |
+| Retrieval | keyword scoring (`KnowledgeStore.hot/cold`) | `Glob`/`Grep` on disk |
+| Cost of an accidental delete | one lesson the agent had distilled | **a client's file, gone** |
 
-Dùng chung tầng lưu trữ nghĩa là một ngày nào đó `pruneStale` xoá hợp đồng của khách vì nó "15 ngày không dính việc nào". Hai vòng đời không tương thích được.
+Sharing one storage layer means that one day `pruneStale` deletes a client's contract because it "hasn't touched any task in 15 days." The two lifecycles are not compatible.
 
-**Cấp VĂN PHÒNG, không phải cấp công ty.** Tài liệu không vào prefix nên về kỹ thuật cấp công ty làm được — nhưng nó phá bất biến *"văn phòng tự chứa, zip lại là một template chạy được ở máy khác"* (`SPEC-offices.md` §2).
+**Office-level, not company-level.** Documents don't enter the prefix, so technically company-level would work — but it would break the invariant *"an office is self-contained, zip it up and it runs as a template on another machine"* (`SPEC-offices.md` §2).
 
-**Và chỉ tách MỘT lần này.** Không có kho thứ ba.
+**And this split happens exactly once.** There is no third store.
 
 ---
 
-## 2. Bố cục thư mục
+## 2. Folder layout
 
 ```
-offices/<mã>/
+offices/<id>/
   library/
-    files/           ← BẢN GỐC người dùng đưa vào. Giao diện hiện đúng thư mục này, 1:1
-    text/            ← văn bản đã bóc:  <tên gốc>.txt
-    INDEX.md         ← tầng định tuyến, dựng bằng CODE, 0 token (§8)
-    catalog.json     ← trạng thái từng tài liệu
-  artifacts/         ← KHÔNG ĐỔI: nơi agent GHI RA
-  knowledge/         ← KHÔNG ĐỔI: node tri thức
+    files/           ← ORIGINALS the user put in. The UI shows exactly this folder, 1:1
+    text/            ← extracted text:  <original name>.txt
+    INDEX.md         ← routing layer, built by CODE, 0 tokens (§8)
+    catalog.json     ← per-document status
+  artifacts/         ← UNCHANGED: where the agent WRITES
+  knowledge/         ← UNCHANGED: knowledge nodes
 ```
 
-### 2.1 ⚠ Vì sao KHÔNG giấu vào `.state/` — đã kiểm bằng lệnh thật
+### 2.1 ⚠ Why NOT hide it under `.state/` — checked with a real command
 
-Ý định tự nhiên là nhét `text/` và `catalog.json` vào `.state/` cho khuất mắt. **Làm thế là cơ chế truy xuất chết im lặng:** `Grep` dựng trên ripgrep, và ripgrep **bỏ qua mọi thư mục bắt đầu bằng dấu chấm** khi duyệt xuống.
+The natural instinct is to tuck `text/` and `catalog.json` under `.state/` to keep them out of sight. **Doing that silently kills the retrieval mechanism:** `Grep` is built on ripgrep, and ripgrep **skips every directory whose name starts with a dot** when walking down.
 
-Đo ngày 17/08:
+Measured on 17/08:
 
 ```
-Grep "pid|port"  path=company/         → 4 file, KHÔNG có .state/daemon.json
-Grep "."         path=company/.state/  → tìm thấy (vì là gốc tìm kiếm, không phải duyệt xuống)
+Grep "pid|port"  path=company/         → 4 files, NO .state/daemon.json
+Grep "."         path=company/.state/  → found it (because it's the search root, not something walked into)
 ```
 
-Kèm một tin tốt cũng đã kiểm: **`.gitignore` KHÔNG chặn `Grep`**. `company/` bị gitignore mà `Grep` vẫn thấy đủ file. Chỉ có một cái bẫy, và nó nằm ở dấu chấm.
+Plus one piece of good news, also checked: **`.gitignore` does NOT block `Grep`**. `company/` is gitignored and `Grep` still sees every file. There's only one trap, and it's the dot.
 
-> **Luật rút ra: thứ gì agent phải `Grep` thấy thì tên thư mục KHÔNG được bắt đầu bằng dấu chấm.**
+> **Rule to carry forward: if the agent needs to `Grep` it, the folder name must NOT start with a dot.**
 
-### 2.2 Vì sao `library/` tách khỏi `artifacts/`
+### 2.2 Why `library/` is separate from `artifacts/`
 
-- Lẫn vào nhau thì "xoá hết tài liệu" ăn luôn kết quả agent đã trả tiền để làm ra.
-- Danh sách 1:1 sẽ nhấp nháy theo mỗi lần agent ghi file.
-- `artifacts/` là **đầu ra**, `library/files/` là **đầu vào**. Trộn hai chiều dữ liệu vào một thư mục là chỗ mọi thứ bắt đầu rối.
+- Mixing them means "delete all documents" also eats results the agent was paid to produce.
+- A 1:1 listing would flicker with every file the agent writes.
+- `artifacts/` is **output**, `library/files/` is **input**. Mixing two data directions into one folder is where everything starts getting confused.
 
-### 2.3 Tên sidecar giữ nguyên tên gốc
+### 2.3 Sidecar names keep the original name
 
-`library/text/Hợp đồng ABC.pdf.txt` — **không** băm, **không** slug. Kết quả `Grep` tự nói ra nó thuộc tài liệu nào; model không phải tra bảng, người dùng không phải đoán.
+`library/text/Contract ABC.pdf.txt` — **no** hashing, **no** slugging. The `Grep` result names the document it belongs to on its own; the model doesn't have to look anything up, and the user doesn't have to guess.
 
 ---
 
-## 3. PDF: bóc text KHÔNG phải để thay việc đọc — để đọc ĐÚNG CHỖ
+## 3. PDFs: extracting text is NOT to replace reading — it's to read the RIGHT PLACE
 
-Đây là mục dễ quyết sai nhất, vì tiền đề *"model đọc PDF rất tốt rồi"* **đúng**.
+This is the section most likely to be decided wrong, because the premise *"the model already reads PDFs very well"* is **true**.
 
-Nhưng model đọc PDF bằng cách **nhìn từng trang như một tấm ảnh**, và ràng buộc của tool `Read` nói hết:
+But the model reads a PDF by **looking at each page as an image**, and the `Read` tool's own constraints say the rest:
 
-> PDF đọc qua tham số `pages` (vd `"1-5"`), **tối đa 20 trang mỗi lần**, và **bắt buộc khai `pages` nếu PDF trên 10 trang**.
+> A PDF is read via the `pages` parameter (e.g. `"1-5"`), **at most 20 pages per call**, and **`pages` is required if the PDF is over 10 pages**.
 
-Tức là với hợp đồng 34 trang, agent **không thể** gõ "đọc file này" — nó **buộc phải biết trước cần trang nào**. Với sách 300 trang thì càng không. Đây không phải chuyện rẻ hay đắt, mà là chuyện làm được hay không.
+Meaning for a 34-page contract, the agent **cannot** just say "read this file" — it **has to already know** which pages it needs. For a 300-page book, even less so. This isn't a question of cheap vs. expensive — it's a question of possible vs. impossible.
 
-| | Bóc text lúc nạp | `Read` thẳng bản gốc |
+| | Extract text on ingest | `Read` the original directly |
 |---|---|---|
-| Chi phí LLM | **0 token, một lần, mãi mãi** (code thuần) | trả token **mỗi task, mỗi lần** — trang vào dạng ảnh nên đắt hơn text nhiều |
-| Sách 300 trang | `Grep` ra đúng 200 dòng cần | 15 lần gọi — không ai làm |
-| Bảng biểu, nhiều cột | **hỏng** — text bóc ra lộn cột | **đúng** — model thấy bố cục |
-| Biểu đồ, hình vẽ | mất sạch | đọc được |
-| **PDF scan** | **ra rỗng** | **đọc được — model tự OCR** |
+| LLM cost | **0 tokens, once, forever** (pure code) | pays tokens **every task, every time** — pages come in as images so it's much more expensive than text |
+| 300-page book | `Grep` pulls out exactly the 200 lines needed | 15 calls — nobody does that |
+| Tables, many columns | **broken** — extracted text scrambles columns | **correct** — the model sees the layout |
+| Charts, drawings | lost entirely | readable |
+| **Scanned PDF** | **comes out empty** | **readable — the model OCRs it itself** |
 
-Hai cột **không đối nhau, chúng bù nhau**:
+The two columns **don't compete, they complement each other**:
 
-> **Text đã bóc dùng để TÌM. Bản gốc dùng để ĐỌC KỸ trang đã tìm ra.**
+> **Extracted text is for FINDING. The original is for READING CLOSELY the page you found.**
 
-### 3.1 Cơ chế nối hai thứ: mốc trang
+### 3.1 The mechanism that links the two: page markers
 
-File text của PDF **phải** cắm mốc trang:
+The text file for a PDF **must** carry page markers:
 
 ```
---- trang 12 ---
-Điều 7. Bên B chịu mọi chi phí phát sinh...
+--- page 12 ---
+Article 7. Party B bears all costs incurred...
 ```
 
-Grep trúng dòng → tra mốc gần nhất phía trên → `Read(hop-dong.pdf, pages="12-14")`. **3 trang thay vì 34.** Đây là "lấy chunk thay vì tải cả file" mà không cần chunk thủ công gì cả — và không cần một cơ chế chia đoạn thứ hai phải đồng bộ với cơ chế thứ nhất.
+A `Grep` hit → look up the nearest marker above it → `Read(contract.pdf, pages="12-14")`. **3 pages instead of 34.** This is "fetch a chunk instead of loading the whole file" without any manual chunking mechanism at all — and no second segmentation mechanism that has to stay in sync with the first.
 
-### 3.2 PDF scan KHÔNG phải lỗi
+### 3.2 A scanned PDF is NOT an error
 
-Bản nháp đầu của spec này ghi PDF scan là `failed` kèm câu *"cần OCR — chưa hỗ trợ"*. **Sai, đã sửa.** Model OCR được. Trạng thái đúng:
+The first draft of this spec marked a scanned PDF as `failed` with the message *"needs OCR — not supported yet."* **Wrong, and fixed.** The model can OCR. The correct states are:
 
-| state | Nghĩa | Nhãn cho người dùng |
+| state | Meaning | Label shown to the user |
 |---|---|---|
-| `ready` | có lớp chữ, bóc xong | (không nhãn) |
-| `image-only` | scan / ảnh chụp, bóc ra ~0 chữ | *"Bản chụp — tìm bằng từ khoá không ra. Nhân viên phải đọc từng trang nên tốn hơn."* |
-| `failed` | file hỏng, có mật khẩu, sai định dạng | đỏ + cách xử lý |
+| `ready` | has a text layer, extracted successfully | (no label) |
+| `image-only` | scan / photo, extraction yields ~0 characters | *"Scanned copy — keyword search won't find anything. A worker has to read it page by page, which costs more."* |
+| `failed` | file is corrupt, password-protected, wrong format | red + how to fix it |
 
-Phát hiện bằng **code, 0 token**: `số ký tự bóc được / số trang < 50` → `image-only`.
+Detected with **code, 0 tokens**: `characters extracted / page count < 50` → `image-only`.
 
-`.pdf` là định dạng **duy nhất** mà bản gốc vẫn là công dân hạng nhất. `.docx`/`.xlsx`/`.pptx` thì agent không đọc nổi bản gốc, chỉ còn file text.
+`.pdf` is the **only** format where the original stays a first-class citizen. For `.docx`/`.xlsx`/`.pptx` the agent can't read the original at all, only the text file.
 
 ---
 
-## 4. Định dạng nhận và không nhận
+## 4. Formats accepted and rejected
 
-**Không ảnh, không video — và lý do không phải là lười:** cả cơ chế truy xuất là grep. Thứ không thành text được thì **không có đường nào tìm thấy**. Ảnh còn tệ hơn: nó vào model dạng image block, đắt, và trả tiền lại từ đầu ở mỗi task.
+**No images, no video — and the reason isn't laziness:** the whole retrieval mechanism is grep. Anything that can't become text **has no way to be found**. Images are even worse: they go into the model as an image block, which is expensive and gets paid for again from scratch on every task.
 
-| Nhóm | Đuôi | Xử lý |
+| Group | Extensions | Handling |
 |---|---|---|
-| Text sẵn | `.md` `.txt` `.csv` `.json` `.yaml` `.yml` | không convert, `Grep` thẳng bản gốc |
-| Bóc lúc nạp (ZIP+XML, 0 phụ thuộc) | `.docx` `.xlsx` `.pptx` | → `library/text/` |
-| Bóc lúc nạp (`pdfjs-dist`, **đi kèm sản phẩm**) | `.pdf` | → `library/text/` **có mốc trang**, bản gốc vẫn đọc được |
-| **Chặn**, kèm câu giải thích | ảnh · video · audio · `.zip` · `.exe` · `.doc` `.xls` (nhị phân cũ, parser khác hẳn) | |
+| Already text | `.md` `.txt` `.csv` `.json` `.yaml` `.yml` | no conversion, `Grep` the original directly |
+| Extracted on ingest (ZIP+XML, 0 dependencies) | `.docx` `.xlsx` `.pptx` | → `library/text/` |
+| Extracted on ingest (`pdfjs-dist`, **shipped with the product**) | `.pdf` | → `library/text/` **with page markers**, original still readable |
+| **Blocked**, with an explanation | images · video · audio · `.zip` · `.exe` · `.doc` `.xls` (old binary formats, a completely different parser) | |
 
-`.csv` **bắt buộc có** — bài 3 và bài 7 của `TEST-WALKTHROUGH` sống bằng nó.
-`.zip` nói không thẳng: giải nén đẻ ra đệ quy, zip bomb, và path traversal trong tên mục.
+`.csv` **must be supported** — walkthrough tests #3 and #7 depend on it.
+`.zip` is refused outright: unzipping opens the door to recursion, zip bombs, and path traversal in entry names.
 
-### 4.2 `pdfjs-dist` là phụ thuộc THẬT, không phải tuỳ chọn — sửa 20/08
+### 4.2 `pdfjs-dist` is a REAL dependency, not optional — fixed 20/08
 
-Bản đầu để nó là phụ thuộc **tuỳ chọn**, nạp động, và khi thiếu thì tủ tài liệu hiện nhãn `chưa lập chỉ mục` kèm câu *"Cài: `npm i pdfjs-dist`"*. Lý lẽ nghe rất gọn: PDF vẫn đọc được bằng `Read` theo trang, chỉ mất khả năng grep — nên đừng bắt ai tải 36MB nếu họ không dùng PDF.
+The first draft made it an **optional**, dynamically-loaded dependency, and when it was missing, the document library would show a `not indexed` label with the line *"Install: `npm i pdfjs-dist`"*. The reasoning sounded tidy: PDFs are still readable via page-by-page `Read`, you just lose grep — so don't force anyone to download 36MB if they don't use PDFs.
 
-**Người dùng bác đúng chỗ:** *"tôi tưởng cái này phải build in-app chứ, sau này ra product cũng thế, bắt người dùng handle sao?"*
+**The user pushed back, correctly:** *"I thought this was supposed to be built into the app — the same will be true once this ships as a product, how are users supposed to handle it?"*
 
-Một người mở tiệm hoa không có `npm`. Với họ dòng chữ đó không phải một gợi ý — nó là một **cánh cửa đóng**, và tính năng coi như không tồn tại. Tệ hơn: nó xuất hiện đúng lúc họ vừa thả hợp đồng vào, tức là đúng lúc họ đang tin sản phẩm làm được việc.
+Someone running a flower shop doesn't have `npm`. For them that line isn't a suggestion — it's a **closed door**, and the feature might as well not exist. Worse: it shows up right after they've just dropped in a contract, exactly the moment they're trusting the product to handle it.
 
 | | |
 |---|---|
-| Luật *"0 phụ thuộc mới"* (17/08) | **vẫn đúng ở chỗ nó sinh ra**: `.docx/.xlsx/.pptx` là ZIP+XML, tự bóc trong ~200 dòng, thêm thư viện là lười |
-| PDF | content stream nén + bảng mã CID font — **không tự viết được**, và một tính năng chỉ chạy trên máy có toolchain thì nó **chưa được xây xong** |
-| Cái giá | **~36 MB trên đĩa**, nằm cạnh 304 MB của Agent SDK. +10% |
+| The *"no new dependencies"* rule (17/08) | **still holds where it originated**: `.docx/.xlsx/.pptx` are ZIP+XML, extractable by hand in ~200 lines — adding a library there would be laziness |
+| PDF | compressed content streams + CID font encoding tables — **can't be hand-rolled**, and a feature that only runs on a machine with a toolchain isn't a **finished build** |
+| The cost | **~36 MB on disk**, next to the Agent SDK's 304 MB. +10% |
 
-> **Luật rút ra: "0 phụ thuộc mới" là một luật về SỰ LƯỜI, không phải một luật về DUNG LƯỢNG.** Nó cấm thêm thư viện cho việc tự làm được, chứ không cho phép đẩy một bước cài đặt sang cho người không có công cụ để làm bước đó.
+> **Rule to carry forward: "no new dependencies" is a rule about LAZINESS, not about DISK SIZE.** It bans adding a library for something you could have built yourself — it doesn't license pushing an install step onto someone who has no toolchain to run it.
 
-**Ba chốt code:**
+**Three code decisions:**
 
-1. `pdfjs-dist` trong `dependencies`, ghim `~5.4.624`. ⚠ Dòng `5.7+` và `6.x` đòi **Node ≥ 22.13**, còn `engines` của agentco là `>=22` — nâng lên phải nâng cả hai cùng lúc, nếu không người dùng Node 22.12 nhận một cảnh báo `EBADENGINE` mà không hiểu vì sao.
-2. **Vẫn nạp động** (`await import(spec)`), nhưng vì lý do khác hẳn lý do cũ: 36MB đó chỉ vào bộ nhớ khi có người thả PDF, không phải mỗi lần khởi động daemon.
-3. `PdfToolMissing` **còn nguyên**, đổi nghĩa: nay là **cài đặt hỏng** (`npm install` chạy dở, hoặc `--omit=optional`). Việc phải làm đổi theo — *"chạy lại `npm install`"*, không phải *"đi tìm tên một gói npm"*.
+1. `pdfjs-dist` goes in `dependencies`, pinned at `~5.4.624`. ⚠ The `5.7+` and `6.x` lines require **Node ≥ 22.13**, while agentco's `engines` says `>=22` — bumping the version means bumping both at once, or a user on Node 22.12 gets an `EBADENGINE` warning they won't understand.
+2. **Still dynamically loaded** (`await import(spec)`), but for a different reason than before: those 36MB only enter memory when someone drops a PDF, not on every daemon startup.
+3. `PdfToolMissing` **stays**, with a changed meaning: it now means a **broken install** (`npm install` didn't finish, or ran with `--omit=optional`). The fix changes accordingly — *"run `npm install` again"*, not *"go find an npm package name."*
 
-### 4.4 🔴 MỘT tài liệu, MỘT đường dẫn — và nó phải là đường MỞ ĐƯỢC (20/08)
+### 4.4 🔴 ONE document, ONE path — and it has to be a path that CAN BE OPENED (20/08)
 
-**Ca hỏng có thật, `P-260820-2219-5ltb`.** Bảng kê nêu `library/files/hd1.docx` rồi dặn *"put its path in that task's `inputs`"*. Trợ lý làm **đúng y lời dặn**, tool `Read` không mở được file nén, và cả ca ba bước chết ở bước một — **$0.25**, trong khi `library/text/hd1.docx.txt` đã nằm sẵn trên đĩa từ lúc thả file vào.
+**A real failed case, `P-260820-2219-5ltb`.** The manifest listed `library/files/hd1.docx` and told the worker to *"put its path in that task's `inputs`"*. The assistant did **exactly as told**, the `Read` tool couldn't open the compressed file, and the whole three-step case died at step one — **$0.25**, while `library/text/hd1.docx.txt` had already been sitting on disk since the file was dropped in.
 
-> ⚠ **Luật §3.1 (*"text để TÌM, bản gốc để ĐỌC KỸ"*) CHỈ ĐÚNG VỚI PDF.** Model nhìn trang PDF như ảnh nên bản gốc thật sự đọc được. Với `.docx/.xlsx/.pptx` thì **bản gốc không mở được bằng gì cả** — áp luật đó cho chúng là chỉ nhân viên vào một file nhị phân. Bản trước nói như thể ba định dạng giống nhau.
+> ⚠ **Rule §3.1 (*"text is for FINDING, the original is for READING CLOSELY"*) ONLY HOLDS FOR PDF.** The model sees a PDF page as an image, so the original really is readable. For `.docx/.xlsx/.pptx`, the original **can't be opened by anything** — applying that rule to them just hands the worker a binary file. The earlier draft talked as if all three formats were the same.
 
-Luật giờ là hàm **thuần** `docPaths(name, ext, state)` trong `library/names.ts`:
+The rule is now the **pure** function `docPaths(name, ext, state)` in `library/names.ts`:
 
 | `HANDLING[ext]` | `open` | `original` |
 |---|---|---|
-| `text` (md/txt/csv/json/yaml) | `library/files/<tên>` — bản gốc CHÍNH LÀ văn bản | — |
-| `zip` (docx/xlsx/pptx) | `library/text/<tên>.txt` | **không bao giờ** |
-| `pdf` đã bóc | `library/text/<tên>.txt` | `library/files/<tên>` |
-| `pdf` `image-only`/`unindexed` | `library/files/<tên>` (đọc theo trang) | — |
-| còn lại (`failed`, đuôi lạ) | **không có** → bảng kê **không nêu đường dẫn nào** | — |
+| `text` (md/txt/csv/json/yaml) | `library/files/<name>` — the original IS the text | — |
+| `zip` (docx/xlsx/pptx) | `library/text/<name>.txt` | **never** |
+| `pdf` extracted | `library/text/<name>.txt` | `library/files/<name>` |
+| `pdf` `image-only`/`unindexed` | `library/files/<name>` (read page by page) | — |
+| everything else (`failed`, unknown extension) | **nothing** → the manifest **lists no path at all** | — |
 
-**Thuần được** vì `extractOne` chỉ ghi sidecar trên đúng một nhánh (`ready` và `kind !== 'text'`); mọi nhánh khác `return` trước đó. Nên *"sidecar có tồn tại không"* suy được từ trạng thái, không cần chạm đĩa — và hai bên không thể lệch vì chỉ có một chỗ định nghĩa.
+**It can be pure** because `extractOne` only writes a sidecar on exactly one branch (`ready` and `kind !== 'text'`); every other branch `return`s before that point. So *"does a sidecar exist"* can be derived from the state without touching disk — and the two can never diverge, because there's only one place that defines it.
 
-> ⚠ Nêu một đường dẫn chết **tệ hơn không nêu gì**: Trợ lý sẽ giao một task chắc chắn hỏng, và hoá đơn vẫn tính đủ. Đuôi không nhận cũng phải rơi vào nhánh này — bỏ sót thì mọi đuôi lạ trượt vào nhánh `zip` và ta nêu một sidecar chưa bao giờ được ghi. *(Test bắt đúng chỗ này ở vòng đầu.)*
+> ⚠ Listing a dead path is **worse than listing nothing**: the assistant will hand out a task guaranteed to fail, and the bill still gets charged in full. Rejected extensions have to fall into this branch too — miss that and every unrecognized extension slides into the `zip` branch and we list a sidecar that was never written. *(A test caught exactly this on the first round.)*
 
-**Ba cửa cùng đi qua một luật.** `LibraryStore.manifest()` (prefix Trợ lý) · `resolveFileRefs` (`@` người dùng gõ) · `pickReadable` (worker ẩn `lookup`). Hai cửa sau nhận `ReadableRef { ref, open }`:
+**Three doors, one shared rule.** `LibraryStore.manifest()` (the assistant's prefix) · `resolveFileRefs` (user-typed `@`) · `pickReadable` (the assistant's hidden `lookup` worker). The latter two receive `ReadableRef { ref, open }`:
 
-- `ref` = chuỗi **người dùng nhận ra**, và là chuỗi nút Chép đưa vào ô chat (`library/files/hd1.docx`).
-- `open` = chuỗi **đi tới model** (`library/text/hd1.docx.txt`).
+- `ref` = the string **the user recognizes**, and the string the Copy button puts into the chat box (`library/files/hd1.docx`).
+- `open` = the string **that goes to the model** (`library/text/hd1.docx.txt`).
 
-Bỏ `ref` thì nút Chép gãy im lặng; bỏ `open` thì ta quay lại đúng ca hỏng. Cả hai đều nhận, cả hai đều nở ra `open`. Một tài liệu khớp qua **hai** cửa thì không tính là trùng tên.
+Drop `ref` and the Copy button breaks silently; drop `open` and we're back to the failed case. Both are accepted, both expand to `open`. One document matched through **two** doors doesn't count as a name collision.
 
-> **User chốt và nói rõ đây KHÔNG phải phá luật *"đường dẫn người dùng gõ là chính xác, chép nguyên văn"* — mà là SỬA luật.** Thứ họ chỉ đích danh là một **TÀI LIỆU**, không phải một chuỗi byte. Giữ nguyên văn cái chuỗi mà đánh mất tài liệu thì mới là làm sai ý họ.
+> **The user locked this in and said explicitly this does NOT break the rule *"the path the user typed is authoritative, copy it verbatim"* — it's an AMENDMENT to it.** What they pointed at was a **DOCUMENT**, not a string of bytes. Keeping the string byte-for-byte while losing the document is what actually breaks their intent.
 
-`INDEX.md` có thêm cột **"Mở bằng"** và nêu luật theo từng định dạng ngay dưới tiêu đề.
+`INDEX.md` gets a new **"Open with"** column and states the per-format rule right under the heading.
 
-### 4.5 Bóc lại — trạng thái là bản ghi về QUÁ KHỨ, không phải một lời tuyên án
+### 4.5 Re-extraction — a status is a record of the PAST, not a life sentence
 
-`hd2.pdf` vào tủ lúc chưa có bộ đọc PDF nên nhận `unindexed`. Chiều hôm đó `pdfjs-dist` thành phụ thuộc thật — và tài liệu **vẫn** `unindexed`, kèm nguyên câu *"Cài: `npm i pdfjs-dist`"* nằm trong prefix Trợ lý. Đường duy nhất để thử lại là **xoá rồi thả lại chính file của mình**: một thao tác đáng sợ, và người dùng có thể không còn giữ bản gốc.
+`hd2.pdf` went into the library before a PDF reader existed, so it got `unindexed`. That afternoon `pdfjs-dist` became a real dependency — and the document was **still** `unindexed`, with the line *"Install: `npm i pdfjs-dist`"* still sitting in the assistant's prefix. The only way to retry was to **delete and re-drop your own file**: a scary action, and the user might not even still have the original.
 
-| Cửa | |
+| Door | |
 |---|---|
-| Nút **Bóc lại** (icon ↻) trong Tủ tài liệu | chỉ hiện khi tài liệu **chưa dùng được**. `POST /api/office/:id/library/reextract?name=…` → `202`, tài liệu về `pending`, bóc chạy ngầm y như lúc mới thả |
-| `LibraryStore.retryUnindexed()` lúc dựng `Office` | thử lại **một lần** mỗi lần khởi động |
+| **Re-extract** button (↻ icon) in the Document Library | shown only when a document is **not yet usable**. `POST /api/office/:id/library/reextract?name=…` → `202`, the document goes to `pending`, extraction runs in the background exactly like on first drop |
+| `LibraryStore.retryUnindexed()` when an `Office` is constructed | retries **once** per startup |
 
-**Không hỏi lại trước khi bóc lại** — khác `remove`, thao tác này không mất gì (bản gốc nguyên vẹn, chỉ dựng lại bản text). Hỏi lại một việc không có hậu quả là dạy người dùng bấm "Đồng ý" mà không đọc, rồi họ bấm đúng như thế vào hộp thoại xoá.
+**No confirmation before re-extracting** — unlike `remove`, this action loses nothing (the original is untouched, only the text version is rebuilt). Asking for confirmation on a consequence-free action teaches the user to click "OK" without reading, and then they click the same way on the delete dialog.
 
-> ⚠ **CHỈ thử lại `unindexed`, cố ý không đụng `failed`.** Hai trạng thái nói hai chuyện khác hẳn: `unindexed` = *máy này chưa có công cụ* (đổi được, và thường đã đổi đúng vào lúc khởi động lại sau khi cài); `failed` = *file này hỏng* (không đổi). Thử lại `failed` mỗi lần bật daemon là đốt CPU cho một kết quả biết trước, và với file lớn thì nó làm chậm mọi lần khởi động.
+> ⚠ **ONLY retries `unindexed`, deliberately leaves `failed` alone.** The two states say two different things: `unindexed` = *this machine didn't have the tool yet* (can change, and usually already has, right after a restart following install); `failed` = *this file is broken* (won't change). Retrying `failed` on every daemon start burns CPU for a foregone conclusion, and for a large file it slows down every startup.
 
-Kiểm chạy thật 20/08 trên đúng văn phòng đã hỏng: `hd2.pdf` tự gỡ kẹt thành `pdf, 1 trang` kèm mốc trang, `hd1.docx` đổi sang `library/text/hd1.docx.txt`.
+Verified with a real run on 20/08 on the exact office that had been broken: `hd2.pdf` unstuck itself into `pdf, 1 page` with page markers, `hd1.docx` switched over to `library/text/hd1.docx.txt`.
 
-### 4.3 ⚠ `standardFontDataUrl` + `cMapUrl` — hỏng IM LẶNG nếu đưa `file://`
+### 4.3 ⚠ `standardFontDataUrl` + `cMapUrl` — SILENT failure if given `file://`
 
-Hai tham số này **không phải để vẽ trang** — chúng là **bảng mã chữ**:
+These two parameters are **not for rendering the page** — they're **character encoding tables**:
 
-| | Thiếu nó thì |
+| | Without it |
 |---|---|
-| `standardFontDataUrl` | font base-14 **không nhúng** không dịch ngược được glyph → unicode |
-| `cMapUrl` (+ `cMapPacked`) | CMap dựng sẵn cho **CID/CJK** — tức là PDF **tiếng Việt xuất từ Word**, đúng loại hợp đồng bài 6 |
+| `standardFontDataUrl` | base-14 fonts without embedded glyphs **can't** map glyph → unicode |
+| `cMapUrl` (+ `cMapPacked`) | prebuilt CMaps for **CID/CJK** — meaning **Vietnamese PDFs exported from Word**, exactly the kind of contract test #6 uses |
 
-Cả hai chỉ trỏ được **vì `pdfjs-dist` giờ là phụ thuộc thật**; hồi nó còn tuỳ chọn thì không có đường nào biết nó nằm ở đâu.
+Both can only be pointed anywhere **because `pdfjs-dist` is now a real dependency**; back when it was optional there was no way to know where it lived.
 
-> ⚠ **Đưa ĐƯỜNG DẪN ĐĨA TRẦN, gạch chéo XUÔI, có gạch ở cuối — KHÔNG phải `file://`.** Tên tham số kết thúc bằng `Url` nên phản xạ đầu tiên là `pathToFileURL()`, và nó **hỏng không thành lỗi**: dưới Node, pdf.js gọi thẳng `fs.readFile(url)` với chuỗi ta đưa, mà `fs` không hiểu chuỗi `file:///D:/…`. Nó in một dòng `Warning:` rồi **chạy tiếp** và trả về chữ thiếu bảng mã. Đã dẫm đúng bẫy này lúc sửa 20/08 — bắt được vì chạy thật với PDF thật, không phải vì đọc lại code.
+> ⚠ **Give it a BARE DISK PATH, forward slashes, no leading `file://`.** Since the parameter name ends in `Url`, the first instinct is `pathToFileURL()`, and it **fails without erroring**: under Node, pdf.js calls `fs.readFile(url)` directly with whatever string we hand it, and `fs` doesn't understand a `file:///D:/…` string. It prints one `Warning:` line and **keeps going**, returning text missing its character mapping. This exact trap was hit while fixing this on 20/08 — caught because it was run for real against a real PDF, not by re-reading the code.
 
-### 4.1 Hai chốt bắt buộc khi nhận file
+### 4.1 Two mandatory checks on file intake
 
-**a. Kiểm magic bytes, không chỉ đuôi.** Đổi tên `.exe` thành `.pdf` mất 2 giây. Với đuôi text-native thì kiểm ngược lại: chặn nếu có byte NUL trong 8KB đầu (dấu hiệu file nhị phân đội lốt `.txt`).
+**a. Check magic bytes, not just the extension.** Renaming `.exe` to `.pdf` takes 2 seconds. For text-native extensions, check the reverse: reject if a NUL byte appears in the first 8KB (a sign of a binary file wearing a `.txt` costume).
 
-**b. Làm sạch tên file — và đây là chỗ Windows sẽ cắn.**
+**b. Sanitize the filename — and this is where Windows will bite.**
 
-- chặn `..`, `/`, `\`, byte NUL, ký tự điều khiển
-- chặn **tên cấm của Windows**: `CON` `PRN` `AUX` `NUL` `COM1`–`COM9` `LPT1`–`LPT9` (kể cả khi có đuôi: `CON.txt`)
-- chặn tên kết thúc bằng dấu chấm hoặc khoảng trắng (Windows lặng lẽ cắt đi → tên trong catalog khác tên trên đĩa)
-- **KHÔNG slugify.** Người dùng phải nhận ra file của mình. Tiếng Việt có dấu trong tên file là hợp lệ trên NTFS và ext4.
+- block `..`, `/`, `\`, NUL bytes, control characters
+- block **Windows-reserved names**: `CON` `PRN` `AUX` `NUL` `COM1`–`COM9` `LPT1`–`LPT9` (even with an extension: `CON.txt`)
+- block names ending in a dot or a space (Windows silently strips them → the name in the catalog no longer matches the name on disk)
+- block `|` — it's `INDEX.md`'s column separator, and a row broken there means the assistant reads out a truncated path. Windows already forbids this character, so no name usable on all three OSes is lost. `renderIndex` also replaces `|`/newlines in the **name** and **description** cells (copying straight into `library/files/` by hand bypasses this door) — but **never** touches the path cell: a modified path is a dead path, far worse than an empty cell
+- **NO slugifying.** The user has to recognize their own file. Vietnamese with diacritics in a filename is valid on NTFS and ext4.
 
 ---
 
-## 5. Giới hạn kích thước
+## 5. Size limits
 
-**Số thật, để không phải đoán lại:**
+**Real numbers, so nobody has to guess again:**
 
-| | Dung lượng |
+| | Size |
 |---|---|
-| Sách 300 trang, PDF có lớp chữ | **1–5 MB** |
-| PDF nhiều hình (catalogue, slide xuất ra) | 20–100 MB |
-| Sách **scan** | 50–200 MB — và bóc ra 0 chữ |
+| 300-page book, PDF with a text layer | **1–5 MB** |
+| Image-heavy PDF (catalog, exported slides) | 20–100 MB |
+| **Scanned** book | 50–200 MB — and extracts to 0 characters |
 
-→ **Trần 50 MB/file**, khai trong `company.yaml`. Trên mức đó gần như chắc chắn là bản scan.
+→ **Cap at 50 MB/file**, declared in `company.yaml`. Above that, it's almost certainly a scan.
 
-**Nhưng trần đáng lo không phải MB — là số token sau khi bóc.** PDF 3MB có thể ra 800K token. `Grep` không sao; vấn đề là nếu nhân viên `Read` cả file thì nổ ngữ cảnh và chạm `max_turns`.
+**But the cap that should actually worry us isn't MB — it's the token count after extraction.** A 3MB PDF can turn into 800K tokens. `Grep` is fine with that; the problem is if a worker `Read`s the whole file, blows the context, and hits `max_turns`.
 
-Cách xử lý, theo đúng luật *"thứ gì quan sát được thì đừng hỏi model"* và *"kế toán token là việc của người đứng ngoài đếm"*:
+The handling, following the rules *"if it's observable, don't ask the model"* and *"token accounting is the outside auditor's job"*:
 
-- ghi `tokens` (ước lượng) vào `catalog.json`
-- **hiện cho NGƯỜI DÙNG** trong tủ: *"tài liệu này rất dài"*
-- **KHÔNG** nhét lời dặn vào prompt — đó là token thu phí vĩnh viễn để mua một hành vi bất định
-- **không chunk thủ công**: `Read` có `offset`/`limit` và tự cắt ở 2000 dòng, nó thoái hoá êm. Mốc trang (§3.1) đã lo phần định vị.
+- write `tokens` (estimated) into `catalog.json`
+- **show it to the USER** in the library: *"this document is quite long"*
+- **DO NOT** stuff a warning into the prompt — that's a permanent token tax to buy an uncertain behavior
+- **no manual chunking**: `Read` has `offset`/`limit` and self-truncates at 2000 lines, degrading gracefully. Page markers (§3.1) already handle locating content.
 
-Không có trần tổng cho cả tủ ở v1. Nói thẳng ra đây để lần sau không ai tưởng là sót.
-
----
-
-## 6. Chỉ THÊM và XOÁ. Không có editor.
-
-**Không editor** — và lý do mạnh hơn "chưa làm kịp": có editor là ôm luôn câu chuyện xung đột · undo · **giữ định dạng**. Không ai sửa được `.docx` trong một `<textarea>` mà không phá nó. *"Muốn sửa thì sửa ngoài rồi thả lại đè lên"* là đúng và miễn phí.
-
-**Trùng tên → hỏi lại, có nút Thay thế.** Kèm một chốt bắt buộc, vì đây đúng lớp bug §8 *"ghi một đằng đọc một nẻo"*:
-
-> **Thay file thì phải XOÁ sidecar cũ TRƯỚC, rồi mới bóc lại.**
-
-Sidecar cũ còn nằm đó là `Grep` tìm thấy nội dung của bản đã bị thay — im lặng, mãi mãi, và người dùng thấy hệ thống trích dẫn một câu không còn tồn tại trong file họ đang mở. Giữ nguyên tên file để mọi thứ đang trỏ tới nó không đứt.
-
-**Xoá: MỘT mức, xoá hẳn, có hỏi lại kèm tên file.** (Người dùng chốt 17/08.)
-
-Luật chung *"Xoá luôn có HAI mức: Lưu trữ · Xoá hẳn"* **cố ý không áp dụng ở đây**, và phải ghi lý do ra để lần sau không ai "sửa cho nhất quán":
-
-- tài liệu là file của **chính người dùng**, bản gốc còn trên máy họ — họ vừa tải nó lên
-- mức "lưu trữ" đẻ ra **một kho thứ hai cũng cần dọn**, đúng thứ comment trong `store.ts` đã cảnh báo
-- và nó kéo theo một câu hỏi không có câu trả lời tốt: *file đã cất thì còn `Grep` thấy không?* (phải là KHÔNG — nghĩa là phải di chuyển cả sidecar, tức là hai chỗ phải đồng bộ)
+There is no total cap for the whole library in v1. Said plainly here so nobody thinks it was overlooked later.
 
 ---
 
-## 7. Kho tri thức: KHÔNG cho thêm node
+## 6. Only ADD and DELETE. No editor.
 
-Bất biến mới, và nó là nửa còn lại của việc tách:
+**No editor** — and the reason is stronger than "haven't gotten to it yet": having an editor means owning conflict resolution · undo · **preserving formatting**. Nobody can edit a `.docx` in a `<textarea>` without breaking it. *"Want to edit it? Edit it elsewhere and drop it back in to overwrite"* is correct and free.
 
-> **Node tri thức là điều hệ thống ĐÃ HỌC, không phải chỗ người dùng gõ vào.**
+**Same name → ask, with a Replace button.** With one mandatory rule, because this is exactly the §8 bug class *"write one thing, read another"*:
 
-Cho người dùng gõ node thẳng vào kho là biến kho tri thức thành một tủ tài liệu thứ hai, tệ hơn — không có vòng đời phù hợp, mà lại nằm trong prefix.
+> **Replacing a file means DELETING the old sidecar FIRST, then re-extracting.**
 
-Người dùng vẫn có **ba cửa** để đưa kiến thức vào, không cửa nào là "tự viết file node":
+Leaving the old sidecar in place means `Grep` finds content from the replaced version — silently, forever, and the user sees the system quote a sentence that no longer exists in the file they're looking at. Keep the filename unchanged so anything already pointing at it stays intact.
 
-| Cửa | Đi vào đâu | confidence |
+**Delete: ONE level, permanent, with a confirmation showing the filename.** (User locked this in on 17/08.)
+
+The general rule *"delete always has TWO levels: Archive · Permanent delete"* **deliberately does not apply here**, and the reason has to be written down so nobody "fixes it for consistency" later:
+
+- a document is the user's **own** file, the original is still on their machine — they just uploaded it
+- an "archive" level creates **a second store that also needs cleaning up**, exactly what a comment in `store.ts` already warned about
+- and it drags in a question with no good answer: *is an archived file still findable by `Grep`?* (it has to be NO — meaning the sidecar has to move too, i.e. two places now have to stay in sync)
+
+---
+
+## 7. Knowledge store: NO adding nodes
+
+A new invariant, and it's the other half of the split:
+
+> **A knowledge node is something the system has LEARNED, not a place for the user to type into.**
+
+Letting the user type nodes straight into the store turns it into a second document library, a worse one — no proper lifecycle, but sitting inside the prefix.
+
+The user still has **three doors** to feed knowledge in, none of which is "write a node file by hand":
+
+| Door | Goes into | confidence |
 |---|---|---|
-| **Charter** (sửa được trên UI) | node `pinned`, trong prefix mọi nhân viên | 1 |
-| **Nói với Trợ lý** → `/clear` cô lại | node GHI NHỚ, `knowledge/agents/assistant/` | 0.9 |
-| **Tủ tài liệu** | không vào prefix, với tới bằng `Grep` | — |
+| **Charter** (editable in the UI) | `pinned` node, in every worker's prefix | 1 |
+| **Talk to the Assistant** → `/clear` distills it | a MEMORY node, `knowledge/agents/assistant/` | 0.9 |
+| **Document library** | not in the prefix, reached with `Grep` | — |
 
-API `PATCH /knowledge` giữ nguyên: **sửa và xoá, không tạo**. Không có nút "+ Ghi chú".
+The `PATCH /knowledge` API stays as-is: **edit and delete, no create**. No "+ Add note" button.
 
-⚠ Bất biến này **chỉ thành thật từ 17/08**, khi charter rời khỏi `knowledge/` — xem §17. Trước đó mỗi văn phòng mới tự đẻ một node charter, tức là chính hệ thống đang vi phạm điều nó vừa tuyên bố. *Một bất biến chỉ có thật khi có mã nguồn thi hành nó.*
+⚠ This invariant only **became true starting 17/08**, when the charter moved out of `knowledge/` — see §17. Before that, every new office spawned its own charter node, meaning the system itself was violating the very thing it had just declared. *An invariant is only real once source code enforces it.*
 
 ---
 
-## 8. `INDEX.md` — tầng định tuyến dựng bằng CODE, 0 token
+## 8. `INDEX.md` — the routing layer, built by CODE, 0 tokens
 
-Phụ lục `SPEC-connectors` nói *"để file tải lên sinh ra một node tóm tắt trỏ về file gốc"*. **Đúng ý, sai cách**: tóm tắt bằng LLM là một lượt gọi cho mỗi file — đúng thứ phải tránh.
+The `SPEC-connectors` appendix says *"let an uploaded file spawn a summary node pointing back to the original."* **Right intent, wrong method**: an LLM-generated summary is one call per file — exactly what should be avoided.
 
-Dựng bằng code. Mọi cột dưới đây đều **quan sát được**, không hỏi model câu nào:
+Built by code instead. Every column below is **observable**, without asking the model anything:
 
 ```markdown
-# Tủ tài liệu — 12 tài liệu
+# Document Library — 12 documents
 
-| Tên | Loại | Cỡ | ~Token | Mở đầu / cấu trúc |
+| Name | Type | Size | ~Tokens | Opening / structure |
 |---|---|---|---|---|
-| Hợp đồng ABC.pdf | pdf, 34 trang | 1.2 MB | 41K | "HỢP ĐỒNG DỊCH VỤ số 07/2026…" |
-| Doanh thu Q3.xlsx | 3 sheet | 240 KB | 8K | Sheet: Tháng 7, Tháng 8, Tổng · cột: ngày, mã, doanh thu |
-| Sổ tay nhân sự.docx | docx, 18 mục | 90 KB | 12K | "Chương 1. Quy định chung…" |
+| Contract ABC.pdf | pdf, 34 pages | 1.2 MB | 41K | "SERVICE CONTRACT No. 07/2026…" |
+| Revenue Q3.xlsx | 3 sheets | 240 KB | 8K | Sheets: July, August, Total · columns: date, code, revenue |
+| HR Handbook.docx | docx, 18 sections | 90 KB | 12K | "Chapter 1. General provisions…" |
 ```
 
-Số trang · tên sheet · tên cột · tiêu đề mục · 40 chữ đầu — code đọc ra hết trong lúc bóc text.
+Page count · sheet names · column names · section titles · first 40 characters — code reads all of it out during text extraction.
 
-**Ba thứ nó giải cùng lúc:**
-1. Trợ lý `Read` **một file nhỏ** thay vì `Glob` mò cả tủ.
-2. **Đóng lỗ hổng số 4** (`USE-CASES` — bài 6 "tài liệu dài hơn một task"). Ghi chú cũ nói cần *"một bước `survey` rẻ đo kích thước file trước khi lập kế hoạch"*. `INDEX.md` **chính là bước đó** — 0 token, tất định. Trợ lý biết hợp đồng 34 trang **trước khi** chia việc.
-3. Trả lời câu *"file nào đáng mở"* mà phụ lục §3 đã chỉ ra là câu đúng cần trả lời.
+**Three things it solves at once:**
+1. The assistant `Read`s **one small file** instead of `Glob`-ing the whole library.
+2. **It closes gap #4** (`USE-CASES` — test #6, "a document longer than one task"). An earlier note said we needed *"a cheap `survey` step measuring file size before planning."* `INDEX.md` **is that step** — 0 tokens, deterministic. The assistant knows a contract is 34 pages **before** breaking work into tasks.
+3. It answers *"which file is worth opening"*, which appendix §3 already identified as the right question.
 
-`INDEX.md` **không vào prefix**. Nó là một file trên đĩa, agent chủ động đọc khi cần.
+`INDEX.md` **does not enter the prefix**. It's a file on disk that the agent actively reads when it needs to.
 
 ---
 
-## 8b. ⚠ ĐÍNH CHÍNH 19/08 — điểm 2 ở trên CHƯA BAO GIỜ ĐÚNG
+## 8b. ⚠ CORRECTION 19/08 — point 2 above WAS NEVER TRUE
 
-> *"Trợ lý biết hợp đồng 34 trang **trước khi** chia việc."*
+> *"The assistant knows a contract is 34 pages **before** breaking work into tasks."*
 
-**Câu đó sai suốt từ 17/08 tới 19/08.** `INDEX.md` được dựng ra tử tế, ghi ra đĩa tử tế, rồi **không ai đưa nó cho Trợ lý**. Kiểm bằng một lệnh:
+**That sentence was false the entire time, from 17/08 to 19/08.** `INDEX.md` was being built cleanly, written to disk cleanly, and then **nobody ever handed it to the assistant.** Checked with one command:
 
 ```
-grep "INDEX.md" src/core/     → 0 kết quả
+grep "INDEX.md" src/core/     → 0 results
 assistant.ts                   → allowedTools: []
 ```
 
-Trợ lý không có tool, nên nó **không có đường nào** đọc file đó. Lần thứ hai của cùng một bài học §5d: *một bất biến chỉ có thật khi có mã nguồn thi hành nó.*
+The assistant has no tools, so it **has no way at all** to read that file. Second occurrence of the same §5d lesson: *an invariant is only real once source code enforces it.*
 
-### Cái giá, đo được trên máy người dùng (bài 2, 19/08)
+### The cost, measured on a user's machine (test #2, 19/08)
 
-| | trước | sau |
+| | before | after |
 |---|---|---|
-| Trợ lý hỏi lại trước khi làm | **có** — *"size khách muốn đổi còn hàng không?"* | không |
-| `inputs` của task | `[]` | `["library/files/doi-tra.md"]` |
-| ràng buộc do Trợ lý viết | 7, trong đó **4 cái chết** khi nhân viên đọc tài liệu, và một cái là **nhánh IF** giao cho model tự rẽ | 5, đều dùng được |
-| nhân viên | **9 lượt · $0.0582** — 4 lượt `Grep` mò + đọc trùng một file 2 lần | **6 lượt · $0.0296** |
-| cả ca | **11 lượt · $0.1082** | **8 lượt · $0.0511** |
+| Assistant asks a clarifying question before starting | **yes** — *"is the size the customer wants to exchange still in stock?"* | no |
+| Task `inputs` | `[]` | `["library/files/return-exchange.md"]` |
+| Constraints the assistant wrote | 7, of which **4 were dead on arrival** once the worker read the document, and one was an **IF branch** left for the model to resolve on its own | 5, all usable |
+| worker | **9 turns · $0.0582** — 4 turns of `Grep` fishing + reading the same file twice | **6 turns · $0.0296** |
+| whole case | **11 turns · $0.1082** | **8 turns · $0.0511** |
 
-Câu hỏi *"size còn hàng không"* là câu mà **câu trả lời không đổi được việc phải làm** — chính sách đã cấm đổi từ trước. Nhưng Trợ lý **không có cách nào biết điều đó**. Đây không phải model quá thận trọng, và **không sửa được bằng prompt**: đó là lỗ hổng dữ liệu.
+The question *"is the size in stock"* is exactly a question whose **answer can't change what has to be done** — policy already forbade the exchange. But the assistant **had no way of knowing that**. This isn't the model being overly cautious, and **it can't be fixed with a prompt**: it's a data gap.
 
-> **Thước đo nâng thành luật:** *một câu hỏi làm rõ chỉ đáng hỏi khi câu trả lời làm ĐỔI việc phải làm.*
+> **Measurement promoted to a rule:** *a clarifying question is only worth asking if the answer CHANGES what has to be done.*
 
-### Cách sửa: DỮ LIỆU, không phải LỜI DẶN
+### The fix: DATA, not INSTRUCTIONS
 
-`LibraryStore.manifest()` — khối nhỏ đi vào **prefix được cache** của Trợ lý:
+`LibraryStore.manifest()` — a small block that goes into the assistant's **cached** prefix:
 
 ```markdown
 # Documents the human put in this office's library
 
-- doi-tra.md — 15 dòng
-- bang-gia.md — 17 dòng
+- doi-tra.md — 15 lines
+- bang-gia.md — 17 lines
 
 Originals are in `library/files/`. Extracted text for keyword search is in `library/text/`.
 When a task needs one of these, put its path in that task's `inputs`.
 ```
 
-Đo thật: **103 token cho 5 tài liệu**, trả ~0.1× mỗi lượt vì nằm trong cache.
+Measured for real: **103 tokens for 5 documents**, paid at ~0.1× per turn because it lives in cache.
 
-**Hai ràng buộc giữ cho nó không phá cache:**
+**Two constraints keep it from breaking the cache:**
 
-1. **Chỉ tên + hình dạng, KHÔNG `preview`.** Preview làm khối vừa to vừa hay đổi. Trợ lý cần biết *có gì trong tủ* để chỉ đường, không cần biết *nội dung nói gì* — nó không phải người đọc tài liệu.
-2. **Bỏ qua tài liệu đang bóc.** `pending`/`extracting` là trạng thái thoáng qua vài giây; đưa vào là mỗi lần thả một file thì prefix đổi **ba** lần thay vì hai.
+1. **Names and shape only, NO `preview`.** A preview would make the block both bigger and volatile. The assistant needs to know *what's in the library* to route to it, not *what it says* — it isn't the one reading the document.
+2. **Skip documents still being extracted.** `pending`/`extracting` is a transient state lasting a few seconds; including it would mean the prefix changes **three** times per file drop instead of two.
 
-`emitLibrary()` gọi `refreshAssistantContext()` — thả tài liệu xong hỏi ngay thì Trợ lý đã thấy.
+`emitLibrary()` calls `refreshAssistantContext()` — ask a question right after dropping a document and the assistant has already seen it.
 
-### Trợ lý vẫn KHÔNG có tool — đã thử trao `Grep`, và đã thu lại
+### The assistant still has NO tools — `Grep` was tried and pulled back
 
-Bảng kê chỉ nói *có file gì*, nên ý muốn tự nhiên là cho Trợ lý `Grep` để với tới nội dung. **Đã thử ngày 19/08 và đã bỏ.** Chi tiết ở `SPEC-offices.md` §4.7; tóm tắt: không có cơ chế nào của SDK chặn được `Grep` theo thư mục, nên Trợ lý sẽ đọc được cả sổ tay riêng của nhân viên đã bị ngắt dây — và tệ hơn, nó **nói với người dùng rằng nó bị chặn** trong khi không hề bị.
+The manifest only says *what files exist*, so the natural next thought is giving the assistant `Grep` to reach the content. **Tried on 19/08 and abandoned.** Details in `SPEC-offices.md` §4.7; summary: no SDK mechanism scopes `Grep` to a directory, so the assistant would end up reading a worker's private notebook after it had been unwired — and worse, it would **tell the user it was blocked** when it wasn't blocked at all.
 
-**Cái giá của việc bỏ: đo được là bằng không.** Trong cả hai lần chạy lại bài 2, Trợ lý **không gọi tool nào** — bảng kê trong prefix đã đủ để nó lập kế hoạch đúng và đưa `inputs` đúng file.
+**The measured cost of dropping it: zero.** Across both reruns of test #2, the assistant **called no tool at all** — the prefix manifest alone was enough for it to plan correctly and hand out the right `inputs`.
 
-⚠ **Nhưng con rò thứ hai tìm ra ở đây thì có thật và đã vá:** `assistant.ts` chỉ đặt `allowedTools: []` mà **không đặt `tools`**. Đó chính xác là con rò đã vá cho worker ngày 16/08 — `allowedTools` không cắt tool khỏi ngữ cảnh, nên **định nghĩa của toàn bộ bộ tool Claude Code vẫn nằm trong prefix của `route()`**, thứ chạy ở **mỗi tin nhắn người dùng gõ**. Worker được vá 16/08; Trợ lý bị bỏ quên ba ngày. Giờ `tools: []` được truyền tường minh.
+⚠ **But a second, real leak was found here and has been patched:** `assistant.ts` only set `allowedTools: []` and **did not set `tools`**. That is exactly the same leak that was patched for the worker on 16/08 — `allowedTools` does not cut a tool out of the context, so **the definitions of Claude Code's entire tool set were still sitting in the prefix of `route()`**, which runs on **every message the user types**. The worker was fixed on 16/08; the assistant was forgotten for three days. Now `tools: []` is passed explicitly.
 
-Ranh giới *"ghi chú ≠ tài liệu"* vẫn nằm trong `ASSISTANT_CORE`, nhưng ở dạng ngắn và **đúng sự thật**: Trợ lý không có tool, không tự mở file, và **tài liệu thắng khi mâu thuẫn với ghi chú**.
+The *"notes ≠ documents"* boundary still lives in `ASSISTANT_CORE`, but shorter and **truthful**: the assistant has no tools, doesn't open files itself, and **a document wins when it contradicts a note**.
 
 ---
 
-## 8c. `@đường-dẫn` — người dùng chỉ đích danh một file (chốt 20/08)
+## 8c. `@path` — the user pointing directly at a file (locked 20/08)
 
-Hai cái kho (`library/files/` và `artifacts/`) **được phép có file trùng tên**, và đó không phải thiếu sót: chúng thuộc về hai người khác nhau (người dùng đưa vào / nhân viên làm ra) và có vòng đời khác nhau. Nên **tên trần không bao giờ là một định danh**.
+The two stores (`library/files/` and `artifacts/`) **are allowed to have files with the same name**, and that isn't an oversight: they belong to two different owners (the user brings files in / a worker produces them) and have different lifecycles. So **a bare name is never an identifier**.
 
-### Nút Chép cho ĐƯỜNG DẪN ĐỦ, không cho tên
+### The Copy button copies the FULL PATH, not the name
 
-| kho | chuỗi chép ra |
+| store | string copied |
 |---|---|
-| Tủ tài liệu | `@library/files/doc-1.md` |
-| Kết quả | `@artifacts/P-260820-0314-rab5/T-01/doc-2.md` |
+| Document library | `@library/files/doc-1.md` |
+| Result | `@artifacts/P-260820-0314-rab5/T-01/doc-2.md` |
 
-Đường dẫn đủ **tự nó là thứ phân biệt**. Chép tên trần là đẩy sự mập mờ sang cho người dùng gõ lại bằng tay, rồi sang cho model đoán.
+The full path **is itself the disambiguator**. Copying a bare name pushes the ambiguity onto the user retyping it by hand, and then onto the model guessing.
 
-> ⚠ Hai hệ quy chiếu, hai người dùng — đừng trộn. `company/offices/<id>/artifacts/…` là cho người **mở file explorer** (chỉ xuất hiện trong câu báo kết quả). `artifacts/…` tính từ thư mục văn phòng là dạng **chuẩn** mà mọi thứ hệ thống tiêu thụ đều dùng: `inputs`, API, bảng kê, và nút Chép.
+> ⚠ Two frames of reference, two different audiences — don't mix them. `company/offices/<id>/artifacts/…` is for someone **opening a file explorer** (it only appears in the result-report sentence). `artifacts/…`, measured from the office folder, is the **canonical** form everything in the system consumes: `inputs`, the API, the manifest, and the Copy button.
 
-### `@` là quy ước CỦA TA, không phải cú pháp của SDK
+### `@` is OUR convention, not SDK syntax
 
-CLI Claude Code có `@file` khi gõ tay. Nó có chạy trong SDK hay không thì **chưa ai đo** — `FINDINGS-sdk` không có một dòng nào, và dự án đã trả giá một lần cho việc xây lên hành vi SDK chưa đo (`canUseTool`, `SPEC-offices.md` §4.7).
+The Claude Code CLI has `@file` when typed by hand. Whether it works in the SDK **has never been measured** — `FINDINGS-sdk` has zero lines on it, and this project has already paid once for building on unmeasured SDK behavior (`canUseTool`, `SPEC-offices.md` §4.7).
 
-> 🔥 **Lý do thật mạnh hơn: nếu SDK có hiểu thì đó là chuyện XẤU.** Mở rộng `@` nghĩa là nhét **nội dung file** vào lượt gọi — mà Trợ lý chạy trên session được persist, nên mọi thứ nó đọc nằm trong ngữ cảnh của **mọi** lượt sau: *đọc một lần, trả tiền mãi mãi*. Cả kiến trúc dựng trên luật *"Trợ lý không đọc file, nhân viên mới đọc"*.
+> 🔥 **A much stronger reason: if the SDK DID understand it, that would be a BAD thing.** Expanding `@` means injecting **file content** into a call — and the assistant runs on a persisted session, so everything it reads sits in the context of **every** subsequent turn: *read once, pay forever.* The whole architecture is built on the rule *"the assistant doesn't read files, only workers do."*
 
-Nên `resolveFileRefs()` **bóc sạch `@`** trước khi chuỗi tới model. Ta không phụ thuộc vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.
+So `resolveFileRefs()` **strips `@` entirely** before the string reaches the model. We don't depend on any SDK behavior here — measured or not, it makes no difference.
 
-### Ba dạng, và dạng thứ ba là lý do hàm này tồn tại
+### Four shapes
 
 ```
-@artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
-@library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
-@doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+@artifacts/P-…/T-01/vi/doc-2.md      full path → match, then use
+@library/files/doc-1.md               full path → match, then use
+@doc-1.md                             bare name  → look up, and BLOCK if ambiguous
+@library/files/Mix, Mingle&Meet.pptx  HAS A SPACE → longest-string match
 ```
 
-Mọi tham chiếu đều **đối chiếu với danh sách đường dẫn có thật** đọc từ đĩa. Ba nhánh trả lời bằng **code, 0 token, tức thì**:
+The third shape is why this function exists; **the fourth shape is why it can't be cut at whitespace** (fixed 02/09).
 
-| ca | trả lời |
+Every reference is **matched against a real list of paths** read from disk. Three branches respond in **code, 0 tokens, instantly**:
+
+| case | response |
 |---|---|
-| trùng tên | liệt kê đủ các đường dẫn, bảo dùng nút Chép |
-| không tồn tại | nêu đúng chuỗi họ gõ |
-| một tham chiếu hỏng trong câu có nhiều | **chặn cả câu**, giữ nguyên chữ gốc |
+| ambiguous name | list every matching path in full, tell them to use the Copy button |
+| doesn't exist | echo back exactly what they typed |
+| one broken reference in a sentence with several | **block the whole sentence**, keep the original wording |
 
-Nhánh cuối đáng nói riêng: giải một nửa nghĩa là model nhận một câu có một đường dẫn thật và một chuỗi `@…` lạ — nó sẽ **tự xoay sở**, và ta mất quyền kiểm soát đúng lúc cần nhất.
+The last branch deserves its own note: resolving half the sentence means the model gets one real path plus one stray `@…` string — it will **improvise**, and we lose control at the exact moment it matters most.
 
-> ⚠ Regex này chạy trên chữ **người dùng gõ**, khác hẳn luật cấm dò đường dẫn trong `say` (`SPEC-artifacts.md` §2.5). Ở đó rủi ro là *model bịa*; ở đây người dùng tự chịu trách nhiệm cho thứ họ gõ, và kết quả vẫn phải qua cửa đối chiếu.
+#### A reference's boundary is `known`, not whitespace (fixed 02/09)
+
+The 20/08 version cut on whitespace (`@([^\s@]+)`), citing exactly one reason spelled out in a comment: *"a name with a space needs the full path, and the Copy button always gives the full path anyway."* **That premise was wrong** — the full path contains that very space. So with `Mix, Mingle&Meet.pptx`, the Copy button — the escape hatch the error message itself invites the user to click — produced a string the resolver couldn't read, and the answer was *"couldn't find `library/files/Mix"*.
+
+The fix is **not** inventing a quoting convention (`@"…"`) and making users learn it, and **not** forcing filenames to be clean (the document is theirs). We're already **holding** the real list of paths read from disk, so there's no need to guess the boundary:
+
+- match the **longest string** in `known` that the text after `@` starts with — longest before shortest, because `report.md` is a prefix of `report.md.bak`;
+- with a **boundary guard**: the character right after has to be end-of-string, whitespace, or punctuation. Without it, a document named `anh` would turn `@anh-khong-co.md` into a match;
+- if nothing matches ⇒ fall back to the old cut-on-whitespace behavior, so the error message still echoes exactly what was typed.
+
+The sentence is rebuilt using **indices**, not `String.replace` — `replace` only hits the first occurrence in the whole sentence, so `@a.md then @a.md again` would fix the same spot twice.
+
+> ⚠ This door runs on text **the user typed**, unlike the ban on path-guessing inside `say` (`SPEC-artifacts.md` §2.5). There, the risk is the **model making things up**; here, the user is responsible for what they typed, and the result still has to pass through the matching door.
 >
-> Và ta chỉ được phép **bóc `@`**, không được phép **biên tập**: bản đầu nuốt luôn dấu phẩy dính đuôi (`sửa @a/b.md, giữ nguyên…`), tức là sửa chữ người dùng viết mà không nói. Chuyện nhỏ, nhưng là một thói quen sai.
+> And we're only allowed to **strip `@`**, never to **edit**: the first version swallowed a trailing comma stuck to the reference (`fix @a/b.md, keep the rest…`), which is editing the user's own words without saying so. A small thing, but a bad habit.
 
-### Bảng kê tủ tài liệu cũng phải nêu đường dẫn đủ
+### The document library manifest also has to list full paths
 
-Ba chuỗi phải khớp nhau **từng ký tự**: chuỗi trong bảng kê, chuỗi nút Chép đưa vào ô chat, và chuỗi planner ghi vào `inputs`. Bảng kê trước 20/08 nêu tên trần (`- doc-1.md`) kèm một câu *"originals are in `library/files/`"*, tức là bắt planner **tự ghép tiền tố** — một phép ghép nhỏ, và một chỗ nữa để sai.
+Three strings need to match **character for character**: the string in the manifest, the string the Copy button puts in the chat box, and the string the planner writes into `inputs`. The pre-20/08 manifest listed bare names (`- doc-1.md`) plus a note saying *"originals are in `library/files/"`, which forced the planner to **prepend the prefix itself** — a small extra step, and one more place to get it wrong.
 
-Kèm một luật trong `CORE_PROMPT`: *"đường dẫn người dùng gõ là chính xác — chép thẳng vào `inputs`, đừng đi tìm, đừng 'sửa' nó, và đừng hỏi lại xem nó có tồn tại không."* Nó **đã** được đối chiếu trước khi tới model.
+Plus a rule in `CORE_PROMPT`: *"a path the user typed is authoritative — copy it straight into `inputs`, don't go looking for it, don't 'fix' it, and don't ask whether it exists."* It **has already** been matched before it reaches the model.
 
 ---
 
-## 9. Nạp file vào: một đường chính, hai cửa phụ miễn phí
+## 9. Getting files in: one main path, two free side doors
 
-**Đường chính: upload HTTP, kể cả khi cùng một máy.**
+**Main path: HTTP upload, even on the same machine.**
 
-*"Cùng laptop thì copy file cho nhanh"* nghe rẻ hơn nhưng không rẻ: trình duyệt **không đưa đường dẫn thật** cho JS, chỉ đưa bytes. Muốn copy-theo-đường-dẫn phải có hộp thoại native, tức Electron/Tauri. Trong khi upload 50MB qua localhost là tức thì. **Một code path, một tập bug, chạy giống hệt trên VPS/docker** — và thoả ràng buộc container của `SPEC-cli` §4 (mount đúng một volume).
+*"It's the same laptop, just copy the file, it's faster"* sounds cheaper but isn't: the browser **does not hand JS a real path**, only bytes. Copy-by-path would require a native file dialog, i.e. Electron/Tauri. Meanwhile uploading 50MB over localhost is instant. **One code path, one set of bugs, running identically on a VPS/docker** — and it satisfies `SPEC-cli` §4's container constraint (mounting exactly one volume).
 
-Hai cửa phụ **không tốn thêm gì**, vì ta cần quét-lúc-đọc sẵn rồi:
+Two side doors cost **nothing extra**, since we already need scan-on-read anyway:
 
-| Cửa | Ai dùng |
+| Door | Who uses it |
 |---|---|
-| Thả file thẳng vào `library/files/` bằng Explorer / `scp` | máy local, hoặc VPS đã mount |
-| `agentco doc add <đường-dẫn>` | VPS chỉ có ssh |
+| Drop files straight into `library/files/` via Explorer / `scp` | local machine, or a VPS that's already mounted |
+| `agentco doc add <path>` | a VPS with only ssh |
 
-### 9.1 KHÔNG dùng file watcher
+### 9.1 NO file watcher
 
-Bẫy thật: copy một PDF 200MB thì watcher bắn sự kiện **giữa lúc file đang ghi dở** → bóc ra text cụt → không ai biết, và catalog ghi `ready`.
+A real trap: copying a 200MB PDF triggers a watcher event **mid-write** → text extraction runs on a truncated file → nobody notices, and the catalog says `ready`.
 
-Thay bằng **quét lại lúc `GET /library`**: `readdir` + so `mtime`/`size` với catalog, vài ms. Cộng cập nhật ngay sau upload. "Realtime" đủ đúng nghĩa 1:1 mà không có ca file dở.
+Instead, **rescan on `GET /library`**: `readdir` + compare `mtime`/`size` against the catalog, a few ms. Plus an immediate refresh right after upload. That's "realtime" enough in every sense that matters, without ever catching a half-written file.
 
 ---
 
-## 10. Index/convert: NGẦM, per-file — và đúng MỘT điểm chờ, rất hẹp
+## 10. Indexing/converting: BACKGROUND, per-file — and exactly ONE, very narrow wait point
 
-**Không bao giờ dừng hệ thống để đợi index.** Nó phá tiêu chí "mượt", phá *"sập một VP không kéo VP khác"*, và phá luật lớn nhất: *không có ngoại lệ nào cần dừng tất cả để áp dụng cấu hình*.
+**Never freeze the whole system waiting for indexing.** That would break the "smooth" quality criterion, break *"one office crashing shouldn't drag another one down,"* and break the biggest rule of all: *no exception is ever worth stopping everything to apply a config change.*
 
-Nhưng có một ca hỏng thật: người dùng thả PDF xong hỏi ngay → chưa bóc xong → agent grep không thấy gì → **trả lời sai mà không ai biết**. Đó là kết cục tệ nhất trong mọi kết cục.
+But there's a real failure case: the user drops a PDF and asks about it right away → extraction isn't done yet → the agent greps and finds nothing → **it answers wrong and nobody knows**. That's the worst possible outcome.
 
-Giải bằng một máy trạng thái per-file:
+Solved with a per-file state machine:
 
 ```
 pending → extracting → ready | image-only | failed | unsupported
 ```
 
-và **đúng một điểm chờ**:
+and **exactly one wait point**:
 
-> `office.run()` chờ **chỉ những tài liệu đang `extracting`** (có timeout), không chờ gì khác, không đụng văn phòng khác.
+> `office.run()` waits **only for documents currently `extracting`** (with a timeout), waits for nothing else, touches no other office.
 
-Dòng trạng thái: *"Đang đọc tài liệu Hợp đồng ABC.pdf…"*. Vài dòng code, và nó xoá hẳn ca trả-lời-sai-im-lặng.
+Status line: *"Reading document Contract ABC.pdf…"*. A few lines of code, and it wipes out the whole silent-wrong-answer failure mode.
 
-### 10.1 Lỗi phải TRÔNG NHƯ lỗi
+### 10.1 An error has to LOOK LIKE an error
 
-Theo luật đã chốt sau vụ toast: hiện trên **chính dòng file đó** trong tủ, nền `danger-soft`, và câu chữ phải nói *chuyện gì xảy ra + làm gì tiếp*:
+Following the rule locked in after the toast incident: shown on **that exact file's row** in the library, `danger-soft` background, and the wording has to say *what happened + what to do next*:
 
-- *"File có mật khẩu — bỏ mật khẩu rồi thả lại."*
-- *"File hỏng, hoặc không phải PDF thật dù có đuôi .pdf."*
-- *"Bản chụp, không có lớp chữ."* ← `image-only`, **không phải lỗi**, nhãn xám
+- *"File is password-protected — remove the password and drop it in again."*
+- *"File is corrupt, or isn't actually a PDF despite the .pdf extension."*
+- *"Scanned copy, no text layer."* ← `image-only`, **not an error**, gray label
 
-File lỗi **vẫn nằm trong tủ** (nó là file của người dùng) nhưng dán nhãn không tìm được. Giấu đi là lặp lại đúng lỗi node-bị-đè đã sửa ngày 16/08.
-
----
-
-## 11. Khoá ngoại / graph: KHÔNG. Chỉ một phép JOIN.
-
-Người dùng tự đặt câu hỏi và tự nghi ngờ đúng chỗ. Chốt: **không xây graph, không để Trợ lý tự ghi id tài liệu vào kho tri thức.**
-
-Lý do mạnh hơn "gọi LLM thì chậm":
-
-> **Node tri thức trỏ tới id tài liệu sẽ thành tham chiếu chết ngay khi người dùng xoá tài liệu** — mà quyền xoá tự do chính là thiết kế ở §6.
-
-Lúc đó prefix của **mọi worker** chứa một con trỏ tới file không tồn tại, và model sẽ đi tìm nó: tốn lượt, mỗi task, im lặng. Muốn chữa thì phải quét cả kho tri thức mỗi lần xoá một file → cơ chế thứ hai phải đồng bộ với cơ chế thứ nhất, mãi mãi.
-
-**Thứ đáng làm thì rẻ và đã gần xong.** Phụ lục §1 nói đúng: cái trực giác gọi là "graph" ở đây thực ra là một **phép join** — `file · plan_id · task_id · role · thời điểm`, một dòng JSONL append lúc receipt về. `receipt.landed` **đã là mảnh đó rồi**. 0 lượt LLM.
-
-Nó trả lời câu người dùng thật sự hỏi — *"file này ở đâu ra, ai tạo, từ việc nào"* — chứ không phải *"file nào nói về X"*, câu mà `Grep` trả lời tốt hơn bất cứ thứ gì ta xây được.
+A failed file **still stays in the library** (it's the user's own file) but is labeled as not searchable. Hiding it repeats exactly the node-got-overwritten bug fixed on 16/08.
 
 ---
 
-## 12. Cấu hình
+## 11. Foreign keys / graph: NO. Just one JOIN.
+
+The user asked the right question and had the right doubt themselves. Decision: **no graph, and the assistant never gets to write document IDs into the knowledge store on its own.**
+
+The reason is stronger than "calling an LLM would be slow":
+
+> **A knowledge node pointing at a document ID becomes a dead reference the instant the user deletes that document** — and the freedom to delete freely is exactly the design chosen in §6.
+
+At that point, the prefix of **every worker** contains a pointer to a file that no longer exists, and the model will go looking for it: burning a turn, every task, silently. Fixing it would mean scanning the entire knowledge store on every file deletion → a second mechanism that has to stay in sync with the first, forever.
+
+**The thing worth building is cheap and nearly done already.** Appendix §1 has it right: what intuitively gets called a "graph" here is actually a **join** — `file · plan_id · task_id · role · timestamp`, one JSONL line appended when a receipt lands. `receipt.landed` **is already that piece.** 0 LLM calls.
+
+It answers the question the user is actually asking — *"where did this file come from, who created it, from which task"* — not *"which file talks about X,"* a question `Grep` answers better than anything we could build.
+
+---
+
+## 12. Configuration
 
 ```yaml
 # company.yaml
 library:
   max_file_mb: 50
-  # Đuôi nhận vào. Bỏ một đuôi khỏi đây là chặn ngay, không cần build lại.
+  # Accepted extensions. Removing one here blocks it immediately, no rebuild needed.
   allow: [md, txt, csv, json, yaml, yml, pdf, docx, xlsx, pptx]
-  # Chờ tối đa bao lâu ở điểm chờ §10 trước khi chạy tiếp mà không có text.
+  # How long to wait at the §10 wait point before continuing without text.
   extract_timeout_ms: 30000
 ```
 
@@ -521,192 +537,192 @@ library:
 
 ## 13. API
 
-Mọi route dưới `/api/office/:id/library`, đi qua đúng các chốt sẵn có (token · CSRF `Sec-Fetch-Site` · DNS rebinding · `assertLive`).
+Every route under `/api/office/:id/library` goes through the existing set of gates (token · CSRF `Sec-Fetch-Site` · DNS rebinding · `assertLive`).
 
 | | |
 |---|---|
-| `GET /library` | quét lại + trả `{ docs: [...] }`. Đây là chỗ §9.1 quét, không có watcher |
-| `POST /library` | `multipart/form-data`. `409` nếu trùng tên và không có `?replace=1` |
-| `DELETE /library?name=<tên>` | xoá hẳn bản gốc + sidecar. Một mức (§6) |
-| `GET /library/file?name=<tên>` | tải bản gốc về |
+| `GET /library` | rescan + return `{ docs: [...] }`. This is where §9.1 scans, no watcher involved |
+| `POST /library` | `multipart/form-data`. `409` on a name collision without `?replace=1` |
+| `DELETE /library?name=<name>` | permanently delete the original + sidecar. One level (§6) |
+| `GET /library/file?name=<name>` | download the original |
 
-`POST` là **route đầu tiên của hệ thống nhận dữ liệu nhị phân**. Trần `max_file_mb` phải chặn **theo dòng khi đang nhận**, không phải sau khi đã đệm đủ vào RAM — nếu không thì một file 2GB làm sập daemon trước khi tới được câu kiểm tra.
+`POST` is **the first route in the system that receives binary data.** The `max_file_mb` cap has to be enforced **streaming, while receiving**, not after it's all been buffered into RAM — otherwise a 2GB file crashes the daemon before it ever reaches the check.
 
 ---
 
-## 14. Ảnh hưởng tới `TEST-WALKTHROUGH.md`
+## 14. Effect on `TEST-WALKTHROUGH.md`
 
-Đây là **chỉ số #1** trong bảng ghi kết quả: *"bao nhiêu bài phải mở editor?"*
+This is **metric #1** in the results table: *"how many tests require opening an editor?"*
 
-| Bài | Trước | Sau |
+| Test | Before | After |
 |---|---|---|
-| 2 Hỗ trợ khách | 📝 tự viết 5 file node vào `knowledge/shared/` | 🖱 thả 5 file chính sách vào tủ |
-| 3 Sổ sách | 📝 tạo `artifacts/input/sao-ke.csv` | 🖱 thả CSV vào tủ |
-| 5 Bản địa hoá | 📝 bỏ 3–5 tài liệu vào `artifacts/input/` | 🖱 thả vào tủ |
-| 6 Rà hợp đồng | 📝 + **cụt vì không đo được độ dài** | 🖱 thả · `INDEX.md` cho Trợ lý biết 34 trang trước khi chia việc |
-| 7 Bảng tính | 📝 CSV 200 dòng | 🖱 thả vào tủ |
-| 8 Sàng lọc | 📝 20 CV vào `artifacts/input/cv/` | 🖱 thả 20 file vào tủ |
+| 2 Customer support | 📝 hand-write 5 node files into `knowledge/shared/` | 🖱 drop 5 policy files into the library |
+| 3 Bookkeeping | 📝 create `artifacts/input/statement.csv` | 🖱 drop the CSV into the library |
+| 5 Localization | 📝 put 3–5 documents into `artifacts/input/` | 🖱 drop into the library |
+| 6 Contract review | 📝 + **cut short because length couldn't be measured** | 🖱 drop it · `INDEX.md` tells the assistant it's 34 pages before dividing the work |
+| 7 Spreadsheets | 📝 200-row CSV | 🖱 drop into the library |
+| 8 Screening | 📝 20 resumes into `artifacts/input/cv/` | 🖱 drop 20 files into the library |
 
-**Bài 2 đổi đề, không đổi mục đích** (người dùng chốt 17/08): đề bài mới là *"khách hàng thêm file chính sách vào tủ tài liệu"*. Nó chuyển từ đo `KnowledgeStore.cold()` sang đo `Grep` — và đó là thứ đúng hơn cần đo, vì chính sách shop là **tài liệu người dùng sở hữu**, không phải bài học agent tự rút ra.
+**Test #2 changed premise, not purpose** (user locked this in 17/08): the new premise is *"the customer adds policy files to the document library."* It shifts from measuring `KnowledgeStore.cold()` to measuring `Grep` — and that's the more correct thing to measure, since a shop's policies are **documents the user owns**, not lessons the agent distilled on its own.
 
-⚠ Hệ quả phải ghi nhận: sau khi đổi, **không còn bài nào đo chấm điểm từ khoá của `cold()`**. Cần một bài 2b riêng, hoặc chấp nhận rằng `cold()` chỉ được kiểm gián tiếp qua bài 5.
+⚠ A consequence worth noting: after the change, **no test measures `cold()`'s keyword scoring anymore.** We need either a dedicated test #2b, or to accept that `cold()` is only checked indirectly through test #5.
 
 ---
 
-## 15. Việc phải KIỂM trước khi hứa với khách
+## 15. Things that must be CHECKED before promising them to a client
 
-Theo luật *"một bất biến chỉ có thật khi có mã nguồn thi hành nó"*:
+Following the rule *"an invariant is only real once source code enforces it"*:
 
-| Việc | Trạng thái |
+| Item | Status |
 |---|---|
-| **Test hàm thuần** (`node --test`) | ✅ **21 test, chạy 0,4s, 0 token.** Bộ test đầu tiên của dự án. Nó bắt được một lỗi thật ngay lần chạy đầu — xem §16 |
-| **`Grep` có thấy `library/text/` không** | ✅ **đã kiểm với file thật**: `Grep "nghỉ phép"` trên thư mục văn phòng trả về `library/text/Sổ tay nhân sự.docx.txt`. Nội dung bên trong một `.docx` giờ tìm được bằng từ khoá |
-| **Đường từ chối** | ✅ đã kiểm chạy thật cả bảy: ảnh · `../` · tên bắt đầu bằng dấu chấm · `CON.txt` · `.exe` đội lốt `.pdf` · file không phải ZIP đội lốt `.docx` · trùng tên (409) |
-| **Đếm lại phụ thuộc** | ✅ `.docx`/`.xlsx`/`.pptx` đọc bằng `node:zlib`, **0 phụ thuộc mới**. `.pdf` → `pdfjs-dist`, **phụ thuộc thật, đi kèm sản phẩm** từ 20/08 (§4.2). Dự án giờ có 4: `sdk` `yaml` `zod` `pdfjs-dist` |
-| **Spike PDF thật**: 1 sách có lớp chữ · 1 bản scan | 🟡 **MỘT NỬA** — 20/08 đã chạy thật một PDF 2 trang có lớp chữ: bóc đúng chữ, **mốc trang đúng**, không còn dòng `Warning` nào sau khi sửa `standardFontDataUrl`/`cMapUrl` (§4.3). Còn nợ: **sách dài thật** và **bản scan** (ca `image-only`) |
-| **Bóc file lớn giữ vòng lặp sự kiện** | ⏳ chưa đo. `inflateRawSync` là đồng bộ; một `.xlsx` 40MB có thể làm giao diện khựng vài trăm ms. Nếu đo thấy đau thì chuyển sang `worker_threads` — đổi được mà không đụng gì ngoài `pump()` |
+| **Pure function tests** (`node --test`) | ✅ **21 tests, run in 0.4s, 0 tokens.** The project's first test suite. It caught a real bug on the very first run — see §16 |
+| **Does `Grep` see `library/text/`** | ✅ **checked with real files**: `Grep "sick leave"` on the office folder returns `library/text/HR Handbook.docx.txt`. Content inside a `.docx` is now keyword-searchable |
+| **Rejection paths** | ✅ ran all seven for real: image · `../` · a name starting with a dot · `CON.txt` · `.exe` disguised as `.pdf` · a non-ZIP file disguised as `.docx` · duplicate name (409) |
+| **Dependency recount** | ✅ `.docx`/`.xlsx`/`.pptx` read via `node:zlib`, **0 new dependencies**. `.pdf` → `pdfjs-dist`, a **real dependency shipped with the product** as of 20/08 (§4.2). The project now has 4: `sdk` `yaml` `zod` `pdfjs-dist` |
+| **Real PDF spike**: 1 book with a text layer · 1 scan | 🟡 **HALF DONE** — on 20/08, a real 2-page PDF with a text layer was tested end to end: correct text extraction, **correct page markers**, no more `Warning` lines after fixing `standardFontDataUrl`/`cMapUrl` (§4.3). Still owed: a **genuinely long book** and a **scan** (the `image-only` case) |
+| **Does extracting large files block the event loop** | ⏳ not yet measured. `inflateRawSync` is synchronous; a 40MB `.xlsx` could stall the UI for a few hundred ms. If measurement shows real pain, switch to `worker_threads` — a change that touches nothing outside `pump()` |
 
 ---
 
-## 15b. Node **Tủ tài liệu** trên sơ đồ — hai cửa vào, MỘT đường xử lý
+## 15b. The **Document Library** node on the diagram — two doors in, ONE processing path
 
-Người dùng hỏi thẳng: *"tức là có 2 chỗ upfile?"* — **Có hai CỬA, không có hai bản mã.**
+The user asked directly: *"so there are 2 places to upload a file?"* — **There are two DOORS, not two code paths.**
 
 | | |
 |---|---|
-| Node `🗄 Tủ tài liệu` trên canvas | **bấm một cái** → mở ngăn kéo · **thả file thẳng lên node** → mở ngăn kéo rồi tải lên |
-| Ngăn kéo Tủ tài liệu ở sidebar | nút **Thêm tài liệu** · kéo thả vào ngăn kéo |
+| `🗄 Document Library` node on the canvas | **one click** → opens the drawer · **drop a file directly on the node** → opens the drawer and uploads |
+| Document Library drawer in the sidebar | **Add document** button · drag-and-drop into the drawer |
 
-Canvas **không gọi API tải lên**. Nó đặt file vào `pendingDocs` trong store rồi mở ngăn kéo; ngăn kéo là nơi DUY NHẤT có `upload()`. Lý do không phải gọn gàng mà là hồi quy: có hai bản thì đến ngày sửa luật trùng tên, một bản được sửa và một bản bị quên — đúng lớp lỗi `skillFileFor` đã dẫm (`SESSIONS_MEMORY` §8).
+The canvas **never calls the upload API itself.** It puts the file into `pendingDocs` in the store and opens the drawer; the drawer is the ONLY place with `upload()`. The reason isn't tidiness, it's regression: two copies means that the day someone fixes the duplicate-name rule, one copy gets fixed and the other gets forgotten — exactly the bug class `skillFileFor` already hit (`SESSIONS_MEMORY` §8).
 
-**Số trên node đọc từ catalog trong bộ nhớ, không quét đĩa.** `describeNode` chạy mỗi lần vẽ lại sơ đồ (kéo node, mỗi sự kiện SSE); một `readdir` ở đó là một lần chạm đĩa cho mỗi khung hình. Quét đĩa chỉ xảy ra ở `GET /library`.
+**The number on the node reads from the in-memory catalog, not a disk scan.** `describeNode` runs on every re-render of the diagram (dragging a node, every SSE event); a `readdir` there would be a disk touch per frame. Disk scanning only happens at `GET /library`.
 
 ---
 
-## 15c. Node KHO không có bảng chi tiết — bấm là MỞ THẲNG
+## 15c. The knowledge/document nodes have no detail panel — a click OPENS DIRECTLY
 
-Người dùng báo: *"bấm vào tủ tài liệu thì mở ra bên tay phải nhưng chẳng tương tác được gì, không có nút bấm ngoài dấu ✕. Mà trong sidebar cũng có tủ tài liệu rồi. Flow thế có rườm rà không?"*
+The user reported: *"clicking the document library opens something on the right but nothing in it is interactive, there's no button except the ✕. And there's already a document library in the sidebar too. Isn't that flow redundant?"*
 
-**Rườm rà, và bảng rỗng là một lỗi thật** — `Inspector` không có nhánh render cho `library`, nên nó vẽ ra đúng cái khung với dấu ✕ và không có gì bên trong.
+**Redundant, and the empty panel is a real bug** — `Inspector` has no render branch for `library`, so it draws exactly that frame with a ✕ and nothing inside.
 
-Nhưng sửa bằng cách *thêm nhánh* là sửa sai chỗ. Câu hỏi đúng: **bảng chi tiết bên phải để làm gì?**
+But fixing it by *adding a branch* would be fixing it in the wrong place. The right question: **what is the right-hand detail panel FOR?**
 
-> Để **CHỈNH một đối tượng**: đổi model, sửa hồ sơ, nối/ngắt dây, cho nghỉ, xoá.
+> To **EDIT an object**: change its model, edit its profile, wire/unwire connections, pause it, delete it.
 
-Kho tri thức và tủ tài liệu **không có gì để chỉnh**. Chúng là **CỬA**, không phải đối tượng. Bảng của kho tri thức trước đây chỉ có 2 con số + 2 đoạn giải thích + một nút *"Mở kho tri thức"* — tức là một cái **sảnh phải đi qua** để tới nơi mình muốn tới.
+The knowledge store and the document library have **nothing to edit**. They're **DOORS**, not objects. The knowledge store panel used to be just 2 numbers + 2 paragraphs of explanation + an *"Open knowledge store"* button — i.e. a **lobby you have to walk through** to get where you actually wanted to go.
 
-### Luật, và nó tự trả lời cho mọi node thêm vào sau này
+### The rule, and it answers the question for every node added later too
 
-| Node | Bấm một cái |
+| Node | One click |
 |---|---|
-| Trợ lý · nhân viên · MCP | **bảng chi tiết bên phải** — có thứ để chỉnh |
-| Kho tri thức · Tủ tài liệu | **ngăn kéo bên trái, mở thẳng** — không có gì để chỉnh |
+| Assistant · worker · MCP | **the right-hand detail panel** — there's something to edit |
+| Knowledge store · Document library | **the left-hand drawer, opens directly** — nothing to edit |
 
-### Bốn chi tiết khiến nó chạy đúng
+### Four details that make it work correctly
 
-**1. `showPanel` không đảo trạng thái, khác `openPanel`.** Nút trên thanh tab thì bấm lại = đóng (đó là hành vi của một tab). Nhưng bấm vào node "Tủ tài liệu" thì ý định **luôn là MỞ** — dùng `openPanel` ở đây thì bấm đúp thành "mở rồi đóng ngay", trông y hệt *"bấm không ăn"*.
+**1. `showPanel` doesn't toggle, unlike `openPanel`.** The button on the tab bar toggles closed on a second click (that's normal tab behavior). But clicking the "Document Library" node means the intent is **always to OPEN** — using `openPanel` here would make a double-click "open then immediately close," which looks exactly like "the click didn't register."
 
-**2. Bấm node kho thì KHÔNG chọn nó** (`selected: null`). Chọn nó là mở kèm một cột rỗng bên phải — đúng cái vừa bỏ.
+**2. Clicking a store node does NOT select it** (`selected: null`). Selecting it would open an empty column on the right — exactly what was just removed.
 
-**3. Chốt đặt trong `Inspector`, không đặt ở chỗ gọi:**
+**3. The gate lives in `Inspector`, not at the call site:**
 
 ```ts
 if (node.kind === 'knowledge' || node.kind === 'library') return null;
 ```
 
-Một dòng, và nó chặn cả **LỚP** lỗi: mỗi node kho thêm vào sau này sẽ lặp lại đúng cái bảng rỗng nếu ai đó quên viết nhánh. Giờ quên cũng không sao.
+One line, and it blocks a whole **class** of bugs: every store node added later would repeat this exact empty-panel bug if someone forgot to write a branch for it. Now forgetting doesn't matter.
 
-**4. Bỏ `onDoubleClick`.** Một cái bấm đã mở rồi.
+**4. Drop `onDoubleClick`.** A single click already opens it.
 
-### Hai đoạn giải thích không mất — chúng về đúng chỗ
+### The two explanatory paragraphs aren't lost — they move to the right place
 
-Chúng là sự thật về cái **KHO**, không phải về cái node trên sơ đồ. Nên chúng chuyển vào chân của chính ngăn kéo, nơi người dùng đọc được đúng lúc đang nhìn vào kho. Và mỗi ngăn kéo **chỉ sang cái kia**:
+They're facts about the **STORE**, not about the node on the diagram. So they move to the footer of the drawer itself, where the user reads them exactly while looking at the store. And each drawer **only points to the other one**:
 
-- Kho tri thức: *"đây là thứ hệ thống tự rút ra… bạn sửa và xoá được nhưng không thêm mới — **tài liệu của bạn thì thả vào Tủ tài liệu**"* (bấm được, nhảy thẳng sang)
-- Tủ tài liệu: *"đây là tài liệu **bạn đưa vào**… nó **không** nằm trong prompt"*
+- Knowledge store: *"this is what the system distilled on its own… you can edit and delete but not add new — put YOUR documents in the Document Library instead"* (clickable, jumps straight over)
+- Document Library: *"these are documents YOU brought in… they are NOT in the prompt"*
 
-Trạng thái **rỗng** của kho tri thức mang nút bắc cầu đó, vì đó là màn hình duy nhất người dùng mới đọc kỹ — và câu hỏi đến ngay sau nó luôn là *"vậy tài liệu của tôi bỏ đâu?"*. Không trả lời ở đây thì họ đi tìm nút "thêm ghi chú" không tồn tại.
+The knowledge store's **empty** state carries that bridging button, because it's the one screen a new user actually reads closely — and the question right after is always *"so where does my document go?"*. Not answering it there sends them looking for a nonexistent "add note" button.
 
-> **Nguyên tắc rút ra: hai khái niệm dễ lẫn thì mỗi cái phải tự nói mình LÀ GÌ và chỉ sang cái kia.** Rẻ nhất trong mọi cách chống nhầm lẫn, và tốn **0 token** vì nằm hoàn toàn ở giao diện.
+> **Principle to carry forward: two easily-confused concepts each have to state what they ARE and point to the other one.** The cheapest anti-confusion trick there is, and it costs **0 tokens** since it's purely in the UI.
 
-### Bố cục
+### Layout
 
-Hai kho đứng **cạnh nhau** ở hàng dưới cùng — **kho tri thức TRÁI, tủ tài liệu PHẢI** — và **cùng dùng viền nét đứt**.
+The two stores sit **side by side** in the bottom row — **knowledge store LEFT, document library RIGHT** — and **both use a dashed border**.
 
-- *Cạnh nhau:* đây là hai khái niệm dễ lẫn nhất trong sản phẩm; đặt xa nhau thì người dùng không bao giờ nhìn thấy chúng cùng lúc, và đó chính là lúc chúng nhập làm một trong đầu họ.
-- *Nét đứt:* không phải trang trí. Node agent có cổng và có dây, nên viền liền đọc ra *"thứ này tham gia vào quan hệ"*. Hai kho là **môi trường** — ai cũng với tới được, không ai phải nối tới. Nét đứt nói điều đó **trước** khi người dùng kịp thử kéo một sợi dây và thất bại.
+- *Side by side:* these are the two most easily-confused concepts in the product; placing them far apart means the user never sees them together, which is exactly when they merge into one thing in the user's head.
+- *Dashed border:* not decoration. Agent nodes have ports and wires, so a solid border reads as *"this participates in relationships."* The two stores are **environments** — anyone can reach them, nobody wires up to them. The dashed border says that **before** the user even tries dragging a wire and fails.
 
-⚠ Thứ tự phải khớp ở **hai chỗ**: vị trí mặc định (`src/core/layout.ts`) và `autoArrange()` (`web/src/canvas/geometry.ts`). Văn phòng đã lưu `layout.json` giữ vị trí cũ cho tới khi bấm **Sắp xếp lại sơ đồ** — cố ý: không tự dời node người dùng đã đặt.
+⚠ The order has to match in **two places**: the default position (`src/core/layout.ts`) and `autoArrange()` (`web/src/canvas/geometry.ts`). A saved office keeps `layout.json`'s old positions until **Rearrange diagram** is clicked — deliberately: never move a node the user has already placed.
 
 ---
 
-## 17. Charter rời khỏi kho tri thức — ba lỗi cùng một gốc
+## 17. The charter moves out of the knowledge store — three bugs, one root cause
 
-Người dùng báo: *"tạo văn phòng mới thì nó tự tạo một điều lệ trống trong kho tri thức, hits khá nhiều… mà tôi không thấy nó link tới giới thiệu văn phòng trong assistant. Hay là hai cái khác nhau?"*
+The user reported: *"creating a new office auto-creates an empty charter in the knowledge store, with a fairly high hit count… but I don't see it linked to the office intro in the assistant panel. Are these two different things?"*
 
-**Là MỘT.** `charter_file` mặc định trỏ `knowledge/shared/_charter.md`, nên cùng một file vừa là lớp prompt *"Giới thiệu văn phòng"* vừa là một node trong ngăn kéo Tri thức. Hai cửa sổ, hai đường ghi, không cửa nào nhắc tới cửa kia. Ba hậu quả, tất cả đều đã xảy ra trên máy người dùng:
+**They're ONE thing.** `charter_file` defaults to `knowledge/shared/_charter.md`, so the same file is simultaneously the *"Office introduction"* prompt layer AND a node in the Knowledge drawer. Two windows, two write paths, neither mentions the other. Three consequences, all of which have already happened on a real user's machine:
 
-**1. Node ma.** Mỗi văn phòng mới đẻ ra một node người dùng không tạo, không hiểu, và ngăn kéo thì nói *"nhân viên tự ghi… không ai phải nhập tay"* — một câu sai ngay ở màn hình đầu tiên.
+**1. A ghost node.** Every new office spawns a node the user didn't create, doesn't understand, and the drawer says *"agents write these themselves… nobody has to type them in by hand"* — a false statement right on the first screen.
 
-**2. Xoá node đó là hỏng thầm lặng.** Tái hiện được 100%:
+**2. Deleting that node breaks things silently.** 100% reproducible:
 
 ```
 PATCH /knowledge {id:"k/shared/_charter", remove:true}   → 200
-PUT   /prompt/assistant/charter {text:"Chào"}            → 200
-file  → "\nChào\n"          ← frontmatter biến mất, nó thôi là node tri thức
+PUT   /prompt/assistant/charter {text:"Hello"}            → 200
+file  → "\nHello\n"          ← frontmatter is gone, it's no longer a knowledge node
 ```
 
-Ghi lại giữ frontmatter *"cũ"*, mà file vừa bị xoá nên không có gì để giữ. Prompt vẫn chạy nên **không có gì báo**. File `ho-tro-khach/knowledge/shared/_charter.md` trên máy người dùng đúng bằng `"\nChào\n"`, từng byte.
+Saving retains the "old" frontmatter, but the file was just deleted, so there's nothing to retain. The prompt still runs, so **nothing reports it.** The file `customer-support/knowledge/shared/_charter.md` on the user's machine literally equals `"\nHello\n"`, byte for byte.
 
-**3. Trả tiền HAI lần cho cùng một đoạn văn.** `hot()` loại node `pinned`, nhưng `cold()` thì **không** — `visible()` không lọc `pinned`. Nên charter dự thi COLD, bị tính `hits` (đo được: 6 và 3 ở hai văn phòng), và được render **thêm** vào task, trong khi thân charter **đã** nằm sẵn trong prefix qua `office.charter`. Lần thứ hai nằm sau cache breakpoint nên trả **giá đầy đủ**, mỗi task. Đây là câu trả lời cho *"hits khá nhiều"*.
+**3. Paying TWICE for the same paragraph.** `hot()` excludes `pinned` nodes, but `cold()` does **not** — `visible()` doesn't filter `pinned`. So the charter competes in COLD, gets `hits` counted (measured: 6 and 3 across two offices), and gets rendered **additionally** into a task, while the charter's body **already** sits in the prefix via `office.charter`. The second copy sits past the cache breakpoint, so it's paid **at full price, every task.** This is the answer to *"fairly high hit count."*
 
-### Chốt: DỜI RA, không vá tại chỗ
+### Decision: MOVE IT OUT, don't patch it in place
 
-> **`charter.md` ở gốc văn phòng. Markdown thuần, không frontmatter, không phải node tri thức.**
+> **`charter.md` lives at the office root. Plain markdown, no frontmatter, not a knowledge node.**
 
-Vá từng triệu chứng thì phải nhớ cả ba chỗ mãi mãi. Dời ra thì cả ba biến mất cùng lúc — và bất biến §7 (*kho tri thức chỉ agent ghi*) trở thành **thật**, có mã nguồn thi hành, chứ không phải một lời hứa trong spec.
+Patching each symptom means remembering all three spots forever. Moving it out makes all three disappear at once — and the §7 invariant (*the knowledge store is only ever written by the agent*) becomes **true**, enforced by source code, instead of a promise in a spec.
 
-| | Trước | Sau |
+| | Before | After |
 |---|---|---|
-| Đường dẫn | `knowledge/shared/_charter.md` | `charter.md` |
-| Định dạng | markdown + YAML frontmatter | markdown thuần |
-| Tạo lúc nào | **tự tạo** khi tạo văn phòng | **chỉ khi người dùng lưu lần đầu** |
-| Trong ngăn kéo Tri thức | có (node ma) | **không** |
-| Vào prompt mấy lần | 2 (prefix + COLD) | **1** (prefix) |
-| Chỗ sửa | hai chỗ, không đồng bộ | **một chỗ** |
+| Path | `knowledge/shared/_charter.md` | `charter.md` |
+| Format | markdown + YAML frontmatter | plain markdown |
+| Created when | **automatically** on office creation | **only** when the user saves it for the first time |
+| In the Knowledge drawer | yes (ghost node) | **no** |
+| Enters the prompt how many times | 2 (prefix + COLD) | **1** (prefix) |
+| Where to edit | two places, out of sync | **one place** |
 
-**Trả lời câu *"điều lệ này có bị xoá không?"*: nội dung KHÔNG mất.** `migrateCharters()` chạy lúc khởi động, bóc thân ra `charter.md`, xoá file cũ, và sửa dòng `charter_file:` trong `office.yaml`. Thứ duy nhất mất là frontmatter — metadata của cái kho nó vừa rời khỏi. Đã chạy thật trên cả ba văn phòng: không mất chữ nào.
+**Answering *"will this delete my charter?"*: the content is NOT lost.** `migrateCharters()` runs at startup, extracts the body into `charter.md`, deletes the old file, and updates the `charter_file:` line in `office.yaml`. The only thing lost is frontmatter — metadata belonging to the store it just left. Already run for real across all three offices: not a single character lost.
 
-### Bốn chốt của di trú
-1. **Idempotent từng văn phòng**, một văn phòng hỏng không chặn phần còn lại.
-2. **Không đè `charter.md` đã có nội dung** — đó là bản người dùng viết sau di trú.
-3. **Charter thân rỗng thì không đẻ ra file rỗng** (ca phổ biến nhất: mọi văn phòng tạo từ UI).
-4. **Gọi HAI lần** trong `migrateIfNeeded`: lượt đầu cho công ty đã ở bố cục mới, lượt sau cho công ty v0 vừa được dời `knowledge/` vào văn phòng.
+### Four migration guarantees
+1. **Idempotent per office**, one broken office doesn't block the rest.
+2. **Never overwrite an existing `charter.md`** — that would be content the user wrote after migration.
+3. **A charter with an empty body doesn't spawn an empty file** (the most common case: every office created from the UI).
+4. **Called TWICE** in `migrateIfNeeded`: once for a company already on the new layout, once for a v0 company whose `knowledge/` just got moved into the office.
 
-### Một chỗ hở đã bịt
-`PromptLayer.frontmatter` **suy ra từ đường dẫn thật**, không đóng đinh `false`:
+### One gap that's now closed
+`PromptLayer.frontmatter` **is derived from the real path**, not hardcoded to `false`:
 
 ```ts
 frontmatter: office.config.charter_file.replace(/\\/g, '/').startsWith('knowledge/')
 ```
 
-Di trú **có thể** hỏng (Windows khoá file, thư mục chỉ đọc, người dùng khôi phục bản sao lưu cũ). Đóng đinh `false` nghĩa là ở đúng những máy đó, lần lưu kế tiếp xoá sạch frontmatter và **tái tạo chính cái lỗi vừa sửa**.
+Migration **can** fail (a locked file on Windows, a read-only folder, a user restoring an old backup). Hardcoding `false` would mean that on exactly those machines, the next save wipes frontmatter clean and **recreates the very bug just fixed.**
 
-### Còn lại: `pinned` giờ là cờ chết
-Charter là node `pinned` duy nhất từng tồn tại. Sau khi dời, **không đường nào đặt `pinned: true`** — cả ba hàm `add*` ghi `false`, giao diện không có nút, chỉ sửa file bằng tay mới đặt được.
+### One remaining loose end: `pinned` is now a dead flag
+The charter was the only `pinned` node that ever existed. After the move, **nothing sets `pinned: true`** — all three `add*` functions write `false`, the UI has no button for it, only hand-editing a file can set it.
 
-**Giữ nguyên hành vi**, chỉ sửa lại chú thích cho khỏi nói dối. Đổi ngữ nghĩa một cờ chưa ai dùng là mua rủi ro không đổi lấy gì. Nhưng ghi lại đây cho lần sau: **nếu làm nút "ghim ghi chú", ghim phải nghĩa là LUÔN nằm trong HOT — và khi đó `cold()` bắt buộc phải loại nó ra**, nếu không nó được render hai lần cho cùng một task, đúng cái bẫy charter vừa dẫm.
+**Behavior kept as-is**, only the comment was corrected so it stops lying. Changing the meaning of a flag nobody uses yet buys risk for nothing in return. But noting it here for next time: **if a "pin this note" button gets built, pinned has to mean it's ALWAYS in HOT — and `cold()` would then have to exclude it**, or it would get rendered twice for the same task, exactly the trap the charter just fell into.
 
 ---
 
-## 16. Lỗi bộ test bắt được ngay lần chạy đầu
+## 16. A bug the test suite caught on its very first run
 
-Ghi lại vì nó là bằng chứng cho luận điểm §4 `SESSIONS_MEMORY` (*test hàm thuần là TIẾT KIỆM, không phải chi phí*), và vì nó suýt thành một lỗi loại tệ nhất: **sai mà trông vẫn hợp lý**.
+Noting this because it's proof of `SESSIONS_MEMORY` §4's thesis (*testing pure functions SAVES money, it isn't a cost*), and because it very nearly became the worst kind of bug: **wrong, but plausible-looking.**
 
-**Excel không ghi ô trống ra file.** Một hàng có `A=1`, `B` trống, `C=3` chỉ có hai thẻ `<c r="A1">` và `<c r="C1">`, không có gì ở giữa. Bản đầu của `readSheetRows` đọc tuần tự theo thứ tự xuất hiện → ra `1 | 3` → **mọi cột sau ô trống dịch sang trái một bậc**.
+**Excel doesn't write empty cells to the file.** A row with `A=1`, `B` empty, `C=3` only has two `<c r="A1">` tags, nothing in between. The first version of `readSheetRows` read cells in appearance order → produced `1 | 3` → **every column after an empty cell shifted one position to the left.**
 
-Hậu quả không phải một bảng xấu: bài 3 và bài 7 của `TEST-WALKTHROUGH` giao đúng việc *"cộng tổng theo cột"*. Cột lệch thì con số vẫn ra, vẫn trông hợp lý, và sai — đúng lỗ hổng số 3 mà `USE-CASES` đã cảnh báo (*hệ thống không có cách kiểm chứng con số*).
+The consequence wasn't just an ugly table: walkthrough tests #3 and #7 assign exactly the task *"sum a column."* A shifted column still produces a number, still looks plausible, and is wrong — precisely gap #3 that `USE-CASES` warned about (*the system has no way to verify a number*).
 
-Sửa: lấy vị trí từ thuộc tính `r="C1"`, không từ thứ tự duyệt. Ba test giữ nó: ô bị bỏ khỏi file · ô tự đóng `<c/>` · cột quá chữ Z (`AA` = cột 27).
+Fix: derive position from the `r="C1"` attribute, not from traversal order. Three tests lock this in: a cell dropped from the file · a self-closing `<c/>` cell · a column past Z (`AA` = column 27).
 
-**Và một câu nói sai do CHẠY THẬT mới lộ ra:** `INDEX.md` ghi *"cột: doanh thu, 1500"* — ta quan sát được nội dung dòng một, ta **không** quan sát được rằng đó là dòng tiêu đề. File xuất từ hệ thống khác hoàn toàn có thể vào thẳng dữ liệu. Đổi thành **"hàng đầu:"**. Cùng một luật với bảng token: một dòng nói sai làm hỏng niềm tin vào cả những dòng nói thật.
+**And one line that turned out wrong only because it was actually run against real data:** `INDEX.md` said *"columns: revenue, 1500"* — we can observe the content of the first row, we **can't** observe whether that row is a header. A file exported from a different system could easily put real data in row one. Changed to **"first row:"**. Same rule as the token table: one false line damages trust in every true line next to it.

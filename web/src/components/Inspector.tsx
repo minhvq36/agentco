@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Archive, FileCode2, Globe, Pencil, ScrollText, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -14,16 +14,20 @@ import {
 import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
 import type { ArmCall, CanvasNode } from '@/lib/types';
+import { plural, t, type MessageKey } from '@i18n';
+import { formatDateTime } from '@i18n/fmt';
 
 /**
- * Sửa hồ sơ nhân viên tại chỗ. → docs/SPEC-tools-approval.md §1
+ * Edit an employee's profile in place. → docs/SPEC-tools-approval.md §1
  *
- * KHÔNG autosave. Sửa `pitch` bump cacheKey của Trợ lý (pitch nằm trong roster
- * của nó). Nút Lưu tường minh và nói ra cái giá — cùng luật với skills.
+ * NO autosave. Editing `pitch` bumps the assistant's cacheKey (the pitch sits in
+ * its roster). The Save button is explicit and states the price — the same rule
+ * as skills.
  *
- * Mức model CỐ Ý không nằm trong form này nữa: nó có ô riêng (`ModelPicker`),
- * đúng một chỗ, dùng chung với Trợ lý. Cùng một thứ sửa được ở hai nơi là kiểu
- * gì rồi cũng có một nơi bị quên khi luật đổi.
+ * The model tier is DELIBERATELY no longer in this form: it has its own control
+ * (`ModelPicker`), in exactly one place, shared with the assistant. One thing
+ * editable in two places always ends up with one of them forgotten when the rule
+ * changes.
  */
 function AgentProfile({ node }: { node: CanvasNode }) {
   const [open, setOpen] = useState(false);
@@ -48,7 +52,7 @@ function AgentProfile({ node }: { node: CanvasNode }) {
           onClick={() => setOpen(true)}
         >
           <Pencil className="h-3.5 w-3.5" />
-          Sửa hồ sơ
+          {t('inspector.editProfile')}
         </button>
       </>
     );
@@ -56,22 +60,17 @@ function AgentProfile({ node }: { node: CanvasNode }) {
 
   return (
     <div className="mb-3 rounded-lg border border-line p-3">
-      <Label htmlFor="ag-name">Tên hiển thị</Label>
+      <Label htmlFor="ag-name">{t('inspector.displayName')}</Label>
       <Input id="ag-name" value={name} onChange={(e) => setName(e.target.value)} />
 
       <Label htmlFor="ag-pitch" className="mt-3">
-        Giới thiệu
+        {t('inspector.pitch')}
       </Label>
       <Textarea id="ag-pitch" rows={3} value={pitch} onChange={(e) => setPitch(e.target.value)} />
 
-      <p className="mt-3 text-xs leading-relaxed text-muted">
-        Lưu sẽ làm Trợ lý ghi lại bộ nhớ đệm một lần — giới thiệu nằm trong ngữ cảnh của nó ở mọi lượt
-        trò chuyện.
-      </p>
-
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
-          Thôi
+          {t('common.cancel')}
         </Button>
         <Button
           size="sm"
@@ -87,7 +86,7 @@ function AgentProfile({ node }: { node: CanvasNode }) {
             if (ok) setOpen(false);
           }}
         >
-          {busy ? 'Đang lưu…' : 'Lưu'}
+          {busy ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>
@@ -95,19 +94,20 @@ function AgentProfile({ node }: { node: CanvasNode }) {
 }
 
 /**
- * Đổi tên Trợ lý.
+ * Rename the assistant.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Ô NÀY CỐ Ý *KHÔNG* CÓ CÂU CẢNH BÁO VỀ CACHE — và đó là thông tin.        │
+ * │ THIS CONTROL DELIBERATELY HAS *NO* CACHE WARNING — and that is           │
+ * │ information.                                                             │
  * │                                                                          │
- * │ Nó nằm ngay trên `ModelPicker`, thứ có nguyên một đoạn giải thích về bộ  │
- * │ nhớ đệm. Hai nút giống hệt nhau về hình dạng mà khác hẳn nhau về giá:    │
- * │ `display_name` **không nằm trong prompt của ai cả** (roster chỉ liệt kê  │
- * │ NHÂN VIÊN), nên đổi nó không ghi lại cache, không mất trí nhớ, không     │
- * │ đụng session.                                                            │
+ * │ It sits directly above `ModelPicker`, which carries a whole paragraph    │
+ * │ about the cache. Two buttons identical in shape and utterly different in │
+ * │ price: `display_name` **is in nobody's prompt** (the roster lists only   │
+ * │ EMPLOYEES), so changing it rewrites no cache, loses no memory and touches│
+ * │ no session.                                                              │
  * │                                                                          │
- * │ Dán một câu cảnh báo chung lên cả hai là dạy người dùng bỏ qua cảnh báo  │
- * │ — rồi họ bỏ qua đúng cái đáng đọc. Im lặng ở đây là một lựa chọn.        │
+ * │ Pasting one generic warning onto both teaches the user to skip warnings  │
+ * │ — and then they skip the one worth reading. The silence here is a choice.│
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function AssistantName({ node }: { node: CanvasNode }) {
@@ -129,29 +129,29 @@ function AssistantName({ node }: { node: CanvasNode }) {
         onClick={() => setOpen(true)}
       >
         <Pencil className="h-3.5 w-3.5" />
-        Đổi tên Trợ lý
+        {t('inspector.renameAssistant')}
       </button>
     );
   }
 
   return (
     <div className="mb-3 rounded-lg border border-line p-3">
-      <Label htmlFor="as-name">Tên hiển thị</Label>
+      <Label htmlFor="as-name">{t('inspector.displayName')}</Label>
       <Input
         id="as-name"
         autoFocus
         maxLength={40}
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Ví dụ: Quản lý, Chị Lan, Điều phối viên"
+        placeholder={t('inspector.assistantNamePlaceholder')}
       />
       <p className="mt-1.5 text-xs leading-relaxed text-muted">
-        Chỉ là cái tên trên sơ đồ và trong khung chat. Trợ lý <b>vẫn nhớ nguyên</b> mọi thứ đã nói, và
-        không có gì phải chạy lại.
+        {t('inspector.assistantNameNoteBefore')} <b>{t('inspector.assistantNameNoteBold')}</b>{' '}
+        {t('inspector.assistantNameNoteAfter')}
       </p>
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
-          Thôi
+          {t('common.cancel')}
         </Button>
         <Button
           size="sm"
@@ -164,7 +164,7 @@ function AssistantName({ node }: { node: CanvasNode }) {
             if (ok) setOpen(false);
           }}
         >
-          {busy ? 'Đang lưu…' : 'Lưu'}
+          {busy ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>
@@ -173,16 +173,16 @@ function AssistantName({ node }: { node: CanvasNode }) {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CỬA ĐĂNG NHẬP BẰNG TAY — mở một cửa sổ trình duyệt THƯỜNG vào đúng hồ sơ │
- * │ mà nhân viên dùng. → `core/browser-login.ts`                             │
+ * │ THE MANUAL SIGN-IN DOOR — opens an ORDINARY browser window on the very   │
+ * │ profile an employee uses. → `core/browser-login.ts`                      │
  * │                                                                          │
- * │ Ca sinh ra nó (user 29/08, bốn lần thử): *"tui đang đăng nhập dở bằng    │
- * │ sđt mà, chờ xíu đi"* · *"đến bước setup địa chỉ thì nó lại tắt của tôi"*. │
- * │ Vòng đời trình duyệt của nhân viên = vòng đời một LƯỢT VIỆC, nên không có │
- * │ chỗ nào trong đó để một con người thao tác.                              │
+ * │ The case that produced it (user, 29/08, four attempts): *"I'm halfway    │
+ * │ through signing in with my phone number, wait a second"* · *"it closes on │
+ * │ me right at the address step"*. An employee's browser lifetime = the      │
+ * │ lifetime of ONE TASK, so there is no room inside it for a human to act.  │
  * │                                                                          │
- * │ ⚠ Nút này KHÔNG nhận mật khẩu và không bao giờ được nhận: nhận là agentco │
- * │ thành nơi giữ mật khẩu. Nó chỉ mở đúng một cửa sổ tới đúng một địa chỉ.   │
+ * │ ⚠ This button takes NO password and never may: taking one turns agentco   │
+ * │ into a password holder. It opens exactly one window at exactly one URL.   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function BrowserLogin() {
@@ -196,19 +196,18 @@ function BrowserLogin() {
     <div className="mb-3 rounded-lg border border-line p-3">
       <div className="flex items-center gap-2">
         <Globe className="h-4 w-4 shrink-0 text-muted" />
-        <span className="text-[13px] font-medium">Đăng nhập / thêm cookie</span>
+        <span className="text-[13px] font-medium">{t('inspector.browserLoginTitle')}</span>
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-muted">
         {opened ? (
           <>
-            Cửa sổ đã mở. Dùng như trình duyệt bình thường — đăng nhập, chờ mã SMS, xác minh hai
-            bước, bao lâu cũng được. Xong thì <b>đóng cửa sổ</b>; nhân viên dùng lại phiên đó ở
-            những lượt sau.
+            {t('inspector.browserOpenedBefore')} <b>{t('inspector.browserOpenedBold')}</b>{' '}
+            {t('inspector.browserOpenedAfter')}
           </>
         ) : (
           <>
-            Mở một cửa sổ trình duyệt thường, dùng <b>đúng hồ sơ</b> mà nhân viên dùng. Đăng nhập
-            ở đây một lần là những lượt việc sau vào thẳng được.
+            {t('inspector.browserIdleBefore')} <b>{t('inspector.browserIdleBold')}</b>{' '}
+            {t('inspector.browserIdleAfter')}
           </>
         )}
       </p>
@@ -220,7 +219,11 @@ function BrowserLogin() {
         disabled={busy}
         onClick={() => void go()}
       >
-        {busy ? 'Đang mở…' : opened ? 'Mở lại' : 'Mở trình duyệt'}
+        {busy
+          ? t('inspector.browserOpening')
+          : opened
+            ? t('inspector.browserReopen')
+            : t('inspector.browserOpen')}
       </Button>
     </div>
   );
@@ -229,8 +232,9 @@ function BrowserLogin() {
     setBusy(true);
     setErr('');
     try {
-      // Không gửi `url`: mở trình duyệt của văn phòng là đủ, người dùng tự gõ
-      // địa chỉ trong cửa sổ. Bắt gõ trước là thêm một bước cho cùng kết quả.
+      // No `url`: opening the office's browser is enough, and the user types the
+      // address in the window. Asking them to type it first adds a step for the
+      // same result.
       await api.browserLogin(officeId!);
       setOpened(true);
     } catch (e) {
@@ -243,24 +247,27 @@ function BrowserLogin() {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ NHẬT KÝ KIỂM TOÁN — VÀ VÌ SAO NÓ NẰM Ở ĐÂY, không ở một ngăn kéo riêng.  │
- * │ (user hỏi 26/08: *"nó nên thuộc object nào trên UI?"*)                   │
- * │                                                                          │
- * │ Ba ngăn kéo bên trái (Kết quả · Tủ tài liệu · Kho tri thức) đều là **nội  │
- * │ dung của người dùng**. Một cuốn nhật ký không phải nội dung — thêm ngăn   │
- * │ thứ tư là bắt MỌI người học một khái niệm nữa, kể cả người sẽ không bao   │
- * │ giờ mở nó. Đúng thứ user cảnh báo: *"người nocode vào cũng đâu hiểu gì"*. │
- * │                                                                          │
- * │ Chỗ đúng là **object sở hữu rủi ro**: cánh tay. Bảng này đã nói *"nó LÀM  │
- * │ ĐƯỢC gì"* (huy hiệu mức quyền, số việc); nhật ký nói *"nó ĐÃ LÀM gì"*.    │
- * │ Hai vế của cùng một câu hỏi, nên chúng đứng cạnh nhau.                    │
- * │                                                                          │
- * │ Và nó **tự phân tầng người dùng** mà không cần một chế độ "nâng cao" nào: │
- * │ phải bấm vào một node 🔌 mới thấy, và ai bấm vào node 🔌 thì đã đi qua    │
- * │ ngưỡng đó rồi.                                                           │
- * │                                                                          │
- * │ ⚠ Mặc định ĐÓNG. Nó có thể dài hàng trăm dòng, và bảng chi tiết là chỗ    │
- * │ người ta vào để đổi tên hoặc rút dây — không phải để đọc log.             │
+ * │ THE AUDIT LOG — AND WHY IT LIVES HERE rather than in its own drawer.      │
+ * │ (the user asked 26/08: *"which object on the UI should own it?"*)         │
+ * │                                                                           │
+ * │ The three left-hand drawers (Results · Library · Knowledge) are all       │
+ * │ **the user's content**. A log is not content — a fourth drawer makes      │
+ * │ EVERYONE learn one more concept, including people who will never open it. │
+ * │ Exactly what the user warned about: *"a no-code person walks in and       │
+ * │ understands none of it"*.                                                 │
+ * │                                                                           │
+ * │ The right place is **the object that owns the risk**: the arm. This panel │
+ * │ already says *"what it CAN do"* (the level badge, the tool count); the    │
+ * │ log says *"what it HAS done"*. Two halves of one question, so they stand  │
+ * │ next to each other.                                                       │
+ * │                                                                           │
+ * │ And it **tiers the audience by itself** with no "advanced" mode: you have │
+ * │ to click a 🔌 node to see it, and anyone clicking a 🔌 node has already   │
+ * │ crossed that threshold.                                                   │
+ * │                                                                           │
+ * │ ⚠ CLOSED by default. It can run to hundreds of lines, and the inspector   │
+ * │ is where people come to rename something or pull a wire — not to read a   │
+ * │ log.                                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ArmLog({ server }: { server: string }) {
@@ -268,8 +275,8 @@ function ArmLog({ server }: { server: string }) {
   const [open, setOpen] = useState(false);
   const [calls, setCalls] = useState<ArmCall[] | null>(null);
 
-  // Chỉ nạp khi MỞ: một cánh tay chạy lâu có hàng trăm dòng, và nạp sẵn cho mỗi
-  // lần bấm vào node là trả giá cho một thứ hầu như không ai xem.
+  // Load only when OPENED: a long-running arm has hundreds of rows, and
+  // pre-loading on every node click pays for something almost nobody looks at.
   useEffect(() => {
     if (!open || !officeId) return;
     setCalls(null);
@@ -286,16 +293,16 @@ function ArmLog({ server }: { server: string }) {
         onClick={() => setOpen((v) => !v)}
       >
         <ScrollText className="h-3.5 w-3.5" />
-        {open ? 'Ẩn nhật ký' : 'Kết nối này đã làm gì?'}
+        {open ? t('inspector.hideLog') : t('inspector.showLog')}
       </button>
 
       {open && (
         <div className="mt-2">
-          {calls === null && <p className="text-xs text-muted">Đang đọc…</p>}
+          {calls === null && <p className="text-xs text-muted">{t('common.reading')}</p>}
           {calls?.length === 0 && (
             <p className="text-xs leading-relaxed text-muted">
-              Chưa có lời gọi nào được ghi. Nhật ký bắt đầu từ lúc kết nối được dùng trong một việc
-              thật — bấm <b>Thử ngay</b> lúc cắm thì không tính.
+              {t('inspector.noCallsBefore')} <b>{t('inspector.noCallsBold')}</b>{' '}
+              {t('inspector.noCallsAfter')}
             </p>
           )}
           {calls?.map((c, i) => (
@@ -308,25 +315,24 @@ function ArmLog({ server }: { server: string }) {
 }
 
 /**
- * Một dòng: **AI · LÀM GÌ · LÚC NÀO**, tham số giấu sau một cú bấm.
+ * One row: **WHO · DID WHAT · WHEN**, with the arguments one click away.
  *
- * Tham số là thứ đắt nhất của cuốn nhật ký (nó trả lời *"nó đã ghi GÌ vào
- * Notion"*) và cũng là thứ dài nhất. Bày hết ra thì 20 lời gọi thành một bức
- * tường JSON và người ta thôi đọc — tức mất luôn cả những dòng đáng đọc.
+ * The arguments are the log's most valuable part (they answer *"WHAT did it write
+ * into Notion"*) and also its longest. Laid out in full, 20 calls become a wall of
+ * JSON and people stop reading — which loses the rows worth reading too.
  */
 function ArmLogRow({ call }: { call: ArmCall }) {
   const [show, setShow] = useState(false);
   const when = new Date(call.ts);
-  const stamp = Number.isNaN(when.getTime())
-    ? call.ts
-    : when.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const stamp = Number.isNaN(when.getTime()) ? call.ts : formatDateTime(when);
 
   return (
     <div className="border-b border-line/60 py-1.5 last:border-0">
       <button className="w-full text-left" onClick={() => setShow((v) => !v)}>
         <div className="flex items-baseline gap-1.5 text-[12.5px]">
-          {/* Tên việc NGUYÊN VĂN, không qua bảng dịch viết tay: bảng đó đúng cho
-              một hãng và câm cho mọi hãng khác — cùng lý lẽ `describeCall`. */}
+          {/* The tool name VERBATIM, never through a hand-written translation
+              table: such a table is right for one vendor and silent for every
+              other — the same argument as `describeCall`. */}
           <span className="min-w-0 flex-1 truncate font-medium">{call.tool.replace(/_/g, ' ')}</span>
           <span className="flex-none tabular-nums text-[11px] text-muted">{stamp}</span>
         </div>
@@ -338,14 +344,14 @@ function ArmLogRow({ call }: { call: ArmCall }) {
       {show && (
         <pre className="mt-1 max-h-48 overflow-auto rounded bg-line/40 p-2 text-[11px] leading-relaxed text-ink">
           {pretty(call.args)}
-          {call.truncated ? '\n\n… (đã cắt bớt — tham số quá dài)' : ''}
+          {call.truncated ? t('inspector.argsTruncated') : ''}
         </pre>
       )}
     </div>
   );
 }
 
-/** JSON cho dễ đọc; hỏng thì hiện nguyên văn — đừng nuốt thứ duy nhất còn lại. */
+/** Pretty-print the JSON; if it is broken show it verbatim — never swallow the only thing left. */
 function pretty(raw: string): string {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
@@ -354,25 +360,28 @@ function pretty(raw: string): string {
   }
 }
 
-const TIER_HINT: Record<string, string> = {
-  eco: 'eco — rẻ nhất, chậm hơn và cần nhiều lượt hơn',
-  standard: 'standard — cân bằng',
-  deep: 'deep — chỉ cho việc thật khó, đắt hơn nhiều',
+/** Keys, not sentences — a module-level string would freeze the load-time locale. */
+const TIER_HINT: Record<string, MessageKey> = {
+  eco: 'inspector.tier.eco',
+  standard: 'inspector.tier.standard',
+  deep: 'inspector.tier.deep',
 };
 
 /**
- * Ô đổi model. MỘT component cho cả Trợ lý và nhân viên.
+ * The model picker. ONE component for both the assistant and employees.
  * → docs/SPEC-offices.md §4.5
  *
- * Hai bên khác nhau đúng hai điểm, và cả hai đều là SỰ THẬT về cái giá phải trả:
+ * The two sides differ in exactly two ways, and both are FACTS about the price:
  *
- *  - Trợ lý có tuỳ chọn "theo mặc định công ty", và đổi nó làm mất prompt cache
- *    một lượt (nó chạy `resume`, nên lượt đó gửi lại cả bản ghi hội thoại).
- *    Trí nhớ KHÔNG mất — bản ghi nằm trên đĩa, độc lập với model.
- *  - Nhân viên là hàm không trạng thái: đổi model không mất gì cả.
+ *  - The assistant has a "follow the company default" option, and changing it
+ *    loses the prompt cache for one turn (it runs `resume`, so that turn resends
+ *    the whole transcript). Memory is NOT lost — the transcript is on disk,
+ *    independent of the model.
+ *  - An employee is a stateless function: changing its model loses nothing.
  *
- * Nói ra khác nhau đó thay vì một câu cảnh báo chung, vì một câu chung thì hoặc
- * doạ người dùng ở chỗ không đáng, hoặc trấn an ở chỗ đáng lo.
+ * Say that difference rather than one generic warning, because a generic one
+ * either frightens the user where there is nothing to fear or reassures them
+ * where there is.
  */
 function ModelPicker({ node }: { node: CanvasNode }) {
   const isAssistant = node.kind === 'assistant';
@@ -382,8 +391,9 @@ function ModelPicker({ node }: { node: CanvasNode }) {
   const current = isAssistant && node.tierInherited ? '' : (node.tier ?? 'standard');
   const [tier, setTier] = useState(current);
   const [busy, setBusy] = useState(false);
-  // Giữ dạng CHUỖI trong lúc gõ: number state biến "" thành 0 giữa chừng, và 0
-  // ở đây mang nghĩa "không giới hạn" — người dùng xoá ô để sửa sẽ vô tình bỏ trần.
+  // Kept as a STRING while typing: number state turns "" into 0 mid-edit, and 0
+  // here means "no limit" — so clearing the field to retype it would silently
+  // remove the ceiling.
   const [usd, setUsd] = useState(String(node.maxUsd ?? 0));
   const [turns, setTurns] = useState(String(node.maxTurns ?? 6));
 
@@ -406,22 +416,26 @@ function ModelPicker({ node }: { node: CanvasNode }) {
     return (
       <>
         <Row
-          k="Mức model"
+          k={t('inspector.modelTier')}
           v={
             <>
               {node.tier}
-              {node.tierInherited ? ' · theo công ty' : ''}
             </>
           }
         />
-        <Row k="Model" v={<span className="font-mono text-[11.5px]">{node.model}</span>} />
+        <Row
+          k={t('inspector.model')}
+          v={<span className="font-mono text-[11.5px]">{node.model}</span>}
+        />
         {!isAssistant && (
           <Row
-            k="Giới hạn một việc"
+            k={t('inspector.perJobLimit')}
             v={
               <>
-                {node.maxUsd ? `tối đa $${node.maxUsd}` : 'không giới hạn tiền'}
-                {` · ${node.maxTurns ?? 6} bước`}
+                {node.maxUsd
+                  ? t('inspector.maxUsd', { n: node.maxUsd })
+                  : t('inspector.noMoneyLimit')}
+                {` · ${plural('inspector.stepCount', node.maxTurns ?? 6)}`}
               </>
             }
           />
@@ -431,7 +445,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
           onClick={() => setOpen(true)}
         >
           <Pencil className="h-3.5 w-3.5" />
-          {isAssistant ? 'Đổi model' : 'Đổi model & giới hạn'}
+          {isAssistant ? t('inspector.changeModel') : t('inspector.changeModelLimits')}
         </button>
       </>
     );
@@ -439,17 +453,19 @@ function ModelPicker({ node }: { node: CanvasNode }) {
 
   return (
     <div className="my-3 rounded-lg border border-line p-3">
-      <Label htmlFor="tier-pick">Mức model</Label>
+      <Label htmlFor="tier-pick">{t('inspector.modelTier')}</Label>
       <Select
         id="tier-pick"
         className="w-full"
         value={tier}
         onChange={(e) => setTier(e.target.value)}
       >
-        {isAssistant && <option value="">theo mặc định công ty ({companyDefault})</option>}
-        <option value="eco">{TIER_HINT['eco']}</option>
-        <option value="standard">{TIER_HINT['standard']}</option>
-        <option value="deep">{TIER_HINT['deep']}</option>
+        {isAssistant && (
+          <option value="">{t('inspector.companyDefault', { default: companyDefault })}</option>
+        )}
+        <option value="eco">{t(TIER_HINT['eco']!)}</option>
+        <option value="standard">{t(TIER_HINT['standard']!)}</option>
+        <option value="deep">{t(TIER_HINT['deep']!)}</option>
       </Select>
       {models && (
         <p className="mt-1.5 font-mono text-[11.5px] text-muted">
@@ -457,30 +473,15 @@ function ModelPicker({ node }: { node: CanvasNode }) {
         </p>
       )}
 
-      {isAssistant ? (
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          Trợ lý <b>vẫn nhớ nguyên</b> cuộc trò chuyện — bản ghi nằm trên đĩa, không thuộc về model.
-          Cái mất là bộ nhớ đệm: lượt sau phải gửi lại toàn bộ ngữ cảnh một lần, nên trò chuyện càng
-          dài thì lần đổi này càng tốn. Sau đó về lại bình thường.
-        </p>
-      ) : (
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          Nhân viên làm xong là quên, nên đổi model <b>không mất gì cả</b> — chỉ ghi lại bộ nhớ đệm
-          một lần cho model mới.
-        </p>
-      )}
-      <p className="mt-2 text-xs leading-relaxed text-muted">
-        Việc đang chạy giữ nguyên model cũ cho tới khi xong. Mức mới áp dụng cho việc giao từ giờ.
-      </p>
-
       {/*
-        Giới hạn nằm CHUNG ô với mức model, không tách màn hình riêng: người dùng
-        đổi tier là lúc duy nhất họ nghĩ về cái giá, và cùng một việc trên `deep`
-        đắt gấp mấy lần trên `eco`. Tách ra là bắt họ nhớ quay lại sửa lần hai.
+        The limits share a control with the model tier rather than getting their
+        own screen: changing tier is the only moment the user is thinking about
+        price, and the same job on `deep` costs several times what it does on
+        `eco`. Splitting them makes the user remember to come back and edit twice.
       */}
       {!isAssistant && (
         <div className="mt-4 border-t border-line pt-3">
-          <Label htmlFor="lim-usd">Giới hạn cho MỘT việc</Label>
+          <Label htmlFor="lim-usd">{t('inspector.limitOneJob')}</Label>
           <div className="mt-1.5 flex gap-2">
             <div className="flex-1">
               <Input
@@ -491,7 +492,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
                 value={usd}
                 onChange={(e) => setUsd(e.target.value)}
               />
-              <p className="mt-1 text-[11.5px] text-muted">tiền tối đa ($) · 0 = không giới hạn</p>
+              <p className="mt-1 text-[11.5px] text-muted">{t('inspector.maxSpendHint')}</p>
             </div>
             <div className="flex-1">
               <Input
@@ -502,19 +503,15 @@ function ModelPicker({ node }: { node: CanvasNode }) {
                 value={turns}
                 onChange={(e) => setTurns(e.target.value)}
               />
-              <p className="mt-1 text-[11.5px] text-muted">số bước tối đa</p>
+              <p className="mt-1 text-[11.5px] text-muted">{t('inspector.maxStepsHint')}</p>
             </div>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            Đặt <b>rộng tay</b>. Chạm giới hạn giữa chừng là mất trắng số tiền đã tiêu mà chưa có kết
-            quả — còn việc nào tiêu ít thì vốn dĩ đã chỉ tính tiền phần nó dùng.
-          </p>
         </div>
       )}
 
       <div className="mt-3 flex gap-2">
         <Button size="sm" onClick={() => setOpen(false)}>
-          Thôi
+          {t('common.cancel')}
         </Button>
         <Button
           size="sm"
@@ -533,7 +530,7 @@ function ModelPicker({ node }: { node: CanvasNode }) {
             if (ok) setOpen(false);
           }}
         >
-          {busy ? 'Đang lưu…' : 'Lưu'}
+          {busy ? t('common.saving') : t('common.save')}
         </Button>
       </div>
     </div>
@@ -542,30 +539,31 @@ function ModelPicker({ node }: { node: CanvasNode }) {
 
 
 /**
- * Công tắc `Bash`. → docs/SPEC-tools-approval.md §5
+ * The `Bash` switch. → docs/SPEC-tools-approval.md §5
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CÔNG TẮC DUY NHẤT VỀ KHẢ NĂNG TRONG CẢ SẢN PHẨM — và đó là chủ ý.        │
+ * │ THE ONLY CAPABILITY SWITCH IN THE WHOLE PRODUCT — and that is deliberate.│
  * │                                                                          │
- * │ Sáu tool còn lại bật sẵn, không tắt được, vì chúng chỉ chạm tới thư mục  │
- * │ văn phòng hoặc chỉ đọc web. Hỏi người dùng bật `WebSearch` cho một nhân  │
- * │ viên tên "Người tìm tin" là hỏi một câu chỉ có một đáp án.                │
+ * │ The other six tools are on and cannot be turned off, because they only   │
+ * │ touch the office directory or only read the web. Asking a user to enable │
+ * │ `WebSearch` for an employee called "Researcher" asks a question with one │
+ * │ possible answer.                                                         │
  * │                                                                          │
- * │ `Bash` khác HẲN về loại, không khác về mức: nó là thứ duy nhất ra được   │
- * │ khỏi văn phòng. Cụ thể — và câu này phải nói thẳng ra ở giao diện, không  │
- * │ chỉ nằm trong spec:                                                      │
+ * │ `Bash` differs in KIND, not in degree: it is the only thing that can     │
+ * │ leave the office. Specifically — and this has to be said in the          │
+ * │ interface, not only in the spec:                                         │
  * │                                                                          │
- * │  · LUẬT "kết quả luôn sinh ra trong văn phòng" được thi hành bằng hook   │
- * │    `PreToolUse` khớp `Write|Edit|NotebookEdit` (worker.ts §officeJail).  │
- * │    `Bash` KHÔNG nằm trong matcher đó, và không thể nằm: đường dẫn của    │
- * │    một lệnh shell nằm trong chuỗi lệnh, không nằm ở một trường có tên.   │
- * │    Bật công tắc này là tự tay mở một cửa mà cái hook kia không canh.      │
- * │  · Cổng duyệt `write_external` ở SPEC §8 CHƯA được cài. Nên hôm nay      │
- * │    không có tầng chặn nào phía sau công tắc này cả.                      │
+ * │  · THE RULE "artifacts are always produced inside the office" is         │
+ * │    enforced by a `PreToolUse` hook matching `Write|Edit|NotebookEdit`    │
+ * │    (worker.ts §officeJail). `Bash` is NOT in that matcher and cannot be: │
+ * │    a shell command's path lives inside the command string, not in a      │
+ * │    named field. Turning this on opens a door that hook does not watch.   │
+ * │  · The `write_external` approval gate in SPEC §8 is NOT BUILT YET. So    │
+ * │    today there is no blocking layer behind this switch at all.           │
  * │                                                                          │
- * │ ⇒ Câu cảnh báo ở đây không phải thủ tục. Nó là tầng bảo vệ DUY NHẤT, nên │
- * │   nó nói ĐÚNG hậu quả ("đọc và ghi bất cứ đâu trên máy bạn") thay vì một │
- * │   câu chung chung kiểu "hãy cân nhắc".                                    │
+ * │ ⇒ The warning here is not procedure. It is the ONLY protective layer, so │
+ * │   it states the REAL consequence ("read and write anywhere on your       │
+ * │   machine") instead of something generic like "please consider".         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function BashSwitch({ node }: { node: CanvasNode }) {
@@ -586,44 +584,47 @@ function BashSwitch({ node }: { node: CanvasNode }) {
             setBusy(false);
           }}
         />
+        {/*
+          Just the label now. The capability description was dropped on 02/09 (the
+          app was drowning in text) — what stayed is the WARNING right below, and
+          it only appears when the switch is ON. One sentence about a consequence,
+          at the moment there is a consequence, beats three describing a feature
+          before anyone has decided anything.
+        */}
         <span className="min-w-0">
-          <span className="block text-[13px] text-ink">Cho chạy lệnh trên máy</span>
-          <span className="block text-xs leading-relaxed text-muted">
-            Xem được <b>kích thước · ngày sửa · dung lượng</b> file, chạy script, gọi git — những thứ
-            các tool đọc file thường không lấy được. Kết quả vẫn lưu trong thư mục văn phòng. Tắt khi
-            không cần: bật thì mỗi lượt tốn thêm ~2 700 token.
-          </span>
+          <span className="block text-[13px] text-ink">{t('inspector.bashLabel')}</span>
         </span>
       </label>
 
       {/*
         ┌────────────────────────────────────────────────────────────────────┐
-        │ ⚠ VIẾT LẠI 22/08 — CÂU CŨ VỪA DOẠ QUÁ TAY VỪA HỨA QUÁ TAY.        │
-        │                                                                    │
-        │ Cũ: *"đọc và ghi được bất cứ đâu trên máy bạn"* + *"ngoại lệ duy   │
-        │ nhất của luật kết quả luôn nằm trong văn phòng"*.                   │
-        │                                                                    │
-        │ Sai ở hai đầu:                                                     │
-        │  · KHÔNG phải ngoại lệ duy nhất về ĐỌC — `Read`/`Glob`/`Grep`      │
-        │    cũng không có hàng rào nào (types.ts §BUILTIN_TOOLS).            │
-        │  · "Ghi bất cứ đâu" thì đúng về mặt kỹ thuật nhưng SAI về mặt sản  │
-        │    phẩm: `outputScoper` luôn kéo đầu ra về `artifacts/`, nên kế     │
-        │    hoạch chưa bao giờ trỏ `Bash` ra ngoài. Ca 22/08 22:06 thử lối   │
-        │    đó: 7 lượt · $0,3158 · blocked, không ra file nào.               │
-        │                                                                    │
-        │ Doạ quá tay làm người dùng tắt một thứ họ cần; hứa quá tay làm họ   │
-        │ bật để mua một thứ không tồn tại. Cái sau tệ hơn.                   │
-        │                                                                    │
-        │ Câu mới giữ đúng MỘT cảnh báo, và nó có thật: lệnh chạy bằng quyền  │
-        │ của chính người dùng. Chính sách "ghi ra ngoài phải qua tool/MCP    │
-        │ tường minh" → SPEC-tools-approval.md §1b, §8.                       │
+        │ ⚠ REWRITTEN 22/08 — THE OLD TEXT BOTH OVER-SCARED AND OVER-PROMISED.│
+        │                                                                     │
+        │ Old: *"can read and write anywhere on your machine"* + *"the only   │
+        │ exception to the rule that artifacts stay inside the office"*.      │
+        │                                                                     │
+        │ Wrong at both ends:                                                 │
+        │  · NOT the only exception for READING — `Read`/`Glob`/`Grep` have   │
+        │    no fence either (types.ts §BUILTIN_TOOLS).                       │
+        │  · "Write anywhere" is technically true and WRONG as a product      │
+        │    statement: `outputScoper` always pulls output back into          │
+        │    `artifacts/`, so a plan has never pointed `Bash` outward. The    │
+        │    22/08 22:06 run tried it: 7 turns · $0.3158 · blocked, no file.  │
+        │                                                                     │
+        │ Over-scaring makes the user turn off something they need;           │
+        │ over-promising makes them turn it on to buy something that does not │
+        │ exist. The second is worse.                                         │
+        │                                                                     │
+        │ The new text keeps exactly ONE warning, and it is true: the command │
+        │ runs with the user's own privileges. The "writing outward must go   │
+        │ through an explicit tool/MCP" policy →                              │
+        │ SPEC-tools-approval.md §1b, §8.                                     │
         └────────────────────────────────────────────────────────────────────┘
       */}
       {on && (
         <p className="mt-2.5 rounded bg-warn-soft px-2 py-1.5 text-xs leading-relaxed text-warn">
-          Lệnh chạy bằng <b>quyền của chính bạn</b> trên máy này. Nhân viên chỉ được giao việc trong
-          thư mục văn phòng, nhưng một câu lệnh thì không có hàng rào — nên chỉ bật cho người bạn
-          thật sự cần.
+          {t('inspector.bashWarnBefore')} <b>{t('inspector.bashWarnBold')}</b>{' '}
+          {t('inspector.bashWarnAfter')}
         </p>
       )}
     </div>
@@ -644,63 +645,69 @@ function Note({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * CÁNH TAY MỘT NGƯỜI ĐANG CẦM — hiện NHÃN, không hiện BĂM.
+ * THE ARMS AN EMPLOYEE HOLDS — shows LABELS, never HASHES.
  *
- * Bản trước in thẳng `node.mcp.join(', ')`, ra `a385afc3ab6, a4fbabd0360`. Đó là
- * **cùng một con bug** đã vá ở nhật ký công việc 24/08, chỉ khác chỗ nó nằm: băm
- * là DANH TÍNH, không phải thứ để đọc. Người dùng đặt tên "Musics" thì mọi chỗ
- * phải nói "Musics" — bảng chi tiết cũng là một chỗ.
+ * The previous version printed `node.mcp.join(', ')` directly, yielding
+ * `a385afc3ab6, a4fbabd0360`. That is **the same bug** fixed in the work log on
+ * 24/08, only somewhere else: a hash is an IDENTITY, not something to read. If the
+ * user named it "Musics" then everywhere says "Musics" — and the inspector is an
+ * everywhere.
  *
- * Nhãn tra qua chính node 🔌 trên sơ đồ nên không cần dữ liệu mới. Rơi về băm khi
- * cánh tay đã biến khỏi `company.yaml`: lúc đó băm là thứ DUY NHẤT còn thật, và
- * nó khớp với dòng `Không còn khai trong company.yaml` ở panel của node kia.
+ * The label is looked up through the 🔌 node already on the diagram, so no new
+ * data is needed. It falls back to the hash when the arm has vanished from
+ * `company.yaml`: at that point the hash is the ONLY thing still true, and it
+ * matches the "no longer declared in company.yaml" line on that node's own panel.
  *
- * Nhãn ô cũ là *"Tool ngoài"* — từ vựng của người viết code. Người dùng kéo dây
- * từ một node tên **Kết nối**, nên ô này nói cùng thứ tiếng đó.
+ * The field used to be labelled *"External tool"* — a coder's vocabulary. The user
+ * drags a wire from a node called **Connection**, so this field speaks the same
+ * language.
  */
 function ArmList({ ids, nodes }: { ids?: string[]; nodes: CanvasNode[] }) {
   if (!ids?.length) return null;
   const name = (id: string) => nodes.find((n) => n.kind === 'mcp' && n.server === id)?.label ?? id;
-  return <Row k="Kết nối đang dùng" v={ids.map(name).join(', ')} />;
+  return <Row k={t('inspector.armsInUse')} v={ids.map(name).join(', ')} />;
 }
 
 /**
- * THƯ MỤC CÁNH TAY — chỉ đọc, và "chỉ đọc" ở đây là một câu về DANH TÍNH.
+ * AN ARM'S DIRECTORIES — read only, and "read only" here is a statement about
+ * IDENTITY.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG PHẢI MỘT Ô NHẬP.                                            │
- * │                                                                          │
- * │ Nhãn sửa được vì nhãn không phải danh tính. Thư mục thì NẰM TRONG cấu     │
- * │ hình, mà danh tính = `armHash(cấu hình)` — nên "sửa thư mục" không phải   │
- * │ một phép sửa, nó là **một cánh tay khác**. Cho sửa tại chỗ là dựng lại    │
- * │ đúng ca GHI ĐÈ IM LẶNG mà §6i sinh ra để chặn: node y nguyên, mọi sợi     │
- * │ dây y nguyên, chỉ thư mục bên dưới đổi — **không có triệu chứng ở chỗ nó  │
- * │ nằm**. Đường đi đúng là `+ Kết nối` một cái mới rồi rút cái cũ.           │
- * │                                                                          │
- * │ Nhưng PHẢI HIỆN: đây là thứ trả lời câu *"nhân viên này với tới đâu"* —   │
- * │ hôm nay người dùng chỉ đọc được nó bằng cách mở `company.yaml`, mà một    │
- * │ bước "mở file yaml" là một chuông báo (§6, chốt 22/08).                   │
+ * │ WHY THIS IS NOT AN INPUT FIELD.                                           │
+ * │                                                                           │
+ * │ The label is editable because a label is not an identity. The directories │
+ * │ are INSIDE the config, and identity = `armHash(config)` — so "edit the    │
+ * │ directory" is not an edit, it is **a different arm**. Allowing an in-place│
+ * │ edit rebuilds exactly the SILENT OVERWRITE case §6i exists to stop: the   │
+ * │ node unchanged, every wire unchanged, only the directory underneath       │
+ * │ different — **with no symptom where it happened**. The right path is      │
+ * │ `+ Connection` for a new one and then withdrawing the old.                │
+ * │                                                                           │
+ * │ But it MUST be shown: this is what answers *"how far does this employee   │
+ * │ reach"* — and today the only way to read it is opening `company.yaml`,    │
+ * │ and an "open the yaml file" step is an alarm bell (§6, settled 22/08).    │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Hiện NGUYÊN VĂN, không chuẩn hoá dấu gạch và không dò hệ điều hành. Chuỗi
- * này để người dùng đối chiếu bằng mắt với Explorer/Finder, nên nó phải là thứ
- * họ đã nhập — `D:\…` trên Windows, `/home/…` trên Linux/macOS, và một văn phòng
- * zip từ máy khác hệ vẫn hiện đúng thứ đã ghi. `folderRoots` cố ý nhận cả hai
- * kiểu ở mọi nền tảng, cùng lý do `SHELL_ALIASES` gửi cả hai tên tool.
+ * ⚠ Shown VERBATIM: no separator normalisation and no OS sniffing. This string
+ * exists for the user to compare by eye against Explorer/Finder, so it has to be
+ * what they typed — `D:\…` on Windows, `/home/…` on Linux/macOS, and an office
+ * zipped over from a different platform still shows what was written.
+ * `folderRoots` deliberately accepts both shapes everywhere, for the same reason
+ * `SHELL_ALIASES` sends both tool names.
  *
- * Rỗng ⇒ KHÔNG vẽ gì: cánh tay Notion/GitHub không có thư mục nào, và một ô
- * trống nói dối rằng cấu hình bị thiếu.
+ * Empty ⇒ draw NOTHING: a Notion/GitHub arm has no directories, and an empty field
+ * lies that the config is incomplete.
  */
 function ArmFolders({ folders }: { folders?: string[] }) {
   if (!folders?.length) return null;
   return (
     <div className="border-b border-line py-1.5 text-[13px] last:border-0">
-      <div className="text-ink">Thư mục với tới được</div>
+      <div className="text-ink">{t('inspector.reachableFolders')}</div>
       <ul className="mt-1 space-y-0.5">
         {folders.map((f) => (
-          // `break-all`: đường dẫn Windows có khoảng trắng lẫn dấu gạch ngược,
-          // không ngắt dòng được ở chỗ tử tế nào. Thà xuống dòng giữa chừng còn
-          // hơn tràn ngang cả panel.
+          // `break-all`: a Windows path mixes spaces and backslashes and has no
+          // decent place to wrap. Better a break mid-word than a path running off
+          // the side of the panel.
           <li key={f} className="select-all break-all font-mono text-xs text-muted">
             {f}
           </li>
@@ -711,12 +718,12 @@ function ArmFolders({ folders }: { folders?: string[] }) {
 }
 
 /**
- * ĐỔI TÊN KẾT NỐI — và nó CỐ Ý không có câu cảnh báo nào.
+ * RENAME A CONNECTION — and it DELIBERATELY carries no warning.
  *
- * Nhãn không phải danh tính (danh tính là băm cấu hình), nên đổi nó không đụng
- * khoá, không viết lại `roles/*.yaml`, không phá cache của ai. Dán một câu
- * cảnh báo lên đây là dạy người dùng bỏ qua cảnh báo — rồi họ bỏ qua đúng cái
- * đáng đọc, y như lý do `renameAssistant` không có cảnh báo.
+ * A label is not an identity (the identity is the config hash), so changing it
+ * touches no key, rewrites no `roles/*.yaml`, and breaks nobody's cache. Pasting a
+ * warning here teaches the user to skip warnings — and then they skip the one
+ * worth reading, exactly why `renameAssistant` has none either.
  */
 function ArmName({ node }: { node: CanvasNode }) {
   const [text, setText] = useState(node.label);
@@ -727,35 +734,39 @@ function ArmName({ node }: { node: CanvasNode }) {
     <div className="mt-3">
       {/*
         ┌──────────────────────────────────────────────────────────────────────┐
-        │ HUY HIỆU MỨC QUYỀN — **SUY TỪ `level`, KHÔNG ĐỌC CHUỖI TÊN**.        │
-        │                                                                      │
-        │ User hỏi 25/08 *"thêm quyền vào tên có hơi lủng không"* — có. Nhãn là │
-        │ của người dùng, đổi tự do (§6i). Nhét `· chỉ đọc` vào chuỗi thì một   │
-        │ cú đổi tên tạo ra được **"Notion (ghi được)" trên một cánh tay chỉ    │
-        │ đọc** — nhãn nói dối về ĐẶC QUYỀN, đúng con bug "lời hứa rỗng" đã gỡ  │
-        │ ở bài 11 bước 5.                                                     │
-        │                                                                      │
-        │ Nên: hai lớp. Lớp ngoài (tên) đổi được; lớp trong (huy hiệu) thì      │
-        │ không — nó đọc `arms[băm].level`, thứ nằm trong chính cái băm. Ô nhập │
-        │ ngay dưới **không** với tới được nó, và đó là toàn bộ điểm.           │
+        │ THE LEVEL BADGE — **DERIVED FROM `level`, NEVER READ OFF THE NAME**.  │
+        │                                                                       │
+        │ The user asked on 25/08 *"isn't putting the permission in the name a  │
+        │ bit shaky?"* — it is. The label belongs to the user and changes freely│
+        │ (§6i). Bake `· read only` into the string and one rename can produce  │
+        │ **"Notion (writable)" on a read-only arm** — a label lying about      │
+        │ PRIVILEGE, precisely the "empty promise" bug removed in exercise 11   │
+        │ step 5.                                                               │
+        │                                                                       │
+        │ So: two layers. The outer one (the name) is editable; the inner one   │
+        │ (the badge) is not — it reads `arms[hash].level`, which lives inside  │
+        │ that very hash. The input right below **cannot** reach it, and that is│
+        │ the whole point.                                                      │
         └──────────────────────────────────────────────────────────────────────┘
       */}
       {(node.level || node.via || node.optionLabels?.length) && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {/*
-            CÁCH CHẠY — *"nhìn vào panel là biết đang cấu hình thế nào"* (user 29/08).
+            HOW IT RUNS — *"looking at the panel tells you how it is configured"*
+            (user, 29/08).
 
-            Suy từ **cấu hình đã lưu** (`catalog.ts §activeOptions`), không từ một
-            danh sách id cất riêng: hai nguồn cho cùng một sự thật thì nguồn sai sẽ
-            là nguồn HIỂN THỊ — người dùng đọc một cấu hình không phải cấu hình
-            đang chạy, và đó là kiểu nói dối khó phát hiện nhất.
+            Derived from **the saved config** (`catalog.ts §activeOptions`), not
+            from a separately stored list of ids: with two sources for one truth,
+            the wrong one will be the DISPLAYED one — the user reads a config that
+            is not the config running, and that is the hardest kind of lie to
+            catch.
           */}
           {node.optionLabels?.map((t) => (
             <span key={t} className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">
               {t}
             </span>
           ))}
-          {/* Workspace NÀO — user 26/08. Tra từ tên chìa, không đọc chuỗi tên. */}
+          {/* WHICH workspace — user, 26/08. Resolved from the key name, never read off the label. */}
           {node.via && (
             <span className="rounded bg-line/70 px-1.5 py-0.5 text-[11px] text-muted">{node.via}</span>
           )}
@@ -765,37 +776,45 @@ function ArmName({ node }: { node: CanvasNode }) {
                 node.level === 'full' ? 'bg-danger-soft text-danger' : 'bg-line/70 text-muted'
               }`}
             >
-              {node.level === 'read' ? 'chỉ đọc' : node.level === 'add' ? 'đọc + thêm mới' : 'toàn quyền'}
+              {node.level === 'read'
+                ? t('inspector.level.read')
+                : node.level === 'add'
+                  ? t('inspector.level.add')
+                  : t('inspector.level.full')}
             </span>
           )}
           {node.toolCount ? (
-            <span className="text-[11px] tabular-nums text-muted">{node.toolCount} việc</span>
+            <span className="text-[11px] tabular-nums text-muted">
+              {plural('inspector.toolCount', node.toolCount)}
+            </span>
           ) : null}
         </div>
       )}
       {/*
-        ⚠ ĐỨNG RIÊNG, KHÔNG NẰM CHUNG HÀNG CHIP. (user chốt 29/08)
+        ⚠ ON ITS OWN, NOT IN THE CHIP ROW. (the user's call, 29/08)
 
-        Chip là **trạng thái** — thứ để đọc. Nút này là **hành động**, và là hành
-        động duy nhất trong bảng này mở một cửa sổ ra ngoài agentco. Trộn hai loại
-        vào một hàng thì mắt lướt qua nó như lướt qua một cái nhãn.
+        A chip is **state** — something to read. This button is an **action**, and
+        the only action in this panel that opens a window outside agentco. Mix the
+        two kinds into one row and the eye skims past it like a label.
       */}
       {node.canLogin && <BrowserLogin />}
-      <label className="text-[11px] uppercase tracking-wide text-muted">Tên hiển thị</label>
+      <label className="text-[11px] uppercase tracking-wide text-muted">
+        {t('inspector.displayName')}
+      </label>
       <div className="mt-1 flex gap-1.5">
         <Input value={text} onChange={(e) => setText(e.target.value)} />
         <Button
           disabled={!dirty}
           onClick={() => void actions.renameArm(node.server!, text.trim())}
         >
-          Lưu
+          {t('common.save')}
         </Button>
       </div>
     </div>
   );
 }
 
-/** Bảng chi tiết bên phải. Mở khi chọn một node; ✕ để đóng. */
+/** The inspector on the right. Opens when a node is selected; ✕ closes it. */
 export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void }) {
   const canvas = useApp((s) => s.canvas);
   const selected = useApp((s) => s.selected);
@@ -805,16 +824,17 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
   if (!canvas || !node) return null;
 
   /**
-   * Node KHO không bao giờ có bảng chi tiết.
+   * A STORE node never gets an inspector.
    *
-   * Bảng này để CHỈNH một đối tượng. Kho tri thức và tủ tài liệu không có gì để
-   * chỉnh — chúng là cửa dẫn tới một ngăn kéo, và bấm vào chúng mở thẳng ngăn
-   * kéo đó (xem `onOpenStore` trong Canvas.tsx).
+   * This panel is for EDITING an object. The knowledge store and the library have
+   * nothing to edit — they are doors onto a drawer, and clicking them opens that
+   * drawer directly (see `onOpenStore` in Canvas.tsx).
    *
-   * Chốt đặt ở ĐÂY chứ không phải ở chỗ gọi, vì nó chặn cả LỚP lỗi: bản trước
-   * tủ tài liệu chưa có nhánh render nên bấm vào nó mở ra một bảng rỗng chỉ có
-   * dấu ✕ — và mỗi node kho thêm vào sau này sẽ lặp lại đúng như thế nếu ai đó
-   * quên viết nhánh. Giờ quên cũng không sao.
+   * The guard lives HERE rather than at the call site because it closes the whole
+   * CLASS of bug: the previous version had no render branch for the library, so
+   * clicking it opened an empty panel with nothing but a ✕ — and every store node
+   * added later would repeat that exactly if someone forgot to write a branch.
+   * Now forgetting is harmless.
    */
   if (node.kind === 'knowledge' || node.kind === 'library') return null;
 
@@ -836,7 +856,12 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           {node.label}
         </span>
         <div className="flex-1" />
-        <Button size="iconSm" variant="ghost" aria-label="Đóng" onClick={() => actions.select(null)}>
+        <Button
+          size="iconSm"
+          variant="ghost"
+          aria-label={t('common.close')}
+          onClick={() => actions.select(null)}
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -844,110 +869,131 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {node.kind === 'assistant' && (
           <>
-            <Note>
-              Trợ lý không tự làm việc. Nó chia việc, và chỉ nhìn thấy giới thiệu của những người{' '}
-              <b>có dây nối</b> tới đây.
-            </Note>
             <AssistantName node={node} />
             <ModelPicker node={node} />
-            <Row k="Đang trực" v={`${onDuty.length} người`} />
-            <Row k="Đang nghỉ" v={`${off.length} người`} />
-            <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
+            <Row k={t('inspector.onDuty')} v={plural('inspector.peopleCount', onDuty.length)} />
+            <Row k={t('inspector.offDuty')} v={plural('inspector.peopleCount', off.length)} />
+            <Row
+              k={t('inspector.ownNotebook')}
+              v={plural('knowledge.noteCount', node.count ?? 0)}
+            />
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
             <Note>
-              Mỗi người đang trực chiếm một dòng giới thiệu trong ngữ cảnh của Trợ lý, ở <b>mọi</b> lượt trò
-              chuyện. Ngắt dây người không dùng đến là tiết kiệm thật, không phải dọn cho gọn.
+              {t('inspector.rosterNoteBefore')} <b>{t('inspector.rosterNoteBold')}</b>{' '}
+              {t('inspector.rosterNoteAfter')}
             </Note>
             <Button className="w-full" onClick={() => onShowPrompt('assistant')}>
               <FileCode2 className="h-4 w-4" />
-              Xem prompt phân lớp
+              {t('inspector.viewPrompt')}
             </Button>
           </>
         )}
 
         {/*
-          Nhánh `knowledge` đã BỎ (17/08). Hai đoạn giải thích của nó không mất
-          — chúng chuyển vào chính ngăn kéo Tri thức, nơi chúng vốn thuộc về:
-          đó là sự thật về cái KHO, không phải về cái node trên sơ đồ.
+          The `knowledge` branch was REMOVED (17/08). Its two explanations were not
+          lost — they moved into the Knowledge drawer itself, where they belonged
+          all along: they are facts about THE STORE, not about the node on the
+          diagram.
         */}
 
         {node.kind === 'mcp' && (
           <>
-            <Row k="Loại" v="MCP server" />
+            <Row k={t('inspector.type')} v="MCP server" />
             <Row
-              k="Đang dùng"
+              k={t('inspector.inUseBy')}
               v={
                 canvas.edges
                   .filter((e) => e.from === node.id)
                   .map((e) => canvas.nodes.find((n) => n.id === e.to)?.label ?? e.to)
-                  .join(', ') || 'chưa ai'
+                  .join(', ') || t('inspector.nobody')
               }
             />
             <ArmFolders folders={node.folders} />
+            {/*
+              The red border on the diagram gets its sentence HERE — the node
+              has room for four words, this panel is where someone comes to
+              find out what to do about it. Naming the account matters: an arm
+              can hold a credential whose label looks nothing like the arm's
+              own name, and *"sign in again"* is unanswerable without knowing
+              sign in as WHOM. → `office.ts §keyDeadOf`
+            */}
+            {node.keyDead && !node.missing && (
+              <Note>
+                <span className="text-danger">
+                  {t('inspector.armKeyDead', { who: node.keyDead })}
+                </span>
+              </Note>
+            )}
             {node.missing && (
               <Note>
-                <span className="text-danger">Không còn khai trong company.yaml.</span>
+                <span className="text-danger">{t('inspector.missingArm')}</span>
               </Note>
             )}
             {/*
-              ĐÃ BỎ: *"Nối vào một nhân viên = ghi `mcp:` vào `roles/<id>.yaml`"*.
+              REMOVED: *"wiring it to an employee = writing `mcp:` into
+              `roles/<id>.yaml`"*.
 
-              Nó mô tả **cách ta lưu**, không mô tả thứ người dùng làm — họ kéo
-              một sợi dây, và cái file yaml là chuyện của ta. Cùng luật với hai
-              khối bên dưới: một dòng chỉ đáng ở lại nếu nó đổi được việc người
-              dùng sắp làm.
+              That describes **how we store it**, not what the user does — they
+              drag a wire, and the yaml file is our business. Same rule as the two
+              blocks below: a line only earns its place if it changes what the user
+              is about to do.
             */}
 
             {/*
-              HAI MỨC, đúng như nhân viên có "Cho nghỉ" và "Cất đi" — ranh giới
-              là *dựng lại được hay không*:
+              TWO STEPS, exactly as an employee has "Send home" and "Archive" — the
+              line between them is *can it be rebuilt*:
 
-                Gỡ khỏi văn phòng  cắt mọi sợi dây ở ĐÂY. Cấu hình và chìa còn
-                                   nguyên ở cấp công ty, nên nó quay lại qua
-                                   "đã cắm ở văn phòng khác" trong `+ Kết nối`.
-                Xoá hẳn            bỏ khỏi company.yaml. ⚠ CHÌA VẪN GIỮ — rút
-                                   dây ≠ vứt chìa: người ta hay rút để xoay
-                                   token, bắt đi lấy lại là phạt một thao tác
-                                   vốn vô hại.
+                Remove from office  cuts every wire HERE. The config and the key
+                                    stay intact at company level, so it comes back
+                                    through "already plugged in elsewhere" under
+                                    `+ Connection`.
+                Delete for good     drops it from company.yaml. ⚠ THE KEY IS KEPT —
+                                    pulling a wire ≠ throwing away a key: people
+                                    unplug to rotate tokens, and making them fetch
+                                    it again punishes a harmless action.
             */}
             <ArmName node={node} />
 
             {/*
-              MỘT MỨC, KHÔNG HAI. (user chốt 23/08)
+              ONE STEP, NOT TWO. (the user's call, 23/08)
 
-              Nhân viên có "Cất đi" và "Xoá hẳn" vì họ mang thứ dựng lại KHÔNG
-              ĐƯỢC — kỹ năng, giới thiệu, sổ kinh nghiệm. Cánh tay chỉ mang cấu
-              hình, mà cấu hình sống trong SỔ CHUNG và không ai xoá nó. Nên "xoá"
-              ở đây đã có sẵn tính chất của "cất đi": cắm lại đúng thư mục ⇒ cùng
-              băm ⇒ tìm thấy nguyên vẹn, không phải nhập lại gì.
+              An employee gets "Archive" and "Delete for good" because they carry
+              things that CANNOT be rebuilt — skills, a pitch, a notebook of
+              lessons. An arm carries only config, and that config lives in the
+              SHARED LEDGER, which nobody deletes. So "delete" here already has the
+              character of "archive": plug in the same directory ⇒ the same hash ⇒
+              found intact, with nothing to re-enter.
 
-              Mượn một khái niệm từ chỗ nó xứng đáng sang chỗ nó không, là thứ
-              vừa được gỡ ra. → SPEC-arms.md §6i
+              Borrowing a concept from where it is earned into a place where it is
+              not, is exactly what was just removed. → SPEC-arms.md §6i
             */}
             {/*
               ┌──────────────────────────────────────────────────────────────────┐
-              │ HAI KHỐI `Note` ĐÃ BỎ. (user 26/08: *"prune giúp tôi block này,  │
-              │ tôi không ngại nếu prune chúng ở tất cả"*)                       │
+              │ TWO `Note` BLOCKS REMOVED. (user, 26/08: *"prune this block for  │
+              │ me, and I don't mind pruning them everywhere"*)                  │
               │                                                                  │
-              │ ① *"Cấu hình và chìa khoá vẫn được giữ…"* — nó lặp lại y hệt câu │
-              │   trong hộp xác nhận, thứ hiện ra **đúng lúc người dùng cần**.   │
-              │   Nói trước một chuyện sẽ được nói lại là bắt họ đọc hai lần.    │
+              │ ① *"The config and the key are kept…"* — it repeats the          │
+              │   confirmation dialog word for word, and that appears **exactly  │
+              │   when the user needs it**. Saying something in advance that will│
+              │   be said again makes them read it twice.                        │
               │                                                                  │
-              │ ② *"Nối vào Trợ lý = việc vặt… concierge (M1)… phá prompt cache"*│
-              │   — đây là ghi chú cho **người viết code**, không phải cho người │
-              │   dùng: `concierge`, `M1`, `prompt cache` đều là từ vựng của ta. │
+              │ ② *"Wiring it to the assistant = odd jobs… concierge (M1)…       │
+              │   breaks the prompt cache"* — that is a note for **whoever writes│
+              │   the code**, not for the user: `concierge`, `M1` and `prompt    │
+              │   cache` are all our vocabulary.                                 │
               │                                                                  │
-              │ ⚠ Luật rút ra, áp cho mọi `Note` về sau: một dòng chỉ đáng ở lại │
-              │ nếu nó **đổi được việc người dùng sắp làm**. Chữ nói đúng nhưng  │
-              │ không đổi hành vi là thứ dạy người ta lướt qua mọi chữ khác —    │
-              │ rồi họ lướt qua đúng cái đáng đọc. Cùng lý lẽ đã dùng để KHÔNG   │
-              │ dán cảnh báo lên nút đổi tên (§AssistantName).                   │
+              │ ⚠ The rule this yields, applying to every `Note` from now on: a  │
+              │ line only earns its place if it **changes what the user is about │
+              │ to do**. Text that is true but changes nothing teaches people to │
+              │ skim past all the other text — and then they skim past the one   │
+              │ worth reading. The same argument used for NOT pasting a warning  │
+              │ onto the rename button (§AssistantName).                         │
               └──────────────────────────────────────────────────────────────────┘
             */}
             <ArmLog server={node.server!} />
 
             <Button variant="danger" className="mt-4 w-full" onClick={() => setConfirmRemove(node)}>
-              Xoá khỏi văn phòng này
+              {t('inspector.removeFromOffice')}
             </Button>
           </>
         )}
@@ -956,40 +1002,47 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           <>
             <AgentProfile node={node} />
             <ModelPicker node={node} />
-            <Row k="Mã vai trò" v={node.role} />
-            <Row k="Sổ tay riêng" v={`${node.count ?? 0} ghi chú`} />
-            <Row k="Trạng thái" v={node.connected ? 'đang trực' : 'đang nghỉ'} />
+            <Row k={t('inspector.roleId')} v={node.role} />
+            <Row
+              k={t('inspector.ownNotebook')}
+              v={plural('knowledge.noteCount', node.count ?? 0)}
+            />
+            <Row
+              k={t('inspector.status')}
+              v={node.connected ? t('inspector.statusOnDuty') : t('inspector.statusOffDuty')}
+            />
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
             {node.missing && (
               <Note>
-                <span className="text-danger">Không tìm thấy roles/{node.role}.yaml</span>
+                <span className="text-danger">
+                  {t('inspector.missingRole', { role: node.role ?? '' })}
+                </span>
               </Note>
             )}
 
             <div className="mt-4 flex flex-col gap-2">
               <Button onClick={() => onShowPrompt(node.role!)}>
                 <FileCode2 className="h-4 w-4" />
-                Xem prompt phân lớp
+                {t('inspector.viewPrompt')}
               </Button>
               <Button onClick={() => toggleDuty(node)}>
-                {node.connected ? 'Cho nghỉ' : 'Cho trực lại'}
+                {node.connected ? t('inspector.rest') : t('inspector.backOnDuty')}
               </Button>
-              {/* "Cho nghỉ" = còn trên sơ đồ, chỉ mất dây → tạm thời.
-                  "Cất đi"  = biến khỏi sơ đồ, file còn nguyên → lâu dài.
-                  Hai mức khác nhau thật, nên là hai nút, không phải một nút hỏi lại. */}
+              {/* "Send home" = still on the diagram, only the wire is gone →
+                  temporary. "Archive" = off the diagram, the file intact →
+                  long-term. Two genuinely different steps, so two buttons rather
+                  than one button that asks. */}
               <Button onClick={() => void actions.archiveAgent(node.role!, true)}>
                 <Archive className="h-4 w-4" />
-                Cất vào lưu trữ
+                {t('inspector.archive')}
               </Button>
               <Button variant="danger" onClick={() => setConfirmRemove(node)}>
                 <Trash2 className="h-4 w-4" />
-                Xoá hẳn
+                {t('inspector.deleteForGood')}
               </Button>
             </div>
 
-            <Note>
-              Mọi nhân viên đã có sẵn: đọc/ghi file trong văn phòng, và tìm trên web. Không cần bật gì.
-            </Note>
+            <Note>{t('inspector.builtinNote')}</Note>
             <BashSwitch node={node} />
           </>
         )}
@@ -1002,40 +1055,43 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
           <DialogHeader>
             <DialogTitle>
               {confirmRemove?.kind === 'mcp'
-                ? `Xoá “${confirmRemove.label}” khỏi văn phòng này?`
-                : `Xoá hẳn “${confirmRemove?.label}”?`}
+                ? t('inspector.confirmRemoveArmTitle', { label: confirmRemove.label })
+                : t('inspector.confirmDeleteAgentTitle', { label: confirmRemove?.label ?? '' })}
             </DialogTitle>
             <DialogDescription>
               {confirmRemove?.kind === 'mcp' ? (
                 <>
-                  Kết nối này biến khỏi sơ đồ, và những nhân viên đang nối tới nó thôi dùng được.{' '}
-                  <b>Chỉ văn phòng này</b> — nơi khác không bị chạm.
+                  {t('inspector.armRemoveBody1')} <b>{t('inspector.armRemoveBold')}</b>{' '}
+                  {t('inspector.armRemoveBody2')}
                   <br />
                   <br />
-                  {/* Không doạ, vì không có gì đáng doạ: sổ chung giữ cấu hình và
-                      chìa, nên đây là thao tác HOÀN TÁC ĐƯỢC. Nói đúng mức độ
-                      của nó là cách giữ cho những cảnh báo THẬT còn sức nặng. */}
-                  Cấu hình và chìa khoá <b>vẫn được giữ</b>. Cắm lại đúng thứ này thì không phải nhập
-                  lại gì — chỉ mất công nối dây.
+                  {/* No scare wording, because there is nothing to be scared of:
+                      the shared ledger keeps the config and the key, so this is
+                      REVERSIBLE. Stating its true weight is how the warnings that
+                      ARE real keep theirs. */}
+                  {t('inspector.armRemoveKeep1')} <b>{t('inspector.armRemoveKeepBold')}</b>
+                  {t('inspector.armRemoveKeep2')}
                 </>
               ) : (
                 <>
-                  Mất file <code>roles/{confirmRemove?.role}.yaml</code> và toàn bộ kỹ năng bạn đã viết
-                  cho người này. <b>Không lấy lại được.</b>
+                  {t('inspector.agentDeleteBefore')} <code>roles/{confirmRemove?.role}.yaml</code>{' '}
+                  {t('inspector.agentDeleteMid')} <b>{t('inspector.agentDeleteBold')}</b>
                   <br />
                   <br />
-                  Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirmRemove?.role}/</code> vẫn được giữ
-                  — đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.
+                  {t('inspector.agentNotesBefore')}{' '}
+                  <code>knowledge/agents/{confirmRemove?.role}/</code>{' '}
+                  {t('inspector.agentNotesAfter')}
                   <br />
                   <br />
-                  Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi chọn <b>Cất vào lưu trữ</b> — khôi phục
-                  được bất cứ lúc nào.
+                  {t('inspector.archiveHintBefore')} <b>{t('common.cancel')}</b>{' '}
+                  {t('inspector.archiveHintMid')} <b>{t('inspector.archive')}</b>{' '}
+                  {t('inspector.archiveHintAfter')}
                 </>
               )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setConfirmRemove(null)}>Thôi</Button>
+            <Button onClick={() => setConfirmRemove(null)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -1047,7 +1103,9 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                 setConfirmRemove(null);
               }}
             >
-              {confirmRemove?.kind === 'mcp' ? 'Xoá khỏi văn phòng' : 'Xoá hẳn'}
+              {confirmRemove?.kind === 'mcp'
+                ? t('inspector.removeFromOfficeShort')
+                : t('inspector.deleteForGood')}
             </Button>
           </DialogFooter>
         </DialogContent>

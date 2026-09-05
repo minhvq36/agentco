@@ -1,27 +1,29 @@
 /**
- * PHÉP TOÁN BỐ CỤC — module THUẦN, dùng chung server và giao diện.
+ * LAYOUT GEOMETRY — a PURE module, shared by the server and the interface.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO FILE NÀY TỒN TẠI                                                  │
+ * │ WHY THIS FILE EXISTS                                                    │
  * │                                                                          │
- * │ Trước 19/08 phép toán này có HAI bản: `agentSlot` + toạ độ mặc định viết │
- * │ tay trong `layout.ts`, và `arrange()` trong `web/src/canvas/geometry.ts`.│
- * │ Cả hai file đều có một dòng chú thích dặn "⚠ phải khớp bên kia" — và     │
- * │ chúng đã lệch nhau:                                                      │
+ * │ Before 19/08 this math had TWO copies: `agentSlot` + hand-written default    │
+ * │ coordinates in `layout.ts`, and `arrange()` in `web/src/canvas/geometry.ts`.   │
+ * │ Both files carried a comment saying "⚠ must match the other side" — and they   │
+ * │ had already drifted apart:                                                │
  * │                                                                          │
- * │   văn phòng MỚI (chưa có layout.json)   assistant 520 · kho 300/524      │
- * │   sau khi bấm "Sắp xếp lại sơ đồ"        assistant 122 · kho  26/250     │
+ * │   a NEW office (no layout.json yet)      assistant 520 · shelf 300/524          │
+ * │   after clicking "Re-arrange diagram"     assistant 122 · shelf  26/250          │
  * │                                                                          │
- * │ Tâm dải kho là 512 còn tâm Trợ lý là 636 → lệch 124px ngay lúc văn phòng │
- * │ chưa có ai; thêm một nhân viên thì lệch ~400px. Người dùng thấy sơ đồ    │
- * │ méo, bấm "Sắp xếp lại" thì nó thẳng — tức là hệ thống tự mâu thuẫn.      │
+ * │ The shelf row's center is 512 while the Assistant's is 636 → a 124px          │
+ * │ mismatch the instant the office has nobody in it yet; adding one worker         │
+ * │ pushes that to ~400px. The user sees a lopsided diagram, clicks "Re-arrange",   │
+ * │ and it straightens out — meaning the system contradicts itself.                │
  * │                                                                          │
- * │ Một dòng chú thích không phải là một cơ chế. Hai bên IMPORT CHUNG một    │
- * │ hàm thì lỗi này không thể xảy ra lần nữa, và không cần ai nhớ gì cả.     │
+ * │ A comment is not a mechanism. Both sides IMPORTING THE SAME function            │
+ * │ makes this bug impossible to happen again, and nobody has to remember           │
+ * │ anything.                                                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * KHÔNG import gì ngoài kiểu — kể cả `node:*`. Đây là điều kiện để `web/`
- * (chạy trong trình duyệt, build riêng bằng Vite) nạp được file này.
+ * Imports NOTHING but types — not even `node:*`. This is the condition that
+ * lets `web/` (runs in the browser, built separately with Vite) load this file at all.
  */
 
 export type NodeKind = 'assistant' | 'agent' | 'knowledge' | 'library' | 'mcp';
@@ -31,13 +33,14 @@ export interface Point {
   y: number;
 }
 
-/** Kích thước node. Server và client PHẢI thống nhất để tự sắp xếp khớp nhau. */
+/** Node dimensions. Server and client MUST agree so their layouts match. */
 /**
- * ⚠ Thu nhỏ 23/08 (user chốt). Sơ đồ cũ hết chỗ rất nhanh: bốn nhân viên là đã
- * chiếm 944px ngang, và mỗi hàng thêm vào đẩy hai kho xuống 148px nữa.
+ * ⚠ Shrunk on 23/08 (the user's call). The old diagram ran out of room fast:
+ * four workers alone took up 944px horizontally, and every extra row pushed
+ * the two shelves down another 148px.
  *
- * Node nhỏ hơn KHÔNG làm mất thông tin nào — chữ trong node vốn đã bị cắt
- * (`cut(node.label, 17)`), thứ chiếm chỗ là khoảng đệm.
+ * A smaller node loses NO information at all — the text inside a node was
+ * already truncated (`cut(node.label, 17)`); what was taking up space was padding.
  */
 export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
   assistant: { w: 200, h: 72 },
@@ -47,21 +50,21 @@ export const NODE_SIZE: Record<NodeKind, { w: number; h: number }> = {
   mcp: { w: 152, h: 52 },
 };
 
-/** Số nhân viên mỗi hàng trước khi xuống dòng. */
+/** Number of workers per row before wrapping. */
 export const PER_ROW = 4;
 
 const ORIGIN_X = 140;
 const ORIGIN_Y = 210;
 const COL_GAP = 34;
 const ROW_GAP = 44;
-/** Khe giữa hai kho ở hàng dưới cùng. */
+/** Gap between the two shelves on the bottom row. */
 export const SHELF_GAP = 24;
-/** Khoảng cách tối thiểu giữa hai node để mắt đọc ra là "hai cái". */
+/** Minimum distance between two nodes for the eye to read them as "two separate things". */
 const CLEARANCE = 24;
 const SHELF_DROP = 30;
 const MAX_SLOTS = 200;
 
-/** Bước lưới. Mọi ô nhân viên — kể cả ô mọc sang trái — đều nằm trên lưới này. */
+/** The grid step. Every worker slot — including ones that grow to the left — lies on this grid. */
 const COL_STEP = NODE_SIZE.agent.w + COL_GAP;
 const ROW_STEP = NODE_SIZE.agent.h + ROW_GAP;
 
@@ -69,13 +72,13 @@ export interface ArrangeNode {
   id: string;
   kind: NodeKind;
   /**
-   * Khoá SẮP XẾP cho cánh tay ở bãi đỗ — chuỗi, so bằng `localeCompare`.
+   * The SORT key for an arm sitting in the parking area — a string, compared with `localeCompare`.
    *
-   * ⚠ Do **chỗ gọi** tính, không phải file này. Hình học không được biết
-   * "Notion" hay "Linear" là gì; phân loại hãng là **dữ liệu của danh mục**.
-   * Quy ước hiện dùng: `0-files` · `1-<mục danh mục>` · `2-custom`
-   * ⇒ filesystem trước, rồi provider (các provider cùng hãng đứng cạnh nhau vì
-   * cùng tiền tố), rồi hàng tự dán. → `layout.ts §armGroup`
+   * ⚠ Computed by the **caller**, not this file. Geometry isn't allowed to
+   * know what "Notion" or "Linear" are; sorting vendors is **catalog data**.
+   * Current convention: `0-files` · `1-<catalog entry>` · `2-custom` ⇒
+   * filesystem first, then providers (same-vendor providers sit next to each
+   * other since they share a prefix), then custom-pasted ones. → `layout.ts §armGroup`
    */
   armGroup?: string;
 }
@@ -87,41 +90,44 @@ export interface ArrangeEdge {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BÃI ĐỖ CHO CÁNH TAY KHÔNG NỐI DÂY — bên trái, ngoài sơ đồ. (user 31/08)  │
+ * │ PARKING AREA FOR UNWIRED ARMS — to the left, outside the main diagram.       │
+ * │ (user, 31/08)                                                            │
  * │                                                                          │
- * │ Các hằng số dưới đây **lấy từ chính bố cục user đã tự kéo tay** trong     │
- * │ `offices/canh-tay/layout.json`, không phải bịa ra:                        │
+ * │ The constants below are **taken from the layout the user actually dragged        │
+ * │ by hand** in `offices/canh-tay/layout.json`, not made up:                        │
  * │                                                                          │
- * │   cột 1  x ≈ −133…−139      cột 2  x ≈ −309…−312   ⇒ bước ≈ 177          │
- * │   y      0 · 72 · 143 · 217 · 292 · 376 · 459      ⇒ bước ≈ 72, ĐÚNG 7   │
- * │   y bắt đầu = 0, **cao hơn Trợ lý** (y=40) — user nêu đích danh mốc này  │
+ * │   col 1  x ≈ −133…−139      col 2  x ≈ −309…−312   ⇒ step ≈ 177                 │
+ * │   y      0 · 72 · 143 · 217 · 292 · 376 · 459      ⇒ step ≈ 72, EXACTLY 7        │
+ * │   starting y = 0, **higher than the Assistant** (y=40) — the user named this        │
+ * │   reference point explicitly                                              │
  * │                                                                          │
- * │ Lấy số từ thứ người dùng đã tự làm thì "sắp xếp lại" không giật cục: nó   │
- * │ dọn về gần đúng chỗ họ vốn để.                                           │
+ * │ Taking the numbers from something the user already built means "re-arrange"      │
+ * │ doesn't jerk things around: it settles back to roughly where they already had it.│
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const PARK_PER_COL = 7;
-/** Khe nhìn thấy giữa hai node ở bãi đỗ. Mọi bước dưới đây suy ra từ nó. */
+/** Visible gap between two nodes in the parking area. Every step below is derived from it. */
 const PARK_GAP = 20;
-const PARK_ROW_STEP = NODE_SIZE.mcp.h + PARK_GAP; // 72 — đúng bước user đã tự kéo
+const PARK_ROW_STEP = NODE_SIZE.mcp.h + PARK_GAP; // 72 — the exact step the user dragged by hand
 const PARK_COL_STEP = NODE_SIZE.mcp.w + PARK_GAP; // 172
 /**
- * 🔴 KHE NGANG giữa bãi đỗ và sơ đồ chính. **Đây là số cần sửa nếu còn xa/gần.**
+ * 🔴 The HORIZONTAL GAP between the parking area and the main diagram. **This is the number to adjust if it's still too far/close.**
  *
- * User 31/08: *"gap x hiện tại đang hơi xa, cho nó gần lại với đáy dưới của tam
- * giác, chắc gap x = gap y nhỉ, cỡ đó"*.
+ * The user, 31/08: *"the x gap right now is a bit too far, bring it closer to
+ * the bottom of the triangle, I guess gap x = gap y, something like that"*.
  *
- * Trước: cột đầu ở `x = -133` ⇒ mép phải = 19, mà mép trái sơ đồ là `ORIGIN_X`
- * = 140 ⇒ khe **121px**. Giờ đặt bằng đúng MỘT nhịp dọc của bãi đỗ (72) —
- * "gap x = gap y" theo nghĩa cùng một bước lưới. Khe 20 (bằng khe giữa hai node)
- * thì bãi đỗ dính vào sơ đồ và mắt đọc ra là **cùng một hàng**, mất luôn ý
- * "hàng chưa dùng để riêng một chỗ".
+ * Before: the first column sat at `x = -133` ⇒ right edge = 19, while the
+ * diagram's left edge is `ORIGIN_X` = 140 ⇒ a **121px** gap. Now set to
+ * exactly ONE of the parking area's own vertical steps (72) — "gap x = gap
+ * y" meaning the same grid step. A gap of 20 (equal to the gap between two
+ * nodes) would make the parking area stick to the diagram and read as **the
+ * same row** to the eye, losing the whole point of "a row set apart for the unused ones".
  */
 const PARK_CLEAR = PARK_ROW_STEP;
 const PARK_X = ORIGIN_X - PARK_CLEAR - NODE_SIZE.mcp.w;
 const PARK_Y = 0;
 
-/** Ô thứ `i` của bãi đỗ: đầy một cột (7) rồi mở cột mới **sang trái**. */
+/** Slot `i` of the parking area: fills one column (7) then opens a new column **to the left**. */
 export function parkSlot(i: number): Point {
   return {
     x: PARK_X - Math.floor(i / PARK_PER_COL) * PARK_COL_STEP,
@@ -130,27 +136,27 @@ export function parkSlot(i: number): Point {
 }
 
 /**
- * Ô cho một cánh tay MỚI, bám theo chủ của nó.
+ * A slot for a NEW arm, following its owner.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 BUG user bắt 31/08: *"cứ thêm 1 MCP mới, địa điểm nó chọn rất tệ…      │
- * │ nó chọn faraway"*.                                                       │
+ * │ 🔴 BUG the user caught, 31/08: *"every time I add a new MCP, the spot it       │
+ * │ picks is really bad… it lands far away"*.                                 │
  * │                                                                          │
- * │ Thủ phạm: `firstFreeSlot` đi trên **lưới NHÂN VIÊN** cho mọi loại node.   │
- * │ Bước lưới đó là 202×120 — quá thô cho một node 152×52 — nên nó nhảy qua   │
- * │ hết mọi khe trống thật rồi rơi ra tận rìa sơ đồ. Với bố cục user đang có  │
- * │ (nhân viên, hai kho, và một bãi đỗ tự kéo bên trái) thì ô trống đầu tiên  │
- * │ trên lưới ấy nằm rất xa.                                                  │
+ * │ The culprit: `firstFreeSlot` walked the **WORKER grid** for every node type.     │
+ * │ That grid's step is 202×120 — far too coarse for a 152×52 node — so it skipped     │
+ * │ over every real open gap and landed all the way at the edge of the diagram. With    │
+ * │ the layout the user already had (workers, two shelves, and a parking area dragged    │
+ * │ to the left), the first open slot on that grid was very far away.                    │
  * │                                                                          │
- * │ ⇒ Cánh tay phải có LƯỚI RIÊNG: bước bằng chính cỡ nó, quét NGANG ngay     │
- * │ dưới chủ của nó, toả ra hai bên rồi mới xuống hàng.                       │
+ * │ ⇒ Arms need their OWN grid: a step sized to match them, scanning HORIZONTALLY       │
+ * │ right below their owner, fanning out to both sides before wrapping to a new row.     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function armSlot(i: number, centerX: number, topY: number): Point {
   const step = NODE_SIZE.mcp.w + COL_GAP;
   const perRow = 7;
   const j = i % perRow;
-  // 0, +1, −1, +2, −2… — toả ra từ trục, cùng khuôn `centeredSlot`.
+  // 0, +1, −1, +2, −2… — fans out from the axis, same shape as `centeredSlot`.
   const off = j === 0 ? 0 : j % 2 === 1 ? Math.ceil(j / 2) : -(j / 2);
   return {
     x: Math.round(centerX - NODE_SIZE.mcp.w / 2 + off * step),
@@ -158,7 +164,7 @@ export function armSlot(i: number, centerX: number, topY: number): Point {
   };
 }
 
-/** Ô lưới thứ `i` của hàng nhân viên, đếm từ TRÁI sang. */
+/** Grid slot `i` of the worker row, counted from LEFT to right. */
 export function agentSlot(i: number): Point {
   return {
     x: ORIGIN_X + (i % PER_ROW) * COL_STEP,
@@ -167,57 +173,63 @@ export function agentSlot(i: number): Point {
 }
 
 /**
- * Ô thứ `i` khi hàng nhân viên MỌC QUANH MỘT TRỤC, không nối đuôi sang phải.
+ * Slot `i` when the worker row GROWS AROUND AN AXIS, rather than chaining rightward.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG DÙNG `agentSlot` CHO NGƯỜI MỚI (20/08).                     │
+ * │ WHY `agentSlot` ISN'T USED FOR A NEW PERSON (20/08).                       │
  * │                                                                          │
- * │ `agentSlot` đếm từ trái sang, nên thêm người thứ ba là nó rơi vào ô thứ   │
- * │ ba — bên phải người thứ hai. Trợ lý thì ĐỨNG YÊN (nó chỉ được căn lại     │
- * │ lúc bấm "Sắp xếp lại sơ đồ"), nên sơ đồ nghiêng hẳn sang phải và người    │
- * │ dùng phải bấm Sắp xếp lại mới thấy nó cân. Một thao tác sửa lỗi của hệ    │
- * │ thống không được nằm ở tay người dùng.                                    │
+ * │ `agentSlot` counts left to right, so adding a third person drops them into      │
+ * │ the third slot — to the right of the second person. The Assistant STAYS PUT      │
+ * │ (it only gets re-centered when "Re-arrange diagram" is clicked), so the diagram    │
+ * │ visibly tilts to the right and the user has to click Re-arrange just to see it      │
+ * │ balanced. A system's own error-correction step should never sit in the user's        │
+ * │ hands.                                                                    │
  * │                                                                          │
- * │ Thứ tự ở đây là thứ tự người dùng tự mô tả khi báo lỗi:                    │
+ * │ The order here is the exact order the user themselves described when reporting     │
+ * │ the bug:                                                                  │
  * │                                                                          │
- * │   người 1 → thẳng dưới Trợ lý     (lệch 0)                               │
- * │   người 2 → bên phải người 1      (lệch +1, số chẵn thì không cân được)   │
- * │   người 3 → bên TRÁI người 1      (lệch −1, hàng cân trở lại)             │
- * │   người 4 → +2 … rồi xuống hàng                                          │
+ * │   person 1 → directly under the Assistant  (offset 0)                        │
+ * │   person 2 → to the right of person 1      (offset +1, an even count can't balance) │
+ * │   person 3 → to the LEFT of person 1       (offset −1, the row balances again)     │
+ * │   person 4 → +2 … then wraps to the next row                                 │
  * │                                                                          │
- * │ Vẫn ĐÚNG LƯỚI của `agentSlot`, chỉ khác THỨ TỰ duyệt: `kc` là chỉ số cột  │
- * │ chứa trục, làm tròn về lưới. Không bám lưới thì ô mới lệch nửa cột và     │
- * │ chồng một nửa lên người cũ — tệ hơn hẳn lệch phải.                        │
+ * │ Still the EXACT SAME GRID as `agentSlot`, only the TRAVERSAL ORDER differs:       │
+ * │ `kc` is the column index holding the axis, rounded to the grid. Without staying     │
+ * │ on the grid, a new slot would land half a column off and half-overlap the previous   │
+ * │ person — far worse than just leaning right.                                        │
  * │                                                                          │
- * │ Mỗi hàng vẫn chỉ `PER_ROW` cột (lệch −1…+2), nên sơ đồ không nở ngang     │
- * │ vô hạn: người thứ năm xuống hàng dưới, thẳng trục, y như `arrangeAll`.    │
+ * │ Each row still holds only `PER_ROW` columns (offsets −1…+2), so the diagram         │
+ * │ doesn't grow sideways forever: the fifth person drops to the row below, on axis,     │
+ * │ exactly like `arrangeAll`.                                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function centeredSlot(i: number, centerX: number): Point {
   const kc = Math.round((centerX - (ORIGIN_X + NODE_SIZE.agent.w / 2)) / COL_STEP);
   const j = i % PER_ROW;
-  // 0, +1, −1, +2 — `PER_ROW` cột đầu của dãy toả ra từ giữa.
+  // 0, +1, −1, +2 — the first `PER_ROW` columns of a series fanning out from the center.
   const off = j === 0 ? 0 : j % 2 === 1 ? Math.ceil(j / 2) : -(j / 2);
   return { x: ORIGIN_X + (kc + off) * COL_STEP, y: ORIGIN_Y + Math.floor(i / PER_ROW) * ROW_STEP };
 }
 
 /**
- * Bố cục sạch cho TOÀN BỘ sơ đồ. Đây là thứ nút "Sắp xếp lại sơ đồ" chạy, và
- * cũng là thứ một văn phòng chưa có `layout.json` nhận được.
+ * A clean layout for the ENTIRE diagram. This is what the "Re-arrange
+ * diagram" button runs, and also what an office with no `layout.json` yet receives.
  *
- * Mọi thứ căn quanh MỘT tâm: tâm của hàng nhân viên. Trợ lý ở trên, hai kho ở
- * dưới, cả ba cùng một trục dọc — nếu không thì sơ đồ trông như bị xô lệch dù
- * không có gì sai.
+ * Everything is centered around ONE axis: the center of the worker row. The
+ * Assistant sits above, the two shelves below, all three on the same
+ * vertical axis — otherwise the diagram looks lopsided even when nothing is
+ * actually wrong.
  *
- * Hai kho đứng cạnh nhau, kho tri thức TRÁI và tủ tài liệu PHẢI: đây là hai
- * khái niệm dễ lẫn nhất trong sản phẩm, nên phải nhìn thấy CÙNG LÚC thì sự
- * khác biệt "hệ thống tự học" / "bạn đưa vào" mới đọc được bằng mắt.
+ * The two shelves sit side by side, knowledge LEFT and document cabinet
+ * RIGHT: these are the two easiest concepts to confuse in the product, so
+ * they must be visible AT THE SAME TIME for the "the system learns it" /
+ * "you feed it in" distinction to read visually.
  */
 export function arrangeAll(
   nodes: readonly ArrangeNode[],
   /**
-   * Cạnh `mcp → agent`. Không truyền ⇒ hành vi CŨ (mọi cánh tay xếp một hàng
-   * căn giữa) — mọi chỗ gọi cũ và mọi test cũ giữ nguyên kết quả.
+   * `mcp → agent` edges. Omitted ⇒ the OLD behavior (every arm laid out in
+   * one centered row) — every existing call site and every existing test keeps producing the same result.
    */
   edges: readonly ArrangeEdge[] = [],
 ): Map<string, Point> {
@@ -230,24 +242,27 @@ export function arrangeAll(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ HÀNG CÁNH TAY QUYẾT ĐỊNH CHIỀU NGANG, KHÔNG PHẢI NGƯỢC LẠI. (user 31/08) │
+   * │ THE ARM ROW DECIDES THE HORIZONTAL LAYOUT, NOT THE OTHER WAY AROUND.        │
+   * │ (user, 31/08)                                                            │
    * │                                                                          │
-   * │   *"Các worker phải cân đối với các mcp của mình"* ·                     │
-   * │   *"thứ tự sắp xếp phải theo worker (để tránh vướng dây chằng chéo)"*    │
+   * │   *"workers have to balance with their own mcps"* ·                        │
+   * │   *"the order has to follow the worker (to avoid wires crossing each          │
+   * │    other)"*                                                               │
    * │                                                                          │
-   * │ Bản cũ đặt nhân viên lên lưới trước, rồi rải TẤT CẢ cánh tay thành một   │
-   * │ hàng căn giữa toàn sơ đồ. Hệ quả: cánh tay của người ngoài cùng bên trái │
-   * │ có thể rơi sang phải, và mọi sợi dây cắt chéo qua nhau.                  │
+   * │ The old version placed workers on the grid first, then scattered ALL arms       │
+   * │ into a single row centered on the whole diagram. Consequence: the leftmost       │
+   * │ person's own arm could land on the right side, and every wire crossed every       │
+   * │ other one.                                                                │
    * │                                                                          │
-   * │ Đảo lại: mỗi nhân viên có một KHỐI cánh tay của riêng mình, các khối xếp │
-   * │ liền nhau theo đúng thứ tự nhân viên, rồi **nhân viên được căn lên giữa  │
-   * │ khối của mình**. Dây thành những chùm song song, không sợi nào cắt sợi   │
-   * │ nào — vì thứ tự ngang của cánh tay CHÍNH LÀ thứ tự ngang của chủ nó.     │
+   * │ Reversed: each worker gets their own BLOCK of arms, blocks are laid out         │
+   * │ side by side in worker order, and then **the worker gets centered over their     │
+   * │ own block**. Wires become parallel bundles, none crossing another — because      │
+   * │ an arm's horizontal order IS its owner's horizontal order.                       │
    * │                                                                          │
-   * │ ⚠ Vẫn giữ đúng 4 tầng (user chốt: *"mô hình 4 hàng vẫn đúng"*). Quá      │
-   * │ `PER_ROW` nhân viên thì mỗi HÀNG nhân viên có hàng cánh tay riêng ngay   │
-   * │ dưới nó — đó là cách duy nhất giữ "cánh tay nằm dưới chủ nó" mà không    │
-   * │ để hai hàng đè lên nhau.                                                 │
+   * │ ⚠ Still exactly 4 tiers (the user's call: *"the 4-row model is still            │
+   * │ correct"*). Past `PER_ROW` workers, each worker ROW gets its own arm row right     │
+   * │ below it — the only way to keep "an arm sits below its owner" without two          │
+   * │ rows overlapping.                                                         │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const rowsOf: ArrangeNode[][] = [];
@@ -255,13 +270,13 @@ export function arrangeAll(
   if (!rowsOf.length) rowsOf.push([]);
 
   const armStep = NODE_SIZE.mcp.w + COL_GAP;
-  /** Bề ngang khối của một nhân viên: rộng bằng cái rộng hơn giữa người và đám cánh tay. */
+  /** A worker's block width: whichever is wider between the person and their pile of arms. */
   const blockW = (a: ArrangeNode): number => {
     const n = blocks ? (owned.get(a.id)?.length ?? 0) : 0;
     return Math.max(NODE_SIZE.agent.w, n ? n * armStep - COL_GAP : 0);
   };
 
-  /** Bề ngang của hàng rộng nhất — cái này định nghĩa trục giữa của cả sơ đồ. */
+  /** The width of the widest row — this defines the diagram's own center axis. */
   let widest = 0;
   for (const row of rowsOf) {
     const w = row.reduce((s, a) => s + blockW(a), 0) + Math.max(0, row.length - 1) * COL_GAP;
@@ -270,7 +285,7 @@ export function arrangeAll(
   if (!widest) widest = NODE_SIZE.agent.w;
   const mid = ORIGIN_X + widest / 2;
 
-  // Đặt từng hàng: khối liền khối, cả hàng căn vào trục giữa.
+  // Places each row: block after block, the whole row centered on the axis.
   let y = ORIGIN_Y;
   for (const row of rowsOf) {
     const rowW = row.reduce((s, a) => s + blockW(a), 0) + Math.max(0, row.length - 1) * COL_GAP;
@@ -291,16 +306,16 @@ export function arrangeAll(
   }
 
   /**
-   * CÁNH TAY KHÔNG NỐI DÂY → BÃI ĐỖ BÊN TRÁI. (user chốt 31/08)
+   * UNWIRED ARMS → PARKING AREA ON THE LEFT. (the user's call, 31/08)
    *
-   * *"Các mcp không dùng thì xếp thành các hàng dọc bên tay trái xa nhất, mỗi
-   * cột 7 mcp tối đa… sắp xếp theo type (filesystem, provider, custom), trong
-   * provider thì cũng sắp xếp theo provider."*
+   * *"unused mcps get laid out in vertical columns as far left as possible,
+   * max 7 per column… sorted by type (filesystem, provider, custom), and
+   * within provider also sorted by provider."*
    *
-   * ⚠ Thứ tự lấy từ `armGroup` — một chuỗi do **chỗ gọi** tính, không phải ở đây.
-   * File này không được biết "Notion" hay "Linear" là gì: nó là hình học thuần,
-   * còn phân loại hãng là **dữ liệu của danh mục**. Trộn vào là đúng cái
-   * `arms/index.ts` đã dựng hàng rào để chặn.
+   * ⚠ The order comes from `armGroup` — a string computed by the **caller**,
+   * not here. This file isn't allowed to know what "Notion" or "Linear" are:
+   * it is pure geometry, while sorting by vendor is **catalog data**. Mixing
+   * that in is exactly what `arms/index.ts` built a fence to block.
    */
   parked
     .slice()
@@ -310,49 +325,52 @@ export function arrangeAll(
   const rows = rowsOf.length;
 
   /**
-   * BỐN TẦNG, và thứ tự này là một CÂU đọc từ trên xuống:
+   * FOUR TIERS, and this order reads as a SENTENCE from top to bottom:
    *
-   *   Trợ lý      chia việc
-   *   nhân viên   làm việc
-   *   cánh tay    ← ngay dưới người dùng nó, dây ngắn nhất có thể
-   *   hai kho     đáy, vì chúng là NỀN của cả văn phòng
+   *   Assistant   delegates work
+   *   workers     do the work
+   *   arms        ← right below whoever uses it, wires as short as possible
+   *   two shelves the floor, because they're the FOUNDATION of the whole office
    *
-   * ⚠ Bản 23/08 sáng đặt cánh tay DƯỚI hai kho. User bác: *"2 kho ở tầng dưới
-   * cùng"*. Và ngoài chuyện thứ bậc, nó còn sai về hình: dây từ cánh tay lên
-   * nhân viên phải vòng qua hai kho, nên nó vẽ ra một cái vòng kỳ cục.
+   * ⚠ The morning-of-23/08 version put arms BELOW the two shelves. The user
+   * rejected it: *"the 2 shelves belong at the very bottom tier"*. And beyond
+   * the hierarchy, it was also geometrically wrong: the wire from an arm up
+   * to its worker had to loop around the two shelves, drawing an odd-looking arc.
    */
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 CHỪA SẴN HÀNG CÁNH TAY, KỂ CẢ KHI CHƯA CÓ CÁI NÀO. (user bắt 31/08)   │
+   * │ 🔴 THE ARM ROW RESERVES ITS SPACE EVEN WHEN IT'S EMPTY. (the user caught       │
+   * │ this, 31/08)                                                              │
    * │                                                                          │
-   * │   *"Khi tạo văn phòng mới: khoảng cách height giữa trợ lý và kho tri     │
-   * │    thức | tủ tài liệu không đủ sẵn cho nhân viên và mcp ⇒ khi tạo MCP    │
-   * │    thì nó không có chỗ, nó phải trèo ra chỗ khác. Sắp xếp lại mới được."*│
+   * │   *"When creating a new office: the height gap between the assistant and         │
+   * │    the knowledge shelf | document cabinet isn't wide enough for a worker         │
+   * │    and an mcp ⇒ when an MCP gets created it has no room, it has to climb out       │
+   * │    somewhere else. Only fixed by Re-arranging."*                                 │
    * │                                                                          │
-   * │ Đo được: văn phòng mới ⇒ 0 cánh tay ⇒ `armRow = 0` ⇒ hai kho ngồi ở      │
-   * │ **y=360**. Nhưng chỗ của hàng cánh tay CŨNG là y=360. Cắm cánh tay đầu   │
-   * │ tiên ⇒ `clashes` với hai kho ⇒ `armSlot` quét mãi rồi rơi ra chỗ khác.   │
-   * │ Sau khi bấm "Sắp xếp lại", hai kho xuống **y=442** và mọi thứ vừa vặn —  │
-   * │ tức hệ thống **tự mâu thuẫn với chính nó**, đúng cái bệnh mà cả file này │
-   * │ sinh ra để chữa (xem khối đầu file: *"người dùng thấy sơ đồ méo, bấm     │
-   * │ Sắp xếp lại thì nó thẳng"*).                                             │
+   * │ Measured: a new office ⇒ 0 arms ⇒ `armRow = 0` ⇒ the two shelves sit at            │
+   * │ **y=360**. But the arm row's own spot is ALSO y=360. Connecting the first arm      │
+   * │ ⇒ `clashes` with the two shelves ⇒ `armSlot` scans forever and lands elsewhere.     │
+   * │ After clicking "Re-arrange", the two shelves drop to **y=442** and everything      │
+   * │ fits — meaning the system **contradicts itself**, exactly the disease this          │
+   * │ whole file exists to cure (see the block at the top of the file: *"the user          │
+   * │ sees a lopsided diagram, clicks Re-arrange and it straightens out"*).              │
    * │                                                                          │
-   * │ ⇒ Chừa chỗ **luôn luôn**, không hỏi có cánh tay hay chưa. Cái giá là một │
-   * │ khoảng trắng ~82px ở văn phòng chưa cắm gì; đổi lại, **bố cục lúc tạo     │
-   * │ bằng đúng bố cục sau khi sắp xếp lại** — và đó là bất biến đáng giữ hơn  │
-   * │ vài chục pixel.                                                          │
+   * │ ⇒ Reserve the space **always**, without asking whether an arm exists yet.          │
+   * │ The cost is ~82px of blank space in an office with nothing connected; in           │
+   * │ exchange, **the layout at creation time equals the layout after re-arranging**       │
+   * │ — an invariant worth more than a few dozen pixels.                                 │
    * │                                                                          │
-   * │ ⚠ Nhánh KHỐI (`blocks`) vốn đã chừa sẵn theo từng hàng, nên nó không đổi.│
+   * │ ⚠ The BLOCK branch (`blocks`) already reserves space per row, so it's unchanged.    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const armRow = NODE_SIZE.mcp.h + SHELF_DROP;
   const armY = ORIGIN_Y + rows * (NODE_SIZE.agent.h + ROW_GAP) + SHELF_DROP;
   /**
-   * Đáy của hai kho: dưới hàng cuối cùng đã đặt.
+   * The bottom edge of the two shelves: below the last row placed.
    *
-   * Ở chế độ KHỐI, `y` đã chạy qua mọi hàng (mỗi hàng gồm nhân viên + cánh tay
-   * của họ), nên nó chính là mép dưới — không tính lại theo `rows` được nữa.
-   * Chế độ cũ thì giữ nguyên công thức cũ, từng ký tự.
+   * In BLOCK mode, `y` has already run through every row (each row being a
+   * worker plus their own arms), so it already IS the bottom edge — it can no
+   * longer be recomputed from `rows`. The old mode keeps its old formula, unchanged.
    */
   const shelfY = blocks ? y - ROW_GAP + SHELF_DROP : armY + armRow;
   const shelfW = NODE_SIZE.knowledge.w + SHELF_GAP + NODE_SIZE.library.w;
@@ -370,24 +388,28 @@ export function arrangeAll(
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ CÁNH TAY XẾP THÀNH MỘT HÀNG DƯỚI CÙNG, CĂN GIỮA. (đổi 23/08, user chốt)  │
+   * │ ARMS LAID OUT IN ONE CENTERED ROW AT THE BOTTOM. (changed 23/08, user's       │
+   * │ call)                                                                     │
    * │                                                                          │
-   * │ Bản trước xếp chúng thành một CỘT bên phải, chạy từ y=40 xuống. Hai cái   │
-   * │ sai cùng lúc, và user bắt được cả hai ngay lượt test đầu:                 │
+   * │ The earlier version stacked them into a COLUMN on the right, running down       │
+   * │ from y=40. Two mistakes at once, and the user caught both on the very first       │
+   * │ test:                                                                     │
    * │                                                                          │
-   * │  1. Nó cắt ngang trục dọc mà cả sơ đồ đang căn theo. Trợ lý trên, nhân   │
-   * │     viên giữa, hai kho dưới — rồi một cột lạ mọc ra bên hông.            │
-   * │  2. **Sai CHIỀU DÒNG CHẢY.** Cạnh là `mcp → agent`, tức cánh tay NUÔI    │
-   * │     nhân viên. Đặt nó ngang vai nhân viên thì sợi dây đi ngang, và mắt   │
-   * │     không đọc ra ai cấp gì cho ai.                                       │
+   * │  1. It cuts across the vertical axis the whole diagram is centered on.          │
+   * │     Assistant on top, workers in the middle, two shelves at the bottom —          │
+   * │     then a strange column sprouting off to the side.                             │
+   * │  2. **Wrong FLOW DIRECTION.** The edge is `mcp → agent`, meaning an arm             │
+   * │     FEEDS a worker. Placing it level with the worker's shoulder makes the           │
+   * │     wire run sideways, and the eye can't read who's supplying what to whom.         │
    * │                                                                          │
-   * │ Đặt dưới cùng thì ngữ pháp của cả sơ đồ thành một câu đọc được:          │
-   * │ **việc đi từ trên xuống, tài nguyên đẩy từ dưới lên.** Hai kho và cánh   │
-   * │ tay cùng nằm ở tầng dưới vì chúng cùng là thứ nhân viên VỚI TỚI.         │
+   * │ Placing it at the very bottom turns the whole diagram's grammar into a readable    │
+   * │ sentence: **work flows top-down, resources push bottom-up.** The two shelves        │
+   * │ and the arms both sit at the bottom tier because they're both things a worker        │
+   * │ REACHES for.                                                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  // ⚠ CHỈ chạy ở chế độ cũ (không có cạnh). Có cạnh thì cánh tay đã được đặt
-  // theo khối ở trên, và chạy lại vòng này là xoá sạch việc đó.
+  // ⚠ ONLY runs in the old mode (no edges). With edges, arms are already
+  // placed by block above, and re-running this loop would wipe that out.
   if (!blocks && mcps.length) {
     const oneRow = NODE_SIZE.mcp.w + COL_GAP;
     const armW = mcps.length * oneRow - COL_GAP;
@@ -399,12 +421,13 @@ export function arrangeAll(
 }
 
 /**
- * Cánh tay nào thuộc về nhân viên nào — và cái nào **không của ai**.
+ * Which arm belongs to which worker — and which ones belong to **nobody**.
  *
- * ⚠ CHỦ CHÍNH = người đứng TRÁI NHẤT trong số những người cầm nó. Một cánh tay
- * dùng chung phải chọn đúng một chỗ đứng; chọn người trái nhất thì sợi dây thứ
- * hai luôn đi sang PHẢI, cùng chiều với mọi sợi khác — thay vì có sợi rẽ trái,
- * sợi rẽ phải, và chúng cắt nhau ngay dưới hàng nhân viên.
+ * ⚠ THE OWNER = whoever stands LEFTMOST among those holding it. A shared arm
+ * has to pick exactly one place to stand; picking the leftmost person means
+ * the second wire always runs RIGHTWARD, in the same direction as every
+ * other wire — instead of having some wires veer left and others veer right,
+ * crossing each other right below the worker row.
  */
 function groupArms(
   agents: readonly ArrangeNode[],
@@ -435,7 +458,7 @@ function groupArms(
   return { owned, parked };
 }
 
-/** Hai hình chữ nhật có chạm nhau không (đã cộng khoảng hở nhìn được). */
+/** Do two rectangles touch (already padded with the visible gap)? */
 export function clashes(
   spot: Point,
   kind: NodeKind,
@@ -454,18 +477,20 @@ export function clashes(
 }
 
 /**
- * Ô lưới đầu tiên KHÔNG chạm node nào đã đặt.
+ * The first grid slot that does NOT touch any already-placed node.
  *
- * Kiểm bằng hình chữ nhật thật chứ không bằng "toạ độ có trùng nhau không":
- * người dùng kéo node đi đâu tuỳ ý, nên hai node lệch nhau 10px vẫn là chồng
- * lên nhau với con mắt. Đây là chỗ lỗi "thêm nhân viên mà không thấy gì" bị
- * chặn ở gốc — không cần ai nhớ phải gọi hàm nào.
+ * Checked with real rectangles rather than "do the coordinates match
+ * exactly": the user can drag a node anywhere, so two nodes 10px apart still
+ * read as overlapping to the eye. This is where the "added a worker and
+ * nothing appeared" bug gets blocked at the root — nobody has to remember which function to call.
  *
- * `centerX` = tâm ngang của TRỤC (thực tế: node Trợ lý). Có trục thì ô mọc toả
- * ra hai bên (`centeredSlot`); không có thì rơi về đếm-từ-trái. Hai đường dùng
- * CHUNG một lưới nên trộn lẫn cũng không sinh ra node lệch nửa cột.
+ * `centerX` = the horizontal center of the AXIS (in practice: the Assistant
+ * node). With an axis, slots fan out to both sides (`centeredSlot`); without
+ * one, it falls back to counting-from-the-left. Both paths use THE SAME
+ * grid, so mixing them never produces a node offset by half a column.
  *
- * Có trần vòng lặp: hết ô thì trả ô cuối, thà hai node chồng nhau còn hơn treo.
+ * Has a loop ceiling: run out of slots and it returns the last one — better
+ * two nodes overlapping than hanging forever.
  */
 export function firstFreeSlot(
   placed: readonly { kind: NodeKind; x: number; y: number }[],

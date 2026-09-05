@@ -1,35 +1,38 @@
 /**
- * BẮT TAY THỬ MỘT CÁNH TAY — nguồn của nút "Thử ngay", của dòng năng lực, và
- * của con số token hiện trên node. → docs/SPEC-arms.md §3a · §6c · §7 · §9b
+ * TEST-HANDSHAKE AN ARM — the source behind the "Try it" button, the
+ * capability list, and the token count shown on the node. → docs/SPEC-arms.md §3a · §6c · §7 · §9b
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BA THỨ ĐO ĐƯỢC 23/08 (`scripts/spike-mcp.ts`) MÀ FILE NÀY DỰNG TRÊN.     │
+ * │ THREE THINGS MEASURED 23/08 (`scripts/spike-mcp.ts`) THAT THIS FILE IS BUILT ON. │
  * │                                                                          │
- * │ ① CONTROL REQUEST CHỈ CHẠY KHI CLI RẢNH. Phải mở query bằng generator    │
- * │   GIỮ STREAM MỞ mà không gửi tin nào, và VẪN phải tiêu thụ luồng để phản │
- * │   hồi được bơm ra. Khuôn gốc: `core/energy.ts §refresh`. Đo hỏng 4/4 lần │
- * │   trước khi ai hiểu ra (§5n ⑤).                                          │
+ * │ ① A CONTROL REQUEST ONLY RUNS WHILE THE CLI IS IDLE. The query has to be    │
+ * │   opened with a generator that KEEPS THE STREAM OPEN while sending no          │
+ * │   message, and the stream STILL has to be consumed for control responses to    │
+ * │   get pumped out. Original pattern: `core/energy.ts §refresh`. Measured           │
+ * │   broken 4/4 times before anyone understood why (§5n ⑤).                       │
  * │                                                                          │
- * │ ② `pending` LÀ TRẠNG THÁI CÓ THẬT, KÉO DÀI NHIỀU GIÂY.                   │
+ * │ ② `pending` IS A REAL STATE THAT LASTS SEVERAL SECONDS.                          │
  * │                                                                          │
- * │   ⚠ ĐÍNH CHÍNH 24/08 (`scripts/spike-npx-cost.ts`, 10 lượt): câu cũ ghi  │
- * │   *"4 s sau khi cache npx ấm, 17,7 s lần đầu"*. Số thật với gói ĐÃ cache │
- * │   là **7,7–9,2 s, và lần đầu bằng lần thứ ba** — "lần sau nhanh hơn" là  │
- * │   một mệnh đề chưa ai đo, sinh từ ĐÚNG MỘT lần bấm giờ thuận lợi rồi     │
- * │   được chép vào ba chỗ. ~3,2 s là phí tự thân của `npx`: chạy thẳng      │
- * │   `node <file đã cache>` chỉ mất 0,8 s.                                  │
+ * │   ⚠ CORRECTED 24/08 (`scripts/spike-npx-cost.ts`, 10 runs): the old copy         │
+ * │   said *"4s once the npx cache is warm, 17.7s the first time"*. The real           │
+ * │   number with an ALREADY-cached package is **7.7–9.2s, and the first run is        │
+ * │   the same as the third** — "faster next time" was a claim nobody had ever          │
+ * │   measured, born from EXACTLY ONE lucky-timing run that then got copied into        │
+ * │   three places. ~3.2s is `npx`'s own overhead: running `node <cached file>`         │
+ * │   directly costs only 0.8s.                                                  │
  * │                                                                          │
- * │   Hỏi MỘT LẦN rồi kết luận                                               │
- * │   là đo THỜI ĐIỂM HỎI chứ không đo cái server — lần đo đầu của spike đã  │
- * │   ra "0 tool, không có annotations" theo đúng cách đó.                   │
+ * │   Asking ONCE and drawing a conclusion measures THE MOMENT ASKED, not the         │
+ * │   server itself — the spike's very first measurement gave "0 tools, no             │
+ * │   annotations" for exactly that reason.                                          │
  * │                                                                          │
- * │ ③ `getContextUsage()` và HOÁ ĐƠN LỆCH 27%, và không đo cùng một thứ.     │
- * │   File này trả số của `getContextUsage` vì nó phân rã tới TỪNG TOOL —     │
- * │   đúng thứ giao diện cần. Đừng đem con số này đi tính tiền.              │
+ * │ ③ `getContextUsage()` and the BILL DIFFER BY 27%, and don't measure the same       │
+ * │   thing. This file returns `getContextUsage`'s number because it breaks           │
+ * │   down PER TOOL — exactly what the interface needs. Don't use this number           │
+ * │   to compute a bill.                                                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Không tốn token: không tin nhắn nào được gửi, không lượt suy luận nào chạy.
- * Giá của nó là ĐĨA và THỜI GIAN.
+ * Costs no tokens: no message is sent, no reasoning turn runs. Its cost is
+ * DISK and TIME.
  */
 
 import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
@@ -39,11 +42,12 @@ import { missingSecretRefs } from './secrets.js';
 import { isCliArm } from './cli-arm.js';
 import { isAccountName } from './oauth.js';
 import { httpTarget, rawAnnotations } from './mcp-http.js';
+import { t } from '../i18n/index.js';
 
-/** Đúng bộ `effectiveTools([])` của một vai trò trần — để số token so sánh được. */
+/** Exactly `effectiveTools([])` for a bare role — so the token count stays comparable. */
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 
-/** Lần đầu `npx` phải tải gói: đo được 17,7 s. Trần phải rộng hơn thế hẳn. */
+/** The first time `npx` has to download a package: measured at 17.7s. The ceiling has to be well above that. */
 const CONNECT_TIMEOUT_MS = 45_000;
 const POLL_MS = 500;
 
@@ -51,14 +55,14 @@ export interface ProbedTool {
   name: string;
   description?: string;
   /**
-   * Mức duyệt suy từ `annotations`. → SPEC-arms.md §8a-bis
+   * The approval level inferred from `annotations`. → SPEC-arms.md §8a-bis
    *
-   * ⚠ MỘT CHIỀU: chỉ LEO THANG, không bao giờ HẠ CẤP. `annotations` là **gợi ý
-   * của server**, không phải bảo đảm — một server viết ẩu (hoặc cố ý) khai
-   * `readOnly: true` cho một tool xoá dữ liệu.
+   * ⚠ ONE-WAY: only ESCALATES, never DOWNGRADES. `annotations` are the
+   * **server's own claim**, not a guarantee — a carelessly (or deliberately)
+   * written server can declare `readOnly: true` for a tool that deletes data.
    */
   level: 'read' | 'write_external';
-  /** Nấc quyền tối thiểu để việc này được cấp. → `tierOf` */
+  /** The minimum permission tier for this tool to be granted. → `tierOf` */
   tier: Tier;
 }
 
@@ -66,118 +70,129 @@ export interface ProbeResult {
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
   serverName?: string;
   serverVersion?: string;
-  /** NGUYÊN VĂN câu lỗi của server. Là chuỗi duy nhất người dùng copy đi hỏi được. */
+  /** The server's error message, VERBATIM. The only string the user can actually copy and go ask about. */
   error?: string;
   tools: ProbedTool[];
   /**
-   * Nấc quyền ĐÁNG hiện ra, kèm số việc. Tính ở ĐÂY chứ không ở giao diện.
+   * The tiers WORTH showing, with their tool count. Computed HERE, not in the interface.
    *
-   * ⚠ Luật *"chỉ hiện nếu thêm ≥1 việc so với nấc dưới"* là một quyết định sản
-   * phẩm có ca biên tinh tế (server toàn tool đọc ⇒ ba nấc đều bằng nhau ⇒ hai
-   * nấc dưới là noise). Để giao diện tự suy là dựng bản thứ hai của luật đó, và
-   * bản thứ hai luôn là bản quên mất một điều kiện. → `offeredTiers`
+   * ⚠ The rule *"only show if it adds ≥1 tool over the tier below"* is a
+   * product decision with a subtle edge case (an all-read-tool server ⇒ all
+   * three tiers come out equal ⇒ the two lower tiers are noise). Letting the
+   * interface infer this itself means building a second copy of that rule,
+   * and a second copy always forgets a condition. → `offeredTiers`
    */
   tiers?: { tier: Tier; count: number }[];
-  /** Token cánh tay này cộng vào prefix mỗi lượt. `undefined` = chưa đo được. */
+  /** Tokens this arm adds to the prefix every turn. `undefined` = not yet measured. */
   tokens?: number;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ NỐI ĐƯỢC MÀ 0 VIỆC — hỏng, và hỏng KHÔNG có câu lỗi nào. → §5h·7e        │
+   * │ CONNECTED BUT 0 TOOLS — broken, and broken with NO error message at all.       │
+   * │ → §5h·7e                                                                  │
    * │                                                                          │
-   * │ Đo 26/08: gõ sai tên nhóm trong `X-MCP-Toolsets` ⇒ GitHub trả **0 việc   │
-   * │ và không báo lỗi gì**. Bắt tay ✓, `status: 'connected'` ✓, và cánh tay    │
-   * │ hoàn toàn vô dụng. Đúng họ [[agentco-silent-allowlist]]: allowlist im     │
-   * │ lặng bỏ tên lạ, ở đây là allowlist của HÃNG.                              │
+   * │ Measured 26/08: a mistyped group name in `X-MCP-Toolsets` ⇒ GitHub returns       │
+   * │ **0 tools and reports no error whatsoever**. Handshake ✓, `status:                │
+   * │ 'connected'` ✓, and the arm is completely useless. Same family as                 │
+   * │ [[agentco-silent-allowlist]]: an allowlist silently dropping an unrecognized       │
+   * │ name — here, it's the VENDOR's own allowlist.                                     │
    * │                                                                          │
-   * │ ⚠ CỐ Ý KHÔNG hỏi *"nhóm nào bị bỏ"*. Server không echo lại danh sách nó  │
-   * │ nhận, nên câu đó không trả lời được — và một cơ chế chỉ chạy khi hãng     │
-   * │ chịu echo là một cơ chế không chạy. Triệu chứng thì TẤT ĐỊNH và không     │
-   * │ cần biết tên hãng nào: **nối được mà không có việc nào**. Một câu hỏi rẻ  │
-   * │ hơn, đúng cho mọi server, và không có tên hãng nào trong mã.              │
-   * │ → [[agentco-count-mechanisms]] · [[agentco-deterministic-vs-signal]]      │
+   * │ ⚠ DELIBERATELY DOES NOT ask *"which group got dropped"*. The server doesn't        │
+   * │ echo back the list it received, so that question can't be answered — and a          │
+   * │ mechanism that only works if the vendor agrees to echo something back is a           │
+   * │ mechanism that doesn't work. The symptom, though, is DETERMINISTIC and needs         │
+   * │ no vendor name at all: **connected with zero tools**. A cheaper question,            │
+   * │ correct for every server, with no vendor name anywhere in the code.                  │
+   * │ → [[agentco-count-mechanisms]] · [[agentco-deterministic-vs-signal]]              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   warn?: string;
-  /** Mili-giây từ lúc mở query tới lúc rời `pending`. Để giao diện biết nên chờ. */
+  /** Milliseconds from opening the query to leaving `pending`. Lets the interface know how long to wait. */
   connectMs: number;
 }
 
 /**
- * ⚠ `destructive: true` ⇒ `write_external`, KHÔNG phải `irreversible`.
+ * ⚠ `destructive: true` ⇒ `write_external`, NOT `irreversible`.
  *
- * Đo 23/08: `filesystem` gắn `destructive` cho `write_file`/`edit_file`/`move_file`.
- * Map chúng vào `irreversible` thì MỌI lần ghi một file đều phải hỏi người dùng —
- * trong khi `irreversible` được định nghĩa là *"gửi đi · xoá · trả tiền · đăng
- * công khai"*, tức RỜI KHỎI thế giới của người dùng. Ghi file lên đĩa của chính
- * họ không phải chuyện đó.
+ * Measured 23/08: `filesystem` attaches `destructive` to
+ * `write_file`/`edit_file`/`move_file`. Mapping those to `irreversible` would
+ * mean EVERY file write has to ask the user — while `irreversible` is defined
+ * as *"send it out · delete · spend money · publish publicly"*, meaning it
+ * LEAVES the user's own world. Writing a file to their own disk isn't that.
  *
- * ⇒ `irreversible` KHÔNG suy được từ annotations. Nó phải đến từ danh mục ta
- * curate hoặc từ người dùng bấm — cả hai đều có chủ thể chịu trách nhiệm.
+ * ⇒ `irreversible` CANNOT be inferred from annotations. It has to come from a
+ * catalog entry we curate or from the user clicking something — both have an
+ * accountable party behind them.
  * → SPEC-arms.md §8a-bis
  */
 export function levelOf(a: { readOnly?: boolean; destructive?: boolean; openWorld?: boolean } | undefined) {
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MỘT CHIỀU: KHÔNG BIẾT ⇒ LEO THANG. KHÔNG BAO GIỜ HẠ CẤP. (user 25/08)    │
+   * │ ONE-WAY: UNKNOWN ⇒ ESCALATE. NEVER DOWNGRADE. (user, 25/08)                   │
    * │                                                                          │
-   * │   *"đảm bảo nếu 0 biết gì thì nó ở nấc cao hơn, đừng kiểu khai chỉ đọc   │
-   * │    mà đến lúc nó thêm/xoá/sửa được là chết dở. Nói tóm lại KHÔNG ĐƯỢC    │
-   * │    NÓI DỐI — khi ta không biết, nói toàn quyền là không nói dối."*       │
+   * │   *"make sure that if we know 0, it sits at the higher tier — don't have         │
+   * │    it declared read-only and then have it turn out it can add/delete/edit          │
+   * │    and everything falls apart. In short, DO NOT LIE — when we don't know,           │
+   * │    saying full access is not a lie."*                                            │
    * │                                                                          │
-   * │ Không khai gì ⇒ `write_external`. Ca này CÓ THẬT: `create_directory` của │
-   * │ `filesystem` không mang annotation nào.                                  │
+   * │ Declaring nothing at all ⇒ `write_external`. This case is REAL:                   │
+   * │ `filesystem`'s `create_directory` carries no annotation at all.                    │
    * │                                                                          │
-   * │ 🔴 VÀ ĐÂY LÀ LỖ VỪA VÁ 25/08 — ca **KHAI MÂU THUẪN**:                    │
+   * │ 🔴 AND THIS IS A HOLE JUST PATCHED 25/08 — the **CONTRADICTORY DECLARATION**       │
+   * │ case:                                                                     │
    * │                                                                          │
    * │      { readOnly: true, destructive: true }                               │
    * │                                                                          │
-   * │ Bản cũ chỉ hỏi `readOnly === true` ⇒ xếp nó vào **`read`**, tức một tool │
-   * │ tự khai là phá huỷ được cấp dưới nhãn *"chỉ đọc"*. Không cần server nói  │
-   * │ dối: chỉ cần nó khai **ẩu**, và một trường mâu thuẫn là dấu hiệu rõ nhất │
-   * │ của khai ẩu. Ta đọc lời khai đó theo nghĩa **nặng hơn**, luôn luôn.      │
+   * │ The old version only checked `readOnly === true` ⇒ sorted it into                 │
+   * │ **`read`**, meaning a tool that self-declares as destructive gets granted          │
+   * │ under the label *"read-only"*. The server doesn't even have to lie: it only         │
+   * │ has to declare **carelessly**, and a contradictory field is the clearest             │
+   * │ possible sign of carelessness. We read that declaration under its **more            │
+   * │ severe** meaning, always.                                                      │
    * │                                                                          │
-   * │ Nó KHÔNG phải giả thuyết: `arms[băm].tools` của cánh tay "chỉ đọc" sinh  │
-   * │ ra từ đúng hàm này, và đó là thứ đi thẳng vào `allowedTools` lúc chạy.   │
+   * │ Not hypothetical: a "read-only" arm's `arms[hash].tools` is produced by             │
+   * │ exactly this function, and that's what feeds `allowedTools` at runtime.            │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ `destructive: true` ⇒ `write_external`, KHÔNG phải `irreversible`.
+   * ⚠ `destructive: true` ⇒ `write_external`, NOT `irreversible`.
    *
-   * Đo 23/08: `filesystem` gắn `destructive` cho `write_file`/`edit_file`/`move_file`.
-   * Map chúng vào `irreversible` thì MỌI lần ghi một file đều phải hỏi người dùng —
-   * trong khi `irreversible` được định nghĩa là *"gửi đi · xoá · trả tiền · đăng
-   * công khai"*, tức RỜI KHỎI thế giới của người dùng. Ghi file lên đĩa của chính
-   * họ không phải chuyện đó.
+   * Measured 23/08: `filesystem` attaches `destructive` to
+   * `write_file`/`edit_file`/`move_file`. Mapping those to `irreversible`
+   * would mean EVERY file write has to ask the user — while `irreversible` is
+   * defined as *"send it out · delete · spend money · publish publicly"*,
+   * meaning it LEAVES the user's own world. Writing a file to their own disk isn't that.
    *
-   * ⇒ `irreversible` KHÔNG suy được từ annotations. Nó phải đến từ danh mục ta
-   * curate hoặc từ người dùng bấm — cả hai đều có chủ thể chịu trách nhiệm.
+   * ⇒ `irreversible` CANNOT be inferred from annotations. It has to come from
+   * a catalog entry we curate or from the user clicking something — both
+   * have an accountable party behind them.
    * → SPEC-arms.md §8a-bis · §6j
    */
   const readable = a?.readOnly === true && a?.destructive !== true;
   return readable ? ('read' as const) : ('write_external' as const);
 }
 
-/** Ba nấc quyền người dùng chọn lúc cắm. → docs/SPEC-arms.md §6j */
+/** The three permission tiers the user picks at connect time. → docs/SPEC-arms.md §6j */
 export type Tier = 'read' | 'add' | 'full';
 
-/** Thứ tự lũy tiến. Nấc sau **bao gồm** nấc trước — đó là ý nghĩa của "lũy tiến". */
+/** Progressive order. A later tier **includes** the earlier one — that's what "progressive" means. */
 export const TIERS: readonly Tier[] = ['read', 'add', 'full'];
 
 /**
- * Một việc thuộc nấc nào — **cùng luật một chiều với `levelOf`, cùng một file**.
+ * Which tier a tool belongs to — **the same one-way rule as `levelOf`, in the same file**.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ NẤC 2 ĐÒI **ĐỦ HAI** LỜI KHAI TƯỜNG MINH. (user chốt 25/08)             │
+ * │ TIER 2 REQUIRES **BOTH** DECLARATIONS EXPLICITLY. (the user's call, 25/08)     │
  * │                                                                          │
- * │   *"khi chúng ta không biết, chúng ta nói toàn quyền là không nói dối —  │
- * │    điều tương tự cũng đúng với nấc 2"*                                   │
+ * │   *"when we don't know something, saying full access is not lying — the         │
+ * │    same thing applies to tier 2"*                                           │
  * │                                                                          │
- * │ Chỗ dễ sai nhất: `destructive: false` đứng MỘT MÌNH trông như một lời    │
- * │ hứa. Nhưng theo spec MCP, `destructiveHint` **chỉ có nghĩa khi            │
- * │ `readOnlyHint` là false** — thiếu vế kia thì nó không nói được điều ta    │
- * │ cần biết ⇒ **không biết** ⇒ nấc 3.                                       │
+ * │ The easiest place to get wrong: `destructive: false` sitting ALONE looks         │
+ * │ like a promise. But per the MCP spec, `destructiveHint` **only has meaning        │
+ * │ when `readOnlyHint` is false** — missing that other half means it can't tell        │
+ * │ us what we need to know ⇒ **unknown** ⇒ tier 3.                                 │
  * │                                                                          │
- * │ Đặt cạnh `levelOf` chứ không ở file khác: hai hàm trả lời cùng một câu    │
- * │ hỏi ở hai độ phân giải, và để chúng xa nhau là để chúng lệch nhau.       │
+ * │ Placed right next to `levelOf` rather than in another file: the two functions       │
+ * │ answer the exact same question at two resolutions, and keeping them apart is         │
+ * │ what lets them drift out of sync.                                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function tierOf(a: { readOnly?: boolean; destructive?: boolean } | undefined): Tier {
@@ -185,19 +200,21 @@ export function tierOf(a: { readOnly?: boolean; destructive?: boolean } | undefi
   return a?.readOnly === false && a?.destructive === false ? 'add' : 'full';
 }
 
-/** Việc được cấp ở một nấc — LŨY TIẾN: `add` gồm cả `read`, `full` gồm tất. */
+/** Tools granted at a tier — PROGRESSIVE: `add` includes `read`, `full` includes everything. */
 export function toolsAtTier(tools: readonly ProbedTool[], tier: Tier): string[] {
   const max = TIERS.indexOf(tier);
   return tools.filter((t) => TIERS.indexOf(t.tier) <= max).map((t) => t.name);
 }
 
 /**
- * Nấc nào ĐÁNG hiện ra — user chốt 25/08: *"tầng nào 0 việc thì đừng cho chọn,
- * không để một thứ không ý nghĩa hoặc chỉ mang noisy mà không lợi ích gì tồn tại"*.
+ * Which tiers are WORTH showing — the user's call, 25/08: *"if a tier has 0
+ * tools, don't offer it as a choice — don't let something meaningless or
+ * purely noisy exist with no upside"*.
  *
- * ⚠ Phép kiểm là **`đếm(nấc) > đếm(nấc dưới)`**, KHÔNG phải `> 0`. Một server
- * toàn tool đọc cho ra ba nấc **đều 14 việc** — hai nấc dưới không rỗng nên lọt
- * luật "0 việc", trong khi chúng **hứa thêm quyền mà không đưa gì**.
+ * ⚠ The check is **`count(tier) > count(tier below)`**, NOT `> 0`. An
+ * all-read-tool server produces three tiers that are **all 14 tools** — the
+ * two lower tiers aren't empty, so they'd slip past the "0 tools" rule, even
+ * though they **promise more permission while granting nothing extra**.
  */
 export function offeredTiers(tools: readonly ProbedTool[]): { tier: Tier; count: number }[] {
   const out: { tier: Tier; count: number }[] = [];
@@ -211,45 +228,48 @@ export function offeredTiers(tools: readonly ProbedTool[]): { tier: Tier; count:
 }
 
 /**
- * Mở một phiên RỖNG chỉ để bắt tay với `servers`, rồi đóng. Không gửi tin nào.
+ * Opens an EMPTY session just to handshake with `servers`, then closes it. Sends no message.
  *
- * `baseline` = kết quả của một lần probe KHÔNG có MCP; truyền vào thì `tokens`
- * là phần CHÊNH LỆCH (thứ cánh tay này thật sự cộng thêm). Thiếu nó thì `tokens`
- * là tổng cửa sổ ngữ cảnh — một con số đúng nhưng trả lời câu hỏi khác.
+ * `baseline` = the result of a probe run WITHOUT any MCP; passing it makes
+ * `tokens` the DIFFERENCE (what this arm genuinely adds on top). Without it,
+ * `tokens` is the full context window total — a correct number that answers a different question.
  */
 export async function probeArm(
   servers: Record<string, McpServerConfig>,
   baseline?: number,
   /**
-   * Chìa tiêm vào tiến trình MCP — PHẢI là đúng bộ mà `pickMcp` sẽ tiêm lúc
-   * chạy thật. Thiếu nó thì nút "Thử ngay" kiểm một cấu hình KHÔNG CÓ CHÌA rồi
-   * báo ✓, và cánh tay hỏng ở lần đầu một nhân viên dùng nó.
+   * The keys injected into the MCP process — MUST be the exact set `pickMcp`
+   * will inject at real runtime. Without it, the "Try it" button tests a
+   * config WITH NO KEYS and reports ✓, and the arm breaks the first time a worker actually uses it.
    */
   env?: Record<string, string>,
   /**
-   * Đích của ô trống `<OFFICE_STATE>`. Phải truyền, cùng lý do `env` phải truyền:
-   * nút "Thử ngay" mà không điền ô trống thì nó kiểm một cấu hình **khác** thứ sẽ
-   * chạy — và ở đây cái khác đó rất cụ thể: trình duyệt sẽ đẻ một thư mục tên
-   * `<OFFICE_STATE>` ngay trong thư mục làm việc của daemon.
+   * The target for the `<OFFICE_STATE>` placeholder. Must be passed, for the
+   * same reason `env` must be passed: a "Try it" click without filling in the
+   * placeholder tests a **different** config from what will actually run —
+   * and here that difference is very specific: the browser would spawn a
+   * folder literally named `<OFFICE_STATE>` right inside the daemon's own working directory.
    */
   dirs?: { officeState: string; officeDir: string },
 ): Promise<ProbeResult> {
   /**
-   * ⚠ CÙNG MỘT HÀM `pickMcp` DÙNG — `armexec.ts §prepareArm`. Đây là bất biến,
-   * không phải tiện tay: nút "Thử ngay" phải kiểm **đúng cấu hình sẽ chạy**.
-   * Bản cũ ở đây bỏ qua server HTTP (lỗ §5a) ⇒ một cánh tay HTTP cần chìa sẽ
-   * báo ✓ ở đây rồi 401 lúc nhân viên đầu tiên dùng nó.
+   * ⚠ THE EXACT SAME `pickMcp` FUNCTION IS USED — `armexec.ts §prepareArm`.
+   * This is an invariant, not a convenience: the "Try it" button must test
+   * **the exact config that will run**. The earlier version here skipped HTTP
+   * servers (hole §5a) ⇒ an HTTP arm needing a key would report ✓ here and
+   * then 401 the first time a worker used it.
    *
-   * 🔴 MỘT LƯỢT, KHÔNG PHẢI HAI. Bản trước gọi `injectSecrets` **hai lần** — một
-   * lượt cho `dirs`, một lượt cho `env` — nên cấu hình đi qua hai đường khác
-   * nhau tuỳ ô nào được truyền. Với tờ khai CLI thì đó là bẫy chết người: bước
-   * biên dịch phải chạy **sau khi đã điền xong hết**, mà "xong hết" không xác
-   * định được nếu còn một lượt điền nữa ở phía sau.
+   * 🔴 ONE PASS, NOT TWO. The earlier version called `injectSecrets` **twice**
+   * — once for `dirs`, once for `env` — so the config went through two
+   * different paths depending on which field was passed. For a CLI
+   * declaration that's a deadly trap: the compile step must run **after**
+   * everything has been filled in, and "everything" can't be determined if
+   * there's still another fill pass coming afterward.
    */
   /**
-   * ⚠ CHỈ BƯỚC ① Ở ĐÂY. Bước ② (biên dịch) nằm SAU phép kiểm ô trống bên dưới —
-   * xem khối chú thích ở `armexec.ts §fillArm`: một cấu hình đã biên dịch chở
-   * `McpServer` sống, và `missingSecretRefs` soi bằng `JSON.stringify`.
+   * ⚠ ONLY STEP ① HAPPENS HERE. Step ② (compiling) sits AFTER the blank-field
+   * check below — see the comment block at `armexec.ts §fillArm`: a compiled
+   * config carries a live `McpServer`, and `missingSecretRefs` inspects things via `JSON.stringify`.
    */
   const filled: Record<string, unknown> = {};
   for (const [name, cfg] of Object.entries(servers)) {
@@ -257,76 +277,78 @@ export async function probeArm(
     servers[name] = filled[name] as McpServerConfig;
   }
   /**
-   * Nhớ **TRƯỚC KHI BIÊN DỊCH** đây có phải tờ khai CLI không: sau bước ② nó đã
-   * thành `{type:'sdk'}` và không còn phân biệt được với một MCP bình thường.
-   * Câu trả lời chỉ tồn tại ở đây — hỏi muộn hơn là hỏi một vật khác.
+   * Remembered **BEFORE COMPILING** whether this is a CLI declaration: after
+   * step ② it has already become `{type:'sdk'}` and can no longer be told
+   * apart from an ordinary MCP. The answer only exists here — asking later means asking a different object.
    */
   const hasCli = Object.values(filled).some((c) => isCliArm(c));
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ CÒN Ô TRỐNG ⇒ DỪNG Ở ĐÂY. Không bắt tay, không chờ 20 giây, không 401.  │
+   * │ A BLANK FIELD REMAINS ⇒ STOP HERE. No handshake, no 20-second wait, no 401.    │
    * │                                                                          │
-   * │ Bug user báo 25/08: *"chìa thiếu (để trắng) nó cũng báo câu lệnh y hệt   │
-   * │ [chìa sai] mà? Tôi hiểu sai chỗ nào"*. Không sai chỗ nào — cả hai ca đều │
-   * │ đi tới cùng một câu 401 của server, mà 401 chỉ nói được *"chìa này sai"*.│
-   * │ Server không có cách nào biết ta **chưa từng điền chìa**; ta thì biết.   │
+   * │ Bug the user reported, 25/08: *"a missing key (left blank) reports the exact       │
+   * │ same message [as a wrong key]? Where did I get confused"*. Nowhere — both           │
+   * │ cases land on the same server 401, and a 401 can only say *"this key is             │
+   * │ wrong"*. The server has no way of knowing we **never filled in a key at              │
+   * │ all**; we do know.                                                                │
    * │                                                                          │
-   * │ Đặt ở đây chứ không ở route HTTP: `probeArm` là cửa CHUNG của nút "Thử   │
-   * │ ngay", của `readOnlyTools` lúc bấm Xong, và của mọi phép đo. Đặt ở route │
-   * │ là vá một cửa rồi để ba cửa kia giữ nguyên hành vi cũ — đúng lớp lỗi     │
-   * │ "hai bản của cùng một luật" đã đốt dự án này nhiều lần.                  │
+   * │ Placed HERE, not in the HTTP route: `probeArm` is the SHARED door for the           │
+   * │ "Try it" button, for `readOnlyTools` at click-Done time, and for every                 │
+   * │ measurement. Placing it in a route would patch one door while the other three          │
+   * │ keep their old behavior — exactly the "two copies of the same rule" class of           │
+   * │ bug that has burned this project repeatedly.                                        │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const missing = missingSecretRefs(servers);
   if (missing.length) {
     /**
-     * ⚠ HAI CÂU KHÁC HẲN NHAU, vì hai việc người dùng phải làm khác hẳn nhau.
-     * (user bắt 26/08: *"Notion làm gì có chìa nào, human đọc sẽ rất khó hiểu"*)
+     * ⚠ TWO ENTIRELY DIFFERENT SENTENCES, because the user's two required
+     * actions are entirely different. (the user caught this, 26/08: *"Notion
+     * doesn't even have keys, a human reading that will find it very confusing"*)
      *
-     *   chìa gõ tay  → "điền vào ô đó"
-     *   tài khoản    → "bấm Đăng nhập" — **không có ô nào để điền**
+     *   a hand-typed key → "fill in that field"
+     *   an account       → "click Sign in" — **there's no field to fill in at all**
      *
-     * Câu cũ gộp cả hai thành *"Thiếu chìa: NOTION_OAUTH_AFAFBCD6"*, tức bảo
-     * người ta đi tìm một thứ không tồn tại. Đúng lớp lỗi §5m mà chính câu này
-     * sinh ra để chữa — chỉ là ở một cửa khác.
+     * The old copy merged both into *"Missing key:
+     * NOTION_OAUTH_AFAFBCD6"*, telling someone to go find something that
+     * doesn't exist. Exactly the §5m failure class this very sentence exists to fix — just at a different door.
      */
     const accounts = missing.filter((n) => isAccountName(n));
     const keys = missing.filter((n) => !isAccountName(n));
     const parts: string[] = [];
     if (accounts.length) {
       parts.push(
-        `Chưa nối tài khoản, hoặc kết nối đã bị gỡ ở phía dịch vụ. Bấm **Đăng nhập** rồi thử lại — ` +
-          `không có ô chìa nào để điền cho loại này.`,
+        t('probe.noAccount'),
       );
     }
     if (keys.length) {
-      parts.push(`Thiếu chìa: ${keys.join(', ')}.`);
+      parts.push(t('probe.missingKeys', { keys: keys.join(', ') }));
     }
     return {
       status: 'failed',
       tools: [],
       connectMs: 0,
       error:
-        `${parts.join(' ')} Chưa gửi yêu cầu nào — gửi đi thì server chỉ trả về "sai chìa", ` +
-        `và câu đó sẽ dắt bạn đi tìm nhầm chỗ.`,
+        t('probe.notSentBecause', { parts: parts.join(' ') }),
     };
   }
   /**
-   * CÀI SẴN NGAY Ở ĐÂY, và đây là chỗ ĐÚNG để chờ nó.
+   * INSTALLED RIGHT HERE, and this is the CORRECT place to wait for it.
    *
-   * Nút "Thử ngay" là lúc DUY NHẤT người dùng còn đứng đó và biết mình đang chờ
-   * một cánh tay mới. Đẩy lần cài sang lượt chạy đầu tiên là dời khoản chờ vào
-   * giữa một việc đang chạy, lúc họ đã bỏ đi — đúng lý lẽ đã dùng để GIỮ phép
-   * thử này (§6c). Nên trả nó ở đây, một lần, rồi mọi lượt sau nhanh mãi.
+   * The "Try it" button is the ONE moment the user is still standing there
+   * and knows they're waiting on a new arm. Pushing the install to the first
+   * real run moves that wait into the middle of a task already running, once
+   * they've walked away — the exact reasoning used to KEEP this test in the
+   * first place (§6c). So pay it here, once, and every run after that stays fast.
    *
-   * Hỏng thì đi tiếp: `fastLaunch` trả về `npx` như cũ và phép thử vẫn đúng.
+   * Fails? Keep going: `fastLaunch` falls back to `npx` as before, and the test is still correct.
    */
   for (const cfg of Object.values(servers)) {
     await ensureInstalled(cfg as Record<string, unknown>);
   }
   /**
-   * BƯỚC ②+③ — biên dịch tờ khai CLI rồi bỏ `npx`. Đứng ở đây, **sau** phép kiểm
-   * ô trống ở trên, vì bản đã biên dịch không `JSON.stringify` được.
+   * STEPS ②+③ — compile a CLI declaration, then strip `npx`. Placed here,
+   * **after** the blank-field check above, because a compiled config can't be `JSON.stringify`d.
    * → `armexec.ts §fillArm`
    */
   for (const [name, cfg] of Object.entries(servers)) {
@@ -336,8 +358,8 @@ export async function probeArm(
   const t0 = Date.now();
   let release: (() => void) | undefined;
 
-  // Generator KHÔNG BAO GIỜ yield — đây chính là thứ giữ CLI ở trạng thái "đang
-  // chờ input", tức RẢNH. Đổi nó thành generator có gửi tin là làm hỏng cả cơ chế.
+  // A generator that NEVER yields — this is exactly what keeps the CLI in
+  // the "waiting for input" state, i.e. IDLE. Turning it into a generator that sends a message breaks the whole mechanism.
   const idle = async function* (): AsyncGenerator<never> {
     await new Promise<void>((r) => {
       release = r;
@@ -356,14 +378,14 @@ export async function probeArm(
     },
   });
 
-  // Phải TIÊU THỤ luồng, nếu không phản hồi control không được bơm ra.
+  // Must CONSUME the stream, or control responses never get pumped out.
   const drain = (async () => {
     try {
       for await (const _ of q) {
-        /* chỉ cần luồng chảy */
+        /* just need the stream to keep flowing */
       }
     } catch {
-      /* đóng giữa chừng thì SDK ném — đúng thiết kế */
+      /* closing mid-way makes the SDK throw — expected */
     }
   })();
 
@@ -387,31 +409,34 @@ export async function probeArm(
       if (s.error) out.error = s.error;
       /**
        * ┌──────────────────────────────────────────────────────────────────────┐
-       * │ 🔴 HỎI THẲNG SERVER VỀ `annotations` — SDK LÀM MẤT MỌI GIÁ TRỊ `false`│
-       * │ (đo 26/08, `spike-sdk-annotations.ts`)                               │
+       * │ 🔴 ASK THE SERVER DIRECTLY FOR `annotations` — THE SDK DROPS EVERY      │
+       * │ `false` VALUE (measured 26/08, `spike-sdk-annotations.ts`)             │
        * │                                                                      │
-       * │   Notion khai `{readOnlyHint:false, destructiveHint:false}`          │
-       * │   SDK đưa ta `{}` ⇒ `tierOf` thấy "không biết" ⇒ leo thang           │
+       * │   Notion declares `{readOnlyHint:false, destructiveHint:false}`          │
+       * │   The SDK hands us `{}` ⇒ `tierOf` sees "unknown" ⇒ escalates             │
        * │                                                                      │
-       * │ Hậu quả: 11/28 tool Notion vốn **chỉ tạo mới** bị xếp vào *toàn       │
-       * │ quyền*, nấc giữa vĩnh viễn rỗng, và người dùng muốn *"cho tạo trang,  │
-       * │ đừng cho sửa trang cũ"* buộc phải cấp cả sửa lẫn xoá. Đó là **hồi     │
-       * │ quy đặc quyền tối thiểu**, không phải chuyện đếm nấc.                 │
+       * │ Consequence: 11/28 Notion tools that only **create new items** get sorted     │
+       * │ into *full access*, the middle tier is permanently empty, and a user who        │
+       * │ wants *"allow creating pages, but not editing existing ones"* is forced to       │
+       * │ grant editing and deleting too. That's a **least-privilege regression**,        │
+       * │ not a tier-counting quirk.                                                   │
        * │                                                                      │
-       * │ ⚠ Luật một chiều KHÔNG sai — nó đang xử lý một dữ kiện đã mất trên    │
-       * │ đường. Nên bản vá không đụng `tierOf`; nó đi lấy lại dữ kiện.         │
+       * │ ⚠ The one-way rule is NOT wrong — it's correctly processing a fact that got     │
+       * │ lost along the way. So the fix doesn't touch `tierOf`; it goes and recovers      │
+       * │ the fact instead.                                                          │
        * │                                                                      │
-       * │ Hỏng ⇒ `raw` rỗng ⇒ rơi về annotations của SDK, tức đúng hành vi      │
-       * │ trước 26/08: tệ hơn nhưng **không sai** (leo thang = an toàn).        │
+       * │ Fails ⇒ `raw` comes back empty ⇒ falls back to the SDK's own annotations,       │
+       * │ i.e. exactly the pre-26/08 behavior: worse, but **not wrong** (escalating =      │
+       * │ safe).                                                                       │
        * └──────────────────────────────────────────────────────────────────────┘
        */
       const target = out.status === 'connected' ? httpTarget(Object.values(servers)[0]) : undefined;
       const raw = target ? await rawAnnotations(target.url, target.headers) : new Map();
 
       out.tools = (s.tools ?? []).map((t) => {
-        // Thô đè SDK khi có — nó là bản ĐẦY ĐỦ hơn của cùng một thứ. Không có
-        // thì dùng bản SDK, không trộn nửa nọ nửa kia (trộn là tạo ra một bộ
-        // annotations chưa server nào từng khai).
+        // Raw data overrides the SDK when available — it's the MORE COMPLETE
+        // version of the same thing. Without it, use the SDK's own copy;
+        // never mix the two halfway (mixing would produce a set of annotations no server ever declared).
         const a = raw.get(t.name);
         const ann = a
           ? { readOnly: a.readOnlyHint, destructive: a.destructiveHint, openWorld: a.openWorldHint }
@@ -424,35 +449,36 @@ export async function probeArm(
         };
       });
       /**
-       * ⚠ CÁNH TAY CLI KHÔNG CÓ NẤC — user chốt 30/08, và ở đây phải THI HÀNH
-       * chứ không chỉ ghi trong spec.
+       * ⚠ A CLI ARM HAS NO TIERS — the user's call, 30/08, and this has to be
+       * ENFORCED here, not just written in the spec.
        *
-       * `annotations` của tool CLI là do CHÍNH TA dựng từ ô `read_only`, nên
-       * `offeredTiers` sẽ ngoan ngoãn chào ra `read`/`full`. Bộ chọn nấc hiện
-       * lên là hứa một hàng rào **không có gì thi hành**: `addArm` cho CLI
-       * không truyền `level`, `pickMcp` cấp trọn danh sách việc trong tờ khai.
-       * Đúng loại lời hứa §14 đã mất công gỡ một lần ở bài 11.
+       * A CLI tool's `annotations` are built by OURSELVES from the
+       * `read_only` checkbox, so `offeredTiers` would obediently offer up
+       * `read`/`full`. Showing the tier picker would promise a fence **with
+       * nothing behind it enforcing it**: `addArm` for CLI never passes a
+       * `level`, and `pickMcp` grants the entire tool list in the
+       * declaration. Exactly the kind of promise §14 already went to the
+       * trouble of removing once, in test 11.
        *
-       * ⇒ Cổng của CLI là hai cái khác: **ai được nối dây** + `confirm` từng
-       * action. Nói thật là "toàn quyền" thì người dùng còn cân nhắc; chào ra
-       * ba nấc giả thì họ yên tâm nhầm.
+       * ⇒ CLI's real gates are two different things: **who gets wired to it**
+       * + `confirm` on each individual action. Stating honestly that it's
+       * "full access" lets the user actually weigh it; offering three fake
+       * tiers gives them false reassurance.
        */
       if (out.tools.length && !hasCli) out.tiers = offeredTiers(out.tools);
     }
 
-    // Chỉ đo token khi đã nối được: hỏi lúc `pending` là đo một prefix chưa có
-    // tool, tức một con số 0 rất thuyết phục và hoàn toàn vô nghĩa.
+    // Only measure tokens once connected: asking while `pending` measures a
+    // prefix with no tools in it — a very convincing, completely meaningless zero.
     if (out.status === 'connected' && baseline !== undefined) {
       const ctx = (await q.getContextUsage()) as { totalTokens: number };
       out.tokens = Math.max(0, ctx.totalTokens - baseline);
     }
 
-    // Nối được mà rỗng — xem khối chú thích ở `ProbeResult.warn`. Đặt sau cùng
-    // để nó thấy `out.tools` ở trạng thái cuối, không phải giữa chừng.
+    // Connected but empty — see the comment block at `ProbeResult.warn`.
+    // Placed last so it sees `out.tools` in its final state, not mid-way through.
     if (out.status === 'connected' && out.tools.length === 0) {
-      out.warn =
-        'Nối được nhưng server không cấp việc nào. Thường là do một tuỳ chọn gửi lên bị server ' +
-        'lặng lẽ bỏ qua — kiểm lại các nhóm việc đã tick.';
+      out.warn = t('probe.zeroTools');
     }
   } catch (e) {
     out.status = 'failed';
@@ -467,10 +493,10 @@ export async function probeArm(
 }
 
 /**
- * Prefix của một vai trò TRẦN, không cánh tay nào. Mốc để trừ ra phần của MCP.
+ * The prefix of a BARE role, no arms at all. The reference point for subtracting out the MCP portion.
  *
- * Nhớ trong tiến trình: nó không đổi giữa hai lần hỏi trong cùng một phiên
- * daemon, và mỗi lần hỏi tốn vài trăm mili-giây.
+ * Cached in-process: it doesn't change between two asks within the same
+ * daemon session, and each ask costs a few hundred milliseconds.
  */
 let baselineCache: number | undefined;
 
@@ -506,12 +532,12 @@ export async function baselineTokens(): Promise<number | undefined> {
   try {
     const ctx = (await Promise.race([
       q.getContextUsage(),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('quá hạn')), 20_000)),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timed out')), 20_000)),
     ])) as { totalTokens: number };
     baselineCache = ctx.totalTokens;
   } catch {
-    // Không lấy được thì thôi — `tokens` sẽ là `undefined` và giao diện phải
-    // chịu được chuyện đó. Một ô trống thành thật hơn một con số bịa.
+    // Couldn't get it — fine, `tokens` will be `undefined` and the interface
+    // has to handle that. An honest blank beats a made-up number.
   } finally {
     release?.();
     await Promise.race([drain, new Promise((r) => setTimeout(r, 2_000))]);

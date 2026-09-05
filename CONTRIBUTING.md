@@ -62,7 +62,7 @@ change would require collecting signatures again, and one unreachable contributo
 ```bash
 npm install
 npm run build:all     # compile server + web UI
-npm test              # 323 tests, ~6 seconds, 0 tokens, no LLM calls
+npm test              # 875 tests, ~20 seconds, 0 tokens, no LLM calls
 npm run dev           # run the CLI from source
 ```
 
@@ -79,6 +79,13 @@ A change is finished only when it passes all four: **stability** · **good error
    *where is the equivalent thing working today, and how does it differ from ours?*
 3. **Tokens are a design constraint, not a later optimization.** Anything placed in the prefix is
    paid on **every** turn, forever. `docs/SPEC-token-economy.md` is the highest law here.
+
+### Source is English; the product speaks the user's language
+
+Code, comments and log lines are English. Anything a user sees on screen goes through
+`src/i18n/`. Anything the **model produces** — replies, results, lessons, memory — follows whatever
+language the user is writing in, and no prompt ever names a language. `npm test` enforces the first
+half; `docs/CLAUDE.md` explains the rest, including why the two must not be wired together.
 
 ### Before you open a pull request
 

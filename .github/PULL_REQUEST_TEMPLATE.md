@@ -27,6 +27,9 @@ Name: <your full name>   GitHub: @<your-handle>   Date: <YYYY-MM-DD>
 - [ ] If token cost is affected: **measurements included**, with a **nonce** to defeat the cache
       *(without one, the second measurement reads the first one's cache and reports zero difference —
       this trap has been missed twice)*
+- [ ] New code, comments and log lines are **English**; user-visible strings went into `src/i18n/`
+      *(and no locale was passed into a prompt — the product follows the user's language, not a
+      setting. See `docs/CLAUDE.md`)*
 - [ ] If a rule documented in `docs/` changed: **the document is updated in this same pull request**
       *(documentation that disagrees with the code is a bug, and the longest-lived kind, because it
       never produces a symptom)*

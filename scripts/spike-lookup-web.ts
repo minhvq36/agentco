@@ -1,21 +1,23 @@
 /**
- * SPIKE — CÁI GIÁ CỦA VIỆC CHO WORKER ẨN TRA WEB.
+ * SPIKE — THE COST OF GIVING THE HIDDEN WORKER A WEB SEARCH.
  *
- * User phản biện lời từ chối của tôi bằng một câu không cãi được: *"một người
- * non-code bán hoa có vào tạo nhân viên chuyên nghiệp không, hay họ sẽ hỏi vu vơ
- * kiểu quán ăn, thời tiết, tin tức?"*. Trước khi đổi quyết định thì phải có SỐ,
- * vì mọi lý lẽ ở đây đều là suy đoán về hành vi.
+ * The user pushed back on my refusal with a point I couldn't argue against:
+ * *"is a non-coder selling flowers going to go create a proper specialized
+ * staff member, or will they just ask offhand things like restaurants,
+ * weather, news?"*. Before changing the decision we need NUMBERS, because
+ * every argument here is a guess about behavior.
  *
- * Ba con số cần, và cái thứ ba mới quyết:
+ * Three numbers needed, and the third one is what actually decides it:
  *
- *   ① prefix của worker ẩn hôm nay (`Read`/`Grep`/`Glob` + LOOKUP_PROMPT)
- *   ② prefix sau khi thêm `WebSearch`/`WebFetch`  → cái GIÁ
- *   ③ một câu hỏi vu vơ chạy hết bao nhiêu, so với đường plan→worker hôm nay
+ *   ① today's hidden-worker prefix (`Read`/`Grep`/`Glob` + LOOKUP_PROMPT)
+ *   ② prefix after adding `WebSearch`/`WebFetch`  → the COST
+ *   ③ how much a single offhand question costs, compared to today's plan→worker path
  *
- * ⚠ NONCE ở system prompt cả hai lượt: không có nó thì lượt hai ăn cache lượt
- * một và spike báo "0 token" một cách rất thuyết phục (bẫy đã trả tiền 22/08).
+ * ⚠ NONCE in the system prompt on both runs: without it the second run hits
+ * the first run's cache and the spike reports "0 tokens" very convincingly
+ * (a trap that already cost money on 08/22).
  *
- * Chạy: npx tsx scripts/spike-lookup-web.ts   (~$0,03)
+ * Run: npx tsx scripts/spike-lookup-web.ts   (~$0.03)
  */
 
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -23,7 +25,7 @@ import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 const LOOKUP_TOOLS = ['Read', 'Grep', 'Glob'];
 const WEB_TOOLS = [...LOOKUP_TOOLS, 'WebSearch', 'WebFetch'];
 
-/** Bản rút gọn của `LOOKUP_PROMPT` — đủ để prefix có cùng bậc độ lớn. */
+/** Shortened version of `LOOKUP_PROMPT` — enough for the prefix to be the same order of magnitude. */
 const BASE = 'You read documents and answer questions about them. You do not write files.';
 
 async function* one(text: string): AsyncGenerator<SDKUserMessage> {
@@ -31,14 +33,15 @@ async function* one(text: string): AsyncGenerator<SDKUserMessage> {
 }
 
 /**
- * Prefix = `input_tokens + cache_creation_input_tokens` của một lượt MISS.
+ * Prefix = `input_tokens + cache_creation_input_tokens` of a MISS turn.
  *
- * ⚠ ĐỌC `usage` THÔ, KHÔNG đọc `modelUsage`: lượt đo đầu lấy theo `modelUsage`
- * và nhận **0/0** — với prefix nhỏ như của worker ẩn, SDK không đặt điểm cắt
- * cache nào, nên mọi trường `cache*` đều rỗng và bảng kết quả sẽ nói "web miễn
- * phí" một cách rất thuyết phục. Đây là ca NGƯỢC với `readUsage` của worker
- * (ở đó `modelUsage` mới là nguồn đúng) — hai phép đo, hai trường, đừng chép
- * lẫn. → [[agentco-measurement-vs-conclusion]]
+ * ⚠ READ RAW `usage`, NOT `modelUsage`: the first measurement run read from
+ * `modelUsage` and got **0/0** — with a prefix as small as the hidden
+ * worker's, the SDK doesn't set any cache breakpoint, so every `cache*`
+ * field is empty and the results table would say "web is free" very
+ * convincingly. This is the OPPOSITE case from the worker's `readUsage`
+ * (there, `modelUsage` is the correct source) — two measurements, two
+ * fields, don't copy one for the other. → [[agentco-measurement-vs-conclusion]]
  */
 async function prefixOf(label: string, tools: string[]): Promise<number> {
   const nonce = Math.random().toString(36).slice(2);
@@ -71,27 +74,27 @@ async function prefixOf(label: string, tools: string[]): Promise<number> {
     `   ${label.padEnd(30)} input ${String(input).padStart(5)} + cache_write ${String(write).padStart(5)}` +
       ` = ${String(total).padStart(5)}   (cache_read ${read})`,
   );
-  if (read > 0) console.log('      ⚠ cache_read > 0 ⇒ nonce KHÔNG phá được cache, số này vô nghĩa.');
+  if (read > 0) console.log('      ⚠ cache_read > 0 ⇒ the nonce did NOT break the cache, this number is meaningless.');
   return total;
 }
 
-console.log('\n─── ① + ② PREFIX của worker ẩn ───\n');
-const a = await prefixOf('Read/Grep/Glob (hôm nay)', LOOKUP_TOOLS);
+console.log('\n─── ① + ② hidden-worker PREFIX ───\n');
+const a = await prefixOf('Read/Grep/Glob (today)', LOOKUP_TOOLS);
 const b = await prefixOf('+ WebSearch + WebFetch', WEB_TOOLS);
-console.log(`\n   ⇒ web THÊM VÀO: ${b - a} token / lượt lookup\n`);
+console.log(`\n   ⇒ web ADDS: ${b - a} tokens / lookup turn\n`);
 
-// Phần ③ tốn tiền thật — bỏ qua khi chỉ cần đo lại prefix.
+// Part ③ costs real money — skip it when all we need is to re-measure the prefix.
 if (process.argv.includes('--prefix-only')) process.exit(0);
 
-console.log('─── ③ Một câu hỏi vu vơ, chạy thật ở tier của Trợ lý (sonnet) ───\n');
+console.log('─── ③ An offhand question, run for real at the Assistant tier (sonnet) ───\n');
 const t0 = Date.now();
 let cost = 0;
 let text = '';
 const calls: string[] = [];
 for await (const msg of query({
-  prompt: one('Thời tiết TP.HCM hôm nay thế nào?'),
+  prompt: one("What's the weather like in Ho Chi Minh City today?"),
   options: {
-    systemPrompt: `${BASE} Nếu câu hỏi không nằm trong tài liệu nào, hãy tra trên web rồi trả lời ngắn gọn bằng tiếng Việt.`,
+    systemPrompt: `${BASE} If the question isn't covered by any document, look it up on the web and then answer briefly in Vietnamese.`,
     model: 'claude-sonnet-5',
     tools: WEB_TOOLS,
     allowedTools: WEB_TOOLS,
@@ -111,10 +114,10 @@ for await (const msg of query({
     text = typeof m['result'] === 'string' ? m['result'] : '';
   }
 }
-console.log(`   tool: ${calls.join(', ') || '(không)'}`);
+console.log(`   tool: ${calls.join(', ') || '(none)'}`);
 console.log(`   ${((Date.now() - t0) / 1000).toFixed(1)}s · $${cost.toFixed(4)}`);
-console.log(`   nói: ${text.replace(/\s+/g, ' ').slice(0, 220)}`);
+console.log(`   said: ${text.replace(/\s+/g, ' ').slice(0, 220)}`);
 console.log(
-  `\n   Đối chiếu: đường plan→worker hôm nay cho một việc tương đương đo được\n` +
-    `   $0,13–0,14 và 30–40 giây (ca 9 · ca arm-e2e).`,
+  `\n   For comparison: today's plan→worker path for an equivalent task measured\n` +
+    `   $0.13-0.14 and 30-40 seconds (test 9 · arm-e2e test).`,
 );

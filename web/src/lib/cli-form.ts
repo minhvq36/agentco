@@ -1,47 +1,69 @@
 /**
- * TAB "LỆNH" — ÁNH XẠ form ↔ tờ khai CLI. → docs/SPEC-arms.md §16
+ * THE "COMMANDS" TAB — the form ↔ CLI declaration mapping. → docs/SPEC-arms.md §16
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO NÓ RA KHỎI `ArmDialog.tsx` (01/09)                                │
+ * │ WHY IT MOVED OUT OF `ArmDialog.tsx` (01/09)                              │
  * │                                                                          │
- * │ User chốt 31/08: JSON và form là **ánh xạ 1-1 hai chiều**. Một lời hứa    │
- * │ dạng "đi vòng rồi về vẫn thế" chỉ là lời hứa **cho tới khi có test**, và  │
- * │ test không vào được một file `.tsx` đầy React. Ở đây thì vào được:        │
- * │ không import gì, không JSX, chạy thẳng dưới `node --test`.                │
- * │ → test/cli-form.test.ts · [[agentco-detect-fix-pair-scope]]               │
+ * │ The user's call on 31/08: JSON and the form are a **1-to-1 mapping, both │
+ * │ ways**. A promise of the "round-trip and it is unchanged" kind is only a │
+ * │ promise **until there is a test**, and a test cannot reach into a `.tsx` │
+ * │ full of React. It can reach in here: no imports, no JSX, runs directly   │
+ * │ under `node --test`.                                                     │
+ * │ → test/cli-form.test.ts · [[agentco-detect-fix-pair-scope]]              │
  * │                                                                          │
- * │ ⚠ File này **không được import React hay `@/…`** — mất tính chất đó là    │
- * │ mất luôn bộ test, im lặng.                                               │
+ * │ ⚠ This file **must not import React or `@/…`** — losing that property    │
+ * │ loses the test suite, silently.                                          │
+ * │                                                                          │
+ * │ ⚠ …and it cannot import `@i18n` AT RUNTIME either. Measured 03/09: node  │
+ * │ loads this file as raw `.ts`, so every specifier has to resolve to a     │
+ * │ real path on disk — there is no alias, and `src/i18n/index.ts` imports   │
+ * │ `./en.js`, which only exists after a build.                              │
+ * │                                                                          │
+ * │ ⇒ the three functions holding words for a human TAKE `t` AS AN ARGUMENT  │
+ * │ instead. `import type` is fine: node erases it before resolving.         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+
+import type { MessageKey } from '@i18n';
+
+/**
+ * The `t` of `@i18n`, handed in rather than imported — see the box above.
+ *
+ * Typed by `MessageKey`, not `string`, so a misspelt key still fails `tsc` at
+ * the call site exactly as a direct `t()` would.
+ */
+export type Translate = (key: MessageKey) => string;
 
 export interface CliDraft {
   say: string;
   description: string;
-  /** CÚ PHÁP — dòng lệnh tổng quát, `{ô_trống}` là chỗ nhân viên điền. */
+  /** THE SYNTAX — the general command line; `{slot}` is what the employee fills in. */
   line: string;
   /**
-   * ⭐ MỘT LỆNH THẬT CHẠY ĐƯỢC. (user đòi lại 01/09: *"tôi định nó là 1 lệnh
-   * hoàn chỉnh ở sau cú pháp"* — và họ đúng, xem `alignExample`.)
+   * ⭐ ONE REAL, RUNNABLE COMMAND. (the user asked for this back on 01/09: *"I
+   * meant it as one complete command underneath the syntax"* — and they were
+   * right, see `alignExample`.)
    */
   example: string;
   read_only: boolean;
   /**
-   * ⚠ **CHỞ QUA, KHÔNG VẼ** (user 01/09 — xem `SPEC-arms §16v`).
+   * ⚠ **CARRIED THROUGH, NOT RENDERED** (user, 01/09 — see `SPEC-arms §16v`).
    *
-   * `fail_when` là dụng cụ của **người biết CLI của mình**: nó biến một chuỗi
-   * thành lời tuyên "THẤT BẠI" dù tiến trình thoát 0. Người điền form thì không
-   * biết — và placeholder cũ của tôi (`ERROR, FAILED, Traceback`) mời họ gõ đúng
-   * ba chuỗi **hay xuất hiện trong output lành nhất**. ⇒ chỉ soạn ở tab JSON.
+   * `fail_when` is a tool for **someone who knows their own CLI**: it turns a
+   * string into a declaration of "FAILED" even when the process exits 0. Someone
+   * filling in the form does not know that — and my old placeholder (`ERROR,
+   * FAILED, Traceback`) invited them to type the three strings **most likely to
+   * appear in perfectly healthy output**. ⇒ editable on the JSON tab only.
    */
   fail_when: string;
   /**
-   * Tham số đã khai từ JSON — **chở nguyên, không vẽ hết**.
+   * Parameters declared from the JSON — **carried whole, not fully rendered**.
    *
-   * Form chỉ sửa `example` (suy từ dòng ví dụ) và tự thêm/bớt cho khớp ô trống.
-   * `pattern`/`min`/`max`/`allow_dash`/`integer` chỉ soạn được ở tab JSON, nhưng
-   * **phải sống sót một vòng form** — bằng không thì bấm "Về form" là im lặng gỡ
-   * mất một hàng rào người dùng đã dựng. → luật 1-1 hai chiều, user chốt 31/08
+   * The form only edits `example` (derived from the example line) and adds or
+   * removes entries to match the slots. `pattern`/`min`/`max`/`allow_dash`/
+   * `integer` are editable on the JSON tab only, but they **have to survive a
+   * round-trip through the form** — otherwise clicking "Back to form" silently
+   * removes a guard the user put up. → the 1-to-1 rule, the user's call 31/08
    */
   params: Record<string, unknown>[];
 }
@@ -58,45 +80,55 @@ export const blankAct = (): CliDraft => ({
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MẪU CHẠY ĐƯỢC NGAY — một cú bấm, không cần thư mục, không cần cài gì.    │
- * │ (user 01/09: *"chỉ cần click là fill hết chạy được ngay"*)               │
+ * │ A SAMPLE THAT RUNS IMMEDIATELY — one click, no directory, nothing to     │
+ * │ install. (user, 01/09: *"one click should fill it all in and just run"*) │
  * │                                                                          │
- * │ Ba ràng buộc nó phải qua, và cả ba đều đã đo:                            │
- * │  ① `node` chắc chắn có — daemon đang chạy bằng nó.                       │
- * │  ② KHÔNG cần file nào, KHÔNG cần thư mục nào: `-e` mang mã theo mình,    │
- * │     nên `cwd` để trống (rơi về thư mục văn phòng, luôn tồn tại).         │
- * │  ③ CÓ một ô trống `{ten}` — mẫu mà không có tham số thì nó dạy sai một   │
- * │     nửa quan trọng nhất, và ô "Ví dụ" bên dưới sẽ không có gì để nói.    │
+ * │ Three constraints it has to pass, all three measured:                    │
+ * │  ① `node` is certainly present — the daemon is running on it.            │
+ * │  ② NO file needed, NO directory needed: `-e` carries the code with it,   │
+ * │     so `cwd` stays empty (falling back to the office directory, which    │
+ * │     always exists).                                                      │
+ * │  ③ It HAS a `{name}` slot — a sample with no parameter teaches the wrong │
+ * │     half of the most important thing, and the "Example" field below it   │
+ * │     would have nothing to say.                                           │
  * │                                                                          │
- * │ ⚠ `shell:false` ⇒ dấu nháy trong ô Cú pháp là quy ước của `toArgv`, KHÔNG │
- * │ phải cú pháp shell. Mẫu này cố ý có nháy để chỗ đó lộ ra ngay lần đầu.   │
+ * │ ⚠ `shell:false` ⇒ the quotes in the Syntax field are `toArgv`'s          │
+ * │ convention, NOT shell syntax. The sample deliberately contains quotes so │
+ * │ that distinction shows up on the very first try.                         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export const HELLO = `node -e "console.log('Xin chào, ' + process.argv[1])"`;
-export const sampleAct = (): CliDraft => ({
-  say: 'nói xin chào',
-  description:
-    'In ra một lời chào kèm tên được đưa vào. Chỉ in ra màn hình, không đọc và không ghi file nào — chạy lại bao nhiêu lần cũng an toàn.',
-  line: `${HELLO} {ten}`,
-  example: `${HELLO} Alex`,
+/**
+ * A FUNCTION, not a constant: the greeting inside it is translated, and a
+ * module-level constant would freeze whichever language the page loaded with.
+ * Everything outside the greeting is code and is not translated.
+ */
+export const hello = (t: Translate): string =>
+  `node -e "console.log('${t('cliForm.helloGreeting')}' + process.argv[1])"`;
+export const sampleAct = (t: Translate): CliDraft => ({
+  say: t('cliForm.helloSay'),
+  description: t('cliForm.helloDescription'),
+  // The slot NAME is an identifier, so it stays English like `plan_id` and
+  // `max_turns` — only the greeting inside the command is translated.
+  line: `${hello(t)} {name}`,
+  example: `${hello(t)} Alex`,
   read_only: true,
   fail_when: '',
   params: [],
 });
 
 /**
- * Chuỗi đang dán có phải tờ khai CLI không.
+ * Is the pasted string a CLI declaration?
  *
- * ⚠ Chỉ hỏi `type === 'cli'` — **cùng một câu hỏi** `core/cli-arm.ts §isCliArm`
- * hỏi, không phải một luật thứ hai. Nhận theo `type`, không suy theo *"không có
- * `command` cũng không có `url`"*: vắng mặt không phải tín hiệu, và một khối gõ
- * sai không được im lặng bị đọc thành CLI rồi đá sang tab khác.
+ * ⚠ It asks only `type === 'cli'` — **the same question** `core/cli-arm.ts
+ * §isCliArm` asks, not a second rule. Recognised by `type`, never inferred from
+ * *"there is no `command` and no `url`"*: absence is not a signal, and a block
+ * with a typo must not be silently read as CLI and kicked to another tab.
  */
 export function isCliPaste(s: string): boolean {
   return safeJson(s)?.['type'] === 'cli';
 }
 
-/** `JSON.parse` không ném — ô JSON hỏng thì nút phải mờ đi, không phải nổ. */
+/** `JSON.parse` that does not throw — a broken JSON box dims the button, it does not explode. */
 export function safeJson(s: string): Record<string, unknown> | null {
   try {
     const v: unknown = JSON.parse(s);
@@ -107,38 +139,59 @@ export function safeJson(s: string): Record<string, unknown> | null {
 }
 
 /**
- * Tên máy suy từ câu tiếng người — người dùng **không bao giờ gõ `id`**.
+ * A machine name derived from a human sentence — the user **never types an `id`**.
  *
- * Schema đòi `^[a-z][a-z0-9_]*$`, và bắt một người non-code tự nghĩ ra một chuỗi
- * hợp khuôn đó là bắt họ học một luật của MÁY. Họ gõ *"đếm hoá đơn"*, ta ra
- * `dem_hoa_don`.
+ * The schema demands `^[a-z][a-z0-9_]*$`, and asking a non-coder to invent a
+ * string in that shape is asking them to learn a rule that belongs to THE
+ * MACHINE. They type *"đếm hoá đơn"*, we produce `dem_hoa_don`. // i18n-allow-vietnamese: the diacritics are the example
  *
- * ⚠ Bỏ dấu bằng `\p{M}` sau `NFD` chứ không bằng bảng tra tay: gõ thẳng dấu tổ
- * hợp vào `[]` thì nó bám lên dấu ngoặc — nhìn giống hệt, chạy sai. Bài học đã
- * trả tiền một lần ở regex tiếng Việt.
+ * ⚠ Diacritics come off with `\p{M}` after `NFD`, never with a hand-written
+ * table: typing a combining mark straight into a `[]` makes it attach to the
+ * bracket — it looks identical and behaves wrongly. That lesson was paid for once
+ * already on a Vietnamese regex.
  */
 export function slugId(say: string): string {
   const s = say
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
-    .replace(/đ/gi, 'd')
+    .replace(/đ/gi, 'd') // i18n-allow-vietnamese: `đ` survives NFD, so it needs its own rule
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return /^[a-z]/.test(s) ? s : `viec_${s || 'moi'}`;
+  /**
+   * ⚠ THE PREFIX IS CODE, SO IT IS LANGUAGE-NEUTRAL. (changed 03/09)
+   *
+   * It used to be `viec_${s || 'moi'}` — Vietnamese baked into an identifier the
+   * schema, the tool registry and `armHash` all carry. No diacritics, so
+   * `check-language` never saw it.
+   *
+   * ⚠ `id` FEEDS `armHash`, so this is not a free rename: `draftToDecl`
+   * regenerates every `id` from `say`, meaning an affected arm re-saved through
+   * the form becomes a DIFFERENT arm (new hash, old entry orphaned, wires in
+   * `roles/*.yaml` dropped). Nothing on disk changes on its own, and only the
+   * fallback branch is affected — a name that slugifies to something not starting
+   * with `[a-z]`. `đếm hoá đơn` → `dem_hoa_don` never reaches this line. // i18n-allow-vietnamese: repeating the example
+   *
+   * The empty case still yields ONE id for every non-Latin name, so two commands
+   * named in Chinese collide and `dupIds` blocks them. That is the same
+   * non-Latin blind spot as `paths.ts §slugId`, and this rename does not pretend
+   * to fix it.
+   */
+  return /^[a-z]/.test(s) ? s : `job_${s || 'new'}`;
 }
 
 /**
- * Một dòng lệnh → argv.
+ * One command line → argv.
  *
- * ⚠ ĐÂY KHÔNG PHẢI MỘT SHELL, và không được để nó lớn thành shell. Nó chỉ tách
- * theo khoảng trắng, tôn trọng `"…"` và `'…'` — vừa đủ để nhận một dòng người
- * dùng **chép từ chỗ họ đã chạy**. Không `|`, không `&&`, không biến, không
- * `$(…)`: những thứ đó là **cú pháp shell**, mà §16e cấm đi qua shell.
+ * ⚠ THIS IS NOT A SHELL, and it must never be allowed to grow into one. It splits
+ * on whitespace and honours `"…"` and `'…'` — just enough to accept a line the
+ * user **copied from where they already ran it**. No `|`, no `&&`, no variables,
+ * no `$(…)`: those are **shell syntax**, and §16e forbids going through a shell.
  *
- * ⭐ Và vì phép tách có thể đoán sai, **giao diện hiện lại từng mảnh argv** ngay
- * bên dưới. Người dùng THẤY thứ sẽ chạy ⇒ đoán sai thì họ sửa, không có ca hỏng
- * im lặng. Đó là cách duy nhất một phép đoán được phép tồn tại ở đây.
+ * ⭐ And because the split can guess wrong, **the interface shows every argv piece
+ * back** right underneath. The user SEES what will run ⇒ a wrong guess gets
+ * corrected, and nothing breaks silently. That is the only way a guess is allowed
+ * to exist here.
  */
 export function toArgv(line: string): string[] {
   const out: string[] = [];
@@ -169,9 +222,10 @@ export function toArgv(line: string): string[] {
 }
 
 /**
- * argv → một dòng đọc lại được bằng `toArgv`. Nghịch đảo, nên phải chọn đúng
- * loại nháy: bọc bằng `"` trừ khi mảnh có `"` (lúc đó dùng `'`). `toArgv` không
- * hiểu ký tự thoát, nên `JSON.stringify` là SAI ở đây — nó đẻ ra `\"`.
+ * argv → a line `toArgv` can read back. It is the inverse, so the quote has to be
+ * chosen correctly: wrap in `"` unless the piece contains a `"` (then use `'`).
+ * `toArgv` understands no escapes, so `JSON.stringify` is WRONG here — it emits
+ * `\"`.
  */
 export function joinArgv(parts: readonly string[]): string {
   return parts
@@ -182,7 +236,7 @@ export function joinArgv(parts: readonly string[]): string {
     .join(' ');
 }
 
-/** Tên các ô trống trong argv, theo thứ tự xuất hiện, không lặp. */
+/** The slot names in an argv, in order of appearance, without repeats. */
 export function slots(argv: readonly string[]): string[] {
   const out: string[] = [];
   for (const el of argv) {
@@ -193,27 +247,32 @@ export function slots(argv: readonly string[]): string[] {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ⭐ VÍ DỤ: NGƯỜI DÙNG GÕ **CẢ DÒNG LỆNH**, MÁY BÓC RA **TỪNG Ô**.         │
- * │ (user 01/09 đòi lại ô này, và cách hoà hai chốt cũ nằm ở đây)            │
+ * │ ⭐ THE EXAMPLE: THE USER TYPES **A WHOLE COMMAND**, THE MACHINE EXTRACTS │
+ * │ **EACH SLOT**. (the user asked for this field back on 01/09, and this is │
+ * │ where the two earlier decisions are reconciled)                          │
  * │                                                                          │
- * │ Hai chốt trước mặt nhau tưởng là mâu thuẫn:                              │
- * │  · 31/08 — ví dụ phải ở **tầng THAM SỐ**: model không dựng dòng lệnh, nó │
- * │    chỉ điền `{tag}`. Cho nó xem trọn dòng lệnh là bắt nó khớp ngược.     │
- * │    Và đó là hoá đơn LẶP LẠI: prefix mọi lượt, trần 60 ký tự.             │
- * │  · 01/09 — *"1 lệnh real chạy được thì zero shot"*: người dùng **không   │
- * │    kiểm chứng được** một ví dụ rời rạc, nhưng một dòng lệnh thì họ chạy   │
- * │    thử được ngay trong terminal của chính họ.                            │
+ * │ The two decisions look contradictory:                                    │
+ * │  · 31/08 — the example belongs at the **PARAMETER level**: the model does│
+ * │    not assemble a command line, it only fills `{tag}`. Showing it a whole│
+ * │    command line makes it match backwards. And that is a RECURRING bill:  │
+ * │    it sits in the prefix on every turn, capped at 60 characters.         │
+ * │  · 01/09 — *"one real runnable command and it is zero-shot"*: the user   │
+ * │    **cannot verify** a detached example, but they can paste a command    │
+ * │    line into their own terminal right now.                               │
  * │                                                                          │
- * │ ⇒ Không phải chọn một. **Người gõ ở tầng họ kiểm chứng được; model nhận  │
- * │ ở tầng nó điều khiển được.** Ta khớp `run` với dòng ví dụ theo từng mảnh │
- * │ argv rồi rút giá trị ra: `… --thang {thang}` ⨯ `… --thang 8` → `thang=8`.│
+ * │ ⇒ It is not either/or. **The human types at the level they can verify;   │
+ * │ the model receives at the level it controls.** We align `run` with the   │
+ * │ example line piece by argv piece and pull the values out:                │
+ * │ `… --month {month}` ⨯ `… --month 8` → `month=8`.                         │
  * │                                                                          │
- * │ ⚠ Và đây là MỘT PHÉP ĐOÁN, nên nó theo đúng luật của `toArgv`: **giao    │
- * │ diện hiện lại thứ bóc được**. Không khớp ⇒ trả `null` ⇒ màn hình nói     │
- * │ thẳng "ví dụ không khớp cú pháp", chứ KHÔNG âm thầm gán bừa.             │
+ * │ ⚠ And this IS A GUESS, so it follows `toArgv`'s rule: **the interface    │
+ * │ shows what was extracted**. No match ⇒ return `null` ⇒ the screen says   │
+ * │ plainly "the example does not match the syntax", rather than quietly     │
+ * │ assigning something.                                                     │
  * │                                                                          │
- * │ ⚠ Số mảnh phải BẰNG NHAU. Lệch ⇒ ví dụ thuộc về một cú pháp khác (hoặc   │
- * │ họ vừa sửa cú pháp mà quên sửa ví dụ) — đó là tín hiệu, không phải nhiễu.│
+ * │ ⚠ The piece counts must be EQUAL. A mismatch means the example belongs to│
+ * │ a different syntax (or they edited the syntax and forgot the example) —  │
+ * │ that is signal, not noise.                                               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function alignExample(tmpl: readonly string[], ex: readonly string[]): Record<string, string> | null {
@@ -223,13 +282,14 @@ export function alignExample(tmpl: readonly string[], ex: readonly string[]): Re
     const t = tmpl[i]!;
     const e = ex[i]!;
     const found = [...t.matchAll(/\{([a-z0-9_]+)\}/gi)];
-    // Mảnh cố định: phải giống hệt. Khác ⇒ ví dụ không thuộc cú pháp này.
+    // A fixed piece must be identical. Different ⇒ the example is not this syntax.
     if (!found.length) {
       if (t !== e) return null;
       continue;
     }
-    // Hai ô trống trong CÙNG một mảnh (`{a}-{b}`) thì tách được nhưng mập mờ —
-    // bỏ qua, không đoán. Ô nào không bóc được thì đơn giản là không có ví dụ.
+    // Two slots in the SAME piece (`{a}-{b}`) are separable but ambiguous — skip
+    // them rather than guess. A slot that cannot be extracted simply has no
+    // example.
     if (found.length > 1) continue;
     const at = t.indexOf('{');
     const head = t.slice(0, at);
@@ -242,12 +302,13 @@ export function alignExample(tmpl: readonly string[], ex: readonly string[]): Re
 }
 
 /**
- * Tham số SẼ ĐƯỢC LƯU cho một lệnh — ô trống trong argv là NGUỒN SỰ THẬT.
+ * The parameters that WILL BE SAVED for one command — the argv slots are THE
+ * SOURCE OF TRUTH.
  *
- * Người dùng không khai tham số ở đâu cả: họ gõ `{thang}` vào cú pháp, thế là
- * có. Khai ở hai chỗ (một danh sách tham số + một argv) là hai chỗ lệch nhau —
- * và chỗ lệch đó nổ lúc chạy, ở `fillArgv`, bằng câu *"argv có ô trống nhưng
- * khai báo không có tham số đó"*.
+ * The user declares parameters nowhere: they type `{month}` into the syntax and
+ * that is it. Declaring in two places (a parameter list plus an argv) is two
+ * places that drift — and the drift explodes at run time, in `fillArgv`, with
+ * *"the argv has a slot but the declaration has no such parameter"*.
  */
 export function paramsFor(a: CliDraft): Record<string, unknown>[] {
   const argv = toArgv(a.line);
@@ -263,45 +324,52 @@ export function paramsFor(a: CliDraft): Record<string, unknown>[] {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `cwd` LÀ CỦA **CÁNH TAY**, KHÔNG PHẢI CỦA TỪNG LỆNH. (user chốt 01/09)   │
+ * │ `cwd` BELONGS TO **THE ARM**, NOT TO EACH COMMAND. (the user's call      │
+ * │ 01/09)                                                                   │
  * │                                                                          │
- * │   *"chọn tab → thư mục picker → sau đó tất cả danh sách lệnh đều được    │
- * │    thao tác từ văn phòng đó khi được gọi/kích hoạt"*                     │
+ * │   *"pick the tab → the folder picker → after that every command in the   │
+ * │    list operates from that office when it is called"*                    │
  * │                                                                          │
- * │ Schema vẫn để `cwd` ở tầng action (đúng — nó phải mềm hơn giao diện), và │
- * │ ta ghi **cùng một giá trị vào mọi action**. Vì sao đó là đúng chứ không   │
- * │ phải lười: một cánh tay CLI **là một dự án** — nhiều lệnh trên cùng một   │
- * │ thư mục. Hỏi lại thư mục ở mỗi lệnh là hỏi n lần một câu chỉ có một câu   │
- * │ trả lời, và đó chính là chỗ người dùng gõ lệch nhau rồi không hiểu vì sao │
- * │ lệnh thứ ba không thấy file.                                             │
+ * │ The schema still keeps `cwd` at the action level (correct — it has to be │
+ * │ more permissive than the interface), and we write **the same value into  │
+ * │ every action**. Why that is right rather than lazy: a CLI arm **is a     │
+ * │ project** — several commands over one directory. Asking for the folder   │
+ * │ again per command asks one question n times when it has one answer, and  │
+ * │ that is exactly where a user types them differently and then cannot see  │
+ * │ why the third command finds no file.                                     │
  * │                                                                          │
- * │ ⚠ Hệ quả phải tôn trọng: tờ khai gõ tay CÓ THỂ đặt `cwd` khác nhau từng  │
- * │ lệnh. Form **không giữ được** hình đó ⇒ nó phải **từ chối đọc ngược**     │
- * │ (`declToDraft` trả `mixed: true`), không phải im lặng lấy cái đầu tiên.   │
+ * │ ⚠ The consequence has to be respected: a hand-written declaration CAN set│
+ * │ a different `cwd` per command. The form **cannot hold** that shape ⇒ it  │
+ * │ must **refuse to read it back** (`declToDraft` returns `mixed: true`)    │
+ * │ rather than quietly taking the first one.                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 KHÔNG LỌC BỎ LỆNH CÒN TRỐNG. (bug user bắt 01/09, và ĐÃ ĐO)           │
- * │                                                                          │
- * │ Bản trước có `.filter(a => a.say.trim() && toArgv(a.line).length)` để     │
- * │ đầu ra "sạch". Đo được cái giá của nó: form **2 lệnh** → JSON **1         │
- * │ action** → đọc ngược về form còn **1 lệnh**. Bấm *Xem JSON* rồi *← Về     │
- * │ form* là **mất hẳn một dòng, im lặng** — và nút *Dùng cấu hình này* vẫn   │
- * │ sáng vì `cliCount` đếm sau khi lọc.                                       │
- * │                                                                          │
- * │ ⭐ Bộ lọc CHÍNH LÀ bug: nó **xoá dữ liệu người dùng để đầu ra hợp lệ**.   │
- * │ Đó là hàng giả — cấu hình trông hợp lệ vì thứ không hợp lệ đã bị vứt đi,  │
- * │ chứ không phải vì người dùng đã điền xong.                               │
+ * │ 🔴 DO NOT FILTER OUT UNFINISHED COMMANDS. (bug the user caught 01/09,     │
+ * │ and MEASURED)                                                             │
+ * │                                                                           │
+ * │ The previous version had `.filter(a => a.say.trim() &&                    │
+ * │ toArgv(a.line).length)` to keep the output "clean". Its price, measured:  │
+ * │ a form with **2 commands** → JSON with **1 action** → read back into a    │
+ * │ form with **1 command**. Pressing *View JSON* then *← Back to form*       │
+ * │ **loses a whole row, silently** — and the *Use this config* button stayed │
+ * │ lit, because `cliCount` counted after the filter.                         │
+ * │                                                                           │
+ * │ ⭐ The filter IS the bug: it **deletes the user's data so the output      │
+ * │ validates**. That is a forgery — the config looks valid because whatever  │
+ * │ was invalid got thrown away, not because the user finished filling it in. │
  * │ → [[agentco-fallback-throws-away-answers]]                                │
- * │                                                                          │
- * │ ⇒ Xuất **mọi dòng**, kể cả dòng dở. Dòng dở ra tờ khai KHÔNG hợp lệ, và   │
- * │ đó là chuyện tốt: `cliProblems` bắt nó ở giao diện, `parseCliArm` bắt nó  │
- * │ ở cửa. Một tờ khai nói thật rằng nó chưa xong thì mọi cổng phía sau còn   │
- * │ cơ hội làm việc; một tờ khai đã bị dọn sạch thì không.                    │
- * │                                                                          │
- * │ ⚠ `id: ''` khi chưa có tên — KHÔNG phải `slugId('')` (ra `viec_moi`).     │
- * │ Hai dòng trống mà cùng ra `viec_moi` thì `dupIds` sẽ tố *"trùng tên"*     │
- * │ trên hai ô còn chưa gõ gì — một câu lỗi đúng luật nhưng nói sai chuyện.   │
+ * │                                                                           │
+ * │ ⇒ Emit **every row**, unfinished ones included. An unfinished row makes   │
+ * │ an INVALID declaration, and that is a good thing: `cliProblems` catches   │
+ * │ it in the interface, `parseCliArm` catches it at the door. A declaration  │
+ * │ that admits it is not finished leaves every gate behind it able to do its │
+ * │ job; one that has been tidied up does not.                                │
+ * │                                                                           │
+ * │ ⚠ `id: ''` while there is no name — NOT `slugId('')` (which yields        │
+ * │ `job_new`). Two empty rows both yielding `job_new` would have `dupIds`    │
+ * │ shouting *"duplicate name"* over two fields nobody has typed in yet — an  │
+ * │ error that follows the rule and describes the wrong thing.                │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function draftToDecl(
@@ -331,18 +399,22 @@ export function draftToDecl(
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỌI LỆNH ĐỀU PHẢI ĐỦ THÌ MỚI ĐƯỢC ĐI TIẾP. (user chốt 01/09)             │
- * │                                                                          │
- * │   *"khi tôi bấm thêm lệnh, chưa điền gì cả, nút button vẫn sáng"*        │
- * │                                                                          │
- * │ Trả về **theo chỉ số**, không phải một cờ `boolean` chung: nút mờ mà      │
- * │ không có chỗ nào đỏ thì người dùng phải đi dò từng ô. Cùng luật với       │
- * │ `dupIds` — báo tại **ô sửa được**, không báo ở chân màn hình.             │
- * │                                                                          │
- * │ ⚠ Đây là hàng rào THỨ NHẤT trong hai. Luật thật vẫn ở `parseCliArm`       │
- * │ (`server.ts §resolveArm`, cửa CHUNG của nút Thử và nút Xong) — nên đua    │
- * │ tay hay client tự viết đều không lọt. Cái ở đây chỉ để **thấy trước khi   │
- * │ bấm**, và nó cố ý hẹp hơn schema: chỉ hỏi hai ô mà FORM vẽ.               │
+ * │ EVERY COMMAND HAS TO BE COMPLETE BEFORE ANYTHING MOVES ON. (the user's    │
+ * │ call 01/09)                                                               │
+ * │                                                                           │
+ * │   *"I click add command, fill in nothing, and the button is still lit"*   │
+ * │                                                                           │
+ * │ It returns **per index**, not one shared `boolean`: a dimmed button with  │
+ * │ nothing marked red leaves the user hunting field by field. Same rule as   │
+ * │ `dupIds` — report at **the field they can fix**, not at the foot of the   │
+ * │ screen.                                                                   │
+ * │                                                                           │
+ * │ ⚠ This is the FIRST of two fences. The real rule still lives in           │
+ * │ `parseCliArm` (`server.ts §resolveArm`, the SHARED door behind both Test  │
+ * │ and Done) — so neither a race nor a hand-written client gets past it.     │
+ * │ This one exists only to be **seen before the click**, and it is           │
+ * │ deliberately narrower than the schema: it asks about the two fields THE   │
+ * │ FORM draws.                                                               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export interface CliProblem {
@@ -351,28 +423,28 @@ export interface CliProblem {
   say: string;
 }
 
-export function cliProblems(list: readonly CliDraft[]): CliProblem[] {
+export function cliProblems(list: readonly CliDraft[], t: Translate): CliProblem[] {
   const out: CliProblem[] = [];
   list.forEach((a, at) => {
-    if (!a.say.trim()) out.push({ at, field: 'say', say: 'Chưa đặt tên cho lệnh này.' });
-    if (!toArgv(a.line).length) out.push({ at, field: 'line', say: 'Chưa có dòng lệnh nào để chạy.' });
+    if (!a.say.trim()) out.push({ at, field: 'say', say: t('cliForm.noName') });
+    if (!toArgv(a.line).length) out.push({ at, field: 'line', say: t('cliForm.noLine') });
   });
   return out;
 }
 
 /**
- * Thứ SẼ ĐƯỢC LƯU — dùng cho **cả** nút mờ/sáng lẫn lúc bấm.
+ * What WILL BE SAVED — used for **both** the button's lit/dim state and the click.
  *
- * ⚠ Một hàm, không phải hai biểu thức giống nhau: nút mờ theo một phép tính còn
- * lúc bấm lưu theo một phép tính khác là ca "nút sáng mà bấm không ra gì" (hoặc
- * ngược lại, tệ hơn: nút mờ trong khi cấu hình hợp lệ).
+ * ⚠ One function, not two similar-looking expressions: dimming by one computation
+ * while saving by another is the "the button was lit and clicking did nothing"
+ * case (or, worse, the reverse: dimmed while the config is valid).
  *
- * ⚠ `null` = **chưa có gì để lưu**, và nó là một câu trả lời chứ không phải một
- * lỗi. Bản trước ngã về `draftToDecl(list)` khi khối JSON hỏng — tức nút
- * *"Dùng cấu hình này"* **vẫn sáng** trong lúc ô JSON đang đỏ, và bấm vào thì
- * lưu **bản form**, không phải thứ đang hiện trên màn hình. Một fallback vứt mất
- * đúng câu trả lời cần nghe (*"khối này hỏng"*).
- * → [[agentco-fallback-throws-away-answers]]
+ * ⚠ `null` = **there is nothing to save yet**, and that is an answer, not an
+ * error. The previous version fell back to `draftToDecl(list)` when the JSON block
+ * was broken — so *"Use this config"* **stayed lit** while the JSON box was red,
+ * and clicking it saved **the form's version**, not what was on the screen. A
+ * fallback that threw away the one answer that needed hearing (*"this block is
+ * broken"*). → [[agentco-fallback-throws-away-answers]]
  */
 export function cliDecl(
   list: readonly CliDraft[],
@@ -384,22 +456,25 @@ export function cliDecl(
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MÃ LỆNH BỊ TRÙNG — trả về danh sách mã xuất hiện nhiều hơn một lần.      │
- * │ (user hỏi 01/09: *"Điều gì xảy ra nếu id trùng lặp?"*)                   │
- * │                                                                          │
- * │ ĐÃ ĐO: SDK **ném** `Tool a is already registered` ⇒ không có ca nuốt im   │
- * │ lặng. Nhưng nó ném ở `compileCliArm`, tức **lúc bấm Thử**, bằng tiếng Anh │
- * │ nói về "tool" — trong khi người dùng vừa đặt tên hai *lệnh* tiếng Việt.  │
- * │                                                                          │
- * │ 🔴 VÀ NÓ TỚI ĐƯỢC TỪ FORM: người dùng **không bao giờ gõ `id`**, nó do    │
- * │ `slugId(say)` sinh ra ⇒ *"đếm hoá đơn"* và *"đếm hoá đơn!"* ra **cùng     │
- * │ một** mã. Đây không phải ca hiếm của người nghịch JSON.                  │
- * │                                                                          │
- * │ ⚠ VÀ ĐÂY LÀ CHỖ DỄ VÁ SAI TẦNG (user chỉ ra): mã trùng chỉ là **triệu    │
- * │ chứng**; bệnh là **hai lệnh mà nhân viên không phân biệt được**. Nên      │
- * │ đừng tự thêm hậu tố `_2` cho xong — làm thế là giấu một vấn đề vẫn còn    │
- * │ nguyên ở phía model: `does` liệt kê hai dòng y hệt, và nó phải đoán.      │
- * │ ⇒ **Chặn, và báo ở ô TÊN** — chỗ người dùng sửa được.                     │
+ * │ DUPLICATE COMMAND IDS — returns the ids that appear more than once.       │
+ * │ (the user asked on 01/09: *"what happens if two ids collide?"*)           │
+ * │                                                                           │
+ * │ MEASURED: the SDK **throws** `Tool a is already registered` ⇒ there is no │
+ * │ silent-swallow case. But it throws inside `compileCliArm`, i.e. **when    │
+ * │ Test is pressed**, in English, about a "tool" — while the user has just   │
+ * │ named two *commands* in their own language.                               │
+ * │                                                                           │
+ * │ 🔴 AND IT IS REACHABLE FROM THE FORM: the user **never types an `id`**,   │
+ * │ `slugId(say)` generates it ⇒ *"count invoices"* and *"count invoices!"*   │
+ * │ produce **the same** id. This is not a rare case for someone poking at    │
+ * │ JSON.                                                                     │
+ * │                                                                           │
+ * │ ⚠ AND THIS IS EASY TO FIX AT THE WRONG LAYER (the user pointed it out):   │
+ * │ a duplicate id is only a **symptom**; the illness is **two commands the   │
+ * │ employee cannot tell apart**. So do not quietly append a `_2` suffix —    │
+ * │ that hides a problem that is still fully present on the model's side:     │
+ * │ `does` lists two identical lines and it has to guess.                     │
+ * │ ⇒ **Block, and report on the NAME field** — where the user can fix it.    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function dupIds(decl: Record<string, unknown> | null): string[] {
@@ -420,20 +495,23 @@ export function cliCount(decl: Record<string, unknown> | null): number {
 }
 
 /**
- * Tờ khai → bản nháp, cho chiều JSON → form.
+ * Declaration → draft, for the JSON → form direction.
  *
- * ⚠ ĐÍNH CHÍNH 01/09 — bản trước ghi *"ô lạ rơi mất là ĐÚNG"*, và câu đó chỉ
- * đúng với ô **form không biết tới**. Nó KHÔNG đúng với `params`: form biết
- * `params` (nó tự sinh ra chúng từ `{ô trống}`), nhưng chỉ vẽ **một trường** của
- * chúng. Thả rơi `pattern`/`min`/`max`/`allow_dash` ở đây là bấm "Về form" một
- * cái thì im lặng **gỡ mất hàng rào người dùng đã dựng** — đúng lớp
- * [[agentco-fallback-throws-away-answers]]. ⇒ Chở nguyên, ghi đè đúng `example`.
+ * ⚠ CORRECTION 01/09 — the previous text said *"dropping unknown fields is
+ * CORRECT"*, and that is only true of fields **the form does not know about**. It
+ * is NOT true of `params`: the form does know `params` (it generates them from
+ * `{slots}`), it just renders **one field** of them. Dropping
+ * `pattern`/`min`/`max`/`allow_dash` here means one click on "Back to form"
+ * silently **removes a guard the user put up** — exactly
+ * [[agentco-fallback-throws-away-answers]]. ⇒ Carry them whole and overwrite only
+ * `example`.
  *
- * ⚠ `mixed: true` = tờ khai đặt **thư mục khác nhau cho từng lệnh**, thứ form
- * không giữ được (xem `draftToDecl`). Trả cờ chứ không tự chọn hộ: chỗ gọi phải
- * **khoá nút "← Về form"** lại. Im lặng lấy `cwd` của lệnh đầu là đổi chỗ chạy
- * của n−1 lệnh còn lại mà không ai được báo — và với một lệnh ghi dữ liệu thì đó
- * là chạy nhầm thư mục, không phải một lỗi hiển thị.
+ * ⚠ `mixed: true` = the declaration sets **a different directory per command**, a
+ * shape the form cannot hold (see `draftToDecl`). It returns a flag rather than
+ * choosing for the user: the call site has to **lock the "← Back to form"
+ * button**. Quietly taking the first command's `cwd` moves where the other n−1
+ * commands run with nobody told — and for a command that writes data that is
+ * running in the wrong directory, not a display bug.
  */
 export function declToDraft(
   decl: unknown,
@@ -453,9 +531,10 @@ export function declToDraft(
       ? (o['params'] as unknown[]).filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
       : [];
     /**
-     * Dựng lại DÒNG VÍ DỤ bằng cách thay từng ô trống bằng `example` của nó —
-     * nghịch đảo của `alignExample`. Thiếu một ô ⇒ **để trống cả dòng**: một ví
-     * dụ còn `{thang}` nằm giữa thì không phải ví dụ, nó là cú pháp lần hai.
+     * Rebuild THE EXAMPLE LINE by replacing each slot with its `example` — the
+     * inverse of `alignExample`. One slot missing ⇒ **leave the whole line
+     * empty**: an example still carrying a `{month}` in the middle is not an
+     * example, it is the syntax a second time.
      */
     const byName = new Map(params.map((p) => [String(p['name']), p['example']]));
     const need = slots(run);

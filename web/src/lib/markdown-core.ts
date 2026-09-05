@@ -1,22 +1,23 @@
 /**
- * Markdown tối giản — PHẦN THUẦN. Không React, không DOM, không phụ thuộc.
+ * Minimal markdown — THE PURE HALF. No React, no DOM, no dependencies.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO TÁCH KHỎI `markdown.tsx`: ĐỂ KIỂM ĐƯỢC.                          │
+ * │ WHY IT IS SPLIT FROM `markdown.tsx`: SO IT CAN BE TESTED.                │
  * │                                                                          │
- * │ Đây là mảnh code duy nhất trong giao diện có LOGIC PHÂN TÍCH thật, và là │
- * │ mảnh người dùng đã nêu đích danh là "hay bị lỗi, nhất là backtick lồng   │
- * │ nhau". Thứ vừa dễ sai vừa sai âm thầm thì phải có bộ test — mà bộ test   │
- * │ không dựng được nếu logic bị trộn vào file JSX.                          │
+ * │ This is the only piece of the interface with real PARSING LOGIC, and the │
+ * │ piece the user named outright as "the one that keeps breaking, nested    │
+ * │ backticks especially". Something both easy to get wrong and quiet about  │
+ * │ being wrong needs tests — and tests cannot be written while the logic is │
+ * │ stirred into a JSX file.                                                 │
  * │                                                                          │
- * │ Phần render (`markdown.tsx`) thì ngược lại: nó chỉ ánh xạ khối → thẻ,    │
- * │ không có nhánh nào đáng sai, và nhìn bằng mắt là đủ.                     │
+ * │ The rendering half (`markdown.tsx`) is the opposite: it maps block → tag │
+ * │ with no branch worth getting wrong, and looking at it is enough.         │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * → `test/markdown.test.ts` · `web/src/lib/markdown.tsx`
  */
 
-/** Canh cột, đọc từ dòng phân cách: `:---` `:--:` `---:`. */
+/** Column alignment, read from the delimiter row: `:---` `:--:` `---:`. */
 export type Align = 'left' | 'center' | 'right';
 
 export type Block =
@@ -24,64 +25,67 @@ export type Block =
   | { kind: 'heading'; level: number; text: string }
   | { kind: 'table'; head: string[]; rows: string[][]; align: Align[] }
   /**
-   * Danh sách việc cần làm — `- [ ]` / `- [x]`. → SPEC-ui.md
+   * A task list — `- [ ]` / `- [x]`. → SPEC-ui.md
    *
-   * Có kiểu RIÊNG chứ không nhét vào `text`, vì đây đúng là thứ bài 6 sinh ra
-   * ("gộp thành một checklist ngắn") và in nó ra dạng `- [ ] …` nguyên văn thì
-   * người dùng nhận về ký tự thay vì một danh sách đọc được bằng mắt.
+   * It gets its OWN kind rather than being folded into `text`, because this is
+   * exactly what exercise 6 produces ("fold it into a short checklist"), and
+   * printing it back as literal `- [ ] …` hands the user characters instead of a
+   * list they can read at a glance.
    *
-   * `done` là thứ QUAN SÁT ĐƯỢC từ chữ trong file, không phải trạng thái ta
-   * giữ: ô này không bấm được, và đó là chủ ý — file kết quả là thứ nhân viên
-   * viết ra, ngăn Kết quả là cửa sổ ĐỌC. Cho bấm là mở một đường ghi thứ hai
-   * vào cùng một file, và sớm muộn nó lệch với thứ agent vừa ghi.
+   * `done` is OBSERVED from the text in the file, not state we hold: the box is
+   * not clickable, and that is deliberate — the artifact is what the employee
+   * wrote, and the Results panel is a READING window. Making it clickable opens a
+   * second write path onto the same file, and sooner or later it disagrees with
+   * what the agent just wrote.
    */
   | { kind: 'tasks'; items: { done: boolean; text: string }[] }
   | { kind: 'text'; text: string };
 
-/** Một mẩu trong dòng: code span, hoặc văn bản thường. */
+/** One inline piece: a code span, or ordinary text. */
 export type Token = { code: boolean; text: string };
 
 const FENCE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)/;
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
 /**
- * `- [ ] việc` · `* [x] việc` · `+ [X] việc`, thụt lề tuỳ ý.
+ * `- [ ] task` · `* [x] task` · `+ [X] task`, at any indent.
  *
- * ⚠ BẮT BUỘC có khoảng trắng sau `]`. Thiếu nó thì `- [x]abc` cũng khớp, mà
- * chuỗi đó trong văn xuôi kỹ thuật là một tham chiếu, không phải một việc.
+ * ⚠ The space after `]` is REQUIRED. Without it `- [x]abc` matches too, and in
+ * technical prose that string is a reference, not a task.
  *
- * ⚠ Và nội dung phải MỞ ĐẦU BẰNG KÝ TỰ THẬT (`\S`), không phải `.+` — `.` khớp
- * cả khoảng trắng, nên `- [ ]` kèm vài dấu cách thừa ở cuối vẫn lọt và đẻ ra
- * một việc RỖNG. Test bắt đúng ca đó ở vòng đầu, và nó là ca có thật: model
- * xuống dòng sau `]` là chuyện thường.
+ * ⚠ And the content must START WITH A REAL CHARACTER (`\S`), not `.+` — `.`
+ * matches whitespace, so `- [ ]` with a few trailing spaces would pass and yield
+ * an EMPTY task. A test caught that on the first run, and it is a real case: a
+ * model breaking the line right after `]` is ordinary.
  */
 const TASK = /^\s*[-*+]\s+\[([ xX])\]\s+(\S.*)$/;
 
 /**
- * Dòng phân cách của bảng: `|---|:--:|---:|`. Đây là thứ ĐỊNH NGHĨA một bảng.
+ * A table's delimiter row: `|---|:--:|---:|`. This is what DEFINES a table.
  *
- * Một dòng chỉ có dấu `|` thì chưa phải bảng — người dùng gõ "a | b" trong câu
- * là chuyện bình thường. Chỉ khi dòng NGAY SAU là dòng phân cách hợp lệ thì
- * khối đó mới là bảng, đúng luật GFM.
+ * A line merely containing `|` is not a table — people write "a | b" in a
+ * sentence all the time. Only when the line IMMEDIATELY AFTER is a valid
+ * delimiter row does the block become a table, exactly as GFM says.
  */
 const DELIM_CELL = /^:?-{1,}:?$/;
 
-/** Số cột tối đa. Bảng rộng hơn thế gần như chắc chắn là văn bản bị hiểu nhầm. */
+/** Column ceiling. A table wider than this is almost certainly misread prose. */
 const MAX_COLS = 24;
-/** Số hàng tối đa cho một bảng. Vượt thì cắt — bong bóng chat không phải bảng tính. */
+/** Row ceiling for one table. Past it, truncate — a chat bubble is not a spreadsheet. */
 const MAX_ROWS = 500;
 
 /**
- * Cắt một dòng bảng thành các ô.
+ * Split one table row into cells.
  *
- * Bỏ đúng MỘT dấu `|` ở hai đầu (viết `| a | b |` hay `a | b` đều hợp lệ trong
- * GFM), và tôn trọng `\|` — dấu gạch đứng đã thoát là NỘI DUNG, không phải vách
- * ngăn. Thiếu luật thoát đó thì một ô chứa `a\|b` tự tách làm đôi và cả hàng
- * lệch cột so với hàng tiêu đề — tức là cả bảng bị vứt đi ở khâu kiểm cột.
+ * Drops exactly ONE `|` at each end (both `| a | b |` and `a | b` are legal GFM),
+ * and honours `\|` — an escaped pipe is CONTENT, not a wall. Without that escape
+ * rule a cell holding `a\|b` splits itself in two and the whole row falls out of
+ * step with the header — which means the entire table is thrown away at the
+ * column check.
  */
 function splitCells(line: string): string[] {
   let s = line.trim();
   if (s.startsWith('|')) s = s.slice(1);
-  // Cắt `|` cuối, nhưng KHÔNG cắt nếu nó đã được thoát (`\|`).
+  // Drop the trailing `|`, but NOT if it was escaped (`\|`).
   if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
 
   const out: string[] = [];
@@ -105,18 +109,18 @@ function splitCells(line: string): string[] {
 }
 
 /**
- * Dòng này có phải dòng phân cách với ĐÚNG `cols` cột không?
+ * Is this line a delimiter row with EXACTLY `cols` columns?
  *
- * ⚠ ĐÒI CÓ `|` TRONG CHÍNH DÒNG PHÂN CÁCH, và đó không phải thừa. Không có luật
- * này thì hai dòng vô hại sau đây thành một cái bảng một cột:
+ * ⚠ IT DEMANDS A `|` IN THE DELIMITER ROW ITSELF, and that is not redundant.
+ * Without the rule, these two harmless lines become a one-column table:
  *
- *   chọn cà phê | trà sữa
+ *   pick coffee | bubble tea
  *   ---
  *
- * `---` đứng một mình là gạch ngang / tiêu đề kiểu setext — hai thứ bộ phân
- * tích này CỐ Ý không hỗ trợ, nên hôm nay chúng hiện nguyên văn và phải tiếp
- * tục như thế. Luật này miễn phí: bảng từ hai cột trở lên thì dòng phân cách
- * BẮT BUỘC đã có `|` rồi.
+ * A bare `---` is a horizontal rule or a setext heading — two things this parser
+ * DELIBERATELY does not support, so today they render verbatim and must go on
+ * doing so. The rule is free: any table of two columns or more already has a `|`
+ * in its delimiter row.
  */
 function delimAlign(line: string, cols: number): Align[] | undefined {
   if (!line.includes('-') || !line.includes('|')) return undefined;
@@ -131,36 +135,38 @@ function delimAlign(line: string, cols: number): Align[] | undefined {
 }
 
 /**
- * LƯỢT KHỐI — quét theo DÒNG.
+ * THE BLOCK PASS — scans LINE BY LINE.
  *
- * Fence phải xong hẳn TRƯỚC khi bất kỳ luật inline nào chạy. Đây là thứ tự
- * quyết định cả bài toán: làm ngược lại thì `**` nằm trong khối code sẽ bị bôi
- * đậm, và đó đúng là lớp lỗi mà cách viết "nối nhiều .replace()" luôn dẫm phải.
+ * Fences must be fully resolved BEFORE any inline rule runs. That ordering is the
+ * whole problem: do it the other way round and a `**` inside a code block gets
+ * bolded, which is exactly the failure class that "chain a few .replace() calls"
+ * implementations always walk into.
  *
- * ⚠ CỐ Ý KHÔNG hỗ trợ khối code thụt 4 dấu cách, và không hỗ trợ danh sách.
- * `helpText()` thụt mô tả lệnh đúng 4 dấu cách; dải bước kế hoạch dùng `  1. `.
- * Bật hai luật đó lên là biến những câu backend dựng sẵn thành khối code xám và
- * danh sách đánh số lại — hỏng đúng thứ đang chạy tốt.
+ * ⚠ DELIBERATELY no 4-space-indented code blocks, and no lists. `helpText()`
+ * indents its command descriptions by exactly 4 spaces; the plan-step strip uses
+ * `  1. `. Turning those two rules on converts sentences the backend assembles
+ * into grey code blocks and renumbered lists — breaking exactly what works today.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BẢNG: "TRỌN BẢNG HOẶC KHÔNG GÌ CẢ" (20/08).                             │
- * │                                                                          │
- * │ Nhận diện bảng đòi BA điều kiện, thiếu một là rơi thẳng về `text` và      │
- * │ hiện nguyên văn y như trước khi có luật này:                              │
- * │                                                                          │
- * │   1. dòng hiện tại có `|`                                                │
- * │   2. dòng NGAY SAU là dòng phân cách (`|---|:--:|`)                      │
- * │   3. số cột của hai dòng đó KHỚP NHAU                                    │
- * │                                                                          │
- * │ Vì sao khắt khe: một bảng vẽ ra mà lệch cột, thiếu ô, hay nuốt mất hàng   │
- * │ cuối là một LỜI KHẲNG ĐỊNH SAI về dữ liệu — người đọc tin vào cái bảng    │
- * │ hơn hẳn tin vào một đống dấu `|`. Hiện nguyên văn thì xấu nhưng không     │
- * │ nói dối, và người dùng nhìn ra ngay là "chỗ này chưa dựng được".          │
- * │                                                                          │
- * │ Hàng THÂN thì ngược lại — được nới: GFM cho phép hàng thiếu ô (đệm rỗng)  │
- * │ và thừa ô (cắt bớt). Ràng buộc chặt đặt ở chỗ QUYẾT ĐỊNH "đây có phải     │
- * │ bảng không"; sau khi đã quyết rồi thì một hàng lệch không đáng để vứt cả  │
- * │ bảng đi.                                                                  │
+ * │ TABLES: "THE WHOLE TABLE OR NOTHING" (20/08).                             │
+ * │                                                                           │
+ * │ Recognising a table demands THREE conditions; miss one and it falls       │
+ * │ straight back to `text` and renders verbatim, exactly as it did before    │
+ * │ this rule existed:                                                        │
+ * │                                                                           │
+ * │   1. the current line contains `|`                                        │
+ * │   2. the line IMMEDIATELY AFTER is a delimiter row (`|---|:--:|`)         │
+ * │   3. the two lines' column counts MATCH                                   │
+ * │                                                                           │
+ * │ Why so strict: a table drawn with columns out of step, a missing cell, or │
+ * │ a swallowed last row is a FALSE ASSERTION about data — a reader trusts a  │
+ * │ table far more than a pile of `|` characters. Verbatim is ugly but does   │
+ * │ not lie, and the user sees at once that "this bit didn't render".         │
+ * │                                                                           │
+ * │ BODY rows are the opposite — they are forgiving: GFM allows a short row   │
+ * │ (pad with empties) and a long one (truncate). The strict constraint       │
+ * │ belongs at the DECISION "is this a table"; once that is settled, one      │
+ * │ ragged row is not worth throwing the whole table away.                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function blocksOf(src: string): Block[] {
@@ -169,12 +175,13 @@ export function blocksOf(src: string): Block[] {
   let text: string[] = [];
 
   const flush = (): void => {
-    // Khối CHỈ CÓ khoảng trắng thì bỏ hẳn, đừng đẩy xuống cho tầng render tự lo.
+    // A block that is ONLY whitespace is dropped here, not passed down for the
+    // renderer to deal with.
     //
-    // Chuỗi rỗng `''.split('\n')` ra `['']` — tức là văn bản rỗng vẫn sinh một
-    // khối. Tầng render hiện đang lọc nó, nhưng bắt MỌI người gọi phải nhớ điều
-    // đó là cách để một ngày nào đó ai đó quên, rồi một bong bóng chat trống
-    // trơn hiện ra mà không ai giải thích được nó từ đâu.
+    // `''.split('\n')` yields `['']` — so empty text still produces a block. The
+    // renderer does filter it today, but requiring EVERY caller to remember that
+    // is how, one day, someone forgets and an empty chat bubble appears that
+    // nobody can explain.
     const joined = text.join('\n');
     if (joined.trim()) out.push({ kind: 'text', text: joined });
     text = [];
@@ -189,9 +196,9 @@ export function blocksOf(src: string): Block[] {
       const marker = fence[2]!;
       const body: string[] = [];
       i++;
-      // Fence KHÔNG ĐÓNG thì nuốt tới hết văn bản — đúng hành vi CommonMark, và
-      // đúng thứ ta muốn ở đây: model bị cắt giữa chừng hay để hở một fence, mà
-      // coi nó là văn bản thường thì cả phần đuôi hiện sai kiểu.
+      // An UNCLOSED fence swallows the rest of the text — CommonMark's behaviour,
+      // and the right one here: a model cut off mid-answer, or one that leaves a
+      // fence open, would otherwise have its whole tail rendered as prose.
       for (; i < lines.length; i++) {
         const close = /^\s*(`{3,}|~{3,})\s*$/.exec(lines[i]!);
         if (close && close[1]!.length >= marker.length && close[1]![0] === marker[0]) break;
@@ -208,25 +215,26 @@ export function blocksOf(src: string): Block[] {
       continue;
     }
 
-    // BẢNG — kiểm trước khi gom vào văn bản, nhưng chỉ khi cả ba điều kiện đủ.
-    // Không đủ thì `continue` KHÔNG chạy và dòng rơi xuống `text.push` như cũ.
+    // TABLE — checked before the line joins the text buffer, but only when all
+    // three conditions hold. If they do not, the `continue` never runs and the
+    // line falls through to `text.push` exactly as before.
     if (line.includes('|')) {
       const head = splitCells(line);
-      // Bảng MỘT CỘT là hợp lệ và có thật (một danh sách có tiêu đề). Cửa chặn
-      // ca giả nằm ở `delimAlign`, không nằm ở số cột.
+      // A ONE-COLUMN table is legal and real (a list with a heading). The guard
+      // against false positives lives in `delimAlign`, not in the column count.
       const align =
         head.length <= MAX_COLS ? delimAlign(lines[i + 1] ?? '', head.length) : undefined;
       if (align) {
         flush();
         const rows: string[][] = [];
         let j = i + 2;
-        // Ăn tới dòng đầu tiên KHÔNG có `|`. Dòng trắng cũng dừng — nó là ranh
-        // giới đoạn văn, và một bảng nối qua dòng trắng là hai bảng khác nhau.
+        // Consume up to the first line WITHOUT a `|`. A blank line stops it too —
+        // that is a paragraph boundary, and a table spanning one is two tables.
         for (; j < lines.length && rows.length < MAX_ROWS; j++) {
           const row = lines[j]!;
           if (!row.includes('|') || !row.trim()) break;
           const cells = splitCells(row);
-          // Đệm/cắt về đúng số cột của tiêu đề — xem khối chú thích ở trên.
+          // Pad or truncate to the header's column count — see the box above.
           while (cells.length < head.length) cells.push('');
           rows.push(cells.slice(0, head.length));
         }
@@ -237,14 +245,14 @@ export function blocksOf(src: string): Block[] {
     }
 
     /**
-     * DANH SÁCH VIỆC — gom các dòng `- [ ]` / `- [x]` LIỀN NHAU thành một khối.
+     * TASK LIST — gather ADJACENT `- [ ]` / `- [x]` lines into one block.
      *
-     * Kiểm SAU bảng và SAU heading: một dòng `- [x]` không chứa `|` và không bắt
-     * đầu bằng `#`, nên thứ tự ở đây không tranh chấp — nhưng giữ nó cuối cùng
-     * để mọi cấu trúc "mạnh" hơn vẫn được xét trước.
+     * Checked AFTER tables and AFTER headings: a `- [x]` line contains no `|` and
+     * does not start with `#`, so nothing here actually competes — but it stays
+     * last so every "stronger" structure is considered first.
      *
-     * Dừng ở dòng đầu tiên KHÔNG phải việc cần làm, kể cả dòng trắng: một danh
-     * sách nối qua dòng trắng là hai danh sách khác nhau — cùng luật với bảng.
+     * Stops at the first line that is NOT a task, blank lines included: a list
+     * spanning a blank line is two lists — the same rule as tables.
      */
     const firstTask = TASK.exec(line);
     if (firstTask) {
@@ -269,33 +277,35 @@ export function blocksOf(src: string): Block[] {
 }
 
 /**
- * Tin nhắn này có bảng dựng được không?
+ * Does this message contain a table that will actually render?
  *
- * Ô chat dùng nó để chọn bề rộng bong bóng: bảng là thứ DUY NHẤT trong markdown
- * mà bề rộng mang thông tin, nên tin có bảng được nới ra hết panel còn tin
- * thường vẫn giữ 92% (một bong bóng full width cho câu "Đã xong." trông sai).
+ * The chat panel uses it to pick the bubble width: a table is the ONLY thing in
+ * markdown whose width carries information, so a message with one gets the full
+ * panel while an ordinary message stays at 92% (a full-width bubble for "Done."
+ * looks wrong).
  *
- * Đi qua ĐÚNG `blocksOf`, không phải một regex riêng: hai cách nhận diện song
- * song thì kiểu gì cũng có ngày lệch nhau — bong bóng nới rộng cho một "bảng"
- * mà tầng vẽ lại quyết định hiện nguyên văn. Phân tích lại một tin nhắn chat là
- * vài chục micro giây, rẻ hơn nhiều so với một lớp lỗi.
+ * It goes through `blocksOf` ITSELF, not a separate regex: two parallel
+ * detections drift apart sooner or later — a bubble widened for a "table" the
+ * renderer then decides to print verbatim. Re-parsing one chat message costs tens
+ * of microseconds, far less than a class of bug.
  */
 export function hasTable(src: string): boolean {
   return blocksOf(src).some((b) => b.kind === 'table');
 }
 
 /**
- * LƯỢT INLINE 1 — bóc code span ra khỏi văn bản. Chạy TRƯỚC bold.
+ * INLINE PASS 1 — lift code spans out of the text. Runs BEFORE bold.
  *
- * Luật CommonMark: mở bằng một run **N** backtick thì đóng bằng một run **đúng
- * N** — run dài hơn KHÔNG tính là đóng. Nhờ đúng một luật này mà ca "lồng nhau"
- * tự chạy đúng, không cần trường hợp riêng nào:
+ * The CommonMark rule: a run of **N** backticks opens, and only a run of
+ * **exactly N** closes it — a longer run does NOT count as a close. That single
+ * rule makes the "nested" case work with no special handling at all:
  *
- *   `` `a` ``   → hai backtick mở, `a` bên trong là VĂN BẢN, hai backtick đóng
+ *   `` `a` ``   → two backticks open, the inner `a` is TEXT, two backticks close
  *
- * ⚠ Run không tìm được cặp đóng thì in NGUYÊN VĂN rồi đi tiếp. Đây là ca hỏng
- * hay gặp nhất trong các bản tự viết khác: chúng coi backtick lẻ là mở rồi nuốt
- * sạch phần còn lại vào một khối code — người dùng thấy "lệch format từ đó trở đi".
+ * ⚠ A run with no matching close prints VERBATIM and the scan carries on. This is
+ * the most common failure in other hand-written versions: they treat a lone
+ * backtick as an opener and swallow the whole remainder into a code block — the
+ * user sees "the formatting goes wrong from there on".
  */
 export function tokenize(src: string): Token[] {
   const out: Token[] = [];
@@ -317,7 +327,7 @@ export function tokenize(src: string): Token[] {
     let n = 0;
     while (src[i + n] === '`') n++;
 
-    // Tìm run đóng có ĐỘ DÀI ĐÚNG BẰNG n.
+    // Find a closing run of EXACTLY length n.
     let j = i + n;
     let close = -1;
     while (j < src.length) {
@@ -341,8 +351,8 @@ export function tokenize(src: string): Token[] {
     }
 
     flush();
-    // CommonMark bỏ đúng MỘT dấu cách hai đầu — đó là cách viết một backtick
-    // trần (`` ` ``) mà không bị hiểu nhầm thành dấu mở.
+    // CommonMark strips exactly ONE space at each end — that is how a bare
+    // backtick (`` ` ``) is written without being read as an opener.
     let inner = src.slice(i + n, close);
     if (inner.length > 2 && inner.startsWith(' ') && inner.endsWith(' ')) inner = inner.slice(1, -1);
     out.push({ code: true, text: inner });
@@ -353,7 +363,7 @@ export function tokenize(src: string): Token[] {
   return out;
 }
 
-/** Một mẩu đã ghép xong `**`: `bold` cho biết có bọc `<strong>` không. */
+/** A piece with `**` already resolved: `bold` says whether it wears a `<strong>`. */
 export interface Span {
   code: boolean;
   bold: boolean;
@@ -361,18 +371,19 @@ export interface Span {
 }
 
 /**
- * LƯỢT INLINE 2 — ghép `**` TRÊN CHUỖI TOKEN, không phải trên chuỗi ký tự.
+ * INLINE PASS 2 — match `**` OVER THE TOKEN LIST, not over the characters.
  *
- * Nhờ chạy trên token mà hai ca cùng đúng một lúc:
+ * Running on tokens is what makes both cases right at once:
  *
- *   **xem `bao-hanh.md` nhé**   → đậm ôm trọn cả code span bên trong   ✅
- *   `a ** b`                    → `**` nằm trong code, không tới đây   ✅
+ *   **see `warranty.md` please**  → bold wraps the code span inside it       ✅
+ *   `a ** b`                      → the `**` is inside code and never gets   ✅
+ *                                    here
  *
- * `**` lẻ in nguyên văn: người dùng gõ "2**3", hay một câu trả lời bị cắt giữa
- * chừng, không được làm hỏng phần còn lại của tin nhắn.
+ * A lone `**` prints verbatim: someone typing "2**3", or an answer cut off
+ * mid-sentence, must not wreck the rest of the message.
  *
- * Trả về danh sách phẳng để tầng render chỉ việc ánh xạ 1-1 sang thẻ — mọi
- * quyết định đã chốt xong ở đây, nơi kiểm được.
+ * Returns a flat list so the renderer only has to map 1-to-1 onto tags — every
+ * decision is settled here, where it can be tested.
  */
 export function spansOf(src: string): Span[] {
   const tokens = tokenize(src);
@@ -394,7 +405,7 @@ export function spansOf(src: string): Span[] {
       const open = rest.indexOf('**');
       if (open === -1) break;
 
-      // Cặp đóng nằm trong CÙNG token — ca thường gặp nhất.
+      // The closer is in the SAME token — by far the common case.
       const same = rest.indexOf('**', open + 2);
       if (same !== -1) {
         push(false, false, rest.slice(0, open));
@@ -403,8 +414,8 @@ export function spansOf(src: string): Span[] {
         continue;
       }
 
-      // Không có ở đây — tìm ở token VĂN BẢN phía sau, ôm trọn mọi code span
-      // nằm giữa. Đây là ca `**xem `x.md` nhé**`.
+      // Not here — look in a later TEXT token, wrapping every code span in
+      // between. This is the `**see `x.md` please**` case.
       let end = -1;
       for (let u = t + 1; u < tokens.length; u++) {
         const nxt = tokens[u]!;
@@ -413,7 +424,7 @@ export function spansOf(src: string): Span[] {
           break;
         }
       }
-      if (end === -1) break; // `**` lẻ → để nguyên văn ở nhánh dưới
+      if (end === -1) break; // lone `**` → left verbatim by the branch below
 
       push(false, false, rest.slice(0, open));
       push(false, true, rest.slice(open + 2));

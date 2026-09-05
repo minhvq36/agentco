@@ -1,8 +1,8 @@
 /**
- * Style của canvas. Để ở CSS thuần chứ không phải Tailwind trong JSX vì:
- * lúc kéo node, ta gắn/gỡ CLASS bằng JS (`is-working`, `is-dragging`) — CSS lo
- * phần hiển thị, JS không phải đụng tới style nào. Không có lớp nào ở đây kích
- * hoạt một lần render React.
+ * Canvas styling. Plain CSS rather than Tailwind in the JSX because while a node
+ * is being dragged we add and remove CLASSES from JS (`is-working`,
+ * `is-dragging`) — CSS owns the appearance and JS never touches a style. Nothing
+ * in here costs a React render.
  */
 
 .canvas-root {
@@ -38,12 +38,13 @@
   stroke-width: 2;
 }
 /*
- * Hai KHO dùng chung một ngôn ngữ hình: viền nét đứt = "không nối dây được".
+ * The two STORES share one visual language: a dashed border means "nothing wires
+ * to this".
  *
- * Đây không phải trang trí. Node agent có cổng và có dây, nên viền liền đọc ra
- * "thứ này tham gia vào quan hệ". Kho tri thức và tủ tài liệu là MÔI TRƯỜNG —
- * ai cũng với tới được, không ai phải nối tới. Nét đứt nói đúng điều đó trước
- * khi người dùng kịp thử kéo một sợi dây và thất bại.
+ * That is not decoration. An agent node has ports and wires, so a solid border
+ * reads as "this thing takes part in a relationship". The knowledge store and the
+ * library are the ENVIRONMENT — everyone reaches them, nobody connects to them.
+ * The dash says so before the user has time to drag a wire and fail.
  */
 .node-knowledge .node-box,
 .node-library .node-box {
@@ -59,14 +60,19 @@
   fill: var(--color-muted);
   font-size: 12px;
 }
+/* The sub-line when it is carrying the reason the border went red. */
+.node-sub-alert {
+  fill: var(--color-danger);
+  font-weight: 600;
+}
 .node-av {
   font-size: 20px;
 }
 /*
-  Hình cánh tay (logo hãng hoặc icon theo loại) — KHÔNG phải emoji, nên nó cần
-  được nói màu. `color` chứ không phải `fill`: logo hãng tô bằng `fill`, còn
-  icon lucide vẽ bằng `stroke`; cả hai đều đọc `currentColor`, nên một dòng
-  phục vụ cả hai. → `ArmIcon.tsx`
+  The arm mark (a vendor logo, or an icon picked by kind) is NOT an emoji, so it
+  has to be told its colour. `color`, not `fill`: vendor logos paint with `fill`
+  and lucide icons draw with `stroke`, but both read `currentColor`, so one
+  declaration serves both. → `ArmIcon.tsx`
 */
 .node-av-mark {
   color: var(--color-ink);
@@ -106,6 +112,27 @@
   stroke: var(--color-danger);
   stroke-dasharray: 3 3;
 }
+/*
+ * A REFUSED credential. Solid red, and a faint red ground so the node reads as
+ * "not green" from across the diagram without having to be read.
+ *
+ * Solid, not dashed: dashed already means "nothing is wired here" (the stores)
+ * and "this config points at something absent" (`is-missing`). This arm exists
+ * and is wired correctly — a person simply has to sign in again. Reusing the
+ * dash would say the wrong thing in the existing vocabulary of the diagram.
+ *
+ * Does NOT animate. It can sit there for days until someone deals with it, and
+ * a permanent animation on the canvas is exhausting to work next to.
+ */
+.node.is-keydead .node-box {
+  fill: var(--color-danger-soft);
+  stroke: var(--color-danger);
+  stroke-width: 2;
+}
+/* Selection still has to win: it is the one thing that follows the cursor. */
+.node.is-keydead.is-selected .node-box {
+  stroke: var(--color-accent);
+}
 .node.is-selected .node-box {
   stroke: var(--color-accent);
   stroke-width: 2.5;
@@ -115,7 +142,7 @@
   stroke-width: 3;
 }
 
-/* ── cổng nối */
+/* ── ports */
 .port {
   fill: var(--color-panel);
   stroke: var(--color-wire);
@@ -135,7 +162,7 @@
   stroke: var(--color-accent);
 }
 
-/* ── dây */
+/* ── wires */
 .wire {
   fill: none;
   stroke: var(--color-wire);

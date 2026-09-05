@@ -1,8 +1,9 @@
 @import 'tailwindcss';
 
 /**
- * Bảng màu giữ nguyên tinh thần bản v0: giấy ấm, mực nâu đen, nhấn cam đất.
- * Tailwind v4 khai token bằng @theme — không cần tailwind.config.js.
+ * The palette keeps the spirit of the v0 build: warm paper, brown-black ink, an
+ * earthy orange accent. Tailwind v4 declares tokens with @theme — no
+ * tailwind.config.js needed.
  */
 @theme {
   --color-paper: #fbfaf8;
@@ -16,25 +17,27 @@
   --color-warn: #b4832a;
   --color-danger: #c0392b;
   /**
-   * Nền cho thông báo lỗi. Đủ đậm để nhìn phát biết là lỗi, đủ nhạt để chữ
-   * `ink` vẫn đọc được trên đó — lỗi phải NÓI được chuyện gì xảy ra, mà muốn
-   * nói được thì trước hết phải đọc được.
+   * The ground for an error message. Saturated enough to read as an error at a
+   * glance, pale enough that `ink` on top of it stays legible — an error has to
+   * SAY what happened, and to say anything it first has to be readable.
    */
   --color-danger-soft: #fbe6e2;
   --color-grid: #ece7de;
   --color-wire: #cbc4b8;
 
   /**
-   * Ô dán JSON — tên trường vs giá trị. → `lib/json-paint.ts` · `ArmDialog §JsonBox`
+   * The JSON paste box — field names vs values. → `lib/json-paint.ts` ·
+   * `ArmDialog §JsonBox`
    *
-   * ⚠ PHẢI là token của theme, không phải mã màu viết thẳng trong class. Bản
-   * đầu 31/08 dùng `text-[#2f6f6a]` cứng và user báo ngay *"sao mà mờ quá"*:
-   * màu cố định thì ở theme tối nó là chữ tối trên nền tối. Ở đây mỗi màu có
-   * hai giá trị, và khối `prefers-color-scheme: dark` bên dưới đổi cả hai.
+   * ⚠ These MUST be theme tokens, not colour codes written straight into a class.
+   * The first cut on 31/08 hard-coded `text-[#2f6f6a]` and the user said so at
+   * once — *"why is it so washed out"*: a fixed colour is dark text on a dark
+   * ground under the dark theme. Here each colour has two values, and the
+   * `prefers-color-scheme: dark` block below swaps both.
    *
-   * ⚠ Và chúng phải ĐẬM NGANG `ink`. "Trung tính, không nổi bật" (user chốt) là
-   * nói về ĐỘ RỰC, không phải độ tương phản — chữ nhạt hơn chữ thường thì đọc
-   * ra là "bị mờ", không đọc ra là "trung tính".
+   * ⚠ And they must be AS STRONG AS `ink`. "Neutral, not attention-grabbing"
+   * (the user's call) is about SATURATION, not contrast — text paler than normal
+   * text reads as "greyed out", not as "neutral".
    */
   --color-jkey: #1f5f57;
   --color-jval: #6b3f1d;
@@ -68,7 +71,7 @@ body,
   height: 100%;
 }
 
-/* Bật `light-dark()` — màu của agent trong log phụ thuộc vào nó. */
+/* Turns `light-dark()` on — the per-agent colour in the log depends on it. */
 :root {
   color-scheme: light dark;
 }
@@ -83,15 +86,15 @@ body {
   overflow: hidden;
 }
 
-/* Bố cục canvas hoàn toàn do transform điều khiển; không cho gì cuộn ngoài ý muốn. */
+/* Canvas layout is driven entirely by transforms; nothing gets to scroll by accident. */
 * {
   box-sizing: border-box;
 }
 
 /**
- * Hai animation của canvas. Để ở CSS chứ không ở JS: chúng chạy trên compositor,
- * không tốn một frame JS nào — tiêu chí "Hiệu năng" đòi 60fps kể cả lúc công ty
- * đang chạy và có dây đang nhấp nháy.
+ * The canvas's two animations. In CSS rather than JS: they run on the compositor
+ * and cost no JS frame at all — the "Performance" bar asks for 60fps even while
+ * the company is working and wires are pulsing.
  */
 @keyframes wire-flow {
   to {
@@ -112,42 +115,45 @@ body {
   animation: soft-pulse 1.5s ease-in-out infinite;
 }
 
-/* Chỉ hiện viền focus khi điều hướng bằng bàn phím. */
+/* Show the focus ring only for keyboard navigation. */
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
 /**
- * Ô NHẬP: MỘT vòng focus, không phải hai.
+ * INPUTS: ONE focus ring, not two.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BUG ĐÃ SỬA (20/08): "viền ô chat khi được chọn bị dày và thô".           │
- * │                                                                          │
- * │ Ô nhập nhận HAI dấu focus chồng lên nhau: `focus:border-accent` ở         │
- * │ `ui/misc.tsx` cho viền 1px cam, cộng luật `:focus-visible` ngay trên cho  │
- * │ một vòng 2px cam CÁCH VIỀN 2px. Hai đường cam song song, giữa là một khe  │
- * │ nền — mắt đọc ra thành một viền dày ~5px.                                │
- * │                                                                          │
- * │ 🔥 `misc.tsx` ĐÃ CÓ `focus:outline-none`, và nó không có tác dụng. Lý do  │
- * │ không phải specificity mà là CASCADE LAYER: Tailwind v4 đặt utility trong │
- * │ `@layer utilities`, còn file này viết ngoài mọi layer — mà style không    │
- * │ nằm trong layer thắng mọi style nằm trong layer, bất kể specificity. Nên  │
- * │ luật trên đè được `focus:outline-none`, và người viết dòng đó tin rằng    │
- * │ mình đã tắt xong. Bài học: đã dùng `@layer` thì mọi CSS trần trong file   │
- * │ này là một luật ƯU TIÊN CAO NHẤT, phải viết như thế.                      │
+ * │ FIXED BUG (20/08): "the selected chat box border is thick and coarse".    │
+ * │                                                                           │
+ * │ The input carried TWO focus marks stacked on each other:                  │
+ * │ `focus:border-accent` in `ui/misc.tsx` paints a 1px orange border, and    │
+ * │ the `:focus-visible` rule just above adds a 2px orange ring 2px AWAY      │
+ * │ FROM IT. Two parallel orange lines with a strip of ground between them —  │
+ * │ the eye reads one ~5px border.                                            │
+ * │                                                                           │
+ * │ 🔥 `misc.tsx` ALREADY HAS `focus:outline-none`, and it does nothing. Not  │
+ * │ specificity — CASCADE LAYERS: Tailwind v4 puts utilities in `@layer       │
+ * │ utilities` while this file is written outside every layer, and an         │
+ * │ unlayered style beats every layered one regardless of specificity. So the │
+ * │ rule above overrode `focus:outline-none`, and whoever wrote that line     │
+ * │ believed it was already off. Lesson: once `@layer` is in play, every bare │
+ * │ CSS rule in this file is a HIGHEST-PRIORITY rule and must be written as   │
+ * │ one.                                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Thay bằng viền đổi màu + quầng mềm SÁT viền: không khe hở thì không có hai
- * đường, và 1px viền + 3px quầng vẫn thấy rõ hơn hẳn 1px viền trơn — tiêu chí
- * dễ nhìn cho người điều hướng bằng bàn phím không bị mua rẻ ở đây.
+ * Replaced with a border that changes colour plus a soft halo TIGHT AGAINST it:
+ * no gap means no second line, and 1px border + 3px halo is still far more
+ * visible than a plain 1px border — legibility for anyone navigating by keyboard
+ * is not bought cheaply here.
  *
- * `color-mix` chứ không phải `--color-accent-soft`: ở nền tối `accent-soft` là
- * nâu sẫm, đặt trên `panel` thì gần như biến mất. Trộn từ chính `accent` thì
- * quầng luôn cùng sắc với viền và luôn thấy được ở CẢ hai bảng màu.
+ * `color-mix`, not `--color-accent-soft`: on the dark ground `accent-soft` is a
+ * deep brown that all but vanishes on top of `panel`. Mixing from `accent`
+ * itself keeps the halo the same hue as the border and visible in BOTH palettes.
  *
- * Nút bấm CỐ Ý không nằm trong luật này: chúng là nền đặc, một vòng outline
- * bao quanh đọc ra đúng là "đang được chọn", không phải một viền dày.
+ * Buttons are DELIBERATELY outside this rule: they are solid fills, and an
+ * outline ring around one reads exactly as "selected", not as a thick border.
  */
 :where(input, textarea, select):focus-visible {
   outline: none;

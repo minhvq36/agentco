@@ -1,296 +1,277 @@
-# 10 use case — thước đo hệ thống, và phôi cho template văn phòng
+# 10 use cases — the system's measuring stick, and blanks for office templates
 
-**Ngày:** 15/08/2026 · **Mục đích:** đo xem hệ thống phục vụ được tới đâu, không phải để quảng cáo.
+**Date:** 2026-08-15 · **Purpose:** to measure how far the system actually goes, not to advertise it.
 
-Mỗi use case viết ở dạng **một văn phòng** (`offices/<mã>/`), nên khi nó chạy được thì nó **đã là** một template — zip thư mục lại là xong. Đó là lý do file này quan trọng hơn một danh sách ý tưởng: nó vừa là đề bài kiểm tra, vừa là sản phẩm.
+Each use case is written as **an office** (`offices/<code>/`), so once it works it **already is** a template — zip the folder and you're done. That's why this file matters more than a list of ideas: it's both the exam question and the product.
 
-Mỗi mục có đúng bốn phần: **ai đau ở đâu · dựng thế nào · nó kiểm thứ gì · hệ thống hiện thiếu gì.** Phần thứ tư mới là phần đáng đọc.
+Each entry has exactly four parts: **who hurts where · how it's built · what it tests · what the system is currently missing.** The fourth part is the one worth reading.
 
 ---
 
-## Bảng tổng
+## Summary table
 
-| # | Văn phòng | Kiểm điều gì mà cái khác không kiểm | Sẵn sàng? |
+| # | Office | Tests something nothing else tests | Ready? |
 |---|---|---|---|
-| 1 | Xưởng nội dung | DAG song song thật, tích luỹ giọng văn | ✅ chạy được hôm nay |
-| 2 | Hỗ trợ khách hàng | chất lượng truy xuất tri thức HOT/COLD | ✅ |
-| 3 | Sổ sách & hoá đơn | đầu vào là file người dùng, đầu ra phải ĐÚNG số | ⚠ thiếu kiểm chứng |
-| 4 | Theo dõi đối thủ | chạy định kỳ, so sánh với lần trước | ❌ chưa có lịch |
-| 5 | Bản địa hoá | nhất quán thuật ngữ xuyên nhiều ca | ✅ |
-| 6 | Rà hợp đồng | tài liệu DÀI hơn context | ❌ chưa có chia nhỏ |
-| 7 | Xưởng bảng tính | tier `eco` có thật sự lãi không | ✅ |
-| 8 | Sàng lọc hồ sơ | nhiều đầu vào cùng lúc, chấm điểm nhất quán | ✅ |
-| 9 | Báo cáo tiến độ | tool `Bash`/`Glob`, đọc repo thật | ✅ |
-| 10 | Trợ lý cá nhân | MCP + secrets + duyệt trước khi hành động | ⚠ thiếu cổng duyệt |
+| 1 | Content workshop | real DAG parallelism, voice accumulation | ✅ works today |
+| 2 | Customer support | HOT/COLD knowledge retrieval quality | ✅ |
+| 3 | Bookkeeping & invoices | input is a user's file, output numbers must be RIGHT | ⚠ missing verification |
+| 4 | Competitor tracking | recurring runs, comparing against the last run | ❌ no scheduler yet |
+| 5 | Localization | terminology consistency across many shifts | ✅ |
+| 6 | Contract review | documents LONGER than context | ❌ no chunking yet |
+| 7 | Spreadsheet workshop | does the `eco` tier actually pay off | ✅ |
+| 8 | Resume screening | many inputs at once, consistent scoring | ✅ |
+| 9 | Progress reports | `Bash`/`Glob` tools, reading a real repo | ✅ |
+| 10 | Personal assistant | MCP + secrets + approval before acting | ⚠ missing an approval gate |
 
 ---
 
-## 1. Xưởng nội dung
+## 1. Content workshop
 
-**Đau:** người làm fanpage/blog một mình mất 2–3 tiếng mỗi bài, và bài thứ 20 vẫn phải nhắc lại "giọng văn của tôi là gì".
+**Pain:** a solo fan-page/blog writer loses 2–3 hours per post, and by post #20 they're still re-explaining "what my voice sounds like."
 
-**Dựng:**
+**Built as:**
 
-| Nhân viên | tier | tools | việc |
+| Employee | tier | tools | job |
 |---|---|---|---|
-| `researcher` | standard | Read, Glob, Grep, WebSearch, WebFetch | tìm tư liệu, ghi file có nguồn |
-| `writer` | standard | Read, Write | viết bản nháp |
-| `reviewer` | eco | Read, Write | soát giọng + lỗi, ghi nhận xét |
+| `researcher` | standard | Read, Glob, Grep, WebSearch, WebFetch | finds material, writes files with sources |
+| `writer` | standard | Read, Write | writes the draft |
+| `reviewer` | eco | Read, Write | checks voice + errors, writes notes |
 
-Charter giữ giọng thương hiệu (≤500 token). Sau vài ca, `knowledge/shared/` tự có "khách hay hỏi X", "đừng dùng từ Y".
+The charter holds the brand voice (≤500 tokens). After a few shifts, `knowledge/shared/` fills up on its own with things like "customers often ask X," "don't use word Y."
 
-**Kiểm:** ba bài viết song song = ba task cùng `step`, không phụ thuộc nhau → đo được cache priming gate có hoạt động không (task đầu trả `cache_write`, hai task sau chỉ `cache_read`). Đây là use case duy nhất tạo được song song thật một cách tự nhiên.
+**Tests:** three posts running in parallel = three tasks in the same `step`, with no dependency between them → measures whether the cache priming gate actually works (the first task pays `cache_write`, the next two only pay `cache_read`). This is the only use case that naturally produces real parallelism.
 
-**Thiếu:** không có. Chạy được hôm nay.
-
----
-
-## 2. Hỗ trợ khách hàng
-
-**Đau:** chủ shop trả lời cùng 20 câu hỏi mỗi ngày, và trả lời sai chính sách của chính mình vì không nhớ.
-
-**Dựng:** một `responder` (eco) + một `librarian` (standard, chỉ chạy khi cần nạp tài liệu mới). Chính sách đổi trả, bảng giá, FAQ nạp vào `knowledge/shared/` dạng node ≤250 token.
-
-**Kiểm:** đây là bài kiểm **truy xuất tri thức**, không phải bài kiểm sinh văn. Câu hỏi "đổi hàng sau 10 ngày được không" phải kéo đúng node chính sách vào COLD mà không kéo 20 node khác. Nếu `KnowledgeStore.cold()` chấm điểm từ khoá không đủ tốt thì use case này lộ ra ngay, còn use case 1 thì không.
-
-**Thiếu:** chưa có Librarian tự chia tài liệu dài thành node — hiện phải tự viết node bằng tay.
+**Missing:** nothing. Works today.
 
 ---
 
-## 3. Sổ sách & hoá đơn cá nhân
+## 2. Customer support
 
-**Đau:** freelancer cuối tháng ngồi phân loại 200 dòng sao kê để biết mình lãi bao nhiêu.
+**Pain:** a shop owner answers the same 20 questions every day, and gets their own policies wrong because they can't remember them.
 
-**Dựng:** `bookkeeper` (eco, Read/Write/Glob) đọc CSV sao kê trong `artifacts/input/`, phân loại, ghi `bao-cao-thang.md` + `phan-loai.csv`.
+**Built as:** one `responder` (eco) + one `librarian` (standard, only runs when new documents need ingesting). Return policy, price list, FAQ get loaded into `knowledge/shared/` as ≤250-token nodes.
 
-**Kiểm:** use case đầu tiên mà **đầu ra sai là sai hẳn**, không phải "chưa hay". Nó kiểm được điều mà văn bản không kiểm được: model có bịa số không.
+**Tests:** this is a **knowledge retrieval** test, not a text-generation test. The question "can I exchange an item after 10 days" has to pull exactly the right policy node into COLD without pulling 20 others in with it. If `KnowledgeStore.cold()`'s keyword scoring isn't good enough, this use case exposes it immediately — use case 1 wouldn't.
 
-**Thiếu — và đây là lỗ hổng thật:** hệ thống hiện **không có cách kiểm chứng con số**. Receipt nói "đã phân loại xong" và ta tin. Cần một cơ chế `verify` chạy bằng **code, không phải LLM** (ví dụ: tổng các nhóm phải bằng tổng sao kê). Chưa có, và đây là thứ nên có trước khi đem hệ thống đụng vào tiền của ai.
-
----
-
-## 4. Theo dõi đối thủ
-
-**Đau:** muốn biết tuần này đối thủ đổi giá gì, ra tính năng gì — nhưng không ai ngồi kiểm thủ công mỗi tuần.
-
-**Dựng:** `watcher` (standard, WebSearch/WebFetch/Write) quét một danh sách URL, ghi `snapshot-<tuần>.md`; `differ` (eco) so với snapshot tuần trước, chỉ báo cái ĐỔI.
-
-**Kiểm:** trí nhớ **xuyên ca**. Mọi use case khác chỉ cần nhớ trong một ca; cái này cần "lần trước thế nào".
-
-**Thiếu:** **chưa có lịch chạy định kỳ.** Hệ thống hoàn toàn thụ động — phải có người gõ. Đây là hạng mục nhỏ (một cron trong daemon) nhưng thiếu nó thì cả nhóm use case "theo dõi" không tồn tại được.
+**Missing:** no Librarian yet to auto-chunk long documents into nodes — currently nodes have to be hand-written.
 
 ---
 
-## 5. Bản địa hoá & thuật ngữ
+## 3. Personal bookkeeping & invoices
 
-**Đau:** dịch tài liệu sản phẩm, mỗi lần dịch lại gọi cùng một khái niệm bằng một từ khác.
+**Pain:** at month-end, a freelancer sits down and manually sorts 200 statement lines just to find out how much they made.
 
-**Dựng:** `translator` (standard) + `term-keeper` (eco). Bảng thuật ngữ sống trong `knowledge/shared/` — mỗi thuật ngữ một node. `term-keeper` chạy sau mỗi ca, bổ sung thuật ngữ mới gặp.
+**Built as:** a `bookkeeper` (eco, Read/Write/Glob) reads a bank-statement CSV from `artifacts/input/`, categorizes it, writes `monthly-report.md` + `categorized.csv`.
 
-**Kiểm:** kho tri thức có thật sự làm hệ thống **tốt lên theo thời gian** không. Ca thứ 10 phải nhất quán hơn ca thứ nhất — và điều đó **đo được** bằng cách đếm số thuật ngữ dịch khác nhau.
+**Tests:** the first use case where **a wrong output is flat-out wrong**, not just "not great." It tests something text can't test: does the model make up numbers.
 
-**Thiếu:** không có. Đây cũng là use case chứng minh giá trị của kho tri thức rõ nhất, nên đáng làm template sớm.
-
----
-
-## 6. Rà hợp đồng cho freelancer
-
-**Đau:** nhận hợp đồng 15 trang, không biết điều khoản nào bất lợi, thuê luật sư thì quá đắt cho hợp đồng 20 triệu.
-
-**Dựng:** `reader` (standard) chia hợp đồng theo điều khoản, ghi mỗi phần một file; `flagger` (deep) chấm rủi ro từng điều khoản; `summarizer` (eco) gộp thành checklist.
-
-**Kiểm:** tài liệu **dài hơn ngân sách một task**. Đây là bài toán khác hẳn mọi use case trên.
-
-**Thiếu:** hệ thống chưa có cách chia tài liệu dài. Trợ lý phải tự đoán "chia làm mấy phần" mà không biết file dài bao nhiêu — nó không được đọc file. Cần một tool đo kích thước (`Glob`/`Bash wc`) hoặc một bước `survey` rẻ chạy trước. **Chưa có, và không tự nhiên có.**
-
-⚠ Cảnh báo sản phẩm: đây là lãnh địa dễ gây hại. Nếu làm template này thì phải kèm một câu rất rõ rằng đây **không phải tư vấn pháp lý**.
+**Missing — and this is a real gap:** the system currently **has no way to verify a number**. The receipt says "categorization done" and we just trust it. There needs to be a `verify` mechanism that runs on **code, not an LLM** (e.g.: category totals must sum to the statement total). Not built yet, and this should exist before the system is trusted anywhere near someone's money.
 
 ---
 
-## 7. Xưởng bảng tính
+## 4. Competitor tracking
 
-**Đau:** có CSV dữ liệu thô, muốn ra bảng tổng hợp + vài con số, không biết pivot.
+**Pain:** wanting to know what a competitor changed this week — pricing, new features — but nobody's going to manually check every week.
 
-**Dựng:** `cleaner` (eco) chuẩn hoá cột, `analyst` (standard) tổng hợp, `charter` (eco) viết mô tả biểu đồ.
+**Built as:** a `watcher` (standard, WebSearch/WebFetch/Write) scans a list of URLs, writes `snapshot-<week>.md`; a `differ` (eco) compares it against last week's snapshot, reports only what CHANGED.
 
-**Kiểm:** **tier `eco` có thật sự lãi không.** SESSIONS_MEMORY ghi rằng `eco` dùng 2,5× lượt và 2,17× token nhưng vẫn rẻ hơn 38% — với việc *này*. Việc dữ liệu có tính máy móc cao, đúng chỗ `eco` nên thắng. Nếu nó thua ở đây thì luật chọn tier phải viết lại.
+**Tests:** memory **across shifts**. Every other use case only needs to remember within a single shift; this one needs "what did it look like last time."
 
-**Thiếu:** không có. Nhưng nên chạy kèm `bench/tier-compare.mjs` để có số, đừng đoán.
-
----
-
-## 8. Sàng lọc hồ sơ
-
-**Đau:** đăng một tin tuyển, nhận 80 CV, đọc hết mất một ngày.
-
-**Dựng:** `screener` (eco) đọc từng CV theo một rubric cố định trong charter, ghi một dòng chấm điểm; `ranker` (standard) xếp hạng và giải thích top 10.
-
-**Kiểm:** **nhất quán khi lặp lại nhiều lần**. 80 CV = 80 task hoặc vài task gộp — đây là chỗ luật "ít task lớn hơn nhiều task nhỏ" bị thử thách thật, vì sàn ~13 200 token mỗi call nhân với 80 là con số rất khác nhân với 8.
-
-**Thiếu:** không có về mặt kỹ thuật. Nhưng đây là use case đụng **dữ liệu cá nhân của người khác** — template phải nói rõ CV nằm trên máy người dùng, không đi đâu ngoài Anthropic.
+**Missing:** **no recurring scheduler yet.** The system is entirely passive — someone has to type the command. This is a small item (a cron inside the daemon), but without it the entire "tracking" family of use cases can't exist.
 
 ---
 
-## 9. Báo cáo tiến độ dự án
+## 5. Localization & terminology
 
-**Đau:** dev một mình, cuối tuần không nhớ mình đã làm gì để viết changelog hay báo cho khách.
+**Pain:** translating product docs, and the same concept gets called something different every time it's translated.
 
-**Dựng:** `historian` (eco, tools `Bash`, `Glob`, `Grep`, `Read`) đọc `git log` và các file đã đổi; `writer` (standard) viết bản cập nhật cho **người không phải dev**.
+**Built as:** a `translator` (standard) + a `term-keeper` (eco). The terminology table lives in `knowledge/shared/` — one node per term. `term-keeper` runs after every shift, adding any new terms it encountered.
 
-**Kiểm:** tool hệ thống thật (`Bash`) trong tay agent, và `use_preset: true` cho vai trò đọc code — use case duy nhất mà preset `claude_code` đáng giá 6 300 token của nó.
+**Tests:** whether the knowledge store actually makes the system **get better over time**. Shift 10 should be more consistent than shift 1 — and that's **measurable** by counting how many different translations a given term received.
 
-**Thiếu:** không có. Đây cũng là use case dễ tự dùng nhất — chính chúng ta là người dùng.
+**Missing:** nothing. This is also the use case that most clearly demonstrates the knowledge store's value, so it's worth turning into a template early.
 
 ---
 
-## 10. Trợ lý cá nhân — phần đáng giá của openclaw
+## 6. Contract review for freelancers
 
-> **Nguồn:** đọc README của openclaw, thảo luận cộng đồng, và các bản tin về chính sách Anthropic — tra ngày 15/08/2026. Danh sách nguồn ở cuối mục.
+**Pain:** getting handed a 15-page contract, not knowing which clauses are unfavorable, and a lawyer being way too expensive for a 20-million-dong contract.
 
-### OpenClaw thật ra là gì
+**Built as:** a `reader` (standard) splits the contract by clause, writes one file per section; a `flagger` (deep) scores the risk of each clause; a `summarizer` (eco) rolls it up into a checklist.
 
-Ra mắt 24/11/2025 (tên cũ Warelay → Moltbot → Clawdbot), đổi tên thành OpenClaw cuối tháng 1/2026, **hơn 380 000 sao GitHub**. Đây không phải một dự án nhỏ — nó là *đối thủ tham chiếu*, và cũng là bằng chứng thị trường lớn hơn ta tưởng.
+**Tests:** a document **longer than a single task's budget**. This is a fundamentally different problem from every use case above it.
 
-Hình dạng: **trợ lý cá nhân tự host, giao diện chính là app nhắn tin** — WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Google Chat và hơn chục kênh khác. Kiến trúc gồm một **Gateway** (mặt phẳng điều khiển cục bộ cho session, tool, sự kiện, kết nối kênh) + Control UI/CLI/TUI + companion app cho giọng nói, camera, chụp màn hình. Mở rộng bằng **plugin SDK** riêng và chợ **ClawHub**, có thêm MCP registry — tức là ghi chú cũ của ta ("bắt viết MCP server") **chưa chính xác**: nó có SDK plugin riêng, còn khó hơn.
+**Missing:** the system has no way to chunk long documents yet. The Assistant has to guess "how many parts to split this into" without knowing how long the file is — it isn't allowed to read the file. This needs a size-measuring tool (`Glob`/`Bash wc`) or a cheap `survey` step run beforehand. **Doesn't exist yet, and won't emerge naturally.**
 
-Thiết kế **một người vận hành**. Tài liệu của chính nó cảnh báo: *"Tool chạy trên máy host cho session chính trừ khi bạn tự cấu hình sandbox."*
+⚠ Product warning: this is territory where harm is easy to cause. If this template gets built, it must carry a very clear line stating this is **not legal advice**.
 
-### Cộng đồng thật sự dùng nó vào việc gì — và bỏ vì cái gì
+---
 
-**Việc còn dùng được** (từ Ask HN: Who is using OpenClaw?):
+## 7. Spreadsheet workshop
 
-- Trí nhớ cá nhân gắn Obsidian, hỏi qua WhatsApp — điểm được khen: *trí nhớ nằm trong version control, đọc và sửa được, không bị khoá vào một hãng*
-- Một người dựng trong nhóm Telegram gia đình để thu thập chuyện kể của hơn 50 người họ hàng, hỏi lại có ngữ cảnh, lưu thành kho tư liệu nhiều thế hệ
-- Một người làm vườn nối MCP + Xero, biến ảnh chụp hiện trường thành đề xuất báo giá PDF 14–32 trang
-- Sinh viên tự sinh thẻ ghi nhớ từ ghi chú Obsidian mỗi đêm
+**Pain:** having a raw CSV of data, wanting a summary table + a few key numbers, and not knowing how to pivot.
 
-**Lý do bỏ:**
+**Built as:** a `cleaner` (eco) normalizes columns, an `analyst` (standard) aggregates, a `charter` (eco) writes chart descriptions.
+
+**Tests:** **whether the `eco` tier actually pays off.** SESSIONS_MEMORY notes that `eco` uses 2.5x the turns and 2.17x the tokens but is still 38% cheaper — for *that particular* task. Data work is highly mechanical, exactly where `eco` should win. If it loses here, the tier-selection rule needs rewriting.
+
+**Missing:** nothing. But it should be run against `bench/tier-compare.mjs` to get real numbers instead of guessing.
+
+---
+
+## 8. Resume screening
+
+**Pain:** posting a job listing, getting 80 resumes, and reading them all taking a whole day.
+
+**Built as:** a `screener` (eco) reads each resume against a fixed rubric in the charter, writes one scored line; a `ranker` (standard) ranks them and explains the top 10.
+
+**Tests:** **consistency across repeated runs**. 80 resumes = 80 tasks, or a few batched tasks — this is where the "fewer, larger tasks over many small ones" rule gets genuinely tested, because a ~13,200-token floor per call multiplied by 80 is a very different number than multiplied by 8.
+
+**Missing:** nothing technical. But this use case touches **someone else's personal data** — the template has to clearly state that resumes stay on the user's machine and go nowhere outside Anthropic.
+
+---
+
+## 9. Project progress reports
+
+**Pain:** a solo dev, come the weekend, can't remember what they did in order to write a changelog or update a client.
+
+**Built as:** a `historian` (eco, tools `Bash`, `Glob`, `Grep`, `Read`) reads `git log` and changed files; a `writer` (standard) writes an update for **someone who isn't a developer**.
+
+**Tests:** a real system tool (`Bash`) in an agent's hands, and `use_preset: true` for a code-reading role — the only use case where the `claude_code` preset's 6,300 tokens are actually worth paying for.
+
+**Missing:** nothing. This is also the easiest use case to dogfood — we're the users ourselves.
+
+---
+
+## 10. Personal assistant — the part of openclaw that's actually worth having
+
+> **Source:** read from openclaw's README, community discussion, and news coverage of Anthropic's policy — checked 2026-08-15. Source list at the end of this section.
+
+### What OpenClaw actually is
+
+Launched 2025-11-24 (formerly named Warelay → Moltbot → Clawdbot), renamed to OpenClaw at the end of January 2026, **over 380,000 GitHub stars**. This isn't a small project — it's *the reference competitor*, and it's also proof the market is bigger than we assumed.
+
+Shape: a **self-hosted personal assistant whose primary interface is a messaging app** — WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Google Chat, and a dozen other channels. Architecture consists of a **Gateway** (a local control plane for sessions, tools, events, channel connections) + Control UI/CLI/TUI + a companion app for voice, camera, screen capture. Extended via its own **plugin SDK** and a **ClawHub** marketplace, plus an MCP registry — meaning our earlier note ("forces you to write an MCP server") **wasn't quite right**: it has its own plugin SDK, which is even harder.
+
+Designed for **a single operator**. Its own docs warn: *"Tools run on the host machine for the primary session unless you configure a sandbox yourself."*
+
+### What the community actually uses it for — and what makes them quit
+
+**Things people keep using it for** (from Ask HN: Who is using OpenClaw?):
+
+- Personal memory hooked to Obsidian, queried over WhatsApp — the praised point: *memory lives under version control, is readable and editable, and isn't locked to one vendor*
+- Someone set it up in a family Telegram group to collect stories from 50+ relatives, queryable with context, saved as a multi-generational archive
+- A gardener wired up MCP + Xero, turning site photos into 14–32-page PDF quote proposals
+- A student auto-generates flashcards from Obsidian notes every night
+
+**Reasons people quit:**
 
 | | |
 |---|---|
-| **Tiền** | một người báo **$100/tháng** tiền API chỉ để có bản tin buổi sáng — mà nó chỉ chạy đúng "một hai lần mỗi tuần" |
-| **Độ tin cậy** | việc chạy theo lịch *"hỏng cách ngày"*, phải sửa liên tục, và hệ thống còn tự nhận đã tự sửa xong trong khi không |
-| **Cài đặt** | một người cài trên Raspberry Pi tiêu *"$40–50 trong một tuần chỉ để gỡ rối"* rồi bỏ cuộc |
-| **Bảo mật** | trao cho agent *"toàn quyền API key không giới hạn"* — có người sợ nó xoá repo, xoá file hệ thống |
-| **Đốt token** | phê bình sắc nhất: **việc chạy theo lịch và có tính tất định thì thuộc về script, không thuộc về vòng lặp LLM.** Sinh lại lời giải mỗi lần là đốt token vô ích |
-| **Đánh giá chung** | *"một bản Claude Code tệ hơn, chậm hơn, kém năng lực hơn"*; sau vài tháng dùng, có người kết luận nó là **một lớp giao diện điều phối các tự động hoá sẵn có**, không phải một cách làm việc mới |
+| **Money** | one person reported **$100/month** in API cost just for a morning briefing — that only actually ran "once or twice a week" |
+| **Reliability** | scheduled work *"breaks every other day,"* needs constant fixing, and the system even claims to have self-repaired when it hasn't |
+| **Setup** | one person burned *"$40–50 in one week just troubleshooting"* a Raspberry Pi install before giving up |
+| **Security** | handing the agent *"full, unrestricted API-key privileges"* — some worried it would delete a repo, delete system files |
+| **Burning tokens** | the sharpest criticism: **work that's scheduled and deterministic belongs in a script, not in an LLM loop.** Regenerating the same solution every time is wasted tokens |
+| **Overall verdict** | *"a worse, slower, less capable version of Claude Code"*; after months of use, some concluded it's **an orchestration UI layer over pre-existing automations**, not a new way of working |
 
-**Điểm chung của những ca THÀNH CÔNG:** đều **có người trong vòng lặp**, đều **chấp nhận đầu ra không tất định**, và đều giải bài toán **chưa có app nào làm** (lưu trữ chuyện gia đình, báo giá theo ảnh). Ca thất bại đều là ca cố thay thế cron — chỗ mà độ tin cậy mới là thứ quan trọng.
+**What the SUCCESSFUL cases have in common:** all of them **keep a human in the loop**, all **accept non-deterministic output**, and all solve a problem **no app currently solves** (archiving family stories, photo-based quotes). Every failure case was an attempt to replace cron — exactly where reliability is what matters.
 
-> Ba điều này gần như là một bản mô tả ngược của chỗ ta nên đứng.
+> These three points read almost like a mirror image of where we should stand.
 
-### Giữ — bốn việc chiếm phần lớn giá trị
+### Keep — four jobs that account for most of the value
 
-| Việc | Nhân viên | secrets | Vì sao đáng |
+| Job | Employee | secrets | Why it's worth it |
 |---|---|---|---|
-| **Lọc hộp thư & soạn nháp trả lời** | `inbox` (eco) | `GMAIL_TOKEN` | tần suất hằng ngày, đau rõ, kiểm được ngay |
-| **Tóm tắt lịch + chuẩn bị họp** | `scheduler` (eco) | `GCAL_TOKEN` | rẻ, chạy 30 giây, giá trị thấy liền |
-| **Ghi chú → việc phải làm** | `notetaker` (standard) | `NOTION_TOKEN` | chỗ người ta đã đổ dữ liệu vào sẵn |
-| **Tìm & tóm tắt trên web theo yêu cầu** | `scout` (standard) | — | **không cần MCP nào** — `WebSearch`/`WebFetch` là native tool |
+| **Triage inbox & draft replies** | `inbox` (eco) | `GMAIL_TOKEN` | daily frequency, clear pain, immediately testable |
+| **Summarize calendar + prep for meetings** | `scheduler` (eco) | `GCAL_TOKEN` | cheap, runs in 30 seconds, value visible instantly |
+| **Notes → action items** | `notetaker` (standard) | `NOTION_TOKEN` | somewhere people have already been pouring data in |
+| **Search & summarize the web on request** | `scout` (standard) | — | **needs no MCP at all** — `WebSearch`/`WebFetch` are native tools |
 
-Việc thứ tư đáng chú ý: nó **không cần cắm gì cả**. Trong bốn thứ giá trị nhất, một thứ chạy ngay từ phút đầu — trong khi openclaw đòi cài Gateway, nối kênh chat, và với nhiều người là vài chục đô tiền gỡ rối.
+The fourth job is worth noting: it **needs nothing plugged in at all**. Of the four highest-value jobs, one works from minute one — while openclaw requires installing a Gateway, wiring up a chat channel, and for many people, tens of dollars spent troubleshooting.
 
-### Bỏ — làm được nhưng thực tế không đáng
+### Drop — technically possible but not actually worth it
 
-Danh sách này giờ có bằng chứng, không chỉ là phỏng đoán:
+This list now has evidence behind it, not just guesses:
 
-- **Bề rộng tích hợp (50+ kênh, ClawHub).** Đẹp trên trang chủ. Ca dùng thật mà cộng đồng kể ra đều xoay quanh 2–3 thứ: kho ghi chú, một app nhắn tin, một dịch vụ nghiệp vụ. Chi phí bảo trì tuyến tính, giá trị gần bằng 0 sau cái thứ ba.
-- **Việc chạy theo lịch bằng LLM.** Đây là chỗ openclaw hỏng nặng nhất — hỏng cách ngày, và đốt $100/tháng cho một bản tin sáng. **Bài học cho ta:** khi làm lịch chạy định kỳ (lỗ hổng số 2), phần **tất định phải là code**, LLM chỉ chạm vào phần cần phán đoán.
-- **Tự động hoá không có người duyệt.** Ca thành công đều có người trong vòng lặp; ca thất bại đều không.
-- **Companion app: giọng nói, camera, chụp màn hình.** Bề mặt lớn, không xuất hiện lần nào trong các ca dùng thật được kể lại.
-- **Trợ lý thường trú nghe mọi thứ.** Tốn token thường trực đổi lấy một cảm giác. Kiến trúc ở đây cố ý ngược lại: agent đến, làm, chết.
-- **Chuỗi agent tự gọi agent.** Nguồn đốt token lớn nhất — và trên canvas của ta nó **không vẽ ra được**.
-- **Bắt người dùng viết plugin/MCP.** Rào chắn tuyệt đối với nhóm khách chính. Đây đúng là chỗ `SPEC-connectors.md` chen vào: *mô tả cái API, đừng viết code gọi nó.*
+- **Integration breadth (50+ channels, ClawHub).** Looks great on the homepage. Every real use case the community reported centered on 2–3 things: a notes archive, one messaging app, one business service. Maintenance cost scales linearly, value flattens to near-zero after the third integration.
+- **Scheduled work run by an LLM.** This is where openclaw fails hardest — breaking every other day, burning $100/month for a morning briefing. **Lesson for us:** when we build recurring scheduling (gap #2 below), the **deterministic part has to be code**, with the LLM only touching the part that genuinely needs judgment.
+- **Automation with no human approval.** Every success story kept a human in the loop; every failure story didn't.
+- **Companion app: voice, camera, screen capture.** A large surface area that never once showed up in any real use case people actually reported.
+- **An always-on assistant listening to everything.** Constant token spend traded for a feeling. This architecture deliberately does the opposite: an agent arrives, works, and terminates.
+- **Chains of agents calling agents.** The single biggest source of burned tokens — and on our canvas, it **can't even be drawn**.
+- **Forcing users to write plugins/MCP.** An absolute wall for our core customer segment. This is exactly where `SPEC-connectors.md` steps in: *describe the API, don't write code that calls it.*
 
-### ⚠ Rủi ro chính sách — đọc kỹ, nó chạm vào luận điểm kinh tế của dự án
+### ⚠ Policy risk — read carefully, it touches the project's economic argument directly
 
-**Chuyện đã xảy ra:** 04/04/2026 Anthropic **cắt** quyền dùng subscription Claude cho các harness bên thứ ba như OpenClaw. Lý do nêu ra: vi phạm ToS, và **gây tải bất thường vì chúng đi vòng qua tối ưu prompt cache của Claude Code — gọi model mới tinh mỗi lần**.
+**What actually happened:** on 2026-04-04 Anthropic **cut off** Claude subscription usage for third-party harnesses like OpenClaw. Stated reason: ToS violations, and **causing abnormal load because they route around Claude Code's prompt-cache optimization — calling the model fresh every time**.
 
-Sau đó Anthropic công bố một hạng mục **"Agent SDK credit"** riêng cho thuê bao trả phí (Pro $20 · Max 5x $100 · Max 20x $200 mỗi tháng), dự kiến áp dụng 15/06/2026 — rồi **TẠM HOÃN**. Trang trợ giúp chính thức hiện ghi rõ thay đổi *"không còn áp dụng từ 15/06"* và **chưa có gì đổi so với chính sách cũ**.
+Anthropic then announced a separate **"Agent SDK credit"** allotment for paid subscribers (Pro $20 · Max 5x $100 · Max 20x $200 per month), planned to take effect 2026-06-15 — then **POSTPONED**. The official help page currently states the change *"is no longer in effect as of 06/15"* and **nothing has changed from the prior policy**.
 
-**Vị thế của agentco — khác hẳn openclaw ở đúng hai điểm sống còn:**
+**agentco's position — different from openclaw at exactly two make-or-break points:**
 
 | | OpenClaw | agentco |
 |---|---|---|
-| Cách lấy quyền | **dịch ngược luồng xác thực** của Claude Code | **Claude Agent SDK chính thức** của Anthropic |
-| Prompt cache | đi vòng qua — chính là lý do bị cắt | **toàn bộ kiến trúc xây quanh việc giữ nó** |
+| How it gets access | **reverse-engineers** Claude Code's auth flow | uses Anthropic's **official Claude Agent SDK** |
+| Prompt cache | routes around it — the exact reason it got cut off | **the whole architecture is built around preserving it** |
 
-Chính sách được công bố (dù đang hoãn) nói rõ credit đó bao gồm *"app bên thứ ba xác thực bằng subscription của bạn thông qua Agent SDK"* — tức là **đúng hình dạng của agentco, và được phép**.
+The announced policy (even while postponed) explicitly states that credit allotment covers *"third-party apps authenticating with your subscription via the Agent SDK"* — which is **exactly agentco's shape, and permitted**.
 
-**Nhưng đây vẫn là rủi ro phải theo dõi, không phải chuyện đã xong:**
+**But this is still a risk to keep watching, not a settled matter:**
 
-1. Nếu bản tách credit được bật lại, người dùng Pro chỉ có **$20/tháng** cho agentco — với chi phí đo được ($0.05–0.20 mỗi việc) là khoảng **100–400 việc/tháng**. Đủ cho người dùng cá nhân, **chật** cho ai chạy nhiều văn phòng.
-2. Hết credit thì hoặc rơi về giá API tiêu chuẩn (nếu bật usage credit), hoặc **dừng hẳn tới tháng sau**.
-3. Credit **theo từng người, không gộp chung** — ảnh hưởng tới mọi ý định làm bản đội nhóm.
+1. If the credit split gets turned back on, Pro users get only **$20/month** for agentco — against a measured cost of $0.05–0.20 per task, that's roughly **100–400 tasks/month**. Enough for a solo user, **tight** for anyone running multiple offices.
+2. Running out of credit either falls back to standard API pricing (if usage-based credit is enabled) or **stops completely until next month**.
+3. Credit is **per-person, not pooled** — this affects any plan to build a team edition.
 
-**Ba việc nên làm vì phát hiện này:**
+**Three things worth doing because of this finding:**
 
-- **`agentco cost` phải nói được "còn bao nhiêu".** Hôm nay nó chỉ nói đã tiêu bao nhiêu. Nếu credit có trần, biết còn lại bao nhiêu là tính năng chứ không phải trang trí.
-- **Luận điểm bán hàng phải nêu thẳng chuyện prompt cache.** Anthropic vừa công khai nói lý do cắt là các harness phá cache. Đây là lúc tốt nhất để nói "chúng tôi được xây quanh việc giữ nó" — và ta có số đo để chứng minh, không phải chỉ có lời.
-- **`ProviderAdapter` vẫn phải giữ nguyên.** Chưa cần triển khai provider thứ hai, nhưng đừng để mất chỗ cắm.
+- **`agentco cost` has to be able to say "how much is left."** Today it only reports what's been spent. If the credit has a ceiling, knowing what remains is a feature, not decoration.
+- **The sales pitch should state the prompt-cache story directly.** Anthropic has publicly said the cutoff reason was harnesses breaking the cache. This is the best possible moment to say "we're built around preserving it" — and we have measurements to prove it, not just a claim.
+- **`ProviderAdapter` still has to be kept as-is.** No need to implement a second provider yet, but don't lose the socket for it.
 
-**Nguồn:** [openclaw/openclaw](https://github.com/openclaw/openclaw) · [Ask HN: Who is using OpenClaw?](https://news.ycombinator.com/item?id=47783940) · [Anthropic closes door on subscription use of OpenClaw — The Register](https://www.theregister.com/2026/04/06/anthropic_closes_door_on_subscription/) · [Claude Code subscribers will need to pay extra — TechCrunch](https://techcrunch.com/2026/04/04/anthropic-says-claude-code-subscribers-will-need-to-pay-extra-for-openclaw-support/) · [Anthropic reinstates third-party agent usage — VentureBeat](https://venturebeat.com/technology/anthropic-reinstates-openclaw-and-third-party-agent-usage-on-claude-subscriptions-with-a-catch) · [Use the Claude Agent SDK with your Claude plan — Anthropic Help Center](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) · [OpenClaw — Wikipedia](https://en.wikipedia.org/wiki/OpenClaw)
+**Sources:** [openclaw/openclaw](https://github.com/openclaw/openclaw) · [Ask HN: Who is using OpenClaw?](https://news.ycombinator.com/item?id=47783940) · [Anthropic closes door on subscription use of OpenClaw — The Register](https://www.theregister.com/2026/04/06/anthropic_closes_door_on_subscription/) · [Claude Code subscribers will need to pay extra — TechCrunch](https://techcrunch.com/2026/04/04/anthropic-says-claude-code-subscribers-will-need-to-pay-extra-for-openclaw-support/) · [Anthropic reinstates third-party agent usage — VentureBeat](https://venturebeat.com/technology/anthropic-reinstates-openclaw-and-third-party-agent-usage-on-claude-subscriptions-with-a-catch) · [Use the Claude Agent SDK with your Claude plan — Anthropic Help Center](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) · [OpenClaw — Wikipedia](https://en.wikipedia.org/wiki/OpenClaw)
 
-**Mệnh đề:** thứ người ta thật sự muốn từ một trợ lý cá nhân gắn tool là **bốn** việc, không phải bốn mươi.
+**Thesis:** what people actually want from a tool-connected personal assistant is **four** jobs, not forty.
 
-### Giữ — bốn việc chiếm phần lớn giá trị
+### Where the real economic gap actually sits — now with evidence
 
-| Việc | Nhân viên | secrets | Vì sao đáng |
-|---|---|---|---|
-| **Lọc hộp thư & soạn nháp trả lời** | `inbox` (eco) | `GMAIL_TOKEN` | tần suất hằng ngày, đau rõ, kết quả kiểm được ngay |
-| **Tóm tắt lịch + chuẩn bị họp** | `scheduler` (eco) | `GCAL_TOKEN` | rẻ, chạy 30 giây, giá trị thấy liền |
-| **Ghi chú → việc phải làm** | `notetaker` (standard) | `NOTION_TOKEN` | chỗ người ta đã đổ dữ liệu vào sẵn |
-| **Tìm & tóm tắt trên web theo yêu cầu** | `scout` (standard) | — | **không cần MCP nào** — `WebSearch`/`WebFetch` là native tool |
+It's not "connect more tools" — openclaw already has 50+ channels and people still quit. It sits in three places, and all three are **exactly where openclaw hurts most**:
 
-Việc thứ tư đáng chú ý: nó **không cần cắm gì cả**. Trong bốn thứ giá trị nhất, một thứ chạy ngay từ phút đầu.
-
-### Bỏ — làm được nhưng gần như không ai dùng thật
-
-- **Cắm được mọi API trên đời.** Bề rộng tích hợp là thứ đẹp trên trang chủ và chết trong thực tế: người dùng cắm 2–3 thứ rồi dừng. Chi phí bảo trì tuyến tính, giá trị gần như bằng không sau cái thứ ba.
-- **Tự động hoá nhiều bước không có người duyệt.** "Agent tự gửi email cho khách" là tính năng ai cũng tắt sau lần đầu nó gửi nhầm.
-- **Bắt người dùng viết MCP server.** Rào chắn tuyệt đối với nhóm khách chính. Đây đúng là chỗ `SPEC-connectors.md` định chen vào: *mô tả cái API, đừng viết code gọi nó.*
-- **Trợ lý luôn thường trú, nghe mọi thứ.** Tốn token thường trực để đổi lấy một cảm giác. Kiến trúc ở đây cố ý ngược lại: agent đến, làm, chết.
-- **Chuỗi agent tự gọi agent.** Nguồn đốt token lớn nhất, không kiểm soát được — và trên canvas của ta nó **không vẽ ra được**.
-
-### Khoảng trống kinh tế thật nằm ở đâu — giờ có bằng chứng
-
-Không nằm ở "gắn được nhiều tool hơn" — openclaw đã có 50+ kênh và người ta vẫn bỏ. Nó nằm ở ba chỗ, và cả ba đều **đúng chỗ openclaw đau nhất**:
-
-| Chỗ trống | Bằng chứng từ phía openclaw | Ta đã có sẵn gì |
+| Gap | Evidence from openclaw's side | What we already have |
 |---|---|---|
-| **Chi phí kiểm soát được** | *$100/tháng cho một bản tin sáng chạy 1–2 lần/tuần*; Anthropic cắt vì các harness *phá prompt cache* | toàn bộ kiến trúc xây quanh prefix cache; `$0.09 · 4 lượt` hiện ngay trên màn hình |
-| **Chạy trên subscription hợp lệ** | openclaw bị cắt vì dịch ngược luồng xác thực | dùng **Agent SDK chính thức** — đúng con đường được cho phép |
-| **Kết quả là file của người dùng** | chính người dùng openclaw khen điểm này nhất: *"trí nhớ nằm trong version control, đọc và sửa được"* | markdown + yaml trong thư mục của họ, từ ngày đầu |
+| **Controllable cost** | *$100/month for a morning briefing that runs 1–2 times a week*; Anthropic cut them off because harnesses *break prompt cache* | the whole architecture is built around the prefix cache; `$0.09 · 4 turns` shown right on screen |
+| **Running on a legitimate subscription** | openclaw got cut off for reverse-engineering the auth flow | uses the **official Agent SDK** — exactly the permitted path |
+| **Results are the user's own files** | openclaw's own users cite this as the thing they praise most: *"memory lives under version control, readable and editable"* | markdown + yaml in their own folder, from day one |
 
-Điểm thứ ba đáng chú ý: đó là thứ **cộng đồng openclaw tự nêu ra là lý do họ ở lại**, chứ không phải một giả thuyết của ta. Nó xác nhận nguyên tắc *"sở hữu artifact, không sở hữu prompt"* là một luận điểm bán được, không chỉ là một quyết định kỹ thuật.
+The third point is worth noting: it's something **the openclaw community itself named as the reason they stayed**, not a hypothesis of ours. It confirms that the "own the artifact, not the prompt" principle is a sellable argument, not just an engineering decision.
 
-**Và chỗ KHÔNG nên đứng:** đừng cạnh tranh ở "làm được nhiều thứ hơn". Openclaw có 380 000 sao và vẫn bị gọi là *"một bản Claude Code tệ hơn, chậm hơn"*. Bề rộng không phải hào nước.
+**And where NOT to stand:** don't compete on "does more things." Openclaw has 380,000 stars and still gets called *"a worse, slower version of Claude Code."* Breadth isn't a moat.
 
-**Thiếu — nghiêm trọng nhất trong cả 10 use case:** chưa có **cổng duyệt**. Trạng thái `needs_human` đã có trong schema receipt nhưng **không có màn hình nào để duyệt**. Không có nó thì bốn việc ở trên chỉ dừng ở mức "soạn nháp", không bao giờ được phép bấm gửi. Đây là hạng mục nên làm trước Telegram bridge.
+**Missing — the most serious gap across all 10 use cases:** there's still no **approval gate**. The `needs_human` state already exists in the receipt schema but **there's no screen to approve it from**. Without it, the four jobs above stop at "drafted," never getting permission to actually hit send. This item should be built before the Telegram bridge.
 
 ---
 
-## Tổng kết: 10 use case này lộ ra 5 lỗ hổng
+## Summary: these 10 use cases expose 5 gaps
 
-Xếp theo thứ tự nên làm, không theo thứ tự use case:
+Ordered by build priority, not by use-case number:
 
-| # | Thiếu gì | Chặn use case | Kích cỡ |
+| # | What's missing | Blocks which use case | Size |
 |---|---|---|---|
-| 1 | **Cổng duyệt** (`needs_human` có schema, không có màn hình) | 10, và mọi việc có hậu quả ra ngoài | vừa |
-| 2 | **Lịch chạy định kỳ** | 4, và cả nhóm "theo dõi" | nhỏ |
-| 3 | **Kiểm chứng bằng code, không bằng LLM** | 3, 7 — mọi việc mà sai số là sai hẳn | vừa |
-| 4 | **Chia tài liệu dài** (Librarian) | 2, 6 | vừa |
-| 5 | **`agentco resume`** (`pending.json` đã ghi, chưa ai đọc) | mọi use case dài gặp hết hạn mức | nhỏ |
+| 1 | **Approval gate** (`needs_human` has a schema, no screen) | 10, and anything with an outward-facing consequence | medium |
+| 2 | **Recurring scheduler** | 4, and the whole "tracking" family | small |
+| 3 | **Code-based verification, not LLM-based** | 3, 7 — anything where an error is a flat-out error | medium |
+| 4 | **Long-document chunking** (Librarian) | 2, 6 | medium |
+| 5 | ~~**`agentco resume`**~~ ✅ **already exists** — the `/resume` slash command (`commands.ts`), measured in session 6 step 7d | any long-running use case that hits its quota | small |
 
-Ba trong năm cái là **nhỏ hoặc vừa**. Không cái nào đòi đổi kiến trúc — đó là tin tốt, và cũng là bằng chứng rằng nền đã đặt đúng chỗ.
+Three of the five are **small or medium**. None require an architecture change — that's good news, and also evidence the foundation was laid in the right place.
 
-## Bốn use case nên dựng thành template TRƯỚC
+## Four use cases to build into templates FIRST
 
-Chọn theo P/công sức, không theo độ hấp dẫn:
+Chosen by payoff-to-effort ratio, not by how appealing they sound:
 
-1. **#9 Báo cáo tiến độ** — chúng ta là người dùng, phản hồi tức thì, không thiếu gì.
-2. **#1 Xưởng nội dung** — đã chạy, và là kịch bản quay video tốt nhất (song song nhìn thấy được).
-3. **#5 Bản địa hoá** — chứng minh giá trị kho tri thức bằng số đếm được.
-4. **#10 Trợ lý cá nhân, chỉ với `scout`** — bản không cần cắm gì, chạy được từ phút đầu.
+1. **#9 Progress reports** — we're the users ourselves, instant feedback, nothing missing.
+2. **#1 Content workshop** — already works, and it's the best video-recording scenario (parallelism you can actually see).
+3. **#5 Localization** — proves the knowledge store's value with a countable number.
+4. **#10 Personal assistant, `scout` only** — the version that needs nothing plugged in, works from minute one.
 
-Ba use case còn thiếu hạ tầng (3, 4, 6) để sau — làm sớm chỉ ra một template hứa nhiều hơn nó làm được.
+Three use cases still lacking infrastructure (3, 4, 6) are for later — building them early would ship a template that promises more than it can deliver.

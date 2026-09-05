@@ -1,20 +1,22 @@
 /**
- * CÂU HỎI DUY NHẤT: một MCP server HTTP mà **Claude Code CLI của khách** đã đăng
- * nhập OAuth rồi — thì tiến trình do **Agent SDK** đẻ ra có dùng lại được chìa
- * đó không, khi ta vẫn giữ nguyên `strictMcpConfig: true` + `settingSources: []`
- * như `worker.ts §324-325`?
+ * THE ONLY QUESTION: for an HTTP MCP server that **the user's Claude Code CLI**
+ * has already logged into via OAuth — can the process spawned by the **Agent
+ * SDK** reuse that same key, while we still keep `strictMcpConfig: true` +
+ * `settingSources: []` as in `worker.ts §324-325`?
  *
- * Vì sao hỏi: cổng của Figma lọc theo `client_name` lúc đăng ký động (đo 29/08:
- * `agentco` → 403 thân rỗng · `Claude Code` → 200). Nếu chìa của CLI dùng lại
- * được thì agentco **không cần** được Figma duyệt — Claude Code đã ở trong danh
- * sách, và người đăng nhập là khách chứ không phải ta.
+ * Why this matters: Figma's gateway filters by `client_name` at dynamic
+ * registration time (measured 08/29: `agentco` -> 403 empty body ·
+ * `Claude Code` -> 200). If the CLI's key can be reused, agentco **doesn't
+ * need** Figma's approval — Claude Code is already on the allowlist, and the
+ * one who logged in is the user, not us.
  *
- * ⚠ ĐO BẰNG GOOGLE DRIVE, KHÔNG BẰNG FIGMA. Cùng hình dạng (HTTP + OAuth lưu
- * trong CLI), nhưng Drive **đã đăng nhập sẵn** trên máy này nên đo được ngay,
- * không cần tài khoản Figma và không cần ai bấm đồng ý. Thứ đang đo là **cơ
- * chế thừa kế chìa**, không phải Figma.
+ * WARNING: MEASURE WITH GOOGLE DRIVE, NOT FIGMA. Same shape (HTTP + OAuth
+ * stored in the CLI), but Drive is **already logged in** on this machine so
+ * it can be measured right away, with no Figma account and no one needing to
+ * click consent. What's being measured is the **key inheritance mechanism**,
+ * not Figma.
  *
- * Chạy: npx tsx scripts/spike-inherit-cli-oauth.ts
+ * Run: npx tsx scripts/spike-inherit-cli-oauth.ts
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -49,39 +51,39 @@ async function probe(
       const msg = m as { type?: string; subtype?: string; mcp_servers?: InitInfo };
       if (msg.type === 'system' && msg.subtype === 'init') {
         seen = msg.mcp_servers ?? [];
-        break; // chỉ cần cái bắt tay, không cần chạy hết lượt
+        break; // only need the handshake, no need to run the full turn
       }
     }
   } catch (e) {
     errs.push(`THROW ${(e as Error).message.slice(0, 300)}`);
   }
   console.log(`\n── ${label}   (${Date.now() - t0}ms)`);
-  console.log('   mcp_servers:', seen === null ? '(không thấy system.init)' : JSON.stringify(seen));
+  console.log('   mcp_servers:', seen === null ? '(no system.init seen)' : JSON.stringify(seen));
   for (const e of errs.slice(0, 6)) console.log('   stderr:', e);
 }
 
 async function main(): Promise<void> {
-  // ① Đúng hình dạng worker.ts hôm nay.
-  await probe('A · drive · strictMcpConfig:true · settingSources:[]  ← hình dạng worker.ts', {
+  // ① The exact shape worker.ts uses today.
+  await probe('A · drive · strictMcpConfig:true · settingSources:[]  ← worker.ts shape', {
     strictMcpConfig: true,
     settingSources: [],
     mcpServers: { drive: DRIVE },
   });
 
-  // ② Nới `settingSources` — nếu A hỏng mà B chạy thì chìa đi theo settings.
+  // ② Relax `settingSources` — if A fails but B works, the key follows settings.
   await probe('B · drive · strictMcpConfig:true · settingSources:["user"]', {
     strictMcpConfig: true,
     settingSources: ['user'],
     mcpServers: { drive: DRIVE },
   });
 
-  // ③ Không khai gì cả — CLI tự nạp server của khách hay không.
-  await probe('C · KHÔNG khai mcpServers · settingSources:["user"] · strict:false', {
+  // ③ Declare nothing at all — does the CLI auto-load the user's server or not.
+  await probe('C · NO mcpServers declared · settingSources:["user"] · strict:false', {
     settingSources: ['user'],
   });
 
-  // ④ Đối chứng: Figma CHƯA đăng nhập. Phải ra khác A nếu A thật sự dùng chìa.
-  await probe('D · figma (chưa login) · strictMcpConfig:true · settingSources:[]', {
+  // ④ Control: Figma is NOT logged in. Must differ from A if A truly reuses the key.
+  await probe('D · figma (not logged in) · strictMcpConfig:true · settingSources:[]', {
     strictMcpConfig: true,
     settingSources: [],
     mcpServers: { figma: FIGMA },

@@ -26,6 +26,14 @@ export default defineConfig({
        * thì lỗi đó không xảy ra lại được.
        */
       '@core': path.resolve(__dirname, '../src/core'),
+      /**
+       * The interface string catalogue, shared with the daemon. Same reason as
+       * `@core` above, one step further: the daemon writes error sentences that
+       * this UI renders verbatim, so a second copy of the table would let the
+       * two disagree about what a thing is called. Also pure — no `node:*`.
+       * → src/i18n/ · docs/CLAUDE.md §Language
+       */
+      '@i18n': path.resolve(__dirname, '../src/i18n'),
     },
   },
   build: {
