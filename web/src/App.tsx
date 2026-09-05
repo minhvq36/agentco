@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -30,6 +30,17 @@ import { t } from '@i18n';
 
 import '@/canvas/canvas.css';
 
+/**
+ * THE ROOM IS A SEPARATE CHUNK, AND THAT IS WHAT "OFF" MEANS.
+ * → docs/SPEC-office-animation.md §11c②
+ *
+ * With `ui.office_view: false` the switch never renders, so this `import()`
+ * never runs and the bytes never reach the browser. For a local web app that is
+ * what "not installed" is — anything less would be a hidden button rather than
+ * an off switch, and leg G-10 of test 23 measures exactly that.
+ */
+const Office = lazy(() => import('@/office/Office'));
+
 export default function App() {
   /**
    * `key={locale}` REMOUNTS THE TREE when the interface language changes.
@@ -52,6 +63,12 @@ export default function App() {
   const canvas = useApp((s) => s.canvas);
   const live = useApp((s) => s.live);
   const selected = useApp((s) => s.selected);
+  /**
+   * Two conditions, and both are needed: the company allows the room at all,
+   * and this browser is currently looking at it. The first is a door that may
+   * not exist; the second is which door this tab walked through.
+   */
+  const room = useApp((s) => s.view === 'office' && s.company?.officeView !== false);
 
   const [newOffice, setNewOffice] = useState(false);
   const [renameOffice, setRenameOffice] = useState(false);
@@ -171,28 +188,50 @@ export default function App() {
 
             <main className="relative min-w-0 flex-1">
               {canvas ? (
-                <>
-                  <Canvas
-                    ref={canvasRef}
-                    canvas={canvas}
-                    live={live}
-                    selected={selected}
-                    onSelect={actions.select}
-                    onCommit={onCommit}
-                    onOpenStore={actions.showPanel}
-                    onDropDocs={actions.dropDocs}
-                  />
-                  <Toolbar
-                    onAddArm={() => setNewArm(true)}
-                    onAddAgent={() => setNewAgent(true)}
-                    onArrange={() => canvasRef.current?.autoArrange()}
-                    onFit={() => canvasRef.current?.fit()}
-                    onZoom={(f) => canvasRef.current?.zoomBy(f)}
-                  />
-                  {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <NoAgentsHint />}
-                  <PlanStrip />
-                  <Hint />
-                </>
+                /*
+                  Only the SCENE swaps. Header, sidebar, plan strip, inspector,
+                  toasts and the current selection all survive the switch — a
+                  view is a different way of looking at one office, not a
+                  different application. → docs/SPEC-office-animation.md §11a
+                */
+                room ? (
+                  <>
+                    <Suspense fallback={<Loading />}>
+                      <Office />
+                    </Suspense>
+                    {/*
+                      The toolbar is deliberately absent here: every button on it
+                      edits or navigates the SHAPE, and the room does not have
+                      one (§10). The plan strip stays — "which step am I on" has
+                      to be answerable with no click, in BOTH views.
+                    */}
+                    {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <RoomHint />}
+                    <PlanStrip />
+                  </>
+                ) : (
+                  <>
+                    <Canvas
+                      ref={canvasRef}
+                      canvas={canvas}
+                      live={live}
+                      selected={selected}
+                      onSelect={actions.select}
+                      onCommit={onCommit}
+                      onOpenStore={actions.showPanel}
+                      onDropDocs={actions.dropDocs}
+                    />
+                    <Toolbar
+                      onAddArm={() => setNewArm(true)}
+                      onAddAgent={() => setNewAgent(true)}
+                      onArrange={() => canvasRef.current?.autoArrange()}
+                      onFit={() => canvasRef.current?.fit()}
+                      onZoom={(f) => canvasRef.current?.zoomBy(f)}
+                    />
+                    {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <NoAgentsHint />}
+                    <PlanStrip />
+                    <Hint />
+                  </>
+                )
               ) : (
                 <div className="flex h-full items-center justify-center text-[13px] text-muted">
                   {t('app.openingOffice')}
@@ -327,6 +366,30 @@ function PlanStrip() {
           (officeState === 'working' ? t('app.planRunning') : plan.request)}
       </span>
     </button>
+  );
+}
+
+function Loading() {
+  return (
+    <div className="flex h-full items-center justify-center text-[13px] text-muted">
+      {t('app.openingOffice')}
+    </div>
+  );
+}
+
+/**
+ * The room with nobody hired yet is NOT an empty state screen — the room is
+ * already there, with the assistant standing in it. This is a hint sitting on
+ * top of it, pointing at the view that can actually hire somebody.
+ * → docs/SPEC-office-animation.md §5a′
+ */
+function RoomHint() {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
+      <div className="rounded-lg border border-line bg-panel/90 px-3 py-2 text-[13px] text-muted shadow-sm backdrop-blur">
+        {t('office.hireHint')}
+      </div>
+    </div>
   );
 }
 

@@ -34,6 +34,7 @@ node dist/cli/index.js start
 | 11, 12, 15, 17, 20, 22 | Arms: files · Notion · security · permission tiers · self-attach · CLI | ✅ |
 | 13 | GitHub | ✅ |
 | 14, 16, 18, 19 | Google via UI · unplugging an arm · web browser · Linear | ⛔ not fully built |
+| 23 | The office view (the room) | ⛔ not built — `SPEC-office-animation.md` |
 
 ---
 
@@ -1848,6 +1849,166 @@ Plug in one more arm (labeled `Number workshop`):
 
 ---
 
+# ══════ TEST 23 · THE OFFICE VIEW ══════
+
+## Test 23 — The office drawn as a room ⛔ *not built*
+
+→ `SPEC-office-animation.md`. **Almost every leg costs $0** — it re-draws events that
+already happened. Only legs D and E need a real run, and they reuse Test 1's office
+rather than paying for a new one.
+
+**Setup:** reuse the `Content` office from Test 1 (assistant + 3 employees, at least
+one finished job on record). Add one arm from Test 11 (files on the machine) and wire
+it to **one** employee. Archive one employee. Unwire one employee.
+
+### Leg A — the switch and the frame ⏱ ~4 min · $0
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| A-1 | 🖱 header → **Office** | the room appears, the header · sidebar · plan strip · toasts all stay exactly where they were | anything in the chrome moves ⇒ the scene is not the only thing swapping |
+| A-2 | F5 | comes back **in office view** | back to the diagram ⇒ `agentco:view` isn't being read |
+| A-3 | Open a second tab, switch it to **Diagram** | the two tabs disagree and both are right | one tab changes the other ⇒ this got stored on the server |
+| A-4 | Resize the window narrow, then very wide | the room re-fits, aspect preserved, **nothing overflows and no scrollbar appears** | horizontal scrollbar ⇒ `preserveAspectRatio` / `viewBox` wrong |
+| A-5 | Look at the toolbar | Add employee · Add connection · Rearrange · Fit · Zoom are **gone** | still there ⇒ they promise editing this view does not have |
+| A-6 | 🖱 expand the sidebar wide (720px) | it **overlays** the room, the room keeps its width and pans right ~200ms. **Nobody shrinks** | the room re-fits ⇒ everyone slides and shrinks — the exact bug the overlay exists to prevent |
+| A-7 | Collapse the sidebar | the room pans back, no jump | |
+| A-8 | 🔴 Brand-new office, **zero employees** → switch to Office | a **complete room**: all five stations drawn, **the assistant standing at centre-front**, a hint near it about hiring the first person | an empty-state paragraph replacing the room ⇒ the 02/09 bug through a new door |
+| A-9 | Same office, no connection plugged in | the arm bench is **dimmed + dashed** (the diagram's own "nothing wired here" vocabulary) and clicking it opens the Connect dialog | it disappears ⇒ the room's floor plan changes shape per office, and nothing stays where the user learned it was |
+| A-10 | 📝 `company.yaml` → `ui: { office_view: false }`, reload | the header switch **is not rendered at all** | a greyed-out button ⇒ a control that exists and never works |
+| A-11 | With it off: DevTools ▸ Network, reload | the `office` chunk is **never fetched** | it downloads ⇒ the dynamic import isn't dynamic |
+| A-12 | Flip it back to `true`, reload | the room is back. **No reinstall, no rebuild** | |
+
+### Leg B — who is standing where, before anything runs ⏱ ~5 min · $0
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| B-1 | Count people | assistant + every **non-archived** employee. The archived one is **absent** | the archived person is in the room ⇒ the room reads `roles/` instead of the same source the canvas reads |
+| B-2 | Find the unwired employee | in the **break area**, and the diagram labels that same person *"resting"* | in the room's break area but *not* labelled resting on the diagram (or the reverse) ⇒ two sources of truth |
+| B-3 | 🖱 cut a wire on the diagram → switch to Office | that person walks to the break area | needs F5 ⇒ `layout.changed` isn't re-reading the cast |
+| B-4 | 🖱 re-wire → Office | they walk back out to the floor | |
+| B-5 | Watch the break area for ~60 s | people wander to new spots every ~6–14 s, **not in lockstep** | everyone moves on the same beat ⇒ the timer isn't seeded per character |
+| B-6 | Look at where the working-floor people stand | a loose arc, **not a grid** | evenly-spaced columns ⇒ the jitter isn't applied |
+| B-7 | F5 five times | the same people get the same faces, the same break-area game, the same spots | faces shuffle ⇒ casting isn't deterministic |
+| B-8 | Look at names | the name over each head is **the name the user typed**; no character has a name of its own | |
+
+### Leg C — the doors ⏱ ~3 min · $0
+
+| # | Do what | Correct |
+|---|---|---|
+| C-1 | 🖱 a worker | that employee's Inspector opens — **identical** to clicking their node |
+| C-2 | 🖱 the assistant | the assistant's Inspector (tiered prompt) |
+| C-3 | 🖱 the bookshelf | the Document library panel |
+| C-4 | 🖱 the filing desk | the Results panel |
+| C-5 | 🖱 the arm bench | that arm's Inspector; hovering names each arm when there is more than one |
+| C-6 | 🖱 the break area | **nothing happens.** It's a state, not an object |
+| C-7 | Drag two files onto the bookshelf | uploads exactly as dropping them on the library node — same dialog on a name clash, same refusals |
+| C-8 | `Tab` through the room | every character and every station is reachable, focus ring visible, `Enter` opens the same panel |
+| C-9 | Try to drag a character | **it does not move.** Nothing in this view edits the shape |
+
+### Leg D — one job, watched ⏱ ~6 min · ~$0.05 *(reuse Test 1's office)*
+
+**1.** 🖱 switch to **Office**. **2.** 💬 `Write one short intro paragraph for a flower shop, save it as a file.`
+
+| # | Correct | Broken |
+|---|---|---|
+| D-1 | the assistant **faces the viewer** the whole time and **never walks off centre** | it wanders ⇒ the user loses the thing they talk to |
+| D-2 | a thought bubble `…` appears **within the first second**, before any plan exists | silence ⇒ the same gap `office.activity` was built to fill |
+| D-3 | on `task.started`: the assistant **turns toward** the worker, a briefing token flies out, the worker walks to its own spot | the assistant walks ⇒ wrong rule, and it breaks the moment two tasks run |
+| D-4 | the worker's bubble carries **the same sentence** the diagram's `say` line shows | two different sentences ⇒ a second truncation implementation |
+| D-5 | when the worker writes the file: it walks to the **filing desk** and the stack grows by one | it never leaves its spot ⇒ field ① isn't wired |
+| D-6 | on `task.done`: the worker turns to the assistant, a receipt token travels **worker → assistant**, the assistant's bubble shows the receipt sentence | |
+| D-7 | ✓ flashes on the worker ~1.2 s, the bubble clears ~4.5 s later | a different delay ⇒ the 4500 ms constant was re-typed instead of imported |
+| D-8 | the plan strip is visible the whole time and matches | |
+| D-9 | 🔴 **the bubble text updates the instant the event lands, even while that character is still walking** | the text waits for the character to arrive ⇒ the picture is now gating the state |
+
+### Leg E — the hard cases ⏱ ~12 min · ~$0.2
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| E-1 | 💬 Test 1's three-paragraph request (**three workers at once**) | three people work in parallel, three bubbles, nobody blocks anybody | any full-screen "cut" ⇒ parallel work rendered as a slideshow |
+| E-2 | 🔴 Give the job to the employee **that has the arm wired**, but a job that needs no arm at all (*"rewrite this sentence shorter"*) | **they never walk to the arm bench.** A wired arm is a capability, not an event | they visit the bench ⇒ the trip is being drawn from the wire instead of from a call |
+| E-3 | Now a job that **does** use the arm (*"list the files in that folder"*) | now they walk to the bench, and the bubble names which arm | |
+| E-4 | Switch the interface to English, rerun E-3 | **identical behaviour** | different behaviour ⇒ somebody is matching on `say` text (§6b), and it only worked in one language |
+| E-5 | While a worker is mid-walk to the bookshelf, hit **Esc** (`/stop`) | walking stops **where it is**, bubbles clear. `/stop` looks like a stop | they finish the walk first ⇒ trips are queued instead of abandoned |
+| E-6 | A job where a task fails | ⚠ marker, the bubble holds the reason and **does not auto-clear**; no filing-desk trip | it clears itself ⇒ the one message the user needed vanished |
+| E-7 | A `deliver: reply` office (Test 2): ask a question | **the employee** gets the answer bubble, not the assistant; no file lands on the desk | the assistant speaks ⇒ the two delivery shapes look identical |
+| E-8 | Ask a general question in an office with nobody staffed (`lookup`, web) | the assistant stays put with a 🌐 bubble | it walks to the bookshelf ⇒ `reading: 'web'` is being drawn as `library` |
+| E-9 | Ask a question about a document in the library (`lookup`, files) | the assistant **walks to the bookshelf**, reads, returns to centre-front | |
+| E-10 | 💬 `/clear` | every bubble in the room clears; **nobody moves** | |
+| E-11 | Drop a thick PDF into the library while nothing else is running | the bookshelf shows it being filed. **No character is involved** — this is the user filing, not an employee working | someone walks over ⇒ the room invented an employee action |
+| E-12 | Restart the daemon mid-job, F5 | no ghost character stuck mid-walk; the room shows the state that actually survived | a frozen walker ⇒ a stale target survived a reload |
+
+### Leg F — the costume ⏱ ~4 min · $0
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| F-1 | 🖱 an employee → Inspector → change character | it changes immediately, in both views if both are open | |
+| F-2 | F5, then `stop` + `start` the daemon | the chosen character **survives both** | it reverts ⇒ it was only in `localStorage`, not per office |
+| F-3 | 📝 open `offices/<id>/layout.json` | there is a `cast` block, and `nodes`/`edges` are **untouched** | nodes reshuffled ⇒ `writeRaw` is rebuilding instead of carrying through |
+| F-4 | Drag a node on the **diagram**, then reopen `layout.json` | `cast` is **still there** | `cast` vanished ⇒ `readRaw` dropped the unknown field, the §6c③ trap |
+| F-5 | 🔴 Delete that employee for good → create a new one **with the same name** | the new person gets a **fresh hashed** character | they inherit the deleted person's costume ⇒ `dropAgent` didn't delete the `cast` entry — same family as an office id that can come back |
+| F-6 | 📝 delete `layout.json` entirely, reload | the office still runs, the room re-casts from the hash | anything breaks ⇒ `layout.json` stopped being pure view state |
+
+### Leg G — the machine ⏱ ~8 min · $0 · 🔴 *this is the leg that gets skipped and shouldn't*
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| G-1 | Idle office (nothing running, nobody in the break area moving right now) → DevTools ▸ Performance, record 10 s | **no animation frames scheduled.** Flat, idle | a steady 60 fps trace ⇒ the rAF loop never sleeps, and this is what kills a laptop battery |
+| G-2 | Same, with the tab in the background | still nothing | |
+| G-3 | Three workers walking → Performance, 10 s | 60 fps, and **zero React commits** in the React profiler while they walk | commits per frame ⇒ positions are going through `setState`, the rule the whole canvas was built around |
+| G-4 | Switch to Diagram, drag a node while a job runs | still 60 fps — the room mustn't have left a loop running behind it | |
+| G-5 | Memory tab: switch Diagram ⇄ Office 20 times | heap returns to baseline | it climbs ⇒ the loop or listeners aren't torn down |
+| G-6 | Elements tab: count nodes under the scene with 8 people | ~170 | thousands ⇒ something is drawn per frame instead of animated |
+| G-7 | OS setting **Reduce motion** on, reload | **no walking at all** — characters cross-fade between stations in ~250 ms, no limb animation, no loiter | limbs still swing ⇒ the media query isn't gating the keyframes |
+| G-8 | Zoom the browser to 200%, then 50% | crisp at both — it is vector | blurry ⇒ a raster asset got in |
+| G-9 | `npm run build:web`, compare bundle size before/after | **+25 KB gzipped or less** in a **separate chunk**, and `package.json` gained **no dependency** | it landed in the main chunk ⇒ everyone pays for it including people who turned it off · a new dependency ⇒ a game engine snuck in |
+| G-10 | 🔴 `ui.office_view: false` → Performance, record 10 s on the diagram | **identical to the build before this feature existed**: no rAF, no listener, no DOM from the room | anything at all ⇒ "off" is a hidden button, not an off switch |
+| G-11 | Open `/__cast` (the contact sheet) in a production build | **404 / not present** | it ships ⇒ a dev page went out with the product |
+
+### Leg H — theme, language, honesty ⏱ ~4 min · $0
+
+| # | Do what | Correct |
+|---|---|---|
+| H-1 | Switch light ⇄ dark | every character, every station, every bubble stays readable. No hard-coded colour |
+| H-2 | Switch interface language | station tooltips, the view switch, the aria summary all change |
+| H-3 | 🔴 Ask a question in a third language (not `en`, not `vi`) | the **bubbles** come back in that language, the chrome stays in the interface language. The bubble is a pass-through and names no language |
+| H-4 | Screen reader on the room | it announces *"N working, M resting"*, and each character/station has a name |
+| H-5 | Turn off every bubble mentally and ask: *is any fact only visible here?* | **no.** Everything the room says is also in the plan strip, the activity line, or the log |
+
+### Leg I — the drawing standard ⏱ ~5 min · $0 *(dev build)*
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| I-1 | Open `/__cast` — 10 characters × 3 poses × both themes on one screen | heads on one line, shoulders on one line, feet on one line. **Ten configurations of one drawing**, not ten drawings | any one of them sits taller/wider/thicker ⇒ a part was drawn by eye instead of to the `u` grid (§2b②) |
+| I-2 | Compare stroke weight against a lucide icon in the header at the same zoom | the same family: round caps, round joins, one weight | |
+| I-3 | Toggle light ⇄ dark on the contact sheet | all 20 cells stay readable; no character depends on a colour that only works in one theme | |
+| I-4 | Add an 11th row to `cast.ts` | a new character appears, correctly proportioned, **with no new drawing code** | it needs its own paths ⇒ the parameter table isn't actually the source |
+| I-5 | Time one walk across the room, then one short trip | the short trip is **proportionally shorter** — speed is constant, duration is not | both take the same time ⇒ a duration got hard-coded and short trips lunge |
+
+### Leg J — the art slot ⏱ ~6 min · $0 · *only once an asset is plugged in*
+
+→ `web/src/office/art/manifest.ts`. With `ART = null` (the shipped state) only J-1 and J-2 apply.
+
+| # | Do what | Correct | Broken |
+|---|---|---|---|
+| J-1 | `ART = null`, open the room, DevTools ▸ Network | **`lottie_light_canvas` is never fetched.** The chunk exists on disk; nobody downloads it | it loads ⇒ the socket is not actually gated and everybody pays for a feature nobody turned on |
+| J-2 | Same, React profiler while people walk | **zero commits** — the built-in drawing walks from a CSS class | commits per trip ⇒ `Stage.onWalk` got wired unconditionally |
+| J-3 | Fill in `ART`, reload | the same room, the same walks, the new drawing. **Nothing else changes** | the furniture needs re-tuning ⇒ `height` in the manifest is wrong, not the room |
+| J-4 | Watch somebody cross the room | the **walk** clip plays while moving and **stops** on arrival | it loops forever ⇒ the standing-still freeze is gone, and with it the whole CPU argument |
+| J-5 | Idle office, Performance, 10 s | still flat. An asset must not resurrect the loop | a steady trace ⇒ animations are playing for people who are standing still |
+| J-6 | Eight people, three walking, Performance | 60 fps | jank ⇒ re-check the renderer is `canvas`, not `svg` |
+| J-7 | 🔴 `licence` / `source` left blank | it does not compile — both are required fields | it builds ⇒ an asset can ship with nobody able to say where it came from |
+| J-8 | Set `hue`, compare two people | tellable apart at a glance, and **skin still looks like skin** | grey or green faces ⇒ the range is too wide; narrow it |
+| J-9 | Reduced motion on | no walking; the clip does not play | it animates ⇒ the player is ignoring the setting the rest of the room respects |
+
+**The five checks that matter most in test 23:** **G-1** · **G-3** · **E-2** · **E-4** · **D-9**.
+
+**Suggested run order:** **A** → **I** → **B** → **C** → **G** → **J** (all free) → **D** → **E** → **F** → **H**.
+
+**Cost:** legs A, B, C, F, G, H, I, J **$0** · D ~$0.05 · E ~$0.2
+
+---
+
 ## Results log
 
 | Test | Runnable? | Actual cost | Turn count | Where it stumbled |
@@ -1875,6 +2036,7 @@ Plug in one more arm (labeled `Number workshop`):
 | 19 Linear | | | | |
 | 20 Self-attach MCP | | | | |
 | 22 CLI → MCP | | | | |
+| 23 Office view | | | | |
 
 **The three numbers that matter most:**
 

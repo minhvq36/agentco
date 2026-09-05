@@ -62,6 +62,28 @@ export const en = {
   'app.canvasHint': 'Drag nodes to arrange · connect the assistant to a person to grant access',
   'app.planRunning': 'running…',
 
+  // ─────────────────────────────────────────────────── the office view (room)
+  // → docs/SPEC-office-animation.md
+  // ⚠ These are APP strings — furniture, tooltips, the accessible summary. What
+  // a character SAYS is `say`, which passes through no catalogue and names no
+  // language. → docs/CLAUDE.md §Language
+  'office.desk': 'Results desk',
+  'office.openResults': 'open the Results panel',
+  'office.openLibrary': 'open the Document cabinet',
+  'office.openArm': 'open this connection',
+  'office.connectArm': 'plug in a connection',
+  'office.armNone': 'No connection',
+  'office.breakArea': 'Break area',
+  'office.summary': '{working} working, {resting} resting',
+  'office.viewDiagram': 'Diagram',
+  'office.viewRoom': 'Office',
+  'office.viewDiagramTip': 'The diagram: build and wire up the company',
+  'office.viewRoomTip': 'The room: watch what is happening right now',
+  'office.character': 'Character',
+  'office.characterHint': 'How this person is drawn in the office view. Costs nothing and changes nothing about the work.',
+  'office.characterPick': 'Character {n}',
+  'office.hireHint': 'Nobody works here yet. Switch to the diagram to hire your first person.',
+
   // ───────────────────────────────────────────────────────────────── chat
   'chat.you': 'you',
   /** Fallback only — an office with a canvas shows the name the user chose. */
@@ -1768,6 +1790,7 @@ export const enPlural = {
   'header.taskCount': { one: '{n} task', other: '{n} tasks' },
   'header.turnCount': { one: '{n} turn', other: '{n} turns' },
   'node.libraryCount': { one: '{n} document', other: '{n} documents' },
+  'office.armCount': { one: '{n} connection', other: '{n} connections' },
   'cmd.readingMore': { one: 'Reading {names} and {n} more file…', other: 'Reading {names} and {n} more files…' },
   'lib.shapeLines': { one: '{n} line', other: '{n} lines' },
   'lib.shapeCsv': { one: 'csv, {n} row', other: 'csv, {n} rows' },

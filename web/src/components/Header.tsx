@@ -1,4 +1,4 @@
-import { Pencil, Plus, Power, Square } from 'lucide-react';
+import { Home, Network, Pencil, Plus, Power, Square } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Select, Tip } from '@/components/ui/misc';
@@ -263,6 +263,49 @@ function resetLabel(iso: string, long = false): string {
   return long && !sameDay ? `${formatWeekday(d)} ${formatDate(d)} ${hm}` : short;
 }
 
+/**
+ * Diagram ⇄ room. → docs/SPEC-office-animation.md §11a
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NOT RENDERED AT ALL when `ui.office_view` is off — no greyed-out button.  │
+ * │ A control that exists and never works is worse than no control: somebody  │
+ * │ will click it, get nothing, and conclude the app is broken rather than    │
+ * │ that a feature is switched off. §11c①                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Which view is open is remembered per BROWSER, not per company — two tabs on
+ * two views is legal. Whether the door exists at all is the company's call.
+ */
+function ViewSwitch() {
+  const view = useApp((s) => s.view);
+  const enabled = useApp((s) => s.company?.officeView !== false);
+  if (!enabled) return null;
+
+  return (
+    <div className="flex items-center rounded-lg border border-line p-0.5" role="group" aria-label={t('office.viewRoom')}>
+      {(['diagram', 'office'] as const).map((v) => {
+        const on = view === v;
+        const label = v === 'diagram' ? t('office.viewDiagram') : t('office.viewRoom');
+        return (
+          <Tip key={v} label={v === 'diagram' ? t('office.viewDiagramTip') : t('office.viewRoomTip')}>
+            <button
+              type="button"
+              aria-pressed={on}
+              onClick={() => actions.setView(v)}
+              className={`flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[13px] transition-colors ${
+                on ? 'bg-accent-soft text-accent' : 'text-muted hover:text-ink'
+              }`}
+            >
+              {v === 'diagram' ? <Network className="h-3.5 w-3.5" /> : <Home className="h-3.5 w-3.5" />}
+              {label}
+            </button>
+          </Tip>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Header({
   onNewOffice,
   onRenameOffice,
@@ -310,6 +353,8 @@ export function Header({
           </Button>
         </Tip>
       )}
+
+      {officeId && <ViewSwitch />}
 
       {officeId && (
         <span className="flex items-center gap-2 text-[13px] text-muted">

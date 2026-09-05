@@ -265,5 +265,6 @@ The CLI and the Telegram bridge don't send `Origin`/`Sec-Fetch-Site`, so they're
 
 - **Cross-office** (Assistant talking to Assistant). This is exactly the agent-to-agent problem the architecture is designed to avoid — it needs its own design, not a canvas extension. Logged in the roadmap for M3+.
 - Multiple Assistants in one office
-- Drawing characters / character animation — **deliberately not doing this**. Nodes are enough, and far cheaper.
+- ~~Drawing characters / character animation — **deliberately not doing this**. Nodes are enough, and far cheaper.~~
+  **REVERSED 05/09/2026 → [`SPEC-office-animation.md`](SPEC-office-animation.md).** Still true for *this* file: the diagram gains no characters and stays the one editing surface. What changed is the audience — nodes are enough for someone who already reads diagrams, and the customer this product committed to is not that person. The room is a **second view** of the same state, read-only for the shape, and it costs three additive backend fields and no dependency.
 - Editing knowledge content by dragging nodes

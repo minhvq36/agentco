@@ -828,8 +828,20 @@ export class Scheduler {
         {
           office,
           acquireCacheSlot: (key) => this.gate.acquire(key),
-          onProgress: (say) =>
-            this.deps.emit({ type: 'task.progress', task_id: brief.task_id, role: role.id, say }),
+          /**
+           * `place` is spread, so ABSENT STAYS ABSENT — a turn with no tool
+           * call must not carry `at: undefined`, because a display side reading
+           * "has the key" instead of "has a value" would move somebody nowhere.
+           * → docs/SPEC-office-animation.md §6c①
+           */
+          onProgress: (say, place) =>
+            this.deps.emit({
+              type: 'task.progress',
+              task_id: brief.task_id,
+              role: role.id,
+              say,
+              ...(place ?? {}),
+            }),
           /**
            * EVERY MCP call goes to the audit log, with its arguments.
            * → `core/audit.ts`

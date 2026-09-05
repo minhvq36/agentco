@@ -25,6 +25,7 @@ import type {
   StepStatus,
   Usage,
   Locale,
+  WorkPlace,
 } from './types';
 import { plural, resolveLocale, setLocale, t } from '@i18n';
 
@@ -67,6 +68,26 @@ export interface ChatMessage {
 export interface LiveAgent {
   status: 'working' | 'done' | 'error';
   say: string;
+  /**
+   * Where this person's last tool call landed, straight off `task.progress`.
+   * → docs/SPEC-office-animation.md §6
+   *
+   * ⚠ `undefined` means NO PLACE — a turn that called no tool. The office view
+   * must leave that person exactly where they are; substituting a default here
+   * would turn "we did not observe a place" into "they went to the desk", and
+   * the picture would be stating something nobody saw.
+   */
+  at?: WorkPlace;
+  /** Which arm, when `at === 'arm'`. */
+  arm?: string;
+  /**
+   * How many files the finished task produced. Set ONLY on `task.done`.
+   *
+   * It is the difference between a worker walking to the filing desk to put
+   * something down and one that has nothing to put down — a `deliver: reply`
+   * task answers and lands no file.
+   */
+  artifacts?: number;
 }
 
 export type PanelId =
@@ -263,6 +284,32 @@ export interface AppState {
   panel: PanelId | null;
   /** The node selected on the canvas (a node id, not a role id). */
   selected: string | null;
+
+  /**
+   * WHICH VIEW of the office is open — the diagram, or the room.
+   * → docs/SPEC-office-animation.md §11a
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `localStorage`, NOT the server. Identical reasoning to `agentco:office`:  │
+   * │ two tabs on two views is perfectly legal, and putting this on the server  │
+   * │ has one tab kicking the other. What the SERVER holds is a different       │
+   * │ question — `company.officeView` says whether this door exists at all.     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Defaults to the diagram: a new office is an empty room, and the diagram is
+   * where a company gets built. The choice sticks once made.
+   */
+  view: 'diagram' | 'office';
+
+  /**
+   * The assistant's HIDDEN WORKER is running, and which shape it is.
+   * → `SPEC-offices.md` §6c · SPEC-office-animation §6c②
+   *
+   * Read straight off `office.activity.reading`, never inferred from the
+   * presence of `note` — which is a localized sentence and would make this
+   * work in exactly the language it was tested in.
+   */
+  assistantReading: 'library' | 'web' | null;
 }
 
 const initial: AppState = {
@@ -293,6 +340,8 @@ const initial: AppState = {
   revealArtifact: null,
   panel: null,
   selected: null,
+  view: bootView(),
+  assistantReading: null,
 };
 
 let state: AppState = initial;
@@ -368,6 +417,25 @@ function applyLocale(locale: Locale): void {
     /* blocked storage — the server still knows, so only the first paint suffers */
   }
   set({ locale });
+}
+
+const VIEW_KEY = 'agentco:view';
+
+/**
+ * The view chosen last time. Same class of state as `agentco:office` and stored
+ * the same way — losing it on F5 would drop somebody back into the diagram every
+ * time they reload, which reads as the switch not working.
+ *
+ * ⚠ Swallows its own error, like every other `localStorage` call in this file:
+ * a private window or blocked site data must cost a preference, never a white
+ * screen.
+ */
+function bootView(): 'diagram' | 'office' {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'office' ? 'office' : 'diagram';
+  } catch {
+    return 'diagram';
+  }
 }
 
 const LAST_OFFICE = 'agentco:office';
@@ -1121,6 +1189,52 @@ export const actions = {
     set({ selected: nodeId });
   },
 
+  /**
+   * Diagram ⇄ room. → docs/SPEC-office-animation.md §11a
+   *
+   * Remembered per browser, never on the server. Everything else on screen —
+   * header, sidebar, plan strip, the inspector, the selection — survives the
+   * switch untouched: only the main scene swaps.
+   */
+  setView(view: 'diagram' | 'office'): void {
+    if (state.view === view) return;
+    set({ view });
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // A remembered view is a convenience; a white screen is not acceptable.
+    }
+  },
+
+  /**
+   * Somebody picked a different character for one person.
+   * → docs/SPEC-office-animation.md §6c③
+   *
+   * ⚠ Sends the stored CHOICES plus this one — never the resolved cast. Sending
+   * what everyone currently looks like would freeze every hashed default into
+   * `layout.json`, and the "delete it and the office re-casts itself" property
+   * would be gone without anything failing.
+   */
+  async setCharacter(nodeId: string, character: number): Promise<void> {
+    const id = state.officeId;
+    const canvas = state.canvas;
+    if (!id || !canvas) return;
+    // Optimistic: this is a costume, and waiting for a round trip to see it is
+    // exactly the "responds before the server answers" bar.
+    set({
+      canvas: {
+        ...canvas,
+        cast: { ...canvas.cast, [nodeId]: character },
+        nodes: canvas.nodes.map((n) => (n.id === nodeId ? { ...n, character } : n)),
+      },
+    });
+    markLocalSave();
+    const next = await guard(() =>
+      api.saveCanvas(id, { cast: { ...canvas.cast, [nodeId]: character } }),
+    );
+    if (next) set({ canvas: next });
+  },
+
   dismissToast(): void {
     set({ toast: null });
   },
@@ -1216,10 +1330,22 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       set({ live: {}, activity: null });
       break;
 
+    /**
+     * ⚠ `task.started` carries NO place, and must not inherit one. It is the
+     * brief being handed over, before any tool has run — the person walks to
+     * their own spot, and only a real `at` moves them anywhere else.
+     */
     case 'task.started':
     case 'task.progress':
       clearTimeout(doneTimers[e.role]);
-      setLive(e.role, { status: 'working', say: e.say });
+      setLive(e.role, {
+        status: 'working',
+        say: e.say,
+        // Spread so ABSENT STAYS ABSENT: a progress turn with no tool call
+        // must clear the previous place rather than leave the person standing
+        // at a station they have already left.
+        ...(e.type === 'task.progress' && e.at ? { at: e.at, ...(e.arm ? { arm: e.arm } : {}) } : {}),
+      });
       // Who is doing what — shown in the chat frame, so nobody has to open another
       // panel to learn that the system is still alive.
       set({ activity: labelFor(e.role) + ': ' + e.say });
@@ -1229,7 +1355,10 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       const ok = e.status === 'done';
       // A finished task may mean new artifacts on disk. The Results panel reloads.
       if (e.artifacts.length) set({ artifactsVersion: state.artifactsVersion + 1 });
-      setLive(e.role, { status: ok ? 'done' : 'error', say: e.say });
+      // `artifacts` rides along because it is the difference between a worker
+      // with something to put on the filing desk and one without — a
+      // `deliver: reply` task answers and lands no file.
+      setLive(e.role, { status: ok ? 'done' : 'error', say: e.say, artifacts: e.artifacts.length });
       clearTimeout(doneTimers[e.role]);
       doneTimers[e.role] = setTimeout(() => {
         if (state.live[e.role]?.status === 'done') setLive(e.role, null);
@@ -1294,6 +1423,14 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
        * otherwise the old timer clears the status line of the NEW task that just
        * started.
        */
+      /**
+       * Written on EVERY `office.activity`, including when absent — the same
+       * rule as `libraryBusy`. A conditional write is how a state gets stuck on
+       * screen forever: the "no longer reading" branch would write nothing, and
+       * the assistant would stand at the bookshelf until the next lookup.
+       */
+      set({ assistantReading: e.reading ?? null });
+
       if (e.note) {
         if (noteTimer) clearTimeout(noteTimer);
         noteTimer = undefined;

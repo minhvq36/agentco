@@ -50,6 +50,24 @@ export const vi: Catalog = {
   'app.canvasHint': 'Kéo node để sắp xếp · kết nối Trợ lý và nhân viên để giao quyền',
   'app.planRunning': 'đang chạy…',
 
+  // ─────────────────────────────────────────────────── the office view (room)
+  'office.desk': 'Bàn hồ sơ',
+  'office.openResults': 'mở ngăn Kết quả',
+  'office.openLibrary': 'mở Tủ tài liệu',
+  'office.openArm': 'mở kết nối này',
+  'office.connectArm': 'cắm một kết nối',
+  'office.armNone': 'Chưa có kết nối',
+  'office.breakArea': 'Khu giải lao',
+  'office.summary': '{working} đang làm, {resting} đang nghỉ',
+  'office.viewDiagram': 'Sơ đồ',
+  'office.viewRoom': 'Văn phòng',
+  'office.viewDiagramTip': 'Sơ đồ: dựng và nối dây cho công ty',
+  'office.viewRoomTip': 'Căn phòng: xem đang có chuyện gì xảy ra',
+  'office.character': 'Nhân vật',
+  'office.characterHint': 'Cách vẽ người này trong giao diện văn phòng. Không tốn gì và không đổi gì trong công việc.',
+  'office.characterPick': 'Nhân vật {n}',
+  'office.hireHint': 'Chưa có ai làm việc ở đây. Chuyển sang sơ đồ để tuyển người đầu tiên.',
+
   // ───────────────────────────────────────────────────────────────── chat
   'chat.you': 'bạn',
   'chat.assistant': 'Trợ lý',
@@ -1495,6 +1513,7 @@ export const viPlural: PluralCatalog = {
   'header.taskCount': { one: '{n} việc', other: '{n} việc' },
   'header.turnCount': { one: '{n} lượt', other: '{n} lượt' },
   'node.libraryCount': { one: '{n} tài liệu', other: '{n} tài liệu' },
+  'office.armCount': { one: '{n} kết nối', other: '{n} kết nối' },
   'cmd.readingMore': { one: 'Đang đọc {names} và {n} file nữa…', other: 'Đang đọc {names} và {n} file nữa…' },
   'lib.shapeLines': { one: '{n} dòng', other: '{n} dòng' },
   'lib.shapeCsv': { one: 'csv, {n} dòng', other: 'csv, {n} dòng' },

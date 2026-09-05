@@ -38,6 +38,7 @@ import {
   type TaskBrief,
   type Tier,
   type Usage,
+  type WorkPlace,
 } from './types.js';
 import { effectiveTools } from './types.js';
 import { splitArmTool } from './audit.js';
@@ -55,7 +56,14 @@ export interface WorkerDeps {
   office: LoadedOffice;
   /** Called before firing the request; the scheduler uses this to gate cache priming. */
   acquireCacheSlot?(cacheKey: string): Promise<() => void>;
-  onProgress?(say: string): void;
+  /**
+   * `place` rides along with the sentence, and it is the half a MACHINE can
+   * read. → `placeOf` · docs/SPEC-office-animation.md §6c
+   *
+   * Optional on purpose: a turn that called no tool has no place, and callers
+   * that only want the sentence (every spike script, the CLI) ignore it.
+   */
+  onProgress?(say: string, place?: { at: WorkPlace; arm?: string }): void;
   /**
    * ONE MCP call happened — for the audit log. → `core/audit.ts`
    *
@@ -658,7 +666,9 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
         // only shows the FIRST one (more would just flicker meaninglessly),
         // but DESTINATIONS get recorded for all of them — this is where we
         // learn where the output actually went.
-        if (calls[0]) deps.onProgress?.(describeCall(calls[0], armLabels));
+        // The sentence and the place come from THE SAME call, in one read. Two
+        // reads is how they would eventually disagree about the same turn.
+        if (calls[0]) deps.onProgress?.(describeCall(calls[0], armLabels), placeOf(calls[0]));
         for (const call of calls) {
           const spot = landingOf(office.dir, call);
           if (spot) landed.set(`${spot.kind}:${spot.ref}`, spot);
@@ -1687,12 +1697,83 @@ function isAbsolutePath(p: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('/');
 }
 
-function roomOf(searchPath: string): string {
+/**
+ * The SAME question `roomOf` answers, one step earlier: which room, as a value
+ * rather than as a sentence.
+ *
+ * ⚠ There is exactly ONE set of these regexes, and both callers go through it.
+ * Two copies would drift on the day someone adds a fourth store, and they would
+ * drift SILENTLY — the sentence would say one room while the display walked a
+ * character to another.
+ */
+function roomKindOf(searchPath: string): 'library' | 'artifacts' | 'knowledge' | 'desk' {
   const p = searchPath.replace(/\\/g, '/');
-  if (/(^|\/)library(\/|$)/.test(p)) return t('wk.roomLibrary');
-  if (/(^|\/)artifacts(\/|$)/.test(p)) return t('wk.roomArtifacts');
-  if (/(^|\/)knowledge(\/|$)/.test(p)) return t('wk.roomKnowledge');
-  return t('wk.roomOffice');
+  if (/(^|\/)library(\/|$)/.test(p)) return 'library';
+  if (/(^|\/)artifacts(\/|$)/.test(p)) return 'artifacts';
+  if (/(^|\/)knowledge(\/|$)/.test(p)) return 'knowledge';
+  return 'desk';
+}
+
+function roomOf(searchPath: string): string {
+  switch (roomKindOf(searchPath)) {
+    case 'library':
+      return t('wk.roomLibrary');
+    case 'artifacts':
+      return t('wk.roomArtifacts');
+    case 'knowledge':
+      return t('wk.roomKnowledge');
+    default:
+      return t('wk.roomOffice');
+  }
+}
+
+/**
+ * WHERE this call landed, as a value. The machine-readable half of
+ * `describeCall`. → docs/SPEC-office-animation.md §6c①
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NOTHING HERE IS INFERRED. Every branch reads a classifier that already    │
+ * │ ran for another reason: `roomKindOf` for the status sentence,             │
+ * │ `EXTERNAL_TOOLS` for `landingOf`, `mcpServerOf` for the audit log. This   │
+ * │ function only stops the answer being thrown away.                        │
+ * │                                                                          │
+ * │ ⚠ `undefined` IS AN ANSWER, and it means *"no place"* — a tool we do not  │
+ * │ classify (a todo list, a future builtin) must produce no movement at all. │
+ * │ Guessing a place for it would be the display stating something nobody     │
+ * │ observed, which is the one thing this whole field exists to avoid.        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function placeOf(call: ToolCall): { at: WorkPlace; arm?: string } | undefined {
+  // `EXTERNAL_TOOLS`, not `=== 'Bash'`: the shell tool carries a different name
+  // per OS, exactly as `landingOf` already has to deal with.
+  if (EXTERNAL_TOOLS.has(call.name)) return { at: 'shell' };
+  switch (call.name) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+    case 'NotebookEdit':
+      return { at: roomKindOf(str(call.input['file_path']) || str(call.input['notebook_path'])) };
+    case 'Grep':
+    case 'Glob': {
+      /**
+       * ⚠ Reads BOTH fields, the same trap `describeCall` records above: the
+       * model often puts an absolute path in `pattern` and leaves `path` empty.
+       *
+       * Outside the office resolves to `desk` — *"working, from where they
+       * stand"*. There is no station for the user's own disk, and inventing one
+       * would teach a symbol that means nothing anywhere else in the product.
+       */
+      const where = str(call.input['path']) || str(call.input['pattern']);
+      return { at: isAbsolutePath(where) ? 'desk' : roomKindOf(str(call.input['path'])) };
+    }
+    case 'WebSearch':
+    case 'WebFetch':
+      return { at: 'web' };
+    default: {
+      const server = mcpServerOf(call.name);
+      return server ? { at: 'arm', arm: server } : undefined;
+    }
+  }
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');

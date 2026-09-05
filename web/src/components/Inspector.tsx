@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { Archive, FileCode2, Globe, Pencil, ScrollText, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,29 @@ import { actions, useApp } from '@/lib/store';
 import type { ArmCall, CanvasNode } from '@/lib/types';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatDateTime } from '@i18n/fmt';
+
+/**
+ * The costume picker draws with the cast, so it comes from the OFFICE CHUNK
+ * through a lazy import. A direct import would pull the whole room into the main
+ * bundle and undo the code split for everybody, including people who switched
+ * the room off. → `office/CharacterPicker.tsx` · SPEC-office-animation §11c②
+ */
+const CharacterPickerLazy = lazy(() => import('@/office/CharacterPicker'));
+
+/**
+ * Renders nothing at all when the company has no office view: a costume for a
+ * view that does not exist is a control with no consequence, and offering one
+ * is how a setting turns into a lie.
+ */
+function CharacterPicker({ node }: { node: CanvasNode }) {
+  const enabled = useApp((s) => s.company?.officeView !== false);
+  if (!enabled) return null;
+  return (
+    <Suspense fallback={null}>
+      <CharacterPickerLazy node={node} />
+    </Suspense>
+  );
+}
 
 /**
  * Edit an employee's profile in place. → docs/SPEC-tools-approval.md §1
@@ -878,6 +901,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               v={plural('knowledge.noteCount', node.count ?? 0)}
             />
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
+            <CharacterPicker node={node} />
             <Note>
               {t('inspector.rosterNoteBefore')} <b>{t('inspector.rosterNoteBold')}</b>{' '}
               {t('inspector.rosterNoteAfter')}
@@ -1012,6 +1036,7 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
               v={node.connected ? t('inspector.statusOnDuty') : t('inspector.statusOffDuty')}
             />
             <ArmList ids={node.mcp} nodes={canvas.nodes} />
+            <CharacterPicker node={node} />
             {node.missing && (
               <Note>
                 <span className="text-danger">

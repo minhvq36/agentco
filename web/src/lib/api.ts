@@ -364,7 +364,13 @@ export const api = {
 
   canvas: (id: string) => call<CanvasState>(`/api/office/${enc(id)}/canvas`),
 
-  saveCanvas: (id: string, payload: { nodes: unknown; edges: unknown }) =>
+  /**
+   * Every key is optional and ABSENT MEANS "leave it alone" — the server
+   * distinguishes absent from empty. That is what lets a costume change send
+   * only `cast`, and a node drag send only `nodes`/`edges`, without either one
+   * wiping the other. → `src/core/layout.ts §save`
+   */
+  saveCanvas: (id: string, payload: { nodes?: unknown; edges?: unknown; cast?: unknown }) =>
     call<CanvasState>(`/api/office/${enc(id)}/canvas`, { method: 'PUT', body: JSON.stringify(payload) }),
 
   addAgent: (id: string, input: { display_name: string; pitch: string; tier: string }) =>

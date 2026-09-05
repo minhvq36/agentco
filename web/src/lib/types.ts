@@ -19,6 +19,17 @@ export type { Locale };
 
 import type { NodeKind } from '@core/layout-geometry';
 
+/**
+ * Where a worker's tool call landed. → `src/core/types.ts §WorkPlace`
+ *
+ * ⚠ A HAND-WRITTEN COPY, like the rest of this file — deliberately NOT imported
+ * from `@core/types`, which pulls in `zod` and is therefore not one of the pure
+ * modules the interface is allowed to load. `@core` exists for
+ * `layout-geometry.ts`, and widening it to a schema file would drag a
+ * validation library into a bundle that has no use for one.
+ */
+export type WorkPlace = 'desk' | 'library' | 'artifacts' | 'knowledge' | 'arm' | 'web' | 'shell';
+
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 export type StepStatus = 'pending' | 'running' | 'done' | 'problem' | 'waiting_human';
 export type PlanStatus =
@@ -119,6 +130,14 @@ export interface CanvasNode {
    */
   folders?: string[];
   hue?: number;
+  /**
+   * assistant/agent only: which row of `CAST` draws this person in the office
+   * view. **RESOLVED ON THE SERVER** (a stored choice, else hashed) — the
+   * interface never re-derives it, for the same reason it never re-derives
+   * `mark` or `armGroup`: one side answering a question is one side that can be
+   * wrong about it. → `@core/cast` · docs/SPEC-office-animation.md §4a
+   */
+  character?: number;
   missing: boolean;
   connected: boolean;
   removable: boolean;
@@ -133,6 +152,12 @@ export interface CanvasState {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   knowledge: { shared: number; total: number };
+  /**
+   * The stored character CHOICES — never the resolved cast (that is
+   * `node.character`). Held so that changing ONE person can `PUT` the map back
+   * without freezing everyone else's hashed default into stored data.
+   */
+  cast: Record<string, number>;
 }
 
 export interface OfficeSummary {
@@ -184,6 +209,16 @@ export interface CompanyView {
    * English interface still gets Vietnamese answers, on purpose.
    */
   language: Locale;
+  /**
+   * Does the office view exist at all — `company.yaml → ui.office_view`.
+   * → docs/SPEC-office-animation.md §11c
+   *
+   * ⚠ Off means the switch is **not rendered** and the scene's chunk is never
+   * fetched. A greyed-out control that never works is worse than no control.
+   * Which view is currently open is a different question and lives in
+   * `localStorage` — two tabs on two views is legal.
+   */
+  officeView: boolean;
 }
 
 export interface PlanStep {
@@ -323,7 +358,26 @@ export type AgentEvent = EventBase &
      */
     | { type: 'plan.finished'; status: PlanStatus; costUSD: number; turns: number }
     | { type: 'task.started'; task_id: string; role: string; say: string }
-    | { type: 'task.progress'; task_id: string; role: string; say: string }
+    /**
+     * `at` / `arm` — WHERE this turn's tool call landed, as DATA.
+     * → `src/core/worker.ts §placeOf` · docs/SPEC-office-animation.md §6
+     *
+     * ⚠ THE WHOLE POINT IS THAT NOBODY READS `say` TO WORK THIS OUT. That
+     * string has two authors (our `describeCall`, or the model's own prose on a
+     * turn with no tool call) and it goes through i18n, so matching on it would
+     * work in exactly one language. Same rule as `files` on `master.message`:
+     * only what CODE put there may be acted on.
+     *
+     * ⚠ Absent is normal, and absent means NO PLACE — never a default place.
+     */
+    | {
+        type: 'task.progress';
+        task_id: string;
+        role: string;
+        say: string;
+        at?: WorkPlace;
+        arm?: string;
+      }
     | {
         type: 'task.done';
         task_id: string;
@@ -363,6 +417,15 @@ export type AgentEvent = EventBase &
          */
         note?: string;
         hold_ms?: number;
+        /**
+         * The hidden worker is running: `library` = reading named documents,
+         * `web` = searching the web. → `SPEC-offices.md` §6c
+         *
+         * The KIND, kept alongside the sentence that spends it. This is what
+         * lets the office view walk the assistant to the bookshelf for one and
+         * leave it standing for the other, without reading `note`.
+         */
+        reading?: 'library' | 'web';
       }
     | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }

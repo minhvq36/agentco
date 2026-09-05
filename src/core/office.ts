@@ -46,6 +46,7 @@ import {
   type ParsedInput,
 } from './commands.js';
 import { Mailbox, mergeUserText } from './mailbox.js';
+import { castOf } from './cast.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
@@ -210,6 +211,12 @@ export interface CanvasNode extends LayoutNode {
   folders?: string[];
   /** representative color, shared with the log */
   hue?: number;
+  /**
+   * assistant/agent only: WHICH CHARACTER draws them in the office view.
+   * An index into `CAST` (`core/cast.ts`), resolved on the server — a stored
+   * choice if the office has one, otherwise hashed. → `canvas()`
+   */
+  character?: number;
   /** roles/<id>.yaml wasn't found, or the mcp server has vanished from company.yaml */
   missing: boolean;
   /** has a wire from the Assistant → gets assigned work. No wire = "idle". */
@@ -222,6 +229,17 @@ export interface CanvasState {
   nodes: CanvasNode[];
   edges: Array<{ from: string; to: string }>;
   knowledge: { shared: number; total: number };
+  /**
+   * The stored character CHOICES only — not the resolved cast.
+   *
+   * `node.character` already carries what to draw. This is the other half, and
+   * the interface needs it for exactly one job: changing one person's character
+   * means `PUT`ing the map back, and without the current choices it would have
+   * to send the resolved cast for EVERYBODY — freezing every hashed default
+   * into stored data and quietly killing the "delete layout.json and it
+   * re-casts itself" property.
+   */
+  cast: Record<string, number>;
 }
 
 export interface SayOutcome {
@@ -844,7 +862,11 @@ export class Office {
       // The "Reading doc-2.md…" line — 0 tokens, and the other half of the
       // hidden worker's own honesty. `finally` so it doesn't get stuck on
       // screen if the read turn throws or gets cut by `/stop`. → `reading`
-      this.reading = readingNote(ok);
+      // The KIND rides along with the sentence, from the branch that already
+      // decides it. `readingNote` spends `ok.length` to pick a wording and then
+      // it is gone; a display side cannot get it back out of the sentence.
+      // → docs/SPEC-office-animation.md §6c②
+      this.reading = { note: readingNote(ok), kind: ok.length ? 'library' : 'web' };
       this.emitActivity();
       let found: { value: string; usage: Usage };
       try {
@@ -1012,7 +1034,7 @@ export class Office {
    * Assistant just knows the answer, when a real file-reading turn just ran.
    * → commands.ts `readingNote`
    */
-  private reading: string | null = null;
+  private reading: { note: string; kind: 'library' | 'web' } | null = null;
 
   private emitActivity(): void {
     const planning = this.currentRecord?.status === 'planning';
@@ -1024,7 +1046,8 @@ export class Office {
         queued: this.mailbox.size,
         jobs: this.deferred.length,
         // ⚠ DELIBERATELY carries no `hold_ms` — see `reading`.
-        note: this.reading,
+        note: this.reading.note,
+        reading: this.reading.kind,
         plan_id: null,
       });
       return;
@@ -2434,13 +2457,28 @@ export class Office {
         // browser side sorts identically to the server. Recomputing it in
         // the UI would build a second copy of the same classification rule.
         ...this.layout.armGroup(n),
+        /**
+         * WHICH CHARACTER this person is, RESOLVED — a stored choice if there
+         * is one, otherwise the hash. → `core/cast.ts` · SPEC-office-animation §4a
+         *
+         * Resolved here rather than in the interface for the same reason `mark`
+         * is (see `describeNode`): the office view must draw a face on its
+         * first paint, and one side answering "who is this" is one side that
+         * can be wrong about it. Only people get one — furniture has no face,
+         * and sending `character` on a bookshelf would invite somebody to draw
+         * one.
+         */
+        ...(n.kind === 'assistant' || n.kind === 'agent'
+          ? { character: layout.cast?.[n.id] ?? castOf(this.id, n.id) }
+          : {}),
       })),
       edges: layout.edges,
       knowledge: { shared: this.knowledge.countShared(), total: this.knowledge.size },
+      cast: layout.cast ?? {},
     };
   }
 
-  saveCanvas(input: { nodes?: unknown; edges?: unknown }): CanvasState {
+  saveCanvas(input: { nodes?: unknown; edges?: unknown; cast?: unknown }): CanvasState {
     this.assertLive();
     const { touched } = this.layout.save(input);
     if (touched.length) this.reload();

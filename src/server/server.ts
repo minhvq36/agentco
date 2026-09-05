@@ -649,6 +649,11 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         name: company.config.name || t('company.unnamed'),
         offices: company.list(),
         allowCorePromptEdit: company.config.allow_core_prompt_edit,
+        // Does the office view exist at all. A matter of taste, declared at the
+        // company because it answers "does this door exist", not "which view am
+        // I in" — that one stays in the browser.
+        // → docs/SPEC-office-animation.md §11c
+        officeView: company.config.ui.office_view,
         // Which tier runs which model — the UI needs to say this out loud, or
         // "standard" is just a word and the user doesn't know what they're
         // paying for.
@@ -1302,7 +1307,10 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
       if (rest[0] === 'canvas' && method === 'GET') return json(res, 200, office.canvas());
       if (rest[0] === 'canvas' && method === 'PUT') {
-        const body = await readJson<{ nodes?: unknown; edges?: unknown }>(req);
+        // `cast` = which character each person is drawn as in the office view.
+        // Pure view state, so it rides on the diagram's own PUT rather than
+        // earning an endpoint. Absent leaves it untouched. → `layout.ts §save`
+        const body = await readJson<{ nodes?: unknown; edges?: unknown; cast?: unknown }>(req);
         return json(res, 200, office.saveCanvas(body));
       }
       if (rest[0] === 'agent' && method === 'POST') {
