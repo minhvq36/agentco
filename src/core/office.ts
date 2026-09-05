@@ -1,11 +1,12 @@
 ﻿/**
- * Một VĂN PHÒNG đang chạy — chỗ mọi thứ gặp nhau.
+ * A running OFFICE — the place where everything meets.
  *
  * → docs/SPEC-offices.md
  *
- * Văn phòng tự chứa đầy đủ: Trợ lý riêng, nhân viên riêng, kho tri thức riêng,
- * session riêng. Không nói chuyện với văn phòng khác. Đó là lý do zip một thư
- * mục `offices/<id>/` lại là một template chạy được ở máy khác.
+ * An office is fully self-contained: its own Assistant, its own workers, its
+ * own knowledge store, its own session. Never talks to another office. That's
+ * why zipping up an `offices/<id>/` directory produces a template that runs
+ * on another machine.
  */
 
 import fs from 'node:fs';
@@ -30,7 +31,7 @@ import { readOAuth } from './secrets.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
-import { ArtifactStore, isStale } from './artifacts.js';
+import { ArtifactStore, isStale, MAX_PANEL_FILES } from './artifacts.js';
 import { AuditLog } from './audit.js';
 import { loginOpen } from './browser-login.js';
 import { LayoutStore, ASSISTANT_NODE, agentNodeId, mcpNodeId, type LayoutNode } from './layout.js';
@@ -48,8 +49,10 @@ import { Mailbox, mergeUserText } from './mailbox.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
-import { straysOnDisk } from './worker.js';
+import { filesOnDisk, straysOnDisk } from './worker.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
+import { plural, t } from '../i18n/index.js';
+import { formatUSD } from '../i18n/fmt.js';
 import {
   RunError,
   TIERS,
@@ -70,110 +73,148 @@ import {
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 
 /**
- * Trần số file liệt kê trong câu báo cáo. Một ca chạm 20 CV (bài 8 của
- * TEST-WALKTHROUGH) sẽ sinh hàng chục file — đổ hết vào ô chat là biến câu báo
- * cáo thành một bức tường không ai đọc. Phần dư nói bằng một dòng đếm.
+ * Cap on how many files get listed in a report sentence. A run that touches
+ * 20 resumes (test 8 in TEST-WALKTHROUGH) generates dozens of files —
+ * dumping all of them into chat turns the report into a wall nobody reads.
+ * The overflow gets stated as a single count line.
  */
 const MAX_LISTED_FILES = 8;
 
-/** Số tin nhắn phát lại khi mở văn phòng. Đủ để nhớ mạch, không phải cả đời. */
+/**
+ * Token ceiling for the work listing handed to a memory-compaction turn.
+ *
+ * ⚠ Belongs to `factSkeleton` / `compactMemory` ONLY — the ASSISTANT's memory.
+ * It has nothing to do with a worker's HOT/COLD knowledge selection, which is
+ * a different store, a different budget (`knowledge_pack`) and a different
+ * question. One constant serving two purposes is how a number ends up wrong
+ * for both. → [[agentco-cut-after-sort]]
+ */
+const SKELETON_TOKENS = 1_200;
+
+/** How many messages get replayed when an office is opened. Enough to remember the thread, not a whole lifetime. */
 const CHAT_REPLAY = 200;
 
 /**
- * Số CA gần nhất được nêu trong bảng kê kết quả gửi cho Trợ lý.
+ * How many recent JOBS get named in the output manifest sent to the
+ * Assistant.
  *
- * 5 chứ không phải 1: ca người dùng muốn nhắc lại không phải lúc nào cũng là ca
- * vừa xong. Ca thật 20/08 cần một kết quả của **25 phút và hai ca trước đó**.
- * Cũng không phải "tất cả": trần token mới là chốt cuối, còn đây là chốt rẻ
- * chạy trước nó. → `artifactManifest`
+ * 5, not 1: the job a user wants to refer back to isn't always the one that
+ * just finished. A real case on 08/20 needed a result from **25 minutes and
+ * two jobs earlier**. Also not "all of them": the token cap is the final
+ * backstop, and this is the cheap gate that runs before it. → `artifactManifest`
  */
 const MANIFEST_PLANS = 5;
 
-/** Khoá gom cho file cũ nằm thẳng dưới `artifacts/<task_id>/` (trước 19/08). */
-const LEGACY_PLAN = '(cũ)';
+/** Grouping key for old files sitting directly under `artifacts/<task_id>/` (before 08/19). */
+/**
+ * Bucket key for artifacts written before plans carried an id.
+ *
+ * ⚠ NOT a catalogue key, and not a displayed string either. It exists only as a
+ * `Map` key inside `manifestArtifacts`, rebuilt from `a.plan_id || LEGACY_PLAN`
+ * on every call — nothing on disk holds it, and nothing compares against a
+ * stored copy. Running it through `t()` would make the grouping depend on the
+ * interface switch, which is how two locales end up with two different buckets
+ * for the same files.
+ */
+const LEGACY_PLAN = '(legacy)';
 
-/** Node đã kèm metadata để vẽ. Không có gì trong đây được ghi vào layout.json. */
+/** A node with metadata attached for drawing. Nothing in here gets written to layout.json. */
 export interface CanvasNode extends LayoutNode {
   label: string;
   avatar?: string;
-  /** Mức model: `eco` | `standard` | `deep`. Với Trợ lý có thể là mức thừa hưởng. */
+  /** Model tier: `eco` | `standard` | `deep`. For the Assistant, this may be an inherited tier. */
   tier?: string;
-  /** Model thật sự sẽ chạy ở mức đó. Nói ra để người dùng không phải đoán. */
+  /** The actual model that will run at that tier. Stated outright so the user doesn't have to guess. */
   model?: string;
-  /** Trợ lý: true khi mức đang theo `models.master` của công ty, không phải đặt riêng. */
+  /** Assistant: true when the tier follows the company's `models.master`, not a value set on its own. */
   tierInherited?: boolean;
   pitch?: string;
-  /** Trần chi phí một việc. **`0` = không giới hạn.** → `RoleBudget.max_usd` */
+  /** Cost cap for one task. **`0` = no limit.** → `RoleBudget.max_usd` */
   maxUsd?: number;
   maxTurns?: number;
   /**
-   * agent: vai trò này có `Bash` không. → docs/SPEC-tools-approval.md §5
+   * agent: does this role have `Bash`. → docs/SPEC-tools-approval.md §5
    *
-   * Chỉ tool DUY NHẤT đáng đưa lên node, vì nó là tool duy nhất bật/tắt được —
-   * và là ranh giới giữa "chỉ chạm được văn phòng" với "chạm được cả máy".
+   * The ONLY tool worth surfacing on the node, because it's the only one that
+   * can be toggled on/off — and it's the boundary between "can only touch the
+   * office" and "can touch the whole machine".
    */
   bash?: boolean;
-  /** agent: số ghi chú sổ tay riêng · knowledge: tổng số node */
+  /** agent: count of its own private notebook entries · knowledge: total node count */
   count?: number;
   /**
-   * mcp: NẤC QUYỀN, và bảng chi tiết vẽ huy hiệu từ đây — **không** từ `label`.
-   * Nhãn là của người dùng và đổi tự do; nhét mức quyền vào chuỗi tên thì một
-   * cú đổi tên tạo ra được một cái nhãn nói dối về đặc quyền. → §6j
+   * mcp: PERMISSION TIER, and the detail panel draws its badge from this —
+   * **not** from `label`. The label belongs to the user and can be renamed
+   * freely; stuffing the permission level into the name string means a
+   * rename can produce a label that lies about privilege. → §6j
    */
   level?: 'read' | 'add' | 'full';
-  /** mcp: số việc đã cấp — để "chỉ đọc" kiểm được bằng mắt, không phải tin nhãn. */
+  /** mcp: number of jobs granted — so "read-only" can be checked by eye, not taken on faith from the label. */
   toolCount?: number;
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ HÌNH CỦA NODE CÁNH TAY — gửi từ SERVER, không tra ở giao diện.           │
-   * │ (user chốt 28/08: *"đổi cái biểu tượng phích cắm thành … ứng với từng    │
-   * │ loại mcp"*)                                                              │
+   * │ THE ARM NODE'S ICON — sent from the SERVER, not looked up in the UI.     │
+   * │ (user settled 08/28: *"change the plug icon to … match each MCP           │
+   * │ kind"*)                                                                  │
    * │                                                                          │
-   * │ `mark` = đường dẫn SVG đơn sắc của hãng, lấy thẳng từ `brand.mark` trong  │
-   * │ danh mục. `armKind` = loại, để rơi về hình chung khi hãng không có logo.  │
+   * │ `mark` = the vendor's monochrome SVG path, taken straight from            │
+   * │ `brand.mark` in the catalog. `armKind` = the kind, to fall back to a      │
+   * │ generic icon when a vendor has no logo.                                  │
    * │                                                                          │
-   * │ ⚠ Vì sao không để canvas tự tra danh mục: sơ đồ vẽ **trước** khi ai mở    │
-   * │ hộp thoại Kết nối, mà danh mục chỉ được tải trong hộp thoại đó. Bắt       │
-   * │ canvas đi tải thêm một lượt nữa là mua một khoảnh khắc node **không có    │
-   * │ hình** ở mỗi lần mở app. Server đã cầm cả hai dữ kiện — gửi kèm là xong.  │
+   * │ ⚠ Why the canvas doesn't just look up the catalog itself: the diagram     │
+   * │ draws **before** anyone opens the Connection dialog, and the catalog      │
+   * │ only loads inside that dialog. Making the canvas fetch an extra round     │
+   * │ trip buys a moment where the node has **no icon** every time the app      │
+   * │ opens. The server already holds both facts — sending them along is free. │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   mark?: string;
   /**
-   * mcp: `files` · `service` · `custom` · `browser` · `cli` — **cùng trục phân
-   * loại với hộp thoại** (`ArmDialog §kindOf`).
+   * mcp: `files` · `service` · `custom` · `browser` · `cli` — **the same axis
+   * the dialog classifies by** (`ArmDialog §kindOf`).
    *
-   * ⚠ Thêm một giá trị ở đây thì phải thêm ở **cả ba chỗ**: union này,
-   * `web/src/lib/types.ts §CanvasNode.armKind`, và `ArmIcon §ArmKind`. Bỏ sót
-   * một chỗ là node mang hình sai **mà không có gì đỏ** — đúng ca `cli` 01/09.
+   * ⚠ Adding a value here means adding it in **all three places**: this
+   * union, `web/src/lib/types.ts §CanvasNode.armKind`, and `ArmIcon §ArmKind`.
+   * Missing one leaves a node showing the wrong icon **with nothing turning
+   * red** — exactly the `cli` case on 09/01.
    */
   armKind?: 'files' | 'service' | 'custom' | 'browser' | 'cli';
-  /** Nhãn các ô tick đang bật — panel vẽ chip từ đây. */
+  /**
+   * A credential this arm runs on was **REFUSED by the service** — carries the
+   * account's label so the diagram can name it. The one condition that turns a
+   * node red. → `canvas() §keyDeadOf` for what it deliberately does NOT cover
+   */
+  keyDead?: string;
+  /** Labels of the currently-enabled checkboxes — the panel draws chips from this. */
   optionLabels?: string[];
-  /** Có hồ sơ bền ⇒ panel hiện nút mở cửa sổ đăng nhập. → `browser-login.ts` */
+  /** Has a persisted profile ⇒ the panel shows a button to open the sign-in window. → `browser-login.ts` */
   canLogin?: boolean;
   /**
-   * mcp: TÊN TÀI KHOẢN nó nối tới, tra từ kho OAuth chứ không đọc `label`.
+   * mcp: the ACCOUNT NAME it's connected to, looked up from the OAuth store,
+   * not read off `label`.
    *
-   * Node vẽ nó ở dòng phụ — đây là thứ DUY NHẤT trên sơ đồ phân biệt được hai
-   * cánh tay cùng hãng khác tài khoản, kể từ khi nhãn thôi ghép tài khoản vào
-   * (27/08). Vắng ⇒ không dùng OAuth, hoặc workspace đã bị gỡ ⇒ không vẽ gì.
+   * The node draws it on a secondary line — this is the ONLY thing on the
+   * diagram that distinguishes two arms of the same vendor on different
+   * accounts, ever since the label stopped folding the account name in
+   * (08/27). Absent ⇒ doesn't use OAuth, or the workspace has been
+   * disconnected ⇒ nothing drawn.
    */
   via?: string;
   mcp?: string[];
   /**
-   * mcp: thư mục cánh tay với tới, nguyên văn như trong `company.yaml`. CHỈ ĐỌC
-   * trên giao diện — đổi thư mục là đổi `armHash`, tức một cánh tay khác. Rỗng =
-   * không phải cánh tay file (Notion, GitHub…).
+   * mcp: the directory this arm reaches, verbatim as written in
+   * `company.yaml`. READ-ONLY on the UI — changing the directory changes
+   * `armHash`, i.e. it becomes a different arm. Empty = not a file arm
+   * (Notion, GitHub…).
    */
   folders?: string[];
-  /** màu đại diện, dùng chung với log */
+  /** representative color, shared with the log */
   hue?: number;
-  /** không tìm thấy roles/<id>.yaml hoặc mcp server đã biến khỏi company.yaml */
+  /** roles/<id>.yaml wasn't found, or the mcp server has vanished from company.yaml */
   missing: boolean;
-  /** có dây từ Trợ lý → được giao việc. Không có dây = "đang nghỉ". */
+  /** has a wire from the Assistant → gets assigned work. No wire = "idle". */
   connected: boolean;
-  /** Trợ lý và kho tri thức không xoá được. */
+  /** The Assistant and the knowledge store can't be deleted. */
   removable: boolean;
 }
 
@@ -190,55 +231,53 @@ export interface SayOutcome {
 }
 
 /**
- * Câu báo "chia việc hỏng" gửi thẳng lên mặt người dùng.
+ * The "planning broke" message sent straight to the user's face.
  *
- * `repeats` = số lần DANH SÁCH LỖI Y HỆT vừa lặp lại (0 = lần đầu).
+ * `repeats` = how many times the EXACT SAME error list has now repeated (0 = first time).
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TỪ LẦN THỨ BA, LỜI KHUYÊN MẶC ĐỊNH TRỞ THÀNH MỘT LỜI NÓI DỐI.            │
+ * │ FROM THE THIRD TIME ON, THE DEFAULT ADVICE BECOMES A LIE.                │
  * │                                                                          │
- * │ *"Bạn nhắn lại yêu cầu rõ hơn một chút"* là lời khuyên tốt ở lần đầu.     │
- * │ Tới lần thứ ba với cùng một danh sách lỗi thì ta đã có BẰNG CHỨNG rằng    │
- * │ diễn đạt lại không đổi được kết quả — ca 22/08: người dùng gõ lại hai     │
- * │ lần, mỗi lần rõ hơn, và nhận đúng cùng một chuỗi từng byte, vì nguyên     │
- * │ nhân nằm ở hai luật trong prompt ép nhau chứ không ở câu chữ của họ.      │
+ * │ *"Try rephrasing your request a bit more clearly"* is good advice the     │
+ * │ first time. By the third time with the same error list, we have PROOF     │
+ * │ that rephrasing doesn't change the outcome — case 08/22: the user typed    │
+ * │ it again twice, each time clearer, and got back the exact same string,    │
+ * │ byte for byte, because the cause was two prompt rules fighting each        │
+ * │ other, not their wording.                                                │
  * │                                                                          │
- * │ Lặp lại lời khuyên đó là để người dùng tự tiêu thời gian đi tìm một cách  │
- * │ diễn đạt KHÔNG TỒN TẠI. Ta chưa sửa được nguyên nhân, nhưng ta biết chắc  │
- * │ điều này và phải nói ra — rồi chuyển hướng sang thứ họ thật sự làm được.  │
+ * │ Repeating that advice just burns the user's own time hunting for a         │
+ * │ phrasing that DOESN'T EXIST. We haven't fixed the root cause, but we do    │
+ * │ know this for certain and have to say so — then redirect to something      │
+ * │ they can actually do.                                                    │
  * │                                                                          │
- * │ ⚠ KHÔNG giấu danh sách lỗi đi ở lần thứ ba. Nó vẫn là thứ duy nhất nói    │
- * │ được chuyện gì đang xảy ra, và người dùng có thể copy nó đi hỏi chỗ khác. │
+ * │ ⚠ Do NOT hide the error list on the third time. It's still the only thing  │
+ * │ that says what's actually happening, and the user can copy it elsewhere    │
+ * │ to ask for help.                                                         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function planProblemsMessage(problems: readonly string[], repeats: number): string {
   const head =
-    'Mình chia việc bị lỗi nên chưa chạy được. Chưa nhân viên nào bắt tay vào làm\n' +
+    t('off.planFailedHead') + '\n' +
     problems.map((p) => `  · ${p}`).join('\n');
 
-  if (repeats < 2) {
-    return `${head}\nBạn nhắn lại yêu cầu rõ hơn một chút, hoặc nói cụ thể tên tài liệu cần dùng nhé.`;
-  }
-  return (
-    `${head}\nĐây là lần thứ ${repeats + 1} mình kẹt y hệt, nên gõ lại lần nữa nhiều khả năng ` +
-    `cũng vậy — vướng nằm ở chỗ mình chia việc, không nằm ở cách bạn diễn đạt. Thử bỏ bớt một ` +
-    `yêu cầu trong câu (nhất là chỗ chỉ định nơi lưu file), hoặc tách ra hai lần nhắn.`
-  );
+  if (repeats < 2) return `${head}\n${t('off.planFailedRetry')}`;
+  return `${head}\n${t('off.planFailedStuck', { n: String(repeats + 1) })}`;
 }
 
 export class Office {
   loaded: LoadedOffice;
   readonly knowledge: KnowledgeStore;
-  /** Tủ tài liệu — file người dùng đưa vào. → docs/SPEC-library.md */
+  /** The library — files the user has brought in. → docs/SPEC-library.md */
   readonly library: LibraryStore;
-  /** Kết quả — file nhân viên làm ra. → docs/SPEC-artifacts.md */
+  /** Outputs — files a worker produced. → docs/SPEC-artifacts.md */
   readonly artifacts: ArtifactStore;
   /**
-   * Nhật ký kiểm toán cánh tay — MỌI lời gọi MCP, kèm tham số.
+   * Arm audit log — EVERY MCP call, with its arguments.
    * → `core/audit.ts` · docs/SPEC-arms.md §6k
    *
-   * Nó là thứ **thay** cho cổng duyệt từng lần (user chốt 25/08), nên nó không
-   * phải một tiện ích: bỏ cổng mà log không đủ thì ta vừa bỏ cả hai.
+   * This is what **replaces** per-call approval (user settled 08/25), so
+   * it's not a nicety: drop the gate while the log stays incomplete and
+   * we've just dropped both.
    */
   readonly audit: AuditLog;
   readonly assistant: Assistant;
@@ -249,45 +288,50 @@ export class Office {
   private stopRequested = false;
   private currentPlan: Plan | undefined;
   private currentRecord: PlanRecord | undefined;
-  /** Scheduler của ca đang chạy — giữ để ngắt được giữa chừng. */
+  /** The scheduler for the currently running job — kept so it can be interrupted mid-run. */
   private activeScheduler: Scheduler | undefined;
-  /** Hòm thư của Trợ lý — nó là MỘT người, làm một việc một lúc. */
+  /** The Assistant's mailbox — it's ONE person, doing one thing at a time. */
   private readonly mailbox = new Mailbox();
-  /** Việc người dùng giao trong lúc đang bận, làm nốt sau khi ca này xong. */
+  /** Work the user handed over while busy, finished once this job is done. */
   private deferred: Array<{ request: string; at: number }> = [];
-  /** Artifact của ca vừa xong — để bàn giao cho việc xếp hàng kế tiếp. */
+  /** Artifacts from the job that just finished — handed off to the next queued job. */
   private lastArtifacts: string[] = [];
   /**
-   * MA SÁT: số lượt lập kế hoạch KHÔNG ra được kế hoạch kể từ ca chạy được gần
-   * nhất. Tăng khi planner hỏi lại hoặc không trả về JSON; về 0 khi một ca thật
-   * sự khởi động. Đây là thứ duy nhất trong hệ thống đo được **con người phải
-   * vật lộn bao nhiêu**, chứ không phải cỗ máy. → `assistant.ts → worthLearning`
+   * FRICTION: how many planning attempts have FAILED to produce a plan since
+   * the most recent job that actually ran. Increments when the planner asks
+   * a follow-up or fails to return JSON; resets to 0 when a job genuinely
+   * starts. This is the only thing in the system that measures **how much a
+   * human had to struggle**, not the machine. → `assistant.ts → worthLearning`
    *
-   * Ở RAM chứ không trên đĩa là có chủ ý: nó chỉ có nghĩa trong một mạch hội
-   * thoại liền. Tắt daemon rồi mở lại thì người dùng đã bỏ đi và quay lại — ma
-   * sát của phiên trước không còn dạy được gì về phiên này.
+   * Kept in RAM rather than on disk, deliberately: it only means anything
+   * within one continuous conversation thread. Stopping and restarting the
+   * daemon means the user has left and come back — the previous session's
+   * friction has nothing left to teach about this one.
    */
   private planFriction = 0;
 
   /**
-   * Dấu vân tay của lần `validate` hỏng gần nhất, và số lần nó lặp lại y nguyên.
+   * The fingerprint of the most recent failed `validate`, and how many times
+   * it has repeated identically.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ CÙNG MỘT CÂU TỪ CHỐI BA LẦN LIÊN TIẾP LÀ HỆ THỐNG ĐANG KHÔNG HỌC ĐƯỢC   │
-   * │ GÌ TỪ CHÍNH LỜI TỪ CHỐI CỦA NÓ. (ca thật 22/08, user chạy bài 9b)       │
+   * │ THE SAME REJECTION THREE TIMES IN A ROW MEANS THE SYSTEM IS LEARNING      │
+   * │ NOTHING FROM ITS OWN REJECTION. (real case 08/22, user ran test 9b)      │
    * │                                                                          │
-   * │ Người dùng gõ lại yêu cầu hai lần, mỗi lần rõ hơn — *"chưa có file đó,   │
-   * │ tạo mới mà"*, rồi *"tức là đọc đường dẫn, xong mới ghi vào file đó"* —   │
-   * │ và nhận về **đúng cùng một chuỗi, từng byte**. Vì nguyên nhân nằm ở hai  │
-   * │ luật trong prompt ép nhau (→ TEST-WALKTHROUGH §Bài 9b), nên KHÔNG cách   │
-   * │ diễn đạt lại nào thoát được. Vòng lặp vô hạn theo cấu trúc.              │
+   * │ The user retyped the request twice, each time clearer — *"that file       │
+   * │ doesn't exist yet, create it"*, then *"I mean read the path, THEN write    │
+   * │ into that file"* — and got back **the exact same string, byte for         │
+   * │ byte**. Because the cause was two prompt rules fighting each other        │
+   * │ (→ TEST-WALKTHROUGH §Test 9b), NO rephrasing could escape it. An           │
+   * │ infinite loop by construction.                                          │
    * │                                                                          │
-   * │ Ta chưa sửa được nguyên nhân ở đây, nhưng ta biết chắc một điều và phải  │
-   * │ nói ra: **gõ lại lần nữa sẽ không giúp gì.** Im lặng lặp lại câu cũ là   │
-   * │ để người dùng tự tiêu thời gian đi tìm cách diễn đạt không tồn tại.      │
+   * │ We haven't fixed the root cause here, but we do know one thing for        │
+   * │ certain and have to say it: **typing it again won't help.** Silently      │
+   * │ repeating the same message just burns the user's time hunting for a       │
+   * │ phrasing that doesn't exist.                                            │
    * │                                                                          │
-   * │ Ở RAM, cùng lý do `planFriction`: nó chỉ có nghĩa trong một mạch hội     │
-   * │ thoại liền.                                                              │
+   * │ In RAM, for the same reason as `planFriction`: it only means anything      │
+   * │ within one continuous conversation thread.                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   private lastPlanProblems = '';
@@ -300,15 +344,17 @@ export class Office {
     ensureOfficeDirs(loaded.paths);
     this.knowledge = new KnowledgeStore(loaded.dir, loaded.paths);
     this.knowledge.scan();
-    // Bóc tài liệu chạy NGẦM (§10) nên nó phải có đường báo cho giao diện — nếu
-    // không thì dòng "đang đọc…" đứng im cho tới lần người dùng bấm mở tủ.
+    // Text extraction runs IN THE BACKGROUND (§10), so it needs a way to notify
+    // the UI — otherwise the "reading…" line stays frozen until the user
+    // happens to open the library.
     this.library = new LibraryStore(loaded.paths, () => this.emitLibrary());
     /**
-     * Tài liệu kẹt vì THIẾU CÔNG CỤ thì thử lại một lần lúc dựng văn phòng.
+     * A document stuck for LACK OF A TOOL gets retried once when the office is built.
      *
-     * Khởi động lại daemon là đúng thời điểm nguyên nhân vừa biến mất: người ta
-     * chạy `npm install`, nâng phiên bản, rồi `stop`+`start`. Bắt họ tự nhớ đi
-     * xoá và thả lại từng file là bắt họ dọn hộ mình. → `retryUnindexed`
+     * Restarting the daemon is the exact moment the cause just disappeared:
+     * someone ran `npm install`, upgraded a version, then `stop`+`start`.
+     * Making them remember to delete and re-drop each file themselves would
+     * be asking them to clean up after us. → `retryUnindexed`
      */
     this.library.retryUnindexed();
     this.artifacts = new ArtifactStore(loaded.paths);
@@ -316,24 +362,26 @@ export class Office {
     this.assistant = new Assistant(loaded);
     const saved = this.readSession();
     this.assistant.resumeFrom(saved.id, saved.reach);
+    this.compactedThrough = saved.compactedThrough;
     this.layout = new LayoutStore(loaded);
     this.plans = new PlanStore(loaded.paths);
     /**
-     * CHỮA CA ZOMBIE ngay lúc dựng — nợ kỹ thuật #2, trả một phần.
+     * HEAL ZOMBIE JOBS right at construction — technical debt #2, partially paid off.
      *
-     * Tiến trình vừa khởi động nên KHÔNG có ca nào đang chạy: mọi bản ghi còn
-     * mang `planning`/`running` đều là tàn dư của một lần daemon chết giữa
-     * chừng. Để nguyên thì nhật ký nói dối vĩnh viễn — nó bảo "đang chạy" cho
-     * một việc không ai làm, và người dùng ngồi chờ một thứ đã chết từ lâu.
+     * A process that just started can have NO job actually running: any
+     * record still carrying `planning`/`running` is a leftover from a
+     * previous daemon dying mid-run. Left alone, the log lies forever — it
+     * claims "running" for work nobody is doing, and the user sits waiting on
+     * something that died a long time ago.
      *
-     * Câu này đi vào `report`, tức là đi thẳng lên mặt người dùng, nên nó phải
-     * nói được *chuyện gì xảy ra* + *làm gì tiếp* — tiêu chí "Xử lý lỗi tốt".
-     * Và nó KHÔNG đổ lỗi cho hệ thống hay cho người dùng: tắt daemon là việc
-     * hạ tầng bình thường (cập nhật, reboot), không phải một sự cố.
+     * This sentence goes into `report`, i.e. straight to the user's face, so
+     * it has to say *what happened* + *what to do next* — the "handles errors
+     * well" criterion. And it does NOT blame the system or the user: stopping
+     * the daemon is normal infrastructure work (an update, a reboot), not an
+     * incident.
      */
     this.plans.healStale(
-      'Việc này bị ngắt giữa chừng vì công ty tắt (cập nhật, khởi động lại, hoặc mất điện). ' +
-        'Những phần đã xong vẫn còn trong ngăn Kết quả — nhắn lại để mình làm nốt phần còn lại.',
+      t('off.cutByShutdown'),
     );
     this.refreshAssistantContext();
   }
@@ -346,7 +394,7 @@ export class Office {
     return this.loaded.config.name;
   }
 
-  /** Thư mục thật trên đĩa. Để giao diện mở được nó — xem `openFolder`. */
+  /** The real directory on disk. So the UI can open it — see `openFolder`. */
   get dir(): string {
     return this.loaded.dir;
   }
@@ -355,23 +403,23 @@ export class Office {
     return this.state;
   }
 
-  /** Đã cất vào lưu trữ — đóng băng, chỉ đọc. → docs/SPEC-offices.md §3.1 */
+  /** Put into archive — frozen, read-only. → docs/SPEC-offices.md §3.1 */
   get archived(): boolean {
     return this.loaded.config.archived;
   }
 
   /**
-   * Chốt chặn DUY NHẤT cho "văn phòng lưu trữ là chỉ đọc".
+   * The ONE gate for "an archived office is read-only".
    *
-   * Gọi ở đầu MỌI hàm làm thay đổi thứ gì đó. Một chốt một câu, thay vì rải
-   * điều kiện khắp nơi rồi sót một chỗ — mà chỗ sót nguy hiểm nhất là chỗ tiêu
-   * tiền, vì tiền là thứ duy nhất người dùng không lấy lại được.
+   * Called at the top of EVERY function that changes something. One gate, one
+   * sentence, instead of scattering the condition everywhere and missing a
+   * spot — and the most dangerous spot to miss is one that spends money,
+   * because money is the one thing a user can't get back.
    */
   private assertLive(): void {
     if (!this.archived) return;
     throw new RunError(
-      `Văn phòng "${this.name}" đang trong lưu trữ nên chỉ xem được. ` +
-        `Khôi phục nó ở bảng Tổng quan công ty rồi làm tiếp.`,
+      t('off.officeArchivedReadOnly', { name: this.name }),
       'other',
     );
   }
@@ -381,23 +429,27 @@ export class Office {
   }
 
   /**
-   * Company gắn bus vào đây. Mọi sự kiện tự động mang `office` và `plan_id`.
+   * The company wires the bus in here. Every event automatically carries
+   * `office` and `plan_id`.
    *
-   * ⚠ Lời mời chạy tiếp phát Ở ĐÂY, không phải trong constructor — đã dẫm 20/08.
-   * Constructor chạy trước khi `PlanStore` được dựng (`resumable()` nổ) VÀ trước
-   * khi có bus, nên câu mời rơi vào hư không. Cùng một chỗ sai đẻ ra hai triệu
-   * chứng, và triệu chứng thứ hai thì im lặng — đúng loại chỉ lộ ra khi chạy thật.
+   * ⚠ The resume invitation fires HERE, not in the constructor — already hit
+   * this on 08/20. The constructor runs before `PlanStore` is built
+   * (`resumable()` blows up) AND before there's a bus, so the invitation
+   * fired into the void. One wrong spot produced two symptoms, and the
+   * second one was silent — the kind that only surfaces under a real run.
    */
   bindBus(fn: (e: AgentEvent) => void): void {
     this.emitFn = fn;
     this.offerResume();
     /**
-     * Hỏi hạn mức NGAY khi có bus. Người dùng mở app lên là thấy số, không phải
-     * chờ tới lượt chạy đầu tiên — mà "còn chạy được nữa không" thường chính là
-     * câu họ hỏi TRƯỚC khi giao việc.
+     * Check the usage limit IMMEDIATELY once there's a bus. The user opens
+     * the app and sees the number, instead of waiting for the first run —
+     * and "can I still run anything" is usually the exact question they ask
+     * BEFORE handing over work.
      *
-     * `force` bỏ tiết lưu: đây là lần đầu, và nó chỉ xảy ra một lần mỗi lần mở.
-     * Không `await`: nó tốn ~5 giây và không ai đứng đợi nó. → `core/energy.ts`
+     * `force` skips the throttle: this is the first time, and it only
+     * happens once per open. No `await`: it costs ~5 seconds and nobody is
+     * standing around waiting on it. → `core/energy.ts`
      */
     void refreshEnergy(true).then(() => this.emitEnergy());
   }
@@ -406,39 +458,43 @@ export class Office {
     const planId = e.plan_id !== undefined ? e.plan_id : (this.currentRecord?.plan_id ?? null);
     const full = { ...e, office: this.id, plan_id: planId } as AgentEvent;
     if (planId) this.plans.append(planId, full);
-    // Lưới an toàn cuối cùng cho tin RỖNG. Cửa thật nằm ở nơi phát (`reply`),
-    // nhưng `emit` là chốt DUY NHẤT mọi sự kiện đi qua — một tin rỗng lọt tới
-    // đây là nó sắp nằm lại trên `chat.jsonl` vĩnh viễn. → bug 21/08
+    // Last-resort safety net for an EMPTY message. The real gate sits at the
+    // point of emission (`reply`), but `emit` is the ONE choke point every
+    // event passes through — an empty message reaching here is about to sit
+    // in `chat.jsonl` forever. → bug 08/21
     if (full.type === 'master.message' && !String(full.say ?? '').trim()) return;
     if (full.type === 'master.message') this.appendChat(full);
     this.emitEnergy();
     this.emitFn(full);
   }
 
-  /** So `energyVersion()` với lần bắn trước. Chỉ đổi mới bắn. */
+  /** Compares `energyVersion()` against the last time it fired. Only fires on a change. */
   private energySeen = 0;
 
   /**
-   * Hạn mức tài khoản ĐI NHỜ luồng sự kiện đang có, không có bus riêng.
-   * → `core/energy.ts`
+   * The account usage limit RIDES ALONG the existing event stream — it has no
+   * bus of its own. → `core/energy.ts`
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO KHÔNG DÙNG PUB/SUB — dù đó là phản xạ đầu tiên.                   │
+   * │ WHY NOT PUB/SUB — even though that's the first reflex.                  │
    * │                                                                          │
-   * │ `energy.ts` là state ở MODULE (hạn mức thuộc về tài khoản, không thuộc   │
-   * │ văn phòng nào), còn `Office` thì sinh ra và mất đi theo thao tác của     │
-   * │ người dùng. Cho Office đăng ký listener là tự nhận một bài toán vòng đời │
-   * │ — gỡ ở đâu, ai gỡ, và một listener sót lại sẽ bắn vào một SSE đã đóng.   │
+   * │ `energy.ts` is MODULE-level state (the usage limit belongs to the        │
+   * │ account, not to any office), while `Office` is created and destroyed     │
+   * │ following the user's own actions. Having `Office` register a listener    │
+   * │ takes on a lifecycle problem of its own — where it gets unregistered,     │
+   * │ who unregisters it, and a leftover listener firing into an already-       │
+   * │ closed SSE stream.                                                      │
    * │                                                                          │
-   * │ `emit()` đã là CHỐT DUY NHẤT mọi sự kiện đi qua, và trong lúc chạy thì   │
-   * │ nó dày đặc (`plan.step`, `agent.progress`, `cost.tick`). Mà               │
-   * │ `rate_limit_event` tới ngay ĐẦU query — tức là ngay trước cả một trận    │
-   * │ sự kiện. Đi nhờ ở đây thì độ trễ tính bằng mili-giây, còn số listener    │
-   * │ phải quản là 0.                                                          │
+   * │ `emit()` is already the ONE choke point every event passes through, and  │
+   * │ during a run it's dense (`plan.step`, `agent.progress`, `cost.tick`).     │
+   * │ And `rate_limit_event` arrives right at the START of a query — i.e.       │
+   * │ right before a whole burst of events. Riding along here costs             │
+   * │ millisecond-scale latency, and the number of listeners to manage is 0.    │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Bắn thẳng qua `emitFn`, KHÔNG qua `emit()`: đệ quy là một, và đây không
-   * phải chuyện của một kế hoạch nên nó không được nằm trong `plans.append`.
+   * Fires straight through `emitFn`, NOT through `emit()`: recursion aside,
+   * this isn't the business of any one plan, so it must not land inside
+   * `plans.append`.
    */
   private emitEnergy(): void {
     if (energyVersion() === this.energySeen) return;
@@ -448,23 +504,25 @@ export class Office {
   }
 
   /**
-   * Luồng hội thoại, GHI RA ĐĨA. → docs/SPEC-offices.md §6
+   * The chat stream, WRITTEN TO DISK. → docs/SPEC-offices.md §6
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MÀN HÌNH KHÔNG ĐƯỢC NÓI DỐI VỀ THỨ HỆ THỐNG CÒN NHỚ.                    │
+   * │ THE SCREEN MUST NOT LIE ABOUT WHAT THE SYSTEM STILL REMEMBERS.           │
    * │                                                                          │
-   * │ Trí nhớ của Trợ lý nằm trên đĩa ở HAI chỗ và sống sót qua mọi lần tắt    │
-   * │ daemon: con trỏ `.state/assistant-session.json`, và bản ghi hội thoại    │
-   * │ do chính CLI Claude Code giữ trong `~/.claude/projects/`. Nhưng ô chat   │
-   * │ trên giao diện lại đọc từ một vòng đệm 300 sự kiện TRONG BỘ NHỚ.         │
+   * │ The Assistant's memory lives on disk in TWO places and survives every     │
+   * │ daemon restart: the pointer at `.state/assistant-session.json`, and the   │
+   * │ conversation record the Claude Code CLI itself keeps under                │
+   * │ `~/.claude/projects/`. But the chat pane on the UI reads from a 300-      │
+   * │ event ring buffer IN MEMORY.                                             │
    * │                                                                          │
-   * │ Hệ quả người dùng gặp thật: tắt daemon, mở lại, ô chat TRẮNG TRƠN — rồi  │
-   * │ gõ tiếp "200 từ, hài hước" thì Trợ lý trả lời đúng như chưa hề mất gì.   │
-   * │ Model nhớ, màn hình quên. Người dùng không thể tin cái nào nữa.          │
+   * │ The real consequence a user hits: restart the daemon, reopen, the chat    │
+   * │ pane is COMPLETELY BLANK — then type "200 words, funny" and the           │
+   * │ Assistant answers exactly as if nothing had been lost. The model            │
+   * │ remembers, the screen forgets. The user can no longer trust either one.    │
    * │                                                                          │
-   * │ Sự kiện gắn với một công việc đã được ghi ở `<plan_id>.log.jsonl` từ     │
-   * │ trước; chỗ hổng đúng là hội thoại (`plan_id: null`) — thứ KHÔNG thuộc    │
-   * │ việc nào nên không có file nào nhận.                                     │
+   * │ Events tied to a job were already recorded in `<plan_id>.log.jsonl`;      │
+   * │ the actual gap was chat (`plan_id: null`) — something that belongs to     │
+   * │ no job, so no file was catching it.                                     │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   private appendChat(e: AgentEvent): void {
@@ -472,16 +530,17 @@ export class Office {
       fs.mkdirSync(this.loaded.paths.state, { recursive: true });
       fs.appendFileSync(this.chatFile(), `${JSON.stringify({ ...e, ts: new Date().toISOString() })}\n`, 'utf8');
     } catch {
-      /* Không ghi được nhật ký hội thoại KHÔNG được làm hỏng câu trả lời. */
+      /* Failing to write the chat log must NEVER break the actual reply. */
     }
   }
 
   /**
-   * Hội thoại đã lưu, mới nhất ở cuối. Đọc khi mở văn phòng.
+   * Saved chat, most recent last. Read when an office is opened.
    *
-   * Cắt về `CHAT_REPLAY` dòng cuối chứ không đọc cả file: nó chỉ để người dùng
-   * thấy lại mạch chuyện, không phải để làm trí nhớ cho model — trí nhớ model
-   * nằm ở session của SDK và không đi qua đây.
+   * Trimmed to the last `CHAT_REPLAY` lines rather than reading the whole
+   * file: it only exists so the user can see the thread again, not to serve
+   * as the model's memory — the model's memory lives in the SDK's session and
+   * never passes through here.
    */
   readChat(limit = CHAT_REPLAY): AgentEvent[] {
     try {
@@ -503,84 +562,98 @@ export class Office {
   }
 
   /**
-   * Dừng việc — daemon vẫn sống. Đây là thứ người dùng muốn 95% số lần.
+   * Stops the job — the daemon stays alive. This is what a user wants 95% of
+   * the time.
    *
-   * NGẮT NGAY worker đang chạy, không chỉ đặt cờ. Trước đây cờ chỉ được kiểm
-   * GIỮA các task, nên bấm Dừng xong vẫn phải ngồi chờ task hiện tại chạy hết —
-   * có khi cả phút và cả nghìn token đã tiêu.
+   * Interrupts the running worker IMMEDIATELY, not just a flag set. Before,
+   * the flag was only checked BETWEEN tasks, so hitting Stop still meant
+   * sitting through the current task running to completion — sometimes a
+   * full minute and thousands of tokens spent.
    */
   stop(): { dropped: number; cutAssistant: boolean } {
     this.stopRequested = true;
     void this.activeScheduler?.interruptAll();
     /**
-     * NGẮT LUÔN LƯỢT CỦA CHÍNH TRỢ LÝ — thứ tư, và nó bị bỏ quên tới 20/08.
+     * ALSO INTERRUPT THE ASSISTANT'S OWN TURN — the fourth thing, and it got
+     * forgotten until 08/20.
      *
-     * §11e liệt kê ba thứ (nhân viên · hòm thư · việc hoãn) và cả ba đều đã
-     * chạy. Nhưng `route()`/`plan()`/`report()` không nằm trong ba thứ đó, nên
-     * gõ `/stop` giữa lúc Trợ lý đang nghĩ thì nó nghĩ nốt và trả lời sau khi
-     * màn hình đã nói "đang dừng". Cùng đúng một lớp lỗi mà chính §11e sinh ra
-     * để chặn: bấm Dừng xong hệ thống vẫn tự làm tiếp.
+     * §11e lists three things (worker · mailbox · deferred work) and all
+     * three already ran. But `route()`/`plan()`/`report()` weren't among
+     * those three, so typing `/stop` while the Assistant is mid-thought lets
+     * it finish thinking and reply after the screen has already said
+     * "stopping". The exact same failure class §11e itself exists to
+     * block: hit Stop and the system keeps going on its own.
      */
     const cutAssistant = this.assistant.abort();
-    // Dừng là dừng CẢ HỆ THỐNG: ngắt nhân viên đang chạy, bỏ tin còn trong hòm
-    // thư, bỏ việc đang hoãn. Giữ lại bất cứ thứ gì trong số đó nghĩa là người
-    // dùng bấm Dừng xong vẫn thấy hệ thống tự làm tiếp — đúng thứ họ vừa bảo đừng.
+    // Stopping means stopping the WHOLE SYSTEM: interrupt the running worker,
+    // drop anything still in the mailbox, drop deferred work. Keeping any of
+    // it means the user hits Stop and still sees the system keep working —
+    // exactly what they just said not to do.
     const dropped = this.mailbox.clear() + this.deferred.length;
     this.deferred = [];
-    if (this.state === 'working') this.setState('paused', 'Đang dừng…');
+    if (this.state === 'working') this.setState('paused', t('off.stopping'));
     this.emitActivity();
     return { dropped, cutAssistant };
   }
 
-  // ── cửa vào duy nhất
+  // ── the single entry point
 
   /**
-   * Cửa vào DUY NHẤT cho mọi thứ người dùng gõ. UI và bridge chat đều dùng cái này.
+   * The ONE entry point for everything the user types. Both the UI and the
+   * chat bridge use this exact function.
    *
-   * Trước đây UI luôn gọi thẳng `run()`, nên gõ "Chào" cũng khởi động cả một DAG
-   * rồi fail — lỗi người dùng gặp ngay thao tác đầu tiên.
+   * Before, the UI always called `run()` directly, so typing "Hi" would kick
+   * off a whole DAG and then fail — an error the user hit on their very
+   * first action.
    */
   async say(message: string): Promise<SayOutcome> {
     this.assertLive();
     this.emit({ type: 'master.message', say: message, role: 'user', plan_id: null });
 
     /**
-     * `@đường-dẫn` — GIẢI BẰNG CODE, TRƯỚC KHI TỚI MODEL. → docs/SPEC-library.md §8c
+     * `@path` — RESOLVED BY CODE, BEFORE IT REACHES THE MODEL. →
+     * docs/SPEC-library.md §8c
      *
-     * Chạy ở đây, ngay sau khi ghi tin của người dùng vào luồng và TRƯỚC mọi
-     * nhánh khác: người dùng phải thấy đúng thứ họ gõ trong ô chat, còn model
-     * thì nhận bản đã được xác minh.
+     * Runs here, right after the user's message is recorded in the stream
+     * and BEFORE any other branch: the user has to see exactly what they
+     * typed in the chat pane, while the model receives an already-verified
+     * version.
      */
     const refs = this.resolveRefs(message);
     if (refs.problem) {
-      // Trả lời bằng CODE. Một đường dẫn không tồn tại là SỰ VIỆC — ta đang cầm
-      // cả hai cái kho trong tay, hỏi model là trả tiền để nhận về một phỏng đoán.
+      // Answer with CODE. A path that doesn't exist is a FACT — we're already
+      // holding both stores in hand; asking the model would be paying money
+      // to get back a guess.
       this.emit({ type: 'master.message', say: refs.problem, role: 'assistant', plan_id: null });
       this.emitActivity();
       return { intent: 'chat', reply: refs.problem };
     }
     message = refs.text;
 
-    // Lệnh chữ bị bắt TRƯỚC khi tới model. Hai lý do, cả hai đều bắt buộc:
-    // ném "/stop" cho model là trả tiền để được dừng chậm hơn; và chuỗi bắt đầu
-    // bằng "/" có thể bị chính CLI Claude Code hiểu là lệnh CỦA NÓ.
-    // → docs/SPEC-tools-approval.md §8e
+    // A slash command gets caught BEFORE it reaches the model. Two reasons,
+    // both mandatory: throwing "/stop" at the model is paying money for a
+    // slower stop; and a string starting with "/" could be interpreted by
+    // the Claude Code CLI itself as ITS OWN command. →
+    // docs/SPEC-tools-approval.md §8e
     const parsed = parseInput(message);
     if (parsed.kind !== 'text') {
       const outcome = this.runCommand(parsed);
-      // BẮT BUỘC: giao diện bật dòng "đang đọc yêu cầu…" ngay khi bấm Gửi, và
-      // chỉ tắt nó khi nhận được `office.activity`. Lệnh chữ trả lời tức thì
-      // bằng code nên KHÔNG đi qua hòm thư — không có dòng này thì ba chấm quay
-      // mãi mãi sau mỗi `/help`, và người dùng phải tải lại trang mới hết.
+      // MANDATORY: the UI turns on the "reading your request…" line the
+      // moment Send is hit, and only turns it off on receiving
+      // `office.activity`. A slash command answers instantly via code, so it
+      // does NOT pass through the mailbox — without this line, the three
+      // dots would spin forever after every `/help`, and the user would have
+      // to reload the page to clear it.
       this.emitActivity();
       return outcome;
     }
 
-    // Bỏ vào hòm thư thay vì gọi thẳng. Trợ lý là MỘT NGƯỜI: hai lượt gọi chồng
-    // nhau trên cùng một session thì một lượt bị mất trắng khỏi trí nhớ hội
-    // thoại. → docs/SPEC-tools-approval.md §11
+    // Placed into the mailbox instead of called directly. The Assistant is
+    // ONE PERSON: two overlapping calls on the same session mean one turn
+    // gets erased entirely from the conversation memory. →
+    // docs/SPEC-tools-approval.md §11
     if (!this.mailbox.push({ kind: 'user', text: parsed.text, at: Date.now() })) {
-      const say = `Bạn nhắn nhanh quá — mình còn ${this.mailbox.size} tin chưa đọc. Chờ mình xử lý xong đã nhé.`;
+      const say = t('off.mailboxFlooded', { n: String(this.mailbox.size) });
       this.emit({ type: 'master.message', say, role: 'assistant', plan_id: null });
       return { intent: 'chat', reply: say };
     }
@@ -591,83 +664,95 @@ export class Office {
   }
 
   /**
-   * Giải `@đường-dẫn` người dùng dán vào ô chat. → docs/SPEC-library.md §8c
+   * Resolves an `@path` the user pasted into the chat pane. →
+   * docs/SPEC-library.md §8c
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO KHÔNG TRÔNG CHỜ SDK HIỂU `@` — VÀ VÌ SAO TA KHÔNG MUỐN NÓ HIỂU.  │
+   * │ WHY NOT RELY ON THE SDK UNDERSTANDING `@` — AND WHY WE DON'T WANT IT TO.  │
    * │                                                                          │
-   * │ CLI Claude Code có cú pháp `@file` khi gõ tay. Nó CÓ chạy trong SDK hay  │
-   * │ không thì **chưa ai đo** — `FINDINGS-sdk` không có dòng nào về nó, và    │
-   * │ dự án này đã có tiền lệ đắt về việc xây lên một hành vi SDK chưa đo      │
-   * │ (`canUseTool` không nổ lần nào, §4.7).                                   │
+   * │ The Claude Code CLI has an `@file` syntax when typed by hand. Whether it  │
+   * │ actually runs inside the SDK is **not measured by anyone** — `FINDINGS-  │
+   * │ sdk` has no line about it, and this project already has a costly           │
+   * │ precedent for building on top of an unmeasured SDK behavior (`canUseTool` │
+   * │ never firing, §4.7).                                                    │
    * │                                                                          │
-   * │ 🔥 Nhưng lý do thật mạnh hơn: **nếu SDK có hiểu thì đó là chuyện XẤU.**  │
-   * │ Mở rộng `@` nghĩa là nhét NỘI DUNG file vào lượt gọi — mà Trợ lý chạy    │
-   * │ trên session được persist, nên mọi thứ nó đọc nằm trong ngữ cảnh của     │
-   * │ MỌI lượt sau đó: *đọc một lần, trả tiền mãi mãi*. Cả kiến trúc dựng trên │
-   * │ luật "Trợ lý không đọc file, nhân viên mới đọc".                         │
+   * │ 🔥 But the stronger reason is: **if the SDK DID understand it, that would  │
+   * │ be BAD.** Expanding `@` means stuffing a file's CONTENT into the call —   │
+   * │ and the Assistant runs on a persisted session, so anything it reads sits  │
+   * │ in the context of EVERY turn afterward: *read once, pay forever*. The     │
+   * │ entire architecture is built on the rule "the Assistant doesn't read       │
+   * │ files, only a worker does".                                              │
    * │                                                                          │
-   * │ Nên `@` bị BÓC HẾT ở đây. Model không bao giờ nhìn thấy ký tự đó, và ta  │
-   * │ không phụ thuộc vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.    │
+   * │ So `@` gets FULLY STRIPPED here. The model never sees that character, and │
+   * │ we don't depend on any SDK behavior — measured or not.                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Regex chạy trên chữ NGƯỜI DÙNG GÕ, không phải chữ model sinh — khác hẳn
-   * luật cấm dò đường dẫn trong `say` (SPEC-artifacts §2.5). Ở đó rủi ro là
-   * model bịa; ở đây người dùng tự chịu trách nhiệm cho thứ họ gõ, và mọi tham
-   * chiếu vẫn phải ĐỐI CHIẾU với kho thật trước khi được công nhận.
+   * ⚠ The regex runs on text the USER TYPED, not text the model generated —
+   * the opposite of the rule against sniffing paths out of `say`
+   * (SPEC-artifacts §2.5). There the risk is the model making something up;
+   * here the user is responsible for what they type, and every reference
+   * still has to be CROSS-CHECKED against the real store before it's
+   * accepted.
    *
-   * Ba dạng nhận được, và dạng thứ ba là lý do phải có hàm này:
+   * Three shapes are accepted, and the third is why this function has to
+   * exist at all:
    *
-   *   @artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
-   *   @library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
-   *   @doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+   *   @artifacts/P-…/T-01/vi/doc-2.md   a full path  → cross-check, then use
+   *   @library/files/doc-1.md            a full path  → cross-check, then use
+   *   @doc-1.md                          a bare name  → look up, and BLOCK on a collision
    *
-   * Tên trần trùng nhau là ca có thật: tủ tài liệu có `doc-1.md` và ngăn Kết
-   * quả cũng có `doc-1.md`. Đoán bừa một bên là làm sai việc của người dùng
-   * một cách im lặng — nên hỏi lại, bằng code, 0 token.
+   * Bare names colliding is a real case: the library has `doc-1.md` and the
+   * Output pane also has `doc-1.md`. Guessing which one silently does the
+   * user's job wrong — so ask back instead, by code, 0 tokens.
    */
   private resolveRefs(text: string): { text: string; problem?: string } {
-    // Phần quyết định thì thuần và nằm ở `commands.ts` để bộ test chạm được.
+    // The decision logic itself is pure and lives in `commands.ts` so the test suite can reach it.
     return resolveFileRefs(text, this.readablePaths());
   }
 
   /**
-   * Mọi đường dẫn người dùng (hoặc Trợ lý) được phép trỏ tới — ĐỌC TỪ ĐĨA ngay
-   * lúc gọi, không cache.
+   * Every path a user (or the Assistant) is allowed to point to — READ FROM
+   * DISK at the moment of the call, never cached.
    *
-   * Đúng một nguồn sự thật cho cả hai cửa: `@đường-dẫn` người dùng gõ, và
-   * `paths` của một lượt `lookup`. Hai danh sách riêng cho cùng một câu hỏi thì
-   * sẽ lệch nhau vào đúng ngày ai đó thêm một kho thứ ba.
+   * One single source of truth for both doors: an `@path` the user typed, and
+   * the `paths` of a `lookup` turn. Two separate lists for the same question
+   * would drift apart on the exact day someone adds a third store.
    */
   private readablePaths(): ReadableRef[] {
     /**
-     * ⚠ MỖI TÀI LIỆU CÓ HAI CHUỖI, VÀ CẢ HAI ĐỀU PHẢI NHẬN. → `ReadableRef`
+     * ⚠ EVERY DOCUMENT CARRIES TWO STRINGS, AND BOTH ARE REQUIRED. → `ReadableRef`
      *
-     * `ref` = thứ hiện trên giao diện và thứ nút Chép đưa vào ô chat
-     * (`library/files/hd1.docx`). `open` = đường nhân viên mở được
-     * (`library/text/hd1.docx.txt`). Bỏ `ref` đi thì nút Chép gãy ngay lập tức;
-     * bỏ `open` đi thì ta quay lại đúng ca hỏng 20/08.
+     * `ref` = what shows in the UI and what the Copy button puts into the
+     * chat pane (`library/files/hd1.docx`). `open` = the path a worker can
+     * actually open (`library/text/hd1.docx.txt`). Drop `ref` and the Copy
+     * button breaks immediately; drop `open` and we're back to the exact
+     * 08/20 failure.
      *
-     * Tài liệu chưa dùng được (`docPaths` không trả `open`) thì KHÔNG có mặt ở
-     * đây — `@` vào nó phải nhận câu "không tìm thấy", không phải một đường dẫn
-     * chết đi tiếp tới nhân viên.
+     * A document that isn't usable yet (`docPaths` returns no `open`) is
+     * NOT present here — `@`-ing it must get "not found", not a dead path
+     * forwarded on to a worker.
      */
     const docs: ReadableRef[] = [];
     for (const d of this.library.list()) {
       const { open, original } = docPaths(d.name, d.ext, d.state);
       if (!open) continue;
       docs.push({ ref: `library/files/${d.name}`, open });
-      // PDF: bản gốc là một đường hợp lệ theo đúng nghĩa của nó, nêu riêng.
+      // PDF: the original is a legitimate path in its own right, listed separately.
       if (original && original !== open) docs.push({ ref: original, open: original });
     }
-    return [...docs, ...this.artifacts.list().map((a) => ({ ref: a.path, open: a.path }))];
+    // `filePaths()`, not `list()`: only the path STRING is needed here, and
+    // this function runs on every message the user types. `list()` calls
+    // `stat` on every file to get `bytes`/`mtime` that we'd throw away
+    // immediately — ~0.1 ms per file, see `artifacts.ts §walk`.
+    return [...docs, ...this.artifacts.filePaths().items.map((p) => ({ ref: p, open: p }))];
   }
 
   /**
-   * Vòng bơm hòm thư. Chạy một lô một lúc, không bao giờ hai lô cùng lúc.
+   * The mailbox pump loop. Runs one batch at a time, never two batches at once.
    *
-   * Trợ lý bận KHÔNG có nghĩa là văn phòng bận: nhân viên vẫn chạy song song
-   * bên dưới. Hai trạng thái đó độc lập, và `emitActivity()` nói cả hai ra.
+   * The Assistant being busy does NOT mean the office is busy: workers keep
+   * running in parallel underneath. The two states are independent, and
+   * `emitActivity()` reports both.
    */
   private async pump(): Promise<void> {
     if (this.mailbox.isBusy) return;
@@ -684,78 +769,81 @@ export class Office {
         await this.handleUserBatch(mergeUserText(batch));
       });
     } catch (err) {
-      // Người dùng bấm Dừng thì `/stop` ĐÃ trả lời rồi. Phát thêm một dòng nữa ở
-      // đây là hai tin nói cùng một chuyện — và tin thứ hai trông như một lỗi,
-      // trong khi thứ vừa xảy ra chính là thứ họ yêu cầu. → types.ts `stopped`
+      // If the user hit Stop, `/stop` has ALREADY replied. Emitting another
+      // line here would be two messages about the same thing — and the
+      // second one would look like an error, when what just happened is
+      // exactly what they asked for. → types.ts `stopped`
       if (!(err instanceof RunError && err.kind === 'stopped')) {
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: err instanceof Error ? err.message : 'Có lỗi khi xử lý tin nhắn của bạn.',
+          say: err instanceof Error ? err.message : t('off.messageFailed'),
           plan_id: null,
         });
       }
     }
 
     this.emitActivity();
-    // Còn thư thì đọc tiếp. Đệ quy qua microtask nên không làm sâu ngăn xếp.
+    // Keep reading if there's more mail. Recurses via a microtask, so it doesn't deepen the call stack.
     if (this.mailbox.size > 0) void this.pump();
   }
 
   private async handleUserBatch(text: string): Promise<void> {
     const routed = await this.assistant.route(text, this.state === 'working');
-    // `route` chạy MỖI lượt người dùng nhắn. Bản trước vứt thẳng `routed.usage`
-    // đi, nên toàn bộ chi phí trò chuyện vô hình với `agentco cost` — và đó
-    // đúng là phần bị đổi model làm đắt lên. Không đo được thì không đánh giá
-    // được cái giá của việc đổi model. → SPEC-token-economy.md §5
+    // `route` runs on EVERY user message. The old version threw
+    // `routed.usage` straight away, so the entire cost of chatting was
+    // invisible to `agentco cost` — and that's exactly the part a model
+    // switch would make more expensive. What isn't measured can't be
+    // weighed against the price of switching models. →
+    // SPEC-token-economy.md §5
     this.logAssistantUsage('route', routed.usage);
     this.saveSessionId();
 
     /**
-     * `lookup` — WORKER ẨN đọc tài liệu rồi trả lời thẳng. → `RouteSchema`
+     * `lookup` — a HIDDEN WORKER reads documents and answers directly. → `RouteSchema`
      *
-     * KHÔNG lập kế hoạch, KHÔNG sinh Plan, KHÔNG đụng `state`: đây không phải
-     * một ca làm việc, nó là một câu hỏi có câu trả lời nằm trong file. Sinh một
-     * `PlanRecord` cho nó là làm nhật ký công việc đầy những dòng không phải
-     * công việc — cùng lý do `intent: 'chat'` không sinh Plan.
+     * NO planning, NO `Plan` created, NO touching `state`: this isn't a job,
+     * it's a question whose answer sits in a file. Generating a `PlanRecord`
+     * for it would fill the work log with lines that aren't work — same
+     * reason `intent: 'chat'` produces no `Plan`.
      *
-     * Chạy TRONG khoá hòm thư (`pump` đang giữ): Trợ lý là MỘT người, và lượt
-     * này là lượt của nó. Nhờ thế `/stop` cắt được — `Assistant.run` đặt
-     * `inflight` cho mọi lượt, kể cả lượt này.
+     * Runs INSIDE the mailbox lock (`pump` is holding it): the Assistant is
+     * ONE person, and this is its turn. That's what lets `/stop` interrupt
+     * it — `Assistant.run` sets `inflight` for every turn, including this one.
      */
     if (routed.value.intent === 'lookup') {
       /**
-       * `paths` RỖNG = câu hỏi tra cứu chung, không đọc tài liệu nào (24/08).
+       * EMPTY `paths` = a general lookup question, no document read (08/24).
        *
-       * Phải tách nhánh ở ĐÂY chứ không nới `pickReadable`: hàm đó trả lời câu
-       * *"những đường dẫn model vừa nêu có thật không"*, và với danh sách rỗng
-       * thì câu trả lời đúng là "không có gì để kiểm" — không phải "không tìm
-       * thấy file nào". Gộp hai chuyện đó là đẻ ra câu báo lỗi *"Mình không tìm
-       * thấy … trong tủ tài liệu"* cho một câu hỏi về thời tiết.
+       * Has to branch HERE, not by loosening `pickReadable`: that function
+       * answers the question *"do the paths the model just named actually
+       * exist"*, and with an empty list the correct answer is "there's
+       * nothing to check" — not "no file was found". Merging the two
+       * produces the error message *"I couldn't find … in the library"* for
+       * a question about the weather.
        */
       const asked = routed.value.paths;
-      // Đường dẫn do MODEL sinh ⇒ phải đối chiếu với đĩa trước khi ai đọc gì.
-      // → commands.ts `pickReadable`
+      // A path generated by the MODEL ⇒ has to be cross-checked against disk
+      // before anyone reads anything. → commands.ts `pickReadable`
       const { ok, missing } = asked.length
         ? pickReadable(asked, this.readablePaths())
         : { ok: [] as string[], missing: [] as string[] };
       if (asked.length > 0 && ok.length === 0) {
-        // Trả lời bằng CODE. Ta đang cầm cả hai cái kho trong tay; hỏi model
-        // "file này có thật không" là trả tiền để nhận về một phỏng đoán.
+        // Answer with CODE. We're already holding both stores in hand; asking
+        // the model "does this file exist" is paying money to get back a guess.
         this.emit({
           type: 'master.message',
           role: 'assistant',
           say:
-            `Mình không tìm thấy ${missing.map((m) => `"${m}"`).join(', ')} trong tủ tài liệu hay ngăn Kết quả. ` +
-            `Bạn kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn nhé.`,
+            t('off.refsMissing', { list: missing.map((m) => `"${m}"`).join(', ') }),
           plan_id: null,
         });
         return;
       }
 
-      // Dòng "Đang đọc doc-2.md…" — 0 token, và là nửa sự thật còn lại của
-      // worker ẩn. `finally` để nó không kẹt trên màn hình khi lượt đọc ném lỗi
-      // hoặc bị `/stop` cắt. → `reading`
+      // The "Reading doc-2.md…" line — 0 tokens, and the other half of the
+      // hidden worker's own honesty. `finally` so it doesn't get stuck on
+      // screen if the read turn throws or gets cut by `/stop`. → `reading`
       this.reading = readingNote(ok);
       this.emitActivity();
       let found: { value: string; usage: Usage };
@@ -764,9 +852,10 @@ export class Office {
       } finally {
         this.reading = null;
       }
-      // Khâu riêng trong sổ chi phí: `lookup` có hình dạng chi phí khác hẳn
-      // `route` (prefix tí xíu, nhưng đọc file nên output dài hơn). Gộp vào một
-      // khâu thì không thấy khâu nào đang phình. → `logAssistantUsage`
+      // A separate line item in the cost ledger: `lookup` has a completely
+      // different cost shape from `route` (a tiny prefix, but reads a file so
+      // output runs longer). Merged into one line item, no single line item
+      // would show it ballooning. → `logAssistantUsage`
       this.logAssistantUsage('lookup', found.usage);
       this.emit({
         type: 'master.message',
@@ -774,18 +863,22 @@ export class Office {
         say:
           found.value ||
           (asked.length
-            ? 'Mình đọc rồi nhưng chưa rút ra được câu trả lời. Bạn hỏi cụ thể hơn một chút, hoặc giao hẳn cho một nhân viên đọc kỹ nhé.'
-            : 'Mình tra rồi nhưng chưa ra câu trả lời chắc chắn. Bạn hỏi cụ thể hơn một chút nhé.'),
+            ? t('off.lookupNoAnswerFiles')
+            : t('off.lookupNoAnswerWeb')),
         plan_id: null,
       });
-      // ⚠ Một phần đề nghị của Trợ lý không có thật thì NÓI RA, đừng im. Câu
-      // trả lời ở trên dựa trên ít tài liệu hơn nó tưởng, và người dùng là bên
-      // duy nhất biết được thiếu file đó có đổi câu trả lời hay không.
+      // ⚠ If part of what the Assistant proposed doesn't actually exist, SAY
+      // SO, don't stay quiet. The answer above is based on fewer documents
+      // than it thinks, and the user is the only one who can tell whether the
+      // missing file would have changed the answer.
       if (missing.length > 0) {
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: `(Mình không tìm thấy ${missing.map((m) => `"${m}"`).join(', ')} nên câu trên chỉ dựa trên ${ok.length} tài liệu còn lại.)`,
+          say: t('off.lookupPartial', {
+            list: missing.map((m) => `"${m}"`).join(', '),
+            n: String(ok.length),
+          }),
           plan_id: null,
         });
       }
@@ -793,117 +886,131 @@ export class Office {
     }
 
     /**
-     * CỬA CỨU HỘ: Trợ lý trả về nguyên một KẾ HOẠCH thay vì một quyết định.
+     * ESCAPE HATCH: the Assistant returns an entire PLAN instead of a decision.
      *
      * → `Assistant.decideRoute`
      *
-     * Ta đang cầm một kế hoạch hợp lệ ĐÃ TRẢ TIỀN. Chạy nó thì bỏ luôn được một
-     * lượt `plan()` — rẻ hơn ca thường, không phải đắt hơn.
+     * We're already holding a valid, ALREADY-PAID-FOR plan. Running it skips
+     * a whole `plan()` turn — cheaper than the usual case, not more
+     * expensive.
      *
-     * ⚠ KHÔNG hạ xuống `intent: 'task'` với chính câu người dùng vừa gõ, dù nghe
-     * gọn hơn nhiều: `plan()` chạy ở query ONE-SHOT, **không có trí nhớ hội
-     * thoại**. Câu "bất kỳ, random cũng được" đứng một mình thì planner không
-     * chia được việc gì cả — ta sẽ trả tiền thêm một lượt để nhận về một ca hỏng.
-     * Đúng ca đã đo được 20/08.
+     * ⚠ Does NOT downgrade to `intent: 'task'` with the exact text the user
+     * just typed, even though that sounds much simpler: `plan()` runs as a
+     * ONE-SHOT query, with **no conversation memory**. A message like "any,
+     * random is fine" standing alone gives the planner nothing to split work
+     * from — we'd pay for an extra turn just to get back a broken run. The
+     * exact case measured on 08/20.
      */
     if (routed.value.intent === 'plan') {
       const draft = routed.value.draft;
       if (this.state === 'working') {
-        // Bản nháp KHÔNG đi vào hàng đợi cùng câu yêu cầu: tới lượt nó chạy thì
-        // danh sách nhân viên trực và các file đầu vào có thể đã khác, mà một kế
-        // hoạch đã đóng khung không được kiểm lại lần nữa. Giữ lại phần bền hơn
-        // — mô tả việc — rồi lập kế hoạch mới lúc thật sự chạy.
+        // The draft does NOT go into the queue alongside the request text: by
+        // the time it runs, the roster of available workers and the input
+        // files may have changed, and an already-framed plan doesn't get
+        // re-checked. Keep the more durable part — the description of the
+        // work — and plan fresh when it actually runs.
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: 'Mình đang bận một việc rồi. Xong việc này mình làm tiếp việc bạn vừa giao nhé.',
+          say: t('off.busyWillFollow'),
         });
         this.deferred.push({ request: requestOf(draft), at: Date.now() });
         return;
       }
       void this.run(requestOf(draft), draft).catch(() => {
-        /* run() đã emit lỗi lên UI rồi */
+        /* run() has already emitted the error to the UI */
       });
       return;
     }
 
     if (routed.value.intent === 'task') {
-      // scope "refine" gắn vào việc đang chạy; "new" sinh một Plan độc lập.
-      // Khi phân vân Trợ lý được dặn chọn "new" — hai việc tách rời chỉ tốn thêm
-      // một lần lập kế hoạch, còn gắn nhầm thì làm hỏng cả hai.
+      // scope "refine" attaches to the running job; "new" spawns an independent Plan.
+      // When unsure, the Assistant is told to pick "new" — two separate jobs
+      // only cost one extra planning round, while a wrong attachment breaks
+      // both.
       if (this.state === 'working') {
         this.emit({
           type: 'master.message',
           role: 'assistant',
           say:
             routed.value.scope === 'refine'
-              ? 'Đã ghi nhận bổ sung. Mình áp dụng ngay khi việc đang chạy xong.'
-              : 'Mình đang bận một việc rồi. Xong việc này mình làm tiếp việc bạn vừa giao nhé.',
+              ? t('off.addendumNoted')
+              : t('off.busyWillFollow'),
         });
         this.deferred.push({ request: routed.value.request, at: Date.now() });
         return;
       }
-      // KHÔNG await: DAG chạy nền, và trong lúc đó Trợ lý phải RẢNH để nói
-      // chuyện tiếp. Đây là chỗ "một người, nhiều khoảng trống thời gian".
+      // NO await: the DAG runs in the background, and during that time the
+      // Assistant has to stay FREE to keep talking. This is the "one person,
+      // many idle gaps" spot.
       void this.run(routed.value.request).catch(() => {
-        /* run() đã emit lỗi lên UI rồi */
+        /* run() has already emitted the error to the UI */
       });
       return;
     }
 
-    // chat, ask, hoặc garbled — trả lời rồi thôi, không tốn một token worker nào.
-    // Cả ba mang một câu ĐÃ ĐƯỢC DUYỆT để cho người đọc: hai cửa đầu là lời model
-    // nói với người dùng, cửa thứ ba là câu do CODE viết vì lời model không đưa ra
-    // được (nguyên văn nằm ở `.state/route-failure.log`). → `Assistant.decideRoute`
+    // chat, ask, or garbled — reply and stop, without spending a single
+    // worker token. All three carry a sentence ALREADY APPROVED for the
+    // reader: the first two are the model speaking to the user, the third is
+    // a sentence CODE wrote because the model failed to produce one (the raw
+    // text lives in `.state/route-failure.log`). → `Assistant.decideRoute`
     this.emit({ type: 'master.message', say: routed.value.say, role: 'assistant', plan_id: null });
   }
 
   /**
-   * Trạng thái Trợ lý và trạng thái nhân viên là HAI thứ. Nói cả hai ra.
+   * The Assistant's state and a worker's state are TWO different things. Say both.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MẠCH KHÔNG ĐƯỢC ĐỨT.                                                     │
+   * │ THE THREAD MUST NEVER GO SILENT.                                         │
    * │                                                                          │
-   * │ Từ lúc người dùng bấm Gửi tới lúc có kết quả, LUÔN phải có một câu mô tả │
-   * │ việc đang diễn ra. Bản trước đứt đúng một nhịp — giữa lúc Trợ lý đọc     │
-   * │ xong yêu cầu và lúc kế hoạch hiện ra — vì `run()` chạy nền còn hòm thư   │
-   * │ đã mở khoá, nên mọi con số đều bằng 0.                                   │
+   * │ From the moment the user hits Send until there's a result, there must     │
+   * │ ALWAYS be a sentence describing what's happening. The old version went     │
+   * │ silent for exactly one beat — between the Assistant finishing reading       │
+   * │ the request and the plan showing up — because `run()` runs in the           │
+   * │ background while the mailbox has already unlocked, so every number reads    │
+   * │ zero.                                                                     │
    * │                                                                          │
-   * │ `planning` lấp đúng nhịp đó. Đọc từ `currentRecord.status`, tức là từ    │
-   * │ BẢN GHI CÔNG VIỆC — thứ tồn tại từ trước khi lập kế hoạch, kể cả khi lập │
-   * │ kế hoạch fail. Không suy ra từ hòm thư, vì hòm thư chính là chỗ đã sai.  │
+   * │ `planning` fills exactly that beat. Read from `currentRecord.status`,      │
+   * │ i.e. from the JOB RECORD — something that exists before planning even      │
+   * │ starts, even when planning fails. Not inferred from the mailbox, because    │
+   * │ the mailbox is exactly where it went wrong.                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   /**
-   * Đang nén trí nhớ — TRẠNG THÁI THẬT, không phải một câu hẹn giờ.
+   * Compacting memory — a REAL STATE, not a sentence with a timer.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BUG ĐÃ SỬA: "/clear nháy một cái rồi khựng im rất lâu".                  │
+   * │ BUG FIXED: "/clear flashes once then goes silent for a very long time".   │
    * │                                                                          │
-   * │ Bản trước phát câu "Đang dọn…" bằng một `note` có hẹn giờ. Nhưng `say()` │
-   * │ gọi `emitActivity()` NGAY SAU `runCommand()` — và activity đó không mang │
-   * │ `note`, nên giao diện xoá luôn câu vừa đặt. Người dùng thấy nó nháy vài  │
-   * │ chục mili giây, rồi im lặng hoàn toàn suốt cả lượt gọi model.            │
+   * │ The old version emitted "Clearing…" as a `note` with a timer. But `say()` │
+   * │ calls `emitActivity()` RIGHT AFTER `runCommand()` — and that activity      │
+   * │ event carries no `note`, so the UI immediately clears the sentence it       │
+   * │ just set. The user sees it flash for a few dozen milliseconds, then         │
+   * │ complete silence for the entire model call.                              │
    * │                                                                          │
-   * │ Bài học chung hơn: **một việc đang chạy là TRẠNG THÁI, không phải một    │
-   * │ thông báo.** Thông báo thì có kẻ khác ghi đè được và có hẹn giờ để hết   │
-   * │ hạn; trạng thái thì đúng chừng nào việc còn chạy, bất kể ai phát         │
-   * │ `emitActivity()` xen vào. Nén mất 5–15 giây — đó là khoảng im lặng dài   │
-   * │ nhất trong sản phẩm, đúng thứ luật "mạch không được đứt" (§6) cấm.       │
+   * │ The more general lesson: **work in progress is a STATE, not a               │
+   * │ notification.** A notification can be overwritten by something else and    │
+   * │ has a timer to expire; a state is correct for as long as the work keeps      │
+   * │ running, no matter who else fires `emitActivity()` in between.              │
+   * │ Compaction takes 5-15 seconds — the longest silence in the whole            │
+   * │ product, exactly what the "the thread must never go silent" rule (§6)       │
+   * │ forbids.                                                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   private clearing = false;
 
   /**
-   * Đang đọc tài liệu cho một lượt `lookup` — TRẠNG THÁI, không phải thông báo.
+   * Reading a document for a `lookup` turn — a STATE, not a notification.
    *
-   * Cùng khuôn `clearing` và cùng lý do: một việc đang chạy phải đúng chừng nào
-   * nó còn chạy, bất kể ai phát `emitActivity()` xen vào. Đặt nó thành một câu
-   * có `hold_ms` là tái tạo đúng cái bug "/clear nháy rồi khựng".
+   * Same pattern as `clearing`, same reason: work in progress has to stay
+   * correct for as long as it's running, no matter who else fires
+   * `emitActivity()` in between. Turning it into a sentence with `hold_ms`
+   * would recreate the exact "/clear flashes then goes silent" bug.
    *
-   * Đây là nửa sự thật còn lại của worker ẩn: nó cố ý không sinh Plan, nên nếu
-   * không có dòng này thì người dùng tưởng Trợ lý tự biết, trong khi vừa có một
-   * lượt đọc file thật sự chạy. → commands.ts `readingNote`
+   * This is the other half of the hidden worker's honesty: it deliberately
+   * produces no Plan, so without this line the user would assume the
+   * Assistant just knows the answer, when a real file-reading turn just ran.
+   * → commands.ts `readingNote`
    */
   private reading: string | null = null;
 
@@ -916,15 +1023,16 @@ export class Office {
         workers: this.activeScheduler?.runningCount ?? 0,
         queued: this.mailbox.size,
         jobs: this.deferred.length,
-        // ⚠ CỐ Ý KHÔNG kèm `hold_ms` — xem `reading`.
+        // ⚠ DELIBERATELY carries no `hold_ms` — see `reading`.
         note: this.reading,
         plan_id: null,
       });
       return;
     }
     if (this.clearing) {
-      // Đè lên mọi thứ khác: lúc này Trợ lý không "nghĩ" về tin nhắn nào cả,
-      // nó đang nén trí nhớ. Nói "đang nghĩ…" ở đây là mô tả sai việc đang chạy.
+      // Overrides everything else: right now the Assistant isn't "thinking"
+      // about any message at all, it's compacting memory. Saying "thinking…"
+      // here would misdescribe what's actually running.
       this.emit({
         type: 'office.activity',
         assistant: 'thinking',
@@ -932,14 +1040,16 @@ export class Office {
         queued: this.mailbox.size,
         jobs: this.deferred.length,
         /**
-         * Nói luôn là MẤT VÀI GIÂY — đây là khoảng chờ dài nhất trong sản phẩm
-         * mà người dùng không thấy có việc gì đang chạy trên sơ đồ.
+         * States outright that it TAKES A FEW SECONDS — this is the longest
+         * wait in the product where the user sees nothing running on the
+         * diagram.
          *
-         * ⚠ CỐ Ý KHÔNG kèm `hold_ms`: đây là TRẠNG THÁI của một việc đang chạy,
-         * phải đúng chừng nào việc còn chạy. Thêm `hold_ms` vào đây là tái tạo
-         * lại đúng khoảng im lặng vừa vá. → core/types.ts `office.activity`
+         * ⚠ DELIBERATELY carries no `hold_ms`: this is the STATE of work in
+         * progress, and has to stay correct for as long as the work runs.
+         * Adding `hold_ms` here would recreate the exact silence just fixed.
+         * → core/types.ts `office.activity`
          */
-        note: 'Đang dọn cuộc trò chuyện, cất lại những gì bạn đã chốt… (mất vài giây)',
+        note: t('off.clearing'),
         plan_id: null,
       });
       return;
@@ -955,15 +1065,18 @@ export class Office {
   }
 
   /**
-   * Một câu trạng thái TẠM — hiện rồi tự biến, không để lại gì trong luồng chat.
+   * A TEMPORARY status sentence — shows then vanishes on its own, leaving
+   * nothing behind in the chat stream.
    *
-   * Đây là đường nói chuyện của `/clear` (§4.6). Nó cố ý KHÔNG mang các con số
-   * bận/rảnh: nó đè lên dòng trạng thái, và lượt `emitActivity()` kế tiếp sẽ tự
-   * lấy lại quyền — nên không có ca "câu tạm kẹt trên màn hình vĩnh viễn".
+   * This is `/clear`'s (§4.6) way of speaking. It deliberately carries NO
+   * busy/idle numbers: it overrides the status line, and the next
+   * `emitActivity()` call reclaims control on its own — so there's no case of
+   * "a temporary sentence stuck on screen forever".
    *
-   * `hold_ms` là gợi ý cho BÊN HIỂN THỊ, không phải hẹn giờ ở server: web tự xoá
-   * sau ngần ấy, còn Telegram giữ nguyên tin đã sửa làm vạch ngăn. Cùng một sự
-   * kiện, hai kết cục — đúng luật "mỗi bên hiển thị tự chọn cách phản ứng".
+   * `hold_ms` is a hint for the DISPLAY SIDE, not a server-side timer: web
+   * clears it after that long on its own, while Telegram keeps the edited
+   * message as a divider. Same event, two outcomes — exactly the rule "each
+   * display side picks its own reaction".
    */
   private emitNote(note: string, holdMs = 4_000): void {
     this.emit({
@@ -978,23 +1091,26 @@ export class Office {
     });
   }
 
-  /** Lệnh chữ — xử lý hoàn toàn bằng code, KHÔNG gọi model. 0 token. */
+  /** A slash command — handled entirely by code, NO model call. 0 tokens. */
   private runCommand(parsed: Exclude<ParsedInput, { kind: 'text' }>): SayOutcome {
     /**
-     * ⚠ `say` RỖNG thì KHÔNG phát sự kiện nào. → bug 21/08
+     * ⚠ An EMPTY `say` emits NO event at all. → bug 08/21
      *
-     * Một `master.message` với `say: ''` vẫn đi hết đường: `appendChat` ghi nó
-     * vào `chat.jsonl`, SSE đẩy nó ra, và giao diện vẽ một bong bóng chat TRỐNG
-     * TRƠN — người dùng thấy một ô rỗng và không có cách nào đoán nó là gì.
+     * A `master.message` with `say: ''` would otherwise go all the way
+     * through: `appendChat` writes it to `chat.jsonl`, SSE pushes it out, and
+     * the UI draws a COMPLETELY EMPTY chat bubble — the user sees a blank box
+     * with no way to guess what it is.
      *
-     * Ca đẻ ra nó: những lệnh vừa trả lời bằng một câu RIÊNG (`/resume` tự phát
-     * câu "chạy tiếp N việc…") vừa phải trả về một `SayOutcome`. Chúng gọi
-     * `reply('')` để nói *"tôi nói xong rồi"* — và `reply` cứ thế phát thêm một
-     * tin rỗng nữa.
+     * How it happens: a command that already replies with its OWN sentence
+     * (`/resume` emits its own "resuming N jobs…" message) still has to
+     * return a `SayOutcome`. It calls `reply('')` to mean *"I'm already
+     * done talking"* — and `reply` would go ahead and emit yet another empty
+     * message.
      *
-     * Chặn ở ĐÂY chứ không ở tầng vẽ: một tin rỗng lọt xuống `chat.jsonl` là
-     * nằm lại trên đĩa vĩnh viễn, và mọi client tương lai (Telegram) lại phải
-     * tự nhớ mà lọc. Tầng vẽ có chốt thứ hai, nhưng đó là lưới, không phải cửa.
+     * Blocked HERE, not at the drawing layer: an empty message reaching
+     * `chat.jsonl` sits on disk forever, and every future client (Telegram)
+     * would have to remember to filter it out on its own. The drawing layer
+     * has a second gate, but that's a safety net, not the actual door.
      */
     const reply = (say: string): SayOutcome => {
       if (say.trim()) {
@@ -1011,24 +1127,27 @@ export class Office {
 
       case 'stop': {
         /**
-         * ⚠ `mailbox.size` LÀ HÀNG ĐỢI, KHÔNG PHẢI "ĐANG BẬN". Bug đã sửa 20/08.
+         * ⚠ `mailbox.size` IS THE QUEUE, NOT "BUSY". Bug fixed 08/20.
          *
          * ┌──────────────────────────────────────────────────────────────────┐
-         * │ Bản trước hỏi `state !== 'working' && mailbox.size === 0 &&      │
-         * │ deferred.length === 0` rồi kết luận "đang rảnh". Nhưng lúc Trợ lý │
-         * │ đang nghĩ, lô tin đã được `take()` ra khỏi hàng đợi — `size` về 0, │
-         * │ `state` vẫn là `idle` (chưa có Plan nào), và cái đang chạy nằm ở  │
-         * │ `mailbox.isBusy`, một biến KHÔNG AI HỎI TỚI.                      │
-         * │                                                                  │
-         * │ Đo được trên máy người dùng, ngay thao tác đầu tiên của phiên:    │
-         * │ họ gõ "Chào, giới thiệu về bạn", gõ tiếp `/stop`, nhận về *"Hiện  │
-         * │ không có việc nào đang chạy."* — rồi câu trả lời hiện ra ngay sau. │
-         * │ Hệ thống vừa nói dối về trạng thái của chính nó.                  │
-         * │                                                                  │
-         * │ Ba trạng thái, ba biến, phải hỏi cả ba: Plan đang chạy (`state`)  │
-         * │ · Trợ lý đang trong một lượt (`isBusy`) · còn việc xếp hàng        │
-         * │ (`size`/`deferred`). Nén nhớ (`clearing`) cũng là một lượt model   │
-         * │ đang bay, và `/stop` cắt được nó.                                 │
+         * │ The old version checked `state !== 'working' && mailbox.size === 0 │
+         * │ && deferred.length === 0` and concluded "idle". But while the       │
+         * │ Assistant is thinking, that batch has already been `take()`n out    │
+         * │ of the queue — `size` reads 0, `state` is still `idle` (no Plan       │
+         * │ exists yet), and the actual running work lives in                   │
+         * │ `mailbox.isBusy`, a variable NOBODY was checking.                    │
+         * │                                                                    │
+         * │ Measured on a user's machine, on the very first action of a          │
+         * │ session: they typed "Hi, tell me about yourself", then `/stop`,        │
+         * │ and got back *"Nothing is currently running."* — then the answer     │
+         * │ showed up right after. The system had just lied about its own          │
+         * │ state.                                                              │
+         * │                                                                    │
+         * │ Three states, three variables, all three have to be checked: a       │
+         * │ Plan running (`state`) · the Assistant mid-turn (`isBusy`) ·          │
+         * │ still-queued work (`size`/`deferred`). Compacting memory              │
+         * │ (`clearing`) is also a model call in flight, and `/stop` can          │
+         * │ interrupt it.                                                       │
          * └──────────────────────────────────────────────────────────────────┘
          */
         const idle =
@@ -1037,40 +1156,44 @@ export class Office {
           !this.clearing &&
           this.mailbox.size === 0 &&
           this.deferred.length === 0;
-        if (idle) return reply('Hiện không có việc nào đang chạy.');
+        if (idle) return reply(t('off.nothingRunning'));
         const { dropped, cutAssistant } = this.stop();
         return reply(
-          'Đang dừng tất cả.' +
-            (cutAssistant ? ' Đã cắt lượt Trợ lý đang chạy.' : '') +
-            (dropped ? ` Đã bỏ ${dropped} việc còn trong hàng đợi.` : '') +
-            // Cùng lý do với câu ở `finish`: mời `/resume`, đừng mời "nhắn tiếp".
-            ' Việc đã xong vẫn giữ nguyên — gõ /resume để mình làm nốt.',
+          t('off.stoppingAll') +
+            (cutAssistant ? ` ${t('off.stoppedAssistantTurn')}` : '') +
+            (dropped ? ` ${t('off.droppedQueued', { n: String(dropped) })}` : '') +
+            // Same reason as the sentence in `finish`: invite `/resume`, not "just message again".
+            ` ${t('off.finishedWorkKept')}`,
         );
       }
 
       /**
-       * Chạy tiếp ca bị ngắt. 0 lượt model — kế hoạch đã có và đã trả tiền.
+       * Continues a job that got interrupted. 0 model turns — the plan
+       * already exists and has already been paid for.
        * → `Office.resume` · SPEC-offices.md §6b
        */
       case 'resume': {
         const ready = this.resumable();
         if (!ready) {
-          return reply('Không có việc nào đang dở cả. Nhắn cho mình việc mới nhé.');
+          return reply(t('off.nothingHalfDone'));
         }
         if (this.state === 'working') {
-          return reply('Văn phòng đang bận. Đợi xong ca này rồi gõ /resume nhé.');
+          return reply(t('off.busyResumeLater'));
         }
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: `Chạy tiếp ${ready.left} việc còn dở${ready.request ? ` của "${ready.request}"` : ''}. Mình không chia lại việc — kế hoạch cũ vẫn còn.`,
+          say: t('off.resuming', {
+            n: String(ready.left),
+            of: ready.request ? t('off.resumingOf', { request: ready.request }) : '',
+          }),
         });
-        // `void`: lệnh trả lời NGAY, ca chạy nền — y như đường `run()` thường.
+        // `void`: the command replies IMMEDIATELY, the job runs in the background — same as the usual `run()` path.
         void this.resume().catch((err: unknown) => {
           this.emit({
             type: 'master.message',
             role: 'assistant',
-            say: err instanceof Error ? err.message : 'Chưa chạy tiếp được.',
+            say: err instanceof Error ? err.message : t('off.resumeFailed'),
           });
         });
         return reply('');
@@ -1080,94 +1203,109 @@ export class Office {
         if (!this.currentRecord) {
           const ready = this.resumable();
           if (ready) {
-            // Ca dở là TRẠNG THÁI của văn phòng, không phải một thông báo đã
-            // trôi qua — nên nó phải trả lời được câu "giờ đang thế nào".
+            // Leftover work is a STATE of the office, not a notification
+            // that has already come and gone — so it has to be able to
+            // answer "what's the current state".
             return reply(
-              `Đang rảnh, nhưng còn ${ready.left} việc dở của "${ready.request}". ` +
-                `Gõ /resume để làm nốt — mình không chia lại việc nên không tốn thêm lượt nào.`,
+              t('off.idleWithLeftovers', { n: String(ready.left), request: ready.request }),
             );
           }
           return reply(
-            `Đang rảnh. Văn phòng có ${this.loaded.roles.size} nhân viên, ` +
-              `${this.assistant.assignableRoles().size} người đang trực.`,
+            t('off.idle', {
+              total: String(this.loaded.roles.size),
+              onDuty: String(this.assistant.assignableRoles().size),
+            }),
           );
         }
         const r = this.currentRecord;
         const done = r.steps.filter((s) => s.status === 'done').length;
         return reply(
-          `Đang làm: ${r.request}\n` +
-            `Bước ${done}/${r.steps.length} · ${r.tasks_done}/${r.tasks_total} việc · ` +
-            `${r.turns} lượt · $${r.costUSD.toFixed(4)}`,
+          t('off.statusRunning', {
+            request: r.request,
+            step: String(done),
+            steps: String(r.steps.length),
+            done: String(r.tasks_done),
+            total: String(r.tasks_total),
+            turns: String(r.turns),
+            cost: formatUSD(r.costUSD),
+          }),
         );
       }
 
       case 'clear': {
         if (this.state === 'working') {
-          return reply('Đang có việc chạy dở. Bấm Dừng hoặc chờ xong rồi mình dọn nhé.');
+          return reply(t('off.clearBusy'));
         }
         /**
-         * `/clear` KHÔNG PHÁT MỘT `master.message` NÀO. → SPEC-offices.md §4.6
+         * `/clear` EMITS NO `master.message` AT ALL. → SPEC-offices.md §4.6
          *
          * ┌──────────────────────────────────────────────────────────────────┐
-         * │ Nhịp "Đang dọn…" VỐN ĐÃ là trạng thái giả dạng tin nhắn: nó luôn │
-         * │ bị chính `office.cleared` ngay sau đó cuốn đi, không nhánh nào nó │
-         * │ sống sót. Một tin nhắn được thiết kế để không tồn tại quá một     │
-         * │ nhịp thì nó LÀ trạng thái — gọi đúng tên là trung thực hơn.       │
+         * │ The "Clearing…" pulse was ALREADY a state pretending to be a       │
+         * │ message: it always got swept away by `office.cleared` right after,  │
+         * │ no branch of it ever survives. A message designed to never outlive  │
+         * │ one beat IS a state — calling it by its real name is more honest.   │
          * │                                                                  │
-         * │ Nhịp "Đã dọn xong" thì tệ hơn: nó khiến `/clear` để lại rác cho  │
-         * │ đúng thứ nó vừa dọn, và dòng đó không thuộc về ai — không phải    │
-         * │ người dùng hỏi, không phải Trợ lý trả lời, mà là hệ thống tự nói  │
-         * │ về chính mình.                                                    │
+         * │ The "Cleared" pulse was worse: it left `/clear` littering the        │
+         * │ exact thing it had just cleaned up, and that line belonged to no     │
+         * │ one — not the user asking, not the Assistant answering, just the    │
+         * │ system talking to itself.                                          │
          * │                                                                  │
-         * │ Cùng khuôn `…thinking` → trắng: QUÁ TRÌNH hiện rồi biến, chỉ KẾT  │
-         * │ QUẢ mới ở lại. Bằng chứng bền là node GHI NHỚ trong ngăn Tri thức.│
+         * │ Same pattern as `…thinking` → blank: a PROCESS shows then           │
+         * │ vanishes, only the RESULT stays. The durable evidence is the         │
+         * │ MEMORY node in the Knowledge pane.                                  │
          * └──────────────────────────────────────────────────────────────────┘
          */
-        // Cờ TRẠNG THÁI, không phải một câu có hẹn giờ. `say()` phát
-        // `emitActivity()` ngay sau hàm này, và chính nó đọc cờ để nói đúng
-        // việc đang chạy — thay vì xoá mất câu vừa đặt. Xem `clearing`.
+        // A STATE flag, not a sentence with a timer. `say()` fires
+        // `emitActivity()` right after this function, and that function
+        // reads this exact flag to describe what's actually running —
+        // instead of erasing the sentence just set. See `clearing`.
         this.clearing = true;
-        // KHÔNG await: trả lời ngay để ô chat không đứng hình, rồi báo kết quả
-        // bằng sự kiện như mọi thứ khác.
+        // NO await: reply immediately so the chat pane doesn't freeze, then
+        // report the result as an event like everything else.
         void this.compactMemory()
           .then((r) => {
             this.clearing = false;
             this.emitNote(r.note);
           })
-          // Tin XẤU giữ lâu hơn tin tốt: người ta đọc tin xấu chậm hơn, và câu
-          // này báo một việc ĐÃ KHÔNG xảy ra — ngữ cảnh vẫn còn nguyên.
+          // BAD news stays up longer than good news: people read bad news
+          // more slowly, and this sentence reports something that did NOT
+          // happen — the context is still intact.
           .catch(() => {
             this.clearing = false;
-            this.emitNote('Chưa dọn được cuộc trò chuyện. Mình giữ nguyên mọi thứ, thử lại sau nhé.', 8_000);
+            this.emitNote(t('off.clearFailedKept'), 8_000);
           });
         return { intent: 'chat', reply: '' };
       }
 
-      // Cổng duyệt chưa cài đặt (SPEC-tools-approval.md §8). Trả lời trung thực
-      // thay vì im lặng — người dùng gõ /approve nghĩa là họ đang chờ một thứ
-      // mà ta chưa hỏi, và họ cần biết là ta chưa hỏi.
+      // The approval gate isn't built yet (SPEC-tools-approval.md §8). Reply honestly
+      // instead of silence — the user typing /approve means they're waiting
+      // on something we never asked, and they need to know we never asked it.
       case 'approve':
       case 'reject':
-        return reply('Hiện không có gì đang chờ bạn duyệt.');
+        return reply(t('off.nothingToApprove'));
     }
   }
 
-  // ── chạy một yêu cầu
+  // ── running a request
 
   /**
-   * `draft` — kế hoạch ĐÃ CÓ, khỏi lập lại. → `Assistant.decideRoute` cửa cứu hộ
+   * `draft` — a plan that ALREADY EXISTS, no need to plan again. →
+   * `Assistant.decideRoute`'s escape hatch
    *
-   * Truyền vào thì bỏ hẳn lượt `plan()`. Mọi chốt sau đó (`linkDeps`, `validate`,
-   * đóng khung đường dẫn) chạy y nguyên: một kế hoạch tới từ cửa khác vẫn phải
-   * qua đúng những cửa kiểm của kế hoạch bình thường.
+   * Passing it in skips the `plan()` turn entirely. Every gate after that
+   * (`linkDeps`, `validate`, framing the paths) runs unchanged: a plan
+   * arriving through a different door still has to pass through the exact
+   * same checks as a normal plan.
    */
   /**
-   * `resumePlan` — kế hoạch ĐÃ CÓ, chỉ còn phần chưa chạy. → `resume()`
+   * `resumePlan` — a plan that ALREADY EXISTS, only the unfinished part left
+   * to run. → `resume()`
    *
-   * Đi qua ĐÚNG hàm này chứ không phải một bản sao rút gọn: `linkDeps`,
-   * `validate`, `missingInputs`, sổ chi phí, báo cáo, `finish` — tất cả đều
-   * phải chạy y hệt. Hai bản mã của cùng một phép toán sẽ lệch (luật 19/08), và
-   * bản chạy hiếm hơn là bản lệch trước.
+   * Passes through this EXACT function rather than a trimmed-down copy:
+   * `linkDeps`, `validate`, `missingInputs`, the cost ledger, the report,
+   * `finish` — all of it has to run identically. Two copies of the same
+   * computation will drift (the 08/19 rule), and the rarer-to-run copy is the
+   * one that drifts first.
    */
   async run(
     request: string,
@@ -1176,18 +1314,19 @@ export class Office {
   ): Promise<{ plan_id: string; report: string; usage: Usage }> {
     this.assertLive();
     if (this.state === 'working') {
-      throw new RunError('Văn phòng đang bận. Đợi xong ca này đã.', 'other');
+      throw new RunError(t('off.officeBusyWait'), 'other');
     }
 
     this.stopRequested = false;
     let usage: Usage = emptyUsage();
 
-    // Bản ghi công việc tồn tại TỪ TRƯỚC khi lập kế hoạch: nếu lập kế hoạch
-    // fail thì người dùng vẫn phải thấy "đã có một việc, và nó hỏng ở đâu".
+    // The job record exists BEFORE planning even starts: if planning fails,
+    // the user still has to see "there was a job, and here's where it broke".
     const record: PlanRecord = {
-      // DÙNG LẠI id cũ khi chạy tiếp: `artifacts/<plan_id>/` là khung theo ca,
-      // nên id mới nghĩa là kết quả mới rơi vào một thư mục khác và phần đã làm
-      // xong thành mồ côi — đúng chuyện `resume` sinh ra để tránh.
+      // REUSE the old id when resuming: `artifacts/<plan_id>/` is the frame
+      // for a whole run, so a new id would mean fresh output landing in a
+      // different directory and the already-finished part becoming an
+      // orphan — exactly what `resume` exists to avoid.
       plan_id: resumePlan?.plan_id ?? newPlanId(),
       office: this.id,
       request,
@@ -1201,65 +1340,73 @@ export class Office {
     };
     this.currentRecord = record;
     this.plans.upsert(record);
-    // Câu này phải nói ĐÚNG việc đang xảy ra. `/resume` không gọi model lần
-    // nào — in "đang lập kế hoạch" ở đó là nói dối đúng chỗ người dùng đang
-    // nhìn, và nó chính là thứ làm cả hai chúng tôi đọc nhầm log ca hd3/hd4.
+    // This sentence has to state EXACTLY what's happening. `/resume` never
+    // calls the model — printing "planning" there would be a lie in the
+    // exact spot the user is looking, and that's exactly what led us both to
+    // misread the log for cases hd3/hd4.
     this.setState(
       'working',
-      resumePlan ? 'Đang chạy tiếp việc còn dở...' : 'Trợ lý đang lập kế hoạch...',
+      resumePlan ? t('off.stateResuming') : t('off.statePlanning'),
     );
-    // Nối mạch NGAY. `run()` được gọi bằng `void` từ `handleUserBatch`, và ngay
-    // sau đó `pump()` phát một activity toàn số 0 — nếu ta không phát cái này
-    // trước thì dòng trạng thái tắt đúng vào lúc việc mới bắt đầu.
+    // Keep the thread alive IMMEDIATELY. `run()` gets called with `void` from
+    // `handleUserBatch`, and right after that `pump()` emits an activity
+    // that's all zeros — if this doesn't fire first, the status line goes
+    // dark at the exact moment work is starting.
     this.emitActivity();
 
     try {
       /**
-       * 0a. Chờ tài liệu đang bóc — ĐIỂM CHỜ DUY NHẤT của tủ tài liệu.
+       * 0a. Wait for documents still being extracted — the library's ONE wait point.
        *
        * → docs/SPEC-library.md §10
        *
-       * Không chờ ở đây thì có một ca hỏng thật và im lặng: người dùng thả một
-       * PDF rồi hỏi ngay, `Grep` chạy trước khi văn bản kịp tồn tại, và nhân
-       * viên trả lời "không tìm thấy gì trong tài liệu" một cách rất thuyết
-       * phục. Sai mà không ai biết là kết cục tệ nhất trong mọi kết cục.
+       * Not waiting here creates a real and silent failure: the user drops a
+       * PDF and immediately asks about it, `Grep` runs before the text even
+       * exists, and a worker answers "found nothing in the document" very
+       * convincingly. Being wrong with nobody noticing is the worst outcome
+       * of all.
        *
-       * Phạm vi chờ hẹp hết mức: chỉ file đang bóc của CHÍNH văn phòng này, có
-       * timeout, và không đụng gì tới văn phòng khác. Dừng cả hệ thống để đợi
-       * index là thứ luật "không có ngoại lệ nào cần dừng tất cả" đã cấm.
+       * The wait is scoped as narrowly as possible: only files being
+       * extracted for THIS office, with a timeout, touching no other office.
+       * Stopping the whole system to wait for an index is exactly what the
+       * "no exception justifies stopping everything" rule forbids.
        */
       const waitingFor = this.library.busyNames();
       if (waitingFor.length > 0) {
-        this.setState('working', `Đang đọc tài liệu ${waitingFor.slice(0, 2).join(', ')}…`);
+        this.setState('working', t('off.stateReadingDocs', { names: waitingFor.slice(0, 2).join(', ') }));
         await this.library.settled(this.loaded.company.library.extract_timeout_ms);
       }
 
-      // 0. Không ai trực thì đừng tốn một token nào để biết điều đó.
+      // 0. Nobody's on duty — don't spend a single token finding that out.
       const onDuty = this.assistant.assignableRoles();
       if (onDuty.size === 0) {
         throw new RunError(
           this.loaded.roles.size === 0
-            ? 'Văn phòng này chưa có nhân viên nào. Bấm "+ Nhân viên" trên sơ đồ để thêm người đầu tiên.'
-            : 'Chưa có nhân viên nào được giao việc. Trên sơ đồ, kéo một sợi dây từ Trợ lý xuống một nhân viên.',
+            ? t('off.noRolesAtAll')
+            : t('off.noRolesWired'),
           'other',
         );
       }
 
-      // 1. Kế hoạch — QUA KHOÁ. Trợ lý là một người: nếu người dùng vừa nhắn
-      // gì đó thì lượt đó phải xong trước, không được chồng lên lượt này.
-      // `record.plan_id` đi VÀO khâu lập kế hoạch, không phải được ghi đè lên
-      // kết quả của nó: `artifactScoper` đóng khung đường dẫn bằng id nó nhận
-      // được, nên ghi đè sau đó là để lại một thư mục kết quả mang id mồ côi.
-      // → `Assistant.plan`
-      // Lập kế hoạch NÉM thì cũng là một lượt người dùng phải nói lại — đếm ở
-      // đây chứ không ở `catch` cuối hàm: `catch` đó còn nhận cả "chưa có nhân
-      // viên nào trực" và "văn phòng đang bận", vốn là chuyện cấu hình chứ
-      // không phải chuyện hai bên chưa hiểu nhau. → `planFriction`
-      // Kế hoạch tới từ cửa cứu hộ thì KHÔNG gọi model lần nữa — nó đã được trả
-      // tiền ở lượt `route()` vừa rồi. `usage` cũng đã tính ở đó, nên ở đây là 0.
-      // Chạy tiếp thì kế hoạch ĐÃ CÓ và ĐÃ TRẢ TIỀN — không gọi model lần nào.
-      // Đây là cả điểm của `resume`: phần đắt nhất của một ca hỏng là những
-      // lượt đã tiêu, và làm lại kế hoạch là tiêu thêm cho một thứ đang có sẵn.
+      // 1. Planning — UNDER LOCK. The Assistant is one person: if the user
+      // just sent something, that turn has to finish first, and must never
+      // overlap this one. `record.plan_id` goes INTO the planning step,
+      // rather than being written on top of its output afterward:
+      // `artifactScoper` frames paths using the id it was given, so
+      // overwriting it afterward would leave a results directory carrying an
+      // orphaned id. → `Assistant.plan`
+      // A planning call that THROWS is also a turn the user has to repeat —
+      // counted HERE, not in this function's closing `catch`: that `catch`
+      // also receives "no worker on duty" and "the office is busy", which are
+      // configuration issues, not a case of the two sides misunderstanding
+      // each other. → `planFriction`
+      // A plan arriving through the escape hatch does NOT call the model
+      // again — it's already been paid for in the `route()` turn that just
+      // ran. `usage` was already counted there too, so it's 0 here.
+      // Resuming means the plan ALREADY EXISTS and is ALREADY PAID FOR — no
+      // model call at all. This is the whole point of `resume`: the most
+      // expensive part of a failed run is the turns already spent, and
+      // replanning would spend more on something already in hand.
       const planned = resumePlan
         ? { value: { kind: 'plan' as const, plan: resumePlan }, usage: emptyUsage() }
         : draft
@@ -1274,96 +1421,113 @@ export class Office {
       this.logAssistantUsage('plan', planned.usage);
 
       /**
-       * 1b. Chưa chia được vì THIẾU THÔNG TIN → hỏi lại, KHÔNG phải một lỗi.
+       * 1b. Couldn't split the work because of MISSING INFORMATION → ask back,
+       * NOT an error.
        *
        * → docs/SPEC-offices.md §6 · `Assistant.plan`
        *
-       * Ca này kết thúc ở `blocked`, không phải `failed`: `failed` nghĩa là đã
-       * thử và hỏng, còn đây là chưa thử. Người dùng nhìn nhật ký phải phân biệt
-       * được "hệ thống làm sai" với "hệ thống đang chờ mình" — gộp hai thứ đó
-       * vào một trạng thái là làm hỏng chính cái nhật ký sinh ra để tin.
+       * This case closes as `blocked`, not `failed`: `failed` means it was
+       * tried and broke, while this is not yet tried. A user reading the log
+       * has to be able to tell "the system got it wrong" from "the system is
+       * waiting on me" — merging the two into one status breaks the very log
+       * built to be trusted.
        *
-       * KHÔNG tiêu một token nhân viên nào. Câu hỏi đi thẳng lên ô chat với vai
-       * `assistant`, y như một lượt `intent: 'ask'` của `route()` — với người
-       * dùng thì đây LÀ cùng một chuyện, và họ không cần biết nó đến từ khâu nào.
+       * Spends NO worker tokens. The question goes straight to the chat pane
+       * with role `assistant`, exactly like an `intent: 'ask'` turn from
+       * `route()` — to the user this IS the same thing, and they don't need
+       * to know which step it came from.
        */
       if (planned.value.kind === 'ask') {
         this.planFriction++;
         this.emit({ type: 'master.message', role: 'assistant', say: planned.value.say });
-        // `finish` tự trả văn phòng về `idle` — không gọi `setState` thêm ở đây.
+        // `finish` returns the office to `idle` on its own — no extra `setState` call needed here.
         this.finish(record, 'blocked', '', usage, 0);
         return { plan_id: record.plan_id, report: '', usage };
       }
 
       const plan = planned.value.plan;
-      // Chia được việc rồi thì CHỐT con số ma sát cho ca này, và trả biến đếm về
-      // 0 ngay: một ca sau đó chạy trơn từ câu đầu tiên không được thừa hưởng
-      // ma sát của ca này. Đọc lại ở khâu báo cáo bên dưới.
+      // Work got split successfully, so LOCK IN the friction count for this
+      // run and reset it to 0 right away: a later run that goes smoothly
+      // from the first sentence must not inherit this run's friction. Read
+      // again in the report step below.
       const friction = this.planFriction;
       this.planFriction = 0;
 
       /**
-       * 2. SỬA thứ sửa được, rồi mới CHẶN thứ không sửa được.
+       * 2. FIX what's fixable, THEN block what isn't.
        *
-       * Thứ tự có chủ ý, và nó là phương châm "ra bản nháp để sửa còn hơn viết
-       * mới từ đầu" áp vào chính kế hoạch:
+       * The order is deliberate, and it's the "a draft worth fixing beats
+       * starting from scratch" principle applied to the plan itself:
        *
-       *  · `linkDeps` — task đọc kết quả của task khác mà quên khai `deps` thì
-       *    NỐI THẲNG. Quan hệ đó suy ra được từ hai đường dẫn ta đang cầm; bắt
-       *    model lập lại kế hoạch cho đúng là một lượt gọi nữa để đổi lấy một
-       *    kết quả vẫn có thể sai.
-       *  · `validate` — thứ còn lại thì không đoán được, phải dừng.
+       *  · `linkDeps` — a task that reads another task's output but forgot to
+       *    declare `deps` gets WIRED DIRECTLY. That relationship can be
+       *    inferred from the two paths already in hand; making the model
+       *    replan just to get it right is one more call spent to get back a
+       *    result that could still be wrong.
+       *  · `validate` — whatever's left can't be guessed, so it has to stop.
        *
-       * Cả hai chạy SAU lập kế hoạch nhưng TRƯỚC khi phóng worker đầu tiên: tới
-       * đây mới tốn đúng một lượt planner.
+       * Both run AFTER planning but BEFORE the first worker is launched: only
+       * one planner turn has been spent by this point.
        *
-       * Danh sách vai trò đối chiếu là vai trò ĐANG TRỰC, không phải mọi file
-       * trong `roles/` — nếu không thì ngắt dây trên canvas chỉ là trang trí.
+       * The role list checked against is the roles ON DUTY, not every file
+       * under `roles/` — otherwise unwiring a node on the canvas would just
+       * be decoration.
        */
       const linked = Scheduler.linkDeps(plan);
       if (linked.length) {
-        // Nói ra, đừng sửa lén. Người dùng nhìn dải kế hoạch thấy hai việc chạy
-        // nối tiếp thay vì song song thì phải có một dòng giải thích vì sao.
+        // Say it, don't silently fix it. A user looking at the plan strip
+        // sees two tasks running one after another instead of in parallel,
+        // and there has to be a line explaining why.
         this.emit({
           type: 'office.state',
           state: 'working',
-          say: `Đã nối ${linked.length} việc phải chạy nối tiếp (${linked.join(', ')}) — chúng dùng chung file.`,
+          say: t('off.linkedTasks', { n: String(linked.length), list: linked.join(', ') }),
         });
       }
 
-      // ⚠ Truyền bảng cánh tay: thiếu nó thì `inputs: ["Musics"]` bị chặn dù
-      // nhân viên có cánh tay tên Musics trỏ thẳng vào thư mục đó. → `resolveInput`
+      // ⚠ Pass the arm table: without it, `inputs: ["Musics"]` gets blocked
+      // even when a worker has an arm named Musics pointing straight at that
+      // directory. → `resolveInput`
       const problems = Scheduler.validate(
         plan,
         onDuty,
         this.loaded.dir,
         armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers),
+        // ⚠ Who actually holds a connection — the only thing that makes a
+        // `kind: "connection"` input believable, and the only thing stopping
+        // it from being a one-word way around the file gate.
+        // → `Scheduler.validate`, the `connection` branch
+        new Set([...this.loaded.roles].filter(([, r]) => r.mcp.length > 0).map(([id]) => id)),
       );
       if (problems.length) {
-        // Kế hoạch có ra, nhưng không chạy được — với người dùng thì vẫn là một
-        // lượt phải nói lại. Tính là ma sát. → `planFriction`
+        // The plan came out, but it can't run — to the user this is still a
+        // turn they have to repeat. Counts as friction. → `planFriction`
         this.planFriction++;
         /**
-         * Câu này đi thẳng lên mặt người dùng, nên nó phải nói được VIỆC PHẢI
-         * LÀM — tiêu chí "Xử lý lỗi tốt". Bản trước in nguyên văn danh sách kỹ
-         * thuật ("Task T-02: phụ thuộc T-05 không tồn tại") cho một người mở
-         * tiệm hoa đọc.
+         * This sentence goes straight to the user's face, so it has to state
+         * WHAT TO DO — the "handles errors well" criterion. The old version
+         * printed the raw technical list ("Task T-02: dependency T-05 doesn't
+         * exist") for someone running a flower shop to read.
          *
          * ┌────────────────────────────────────────────────────────────────────┐
-         * │ VÀ NÓ KHÔNG ĐƯỢC NÓI "CHƯA TỐN TIỀN" (sửa 20/08, user bắt được).  │
+         * │ AND IT MUST NOT SAY "NOTHING SPENT YET" (fixed 08/20, user caught   │
+         * │ it).                                                               │
          * │                                                                    │
-         * │ Bản trước ghi *"chưa tốn tiền cho việc nào cả"*. Người dùng mở sổ   │
-         * │ chi phí ngay sau đó và thấy có tiền — vì lượt `route()` và lượt     │
-         * │ `plan()` vừa chạy xong đều đã ghi vào sổ. Câu an ủi đó là một câu   │
-         * │ nói dối, và nó nói dối đúng ở chỗ người dùng kiểm được dễ nhất.     │
+         * │ The old version wrote *"nothing has been spent on any job yet"*.    │
+         * │ The user opened the cost ledger right after and saw money spent —   │
+         * │ because the `route()` turn and the `plan()` turn that just ran had  │
+         * │ both already recorded charges. That reassurance was a lie, and it   │
+         * │ lied in exactly the spot the user could check most easily.          │
          * │                                                                    │
-         * │ Thứ ta biết chắc và nói được: KHÔNG nhân viên nào chạy — mà nhân   │
-         * │ viên mới là phần đắt (một lượt worker sàn ~13 200 token, so với     │
-         * │ một lượt Trợ lý). Nói đúng phần đó, và chỉ thẳng sang sổ chi phí    │
-         * │ cho phần còn lại, thay vì gắn một con số vào đây: ở nhánh cửa cứu   │
-         * │ hộ, `usage` tại điểm này bằng 0 trong khi lượt `route()` đã tính    │
-         * │ tiền — in số ra là đẻ ra một câu nói dối thứ hai.                   │
-         * │ → SESSIONS_MEMORY §2 "Sổ chi phí không được nói sai câu nào"        │
+         * │ What we know for certain and can say: NO worker ran — and a worker  │
+         * │ is the expensive part (a worker turn floors around ~13,200 tokens,  │
+         * │ compared to one Assistant turn). State that part correctly, and      │
+         * │ point straight to the cost ledger for the rest, instead of putting  │
+         * │ a number here: on the escape-hatch branch, `usage` at this exact     │
+         * │ point reads 0 while the `route()` turn already charged money —       │
+         * │ printing a number here would create a second lie.                   │
+         * │ → SESSIONS_MEMORY §2 "The cost ledger must never say the wrong       │
+         * │ thing"                                                              │
          * └────────────────────────────────────────────────────────────────────┘
          */
         const fingerprint = problems.join('\n');
@@ -1374,7 +1538,7 @@ export class Office {
         throw new RunError(planProblemsMessage(problems, this.samePlanProblemsCount), 'other');
       }
 
-      // Qua được cửa `validate` thì mạch kẹt đã đứt — xem `samePlanProblemsCount`.
+      // Passing the `validate` gate breaks the stuck loop — see `samePlanProblemsCount`.
       this.lastPlanProblems = '';
       this.samePlanProblemsCount = 0;
 
@@ -1386,62 +1550,68 @@ export class Office {
       this.emitActivity();
 
       /**
-       * ⚠ BỐN VIỆC DƯỚI ĐÂY CHỈ DÀNH CHO MỘT LƯỢT LẬP KẾ HOẠCH THẬT.
+       * ⚠ THE FOUR THINGS BELOW ARE ONLY FOR A REAL PLANNING TURN.
        *
-       * Sửa 21/08, sau khi `/resume` đi nhờ `run()` và kéo theo cả bốn:
+       * Fixed 08/21, after `/resume` rode along on `run()` and dragged all
+       * four in with it:
        *
-       *  · `savePlan` **GHI ĐÈ** `<plan_id>.plan.json` bằng kế hoạch RÚT GỌN.
-       *    Bản gốc 3 task biến mất khỏi đĩa — mất bản ghi pháp y, và đó là thứ
-       *    duy nhất trả lời được câu "ca này ban đầu định làm gì". Cùng lớp với
-       *    lỗi `plan_id` đôi 19/08.
-       *  · `plan.created` lần hai trong cùng một file log → nhật ký hiện *"lập
-       *    kế hoạch 3 bước"* cho một lượt KHÔNG gọi model lần nào.
-       *  · Câu *"Mình chia thành 3 việc: 1. Tách hợp đồng…"* đọc to cả cái bước
-       *    nó sẽ KHÔNG làm — người dùng không có cách nào biết đây là chạy tiếp.
+       *  · `savePlan` **OVERWRITES** `<plan_id>.plan.json` with the TRIMMED
+       *    plan. The original 3-task plan disappears from disk — losing the
+       *    forensic record, the only thing that can answer "what was this
+       *    run originally supposed to do". Same class as the duplicate
+       *    `plan_id` bug on 08/19.
+       *  · `plan.created` fires a second time in the same log file → the log
+       *    reads *"planned 3 steps"* for a turn that made NO model call.
+       *  · The sentence *"I've split this into 3 jobs: 1. Split the
+       *    contract…"* reads out the exact step it will NOT do — the user has
+       *    no way to know this is a resume.
        *
-       * `resume()` tự phát câu của nó (*"Chạy tiếp N việc còn dở…"*) ở tầng
-       * lệnh, nên ở đây im lặng là đúng, không phải là thiếu.
+       * `resume()` emits its own sentence (*"Continuing N unfinished
+       * jobs…"*) at the command layer, so staying silent here is correct, not
+       * a gap.
        */
       if (!resumePlan) {
         this.savePlan(plan);
         this.emit({ type: 'plan.created', plan_id: plan.plan_id, request, steps: plan.steps });
 
-        // Kế hoạch phải LÊN LUỒNG HỘI THOẠI, không chỉ nằm trên sơ đồ. Qua
-        // Telegram thì sơ đồ không tồn tại — mà bridge là mục tiêu tối thượng.
-        // Dựng bằng code từ `steps` đã có: 0 token. Khi có cổng duyệt
-        // (SPEC-tools-approval.md §8b) thì chính tin nhắn này mang nút duyệt.
+        // The plan has to reach the CHAT STREAM, not just sit on the diagram.
+        // Over Telegram, the diagram doesn't exist — and the bridge is the
+        // ultimate target. Built by code from `steps` already in hand: 0
+        // tokens. Once an approval gate exists (SPEC-tools-approval.md §8b),
+        // this exact message will carry the approve button.
         this.emit({
           type: 'master.message',
           role: 'assistant',
           say:
-            `Mình chia thành ${plan.steps.length} việc:\n` +
+            `${plural('off.splitInto', plan.steps.length)}\n` +
             plan.steps.map((s, i) => `  ${i + 1}. ${s.title}`).join('\n') +
-            `\nBắt đầu nhé.`,
+            `\n${t('off.startingNow')}`,
         });
       }
 
-      // 3. Chạy
+      // 3. Run
       /**
        * ┌──────────────────────────────────────────────────────────────────────┐
-       * │ CỬA SỔ ĐĂNG NHẬP ĐANG MỞ ⇒ KHÔNG PHÓNG VIỆC. → `browser-login.ts`   │
+       * │ A SIGN-IN WINDOW IS OPEN ⇒ DO NOT LAUNCH WORK. → `browser-login.ts`   │
        * │                                                                      │
-       * │ Chromium **khoá** `user-data-dir`. Cửa sổ đăng nhập đang giữ hồ sơ mà │
-       * │ worker phóng lên thì Playwright đâm vào hồ sơ bị khoá ⇒ **MCP chết    │
-       * │ lúc spawn** ⇒ nhân viên mất tool và trả lời bằng persona của nó. Đó   │
-       * │ đúng là ca hỏng im lặng đã tốn của user $0,03 và một buổi đi tìm.     │
+       * │ Chromium **locks** `user-data-dir`. A sign-in window holding the       │
+       * │ profile while a worker launches means Playwright runs into a locked    │
+       * │ profile ⇒ **the MCP dies at spawn** ⇒ the worker loses its tool and     │
+       * │ answers from its own persona. That's exactly the silent failure that    │
+       * │ once cost a user $0.03 and a whole afternoon of digging.               │
        * │                                                                      │
-       * │ ⚠ Chặn ở ĐÂY, không ở `pickMcp`: ở đó thì kế hoạch đã lập, tiền lập  │
-       * │ kế hoạch đã trả, và câu từ chối đến sau khi người dùng đã chờ. Chặn    │
-       * │ trước khi phóng là chặn **trước khi tiêu tiền**.                       │
+       * │ ⚠ Blocked HERE, not in `pickMcp`: by that point the plan is already     │
+       * │ made, planning has already been paid for, and the rejection arrives     │
+       * │ after the user has already waited. Blocking before launch means         │
+       * │ blocking **before money is spent**.                                    │
        * │                                                                      │
-       * │ Khoá tự lành: người dùng đóng cửa sổ ⇒ `exit` gỡ khoá. Nên câu này    │
-       * │ nói **việc phải làm**, không nói "thử lại sau".                        │
+       * │ The lock heals itself: the user closes the window ⇒ `exit` releases     │
+       * │ it. So this sentence states **what to do**, not "try again later".      │
        * └──────────────────────────────────────────────────────────────────────┘
        */
       if (loginOpen(this.id)) {
         throw new RunError(
-          'Cửa sổ đăng nhập của văn phòng này đang mở, nên nhân viên chưa dùng được trình duyệt. ' +
-            'Đóng cửa sổ đó rồi giao việc lại.',
+          t('off.browserLoginOpen'),
           'other',
         );
       }
@@ -1455,36 +1625,54 @@ export class Office {
       this.activeScheduler = scheduler;
 
       const result = await scheduler.run(plan);
-      // Dọn sau MỘT CA, không phải sau mỗi lời gọi: đọc-ghi cả file cho từng
-      // dòng biến một `appendFileSync` thành O(n²). → `audit.ts §trim`
+      // Trim after ONE run, not after every call: reading and rewriting the
+      // whole file for every line would turn one `appendFileSync` into
+      // O(n²). → `audit.ts §trim`
       this.audit.trim();
       const receipts = [...result.receipts.values()];
 
       /**
-       * Bản văn tài liệu, đọc ĐÚNG MỘT LẦN cho cả ca — dùng để chặn bài học chỉ
-       * là bản chép lại một tài liệu (`echoesLibrary`).
+       * Document text, read EXACTLY ONCE for the whole run — used to block a
+       * lesson that's just a copy of a document (`echoesLibrary`).
        *
-       * Chỉ đọc khi thật sự có bài học để kiểm. Phần lớn ca không có: chốt
-       * `worthLearning` đã cắt nhánh Trợ lý, còn nhân viên thì thường trả về
-       * `lessons: []`.
+       * Only read when there's actually a lesson to check. Most runs have
+       * none: the `worthLearning` gate already cuts the Assistant branch, and
+       * a worker usually returns `lessons: []`.
        */
       /**
        * ┌──────────────────────────────────────────────────────────────────────┐
-       * │ 🔴 CẢNH BÁO CẤP CA PHẢI TÍNH **TRƯỚC** HAI CỬA BÀI HỌC. (user 29/08) │
-       * │ > *"nếu 1 công việc còn warning có nghĩa là còn leak, không thể coi   │
-       * │ >  đó là kinh nghiệm được"*                                          │
+       * │ 🔴 A RUN-LEVEL WARNING HAS TO BE COMPUTED **BEFORE** BOTH LESSON       │
+       * │ GATES. (user 08/29)                                                   │
+       * │ > *"if one job still has a warning, that means there's still a leak,   │
+       * │ >  it can't be counted as a lesson"*                                   │
        * │                                                                      │
-       * │ `missingOutputs` vốn được tính ở tít dưới, SAU cả vòng ghi bài học    │
-       * │ của nhân viên VÀ sau lượt `report()` đã hỏi Trợ lý học được gì. Nên   │
-       * │ nó nói được với NGƯỜI DÙNG mà chưa bao giờ chặn được một node nào —   │
-       * │ đúng lớp lỗi *"luật đứng sau thứ nó quản"*.                          │
-       * │ → [[agentco-rule-must-see-what-it-governs]]                           │
+       * │ `missingOutputs` used to be computed way down below, AFTER both the    │
+       * │ worker lesson-recording loop AND the `report()` turn that already      │
+       * │ asked the Assistant what it learned. So it could tell the USER            │
+       * │ without ever having blocked a single node — exactly the failure         │
+       * │ class *"a rule standing behind what it governs"*.                       │
+       * │ → [[agentco-rule-must-see-what-it-governs]]                            │
        * │                                                                      │
-       * │ Dời lên đây: cùng một phép tính, cùng một kết quả, chỉ khác chỗ đứng. │
-       * │ Đọc đĩa an toàn ở điểm này — `scheduler.run()` đã xong ở dòng trên.   │
+       * │ Moved up here: same computation, same result, only the position         │
+       * │ changed. Safe to read from disk at this point — `scheduler.run()`       │
+       * │ already finished on the line above.                                    │
        * └──────────────────────────────────────────────────────────────────────┘
        */
-      const gone = this.missingOutputs(plan, receipts);
+      /**
+       * `wrote` — the outputs this run PROMISED that are really on disk.
+       *
+       * The second source `whereBlock` needs, and the only one that can see a
+       * file produced by `Bash`/`PowerShell` or by an arm's own write tool:
+       * `landingOf` recognises `Write`/`Edit`/`NotebookEdit` and nothing else,
+       * so a worker that builds its report with a shell one-liner lands
+       * `kind: 'command'` and the file becomes invisible to the interface.
+       * Measured 05/09 — `P-260905-0100-zquw` T-01.
+       *
+       * Still code-owned, so it is still allowed to be clickable: these paths
+       * come from `outputScoper`, not from anything the model wrote in prose,
+       * and they have just passed `safeJoin` + `existsSync` above.
+       */
+      const { gone, landed: wrote } = this.outputStatus(plan, receipts);
       const leaked = gone.length > 0 || (plan.redirected?.length ?? 0) > 0;
 
       const anyLesson = receipts.some((r) => r.lessons.length > 0 && learnable(r) && !leaked);
@@ -1496,90 +1684,111 @@ export class Office {
         usage = addUsage(usage, r.usage);
         /**
          * ┌────────────────────────────────────────────────────────────────┐
-         * │ 🔴 CỬA THỨ HAI CỦA CÙNG MỘT LUẬT. → `assistant.ts §learnable`  │
+         * │ 🔴 THE SECOND GATE OF THE SAME RULE. → `assistant.ts §learnable` │
          * │                                                                │
-         * │ `worthLearning` gác cửa Trợ lý. Nhân viên thì KHÔNG đi qua cửa  │
-         * │ đó — nó tự khai `lessons` trong biên nhận, và trước 29/08 thứ   │
-         * │ duy nhất chặn là `rejectLesson` (trùng · chép tài liệu · con    │
-         * │ số). Nên vá một cửa là để hở cửa kia, cùng lớp lỗi              │
-         * │ [[agentco-finish-completely]] đã dẫm ba lần.                    │
+         * │ `worthLearning` guards the Assistant's door. A worker does NOT   │
+         * │ pass through that gate — it self-reports `lessons` in its own    │
+         * │ receipt, and before 08/29 the only thing filtering it was         │
+         * │ `rejectLesson` (duplicates · copied documents · numbers). So       │
+         * │ patching one door left the other one open, the same failure       │
+         * │ class [[agentco-finish-completely]] had already hit three times.  │
          * │                                                                │
-         * │ Ca thật của cửa NÀY, đo 29/08 — bài học của chính vai trò       │
-         * │ `nguoi-soi-thu-muc`, sinh ra từ một ca không xong:              │
-         * │   *"Trước khi gọi browser_navigate … nếu bị từ chối quyền,      │
-         * │    dừng lại và báo blocked ngay thay vì thử lại"*               │
-         * │ Nó nằm trong 10 mẩu đã làm cánh tay trình duyệt ngừng chạy.     │
+         * │ The real case for THIS gate, measured 08/29 — a lesson from the   │
+         * │ `nguoi-soi-thu-muc` role itself, born from a job that didn't       │
+         * │ finish:                                                          │
+         * │   *"Before calling browser_navigate … if permission is denied,     │
+         * │    stop and report blocked immediately instead of retrying"*       │
+         * │ It's one of the 10 entries that had stopped the browser arm from    │
+         * │ running at all.                                                  │
          * │                                                                │
-         * │ ⚠ Cổng đặt ở ĐÂY chứ không ở `addLesson`: `addLesson` chỉ nhận  │
-         * │ được `text`, nó không nhìn thấy `status` của ca đã đẻ ra text    │
-         * │ đó — luật phải đứng ở chỗ nhìn thấy thứ nó quản.                │
-         * │ → [[agentco-rule-must-see-what-it-governs]]                     │
+         * │ ⚠ The gate sits HERE, not in `addLesson`: `addLesson` only          │
+         * │ receives `text`, it never sees the `status` of the run that         │
+         * │ produced that text — a rule has to stand where it can see what      │
+         * │ it governs.                                                       │
+         * │ → [[agentco-rule-must-see-what-it-governs]]                       │
          * └────────────────────────────────────────────────────────────────┘
          */
-        // ⚠ Bọc vòng lặp chứ KHÔNG `continue`: dưới đây còn chỗ cho việc khác
-        // của mỗi receipt, và một `continue` sẽ lặng lẽ nuốt luôn việc ấy.
+        // ⚠ Wraps the loop body rather than `continue`: below this there's
+        // still room for other work per receipt, and a `continue` would
+        // silently swallow that work too.
         if (learnable(r) && !leaked) {
           for (const lesson of r.lessons) {
-            // `r.reads` = tài liệu tủ mà CHÍNH nhân viên này đã mở trong ca. Bài
-            // học của nó sống chết theo đúng những file đó — thực thể yếu.
+            // `r.reads` = library documents THIS worker opened during this
+            // run. Its lesson lives or dies with those exact files — a weak
+            // entity.
             this.knowledge.addLesson(r.role, lesson.text, r.task_id, docTexts ?? [], r.reads);
           }
         }
       }
 
-      // 4. Báo cáo
+      // 4. Report
       let report: string;
       let status: PlanStatus;
+      /**
+       * Hoisted out of the branch below because the "saved to" block has to
+       * read it — see the gate at the bottom of this method. It is the ONE
+       * shape where naming the file underneath really is noise.
+       */
+      let soloReply = false;
       if (result.stoppedBy === 'usage_limit') {
         report =
-          `Hết lượt dùng Claude. Văn phòng tạm nghỉ, còn ${result.pending.length} việc chưa làm. ` +
-          `Gõ /resume khi có lượt lại.`;
+          t('off.rateLimited', { n: String(result.pending.length) });
         status = 'paused';
       } else if (result.stoppedBy === 'auth') {
-        report = 'Chưa đăng nhập Claude Code. Chạy `claude` một lần để đăng nhập rồi thử lại.';
+        report = t('off.notSignedIn');
         status = 'paused';
-        // `stoppedBy` chỉ được đặt khi scheduler chưa kịp phóng task nào nữa.
-        // Nhưng khi ta NGẮT task đang chạy, chúng trả receipt "blocked" một cách
-        // bình thường và scheduler chạy hết vòng — nên phải tự nhận ra ở đây.
-        // Không có dòng này thì nhật ký ghi "xong" cho một ca người dùng đã dừng.
+        // `stoppedBy` only gets set when the scheduler never got to launch
+        // any more tasks. But when WE interrupt a running task, it returns a
+        // "blocked" receipt normally and the scheduler runs its loop to
+        // completion — so this has to be detected here on its own. Without
+        // this line, the log would record "done" for a run the user stopped.
       } else if (result.stoppedBy === 'user' || this.stopRequested) {
-        // Bàn giao dựng bằng CODE, không phải một lượt gọi LLM. Trợ lý cần biết
-        // đã làm tới đâu để lần nhắn sau nó làm tiếp phần CÒN LẠI thay vì làm
-        // lại từ đầu. → docs/SPEC-tools-approval.md §3b
+        // The handoff is built by CODE, not an LLM call. The Assistant needs
+        // to know how far it got so the next message continues the
+        // REMAINING part instead of starting over. →
+        // docs/SPEC-tools-approval.md §3b
         //
-        // Sạch ngữ cảnh là MIỄN PHÍ ở đây: Trợ lý vốn chỉ thấy receipt (≤800
-        // token), không bao giờ thấy transcript worker. Nó thừa hưởng KẾT QUẢ,
-        // không thừa hưởng QUÁ TRÌNH.
+        // A clean context is FREE here: the Assistant only ever sees the
+        // receipt (≤800 tokens), never a worker's transcript. It inherits
+        // the RESULT, not the PROCESS.
         const finished = receipts.filter((r) => r.status === 'done');
         const left = result.pending.length + receipts.filter((r) => r.status === 'blocked').length;
         report =
-          `Đã dừng. Xong ${finished.length}/${plan.tasks.length} việc, còn ${left} việc chưa làm.` +
+          t('off.stopped', {
+            done: String(finished.length),
+            total: String(plan.tasks.length),
+            left: String(left),
+          }) +
           (finished.length
-            ? `\nĐã có: ${finished.flatMap((r) => r.artifacts).join(', ') || 'kết quả đã lưu'}.`
+            ? `\n${t('off.stoppedHave', {
+                list: finished.flatMap((r) => r.artifacts).join(', ') || t('off.resultsSaved'),
+              })}`
             : '') +
           /**
-           * ⚠ MỜI ĐÚNG CON ĐƯỜNG ĐÃ ĐƯỢC BẢO VỆ. → SPEC-offices.md §6b
+           * ⚠ INVITE TOWARD THE PATH THAT'S ACTUALLY GUARDED. → SPEC-offices.md §6b
            *
-           * Bản trước mời *"Nhắn tiếp để mình làm phần còn lại"* — tức là đẩy
-           * người dùng vào đường LẬP KẾ HOẠCH LẠI, nơi planner nhìn bảng kê và
-           * có thể nhặt một file dở dang làm đầu vào. `/resume` thì đi qua
-           * `delivered()`: task nào chưa giao được hàng thì CHẠY LẠI.
+           * The old version said *"message again and I'll do the rest"* —
+           * i.e. it pushed the user down the REPLAN path, where the planner
+           * looks at the manifest and might pick up an unfinished file as an
+           * input. `/resume` instead goes through `delivered()`: any task
+           * that never delivered its output gets RERUN.
            *
-           * Một câu chữ, và nó đổi hẳn xác suất người dùng rơi vào cửa nào —
-           * rẻ hơn mọi hàng rào kỹ thuật dựng ở phía sau.
+           * One sentence, and it completely changes the odds of which door
+           * the user walks through — cheaper than any technical fence built
+           * behind it.
            */
-          `\nGõ /resume để mình làm nốt — việc nào đã xong trọn thì giữ nguyên, ` +
-          `việc bị cắt giữa chừng sẽ làm lại cho đủ.`;
+          `\n${t('off.stoppedResumeHint')}`;
         status = 'stopped';
       } else {
         /**
-         * CÂU TRẢ LỜI ĐI THẲNG TỪ NHÂN VIÊN TỚI NGƯỜI DÙNG. → SPEC-offices.md §6
+         * THE ANSWER GOES STRAIGHT FROM A WORKER TO THE USER. → SPEC-offices.md §6
          *
-         * Không qua Trợ lý, không nằm trong `report()`, không bao giờ vào session
-         * Trợ lý. Đây là nửa "answer" của hai kênh — nửa "say" vẫn chạy đường cũ.
+         * Doesn't pass through the Assistant, isn't part of `report()`, never
+         * enters the Assistant's session. This is the "answer" half of the
+         * two channels — the "say" half still runs the old path.
          *
-         * Phát TRƯỚC báo cáo: người dùng hỏi một câu, thứ họ chờ là CÂU TRẢ LỜI,
-         * không phải một dòng tổng kết về việc đã trả lời.
+         * Emitted BEFORE the report: the user asked a question, what they're
+         * waiting for is the ANSWER, not a summary line about having answered.
          */
         const answered = receipts.filter((r) => r.answer.trim() && r.status === 'done');
         for (const r of answered) {
@@ -1587,28 +1796,31 @@ export class Office {
         }
 
         /**
-         * MỘT task `reply` duy nhất thì BỎ LUÔN `report()` — câu trả lời của nhân
-         * viên CHÍNH LÀ báo cáo.
+         * A SINGLE `reply` task SKIPS `report()` ENTIRELY — the worker's own
+         * answer IS the report.
          *
          * ┌────────────────────────────────────────────────────────────────────┐
-         * │ Đây là chỗ hết "cấn", và nó tiết kiệm thật chứ không chỉ gọn mắt.  │
+         * │ This is where the awkwardness ends, and it's a real savings, not     │
+         * │ just tidier to look at.                                             │
          * │                                                                    │
-         * │ Chạy `report()` ở đây nghĩa là ô chat hiện HAI tin nói cùng một     │
-         * │ chuyện: câu trả lời cho khách, rồi một dòng Trợ lý nói lại rằng đã  │
-         * │ trả lời. Bỏ nó đi cắt luôn MỘT LƯỢT TRỢ LÝ cho mỗi câu hỏi — mà     │
-         * │ văn phòng hỗ trợ là nơi hình dạng chi phí này lặp nhiều nhất.       │
+         * │ Running `report()` here would mean the chat pane shows TWO             │
+         * │ messages about the same thing: the answer for the customer, then       │
+         * │ an Assistant line saying it has answered. Dropping it cuts ONE          │
+         * │ ASSISTANT TURN for every question — and a customer-support office        │
+         * │ is exactly where this cost shape repeats the most.                     │
          * │                                                                    │
-         * │ Cái giá, nói thẳng: session Trợ lý KHÔNG chứa câu trả lời đó. Lần  │
-         * │ sửa sau nó biết YÊU CẦU (chính nó định tuyến) nhưng không biết ĐÃ   │
-         * │ TRẢ LỜI GÌ — nó phải giao lại cho nhân viên đọc file. Đúng một lượt │
-         * │ nhân viên, đổi lấy việc ngữ cảnh Trợ lý KHÔNG phình theo số câu     │
-         * │ khách hỏi. Với văn phòng hỗ trợ, đó là đánh đổi đúng chiều.         │
+         * │ The cost, stated plainly: the Assistant's session does NOT contain     │
+         * │ that answer. On the next edit, it knows the REQUEST (it routed it       │
+         * │ itself) but not WHAT WAS ANSWERED — it has to hand it back to a          │
+         * │ worker to read the file. One worker turn, in exchange for the            │
+         * │ Assistant's context NOT growing with every question a customer          │
+         * │ asks. For a support office, that's the right trade.                    │
          * └────────────────────────────────────────────────────────────────────┘
          */
-        const soloReply = plan.tasks.length === 1 && answered.length === 1;
+        soloReply = plan.tasks.length === 1 && answered.length === 1;
         if (soloReply) {
-          // `report` rỗng: `finish()` sẽ không phát thêm tin nào. Câu trả lời vừa
-          // phát ở trên đã là thứ người dùng cần đọc.
+          // Empty `report`: `finish()` won't emit any more messages. The
+          // answer just emitted above is already what the user needs to read.
           report = '';
           status = 'done';
         } else {
@@ -1618,47 +1830,57 @@ export class Office {
         usage = addUsage(usage, summary.usage);
         this.logAssistantUsage('report', summary.usage);
         report = summary.value.say;
-        status = receipts.some((r) => r.status === 'failed') ? 'failed' : 'done';
+        // A task that came back `blocked` must never be written into the work
+        // log as a finished run. → `planStatusOf`, and the box on it
+        status = planStatusOf(receipts);
 
         /**
-         * File đã hứa mà không có trên đĩa → NÓI RA, và hạ trạng thái xuống
-         * `failed`. Nhật ký ghi "xong" cho một ca không ra được kết quả là đúng
-         * loại nói dối mà `stoppedReceipt` đã sửa cho nhánh bị ngắt; nhánh chạy
-         * hết bình thường thì chưa ai kiểm.
+         * A promised file that isn't on disk → SAY SO, and downgrade the
+         * status to `failed`. A log recording "done" for a run that produced
+         * no result is exactly the kind of lie `stoppedReceipt` already fixed
+         * for the interrupted branch; nobody had checked the normal
+         * completion branch yet.
          */
-        // `gone` đã tính ở trên — nó phải chạy TRƯỚC hai cửa bài học, xem chỗ
-        // dựng `leaked`. Ở đây chỉ còn việc nói ra cho người dùng.
+        // `gone` was already computed above — it has to run BEFORE both
+        // lesson gates, see where `leaked` is built. All that's left here is
+        // telling the user.
         if (gone.length) {
           status = 'failed';
           /**
-           * HAI CA KHÁC HẲN NHAU, VÀ BẢN TRƯỚC GỘP LÀM MỘT.
+           * TWO COMPLETELY DIFFERENT CASES, AND THE OLD VERSION MERGED THEM
+           * INTO ONE.
            *
-           *  · không có gì trên đĩa      → làm lại là đúng
-           *  · CÓ, nhưng nằm sai chỗ     → làm lại là bắt trả tiền lần hai cho
-           *                                thứ đã có, và bỏ lại một file lạc
+           *  · nothing on disk at all   → redoing it is correct
+           *  · it EXISTS, but in the wrong place → redoing it charges the user
+           *                                        twice for something already
+           *                                        done, and leaves a stray file
+           *                                        behind
            *
-           * Ca hai đã xảy ra thật (`P-260821-1818-yydi`) và bản trước nói câu
-           * của ca một. Ta QUAN SÁT ĐƯỢC sự khác biệt qua `landed.outside` —
-           * không nói ra là tự nguyện mù.
+           * The second case actually happened (`P-260821-1818-yydi`) and the
+           * old version said the sentence for the first. We can OBSERVE the
+           * difference through `landed.outside` — not saying so is willful
+           * blindness.
            */
           const strays = strayFilesOf(receipts);
           report += strays.length
-            ? `\n\n⚠ Kết quả đã được ghi nhưng nằm ngoài văn phòng nên panel Kết quả không thấy: ` +
-              `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}. ` +
-              `File có thật và dùng được — bạn xem thử rồi bảo mình chép về đúng chỗ, ` +
-              `không cần chạy lại từ đầu.`
-            : `\n\n⚠ Có ${gone.length} file lẽ ra phải được ghi mà không thấy trên đĩa: ` +
-              `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}. ` +
-              `Nhân viên báo xong nhưng kết quả chưa có — nhắn mình làm lại việc này nhé.`;
+            ? `\n\n⚠ ${t('off.wroteOutside', {
+                list: `${strays.slice(0, 2).join(', ')}${strays.length > 2 ? '…' : ''}`,
+              })}`
+            : `\n\n⚠ ${t('off.filesMissing', {
+                n: String(gone.length),
+                list: `${gone.slice(0, 3).join(', ')}${gone.length > 3 ? '…' : ''}`,
+              })}`;
         }
-        // Trợ lý là bên DUY NHẤT được ghi vào kho chung (SPEC-offices.md §4.3):
-        // kho chung nằm trong prefix của cả văn phòng, cho ai cũng ghi được thì
-        // nó phình theo cấp số nhân và không ai chịu trách nhiệm.
+        // The Assistant is the ONLY one allowed to write into the shared
+        // knowledge store (SPEC-offices.md §4.3): the shared store sits in
+        // the prefix of the whole office, and letting anyone write to it
+        // would make it grow exponentially with nobody accountable for it.
         if (summary.value.lessons.length > 0) docTexts ??= this.library.texts();
         for (const lesson of summary.value.lessons) {
-          // Bài học CHUNG phụ thuộc vào MỌI tài liệu ca này đã chạm: Trợ lý
-          // không đọc file nào, nên thứ duy nhất nó có thể đang nói tới là tài
-          // liệu nhân viên vừa đọc. Xoá bất kỳ file nào trong đó là bài học đi theo.
+          // A SHARED lesson depends on EVERY document this run touched: the
+          // Assistant reads no files itself, so the only thing it could
+          // possibly be referring to is a document a worker just read.
+          // Deleting any one of those files means the lesson goes with it.
           this.knowledge.addSharedLesson(lesson.text, plan.plan_id, docTexts ?? [], readsOf(receipts));
         }
         }
@@ -1673,204 +1895,284 @@ export class Office {
         });
       }
       /**
-       * Đồng bộ ngoài nhánh trên, và đó là chỗ bản nháp đầu suýt sai.
+       * Synced OUTSIDE the branch above, and that's exactly where the first
+       * draft nearly got it wrong.
        *
-       * Nhánh trên chỉ chạy khi có bài học hoặc ca `done`. Nhưng bảng kê kết quả
-       * phải cập nhật kể cả khi ca `failed`/`stopped` — nhân viên có thể đã ghi
-       * xong vài file trước lúc hỏng, và đó chính là những file người dùng sẽ
-       * nhắc tới ở câu tiếp theo ("làm nốt phần còn lại"). Gắn nó vào cổng của
-       * kho tri thức là để nó lỡ đúng cái ca cần nó nhất.
+       * The branch above only runs when there's a lesson or the run is
+       * `done`. But the output manifest has to update even when the run is
+       * `failed`/`stopped` — a worker may have already written a few files
+       * before things broke, and those are exactly the files the user will
+       * refer to in the next message ("finish the rest of it"). Tying it to
+       * the knowledge store's gate would make it miss the exact run that
+       * needs it most.
        */
       this.refreshAssistantContext();
 
-      // Nhớ kết quả để bàn giao cho việc đang xếp hàng — xem inish().
+      // Remember the output to hand off to whatever's queued next -- see `finish()`.
       this.lastArtifacts = receipts.flatMap((r) => r.artifacts);
       this.savePending(record.plan_id, result.pending);
       this.saveSessionId();
       /**
-       * Khối "kết quả đã lưu tại" bị CHẶN ở hai nhánh, vì hai lý do khác nhau:
+       * The "saved to" block is BLOCKED on two branches, for two different reasons:
        *
-       *  · `stopped` — câu của nó đã tự liệt kê artifact rồi (§11f).
-       *  · task `reply` — người dùng vừa ĐỌC XONG câu trả lời. Dán thêm một
-       *    đường dẫn xuống dưới là nói lại cùng một chuyện bằng ngôn ngữ của
-       *    máy, và nó lôi cả `P-260819-1430-…` ra trước mặt một người mở tiệm
-       *    hoa. File vẫn nằm nguyên trong ngăn Kết quả cho ai cần.
+       *  · `stopped` — its own sentence already lists the artifacts (§11f).
+       *  · a SOLO `reply` run — the user just FINISHED READING the answer.
+       *    Pasting a path underneath it repeats the same thing in machine
+       *    language, and drags `P-260819-1430-…` in front of someone running
+       *    a flower shop. The file still sits in the Output pane for anyone
+       *    who needs it.
+       *
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 THE SECOND GATE USED TO READ `receipts.filter(r => !r.answer)` —   │
+       * │ i.e. it dropped the whole RECEIPT of any task that answered, not      │
+       * │ just the sentence. (user caught it 05/09)                             │
+       * │                                                                      │
+       * │ In a MIXED run that throws away evidence: `P-260905-0100-zquw` had    │
+       * │ T-01 (`deliver: file`, wrote via PowerShell ⇒ no `file` landing at    │
+       * │ all) and T-02 (`deliver: reply`, landed a real `file`). The filter    │
+       * │ discarded T-02's receipt for having an `answer`, T-01 had nothing to  │
+       * │ give, and the run reported ZERO files while TWO sat on disk — so the  │
+       * │ chat had no clickable path at all, and the only paths on screen were  │
+       * │ ones the model had typed itself, which are deliberately inert.        │
+       * │                                                                      │
+       * │ The intent behind the gate (SPEC-offices §6) was about the run where  │
+       * │ the answer IS the whole report. That is exactly `soloReply`, which    │
+       * │ is now what it asks. A mixed run still prints a report, and naming    │
+       * │ every file it really produced is the point of that report.            │
+       * │ → [[agentco-fallback-throws-away-answers]]                            │
+       * └──────────────────────────────────────────────────────────────────────┘
        */
-      const shown = status === 'stopped' ? [] : receipts.filter((r) => !r.answer.trim());
-      this.finish(record, status, report, usage, receipts.length, shown, plan.redirected ?? []);
+      const quiet = status === 'stopped' || soloReply;
+      this.finish(
+        record,
+        status,
+        report,
+        usage,
+        receipts.length,
+        quiet ? [] : receipts,
+        plan.redirected ?? [],
+        quiet ? [] : wrote,
+      );
       return { plan_id: record.plan_id, report, usage };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       /**
-       * NGƯỜI DÙNG BẤM DỪNG KHÔNG PHẢI MỘT CA HỎNG. → types.ts `stopped`
+       * THE USER HITTING STOP IS NOT A FAILED RUN. → types.ts `stopped`
        *
-       * Ca thật: `/stop` giữa lúc Trợ lý đang lập kế hoạch. Lượt đó bị ngắt và
-       * ném ra, rồi rơi vào đây — bản trước đóng bản ghi ở `failed` với nguyên
-       * văn câu lỗi làm báo cáo. Nhật ký công việc ghi "hệ thống làm sai" cho
-       * đúng một việc người dùng tự bảo đừng làm nữa.
+       * Real case: `/stop` while the Assistant is mid-planning. That turn
+       * gets interrupted and throws, landing here — the old version closed
+       * the record as `failed` using the raw error message as the report.
+       * The work log recorded "the system got it wrong" for the exact thing
+       * the user themself asked to stop.
        *
-       * Và nó KHÔNG phát thêm tin nào: `/stop` đã trả lời rồi (§11e). `finish`
-       * bỏ qua `report` rỗng, nên chỉ còn `plan.finished` đóng sổ cho UI.
+       * And it emits NO extra message: `/stop` has already replied (§11e).
+       * `finish` skips an empty `report`, so all that's left is
+       * `plan.finished` closing the books for the UI.
        */
       if (err instanceof RunError && err.kind === 'stopped') {
         this.finish(record, 'stopped', '', usage, 0);
         return { plan_id: record.plan_id, report: '', usage };
       }
-      // Thông báo cho người dùng và thông báo cho log là HAI thứ khác nhau.
-      // Người dùng cần biết LÀM GÌ TIẾP; log cần biết chuyện gì xảy ra.
+      // What the user is told and what the log records are TWO different
+      // things. The user needs to know WHAT TO DO NEXT; the log needs to
+      // know what actually happened.
       this.finish(record, 'failed', msg, usage, 0);
       return { plan_id: record.plan_id, report: msg, usage };
     }
   }
 
   /**
-   * Khối "kết quả nằm ở đâu", DỰNG BẰNG CODE từ điểm đến QUAN SÁT ĐƯỢC. 0 token.
+   * The "where the output is" block, BUILT BY CODE from OBSERVED
+   * destinations. 0 tokens.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO KHÔNG DẶN MODEL, VÀ VÌ SAO KHÔNG DÙNG `artifacts`                │
+   * │ WHY NOT INSTRUCT THE MODEL, AND WHY NOT USE `artifacts`                  │
    * │                                                                          │
-   * │ Bản đầu: model NGẪU NHIÊN nhắc đường dẫn trong câu tổng kết. Không ai    │
-   * │ bảo đảm → mất. Dặn prompt "hãy nêu đường dẫn" là mua lại đúng sự bất     │
-   * │ định vừa bỏ đi, bằng token vĩnh viễn, và vẫn hỏng khi đổi model.         │
+   * │ First version: the model RANDOMLY mentioned a path in its summary          │
+   * │ sentence. No guarantee → lost. Instructing the prompt "state the path"     │
+   * │ buys back the exact uncertainty just removed, at a permanent token          │
+   * │ cost, and still breaks on a model switch.                                 │
    * │                                                                          │
-   * │ Bản hai dùng `receipt.artifacts` — khá hơn, nhưng vẫn là lời model KỂ,   │
-   * │ và nó CHỈ MÔ TẢ ĐƯỢC FILE. Kết quả có thể nằm ở Notion, Google Sheets,   │
-   * │ một database. Với những ca đó `artifacts` rỗng và khối này im lặng — tức │
-   * │ là ta lại quay về phụ thuộc câu chữ của model.                           │
+   * │ Second version used `receipt.artifacts` — better, but still the model's    │
+   * │ own account, and it can ONLY DESCRIBE FILES. Output can live in Notion,    │
+   * │ Google Sheets, a database. For those cases `artifacts` is empty and this    │
+   * │ block goes silent — i.e. we're back to depending on the model's own          │
+   * │ wording.                                                                  │
    * │                                                                          │
-   * │ Bản này đọc `receipt.landed`: suy từ TOOL ĐÃ GỌI trong luồng, là sự việc │
-   * │ quan sát được chứ không phải lời kể. → worker.ts `landingOf`             │
+   * │ This version reads `receipt.landed`: inferred from TOOLS ACTUALLY           │
+   * │ CALLED in the stream, an observed fact rather than a claim. →               │
+   * │ worker.ts `landingOf`                                                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Ba loại điểm đến, ba cách nói — và cách nói phản ánh ĐÚNG mức chắc chắn:
+   * Three kinds of destination, three ways of stating it — and the wording
+   * matches the ACTUAL level of certainty:
    *
-   *  file     kiểm `existsSync` rồi mới liệt kê → nói chắc "đã lưu tại".
-   *  external biết chắc đã gọi server nào, không kiểm được nó lưu ra sao →
-   *           nói "đã ghi ra", nêu tên server.
-   *  command  KHÔNG biết dữ liệu đi đâu → nói thẳng là không biết.
+   *  file     checks `existsSync` before listing it → states "saved to" with confidence.
+   *  external knows for certain which server was called, can't check how it
+   *           saved it → says "sent to", names the server.
+   *  command  does NOT know where the data went → states outright that it doesn't know.
    *
-   * Ca cuối là phần bất định còn lại, và nó được KHOANH VÙNG + DÁN NHÃN chứ
-   * không bị giấu. Chi tiết còn lại nằm ở câu `say` của chính nhân viên — đó
-   * đúng là việc của `say`, và ta không phải dặn thêm gì để có nó.
+   * The last case is the remaining uncertainty, and it's BOXED IN AND
+   * LABELED rather than hidden. The rest of the detail lives in the worker's
+   * own `say` sentence — that's exactly `say`'s job, and nothing extra needs
+   * to be instructed to get it.
    */
   /**
-   * KIỂM LẮP RÁP — bằng code, 0 token, 0 lượt gọi.
+   * ASSEMBLY CHECK — by code, 0 tokens, 0 calls.
    *
-   * Câu hỏi "kết quả có khớp với việc đã giao không" có hai nửa, và chỉ MỘT nửa
-   * cần model:
+   * The question "does the output match what was assigned" has two halves,
+   * and only ONE half needs the model:
    *
-   *  · *"Câu trả lời cho khách có hay không"* → phải đọc nội dung. Việc đó thuộc
-   *    về một nhân viên soát, quyết ở lúc lập kế hoạch. KHÔNG thuộc về Trợ lý:
-   *    Trợ lý chạy trên session được persist, nên mọi thứ nó đọc sẽ nằm trong
-   *    ngữ cảnh của MỌI lượt trò chuyện sau đó — đọc một lần, trả tiền mãi mãi.
-   *  · *"Việc khai sẽ ghi ra file X mà file X có tồn tại không"* → đây là SỰ
-   *    VIỆC. Hỏi model là trả tiền để đổi lấy bất định. Đó là nửa nằm ở đây.
+   *  · *"Is the answer for the customer any good"* → requires reading the
+   *    content. That belongs to a reviewing worker, decided at planning time.
+   *    It does NOT belong to the Assistant: the Assistant runs on a persisted
+   *    session, so anything it reads sits in the context of EVERY chat turn
+   *    afterward — read once, pay forever.
+   *  · *"The task claims it wrote file X — does file X exist"* → this is a
+   *    FACT. Asking the model is paying money for uncertainty in return.
+   *    That's the half handled here.
    *
-   * Nhân viên báo `done` mà file đã hứa không có trên đĩa là ca nói dối tệ nhất:
-   * người dùng đọc "xong rồi", đi mở file, và không có gì. `whereBlock` liệt kê
-   * thứ CÓ THẬT nên nó im lặng đúng lúc cần nói to nhất.
+   * A worker reporting `done` while a promised file isn't on disk is the
+   * worst kind of lie: the user reads "it's done", goes to open the file, and
+   * there's nothing there. `whereBlock` only lists what's REAL, so it stays
+   * silent at the exact moment it most needs to speak up.
    */
-  private missingOutputs(plan: Plan, receipts: readonly Receipt[]): string[] {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ONE LOOP, BOTH ANSWERS — `gone` AND `landed`. (05/09)                    │
+   * │                                                                          │
+   * │ This used to be `missingOutputs`, returning only the absent half. The     │
+   * │ present half was needed too (see `whereBlock`), and writing a second      │
+   * │ near-identical loop for it is the "two copies of the same computation"    │
+   * │ trap: the day the `status !== 'done'` gate or the `safeJoin` guard moves, │
+   * │ one copy moves and the other quietly does not. Same walk, two lists.      │
+   * │ → [[agentco-detect-fix-pair-scope]]                                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private outputStatus(
+    plan: Plan,
+    receipts: readonly Receipt[],
+  ): { gone: string[]; landed: string[] } {
     const byTask = new Map(receipts.map((r) => [r.task_id, r]));
     const gone: string[] = [];
+    const landed: string[] = [];
     for (const task of plan.tasks) {
-      // Chỉ soi việc TỰ NHẬN là xong. Việc bị chặn hoặc bị dừng giữa chừng
-      // không có file là chuyện bình thường, và nó đã tự nói ra rồi.
+      // Only checks work that SELF-REPORTED as done. A task that was blocked
+      // or interrupted mid-run having no file is normal, and it already said
+      // so itself.
       if (byTask.get(task.task_id)?.status !== 'done') continue;
       for (const out of task.outputs) {
         try {
-          if (!fs.existsSync(safeJoin(this.loaded.dir, out.path))) gone.push(out.path);
+          if (fs.existsSync(safeJoin(this.loaded.dir, out.path))) landed.push(out.path);
+          else gone.push(out.path);
         } catch {
           gone.push(out.path);
         }
       }
     }
-    return gone;
+    return { gone, landed };
   }
 
-  private whereBlock(receipts: readonly Receipt[]): { text: string; files: string[] } {
-    const files = new Set<string>();
+  /**
+   * @param wrote promised outputs verified on disk by `outputStatus` — the
+   *   second source, and the only one that sees a file written through the
+   *   shell or through an arm. Both sources go through the SAME existence
+   *   gate below, so neither can smuggle in a path the other would reject.
+   */
+  private whereBlock(
+    receipts: readonly Receipt[],
+    wrote: readonly string[] = [],
+  ): { text: string; files: string[] } {
     const servers = new Set<string>();
     let ranCommand = false;
+    const landed = receipts.flatMap((r) => r.landed ?? []);
 
-    for (const r of receipts) {
-      for (const spot of r.landed ?? []) {
-        if (spot.kind === 'external') servers.add(spot.ref);
-        else if (spot.kind === 'command') ranCommand = true;
-        else if (spot.kind === 'file') {
-          try {
-            if (fs.existsSync(safeJoin(this.loaded.dir, spot.ref))) files.add(spot.ref);
-          } catch {
-            /* ra ngoài thư mục văn phòng — không khai là kết quả của người dùng */
-          }
-        }
-      }
+    for (const spot of landed) {
+      if (spot.kind === 'external') servers.add(spot.ref);
+      else if (spot.kind === 'command') ranCommand = true;
     }
+
+    /**
+     * ⚠ `filesOnDisk`, NOT a local `existsSync` loop.
+     *
+     * *"Merge what was PROMISED with what we SAW written, keep only what is
+     * really there"* is the same question the scheduler already asks on four
+     * other exit paths, and that function is exported precisely so a fifth
+     * copy never gets written — its own comment box says so. Writing the loop
+     * again here is the 08/19 rule broken in the very file that cites it.
+     * → `worker.ts §filesOnDisk`
+     */
+    const files = new Set(filesOnDisk(this.loaded.dir, wrote, landed));
 
     const lines: string[] = [];
     let shown: string[] = [];
     if (files.size) {
-      // Đường dẫn tính từ THƯ MỤC LÀM VIỆC, không từ thư mục văn phòng: người
-      // dùng đang đứng ở đó khi mở file explorer. `artifacts/T-01/x.md` đứng một
-      // mình thì đúng về kỹ thuật mà vô dụng với người lần đầu đi tìm.
+      // Path relative to the WORKING DIRECTORY, not the office directory:
+      // that's where the user is standing when they open a file explorer.
+      // `artifacts/T-01/x.md` alone is technically correct but useless to
+      // someone hunting for it the first time.
       const base = `${path.basename(this.loaded.companyDir)}/offices/${this.id}`;
       shown = [...files].sort().slice(0, MAX_LISTED_FILES);
-      lines.push('Kết quả đã lưu tại:');
+      lines.push(t('off.resultsSavedAt'));
       lines.push(...shown.map((p) => `  ${base}/${p}`));
-      if (files.size > shown.length) lines.push(`  …và ${files.size - shown.length} file nữa`);
+      if (files.size > shown.length) {
+        lines.push(`  ${plural('off.andMoreFiles', files.size - shown.length)}`);
+      }
       /**
-       * Một câu giải thích cái tiền tố `P-…/T-01/`, CHỈ khi người dùng đã tự đặt
-       * thư mục.
+       * A sentence explaining the `P-…/T-01/` prefix, ONLY when the user
+       * declared the directory themselves.
        *
-       * `artifacts/<plan>/<task>/` là bốn đoạn. Sâu hơn thế nghĩa là `outputScoper`
-       * vừa giữ lại một phần đuôi mà người dùng viết ra — tức là họ CÓ ý về chỗ
-       * để file, và giờ đang nhìn đường dẫn của mình bị bọc thêm hai lớp lạ. Đó
-       * đúng là lúc phải nói vì sao, và cũng là lúc DUY NHẤT đáng nói: dán câu
-       * này vào mọi ca là biến một lời giải thích thành tiếng ồn.
+       * `artifacts/<plan>/<task>/` is four segments. Deeper than that means
+       * `outputScoper` just kept part of a suffix the user wrote — i.e. they
+       * DID have an intended location, and are now looking at their own path
+       * wrapped in two extra unfamiliar layers. That's exactly when it needs
+       * explaining, and also the ONLY time it's worth explaining: pasting
+       * this sentence onto every case turns an explanation into noise.
        *
-       * 0 token — dựng bằng code từ chính đường dẫn đang cầm.
+       * 0 tokens — built by code from the path already in hand.
        */
       if (shown.some((p) => p.split('/').length > 4)) {
-        lines.push('(mỗi ca có thư mục riêng để lần chạy sau không đè lên lần này)');
+        lines.push(t('off.perShiftFolder'));
       }
     }
     if (servers.size) {
       /**
        * ┌──────────────────────────────────────────────────────────────────────┐
-       * │ HAI CHỖ SAI TRONG MỘT DÒNG, cùng sửa 24/08.                          │
+       * │ TWO THINGS WRONG IN ONE LINE, both fixed 08/24.                       │
        * │                                                                      │
-       * │ ① Nó in cái BĂM (`a385afc3ab6`). Người dùng đặt tên cánh tay ở hộp   │
-       * │   thoại và không bao giờ gặp lại cái tên đó. Nhãn nằm sẵn ở          │
-       * │   `company.arms[id].label` — ta đang cầm mà không nói ra.            │
+       * │ ① It printed the HASH (`a385afc3ab6`). The user named the arm in the  │
+       * │   dialog and would never see that name again. The label already sits  │
+       * │   at `company.arms[id].label` — we were holding it and not saying so. │
        * │                                                                      │
-       * │ ② Câu cũ *"Đã ghi ra ngoài qua: …"* KHAI NHIỀU HƠN THỨ TA KIỂM.      │
-       * │   `landingOf` ghi nhận một lời GỌI TOOL, không ghi nhận kết quả —    │
-       * │   và 10/14 tool của cánh tay filesystem là CHỈ ĐỌC. Ca có thật, đo   │
-       * │   được: `P-260824-0355-r3qe` bị deny cả ba lần, không một byte nào   │
-       * │   được ghi, và báo cáo vẫn nói *"Đã ghi ra ngoài qua: a385afc3ab6"*. │
+       * │ ② The old sentence *"Written out via: …"* CLAIMED MORE THAN WHAT WE    │
+       * │   ACTUALLY CHECK. `landingOf` records a tool CALL, not its result —   │
+       * │   and 10/14 tools on the filesystem arm are READ-ONLY. A real case,    │
+       * │   measured: `P-260824-0355-r3qe` was denied all three times, not a     │
+       * │   single byte was written, and the report still said *"Written out    │
+       * │   via: a385afc3ab6"*.                                                 │
        * │                                                                      │
-       * │ Câu mới nói ĐÚNG thứ quan sát được — *đã dùng cánh tay này* — rồi    │
-       * │ khoanh vùng phần bất định thành một câu riêng. Cùng luật với          │
-       * │ `kind: 'command'` của `Bash`: khai điều mình biết, dán nhãn phần     │
-       * │ mình không biết, không gộp hai thứ vào một câu khẳng định.           │
+       * │ The new sentence states EXACTLY what's observed — *this arm was       │
+       * │ used* — then boxes the remaining uncertainty into a separate           │
+       * │ sentence. Same rule as `Bash`'s `kind: 'command'`: state what you       │
+       * │ know, label what you don't, never merge the two into one assertion.    │
        * └──────────────────────────────────────────────────────────────────────┘
        */
       const named = [...servers].map((id) => this.loaded.company.arms[id]?.label || id).sort();
-      lines.push(`Có dùng kết nối: ${named.join(', ')}`);
-      lines.push('(kết quả của kết nối có thể nằm ngoài thư mục văn phòng)');
+      lines.push(t('off.usedArms', { list: named.join(', ') }));
+      lines.push(t('off.armResultsMayBeOutside'));
     }
     if (ranCommand) {
-      lines.push('Có chạy lệnh trên máy — kết quả có thể nằm ngoài thư mục văn phòng.');
+      lines.push(t('off.ranShellCommands'));
     }
 
     return {
       text: lines.length ? `\n\n${lines.join('\n')}` : '',
       /**
-       * Trả `shown` — ĐÚNG những đường dẫn đã in ra chữ, không phải cả `files`.
+       * Returns `shown` — EXACTLY the paths printed as text, not all of `files`.
        *
-       * Lệch một cái là giao diện có một mục bấm được không ứng với dòng nào,
-       * hoặc một dòng chữ không bấm được trong khi hàng xóm của nó thì được.
-       * Cả hai đều là giao diện tự mâu thuẫn với chính nó. Một nguồn, hai dạng.
+       * A mismatch means the UI has a clickable entry with no matching line,
+       * or a text line that isn't clickable while its neighbor is. Both are
+       * a UI contradicting itself. One source, two shapes.
        */
       files: shown,
     };
@@ -1883,78 +2185,84 @@ export class Office {
     usage: Usage,
     tasks: number,
     receipts: readonly Receipt[] = [],
-    /** Đường dẫn ngoài văn phòng mà `outputScoper` đã kéo về khung. → `Plan.redirected` */
+    /** Paths outside the office that `outputScoper` pulled back into the frame. → `Plan.redirected` */
     redirected: readonly string[] = [],
+    /** Promised outputs verified on disk. → `outputStatus`, and `whereBlock`'s second source */
+    wrote: readonly string[] = [],
   ): void {
     /**
-     * ⚠ BÁO CÁO KHÔNG ĐƯỢC MÂU THUẪN VỚI DẢI BƯỚC NGAY BÊN CẠNH NÓ. → §B
+     * ⚠ THE REPORT MUST NOT CONTRADICT THE STEP STRIP RIGHT NEXT TO IT. → §B
      *
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ User bắt được 21/08, và cái họ chỉ ra là một MÂU THUẪN, không phải  │
-     * │ một thông tin thiếu:                                               │
-     * │                                                                    │
-     * │   1. ○ Tách hợp đồng thành từng điều khoản                          │
-     * │   2. ✓ …            ← rồi Trợ lý nói "Xong hợp đồng 4 rồi!"        │
-     * │                                                                    │
-     * │ Thông tin ĐÃ có mặt trên màn hình — dải bước nói đúng. Nhưng hai    │
-     * │ bề mặt nói ngược nhau thì tệ hơn cả việc thiếu một trong hai: người │
-     * │ dùng không biết tin cái nào, và cái sai thì lại là cái viết bằng    │
-     * │ tiếng người nên dễ tin hơn.                                        │
-     * │                                                                    │
-     * │ Cùng họ với "chưa tốn tiền" (20/08) và "xuất sang PDF giúp mình"    │
-     * │ (20/08): model khẳng định một điều mà dữ liệu TRONG TAY TA bác bỏ   │
-     * │ được. Ba lần trong hai ngày ⇒ không phải xui, là một lớp lỗi.       │
+     * │ The user caught this on 08/21, and what they pointed out was a         │
+     * │ CONTRADICTION, not missing information:                                │
+     * │                                                                        │
+     * │   1. ○ Split the contract into individual clauses                       │
+     * │   2. ✓ …            ← then the Assistant says "Contract 4 is done!"     │
+     * │                                                                        │
+     * │ The information WAS already on screen — the step strip was correct.     │
+     * │ But two surfaces saying opposite things is worse than either one         │
+     * │ being missing: the user doesn't know which to trust, and the wrong        │
+     * │ one is the one written in human words, so it's easier to believe.        │
+     * │                                                                        │
+     * │ Same family as "nothing spent yet" (08/20) and "export to PDF for you"    │
+     * │ (08/20): the model asserts something the data IN OUR OWN HANDS can        │
+     * │ refute. Three times in two days ⇒ not bad luck, a failure class.          │
      * └────────────────────────────────────────────────────────────────────┘
      *
-     * Dựng bằng CODE từ `record.steps`: 0 token, không phụ thuộc model, và
-     * không có cách nào để nó "quên" như một câu dặn trong prompt.
+     * Built by CODE from `record.steps`: 0 tokens, doesn't depend on the
+     * model, and there's no way for it to "forget" the way a prompt
+     * instruction can.
      *
-     * Chỉ nối khi ca tự nhận là XONG. Ca `stopped`/`failed` đã tự nói ra rồi —
-     * thêm một dòng nữa là lải nhải đúng lúc người dùng đang bực.
+     * Only appended when the run self-reports as DONE. A `stopped`/`failed`
+     * run has already said so itself — one more line here would be nagging at
+     * the exact moment the user is already frustrated.
      */
     const undone = record.steps.filter((s) => s.status !== 'done');
     if (status === 'done' && undone.length > 0 && report.trim()) {
       report +=
-        `\n\n⚠ Còn ${undone.length}/${record.steps.length} bước chưa xong: ` +
+        `\n\n⚠ ${t('off.stepsUnfinishedHead', {
+          n: String(undone.length),
+          total: String(record.steps.length),
+        })}: ` +
         undone.map((s) => `"${s.title}"`).join(', ') +
-        `. Kết quả ở trên chỉ tính phần đã làm.`;
+        `. ${t('off.stepsUnfinishedTail')}`;
     }
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ NGƯỜI DÙNG XIN MỘT CHỖ ngoài VĂN PHÒNG — NÓI RA, VÀ CHỈ LỐI ĐI.    │
-     * │                                                                    │
-     * │ Ca 24/08 (`P-260824-0401-q7ma`): họ bảo chép file vào              │
-     * │ `D:\Downloads\Programs Installation\`. `outputScoper` kéo đích về    │
-     * │ `artifacts/` (đúng thiết kế), Trợ lý nhìn ra sự lệch đó và tự viết:  │
-     * │                                                                    │
-     * │   *"…nếu cần mình sẽ thử ghi lại đúng vị trí đó."*                  │
-     * │                                                                    │
-     * │ Thử lại bao nhiêu lần cũng vào `artifacts/`: `outputScoper` chạy    │
-     * │ TRƯỚC khi nhân viên được phóng. Đó là một lời mời vào vòng lặp      │
-     * │ không có lối ra, và mỗi vòng đều tính tiền.                         │
-     * │                                                                    │
-     * │ Dòng dưới dựng bằng CODE từ chính chuỗi `outputScoper` vừa viết     │
-     * │ lại — 0 token, model không "quên" được, và nó nói ra ĐƯỜNG ĐI CÓ    │
-     * │ THẬT thay vì một lời hứa: cắm một kết nối trỏ vào thư mục đó.       │
-     * │ Đó chính là luật §8·0 nói bằng tiếng người — *mọi đường ra phải là  │
-     * │ một năng lực CÓ TÊN* — và từ 24/08 nó chạy được thật (SPEC-arms     │
-     * │ §5i, ca B).                                                        │
-     * │                                                                    │
-     * │ ⚠ KHÔNG dán vào ca `stopped`: người vừa bấm Dừng không cần một bài  │
-     * │ giảng về chỗ để file.                                              │
+     * │ THE USER ASKED FOR A LOCATION outside THE OFFICE — SAY SO, AND POINT   │
+     * │ THE WAY.                                                              │
+     * │                                                                        │
+     * │ Case 08/24 (`P-260824-0401-q7ma`): they asked to copy a file into        │
+     * │ `D:\Downloads\Programs Installation\`. `outputScoper` pulled the           │
+     * │ destination back to `artifacts/` (as designed), the Assistant noticed     │
+     * │ the mismatch and wrote on its own:                                       │
+     * │                                                                        │
+     * │   *"…I'll try writing to that exact location if needed."*                │
+     * │                                                                        │
+     * │ However many times it retries, it still lands in `artifacts/`:            │
+     * │ `outputScoper` runs BEFORE the worker is even launched. That's an          │
+     * │ invitation into a loop with no exit, and every lap costs money.           │
+     * │                                                                        │
+     * │ The line below is built by CODE from the exact string `outputScoper`      │
+     * │ just rewrote — 0 tokens, the model can't "forget" it, and it states       │
+     * │ a REAL PATH FORWARD instead of a promise: plugging in a connection         │
+     * │ that points at that directory. That's §8·0's rule stated in plain          │
+     * │ words — *every way out has to be a NAMED capability* — and since           │
+     * │ 08/24 it actually works (SPEC-arms §5i, case B).                          │
+     * │                                                                        │
+     * │ ⚠ NOT appended for a `stopped` run: someone who just hit Stop doesn't      │
+     * │ need a lecture about where to put files.                                 │
      * └────────────────────────────────────────────────────────────────────┘
      */
     if (redirected.length && status !== 'stopped' && report.trim()) {
       const shownPaths = [...new Set(redirected)].slice(0, 3);
       report +=
-        `\n\nBạn có nhắc tới ${shownPaths.map((p) => `"${p}"`).join(', ')}. ` +
-        `Kế hoạch luôn đặt kết quả trong thư mục văn phòng, nên file nằm ở đường dẫn ghi bên dưới. ` +
-        `Muốn nó nằm thẳng ngoài đó, cắm một kết nối "File trên máy" trỏ vào thư mục ấy rồi giao ` +
-        `cho nhân viên — đó là đường duy nhất ghi ra ngoài mà vẫn vào được nhật ký.`;
+        `\n\n${t('off.pathsMentioned', { list: shownPaths.map((p) => `"${p}"`).join(', ') })}`;
     }
 
-    const where = this.whereBlock(receipts);
+    const where = this.whereBlock(receipts, wrote);
     report += where.text;
     record.status = status;
     record.ended_at = new Date().toISOString();
@@ -1965,24 +2273,29 @@ export class Office {
 
     this.emit({ type: 'cost.tick', totals: { ...usage, tasks } });
     /**
-     * Kế hoạch vừa xong là lúc DUY NHẤT con số hạn mức thật sự nhảy — hỏi lại ở
-     * đây, đừng hẹn giờ. Polling khi không có gì chạy là mở một tiến trình CLI
-     * mỗi phút để nghe cùng một câu trả lời.
+     * A plan just finishing is the ONE moment the usage-limit number actually
+     * moves — check again right here, don't set a timer. Polling while
+     * nothing is running just means opening a CLI process every minute to
+     * hear the same answer.
      *
-     * Không `await`: người dùng đang đọc báo cáo, không đứng đợi cái ô ở header.
-     * `refreshEnergy` tự tiết lưu 60 giây nên ba kế hoạch ngắn liên tiếp cũng
-     * chỉ mở một tiến trình. → `core/energy.ts`
+     * No `await`: the user is reading the report, not standing around
+     * waiting on the header widget. `refreshEnergy` throttles itself to 60
+     * seconds, so three short plans in a row still open only one process. →
+     * `core/energy.ts`
      */
     void refreshEnergy().then(() => this.emitEnergy());
-    // Câu báo cáo phát ĐÚNG MỘT LẦN, ở đây. `plan.finished` là sự kiện cấu trúc
-    // (trạng thái + tiền) để UI đóng sổ, KHÔNG mang lại câu chữ — trước đây nó
-    // mang, và nhật ký hiện hai dòng y hệt nhau ngay cạnh nhau.
+    // The report sentence fires EXACTLY ONCE, right here. `plan.finished` is
+    // a structural event (status + money) for the UI to close the books,
+    // carrying NO text — it used to, and the log showed two identical lines
+    // right next to each other.
     //
-    // `report` RỖNG là hợp lệ và có chủ ý: ca một task `reply` đã phát câu trả
-    // lời của nhân viên rồi, và đó CHÍNH LÀ báo cáo. Phát thêm một bong bóng
-    // trống ở đây là tái tạo đúng cái "cấn" vừa bỏ đi.
-    // `files` đi KÈM tin nhắn, không thay thế phần chữ trong nó: bên hiển thị
-    // nào không đọc trường này (Telegram) vẫn thấy đủ đường dẫn trong `say`.
+    // An EMPTY `report` is valid and deliberate: a single `reply` task has
+    // already emitted the worker's own answer, and that IS the report.
+    // Emitting another empty bubble here would recreate the exact
+    // awkwardness just removed.
+    // `files` rides ALONGSIDE the message, it doesn't replace the text in
+    // it: any display side that doesn't read this field (Telegram) still
+    // sees the full path inside `say`.
     if (report.trim()) {
       this.emit({
         type: 'master.message',
@@ -1999,44 +2312,52 @@ export class Office {
     this.settled.clear();
     this.emitActivity();
 
-    // Việc người dùng giao trong lúc bận: giờ mới tới lượt. Chỉ chạy tiếp khi
-    // ca này KHÔNG bị dừng — người dùng bấm Dừng là dừng tất, kể cả hàng đợi.
+    // Work the user handed over while busy: now it's its turn. Only
+    // continues when this run was NOT stopped — the user hitting Stop stops
+    // everything, including the queue.
     const next = this.deferred.shift();
     if (next && !this.stopRequested) {
       this.emitActivity();
-      // BÀN GIAO: việc xếp hàng thường là phần tiếp của việc vừa xong ("giọng
-      // trẻ hơn nữa"). Không nói cho nó biết kết quả vừa rồi nằm ở đâu thì nó
-      // VIẾT LẠI TỪ ĐẦU thay vì SỬA — đắt hơn nhiều và mất luôn bản đã trả tiền.
+      // HANDOFF: queued work is usually the continuation of what just
+      // finished ("make it sound even younger"). Not telling it where the
+      // previous output landed means it WRITES FROM SCRATCH instead of
+      // EDITING — far more expensive, and it throws away work already paid
+      // for.
       //
-      // Dựng bằng code từ receipt đã có: 0 token.
+      // Built by code from the receipt already in hand: 0 tokens.
       const done = this.lastArtifacts;
       const request = done.length
-        ? `${next.request}\n\n(Việc trước vừa xong, kết quả đã có sẵn ở: ${done.join(', ')}. ` +
-          `Nếu yêu cầu này là chỉnh sửa cho việc đó thì SỬA file có sẵn, đừng làm lại từ đầu.)`
+        ? // ⚠ English, hard-coded: this is glued onto the request the ASSISTANT
+          // reads, so it is prompt scaffolding, not chrome. The user's own words
+          // sit right above it and still set the reply language.
+          `${next.request}\n\n(The previous job just finished; its results are already at: ${done.join(', ')}. ` +
+          `If this request is an edit to that, EDIT the existing files — do not redo it from scratch.)`
         : next.request;
       void this.run(request).catch(() => {
-        /* run() đã emit lỗi rồi */
+        /* run() has already emitted the error */
       });
     } else {
       this.emitActivity();
     }
-    // Còn việc xếp hàng thì để nó chạy trước — nén giữa hai việc liên tiếp là
-    // cắt đúng chỗ mạch chuyện đang liền.
+    // If there's still queued work, let it run first — compacting between
+    // two back-to-back jobs would cut exactly where the thread is continuous.
     if (!next) this.maybeCompact();
 
-    // `setState` cũng phát một `office.state` mang `say`. Đưa câu báo cáo vào
-    // đó nữa là lặp lần thứ ba — trạng thái chỉ cần nói TRẠNG THÁI.
-    // `blocked` về `idle` như mọi ca đã đóng, nhưng KHÔNG được nói "Xong việc."
-    // — chưa có việc nào chạy cả, và câu hỏi của Trợ lý vừa hiện ngay phía trên.
+    // `setState` also emits an `office.state` carrying `say`. Putting the
+    // report sentence in there too would be a third repeat — a state only
+    // needs to say the STATE.
+    // `blocked` returns to `idle` like any closed run, but must NOT say "Job
+    // done." — no job ever ran, and the Assistant's question just appeared
+    // right above it.
     this.setState(
       status === 'paused' || status === 'stopped' ? 'paused' : 'idle',
       status === 'paused'
-        ? 'Tạm nghỉ.'
+        ? t('off.statePaused')
         : status === 'stopped'
-          ? 'Đã dừng.'
+          ? t('off.stateStopped')
           : status === 'blocked'
-            ? 'Đang chờ bạn trả lời.'
-            : 'Xong việc.',
+            ? t('off.stateWaitingOnYou')
+            : t('off.stateDone'),
     );
   }
 
@@ -2049,17 +2370,19 @@ export class Office {
 
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ TÊN TÀI KHOẢN CHO NODE CÁNH TAY — đọc kho OAuth **LƯỜI, một lần**.   │
+     * │ ACCOUNT NAME FOR AN ARM NODE — reads the OAuth store **LAZILY, once**. │
      * │                                                                      │
-     * │ ⚠ ĐÍNH CHÍNH 27/08. `describeNode` từng ghi *"KHÔNG tra tên workspace │
-     * │ ở đây … vì nhãn mặc định của cánh tay OAuth ĐÃ kèm tên workspace"*.   │
-     * │ Lý lẽ đó chết cùng ngày: nhãn thôi ghép tài khoản, vì nó đóng băng ở  │
-     * │ tài khoản đầu tiên và nói dối sau lần đổi thứ hai. → `ArmDialog.tsx`  │
+     * │ ⚠ CORRECTED 08/27. `describeNode` used to say *"do NOT look up the    │
+     * │ workspace name here … because an OAuth arm's default label already     │
+     * │ includes the workspace name"*. That reasoning died the same day: the    │
+     * │ label stopped folding the account in, because it froze on the first     │
+     * │ account and lied after a second account switch. → `ArmDialog.tsx`      │
      * │                                                                      │
-     * │ Nỗi lo cũ vẫn đúng và vẫn được tôn trọng: `canvas()` chạy mỗi sự kiện │
-     * │ SSE, nên **một lần đọc cho mỗi node** thì đắt thật. Cách ở đây:       │
-     * │  · lười — văn phòng không có cánh tay OAuth nào ⇒ **không chạm đĩa**; │
-     * │  · một lần cho cả sơ đồ — đúng khuôn `Company.listArms`.              │
+     * │ The old concern is still valid and still respected: `canvas()` runs     │
+     * │ on every SSE event, so **one read per node** really would be              │
+     * │ expensive. The approach here:                                          │
+     * │  · lazy — an office with no OAuth arm at all ⇒ **touches no disk**;     │
+     * │  · once for the whole diagram — same pattern as `Company.listArms`.     │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     let oauth: ReturnType<typeof readOAuth> | null = null;
@@ -2067,17 +2390,49 @@ export class Office {
       const names = this.loaded.company.arms[server]?.secrets ?? [];
       if (!names.length) return undefined;
       oauth ??= readOAuth(companyPaths(this.loaded.companyDir));
-      // Vắng ⇒ không dùng OAuth, hoặc workspace đã bị gỡ. Cả hai đều là "không
-      // biết" ⇒ không vẽ gì, chứ không bịa một cái tên. (cùng luật §armWorkspace)
+      // Absent ⇒ doesn't use OAuth, or the workspace has been disconnected.
+      // Both count as "unknown" ⇒ draw nothing, rather than making up a name.
+      // (same rule as §armWorkspace)
       return names.map((s) => oauth?.[s]?.label).find(Boolean);
+    };
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ THE ONE THING THE DIAGRAM MARKS RED, and the boundary is the point.   │
+     * │                                                                      │
+     * │ It means exactly: **a service REFUSED a credential this arm runs on**,│
+     * │ so a person has to sign in again. Nothing else qualifies:             │
+     * │                                                                      │
+     * │  · *expiring / expired* is NOT a fault — the refresh loop renews at   │
+     * │    50% of the credential's life, and marking that red would light up  │
+     * │    healthy arms several times a day. A warning that is usually wrong  │
+     * │    teaches people to stop reading warnings, and then the real one     │
+     * │    goes unread too. → the false `folderRoots` alarm, §15i             │
+     * │  · *"is the arm actually working"* is NOT knowable here: it takes a   │
+     * │    handshake per arm, seconds and tokens each, on a function that     │
+     * │    runs on EVERY SSE event. Red for a guess is worse than no red.     │
+     * │                                                                      │
+     * │ So this reads a fact we wrote ourselves (`OAuthAccount.dead`), never  │
+     * │ an inference. → [[agentco-deterministic-vs-signal]]                   │
+     * │                                                                      │
+     * │ ⚠ Shares the same lazy `oauth` read as `viaOf` — one read for the     │
+     * │ whole diagram, and an office with no OAuth arm still touches no disk. │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const keyDeadOf = (server: string): string | undefined => {
+      const names = this.loaded.company.arms[server]?.secrets ?? [];
+      if (!names.length) return undefined;
+      oauth ??= readOAuth(companyPaths(this.loaded.companyDir));
+      const dead = names.find((s) => oauth?.[s]?.dead);
+      return dead ? (oauth?.[dead]?.label ?? dead) : undefined;
     };
 
     return {
       nodes: layout.nodes.map((n) => ({
-        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf),
-        // Khoá sắp xếp bãi đỗ — tính ở MỘT chỗ (`layout.ts §armGroup`) rồi gửi
-        // kèm, để nút "Sắp xếp lại" ở trình duyệt xếp y hệt server. Tính lại ở
-        // giao diện là dựng bản mã thứ hai của cùng một luật phân loại.
+        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf, keyDeadOf),
+        // The layout/grouping key — computed in ONE place (`layout.ts
+        // §armGroup`) and sent along, so the "Rearrange" button on the
+        // browser side sorts identically to the server. Recomputing it in
+        // the UI would build a second copy of the same classification rule.
         ...this.layout.armGroup(n),
       })),
       edges: layout.edges,
@@ -2090,25 +2445,28 @@ export class Office {
     const { touched } = this.layout.save(input);
     if (touched.length) this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: 'Sơ đồ văn phòng đã cập nhật.', plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.layoutUpdated'), plan_id: null });
     return this.canvas();
   }
 
   /**
-   * BỎ HẲN một cánh tay khỏi văn phòng này: xoá `mcp:` khỏi mọi vai trò và khỏi
-   * Trợ lý. Dùng khi cánh tay bị xoá ở cấp công ty.
+   * FULLY REMOVES an arm from this office: strips `mcp:` from every role and
+   * from the Assistant. Used when the arm gets deleted at the company level.
    *
-   * ⚠ Phải chạy CẢ KHI server đã biến mất khỏi `company.yaml` — nếu không thì
-   * một vai trò còn khai `mcp: [x]` sẽ giữ node mồ côi trên sơ đồ mãi mãi, và
-   * người dùng bấm "Xoá hẳn" lần nữa chỉ nhận về *"không có cánh tay x"*. Đó
-   * đúng ca user báo 23/08: nút xoá báo lỗi, node không biến mất.
+   * ⚠ Has to run EVEN WHEN the server has already vanished from
+   * `company.yaml` — otherwise a role still declaring `mcp: [x]` would keep
+   * an orphan node on the diagram forever, and the user clicking "Remove"
+   * again would just get *"no such arm x"*. That's exactly the case a user
+   * reported 08/23: the delete button errors, the node doesn't disappear.
    *
-   * Trả `true` nếu có gì đó thật sự đổi — caller dùng để quyết có phát sự kiện.
+   * Returns `true` if something actually changed — the caller uses this to
+   * decide whether to emit an event.
    */
   dropArm(server: string): boolean {
     let touched = false;
-    // Bỏ SỰ CÓ MẶT trước: thiếu bước này thì node vẫn nằm trên sơ đồ dù không
-    // còn sợi dây nào — đúng cái node ma đã mất một vòng mới bắt được.
+    // Remove PRESENCE first: skip this step and the node stays on the
+    // diagram even with no wire left — the exact ghost node that took an
+    // extra round to catch.
     if (this.loaded.config.arms.includes(server)) {
       this.writeYamlList(
         this.loaded.paths.configFile,
@@ -2139,7 +2497,7 @@ export class Office {
     return touched;
   }
 
-  /** Ghi một mảng chuỗi vào yaml, giữ chú thích. Xoá hẳn khoá khi rỗng. */
+  /** Writes a string array into yaml, preserving comments. Removes the key entirely when empty. */
   private writeYamlList(file: string, keyPath: string[], next: string[]): void {
     const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
     if (next.length) doc.setIn(keyPath, doc.createNode(next));
@@ -2148,29 +2506,32 @@ export class Office {
   }
 
   /**
-   * GIAO một cánh tay cho những nhân viên nào. → docs/SPEC-arms.md §6f bước 3
+   * GRANTS an arm to which workers. → docs/SPEC-arms.md §6f step 3
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BƯỚC NÀY BẮT BUỘC, KHÔNG PHẢI TUỲ CHỌN — và đây là lý do nó có mã nguồn │
-   * │ riêng thay vì để giao diện tự kéo dây.                                   │
+   * │ THIS STEP IS MANDATORY, NOT OPTIONAL — and that's why it has its own      │
+   * │ dedicated code instead of leaving the UI to drag the wire on its own.     │
    * │                                                                          │
-   * │ Một node KHÔNG CÓ DÂY là một NODE CHẾT: nó hiện trên sơ đồ, trông như đã │
-   * │ xong, và không ai dùng được. Người dùng non-code vừa bấm "Lưu" và thấy    │
-   * │ dấu ✓ — họ sẽ không đoán ra là còn phải kéo một sợi dây nữa. Đó đúng lớp │
-   * │ lỗi "hệ thống nói dối về trạng thái của chính nó" (§5i·1).                │
+   * │ A node WITH NO WIRE is a DEAD NODE: it shows up on the diagram, looks      │
+   * │ finished, and nobody can use it. A non-technical user just clicked "Save"  │
+   * │ and saw a ✓ — they'll never guess there's one more wire left to drag.      │
+   * │ That's exactly the "system lies about its own state" failure class          │
+   * │ (§5i·1).                                                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Cạnh `mcp→agent` là NGUỒN SỰ THẬT cho `role.mcp` — `LayoutStore.save` ghi nó
-   * xuống `roles/<id>.yaml`, không xuống `layout.json`. Nên "kéo dây" và "cấp
-   * quyền dùng" là **cùng một hành động**, không phải hai.
+   * The `mcp→agent` edge is the SOURCE OF TRUTH for `role.mcp` —
+   * `LayoutStore.save` writes it down to `roles/<id>.yaml`, not to
+   * `layout.json`. So "drag a wire" and "grant permission to use it" are
+   * **the same action**, not two.
    */
   grantArm(server: string, roleIds: string[]): CanvasState {
     this.assertLive();
 
     /**
-     * GHI SỰ CÓ MẶT TRƯỚC, nối dây sau — và bước này chạy KỂ CẢ khi `roleIds`
-     * rỗng. Đó là điểm của nó: cắm một cánh tay mà chưa giao cho ai thì node
-     * vẫn phải hiện ra để còn kéo dây. → types.ts §OfficeConfig.arms
+     * WRITE PRESENCE FIRST, wire it up second — and this step runs EVEN WHEN
+     * `roleIds` is empty. That's the whole point: plugging in an arm before
+     * assigning it to anyone still has to make the node appear so there's
+     * something to drag a wire from. → types.ts §OfficeConfig.arms
      */
     if (!this.loaded.config.arms.includes(server)) {
       this.writeYamlList(this.loaded.paths.configFile, ['arms'], [...this.loaded.config.arms, server]);
@@ -2188,18 +2549,20 @@ export class Office {
 
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 CHÌA PHẢI ĐI THEO SỢI DÂY — nửa này TỪNG THIẾU HẲN.             │
+     * │ 🔴 A CREDENTIAL HAS TO FOLLOW THE WIRE — this half WAS COMPLETELY     │
+     * │ MISSING.                                                             │
      * │                                                                    │
-     * │ `pickMcp` (worker.ts) dựng env từ `role.secrets`, nhưng cho tới     │
-     * │ 23/08 **không có chỗ nào GHI `role.secrets`** trong luồng cắm cánh  │
-     * │ tay. Hậu quả: cắm một cánh tay cần chìa thì token vào               │
-     * │ `.state/secrets.json` đúng, `role.mcp` đúng, mà tiến trình MCP khởi │
-     * │ động KHÔNG CÓ BIẾN MÔI TRƯỜNG nào — hỏng lúc chạy thật, sau khi     │
-     * │ giao diện đã báo ✓.                                                 │
+     * │ `pickMcp` (worker.ts) builds its env from `role.secrets`, but until    │
+     * │ 08/23 **nothing anywhere WROTE `role.secrets`** during the arm-plug-in  │
+     * │ flow. Consequence: plugging in an arm that needs a credential got the   │
+     * │ token correctly into `.state/secrets.json`, `role.mcp` correctly set,   │
+     * │ yet the MCP process launched with NO ENVIRONMENT VARIABLE AT ALL —       │
+     * │ breaking at real runtime, after the UI had already shown a ✓.           │
      * │                                                                    │
-     * │ Sổ chung là chỗ trả lời "cánh tay này cần chìa tên gì" (§6i), nên   │
-     * │ nối dây và cấp chìa giờ là MỘT thao tác — đúng chốt §7a của          │
-     * │ SPEC-tools-approval: *"nối dây là xong, chìa đi theo"*.             │
+     * │ The shared ledger is where "what credential name does this arm need"     │
+     * │ (§6i) gets answered, so wiring it up and granting the credential are      │
+     * │ now ONE operation — exactly §7a's rule from SPEC-tools-approval:          │
+     * │ *"wiring it is enough, the credential follows"*.                        │
      * └────────────────────────────────────────────────────────────────────┘
      */
     const need = this.loaded.company.arms[server]?.secrets ?? [];
@@ -2214,84 +2577,122 @@ export class Office {
       this.reload();
     }
 
-    // Không có gì để thêm thì KHÔNG ghi và KHÔNG phát sự kiện: một `layout.changed`
-    // rỗng làm mọi tab vẽ lại sơ đồ để nhận về đúng thứ chúng đang có.
+    // Nothing to add means DO NOT write and DO NOT emit an event: an empty
+    // `layout.changed` makes every tab redraw the diagram just to get back
+    // exactly what it already had.
     if (!add.length) return this.canvas();
     return this.saveCanvas({ edges: [...cur, ...add] });
   }
 
   /**
-   * Thêm nhân viên: ghi roles/<id>.yaml rồi nối dây từ Trợ lý.
+   * Adds a worker: writes roles/<id>.yaml then wires it up from the Assistant.
    *
-   * Canvas KHÔNG tự sinh gì ngoài layout.json — trừ đúng chỗ này, và nó ghi ra
-   * yaml người đọc được chứ không phải một cục JSON riêng.
+   * The canvas generates NOTHING beyond layout.json — except right here,
+   * where it writes to a human-readable yaml file instead of a separate blob
+   * of JSON.
    */
   addAgent(input: { id?: string; display_name?: string; pitch?: string; tier?: string }): string {
     this.assertLive();
     const name = (input.display_name ?? '').trim();
-    // `folderId` để tên nhân viên phi-Latin không chết ở cửa này. → paths.ts
+    // `folderId` so a non-Latin worker name doesn't die at this gate. → paths.ts
     const id = input.id?.trim() ? slugId(input.id.trim()) : folderId(name || 'nhan-vien', 'nv');
     if (!isSafeId(id)) {
-      throw new RunError('Mã nhân viên chỉ dùng chữ thường, số, gạch ngang.', 'other');
+      throw new RunError(t('off.roleIdShape'), 'other');
     }
     if (id === 'assistant') {
-      throw new RunError('"assistant" là tên dành riêng cho Trợ lý.', 'other');
+      throw new RunError(t('off.roleIdReserved'), 'other');
     }
     if (this.loaded.roles.has(id)) {
-      throw new RunError(`Văn phòng này đã có nhân viên "${id}".`, 'other');
+      throw new RunError(t('off.roleExists', { id }), 'other');
+    }
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 THE SAME GATE `updateRole` ALREADY HAS. (user 05/09)              │
+     * │                                                                      │
+     * │ Editing a worker has rejected an empty `pitch` all along, and         │
+     * │ `RoleSchema` declares `z.string().min(1)`. Creating one did not —     │
+     * │ it quietly substituted `t('seed.rolePitchDefault')`, so this door     │
+     * │ produced a worker **the editor would refuse to let you type**.        │
+     * │                                                                      │
+     * │ The substituted sentence was worse than nothing: *"What X can do,     │
+     * │ written for the assistant to read"* carries no information about      │
+     * │ what X does, and `pitch` is what the Assistant routes on. So the      │
+     * │ worker sat in the office and was never given work, for a reason       │
+     * │ nobody could see. And being written through the catalogue, it froze   │
+     * │ the INTERFACE LANGUAGE into user data that then sits in the cached    │
+     * │ prefix of every turn — the third time this exact wire was built,      │
+     * │ after the charter (17/08) and `skills/assistant.md` (05/09).          │
+     * │ → docs/CLAUDE.md §Language, [[agentco-seed-file-is-a-wire]]           │
+     * │                                                                      │
+     * │ ⚠ The advice itself is NOT lost — it is the field's placeholder,      │
+     * │ where the person reads it, adopts it deliberately, and it costs zero  │
+     * │ tokens until they do.                                                │
+     * │                                                                      │
+     * │ ⚠ Gated HERE and not only in the dialog: the HTTP door is a door too, │
+     * │ and an empty pitch reaching disk fails `min(1)` on the next load —    │
+     * │ which does not error, it makes the worker VANISH without a word.      │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const pitch = (input.pitch ?? '').trim();
+    if (!pitch) {
+      throw new RunError(t('off.pitchEmpty'), 'other');
     }
 
     const tier = input.tier === 'eco' || input.tier === 'deep' ? input.tier : 'standard';
     fs.mkdirSync(this.loaded.paths.roles, { recursive: true });
     fs.writeFileSync(
       path.join(this.loaded.paths.roles, `${id}.yaml`),
-      roleTemplate(id, name || id, (input.pitch ?? '').trim(), tier),
+      roleTemplate(id, name || id, pitch, tier),
       'utf8',
     );
 
     this.reload();
-    // `placeAgent` chứ không phải `connectAssistant`: nó GHI vị trí xuống đĩa kể
-    // cả khi cạnh đã có sẵn. Bản cũ return sớm ở đó, nên toạ độ vừa tính không
-    // bao giờ được lưu. → layout.ts
-    // Nhân viên MỚI thì nối dây luôn: thêm một người rồi không giao được việc
-    // cho họ là một thao tác không có kết quả nhìn thấy được.
+    // `placeAgent`, not `connectAssistant`: it WRITES the position to disk
+    // even when the edge already exists. The old version returned early
+    // there, so the coordinates just computed never got saved. → layout.ts
+    // A NEW worker gets wired up right away: adding a person and then not
+    // being able to assign them work is an action with no visible result.
     this.layout.placeAgent(id, true);
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã thêm "${name || id}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.roleAdded', { name: name || id }), plan_id: null });
     return id;
   }
 
   /**
-   * LƯU TRỮ một nhân viên (soft delete). → docs/SPEC-offices.md §5.1
+   * ARCHIVES a worker (soft delete). → docs/SPEC-offices.md §5.1
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO PHẢI CÓ CỜ, KHÔNG THỂ CHỈ "BỎ KHỎI SƠ ĐỒ"                        │
+   * │ WHY IT NEEDS A FLAG, AND CAN'T JUST BE "REMOVED FROM THE DIAGRAM"        │
    * │                                                                          │
-   * │ Bản trước xoá node khỏi layout.json rồi giữ file yaml — nghe thì đúng,   │
-   * │ nhưng `layout.read()` TÁI TẠO node từ `office.roles` ở lần đọc kế tiếp.  │
-   * │ Nhân viên "đã bỏ" quay lại canvas ở một ô lưới khác, chỉ mất sợi dây.    │
-   * │ Tức là "bỏ khỏi sơ đồ" chưa bao giờ thật sự bỏ được cái gì.              │
+   * │ The old version deleted the node from layout.json while keeping the       │
+   * │ yaml file — sounds right, but `layout.read()` RECONSTRUCTS the node from   │
+   * │ `office.roles` on the next read. The "removed" worker comes back onto the  │
+   * │ canvas at a different grid cell, only missing its wire. I.e. "removed        │
+   * │ from the diagram" never actually removed anything.                        │
    * │                                                                          │
-   * │ Cờ trong yaml là nguồn sự thật DUY NHẤT: canvas, roster và scheduler đều │
-   * │ đọc nó. Không có đường nào để một nhân viên đã cất nhận được việc.       │
+   * │ The flag in the yaml is the ONLY source of truth: the canvas, the           │
+   * │ roster, and the scheduler all read it. There is no path for an archived    │
+   * │ worker to receive work.                                                   │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * File không đi đâu cả. Kinh nghiệm trong `knowledge/agents/<id>/` còn nguyên,
-   * skills còn nguyên — khôi phục là trở lại đúng chỗ cũ, vì nó chưa từng rời đi.
-   * (Lời hứa đó chỉ THẬT nhờ `pruneStale` miễn trừ sổ tay của người đã cất —
-   * xem `KnowledgeStore.pruneStale`.)
+   * The file goes nowhere. Its lessons under `knowledge/agents/<id>/` stay
+   * intact, its skills stay intact — restoring it returns to the exact same
+   * spot, because it never actually left. (That promise is only TRUE because
+   * `pruneStale` exempts an archived worker's notebook — see
+   * `KnowledgeStore.pruneStale`.)
    *
-   * ⚠ KHÔI PHỤC KHÔNG NỐI DÂY. Node trở lại sơ đồ, nhưng muốn nó nhận việc thì
-   * người dùng phải tự kéo một sợi dây. Xem `LayoutStore.placeAgent`.
+   * ⚠ RESTORING DOES NOT REWIRE IT. The node returns to the diagram, but for
+   * it to receive work the user has to drag a wire themselves. See
+   * `LayoutStore.placeAgent`.
    */
   archiveAgent(roleId: string, archived: boolean): CanvasState {
     this.assertLive();
-    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
+    if (!isSafeId(roleId)) throw new RunError(t('off.roleIdInvalid'), 'other');
     const role = this.loaded.roles.get(roleId);
-    if (!role) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+    if (!role) throw new RunError(t('off.noRole', { id: roleId }), 'other');
 
     const file = this.roleFile(roleId);
-    if (!file) throw new RunError(`Không tìm thấy file roles/${roleId}.yaml.`, 'other');
+    if (!file) throw new RunError(t('off.roleFileMissing', { id: roleId }), 'other');
 
     const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
     if (archived) doc.set('archived', true);
@@ -2300,34 +2701,36 @@ export class Office {
 
     if (archived) this.layout.dropAgent(roleId);
     this.reload();
-    // `connect: false` — đưa trở lại KHÔNG phải là cho nhận việc lại.
+    // `connect: false` — bringing it back does NOT mean it can receive work again.
     if (!archived) this.layout.placeAgent(roleId, false);
     this.refreshAssistantContext();
 
     const name = role.display_name || roleId;
     this.emit({
       type: 'layout.changed',
-      // Câu này phải nói ra việc CÒN LẠI phải làm. Không nói thì người dùng thấy
-      // node hiện lên, tưởng xong, rồi giao việc và Trợ lý bảo không có ai làm.
+      // This sentence has to state what's LEFT to do. Without it, the user
+      // sees the node appear, assumes it's ready, hands it work, and the
+      // Assistant says there's nobody to do it.
       say: archived
-        ? `Đã cất "${name}" vào lưu trữ.`
-        : `Đã đưa "${name}" trở lại sơ đồ. Kéo một sợi dây từ Trợ lý xuống nếu muốn giao việc cho họ.`,
+        ? t('off.roleArchived', { name })
+        : t('off.roleRestored', { name }),
       plan_id: null,
     });
     return this.canvas();
   }
 
   /**
-   * XOÁ HẲN một nhân viên: mất file yaml, mất skills. Không lấy lại được.
+   * PERMANENTLY DELETES a worker: loses the yaml file, loses its skills. Can't be undone.
    *
-   * Sổ tay kinh nghiệm ở `knowledge/agents/<id>/` CỐ Ý được giữ: nó là thứ văn
-   * phòng đã học được, không phải tài sản riêng của một cái tên. Xoá người mà
-   * xoá luôn bài học là mất thứ đắt nhất trong cả thư mục.
+   * The lesson notebook at `knowledge/agents/<id>/` is DELIBERATELY kept:
+   * it's something the office learned, not a name's private property.
+   * Deleting a person and losing their lessons with them would be losing the
+   * most valuable thing in the whole directory.
    */
   removeAgent(roleId: string): void {
     this.assertLive();
-    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
-    if (!this.loaded.roles.has(roleId)) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+    if (!isSafeId(roleId)) throw new RunError(t('off.roleIdInvalid'), 'other');
+    if (!this.loaded.roles.has(roleId)) throw new RunError(t('off.noRole', { id: roleId }), 'other');
 
     this.layout.dropAgent(roleId);
     for (const ext of ['.yaml', '.yml']) {
@@ -2335,10 +2738,10 @@ export class Office {
     }
     this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã xoá hẳn "${roleId}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.roleDeleted', { id: roleId }), plan_id: null });
   }
 
-  /** Nhân viên đang nằm trong lưu trữ — để giao diện cho khôi phục. */
+  /** Workers currently archived — so the UI can offer to restore them. */
   archivedAgents(): Array<{ role: string; label: string; avatar: string; pitch: string; notes: number }> {
     const notes = this.knowledge.notesByRole();
     return [...this.loaded.archivedRoles]
@@ -2354,13 +2757,14 @@ export class Office {
   }
 
   /**
-   * Sửa hồ sơ một nhân viên. → docs/SPEC-tools-approval.md §1
+   * Edits a worker's profile. → docs/SPEC-tools-approval.md §1
    *
-   * Ghi bằng `parseDocument` để GIỮ chú thích người dùng viết trong file yaml.
+   * Writes with `parseDocument` to KEEP comments the user wrote in the yaml file.
    *
-   * ⚠ Sửa `pitch` là bump cacheKey của TRỢ LÝ (pitch nằm trong roster);
-   * sửa `model_tier` là bump cacheKey của chính agent đó. Vì thế giao diện phải
-   * có nút Lưu tường minh, không autosave — cùng luật với skills.
+   * ⚠ Editing `pitch` bumps the ASSISTANT's cacheKey (the pitch sits in the
+   * roster); editing `model_tier` bumps that worker's own cacheKey. That's
+   * why the UI has an explicit Save button rather than autosave — same rule
+   * as skills.
    */
   editAgent(
     roleId: string,
@@ -2370,34 +2774,35 @@ export class Office {
       pitch?: string;
       not_for?: string[];
       model_tier?: string;
-      /** Trần chi phí một việc. **`0` = không giới hạn.** → `RoleBudget.max_usd` */
+      /** Cost cap for one task. **`0` = no limit.** → `RoleBudget.max_usd` */
       max_usd?: number;
       max_turns?: number;
       /**
-       * Bật/tắt `Bash` cho vai trò này. → docs/SPEC-tools-approval.md §5
+       * Toggles `Bash` for this role. → docs/SPEC-tools-approval.md §5
        *
-       * Công tắc DUY NHẤT trong cả hệ thống về khả năng — mọi tool khác bật sẵn
-       * và không tắt được (`BUILTIN_TOOLS`). Nó có công tắc riêng vì nó là thứ
-       * duy nhất chạm được ra ngoài thư mục văn phòng.
+       * The ONLY capability switch in the whole system — every other tool is
+       * on by default and can't be turned off (`BUILTIN_TOOLS`). It gets its
+       * own switch because it's the only one that can reach outside the
+       * office directory.
        */
       bash?: boolean;
     },
   ): CanvasState {
     this.assertLive();
-    if (!isSafeId(roleId)) throw new RunError('Mã nhân viên không hợp lệ.', 'other');
+    if (!isSafeId(roleId)) throw new RunError(t('off.roleIdInvalid'), 'other');
     const role = this.loaded.roles.get(roleId);
-    if (!role) throw new RunError(`Không có nhân viên "${roleId}".`, 'other');
+    if (!role) throw new RunError(t('off.noRole', { id: roleId }), 'other');
 
     const pitch = patch.pitch?.trim();
     if (patch.pitch !== undefined && !pitch) {
-      throw new RunError('Giới thiệu không được để trống — đây là thứ duy nhất Trợ lý thấy.', 'other');
+      throw new RunError(t('off.pitchEmpty'), 'other');
     }
     if (patch.model_tier !== undefined && !TIERS.includes(patch.model_tier as never)) {
-      throw new RunError(`Mức model phải là một trong: ${TIERS.join(', ')}.`, 'other');
+      throw new RunError(t('off.tierMustBe', { tiers: TIERS.join(', ') }), 'other');
     }
 
     const file = this.roleFile(roleId);
-    if (!file) throw new RunError(`Không tìm thấy file roles/${roleId}.yaml.`, 'other');
+    if (!file) throw new RunError(t('off.roleFileMissing', { id: roleId }), 'other');
 
     const doc = YAML.parseDocument(fs.readFileSync(file, 'utf8'));
     if (patch.display_name !== undefined) doc.set('display_name', patch.display_name.trim());
@@ -2411,54 +2816,60 @@ export class Office {
     if (patch.model_tier !== undefined) doc.set('model_tier', patch.model_tier);
 
     /**
-     * Ngân sách nằm trong một map con — `doc.set('budget', …)` sẽ THAY CẢ KHỐI
-     * và nuốt mất `knowledge_pack` cùng mọi chú thích người dùng viết trong đó.
-     * `setIn` sửa đúng một khoá. Cùng lý do với `parseDocument` ở đầu hàm.
+     * The budget lives inside a nested map — `doc.set('budget', …)` would
+     * REPLACE THE WHOLE BLOCK and swallow `knowledge_pack` along with any
+     * comments the user wrote inside it. `setIn` edits exactly one key. Same
+     * reason as `parseDocument` at the top of this function.
      */
     if (patch.max_usd !== undefined) {
       if (!Number.isFinite(patch.max_usd) || patch.max_usd < 0) {
-        throw new RunError('Trần chi phí phải là số không âm. Đặt 0 nghĩa là không giới hạn.', 'other');
+        throw new RunError(t('off.budgetShape'), 'other');
       }
       doc.setIn(['budget', 'max_usd'], patch.max_usd);
     }
     if (patch.max_turns !== undefined) {
       if (!Number.isInteger(patch.max_turns) || patch.max_turns < 1) {
-        throw new RunError('Số bước tối đa phải là số nguyên từ 1 trở lên.', 'other');
+        throw new RunError(t('off.maxTurnsShape'), 'other');
       }
       doc.setIn(['budget', 'max_turns'], patch.max_turns);
     }
 
     /**
      * ┌────────────────────────────────────────────────────────────────────────┐
-     * │ `Bash` — CÔNG TẮC, KHÔNG PHẢI Ô NHẬP DANH SÁCH TOOL.                   │
+     * │ `Bash` — A SWITCH, NOT A TOOL-LIST INPUT FIELD.                        │
      * │ → docs/SPEC-tools-approval.md §5                                        │
      * │                                                                         │
-     * │ Spec chốt "một công tắc duy nhất trong toàn hệ thống" từ đầu, nhưng     │
-     * │ cách duy nhất để bật vẫn là mở `roles/<id>.yaml` gõ tay — tức là bài 9  │
-     * │ của TEST-WALKTHROUGH có một bước 📝 **BẮT BUỘC** dành cho một sản phẩm  │
-     * │ làm cho người non-code. Đây là dòng code trả nốt lời hứa đó.            │
+     * │ The spec settled "one single switch in the whole system" from the         │
+     * │ start, but the only way to turn it on was still opening                   │
+     * │ `roles/<id>.yaml` by hand — i.e. test 9 of TEST-WALKTHROUGH has a          │
+     * │ 📝 **MANDATORY** step for a product built for non-technical people.        │
+     * │ This is the line of code that finally pays off that promise.              │
      * │                                                                         │
-     * │ GIỮ tool khác trong `tools:` nếu người dùng advanced đã tự thêm: đây là │
-     * │ công tắc CHO MỘT TOOL, không phải nút ghi đè cả danh sách. Xoá hẳn khoá │
-     * │ khi danh sách rỗng để file quay về đúng hình dạng template.             │
+     * │ KEEPS other tools in `tools:` if an advanced user already added their      │
+     * │ own: this is a switch FOR ONE TOOL, not a button that overwrites the       │
+     * │ whole list. Removes the key entirely when the list is empty, so the        │
+     * │ file returns to the exact template shape.                                 │
      * │                                                                         │
-     * │ KHÔNG cần bump `version`: `cacheKey` băm chính `toolKey` (prompt.ts     │
-     * │ §buildWorkerPrompt), nên bộ tool đổi là khoá đổi — không thể quên.      │
+     * │ No need to bump `version`: `cacheKey` hashes `toolKey` itself                │
+     * │ (prompt.ts §buildWorkerPrompt), so the tool set changing changes the         │
+     * │ key — impossible to forget.                                               │
      * └────────────────────────────────────────────────────────────────────────┘
      */
     if (patch.bash !== undefined) {
-      // Lọc MỌI tên nền tảng, ghi lại đúng MỘT tên chuẩn: file vai trò phải
-      // portable giữa Windows và macOS. → types.ts §SHELL_ALIASES
+      // Filters out EVERY platform name, writes back exactly ONE canonical
+      // name: a role file has to be portable between Windows and macOS. →
+      // types.ts §SHELL_ALIASES
       const rest = role.tools.filter((t) => !EXTERNAL_TOOLS.has(t));
       /**
-       * GHI `tools: []` chứ KHÔNG xoá khoá. `doc.delete('tools')` kéo theo cả
-       * khối chú thích đứng trên nó — yaml gắn comment vào KHOÁ, không vào
-       * file. Đo được trên `nguoi-kiem-ke.yaml`: tắt công tắc một lần là mất
-       * vĩnh viễn đoạn giải thích "Bash = cho phép chạy lệnh… ngoại lệ duy
-       * nhất của luật §2.6", và bật lại chỉ còn một dòng trần.
+       * WRITES `tools: []` rather than DELETING the key. `doc.delete('tools')`
+       * drags along the whole comment block sitting above it — yaml attaches
+       * comments to the KEY, not to the file. Measured on
+       * `nguoi-kiem-ke.yaml`: toggling the switch off once permanently loses
+       * the explanation "Bash = allows running commands… the one exception to
+       * rule §2.6", and turning it back on leaves just a bare line.
        *
-       * `[]` cũng đọc đúng hơn: nó nói "không có tool thêm nào", khác với
-       * "chưa ai từng nghĩ về chuyện này".
+       * `[]` also reads more correctly: it says "no additional tools", as
+       * opposed to "nobody has ever thought about this".
        */
       doc.set('tools', patch.bash ? [...rest, SHELL_TOOL] : rest);
     }
@@ -2467,40 +2878,42 @@ export class Office {
 
     this.reload();
     this.refreshAssistantContext();
-    this.emit({ type: 'layout.changed', say: `Đã cập nhật hồ sơ "${roleId}".`, plan_id: null });
+    this.emit({ type: 'layout.changed', say: t('off.roleUpdated', { id: roleId }), plan_id: null });
     return this.canvas();
   }
 
   /**
-   * Đổi tên hiển thị của văn phòng. → docs/SPEC-offices.md §3
+   * Renames this office's display name. → docs/SPEC-offices.md §3
    *
-   * `id` (tên thư mục) có đổi theo hay không là quyết định của `Company` —
-   * xem `Company.renameTarget`. Hàm này chỉ ghi cái tên.
+   * Whether the `id` (folder name) changes along with it is `Company`'s
+   * decision — see `Company.renameTarget`. This function only writes the name.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ `silent` — ĐỪNG PHÁT SỰ KIỆN MANG MỘT ID SẮP CHẾT. (bug user báo 22/08)  │
+   * │ `silent` — DO NOT EMIT AN EVENT CARRYING AN ID THAT'S ABOUT TO DIE. (bug   │
+   * │ reported by a user 08/22)                                                │
    * │                                                                          │
-   * │ Khi đổi tên kéo theo dời thư mục, `Company` gọi hàm này TRƯỚC rồi mới     │
-   * │ `fs.renameSync`. Sự kiện `layout.changed` phát ở đây mang `office: <id    │
-   * │ CŨ>` — và tới tay trình duyệt SAU khi thư mục đã dời.                     │
+   * │ When a rename also moves the directory, `Company` calls this function       │
+   * │ FIRST, then `fs.renameSync`. The `layout.changed` event emitted here          │
+   * │ carries `office: <OLD id>` — and reaches the browser AFTER the directory      │
+   * │ has already moved.                                                       │
    * │                                                                          │
-   * │ Client thấy id đó vẫn khớp `state.officeId` nên xử lý bình thường: gọi    │
-   * │ `refreshCanvas()` → `GET /api/office/<id cũ>/canvas` → **404** → toast    │
-   * │ *"Không có văn phòng …"*. Người dùng vừa đổi tên THÀNH CÔNG mà màn hình   │
-   * │ báo lỗi — đúng thứ họ kể lại.                                            │
+   * │ The client sees that id still matches `state.officeId`, so it handles it     │
+   * │ normally: calls `refreshCanvas()` → `GET /api/office/<old id>/canvas` →       │
+   * │ **404** → toast *"No such office …"*. The user just renamed something         │
+   * │ SUCCESSFULLY and the screen reports an error — exactly what they reported.    │
    * │                                                                          │
-   * │ Nên khi sắp dời, `Company` bảo im, rồi tự phát **một** sự kiện            │
-   * │ `company.offices` mang id MỚI. Một thao tác của người dùng ⇒ một sự kiện, │
-   * │ và sự kiện đó nói đúng nơi cần đến.                                       │
+   * │ So while a move is about to happen, `Company` tells it to stay silent,        │
+   * │ then emits **one** `company.offices` event itself carrying the NEW id.        │
+   * │ One user action ⇒ one event, and that event points to the right place.        │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Ghi bằng `parseDocument` để giữ nguyên chú thích trong office.yaml.
+   * Writes with `parseDocument` to preserve comments in office.yaml.
    */
   rename(name: string, opts?: { silent?: boolean }): string {
     this.assertLive();
     const next = normalizeName(name);
-    if (!next) throw new RunError('Tên văn phòng không được để trống.', 'other');
-    if (next.length > 60) throw new RunError('Tên văn phòng dài quá 60 ký tự.', 'other');
+    if (!next) throw new RunError(t('off.officeNameEmpty'), 'other');
+    if (next.length > 60) throw new RunError(t('co.officeNameTooLong'), 'other');
     if (next === this.loaded.config.name) return next;
 
     const file = this.loaded.paths.configFile;
@@ -2510,26 +2923,28 @@ export class Office {
 
     this.reload();
     if (opts?.silent) return next;
-    // Tên văn phòng KHÔNG nằm trong prompt của ai — không có gì phải ghi lại cache.
-    this.emit({ type: 'layout.changed', say: `Văn phòng đã đổi tên thành "${next}".`, plan_id: null });
+    // The office name sits in NOBODY's prompt — nothing to invalidate in the cache.
+    this.emit({ type: 'layout.changed', say: t('off.officeRenamed', { name: next }), plan_id: null });
     return next;
   }
 
   /**
-   * Đổi mức model của Trợ lý văn phòng này. → docs/SPEC-offices.md §4.5
+   * Changes this office's Assistant's model tier. → docs/SPEC-offices.md §4.5
    *
-   * `undefined` = bỏ ghi đè, quay về `models.master` của công ty.
+   * `undefined` = removes the override, falls back to the company's `models.master`.
    *
-   * KHÔNG chạm vào session: `resume` nạp bản ghi hội thoại từ đĩa, và bản ghi đó
-   * độc lập với model. Trợ lý vẫn nhớ nguyên mọi thứ đã nói. Thứ mất là PROMPT
-   * CACHE — cặp (model, prefix) đổi nên lượt kế tiếp ghi lại cache một lần, và
-   * vì `resume` gửi lại cả bản ghi hội thoại nên lần đó trả giá đầy đủ cho phần
-   * đó. Đắt nhất khi hội thoại đã dài; vẫn là MỘT LẦN, không phải mỗi lượt.
+   * Does NOT touch the session: `resume` loads the conversation record from
+   * disk, and that record is independent of the model. The Assistant still
+   * remembers everything it has said. What's lost is the PROMPT CACHE — the
+   * (model, prefix) pair changes so the next turn rewrites the cache once,
+   * and because `resume` resends the whole conversation record, that turn
+   * pays full price for it. Most expensive when the conversation is already
+   * long; still a ONE-TIME cost, not a per-turn one.
    */
   setAssistantTier(tier: string | undefined): { tier: string; model: string } {
     this.assertLive();
     if (tier !== undefined && !TIERS.includes(tier as never)) {
-      throw new RunError(`Mức model phải là một trong: ${TIERS.join(', ')}.`, 'other');
+      throw new RunError(t('off.tierMustBe', { tiers: TIERS.join(', ') }), 'other');
     }
 
     const file = this.loaded.paths.configFile;
@@ -2543,36 +2958,37 @@ export class Office {
     this.refreshAssistantContext();
     this.emit({
       type: 'layout.changed',
-      say: `Trợ lý chuyển sang mức "${this.assistant.modelTier}". Áp dụng từ lượt trò chuyện tiếp theo.`,
+      say: t('off.assistantTierChanged', { tier: this.assistant.modelTier }),
       plan_id: null,
     });
     return { tier: this.assistant.modelTier, model: this.assistant.model };
   }
 
   /**
-   * Đổi tên hiển thị của Trợ lý văn phòng này. → docs/SPEC-offices.md §4.5
+   * Renames this office's Assistant's display name. → docs/SPEC-offices.md §4.5
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ KHÔNG PHÁ CACHE, VÀ ĐÓ LÀ LÝ DO TÊN NÀY ĐƯỢC PHÉP SỬA THOẢI MÁI.        │
+   * │ DOESN'T BREAK THE CACHE, AND THAT'S WHY THIS NAME CAN BE EDITED FREELY.    │
    * │                                                                          │
-   * │ `display_name` **không nằm trong prompt của ai cả** — không trong         │
-   * │ `ASSISTANT_CORE`, không trong roster (roster chỉ liệt kê NHÂN VIÊN).     │
-   * │ Nó chỉ là cái nhãn trên sơ đồ và trong bong bóng chat. Nên đổi nó rẻ      │
-   * │ ngang đổi tên văn phòng: không ghi lại cache, không mất trí nhớ, không    │
-   * │ đụng session.                                                            │
+   * │ `display_name` **sits in nobody's prompt at all** — not in                  │
+   * │ `ASSISTANT_CORE`, not in the roster (the roster only lists WORKERS). It      │
+   * │ is only the label on the diagram and in the chat bubble. So changing it       │
+   * │ is as cheap as renaming the office: no cache rewrite, no lost memory,         │
+   * │ no touching the session.                                                  │
    * │                                                                          │
-   * │ Đối lập hẳn với `model_tier` ngay trên: cái đó là một nửa của khoá cache │
-   * │ (model, prefix), nên nó phải kèm câu cảnh báo. Hai thao tác trông giống  │
-   * │ nhau trên giao diện mà giá khác hẳn nhau — giao diện phải nói ra.        │
+   * │ Complete opposite of `model_tier` right above: that one is half the           │
+   * │ cache key (model, prefix), so it has to carry a warning. Two actions that     │
+   * │ look identical in the UI but cost completely differently — the UI has         │
+   * │ to say so.                                                                │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Ghi bằng `parseDocument` để giữ chú thích người dùng viết trong office.yaml.
+   * Writes with `parseDocument` to preserve comments the user wrote in office.yaml.
    */
   renameAssistant(name: string): string {
     this.assertLive();
     const next = normalizeName(name);
-    if (!next) throw new RunError('Tên Trợ lý không được để trống.', 'other');
-    if (next.length > 40) throw new RunError('Tên Trợ lý dài quá 40 ký tự.', 'other');
+    if (!next) throw new RunError(t('off.assistantNameEmpty'), 'other');
+    if (next.length > 40) throw new RunError(t('off.assistantNameTooLong'), 'other');
     if (next === this.loaded.config.assistant.display_name) return next;
 
     const file = this.loaded.paths.configFile;
@@ -2582,25 +2998,27 @@ export class Office {
     fs.writeFileSync(file, doc.toString({ lineWidth: 0, flowCollectionPadding: false }), 'utf8');
 
     this.reload();
-    // KHÔNG `refreshAssistantContext()`: tên không nằm trong prompt, nên không
-    // có gì để làm mới. Gọi thừa ở đây là tự dựng lại prefix cho vui.
-    this.emit({ type: 'layout.changed', say: `Trợ lý giờ tên là "${next}".`, plan_id: null });
+    // NO `refreshAssistantContext()`: the name isn't in the prompt, so
+    // there's nothing to refresh. Calling it here anyway would just rebuild
+    // the prefix for no reason.
+    this.emit({ type: 'layout.changed', say: t('off.assistantRenamed', { name: next }), plan_id: null });
     return next;
   }
 
   /**
-   * Nhận cấu hình công ty mới (đổi model, đổi ngân sách…).
+   * Receives new company config (model change, budget change…).
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BẤT BIẾN: KHÔNG BAO GIỜ SỬA `this.loaded` TẠI CHỖ.                       │
+   * │ INVARIANT: NEVER MUTATE `this.loaded` IN PLACE.                          │
    * │                                                                          │
-   * │ Scheduler của ca đang chạy giữ THAM CHIẾU tới đúng object `LoadedOffice` │
-   * │ mà nó nhận lúc `run()`. Dựng object MỚI ở đây nghĩa là ca đang chạy tiếp │
-   * │ tục với model và cấu hình cũ cho tới khi xong — đúng thứ người dùng muốn:│
-   * │ đổi model không được đổi luật giữa ván. Còn nếu sửa tại chỗ              │
-   * │ (`this.loaded.company = next`), những task CHƯA phóng của cùng một kế    │
-   * │ hoạch sẽ chạy model khác các task đã phóng, và hoá đơn không giải thích  │
-   * │ được nữa.                                                                │
+   * │ The scheduler of a currently running job holds a REFERENCE to the exact     │
+   * │ `LoadedOffice` object it received at `run()` time. Building a NEW object       │
+   * │ here means a running job keeps going with the old model and config until      │
+   * │ it finishes — exactly what the user wants: changing the model must not         │
+   * │ change the rules mid-hand. Whereas mutating in place                          │
+   * │ (`this.loaded.company = next`) would run tasks of the same plan that            │
+   * │ haven't launched yet on a different model than the tasks already launched,     │
+   * │ and the bill would stop making sense.                                     │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   applyCompanyConfig(next: CompanyConfig): void {
@@ -2612,8 +3030,9 @@ export class Office {
     this.knowledge.scan();
     this.library.rebind(this.loaded.paths);
     this.artifacts.rebind(this.loaded.paths);
-    // Đổi tên văn phòng làm dời thư mục ⇒ nhật ký phải đi theo. Quên dòng này
-    // là log ghi tiếp vào thư mục cũ, và giao diện đọc chỗ mới thấy trống trơn.
+    // Renaming an office moves its directory ⇒ the audit log has to follow.
+    // Forgetting this line means the log keeps writing into the old
+    // directory, and the UI reads the new one and finds it empty.
     this.audit.rebind(this.loaded.paths.state);
     this.refreshAssistantContext();
   }
@@ -2627,23 +3046,23 @@ export class Office {
   }
 
   /**
-   * Ghi một lớp prompt sửa được. → docs/SPEC-tools-approval.md §4
+   * Writes an editable prompt layer. → docs/SPEC-tools-approval.md §4
    *
-   * Ba chốt an toàn, và cái thứ ba là cái dễ quên nhất:
-   *  1. Chỉ lớp `editable` mới ghi được — lớp lõi từ chối thẳng.
-   *  2. Đường dẫn phải nằm trong thư mục văn phòng (`safeJoin`).
-   *  3. File charter là NODE TRI THỨC nên có YAML frontmatter. Ta chỉ hiện
-   *     phần thân cho người dùng sửa, nên khi ghi phải GIỮ NGUYÊN frontmatter
-   *     cũ — ghi đè cả file là xoá mất id/scope/pinned và node biến khỏi kho.
+   * Three safety gates, and the third is the easiest to forget:
+   *  1. Only the `editable` layer can be written — the core layer refuses outright.
+   *  2. The path has to sit inside the office directory (`safeJoin`).
+   *  3. The charter file is a KNOWLEDGE NODE, so it carries YAML frontmatter.
+   *     We only show the body for the user to edit, so writing it back has to
+   *     KEEP the existing frontmatter — overwriting the whole file would wipe
+   *     out id/scope/pinned and the node would vanish from the store.
    */
   savePromptLayer(who: string, layerId: string, text: string): PromptLayer[] {
     this.assertLive();
     const layer = this.describePrompt(who).find((l) => l.id === layerId);
-    if (!layer) throw new RunError(`Không có lớp "${layerId}".`, 'other');
+    if (!layer) throw new RunError(t('off.noLayer', { id: layerId }), 'other');
     if (!layer.editable || !layer.file) {
       throw new RunError(
-        'Lớp này chỉ đọc. Lớp lõi thuộc về mã nguồn — mở khoá bằng ' +
-          '`allow_core_prompt_edit: true` trong company.yaml nếu bạn thật sự cần.',
+        t('off.layerReadOnly'),
         'other',
       );
     }
@@ -2651,8 +3070,7 @@ export class Office {
     const limit = layer.limit;
     if (limit && estimateTokens(text) > limit) {
       throw new RunError(
-        `Dài quá: ${estimateTokens(text)} token, trần là ${limit}. ` +
-          `Khối này nằm trong prefix cache nên mỗi dòng thừa là chi phí thu suốt ca làm việc.`,
+        t('off.layerTooLong', { tokens: String(estimateTokens(text)), limit: String(limit) }),
         'other',
       );
     }
@@ -2671,44 +3089,46 @@ export class Office {
     this.reload();
     this.refreshAssistantContext();
     /**
-     * TRẢ LỜI CÂU HỎI NGƯỜI DÙNG THẬT SỰ ĐANG CÓ: *"đã ăn chưa?"*
+     * ANSWERS THE QUESTION THE USER ACTUALLY HAS: *"did it take effect?"*
      *
-     * Câu cũ — *"Đã lưu. Bộ nhớ đệm sẽ ghi lại một lần."* — nói về một cơ chế
-     * bên trong mà người dùng không hỏi, và **im lặng đúng chỗ họ đang phân
-     * vân**: có phải restart không, ai đã biết, việc đang chạy có bị ảnh hưởng.
-     * User hỏi thẳng ba câu đó 21/08, và tài liệu thì đang bảo họ đi `stop`/
-     * `start` — một bước thừa không bao giờ gây triệu chứng nên sống rất lâu.
+     * The old sentence — *"Saved. The cache will rewrite once."* — described
+     * an internal mechanism nobody asked about, and **stayed silent exactly
+     * where they were unsure**: do I need to restart, who already knows, does
+     * this affect a running job. A user asked those exact three questions on
+     * 08/21, while the docs told them to `stop`/`start` — an unnecessary step
+     * that never causes a visible symptom, so it survives for a very long
+     * time.
      *
-     * Nói ba việc, theo đúng thứ tự người ta lo: hiệu lực · phạm vi · cái giá.
+     * States three things, in the exact order people worry about them: effect · scope · cost.
      */
     this.emit({
       type: 'layout.changed',
       say:
-        'Đã lưu và áp dụng ngay — không cần khởi động lại. Nhân viên nhận việc từ giờ dùng bản mới; ' +
-        'việc đang chạy vẫn theo bản cũ cho tới khi xong. Lượt đầu của mỗi nhân viên sẽ tốn thêm ' +
-        'một chút vì phải ghi lại bộ nhớ đệm.',
+        t('off.layerSaved'),
       plan_id: null,
     });
     return this.describePrompt(who);
   }
 
   /**
-   * Sửa / xoá một node tri thức. → docs/SPEC-2026-08-14-agentco.md §5
+   * Edits / deletes a knowledge node. → docs/SPEC-2026-08-14-agentco.md §5
    *
-   * Tác động 1-1 và NGAY LẬP TỨC: quét lại kho, dựng lại ngữ cảnh Trợ lý, và
-   * mọi worker phóng SAU thời điểm này dùng bản mới (chúng đọc `hot()` lúc
-   * dựng prompt). Worker đang chạy giữ nguyên bản cũ — cùng luật với đổi model:
-   * đổi luật giữa ván thì không ván nào đọc được.
+   * A 1-to-1, IMMEDIATE effect: rescans the store, rebuilds the Assistant's
+   * context, and every worker launched AFTER this point uses the new version
+   * (they read `hot()` while building their prompt). A running worker keeps
+   * its old version — same rule as changing the model: changing the rules
+   * mid-hand means no hand reads it.
    *
-   * Cái giá phải nói ra: node tri thức nằm trong prefix được cache, nên mỗi lần
-   * sửa là một lần ghi lại cache cho những vai trò có node đó trong phần HOT.
+   * The cost has to be stated: a knowledge node sits inside a cached prefix,
+   * so every edit rewrites the cache for any role that has that node in its
+   * HOT section.
    */
   editKnowledge(id: string, patch: { body?: string; remove?: boolean }): void {
     this.assertLive();
     const ok = patch.remove
       ? this.knowledge.removeNode(id)
       : this.knowledge.editNode(id, patch.body ?? '');
-    if (!ok) throw new RunError(`Không có ghi chú "${id}".`, 'other');
+    if (!ok) throw new RunError(t('off.noNote', { id }), 'other');
 
     this.knowledge.scan();
     this.refreshAssistantContext();
@@ -2720,7 +3140,7 @@ export class Office {
     });
   }
 
-  /** Prompt phân lớp để NGƯỜI XEM ĐƯỢC. → SPEC-offices.md §4.1 */
+  /** Layered prompt, made VIEWABLE BY A PERSON. → SPEC-offices.md §4.1 */
   describePrompt(who: string): PromptLayer[] {
     const hot =
       who === 'assistant'
@@ -2730,17 +3150,18 @@ export class Office {
             this.loaded.roles.get(who)?.hot_knowledge_size ?? 8,
             this.loaded.company.budgets.hot_knowledge_tokens,
           ).text;
-    // Ghi nhớ hội thoại chỉ có với Trợ lý — nhân viên không có, và không được có.
+    // Conversation memory only exists for the Assistant — a worker has none, and must not have any.
     const memory = who === 'assistant' ? this.knowledge.assistantMemoryText() : '';
-    // Hai bảng kê chỉ có với Trợ lý. Tủ tài liệu: nhân viên tìm bằng `Grep`.
-    // Kết quả: nhân viên nhận đường dẫn qua `inputs`, không cần danh sách —
-    // và đó là chốt giữ cho prefix của họ không phình theo số ca đã chạy.
+    // Both manifests only exist for the Assistant. The library: a worker
+    // searches with `Grep`. Output: a worker receives paths via `inputs`, no
+    // list needed — and that's the gate keeping its prefix from growing with
+    // every past run.
     const library = who === 'assistant' ? this.library.manifest() : '';
     const artifacts = who === 'assistant' ? this.artifactManifest() : '';
     return describePrompt(this.loaded, who, hot, memory, library, artifacts);
   }
 
-  /** cacheKey hiện tại của từng vai trò — để chẩn đoán prefix bị phá. */
+  /** Each role's current cacheKey — for diagnosing a broken prefix. */
   cacheKeys(): Array<{ role: string; key: string; staticTokens: number; model: string }> {
     return [...this.loaded.roles.values()].map((r) => {
       const model = this.loaded.company.models[r.model_tier];
@@ -2757,54 +3178,66 @@ export class Office {
   }
 
   /**
-   * NÉN TRÍ NHỚ TRỢ LÝ vào kho riêng của nó, rồi bắt đầu hội thoại mới.
-   * → docs/SPEC-offices.md §4.6
+   * COMPACTS THE ASSISTANT'S MEMORY into its own dedicated store, then starts
+   * a fresh conversation. → docs/SPEC-offices.md §4.6
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO CHỦ ĐỘNG NÉN, THAY VÌ ĐỂ CLI TỰ NÉN                              │
+   * │ WHY COMPACT PROACTIVELY, INSTEAD OF LETTING THE CLI DO IT ON ITS OWN      │
    * │                                                                          │
-   * │ CLI Claude Code CÓ auto-compact (SDK phơi ra hook `PreCompact`/          │
-   * │ `PostCompact` với `trigger: 'manual' | 'auto'`). Nghĩa là nén SẼ xảy ra  │
-   * │ dù ta muốn hay không.                                                    │
+   * │ The Claude Code CLI DOES have auto-compact (the SDK exposes             │
+   * │ `PreCompact`/`PostCompact` hooks with `trigger: 'manual' | 'auto'`).       │
+   * │ Meaning compaction WILL happen whether we want it to or not.               │
    * │                                                                          │
-   * │ Rủi ro không phải tràn bộ nhớ — mà là nén tự động LÀ MẤT MÁT, xảy ra ở  │
-   * │ ngưỡng ta không thấy, giữ lại thứ ta không chọn, vào một cái kho ta      │
-   * │ không đọc được. Trợ lý sẽ quên một quyết định nào đó, lúc nào đó, và     │
-   * │ không ai biết.                                                           │
+   * │ The risk isn't running out of memory — it's that automatic compaction IS  │
+   * │ A LOSS, happening at a threshold we can't see, keeping what we didn't       │
+   * │ choose, into a store we can't read. The Assistant will forget some          │
+   * │ decision, at some point, and nobody will know.                            │
    * │                                                                          │
-   * │ Nén chủ động: đúng thời điểm ta chọn (ranh giới một công việc vừa xong), │
-   * │ vào một file người dùng mở ra đọc được, và có `supersedes` để bản cũ     │
-   * │ rời khỏi prompt mà không mất dấu vết.                                    │
+   * │ Proactive compaction: at a moment WE choose (the boundary right after a     │
+   * │ job finishes), into a file the user can open and read, with `supersedes`    │
+   * │ so the old version leaves the prompt without losing its trail.             │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Vào `knowledge/agents/assistant/`, KHÔNG vào kho chung: ký ức hội thoại của
-   * Trợ lý là thứ nhân viên viết bài không cần biết và không dùng được.
+   * Goes into `knowledge/agents/assistant/`, NOT the shared store: the
+   * Assistant's conversation memory is something a worker writing content
+   * has no need for and no use for.
    */
   async compactMemory(): Promise<{ saved: boolean; note: string }> {
     this.assertLive();
-    // Chưa có hội thoại nào để nén — nhưng VẪN PHẢI DỌN RÁC.
+    // No conversation to compact yet — but STILL HAS TO CLEAN UP.
     //
-    // Bản trước return thẳng ở đây, nên người dùng gõ `/clear` lần thứ hai (lúc
-    // session đã sạch) thì không có gì xảy ra cả: node bị đè vẫn nằm nguyên,
-    // ghi chú cũ vẫn nằm nguyên. Đúng lúc họ đang cố dọn thì lệnh dọn im lặng.
+    // The old version returned immediately here, so a user typing `/clear` a
+    // second time (with an already-clean session) got nothing at all: a
+    // superseded node stayed as-is, an old note stayed as-is. Exactly while
+    // they were trying to clean up, the clean-up command went silent.
     if (!this.assistant.session) {
       const swept = this.finishClear();
       return {
         saved: false,
-        note: swept ? `Chưa có gì mới để nhớ.${swept}` : 'Chưa có gì để nhớ — bắt đầu mới luôn.',
+        note: swept ? `${t('off.nothingNewToRemember')}${swept}` : t('off.nothingToRemember'),
       };
     }
 
     let saved = false;
+    /**
+     * Captured BEFORE the turn, not after: a job that finishes while the
+     * compaction is in flight was not in the listing the model just read, so
+     * marking it as covered would lose it.
+     */
+    const upTo = new Date().toISOString();
     try {
       const result = await this.mailbox.lock(() => this.assistant.compact(this.factSkeleton()));
       this.logAssistantUsage('report', result.usage);
       const body = result.value;
-      // "KHÔNG" là câu trả lời hợp lệ và đáng tôn trọng: ép ghi một node rỗng
-      // vào kho là tự đầu độc phần HOT của chính mình ở mọi lượt sau.
-      if (body && !/^KHÔNG\.?$/i.test(body)) {
+      // "NOTHING" is a valid answer and deserves respect: forcing an empty node
+      // into the store poisons this office's own HOT prefix on every later turn.
+      //
+      // ⚠ The sentinel is ENGLISH in every locale — it is a protocol token the
+      // prompt asks for verbatim (`Assistant.COMPACT_RULES`), not prose. Making
+      // it follow the switch would break this branch the day someone flips it.
+      if (body && !/^NOTHING\.?$/i.test(body)) {
         this.knowledge.addAssistantMemory(
-          `Ghi nhớ tới ${new Date().toISOString().slice(0, 10)}`,
+          t('off.memoryUpTo', { date: new Date().toISOString().slice(0, 10) }),
           body,
           this.knowledge.assistantMemoryIds(),
         );
@@ -2813,71 +3246,113 @@ export class Office {
     } catch (err) {
       /**
        * ┌──────────────────────────────────────────────────────────────────────┐
-       * │ BUG ĐÃ SỬA (20/08): `/clear` KẸT VĨNH VIỄN, không có đường thoát.    │
+       * │ BUG FIXED (08/20): `/clear` GETTING STUCK FOREVER, no way out.        │
        * │                                                                      │
-       * │ Bản trước gộp MỌI lỗi nén vào một nhánh "giữ nguyên cuộc trò chuyện".│
-       * │ Ý định đúng cho lỗi TẠM (mạng, hết hạn mức) — nhưng sai hoàn toàn    │
-       * │ cho lỗi VĨNH VIỄN.                                                    │
+       * │ The old version merged EVERY compaction error into one "keep the        │
+       * │ conversation as-is" branch. The right instinct for a TEMPORARY error       │
+       * │ (network, out of usage) — but completely wrong for a PERMANENT one.       │
        * │                                                                      │
-       * │ Nén chạy `resume: <session_id>`, và bản ghi hội thoại đó nằm trong   │
-       * │ `~/.claude/projects/` — MỘT THƯ MỤC AGENTCO KHÔNG SỞ HỮU. Người dùng │
-       * │ dọn nó, đổi tên thư mục công ty, hay bê máy khác là bản ghi biến     │
-       * │ mất. Từ giây phút đó, mọi lần gõ `/clear` đều ném cùng một lỗi, và ô │
-       * │ chat KHÔNG BAO GIỜ dọn được nữa. Lệnh dọn duy nhất của sản phẩm chết │
-       * │ cứng, còn câu lỗi thì nói "mình giữ nguyên cuộc trò chuyện" như thể  │
-       * │ đó là một lựa chọn.                                                   │
+       * │ Compaction runs `resume: <session_id>`, and that conversation record      │
+       * │ lives under `~/.claude/projects/` — A DIRECTORY AGENTCO DOES NOT OWN.     │
+       * │ A user cleaning it up, renaming the company directory, or moving to a     │
+       * │ different machine makes the record vanish. From that moment on, every     │
+       * │ `/clear` throws the same error, and the chat pane can NEVER be cleared     │
+       * │ again. The product's only clean-up command dies permanently, while the     │
+       * │ error message says "keeping the conversation as-is" as if that were a      │
+       * │ choice.                                                                │
        * │                                                                      │
-       * │ Mất trí nhớ là chuyện ĐÃ RỒI ở thời điểm này — bản ghi không còn thì │
-       * │ không ai nén được nó nữa. Giữ thêm một ô chat không xoá được chỉ là   │
-       * │ mất thêm lần thứ hai. Nên: dọn, và NÓI THẬT đã mất gì.                │
+       * │ Losing the memory is ALREADY DONE at this point — once the record is       │
+       * │ gone, nobody can compact it anymore. Keeping an uncleanable chat pane       │
+       * │ around is just a second loss on top of the first. So: clean up, and       │
+       * │ STATE HONESTLY what was lost.                                         │
        * └──────────────────────────────────────────────────────────────────────┘
        */
       if (!sessionGone(err)) {
-        // Lỗi TẠM — thà giữ một bản ghi dài còn hơn mất trắng. Gõ lại sau là được.
+        // A TEMPORARY error — better to keep a long record than lose it entirely. Retry later.
         return {
           saved: false,
           note:
-            `Chưa nén được trí nhớ (${err instanceof Error ? err.message : 'lỗi'}), ` +
-            'nên mình giữ nguyên cuộc trò chuyện. Bạn thử lại /clear sau nhé.',
+            t('off.compactFailed', {
+              reason: err instanceof Error ? err.message : t('off.anError'),
+            }),
         };
       }
       const swept = this.finishClear();
       return {
         saved: false,
         note:
-          'Mình không đọc lại được cuộc trò chuyện cũ (bản ghi của Claude Code đã bị dọn), ' +
-          `nên không cất lại được gì. Đã dọn ô chat, bắt đầu mới.${swept}`,
+          `${t('off.transcriptGone')}${swept}`,
       };
     }
 
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ THE MARKER MOVES ON **SUCCESS**, NOT ON "A NODE WAS WRITTEN".        │
+     * │                                                                      │
+     * │ My first draft tied it to `saved`, which folds `NOTHING` in with a    │
+     * │ crash. The user caught what that costs: `NOTHING` repeated would      │
+     * │ never advance the marker, so the window would grow without bound and  │
+     * │ every later compaction would re-read a longer and longer log.        │
+     * │                                                                      │
+     * │ The two cases are not alike:                                         │
+     * │  · a THROW — the turn never happened, nobody summarised anything, so  │
+     * │    the window must stay open. Both `catch` branches return above      │
+     * │    without touching the marker, including `sessionGone`: the          │
+     * │    transcript is lost, but those jobs are still on disk and the NEXT  │
+     * │    compaction can still record them from the facts.                  │
+     * │  · `NOTHING` — the turn ran and gave its answer: *this stretch of     │
+     * │    work taught nothing worth keeping*. The code already respects that │
+     * │    answer by writing no node; respecting it means consuming the       │
+     * │    window too, or we are just asking the same question again forever. │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    this.compactedThrough = upTo;
+    // `finishClear` persists it — see the note there on why the write lives
+    // inside that function and not on this line.
     const tail = this.finishClear();
     return {
       saved,
       note:
         (saved
-          ? 'Đã dọn cuộc trò chuyện. Những gì bạn đã chốt mình cất vào sổ tay riêng, mở ở ngăn Tri thức xem được.'
-          : 'Đã dọn cuộc trò chuyện.') + tail,
+          ? t('off.clearedWithNotebook')
+          : t('off.cleared')) + tail,
     };
   }
 
   /**
-   * Dọn THẬT: quên session, xoá con trỏ, xoá nhật ký hội thoại, dọn kho, báo UI.
+   * The REAL clean-up: forgets the session, deletes the pointer, deletes the
+   * chat log, sweeps the store, notifies the UI.
    *
-   * Gộp một chỗ vì `compactMemory` có BA đường tới đây — chưa có gì để nén, nén
-   * xong, và bản ghi hội thoại đã biến mất. Bản trước viết tay từng đường, nên
-   * đường "chưa có gì để nén" thiếu mất `knowledge.changed`: `pruneNow()` có thể
-   * vừa xoá vài node xong mà ngăn Tri thức vẫn hiện số cũ cho tới lần mở lại.
+   * Merged into one place because `compactMemory` has THREE paths leading
+   * here — nothing to compact yet, compaction finished, and the conversation
+   * record has vanished. The old version hand-wrote each path, so the
+   * "nothing to compact yet" path was missing `knowledge.changed`:
+   * `pruneNow()` could have just deleted a few nodes while the Knowledge pane
+   * kept showing the old count until the next time it was reopened.
    *
-   * Trả về câu đuôi của `pruneNow()` để người gọi ghép vào báo cáo.
+   * Returns `pruneNow()`'s trailing sentence for the caller to append to its report.
    */
   private finishClear(): string {
     const tail = this.pruneNow();
     this.assistant.forget();
     fs.rmSync(this.sessionFile(), { force: true });
+    /**
+     * ⚠ REWRITES the compaction marker the file just took with it.
+     *
+     * The whole file is removed to drop the session pointer, but the marker is
+     * NOT part of the conversation — it records how far the WORK LOG has been
+     * squashed, which `/clear` does not undo. Sits here rather than at the one
+     * call site that moves it, because all three callers delete this file and
+     * only one of them was thinking about the marker; a second `/clear` would
+     * otherwise wipe it and hand the next compaction the entire log again —
+     * the exact bug this marker exists to close.
+     */
+    this.saveSessionId();
     this.clearChatLog();
-    // Phát TRƯỚC câu báo kết quả: đây là lệnh "xoá những gì đang hiện", nên câu
-    // đi sau nó mới là câu đầu tiên của cuộc trò chuyện mới.
-    this.emit({ type: 'office.cleared', say: 'Đã dọn cuộc trò chuyện.', plan_id: null });
+    // Fires BEFORE the result sentence: this is the "erase what's currently
+    // shown" command, so the sentence that follows it becomes the first
+    // sentence of the new conversation.
+    this.emit({ type: 'office.cleared', say: t('off.cleared'), plan_id: null });
     this.knowledge.scan();
     this.refreshAssistantContext();
     this.emit({
@@ -2890,152 +3365,162 @@ export class Office {
   }
 
   /**
-   * Tự nén khi ngữ cảnh vượt trần. → docs/SPEC-token-economy.md §4
+   * Auto-compacts when context goes over the cap. → docs/SPEC-token-economy.md §4
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ KIỂM Ở ĐÂU VÀ VÌ SAO — hai quyết định tách biệt:                        │
+   * │ WHERE IT'S CHECKED AND WHY — two separate decisions:                     │
    * │                                                                          │
-   * │ NGƯỠNG là `budgets.master_compact_at` (mặc định 60 000), đo bằng         │
-   * │ `assistant.contextTokens` — tức `cache_read` thật của lượt gần nhất, chứ │
-   * │ không phải một phép đếm tay. Cửa sổ là 200K nên 60K còn rất nhiều dư     │
-   * │ địa: ta muốn chặn TRƯỚC auto-compact của CLI, không phải chạy đua với    │
-   * │ nó. Và vì `chi phí ≈ lượt × prefix × 0.1`, ngữ cảnh nhỏ là rẻ ở MỌI      │
-   * │ lượt, không chỉ ở lượt nén.                                              │
+   * │ The THRESHOLD is `budgets.master_compact_at` (default 60,000), measured    │
+   * │ against `assistant.contextTokens` — i.e. the REAL `cache_read` of the       │
+   * │ most recent turn, not a hand-rolled estimate. The window is 200K, so 60K    │
+   * │ still leaves plenty of room: the goal is to block BEFORE the CLI's own      │
+   * │ auto-compact, not to race it. And because `cost ≈ turns × prefix × 0.1`,     │
+   * │ a smaller context is cheaper on EVERY turn, not just the compacting one.     │
    * │                                                                          │
-   * │ THỜI ĐIỂM là ranh giới một công việc vừa xong — chứ không phải "hễ vượt  │
-   * │ ngưỡng là nén ngay". Nén giữa lúc người dùng đang hỏi dở là cắt đúng     │
-   * │ chỗ mạch chuyện đang liền, và bản tóm tắt sẽ tệ hơn hẳn. Một việc xong   │
-   * │ là một đường may tự nhiên.                                               │
+   * │ The TIMING is the boundary right after a job finishes — not "the instant    │
+   * │ the threshold is crossed, compact immediately". Compacting mid-question       │
+   * │ would cut exactly where the thread is continuous, and the summary would      │
+   * │ come out far worse. A finished job is a natural seam.                      │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * ⚠ Token của NHÂN VIÊN không tính vào đây. Worker chạy `persistSession:
-   * false` ở query riêng, khâu lập kế hoạch cũng vậy — chỉ `route()` (mỗi tin
-   * nhắn) và `report()` (mỗi ca) làm bản ghi này phình.
+   * ⚠ A WORKER's tokens don't count toward this. A worker runs with
+   * `persistSession: false` in its own query, and so does the planning step —
+   * only `route()` (every message) and `report()` (every run) grow this record.
    */
   private maybeCompact(): void {
     const limit = this.loaded.company.budgets.master_compact_at;
     if (this.assistant.contextTokens < limit) return;
-    // Cùng đường với `/clear`: một câu trạng thái tạm, KHÔNG một tin nhắn nào.
-    // Tự nén còn cần điều đó hơn cả `/clear` — người dùng không hề gõ lệnh gì,
-    // nên một bong bóng chat tự mọc ra là thứ họ không giải thích được.
+    // Same pattern as `/clear`: a temporary status sentence, NOT a message.
+    // Auto-compaction needs this even more than `/clear` does — the user
+    // never typed a command at all, so a chat bubble sprouting on its own is
+    // something they can't explain.
     void this.compactMemory()
-      .then((r) => this.emitNote(`Cuộc trò chuyện đã dài, mình dọn bớt cho nhẹ. ${r.note}`, 6_000))
+      .then((r) => this.emitNote(t('off.autoCompacted', { note: r.note }), 6_000))
       .catch(() => {
-        /* Nén hỏng thì giữ nguyên — `compactMemory` không quên khi lỗi. */
+        /* If compaction fails, leave things as they are — `compactMemory` doesn't forget on error. */
       });
   }
 
   /**
-   * Bộ khung SỰ THẬT, dựng bằng code từ `tasks/index.json`. 0 token.
+   * The FACT skeleton, built by code from `tasks/index.json`. 0 tokens.
    *
-   * Đưa vào để model KHÔNG phải kể lại — và để nó không kể sai. Việc đã chạy,
-   * kết quả ở đâu, tốn bao nhiêu đều là dữ liệu ta đang cầm; thứ duy nhất chỉ
-   * model biết là những gì người dùng đã nói mà không nằm trong bản ghi nào.
+   * Fed in so the model does NOT have to recall it — and so it can't recall
+   * it wrong. Which jobs ran, where the output is, what it cost are all data
+   * already in hand; the only thing only the model knows is what the user
+   * has said that lives in no record at all.
    */
   private factSkeleton(): string {
-    const plans = this.plans.list().slice(0, 12);
-    if (plans.length === 0) return '(chưa có việc nào chạy)';
-    return plans
-      .map((p) => `- [${p.status}] ${p.request}${p.report ? `\n  → ${p.report.split('\n')[0]}` : ''}`)
-      .join('\n');
+    return workSkeleton(this.plans.list(), this.compactedThrough);
   }
 
   /**
-   * Dọn kho ngay, trả về câu đuôi để ghép vào báo cáo (rỗng nếu không bỏ gì).
+   * Sweeps the store right now, returns a trailing sentence to append to the
+   * report (empty if nothing was dropped).
    *
-   * `/clear` là lúc DUY NHẤT người dùng chủ động nói "dọn đi", nên gộp mọi việc
-   * dọn vào đúng nhịp đó — thay vì rải một bộ hẹn giờ chạy ngầm mà không ai thấy
-   * và không ai kiểm được.
+   * `/clear` is the ONE moment the user actively says "clean up", so all the
+   * cleaning is merged into that exact beat — rather than scattered across a
+   * set of background timers nobody can see or check.
    */
   private pruneNow(): string {
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ BUG ĐÃ SỬA: node bị đè vẫn nằm lại, dù lần trước đã "sửa rồi".        │
+     * │ BUG FIXED: a superseded node stayed behind, even though it was "fixed  │
+     * │ last time".                                                           │
      * │                                                                      │
-     * │ HAI nguyên nhân ĐỘC LẬP — và đó chính là lý do bản vá trước chỉ giết  │
-     * │ được một nửa, rồi ai cũng tưởng xong:                                 │
+     * │ TWO INDEPENDENT CAUSES — and that's exactly why the previous fix only   │
+     * │ killed half of it, and everyone assumed it was done:                    │
      * │                                                                      │
-     * │  1. QUÉT MUỘN. `addAssistantMemory` GHI file mới (mang `supersedes`)  │
-     * │     nhưng KHÔNG `scan()`. Tập `superseded` chỉ được dựng lại lúc quét,│
-     * │     nên ngay sau đó `pruneStale` vẫn đang cầm tập CŨ — bản vừa bị đè  │
-     * │     không có trong đó. Nó chỉ chết ở lần `/clear` KẾ TIẾP, tức là     │
-     * │     người dùng luôn nhìn thấy đúng một node thừa, mãi mãi.            │
+     * │  1. SCANNED TOO LATE. `addAssistantMemory` WRITES the new file          │
+     * │     (carrying `supersedes`) but does NOT `scan()`. The `superseded`      │
+     * │     set only gets rebuilt during a scan, so right after that,             │
+     * │     `pruneStale` is still holding the OLD set — the version that just     │
+     * │     got superseded isn't in it. It only dies on the NEXT `/clear`, i.e.    │
+     * │     the user always sees exactly one leftover node, forever.              │
      * │                                                                      │
-     * │  2. CHẶN NHẦM CỬA. `prune_after_days <= 0` là lựa chọn hợp lệ ("đừng  │
-     * │     tự xoá ghi chú của tôi theo tuổi"), nhưng nó `return` sớm và cuốn │
-     * │     theo cả việc dọn node bị đè. Mà xoá node bị đè KHÔNG PHẢI lão hoá │
-     * │     — nó là "bản này đã được thay thế", đúng hay sai không liên quan  │
-     * │     gì tới ngày tháng. Hai việc khác nhau thì không dùng chung cổng.  │
+     * │  2. BLOCKED AT THE WRONG GATE. `prune_after_days <= 0` is a valid         │
+     * │     choice ("don't auto-delete my notes by age"), but it `return`ed        │
+     * │     early and dragged the superseded-node cleanup down with it. But        │
+     * │     deleting a superseded node is NOT aging out — it's "this version       │
+     * │     has been replaced", which has nothing to do with dates, right or       │
+     * │     wrong. Two different things must not share one gate.                  │
      * └──────────────────────────────────────────────────────────────────────┘
      *
-     * Quét TRƯỚC: mọi thứ dưới đây đọc `superseded`, mà tập đó chỉ đúng sau khi
-     * đã đọc lại đĩa. Đây là bước bản trước thiếu.
+     * Scans FIRST: everything below reads `superseded`, and that set is only
+     * correct after disk has been reread. This is the step the old version
+     * was missing.
      */
     this.knowledge.scan();
 
-    // Node bị đè: xoá LUÔN, không qua cổng `prune_after_days`.
+    // A superseded node: delete it IMMEDIATELY, no gate through `prune_after_days`.
     const replaced = this.knowledge.dropSuperseded();
 
     const days = this.loaded.company.librarian.prune_after_days;
-    // Sổ tay của người đã cất được miễn trừ — xem `pruneStale`.
+    // An archived person's notebook is exempt — see `pruneStale`.
     const aged = days > 0 ? this.knowledge.pruneStale(days, this.loaded.archivedRoles) : [];
 
     if (replaced.length === 0 && aged.length === 0) return '';
     this.knowledge.scan();
 
-    // Nói RIÊNG hai loại: "bản cũ bị thay" là chuyện bình thường và đáng yên
-    // tâm; "ghi chú cũ bị dọn" là mất mát thật. Gộp một câu thì người dùng
-    // không biết mình vừa mất gì.
+    // States the two kinds SEPARATELY: "an old version got replaced" is
+    // normal and reassuring; "an old note got swept away" is a real loss.
+    // Merging them into one sentence leaves the user not knowing what they
+    // just lost.
     const parts: string[] = [];
-    if (replaced.length) parts.push(`${replaced.length} bản ghi nhớ cũ đã được thay`);
-    if (aged.length) parts.push(`${aged.length} ghi chú lâu không dùng`);
-    return ` Dọn luôn ${parts.join(' và ')}.`;
+    if (replaced.length) parts.push(plural('off.sweptReplaced', replaced.length));
+    if (aged.length) parts.push(plural('off.sweptAged', aged.length));
+    return ` ${t('off.sweptAlso', { what: parts.join(t('off.sweptAnd')) })}`;
   }
 
   private clearChatLog(): void {
     fs.rmSync(path.join(this.loaded.paths.state, 'chat.jsonl'), { force: true });
   }
 
-  /** Nạp lại từ đĩa. Giữ nguyên session Trợ lý — nạp lại config không phải quên hội thoại. */
+  /** Reloads from disk. Keeps the Assistant's session intact — reloading config isn't forgetting the conversation. */
   reload(): void {
     this.applyCompanyConfig(this.loaded.company);
   }
 
-  // `readArtifact` ĐÃ BỎ (19/08). Nó đọc bất kỳ file nào trong văn phòng —
-  // `roles/*.yaml`, `charter.md`, `office.yaml` — chỉ vì tên nó nghe như chỉ
-  // đọc artifact; và nó luôn `readFileSync(…, 'utf8')` nên làm hỏng mọi file
-  // nhị phân. Thay bằng `ArtifactStore`, nhốt trong `artifacts/` và stream.
+  // `readArtifact` was REMOVED (08/19). It read any file at all inside the
+  // office — `roles/*.yaml`, `charter.md`, `office.yaml` — just because its
+  // name sounded like it only read artifacts; and it always called
+  // `readFileSync(…, 'utf8')`, so it corrupted every binary file. Replaced by
+  // `ArtifactStore`, locked to `artifacts/` and streamed.
   // → src/core/artifacts.ts
 
   /**
-   * Artifact do một task BỊ NGẮT GIỮA CHỪNG ghi ra. → SPEC-artifacts.md §2.7
+   * An artifact written by a task that got INTERRUPTED MID-RUN. →
+   * SPEC-artifacts.md §2.7
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ CA HỎNG NGUY HIỂM NHẤT TÌM ĐƯỢC TỚI GIỜ — đo được 21/08.                 │
+   * │ THE MOST DANGEROUS FAILURE FOUND SO FAR — measured 08/21.                │
    * │                                                                          │
-   * │ User bấm Dừng đúng lúc `Người đọc` đang tách hợp đồng. Hợp đồng có **5**  │
-   * │ điều khoản; nó kịp ghi **3**. Receipt ghi đúng: `status: 'blocked'`,      │
-   * │ *"Đã dừng giữa chừng. Có 4 file đã ghi dở, xem lại trước khi dùng."*      │
+   * │ A user hit Stop right as `Người đọc` was splitting a contract into            │ // i18n-allow-vietnamese: the real role's actual display name from the recorded incident
+   * │ clauses. The contract had **5** clauses; it had managed to write **3**.      │
+   * │ The receipt recorded it correctly: `status: 'blocked'`, *"Stopped mid-run.    │
+   * │ 4 files were left partially written, review before use."*                    │
    * │                                                                          │
-   * │ Rồi ca sau đọc thư mục đó, thấy 3 file, và trả về:                        │
-   * │   *"Đã soi xong CẢ 3 điều khoản, cả ba đều bất lợi…"* → checklist 16 điểm │
+   * │ Then a later run read that directory, saw 3 files, and reported:             │
+   * │   *"Reviewed ALL 3 clauses, all three are unfavorable…"* → a 16-point         │
+   * │   checklist                                                             │
    * │                                                                          │
-   * │ 🔥 Người dùng nhận một bản rà soát hợp đồng **trông hoàn hảo, bỏ sót 40%**│
-   * │ và không có một dòng nào nói rằng nó thiếu. Đây đúng là *"sai mà không ai │
-   * │ biết"* — kết cục tệ nhất trong mọi kết cục.                               │
+   * │ 🔥 The user got a contract review that **looks complete, missing 40%**       │
+   * │ and not one line stating it was incomplete. This is exactly *"wrong with     │
+   * │ nobody knowing"* — the worst outcome of all.                                 │
    * │                                                                          │
-   * │ ⚠ Nhãn `UNFINISHED` ở cấp CA không cứu được: nó nói *"ca chưa xong"*,     │
-   * │ không nói *"file NÀY thiếu"*. Và `isStale` cũng không: nguồn không đổi,   │
-   * │ file vẫn tươi — nó chỉ CỤT. Phải là một nhãn thứ ba.                      │
+   * │ ⚠ A RUN-level `UNFINISHED` label can't rescue this: it says *"the run          │
+   * │ isn't finished"*, not *"THIS file is incomplete"*. And `isStale` can't          │
+   * │ either: the source hasn't changed, the file is still fresh — it's just         │
+   * │ CUT SHORT. It needs to be a third label entirely.                            │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Quan sát được, không đoán: receipt của mỗi task nằm trên đĩa và mang cả
-   * `status` lẫn `landed` — tức là *"ai bị ngắt"* và *"nó đã kịp ghi file nào"*.
-   * Ta chỉ việc nối hai thứ đang cầm.
+   * Observed, not guessed: each task's receipt sits on disk and carries both
+   * `status` and `landed` — i.e. *"who got interrupted"* and *"which files did
+   * it manage to write"*. All that's needed is joining two things already in
+   * hand.
    *
-   * ⚠ Nhãn nói **"làm lại bước đó"**, không phải "cẩn thận nhé". Với một file
-   * cụt thì không có mức độ cẩn thận nào cứu được: cái thiếu KHÔNG nằm trong
-   * file, nên đọc kỹ đến mấy cũng không thấy nó.
+   * ⚠ The label says **"redo that step"**, not "be careful with this". With a
+   * cut-short file, no amount of care rescues it: the missing part is NOT in
+   * the file, so no amount of careful reading will find it.
    */
   private partialIn(planId: string): Set<string> {
     const out = new Set<string>();
@@ -3052,30 +3537,32 @@ export class Office {
         const r = JSON.parse(
           fs.readFileSync(path.join(this.loaded.paths.tasks, name), 'utf8'),
         ) as Receipt;
-        // CHỈ task bị cắt ngang. `done` thì thứ nó ghi là thứ nó định ghi; một
-        // task chưa bao giờ chạy thì không có file nào để dán nhãn.
+        // ONLY a task that got cut off mid-run. A `done` task wrote exactly
+        // what it meant to write; a task that never ran has no file to label.
         if (r.status === 'done') continue;
         for (const l of r.landed ?? []) {
           if (l.kind === 'file' && l.ref) out.add(l.ref);
         }
       } catch {
-        /* receipt hỏng — không đoán bừa, xem `staleIn` */
+        /* corrupted receipt — don't guess, see `staleIn` */
       }
     }
     return out;
   }
 
   /**
-   * Artifact nào ĐÃ ÔI: nguồn của nó đổi sau khi nó được ghi. → `isStale`
+   * Which artifacts have gone STALE: their source changed after they were
+   * written. → `isStale`
    *
-   * Quan hệ "file này sinh ra từ file kia" KHÔNG phải phỏng đoán — `plan.json`
-   * ghi rõ từng task đọc gì (`inputs`) và ghi ra gì (`outputs`). Ta chỉ việc so
-   * `mtime` hai đầu.
+   * The "this file was generated from that file" relationship is NOT a
+   * guess — `plan.json` records exactly what each task read (`inputs`) and
+   * wrote (`outputs`). All that's needed is comparing `mtime` on both ends.
    *
-   * Chỉ chạy cho ca CHƯA XONG và chỉ ≤ `MANIFEST_PLANS` ca được hiện, nên nó
-   * đọc nhiều nhất vài file JSON nhỏ mỗi lần dựng prefix. Ca đã xong không cần:
-   * kết quả trọn vẹn thì "ôi" là chuyện của lần chạy sau, không phải của việc
-   * quyết định có dùng lại một mớ dở dang hay không.
+   * Only runs for jobs NOT YET DONE, and only the ≤ `MANIFEST_PLANS` jobs
+   * shown, so it reads at most a few small JSON files each time the prefix is
+   * built. A finished job doesn't need this: with a complete result, "going
+   * stale" is a concern for the next run, not a factor in deciding whether to
+   * reuse an unfinished batch.
    */
   private staleIn(
     planId: string,
@@ -3089,28 +3576,33 @@ export class Office {
       if (!fs.existsSync(file)) return out;
       plan = JSON.parse(fs.readFileSync(file, 'utf8')) as Plan;
     } catch {
-      // Không đọc được kế hoạch thì KHÔNG đoán bừa là ôi. Dán nhãn cảnh báo sai
-      // còn tệ hơn không dán: người dùng học cách bỏ qua nhãn đó.
+      // Failing to read the plan means DO NOT guess that it's stale. A wrong
+      // warning label is worse than no label: the user learns to ignore it.
       return out;
     }
 
     const norm = (p: string): string => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
     const armDirs = armDirIndex(this.loaded.company.arms, this.loaded.company.mcpServers);
     for (const t of plan.tasks ?? []) {
-      // `mtime` của một input đọc THẲNG từ đĩa: nguồn thường là tài liệu trong
-      // tủ, và tủ không nằm trong bảng kê kết quả.
+      // An input's `mtime` read STRAIGHT from disk: the source is usually a
+      // library document, and the library isn't part of the output manifest.
       const srcTimes: string[] = [];
       for (const i of t.inputs ?? []) {
-        // `resolveInput` chứ không phải `safeJoin`: đầu vào có thể là một đường
-        // dẫn TUYỆT ĐỐI ngoài văn phòng, hoặc **tên một cánh tay** (`Musics`).
-        // Dùng safeJoin thì mọi kết quả dựng từ nguồn bên ngoài lặng lẽ mất
-        // phép kiểm "có ôi không" — chỗ thứ BA của cùng một luật. → paths.ts
+        // A connection has no file, so it has no mtime and can say nothing
+        // about staleness. Skipping is not the same as "fresh": a task with
+        // ONLY connection inputs collects no times, and `srcTimes.length === 0`
+        // below already means "no conclusion", which is the honest answer.
+        if (i.kind === 'connection') continue;
+        // `resolveInput`, not `safeJoin`: an input can be an ABSOLUTE path
+        // outside the office, or **an arm's name** (`Musics`). Using safeJoin
+        // would silently drop the "is it stale" check for any output built
+        // from an outside source — the THIRD spot for the same rule. → paths.ts
         const abs = resolveInput(this.loaded.dir, i.path, armDirs);
         if (!abs) continue;
         try {
           srcTimes.push(fs.statSync(abs).mtime.toISOString());
         } catch {
-          /* nguồn đã biến mất — không kết luận gì, `missingInputs` lo ca đó */
+          /* the source has vanished — draws no conclusion, `missingInputs` handles that case */
         }
       }
       if (srcTimes.length === 0) continue;
@@ -3118,8 +3610,9 @@ export class Office {
       const owned = new Set((t.outputs ?? []).map((o) => norm(o.path)));
       for (const p of paths) {
         const made = mtimes.get(p);
-        // `outputs` có thể là một THƯ MỤC (ca "mỗi điều khoản một file"), nên
-        // vừa so bằng vừa so tiền tố — cùng luật với `contains` ở scheduler.
+        // `outputs` can be a DIRECTORY (the "one file per clause" case), so
+        // it checks both exact match and prefix — same rule as `contains` in
+        // the scheduler.
         const mine = owned.has(norm(p)) || [...owned].some((o) => norm(p).startsWith(`${o}/`));
         if (mine && made && isStale(made, srcTimes)) out.add(p);
       }
@@ -3128,11 +3621,12 @@ export class Office {
   }
 
   /**
-   * Việc còn dở của ca bị NGẮT. → SPEC-offices.md §6b
+   * Unfinished work from an INTERRUPTED run. → SPEC-offices.md §6b
    *
-   * Nhận cả hình dạng cũ (mảng trần, chưa có `plan_id`) để một lần nâng cấp
-   * không làm mất việc đang chờ của người dùng — nhưng ca đó không chạy tiếp
-   * được, và `resumable()` nói thẳng ra thay vì im lặng bỏ qua.
+   * Also accepts the old shape (a bare array, no `plan_id`) so a single
+   * upgrade doesn't lose a user's pending work — but that job can't be
+   * resumed, and `resumable()` states so outright instead of silently
+   * skipping it.
    */
   readPending(): { plan_id: string; tasks: TaskBrief[] } {
     const file = path.join(this.loaded.paths.state, 'pending.json');
@@ -3148,24 +3642,26 @@ export class Office {
   }
 
   /**
-   * Ca bị ngắt có chạy tiếp được không — và nếu có thì còn bao nhiêu việc.
+   * Whether an interrupted run can be resumed — and if so, how much work is left.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ĐÂY LÀ CA `resume` DUY NHẤT KHÔNG PHẢI ĐOÁN GÌ (user chốt 20/08 tối).    │
+   * │ THIS IS THE ONE `resume` CASE THAT REQUIRES NO GUESSING AT ALL (user       │
+   * │ settled this 08/20 evening).                                             │
    * │                                                                          │
-   * │ Ca này **chưa bao giờ được lập kế hoạch lại**: `/stop`, hết hạn mức,      │
-   * │ daemon crash. Vẫn đúng `plan_id` đó, vẫn đúng danh sách task đó, receipt  │
-   * │ nằm trên đĩa. Không có gì để khớp, nên không có gì để đoán sai.           │
+   * │ This run was **never replanned**: `/stop`, ran out of usage, a daemon        │
+   * │ crash. It's still the exact same `plan_id`, the exact same task list, the    │
+   * │ receipt sits on disk. Nothing to match, so nothing to match wrong.            │
    * │                                                                          │
-   * │ Khác hẳn ca *"người dùng gõ lại một yêu cầu tương tự"* — ca đó ta CỐ Ý    │
-   * │ không tự khớp, chỉ nói ra mớ dở dang qua bảng kê rồi để planner quyết.    │
+   * │ Completely different from *"the user typed a similar-sounding request       │
+   * │ again"* — for that case we DELIBERATELY don't auto-match, only state the      │
+   * │ unfinished batch through the manifest and let the planner decide.            │
    * │ → `artifacts.ts` `isStale`                                               │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   resumable(): { plan_id: string; left: number; request: string } | undefined {
     const { plan_id, tasks } = this.readPending();
     if (tasks.length === 0) return undefined;
-    // Hình dạng cũ không mang `plan_id` ⇒ không biết ghi kết quả vào đâu.
+    // The old shape carries no `plan_id` ⇒ no way to know where to write the output.
     if (!plan_id) return undefined;
     if (!fs.existsSync(path.join(this.loaded.paths.tasks, `${plan_id}.plan.json`))) return undefined;
     const rec = this.plans.list().find((p) => p.plan_id === plan_id);
@@ -3173,22 +3669,26 @@ export class Office {
   }
 
   /**
-   * Một dòng mời chạy tiếp, phát lúc văn phòng nối bus. 0 token.
+   * A line inviting the user to resume, emitted when the office connects to
+   * the bus. 0 tokens.
    *
-   * Việc dở được MỜI RA, KHÔNG tự chạy — ba lý do:
+   * Unfinished work is OFFERED, NOT auto-run — three reasons:
    *
-   *  1. Tự chạy lúc bật daemon = một lần crash âm thầm tiêu tiền người dùng.
-   *     Cùng luật đã chốt cho trí nhớ Trợ lý: đừng gắn ngữ nghĩa vào việc
-   *     tắt/bật daemon, đó là việc hạ tầng (cập nhật, crash, reboot).
-   *  2. Ca dở thường tới từ `/stop` — tức là người dùng vừa NÓI dừng. Tự chạy
-   *     tiếp là ghi đè lên một quyết định họ vừa ra.
-   *  3. Một dòng chat để họ đáp là HỘI THOẠI, không phải quản lý trạng thái —
-   *     đúng thứ họ muốn khi nói *"tự thông minh, không phải nút bấm"*.
+   *  1. Auto-running on daemon start = one silent crash quietly spending the
+   *     user's money. Same rule already settled for the Assistant's memory:
+   *     don't attach meaning to the daemon stopping/starting, that's
+   *     infrastructure work (an update, a crash, a reboot).
+   *  2. Unfinished work usually comes from `/stop` — i.e. the user just SAID
+   *     stop. Auto-resuming would overwrite a decision they just made.
+   *  3. A chat line for them to respond to is a CONVERSATION, not state
+   *     management — exactly what they want when they say *"be smart on your
+   *     own, not a button to click"*.
    *
-   * Câu phải nói được cả ba thứ người dùng cần để quyết: **còn bao nhiêu việc**,
-   * **của ca nào**, và **chạy tiếp thì tốn gì** — vì nỗi lo thật ở khoảnh khắc
-   * đó là "bấm vào có mất thêm tiền không". Câu trả lời là *không thêm lượt lập
-   * kế hoạch nào*, và nói ra được thì nó thành một quyết định dễ.
+   * The sentence has to state all three things the user needs to decide:
+   * **how much work is left**, **from which run**, and **what resuming
+   * costs** — because the real worry at that moment is "will clicking this
+   * cost more money". The answer is *no additional planning turn at all*,
+   * and stating that turns it into an easy decision.
    */
   private offerResume(): void {
     const ready = this.resumable();
@@ -3197,24 +3697,27 @@ export class Office {
       type: 'master.message',
       role: 'assistant',
       say:
-        `Ca trước còn ${ready.left} việc chưa chạy${ready.request ? ` — "${ready.request}"` : ''}. ` +
-        `Gõ /resume là mình làm nốt, dùng lại kế hoạch cũ nên không tốn thêm lượt chia việc nào. ` +
-        `Hoặc cứ nhắn việc mới, phần đã xong vẫn nằm trong ngăn Kết quả.`,
+        t('off.leftoversOnBoot', {
+          n: String(ready.left),
+          of: ready.request ? ` — "${ready.request}"` : '',
+        }),
       plan_id: null,
     });
   }
 
   /**
-   * Chạy tiếp ca dở — DÙNG LẠI đúng `plan_id`, chỉ chạy những task chưa chạy.
+   * Resumes unfinished work — REUSES the exact `plan_id`, only runs the tasks
+   * that never ran.
    *
-   * ⚠ KHÔNG bao giờ tự chạy lúc khởi động daemon. Cùng lý do đã chốt cho trí
-   * nhớ Trợ lý: gắn ngữ nghĩa vào việc tắt/bật daemon nghĩa là một lần crash âm
-   * thầm tiêu tiền của người dùng. Nó được MỜI ra ở ô chat, và người dùng nói
-   * "ừ" — đó là hội thoại, không phải quản lý trạng thái.
+   * ⚠ NEVER auto-runs on daemon startup. Same reason already settled for the
+   * Assistant's memory: attaching meaning to the daemon stopping/starting
+   * means one silent crash quietly spending the user's money. It's OFFERED
+   * in the chat pane, and the user says "yes" — that's a conversation, not
+   * state management.
    */
   async resume(): Promise<{ plan_id: string; report: string; usage: Usage }> {
     const ready = this.resumable();
-    if (!ready) throw new RunError('Không có việc nào đang dở để chạy tiếp.', 'other');
+    if (!ready) throw new RunError(t('off.nothingToResume'), 'other');
 
     const file = path.join(this.loaded.paths.tasks, `${ready.plan_id}.plan.json`);
     const full = JSON.parse(fs.readFileSync(file, 'utf8')) as Plan;
@@ -3222,28 +3725,32 @@ export class Office {
 
     /**
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ "KHÔNG NẰM TRONG `pending`" ≠ "ĐÃ XONG". Bản trước tin thế và nó nổ.  │
+     * │ "NOT IN `pending`" ≠ "DONE". The old version assumed that, and it blew up. │
      * │                                                                      │
-     * │ `pending` là *task CHƯA CHẠY LẦN NÀO* (scheduler trả về khi bị ngắt). │
-     * │ Một task vắng mặt ở đó có thể là: xong ✓ · hỏng ✗ · bị chặn ✗ ·      │
-     * │ **bị cắt giữa lúc đang ghi file ✗**. Bản trước cắt phăng `deps` trỏ   │
-     * │ tới mọi task vắng mặt, tức là coi cả bốn ca như ca đầu.               │
+     * │ `pending` is *tasks that NEVER RAN AT ALL* (what the scheduler returns  │
+     * │ when interrupted). A task absent from it could be: finished ✓ · broke ✗   │
+     * │ · got blocked ✗ · **got cut off while it was mid-write ✗**. The old        │
+     * │ version stripped `deps` pointing at every absent task outright, i.e. it     │
+     * │ treated all four cases as the first one.                                  │
      * │                                                                      │
-     * │ Đo được 21/08, hai lần liên tiếp (hd3, hd4): user bấm Dừng lúc        │
-     * │ `Người đọc` đang tách hợp đồng (4/5 điều khoản), rồi gõ `/resume`.    │
-     * │ T-01 vắng mặt trong `pending` vì nó ĐÃ chạy — và trả `blocked`. Dây   │
-     * │ `T-02 → T-01` bị cắt, `missingInputs` thấy thư mục có 4 file nên cho  │
-     * │ qua, và cả chuỗi sau chạy trên một hợp đồng thiếu 20%.               │
+     * │ Measured 08/21, twice in a row (hd3, hd4): a user hit Stop while           │
+     * │ `Người đọc` was splitting a contract (4/5 clauses done), then typed          │ // i18n-allow-vietnamese: the real role's actual display name from the recorded incident
+     * │ `/resume`. T-01 was absent from `pending` because it HAD run — and           │
+     * │ returned `blocked`. The `T-02 → T-01` wire got cut, `missingInputs` saw       │
+     * │ the directory had 4 files and let it through, and the whole chain after       │
+     * │ that ran on a contract missing 20% of its content.                        │
      * │                                                                      │
-     * │ ⚠ `delivered()` tồn tại ĐÚNG để trả lời câu hỏi này, và bản trước đi  │
-     * │ vòng qua nó vì lọc theo DANH SÁCH thay vì hỏi RECEIPT.               │
-     * │ → luật 20/08 "quyết định đúng + tiền đề sai = bom hẹn giờ"           │
+     * │ ⚠ `delivered()` exists PRECISELY to answer this question, and the old       │
+     * │ version routed around it by filtering on a LIST instead of asking the       │
+     * │ RECEIPT.                                                              │
+     * │ → the 08/20 rule "a correct decision + a wrong premise = a time bomb"        │
      * └──────────────────────────────────────────────────────────────────────┘
      *
-     * Luật đúng: một task được bỏ qua **chỉ khi receipt của nó nói là đã giao
-     * được hàng**. Còn lại thì nó CHẠY LẠI — kể cả khi nó đã chạy một lần và
-     * để lại file dở. Chạy lại ghi đè vào đúng thư mục của chính nó
-     * (`artifacts/<plan>/<task>/`) nên không đẻ ra mảnh mồ côi nào.
+     * The correct rule: a task gets skipped **only when its own receipt says
+     * it delivered output**. Otherwise it RERUNS — even if it already ran
+     * once and left behind a partial file. Rerunning overwrites into its
+     * exact own directory (`artifacts/<plan>/<task>/`), so it produces no
+     * orphan fragments.
      */
     const redo = (id: string): boolean => queued.has(id) || !delivered(this.receiptOf(ready.plan_id, id));
     const run = new Set(full.tasks.filter((t) => redo(t.task_id)).map((t) => t.task_id));
@@ -3252,15 +3759,16 @@ export class Office {
       ...full,
       tasks: full.tasks
         .filter((t) => run.has(t.task_id))
-        // Chỉ cắt dây tới task THẬT SỰ đã giao hàng — nó không còn trong kế
-        // hoạch rút gọn nên để nguyên là `validate` báo "phụ thuộc không tồn
-        // tại" và chặn chính cái ca ta đang cứu.
+        // Only cuts a wire to a task that REALLY did deliver output — leaving
+        // it in place would have `validate` report "dependency doesn't
+        // exist" for a task that isn't in the trimmed plan, blocking the
+        // exact run we're trying to rescue.
         .map((t) => ({ ...t, deps: t.deps.filter((d) => run.has(d)) })),
     };
     return this.run(plan.request, undefined, plan);
   }
 
-  /** Receipt của một task, hoặc `undefined` nếu nó chưa từng chạy. */
+  /** A task's receipt, or `undefined` if it never ran. */
   private receiptOf(planId: string, taskId: string): Receipt | undefined {
     try {
       const f = path.join(this.loaded.paths.tasks, `${planId}.${taskId}.receipt.json`);
@@ -3270,34 +3778,38 @@ export class Office {
     }
   }
 
-  // ── nội bộ
+  // ── internal
 
   /**
-   * Đồng bộ hai thứ Trợ lý cần biết: ai đang trực, và kho tri thức có gì.
+   * Syncs the two things the Assistant needs to know: who's on duty, and
+   * what's in the knowledge store.
    *
-   * Cả hai nằm trong prefix được cache nên hàm này ĐẮT — gọi khi hình dạng hoặc
-   * tri thức đổi, không gọi mỗi lượt trò chuyện.
+   * Both sit in the cached prefix, so this function is EXPENSIVE — call it
+   * when the shape or the knowledge changes, not on every chat turn.
    */
   /**
-   * BẢNG KÊ VỪA ĐỔI — nạp lại prefix Trợ lý. → SPEC-library §8b · SPEC-artifacts §2.4
+   * A MANIFEST JUST CHANGED — reload the Assistant's prefix. → SPEC-library
+   * §8b · SPEC-artifacts §2.4
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BUG ĐÃ SỬA (20/08): HAI TRONG BỐN CỬA KHÔNG NẠP LẠI.                    │
+   * │ BUG FIXED (08/20): TWO OF FOUR DOORS NEVER RELOADED.                     │
    * │                                                                          │
-   * │   thêm tài liệu  → `library.add()` thẳng từ server   ❌ KHÔNG nạp lại    │
-   * │   xoá tài liệu   → `Office.removeDocument()`          ✅                  │
-   * │   sinh kết quả   → cuối `Office.run()`                ✅                  │
-   * │   xoá kết quả    → `artifacts.remove()` thẳng từ server ❌ KHÔNG nạp lại │
+   * │   add a document    → `library.add()` straight from the server   ❌ did NOT reload │
+   * │   delete a document → `Office.removeDocument()`                   ✅              │
+   * │   produce output    → end of `Office.run()`                       ✅              │
+   * │   delete output     → `artifacts.remove()` straight from the server ❌ did NOT reload │
    * │                                                                          │
-   * │ Hậu quả của cửa thứ nhất là ca tệ nhất: người dùng **vừa tải một tài     │
-   * │ liệu lên rồi hỏi ngay về nó** — thao tác tự nhiên nhất của cả sản phẩm — │
-   * │ và Trợ lý nói không thấy file nào tên đó. Cửa thứ tư ngược lại: nó nêu    │
-   * │ tên một kết quả người dùng vừa xoá.                                      │
+   * │ The first door's consequence is the worst case: the user **just uploaded    │
+   * │ a document and immediately asks about it** — the most natural action in       │
+   * │ the whole product — and the Assistant says it can't find a file by that       │
+   * │ name. The fourth door is the opposite: it names an output the user just       │
+   * │ deleted.                                                                  │
    * │                                                                          │
-   * │ Gốc rễ là luật "ghi/đọc phải dùng chung một hàm" bị phá ở tầng HTTP:      │
-   * │ hai route gọi thẳng vào store, hai route đi qua `Office`. Cửa nào đi tắt  │
-   * │ thì cửa đó quên. Nên bản vá không phải "thêm hai lời gọi" mà là **đóng    │
-   * │ cửa tắt**: mọi thao tác đổi hai cái kho đi qua `Office`.                  │
+   * │ The root cause is the "write/read must share one function" rule broken       │
+   * │ at the HTTP layer: two routes call the store directly, two routes go          │
+   * │ through `Office`. Whichever door takes a shortcut is the one that            │
+   * │ forgets. So the fix isn't "add two calls" but **closing the shortcut**:       │
+   * │ every operation that changes either store goes through `Office`.             │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   addDocument(name: string, data: Buffer, opts: { replace: boolean; maxBytes: number }): DocRecord {
@@ -3307,7 +3819,7 @@ export class Office {
     return doc;
   }
 
-  /** Xoá một KẾT QUẢ. Đi qua đây để bảng kê trong prefix Trợ lý không nói tên file đã mất. */
+  /** Deletes an OUTPUT file. Routed through here so the Assistant's manifest doesn't name a file that's gone. */
   removeArtifact(rel: string): boolean {
     this.assertLive();
     if (!this.artifacts.remove(rel)) return false;
@@ -3316,12 +3828,13 @@ export class Office {
   }
 
   /**
-   * DỌN SẠCH ngăn Kết quả. Trả về số file đã xoá.
+   * CLEARS the entire Output pane. Returns the number of files deleted.
    *
-   * ⚠ `refreshAssistantContext()` ở đây KHÔNG phải thủ tục — bảng kê Kết quả nằm
-   * trong prefix của Trợ lý. Bỏ nó là Trợ lý tiếp tục nêu tên hàng chục file vừa
-   * bị xoá, rất tự tin, và người dùng bấm vào từng cái để nhận "không tìm thấy".
-   * Đúng cửa tắt mà §3116 đã đóng một lần rồi.
+   * ⚠ `refreshAssistantContext()` here is NOT a formality — the Output
+   * manifest sits in the Assistant's prefix. Skip it and the Assistant keeps
+   * confidently naming dozens of files that were just deleted, and the user
+   * clicks each one only to get "not found". Exactly the shortcut §3116
+   * already closed once.
    */
   clearArtifacts(): number {
     this.assertLive();
@@ -3339,55 +3852,63 @@ export class Office {
   }
 
   /**
-   * BẢNG KÊ KẾT QUẢ cho Trợ lý — tên file, KHÔNG nội dung. → docs/SPEC-artifacts.md §2.4
+   * OUTPUT MANIFEST for the Assistant — file names, NOT content. →
+   * docs/SPEC-artifacts.md §2.4
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO BẺ LUẬT "ARTIFACT VÔ HÌNH" (20/08) — và bẻ tới đâu.              │
+   * │ WHY THE "ARTIFACTS ARE INVISIBLE" RULE GOT BROKEN (08/20) — and how far.     │
    * │                                                                          │
-   * │ Luật cũ (§1) canh ĐÚNG rủi ro: đừng biến ngăn Kết quả thành một cái kho  │
-   * │ thứ hai người dùng phải quản, và đừng để kết quả cũ trôi vào ngữ cảnh    │
-   * │ việc mới. Nhưng nó chọn cách canh THÔ NHẤT — vô hình hoàn toàn — và cái  │
-   * │ giá là chặn luôn thao tác tự nhiên nhất của cả sản phẩm: "làm tiếp cái   │
-   * │ vừa xong".                                                               │
+   * │ The old rule (§1) guarded the RIGHT risk: don't turn the Output pane into    │
+   * │ a second store the user has to manage, and don't let old output leak into     │
+   * │ a new job's context. But it picked the CRUDEST guard — total invisibility     │
+   * │ — and the cost was blocking the single most natural action in the whole      │
+   * │ product: "keep working on what I just finished".                            │
    * │                                                                          │
-   * │ CA HỎNG ĐO ĐƯỢC 20/08. Người dùng: *"doc-2, doc-3 thiếu file thuật       │
-   * │ ngữ"*. Bốn lượt qua lại, một lượt lập kế hoạch chết vì planner hỏi *"bản │
-   * │ dịch tiếng Việt đang nằm ở đường dẫn nào?"* — nó KHÔNG THỂ tự biết. Rồi  │
-   * │ khi chạy được, kế hoạch lấy `inputs = library/files/doc-2.md` (bản gốc   │
-   * │ TIẾNG ANH), nên người dịch **chưa bao giờ nhìn thấy bản dịch** mà vẫn    │
-   * │ viết ra một bảng "các thuật ngữ và cách ĐÃ CHỌN dịch chúng".             │
+   * │ FAILURE MEASURED 08/20. The user: *"doc-2, doc-3 are missing the             │
+   * │ terminology file"*. Four rounds back and forth, one planning turn died          │
+   * │ because the planner asked *"where is the Vietnamese translation                │
+   * │ located?"* — it had NO WAY to know. Then once it did run, the plan took         │
+   * │ `inputs = library/files/doc-2.md` (the ENGLISH original), so the translator     │
+   * │ **had never even seen the translation** yet still wrote out a table of          │
+   * │ "terms and how they WERE translated".                                       │
    * │                                                                          │
-   * │ 🔥 Kết quả: bảng ghi `Widget → "Tiện ích (widget)"`, trong khi bản dịch  │
-   * │ thật dùng `Widget` nguyên văn và KHÔNG chứa chữ "Tiện ích" lần nào. Một  │
-   * │ tài liệu ghi lại những lựa chọn CHƯA TỪNG ĐƯỢC THỰC HIỆN — nhìn rất      │
-   * │ chuyên nghiệp, và sai. Đúng lớp lỗi "sai mà không ai biết".              │
+   * │ 🔥 Result: the table recorded `Widget → "Tiện ích (widget)"`, while the       │ // i18n-allow-vietnamese: the fabricated string as it literally appeared in the incident
+   * │ real translation used `Widget` verbatim and NEVER contained the word            │
+   * │ "Tiện ích" at all. A document recording choices that WERE NEVER ACTUALLY        │ // i18n-allow-vietnamese: same fabricated string, quoted again
+   * │ MADE — looking very professional, and wrong. Exactly the "wrong with            │
+   * │ nobody knowing" failure class.                                             │
    * │                                                                          │
-   * │ Thứ THIẾU không phải QUYỀN ĐỌC: nhân viên đã có `Read`/`Grep` với `cwd`  │
-   * │ là thư mục văn phòng, chỉ cần `inputs` gọi tên là đọc được ngay hôm nay. │
-   * │ Thiếu đúng một thứ — **planner không biết đường dẫn để mà ghi vào        │
-   * │ `inputs`.** Đây là lỗ hổng THÔNG TIN lúc lập kế hoạch, không phải lỗ     │
-   * │ hổng quyền hạn. Nên bản vá cũng chỉ vá đúng chỗ đó.                      │
+   * │ What was MISSING wasn't READ PERMISSION: a worker already has                  │
+   * │ `Read`/`Grep` with `cwd` set to the office directory, and only needed           │
+   * │ `inputs` to name the file to read it that very day. Exactly one thing was       │
+   * │ missing — **the planner had no path to write into `inputs`.** This is an        │
+   * │ INFORMATION gap at planning time, not a permission gap. So the fix only          │
+   * │ patches exactly that spot.                                                 │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Năm chốt để nó không thành tiếng ồn:
+   * Five gates so it doesn't turn into noise:
    *
-   *  1. CHỈ tên + hình dạng. Nội dung đã có `Read` lo, và chỉ khi `inputs` gọi.
-   *  2. Gom theo CA, kèm một dòng `request` của ca đó. `P-260820-0314-rab5/T-01/
-   *     doc-2.md` không nói gì với model; *"ca: dịch doc-2 sang tiếng Việt"* nói
-   *     tất cả. Đây là mảnh làm bảng kê DÙNG ĐƯỢC, không phải đường dẫn.
-   *  3. Chỉ `MANIFEST_PLANS` ca gần nhất, kèm một dòng nói còn bao nhiêu ca cũ.
-   *  4. Trần token cứng, cắt từ ca CŨ NHẤT.
-   *  5. 🔒 CHỈ Trợ lý. Không bao giờ vào prefix nhân viên — xem `budgets`.
+   *  1. ONLY names + shape. Content is already `Read`'s job, and only when
+   *     `inputs` names it.
+   *  2. Grouped by RUN, with a `request` line for that run. `P-260820-0314-
+   *     rab5/T-01/doc-2.md` tells the model nothing; *"run: translate doc-2 to
+   *     Vietnamese"* tells it everything. This is the piece that makes the
+   *     manifest USABLE, not just a path.
+   *  3. Only the `MANIFEST_PLANS` most recent runs, with a line stating how
+   *     many older runs exist.
+   *  4. A hard token cap, trimmed from the OLDEST run.
+   *  5. 🔒 The Assistant ONLY. Never enters a worker's prefix — see `budgets`.
    *
-   * ⚠ Cái giá đã biết: khối này đổi sau MỖI ca, nên prefix Trợ lý bị ghi lại
-   * mỗi ca. Giảm thiểu bằng cách đặt nó CUỐI chuỗi khối (`buildAssistantPrompt`)
-   * để mọi thứ phía trên vẫn ấm — chỉ cái đuôi bị viết lại.
+   * ⚠ A known cost: this block changes after EVERY run, so the Assistant's
+   * prefix gets rewritten every run. Minimized by placing it at the END of
+   * the block chain (`buildAssistantPrompt`) so everything above it stays
+   * warm — only the tail gets rewritten.
    */
   private artifactManifest(): string {
     const files = this.artifacts.list();
     if (files.length === 0) return '';
 
-    // Gom theo ca, giữ thứ tự mới→cũ mà `list()` đã sắp (theo `mtime`).
+    // Grouped by run, keeping the newest→oldest order `list()` already sorted (by `mtime`).
     const byPlan = new Map<string, string[]>();
     for (const a of files) {
       const key = a.plan_id || LEGACY_PLAN;
@@ -3405,49 +3926,59 @@ export class Office {
     const blocks: string[] = [];
     for (const [planId, paths] of shown) {
       /**
-       * CA CHƯA XONG PHẢI NÓI RA LÀ CHƯA XONG. → SPEC-artifacts.md §2.6
+       * AN UNFINISHED RUN MUST SAY IT'S UNFINISHED. → SPEC-artifacts.md §2.6
        *
-       * Trước 20/08 bảng kê chỉ liệt kê file, không phân biệt "kết quả của một
-       * ca chạy trọn" với "mớ dở dang của một ca chết giữa chừng". Người dùng gõ
-       * lại yêu cầu thì Trợ lý làm lại từ đầu — trả tiền lần nữa cho việc đã nằm
-       * sẵn trên đĩa — hoặc tệ hơn, dùng lại một file dở như thể nó đã xong.
+       * Before 08/20 the manifest only listed files, with no distinction
+       * between "output from a run that completed" and "an unfinished batch
+       * from a run that died mid-way". The user types the request again and
+       * the Assistant redoes it from scratch — paying again for work already
+       * sitting on disk — or worse, reuses a half-finished file as if it were
+       * complete.
        *
-       * Đây là nửa TẤT ĐỊNH của bài toán "chạy tiếp": ta không đoán *"đây có
-       * phải việc cũ không"*, ta chỉ nói ra thứ đang có và để planner quyết với
-       * đầy đủ ngữ cảnh câu người dùng vừa gõ. → `isStale`
+       * This is the DETERMINISTIC half of the "resume" problem: we don't
+       * guess *"is this old work"*, we just state what exists and let the
+       * planner decide with the full context of what the user just typed. →
+       * `isStale`
        */
       const rec = records.get(planId);
       const unfinished = rec && rec.status !== 'done' ? rec : undefined;
       const stale = unfinished ? this.staleIn(planId, paths, mtimes) : new Set<string>();
       /**
-       * ⚠ KHÔNG gắn vào `unfinished`. Đã dẫm đúng bẫy này 21/08.
+       * ⚠ Do NOT attach to `unfinished`. Already hit this exact trap on 08/21.
        *
-       * Ca `P-260821-0103-cx3a` mang `status: 'done'` — vì lần chạy SAU của nó
-       * kết thúc êm — trong khi file của T-01 vẫn cụt ở 3/5 điều khoản. Trạng
-       * thái CA nói về lần chạy cuối; tính dở dang là thuộc tính của TỪNG TASK.
-       * Gắn nhầm tầng thì nhãn im lặng đúng ở ca nguy hiểm nhất.
+       * Run `P-260821-0103-cx3a` carries `status: 'done'` — because its LATER
+       * retry finished cleanly — while T-01's file is still cut short at 3/5
+       * clauses. The RUN's status describes the most recent attempt;
+       * incompleteness is a property of EACH TASK. Attaching it to the wrong
+       * layer makes the label go silent on exactly the most dangerous case.
        */
       const partial = this.partialIn(planId);
       /**
-       * Tên việc là thứ làm đường dẫn có nghĩa — nhưng CẮT NGẮN HẲN.
+       * The job's name is what makes a path meaningful — but SEVERELY TRIMMED.
        *
-       * `request` là câu Trợ lý viết lại "cho rõ, đủ ngữ cảnh" nên nó dài thật:
-       * đo trên máy người dùng, một câu chiếm 300+ ký tự và ăn hơn nửa ngân sách
-       * của cả bảng kê. Ở đây nó chỉ làm một việc — giúp model nhận ra *"à, ca
-       * dịch doc-2"* — và 30 token là quá đủ cho việc đó. Phần đuôi chi tiết
-       * không giúp chọn file, chỉ đẩy các ca khác ra khỏi trần.
+       * `request` is the sentence the Assistant rewrote "to be clear, with
+       * enough context", so it's genuinely long: measured on a user's
+       * machine, one sentence ran 300+ characters and ate over half the
+       * manifest's whole budget. Here it does exactly one job — helping the
+       * model recognize *"ah, the doc-2 translation run"* — and 30 tokens is
+       * plenty for that. The detailed tail doesn't help pick a file, it just
+       * pushes other runs past the cap.
        *
-       * `briefText` (200 token) là trần dành cho NHẬT KÝ, không phải cho prefix.
+       * `briefText` (200 tokens) is the cap meant for the LOG, not for the prefix.
        *
-       * Không tra được tên (ca đã rơi khỏi `index.json`, trần 200 bản ghi — hoặc
-       * là artifact sinh trước bản vá `plan_id` đôi 20/08, mang một id mồ côi)
-       * thì nói thẳng là không biết. Bịa một nhãn ngày giờ chỉ tốn token mà
-       * không giúp model quyết gì.
+       * When the name can't be found (the run fell off `index.json`, capped
+       * at 200 records — or it's an artifact generated before the 08/20
+       * duplicate-`plan_id` fix, carrying an orphaned id), state outright
+       * that it's unknown. Making up a date-based label just costs tokens
+       * without helping the model decide anything.
        */
       const title = titles.get(planId);
-      const name = title ? truncateToTokens(title, 30) : '(một việc cũ, không còn tên trong sổ)';
-      // Nói bằng SỐ BƯỚC, không bằng tên trạng thái nội bộ: "2/3 bước" nói được
-      // cả *"còn dở"* lẫn *"dở tới đâu"*, mà `status: 'blocked'` thì không.
+      // English, hard-coded: this block goes into the ASSISTANT's manifest, next
+      // to the `UNFINISHED` line just below, which was already English.
+      const name = title ? truncateToTokens(title, 30) : '(an older job, no longer named in the log)';
+      // Stated as a STEP COUNT, not an internal status name: "2/3 steps" says
+      // both *"still unfinished"* and *"how far along"*, while `status:
+      // 'blocked'` says neither.
       const progress = unfinished
         ? ` — ⚠ UNFINISHED (${unfinished.steps.filter((s) => s.status === 'done').length}/${
             unfinished.steps.length
@@ -3456,33 +3987,38 @@ export class Office {
       blocks.push(
         [
           `## ${name}${progress}`,
-          // Sắp theo đường dẫn trong MỘT ca: `T-01` phải đứng trước `T-02`.
-          // `list()` sắp theo `mtime` nên task chạy xong sau lại lên trên, và
-          // một danh sách nhảy số là một danh sách người đọc phải dò lại.
+          // Sorted by path within ONE run: `T-01` has to come before `T-02`.
+          // `list()` sorts by `mtime`, so a task that finished later floats
+          // to the top, and a list with jumbled numbering is one a reader
+          // has to hunt through.
           /**
-           * ⚠ FILE DỞ DANG: GIẤU ĐƯỜNG DẪN, GIỮ CON SỐ. → SPEC-artifacts §2.7
+           * ⚠ AN UNFINISHED FILE: HIDE THE PATH, KEEP THE COUNT. →
+           * SPEC-artifacts §2.7
            *
            * ┌──────────────────────────────────────────────────────────────┐
-           * │ NHÃN LÀ MỘT LỜI NHỜ MODEL TUÂN THEO. BỎ HẲN THÌ KHÔNG CÓ GÌ │
-           * │ ĐỂ TUÂN THEO CẢ.                                             │
+           * │ A LABEL IS A REQUEST FOR THE MODEL TO COMPLY. REMOVE IT       │
+           * │ ENTIRELY AND THERE IS NOTHING LEFT TO COMPLY WITH.            │
            * │                                                              │
-           * │ Bản trước dán `(INCOMPLETE — … Redo that step …)` lên từng    │
-           * │ file. Đọc rất thuyết phục — và ca hd4 vẫn hỏng y hệt. Đó là   │
-           * │ một LỜI HỨA, không phải một cơ chế: luật cổ nhất của dự án.   │
+           * │ The old version stuck `(INCOMPLETE — … Redo that step …)` on   │
+           * │ every file. Read very convincingly — and case hd4 broke the     │
+           * │ exact same way anyway. That's a PROMISE, not a mechanism: the    │
+           * │ project's oldest rule.                                          │
            * │                                                              │
-           * │ Không nêu đường dẫn thì planner không có chuỗi nào để chép    │
-           * │ vào `inputs`, nên nó buộc phải lập lại bước đó. Không cần     │
-           * │ model hợp tác một lần nào.                                    │
+           * │ Without a stated path, the planner has no string to copy into    │
+           * │ `inputs`, so it's forced to redo that step. No model            │
+           * │ cooperation required, not even once.                           │
            * └──────────────────────────────────────────────────────────────┘
            *
-           * Nhưng KHÔNG giấu sạch — giữ một dòng đếm. Ẩn hết thì người dùng
-           * hỏi *"ca vừa rồi làm tới đâu?"* và Trợ lý mù, mà đó là câu hỏi
-           * chính đáng ở đúng khoảnh khắc đó. Con số trả lời được câu hỏi mà
-           * không đưa ra thứ để chép.
+           * But NOT fully hidden — keeps a count line. Hiding everything
+           * would leave the user asking *"how far did that last run get?"*
+           * with the Assistant blind, and that's a legitimate question to
+           * ask at exactly that moment. The number answers the question
+           * without handing over something to copy.
            *
-           * ⚠ Model ĐOÁN ĐƯỢC đường dẫn (`artifacts/<plan>/<task>/…` có quy
-           * luật), nên đây chỉ là hàng rào thứ nhất. Hàng rào cứng nằm ở
-           * `Scheduler.missingInputs`, chặn lúc phóng.
+           * ⚠ The model CAN GUESS the path (`artifacts/<plan>/<task>/…`
+           * follows a pattern), so this is only the first fence. The hard
+           * fence lives in `Scheduler.missingInputs`, which blocks it at
+           * launch time.
            */
           ...[...paths]
             .filter((p) => !partial.has(p))
@@ -3501,17 +4037,18 @@ export class Office {
 
     const head = '# Results this office has already produced';
     /**
-     * TỔNG SỐ CHÍNH XÁC, kể cả khi danh sách bị cắt. → SPEC-artifacts.md §2.4
+     * THE EXACT TOTAL, even when the list is trimmed. → SPEC-artifacts.md §2.4
      *
      * ┌──────────────────────────────────────────────────────────────────────┐
-     * │ Bảng kê CỐ Ý chỉ liệt kê `MANIFEST_PLANS` ca gần nhất — đó là ngân    │
-     * │ sách token, không phải khiếm khuyết. Nhưng nó khiến một câu hỏi rất   │
-     * │ thường gặp trở nên KHÔNG TRẢ LỜI ĐƯỢC: *"mình đang có bao nhiêu kết   │
-     * │ quả?"*. Model nhìn vào danh sách cắt ngắn rồi đếm — và đếm sai.        │
+     * │ The manifest DELIBERATELY lists only the `MANIFEST_PLANS` most recent   │
+     * │ runs — that's a token budget, not a flaw. But it makes a very common     │
+     * │ question UNANSWERABLE: *"how much output do I have?"*. The model looks    │
+     * │ at the trimmed list and counts — and counts wrong.                       │
      * │                                                                      │
-     * │ Hai con số này ta đang CẦM TRONG TAY (`files.length`, `byPlan.size`). │
-     * │ Luật tối cao: *thứ gì ta quan sát được thì đừng để model đoán*. Giá:   │
-     * │ một dòng, ~15 token, và nó biến một câu trả lời bịa thành một sự việc.│
+     * │ These two numbers are already IN OUR OWN HANDS (`files.length`,          │
+     * │ `byPlan.size`). The top rule: *never let the model guess something we     │
+     * │ can observe*. Cost: one line, ~15 tokens, and it turns a made-up          │
+     * │ answer into a fact.                                                   │
      * └──────────────────────────────────────────────────────────────────────┘
      */
     const totals =
@@ -3530,70 +4067,101 @@ export class Office {
       .join('\n');
 
     /**
-     * Cắt từ ca CŨ NHẤT khi vượt trần — bỏ dần từ cuối chứ không `truncateToTokens`
-     * cả khối. Cắt giữa chuỗi sẽ để lại một đường dẫn cụt, mà một đường dẫn cụt
-     * còn tệ hơn không có đường dẫn nào: model vẫn sẽ điền nó vào `inputs`.
+     * Trims from the OLDEST run when over the cap — drops from the end
+     * instead of `truncateToTokens`-ing the whole block. Cutting mid-string
+     * would leave a truncated path, and a truncated path is worse than no
+     * path at all: the model would still put it into `inputs`.
      */
     const limit = this.loaded.company.budgets.artifacts_manifest_tokens;
     const kept = [...blocks];
-    // `totals` đứng NGAY SAU tiêu đề và KHÔNG bao giờ bị cắt: vòng lặp dưới chỉ
-    // bỏ bớt `kept`. Trần token được phép làm danh sách ngắn đi, không được phép
-    // làm con số sai đi.
+    // `totals` sits RIGHT AFTER the heading and is NEVER trimmed: the loop
+    // below only drops from `kept`. The token cap is allowed to shorten the
+    // list, never allowed to make a number wrong.
     const render = (): string => [head, '', totals, '', ...kept, '', foot].join('\n');
     while (kept.length > 1 && estimateTokens(render()) > limit) kept.pop();
     return render();
   }
 
   /**
-   * Danh sách kết quả, KÈM TÊN VIỆC đã sinh ra chúng. → docs/SPEC-artifacts.md §2.1
+   * The output list, PAIRED WITH THE JOB NAME that produced them. →
+   * docs/SPEC-artifacts.md §2.1
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MÃ KẾ HOẠCH KHÔNG BAO GIỜ ĐƯỢC LÀ THỨ NGƯỜI DÙNG PHẢI ĐỌC.              │
+   * │ A PLAN CODE MUST NEVER BE SOMETHING THE USER HAS TO READ.                │
    * │                                                                          │
-   * │ Panel vốn đã cố ý không hiện `plan_id` — nhưng thứ nó hiện thay vào là   │
-   * │ một bản dự phòng ("Việc chạy 19/08 15:10") mà chú thích trong chính file │
-   * │ đó đã tự thú: *"chưa có tên việc thì nói ngày giờ"*. Tên việc thì CÓ SẴN │
-   * │ ở `tasks/index.json`, chỉ là chưa ai nối dây.                            │
+   * │ The panel had already deliberately hidden `plan_id` — but what it showed    │
+   * │ in its place was a fallback ("Run from 08/19 15:10") that a comment in         │
+   * │ that exact file already confessed to: *"no job name yet, so state the         │
+   * │ date/time"*. The job name was ALREADY THERE in `tasks/index.json`,             │
+   * │ nobody had wired it up.                                                   │
    * │                                                                          │
-   * │ Nối ở đây chứ không ở `ArtifactStore`: store quét ĐĨA và không được biết │
-   * │ gì về sổ công việc. Trộn hai nguồn vào một lớp là để lần sau ai đó phải  │
-   * │ tự hỏi cái nào mới là sự thật.                                           │
+   * │ Wired up HERE, not in `ArtifactStore`: the store scans DISK and has no        │
+   * │ business knowing anything about the work log. Mixing two sources into          │
+   * │ one layer is what makes someone later have to guess which one is the           │
+   * │ real source of truth.                                                     │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Kế hoạch đã rơi khỏi `index.json` (trần 200 bản ghi) thì trả rỗng — giao
-   * diện tự rơi về nhãn ngày giờ. Đó là suy giảm êm, không phải lỗi.
+   * A run that has fallen off `index.json` (capped at 200 records) returns
+   * empty — the UI falls back to the date/time label on its own. That's a
+   * graceful degradation, not a bug.
    */
-  artifactList(): Array<import('./artifacts.js').ArtifactRecord & { plan_title: string }> {
-    // Đọc sổ MỘT LẦN rồi tra bằng Map: `plans.list()` đọc và parse cả file
-    // index, mà một ca chạm 20 CV sẽ sinh hàng chục artifact — gọi nó trong
-    // vòng lặp là đọc lại cùng một file hàng chục lần cho mỗi lần mở panel.
+  artifactList(): {
+    items: Array<import('./artifacts.js').ArtifactRecord & { plan_title: string }>;
+    total: number;
+    capped: boolean;
+  } {
+    // Reads the log ONCE then looks up via a Map: `plans.list()` reads and
+    // parses the whole index file, and a run touching 20 resumes produces
+    // dozens of artifacts — calling it inside a loop would reread the same
+    // file dozens of times on every panel open.
     const titles = new Map(this.plans.list().map((p) => [p.plan_id, p.request]));
-    return this.artifacts.list().map((a) => ({ ...a, plan_title: titles.get(a.plan_id) ?? '' }));
+    const { items, capped } = this.artifacts.scan();
+    /**
+     * TRIMMED HERE, AFTER sorting by `mtime` — and returns the REAL total
+     * alongside it.
+     *
+     * Trimming without stating the total would rebuild the exact bug just
+     * fixed, only in a different spot: the UI shows 500 lines and the user
+     * has no way to know 200 more exist. These two numbers are already in our
+     * own hands — the rule *"never let anyone guess something we can
+     * observe"*.
+     */
+    return {
+      items: items
+        .slice(0, MAX_PANEL_FILES)
+        .map((a) => ({ ...a, plan_title: titles.get(a.plan_id) ?? '' })),
+      total: items.length,
+      capped,
+    };
   }
 
   /**
-   * XOÁ MỘT TÀI LIỆU — và mọi kinh nghiệm sống nhờ nó. → `KnowledgeNode.depends_on`
+   * DELETES A DOCUMENT — and every lesson that depends on it. →
+   * `KnowledgeNode.depends_on`
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO XOÁ DÂY CHUYỀN Ở ĐÂY, KHÔNG PHẢI Ở MỘT JOB QUÉT ĐỊNH KỲ.         │
+   * │ WHY THE CASCADE DELETE HAPPENS HERE, NOT IN A PERIODIC SWEEP JOB.        │
    * │                                                                          │
-   * │ Quét định kỳ nghĩa là có một cửa sổ thời gian mà node mồ côi vẫn nằm     │
-   * │ trong prefix của mọi nhân viên và vẫn được nghe theo — nó trỏ vào một    │
-   * │ file không còn tồn tại, và nó nói điều đó rất tự tin. Độ dài cửa sổ ấy   │
-   * │ không ai kiểm được, mà đó đúng là loại lỗi tệ nhất: sai mà im lặng.      │
+   * │ A periodic sweep would mean there's a time window where an orphan node       │
+   * │ still sits in every worker's prefix and still gets followed — it points        │
+   * │ at a file that no longer exists, and states so very confidently. Nobody         │
+   * │ can check how long that window is, and that's exactly the worst kind of         │
+   * │ bug: wrong and silent.                                                    │
    * │                                                                          │
-   * │ Ở đây thì quan hệ là 1-1 với thao tác của người dùng: bấm xoá, mất luôn. │
+   * │ Here, the relationship is 1-to-1 with the user's own action: click            │
+   * │ delete, it's gone immediately.                                           │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Nói ra số node đã bỏ. Xoá âm thầm thứ người dùng nhìn thấy trong ngăn Tri
-   * thức là đúng lớp lỗi "mất việc của người dùng, im lặng" (§8).
+   * States how many nodes were dropped. Silently deleting something the user
+   * can see in the Knowledge pane is exactly the "lost the user's work,
+   * silently" failure class (§8).
    */
   removeDocument(name: string): { removed: boolean; droppedNotes: string[] } {
     this.assertLive();
     if (!this.library.remove(name)) return { removed: false, droppedNotes: [] };
 
-    // Đường dẫn trong `depends_on` tính từ thư mục VĂN PHÒNG — cùng dạng với
-    // `receipt.reads`, vốn là nguồn sinh ra chúng.
+    // The path in `depends_on` is relative to the OFFICE directory — same
+    // shape as `receipt.reads`, which is what generates them.
     const dropped = this.knowledge.dropDependents([`library/files/${name}`]);
     if (dropped.length) {
       this.refreshAssistantContext();
@@ -3604,18 +4172,19 @@ export class Office {
         plan_id: null,
       });
       this.emitNote(
-        `Đã xoá "${name}" và ${dropped.length} ghi chú chỉ có nghĩa nhờ tài liệu đó.`,
+        t('off.docDeletedWithNotes', { name, n: String(dropped.length) }),
         6_000,
       );
     }
     return { removed: true, droppedNotes: dropped };
   }
 
-  /** Tủ tài liệu vừa đổi — số lượng và số đang bóc. → docs/SPEC-library.md §10 */
+  /** The library just changed — count and how many are being extracted. → docs/SPEC-library.md §10 */
   private emitLibrary(): void {
-    // Tủ đổi thì BẢNG KÊ trong prefix Trợ lý cũng phải đổi. Thiếu dòng này thì
-    // người dùng thả tài liệu vào rồi hỏi ngay, và Trợ lý lập kế hoạch như thể
-    // tủ vẫn trống — đúng cái lỗ hổng vừa bịt, chỉ khác là muộn hơn vài giây.
+    // If the library changes, the MANIFEST in the Assistant's prefix has to
+    // change too. Skip this line and the user drops a document then
+    // immediately asks about it, and the Assistant plans as if the library
+    // were still empty — the exact hole just patched, just a few seconds later.
     this.refreshAssistantContext();
     this.emit({
       type: 'library.changed',
@@ -3634,43 +4203,51 @@ export class Office {
     missing: boolean,
     connected: boolean,
     notes: Record<string, number>,
-    /** Tra tên tài khoản của một cánh tay. Lười — xem `canvas()`. */
+    /** Looks up an arm's account name. Lazy — see `canvas()`. */
     viaOf: (server: string) => string | undefined,
+    /** Looks up a REFUSED credential on that arm. Same lazy read — see `canvas()`. */
+    keyDeadOf: (server: string) => string | undefined,
   ): CanvasNode {
     const base: CanvasNode = { ...n, label: n.id, missing, connected, removable: true };
     /**
-     * Node cánh tay hiện NHÃN, không hiện băm. `a3f9c2e1b0` là danh tính, không
-     * phải thứ để đọc — sơ đồ mà đầy chuỗi băm thì không ai nhìn ra cái gì.
-     * Rơi về chính băm khi sổ chưa có mục (cấu hình cũ, hoặc dán tay vào yaml).
+     * An arm node shows its LABEL, not the hash. `a3f9c2e1b0` is an identity,
+     * not something meant to be read — a diagram full of hash strings and
+     * nobody can tell what anything is. Falls back to the hash itself when
+     * the ledger has no entry yet (an old config, or hand-pasted into yaml).
      */
     if (n.kind === 'mcp') {
       const meta = n.server ? this.loaded.company.arms[n.server] : undefined;
-      // Mục danh mục (nếu có) là nguồn của HÌNH. Không có `catalog` ⇒ người dùng
-      // tự dán ⇒ `custom`, y hệt `ArmDialog §kindOf` — một trục phân loại, hai
-      // chỗ đọc, và cả hai đọc từ cùng một dữ kiện.
+      // The catalog entry (if any) is the source for the ICON. No `catalog`
+      // ⇒ the user pasted it in themselves ⇒ `custom`, exactly like
+      // `ArmDialog §kindOf` — one classification axis, two places reading
+      // it, and both read from the same fact.
       const entry = meta?.catalog ? findArm(meta.catalog) : undefined;
       /**
        * ┌──────────────────────────────────────────────────────────────────────┐
-       * │ 🔴 NHÁNH `cli` — THIẾU Ở ĐÂY tới 01/09. (bug user bắt)               │
+       * │ 🔴 THE `cli` BRANCH — MISSING HERE until 09/01. (bug a user caught)     │
        * │                                                                      │
-       * │ *"Tạo CLI, nhưng node ở canvas vẫn là icon của custom MCP"* — đúng:   │
-       * │ tờ khai CLI không có `catalog`, nên nó rơi vào nhánh `custom` và mang │
-       * │ hình phích cắm suốt từ lúc cắm.                                       │
+       * │ *"Created a CLI, but the canvas node still shows the custom-MCP           │
+       * │ icon"* — correct: a CLI declaration has no `catalog`, so it fell into      │
+       * │ the `custom` branch and carried the plug icon from the moment it was       │
+       * │ plugged in.                                                           │
        * │                                                                      │
-       * │ ⚠ Chú thích ngay trên khai *"y hệt `ArmDialog §kindOf`"*, và câu đó   │
-       * │ **đã thành sai** đúng lúc tôi thêm `cli` vào một bên mà quên bên này. │
-       * │ Một trục phân loại đọc ở hai chỗ thì thêm một giá trị phải sửa cả     │
-       * │ hai — và chú thích khai "hai chỗ giống nhau" KHÔNG canh được chuyện   │
-       * │ đó. → [[agentco-finish-completely]]                                   │
+       * │ ⚠ The comment right above states *"exactly like `ArmDialog                │
+       * │ §kindOf`"*, and that sentence **became false** the exact moment I           │
+       * │ added `cli` to one side and forgot the other. One classification axis      │
+       * │ read in two places means adding a value has to fix both — and a            │
+       * │ comment claiming "these two match" does NOT guard against that.            │
+       * │ → [[agentco-finish-completely]]                                       │
        * │                                                                      │
-       * │ ⚠ Hỏi `type === 'cli'` trên **cấu hình thi hành** (`mcpServers`), y   │
-       * │ hệt `isCliArm`. Nửa `arms[]` chỉ giữ nhãn/chìa/việc — nó **không có** │
-       * │ trường nào nói đây là tờ khai lệnh, nên đọc ở đó là đoán.             │
+       * │ ⚠ Checks `type === 'cli'` against the **launch config** (`mcpServers`),    │
+       * │ exactly like `isCliArm`. The `arms[]` half only holds label/credential/    │
+       * │ tools — it has **no field at all** saying this is a command                │
+       * │ declaration, so reading it there would be a guess.                        │
        * │                                                                      │
-       * │ ⚠ VÀ ĐỨNG TRƯỚC `catalog`: đúng, hôm nay tờ khai CLI không bao giờ có │
-       * │ mục danh mục — nhưng thứ tự này làm nhánh CLI **không phụ thuộc vào   │
-       * │ điều đó**. Ngày ta dựng sẵn một cánh tay CLI trong danh mục (§8 lộ    │
-       * │ trình Google), nó vẫn ra `>_` chứ không lặng lẽ thành `service`.      │
+       * │ ⚠ AND IT COMES BEFORE `catalog`: true, a CLI declaration today never       │
+       * │ has a catalog entry — but this ordering makes the CLI branch                │
+       * │ **not depend on that fact**. The day a CLI arm ships pre-built in the        │
+       * │ catalog (§8's Google roadmap), it still comes out as `>_` instead of         │
+       * │ silently becoming `service`.                                          │
        * └──────────────────────────────────────────────────────────────────────┘
        */
       const cfg = n.server ? this.loaded.company.mcpServers[n.server] : undefined;
@@ -3689,61 +4266,76 @@ export class Office {
             : 'service',
         ...(entry?.brand.mark ? { mark: entry.brand.mark } : {}),
         /**
-         * NHÃN CẤU HÌNH — *"nhìn vào panel là biết đang cấu hình thế nào"* (user
-         * 29/08). Suy từ **cấu hình đã lưu**, không từ một danh sách id cất riêng:
-         * hai nguồn cho cùng một sự thật thì nguồn sai sẽ là nguồn **hiển thị**.
-         * → `catalog.ts §activeOptions`
+         * CONFIG LABELS — *"look at the panel and know how it's configured"*
+         * (user 08/29). Inferred from the **saved config**, not from a
+         * separately stored id list: two sources for the same fact means the
+         * wrong one ends up being the **displayed** one. →
+         * `catalog.ts §activeOptions`
          */
         ...(() => {
           const cfg = n.server ? this.loaded.company.mcpServers?.[n.server] : undefined;
           if (!entry || !cfg) return {};
           const on = activeOptions(entry, cfg);
           /**
-           * `canLogin` = cánh tay có **hồ sơ bền** để đăng nhập VÀO. Không có
-           * `dirs` thì đăng nhập xong cũng mất theo lượt việc — bày nút ở đó là
-           * bày một cái bẫy, không phải một tính năng.
+           * `canLogin` = the arm has a **persisted profile** to sign INTO.
+           * Without `dirs`, a sign-in would be lost as soon as the run ends —
+           * showing the button there would be setting a trap, not offering a
+           * feature.
            */
           const login = on.some((o) => o.dirs?.length);
           return {
-            ...(on.length ? { optionLabels: on.map((o) => o.label) } : {}),
+            ...(on.length ? { optionLabels: on.map((o) => t(o.label)) } : {}),
             ...(login ? { canLogin: true } : {}),
           };
         })(),
         connected: true,
         /**
-         * NẤC QUYỀN + SỐ VIỆC — để bảng chi tiết vẽ huy hiệu **từ dữ liệu**, chứ
-         * không từ chuỗi tên. Nhãn đổi tự do; cái này thì không. → §6j
+         * PERMISSION TIER + JOB COUNT — so the detail panel draws its badge
+         * **from data**, not from a name string. The label can be renamed
+         * freely; this cannot. → §6j
          */
         ...(meta?.level ? { level: meta.level } : {}),
         ...(meta?.tools?.length ? { toolCount: meta.tools.length } : {}),
         /**
-         * TÊN TÀI KHOẢN — node vẽ nó ở dòng phụ, thay cho chữ "kết nối".
+         * ACCOUNT NAME — the node draws it on a secondary line, replacing the
+         * word "connected".
          *
-         * ⚠ Chỗ này từng cố ý BỎ TRỐNG, với lý lẽ *"nhãn mặc định đã kèm tên
-         * workspace rồi"*. Lý lẽ đó không còn: nhãn thôi ghép tài khoản (nó
-         * đóng băng ở tài khoản đầu tiên), nên nếu đây cũng trống thì sơ đồ
-         * không còn chỗ nào phân biệt hai cánh tay cùng hãng. → `canvas()`
+         * ⚠ This used to be DELIBERATELY LEFT EMPTY, with the reasoning
+         * *"the default label already includes the workspace name"*. That
+         * reasoning no longer holds: the label stopped folding the account in
+         * (it froze on the first account), so leaving this empty too would
+         * leave the diagram with nowhere left to distinguish two arms of the
+         * same vendor. → `canvas()`
          *
-         * Suy từ `arms[].secrets` tra ngược kho OAuth, **không** đọc chuỗi
-         * `label`: nhãn là của người dùng và đổi tự do; tài khoản là sự thật
-         * thuộc về cấu hình. Cùng luật với `Company.listArms`. → §armWorkspace
+         * Inferred from `arms[].secrets` looked up against the OAuth store,
+         * **not** read off the `label` string: the label belongs to the user
+         * and changes freely; the account is a fact that belongs to the
+         * config. Same rule as `Company.listArms`. → §armWorkspace
          */
         ...(() => {
           const via = n.server ? viaOf(n.server) : undefined;
           return via ? { via } : {};
         })(),
+        // The only thing that paints a node red, and it is a fact we wrote
+        // ourselves, never a guess. → `canvas() §keyDeadOf`
+        ...(() => {
+          const keyDead = n.server ? keyDeadOf(n.server) : undefined;
+          return keyDead ? { keyDead } : {};
+        })(),
         /**
-         * THƯ MỤC THẬT của cánh tay — đọc từ `company.yaml`, KHÔNG sửa được ở đây.
+         * The arm's REAL directory — read from `company.yaml`, NOT editable here.
          *
-         * Nhãn là thứ người dùng đặt và đổi được; thư mục là **cấu hình**, và
-         * đổi nó nghĩa là đổi `armHash` ⇒ một cánh tay KHÁC. Nên ô này chỉ đọc:
-         * muốn thư mục khác thì cắm một kết nối khác, đúng luật §6i.
+         * The label is something the user sets and can rename; the directory
+         * is **config**, and changing it means changing `armHash` ⇒ a
+         * DIFFERENT arm. So this field is read-only: wanting a different
+         * directory means plugging in a different connection, per §6i.
          *
-         * ⚠ KHÔNG dò `process.platform`, và đó là chủ ý — `folderRoots` nhận cả
-         * `D:\…` lẫn `/home/…` ở mọi hệ, vì một văn phòng zip từ máy khác hệ
-         * vẫn phải hiện đúng chuỗi đã ghi trong `company.yaml`. Hiện nguyên văn,
-         * không chuẩn hoá dấu gạch: thứ người dùng đối chiếu với Explorer/Finder
-         * là chuỗi họ đã nhập, không phải bản ta viết lại.
+         * ⚠ Does NOT check `process.platform`, deliberately — `folderRoots`
+         * accepts both `D:\…` and `/home/…` on every OS, because an office
+         * zipped over from a different OS still has to display the exact
+         * string written in `company.yaml`. Shown verbatim, slashes not
+         * normalized: what the user cross-checks against Explorer/Finder is
+         * the string they typed, not a version we rewrote.
          */
         folders: n.server ? folderRoots(this.loaded.company.mcpServers[n.server]) : [],
       };
@@ -3752,11 +4344,13 @@ export class Office {
       const a = this.loaded.config.assistant;
       return {
         ...base,
-        label: a.display_name,
+        // Empty = nobody named it ⇒ the label follows the switch. → types.ts
+        label: a.display_name || t('chat.assistant'),
         avatar: a.avatar,
-        // Trước đây trường này mang MODEL ID cho Trợ lý nhưng mang TÊN MỨC cho
-        // nhân viên, nên cùng một ô "Model" trên giao diện hiện hai loại giá trị
-        // khác nhau. Giờ `tier` luôn là mức, `model` luôn là model.
+        // This field used to carry a MODEL ID for the Assistant but a TIER
+        // NAME for a worker, so the same "Model" field in the UI showed two
+        // different kinds of value. Now `tier` is always the tier, `model`
+        // is always the model.
         tier: this.assistant.modelTier,
         model: this.assistant.model,
         tierInherited: a.model_tier === undefined,
@@ -3770,7 +4364,7 @@ export class Office {
     if (n.kind === 'knowledge') {
       return {
         ...base,
-        label: 'Kho tri thức chung',
+        label: t('off.sharedKnowledge'),
         avatar: '📚',
         count: this.knowledge.size,
         connected: true,
@@ -3779,16 +4373,17 @@ export class Office {
     }
     if (n.kind === 'library') {
       /**
-       * `size` đọc từ catalog trong bộ nhớ — KHÔNG quét đĩa ở đây.
+       * `size` is read from the in-memory catalog — does NOT scan disk here.
        *
-       * `describeNode` chạy mỗi lần vẽ lại sơ đồ (kéo node, đổi dây, mỗi sự
-       * kiện SSE). Nhét một `readdir` vào đây là mua một lần chạm đĩa cho mỗi
-       * khung hình. Quét đĩa chỉ xảy ra ở `GET /library`, đúng lúc người dùng
-       * mở tủ ra nhìn. → docs/SPEC-library.md §9.1
+       * `describeNode` runs every time the diagram redraws (dragging a node,
+       * rewiring, every SSE event). Sticking a `readdir` in here would buy a
+       * disk touch on every single frame. Disk scanning only happens at `GET
+       * /library`, exactly when the user opens the library to look at it. →
+       * docs/SPEC-library.md §9.1
        */
       return {
         ...base,
-        label: 'Tủ tài liệu',
+        label: t('off.documentCabinet'),
         avatar: '🗄',
         count: this.library.size,
         connected: true,
@@ -3813,7 +4408,7 @@ export class Office {
     };
   }
 
-  /** Task đã kết thúc trong ca hiện tại. Xem `onSchedulerEvent` để biết vì sao cần. */
+  /** Tasks that have finished in the current run. See `onSchedulerEvent` for why this is needed. */
   private settled = new Set<string>();
 
   private onSchedulerEvent(e: AgentEventBody, plan: Plan, record: PlanRecord): void {
@@ -3829,12 +4424,13 @@ export class Office {
     if (e.type === 'task.done') {
       const task = plan.tasks.find((t) => t.task_id === e.task_id);
       if (task) {
-        // Đếm theo TASK đã xong, không theo trạng thái của BƯỚC.
+        // Counted by TASKS finished, not by a STEP's own status.
         //
-        // Bản cũ hỏi "các task anh em có thuộc bước đã done không" — mà bước chỉ
-        // done khi mọi task của nó xong, nên câu hỏi tự tham chiếu chính nó và
-        // KHÔNG BAO GIỜ đúng. Hệ quả: bước có từ 2 task trở lên vĩnh viễn kẹt ở
-        // "đang làm", kể cả khi mọi việc đã xong.
+        // The old version asked "are the sibling tasks part of a step that's
+        // already done" — but a step is only done once all its tasks finish,
+        // so the question referenced itself and was NEVER true. Consequence:
+        // a step with 2+ tasks stayed stuck at "running" forever, even after
+        // everything actually finished.
         const siblings = plan.tasks.filter((t) => t.step === task.step);
         const allDone = siblings.every((s) => this.settled.has(s.task_id));
         this.markStep(plan, task.step, e.status === 'done' ? (allDone ? 'done' : 'running') : 'problem');
@@ -3856,16 +4452,18 @@ export class Office {
   }
 
   /**
-   * Ghi một lượt của TRỢ LÝ vào sổ chi phí.
+   * Records one ASSISTANT turn in the cost ledger.
    *
-   * Trợ lý cũng tiêu tiền, và với văn phòng dùng nhiều để trò chuyện thì nó tiêu
-   * phần lớn. Trước đây sổ chỉ có receipt của nhân viên, nên `agentco cost` trả
-   * lời sai cho đúng câu hỏi quan trọng nhất — "còn bao nhiêu hạn mức".
+   * The Assistant spends money too, and for an office used heavily for chat
+   * it spends the majority of it. The ledger used to only hold a worker's
+   * receipts, so `agentco cost` gave the wrong answer to the single most
+   * important question — "how much of my usage limit is left".
    *
-   * `task_id` mang tên KHÂU (`route`/`plan`/`report`) chứ không phải một id
-   * task: ba khâu này có hình dạng chi phí khác hẳn nhau — `route` chạy mỗi lượt
-   * và phải rẻ; `plan` chạy một lần một ca ở query riêng. Gộp lại thì không thấy
-   * khâu nào đang phình.
+   * `task_id` carries a STAGE name (`route`/`plan`/`report`) rather than a
+   * task id: these three stages have completely different cost shapes —
+   * `route` runs on every turn and has to stay cheap; `plan` runs once per
+   * job in its own query. Merged together, no single stage's growth would be
+   * visible.
    */
   private logAssistantUsage(stage: 'route' | 'plan' | 'report' | 'lookup', usage: Usage): void {
     if (usage.turns === 0 && usage.costUSD === 0) return;
@@ -3913,7 +4511,7 @@ export class Office {
     });
   }
 
-  /** Company cắm vào — sổ chi phí ở cấp CÔNG TY, một hoá đơn Claude một sổ. */
+  /** The company plugs in here — the cost ledger lives at the COMPANY level, one Claude bill, one ledger. */
   onUsage?: (rec: import('./usage.js').UsageRecord) => void;
 
   private savePlan(plan: Plan): void {
@@ -3921,41 +4519,46 @@ export class Office {
   }
 
   /**
-   * Biên nhận một task. Tên file mang CẢ `plan_id`.
+   * A task's receipt. The filename carries BOTH the `plan_id`.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ BUG ĐÃ SỬA (20/08): ba ca chạy, còn đúng MỘT file biên nhận.             │
+   * │ BUG FIXED (08/20): three runs happened, exactly ONE receipt file             │
+   * │ survived.                                                                │
    * │                                                                          │
-   * │ Bản trước đặt tên `${task_id}.receipt.json`. Nhưng `T-01` là số thứ tự   │
-   * │ TRONG một kế hoạch và mọi kế hoạch đều bắt đầu từ 1 — nên mọi ca đều ghi │
-   * │ đè lên cùng một file. Đo được trên máy người dùng: văn phòng             │
-   * │ `ban-dia-hoa` chạy ba ca dịch, `tasks/` còn lại đúng `T-01.receipt.json` │
-   * │ của ca CUỐI. Token, số lượt, `reads`, `looped`, `lessons` của hai ca đầu │
-   * │ mất trắng, không khôi phục được.                                         │
+   * │ The old version named it `${task_id}.receipt.json`. But `T-01` is a          │
+   * │ sequence number WITHIN one plan, and every plan starts at 1 — so every         │
+   * │ run overwrote the exact same file. Measured on a user's machine: office        │
+   * │ `ban-dia-hoa` ran three translation jobs, and `tasks/` was left holding         │
+   * │ exactly `T-01.receipt.json` from the LAST one. Tokens, turn count,             │
+   * │ `reads`, `looped`, `lessons` for the first two jobs vanished, unrecoverable.    │
    * │                                                                          │
-   * │ Đây CHÍNH XÁC là lỗi đã sửa cho `artifacts/` ngày 19/08 (xem             │
-   * │ `artifactScoper`) — cùng nguyên nhân, cùng lớp hậu quả. Lần đó `tasks/`  │
-   * │ bị bỏ quên, dù `savePlan` ngay bên trên đã dùng `plan_id` từ đầu.        │
+   * │ This is EXACTLY the bug already fixed for `artifacts/` on 08/19 (see          │
+   * │ `artifactScoper`) — same root cause, same failure class. That time            │
+   * │ `tasks/` got overlooked, even though `savePlan` right above it had already     │
+   * │ been using `plan_id` from the start.                                     │
    * │                                                                          │
-   * │ Bài học: khi sửa một lỗi "id không duy nhất", phải rà HẾT mọi chỗ lấy id │
-   * │ đó làm tên file — không chỉ chỗ người dùng vừa kêu.                      │
+   * │ Lesson: when fixing a "non-unique id" bug, sweep EVERY spot that uses          │
+   * │ that id as a filename — not just the one a user just reported.               │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * File cũ KHÔNG di trú: không có đoạn code nào đọc biên nhận trở lại (đây là
-   * bản ghi pháp y để người dùng mở ra xem), nên đổi tên là đủ. Bản `T-01.
-   * receipt.json` cũ nằm lại vô hại.
+   * Old files are NOT migrated: no code anywhere reads a receipt back (this
+   * is a forensic record for a person to open and read), so renaming going
+   * forward is enough. An old `T-01.receipt.json` sits there harmlessly.
    */
   private saveReceipt(planId: string, r: Receipt): void {
     this.writeJson(path.join(this.loaded.paths.tasks, `${planId}.${r.task_id}.receipt.json`), r);
   }
 
   /**
-   * Task chưa chạy — để chạy tiếp thay vì làm lại từ đầu. → SPEC-offices §6b
+   * Tasks that never ran — so they can be resumed instead of redone from
+   * scratch. → SPEC-offices §6b
    *
-   * ⚠ PHẢI ghi kèm `plan_id`. Bản trước lưu một mảng `TaskBrief` trần, và thiếu
-   * đúng mảnh đó thì không chạy tiếp được: `artifacts/<plan_id>/` là khung theo
-   * ca, nên không biết ca nào là ghi kết quả mới vào một thư mục khác và mớ dở
-   * dang cũ thành mồ côi — đúng chuyện `resume` sinh ra để tránh.
+   * ⚠ MUST be saved together with `plan_id`. The old version stored a bare
+   * `TaskBrief` array, and missing that exact piece meant it couldn't be
+   * resumed: `artifacts/<plan_id>/` is the frame for a whole run, so without
+   * it there's no way to know which run's new output would land in a
+   * different directory, orphaning the old unfinished batch — exactly what
+   * `resume` exists to avoid.
    */
   private savePending(planId: string, pending: TaskBrief[]): void {
     const file = path.join(this.loaded.paths.state, 'pending.json');
@@ -3971,30 +4574,63 @@ export class Office {
   }
 
   /**
-   * ⚠ ĐỌC CẢ ẢNH CHỤP DANH BẠ, không chỉ con trỏ phiên. → `Assistant.resumeFrom`
+   * ⚠ Reads the ROSTER SNAPSHOT too, not just the session pointer. →
+   * `Assistant.resumeFrom`
    *
-   * Hai thứ này là MỘT CẶP: hội thoại cũ (nơi có những câu từ chối cũ) và ảnh
-   * chụp để biết cấu hình đã đổi gì. Lưu một, quên một, thì sau restart lịch sử
-   * còn nguyên mà tín hiệu đính chính thì mất — và model theo lịch sử.
+   * These two are A PAIR: the old conversation (which holds old rejections)
+   * and the snapshot to tell what changed in the config. Save one, forget
+   * the other, and after a restart the history stays intact while the
+   * correction signal is lost — and the model follows the history.
    */
-  private readSession(): { id?: string; reach?: Record<string, string[]> } {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HOW FAR THE WORK LOG HAS ALREADY BEEN SQUASHED INTO MEMORY. (user 05/09) │
+   * │                                                                          │
+   * │ Lives HERE, next to the session pointer, for one specific reason: it must │
+   * │ survive the user DELETING their memory. Deleting is them saying *"forget  │
+   * │ every task up to now"* — if the marker lived in the memory node, deleting │
+   * │ it would reset the marker, `factSkeleton` would re-read the whole log,    │
+   * │ and the next compaction would rebuild exactly what they just deleted.     │
+   * │ That is the bug this field exists to close.                              │
+   * │                                                                          │
+   * │ ⚠ Deliberately NOT cleared by `forget()`. `/clear` starts a new           │
+   * │ conversation; it does not un-summarise work already recorded.            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  private compactedThrough: string | undefined;
+
+  private readSession(): {
+    id?: string;
+    reach?: Record<string, string[]>;
+    compactedThrough?: string;
+  } {
     try {
       const raw = JSON.parse(fs.readFileSync(this.sessionFile(), 'utf8')) as {
         session_id?: string;
         reach?: Record<string, string[]>;
+        compacted_through?: string;
       };
-      return { id: raw.session_id, reach: raw.reach };
+      return { id: raw.session_id, reach: raw.reach, compactedThrough: raw.compacted_through };
     } catch {
       return {};
     }
   }
 
+  /**
+   * ⚠ Writes when there is a session **or** a marker.
+   *
+   * The old early-return assumed the file only ever holds a session pointer.
+   * After `/clear` there is no session — and that is EXACTLY the moment the
+   * marker has just moved, so returning early there would drop the one write
+   * that matters and hand the next compaction the whole log again.
+   */
   private saveSessionId(): void {
-    if (!this.assistant.session) return;
+    if (!this.assistant.session && !this.compactedThrough) return;
     const reach = this.assistant.reachSnapshot;
     this.writeJson(this.sessionFile(), {
-      session_id: this.assistant.session,
+      ...(this.assistant.session ? { session_id: this.assistant.session } : {}),
       ...(reach ? { reach } : {}),
+      ...(this.compactedThrough ? { compacted_through: this.compactedThrough } : {}),
       saved: new Date().toISOString(),
     });
   }
@@ -4006,26 +4642,29 @@ export class Office {
 }
 
 /**
- * Bản ghi hội thoại đã BIẾN MẤT — `resume` sẽ không bao giờ chạy lại được.
+ * A conversation record has VANISHED — `resume` will never be able to run
+ * again.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐÂY LÀ RANH GIỚI "THỬ LẠI ĐƯỢC" vs "THỬ LẠI VÔ NGHĨA".                   │
+ * │ THIS IS THE BOUNDARY BETWEEN "RETRYABLE" AND "RETRYING IS POINTLESS".      │
  * │                                                                          │
- * │ Không dùng `classifyError` (worker.ts): nó phân loại theo cái giá phải    │
- * │ trả (hết hạn mức, rate limit, auth) để quyết có retry không. Ở đây câu    │
- * │ hỏi khác hẳn — không phải "chờ rồi thử lại được không" mà "cái ta định    │
- * │ đọc còn tồn tại không". Một lỗi mạng là `other`, một session đã bị xoá    │
- * │ cũng là `other`; gộp chúng lại là mất đúng thông tin cần dùng.            │
+ * │ Doesn't use `classifyError` (worker.ts): that classifies by the cost of      │
+ * │ the failure (out of usage, rate limit, auth) to decide whether to retry.       │
+ * │ Here the question is completely different — not "can I wait and try           │
+ * │ again" but "does the thing I meant to read still exist". A network error       │
+ * │ is `other`, a deleted session is also `other`; merging them loses exactly       │
+ * │ the information needed here.                                            │
  * │                                                                          │
- * │ ⚠ MẶC ĐỊNH LÀ `false` — khớp mẫu không chắc thì coi là lỗi TẠM. Nhận      │
- * │ nhầm một lỗi mạng thành "session mất" là ném đi một bản nén trí nhớ có    │
- * │ thể cứu được; nhận nhầm chiều ngược lại chỉ khiến người dùng gõ `/clear`  │
- * │ thêm một lần. Sai lệch về phía giữ dữ liệu.                              │
+ * │ ⚠ DEFAULTS TO `false` — an uncertain pattern match is treated as a            │
+ * │ TEMPORARY error. Mistaking a network error for "session gone" throws away      │
+ * │ a memory compaction that might have been rescuable; the opposite mistake       │
+ * │ only makes the user type `/clear` one more time. Errs on the side of           │
+ * │ keeping data.                                                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Khớp theo VĂN BẢN lỗi vì SDK không phơi mã lỗi có cấu trúc cho ca này. Mẫu
- * để rộng có chủ ý: một bản SDK đổi cách diễn đạt không được làm `/clear` kẹt
- * lại lần nữa. → `Office.compactMemory`
+ * Matches on the error TEXT because the SDK exposes no structured error code
+ * for this case. The pattern is deliberately loose: an SDK update rewording
+ * its message must not make `/clear` get stuck again. → `Office.compactMemory`
  */
 function sessionGone(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
@@ -4035,21 +4674,144 @@ function sessionGone(err: unknown): boolean {
 }
 
 /**
- * Mọi tài liệu tủ mà ca này đã chạm — gộp từ receipt, bỏ trùng.
+ * Every library document this run touched — merged from all receipts, deduplicated.
  *
- * Dùng làm `depends_on` cho bài học CHUNG: Trợ lý không đọc file nào, nên thứ
- * duy nhất nó có thể đang nói tới là tài liệu nhân viên vừa mở.
+ * Used as `depends_on` for a SHARED lesson: the Assistant reads no file
+ * itself, so the only thing it could possibly be referring to is a document
+ * a worker just opened.
  */
 function readsOf(receipts: readonly Receipt[]): string[] {
   return [...new Set(receipts.flatMap((r) => r.reads))].sort();
 }
 
 /**
- * File ca này ghi RA ngoài thư mục văn phòng, và có thật trên đĩa.
+ * What the WORK LOG records for a finished run, from the receipts it produced.
  *
- * Dùng ở đúng một chỗ: chọn câu nào để nói khi file đã hứa không có mặt. Không
- * bao giờ đi vào `whereBlock` — "kết quả của bạn nằm ở đây" chỉ được nói về chỗ
- * hệ thống quản được. → `worker.ts → landingOf`, nhãn `outside`
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `blocked` USED TO FALL THROUGH TO `done`. (user caught it 05/09)       │
+ * │                                                                          │
+ * │ The old expression asked only about `failed`, so a run whose ONLY task    │
+ * │ came back `blocked` was written into the log as **done**.                │
+ * │                                                                          │
+ * │ Measured, `P-260905-0237-oq34`:                                          │
+ * │   receipt → status "blocked", blocked_on "No file-system access to the   │
+ * │             human's local machine (D:\Downloads\Musics)…"                │
+ * │   log     → status "done"                                                │
+ * │   request → "Create an empty file named abc.txt in D:\Downloads\Musics"  │
+ * │                                                                          │
+ * │ That line then sits in the results listing, inside the prefix of EVERY   │
+ * │ `route()` turn, reading `- [done] Create an empty file named abc.txt…`.  │
+ * │ The user asked for the file again and was told *"it was already created  │
+ * │ last time"*. The model invented nothing — it read a status WE wrote      │
+ * │ wrong, and had no way to know better.                                    │
+ * │                                                                          │
+ * │ ⚠ Neither existing guard could see it. `missingOutputs` asks *"is the    │
+ * │ promised file on disk"* and the answer was YES: the worker dutifully     │
+ * │ wrote `result.md` holding its explanation of why it could not do the     │
+ * │ job. **A file existing is not a goal being met.**                        │
+ * │                                                                          │
+ * │ Same failure class the note on `missingOutputs` already names — *"the    │
+ * │ worst kind of lie"* — one level up, at the RUN, where nobody was         │
+ * │ looking. And this one SELF-PROPAGATES: a false fact in the log is read   │
+ * │ by every later turn, and the next compaction would squash it into        │
+ * │ memory, where `supersedes` renews it forever.                            │
+ * │ → [[agentco-experience-ratchet]]                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ Says nothing about `stopped` or `paused` on purpose: an interrupted or
+ * rate-limited run never reaches this function — those branches are decided
+ * earlier, from `result.stoppedBy`, and folding them in here would give one
+ * function two different questions to answer.
+ */
+export function planStatusOf(
+  receipts: readonly { status: string }[],
+): 'failed' | 'blocked' | 'done' {
+  if (receipts.some((r) => r.status === 'failed')) return 'failed';
+  if (receipts.some((r) => r.status === 'blocked' || r.status === 'needs_human')) return 'blocked';
+  return 'done';
+}
+
+/**
+ * The work listing handed to a memory-compaction turn. PURE, so it can be tested.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 ONLY THE JOBS NOT YET SQUASHED INTO MEMORY. (user 05/09)              │
+ * │                                                                          │
+ * │ This used to read `list().slice(0, 12)` — the last twelve jobs, however   │
+ * │ many of them memory already covered. Two consequences, and the second is  │
+ * │ the real defect:                                                         │
+ * │                                                                          │
+ * │  ① job #13 fell off the end and was NEVER recorded anywhere, with not     │
+ * │    one line saying so. `whereBlock`, in this same file, cuts at 8 and     │
+ * │    always prints "…and N more". Same shape, one of them honest.          │
+ * │  ② A user who EDITS or DELETES their memory is correcting the machine —   │
+ * │    that is the whole point of that pane being editable. But the deleted   │
+ * │    content came straight back at the next `/clear`, rebuilt from a log    │
+ * │    they have no door to. The edit pane was promising an authority it did  │
+ * │    not have. → [[agentco-scope-of-door-vs-data]]                         │
+ * │                                                                          │
+ * │ The recursion was always meant to be                                     │
+ * │     memory(n) = compact( session(n) + memory(n-1) )                      │
+ * │ with memory(n-1) — already in this very prompt, carried over by           │
+ * │ COMPACT_RULES rule 1 — as the truth for everything older. The skeleton's  │
+ * │ job is only the part memory CANNOT hold yet: what has run since. Feeding  │
+ * │ it the whole log made it a second, staler copy of memory, overwriting the │
+ * │ copy the user is allowed to correct.                                     │
+ * │                                                                          │
+ * │ ⚠ Belongs to the ASSISTANT's memory alone. Nothing here touches a         │
+ * │ worker's HOT/COLD knowledge — different store, different budget,          │
+ * │ different question. `factSkeleton` is its only caller.                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Split out of `Office` for the same reason `buildPlan` was: it holds rules
+ * that each cost something to learn — the window, the unfinished-job
+ * exception, the stated overflow — and buried inside a method that awaits the
+ * model, no test can reach any of them. → `assistant.ts §buildPlan`
+ */
+export function workSkeleton(
+  plans: readonly { status: string; request: string; report?: string; ended_at?: string }[],
+  since: string | undefined,
+): string {
+  /**
+   * ⚠ A job with no `ended_at` is KEPT whatever the marker says: unfinished
+   * work is exactly what memory should keep carrying forward, and it stops
+   * repeating by itself the moment the job finishes.
+   */
+  const fresh = plans.filter((p) => !since || !p.ended_at || p.ended_at > since);
+  if (fresh.length === 0) return '(no jobs have run since the last memory was written)';
+
+  /**
+   * Bounded by TOKENS, not by a job count — and the overflow is STATED.
+   *
+   * No arbitrary cap: the marker already makes this exactly one stretch of
+   * work, so the number is right by construction instead of by a guess. This
+   * ceiling is the safety valve for the one pathological session that ran
+   * hundreds of jobs, where the listing would otherwise eat the budget of the
+   * very turn meant to summarise it. `list()` is newest-first, so what gets
+   * dropped is the oldest — and the model is TOLD, because a summary that
+   * silently covers part of a window is worse than one that says which part.
+   */
+  const lines: string[] = [];
+  let spent = 0;
+  for (const p of fresh) {
+    const line = `- [${p.status}] ${p.request}${p.report ? `\n  → ${p.report.split('\n')[0]}` : ''}`;
+    const cost = estimateTokens(line);
+    if (spent + cost > SKELETON_TOKENS && lines.length > 0) break;
+    lines.push(line);
+    spent += cost;
+  }
+  const dropped = fresh.length - lines.length;
+  if (dropped > 0) lines.push(`- (+${dropped} older job(s) in this window, not listed here)`);
+  return lines.join('\n');
+}
+
+/**
+ * Files this run wrote OUTSIDE the office directory, that really exist on disk.
+ *
+ * Used in exactly one spot: choosing which sentence to say when a promised
+ * file is missing. Never flows into `whereBlock` — "your output is here" is
+ * only ever stated about a place the system actually manages. →
+ * `worker.ts → landingOf`, the `outside` label
  */
 function strayFilesOf(receipts: readonly Receipt[]): string[] {
   return straysOnDisk(receipts.flatMap((r) => r.landed ?? []));
@@ -4072,9 +4834,21 @@ function addUsage(a: Usage, b: Usage): Usage {
 }
 
 /**
- * Nhân viên mới sinh ra dưới dạng YAML CÓ CHÚ THÍCH, không phải cấu hình trần.
- * File này là chỗ người dùng advanced sẽ mở ra đầu tiên — nó phải tự giải thích
- * được, nhất là hai con số trực tiếp quyết định hoá đơn.
+ * ⚠ NO COMMENTS. → the box on `companyTemplate` in `src/cli/index.ts`
+ *
+ * This file used to carry a paragraph above `tools:` and above each budget
+ * number, on the grounds that it is the first file an advanced user opens and
+ * ought to explain itself. It still ought to — but not from here, because a
+ * comment written at creation time is never rewritten and quietly rots against
+ * the code. `tools: [Bash]` in particular is the ONE exception to "results
+ * always stay inside the office folder", and that warning has to be somewhere
+ * it stays true: the employee detail panel and docs/SPEC-artifacts.md §2.6.
+ *
+ * ⚠ `pitch` is the only thing the assistant sees when planning, so it is never
+ * left blank — an empty pitch means the assistant has nothing to route on.
+ * It arrives non-empty because `addAgent` REFUSES otherwise; this function does
+ * not substitute a default of its own. Writing one here is exactly what put our
+ * interface-language sentence into user data. → the box in `addAgent`
  */
 function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
   return `id: ${id}
@@ -4082,47 +4856,19 @@ version: 1
 display_name: ${JSON.stringify(displayName)}
 avatar: "•"
 
-# Đây là THỨ DUY NHẤT Trợ lý nhìn thấy khi lên kế hoạch.
-# Giữ ngắn: nó nằm trong ngữ cảnh của Trợ lý suốt cả ca làm việc.
-pitch: ${JSON.stringify(pitch || `Mô tả việc ${displayName} làm được, viết cho Trợ lý đọc.`)}
+pitch: ${JSON.stringify(pitch)}
 good_at: []
 not_for: []
 
 skill_level: medium
 skills: {}
 
-# Đọc/ghi file trong văn phòng và tìm trên web đã BẬT SẴN cho mọi nhân viên —
-# không cần khai gì ở đây. Trường này chỉ để thêm thứ nằm ngoài bộ mặc định.
-#
-# Bash = cho phép chạy lệnh trên máy. BẬT SẴN (user chốt 22/08) vì phần lớn
-# việc văn phòng thật sự cần nó: gọi git, đổi định dạng file, nén kết quả,
-# đụng tới thư mục nằm ngoài văn phòng.
-#
-# ⚠ Đây là NGOẠI LỆ DUY NHẤT của luật "kết quả luôn nằm trong thư mục văn
-# phòng" (docs/SPEC-artifacts.md §2.6): hook chặn ghi bậy chỉ khớp được
-# Write/Edit, không khớp được lệnh shell. Người này đọc và ghi được bất cứ
-# đâu trên máy bạn. Xoá dòng dưới, hoặc tắt công tắc trong bảng chi tiết,
-# nếu vai trò này không cần.
 tools: [Bash]
 model_tier: ${tier}
 use_preset: false
 
 budget:
-  # max_turns là đòn bẩy chi phí lớn nhất: mỗi lượt đọc lại TOÀN BỘ prefix.
-  # Vai trò tier eco cần con số CAO HƠN tier standard — model rẻ đi nhiều
-  # bước hơn cho cùng một việc. Tier deep thì ngược lại: mỗi lượt đắt hơn hẳn
-  # nhưng nó đi ít bước hơn.
-  #
-  # ⚠ NỚI 26/08 (user chốt) — 6/12 là con số của thời CHƯA CÓ MCP. Mỗi lời gọi
-  # MCP là MỘT LƯỢT, nên một việc chạm vài trang Notion đốt hết trần trước khi
-  # kịp làm xong. Đo được: xoá một trang con = 9 lượt, chạm trần ở 6, và cái
-  # giá của việc chạm trần là ĐẮT NHẤT trong mọi kiểu hỏng — nó chạy tới kịch
-  # rồi mất trắng.
   max_turns: ${tier === 'eco' ? 20 : tier === 'deep' ? 10 : 15}
-  # Trần chi phí MỘT việc. Đặt 0 = không giới hạn.
-  # Số dưới đây RỘNG có chủ ý: chặn giữa chừng là mất trắng số tiền đã tiêu mà
-  # không có kết quả. Đo được 21/08 trên bài gộp CSV 200 dòng: eco ~$0.17,
-  # standard ~$0.45. Siết xuống khi bạn đã biết việc của mình tốn bao nhiêu.
   max_usd: ${tier === 'eco' ? '2.0' : tier === 'deep' ? '10.0' : '5.0'}
   knowledge_pack: 3000
 `;

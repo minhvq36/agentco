@@ -1,29 +1,33 @@
 /**
- * DỌN NGƯỢC BÁNH CÓC — bỏ những bài học sinh ra từ ca KHÔNG ĐI ĐẾN ĐÍCH.
- * → `assistant.ts §learnable` · SESSIONS_MEMORY §"BÁNH CÓC KINH NGHIỆM"
+ * RATCHET CLEANUP — remove lessons that were born from runs that DID NOT REACH THE GOAL.
+ * → `assistant.ts §learnable` · SESSIONS_MEMORY §"EXPERIENCE RATCHET"
  *
- * Cổng mới (29/08) chỉ chặn từ nay về sau. Kho hiện có đã tích sẵn những mẩu mà
- * cổng ấy lẽ ra đã chặn — và chín trong số đó đang làm cánh tay "Trình duyệt
- * web" ngừng chạy. Script này áp **đúng cùng một luật** lên kho cũ.
+ * The new gate (added 08/29) only blocks going forward. The existing knowledge
+ * store had already accumulated entries that gate would have blocked — and nine
+ * of them are currently causing the "Web browser" arm to stop working. This
+ * script applies **that exact same rule** to the existing store.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ KHÔNG GÕ TAY DANH SÁCH. Mỗi node ghi `source: <plan_id>`, và biên nhận   │
- * │ của kế hoạch đó còn nằm trong `.state/tasks/`. Nên câu hỏi *"ca này có    │
- * │ đi đến đích không"* trả lời được bằng **dữ liệu**, y hệt cách cổng mới    │
- * │ trả lời nó lúc chạy. Gõ tay thì danh sách đúng một lần rồi thành sai.     │
+ * │ DO NOT HAND-TYPE THE LIST. Every node records `source: <plan_id>`, and    │
+ * │ that plan's receipt still lives under `.state/tasks/`. So the question    │
+ * │ *"did this run reach the goal"* can be answered from **data**, the same   │
+ * │ way the new gate answers it at runtime. A hand-typed list is correct once │
+ * │ and wrong forever after.                                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ ĐI QUA API CỦA DAEMON nếu daemon đang chạy. Xoá file dưới chân một daemon
- * đang giữ index trong RAM thì đĩa và bộ nhớ lệch nhau, và nó sẽ tiếp tục nạp
- * mẩu đã xoá vào prompt cho tới lần quét sau — đúng kiểu hỏng im lặng.
+ * WARNING: goes through the daemon's API when the daemon is running. Deleting
+ * files out from under a daemon that keeps the index in RAM leaves disk and
+ * memory out of sync, and it will keep feeding the deleted entry into prompts
+ * until the next scan — a textbook silent failure.
  *
- * ⚠ KHÔNG đụng node GHI NHỚ của Trợ lý (`source: compact`): thẩm quyền của nó
- * đến từ NGƯỜI DÙNG, không từ kết quả một ca.
- * ⚠ KHÔNG đụng node của vai trò (`source: T-01`): chúng không ghi lại kế hoạch
- * nào đã đẻ ra chúng, nên KHÔNG CÓ DỮ LIỆU để phán — script báo ra, không đoán.
+ * WARNING: does NOT touch the Assistant's MEMORY node (`source: compact`): its
+ * authority comes from the USER, not from the outcome of a run.
+ * WARNING: does NOT touch role nodes (`source: T-01`): they don't record which
+ * plan produced them, so there is NO DATA to judge by — the script reports
+ * them, it does not guess.
  *
- * Chạy:  npx tsx scripts/prune-unfinished-lessons.ts <office-id> [--apply]
- * Không có `--apply` thì chỉ in ra, không xoá gì.
+ * Run:  npx tsx scripts/prune-unfinished-lessons.ts <office-id> [--apply]
+ * Without `--apply` it only prints, it deletes nothing.
  */
 
 import fs from 'node:fs';
@@ -35,28 +39,30 @@ import { companyPaths, officePaths } from '../src/core/paths.js';
 
 const companyDir = path.resolve('company');
 const officeId = process.argv[2];
-if (!officeId) throw new Error('thiếu <office-id>, ví dụ: canh-tay');
+if (!officeId) throw new Error('missing <office-id>, e.g. canh-tay');
 const apply = process.argv.includes('--apply');
 
 const oPaths = officePaths(path.join(companyPaths(companyDir).offices, officeId));
 
-/** `learnable` của `assistant.ts`, áp lên biên nhận đọc từ đĩa. */
+/** `learnable` from `assistant.ts`, applied to a receipt read off disk. */
 const learnableReceipt = (r: Record<string, unknown>): boolean =>
   r['status'] === 'done' && agentFault(r as never);
 
 /**
- * Kế hoạch này còn được giữ bài học không — BA kết quả, và vế thứ hai là vế dễ
- * đánh rơi nhất:
+ * Whether this plan's lesson should still be kept — THREE outcomes, and the
+ * second one is the easiest to drop by accident:
  *
- *   'yes'      có việc ĐI ĐẾN ĐÍCH mà có vấp  → `learnable`
- *   'friction' MỌI việc đều `done` và SẠCH    → `worthLearning` nhánh ma sát
- *   'no'       còn lại
+ *   'yes'      a task REACHED THE GOAL but hit friction along the way → `learnable`
+ *   'friction' EVERY task is `done` and CLEAN                          → `worthLearning`'s friction branch
+ *   'no'       everything else
  *
- * ⚠ `friction` không nằm trên đĩa (nó ở RAM, theo mạch hội thoại), nên không
- * đọc thẳng được. Nhưng suy ra được **chắc chắn**: một ca sạch bong mà vẫn có
- * bài học thì cửa duy nhất nó lọt qua là nhánh ma sát. Bỏ vế này là xoá nhầm
- * đúng cái LỚP bài học học được từ chính người dùng — thứ đắt nhất trong kho,
- * và là thứ luật 29/08 cố ý KHÔNG đụng tới.
+ * WARNING: `friction` doesn't live on disk (it lives in RAM, tied to the
+ * conversation), so it can't be read directly. But it CAN be inferred with
+ * certainty: a run that finished clean and still produced a lesson could only
+ * have gotten there through the friction branch. Dropping this case would
+ * delete exactly the LAYER of lessons learned from the user themselves — the
+ * most valuable thing in the store, and the one the 08/29 rule deliberately
+ * left untouched.
  */
 function planLearnable(planId: string): 'yes' | 'friction' | 'no' | 'unknown' {
   let files: string[];
@@ -65,13 +71,13 @@ function planLearnable(planId: string): 'yes' | 'friction' | 'no' | 'unknown' {
   } catch {
     return 'unknown';
   }
-  if (!files.length) return 'unknown'; // biên nhận đã bị dọn — không có dữ liệu để phán
+  if (!files.length) return 'unknown'; // receipts have already been cleaned up — no data to judge from
   const rs: Record<string, unknown>[] = [];
   for (const f of files) {
     try {
       rs.push(JSON.parse(fs.readFileSync(path.join(oPaths.tasks, f), 'utf8')));
     } catch {
-      return 'unknown'; // biên nhận hỏng ⇒ không đủ dữ kiện, và "không biết" thì KHÔNG xoá
+      return 'unknown'; // corrupt receipt => not enough data, and "unknown" means DO NOT delete
     }
   }
   if (rs.some(learnableReceipt)) return 'yes';
@@ -128,13 +134,13 @@ const say = (label: string, rs: Row[]) => {
   console.log(`\n${label} (${rs.length})`);
   for (const r of rs) console.log(`  ${r.source.padEnd(19)} ${r.title.slice(0, 62)}`);
 };
-say('✅ GIỮ — ca có việc đi đến đích mà có vấp', keep);
-say('✅ GIỮ — nhánh MA SÁT: ca sạch bong, bài học là về cách giao việc', fric);
-say('⏭ KHÔNG PHÁN — ghi nhớ của người dùng / bài học vai trò (không ghi plan_id)', skip);
-say('🔴 BỎ — sinh ra từ ca KHÔNG đi đến đích', drop);
+say('KEEP — a task reached the goal but hit friction', keep);
+say('KEEP — FRICTION branch: a clean run whose lesson is about how the task was handed off', fric);
+say('NO VERDICT — user memory / role lessons (no plan_id recorded)', skip);
+say('DROP — born from a run that did NOT reach the goal', drop);
 
 if (!apply) {
-  console.log(`\n(chạy thử — chưa xoá gì. Thêm --apply để xoá ${drop.length} mẩu.)\n`);
+  console.log(`\n(dry run — nothing deleted. Add --apply to delete ${drop.length} entries.)\n`);
   process.exit(0);
 }
 
@@ -145,8 +151,9 @@ const base = fs.existsSync(daemonFile)
 
 if (!base) {
   throw new Error(
-    'Không thấy daemon.json. Script này cố ý KHÔNG xoá thẳng trên đĩa: daemon giữ index ' +
-      'trong RAM, xoá dưới chân nó thì đĩa và bộ nhớ lệch nhau. Khởi động daemon rồi chạy lại.',
+    'daemon.json not found. This script deliberately does NOT delete straight from disk: the ' +
+      'daemon keeps its index in RAM, and deleting out from under it would leave disk and memory ' +
+      'out of sync. Start the daemon and run this again.',
   );
 }
 
@@ -163,4 +170,4 @@ for (const r of drop) {
   }
   done++;
 }
-console.log(`\nĐã xoá ${done}/${drop.length} mẩu qua API của daemon (${base}).\n`);
+console.log(`\nDeleted ${done}/${drop.length} entries via the daemon API (${base}).\n`);

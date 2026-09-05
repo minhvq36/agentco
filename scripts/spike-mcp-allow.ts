@@ -1,26 +1,28 @@
 /**
- * SPIKE — TOOL CỦA MCP CÓ ĐƯỢC TỰ DUYỆT KHÔNG?
+ * SPIKE — DO MCP TOOLS GET AUTO-APPROVED?
  *
- * Sinh ra từ ca 9 chạy 24/08 (`P-260824-0355-r3qe`): vai trò `nguoi-kiem-ke` CÓ
- * cánh tay filesystem trỏ đúng `D:\Downloads\Programs Installation`, gọi tool ba
- * lần, và cả ba lần nhận *"permission denied"*. $0,0948 cho 0 kết quả.
+ * Born from test 9, run 08/24 (`P-260824-0355-r3qe`): the `nguoi-kiem-ke`
+ * (inventory-clerk) role HAS a filesystem arm pointed straight at
+ * `D:\Downloads\Programs Installation`, called the tool three times, and got
+ * *"permission denied"* all three times. $0.0948 for 0 results.
  *
- * Giả thuyết: `worker.ts` gửi `allowedTools = effectiveTools(role.tools)` — chỉ
- * 7 tool văn phòng (+ shell). Tên tool MCP (`mcp__<server>__<tool>`) KHÔNG nằm
- * trong đó ⇒ SDK coi chúng là "cần hỏi" ⇒ không có `canUseTool` ⇒ **deny**.
+ * Hypothesis: `worker.ts` sends `allowedTools = effectiveTools(role.tools)` —
+ * just the 7 office tools (+ shell). MCP tool names (`mcp__<server>__<tool>`)
+ * are NOT in that list ⇒ the SDK treats them as "needs asking" ⇒ no
+ * `canUseTool` ⇒ **deny**.
  *
- * Nếu đúng: mỗi cánh tay cắm vào tốn ~2 185 token/lượt (đo 23/08) cho một bộ
- * tool KHÔNG BAO GIỜ dùng được. Trả tiền cho một cánh tay bị trói.
+ * If true: every arm plugged in costs ~2,185 tokens/turn (measured 08/23) for
+ * a toolset that can NEVER actually be used. Paying for an arm that's tied down.
  *
- * Ba điều kiện, một biến mỗi lần:
- *   A  allowedTools = 7 tool          (đúng production hôm nay)
- *   B  allowedTools += `mcp__files`   (tiền tố cấp SERVER)
- *   C  allowedTools += tên đầy đủ     (`mcp__files__list_directory`, …)
+ * Three conditions, one variable changed each time:
+ *   A  allowedTools = 7 tools          (matches production today)
+ *   B  allowedTools += `mcp__files`    (SERVER-level prefix)
+ *   C  allowedTools += full names      (`mcp__files__list_directory`, …)
  *
- * In ra thứ THẤY trước thứ SUY: `system/init.tools`, từng `tool_use`, từng
- * `tool_result` kèm `is_error`. → [[agentco-measurement-vs-conclusion]]
+ * Print what's OBSERVED before what's INFERRED: `system/init.tools`, each
+ * `tool_use`, each `tool_result` with its `is_error`. → [[agentco-measurement-vs-conclusion]]
  *
- * Chạy: npx tsx scripts/spike-mcp-allow.ts   (~$0,01, haiku, 3 lượt)
+ * Run: npx tsx scripts/spike-mcp-allow.ts   (~$0.01, haiku, 3 turns)
  */
 
 import fs from 'node:fs';
@@ -32,7 +34,7 @@ import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 const OFFICE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 const PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
 
-// Thư mục thử có DẤU CÁCH trong tên — giống hệt ca thật của user.
+// Test directory with a SPACE in its name — exactly like the user's real case.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcpallow-'));
 const dir = path.join(root, 'Programs Installation');
 fs.mkdirSync(dir, { recursive: true });
@@ -56,11 +58,11 @@ async function run(label: string, allowed: string[]): Promise<Row> {
 
   const q = query({
     prompt:
-      `Liệt kê các file trong thư mục "${dir}" kèm kích thước từng file. ` +
-      `Dùng công cụ đang có. Trả lời ngắn gọn bằng tiếng Việt.`,
+      `List the files in the directory "${dir}" along with each file's size. ` +
+      `Use whatever tool is available. Answer briefly.`,
     options: {
       model: 'claude-haiku-4-5-20251001',
-      systemPrompt: 'Bạn là nhân viên kiểm kê file.',
+      systemPrompt: 'You are a file-inventory clerk.',
       tools: OFFICE_TOOLS,
       allowedTools: allowed,
       mcpServers: { files: FILES },
@@ -86,7 +88,7 @@ async function run(label: string, allowed: string[]): Promise<Row> {
       }
     }
 
-    // tool_result đi trong tin `user` — đây là chỗ DUY NHẤT thấy được deny.
+    // tool_result travels inside a `user` message — this is the ONLY place denials show up.
     if (m['type'] === 'user') {
       const content = (m['message'] as { content?: unknown[] })?.content ?? [];
       for (const b of content as Record<string, unknown>[]) {
@@ -106,38 +108,38 @@ async function run(label: string, allowed: string[]): Promise<Row> {
     }
   }
   } catch (e) {
-    // Chạm trần lượt / kết quả lỗi ⇒ SDK ném. Đó là DỮ LIỆU, không phải sự cố.
-    row.text = `⟨ném⟩ ${(e as Error).message.replace(/\s+/g, ' ').slice(0, 140)}`;
+    // Hitting the turn cap / an error result ⇒ the SDK throws. That's DATA, not a crash.
+    row.text = `⟨threw⟩ ${(e as Error).message.replace(/\s+/g, ' ').slice(0, 140)}`;
   }
   return row;
 }
 
 const rows: Row[] = [];
 
-console.log(`\nthư mục thử: ${dir}\n`);
+console.log(`\ntest directory: ${dir}\n`);
 
-console.log('── A · allowedTools = 7 tool văn phòng (ĐÚNG production hôm nay)');
-rows.push(await run('A · 7 tool', OFFICE_TOOLS));
+console.log('── A · allowedTools = the 7 office tools (matches production today)');
+rows.push(await run('A · 7 tools', OFFICE_TOOLS));
 
-console.log('\n── B · allowedTools += "mcp__files" (tiền tố cấp SERVER)');
+console.log('\n── B · allowedTools += "mcp__files" (SERVER-level prefix)');
 rows.push(await run('B · + mcp__files', [...OFFICE_TOOLS, 'mcp__files']));
 
-console.log('\n── C · allowedTools += tên tool đầy đủ');
+console.log('\n── C · allowedTools += full tool names');
 const full = rows[0]?.granted.filter((t) => t.startsWith('mcp__files__')) ?? [];
-rows.push(await run('C · + tên đầy đủ', [...OFFICE_TOOLS, ...full]));
+rows.push(await run('C · + full names', [...OFFICE_TOOLS, ...full]));
 
-console.log('\n═══ KẾT QUẢ ═══\n');
-console.log('CLI cấp (system/init) ở lượt A:');
-console.log(`   tổng ${rows[0]?.granted.length} tool, trong đó mcp__files__* = ${full.length}`);
+console.log('\n═══ RESULTS ═══\n');
+console.log('CLI-granted (system/init) on run A:');
+console.log(`   ${rows[0]?.granted.length} tools total, of which mcp__files__* = ${full.length}`);
 console.log(`   ${full.slice(0, 6).join(', ')}${full.length > 6 ? ', …' : ''}\n`);
 
 for (const r of rows) {
   console.log(
-    `${r.label.padEnd(20)} gọi ${String(r.calls.length).padStart(2)} · deny ${String(r.denied).padStart(2)} · ok ${String(r.ok).padStart(2)} · $${r.cost.toFixed(4)}`,
+    `${r.label.padEnd(20)} calls ${String(r.calls.length).padStart(2)} · deny ${String(r.denied).padStart(2)} · ok ${String(r.ok).padStart(2)} · $${r.cost.toFixed(4)}`,
   );
-  console.log(`   tool đã gọi: ${r.calls.join(', ') || '(không gọi tool nào)'}`);
-  console.log(`   nói: ${r.text.replace(/\s+/g, ' ').slice(0, 160)}\n`);
+  console.log(`   tools called: ${r.calls.join(', ') || '(none called)'}`);
+  console.log(`   said: ${r.text.replace(/\s+/g, ' ').slice(0, 160)}\n`);
 }
 
 fs.rmSync(root, { recursive: true, force: true });
-console.log('↩ đã dọn thư mục thử');
+console.log('↩ test directory cleaned up');

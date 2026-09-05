@@ -7,6 +7,7 @@ import {
   FolderOpen,
   MessageSquare,
   ScrollText,
+  Settings,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -14,42 +15,50 @@ import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/misc';
 import { actions, useApp, type PanelId } from '@/lib/store';
+import { t, type MessageKey } from '@i18n';
 import { ChatPanel } from './panels/ChatPanel';
 import { PlansPanel } from './panels/PlansPanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { KnowledgePanel } from './panels/KnowledgePanel';
 import { LibraryPanel } from './panels/LibraryPanel';
 import { ArtifactsPanel } from './panels/ArtifactsPanel';
+import { SettingsPanel } from './panels/SettingsPanel';
 
 /**
- * BA KHO ĐỨNG LIỀN NHAU, và thứ tự đó có chủ ý.
+ * THE THREE STORES SIT TOGETHER, and the order is deliberate.
  *
- * Chúng là ba khái niệm dễ lẫn nhất trong cả sản phẩm, phân biệt bằng đúng một
- * câu hỏi: **AI ĐẶT FILE VÀO ĐÓ?**
+ * They are the three most confusable concepts in the product, separated by
+ * exactly one question: WHO PUT THE FILE THERE?
  *
- *   Tủ tài liệu   NGƯỜI DÙNG đưa vào   → thêm/xoá được, không sửa
- *   Kết quả       NHÂN VIÊN làm ra     → xoá được, không thêm, không sửa
- *   Kho tri thức  AGENT tự rút ra      → sửa/xoá được, không thêm
+ *   Documents   THE USER put it there    → add/delete, never edit
+ *   Results     AN EMPLOYEE made it      → delete only, never add, never edit
+ *   Knowledge   AN AGENT derived it      → edit/delete, never add
  *
- * Đứng cạnh nhau thì khác biệt đó đọc được bằng mắt; rải ra ba chỗ thì người
- * dùng phải nhớ. Đặt "Kết quả" ở GIỮA vì nó là cái duy nhất có cả hai đầu:
- * nhân viên đọc tài liệu ở trên, và học được gì thì thành tri thức ở dưới.
+ * Side by side that difference reads at a glance; spread across three places it
+ * has to be memorised. "Results" sits in the MIDDLE because it is the only one
+ * with both ends: employees read documents above it, and what they learn becomes
+ * knowledge below it.
  * → docs/SPEC-library.md §1 · docs/SPEC-artifacts.md
+ *
+ * ⚠ `label` is a MESSAGE KEY, not a string. This table is module-level, so a
+ * resolved string here would be frozen at import time and every tab would keep
+ * the language the page loaded with. The key is resolved at render instead.
  */
-const TABS: Array<{ id: PanelId; icon: LucideIcon; label: string }> = [
-  { id: 'chat', icon: MessageSquare, label: 'Nói với Trợ lý' },
-  { id: 'plans', icon: ScrollText, label: 'Nhật ký công việc' },
-  { id: 'overview', icon: Building2, label: 'Tổng quan công ty' },
-  { id: 'library', icon: FolderOpen, label: 'Tủ tài liệu' },
-  { id: 'artifacts', icon: FileCheck2, label: 'Kết quả' },
-  { id: 'knowledge', icon: BookOpen, label: 'Kho tri thức' },
+const TABS: Array<{ id: PanelId; icon: LucideIcon; label: MessageKey }> = [
+  { id: 'chat', icon: MessageSquare, label: 'sidebar.chat' },
+  { id: 'plans', icon: ScrollText, label: 'sidebar.plans' },
+  { id: 'overview', icon: Building2, label: 'sidebar.overview' },
+  { id: 'library', icon: FolderOpen, label: 'sidebar.library' },
+  { id: 'artifacts', icon: FileCheck2, label: 'sidebar.artifacts' },
+  { id: 'knowledge', icon: BookOpen, label: 'sidebar.knowledge' },
+  { id: 'settings', icon: Settings, label: 'sidebar.settings' },
 ];
 
 const MIN_W = 300;
 const WIDE_W = 720;
 const STORAGE_KEY = 'agentco.panelWidth';
 
-/** Trần theo cửa sổ: canvas phải còn chỗ để nhìn thấy sơ đồ, không chỉ một khe. */
+/** Capped by the window: the canvas needs room to show a diagram, not a slit. */
 function maxWidth(): number {
   return Math.max(MIN_W, Math.min(WIDE_W + 240, window.innerWidth - 420));
 }
@@ -59,30 +68,50 @@ function clampWidth(w: number): number {
 }
 
 /**
- * Sidebar trái. → docs/SPEC-ui.md §0
+ * The left sidebar. → docs/SPEC-ui.md §0
  *
- * Bản v0 có một thanh dock dưới chiếm chỗ VĨNH VIỄN cho chat và kế hoạch —
- * thứ người dùng chỉ cần từng lúc. Ở đây: rail icon luôn thấy, panel mở ra khi
- * bấm và đóng lại được, trả toàn bộ màn hình cho canvas.
+ * v0 had a bottom dock that PERMANENTLY held space for chat and the plan —
+ * things people need only now and then. Here: the icon rail is always visible,
+ * the panel opens on click and closes again, giving the whole screen to the
+ * canvas.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO PANEL KÉO ĐƯỢC                                                    │
+ * │ WHY THE PANEL IS RESIZABLE                                               │
  * │                                                                          │
- * │ 336px là đủ cho một dòng chat, không đủ cho thứ Trợ lý thật sự trả về:   │
- * │ danh sách lệnh, kế hoạch nhiều bước, báo cáo. Nội dung không co lại được │
- * │ — nó chỉ ngắt dòng xấu đi. Nên bề rộng phải là thứ người dùng chỉnh.     │
+ * │ 336px is enough for a line of chat and not enough for what the assistant │
+ * │ actually returns: command lists, multi-step plans, reports. That content │
+ * │ does not shrink — it only wraps worse. So the width has to be theirs.    │
  * │                                                                          │
- * │ Bề rộng lúc ĐANG KÉO đi thẳng vào DOM qua ref, y hệt toạ độ node trên    │
- * │ canvas. Một `setState` mỗi frame kéo là render lại cả cây React 60       │
- * │ lần/giây trong khi SSE vẫn đang bắn sự kiện vào — đúng thứ tiêu chí      │
- * │ "Hiệu năng" cấm. React chỉ biết bề rộng mới khi THẢ CHUỘT.               │
+ * │ The width WHILE DRAGGING goes straight into the DOM through a ref, the   │
+ * │ same as node coordinates on the canvas. One `setState` per drag frame is │
+ * │ re-rendering the whole React tree 60 times a second while SSE is still   │
+ * │ firing events into it — precisely what the "performance" criterion       │
+ * │ forbids. React only learns the new width ON MOUSE RELEASE.               │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function Sidebar() {
   const panel = useApp((s) => s.panel);
   const unread = useApp((s) => s.messages.length - s.seenMessages);
   const working = useApp((s) => s.officeState === 'working');
-  const active = TABS.find((t) => t.id === panel);
+  /**
+   * NO OFFICES ⇒ only the COMPANY-level drawer remains. (bug 02/09)
+   *
+   * The other five drawers describe an open office, so they are meaningless
+   * here. But "Company overview" describes the company — spending, connections
+   * and workspaces are all company-level data, and THEY OUTLIVE THE LAST OFFICE.
+   * Hiding this drawer too locks people out of their own shared ledger: delete
+   * every office and the Notion/Linear/GitHub connections have no door left to
+   * clean them up through.
+   */
+  const noOffices = useApp((s) => (s.company?.offices.length ?? 0) === 0);
+  /**
+   * Settings survives the no-offices state alongside Overview, and for the same
+   * reason: it is COMPANY-level. A fresh install lands here with nothing built
+   * yet, and the language of the interface is exactly the thing someone wants
+   * to fix before they start naming their first office in it.
+   */
+  const tabs = noOffices ? TABS.filter((tab) => tab.id === 'overview' || tab.id === 'settings') : TABS;
+  const active = tabs.find((tab) => tab.id === panel);
 
   const paneRef = useRef<HTMLElement | null>(null);
   const [width, setWidth] = useState<number>(() => {
@@ -90,8 +119,8 @@ export function Sidebar() {
     return Number.isFinite(saved) && saved > 0 ? clampWidth(saved) : 336;
   });
 
-  // Thu nhỏ cửa sổ có thể làm panel rộng hơn cả màn hình. Kẹp lại, nếu không
-  // canvas biến mất hoàn toàn và không có cách nào lấy lại ngoài xoá localStorage.
+  // Shrinking the window can leave the panel wider than the screen. Clamp it, or
+  // the canvas disappears entirely with no way back except clearing localStorage.
   useEffect(() => {
     const onResize = () => setWidth((w) => clampWidth(w));
     window.addEventListener('resize', onResize);
@@ -107,8 +136,8 @@ export function Sidebar() {
     const startW = pane.getBoundingClientRect().width;
     let next = startW;
 
-    // `setPointerCapture` trên chính tay nắm: chuột đi nhanh ra ngoài phần tử
-    // vẫn không tuột, và không cần bắt sự kiện ở tận `window`.
+    // `setPointerCapture` on the handle itself: a fast pointer leaving the
+    // element does not break the drag, and no `window`-level listener is needed.
     const handle = e.currentTarget;
     handle.setPointerCapture(e.pointerId);
     document.body.style.cursor = 'col-resize';
@@ -143,27 +172,28 @@ export function Sidebar() {
   return (
     <div className="flex flex-none border-r border-line bg-panel">
       <nav className="flex w-14 flex-none flex-col items-center gap-1 border-r border-line py-2">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const on = panel === t.id;
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const on = panel === tab.id;
+          const label = t(tab.label);
           return (
-            /* `side="right"`: rail này XẾP DỌC, nên tooltip mặc định (`top`)
-               phủ đúng lên nút phía trên. → chú thích ở `Tip` */
-            <Tip key={t.id} label={t.label} side="right">
+            /* `side="right"`: this rail is VERTICAL, so the default tooltip
+               (`top`) lands right on the button above. → the note on `Tip` */
+            <Tip key={tab.id} label={label} side="right">
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={t.label}
+                aria-label={label}
                 aria-pressed={on}
                 className={on ? 'bg-accent-soft text-accent' : ''}
-                onClick={() => actions.openPanel(t.id)}
+                onClick={() => actions.openPanel(tab.id)}
               >
                 <span className="relative">
                   <Icon className="h-[18px] w-[18px]" />
-                  {t.id === 'chat' && unread > 0 && !on && (
+                  {tab.id === 'chat' && unread > 0 && !on && (
                     <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent" />
                   )}
-                  {t.id === 'plans' && working && !on && (
+                  {tab.id === 'plans' && working && !on && (
                     <span className="soft-pulse absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent" />
                   )}
                 </span>
@@ -178,18 +208,18 @@ export function Sidebar() {
           ref={paneRef}
           className="relative flex flex-none flex-col"
           style={{ width }}
-          aria-label={active.label}
+          aria-label={t(active.label)}
         >
           <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.09em] text-muted">
-              {active.label}
+              {t(active.label)}
             </span>
             <div className="flex-1" />
-            <Tip label={wide ? 'Thu về bề rộng thường' : 'Mở rộng bảng'}>
+            <Tip label={wide ? t('sidebar.narrowHint') : t('sidebar.widenHint')}>
               <Button
                 size="iconSm"
                 variant="ghost"
-                aria-label={wide ? 'Thu hẹp bảng' : 'Mở rộng bảng'}
+                aria-label={wide ? t('sidebar.narrow') : t('sidebar.widen')}
                 onClick={() => applyWidth(wide ? 336 : WIDE_W)}
               >
                 <ChevronsLeftRight className="h-4 w-4" />
@@ -198,14 +228,14 @@ export function Sidebar() {
             <Button
               size="iconSm"
               variant="ghost"
-              aria-label="Đóng bảng"
+              aria-label={t('sidebar.closePanel')}
               onClick={() => actions.openPanel(null)}
             >
               <X className="h-4 w-4" />
             </Button>
           </div>
-          {/* overflow-hidden: mỗi panel tự lo cuộn của nó. Bọc thêm một lớp
-              cuộn ở đây sẽ sinh hai thanh cuộn lồng nhau. */}
+          {/* overflow-hidden: each panel handles its own scrolling. Wrapping
+              another scroll layer here produces two nested scrollbars. */}
           <div className="min-h-0 flex-1 overflow-hidden">
             {panel === 'chat' && <ChatPanel />}
             {panel === 'plans' && <PlansPanel />}
@@ -213,15 +243,16 @@ export function Sidebar() {
             {panel === 'library' && <LibraryPanel />}
             {panel === 'artifacts' && <ArtifactsPanel />}
             {panel === 'knowledge' && <KnowledgePanel />}
+            {panel === 'settings' && <SettingsPanel />}
           </div>
 
-          {/* Tay nắm kéo. Vùng bắt rộng 7px nhưng vạch chỉ hiện khi rê tới —
-              một đường kẻ đậm nằm suốt chiều cao màn hình là nhiễu thị giác. */}
+          {/* The drag handle. A 7px hit area, but the line only shows on hover —
+              a solid rule running the full height of the screen is visual noise. */}
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="Kéo để đổi bề rộng bảng"
-            title="Kéo để đổi bề rộng · nhấp đúp để về mặc định"
+            aria-label={t('sidebar.resizeHandle')}
+            title={t('sidebar.resizeHint')}
             onPointerDown={startResize}
             onDoubleClick={() => applyWidth(336)}
             className="absolute -right-[3px] top-0 z-20 h-full w-[7px] cursor-col-resize touch-none

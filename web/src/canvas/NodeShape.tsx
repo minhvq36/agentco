@@ -5,14 +5,16 @@ import { agentInk } from '@/lib/colors';
 import { useApp } from '@/lib/store';
 import { sizeOf } from './geometry';
 import type { CanvasNode } from '@/lib/types';
+import { plural, t } from '@i18n';
 
 /**
- * Ruột của node Tủ tài liệu — tách riêng CHỈ để giữ ràng buộc hiệu năng.
+ * The innards of the Documents node — split out PURELY to hold a performance
+ * constraint.
  *
- * Nó phải theo `libraryBusy`, mà `libraryBusy` đổi khi có sự kiện SSE. Đăng ký
- * store ngay trong `NodeShape` thì mọi node trên sơ đồ render lại theo, đúng
- * thứ "một sự kiện SSE không kéo theo một lần render cây" đã cấm. Tách ra thì
- * chỉ đúng cái node này render lại.
+ * It has to follow `libraryBusy`, and `libraryBusy` changes on an SSE event.
+ * Subscribing to the store inside `NodeShape` itself would re-render every node
+ * on the diagram along with it — exactly what "one SSE event does not re-render
+ * the tree" forbids. Split out, only this one node re-renders.
  */
 function LibraryBody({ count }: { count: number }) {
   const busy = useApp((s) => s.libraryBusy);
@@ -22,15 +24,17 @@ function LibraryBody({ count }: { count: number }) {
         🗄
       </text>
       <text className="node-nm" x={44} y={30}>
-        Tủ tài liệu
+        {t('node.library')}
       </text>
       {/*
-        Câu phụ nói THẲNG cách đưa file vào, vì đây là node duy nhất trên sơ đồ
-        mà người dùng làm gì đó với NÓ chứ không phải với một người — "bấm để mở"
-        không đủ để đoán ra là thả file được.
+        The sub-line says OUTRIGHT how files get in, because this is the only
+        node on the diagram where the user acts on IT rather than on a person —
+        "click to open" is not enough to infer that files can be dropped here.
       */}
       <text className="node-sub" x={44} y={50}>
-        {busy > 0 ? `đang đọc ${busy} tài liệu…` : `${count} tài liệu · thả file vào đây`}
+        {busy > 0
+          ? t('node.libraryBusy', { n: busy })
+          : `${plural('node.libraryCount', count)} · ${t('node.libraryHint')}`}
       </text>
     </>
   );
@@ -42,12 +46,12 @@ function cut(s: string | undefined, n: number): string {
 }
 
 /**
- * Một node. `memo` vì lúc kéo, component này KHÔNG render lại — vị trí do
- * canvas set thẳng vào `transform` của thẻ `<g>` bọc ngoài.
+ * One node. `memo` because during a drag this component does NOT re-render — the
+ * canvas writes the position straight into the wrapping `<g>`'s `transform`.
  *
- * Trạng thái sống (đang làm / xong / lỗi) cũng không đi qua props: canvas gắn
- * class lên `<g>`, CSS lo phần còn lại. Nhờ vậy một sự kiện SSE không kéo theo
- * một lần render cây.
+ * Live state (working / done / failed) does not travel through props either: the
+ * canvas puts a class on the `<g>` and CSS handles the rest. That is what keeps
+ * one SSE event from re-rendering the tree.
  */
 export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode }) {
   const s = sizeOf(node.kind);
@@ -80,18 +84,18 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
             📚
           </text>
           <text className="node-nm" x={44} y={30}>
-            Kho tri thức chung
+            {t('node.knowledge')}
           </text>
           <text className="node-sub" x={44} y={50}>
-            {node.count ?? 0} ghi chú · bấm để mở
+            {plural('knowledge.noteCount', node.count ?? 0)} · {t('node.knowledgeHint')}
           </text>
         </>
       )}
 
       {/*
-        Tủ tài liệu. Câu phụ nói THẲNG cách đưa file vào, vì đây là node duy
-        nhất trên sơ đồ mà người dùng làm gì đó với NÓ chứ không phải với một
-        người — "bấm để mở" không đủ để đoán ra là thả file được.
+        Documents. The sub-line says OUTRIGHT how files get in, because this is
+        the only node on the diagram where the user acts on IT rather than on a
+        person — "click to open" is not enough to infer that files can be dropped.
       */}
       {node.kind === 'library' && <LibraryBody count={node.count ?? 0} />}
 
@@ -99,18 +103,19 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
         <>
           {/*
             ┌────────────────────────────────────────────────────────────────┐
-            │ HÌNH CỦA HÃNG, KHÔNG PHẢI EMOJI PHÍCH CẮM. (user chốt 28/08)   │
-            │                                                                │
-            │ > *"đổi cái biểu tượng phích cắm thành chính đơn giản như vừa  │
-            │ >  đổi (reuse, tôi thấy rất tối giản và đẹp)"*                  │
-            │                                                                │
-            │ Cùng hàm với hộp thoại Kết nối (`ArmIcon`), nên một cánh tay    │
-            │ giữ nguyên hình từ lúc chọn tới lúc nằm trên sơ đồ. Emoji 🔌    │
-            │ vừa mang màu của phông chữ hệ điều hành, vừa nói **loại giao    │
-            │ thức** trong khi thứ người dùng cần phân biệt là **hãng nào**.  │
-            │                                                                │
-            │ ⚠ Vị trí bằng `x`/`y`/`size`, không bằng class: đây là bên      │
-            │ trong `<svg>` của sơ đồ, Tailwind không với tới hệ toạ độ này.  │
+            │ THE VENDOR'S MARK, NOT A PLUG EMOJI. (settled 28/08)            │
+            │                                                                 │
+            │ > *"change the plug symbol to the same simple one you just      │
+            │ >  switched to (reuse — I find it very minimal and good)"*      │
+            │                                                                 │
+            │ The same function as the Connection dialog (`ArmIcon`), so one  │
+            │ arm keeps its mark from the moment it is picked to the moment   │
+            │ it sits on the diagram. The 🔌 emoji both carried the OS        │
+            │ font's colours and said PROTOCOL TYPE, when what people need    │
+            │ to tell apart is WHICH VENDOR.                                  │
+            │                                                                 │
+            │ ⚠ Positioned with `x`/`y`/`size`, not classes: this is inside   │
+            │ the diagram's `<svg>`, and Tailwind cannot reach that system.   │
             └────────────────────────────────────────────────────────────────┘
           */}
           <g className="node-av-mark">
@@ -127,36 +132,55 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
           </text>
           {/*
             ┌────────────────────────────────────────────────────────────────┐
-            │ DÒNG PHỤ NÓI **TÀI KHOẢN**, không nói "kết nối". (user 27/08)  │
+            │ THE SUB-LINE NAMES THE ACCOUNT, not "connection". (27/08)      │
             │                                                                │
-            │ > *"ra canvas thì không còn phân biệt được nữa"*               │
+            │ > *"once it is on the canvas you cannot tell them apart"*      │
             │                                                                │
-            │ Chữ "kết nối" lặp lại đúng thứ hình phích cắm đã nói — nó tốn  │
-            │ một dòng để không thêm gì. Còn thứ người dùng thật sự cần phân │
-            │ biệt (hai cánh tay GitHub của hai tài khoản) thì trước nay chỉ │
-            │ nằm trong `label`, và nhãn thì ĐÓNG BĂNG ở tài khoản đầu tiên. │
+            │ The word "connection" repeats what the plug already said — it  │
+            │ spends a line to add nothing. What people genuinely need to    │
+            │ tell apart (two GitHub arms on two accounts) lived only in     │
+            │ `label`, and a label FREEZES at the first account.             │
             │                                                                │
-            │ `via` do server tra từ `arms[].secrets` mỗi lần đọc sơ đồ, nên │
-            │ nó không lỗi thời được. Vắng `via` ⇒ mục không dùng OAuth (hay │
-            │ workspace đã bị gỡ) ⇒ quay về câu cũ, KHÔNG bịa một cái tên.   │
-            │ → `ArmDialog.tsx` (chỗ bỏ ghép tài khoản vào nhãn)             │
+            │ `via` is resolved by the server from `arms[].secrets` on every │
+            │ read of the diagram, so it cannot go stale. No `via` ⇒ the     │
+            │ entry does not use OAuth (or the workspace was removed) ⇒ fall │
+            │ back to the old line, NEVER invent a name.                     │
+            │ → `ArmDialog.tsx` (where the account stopped being glued on)   │
             └────────────────────────────────────────────────────────────────┘
           */}
-          <text className="node-sub" x={38} y={s.h / 2 + 13}>
-            {node.missing ? 'không còn cắm' : node.via ? cut(node.via, 16) : 'kết nối'}
+          {/*
+            ⚠ A RED BORDER ALONE IS A RIDDLE. The colour says *"something is
+            wrong here"*; only the sub-line says **what**, and that this one is
+            fixable by signing in rather than by editing anything.
+
+            It takes priority over `via` because the two answer different
+            questions and only one of them is urgent: `via` answers *"which
+            account is this"*, this answers *"can it run at all"*. `missing`
+            still wins over both — an arm whose config has vanished cannot be
+            repaired by signing in, so offering that would be the wrong door.
+          */}
+          <text className={`node-sub${node.keyDead && !node.missing ? ' node-sub-alert' : ''}`} x={38} y={s.h / 2 + 13}>
+            {node.missing
+              ? t('node.armMissing')
+              : node.keyDead
+                ? t('node.armKeyDead')
+                : node.via
+                  ? cut(node.via, 16)
+                  : t('node.armFallback')}
           </text>
         </>
       )}
 
       {/*
-        ⚠ TOẠ ĐỘ BÁM ĐÁY, KHÔNG PHẢI SỐ CỐ ĐỊNH.
+        ⚠ ANCHORED TO THE BOTTOM, NOT A FIXED NUMBER.
 
-        Bản trước ghi `y={76}` cho dòng cuối, đúng lúc node cao 88 — tức chừa
-        12px. Ngày thu nhỏ node xuống 76 (23/08) thì dòng đó rơi ĐÚNG mép dưới,
-        dính vào viền. Một hằng số hợp lệ đổi ở file khác, và chỗ này hỏng im
-        lặng — cùng họ với hai test khoá cứng bước lưới hỏng cùng ngày.
+        The previous version wrote `y={76}` for the last line, back when a node
+        was 88 tall — 12px of clearance. The day nodes shrank to 76 (23/08) that
+        line landed exactly on the bottom edge, touching the border. A legitimate
+        constant changed in another file and this broke silently — the same
+        family as the two tests hard-coding a grid step that broke that same day.
 
-        Neo theo `s.h` thì mọi lần chỉnh kích thước sau này tự đúng.
+        Anchoring to `s.h` makes every later size change correct by itself.
       */}
       {node.kind === 'agent' && (
         <>
@@ -167,14 +191,14 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
           <text className="node-nm" x={44} y={28}>
             {cut(node.label, 15)}
           </text>
-          {/* Câu `say` lúc chạy — canvas ghi thẳng textContent vào đây. */}
+          {/* The live `say` line — the canvas writes textContent straight in here. */}
           <text className="node-say" x={16} y={s.h - 30} />
           <text className="node-sub" x={16} y={s.h - 12}>
-            {node.missing ? 'không tìm thấy vai trò' : `📒 ${node.count ?? 0}  ·  ${node.tier ?? ''}`}
+            {node.missing ? t('node.roleMissing') : `📒 ${node.count ?? 0}  ·  ${node.tier ?? ''}`}
           </text>
           {!node.connected && (
             <text className="node-sub" x={s.w - 12} y={s.h - 12} textAnchor="end">
-              đang nghỉ
+              {t('node.resting')}
             </text>
           )}
         </>

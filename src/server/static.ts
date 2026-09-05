@@ -1,18 +1,21 @@
 /**
- * Phục vụ giao diện đã build (`web/dist`). → docs/SPEC-ui.md §0
+ * Serving the built interface (`web/dist`). → docs/SPEC-ui.md §0
  *
- * Giao diện là một app React build sẵn, không phải chuỗi HTML trong mã nguồn
- * nữa. Daemon chỉ việc đưa file tĩnh ra — không SSR, không router phía server.
+ * The interface is a pre-built React app, not HTML strings in the source any
+ * more. The daemon just hands out static files — no SSR, no server-side router.
  *
- * Nếu chưa build thì KHÔNG trả 404 trống: in ra đúng lệnh phải chạy. Người
- * clone repo về lần đầu sẽ gặp đúng trạng thái này, và một trang trắng ở đây là
- * cách nhanh nhất để họ nghĩ sản phẩm hỏng.
+ * When it has not been built, do NOT return a bare 404: print the exact command
+ * to run. Anyone cloning the repo for the first time lands in precisely this
+ * state, and a blank page here is the fastest way to make them think the
+ * product is broken.
  */
 
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { getLocale, t } from '../i18n/index.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -31,7 +34,7 @@ const MIME: Record<string, string> = {
 
 let cachedRoot: string | null | undefined;
 
-/** `dist/server/static.js` → gốc gói. Chạy từ `dist/` hay từ `src/` đều ra đúng. */
+/** `dist/server/static.js` → the package root. Correct from `dist/` and from `src/`. */
 function webRoot(): string | null {
   if (cachedRoot !== undefined) return cachedRoot;
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -47,18 +50,19 @@ function webRoot(): string | null {
 }
 
 /**
- * Bundle đang phục vụ có CŨ HƠN mã nguồn giao diện không? → `cmdStart`
+ * Is the bundle being served OLDER than the interface source? → `cmdStart`
  *
- * Daemon phục vụ `web/dist` (đã build), nên sửa `web/src` mà quên build thì
- * trình duyệt tải về bản cũ — và cả ba phản xạ tự nhiên (Ctrl+Shift+R, tắt mở
- * daemon, Ctrl+C) đều KHÔNG chạm tới bước build. Người dùng gặp thật 20/08 và
- * kết luận là mình sai. Một phép so `mtime` vài mili giây thì nói ra được.
+ * The daemon serves `web/dist`, so editing `web/src` and forgetting to build
+ * means the browser downloads the old version — and all three natural reflexes
+ * (Ctrl+Shift+R, restarting the daemon, Ctrl+C) touch nothing that rebuilds. A
+ * real user hit this on 20/08 and concluded they had done something wrong. An
+ * `mtime` comparison costs a few milliseconds and says it out loud.
  */
 export function webBuildStale(): boolean {
   const root = webRoot();
   if (!root) return false;
   const src = path.resolve(root, '../src');
-  if (!fs.existsSync(src)) return false; // bản cài từ npm — không có mã nguồn
+  if (!fs.existsSync(src)) return false; // installed from npm — no source tree
   const newest = (dir: string): number => {
     let max = 0;
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -74,20 +78,20 @@ export function webBuildStale(): boolean {
   }
 }
 
-/** Trả về true nếu đã xử lý request. */
+/** Returns true when the request has been handled. */
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
   const root = webRoot();
   if (!root) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(NOT_BUILT);
+    res.end(notBuilt());
     return true;
   }
 
-  // SPA: mọi đường dẫn không phải file đều trả index.html.
+  // SPA: every path that is not a file resolves to index.html.
   const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const target = path.resolve(root, rel);
 
-  // Chặn path traversal: đường dẫn đến từ URL nên không tin được.
+  // Block path traversal: this path came from a URL, so it is not trusted.
   if (!target.startsWith(root + path.sep) && target !== path.join(root, 'index.html')) {
     res.writeHead(403).end();
     return true;
@@ -98,9 +102,9 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse,
 
   res.writeHead(200, {
     'content-type': MIME[ext] ?? 'application/octet-stream',
-    // Asset của Vite có hash trong tên -> cache vĩnh viễn an toàn.
-    // index.html thì không, phải luôn hỏi lại, nếu không người dùng nâng cấp
-    // agentco xong vẫn chạy bundle cũ và không hiểu vì sao.
+    // Vite assets carry a hash in the filename -> caching them forever is safe.
+    // index.html does not, so it must always be revalidated; otherwise someone
+    // upgrades agentco and keeps running the old bundle with no idea why.
     'cache-control': /-[A-Za-z0-9_]{8,}\./.test(path.basename(file))
       ? 'public, max-age=31536000, immutable'
       : 'no-cache',
@@ -109,8 +113,13 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse,
   return true;
 }
 
-const NOT_BUILT = `<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><title>AgentCo — chưa build giao diện</title>
+/**
+ * A FUNCTION, not a constant: the page is built per request so it follows the
+ * interface language, `lang` attribute included. A module-level template string
+ * would freeze whichever locale happened to be set when this file was imported.
+ */
+const notBuilt = (): string => `<!doctype html>
+<html lang="${getLocale()}"><head><meta charset="utf-8"><title>${t('srv.notBuiltTitle')}</title>
 <style>
  body{margin:0;height:100vh;display:grid;place-items:center;background:#fbfaf8;color:#232019;
       font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -122,9 +131,9 @@ const NOT_BUILT = `<!doctype html>
       margin:.9rem 0;font:13px ui-monospace,Consolas,monospace}
 </style></head>
 <body><main>
- <h1>Giao diện chưa được build</h1>
- <p>Daemon đang chạy bình thường — chỉ thiếu phần giao diện. Chạy một lần:</p>
+ <h1>${t('srv.notBuiltH1')}</h1>
+ <p>${t('srv.notBuiltRun')}</p>
  <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>
- <p>Hoặc từ thư mục gốc: <code style="display:inline;padding:.15rem .4rem">npm run build:all</code></p>
- <p>Rồi tải lại trang này. API vẫn hoạt động, nên <code style="display:inline;padding:.15rem .4rem">agentco run</code> ở terminal dùng được ngay.</p>
+ <p>${t('srv.notBuiltFromRoot')} <code style="display:inline;padding:.15rem .4rem">npm run build:all</code></p>
+ <p>${t('srv.notBuiltReloadBefore')} <code style="display:inline;padding:.15rem .4rem">agentco run</code> ${t('srv.notBuiltReloadAfter')}</p>
 </main></body></html>`;

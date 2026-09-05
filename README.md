@@ -1,95 +1,96 @@
 # AgentCo
 
-> **Trạng thái: thiết kế xong, chưa có code.** Repo hiện chỉ chứa spec và kết quả đo. Tên `agentco` là **tên mã tạm**.
+A **virtual company that runs on your machine**. Claude acts as director, orchestrating a team of specialist agents that run in parallel and accumulate experience into a graph-shaped knowledge store. You give orders in plain language — through the web UI or through Telegram. `agentco` is a **working codename**.
 
-Một **công ty ảo chạy trên máy bạn**. Claude làm giám đốc, điều phối một đội agent chuyên môn chạy song song, tích luỹ kinh nghiệm vào kho tri thức dạng đồ thị. Bạn ra lệnh bằng tiếng người — qua web UI hoặc qua Telegram.
-
-Chạy bằng **subscription Claude Code của chính bạn**. Không có server của chúng tôi ở giữa. Không có dữ liệu nào rời máy bạn.
+Runs on **your own Claude Code subscription**. There is no server of ours in the middle. No data ever leaves your machine.
 
 ---
 
-## Vì sao có cái này
+## Why this exists
 
-Agent AI đã giải xong "làm thế nào". Cái chưa ai giải: **tôi đang ở đâu, ai đang làm gì, còn bao xa, có đúng hướng không.**
+AI agents have solved "how to do the work." What nobody has solved yet: **where am I, who is doing what, how much is left, and are we headed the right way.**
 
-Các công cụ orchestration hiện có đều nhắm dân code. AgentCo nhắm người **không code nhưng cho phép đi sâu**: mặc định thấy một công ty đang làm việc với kế hoạch 4 bước dễ hiểu; muốn xem transcript thô và bảng chi phí từng token thì cách một cú click.
+Existing orchestration tools all target developers. AgentCo targets people who **don't code but want to be able to go deep**: by default you see a company at work, with a plan that reads as four understandable steps; the raw transcript and the per-token cost table are one click away when you want them.
 
-Và điểm khác biệt lớn nhất: **nhân viên biết dùng hệ thống của chính bạn.** Muốn agent gọi API của bạn, các công cụ khác bắt bạn viết một MCP server. Ở đây bạn **mô tả cái API** — dán link OpenAPI, dán một lệnh cURL, hoặc điền form — rồi bấm Test. Xem [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md).
+And the biggest difference: **employees know how to use your own systems.** Other tools make you write an MCP server before an agent can call your API. Here you **describe the API** — paste an OpenAPI link, paste a cURL command, or fill in a form — then hit Test. See [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md).
 
-## Nguyên tắc thiết kế
+## Design principles
 
-1. **Sở hữu artifact, không sở hữu prompt.** Giá trị nằm ở file trong thư mục công ty của bạn. Chúng sống độc lập với mọi thay đổi của Claude Code.
-2. **Agent là hàm stateless.** Đến, làm, ghi file, chết. Trí nhớ nằm ở đồ thị tri thức, không nằm trong context window.
-3. **Mỗi token phải có lý do tồn tại.** Hiệu năng và tiết kiệm là mục tiêu tối thượng, không phải tính năng phụ.
+1. **Own the artifact, not the prompt.** The value lives in the files inside your company's folder. They survive independently of anything Claude Code changes.
+2. **An agent is a stateless function.** It arrives, does the work, writes a file, and disappears. Memory lives in the knowledge graph, not in the context window.
+3. **Every token must justify its own existence.** Efficiency and cost are the primary goal here, not a side feature.
 
-## Tài liệu
+## Documentation
 
-| File | Nội dung |
+| File | Contents |
 |---|---|
-| [`docs/SPEC-2026-08-14-agentco.md`](docs/SPEC-2026-08-14-agentco.md) | Spec hệ thống — tổ chức, role, giao thức Task/Receipt, đồ thị tri thức, scheduler |
-| [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md) | **Đọc cái này trước nếu chỉ đọc một file.** Luật chi phí token, kiến trúc prefix cache |
-| [`docs/SPEC-cli.md`](docs/SPEC-cli.md) | Process model, bộ lệnh, cấu hình, đường lên container |
-| [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md) | **Đặc sản** — nhân viên biết CRUD vào REST API / MCP của chính bạn |
-| [`docs/SPEC-canvas.md`](docs/SPEC-canvas.md) | Canvas dạng node — văn phòng kéo thả được (bản UI kế tiếp) |
-| [`docs/SPEC-ui.md`](docs/SPEC-ui.md) | Giao diện v0 (danh sách), sự kiện SSE |
-| [`docs/FINDINGS-sdk-2026-08-14.md`](docs/FINDINGS-sdk-2026-08-14.md) | Kết quả đo thật trên Claude Agent SDK — số liệu, cái bẫy, quyết định phát sinh |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Mốc phát triển |
-| [`bench/`](bench/) | Script đo, tái lập được mọi con số trong FINDINGS |
+| [`docs/SPEC-2026-08-14-agentco.md`](docs/SPEC-2026-08-14-agentco.md) | System spec — org structure, roles, the Task/Receipt protocol, the knowledge graph, the scheduler |
+| [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md) | **Read this first if you only read one file.** Token-cost rules, prefix-cache architecture |
+| [`docs/SPEC-cli.md`](docs/SPEC-cli.md) | Process model, command set, configuration, the path to a container |
+| [`docs/SPEC-connectors.md`](docs/SPEC-connectors.md) | **The signature feature** — employees that can CRUD your own REST API / MCP server |
+| [`docs/SPEC-canvas.md`](docs/SPEC-canvas.md) | Node-based canvas — a drag-and-drop office (the next UI generation) |
+| [`docs/SPEC-ui.md`](docs/SPEC-ui.md) | The shipped UI, SSE events |
+| [`docs/FINDINGS-sdk-2026-08-14.md`](docs/FINDINGS-sdk-2026-08-14.md) | Real measurements against the Claude Agent SDK — numbers, traps, and the decisions they led to |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development milestones |
+| [`bench/`](bench/) | Measurement scripts — every number in FINDINGS is reproducible |
 
-## Kiến trúc, một hình
+## Architecture, in one picture
 
 ```
-   Human ──► MASTER (session dài, lập kế hoạch, không tự làm tay chân)
+   Human ──► MASTER (long-lived session, plans, does not do the hands-on work)
                 │ TaskBrief (DAG)
       ┌─────────┼─────────┬─────────┐
       ▼         ▼         ▼         ▼
-   Worker    Worker    Worker    Worker      stateless, song song
-      │ Receipt (≤800 token, có trường `say` tiếng người)
+   Worker    Worker    Worker    Worker      stateless, run in parallel
+      │ Receipt (≤800 tokens, carries a human-readable `say` field)
       └─────────┴─────────┴─────────┘
                 │
-        KNOWLEDGE GRAPH (markdown + frontmatter, người đọc được)
+        KNOWLEDGE GRAPH (markdown + frontmatter, human-readable)
 ```
 
-Worker không nói chuyện trực tiếp với nhau — mọi trao đổi qua master hoặc qua artifact. Lý do là kinh tế, không phải thẩm mỹ: agent-to-agent chat là nguồn đốt token lớn nhất và khó kiểm soát nhất trong mọi hệ multi-agent.
+Workers never talk to each other directly — every exchange goes through the master or through an artifact. That's an economic choice, not an aesthetic one: agent-to-agent chat is the single largest and hardest-to-control source of token burn in every multi-agent system.
 
-## Yêu cầu
+## Requirements
 
 - Node.js ≥ 22
-- Claude Code CLI đã đăng nhập (`claude` chạy được). **Không cần API key.**
+- The Claude Code CLI, logged in (`claude` runs). **No API key needed.**
 
 ## License
 
-[**FSL-1.1-ALv2**](LICENSE.md) — source-available. Đây **không** phải open source theo định nghĩa
-OSI, và tôi không gọi nó như vậy.
+[**FSL-1.1-ALv2**](LICENSE.md) — source-available. This is **not** open source under the OSI
+definition, and I don't call it that.
 
-**Bạn được làm ngay hôm nay:** đọc toàn bộ mã · chạy cho bất kỳ mục đích gì, gồm cả thương mại và
-dùng trong công ty · sửa · fork · phát hành bản sửa · dựng sản phẩm nội bộ trên nền nó.
+**You may do, today:** read all of the code · run it for any purpose, including commercial use
+and internal company use · modify it · fork it · publish your modifications · build an internal
+product on top of it.
 
-**Đúng một điều bị cấm:** bán một sản phẩm/dịch vụ **cạnh tranh với agentco**. Và lệnh cấm đó có
-hạn dùng — xem dưới.
+**Exactly one thing is forbidden:** selling a product or service that **competes with agentco**.
+And that restriction has an expiry date — see below.
 
-### Mỗi bản phát hành TỰ trở thành Apache 2.0 sau đúng 2 năm
+### Every release turns into Apache 2.0 on its own, exactly 2 years later
 
 > *"We hereby **irrevocably** grant you an additional license … under the Apache License, Version
 > 2.0 … effective on the **second anniversary of the date we make the Software available**."*
 
-- **Không huỷ ngang được.** Chữ `irrevocably` nằm trong chính giấy phép. Tôi không có quyền rút lại
-  — kể cả khi đổi ý, kể cả khi dự án được mua lại, kể cả khi tôi biến mất.
-- **Đồng hồ chạy theo TỪNG BẢN.** Phát hành bản mới **không** đẩy lùi bản cũ một ngày nào.
-- **Hệ quả:** một cửa sổ trượt rộng đúng hai năm — mọi thứ già hơn thế **đã là Apache 2.0 hoàn
-  toàn**, không cần ai bấm nút.
+- **It cannot be revoked.** The word `irrevocably` is in the license itself. I have no power to
+  take it back — not if I change my mind, not if the project is acquired, not if I disappear.
+- **The clock runs per release.** Publishing a new release does **not** push the older one's
+  clock back by a single day.
+- **Result:** a sliding two-year window — anything older than that **is already fully Apache
+  2.0**, with no button for anyone to press.
 
-📅 Mỗi bản phát hành trên GitHub Releases sẽ ghi **ngày cụ thể** nó thành Apache 2.0 — ghi rõ,
-không nói chung chung. Mập mờ không cản được người muốn copy (họ tự tính ra được từ giấy phép), nó
-chỉ cản người đang phân vân có nên tin dự án này không.
+📅 Every GitHub release states the **exact date** it becomes Apache 2.0 — spelled out, not left
+vague. Vagueness doesn't stop someone determined to copy the code (they can work it out from the
+license themselves); it only costs the trust of someone on the fence about the project.
 
-## Đóng góp
+## Contributing
 
-PR được hoan nghênh — đọc [**CONTRIBUTING.md**](CONTRIBUTING.md) trước.
+PRs are welcome — read [**CONTRIBUTING.md**](CONTRIBUTING.md) first.
 
-PR đầu tiên cần ký [CLA](CLA.md) bằng **một dòng** dán vào mô tả PR. Bạn **giữ nguyên bản quyền**
-phần mình viết; giấy phép bạn cấp chính là thứ làm cho lời hứa "tự thành Apache 2.0" ở trên thi
-hành được.
+Your first PR needs the [CLA](CLA.md) signed with **one line** pasted into the PR description. You
+**keep the copyright** on what you write; the license you grant is exactly what makes the
+"turns into Apache 2.0 on its own" promise above enforceable.
 
-Mọi PR phải trả lời được checklist cuối [`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md)
-— thay đổi làm xấu chi phí quá 10% ở bất kỳ golden scenario nào sẽ không được merge.
+Every PR must answer the checklist at the end of
+[`docs/SPEC-token-economy.md`](docs/SPEC-token-economy.md) — a change that makes any golden
+scenario's cost worse by more than 10% will not be merged.

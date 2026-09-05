@@ -1,24 +1,25 @@
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MÃ THIẾT BỊ — ba bước ĐÁNH SỐ, vì đây là luồng duy nhất bắt người dùng   │
- * │ làm việc ở MỘT MÀN HÌNH KHÁC. → SPEC-arms §5h·7b                         │
+ * │ DEVICE CODE — three NUMBERED steps, because this is the only flow that   │
+ * │ makes someone do work ON A DIFFERENT SCREEN. → SPEC-arms §5h·7b          │
  * │                                                                          │
- * │ Web flow chỉ cần "bấm nút, tab tự lo". Ở đây họ phải cầm một mã đi sang  │
- * │ chỗ khác gõ vào — và giữa hai màn hình đó không có gì nối lại ngoài cái   │
- * │ mã. Nên nó phải TO, chép được, và có đồng hồ: một mã im lặng chết là     │
- * │ người dùng gõ vào chỗ vô ích rồi đi tìm lỗi ở phía họ.                    │
+ * │ The web flow only needs "press the button, the tab handles it". Here     │
+ * │ they carry a code somewhere else and type it in — and nothing links the  │
+ * │ two screens except that code. So it has to be LARGE, copyable, and       │
+ * │ clocked: a code that dies quietly means typing into a dead form and then │
+ * │ hunting for a fault on their own side.                                   │
  * │                                                                          │
- * │ ⚠ KHÔNG tự `window.open`: ca device flow sinh ra để phục vụ chính là     │
- * │ *người dùng duyệt ở máy/điện thoại khác*. Mở giúp thì được, giả định thì  │
- * │ không.                                                                   │
+ * │ ⚠ NO automatic `window.open`: the case device flow exists to serve is    │
+ * │ precisely *someone browsing on another machine or phone*. Offering to    │
+ * │ open it is fine; assuming is not.                                        │
  * │                                                                          │
- * │ ⚠ Ở ĐÂY KHÔNG CÓ BÍ MẬT NÀO. `userCode` là thứ người dùng phải ĐỌC ĐƯỢC  │
- * │ và gõ đi; `state` chỉ trỏ tới một phiên nằm ở daemon. Khác hẳn            │
- * │ `code_verifier` của web flow, thứ chưa bao giờ rời khỏi daemon.           │
+ * │ ⚠ THERE IS NO SECRET HERE. `userCode` is something the person has to     │
+ * │ READ and carry; `state` only points at a session held by the daemon.     │
+ * │ Quite unlike the web flow's `code_verifier`, which never leaves it.      │
  * │                                                                          │
- * │ `copied` sống TRONG đây (tách khỏi `ArmDialog` 28/08): nó không ai ngoài  │
- * │ khối này quan tâm, và một state cục bộ nằm ở component cha là một dòng    │
- * │ render lại cả hộp thoại cho một dấu tích.                                 │
+ * │ `copied` lives IN here (split out of `ArmDialog` 28/08): nobody outside  │
+ * │ this block cares about it, and a local state parked on the parent is one │
+ * │ line that re-renders the whole dialog for a tick mark.                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -27,16 +28,17 @@ import { Check, Copy } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { DeviceLogin } from './types';
+import { t } from '@i18n';
 
 export function DeviceCode({
   name,
   device,
   now,
 }: {
-  /** Tên hãng — câu lệnh phải gọi đúng tên màn hình họ sắp mở. */
+  /** The vendor's name — the instructions must name the screen they will open. */
   name: string;
   device: DeviceLogin;
-  /** Đồng hồ của cha: nó cũng là thứ dọn mã hết hạn, nên không nhân bản ở đây. */
+  /** The parent's clock: it is also what clears an expired code, so it is not duplicated here. */
   now: number;
 }) {
   const [copied, setCopied] = useState(false);
@@ -45,11 +47,13 @@ export function DeviceCode({
   return (
     <div className="mt-3 rounded-md border border-accent/40 bg-accent-soft/30 px-3 py-3">
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-[13px] font-medium">Gõ mã này ở {name}</div>
-        {/* Đồng hồ: mã chết THẬT sau 15 phút, và họ phải thấy nó chết. */}
+        <div className="text-[13px] font-medium">{t('arm.deviceTitle', { name })}</div>
+        {/* The clock: the code REALLY dies after 15 minutes, and they must see it die. */}
         <div className="shrink-0 font-mono text-[11px] text-muted">
-          còn {Math.floor(left / 60000)}:
-          {String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}
+          {t('arm.deviceLeft', {
+            mm: Math.floor(left / 60000),
+            ss: String(Math.floor((left % 60000) / 1000)).padStart(2, '0'),
+          })}
         </div>
       </div>
 
@@ -58,14 +62,14 @@ export function DeviceCode({
           {device.userCode}
         </code>
         <Button
-          aria-label="Chép mã"
-          title="Chép mã"
+          aria-label={t('arm.copyCode')}
+          title={t('arm.copyCode')}
           onClick={() => {
             void navigator.clipboard?.writeText(device.userCode).then(
               () => setCopied(true),
-              // Clipboard bị chặn (http, quyền) ⇒ KHÔNG báo đã chép. Mã vẫn
-              // `select-all` nên họ bôi đen chép tay được — một dấu ✓ sai còn
-              // tệ hơn không có dấu nào.
+              // Clipboard blocked (http, permissions) ⇒ do NOT claim it copied.
+              // The code is still `select-all`, so it can be copied by hand — a
+              // false ✓ is worse than no ✓ at all.
               () => setCopied(false),
             );
           }}
@@ -76,7 +80,7 @@ export function DeviceCode({
 
       <ol className="mt-2.5 list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
         <li>
-          Mở{' '}
+          {t('arm.deviceStep1Before')}{' '}
           <a
             className="underline decoration-dotted hover:text-fg"
             href={device.verificationUriComplete ?? device.verificationUri}
@@ -85,21 +89,22 @@ export function DeviceCode({
           >
             {device.verificationUri.replace(/^https?:\/\//, '')}
           </a>{' '}
-          — ở máy này hay điện thoại đều được.
+          {t('arm.deviceStep1After')}
         </li>
-        <li>Gõ mã ở trên rồi bấm cho phép.</li>
-        <li>Quay lại đây — màn này tự biết, không cần F5.</li>
+        <li>{t('arm.deviceStep2')}</li>
+        <li>{t('arm.deviceStep3')}</li>
       </ol>
 
       {/*
-        ⚠ CÂU NÀY PHẢI CÓ, và nó đến từ một ca thật ta tự dẫm khi đo: trình duyệt
-        đang đăng nhập MỘT TÀI KHOẢN KHÁC thì chìa lấy về là của người đó, và
-        triệu chứng duy nhất sẽ là *"cánh tay không thấy gì cả"* — một câu sai
-        cửa dẫn người ta đi kiểm quyền, kiểm cài đặt, kiểm repo. → §5h·7k
+        ⚠ THIS SENTENCE HAS TO BE HERE, and it comes from a real case we walked
+        into while measuring: if the browser is signed in as A DIFFERENT ACCOUNT,
+        the key that comes back belongs to that account, and the only symptom is
+        *"the arm sees nothing"* — a wrong-door message that sends people off to
+        check permissions, check the installation, check the repo. → §5h·7k
       */}
       <p className="mt-2 text-xs leading-relaxed text-muted">
-        ⚠ Trang đó sẽ dùng <b>tài khoản đang đăng nhập trên trình duyệt của bạn</b>. Nếu đó không
-        phải tài khoản bạn muốn nối, mở nó bằng cửa sổ ẩn danh.
+        {t('arm.deviceAccountBefore')} <b>{t('arm.deviceAccountBold')}</b>
+        {t('arm.deviceAccountAfter')}
       </p>
     </div>
   );

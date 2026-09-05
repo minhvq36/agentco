@@ -1,4 +1,4 @@
-import {
+﻿import {
   forwardRef,
   useCallback,
   useEffect,
@@ -10,6 +10,7 @@ import {
 import { canConnect, type CanvasEdge, type CanvasNode, type CanvasState } from '@/lib/types';
 import type { LiveAgent } from '@/lib/store';
 import { NodeShape } from './NodeShape';
+import { t } from '@i18n';
 import {
   anchor,
   arrange,
@@ -35,31 +36,34 @@ interface Props {
   live: Record<string, LiveAgent>;
   selected: string | null;
   onSelect(id: string | null): void;
-  /** immediate = cạnh nối vừa đổi -> gửi ngay, đừng gộp nhịp. */
+  /** immediate = an edge just changed → send now, do not coalesce. */
   onCommit(nodes: CanvasNode[], edges: CanvasEdge[], immediate?: boolean): void;
   /**
-   * Bấm vào một node KHO (kho tri thức / tủ tài liệu) → mở thẳng ngăn kéo trái.
+   * Clicking a STORE node (knowledge store / library) → open the left drawer
+   * directly.
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO KHÔNG ĐI QUA BẢNG CHI TIẾT BÊN PHẢI                               │
+   * │ WHY IT DOES NOT GO THROUGH THE INSPECTOR ON THE RIGHT                    │
    * │                                                                          │
-   * │ Bảng bên phải tồn tại để CHỈNH một đối tượng: đổi model, sửa hồ sơ,      │
-   * │ nối/ngắt dây, cho nghỉ. Hai node kho KHÔNG có gì để chỉnh — chúng là     │
-   * │ CỬA, không phải đối tượng. Bảng của chúng chỉ có vài con số và một nút   │
-   * │ "Mở kho", tức là một cái sảnh phải đi qua để tới nơi mình muốn tới.      │
+   * │ The right-hand panel exists to EDIT an object: change the model, edit a  │
+   * │ profile, wire and unwire, send someone home. The two store nodes have    │
+   * │ NOTHING to edit — they are DOORS, not objects. Their panel held a couple │
+   * │ of numbers and an "Open store" button: a lobby to walk through on the    │
+   * │ way to where you were going.                                             │
    * │                                                                          │
-   * │ Và cái sảnh đó đẻ ra lỗi: tủ tài liệu chưa có nhánh trong Inspector nên  │
-   * │ bấm vào nó mở ra một bảng RỖNG, chỉ có dấu ✕.                            │
+   * │ And that lobby produced a bug: the library had no branch in the          │
+   * │ Inspector, so clicking it opened an EMPTY panel with nothing but a ✕.    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   onOpenStore(kind: 'knowledge' | 'library'): void;
   /**
-   * File thả thẳng lên node Tủ tài liệu.
+   * Files dropped straight onto the library node.
    *
-   * Canvas KHÔNG tự tải lên — nó chỉ chuyển tay. Toàn bộ việc tải lên (hỏi lại
-   * khi trùng tên, câu từ chối, trạng thái từng file) sống ở đúng MỘT chỗ là
-   * `LibraryPanel`. Hai cửa vào, một đường xử lý: nếu canvas gọi API riêng thì
-   * đến ngày sửa luật trùng tên sẽ có một cửa được sửa và một cửa bị quên.
+   * The canvas does NOT upload — it only hands over. All of uploading (asking on
+   * a name clash, the refusal messages, per-file state) lives in exactly ONE
+   * place, `LibraryPanel`. Two entrances, one path: if the canvas called the API
+   * itself, then the day the name-clash rule changes, one entrance gets fixed and
+   * the other is forgotten.
    */
   onDropDocs(files: File[]): void;
 }
@@ -67,18 +71,20 @@ interface Props {
 const edgeKey = (e: CanvasEdge): string => `${e.from} ${e.to}`;
 
 /**
- * Canvas SVG viết tay. → docs/SPEC-canvas.md, docs/SPEC-ui.md §0
+ * A hand-written SVG canvas. → docs/SPEC-canvas.md, docs/SPEC-ui.md §0
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG DÙNG STATE CHO VỊ TRÍ NODE                                  │
+ * │ WHY NODE POSITIONS ARE NOT IN STATE                                      │
  * │                                                                          │
- * │ Kéo một node bắn ra ~60 sự kiện mỗi giây. Nếu mỗi sự kiện là một         │
- * │ setState thì React reconcile cả cây 60 lần/giây — và điều đó xảy ra ĐÚNG │
- * │ lúc công ty đang chạy, tức là đang có sự kiện SSE bắn vào cùng lúc.      │
+ * │ Dragging a node fires ~60 events a second. If each one were a setState,  │
+ * │ React would reconcile the whole tree 60 times a second — and that        │
+ * │ happens EXACTLY while the company is working, i.e. while SSE events are  │
+ * │ arriving at the same time.                                               │
  * │                                                                          │
- * │ Nên: vị trí sống trong `posRef` (Map thường), và lúc kéo ta ghi thẳng    │
- * │ `transform` lên thẻ <g> qua ref. React chỉ được biết khi THẢ CHUỘT.      │
- * │ Đây là chỗ tiêu chí "Hiệu năng" được thi hành, không phải được hứa.      │
+ * │ So: positions live in `posRef` (a plain Map), and during a drag we write │
+ * │ `transform` straight onto the <g> element through a ref. React is only   │
+ * │ told on POINTER UP. This is where the "Performance" bar is enforced      │
+ * │ rather than promised.                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
@@ -92,18 +98,18 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const nodeEls = useRef(new Map<string, SVGGElement>());
   const edgeEls = useRef(new Map<string, { wire: SVGPathElement; hit: SVGPathElement; cut: SVGGElement }>());
 
-  /** Vị trí SỐNG. Nguồn sự thật trong lúc tương tác. */
+  /** LIVE positions. The source of truth while the user is interacting. */
   const posRef = useRef(new Map<string, Point>());
   const viewRef = useRef<Viewport>({ x: 0, y: 0, k: 1 });
   const edgesRef = useRef<CanvasEdge[]>(canvas.edges);
   const didFit = useRef(false);
 
   const drag = useRef<{ id: string; dx: number; dy: number; sx: number; sy: number; moved: boolean } | null>(null);
-  /** `top` = đang cầm cổng TRÊN. Quyết định chỗ đường kẻ mờ mọc ra. */
+  /** `top` = the TOP port is being held. Decides where the ghost wire grows from. */
   const link = useRef<{ from: string; target: string | null; top: boolean } | null>(null);
   const pan = useRef<{ x: number; y: number } | null>(null);
 
-  // ── đồng bộ dữ liệu từ server vào bản sống (không đụng khi đang kéo)
+  // ── sync server data into the live copy (untouched while a drag is in flight)
   useLayoutEffect(() => {
     if (drag.current || link.current) return;
     const next = new Map<string, Point>();
@@ -118,7 +124,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvas]);
 
-  // ── trạng thái sống: gắn class + câu say, KHÔNG render lại node
+  // ── live state: toggle classes and the say line, WITHOUT re-rendering the node
   useEffect(() => {
     for (const n of canvas.nodes) {
       const g = nodeEls.current.get(n.id);
@@ -217,11 +223,12 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   useImperativeHandle(ref, () => ({ fit, autoArrange, zoomBy }), [fit, autoArrange, zoomBy]);
 
   /**
-   * Đẩy bản sống lên server. Gọi khi THẢ chuột, không gọi lúc đang kéo.
+   * Push the live copy to the server. Called on POINTER UP, never mid-drag.
    *
-   * `immediate` phân biệt hai loại thay đổi đi chung một hàm nhưng khác hẳn
-   * bản chất: toạ độ là liên tục (gộp nhịp), cạnh nối là rời rạc (gửi ngay).
-   * Gộp nhịp cho cạnh nối thì không có gì để gộp, chỉ có độ trễ để chịu.
+   * `immediate` separates two kinds of change that share one function but are
+   * nothing alike: coordinates are continuous (coalesce them), edges are discrete
+   * (send at once). Coalescing an edge change has nothing to coalesce — only
+   * latency to pay.
    */
   const commit = useCallback(
     (immediate = false) => {
@@ -234,7 +241,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     [canvas.nodes, onCommit],
   );
 
-  // ── chuột
+  // ── pointer
 
   const onPointerDown = useCallback(
     (ev: React.PointerEvent<SVGSVGElement>) => {
@@ -245,27 +252,30 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       const portHost = target.closest<SVGGElement>('[data-port]');
       const nodeHost = target.closest<SVGGElement>('[data-node]');
 
-      // Kéo từ cổng RA để nối dây. Node agent không có cổng ra, nên
-      // agent→agent không vẽ ra được — đó là ràng buộc vật lý, không phải
-      // một thông báo lỗi sau khi vẽ xong.
+      // Drag from an OUT port to make a wire. An agent node has no out port, so
+      // agent→agent cannot be drawn at all — a physical constraint, not an error
+      // message after the fact.
       /*
-        KÉO ĐƯỢC TỪ CẢ HAI CỔNG CỦA NHÂN VIÊN. (user chốt 23/08)
+        BOTH OF AN EMPLOYEE'S PORTS CAN BE DRAGGED FROM. (the user's call, 23/08)
 
-        Luật: **thao tác khoan dung, hiển thị không bao giờ sai.** Người dùng
-        bấm cổng trên của nhân viên rồi kéo vào một cánh tay — ý họ rõ ràng là
-        "nối cái này vào người này", và bắt họ đoán đúng cổng nào là bắt họ học
-        một luật của ta. Chiều thật được nắn lúc THẢ (`normalize`), còn chỗ vẽ
-        thì luôn suy từ `from.kind` — nên không có ca nào hiện sai.
+        The rule: **forgiving on input, never wrong on display.** A user grabs an
+        employee's top port and drags to an arm — their intent is plainly "connect
+        this to this person", and making them guess the right port makes them
+        learn a rule of ours. The real direction is straightened out on DROP
+        (`normalize`), and where things are drawn is always derived from
+        `from.kind` — so there is no case that renders wrongly.
       */
       if (portHost?.dataset['port'] && nodeHost) {
         ev.preventDefault();
-        // Nhớ CỔNG NÀO đang bị cầm: đường kẻ mờ phải mọc ra từ đúng chỗ ngón
-        // tay đặt xuống. Suy từ `from.kind` như lúc vẽ dây thật là sai ở đây —
-        // dây thật đã biết đầu kia là ai, đường kẻ mờ thì chưa.
+        // Remember WHICH PORT is being held: the ghost wire has to grow from the
+        // exact place the finger went down. Deriving it from `from.kind`, the way
+        // a real wire does, is wrong here — a real wire already knows what is at
+        // the other end, and a ghost does not.
         link.current = {
           from: nodeHost.dataset['node']!,
           target: null,
-          // Đọc CHỖ ĐỨNG, không đoán từ tên cổng. → `data-side` ở phần vẽ node
+          // Read the SIDE, do not infer it from the port's name.
+          // → `data-side` where the node is drawn
           top: portHost.dataset['side'] === 'top',
         };
         svgRef.current?.setPointerCapture(ev.pointerId);
@@ -323,9 +333,10 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         if (!from) return;
         const pf = posRef.current.get(l.from) ?? from;
         const w = screenToWorld(ev, rect, viewRef.current);
-        // `up` ở đây nghĩa là "cổng TRÊN", suy từ cổng đang cầm — không suy từ
-        // loại node. Node MCP chỉ có cổng trên nên hai cách trùng nhau ở đó;
-        // nhân viên có hai cổng nên chúng KHÁC nhau, và đó là ca user bắt được.
+        // `up` here means "the TOP port", derived from the port being held — not
+        // from the node's kind. An MCP node only has a top port, so the two agree
+        // there; an employee has two ports, so they DIFFER, and that is the case
+        // the user caught.
         const gUp = l.top;
         ghostRef.current?.setAttribute('d', curve(anchor({ kind: from.kind, ...pf }, 'out', gUp), w, gUp));
 
@@ -333,8 +344,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         const host = over?.closest<SVGGElement>('[data-node]');
         const id = host?.dataset['node'] ?? null;
         const to = id ? canvas.nodes.find((n) => n.id === id) : undefined;
-        // Nhận cả chiều ngược: kéo từ nhân viên sang cánh tay vẫn sáng lên, vì
-        // `mcp → agent` hợp lệ. Chiều thật được nắn lúc thả.
+        // Accept the reverse direction too: dragging from an employee onto an arm
+        // still lights up, because `mcp → agent` is the legal edge. The real
+        // direction is straightened out on drop.
         const ok =
           to && (canConnect(from, to, edgesRef.current) || canConnect(to, from, edgesRef.current))
             ? to.id
@@ -365,8 +377,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         drag.current = null;
         if (d.moved) commit();
         else {
-          // Bấm (không kéo). Node kho mở thẳng ngăn kéo và KHÔNG được chọn —
-          // chọn nó là mở kèm một bảng chi tiết rỗng bên phải.
+          // A click, not a drag. A store node opens the drawer directly and is
+          // NOT selected — selecting it would also open an empty inspector panel
+          // on the right.
           const kind = canvas.nodes.find((n) => n.id === d.id)?.kind;
           if (kind === 'knowledge' || kind === 'library') onOpenStore(kind);
           else onSelect(d.id);
@@ -377,8 +390,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       if (l) {
         if (l.target) {
           nodeEls.current.get(l.target)?.classList.remove('is-droptarget');
-          // Kéo ngược chiều thì ĐẢO LẠI, đừng từ chối: `mcp → agent` là chiều
-          // duy nhất hợp lệ, nên kéo từ nhân viên sang cánh tay vẫn ra đúng nó.
+          // A backwards drag gets FLIPPED, not refused: `mcp → agent` is the only
+          // legal direction, so dragging from an employee to an arm still lands
+          // on exactly that edge.
           const a = canvas.nodes.find((n) => n.id === l.from);
           const b = canvas.nodes.find((n) => n.id === l.target);
           const flip = a && b && !canConnect(a, b, edgesRef.current) && canConnect(b, a, edgesRef.current);
@@ -416,7 +430,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     [applyView],
   );
 
-  // `passive: false` bắt buộc để preventDefault chặn được zoom của trình duyệt.
+  // `passive: false` is required for preventDefault to stop the browser's zoom.
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
@@ -449,8 +463,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
             const from = nodeById.get(e.from);
             const to = nodeById.get(e.to);
             if (!from || !to) return null;
-            // Cánh tay ĐẨY LÊN, Trợ lý GIAO XUỐNG — hai quan hệ ngược chiều thì
-            // phải vào hai cổng khác nhau. → `geometry.ts §anchor`
+            // An arm PUSHES UP, the assistant HANDS DOWN — two relationships
+            // running in opposite directions must land on different ports.
+            // → `geometry.ts §anchor`
             const up = from.kind === 'mcp';
             const a = anchor(from, 'out', up);
             const b = anchor(to, 'in', up);
@@ -473,7 +488,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                     cutEdge(e);
                   }}
                   role="button"
-                  aria-label="Ngắt dây"
+                  aria-label={t('canvas.cutEdge')}
                 >
                   <circle r={9} />
                   <text y={4} textAnchor="middle">
@@ -491,23 +506,33 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
             return (
               <g
                 key={n.id}
+                /*
+                  `is-keydead` — a service refused a credential this arm runs
+                  on, so the office is NOT fully green until someone signs in
+                  again. Its own class rather than reusing `is-error`: that one
+                  is live task state and clears itself, while this one only
+                  clears when a person acts. The server decides it from a fact
+                  it wrote down, never from a guess. → `office.ts §keyDeadOf`
+                */
                 className={`node node-${n.kind}${n.missing ? ' is-missing' : ''}${
-                  n.kind === 'agent' && !n.connected ? ' is-off' : ''
-                }`}
+                  n.keyDead ? ' is-keydead' : ''
+                }${n.kind === 'agent' && !n.connected ? ' is-off' : ''}`}
                 data-node={n.id}
                 transform={`translate(${n.x},${n.y})`}
                 ref={(el) => {
                   if (el) nodeEls.current.set(n.id, el);
                   else nodeEls.current.delete(n.id);
                 }}
-                // Không còn `onDoubleClick`: một cái bấm đã mở ngăn kéo rồi, và
-                // `showPanel` không đảo trạng thái nên bấm đúp cũng chỉ là mở
-                // hai lần. Bản trước dùng `openPanel` (có đảo) nên bấm đúp là
-                // mở rồi đóng ngay — trông y hệt "bấm không ăn".
+                // No `onDoubleClick` any more: one click already opens the
+                // drawer, and `showPanel` does not toggle, so a double click just
+                // opens it twice. The previous version used `openPanel` (which
+                // toggles), so a double click opened and immediately closed it —
+                // indistinguishable from "the click did nothing".
                 //
-                // Thả file THẲNG lên node. `preventDefault` ở `dragOver` là bắt
-                // buộc — thiếu nó thì trình duyệt coi như không cho thả và mở
-                // luôn file trong tab, cuốn mất cả trang đang mở.
+                // Files drop STRAIGHT onto the node. `preventDefault` on
+                // `dragOver` is required — without it the browser treats the drop
+                // as refused and opens the file in the tab, taking the whole page
+                // with it.
                 onDragOver={n.kind === 'library' ? (e) => e.preventDefault() : undefined}
                 onDrop={
                   n.kind === 'library'
@@ -522,42 +547,46 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
 
                 {/*
                   ┌──────────────────────────────────────────────────────────┐
-                  │ CỔNG PHẢI KHỚP CHỖ SỢI DÂY THẬT SỰ ĐI RA/VÀO.            │
+                  │ A PORT MUST SIT WHERE THE WIRE ACTUALLY LEAVES/ARRIVES.  │
                   │                                                          │
-                  │   Trợ lý    dưới  → giao việc xuống                      │
-                  │   nhân viên trên  ← nhận việc  ·  DƯỚI ← nhận cánh tay   │
-                  │   cánh tay  TRÊN  → đẩy năng lực lên                     │
+                  │   assistant  bottom → hands work down                    │
+                  │   employee   top    ← receives work · BOTTOM ← takes arm │
+                  │   arm        TOP    → pushes capability up               │
                   │                                                          │
-                  │ Bản trước cho MCP một cổng ở ĐÁY trong khi dây đã đổi ra │
-                  │ đi từ đỉnh (§anchor) — vòng tròn nằm một chỗ, dây mọc ra │
-                  │ chỗ khác. Và nhân viên chỉ có MỘT cổng cho HAI quan hệ    │
-                  │ ngược chiều nhau.                                        │
+                  │ The previous version gave MCP a port at the BOTTOM while │
+                  │ the wire had already been moved to leave from the top    │
+                  │ (§anchor) — the circle in one place, the wire growing    │
+                  │ out of another. And an employee had ONE port for TWO     │
+                  │ relationships running in opposite directions.            │
                   └──────────────────────────────────────────────────────────┘
                 */}
                 {/*
-                  ⚠ `data-side` là SỰ THẬT VỀ CHỖ ĐỨNG, không phải một cái tên.
+                  ⚠ `data-side` is THE TRUTH ABOUT POSITION, not a name.
 
-                  Bản trước suy hướng từ tên cổng (`'in'` ⇒ đỉnh). Node MCP có
-                  cổng tên `out` nhưng NẰM Ở ĐỈNH, nên đường kẻ mờ mọc ra từ đáy
-                  trong khi ngón tay đặt ở đỉnh. Lấy cái tên thay cho vị trí —
-                  cùng lỗi với `pitch` vs `tools`, ở tầng pixel.
+                  The previous version inferred direction from the port's name
+                  (`'in'` ⇒ top). An MCP node has a port named `out` that SITS AT
+                  THE TOP, so the ghost wire grew from the bottom while the finger
+                  was on the top. Taking the name for the position — the same
+                  mistake as `pitch` vs `tools`, one layer down in pixels.
                 */}
                 {/*
                   ┌──────────────────────────────────────────────────────────┐
-                  │ SỐ CỔNG = SỐ QUAN HỆ CHẠM VÀO NODE ĐÓ. (chốt 23/08)      │
+                  │ PORT COUNT = NUMBER OF RELATIONSHIPS TOUCHING THAT NODE. │
+                  │ (settled 23/08)                                          │
                   │                                                          │
-                  │   Trợ lý     chỉ GỬI          → 1 cổng, ở ĐÁY            │
-                  │   cánh tay   chỉ GỬI          → 1 cổng, ở ĐỈNH           │
-                  │   nhân viên  NHẬN từ hai phía → 2 cổng                   │
+                  │   assistant  only SENDS         → 1 port, at the BOTTOM  │
+                  │   arm        only SENDS         → 1 port, at the TOP     │
+                  │   employee   RECEIVES from both → 2 ports                │
                   │                                                          │
-                  │ Trợ lý từng có thêm một cổng ở đỉnh, từ hồi `mcp →       │
-                  │ assistant` còn hợp lệ. Cạnh đó đã gỡ (nó không làm gì,   │
-                  │ và nếu chạy thật thì ~36 000 token mỗi lượt), nên cái     │
-                  │ cổng ở lại là một ô nhận KHÔNG NHẬN ĐƯỢC GÌ — mời người   │
-                  │ dùng kéo một sợi dây không bao giờ đậu được.              │
+                  │ The assistant used to carry an extra top port, from when │
+                  │ `mcp → assistant` was still legal. That edge is gone (it │
+                  │ did nothing, and had it really run it would have cost    │
+                  │ ~36,000 tokens a turn), so the port left behind was an   │
+                  │ inbound socket THAT COULD RECEIVE NOTHING — an invitation│
+                  │ to drag a wire that can never land.                      │
                   │                                                          │
-                  │ Cùng luật vừa áp cho chính sợi dây đó: đừng bày ra một    │
-                  │ lối đi không dẫn tới đâu.                                │
+                  │ Same rule as the one just applied to that wire: do not   │
+                  │ display a path that leads nowhere.                       │
                   └──────────────────────────────────────────────────────────┘
                 */}
                 {n.kind === 'agent' && (
@@ -607,7 +636,7 @@ function bindEdge(
     return;
   }
   const cur = map.get(key) ?? ({} as { wire: SVGPathElement; hit: SVGPathElement; cut: SVGGElement });
-  // @ts-expect-error — ba slot ba kiểu phần tử khác nhau, gán theo tên slot là đúng.
+  // @ts-expect-error — three slots, three element types; assigning by slot name is right.
   cur[slot] = el;
   map.set(key, cur);
 }
@@ -622,53 +651,62 @@ function trim(s: string, n: number): string {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CÂU `say` CẮT THEO SỐ ĐO, KHÔNG THEO SỐ KÝ TỰ. (user báo tràn 24/08)     │
- * │                                                                          │
- * │ Bản trước: `trim(st.say, 30)`. Node `agent` rộng **168px** (thu nhỏ từ    │
- * │ 23/08), `.node-say` bắt đầu ở `x=16`, font 12px ⇒ chỗ còn ~142px, vừa     │
- * │ khoảng **22–23 ký tự**. 30 ký tự ≈ 186px ⇒ chữ tràn khỏi hình chữ nhật.   │
- * │                                                                          │
- * │ Và nó nặng thêm từ 22/08, khi `describeCall` thôi nói "đang chạy lệnh" mà │
- * │ nói ra cả câu lệnh (tới 60 ký tự) — rồi 24/08 nói thêm tên cánh tay.      │
- * │                                                                          │
- * │ Đây ĐÚNG cái bẫy mà chú thích "TOẠ ĐỘ BÁM ĐÁY" trong `NodeShape.tsx` đã   │
- * │ cảnh báo, chỉ khác trục: một hằng số hợp lệ (`NODE_SIZE`) đổi ở FILE      │
- * │ KHÁC, và con số ở đây không ai sửa. Chú thích đó neo `y` theo `s.h`;      │
- * │ dòng này là nửa còn lại — neo BỀ RỘNG theo bề rộng thật.                  │
- * │                                                                          │
- * │ Vì sao KHÔNG đổi 30 thành 22: 22 cũng chỉ là một con số ĐOÁN. Chữ Việt có │
- * │ dấu, `iiii` và `MMMM` rộng khác nhau gấp đôi, và ngày ai chỉnh            │
- * │ `NODE_SIZE` lần nữa thì lỗi này quay lại y nguyên, im lặng y nguyên.      │
- * │ `getComputedTextLength()` hỏi đúng cái trình duyệt vừa vẽ ra.             │
- * │                                                                          │
- * │ Vì sao KHÔNG nới node: +16px × 4 node mỗi hàng = +64px ngang, đổi lại ~2  │
- * │ ký tự. Node vừa được thu nhỏ có chủ ý vì sơ đồ hết chỗ quá nhanh.         │
- * │                                                                          │
- * │ KHÔNG MẤT THÔNG TIN NÀO: câu đầy đủ vốn đã có ở hai chỗ khác — panel      │
- * │ Nhật ký (`PlansPanel`, nguyên văn) và dòng hoạt động trên ô chat. Sơ đồ   │
- * │ là chỗ LIẾC, không phải chỗ đọc. `<title>` trả nốt phần còn lại khi rê    │
- * │ chuột, bằng cơ chế sẵn có của SVG: 0 state, 0 render, 0 thư viện.         │
+ * │ `say` IS TRUNCATED BY MEASUREMENT, NOT BY CHARACTER COUNT. (overflow      │
+ * │ reported by the user 24/08)                                               │
+ * │                                                                           │
+ * │ Before: `trim(st.say, 30)`. An `agent` node is **168px** wide (shrunk on  │
+ * │ 23/08), `.node-say` starts at `x=16`, font 12px ⇒ ~142px of room, about   │
+ * │ **22–23 characters**. 30 characters ≈ 186px ⇒ the text spills out of the  │
+ * │ rectangle.                                                                │
+ * │                                                                           │
+ * │ And it got worse on 22/08, when `describeCall` stopped saying "running a  │
+ * │ command" and started printing the command itself (up to 60 characters) —  │
+ * │ then on 24/08 it added the arm's name too.                                │
+ * │                                                                           │
+ * │ This is EXACTLY the trap the "COORDINATES ANCHORED TO THE BOTTOM" note in │
+ * │ `NodeShape.tsx` warned about, on the other axis: a legitimate constant    │
+ * │ (`NODE_SIZE`) changed in ANOTHER FILE, and the number here went unedited. │
+ * │ That note anchors `y` to `s.h`; this line is the other half — anchoring   │
+ * │ WIDTH to the real width.                                                  │
+ * │                                                                           │
+ * │ Why NOT change 30 to 22: 22 is a GUESS as well. Vietnamese carries        │
+ * │ diacritics, `iiii` and `MMMM` differ in width by a factor of two, and the │
+ * │ day somebody adjusts `NODE_SIZE` again the bug returns unchanged and just │
+ * │ as silent. `getComputedTextLength()` asks the browser about what it just  │
+ * │ drew.                                                                     │
+ * │                                                                           │
+ * │ Why NOT widen the node: +16px × 4 nodes per row = +64px across, in        │
+ * │ exchange for ~2 characters. The node was deliberately shrunk because the  │
+ * │ diagram runs out of room fast.                                            │
+ * │                                                                           │
+ * │ NOTHING IS LOST: the full sentence already exists in two other places —   │
+ * │ the log panel (`PlansPanel`, verbatim) and the activity line above the    │
+ * │ chat box. The diagram is for GLANCING at, not for reading. `<title>`      │
+ * │ hands back the rest on hover through SVG's own mechanism: 0 state, 0      │
+ * │ renders, 0 libraries.                                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Ghi `textContent` TRƯỚC rồi mới đo — `getComputedTextLength` đọc thứ đang
- * nằm trên màn hình, không đọc chuỗi ta định ghi. Cắt 2 ký tự mỗi vòng để một
- * câu dài không thành vài trăm lần đo.
+ * ⚠ Write `textContent` FIRST, then measure — `getComputedTextLength` reads what
+ * is on screen, not the string we are about to write. Two characters come off per
+ * iteration so a long sentence does not become hundreds of measurements.
  */
-const SAY_PAD = 26; // x=16 của `.node-say` + 10px chừa mép phải
+const SAY_PAD = 26; // `.node-say`'s x=16 + 10px of right-hand margin
 
 function fitSay(el: SVGTextElement, full: string): void {
-  // Gán `textContent` xoá sạch con, kể cả `<title>` của lượt trước — nên nhánh
-  // rỗng không cần dọn gì thêm.
+  // Assigning `textContent` wipes every child, including the previous turn's
+  // `<title>` — so the empty branch has nothing left to clean up.
   el.textContent = full;
   if (!full) return;
 
   const room = sizeOf('agent').w - SAY_PAD;
-  // Cắt thô về 60 TRƯỚC khi đo: `describeCall` có thể trả một câu lệnh dài, và
-  // đo-rồi-cắt-2-ký-tự từ 200 ký tự là 70 lần ép layout cho một dòng chữ.
+  // A rough cut to 60 BEFORE measuring: `describeCall` can return a long command,
+  // and measure-then-trim-two from 200 characters is 70 forced layouts for one
+  // line of text.
   let cut = trim(full, 60);
   el.textContent = cut;
-  // Trần vòng lặp: `getComputedTextLength()` trả 0 khi node đang ẩn (tab nền,
-  // `display:none`) — không có trần thì đây là một vòng while không lối ra.
+  // A loop ceiling: `getComputedTextLength()` returns 0 while the node is hidden
+  // (background tab, `display:none`) — without the ceiling this is a while loop
+  // with no way out.
   let guard = 40;
   while (guard-- > 0 && cut.length > 1 && el.getComputedTextLength() > room) {
     cut = cut.slice(0, -2);

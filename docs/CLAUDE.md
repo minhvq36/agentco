@@ -1,0 +1,208 @@
+# Conventions
+
+Rules that apply to every change in this repository. `CONTRIBUTING.md` holds the
+four quality criteria and the three rules that define "done" — this file does not
+repeat them, it assumes them.
+
+---
+
+## Language
+
+The repository has **two worlds**, and there is deliberately **no wire between
+them**. Almost every mistake in this area comes from connecting them.
+
+| | The **APP** | The **PRODUCT** |
+|---|---|---|
+| What | comments, identifiers, log lines, the rules and field names inside prompts · interface chrome, labels, server error sentences, seed YAML comments | `say` · `answer` · `gist` · `lessons` · the memory written on `/clear` · the contents of result files · plan steps |
+| Written by | **us** | the **model**, and the user then reads, adds to and edits it |
+| Language | source = **English, always** · anything displayed = **the `language` setting**, via `src/i18n/` | **whatever language the user is actually writing in** |
+| Mechanism | the i18n catalogue | **none at all** — the model observes it |
+
+### 🔴 The switch never reaches a prompt
+
+`company.yaml → language` answers *"what do I want to see"*. It cannot answer
+*"what language is this person speaking"*. **A Vietnamese user may genuinely
+prefer an English interface** — that is a normal case, not an odd one. Wiring the
+two together forces English answers on someone who only wanted English menus.
+
+So no prompt builder takes a locale. `LOOKUP_PROMPT` has had this right from the
+start and is the model to copy:
+
+> Answer in the language the question was asked in.
+
+Not naming a language is also what makes the product work in languages we have
+never shipped a catalogue for: a Chinese user gets Chinese lessons and Chinese
+artifacts because **nothing anywhere names a language**. Adding "reply in X"
+would break that, permanently, for every language except X.
+
+`test/no-pinned-language.test.ts` is the gate. It fails the day someone passes a
+locale into a prompt builder, or pins a language name inside prompt text.
+
+### 🔴 …and it can reach one WITHOUT any source string naming a language
+
+Measured 05/09 (`P-260905-0100-zquw`): an English request produced a plan in
+another language. Nothing in the source named one. The road was a **file we
+wrote on the user's behalf**: `newOffice` seeded `skills/assistant.md` from
+`t('seed.assistantSkills.body')` — the switch, at the instant of creation — and
+that file then sat in the **cached prefix of every chat turn** for the life of
+the office. The gate above reads source code, so it could not see it.
+
+Two rules follow, and the second is the general one:
+
+1. **Seeding a file that later lands in a prompt goes through no catalogue.**
+   *"It becomes the user's own datum"* and *"it never reaches a prompt"* are two
+   different tests. A company name passes both; a skills block passes only the
+   first. Advice worth giving belongs in the editor's **placeholder** — the user
+   reads it, adopts it deliberately, and it costs zero tokens until they do.
+   `newOffice` now seeds neither the charter nor the skills.
+2. **A rule about language must sit on the line it governs, and say what it
+   outranks.** `route()` and `report()` carry the clause inside the very field
+   slot; `plan()` carried nothing and lost to a three-line style instruction in
+   the office's own skills. An abstract rule in a cached prefix loses to a
+   concrete example — restating it louder does not help, saying *"the request
+   outranks every other text in this prompt on the question of language"* does.
+
+⚠ Existing offices keep their seeded file. It is their text now; rewriting it to
+fix our seed would be editing the user's data behind their back.
+
+### 🔴 …and the third road is not ours at all — the harness names the person
+
+Measured 05/09 with a logging proxy on `ANTHROPIC_BASE_URL`, reading the actual
+request body. The Claude Code CLI prepends its own block as **content[0] of the
+first user message**, ahead of every word we wrote:
+
+> `<system-reminder> … # userEmail`
+> `The user's email address is <the machine owner's address>. …`
+
+An address carries a name and a name carries a language. On a brand-new empty
+office, first turn of a fresh session, an English request, and a prompt holding
+**zero non-English characters anywhere**: 16/19 replies came back in the
+language of the address. The reverse direction is fine — the email agrees there.
+
+Three things follow, and the third is the general one:
+
+1. **`settingSources: []` does not cover this.** That switch turns off CLAUDE.md
+   (`claudemd_disabled` in the CLI's own flags, right beside `has_user_email`).
+   There is no switch for the email. It is not ours and we cannot remove it.
+2. **It lands on the FIRST user message only.** So chat drifts on its opening
+   turn and recovers as turns pile up, while every one-shot door — planning,
+   the report, the `/clear` memory — is turn 1 *every time* and never recovers.
+3. **Six wordings lost, so it is not a wording problem.** Rewording the slot
+   clause, deleting it, deleting the prompt-wide language line, strengthening
+   it, pointing it at the quoted sentence, and a fence sitting directly under
+   the injected block naming exactly what it outranks: 0/5, 4/5, 4/4, 4/4, 5/5,
+   5/5. An identity datum next to the request beats every rule, however loud,
+   however close. The answer is **code**, and it is
+   `core/language-drift.ts` — a script-share comparison between two strings we
+   already hold, plus one second turn that ASKS rather than orders. 5/5 both
+   directions, and $0 on the direction that was never broken.
+
+⚠ A worked example pair *did* move the number (3/5 where every rule scored 0/5)
+and is deliberately **not** shipped: an example has to be written in some
+language, which pins two named languages into the prefix and silently biases
+every user who speaks a third. That is the trade this section forbids.
+
+⚠ `test/no-pinned-language.test.ts` reads source code, and `newOffice` taught us
+it cannot see a file we wrote. This road it cannot see either — the text is not
+in our repository at all. **A prompt gate that reads only what we authored can
+never be complete.** The way to know what the model receives is to capture the
+request, not to grep the source.
+
+### Adding a user-visible string
+
+1. Add the key to `src/i18n/en.ts` — **English is the source of truth**.
+2. Add the same key to `src/i18n/vi.ts`. `vi` is declared `: Catalog`, so `tsc`
+   tells you what is missing. Catalogue completeness is a **compile-time** fact
+   here; there is no runtime "missing key" path and no fallback that would turn a
+   loud failure into a quiet one.
+3. Call `t('your.key', { param })`. Counted strings use `plural('your.key', n)` —
+   English needs two forms where Vietnamese needs one, so a count glued onto a
+   noun is correct in exactly one of the two languages.
+4. Dates, numbers, byte sizes and money go through `src/i18n/fmt.ts`. Never write
+   a locale tag such as `'vi-VN'` at a call site.
+
+`src/i18n/` is imported by the web build through the `@i18n` alias, the same way
+`layout-geometry.ts` is imported through `@core`, and for the same recorded
+reason: two copies of one table drift. **It must therefore stay pure** — no
+`node:*`, no disk, no `process`. Environment and OS hints are read by the caller
+and passed in as plain strings.
+
+### Vietnamese in source
+
+`scripts/check-language.ts` runs inside `npm test` and fails on Vietnamese text
+in `src/`, `web/src/`, `test/`, `scripts/`, `docs/`, `README.md` and
+`package.json`. Two exemptions, both narrow:
+
+- `src/i18n/vi.ts` — the catalogue itself, values only. Its comments are English.
+- A line carrying `i18n-allow-vietnamese: <reason>`, for a **fixture where
+  Vietnamese is the thing under test**: diacritic-stripping in `slug.test.ts`,
+  Unicode round-tripping in `markdown.test.ts`, reply scanning in
+  `lesson-guard.test.ts` and `knowledge.test.ts`, and the office-document
+  fixtures in `library.test.ts`.
+
+The file also carries a `PENDING` list — trees not yet migrated. It only ever
+shrinks; deleting a phase's entry *is* that phase's exit criterion.
+
+⚠ `hasVietnameseDiacritics` inside that script is exact **only because it is
+pointed at our own source**, which has exactly two possible states. Point it at
+user text and it becomes a guess: it finds no Vietnamese marks in Spanish, German
+or Arabic and would label all three "English". Never reuse it on user data.
+
+### The knowledge store carries no language field — on purpose
+
+`KnowledgeNode` has no `lang`, and `hot()` does not filter by language.
+
+A detector would be a **signal wearing a deterministic gate's clothes**, and it
+would write its guess **to disk, into user data**, where no later read can tell
+that it was a guess. And filtering would trade a *visible* nuisance (a prefix
+mixing two languages) for a *silent* one (the office quietly forgetting what it
+learned). This repository picks the visible failure every time.
+
+Reopen this only with evidence, not with tidiness: a real office holding notes in
+≥2 languages **plus a wrong output traceable to the mix**, or a real user asking.
+The mechanism then is the **model declaring** the language it just wrote, as a
+free-form BCP-47 tag, on new nodes only. Old nodes stay blank, and blank means
+*unknown* — never inferred.
+
+---
+
+## Comment boxes
+
+Design decisions live in `┌─ … ─┐` boxes next to the code they govern. They
+record the failure that was paid for, not just the conclusion.
+
+Right-hand borders are padded by hand. Take a copy of the file **before** you
+edit it, then afterwards:
+
+```
+git show HEAD:src/core/worker.ts > /tmp/base.ts     # or copy it first
+node --experimental-strip-types scripts/fix-comment-boxes.ts --against /tmp/base.ts src/core/worker.ts
+```
+
+Do not align them by eye. **Display width is not `string.length`**: a combining
+mark adds a code unit and no column, an emoji adds two code units and two
+columns, so counting characters is wrong in both directions at once.
+
+**The rule is "a line I edited keeps the width it had"** — not "every line
+matches its border". Measured across 154 real boxes: 1023 of 2495 body lines
+already disagree with their top border, and 645 still disagree with their own
+block's dominant width, with the deviation tracking line length rather than any
+character. The boxes are simply ragged by ±1 from years of padding by eye, and
+there is no hidden rule to recover. Normalising would rewrite ~40% of every box
+in the repository and bury the real diff under noise nobody can review.
+
+A line too wide to fit is **reported, never trimmed** — trimming would silently
+delete a clause from the reason a decision exists. Shorten the sentence and rerun.
+
+`--check <file…>` reports lines sitting off their block's dominant width and
+writes nothing. It is advisory; a hit is not automatically a defect.
+
+## Writing comments
+
+- English reads as the original, not as a translation. Keeping the metaphor is
+  better than keeping the words.
+- Keep the register: direct, with the real case and the real measurement.
+  A comment that reads like API documentation has lost the thing it was for.
+- **Never drop a clause.** Shortening is fine; dropping a condition, a date, a
+  measured number, or a "but the other half is just as dangerous" is not.
+- State the mechanism and the cost, not the intention.

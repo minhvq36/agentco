@@ -1,18 +1,21 @@
 /**
- * Đọc ZIP — vừa đủ để bóc `.docx` / `.xlsx` / `.pptx`.
+ * Reading ZIP — just enough to extract `.docx` / `.xlsx` / `.pptx`.
  *
  * → docs/SPEC-library.md §4
  *
- * VÌ SAO TỰ VIẾT thay vì thêm một thư viện: ba định dạng Office đều là ZIP chứa
- * XML, và phần ZIP ta cần chỉ có "tìm mục theo tên, giải nén mục đó". `node:zlib`
- * đã có sẵn `inflateRawSync`. Đổi lại là ~150 dòng đọc được, test được bằng
- * `node --test`, và **không thêm một phụ thuộc nào** vào một dự án hiện chỉ có ba.
+ * WHY HAND-WRITTEN rather than one more library: all three Office formats are
+ * ZIP containers holding XML, and the only ZIP we need is "find an entry by
+ * name, inflate that entry". `node:zlib` already ships `inflateRawSync`. What we
+ * get back is ~150 readable lines, testable under `node --test`, and NOT ONE
+ * MORE DEPENDENCY on a project that currently has three.
  *
- * (`.pdf` thì ngược lại — content stream nén + CID font là thứ không tự viết
- * được, và spec §15 đã ghi rõ nó bắt buộc phải có thư viện thật.)
+ * (`.pdf` is the opposite — compressed content streams plus CID fonts are not
+ * something to hand-write, and spec §15 says outright that it requires a real
+ * library.)
  *
- * CỐ Ý chỉ giải nén mục được HỎI TÊN. Một file .docx 90KB có thể chứa hàng chục
- * ảnh nhúng; giải nén hết để rồi vứt đi là trả tiền cho việc không ai cần.
+ * DELIBERATELY inflates only the entry that was ASKED FOR BY NAME. A 90KB .docx
+ * can hold dozens of embedded images; inflating them all to throw them away is
+ * paying for work nobody asked for.
  */
 
 import zlib from 'node:zlib';
@@ -22,10 +25,10 @@ const SIG_CENTRAL = 0x02014b50;
 const SIG_LOCAL = 0x04034b50;
 
 /**
- * Trần giải nén MỘT mục. Chốt chống zip bomb: tỉ lệ nén của XML rất cao (một
- * mục 50KB nén ra 10MB là bình thường), nên không thể chặn bằng tỉ lệ — phải
- * chặn bằng con số tuyệt đối. 200MB là quá đủ cho `word/document.xml` của bất
- * kỳ tài liệu nào người ta thật sự viết bằng tay.
+ * Inflation ceiling for ONE entry — the zip-bomb guard. XML compresses
+ * enormously well (a 50KB entry inflating to 10MB is ordinary), so a ratio
+ * cannot be the check; it has to be an absolute number. 200MB is far more than
+ * `word/document.xml` of any document a person actually wrote by hand.
  */
 const MAX_ENTRY_BYTES = 200 * 1024 * 1024;
 
@@ -39,26 +42,27 @@ export interface ZipEntry {
 
 export interface ZipFile {
   names: string[];
-  /** Giải nén một mục. `undefined` nếu không có mục đó. Ném lỗi nếu mục hỏng. */
+  /** Inflate one entry. `undefined` when it is not there; throws when it is corrupt. */
   read(name: string): Buffer | undefined;
 }
 
 export function openZip(buf: Buffer): ZipFile {
   const eocd = findEocd(buf);
-  if (eocd < 0) throw new Error('Không đọc được cấu trúc ZIP (thiếu bản ghi kết thúc).');
+  if (eocd < 0) throw new Error('could not read the ZIP structure (no end-of-central-directory record)');
 
   const centralOffset = buf.readUInt32LE(eocd + 16);
   const count = buf.readUInt16LE(eocd + 10);
 
   /**
-   * ZIP64: khi file > 4GB hoặc > 65535 mục, hai trường trên bị đặt thành toàn
-   * 1 và số thật nằm ở một bản ghi khác. Ta không đọc ZIP64 — nhưng phải NÓI RA
-   * thay vì đọc bừa một offset vô nghĩa rồi ném một lỗi không ai hiểu.
+   * ZIP64: above 4GB or 65535 entries, both fields above are set to all-ones and
+   * the real numbers live in a separate record. We do not read ZIP64 — but we
+   * SAY SO, rather than reading a meaningless offset and throwing an error
+   * nobody can interpret.
    */
   if (centralOffset === 0xffffffff || count === 0xffff) {
-    throw new Error('File nén dạng ZIP64 — quá lớn để đọc.');
+    throw new Error('ZIP64 archive — too large to read');
   }
-  if (centralOffset >= buf.length) throw new Error('Cấu trúc ZIP hỏng.');
+  if (centralOffset >= buf.length) throw new Error('corrupt ZIP structure');
 
   const entries = new Map<string, ZipEntry>();
   let p = centralOffset;
@@ -82,17 +86,18 @@ export function openZip(buf: Buffer): ZipFile {
       const e = entries.get(name);
       if (!e) return undefined;
       if (e.uncompressedSize > MAX_ENTRY_BYTES) {
-        throw new Error(`Mục "${name}" trong file quá lớn.`);
+        throw new Error(`ZIP entry "${name}" is too large`);
       }
 
       /**
-       * Kích thước tên và extra của LOCAL header có thể KHÁC central directory —
-       * đây là chỗ hay bị viết sai nhất khi tự đọc ZIP. Phải đọc lại từ local
-       * header, không được tái dùng `nameLen`/`extraLen` ở trên.
+       * The name and extra lengths in the LOCAL header can DIFFER from the
+       * central directory — the single most common mistake when reading ZIP by
+       * hand. They have to be re-read from the local header; the `nameLen` and
+       * `extraLen` above must not be reused.
        */
       const lo = e.localOffset;
       if (lo + 30 > buf.length || buf.readUInt32LE(lo) !== SIG_LOCAL) {
-        throw new Error(`Mục "${name}" trong file hỏng.`);
+        throw new Error(`ZIP entry "${name}" is corrupt`);
       }
       const nameLen = buf.readUInt16LE(lo + 26);
       const extraLen = buf.readUInt16LE(lo + 28);
@@ -101,16 +106,16 @@ export function openZip(buf: Buffer): ZipFile {
 
       if (e.method === 0) return Buffer.from(raw);
       if (e.method === 8) return zlib.inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES });
-      throw new Error(`Mục "${name}" dùng kiểu nén chưa hỗ trợ (${e.method}).`);
+      throw new Error(`ZIP entry "${name}" uses an unsupported compression method (${e.method})`);
     },
   };
 }
 
 /**
- * Tìm bản ghi kết thúc, quét NGƯỢC từ cuối file.
+ * Find the end-of-central-directory record, scanning BACKWARDS from the end.
  *
- * Không thể nhảy thẳng tới `length - 22`: ZIP cho phép một chú thích dài tới
- * 65535 byte nằm sau bản ghi đó. Nhiều công cụ ghi chú thích thật.
+ * Jumping straight to `length - 22` does not work: ZIP allows a comment of up to
+ * 65535 bytes after that record, and plenty of tools write a real one.
  */
 function findEocd(buf: Buffer): number {
   const min = Math.max(0, buf.length - (22 + 0xffff));

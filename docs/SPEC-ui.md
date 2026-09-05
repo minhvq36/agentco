@@ -1,344 +1,528 @@
-# SPEC — Giao diện
+# SPEC — Interface
 
-> **⚠ CHỐT 15/08/2026 — stack và bố cục đổi. Đọc §0 trước.**
+> **⚠ LOCKED IN 15/08/2026 — the stack and layout changed. Read §0 first.**
 
-## 0. Stack và bố cục — **ĐÃ CÀI ĐẶT** (Đợt 2, 15/08/2026)
+## 0. Stack and layout — **ALREADY IMPLEMENTED** (Batch 2, 15/08/2026)
 
-| Phần | Ở đâu |
+| Part | Where |
 |---|---|
-| Vỏ app, dải kế hoạch, toast, trạng thái rỗng | `web/src/App.tsx` |
-| Canvas SVG + tương tác chuột | `web/src/canvas/` |
+| App shell, plan strip, toasts, empty states | `web/src/App.tsx` |
+| SVG canvas + mouse interaction | `web/src/canvas/` |
 | State + SSE | `web/src/lib/store.ts` |
-| Client API (không nuốt lỗi) | `web/src/lib/api.ts` |
-| Sidebar + 6 panel | `web/src/components/` |
-| Daemon phục vụ `web/dist` | `src/server/static.ts` |
+| API client (doesn't swallow errors) | `web/src/lib/api.ts` |
+| Sidebar + 6 panels | `web/src/components/` |
+| Daemon serving `web/dist` | `src/server/static.ts` |
 
-Lệnh: `npm run build:all` (backend + UI) · `npm run dev:web` (Vite 5173, proxy `/api` sang 7317).
+Commands: `npm run build:all` (backend + UI) · `npm run dev:web` (Vite 5173, proxying `/api` to 7317).
 
 ### Stack: React + Vite + Tailwind v4 + shadcn/ui
 
-Bỏ ràng buộc "không build step" của §5. Lý do: sáu màn hình mới (sidebar đóng/mở, chuyển văn phòng, log nhiều luồng, prompt phân lớp, dialog cảnh báo, canvas) trong một chuỗi `String.raw` không có type check sẽ thành ~2 500 dòng không ai bảo trì nổi — và bốn tiêu chí chất lượng mới (`SPEC-2026-08-14-agentco.md` §1) đòi đúng những thứ shadcn/Radix cho sẵn: focus trap, aria, không nhảy layout.
+Drops the "no build step" constraint from §5. Reason: six new screens (collapsible
+sidebar, switching offices, multi-stream logs, the layered prompt view, warning
+dialogs, canvas) inside one type-checkless `String.raw` template would come out to
+~2,500 lines nobody could maintain — and the four new quality criteria
+(`SPEC-2026-08-14-agentco.md` §1) demand exactly what shadcn/Radix give you for
+free: focus traps, aria, no layout jumping.
 
 ```
 agentco/
-├─ src/                backend TS, như cũ
-└─ web/                mới
+├─ src/                backend TS, as before
+└─ web/                new
    ├─ src/App.tsx
-   ├─ src/canvas/      SVG VIẾT TAY, không thư viện canvas
-   └─ src/components/ui/   shadcn copy vào
+   ├─ src/canvas/      HAND-WRITTEN SVG, no canvas library
+   └─ src/components/ui/   shadcn copied in
 ```
 
-`npm run build` = `tsc` + `vite build`. Daemon phục vụ `web/dist` tĩnh.
+`npm run build` = `tsc` + `vite build`. The daemon serves `web/dist` statically.
 
-**Ràng buộc hiệu năng, không thương lượng:** kéo node cập nhật `transform` qua `ref`, **không** `setState` mỗi frame. React lo phần vỏ; canvas tự lo vòng lặp chuột của nó. 60fps kể cả khi công ty đang chạy.
+**Non-negotiable performance constraint:** dragging a node updates `transform`
+through a `ref`, **never** `setState` on every frame. React owns the shell; the
+canvas owns its own mouse loop. 60fps even while the company is running.
 
-### Bố cục: sidebar trái đóng/mở
+### Layout: collapsible left sidebar
 
-Chat, nhật ký, tổng quan công ty, tri thức chuyển hết vào **sidebar trái**. Bấm vào mục nào hiện mục đó; luôn có nút ✕ để đóng lại và trả toàn bộ màn hình cho canvas.
+Chat, log, company overview, and knowledge all move into the **left sidebar**.
+Clicking an entry shows it; there's always a ✕ button to close it and give the
+whole screen back to the canvas.
 
-Thanh dưới (kế hoạch + chat) của bản v0 biến mất — nó chiếm chỗ vĩnh viễn cho thứ người dùng chỉ cần từng lúc.
+The bottom bar (plan + chat) from v0 disappears — it permanently claimed space for
+something the user only needs occasionally.
 
-Hai nút `Sắp xếp` / `Vừa khung` đổi thành **icon**, không chữ.
+The two buttons `Arrange` / `Fit to frame` become **icons**, no text.
 
-### Sáu tab, và BA KHO đứng liền nhau (19/08)
+### Seven tabs, and THREE STORES sitting side by side (19/08 · Settings added 03/09)
 
 ```
-Nói với Trợ lý · Nhật ký công việc · Tổng quan công ty · Tủ tài liệu · Kết quả · Kho tri thức
-                                                        └────────── ba kho ──────────┘
+Talk to the Assistant · Work log · Company overview · Document library · Results · Knowledge base · Settings
+                                                       └────────── three stores ──────────┘
 ```
 
-Ba kho là ba khái niệm dễ lẫn nhất trong sản phẩm, phân biệt bằng đúng một câu hỏi: **ai đặt file vào đó?**
+**Settings shows up EVEN WHEN THERE IS NO OFFICE YET** — the same exception as
+Overview, and for the same reason: it belongs to the **company** level, not the
+office level. A fresh install lands on an empty screen, and interface language is
+something the user needs to pick **before** creating their first office — forcing
+them to create an office before they can change the language forces them to read a
+screen in a language they didn't come there to use.
+→ `web/src/components/Sidebar.tsx §tabs` · `docs/CLAUDE.md §Language`
 
-| | ai ghi | người dùng làm được gì |
+The three stores are the three most easily confused concepts in the product,
+distinguished by exactly one question: **who puts the file there?**
+
+| | who writes | what the user can do |
 |---|---|---|
-| Tủ tài liệu | NGƯỜI DÙNG | thêm · xoá |
-| **Kết quả** | NHÂN VIÊN | xoá |
-| Kho tri thức | AGENT tự rút ra | sửa · xoá |
+| Document library | THE USER | add · delete |
+| **Results** | THE EMPLOYEE | delete |
+| Knowledge base | the AGENT extracts it itself | edit · delete |
 
-Đứng cạnh nhau thì khác biệt đọc được bằng mắt; rải ra ba chỗ thì người dùng phải nhớ. **Kết quả đặt ở GIỮA** vì nó là cái duy nhất có cả hai đầu: nhân viên đọc tài liệu ở trên, học được gì thì thành tri thức ở dưới.
+Standing next to each other, the difference reads at a glance; scattered across
+three places, the user has to remember it. **Results sits in the MIDDLE** because
+it's the only one with both ends: the employee reads documents above, and
+whatever gets learned becomes knowledge below.
 
-Mỗi ngăn kéo có một dòng ở chân tự nói mình LÀ GÌ và chỉ sang cái kia. **0 token** — nằm hoàn toàn ở giao diện. → `SPEC-artifacts.md`
+Each drawer has a line at the bottom stating what it IS and pointing to the
+others. **0 tokens** — lives entirely in the UI. → `SPEC-artifacts.md`
 
-### Sidebar KÉO RỘNG ĐƯỢC — bề rộng là nội dung, không phải trang trí
+### The sidebar is RESIZABLE — width is content, not decoration
 
-336px đủ cho một dòng chat, **không** đủ cho thứ Trợ lý thật sự trả về: danh sách lệnh, kế hoạch nhiều bước, báo cáo cuối ca. Nội dung dạng đó không co lại được — nó chỉ ngắt dòng xấu đi. Nên bề rộng phải là thứ người dùng chỉnh:
+336px is enough for one line of chat, **not** enough for what the Assistant
+actually returns: a list of commands, a multi-step plan, an end-of-run report.
+That kind of content doesn't shrink gracefully — it just wraps ugly. So width has
+to be something the user controls:
 
-- **tay nắm kéo** ở mép phải, vùng bắt 7px, vạch chỉ hiện khi rê tới (một đường kẻ đậm suốt chiều cao màn hình là nhiễu thị giác)
-- **nút mở rộng** nhảy thẳng tới bề rộng rộng (720px) và về lại
-- **nhấp đúp** tay nắm → về mặc định
-- nhớ trong `localStorage`; kẹp lại khi thu nhỏ cửa sổ, nếu không canvas biến mất hẳn và không có cách lấy lại
+- a **drag handle** on the right edge, a 7px hit zone, the line only shows on
+  hover (a bold line running the full height of the screen at all times is visual
+  noise)
+- an **expand button** jumps straight to the wide width (720px) and back
+- **double-click** the handle → back to default
+- remembered in `localStorage`; clamped when the window shrinks, otherwise the
+  canvas disappears entirely with no way to get it back
 
-> **Ràng buộc hiệu năng, giống hệt luật của canvas:** bề rộng lúc **đang kéo** đi thẳng vào DOM qua `ref`, không qua `setState`. Một `setState` mỗi frame kéo là render lại cả cây React 60 lần/giây **trong khi SSE vẫn đang bắn sự kiện vào**. React chỉ biết bề rộng mới khi **thả chuột**.
+> **Performance constraint, identical to the canvas rule:** width **while
+> dragging** goes straight into the DOM through a `ref`, not through `setState`.
+> A `setState` on every drag frame re-renders the entire React tree 60 times a
+> second **while SSE is still firing events in**. React only learns the new width
+> when the **mouse is released**.
 
-### Tin nhắn phải giữ ký tự xuống dòng
+### Messages must preserve line breaks
 
-Bong bóng chat dùng `white-space: pre-wrap`. Đây là **bắt buộc**, không phải thẩm mỹ: những câu trả lời nhiều dòng mà backend dựng sẵn bằng code — `/help`, danh sách bước của kế hoạch, báo cáo cuối ca — dùng ký tự xuống dòng thật, và HTML gộp mọi khoảng trắng thành một dấu cách. Không giữ thì `/help` hiện ra thành một khối chữ liền không đọc nổi.
+Chat bubbles use `white-space: pre-wrap`. This is **mandatory**, not aesthetic:
+multi-line responses the backend builds in code — `/help`, a plan's step list, an
+end-of-run report — use real newline characters, and HTML collapses all
+whitespace into a single space. Without this, `/help` renders as one unreadable
+run-on block of text.
 
-Kèm `break-words`: đường dẫn file và URL dài không có khoảng trắng để ngắt; thiếu nó thì bong bóng tự nong ra và đẩy cả panel sinh thanh cuộn ngang.
+Paired with `break-words`: long file paths and URLs have no spaces to break on;
+without it, the bubble stretches out and pushes the whole panel into a horizontal
+scrollbar.
 
-Phía backend chịu ràng buộc đối ứng: `helpText()` xếp **tên lệnh một dòng, mô tả thụt vào ở dòng dưới** thay vì căn cột. Căn cột bằng khoảng trắng chỉ đúng với font đơn cách, mà bong bóng chat dùng font thường — và cùng bộ lệnh này sẽ chạy qua Telegram, nơi còn hẹp hơn.
+The backend carries a matching constraint: `helpText()` lays out **the command
+name on its own line, with the description indented on the line below** instead
+of column-aligning them. Column-aligning with spaces only works with a monospace
+font, and the chat bubble uses a regular font — and this same command set also
+runs through Telegram, which is even narrower.
 
-### Bảng markdown: TRỌN BẢNG HOẶC KHÔNG GÌ CẢ (20/08)
+### Markdown tables: THE WHOLE TABLE OR NOTHING (20/08)
 
-Bộ vẽ markdown tự viết (`markdown-core.ts` + `markdown.tsx`, dùng chung ô chat và cửa sổ xem trước `.md`) nhận thêm **luật thứ năm**: bảng. Lý do là dữ liệu, không phải sở thích — bảng là dạng kết quả nhân viên sinh ra thật: bảng thuật ngữ, bảng chi tiêu, bảng so sánh giá. Hiện nguyên văn dấu `|` là bắt người dùng tự dựng cái bảng đó trong đầu, mà họ mở file `.md` ra để **duyệt trước khi gửi cho khách**.
+The hand-written markdown renderer (`markdown-core.ts` + `markdown.tsx`, shared by
+the chat box and the `.md` preview window) gains a **fifth rule**: tables. The
+reason is data, not preference — tables are a real shape of what employees
+actually produce: terminology tables, expense tables, price-comparison tables.
+Showing the raw `|` characters forces the user to mentally build the table
+themselves, right when they've opened the `.md` file specifically to **review it
+before sending it to a client**.
 
-**Nhận diện đòi BA điều kiện**, thiếu một là rơi thẳng về văn bản thường và hiện nguyên văn y như trước:
+**Detection requires THREE conditions**, and missing any one falls straight back
+to plain text, shown verbatim as before:
 
-1. dòng hiện tại có `|`
-2. dòng **ngay sau** là dòng phân cách (`|---|:--:|`) — và **chính nó cũng phải có `|`**
-3. số cột của hai dòng đó **khớp nhau**
+1. the current line has `|`
+2. the line **immediately after** is a separator line (`|---|:--:|`) — and **it
+   too must have `|`**
+3. the two lines' column counts **match**
 
-> Điều kiện 2 có vế thứ hai là để hai dòng vô hại `chọn cà phê | trà sữa` + `---` không thành một bảng một cột. `---` đứng một mình là gạch ngang / tiêu đề setext — hai thứ bộ vẽ này **cố ý không hỗ trợ**, nên chúng phải tiếp tục hiện nguyên văn. Miễn phí: bảng từ hai cột trở lên thì dòng phân cách bắt buộc đã có `|`.
+> The second half of condition 2 exists so two harmless lines like
+> `pick coffee | milk tea` + `---` don't turn into a one-column table. A lone
+> `---` is a horizontal rule / setext heading — two things this renderer
+> **deliberately doesn't support**, so they must keep rendering as plain text.
+> Free bonus: for a table of two or more columns, the mandatory separator line
+> already has a `|`.
 
-Vì sao khắt khe: **một bảng vẽ ra mà lệch cột hay thiếu ô là một lời khẳng định SAI về dữ liệu** — người đọc tin cái bảng hơn hẳn tin một đống dấu `|`. Hiện nguyên văn thì xấu nhưng không nói dối, và người dùng nhìn ra ngay *"chỗ này chưa dựng được"*.
+Why this is strict: **a table rendered with misaligned columns or missing cells
+is a FALSE claim about the data** — a reader trusts a rendered table far more than
+they'd trust a pile of `|` characters. Showing it as raw text is ugly but honest,
+and the user immediately sees *"this part didn't render."*
 
-Hàng **thân** thì ngược lại, được nới: thiếu ô thì đệm rỗng, thừa ô thì cắt (đúng GFM). Ràng buộc chặt đặt ở chỗ **quyết định "đây có phải bảng không"**; quyết rồi thì một hàng lệch không đáng để vứt cả bảng.
+**Body** rows go the other way, and are lenient: a missing cell gets padded
+empty, an extra cell gets truncated (matching GFM). The strictness sits at the
+point of **deciding "is this a table at all"**; once that's decided, one uneven
+row isn't worth throwing away the whole table.
 
-#### Hai lớp chống vỡ — và cả hai đều bắt buộc
+#### Two anti-breakage layers — and both are required
 
-1. **`overflow-x-auto` + `max-w-full` ở khối bọc ngoài** — cùng luật đã áp cho khối code: nội dung rộng cuộn **trong khối của nó**.
-2. **Bong bóng chứa bảng phải có BỀ RỘNG XÁC ĐỊNH** (`block w-full`), không phải `inline-block` co theo nội dung. Với `inline-block`, bề rộng khối bọc lại phụ thuộc vào nội dung bên trong — `max-w-full` không còn mốc nào để bám và lớp 1 mất tác dụng.
+1. **`overflow-x-auto` + `max-w-full` on the outer wrapper** — the same rule
+   already applied to code blocks: wide content scrolls **inside its own block**.
+2. **A bubble containing a table must have a FIXED WIDTH** (`block w-full`), not
+   `inline-block` shrinking to content. With `inline-block`, the wrapper's width
+   depends on what's inside it — `max-w-full` has nothing to anchor to, and layer
+   1 stops working.
 
-Nhờ đó **panel thu hẹp tới `MIN_W` = 300px thì bảng vẫn chỉ cuộn ngang bên trong, không bao giờ đẩy sidebar rộng ra** — thân panel là `flex-none` với `width` tường minh và `overflow-hidden`, nên nội dung không có đường nào nong nó.
+Thanks to that, **a panel shrunk down to `MIN_W` = 300px still only scrolls the
+table horizontally inside itself, and never pushes the sidebar wider** — the
+panel body is `flex-none` with an explicit `width` and `overflow-hidden`, so
+nothing inside it has any way to stretch it.
 
-Bong bóng nới rộng **chỉ khi tin nhắn thật sự có bảng** (`hasTable()`): một bong bóng chiếm trọn bề ngang cho câu *"Đã xong."* trông như lỗi bố cục. Và `hasTable()` đi qua **đúng `blocksOf`** chứ không phải một regex riêng — hai cách nhận diện song song thì kiểu gì cũng có ngày lệch, và lúc đó bong bóng nới rộng cho một thứ tầng vẽ lại quyết định hiện nguyên văn.
+The bubble only widens **when the message actually has a table** (`hasTable()`):
+a bubble taking the full width for the sentence *"Done."* would look like a
+layout bug. And `hasTable()` goes through the **exact same `blocksOf`**, not a
+separate regex — two parallel detection methods will eventually drift apart, and
+that's exactly when the bubble would widen for something the rendering layer
+decided to show as plain text.
 
-### Một ô nhập, MỘT vòng focus (20/08)
+### One input, ONE focus ring (20/08)
 
-Người dùng: *"viền ô chat khi được chọn bị dày, hai đường cam song song tạo cảm giác thô"*. Đúng, và nguyên nhân đáng ghi lại.
+The user: *"the chat box border looks thick when focused, two parallel orange
+lines feel crude."* Correct, and the cause is worth recording.
 
-Ô nhập nhận **hai** dấu focus chồng lên nhau: `focus:border-accent` (viền 1px cam) trong `ui/misc.tsx`, cộng luật nền `:focus-visible { outline: 2px; outline-offset: 2px }` — hai đường cam cách nhau một khe 2px, mắt đọc ra thành viền dày ~5px.
+The input field was getting **two** focus indicators stacked on top of each
+other: `focus:border-accent` (a 1px orange border) in `ui/misc.tsx`, plus a
+baseline rule `:focus-visible { outline: 2px; outline-offset: 2px }` — two orange
+lines 2px apart, which the eye reads as one ~5px thick border.
 
-> 🔥 **`misc.tsx` ĐÃ CÓ `focus:outline-none`, và nó không có tác dụng.** Không phải vì specificity mà vì **cascade layer**: Tailwind v4 đặt utility trong `@layer utilities`, còn CSS trần trong `index.css` nằm **ngoài mọi layer** — mà style không nằm trong layer **thắng mọi style nằm trong layer**, bất kể specificity. Người viết dòng đó tin rằng mình đã tắt xong.
+> 🔥 **`misc.tsx` ALREADY HAD `focus:outline-none`, and it had no effect.** Not a
+> specificity issue but a **cascade layer** one: Tailwind v4 puts utilities inside
+> `@layer utilities`, while plain CSS in `index.css` sits **outside every layer**
+> — and a style outside any layer **beats every style inside a layer**, regardless
+> of specificity. Whoever wrote that line genuinely believed it had turned the
+> outline off.
 >
-> **Bài học chung:** đã `@import 'tailwindcss'` thì mọi luật CSS trần viết sau nó là luật **ưu tiên cao nhất trong ứng dụng** — phải viết như thế, và không được trông đợi một utility nào đè lại được.
+> **General lesson:** once `@import 'tailwindcss'` is in effect, any plain CSS
+> rule written after it is the **highest-priority rule in the whole app** — it
+> has to be treated that way, and no utility class should be expected to override
+> it.
 
-Sửa bằng một luật cho riêng ô nhập: bỏ `outline`, giữ viền đổi màu, thêm quầng mềm **sát viền** (`box-shadow 0 0 0 3px`). Không khe hở thì không có hai đường. Quầng trộn từ chính `accent` bằng `color-mix` chứ không dùng `--color-accent-soft`: ở nền tối `accent-soft` là nâu sẫm đặt trên `panel`, gần như biến mất.
+Fixed with one rule scoped to the input field: drop `outline`, keep the color-
+changing border, add a soft glow **hugging the border** (`box-shadow 0 0 0 3px`).
+No gap, no second line. The glow is mixed from `accent` itself via `color-mix`
+rather than using `--color-accent-soft`: on the dark theme, `accent-soft` is a
+dark brown sitting on `panel`, and nearly disappears.
 
-Nút bấm **cố ý** không nằm trong luật này — chúng là nền đặc, một vòng outline bao quanh đọc ra đúng là *"đang được chọn"*, không phải một viền dày.
+Buttons are **deliberately** excluded from this rule — they're solid fills, and
+an outline ring around one reads correctly as *"currently selected,"* not as a
+thick border.
 
-### Đường dẫn kết quả trong chat BẤM ĐƯỢC — nhưng chỉ đường dẫn CODE đặt vào (20/08)
+### Result paths in chat are CLICKABLE — but only paths CODE placed there (20/08)
 
-Chi tiết cơ chế ở `SPEC-artifacts.md` §2.5. Phần thuộc về giao diện:
+Mechanism details in `SPEC-artifacts.md` §2.5. The UI-facing part:
 
-- Tin nhắn mang `files` thì mỗi dòng khớp một đường dẫn trong đó thành **một nút cả dòng** (`w-full`) — một mục tiêu cao 8px thì người dùng bấm trượt rồi kết luận là nó không bấm được. `break-all` vì đường dẫn dài không có khoảng trắng để ngắt, và một cái nút không xuống dòng được sẽ nong rộng bong bóng.
-- Dòng **không** khớp file nào đi qua `Markdown` như mọi tin khác. Không nhánh nào ở đây được phép đổi cách hiển thị hiện tại.
-- ⛔ Giao diện **không bao giờ** tự dò đường dẫn trong chữ. Xem §2.5 — đó là cách cho một câu model bịa mượn uy tín của giao diện.
+- A message carrying `files` turns each matching line into **a full-width
+  button** (`w-full`) — an 8px-tall target means the user misses the click and
+  concludes it isn't clickable at all. `break-all` because long paths have no
+  spaces to break on, and a button that can't wrap would stretch the bubble wider.
+- A line that **doesn't** match any file goes through `Markdown` like any other
+  message. No branch here is allowed to change today's rendering.
+- ⛔ The UI **never** scans text for paths on its own. See §2.5 — that's exactly
+  how a sentence the model made up borrows the UI's credibility.
 
-### Lỗi phải TRÔNG NHƯ lỗi
+### Errors must LOOK like errors
 
-Toast lỗi có **nền màu** (`danger-soft`) và viền `danger`, `role="alert"`, `aria-live="assertive"`.
+Error toasts have a **colored background** (`danger-soft`) and a `danger` border,
+`role="alert"`, `aria-live="assertive"`.
 
-Bản trước dùng nền `panel` — y hệt mọi bảng khác — và chỉ đổi màu một cái icon 16px. Người dùng bấm "Thêm nhân viên", tên trùng, toast hiện lên trông như một thông báo bình thường, và họ **đứng khựng vì tưởng app đơ** chứ không đọc ra rằng vừa có lỗi.
+The earlier version used the `panel` background — identical to every other
+toast — and only changed the color of a 16px icon. A user clicks "Add employee,"
+the name already exists, the toast pops up looking like an ordinary
+notification, and they **freeze thinking the app hung** instead of reading that
+an error just happened.
 
-Tiêu chí "Xử lý lỗi tốt" đòi mọi lỗi nói được *chuyện gì xảy ra + làm gì tiếp*. Bước đầu tiên của việc đó là **nhìn vào phải biết ngay đây là lỗi** — nếu không thì phần chữ viết hay đến mấy cũng không ai đọc.
+The "good error handling" criterion demands every error state *what happened +
+what to do next*. The first step of that is **being able to tell it's an error at
+a glance** — otherwise no matter how well-written the text is, no one reads it.
 
-### Xoá luôn có hai mức, và mức an toàn đứng trước
+### Deletion always has two levels, and the safe one comes first
 
-Văn phòng và nhân viên đều: **Lưu trữ** (cất đi, khôi phục được) · **Xoá hẳn** (mất luôn). → `SPEC-offices.md` §3.1, §5.1
+For both offices and employees: **Archive** (put away, recoverable) · **Delete
+for good** (gone permanently). → `SPEC-offices.md` §3.1, §5.1
 
-- Hai **nút riêng**, không phải một nút rồi hỏi lại. Hai ý định khác nhau thật thì cho chúng hai lối đi khác nhau.
-- Nút "Xoá hẳn" mang `variant="danger"`; dialog xác nhận **nói ra thứ sẽ mất**, và **chỉ đường sang mức Lưu trữ** cho người bấm nhầm.
-- Danh sách "Trong lưu trữ" dùng viền **nét đứt** — nhìn là biết chưa phải trạng thái bình thường.
+- Two **separate buttons**, not one button followed by a prompt. Two genuinely
+  different intents deserve two different paths.
+- The "Delete for good" button carries `variant="danger"`; the confirmation
+  dialog **states what will be lost**, and **points toward the Archive option**
+  for anyone who clicked it by mistake.
+- The "In archive" list uses a **dashed** border — visibly not a normal state at
+  a glance.
 
-### Chi phí: gộp để HIỂN THỊ, không gộp DỮ LIỆU
+### Cost: merged for DISPLAY, not merged in DATA
 
-Những dòng chi phí không còn văn phòng (đã xoá hẳn, hoặc bản ghi có trước khi tách văn phòng) gom vào **một khối đóng/mở**: *"N mục không còn · $X · bấm để xem"*.
+Cost line items with no office left (deleted for good, or a record predating
+office splitting) get collected into **one collapsible block**: *"N items with no
+office · $X · click to view"*.
 
-Không gom thì sau vài tháng bảng đầy tên đã chết. Nhưng **cộng chúng thành một dòng** thì cái mã văn phòng mất — mà với văn phòng đã xoá hẳn, cái mã là manh mối **duy nhất** còn lại để biết khoản tiền đó là của việc gì. Thu gọn giữ được cả hai, và không tốn một dòng code kế toán nào — chỉ là một `<details>`.
+Without grouping, the table fills up with dead names after a few months. But
+**adding them into one line** loses the office code — and for a deleted office,
+that code is the **only remaining clue** to what job that money was for.
+Collapsing keeps both, at zero accounting-code cost — it's just a `<details>`.
 
-Văn phòng **lưu trữ** thì vẫn nằm ở danh sách chính kèm nhãn *(lưu trữ)*: nó còn cứu được, và nó còn tên.
+**Archived** offices still show in the main list with a *(archived)* label:
+they're still recoverable, and still have a name.
 
-### Log đi theo CÔNG VIỆC, không theo thời gian
+### The log follows the WORK, not the timeline
 
-→ `SPEC-offices.md` §6. Mỗi agent (kể cả Trợ lý) có một màu ổn định băm từ id. Log lọc theo `plan_id`; hội thoại là một luồng riêng (`plan_id: null`).
+→ `SPEC-offices.md` §6. Every agent (including the Assistant) gets a stable color
+hashed from its id. The log filters by `plan_id`; the conversation is its own
+stream (`plan_id: null`).
 
-### Ngoại lệ có chủ ý: dải kế hoạch KHÔNG nằm trong sidebar
+### Deliberate exception: the plan strip does NOT live in the sidebar
 
-Checklist §6 đòi trả lời được *"đang ở bước mấy"* **không cần click**. Nhét kế hoạch vào một panel đóng/mở là vi phạm đúng điều đó.
+The §6 checklist demands answering *"which step am I on"* **with no click
+required**. Stuffing the plan into a collapsible panel violates exactly that.
 
-Nên kế hoạch nằm ở một **dải mỏng đè lên canvas**, chỉ hiện khi có việc đang chạy, và bấm vào thì mở nhật ký của chính việc đó. Dòng gợi ý cho người mới tự ẩn đi khi dải này xuất hiện — hai thứ tranh cùng một chỗ thì thứ đang chạy thắng.
+So the plan lives in a **thin strip overlaying the canvas**, only showing while a
+job is running, and clicking it opens that job's own log. The hint line for new
+users hides itself automatically once this strip appears — when two things
+compete for the same space, whatever is actively running wins.
 
 ---
 
-> **⚠ §1–§2 ĐÃ BỊ THAY THẾ bởi [`SPEC-canvas.md`](SPEC-canvas.md).**
-> Bố cục danh sách mô tả dưới đây là bản v0 đang chạy. Bản kế tiếp là **canvas dạng node**
-> (kiểu n8n) — công ty thành một sơ đồ kéo thả được, và ràng buộc kiến trúc
-> (mô hình sao, agent không nối agent) trở thành thứ *không vẽ được* thay vì
-> một dòng trong tài liệu.
+> **⚠ §1–§2 HAVE BEEN REPLACED by [`SPEC-canvas.md`](SPEC-canvas.md).**
+> The list-based layout described below is the v0 version currently running. The
+> next version is a **node-based canvas** (n8n-style) — the company becomes a
+> drag-and-drop diagram, and the architectural constraint (star topology, agents
+> never wire to agents) becomes something *impossible to draw* instead of a line
+> in a document.
 >
-> Các phần vẫn còn nguyên giá trị: §3 ngăn kéo nhật ký · §4 ngăn kéo tri thức ·
-> §5 kỹ thuật & sự kiện SSE · §6 checklist chống hoang mang.
+> The following sections are still valid: §3 log drawer · §4 knowledge drawer ·
+> §5 technical & SSE events · §6 anti-confusion checklist.
 
-Đọc kèm `SPEC-2026-08-14-agentco.md`.
+Read alongside `SPEC-2026-08-14-agentco.md`.
 
-**Nguyên lý chủ đạo:** người dùng nhìn thấy **một công ty đang làm việc**, không phải một terminal đang cuộn log. Nhưng log advanced luôn cách một cú click — không giấu, chỉ không phô ra.
+**Guiding principle:** the user sees **a company at work**, not a terminal
+scrolling logs. But the advanced log is always one click away — not hidden, just
+not thrust forward.
 
-Đây cũng là nỗi đau gốc đã tìm ra ở phiên 03/08: *"người ngoại đạo hoang mang không biết bị dắt đi đâu và scope AI làm đến đâu"*. Toàn bộ UI này tồn tại để trả lời bốn câu: **đang ở đâu, ai đang làm, còn bao xa, có đúng hướng không.**
+This is also the root pain point found in the 03/08 session: *"a non-technical
+person gets confused, not knowing where they're being led or how far the AI's
+scope reaches."* This entire UI exists to answer four questions: **where am I,
+who's working, how much further, is this the right direction.**
 
 ---
 
-## 1. Bố cục
+## 1. Layout
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Xưởng Nội Dung          ● 3 đang làm   ⏱ 4p12s   💰 62K token   ⚙  │
+│  Content Studio          ● 3 running   ⏱ 4m12s   💰 62K tokens  ⚙  │
 ├──────────────┬───────────────────────────────────────────────────────┤
 │              │                                                       │
-│  ĐỘI NGŨ     │   ┌─ KẾ HOẠCH ────────────────────────────────────┐  │
-│              │   │ "viết 3 bài fanpage về sản phẩm X"            │  │
-│  🔎 Nghiên   │   │                                               │  │
-│     ● đang   │   │ ✓ 1. Tìm hiểu sản phẩm và khách hàng          │  │
-│     T-01     │   │ ⟳ 2. Nghiên cứu bài viết đối thủ    ← đang    │  │
-│              │   │ ○ 3. Viết 3 bản nháp                          │  │
-│  ✍ Viết      │   │ ○ 4. Soát và chỉnh giọng                      │  │
-│     ○ rảnh   │   └───────────────────────────────────────────────┘  │
+│  TEAM        │   ┌─ PLAN ──────────────────────────────────────┐  │
+│              │   │ "write 3 fanpage posts about product X"       │  │
+│  🔎 Research │   │                                               │  │
+│     ● busy   │   │ ✓ 1. Research the product and customers       │  │
+│     T-01     │   │ ⟳ 2. Research competitor posts     ← running  │  │
+│              │   │ ○ 3. Write 3 drafts                            │  │
+│  ✍ Writer    │   │ ○ 4. Review and adjust tone                    │  │
+│     ○ idle   │   └───────────────────────────────────────────────┘  │
 │              │                                                       │
-│  🔍 Soát     │   ┌─ ĐANG DIỄN RA ────────────────────────────────┐  │
-│     ○ rảnh   │   │ 🔎 Nghiên cứu viên                            │  │
-│              │   │    Đang đọc 4 fanpage cùng ngành...           │  │
-│  📚 Thủ thư  │   │                                               │  │
-│     ○ rảnh   │   │ ✍ Người viết                                  │  │
-│              │   │    Chờ kết quả nghiên cứu                     │  │
-│  + Thêm      │   └───────────────────────────────────────────────┘  │
+│  🔍 Reviewer │   ┌─ IN PROGRESS ──────────────────────────────────┐  │
+│     ○ idle   │   │ 🔎 Researcher                                  │  │
+│              │   │    Reading 4 pages in the same industry...     │  │
+│  📚 Librarian│   │                                               │  │
+│     ○ idle   │   │ ✍ Writer                                       │  │
+│              │   │    Waiting on research results                 │  │
+│  + Add       │   └───────────────────────────────────────────────┘  │
 │              │                                                       │
-│              │   ┌─ NÓI VỚI GIÁM ĐỐC ────────────────────────────┐  │
-│              │   │ > _                                           │  │
+│              │   ┌─ TALK TO THE MANAGER ──────────────────────────┐  │
+│              │   │ > _                                            │  │
 │              │   └───────────────────────────────────────────────┘  │
 ├──────────────┴───────────────────────────────────────────────────────┤
-│  ▸ Nhật ký chi tiết (12)                             ▸ Tri thức (48) │
+│  ▸ Detailed log (12)                                  ▸ Knowledge (48)│
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Hai thanh dưới cùng là **ngăn kéo**, mặc định đóng.
+The two bottom bars are **drawers**, collapsed by default.
 
 ---
 
-## 2. Bốn khu vực
+## 2. Four areas
 
-### 2.1 Kế hoạch — trái tim của UI
+### 2.1 Plan — the heart of the UI
 
-Đúng như hình dung: **kế hoạch ngắn gọn 1. 2. 3. 4., đi qua những đâu.**
+Exactly as envisioned: **a short 1. 2. 3. 4. plan, showing where it's headed.**
 
-- Master sinh ra kế hoạch với **tối đa 6 bước**, mỗi bước **≤10 từ tiếng Việt**. Đây là ràng buộc trong prompt của master, không phải gợi ý.
-- Trạng thái: `○ chưa làm` · `⟳ đang làm` · `✓ xong` · `⚠ có vấn đề` · `⏸ chờ bạn`
-- Bước có nhiều task con chạy song song → hiện `⟳ 2/3`
-- Click một bước → mở chi tiết: task nào, ai làm, file gì ra, tốn bao nhiêu
+- The Master generates a plan with **at most 6 steps**, each **≤10 words**. This
+  is a constraint in the Master's prompt, not a suggestion.
+- Status: `○ not started` · `⟳ running` · `✓ done` · `⚠ has an issue` ·
+  `⏸ waiting on you`
+- A step with multiple sub-tasks running in parallel → shows `⟳ 2/3`
+- Clicking a step → opens details: which task, who's doing it, what file comes
+  out, how much it cost
 
-**Nút `Xem trước kế hoạch` (`--plan-only`):** master lập kế hoạch xong thì **dừng, chờ duyệt**, chưa tiêu token thực thi. Người dùng sửa/xoá bước rồi bấm Chạy. Bật/tắt được trong cài đặt; **mặc định BẬT** cho người mới — đây chính là "kiểm soát scope", lý do tồn tại của sản phẩm.
+**"Preview plan" button (`--plan-only`):** once the Master finishes planning, it
+**stops and waits for approval**, without spending any execution tokens yet. The
+user edits/removes steps, then clicks Run. Toggleable in settings; **ON by
+default** for new users — this is exactly "scope control," the reason the product
+exists.
 
-### 2.2 Đội ngũ
+### 2.2 Team
 
-Danh sách role như danh sách nhân viên. Mỗi người: avatar, tên, trạng thái, task hiện tại.
+A list of roles, like a staff roster. Each person: avatar, name, status, current
+task.
 
-Click vào một người → thẻ nhân viên:
-- **Giới thiệu** (`pitch` từ role yaml)
-- **Kỹ năng** — chọn mức `ngắn / trung bình / formal`, đổi tại chỗ
-- **Kinh nghiệm riêng** — các node `k/agents/<role>/`, đọc và sửa được
-- **Lịch sử** — 20 task gần nhất, chi phí trung bình
-- **Nâng cao** — tier model, budget, tool, MCP
+Clicking a person → their employee card:
+- **Pitch** (`pitch` from the role yaml)
+- **Skills** — pick a level, `short / medium / formal`, changed in place
+- **Personal experience** — the `k/agents/<role>/` nodes, readable and editable
+- **History** — the 20 most recent tasks, average cost
+- **Advanced** — model tier, budget, tools, MCP
 
-Đây là mặt "modding" chính cho người advanced, nhưng trình bày như hồ sơ nhân sự chứ không như file cấu hình.
+This is the main "modding" surface for advanced users, but presented as an HR
+profile, not a config file.
 
-**Hai ràng buộc bắt buộc khi soạn kỹ năng:**
+**Two mandatory constraints when editing skills:**
 
-1. **KHÔNG autosave theo từng phím.** Phải có nút **Lưu** tường minh. Mỗi lần lưu là bump cache key → trả một lần cache write. Autosave = churn cache liên tục, đắt và chậm.
-2. **Lớp core hiện ở chế độ chỉ đọc**, có nhãn rõ "phần này đảm bảo hệ thống chạy đúng chi phí — không sửa được". Đừng giấu nó đi: người advanced cần **thấy** để tin, chỉ là không được sửa. Xem `SPEC-2026-08-14-agentco.md` §3.
+1. **NO autosave on every keystroke.** There must be an explicit **Save** button.
+   Every save bumps the cache key → pays one cache write. Autosave would mean
+   constant cache churn — expensive and slow.
+2. **The core layer shows in read-only mode**, clearly labeled "this part
+   guarantees the system runs at the right cost — not editable." Don't hide it:
+   advanced users need to **see** it to trust it, they just can't edit it. See
+   `SPEC-2026-08-14-agentco.md` §3.
 
-`concierge` **không xuất hiện** trong danh sách này — nó là tool của master, không phải nhân viên.
+`concierge` **does not appear** in this list — it's a tool of the Master, not an
+employee.
 
-### 2.3 Đang diễn ra
+### 2.3 In progress
 
-Stream trạng thái sống của các worker. **Mỗi dòng là trường `say` trong receipt/progress event — do chính worker sinh ra, không tốn thêm call LLM nào để "dịch cho thân thiện".**
+A live stream of worker status. **Each line is the `say` field from a
+receipt/progress event — generated by the worker itself, with no extra LLM call
+spent "translating it into something friendlier."**
 
-Quy tắc hiển thị:
-- Một agent chỉ giữ **một dòng hiện tại**, cập nhật tại chỗ, không cuộn vô hạn
-- Không hiện tên tool, không hiện JSON, không hiện đường dẫn dài
-- Agent chờ dependency → hiện rõ "Chờ kết quả nghiên cứu", không để trống
-- `⏸ chờ bạn` → nổi lên trên cùng, có nút trả lời ngay
+Display rules:
+- An agent only ever keeps **one current line**, updated in place, never scrolls
+  endlessly
+- No tool names shown, no JSON shown, no long paths shown
+- An agent waiting on a dependency → shows explicitly "Waiting on research
+  results," never left blank
+- `⏸ waiting on you` → floats to the top, with an immediate reply button
 
-### 2.4 Nói với giám đốc
+### 2.4 Talk to the manager
 
-Ô chat với master. Chính là kênh Telegram nhưng ở dạng web. Một session, một ca làm việc.
+A chat box with the Master. This is the same channel as Telegram, just in web
+form. One session, one run.
 
-Hiện ở góc: `ngữ cảnh 23K / 60K` — khi gần chạm sẽ báo "sắp gộp ký ức", để người dùng không bị bất ngờ khi master quên chi tiết cũ.
+Shows in the corner: `context 23K / 60K` — as it nears the limit it warns "memory
+compaction coming up," so the user isn't caught off guard when the Master
+forgets older details.
 
 ---
 
-## 3. Ngăn kéo Nhật ký chi tiết
+## 3. Detailed log drawer
 
-Mở ra là log advanced đầy đủ. Ba mức, chọn bằng tab:
+Opens into the full advanced log. Three levels, chosen via tabs:
 
-| Mức | Nội dung |
+| Level | Contents |
 |---|---|
-| **Sự kiện** | task bắt đầu/kết thúc, quyết định của master, lỗi — dạng bảng thời gian |
-| **Hội thoại** | transcript thô của từng worker, chọn theo task |
-| **Chi phí** | bảng `agentco cost` dạng web: token vào/ra/cache theo task, cảnh báo cache write bất thường |
+| **Events** | task start/end, Master decisions, errors — a timeline table |
+| **Conversation** | the raw transcript of each worker, selectable by task |
+| **Cost** | the `agentco cost` table, in web form: token in/out/cache by task, warnings for abnormal cache writes |
 
-Tab **Chi phí** phải dễ tìm và dễ đọc — đây là thứ giữ cho sản phẩm không âm thầm đắt lên, và là thứ khách hàng advanced đánh giá cao nhất.
+The **Cost** tab must be easy to find and easy to read — this is what keeps the
+product from silently getting more expensive, and it's what advanced customers
+value most.
 
-### 3.1 🔴 KHỐI KHÔNG CO ĐƯỢC THÌ NÓ ĂN HẾT CHỖ CỦA KHỐI CO ĐƯỢC (bug 21/08)
+### 3.1 🔴 A NON-SHRINKING BLOCK EATS ALL THE SPACE OF THE ONE THAT CAN SHRINK (bug 21/08)
 
-Bảng chi tiết một ca là một cột flex với **năm** khối, và bốn trong số đó là `flex-none`: tiêu đề · dải bước · bảng token · **câu tổng kết của Trợ lý**. Chỉ nhật ký sự kiện là `flex-1`.
+A run's detail panel is a flex column with **five** blocks, and four of them are
+`flex-none`: header · step strip · token table · **the Assistant's summary
+sentence**. Only the event log is `flex-1`.
 
-Hậu quả người dùng gặp: báo cáo dài 30 dòng chiếm 30 dòng, nhật ký bị ép xuống gần bằng không.
+The result the user hit: a 30-line report takes up 30 lines, and the log gets
+squeezed down to almost nothing.
 
-> *"Nếu câu kết quả này dài, nó chiếm hết diện tích bên trên khiến tôi thực sự không biết các worker trao đổi với nhau cái gì (cảm giác như không kéo xuống hoặc lăn chuột được). Tôi chỉ làm được khi kéo khung rộng ra."*
+> *"If this result sentence is long, it takes up all the space above so I really
+> can't tell what the workers are saying to each other (it feels like I can't
+> scroll or use the wheel). I can only manage by dragging the window wider."*
 
-Kéo khung rộng ra thì chữ xuống dòng ít hơn ⇒ báo cáo thấp xuống ⇒ nhật ký có lại chỗ. Tức là **bố cục đang bắt người dùng chỉnh cửa sổ để đọc được nội dung** — cùng lớp với luật *"thao tác dọn dẹp của hệ thống không được nằm ở tay người dùng"* (§SPEC-canvas).
+Widening the window means fewer text wraps ⇒ the report gets shorter ⇒ the log
+gets its space back. In other words, **the layout was making the user resize the
+window just to read the content** — the same failure class as the rule *"a
+cleanup action the system owns must never fall on the user's hands"*
+(§SPEC-canvas).
 
-**Ba tầng, và cần cả ba:**
+**Three layers, and all three are needed:**
 
-| | Vì sao không bỏ được |
+| | Why it can't be dropped |
 |---|---|
-| Báo cáo **mặc định gấp lại** (`max-h-[4.5rem]`) + nút *Xem đầy đủ* | nhật ký giữ gần như toàn bộ chiều cao ngay khi mở — đó là thứ người ta mở bảng này để xem |
-| Báo cáo **trần 40%** kể cả khi mở, cuộn nằm bên trong | vẫn còn 60% cho nhật ký với báo cáo dài nhất |
-| Nhật ký có **sàn** `min-h-[8rem]` | trần một mình chưa đủ: khung thấp thì hai bên lại tranh nhau |
+| Report **collapses by default** (`max-h-[4.5rem]`) + a *View full* button | the log keeps nearly the full height right when it opens — which is what people open this panel to see |
+| Report **caps at 40%** even when expanded, scrolling internally | still leaves 60% for the log even with the longest report |
+| Log has a **floor** of `min-h-[8rem]` | a ceiling alone isn't enough: at a short window height, the two sides fight over space again |
 
-> ⚠ **Lúc gấp lại dùng `max-h`, KHÔNG dùng `line-clamp`.** `line-clamp` chạy trên `-webkit-box` và chỉ đáng tin với một dòng chảy văn bản; báo cáo đi qua `Markdown` nên bên trong là nhiều khối block — clamp lúc đó hoặc không cắt gì, hoặc cắt ở chỗ không ai đoán được.
+> ⚠ **Use `max-h` when collapsing, NOT `line-clamp`.** `line-clamp` runs on
+> `-webkit-box` and is only reliable with one continuous flow of text; the report
+> goes through `Markdown`, so it's made of multiple block-level elements —
+> clamping there either cuts nothing or cuts at an unpredictable point.
 
-> **LUẬT RÚT RA: trong một cột flex, mỗi khối `flex-none` là một lời hứa rằng nội dung của nó KHÔNG BAO GIỜ dài.** Với nội dung do model sinh thì lời hứa đó luôn sai. Nội dung độ dài không đoán được ⇒ phải có trần + đường cuộn riêng, và khối co giãn phải có sàn.
+> **LESSON: inside a flex column, every `flex-none` block is a promise that its
+> content will NEVER be long.** For model-generated content, that promise is
+> always false. Content of unpredictable length ⇒ needs a cap plus its own scroll
+> track, and the flexible block needs a floor.
 
-Báo cáo cũng render qua `Markdown` chứ không in chuỗi trần — nó là chữ Trợ lý viết, có gạch đầu dòng, đường dẫn, đôi khi cả bảng, hệt như trong ô chat.
+The report also renders through `Markdown` rather than printing a raw string —
+it's text the Assistant wrote, with bullet points, paths, sometimes even a
+table, exactly like the chat box.
 
-### 3.2 Danh sách việc `- [ ]` trong markdown (21/08)
+### 3.2 `- [ ]` task lists in markdown (21/08)
 
-Bài 6 sinh ra đúng thứ này (*"gộp thành một checklist ngắn"*), và in nguyên văn thì người dùng nhận về ký tự thay vì một danh sách đọc được bằng mắt. Có ở **cả** ô chat lẫn cửa sổ xem trước file kết quả — dùng chung một `Markdown`.
+Exercise 6 produces exactly this (*"collapse it into a short checklist"*), and
+printed verbatim the user gets back raw characters instead of a list readable at
+a glance. Present in **both** the chat box and the results-file preview window —
+they share one `Markdown` renderer.
 
-| Chốt | Vì sao |
+| Decision | Why |
 |---|---|
-| Ô vuông vẽ bằng **CSS**, không phải `<input type="checkbox">` | `<input>` mặc định không nghe bảng màu (hiện xanh hệ điều hành); `disabled` thì hiện xám như một ô đang hỏng |
-| **KHÔNG bấm được**, và đó là chủ ý | ngăn Kết quả là cửa sổ **ĐỌC**. Cho bấm là mở một đường ghi thứ hai vào cùng một file, sớm muộn lệch với thứ agent vừa ghi. Cùng lý do tủ tài liệu không có editor |
-| `sr-only` nói *"đã xong / chưa xong"* | người khiếm thị phải **nghe** được trạng thái, không chỉ thấy dấu ✓ |
-| Việc đã xong **gạch ngang, không làm mờ** | vẫn phải đọc lại được thứ mình đã làm |
+| The checkbox is drawn with **CSS**, not `<input type="checkbox">` | `<input>` doesn't respect the color palette by default (shows the OS's blue), and `disabled` renders as gray as if something's broken |
+| **NOT clickable**, deliberately | the Results drawer is a **READ-ONLY** window. Making it clickable opens a second write path into the same file, and it will sooner or later drift from what the agent actually wrote. Same reason the document library has no editor |
+| `sr-only` states *"done / not done"* | a screen-reader user needs to **hear** the status, not just see a ✓ mark |
+| A finished item gets **strikethrough, not faded** | it still has to be readable — this is what you just did |
 
-⚠ Hai bẫy trong regex, cả hai đã dẫm: bắt buộc **khoảng trắng sau `]`** (thiếu thì `- [x]abc` — một tham chiếu trong văn xuôi kỹ thuật — cũng khớp), và nội dung phải mở đầu bằng **`\S`** chứ không `.` (`.` khớp cả khoảng trắng, nên `- [ ]` kèm vài dấu cách thừa đẻ ra một việc RỖNG; test bắt ca này ở vòng đầu).
+⚠ Two regex traps, both already stepped on: requiring a **space after `]`**
+(without it, `- [x]abc` — a reference inside technical prose — would also match),
+and content must start with **`\S`**, not `.` (`.` also matches whitespace, so
+`- [ ]` followed by a few stray spaces would create an EMPTY task; a test caught
+this on the first pass).
 
 ---
 
-## 4. Ngăn kéo Tri thức
+## 4. Knowledge drawer
 
-Trình duyệt đồ thị tri thức. Hai chế độ:
+A knowledge-graph browser. Two modes:
 
-**Danh sách** (mặc định) — bảng: tiêu đề, loại, phạm vi, độ tin, lượt dùng, cập nhật. Lọc theo `shared` / từng role. Tìm kiếm dùng index, 0 token.
+**List** (default) — a table: title, type, scope, confidence, times used,
+updated. Filterable by `shared` / by role. Search uses an index, 0 tokens.
 
-**Đồ thị** — node + liên kết, `shared` một màu, mỗi role một màu. Kích thước node theo `hits`. Chỉ hiển thị, không phải công cụ chỉnh sửa.
+**Graph** — nodes + links, `shared` in one color, each role its own color. Node
+size scales with `hits`. View-only, not an editing tool.
 
-Node mở ra: markdown render, sửa được tại chỗ, nút `Ghim` (đưa vào charter) và `Bỏ`.
+Opening a node: markdown rendered, editable in place, with `Pin` (adds it to the
+charter) and `Discard` buttons.
 
-**Nạp tài liệu tay:** kéo-thả file vào ngăn này → chạy một task `librarian` chia nhỏ tài liệu thành các node ≤250 token và gắn tag. Có màn xem trước trước khi ghi — người dùng thấy tài liệu 20 trang biến thành 34 node và duyệt.
+**Manual document ingestion:** drag-and-drop a file into this drawer → runs a
+`librarian` task that splits the document into ≤250-token nodes and tags them.
+There's a preview screen before it commits — the user sees a 20-page document
+turn into 34 nodes and reviews it.
 
 ---
 
-## 5. Kỹ thuật
+## 5. Technical
 
-- **Web app chạy local**, phục vụ bởi chính daemon tại `:7317`
-- **SSE** cho stream sự kiện một chiều (đơn giản hơn WS, đủ dùng; WS chỉ khi cần input hai chiều tần suất cao — hiện không cần)
-- Stack: nhẹ nhất có thể. Không SSR, không router phức tạp. **UI không được là thứ ngốn thời gian tuần đầu.**
-- **Không có build step phức tạp cho v1.** Ưu tiên bundle một lần, phục vụ tĩnh.
-- Không auth ở v1 (bind `127.0.0.1`). Bind `0.0.0.0` (chế độ VPS) → **bắt buộc bật token đăng nhập**, daemon từ chối chạy nếu không.
+- **Web app runs locally**, served by the daemon itself on `:7317`
+- **SSE** for one-way event streaming (simpler than WS, sufficient; WS only if
+  high-frequency two-way input is ever needed — not currently needed)
+- Stack: as light as possible. No SSR, no complex router. **The UI must not be
+  something that eats up the first week.**
+- **No complex build step for v1.** Prefer bundling once, serving statically.
+- No auth in v1 (binds `127.0.0.1`). Binding `0.0.0.0` (VPS mode) →
+  **mandatory login token**, the daemon refuses to run without it.
 
-### Sự kiện SSE
+### SSE events
 
 ```
 plan.created     { plan_id, steps[] }
@@ -352,26 +536,30 @@ knowledge.changed{ count, version }
 cost.tick        { session_totals }
 ```
 
-**`say` là trường bắt buộc ở mọi sự kiện hướng người dùng.** Không có `say` → UI không hiện gì. Ràng buộc này ép mọi thứ hiển thị đều đã ở dạng tiếng người ngay từ nguồn.
+**`say` is a mandatory field on every user-facing event.** No `say` → the UI
+shows nothing. This constraint forces everything displayed to already be in
+plain language right at the source.
 
 ---
 
-## 6. Chống hoang mang — checklist
+## 6. Anti-confusion checklist
 
-Mỗi màn hình phải trả lời được, không cần click:
+Every screen must answer these, with no click required:
 
-- [ ] Đang ở bước mấy trên mấy?
-- [ ] Ai đang làm gì lúc này?
-- [ ] Đã tốn bao nhiêu?
-- [ ] Có gì đang chờ tôi không?
-- [ ] Muốn dừng thì bấm đâu? → **nút Dừng phải luôn thấy được, không nằm trong menu.**
+- [ ] Which step, out of how many, am I on?
+- [ ] Who's doing what right now?
+- [ ] How much has this cost so far?
+- [ ] Is anything waiting on me?
+- [ ] Where do I click to stop? → **the Stop button must always be visible, never
+      buried in a menu.**
 
 ---
 
-## 7. Ngoài phạm vi v1
+## 7. Out of scope for v1
 
-- Đa ca làm việc song song (v1: một ca một lúc)
-- Nhiều người dùng / phân quyền (đó là hướng doanh nghiệp, xem `ROADMAP.md`)
-- Sửa đồ thị bằng kéo-thả node
-- Giao diện di động riêng — **Telegram chính là bản di động**
-- Theme tuỳ biến
+- Multiple runs in parallel (v1: one run at a time)
+- Multiple users / access control (that's the enterprise direction, see
+  `ROADMAP.md`)
+- Editing the graph via drag-and-drop nodes
+- A dedicated mobile interface — **Telegram is the mobile version**
+- Custom themes

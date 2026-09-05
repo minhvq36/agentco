@@ -3,11 +3,12 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { t } from '@i18n';
 
 /**
- * Dialog dựng trên Radix. Lý do không tự viết: focus trap, khoá scroll, Escape,
- * và aria-modal đúng chuẩn là những thứ tự viết sẽ sai ở đâu đó — mà tiêu chí
- * "Ổn định" và "Mượt" đo đúng chỗ đó.
+ * Dialogs built on Radix. Why not hand-written: focus trapping, scroll locking,
+ * Escape handling and correct `aria-modal` are things a hand-rolled version gets
+ * wrong somewhere — and "stable" and "smooth" are measured exactly there.
  */
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -33,7 +34,7 @@ export const DialogContent = React.forwardRef<
       {children}
       <DialogPrimitive.Close
         className="absolute right-4 top-4 rounded-md p-1 text-muted transition-colors hover:bg-line/60 hover:text-ink"
-        aria-label="Đóng"
+        aria-label={t('common.close')}
       >
         <X className="h-4 w-4" />
       </DialogPrimitive.Close>

@@ -1,44 +1,52 @@
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 PHẠM VI BÊN HÃNG — NGAY SAU ĐĂNG NHẬP, cùng một màn.                  │
- * │ (user chốt thứ tự 27/08)                                                 │
- * │                                                                          │
- * │ Hai lý do, và cái thứ hai là cái quan trọng:                              │
- * │  ① Cài app **phải xảy ra trước** mọi bước phụ thuộc repo.                 │
- * │  ② *"kịp thời update cái người dùng vừa allow trên github"* — ta không     │
- * │     đọc được bản cài, nên thứ duy nhất đồng bộ được là **thứ tự thao      │
- * │     tác**: cài xong rồi mới thử.                                          │
- * │                                                                          │
- * │ Không có khối này thì chuỗi `installations/new` **không xuất hiện một lần │
- * │ nào trong sản phẩm** (trước 27/08 nó chỉ nằm trong walkthrough). Người    │
- * │ dùng cắm xong, thấy ✓ kèm số việc, rồi nhận 404 ở mọi lời gọi — và GitHub │
- * │ cố ý trả 404 chứ không 403, nên câu lỗi dẫn họ đi kiểm chìa. → C-2 · F-3  │
- * │                                                                          │
- * │ ⚠ Ta KHÔNG hiển thị "bạn đã cài chưa" ở đây và KHÔNG đặt mặc định hộ.     │
- * │ (user hỏi thẳng 27/08: *"không chọn install mà tiếp luôn thì nó có        │
- * │ DEFAULT All repositories không?"*) — **không, và ta không biết được**.    │
- * │ Chưa cài lần nào ⇒ **không có quyền gì cả**, không phải "tất cả".         │
- * │ Không tool MCP nào trả lời thẳng câu đó, nên khối này không vẽ trạng       │
- * │ thái. `RepoScan` suy ra nó bằng đường khác và là chỗ DUY NHẤT được phép   │
- * │ nói "đã cài / chưa cài". → §5h·7o                                         │
+ * │ 🔴 VENDOR-SIDE SCOPE — RIGHT AFTER SIGN-IN, on the same screen.           │
+ * │ (order settled 27/08)                                                     │
+ * │                                                                           │
+ * │ Two reasons, and the second is the one that matters:                      │
+ * │  ① Installing the app MUST HAPPEN BEFORE any repo-dependent step.         │
+ * │  ② *"pick up what the user just allowed on github in time"* — we cannot   │
+ * │     read the installation, so the only thing we can synchronise on is     │
+ * │     the ORDER OF ACTIONS: install first, then probe.                      │
+ * │                                                                           │
+ * │ Without this block the `installations/new` URL APPEARS NOWHERE IN THE     │
+ * │ PRODUCT (before 27/08 it lived only in the walkthrough). Someone plugs    │
+ * │ the arm in, sees ✓ with a tool count, and then gets 404 on every call —   │
+ * │ and GitHub returns 404 rather than 403 on purpose, so the error sends     │
+ * │ them off to check their keys. → C-2 · F-3                                 │
+ * │                                                                           │
+ * │ ⚠ We do NOT show "have you installed it" here and do NOT assume a         │
+ * │ default. (Asked outright 27/08: *"if I skip install and carry on, does    │
+ * │ it DEFAULT to All repositories?"*) — NO, AND WE CANNOT KNOW. Never        │
+ * │ installed ⇒ NO ACCESS AT ALL, not "everything". No MCP tool answers that  │
+ * │ question directly, so this block draws no state. `RepoScan` infers it by  │
+ * │ another route and is the ONLY place allowed to say "installed / not       │
+ * │ installed". → §5h·7o                                                      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 import { Button } from '@/components/ui/button';
 import type { ArmScope } from './types';
+import { t } from '@i18n';
 
 export function ScopeBox({ name, scope }: { name: string; scope: ArmScope }) {
   return (
     <div className="mt-3 rounded-md border border-line px-3 py-3">
-      <div className="text-[13px] font-medium">Phạm vi bên {name}</div>
-      <p className="mt-0.5 text-xs leading-relaxed text-muted">{scope.help}</p>
+      <div className="text-[13px] font-medium">{t('arm.scopeTitle', { name })}</div>
+      {/*
+        Trimmed 02/09 to a TITLE + BUTTON. The two old paragraphs (scope is held
+        by the vendor · a private repo is unreadable until installed) are gone.
+
+        ⚠ What they warned about did NOT go with them — it moved somewhere that
+        speaks at a better moment: `RepoScan`, directly below this block, is the
+        ONLY place allowed to say "installed / not installed" (§5h·7o), and the
+        translated 404 at run time (§5h·7f-bis) catches exactly the person who
+        forgot. A line read before it can be understood holds nobody; those two
+        speak when it matters.
+      */}
       <Button className="mt-2 w-full" onClick={() => window.open(scope.url, '_blank', 'noopener')}>
         {scope.say}
       </Button>
-      <p className="mt-2 text-xs leading-relaxed text-muted">
-        Chưa cài lần nào thì nhân viên <b>không đọc được repo riêng tư và không ghi được gì</b>. Cài
-        xong quay lại đây — khối ngay bên dưới tự kiểm lại, không phải gõ gì.
-      </p>
     </div>
   );
 }

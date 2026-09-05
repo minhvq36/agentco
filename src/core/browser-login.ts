@@ -1,35 +1,39 @@
-﻿/**
- * ĐĂNG NHẬP BẰNG TAY VÀO HỒ SƠ CỦA CÁNH TAY TRÌNH DUYỆT.
- * → docs/TEST-WALKTHROUGH.md bài 18 chặng E · `arms/browser.ts §options`
+/**
+ * MANUAL SIGN-IN INTO A BROWSER ARM'S PROFILE.
+ * → docs/TEST-WALKTHROUGH.md test 18 step E · `arms/browser.ts §options`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO TÍNH NĂNG NÀY TỒN TẠI — một ca thật, lặp lại bốn lần 29/08.       │
+ * │ WHY THIS FEATURE EXISTS — a real case, hit four times on 29/08.          │
  * │                                                                          │
- * │ Vòng đời trình duyệt của nhân viên = vòng đời một LƯỢT VIỆC. Task xong ⇒  │
- * │ tiến trình MCP bị đóng ⇒ cửa sổ biến mất. User đang chờ mã SMS, đang ở    │
- * │ bước "setup địa chỉ" của Google, thì cửa sổ tắt giữa chừng:               │
+ * │ A worker's browser lifecycle = the lifecycle of one TASK RUN. Task ends  │
+ * │ ⇒ the MCP process is closed ⇒ the window disappears. The user is waiting │
+ * │ for an SMS code, mid-way through Google's "set up phone number" step,    │
+ * │ and the window closes on them mid-flow:                                  │
  * │                                                                          │
- * │   *"Kìa, tui đang đăng nhập dở bằng sđt mà, chờ xíu đi"*                 │
+ * │   *"Hey, I'm in the middle of signing in with my phone number, hang on"* │
  * │                                                                          │
- * │ Không có chỗ nào trong vòng đời một task để **một con người thao tác**.   │
- * │ Nên đây không phải một task — nó là một hành động của daemon, cùng họ với │
- * │ `probeArm`.                                                              │
+ * │ There is no room anywhere in a task's lifecycle for **a human to act**.  │
+ * │ So this isn't a task — it's an action the daemon itself performs, in the │
+ * │ same family as `probeArm`.                                               │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 VÀ NÓ KHÔNG ĐI QUA PLAYWRIGHT — đây là chỗ đáng nhớ nhất của file này. │
- * │                                                                          │
- * │ Phản xạ đầu là mở cửa sổ **qua MCP** rồi giữ phiên sống. Sai, vì thứ ta   │
- * │ cần né chính là **trình duyệt bị điều khiển**: Google/Facebook dò         │
- * │ `navigator.webdriver`, dò CDP, và chặn đăng nhập ngay trong đó. Mở qua    │
- * │ Playwright là đăng nhập bên trong đúng cái cửa họ đang gác.               │
- * │                                                                          │
- * │ ⇒ Mở một cửa sổ **bình thường** của hệ điều hành, trỏ vào **cùng hồ sơ**. │
- * │ Không CDP, không cờ tự động hoá — với hãng thì đó là một người thật.      │
- * │ Cookie đọng lại trong hồ sơ, và lượt sau Playwright dùng lại.             │
- * │                                                                          │
- * │   **Đăng nhập bằng cửa sổ thường. Dùng bằng Playwright.**                 │
- * │   Hai việc, hai công cụ, chung một hồ sơ.                                 │
+ * │ 🔴 AND IT DOES NOT GO THROUGH PLAYWRIGHT — the single most important      │
+ * │ thing to remember about this file.                                        │
+ * │                                                                           │
+ * │ The first instinct is to open the window **through MCP** and keep the     │
+ * │ session alive. Wrong, because what we actually need to avoid is **a       │
+ * │ browser that's being automated**: Google/Facebook detect                  │
+ * │ `navigator.webdriver`, detect CDP, and block sign-in right there.         │
+ * │ Opening through Playwright means signing in behind the exact door         │
+ * │ they're guarding.                                                         │
+ * │                                                                           │
+ * │ ⇒ Open a **normal** OS window, pointed at **the same profile**. No CDP,   │
+ * │ no automation flags — to the vendor, that's a real human. Cookies land    │
+ * │ in the profile, and the next Playwright run reuses them.                  │
+ * │                                                                           │
+ * │   **Sign in with a normal window. Use it through Playwright.**            │
+ * │   Two jobs, two tools, one shared profile.                                │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -37,19 +41,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 
+import { t } from '../i18n/index.js';
+
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BA HỆ ĐIỀU HÀNH, KHAI BẰNG DỮ LIỆU. (user nhắc 29/08 — lần thứ sáu)     │
- * │                                                                          │
- * │ Thứ tự trong mỗi mảng là thứ tự THỬ, và nó khớp `arms/browser.ts          │
- * │ §argsByOs`: mục danh mục bảo Playwright dùng channel nào thì ở đây mở     │
- * │ đúng trình duyệt ấy. Lệch nhau ⇒ đăng nhập vào hồ sơ bằng Edge rồi chạy   │
- * │ việc bằng Chrome — hai trình duyệt, một thư mục hồ sơ, và Chromium sẽ     │
- * │ **từ chối** hoặc làm hỏng hồ sơ. Đây là chỗ hai file phải nhìn nhau.      │
- * │                                                                          │
- * │ `win32`/`darwin` dùng đường tuyệt đối vì hai hãng cài cố định chỗ đó;     │
- * │ `linux` dùng TÊN LỆNH vì bản phân phối nào cũng đặt một chỗ khác nhau —   │
- * │ ở đó `PATH` mới là nguồn sự thật, không phải một danh sách ta đoán.       │
+ * │ THREE OPERATING SYSTEMS, DECLARED AS DATA. (the user flagged this,        │
+ * │ 29/08 — the sixth time)                                                   │
+ * │                                                                           │
+ * │ The order within each array is TRY order, and it must match               │
+ * │ `arms/browser.ts §argsByOs`: whatever channel the catalog entry tells     │
+ * │ Playwright to use, this opens that exact browser. A mismatch ⇒ signing    │
+ * │ in to the profile with Edge and then running tasks with Chrome — two      │
+ * │ browsers, one profile directory, and Chromium will **refuse** it or       │
+ * │ corrupt the profile. This is the spot where the two files must agree.     │
+ * │                                                                           │
+ * │ `win32`/`darwin` use absolute paths because both vendors install to a     │
+ * │ fixed location; `linux` uses a COMMAND NAME because every distro puts     │
+ * │ it somewhere different — there, `PATH` is the actual source of truth,     │
+ * │ not a list we're guessing at.                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const BROWSER_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
@@ -67,12 +76,13 @@ export const BROWSER_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * Trình duyệt đầu tiên **thật sự có** trên máy này.
+ * The first browser that **actually exists** on this machine.
  *
- * ⚠ Linux trả về TÊN LỆNH chưa kiểm — `Test-Path` một tên lệnh là vô nghĩa, và
- * quét cả `PATH` ở đây là dựng lại `which` bằng tay. Sai tên thì `spawn` ném, và
- * câu ném đó nói đúng tên lệnh thiếu — một câu lỗi dùng được, không phải một câu
- * đoán. Chiều an toàn: **thà hỏng ồn ào còn hơn im lặng không mở gì**.
+ * ⚠ Linux returns an UNVERIFIED COMMAND NAME — running `Test-Path` on a bare
+ * command name is meaningless, and scanning `PATH` here would just be
+ * rebuilding `which` by hand. A wrong name means `spawn` throws, and that
+ * error names the exact missing command — a usable error, not a guess. The
+ * safe direction: **better a loud failure than silently opening nothing**.
  */
 export function findBrowser(platform: string = process.platform): string | undefined {
   const list = BROWSER_CANDIDATES[platform] ?? [];
@@ -86,7 +96,7 @@ export function findBrowser(platform: string = process.platform): string | undef
   });
 }
 
-/** Hồ sơ của một văn phòng — MỘT chỗ tính, để cửa đăng nhập và cánh tay không lệch. */
+/** An office's profile — computed in ONE place, so the sign-in door and the arm never disagree. */
 export function profileDir(officeStateDir: string): string {
   return path.join(officeStateDir, 'profile');
 }
@@ -100,22 +110,25 @@ interface OpenSession {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ KHOÁ THEO **VĂN PHÒNG**, KHÔNG THEO CÁNH TAY. (user hỏi 29/08)          │
- * │                                                                          │
- * │ Chromium **khoá** `user-data-dir`: hai tiến trình cùng trỏ vào một hồ sơ  │
- * │ thì cái thứ hai hỏng. Mà hồ sơ là của **văn phòng** — hai cánh tay trình  │
- * │ duyệt trong cùng văn phòng dùng chung nó (cố ý: đăng nhập bằng cánh tay   │
- * │ hiện-cửa-sổ, chạy việc bằng cánh tay chạy-ẩn). ⇒ Khoá theo cánh tay là    │
- * │ khoá **sai tài nguyên**, và nó sẽ cho qua đúng ca hỏng.                   │
- * │                                                                          │
- * │ Cất trong RAM, không cất ra file: một file khoá **mồ côi sau crash** lại  │
- * │ đẻ ra nhu cầu một cơ chế dọn thứ hai. Cùng lựa chọn đã làm cho `pending`  │
- * │ của OAuth, và cùng ràng buộc *1 replica* đã ghi ở `SPEC-deploy` §5③.      │
- * │                                                                          │
- * │ 🔴 KHOÁ PHẢI TỰ LÀNH, vì mọi khoá không tự lành đều thành khoá vĩnh viễn: │
- * │   · người dùng đóng cửa sổ  → `exit` của tiến trình gỡ khoá (TẤT ĐỊNH,   │
- * │     không phải một cái hẹn giờ đoán mò)                                   │
- * │   · daemon khởi động lại    → RAM sạch, không có trạng thái mồ côi        │
+ * │ LOCK BY **OFFICE**, NOT BY ARM. (the user asked, 29/08)                   │
+ * │                                                                           │
+ * │ Chromium **locks** `user-data-dir`: two processes pointing at the same    │
+ * │ profile means the second one fails. And the profile belongs to the        │
+ * │ **office** — two browser arms in the same office share it (deliberately:  │
+ * │ one arm for signing in with a visible window, another for running tasks   │
+ * │ headless). ⇒ Locking by arm would be locking **the wrong resource**, and  │
+ * │ it would let exactly this failure through.                                │
+ * │                                                                           │
+ * │ Held in RAM, not written to a file: a lock file **orphaned by a crash**   │
+ * │ just creates the need for a second cleanup mechanism. The same choice     │
+ * │ made for OAuth's `pending`, and the same *1 replica* constraint recorded  │
+ * │ at `SPEC-deploy` §5③.                                                     │
+ * │                                                                           │
+ * │ 🔴 THE LOCK MUST SELF-HEAL, because every lock that doesn't self-heal     │
+ * │ eventually becomes permanent:                                             │
+ * │   · the user closes the window → the process's `exit` clears the lock     │
+ * │     (DETERMINISTIC, not a guessed timeout)                                │
+ * │   · the daemon restarts          → RAM is clean, no orphaned state        │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const open = new Map<string, OpenSession>();
@@ -124,7 +137,7 @@ export function loginOpen(office: string): boolean {
   return open.has(office);
 }
 
-/** Ai đang mở, mở từ bao giờ — để câu từ chối nói được điều gì đó cụ thể. */
+/** Who has it open, and since when — so a rejection can say something concrete. */
 export function loginInfo(office: string): { url: string; since: number } | undefined {
   const s = open.get(office);
   return s ? { url: s.url, since: s.since } : undefined;
@@ -133,49 +146,50 @@ export function loginInfo(office: string): { url: string; since: number } | unde
 export class LoginError extends Error {}
 
 /**
- * Mở cửa sổ đăng nhập. Trả về khi cửa sổ **đã mở**, không đợi người dùng xong —
- * họ đóng lúc nào thì khoá gỡ lúc ấy.
+ * Opens the sign-in window. Returns once the window is **open**, not once the
+ * user is done — the lock clears whenever they close it.
  *
- * ⚠ `url` phải là `http`/`https`. Một `file://` ở đây là mở đĩa của máy chủ bằng
- * một cửa sổ có toàn quyền hồ sơ — không phải thứ nút này sinh ra để làm.
+ * ⚠ `url` must be `http`/`https`. A `file://` here would open the server's own
+ * disk through a window with full profile privileges — not what this button
+ * exists to do.
  */
 export function startLogin(opts: {
   office: string;
   officeStateDir: string;
-  /** Bỏ trống ⇒ mở trang mặc định của trình duyệt. Người dùng tự gõ tiếp. */
+  /** Empty ⇒ opens the browser's default page. The user types the rest themselves. */
   url?: string;
-  /** `office.currentState` — chặn khi đang chạy việc, cùng luật `archiveOffice`. */
+  /** `office.currentState` — blocks while a task is running, same rule as `archiveOffice`. */
   working: boolean;
   platform?: string;
 }): { profile: string; browser: string } {
   if (opts.working) {
     throw new LoginError(
-      'Văn phòng đang chạy việc. Đợi xong (hoặc bấm dừng) rồi mở cửa sổ đăng nhập — ' +
-        'trình duyệt chỉ mở được một lần cho mỗi hồ sơ.',
+      t('browserLogin.officeBusy'),
     );
   }
   if (open.has(opts.office)) {
-    throw new LoginError('Cửa sổ đăng nhập của văn phòng này đang mở. Đóng nó rồi thử lại.');
+    throw new LoginError(t('browserLogin.alreadyOpen'));
   }
 
   /**
-   * ⚠ URL là TUỲ CHỌN (user chốt 29/08: *"mở chromium của văn phòng lên, người
-   * dùng muốn làm gì cũng được"*).
+   * ⚠ THE URL IS OPTIONAL (the user's call, 29/08: *"just open the office's
+   * chromium, let the user do whatever they want"*).
    *
-   * Bản đầu bắt gõ địa chỉ. Thừa: một khi cửa sổ đã mở, họ gõ vào thanh địa chỉ
-   * được — bắt gõ trước chỉ thêm một bước cho cùng một kết quả. Và nó **mô tả
-   * sai bản chất**: đây không phải "mở một trang", đây là **mở trình duyệt của
-   * văn phòng**.
+   * The first version required typing an address. Unnecessary: once the window
+   * is open, they can type into the address bar themselves — requiring it
+   * upfront just adds a step for the same outcome. And it **misdescribed what
+   * this actually is**: this isn't "open a page", it's **open the office's
+   * browser**.
    */
   let u: URL | undefined;
   if (opts.url?.trim()) {
     try {
       u = new URL(opts.url);
     } catch {
-      throw new LoginError(`"${opts.url}" không phải một địa chỉ web hợp lệ.`);
+      throw new LoginError(t('browserLogin.badUrl', { url: opts.url }));
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-      throw new LoginError('Chỉ mở được địa chỉ http hoặc https.');
+      throw new LoginError(t('browserLogin.badScheme'));
     }
   }
 
@@ -183,8 +197,7 @@ export function startLogin(opts: {
   const browser = findBrowser(platform);
   if (!browser) {
     throw new LoginError(
-      'Không tìm thấy Microsoft Edge hay Google Chrome trên máy này. ' +
-        'Cài một trong hai rồi thử lại — cánh tay trình duyệt cũng dùng chính nó.',
+      t('browserLogin.noBrowser'),
     );
   }
 
@@ -192,24 +205,27 @@ export function startLogin(opts: {
   fs.mkdirSync(profile, { recursive: true });
 
   /**
-   * ⚠ KHÔNG qua shell. URL luôn có thể chứa `&`, và đi qua shell trên Windows là
-   * hỏng **100% số lần** — đã dẫm 24/08 với URL OAuth. `spawn` với mảng tham số
-   * đưa từng chuỗi nguyên vẹn tới tiến trình con.
+   * ⚠ NOT through a shell. A URL can always contain `&`, and going through a
+   * shell on Windows fails **100% of the time** — hit this on 24/08 with an
+   * OAuth URL. `spawn` with an argument array delivers each string intact to
+   * the child process.
    */
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ HAI CỜ DẸP MÀN CHÀO CỦA TRÌNH DUYỆT. (user 29/08: *"nó có 1 bảng yêu cầu │
-   * │ sync với account mà không ra trình duyệt luôn, tôi thấy cũng hơi phiền"*) │
-   * │                                                                          │
-   * │ Hồ sơ này **luôn mới với trình duyệt** (nó không phải hồ sơ cá nhân của   │
-   * │ người dùng), nên Edge/Chrome bày màn chào + mời đăng nhập đồng bộ **mỗi   │
-   * │ lần**. Người dùng bấm nút để đi đăng nhập một trang, không phải để trả    │
-   * │ lời một câu hỏi về tài khoản trình duyệt.                                 │
-   * │                                                                          │
-   * │ ⚠ CỐ Ý KHÔNG thêm `--disable-extensions`: extension bị máy ép cài (IDM,   │
-   * │ Grammarly qua registry) thì gây ồn thật, nhưng tắt hết cũng tắt luôn      │
-   * │ **trình quản lý mật khẩu** — thứ người ta cần đúng lúc đang đăng nhập.    │
-   * │ Ồn thì thấy được và bỏ qua được; thiếu thì họ kẹt.                        │
+   * │ TWO FLAGS TO CLEAR THE BROWSER'S WELCOME SCREEN. (user, 29/08: *"it       │
+   * │ shows a panel asking to sync with an account instead of just opening      │
+   * │ the browser, that's kind of annoying too"*)                               │
+   * │                                                                           │
+   * │ This profile is **always new to the browser** (it isn't the user's own    │
+   * │ personal profile), so Edge/Chrome show the welcome screen + sync sign-in  │
+   * │ prompt **every single time**. The user clicked the button to sign in to   │
+   * │ one page, not to answer a question about a browser account.               │
+   * │                                                                           │
+   * │ ⚠ DELIBERATELY NOT adding `--disable-extensions`: an extension the        │
+   * │ machine forces onto it (IDM, Grammarly via the registry) causes real      │
+   * │ noise, but disabling all of them also disables the **password manager**   │
+   * │ — exactly what someone needs while signing in. Noise is visible and       │
+   * │ ignorable; missing it leaves them stuck.                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const quiet = ['--no-first-run', '--no-default-browser-check'];
@@ -229,14 +245,14 @@ export function startLogin(opts: {
   return { profile, browser };
 }
 
-/** Đóng hộ (nút "Xong"). Người dùng tự đóng cửa sổ cũng ra cùng kết quả. */
+/** Closes it on their behalf (the "Done" button). The user closing the window themselves has the same effect. */
 export function endLogin(office: string): boolean {
   const s = open.get(office);
   if (!s) return false;
   try {
     s.child.kill();
   } catch {
-    /* đã tự đóng — `exit` đã gỡ khoá rồi */
+    /* already closed itself — `exit` already cleared the lock */
   }
   open.delete(office);
   return true;

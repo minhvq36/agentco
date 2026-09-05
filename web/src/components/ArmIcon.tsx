@@ -1,44 +1,49 @@
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỘT CÁNH TAY = MỘT HÌNH, VÀ CÙNG MỘT HÌNH Ở MỌI NƠI. (user chốt 27–28/08)│
+ * │ ONE ARM = ONE MARK, AND THE SAME MARK EVERYWHERE. (settled 27–28/08)     │
  * │                                                                          │
- * │ > *"Một card cũng có icon phân biệt ở phía trước … áp dụng xuyên suốt    │
- * │ >  vào các nấc bên trong luôn"* · *"Cái node mcp server trên canvas nữa: │
- * │ >  đổi cái biểu tượng phích cắm thành … ứng với từng loại mcp"*          │
+ * │ > *"a card should have a distinguishing icon in front … carried all the  │
+ * │ >  way through the inner tiers too"* · *"and the mcp server node on the  │
+ * │ >  canvas: change the plug symbol to … match each kind of mcp"*          │
  * │                                                                          │
- * │ Vẽ ở NĂM chỗ: thẻ chọn loại · lưới dịch vụ · danh sách dùng lại · tiêu   │
- * │ đề bước 2 · **node trên sơ đồ**. Năm bản của cùng một ánh xạ là năm chỗ  │
- * │ để lệch, và khi lệch thì mất đúng thứ hình vẽ sinh ra để giữ: nhận ra    │
- * │ **nó vẫn là nó** khi đi từ màn này sang màn kia.                          │
+ * │ Drawn in FIVE places: the kind picker · the services grid · the reuse    │
+ * │ list · the step-2 heading · THE NODE ON THE DIAGRAM. Five copies of one  │
+ * │ mapping are five places to drift, and drifting loses exactly what the    │
+ * │ mark exists for: recognising THAT IT IS STILL THE SAME THING when moving │
+ * │ from one screen to another.                                              │
  * │                                                                          │
- * │ 🔴 KHÔNG CÓ TÊN HÃNG NÀO TRONG FILE NÀY, và đó là thay đổi 28/08. Bản    │
- * │ đầu có bảng `{ github: '<path…>', notion: '<path…>' }` ngay tại đây —     │
- * │ tức logo của hãng sống ở thư mục web, còn lời khai thương hiệu            │
- * │ (`brand.checkedOn`, luật §11c *"chưa đọc quy tắc ⇒ không logo"*) sống ở   │
- * │ danh mục. Hai file, không ai đối chiếu ⇒ ta ship logo trong khi lời khai  │
- * │ vẫn ghi *"chưa đọc quy tắc"*, và **không có gì kêu lên**.                 │
- * │ ⇒ Đường dẫn giờ đi kèm chính hồ sơ thương hiệu: `catalog.ts §brand.mark`. │
+ * │ 🔴 NO VENDOR NAME APPEARS IN THIS FILE, and that is the 28/08 change.    │
+ * │ The first version had `{ github: '<path…>', notion: '<path…>' }` right   │
+ * │ here — meaning a vendor's logo lived in the web folder while the brand   │
+ * │ declaration (`brand.checkedOn`, rule §11c *"guidelines unread ⇒ no       │
+ * │ logo"*) lived in the catalogue. Two files, nobody reconciling them ⇒ we  │
+ * │ shipped a logo while the declaration still said *"guidelines unread"*,   │
+ * │ and NOTHING COMPLAINED.                                                  │
+ * │ ⇒ The path now travels with the brand record itself: `catalog.ts         │
+ * │ §brand.mark`.                                                            │
  * │                                                                          │
- * │ ⚠ ĐƠN SẮC — `currentColor` hết, kể cả logo hãng. Emoji cũ (📁 🔌 ⚙️ 📝)   │
- * │ tự mang màu của phông chữ hệ điều hành: cùng một thẻ ra ba màu trên ba    │
- * │ máy, và không cái nào theo được nền sáng/tối của ta.                      │
+ * │ ⚠ MONOCHROME — `currentColor` throughout, vendor logos included. The old │
+ * │ emoji (📁 🔌 ⚙️ 📝) carried the OS font's own colours: one card rendered │
+ * │ three different ways on three machines, and none of them followed our    │
+ * │ light/dark ground.                                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 import { Cog, Folder, Globe, Plug, SquareTerminal } from 'lucide-react';
 
-/** Các loại cánh tay. Cùng trục phân loại với `ArmDialog §kindOf` và `office.ts §armKind`. */
+/** The arm kinds. Same axis as `ArmDialog §kindOf` and `office.ts §armKind`. */
 export type ArmKind = 'files' | 'service' | 'custom' | 'browser' | 'cli';
 
 /**
- * Hình của một cánh tay.
+ * An arm's mark.
  *
- * `mark` = đường dẫn SVG 24×24 của hãng, đến từ danh mục. Không có ⇒ ngã về
- * hình theo LOẠI, và loại vẫn đủ để phân biệt bằng mắt.
+ * `mark` = the vendor's 24×24 SVG path, coming from the catalogue. Absent ⇒ fall
+ * back to a mark by KIND, which is still enough to tell them apart by eye.
  *
- * ⚠ `x` / `y` / `size` chỉ dùng khi vẽ **bên trong một `<svg>` khác** (sơ đồ).
- * Trong HTML thường thì bỏ trống và chỉnh bằng `className` như mọi icon khác —
- * hai đường vào một hàm, vì hai chỗ vẽ có hai hệ toạ độ.
+ * ⚠ `x` / `y` / `size` are only for drawing INSIDE ANOTHER `<svg>` (the diagram).
+ * In ordinary HTML leave them out and position with `className` like any other
+ * icon — two ways into one function, because the two drawing sites have two
+ * coordinate systems.
  */
 export function ArmIcon({
   mark,
@@ -55,8 +60,8 @@ export function ArmIcon({
   y?: number;
   size?: number;
 }) {
-  // Trong SVG thì vị trí phải nói bằng thuộc tính, không nói bằng class: node
-  // trên sơ đồ nằm trong hệ toạ độ của chính nó, và Tailwind không với tới đó.
+  // Inside an SVG, position has to be said in attributes, not classes: a node on
+  // the diagram lives in its own coordinate system and Tailwind cannot reach it.
   const place = size !== undefined ? { x, y, width: size, height: size } : {};
 
   if (mark) {
@@ -73,19 +78,20 @@ export function ArmIcon({
       </svg>
     );
   }
-  // Thư mục ⇒ thư mục; tự cắm ⇒ bánh răng; dịch vụ chưa có logo ⇒ phích cắm.
+  // Folder ⇒ folder; self-plugged ⇒ cog; a service with no logo ⇒ plug.
   /**
-   * `browser` vẽ **quả địa cầu**, không vẽ phích cắm. Phích cắm nói *đây là một
-   * kết nối* — đúng, nhưng vô nghĩa khi **mọi** mục đều là kết nối. Hình phải nói
-   * mục này **làm gì**, y như thư mục cho `files`.
+   * `browser` draws a GLOBE, not a plug. A plug says *this is a connection* —
+   * true, and useless when EVERY entry is a connection. The mark has to say what
+   * this entry DOES, exactly as the folder does for `files`.
    */
   const Fallback =
     kind === 'files'
       ? Folder
       : kind === 'browser'
         ? Globe
-        : // Dòng lệnh: hình `>_`. Người non-code không biết `argv` là gì, nhưng
-          // cái dấu nhắc thì họ đã thấy trong mọi phim có máy tính.
+        : // Command line: a `>_` mark. Someone who does not write code has never
+          // heard of `argv`, but they have seen that prompt in every film with a
+          // computer in it.
           kind === 'cli'
           ? SquareTerminal
           : kind === 'custom'

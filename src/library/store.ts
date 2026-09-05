@@ -1,17 +1,18 @@
-/**
- * Tủ tài liệu: file NGƯỜI DÙNG đưa vào.
+﻿/**
+ * The document cabinet: files the USER drops in.
  *
  * → docs/SPEC-library.md
  *
- * Khác kho tri thức ở đúng chỗ quan trọng nhất: **không có gì ở đây vào prefix**.
- * Kho tri thức trả tiền mỗi lượt, mỗi worker, nên nó có trần 250 token và một
- * vòng đời tự động (supersedes · hits · prune). Tủ tài liệu nằm trên đĩa, với
- * tới bằng `Glob`/`Grep`, và **không bao giờ tự xoá thứ gì** — vì thứ nó giữ là
- * file của khách, không phải ghi chú agent tự sinh.
+ * Differs from the knowledge store in the one place that matters most:
+ * **nothing here ever enters the prefix**. The knowledge store is paid for
+ * every turn, every worker, so it has a 250-token ceiling and an automatic
+ * lifecycle (supersedes · hits · prune). The document cabinet sits on disk,
+ * reached with `Glob`/`Grep`, and **never deletes anything on its own** —
+ * because what it holds is the customer's own files, not agent-generated notes.
  *
- * ⚠ Không thư mục nào trong đây được bắt đầu bằng dấu chấm: `Grep` bỏ qua thư
- * mục ẩn khi duyệt xuống (đã đo — SPEC-library.md §2.1). Giấu `text/` vào
- * `.state/` là làm cả cơ chế truy xuất chết im lặng.
+ * ⚠ No directory in here may start with a dot: `Grep` skips hidden
+ * directories while traversing (measured — SPEC-library.md §2.1). Hiding
+ * `text/` inside `.state/` would silently kill the entire retrieval mechanism.
  */
 
 import fs from 'node:fs';
@@ -35,22 +36,53 @@ import {
   extractPptx,
   extractText,
   extractXlsx,
+  shapeEn,
+  shapeSay,
   type Extracted,
+  type StoredShape,
 } from './extract.js';
+import { t } from '../i18n/index.js';
 
 export type DocState =
-  /** vừa vào tủ, chưa bóc */
+  /** just dropped in, not extracted yet */
   | 'pending'
-  /** đang bóc — đây là trạng thái DUY NHẤT `office.run()` phải chờ (§10) */
+  /** being extracted — this is the ONLY state `office.run()` has to wait on (§10) */
   | 'extracting'
-  /** bóc xong, tìm được bằng từ khoá */
+  /** extracted, findable by keyword */
   | 'ready'
-  /** bản chụp/scan: bóc ra ~0 chữ. KHÔNG phải lỗi — model đọc trực tiếp được */
+  /** a scan: extracts to ~0 text. NOT an error — the model can read it directly */
   | 'image-only'
-  /** chưa bóc được vì thiếu công cụ, nhưng bản gốc vẫn dùng được */
+  /** couldn't extract due to a missing tool, but the original is still usable */
   | 'unindexed'
-  /** file hỏng, có mật khẩu, hoặc không đúng định dạng như đuôi khai */
+  /** the file is corrupt, password-protected, or doesn't match the format its extension claims */
   | 'failed';
+
+/**
+ * Why the record is NOT `ready`, as a CODE rather than a sentence.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ The same reasoning as `Shape`, and it arrived through the same failure:  │
+ * │ this field is written to `catalog.json`, then read both by `INDEX.md`    │
+ * │ (an employee reads it, so English) and by the document cabinet (a person │
+ * │ reads it, so the interface switch). A stored sentence answers one of     │
+ * │ those and freezes at extraction time besides — flip the switch and every │
+ * │ file already in the cabinet keeps explaining itself in the old language, │
+ * │ for good, because nothing re-extracts on a settings change.              │
+ * │                                                                          │
+ * │ `failed` is the one code carrying free text: the underlying error string │
+ * │ comes from a library and there is no catalogue entry that could hold it. │
+ * │ It is shown as-is, which is honest — a technical line the reader can     │
+ * │ search for beats a translated paraphrase of it.                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export type DocNote =
+  | { code: 'extUnknown'; ext: string }
+  | { code: 'pdfReaderMissing' }
+  | { code: 'imageOnly' }
+  | { code: 'passwordProtected' }
+  | { code: 'tooLarge' }
+  | { code: 'corruptZip'; ext: string }
+  | { code: 'unreadable'; detail: string };
 
 export interface DocRecord {
   name: string;
@@ -58,17 +90,40 @@ export interface DocRecord {
   bytes: number;
   mtime: string;
   state: DocState;
-  /** "34 trang" · "3 sheet: …" — cho INDEX.md và giao diện. */
-  shape?: string;
+  /**
+   * The observed structure. `string` is a record written BEFORE this field
+   * became a datum — keeps the old sentence as-is, doesn't re-extract (a PDF isn't a cheap read).
+   */
+  shape?: StoredShape;
   preview?: string;
   tokens?: number;
   pages?: number;
-  /** Câu nói cho người dùng khi state không phải `ready`. Luôn kèm việc phải làm. */
-  note?: string;
+  /** Why the state isn't `ready`. `string` is also an old-style record. */
+  note?: DocNote | string;
   extracted_at?: string;
 }
 
-/** Ngưỡng phát hiện bản chụp: dưới ngần này ký tự mỗi trang thì coi như không có lớp chữ. */
+/**
+ * A record with the SENTENCE ALREADY BUILT, for the interface. → `docView`
+ *
+ * The interface never sees raw `Shape`/`DocNote`: building the sentence in
+ * two places means the two places drift apart, and the drifted one will be
+ * whichever gets opened least. The server builds it once, right at the exit door.
+ */
+export interface DocView extends Omit<DocRecord, 'shape' | 'note'> {
+  shape?: string;
+  note?: string;
+}
+
+/** `DocRecord` (facts, on disk) → `DocView` (a sentence, following the interface switch). */
+export function docView(d: DocRecord): DocView {
+  const { shape, note, ...rest } = d;
+  const said = shapeSay(shape, d.ext);
+  const noted = noteSay(note);
+  return { ...rest, ...(said ? { shape: said } : {}), ...(noted ? { note: noted } : {}) };
+}
+
+/** Scan-detection threshold: fewer characters per page than this counts as having no text layer. */
 const CHARS_PER_PAGE_MIN = 50;
 
 export class LibraryStore {
@@ -97,33 +152,42 @@ export class LibraryStore {
   }
 
   /**
-   * Đồng bộ catalog với thư mục thật, rồi khởi động việc bóc còn thiếu.
+   * Syncs the catalog against the real directory, then kicks off any missing extraction.
    *
-   * CỐ Ý gọi ở mỗi `GET /library` thay vì dùng file watcher. Watcher bắn sự kiện
-   * GIỮA LÚC một file lớn đang được copy vào → bóc ra text cụt → catalog ghi
-   * `ready` → không ai biết. Quét lúc đọc là `readdir` + `stat`, vài ms, và
-   * không bao giờ nhìn thấy file dở. → SPEC-library.md §9.1
+   * DELIBERATELY called on every `GET /library` instead of using a file
+   * watcher. A watcher fires an event MID-COPY while a large file is still
+   * being written in → extracts truncated text → the catalog records
+   * `ready` → nobody notices. Scanning at read time is `readdir` + `stat`, a
+   * few milliseconds, and it never sees a half-written file. → SPEC-library.md §9.1
    */
   scan(): DocRecord[] {
     fs.mkdirSync(this.filesDir, { recursive: true });
     fs.mkdirSync(this.textDir, { recursive: true });
 
+    /**
+     * ⚠ DID SOMETHING ACTUALLY CHANGE — `scan()` runs on EVERY `GET
+     * /library`, so it absolutely must not report "changed" when nothing
+     * changed. See the comment block at `pump()`: one spurious report here
+     * is an infinite loop in the interface.
+     */
+    let dirty = false;
     const onDisk = new Map<string, fs.Stats>();
     for (const entry of fs.readdirSync(this.filesDir, { withFileTypes: true })) {
       if (!entry.isFile() || entry.name.startsWith('.')) continue;
       try {
         onDisk.set(entry.name, fs.statSync(path.join(this.filesDir, entry.name)));
       } catch {
-        /* file biến mất giữa readdir và stat — coi như không có */
+        /* the file disappeared between readdir and stat — treat as absent */
       }
     }
 
-    // Biến khỏi đĩa → biến khỏi catalog, và sidecar đi cùng. Bỏ sót bước dọn
-    // sidecar là để `Grep` tìm thấy nội dung của một tài liệu đã bị xoá.
+    // Gone from disk → gone from the catalog, and its sidecar goes with it.
+    // Skipping the sidecar cleanup would let `Grep` find the content of a document that's been deleted.
     for (const name of [...this.docs.keys()]) {
       if (!onDisk.has(name)) {
         this.docs.delete(name);
         this.dropSidecar(name);
+        dirty = true;
       }
     }
 
@@ -132,8 +196,8 @@ export class LibraryStore {
       const known = this.docs.get(name);
       if (known && known.bytes === stat.size && known.mtime === mtime) continue;
 
-      // File mới, hoặc đã bị thay bằng bản khác ngay trên đĩa. Cả hai đều phải
-      // bóc lại từ đầu — và sidecar cũ phải chết TRƯỚC.
+      // A new file, or one already replaced by a different file right on
+      // disk. Both cases need re-extraction from scratch — and the old sidecar has to die FIRST.
       this.dropSidecar(name);
       const checked = safeName(name);
       this.docs.set(name, {
@@ -145,28 +209,39 @@ export class LibraryStore {
           ? { state: 'pending' as const }
           : { state: 'failed' as const, note: checked.reason }),
       });
+      dirty = true;
     }
 
     this.save();
+    /**
+     * Only rebuilds the INDEX and reports a change when the CATALOG ACTUALLY CHANGED.
+     *
+     * The case that has to keep working: a file deleted outside the app ⇒
+     * nothing to extract ⇒ `pump()` does nothing ⇒ if this stays silent too,
+     * `INDEX.md` keeps the name of a document that's already gone.
+     */
+    if (dirty) {
+      this.renderIndex();
+      this.onChange();
+    }
     void this.pump();
     return this.list();
   }
 
   /**
-   * Nhận một tài liệu mới.
+   * Accepts a new document.
    *
-   * Ném lỗi có CÂU ĐỌC ĐƯỢC cho mọi đường từ chối — người dùng thả nhầm file thì
-   * phải biết ngay vì sao, không phải thử lại ba lần.
+   * Throws with a READABLE SENTENCE for every rejection path — a user who
+   * dropped in the wrong file needs to know why immediately, not retry three times.
    */
   add(rawName: string, data: Buffer, opts: { replace?: boolean; maxBytes: number }): DocRecord {
     const checked = safeName(rawName);
     if (!checked.ok) throw new LibraryError(checked.reason);
 
-    if (data.length === 0) throw new LibraryError('File rỗng.');
+    if (data.length === 0) throw new LibraryError(t('lib.fileEmpty'));
     if (data.length > opts.maxBytes) {
       throw new LibraryError(
-        `File nặng ${formatBytes(data.length)}, vượt trần ${formatBytes(opts.maxBytes)}. ` +
-          'Nếu là bản chụp/scan thì nén lại hoặc tách nhỏ trước khi thả vào.',
+        t('lib.fileTooBig', { size: formatBytes(data.length), ceiling: formatBytes(opts.maxBytes) }),
       );
     }
 
@@ -175,16 +250,17 @@ export class LibraryStore {
 
     const dest = path.join(this.filesDir, checked.name);
     if (fs.existsSync(dest) && !opts.replace) {
-      throw new LibraryError(`Đã có tài liệu tên "${checked.name}" trong tủ.`, 'duplicate');
+      throw new LibraryError(t('lib.duplicate', { name: checked.name }), 'duplicate');
     }
 
     /**
-     * XOÁ SIDECAR TRƯỚC KHI GHI ĐÈ — không phải sau.
+     * DELETE THE SIDECAR BEFORE OVERWRITING — not after.
      *
-     * Đây đúng lớp bug "ghi một đằng đọc một nẻo" (SESSIONS_MEMORY §8). Nếu ghi
-     * file mới xong mới dọn, và bước dọn hỏng, thì `Grep` tìm thấy nội dung của
-     * bản ĐÃ BỊ THAY — im lặng, mãi mãi, và nhân viên trích dẫn một câu không
-     * còn tồn tại trong file người dùng đang mở.
+     * This is exactly the "write one way, read another" bug class
+     * (SESSIONS_MEMORY §8). If the new file gets written first and cleanup
+     * happens after, and that cleanup fails, `Grep` finds the content of the
+     * version that's ALREADY BEEN REPLACED — silently, forever, with a
+     * worker quoting a sentence that no longer exists in the file the user has open.
      */
     this.dropSidecar(checked.name);
 
@@ -206,30 +282,32 @@ export class LibraryStore {
   }
 
   /**
-   * BÓC LẠI một tài liệu chưa dùng được. → SPEC-library.md §4.5
+   * RE-EXTRACTS a document that isn't usable yet. → SPEC-library.md §4.5
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ MỘT TÀI LIỆU HỎNG VÌ LÝ DO ĐÃ ĐƯỢC SỬA THÌ HỎNG MÃI MÃI — CHO TỚI 20/08. │
+   * │ A DOCUMENT BROKEN FOR A REASON THAT'S SINCE BEEN FIXED STAYED BROKEN            │
+   * │ FOREVER — UNTIL 20/08.                                                    │
    * │                                                                          │
-   * │ `hd2.pdf` vào tủ lúc chưa có bộ đọc PDF nên nhận `unindexed`. Chiều hôm   │
-   * │ đó `pdfjs-dist` thành phụ thuộc thật — và tài liệu vẫn `unindexed`, kèm   │
-   * │ nguyên câu *"Cài: npm i pdfjs-dist"* nằm trong prefix Trợ lý. Không có    │
-   * │ đường nào bóc lại: người dùng phải XOÁ rồi thả lại chính file của mình.   │
+   * │ `contract2.pdf` was dropped into the cabinet before a PDF reader existed,       │
+   * │ so it received `unindexed`. That same afternoon `pdfjs-dist` became a real       │
+   * │ dependency — and the document stayed `unindexed`, with the literal sentence       │
+   * │ *"Install: npm i pdfjs-dist"* sitting in the Assistant's own prefix. No way        │
+   * │ to re-extract it: the user had to DELETE it and drop their own file back in         │
+   * │ again.                                                                     │
    * │                                                                          │
-   * │ Trạng thái `state` là một BẢN GHI VỀ QUÁ KHỨ, không phải một sự thật      │
-   * │ vĩnh viễn — mà nguyên nhân của nó thì thay đổi được (cài thêm công cụ,    │
-   * │ nâng phiên bản, sửa bug). Thiếu đường quay lại thì bản ghi đó hoá thành   │
-   * │ một lời tuyên án.                                                        │
+   * │ `state` is a RECORD OF THE PAST, not a permanent fact — and its underlying         │
+   * │ cause is one that can change (a tool got installed, a version got upgraded, a       │
+   * │ bug got fixed). Without a way back, that record turns into a life sentence.         │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Trả `false` khi không có tài liệu đó hoặc bản gốc đã biến mất khỏi đĩa.
+   * Returns `false` when the document doesn't exist or the original has disappeared from disk.
    */
   reextract(rawName: string): boolean {
     const rec = this.docs.get(rawName);
     if (!rec) return false;
     if (!fs.existsSync(path.join(this.filesDir, rec.name))) return false;
-    // Dọn sidecar cũ TRƯỚC: bóc lại mà thất bại thì thà không có bản text còn
-    // hơn giữ một bản cũ mà `state` mới nói là chưa bóc được.
+    // Clears the old sidecar FIRST: if re-extraction fails, better to have no
+    // text copy at all than to keep an old one while `state` now says it hasn't been extracted.
     this.dropSidecar(rec.name);
     delete rec.note;
     rec.state = 'pending';
@@ -239,13 +317,14 @@ export class LibraryStore {
   }
 
   /**
-   * Thử lại MỘT LẦN lúc khởi động cho tài liệu thiếu công cụ. → `reextract`
+   * Retries ONCE at startup for documents missing a tool. → `reextract`
    *
-   * ⚠ CHỈ `unindexed`, cố ý không đụng `failed`. Hai trạng thái nói hai chuyện
-   * khác hẳn: `unindexed` = *máy này chưa có công cụ* (đổi được, và thường đã
-   * đổi đúng vào lúc khởi động lại sau khi cài); `failed` = *file này hỏng*
-   * (không đổi). Thử lại `failed` mỗi lần bật daemon là đốt CPU cho một kết
-   * quả biết trước, và với file lớn thì nó làm chậm mọi lần khởi động.
+   * ⚠ ONLY `unindexed`, deliberately leaves `failed` alone. The two states
+   * say entirely different things: `unindexed` = *this machine doesn't have
+   * the tool yet* (fixable, and usually already fixed right at the next
+   * restart after installing); `failed` = *this file itself is broken*
+   * (doesn't change). Retrying `failed` on every daemon startup burns CPU on
+   * a known outcome, and for a large file it slows down every single startup.
    */
   retryUnindexed(): number {
     const stuck = [...this.docs.values()].filter((d) => d.state === 'unindexed');
@@ -253,7 +332,7 @@ export class LibraryStore {
     return stuck.length;
   }
 
-  /** Xoá hẳn: bản gốc + văn bản đã bóc. Một mức, không có "lưu trữ". → §6 */
+  /** Permanently deletes: the original + its extracted text. One tier, no "archive". → §6 */
   remove(rawName: string): boolean {
     const rec = this.docs.get(rawName);
     if (!rec) return false;
@@ -266,7 +345,7 @@ export class LibraryStore {
     return true;
   }
 
-  /** Đường dẫn tuyệt đối của bản gốc, để tải về. `undefined` nếu không có. */
+  /** The original's absolute path, for downloading. `undefined` if it doesn't exist. */
   originalPath(rawName: string): string | undefined {
     const rec = this.docs.get(rawName);
     if (!rec) return undefined;
@@ -275,15 +354,16 @@ export class LibraryStore {
   }
 
   /**
-   * Chờ những tài liệu ĐANG BÓC — và chỉ chúng.
+   * Waits for documents CURRENTLY BEING EXTRACTED — and only those.
    *
-   * Đây là điểm chờ DUY NHẤT của cả tính năng (§10). Không có nó thì có một ca
-   * hỏng thật và im lặng: người dùng thả PDF xong hỏi ngay, `Grep` chạy trước
-   * khi text kịp tồn tại, nhân viên trả lời "không tìm thấy gì" một cách rất
-   * thuyết phục. Có nó thì đổi lại vài giây chờ, và câu trả lời đúng.
+   * This is the ONE wait point in the whole feature (§10). Without it,
+   * there's a real, silent failure mode: the user drops a PDF and asks about
+   * it immediately, `Grep` runs before the text even exists, and a worker
+   * answers "found nothing" very convincingly. With it, the cost is a few
+   * seconds' wait, in exchange for the correct answer.
    *
-   * Timeout là bắt buộc: một file hỏng theo cách ta chưa lường được không được
-   * phép treo cả văn phòng.
+   * A timeout is mandatory: a file broken in some way we haven't anticipated
+   * must never be allowed to hang the entire office.
    */
   async settled(timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
@@ -299,36 +379,40 @@ export class LibraryStore {
   }
 
   /**
-   * BẢNG KÊ CHO TRỢ LÝ — khối dữ liệu nhỏ đi vào prefix được cache. → §8b
+   * THE LISTING FOR THE ASSISTANT — a small block of data that goes into the cached prefix. → §8b
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ VÌ SAO PHẢI CÓ: TRỢ LÝ ĐANG MÙ, VÀ NÓ TỐN TIỀN THẬT.                     │
+   * │ WHY THIS HAS TO EXIST: THE ASSISTANT WAS BLIND, AND IT COST REAL MONEY.         │
    * │                                                                          │
-   * │ `INDEX.md` được dựng ra từ 17/08 với đúng mục đích "Trợ lý biết tủ có gì │
-   * │ TRƯỚC khi chia việc" — rồi không ai đưa nó cho Trợ lý. Trợ lý chạy       │
-   * │ `allowedTools: []`, nên nó không có đường nào biết trong tủ có gì.        │
+   * │ `INDEX.md` was built on 17/08 with the exact purpose "the Assistant knows           │
+   * │ what's in the cabinet BEFORE delegating work" — and then nobody ever handed         │
+   * │ it to the Assistant. The Assistant runs with `allowedTools: []`, so it had           │
+   * │ no way to find out what was in the cabinet at all.                                 │
    * │                                                                          │
-   * │ Hậu quả đo được trên máy người dùng (bài 2, 19/08):                       │
-   * │  · hỏi lại một câu mà câu trả lời KHÔNG đổi được việc phải làm           │
-   * │    ("size còn hàng không" — trong khi chính sách đã cấm đổi từ trước)     │
-   * │  · lập kế hoạch với `inputs: []` → nhân viên phải mò: 4 lượt Grep +      │
-   * │    2 lượt Read cùng một file → 9 lượt, $0.0582 cho một câu trả lời khách │
-   * │  · viết 7 ràng buộc trong đó 4 cái chết ngay khi nhân viên đọc tài liệu, │
-   * │    và một cái là nhánh IF giao cho model tự rẽ                            │
+   * │ Consequences measured on the user's own machine (test 2, 19/08):                    │
+   * │  · asking the same question again whose answer CANNOT change what needs to           │
+   * │    be done ("is there stock left" — even though policy had already forbidden          │
+   * │    changing it)                                                                     │
+   * │  · planning with `inputs: []` → the worker has to grope around: 4 Grep runs +          │
+   * │    2 Read runs on the same file → 9 turns, $0.0582 for one customer-facing            │
+   * │    answer                                                                          │
+   * │  · writing 7 constraints where 4 die the moment the worker reads the document,        │
+   * │    and one is an IF-branch handed to the model to resolve on its own                 │
    * │                                                                          │
-   * │ Sửa bằng DỮ LIỆU, không phải bằng lời dặn: bảng kê này quan sát được     │
-   * │ hoàn toàn từ chính các file, dựng bằng code, 0 lượt gọi LLM.             │
+   * │ Fixed with DATA, not with instructions: this listing is entirely observable          │
+   * │ from the files themselves, built in code, 0 LLM calls.                              │
    * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * Hai ràng buộc giữ cho nó KHÔNG phá prompt cache:
+   * Two constraints keep this from breaking the prompt cache:
    *
-   * 1. **Chỉ tên + hình dạng, KHÔNG có `preview`.** Preview làm khối vừa to
-   *    (mỗi file thêm ~40 chữ) vừa hay đổi. Trợ lý cần biết *có gì trong tủ* để
-   *    chỉ đúng đường cho nhân viên, không cần biết *nội dung nói gì* — nó
-   *    không phải người đọc tài liệu.
-   * 2. **Bỏ qua tài liệu đang bóc.** `pending`/`extracting` là trạng thái thoáng
-   *    qua vài giây; đưa vào là mỗi lần thả một file thì prefix đổi BA lần thay
-   *    vì hai. Tài liệu chỉ xuất hiện khi nó đã thật sự dùng được.
+   * 1. **Only name + shape, NO `preview`.** A preview makes the block both
+   *    LARGER (~40 words extra per file) and CHANGE OFTEN. The Assistant
+   *    needs to know *what's in the cabinet* to point a worker in the right
+   *    direction, not *what the content says* — it isn't the one reading the document.
+   * 2. **Skips documents still being extracted.** `pending`/`extracting` is a
+   *    fleeting few-second state; including it means dropping in one file
+   *    changes the prefix THREE times instead of two. A document only
+   *    appears once it's genuinely usable.
    */
   manifest(): string {
     const usable = this.list().filter((d) => d.state !== 'pending' && d.state !== 'extracting');
@@ -336,31 +420,34 @@ export class LibraryStore {
 
     const lines = usable.map((d) => {
       /**
-       * ĐƯỜNG DẪN NÊU RA PHẢI LÀ ĐƯỜNG NHÂN VIÊN MỞ ĐƯỢC. → `docPaths`, §4.4
+       * THE STATED PATH MUST BE A PATH A WORKER CAN OPEN. → `docPaths`, §4.4
        *
-       * Bản trước luôn nêu `library/files/<tên>` rồi dặn "nhét đường dẫn đó vào
-       * `inputs`". Với `.docx` đó là một file nhị phân — cả một ca ba bước chết
-       * ở bước một (20/08) trong khi bản `.txt` đã nằm sẵn cạnh nó.
+       * The earlier version always stated `library/files/<name>` and
+       * instructed "put that path into `inputs`". For a `.docx` that's a
+       * binary file — an entire three-step task died at step one (20/08)
+       * while the `.txt` copy was sitting right next to it.
        *
-       * Ba thứ vẫn phải khớp nhau từng ký tự: chuỗi ở đây, chuỗi nút Chép, và
-       * chuỗi planner ghi vào `inputs`. Nút Chép đưa đường dẫn NGƯỜI DÙNG nhận
-       * ra (`library/files/…`) và `readablePaths` dịch nó sang đường mở được —
-       * nên hai bên vẫn gặp nhau, chỉ khác lớp.
+       * Three things still have to match character-for-character: the string
+       * here, the Copy button's string, and the string the planner writes
+       * into `inputs`. The Copy button hands over the path the USER
+       * recognizes (`library/files/…`), and `readablePaths` translates it
+       * into an openable path — so the two sides still meet, just at different layers.
        */
       const { open, original } = docPaths(d.name, d.ext, d.state);
-      const shape = d.shape ?? d.ext;
+      // English, always: an employee reads this block. → `shapeEn`
+      const shape = shapeEn(d.shape, d.ext);
 
-      // Không có đường nào mở được thì ĐỪNG NÊU ĐƯỜNG DẪN. Nêu ra là mời Trợ lý
-      // giao một task chắc chắn hỏng — đúng chuyện vừa xảy ra.
-      if (!open) return `- ${d.name} — ${shape} (chưa bóc được, chưa dùng được)`;
+      // With no openable path at all, DO NOT STATE A PATH. Stating one would
+      // invite the Assistant to hand out a task guaranteed to fail — exactly what just happened.
+      if (!open) return `- ${d.name} — ${shape} (not extracted, not usable yet)`;
 
-      // Nhãn chỉ cho trạng thái BỀN, và chỉ nói ràng buộc thật: cái nào tìm
-      // được bằng từ khoá, cái nào không.
+      // The flag is only for PERSISTENT states, and only states a real
+      // constraint: whether keyword search finds it or not.
       const flag =
         d.state === 'image-only'
-          ? ' (bản chụp — đọc từng trang, KHÔNG tìm được bằng từ khoá)'
+          ? ' (a scan — read it page by page, keyword search will NOT find it)'
           : d.state === 'unindexed'
-            ? ' (chưa bóc — đọc theo trang, KHÔNG tìm được bằng từ khoá)'
+            ? ' (not extracted — read it by page, keyword search will NOT find it)'
             : '';
       const alt = original ? ` (original for exact pages: ${original})` : '';
       return `- ${open} — ${shape}${flag}${alt}`;
@@ -378,42 +465,43 @@ export class LibraryStore {
   }
 
   /**
-   * Văn bản của mọi tài liệu, mỗi bản mở đầu bằng TÊN FILE trên dòng một.
+   * The text of every document, each one opening with its FILE NAME on line one.
    *
-   * Chỉ dùng cho một việc: kiểm một bài học sắp ghi vào kho tri thức có phải chỉ
-   * là chép lại tài liệu không (`echoesLibrary`). Tên file đi kèm để câu cảnh
-   * báo nói được ĐÚNG file nào — "trùng với tài liệu nào đó" thì người dùng
-   * không kiểm được, mà không kiểm được thì cảnh báo vô dụng.
+   * Used for exactly one job: checking whether a lesson about to be written
+   * to the knowledge store is just a copy of a document (`echoesLibrary`).
+   * The file name is included so the warning can name EXACTLY which file —
+   * "matches some document or other" is something the user can't verify, and
+   * a warning nobody can verify is useless.
    *
-   * KHÔNG BAO GIỜ đi vào prompt của ai. Nó ở lại trong tiến trình, sống vài mili
-   * giây, rồi bị thu hồi — trần dưới đây tồn tại để một tài liệu 40MB không làm
-   * daemon nghẹn ở một việc chỉ là kiểm tra.
+   * NEVER enters anyone's prompt. It lives in-process, for a few
+   * milliseconds, then gets released — the ceiling below exists so a 40MB
+   * document doesn't choke the daemon over what's only a sanity check.
    */
   texts(maxCharsPerDoc = 200_000): string[] {
     const out: string[] = [];
     for (const doc of this.docs.values()) {
       if (doc.state !== 'ready') continue;
-      // Định dạng text sẵn không có sidecar — bản gốc CHÍNH LÀ văn bản (§3.1).
+      // Text-native formats have no sidecar — the original IS the text (§3.1).
       const file = fs.existsSync(this.sidecarFor(doc.name))
         ? this.sidecarFor(doc.name)
         : path.join(this.filesDir, doc.name);
       try {
         out.push(`${doc.name}\n${fs.readFileSync(file, 'utf8').slice(0, maxCharsPerDoc)}`);
       } catch {
-        /* file vừa bị xoá dưới chân ta — bỏ qua, đây chỉ là bước kiểm */
+        /* the file just got deleted out from under us — skip it, this is only a sanity check */
       }
     }
     return out;
   }
 
-  /** Tên tài liệu đang bóc — để dòng trạng thái nói đúng tên chứ không nói "đang xử lý". */
+  /** Names of documents currently being extracted — so the status line names them instead of saying "processing". */
   busyNames(): string[] {
     return [...this.docs.values()]
       .filter((d) => d.state === 'pending' || d.state === 'extracting')
       .map((d) => d.name);
   }
 
-  // ── nội bộ
+  // ── internal
 
   private get filesDir(): string {
     return path.join(this.paths.library, 'files');
@@ -437,19 +525,21 @@ export class LibraryStore {
   }
 
   /**
-   * Bóc lần lượt, MỘT file một lúc.
+   * Extracts one at a time, ONE file at a time.
    *
-   * Không chạy song song có chủ ý: giải nén và bóc XML là việc CPU đồng bộ, chạy
-   * bốn cái cùng lúc trong một tiến trình Node không nhanh hơn mà chỉ giữ vòng
-   * lặp sự kiện lâu hơn — mà chính vòng lặp đó đang phục vụ giao diện và SSE.
+   * Deliberately not parallel: unzipping and parsing XML is synchronous CPU
+   * work, and running four at once in a single Node process isn't faster —
+   * it just holds the event loop longer, and that same event loop is what's serving the interface and SSE.
    */
   private async pump(): Promise<void> {
     if (this.working) return;
     this.working = true;
     try {
+      let did = false;
       for (;;) {
         const next = [...this.docs.values()].find((d) => d.state === 'pending');
         if (!next) break;
+        did = true;
         next.state = 'extracting';
         this.save();
         this.onChange();
@@ -457,8 +547,34 @@ export class LibraryStore {
         this.save();
         this.onChange();
       }
-      this.renderIndex();
-      this.onChange();
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 ONLY REPORT WHEN SOMETHING ACTUALLY HAPPENED — bug the user            │
+       * │ reported, 02/09.                                                       │
+       * │                                                                    │
+       * │ The old version called `renderIndex() + onChange()` **unconditionally**,      │
+       * │ even when the loop extracted no files at all. And `pump()` runs on EVERY       │
+       * │ `GET /library` (through `scan()`), so a READ turn was firing a WRITE            │
+       * │ event. The loop:                                                         │
+       * │                                                                    │
+       * │   GET /library → scan → pump → `library.changed`                          │
+       * │     → store: libraryVersion+1 **and** refreshCanvas()                      │
+       * │     → LibraryPanel `useEffect(reload, [reload, libraryVersion])`               │
+       * │     → GET /library → …                                                    │
+       * │                                                                    │
+       * │ Runs forever while the Document cabinet panel is open, and has **no             │
+       * │ symptom** beyond the fan spinning up — until something else reads              │
+       * │ `canvas`, at which point it surfaces (a prompt dialog flickering                 │
+       * │ continuously). → SPEC-library §10                                            │
+       * │                                                                    │
+       * │ 📌 The rule this yields: **a READ must never emit a CHANGE event.**            │
+       * │ The only place allowed to emit one is the place that actually writes.           │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      if (did) {
+        this.renderIndex();
+        this.onChange();
+      }
     } finally {
       this.working = false;
     }
@@ -469,7 +585,7 @@ export class LibraryStore {
     const kind: Handling | undefined = HANDLING[rec.ext];
     if (!kind) {
       rec.state = 'failed';
-      rec.note = `Chưa nhận đuôi .${rec.ext}.`;
+      rec.note = { code: 'extUnknown', ext: rec.ext };
       return;
     }
 
@@ -489,24 +605,22 @@ export class LibraryStore {
     } catch (err) {
       if (err instanceof PdfToolMissing) {
         /**
-         * Tài liệu vẫn dùng được — nhân viên `Read` thẳng bản gốc theo trang,
-         * chỉ mất khả năng tìm bằng từ khoá. Nói đúng điều đó, kèm việc phải làm.
+         * The document is still usable — a worker can `Read` the original
+         * directly by page, only losing the ability to keyword search. State exactly that, with the action to take.
          *
-         * ⚠ Câu này ĐÃ TỪNG bảo người dùng gõ `npm i pdfjs-dist` (sửa 20/08).
-         * Đọc PDF là một phần của sản phẩm, không phải một tiện ích người dùng
-         * tự lắp thêm — giờ `pdfjs-dist` nằm trong `dependencies`, nên tới được
-         * nhánh này nghĩa là CÀI ĐẶT HỎNG, và việc phải làm là chạy lại
-         * `npm install`, không phải đi tìm tên một gói npm.
+         * ⚠ This sentence USED TO tell the user to type `npm i pdfjs-dist`
+         * (fixed 20/08). Reading PDFs is part of the product, not an extra
+         * the user installs themselves — `pdfjs-dist` is now in
+         * `dependencies`, so reaching this branch means a BROKEN INSTALL, and
+         * the action is re-running `npm install`, not going looking for an npm package name.
          */
         rec.state = 'unindexed';
-        rec.note =
-          'Bộ đọc PDF chưa nạp được nên chưa tìm được bằng từ khoá — nhiều khả năng bản cài thiếu file. ' +
-          'Nhân viên vẫn đọc được nếu bạn nói rõ trang. Chạy lại `npm install` trong thư mục agentco rồi thả lại file.';
-        rec.shape = 'pdf';
+        rec.note = { code: 'pdfReaderMissing' };
+        rec.shape = { kind: 'pdf' };
         return;
       }
       rec.state = 'failed';
-      rec.note = friendlyError(err, rec.ext);
+      rec.note = noteForError(err, rec.ext);
       return;
     }
 
@@ -517,22 +631,21 @@ export class LibraryStore {
     rec.extracted_at = new Date().toISOString();
 
     /**
-     * Bản chụp: bóc ra gần như không có chữ. KHÔNG đánh là lỗi — model nhìn
-     * trang PDF như một tấm ảnh nên nó ĐỌC ĐƯỢC, chỉ đắt hơn và không grep
-     * được. Bản nháp đầu của spec gọi đây là "cần OCR, chưa hỗ trợ", và đó là
-     * một câu sai đã đuổi người dùng khỏi một thứ vốn chạy được. → §3.2
+     * A scan: extracts to almost no text at all. NOT flagged as an error —
+     * the model sees a PDF page as an image, so it CAN read it, just more
+     * expensively and without grep. The spec's first draft called this
+     * "needs OCR, not yet supported", and that was a wrong sentence that
+     * chased users away from something that actually already worked. → §3.2
      */
-    if (rec.pages && out.text.replace(/--- trang \d+ ---/g, '').trim().length < rec.pages * CHARS_PER_PAGE_MIN) {
+    if (rec.pages && out.text.replace(/--- page \d+ ---/g, '').trim().length < rec.pages * CHARS_PER_PAGE_MIN) {
       rec.state = 'image-only';
-      rec.note =
-        'Bản chụp, không có lớp chữ — tìm bằng từ khoá sẽ không ra. ' +
-        'Nhân viên phải đọc từng trang nên tốn hơn bình thường.';
+      rec.note = { code: 'imageOnly' };
       return;
     }
 
-    // Định dạng text sẵn KHÔNG cần bản sao: bản gốc đã là văn bản và `Grep` đọc
-    // thẳng được. Sinh sidecar cho nó chỉ tạo ra hai bản của cùng một thứ, rồi
-    // một ngày nào đó chúng lệch nhau.
+    // Text-native formats need NO copy: the original is already text and
+    // `Grep` reads it directly. Generating a sidecar for it would only
+    // create two copies of the same thing, and someday they'd drift apart.
     if (kind !== 'text') {
       fs.mkdirSync(this.textDir, { recursive: true });
       fs.writeFileSync(this.sidecarFor(rec.name), out.text, 'utf8');
@@ -542,14 +655,15 @@ export class LibraryStore {
   }
 
   /**
-   * `INDEX.md` — tầng định tuyến, dựng bằng CODE, 0 token. → §8
+   * `INDEX.md` — the routing layer, built in CODE, 0 tokens. → §8
    *
-   * Mọi cột đều QUAN SÁT ĐƯỢC từ chính file. Không có lượt gọi LLM nào ở đây, và
-   * đó là điểm khác biệt với ý "sinh một node tóm tắt cho mỗi file" — ý đó đúng
-   * mục tiêu nhưng trả bằng một lượt gọi cho mỗi tài liệu.
+   * Every column is OBSERVABLE from the file itself. No LLM call happens
+   * here, and that's exactly what sets it apart from the idea "generate a
+   * summary node for every file" — that idea hits the same goal but pays for
+   * one call per document.
    *
-   * File này KHÔNG vào prefix. Trợ lý chủ động đọc nó khi cần biết "tủ có gì" —
-   * một file nhỏ, thay cho việc `Glob` mò cả thư mục.
+   * This file does NOT enter the prefix. The Assistant proactively reads it
+   * when it needs to know "what's in the cabinet" — one small file, instead of `Glob`-ing the whole directory.
    */
   renderIndex(): void {
     const docs = this.list();
@@ -558,7 +672,7 @@ export class LibraryStore {
     if (docs.length === 0) {
       fs.writeFileSync(
         this.indexFile,
-        '# Tủ tài liệu\n\nChưa có tài liệu nào. Người dùng thả file vào qua giao diện.\n',
+        '# Document cabinet\n\nNo documents yet. The user drops files in through the interface.\n',
         'utf8',
       );
       return;
@@ -568,37 +682,59 @@ export class LibraryStore {
       const note =
         d.state === 'ready'
           ? (d.preview ?? '')
-          : `**${stateLabel(d.state)}** — ${d.note ?? ''} ${d.preview ?? ''}`.trim();
-      // Cột "Mở bằng" là cột QUAN TRỌNG NHẤT của bảng này, và trước 20/08 nó
-      // không tồn tại — ai đọc INDEX.md phải tự suy ra đường nào mở được, và
-      // Trợ lý suy sai. → `docPaths`
+          : `**${stateEn(d.state)}** — ${noteEn(d.note)} ${d.preview ?? ''}`.trim();
+      // The "Open with" column is the MOST IMPORTANT column in this table,
+      // and before 20/08 it didn't exist — anyone reading INDEX.md had to
+      // guess which path was openable, and the Assistant guessed wrong. → `docPaths`
       const { open, original } = docPaths(d.name, d.ext, d.state);
-      const openCell = open
-        ? original
-          ? `\`${open}\` + \`${original}\` (đọc kỹ theo trang)`
-          : `\`${open}\``
-        : '— chưa dùng được';
-      return `| ${d.name} | ${d.shape ?? d.ext} | ${formatBytes(d.bytes)} | ${
+      /**
+       * ⚠ A `|` IN A FILE NAME SPLITS A TABLE ROW IN HALF.
+       *
+       * `|` is valid on ext4/APFS (only Windows forbids it), and `scan()`
+       * accepts even files someone copies by hand straight into
+       * `library/files/` — bypassing `safeName` entirely. A name like that
+       * splits the row into misaligned columns, and the column that drifts
+       * the worst is exactly "Open with": the Assistant reads out a truncated path.
+       *
+       * So the name and description get characters SUBSTITUTED (they're only
+       * for display), while the path is NOT — a modified path is a dead
+       * path, and a dead path costs far more than a blank cell. A name with
+       * `|` ⇒ state plainly that it isn't usable yet.
+       */
+      const cell = (s: string): string => s.replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+      const openCell = d.name.includes('|')
+        ? '— the file name contains `|`; rename it and drop it again'
+        : open
+          ? original
+            ? `\`${open}\` + \`${original}\` (read those exact pages)`
+            : `\`${open}\``
+          : '— not usable yet';
+      return `| ${cell(d.name)} | ${cell(shapeEn(d.shape, d.ext))} | ${formatBytes(d.bytes)} | ${
         d.tokens ? formatTokens(d.tokens) : '—'
-      } | ${openCell} | ${note.replace(/\|/g, '/').replace(/\n/g, ' ')} |`;
+      } | ${openCell} | ${cell(note)} |`;
     });
 
+    /**
+     * ⚠ ENGLISH, and not through `t()` — an EMPLOYEE reads this file, so it is
+     * prompt scaffolding like every other block that reaches a model.
+     * → docs/CLAUDE.md §Language
+     */
     const lines = [
-      `# Tủ tài liệu — ${docs.length} tài liệu`,
+      `# Document cabinet — ${docs.length} documents`,
       '',
-      '**Dùng đúng đường ở cột "Mở bằng".** Luật khác nhau theo định dạng:',
+      '**Use the exact path in the "Open with" column.** The rules differ by format:',
       '',
-      '- `.md .txt .csv .json .yaml` — bản gốc CHÍNH LÀ văn bản, đọc thẳng `library/files/`.',
-      '- `.docx .xlsx .pptx` — bản gốc là file nén, **không tool nào mở trực tiếp được**.',
-      '  Chỉ dùng bản đã bóc ở `library/text/<tên>.txt`.',
-      '- `.pdf` — dùng CẢ HAI: `Grep` bản text để tìm, thấy dòng nào thì xem mốc',
-      '  `--- trang N ---` gần nhất phía trên, rồi `Read` bản gốc đúng trang đó.',
+      '- `.md .txt .csv .json .yaml` — the original IS the text; read `library/files/` directly.',
+      '- `.docx .xlsx .pptx` — the original is a zip archive, **no tool opens it directly**.',
+      '  Use only the extracted copy at `library/text/<name>.txt`.',
+      '- `.pdf` — use BOTH: `Grep` the text copy to find the passage, then look up to the nearest',
+      '  `--- page N ---` marker above the hit and `Read` that exact page of the original.',
       '',
-      '| Tên | Loại | Cỡ | ~Token | Mở bằng | Mở đầu / cấu trúc |',
+      '| Name | Type | Size | ~Tokens | Open with | Opening / structure |',
       '|---|---|---|---|---|---|',
       ...rows,
       '',
-      `_Cập nhật ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — dựng bằng code, không qua model._`,
+      `_Updated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} — built in code, no model involved._`,
       '',
     ];
     fs.writeFileSync(this.indexFile, lines.join('\n'), 'utf8');
@@ -608,13 +744,14 @@ export class LibraryStore {
     try {
       const raw = JSON.parse(fs.readFileSync(this.catalogFile, 'utf8')) as { docs?: DocRecord[] };
       for (const d of raw.docs ?? []) {
-        // Daemon tắt giữa lúc đang bóc thì trạng thái đó vô nghĩa khi bật lại.
-        // Đưa về `pending` để nó được bóc lại, thay vì kẹt `extracting` vĩnh
-        // viễn và làm `settled()` chờ đủ timeout ở MỌI ca chạy sau đó.
+        // If the daemon shuts down mid-extraction, that state is meaningless
+        // on restart. Reset it to `pending` so it gets extracted again,
+        // instead of staying stuck at `extracting` forever and making
+        // `settled()` wait out the full timeout on EVERY run afterward.
         this.docs.set(d.name, d.state === 'extracting' ? { ...d, state: 'pending' } : d);
       }
     } catch {
-      /* chưa có catalog, hoặc hỏng — quét lại là dựng được hết */
+      /* no catalog yet, or it's corrupt — a rescan rebuilds everything */
     }
   }
 
@@ -638,35 +775,111 @@ export class LibraryError extends Error {
   }
 }
 
+/** Status label for the USER — follows the interface switch. */
 export function stateLabel(s: DocState): string {
   switch (s) {
     case 'pending':
-      return 'đang chờ';
+      return t('lib.statePending');
     case 'extracting':
-      return 'đang đọc';
+      return t('lib.stateExtracting');
     case 'ready':
-      return 'sẵn sàng';
+      return t('lib.stateReady');
     case 'image-only':
-      return 'bản chụp';
+      return t('lib.stateImageOnly');
     case 'unindexed':
-      return 'chưa lập chỉ mục';
+      return t('lib.stateUnindexed');
     case 'failed':
-      return 'lỗi';
+      return t('lib.stateFailed');
+  }
+}
+
+/** The same label, for `INDEX.md` — an employee reads it, so hard-coded English. */
+function stateEn(s: DocState): string {
+  switch (s) {
+    case 'pending':
+      return 'waiting';
+    case 'extracting':
+      return 'reading';
+    case 'ready':
+      return 'ready';
+    case 'image-only':
+      return 'a scan';
+    case 'unindexed':
+      return 'not indexed';
+    case 'failed':
+      return 'failed';
   }
 }
 
 /**
- * Đổi lỗi kỹ thuật thành câu nói được việc phải làm.
+ * Turns a technical error into a CODE that states the next action.
  *
- * Tiêu chí "Xử lý lỗi tốt" nói: mọi lỗi phải nói *chuyện gì xảy ra + làm gì
- * tiếp*. Một dòng "Invalid PDF structure" thoả đúng nửa đầu.
+ * The "good error handling" criterion says: every error has to state *what
+ * happened + what to do next*. A bare "Invalid PDF structure" line only
+ * satisfies the first half.
+ *
+ * ⚠ Returns a code rather than a sentence, since the result goes straight
+ * into `catalog.json` — see the comment block at `DocNote`. `unreadable` is
+ * the only case carrying free text, and that text is the underlying
+ * library's own verbatim message: it's searchable, a translation of it wouldn't be.
  */
-function friendlyError(err: unknown, ext: string): string {
+function noteForError(err: unknown, ext: string): DocNote {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/password|encrypt/i.test(msg)) return 'File có mật khẩu — bỏ mật khẩu rồi thả lại.';
-  if (/ZIP64/i.test(msg)) return 'File quá lớn để đọc. Tách nhỏ rồi thả lại.';
-  if (/zip|inflate|nén/i.test(msg)) {
-    return `File .${ext} hỏng hoặc không đúng định dạng. Mở bằng ứng dụng gốc rồi "Lưu thành" một bản mới.`;
+  if (/password|encrypt/i.test(msg)) return { code: 'passwordProtected' };
+  if (/ZIP64/i.test(msg)) return { code: 'tooLarge' };
+  // Every throw in `zip.ts` names ZIP, and `zlib` says "inflate". Matching on
+  // those two words is what keeps a corrupt archive out of the `unreadable`
+  // bucket, where the reader would be handed a library string and no next step.
+  if (/zip|inflate/i.test(msg)) return { code: 'corruptZip', ext };
+  return { code: 'unreadable', detail: msg };
+}
+
+/**
+ * `DocNote` → a sentence for the USER. Follows the interface switch.
+ *
+ * An old-style record carries a raw string: hand it back verbatim, never
+ * guess a code from the wording — that would be exactly the detector wearing
+ * a deterministic gate's clothes that `docs/CLAUDE.md` forbids.
+ */
+export function noteSay(note: DocNote | string | undefined): string | undefined {
+  if (note === undefined) return undefined;
+  if (typeof note === 'string') return note;
+  switch (note.code) {
+    case 'extUnknown':
+      return t('lib.extUnknown', { ext: note.ext });
+    case 'pdfReaderMissing':
+      return t('lib.notePdfReaderMissing');
+    case 'imageOnly':
+      return t('lib.noteImageOnly');
+    case 'passwordProtected':
+      return t('lib.notePassword');
+    case 'tooLarge':
+      return t('lib.noteTooLarge');
+    case 'corruptZip':
+      return t('lib.noteCorruptZip', { ext: note.ext });
+    case 'unreadable':
+      return t('lib.noteUnreadable', { detail: note.detail });
   }
-  return `Không đọc được nội dung: ${msg}`;
+}
+
+/** The same `DocNote`, but for `INDEX.md` — an employee reads it, so hard-coded English. */
+export function noteEn(note: DocNote | string | undefined): string {
+  if (note === undefined) return '';
+  if (typeof note === 'string') return note;
+  switch (note.code) {
+    case 'extUnknown':
+      return `.${note.ext} is not accepted yet.`;
+    case 'pdfReaderMissing':
+      return 'The PDF reader did not load, so keyword search will not find this. Read it by page instead.';
+    case 'imageOnly':
+      return 'A scan with no text layer — keyword search will not find it. Read it page by page.';
+    case 'passwordProtected':
+      return 'The file is password-protected.';
+    case 'tooLarge':
+      return 'The file is too large to read.';
+    case 'corruptZip':
+      return `This .${note.ext} is corrupt or not in the format its extension claims.`;
+    case 'unreadable':
+      return `Could not read the contents: ${note.detail}`;
+  }
 }

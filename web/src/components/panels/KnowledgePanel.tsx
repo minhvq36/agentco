@@ -15,18 +15,19 @@ import { api } from '@/lib/api';
 import { agentInk, agentWash, agentHue } from '@/lib/colors';
 import { actions, toast, useApp } from '@/lib/store';
 import type { KnowledgeEntry } from '@/lib/types';
+import { plural, t } from '@i18n';
 
 /**
- * Ngăn kéo tri thức. Tìm kiếm dùng index đã có trên client — **0 token**.
+ * The knowledge drawer. Search runs on the index already on the client — 0 tokens.
  *
- * Hai phạm vi hiện khác nhau có chủ ý: `shared` là kho chung cả văn phòng đọc,
- * `role:<id>` là sổ tay riêng chỉ chính agent đó đọc. Trộn chúng vào một danh
- * sách phẳng là xoá mất phân biệt quan trọng nhất của kho.
+ * The two scopes render differently on purpose: `shared` is the store the whole
+ * office reads, `role:<id>` is a private notebook only that agent reads. Mixing
+ * them into one flat list erases the most important distinction in the store.
  */
 export function KnowledgePanel() {
   const officeId = useApp((s) => s.officeId);
-  // Bám vào SỰ KIỆN, không vào số đếm: sửa một ghi chú không làm đổi số node,
-  // nên bản trước đứng im cho tới khi người dùng bấm F5.
+  // Follow the EVENT, not a count: editing a note does not change the number of
+  // nodes, so the previous version sat still until someone pressed F5.
   const knowledgeVersion = useApp((s) => s.knowledgeVersion);
   const [nodes, setNodes] = useState<KnowledgeEntry[] | null>(null);
   const [q, setQ] = useState('');
@@ -39,7 +40,7 @@ export function KnowledgePanel() {
       .knowledge(officeId)
       .then((r) => alive && setNodes(r.nodes))
       .catch((err) => {
-        toast(err instanceof Error ? err.message : 'Không đọc được kho tri thức.');
+        toast(err instanceof Error ? err.message : t('knowledge.loadFailed'));
         if (alive) setNodes([]);
       });
     return () => {
@@ -56,21 +57,20 @@ export function KnowledgePanel() {
     );
   }, [nodes, q]);
 
-  if (nodes === null) return <div className="px-4 py-6 text-[13px] text-muted">Đang đọc…</div>;
+  if (nodes === null) return <div className="px-4 py-6 text-[13px] text-muted">{t('common.reading')}</div>;
 
   if (nodes.length === 0) {
     return (
-      // Trạng thái rỗng của kho tri thức là chỗ DUY NHẤT người dùng mới đọc kỹ,
-      // nên nó phải trả lời luôn câu hỏi sẽ đến ngay sau: "vậy tài liệu của tôi
-      // bỏ đâu?". Không trả lời ở đây thì họ đi tìm nút "thêm ghi chú" không có.
+      // The empty state of the knowledge store is the ONE place a new user reads
+      // carefully, so it has to answer the question that comes straight after:
+      // "then where do my documents go?". Leave it unanswered and they go
+      // hunting for an "add note" button that does not exist.
       <Empty
         icon={<BookOpen className="h-7 w-7" />}
-        title="Kho tri thức còn trống"
-        hint="Nhân viên tự ghi vào sổ tay riêng khi rút ra bài học; Trợ lý ghi vào kho chung sau mỗi ca. Không ai phải nhập tay — đây là thứ hệ thống tự học được."
+        title={t('knowledge.emptyTitle')}
+        hint={t('knowledge.emptyHint')}
         action={
-          <Button onClick={() => actions.showPanel('library')}>
-            Tài liệu của bạn thì thả vào Tủ tài liệu
-          </Button>
+          <Button onClick={() => actions.showPanel('library')}>{t('knowledge.toLibrary')}</Button>
         }
       />
     );
@@ -79,7 +79,12 @@ export function KnowledgePanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex-none border-b border-line p-3">
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm trong kho…" aria-label="Tìm" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t('knowledge.search')}
+          aria-label={t('knowledge.searchLabel')}
+        />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {filtered?.map((n) => {
@@ -101,39 +106,41 @@ export function KnowledgePanel() {
                       📒 {own}
                     </span>
                   ) : (
-                    <span className="rounded bg-line/70 px-1.5 font-medium text-ink">chung</span>
+                    <span className="rounded bg-line/70 px-1.5 font-medium text-ink">
+                      {t('knowledge.shared')}
+                    </span>
                   )}
-                  {n.pinned && <span className="text-warn">ghim</span>}
-                  {/* Không có nhãn này thì ba bản "Ghi nhớ" trông y hệt nhau và
-                      người dùng tưởng hệ thống đang nhân bản rác. */}
-                  {n.superseded && <span className="text-warn">đã bị bản mới đè</span>}
-                  <span className="tabular-nums">{n.tokens} token</span>
+                  {n.pinned && <span className="text-warn">{t('knowledge.pinned')}</span>}
+                  {/* Without this label three "Memory" notes look identical and
+                      it reads as the system duplicating rubbish. */}
+                  {n.superseded && <span className="text-warn">{t('knowledge.superseded')}</span>}
+                  <span className="tabular-nums">{plural('knowledge.tokens', n.tokens)}</span>
                   <span>·</span>
-                  <span className="tabular-nums">dùng {n.hits} lần</span>
+                  <span className="tabular-nums">{plural('knowledge.hits', n.hits)}</span>
                 </div>
               </button>
             </li>
           );
         })}
         {filtered?.length === 0 && (
-          <li className="px-4 py-6 text-[13px] text-muted">Không có ghi chú nào khớp “{q}”.</li>
+          <li className="px-4 py-6 text-[13px] text-muted">{t('knowledge.noMatch', { q })}</li>
         )}
       </ul>
 
       {/*
-        Hai câu này chuyển từ bảng chi tiết bên phải sang đây (17/08). Chúng là
-        sự thật về cái KHO, không phải về cái node trên sơ đồ — và ở đây thì
-        người dùng đọc được chúng ở đúng lúc đang nhìn vào kho.
+        These two sentences moved here from the right-hand detail panel (17/08).
+        They are facts about the STORE, not about a node on the diagram — and
+        here they get read at the moment someone is looking at the store.
 
-        Câu thứ hai là quan trọng nhất: nó phân biệt kho tri thức với tủ tài
-        liệu. Thiếu nó thì hai khái niệm nhập làm một, và người dùng đi tìm chỗ
-        "thêm ghi chú" không có.
+        The second one matters most: it separates the knowledge store from the
+        document cabinet. Without it the two concepts merge, and people go
+        looking for an "add note" button that does not exist.
       */}
       <div className="flex-none border-t border-line px-4 py-2.5 text-xs leading-relaxed text-muted">
-        Đây là thứ hệ thống <b>tự rút ra</b>: Trợ lý ghi vào kho chung, nhân viên ghi vào sổ tay riêng (📒
-        trên node của họ, chỉ mình họ đọc). Bạn sửa và xoá được, nhưng không thêm mới —{' '}
+        {t('knowledge.footerBefore')} <b>{t('knowledge.footerBold')}</b>
+        {t('knowledge.footerAfter')}{' '}
         <button className="underline hover:text-ink" onClick={() => actions.showPanel('library')}>
-          tài liệu của bạn thì thả vào Tủ tài liệu
+          {t('knowledge.toLibraryInline')}
         </button>
         .
       </div>
@@ -151,14 +158,16 @@ export function KnowledgePanel() {
 }
 
 /**
- * Xem / sửa / xoá một ghi chú. Tác động 1-1 và NGAY LẬP TỨC.
+ * View / edit / delete one note. One-to-one, and IMMEDIATE.
  *
- * Trước đây ngăn kéo này chỉ đọc, nên muốn sửa một câu sai trong đầu nhân viên
- * thì phải mở đúng file yaml của người đó ra — thứ người dùng non-code không
- * làm được, và cũng là thứ khiến kho tri thức trông như một cái hộp đen.
+ * This drawer used to be read-only, so correcting a wrong sentence inside an
+ * employee's head meant opening that person's yaml file — something a
+ * non-technical user cannot do, and the thing that made the knowledge store
+ * look like a black box.
  *
- * Sửa xong: quét lại kho, dựng lại ngữ cảnh Trợ lý, và mọi worker phóng SAU đó
- * dùng bản mới. Worker đang chạy giữ nguyên bản cũ — cùng luật với đổi model.
+ * After an edit: rescan the store, rebuild the assistant's context, and every
+ * worker launched AFTERWARDS uses the new version. Workers already running keep
+ * the old one — the same rule as changing a model.
  */
 function NodeDialog({
   node,
@@ -186,7 +195,7 @@ function NodeDialog({
       const r = await api.editKnowledge(officeId, node.id, remove ? { remove: true } : { body: text });
       onDone(r.nodes);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Không lưu được.');
+      toast(err instanceof Error ? err.message : t('common.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -202,31 +211,33 @@ function NodeDialog({
           <DialogDescription>
             {own ? (
               <>
-                Sổ tay riêng của <b>{own}</b> — chỉ mình người này đọc.
+                {t('knowledge.ownBefore')} <b>{own}</b> {t('knowledge.ownAfter')}
               </>
             ) : (
               <>
-                Kho <b>chung</b> — mọi nhân viên trong văn phòng đều đọc, ở mọi việc.
+                {t('knowledge.sharedBefore')} <b>{t('knowledge.shared')}</b>{' '}
+                {t('knowledge.sharedAfter')}
               </>
             )}{' '}
             <code>{node?.file}</code>
             {/*
-              Bản bị đè giờ bị XOÁ THẲNG ngay lúc bản mới ra đời
-              (`KnowledgeStore.dropSuperseded`), nên nhánh này gần như không bao
-              giờ chạy — nó chỉ còn là lưới cho file người dùng tự sửa tay.
+              A superseded note is now DELETED OUTRIGHT the moment its
+              replacement is written (`KnowledgeStore.dropSuperseded`), so this
+              branch almost never runs — it survives as a net for files a user
+              edited by hand.
 
-              Câu cũ ở đây quảng cáo *"file vẫn ở đây để bạn đọc lại khi cần"*.
-              Bỏ hẳn: người dùng cuối KHÔNG đọc lại bản nén cũ. Thứ họ nhận được
-              là một ngăn kéo đầy bản trùng, cộng một đoạn giải thích về cơ chế
-              bên trong mà họ không cần biết — tức là ta bắt họ trả phí chú ý
-              cho một tính năng chỉ có lập trình viên dùng.
+              The old sentence here advertised *"the file is still around for you
+              to read back"*. Removed: end users do NOT read old compactions
+              back. What they got instead was a drawer full of duplicates plus a
+              paragraph about an internal mechanism they never needed — charging
+              them attention for a feature only a developer uses.
             */}
             {node?.superseded && (
               <>
                 <br />
                 <br />
-                <b className="text-warn">Đã có bản mới thay thế.</b> Bản này không còn đi vào prompt
-                của ai và sẽ được dọn ở lần dọn tới.
+                <b className="text-warn">{t('knowledge.supersededTitle')}</b>{' '}
+                {t('knowledge.supersededBody')}
               </>
             )}
           </DialogDescription>
@@ -239,20 +250,20 @@ function NodeDialog({
           className="font-mono text-[11.5px] leading-relaxed"
         />
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Sửa xong áp dụng ngay cho việc giao <b>từ giờ trở đi</b>; việc đang chạy giữ nguyên bản cũ.
-          Ghi chú nằm trong bộ nhớ đệm nên mỗi lần sửa là một lần ghi lại cache.
+          {t('knowledge.editNoteBefore')} <b>{t('knowledge.editNoteBold')}</b>
+          {t('knowledge.editNoteAfter')}
         </p>
 
         <DialogFooter>
-          <Button onClick={onClose}>Thôi</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
           {confirmDel ? (
             <Button variant="danger" disabled={busy} onClick={() => void apply(true)}>
-              {busy ? 'Đang xoá…' : 'Chắc chắn xoá'}
+              {busy ? t('common.deleting') : t('knowledge.confirmDelete')}
             </Button>
           ) : (
             <Button variant="danger" disabled={busy} onClick={() => setConfirmDel(true)}>
               <Trash2 className="h-4 w-4" />
-              Xoá
+              {t('knowledge.delete')}
             </Button>
           )}
           <Button
@@ -260,7 +271,7 @@ function NodeDialog({
             disabled={busy || text.trim() === (node?.body ?? '').trim()}
             onClick={() => void apply(false)}
           >
-            {busy ? 'Đang lưu…' : 'Lưu'}
+            {busy ? t('common.saving') : t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

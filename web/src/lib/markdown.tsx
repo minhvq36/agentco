@@ -1,61 +1,65 @@
 /**
- * Markdown TỐI GIẢN — dựng React node, KHÔNG dựng chuỗi HTML.
+ * MINIMAL markdown — builds React nodes, NEVER an HTML string.
  *
- * Dùng chung cho ô chat và cửa sổ xem trước `.md` ở ngăn Kết quả.
- * Phân tích nằm ở `markdown-core.ts` (thuần, có bộ test); file này chỉ ánh xạ
- * kết quả đã chốt sang thẻ.
+ * Shared by the chat box and the `.md` preview in the Artifacts panel. Parsing
+ * lives in `markdown-core.ts` (pure, with its own tests); this file only maps a
+ * settled parse onto tags.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO TỰ VIẾT, VÀ VÌ SAO KHÔNG BAO GIỜ `dangerouslySetInnerHTML`.       │
+ * │ WHY HAND-WRITTEN, AND WHY NEVER `dangerouslySetInnerHTML`.               │
  * │                                                                          │
- * │ Văn bản ở đây do MODEL sinh ra. Một câu trả lời cho khách hoàn toàn có   │
- * │ thể chứa `<img src=x onerror=…>` — vô tình, hoặc vì tài liệu người dùng  │
- * │ tải lên có đoạn đó. Đổ nó vào `innerHTML` là mở một lỗ XSS ngay trên     │
- * │ giao diện điều khiển công ty, thứ không có xác thực nào ngoài "cùng máy" │
- * │ (đúng lập luận đã ép `.svg` sang `octet-stream`, SPEC-artifacts §3).     │
+ * │ The text here is MODEL-GENERATED. An answer written for a client can     │
+ * │ perfectly well contain `<img src=x onerror=…>` — by accident, or because │
+ * │ a document the user uploaded had that in it. Pouring that into           │
+ * │ `innerHTML` opens an XSS hole in the console that drives the company,    │
+ * │ which has no authentication beyond "same machine" (the same argument     │
+ * │ that forced `.svg` to `octet-stream`, SPEC-artifacts §3).                │
  * │                                                                          │
- * │ Dựng React node thì mọi thứ mặc định là VĂN BẢN — không có đường nào để  │
- * │ một chuỗi biến thành thẻ. Đó cũng là lý do không kéo thư viện             │
- * │ markdown→HTML về: chúng trả CHUỖI, mà chuỗi thì phải đi qua innerHTML.   │
+ * │ Building React nodes makes everything TEXT by default — there is no path │
+ * │ from a string to a tag. That is also why no markdown→HTML library is     │
+ * │ pulled in: they return STRINGS, and a string has to go through innerHTML.│
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ NĂM LUẬT, KHÔNG HƠN — và hai thứ CỐ Ý BỎ.                               │
+ * │ FIVE RULES, NO MORE — and two things left out ON PURPOSE.                │
  * │                                                                          │
- * │   ✅ ```khối code```   ✅ `code trong dòng`   ✅ **đậm**   ✅ # tiêu đề   │
- * │   ✅ | bảng |                                                            │
+ * │   ✅ ```code blocks```   ✅ `inline code`   ✅ **bold**   ✅ # headings  │
+ * │   ✅ | tables |                                                          │
  * │                                                                          │
- * │ Bảng thêm vào 20/08 vì nó là dạng kết quả nhân viên SINH RA THẬT: bảng    │
- * │ thuật ngữ, bảng chi tiêu, bảng so sánh giá. Hiện nguyên văn dấu `|` là    │
- * │ bắt người dùng tự dựng cái bảng đó trong đầu — và họ mở file `.md` ra để  │
- * │ DUYỆT trước khi gửi cho khách, nên nhìn sai là gửi sai.                   │
+ * │ Tables were added on 20/08 because they are a shape employees ACTUALLY   │
+ * │ produce: glossaries, spend breakdowns, price comparisons. Showing the raw│
+ * │ `|` characters makes the user assemble the table in their head — and they│
+ * │ open the `.md` to REVIEW it before sending it to a client, so misreading │
+ * │ it means sending the wrong thing.                                        │
  * │                                                                          │
- * │   ⛔ `_nghiêng_` — sản phẩm này nói `plan_id`, `hot_knowledge_tokens`,   │
- * │      `max_turns`, `default_deliver` suốt ngày. Biến gạch dưới thành      │
- * │      nghiêng là băm nát chính văn bản của mình.                          │
+ * │   ⛔ `_italics_` — this product says `plan_id`, `hot_knowledge_tokens`,  │
+ * │      `max_turns`, `default_deliver` all day long. Turning underscores    │
+ * │      into italics shreds our own text.                                   │
  * │                                                                          │
- * │   ⛔ danh sách + thụt lề 4 dấu cách — xem `blocksOf`.                    │
+ * │   ⛔ lists and 4-space indentation — see `blocksOf`.                     │
  * │                                                                          │
- * │ Bề mặt nhỏ nhất = ít vỡ nhất. Mỗi luật thêm vào là một cách mới để làm   │
- * │ hỏng những câu backend đã dựng sẵn bằng code.                            │
+ * │ The smallest surface breaks least. Every rule added is a new way to ruin │
+ * │ the sentences the backend already assembles in code.                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
 import { Fragment } from 'react';
 
 import { blocksOf, spansOf, type Align } from './markdown-core';
+import { t } from '@i18n';
 
 /**
- * Cỡ tiêu đề — CỐ Ý SÁT CỠ CHỮ THƯỜNG.
+ * Heading sizes — DELIBERATELY CLOSE TO BODY TEXT.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ `#` và `##` theo mặc định trình duyệt là 2em và 1.5em. Trong một bong    │
- * │ bóng chat rộng ~330px, một dòng 27px chiếm gần trọn bề ngang và đẩy mọi  │
- * │ thứ khác xuống — người đọc mất mạch, và cảm giác là giao diện đang HÉT.  │
+ * │ A browser renders `#` and `##` at 2em and 1.5em by default. Inside a     │
+ * │ ~330px chat bubble a 27px line takes nearly the whole width and shoves   │
+ * │ everything else down — the reader loses the thread, and it feels like    │
+ * │ the interface is SHOUTING.                                               │
  * │                                                                          │
- * │ Nên phân cấp bằng ĐỘ ĐẬM và MÀU, không bằng kích cỡ: chênh 1–1.5px là đủ │
- * │ để mắt thấy thứ bậc mà bố cục không nhảy. Cửa sổ xem trước rộng 56rem    │
- * │ nên được nới thêm đúng một nấc — không hơn.                             │
+ * │ So the hierarchy comes from WEIGHT and COLOUR, not size: 1–1.5px is      │
+ * │ enough for the eye to see rank while the layout stays still. The 56rem   │
+ * │ preview earns exactly one step more — no further.                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const SIZES = {
@@ -89,28 +93,31 @@ const ALIGN: Record<Align, string> = {
 };
 
 /**
- * Bảng markdown. Dùng chung ngôn ngữ hình với `CsvTable` ở ngăn Kết quả — hai
- * cái bảng cạnh nhau trong cùng một sản phẩm mà trông khác nhau thì người dùng
- * đi tìm ý nghĩa của sự khác nhau đó.
+ * A markdown table. It shares its visual language with `CsvTable` in the
+ * Artifacts panel — two tables side by side in the same product that look
+ * different send the user hunting for the meaning of the difference.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HAI LỚP CHỐNG VỠ, VÀ CẢ HAI ĐỀU BẮT BUỘC.                               │
- * │                                                                          │
- * │  1. `overflow-x-auto` + `max-w-full` ở khối BỌC ngoài — cùng luật đã áp   │
- * │     cho khối code: nội dung rộng cuộn TRONG khối của nó. Thiếu nó thì     │
- * │     bảng nong bong bóng chat ra và cả panel sinh thanh cuộn ngang.        │
- * │                                                                          │
- * │  2. Bong bóng chứa bảng phải là khối có BỀ RỘNG XÁC ĐỊNH (`block w-full`, │
- * │     xem `ChatPanel`), không phải `inline-block` co theo nội dung. Với     │
- * │     `inline-block`, bề rộng bọc ngoài lại phụ thuộc vào nội dung bên      │
- * │     trong — `max-w-full` không còn mốc nào để bám, và lớp 1 mất tác dụng. │
- * │                                                                          │
- * │ Nhờ vậy panel thu hẹp tới mức nào (MIN_W = 300px) bảng vẫn chỉ cuộn ngang │
- * │ bên trong, không bao giờ đẩy được sidebar rộng ra.                        │
+ * │ TWO LAYERS AGAINST OVERFLOW, AND BOTH ARE REQUIRED.                       │
+ * │                                                                           │
+ * │  1. `overflow-x-auto` + `max-w-full` on the WRAPPER — the same rule as    │
+ * │     for code blocks: wide content scrolls INSIDE its own block. Without   │
+ * │     it the table stretches the chat bubble and the whole panel grows a    │
+ * │     horizontal scrollbar.                                                 │
+ * │                                                                           │
+ * │  2. A bubble holding a table must be a block with a DEFINITE WIDTH        │
+ * │     (`block w-full`, see `ChatPanel`), not an `inline-block` that shrinks │
+ * │     to its content. With `inline-block` the wrapper's width depends on    │
+ * │     the content inside it — `max-w-full` has nothing left to measure      │
+ * │     against, and layer 1 stops working.                                   │
+ * │                                                                           │
+ * │ So however narrow the panel gets (MIN_W = 300px) the table only scrolls   │
+ * │ horizontally inside itself and can never widen the sidebar.               │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `min-w-max` trên `<table>`: để bảng giữ bề rộng tự nhiên của nó rồi mới cuộn,
- * thay vì bị bóp cho vừa khung và mỗi ô xuống dòng thành một cột chữ dọc.
+ * `min-w-max` on the `<table>`: let the table keep its natural width and scroll,
+ * instead of being squeezed to fit until every cell wraps into a vertical column
+ * of letters.
  */
 function Table({ head, rows, align }: { head: string[]; rows: string[][]; align: Align[] }) {
   return (
@@ -161,17 +168,18 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
           return (
             <div key={i} className="my-1.5 overflow-hidden rounded-lg border border-line bg-line/25">
               {/*
-                Nhãn ngôn ngữ, KHÔNG tô màu cú pháp — quyết định có chủ ý.
+                A language label, NO syntax colouring — a deliberate decision.
 
-                Tô màu là một LỜI KHẲNG ĐỊNH về cú pháp: tô nhầm một chuỗi thành
-                comment thì người đọc tin theo, và màu sai tệ hơn không màu hẳn.
-                Tự viết tokenizer cho py/TS/C/C++/Java là 5 bộ ngữ pháp sai theo
-                5 kiểu khác nhau.
+                Colouring is an ASSERTION about syntax: paint a string as a
+                comment by mistake and the reader believes it, and wrong colour
+                is worse than none. Hand-writing tokenizers for py/TS/C/C++/Java
+                is five grammars wrong in five different ways.
 
-                Và đo được (SPEC-artifacts §3): 14/14 kết quả trên máy người dùng
-                là `.md` — nhân viên chỉ có `Write`/`Edit`, chưa vai trò nào sinh
-                ra code. Đây là tính năng cho một người dùng CHƯA TỒN TẠI. Khi có
-                phòng Kỹ thuật thật thì gắn `highlight.js` vào đúng chỗ này.
+                And it is measured (SPEC-artifacts §3): 14 of 14 artifacts on the
+                user's machine are `.md` — employees only have `Write`/`Edit`,
+                and no role yet produces code. This is a feature for a user WHO
+                DOES NOT EXIST. When there is a real engineering department,
+                `highlight.js` goes exactly here.
               */}
               {b.lang && (
                 <div className="border-b border-line px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-wide text-muted">
@@ -179,9 +187,9 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
                 </div>
               )}
               {/*
-                `overflow-x-auto` nằm ở ĐÂY, không ở khối cha: một dòng code dài
-                phải cuộn TRONG khối của nó. Thiếu nó thì cả panel sinh thanh
-                cuộn ngang và bong bóng chat bị nong rộng ra.
+                `overflow-x-auto` belongs HERE, not on the parent: a long line of
+                code has to scroll INSIDE its own block. Without it the whole
+                panel grows a horizontal scrollbar and the chat bubble stretches.
               */}
               <pre className="overflow-x-auto px-2.5 py-2">
                 <code className="font-mono text-[12px] leading-relaxed text-ink">{b.text}</code>
@@ -204,18 +212,18 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
         }
 
         /**
-         * DANH SÁCH VIỆC CẦN LÀM. → markdown-core.ts `TASK`
+         * TASK LISTS. → markdown-core.ts `TASK`
          *
-         * Ô vuông vẽ bằng CSS, không phải `<input type="checkbox">`:
+         * The box is drawn in CSS, not with `<input type="checkbox">`:
          *
-         *  · `<input>` mặc định của trình duyệt không nghe theo bảng màu, nên nó
-         *    hiện xanh hệ điều hành giữa một giao diện đã chọn màu cẩn thận.
-         *  · Nó BẤM ĐƯỢC theo mặc định, và bấm được ở đây là nói dối: không có
-         *    đường nào ghi ngược lại vào file. `disabled` thì lại hiện xám mờ
-         *    như một ô đang hỏng.
+         *  · A browser's default `<input>` ignores the palette, so it shows up
+         *    OS-blue in the middle of a carefully coloured interface.
+         *  · It is CLICKABLE by default, and clickable here is a lie: there is
+         *    no path back to the file. `disabled` instead greys it out like a
+         *    control that is broken.
          *
-         * `aria-hidden` trên ô vuông + chữ "đã xong/chưa xong" cho trình đọc màn
-         * hình: người khiếm thị phải nghe được trạng thái, không chỉ thấy dấu ✓.
+         * `aria-hidden` on the box plus a "done/not done" label for screen
+         * readers: a blind user has to hear the state, not just see a ✓.
          */
         if (b.kind === 'tasks') {
           return (
@@ -232,9 +240,9 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
                   >
                     ✓
                   </span>
-                  <span className="sr-only">{it.done ? 'đã xong: ' : 'chưa xong: '}</span>
-                  {/* Gạch ngang việc đã xong, nhưng KHÔNG làm mờ chữ: người ta
-                      vẫn phải đọc lại được thứ mình đã làm. */}
+                  <span className="sr-only">{it.done ? t('md.taskDone') : t('md.taskTodo')}</span>
+                  {/* Strike through what is done, but do NOT fade the text:
+                      people still have to be able to read back what they did. */}
                   <span className={`min-w-0 break-words ${it.done ? 'text-muted line-through' : 'text-ink'}`}>
                     <Inline text={it.text} />
                   </span>
@@ -244,9 +252,10 @@ export function Markdown({ text, variant = 'chat' }: { text: string; variant?: '
           );
         }
 
-        // Dòng trắng ở HAI ĐẦU bị cắt, bên TRONG giữ nguyên: backend dựng sẵn
-        // nhiều câu nhiều dòng (`/help`, dải bước kế hoạch, khối "kết quả đã lưu
-        // tại") và chúng dựa vào đúng những ký tự xuống dòng đó.
+        // Blank lines at BOTH ENDS are trimmed, the ones INSIDE are kept: the
+        // backend assembles plenty of multi-line messages (`/help`, the strip of
+        // plan steps, the "artifact saved at" block) and they depend on exactly
+        // those newlines.
         const body = b.text.replace(/^\n+|\n+$/g, '');
         if (!body) return null;
         return (

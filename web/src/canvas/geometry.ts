@@ -14,20 +14,22 @@ export function sizeOf(kind: NodeKind): { w: number; h: number } {
 }
 
 /**
- * Cổng của một node trên một sợi dây.
+ * Where a wire attaches to a node.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ MỖI NODE CÓ HAI CỔNG VÀO, KHÔNG PHẢI MỘT. (đổi 23/08, user bắt được)     │
+ * │ EVERY NODE HAS TWO INBOUND PORTS, NOT ONE. (changed 23/08, user caught)  │
  * │                                                                          │
- * │ Bản trước: `in` = giữa cạnh TRÊN, `out` = giữa cạnh DƯỚI, không phụ thuộc │
- * │ vào sợi dây nào. Nên dây từ Trợ lý và dây từ cánh tay **chui vào CÙNG một │
- * │ điểm** trên đỉnh nhân viên — hai quan hệ khác hẳn nhau, một cái cổng.     │
+ * │ Before: `in` = middle of the TOP edge, `out` = middle of the BOTTOM edge,│
+ * │ regardless of which wire it was. So the wire from the assistant and the  │
+ * │ wire from an arm entered at the SAME POINT on an employee's top edge —   │
+ * │ two entirely different relationships through one port.                   │
  * │                                                                          │
- * │ Hai quan hệ đó ngược chiều nhau, và đó chính là thứ phải nhìn thấy:       │
- * │   Trợ lý → nhân viên   GIAO VIỆC       đi từ trên xuống                  │
- * │   cánh tay → nhân viên CẤP NĂNG LỰC    đẩy từ dưới lên                   │
+ * │ Those two run in opposite directions, and that is exactly what has to be │
+ * │ visible:                                                                 │
+ * │   assistant → employee   HANDS OUT WORK      flows downward              │
+ * │   arm → employee         GRANTS CAPABILITY   pushes upward               │
  * │                                                                          │
- * │ ⇒ Cổng suy từ CHIỀU của sợi dây, không từ node. `up` = dây đi lên.        │
+ * │ ⇒ The port follows the wire's DIRECTION, not the node. `up` = going up.  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function anchor(
@@ -36,16 +38,18 @@ export function anchor(
   up = false,
 ): Point {
   const s = sizeOf(node.kind);
-  // Dây đi lên thì đảo cả hai đầu: nguồn nhả ra ở CẠNH TRÊN, đích nhận ở CẠNH DƯỚI.
+  // An upward wire flips both ends: the source leaves from the TOP edge, the
+  // target receives on the BOTTOM edge.
   const bottom = up ? dir === 'in' : dir === 'out';
   return { x: node.x + s.w / 2, y: bottom ? node.y + s.h : node.y };
 }
 
 /**
- * Bézier dọc. `dy` co giãn theo khoảng cách để dây gần không bị phồng.
+ * A vertical Bezier. `dy` scales with distance so short wires do not bulge.
  *
- * `up` phải đảo cả hai điểm điều khiển. Giữ nguyên chúng cho dây đi lên thì
- * đường cong thắt nút ở giữa — nó cố phồng xuống trong khi hai đầu đi lên.
+ * ⚠ `up` has to flip BOTH control points. Leave them as they are for an upward
+ * wire and the curve knots in the middle — it tries to bulge downward while
+ * both ends travel up.
  */
 export function curve(a: Point, b: Point, up = false): string {
   const dy = Math.max(45, Math.abs(b.y - a.y) / 2);
@@ -58,29 +62,29 @@ export function screenToWorld(ev: { clientX: number; clientY: number }, rect: DO
 }
 
 /**
- * Tự sắp xếp — nút "Sắp xếp lại sơ đồ".
+ * Auto-layout — the "Rearrange diagram" button.
  *
- * Chỉ là lớp vỏ mỏng quanh `arrangeAll` ở `src/core/layout-geometry.ts`, tức là
- * ĐÚNG hàm server dùng khi cấp chỗ cho node chưa có toạ độ. Trước đây đây là
- * bản mã thứ hai, và hai bản đã lệch nhau: văn phòng mới hiện sơ đồ méo, bấm
- * nút này thì nó thẳng lại.
+ * A thin shell over `arrangeAll` in `src/core/layout-geometry.ts`, i.e. THE SAME
+ * function the server uses when placing nodes that have no coordinates yet. This
+ * used to be a second implementation, and the two drifted: a new office rendered
+ * a crooked diagram, and pressing this button straightened it out.
  */
 export function arrange(
   nodes: readonly CanvasNode[],
   /**
-   * Cạnh của canvas. Chỉ cạnh `mcp → agent` có tác dụng — `arrangeAll` tự lọc.
+   * The canvas edges. Only `mcp → agent` edges matter — `arrangeAll` filters.
    *
-   * ⚠ PHẢI TRUYỀN. Thiếu nó thì nút "Sắp xếp lại sơ đồ" chạy nhánh CŨ (mọi cánh
-   * tay một hàng căn giữa, không phân biệt đã nối dây hay chưa) — tức là giao
-   * diện và server lại xếp ra hai bố cục khác nhau, đúng lớp lỗi mà cả file
-   * `layout-geometry.ts` sinh ra để đóng.
+   * ⚠ MUST BE PASSED. Without it the "Rearrange diagram" button takes the OLD
+   * branch (every arm on one centred row, wired or not) — which is the interface
+   * and the server producing two different layouts again, the exact class of bug
+   * the whole of `layout-geometry.ts` exists to close.
    */
   edges: readonly { from: string; to: string }[] = [],
 ): Map<string, Point> {
   return arrangeAll(nodes, edges);
 }
 
-/** Khung bao mọi node, để tính "vừa khung". */
+/** Bounding box of every node, for "fit to view". */
 export function bounds(nodes: readonly CanvasNode[], live: Map<string, Point>) {
   let minX = Infinity;
   let minY = Infinity;
@@ -119,10 +123,10 @@ export function fitViewport(
 export const ZOOM_MIN = 0.35;
 export const ZOOM_MAX = 2;
 /**
- * Ngưỡng phân biệt CLICK với KÉO.
+ * The threshold that separates a CLICK from a DRAG.
  *
- * Trình duyệt bắn một `mousemove` ngay cả khi con trỏ đứng yên, và tay người
- * rung một pixel. Không có ngưỡng thì gần như MỌI cú click vào node đều bị hiểu
- * thành cú kéo, và bảng chi tiết không bao giờ mở ra.
+ * Browsers fire a `mousemove` even when the pointer is still, and a human hand
+ * shakes by a pixel. Without a threshold, almost EVERY click on a node reads as
+ * a drag, and the detail panel never opens.
  */
 export const DRAG_THRESHOLD = 4;

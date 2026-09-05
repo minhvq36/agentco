@@ -1,33 +1,38 @@
 /**
- * ĐĂNG NHẬP MỘT DỊCH VỤ — hai route và một cái bàn tạm. → docs/SPEC-arms.md §5h
+ * SIGNING IN TO A SERVICE — two routes and one temporary table. → docs/SPEC-arms.md §5h
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ① NÚT ĐĂNG NHẬP Ở **WEB UI**, KHÔNG Ở DAEMON. (bài học đắt, 24/08)       │
+ * │ ① THE SIGN-IN BUTTON LIVES IN THE **WEB UI**, NOT THE DAEMON. (an expensive         │
+ * │ lesson, 24/08)                                                              │
  * │                                                                          │
- * │ Spike bản đầu tự mở trình duyệt từ tiến trình nền. Nó hỏng ở đúng ca      │
- * │ thường gặp nhất, và user gặp ngay lượt đầu: trình duyệt mặc định của máy  │
- * │ **chưa đăng nhập Notion**, còn cái đang mở agentco thì có. Daemon không   │
- * │ biết gì về phiên đăng nhập của người dùng; **trình duyệt thì biết**.      │
+ * │ The first spike opened the browser itself from the background process. It broke      │
+ * │ at exactly the most common case, and the user hit it on the very first run: the        │
+ * │ machine's default browser **wasn't signed into Notion**, while the one with            │
+ * │ agentco open was. The daemon knows nothing about the user's own sign-in                 │
+ * │ session; **the browser does**.                                                    │
  * │                                                                          │
- * │ ⇒ Ta không mở trình duyệt. Ta trả về một URL, và **web UI tự mở tab**     │
- * │ trong chính cửa sổ người dùng đang ngồi. Không có `spawn`, nên cũng       │
- * │ không có lớp lỗi shell-quoting đã cắt URL ở dấu `&` trên Windows.        │
+ * │ ⇒ We don't open a browser. We return a URL, and the **web UI opens the tab              │
+ * │ itself** inside the exact window the user is sitting at. No `spawn`, so there's         │
+ * │ also no shell-quoting failure class that truncated URLs at `&` on Windows.             │
  * │                                                                          │
- * │ ② REDIRECT VỀ CHÍNH DAEMON, không dựng cổng loopback riêng.              │
+ * │ ② REDIRECTS BACK TO THE DAEMON ITSELF, no separate loopback port built.               │
  * │                                                                          │
- * │ Daemon đã lắng nghe sẵn ở `127.0.0.1:<port>`. Dùng luôn nó thì bỏ được   │
- * │ cả một vòng đời server tạm (mở trước DCR vì `redirect_uri` phải khớp      │
- * │ từng ký tự · đóng khi xong · đóng khi người dùng bỏ ngang · rò cổng khi   │
- * │ quên đóng). RFC 8252 cho phép loopback redirect, và cổng cố định thì      │
- * │ **đăng ký một lần dùng mãi** thay vì DCR lại mỗi lần bấm.                 │
+ * │ The daemon is already listening on `127.0.0.1:<port>`. Reusing it removes an           │
+ * │ entire temporary server lifecycle (opened before DCR because `redirect_uri` must         │
+ * │ match character-for-character · closed when done · closed if the user abandons          │
+ * │ it · a leaked port if closing gets forgotten). RFC 8252 permits loopback                │
+ * │ redirects, and a fixed port means **registered once, used forever** instead of           │
+ * │ re-running DCR on every click.                                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
+import fs from 'node:fs';
 import type { ServerResponse } from 'node:http';
 
 import type { Company } from '../core/company.js';
-import { companyPaths } from '../core/paths.js';
+import { companyPaths, type CompanyPaths } from '../core/paths.js';
 import { RunError } from '../core/types.js';
+import { t } from '../i18n/index.js';
 import { findArm } from '../core/catalog.js';
 import { callTool } from '../core/mcp-http.js';
 import { readClients, readOAuth, saveClient, saveOAuth } from '../core/secrets.js';
@@ -52,12 +57,13 @@ import {
 } from '../core/oauth.js';
 
 /**
- * Lượt đăng nhập ĐANG BAY. Trong RAM, cố ý.
+ * A sign-in flow IN FLIGHT. In RAM, deliberately.
  *
- * `code_verifier` là bí mật **một lần**, chỉ có nghĩa trong vài chục giây giữa
- * lúc mở tab và lúc Notion gọi lại. Ghi nó xuống đĩa là tạo ra một bí mật thứ
- * hai phải bảo vệ, để đổi lấy khả năng "khôi phục" một thứ mà cách khôi phục
- * đúng là **bấm lại nút**. Daemon tắt ⇒ mất ⇒ đúng như mong muốn.
+ * `code_verifier` is a **one-time** secret, only meaningful for the few tens of
+ * seconds between opening the tab and Notion calling back. Writing it to disk
+ * would create a second secret to protect, in exchange for the ability to "restore"
+ * something whose correct recovery path is simply **click the button again**.
+ * Daemon dies ⇒ lost ⇒ exactly as intended.
  */
 interface Pending {
   meta: AsMeta;
@@ -70,7 +76,7 @@ interface Pending {
 }
 const pending = new Map<string, Pending>();
 
-/** Quá hạn thì dọn — một `state` treo mãi là một khe để đoán mò. */
+/** Expired ones get swept — a `state` that lingers forever is a slot for guessing. */
 const PENDING_TTL_MS = 10 * 60_000;
 
 function sweep(): void {
@@ -80,20 +86,23 @@ function sweep(): void {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `client_id` NẰM TRÊN ĐĨA, KHÔNG NẰM TRONG RAM. (truy ra 27/08)        │
+ * │ 🔴 `client_id` LIVES ON DISK, NOT IN RAM. (traced 27/08)                 │
  * │                                                                          │
- * │ Bản cũ ở đây là `new Map()`. Tắt daemon là mất ⇒ lần bật sau **đăng ký    │
- * │ một ứng dụng MỚI** ở phía dịch vụ. Người dùng bật/tắt vài chục lần là vài │
- * │ chục ứng dụng, mỗi cái cầm chìa của một nhóm tài khoản.                   │
+ * │ The old version here was `new Map()`. Killing the daemon lost it ⇒ next   │
+ * │ startup **registered a NEW application** with the service. A user who      │
+ * │ restarts a few dozen times gets a few dozen applications, each holding the │
+ * │ key to a group of accounts.                                              │
  * │                                                                          │
- * │ Số đo dẫn tới đây: hai tài khoản Notion chết dùng **chung một `client_id` │
- * │ cũ**, tài khoản còn sống dùng `client_id` mới nhất — và cả hai client vẫn │
- * │ tồn tại (`invalid_grant`, không phải `invalid_client`), nên thứ mất là    │
- * │ **quyền cấp cho ứng dụng cũ**, không phải bản thân chìa.                  │
+ * │ The measurement that led here: two dead Notion accounts sharing **the same │
+ * │ old `client_id`**, the surviving account using the newest `client_id` —    │
+ * │ and both clients still exist (`invalid_grant`, not `invalid_client`), so    │
+ * │ what's actually lost is **the grant to the old application**, not the key   │
+ * │ itself.                                                                  │
  * │                                                                          │
- * │ ⇒ Luật: **ứng dụng đứng yên, chỉ chìa xoay.** Đó chính là cách một phiên  │
- * │ web sống được cả năm — thứ người dùng đòi bằng đúng câu *"account         │
- * │ Facebook, Shopee log cả năm có bị ai đá ra đâu"*.                         │
+ * │ ⇒ Rule: **the application stays put, only the key rotates.** That's exactly│
+ * │ how a web session survives a whole year — the thing users expect, in       │
+ * │ exactly the words *"my Facebook, Shopee account stays logged in for a       │
+ * │ year, nobody kicks it out"*.                                              │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function clientFor(company: Company, key: string): string | undefined {
@@ -107,30 +116,33 @@ export interface StartResult {
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐỊA CHỈ REDIRECT — THỨ DUY NHẤT KHÔNG ĐƯỢC PHÉP ĐOÁN. (user hỏi 26/08)   │
+ * │ THE REDIRECT ADDRESS — THE ONE THING THAT MUST NEVER BE GUESSED. (user asked │
+ * │ 26/08)                                                                   │
  * │                                                                          │
- * │   *"cái flow redirect về nên cần case khách hàng chạy docker, vps, nginx │
- * │    → domain… 1 là ghi vào backlog, 2 là làm luôn, tôi sợ làm mà để đó    │
- * │    không test cũng ố dề"*                                                │
+ * │   *"the redirect flow needs to handle customers running docker, vps, nginx │
+ * │    → domain… either 1) log it in the backlog, or 2) do it now — I'm worried │
+ * │    about building it and leaving it untested"*                            │
  * │                                                                          │
- * │ Câu lo đúng, nên đây **không** phải một tính năng triển khai chưa test —  │
- * │ nó là một **cái chốt**, và chốt thì test được ngay hôm nay: mọi nhánh     │
- * │ dưới đây là hàm thuần, không cần Docker nào để chạy.                     │
+ * │ The worry is legitimate, so this is **not** an unfinished feature waiting  │
+ * │ on a test — it's a **gate**, and a gate can be tested today: every branch   │
+ * │ below is a pure function, no Docker needed to run it.                     │
  * │                                                                          │
- * │ 🔴 VÌ SAO KHÔNG SUY TỪ HEADER `Host`: `redirect_uri` là nơi **mã uỷ       │
- * │ quyền** được gửi tới. `Host` do client gửi nên **giả được** — suy redirect│
- * │ từ nó nghĩa là ai gọi được daemon cũng chỉ định được nơi nhận mã. Đó là   │
- * │ lỗ chiếm tài khoản, không phải một chi tiết tiện lợi. Cùng lý lẽ với      │
- * │ `isLoopback` chỉ đọc địa chỉ SOCKET chứ không đọc `X-Forwarded-For`.     │
+ * │ 🔴 WHY WE DON'T INFER FROM THE `Host` HEADER: `redirect_uri` is where the  │
+ * │ **authorization code** gets sent. `Host` is sent by the client, so it can   │
+ * │ be **spoofed** — inferring the redirect from it means anyone who can call   │
+ * │ the daemon can also choose where the code lands. That's an account-takeover│
+ * │ hole, not a convenience detail. Same reasoning as `isLoopback` only reading │
+ * │ the SOCKET address, never `X-Forwarded-For`.                              │
  * │                                                                          │
- * │ ⇒ Ba nhánh, và nhánh thứ ba là thứ cứu người triển khai:                 │
- * │   ① khai `public_url`        → dùng, sau khi soi kỹ                       │
- * │   ② chạy loopback, không khai → `http://127.0.0.1:<cổng>` (ca đã test)   │
- * │   ③ bind ra ngoài, không khai → **TỪ CHỐI**, và nói ra cách sửa          │
+ * │ ⇒ Three branches, and the third is what saves the person deploying it:     │
+ * │   ① `public_url` declared        → use it, after careful validation        │
+ * │   ② running loopback, not declared → `http://127.0.0.1:<port>` (tested case)│
+ * │   ③ bound externally, not declared → **REFUSE**, and say how to fix it     │
  * │                                                                          │
- * │ Nhánh ③ đúng khuôn `serve()` đã dùng cho `AGENTCO_TOKEN`: mở cổng ra      │
- * │ ngoài mà thiếu một thứ bắt buộc thì **dừng ngay, nói thẳng** — không      │
- * │ chạy tiếp rồi hỏng ở một chỗ xa nguyên nhân.                             │
+ * │ Branch ③ follows the same pattern `serve()` already uses for `AGENTCO_TOKEN`:│
+ * │ opening a port to the outside while missing something mandatory means      │
+ * │ **stop right there, say so plainly** — not limping on and failing         │
+ * │ somewhere far from the cause.                                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function redirectBase(opts: { host: string; port: number; publicUrl?: string }): string {
@@ -140,11 +152,10 @@ export function redirectBase(opts: { host: string; port: number; publicUrl?: str
   if (!raw) {
     if (loopback) return `http://127.0.0.1:${opts.port}`;
     throw new RunError(
-      `Daemon đang lắng nghe ở "${opts.host}", nên "http://127.0.0.1" KHÔNG phải địa chỉ người dùng ` +
-        `gõ vào trình duyệt — dịch vụ sẽ trả mã uỷ quyền về nhầm máy.\n` +
-        `Khai địa chỉ thật rồi thử lại:\n` +
-        `  AGENTCO_RUNTIME_PUBLIC_URL=https://agentco.cong-ty-cua-ban.com\n` +
-        `hoặc đặt runtime.public_url trong company.yaml.`,
+      t('srv.oauthLoopbackHost', {
+        host: opts.host,
+        hint: '  AGENTCO_RUNTIME_PUBLIC_URL=https://agentco.your-company.com',
+      }),
       'other',
     );
   }
@@ -153,47 +164,45 @@ export function redirectBase(opts: { host: string; port: number; publicUrl?: str
   try {
     u = new URL(raw);
   } catch {
-    throw new RunError(`runtime.public_url không phải URL hợp lệ: "${raw}"`, 'other');
+    throw new RunError(t('srv.oauthPublicUrlInvalid', { raw }), 'other');
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') {
-    throw new RunError(`runtime.public_url phải là http hoặc https, đang là "${u.protocol}"`, 'other');
+    throw new RunError(t('srv.oauthPublicUrlScheme', { scheme: u.protocol }), 'other');
   }
   /**
-   * ⚠ `http` chỉ được phép khi đích là chính máy này. Mã uỷ quyền đi qua một
-   * chặng `http` trên mạng là đi ở dạng chữ thường — ai đứng giữa cũng đọc
-   * được, và mã đó đổi thẳng ra chìa. Phần lớn dịch vụ cũng tự từ chối, nhưng
-   * ta không dựa vào việc họ nhớ từ chối hộ.
+   * ⚠ `http` is only allowed when the target is this machine itself. An
+   * authorization code crossing a network `http` hop travels in plaintext —
+   * anyone in the middle can read it, and that code trades directly for a key.
+   * Most services reject this themselves too, but we don't rely on them
+   * remembering to.
    */
   const targetLoopback = /^(127\.|localhost$|\[::1\]$)/i.test(u.hostname) || u.hostname === '::1';
   if (u.protocol === 'http:' && !targetLoopback) {
-    throw new RunError(
-      `runtime.public_url dùng http:// cho một địa chỉ ngoài máy này ("${u.hostname}").\n` +
-        `Mã uỷ quyền sẽ đi qua mạng ở dạng chữ thường — bất kỳ ai đứng giữa cũng đổi được nó ra chìa.\n` +
-        `Dùng https, hoặc đưa nginx/Caddy lên trước để nó lo TLS.`,
-      'other',
-    );
+    throw new RunError(t('srv.oauthPublicUrlInsecure', { host: u.hostname }), 'other');
   }
-  // Query/hash trong một địa chỉ gốc là dấu hiệu dán nhầm cả một URL nào đó.
-  // Bỏ qua im lặng thì `redirect_uri` lệch từng ký tự với thứ đã đăng ký, và
-  // dịch vụ trả `invalid_redirect_uri` — câu **không hề nói ra nguyên nhân**.
+  // A query/hash on an origin address is a sign some whole other URL got pasted
+  // in by mistake. Ignoring it silently means `redirect_uri` mismatches the
+  // registered one character-for-character, and the service returns
+  // `invalid_redirect_uri` — a message that **never says why**.
   if (u.search || u.hash) {
-    throw new RunError(`runtime.public_url không được có "?" hay "#": "${raw}"`, 'other');
+    throw new RunError(t('srv.oauthPublicUrlQuery', { raw }), 'other');
   }
-  // Giữ path prefix (nginx có thể gắn agentco dưới `/agentco`), bỏ gạch chéo cuối.
+  // Keep the path prefix (nginx might mount agentco under `/agentco`), strip the trailing slash.
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HAI ĐƯỜNG ĐĂNG NHẬP, VÀ METADATA CHỌN GIÙM — không ai gõ tên hãng.       │
+ * │ TWO SIGN-IN PATHS, AND METADATA PICKS WHICH ONE — nobody types a vendor name. │
  * │                                                                          │
- * │   có DCR          → web flow + PKCE (Notion)     `oauthStart`            │
- * │   khai device     → mã thiết bị (GitHub)         `oauthDeviceStart`      │
+ * │   has DCR         → web flow + PKCE (Notion)     `oauthStart`            │
+ * │   declares device  → device code (GitHub)         `oauthDeviceStart`      │
  * │                                                                          │
- * │ Mục danh mục khai `auth: {kind:'device'}` thì đi đường hai. Vì sao khai   │
- * │ trong DỮ LIỆU thay vì tự dò: `client_id` phải có **trước** khi gõ cửa,    │
- * │ và nó không suy được từ handshake — đúng cùng lý do tên biến chìa phải    │
- * │ cố định (§5c).                                                           │
+ * │ A catalog entry declaring `auth: {kind:'device'}` takes the second path.  │
+ * │ Why declared in DATA instead of auto-detected: `client_id` must exist      │
+ * │ **before** knocking on the door, and it can't be inferred from the         │
+ * │ handshake — the same reason the key's variable name has to be fixed        │
+ * │ (§5c).                                                                   │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function loginKind(catalogId: string): 'device' | 'web' | null {
@@ -202,7 +211,7 @@ export function loginKind(catalogId: string): 'device' | 'web' | null {
   return arm.auth?.kind === 'device' ? 'device' : 'web';
 }
 
-/** Mở một lượt đăng nhập. Trả URL cho **web UI** mở, không tự mở. */
+/** Opens a sign-in flow. Returns a URL for the **web UI** to open, doesn't open it itself. */
 export async function oauthStart(
   company: Company,
   catalogId: string,
@@ -211,20 +220,20 @@ export async function oauthStart(
   sweep();
   const arm = findArm(catalogId);
   if (!arm || arm.spec.kind !== 'http') {
-    throw new RunError(`"${catalogId}" không phải dịch vụ đăng nhập được.`, 'other');
+    throw new RunError(t('srv.oauthNotLoginService', { id: catalogId }), 'other');
   }
   const mcpUrl = arm.spec.url;
 
   const meta = await discover(mcpUrl);
-  if (!meta) throw new RunError(`${mcpUrl} không cần đăng nhập — cắm thẳng được.`, 'other');
+  if (!meta) throw new RunError(t('srv.oauthNoLoginNeeded', { url: mcpUrl }), 'other');
 
   const redirectUri = `${origin}/api/oauth/callback`;
   const ck = `${meta.issuer}|${redirectUri}`;
   let clientId = clientFor(company, ck);
   if (!clientId) {
     clientId = await register(meta, redirectUri);
-    // Ghi NGAY, trước khi mở tab: người dùng đóng daemon giữa chừng thì lần sau
-    // vẫn dùng lại đúng ứng dụng này thay vì đăng ký thêm một cái nữa.
+    // Write it NOW, before opening the tab: if the user closes the daemon mid-flow,
+    // next time it reuses this exact application instead of registering yet another one.
     saveClient(companyPaths(company.dir), ck, clientId);
   }
 
@@ -233,8 +242,8 @@ export async function oauthStart(
   pending.set(state, { meta, clientId, verifier, mcpUrl, prefix: catalogId, redirectUri, at: Date.now() });
 
   return {
-    // `authScope` không khai ⇒ `authorizeUrl` không gửi tham số `scope` nào,
-    // đúng hành vi cũ. → `catalog.ts §authScope`
+    // `authScope` not declared ⇒ `authorizeUrl` sends no `scope` parameter at all,
+    // preserving prior behavior. → `catalog.ts §authScope`
     authUrl: authorizeUrl(meta, {
       clientId,
       redirectUri,
@@ -246,7 +255,7 @@ export async function oauthStart(
   };
 }
 
-/** Notion gọi về đây. Trả một trang HTML nhỏ, và **không bao giờ trả token**. */
+/** Notion calls back here. Returns a small HTML page, and **never returns a token**. */
 export async function oauthCallback(
   company: Company,
   params: URLSearchParams,
@@ -254,20 +263,23 @@ export async function oauthCallback(
 ): Promise<{ name: string; label?: string } | null> {
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ TRANG NÀY LÀ THỨ DUY NHẤT NGƯỜI DÙNG THẤY Ở TAB KIA. (viết lại 30/08)    │
+   * │ THIS PAGE IS THE ONLY THING THE USER SEES IN THAT OTHER TAB. (rewritten   │
+   * │ 30/08)                                                                   │
    * │                                                                          │
-   * │ User chốt hình dạng: *"chỉ toàn chữ thôi cũng được, không cần icon, chữ   │
-   * │ thon gọn không to quá, căn giữa màn hình"* + *"font chữ hiện đại"*.       │
+   * │ User signed off on the look: *"plain text is fine, no icon needed, slim   │
+   * │ text not too big, centered on screen"* + *"a modern-looking font"*.        │
    * │                                                                          │
-   * │ Bản cũ mở đầu bằng một emoji ✅/❌ cỡ 2.5rem. Bỏ, và không chỉ vì thẩm mỹ:│
-   * │ một dấu tích to đùng **nói mạnh hơn thứ ta biết** — ở nhánh hỏng nó đã    │
-   * │ hét lên trước khi người ta kịp đọc câu giải thích, còn ở nhánh thành công │
-   * │ nó hứa "xong hết rồi" trong khi việc còn lại (chọn nấc, kéo dây) vẫn nằm  │
-   * │ ở tab agentco. Chữ nói vừa đúng phần nó biết.                            │
+   * │ The old version opened with a 2.5rem ✅/❌ emoji. Dropped it, and not just │
+   * │ for looks: a giant checkmark **claims more certainty than we actually       │
+   * │ have** — on the failure branch it screamed before anyone could read the     │
+   * │ explanation, and on the success branch it promised "all done" while what's  │
+   * │ left (picking a tier, wiring it up) still lives in the agentco tab. The     │
+   * │ text says exactly the part it actually knows.                              │
    * │                                                                          │
-   * │ ⚠ Tự-đóng chỉ chạy ở nhánh THÀNH CÔNG. Nhánh hỏng mà tự đóng sau 1,2 giây│
-   * │ là **xoá mất câu lỗi trước khi người ta đọc xong** — đúng lớp lỗi §5m     │
-   * │ (chuông kêu ở chỗ không ai nghe). Hỏng thì để nguyên, họ tự đóng.        │
+   * │ ⚠ Auto-close only runs on the SUCCESS branch. A failure branch that        │
+   * │ auto-closes after 1-2 seconds **erases the error message before anyone can │
+   * │ finish reading it** — exactly failure class §5m (a bell ringing where no one│
+   * │ can hear it). On failure, leave it as-is; they close it themselves.       │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const page = (title: string, body: string, ok: boolean) => {
@@ -276,18 +288,19 @@ export async function oauthCallback(
       `<!doctype html><meta charset="utf-8">` +
         `<meta name="viewport" content="width=device-width,initial-scale=1">` +
         `<title>${title}</title><style>` +
-        // `system-ui` đứng đầu để mỗi HĐH lấy đúng bộ chữ hiện đại của nó
-        // (Segoe UI Variable · SF Pro · Inter), rồi mới tới các bản dự phòng.
-        // Nền TRẮNG, chữ xám, không thẻ — user chốt 30/08: *"không cần màu mè
-        // container. Chỉ có nền trắng + chữ (hết)"*. "Chút gương" nằm ở hai chỗ
-        // rất nhẹ: một vệt sáng xám loang từ mép trên, và tiêu đề tô bằng
-        // gradient dọc (đậm trên, nhạt dưới) — đủ để chữ có chiều sâu mà không
-        // cần một khối hình nào.
+        // `system-ui` comes first so each OS picks up its own modern font
+        // (Segoe UI Variable · SF Pro · Inter), with fallbacks after it.
+        // WHITE background, gray text, no card — user's call on 30/08: *"no need
+        // for a fancy container. Just white background + text (that's it)"*.
+        // The "bit of polish" lives in two very light touches: a faint gray glow
+        // fading in from the top edge, and the heading tinted with a vertical
+        // gradient (dark on top, light below) — enough depth to the text without
+        // any actual graphic block.
         `*{box-sizing:border-box}` +
-        // ⚠ `height:100%` phải leo tới `html`, không chỉ `body`. Thiếu nó thì
-        // `body` cao bằng nội dung, và "căn giữa" chỉ căn trong đúng khối chữ —
-        // nhìn ra là lệch lên trên. `100dvh` để thanh địa chỉ trên di động
-        // không kéo lệch phần bù.
+        // ⚠ `height:100%` must climb up to `html`, not just `body`. Without it,
+        // `body` is only as tall as its content, so "centered" only centers within
+        // that text block — visibly shifted toward the top. `100dvh` so a mobile
+        // address bar doesn't throw the centering off.
         `html,body{height:100%}` +
         `body{margin:0;min-height:100dvh;padding:1.5rem;display:flex;align-items:center;justify-content:center;` +
         `background:#fff linear-gradient(180deg,#f3f3f2 0%,#fff 34%) no-repeat;` +
@@ -296,8 +309,8 @@ export async function oauthCallback(
         `-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}` +
         `main{width:min(22rem,calc(100vw - 2.5rem));text-align:center}` +
         `.tag{margin:0 0 1.1rem;font-size:10.5px;font-weight:500;letter-spacing:.15em;text-transform:uppercase;color:#a7a39e}` +
-        // `color` đặt TRƯỚC làm bản dự phòng: trình duyệt không hiểu
-        // `background-clip:text` thì chữ vẫn hiện, chỉ mất hiệu ứng.
+        // `color` is set FIRST as a fallback: a browser that doesn't understand
+        // `background-clip:text` still shows the text, just loses the effect.
         `h1{margin:0;font-size:1.0625rem;font-weight:550;letter-spacing:-.012em;line-height:1.4;color:#33312e;` +
         `background:linear-gradient(180deg,#33312e 12%,#7c7873 100%);` +
         `-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}` +
@@ -306,43 +319,48 @@ export async function oauthCallback(
         `</style>` +
         `<main><p class="tag">agentco</p>` +
         `<h1>${title}</h1><p class="say">${body}</p><hr></main>` +
-        // Chỉ đóng khi XONG, và chỉ đóng được nếu tab này do `window.open` sinh
-        // ra. Không đóng được thì thôi — câu chữ ở trên đã đủ để biết làm gì.
+        // Only closes when DONE, and only closable if this tab was spawned by
+        // `window.open`. If it can't close, that's fine — the text above already
+        // says what to do.
         (ok ? `<script>setTimeout(()=>window.close(),1400)</script>` : ''),
     );
   };
 
   const state = params.get('state') ?? '';
   const p = pending.get(state);
-  // Xoá NGAY, kể cả khi sắp hỏng: một `code_verifier` chỉ dùng đúng một lần, và
-  // để nó nằm lại là mở cửa cho lần gọi thứ hai với cùng `state`.
+  // Delete it NOW, even if we're about to fail: a `code_verifier` is used exactly
+  // once, and leaving it in place opens the door to a second call with the same
+  // `state`.
   pending.delete(state);
 
   const err = params.get('error');
   if (err) {
-    page('Chưa nối được', `Dịch vụ trả về: ${escapeHtml(err)}. Quay lại agentco và thử lại nhé.`, false);
+    page(t('srv.oauthPageFailedTitle'), t('srv.oauthPageFailedBody', { error: escapeHtml(err) }), false);
     return null;
   }
   if (!p) {
-    // `state` không khớp ⇒ mã này không phải của lượt ta mở. Đây là chốt CSRF,
-    // và nó cũng bắt luôn ca lành tính: bấm F5 trên trang callback.
-    page('Lượt đăng nhập đã hết hạn', 'Quay lại agentco và bấm Đăng nhập lần nữa.', false);
+    // `state` doesn't match ⇒ this code isn't from a flow we opened. This is the
+    // CSRF gate, and it also catches a perfectly benign case: hitting F5 on the
+    // callback page.
+    page(t('srv.oauthPageExpiredTitle'), t('srv.oauthPageExpiredBody'), false);
     return null;
   }
   const code = params.get('code');
   if (!code) {
-    page('Thiếu mã uỷ quyền', 'Dịch vụ không gửi mã về. Thử lại từ agentco.', false);
+    page(t('srv.oauthPageNoCodeTitle'), t('srv.oauthPageNoCodeBody'), false);
     return null;
   }
 
   /**
-   * ⚠ HAI KHỐI `try` RIÊNG, KHÔNG PHẢI MỘT. (tách 30/08 — user báo lỗi)
+   * ⚠ TWO SEPARATE `try` BLOCKS, NOT ONE. (split 30/08 — user reported a bug)
    *
-   * Bản cũ bọc cả đổi-chìa lẫn lưu-tài-khoản trong một `try`, và mọi thứ hỏng
-   * bên trong đều hiện ra là **"Đổi chìa không thành"**. Ca thật: đổi chìa
-   * **đã xong**, thứ hỏng là bước hỏi danh tính — nên câu lỗi chỉ **sai cửa**,
-   * và người dùng đi tìm nguyên nhân ở chỗ không có gì. Đúng lớp lỗi §5m, và
-   * lần này chính ta dựng lại nó. → [[agentco-wrong-door-errors]]
+   * The old version wrapped both the token exchange and the account-save step
+   * in one `try`, and anything that failed inside surfaced as **"Key exchange
+   * failed"**. The real case: the exchange had **already succeeded**, what
+   * failed was the identity-probe step — so the error message pointed to the
+   * **wrong door**, and the user went hunting for a cause that wasn't there.
+   * Exactly failure class §5m, and this time we built it ourselves.
+   * → [[agentco-wrong-door-errors]]
    */
   let acc: OAuthAccount;
   try {
@@ -354,29 +372,33 @@ export async function oauthCallback(
       mcpUrl: p.mcpUrl,
     });
   } catch (e) {
-    page('Chưa đổi được mã lấy chìa', escapeHtml((e as Error).message.slice(0, 200)), false);
+    page(t('srv.oauthPageExchangeTitle'), escapeHtml((e as Error).message.slice(0, 200)), false);
     return null;
   }
 
   try {
     /**
      * ┌────────────────────────────────────────────────────────────────────┐
-     * │ 🔴 CỬA NÀY TRƯỚC 30/08 TRUYỀN THẲNG `undefined` — VÀ ĐÓ LÀ BUG.    │
+     * │ 🔴 BEFORE 30/08 THIS DOOR PASSED `undefined` STRAIGHT THROUGH — AND THAT│
+     * │ WAS A BUG.                                                          │
      * │                                                                    │
-     * │ Chú thích của `mustHaveIdentity` tự dặn: *"MỘT hàm, gọi ở CẢ HAI    │
-     * │ đường lưu… chốt ở một cửa rồi để cửa kia mở là kiểu vá đã đốt dự án │
-     * │ này nhiều lần"*. Hàng rào **đúng là có ở cả hai cửa** — nhưng thứ    │
-     * │ NUÔI nó (`probeIdentity`) thì chỉ có ở đường mã thiết bị. Web flow  │
-     * │ khai `undefined`, tức luôn luôn "không có seed".                    │
+     * │ `mustHaveIdentity`'s own comment warns: *"ONE function, called at    │
+     * │ BOTH save paths… gating at one door and leaving the other open is a   │
+     * │ patch pattern that has burned this project before"*. The gate       │
+     * │ **really is present at both doors** — but the thing that FEEDS it    │
+     * │ (`probeIdentity`) only ran on the device-code path. The web flow      │
+     * │ passed `undefined`, meaning "no seed" every single time.             │
      * │                                                                    │
-     * │ Vô hình suốt vì hai mục web flow đầu tiên đều tự trả danh tính:     │
-     * │ Notion có `workspace_id` trong phản hồi token ⇒ `hasOwnSeed` true    │
-     * │ ⇒ chốt cho qua mà không cần seed. Linear là mục ĐẦU TIÊN vừa khai   │
-     * │ `identity` vừa đi web flow, nên nó là mục đầu tiên đâm vào —        │
-     * │ triệu chứng: *"Đã cấp quyền xong"* rồi hỏng ở bước lưu.             │
+     * │ It stayed invisible because the first two web-flow entries both      │
+     * │ return their own identity: Notion has `workspace_id` in the token     │
+     * │ response ⇒ `hasOwnSeed` is true ⇒ the gate passes without needing a   │
+     * │ seed. Linear is the FIRST entry that both declares `identity` and     │
+     * │ uses the web flow, so it's the first one to hit this — symptom:       │
+     * │ *"Grant succeeded"* then failing at the save step.                   │
      * │                                                                    │
-     * │ ⇒ Gọi `probeIdentity` y như đường kia. Mục không khai `identity`    │
-     * │ thì nó trả `{}` ngay lập tức (0 vòng mạng), nên Notion không mất gì.│
+     * │ ⇒ Call `probeIdentity` exactly like the other path. An entry that     │
+     * │ doesn't declare `identity` gets `{}` back immediately (0 network      │
+     * │ round trips), so Notion loses nothing.                              │
      * │ → [[agentco-finish-completely]]                                    │
      * └────────────────────────────────────────────────────────────────────┘
      */
@@ -387,10 +409,16 @@ export async function oauthCallback(
     mustHaveIdentity(acc, who.seed, arm?.name ?? p.prefix);
     const name = accountName(p.prefix, acc, who.seed);
     saveOAuth(companyPaths(company.dir), name, acc);
-    page('Đã kết nối', `${escapeHtml(acc.label ?? 'Tài khoản của bạn')} giờ dùng được trong agentco.`, true);
+    page(
+      t('srv.oauthPageDoneTitle'),
+      t('srv.oauthPageDoneBody', {
+        who: escapeHtml(acc.label ?? t('srv.oauthPageDoneFallbackWho')),
+      }),
+      true,
+    );
     return { name, ...(acc.label ? { label: acc.label } : {}) };
   } catch (e) {
-    page('Chưa lưu được tài khoản', escapeHtml((e as Error).message.slice(0, 200)), false);
+    page(t('srv.oauthPageSaveFailedTitle'), escapeHtml((e as Error).message.slice(0, 200)), false);
     return null;
   }
 }
@@ -398,12 +426,13 @@ export async function oauthCallback(
 // ─────────────────────────────────────────────────────────── device flow
 
 /**
- * Lượt đăng nhập bằng mã thiết bị ĐANG BAY. Trong RAM, cùng lý do `pending`.
+ * A device-code sign-in flow IN FLIGHT. In RAM, same reasoning as `pending`.
  *
- * ⚠ Khác `pending` ở một chỗ đáng nói: ở đây **không có bí mật nào**. `device_code`
- * chỉ có nghĩa khi đi kèm `client_id` công khai, và nó tự chết sau 15 phút. Nên
- * mất map này khi tắt daemon **không mất gì cả** — cách khôi phục đúng vẫn là
- * bấm lại nút.
+ * ⚠ Differs from `pending` in one thing worth noting: here there's **no secret
+ * at all**. `device_code` is only meaningful alongside a public `client_id`, and
+ * it dies on its own after 15 minutes. So losing this map when the daemon
+ * restarts **loses nothing** — the correct recovery is still just clicking the
+ * button again.
  */
 interface DevicePending {
   meta: AsMeta;
@@ -425,30 +454,34 @@ export interface DeviceStartResult {
   intervalMs: number;
 }
 
-/** Mở một lượt đăng nhập bằng mã thiết bị. **Không có `redirect_uri`.** */
+/** Opens a device-code sign-in flow. **No `redirect_uri`.** */
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ CLIENT_ID CỦA CÔNG TY NÀY — của khách nếu họ dán, của ta nếu không.      │
- * │ → SPEC-arms §5h·7h · `catalog.ts §ArmAuth.clientId`                      │
+ * │ THIS COMPANY'S OWN CLIENT_ID — the customer's if they pasted one, ours if  │
+ * │ not. → SPEC-arms §5h·7h · `catalog.ts §ArmAuth.clientId`                  │
  * │                                                                          │
- * │ ⚠ §5h·7h từng ghi ô này *"là công dân hạng nhất"* trong khi **0 dòng mã** │
- * │ tồn tại (bắt 27/08). Đây là phần thi hành.                                │
+ * │ ⚠ §5h·7h once described this field as *"a first-class citizen"* while      │
+ * │ **0 lines of code** actually existed for it (caught 27/08). This is that   │
+ * │ implementation.                                                          │
  * │                                                                          │
- * │ Vì sao nó không phải tính năng phụ — hai rủi ro của việc agentco đứng tên:│
- * │   ① app của ta bị hãng treo ⇒ **MỌI khách gãy cùng lúc**                  │
- * │   ② khách doanh nghiệp không muốn đi qua danh tính của ta                 │
- * │ Một ô nhập vá cả hai, và nó là câu trả lời tử tế nhất cho *"sao tôi phải  │
- * │ tin agentco"*: **"anh không phải tin."**                                  │
+ * │ Why it's not a side feature — two risks from agentco standing in as the    │
+ * │ identity:                                                               │
+ * │   ① our app gets suspended by the vendor ⇒ **EVERY customer breaks at once**│
+ * │   ② an enterprise customer doesn't want to route through our identity     │
+ * │ One input field patches both, and it's the most honest answer to *"why    │
+ * │ should I trust agentco"*: **"you don't have to."**                        │
  * │                                                                          │
- * │ Cất ở `$clients` — **cùng kho với client DCR**, và đó là đúng chỗ: cả hai │
- * │ đều trả lời *"công ty này đi bằng danh tính ứng dụng nào"*. Khác nguồn    │
- * │ (một cái hãng mint, một cái khách dán), cùng nghĩa. Khoá `device|<mục>`   │
- * │ vì đường device không có `redirect_uri` để làm khoá như DCR.              │
+ * │ Stored in `$clients` — **the same store as the DCR client**, and that's    │
+ * │ the right place: both answer *"which application identity does this        │
+ * │ company authenticate as"*. Different source (one minted by the vendor,     │
+ * │ one pasted by the customer), same meaning. Keyed by `device|<entry>`       │
+ * │ because the device path has no `redirect_uri` to use as a key like DCR.    │
  * │                                                                          │
- * │ ⚠ VÀ ĐÂY LÀ LÚC `OAuthAccount.client_id` KIẾM ĐƯỢC CHỖ ĐỨNG. Trước hôm   │
- * │ nay nó là bản sao thừa của danh mục (user chỉ ra đúng). Từ giờ có thể tồn │
- * │ tại hai client cùng lúc — chìa cũ do ta cấp, chìa mới do họ cấp — và làm  │
- * │ mới **phải dùng đúng client đã cấp**. Đọc từ danh mục là hỏng ở giờ thứ 4.│
+ * │ ⚠ AND THIS IS WHERE `OAuthAccount.client_id` EARNS ITS KEEP. Until now it  │
+ * │ was a redundant copy of the catalog entry (user correctly called this out).│
+ * │ From now on two clients can coexist — an old key we issued, a new key      │
+ * │ they issued — and refreshing **must use the exact client that issued it**. │
+ * │ Reading from the catalog fails four hours in.                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 const DEVICE_CLIENT_KEY = (catalogId: string) => `device|${catalogId}`;
@@ -460,7 +493,7 @@ export function deviceClientId(company: Company, catalogId: string): { id: strin
   return theirs ? { id: theirs, own: true } : { id: mine, own: false };
 }
 
-/** Dán rỗng = **quay về client của agentco**, không phải lưu một chuỗi rỗng. */
+/** Pasting empty = **fall back to agentco's own client**, not save an empty string. */
 export function setDeviceClientId(company: Company, catalogId: string, clientId: string): void {
   const v = clientId.trim();
   const paths = companyPaths(company.dir);
@@ -469,16 +502,15 @@ export function setDeviceClientId(company: Company, catalogId: string, clientId:
     return;
   }
   /**
-   * ⚠ CHẶN CHUỖI TRÔNG NHƯ BÍ MẬT. `client_id` là dữ liệu công khai; một chuỗi
-   * dài loằng ngoằng dán vào đây gần như chắc chắn là `client_secret` hoặc một
-   * private key — và ta vừa ghi nó vào một file người dùng commit lên git được.
-   * Cùng luật `SPEC-connectors.md §3c`: *UI phải từ chối lưu nếu phát hiện chuỗi
-   * trông giống token.*
+   * ⚠ REJECT STRINGS THAT LOOK LIKE A SECRET. `client_id` is public data; a long,
+   * gnarly string pasted in here is almost certainly a `client_secret` or a
+   * private key — and we're about to write it into a file the user can commit
+   * to git. Same rule as `SPEC-connectors.md §3c`: *the UI must refuse to save
+   * if it detects a string that looks like a token.*
    */
   if (v.length > 80 || /\s/.test(v) || /BEGIN|secret|ghp_|gho_|ghs_/i.test(v)) {
     throw new RunError(
-      'Chuỗi này trông không giống một Client ID. Client ID là dữ liệu công khai và ngắn ' +
-        '(GitHub App: dạng "Iv23li…"). Đừng dán client secret hay private key vào đây.',
+      t('srv.oauthNotAClientId'),
       'other',
     );
   }
@@ -493,23 +525,24 @@ export async function oauthDeviceStart(
 
   const arm = findArm(catalogId);
   if (!arm || arm.spec.kind !== 'http' || arm.auth?.kind !== 'device') {
-    throw new RunError(`"${catalogId}" không đăng nhập bằng mã thiết bị.`, 'other');
+    throw new RunError(t('srv.oauthNoDeviceLogin', { id: catalogId }), 'other');
   }
   const mcpUrl = arm.spec.url;
   const meta = await discover(mcpUrl);
-  if (!meta) throw new RunError(`${mcpUrl} không cần đăng nhập — cắm thẳng được.`, 'other');
+  if (!meta) throw new RunError(t('srv.oauthNoLoginNeeded', { url: mcpUrl }), 'other');
   if (!supportsDevice(meta)) {
     /**
-     * Danh mục khai một đằng, dịch vụ khai một nẻo. Nói thẳng ra là **lời khai
-     * của ta sai**, đừng đổ cho người dùng: họ không chọn cái này, ta ship nó.
+     * The catalog says one thing, the service says another. To be blunt, this is
+     * **our declaration being wrong**, not the user's fault: they didn't choose
+     * this, we shipped it.
      */
     throw new RunError(
-      `${meta.issuer} không còn hỗ trợ đăng nhập bằng mã thiết bị — mục danh mục này cần cập nhật.`,
+      t('srv.oauthDeviceGone', { issuer: meta.issuer }),
       'other',
     );
   }
 
-  // Client của CÔNG TY NÀY — của khách nếu họ đã dán, của ta nếu không.
+  // This company's own client — the customer's if they've already pasted one, ours if not.
   const { id: clientId } = deviceClientId(company, catalogId);
   const start = await deviceStart(meta, clientId, arm.auth.scope);
   const state = randomState();
@@ -535,43 +568,41 @@ export async function oauthDeviceStart(
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ HỎI XEM CHÌA NÀY LÀ CỦA AI. → `catalog.ts §ArmIdentity` · SPEC §5h·7k    │
+ * │ ASKS WHO THIS KEY BELONGS TO. → `catalog.ts §ArmIdentity` · SPEC §5h·7k    │
  * │                                                                          │
- * │ Hỏng thì **KHÔNG giết lượt đăng nhập** — chìa đã cấp thật rồi, và vứt nó  │
- * │ đi vì một lời gọi phụ hỏng là bắt người dùng làm lại toàn bộ vì một thứ   │
- * │ chỉ ảnh hưởng tới cái NHÃN. Rơi về hạt giống mặc định, đúng như trước.    │
+ * │ On failure this **must NOT kill the sign-in flow** — the key was already   │
+ * │ genuinely issued, and throwing it away over a failed side-call would force  │
+ * │ the user to redo the whole thing over something that only affects the       │
+ * │ LABEL. Falls back to the default seed, same as before.                    │
  * │                                                                          │
- * │ ⚠ Nhưng phải KÊU: rơi về mặc định nghĩa là tài khoản thứ hai của cùng     │
- * │ hãng sẽ đụng băm. Im lặng ở đây là để dành một lỗi gộp cánh tay cho ngày  │
- * │ khác.                                                                    │
+ * │ ⚠ But it must LOG: falling back to the default means a second account of    │
+ * │ the same vendor will collide on the hash. Silence here is saving up an      │
+ * │ arm-merging bug for another day.                                         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 KHÔNG CÓ DANH TÍNH RIÊNG ⇒ KHÔNG LƯU. Thà bắt đăng nhập lại.          │
- * │ → `oauth.ts §hasOwnSeed` (lý do đầy đủ + hai hậu quả đã cân)              │
+ * │ 🔴 NO OWN IDENTITY ⇒ DON'T SAVE. Better to force a re-login.              │
+ * │ → `oauth.ts §hasOwnSeed` (full reasoning + two weighed consequences)       │
  * │                                                                          │
- * │ Tóm tắt: thiếu hạt giống riêng thì `accountName` rơi về `issuer|mcp_url`, │
- * │ **giống hệt nhau cho mọi tài khoản** ⇒ người thứ hai ghi đè người thứ     │
- * │ nhất, im lặng. Một cái tên xấu chỉ phiền; cái này thì mất dữ liệu.        │
+ * │ Summary: without its own seed, `accountName` falls back to `issuer|mcp_url`,│
+ * │ **identical for every account** ⇒ the second account silently overwrites   │
+ * │ the first. A bad name is merely annoying; this loses data.                │
  * │                                                                          │
- * │ Vì sao vứt một chìa vừa đúc là ĐÚNG: nó chưa được lưu ở đâu cả, nên không │
- * │ có gì hỏng dở. Người dùng bấm lại một lượt — và lượt sau gần như chắc     │
- * │ chạy vì phiên MCP đã ấm (đúng thứ user quan sát 28/08: *"gỡ đi và làm     │
- * │ lại… nó ra chính xác tên"*).                                              │
+ * │ Why throwing away a freshly-minted key is CORRECT: it hasn't been saved     │
+ * │ anywhere yet, so nothing is left half-broken. The user clicks the flow      │
+ * │ again — and the next attempt is almost certain to succeed because the MCP   │
+ * │ session is now warm (exactly what the user observed on 28/08: *"removed it  │
+ * │ and redid it… got the exact right name"*).                                │
  * │                                                                          │
- * │ ⚠ MỘT hàm, gọi ở CẢ HAI đường lưu (web flow + mã thiết bị). Chốt ở một    │
- * │ cửa rồi để cửa kia mở là kiểu vá đã đốt dự án này nhiều lần.              │
+ * │ ⚠ ONE function, called at BOTH save paths (web flow + device code). Gating │
+ * │ at one door and leaving the other open is a patch pattern that has burned   │
+ * │ this project before.                                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function mustHaveIdentity(acc: OAuthAccount, seed: string | undefined, who: string): void {
   if (hasOwnSeed(acc, seed)) return;
-  throw new RunError(
-    `Đã cấp quyền xong, nhưng chưa lấy được danh tính riêng của tài khoản ${who} nên chưa lưu ` +
-      `được — lưu bây giờ thì tài khoản này sẽ đè lên một tài khoản ${who} khác. ` +
-      `Bấm Đăng nhập một lần nữa; lượt sau thường chạy ngay.`,
-    'other',
-  );
+  throw new RunError(t('srv.oauthNoIdentityYet', { who }), 'other');
 }
 
 async function probeIdentity(
@@ -582,24 +613,26 @@ async function probeIdentity(
   if (!id) return {};
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 THỬ HAI LƯỢT, LƯỢT SAU RỘNG HẠN HƠN. (bug user bắt 28/08)             │
+   * │ 🔴 TWO ATTEMPTS, THE SECOND WITH A WIDER DEADLINE. (bug the user caught    │
+   * │ 28/08)                                                                   │
    * │                                                                          │
-   * │ > *"Lần đầu tiên: tôi chọn 1 account mới, nó ra tên tài khoản là          │
-   * │ >  OAUTH_… viết hoa… Tôi gỡ đi và làm lại, vẫn account đó, nó ra chính    │
-   * │ >  xác tên"*                                                             │
+   * │ > *"First time: I chose a new account, it produced an account name of      │
+   * │ >  OAUTH_… uppercase… I removed it and redid it, same account, it            │
+   * │ >  produced the exact right name"*                                        │
    * │                                                                          │
-   * │ Lượt hỏi này là lời gọi ĐẦU TIÊN tới MCP của hãng bằng chìa vừa đúc, nên  │
-   * │ nó phải trả cả cái bắt tay phiên. Trần 10 giây của `callTool` là trần cho │
-   * │ một lời gọi **ấm**; lượt lạnh vượt qua được, và lượt thứ hai (đã ấm) thì  │
-   * │ nhanh — đúng thứ user quan sát.                                           │
+   * │ This probe is the FIRST call to the vendor's MCP using the freshly-minted   │
+   * │ key, so it has to pay for the session handshake too. `callTool`'s 10-second │
+   * │ deadline is a deadline for a **warm** call; a cold call blows past it, and  │
+   * │ the second attempt (now warm) is fast — exactly what the user observed.     │
    * │                                                                          │
-   * │ ⚠⚠ VÀ HỎNG Ở ĐÂY KHÔNG CHỈ LÀ CÁI TÊN XẤU. Với GitHub, không có `seed`   │
-   * │ thì `accountName` rơi về `issuer|mcp_url` — một chuỗi **giống hệt nhau    │
-   * │ cho mọi tài khoản** ⇒ cùng tên chìa ⇒ **cùng băm** ⇒ hai tài khoản gộp    │
-   * │ thành MỘT cánh tay. Đúng ca §6i mà chú thích ở `accountName` đã cảnh báo, │
-   * │ và nó **không có triệu chứng** cho tới khi người thứ hai đăng nhập.       │
+   * │ ⚠⚠ AND THE FAILURE HERE ISN'T JUST A BAD NAME. For GitHub, without `seed`  │
+   * │ `accountName` falls back to `issuer|mcp_url` — a string **identical for      │
+   * │ every account** ⇒ same key name ⇒ **same hash** ⇒ two accounts merge into   │
+   * │ ONE arm. Exactly the case §6i that `accountName`'s own comment warned         │
+   * │ about, and it has **no symptom** until a second person signs in.            │
    * │                                                                          │
-   * │ Nên hai lượt, và người gọi PHẢI xử lý ca vẫn hỏng — xem `oauthDevicePoll`.│
+   * │ Hence two attempts, and the caller MUST handle the case where it still      │
+   * │ fails — see `oauthDevicePoll`.                                           │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const auth = { Authorization: `Bearer ${token}` };
@@ -607,8 +640,7 @@ async function probeIdentity(
     (await callTool(id.url, auth, id.tool)) ?? (await callTool(id.url, auth, id.tool, {}, 25_000));
   if (!text) {
     process.emitWarning(
-      `Không hỏi được danh tính tài khoản (${arm.name}) sau 2 lượt — KHÔNG lưu chìa, vì thiếu ` +
-        `danh tính thì hai tài khoản của cùng dịch vụ này sẽ gộp làm một.`,
+      t('srv.oauthNoIdentityTwice', { name: t(arm.name) }),
     );
     return {};
   }
@@ -617,42 +649,45 @@ async function probeIdentity(
     const seed = j[id.idField];
     const label = j[id.labelField];
     return {
-      // `String()` vì đây là dữ liệu của bên thứ ba: `id` có thể là số.
+      // `String()` because this is third-party data: `id` might be a number.
       ...(seed !== undefined && seed !== null ? { seed: String(seed) } : {}),
       ...(typeof label === 'string' && label.trim() ? { label: label.trim() } : {}),
     };
   } catch {
-    // Tool trả chữ chứ không trả JSON — vẫn không phải lý do để bỏ chìa đi.
+    // The tool returned plain text instead of JSON — still not a reason to throw the key away.
     return {};
   }
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TRA BẢN CÀI APP — repo nào hãng thật sự cho cánh tay này đụng vào.       │
- * │ → `catalog.ts §repoScan` · SPEC-arms §5h·7o                              │
+ * │ CHECKING THE APP INSTALL — which repos the vendor actually lets this arm    │
+ * │ touch. → `catalog.ts §repoScan` · SPEC-arms §5h·7o                        │
  * │                                                                          │
- * │ 🔴 CẢ HÀM NÀY ĐỨNG TRÊN MỘT SỐ ĐO, VÀ SỐ ĐO ĐÓ PHẢN TRỰC GIÁC:           │
- * │ chìa `ghu_` **đọc được repo CÔNG KHAI bất kể app có được cài hay không**  │
- * │ (`list_branches` ✅ trên cả 16 repo trong khi app chỉ cài 2). Nên mọi     │
- * │ phép thử kiểu *"thử đọc một file xem có được không"* đều trả lời CÓ, và  │
- * │ một phép tra luôn trả lời CÓ thì tệ hơn không tra.                        │
+ * │ 🔴 THIS WHOLE FUNCTION RESTS ON ONE MEASUREMENT, AND THE MEASUREMENT IS     │
+ * │ COUNTERINTUITIVE: a `ghu_` key **can read PUBLIC repos regardless of        │
+ * │ whether the app is installed or not** (`list_branches` ✅ on all 16 repos    │
+ * │ while the app is only installed on 2). So any test shaped like *"try         │
+ * │ reading a file and see if it works"* always answers YES, and a check that    │
+ * │ always answers YES is worse than not checking at all.                       │
  * │                                                                          │
- * │ Thứ phân biệt được là `gateTool` — tool **chỉ đọc nhưng đòi quyền push**. │
- * │ Đo 4/4 đúng với bản cài thật. Đổi tool khác là giết cơ chế, xem chú thích │
- * │ ở `catalog.ts §repoScan.gateTool`.                                        │
+ * │ What actually discriminates is `gateTool` — a tool that's **read-only but    │
+ * │ requires push permission**. Measured 4/4 correct against a real install.     │
+ * │ Swapping in a different tool kills the mechanism — see the comment at        │
+ * │ `catalog.ts §repoScan.gateTool`.                                          │
  * │                                                                          │
- * │ ⚠ HỎNG THÌ TRẢ `null`, KHÔNG NÉM. Đây là một lời gọi PHỤ: mạng chập hay  │
- * │ hãng đổi tên tool không phải lý do chặn người dùng cắm cánh tay. Giao     │
- * │ diện phân biệt được "tra ra rỗng" (chặn) với "không tra được" (cho qua,   │
- * │ kèm câu nói thật) — hai chuyện khác nhau, hai xử lý khác nhau.            │
+ * │ ⚠ ON FAILURE, RETURN `null`, DON'T THROW. This is a SIDE call: a network     │
+ * │ hiccup or the vendor renaming a tool isn't a reason to block the user from   │
+ * │ connecting the arm. The UI distinguishes "checked and came back empty"       │
+ * │ (block) from "couldn't check" (allow through, with an honest message) —      │
+ * │ two different situations, two different handlings.                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export interface RepoScan {
   login: string;
-  /** Repo app THẬT SỰ được cài vào — thứ nhân viên đụng được đầy đủ. */
+  /** Repos the app is ACTUALLY installed on — what an employee can fully touch. */
   installed: string[];
-  /** Tổng số repo tìm thấy của tài khoản. `installed` là tập con. */
+  /** Total repos found for the account. `installed` is a subset. */
   seen: number;
 }
 
@@ -683,9 +718,10 @@ export async function scanRepos(
     if (!raw) return { login, installed: [], seen: 0 };
 
     /**
-     * Hình dạng phản hồi là của HÃNG, và nó đổi được. Nhận ba hình dạng đã gặp
-     * rồi thôi — đoán thêm là dựng một bộ phân tích cho một thứ ta không kiểm
-     * soát. Không đọc được ⇒ `seen: 0`, và giao diện nói "không tra được".
+     * The response shape belongs to the VENDOR, and it can change. We accept the
+     * three shapes we've actually seen and stop there — guessing more would mean
+     * building a parser for something we don't control. If it can't be read
+     * ⇒ `seen: 0`, and the UI says "couldn't check".
      */
     const j = JSON.parse(raw) as Record<string, unknown>;
     const items = (j['items'] ?? j['repositories'] ?? j) as unknown;
@@ -698,8 +734,9 @@ export async function scanRepos(
       .slice(0, SCAN_MAX);
 
     /**
-     * SONG SONG, có trần. Tuần tự thì 16 repo mất ~15 giây — người dùng đang
-     * đứng nhìn. Trần để không bắn 100 lời gọi cùng lúc vào hãng và ăn 429.
+     * PARALLEL, but capped. Sequentially, 16 repos take ~15 seconds — and the user
+     * is sitting there watching. The cap keeps us from firing 100 calls at the
+     * vendor at once and eating a 429.
      */
     const installed: string[] = [];
     for (let i = 0; i < names.length; i += SCAN_LANES) {
@@ -716,12 +753,12 @@ export async function scanRepos(
     }
     return { login, installed, seen: names.length };
   } catch {
-    // Xem khối chú thích ở trên: lời gọi phụ hỏng không được chặn lượt cắm.
+    // See the comment block above: a failed side call must not block the connect flow.
     return null;
   }
 }
 
-/** Trần số repo đem đi kiểm — người có 300 repo không đáng chờ 300 lời gọi. */
+/** Cap on repos checked — someone with 300 repos shouldn't have to wait for 300 calls. */
 const SCAN_MAX = 40;
 const SCAN_LANES = 8;
 const SCAN_TIMEOUT_MS = 8_000;
@@ -730,18 +767,18 @@ export type DevicePollResult =
   | { state: 'pending'; intervalMs: number; expiresAt: number }
   | { state: 'done'; name: string; label?: string };
 
-/** Một nhịp hỏi thăm. Giao diện gọi lặp; **daemon giữ phiên**, không phải trình duyệt. */
+/** One poll tick. The UI calls this in a loop; **the daemon holds the session**, not the browser. */
 export async function oauthDevicePoll(company: Company, state: string): Promise<DevicePollResult> {
   const p = devices.get(state);
-  if (!p) throw new RunError('Lượt đăng nhập đã hết hạn — bấm Đăng nhập lần nữa.', 'other');
+  if (!p) throw new RunError(t('srv.oauthSessionExpired'), 'other');
 
   const r = await devicePoll(p.meta, { clientId: p.clientId, start: p.start, mcpUrl: p.mcpUrl });
   if (r.state === 'pending') {
     return { state: 'pending', intervalMs: r.interval_ms, expiresAt: p.start.expires_at };
   }
 
-  // Xong ⇒ dọn NGAY, kể cả khi bước dưới hỏng: một `device_code` đã đổi ra chìa
-  // thì lần hỏi thứ hai không còn nghĩa gì.
+  // Done ⇒ delete it NOW, even if the step below fails: a `device_code` that has
+  // already been exchanged for a key makes a second poll meaningless.
   devices.delete(state);
 
   const arm = findArm(p.catalogId);
@@ -751,20 +788,23 @@ export async function oauthDevicePoll(company: Company, state: string): Promise<
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 KHÔNG CÓ DANH TÍNH ⇒ KHÔNG LƯU. Thà bắt đăng nhập lại.                │
+   * │ 🔴 NO IDENTITY ⇒ DON'T SAVE. Better to force a re-login.                  │
    * │                                                                          │
-   * │ Mục nào KHAI `identity` là mục mà hãng **không** trả danh tính trong phản │
-   * │ hồi token (GitHub). Thiếu `seed` ⇒ `accountName` rơi về `issuer|mcp_url`, │
-   * │ giống hệt nhau cho mọi tài khoản ⇒ tài khoản thứ hai **ghi đè** tài khoản │
-   * │ thứ nhất, im lặng. Một cái tên xấu chỉ phiền; cái này thì mất dữ liệu.    │
+   * │ An entry that DECLARES `identity` is one where the vendor **doesn't**       │
+   * │ return an identity in the token response (GitHub). Missing `seed` ⇒         │
+   * │ `accountName` falls back to `issuer|mcp_url`, identical for every account  │
+   * │ ⇒ the second account **silently overwrites** the first. A bad name is just  │
+   * │ annoying; this loses data.                                               │
    * │                                                                          │
-   * │ Vì sao vứt một chìa vừa đúc được là ĐÚNG: nó chưa được lưu ở đâu cả, nên  │
-   * │ không có gì hỏng dở. Người dùng bấm lại một lượt device flow — và lượt    │
-   * │ thứ hai gần như chắc chắn chạy, vì phiên MCP giờ đã ấm (đúng thứ user     │
-   * │ quan sát: *"gỡ đi và làm lại… nó ra chính xác tên"*).                     │
+   * │ Why throwing away a freshly-minted key is CORRECT: it hasn't been saved     │
+   * │ anywhere yet, so nothing is left half-broken. The user clicks the device     │
+   * │ flow again — and the next attempt is almost certain to succeed, because the │
+   * │ MCP session is now warm (exactly what the user observed: *"removed it and    │
+   * │ redid it… got the exact right name"*).                                    │
    * │                                                                          │
-   * │ ⚠ Chỉ chặn khi mục CÓ khai `identity`. Notion tự trả `workspace_id` nên   │
-   * │ `who` rỗng là chuyện bình thường ở đó — chặn nó là chặn một ca lành.      │
+   * │ ⚠ Only blocks when the entry DOES declare `identity`. Notion returns its own│
+   * │ identity, so `who` being empty there is normal — blocking it would block a   │
+   * │ perfectly healthy case.                                                  │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   mustHaveIdentity(acc, who.seed, arm?.name ?? p.prefix);
@@ -774,25 +814,25 @@ export async function oauthDevicePoll(company: Company, state: string): Promise<
   return { state: 'done', name, ...(acc.label ? { label: acc.label } : {}) };
 }
 
-/** Workspace đã nối — **TÊN và NHÃN, không bao giờ token**. */
+/** A connected workspace — **NAME and LABEL, never a token**. */
 export function oauthAccounts(company: Company, prefix?: string): {
   name: string;
   label?: string;
   expiresAt?: number;
   /**
-   * Cánh tay nào đang dùng chìa này. Rỗng ⇒ gỡ được.
+   * Which arms currently use this key. Empty ⇒ removable.
    *
-   * ⚠ Tính ở SERVER và gửi kèm, chứ không để giao diện bấm rồi mới biết bị từ
-   * chối: luật *"đừng bày ra một lựa chọn chắc chắn bị từ chối"* (§6e) — và ở
-   * đây nó còn mua thêm một thứ, xem `Optimistic UI` chỗ gọi. Cùng khuôn với
-   * cờ `orphan` của `listArms`.
+   * ⚠ Computed on the SERVER and sent along, rather than letting the UI find out
+   * it's rejected only after clicking: the rule *"don't present a choice that's
+   * certain to be rejected"* (§6e) — and here it also buys something extra, see
+   * `Optimistic UI` at the call site. Same pattern as `listArms`'s `orphan` flag.
    */
   usedBy: string[];
   /**
-   * Chìa đã chết — cần ĐĂNG NHẬP LẠI, không phải chờ. → `OAuthAccount.dead`
+   * The key has died — needs a RE-LOGIN, not a wait. → `OAuthAccount.dead`
    *
-   * Phải nói ra ở đây, vì nếu không thì triệu chứng duy nhất là cánh tay 401
-   * im lặng lúc một nhân viên đang làm việc — xa nguyên nhân.
+   * Has to be surfaced here, because otherwise the only symptom is an arm
+   * silently 401ing while an employee is mid-task — far from the cause.
    */
   dead?: string;
 }[] {
@@ -806,27 +846,30 @@ export function oauthAccounts(company: Company, prefix?: string): {
       ...(a.dead ? { dead: a.dead.why } : {}),
       usedBy: Object.values(company.config.arms)
         .filter((arm) => arm.secrets.includes(name))
-        .map((arm) => arm.label || '(chưa đặt tên)'),
+        .map((arm) => arm.label || t('srv.oauthUnnamed')),
     }));
 }
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÒNG LÀM MỚI — **MỘT CHỖ DUY NHẤT**, và chỗ đó là daemon.                │
+ * │ THE REFRESH LOOP — **ONE PLACE ONLY**, and that place is the daemon.       │
  * │                                                                          │
- * │ `pickMcp` là **đồng bộ có chủ đích** (`armexec.ts` vừa dọn ~4 giây/task   │
- * │ khỏi đường nóng). Làm mới thì bất đồng bộ. Hai lựa chọn đã cân 25/08:     │
- * │   ⓐ làm mới ở NỀN, `pickMcp` chỉ đọc thứ đã có trên đĩa  ← chọn cái này  │
- * │   ⓑ `pickMcp` thành async — trả lại đúng thứ vừa mua                     │
+ * │ `pickMcp` is **deliberately synchronous** (`armexec.ts` just cleared ~4      │
+ * │ seconds/task off the hot path). Refreshing is asynchronous. Two options       │
+ * │ weighed on 25/08:                                                        │
+ * │   ⓐ refresh in the BACKGROUND, `pickMcp` only reads what's already on disk  │
+ * │     ← chose this                                                         │
+ * │   ⓑ make `pickMcp` async — return exactly what was just fetched            │
  * │                                                                          │
- * │ ⚠ VÌ SAO PHẢI LÀ MỘT CHỖ: `refresh_token` **XOAY** (đo 25/08 — mỗi lần    │
- * │ làm mới trả về cả chìa mới lẫn refresh mới, cái cũ chết ngay). Hai tiến   │
- * │ trình cùng làm mới thì cái chậm hơn gửi một refresh **đã chết** ⇒ hỏng,   │
- * │ và nó ghi đè bản tốt bằng bản hỏng. Không có khoá nào cứu được chuyện đó  │
- * │ ngoài việc **chỉ có một người làm**.                                     │
+ * │ ⚠ WHY IT MUST BE ONE PLACE: `refresh_token` **ROTATES** (measured 25/08 —   │
+ * │ every refresh returns both a new key and a new refresh token, the old one    │
+ * │ dies immediately). Two processes refreshing at once means the slower one      │
+ * │ submits an **already-dead** refresh token ⇒ failure, and it overwrites a      │
+ * │ good copy with a broken one. No lock saves you from that except **only one     │
+ * │ worker doing it**.                                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Trả về số tài khoản đã làm mới. Hỏng một cái KHÔNG được làm hỏng cái khác.
+ * Returns the number of accounts refreshed. One failing must NOT break the others.
  */
 export async function refreshDue(company: Company): Promise<number> {
   const paths = companyPaths(company.dir);
@@ -838,74 +881,104 @@ export async function refreshDue(company: Company): Promise<number> {
       if (!meta) continue;
       const next = await refreshAccount(meta, acc);
       /**
-       * ⚠ GHI NGAY, và `saveOAuth` ghi NGUYÊN TỬ (temp + rename) — xem
-       * `secrets.ts §writeRaw`. Vì dịch vụ đã XOAY chìa lúc nó trả lời,
-       * `next.refresh_token` là thứ duy nhất còn dùng được: một lần ghi cụt là
-       * mất tài khoản này, và trước 26/08 còn mất **cả kho**.
+       * ⚠ WRITE IMMEDIATELY, and `saveOAuth` writes ATOMICALLY (temp + rename) —
+       * see `secrets.ts §writeRaw`. Because the service already ROTATED the key
+       * the moment it answered, `next.refresh_token` is the only thing still
+       * usable: one truncated write loses this account, and before 26/08 it
+       * could lose **the whole store**.
        */
       saveOAuth(paths, name, next);
+      logRefresh(paths, { name, outcome: 'ok', ...(next.expires_at ? { expiresAt: next.expires_at } : {}) });
       n++;
     } catch (e) {
       /**
-       * ⚠ HAI LOẠI HỎNG, HAI XỬ LÝ NGƯỢC NHAU — gộp chúng là chọn sai ở cả hai.
+       * ⚠ TWO KINDS OF FAILURE, TWO OPPOSITE HANDLINGS — conflating them gets
+       * both wrong.
        *
-       *  · tạm (mạng chết, 500) → **im lặng, tick sau thử lại**. Cảnh báo mỗi
-       *    15 phút cho một sự cố mạng thoáng qua là dạy người ta bỏ qua log.
-       *  · chết hẳn (`invalid_grant`) → **đánh dấu**, thôi thử, và để giao diện
-       *    nói *"đăng nhập lại"*. Không đánh dấu thì triệu chứng duy nhất là
-       *    cánh tay 401 im lặng lúc một nhân viên đang làm việc — xa nguyên
-       *    nhân, và câu 401 nói "chìa sai" chứ không nói "chìa chết".
+       *  · transient (network down, 500) → **stay silent, retry next tick**.
+       *    Warning every 15 minutes for a passing network blip teaches people to
+       *    ignore the log.
+       *  · truly dead (`invalid_grant`) → **mark it**, stop retrying, and let the
+       *    UI say *"sign in again"*. Without marking it, the only symptom is an
+       *    arm silently 401ing while an employee is mid-task — far from the
+       *    cause, and 401 says "wrong key" rather than "dead key".
        */
       if (e instanceof DeadGrantError) {
-        saveOAuth(paths, name, { ...acc, dead: { at: new Date().toISOString(), why: e.message } });
+        /**
+         * ⚠ RE-READ BEFORE WRITING. `acc` is the copy this sweep started with,
+         * and a refusal is the one moment it is most likely to be out of date:
+         * the most common way to be refused is that someone else already
+         * rotated the credential successfully. → `deadMarkStillApplies`
+         */
+        const onDisk = readOAuth(paths)[name];
+        if (!onDisk || !deadMarkStillApplies(acc, onDisk)) {
+          logRefresh(paths, { name, outcome: 'refused-but-superseded' });
+          continue;
+        }
+        saveOAuth(paths, name, { ...onDisk, dead: { at: new Date().toISOString(), why: e.message } });
+        logRefresh(paths, { name, outcome: 'dead', detail: e.message });
         process.emitWarning(
-          `Chìa "${acc.label ?? name}" không còn hiệu lực — cần đăng nhập lại. ${e.message}`,
+          t('srv.oauthKeyDead', { label: acc.label ?? name, detail: e.message }),
         );
+      } else {
+        // Transient failure: must NOT stop the loop, and no need to warn — a
+        // warning every 15 minutes for a passing blip teaches people to ignore
+        // the log. It IS written to the refresh log, which nobody reads until
+        // something breaks and then it is the only witness there is.
+        logRefresh(paths, {
+          name,
+          outcome: 'transient',
+          detail: e instanceof Error ? e.message : String(e),
+        });
       }
-      // Hỏng tạm: KHÔNG được dừng vòng, và không cần kêu. Tick sau thử lại.
     }
   }
   return n;
 }
 
 /**
- * GỠ MỘT WORKSPACE — xoá chìa ở máy mình, và **báo cho dịch vụ** nếu nó nhận.
+ * FORGETS A WORKSPACE — deletes the key locally, and **tells the service** if it accepts.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ Vì sao cố gắng thu hồi ở phía dịch vụ chứ không chỉ xoá file: người dùng │
- * │ bấm "Gỡ" nghĩa là *"agentco đừng với tới workspace này nữa"*. Xoá mỗi    │
- * │ bản sao của mình mà để chìa còn sống ở Notion là làm ĐÚNG một nửa việc,  │
- * │ và nửa còn lại là nửa họ quan tâm.                                       │
+ * │ Why bother revoking on the service side instead of just deleting the file:  │
+ * │ the user clicking "Forget" means *"agentco should stop reaching into this    │
+ * │ workspace"*. Deleting only our own copy while the key stays alive on Notion  │
+ * │ does HALF the job correctly, and the other half is the half they care about. │
  * │                                                                          │
- * │ ⚠ Nhưng thu hồi hỏng thì **vẫn xoá**. Ngược lại là giam người dùng: mạng │
- * │ chết, dịch vụ không mở `revocation_endpoint`, chìa đã hết hạn — cả ba    │
- * │ đều không phải lý do để giữ một mục họ vừa bảo bỏ đi.                    │
+ * │ ⚠ But if revocation fails, **still delete**. The reverse traps the user:      │
+ * │ network down, the service not exposing a `revocation_endpoint`, the key       │
+ * │ already expired — none of those three is a reason to keep an entry they        │
+ * │ just told us to remove.                                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export async function oauthForget(company: Company, name: string): Promise<void> {
   const paths = companyPaths(company.dir);
   const acc = readOAuth(paths)[name];
-  if (!acc) throw new RunError(`Không có tài khoản "${name}".`, 'other');
+  if (!acc) throw new RunError(t('srv.oauthNoAccount', { name }), 'other');
 
   /**
-   * ⚠ CHẶN KHI CÒN CÁNH TAY DÙNG NÓ — cùng khuôn `Company.forgetArm`.
+   * ⚠ BLOCKS WHILE ANY ARM STILL USES IT — same pattern as `Company.forgetArm`.
    *
-   * Gỡ một workspace đang được cắm thì cánh tay đó chết im: cấu hình vẫn trỏ
-   * `${TÊN}`, mà chìa thì không còn. Triệu chứng lộ ra ở lần một nhân viên dùng
-   * nó — xa chỗ gây ra, và không có gì trên màn hình nối hai đầu lại.
+   * Removing a workspace that's still wired in leaves that arm silently dead:
+   * the config still points at `${NAME}`, but the key is gone. The symptom
+   * surfaces the next time an employee uses it — far from the cause, with
+   * nothing on screen connecting the two.
    */
   const users = Object.entries(company.config.arms)
     .filter(([, a]) => a.secrets.includes(name))
-    .map(([, a]) => a.label || '(chưa đặt tên)');
+    .map(([, a]) => a.label || t('srv.oauthUnnamed'));
   if (users.length) {
     throw new RunError(
-      `"${acc.label ?? name}" vẫn đang được ${users.length} kết nối dùng (${users.join(', ')}). ` +
-        `Gỡ những kết nối đó trước — gỡ tài khoản trước là để lại một cánh tay chết im.`,
+      t('srv.oauthAccountInUse', {
+        label: acc.label ?? name,
+        n: users.length,
+        who: users.join(', '),
+      }),
       'other',
     );
   }
 
-  // Thu hồi là NỖ LỰC TỐT NHẤT, không phải điều kiện.
+  // Revocation is BEST EFFORT, not a precondition.
   try {
     const meta = await discover(acc.mcp_url);
     if (meta?.revocation_endpoint) {
@@ -920,14 +993,151 @@ export async function oauthForget(company: Company, name: string): Promise<void>
       });
     }
   } catch {
-    process.emitWarning(`Không thu hồi được chìa "${name}" ở phía dịch vụ — vẫn xoá ở máy này.`);
+    process.emitWarning(`could not revoke key "${name}" on the service side — deleting locally anyway`);
   }
 
   saveOAuth(paths, name, null);
 }
 
-/** Nhịp quét. Chìa Notion sống 8 giờ, mốc làm mới là 4 — 15 phút là quá dư. */
+/** Sweep interval. A Notion key lives 8 hours, the refresh threshold is 4 — 15 minutes is plenty. */
 export const REFRESH_TICK_MS = 15 * 60_000;
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ONE SWEEP AT A TIME — and "one place in the code" was NOT enough.           │
+ * │                                                                          │
+ * │ `refreshDue` already lived at exactly one call site, and the comment there   │
+ * │ concluded *"no lock fixes this — only one worker doing it does"*. Half        │
+ * │ right: one place in SPACE, but `setInterval` gives no guarantee at all in     │
+ * │ TIME. A sweep that outlives its own 15-minute interval (a socket stalled      │
+ * │ across a laptop sleep — the token endpoint has no timeout, deliberately)      │
+ * │ is still running when the next tick starts a second one. Both read the        │
+ * │ same `refresh_token`, both send it, and the service rotates for the first     │
+ * │ ⇒ the second is told the credential is dead. Which is exactly what the        │
+ * │ loop was built to prevent.                                                │
+ * │                                                                          │
+ * │ Measured 09/03: three accounts across THREE different services marked         │
+ * │ dead inside 4 seconds — Notion `invalid_grant`, GitHub twice                  │
+ * │ `incorrect_client_credentials` — while the credentials still had 2h13m        │
+ * │ of life and the refresh token had 180 of its 181 days left. Nothing had       │
+ * │ expired. They were refused.                                                │
+ * │                                                                          │
+ * │ ⚠ DROP the overlapping tick, never queue it. A queued sweep runs against     │
+ * │ a store that has already moved on, which is the same collision one tick      │
+ * │ later. Skipping costs nothing: the credential is refreshed at 50% of its      │
+ * │ life, so there are ~16 more chances before anything is at risk.              │
+ * │                                                                          │
+ * │ ⚠ This guard is per PROCESS. Two daemons on one `company/` folder still      │
+ * │ collide, and no in-process flag can see that. → SESSIONS_MEMORY §8j          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function oneSweepAtATime(sweep: () => Promise<unknown>): () => void {
+  let running = false;
+  const release = (): void => {
+    running = false;
+  };
+  return () => {
+    if (running) return;
+    running = true;
+    /**
+     * ⚠ `then(release, release)`, NOT `finally` — and the difference is the
+     * daemon staying alive.
+     *
+     * `finally` re-throws, so a sweep that rejects becomes an UNHANDLED
+     * REJECTION inside a timer callback, and Node's default for that is to
+     * kill the process. A background credential sweep is the last thing that
+     * should be able to take the whole company down. Caught by
+     * `test/oauth-refresh-race.test.ts` on the first run.
+     *
+     * Swallowing is right *here* and nowhere near here: this function schedules,
+     * it does not decide error policy — the caller already catches and reports
+     * (`server.ts §tick`). What it must guarantee is only that the flag is
+     * released on BOTH paths, including a synchronous throw, or it latches ON
+     * and refreshing goes silent for the life of the daemon — a failure that
+     * looks exactly like *"credentials just quietly stopped renewing"*.
+     */
+    try {
+      void sweep().then(release, release);
+    } catch {
+      release();
+    }
+  };
+}
+
+/**
+ * A refresh was REFUSED — is it safe to record that on this account?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NO, when the store no longer holds what we set out with. That means          │
+ * │ someone else refreshed successfully while this attempt was in flight, and     │
+ * │ the refusal is just the losing half of a race — the account is FINE, and      │
+ * │ the credential now on disk is the good one.                                 │
+ * │                                                                          │
+ * │ Writing `{ ...acc, dead }` in that state does two separate harms with one    │
+ * │ line: it marks a working account dead (`needsRefresh` then returns false      │
+ * │ FOREVER, so nothing retries), and `...acc` is the copy read at the start      │
+ * │ of the losing sweep, so the write ALSO overwrites the freshly rotated        │
+ * │ credential with the stale one. A recoverable stumble becomes a credential     │
+ * │ that only a human can bring back.                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+/**
+ * One line per refresh attempt. Append-only, and **never throws**.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ Why it exists at all: on 09/03 three credentials died within 4 seconds,     │
+ * │ and answering *"why"* a day later had to be done by subtracting `expires_at` │
+ * │ from timestamps, because not one attempt had ever been written down. The     │
+ * │ loop only ever spoke when it gave up. Everything before that — the sweeps    │
+ * │ that worked, the ones that stalled, the one that lost a race — left no        │
+ * │ trace at all.                                                             │
+ * │                                                                          │
+ * │ ⚠ NAMES ONLY, NEVER A CREDENTIAL VALUE. This file is plain text a user can   │
+ * │ paste into a bug report. The account name (`NOTION_OAUTH_AFAFBCD6`) is an     │
+ * │ identifier; the token is a key. → `secrets.ts`, same rule everywhere.        │
+ * │                                                                          │
+ * │ ⚠ A BROKEN LOG MUST NOT BREAK REFRESHING. A full disk, a read-only folder,   │
+ * │ a locked file — none of those are a reason to stop keeping credentials       │
+ * │ alive, and swallowing here is the one place a bare `catch` is right: the      │
+ * │ caller's job does not depend on the answer.                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function logRefresh(
+  paths: CompanyPaths,
+  entry: {
+    name: string;
+    /**
+     * `ok` refreshed · `dead` the service refused and we recorded it ·
+     * `refused-but-superseded` refused, but the store had already moved on ⇒ a
+     * lost race, NOT a dead credential · `transient` network or 5xx, retried
+     * next sweep.
+     */
+    outcome: 'ok' | 'dead' | 'refused-but-superseded' | 'transient';
+    detail?: string;
+    expiresAt?: number;
+  },
+): void {
+  try {
+    fs.mkdirSync(paths.logs, { recursive: true });
+    fs.appendFileSync(
+      paths.refreshLog,
+      `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`,
+      'utf8',
+    );
+  } catch {
+    // Deliberately silent — see the box above.
+  }
+}
+
+export function deadMarkStillApplies(
+  readAt: Pick<OAuthAccount, 'access_token' | 'refresh_token'>,
+  onDisk: Pick<OAuthAccount, 'access_token' | 'refresh_token'> | undefined,
+): boolean {
+  // Deleted while we were away ⇒ nothing to mark, and re-creating it would
+  // resurrect an account the user just removed.
+  if (!onDisk) return false;
+  return onDisk.access_token === readAt.access_token && onDisk.refresh_token === readAt.refresh_token;
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);

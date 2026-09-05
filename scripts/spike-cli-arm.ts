@@ -1,48 +1,3 @@
-/**
- * SPIKE — CÁNH TAY CLI: khai báo → MCP `type:'sdk'` → worker thật → tiến trình thật
- * → docs/SPEC-arms.md §16d–16q · TEST-WALKTHROUGH bài 22
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ NÓ LÀ MCP THẬT, KHÔNG PHẢI "MCP-LIKE".                                    │
- * │                                                                          │
- * │ Đúng giao thức, đúng `tools/list`, đúng `annotations`, đúng `isError`.    │
- * │ Khác mỗi **transport**: `type:'sdk'` chạy TRONG tiến trình daemon thay vì │
- * │ qua stdio/HTTP. Thứ ta thiết kế riêng chỉ là **tầng KHAI BÁO** nằm trên   │
- * │ nó — và tầng đó tồn tại vì một CLI không tự khai được schema.             │
- * │                                                                          │
- * │ ⇒ Ngày bật Docker, `buildTools()` đi theo nguyên vẹn; chỉ adapter đổi.    │
- * └──────────────────────────────────────────────────────────────────────────┘
- *
- * ═══ HAI TỜ, và chỉ một tờ bất định (§16l) ═══
- *
- *   📄 TỜ HƯỚNG DẪN  `description`  BẤT ĐỊNH — văn xuôi, MODEL đọc
- *   📋 TỜ KHAI       `run`/`params`/`cwd`/`timeoutMs`/`failWhen`  TẤT ĐỊNH — RUNTIME kiểm
- *
- * Bỏ tờ khai = quay về `Bash` = model tự dựng dòng lệnh = phỏng đoán.
- *
- * ═══ BA PHẦN, xếp theo GIÁ ═══
- *
- *   Phần 1  💰 $0    cổng TẤT ĐỊNH — gọi thẳng `fillArgv`/`runCommand`.
- *                    7 ca an ninh + hành vi. Không có model nào tham gia.
- *   Phần 2  💰 ~$0.05 qua `runWorker` THẬT — đúng đường một task đi.
- *   Phần 3  💰 ~$0.15 `--full`: user → Trợ lý → worker → CLI. Đúng chuỗi user hỏi.
- *
- * ⚠ VÌ SAO PHẦN 1 PHẢI ĐỨNG TRƯỚC: 22/08 có 9 test XANH cho một cổng KHÔNG BAO
- * GIỜ BẮN vì chúng đi vòng qua đường thật. Nhưng chiều ngược lại cũng đúng — đo
- * an ninh QUA MODEL là đo hành vi model, không đo hàng rào: model không chịu gõ
- * `; calc` thì ta nhận 🟢 mà chẳng chứng minh được gì. Cổng an ninh phải được
- * gọi TRỰC TIẾP; đường thật để chứng minh nó có mặt trên đường đó.
- *
- * ⚠ KHÔNG ĐỘNG DỮ LIỆU NGƯỜI DÙNG: mọi thứ chạy trong một sandbox tạm, xoá ở
- * `finally`. `role.mcp`/`role.tools` chỉ đổi TRONG BỘ NHỚ, không ghi đĩa.
- *
- * Chạy:
- *   npx tsx scripts/spike-cli-arm.ts                   # phần 1 + 2
- *   npx tsx scripts/spike-cli-arm.ts --only=1          # chỉ cổng tất định, $0
- *   npx tsx scripts/spike-cli-arm.ts --full            # + phần 3 (qua Trợ lý)
- *   npx tsx scripts/spike-cli-arm.ts --treo=180        # đo trần `tools/call` (§16n)
- *   npx tsx scripts/spike-cli-arm.ts [company] [office] [role]
- */
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -56,7 +11,6 @@ import { loadCompanyConfig, loadOffice } from '../src/core/config.js';
 import { TaskBriefSchema } from '../src/core/types.js';
 import { runWorker } from '../src/core/worker.js';
 
-// ══════════════════════════════════════════════════════════ 0 · THAM SỐ
 
 const argv = process.argv.slice(2);
 const flag = (n: string) => argv.find((a) => a.startsWith(`--${n}=`))?.split('=')[1];
@@ -68,46 +22,28 @@ const officeId = positional[1] ?? 'canh-tay';
 const roleId = positional[2] ?? 'nguoi-soi-thu-muc';
 const ONLY = flag('only');
 const wants = (phase: string) => !ONLY || ONLY === phase;
-/** Giây ngủ của ca đo trần `tools/call`. `0` = không chạy ca đó. */
-const TREO = Number(flag('treo') ?? 0);
+const HANG = Number(flag('treo') ?? 0);
 
-// ══════════════════════════════════════════ 1 · KIỂU KHAI BÁO (hai tờ)
 
 interface CliParam {
   name: string;
   type: 'string' | 'integer';
   required?: boolean;
-  /** Chỉ dùng cho `string`. Không khai ⇒ nhận mọi chuỗi (trừ luật gạch dưới đây). */
   pattern?: string;
   min?: number;
   max?: number;
-  /**
-   * 🔴 MẶC ĐỊNH `false` — giá trị mở đầu bằng `-` bị TỪ CHỐI.
-   *
-   * `tag = "--force"` mà nối vào argv là người dùng vừa cấp một cờ họ chưa bao
-   * giờ khai. Bật được, nhưng phải bật CÓ Ý THỨC — cùng khuôn `confirm`.
-   */
   allowDash?: boolean;
 }
 
 interface CliAction {
   id: string;
-  /** Câu tiếng người cho UI. Không vào MCP. */
   say: string;
-  /** 📄 TỜ HƯỚNG DẪN — BẤT ĐỊNH. Vào thẳng `description` của tool. */
   description: string;
-  /** 📋 argv template. `{ten}` = chỗ trống. **MẢNG, không bao giờ là chuỗi shell.** */
   run: string[];
   params?: CliParam[];
-  /** Ô trống `{sandbox}` do runtime giải — model KHÔNG đụng vào được. */
   cwd?: string;
   timeoutMs: number;
-  /**
-   * Chuỗi trên stdout+stderr ⇒ coi là HỎNG dù `exit 0`.
-   * → §5h·7d: *HTTP 200 kèm `error`*. Ở CLI nó nổ tệ hơn — agent tin xong rồi đi tiếp.
-   */
   failWhen?: string[];
-  /** Chỉ để dựng `annotations`. User chốt 30/08: KHÔNG có nấc quyền cho CLI. */
   readOnly?: boolean;
 }
 
@@ -117,7 +53,6 @@ interface CliArm {
   actions: CliAction[];
 }
 
-// ══════════════════════════ 2 · BỘ CHẠY — mọi thứ TƯỜNG MINH (ràng buộc E-3)
 
 interface RunResult {
   ok: boolean;
@@ -125,25 +60,9 @@ interface RunResult {
   stdout: string;
   stderr: string;
   ms: number;
-  /** `spawn` · `timeout` · `exit` · `fail_when` — BỐN CỬA KHÁC NHAU, đừng gộp. */
   door?: 'spawn' | 'timeout' | 'exit' | 'fail_when';
 }
 
-/**
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ KHÔNG `process.cwd()`. KHÔNG kế thừa env ngầm. KHÔNG `shell: true`.       │
- * │                                                                          │
- * │ Cả ba là ràng buộc "chờ sẵn Docker" §16p ③ — trong container ambient là   │
- * │ thứ khác, và một giả định ngầm trộn vào đây sẽ phải gỡ ở hàng chục chỗ.   │
- * │                                                                          │
- * │ `shell:false` còn là cột chịu lực AN NINH: nó là thứ làm `; calc` chỉ là  │
- * │ một chuỗi ký tự chứ không phải một lệnh thứ hai.                          │
- * │                                                                          │
- * │ ⚠ GIỚI HẠN ĐÃ BIẾT: `shell:false` không chạy được `.cmd`/`.bat` trên      │
- * │ Windows (`npx`, `npm`). Đó là ĐÁNH ĐỔI CÓ Ý THỨC — muốn bọc một `.cmd`    │
- * │ thì khai đường dẫn đầy đủ tới trình thông dịch, đừng mở `shell`.          │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
 function runCommand(opts: {
   argv: string[];
   cwd: string;
@@ -174,11 +93,6 @@ function runCommand(opts: {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      /**
-       * ⚠ `child.kill()` trên Windows KHÔNG giết cây con. Một `python` gọi tiếp
-       * một tiến trình khác thì tiến trình cháu sống sót và thành mồ côi — đúng
-       * ô đo D-6 của bài 22. `taskkill /T /F` là đường duy nhất đúng ở đây.
-       */
       try {
         if (process.platform === 'win32' && child.pid) {
           spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
@@ -186,12 +100,10 @@ function runCommand(opts: {
           child.kill('SIGKILL');
         }
       } catch {
-        /* đã chết */
+        /* already dead */
       }
     }, opts.timeoutMs);
 
-    // `error` = KHÔNG spawn được (binary không tồn tại, không có quyền). Đây là
-    // một CỬA KHÁC hẳn "chạy rồi hỏng" — gộp hai cái là đẻ ra câu lỗi sai cửa.
     child.on('error', (e) => {
       clearTimeout(timer);
       resolve({ ok: false, code: null, stdout: out, stderr: e.message, ms: Date.now() - t0, door: 'spawn' });
@@ -211,46 +123,36 @@ function runCommand(opts: {
   });
 }
 
-// ═════════════════════════ 3 · ĐIỀN ARGV — chỗ chịu lực AN NINH (§16e)
 
 class ArgvError extends Error {}
 
-/**
- * Thay `{ten}` bằng giá trị. **Không nối chuỗi, không qua shell, không tự thêm
- * phần tử nào.** Một tham số ⇒ nằm gọn trong đúng phần tử argv đã khai.
- *
- * ⚠ Kiểm giá trị TRƯỚC khi thay, không phải sau: kiểm sau là kiểm một chuỗi đã
- * lẫn với phần cố định, và luật "mở đầu bằng `-`" mất nghĩa ngay lập tức
- * (`--tag=--force` không mở đầu bằng `-` sau khi ghép... nhưng `--force` thì có).
- */
 function fillArgv(a: CliAction, args: Record<string, unknown>): string[] {
   const byName = new Map((a.params ?? []).map((p) => [p.name, p]));
 
   const value = (name: string): string => {
     const p = byName.get(name);
-    if (!p) throw new ArgvError(`argv có ô trống "{${name}}" nhưng khai báo không có tham số đó`);
+    if (!p) throw new ArgvError(`argv has a placeholder "{${name}}" but no param declares it`);
     const raw = args[name];
     if (raw === undefined || raw === null || raw === '') {
-      if (p.required) throw new ArgvError(`thiếu tham số bắt buộc "${name}"`);
-      throw new ArgvError(`tham số "${name}" chưa có giá trị`);
+      if (p.required) throw new ArgvError(`missing required parameter "${name}"`);
+      throw new ArgvError(`parameter "${name}" has no value yet`);
     }
     if (p.type === 'integer') {
       const n = Number(raw);
-      if (!Number.isInteger(n)) throw new ArgvError(`"${name}" phải là số nguyên, nhận "${String(raw)}"`);
-      if (p.min !== undefined && n < p.min) throw new ArgvError(`"${name}" phải ≥ ${p.min}`);
-      if (p.max !== undefined && n > p.max) throw new ArgvError(`"${name}" phải ≤ ${p.max}`);
+      if (!Number.isInteger(n)) throw new ArgvError(`"${name}" must be an integer, got "${String(raw)}"`);
+      if (p.min !== undefined && n < p.min) throw new ArgvError(`"${name}" must be ≥ ${p.min}`);
+      if (p.max !== undefined && n > p.max) throw new ArgvError(`"${name}" must be ≤ ${p.max}`);
       return String(n);
     }
     const s = String(raw);
-    // 🔴 LUẬT GẠCH — xem chú thích `allowDash`.
     if (!p.allowDash && s.startsWith('-')) {
       throw new ArgvError(
-        `"${name}" mở đầu bằng dấu gạch ("${s}") — giá trị không được biến thành một cờ dòng lệnh. ` +
-          `Nếu đây thật sự là ý bạn, khai allow_dash cho tham số này.`,
+        `"${name}" starts with a dash ("${s}") — a value must not turn into a command-line flag. ` +
+          `If this really is intended, declare allow_dash for this parameter.`,
       );
     }
     if (p.pattern && !new RegExp(p.pattern).test(s)) {
-      throw new ArgvError(`"${name}" không khớp khuôn ${p.pattern}: "${s}"`);
+      throw new ArgvError(`"${name}" does not match pattern ${p.pattern}: "${s}"`);
     }
     return s;
   };
@@ -258,22 +160,7 @@ function fillArgv(a: CliAction, args: Record<string, unknown>): string[] {
   return a.run.map((el) => el.replace(/\{([a-z0-9_]+)\}/gi, (_, n: string) => value(n)));
 }
 
-// ══════════════════ 4 · KHAI BÁO → TOOL MCP. HÀM THUẦN (ràng buộc E-1)
 
-/**
- * ⚠ Hàm này **không biết** mình đang chạy dưới transport nào. Đó là toàn bộ lý
- * do nó tồn tại tách khỏi chỗ dựng server: ngày thêm shim HTTP cho Docker, phần
- * này đi theo nguyên vẹn. → §16p ①
- */
-/**
- * 🔴 ĐẾM LỜI GỌI THẬT — thêm 30/08 sau khi cổng ⑨ báo XANH cho một lượt chạy
- * KHÔNG hề gọi CLI lần nào.
- *
- * Bản đầu của ⑨ đo `currentState === 'idle'`, tức đo **còn sống**, không đo
- * **có làm việc không**. Trợ lý trả lời bằng cách BỊA một con số, văn phòng về
- * `idle` đúng như mong đợi, và cổng bật đèn xanh cho một thất bại hoàn toàn.
- * ⇒ Cổng phải bám vào thứ CHỈ tồn tại khi việc thật xảy ra: chính cái handler.
- */
 const calls: { tool: string; args: unknown; at: number; ms?: number }[] = [];
 
 function buildTools(arm: CliArm, ctx: { sandbox: string; env: Record<string, string> }) {
@@ -286,49 +173,29 @@ function buildTools(arm: CliArm, ctx: { sandbox: string; env: Record<string, str
 
     return tool(
       a.id,
-      // 📄 TỜ HƯỚNG DẪN đi thẳng vào đây, nguyên văn. Đây là chỗ DUY NHẤT model
-      // học được lệnh này làm gì và nguy hiểm tới đâu — sau khi bỏ nấc quyền,
-      // nó gánh cả phần cảnh báo. → §16l
       a.description,
       shape,
       async (args): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> => {
         const rec = { tool: a.id, args, at: Date.now() };
         calls.push(rec);
-        console.log(`      ⚙ CLI ĐƯỢC GỌI THẬT: ${a.id}(${JSON.stringify(args)})`);
+        console.log(`      ⚙ CLI ACTUALLY CALLED: ${a.id}(${JSON.stringify(args)})`);
         let filled: string[];
         try {
           filled = fillArgv(a, args as Record<string, unknown>);
         } catch (e) {
-          // Cổng chặn TRƯỚC khi spawn. Trả `isError` để model biết nó sai tham
-          // số chứ không phải máy hỏng — hai chuyện, hai cách xử lý khác nhau.
-          return { content: [{ type: 'text', text: `Tham số không hợp lệ: ${(e as Error).message}` }], isError: true };
+          return { content: [{ type: 'text', text: `Invalid parameter: ${(e as Error).message}` }], isError: true };
         }
 
         const cwd = (a.cwd ?? '{sandbox}').replace('{sandbox}', ctx.sandbox);
 
-        /**
-         * ┌──────────────────────────────────────────────────────────────────┐
-         * │ 🔴 CỬA `spawn` CÓ HAI NGUYÊN NHÂN, VÀ CÂU LỖI CHỈ NÓI MỘT.       │
-         * │ (bắt được 30/08, ngay trong lượt chạy đầu của Phần 3)            │
-         * │                                                                  │
-         * │ `spawn` ném **ENOENT** cho CẢ HAI: binary không tồn tại, VÀ `cwd` │
-         * │ không tồn tại. Bản đầu quy hết về câu *"máy này không tìm thấy    │
-         * │ python"* — và nhân viên đã báo cáo lại nguyên văn câu đó cho      │
-         * │ người dùng, trong khi `python` có đủ trên máy. Một câu lỗi tự tin │
-         * │ và sai, dẫn người ta đi cài lại Python.                          │
-         * │                                                                  │
-         * │ Phân biệt được bằng MỘT phép kiểm rẻ, nên không có lý do gì để   │
-         * │ đoán. → [[agentco-wrong-door-errors]]                            │
-         * └──────────────────────────────────────────────────────────────────┘
-         */
         if (!fs.existsSync(cwd)) {
           return {
             content: [
               {
                 type: 'text',
                 text:
-                  `Không chạy được lệnh — thư mục làm việc "${cwd}" không tồn tại. ` +
-                  `Đây KHÔNG phải chuyện thiếu "${filled[0]}" trên máy; đừng đi cài gì cả.`,
+                  `Could not run the command — the working directory "${cwd}" does not exist. ` +
+                  `This is NOT about "${filled[0]}" being missing on the machine; do not go install anything.`,
               },
             ],
             isError: true,
@@ -336,23 +203,19 @@ function buildTools(arm: CliArm, ctx: { sandbox: string; env: Record<string, str
         }
 
         const r = await runCommand({ argv: filled, cwd, env: ctx.env, timeoutMs: a.timeoutMs });
-        // 🔴 Thời điểm handler XONG — không phải thời điểm nó được gọi. Phép đo
-        // trần `tools/call` cần đúng cặp này: bên kia có còn nghe lúc ta trả lời
-        // không. Thiếu nó thì "chạy 15 phút" và "bị cắt ở phút 2" nhìn giống nhau.
         (rec as { ms?: number }).ms = Date.now() - rec.at;
 
         const body = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n');
         const hit = a.failWhen?.find((s) => body.includes(s));
 
-        // ⚠ BỐN CỬA, BỐN CÂU. Gộp lại là đẻ ra đúng lớp "câu lỗi chỉ sai cửa".
         if (r.door === 'spawn') {
           return {
             content: [
               {
                 type: 'text',
                 text:
-                  `Không chạy được lệnh — máy này không tìm thấy "${filled[0]}" (hoặc không có quyền chạy nó). ` +
-                  `Đây KHÔNG phải lỗi tham số, và cũng không phải lệnh chạy rồi hỏng.\n${r.stderr}`,
+                  `Could not run the command — this machine could not find "${filled[0]}" (or has no permission to run it). ` +
+                  `This is NOT a parameter error, and the command did not run and then fail either.\n${r.stderr}`,
               },
             ],
             isError: true,
@@ -361,7 +224,7 @@ function buildTools(arm: CliArm, ctx: { sandbox: string; env: Record<string, str
         if (r.door === 'timeout') {
           return {
             content: [
-              { type: 'text', text: `Lệnh chạy quá ${a.timeoutMs} ms nên đã bị dừng. Kết quả (nếu có) không đầy đủ.\n${body}` },
+              { type: 'text', text: `The command ran past ${a.timeoutMs} ms and was stopped. Any result is incomplete.\n${body}` },
             ],
             isError: true,
           };
@@ -369,31 +232,26 @@ function buildTools(arm: CliArm, ctx: { sandbox: string; env: Record<string, str
         if (hit) {
           return {
             content: [
-              { type: 'text', text: `Lệnh thoát với mã 0 NHƯNG kết quả có dấu hiệu hỏng ("${hit}"). Coi như THẤT BẠI.\n${body}` },
+              { type: 'text', text: `The command exited with code 0 BUT the output shows a failure marker ("${hit}"). Treat it as FAILED.\n${body}` },
             ],
             isError: true,
           };
         }
         if (!r.ok) {
-          return { content: [{ type: 'text', text: `Lệnh thất bại (mã ${r.code}).\n${body}` }], isError: true };
+          return { content: [{ type: 'text', text: `Command failed (code ${r.code}).\n${body}` }], isError: true };
         }
-        return { content: [{ type: 'text', text: body || '(lệnh chạy xong, không in gì)' }] };
+        return { content: [{ type: 'text', text: body || '(command finished, printed nothing)' }] };
       },
       {
-        // Vẫn khai `annotations` cho ĐÚNG giao thức MCP — nhưng chúng KHÔNG dựng
-        // nấc quyền nào (user chốt 30/08: CLI = toàn quyền, thi hành theo tờ
-        // hướng dẫn). Chúng ở đây để nhật ký và UI đọc được.
         annotations: { readOnlyHint: a.readOnly === true, destructiveHint: a.readOnly !== true },
       },
     );
   });
 }
 
-// ══════════════════════════════════ 5 · SANDBOX + "CLI CỦA KHÁCH HÀNG"
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-arm-'));
 
-/** `python -m xucxac` — đúng hình dạng user nêu. `-m` đọc module từ **cwd**. */
 fs.writeFileSync(
   path.join(sandbox, 'xucxac.py'),
   [
@@ -409,44 +267,16 @@ fs.writeFileSync(
   'utf8',
 );
 
-/** Ca `exit 0` KÈM LỖI — lớp lỗi §5h·7d, ở CLI nó nổ tệ hơn. */
 fs.writeFileSync(
   path.join(sandbox, 'dongbo.py'),
-  ['import sys', "print('ERROR: khong ket noi duoc database')", 'sys.exit(0)'].join('\n'),
+  ['import sys', "print('ERROR: could not connect to the database')", 'sys.exit(0)'].join('\n'),
   'utf8',
 );
 
-/**
- * 🔴 CA CỦA PHÉP THỬ TÁCH BẠC (§16s) — câu hỏi mà **bịa là sai rành rành**.
- *
- * Ca xúc xắc không phân biệt được hai giả thuyết: Trợ lý trả lời thẳng có thể là
- * nó ĐÁNH GIÁ ĐÚNG độ tầm thường của một câu đùa, chứ không phải nó bỏ qua cánh
- * tay. Một con số **chỉ máy mới biết** thì không còn chỗ cho cách đọc thứ hai:
- * bịa ⇒ lỗ định tuyến thật · đi hỏi ⇒ ca xúc xắc là phán đoán đúng.
- *
- * ⚠ Con số phải KHÓ ĐOÁN. `7` thì một lượt bịa cũng có thể trúng, và lúc đó cổng
- * xanh cho đúng thứ nó sinh ra để bắt.
- */
-/**
- * 🔴 SỐ ĐỔI MỖI LƯỢT — sửa 31/08 sau khi ba lượt đo hoá ra là MỘT mẫu.
- *
- * Con trỏ phiên Trợ lý nằm ở `.state/assistant-session.json` nên nó **sống qua
- * cả tiến trình**: ba lần chạy script = **một hội thoại**, và lượt 2–3 chỉ nhắc
- * lại câu lượt 1 vừa nói. Một con số CỐ ĐỊNH thì không phân biệt được
- * *"vừa gọi cánh tay"* với *"chép lại câu cũ"* — cả hai ra cùng chuỗi.
- *
- * Hai vế phải có ĐỦ, thiếu một là cổng vẫn nói dối:
- *   ① phiên sạch mỗi lượt (xoá con trỏ trước khi dựng Office — xem `phase3`)
- *   ② số đổi mỗi lượt — kể cả phiên sạch, kho tri thức vẫn có thể chở số cũ
- *
- * Dải 3000–9999: đủ khó trùng, và **cố ý tránh 2 chữ số** vì câu trả lời luôn
- * có ngày tháng (`31/08/2026`) — một cổng khớp `\b23\b` trúng nhầm là cổng
- * xanh cho đúng thứ nó sinh ra để bắt.
- */
-const SO_HOA_DON = 3000 + Math.floor(Math.random() * 7000);
+const INVOICE_COUNT = 3000 + Math.floor(Math.random() * 7000);
 fs.writeFileSync(
   path.join(sandbox, 'hoadon.py'),
-  ['import sys', `print('Chua thanh toan: ${SO_HOA_DON} hoa don · tong 41.250.000d')`, 'sys.exit(0)'].join('\n'),
+  ['import sys', `print('Unpaid: ${INVOICE_COUNT} invoices · total 41,250,000d')`, 'sys.exit(0)'].join('\n'),
   'utf8',
 );
 
@@ -454,14 +284,14 @@ const PY = process.platform === 'win32' ? 'python' : 'python3';
 
 const ARM: CliArm = {
   id: 'cli-xuong',
-  label: 'Xưởng lệnh',
+  label: 'Command Shop',
   actions: [
     {
       id: 'tung_xuc_xac',
-      say: 'tung một con xúc xắc',
+      say: 'roll a die',
       description:
-        'Tung một con xúc xắc và trả về số chấm. Mất khoảng 10 giây vì máy tung thật. ' +
-        'Chỉ đọc — không ghi gì, không đổi gì trên máy. Trả về đúng một con số.',
+        'Rolls a six-sided die and returns the number shown. Takes about 10 seconds because the ' +
+        'roll is real. Read-only — writes nothing, changes nothing on the machine. Returns exactly one number.',
       run: [PY, '-m', 'xucxac', '--mat', '{mat}', '--cho', '10'],
       params: [{ name: 'mat', type: 'integer', required: true, min: 2, max: 100 }],
       cwd: '{sandbox}',
@@ -470,9 +300,9 @@ const ARM: CliArm = {
     },
     {
       id: 'dong_bo_du_lieu',
-      say: 'đồng bộ dữ liệu',
+      say: 'sync data',
       description:
-        'Đồng bộ dữ liệu từ hệ thống ngoài về máy. ⚠ Ghi đè dữ liệu đang có, không hoàn tác được.',
+        'Syncs data from an external system onto the machine. ⚠ Overwrites existing data, cannot be undone.',
       run: [PY, '-m', 'dongbo'],
       cwd: '{sandbox}',
       timeoutMs: 30_000,
@@ -481,10 +311,10 @@ const ARM: CliArm = {
     },
     {
       id: 'dem_hoa_don',
-      say: 'đếm hoá đơn chưa thanh toán',
+      say: 'count unpaid invoices',
       description:
-        'Đếm số hoá đơn chưa thanh toán trong hệ thống nội bộ của công ty. ' +
-        'Chỉ đọc — không ghi gì, không đổi gì. Trả về số lượng và tổng tiền.',
+        "Counts unpaid invoices in the company's internal system. " +
+        'Read-only — writes nothing, changes nothing. Returns the count and the total.',
       run: [PY, '-m', 'hoadon'],
       cwd: '{sandbox}',
       timeoutMs: 30_000,
@@ -493,34 +323,30 @@ const ARM: CliArm = {
   ],
 };
 
-if (TREO > 0) {
+if (HANG > 0) {
   ARM.actions.push({
     id: 'viec_rat_lau',
-    say: 'một việc rất lâu',
-    description: `Một việc chạy rất lâu (${TREO} giây). Dùng để đo trần thời gian.`,
-    run: [PY, '-m', 'xucxac', '--mat', '6', '--cho', String(TREO)],
+    say: 'a very long job',
+    description: `A job that takes a very long time (${HANG} seconds). Used to measure the time ceiling.`,
+    run: [PY, '-m', 'xucxac', '--mat', '6', '--cho', String(HANG)],
     cwd: '{sandbox}',
-    // ⚠ CỐ Ý để trần của TA cao hơn hẳn — ca này đo trần của SDK, không đo trần của ta.
-    timeoutMs: (TREO + 120) * 1_000,
+    timeoutMs: (HANG + 120) * 1_000,
     readOnly: true,
   });
 }
 
 const CHILD_ENV: Record<string, string> = {
-  // Tường minh, không kế thừa. `PATH` là thứ duy nhất bắt buộc phải mượn —
-  // không có nó thì không tìm được `python` trên bất kỳ OS nào.
   PATH: process.env['PATH'] ?? '',
   ...(process.platform === 'win32' ? { SYSTEMROOT: process.env['SYSTEMROOT'] ?? '' } : {}),
   PYTHONIOENCODING: 'utf-8',
   PYTHONDONTWRITEBYTECODE: '1',
 };
 
-// ═══════════════════════════════════════════ 6 · TẢI VĂN PHÒNG + NỐI DÂY
 
 const companyConfig = loadCompanyConfig(companyDir);
 const office = loadOffice(companyDir, companyConfig, officeId);
 const role = office.roles.get(roleId);
-if (!role) throw new Error(`không có vai trò ${roleId} trong văn phòng ${officeId}`);
+if (!role) throw new Error(`role ${roleId} does not exist in office ${officeId}`);
 
 const tools = buildTools(ARM, { sandbox, env: CHILD_ENV });
 const server = createSdkMcpServer({ name: ARM.id, version: '1', tools });
@@ -528,81 +354,41 @@ const server = createSdkMcpServer({ name: ARM.id, version: '1', tools });
 const shellBefore = role.tools;
 const mcpBefore = role.mcp;
 
-/** Con trỏ phiên Trợ lý — `phase3` xoá để có phiên sạch, `finally` cất lại. */
 const sessionFile = path.join(office.dir, '.state', 'assistant-session.json');
 const sessionBefore = fs.existsSync(sessionFile) ? fs.readFileSync(sessionFile, 'utf8') : null;
 
-// ⚠ TẮT SHELL: còn shell thì nhân viên sẽ tự gõ `python` bằng PowerShell và ta
-// đo nhầm một thứ khác hẳn. Chỉ đổi trong BỘ NHỚ. (cùng thủ thuật spike-arm-e2e)
 (role as { tools: string[] }).tools = [];
 (role as { mcp: string[] }).mcp = [ARM.id];
-/**
- * 🔴🔴 MỘT BẢN KHAI, DÙNG CHO MỌI CHỖ NỐI DÂY — bắt được 31/08, và cái lỗ nó vá
- * đã làm HỎNG MỘT KẾT LUẬN, không chỉ một lượt đo.
- *
- * Bản trước có HAI bản khai của cùng một cánh tay: bản này (có `does`) và một
- * bản gõ lại trong `phase3()` (THIẾU `does`). Hậu quả đúng bằng cái giá của
- * chuyện đó:
- *   · `--roster` đọc bản NÀY  ⇒ in ra "Xưởng lệnh — tung một con xúc xắc · …"
- *   · `phase3()` cho Trợ lý ăn bản KIA ⇒ Trợ lý chỉ thấy đúng chữ "Xưởng lệnh"
- * ⇒ Kết luận 30/08 (*"dữ liệu tới nơi đầy đủ; Trợ lý đọc được mà vẫn chọn tự
- * trả lời ⇒ bài toán ĐỊNH TUYẾN"*) được rút ra từ **một phép đo không đứng trên
- * đường mà Trợ lý thật sự đi**. Phải đo lại trước khi tin.
- *
- * ⚠ Lớp lỗi để nhận mặt: **phép thử phân biệt MIỄN PHÍ vẫn có thể soi nhầm đối
- * tượng.** `--roster` sinh ra đúng để tách *"dữ liệu không tới"* khỏi *"tới rồi
- * mà model quyết khác"* — nhưng nó tự đọc một cái map khác. Rẻ không bằng
- * ĐÚNG CHỖ. → [[agentco-measurement-vs-conclusion]] · [[agentco-finish-completely]]
- */
 const ARM_ENTRY = {
   label: ARM.label,
   secrets: [] as string[],
-  // `pickMcp` đọc ô này để cấp `mcp__<id>__<tool>` thay vì cả server. Thiếu nó
-  // thì cấp cả server — rộng hơn thứ ta định cấp, và im lặng.
   tools: ARM.actions.map((a) => a.id),
-  /**
-   * Ô sinh ra từ chính lượt đo 30/08. Thiếu nó, dòng danh bạ của Trợ lý là đúng
-   * chữ `Xưởng lệnh`. → `assistant.ts §armReach` · SPEC-arms §16r
-   *
-   * Dùng `say` (câu tiếng người) chứ KHÔNG dùng `a.id`: `tung_xuc_xac` là tên
-   * máy, và §7b cấm dán tên tool thô vào danh bạ — cấm đúng.
-   */
   does: ARM.actions.map((a) => a.say),
 };
 
 (office.company.mcpServers as Record<string, unknown>)[ARM.id] = server;
 (office.company.arms as Record<string, unknown>)[ARM.id] = ARM_ENTRY;
 
-/** Giá token của cánh tay, đo bằng byte÷4 — cùng phương pháp §5v đã dùng cho Google. */
 const defBytes = Buffer.byteLength(
   JSON.stringify(tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))),
   'utf8',
 );
 
-console.log('─── SPIKE CÁNH TAY CLI ───');
-console.log(`văn phòng   ${officeId} · vai trò ${roleId} · shell → TẮT (trong bộ nhớ)`);
-console.log(`cánh tay    ${ARM.id} "${ARM.label}" · ${ARM.actions.length} việc · type='sdk' (trong tiến trình)`);
-console.log(`sandbox     ${sandbox}`);
-console.log(`python      ${PY}`);
-console.log(`giá ước     ~${Math.round(defBytes / 4)} token/lượt (byte÷4, ${defBytes} byte)\n`);
+console.log('─── CLI ARM SPIKE ───');
+console.log(`office   ${officeId} · role ${roleId} · shell → OFF (in memory)`);
+console.log(`arm      ${ARM.id} "${ARM.label}" · ${ARM.actions.length} actions · type='sdk' (in-process)`);
+console.log(`sandbox  ${sandbox}`);
+console.log(`python   ${PY}`);
+console.log(`est. cost ~${Math.round(defBytes / 4)} tokens/turn (bytes÷4, ${defBytes} bytes)\n`);
 
-/**
- * `--roster` — in dòng danh bạ rồi THOÁT. **$0, không một lượt model nào.**
- *
- * Sinh ra sau khi trả tiền một lượt chỉ để đọc một chuỗi mà đằng nào cũng tính
- * được bằng code. Khi một lượt đo hỏng, câu hỏi đầu tiên luôn là *"dữ liệu có
- * tới nơi không, hay tới rồi mà model vẫn quyết khác"* — hai giả thuyết đó cần
- * hai bản vá khác hẳn nhau, và phân biệt chúng phải MIỄN PHÍ.
- */
 if (has('roster')) {
   const { armReach } = await import('../src/core/assistant.js');
-  console.log(`dòng danh bạ Trợ lý nhận được:\n  "${armReach(office.company.arms, office.company.mcpServers, ARM.id)}"`);
-  console.log(`cùng cánh tay nhưng KHÔNG khai does:\n  "${armReach({ [ARM.id]: { label: ARM.label } }, {}, ARM.id)}"`);
+  console.log(`roster line the Assistant receives:\n  "${armReach(office.company.arms, office.company.mcpServers, ARM.id)}"`);
+  console.log(`same arm but WITHOUT declaring does:\n  "${armReach({ [ARM.id]: { label: ARM.label } }, {}, ARM.id)}"`);
   fs.rmSync(sandbox, { recursive: true, force: true });
   process.exit(0);
 }
 
-// ══════════════════════════════════ PHẦN 1 · CỔNG TẤT ĐỊNH — $0, không model
 
 interface Gate {
   label: string;
@@ -614,21 +400,19 @@ const dice = ARM.actions[0]!;
 const sync = ARM.actions[1]!;
 
 async function phase1(): Promise<void> {
-  console.log('══ PHẦN 1 · CỔNG TẤT ĐỊNH (gọi thẳng, không qua model) ══\n');
+  console.log('══ PART 1 · DETERMINISTIC GATES (called directly, no model) ══\n');
 
-  // ① tham số hợp lệ → argv đúng hình
   try {
     const a = fillArgv(dice, { mat: 6 });
     gates.push({
-      label: '① argv dựng đúng, KHÔNG phải chuỗi',
+      label: '① argv built correctly, NOT a string',
       ok: Array.isArray(a) && a.length === 7 && a[4] === '6',
       note: JSON.stringify(a),
     });
   } catch (e) {
-    gates.push({ label: '① argv dựng đúng', ok: false, note: (e as Error).message });
+    gates.push({ label: '① argv built correctly', ok: false, note: (e as Error).message });
   }
 
-  // ② giá trị mở đầu bằng `-` → TỪ CHỐI
   const dashArm: CliAction = {
     ...dice,
     run: [PY, '-m', 'xucxac', '--nhan', '{nhan}'],
@@ -636,29 +420,27 @@ async function phase1(): Promise<void> {
   };
   try {
     fillArgv(dashArm, { nhan: '--force' });
-    gates.push({ label: '② giá trị "--force" bị chặn', ok: false, note: '🔴 LỌT — nó thành một cờ' });
+    gates.push({ label: '② value "--force" is blocked', ok: false, note: '🔴 LEAKED THROUGH — it became a flag' });
   } catch (e) {
-    gates.push({ label: '② giá trị "--force" bị chặn', ok: true, note: (e as Error).message.slice(0, 70) });
+    gates.push({ label: '② value "--force" is blocked', ok: true, note: (e as Error).message.slice(0, 70) });
   }
 
-  // ③ TIÊM LỆNH — hai cú pháp, cả hai phải chỉ là chuỗi ký tự
   for (const bad of ['6; calc', '6 && calc']) {
     const injArm: CliAction = {
       ...dice,
-      run: [PY, '-c', 'import sys; print("NHAN:" + sys.argv[1])', '{x}'],
+      run: [PY, '-c', 'import sys; print("VALUE:" + sys.argv[1])', '{x}'],
       params: [{ name: 'x', type: 'string', required: true }],
       timeoutMs: 15_000,
     };
     const filled = fillArgv(injArm, { x: bad });
     const r = await runCommand({ argv: filled, cwd: sandbox, env: CHILD_ENV, timeoutMs: 15_000 });
     gates.push({
-      label: `③ tiêm lệnh "${bad}" chỉ là chuỗi`,
-      ok: r.ok && r.stdout.includes(`NHAN:${bad}`),
-      note: `${r.stdout.trim().slice(0, 50)} (mã ${r.code})`,
+      label: `③ command injection "${bad}" stays just a string`,
+      ok: r.ok && r.stdout.includes(`VALUE:${bad}`),
+      note: `${r.stdout.trim().slice(0, 50)} (code ${r.code})`,
     });
   }
 
-  // ④ binary không tồn tại → cửa `spawn`, KHÔNG phải cửa `exit`
   const r4 = await runCommand({
     argv: ['khong-co-lenh-nay-dau-2608', '--x'],
     cwd: sandbox,
@@ -666,12 +448,11 @@ async function phase1(): Promise<void> {
     timeoutMs: 10_000,
   });
   gates.push({
-    label: '④ binary không có → cửa `spawn`',
+    label: '④ missing binary → the `spawn` door',
     ok: r4.door === 'spawn',
     note: `door=${r4.door} code=${r4.code}`,
   });
 
-  // ⑤ TIMEOUT của TA — lệnh ngủ 30s, trần 3s
   const r5 = await runCommand({
     argv: [PY, '-m', 'xucxac', '--cho', '30'],
     cwd: sandbox,
@@ -679,21 +460,19 @@ async function phase1(): Promise<void> {
     timeoutMs: 3_000,
   });
   gates.push({
-    label: '⑤ timeout của ta cắt được tiến trình',
+    label: '⑤ our timeout can actually cut the process',
     ok: r5.door === 'timeout' && r5.ms < 10_000,
-    note: `door=${r5.door} sau ${r5.ms}ms`,
+    note: `door=${r5.door} after ${r5.ms}ms`,
   });
 
-  // ⑥ `exit 0` KÈM LỖI → `fail_when` bắt được
   const r6 = await runCommand({ argv: fillArgv(sync, {}), cwd: sandbox, env: CHILD_ENV, timeoutMs: 20_000 });
   const caught = sync.failWhen!.some((s) => (r6.stdout + r6.stderr).includes(s));
   gates.push({
-    label: '⑥ `exit 0` kèm lỗi bị `fail_when` bắt',
+    label: '⑥ `exit 0` with an embedded error is caught by `fail_when`',
     ok: r6.code === 0 && caught,
-    note: `mã ${r6.code}, khớp "${sync.failWhen![0]}": ${caught}`,
+    note: `code ${r6.code}, matched "${sync.failWhen![0]}": ${caught}`,
   });
 
-  // ⑦ cwd TƯỜNG MINH — chạy từ chỗ khác thì `-m xucxac` phải KHÔNG tìm thấy
   const r7 = await runCommand({
     argv: [PY, '-m', 'xucxac', '--cho', '0'],
     cwd: os.tmpdir(),
@@ -701,27 +480,26 @@ async function phase1(): Promise<void> {
     timeoutMs: 15_000,
   });
   gates.push({
-    label: '⑦ cwd là thật (đổi cwd ⇒ không thấy module)',
+    label: '⑦ cwd is real (change cwd ⇒ module not found)',
     ok: !r7.ok,
-    note: `mã ${r7.code} — nếu ok thì cwd đang bị lờ đi`,
+    note: `code ${r7.code} — if ok then cwd is being ignored`,
   });
 
   console.log(gates.map((g) => `  ${g.ok ? '🟢' : '🔴'} ${g.label}\n       ${g.note}`).join('\n'));
   console.log();
 }
 
-// ═══════════════════════════════════════ PHẦN 2 · QUA `runWorker` THẬT
 
 async function phase2(): Promise<void> {
-  console.log('══ PHẦN 2 · QUA `runWorker` THẬT ══\n');
+  console.log('══ PART 2 · THROUGH THE REAL `runWorker` ══\n');
   const brief = TaskBriefSchema.parse({
     task_id: 'CLI-A',
     role: roleId,
     goal:
-      'Tung một con xúc xắc 6 mặt bằng công cụ của kết nối đang có, rồi ghi ra file kết quả ' +
-      'đúng một dòng: "Số chấm: <số>". Không tự bịa số.',
+      'Roll a six-sided die using the tool from the existing connection, then write the result to a ' +
+      'file as exactly one line: "Rolled: <n>". Do not make up a number.',
     outputs: [{ path: 'artifacts/cli-arm/A.md' }],
-    constraints: ['Không dùng lệnh shell', 'Phải dùng công cụ của kết nối để lấy số'],
+    constraints: ['Do not use a shell command', 'Must use the connection tool to get the number'],
   });
 
   const t0 = Date.now();
@@ -731,53 +509,33 @@ async function phase2(): Promise<void> {
   );
   const out = path.join(office.dir, 'artifacts', 'cli-arm', 'A.md');
   const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '';
-  const num = text.match(/Số chấm:\s*([1-6])\b/)?.[1];
+  const num = text.match(/Rolled:\s*([1-6])\b/)?.[1];
 
   console.log(
-    `\n[CLI-A] ${r.status}  ${Date.now() - t0}ms  ${r.usage.turns} lượt  $${r.usage.costUSD.toFixed(5)}` +
+    `\n[CLI-A] ${r.status}  ${Date.now() - t0}ms  ${r.usage.turns} turns  $${r.usage.costUSD.toFixed(5)}` +
       `\n      say: ${r.say}` +
-      `\n      file: ${text.trim() || '(trống)'}`,
+      `\n      file: ${text.trim() || '(empty)'}`,
   );
   gates.push({
-    label: '⑧ đầu-cuối qua worker: có số chấm 1..6 trong file',
+    label: '⑧ end-to-end through the worker: file contains a roll of 1..6',
     ok: !!num,
-    note: num ? `số ${num} · ${r.usage.turns} lượt · $${r.usage.costUSD.toFixed(5)}` : 'không thấy số',
+    note: num ? `rolled ${num} · ${r.usage.turns} turns · $${r.usage.costUSD.toFixed(5)}` : 'no number found',
   });
   console.log();
 }
 
-// ══════════ PHẦN 2T · TRẦN THỜI GIAN CỦA MỘT `tools/call` — `--treo=N` (§16n)
 
-/**
- * ❗ PHÉP ĐO CHẶN của cả §16: **một `tools/call` được chạy bao lâu trước khi bị cắt?**
- *
- * Nó quyết định hình dạng, và hai hình dạng KHÔNG cùng giá:
- *   ① một tool chặn tới khi xong        → 1 định nghĩa trong prefix, MỌI lượt
- *   ② bộ ba bắt_đầu/tình_hình/kết_quả   → 3 định nghĩa, trả vĩnh viễn
- * ⇒ Xây ② cho một cái trần chưa ai chứng minh là có = trả 2 tool/lượt mãi mãi.
- *
- * 📖 `sdk.d.ts` khai `MCP_TOOL_TIMEOUT` là *"effectively unbounded by default"* —
- * nhưng 📖 ≠ ✅, và `canUseTool` đã dạy đúng bài đó một lần rồi.
- *
- * ⚠ CHỌN MỘT SỐ, KHÔNG LEO THANG: chạy thẳng giá trị mà **nếu qua thì câu hỏi
- * đóng lại** (≥10 phút ⇒ đi ①). Leo 60→300→420→900 là trả bốn lần tiền cho ba
- * câu trả lời không ai dùng tới.
- *
- * ⚠ Trần của TA (`timeoutMs = TREO + 120s`) cố ý đặt cao hơn hẳn — ca này đo
- * trần của SDK/CLI, không đo trần của mình. Đo nhầm cái của mình thì số nào
- * cũng "đúng".
- */
-async function phaseTreo(): Promise<void> {
-  console.log(`══ PHẦN 2T · ĐO TRẦN \`tools/call\` — một lệnh ngủ ${TREO}s ══\n`);
+async function phaseHang(): Promise<void> {
+  console.log(`══ PART 2T · MEASURING THE \`tools/call\` CEILING — one command sleeping ${HANG}s ══\n`);
   const brief = TaskBriefSchema.parse({
     task_id: 'CLI-T',
     role: roleId,
     goal:
-      `Chạy "một việc rất lâu" bằng công cụ của kết nối đang có. Lệnh đó mất khoảng ${TREO} giây — ` +
-      'CỨ CHỜ nó chạy xong, đừng bỏ ngang và đừng gọi lại lần thứ hai. ' +
-      'Xong thì ghi ra file đúng một dòng: "Kết quả: <thứ lệnh in ra>".',
+      `Run "a very long job" using the tool from the existing connection. That command takes about ${HANG} seconds — ` +
+      'WAIT for it to finish, do not give up early and do not call it a second time. ' +
+      'When done, write the result to a file as exactly one line: "Result: <what the command printed>".',
     outputs: [{ path: 'artifacts/cli-arm/T.md' }],
-    constraints: ['Không dùng lệnh shell', 'Chỉ gọi công cụ đó ĐÚNG MỘT LẦN'],
+    constraints: ['Do not use a shell command', 'Call that tool EXACTLY ONCE'],
   });
 
   const before = calls.length;
@@ -792,103 +550,51 @@ async function phaseTreo(): Promise<void> {
   const first = mine[0];
 
   console.log(
-    `\n[CLI-T] ${r.status}  tổng ${Math.round((Date.now() - t0) / 1000)}s  ${r.usage.turns} lượt  $${r.usage.costUSD.toFixed(5)}` +
-      `\n      lời gọi CLI: ${mine.length}${mine.length > 1 ? '  ⚠ >1 ⇒ có thể lượt đầu đã bị cắt' : ''}` +
-      `\n      handler chạy: ${first?.ms != null ? `${Math.round(first.ms / 1000)}s` : '(chưa trả về)'}` +
+    `\n[CLI-T] ${r.status}  total ${Math.round((Date.now() - t0) / 1000)}s  ${r.usage.turns} turns  $${r.usage.costUSD.toFixed(5)}` +
+      `\n      CLI calls: ${mine.length}${mine.length > 1 ? '  ⚠ >1 ⇒ the first turn may have been cut off' : ''}` +
+      `\n      handler ran: ${first?.ms != null ? `${Math.round(first.ms / 1000)}s` : '(never returned)'}` +
       `\n      say: ${r.say}` +
-      `\n      file: ${text.trim() || '(trống)'}`,
+      `\n      file: ${text.trim() || '(empty)'}`,
   );
 
-  /**
-   * Cổng bám vào thứ CHỈ tồn tại khi bên kia CÒN NGHE lúc ta trả lời: handler
-   * chạy đủ lâu **và** kết quả của nó đi tiếp được vào file. Đo mỗi "handler
-   * chạy xong" là chưa đủ — tiến trình con của ta thì kiểu gì chẳng chạy xong.
-   */
-  const ranFull = (first?.ms ?? 0) >= TREO * 1_000;
+  const ranFull = (first?.ms ?? 0) >= HANG * 1_000;
   gates.push({
-    label: `⑩ một \`tools/call\` chạy ${TREO}s KHÔNG bị cắt, kết quả về tới nơi`,
-    ok: ranFull && mine.length === 1 && /Kết quả:/.test(text),
+    label: `⑩ a \`tools/call\` running ${HANG}s is NOT cut off, the result comes back`,
+    ok: ranFull && mine.length === 1 && /Result:/.test(text),
     note:
-      `handler ${first?.ms != null ? Math.round(first.ms / 1000) + 's' : 'chưa trả về'} · ` +
-      `${mine.length} lời gọi · worker ${r.status} · file ${text.trim() ? 'có' : 'trống'}`,
+      `handler ${first?.ms != null ? Math.round(first.ms / 1000) + 's' : 'never returned'} · ` +
+      `${mine.length} calls · worker ${r.status} · file ${text.trim() ? 'has content' : 'empty'}`,
   });
   console.log();
 }
 
-// ═════════════════════ PHẦN 3 · user → Trợ lý → worker → CLI (`--full`)
 
 async function phase3(): Promise<void> {
-  console.log('══ PHẦN 3 · CHUỖI ĐẦY ĐỦ: user → Trợ lý → worker → CLI ══\n');
+  console.log('══ PART 3 · THE FULL CHAIN: user → Assistant → worker → CLI ══\n');
   const { Office } = await import('../src/core/office.js');
 
-  /**
-   * 🔴 PHIÊN SẠCH — vế ① của bản vá "ba lượt là một mẫu".
-   *
-   * `Office` dựng xong là gọi `readSession()` → `assistant.resumeFrom(id)`, mà
-   * con trỏ nằm trên ĐĨA ⇒ tiến trình mới vẫn nối tiếp hội thoại cũ. Xoá con
-   * trỏ **trước khi dựng** là cách duy nhất đứng ngoài `Office` mà làm được.
-   * ⚠ Cất lại bản cũ ở `finally`: đây là văn phòng thật của người dùng, một
-   * lượt đo không được cướp mất hội thoại đang có của họ.
-   */
   fs.rmSync(sessionFile, { force: true });
 
   const live = new Office(loadOffice(companyDir, companyConfig, officeId));
 
-  // Nối lại cánh tay trên BẢN SAO vừa tải — `new Office(...)` đọc lại từ đĩa.
   const r2 = live.loaded.roles.get(roleId)!;
   (r2 as { tools: string[] }).tools = [];
   (r2 as { mcp: string[] }).mcp = [ARM.id];
   (live.loaded.company.mcpServers as Record<string, unknown>)[ARM.id] = server;
-  // ⚠ ĐÚNG BẢN KHAI Ở TRÊN, không gõ lại. Gõ lại một lần đã đủ làm hỏng một
-  // kết luận cả phiên — xem khối chú thích của `ARM_ENTRY`.
   (live.loaded.company.arms as Record<string, unknown>)[ARM.id] = ARM_ENTRY;
 
-  /**
-   * 🔴 IN RA DÒNG DANH BẠ TRƯỚC KHI HỎI.
-   *
-   * Lượt đo sau bản vá `does` vẫn hỏng, và có HAI giả thuyết hoàn toàn khác nhau:
-   *   ① dữ liệu không tới được Trợ lý (bản vá chưa chạy trên đường này)
-   *   ② dữ liệu tới nơi nhưng Trợ lý vẫn chọn tự trả lời (bài toán ĐỊNH TUYẾN)
-   * Hai giả thuyết đó cần hai bản vá khác hẳn nhau, nên đoán là tốn cả một vòng.
-   * In nó ra là xong — [[agentco-measurement-vs-conclusion]].
-   */
   const { armReach } = await import('../src/core/assistant.js');
   console.log(
-    `  📋 dòng danh bạ Trợ lý nhận được:\n     "${armReach(
+    `  📋 roster line the Assistant receives:\n     "${armReach(
       live.loaded.company.arms,
       live.loaded.company.mcpServers,
       ARM.id,
     )}"\n`,
   );
 
-  /**
-   * 💰 SỔ CHI PHÍ — trả món nợ *"Phần 3 script không in ra chi phí"* (30/08).
-   *
-   * Nguyên nhân của món nợ là một dòng THIẾU, không phải một cơ chế thiếu:
-   * `Company` cắm `office.onUsage` ở cả ba chỗ nó dựng `Office`, còn spike thì
-   * `new Office(...)` thẳng tay nên không ai nghe. `logAssistantUsage` (route ·
-   * plan · report · lookup) và `recordUsage` (biên lai worker) **đều** đã bắn
-   * vào đúng cái móc này từ lâu.
-   * ⚠ Ghi vào bộ nhớ, KHÔNG nối vào `logs/usage.jsonl` — một lượt đo không được
-   * làm bẩn sổ chi phí thật của người dùng.
-   */
   const bill: { role: string; usd: number; turns: number }[] = [];
   live.onUsage = (rec) => bill.push({ role: rec.role, usd: rec.cost_usd, turns: rec.turns });
 
-  /**
-   * Câu MÁY nói ra — cổng tách bạc soi chính nó, không soi trạng thái.
-   *
-   * ⚠ Bỏ đúng `role === 'user'`, KHÔNG lọc lấy mỗi `assistant`. Hai lần sai liên
-   * tiếp ở cùng ba dòng này, và chúng ngược chiều nhau:
-   *   ① không lọc gì  ⇒ tin của NGƯỜI DÙNG lọt vào, mà câu hỏi kết thúc bằng
-   *      `?` ⇒ nhánh "hỏi lại" **luôn đúng**;
-   *   ② lọc `=== 'assistant'` ⇒ rơi mất kênh `answer` — worker trả lời **thẳng
-   *      ra chat dưới TÊN NHÂN VIÊN** (`role: 'nguoi-soi-thu-muc'`), đúng thiết
-   *      kế §gist. Lượt 1 của bản đo 31/08 ra số đúng bằng đúng kênh đó và cổng
-   *      **không nhìn thấy**.
-   * ⇒ Sản phẩm có HAI kênh tới người dùng; cổng nào chỉ biết một kênh là cổng
-   * nói dối về kênh kia. [[agentco-count-mechanisms]]
-   */
   const said: string[] = [];
 
   live.bindBus((e) => {
@@ -903,37 +609,12 @@ async function phase3(): Promise<void> {
 
   const before = calls.length;
   const t0 = Date.now();
-  /**
-   * `--bac` = **phép thử tách bạc** (§16s). Để câu hỏi trong MÃ chứ không bắt
-   * người chạy gõ tay: gõ tay thì đúng một lần rồi thành sai, và ô đo này chỉ có
-   * giá trị khi ba lượt đo dùng **cùng một câu**.
-   */
-  const BAC = 'Bên mình còn bao nhiêu hoá đơn chưa thanh toán? Cho mình con số chính xác.';
-  if (has('bac')) console.log(`  🔑 đáp án BIẾT TRƯỚC của lượt này: ${SO_HOA_DON} hoá đơn\n`);
-  const hoi = flag('hoi') ?? (has('bac') ? BAC : 'Tung giúp mình một con xúc xắc 6 mặt rồi cho mình biết ra mấy chấm nhé.');
+  const INVOICE_ASK = 'How many unpaid invoices do we still have? Give me the exact number.';
+  if (has('bac')) console.log(`  🔑 KNOWN-IN-ADVANCE answer for this run: ${INVOICE_COUNT} invoices\n`);
+  const hoi = flag('hoi') ?? (has('bac') ? INVOICE_ASK : 'Please roll me a six-sided die and tell me what number came up.');
   const outcome = await live.say(hoi);
-  console.log(`  → định tuyến: ${outcome.intent}`);
+  console.log(`  → routed as: ${outcome.intent}`);
 
-  /**
-   * Chờ về `idle`. Trần 6 phút: lệnh ngủ 10 s + lập kế hoạch + một lượt worker.
-   *
-   * ⚠ `say()` trả về NGAY (nó chỉ bỏ tin vào hòm thư, `pump()` chạy bằng `void`),
-   * nên `idle` ở lượt kiểm ĐẦU TIÊN là `idle` của lúc CHƯA bắt đầu — không phải
-   * lúc đã xong. Phải thấy nó rời `idle` trước đã, rồi mới tin lần về `idle` sau.
-   * Đúng lớp lỗi §3a: thứ đo được không phải trạng thái, là THỜI ĐIỂM HỎI.
-   */
-  /**
-   * ⚠⚠ ĐỪNG TIN `outcome.intent` ĐỂ ĐIỀU KHIỂN LUỒNG. (bắt được 30/08)
-   *
-   * Lượt đo thứ hai trả `intent: "chat"` **rồi vẫn lập kế hoạch và chạy worker**.
-   * Bản trước `break` ngay khi thấy `chat` ⇒ script in kết luận sau **121 ms**,
-   * `finally` **xoá sandbox**, và worker chạy tiếp trong nền vào một thư mục vừa
-   * bị xoá. Kết quả: một cổng 🔴 nói về một chuyện **không có thật**, và một câu
-   * lỗi *"máy thiếu python"* trong khi máy có đủ python.
-   *
-   * ⇒ Chờ theo THỨ QUAN SÁT ĐƯỢC, không theo lời khai: cho nó tối đa 45 giây để
-   * rời `idle`. Không rời ⇒ đúng là chat thật, dừng. Rời rồi ⇒ chờ nó quay về.
-   */
   const deadline = Date.now() + 360_000;
   const startBy = Date.now() + 45_000;
   let started = false;
@@ -941,110 +622,71 @@ async function phase3(): Promise<void> {
     await new Promise((r) => setTimeout(r, 1_500));
     if (live.currentState !== 'idle') started = true;
     else if (started) break;
-    else if (Date.now() > startBy) break; // không bao giờ khởi động ⇒ chat thật
+    else if (Date.now() > startBy) break;
   }
   const made = calls.length - before;
   const usd = bill.reduce((s, b) => s + b.usd, 0);
-  console.log(`\n  trạng thái cuối: ${live.currentState} sau ${Date.now() - t0}ms · CLI được gọi ${made} lần`);
+  console.log(`\n  final state: ${live.currentState} after ${Date.now() - t0}ms · CLI called ${made} times`);
   console.log(
-    `  💰 tổng $${usd.toFixed(5)} · ${bill.reduce((s, b) => s + b.turns, 0)} lượt — ` +
+    `  💰 total $${usd.toFixed(5)} · ${bill.reduce((s, b) => s + b.turns, 0)} turns — ` +
       bill.map((b) => `${b.role} $${b.usd.toFixed(4)}`).join(' · '),
   );
   gates.push({
-    label: '⑨ chuỗi đầy đủ CÓ GỌI CLI thật',
+    label: '⑨ the full chain DID call the real CLI',
     ok: made > 0,
     note:
-      `định tuyến "${outcome.intent}" · ${made} lời gọi · ${Math.round((Date.now() - t0) / 1000)}s · $${usd.toFixed(5)}` +
-      (made === 0 ? ' — 🔴 KHÔNG lệnh nào chạy' : ''),
+      `routed "${outcome.intent}" · ${made} calls · ${Math.round((Date.now() - t0) / 1000)}s · $${usd.toFixed(5)}` +
+      (made === 0 ? ' — 🔴 NO command ran' : ''),
   });
 
-  /**
-   * ⑪ TÁCH BẠC — chỉ chạy với `--bac`, vì nó soi một con số CỤ THỂ.
-   *
-   * ⚠ Hai vế phải TÁCH: *"có đi hỏi cánh tay không"* (⑨) và *"con số về tới
-   * người dùng chưa"* (⑪). Ca 30/08 đã chứng minh chúng hỏng độc lập — có lượt
-   * gọi CLI thật rồi vẫn trả lời sai. Gộp lại là mất đúng thông tin phân biệt
-   * hai bản vá. → §16s
-   */
   if (has('bac')) {
-    /**
-     * 🔴 BA KẾT CỤC, KHÔNG PHẢI HAI — sửa 31/08 ngay sau lượt đo đầu.
-     *
-     * Bản đầu của cổng này gộp *"bịa một con số"* với *"hỏi lại"* thành một
-     * nhánh `BỊA`, và lượt 1 rơi đúng vào chỗ gộp: Trợ lý **hỏi lại** (*"dữ liệu
-     * này nằm ở hệ thống nào?"*) và cổng gán cho nó tội bịa.
-     *
-     * Ba kết cục đòi ba bản vá khác hẳn nhau:
-     *   · giao việc → không có lỗ
-     *   · HỎI LẠI   → Trợ lý **không thấy** năng lực. Vá ở dòng danh bạ (`does`)
-     *   · BỊA       → Trợ lý thấy mà vẫn tự trả lời. Vá ở ĐỊNH TUYẾN
-     * Gộp hai cái sau là mất đúng thông tin dùng để chọn bản vá.
-     * → [[agentco-count-mechanisms]]
-     */
     const answer = said.join('\n');
-    /**
-     * ⚠ BỎ DẤU NGĂN NGHÌN TRƯỚC KHI SO. Model viết `7.546`, cổng tìm `7546` ⇒
-     * `\b7546\b` **không khớp**, và cổng báo *"gọi rồi mà trả lời số khác"* cho
-     * ba lượt hoàn toàn đúng. Một cổng đọc số mà không biết cách người ta VIẾT
-     * số thì nó đang đo cách trình bày, không đo sự thật.
-     */
-    const phang = answer.replace(/(?<=\d)[.,  ](?=\d{3}\b)/g, '');
-    const dungSo = new RegExp(`\\b${SO_HOA_DON}\\b`).test(phang);
-    const coSo = /\d/.test(answer);
-    const coHoi = answer.includes('?');
-    const ketCuc = made > 0 ? 'GIAO VIỆC' : coSo && !coHoi ? '🔴 BỊA/CHÉP CŨ' : coHoi ? '⚠ HỎI LẠI' : '⚠ né';
+    const flat = answer.replace(/(?<=\d)[.,  ](?=\d{3}\b)/g, '');
+    const hasRightNumber = new RegExp(`\\b${INVOICE_COUNT}\\b`).test(flat);
+    const hasNumber = /\d/.test(answer);
+    const hasQuestion = answer.includes('?');
+    const outcome_ = made > 0 ? 'DELEGATED' : hasNumber && !hasQuestion ? '🔴 MADE UP/REUSED OLD' : hasQuestion ? '⚠ ASKED BACK' : '⚠ dodged';
     gates.push({
-      /**
-       * ⚠ HAI VẾ, KHÔNG PHẢI MỘT. Bản trước chỉ đòi con số có mặt — và nó bật
-       * XANH cho một lượt **không gọi cánh tay lần nào**, chép lại câu cũ. Câu
-       * hỏi của cổng này là *"con số tới từ CÁI MÁY, TRONG LƯỢT NÀY"*, nên nó
-       * phải hỏi cả `made > 0`. → [[agentco-measurement-vs-conclusion]]
-       */
-      label: `⑪ tách bạc: số ${SO_HOA_DON} tới từ cánh tay TRONG LƯỢT NÀY`,
-      ok: made > 0 && dungSo,
+      label: `⑪ isolating the number: ${INVOICE_COUNT} came from the arm IN THIS TURN`,
+      ok: made > 0 && hasRightNumber,
       note:
-        `${ketCuc} · ${made} lời gọi · câu trả lời ${dungSo ? 'CÓ' : 'KHÔNG có'} số ${SO_HOA_DON}` +
-        (made === 0 && coHoi ? ' ⇒ nghi NHÌN THẤY, không phải định tuyến' : '') +
-        (made === 0 && coSo && !coHoi ? ' ⇒ bịa, HOẶC chép câu cũ — soi số để biết' : '') +
-        (made > 0 && !dungSo ? ' ⇒ 🔴 GỌI RỒI MÀ TRẢ LỜI SỐ KHÁC' : ''),
+        `${outcome_} · ${made} calls · answer ${hasRightNumber ? 'DOES' : 'does NOT'} contain ${INVOICE_COUNT}` +
+        (made === 0 && hasQuestion ? ' ⇒ suspect it just SAW the number, not routed' : '') +
+        (made === 0 && hasNumber && !hasQuestion ? ' ⇒ made up, OR reused an old answer — check the number to know which' : '') +
+        (made > 0 && !hasRightNumber ? ' ⇒ 🔴 CALLED IT AND STILL ANSWERED A DIFFERENT NUMBER' : ''),
     });
   }
   console.log();
 }
 
-// ══════════════════════════════════════════════════════════════ CHẠY
 
 try {
   if (wants('1')) await phase1();
-  // `--treo=N` THAY phần 2 chứ không thêm vào: cả hai đều là một lượt worker,
-  // và ca xúc xắc đã xanh từ 30/08 — chạy lại là trả tiền cho một câu đã biết.
-  if (wants('2') && !ONLY?.startsWith('1')) await (TREO > 0 ? phaseTreo() : phase2());
+  if (wants('2') && !ONLY?.startsWith('1')) await (HANG > 0 ? phaseHang() : phase2());
   if (has('full')) await phase3();
 } catch (e) {
-  console.log(`\n💥 NÉM LỖI: ${(e as Error).message}\n${(e as Error).stack ?? ''}`);
+  console.log(`\n💥 THREW: ${(e as Error).message}\n${(e as Error).stack ?? ''}`);
 } finally {
   (role as { tools: string[] }).tools = shellBefore as string[];
   (role as { mcp: string[] }).mcp = mcpBefore as string[];
-  // Trả lại con trỏ phiên của người dùng. Không có bản cũ ⇒ xoá bản do lượt đo
-  // vừa đẻ ra, chứ không để lại một hội thoại họ chưa từng mở.
   if (sessionBefore !== null) fs.writeFileSync(sessionFile, sessionBefore, 'utf8');
   else fs.rmSync(sessionFile, { force: true });
   fs.rmSync(sandbox, { recursive: true, force: true });
   fs.rmSync(path.join(office.dir, 'artifacts', 'cli-arm'), { recursive: true, force: true });
-  console.log('↩ đã xoá sandbox · xoá artifacts/cli-arm · trả nguyên role (chỉ đổi trong bộ nhớ)');
+  console.log('↩ sandbox removed · artifacts/cli-arm removed · role restored (in-memory change only)');
 }
 
-console.log('\n─── KẾT LUẬN ───');
+console.log('\n─── CONCLUSION ───');
 for (const g of gates) console.log(`${g.ok ? '🟢' : '🔴'} ${g.label.padEnd(46)} ${g.note}`);
 
 const bad = gates.filter((g) => !g.ok);
 console.log(
-  `\n${bad.length === 0 ? '✅ TẤT CẢ ĐẠT' : `🔴 ${bad.length}/${gates.length} KHÔNG ĐẠT`}` +
-    `\n\n⚠ RANH GIỚI CỦA PHÉP ĐO NÀY:` +
-    `\n  · Cổng ①–⑦ chứng minh một CƠ CHẾ, gọi trực tiếp — chúng KHÔNG chứng minh` +
-    `\n    cơ chế đó có mặt trên đường mà một task thật đi. Ô ⑧ mới nói chuyện đó.` +
-    `\n  · Ô ⑧/⑨ xanh MỘT lượt không chứng minh ổn định: định tuyến của Trợ lý có` +
-    `\n    phương sai cao (đã ghi §15f-bis). Chạy 3 lượt trước khi tin.` +
-    `\n  · Giá ~${Math.round(defBytes / 4)} token/lượt là byte÷4, KHÔNG phải số của` +
-    `\n    getContextUsage(). Đừng trộn hai nguồn — chúng lệch 27% (§9b ③).`,
+  `\n${bad.length === 0 ? '✅ ALL PASSED' : `🔴 ${bad.length}/${gates.length} FAILED`}` +
+    `\n\n⚠ THE BOUNDARY OF THIS MEASUREMENT:` +
+    `\n  · Gates ①–⑦ prove a MECHANISM, called directly — they do NOT prove` +
+    `\n    that mechanism sits on the path a real task actually takes. Only ⑧ speaks to that.` +
+    `\n  · ⑧/⑨ green on ONE run does not prove stability: the Assistant's routing has` +
+    `\n    high variance (recorded in §15f-bis). Run it 3 times before trusting it.` +
+    `\n  · The ~${Math.round(defBytes / 4)} tokens/turn estimate is bytes÷4, NOT the number from` +
+    `\n    getContextUsage(). Do not mix the two sources — they differ by 27% (§9b ③).`,
 );

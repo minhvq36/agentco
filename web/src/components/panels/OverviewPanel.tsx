@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Archive, ArchiveRestore, Building2, FolderOpen, Trash2 } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Archive, ArchiveRestore, Building2, ChevronDown, FolderOpen, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input, Label, SectionTitle, Select, Tip } from '@/components/ui/misc';
-import type { ArchivedAgent } from '@/lib/types';
+import type { ArchivedAgent, InstalledArm, OAuthAccount } from '@/lib/types';
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { actions, toast, useApp } from '@/lib/store';
+import { plural, t } from '@i18n';
+import { formatUSD } from '@i18n/fmt';
 
 interface CostRow {
   office: string;
@@ -25,18 +27,21 @@ interface CostRow {
   gone: boolean;
 }
 
-/** Tổng quan cả CÔNG TY: các văn phòng, và tiền — thứ duy nhất dùng chung. */
+/** The whole COMPANY at a glance: the offices, and the money — the one thing shared. */
 export function OverviewPanel() {
   const company = useApp((s) => s.company);
   const officeId = useApp((s) => s.officeId);
   const [cost, setCost] = useState<CostRow[] | null>(null);
   const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
 
-  useEffect(() => {
+  const loadCost = () =>
     api
       .cost()
       .then((c) => setCost(c.byOffice))
       .catch(() => setCost([]));
+
+  useEffect(() => {
+    void loadCost();
   }, [officeId]);
 
   const live = company?.offices.filter((o) => !o.archived) ?? [];
@@ -45,7 +50,7 @@ export function OverviewPanel() {
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto px-4 py-4">
       <section>
-        <SectionTitle className="mb-2">Văn phòng</SectionTitle>
+        <SectionTitle className="mb-2">{t('overview.offices')}</SectionTitle>
         <ul className="flex flex-col gap-1">
           {live.map((o) => (
             <li
@@ -65,59 +70,61 @@ export function OverviewPanel() {
                     {o.error ? (
                       <span className="text-danger">{o.error}</span>
                     ) : (
-                      `${o.onDuty}/${o.agents} người trực · ${o.knowledge} ghi chú`
+                      `${o.onDuty}/${plural('overview.onDutyCount', o.agents)} · ${plural('knowledge.noteCount', o.knowledge)}`
                     )}
                   </span>
                 </span>
               </button>
               {/*
-                MỞ THƯ MỤC — lối thoát cho "mã văn phòng không đổi theo tên".
-                → src/cli/daemonfile.ts §openFolder
+                OPEN FOLDER — the way out of "an office id does not follow its
+                name". → src/cli/daemonfile.ts §openFolder
 
-                `id` là tên thư mục và cố ý không đổi khi đổi tên hiển thị, nên
-                người đổi "Báo cáo" thành "Kiểm kê" sẽ đi tìm `kiem-ke/` không
-                có. Với tên phi-Latin còn tệ hơn: thư mục tên `vp-ee6fd8`.
-                Nút này bỏ hẳn nhu cầu biết thư mục tên gì.
+                `id` is the directory name and deliberately does not change when
+                the display name does, so someone who renames "Reports" to
+                "Inventory" goes looking for an `inventory/` that is not there.
+                With a non-Latin name it is worse: the directory is called
+                `vp-ee6fd8`. This button removes the need to know the name at all.
               */}
-              <Tip label={`Thư mục trên đĩa — offices/${o.id}/`}>
+              <Tip label={t('overview.folderTip', { id: o.id })}>
                 <Button
                   size="iconSm"
                   variant="ghost"
-                  aria-label={`Thư mục của ${o.name}`}
+                  aria-label={t('overview.folderAria', { name: o.name })}
                   className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                   onClick={async () => {
                     const r = await api.revealOffice(o.id).catch(() => null);
                     if (!r) return;
                     /*
-                      Truy cập từ xa (VPS, Docker) thì server CỐ Ý không mở gì —
-                      cửa sổ đó sẽ bật trên máy chủ, không phải máy bạn đang
-                      nhìn. Chép đường dẫn vào clipboard là thứ thật sự dùng
-                      được ở đó, và câu thông báo phải nói ra vì sao.
+                      Over a remote connection (VPS, Docker) the server opens
+                      nothing ON PURPOSE — that window would pop up on the host,
+                      not on the machine you are looking at. Copying the path to
+                      the clipboard is the thing that actually helps there, and
+                      the message has to say why.
                     */
-                    if (r.opened) return toast(`Đã mở: ${r.dir}`);
+                    if (r.opened) return toast(t('overview.opened', { dir: r.dir }));
                     void navigator.clipboard?.writeText(r.dir).catch(() => undefined);
-                    toast(`Đang xem từ máy khác nên không mở được — đã chép đường dẫn: ${r.dir}`);
+                    toast(t('overview.remoteCopied', { dir: r.dir }));
                   }}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
                 </Button>
               </Tip>
-              <Tip label="Cất vào lưu trữ — khôi phục được">
+              <Tip label={t('overview.archiveTip')}>
                 <Button
                   size="iconSm"
                   variant="ghost"
-                  aria-label={`Cất văn phòng ${o.name} vào lưu trữ`}
+                  aria-label={t('overview.archiveAria', { name: o.name })}
                   className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                   onClick={() => void actions.archiveOffice(o.id, true)}
                 >
                   <Archive className="h-3.5 w-3.5" />
                 </Button>
               </Tip>
-              <Tip label="Xoá hẳn cả thư mục — không lấy lại được">
+              <Tip label={t('overview.deleteTip')}>
                 <Button
                   size="iconSm"
                   variant="ghost"
-                  aria-label={`Xoá hẳn văn phòng ${o.name}`}
+                  aria-label={t('overview.deleteOfficeAria', { name: o.name })}
                   className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                   onClick={() => setConfirm({ id: o.id, name: o.name })}
                 >
@@ -129,14 +136,14 @@ export function OverviewPanel() {
         </ul>
         {live.length === 0 && (
           <div className="flex items-center gap-2 py-2 text-[13px] text-muted">
-            <Building2 className="h-4 w-4" /> chưa có văn phòng nào đang mở
+            <Building2 className="h-4 w-4" /> {t('overview.noOffices')}
           </div>
         )}
       </section>
 
       {archived.length > 0 && (
         <section>
-          <SectionTitle className="mb-2">Trong lưu trữ</SectionTitle>
+          <SectionTitle className="mb-2">{t('overview.archived')}</SectionTitle>
           <ul className="flex flex-col gap-1">
             {archived.map((o) => (
               <li
@@ -146,22 +153,24 @@ export function OverviewPanel() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-muted">{o.name}</span>
                   <span className="block text-xs text-muted">
-                    {o.agents} nhân viên · {o.knowledge} ghi chú · chỉ đọc
+                    {plural('overview.employeeCount', o.agents)} ·{' '}
+                    {plural('knowledge.noteCount', o.knowledge)} · {t('overview.readOnly')}
                   </span>
                 </span>
                 <Button size="sm" onClick={() => void actions.archiveOffice(o.id, false)}>
                   <ArchiveRestore className="h-3.5 w-3.5" />
-                  Khôi phục
+                  {t('overview.restore')}
                 </Button>
-                {/* Xoá hẳn phải với tới được TỪ TRONG lưu trữ. Không có nút này
-                    thì muốn dọn sạch phải khôi phục ra rồi mới xoá được — hai
-                    bước cho một ý định, và bước giữa là đưa lại vào danh sách
-                    đang làm việc đúng cái mình vừa muốn bỏ đi. */}
-                <Tip label="Xoá hẳn cả thư mục — không lấy lại được">
+                {/* Deleting for good has to be reachable FROM INSIDE the
+                    archive. Without this button, clearing one out means
+                    restoring it first — two steps for one intent, and the middle
+                    step puts the very thing you want gone back into the working
+                    list. */}
+                <Tip label={t('overview.deleteTip')}>
                   <Button
                     size="iconSm"
                     variant="ghost"
-                    aria-label={`Xoá hẳn văn phòng ${o.name}`}
+                    aria-label={t('overview.deleteOfficeAria', { name: o.name })}
                     onClick={() => setConfirm({ id: o.id, name: o.name })}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -170,29 +179,31 @@ export function OverviewPanel() {
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            File còn nguyên chỗ cũ, không đi đâu cả. Văn phòng trong lưu trữ không nhận việc và không
-            trả lời — khôi phục là trở lại nguyên vẹn, kể cả cuộc trò chuyện đang dở.
-          </p>
         </section>
       )}
 
       <ArchivedAgentsSection />
 
       <section>
-        <SectionTitle className="mb-2">Chi phí cả công ty</SectionTitle>
+        <SectionTitle className="mb-2">{t('overview.costTitle')}</SectionTitle>
         {cost === null ? (
-          <div className="text-[13px] text-muted">Đang đọc…</div>
+          <div className="text-[13px] text-muted">{t('common.reading')}</div>
         ) : cost.length === 0 ? (
-          <div className="text-[13px] text-muted">Chưa có việc nào được ghi nhận.</div>
+          <div className="text-[13px] text-muted">{t('overview.noCost')}</div>
         ) : (
-          <CostTable rows={cost} />
+          <CostTable rows={cost} onPurged={() => void loadCost()} />
         )}
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Số <b>lượt</b> mới là đòn bẩy chi phí lớn nhất — mỗi lượt đọc lại toàn bộ prefix. Việc nhiều lượt
-          đắt hơn việc nhiều token.
+          {t('overview.turnsNoteBefore')} <b>{t('overview.turnsNoteBold')}</b>{' '}
+          {t('overview.turnsNoteAfter')}
         </p>
       </section>
+
+      {/* Below Cost, and folded away (the user's call, 02/09): these are two
+          sections for TIDYING UP when needed, not something read every day. Left
+          open they push the very thing people come here for — the money — off
+          the bottom of the screen. */}
+      <ConnectionsSection />
 
       <ModelsSection />
 
@@ -202,25 +213,343 @@ export function OverviewPanel() {
 }
 
 /**
- * Bảng chi phí. Văn phòng KHÔNG CÒN TỒN TẠI được gom vào một khối đóng/mở.
+ * CONNECTIONS + LINKED ACCOUNTS — the management door at the level the data
+ * actually lives at.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ GỘP ĐỂ HIỂN THỊ, KHÔNG GỘP DỮ LIỆU.                                      │
+ * │ BUG THE USER REPORTED 02/09: *"the Acme Team's Notion connection cannot  │
+ * │ be removed"* (then Linear, then GitHub — the same trap each time).       │
  * │                                                                          │
- * │ Không gom thì sau vài tháng bảng đầy những cái tên đã chết. Nhưng cộng   │
- * │ chúng thành MỘT dòng "đã xoá · $X" thì cái mã văn phòng mất — mà với một │
- * │ văn phòng đã xoá hẳn, cái mã là manh mối DUY NHẤT còn lại để biết khoản  │
- * │ tiền đó là của việc gì.                                                  │
+ * │ Deletion runs down a chain, and each lock sits behind the very door it   │
+ * │ is locking:                                                              │
  * │                                                                          │
- * │ Nên: thu gọn thành một dòng tổng, bấm vào bung ra đúng từng dòng thật.   │
- * │ Danh sách không dài ra, không mất minh bạch, và không cần một dòng code  │
- * │ kế toán nào — chỉ là một cái `<details>`.                                │
+ * │   workspace ←blocked by─ arm ←blocked by─ office                         │
+ * │   `oauthForget`          `forgetArm`      way in: the canvas Toolbar     │
+ * │                                                                          │
+ * │ Those two guards are RIGHT — they stop you leaving a silently dead arm.  │
+ * │ What was wrong is that **the door to the next step lived inside the      │
+ * │ thing just deleted**: 0 offices ⇒ 0 canvas ⇒ 0 Toolbar ⇒ no route left   │
+ * │ to the shared ledger, even though that data belongs to the COMPANY and   │
+ * │ to no office.                                                            │
+ * │                                                                          │
+ * │ The fix is NOT "deleting an office also clears its connections" — that   │
+ * │ breaks the very sharing that makes them useful (delete office A, cut     │
+ * │ office B's wire) and turns one delete button into two behaviours         │
+ * │ depending on how many offices happen to be left. The data stays where it │
+ * │ is; what was fixed is the DOOR. → SPEC-arms.md §6k                       │
  * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `ArmDialog` is still where you **plug something in**. This section is where
+ * you **look and tidy** — two different intents, and the second must not depend
+ * on there being an office.
  */
-function CostTable({ rows }: { rows: CostRow[] }) {
+/**
+ * Access level → the word for it.
+ *
+ * The same three words were spelled out in three places before this
+ * (`ArmDialog`, here, and a ternary in `Inspector`), so a fourth level or a
+ * reworded one would have had to be found in three files. One catalogue region
+ * now owns them: `inspector.level.*`.
+ */
+function levelSay(level: string): string {
+  if (level === 'read') return t('inspector.level.read');
+  if (level === 'add') return t('inspector.level.add');
+  if (level === 'full') return t('inspector.level.full');
+  return level;
+}
+
+function ConnectionsSection() {
+  const company = useApp((s) => s.company);
+  const [arms, setArms] = useState<InstalledArm[] | null>(null);
+  const [accounts, setAccounts] = useState<OAuthAccount[] | null>(null);
+  /** Waiting on a delete confirmation — the one step with no undo, so it asks. */
+  const [dropArm, setDropArm] = useState<InstalledArm | null>(null);
+  const [dropAcc, setDropAcc] = useState<OAuthAccount | null>(null);
+
+  /*
+    Reload on `company`: deleting an office orphans arms, and the `orphan` flag
+    is what decides whether the 🗑 button appears at all. Not listening to it
+    means the user deletes an office and still reads "in use" until they hit F5.
+  */
+  useEffect(() => {
+    void api.arms().then((r) => setArms(r.arms)).catch(() => setArms([]));
+    void api.oauthAccounts().then((r) => setAccounts(r.accounts)).catch(() => setAccounts([]));
+  }, [company]);
+
+  async function forgetArm(a: InstalledArm) {
+    if (await actions.forgetArm(a.id)) {
+      toast(t('overview.armForgotten', { label: a.label }));
+      const r = await api.arms().catch(() => null);
+      if (r) setArms(r.arms);
+    }
+  }
+
+  async function forgetAccount(acc: OAuthAccount) {
+    const name = acc.label ?? acc.name;
+    if (await actions.forgetAccount(acc.name)) {
+      toast(t('overview.accountForgotten', { name }));
+      const [a, b] = await Promise.all([
+        api.arms().catch(() => null),
+        api.oauthAccounts().catch(() => null),
+      ]);
+      if (a) setArms(a.arms);
+      if (b) setAccounts(b.accounts);
+    }
+  }
+
+  const officeName = (id: string) => company?.offices.find((o) => o.id === id)?.name ?? id;
+
+  if (arms !== null && arms.length === 0 && accounts !== null && accounts.length === 0) return null;
+
+  return (
+    <>
+      {arms !== null && arms.length > 0 && (
+        <Fold title={t('overview.connections')} count={arms.length}>
+          <ul className="flex flex-col gap-1">
+            {arms.map((a) => {
+              // "In use" has two meanings, exactly as `armHolders` on the server
+              // has them: there is a wire, OR it sits on a diagram unwired.
+              // Collapsing the two shows a delete button for a node that is on
+              // somebody's diagram right now.
+              const wired = [...new Set(a.usedBy.map((u) => officeName(u.office)))];
+              return (
+                <li
+                  key={a.id}
+                  className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-2 text-[13px]"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-ink">{a.label}</span>
+                    <span className="block truncate text-xs text-muted">
+                      {a.via ? `${a.via} · ` : ''}
+                      {plural('inspector.toolCount', a.toolCount)}
+                      {a.level ? ` · ${levelSay(a.level)}` : ''}
+                    </span>
+                    <span className="block truncate text-xs text-muted">
+                      {wired.length
+                        ? t('overview.usedBy', { who: wired.join(', ') })
+                        : a.orphan
+                          ? t('overview.unused')
+                          : t('overview.onCanvasNotWired')}
+                    </span>
+                  </span>
+                  {a.orphan && (
+                    <Tip label={t('overview.dropArmTip')}>
+                      <Button
+                        size="iconSm"
+                        variant="ghost"
+                        aria-label={t('overview.dropArmAria', { label: a.label })}
+                        onClick={() => setDropArm(a)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </Tip>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </Fold>
+      )}
+
+      {accounts !== null && accounts.length > 0 && (
+        <Fold title={t('overview.accounts')} count={accounts.length}>
+          <ul className="flex flex-col gap-1">
+            {accounts.map((acc) => (
+              <li
+                key={acc.name}
+                className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-2 text-[13px]"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-ink">{acc.label ?? acc.name}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {acc.dead ? (
+                      <span className="text-danger">{t('overview.keyDead')}</span>
+                    ) : acc.usedBy.length ? (
+                      t('overview.usedBy', { who: acc.usedBy.join(', ') })
+                    ) : (
+                      t('overview.accountUnused')
+                    )}
+                  </span>
+                </span>
+                {/*
+                  Dimmed, not hidden, and the tooltip NAMES the connection
+                  holding it: this is the exact spot the user got stuck on 02/09,
+                  so the explanation has to point at the next step instead of
+                  only saying "no".
+                */}
+                <Tip
+                  label={
+                    acc.usedBy.length
+                      ? t('overview.accountBlockedTip', {
+                          n: acc.usedBy.length,
+                          who: acc.usedBy.join(', '),
+                        })
+                      : t('overview.accountDropTip')
+                  }
+                >
+                  <span>
+                    <Button
+                      size="iconSm"
+                      variant="ghost"
+                      disabled={acc.usedBy.length > 0}
+                      aria-label={t('overview.accountDropAria', { label: acc.label ?? acc.name })}
+                      onClick={() => setDropAcc(acc)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </span>
+                </Tip>
+              </li>
+            ))}
+          </ul>
+        </Fold>
+      )}
+
+      {/*
+        Ask with the app's own MODAL, not `window.confirm`. (the user's call,
+        02/09)
+
+        The browser dialog locks the whole tab, carries no formatting, and looks
+        nothing like the rest of the product — while the CREATE dialog is already
+        a modal. Asking and creating are two ends of the same action; two
+        different shapes means the user learns it twice.
+
+        The **"THE KEY IS KEPT"** clause is bold rather than a footnote: it is
+        what makes this decision cheap, and unsaid it leaves the user believing
+        they are about to lose a token, so nobody dares press the button — a
+        button that might as well not exist.
+      */}
+      <Dialog open={!!dropArm} onOpenChange={(o) => !o && setDropArm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t('overview.dropArmTitle', { label: dropArm?.label ?? '' })}
+            </DialogTitle>
+            <DialogDescription>
+              {t('overview.dropArmBody1')} <b>{t('overview.dropArmBodyBold')}</b>{' '}
+              {t('overview.dropArmBody2')}
+              <br />
+              <b>{t('overview.dropArmKeepBold')}</b> {t('overview.dropArmKeepAfter')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setDropArm(null)}>{t('common.cancel')}</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (dropArm) void forgetArm(dropArm);
+                setDropArm(null);
+              }}
+            >
+              {t('inspector.deleteForGood')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dropAcc} onOpenChange={(o) => !o && setDropAcc(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t('overview.dropAccTitle', { label: dropAcc?.label ?? dropAcc?.name ?? '' })}
+            </DialogTitle>
+            <DialogDescription>
+              {t('overview.dropAccBody1')} <b>{t('overview.dropAccBodyBold')}</b>{' '}
+              {t('overview.dropAccBody2')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setDropAcc(null)}>{t('common.cancel')}</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (dropAcc) void forgetAccount(dropAcc);
+                setDropAcc(null);
+              }}
+            >
+              {t('overview.drop')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * A FOLDABLE section for the Overview panel. (the user's call, 02/09)
+ *
+ * Same `<details>` shape as the "N entries gone" block in the cost table, so the
+ * two foldables in one panel open with one gesture. The count sits in the title:
+ * once closed, it is the only thing still saying what is inside.
+ *
+ * CLOSED by default — this is a panel for tidying when needed, not something
+ * read every day, and three connection entries left open push Cost off the
+ * bottom of the screen.
+ */
+function Fold({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group">
+      <summary className="mb-2 flex cursor-pointer list-none items-center gap-1.5 marker:hidden">
+        <ChevronDown className="h-3.5 w-3.5 text-muted transition-transform group-open:rotate-180" />
+        <SectionTitle>
+          {title} <span className="tabular-nums">({count})</span>
+        </SectionTitle>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+/**
+ * The cost table. Offices that NO LONGER EXIST are gathered into one foldable
+ * block.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ COLLAPSE THE DISPLAY, NEVER THE DATA.                                    │
+ * │                                                                          │
+ * │ Without the fold, a few months in the table is full of dead names. But   │
+ * │ adding them into ONE "deleted · $X" row loses the office id — and for an │
+ * │ office that is gone for good, that id is the ONLY clue left about what   │
+ * │ the money was spent on.                                                  │
+ * │                                                                          │
+ * │ So: fold to a single total row, click to expand the real rows, unchanged.│
+ * │ The list stops growing, nothing becomes less transparent, and it takes   │
+ * │ no accounting code at all — it is a `<details>`.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Since 02/09 this block also carries a BROOM. `removeOffice` now closes the
+ * ledger itself, so the block only collects debris from before that fix — but
+ * old debris still needs a way out, and that way must not be "open
+ * `usage.jsonl` and edit it by hand".
+ */
+function CostTable({ rows, onPurged }: { rows: CostRow[]; onPurged: () => void }) {
   const live = rows.filter((r) => !r.gone);
   const gone = rows.filter((r) => r.gone);
   const goneTotal = gone.reduce((n, r) => n + r.costUSD, 0);
+  const [busy, setBusy] = useState(false);
+  const [ask, setAsk] = useState(false);
+
+  async function purge() {
+    setBusy(true);
+    try {
+      const r = await api.purgeGoneCost();
+      toast(t('overview.purged', { n: r.offices, cost: formatUSD(r.costUSD) }));
+      onPurged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t('overview.purgeFailed'));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <>
@@ -234,14 +563,14 @@ function CostTable({ rows }: { rows: CostRow[] }) {
 
       {gone.length > 0 && (
         <details className="mt-1.5 rounded-lg border border-dashed border-line px-2.5 py-1.5">
-          {/* "mục" chứ không phải "văn phòng": khối này chứa cả văn phòng đã xoá
-              hẳn LẪN bản ghi có từ trước khi có khái niệm văn phòng. Gọi chung
-              là "văn phòng đã xoá" thì đúng với đa số dòng và sai với phần còn
-              lại — mà sổ chi phí thì không được nói sai câu nào. */}
+          {/* "entries", not "offices": this block holds both offices deleted for
+              good AND records from before offices were a concept. Calling the
+              lot "deleted offices" is right for most rows and wrong for the
+              rest — and a cost ledger is not allowed one wrong sentence. */}
           <summary className="cursor-pointer list-none text-[13px] text-muted marker:hidden">
-            <span className="tabular-nums">{gone.length}</span> mục không còn ·{' '}
-            <span className="tabular-nums">${goneTotal.toFixed(4)}</span>
-            <span className="float-right text-xs">bấm để xem</span>
+            <span className="tabular-nums">{gone.length}</span> {t('overview.goneEntries')}{' '}
+            <span className="tabular-nums">{formatUSD(goneTotal)}</span>
+            <span className="float-right text-xs">{t('overview.tapToSee')}</span>
           </summary>
           <table className="mt-1.5 w-full text-[13px]">
             <tbody>
@@ -250,8 +579,46 @@ function CostTable({ rows }: { rows: CostRow[] }) {
               ))}
             </tbody>
           </table>
+          {/* The button sits at the BOTTOM of the expanded block on purpose: to
+              press it you have to open the block, which means you have already
+              seen the exact rows about to go. Same rule as "Delete all" in the
+              Artifacts panel — know what you are losing BEFORE you press. */}
+          <div className="mt-2 flex items-center justify-end">
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAsk(true)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              {busy ? t('overview.purging') : t('overview.purgeAll')}
+            </Button>
+          </div>
         </details>
       )}
+
+      <Dialog open={ask} onOpenChange={setAsk}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('overview.purgeTitle', { n: gone.length })}</DialogTitle>
+            <DialogDescription>
+              {plural('plans.jobCount', gone.reduce((n, r) => n + r.tasks, 0))} ·{' '}
+              {formatUSD(goneTotal)} {t('overview.purgeBodyMid')}{' '}
+              <b>{t('overview.purgeBodyBold')}</b>.
+              <br />
+              {t('overview.purgeUntouchedBefore')} <b>{t('overview.purgeUntouchedBold')}</b>{' '}
+              {t('overview.purgeUntouchedAfter')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setAsk(false)}>{t('common.cancel')}</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setAsk(false);
+                void purge();
+              }}
+            >
+              {t('overview.purgeAll')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -261,34 +628,40 @@ function CostRowView({ row }: { row: CostRow }) {
     <tr className="border-b border-line last:border-0">
       <td className="py-1.5 pr-2 text-ink">
         {row.name}
-        {row.archived && <span className="ml-1.5 text-xs text-muted">(lưu trữ)</span>}
+        {row.archived && (
+          <span className="ml-1.5 text-xs text-muted">{t('overview.archivedSuffix')}</span>
+        )}
       </td>
-      <td className="py-1.5 text-right tabular-nums text-muted">{row.tasks} việc</td>
-      <td className="py-1.5 pl-2 text-right tabular-nums text-muted">{row.turns} lượt</td>
-      <td className="py-1.5 pl-2 text-right tabular-nums text-ink">${row.costUSD.toFixed(4)}</td>
+      <td className="py-1.5 text-right tabular-nums text-muted">
+        {plural('plans.jobCount', row.tasks)}
+      </td>
+      <td className="py-1.5 pl-2 text-right tabular-nums text-muted">
+        {plural('plans.turnCount', row.turns)}
+      </td>
+      <td className="py-1.5 pl-2 text-right tabular-nums text-ink">{formatUSD(row.costUSD)}</td>
     </tr>
   );
 }
 
 /**
- * Nhân viên đang trong lưu trữ của văn phòng ĐANG MỞ.
+ * Employees in the archive of the office CURRENTLY OPEN.
  *
- * Khôi phục thì họ trở lại đúng văn phòng cũ — vì họ chưa bao giờ rời đi.
- * `roles/<id>.yaml` không hề di chuyển, chỉ có một cờ `archived` được gỡ.
+ * Restore one and they come back to the same office — because they never left.
+ * `roles/<id>.yaml` does not move at all; an `archived` flag is removed.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ TÊN VĂN PHÒNG PHẢI HIỆN RA, DÙ DANH SÁCH NÀY CHỈ CÓ MỘT VĂN PHÒNG.       │
+ * │ THE OFFICE NAME HAS TO BE VISIBLE, EVEN THOUGH EVERY ROW IS ONE OFFICE.  │
  * │                                                                          │
- * │ Khối này nằm trong bảng **Tổng quan công ty** — một màn hình mà mọi thứ  │
- * │ khác đều nói về CẢ công ty (danh sách văn phòng, sổ chi phí, model dùng  │
- * │ chung). Một mục "Nhân viên trong lưu trữ" đặt giữa đó thì đọc như là     │
- * │ toàn công ty, và người dùng bấm "Đưa trở lại" xong đi tìm người đó trong │
- * │ một mớ văn phòng.                                                        │
+ * │ This block lives in the **company Overview** — a screen where everything │
+ * │ else speaks about the WHOLE company (the office list, the cost ledger,   │
+ * │ the shared models). An "Archived employees" section dropped in there     │
+ * │ reads as company-wide, and the user presses "Bring back" and then goes   │
+ * │ hunting for that person across a pile of offices.                        │
  * │                                                                          │
- * │ Nhãn ở đây không phải để phân biệt các dòng với nhau — chúng cùng một    │
- * │ văn phòng cả. Nó trả lời câu người dùng thật sự đang hỏi: **"bấm nút này │
- * │ thì người đó xuất hiện ở đâu?"** Nên nhãn nằm ở TIÊU ĐỀ khối, chỗ đọc    │
- * │ trước khi bấm, chứ không rắc vào từng dòng.                              │
+ * │ The label is not there to tell rows apart — they are all the same        │
+ * │ office. It answers the question the user is actually asking: **"if I     │
+ * │ press this, where does that person show up?"** So it belongs in the      │
+ * │ section TITLE, read before the click, not sprinkled over every row.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ArchivedAgentsSection() {
@@ -298,8 +671,8 @@ function ArchivedAgentsSection() {
   const [agents, setAgents] = useState<ArchivedAgent[]>([]);
   const [confirm, setConfirm] = useState<ArchivedAgent | null>(null);
 
-  // Đọc lại mỗi khi canvas đổi: cất hoặc khôi phục một người đều làm canvas đổi,
-  // nên danh sách này không bao giờ lệch với sơ đồ.
+  // Re-read whenever the canvas changes: archiving or restoring someone changes
+  // the canvas, so this list can never drift from the diagram.
   useEffect(() => {
     if (!officeId) return setAgents([]);
     api
@@ -313,7 +686,7 @@ function ArchivedAgentsSection() {
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <SectionTitle>Nhân viên trong lưu trữ</SectionTitle>
+        <SectionTitle>{t('overview.archivedAgents')}</SectionTitle>
         {office && (
           <span className="flex min-w-0 items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
             <span className="flex-none">{office.avatar}</span>
@@ -331,26 +704,26 @@ function ArchivedAgentsSection() {
             <span className="min-w-0 flex-1">
               <span className="block truncate text-muted">{a.label}</span>
               <span className="block truncate text-xs text-muted">
-                {a.notes > 0 ? `${a.notes} ghi chú kinh nghiệm còn giữ` : a.pitch}
+                {a.notes > 0 ? plural('overview.lessonNotesKept', a.notes) : a.pitch}
               </span>
             </span>
             <Tip
               label={
                 office
-                  ? `Trở lại sơ đồ của "${office.name}", đứng ở một chỗ trống — không đè lên ai. Vẫn ở trạng thái NGHỈ cho tới khi bạn nối dây.`
-                  : 'Trở lại sơ đồ, đứng ở một chỗ trống, vẫn ở trạng thái nghỉ.'
+                  ? t('overview.restoreTipOffice', { name: office.name })
+                  : t('overview.restoreTip')
               }
             >
               <Button size="sm" onClick={() => void actions.archiveAgent(a.role, false)}>
                 <ArchiveRestore className="h-3.5 w-3.5" />
-                Đưa trở lại
+                {t('overview.bringBack')}
               </Button>
             </Tip>
-            <Tip label="Xoá hẳn file vai trò — không lấy lại được">
+            <Tip label={t('overview.deleteRoleTip')}>
               <Button
                 size="iconSm"
                 variant="ghost"
-                aria-label={`Xoá hẳn ${a.label}`}
+                aria-label={t('overview.deleteAgentAria', { label: a.label })}
                 onClick={() => setConfirm(a)}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -361,42 +734,45 @@ function ArchivedAgentsSection() {
       </ul>
 
       {/*
-        Câu này nói về CHỖ NGỒI, vì đó mới là nỗi lo thật khi bấm "Đưa trở lại":
-        người dùng sợ họ hiện ra ở một chỗ không tìm thấy. Cất đi là node bị XOÁ
-        khỏi layout (`layout.dropAgent`), nên lúc quay lại nó được cấp ô trống
-        đầu tiên như một người mới — kể cả khi ai đó đã ngồi vào chỗ cũ.
-        → test/layout.test.ts "cất đi rồi đưa trở lại"
+        This sentence is about the SEAT, because that is the real worry behind
+        "Bring back": the user is afraid the person reappears somewhere they
+        cannot find. Archiving REMOVES the node from the layout
+        (`layout.dropAgent`), so on the way back it gets the first free slot like
+        a new hire — even if somebody has taken the old seat.
+        → test/layout.test.ts "archive then bring back"
       */}
       <p className="mt-2 text-xs leading-relaxed text-muted">
-        Đưa trở lại là họ xuất hiện trên sơ đồ của <b>{office?.name ?? 'văn phòng này'}</b> ở một chỗ
-        trống — không bao giờ nằm đè lên người khác, kể cả khi đã có ai ngồi vào chỗ cũ của họ. Trạng
-        thái vẫn là <b>đang nghỉ</b> cho tới khi bạn nối dây từ Trợ lý.
+        {t('overview.bringBackNoteBefore')} <b>{office?.name ?? t('overview.thisOffice')}</b>{' '}
+        {t('overview.bringBackNoteMid')} <b>{t('overview.bringBackNoteBold')}</b>{' '}
+        {t('overview.bringBackNoteAfter')}
       </p>
 
       <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Xoá hẳn “{confirm?.label}”?</DialogTitle>
+            <DialogTitle>
+              {t('inspector.confirmDeleteAgentTitle', { label: confirm?.label ?? '' })}
+            </DialogTitle>
             <DialogDescription>
-              Mất file <code>roles/{confirm?.role}.yaml</code> và toàn bộ kỹ năng đã viết cho người
-              này. <b>Không lấy lại được.</b>
+              {t('inspector.agentDeleteBefore')} <code>roles/{confirm?.role}.yaml</code>{' '}
+              {t('inspector.agentDeleteMid')} <b>{t('inspector.agentDeleteBold')}</b>
               <br />
               <br />
               {confirm && confirm.notes > 0 ? (
                 <>
-                  <b>{confirm.notes} ghi chú kinh nghiệm</b> ở{' '}
-                  <code>knowledge/agents/{confirm.role}/</code> vẫn được giữ — đó là thứ văn phòng đã
-                  học được, không phải tài sản riêng của một cái tên.
+                  <b>{plural('overview.lessonNotes', confirm.notes)}</b> {t('overview.atPath')}{' '}
+                  <code>knowledge/agents/{confirm.role}/</code> {t('inspector.agentNotesAfter')}
                 </>
               ) : (
                 <>
-                  Sổ tay kinh nghiệm ở <code>knowledge/agents/{confirm?.role}/</code> vẫn được giữ.
+                  {t('inspector.agentNotesBefore')}{' '}
+                  <code>knowledge/agents/{confirm?.role}/</code> {t('overview.notesKeptShort')}
                 </>
               )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setConfirm(null)}>Thôi</Button>
+            <Button onClick={() => setConfirm(null)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={() => {
@@ -404,7 +780,7 @@ function ArchivedAgentsSection() {
                 setConfirm(null);
               }}
             >
-              Xoá hẳn
+              {t('inspector.deleteForGood')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -414,15 +790,16 @@ function ArchivedAgentsSection() {
 }
 
 /**
- * Mức nào chạy model nào — cấu hình cấp CÔNG TY.
+ * Which tier runs which model — COMPANY-level configuration.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO Ở ĐÂY CHỨ KHÔNG PHẢI TRONG TỪNG VĂN PHÒNG                         │
+ * │ WHY HERE AND NOT INSIDE EACH OFFICE                                      │
  * │                                                                          │
- * │ Đây là câu hỏi "một việc mức standard tốn bao nhiêu" — tức là TIỀN, mà   │
- * │ tiền thì chỉ có một hoá đơn Claude và một chỗ để siết. Còn "Trợ lý văn   │
- * │ phòng này chạy mức nào" là câu hỏi CÔNG VIỆC, nên nó nằm ở từng văn      │
- * │ phòng (bảng bên phải, chọn node Trợ lý). Hai câu hỏi khác nhau, hai chỗ. │
+ * │ This is the question "what does a standard-tier job cost" — that is      │
+ * │ MONEY, and money has one Claude bill and one place to tighten it. "Which │
+ * │ tier does this office's assistant run at" is a question about WORK, so   │
+ * │ it lives per office (the right-hand panel, select the assistant node).   │
+ * │ Two different questions, two different places.                           │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function ModelsSection() {
@@ -443,7 +820,7 @@ function ModelsSection() {
 
   return (
     <section>
-      <SectionTitle className="mb-2">Model của công ty</SectionTitle>
+      <SectionTitle className="mb-2">{t('overview.modelsTitle')}</SectionTitle>
 
       {!open ? (
         <>
@@ -459,16 +836,11 @@ function ModelsSection() {
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            Trợ lý mặc định chạy mức <b>{models.master}</b>, khâu lập kế hoạch chạy mức{' '}
-            <b>{models.planner}</b>. Lập kế hoạch chạy ở lượt gọi riêng, nên đặt nó lên{' '}
-            <code>deep</code> <b>không</b> phá bộ nhớ đệm của Trợ lý.
-          </p>
           <button
             className="mt-2 text-[13px] text-accent hover:underline"
             onClick={() => setOpen(true)}
           >
-            Đổi model
+            {t('inspector.changeModel')}
           </button>
         </>
       ) : (
@@ -485,7 +857,7 @@ function ModelsSection() {
             </div>
           ))}
 
-          <Label htmlFor="m-master">Trợ lý chạy mức</Label>
+          <Label htmlFor="m-master">{t('overview.masterTier')}</Label>
           <Select
             id="m-master"
             className="mb-3 w-full"
@@ -497,7 +869,7 @@ function ModelsSection() {
             <option value="deep">deep</option>
           </Select>
 
-          <Label htmlFor="m-planner">Lập kế hoạch chạy mức</Label>
+          <Label htmlFor="m-planner">{t('overview.plannerTier')}</Label>
           <Select
             id="m-planner"
             className="w-full"
@@ -510,13 +882,13 @@ function ModelsSection() {
           </Select>
 
           <p className="mt-3 text-xs leading-relaxed text-muted">
-            Tên model phải đúng như Anthropic đặt (<code>claude-sonnet-5</code>,{' '}
-            <code>claude-haiku-4-5-20251001</code>…). Gõ sai thì việc đầu tiên chạy sau đó sẽ báo lỗi
-            model không tồn tại — không có gì hỏng vĩnh viễn, sửa lại là chạy tiếp.
+            {t('overview.modelNamesBefore')}
+            <code>claude-sonnet-5</code>, <code>claude-haiku-4-5-20251001</code>
+            {t('overview.modelNamesAfter')}
           </p>
           <p className="mt-2 text-xs leading-relaxed text-muted">
-            Đổi ở đây đụng tới <b>mọi văn phòng</b>. Việc đang chạy giữ nguyên model cũ cho tới khi
-            xong; mọi thứ sau đó dùng model mới và phải ghi lại bộ nhớ đệm một lần.
+            {t('overview.modelsWideBefore')} <b>{t('overview.modelsWideBold')}</b>
+            {t('overview.modelsWideAfter')}
           </p>
 
           <div className="mt-3 flex gap-2">
@@ -527,7 +899,7 @@ function ModelsSection() {
                 setOpen(false);
               }}
             >
-              Thôi
+              {t('common.cancel')}
             </Button>
             <Button
               size="sm"
@@ -540,7 +912,7 @@ function ModelsSection() {
                 if (ok) setOpen(false);
               }}
             >
-              {busy ? 'Đang lưu…' : 'Lưu'}
+              {busy ? t('common.saving') : t('common.save')}
             </Button>
           </div>
         </div>
@@ -560,22 +932,14 @@ function RemoveOfficeDialog({
     <Dialog open={!!target} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Xoá hẳn văn phòng “{target?.name}”?</DialogTitle>
+          <DialogTitle>{t('overview.removeOfficeTitle', { name: target?.name ?? '' })}</DialogTitle>
           <DialogDescription>
-            Xoá cả thư mục <code>offices/{target?.id}/</code>: nhân viên, kỹ năng, kho tri thức và mọi
-            kết quả đã làm. <b>Không lấy lại được.</b>
-            <br />
-            <br />
-            Sau đó những khoản tiền văn phòng này đã tiêu vẫn nằm trong sổ chi phí, nhưng chỉ còn lại
-            cái mã <code>{target?.id}</code> để bạn lần ra — tên và nội dung thì mất.
-            <br />
-            <br />
-            Chỉ muốn cất đi cho gọn? Bấm <b>Thôi</b> rồi dùng nút <b>Lưu trữ</b> — khôi phục được bất cứ
-            lúc nào, và văn phòng vẫn giữ tên trong sổ.
+            {t('overview.removeOfficeBefore')} <code>offices/{target?.id}/</code>
+            {t('overview.removeOfficeAfter')} <b>{t('inspector.agentDeleteBold')}</b>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button onClick={onClose}>Thôi</Button>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
           <Button
             variant="danger"
             onClick={() => {
@@ -583,7 +947,7 @@ function RemoveOfficeDialog({
               onClose();
             }}
           >
-            Xoá hẳn
+            {t('inspector.deleteForGood')}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -3,13 +3,13 @@
  *
  * → docs/SPEC-token-economy.md §3
  *
- * VẤN ĐỀ: bung N task cùng cacheKey song song khi cache chưa có → cả N cùng
- * miss, cả N cùng trả cache_write (1.25–2×). Đúng lúc song song đáng lẽ tiết
- * kiệm thì lại đắt nhất.
+ * THE PROBLEM: firing N tasks that share a cacheKey in parallel while the cache
+ * is cold makes all N miss, and all N pay cache_write (1.25–2×). The very moment
+ * parallelism ought to save money is the moment it costs the most.
  *
- * GIẢI: task đầu tiên của mỗi cacheKey chạy một mình. Các task còn lại CHỜ,
- * và chỉ chờ tới khi primer NHẬN ĐƯỢC TOKEN ĐẦU TIÊN — không chờ nó chạy xong.
- * Prefix đã được ghi vào cache ở thời điểm đó.
+ * THE FIX: the first task on each cacheKey runs alone. The rest WAIT — and only
+ * until the primer RECEIVES ITS FIRST TOKEN, not until it finishes. The prefix
+ * has been written to the cache by that point.
  */
 
 const NOOP = (): void => {};
@@ -32,15 +32,16 @@ export class CachePrimingGate {
   ) {}
 
   /**
-   * Trả về hàm release. Worker PHẢI gọi nó ngay khi nhận message đầu tiên
-   * từ API, và lần nữa trong `finally` (gọi nhiều lần là an toàn).
+   * Returns a release function. The worker MUST call it the moment the first
+   * message arrives from the API, and again in its `finally` — calling it more
+   * than once is safe.
    */
   async acquire(cacheKey: string): Promise<() => void> {
     const now = Date.now();
 
     const expires = this.warm.get(cacheKey);
     if (expires !== undefined && expires > now) {
-      // Cache đang ấm — mỗi lần dùng lại gia hạn TTL phía server, nên gia hạn cả ở đây.
+      // Warm — every reuse extends the TTL on the server side, so extend it here too.
       this.warm.set(cacheKey, now + this.ttlMs);
       return NOOP;
     }
@@ -55,7 +56,7 @@ export class CachePrimingGate {
         }),
         sleep(this.timeoutMs),
       ]);
-      // Thà trả tiền cache_write còn hơn treo task vô hạn.
+      // Better to pay for a cache_write than to hang a task forever.
       if (timedOut) this.stats.timeouts++;
       return NOOP;
     }

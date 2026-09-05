@@ -1,81 +1,93 @@
 /**
- * Lệnh chữ trong ô chat. → docs/SPEC-tools-approval.md §8e
+ * Text commands in the chat box. → docs/SPEC-tools-approval.md §8e
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO PHẢI CHẶN Ở ĐÂY, KHÔNG PHẢI Ở UI                                 │
- * │                                                                          │
- * │ Chuỗi ta đưa vào `query({ prompt })` đi tới chính CLI Claude Code, mà    │
- * │ CLI đó CÓ bộ lệnh gạch chéo riêng (`/clear`, `/compact`, `/model`…).     │
- * │ Một câu bắt đầu bằng `/` có thể bị nó hiểu là lệnh của nó — `/clear`     │
- * │ lọt qua là mất trắng ngữ cảnh hội thoại của Trợ lý mà không ai biết      │
- * │ vì sao.                                                                  │
- * │                                                                          │
- * │ Nên: DANH SÁCH TRẮNG. Cái gì không phải lệnh của ta thì không đi tiếp.   │
- * │ Ta không cần biết Claude Code có những lệnh gì, hôm nay hay năm sau.     │
+ * │ WHY THIS HAS TO BE BLOCKED HERE, NOT IN THE UI
+ * │
+ * │ The string we hand to `query({ prompt })` goes straight to the Claude Code
+ * │ CLI itself, and that CLI HAS its own set of slash commands (`/clear`,
+ * │ `/compact`, `/model`…). A sentence starting with `/` could get interpreted
+ * │ as one of ITS commands — a `/clear` slipping through wipes out the
+ * │ Assistant's entire conversation context with nobody knowing why.
+ * │
+ * │ So: an ALLOWLIST. Anything that isn't one of our own commands doesn't go
+ * │ any further. We don't need to know what commands Claude Code has, today or next year.
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Lệnh viết bằng TIẾNG ANH dù người dùng là ai — dự án đi ra thế giới, và một
- * bộ lệnh là một giao diện lập trình, không phải một câu văn. Câu TRẢ LỜI thì
- * vẫn theo ngôn ngữ người dùng.
+ * Commands are written in ENGLISH regardless of who the user is — the project
+ * goes global, and a command set is a programming interface, not a sentence.
+ * The REPLY still follows the user's own language.
  *
- * Cùng bộ lệnh này chạy ở giao diện và ở Telegram, vì cả hai đều đi qua
- * `office.say()`.
+ * This same command set runs both in the interface and on Telegram, since
+ * both go through `office.say()`.
  */
+
+import { plural, t, type MessageKey } from '../i18n/index.js';
 
 export type CommandName = 'stop' | 'approve' | 'reject' | 'status' | 'help' | 'clear' | 'resume';
 
 export interface CommandSpec {
   name: CommandName;
-  /** Dạng gõ được, kể cả viết tắt. Tất cả đều tiếng Anh. */
+  /** Typable forms, including abbreviations. All in English. */
   aliases: readonly string[];
-  help: string;
+  /**
+   * A CATALOGUE KEY, not a sentence.
+   *
+   * `COMMANDS` is a module-level constant, so a resolved string here would be
+   * frozen at import to whichever language the process started in and would
+   * never follow the switch afterwards. Holding the key defers the lookup to
+   * `helpText()`, which runs per request. → docs/CLAUDE.md §Language
+   */
+  help: MessageKey;
 }
 
 export const COMMANDS: readonly CommandSpec[] = [
-  { name: 'stop', aliases: ['stop', 'cancel', 's'], help: 'Ngắt việc đang chạy' },
-  { name: 'approve', aliases: ['approve', 'ok', 'y'], help: 'Duyệt thứ đang chờ bạn' },
-  { name: 'reject', aliases: ['reject', 'no', 'n'], help: 'Từ chối thứ đang chờ bạn' },
-  { name: 'status', aliases: ['status', 'st'], help: 'Đang chạy gì, đã tốn bao nhiêu' },
+  { name: 'stop', aliases: ['stop', 'cancel', 's'], help: 'cmd.stop' },
+  { name: 'approve', aliases: ['approve', 'ok', 'y'], help: 'cmd.approve' },
+  { name: 'reject', aliases: ['reject', 'no', 'n'], help: 'cmd.reject' },
+  { name: 'status', aliases: ['status', 'st'], help: 'cmd.status' },
   /**
-   * Chạy tiếp ca bị NGẮT — không lập kế hoạch lại, không tốn một lượt model.
+   * Resumes an INTERRUPTED run — no replanning, no model turn spent.
    *
-   * Là một LỆNH chứ không phải một nút, vì nó phải chạy được cả qua Telegram
-   * (bridge là mục tiêu tối thượng, và ở đó sơ đồ không tồn tại). Và nó phải là
-   * hành động TƯỜNG MINH của người dùng: tự chạy tiếp lúc bật daemon nghĩa là
-   * một lần crash âm thầm tiêu tiền của họ. → SPEC-offices.md §6b
+   * A COMMAND rather than a button, because it has to work through Telegram
+   * too (the bridge is the ultimate target, and no canvas exists there). And
+   * it must be an EXPLICIT user action: auto-resuming when the daemon starts
+   * up would mean a silent crash quietly spending their money. → SPEC-offices.md §6b
    */
-  { name: 'resume', aliases: ['resume', 'tiep'], help: 'Chạy tiếp việc còn dở của ca vừa bị ngắt' },
+  { name: 'resume', aliases: ['resume'], help: 'cmd.resume' },
   /**
-   * Cùng TÊN với `/clear` của Claude Code là có chủ ý: người dùng đã quen phản
-   * xạ đó, và ý nghĩa ở đây khớp. Nhưng nó KHÔNG bao giờ đi tới CLI — danh sách
-   * trắng ở `parseInput` chặn mọi chuỗi gạch chéo, và ta xử lý bằng code.
+   * Sharing its NAME with Claude Code's `/clear` is deliberate: the user
+   * already has that reflex, and the meaning matches here. But it NEVER
+   * reaches the CLI — the allowlist in `parseInput` blocks every slash
+   * string, and we handle it ourselves in code.
    *
-   * Khác một điểm quan trọng so với `/clear` của Claude Code: ta NÉN TRƯỚC KHI
-   * QUÊN. Bản nén đi vào sổ tay riêng của Trợ lý, đọc lại được ở ngăn Tri thức.
+   * Differs from Claude Code's `/clear` in one important way: we COMPRESS
+   * BEFORE FORGETTING. The compressed summary goes into the Assistant's own
+   * notebook, readable again from the Knowledge panel.
    */
-  { name: 'clear', aliases: ['clear'], help: 'Dọn cuộc trò chuyện, cất những gì đã chốt vào sổ tay' },
-  { name: 'help', aliases: ['help', 'h', '?'], help: 'Xem danh sách lệnh này' },
+  { name: 'clear', aliases: ['clear'], help: 'cmd.clear' },
+  { name: 'help', aliases: ['help', 'h', '?'], help: 'cmd.help' },
 ];
 
 export type ParsedInput =
-  /** Lệnh của ta — xử lý bằng code, KHÔNG gọi model, 0 token. */
+  /** One of our own commands — handled in code, does NOT call the model, 0 tokens. */
   | { kind: 'command'; name: CommandName; arg: string }
-  /** Bắt đầu bằng "/" nhưng không phải của ta — CHẶN, không chuyển xuống SDK. */
+  /** Starts with "/" but isn't one of ours — BLOCKED, never passed down to the SDK. */
   | { kind: 'unknown'; typed: string }
-  /** Văn bản thường (đã gỡ dấu thoát "//" nếu có). */
+  /** Plain text (with the "//" escape stripped, if present). */
   | { kind: 'text'; text: string };
 
 /**
- * Phân loại một câu người dùng gõ. Gọi ở NGAY ĐẦU `office.say()`, trước mọi
- * thứ khác.
+ * Classifies one line the user typed. Called at the VERY START of
+ * `office.say()`, before anything else.
  *
- * Ba nhánh, và nhánh `unknown` là nhánh giữ an toàn: bất cứ thứ gì bắt đầu
- * bằng "/" mà ta không nhận ra đều dừng lại ở đây.
+ * Three branches, and `unknown` is the safety branch: anything starting with
+ * "/" that we don't recognize stops right here.
  */
 export function parseInput(raw: string): ParsedInput {
   const text = raw.trim();
 
-  // "//" là cửa thoát cho người thật sự muốn bắt đầu câu bằng dấu gạch chéo.
+  // "//" is the escape hatch for someone who genuinely wants to start a sentence with a slash.
   if (text.startsWith('//')) return { kind: 'text', text: text.slice(1) };
   if (!text.startsWith('/')) return { kind: 'text', text };
 
@@ -91,116 +103,180 @@ export function parseInput(raw: string): ParsedInput {
 }
 
 /**
- * Câu trả lời cho `/help` và cho lệnh không nhận ra. Tiếng Việt, 0 token.
+ * The reply to `/help` and to an unrecognized command. 0 tokens — built in code.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO XUỐNG DÒNG THAY VÌ CĂN CỘT                                        │
- * │                                                                          │
- * │ Bản trước xếp `/lệnh — mô tả` trên MỘT dòng. Khung chat rộng ~330px, và  │
- * │ cùng bộ lệnh này sẽ chạy qua Telegram — cả hai đều hẹp. Một dòng dài bị  │
- * │ ngắt tự động ở chỗ ngẫu nhiên, và phần mô tả rơi xuống thẳng hàng với    │
- * │ tên lệnh kế tiếp: người đọc không còn phân biệt được đâu là lệnh.        │
- * │                                                                          │
- * │ Căn cột bằng khoảng trắng cũng không cứu được — nó chỉ đúng với font     │
- * │ đơn cách, mà bong bóng chat dùng font thường.                            │
- * │                                                                          │
- * │ Nên: tên lệnh một dòng, mô tả thụt vào ở dòng dưới. Đọc được ở mọi bề    │
- * │ rộng, kể cả trên điện thoại.                                             │
+ * │ WHY LINE BREAKS INSTEAD OF COLUMN ALIGNMENT
+ * │
+ * │ The earlier version laid out `/command — description` on ONE line. The
+ * │ chat pane is ~330px wide, and this same command set will run over Telegram
+ * │ too — both are narrow. A long line wraps automatically at a random point,
+ * │ and the description falls into line with the next command name: the reader
+ * │ can no longer tell which line is a command.
+ * │
+ * │ Aligning columns with spaces doesn't save it either — that only works with
+ * │ a monospace font, and chat bubbles use a regular one.
+ * │
+ * │ So: command name on its own line, description indented on the line below.
+ * │ Readable at any width, including on a phone.
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Chuỗi này có ký tự xuống dòng thật. Bên hiển thị PHẢI giữ chúng
- * (`white-space: pre-wrap`), nếu không HTML gộp hết thành một dòng.
+ * ⚠ This string contains real newline characters. The display side MUST
+ * preserve them (`white-space: pre-wrap`), or the HTML collapses everything into one line.
  */
 export function helpText(unknown?: string): string {
   const blocks = COMMANDS.map((c) => {
-    // Viết tắt là thứ người dùng chỉ cần biết MỘT lần, nên nó đi cùng dòng tên
-    // lệnh chứ không chiếm dòng riêng.
+    // An abbreviation is something the user only needs to learn ONCE, so it
+    // rides on the same line as the command name instead of taking its own line.
     const short = c.aliases.slice(1).filter((a) => a.length <= 2);
-    const alias = short.length ? `   (hoặc ${short.map((a) => `/${a}`).join(', ')})` : '';
-    return `/${c.aliases[0]}${alias}\n    ${c.help}`;
+    const alias = short.length
+      ? `   ${t('cmd.orAlias', { list: short.map((a) => `/${a}`).join(', ') })}`
+      : '';
+    return `/${c.aliases[0]}${alias}\n    ${t(c.help)}`;
   });
 
-  const head = unknown
-    ? `Không có lệnh "/${unknown}". Các lệnh dùng được:`
-    : 'Các lệnh dùng được:';
+  const head = unknown ? t('cmd.noSuch', { typed: unknown }) : t('cmd.available');
 
-  return `${head}\n\n${blocks.join('\n\n')}\n\nMuốn nhắn một câu bắt đầu bằng dấu "/" thì gõ hai dấu: //`;
+  return `${head}\n\n${blocks.join('\n\n')}\n\n${t('cmd.escapeHint')}`;
 }
 
 /**
- * `@đường-dẫn` trong ô chat → đường dẫn ĐÃ XÁC MINH. → docs/SPEC-library.md §8c
+ * `@path` in the chat box → a VERIFIED path. → docs/SPEC-library.md §8c
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ VÌ SAO KHÔNG TRÔNG CHỜ SDK HIỂU `@` — VÀ VÌ SAO TA KHÔNG MUỐN NÓ HIỂU.   │
+ * │ WHY NOT RELY ON THE SDK UNDERSTANDING `@` — AND WHY WE DON'T WANT IT TO.  │
  * │                                                                          │
- * │ CLI Claude Code có cú pháp `@file` khi gõ tay. Nó CÓ chạy trong SDK hay  │
- * │ không thì **chưa ai đo** — `FINDINGS-sdk` không có một dòng nào về nó, và │
- * │ dự án này đã trả giá một lần cho việc xây lên một hành vi SDK chưa đo     │
- * │ (`canUseTool` không nổ lần nào, SPEC-offices §4.7).                       │
+ * │ The Claude Code CLI has `@file` syntax when typed by hand. Whether it        │
+ * │ actually works through the SDK **has never been measured** — `FINDINGS-sdk`     │
+ * │ has not one line about it, and this project already paid once for building on   │
+ * │ an unmeasured SDK behavior (`canUseTool` never fired once, SPEC-offices §4.7).   │
  * │                                                                          │
- * │ 🔥 Nhưng lý do thật mạnh hơn nhiều: **nếu SDK có hiểu thì đó là chuyện    │
- * │ XẤU.** Mở rộng `@` nghĩa là nhét NỘI DUNG file vào lượt gọi — mà Trợ lý   │
- * │ chạy trên session được persist, nên mọi thứ nó đọc nằm trong ngữ cảnh của │
- * │ MỌI lượt sau đó: *đọc một lần, trả tiền mãi mãi*. Cả kiến trúc dựng trên  │
- * │ luật "Trợ lý không đọc file, nhân viên mới đọc".                          │
+ * │ 🔥 But the real reason is much stronger: **if the SDK does understand it,       │
+ * │ that would be a BAD thing.** Expanding `@` means injecting the file's           │
+ * │ CONTENT into the turn — and the Assistant runs on a persisted session, so         │
+ * │ anything it reads sits in the context of EVERY turn after that: *read once,       │
+ * │ pay forever*. The entire architecture is built on the rule "the Assistant does     │
+ * │ not read files, only a worker does".                                             │
  * │                                                                          │
- * │ Nên `@` bị BÓC HẾT ở đây, trước khi chuỗi tới model. Ta không phụ thuộc   │
- * │ vào bất kỳ hành vi SDK nào — đo hay chưa đo cũng vậy.                     │
+ * │ So `@` is STRIPPED OUT ENTIRELY here, before the string reaches the model. We     │
+ * │ depend on no SDK behavior whatsoever — measured or not.                          │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ Regex này chạy trên chữ NGƯỜI DÙNG GÕ, không phải chữ model sinh — khác
- * hẳn luật cấm dò đường dẫn trong `say` (SPEC-artifacts §2.5). Ở đó rủi ro là
- * model bịa ra một đường dẫn nghe rất thật; ở đây người dùng tự chịu trách
- * nhiệm cho thứ họ gõ, VÀ mọi tham chiếu vẫn phải đối chiếu với `known` — danh
- * sách đường dẫn có thật, đọc từ đĩa — trước khi được công nhận.
+ * ⚠ This gate runs on text the USER TYPED, not text the model generated —
+ * entirely different from the rule banning path-guessing inside `say`
+ * (SPEC-artifacts §2.5). There the risk is the model inventing a
+ * plausible-sounding path; here the user is responsible for what they type,
+ * AND every reference still has to match `known` — the list of real paths
+ * read from disk — before it's accepted.
  *
- * Ba dạng nhận được, và dạng thứ ba là lý do hàm này phải tồn tại:
+ * Four accepted forms:
  *
- *   @artifacts/P-…/T-01/vi/doc-2.md   đường dẫn đủ  → đối chiếu rồi dùng
- *   @library/files/doc-1.md            đường dẫn đủ  → đối chiếu rồi dùng
- *   @doc-1.md                          tên trần      → tra, và CHẶN nếu trùng
+ *   @artifacts/P-…/T-01/vi/doc-2.md      full path → matched then used
+ *   @library/files/doc-1.md               full path → matched then used
+ *   @doc-1.md                             bare name → looked up, BLOCKED if ambiguous
+ *   @library/files/Mix, Mingle&Meet.pptx  HAS SPACES → matched by longest string
  *
- * Tên trần trùng nhau là ca CÓ THẬT và hai kho được phép trùng: tủ tài liệu có
- * `doc-1.md`, ngăn Kết quả cũng có `doc-1.md`. Đoán bừa một bên là làm sai việc
- * của người dùng một cách im lặng — nên hỏi lại, bằng code, 0 token.
+ * The third form is why this function has to exist; the fourth is why it
+ * can't be cut at whitespace. → `typables`
+ *
+ * Colliding bare names are a REAL case, and the two stores are allowed to
+ * collide: the document cabinet has `doc-1.md`, and the Results panel also
+ * has `doc-1.md`. Guessing one side silently means doing the wrong thing with
+ * the user's work — so it asks instead, in code, at 0 tokens.
  */
 /**
- * Một tài liệu, nhìn từ HAI phía. → SPEC-library.md §4.4
+ * One document, seen from TWO sides. → SPEC-library.md §4.4
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ NGƯỜI DÙNG GÕ TÊN HỌ NHÌN THẤY; MODEL PHẢI NHẬN ĐƯỜNG MỞ ĐƯỢC.           │
+ * │ THE USER TYPES THE NAME THEY SEE; THE MODEL NEEDS A PATH IT CAN OPEN.     │
  * │                                                                          │
- * │ Nút Chép ở ngăn Tủ tài liệu đưa `library/files/hd1.docx` — đúng thứ họ    │
- * │ thấy trên màn hình. Nhưng `.docx` là file nén, không tool nào mở trực     │
- * │ tiếp; đường mở được là `library/text/hd1.docx.txt`. Trước 20/08 hai thứ   │
- * │ này là MỘT chuỗi, nên cái nào cũng sai một phía.                          │
+ * │ The Copy button in the Document cabinet panel gives `library/files/hd1.docx` │
+ * │ — exactly what they see on screen. But `.docx` is a compressed file no tool     │
+ * │ opens directly; the openable path is `library/text/hd1.docx.txt`. Before        │
+ * │ 20/08 these two were ONE string, so either use was wrong on one side or the      │
+ * │ other.                                                                    │
  * │                                                                          │
- * │ ⚠ User chốt và nói rõ đây KHÔNG phải phá luật *"đường dẫn người dùng gõ  │
- * │ là chính xác, chép nguyên văn"* mà là **SỬA luật**: thứ họ chỉ đích danh  │
- * │ là một TÀI LIỆU, không phải một chuỗi byte. Giữ nguyên văn cái chuỗi mà   │
- * │ đánh mất tài liệu thì mới là làm sai ý họ.                                │
+ * │ ⚠ The user's call, stated explicitly, is that this is NOT breaking the rule      │
+ * │ *"the path the user typed is exact, copy it verbatim"* but rather **FIXING**       │
+ * │ that rule: what they're pointing at is a DOCUMENT, not a byte string. Keeping      │
+ * │ the string exact while losing the document is what would actually betray their    │
+ * │ intent.                                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export interface ReadableRef {
-  /** Chuỗi người dùng (hoặc model) được phép gõ — thứ hiện trên giao diện. */
+  /** The string the user (or model) is allowed to type — what shows in the interface. */
   ref: string;
-  /** Chuỗi đi tới model. Bằng `ref` với mọi thứ vốn đã mở được. */
+  /** The string that reaches the model. Equal to `ref` for anything already openable as-is. */
   open: string;
 }
 
-/** Tra một chuỗi người ta gõ về đúng một tài liệu. Tên trần trùng → `undefined`. */
+/** File name, with the directory stripped off. */
+function base(p: string): string {
+  return p.split('/').pop() ?? p;
+}
+
+/**
+ * EVERY STRING SOMEONE IS ALLOWED TO TYPE AFTER `@`, LONGEST FIRST.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BUG THE USER REPORTED 02/09 — `@library/files/Mix, Mingle&Meet.pptx`         │
+ * │ reported *"library/files/Mix not found"*.                                  │
+ * │                                                                          │
+ * │ The old version cut the reference at WHITESPACE (`@([^\s@]+)`), based on a       │
+ * │ premise written right in the comment: *"a name with spaces needs the full         │
+ * │ path, and the Copy button always gives the full path anyway"*. That premise        │
+ * │ was WRONG: the full path also contains that exact same space. So the Copy          │
+ * │ button — the escape hatch the error message itself invited the user to click        │
+ * │ — produced a string the parser couldn't read.                                       │
+ * │                                                                          │
+ * │ The fix is NOT inventing a quoting convention (`@"…"`) and forcing the user         │
+ * │ to learn it, and it's NOT forcing file names to be "clean" either — the             │
+ * │ document belongs to them, `Mix, Mingle&Meet.pptx` is a valid name. We're            │
+ * │ HOLDING the list of real paths read from disk, so there's no need to guess           │
+ * │ a boundary: match the longest string in `known` that the text after `@` starts       │
+ * │ with. Spaces, commas, `&`, accented characters — none of them count as a             │
+ * │ boundary anymore.                                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Longest first because one name can be a prefix of another: with both
+ * `report.md` and `report.md.bak` present, `@report.md.bak` has to resolve to the second one.
+ */
+function typables(known: readonly ReadableRef[]): string[] {
+  const set = new Set<string>();
+  for (const k of known) {
+    set.add(k.ref);
+    set.add(k.open);
+    set.add(base(k.ref));
+    set.add(base(k.open));
+  }
+  set.delete('');
+  return [...set].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * The character sitting right after a fully matched reference.
+ *
+ * ⚠ Without this fence, prefix-matching would swallow ordinary words: a
+ * document named `a` would make `@a friendly reminder` match as `a`. End of
+ * string, whitespace, or punctuation — anything else is the person's own
+ * words, not a file name.
+ */
+function endsRef(next: string | undefined): boolean {
+  return next === undefined || /[\s.,;:)\]}]/.test(next);
+}
+
+/** Resolves a typed string to exactly one document. Colliding bare names → `undefined`. */
 function lookupRef(
   raw: string,
   known: readonly ReadableRef[],
 ): { hit?: ReadableRef; clash?: ReadableRef[] } {
-  // Khớp đủ trước, cả hai phía: họ có thể dán đường hiển thị (nút Chép) HOẶC
-  // đường mở được (bảng kê trong prefix Trợ lý nêu đường này).
+  // Exact match first, on both sides: they might paste the displayed path
+  // (Copy button) OR the openable path (the Assistant's own prefix listing names this one).
   const exact = known.find((k) => k.ref === raw || k.open === raw);
   if (exact) return { hit: exact };
 
-  const base = (p: string): string => p.split('/').pop() ?? p;
   const matches = known.filter((k) => base(k.ref) === raw || base(k.open) === raw);
-  // Cùng một tài liệu khớp qua hai cửa thì KHÔNG phải trùng lặp.
+  // The same document matched through two doors is NOT a collision.
   const distinct = [...new Map(matches.map((k) => [k.open, k])).values()];
   if (distinct.length > 1) return { clash: distinct };
   return distinct[0] ? { hit: distinct[0] } : {};
@@ -210,69 +286,102 @@ export function resolveFileRefs(
   text: string,
   known: readonly ReadableRef[],
 ): { text: string; problem?: string } {
-  // `@` phải đứng đầu chuỗi hoặc sau khoảng trắng — `ten@mail.com` không phải
-  // tham chiếu file. Dừng ở khoảng trắng: tên có dấu cách thì dùng đường dẫn
-  // đủ, mà nút Chép vốn luôn cho đường dẫn đủ.
-  const found = [...text.matchAll(/(^|\s)@([^\s@]+)/g)];
-  if (found.length === 0) return { text };
+  // `@` must sit at the start of the string or after whitespace —
+  // `name@mail.com` is not a file reference.
+  if (!/(^|\s)@/.test(text)) return { text };
 
-  let out = text;
-  for (const m of found) {
-    // Bỏ dấu câu dính đuôi: người ta gõ "sửa @a/b.md, giữ nguyên phần đầu".
-    //
-    // ⚠ Phần bị bỏ phải được TRẢ LẠI vào câu. Bản đầu thay cả `m[0]` bằng
-    // đường dẫn sạch, và dấu phẩy biến mất khỏi câu của người dùng — sửa chữ
-    // họ viết mà không nói là chuyện nhỏ ở đây nhưng là một thói quen sai:
-    // ta chỉ được phép bóc `@`, không được phép biên tập.
-    const typed = m[2]!.replace(/\\/g, '/');
-    const tail = /[.,;:)\]}]+$/.exec(typed)?.[0] ?? '';
-    const raw = tail ? typed.slice(0, -tail.length) : typed;
+  const names = typables(known);
+
+  // Rebuilt using INDICES, not `String.replace`. `replace` only touches the
+  // FIRST occurrence in the whole sentence, so "@a.md then @a.md again" used
+  // to fix the same spot twice and miss the second one.
+  let out = '';
+  let cursor = 0; // how far we've written out — also the "this span was already consumed" marker
+  const re = /(^|\s)@/g;
+
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const at = m.index + m[1]!.length; // position of the `@` character itself
+    if (at < cursor) continue; // this `@` sits inside a reference already consumed
+    // `\` → `/` right away: pasting from Explorer is a common case on
+    // Windows. A one-for-one swap keeps every index below still pointing correctly into `text`.
+    const rest = text.slice(at + 1).replace(/\\/g, '/');
+
+    // EXACT MATCH FIRST: the longest string in `known` that `rest` starts
+    // with. This is the only path that accepts names containing spaces. → `typables`
+    let raw = names.find((n) => rest.startsWith(n) && endsRef(rest[n.length]));
+    let tail = '';
+
+    if (!raw) {
+      // Nothing matched ⇒ cut at whitespace as before, so the error message
+      // still names exactly what they typed when they genuinely typed something wrong.
+      const typed = /^[^\s@]+/.exec(rest)?.[0] ?? '';
+      if (!typed) continue; // a bare `@`, or `@@` — not a reference
+      // Strip trailing punctuation stuck to it: someone typed "fix @a/b.md, keep the start as-is".
+      //
+      // ⚠ The stripped part must be PUT BACK into the sentence. The first
+      // version replaced the whole span with a clean path, and the comma
+      // vanished from the user's own sentence — silently editing what they
+      // wrote is a small thing here but a bad habit: we are only allowed to
+      // strip `@`, never to edit.
+      tail = /[.,;:)\]}]+$/.exec(typed)?.[0] ?? '';
+      raw = tail ? typed.slice(0, -tail.length) : typed;
+      if (!raw) continue;
+    }
+
     const { hit, clash } = lookupRef(raw, known);
     if (clash) {
       return {
         text,
-        problem:
-          `Có ${clash.length} file tên "${raw}", mình không đoán bạn muốn cái nào:\n` +
-          clash.map((k) => `  ${k.ref}`).join('\n') +
-          `\nDán lại đường dẫn đầy đủ nhé — nút Chép ở ngăn Tủ tài liệu và Kết quả cho đúng chuỗi đó.`,
+        problem: t('cmd.refClash', {
+          n: String(clash.length),
+          name: raw,
+          list: clash.map((k) => `  ${k.ref}`).join('\n'),
+        }),
       };
     }
     if (!hit) {
       return {
         text,
-        problem:
-          `Mình không tìm thấy "${raw}" trong tủ tài liệu hay ngăn Kết quả. ` +
-          `Kiểm lại tên giúp mình, hoặc dùng nút Chép ở hai ngăn đó để lấy đúng đường dẫn.`,
+        problem: t('cmd.refMissing', { name: raw }),
       };
     }
-    // Bỏ `@`, thay bằng đường NHÂN VIÊN MỞ ĐƯỢC — không nhất thiết là chuỗi họ
-    // vừa gõ. `@hd1.docx` ra `library/text/hd1.docx.txt`, vì `.docx` gốc không
-    // tool nào mở được và một đường dẫn chết là cách đắt nhất để tôn trọng
-    // nguyên văn. → `ReadableRef`
-    out = out.replace(m[0], `${m[1]}${hit.open}${tail}`);
+
+    // Strips `@`, replaced with the path a WORKER CAN OPEN — not necessarily
+    // the string they just typed. `@hd1.docx` becomes
+    // `library/text/hd1.docx.txt`, since no tool can open the raw `.docx`,
+    // and a dead path is the most expensive possible way to honor the
+    // literal text. → `ReadableRef`
+    out += text.slice(cursor, at) + hit.open + tail;
+    cursor = at + 1 + raw.length + tail.length;
   }
-  return { text: out };
+
+  if (cursor === 0) return { text };
+  return { text: out + text.slice(cursor) };
 }
 
 /**
- * Đường dẫn Trợ lý ĐỀ NGHỊ đọc → đường dẫn CÓ THẬT. → SPEC-offices.md §6 `lookup`
+ * Paths the Assistant PROPOSES reading → paths that ACTUALLY EXIST. → SPEC-offices.md §6 `lookup`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ĐÂY LÀ CHỖ "WORKER ẨN" TRỞ THÀNH MỘT CƠ CHẾ CHỨ KHÔNG PHẢI MỘT LỜI HỨA. │
+ * │ THIS IS THE SPOT WHERE "HIDDEN WORKER" BECOMES A MECHANISM RATHER THAN A       │
+ * │ PROMISE.                                                                  │
  * │                                                                          │
- * │ Chuỗi vào là do MODEL sinh, nên nó bịa được — và luật SPEC-artifacts §2.5 │
- * │ cấm cho một đường dẫn model đoán mượn uy tín của hệ thống. Ở đây mọi      │
- * │ đường dẫn phải khớp `known` (đọc từ đĩa ngay lúc đó) mới đi tiếp; thứ     │
- * │ không khớp KHÔNG bị đoán hộ, nó được NÓI RA.                             │
+ * │ The incoming strings are MODEL-generated, so it can make things up — and the      │
+ * │ SPEC-artifacts §2.5 rule forbids letting a model-guessed path borrow the           │
+ * │ system's own credibility. Here every path must match `known` (read fresh from       │
+ * │ disk right at that moment) to proceed; anything that doesn't match is NOT           │
+ * │ guessed on its behalf, it gets STATED.                                             │
  * │                                                                          │
- * │ Khác `resolveFileRefs` ở một điểm quan trọng: ở đó một đường dẫn hỏng là  │
- * │ lỗi của người dùng nên phải dừng cả câu. Ở đây model đề nghị ba file mà   │
- * │ hai file có thật thì **đọc hai file đó** — nó chỉ đoán sai một chỗ, và    │
- * │ bắt người dùng gõ lại vì thế là phạt nhầm người.                          │
+ * │ Differs from `resolveFileRefs` in one important way: there, a broken path is        │
+ * │ the user's own mistake, so it has to stop the whole sentence. Here, if the           │
+ * │ model proposes three files and two of them are real, **those two get read** —        │
+ * │ it only guessed wrong on one, and making the user retype everything because of        │
+ * │ that would be punishing the wrong party.                                            │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Nhận cả tên trần (`doc-1.md`) như `resolveFileRefs`, và cũng CHẶN khi trùng —
- * tủ tài liệu và ngăn Kết quả được phép có cùng một tên file.
+ * Also accepts bare names (`doc-1.md`) like `resolveFileRefs`, and also
+ * BLOCKS on a collision — the document cabinet and the Results panel are
+ * allowed to share the same file name.
  */
 export function pickReadable(
   paths: readonly string[],
@@ -284,12 +393,13 @@ export function pickReadable(
   for (const raw of paths) {
     const p = raw.replace(/\\/g, '/').replace(/^\.\//, '').trim();
     if (!p) continue;
-    // Tên trần chỉ nhận khi có ĐÚNG MỘT ứng viên — hai file cùng tên ở hai kho
-    // thì đoán bừa là đọc nhầm tài liệu rồi trả lời rất thuyết phục, kết cục tệ
-    // nhất trong mọi kết cục. `lookupRef` giữ luật đó cho cả hai cửa.
+    // A bare name is only accepted with EXACTLY ONE candidate — two files
+    // sharing a name across two stores means guessing wrong reads the wrong
+    // document and gives a very convincing wrong answer, the worst outcome
+    // of all. `lookupRef` enforces that rule for both doors.
     const { hit } = lookupRef(p, known);
-    // Đường MỞ ĐƯỢC, y như cửa `@`: worker ẩn `lookup` cũng chỉ có `Read`/`Grep`,
-    // nên đưa nó một `.docx` là đưa một file nó không mở nổi.
+    // The OPENABLE path, same as the `@` gate: the hidden `lookup` worker
+    // only has `Read`/`Grep` too, so handing it a `.docx` hands it a file it can't open.
     if (hit) {
       if (!ok.includes(hit.open)) ok.push(hit.open);
       continue;
@@ -301,33 +411,38 @@ export function pickReadable(
 }
 
 /**
- * Dòng trạng thái của một lượt `lookup`. → SPEC-offices.md §6 `lookup`
+ * The status line for one `lookup` run. → SPEC-offices.md §6 `lookup`
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ NỬA SỰ THẬT CÒN LẠI, GIÁ 0 TOKEN.                                        │
+ * │ THE OTHER HALF OF THE TRUTH, AT 0 TOKENS.                                 │
  * │                                                                          │
- * │ Worker ẩn cố ý KHÔNG sinh Plan: một tin *"mình chia thành 1 việc để đọc  │
- * │ file"* cho một câu hỏi tra cứu tốn hai tin nhắn chỉ để báo rằng sắp trả   │
- * │ lời — đúng cái "ngơ" mà cửa này sinh ra để bỏ. Nhưng trả lời với vai      │
- * │ `assistant` mà không nói gì thêm thì người dùng tưởng Trợ lý tự biết,     │
- * │ trong khi có một lượt đọc file thật sự vừa chạy.                          │
+ * │ The hidden worker deliberately does NOT produce a Plan: a message saying          │
+ * │ *"splitting this into 1 task to read the file"* for a lookup question would         │
+ * │ cost two messages just to announce that an answer is coming — exactly the           │
+ * │ "clunkiness" this path exists to remove. But replying under the `assistant`          │
+ * │ role with nothing further said makes the user think the Assistant just knew,         │
+ * │ while a real file-reading turn just ran.                                            │
  * │                                                                          │
- * │ Một dòng trạng thái nói ĐỌC FILE NÀO là đủ: người dùng thấy có việc đọc   │
- * │ đang diễn ra và đọc cái gì. Không plan, không bước, không tin thừa nằm    │
- * │ lại trong luồng chat.                                                    │
+ * │ A status line naming WHICH FILE was read is enough: the user sees that a           │
+ * │ read is happening and what it read. No plan, no steps, no extra messages           │
+ * │ cluttering the chat stream.                                                        │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Chỉ nêu TÊN FILE, không nêu đường dẫn: `library/files/doc-2.md` trên một dòng
- * trạng thái là ngôn ngữ của máy. Cắt ở 2 tên vì dòng này bị `truncate` trong
- * giao diện — cùng cách `office.run()` nói "Đang đọc tài liệu X, Y…".
+ * States only the FILE NAME, not the path: `library/files/doc-2.md` on a
+ * status line is machine language. Truncated at 2 names since this line gets
+ * `truncate`d in the interface — the same way `office.run()` says "Reading
+ * documents X, Y…".
  */
 export function readingNote(paths: readonly string[]): string {
-  // Không có file nào = câu hỏi tra cứu chung (24/08). Dòng trạng thái phải nói
-  // ĐÚNG việc đang chạy: "Đang đọc …" cho một lượt tra web là nói dối về một
-  // chuyện quan sát được, và người dùng sẽ đi tìm cái file không tồn tại đó.
-  if (paths.length === 0) return 'Đang tra trên web…';
+  // No files at all = a general lookup question (24/08). The status line
+  // must state EXACTLY what's running: "Reading …" for a web lookup would be
+  // lying about something observable, and the user would go looking for a
+  // file that doesn't exist.
+  if (paths.length === 0) return t('cmd.lookingUpWeb');
   const names = paths.map((p) => p.split('/').pop() ?? p);
   const head = names.slice(0, 2).join(', ');
   const rest = names.length - 2;
-  return `Đang đọc ${head}${rest > 0 ? ` và ${rest} file nữa` : ''}…`;
+  return rest > 0
+    ? plural('cmd.readingMore', rest, { names: head })
+    : t('cmd.reading', { names: head });
 }

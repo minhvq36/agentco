@@ -1,18 +1,3 @@
-/**
- * Test cho phép toán bố cục sơ đồ. → src/core/layout-geometry.ts
- *
- * SESSIONS_MEMORY §4 xếp `firstFreeSlot` là ứng viên test số một và ghi rõ lý
- * do: nó ĐÃ từng có bug, bug đó biên dịch sạch, và nó chỉ lộ ra khi người dùng
- * thêm nhân viên rồi thấy "không có gì xảy ra".
- *
- * Bài học 19/08 thêm một ứng viên nữa: `arrangeAll` từng có HAI bản mã (server
- * và giao diện), và chúng lệch nhau. Test ở đây chốt cái tính chất mà con mắt
- * người dùng thật sự kiểm: **mọi thứ phải căn quanh cùng một trục dọc**. Tính
- * chất đó không phụ thuộc vào con số cụ thể, nên nó không vỡ khi ta chỉnh khoảng
- * cách cho đẹp hơn.
- *
- * Chạy: npm test
- */
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -39,49 +24,37 @@ const shell = (n: number): Node[] => [
   { id: 'library', kind: 'library' },
 ];
 
-/** Tâm ngang của một node đã được đặt. */
 function midX(out: Map<string, { x: number; y: number }>, id: string, kind: NodeKind): number {
   const p = out.get(id);
-  assert.ok(p, `thiếu node ${id}`);
+  assert.ok(p, `missing node ${id}`);
   return p.x + NODE_SIZE[kind].w / 2;
 }
 
-// ─────────────────────────────────────────────────────────── arrangeAll
 
-/**
- * ĐÂY LÀ TEST CHO ĐÚNG LỖI 19/08.
- *
- * Văn phòng mới tinh: server cấp toạ độ viết tay (Trợ lý 520, kho 300/524) còn
- * giao diện tính ra 122 / 26 / 250. Tâm Trợ lý 636 vs tâm dải kho 512 → lệch
- * 124px trước khi có bất kỳ nhân viên nào.
- */
-test('arrangeAll: Trợ lý và dải kho căn CÙNG một trục — kể cả khi chưa có nhân viên', () => {
+test('arrangeAll: the assistant and the store row share THE SAME axis — even with no staff yet', () => {
   for (const n of [0, 1, 2, 3, 4, 5, 9]) {
     const out = arrangeAll(shell(n));
     const assistant = midX(out, 'assistant', 'assistant');
     const kn = out.get('knowledge')!;
     const lib = out.get('library')!;
     const shelfMid = (kn.x + lib.x + NODE_SIZE.library.w) / 2;
-    // Cho phép 1px sai số làm tròn, không hơn.
     assert.ok(
       Math.abs(assistant - shelfMid) <= 1,
-      `${n} nhân viên: Trợ lý ở ${assistant}, dải kho ở ${shelfMid}`,
+      `${n} staff: assistant at ${assistant}, store row at ${shelfMid}`,
     );
   }
 });
 
-test('arrangeAll: kho tri thức TRÁI, tủ tài liệu PHẢI, cùng một hàng', () => {
+test('arrangeAll: the knowledge store on the LEFT, the library on the RIGHT, same row', () => {
   const out = arrangeAll(shell(3));
   const kn = out.get('knowledge')!;
   const lib = out.get('library')!;
-  // Thứ tự này là nội dung sản phẩm, không phải thẩm mỹ: hai khái niệm dễ lẫn
-  // nhất phải nhìn thấy cùng lúc thì mới phân biệt được.
-  assert.ok(kn.x < lib.x, 'kho tri thức phải đứng bên trái tủ tài liệu');
-  assert.equal(kn.y, lib.y, 'hai kho phải cùng một hàng');
-  assert.equal(lib.x - kn.x, NODE_SIZE.knowledge.w + 24, 'khe giữa hai kho');
+  assert.ok(kn.x < lib.x, 'the knowledge store must stand to the left of the library');
+  assert.equal(kn.y, lib.y, 'both stores must share one row');
+  assert.equal(lib.x - kn.x, NODE_SIZE.knowledge.w + 24, 'the gap between the two stores');
 });
 
-test('arrangeAll: hàng nhân viên xuống dòng sau 4 người, và không ai chồng ai', () => {
+test('arrangeAll: the staff row wraps after 4 people, and no one overlaps', () => {
   const out = arrangeAll(shell(6));
   assert.equal(out.get('agent:r0')!.y, out.get('agent:r3')!.y);
   assert.ok(out.get('agent:r4')!.y > out.get('agent:r0')!.y);
@@ -93,36 +66,30 @@ test('arrangeAll: hàng nhân viên xuống dòng sau 4 người, và không ai 
   for (let i = 0; i < placed.length; i++) {
     const mine = placed[i]!;
     const others = placed.filter((_, j) => j !== i);
-    assert.equal(clashes(mine, mine.kind, others), false, `node ${i} chồng lên node khác`);
+    assert.equal(clashes(mine, mine.kind, others), false, `node ${i} overlaps another node`);
   }
 });
 
-test('arrangeAll: hai kho luôn nằm DƯỚI hàng nhân viên cuối cùng', () => {
+test('arrangeAll: both stores always sit BELOW the last staff row', () => {
   const out = arrangeAll(shell(5));
   const lowestAgent = Math.max(...agents(5).map((a) => out.get(a.id)!.y + NODE_SIZE.agent.h));
   assert.ok(out.get('knowledge')!.y > lowestAgent);
 });
 
-// ─────────────────────────────────────────────────────────── firstFreeSlot
 
-/**
- * Lỗi gốc 16/08: ô được cấp theo THỨ TỰ ALPHABET của vai trò, không kiểm ô đó
- * có ai ngồi chưa. Nhân viên tên sắp trước người cũ rơi đúng lên trên người cũ.
- */
-test('firstFreeSlot: không bao giờ trả về ô đã có người ngồi', () => {
+test('firstFreeSlot: never returns a slot that is already occupied', () => {
   const taken = [{ kind: 'agent' as const, ...agentSlot(0) }];
   const spot = firstFreeSlot(taken);
   assert.notDeepEqual(spot, agentSlot(0));
   assert.deepEqual(spot, agentSlot(1));
 });
 
-test('firstFreeSlot: tránh cả node KHÁC LOẠI, không chỉ node agent', () => {
-  // Ca thật: một node mcp hoặc một kho bị người dùng kéo vào giữa hàng nhân viên.
+test('firstFreeSlot: avoids a node of a DIFFERENT kind too, not just agent nodes', () => {
   const blocker = { kind: 'knowledge' as const, ...agentSlot(0) };
   assert.notDeepEqual(firstFreeSlot([blocker]), agentSlot(0));
 });
 
-test('firstFreeSlot: hai người thêm liên tiếp nhận HAI ô khác nhau', () => {
+test('firstFreeSlot: two people added back to back get TWO different slots', () => {
   const placed: Array<{ kind: NodeKind; x: number; y: number }> = [];
   const a = firstFreeSlot(placed);
   placed.push({ kind: 'agent', ...a });
@@ -130,64 +97,39 @@ test('firstFreeSlot: hai người thêm liên tiếp nhận HAI ô khác nhau', 
   assert.notDeepEqual(a, b);
 });
 
-test('firstFreeSlot: node lệch 10px vẫn tính là chồng — mắt người, không phải toạ độ', () => {
+test('firstFreeSlot: a node nudged 10px still counts as overlapping — the human eye, not raw coordinates', () => {
   const nudged = { kind: 'agent' as const, x: agentSlot(0).x + 10, y: agentSlot(0).y + 10 };
   assert.notDeepEqual(firstFreeSlot([nudged]), agentSlot(0));
 });
 
-test('firstFreeSlot: sơ đồ rỗng thì nhận ô đầu tiên', () => {
+test('firstFreeSlot: an empty diagram gets the first slot', () => {
   assert.deepEqual(firstFreeSlot([]), agentSlot(0));
 });
 
-// ─────────────────────────────────────────────────────────── centeredSlot
-//
-// Lỗi 20/08 do user báo: "3 nhân viên về 1 phía, phải bấm Sắp xếp lại nó mới
-// đều". Cùng lớp với lỗi 16/08 — người mới được cấp ô mà không nhìn sơ đồ đang
-// có hình gì — nhưng lần này ô KHÔNG chồng lên ai, nó chỉ nằm sai chỗ.
 
-/**
- * ⚠ SUY RA BƯỚC LƯỚI, ĐỪNG CHÉP SỐ. Hai test này từng khoá cứng `196 + 40`, và
- * chúng đỏ ngay lần đầu ai đó tinh chỉnh kích thước node (23/08) — trong khi
- * hành vi chúng canh (thứ tự 0 → +1 → −1 → +2) **không đổi một chút nào**.
- *
- * Một test đỏ vì một hằng số hợp lệ vừa đổi là một test dạy người ta bỏ qua
- * màu đỏ. Lấy bước lưới từ chính nguồn mà `centeredSlot` dùng.
- */
 const STEP = () => NODE_SIZE.agent.w + (agentSlot(1).x - agentSlot(0).x - NODE_SIZE.agent.w);
 
-test('centeredSlot: thứ tự lệch là 0 → +1 → −1 → +2 rồi xuống hàng', () => {
-  // Tâm của ĐÚNG cột 0 — suy ra, không đoán.
+test('centeredSlot: the offset order is 0 → +1 → −1 → +2, then wraps to the next row', () => {
   const c = agentSlot(0).x + NODE_SIZE.agent.w / 2;
   const step = STEP();
   assert.equal(centeredSlot(0, c).x, agentSlot(0).x);
   assert.equal(centeredSlot(1, c).x, agentSlot(0).x + step);
   assert.equal(centeredSlot(2, c).x, agentSlot(0).x - step);
   assert.equal(centeredSlot(3, c).x, agentSlot(0).x + 2 * step);
-  // Người thứ năm xuống hàng dưới, và về lại đúng trục.
   assert.equal(centeredSlot(4, c).x, agentSlot(0).x);
   assert.ok(centeredSlot(4, c).y > centeredSlot(0, c).y);
 });
 
-test('centeredSlot: luôn bám ĐÚNG LƯỚI của agentSlot, kể cả khi trục lệch nửa cột', () => {
-  // Trục nằm giữa hai cột (ca số nhân viên CHẴN). Không làm tròn về lưới thì ô
-  // mới lệch nửa cột và chồng một nửa lên người cũ — tệ hơn hẳn lệch phải.
+test('centeredSlot: always snaps to agentSlot\'s EXACT grid, even when the axis is off by half a column', () => {
   const step = STEP();
   const base = agentSlot(0).x + NODE_SIZE.agent.w / 2;
-  // Trục đúng cột, lệch nửa cột, lệch một chút — mọi ca đều phải rơi về lưới.
   for (const centerX of [base, base + step / 2, base + step, base + step * 1.5, base + 17]) {
     const x = centeredSlot(0, centerX).x;
-    assert.equal((x - agentSlot(0).x) % step, 0, `trục ${centerX} đẻ ra ô lệch lưới: ${x}`);
+    assert.equal((x - agentSlot(0).x) % step, 0, `axis ${centerX} produced an off-grid slot: ${x}`);
   }
 });
 
-/**
- * ĐÂY LÀ TEST CHO ĐÚNG CA USER MÔ TẢ, chạy y như thứ tự họ bấm.
- *
- * Người 1 thẳng dưới Trợ lý · người 2 sang phải (số chẵn thì không cân được) ·
- * người 3 phải sang TRÁI. Trợ lý ĐỨNG YÊN suốt — đó là điều kiện của bài, vì
- * `arrangeAll` chỉ chạy khi bấm "Sắp xếp lại sơ đồ".
- */
-test('thêm ba nhân viên liên tiếp: người thứ ba sang TRÁI, không nối đuôi sang phải', () => {
+test('adding three staff in a row: the third one goes LEFT, not tacked on further right', () => {
   const tidy = arrangeAll(shell(1));
   const placed: Array<{ kind: NodeKind; x: number; y: number }> = [
     { kind: 'assistant', ...tidy.get('assistant')! },
@@ -207,17 +149,16 @@ test('thêm ba nhân viên liên tiếp: người thứ ba sang TRÁI, không n�
   const two = add();
   const three = add();
 
-  assert.equal(one.x + NODE_SIZE.agent.w / 2, centerX, 'người 1 phải thẳng dọc với Trợ lý');
-  assert.ok(two.x > one.x, 'người 2 sang phải');
-  assert.ok(three.x < one.x, 'người 3 phải sang TRÁI, đây là chỗ bug 20/08');
-  assert.equal(three.y, one.y, 'cả ba vẫn cùng một hàng');
+  assert.equal(one.x + NODE_SIZE.agent.w / 2, centerX, 'person 1 must align vertically with the assistant');
+  assert.ok(two.x > one.x, 'person 2 goes right');
+  assert.ok(three.x < one.x, 'person 3 must go LEFT — this is where the 08/20 bug lived');
+  assert.equal(three.y, one.y, 'all three still share one row');
 
-  // Và hàng ba người phải cân quanh Trợ lý, không lệch một cột.
   const rowMid = (Math.min(three.x, one.x, two.x) + Math.max(three.x, one.x, two.x) + NODE_SIZE.agent.w) / 2;
-  assert.ok(Math.abs(rowMid - centerX) <= 1, `hàng lệch: ${rowMid} vs ${centerX}`);
+  assert.ok(Math.abs(rowMid - centerX) <= 1, `row off-axis: ${rowMid} vs ${centerX}`);
 });
 
-test('mọc quanh trục vẫn KHÔNG BAO GIỜ chồng lên ai — kể cả kho và mcp', () => {
+test('growing around the axis NEVER overlaps anyone — including stores and mcp', () => {
   const tidy = arrangeAll(shell(1));
   const placed: Array<{ kind: NodeKind; x: number; y: number }> = [
     { kind: 'assistant', ...tidy.get('assistant')! },
@@ -231,53 +172,34 @@ test('mọc quanh trục vẫn KHÔNG BAO GIỜ chồng lên ai — kể cả kh
     assert.equal(
       clashes(spot, 'agent', placed),
       false,
-      `nhân viên thứ ${i + 1} rơi vào chỗ đã có người`,
+      `staff member ${i + 1} landed on an occupied slot`,
     );
     placed.push({ kind: 'agent', ...spot });
   }
 });
 
-// ────────────────────────────────────── cất đi rồi đưa trở lại: CHỖ NGỒI
 
-/**
- * Ca user hỏi 22/08: *"khôi phục thì trùng 100% toạ độ với một nhân viên đang
- * nằm sẵn ⇒ người dùng không tìm thấy"*.
- *
- * Nó KHÔNG xảy ra, và test này khoá lại lý do — vì lý do đó nằm ở hai chỗ cách
- * xa nhau trong code, tức là đúng loại dễ bị gỡ mất khi ai đó dọn dẹp:
- *
- *   1. `Office.archiveAgent(id, true)` gọi `layout.dropAgent()` → node bị XOÁ
- *      khỏi layout.json, không phải chỉ bị ẩn đi.
- *   2. Vì thế lúc đưa trở lại, `read()` thấy nó là node MỚI (`fresh`) và cấp ô
- *      bằng `firstFreeSlot` — tức là né mọi người đang ngồi.
- *
- * Nếu bước 1 đổi thành "giữ node lại cho nhớ chỗ cũ" thì bug xuất hiện ngay:
- * người mới đã được cấp đúng cái ô đó trong lúc người cũ nằm trong lưu trữ.
- */
-test('cất đi rồi đưa trở lại: KHÔNG bao giờ chồng lên người đã ngồi vào chỗ cũ', () => {
+test('archiving then bringing back: NEVER overlaps someone who took the old slot', () => {
   const spot = agentSlot(2);
 
-  // "An" ngồi ô 2 rồi bị cất đi → node biến khỏi layout, ô 2 trống trên sơ đồ.
-  // "Bình" được thêm sau, và `firstFreeSlot` cấp cho đúng ô đang trống đó.
   const afterArchive: Array<{ kind: NodeKind; x: number; y: number }> = [
     { kind: 'agent', ...agentSlot(0) },
     { kind: 'agent', ...agentSlot(1) },
   ];
   const binh = firstFreeSlot(afterArchive);
-  assert.deepEqual(binh, spot, 'tiền đề: chỗ của người bị cất đi ĐƯỢC cấp lại cho người mới');
+  assert.deepEqual(binh, spot, 'premise: the slot of an archived person IS reassigned to the new one');
   afterArchive.push({ kind: 'agent', ...binh });
 
-  // Đưa "An" trở lại: nó là node mới với layout, nên phải được cấp ô khác.
   const an = firstFreeSlot(afterArchive);
-  assert.notDeepEqual(an, binh, 'An không được rơi đúng lên Bình');
-  assert.ok(!clashes(an, 'agent', afterArchive), 'và không chạm bất kỳ ai khác');
+  assert.notDeepEqual(an, binh, 'An must not land right on top of Binh');
+  assert.ok(!clashes(an, 'agent', afterArchive), 'and must not touch anyone else either');
 });
 
-test('cất/đưa lại nhiều người liên tiếp: mỗi người một ô, không ai chồng ai', () => {
+test('archiving/restoring several people in a row: each gets their own slot, no overlaps', () => {
   const placed: Array<{ kind: NodeKind; x: number; y: number }> = [];
   for (let i = 0; i < 8; i++) {
     const s = firstFreeSlot(placed);
-    assert.ok(!clashes(s, 'agent', placed), `người thứ ${i + 1} phải có ô riêng`);
+    assert.ok(!clashes(s, 'agent', placed), `person ${i + 1} must get their own slot`);
     placed.push({ kind: 'agent', ...s });
   }
 });

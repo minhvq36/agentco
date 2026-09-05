@@ -1,19 +1,21 @@
 /**
- * SPIKE PHỤ — server-filesystem NGHE AI: `args` của ta, hay `roots` của CLI?
+ * SUPPLEMENTARY SPIKE — who does server-filesystem listen to: our `args`, or
+ * the CLI's `roots`?
  *
- * Lượt B/C của `spike-mcp-allow.ts` bị chính MCP server từ chối:
- *   "Access denied - path outside allowed directories: <thư mục ta truyền>
- *    not in D:\Works\…\agentco"   ← đó là `cwd`, KHÔNG phải args ta gửi.
+ * Runs B/C of `spike-mcp-allow.ts` got rejected by the MCP server itself:
+ *   "Access denied - path outside allowed directories: <the directory we passed>
+ *    not in D:\Works\…\agentco"   ← that's `cwd`, NOT the args we sent.
  *
- * Giả thuyết: giao thức MCP có `roots`; client (Claude Code) khai `cwd` làm
- * root, và server-filesystem ƯU TIÊN roots hơn tham số dòng lệnh. Nếu đúng thì
- * ô "thư mục cho phép" trong hộp thoại + Kết nối là TRANG TRÍ — server sẽ chỉ
- * cho đọc đúng thư mục văn phòng.
+ * Hypothesis: the MCP protocol has `roots`; the client (Claude Code) declares
+ * `cwd` as the root, and server-filesystem PRIORITIZES roots over the
+ * command-line argument. If true, the "allowed directory" field in the
+ * Connections dialog is DECORATIVE — the server will only allow reading the
+ * office's own directory.
  *
- * Biến duy nhất: `cwd`. Cùng một `args`, hai `cwd` khác nhau.
- * In NGUYÊN VĂN kết quả `list_allowed_directories`.
+ * Single variable: `cwd`. Same `args`, two different `cwd` values.
+ * Print the `list_allowed_directories` result VERBATIM.
  *
- * Chạy: npx tsx scripts/spike-mcp-roots.ts  (~$0,005)
+ * Run: npx tsx scripts/spike-mcp-roots.ts  (~$0.005)
  */
 
 import fs from 'node:fs';
@@ -25,8 +27,8 @@ import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 const PKG = '@modelcontextprotocol/server-filesystem@2026.7.10';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcproots-'));
-const target = path.join(root, 'muc-tieu'); // thứ ta TRUYỀN vào args
-const office = path.join(root, 'van-phong'); // thứ ta đặt làm cwd
+const target = path.join(root, 'muc-tieu'); // what we PASS in args
+const office = path.join(root, 'van-phong'); // what we set as cwd
 fs.mkdirSync(target, { recursive: true });
 fs.mkdirSync(office, { recursive: true });
 
@@ -38,10 +40,10 @@ async function ask(label: string, cwd: string, extra?: string[]) {
       (extra ? `\n   additionalDirectories → ${extra.join(', ')}` : ''),
   );
   const q = query({
-    prompt: 'Gọi tool list_allowed_directories và in nguyên văn kết quả. Không làm gì khác.',
+    prompt: 'Call the list_allowed_directories tool and print the result verbatim. Do nothing else.',
     options: {
       model: 'claude-haiku-4-5-20251001',
-      systemPrompt: 'Trả lời ngắn.',
+      systemPrompt: 'Answer briefly.',
       tools: ['Read'],
       allowedTools: ['Read', 'mcp__files'],
       mcpServers: { files: FILES },
@@ -65,13 +67,13 @@ async function ask(label: string, cwd: string, extra?: string[]) {
       }
     }
   } catch (e) {
-    console.log(`   ⟨ném⟩ ${(e as Error).message.slice(0, 120)}`);
+    console.log(`   ⟨threw⟩ ${(e as Error).message.slice(0, 120)}`);
   }
 }
 
-await ask('A · cwd = thư mục VĂN PHÒNG (giống worker thật)', office);
-await ask('B · cwd = chính thư mục MỤC TIÊU', target);
-await ask('C · cwd = văn phòng + additionalDirectories = mục tiêu', office, [target]);
+await ask('A · cwd = the OFFICE directory (matches a real worker)', office);
+await ask('B · cwd = the TARGET directory itself', target);
+await ask('C · cwd = office + additionalDirectories = target', office, [target]);
 
 fs.rmSync(root, { recursive: true, force: true });
-console.log('\n↩ đã dọn');
+console.log('\n↩ cleaned up');
