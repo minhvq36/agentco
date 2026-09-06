@@ -5,13 +5,18 @@ import test from 'node:test';
 import {
   ASSISTANT_SPOT,
   BREAK_AREA,
+  BREAK_CAPACITY,
+  BREAK_PIECES,
+  BREAK_SEATS,
   STATIONS,
+  WORLD,
   direct,
   ownSpot,
   ringSlots,
   type DirectAgent,
   type DirectLive,
 } from '../dist/core/office-floor.js';
+import { MAX_SIT_LIFT } from '../dist/core/cast.js';
 
 /**
  * WHO STANDS WHERE. → docs/SPEC-office-animation.md §6e
@@ -120,17 +125,22 @@ test('a finished task with NOTHING to put down hands off where it stands', () =>
 
 // ────────────────────────────────────────────────────────── resting people
 
+/** Is a point on the rug? The one question that catches a piece drawn off the floor. */
+function inArea(p: { x: number; y: number }): boolean {
+  return (
+    p.x >= BREAK_AREA.x &&
+    p.x <= BREAK_AREA.x + BREAK_AREA.w &&
+    p.y >= BREAK_AREA.y &&
+    p.y <= BREAK_AREA.y + BREAK_AREA.h
+  );
+}
+
 test('resting = ON THE DIAGRAM BUT NOT WIRED, and it is the only place anybody sits', () => {
   const p = run([A('a', false)]).get('agent:a')!;
-  assert.equal(p.loiter, true);
   assert.equal(p.pose, 'sit');
-  assert.ok(
-    p.target.x > BREAK_AREA.x && p.target.x < BREAK_AREA.x + BREAK_AREA.w,
-    'a resting person belongs in the break area',
-  );
+  assert.ok(inArea(p.target), 'a resting person belongs in the break area');
   // Everybody else stands. Chairs exist in exactly one place.
   assert.equal(run([A('a')]).get('agent:a')!.pose, 'stand');
-  assert.equal(run([A('a')]).get('agent:a')!.loiter, false);
 });
 
 test('🔴 an unwired person WITH WORK IN FLIGHT is not resting', () => {
@@ -138,9 +148,107 @@ test('🔴 an unwired person WITH WORK IN FLIGHT is not resting', () => {
   // running. Sending them to the coffee table mid-task would contradict the
   // status line still ticking beside them.
   const p = run([A('a', false)], { a: { status: 'working', at: 'library' } }).get('agent:a')!;
-  assert.equal(p.loiter, false);
   assert.equal(p.pose, 'stand');
   assert.ok(onRing(p.target, 'library'));
+});
+
+test('🔴 EVERY BREAK SEAT AND EVERY PIECE IS ON THE RUG — the gate the drift got past', () => {
+  // The pieces were literals in `Room.tsx` and the seats literals in core, both
+  // written against the old 546-wide corner rug. After the area moved, the chess
+  // set was drawn at x 1590 in a 1600-unit world and its seat sat at 1460: a
+  // person resting beside furniture that had walked off the floor. Nothing was
+  // red, because nothing was asking.
+  BREAK_SEATS.forEach((s, i) => assert.ok(inArea(s), `seat ${i} is off the rug: ${JSON.stringify(s)}`));
+  BREAK_PIECES.forEach((p, i) => {
+    assert.ok(inArea({ x: p.x, y: p.baseY }), `piece ${i} (${p.id}) is off the rug: ${p.x},${p.baseY}`);
+    assert.ok(p.x > 0 && p.x < WORLD.w, `piece ${i} (${p.id}) is off the world`);
+  });
+});
+
+test('the six seats are six DIFFERENT places, and the pose belongs to the seat', () => {
+  assert.equal(BREAK_SEATS.length, 6);
+  assert.equal(new Set(BREAK_SEATS.map((s) => `${s.x},${s.y}`)).size, 6, 'two people on one cushion');
+  // Sofa and chess seat; the counter and the foosball ends stand. A pose carried
+  // on the PERSON is how somebody ends up sitting in mid-air beside a table.
+  assert.deepEqual(
+    BREAK_SEATS.map((s) => s.pose),
+    ['sit', 'sit', 'sit', 'stand', 'stand', 'stand'],
+  );
+});
+
+test('resting people fill the seats IN ORDER, one each', () => {
+  const p = run([A('a', false), A('b', false), A('c', false)]);
+  const got = ['agent:a', 'agent:b', 'agent:c'].map((id) => p.get(id)!);
+  got.forEach((g, i) => {
+    assert.deepEqual(g.target, { x: BREAK_SEATS[i].x, y: BREAK_SEATS[i].y }, `seat ${i}`);
+    assert.equal(g.pose, BREAK_SEATS[i].pose);
+  });
+});
+
+test('🔴 SIX AT MOST — the seventh rester is marked off screen, never dropped', () => {
+  // The user's call (06/09): the break area shows six and no more. The cost is
+  // real — absence looks like non-existence — so the thing that must not also be
+  // lost is the DATUM. A placement that simply disappeared from the list would
+  // make "resting, off screen" and "not in this office" the same shape of data.
+  const nine = Array.from({ length: 9 }, (_, i) => A(`r${i}`, false));
+  const out = direct({ assistantId: 'assistant', agents: nine, live: {}, reading: null, at: () => undefined });
+  assert.equal(out.length, 10, 'everybody still gets exactly one placement');
+  const drawn = out.filter((p) => p.id !== 'assistant' && p.rest !== 'offscreen');
+  assert.equal(drawn.length, BREAK_CAPACITY);
+  assert.equal(out.filter((p) => p.rest).length, 9, 'all nine are still counted as resting');
+  // And the six that ARE drawn are the six seats, in order — not an arbitrary six.
+  drawn.forEach((p, i) => assert.deepEqual(p.target, { x: BREAK_SEATS[i].x, y: BREAK_SEATS[i].y }));
+});
+
+test('`rest` is set for resting people ONLY — it is not a synonym for `pose`', () => {
+  // A person at the foosball table or the counter is resting on their feet, and
+  // a person walking to the bookshelf is not resting at all. Reading `pose` to
+  // answer "how many are resting" was the old bug: it counted three of six.
+  const p = run([A('a', false), A('b', false), A('c', false), A('d', false)]);
+  assert.deepEqual(
+    ['agent:a', 'agent:b', 'agent:c', 'agent:d'].map((id) => [p.get(id)!.pose, p.get(id)!.rest]),
+    [
+      ['sit', 'seated'],
+      ['sit', 'seated'],
+      ['sit', 'seated'],
+      ['stand', 'seated'],
+    ],
+  );
+  assert.equal(run([A('a')]).get('agent:a')!.rest, undefined);
+  assert.equal(run([A('a', false)], { a: { status: 'working' } }).get('agent:a')!.rest, undefined);
+});
+
+test('a seat is DERIVED from the piece it belongs to, never typed twice', () => {
+  // The sofa's two cushions have to sit on the sofa, and the chess seat on the
+  // far stool. Both come from the same constants `BREAK_PIECES` is built from,
+  // so this asserts the wiring rather than the numbers.
+  const sofa = BREAK_PIECES.find((p) => p.id === 'sofa')!;
+  assert.deepEqual([BREAK_SEATS[0].y, BREAK_SEATS[1].y], [sofa.baseY, sofa.baseY]);
+  assert.equal((BREAK_SEATS[0].x + BREAK_SEATS[1].x) / 2, sofa.x, 'the cushions straddle the sofa');
+  const stools = BREAK_PIECES.filter((p) => p.id === 'stool');
+  assert.equal(stools.length, 2, 'the chess table needs a seat on each side');
+  assert.equal(BREAK_SEATS[2].x, stools[0].x);
+  // FORWARD of the far stool, not on its base — a person plants their feet in
+  // front of the legs, and the seated sprite is raised off the anchor by up to
+  // `MAX_SIT_LIFT`. Between the two, feet placed at the stool's own base ended up
+  // drawn on the chess pieces. → `core/office-floor §CHESS_SEAT`
+  const forward = BREAK_SEATS[2].y - stools[0].baseY;
+  assert.ok(forward > MAX_SIT_LIFT, `the seat must clear the lift: ${forward} <= ${MAX_SIT_LIFT}`);
+  assert.ok(forward < 60, 'but still be ON the stool, not standing beside it');
+});
+
+test('🔴 exactly ONE object is drawn in front of the people, and it is the chess set', () => {
+  // A front layer sorts by nothing: every piece in it beats every person whatever
+  // their `y`. That is right for a table only ever approached from behind and
+  // wrong for anything somebody can walk in front of — put the sofa in here and
+  // a person crossing the room vanishes behind its backrest.
+  const front = BREAK_PIECES.filter((p) => p.front);
+  assert.deepEqual(
+    front.map((p) => p.id),
+    ['table-chess', 'stool'],
+  );
+  // And the near stool comes after the table, or it is drawn inside it.
+  assert.ok(front[1]!.baseY > front[0]!.baseY, 'the near stool is nearer than the table');
 });
 
 // ─────────────────────────────────────────────────────────────── the shape

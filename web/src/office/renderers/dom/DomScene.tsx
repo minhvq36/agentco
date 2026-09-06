@@ -1,16 +1,18 @@
-﻿import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 
-import { WORLD, type Point } from '@core/office-floor';
+import { clipBubble } from '@core/office-bubble';
+import { CH_H, WORLD, type Point } from '@core/office-floor';
 import { t } from '@i18n';
 
-import { SPRITES } from '../../art/manifest';
+import { BODY_H, CELL, scaleFor, sitLiftFor, spriteFor } from '../../art/manifest';
 import type { ActorView, SceneHandle, SceneProps } from '../../scene';
-import { Character, CharacterDefs, TOTAL_H } from './Character';
-// ⚠ The Lottie adapter and `lottie-web` are GONE, deliberately and completely.
-// Every pixel and every line in this office is now made in-house: there is no
-// third-party runtime to keep in the bundle and no third-party licence to comply
-// with. → art/manifest.ts · docs/SPEC-office-art.md
-import { Room } from './Room';
+// ⚠ THERE IS NO FALLBACK DRAWING ANY MORE, AND THAT IS THE POINT.
+// `Character.tsx` (a hand-drawn parametric SVG figure) and the Lottie adapter are
+// both gone, deliberately and completely. Every pixel in this office is made
+// in-house: no third-party runtime in the bundle, no third-party licence to comply
+// with, and exactly ONE way a person can be drawn.
+// → art/manifest.ts · docs/SPEC-office-art.md
+import { Room, RoomFront } from './Room';
 
 import './office.css';
 
@@ -113,8 +115,13 @@ export const DomScene = forwardRef<SceneHandle, SceneProps>(function DomScene(
     [],
   );
 
+  /**
+   * ⚠ `resting` COMES FROM THE ROOM, NOT FROM THE BODIES ON SCREEN. Counting
+   * `pose === 'sit'` here missed the three resting people who are on their feet
+   * — two at the foosball table, one at the counter — and it would now also miss
+   * everybody past the sixth seat, who is deliberately not drawn.
+   */
   const working = actors.filter((a) => a.status === 'working').length;
-  const resting = actors.filter((a) => a.pose === 'sit').length;
 
   return (
     <div className="office-root" ref={rootRef}>
@@ -124,9 +131,8 @@ export const DomScene = forwardRef<SceneHandle, SceneProps>(function DomScene(
           viewBox={`0 0 ${WORLD.w} ${WORLD.h}`}
           preserveAspectRatio="xMidYMid meet"
           role="img"
-          aria-label={t('office.summary', { working: String(working), resting: String(resting) })}
+          aria-label={t('office.summary', { working: String(working), resting: String(room.resting) })}
         >
-          <CharacterDefs />
           <Room armCount={room.armCount} libraryCount={room.libraryCount} onOpen={onOpen} />
           <g className="tokens" ref={tokenLayer} />
         </svg>
@@ -136,11 +142,60 @@ export const DomScene = forwardRef<SceneHandle, SceneProps>(function DomScene(
           back-to-front, and the renderer must not re-sort — sorting here would
           be a second opinion about depth, and the two would disagree.
         */}
-        <div className="office-stage" ref={stageRef}>
+        {/*
+          ⚠ EVERY NUMBER THE STYLESHEET NEEDS ABOUT SIZE IS WRITTEN HERE, AND
+          NONE OF THEM IS TYPED INTO IT.
+
+          The stage size and `CH_H` used to be literals in `office.css`; when
+          `CH_H` went 133 → 177 the furniture grew and the people did not,
+          because CSS was holding its own stale copy of a core constant.
+
+          The strip geometry went the same way on the next change. `office.css`
+          carried `300 / 258` and `220 / 300` — in TWO places — with a comment
+          arguing they belonged there because they "describe the strip". They
+          describe `art/manifest.ts`, and when the v3 sheets landed at 480×720
+          with a 690-unit figure, that argument was just the old bug wearing a
+          justification.
+
+          ⇒ `--cell-w`/`--cell-h`/`--body-h` are UNITLESS: CSS multiplies a px
+          length by them, so the ratio lives here and the arithmetic lives there.
+        */}
+        <div
+          className="office-stage"
+          ref={stageRef}
+          style={
+            {
+              width: `${WORLD.w}px`,
+              height: `${WORLD.h}px`,
+              '--ch-h': `${CH_H}px`,
+              '--cell-w': `${CELL.w}`,
+              '--cell-h': `${CELL.h}`,
+              '--body-h': `${BODY_H}`,
+            } as React.CSSProperties
+          }
+        >
           {actors.map((a) => (
             <Actor key={a.id} view={a} bind={bind} onSelect={onSelect} />
           ))}
         </div>
+
+        {/*
+          THE FRONT LAYER. → `Room.tsx §RoomFront`
+
+          ⚠ EVERY GEOMETRY ATTRIBUTE IS IDENTICAL TO THE ROOM'S, and that is the
+          whole trick: same box, same `viewBox`, same `preserveAspectRatio`, so it
+          lands on the same pixels without `fit()` learning that it exists.
+          `fit()` already keeps two layers in register; a third that needed its
+          own transform would be a third thing to keep in step.
+        */}
+        <svg
+          className="office-svg office-front"
+          viewBox={`0 0 ${WORLD.w} ${WORLD.h}`}
+          preserveAspectRatio="xMidYMid meet"
+          aria-hidden="true"
+        >
+          <RoomFront />
+        </svg>
       </div>
     </div>
   );
@@ -167,7 +222,24 @@ function Actor({
     <div
       ref={bind(view.id)}
       className={`actor${view.selected ? ' is-selected' : ''}${view.status ? ` is-${view.status}` : ''}`}
+      /* ⚠ Per-CHARACTER, so it has to be on the actor rather than on the stage:
+         `--sprite-k` is inherited by the drawing AND by the ground shadow, which
+         is the only way the two stay the same size as each other. `--sit-lift` is
+         inherited by the drawing ONLY — see `.sprite-art.is-seated`. → manifest.ts */
+      style={
+        {
+          '--sprite-k': scaleFor(view.character),
+          '--sit-lift': sitLiftFor(view.character),
+        } as React.CSSProperties
+      }
     >
+      {/*
+        ⚠ PAINTED BEFORE THE BUTTON so it sits UNDER the feet. It is also a status
+        light and the focus ring — see `.actor-shadow` in office.css — which is why
+        it is drawn here rather than baked into the artwork.
+      */}
+      <span className="actor-shadow" aria-hidden="true" />
+
       {/*
         The clickable thing is the DRAWING, not the anchor: the anchor is a
         zero-sized point and could never be hit. Only the body mirrors — a
@@ -175,32 +247,21 @@ function Actor({
       */}
       <button
         type="button"
-        className={`actor-art${SPRITES ? ' is-sprite' : ''}`}
+        className="actor-art"
         aria-label={view.say ? `${view.name} — ${view.say}` : view.name}
         onClick={() => onSelect(view.id)}
       >
-        {SPRITES ? (
-          /*
-            One <span> with a background image. The frame is chosen by CSS —
-            `is-seated` for the last cell, and `.actor.is-walking` runs the
-            four walk cells with `steps(4)`. Nothing here re-renders when
-            somebody starts moving; the class on the anchor does the work.
-          */
-          <span
-            className={`sprite-art${seated ? ' is-seated' : ''}`}
-            style={{ backgroundImage: `url(${SPRITES[view.character % SPRITES.length]!.src})` }}
-            aria-hidden="true"
-          />
-        ) : (
-          /*
-            The built-in drawing — used whenever no asset is plugged in. It is
-            the fallback, not the plan: `art/manifest.ts` is the socket.
-          */
-          <svg className="ch-svg" viewBox={`-40 ${-TOTAL_H - 8} 80 ${TOTAL_H + 16}`} aria-hidden="true">
-            <CharacterDefs />
-            <Character cast={view.character} pose={seated ? 'sit' : 'front'} />
-          </svg>
-        )}
+        {/*
+          One <span> with a background image. The frame is chosen by CSS —
+          `is-seated` for the last cell, and `.actor.is-walking` runs the four
+          walk cells with `steps(4)`. Nothing here re-renders when somebody
+          starts moving; the class on the anchor does the work.
+        */}
+        <span
+          className={`sprite-art${seated ? ' is-seated' : ''}`}
+          style={{ backgroundImage: `url(${spriteFor(view.character).src})` }}
+          aria-hidden="true"
+        />
       </button>
 
       <div className="actor-name">{view.name}</div>
@@ -208,12 +269,17 @@ function Actor({
       {(view.say || thinking) && (
         <div className={`bubble${view.status === 'error' ? ' is-error' : ''}`} aria-hidden="true">
           {/*
-            Real text layout, because these are real DOM nodes: the width is not
-            estimated from a character count, and a long sentence wraps instead
-            of running out of its box.
+            ⚠ CLIPPED TO 18 CHARACTERS, GLYPH AND ELLIPSIS INCLUDED — the whole
+            bubble, not the sentence inside it. The full text is on the button's
+            `aria-label` above and in the chat panel; the picture only has to say
+            that somebody is talking. → `scene.ts §clipBubble`
+
+            Real text layout is still what draws it, because these are real DOM
+            nodes: the width is not estimated from a character count, and the
+            wrap stays as the safety net for a script far wider than Latin.
           */}
           <span className="bubble-body">
-            {view.say ? `${view.glyph ? `${view.glyph} ` : ''}${view.say}` : '…'}
+            {view.say ? clipBubble(`${view.glyph ? `${view.glyph} ` : ''}${view.say}`) : '…'}
           </span>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { breakSpot, idleDelay, type Point } from '@core/office-floor';
+import { type Point } from '@core/office-floor';
 
 import type { SceneHandle } from './scene';
 
@@ -20,11 +20,15 @@ import type { SceneHandle } from './scene';
  * │ and a laptop fan that never stops.                                       │
  * │                                                                          │
  * │  · nothing moving        ⇒ the rAF is CANCELLED, not left spinning       │
- * │  · somebody loitering    ⇒ a `setTimeout` to the next wander, not a      │
- * │                            frame loop watching a clock                   │
  * │  · tab hidden            ⇒ everything stops                              │
  * │  · reduced motion        ⇒ no walking; positions are set directly        │
  * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ THERE IS NO TIMER LEFT AT ALL, and that is a change in kind, not a saving.
+ * This loop used to hold a `setTimeout` chain for break-area wandering, so an
+ * office where everybody was resting still woke up every 6–14 seconds, forever.
+ * Resting people are bound to fixed seats now (`BREAK_SEATS`), and an idle
+ * office reaches a genuine standstill: no rAF, no timer, nothing scheduled.
  */
 
 /** World units per second. A person crossing an office, not a courier. */
@@ -43,17 +47,11 @@ interface Actor {
   ty: number;
   facing: 1 | -1;
   walking: boolean;
-  /** Loitering in the break area. `false` ⇒ stands still once it arrives. */
-  loiter: boolean;
-  loiterStep: number;
-  /** When this actor next picks a new spot. `Infinity` = never. */
-  loiterAt: number;
 }
 
 export class Stage {
   private readonly actors = new Map<string, Actor>();
   private raf = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
   private last = 0;
   private reduced = false;
   private hidden = false;
@@ -112,9 +110,6 @@ export class Stage {
         ty: p.home.y,
         facing: 1,
         walking: false,
-        loiter: false,
-        loiterStep: 0,
-        loiterAt: Infinity,
       });
       this.paint(this.actors.get(p.id)!);
     }
@@ -161,27 +156,10 @@ export class Stage {
     return a ? { x: a.x, y: a.y } : undefined;
   }
 
-  /**
-   * Turns break-area loitering on or off for one actor.
-   *
-   * ⚠ The wander runs on a TIMER, not on a per-frame simulation. Between two
-   * wanders there is no loop running at all — which is what lets an office full
-   * of resting people cost nothing while still not looking frozen.
-   */
-  setLoiter(id: string, on: boolean): void {
-    const a = this.actors.get(id);
-    if (!a || a.loiter === on) return;
-    a.loiter = on;
-    a.loiterAt = on && !this.reduced ? Date.now() + idleDelay(a.seed, a.loiterStep) : Infinity;
-    this.schedule();
-  }
-
   /** Stops the world. Called on unmount and whenever the tab goes away. */
   pause(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
     this.last = 0;
   }
 
@@ -203,38 +181,12 @@ export class Stage {
     this.sink?.apply(a.id, a.x, a.y, a.facing, a.walking);
   }
 
-  /**
-   * Schedules the next WAKE-UP rather than keeping the loop alive to watch a
-   * clock. Nothing to wait for ⇒ no timer either.
-   */
-  private schedule(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-    if (this.hidden || this.reduced) return;
-    let soonest = Infinity;
-    for (const a of this.actors.values()) soonest = Math.min(soonest, a.loiterAt);
-    if (!Number.isFinite(soonest)) return;
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      this.wake();
-    }, Math.max(16, soonest - Date.now()));
-  }
-
   private frame = (now: number): void => {
     const dt = this.last ? Math.min(0.05, (now - this.last) / 1000) : 0;
     this.last = now;
-    const at = Date.now();
     let moving = false;
 
     for (const a of this.actors.values()) {
-      if (a.loiter && at >= a.loiterAt) {
-        a.loiterStep++;
-        const spot = breakSpot(a.seed, a.loiterStep);
-        a.tx = spot.x;
-        a.ty = spot.y;
-        a.loiterAt = at + idleDelay(a.seed, a.loiterStep);
-      }
-
       const dx = a.tx - a.x;
       const dy = a.ty - a.y;
       const dist = Math.hypot(dx, dy);
@@ -271,10 +223,10 @@ export class Stage {
       this.raf = requestAnimationFrame(this.frame);
       return;
     }
-    // Nothing left to move: let go of the frame loop entirely and wait on a
-    // timer instead. This is the line that makes an idle office cost zero.
+    // Nothing left to move: let go of the frame loop entirely. Nothing is
+    // scheduled to take its place — the next `setTarget` calls `wake()`. This is
+    // the line that makes an idle office cost zero.
     this.raf = 0;
     this.last = 0;
-    this.schedule();
   };
 }

@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  ASSISTANT_SPOT,
-  ownSpot,
-  breakSpot,
-  direct,
-  type DirectAgent,
-  type DirectLive,
-} from '@core/office-floor';
+import { ASSISTANT_SPOT, ownSpot, direct, type DirectAgent, type DirectLive } from '@core/office-floor';
 
 import { actions, labelFor, useApp, type LiveAgent } from '@/lib/store';
 import type { WorkPlace } from '@/lib/types';
@@ -126,16 +119,17 @@ export default function Office() {
     const st = stage.current;
     if (!st) return;
     st.sync(roster);
-    for (const p of placements) {
-      st.setLoiter(p.id, p.loiter);
-      /**
-       * Somebody already loitering keeps wandering: re-targeting them on every
-       * render would restart the walk and nobody would ever arrive. Everyone
-       * else is aimed at whatever the director just decided.
-       */
-      if (p.loiter && st.positionOf(p.id)) continue;
-      st.setTarget(p.id, p.target);
-    }
+    /**
+     * ⚠ NO `setLoiter` ANY MORE, AND NO "leave the wanderers alone" BRANCH.
+     * Every placement is now a fixed point — a break seat is as fixed as a ring
+     * slot — so re-targeting somebody who is already there is a no-op the loop
+     * absorbs, and there is nothing left to make an exception for.
+     */
+    // ⚠ Nobody off screen is given a target. They stay in the loop's map so they
+    // come back where they left, but re-aiming a body nothing draws would spin
+    // the rAF for an animation with no viewer — the one cost an idle office is
+    // not allowed to have.
+    for (const p of placements) if (p.rest !== 'offscreen') st.setTarget(p.id, p.target);
   }, [roster, placements]);
 
   /**
@@ -185,7 +179,19 @@ export default function Office() {
     };
   }, []);
 
-  const poseOf = useMemo(() => new Map(placements.map((p) => [p.id, p.pose])), [placements]);
+  /**
+   * ⚠ THE PLACEMENT IS THE ONLY AUTHORITY ON WHO APPEARS. `direct()` hands back
+   * one entry per person and marks the seventh resting employee `hidden`, so
+   * this map answers both *what pose* and *are they drawn at all* from one read.
+   * Deciding the second question here from `pose` or from a count would be a
+   * second opinion, and two opinions disagree. → `core/office-floor §BREAK_CAPACITY`
+   */
+  const placed = useMemo(
+    () => new Map(placements.filter((p) => p.rest !== 'offscreen').map((p) => [p.id, p.pose])),
+    [placements],
+  );
+  /** Resting INCLUDING the ones not drawn — the summary describes the office, not the picture. */
+  const resting = useMemo(() => placements.filter((p) => p.rest).length, [placements]);
 
   /**
    * ⚠ BACK-TO-FRONT. `ownSpot` gives a larger `y` as the index grows, so the
@@ -198,21 +204,26 @@ export default function Office() {
       id,
       name,
       character,
-      pose: poseOf.get(id) ?? 'stand',
+      pose: placed.get(id) ?? 'stand',
       ...(st?.status ? { status: st.status } : {}),
       say,
       glyph: placeGlyph(st?.at),
       selected: selected === id,
     });
-    const list = agents.map((n) => {
-      const role = n.role ?? '';
-      const st = live[role];
-      const say = recentReply?.role === role ? recentReply.text : (st?.say ?? null);
-      return view(n.id, labelFor(role || n.id), n.character ?? 0, say, st);
-    });
+    const list = agents
+      // Everybody past the sixth break seat is left out of the picture entirely.
+      // They are still on the diagram, still counted as resting in the summary —
+      // this is the one view that stops at six. → `BREAK_CAPACITY`
+      .filter((n) => placed.has(n.id))
+      .map((n) => {
+        const role = n.role ?? '';
+        const st = live[role];
+        const say = recentReply?.role === role ? recentReply.text : (st?.say ?? null);
+        return view(n.id, labelFor(role || n.id), n.character ?? 0, say, st);
+      });
     if (assistant) list.push(view(assistant.id, assistant.label, assistant.character ?? 0, activity));
     return list;
-  }, [agents, assistant, live, activity, recentReply, selected, poseOf]);
+  }, [agents, assistant, live, activity, recentReply, selected, placed]);
 
   useEffect(() => {
     // A renderer that just mounted knows nobody's position yet. One repaint
@@ -230,7 +241,7 @@ export default function Office() {
         if (stage.current) stage.current.sink = h;
         stage.current?.repaint();
       }}
-      room={{ armCount: arms.length, libraryCount: library?.count ?? 0 }}
+      room={{ armCount: arms.length, libraryCount: library?.count ?? 0, resting }}
       actors={actors}
       onOpen={(what) => {
         if (what === 'library') actions.showPanel('library');
@@ -260,5 +271,3 @@ function placeGlyph(place: WorkPlace | undefined): string {
   return '';
 }
 
-/** Re-exported so the fallback drawing's home is reachable from one place. */
-export { breakSpot };

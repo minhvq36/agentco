@@ -1,10 +1,9 @@
-﻿import { CAST } from '@core/cast';
-
 import { actions, useApp } from '@/lib/store';
 import type { CanvasNode } from '@/lib/types';
 import { t } from '@i18n';
 
-import { Character, CharacterDefs } from './renderers/dom/Character';
+import { FRAMES, SPRITES } from './art/manifest';
+import { SpriteFrame } from './art/SpriteFrame';
 import './renderers/dom/office.css';
 
 /**
@@ -13,47 +12,51 @@ import './renderers/dom/office.css';
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ IT LIVES IN THE OFFICE CHUNK, and that is not filing tidiness.           │
  * │                                                                          │
- * │ It draws with `Character`, so importing it straight into the inspector    │
- * │ would drag the whole cast into the MAIN bundle and quietly undo the code  │
- * │ split — everybody would download the room, including the people who       │
- * │ switched it off. The inspector reaches it through a lazy import, gated on │
- * │ `officeView`, so "off" still fetches nothing. §11c②                       │
+ * │ It draws with the cast sprites, so importing it straight into the         │
+ * │ inspector would drag the whole cast into the MAIN bundle and quietly      │
+ * │ undo the code split — everybody would download the room, including the    │
+ * │ people who switched it off. The inspector reaches it through a lazy        │
+ * │ import, gated on `officeView`, so "off" still fetches nothing. §11c②      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * Every swatch is the REAL drawing at a small scale, not an icon standing in
- * for it: a preview that is not the thing makes people pick twice.
+ * ⚠ ONE SWATCH PER SPRITE, NOT PER `CAST` ROW.
+ *
+ * `CAST` is ten rows and there are five strips, so cast ids wrap: id 7 and id 2
+ * are the same face. Offering ten swatches would show every person twice and
+ * make somebody pick "a different one" that is not different — the exact failure
+ * this component's own header used to warn about when the swatch was not the
+ * real drawing. Offer what actually exists.
+ *
+ * Every swatch is the REAL sprite at a small scale, not an icon standing in for
+ * it: a preview that is not the thing makes people pick twice.
  */
 export default function CharacterPicker({ node }: { node: CanvasNode }) {
   const current = node.character ?? 0;
   const busy = useApp((s) => s.officeState === 'working');
 
   return (
-    <div className="mt-3">
+    <div className="mt-3 office-light">
       <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-muted">
         {t('office.character')}
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {CAST.map((m) => {
-          const on = m.id === current;
+        {SPRITES.map((_, cast) => {
+          const on = cast === current % SPRITES.length;
           return (
             <button
-              key={m.id}
+              key={cast}
               type="button"
-              aria-label={t('office.characterPick', { n: String(m.id + 1) })}
+              aria-label={t('office.characterPick', { n: String(cast + 1) })}
               aria-pressed={on}
               disabled={busy}
-              onClick={() => void actions.setCharacter(node.id, m.id)}
-              className={`rounded-lg border p-0.5 transition-colors disabled:opacity-50 ${
+              onClick={() => void actions.setCharacter(node.id, cast)}
+              className={`overflow-hidden rounded-lg border p-0.5 transition-colors disabled:opacity-50 ${
                 on ? 'border-accent bg-accent-soft' : 'border-line hover:border-accent'
               }`}
             >
-              {/* The world is y-up from the feet, so the swatch's viewBox starts
-                  above the head and ends just below them. One transform, no
-                  second set of measurements to keep in step. */}
-              <svg width={30} height={48} viewBox="-25 -142 50 152" aria-hidden="true">
-                <CharacterDefs />
-                <Character cast={m.id} pose="front" />
-              </svg>
+              {/* The standing frame: a swatch showing somebody mid-stride would
+                  be a different picture from the one they will mostly see. */}
+              <SpriteFrame cast={cast} frame={FRAMES.stand} height={52} />
             </button>
           );
         })}

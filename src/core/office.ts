@@ -46,7 +46,7 @@ import {
   type ParsedInput,
 } from './commands.js';
 import { Mailbox, mergeUserText } from './mailbox.js';
-import { castOf } from './cast.js';
+import { assignCast, castOf } from './cast.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
@@ -2449,6 +2449,20 @@ export class Office {
       return dead ? (oauth?.[dead]?.label ?? dead) : undefined;
     };
 
+    /**
+     * WHO LOOKS LIKE WHOM, decided for the WHOLE ROSTER AT ONCE.
+     *
+     * It cannot be answered one node at a time: "is this face already taken"
+     * is a question about everybody else, and the per-node hash it replaces
+     * gave five employees a 3.8% chance of coming out all different.
+     * → `core/cast.ts §assignCast`
+     */
+    const faces = assignCast(
+      this.id,
+      layout.nodes.filter((n) => n.kind === 'assistant' || n.kind === 'agent').map((n) => n.id),
+      layout.cast ?? {},
+    );
+
     return {
       nodes: layout.nodes.map((n) => ({
         ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf, keyDeadOf),
@@ -2469,7 +2483,7 @@ export class Office {
          * one.
          */
         ...(n.kind === 'assistant' || n.kind === 'agent'
-          ? { character: layout.cast?.[n.id] ?? castOf(this.id, n.id) }
+          ? { character: faces[n.id] ?? castOf(this.id, n.id) }
           : {}),
       })),
       edges: layout.edges,

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The room. → docs/SPEC-office-animation.md §2 · §12
  *
  * Plain CSS, exactly like `canvas.css`, and for the same reason: state goes on a
@@ -8,11 +8,19 @@
  */
 
 /**
- * The cast palette. Ten garments and five skins, each with a dark-theme value.
+ * The garment palette — ten colours.
  *
- * ⚠ They MUST be tokens with two values, never colours written into a shape.
- * The lesson is already paid for in `index.css`: a fixed colour is dark on dark
- * the moment somebody switches theme, and the whole cast would wash out at once.
+ * These used to fill the hand-drawn character's shirt. That drawing is gone; the
+ * cast is bitmap sprites now, so these have TWO remaining jobs:
+ *
+ *   · the books on the shelf, so the room's one splash of colour comes from the
+ *     same set the people do
+ *   · the TINT applied to a recolourable garment, once more than five employees
+ *     share five strips → docs/SPEC-office-art.md §11
+ *
+ * ⚠ ONE VALUE EACH, no dark-theme twin. The office is always lit (see below), and
+ * a token painted ON A BODY must not flip with the app theme — that is the bug
+ * that shipped and gave everybody grey hair in dark mode.
  */
 :root {
   --cast-1: #4a6fa5;
@@ -25,22 +33,6 @@
   --cast-8: #5c6b3f;
   --cast-9: #6b5344;
   --cast-10: #40567e;
-
-  --skin-1: #f0d2b8;
-  --skin-2: #e2b48c;
-  --skin-3: #c68e63;
-  --skin-4: #96603c;
-  --skin-5: #6b4227;
-
-  --hair: #3a3128;
-  --shoe: #2f2a22;
-  /**
-   * THE CONTOUR. Flat fills alone read as clip-art; the same shapes with an
-   * outline read as drawn — it is the single biggest difference between the
-   * first cut of this file and this one, and it costs one stroke declaration.
-   */
-  --ch-out: #2b2620;
-  --wear: #5a5346;
 }
 
 /**
@@ -53,11 +45,13 @@
  * │ a ROOM: an office is a lit place, and the user's call is that it stays    │
  * │ lit whatever the canvas around it is doing.                              │
  * │                                                                          │
- * │ Two bugs died with that twin, and both had shipped:                       │
- * │   ① `--hair` and `--shoe` flipped to near-white, so on the dark theme     │
+ * │ Two bugs died with that twin, and both had shipped. They are recorded     │
+ * │ because the RULE they produced still governs, even though the code they   │
+ * │ broke has since been deleted:                                             │
+ * │   ① hair and shoe tokens flipped to near-white, so on the dark theme      │
  * │     every one of the ten had grey hair and pale shoes.                    │
- * │   ② `.ch-ink` took `--color-ink`, the TEXT token, so pupils turned cream  │
- * │     on skin that does not flip — the "mask" face. (Fixed at `.ch-ink`.)   │
+ * │   ② the pupil took the TEXT colour, which flips, painted on skin, which   │
+ * │     does not — two pale holes in a pale head, the "mask" face.            │
  * │                                                                          │
  * │ ⚠ THE RULE THAT PREVENTS BOTH: a token painted ON A BODY is a body token  │
  * │ with ONE value. Only text and chrome get a second one.                    │
@@ -87,7 +81,16 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--color-paper);
+  /*
+   * ⚠ THE FLOOR COLOUR, NOT THE PAGE COLOUR — and it is a backstop, not the
+   * fix. The room paints past its own world rectangle (`Room.tsx §BLEED`), so
+   * nothing shows through here except the strip `.office-pan` uncovers on the
+   * left while the sidebar pushes it. Widening `.office-pan` to close that
+   * strip is the one thing that must NOT be done: the svg fills that box and
+   * `fit()` positions the HTML people from the ROOT box, so the two layers
+   * would drift apart by exactly the amount added.
+   */
+  background: var(--room-floor);
 }
 
 /**
@@ -116,6 +119,16 @@
   height: 100%;
   display: block;
 }
+/*
+ * The one layer above the people. → `Room.tsx §RoomFront`
+ *
+ * ⚠ `pointer-events: none` is not optional: it covers the entire room, so
+ * without it the stations underneath stop taking clicks and become doors only a
+ * keyboard can open.
+ */
+.office-front {
+  pointer-events: none;
+}
 
 /**
  * The PEOPLE layer: a world-sized box given exactly the transform
@@ -128,22 +141,81 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 1600px;
-  height: 900px;
+  /* width / height / --ch-h are written by DomScene from `core/office-floor`. */
   transform-origin: 0 0;
   /* The stage covers the room, so it must not swallow clicks — only the people
      inside it take them, or the bookshelf underneath stops being reachable. */
   pointer-events: none;
 }
 
+/**
+ * ── THE ROOM'S OWN PALETTE. → docs/SPEC-office-art.md §4
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ NAMED VALUES, NOT `color-mix` OFF THE APP TOKENS.                       │
+ * │                                                                           │
+ * │ The wall used to be mixed from `--color-panel` and `--color-line` and     │
+ * │ the floor was `--color-paper` itself — so the room's two largest          │
+ * │ surfaces were a side effect of the CHAT PANEL's palette, and the floor    │
+ * │ was the same colour as the page behind it. There was no floor; there was  │
+ * │ furniture on the background.                                              │
+ * │                                                                           │
+ * │ Three values, one job each, and the ORDER is what makes the room read:    │
+ * │ the wall is the lightest, the floor a step darker, the baseboard darker   │
+ * │ again. Depth comes from that ladder, not from a line.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+.office-root,
+.office-light {
+  --room-wall: #f9faf3;
+  --room-floor: #f2efe6;
+  --room-baseboard: #d9d0c5;
+  /* The board seams. Barely a step off the floor on purpose: it is a TEXTURE,
+     and the moment it reads as a set of lines the floor becomes a grid. */
+  --room-plank: #e9e4d6;
+  /* The break area is a PLACE, and a place is told by its ground, not by a
+     border around it. Green rather than another beige: it is the one part of
+     the floor that means something, so it is the one part that changes hue. */
+  --room-break-floor: #c8dbbb;
+}
+
 /* ── the room */
 .wall {
-  fill: color-mix(in srgb, var(--color-panel) 78%, var(--color-line));
+  fill: var(--room-wall);
 }
 .floor {
-  fill: var(--color-paper);
+  fill: var(--room-floor);
 }
-.skirting,
+/*
+ * The board seams. → `Room.tsx §PLANK_PATH`
+ *
+ * ⚠ A STROKE, NOT A FILL, and one `<path>` rather than 168 elements. Width 2 in
+ * WORLD units, so it scales with the room and stays a hairline at every zoom.
+ *
+ * ⚠ It does NOT taper toward the horizon. A real perspective would narrow the
+ * seams with distance; at this fan angle the difference is under a pixel and it
+ * would cost the single-path trick a stroke width per line.
+ */
+.plank {
+  fill: none;
+  stroke: var(--room-plank);
+  stroke-width: 2;
+}
+/**
+ * 🔴 A BASEBOARD, NOT A LINE — and the line it replaces was doing real damage.
+ *
+ * A 1.75px near-black stroke along `HORIZON` is the hardest edge in the picture,
+ * and every object standing against the back wall had its feet ON it. That reads
+ * as *mounted to the wall*, not as *standing in front of it* — which is exactly
+ * what the bookshelf looked like, and why the fix was half paint and half moving
+ * the furniture 44 units into the room.
+ *
+ * A band of a third colour does the same job the line was hired for (say where
+ * the wall stops) without claiming to be an edge anything can rest on.
+ */
+.baseboard {
+  fill: var(--room-baseboard);
+}
 .furn-line {
   stroke: var(--color-ink);
   stroke-width: 1.75;
@@ -175,11 +247,19 @@
   fill: var(--color-accent);
   opacity: 0.8;
 }
+/**
+ * 🔴 A PATCH OF FLOOR, NOT A PANEL. → SPEC-office-art.md §5
+ *
+ * It used to be a dashed, stroked, rounded rectangle — which is the vocabulary
+ * of a DROP TARGET or a card, borrowed from the canvas. Inside a room that
+ * vocabulary says *this is a piece of interface*, and the eye stops reading the
+ * corner as part of the same floor everybody is standing on.
+ *
+ * ⚠ No stroke at all. A border is what made it a box; softening the border would
+ * have kept the box and made it quieter.
+ */
 .rug {
-  fill: color-mix(in srgb, var(--color-accent-soft) 60%, var(--color-paper));
-  stroke: var(--color-line);
-  stroke-width: 2;
-  stroke-dasharray: 8 6;
+  fill: var(--room-break-floor);
 }
 .break-label,
 .station-label {
@@ -265,11 +345,22 @@
   will-change: transform;
 }
 .actor-art {
+  /* One cell as rendered, and the ONLY place it is computed — `.sprite-art`
+     inherits both. Every input comes from `DomScene`; nothing here is a number
+     this file chose. No fallbacks on purpose: a missing wire must break loudly
+     (an invalid `calc` drops the rule and the sprite has no size) rather than
+     quietly render everybody at some other scale, which is the failure that
+     actually cost a day.
+     ⚠ `--sprite-k` is the ONE exception with a fallback, and deliberately: it is
+     per-CHARACTER (`art/manifest.ts §scale`), so an actor without one is not a
+     broken wire — it is the normal case. */
+  --ch: calc(var(--ch-h) * var(--cell-h) / var(--body-h) * var(--sprite-k, 1));
+  --cw: calc(var(--ch) * var(--cell-w) / var(--cell-h));
   position: absolute;
-  left: -40px;
+  left: calc(var(--cw) / -2);
   bottom: 0;
-  width: 80px;
-  height: 133px;
+  width: var(--cw);
+  height: var(--ch);
   padding: 0;
   border: 0;
   background: none;
@@ -280,18 +371,6 @@
 }
 .actor-art:focus-visible {
   outline: none;
-}
-.actor-art:focus-visible .ch-shadow {
-  fill: var(--color-accent);
-  opacity: 0.6;
-}
-.ch-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  /* Hair, a bubble tail, a raised arm: parts legitimately leave the box, and
-     clipping them would dock somebody's ponytail at certain zooms. */
-  overflow: visible;
 }
 /*
  * ── THE SPRITE ART. → art/manifest.ts · docs/SPEC-office-art.md
@@ -309,15 +388,90 @@
  * │ frame SNAPS.                                                             │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * `--cw` is one cell as rendered. Everything else is derived from it, so the
- * strip geometry is stated once: CELL 220x300 authored, scaled so the 258-unit
- * figure inside lands on CH_H = 133.
+ * `--cw` is one cell as rendered, computed on `.actor-art` from the numbers
+ * `DomScene` writes. The strip's own geometry is stated in `art/manifest.ts` and
+ * nowhere else — see the box further down for why that sentence is load-bearing.
+ */
+/*
+ * ── THE GROUND SHADOW. → docs/SPEC-office-art.md §7
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ THIS IS A STATUS LIGHT, NOT DECORATION — WHICH IS WHY IT IS CODE.      │
+ * │                                                                          │
+ * │ A finished task flashes GREEN under somebody's feet; a failure stays      │
+ * │ RED; keyboard focus lights the same shape. A shadow painted into the      │
+ * │ artwork could do none of those, and a second baked shadow under this one  │
+ * │ would read as two light sources — which is why the generation spec        │
+ * │ forbids drawing one.                                                      │
+ * │                                                                          │
+ * │ Soft by GRADIENT, never by `filter: blur()`. A blur here costs an         │
+ * │ offscreen buffer per person on every frame they move.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+/*
+ * ⚠ WIDER THAN THE STANCE, AND SITTING LOW. Measured, after the first attempt
+ * was invisible: a 48px ellipse centred on the feet is entirely hidden behind
+ * the shoes, which are dark and opaque and about the same width. Only 2px of it
+ * ever showed. A ground shadow has to reach past the thing casting it.
+ */
+/*
+ * ⚠ It scales with `--sprite-k` too. A character drawn at 120% casting a 100%
+ * shadow stands on a puddle that is visibly too small for them — and the mismatch
+ * reads as "floating" long before anyone works out why.
+ */
+.actor-shadow {
+  position: absolute;
+  left: calc(var(--ch-h) * -0.25 * var(--sprite-k, 1));
+  bottom: calc(var(--ch-h) * -0.038 * var(--sprite-k, 1));
+  width: calc(var(--ch-h) * 0.5 * var(--sprite-k, 1));
+  height: calc(var(--ch-h) * 0.12 * var(--sprite-k, 1));
+  border-radius: 50%;
+  /* ⚠ 0.22, down from 0.34. The floor went from `--color-paper` (#fbfaf8) to a
+     real floor colour (#eae6e0), and the same alpha on a darker ground reads a
+     third heavier — a contact shadow, not a cast one. */
+  background: radial-gradient(
+    closest-side,
+    rgba(36, 29, 20, 0.22),
+    rgba(36, 29, 20, 0.09) 62%,
+    rgba(36, 29, 20, 0)
+  );
+  pointer-events: none;
+}
+/* A finished task flashes, an error stays. The tick is a moment; a problem is a
+   state somebody has to deal with, and it must not tidy itself away. */
+.actor.is-done .actor-shadow {
+  background: radial-gradient(closest-side, rgba(63, 125, 74, 0.46), rgba(63, 125, 74, 0.18) 62%, transparent);
+}
+.actor.is-error .actor-shadow {
+  background: radial-gradient(closest-side, rgba(192, 57, 43, 0.5), rgba(192, 57, 43, 0.22) 62%, transparent);
+}
+/* `:has()` because the shadow is painted BEFORE the button so it sits under the
+   feet; a sibling combinator cannot reach backwards. */
+.actor:has(.actor-art:focus-visible) .actor-shadow {
+  background: radial-gradient(closest-side, rgba(180, 83, 42, 0.55), rgba(180, 83, 42, 0.24) 62%, transparent);
+}
+
+/*
+ * ⚠ EVERY SIZE HERE IS WRITTEN BY `DomScene`, AND THAT WIRE IS THE POINT.
+ *
+ * Twice now this file has kept a private copy of somebody else's constant, and
+ * both times it compiled, rendered, and was wrong:
+ *
+ *   `calc(133 / 258)`   `CH_H` went 133 → 177 to stop the room reading as a
+ *                       hall. The furniture grew and the PEOPLE DID NOT.
+ *   `300 / 258`,        the v3 sheets landed at 480×720 with a 690-unit figure.
+ *   `220 / 300`         The comment here argued these belonged in CSS because
+ *                       they "describe the strip" — they describe
+ *                       `art/manifest.ts`, and the argument was the same bug
+ *                       wearing a justification.
+ *
+ * ⇒ A number owned by another file reaches CSS as a custom property, never by
+ * being retyped, and "but this one is about rendering" is not an exception —
+ * it is what both wrong copies said about themselves.
+ *
+ * `--ch` and `--cw` are computed once on `.actor-art` and INHERITED here.
  */
 .sprite-art {
-  --scale: calc(133 / 258);
-  --cw: calc(220px * var(--scale));
-  --ch: calc(300px * var(--scale));
-
   position: absolute;
   left: 50%;
   bottom: 0;
@@ -330,9 +484,23 @@
   pointer-events: none;
 }
 
-/* The seated cell is the last one. */
+/*
+ * The seated cell is the last one.
+ *
+ * ⚠ AND IT IS THE ONLY CELL THAT LEAVES THE ANCHOR. Every strip pins all six
+ * cells to the same bottom edge, which is right for standing and walking — the
+ * anchor is the feet — and wrong for `sit`, where the figures are drawn 448…546
+ * strip-pixels tall against a shared baseline, so the short ones sink into the
+ * seat. `--sit-lift` is the measured difference from the tallest.
+ * → `art/manifest.ts §sitH`
+ *
+ * The GROUND SHADOW deliberately does not move with it: the person is still on
+ * the same floor, and a contact ellipse that rises with the body is a body that
+ * hovers.
+ */
 .sprite-art.is-seated {
   background-position: calc(var(--cw) * -5) 0;
+  bottom: calc(var(--ch) * var(--sit-lift, 0));
 }
 
 @keyframes sprite-walk {
@@ -344,11 +512,6 @@
 }
 
 /* The button has to grow to the picture, or half the person is not clickable. */
-.actor-art.is-sprite {
-  width: calc(220px * 133 / 258);
-  left: calc(220px * 133 / 258 / -2);
-  height: calc(300px * 133 / 258);
-}
 .actor-name {
   position: absolute;
   left: -90px;
@@ -364,215 +527,24 @@
 .actor.is-selected .actor-name {
   color: var(--color-accent);
 }
-.ch-shadow {
-  fill: url(#chGround);
-}
-.ch-hair {
-  fill: var(--hair);
-}
-/* The shade and highlight passes: same geometry, no stroke, no pointer events.
-   Painted on top of the fill, so the fill can be any colour and the light still
-   comes from the same direction. */
-.ch-vol {
-  stroke: none;
-  pointer-events: none;
-}
-/*
- * ⚠ THE PUPIL IS `--ch-out`, NOT `--color-ink`, AND THE DIFFERENCE IS A BUG
- * THAT SHIPPED.
- *
- * `--color-ink` is the TEXT colour, so it flips with the theme: near-black on
- * paper, near-cream in the dark. A pupil painted with it turns WHITE in dark
- * mode — and skin does not flip, so every face became two pale holes on a pale
- * head. That is the "mask" look, and it was invisible in review precisely
- * because the contact sheet was only ever read in one theme.
- *
- * `--ch-out` is the CONTOUR colour and is dark in BOTH themes, which is what a
- * pupil on skin has to be. Rule: anything drawn ON the body takes a body token,
- * never a text token.
- */
-.ch-ink {
-  fill: var(--ch-out);
-}
-.ch-line {
-  stroke: var(--color-ink);
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  fill: none;
-}
-/*
- * The contour, on every solid part. One weight for the whole cast — a stroke
- * that varies per part is the most visible way ten drawings stop looking like
- * one. `non-scaling-stroke` keeps it 1.4 no matter what the room is scaled to,
- * so a wide window does not thicken everybody's outline.
- */
-.ch-out {
-  stroke: var(--ch-out);
-  stroke-width: 1.4;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-.ch-glint {
-  fill: #fff;
-}
-
-/*
- * ── the face. → Character.tsx, the second cut's defect ②.
- *
- * The brow is a HEAVIER stroke than `.ch-line` on purpose: at a 20-unit head a
- * 1.4 brow disappears into the hairline and the face goes back to being a mask.
- */
-.ch-brow {
-  stroke: var(--ch-out);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  fill: none;
-  vector-effect: non-scaling-stroke;
-}
-.ch-smile {
-  stroke: var(--ch-out);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  fill: none;
-  vector-effect: non-scaling-stroke;
-}
-/* Below the level anybody consciously notices, and the whole reason the skin
-   stops reading as cardboard. Never raise this — blush that is VISIBLE as blush
-   is a different, much more specific character. */
-.ch-blush {
-  fill: var(--color-accent);
-  opacity: 0.16;
-  pointer-events: none;
-}
-
-/*
- * A finished task flashes, an error stays. The tick is a moment; a problem is a
- * state somebody has to deal with, and it must not tidy itself away.
- */
-.actor.is-done .ch-shadow {
-  fill: var(--color-ok);
-  opacity: 0.4;
-}
-.actor.is-error .ch-shadow {
-  fill: var(--color-danger);
-  opacity: 0.5;
-}
-
-/* ── the walk. ZERO JavaScript: the loop moves the body, CSS swings the limbs. */
-@keyframes ch-step-a {
-  0%, 100% { transform: rotate(13deg); }
-  50% { transform: rotate(-13deg); }
-}
-@keyframes ch-step-b {
-  0%, 100% { transform: rotate(-13deg); }
-  50% { transform: rotate(13deg); }
-}
-@keyframes ch-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2.5px); }
-}
-.actor.is-walking .ch-leg-a,
-.actor.is-walking .ch-arm-b {
-  animation: ch-step-a 0.62s ease-in-out infinite;
-}
-.actor.is-walking .ch-leg-b,
-.actor.is-walking .ch-arm-a {
-  animation: ch-step-b 0.62s ease-in-out infinite;
-}
-.actor.is-walking .ch {
-  animation: ch-bob 0.31s ease-in-out infinite;
-}
-
-/*
- * ── THE JOINTS. → Character.tsx, the ARTICULATION box.
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ THE REFERENCE PACK'S WALK IS TWO FRAMES. THIS ONE IS CONTINUOUS.          │
- * │                                                                          │
- * │ So the gap was never smoothness — it was that a leg pivoting at the hip  │
- * │ as ONE RIGID STICK reads as a pair of compasses however many frames per  │
- * │ second it gets. The knee and the elbow below cost one `<g>` each and     │
- * │ nothing per frame; they are what makes the swing read as a person.       │
- * │                                                                          │
- * │ ⚠ THE KNEE IS PHASE-SHIFTED AGAINST THE HIP, not in step with it. A knee │
- * │ that bends at the same instant the hip swings forward is a marionette:   │
- * │ the real bend peaks as the foot leaves the ground, a quarter cycle late. │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
-@keyframes ch-knee-a {
-  0%, 100% { transform: rotate(4deg); }
-  25% { transform: rotate(2deg); }
-  55% { transform: rotate(30deg); }
-  80% { transform: rotate(12deg); }
-}
-@keyframes ch-knee-b {
-  0%, 100% { transform: rotate(30deg); }
-  25% { transform: rotate(12deg); }
-  55% { transform: rotate(4deg); }
-  80% { transform: rotate(2deg); }
-}
-/* The elbow trails the shoulder — a forearm that stays locked straight is the
-   second most visible "puppet" tell after a locked knee. */
-@keyframes ch-elbow-a {
-  0%, 100% { transform: rotate(-6deg); }
-  50% { transform: rotate(-19deg); }
-}
-@keyframes ch-elbow-b {
-  0%, 100% { transform: rotate(-19deg); }
-  50% { transform: rotate(-6deg); }
-}
-/* Shoulders counter-twist against the hips. Small — 2.5deg — and it is most of
-   the difference between "walking" and "being slid along the floor". */
-@keyframes ch-twist {
-  0%, 100% { transform: rotate(2.5deg); }
-  50% { transform: rotate(-2.5deg); }
-}
-.actor.is-walking .ch-shin-a { animation: ch-knee-a 0.62s ease-in-out infinite; }
-.actor.is-walking .ch-shin-b { animation: ch-knee-b 0.62s ease-in-out infinite; }
-.actor.is-walking .ch-fore-a { animation: ch-elbow-a 0.62s ease-in-out infinite; }
-.actor.is-walking .ch-fore-b { animation: ch-elbow-b 0.62s ease-in-out infinite; }
-
-/*
- * ── BREATHING. The reference pack has no idle cycle at all — `idle` there is
- * one still frame. A room where nobody standing still ever moves reads as
- * paused, so the torso rides up and down by less than a unit, slowly.
- *
- * ⚠ The walking twist OVERRIDES this by specificity rather than by a class
- * swap in JS: `.actor.is-walking .ch-torso` beats `.ch-torso`.
- */
-@keyframes ch-breathe {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-0.9px); }
-}
-.ch-torso {
-  animation: ch-breathe 3.6s ease-in-out infinite;
-}
-.actor.is-walking .ch-torso {
-  animation: ch-twist 0.62s ease-in-out infinite;
-}
-
-/* Blinking. A per-character `animation-delay` is set inline, so eight people
-   never blink in unison — which is what makes a still room look alive. */
-@keyframes ch-blink {
-  0%, 96%, 100% { transform: scaleY(1); }
-  98% { transform: scaleY(0.1); }
-}
-.ch-eyes {
-  animation: ch-blink 6s ease-in-out infinite;
-  transform-origin: center;
-  transform-box: fill-box;
-}
 
 /**
  * ── bubbles. REAL TEXT LAYOUT, now that these are DOM nodes: the width is no
  * longer estimated from a character count, and a long sentence wraps instead of
  * running out of its box.
  */
+/*
+ * ⚠ THE BOTTOM EDGE IS DERIVED FROM `--ch-h`, NOT TYPED. At a literal 152px the
+ * bubble's tail sat 25 units BELOW the top of a 177-unit person — across their
+ * face, which is the one thing §"Rule 1" of the art spec exists to keep visible.
+ * A hard number was also the third copy of a core constant this file has held
+ * (see the box below); 1.1 × the person clears the tallest hair with room for
+ * the tail, and it follows `CH_H` if the cast is ever resized again.
+ */
 .bubble {
   position: absolute;
   left: -130px;
-  bottom: 152px;
+  bottom: calc(var(--ch-h) * 1.1 * var(--sprite-k, 1));
   width: 260px;
   display: flex;
   justify-content: center;
@@ -639,12 +611,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .actor.is-walking .ch-leg-a,
-  .actor.is-walking .ch-leg-b,
-  .actor.is-walking .ch-arm-a,
-  .actor.is-walking .ch-arm-b,
-  .actor.is-walking .ch,
-  .ch-eyes {
+  /* One rule now: the walk IS the sprite animation. */
+  .actor.is-walking .sprite-art {
     animation: none;
   }
   .office-pan {

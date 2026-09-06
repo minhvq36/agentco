@@ -37,6 +37,16 @@ import type { Point } from '@core/office-floor';
 export interface RoomView {
   armCount: number;
   libraryCount: number;
+  /**
+   * 🔴 HOW MANY PEOPLE ARE RESTING — **including the ones not drawn**.
+   *
+   * The break area seats six and the seventh is hidden, so a renderer that
+   * counted the bodies it drew would under-report the office it is describing.
+   * It would also have been wrong before any of that: it counted `pose: 'sit'`,
+   * which misses the two people at the foosball table and the one at the
+   * counter, all three of whom are resting on their feet.
+   */
+  resting: number;
 }
 
 /** One person, as the renderer sees them. Everything here changes rarely. */
@@ -51,7 +61,12 @@ export interface ActorView {
   status?: 'working' | 'done' | 'error';
   /**
    * The bubble. ⚠ PRODUCT-WORLD TEXT: this is `say`, which passes through no
-   * catalogue and names no language. A renderer displays it verbatim.
+   * catalogue and names no language.
+   *
+   * ⚠ HELD IN FULL, CLIPPED ONLY WHEN DRAWN — see `clipBubble`. The whole
+   * sentence is what the button's accessible name carries, so shortening it
+   * here would take the sentence away from the one reader who cannot see the
+   * picture at all.
    */
   say: string | null;
   /** A marker for a place with no station of its own (`web`, `shell`). */
