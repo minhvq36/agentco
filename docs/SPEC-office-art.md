@@ -1143,6 +1143,47 @@ carry more of that height in hair and head, which reads as a shorter person at t
 same total height — a **proportion** difference, and no amount of re-cutting would
 change it.
 
+### ✅ 07/09 — c1…c4 re-rolled for the sit pose, and the SHEET was the unit
+
+The seated poses were bad on four of the five. New sheets came back (`castN.4.png`)
+and the tempting move was the one §2 forbids in capitals: **cut out the new `sit`
+cell and paste it into the shipped strip.** It was not taken, and this time the
+reasoning is worth separating from §2's, because §2's own measurement does **not**
+apply here:
+
+- §2 measured a spliced cell inside the **walk cycle** — a wristwatch blinking 6.5
+  times a second at `steps(4)`. The `sit` cell is never in that cycle.
+- What *does* still apply is slower and just as real: a person standing and then
+  sitting would change hair volume, hem and skin tone between two states seconds
+  apart, from two different generations of the same character.
+
+⇒ The four sheets were replaced whole. **c0 was not re-rolled and keeps its v3
+strip** — the unit is the sheet, not the cast.
+
+| | v3 `sit/stand` | **v4** |
+|---|---|---|
+| c0 (untouched) | 0.792 | — |
+| c1 | 0.723 | **0.782** |
+| c2 | 0.713 | **0.762** |
+| c3 | 0.721 | **0.772** |
+| c4 | **0.649** | **0.775** |
+
+The correction below is now worth **6 world units at worst instead of 28**, and
+`MAX_SIT_LIFT` came down 30 → 12 with it — slack in that ceiling is a chess player
+pushed that far forward of the stool they are sitting on.
+
+⚠ **`scripts/cut-cast.ps1` is now in the repository.** It was living in a scratch
+folder while `manifest.ts` claimed the file names were "a contract with
+`scripts/normalise-art`" — a script that did not exist. A pipeline that only exists
+in somebody's temp directory is a pipeline that will be lost the first time the
+folder is cleaned, and the three numbers it normalises (standing height, ground
+line, hip anchor) are not recoverable by eye. Windows-only and deliberately outside
+the product: it runs by hand when art arrives and nothing that ships imports it.
+
+⚠ It **prints `sitH` on every cut**, because that number has to be copied into
+`manifest.ts` in the same change. A re-cut without it leaves the seated figure
+floating or sunk, silently, and only when somebody happens to be resting.
+
 ### 🔴 The `sit` cell is the one cell that has to leave the anchor
 
 Same shape of problem, opposite answer, and this time the measurement **predicted the
@@ -1154,10 +1195,11 @@ figures are **not the same height**:
 
 | c0 | c1 | c2 | c3 | c4 |
 |---|---|---|---|---|
-| 546 | 498 | 492 | 497 | **448** |
+| 546 | ~~498~~ 539 | ~~492~~ 525 | ~~497~~ 532 | ~~**448**~~ 535 |
 
-A seated c4 is 98 strip-pixels shorter than a seated c0 while both start at the same
-line, so it **sinks into the seat**. The user reported exactly this, unprompted:
+(v3 struck through; v4 measured after the re-roll above.) On v3 a seated c4 was 98
+strip-pixels shorter than a seated c0 while both started at the same line, so it
+**sank into the seat**. The user reported exactly this, unprompted:
 *"characters 2, 3 and 4 a little; 5 is the worst"* — which is c1/c2/c3 a little and c4
 the worst, and c0 not mentioned at all. The numbers and the complaint are the same fact.
 

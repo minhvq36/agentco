@@ -25,7 +25,7 @@ import cast4 from './cast/cast-4.png';
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ ⚠ FILE NAMES ARE A CONTRACT WITH `scripts/normalise-art`.               │
+ * │ ⚠ FILE NAMES ARE A CONTRACT WITH `scripts/cut-cast.ps1`.                │
  * │                                                                          │
  * │   art/cast/cast-N.png      one strip per character, six cells            │
  * │   art/furniture/<name>.png one file per floor object                     │
@@ -158,14 +158,27 @@ const IN_HOUSE = {
  * Shorter than `CAST` ⇒ it wraps, so a ten-strong office runs on five strips
  * until more are drawn.
  */
+/**
+ * ⚠ `sitH` IS MEASURED OFF THE SHIPPED PNG, and `scripts/cut-cast.ps1` prints it
+ * on every cut. Re-cut a sheet without copying the new number here and the seated
+ * figure floats or sinks — silently, and only when somebody happens to be resting.
+ *
+ * 07/09: c1…c4 re-rolled (v4) for the SIT POSE alone. The seated figures came back
+ * at 0.762…0.782 of standing height against c0's 0.792, where v3 had them at
+ * 0.649…0.723. The correction that used to be worth up to 28 world units is now
+ * worth 6, and `MAX_SIT_LIFT` came down with it.
+ *
+ * ⚠ THE WHOLE SHEET WAS REPLACED, NOT THE SIT CELL — §2 of the art spec: a re-roll
+ * replaces the sheet or nothing. c0 was not re-rolled and keeps its v3 strip.
+ */
 export const SPRITES: readonly CastSprite[] = [
   { src: cast0, ...IN_HOUSE, sitH: 546 },
-  { src: cast1, ...IN_HOUSE, sitH: 532 },
+  { src: cast1, ...IN_HOUSE, sitH: 546 },
   // 1.1, not 1.2 — seen at the shipping size, a fifth taller made them the tall
   // ones instead of the short ones, which is the same complaint from the other end.
-  { src: cast2, ...IN_HOUSE, scale: 1.1, sitH: 532 },
-  { src: cast3, ...IN_HOUSE, scale: 1.1, sitH: 532 },
-  { src: cast4, ...IN_HOUSE, scale: 1.1, sitH: 532 },
+  { src: cast2, ...IN_HOUSE, scale: 1.1, sitH: 546 },
+  { src: cast3, ...IN_HOUSE, scale: 1.1, sitH: 546 },
+  { src: cast4, ...IN_HOUSE, scale: 1.1, sitH: 546 },
 ];
 
 /** The tallest seated figure. Everybody else is raised to meet it. */

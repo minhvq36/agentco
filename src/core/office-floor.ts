@@ -245,8 +245,8 @@ const CHESS = { x: BREAK_AREA.x + 70, baseY: BREAK_AREA.y + 450 };
 // of floor wide enough that the stool stopped belonging to the table; 100 was still
 // reading as *near* the table rather than *at* it. The gap has to be visible and
 // small, and the seat follows the stool because it is derived from it.
-const CHESS_FAR = { x: CHESS.x, baseY: CHESS.baseY - 84 };
-const CHESS_NEAR = { x: CHESS.x, baseY: CHESS.baseY + 42 };
+const CHESS_FAR = { x: CHESS.x, baseY: CHESS.baseY - 60 };
+const CHESS_NEAR = { x: CHESS.x, baseY: CHESS.baseY + 36 };
 // ⚠ Pushed right, away from the chess set: two game tables 170 units apart read
 // as one cluttered corner. 210 apart, each is its own thing. It cannot go further
 // — its RIGHT-hand player would stand past the edge of the floor patch.

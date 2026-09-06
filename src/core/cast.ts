@@ -161,9 +161,15 @@ export const FACE_COUNT = 5;
  * │ with a shorter `sit` cell and the app fails loudly on the line that      │
  * │ loads the room, rather than seating somebody on the chess pieces six     │
  * │ weeks later. Raising it is a decision about the floor plan, not a nudge. │
+ * │                                                                          │
+ * │ ⚠ 12, DOWN FROM 30 ON 07/09, and the ceiling had to come down with the   │
+ * │ art. `CHESS_SEAT` is built from this number, so slack here is a player   │
+ * │ pushed that far forward of the stool they are supposed to be sitting on. │
+ * │ The v4 sit cells need 6 units at worst; 12 is one re-roll of headroom,   │
+ * │ not a number chosen to never have to think again.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export const MAX_SIT_LIFT = 30;
+export const MAX_SIT_LIFT = 12;
 
 /**
  * 🔴 WHO LOOKS LIKE WHOM, WITH NO TWO ALIKE WHILE ANY FACE IS STILL FREE.
