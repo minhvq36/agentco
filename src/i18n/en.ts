@@ -70,8 +70,9 @@ export const en = {
   'office.desk': 'Results desk',
   'office.openResults': 'open the Results panel',
   'office.openLibrary': 'open the Document cabinet',
-  'office.openArm': 'open this connection',
-  'office.connectArm': 'plug in a connection',
+  // ⚠ NO `openArm` / `connectArm` ANY MORE. The arm bench is a LABEL, not a door:
+  // one bench stands for N connections, so "open the nearest one" was a coin toss
+  // wearing a rule. → SPEC-office-animation.md §17i
   'office.armNone': 'No connection',
   'office.breakArea': 'Break area',
   'office.summary': '{working} working, {resting} resting',
@@ -80,9 +81,15 @@ export const en = {
   'office.viewDiagramTip': 'The diagram: build and wire up the company',
   'office.viewRoomTip': 'The room: watch what is happening right now',
   'office.character': 'Character',
-  'office.characterHint': 'How this person is drawn in the office view. Costs nothing and changes nothing about the work.',
+  // ⚠ NO `characterHint`. Five faces in a row explain themselves; a paragraph
+  // reassuring the reader that a costume costs nothing answers a worry the control
+  // never raised. → SPEC-office-animation.md §17i
   'office.characterPick': 'Character {n}',
+  'office.tint': 'Outfit colour',
+  'office.tintCustom': 'Pick any colour',
   'office.hireHint': 'Nobody works here yet. Switch to the diagram to hire your first person.',
+  'office.zoomIn': 'Zoom in',
+  'office.zoomOut': 'Zoom out',
 
   // ───────────────────────────────────────────────────────────────── chat
   'chat.you': 'you',
@@ -1097,6 +1104,14 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'overview.removeOfficeTitle': 'Delete office “{name}” for good?',
   'overview.removeOfficeBefore': 'Deletes the whole folder',
   'overview.removeOfficeAfter': ': employees, skills, the knowledge base and every result made.',
+  /**
+   * ⚠ It used to be `inspector.agentDeleteBold`, borrowed from the employee-delete
+   * modal. That modal's whole paragraph is gone (§17i of SPEC-office-animation),
+   * and a key that outlives the sentence it was written for is a key whose name
+   * lies about where it belongs. Deleting a WHOLE OFFICE is still irreversible and
+   * still says so.
+   */
+  'overview.removeNoUndo': 'There is no getting it back.',
 
   // ────────────────────────────────────────────── inspector (right panel)
   'inspector.editProfile': 'Edit profile',
@@ -1188,9 +1203,6 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'inspector.armRemoveKeepBold': 'kept',
   'inspector.armRemoveKeep2':
     '. Plug the same thing back in and there is nothing to type again — only the wiring to redo.',
-  'inspector.agentDeleteBefore': 'You lose the file',
-  'inspector.agentDeleteMid': 'and every skill you wrote for this person.',
-  'inspector.agentDeleteBold': 'There is no getting it back.',
   'inspector.agentNotesBefore': 'The lessons notebook at',
   'inspector.agentNotesAfter':
     'is kept — that is what the office learned, not the private property of one name.',

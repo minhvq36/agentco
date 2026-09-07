@@ -29,9 +29,25 @@ const CharacterPickerLazy = lazy(() => import('@/office/CharacterPicker'));
  * Renders nothing at all when the company has no office view: a costume for a
  * view that does not exist is a control with no consequence, and offering one
  * is how a setting turns into a lie.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ TWO CONDITIONS, AND THEY ARE NOT THE SAME QUESTION. → SPEC §17i        │
+ * │                                                                          │
+ * │   `officeView`   does this door EXIST for this company (company.yaml)    │
+ * │   `view`         is the user LOOKING at it right now (localStorage)      │
+ * │                                                                          │
+ * │ The second was missing, so somebody editing an employee on the DIAGRAM   │
+ * │ was offered a row of faces for a room they had not opened — and the      │
+ * │ result of the change was invisible until they switched. A control whose  │
+ * │ effect you cannot see is a control you press twice.                      │
+ * │                                                                          │
+ * │ ⚠ It also keeps the code split honest in the common case: a user who     │
+ * │ never opens the room never mounts this, so the cast chunk is never       │
+ * │ fetched — which `officeView` alone did not guarantee.                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 function CharacterPicker({ node }: { node: CanvasNode }) {
-  const enabled = useApp((s) => s.company?.officeView !== false);
+  const enabled = useApp((s) => s.company?.officeView !== false && s.view === 'office');
   if (!enabled) return null;
   return (
     <Suspense fallback={null}>
@@ -1099,10 +1115,13 @@ export function Inspector({ onShowPrompt }: { onShowPrompt(who: string): void })
                 </>
               ) : (
                 <>
-                  {t('inspector.agentDeleteBefore')} <code>roles/{confirmRemove?.role}.yaml</code>{' '}
-                  {t('inspector.agentDeleteMid')} <b>{t('inspector.agentDeleteBold')}</b>
-                  <br />
-                  <br />
+                  {/* ⚠ THE `roles/<id>.yaml` LINE IS GONE, AND SO IS THE "no getting
+                      it back". → SPEC-office-animation.md §17i. The path is our
+                      filing detail; what the user is deciding is *delete this
+                      person*. The paragraph that stays is the one that carries a
+                      real surprise — the lessons under `knowledge/agents/` — and
+                      it keeps its weight only because the one beside it stopped
+                      shouting about a file nobody named. */}
                   {t('inspector.agentNotesBefore')}{' '}
                   <code>knowledge/agents/{confirmRemove?.role}/</code>{' '}
                   {t('inspector.agentNotesAfter')}

@@ -1,3 +1,5 @@
+import { GARMENT_TINTS } from '@core/cast';
+
 import { actions, useApp } from '@/lib/store';
 import type { CanvasNode } from '@/lib/types';
 import { t } from '@i18n';
@@ -61,7 +63,86 @@ export default function CharacterPicker({ node }: { node: CanvasNode }) {
           );
         })}
       </div>
-      <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{t('office.characterHint')}</p>
+      {/* ⚠ NO EXPLANATORY PARAGRAPH. Five faces in a row are self-describing, and
+          "costs nothing and changes nothing about the work" was answering a worry
+          the control never raised. → SPEC-office-animation.md §17i */}
+
+      <TintPicker node={node} />
+    </div>
+  );
+}
+
+/**
+ * 🔴 THE GARMENT COLOUR. → docs/SPEC-office-art.md §11
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ A NATIVE `<input type="color">`, NOT A HAND-BUILT WHEEL.                 │
+ * │                                                                          │
+ * │ The ask was a continuous picker — "the rainbow square". That is exactly   │
+ * │ what the platform's own control opens, it is the one the user's OS       │
+ * │ already taught them, it costs ZERO bundle bytes, and it fires `input` on │
+ * │ every pointer move so the room follows the finger. A wheel drawn here    │
+ * │ would be a few hundred lines and worse at all four.                       │
+ * │                                                                          │
+ * │ ⚠ THE TEN SWATCHES ARE NOT DECORATION. The palette is authored at        │
+ * │ MID-LIGHTNESS on purpose (`core/cast.ts §GARMENT_TINTS`), because        │
+ * │ `mix-blend-mode: color` keeps the artwork's luminance: a near-black or   │
+ * │ near-white pick changes almost nothing on screen. The swatches are the   │
+ * │ set that is known to work; the wheel is the door out of it.              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ It is offered for EVERYBODY, not only for people who currently share a face.
+ * The auto-tint answers *"two people look alike right now"*; a person choosing a
+ * colour is answering *"I want this person in green"*, and gating the second on
+ * the first would make the control appear and disappear as colleagues are hired.
+ */
+function TintPicker({ node }: { node: CanvasNode }) {
+  const busy = useApp((s) => s.officeState === 'working');
+  // ⚠ Falls back to the FIRST palette entry, not to white or to black: the native
+  // control has to open somewhere, and it should open inside the range that works.
+  const current = node.tint ?? GARMENT_TINTS[0]!;
+
+  return (
+    <div className="mt-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-muted">
+        {t('office.tint')}
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        {GARMENT_TINTS.map((hex) => (
+          <button
+            key={hex}
+            type="button"
+            aria-label={hex}
+            aria-pressed={node.tint === hex}
+            disabled={busy}
+            onClick={() => actions.setTint(node.id, hex)}
+            style={{ background: hex }}
+            className={`h-6 w-6 rounded-md border transition-transform disabled:opacity-50 ${
+              node.tint === hex ? 'border-ink scale-110' : 'border-line hover:scale-110'
+            }`}
+          />
+        ))}
+        {/* The continuous picker. `onInput`, not `onChange`: `change` only fires
+            when the OS dialog closes, and the point is that the room follows the
+            pointer while it is open. The write to disk is debounced in the store. */}
+        <label
+          className="ml-0.5 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-line hover:border-accent"
+          style={{
+            background:
+              'conic-gradient(#e5484d,#e8a020,#a8c73a,#30b06e,#3ba4c9,#5b62d8,#a05ac0,#e5484d)',
+          }}
+          title={t('office.tintCustom')}
+        >
+          <span className="sr-only">{t('office.tintCustom')}</span>
+          <input
+            type="color"
+            value={current}
+            disabled={busy}
+            onInput={(e) => actions.setTint(node.id, e.currentTarget.value)}
+            className="h-0 w-0 opacity-0"
+          />
+        </label>
+      </div>
     </div>
   );
 }

@@ -6,6 +6,11 @@ import cast1 from './cast/cast-1.png';
 import cast2 from './cast/cast-2.png';
 import cast3 from './cast/cast-3.png';
 import cast4 from './cast/cast-4.png';
+import mask0 from './cast/cast-0-mask.png';
+import mask1 from './cast/cast-1-mask.png';
+import mask2 from './cast/cast-2-mask.png';
+import mask3 from './cast/cast-3-mask.png';
+import mask4 from './cast/cast-4-mask.png';
 
 /**
  * THE ART MANIFEST — every picture in the office, and where it came from.
@@ -143,6 +148,27 @@ export interface CastSprite {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   sitH: number;
+  /**
+   * 🔴 THE RECOLOURABLE GARMENT, AS A MASK STRIP. → docs/SPEC-office-art.md §11
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ SAME GEOMETRY AS THE STRIP IT BELONGS TO — six cells, same anchor, same   │
+   * │ size — because the tint layer runs the SAME walk animation as the sprite. │
+   * │ A mask a few pixels out of step is a colour that slides off the shirt     │
+   * │ mid-stride, and it only shows while somebody is walking.                  │
+   * │                                                                          │
+   * │ ⚠ IT IS GENERATED, NOT DRAWN. `scripts/cast-mask.ps1` derives it from     │
+   * │ measured colour, and the rule per character is in the spec. Re-cut a      │
+   * │ sheet and the mask MUST be re-derived in the same commit: it is a         │
+   * │ per-pixel statement about one drawing, so an old one on a new drawing     │
+   * │ tints whatever happens to be in those pixels now.                         │
+   * │                                                                          │
+   * │ ⚠ Required, not optional. All five have one; making it optional would     │
+   * │ invite a sixth sheet that silently cannot be recoloured, and "this        │
+   * │ person's colour control does nothing" is the kind of hole nobody reports. │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  mask: string;
 }
 
 const IN_HOUSE = {
@@ -170,15 +196,33 @@ const IN_HOUSE = {
  *
  * ⚠ THE WHOLE SHEET WAS REPLACED, NOT THE SIT CELL — §2 of the art spec: a re-roll
  * replaces the sheet or nothing. c0 was not re-rolled and keeps its v3 strip.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THESE FIVE WERE ALL `546` AND FOUR OF THEM WERE WRONG. Fixed 07/09.    │
+ * │                                                                           │
+ * │ Measured off the shipped PNGs with `scripts/cast-colours.ps1`:            │
+ * │   546 · 539 · 525 · 532 · 535   (sit ÷ stand: .792 .782 .762 .772 .775)   │
+ * │                                                                           │
+ * │ With all five at 546 the tallest equals every entry, so `sitLiftFor`      │
+ * │ returned ZERO for the whole cast and the correction this field exists for │
+ * │ was switched off. Nothing failed: `SIT_TALLEST` is a `Math.max` and a     │
+ * │ flat array is a perfectly good input to it.                               │
+ * │                                                                           │
+ * │ ⚠ THE PROSE ABOVE HAD BEEN UPDATED AND THE ARRAY HAD NOT — the comment    │
+ * │ says "the correction is now worth 6" beside numbers that make it worth 0. │
+ * │ A document that describes a value cannot check it; only a measurement     │
+ * │ can, which is why the script that prints these now lives in the repo and  │
+ * │ why the gate below asserts the spread rather than the values.             │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const SPRITES: readonly CastSprite[] = [
-  { src: cast0, ...IN_HOUSE, sitH: 546 },
-  { src: cast1, ...IN_HOUSE, sitH: 546 },
+  { src: cast0, mask: mask0, ...IN_HOUSE, sitH: 546 },
+  { src: cast1, mask: mask1, ...IN_HOUSE, sitH: 539 },
   // 1.1, not 1.2 — seen at the shipping size, a fifth taller made them the tall
   // ones instead of the short ones, which is the same complaint from the other end.
-  { src: cast2, ...IN_HOUSE, scale: 1.1, sitH: 546 },
-  { src: cast3, ...IN_HOUSE, scale: 1.1, sitH: 546 },
-  { src: cast4, ...IN_HOUSE, scale: 1.1, sitH: 546 },
+  { src: cast2, mask: mask2, ...IN_HOUSE, scale: 1.1, sitH: 525 },
+  { src: cast3, mask: mask3, ...IN_HOUSE, scale: 1.1, sitH: 532 },
+  { src: cast4, mask: mask4, ...IN_HOUSE, scale: 1.1, sitH: 535 },
 ];
 
 /** The tallest seated figure. Everybody else is raised to meet it. */

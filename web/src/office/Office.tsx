@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { ASSISTANT_SPOT, ownSpot, direct, type DirectAgent, type DirectLive } from '@core/office-floor';
+import {
+  ASSISTANT_SPOT,
+  dealOpeningSpots,
+  dealSeats,
+  direct,
+  pickIdleSpot,
+  walkersAtOpen,
+  type DirectAgent,
+  type DirectLive,
+  type Placement,
+  type Point,
+} from '@core/office-floor';
 
 import { actions, labelFor, useApp, type LiveAgent } from '@/lib/store';
 import type { WorkPlace } from '@/lib/types';
@@ -88,11 +99,52 @@ export default function Office() {
     return () => clearTimeout(id);
   }, [recentReply]);
 
-  /** The people the loop should know about, and where each starts. */
-  const roster = useMemo(() => {
-    const list = agents.map((n, i) => ({ id: n.id, home: ownSpot(i, agents.length, n.id) }));
-    return assistant ? [...list, { id: assistant.id, home: ASSISTANT_SPOT }] : list;
-  }, [agents, assistant]);
+  /**
+   * 🔴 WHO GETS A BREAK SEAT — DEALT ONCE PER MOUNT. → SPEC §17c
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ A REF, NOT STATE, AND THE MUTATION SITS INSIDE A `useMemo`.            │
+   * │                                                                          │
+   * │ That is normally the wrong shape, so here is why it is right: the deal   │
+   * │ is IDEMPOTENT given what it has already dealt. `dealSeats` keeps every   │
+   * │ prior entry and only fills what is empty, so a second call — React's     │
+   * │ StrictMode double-invoke, a re-render, anything — returns the same map.  │
+   * │ Randomness enters exactly once per person, the first time they need a    │
+   * │ seat, and never again.                                                   │
+   * │                                                                          │
+   * │ ⚠ `Math.random`, NOT a hash of the roster. A hash would look random and  │
+   * │ be constant forever: the same six faces on every reload, for the life of │
+   * │ the office. → `core/office-floor.ts §dealSeats`                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const seatsRef = useRef<Record<string, number>>({});
+
+  /**
+   * 🔴 WHERE THE IDLE START, THIS TIME THE VIEW WAS OPENED. → SPEC §17l
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ A RELOAD IS THE ARC; A TOGGLE IS A FRESH DEAL. THE USER SET BOTH HALVES. │
+   * │                                                                          │
+   * │ *"I do not want every toggle to go back to the default line-up … but F5  │
+   * │ is default."* Those are two different answers to one question, so the    │
+   * │ code has to be able to tell the two events apart — and the only          │
+   * │ difference between them is that a reload throws this MODULE away.        │
+   * │ `OPENED` is therefore the whole mechanism: false exactly once per page   │
+   * │ load, true for every toggle after it. No storage, nothing to expire.     │
+   * │                                                                          │
+   * │ ⚠ IN DEV, STRICTMODE SPENDS THE FIRST OPEN. It mounts, unmounts and      │
+   * │ mounts again, so the reload after a `dev:web` refresh takes the TOGGLE   │
+   * │ branch and the room opens scattered. Production builds do not double-    │
+   * │ mount. Stated rather than worked around: the workaround would be a       │
+   * │ second flag whose only job is to be wrong in the other environment.      │
+   * │                                                                          │
+   * │ ⚠ THE REF IS FILLED DURING RENDER, and the guard is what makes that      │
+   * │ safe — exactly the argument `seatsRef` above already makes. The deal is  │
+   * │ taken once and every later invocation reads the same map, so a           │
+   * │ re-render cannot move somebody who is already standing somewhere.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const openRef = useRef<Record<string, Point> | null>(null);
 
   const placements = useMemo(() => {
     const st = stage.current;
@@ -105,14 +157,64 @@ export default function Office() {
     for (const [role, l] of Object.entries(live)) {
       directLive[role] = { status: l.status, ...(l.at ? { at: l.at } : {}), artifacts: l.artifacts ?? 0 };
     }
-    return direct({
+    // ⚠ The same test `direct()` applies: on the diagram, not wired, and not
+    // currently working. Two definitions of "resting" would seat somebody the
+    // director then sends to a station.
+    const resting = agents.filter((n) => !n.connected && !live[n.role ?? '']).map((n) => n.id);
+    seatsRef.current = dealSeats(
+      agents.map((n) => n.id),
+      resting,
+      seatsRef.current,
+      Math.random,
+    );
+    const out = direct({
       ...(assistant ? { assistantId: assistant.id } : {}),
       agents: directAgents,
       live: directLive,
       reading,
+      seats: seatsRef.current,
       at: (id) => st?.positionOf(id),
     });
+
+    /**
+     * ⚠ THE DEAL IS TAKEN ON THE FIRST PASS AND NEVER AGAIN, and `roam` is what
+     * it is taken over: `direct()` already answers *"is this person free to
+     * stand anywhere"*, so asking the same question a second way here would be
+     * a second opinion that can disagree with the director.
+     *
+     * On a reload `openRef` stays an empty map — every roamer keeps the arc
+     * position `direct()` gave them, which is the default the user asked to see
+     * after F5.
+     */
+    // ⚠ `out.length > 0`: the first pass can legitimately see an office with
+    // nobody in it yet, and spending the one-per-page-load flag on that pass
+    // would make every real reload take the TOGGLE branch.
+    if (!openRef.current && out.length > 0) {
+      const first = !OPENED;
+      OPENED = true;
+      openRef.current = first
+        ? {}
+        : dealOpeningSpots(
+            out.filter((p) => p.roam).map((p) => p.id),
+            Math.random,
+          );
+    }
+    const opening = openRef.current ?? {};
+    return out.map((p): Placement =>
+      p.roam && opening[p.id] ? { ...p, target: opening[p.id]! } : p,
+    );
   }, [agents, assistant, live, reading]);
+
+  /**
+   * The people the loop should know about, and where each STARTS.
+   *
+   * ⚠ HOME IS THE PLACEMENT, NOT `ownSpot`. `Stage.sync` puts somebody at their
+   * home the first time it sees them — deliberately, so nobody animates an
+   * arrival that never happened — and with `ownSpot` as home, six resting people
+   * appeared on the working floor and then walked into the break area every time
+   * the view was opened. A resting person's home IS their seat. → §17c
+   */
+  const roster = useMemo(() => placements.map((p) => ({ id: p.id, home: p.target })), [placements]);
 
   // ── hand the placement over to the loop.
   useEffect(() => {
@@ -129,8 +231,76 @@ export default function Office() {
     // come back where they left, but re-aiming a body nothing draws would spin
     // the rAF for an animation with no viewer — the one cost an idle office is
     // not allowed to have.
-    for (const p of placements) if (p.rest !== 'offscreen') st.setTarget(p.id, p.target);
+    for (const p of placements) {
+      if (p.rest === 'offscreen') continue;
+      /**
+       * ⚠ ROAMING AND A TARGET ARE MUTUALLY EXCLUSIVE, EVERY TIME.
+       *
+       * `setRoam(false)` cancels the pending trip and pins the body where it is,
+       * so the `setTarget` beside it is the only thing that can move them —
+       * which is §17e: a worker handed a task stops on the spot. Setting a
+       * target on somebody still roaming would leave two owners of one
+       * destination, and the timer would win a second later.
+       */
+      st.setRoam(p.id, !!p.roam);
+      if (!p.roam) st.setTarget(p.id, p.target);
+    }
   }, [roster, placements]);
+
+  /**
+   * WHERE A WANDERING WORKER GOES NEXT. → SPEC-office-animation.md §17f⑤
+   *
+   * Three owners, and the split is deliberate: `direct()` says WHETHER somebody
+   * may wander, `Stage` says WHEN, and this hands the loop the one pure function
+   * that says WHERE. The choice is the rule that can put a body inside a wall,
+   * so it lives in `core` where `node --test` can reach it — the same debt
+   * `direct()` itself was moved out of a `useEffect` to pay.
+   */
+  useEffect(() => {
+    const st = stage.current;
+    if (!st) return;
+    st.idleSpot = (id) => pickIdleSpot(id, st.world(), Math.random);
+    return () => {
+      st.idleSpot = undefined;
+    };
+  }, []);
+
+  /**
+   * 🔴 A FEW PEOPLE ARE ALREADY ON THE MOVE WHEN THE ROOM OPENS. → SPEC §17l
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ IT MUST RUN AFTER THE EFFECT ABOVE, AND THAT IS WHY IT IS BELOW IT.    │
+   * │                                                                          │
+   * │ `nudge` asks `st.idleSpot` where to go, and `idleSpot` is installed by   │
+   * │ the effect above. React runs effects in declaration order, so writing    │
+   * │ this one first would give every opening walker `undefined` — no target,  │
+   * │ no walk, and nothing to say so. The dependency is real; the ordering is  │
+   * │ the only thing expressing it.                                            │
+   * │                                                                          │
+   * │ ⚠ IT WAITS FOR SOMEBODY TO BE FREE. `once` is only spent once there IS   │
+   * │ at least one roamer, so an office whose employees are all mid-task when  │
+   * │ the view opens still gets its opening walk the moment one of them is     │
+   * │ released — rather than silently skipping it because the first placement  │
+   * │ happened to arrive busy.                                                 │
+   * │                                                                          │
+   * │ ⚠ A SHUFFLED PREFIX, NOT A DIE PER PERSON. `walkersAtOpen` returns a     │
+   * │ COUNT; rolling one-in-five per head would produce an office that is      │
+   * │ sometimes completely still, which is the outcome this exists to prevent. │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const opened = useRef(false);
+  useEffect(() => {
+    const st = stage.current;
+    if (!st || opened.current) return;
+    const free = placements.filter((p) => p.roam).map((p) => p.id);
+    if (free.length === 0) return;
+    opened.current = true;
+    for (let i = free.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [free[i], free[j]] = [free[j]!, free[i]!];
+    }
+    for (const id of free.slice(0, walkersAtOpen(free.length))) st.nudge(id);
+  }, [placements]);
 
   /**
    * THE TWO TOKENS, fired off STATE TRANSITIONS — no new events needed.
@@ -200,10 +370,20 @@ export default function Office() {
    * opinion about depth is a second opinion that can disagree.
    */
   const actors: ActorView[] = useMemo(() => {
-    const view = (id: string, name: string, character: number, say: string | null, st?: LiveAgent): ActorView => ({
+    const view = (
+      id: string,
+      name: string,
+      character: number,
+      say: string | null,
+      tint: string | undefined,
+      st?: LiveAgent,
+    ): ActorView => ({
       id,
       name,
       character,
+      // ⚠ Spread conditionally: `tint: undefined` and no key at all are the same
+      // to a reader and not to `exactOptionalPropertyTypes`.
+      ...(tint ? { tint } : {}),
       pose: placed.get(id) ?? 'stand',
       ...(st?.status ? { status: st.status } : {}),
       say,
@@ -219,9 +399,16 @@ export default function Office() {
         const role = n.role ?? '';
         const st = live[role];
         const say = recentReply?.role === role ? recentReply.text : (st?.say ?? null);
-        return view(n.id, labelFor(role || n.id), n.character ?? 0, say, st);
+        return view(n.id, labelFor(role || n.id), n.character ?? 0, say, n.tint, st);
       });
-    if (assistant) list.push(view(assistant.id, assistant.label, assistant.character ?? 0, activity));
+    // ⚠ `onTop` is set HERE, where the office's architecture is already known —
+    // the renderer is told what to do, not who this is. → `scene.ts §onTop`
+    if (assistant) {
+      list.push({
+        ...view(assistant.id, assistant.label, assistant.character ?? 0, activity, assistant.tint),
+        onTop: true,
+      });
+    }
     return list;
   }, [agents, assistant, live, activity, recentReply, selected, placed]);
 
@@ -243,17 +430,24 @@ export default function Office() {
       }}
       room={{ armCount: arms.length, libraryCount: library?.count ?? 0, resting }}
       actors={actors}
-      onOpen={(what) => {
-        if (what === 'library') actions.showPanel('library');
-        else if (what === 'artifacts') actions.showPanel('artifacts');
-        else if (arms[0]) actions.select(arms[0].id);
-      }}
+      onOpen={(what) => actions.showPanel(what === 'library' ? 'library' : 'artifacts')}
       onSelect={actions.select}
     />
   );
 }
 
 const REPLY_HOLD = 9_000;
+
+/**
+ * 🔴 HAS THE ROOM BEEN OPENED YET, THIS PAGE LOAD? → SPEC §17l · `openRef`
+ *
+ * The one bit that separates *"the user came back from the diagram"* from *"the
+ * user reloaded"*, and it is deliberately the cheapest thing that can tell them
+ * apart: module state dies with the page and survives a toggle, which is exactly
+ * the shape of the question. Anything durable — `sessionStorage`, the server —
+ * would survive F5 too and answer the wrong one.
+ */
+let OPENED = false;
 
 /**
  * Does the active renderer have to be TOLD when somebody starts walking?

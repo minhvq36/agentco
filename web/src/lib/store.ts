@@ -312,6 +312,35 @@ export interface AppState {
   assistantReading: 'library' | 'web' | null;
 }
 
+/**
+ * 🔴 EVERY KEY A `boot*()` READS IS DECLARED HERE, ABOVE `initial`. DO NOT MOVE
+ * THEM BACK DOWN BESIDE THE FUNCTION THAT USES THEM.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MEASURED 07/09, IN THE BUILT BUNDLE — BOTH PREFERENCES WERE DEAD.        │
+ * │                                                                          │
+ * │ `initial` calls `bootLocale()` and `bootView()` while the object literal │
+ * │ is being built. Both key constants used to be declared 80 and 110 lines  │
+ * │ BELOW it. A function declaration hoists; a `const` initialiser does not, │
+ * │ and the bundler emits these as `var`, so at call time the key was        │
+ * │ `undefined` — not an error, just `localStorage.getItem(undefined)`,      │
+ * │ which reads a key named `"undefined"`, finds nothing, and falls back.    │
+ * │                                                                          │
+ * │ ⚠ SO `agentco:view` WAS WRITTEN CORRECTLY AND NEVER READ. Reproduced     │
+ * │ cold: set the key, load the page, land on the diagram — the switch       │
+ * │ looked like it did not remember anything. `agentco.locale` had exactly   │
+ * │ the same wound; it was invisible because `/api/company` corrects the     │
+ * │ language a moment later, so the only symptom was a flash.                │
+ * │                                                                          │
+ * │ ⚠ AND THE `try/catch` IS WHAT HID IT. It was written for "the browser    │
+ * │ blocks site data", and it swallowed a completely different failure into  │
+ * │ the same silent fallback. Nothing threw; there was simply nothing to     │
+ * │ throw. A `catch` is where a wrong premise hides.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const LOCALE_KEY = 'agentco.locale';
+const VIEW_KEY = 'agentco:view';
+
 const initial: AppState = {
   locale: bootLocale(),
   loading: true,
@@ -393,8 +422,6 @@ const draftKey = (officeId: string): string => `agentco:draft:${officeId}`;
  * browser blocks site data, and a language preference is never worth a white
  * screen. Missing or unreadable ⇒ fall back and let the fetch correct it.
  */
-const LOCALE_KEY = 'agentco.locale';
-
 function bootLocale(): Locale {
   let locale: Locale;
   try {
@@ -418,8 +445,6 @@ function applyLocale(locale: Locale): void {
   }
   set({ locale });
 }
-
-const VIEW_KEY = 'agentco:view';
 
 /**
  * The view chosen last time. Same class of state as `agentco:office` and stored
@@ -544,6 +569,9 @@ async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
     return undefined;
   }
 }
+
+/** The pending `setTint` write. 0 = nothing scheduled. → `actions.setTint` */
+let tintTimer = 0;
 
 // ───────────────────────────────────────────────────────────────── actions
 
@@ -1208,31 +1236,113 @@ export const actions = {
 
   /**
    * Somebody picked a different character for one person.
-   * → docs/SPEC-office-animation.md §6c③
+   * → docs/SPEC-office-animation.md §6c③ · §17k‴
    *
-   * ⚠ Sends the stored CHOICES plus this one — never the resolved cast. Sending
-   * what everyone currently looks like would freeze every hashed default into
-   * `layout.json`, and the "delete it and the office re-casts itself" property
-   * would be gone without anything failing.
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 IT SENDS THE RESOLVED CAST, AND THIS COMMENT USED TO FORBID THAT.     │
+   * │                                                                          │
+   * │ It read: *"sends the stored CHOICES plus this one — never the resolved   │
+   * │ cast. Sending what everyone currently looks like would freeze every      │
+   * │ hashed default into `layout.json`, and the 'delete it and the office     │
+   * │ re-casts itself' property would be gone."* Both sentences are true. What │
+   * │ they left out is what the sparse payload costs, and it was measured:     │
+   * │                                                                          │
+   * │   an office of 12, ONE hand pick → up to **6 of the other 11** change    │
+   * │   face, and 4 change garment colour                                      │
+   * │                                                                          │
+   * │ Because a face is reserved before the rest are dealt, reserving one      │
+   * │ cascades through everybody the probe walks past. The user saw it from    │
+   * │ the other end: *"I change one person's character and the whole break     │
+   * │ area moves — I expected only that character to change."* It moves        │
+   * │ because a different face is a different per-sheet `scale` and a          │
+   * │ different `sitLift`, so a seated figure visibly jumps.                   │
+   * │                                                                          │
+   * │ ⇒ Freeze what everyone looks like AT THE MOMENT SOMEBODY CHOOSES. A pick │
+   * │ is a deliberate act on a screen the user is watching, and it is already  │
+   * │ a write — the objection §17k raises against storing (a READ that writes  │
+   * │ and emits `layout.changed`) does not apply here.                         │
+   * │                                                                          │
+   * │ ⚠ THE COST IS REAL AND IS NOW THE SMALLER ONE: after the first pick, the │
+   * │ office's whole cast is in `layout.json`, so *"delete it and the office   │
+   * │ re-casts itself"* holds only for an office nobody has ever dressed. It   │
+   * │ is bounded by that first pick, and `setTint` beside this has been paying │
+   * │ exactly the same price since it shipped.                                 │
+   * │                                                                          │
+   * │ ⚠ IT IS ALSO WHY HIRING AND FIRING STOP DISTURBING PEOPLE in a dressed   │
+   * │ office: a stored face is honoured verbatim and `pruneCast` only drops    │
+   * │ the leaver. That was the open hole in §17k″, half closed as a side       │
+   * │ effect rather than as a second mechanism.                                │
+   * └──────────────────────────────────────────────────────────────────────────┘
    */
   async setCharacter(nodeId: string, character: number): Promise<void> {
     const id = state.officeId;
     const canvas = state.canvas;
     if (!id || !canvas) return;
+    /**
+     * ⚠ FROM `node.character`, the value the server RESOLVED, not from
+     * `canvas.cast`, which holds only what was already chosen by hand. The whole
+     * point is to pin the people who never chose.
+     */
+    const cast: Record<string, number> = {};
+    for (const n of canvas.nodes) if (typeof n.character === 'number') cast[n.id] = n.character;
+    cast[nodeId] = character;
+
     // Optimistic: this is a costume, and waiting for a round trip to see it is
     // exactly the "responds before the server answers" bar.
     set({
       canvas: {
         ...canvas,
-        cast: { ...canvas.cast, [nodeId]: character },
+        cast,
         nodes: canvas.nodes.map((n) => (n.id === nodeId ? { ...n, character } : n)),
       },
     });
     markLocalSave();
-    const next = await guard(() =>
-      api.saveCanvas(id, { cast: { ...canvas.cast, [nodeId]: character } }),
-    );
+    const next = await guard(() => api.saveCanvas(id, { cast }));
     if (next) set({ canvas: next });
+  },
+
+  /**
+   * Somebody dragged the colour picker for one person.
+   * → docs/SPEC-office-art.md §11 · SPEC-office-animation §17k
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ REAL-TIME ON SCREEN, DEBOUNCED TO DISK — and they are not the same      │
+   * │ thing dressed differently.                                                │
+   * │                                                                           │
+   * │ A continuous picker fires on every pixel the pointer moves. The colour    │
+   * │ has to follow the finger, or the control feels broken; the SAVE must not, │
+   * │ or one drag across the spectrum is two hundred writes of `layout.json`    │
+   * │ and two hundred `layout.changed` events broadcast to every open tab.      │
+   * │                                                                           │
+   * │ ⚠ THE STORED MAP IS REBUILT FROM THE NODES, not kept as a second field.   │
+   * │ `CanvasState` deliberately does not carry the tint choices (→ types.ts),  │
+   * │ so the map sent up is assembled from every node that HAS a tint plus this │
+   * │ change. That is a real cost, stated: a colour the server computed for a   │
+   * │ face-clash gets written down the first time the user changes anybody's,   │
+   * │ turning a derived value into a stored one. It is bounded — it only        │
+   * │ affects people who were already tinted — and the alternative is shipping  │
+   * │ a second map down the wire on every canvas read.                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  setTint(nodeId: string, tint: string): void {
+    const canvas = state.canvas;
+    if (!canvas) return;
+    set({
+      canvas: { ...canvas, nodes: canvas.nodes.map((n) => (n.id === nodeId ? { ...n, tint } : n)) },
+    });
+    if (tintTimer) clearTimeout(tintTimer);
+    tintTimer = window.setTimeout(() => {
+      tintTimer = 0;
+      const id = state.officeId;
+      const now = state.canvas;
+      if (!id || !now) return;
+      const map: Record<string, string> = {};
+      for (const n of now.nodes) if (n.tint) map[n.id] = n.tint;
+      markLocalSave();
+      void guard(() => api.saveCanvas(id, { tint: map })).then((next) => {
+        if (next) set({ canvas: next });
+      });
+    }, 350);
   },
 
   dismissToast(): void {

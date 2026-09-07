@@ -81,6 +81,24 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /**
+   * 🔴 A DRAG ACROSS THE ROOM WAS SELECTING EVERY NAME IN IT. → §17m
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ Panning is a pointer-down and a move, which is BYTE-FOR-BYTE the gesture  │
+   * │ that selects text — so dragging the room highlighted every `.actor-name`  │
+   * │ it passed, in blue, and the user read it as a stuck double-click. It is   │
+   * │ not a bug in the drag code at all: nothing was ever told that this        │
+   * │ surface is a picture rather than a document.                              │
+   * │                                                                          │
+   * │ ⚠ ON THE ROOT, NOT ON `.actor-name`. Names are only the labels one        │
+   * │ notices; the bubbles, the station captions and the break-area caption     │
+   * │ all select too, and a per-element list is a list that grows a hole the    │
+   * │ next time somebody adds text. The canvas has said the same thing since    │
+   * │ day one, with Tailwind's `select-none` on its `<svg>`.                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  user-select: none;
   /*
    * ⚠ THE FLOOR COLOUR, NOT THE PAGE COLOUR — and it is a backstop, not the
    * fix. The room paints past its own world rectangle (`Room.tsx §BLEED`), so
@@ -91,6 +109,19 @@
    * would drift apart by exactly the amount added.
    */
   background: var(--room-floor);
+}
+/*
+ * ⚠ THE HAND APPEARS ONLY WHEN THERE IS SOMETHING TO DRAG. At fit-to-window the
+ * whole room is already in frame and `onPointerDown` refuses to start a pan, so
+ * an open hand there would be the cursor promising a gesture that does nothing.
+ * `is-pannable` is written by `applyCam`, the one place zoom passes through.
+ * → `DomScene.tsx §applyCam`
+ */
+.office-root.is-pannable {
+  cursor: grab;
+}
+.office-root.is-pannable.is-panning {
+  cursor: grabbing;
 }
 
 /**
@@ -112,6 +143,29 @@
   transform: translateX(calc(var(--sidebar-w, 0px) * 0.4));
   transition: transform 200ms ease-out;
 }
+/**
+ * ── THE CAMERA. → docs/SPEC-office-animation.md §17h
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ IT WRAPS BOTH LAYERS, AND THAT IS WHY ZOOM CANNOT BREAK THE REGISTER.     │
+ * │                                                                           │
+ * │ The svg fits itself with `preserveAspectRatio`; the HTML stage is fitted   │
+ * │ by `fit()`. Two different mechanisms arriving at the same number — which   │
+ * │ is exactly the pair that must not be given two different multipliers.      │
+ * │ Scaling their common ancestor multiplies both by construction: neither     │
+ * │ layer is told the camera exists.                                          │
+ * │                                                                           │
+ * │ ⚠ NO TRANSITION. The wheel writes this many times a second; a transition   │
+ * │ would make every notch chase the last one and the room would lag the       │
+ * │ pointer by its own duration.                                              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+.office-cam {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
 .office-svg {
   position: absolute;
   inset: 0;
@@ -119,15 +173,58 @@
   height: 100%;
   display: block;
 }
-/*
- * The one layer above the people. → `Room.tsx §RoomFront`
+
+/**
+ * The two zoom buttons. Faint and translucent on purpose: they are a camera
+ * control on a picture, not a toolbar — the room is what the user is looking at.
  *
- * ⚠ `pointer-events: none` is not optional: it covers the entire room, so
- * without it the stations underneath stop taking clicks and become doors only a
- * keyboard can open.
+ * ⚠ OUTSIDE `.office-cam`. Inside it they would zoom with the room.
  */
-.office-front {
+.office-zoom {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+.office-zoom button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-ink) 12%, transparent);
+  background: color-mix(in srgb, var(--color-panel) 62%, transparent);
+  color: var(--color-muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.office-zoom button:hover,
+.office-zoom button:focus-visible {
+  opacity: 1;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+/*
+ * ⚠ `.office-front` IS GONE — the whole second `<svg>` above the people, and the
+ * `pointer-events: none` that kept it from eating every click. Depth is
+ * `z-index` in one stacking context now. → SPEC-office-animation.md §17b
+ */
+
+/**
+ * A piece of furniture that shares the people's layer so it can be sorted
+ * against them. → `DomScene.tsx §Prop`
+ *
+ * ⚠ `pointer-events: none` survives the move and for the same reason: it sits
+ * over the station's hit rectangle in the `<svg>` below, and a filing desk that
+ * swallows the click opening Results is a door only a keyboard can reach.
+ */
+.prop {
+  position: absolute;
   pointer-events: none;
+  user-select: none;
 }
 
 /**
@@ -288,19 +385,27 @@
 .sq-a { fill: var(--color-ink); opacity: 0.55; }
 .sq-b { fill: var(--color-panel); }
 
-/* ── stations are BUTTONS */
+/* ── stations are BUTTONS — except the one that is only a caption.
+      ⚠ `.is-inert` is the arm bench: one bench, N connections, so it never had an
+      honest answer to "which one did you mean". → SPEC-office-animation §17i
+      It keeps its label and loses every affordance, together: no cursor, no hover
+      highlight, no hit rectangle. Half of them is a control that looks alive and
+      answers nothing, which is worse than a picture. */
 .station {
   cursor: pointer;
+}
+.station.is-inert {
+  cursor: default;
 }
 .station-hit {
   fill: transparent;
 }
-.station:hover .furn,
-.station:hover .screen {
+.station:not(.is-inert):hover .furn,
+.station:not(.is-inert):hover .screen {
   stroke: var(--color-accent);
   opacity: 1;
 }
-.station:hover .station-label {
+.station:not(.is-inert):hover .station-label {
   fill: var(--color-accent);
 }
 .station:focus-visible {
@@ -368,6 +473,9 @@
   cursor: pointer;
   /* The stage does not take clicks; the people in it do. */
   pointer-events: auto;
+  /* ⚠ For `.tint-art`'s `mix-blend-mode`. Without it the blend escapes the actor
+     and tints the floor behind them. It costs nothing when nobody is tinted. */
+  isolation: isolate;
 }
 .actor-art:focus-visible {
   outline: none;
@@ -503,12 +611,65 @@
   bottom: calc(var(--ch) * var(--sit-lift, 0));
 }
 
+/**
+ * ── THE GARMENT TINT. → docs/SPEC-office-art.md §11
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 A BLEND, NOT A FILL. Painting flat colour through the mask destroys   │
+ * │ every fold the generator drew and the garment goes back to looking like  │
+ * │ clip-art — the exact defect that got the first hand-drawn cast rejected. │
+ * │ `mix-blend-mode: color` takes HUE and SATURATION from the tint and       │
+ * │ LUMINANCE from the artwork underneath, so the shading survives intact.   │
+ * │                                                                          │
+ * │ ⚠ `isolation: isolate` ON THE PARENT IS NOT OPTIONAL. Without it the      │
+ * │ blend reaches past the actor and colours the FLOOR behind them.           │
+ * │                                                                          │
+ * │ ⚠ IT INHERITS `.sprite-art` WHOLE, including the walk animation, and the │
+ * │ `mask-position` keyframes below are the same numbers as the              │
+ * │ `background-position` ones. Two animations that must agree are written   │
+ * │ from one set of values or they disagree the first time either is tuned — │
+ * │ and the symptom shows only while somebody is walking.                     │
+ * │                                                                          │
+ * │ ⚠ `-webkit-mask-*` as well, for Safari.                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+.tint-art {
+  -webkit-mask-image: var(--mask);
+  mask-image: var(--mask);
+  -webkit-mask-size: calc(var(--cw) * 6) var(--ch);
+  mask-size: calc(var(--cw) * 6) var(--ch);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: 0 0;
+  mask-position: 0 0;
+  mix-blend-mode: color;
+}
+.tint-art.is-seated {
+  -webkit-mask-position: calc(var(--cw) * -5) 0;
+  mask-position: calc(var(--cw) * -5) 0;
+}
+
 @keyframes sprite-walk {
   from { background-position-x: calc(var(--cw) * -1); }
   to { background-position-x: calc(var(--cw) * -5); }
 }
+/* The same four cells, on the mask. Same duration, same `steps(4)`, same
+   endpoints — they start together because both begin when the class lands. */
+@keyframes tint-walk {
+  from {
+    -webkit-mask-position-x: calc(var(--cw) * -1);
+    mask-position-x: calc(var(--cw) * -1);
+  }
+  to {
+    -webkit-mask-position-x: calc(var(--cw) * -5);
+    mask-position-x: calc(var(--cw) * -5);
+  }
+}
 .actor.is-walking .sprite-art {
   animation: sprite-walk 0.62s steps(4) infinite;
+}
+.actor.is-walking .tint-art {
+  animation: sprite-walk 0.62s steps(4) infinite, tint-walk 0.62s steps(4) infinite;
 }
 
 /* The button has to grow to the picture, or half the person is not clickable. */

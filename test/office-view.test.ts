@@ -1,10 +1,29 @@
 
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
 
 import { placeOf, describeCall } from '../dist/core/worker.js';
-import { CAST, CAST_COUNT, FACE_COUNT, assignCast, castOf, isCastId } from '../dist/core/cast.js';
-import { pruneCast, readCast } from '../dist/core/layout.js';
+import {
+  BODY_HALF_W,
+  BODY_TALL,
+  CH_H,
+  COOLER,
+  PLANT,
+} from '../dist/core/office-floor.js';
+import {
+  CAST,
+  CAST_COUNT,
+  FACE_COUNT,
+  GARMENT_TINTS,
+  assignCast,
+  assignTints,
+  castOf,
+  isCastId,
+} from '../dist/core/cast.js';
+import { pruneCast, pruneTint, readCast, readTint } from '../dist/core/layout.js';
 
 /**
  * The office view's deterministic half. → docs/SPEC-office-animation.md §6
@@ -13,6 +32,99 @@ import { pruneCast, readCast } from '../dist/core/layout.js';
  * actually OBSERVED. A wrong place is not a cosmetic bug — it is the animation
  * claiming an employee read the user's documents when it never opened one.
  */
+
+// ──────────────────────────────────────── core's numbers vs the actual art
+
+/**
+ * 🔴 THE TWO FILES `core/office-floor.ts` SAYS ARE CHECKED HERE. → §17f①
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THEY WERE NOT. The comment beside `BODY_HALF_W` read *"these two are a    │
+ * │ measurement written down, not a computation, and `test/office-view.test`  │
+ * │ is where the two are held against each other"* — and this file had never  │
+ * │ mentioned them. That is the failure class this repository has paid for    │
+ * │ more than any other: a sentence naming a real file, which does a real     │
+ * │ job, and protects something else entirely. `PLANT.halfW` and              │
+ * │ `COOLER.halfW` arrived carrying the same claim, so the claim is made      │
+ * │ true rather than repeated.                                                │
+ * │                                                                           │
+ * │ ⚠ IT READS THE SOURCE AS TEXT, and that is not a shortcut — it is the     │
+ * │ only door. `core` is pure and the manifest imports PNGs, so `node --test` │
+ * │ cannot import either art module; the numbers, however, are plain decimal  │
+ * │ literals in a file this process can open. A regex over one declaration is │
+ * │ a narrow reader, and it fails loudly (`premise` below) if the shape it is │
+ * │ reading ever changes.                                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const WEB = path.join(url.fileURLToPath(new URL('..', import.meta.url)), 'web', 'src', 'office', 'art');
+const src = (f: string): string => fs.readFileSync(path.join(WEB, f), 'utf8');
+
+/** `'plant': { src: f_plant, h: 146, ar: 0.5038 }` → the drawn width in world units. */
+function furnitureWidth(id: string): number {
+  const row = new RegExp(`'${id}':\\s*\\{[^}]*\\bh:\\s*([0-9.]+)[^}]*\\bar:\\s*([0-9.]+)`).exec(
+    src('furniture.ts'),
+  );
+  assert.ok(row, `premise: no '${id}' row of the expected shape in art/furniture.ts`);
+  return Number(row[1]) * Number(row[2]);
+}
+
+const num = (file: string, re: RegExp): number => {
+  const m = re.exec(src(file));
+  assert.ok(m, `premise: ${re} found nothing in art/${file}`);
+  return Number(m[1]);
+};
+
+test('🔴 PLANT.halfW and COOLER.halfW are the ARTWORK, not two numbers somebody liked', () => {
+  // They decide where a person stands beside each piece (`office-floor §VISIBLE`),
+  // so a re-cut PNG that changes an aspect ratio moves the object and leaves the
+  // person pointing at nothing.
+  //
+  // ⚠ ROUNDED UP, and the direction is asserted rather than a symmetric
+  // tolerance: a `halfW` bigger than the drawing stands somebody a unit further
+  // out than they had to be, while a smaller one hands the sliver rule a piece
+  // narrower than the one on screen and quietly eats the margin it just bought.
+  for (const [what, half] of [
+    ['plant', PLANT.halfW],
+    ['cooler', COOLER.halfW],
+  ] as const) {
+    const measured = furnitureWidth(what) / 2;
+    assert.ok(half >= measured, `${what}: core says halfW ${half}, the art measures ${measured.toFixed(2)}`);
+    assert.ok(half - measured < 1, `${what}: halfW ${half} has drifted off the art's ${measured.toFixed(2)}`);
+  }
+});
+
+test('🔴 BODY_HALF_W and BODY_TALL still describe the sheets they were measured off', () => {
+  // The safe area is a law about BOUNDING BOXES, and this is the box. Re-cut the
+  // cast at a different cell size, or give a sheet a bigger `scale`, and every
+  // edge of the safe area is quietly wrong by the difference.
+  const cell = {
+    w: num('manifest.ts', /CELL\s*=\s*\{\s*w:\s*([0-9.]+)/),
+    h: num('manifest.ts', /CELL\s*=\s*\{[^}]*\bh:\s*([0-9.]+)/),
+  };
+  const bodyH = num('manifest.ts', /BODY_H\s*=\s*([0-9.]+)/);
+  const scales = [...src('manifest.ts').matchAll(/\bscale:\s*([0-9.]+)/g)].map((m) => Number(m[1]));
+  assert.ok(scales.length > 0, 'premise: at least one sheet declares a scale');
+  const maxScale = Math.max(1, ...scales);
+
+  // Feet to the top of the tallest hair: the figure fills `CH_H`, times the
+  // largest per-sheet render scale.
+  const tall = CH_H * maxScale;
+  // A cell rendered so the FIGURE lands on `CH_H`, times the fraction of the
+  // cell's width the drawing actually fills (~87%, the margin the sheets were
+  // authored with).
+  const wide = ((CH_H * cell.h) / bodyH) * maxScale * (cell.w / cell.h) * 0.87;
+
+  // ⚠ ROUNDED UP, NEVER DOWN, and asserted in that direction. An over-estimate
+  // keeps somebody a couple of units further from a wall than they need to be;
+  // an under-estimate puts their shoulder inside it.
+  assert.ok(BODY_TALL >= tall, `BODY_TALL ${BODY_TALL} is under the measured ${tall.toFixed(1)}`);
+  assert.ok(BODY_TALL - tall <= 6, `BODY_TALL ${BODY_TALL} has drifted above ${tall.toFixed(1)}`);
+  assert.ok(
+    BODY_HALF_W >= wide / 2,
+    `BODY_HALF_W ${BODY_HALF_W} is under the measured ${(wide / 2).toFixed(1)}`,
+  );
+  assert.ok(BODY_HALF_W - wide / 2 <= 8, `BODY_HALF_W ${BODY_HALF_W} has drifted above ${(wide / 2).toFixed(1)}`);
+});
 
 // ───────────────────────────────────────────────────────────────── placeOf
 
@@ -157,6 +269,56 @@ test('🔴 a HAND-PICKED face takes its seat first, and is never overwritten', (
   assert.equal(new Set(faces(out)).size, FACE_COUNT, 'the rest fill the gaps');
 });
 
+test('🔴 ONE PICK MUST MOVE ONE PERSON — and a sparse payload moves up to six', () => {
+  /**
+   * The user's report, 07/09: *"I change one person's character and the whole
+   * break area moves. I expected only that character to change."*
+   *
+   * MEASURED, an office of 12 on 5 faces, ONE hand pick sent as `{stored ∪ pick}`:
+   * up to **6 of the other 11** came out on a different face. A reserved face is
+   * seated before the rest are dealt, so reserving one cascades through everybody
+   * the probe walks past — and a different face is a different per-sheet `scale`
+   * and a different `sitLift`, so a SEATED figure visibly jumps.
+   *
+   * ⇒ `setCharacter` freezes the RESOLVED cast and changes one entry in it. This
+   * test is the invariant that makes that work, and the premise below is what
+   * makes it worth having.
+   */
+  const ids = ['assistant', ...people(11)];
+  const resolved = assignCast('office-a', ids);
+
+  // The premise: a SPARSE payload really does drag other people around.
+  let dragged = 0;
+  for (const who of ids) {
+    const sparse = assignCast('office-a', ids, { [who]: (resolved[who]! + 2) % FACE_COUNT });
+    dragged = Math.max(dragged, ids.filter((i) => i !== who && resolved[i] !== sparse[i]).length);
+  }
+  assert.ok(dragged >= 3, `premise: a sparse pick only moved ${dragged} others — nothing to fix`);
+
+  // The invariant: hand the whole resolved map back with one entry changed, and
+  // NOBODY else moves. Every office, every person, every target face.
+  for (const office of ['office-a', 'office-b', 'office-zzz']) {
+    const base = assignCast(office, ids);
+    for (const who of ids) {
+      for (let face = 0; face < FACE_COUNT; face++) {
+        const frozen = { ...base, [who]: face };
+        const after = assignCast(office, ids, frozen);
+        assert.deepEqual(after, frozen, `${office}: picking ${face} for ${who} moved somebody else`);
+      }
+    }
+  }
+});
+
+test('a frozen cast survives a HIRE — the newcomer takes what is free', () => {
+  // The other half of "nobody moves unless I move them": once an office is
+  // dressed, adding somebody must not restyle the people already in the room.
+  const ids = ['assistant', ...people(7)];
+  const frozen = assignCast('office-a', ids);
+  const after = assignCast('office-a', [...ids, 'agent:new'], frozen);
+  for (const id of ids) assert.equal(after[id], frozen[id], `${id} was restyled by a hire`);
+  assert.ok(after['agent:new'] !== undefined);
+});
+
 test('a stored pick outside the drawings is honoured but still counted once', () => {
   // `layout.cast` legitimately holds 0…9 — `CAST` is append-only and a user may
   // have picked 7 before there were five strips. It draws as face 2, so it must
@@ -180,6 +342,200 @@ test('the assistant is dealt from the same basket as everybody else', () => {
   // the same shirt as an employee standing four metres away.
   const out = assignCast('office-a', ['assistant', ...people(FACE_COUNT - 1)]);
   assert.equal(new Set(faces(out)).size, FACE_COUNT);
+});
+
+// ──────────────────────────────────────────────────────── the garment tint
+
+test('🔴 NOBODY IS TINTED UNTIL TWO PEOPLE SHARE A FACE', () => {
+  // The colour exists to separate two employees who look alike. Painting the
+  // first five as well would be five compositing passes a frame buying nothing —
+  // and it would take away the artwork's own colour, which is the one everybody
+  // is designed in.
+  for (let n = 1; n <= FACE_COUNT; n++) {
+    assert.deepEqual(assignTints(assignCast('office-a', people(n))), {}, `${n} people`);
+  }
+});
+
+test('🔴 the SIXTH person gets a colour, and the first five still do not', () => {
+  const faceMap = assignCast('office-a', people(FACE_COUNT + 1));
+  const out = assignTints(faceMap);
+  assert.equal(Object.keys(out).length, 1, 'exactly one person is the second on a face');
+  const [id, hex] = Object.entries(out)[0]!;
+  assert.match(hex, /^#[0-9a-f]{6}$/);
+  assert.ok(GARMENT_TINTS.includes(hex), 'an auto colour comes from the palette');
+  // And it is the LATER of the two on that face, in sorted order — the person
+  // who was already there keeps the drawing they were made in.
+  const twins = Object.keys(faceMap).filter((k) => faceMap[k] === faceMap[id]);
+  assert.equal(twins.sort()[1], id);
+});
+
+test('🔴 TWO PEOPLE ON ONE FACE NEVER SHARE A COLOUR — the twins bug, one layer down', () => {
+  // Measured in the live room on 07/09 BEFORE this was dealt from a basket: two
+  // of seven tinted people came out `#5c6b3f`. A plain `hash % 10` collides at
+  // exactly the rate the birthday problem says, and a collision here is two
+  // employees who look alike AND wear the same colour — the precise state the
+  // colour exists to prevent.
+  for (const office of ['office-a', 'office-b', 'office-zzz']) {
+    for (let n = 1; n <= 30; n++) {
+      const faceMap = assignCast(office, people(n));
+      const tints = assignTints(faceMap);
+      const perFace = new Map<number, string[]>();
+      for (const [id, hex] of Object.entries(tints)) {
+        const f = faceMap[id]! % FACE_COUNT;
+        perFace.set(f, [...(perFace.get(f) ?? []), hex]);
+      }
+      for (const [f, list] of perFace) {
+        assert.equal(new Set(list).size, list.length, `${office}/${n}: face ${f} has ${list.join(',')}`);
+      }
+    }
+  }
+});
+
+// ───────────────────────────────── who KEEPS the colour they were drawn in
+
+/**
+ * 🔴 THE ORDER INSIDE A FACE GROUP — the user's report, 07/09. → §17k″
+ *
+ * `agent:…` versus `assistant`: `'g' < 's'`, so a worker sorted first in EVERY
+ * clash and the assistant was the one put in a costume, every single time. The
+ * user found it the obvious way and named it exactly: *"I pick a character for
+ * employee 5, it happens to be the assistant's, and now the ASSISTANT is not in
+ * its own colour — that makes no sense."*
+ */
+const ANCHOR = { anchor: 'assistant' };
+
+test('🔴 the ASSISTANT never loses its own colour to a worker', () => {
+  // The one figure the room is drawn around and the one the user must never have
+  // to hunt for (§17d) — and by plain id order it was the guaranteed loser.
+  let clashed = false;
+  for (const office of ['office-a', 'office-b', 'office-zzz']) {
+    for (let n = FACE_COUNT; n <= 24; n++) {
+      const faceMap = assignCast(office, ['assistant', ...people(n)]);
+      const face = faceMap['assistant']! % FACE_COUNT;
+      // ⚠ The premise, asserted rather than assumed: a gate that never meets the
+      // case it guards is a gate nobody knows is running.
+      if (Object.entries(faceMap).some(([id, f]) => id !== 'assistant' && f % FACE_COUNT === face)) {
+        clashed = true;
+      }
+      assert.equal(
+        assignTints(faceMap, {}, ANCHOR)['assistant'],
+        undefined,
+        `${office} with ${n} workers tinted the assistant`,
+      );
+    }
+  }
+  assert.ok(clashed, 'premise: the assistant never actually shared a face — the test proved nothing');
+});
+
+test('🔴 a HAND-PICKED face dresses the PICKER, not the person already wearing it', () => {
+  // The general rule the assistant case is a special case of: a change lands on
+  // whoever caused it. Somebody who has been on screen for an hour must not
+  // change colour because a colleague chose their look.
+  const faces = { 'agent:early': 2, 'agent:picker': 2 };
+  const out = assignTints(faces, {}, { picked: { 'agent:picker': 2 } });
+  assert.equal(out['agent:early'], undefined, 'the incumbent was recoloured');
+  assert.ok(out['agent:picker'], 'the picker should be the one tinted');
+
+  // ⚠ Without the hint it is plain id order, and `early` < `picker` — so this
+  // pair would have come out the same way by luck. Reversed names prove the rule
+  // is the PICK and not the alphabet.
+  const flipped = { 'agent:zzz': 2, 'agent:aaa': 2 };
+  const out2 = assignTints(flipped, {}, { picked: { 'agent:aaa': 2 } });
+  assert.equal(out2['agent:zzz'], undefined);
+  assert.ok(out2['agent:aaa']);
+});
+
+test('a stored pick of 7 IS a pick of face 2 — the picker still yields', () => {
+  // `layout.cast` legitimately holds 0…9 while there are five drawings, so
+  // reading the value raw would let the picker quietly keep the original.
+  const out = assignTints({ 'agent:a': 2, 'agent:b': 2 }, {}, { picked: { 'agent:a': 7 } });
+  assert.equal(out['agent:b'], undefined, 'the non-picker keeps the original');
+  assert.ok(out['agent:a']);
+});
+
+test('the anchor outranks a pick, and two pickers fall back to id order', () => {
+  // Stated because both are decisions, not accidents. The assistant keeps its
+  // colour even when the clash came from its own picker; and when everybody in
+  // the group asked for the face there is no "cause" left to land on.
+  const both = assignTints({ assistant: 1, 'agent:a': 1 }, {}, { ...ANCHOR, picked: { assistant: 1 } });
+  assert.equal(both['assistant'], undefined);
+  assert.ok(both['agent:a']);
+
+  const tie = assignTints({ 'agent:a': 3, 'agent:b': 3 }, {}, { picked: { 'agent:a': 3, 'agent:b': 3 } });
+  assert.equal(tie['agent:a'], undefined);
+  assert.ok(tie['agent:b']);
+});
+
+test('two people on DIFFERENT faces may share a colour — that is not a clash', () => {
+  // The colour is not an identifier. It separates people who look alike; two
+  // people who already look nothing alike do not need it to differ, and forcing
+  // that would run the palette out at eleven employees for no gain.
+  let shared = false;
+  for (let n = 6; n <= 40 && !shared; n++) {
+    const seen = new Set(Object.values(assignTints(assignCast('office-a', people(n)))));
+    if (seen.size < Object.keys(assignTints(assignCast('office-a', people(n)))).length) shared = true;
+  }
+  assert.ok(shared, 'no two people anywhere shared a colour — the rule is stricter than intended');
+});
+
+test('assignTints is STABLE — it does not re-roll on every read', () => {
+  // A random pick would make the room flicker through colours while nothing
+  // about the office changed. `canvas()` runs on every SSE event.
+  const faceMap = assignCast('office-a', people(9));
+  const a = assignTints(faceMap);
+  for (let i = 0; i < 20; i++) assert.deepEqual(assignTints(faceMap), a);
+});
+
+test('a hand-picked colour wins, even for somebody who would not be tinted', () => {
+  // The auto rule answers "two people look alike"; a person choosing a colour is
+  // answering something else, and the choice must not be overruled by a count.
+  const faceMap = assignCast('office-a', people(2));
+  const out = assignTints(faceMap, { 'agent:r0': '#123456' });
+  assert.equal(out['agent:r0'], '#123456');
+  assert.equal(out['agent:r1'], undefined, 'the other one is still untinted');
+});
+
+test('a junk stored colour is dropped, never forwarded to the stylesheet', () => {
+  // This is the gate a client-supplied string passes on its way to becoming a
+  // CSS colour. Anything that is not `#rrggbb` must not reach the page.
+  for (const junk of ['red', '#12345', 'url(x)', '#gggggg', 42, null, '#123456;background:red']) {
+    const out = assignTints(assignCast('office-a', people(2)), {
+      'agent:r0': junk as unknown as string,
+    });
+    assert.equal(out['agent:r0'], undefined, `${String(junk)} survived`);
+  }
+});
+
+test('the deal of colours does not depend on the ORDER of the map', () => {
+  const ids = people(8);
+  const forward = assignCast('office-a', ids);
+  const backward = Object.fromEntries(Object.entries(forward).reverse());
+  assert.deepEqual(assignTints(backward), assignTints(forward));
+});
+
+test('readTint / pruneTint: the same two gates the cast has, on the same events', () => {
+  assert.deepEqual(readTint({ 'agent:a': '#b4532a', 'agent:b': 'red', '../x': '#000000' }), {
+    'agent:a': '#b4532a',
+  });
+  assert.deepEqual(readTint('nope'), {});
+  // ⚠ THE PRUNE IS WHY DELETING SOMEBODY DOES NOT DRESS THEIR REPLACEMENT. Delete
+  // an employee for good, create one with the same name, and the node id is
+  // identical — a surviving entry would hand over the dead one's colour.
+  assert.deepEqual(pruneTint({ 'agent:a': '#b4532a', 'agent:gone': '#000000' }, ['agent:a']), {
+    'agent:a': '#b4532a',
+  });
+});
+
+test('every palette colour is MID-LIGHTNESS, or the picker offers colours that do nothing', () => {
+  // `mix-blend-mode: color` keeps the artwork's luminance and takes only hue and
+  // saturation from the tint, so a near-black or near-white entry is a swatch
+  // that visibly changes nothing. This is a property of the LIST, so it is
+  // checkable — unlike the same sentence written as a comment.
+  for (const hex of GARMENT_TINTS) {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const lum = 0.299 * r! + 0.587 * g! + 0.114 * b!;
+    assert.ok(lum > 60 && lum < 190, `${hex} sits at luminance ${Math.round(lum)}`);
+  }
 });
 
 // ─────────────────────────────────────────────────────────── stored choices

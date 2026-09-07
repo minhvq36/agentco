@@ -46,7 +46,7 @@ import {
   type ParsedInput,
 } from './commands.js';
 import { Mailbox, mergeUserText } from './mailbox.js';
-import { assignCast, castOf } from './cast.js';
+import { assignCast, assignTints, castOf } from './cast.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
@@ -2463,6 +2463,31 @@ export class Office {
       layout.cast ?? {},
     );
 
+    /**
+     * WHOSE GARMENT IS RECOLOURED — and it is decided FROM `faces`, not beside it.
+     * → `core/cast.ts §assignTints` · docs/SPEC-office-art.md §11
+     *
+     * The whole question is *"does anybody else look like this person"*, so it can
+     * only be answered after the faces are dealt. Computing the two independently
+     * is how somebody ends up tinted for a clash the dealer had already resolved.
+     */
+    /**
+     * ⚠ THE TWO EXTRA ARGUMENTS ARE THE ANSWER TO *"WHO SHOULD CHANGE"*, and
+     * they are named HERE because this is where the architecture is known.
+     * → `core/cast.ts §TintOrder` · SPEC-office-animation §17k″
+     *
+     *   `anchor`  the assistant keeps its own colour, always. It is the one
+     *             figure the user must never have to hunt for (§17d), and by
+     *             plain id order it was the one that ALWAYS lost.
+     *   `picked`  a hand-picked face is the person who CAUSED the clash, so
+     *             the costume lands on them rather than on whoever was
+     *             already wearing that face.
+     */
+    const tints = assignTints(faces, layout.tint ?? {}, {
+      anchor: ASSISTANT_NODE,
+      picked: layout.cast ?? {},
+    });
+
     return {
       nodes: layout.nodes.map((n) => ({
         ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf, keyDeadOf),
@@ -2483,7 +2508,16 @@ export class Office {
          * one.
          */
         ...(n.kind === 'assistant' || n.kind === 'agent'
-          ? { character: faces[n.id] ?? castOf(this.id, n.id) }
+          ? {
+              character: faces[n.id] ?? castOf(this.id, n.id),
+              /**
+               * ⚠ ABSENT MEANS "DRAWN IN ITS OWN COLOUR", not "no colour". The
+               * renderer draws no tint layer at all for a person without this
+               * field, and that is the point: a `mix-blend-mode` layer costs a
+               * compositing pass per person per frame even at zero effect.
+               */
+              ...(tints[n.id] ? { tint: tints[n.id] } : {}),
+            }
           : {}),
       })),
       edges: layout.edges,
@@ -2492,7 +2526,7 @@ export class Office {
     };
   }
 
-  saveCanvas(input: { nodes?: unknown; edges?: unknown; cast?: unknown }): CanvasState {
+  saveCanvas(input: { nodes?: unknown; edges?: unknown; cast?: unknown; tint?: unknown }): CanvasState {
     this.assertLive();
     const { touched } = this.layout.save(input);
     if (touched.length) this.reload();

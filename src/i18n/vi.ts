@@ -54,8 +54,6 @@ export const vi: Catalog = {
   'office.desk': 'Bàn hồ sơ',
   'office.openResults': 'mở ngăn Kết quả',
   'office.openLibrary': 'mở Tủ tài liệu',
-  'office.openArm': 'mở kết nối này',
-  'office.connectArm': 'cắm một kết nối',
   'office.armNone': 'Chưa có kết nối',
   'office.breakArea': 'Khu giải lao',
   'office.summary': '{working} đang làm, {resting} đang nghỉ',
@@ -64,9 +62,12 @@ export const vi: Catalog = {
   'office.viewDiagramTip': 'Sơ đồ: dựng và nối dây cho công ty',
   'office.viewRoomTip': 'Căn phòng: xem đang có chuyện gì xảy ra',
   'office.character': 'Nhân vật',
-  'office.characterHint': 'Cách vẽ người này trong giao diện văn phòng. Không tốn gì và không đổi gì trong công việc.',
   'office.characterPick': 'Nhân vật {n}',
+  'office.tint': 'Màu trang phục',
+  'office.tintCustom': 'Chọn màu bất kỳ',
   'office.hireHint': 'Chưa có ai làm việc ở đây. Chuyển sang sơ đồ để tuyển người đầu tiên.',
+  'office.zoomIn': 'Phóng to',
+  'office.zoomOut': 'Thu nhỏ',
 
   // ───────────────────────────────────────────────────────────────── chat
   'chat.you': 'bạn',
@@ -877,6 +878,7 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'overview.removeOfficeTitle': 'Xoá hẳn văn phòng “{name}”?',
   'overview.removeOfficeBefore': 'Xoá cả thư mục',
   'overview.removeOfficeAfter': ': nhân viên, kỹ năng, kho tri thức và mọi kết quả đã làm.',
+  'overview.removeNoUndo': 'Không lấy lại được.',
 
   // ────────────────────────────────────────────── inspector (right panel)
   'inspector.editProfile': 'Sửa hồ sơ',
@@ -967,9 +969,6 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'inspector.armRemoveKeep1': 'Cấu hình và chìa khoá',
   'inspector.armRemoveKeepBold': 'vẫn được giữ',
   'inspector.armRemoveKeep2': '. Cắm lại đúng thứ này thì không phải nhập lại gì — chỉ mất công nối dây.',
-  'inspector.agentDeleteBefore': 'Mất file',
-  'inspector.agentDeleteMid': 'và toàn bộ kỹ năng bạn đã viết cho người này.',
-  'inspector.agentDeleteBold': 'Không lấy lại được.',
   'inspector.agentNotesBefore': 'Sổ tay kinh nghiệm ở',
   'inspector.agentNotesAfter':
     'vẫn được giữ — đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.',

@@ -138,6 +138,17 @@ export interface CanvasNode {
    * wrong about it. → `@core/cast` · docs/SPEC-office-animation.md §4a
    */
   character?: number;
+  /**
+   * assistant/agent only: the colour of this person's recolourable garment in the
+   * office view, as `#rrggbb`. **RESOLVED ON THE SERVER**, same rule as
+   * `character`. → `@core/cast §assignTints` · docs/SPEC-office-art.md §11
+   *
+   * ⚠ ABSENT MEANS "drawn in the colour the artist gave them", not "no colour".
+   * Nobody is tinted until two people share a face, and the renderer draws no
+   * layer at all in that case — a `mix-blend-mode` layer is not free just because
+   * it changes nothing.
+   */
+  tint?: string;
   missing: boolean;
   connected: boolean;
   removable: boolean;
@@ -154,11 +165,29 @@ export interface CanvasState {
   knowledge: { shared: number; total: number };
   /**
    * The stored character CHOICES — never the resolved cast (that is
-   * `node.character`). Held so that changing ONE person can `PUT` the map back
-   * without freezing everyone else's hashed default into stored data.
+   * `node.character`).
+   *
+   * ⚠ NOTHING READS IT ANY MORE, and that is stated rather than left to be
+   * discovered. It existed so a one-person change could `PUT` the stored map
+   * back untouched; `setCharacter` now sends the RESOLVED cast instead, because
+   * the sparse payload dragged up to six other people onto different faces
+   * (→ `store.ts §setCharacter` · SPEC-office-animation §17k‴). The field is
+   * kept for one round so an older tab mid-session does not read `undefined`,
+   * and it is a deletion candidate the next time this file is opened — a value
+   * on every canvas read that nobody consumes is how a dead concept survives.
    */
   cast: Record<string, number>;
 }
+
+/**
+ * ⚠ THE STORED TINT CHOICES ARE NOT SENT DOWN, and that is not an oversight.
+ *
+ * `cast` has to travel because the picker shows which face is SELECTED, and a
+ * hashed default must not look selected. A colour picker has no such state: it
+ * shows the colour the person is actually wearing, which is `node.tint`, and that
+ * is already on the node. Sending the map as well would be a second answer to a
+ * question that has one.
+ */
 
 export interface OfficeSummary {
   id: string;

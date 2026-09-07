@@ -2,7 +2,16 @@ import { memo } from 'react';
 
 import { plural, t } from '@i18n';
 import { MAX_SIT_LIFT } from '@core/cast';
-import { BREAK_AREA, BREAK_PIECES, CHESS_SEAT, HORIZON, STATIONS, WORLD } from '@core/office-floor';
+import {
+  BREAK_AREA,
+  BREAK_PIECES,
+  CHESS_SEAT,
+  COOLER,
+  HORIZON,
+  PLANT,
+  STATIONS,
+  WORLD,
+} from '@core/office-floor';
 
 import { FURNITURE, WALL, widthOf, type Piece } from '../../art/furniture';
 
@@ -196,34 +205,26 @@ function Furn({
 }
 
 /**
- * 🔴 THE ONE LAYER THAT DRAWS OVER THE PEOPLE. → SPEC-office-art.md §3
+ * 🔴 `RoomFront` IS GONE — a whole SECOND `<svg>` above the people, deleted.
+ * → SPEC-office-animation.md §17b
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ A SECOND `<svg>`, IDENTICAL IN EVERY ATTRIBUTE THAT DECIDES GEOMETRY.     │
- * │                                                                           │
- * │ Same box (`inset: 0` of `.office-pan`), same `viewBox`, same              │
- * │ `preserveAspectRatio` — so it lands on the same pixels as the room        │
- * │ without `fit()` learning about it. `fit()` is what keeps the SVG room and │
- * │ the HTML people in register; a front layer that needed its own transform  │
- * │ would be a third thing to keep in step, and the third one always drifts.  │
- * │                                                                           │
- * │ ⚠ `pointer-events: none`, or it covers the whole room and the stations    │
- * │ underneath stop being clickable — a door only a keyboard can open.        │
- * │                                                                           │
- * │ ⚠ IT SORTS BY NOTHING. Every piece in here beats every person whatever    │
- * │ their `y`, which is right only for an object people are never in front    │
- * │ of. → `core/office-floor.ts §BreakPiece.front`                            │
+ * │ IT DREW THE CHESS SET OVER EVERYBODY AND SORTED BY NOTHING.              │
+ * │                                                                          │
+ * │ That was right for exactly one object and wrong for the three things this │
+ * │ round asks for — a desk people stand on both sides of, two workers who    │
+ * │ overlap, and one assistant who must beat everyone. Three front layers is  │
+ * │ three mechanisms answering one question, and they disagree the first time │
+ * │ somebody walks between two of them.                                      │
+ * │                                                                          │
+ * │ The pieces it held moved into `.office-stage` — the SAME layer as the     │
+ * │ people, at the same world coordinates — and everything there sorts on     │
+ * │ `z-index = round(baseY)`. → `DomScene.tsx §Prop`                          │
+ * │                                                                          │
+ * │ ⚠ THE SHADOWS DID NOT MOVE. They are still painted here, in the room,     │
+ * │ under everybody's shoes, by the `only="shadow"` split below.              │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-export const RoomFront = memo(function RoomFront() {
-  return (
-    <g aria-hidden="true">
-      {BREAK_PIECES.filter((p) => p.front).map((p, i) => (
-        <Furn key={`${p.id}-${i}`} id={p.id} x={p.x} baseY={p.baseY} only="art" />
-      ))}
-    </g>
-  );
-});
 
 /**
  * 🔴 THE BOOT CHECK THE SEAT RULE CANNOT MAKE FOR ITSELF.
@@ -262,7 +263,7 @@ export const Room = memo(function Room({
 }: {
   armCount: number;
   libraryCount: number;
-  onOpen(what: 'library' | 'artifacts' | 'arm'): void;
+  onOpen(what: 'library' | 'artifacts'): void;
 }) {
   const shelf = STATIONS.library;
   const bench = STATIONS.arm;
@@ -335,10 +336,24 @@ export const Room = memo(function Room({
              own vocabulary for "nothing is wired here". It does not disappear:
              a floor plan that changes shape per office is a floor plan nobody
              can learn. */}
+      {/*
+        ┌──────────────────────────────────────────────────────────────────────┐
+        │ 🔴 NO `onOpen`, AND THAT IS THE WHOLE CHANGE. → SPEC §17i            │
+        │                                                                      │
+        │ It used to open `arms[0]`'s Inspector. There is ONE bench and there  │
+        │ are N connections, so "the nearest one" was a coin toss wearing a    │
+        │ rule: with two arms plugged in, half of every click opened the wrong │
+        │ panel and the user had no way to aim.                                │
+        │                                                                      │
+        │ ⚠ The bench does NOT disappear, and neither does its label — it      │
+        │ still says how many connections this office has, which is a fact     │
+        │ worth reading. `Station` with no handler renders a plain group: no   │
+        │ `role`, no `tabIndex`, no `title` promising a door. A control that   │
+        │ takes focus and does nothing is worse than a picture.                │
+        └──────────────────────────────────────────────────────────────────────┘
+      */}
       <Station
         label={armCount ? plural('office.armCount', armCount) : t('office.armNone')}
-        hint={armCount ? t('office.openArm') : t('office.connectArm')}
-        onOpen={() => onOpen('arm')}
         x={bench.x}
         y={bench.y}
         w={bench.w}
@@ -351,7 +366,9 @@ export const Room = memo(function Room({
             at this bench — §5 makes the break area the only place with seats,
             and `pose: 'sit'` is only ever set there — so an empty chair next to
             it read as an absence rather than as furniture. */}
-        <Furn id="desk-laptop" x={bench.x + bench.w / 2} baseY={floor(bench)} />
+        {/* ⚠ SHADOW ONLY. The desk's ART is in `DESK_PIECES`, drawn in the actor
+            layer so somebody standing behind it is covered by it. → §17b */}
+        <Furn id="desk-laptop" x={bench.x + bench.w / 2} baseY={floor(bench)} only="shadow" />
       </Station>
 
       {/* ── the filing desk: where results land. Deliberately within a short
@@ -368,8 +385,9 @@ export const Room = memo(function Room({
         {/* Longer than the bench's desk and loaded with paperwork — the two
             working stations are no longer the same drawing twice. 292 units
             wide against a 268-unit station: it overhangs slightly on purpose,
-            because the desk is the thing being pointed at, not the rectangle. */}
-        <Furn id="desk-files" x={desk.x + desk.w / 2} baseY={floor(desk)} />
+            because the desk is the thing being pointed at, not the rectangle.
+            ⚠ SHADOW ONLY — see the arm bench above. */}
+        <Furn id="desk-files" x={desk.x + desk.w / 2} baseY={floor(desk)} only="shadow" />
       </Station>
 
       {/* ── the break area. The only place with seats, and the only place
@@ -395,7 +413,7 @@ export const Room = memo(function Room({
             id={p.id}
             x={p.x}
             baseY={p.baseY}
-            {...(p.front ? { only: 'shadow' as const } : {})}
+            {...(p.sorted ? { only: 'shadow' as const } : {})}
           />
         ))}
       </g>
@@ -409,9 +427,14 @@ export const Room = memo(function Room({
              the wall shelf above it. It sits 48 units off the wall rather than
              20: pressed against the baseboard it read as MOUNTED, the same way
              the bookshelf did before it moved — but at 80 it had walked into the
-             room and stopped belonging to the wall at all. */}
-      <Furn id="cooler" x={1100} baseY={HORIZON + 34} />
-      <Furn id="plant" x={64} baseY={HORIZON + 74} />
+             room and stopped belonging to the wall at all.
+             ⚠ BOTH COME FROM `core/office-floor`, and they used to be literals
+             right here — a second copy of a layout whose first copy decides
+             where somebody stands beside them. That pair has drifted in this
+             room once already (`BREAK_PIECES`), and this time the drift would
+             be a person standing in front of nothing. */}
+      <Furn id="cooler" x={COOLER.x} baseY={COOLER.baseY} />
+      <Furn id="plant" x={PLANT.x} baseY={PLANT.baseY} />
     </g>
   );
 });
@@ -435,8 +458,9 @@ function Station({
   children,
 }: {
   label: string;
-  hint: string;
-  onOpen(): void;
+  /** Both absent ⇒ this station is FURNITURE WITH A CAPTION, not a door. */
+  hint?: string;
+  onOpen?: () => void;
   x: number;
   y: number;
   w: number;
@@ -444,28 +468,40 @@ function Station({
   muted?: boolean;
   children: React.ReactNode;
 }) {
+  const door = !!onOpen;
   return (
     <g
-      className={`station${muted ? ' is-muted' : ''}`}
-      role="button"
-      tabIndex={0}
-      aria-label={`${label} — ${hint}`}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
+      className={`station${door ? '' : ' is-inert'}${muted ? ' is-muted' : ''}`}
+      // ⚠ Every interactive attribute is conditional TOGETHER. Half of them —
+      // a `tabIndex` with no handler, a `role="button"` that answers nothing —
+      // is a control a screen reader announces and a keyboard cannot use.
+      {...(door
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            'aria-label': `${label} — ${hint}`,
+            onClick: onOpen,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpen();
+              }
+            },
+          }
+        : { 'aria-hidden': true })}
     >
-      <title>{`${label} — ${hint}`}</title>
+      <title>{door ? `${label} — ${hint}` : label}</title>
       {children}
       <text className="station-label" x={x + w / 2} y={y + h + 24} textAnchor="middle">
         {label}
       </text>
       {/* One generous hit area rather than per-shape hit testing: a click that
-          lands between two books must still open the library. */}
-      <rect className="station-hit" x={x - 12} y={y - 12} width={w + 24} height={h + 48} rx={8} />
+          lands between two books must still open the library.
+          ⚠ An inert station has none: an invisible rectangle that eats clicks and
+          answers nothing is the worst of both. */}
+      {door && (
+        <rect className="station-hit" x={x - 12} y={y - 12} width={w + 24} height={h + 48} rx={8} />
+      )}
     </g>
   );
 }

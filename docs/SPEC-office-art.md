@@ -1285,9 +1285,14 @@ Wheel and buttons, with limits:
 
 | | |
 |---|---|
-| fit-to-window | `1.0` — the whole room visible, the current behaviour |
-| minimum | `0.75` — enough to see the room sit inside its frame |
-| maximum | `2.5` — a face fills a comfortable part of the screen |
+| fit-to-window | `1.0` — the whole room visible, and the **default** |
+| minimum | ⚠ **`1.0` — the same number.** Zooming out is refused |
+| maximum | `3.0` — a face fills a comfortable part of the screen |
+
+⚠ **The minimum was `0.75` and the user's call moved it to `1.0`.** Below fit the
+room stops filling the frame, and what appears around it is the letterbox — the
+white margin `§4` spent a whole round painting out with `BLEED`. A camera that can
+put it back is a second door into a defect that was already closed.
 
 ⚠ **Zoom must be applied in `fit()` and nowhere else.** That function computes the
 single transform that keeps the SVG room and the HTML actor layer in register:
@@ -1304,6 +1309,72 @@ movement loop can go on writing plain world units.
 ---
 
 ## 11. Recolouring: ONE region per character, through a mask
+
+### 🔴 11a. RE-MEASURED ON THE v4 SHEETS, 07/09 — and one character has no answer
+
+Everything below §11a was measured on **v1/v3** art. Four of the five sheets were
+replaced on 06/09, and a mask is a per-pixel statement about one drawing: pointing
+an old one at a new drawing is the failure this section already names. So the
+whole thing was re-derived from the shipped PNGs with two scripts now in the repo
+— `scripts/cast-colours.ps1` (what the strip is made of) and `scripts/cast-mask.ps1`
+(derive, then render a review page at the shipping size).
+
+| | region | separator | rule, from the measurement | mask px |
+|---|---|---|---|---:|
+| **c0** | shirt, mid blue | hue | `B−R > 26 ∧ sat ≥ .32 ∧ 40 ≤ lum ≤ 170` | 95 044 |
+| **c1** | outer jacket, cool grey | **temperature** | `B ≥ R−2 ∧ 38 < lum < 118` | 112 450 |
+| **c2** | shirt, mid blue | hue | same rule as c0 | 135 372 |
+| **c3** | waistcoat, neutral grey | **lightness** | `sat ≤ .10 ∧ 88 ≤ lum ≤ 135` | 81 482 |
+| **c4** | shirt, light blue | hue | `B−R > 40 ∧ sat ≥ .28 ∧ 130 ≤ lum ≤ 230` | 141 007 |
+
+All five reviewed at the shipping size, five tints each: the garment changes, the
+folds survive, and skin · hair · trousers · shoes · glasses · watch · c1's cream
+tee · c3's blue shirt are all untouched.
+
+> ⚠ **The shoe leak from the earlier round is gone, and it was never a mask-code
+> bug.** The old c3 rule was `R > B+4 ∧ sat > .14 ∧ 22 ≤ lum ≤ 96` — a window that
+> reaches down into the shoes. The waistcoat sits at lum 107 and the trousers at
+> 57, so a **lightness** window takes one and not the other.
+
+#### 🔴 THERE ARE THREE SEPARATOR FAMILIES, AND PICKING THE WRONG ONE LOOKS EXACTLY LIKE "IMPOSSIBLE"
+
+**c1 was reported here as untintable on 07/09. That was wrong, and the way it went
+wrong is worth more than the fix.** Its three dark regions:
+
+| | colour | px | lum | **B − R** |
+|---|---|---:|---:|---:|
+| jacket | `#3c3836` | 28 050 | 57 | **−6** |
+| trousers | `#3e342e` | 24 269 | 54 | **−16** |
+| third dark region | `#3d3c3d` | 22 735 | 60 | **0** |
+
+Three garments inside **three luminance points of each other**, so no lightness
+window works — and that measurement was correct. The conclusion drawn from it was
+not: the jacket and the trousers are **16 points apart in `B − R`**. The jacket is
+cool grey, the trousers are warm. `B ≥ R−2` separates them on the first try, and
+the same rule was already in this repository's history, working, on the v3 sheet.
+
+⇒ **Three families, and a character is only untintable when all three fail:**
+
+| | separates by | in use for |
+|---|---|---|
+| **hue** | a coloured garment against neutral ones | c0 · c2 · c4 |
+| **lightness** | two neutrals at different values | c3 |
+| **temperature** | two neutrals at the *same* value | **c1** |
+
+> ⚠ **"Measured N failures" proves a MECHANISM, never a CONCLUSION.** One family
+> was tried, it failed for a real reason, and the failure was reported as a
+> property of the drawing. The question that would have caught it in one step is
+> the one this repository already writes down: *where is the equivalent thing
+> working today, and what does it do differently?* — and the answer was sitting in
+> an earlier scratch folder.
+>
+> ⚠ And the range worry was wrong too, for the same reason: *"lum 57 comes back
+> near-black in any hue"* was **predicted, not rendered**. Rendered, the five tints
+> on c1 read as five clearly different jackets.
+
+⚠ **A geometric rule is still always wrong.** The same old experiment carried a
+variant B — *tint only above the waistline* — and it cut the hem off the jacket in
+every pose. Kept here because it is the one that must not be retried.
 
 ### 🔴 Exactly one garment is tintable, and it is named per character
 
@@ -1456,6 +1527,34 @@ sixth does a tint get applied.
 ⚠ Which also means the tint layer must be **absent, not transparent**, for an
 untinted character. A `mix-blend-mode` layer at zero opacity still forces a
 compositing pass per person, every frame they move.
+
+### ⛔ WHITE AND BLACK DO ALMOST NOTHING, and that is not being fixed
+
+User, 07/09: *"the picker is good, but white or black do not blend like the
+others — does it depend on the original garment colour?"*
+
+**No, and the "no" is the whole answer.** `mix-blend-mode: color` takes **hue and
+saturation** from the top layer. White and black have **saturation 0**, so the
+result is the garment with its colour removed — a grey version of itself at the
+artwork's own lightness. It is not a failure of the blend; it is the blend doing
+exactly what it is for, on an input that carries no colour to give. The base
+garment decides how *light* the grey comes out, nothing more.
+
+⛔ **Deliberately not fixed**, and the price of fixing it is the reason:
+
+| | |
+|---|---|
+| the only real fix | stop using `mix-blend-mode: color` for low-saturation picks and paint flat instead — which is *"tint by filling"* two sections above, the thing that got the first cut rejected for destroying the shading |
+| what that costs | **two blend paths for one control**, so the same slider produces shaded garments in one part of the wheel and clip-art in another. Two mechanisms for one job is the failure class this project pays for most |
+| what it buys | a white or black shirt — a request nobody has made |
+
+⚠ **The ten swatches are already the answer.** They are the mid-lightness,
+saturated set that is known to work, and there is a test for it
+(`office-view.test.ts`). The wheel is the door out of that set, and being able to
+reach a grey through it is a *legitimate result*, not a broken one.
+
+**Reopen only on:** somebody actually asking for a white or black garment, plus a
+demonstration that the flat-fill path can keep the folds. Not on tidiness.
 
 ---
 

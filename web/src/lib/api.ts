@@ -370,7 +370,10 @@ export const api = {
    * only `cast`, and a node drag send only `nodes`/`edges`, without either one
    * wiping the other. → `src/core/layout.ts §save`
    */
-  saveCanvas: (id: string, payload: { nodes?: unknown; edges?: unknown; cast?: unknown }) =>
+  saveCanvas: (
+    id: string,
+    payload: { nodes?: unknown; edges?: unknown; cast?: unknown; tint?: unknown },
+  ) =>
     call<CanvasState>(`/api/office/${enc(id)}/canvas`, { method: 'PUT', body: JSON.stringify(payload) }),
 
   addAgent: (id: string, input: { display_name: string; pitch: string; tier: string }) =>

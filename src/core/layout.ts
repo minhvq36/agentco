@@ -42,7 +42,7 @@ import {
 /** Gap between the bottom of a worker and the top of their arm. Must match `arrangeAll`. */
 const ARM_DROP = 74;
 import { findArm } from './catalog.js';
-import { isCastId } from './cast.js';
+import { isCastId, isTint } from './cast.js';
 import { isSafeId } from './paths.js';
 
 export { NODE_SIZE };
@@ -88,6 +88,17 @@ export interface LayoutFile {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   cast?: Record<string, number>;
+  /**
+   * WHICH COLOUR a node's recolourable garment is painted, when somebody has
+   * chosen one by hand. `nodeId → '#rrggbb'`.
+   * → `core/cast.ts §assignTints` · docs/SPEC-office-art.md §11
+   *
+   * ⚠ EVERY WORD OF THE `cast` BOX ABOVE APPLIES HERE UNCHANGED — it is the same
+   * kind of fact about the same node, stored in the same file for the same
+   * reason. Absent is the normal case: `assignTints` computes a colour for
+   * anybody who shares a face with somebody else, and nobody else gets one.
+   */
+  tint?: Record<string, string>;
 }
 
 export const ASSISTANT_NODE = 'assistant';
@@ -373,7 +384,10 @@ export class LayoutStore {
       edges.push({ from, to: ASSISTANT_NODE });
     }
 
-    return { layout: { version: 1, nodes, edges, cast: raw.cast ?? {} }, missing };
+    return {
+      layout: { version: 1, nodes, edges, cast: raw.cast ?? {}, tint: raw.tint ?? {} },
+      missing,
+    };
   }
 
   /**
@@ -552,7 +566,7 @@ export class LayoutStore {
    *
    * Returns the list of files that changed, so the caller knows whether it needs to reload.
    */
-  save(input: { nodes?: unknown; edges?: unknown; cast?: unknown }): { touched: string[] } {
+  save(input: { nodes?: unknown; edges?: unknown; cast?: unknown; tint?: unknown }): { touched: string[] } {
     /**
      * ⭐ PASSES THE SOON-TO-BE-WRITTEN EDGE DOWN TO `read()` — see the
      * comment block at `spotFor`.
@@ -608,7 +622,32 @@ export class LayoutStore {
       }
     }
 
-    const wanted = sanitizeEdges(input.edges, byId);
+    /**
+     * ┌────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 ABSENT ≠ EMPTY — AND THE `cast` BOX BELOW SAID SO WHILE THIS LINE          │
+     * │ DID THE OPPOSITE.                                                             │
+     * │                                                                    │
+     * │ Bug the user reported, 07/09: *"I change somebody's character or shirt         │
+     * │ colour in the office and EVERY connection on the canvas is cut, the mcp        │
+     * │ ones included."* Exactly that. `setCharacter` PUTs `{cast}` and `setTint`      │
+     * │ PUTs `{tint}` — no `edges`, on purpose — and `sanitizeEdges(undefined)`        │
+     * │ returns `[]`, so the write below stored an empty edge list and the mcp         │
+     * │ split loop underneath it then found no servers and wiped `mcp:` out of         │
+     * │ every `roles/*.yaml` and out of `office.yaml`. One costume change,             │
+     * │ the whole office disconnected, nothing said a word.                           │
+     * │                                                                    │
+     * │ `api.ts` even promised this worked — *"a character change sends only          │
+     * │ `cast` … without either one wiping the other"*. A sentence in a comment        │
+     * │ is not a mechanism; the mechanism is this line, and it disagreed.             │
+     * │                                                                    │
+     * │ ⚠ `current.edges` ROUND-TRIPS EXACTLY, which is what makes falling back       │
+     * │ to it safe rather than merely quiet: `read()` rebuilds the mcp edges from      │
+     * │ the yaml, so the split loop re-derives the same lists and `sameList`           │
+     * │ reports nothing touched; and `writeRaw` filters mcp edges back out, so         │
+     * │ layout.json is written with precisely what it already held.                    │
+     * └────────────────────────────────────────────────────────────────────┘
+     */
+    const wanted = input.edges === undefined ? current.edges : sanitizeEdges(input.edges, byId);
 
     // ── splits two kinds of edges: shape goes into layout.json, tools go into yaml
     const mcpByRole = new Map<string, string[]>();
@@ -633,7 +672,14 @@ export class LayoutStore {
      * is the only way to UNSET a character); absent ⇒ leave it alone.
      */
     const cast = input.cast === undefined ? current.cast : readCast(input.cast);
-    this.writeRaw({ version: 1, nodes: current.nodes, edges: wanted, ...(cast ? { cast } : {}) });
+    const tint = input.tint === undefined ? current.tint : readTint(input.tint);
+    this.writeRaw({
+      version: 1,
+      nodes: current.nodes,
+      edges: wanted,
+      ...(cast ? { cast } : {}),
+      ...(tint ? { tint } : {}),
+    });
 
     const touched: string[] = [];
     for (const [roleId, role] of this.office.roles) {
@@ -738,13 +784,14 @@ export class LayoutStore {
       // Handed over whole; `writeRaw` drops the entry because the node is gone.
       // The deletion is not repeated here on purpose — one gate, one rule.
       ...(raw.cast ? { cast: raw.cast } : {}),
+      ...(raw.tint ? { tint: raw.tint } : {}),
     });
   }
 
   // ── internal
 
   private readRaw(): LayoutFile {
-    if (!this.exists) return { version: 1, nodes: [], edges: [], cast: {} };
+    if (!this.exists) return { version: 1, nodes: [], edges: [], cast: {}, tint: {} };
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<LayoutFile>;
       return {
@@ -752,11 +799,12 @@ export class LayoutStore {
         nodes: Array.isArray(raw.nodes) ? raw.nodes.filter(isNodeShape).slice(0, MAX_NODES) : [],
         edges: Array.isArray(raw.edges) ? raw.edges.filter(isEdgeShape) : [],
         cast: readCast(raw.cast),
+        tint: readTint(raw.tint),
       };
     } catch {
       // A broken layout.json must NOT crash the office — it's only view state.
       process.emitWarning('layout.json is unreadable; the canvas will lay itself out again.');
-      return { version: 1, nodes: [], edges: [], cast: {} };
+      return { version: 1, nodes: [], edges: [], cast: {}, tint: {} };
     }
   }
 
@@ -781,6 +829,10 @@ export class LayoutStore {
      * come back and inherit a dead office's ledger (`SPEC-offices.md` §3b).
      */
     const cast = pruneCast(layout.cast, kindOf.keys());
+    // ⚠ The SAME prune, for the same reason: delete an employee for good, create
+    // one with the same name, and the node id is identical. A surviving entry
+    // would dress the new person in the old one's colour.
+    const tint = pruneTint(layout.tint, kindOf.keys());
     const payload: LayoutFile = {
       version: 1,
       nodes: layout.nodes.map((n) => ({
@@ -795,6 +847,7 @@ export class LayoutStore {
       // Written only when somebody has actually chosen — an empty object in
       // every office's layout.json is noise in a file people read by hand.
       ...(Object.keys(cast).length ? { cast } : {}),
+      ...(Object.keys(tint).length ? { tint } : {}),
     };
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     fs.writeFileSync(this.file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
@@ -912,10 +965,32 @@ export function pruneCast(
   cast: Record<string, number> | undefined,
   alive: Iterable<string>,
 ): Record<string, number> {
+  return prune(cast, alive, isCastId);
+}
+
+/** The same gate for the garment colour. → `LayoutFile.tint` */
+export function pruneTint(
+  tint: Record<string, string> | undefined,
+  alive: Iterable<string>,
+): Record<string, string> {
+  return prune(tint, alive, isTint);
+}
+
+/**
+ * ⚠ ONE IMPLEMENTATION, TWO CALLERS. `cast` and `tint` are the same shape of
+ * fact about the same nodes and they must expire on the same event; two copies
+ * of this loop is two copies that drift, and the one nobody looks at is the one
+ * that stops pruning.
+ */
+function prune<T>(
+  map: Record<string, T> | undefined,
+  alive: Iterable<string>,
+  ok: (v: unknown) => v is T,
+): Record<string, T> {
   const live = new Set(alive);
-  const out: Record<string, number> = {};
-  for (const [id, v] of Object.entries(cast ?? {})) {
-    if (live.has(id) && isCastId(v)) out[id] = v;
+  const out: Record<string, T> = {};
+  for (const [id, v] of Object.entries(map ?? {})) {
+    if (live.has(id) && ok(v)) out[id] = v;
   }
   return out;
 }
@@ -930,10 +1005,26 @@ export function pruneCast(
  * Capped at `MAX_NODES` for the same reason the node list is.
  */
 export function readCast(v: unknown): Record<string, number> {
+  return readMap(v, isCastId);
+}
+
+/** The stored garment colours, filtered to plain 6-digit hex. → `core/cast.ts §isTint` */
+export function readTint(v: unknown): Record<string, string> {
+  return readMap(v, isTint);
+}
+
+/**
+ * ⚠ ONE IMPLEMENTATION, and `isTint` is the reason the value check is a parameter
+ * rather than inlined: this is the gate a client-supplied string passes through
+ * on its way to becoming a CSS colour. A colour that is not `#rrggbb` never
+ * reaches the stylesheet, so there is no string here that could carry anything
+ * but six hex digits.
+ */
+function readMap<T>(v: unknown, ok: (x: unknown) => x is T): Record<string, T> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-  const out: Record<string, number> = {};
+  const out: Record<string, T> = {};
   for (const [id, value] of Object.entries(v as Record<string, unknown>).slice(0, MAX_NODES)) {
-    if (isSafeNodeId(id) && isCastId(value)) out[id] = value;
+    if (isSafeNodeId(id) && ok(value)) out[id] = value;
   }
   return out;
 }

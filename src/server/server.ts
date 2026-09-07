@@ -1307,10 +1307,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
       if (rest[0] === 'canvas' && method === 'GET') return json(res, 200, office.canvas());
       if (rest[0] === 'canvas' && method === 'PUT') {
-        // `cast` = which character each person is drawn as in the office view.
-        // Pure view state, so it rides on the diagram's own PUT rather than
-        // earning an endpoint. Absent leaves it untouched. → `layout.ts §save`
-        const body = await readJson<{ nodes?: unknown; edges?: unknown; cast?: unknown }>(req);
+        // `cast` = which character each person is drawn as in the office view,
+        // `tint` = what colour their recolourable garment is. Both are pure view
+        // state, so they ride on the diagram's own PUT rather than earning an
+        // endpoint each. Absent leaves them untouched. → `layout.ts §save`
+        const body = await readJson<{
+          nodes?: unknown;
+          edges?: unknown;
+          cast?: unknown;
+          tint?: unknown;
+        }>(req);
         return json(res, 200, office.saveCanvas(body));
       }
       if (rest[0] === 'agent' && method === 'POST') {

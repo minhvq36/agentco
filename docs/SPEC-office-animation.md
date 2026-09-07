@@ -1089,8 +1089,10 @@ plainly why.
   is still M3+ (`SPEC-canvas.md` §8) and nothing here changes that.
 - **Editing anything from the room.** §10.
 - **Sound.** Ever, without being asked.
-- **A camera.** No pan, no zoom, no follow. The room fits the frame; that is the
-  whole camera.
+- ~~**A camera.** No pan, no zoom, no follow.~~ ⚠ **REVERSED, 07/09 → §17h.** Zoom
+  and drag-to-pan are in. What survives of this line is the half that was doing
+  the work: **fit-to-window is the floor**, so the room still fills the frame and
+  no camera state can ever put a white margin back around it. Follow is still out.
 - **Pathfinding, physics, collision between characters.** People may pass through
   each other. Nobody has ever complained about that in a diagram, and solving it
   costs a loop that never sleeps.
@@ -1118,3 +1120,664 @@ plainly why.
    off is a feature nobody discovers, and §11c makes off genuinely free. The
    opposite (`false`, opt in from Settings) is the conservative reading and is
    also one line.
+
+---
+
+## 17. Round 3 (07/09) — eleven changes, and the two that reverse this file
+
+> ⚠ **§17j′ · §17k′ · §17l · §17m are ROUND 4**, later the same day: five things
+> the user found by using the room the round before had just shipped. Two of them
+> are halves of round 3 that never landed (§17j′), one is a rule stated for one
+> field and not for the field beside it (§17k′).
+
+Everything below is a decision already taken. It is written here rather than in a
+commit message because four of the items **contradict a sentence this document
+already carries**, and a reader who finds only the new code would fix it back.
+
+### 17a. The order of work, and what it is ordered BY
+
+Not by how much anybody wants each one. By **what each one has to know first**:
+
+| | | depends on |
+|---|---|---|
+| **A** | six small doors: two dead paragraphs, one dead click target, one control shown in the wrong view, the wire's delete button, the stuck tooltip | nothing |
+| **B** | resting people are **dealt once per toggle**, and the assistant's two rules | nothing |
+| **C** | **depth by `y`**, replacing the `front` flag | nothing — but A/B read easier after it |
+| **D** | zoom + pan | C (both write to the same stage) |
+| **E** | the **location map** and the idle rhythm | C (the desk rule IS the depth rule) |
+| **F** | the garment tint (§SPEC-office-art §11) | new mask strips per sheet — **art work, not code** |
+
+⚠ **F is last and it is not laziness.** The masks in the repository's history were
+derived from the **v3** sheets, and four of the five sheets were replaced with v4
+art on 06/09. A mask is a per-pixel statement about one drawing; pointing an old
+one at a new drawing is the failure class §11 already names — *"check which file
+the app actually loads before debugging what it does with it"*.
+
+### 17a′. All six shipped on 07/09
+
+`npm test` **1036 pass · 0 fail**, `tsc` clean on both projects, `check-language`
+clean, `vite build` clean.
+
+⚠ **F nearly stopped at "c1 cannot be tinted", and that was a wrong conclusion
+from a correct measurement.** Only the LIGHTNESS family had been tried; the jacket
+and the trousers are 16 points apart in `B − R`. The full account is in
+`SPEC-office-art.md §11a`, and it is the more useful half of this section.
+
+### 17k. The garment tint — who gets one, and who decides
+
+**Nobody is tinted until two people share a face.** The colour exists to separate
+employees who look alike; the first holder of a face wears the colour the sheet was
+drawn in, and **gets no layer at all**. That last clause is a performance rule, not
+a phrasing: a `mix-blend-mode` element forces a compositing pass for that actor on
+every frame it moves, whether or not it changes a pixel. *Absent* and *transparent*
+are the same picture and two very different machines.
+
+| | |
+|---|---|
+| **who** | every holder of a face except the first, in sorted order |
+| **which colour** | dealt from a **per-face basket** — the person's hash is their preference, a clash probes to the next free colour |
+| **stored?** | ⛔ **no.** Computed on every read, exactly like `assignCast`, and for the recorded reason: the only place that knows the whole roster is `canvas()`, and `canvas()` is a READ. A read that writes `layout.json` and emits `layout.changed` is a feedback loop this repository has already paid for once |
+| **a hand-picked colour** | **is** stored (`layout.json → tint`), wins outright, and takes its seat in the basket *before* any dealing — the same rule a hand-picked face already has |
+| **the cost, stated** | firing somebody can change the colour of whoever their face-clash had displaced. One mechanism, one cost, already accepted for the face |
+
+> 🔴 **A plain `hash % 10` was written first and it collided in the live room** —
+> two of seven tinted people came out `#5c6b3f`. That is the twins bug one layer
+> down, at exactly the rate the birthday problem predicts, and a collision here is
+> two employees who look alike **and** wear the same colour: the precise state the
+> colour exists to prevent. Deal from a basket; never trust a hash to be distinct.
+>
+> ⚠ **Two people on DIFFERENT faces may share a colour, and that is not a clash.**
+> The basket is per face on purpose. Making colours globally unique would run the
+> palette out at eleven employees to fix something nobody can see.
+
+**The picker** is a row of the ten palette swatches plus a native
+`<input type="color">` for anything else — that control opens the OS's own
+continuous picker, is the one the user already knows, and costs zero bundle bytes.
+It writes on `input`, not `change`, so the room follows the pointer while the
+dialog is open; **the save is debounced 350 ms**, or one drag across the spectrum
+is two hundred writes of `layout.json` and two hundred `layout.changed` broadcasts.
+
+⚠ **The ten palette colours are all mid-lightness, and there is a test for it.**
+`mix-blend-mode: color` keeps the artwork's luminance, so a near-black or
+near-white entry would be a swatch that visibly does nothing.
+
+⚠ **The tint layer runs the walk animation on `mask-position` as well**, from the
+same numbers as `background-position`. Measured in the browser across all four
+cells: identical to three decimal places. This is the one defect that is invisible
+until somebody walks.
+
+### 17b. 🔴 THE `front` FLAG IS GONE. DEPTH IS `y`, IN ONE STACKING CONTEXT.
+
+This **reverses** `core/office-floor.ts §BreakPiece.front`, which reads:
+
+> *"IT IS NOT A GENERAL DEPTH SYSTEM AND MUST NOT BECOME ONE. … Real depth needs
+> a per-frame sort of two layers that do not share a coordinate system, and
+> nothing here is worth that."*
+
+That paragraph was right about the **cost** and wrong about the **price** — three
+of this round's requests are each, separately, a request for real depth:
+
+| the request | what it needs |
+|---|---|
+| *"a character standing behind the filing desk is covered by it; in front of it, covers it"* | sort desk against person by `y` |
+| *"if two people overlap, the lower `y` wins"* | sort person against person by `y` |
+| *"the assistant always covers every worker"* | one person outranks the sort |
+
+Three separate front-layer flags would be three mechanisms answering one question,
+and they would disagree the first time somebody walked between two of them.
+
+**And the two layers now DO share a coordinate system.** The quoted sentence
+assumed they could not — the furniture is `<svg>` and the people are HTML. The fix
+is to move the *few pieces that need sorting* into the HTML stage as absolutely
+positioned images placed by the same `(x, baseY)` convention. One stacking
+context, one integer:
+
+```
+z-index = round(baseY)          furniture and people alike
+z-index = ASSISTANT_Z           the assistant only  → §17d
+```
+
+Written in `apply()` beside the transform it already writes, so it costs one more
+style property on a node that was being touched anyway, and **zero** on a frame
+where nobody moves.
+
+Three things this must not become:
+
+- ⚠ **Not every piece.** The plant, the cooler and the bookshelf are objects
+  §17f forbids standing behind, so sorting them buys nothing and costs a DOM node
+  each. Only the two desks and the chess set move up.
+- ⚠ **The SHADOW stays in the `<svg>` room.** A shadow is on the floor and
+  belongs under everybody's shoes. This is the split `Furn(only=…)` already makes,
+  and it survives unchanged.
+- ⚠ **`pointer-events: none` on every promoted piece.** They sit over the stations'
+  hit rectangles, and a desk that swallows the click that opens Results is the
+  `.office-front` trap that was already paid for once.
+
+### 17c. Resting people are DEALT ONCE, and the deal is not walked into
+
+`direct()` today seats the resting in `agents` order, so the room re-seats
+everybody when one person stops resting, and somebody switching to this view
+watches six people slide into a corner.
+
+| | |
+|---|---|
+| **who** | up to `BREAK_CAPACITY` of the resting people, chosen at **random** |
+| **when** | once per **mount** of the office view — a toggle or an `F5`, nothing else |
+| **stability** | fixed until the next mount. A person who starts working leaves their seat and **does not give it away**; the seat stays empty and theirs |
+| **how they arrive** | ⚠ **already there.** `Stage.sync` places somebody at their home the first time it sees them, precisely so nobody animates an arrival that never happened. A resting person's home IS their seat |
+
+⚠ **The seed is per-mount, and it must be a real random, not a hash of the
+roster.** A hash would give the same six people every reload forever, which is the
+thing this replaces wearing a different coat.
+
+### 17c′. 🔴 …and the SECOND question was never actually asked
+
+> *"I am still not happy with the randomisation. First pick at most six of the
+> resting people at random out of the pool; then randomise each one's position,
+> depending on nothing. Toggle or F5 re-rolls those positions."*
+
+Two questions, and §17c above only ever answered one:
+
+| | |
+|---|---|
+| **WHO** gets a seat when more than six are resting | shuffled — correct since 06/09 |
+| **WHERE** each of them sits | ⛔ **not shuffled.** The free seats were handed out in ascending index order |
+
+So four resting people came out on seats 0, 1, 2, 3 — both sofa cushions, the
+chess stool, the counter — **every deal, every reload**, and the foosball table
+only ever had anybody at it at exactly six. The line-up was random and the layout
+was a constant.
+
+⚠ **The old comment argued against the fix, and it was not wrong — it was
+answering the wrong question.** It read: *"shuffling `free` instead would only
+randomise which cushion each of the same six got."* True. *Which cushion* is
+precisely the half the user can see.
+
+⚠ **Only the FREE seats are shuffled.** Anything already dealt keeps its cushion —
+a seat is that person's for the life of the mount, even while they are away
+working (§17c). Re-dealing those is the every-event reshuffle this function exists
+to prevent.
+
+🔴 **This RETIRES a rule from §17c, and the rule is deleted rather than softened.**
+It said: *"ORDER IS FILL ORDER — sofa first because one person resting should look
+like resting; foosball LAST because a single figure at a foosball table is a person
+with no opponent."* Independent placement gives that up: **one resting employee can
+now turn up alone at an end of the foosball table.** Accepted knowingly — the ask
+was *"depending on nothing"* with the old rule in view — and reversible with one
+weighted pick if the lone player ever reads badly.
+
+⚠ **A test at full capacity cannot see this defect.** Six people into six seats is
+a permutation whether or not the seats are shuffled, so the gate has to be the case
+with **fewer people than seats**: over many deals, every seat index must be
+reached. Verified by deleting the shuffle — the capacity test stayed green and the
+under-capacity one went red with *"1 resting reached only seats 0"*.
+
+### 17d. The assistant — §6d was half right, and this is the other half
+
+`§6d` says *"the assistant never leaves centre-front"*. The user's rule is finer,
+and it distinguishes two things this document had merged:
+
+| when | where |
+|---|---|
+| the view mounts (toggle / `F5`) **and no task is running** | `ASSISTANT_SPOT`, the default |
+| it has handed work out and is **waiting for a receipt** | the **waiting spot** beside the filing desk, and it stays there |
+| the wait ends | ⚠ **it does not walk home.** Going back would be a trip that reports nothing; home is where the *next mount* puts it |
+| its hidden worker is reading documents | **still walks to the bookshelf** — §6e keeps this, because it is the one trip that draws an observed fact |
+
+⚠ **Always on top.** The assistant is the one figure the user must never have to
+hunt for, so it takes a `z-index` above every worker and every promoted piece of
+furniture. That is a stated exception to §17b's rule, not a hole in it.
+
+⚠ **Nobody walks to the assistant, ever.** The workers' location map (§17f) does
+not contain its two spots, and a worker may not choose one as a target.
+
+### 17e. A worker being GIVEN work stops where it stands
+
+Not "finishes the trip first, then waits". `task.started` for that role freezes
+them at their current position — which is `Stage.setTarget(id, positionOf(id))`,
+i.e. exactly the §7b rule *"a trip is an intention, and intentions expire"*
+applied to a beat that had never used it.
+
+### 17f. 🔴 THE LOCATION MAP — and the SAFE AREA that governs all of it
+
+This replaces *"§7d standing spots are not a grid"* as the only answer to *where
+can somebody stand*. `ownSpot()` survives as **one entry in the map**, not as the
+map.
+
+**① The safe area is a law about BOUNDING BOXES, not about feet.**
+
+A person is placed by their feet, and every rule anybody writes by hand is written
+about feet — which is how a figure ends up half inside the wall while its
+coordinate is legal. So the safe area is stated once, in body units, and checked
+against the box:
+
+```
+HALF_W   62      half the widest figure at the largest per-sheet scale
+BODY_H'  196     feet to the top of the tallest hair, same scale
+```
+
+| edge | value | why THAT edge |
+|---|---|---|
+| top | `HORIZON + 24` | feet above the wall/floor junction is a person climbing the wall |
+| bottom | `WORLD.h − 22 − NAME_DROP` | the front row must not be cut by the frame — **name included** |
+| left | plant's right edge `+ HALF_W` | *"never to the left of the plant"* |
+| right | `BREAK_AREA.x − HALF_W` | *"never in the break area, and never right of it"* |
+
+🔴 **`NAME_DROP` (24) is the third body number, and the bottom edge was written
+without it.** A person is not only a drawing: `.actor-name` hangs below the anchor
+(`top: 6px`, a ~17-unit line box), so the front row's labels ran off the floor
+while every measurement said the room was legal. Exactly the failure ① is about,
+one layer out — the rule was written about the part of the figure the author had
+in mind rather than about the whole of it.
+
+**② Objects nobody may stand behind.** The plant, the bookshelf + cabinet, the
+cooler, and the wall itself. For these the rule is one-directional and absolute:
+where the horizontal spans overlap, **the person's feet are below the object's
+base, by at least one gap**. There is no depth question to answer because there is
+no legal way to be behind them.
+
+**③ Objects people MAY stand behind — the two desks.** The filing desk and the arm
+bench. Behind means the desk covers the person; in front means the person covers
+the desk; and *"behind"* is decided by nothing but `baseY`, i.e. §17b. This is why
+E depends on C.
+
+**④ The map.** Every entry is a fixed point in world coordinates, derived from the
+piece it belongs to — never a literal, for the reason `BREAK_PIECES` was created:
+two copies of one layout drift, silently, within one change.
+
+| where | slots | |
+|---|---:|---|
+| the plant | 2 | **off to its right**, and further right again — never dead-centre (see below) |
+| the bookshelf + cabinet | 3 | in front |
+| the picture | 1 | in front |
+| the window | 2 | in front |
+| the planning board | 1 | in front |
+| the cooler | 1 | **off to its left**, for the same reason |
+| **the filing desk** | **8** | 3 in front, 3 behind, 1 at each end |
+| own spots | **10** | `ownSpot(0…9)`. ⚠ the eleventh is dropped — at `PER_ROW = 5` it lands at `y = 950` in a 900-unit world, i.e. off the floor |
+| beside a **standing** worker | 1 per such worker | ⚠ **pairs only, never a group of three.** A spot beside somebody who is already half of a pair is not offered |
+| fallback | 1 | a random point in the safe area, retried a few times against everybody's box |
+
+⚠ **The assistant's two spots are not in this table.** → §17d.
+
+🔴 **A narrow object standing behind a person is an object nobody can see, and
+the rule is stated as the SLIVER, not as the offset.** A body is 124 units wide;
+the plant is 74 and the cooler 39, so dead-centre erases both. The break area
+already knew this (*"a person is wider than half the counter, so dead-centre
+erases the whole object"*) and the working floor had never been told.
+
+⚠ **`offset = HALF_W + VISIBLE − halfW`, and the first cut got the direction
+backwards.** *"Stand 24 units past the object's edge"* sounds object-relative and
+is not: it leaves `2 × halfW + 24 − HALF_W` showing, which is **36 units of the
+plant and 2 units of the cooler**. The narrower the piece, the less the rule gave
+it. State the outcome — 22 units of the object still visible past the body — and
+solve for the offset; the numbers then follow the artwork rather than the other
+way round, and `test/office-view.test.ts` holds `halfW` against the PNG's own
+`h × ar`.
+
+**⑤ Choosing a target.** Uniformly at random among the map's entries, **skipping
+any that somebody is standing on or already walking to**. Not nearest, not
+weighted: nearest turns the map into a rut, and a weighting is a preference nobody
+asked for.
+
+### 17g. The idle rhythm — 45 s, and the trip is NOT a duration
+
+> *"Standing 45 s. The trip cannot be a decided number — it depends on the
+> distance from source to destination."*
+
+Which is the rule §2b already carries for the walk (*"distance ÷ 60 u/s — a
+duration is never hard-coded, or a short trip looks like a lunge"*), now applied
+to the thing that schedules the walk. So:
+
+- an idle worker holds for **45 s**, then picks a target and walks it
+- ⚠ **seeded per person, spread across the window**, or eight people who arrived
+  in the same paint all move at the same instant, forever
+- ⚠ the timer exists **only while somebody is idle and the tab is visible**. This
+  is the `setTimeout` chain that was deleted with `breakSpot()` (see the note at
+  the foot of `office-floor.ts`) coming back — and it comes back with the reason
+  it was deleted written next to it: *the wandering it powered spent the room's
+  only signal for work on nothing*. What makes it survivable this time is that
+  the break area is still **completely still** — §17c seats people and they stay
+  seated. Only the working floor breathes.
+- ⚠ **resting people never get a timer.** Movement is this room's vocabulary for
+  work, and a resting person moving is the room lying, slowly.
+
+### 17h. Zoom — and this reverses §15
+
+`§15` lists *"A camera. No pan, no zoom, no follow"* as out of scope. It is now in
+scope, with the bound the user set and the reason it is that bound:
+
+| | |
+|---|---|
+| **fit-to-window is the MINIMUM** | `1.0`. It is never possible to zoom out past it, so the letterbox that §4 of the art spec just spent a round removing cannot come back through a new door |
+| maximum | `3.0` |
+| wheel + two buttons | the buttons faint and translucent, bottom-right |
+| drag to pan | clamped so the visible rectangle stays inside the painted room |
+| persisted | `localStorage`, per browser, beside `agentco:view` — same reasoning: two tabs at two zooms is legal |
+
+⚠ **Applied inside `fit()` and nowhere else.** It is a multiplier on the single `k`
+that keeps the SVG room and the HTML people in register; applied to one layer, the
+two drift apart by exactly that much. → `SPEC-office-art.md §10`.
+
+### 17i. Four doors that were open and should not have been
+
+| | |
+|---|---|
+| the employee-delete modal named `roles/<id>.yaml` | the file path is our filing detail, not the user's decision. What they are deciding is *delete this person* |
+| the character picker explained itself in two sentences | *"costs nothing and changes nothing about the work"* is reassurance about a worry nobody has when the control is a row of five faces |
+| the character picker was offered in **diagram** view | it is a costume for a room the user is not looking at. Gated on `officeView` already (§11c②); now also on the view actually being open |
+| clicking the arm bench opened one arm's Inspector | there is **one bench and N connections**, so *"the nearest one"* was a coin toss wearing a rule. The bench keeps its label and stops being a door — §10's table loses that row |
+
+### 17j. The wire's delete button, and the tooltip that would not go away
+
+**The wire.** A hovered edge now lifts above every other edge and every node, so
+its delete button is reachable without dragging the diagram to make room. The
+button becomes the **trash icon already in the bundle**, on both edge kinds.
+⚠ Lifting is a **paint-order** change on hover, not a `z-index` on an SVG group
+that has none — SVG sorts by document order and nothing else.
+
+**The tooltip.** Not "stuck": Radix opens a tooltip on **focus**, and returning to
+the browser window re-focuses whatever was focused when it left. A button clicked
+with a mouse therefore grows a tooltip that nothing dismisses, because the pointer
+never entered it. The fix is to open on focus only when the focus is **keyboard**
+focus (`:focus-visible`) — which is also the only case a tooltip on focus was ever
+for.
+
+### 17j′. …and only HALF of §17j shipped. Round 4 (07/09)
+
+§17j promised *"a hovered edge lifts above every other edge and every node"*. Only
+the **button** was lifted. The user read the difference straight off the screen and
+asked whether it was intended:
+
+> *"When I select a connection it only lights up the bin, not the whole wire — is
+> that right? Because if I go for the delete button and meet another node on the
+> way, the wire is lost and I cannot delete it."*
+
+Both halves of that are the same missing lift, and both are now closed:
+
+| | |
+|---|---|
+| **the whole wire lights up** | a SECOND drawing of the same curve, in `.edge-tools` (above the nodes), shown only while the edge is hot. The wire in its ordinary state stays under the nodes — that is the diagram's whole depth story — so the highlight is a copy, never a move. `pointer-events: none`: it crosses every node its wire crosses, and taking hits up there would swallow the clicks that open them |
+| **a click LATCHES the edge** | hover still previews and the preview still expires after 90 ms; a latched wire stays lit until the user clicks elsewhere or presses Escape, so the trip to the button has **no time limit at all** |
+
+⚠ **A longer grace period is the same bug with a wider window.** The button sits at
+the wire's midpoint, which on a real diagram is routinely on top of a third node,
+and the pointer can dwell over that node for as long as it likes. Only a state that
+outlives the pointer answers it.
+
+⚠ **The two elements that must not clear the latch — the wire's hit path and its
+own button — both `stopPropagation`,** so the canvas's `onPointerDown` never sees
+them and can clear it unconditionally. One rule expressed by *which events arrive*,
+rather than a list of exceptions a new element can fall off the end of.
+
+### 17k′. 🔴 The costume change that disconnected the whole office
+
+> *"I change somebody's character or shirt colour in the office and EVERY
+> connection on the canvas is cut, the mcp ones included."*
+
+Exactly that, and the cause is one line. `setCharacter` PUTs `{cast}` and `setTint`
+PUTs `{tint}` — deliberately, so a colour change does not have to send the diagram
+— and `LayoutStore.save` read the missing `edges` as *"cut them all"*:
+`sanitizeEdges(undefined, …)` returns `[]`. The empty list was then written to
+`layout.json` **and** run through the mcp split, which found no servers and emptied
+`mcp:` out of every `roles/*.yaml` and out of `office.yaml`.
+
+🔴 **The rule was already written down, one line below, for the OTHER field.**
+`save()` carries a box saying *"ABSENT ≠ EMPTY: the canvas PUTs `{nodes, edges}` on
+every drag and says nothing about the cast; reading that silence as 'clear it'
+would undress the whole office"*, and `api.ts` promised the same thing in the
+reverse direction. Two comments, both correct, and **no mechanism between them** —
+the failure class this project has paid for more than any other.
+
+⚠ `current.edges` **round-trips exactly**, which is what makes falling back to it
+safe rather than merely quiet: `read()` rebuilds the mcp edges from the yaml, so
+the split re-derives the same lists and nothing is written; and `writeRaw` filters
+mcp edges back out, so `layout.json` is written with what it already held.
+`test/layout-save.test.ts` is the gate, and it asserts all three places a wire
+lives — a test that checked only `layout.json` would have gone green while the arms
+still vanished.
+
+### 17l. Opening the room — the line-up, and the office that looks asleep
+
+> *"I do not want every toggle to go back to the default line-up … or, simpler,
+> just randomise from the location list on each toggle. But there is another
+> problem: everybody standing still at that moment is a bit stiff. Could a few
+> characters already be moving? About one in five, minimum one (⇒ ceil), to show
+> the office is always working. F5 is default — but still with the one-in-five."*
+
+Three rules, and the third is what lets the first two differ:
+
+| | |
+|---|---|
+| **a reload** | everybody starts at their own spot — `ownSpot`, the five-wide arc. The default the user asked to keep |
+| **a toggle** | idle workers are **re-dealt** across the location map, one at a time, each pick made in a world that already holds everybody dealt before it |
+| **both** | `ceil(idle / 5)` idle workers set off on an ordinary idle trip **immediately**, instead of waiting out the 45 s hold |
+
+⚠ **The only difference between a reload and a toggle is that a reload throws the
+MODULE away.** So the mechanism is one module-level boolean in `Office.tsx` — false
+exactly once per page load. Nothing stored, nothing to expire; anything durable
+(`sessionStorage`, the server) would survive F5 and answer the wrong question.
+In dev, StrictMode's double-mount spends the first open, so a `dev:web` reload
+takes the toggle branch. Stated rather than worked around.
+
+⚠ **Re-dealing was chosen over carrying live positions across the toggle, and it is
+the answer to BOTH halves of the message.** Continuity nobody can see is not worth
+buying — the room was not on screen — and preserved positions would freeze the same
+people in the same places for the life of the tab, which is the *"avoid sitting and
+standing put"* the same message asks against.
+
+⚠ **A miss is an absent entry, never a guessed point.** `pickIdleSpot` answers
+`null` when everywhere is taken, and the caller falls back to the person's own
+spot. A crowded office degrades to the old picture rather than to bodies inside
+each other.
+
+⚠ **`walkersAtOpen` is a COUNT, not a probability.** A one-in-five die rolled per
+person gives an office that is occasionally completely still, which is the one
+outcome this exists to prevent. And it refuses anybody not roaming: a worker with a
+task, and every resting person, are unreachable from it — the room may look busier
+when it opens, it may not **claim** anything that is not happening (§17g).
+
+### 17m. Dragging the room was selecting every name in it
+
+> *"While dragging, could the cursor be a grab hand? Right now it highlights all
+> the text, like a stuck double-click."*
+
+Not a bug in the drag code: panning is a pointer-down and a move, which is
+byte-for-byte the gesture that selects text, and nothing had ever told this surface
+it is a picture rather than a document. `user-select: none` on `.office-root` — on
+the root, not on `.actor-name`, because the bubbles and the station captions select
+too and a per-element list grows a hole the next time somebody adds text. The
+canvas has said the same thing since day one, with `select-none` on its `<svg>`.
+
+⚠ **The open hand is a claim, so it is only made when it is true.** At fit-to-window
+the whole room is in frame and `onPointerDown` refuses to start a pan; a `grab`
+cursor there would promise a gesture that does nothing. The class is written by
+`applyCam`, the one function every zoom change already passes through.
+
+### 17j″. The same complaint, a third time — and the answer is to remove the journey
+
+> *"Yes, selecting now shows the FULL wire. But tracing along it is still very
+> hard: the moment it meets a node it un-selects and the node wins. I still
+> cannot delete a connection cleanly."*
+
+Three rounds on one door, and each fix was correct and insufficient:
+
+| round | what was wrong | what was fixed |
+|---|---|---|
+| 3 | the ✕ sat **under** the nodes | the button moved into `.edge-tools`, above them |
+| 4 | only the **button** lifted; the wire lit up in fragments | a lifted copy of the whole wire (§17j′) |
+| **4b** | the pointer still has to **travel** from wire to button | ⇒ **it does not have to travel at all** |
+
+**Point at the wire and press Delete.** The mouse never leaves the wire. Clicking
+first *latches* the edge so the pointer is then free to go anywhere. Everything
+else is a backstop around that:
+
+⚠ **The key acts on the wire that is LIT, not on the one that is latched.** They
+are two different answers whenever the pointer is previewing a second edge, and a
+shortcut that cut the latched one would delete a wire the user cannot see
+highlighted. Reading what is on screen is also what hands hover users the shortcut
+without them having to learn about latching at all.
+
+- the latch is now **visible** — `.is-stuck` thickens the lifted wire and fills
+  the button solid. In the first cut a latched edge looked identical to a hovered
+  one, so the click produced no change on screen and the user went on tracing.
+  **A state nobody can see is a state nobody uses**, and that is the whole reason
+  round 4 did not land.
+- the hover grace went **90 ms → 320 ms**, which is a measurement of the real
+  gesture rather than a nicer number: the pointer going from a wire to that wire's
+  own button crosses whatever the diagram put in between, and here that is usually
+  a node. ⚠ It is only a backstop — a pointer can dwell over that node for as long
+  as it likes, so a preview that expires can always be outlasted.
+- Escape lets go; Delete and Backspace cut. ⚠ **Not while a text field is
+  focused** — the chat box and every inspector input share this `window`, and
+  Backspace there must delete a character.
+
+⚠ **The keydown effect is declared BELOW `cutEdge` and must stay there.** The
+dependency array is evaluated during render and a `const` does not hoist, so the
+same effect written above it throws before the canvas paints. This session already
+paid for that exact shape once, in `store.ts`.
+
+### 17j‴. The corridor — a wire's reach widens only once it is LIT
+
+> *"The connection part still is not smooth. Should the wire's select region be
+> widened, parallel to it, WHILE IT IS SELECTED — and left as it is when it is
+> not, so picking one by accident stays annoying-free?"*
+
+Yes, and the second half is the design. Two regions, not one:
+
+| | |
+|---|---|
+| **to CHOOSE a wire** | the 16-unit hit path, unchanged, still **under** the nodes |
+| **to KEEP a lit wire** | `WIRE_REACH` = **48** world units around the whole curve |
+
+🔴 **It is a DISTANCE, not a wider hit path, and that is the whole thing.** A
+96-unit transparent stroke laid over the diagram while an edge is lit would own
+every pixel it covers: the nodes the wire runs *through* would go dead exactly
+while the user is looking at that wire — and clicking a node is the escape from
+the latch, so the widening would eat its own way out. The corridor lives entirely
+in a `pointermove` comparison and takes nothing from anybody.
+
+⚠ **48** is under a third of an employee node's width (168). Wide enough to hold
+the wire while the pointer wanders or crosses a node; narrow enough that two wires
+are only ever both inside it where they are already converging on the same box —
+and there the pointer is inside the box, not the corridor.
+
+⚠ **The control points moved into `core`.** `curve()` in `web/.../geometry.ts` was
+the only thing that knew where a wire actually runs, and it knew it as a `d`
+string. The moment a second reader appeared — *"is the pointer near this wire"* —
+the alternative was a second copy of the same two control points beside the
+distance maths, which is precisely the pair `layout-geometry.ts` exists to delete.
+`wireCurve()` returns the four points; `curve()` formats them; `nearWire()`
+samples them.
+
+⚠ **The sampling error is measured, and the first comment about it was a guess
+that was wrong.** *"Accurate to well under a pixel"* — actual worst chord
+deviation across the most extreme wires: **2.23** units at 24 chords (1.27 at 32,
+0.58 at 48). 24 stays because 2.2 is under 5% of the corridor it lives in; raising
+it would buy a number, not a behaviour. The first version of the test asked for
+1 unit and went red — **the test was wrong, not the code**, and the number in it
+now comes from the measurement rather than from what looked tidy.
+
+⚠ **Sampled over SEGMENTS, not points.** At 24 samples a long wire's chords are
+~35 units apart, so a pointer halfway between two of them would sit ~48 from both
+and read as *far away* — for one frame, which is how a defect gets blamed on the
+browser instead of on the function.
+
+### 17k″. 🔴 The assistant lost its own colour every single time
+
+> *"The assistant and the first four employees are all in their original garment.
+> Then I pick a character for employee 5, it happens to be the assistant's, and
+> now the ASSISTANT is not in its own colour any more. That makes no sense — and
+> does it happen to workers too? Someone gets used to a colleague's colour and it
+> changes for no reason they can see."*
+
+§17k says *"every holder of a face except the first, in sorted order"*. Sorted by
+**id** — and every worker is `agent:…` while the assistant is `assistant`, so
+`'g' < 's'` and **a worker sorted first in every clash there has ever been**. The
+one figure the room is drawn around, the one §17d says the user must never have to
+hunt for, was the guaranteed loser.
+
+Two wrongs were stacked in that one report, and the second is the general one:
+
+| | |
+|---|---|
+| ① | the assistant was recoloured by **somebody else's** choice |
+| ② | the person who **asked** for the face kept the original; the person already wearing it was put in a costume |
+
+⇒ The order inside a face group is now `keeper()`: **the anchor (the assistant)
+first, then everybody who did not hand-pick this face, then the hand-pickers**,
+with the id as the last tiebreak so the answer still cannot depend on the order a
+browser dragged `layout.nodes` into. ① is a special case of ②: **a change lands on
+whoever caused it.**
+
+⚠ **`core` does not decide that the assistant is special.** `office.ts` passes
+`anchor: ASSISTANT_NODE`, the same way the renderer is told `onTop` rather than
+told who this is.
+
+⚠ **A stored pick of `7` is a pick of face `2`.** `layout.cast` legitimately holds
+0…9 while there are five drawings; reading the value raw would let a picker
+quietly keep the original after all.
+
+🔴 **WHAT THIS DOES NOT FIX, and it is the user's second question.** Hiring a
+worker whose id sorts **before** an incumbent on the same face still moves the
+incumbent's colour — and firing anybody can re-deal faces outright (the cost §17k
+and `assignCast` both already state). *A hand pick is the only "who caused it"
+this function can observe*, because **nothing on disk records who arrived first**.
+
+Closing that means storing the face and the colour **at the moment the roster
+changes** — `placeAgent` on hire, `saveCanvas` on a pick — which are genuine write
+moments, unlike `canvas()`. It is a real option with a real price, and it is an
+open decision rather than an oversight:
+
+| | |
+|---|---|
+| **buys** | nobody's appearance ever changes unless the user changes it |
+| **costs** | `layout.json` accumulates a `cast` + `tint` entry for every person, so *"delete `layout.json` and the office re-casts itself"* stops being true in practice; and a face freed by a departure is never reclaimed, so a long-lived office drifts towards everybody frozen on whatever they were first dealt |
+
+### 17k‴. 🔴 One pick, six people changed — the cast is frozen at the pick
+
+> *"When I change the shirt colour or the character of ONE person who is on a
+> break, do not re-render the whole break area. Toggle and F5 only. Right now
+> changing a character moves the whole break area and people look wrong — I
+> expected only that character to change."*
+
+**The seats were never the problem.** `dealSeats` keeps every prior entry, so
+nobody moves cushion. What moves is the **face**, and a face carries a per-sheet
+`scale` and a `sitLift` — so a seated figure with a new face visibly jumps.
+
+🔴 **MEASURED, an office of 12 on 5 faces, one hand pick:**
+
+| payload | other people whose FACE changed |
+|---|---|
+| `{stored choices ∪ this pick}` — what `setCharacter` used to send | **up to 6 of 11**, plus 4 garment colours |
+| `{resolved cast ∪ this pick}` — what it sends now | **0**, in 234 hires and 156 picks across six offices |
+
+A reserved face is seated *before* the rest are dealt, so reserving one cascades
+through everybody the probe walks past. Nothing was wrong with `assignCast`; the
+payload was asking it the wrong question.
+
+⇒ **`setCharacter` freezes the resolved cast and changes one entry in it.** A pick
+is a deliberate act on a screen the user is watching and it is already a write, so
+the objection §17k raises against storing — *a READ that writes and emits
+`layout.changed`* — does not apply. `setTint` beside it has worked this way since
+it shipped.
+
+⚠ **The cost, and it is now the smaller one:** after the first pick the office's
+whole cast sits in `layout.json`, so *"delete it and the office re-casts itself"*
+holds only for an office nobody has ever dressed. Bounded by that first pick.
+
+⚠ **It closes half of §17k″ as a side effect, not as a second mechanism.** In a
+dressed office a stored face is honoured verbatim and `pruneCast` only drops the
+leaver, so **hiring and firing stop restyling anybody** — measured: 0 face changes
+across 234 hires.
+
+⚠ **WHAT IT DOES NOT CLOSE, with the number.** Garment colour is still recomputed
+from scratch, so a **hire** still moves a bystander's colour in **181 of 234**
+cases: a newcomer landing on somebody's face forces one of them into a costume,
+and with the cast frozen `layout.cast` no longer distinguishes *"I chose this"*
+from *"this was pinned for me"*, so §17k″'s picker-yields rule cannot tell them
+apart. A **pick** is clean — 702 cases, **0** colour changes outside the picker
+and the two face groups they left and joined, which is the minimum any correct
+implementation touches. Closing the hire case needs *"own colour"* to become a
+STATED value in `layout.tint` rather than an absent entry; that is the §4.4 open
+decision, not a defect of this change.

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * THE FLOOR PLAN, AND THE RULE THAT DECIDES WHO STANDS WHERE.
  * → docs/SPEC-office-animation.md §5 · §6e · §14
  *
@@ -134,8 +134,36 @@ export const STATIONS: Record<StationId, Station> = {
   artifacts: { id: 'artifacts', x: 790, y: 432, w: 292, h: 116 },
 };
 
-/** Centre-front. The assistant stands here and does not leave. */
+/** Centre-front. Where the assistant is standing every time the view opens. */
 export const ASSISTANT_SPOT: Point = { x: 596, y: 838 };
+
+/**
+ * 🔴 THE ASSISTANT'S SECOND PLACE: WAITING FOR A RECEIPT.
+ * → docs/SPEC-office-animation.md §17d
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ §6d SAID "THE ASSISTANT NEVER LEAVES CENTRE-FRONT". THAT WAS HALF RIGHT. │
+ * │                                                                          │
+ * │ The half that holds: it must not be somewhere the user has to hunt for,   │
+ * │ and it must not try to be in three places when three tasks run at once.   │
+ * │ The half that was wrong: an assistant that has handed work out and is     │
+ * │ waiting for it back is DOING something, and standing at the door it will  │
+ * │ be handed through says so.                                               │
+ * │                                                                          │
+ * │ ⚠ TO THE LEFT OF THE FILING DESK, WITH A GAP — not against it. Against    │
+ * │ it, the figure and the desk read as one object; the gap is what makes it  │
+ * │ *waiting by the desk* rather than *filed at the desk*.                    │
+ * │                                                                          │
+ * │ ⚠ IT SITS BETWEEN TWO HOME SPOTS (ownSpot 2 and 3 of the back row) AND    │
+ * │ THE BOXES OVERLAP by about 25 units. Accepted knowingly, and it is        │
+ * │ survivable for exactly one reason: the assistant is drawn ABOVE every     │
+ * │ worker (§17d), so the overlap can only ever hide part of a worker behind  │
+ * │ the one figure the user is most likely to be looking at. Moving the back  │
+ * │ row instead would re-lay the floor for a spot used a few seconds at a     │
+ * │ time.                                                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const ASSISTANT_WAIT: Point = { x: 664, y: 566 };
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -189,37 +217,51 @@ export const BREAK_AREA = { x: 1170, y: 376, w: 400, h: 502 };
  * │ there is no second number to forget.                                     │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+/** The keys in `web/src/office/art/furniture.ts`. Checked by `tsc` at the call site. */
+export type FloorPieceId =
+  | 'counter'
+  | 'desk-files'
+  | 'desk-laptop'
+  | 'foosball'
+  | 'sofa'
+  | 'stool'
+  | 'table-chess'
+  | 'table-low';
+
 export interface BreakPiece {
-  /** The key in `web/src/office/art/furniture.ts`. Checked by `tsc` at the call site. */
-  id: 'counter' | 'foosball' | 'sofa' | 'stool' | 'table-chess' | 'table-low';
+  id: FloorPieceId;
   /** Centre of the footprint. */
   x: number;
   /** Where the footprint meets the floor — same convention as a person's feet. */
   baseY: number;
   /**
-   * 🔴 DRAWN IN FRONT OF THE PEOPLE. → docs/SPEC-office-art.md §3
+   * 🔴 SORTED AGAINST THE PEOPLE BY `baseY`. → SPEC-office-animation.md §17b
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ ⚠ THE ROOM HAS EXACTLY ONE OF THESE, AND THAT IS THE WHOLE DESIGN.        │
+   * │ ⚠ THIS FLAG USED TO BE `front`, AND THE RENAME IS THE WHOLE CHANGE.       │
    * │                                                                           │
-   * │ Furniture is an `<svg>` and people are an HTML layer stacked on top of    │
-   * │ it, so by construction nothing can occlude anybody. The chess table is    │
-   * │ the one object where that reads as broken rather than as flat: the        │
-   * │ player sits BEHIND it, so a body drawn over the board is a body standing  │
-   * │ in the middle of the game.                                                │
+   * │ `front` meant *beats every person, whatever their y* — a layer that       │
+   * │ sorted by nothing. The comment here said, in as many words, that it must  │
+   * │ never become a general depth system, because "two layers that do not      │
+   * │ share a coordinate system" could not be sorted.                           │
    * │                                                                           │
-   * │ ⚠ IT IS NOT A GENERAL DEPTH SYSTEM AND MUST NOT BECOME ONE. A front       │
-   * │ layer sorts by nothing — every piece in it beats every person, whatever   │
-   * │ their `y`. That is correct for a table only ever approached from behind;  │
-   * │ apply it to the sofa and somebody walking in front of it disappears       │
-   * │ behind the backrest. Real depth needs a per-frame sort of two layers      │
-   * │ that do not share a coordinate system, and nothing here is worth that.    │
+   * │ They share one now: a `sorted` piece is drawn in the SAME HTML stage as   │
+   * │ the people, at the same world coordinates, and everything in that stage   │
+   * │ — furniture and bodies alike — carries `z-index = round(baseY)`. One      │
+   * │ integer, one stacking context, no layer to be on the wrong side of.       │
    * │                                                                           │
-   * │ ⇒ Adding a second `front` piece is a DESIGN decision, not a tweak: it     │
-   * │ must be an object people only ever stand behind.                          │
+   * │ 🔴 WHAT THE FLAG NOW COSTS AND WHAT IT BUYS: a sorted piece is a DOM      │
+   * │ node per frame nobody moves, so it is not free and it is not for          │
+   * │ everything. Give it only to a piece somebody can legitimately stand       │
+   * │ BEHIND — the two desks and the chess set. The plant, the cooler and the   │
+   * │ bookshelf are objects §17f forbids standing behind, so sorting them       │
+   * │ answers a question that cannot be asked.                                  │
+   * │                                                                           │
+   * │ ⚠ THE SHADOW DOES NOT COME WITH IT. A shadow is ON THE FLOOR and belongs  │
+   * │ under everybody's shoes; only the ART moves into the sorted layer.        │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  front?: boolean;
+  sorted?: boolean;
 }
 
 /**
@@ -278,9 +320,48 @@ export const BREAK_PIECES: readonly BreakPiece[] = [
   { id: 'sofa', ...SOFA },
   { id: 'table-low', ...LOW_TABLE },
   { id: 'stool', ...CHESS_FAR },
-  { id: 'table-chess', ...CHESS, front: true },
-  { id: 'stool', ...CHESS_NEAR, front: true },
+  { id: 'table-chess', ...CHESS, sorted: true },
+  { id: 'stool', ...CHESS_NEAR, sorted: true },
   { id: 'foosball', ...FOOSBALL },
+];
+
+/**
+ * 🔴 THE TWO DESKS — the only station furniture people stand on BOTH sides of.
+ * → SPEC-office-animation.md §17b · §17f③
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THEY ARE HERE, NOT IN `Room.tsx`, FOR THE REASON `BREAK_PIECES` EXISTS.  │
+ * │                                                                          │
+ * │ Their coordinates were literals at the call site — `x + w / 2`, `y + h`   │
+ * │ typed into the JSX. That is one copy of a layout, and the room has        │
+ * │ already paid for a second copy once: the break-area pieces and their      │
+ * │ seats were written independently and drifted by up to 130 units the first │
+ * │ time the area moved, silently, within one change.                        │
+ * │                                                                          │
+ * │ Now the standing places BEHIND the filing desk (§17f) are derived from    │
+ * │ the same row the picture is drawn from, so a desk that moves takes its    │
+ * │ people with it.                                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const deskOf = (id: FloorPieceId, s: Station): BreakPiece => ({
+  id,
+  x: s.x + s.w / 2,
+  baseY: s.y + s.h,
+  sorted: true,
+});
+
+export const DESK_PIECES: readonly BreakPiece[] = [
+  deskOf('desk-files', STATIONS.artifacts),
+  deskOf('desk-laptop', STATIONS.arm),
+];
+
+/**
+ * Every floor piece that is drawn in the ACTOR layer and sorted by `baseY`.
+ * The renderer reads exactly this; nothing else decides what is sorted.
+ */
+export const SORTED_PIECES: readonly BreakPiece[] = [
+  ...DESK_PIECES,
+  ...BREAK_PIECES.filter((p) => p.sorted),
 ];
 
 /**
@@ -330,9 +411,14 @@ export const CHESS_SEAT: BreakSeat = {
  * │ pose on the person is how somebody ends up sitting in mid-air beside a   │
  * │ table.                                                                   │
  * │                                                                          │
- * │ ⚠ ORDER IS FILL ORDER. Sofa first because one person resting should look │
- * │ like resting; foosball LAST because a single figure at a foosball table  │
- * │ is a person with no opponent, and that only happens at exactly five.     │
+ * │ 🔴 ⛔ ARRAY ORDER MEANS NOTHING ANY MORE, and the line that said it did  │
+ * │ is deleted rather than softened. It read: *"ORDER IS FILL ORDER. Sofa    │
+ * │ first because one person resting should look like resting; foosball      │
+ * │ LAST because a single figure at a foosball table is a person with no     │
+ * │ opponent."* `dealSeats` now shuffles the free seats (§17c′, the user's   │
+ * │ call), so the fill order is gone and a comment describing it would be a  │
+ * │ description of behaviour that no longer exists — the cheapest lie this   │
+ * │ file could tell. The lone foosball player is a real, accepted cost.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ⚠ The chess table is drawn with TWO stools and seats ONE. The far stool is
@@ -386,6 +472,519 @@ export const BREAK_SEATS: readonly BreakSeat[] = [
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const BREAK_CAPACITY = BREAK_SEATS.length;
+
+/**
+ * 🔴 WHO SITS WHERE IN THE BREAK AREA — DEALT ONCE, NOT RE-DERIVED.
+ * → docs/SPEC-office-animation.md §17c
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ WHAT THIS REPLACES, AND WHY THE OLD WAY WAS VISIBLE.                     │
+ * │                                                                          │
+ * │ `direct()` used to seat the resting in `agents` order and take the first │
+ * │ six. Two consequences, both of which the user saw:                       │
+ * │                                                                          │
+ * │  · the moment one person STOPPED resting, everybody behind them shifted  │
+ * │    up a seat AND WALKED TO IT. Six people sliding across a corner        │
+ * │    because one of them got a task — movement is this room's only word    │
+ * │    for work, and that spent it on bookkeeping.                           │
+ * │  · which six were drawn was decided by `id.localeCompare`, so it was     │
+ * │    always the same six, for the life of the office.                      │
+ * │                                                                          │
+ * │ ⚠ A SEAT, ONCE DEALT, IS THAT PERSON'S FOR THE LIFE OF THE MOUNT — even  │
+ * │ while they are away working. That is the whole point: they leave, the    │
+ * │ seat stays empty, and they come back to it. Handing the empty seat to    │
+ * │ the next person is exactly the shuffle above, arriving one step later.   │
+ * │                                                                          │
+ * │ ⚠ `rnd` IS INJECTED. A hash of the roster would look random and be       │
+ * │ constant forever — the same six people every reload, which is the thing  │
+ * │ this replaces wearing a different coat. Passing the source in is also    │
+ * │ what makes it testable at all.                                          │
+ * │                                                                          │
+ * │ ⚠ IT ACCUMULATES rather than re-deals, so somebody hired MID-SESSION     │
+ * │ still gets a free seat if one is left. Re-dealing on every roster change │
+ * │ would move people who were already sitting down.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @param roster  everybody who exists now — entries for anyone else are dropped,
+ *                or a long session accumulates seats for deleted employees.
+ * @param resting who is resting right now and therefore wants a seat.
+ * @param prior   the deal so far. Empty on the first call after a mount.
+ */
+export function dealSeats(
+  roster: readonly string[],
+  resting: readonly string[],
+  prior: Readonly<Record<string, number>>,
+  rnd: () => number,
+): Record<string, number> {
+  const alive = new Set(roster);
+  const out: Record<string, number> = {};
+  const taken = new Set<number>();
+  for (const id of roster) {
+    const seat = prior[id];
+    // ⚠ `taken` guards against a corrupt `prior` putting two people on one
+    // cushion. It cannot happen through this function, and a seat map is exactly
+    // the kind of value that gets hand-edited during a debugging session.
+    if (seat === undefined || !Number.isInteger(seat) || seat < 0 || seat >= BREAK_CAPACITY) continue;
+    if (taken.has(seat)) continue;
+    out[id] = seat;
+    taken.add(seat);
+  }
+
+  /**
+   * 🔴 TWO INDEPENDENT SHUFFLES, BECAUSE THERE ARE TWO QUESTIONS. → §17c′
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ THE SECOND ONE IS NEW, AND THE COMMENT HERE USED TO ARGUE AGAINST IT.   │
+   * │                                                                           │
+   * │ It said: *"shuffling `free` instead would only randomise which cushion    │
+   * │ each of the same six got"* — true, and it read as a reason not to, which  │
+   * │ was wrong, because **which cushion** is exactly the half the user could   │
+   * │ see. Only the QUEUE was shuffled and `free` was handed out in ascending   │
+   * │ order, so with four people resting the answer was always seats 0,1,2,3:   │
+   * │ both sofa cushions, the chess stool, the counter — **every single time,   │
+   * │ every reload**. The foosball table only ever had anybody at it at exactly │
+   * │ six. The room looked randomised and its layout was a constant.            │
+   * │                                                                           │
+   * │ The user's words, and they are two steps on purpose: *"first pick at      │
+   * │ most six at random out of the pool of resting people; then randomise      │
+   * │ each one's position, depending on nothing."*                              │
+   * │                                                                           │
+   * │   the QUEUE  answers WHO gets a seat when more than six are resting       │
+   * │   the SEATS  answers WHERE each of them sits                              │
+   * │                                                                           │
+   * │ Shuffling one and ordering the other collapses the second question into   │
+   * │ the first — the six chosen people are random, and then they always sit    │
+   * │ in the same places in that order.                                         │
+   * │                                                                           │
+   * │ ⚠ ONLY THE FREE SEATS ARE SHUFFLED. Anything in `prior` keeps its         │
+   * │ cushion: a seat once dealt is that person's for the life of the mount,    │
+   * │ even while they are away working (see the box above). Re-dealing those    │
+   * │ too is the shuffle-on-every-event this function exists to prevent.        │
+   * │                                                                           │
+   * │ 🔴 THE COST, AND IT IS A RULE THIS REPLACES: §17c used to say *"ORDER IS  │
+   * │ FILL ORDER — sofa first because one person resting should look like       │
+   * │ resting; foosball LAST because a single figure at a foosball table is a   │
+   * │ person with no opponent."* Independent placement gives that up: one       │
+   * │ resting employee can now turn up alone at one end of the foosball table.  │
+   * │ Stated rather than quietly lost — the user asked for *"depending on       │
+   * │ nothing"* with the old rule in front of them, and restoring a bias is     │
+   * │ one weighted pick away if the lone player ever reads badly.               │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const shuffle = <T>(xs: T[]): T[] => {
+    for (let i = xs.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [xs[i], xs[j]] = [xs[j]!, xs[i]!];
+    }
+    return xs;
+  };
+
+  const wants = shuffle(resting.filter((id) => alive.has(id) && out[id] === undefined));
+  const free: number[] = [];
+  for (let s = 0; s < BREAK_CAPACITY; s++) if (!taken.has(s)) free.push(s);
+  shuffle(free);
+
+  for (const id of wants) {
+    const seat = free.shift();
+    // Past the capacity: no seat, and `direct()` reads that as `offscreen`.
+    if (seat === undefined) break;
+    out[id] = seat;
+  }
+  return out;
+}
+
+/**
+ * ⚠ Sized against `CH_H`, not chosen by eye. A column narrower than a person is
+ * wide, or a row shorter than a person is tall, and the arc turns into a pile.
+ *
+ * ⚠ THEY LIVE ABOVE `HOME_SPOTS`, NOT BESIDE `ownSpot`, AND THE ORDER IS LOAD-
+ * BEARING. `HOME_SPOTS` calls `ownSpot` at MODULE LOAD; the function declaration
+ * hoists but a `const` does not, so leaving these three below it is a temporal
+ * dead zone that throws before the app draws anything.
+ */
+const PER_ROW = 5;
+const COL = 237;
+const ROW = 202;
+
+// ──────────────────────────────────────────────── where an idle person may stand
+
+/**
+ * 🔴 HALF THE WIDEST FIGURE, AND THE FIGURE'S HEIGHT, IN WORLD UNITS.
+ * → docs/SPEC-office-animation.md §17f①
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ EVERY RULE ABOUT WHERE SOMEBODY MAY STAND IS WRITTEN ABOUT THEIR FEET,   │
+ * │ AND EVERY RULE THAT MATTERS IS ABOUT THEIR BOX.                          │
+ * │                                                                          │
+ * │ That gap is how a figure ends up half inside the wall while its          │
+ * │ coordinate is perfectly legal. Stating the box once, here, is what lets  │
+ * │ the safe area below be checked rather than eyeballed.                    │
+ * │                                                                          │
+ * │ Derived, not guessed: a cell is `CELL.w / CELL.h` of `CH_H × CELL.h /    │
+ * │ BODY_H`, the drawn figure fills ~87% of the cell's width, and the        │
+ * │ largest per-sheet `scale` is 1.1. 177 × (720/690) × (480/720) × 0.87 ×   │
+ * │ 1.1 ≈ 118 wide, ≈ 195 tall.                                              │
+ * │                                                                          │
+ * │ ⚠ THE STRIP GEOMETRY LIVES IN `web/.../art/manifest.ts` AND CANNOT BE    │
+ * │ IMPORTED HERE — `core` is pure and the manifest imports PNGs. So these    │
+ * │ two are a measurement written down, not a computation, and                │
+ * │ `test/office-view.test.ts` is where the two are held against each other.  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const BODY_HALF_W = 62;
+export const BODY_TALL = 196;
+
+/**
+ * 🔴 HOW FAR BELOW THE FEET A PERSON REACHES — because a person is not only a
+ * body. → `office.css §.actor-name` · §17f①
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE NAME IS PART OF THE FIGURE, AND THE BOTTOM EDGE FORGOT IT.           │
+ * │                                                                          │
+ * │ `SAFE.y1` was `WORLD.h − 22`, derived from the drawing alone: feet 22    │
+ * │ units off the bottom, nothing cut. But every actor also carries a label  │
+ * │ hung BELOW the anchor — `.actor-name` sits at `top: 6px` with a ~17-unit │
+ * │ line box — so the front row's names ran off the floor while every        │
+ * │ measurement said the room was legal. Same failure as §17f① one layer     │
+ * │ out: the rule was written about the part of the figure somebody was      │
+ * │ thinking of, not about the whole of it.                                  │
+ * │                                                                          │
+ * │ ⚠ 24, not 23: the label's own descenders. It is a stated measurement of  │
+ * │ the stylesheet, which is why it is named here rather than folded into    │
+ * │ the `y1` expression — `test/office-view.test.ts` holds the two together. │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const NAME_DROP = 24;
+
+/**
+ * 🔴 THE SAFE AREA — a law about BOUNDING BOXES. → §17f①
+ *
+ * Feet may land anywhere in this rectangle and nowhere else. Each edge answers
+ * one of the user's rules, and none of them is a margin chosen to look right:
+ *
+ * | top    | feet above the wall/floor junction is a person climbing the wall |
+ * | bottom | the front row must not be cut off by the frame — NAME INCLUDED   |
+ * | left   | ⚠ the box, not the feet — at `x = 62` the figure's left edge is 0 |
+ * | right  | never in the break area, and never to the right of it            |
+ */
+export const SAFE = {
+  x0: BODY_HALF_W + 8,
+  y0: HORIZON + 24,
+  x1: BREAK_AREA.x - BODY_HALF_W,
+  y1: WORLD.h - 22 - NAME_DROP,
+};
+
+export const clampSafe = (p: Point): Point => ({
+  x: Math.min(SAFE.x1, Math.max(SAFE.x0, p.x)),
+  y: Math.min(SAFE.y1, Math.max(SAFE.y0, p.y)),
+});
+
+/** Is this coordinate on the break-area rug? Used to keep the working floor separate. */
+export const inBreakArea = (p: Point): boolean =>
+  p.x >= BREAK_AREA.x && p.x <= BREAK_AREA.x + BREAK_AREA.w &&
+  p.y >= BREAK_AREA.y && p.y <= BREAK_AREA.y + BREAK_AREA.h;
+
+/**
+ * 🔴 THE TEN DEFAULT SPOTS, AS PLACES RATHER THAN AS PEOPLE'S HOMES.
+ *
+ * ⚠ SAME GENERATOR, DIFFERENT QUESTION, AND THE DIFFERENCE IS THE SEED.
+ * `ownSpot(i, total, agentId)` answers *"where does THIS PERSON live"* and moves
+ * when the headcount changes. This answers *"what are the ten places on the
+ * floor"*, so it is pinned at `total = 10` and seeded by the index — otherwise
+ * the map of the room would change shape every time somebody was hired.
+ *
+ * ⚠ THE ELEVENTH IS NOT HERE. At `PER_ROW = 5` index 10 starts a third row at
+ * `y = 950` in a 900-unit world — off the floor, and the user saw it.
+ */
+export const HOME_SPOTS: readonly Point[] = Array.from({ length: 10 }, (_, i) =>
+  clampSafe(ownSpot(i, 10, `slot:${i}`)),
+);
+
+/**
+ * 🔴 EVERY FIXED PLACE AN IDLE WORKER MAY STAND. → §17f④
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ DERIVED FROM THE FURNITURE, NEVER TYPED AS A PAIR OF NUMBERS.            │
+ * │                                                                          │
+ * │ This is the third table in this file that could have been literals, and  │
+ * │ the first two both drifted: the break-area pieces against their seats,   │
+ * │ and the desks against their stations. A spot in front of the cooler that │
+ * │ does not follow the cooler is a person standing in the middle of the     │
+ * │ floor pointing at nothing.                                               │
+ * │                                                                          │
+ * │ ⚠ `IN_FRONT` is 34 units below the object's base — the same gap          │
+ * │ `ringSlots` uses, so a person waiting at an object and a person WORKING  │
+ * │ at one stand at the same distance from it. Two distances would read as   │
+ * │ two different rooms.                                                     │
+ * │                                                                          │
+ * │ ⚠ THE MAP IS ALLOWED TO BE CROWDED. Two spots closer than a body width   │
+ * │ do not have to be pulled apart here — `pickIdleSpot` refuses a spot too  │
+ * │ near somebody who is standing on, or walking to, its neighbour. Spacing  │
+ * │ is enforced once, at the moment of choosing, instead of by hand in       │
+ * │ twenty-six coordinates.                                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const IN_FRONT = 34;
+
+/**
+ * 🔴 HOW MUCH OF AN OBJECT MUST STILL BE SEEN PAST THE PERSON AT IT. → §17f④
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ SQUARELY IN FRONT ERASES THE OBJECT, AND BOTH OF THE USER'S REPORTS WERE │
+ * │ THE SAME SENTENCE ABOUT TWO DIFFERENT PIECES.                            │
+ * │                                                                          │
+ * │   the plant   74 units wide, standing under a body 124 wide              │
+ * │   the cooler  39 units wide — a body covers it three times over          │
+ * │                                                                          │
+ * │ The rule already existed in the break area and was written down there:   │
+ * │ *"a person is taller than the counter and wider than half of it, so      │
+ * │ dead-centre erases the whole object"* (→ `BREAK_SEATS`). It had simply   │
+ * │ never been carried across to the two objects on the working floor.       │
+ * │                                                                          │
+ * │ 🔴 IT IS THE VISIBLE SLIVER, NOT THE OFFSET — and the first cut of this   │
+ * │ change got that wrong. *"Stand 24 units past the object's edge"* sounds   │
+ * │ object-relative and is not: the sliver it leaves is                       │
+ * │ `2 × halfW + offset − BODY_HALF_W`, so the same 24 leaves 36 units of the │
+ * │ plant showing and **2 units** of the cooler. The narrower the object, the │
+ * │ less the rule gives it — exactly backwards, and the test caught it.       │
+ * │                                                                          │
+ * │ ⇒ State the OUTCOME and solve for the offset. `dx` below comes out at 47  │
+ * │ for the plant and 64 for the cooler, and neither is a number anybody has  │
+ * │ to keep in step with the artwork.                                        │
+ * │                                                                          │
+ * │ ⚠ THE DIRECTION IS PER-OBJECT, not part of the constant. The plant is     │
+ * │ pushed RIGHT because there is nothing but wall to its left; the cooler is │
+ * │ pushed LEFT because the break area starts 70 units to its right.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const VISIBLE = 22;
+
+/** Centre-to-centre offset that leaves `VISIBLE` units of a `halfW`-wide piece showing. */
+const beside = (halfW: number): number => BODY_HALF_W + VISIBLE - halfW;
+
+/**
+ * Base lines the map hangs off, so nothing here is an unexplained number.
+ *
+ * ⚠ EXPORTED, AND `Room.tsx` NOW DRAWS FROM THEM. They were literals in the JSX
+ * as well — a second copy of one layout, which is the pair that drifted by up to
+ * 130 units the first time the break area moved (→ `BREAK_PIECES`). A plant that
+ * moves without taking the person standing beside it is exactly that bug again.
+ *
+ * ⚠ `halfW` is a measurement of the artwork (`art/furniture.ts`: `h × ar / 2`),
+ * not a choice. `core` cannot import the manifest — it is pure and the manifest
+ * imports PNGs — so `test/office-view.test.ts` is where the two are held
+ * against each other, the same arrangement `BODY_HALF_W` already has.
+ */
+export const PLANT = { x: 64, baseY: HORIZON + 74, halfW: 37 };
+export const COOLER = { x: 1100, baseY: HORIZON + 34, halfW: 20 };
+const SHELF_BASE = STATIONS.library.y + STATIONS.library.h;
+const FILING = DESK_PIECES[0]!;
+
+export const IDLE_SPOTS: readonly Point[] = [
+  // the plant — in front but OFF TO ITS RIGHT (→ `VISIBLE`), and further right
+  // again. Never to its LEFT: past it there is a body-width of floor and then
+  // the wall.
+  { x: PLANT.x + beside(PLANT.halfW), y: PLANT.baseY + IN_FRONT },
+  { x: PLANT.x + PLANT.halfW + BODY_HALF_W + 9, y: PLANT.baseY + 18 },
+  // the document cabinet — three, in front
+  { x: 196, y: SHELF_BASE + 58 },
+  { x: 292, y: SHELF_BASE + 58 },
+  { x: 388, y: SHELF_BASE + 58 },
+  // under the picture, the two window panes and the planning board. Wall objects,
+  // so the only constraint is the wall itself: feet below `SAFE.y0`.
+  { x: 452, y: HORIZON + 40 },
+  { x: 640, y: HORIZON + 40 },
+  { x: 760, y: HORIZON + 40 },
+  { x: 950, y: HORIZON + 40 },
+  // the water cooler — in front but OFF TO ITS LEFT, so the bottle is still
+  // visible past the shoulder of whoever is standing at it. → `VISIBLE`
+  { x: COOLER.x - beside(COOLER.halfW), y: COOLER.baseY + IN_FRONT },
+  /**
+   * 🔴 THE FILING DESK — EIGHT, AND THREE OF THEM ARE BEHIND IT.
+   *
+   * The only object in the room with places on both sides, which is the whole
+   * reason §17b exists: "behind" here means `y < the desk's baseY`, and the
+   * `z-index` sort then draws the desk over them. Nothing else is needed —
+   * there is no second rule saying which is in front.
+   */
+  { x: FILING.x - 106, y: FILING.baseY + 40 },
+  { x: FILING.x, y: FILING.baseY + 40 },
+  { x: FILING.x + 106, y: FILING.baseY + 40 },
+  { x: FILING.x - 106, y: FILING.baseY - 48 },
+  { x: FILING.x, y: FILING.baseY - 48 },
+  { x: FILING.x + 106, y: FILING.baseY - 48 },
+  { x: FILING.x - 190, y: FILING.baseY },
+  { x: FILING.x + 190, y: FILING.baseY },
+  ...HOME_SPOTS,
+].map(clampSafe);
+
+/**
+ * How near two people may be before they read as one clump.
+ *
+ * ⚠ IT IS SMALLER THAN `PAIR_GAP`, ON PURPOSE. A spot is refused when somebody
+ * is within `CLEAR` of it — and the "stand beside a colleague" spot is offered at
+ * `PAIR_GAP`, just outside that, which is what lets a pair form at all while
+ * every other kind of crowding is refused.
+ */
+const CLEAR = 90;
+const PAIR_GAP = 112;
+
+const dist = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** What the picker needs to know about everybody else. Positions, not nodes. */
+export interface IdleWorld {
+  /** id → where they are standing right now. */
+  at: Readonly<Record<string, Point>>;
+  /** id → where they are heading. A spot somebody is walking to is taken. */
+  to: Readonly<Record<string, Point>>;
+  /** Who is standing still on the working floor — the only people worth joining. */
+  standing: readonly string[];
+}
+
+/**
+ * 🔴 WHERE AN IDLE WORKER GOES NEXT. → §17f⑤
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ UNIFORMLY AT RANDOM AMONG WHAT IS FREE — NOT NEAREST, NOT WEIGHTED.      │
+ * │                                                                          │
+ * │ Nearest turns the map into a rut: the same two spots, forever, because   │
+ * │ the nearest free spot to where you already are is the one next to you.   │
+ * │ A weighting is a preference nobody asked for and nobody can read off the │
+ * │ screen.                                                                  │
+ * │                                                                          │
+ * │ ⚠ NEVER A GROUP OF THREE. A "beside a colleague" spot is offered only    │
+ * │ next to somebody who is ALONE. The check is the same `CLEAR` radius the  │
+ * │ rest of the picker uses, so "already has company" and "too crowded to    │
+ * │ stand here" are one definition rather than two that can disagree.        │
+ * │                                                                          │
+ * │ ⚠ THE ASSISTANT'S TWO PLACES ARE NOT IN `IDLE_SPOTS` AND MUST NOT BE.    │
+ * │ Nobody goes looking for the assistant. Its positions still appear in     │
+ * │ `world.at`, so they are avoided as OBSTACLES — which is the honest       │
+ * │ shape: a body to steer around, not a destination.                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @returns a target, or `null` when everywhere is taken — which means STAY PUT.
+ *          A fallback that returned "somewhere, anywhere" would walk somebody
+ *          into a colleague to avoid returning nothing.
+ */
+export function pickIdleSpot(id: string, world: IdleWorld, rnd: () => number): Point | null {
+  const others = Object.entries(world.at).filter(([k]) => k !== id);
+  const heading = Object.entries(world.to).filter(([k]) => k !== id);
+
+  const here = world.at[id];
+  const free = (p: Point, ignore?: string): boolean => {
+    if (p.x < SAFE.x0 || p.x > SAFE.x1 || p.y < SAFE.y0 || p.y > SAFE.y1) return false;
+    // ⚠ The spot you are ALREADY ON is not an option. It is legal — nobody is in
+    // the way, because it is you — and picking it spends a whole idle window on
+    // a walk of zero units, which reads as the room having stalled.
+    if (here && dist(p, here) < 1) return false;
+    for (const [k, q] of others) if (k !== ignore && dist(p, q) < CLEAR) return false;
+    for (const [k, q] of heading) if (k !== ignore && dist(p, q) < CLEAR) return false;
+    return true;
+  };
+
+  const options: Point[] = IDLE_SPOTS.filter((p) => free(p));
+
+  for (const mate of world.standing) {
+    if (mate === id) continue;
+    const here = world.at[mate];
+    if (!here || inBreakArea(here)) continue;
+    // Already half of a pair ⇒ joining makes three.
+    if (others.some(([k, q]) => k !== mate && dist(here, q) < PAIR_GAP + CLEAR)) continue;
+    for (const side of [-1, 1]) {
+      const p = { x: here.x + side * PAIR_GAP, y: here.y };
+      if (free(p, mate)) options.push(p);
+    }
+  }
+
+  if (options.length > 0) return options[Math.floor(rnd() * options.length) % options.length] ?? null;
+
+  /**
+   * ⚠ THE FALLBACK IS BOUNDED AND MAY GIVE UP. Twelve tries at a random point in
+   * the safe area, then `null`. An unbounded search on a crowded floor is a loop
+   * that runs until it gets lucky, inside a function called from a timer.
+   */
+  for (let i = 0; i < 12; i++) {
+    const p = {
+      x: SAFE.x0 + rnd() * (SAFE.x1 - SAFE.x0),
+      y: SAFE.y0 + rnd() * (SAFE.y1 - SAFE.y0),
+    };
+    if (free(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * 🔴 WHERE EVERYBODY IS STANDING THE MOMENT THE ROOM OPENS. → §17l
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE VIEW SWITCH WAS DEALING THE SAME HAND EVERY TIME.                    │
+ * │                                                                          │
+ * │ `Office` mounts a fresh `Stage` on every toggle, and `Stage.sync` puts    │
+ * │ somebody at their HOME the first time it sees them — which is            │
+ * │ `ownSpot()`, a five-wide arc. So every trip to the diagram and back       │
+ * │ re-formed the same parade line, and it was the user's report: *"I do not  │
+ * │ want every toggle to go back to the default line-up."*                    │
+ * │                                                                          │
+ * │ ⚠ THIS IS THE CHEAP HALF OF THE TWO ANSWERS THEY OFFERED, AND IT IS THE  │
+ * │ ONE THAT ALSO SATISFIES THE OTHER HALF. Carrying live positions across    │
+ * │ the toggle would preserve continuity nobody can see — the room was not on │
+ * │ screen — and it would freeze the same people in the same places for the   │
+ * │ life of the tab, which is the *"avoid sitting and standing put"* the same │
+ * │ message asks against. Re-dealing gives both: no line-up, and a room that  │
+ * │ is composed differently each time it is looked at.                       │
+ * │                                                                          │
+ * │ ⚠ IT DEALS AGAINST ITSELF AS IT GOES. Each pick is made in a world that   │
+ * │ already contains everybody dealt before it, so the `CLEAR` radius applies │
+ * │ between the new arrivals — otherwise every person would be placed against │
+ * │ an empty floor and the whole room could land on one spot.                │
+ * │                                                                          │
+ * │ ⚠ A MISS IS `undefined`, NOT A GUESS. `pickIdleSpot` returns `null` when  │
+ * │ everywhere is taken, and the caller's fallback is the person's OWN SPOT — │
+ * │ the arc it was replacing. A crowded office degrades to the old picture    │
+ * │ rather than to bodies inside each other.                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @param ids people who are free to stand anywhere — everybody with `roam`.
+ */
+export function dealOpeningSpots(
+  ids: readonly string[],
+  rnd: () => number,
+): Record<string, Point> {
+  const out: Record<string, Point> = {};
+  for (const id of ids) {
+    // ⚠ `standing` is empty on purpose: the "stand beside a colleague" offer is
+    // about somebody who has been on the floor long enough to be joined. At the
+    // instant the view opens nobody has been anywhere, and offering it here
+    // would pair people up before the room has drawn a single frame.
+    const p = pickIdleSpot(id, { at: out, to: out, standing: [] }, rnd);
+    if (p) out[id] = p;
+  }
+  return out;
+}
+
+/**
+ * 🔴 HOW MANY IDLE WORKERS ARE ALREADY WALKING WHEN THE ROOM OPENS. → §17l
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ *"Everybody standing still at that moment is a bit stiff."*              │
+ * │                                                                          │
+ * │ The user's number, and the `ceil` is theirs too — it is what makes ONE   │
+ * │ idle worker still produce one walker instead of rounding the office down │
+ * │ to a photograph. An empty floor produces none: there is nobody to move,  │
+ * │ and inventing motion is the thing §17g exists to forbid.                 │
+ * │                                                                          │
+ * │ ⚠ IT APPLIES ON EVERY OPEN, INCLUDING A RELOAD. The positions differ     │
+ * │ between the two cases (a reload starts from the arc, a toggle from a     │
+ * │ fresh deal); the *liveliness* does not, because the reason for it —      │
+ * │ "show the office is working" — does not care how the page got here.      │
+ * │                                                                          │
+ * │ ⚠ IT IS A COUNT, NOT A PROBABILITY. A one-in-five die rolled per person  │
+ * │ gives an office that is occasionally completely still, which is the one  │
+ * │ outcome this exists to prevent.                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const walkersAtOpen = (idle: number): number => (idle > 0 ? Math.ceil(idle / 5) : 0);
 
 /**
  * Which station a place sends somebody to. → SPEC-office-animation §6e
@@ -446,14 +1045,6 @@ export function nearestFreeSlot(s: Station, from: Point, taken: readonly Point[]
   }
   return best ?? { x: s.x + s.w / 2, y: s.y + s.h + 96 };
 }
-
-/**
- * ⚠ Sized against `CH_H`, not chosen by eye. A column narrower than a person is
- * wide, or a row shorter than a person is tall, and the arc turns into a pile.
- */
-const PER_ROW = 5;
-const COL = 237;
-const ROW = 202;
 
 /**
  * A worker's own spot on the floor — where they stand when they are working but
@@ -519,6 +1110,18 @@ export interface DirectInput {
   /** The assistant's hidden worker, if it is running. */
   reading: 'library' | 'web' | null;
   /**
+   * agent id → index into `BREAK_SEATS`. → `dealSeats`
+   *
+   * ⚠ THIS FUNCTION NO LONGER DECIDES WHO SITS WHERE, and the split is the
+   * point: seating is a decision taken ONCE PER MOUNT with a random source,
+   * while `direct()` runs on every SSE event and must give the same answer every
+   * time it is asked. Putting a `Math.random()` in here would make the one pure,
+   * tested rule in the room non-deterministic.
+   *
+   * An id with no entry is resting OFF SCREEN — see `BREAK_CAPACITY`.
+   */
+  seats: Readonly<Record<string, number>>;
+  /**
    * Where somebody is standing RIGHT NOW, so a ring can pick the slot nearest
    * to them. Absent ⇒ they have not been placed yet and their home is used.
    */
@@ -549,6 +1152,26 @@ export interface Placement {
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   rest?: 'seated' | 'offscreen';
+  /**
+   * 🔴 FREE TO WANDER. → docs/SPEC-office-animation.md §17f · §17g
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ `target` IS STILL SET, AND IT IS NOT THE WANDER TARGET.                 │
+   * │                                                                           │
+   * │ It is where this person belongs when nothing else is happening — their    │
+   * │ own spot — and it is what places them the first time the scene sees them. │
+   * │ WHERE they wander to is chosen by `pickIdleSpot`, WHEN is a timer in the  │
+   * │ movement loop, and neither belongs in a pure function that re-runs on     │
+   * │ every SSE event and must give the same answer every time.                 │
+   * │                                                                           │
+   * │ ⚠ THE FLAG IS THE HAND-OVER. `Stage` walks somebody only while it is set; │
+   * │ the moment work arrives it goes false, and that is the whole of §17e —    │
+   * │ *"when the assistant hands out a task the worker stops where it is"*.     │
+   * │ No separate stop signal, because a second mechanism for stopping is a     │
+   * │ second mechanism that can miss.                                           │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  roam?: true;
 }
 
 /**
@@ -570,21 +1193,6 @@ export interface Placement {
 export function direct(input: DirectInput): Placement[] {
   const out: Placement[] = [];
   const taken: Point[] = [];
-  /**
-   * How many people are already resting, so the next one takes the next seat.
-   *
-   * ⚠ POSITION AMONG THE RESTING, IN THE STABLE `agents` ORDER — not a hash, and
-   * not `nearestFreeSlot`. A hash collides, and two bodies on one sofa cushion is
-   * worse than the cost below; "nearest" has no input here because a resting
-   * person is not walking in from anywhere.
-   *
-   * The cost, stated rather than hidden: when somebody STOPS resting, everybody
-   * behind them shifts up a seat and walks to it. That is a real limitation and
-   * the fix is storage — a seat written into `layout.cast`'s neighbourhood the
-   * way a face already is (§9). It is not the wandering this replaced: nothing
-   * moves on a timer, and the room is still while its state is.
-   */
-  let resting = 0;
 
   const slot = (id: StationId, from: Point): Point => {
     const p = nearestFreeSlot(STATIONS[id], from, taken);
@@ -595,28 +1203,67 @@ export function direct(input: DirectInput): Placement[] {
   if (input.assistantId) {
     const from = input.at(input.assistantId) ?? ASSISTANT_SPOT;
     /**
-     * The assistant walks for EXACTLY ONE reason: its hidden worker is reading
-     * documents. Everything else — thinking, planning, searching the web,
-     * reporting — happens at centre-front, facing the viewer. §6d
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ 🔴 THREE PLACES, AND THE THIRD ONE IS "WHEREVER IT ALREADY IS".      │
+     * │ → docs/SPEC-office-animation.md §17d                                 │
+     * │                                                                      │
+     * │   reading documents   the bookshelf ring. The one trip that draws an │
+     * │                       observed fact, so §6e keeps it.                │
+     * │   waiting on a task   `ASSISTANT_WAIT`, beside the filing desk —     │
+     * │                       standing at the door the work comes back in.   │
+     * │   otherwise           ⚠ `from`. NOT `ASSISTANT_SPOT`.                │
+     * │                                                                      │
+     * │ ⚠ THE THIRD LINE IS THE USER'S RULE AND IT IS EASY TO "FIX" BACK:    │
+     * │ *"the assistant does not need to go back to the default position     │
+     * │ unless there is a toggle or an F5."* Walking home reports nothing —  │
+     * │ it is the room spending its only vocabulary for work on tidying up.  │
+     * │ Home is where the NEXT MOUNT puts it, because `at()` returns         │
+     * │ undefined before anybody has been placed and this line then falls    │
+     * │ through to `ASSISTANT_SPOT` on its own.                              │
+     * └──────────────────────────────────────────────────────────────────────┘
      */
+    const waiting = Object.values(input.live).some((l) => l.status === 'working');
     out.push({
       id: input.assistantId,
-      target: input.reading === 'library' ? slot('library', from) : ASSISTANT_SPOT,
+      target:
+        input.reading === 'library' ? slot('library', from) : waiting ? ASSISTANT_WAIT : from,
       pose: 'stand',
     });
   }
 
   input.agents.forEach((agent, i) => {
     const state = input.live[agent.role];
-    const home = ownSpot(i, input.agents.length, agent.id);
+    /**
+     * 🔴 CLAMPED, AND THIS IS THE BUG THE USER REPORTED AS "the eleventh spot is
+     * broken". → docs/SPEC-office-animation.md §17f
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ MEASURED IN THE LIVE ROOM, 07/09, on an office with eleven employees: │
+     * │                                                                      │
+     * │   `vvv`  y = 946   in a 900-unit world — standing under the floor    │
+     * │   `d`    x = 50    left edge at −12 — half of them off the picture   │
+     * │                                                                      │
+     * │ At `PER_ROW = 5` the eleventh person opens a THIRD ROW at y = 950,    │
+     * │ and the arc's left column starts at x = 46 while a body is 62 wide    │
+     * │ from its centre. Both are `ownSpot` doing exactly what it says.       │
+     * │                                                                      │
+     * │ ⚠ THE FIRST FIX WAS PUT ON THE WRONG TABLE. `HOME_SPOTS` — the idle   │
+     * │ MAP — was clamped and had a gate; `home` here, which is where people  │
+     * │ actually stand, was not. A rule has to be applied to the thing it     │
+     * │ governs, and a gate on the copy is a gate that watches the wrong      │
+     * │ door: the tests were green while the room was wrong.                  │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    const home = clampSafe(ownSpot(i, input.agents.length, agent.id));
     const from = input.at(agent.id) ?? home;
 
     // Resting = on the diagram but not wired, and not currently working. The
     // same source the diagram already prints the word "resting" from, so the
     // two views cannot disagree.
     if (!agent.connected && !state) {
-      const seat = BREAK_SEATS[resting++];
-      // Past the sixth seat: still resting, still counted, simply not drawn. The
+      // ⚠ THE SEAT IS LOOKED UP, NOT COUNTED OUT. → `dealSeats` · §17c
+      const seat = BREAK_SEATS[input.seats[agent.id] ?? -1];
+      // No seat in the deal: still resting, still counted, simply not drawn. The
       // target is their own spot so that the day they stop resting they are
       // already where they belong rather than sliding in from a corner.
       if (!seat) {
@@ -627,11 +1274,22 @@ export function direct(input: DirectInput): Placement[] {
       return;
     }
 
+    /**
+     * ⚠ "STAY WHERE YOU ARE" — unless where you are is the break area.
+     *
+     * A worker handed a task stops on the spot (§17e); walking them to their own
+     * spot first would be a trip that reports nothing. The one exception is the
+     * person who was RESTING when the work arrived: standing up and walking out
+     * of the break area is the most legible thing this view draws, and it is
+     * also the only way they leave a place the working floor forbids.
+     */
+    const stay = inBreakArea(from) ? home : from;
+
     if (state?.status === 'working') {
       const station = STATION_OF[state.at ?? 'desk'];
       out.push({
         id: agent.id,
-        target: station ? slot(station, from) : home,
+        target: station ? slot(station, from) : stay,
         pose: 'stand',
       });
       return;
@@ -651,7 +1309,12 @@ export function direct(input: DirectInput): Placement[] {
       return;
     }
 
-    out.push({ id: agent.id, target: home, pose: 'stand' });
+    /**
+     * Wired, nothing running: on the floor and free to wander. `state` is still
+     * set for a few seconds after a task ends (`done` clears itself), which is
+     * what keeps somebody from wandering off mid hand-off.
+     */
+    out.push({ id: agent.id, target: state ? stay : home, pose: 'stand', ...(state ? {} : { roam: true }) });
   });
 
   return out;

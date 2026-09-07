@@ -247,3 +247,207 @@ export function assignCast(
   }
   return out;
 }
+
+/**
+ * 🔴 THE GARMENT PALETTE. → docs/SPEC-office-art.md §11
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ⚠ THE SAME TEN ARE ALSO IN `office.css` AS `--cast-1…10`, AND THAT IS A  │
+ * │ SECOND COPY. Stated rather than hidden: CSS cannot import a module, and  │
+ * │ the CSS copy paints the BOOKS on the shelf, not a person. If the two     │
+ * │ ever disagree the only visible symptom is a bookshelf whose colours no   │
+ * │ longer echo the cast — a cosmetic drift, and the price of not inventing  │
+ * │ a build step to generate one from the other.                             │
+ * │                                                                          │
+ * │ ⚠ Every one is MID-LIGHTNESS on purpose. `mix-blend-mode: color` keeps   │
+ * │ the artwork's luminance and takes only hue and saturation from the tint, │
+ * │ so a near-black or near-white entry here would be a colour nobody can    │
+ * │ see the difference between. → SPEC-office-art §11                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const GARMENT_TINTS: readonly string[] = [
+  '#4a6fa5',
+  '#b4532a',
+  '#3f7d4a',
+  '#8a5a9b',
+  '#c08a2e',
+  '#2f6f6a',
+  '#a8455f',
+  '#5c6b3f',
+  '#6b5344',
+  '#40567e',
+];
+
+/** A stored override is honoured only if it is a plain 6-digit hex colour. */
+export function isTint(v: unknown): v is string {
+  return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
+}
+
+/**
+ * 🔴 WHO IS ENTITLED TO KEEP THE COLOUR THEIR SHEET WAS DRAWN IN. → §17k′
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ SORTING A FACE GROUP BY ID MADE THE ASSISTANT LOSE, EVERY SINGLE TIME.   │
+ * │                                                                          │
+ * │ Every worker's node id starts `agent:` and the assistant's is            │
+ * │ `assistant`; `'g' < 's'`, so a worker always sorted first and the        │
+ * │ assistant always came second — which is the one figure in the room whose │
+ * │ appearance must never move, and the one the whole room is drawn around.  │
+ * │                                                                          │
+ * │ The user hit it the obvious way and called it what it is: *"I pick a     │
+ * │ character for employee 5, it happens to be the assistant's, and now the  │
+ * │ ASSISTANT is not in its own colour any more — that makes no sense."*     │
+ * │ Two separate wrongs stacked in that one sentence:                        │
+ * │                                                                          │
+ * │  ① the assistant was recoloured by somebody else's choice                │
+ * │  ② the person who ASKED for the face kept the original, and the person   │
+ * │    who was already wearing it was the one put in a costume               │
+ * │                                                                          │
+ * │ ⚠ ② IS THE GENERAL RULE AND ① IS A SPECIAL CASE OF IT: a change should   │
+ * │ land on whoever caused it. A hand pick is the only "who caused it" this  │
+ * │ function can observe, because nothing on disk records who arrived first  │
+ * │ — see the note at the foot of `assignCast` about hire-time storage.      │
+ * │                                                                          │
+ * │ ⚠ WHAT THIS DOES NOT FIX, stated so nobody thinks it did: hiring a       │
+ * │ worker whose id sorts BEFORE an incumbent on the same face still moves   │
+ * │ the incumbent's colour. Only storing at hire time closes that, and that  │
+ * │ is a decision about `layout.json`, not about this ordering.              │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export interface TintOrder {
+  /**
+   * The one id that always keeps its own colour. The CALLER names it — `core`
+   * must not decide that the assistant is special, the same way the renderer is
+   * told `onTop` rather than being told who this is.
+   */
+  anchor?: string;
+  /** `layout.cast`: faces the user picked BY HAND. A picker yields to everybody else. */
+  picked?: Readonly<Record<string, number>>;
+}
+
+/** Lower wins the sheet's own colour. Stable sort ⇒ ties keep id order. */
+function keeper(id: string, face: number, opts: TintOrder): number {
+  if (id === opts.anchor) return 0;
+  // ⚠ `% FACE_COUNT`, because `layout.cast` legitimately holds 0…9 while there
+  // are five drawings — a pick of 7 IS a pick of face 2, and reading it raw
+  // would let the picker quietly keep the original after all.
+  const pick = opts.picked?.[id];
+  return pick !== undefined && isCastId(pick) && pick % FACE_COUNT === face ? 2 : 1;
+}
+
+/**
+ * 🔴 WHO GETS A COLOURED GARMENT, AND WHO KEEPS THE ONE THEY WERE DRAWN IN.
+ * → docs/SPEC-office-animation.md §17k · §17k″ · SPEC-office-art §11
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE FIRST PERSON ON A FACE IS NOT TINTED AT ALL — NOT "TINTED WITH THE   │
+ * │ ORIGINAL COLOUR".                                                        │
+ * │                                                                          │
+ * │ A tint layer at any colour is a masked element with `mix-blend-mode` on   │
+ * │ it, and that costs a compositing pass per person on every frame they      │
+ * │ move. "Absent" and "transparent" are the same picture and very different  │
+ * │ machines. So the map returned here has NO ENTRY for anybody who is the    │
+ * │ only holder of their face, and the renderer draws no layer for them.      │
+ * │                                                                          │
+ * │ 🔴 COMPUTED, NEVER WRITTEN. The only place that knows the whole roster is │
+ * │ `canvas()`, and `canvas()` is a READ. A read that writes `layout.json`    │
+ * │ and emits `layout.changed` is the feedback loop this repository has       │
+ * │ already paid for once — the same reason `assignCast` recomputes rather    │
+ * │ than storing. A hand-picked colour IS stored, because that is a decision  │
+ * │ a person made, and it arrives here as `stored` and wins outright.         │
+ * │                                                                          │
+ * │ ⚠ THE COST, STATED: firing somebody can change the colour of whoever      │
+ * │ their face-clash had displaced, exactly as it can change their face.      │
+ * │ One mechanism, one cost, already accepted.                                │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @param faces the result of `assignCast` — id → face index.
+ * @param stored `layout.tint`: colours the user picked by hand. Honoured verbatim.
+ * @param opts   who is entitled to keep the sheet's own colour. → `TintOrder`
+ */
+export function assignTints(
+  faces: Readonly<Record<string, number>>,
+  stored: Readonly<Record<string, string>> = {},
+  opts: TintOrder = {},
+): Record<string, string> {
+  const out: Record<string, string> = {};
+
+  /**
+   * ⚠ GROUPED BY FACE, AND ORDERED INSIDE EACH GROUP.
+   *
+   * Two people in different faces wearing the same colour is fine — they already
+   * look nothing alike, and the colour is not an identifier. The only pair that
+   * matters is two people on the SAME face, so the basket is per face and there
+   * is no global scarcity to manage.
+   *
+   * The id is the LAST tiebreak, for the reason `assignCast` sorts by it: the
+   * answer must not depend on the order `layout.nodes` happened to be dragged
+   * into by a browser. It is no longer the FIRST key — see `keeper` below.
+   */
+  const byFace = new Map<number, string[]>();
+  for (const id of Object.keys(faces).sort()) {
+    const face = faces[id]!;
+    const list = byFace.get(face);
+    if (list) list.push(id);
+    else byFace.set(face, [id]);
+  }
+  for (const [face, group] of byFace) {
+    group.sort((a, b) => keeper(a, face, opts) - keeper(b, face, opts));
+  }
+
+  for (const [, group] of byFace) {
+    /**
+     * 🔴 DEAL FROM A BASKET, DO NOT TRUST THE HASH. This is the twins bug one
+     * layer down, and it was measured in the live room on 07/09 before it was
+     * fixed: two of seven tinted people came out `#5c6b3f`.
+     *
+     * A plain `hash % 10` collides at exactly the rate the birthday problem
+     * says — for the three people who can share one face that is ~28 %, and a
+     * collision here is two employees who look alike AND wear the same colour,
+     * which is precisely the state the colour exists to prevent.
+     *
+     * ⚠ A HAND-PICKED COLOUR TAKES ITS SEAT FIRST, before any dealing, or the
+     * deal hands somebody a colour the user has already claimed — the same rule
+     * `assignCast` states for a hand-picked face, and for the same reason.
+     */
+    const used = new Set<string>();
+    for (const id of group) {
+      if (!isTint(stored[id])) continue;
+      out[id] = stored[id]!.toLowerCase();
+      used.add(out[id]!);
+    }
+
+    for (const [i, id] of group.entries()) {
+      if (out[id] !== undefined) continue;
+      /**
+       * ⚠ THE HEAD OF THE GROUP GETS NO ENTRY, so the renderer draws no layer
+       * for them: they wear the colour they were drawn in, which is the one
+       * every sheet was designed around. Who the head IS is `keeper`'s answer,
+       * not the id order — → `TintOrder`.
+       *
+       * ⚠ POSITION IN THE GROUP, not "the first one still without a colour". If
+       * the second person has a hand-picked colour and the first does not, the
+       * first is still the one who keeps the original — a stored choice must not
+       * push somebody else into a costume.
+       */
+      if (i === 0) continue;
+      /**
+       * ⚠ HASHED, NOT RANDOM. Random would re-roll on every read and the room
+       * would flicker through colours while nothing about the office changed —
+       * `canvas()` runs on every SSE event.
+       *
+       * Seeded with the FACE as well as the id, so the same person moved to a
+       * different face gets a different colour: the colour is there to separate
+       * two people who look alike, and it should move when that does.
+       */
+      const want = hash32(`tint:${faces[id]}:${id}`) % GARMENT_TINTS.length;
+      let pick = want;
+      for (let step = 1; step <= GARMENT_TINTS.length && used.has(GARMENT_TINTS[pick]!); step++) {
+        pick = (want + step) % GARMENT_TINTS.length;
+      }
+      out[id] = GARMENT_TINTS[pick]!;
+      used.add(out[id]!);
+    }
+  }
+  return out;
+}

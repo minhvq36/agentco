@@ -69,15 +69,38 @@ export interface ActorView {
    * picture at all.
    */
   say: string | null;
+  /**
+   * The colour of this person's recolourable garment, `#rrggbb`, or absent.
+   * → `@core/cast §assignTints` · docs/SPEC-office-art.md §11
+   *
+   * ⚠ ABSENT means the artwork's own colour and NO TINT LAYER — see `DomScene`.
+   */
+  tint?: string;
   /** A marker for a place with no station of its own (`web`, `shell`). */
   glyph: string;
   selected: boolean;
+  /**
+   * 🔴 DRAWN ABOVE EVERY OTHER BODY AND EVERY PIECE OF FURNITURE.
+   * → SPEC-office-animation.md §17d
+   *
+   * ⚠ The ASSISTANT, and only the assistant — but the flag says what it DOES,
+   * not who it is. A renderer asking "is this the assistant" would be a second
+   * place that knows the office's architecture; this way the rule stays where
+   * the roster is built and the adapter just draws it.
+   */
+  onTop?: boolean;
 }
 
 export interface SceneProps {
   room: RoomView;
   actors: ActorView[];
-  onOpen(what: 'library' | 'artifacts' | 'arm'): void;
+  /**
+   * ⚠ `'arm'` IS GONE FROM THIS UNION, and narrowing the port is the point.
+   * The bench was a door that had to guess which of N connections the user meant.
+   * Leaving the case in the type would keep a branch nothing can reach — and the
+   * day somebody re-adds the click, `tsc` says nothing. → SPEC-office-animation §17i
+   */
+  onOpen(what: 'library' | 'artifacts'): void;
   onSelect(id: string): void;
 }
 
