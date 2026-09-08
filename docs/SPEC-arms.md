@@ -22,7 +22,7 @@ This project's rule: *"measuring N times proves a MECHANISM, not a CONCLUSION"*
 |---|---|
 | ✅ | **Actually run in this project**, with a measurement, reproducible |
 | 📖 | **Read from a `.d.ts`** in `node_modules` — a real type, **behavior NEVER run** |
-| 🌐 | **Looked up an external source**, dated. External sources can be wrong — see §Sources |
+|  | **Looked up an external source**, dated. External sources can be wrong — see §Sources |
 | ❓ | **Not measured, not known.** Do not build a design on top of it |
 
 > ⚠ 📖 **is not** ✅. `canUseTool` was once a very convincing 📖 reading and **never fired once**
@@ -159,7 +159,7 @@ a back door left open. If the MCP direction is chosen, **both must be built**, o
 
 ## 2. Transport — checking the spec again, August 2026
 
-### 2a. What does the spec say 🌐
+### 2a. What does the spec say 
 
 | Transport | Status 2026-08-23 |
 |---|---|
@@ -167,7 +167,7 @@ a back door left open. If the MCP direction is chosen, **both must be built**, o
 | **Streamable HTTP** | ✅ standard for remote. Introduced in the `2025-03-26` revision, **replaces** HTTP+SSE |
 | ~~HTTP+SSE~~ | ❌ the `2024-11-05` revision, **already superseded** |
 
-🌐 The `2026-07-28` revision (release candidate) makes Streamable HTTP **stateless**: it drops
+ The `2026-07-28` revision (release candidate) makes Streamable HTTP **stateless**: it drops
 sessions at the protocol layer and drops the `Mcp-Session-Id` header, so any request can be
 answered by any instance behind an ordinary HTTP load balancer.
 
@@ -318,7 +318,7 @@ up with 0 dynamic MCPs when a plugin has loaded one.
 
 ## 4. The catalog — n8n has nothing to copy, and that's the answer
 
-### 4a. Went and actually checked 🌐
+### 4a. Went and actually checked 
 
 | Source | What it shows |
 |---|---|
@@ -399,7 +399,7 @@ builtin tool" bar (`SPEC-tools-approval` §5c):
 > where they have their own domain).
 > ⚠ But `client_secret` is something **agentco is required to ship**: measured across two calls,
 > both the code exchange and the refresh return `invalid_request — client_secret is missing`,
-> **even for a Desktop-type client with PKCE**. The claim 🌐 *"obviously not treated as a secret"*
+> **even for a Desktop-type client with PKCE**. The claim  *"obviously not treated as a secret"*
 > is right about intent, wrong about mechanism. ⇒ Unlike GitHub's device flow (0 secrets), this is
 > **a weaker position** — one that has to be stated plainly.
 >
@@ -468,7 +468,7 @@ builtin tool" bar (`SPEC-tools-approval` §5c):
 > **Notion (1 screen) < GitHub (2 screens: type a code + install the app on the repo) < Google
 > (Cloud Console)**.
 
-1. **It's one notch cheaper than Google.** 🌐 `https://api.githubcopilot.com/mcp/` — nothing to
+1. **It's one notch cheaper than Google.**  `https://api.githubcopilot.com/mcp/` — nothing to
    install, no `npx`, no app registration. GitHub **is its own identity provider**, so Google's
    *"create an OAuth client"* step **doesn't exist here** (§5h·5).
 2. **It's the only HTTP entry among the four** ⇒ it forces us to patch the hole logged at §5a: ✅
@@ -480,7 +480,7 @@ builtin tool" bar (`SPEC-tools-approval` §5c):
 
 ⚠ **Google fails criterion 3** (§4d — *"can be plugged in without manually creating an OAuth
 client"*) and still made the catalog because the user decided so. **§5h·4 already answered this
-with a source: Google is path G2, not G1.** 🌐 Google's own MCP suite (docs updated
+with a source: Google is path G2, not G1.**  Google's own MCP suite (docs updated
 2026-08-20) **still** requires manually configuring an OAuth consent screen + client ID.
 
 | | | |
@@ -983,8 +983,8 @@ needs a clear split — because **the three kinds have very different consequenc
 >
 > | | source |
 > |---|---|
-> | *"MCP tools act with your **full Notion permissions**"* — inherits **the entire** permission set of the signed-in user, **not** granted per page | 🌐 `notion.com/help/notion-mcp` |
-> | `scopes_supported: ["default"]` — **exactly one** scope, cannot be split further | 🌐 `mcp.notion.com/.well-known/oauth-authorization-server` |
+> | *"MCP tools act with your **full Notion permissions**"* — inherits **the entire** permission set of the signed-in user, **not** granted per page |  `notion.com/help/notion-mcp` |
+> | `scopes_supported: ["default"]` — **exactly one** scope, cannot be split further |  `mcp.notion.com/.well-known/oauth-authorization-server` |
 >
 > Whereas **Notion's static key sees NOTHING by default** — each page has to be manually added as a
 > connection (that's exactly the step in lesson 12 step 1 that keeps getting forgotten). ⇒ At
@@ -1009,7 +1009,7 @@ Google needs **both ② and ③**:
 yourself to Test users*) **don't disappear just because OAuth exists** — they're the step that
 produces ②, and ② has to exist **before** ③ can happen at all.
 
-🌐 Checked 08/23: Google **does** have a vendor-hosted MCP suite for Gmail/Drive/Docs/Sheets/Slides
+ Checked 08/23: Google **does** have a vendor-hosted MCP suite for Gmail/Drive/Docs/Sheets/Slides
 /Calendar/Chat/People, docs updated 2026-08-20, and it **still** requires manually configuring an
 OAuth consent screen + client ID. ⇒ Using the vendor's own build (the user's decision) is correct —
 it removes supply-chain risk §11d, **but doesn't remove the setup step**.
@@ -1031,7 +1031,7 @@ doesn't change by a single word.
 
 The second half of the user's question ① is correct, and it describes GitHub exactly:
 
-| | GitHub remote MCP 🌐 |
+| | GitHub remote MCP  |
 |---|---|
 | Where it runs | **`https://api.githubcopilot.com/mcp/`** — nothing to install, no `npx` |
 | Transport | **Streamable HTTP** — matches the new standard, §2 |
@@ -1394,7 +1394,7 @@ patches above remove two *known* blockers; they don't prove a third one isn't lu
 
 ### 5h·7a. Why Notion's flow could NOT be reused — and this is the easiest place to guess wrong
 
-🌐 GitHub's docs, web flow: `client_secret` **"Required."** PKCE at GitHub is **ADDED ON TOP**, not
+ GitHub's docs, web flow: `client_secret` **"Required."** PKCE at GitHub is **ADDED ON TOP**, not
 **A REPLACEMENT** for the secret — even though the metadata declares
 `code_challenge_methods_supported: ["S256"]`.
 
@@ -1414,7 +1414,7 @@ this time **we'd be manufacturing it for ourselves**.
 | | web flow (Notion) | **device flow (GitHub)** |
 |---|---|---|
 | `client_secret` at code exchange | not needed (DCR grants a public client) | ✅ **not needed** |
-| `client_secret` at **refresh** | not needed | ✅ **not needed** — 🌐 *"Required **unless** the user access token was generated using the device flow"* |
+| `client_secret` at **refresh** | not needed | ✅ **not needed** —  *"Required **unless** the user access token was generated using the device flow"* |
 | `redirect_uri` | required, must match character-for-character | ❌ **DOESN'T EXIST** |
 | `state` · `code_verifier` · a `pending` map | present | ❌ none |
 | DCR | present | ❌ none — `client_id` comes from data |
@@ -3426,7 +3426,7 @@ actually called, it was blocked by `allowedTools`.
 
 ### 8b. ⚠⚠ A one-way rule — annotations are **the server's own HINT**, not a guarantee
 
-🌐 The MCP spec calls them *hints* and states plainly that **a client must not trust them as a
+ The MCP spec calls them *hints* and states plainly that **a client must not trust them as a
 safety guarantee**. A carelessly (or deliberately) written server could declare `readOnly: true`
 for a tool that deletes data.
 
@@ -4005,7 +4005,7 @@ where the three v1 entries diverge:
 |---|---|---|
 | **Files on the machine** | ❌ **none** — this is MCP's own reference server | 🟢 our own icon, **zero risk** |
 | **Notion** | yes | 🟡 ❓ **couldn't confirm** their guideline page in one pass. That's exactly why the `checked_on` field exists |
-| **Google** | yes | 🟠 🌐 **strictest, and already read**: forbids using Google's logo as the app's own logo; requires attribution; only *"for / compatible with"* phrasing is allowed |
+| **Google** | yes | 🟠  **strictest, and already read**: forbids using Google's logo as the app's own logo; requires attribution; only *"for / compatible with"* phrasing is allowed |
 
 > ⚠ **Not finding Notion's page in one pass IS data, not a failure.** A vendor's normal state is
 > *"nobody has gone and read their rules yet,"* and shipping a logo on the strength of *"probably
@@ -4028,7 +4028,7 @@ each vendor's guidelines is an afternoon's work, doable any time, and done **onc
 
 ### 11b. Four hard rules — violating them differs from this by degree, not by kind
 
-🌐 Compiled from Google's brand guidelines (which also govern the Google Workspace Marketplace):
+ Compiled from Google's brand guidelines (which also govern the Google Workspace Marketplace):
 
 1. ❌ **Do not** use their logo as agentco's own logo/icon, or as a feature's icon.
 2. ❌ **Do not** fold their name into a product name, company name, **domain name**, or tagline.
@@ -4046,7 +4046,7 @@ each vendor's guidelines is an afternoon's work, doable any time, and done **onc
 | **When a real logo is allowed** | Only once **that vendor's own brand-guideline page has been read**, using an **official asset file** they published, at the padding/color/ratio they specify, with the link recorded in that entry's record |
 | **Required field on every catalog entry** | `brand: { name, trademark_owner, guideline_url, asset_source, checked_on }` — **an empty field means no logo**. Structure, not discipline |
 | **Customer-built connectors** | icon chosen/uploaded by the **customer**. The risk shifts to them, and they're using it inside their own company — a genuinely different situation |
-| **Screenshots / sales video** | 🌐 Google permits **unmodified, as-is** screenshots with attribution. Read each vendor's own rules — don't infer one vendor's policy from another's |
+| **Screenshots / sales video** |  Google permits **unmodified, as-is** screenshots with attribution. Read each vendor's own rules — don't infer one vendor's policy from another's |
 
 > **A side benefit, and not a small one:** a neutral icon makes **the whole catalog read as one
 > system**, instead of a wall of logos in mismatched colors and ratios. The legal question and the
@@ -6193,7 +6193,7 @@ behavior): `sdk.d.ts` — `McpServerConfig` (1068) · `McpHttpServerConfig` (103
 `paths.ts §companyPaths` · `layout.ts` · `types.ts` §`BUILTIN_TOOLS` · `SPEC-tools-approval.md`
 §5–§12 · `SESSIONS_MEMORY.md` §5n.
 
-**External** (🌐 — checked 2026-08-23): [MCP Transports](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
+**External** ( — checked 2026-08-23): [MCP Transports](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
 · [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) ·
 [MCP Registry](https://registry.modelcontextprotocol.io/) ·
 [n8n MCP Client Tool](https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.toolmcp)

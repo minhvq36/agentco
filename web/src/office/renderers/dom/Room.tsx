@@ -48,6 +48,13 @@ import { FURNITURE, WALL, widthOf, type Piece } from '../../art/furniture';
  * │                                                                          │
  * │ So the rule is one-way: the ART follows the COORDINATES. When a piece    │
  * │ does not fit its station, the piece moves — never the station.           │
+ * │                                                                          │
+ * │ ⚠ 08/09 restated it from the other end, and NOTHING HERE MOVED: two      │
+ * │ stations now name the place they are USED from (`Station.use`), so a     │
+ * │ worker stands at the cabinet and behind the arm bench's desk instead of  │
+ * │ beside them. That is a change to where a PERSON walks, in `core` — the   │
+ * │ furniture did not shift by one unit, and the constraint that the desk    │
+ * │ must actually cover the legs is held in `test/office-view.test.ts`.      │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * `memo` with no live props: the furniture does not move, so it must not

@@ -121,6 +121,31 @@ of column-aligning them. Column-aligning with spaces only works with a monospace
 font, and the chat bubble uses a regular font — and this same command set also
 runs through Telegram, which is even narrower.
 
+### Markdown links: `[label](https://…)` — a SIXTH rule, and the only one that leaves the machine (08/09)
+
+The same renderer, both surfaces (chat and the `.md` preview). The reason is the
+same shape argument tables were added on: a worker with web access produces a
+comparison and puts its sources under it, and printed raw the reader has to pick
+a URL out of the middle of a sentence while the `[…](…)` brackets read as noise.
+
+**Two mechanisms, and neither is optional:**
+
+| | |
+|---|---|
+| `http`/`https` **allowlist**, at PARSE time | The text is model-generated — the premise that already forbids `dangerouslySetInnerHTML` here. `javascript:` is a valid URL in a markdown link; React strips it today, with a warning, but that is a library's courtesy, not our gate. A blocklist would need `data:`, `file:`, `vbscript:` and whatever is invented next; an allowlist needs nothing. ⚠ **Refused = printed verbatim**, never dropped: a link the interface will not open must not become one the reader cannot see |
+| the destination is **readable before the click** (`title`) | `[your invoice](https://evil.example)` is legal markdown, and the label and the address are two different strings the model wrote. Plus `rel="noopener noreferrer"` — without `noopener` the opened page can navigate this one, and this console drives the whole company with no authentication beyond "same machine" |
+
+⚠ **This does NOT reverse *"only a path CODE placed there is clickable"*.** That
+rule protects an assertion about the **user's own files** — underlining a path
+says *"this result exists, here"*. An external link asserts only *"the author
+wrote this address"*, and it is shown as one. Result paths keep their own,
+separate mechanism (`master.message.files`).
+
+⛔ Still not supported, on purpose: reference links (`[a][1]`), bare autolinking
+of a naked URL, images, and a URL containing brackets or spaces. A balanced-paren
+scanner is a parser; this is a rule in a file whose whole argument is *"the
+smallest surface breaks least"*.
+
 ### Markdown tables: THE WHOLE TABLE OR NOTHING (20/08)
 
 The hand-written markdown renderer (`markdown-core.ts` + `markdown.tsx`, shared by

@@ -2,7 +2,7 @@
 
 **Updated:** 2026-09-01 · Rationale and background live in `USE-CASES.md` + `SPEC-*.md`. This file **only has actions and expected results**.
 
-**Legend:** 🖱 click in the UI · 💬 type in the chat box · ⌨ type in the terminal · 📝 open a file in an editor · 🌐 check on the web
+**Legend:** 🖱 click in the UI · 💬 type in the chat box · ⌨ type in the terminal · 📝 open a file in an editor ·  check on the web
 
 ---
 
@@ -576,7 +576,7 @@ this folder, what's taking up the most space, does anything look like junk.
 
 ### Leg B — plug in Google *(baseline for test 14 — don't rework it into "the new way")*
 
-**B1.** 🌐 [Google Cloud Console](https://console.cloud.google.com): create a project → enable **Drive API** + **Sheets API** + **Docs API** → **Credentials** → **OAuth client ID** of type *Desktop app* → set up the consent screen, add your email to *Test users*.
+**B1.**  [Google Cloud Console](https://console.cloud.google.com): create a project → enable **Drive API** + **Sheets API** + **Docs API** → **Credentials** → **OAuth client ID** of type *Desktop app* → set up the consent screen, add your email to *Test users*.
 
 **B2.** Record the `Client ID` and `Client secret`.
 
@@ -843,7 +843,7 @@ Reuse the `Arms` office from test 11.
 | Expected | |
 |---|---|
 | **Before** deleting the connection in step 2: the 🗑 button is **greyed out**, tooltip **names** the connection holding it | ✅ points to the next step, doesn't just say "can't" |
-| **After** step 2: 🗑 is clickable ⇒ unlinks it, 🌐 Notion → Settings → Connections no longer shows agentco | ✅ |
+| **After** step 2: 🗑 is clickable ⇒ unlinks it,  Notion → Settings → Connections no longer shows agentco | ✅ |
 | Having to create a **throwaway office** to clean this up | 🔴 **test failed** — that's the original symptom |
 
 **V7 — two 08/26 bugs (regression check).**
@@ -896,7 +896,7 @@ Reuse the `Arms` office from test 11.
 
 ## Test 13 — GitHub: device code, scope groups, server-side fencing
 
-**Setup (~2 min).** 🌐 `github.com/apps/agent-co-app/installations/new` → **Only select repositories** → tick at least **one private repo** → Install. *(Skip this and every call will return 404.)*
+**Setup (~2 min).**  `github.com/apps/agent-co-app/installations/new` → **Only select repositories** → tick at least **one private repo** → Install. *(Skip this and every call will return 404.)*
 
 ### Leg A — Login, 0 keys
 
@@ -964,7 +964,7 @@ Reuse the `Arms` office from test 11.
 
 | # | Check | Passes when |
 |---|---|---|
-| D-1 | Does the file actually land on GitHub | 🌐 check by opening the repo on the web |
+| D-1 | Does the file actually land on GitHub |  check by opening the repo on the web |
 | D-2 | Whose name is on the commit | **your name**, not a bot |
 | D-3 | Any clone/pull/push happening | **NO** — writes straight to the cloud |
 
@@ -1037,7 +1037,7 @@ Reuse the `Arms` office from test 11.
 
 ## Test 14 — Google via UI ⛔ *not runnable yet*
 
-**1.** 🌐 [Google Cloud Console](https://console.cloud.google.com): create a project → enable the API → **OAuth client ID** of type *Desktop app* → consent screen → add your email to *Test users*. Record the `Client ID` + `Client secret`. *(This step does **NOT go away** — the Google card must say "needs ~10 minutes of one-time setup at Google".)*
+**1.**  [Google Cloud Console](https://console.cloud.google.com): create a project → enable the API → **OAuth client ID** of type *Desktop app* → consent screen → add your email to *Test users*. Record the `Client ID` + `Client secret`. *(This step does **NOT go away** — the Google card must say "needs ~10 minutes of one-time setup at Google".)*
 
 **2.** 🖱 **+ Connection** → the **🗂 Google** card → fill in `Client ID` + `Client secret` → **Test now**
 
@@ -1058,7 +1058,7 @@ Reuse the `Arms` office from test 11.
 |---|---|---|
 | 5 | What **scope** does the consent screen show | exactly what's needed; asking for Gmail too just to read Drive ⇒ wrong server picked |
 | 6 | Does `secret list` show a refresh token | **NO** — the OAuth key is held by the MCP server |
-| 7 | 🌐 [Google account permissions](https://myaccount.google.com/permissions) | the app shows up, and **Revoke kills it instantly** |
+| 7 |  [Google account permissions](https://myaccount.google.com/permissions) | the app shows up, and **Revoke kills it instantly** |
 
 **Cost:** ~$0.10/question
 
@@ -1206,7 +1206,7 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 |---|---|
 | Disappears from the list **immediately** | ✅ |
 | A workspace **currently used by a connection** ⇒ 🗑 is **greyed out**, tooltip names that connection | ✅ |
-| 🌐 Notion → Settings → Connections: agentco **no longer** shows for that workspace | ✅ |
+|  Notion → Settings → Connections: agentco **no longer** shows for that workspace | ✅ |
 | Disconnect network then click 🗑 ⇒ the entry **comes back** with an error message | ✅ |
 
 ### Leg B — Three permission tiers
@@ -1240,7 +1240,7 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 | Expected | |
 |---|---|
 | The employee **succeeds**, reports back the page link/name | ✅ |
-| 🌐 Open Notion — the page really exists | ✅ |
+|  Open Notion — the page really exists | ✅ |
 | The Assistant **doesn't** refuse before handing it off | ✅ |
 
 **11.** 💬 `Change the content of the "permission-test" page to "edited".`
@@ -1248,17 +1248,17 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 | Expected | |
 |---|---|
 | **CANNOT edit it** | ✅ |
-| 🌐 The page content **is unchanged**, not one character | ✅ |
+|  The page content **is unchanged**, not one character | ✅ |
 | The refusal states **the actual reason** (can create new, can't edit) | ✅ not a bare "permission denied" |
 | Blocked at the **deterministic** layer: the SDK returns `Claude requested permissions to use mcp__…__notion-update-page, but you haven't granted it yet.` | ✅ |
 
-**12.** 💬 `Delete the "permission-test" page.` ⇒ **CANNOT delete it**, 🌐 page still exists.
+**12.** 💬 `Delete the "permission-test" page.` ⇒ **CANNOT delete it**,  page still exists.
 
 **13.** 🖱 plug in Notion at the **Full access** tier (28 actions) → wire it to the same employee → unplug the tier-2 arm → 💬 `Change the content of the "permission-test" page to "edited".`
 
 | Expected | |
 |---|---|
-| This time it **succeeds**, 🌐 content is changed | ✅ |
+| This time it **succeeds**,  content is changed | ✅ |
 | The Assistant **doesn't** repeat its own refusal from step 11 | ✅ `reachDiff` fires the line `+ Notion — read + write + edit/delete → <employee>` |
 
 **14.** 📝 `company/company.yaml` — action counts must match:
@@ -1411,7 +1411,7 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 
 ### Leg 0 — Seed data for measurement ⏱ ~8 minutes
 
-**0.1.** 🌐 `linear.app` → **Sign up** (Free plan).
+**0.1.**  `linear.app` → **Sign up** (Free plan).
 
 **0.2.** Name the workspace `agentco-test`; team `Engineering`, prefix **`ENG`**.
 
@@ -1501,7 +1501,7 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 |---|---|
 | D-1 | **Blocked** |
 | D-2 | ⭐ Blocked because that action **DOESN'T EXIST** in the server's returned action list. Error is `you haven't granted it yet` ⇒ the read-only URL isn't being enforced, we're doing the blocking on the vendor's behalf |
-| D-3 | 🌐 `ENG-5` **is still Backlog** |
+| D-3 |  `ENG-5` **is still Backlog** |
 | D-4 | The Assistant correctly states the tier when asked *"why can't you do this"* |
 
 **8.** ⌨ with the **same** read-tier key, call `…/mcp` directly with a `scripts/` script (bypassing the UI) then try a write ⇒ still **rejected**, this time by the **key's `read` scope**.
@@ -1511,7 +1511,7 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 | Expected | |
 |---|---|
 | All three **succeed** | ✅ |
-| 🌐 verify by eye: `ENG-6` exists, `ENG-5` is Todo, `ENG-1` has a comment | ✅ |
+|  verify by eye: `ENG-6` exists, `ENG-5` is Todo, `ENG-1` has a comment | ✅ |
 | The comment is under **your account name** | ✅ |
 | 📝 the audit log records all 3 write calls | ✅ |
 
@@ -1535,7 +1535,7 @@ Requires test 12 already done (Notion plugged in, at least one knowledge note me
 
 | # | Check | Passes when |
 |---|---|---|
-| V-1 | Unlink the Linear workspace from the account screen | 🌐 Linear → Settings → Applications: `agentco` **no longer there** |
+| V-1 | Unlink the Linear workspace from the account screen |  Linear → Settings → Applications: `agentco` **no longer there** |
 | V-2 | Disconnect network then hand off a Linear job | gets a **readable error**, not the employee making up an answer |
 | V-3 | Delete `access_token` from `secrets.json` (keep `refresh_token`) then run | **self-refreshes** then continues |
 | V-4 | 📝 `company.yaml` after plugging in both tiers | shows **which arm goes where**, does **not** show the key |
@@ -1932,7 +1932,7 @@ it to **one** employee. Archive one employee. Unwire one employee.
 | E-5 | While a worker is mid-walk to the bookshelf, hit **Esc** (`/stop`) | walking stops **where it is**, bubbles clear. `/stop` looks like a stop | they finish the walk first ⇒ trips are queued instead of abandoned |
 | E-6 | A job where a task fails | ⚠ marker, the bubble holds the reason and **does not auto-clear**; no filing-desk trip | it clears itself ⇒ the one message the user needed vanished |
 | E-7 | A `deliver: reply` office (Test 2): ask a question | **the employee** gets the answer bubble, not the assistant; no file lands on the desk | the assistant speaks ⇒ the two delivery shapes look identical |
-| E-8 | Ask a general question in an office with nobody staffed (`lookup`, web) | the assistant stays put with a 🌐 bubble | it walks to the bookshelf ⇒ `reading: 'web'` is being drawn as `library` |
+| E-8 | Ask a general question in an office with nobody staffed (`lookup`, web) | the assistant stays put with a  bubble | it walks to the bookshelf ⇒ `reading: 'web'` is being drawn as `library` |
 | E-9 | Ask a question about a document in the library (`lookup`, files) | the assistant **walks to the bookshelf**, reads, returns to centre-front | |
 | E-10 | 💬 `/clear` | every bubble in the room clears; **nobody moves** | |
 | E-11 | Drop a thick PDF into the library while nothing else is running | the bookshelf shows it being filed. **No character is involved** — this is the user filing, not an employee working | someone walks over ⇒ the room invented an employee action |

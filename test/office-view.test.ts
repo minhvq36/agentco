@@ -11,7 +11,10 @@ import {
   BODY_TALL,
   CH_H,
   COOLER,
+  DESK_PIECES,
   PLANT,
+  STATIONS,
+  usedFrom,
 } from '../dist/core/office-floor.js';
 import {
   CAST,
@@ -91,6 +94,98 @@ test('🔴 PLANT.halfW and COOLER.halfW are the ARTWORK, not two numbers somebod
     assert.ok(half >= measured, `${what}: core says halfW ${half}, the art measures ${measured.toFixed(2)}`);
     assert.ok(half - measured < 1, `${what}: halfW ${half} has drifted off the art's ${measured.toFixed(2)}`);
   }
+});
+
+/**
+ * 🔴 THE ROOM IS ALWAYS LIT — AND A HAND-KEPT LIST CANNOT KNOW THAT. (08/09)
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE BLACK BUBBLE. `.office-root` pins the app's colour tokens to their    │
+ * │ light values, because the room does not follow the app theme. The pin     │
+ * │ was written by walking the tokens somebody thought of, and                │
+ * │ `--color-danger-soft` was not one of them — it is used by exactly one     │
+ * │ rule, the ERROR bubble, so it stayed invisible until a task failed on     │
+ * │ the dark theme: `#40201a` behind `#232019` text, over a light floor.      │
+ * │                                                                          │
+ * │ ⚠ THE RULE EXISTED AND THE MECHANISM DID NOT. This reads both halves out  │
+ * │ of the stylesheet — every `var(--color-…)` the office subtree mentions,   │
+ * │ and every token the pin declares — so a token that arrives LATER is       │
+ * │ caught by the file that introduces it rather than by whoever next looks   │
+ * │ at a bubble.                                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 every app colour the office uses is PINNED to its light value', () => {
+  const office = path.join(
+    url.fileURLToPath(new URL('..', import.meta.url)),
+    'web',
+    'src',
+    'office',
+  );
+  const files = ['renderers/dom/office.css', 'renderers/dom/Room.tsx', 'renderers/dom/DomScene.tsx'];
+  const used = new Set<string>();
+  for (const f of files) {
+    for (const m of fs.readFileSync(path.join(office, f), 'utf8').matchAll(/var\((--color-[a-z-]+)/g)) {
+      used.add(m[1]!);
+    }
+  }
+  assert.ok(used.size > 5, 'premise: the regex found no tokens at all — it is reading the wrong thing');
+
+  const css = fs.readFileSync(path.join(office, 'renderers/dom/office.css'), 'utf8');
+  const block = /\.office-root,\s*\.office-light\s*\{([\s\S]*?)\}/.exec(css);
+  assert.ok(block, 'premise: the pin block is no longer where this test looks for it');
+  const pinned = new Set([...block[1]!.matchAll(/(--color-[a-z-]+)\s*:/g)].map((m) => m[1]!));
+
+  const loose = [...used].filter((t) => !pinned.has(t)).sort();
+  assert.deepEqual(
+    loose,
+    [],
+    `these flip with the app theme inside a room that never does: ${loose.join(', ')}`,
+  );
+});
+
+/**
+ * 🔴 THE PERSON AT THE ARM BENCH — A CONSTRAINT THAT SPANS TWO FILES. → §17f′
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ "BEHIND THE DESK" IS ONLY TRUE IF THE DESK IS DRAWN THERE, AND IS TALL   │
+ * │ ENOUGH.                                                                  │
+ * │                                                                          │
+ * │ `core` picks the standing point from a RECTANGLE (312 wide); the desk    │
+ * │ that has to cover the legs is a PNG (161 wide) whose size lives in       │
+ * │ `art/furniture.ts`. Get it wrong in the cheap direction — a re-cut sheet │
+ * │ with a different aspect ratio — and nothing is out of place on screen:   │
+ * │ a person simply stands in a gap of floor behind a desk that no longer    │
+ * │ reaches them, which reads as a rendering bug and will be looked for in   │
+ * │ the image file. Same arrangement as `CHESS_SEAT`, one desk over.         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 the arm bench standing point is inside the desk that is DRAWN, and covered by it', () => {
+  const bench = STATIONS.arm;
+  const at = usedFrom(bench);
+  assert.ok(at, 'premise: the arm bench declares where it is used from');
+
+  const desk = DESK_PIECES.find((p) => p.id === 'desk-laptop');
+  assert.ok(desk, 'premise: the arm bench desk is a sorted piece with its own row');
+
+  const w = furnitureWidth('desk-laptop');
+  const h = num('furniture.ts', /'desk-laptop':\s*\{[^}]*\bh:\s*([0-9.]+)/);
+
+  // Inside the drawn top, with a body's shoulder-width of margin either side —
+  // half a person hanging past the end of the desk is not standing at it.
+  assert.ok(
+    Math.abs(at.x - desk.x) < w / 2 - BODY_HALF_W / 2,
+    `standing at x ${at.x} on a desk drawn ${w.toFixed(0)} wide, centred on ${desk.x}`,
+  );
+
+  const back = desk.baseY - at.y;
+  assert.ok(back > 0, 'in front of the desk is standing NEAR the laptop, not AT it');
+  assert.ok(
+    h > back,
+    `the desk is ${h} tall and the person stands ${back} behind it — nothing would cover them`,
+  );
+  // …and not so far back that the desk swallows the knees. Half the art's height
+  // is the shin; past that the figure starts reading as a bust on a shelf.
+  assert.ok(back < h / 2 + 20, `${back} behind a ${h}-tall desk hides too much of the body`);
 });
 
 test('🔴 BODY_HALF_W and BODY_TALL still describe the sheets they were measured off', () => {

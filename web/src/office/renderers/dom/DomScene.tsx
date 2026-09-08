@@ -47,15 +47,8 @@ export const DomScene = forwardRef<SceneHandle, SceneProps>(function DomScene(
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const tokenLayer = useRef<SVGGElement | null>(null);
-  /**
-   * id → the elements the per-frame channel writes to. Never React state.
-   *
-   * `onTop` rides along because `apply()` must NOT write a `z-index` for somebody
-   * who has a fixed one — the assistant. Re-deriving that from the actor list on
-   * every frame would be a lookup per person per frame to answer a question that
-   * changes when the roster does. → §17d
-   */
-  const els = useRef(new Map<string, { box: HTMLElement; art: HTMLElement; onTop: boolean }>());
+  /** id → the elements the per-frame channel writes to. Never React state. */
+  const els = useRef(new Map<string, { box: HTMLElement; art: HTMLElement }>());
 
   /**
    * THE PER-FRAME CHANNEL. → `scene.ts §SceneHandle`
@@ -85,10 +78,11 @@ export const DomScene = forwardRef<SceneHandle, SceneProps>(function DomScene(
          * person against the chess table. Furniture in this same stage carries
          * the same number, computed from its `baseY` once at render.
          *
-         * ⚠ NOT for `onTop` — the assistant holds a fixed z from React, and
-         * overwriting it here would sink it behind whoever walked in front.
+         * ⚠ NO EXCEPTIONS ANY MORE. The assistant used to hold a fixed z and be
+         * skipped here; §17d′ removed it, so this line now governs every body
+         * in the room and there is nothing to keep in step with it.
          */
-        if (!el.onTop) el.box.style.zIndex = String(Math.round(y));
+        el.box.style.zIndex = String(Math.round(y));
       },
       token(from, to, kind) {
         const layer = tokenLayer.current;
@@ -264,13 +258,13 @@ export const DomScene = forwardRef<SceneHandle, SceneProps>(function DomScene(
   }, []);
 
   const bind = useCallback(
-    (id: string, onTop: boolean) => (box: HTMLDivElement | null) => {
+    (id: string) => (box: HTMLDivElement | null) => {
       if (!box) {
         els.current.delete(id);
         return;
       }
       const art = box.querySelector<HTMLElement>('.actor-art');
-      if (art) els.current.set(id, { box, art, onTop });
+      if (art) els.current.set(id, { box, art });
     },
     [],
   );
@@ -485,7 +479,7 @@ function Actor({
   onSelect,
 }: {
   view: ActorView;
-  bind(id: string, onTop: boolean): (el: HTMLDivElement | null) => void;
+  bind(id: string): (el: HTMLDivElement | null) => void;
   onSelect(id: string): void;
 }) {
   const thinking = !view.say && view.status === 'working';
@@ -493,7 +487,7 @@ function Actor({
 
   return (
     <div
-      ref={bind(view.id, !!view.onTop)}
+      ref={bind(view.id)}
       className={`actor${view.selected ? ' is-selected' : ''}${view.status ? ` is-${view.status}` : ''}`}
       /* ⚠ Per-CHARACTER, so it has to be on the actor rather than on the stage:
          `--sprite-k` is inherited by the drawing AND by the ground shadow, which
@@ -503,17 +497,12 @@ function Actor({
         {
           '--sprite-k': scaleFor(view.character),
           '--sit-lift': sitLiftFor(view.character),
-          /**
-           * 🔴 THE ASSISTANT IS NEVER BEHIND ANYBODY. → §17d
+          /*
+           * 🔴 THE ASSISTANT'S FIXED `zIndex` WAS HERE AND IS GONE. → §17d′
            *
-           * A stated exception to `z = round(y)`, not a hole in it: the assistant
-           * is the one figure the user must never have to hunt for, and it stands
-           * centre-front where a worker crossing the room would otherwise pass in
-           * front of it. `WORLD.h` is the largest `y` any body can have, so `+1`
-           * is the smallest number that wins — a magic 9999 would be a second,
-           * unrelated fact about the room.
+           * `z = round(y)` now has NO exception: `apply()` writes it for every
+           * body on the first frame, so there is nothing to set here.
            */
-          ...(view.onTop ? { zIndex: WORLD.h + 1 } : {}),
         } as React.CSSProperties
       }
     >

@@ -15,6 +15,74 @@ const sketch = (src: string): string =>
     .join('|');
 
 
+// ───────────────────────────────────────────────────────── links (08/09)
+
+const link = (src: string) => spansOf(src).find((s) => s.href);
+
+test('🔴 `[label](https://…)` becomes ONE span carrying the destination', () => {
+  const out = spansOf('xem [Notion pricing](https://www.eesel.ai/blog/notion-pricing) nhé'); // i18n-allow-vietnamese: fixture — Vietnamese markdown input
+  assert.deepEqual(
+    out.map((s) => s.text),
+    ['xem ', 'Notion pricing', ' nhé'], // i18n-allow-vietnamese: fixture — Vietnamese markdown input
+    'the text around the link must survive exactly as written',
+  );
+  assert.equal(out[1]!.href, 'https://www.eesel.ai/blog/notion-pricing');
+  assert.equal(out[0]!.href, undefined, 'only the label carries a destination');
+});
+
+test('🔴 ONLY http/https — every other scheme prints VERBATIM, never as a link', () => {
+  // The text is model-generated, so the gate is an allowlist: `data:`,
+  // `file:`, `vbscript:` and whatever comes next are out by construction.
+  for (const url of [
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'file:///etc/passwd',
+    'vbscript:msgbox',
+    '/relative/path',
+    'ftp://host/x',
+  ]) {
+    const src = `see [click me](${url}) now`;
+    assert.equal(link(src), undefined, `${url} must not become a link`);
+    // …and refused is not the same as swallowed: every character still shows.
+    assert.equal(spansOf(src).map((s) => s.text).join(''), src, `${url} lost characters`);
+  }
+});
+
+test('🔴 a link inside a CODE span is not a link — the code rule wins', () => {
+  const out = spansOf('gõ `[a](https://x.test)` vào'); // i18n-allow-vietnamese: fixture — Vietnamese markdown input
+  assert.equal(out.some((s) => s.href), false);
+  assert.equal(out.find((s) => s.code)?.text, '[a](https://x.test)');
+});
+
+test('a bold link keeps BOTH — bold is resolved first and travels with the label', () => {
+  const out = spansOf('**[docs](https://x.test)**');
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.bold, true);
+  assert.equal(out[0]!.href, 'https://x.test');
+  assert.equal(out[0]!.text, 'docs');
+});
+
+test('two links in one line each keep their own destination', () => {
+  const out = spansOf('[a](https://one.test) and [b](https://two.test)').filter((s) => s.href);
+  assert.deepEqual(out.map((s) => s.href), ['https://one.test', 'https://two.test']);
+  assert.deepEqual(out.map((s) => s.text), ['a', 'b']);
+});
+
+test('half a link is not a link, and nothing is lost', () => {
+  for (const src of ['[label](', '[label] (https://x.test)', 'a ] b ( c', '[](https://x.test)']) {
+    assert.equal(link(src), undefined, `"${src}" should print verbatim`);
+    assert.equal(spansOf(src).map((s) => s.text).join(''), src);
+  }
+});
+
+test('⭐ the LABEL may lie about the destination — the parse keeps them separate', () => {
+  // The renderer is what puts the real address in front of the reader
+  // (`title`); this asserts the two strings never get merged on the way there.
+  const out = link('[your invoice](https://evil.test/phish)')!;
+  assert.equal(out.text, 'your invoice');
+  assert.equal(out.href, 'https://evil.test/phish');
+});
+
 test('lone backtick prints verbatim, does NOT swallow the trailing part', () => {
   assert.equal(sketch('giá 100`000 đồng nhé'), 'giá 100`000 đồng nhé'); // i18n-allow-vietnamese: fixture — Vietnamese markdown input
   assert.equal(tokenize('mở ` mà không đóng').filter((t) => t.code).length, 0); // i18n-allow-vietnamese: fixture — Vietnamese markdown input

@@ -115,6 +115,23 @@ export interface CanvasNode {
    * → `office.ts §keyDeadOf`
    */
   keyDead?: string;
+  /**
+   * 🔴 THE ARM NAMES A CREDENTIAL THIS COMPANY DOES NOT HOLD. The name it
+   * asked for. → `office.ts §keyGoneOf` · `secrets.ts §keysFor`
+   *
+   * ⚠ A SECOND FIELD, NOT A SECOND MEANING OF `keyDead`. Dead = the service
+   * REFUSED a sign-in we still hold; gone = there is nothing stored under that
+   * name at all. Measured 08/09: three arms answered 401 for days with every
+   * credential alive and freshly refreshed, so `keyDead` was empty and the
+   * diagram stayed green. The advice differs too — sign in again vs. the key
+   * was never stored — and a confidently wrong instruction costs more than
+   * none.
+   *
+   * ⚠ Deterministic, and that is the whole design: it compares two things we
+   * wrote ourselves (the ledger, the key store). No handshake, no token, so it
+   * cannot be wrong the way a probe can.
+   */
+  keyGone?: string;
   /** Labels of the checkboxes that are on — the panel draws its chips from this. */
   optionLabels?: string[];
   /** There is a browser profile ⇒ the panel shows the "open sign-in window" button. */

@@ -21,7 +21,7 @@ import { findArm, folderRoots } from './catalog.js';
 import { noteRateLimit } from './energy.js';
 import { isAccountName } from './oauth.js';
 import { companyPaths, guardedZone, safeJoin, type GuardedZone, type GuardMode } from './paths.js';
-import { grantFor, injectSecrets, readSecrets } from './secrets.js';
+import { grantFor, injectSecrets, keysFor, readSecrets } from './secrets.js';
 import { buildTaskMessage, buildWorkerPrompt } from './prompt.js';
 import { enforceCap, parseReceipt, repairPrompt } from './receipt.js';
 import { relative } from 'node:path';
@@ -1362,7 +1362,46 @@ type McpServers = NonNullable<Options['mcpServers']>;
  * and "an agent that knows the password".
  */
 function pickMcp(office: LoadedOffice, role: Role): McpServers {
-  const { env, missing } = grantFor(readSecrets(companyPaths(office.companyDir)), role.secrets);
+  const store = readSecrets(companyPaths(office.companyDir));
+  /**
+   * 🔴 THE WIRE IS THE GRANT — READ AT THE POINT OF USE, NOT AT THE POINT OF
+   * WRITING. → docs/SPEC-arms.md §7a · SPEC-tools-approval §7a
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ MEASURED 08/09: NOTION, GITHUB AND LINEAR ALL ANSWERED 401 AT ONCE.      │
+   * │                                                                          │
+   * │ `roles/<id>.yaml` had `mcp:` with the arm wired, the ledger named the    │
+   * │ credential (`arms[id].secrets`), the store HELD it — and the worker      │
+   * │ still launched with an unfilled `${…}` placeholder, so every OAuth arm   │
+   * │ answered 401 and the SDK registered none of their tools. The model then  │
+   * │ told the user *"there is no Notion tool"* — a false statement about      │
+   * │ CAPABILITY, produced by a broken WIRE. Across all 20 roles in the        │
+   * │ user's company, not one declared `secrets:`.                             │
+   * │                                                                          │
+   * │ 🔴 WHY IT WAS EMPTY: there are TWO DOORS that create the same wire, and  │
+   * │ only one carried the credential.                                         │
+   * │   the Connections dialog → `Office.grantArm` → writes `role.mcp` AND     │
+   * │                            `role.secrets`                                │
+   * │   dragging the wire      → `LayoutStore.save` → writes `role.mcp` ONLY   │
+   * │                            (`layout.ts` does not contain the word        │
+   * │                            "secrets" anywhere)                           │
+   * │ And the Try button stayed green throughout: it builds its own grant from │
+   * │ the config's own placeholders, so it tests a set-up the worker never     │
+   * │ gets — the exact drift `armexec.ts` warns about in as many words.        │
+   * │                                                                          │
+   * │ ⇒ FIXED HERE, at the READER, because a third door can be added tomorrow  │
+   * │ and this cannot be bypassed: an arm's own credential follows the wire,   │
+   * │ every time, whoever drew it. `role.secrets` still works and still means  │
+   * │ what it meant — keys granted to the PERSON rather than to a connection.  │
+   * │                                                                          │
+   * │ ⚠ PER ARM, NOT ONE POOLED ENV — and this is STRICTER than before. The    │
+   * │ stdio branch of `injectSecrets` merges the whole key map into a server's │
+   * │ environment, so one pooled grant hands the filesystem server the Notion  │
+   * │ token. Each arm now sees its own credential and the role's own keys, and │
+   * │ nothing else. → `secrets.ts §injectSecrets`                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const { missing } = grantFor(store, keysFor(office.company.arms, role));
   if (missing.length) {
     process.emitWarning(
       /**
@@ -1420,6 +1459,9 @@ function pickMcp(office: LoadedOffice, role: Role): McpServers {
      * ledger, and why a catalog entry plugged into two offices stays a
      * **single hash**. → `secrets.ts §OFFICE_STATE`
      */
+    // ⚠ Built PER SERVER: this arm's own credential plus the role's own keys.
+    // → the box on `keysFor` for why it is not one pooled `env`.
+    const { env } = grantFor(store, keysFor(office.company.arms, role, n));
     const withEnv = prepareArm(n, cfg, env, {
       officeState: path.join(office.paths.state, 'browser'),
       officeDir: office.dir,

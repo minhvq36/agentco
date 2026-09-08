@@ -615,9 +615,9 @@ function cmdSetup(): void {
   say('     ⚠ Leave it on "Testing" for now — we specifically want to measure the 7-day case too.');
   say('');
   say('④ "Credentials" → create a **Desktop app** client. That\'s it. No redirect field to fill in —');
-  say('   🌐 *"The console does not require any additional information to create OAuth 2.0');
+  say('    *"The console does not require any additional information to create OAuth 2.0');
   say('   credentials for desktop applications."* Loopback accepts any port, and');
-  say('   🌐 this flow *"will continue to be supported on desktop apps"* (only iOS/Android/');
+  say('    this flow *"will continue to be supported on desktop apps"* (only iOS/Android/');
   say('   Chrome are being retired).');
   say('   ⚠ ONLY create an extra **Web application** client (redirect `http://localhost:8765/callback`)');
   say('     IF Desktop fails at Q1 — that is a control, not a required step.');

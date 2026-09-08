@@ -82,7 +82,38 @@ export interface Station {
   y: number;
   w: number;
   h: number;
+  /**
+   * 🔴 WHERE THIS OBJECT IS ACTUALLY USED FROM. Tried first; the ring is
+   * overflow. → `usedFrom` · docs/SPEC-office-animation.md §17f′
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ MEASURED 08/09, AND THE PICTURE WAS BACKWARDS.                       │
+   * │                                                                      │
+   * │ `nearestFreeSlot` answers *"which slot is closest to the walker"*,   │
+   * │ and workers arrive from the floor — from the right and below. So the │
+   * │ person READING documents was sent to (449, 483), which is 88 units   │
+   * │ past the cabinet's right edge, while an IDLE colleague stood at      │
+   * │ (292, 462), right in front of it. The one using the object stood     │
+   * │ further from it than the one doing nothing.                          │
+   * │                                                                      │
+   * │ ⚠ NEAREST IS STILL RIGHT FOR THE SECOND PERSON ONWARDS. Varying the  │
+   * │ approach is what keeps two trips from being choreographed identically│
+   * │ (§5b) — it was only ever wrong as the answer for the FIRST one.      │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  use?: UsePlace;
 }
+
+/**
+ * Which side of its object a station is used from.
+ *
+ * `front`  in front of it, dead centre — the ring's own first slot, so this
+ *          adds a PREFERENCE and not one new coordinate.
+ * `behind` the far side of a desk, where somebody typing at it stands. The desk
+ *          is a sorted piece, so it is drawn over them and they read as being
+ *          AT it rather than in front of it. → `BEHIND_DESK` · §17b
+ */
+export type UsePlace = 'front' | 'behind';
 
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -129,8 +160,15 @@ export interface Station {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export const STATIONS: Record<StationId, Station> = {
-  library: { id: 'library', x: 176, y: 196, w: 214, h: 208 },
-  arm: { id: 'arm', x: 120, y: 620, w: 312, h: 116 },
+  library: { id: 'library', x: 176, y: 196, w: 214, h: 208, use: 'front' },
+  arm: { id: 'arm', x: 120, y: 620, w: 312, h: 116, use: 'behind' },
+  /**
+   * ⚠ NO `use`, AND THE ABSENCE IS A DECISION. This is the only station with a
+   * crowd — every finished task with files walks here (§6d) — so the ring's
+   * spread is doing real work, and the user has not reported it standing
+   * anybody in the wrong place. Giving all three a primary place because two of
+   * them needed one is a change nobody asked for on the busiest object.
+   */
   artifacts: { id: 'artifacts', x: 790, y: 432, w: 292, h: 116 },
 };
 
@@ -727,6 +765,28 @@ export const HOME_SPOTS: readonly Point[] = Array.from({ length: 10 }, (_, i) =>
 const IN_FRONT = 34;
 
 /**
+ * 🔴 HOW FAR BEHIND A DESK SOMEBODY STANDS TO WORK AT IT. → §17b · `usedFrom`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ ONE NUMBER, TWO CALLERS, AND IT WAS A LITERAL IN ONE OF THEM.            │
+ * │                                                                          │
+ * │ The three idle places behind the filing desk were `FILING.baseY - 48`,   │
+ * │ typed here; the arm bench now needs the same relationship for the person │
+ * │ actually typing at it. Two `- 48`s in two files is the pair that drifts, │
+ * │ and this one drifts INVISIBLY: nothing is out of place, somebody just    │
+ * │ stands a little more in front of one desk than the other.                │
+ * │                                                                          │
+ * │ ⚠ IT IS AN OCCLUSION NUMBER, NOT A GAP. Standing behind a desk only      │
+ * │ reads as *at* it because the desk is a sorted piece drawn over the legs  │
+ * │ (`z-index = round(baseY)`, and the person's is `round(y)`). Measured:    │
+ * │ 48 hides 57 units of shin at the filing desk (art 105 tall) and 68 at    │
+ * │ the arm bench (116 tall) — both well short of the knee, which is what    │
+ * │ keeps it reading as a person and not as a bust on a shelf.               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const BEHIND_DESK = 48;
+
+/**
  * 🔴 HOW MUCH OF AN OBJECT MUST STILL BE SEEN PAST THE PERSON AT IT. → §17f④
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -810,9 +870,9 @@ export const IDLE_SPOTS: readonly Point[] = [
   { x: FILING.x - 106, y: FILING.baseY + 40 },
   { x: FILING.x, y: FILING.baseY + 40 },
   { x: FILING.x + 106, y: FILING.baseY + 40 },
-  { x: FILING.x - 106, y: FILING.baseY - 48 },
-  { x: FILING.x, y: FILING.baseY - 48 },
-  { x: FILING.x + 106, y: FILING.baseY - 48 },
+  { x: FILING.x - 106, y: FILING.baseY - BEHIND_DESK },
+  { x: FILING.x, y: FILING.baseY - BEHIND_DESK },
+  { x: FILING.x + 106, y: FILING.baseY - BEHIND_DESK },
   { x: FILING.x - 190, y: FILING.baseY },
   { x: FILING.x + 190, y: FILING.baseY },
   ...HOME_SPOTS,
@@ -1024,26 +1084,103 @@ export function ringSlots(s: Station): Point[] {
 }
 
 /**
+ * 🔴 THE ONE PLACE THIS OBJECT IS USED FROM — or `null` if it has none.
+ * → `Station.use` · docs/SPEC-office-animation.md §17f′
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ IT ADDS A PREFERENCE, AND — for `front` — NOT ONE NEW COORDINATE.        │
+ * │                                                                          │
+ * │ `front` IS the ring's first slot, which has always been the dead-centre  │
+ * │ one. Nothing about the floor plan moves; what changes is that it is      │
+ * │ ASKED FOR first instead of being one of six candidates a distance test   │
+ * │ almost never picked.                                                     │
+ * │                                                                          │
+ * │ ⚠ `behind` IS a new point, and it is centred on the desk rather than on  │
+ * │ the laptop drawn on it. Measured 08/09 in `desk-laptop.png`: the laptop  │
+ * │ centres at 0.4878 of the image width, i.e. **2 world units** left of the │
+ * │ desk's own centre — a body is 124 wide. A `laptopOffset` would be a      │
+ * │ measurement of an image that somebody has to keep in step with the art   │
+ * │ for two units nobody can see. → `art/furniture.ts`                       │
+ * │                                                                          │
+ * │ ⚠ NO FURNITURE MOVED FOR ANY OF THIS. The user's own constraint, and it  │
+ * │ is also `Room.tsx`'s standing rule: the art follows the coordinates,     │
+ * │ never the other way round.                                               │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function usedFrom(s: Station): Point | null {
+  if (!s.use) return null;
+  if (s.use === 'front') return ringSlots(s)[0]!;
+  return { x: s.x + s.w / 2, y: s.y + s.h - BEHIND_DESK };
+}
+
+/**
+ * 🔴 WHERE THE SEVENTH PERSON AT ONE STATION STANDS. → §17f″
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE COMMENT PROMISED THIS AND THE CODE DID THE OPPOSITE.                 │
+ * │                                                                          │
+ * │ `nearestFreeSlot` read: *"every slot taken ⇒ stop at the ring's EDGE     │
+ * │ rather than stack two people on one spot"* — and returned **one point**, │
+ * │ the same one, to everybody. Measured with nine workers all reading       │
+ * │ documents: six took the ring, and the last **three stood on (283, 500)**,│
+ * │ one body inside another. A sentence is not a mechanism.                  │
+ * │                                                                          │
+ * │ ⚠ SPACED BY A WHOLE BODY, not by a gap that looks about right:           │
+ * │ `BODY_HALF_W × 2` is the width of the figure, so two neighbours here     │
+ * │ touch and never overlap. The +6 keeps a hair of floor between them.      │
+ * │                                                                          │
+ * │ ⚠ CENTRE OUTWARDS, and points outside the safe area are DROPPED rather   │
+ * │ than clamped: clamping two of them lands both on the same edge x, which  │
+ * │ is the stacking this exists to end, wearing a different coordinate.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function overflowSlots(s: Station): Point[] {
+  const cx = s.x + s.w / 2;
+  const y = s.y + s.h + 96;
+  if (y < SAFE.y0 || y > SAFE.y1) return [];
+  const out: Point[] = [];
+  for (let i = 0; i < 7; i++) {
+    // 0, −1, +1, −2, +2, … so the row grows outwards from the middle.
+    const step = i === 0 ? 0 : Math.ceil(i / 2) * (i % 2 === 1 ? -1 : 1);
+    const x = cx + step * (BODY_HALF_W * 2 + 6);
+    if (x >= SAFE.x0 && x <= SAFE.x1) out.push({ x, y });
+  }
+  return out;
+}
+
+/**
  * Picks the free slot NEAREST to where the walker is standing right now.
  *
  * Nearest, not first: it makes the approach direction depend on where somebody
  * came from, so the same trip never looks identically choreographed twice — and
- * it costs one comparison. Every slot taken ⇒ stop at the ring's edge rather
- * than stack two people on one spot.
+ * it costs one comparison. Every slot taken ⇒ a place on the ring's edge, one
+ * body apart from the last one. → `overflowSlots`
  */
 export function nearestFreeSlot(s: Station, from: Point, taken: readonly Point[]): Point {
-  const slots = ringSlots(s);
+  const isTaken = (p: Point): boolean =>
+    taken.some((q) => Math.abs(q.x - p.x) < 1 && Math.abs(q.y - p.y) < 1);
+
   let best: Point | undefined;
   let bestD = Infinity;
-  for (const slot of slots) {
-    if (taken.some((p) => Math.abs(p.x - slot.x) < 1 && Math.abs(p.y - slot.y) < 1)) continue;
+  for (const slot of ringSlots(s)) {
+    if (isTaken(slot)) continue;
     const d = (slot.x - from.x) ** 2 + (slot.y - from.y) ** 2;
     if (d < bestD) {
       bestD = d;
       best = slot;
     }
   }
-  return best ?? { x: s.x + s.w / 2, y: s.y + s.h + 96 };
+  if (best) return best;
+
+  const edge = overflowSlots(s);
+  for (const p of edge) if (!isTaken(p)) return p;
+  /**
+   * ⚠ THE LAST RESORT STILL STACKS, and it is stated rather than hidden: past
+   * 6 ring slots + the edge row, the room has genuinely run out of floor at
+   * this object. Reachable only with ~12 workers at ONE station in ONE office,
+   * which the scheduler does not produce today.
+   */
+  return edge[edge.length - 1] ?? { x: s.x + s.w / 2, y: s.y + s.h + 96 };
 }
 
 /**
@@ -1194,8 +1331,18 @@ export function direct(input: DirectInput): Placement[] {
   const out: Placement[] = [];
   const taken: Point[] = [];
 
+  /**
+   * ⚠ THE PLACE IT IS USED FROM FIRST, THE RING AFTER — and "free" means the
+   * same thing for both, because `taken` is the same list. A second person
+   * reading documents still gets a nearest-free slot; they simply cannot have
+   * the one the first person is standing in. → `usedFrom` · §17f′
+   */
   const slot = (id: StationId, from: Point): Point => {
-    const p = nearestFreeSlot(STATIONS[id], from, taken);
+    const station = STATIONS[id];
+    const first = usedFrom(station);
+    const free =
+      first && !taken.some((p) => Math.abs(p.x - first.x) < 1 && Math.abs(p.y - first.y) < 1);
+    const p = free ? first : nearestFreeSlot(station, from, taken);
     taken.push(p);
     return p;
   };
@@ -1318,4 +1465,63 @@ export function direct(input: DirectInput): Placement[] {
   });
 
   return out;
+}
+
+/** Who just stopped resting, and who is resting after this pass. → `releasedFromRest` */
+export interface Released {
+  /** Send these out of the break area NOW, in placement order. */
+  go: string[];
+  /** Everybody resting as of this pass. Hand it back on the next call. */
+  resting: Set<string>;
+}
+
+/**
+ * 🔴 WHO WAS JUST PUT BACK ON THE FLOOR — the moment a wire is plugged in.
+ * → docs/SPEC-office-animation.md §17f · §9
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE TARGET `direct()` GIVES THEM IS NEVER APPLIED, AND THAT IS BY        │
+ * │ DESIGN — WHICH IS WHY THIS EXISTS.                                       │
+ * │                                                                          │
+ * │ Reconnected, no task ⇒ `{ target: home, roam: true }`. The caller must   │
+ * │ NOT `setTarget` anybody roaming (two owners of one destination, and the  │
+ * │ idle timer wins a second later), so the only thing that ever moves them  │
+ * │ is that timer — whose FIRST delay is seeded, `hash32 % 45 s`. Measured   │
+ * │ in the live room: they stand up on the spot and leave the break area     │
+ * │ somewhere between 0 and 45 seconds later. The user reported exactly      │
+ * │ that, and *"not too bad"* is not the same as right: standing up inside   │
+ * │ the break area says they are still resting.                              │
+ * │                                                                          │
+ * │ ⚠ A TRANSITION, NOT A POSITION TEST. *"Anybody roaming who is standing   │
+ * │ on the rug"* would fire again on every SSE event for as long as they     │
+ * │ were stuck there — and each firing re-arms the hold, so a crowded floor  │
+ * │ (`pickIdleSpot` → `null`) would keep resetting the very timer that is    │
+ * │ their way out. One release, one nudge, then the ordinary cadence.        │
+ * │                                                                          │
+ * │ ⚠ THE SET IS REBUILT, NOT EDITED. Somebody deleted while resting would   │
+ * │ otherwise sit in it for the life of the tab, and come back from the dead │
+ * │ the day their id was hired again — the ledger bug, in a `Set`.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ It says WHO, never WHERE. The destination stays `pickIdleSpot`'s, through
+ * the same `Stage.nudge` the opening walk already uses — one code path for "an
+ * idle worker walks somewhere", and one place that can put a body inside a wall.
+ */
+export function releasedFromRest(
+  prev: ReadonlySet<string>,
+  placements: readonly Placement[],
+): Released {
+  const go: string[] = [];
+  const resting = new Set<string>();
+  for (const p of placements) {
+    if (p.rest) {
+      resting.add(p.id);
+      continue;
+    }
+    // ⚠ `roam` is the whole test on this side: somebody released STRAIGHT into a
+    // task is already being walked by their placement, and nudging them would be
+    // a second owner of that trip. → `Placement.roam`
+    if (p.roam && prev.has(p.id)) go.push(p.id);
+  }
+  return { go, resting };
 }

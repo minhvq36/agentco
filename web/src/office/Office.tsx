@@ -6,6 +6,7 @@ import {
   dealSeats,
   direct,
   pickIdleSpot,
+  releasedFromRest,
   walkersAtOpen,
   type DirectAgent,
   type DirectLive,
@@ -303,6 +304,37 @@ export default function Office() {
   }, [placements]);
 
   /**
+   * 🔴 A WIRE JUST PLUGGED IN ⇒ THAT PERSON LEAVES THE BREAK AREA NOW.
+   * → `core/office-floor §releasedFromRest`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ IT MUST RUN AFTER THE TWO EFFECTS ABOVE, AND THAT IS WHY IT IS BELOW   │
+   * │ THEM — the same dependency the opening walk already has, one step        │
+   * │ longer. `nudge` refuses anybody not roaming, and `roam` is set by the    │
+   * │ placement effect; it also asks `st.idleSpot`, which the effect after     │
+   * │ that one installs. Declared first, this would silently do nothing at     │
+   * │ all: no target, no walk, and nothing to say so.                          │
+   * │                                                                          │
+   * │ ⚠ REDUCED MOTION IS SILENT HERE THROUGH THE SAME GATE, not a second      │
+   * │ check: `setRoam` refuses to set `roam` at all, so `nudge` returns.       │
+   * │                                                                          │
+   * │ ⚠ AND `nudge` IS ALL IT DOES. The trip is the ordinary idle trip — same  │
+   * │ chooser, same cadence afterwards — because "the room found them a place  │
+   * │ to stand" and "the room walked them out of the break area" are the same  │
+   * │ event, and giving the second one its own kind of walk is the second      │
+   * │ mechanism this loop has already deleted once (`breakSpot`).              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const wasResting = useRef<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const st = stage.current;
+    if (!st) return;
+    const { go, resting } = releasedFromRest(wasResting.current, placements);
+    wasResting.current = resting;
+    for (const id of go) st.nudge(id);
+  }, [placements]);
+
+  /**
    * THE TWO TOKENS, fired off STATE TRANSITIONS — no new events needed.
    *
    * `task.done` is the ONE moment a worker really reports to the assistant: the
@@ -401,13 +433,11 @@ export default function Office() {
         const say = recentReply?.role === role ? recentReply.text : (st?.say ?? null);
         return view(n.id, labelFor(role || n.id), n.character ?? 0, say, n.tint, st);
       });
-    // ⚠ `onTop` is set HERE, where the office's architecture is already known —
-    // the renderer is told what to do, not who this is. → `scene.ts §onTop`
+    // ⚠ The assistant is LAST, and that is now the whole of its privilege: it
+    // sorts by `y` like everybody else (§17d′ removed `onTop`), and being last
+    // only breaks a tie between two bodies standing on the same line.
     if (assistant) {
-      list.push({
-        ...view(assistant.id, assistant.label, assistant.character ?? 0, activity, assistant.tint),
-        onTop: true,
-      });
+      list.push(view(assistant.id, assistant.label, assistant.character ?? 0, activity, assistant.tint));
     }
     return list;
   }, [agents, assistant, live, activity, recentReply, selected, placed]);
@@ -460,7 +490,7 @@ const NEEDS_WALK_STATE = false;
 
 /** A glyph for the two places that have no station of their own. */
 function placeGlyph(place: WorkPlace | undefined): string {
-  if (place === 'web') return '🌐';
+  if (place === 'web') return '';
   if (place === 'shell') return '›_';
   return '';
 }

@@ -732,6 +732,7 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'node.knowledgeHint': 'bấm để mở',
   'node.armMissing': 'không còn cắm',
   'node.armKeyDead': 'cần đăng nhập lại',
+  'node.armKeyGone': 'chưa có chìa',
   'node.armFallback': 'kết nối',
   'node.roleMissing': 'không tìm thấy vai trò',
   'node.resting': 'đang nghỉ',

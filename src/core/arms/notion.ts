@@ -4,7 +4,7 @@
  * ⚠ Notion NO LONGER goes through `npx`, and that absence is a decision (25/08).
  *
  * The old version pinned `@notionhq/notion-mcp-server@2.5.1` — a LOCAL, FIRST-
- * PARTY package. But the first party let go of it: 🌐 *"We may sunset this local
+ * PARTY package. But the first party let go of it:  *"We may sunset this local
  * MCP server repository"* + *"issues and pull requests here are not actively
  * monitored"*.
  *
@@ -22,7 +22,7 @@ export const NOTION_ARM: CatalogArm = {
   /**
    * ⚠ THIS SENTENCE HAS TO STATE THE RADIUS, and it runs against intuition. → §5h·3
    *
-   * Notion's OAuth INHERITS THE SIGNED-IN PERSON'S ENTIRE PERMISSIONS: 🌐 *"MCP
+   * Notion's OAuth INHERITS THE SIGNED-IN PERSON'S ENTIRE PERMISSIONS:  *"MCP
    * tools act with your full Notion permissions"*, and the metadata declares
    * `scopes_supported: ["default"]` — ONE scope, not divisible.
    *

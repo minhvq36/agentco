@@ -30,6 +30,7 @@ import type {
 import { plural, resolveLocale, setLocale, t } from '@i18n';
 
 import { mergeUserEcho } from './chat-echo';
+import { replayable } from './replay';
 
 export interface ChatMessage {
   id: number;
@@ -656,13 +657,16 @@ export const actions = {
      *                 daemon stopping, and what makes the screen match what the
      *                 assistant still remembers.
      *  2. `history` — the daemon's in-memory ring buffer, for LIVE state (a plan
-     *                 in flight, who is doing what). `master.message` is dropped
-     *                 here because step 1 already had it; keeping it prints every
-     *                 message twice.
+     *                 in flight, who is doing what). What it may NOT apply is
+     *                 `replayable`'s list, and it is a list rather than the one
+     *                 `e.type === 'master.message'` test it used to be: an
+     *                 `office.cleared` still sitting in that buffer emptied the
+     *                 chat pane on every reload, hours after the `/clear` that
+     *                 caused it. → `replay.ts`
      */
     for (const e of detail.chat ?? []) applyEvent(e, false);
     for (const e of detail.history) {
-      if (e.type === 'master.message') continue;
+      if (!replayable(e.type)) continue;
       applyEvent(e, false);
     }
   },

@@ -202,11 +202,18 @@ export default function App() {
                     {/*
                       The toolbar is deliberately absent here: every button on it
                       edits or navigates the SHAPE, and the room does not have
-                      one (§10). The plan strip stays — "which step am I on" has
-                      to be answerable with no click, in BOTH views.
+                      one (§10).
+
+                      🔴 AND SO IS THE PLAN STRIP, WHICH REVERSES §11a. It sits
+                      at `bottom-3`, which on the canvas is empty space and in the
+                      room is the FRONT ROW — it covered the people the view
+                      exists to show. The room answers "who is working right now"
+                      by drawing it, and the same question is still one click away
+                      in the chat frame's activity line and in the Plans panel, so
+                      what is lost here is a shortcut, not the only copy of a
+                      fact (§13). → docs/SPEC-office-animation.md §11a
                     */}
                     {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <RoomHint />}
-                    <PlanStrip />
                   </>
                 ) : (
                   <>

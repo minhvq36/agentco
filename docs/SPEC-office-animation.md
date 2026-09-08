@@ -675,7 +675,7 @@ hand-off beat is short, legible, and lands where the user is already looking.
 |---|---|---|
 | `plan.created` | assistant | faces the viewer, plan bubble `…`, the plan strip is already on screen |
 | `task.started` | assistant + worker | assistant turns toward the worker, briefing token flies out; the worker leaves the break area (if it was there) and walks to **its own spot** |
-| `task.progress` **with `at`** | worker | walks to that station's ring · `desk`/`knowledge` → stays at its own spot · `web`/`shell` → stays put, bubble carries a 🌐 / `>_` glyph (§7c) |
+| `task.progress` **with `at`** | worker | walks to that station's ring · `desk`/`knowledge` → stays at its own spot · `web`/`shell` → stays put, bubble carries a  / `>_` glyph (§7c) |
 | `task.progress` **without `at`** | worker | **does not move.** Bubble text updates only. Absence of a place is not a place |
 | `task.done` `status: done` | worker | the hand-off beat, §6d. Character flashes ✓ for ~1.2 s |
 | `task.done` `status: failed`/`blocked` | worker | hand-off beat **without** the desk trip; a ⚠ marker, the bubble holds the reason and does **not** auto-clear |
@@ -685,7 +685,7 @@ hand-off beat is short, legible, and lands where the user is already looking.
 | `master.message` role = an employee | that employee | **that employee** gets the bubble, not the assistant. This is `deliver: reply` and it is a real, visible difference between the two delivery shapes |
 | `office.activity.assistant: 'thinking'`/`'planning'` | assistant | thought bubble `…`, no walking |
 | `office.activity.reading: 'library'` | assistant | **walks to the bookshelf**, reads, returns to centre-front when it clears |
-| `office.activity.reading: 'web'` | assistant | stays put, 🌐 bubble |
+| `office.activity.reading: 'web'` | assistant | stays put,  bubble |
 | `office.cleared` | assistant | every bubble in the room clears; nothing else moves |
 | `library.changed` with `busy > 0` | — | the bookshelf shows *"n"* being filed; **no character** — this is the user dropping files in, not an employee working |
 | `knowledge.changed` | — | nothing. There is no knowledge object (§5a) |
@@ -854,7 +854,7 @@ picker:  `⬡ Diagram | ⌂ Office`.
 | **why not on the server** | identical reasoning to `agentco:office` (`store.ts`): two tabs on two views is legal, and putting it on the server makes one tab kick the other |
 | what survives the switch | **everything.** Header, sidebar, plan strip, toasts, the Inspector, the selected node. Only the main scene swaps |
 | the toolbar | Add employee · Add connection · Rearrange · Fit · Zoom all **hide** in office view. Every one of them edits or navigates the *shape*, which this view does not have (§10) |
-| the plan strip | **stays.** *"Which step am I on"* must be answerable with no click, in both views |
+| the plan strip | 🔴 **hidden here since 08/09 — this line used to read "stays".** It is `absolute bottom-3`, which on the canvas is empty space and in the room is the **front row**: it covered the people the whole view exists to show. *"Which step am I on"* is still answerable without opening the strip — the chat frame's activity line names who is working and on what, the room itself draws it, and the Plans panel is one click — so this costs a shortcut, not the last copy of a fact (§13). ⚠ The rule it bends (`SPEC-ui.md` §6) is about the **canvas**, where nothing is underneath it |
 | first paint | office view is **not** the default. A new user has an empty room and learns nothing from it; they need the diagram to build a company first. Once they have ≥1 employee, a one-line hint offers the room. Their choice then sticks |
 
 ### 11b. The sidebar overlays instead of pushing — **in office view only**
@@ -1420,6 +1420,115 @@ any that somebody is standing on or already walking to**. Not nearest, not
 weighted: nearest turns the map into a rut, and a weighting is a preference nobody
 asked for.
 
+### 17f′. 🔴 A station has a place it is USED from — the ring is overflow (08/09)
+
+> *"The positions for a worker using the arm, and the document cabinet, could be
+> a bit closer — right now they are a little far, or a little off to one side."*
+> · *"Not moving the furniture, only the worker's target position?"* — **correct,
+> and nothing in the room moved by one unit.**
+
+**The picture was backwards, and the measurement says it in one line.** §5b picks
+the ring slot **nearest the walker**, and workers arrive from the floor — from the
+right and below. So:
+
+| | where they were sent | the object, as drawn |
+|---|---|---|
+| reading documents | **(449, 483)** — 88 units past the cabinet's right edge | bookcase + cabinet span x 194…362 |
+| using the arm | **(398, 770)** — 41 units past the desk's right edge, in front of it | `desk-laptop` spans x 195…357 |
+| *an idle colleague* | **(292, 462)** — right in front of the cabinet | — |
+
+The person **using** the object stood further from it than the person doing
+nothing. Nearest-free was never wrong about *which* station; it was wrong as the
+answer for the **first** person to arrive.
+
+**`Station.use`** — `front` · `behind` · absent:
+
+| | |
+|---|---|
+| `front` | dead centre in front, and it **adds no coordinate**: it is the ring's own first slot, asked for instead of being one of six candidates a distance test almost never picked. Library ⇒ **(283, 451)**, whose centre falls in the 16-unit gap between the bookcase and the cabinet |
+| `behind` | the far side of a desk, `BEHIND_DESK = 48` above its base — **one constant, two desks**: the three idle places behind the filing desk were a literal `- 48` and now read the same name, held by a test that compares the two gaps. Arm ⇒ **(276, 688)** |
+| absent | the filing desk keeps nearest-free. It is the one station with a crowd — every finished task with files walks there (§6d) — and nobody reported it. Completing the set is a change nobody asked for on the busiest object |
+
+⚠ **The depth sort is what makes `behind` legible, and it is NOT what puts anybody
+there.** `z-index = round(baseY)` for furniture and `round(y)` for people already
+existed (§17b) — it answers *"standing here, who covers whom"*. It does not answer
+*"where does the worker walk"*, which is `nearestFreeSlot`. Drop `use` and the
+worker is still sent in front of the bench, and the sort correctly draws them over
+the desk, because that is where they are standing.
+
+⚠ **Centred on the DESK, not on the laptop drawn on it.** Measured in
+`desk-laptop.png`: the laptop centres at **0.4878** of the image width, i.e. **2
+world units** left of the desk's centre, against a 124-wide body. A
+`laptopOffset` would be a measurement of an image somebody has to keep in step
+with the art, bought for two units nobody can see.
+
+⚠ **The occlusion is a two-file constraint, so the gate sits where both halves are
+visible.** `core` picks the point from a 312-wide rectangle; the desk that must
+cover the legs is a 161-wide PNG whose size lives in `art/furniture.ts`.
+`test/office-view.test.ts` holds them together — the failure it prevents is silent
+(a person standing in a strip of floor behind a desk that no longer reaches them,
+which reads as a rendering bug and gets looked for in the image file).
+
+**What did NOT change:** every station rectangle, every piece of furniture, the
+ring itself, and nearest-free for the second arrival onward — including at the two
+stations that gained a primary place.
+
+### 17d′. 🔴 The assistant is no longer drawn on top — and that was only HALF the report (08/09)
+
+> *"Why is the assistant shielded from being overlaid by a worker? Revert it."*
+> · *"The case I saw is a near 1-to-1 overlap, not a partial one. Am I seeing
+> things?"* — **No. Measured, in the user's own offices:**
+
+| office | employees | nearest standing spot to `ASSISTANT_WAIT` |
+|---|---|---|
+| **so-sach** | 2 | **39 units** |
+| **inventory** | 2 | **45 units** |
+| ra-hop-dong · test | 3 · 5 | 83 · 86 |
+| noi-dung | 3 | 97 |
+
+A body is 124 wide, so 39 units is two figures sharing one silhouette. And it is
+**deterministic, not luck**: with two employees `ownSpot(1, 2, …)` lands at
+x ≈ 638 ± 20, y ≈ 546 ± 12, while `ASSISTANT_WAIT` is (664, 566) — the assistant
+waits *in the middle of the workers' own row*.
+
+⚠ **The comment beside `ASSISTANT_WAIT` said this was checked.** It was — against
+`HOME_SPOTS`, the map pinned at `total = 10`. The spots people actually stand on
+come from `ownSpot(i, headcount, id)`, and at `headcount = 2` they are somewhere
+else entirely. **The same "the gate watches the copy" lesson as §17f①**, one
+layer out.
+
+**What shipped: `onTop` is deleted** — the flag, its `z-index` override, the
+renderer's per-actor exception, all of it. `z = round(y)` now governs every body
+with no exception to keep in step. The reason it was there (*"the one figure you
+must never have to hunt for"*) does not survive the measurement: no stacking
+order rescues two people standing 39 units apart.
+
+⚠ **This does NOT close the overlap**, and it is stated so nobody reads a green
+test as a fixed room: the two figures still stand 39 units apart, they are now
+merely layered correctly. Closing it means moving the assistant's waiting spot
+out of the arc band — the rows sit at y = 546 and y = 748, and every x is
+reachable by some headcount — or dropping `ASSISTANT_WAIT` and returning to §6d's
+*"the assistant never leaves centre-front"*, which is the only spot the arc
+provably never reaches. **Still open.**
+
+### 17f″. 🔴 The seventh person at one station used to stand INSIDE the sixth (08/09)
+
+`nearestFreeSlot`'s own comment read *"every slot taken ⇒ stop at the ring's
+**edge** rather than stack two people on one spot"* — and returned **one point**
+to everybody who asked. Measured with nine workers all reading documents: six
+took the ring, and the last three all stood on **(283, 500)**.
+
+The fix is an **edge row**, spaced by `BODY_HALF_W × 2 + 6` and grown outwards
+from the centre, with points outside the safe area **dropped rather than clamped**
+(clamping two of them lands both on the same edge x — the same stacking, wearing a
+different coordinate). It lives in `nearestFreeSlot`, so all three stations get it
+from one change. Measured after: nine distinct places.
+
+⚠ Past the ring plus the edge row the room has genuinely run out of floor at one
+object, and the last resort still stacks. That is **stated in the code** rather
+than hidden behind another promise — it needs ~12 workers at one station in one
+office, which the scheduler does not produce.
+
 ### 17g. The idle rhythm — 45 s, and the trip is NOT a duration
 
 > *"Standing 45 s. The trip cannot be a decided number — it depends on the
@@ -1441,6 +1550,28 @@ to the thing that schedules the walk. So:
   seated. Only the working floor breathes.
 - ⚠ **resting people never get a timer.** Movement is this room's vocabulary for
   work, and a resting person moving is the room lying, slowly.
+
+### 17g′. 🔴 Being wired SPENDS the hold instead of waiting it out (08/09)
+
+> *"Reconnecting somebody who was resting does stand them up — but it stands them
+> up in the break area."*
+
+Reported after using it, and the cause is not a slip; it is two correct rules
+meeting. `direct()` returns `{ target: home, roam: true }` for somebody wired and
+idle, and `Office.tsx` deliberately never `setTarget`s anybody roaming (**two
+owners of one destination, and the timer wins a second later** — §17f). So the
+only thing that could move them was the idle timer, whose **first** delay is
+seeded: `hash32('idle:' + id) % 45 s`. **Measured: 0–45 seconds standing on the
+rug**, which reads as *still resting*.
+
+| | |
+|---|---|
+| the fix | `releasedFromRest(prev, placements)` in `core/` names **who** was `rest` last pass and is `roam` this pass; the view hands each of them to `Stage.nudge` — the same *"go now instead of waiting out the hold"* the opening walk (§17l) already uses |
+| ⚠ what it is NOT | a second kind of walk. `pickIdleSpot` still chooses **where**, the ordinary 45 s cadence re-arms behind it, and there is one code path for *an idle worker walks somewhere* |
+| ⚠ a TRANSITION, never a position test | *"anybody roaming who is standing on the rug"* would re-fire on every SSE event while they were stuck there, and **each firing re-arms the hold** — so a crowded floor (`pickIdleSpot` → `null`) would keep resetting the very timer that is their way out |
+| reduced motion | silent through the existing gate, not a second check: `setRoam` refuses to set `roam`, and `nudge` refuses anybody not roaming |
+| released straight into a TASK | not nudged — that person is not roaming, and their placement already owns the trip (§17e) |
+| the seats | untouched. A seat is that person's for the life of the mount (§17c), so leaving early moves nobody else |
 
 ### 17h. Zoom — and this reverses §15
 

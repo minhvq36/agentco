@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The room. → docs/SPEC-office-animation.md §2 · §12
  *
  * Plain CSS, exactly like `canvas.css`, and for the same reason: state goes on a
@@ -73,6 +73,30 @@
   --color-accent-soft: #f3e4dc;
   --color-ok: #3f7d4a;
   --color-danger: #c0392b;
+  /*
+   * 🔴 THE BLACK BUBBLE, 08/09 — and it was ONE MISSING LINE IN THIS LIST.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ The pin above was written by walking the tokens somebody thought of, and │
+   * │ `--color-danger-soft` was not one of them. It is used by exactly one     │
+   * │ rule — `.bubble.is-error .bubble-body` — so it stayed invisible until a  │
+   * │ task actually failed, on the dark theme, in a room that is always lit:   │
+   * │                                                                          │
+   * │   background  --color-danger-soft → #40201a   (dark theme, NOT pinned)   │
+   * │   text        --color-ink         → #232019   (pinned, stays dark)       │
+   * │                                                                          │
+   * │ ⇒ a near-black box with near-black text, sitting over a light floor. The │
+   * │ user read it as *"a black bubble"*, and it appears only in the one       │
+   * │ moment the message matters most: an employee reporting a failure.        │
+   * │                                                                          │
+   * │ ⚠ THE RULE WAS ALREADY WRITTEN, ONE BOX UP: the room does not follow the │
+   * │ app theme. What was missing is a MECHANISM for it — a hand-kept list has │
+   * │ no way to notice a token that arrives later. `test/office-view.test.ts`  │
+   * │ now reads every `var(--color-…)` the office subtree mentions and fails   │
+   * │ on any that this block does not pin.                                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  --color-danger-soft: #fbe6e2;
   /* So form controls and scrollbars inside the office match the room. */
   color-scheme: light;
 }

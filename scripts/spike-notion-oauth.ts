@@ -17,8 +17,8 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * Source of truth is NOTION'S DOCS, not Claude's docs (user's call):
- *   🌐 developers.notion.com/guides/mcp/get-started-with-mcp
- *   🌐 notion.com/help/notion-mcp
+ *    developers.notion.com/guides/mcp/get-started-with-mcp
+ *    notion.com/help/notion-mcp
  *
  * Four questions this spike settles — each one could have KILLED path B:
  *

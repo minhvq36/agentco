@@ -982,13 +982,59 @@ The UI has to communicate **both**, or the user sees silence and assumes the sys
 |---|---|
 | Assistant is **busy**, user sends a message | goes into the mailbox. Several in a row → **batched into ONE turn** |
 | Assistant is **idle**, workers are running | replied to immediately. This is "using the dead time productively" |
-| User assigns **new work** while old work is running | recorded, put into `deferred`, done after the current job finishes |
+| User assigns **new work** while old work is running | added to **ONE waiting cluster**, and that cluster becomes **one new plan** the moment the running job closes → §11b′ |
 | Mailbox full (>12 messages) | politely refused: *"You're sending messages faster than I can read — I still have N unread"* |
 | Text commands (`/stop`…) | **jump the queue**, handled in code, 0 tokens |
 
 **Batching is a real saving, not just tidiness.** Measured: firing 4 messages at once → **2 calls instead of 4.** And it's *more correct*: three messages typed in quick succession are one thought — answering message 1 once message 3's context already exists means answering wrong.
 
 The merged message is built with **code**, not an LLM call to "summarize" — that would be buying smoothness with tokens, forbidden by criterion four.
+
+### 11b′. 🔴 Work handed over mid-job: ONE CLUSTER, ONE PLAN — and the queue had never run (09/09)
+
+**What was broken, and it was total.** `run()` refuses to start while the office
+is `working`. `finish()` drained the queue and called `run()` **twelve lines
+before** it set the state back to idle — so every queued job threw
+`officeBusyWait` into a `.catch(() => {})` and vanished. The user was told *"I'll
+pick that up next"*, and nothing ever picked it up. Nothing was red: `tsc` cannot
+see a promise thrown into an empty catch, and no test had ever touched the queue.
+
+⚠ **And the first patch made it worse.** A `state !== 'working'` guard inside the
+drain — correct as a rule — was being asked at the one moment the state is always
+`working`, turning a silent drop into a permanent stall. *A rule can be right and
+still be asked in the wrong place.* The fix is the ORDER: close the state, then
+drain. `test/deferred-queue.test.ts` asserts that order, and asserts the premise
+it depends on (`run()` still refusing on a busy office) so the two cannot drift
+apart in silence.
+
+**The shape, settled by the user 09/09:**
+
+| | |
+|---|---|
+| everything typed during one job | goes into **one cluster**, not N queued jobs. The header can therefore only ever say *"1 waiting"* |
+| when the job closes | the cluster becomes **one new plan**, immediately — the office runs *ask → work → straight on* instead of *ask → work → idle → ask* |
+| the merge | `mergeUserText`, the **same** function the mailbox uses, applied **once at the drain**. Merging on arrival would nest its own scaffolding sentence inside itself and hand that to the planner as the user's words |
+| the ceiling | `MAX_QUEUED`, the **same** constant as the mailbox — one question, one number — and a refused message is told so, rather than promised a pickup that will not happen |
+
+**What is deliberately given up, stated so nobody rediscovers it as a bug:** there
+is no partial take-back. One cluster is one decision, and changing your mind is
+`/stop` then say the new thing. That is this repo's standing rule — *a draft you
+can correct beats an interruption* — and it is exactly what makes this the cheap
+option instead of a live DAG that would have to be made controllable.
+
+⛔ **Splicing new work into the RUNNING plan was considered and refused** (09/09).
+It is buildable — plan the new request, compare its declared files against the
+unfinished tasks, append as a new DAG root when they are disjoint — and the
+dependency question really does become deterministic that way. It is refused
+because the declared file list is the *planner's* claim, so "disjoint" is only as
+good as that claim, and the failure it buys is a wrong answer produced quietly in
+parallel. Reopen it only with a real complaint about latency, not tidiness.
+
+⚠ A related promise that was **also** not kept: the comment at the queue site
+said *"scope `refine` attaches to the running job; `new` spawns an independent
+plan"*. Both branches did the same thing — `refine` only changed the SENTENCE.
+That is now honest: both go to the cluster, and the two sentences differ because
+the user framed them differently, not because the code does two things.
 
 ### 11c. The lock has to be a REAL MUTEX, not a flag
 

@@ -752,9 +752,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                   is live task state and clears itself, while this one only
                   clears when a person acts. The server decides it from a fact
                   it wrote down, never from a guess. → `office.ts §keyDeadOf`
+
+                  ⚠ `keyGone` shares the class, and only the class: the arm
+                  cannot run and a person has to act, which is the same red.
+                  What differs is the SENTENCE, and that lives in the subtitle
+                  — one colour, two instructions. → `office.ts §keyGoneOf`
                 */
                 className={`node node-${n.kind}${n.missing ? ' is-missing' : ''}${
-                  n.keyDead ? ' is-keydead' : ''
+                  n.keyDead || n.keyGone ? ' is-keydead' : ''
                 }${n.kind === 'agent' && !n.connected ? ' is-off' : ''}`}
                 data-node={n.id}
                 transform={`translate(${n.x},${n.y})`}

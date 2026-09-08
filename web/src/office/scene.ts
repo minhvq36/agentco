@@ -79,16 +79,20 @@ export interface ActorView {
   /** A marker for a place with no station of its own (`web`, `shell`). */
   glyph: string;
   selected: boolean;
-  /**
-   * 🔴 DRAWN ABOVE EVERY OTHER BODY AND EVERY PIECE OF FURNITURE.
-   * → SPEC-office-animation.md §17d
+  /*
+   * 🔴 `onTop` WAS HERE AND IS GONE (08/09). → SPEC-office-animation.md §17d′
    *
-   * ⚠ The ASSISTANT, and only the assistant — but the flag says what it DOES,
-   * not who it is. A renderer asking "is this the assistant" would be a second
-   * place that knows the office's architecture; this way the rule stays where
-   * the roster is built and the adapter just draws it.
+   * It drew the assistant above every body and every piece of furniture, on
+   * the reasoning that *"the one figure you must never have to hunt for"*
+   * should never be behind anybody. The user's verdict after using it: a
+   * worker standing NEARER the viewer than the assistant, drawn behind it,
+   * reads as wrong — and the exception bought nothing, because the thing it
+   * was protecting against was two bodies standing 39 units apart, which no
+   * stacking order fixes.
+   *
+   * ⚠ DELETED, NOT LEFT UNSET. A flag nobody sets is how the exception comes
+   * back in six months, wired by somebody who found an unused boolean.
    */
-  onTop?: boolean;
 }
 
 export interface SceneProps {

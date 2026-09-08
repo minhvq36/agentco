@@ -942,6 +942,14 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'node.knowledgeHint': 'click to open',
   'node.armMissing': 'no longer plugged in',
   'node.armKeyDead': 'sign in again',
+  /**
+   * ⚠ NOT "sign in again" — that is `armKeyDead`, and it would be the wrong
+   * door here. This one means the office holds no value under the name this
+   * connection asks for: for an OAuth account the fix is to connect it, for a
+   * typed key it is `agentco secret set`. The node says WHAT IS WRONG; the
+   * panel behind the click says which of the two to do. → `office.ts §keyGoneOf`
+   */
+  'node.armKeyGone': 'no key stored',
   'node.armFallback': 'connection',
   'node.roleMissing': 'role not found',
   'node.resting': 'off duty',

@@ -212,7 +212,7 @@ export const LINEAR_ARM: CatalogArm = {
    * │ READ, not left blank.                                                     │
    * │                                                                           │
    * │ The user's call, 30/08: *"just change the logo to Linear's own, both on   │
-   * │ the canvas node and the UI modal"*. Before pasting it in, read 🌐         │
+   * │ the canvas node and the UI modal"*. Before pasting it in, read          │
    * │ linear.app/brand. Recorded verbatim what it says, because this is a       │
    * │ **fact**, not an impression:                                              │
    * │                                                                           │
@@ -222,7 +222,7 @@ export const LINEAR_ARM: CatalogArm = {
    * │    consent from Linear"*                                                  │
    * │  · **Monochrome is PREFERRED** over the color version ⇒ exactly what we   │
    * │    use                                                                    │
-   * │  · Third parties who want to use it should ask 🌐 hello@linear.app        │
+   * │  · Third parties who want to use it should ask  hello@linear.app        │
    * │                                                                           │
    * │ ⚠⚠ A REAL OUTSTANDING DEBT, stated rather than hidden: the guidelines     │
    * │ **do require written consent** for the third-party case. We shipped       │

@@ -1,6 +1,9 @@
 
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import url from 'node:url';
 
 import {
   ASSISTANT_SPOT,
@@ -11,6 +14,7 @@ import {
   BREAK_SEATS,
   BODY_HALF_W,
   COOLER,
+  DESK_PIECES,
   HOME_SPOTS,
   HORIZON,
   IDLE_SPOTS,
@@ -24,9 +28,12 @@ import {
   dealOpeningSpots,
   dealSeats,
   direct,
+  overflowSlots,
   ownSpot,
   pickIdleSpot,
+  releasedFromRest,
   ringSlots,
+  usedFrom,
   walkersAtOpen,
   type DirectAgent,
   type DirectLive,
@@ -84,8 +91,19 @@ function run(
   return new Map(out.map((p) => [p.id, p]));
 }
 
+/**
+ * Is this point one of the places a station puts somebody?
+ *
+ * ⚠ THE RING IS NO LONGER THE WHOLE ANSWER (§17f′). A station may declare the
+ * place it is USED from — in front of the cabinet, behind the arm bench — and
+ * the first arrival takes it. The claim these tests make has always been *"they
+ * are at that station"*; the ring was standing in for it, and that stopped being
+ * true the day a station got a primary place.
+ */
 function onRing(p: { x: number; y: number }, id: 'library' | 'artifacts' | 'arm'): boolean {
-  return ringSlots(STATIONS[id]).some((s) => Math.abs(s.x - p.x) < 1 && Math.abs(s.y - p.y) < 1);
+  const use = usedFrom(STATIONS[id]);
+  const places = use ? [use, ...ringSlots(STATIONS[id])] : ringSlots(STATIONS[id]);
+  return places.some((s) => Math.abs(s.x - p.x) < 1 && Math.abs(s.y - p.y) < 1);
 }
 
 // ─────────────────────────────────────────────────────────────── assistant
@@ -791,16 +809,279 @@ test('no assistant yet ⇒ no assistant placement, and nothing throws', () => {
   assert.equal(out[0]!.id, 'agent:a');
 });
 
+// ──────────────────────────────────── where an object is USED from (§17f′)
+
+test('🔴 the first person reading documents stands AT the cabinet, not past its edge', () => {
+  const target = direct({
+    agents: [A('a')],
+    live: { a: { status: 'working', at: 'library' } },
+    reading: null,
+    seats: {},
+    at: () => ({ x: 520, y: 560 }),
+  })[0]!.target;
+
+  const shelf = STATIONS.library;
+  assert.deepEqual(target, usedFrom(shelf), 'the object is used from its own place, not the nearest slot');
+  assert.ok(
+    Math.abs(target.x - (shelf.x + shelf.w / 2)) < 1,
+    `centred on the furniture: ${target.x} vs ${shelf.x + shelf.w / 2}`,
+  );
+  // The measurement that started this: the nearest-slot answer was 88 units
+  // past the drawn cabinet's right edge, further from it than an IDLE colleague.
+  assert.ok(target.x < shelf.x + shelf.w, 'never outside the object it is standing at');
+});
+
+test('🔴 the person using the arm stands BEHIND the bench, where the desk covers them', () => {
+  const bench = STATIONS.arm;
+  const target = direct({
+    agents: [A('a')],
+    live: { a: { status: 'working', at: 'arm' } },
+    reading: null,
+    seats: {},
+    at: () => ({ x: 520, y: 560 }),
+  })[0]!.target;
+
+  const base = bench.y + bench.h;
+  assert.ok(target.y < base, 'in front of the desk is standing NEAR the laptop, not AT it');
+  assert.ok(target.y > bench.y, 'behind is a step back, not a walk up the wall');
+  assert.ok(Math.abs(target.x - (bench.x + bench.w / 2)) < 1, 'centred on the laptop');
+  // The occlusion this depends on is `z-index = round(baseY)` vs `round(y)`:
+  // strictly above the desk's base is what puts the desk in front of the legs.
+  assert.ok(Math.round(target.y) < Math.round(base), 'the depth sort must draw the desk over them');
+});
+
+test('🔴 ONE person gets the primary place — the second is not stacked on top of them', () => {
+  for (const where of ['library', 'arm'] as const) {
+    const out = direct({
+      agents: [A('a'), A('b')],
+      live: { a: { status: 'working', at: where }, b: { status: 'working', at: where } },
+      reading: null,
+      seats: {},
+      at: () => ({ x: 520, y: 560 }),
+    });
+    assert.deepEqual(out[0]!.target, usedFrom(STATIONS[where]), `${where}: the first one uses it`);
+    assert.notDeepEqual(out[1]!.target, out[0]!.target, `${where}: two bodies on one spot`);
+    // …and the second one is back on the ring, chosen the way it always was.
+    assert.ok(
+      ringSlots(STATIONS[where]).some((p) => p.x === out[1]!.target.x && p.y === out[1]!.target.y),
+      `${where}: the overflow must still be a ring slot`,
+    );
+  }
+});
+
+test('both primary places are inside the safe area, like every other standing point', () => {
+  for (const where of ['library', 'arm'] as const) {
+    const p = usedFrom(STATIONS[where])!;
+    assert.deepEqual(clampSafe(p), p, `${where}: ${JSON.stringify(p)} is outside the safe area`);
+  }
+});
+
+/**
+ * The scoped-change control. Two stations were reported; the third was not, and
+ * "complete the set" is how a change nobody asked for arrives on the busiest
+ * object in the room.
+ */
+test('the filing desk keeps NEAREST-slot — it has a crowd, and nobody reported it', () => {
+  assert.equal(usedFrom(STATIONS.artifacts), null);
+  const target = direct({
+    agents: [A('a')],
+    live: { a: { status: 'done', artifacts: 2 } },
+    reading: null,
+    seats: {},
+    at: () => ({ x: 520, y: 560 }),
+  })[0]!.target;
+  assert.ok(
+    ringSlots(STATIONS.artifacts).some((p) => p.x === target.x && p.y === target.y),
+    'the hand-off beat still lands on a ring slot',
+  );
+});
+
+/**
+ * ⚠ ONE distance, two desks. `BEHIND_DESK` is not exported — it is an internal
+ * constant — so the gate is that both readers still produce the same gap, which
+ * is the thing that would actually be wrong if somebody re-typed one of them.
+ */
+test('🔴 standing behind the arm bench and behind the filing desk is the SAME step back', () => {
+  const filing = DESK_PIECES.find((p) => p.id === 'desk-files')!;
+  const behind = IDLE_SPOTS.filter((p) => Math.abs(p.x - filing.x) < 1 && p.y < filing.baseY);
+  assert.equal(behind.length, 1, 'premise: exactly one idle spot dead behind the filing desk');
+  const bench = STATIONS.arm;
+  assert.equal(
+    filing.baseY - behind[0]!.y,
+    bench.y + bench.h - usedFrom(bench)!.y,
+    'two desks, two different steps back — the person at one reads as further forward',
+  );
+});
+
+test('🔴 the SEVENTH person at a station gets their own place, not a shared point', () => {
+  const many = Object.fromEntries(
+    Array.from({ length: 9 }, (_, i) => [`w${i}`, { status: 'working', at: 'library' } as DirectLive]),
+  );
+  const out = direct({
+    agents: Object.keys(many).map((r) => A(r)),
+    live: many,
+    reading: null,
+    seats: {},
+    at: () => ({ x: 520, y: 560 }),
+  });
+  const key = (p: { x: number; y: number }) => `${Math.round(p.x)},${Math.round(p.y)}`;
+  const spots = out.map((p) => key(p.target));
+  assert.equal(
+    new Set(spots).size,
+    spots.length,
+    `two people on one spot: ${spots.join(' | ')}`,
+  );
+  // …and the overflow row is spaced by a whole body, so "not the same point"
+  // also means "not inside each other".
+  const edge = overflowSlots(STATIONS.library);
+  assert.ok(edge.length >= 3, 'premise: the library has an overflow row at all');
+  for (let i = 1; i < edge.length; i++) {
+    const gap = Math.min(
+      ...edge.slice(0, i).map((p) => Math.hypot(p.x - edge[i]!.x, p.y - edge[i]!.y)),
+    );
+    assert.ok(gap >= BODY_HALF_W * 2, `overflow places ${gap} apart, a body is ${BODY_HALF_W * 2}`);
+  }
+});
+
+test('every overflow place is inside the safe area — it is a place, not a spill', () => {
+  for (const id of ['library', 'arm', 'artifacts'] as const) {
+    for (const p of overflowSlots(STATIONS[id])) {
+      assert.deepEqual(clampSafe(p), p, `${id}: ${JSON.stringify(p)} is off the floor`);
+    }
+  }
+});
+
+// ──────────────────────────────────────────────── released from the break area
+
+/**
+ * `direct()` for one office, seats dealt deterministically — the two passes
+ * either side of a wire being plugged in.
+ */
+const pass = (agents: DirectAgent[], live: Record<string, DirectLive> = {}) =>
+  direct({
+    agents,
+    live,
+    reading: null,
+    seats: dealFor(agents, live),
+    at: () => undefined,
+  });
+
+test('🔴 a wire plugged in releases that person THIS pass — not 0–45 s later', () => {
+  const resting = pass([A('a', false), A('b', false)]);
+  assert.equal(resting.every((p) => p.rest), true, 'premise: both are resting');
+
+  const first = releasedFromRest(new Set(), resting);
+  assert.deepEqual(first.go, [], 'nobody has been released yet — the first pass moves no one');
+  assert.deepEqual([...first.resting].sort(), ['agent:a', 'agent:b']);
+
+  // `a` gets wired. `b` stays on the bench.
+  const after = releasedFromRest(first.resting, pass([A('a', true), A('b', false)]));
+  assert.deepEqual(after.go, ['agent:a'], 'the one that was just wired walks out now');
+  assert.deepEqual([...after.resting], ['agent:b'], 'the other is still resting');
+});
+
+test('🔴 ONE nudge per release — a re-render must not re-arm the trip forever', () => {
+  const before = releasedFromRest(new Set(), pass([A('a', false)]));
+  const now = pass([A('a', true)]);
+  const once = releasedFromRest(before.resting, now);
+  assert.deepEqual(once.go, ['agent:a']);
+  // The very next SSE event, nothing about this person changed.
+  assert.deepEqual(
+    releasedFromRest(once.resting, now).go,
+    [],
+    'firing again would re-arm the 45 s hold on every event and could strand somebody',
+  );
+});
+
+test('🔴 released STRAIGHT into a task is never nudged — the placement owns that trip', () => {
+  const before = releasedFromRest(new Set(), pass([A('a', false)]));
+  const working = pass([A('a', true)], { a: { status: 'working', at: 'library' } });
+  assert.equal(working[0]!.roam, undefined, 'premise: a worker with a task does not roam');
+  assert.deepEqual(
+    releasedFromRest(before.resting, working).go,
+    [],
+    'two owners of one destination, and the idle timer would win a second later',
+  );
+});
+
+test('somebody already on the floor is left alone, however many events arrive', () => {
+  const floor = pass([A('a', true)]);
+  assert.equal(floor[0]!.roam, true, 'premise: wired and idle ⇒ free to wander');
+  assert.deepEqual(releasedFromRest(new Set(), floor).go, [], 'they were never resting');
+});
+
+test('🔴 the resting set is REBUILT, so a deleted employee cannot come back from it', () => {
+  const gone = releasedFromRest(new Set(), pass([A('a', false), A('b', false)]));
+  assert.equal(gone.resting.has('agent:a'), true);
+  // `a` is deleted; only `b` is in the office now.
+  const next = releasedFromRest(gone.resting, pass([A('b', false)]));
+  assert.equal(next.resting.has('agent:a'), false, 'an id that is gone must not linger in the set');
+  // …and if that id is ever hired again, it starts from nothing rather than
+  // being nudged on the strength of a rest that belonged to somebody else.
+  assert.deepEqual(releasedFromRest(next.resting, pass([A('a', true), A('b', false)])).go, []);
+});
+
+/**
+ * A correct rule nobody calls is worth nothing, and `tsc` cannot see the
+ * difference — the same hole `chat-echo.test.ts` closes for the echo.
+ */
+test('🔴 the office view really CALLS it, and after the effects it depends on', () => {
+  const file = path.join(
+    url.fileURLToPath(new URL('..', import.meta.url)),
+    'web',
+    'src',
+    'office',
+    'Office.tsx',
+  );
+  const code = fs.readFileSync(file, 'utf8');
+  assert.match(
+    code,
+    /releasedFromRest\(wasResting\.current, placements\)/,
+    'nothing releases anybody — a reconnected employee stands in the break area again',
+  );
+  assert.ok(
+    code.indexOf('st.idleSpot = (id) =>') < code.indexOf('releasedFromRest('),
+    'declared before `idleSpot` is installed, the nudge asks nobody where to go and silently does nothing',
+  );
+  assert.ok(
+    code.indexOf('st.setRoam(p.id, !!p.roam)') < code.indexOf('releasedFromRest('),
+    '`nudge` refuses anybody not roaming, so this must run after the placement effect',
+  );
+});
+
+/**
+ * ⚠ THIS USED TO ASK THE LIBRARY, AND §17f′ IS WHY IT NO LONGER CAN.
+ *
+ * The library now has a primary place, so its FIRST arrival lands there whatever
+ * direction they came from — deliberately. The rule this test guards is still
+ * live everywhere it was ever about: a station with no primary place, and every
+ * arrival after the first. Both halves are asserted, or "nearest" quietly
+ * becomes a word in a comment.
+ */
 test('the nearest free slot follows where somebody is standing NOW', () => {
-  // Two runs, same office, different current positions ⇒ different approach.
   const far = { x: 1500, y: 850 };
   const near = { x: 100, y: 400 };
+
+  // ① a station with no primary place — the original claim, unchanged.
   const pick = (from: { x: number; y: number }) =>
     direct({
       agents: [A('a')],
-      live: { a: { status: 'working', at: 'library' } },
+      live: { a: { status: 'working', at: 'artifacts' } },
       reading: null,
+      seats: {},
       at: () => from,
     })[0]!.target;
   assert.notDeepEqual(pick(far), pick(near), 'the ring must be entered from the nearer side');
+
+  // ② the SECOND person at a station that does have one: the first takes the
+  //    primary place, and the overflow is still chosen by where they came from.
+  const second = (from: { x: number; y: number }) =>
+    direct({
+      agents: [A('a'), A('b')],
+      live: { a: { status: 'working', at: 'library' }, b: { status: 'working', at: 'library' } },
+      reading: null,
+      seats: {},
+      at: (id) => (id === 'agent:b' ? from : { x: 520, y: 560 }),
+    })[1]!.target;
+  assert.notDeepEqual(second(far), second(near), 'the overflow lost its approach direction');
 });
