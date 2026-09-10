@@ -41,15 +41,40 @@ function finishBody(): string {
   return SRC.slice(at, end);
 }
 
-test('🔴 the office state is closed BEFORE the queue is drained', () => {
+test('🔴 the office state is closed BEFORE the queue is opened', () => {
   const body = finishBody();
   const closes = body.indexOf('this.setState(');
-  const drains = body.indexOf('this.drainDeferred()');
+  const opens = body.indexOf('this.tick()');
   assert.ok(closes > 0, 'premise: `finish` no longer closes the state');
-  assert.ok(drains > 0, 'premise: `finish` no longer drains the queue');
+  assert.ok(opens > 0, 'premise: `finish` no longer opens the door');
   assert.ok(
-    closes < drains,
+    closes < opens,
     'the queued job starts while the office still says `working`, so `run()` throws it away',
+  );
+});
+
+/**
+ * 🔴 ONE DOOR. → `office.ts §tick` (user settled 09/09)
+ *
+ * Three stalls in three days were all the same shape — a waiting state whose
+ * only exit ran on the success path — and there were FIVE places that had to
+ * remember to nudge one of the two queues. Now every transition asks one
+ * function, so there is exactly one place that can be wrong.
+ */
+test('🔴 queued work has exactly ONE starter, and every transition goes through the door', () => {
+  assert.equal(
+    SRC.split('this.drainDeferred()').length - 1,
+    1,
+    'a second drain site is a second set of preconditions to keep in step',
+  );
+  const starter = SRC.indexOf('private startQueued()');
+  const drain = SRC.indexOf('this.drainDeferred()');
+  assert.ok(starter > 0 && drain > starter, 'the only drain must live inside `startQueued`');
+  // The collection points, all of them, all through `tick()`.
+  assert.equal(
+    SRC.split('this.tick();').length - 1,
+    6,
+    'a transition stopped calling the door, or a new one was added without it',
   );
 });
 
@@ -71,7 +96,7 @@ test('🔴 the queue has a SECOND exit, for the item that arrives after the drai
   assert.equal(pushes.length, 2, 'premise: there are exactly two places that queue work (plan, task)');
   for (const [i, after] of pushes.entries()) {
     assert.ok(
-      after.slice(0, 600).includes('this.startDeferredIfIdle();'),
+      after.slice(0, 600).includes('this.tick();'),
       `push site ${i + 1} has no exit beside it — the queue stalls exactly as it did on 08/09`,
     );
   }

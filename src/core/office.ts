@@ -395,7 +395,7 @@ export class Office {
      */
     this.mailbox.onFree = () => {
       this.emitActivity();
-      if (this.mailbox.size > 0) void this.pump();
+      this.tick();
     };
     ensureOfficeDirs(loaded.paths);
     this.knowledge = new KnowledgeStore(loaded.dir, loaded.paths);
@@ -715,7 +715,7 @@ export class Office {
     }
 
     this.emitActivity();
-    void this.pump();
+    this.tick();
     return { intent: 'chat', reply: '' };
   }
 
@@ -840,8 +840,9 @@ export class Office {
     }
 
     this.emitActivity();
-    // Keep reading if there's more mail. Recurses via a microtask, so it doesn't deepen the call stack.
-    if (this.mailbox.size > 0) void this.pump();
+    // Keep going — more mail, or the cluster this batch may have just filled.
+    // Recurses via a microtask, so it doesn't deepen the call stack. → `tick`
+    this.tick();
   }
 
   private async handleUserBatch(text: string): Promise<void> {
@@ -978,8 +979,8 @@ export class Office {
           role: 'assistant',
           say: took ? t('off.busyWillFollow') : t('off.mailboxFlooded', { n: String(MAX_QUEUED) }),
         });
-        // ⚠ The job may have finished while `route()` was thinking. → `drainDeferred`
-        this.startDeferredIfIdle();
+        // ⚠ The job may have finished while `route()` was thinking. → `tick`
+        this.tick();
         return;
       }
       void this.run(requestOf(draft), draft).catch(() => {
@@ -1005,8 +1006,8 @@ export class Office {
               ? t('off.addendumNoted')
               : t('off.busyWillFollow'),
         });
-        // ⚠ Same window as the `plan` branch above. → `drainDeferred`
-        this.startDeferredIfIdle();
+        // ⚠ Same window as the `plan` branch above. → `tick`
+        this.tick();
         return;
       }
       // NO await: the DAG runs in the background, and during that time the
@@ -2382,6 +2383,11 @@ export class Office {
     this.settled.clear();
     this.emitActivity();
 
+    // Was there work waiting BEFORE we opened the door? Asked here because
+    // `tick()` may consume it, and compaction must not cut between two
+    // back-to-back jobs — the thread is continuous there.
+    const queued = !!this.deferred;
+
     /**
      * 🔴 THE STATE CLOSES **BEFORE** THE QUEUE IS TOUCHED, and this order is the
      * whole of the fix. → `drainDeferred`
@@ -2428,36 +2434,16 @@ export class Office {
             : t('off.stateDone'),
     );
 
-    // Work the user handed over while busy: now it's its turn. Only
-    // continues when this run was NOT stopped — the user hitting Stop stops
-    // everything, including the queue.
-    const next = this.drainDeferred();
-    if (next) {
-      this.emitActivity();
-      // HANDOFF: queued work is usually the continuation of what just
-      // finished ("make it sound even younger"). Not telling it where the
-      // previous output landed means it WRITES FROM SCRATCH instead of
-      // EDITING — far more expensive, and it throws away work already paid
-      // for.
-      //
-      // Built by code from the receipt already in hand: 0 tokens.
-      const done = this.lastArtifacts;
-      const request = done.length
-        ? // ⚠ English, hard-coded: this is glued onto the request the ASSISTANT
-          // reads, so it is prompt scaffolding, not chrome. The user's own words
-          // sit right above it and still set the reply language.
-          `${next.request}\n\n(The previous job just finished; its results are already at: ${done.join(', ')}. ` +
-          `If this request is an edit to that, EDIT the existing files — do not redo it from scratch.)`
-        : next.request;
-      void this.run(request).catch(() => {
-        /* run() has already emitted the error */
-      });
-    } else {
-      this.emitActivity();
-    }
-    // If there's still queued work, let it run first — compacting between
-    // two back-to-back jobs would cut exactly where the thread is continuous.
-    if (!next) this.maybeCompact();
+    this.emitActivity();
+    /**
+     * ⚠ THE SAME DOOR EVERY OTHER TRANSITION USES. This path used to have its
+     * own drain and its own copy of the hand-off note; the office is free now
+     * and that is all this line has to say. → `tick`
+     */
+    this.tick();
+    // Queued work runs first — compacting between two back-to-back jobs would
+    // cut exactly where the thread is continuous.
+    if (!queued) this.maybeCompact();
   }
 
   // ── canvas
@@ -2757,19 +2743,91 @@ export class Office {
   }
 
   /**
-   * The queue's SECOND exit: a push that lands after the job it was waiting for
-   * has already ended. → `drainDeferred`
+   * 🔴 THE ONE DOOR. *"Is there anything I can act on right now?"*
+   * → docs/SPEC-tools-approval.md §11b″ (user settled 09/09)
    *
-   * ⚠ It is the same `run()` the finish path takes, minus the hand-off note:
-   * that note describes *"the job that just finished"*, and here there is no
-   * such moment — the finish already happened and its artifacts have been
-   * reported. Repeating it would glue a stale sentence onto a fresh request.
+   * ┌──────────────────────────────────────────────────────────────────────
+   * │ IT IS NOT THE NUMBER OF QUEUES THAT WAS FRAGILE — IT WAS THE NUMBER OF
+   * │ WAKE-UPS. Three stalls in three days, all the same shape: *a waiting
+   * │ state whose only exit ran on the success path*. Before this there were
+   * │ FIVE places that had to remember to nudge one of the two queues, and we
+   * │ had already paid for three of them being wrong. A sixth queue tomorrow
+   * │ would mean a seventh place to forget.
+   * │
+   * │ Now every state transition asks ONE function the SAME question, so
+   * │ there is exactly one place that can be wrong — and if it is, it is
+   * │ wrong loudly and everywhere, not silently in one branch.
+   * │
+   * │ 🔴 THE COLLECTION POINTS — every moment new work can become possible,
+   * │ and each is legal for the same reason (see below):
+   * │   · a message arrives                       `say()`
+   * │   · the assistant's lock opens              `mailbox.onFree`
+   * │   · a pump cycle ends, mail may remain      `pump()`
+   * │   · work is handed over while busy          `queueWork` call sites
+   * │   · a job closes                            `finish()`, after `setState`
+   * │
+   * │ ⚠ COLLECTING IS NOT STARTING, and that distinction is what keeps this
+   * │ sequential. Reading and classifying a message (`route()`) is an
+   * │ ASSISTANT turn and is legal while workers run — the receptionist is not
+   * │ busy just because the staff are. Whether a JOB may begin is a separate
+   * │ question, asked in exactly one other place (`drainDeferred`, which
+   * │ refuses while `state === 'working'`). Mixing the two is how two jobs
+   * │ would end up overlapping.
+   * │
+   * │ ⚠ NOTHING STARTS WHILE THE ASSISTANT IS MID-TURN, even if the office is
+   * │ otherwise idle. That turn may be the very message that cancels the
+   * │ queued work (*"don't do A any more"*), and starting A while it is being
+   * │ read is the mess this design exists to avoid. It costs nothing: the
+   * │ lock closing calls straight back in here.
+   * │
+   * │ ⚠ MAIL BEFORE WORK, and that order is a decision. A cancellation still
+   * │ sitting in the mailbox has to reach the cluster BEFORE the cluster is
+   * │ drained, or the office starts the one thing it was just told to drop.
+   * └──────────────────────────────────────────────────────────────────────
    */
-  private startDeferredIfIdle(): void {
+  private tick(): void {
+    if (this.mailbox.isBusy) return;
+    if (this.mailbox.size > 0) {
+      void this.pump();
+      return;
+    }
+    this.startQueued();
+  }
+
+  /**
+   * Start the waiting cluster, if there is one and the office may take it.
+   * → `drainDeferred` · `tick`
+   *
+   * ⚠ THE ONLY PLACE THAT STARTS QUEUED WORK. It used to be two — the finish
+   * path had its own copy carrying the hand-off note, and the push path had one
+   * without it. Two starts is two sets of preconditions to keep in step.
+   */
+  private startQueued(): void {
     const next = this.drainDeferred();
     if (!next) return;
     this.emitActivity();
-    void this.run(next.request).catch(() => {
+    /**
+     * HAND-OFF: queued work is usually the continuation of what just finished
+     * ("make it sound even younger"). Not telling it where the previous output
+     * landed means it WRITES FROM SCRATCH instead of EDITING — far more
+     * expensive, and it throws away work already paid for. Built by code from
+     * the receipt already in hand: 0 tokens.
+     *
+     * ⚠ READ ONCE, THEN CLEARED — a baton, not a standing fact. A cluster can
+     * only exist while a job was running (`queueWork` is unreachable otherwise),
+     * so whenever one is drained, the job it names really did just close. The
+     * clear is what keeps that true if that ever stops holding.
+     */
+    const done = this.lastArtifacts;
+    this.lastArtifacts = [];
+    const request = done.length
+      ? // ⚠ English, hard-coded: this is glued onto the request the ASSISTANT
+        // reads, so it is prompt scaffolding, not chrome. The user's own words
+        // sit right above it and still set the reply language.
+        `${next.request}\n\n(The previous job just finished; its results are already at: ${done.join(', ')}. ` +
+        `If this request is an edit to that, EDIT the existing files — do not redo it from scratch.)`
+      : next.request;
+    void this.run(request).catch(() => {
       /* run() has already emitted the error to the UI */
     });
   }
@@ -5141,8 +5199,15 @@ function addUsage(a: Usage, b: Usage): Usage {
  * not substitute a default of its own. Writing one here is exactly what put our
  * interface-language sentence into user data. → the box in `addAgent`
  */
-function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
-  return `id: ${id}
+/**
+ * ⚠ `id` IS QUOTED, like `display_name` beside it. An id that slugs to a YAML
+ * scalar — `1`, `true`, `null`, `0x1f` — comes back from the parser as a
+ * number/boolean/null and fails the schema, and the employee silently never
+ * appears. `isSafeId` passes all of them: it guards the character set, not the
+ * parser's reading of them. → `config.ts §loadOffice`
+ */
+export function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
+  return `id: ${JSON.stringify(id)}
 version: 1
 display_name: ${JSON.stringify(displayName)}
 avatar: "•"

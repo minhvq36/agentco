@@ -25,7 +25,40 @@ import path from 'node:path';
 import test from 'node:test';
 import url from 'node:url';
 
-import { Mailbox } from '../dist/core/mailbox.js';
+import { Mailbox, mergeUserText } from '../dist/core/mailbox.js';
+
+// ─────────────────────────────── conflicts inside one cluster (09/09)
+
+const user = (text: string) => ({ kind: 'user' as const, text, at: 0 });
+
+test('one message is passed through UNTOUCHED — no scaffolding, no rule', () => {
+  assert.equal(mergeUserText([user('đọc readme')]), 'đọc readme'); // i18n-allow-vietnamese: fixture — a real user message
+});
+
+test('🔴 "do A" then "do not do A": the precedence rule is stated, and stated BEFORE the list', () => {
+  const out = mergeUserText([user('làm A'), user('không làm A nữa')]); // i18n-allow-vietnamese: fixture — a real user message
+  assert.match(out, /LATER one wins/, 'order alone does not tell a model which of two conflicting asks wins');
+  assert.ok(
+    out.indexOf('LATER one wins') < out.indexOf('\n1. '),
+    'a rule placed after the examples loses to them — measured 1/4 vs 4/4 in this repo',
+  );
+  // …and it is on the SAME line as the list intro, not a paragraph of its own.
+  assert.ok(out.split('\n')[0]!.includes('LATER one wins'));
+});
+
+test('🔴 it says "where they conflict", never "the last one wins"', () => {
+  // Most clusters are additions ("also do B"). A blanket last-wins would throw
+  // the first two requests away.
+  const out = mergeUserText([user('a'), user('b')]);
+  assert.match(out, /where two of them conflict/);
+  assert.doesNotMatch(out, /only the last|answer the last one/i);
+});
+
+test('the order the user sent them in is preserved and numbered', () => {
+  const out = mergeUserText([user('first'), user('second'), user('third')]);
+  assert.match(out, /1\. first\n2\. second\n3\. third$/);
+  assert.match(out, /I sent 3 messages/);
+});
 
 test('🔴 the lock opening fires `onFree` — the exit that is NOT on the success path', async () => {
   const box = new Mailbox();
@@ -86,9 +119,12 @@ test('🔴 the office really WIRES it, and wakes the pump from it', () => {
     path.join(url.fileURLToPath(new URL('..', import.meta.url)), 'src', 'core', 'office.ts'),
     'utf8',
   );
+  // ⚠ It wakes the office's ONE door (`tick`), not the pump directly: the pump
+  // is only half the answer, and a wake-up that skips the door would leave the
+  // queued-work half of the question unasked. → `office.ts §tick`
   assert.match(
     src,
-    /this\.mailbox\.onFree = \(\) => \{[\s\S]{0,200}?this\.pump\(\)/,
+    /this\.mailbox\.onFree = \(\) => \{[\s\S]{0,200}?this\.tick\(\);/,
     'the hook exists and nobody listens — the stall is back, silently',
   );
 });

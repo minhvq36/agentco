@@ -1036,6 +1036,75 @@ plan"*. Both branches did the same thing — `refine` only changed the SENTENCE.
 That is now honest: both go to the cluster, and the two sentences differ because
 the user framed them differently, not because the code does two things.
 
+### 11b″. 🔴 ONE DOOR — `tick()`, and WHEN the office goes out to collect the tray (09/09)
+
+> *"One-window office: spam as much as you like, and when it's ready it carries
+> the whole stack of the customer's paperwork in and starts. Is that sturdier —
+> or does the code already work that way?"*
+
+**The shape was already right.** The intake IS one door: mailbox → merge
+consecutive messages → `route()` → *then* split by intent. What was fragile was
+never the number of queues — it was the number of **wake-ups**: five places had
+to remember to nudge one of the two queues, and three of them had been wrong in
+three days, every one the same shape (a waiting state whose only exit ran on the
+success path).
+
+⛔ **A single queue in the literal sense is refused**, and the reason is a
+property the product already has: the assistant answers *while workers run*
+(§11b). One literal door means a question typed mid-job waits for the job. The
+receptionist is not busy just because the staff are.
+
+✅ **What shipped instead: one `tick()`** — *"is there anything I can act on right
+now?"* — called from every state transition, and nothing else may start queued
+work:
+
+| the collection points | why it is legal there |
+|---|---|
+| a message arrives (`say`) | new input; classifying it is an assistant turn |
+| the assistant's lock opens (`mailbox.onFree`) | the reader is free — this is the one that was missing |
+| a pump cycle ends | mail may remain, or the cluster it just filled may be runnable |
+| work is handed over while busy (both `queueWork` sites) | the job may have closed during `route()`'s ~10 s |
+| a job closes (`finish`, **after** `setState`) | the office is free |
+
+**Two rules inside the door, and both are decisions:**
+
+1. ⚠ **Collecting is not starting.** Reading and classifying is an *assistant*
+   turn and is legal while workers run; whether a *job* may begin is asked in
+   exactly one other place (`drainDeferred`, which refuses while `working`).
+   Merging those two questions is how two jobs would overlap.
+2. ⚠ **Mail before work, and nothing starts while the assistant is mid-turn.**
+   That turn may be the message that cancels the queued work (*"don't do A any
+   more"*); starting A while the cancellation is being read is precisely the mess
+   this design exists to prevent. It costs nothing — the lock closing calls
+   straight back into the door.
+
+⚠ **The mailbox stall was a THIRD queue bug, in a different queue from the other
+two, and the counter says which:** `activity.queued` = *"n waiting"* is the
+**mailbox**; `activity.jobs` = *"n queued"* is the **cluster**. Reading the wrong
+word sends the next person to the wrong file — it nearly did here.
+
+### 11b‴. Conflicts inside one cluster — one clause, on the line that introduces the list (09/09)
+
+*"Do A"* then *"don't do A"* arrive in the same cluster, and **order alone does
+not tell a model which wins**. Two mechanisms, one deterministic and one not:
+
+| | |
+|---|---|
+| deterministic | `tick()` reads the **mailbox before the cluster**, so a cancellation still in the post reaches the cluster **before** the cluster is drained → §11b″ |
+| the prompt | one clause in `mergeUserText`: *"where two of them conflict, the LATER one wins and the earlier one is dropped, including a later message that cancels an earlier one outright"* |
+
+⚠ **On the line that introduces the numbered list, not in a paragraph of its
+own.** Measured in this repo: an abstract rule placed beside a concrete list
+loses to the list, and moving the condition onto the example's own line took a
+case from 1/4 to 4/4.
+
+⚠ **"Where they conflict", never "the last one wins".** Most clusters are
+additions (*"also do B"*); a blanket last-wins throws the earlier requests away.
+
+⛔ **No timestamps.** They were considered and refused: a model does not derive
+precedence from clock times, and the numbering already carries the order. A
+timestamp would add tokens and answer nothing the clause does not.
+
 ### 11c. The lock has to be a REAL MUTEX, not a flag
 
 The first version used `busy = true/false`. Not enough: `run()` calls `plan()` then `report()` from a different pumped branch, both set the flag, whichever finishes first clears the other one's flag — **the exact bug this whole mechanism exists to prevent.** It has to queue with a promise chain, and count depth so nesting doesn't release the lock early.

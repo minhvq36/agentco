@@ -1408,8 +1408,15 @@ export class Company {
  * language. The moment a person types a name the key gets written and it is
  * their datum, never translated again.
  */
+/**
+ * ⚠ `id` IS QUOTED, for the same reason `name` beside it always was: an office
+ * named "1" slugs to `1`, and unquoted that is a NUMBER when the file is read
+ * back — the schema then rejects it and the whole office fails to load, which
+ * is worse than the employee case (a role is skipped; an office throws).
+ * → `config.ts §loadOffice`
+ */
 function officeTemplate(id: string, name: string): string {
-  return `id: ${id}
+  return `id: ${JSON.stringify(id)}
 name: ${JSON.stringify(name)}
 charter_file: charter.md
 
