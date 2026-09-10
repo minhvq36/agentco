@@ -588,6 +588,265 @@ is in the audit log · a CLI action can be declared read-only.
 the EU and Vietnam limits how far a blanket exclusion carries. This is not legal
 advice. Have the final text reviewed before selling into the EU.
 
+### 7.4b 🔴 THE LAUNCHER IS AN `.exe`, AND THE REASON IS NOT MODERNITY
+
+A `.vbs` run by `wscript.exe` proved the tree could start silently, and it was
+replaced anyway — for two reasons, the second of which was measured:
+
+1. **VBScript is being retired.** Feature-on-demand since 2024, with removal
+   stated as the direction. A product's only entry point cannot sit on that.
+2. 🔴 **It could not report a failure.** `WScript.Shell.Run(…, 0, …)` means no
+   window — which also means no stdout, no stderr, and no exit code anybody
+   sees. Symptom, reported from a real desktop: **double-click the icon a second
+   time and nothing happens at all.** No browser, no error, nothing. Whatever
+   went wrong printed to a console that did not exist.
+
+⚠ **A launcher that cannot fail out loud teaches the user the app is broken.**
+That is worse than a launcher that occasionally shows an ugly box.
+
+`installer/launcher.nsi` builds `AgentCo.exe` with NSIS — already the installer's
+compiler, so no new toolchain. `SilentInstall silent` emits a plain
+GUI-subsystem program: no wizard, no window, and no console can be attached to
+it at all — the same guarantee wscript gave, from something that can also show a
+message box. **0.32 MB**, and it carries the icon.
+
+It **waits** on the daemon, and that is deliberate in both directions: on a first
+launch it stays as the app's presence in Task Manager; on a later one `start`
+finds the running daemon, opens a window onto it and exits. Measured:
+
+```
+click 1 →  daemon up          healthz {"ok":true,"version":"0.0.1"}
+click 2 →  exits in 2.2s, code 0   ← found the daemon, no second port
+```
+
+⚠ The second click was the reported bug and it now behaves — but the durable
+part is that **if it ever stops behaving, a message box says so** instead of
+nothing at all.
+
+### 7.5 🔴 A DOUBLE-CLICKED LAUNCHER DOES NOT KNOW WHERE THE COMPANY IS
+
+Found by running the packaged tree, 10/09 — not by reading anything.
+
+```ts
+resolveCompanyDir(explicit?) =
+  explicit ?? process.env.AGENTCO_COMPANY_DIR ?? path.join(process.cwd(), 'company')
+```
+
+All three doors are shut for a double-click: there is no `--dir`, no environment
+was set by anybody, and `cwd` under `wscript` is not a place that means anything.
+The daemon goes looking for `company/` beside a directory nobody chose.
+
+⇒ **the launcher has to be told**, and the answer settled 11/09 is the simplest
+one available:
+
+> **`<install>\company`. No picker, no `company-dir.txt`, no lookup.**
+
+The maintainer's call, and the reasons are good: one place to find, one place to
+back up, and nothing that can go stale. It sits beside `runtime/` and `app/` — the
+part of the tree an update never touches — so it survives updates by structure
+rather than by care.
+
+⚠ **The uninstaller leaves it, and that needs the right NSIS verb**: `RMDir
+"$INSTDIR"` without `/r`, which removes the folder only when it is already
+empty. A `/r` on that one line would delete every office, document and note the
+customer has — the thing `BUSINESS.md` calls the highest switching cost there is.
+
+⚠ **THE COST, STATED:** `%LOCALAPPDATA%` normally sits outside a user's own backup
+and outside OneDrive sync, while `Documents` does not. The customer's work lives
+here, so *"where are my backups"* has a worse answer than it would elsewhere.
+Accepted in exchange for findability; revisit the first time somebody loses work.
+
+### 7.6 The installer itself — nothing exists yet
+
+What `scripts/package.ts` produces is **the folder an installer would lay down**,
+plus two entry points: `agentco.cmd` (terminal, shows a console, correct) and
+`AgentCo.vbs` (double-click, no console — see §7.4).
+
+**Not built, and each is one of the five things a customer actually sees:**
+accept the policy · choose a path · choose a language · check Claude Code · a
+shortcut with an icon.
+
+### ✅ BUILT 10/09 — `installer/agentco.nsi`, and it compiles
+
+```
+AgentCo-0.0.1-win-x64-setup.exe    38.5 MB      ← the download
+                                  169.5 MB      ← on disk after install
+                                     22.9%      ← LZMA, whole-file
+```
+
+⚠ **38.5 MB is the number that matters**, not 169.5. The earlier worry about a
+"few-hundred-megabyte download" was about the wrong figure: the installer
+compresses to a size nobody thinks twice about, and the disk cost lands after
+they have already committed. **A web installer buys nothing here.** → §5.3
+
+**Language dialog → policy → install folder → shortcuts → progress → finish.**
+
+- **The policy shows no text caret.** MUI's licence control is a read-only
+  RichEdit, so nothing can be typed into it — but it still blinks a caret, and a
+  caret is the universal sign for *"a box you fill in"*, on the one screen whose
+  entire job is to be read. `HideCaret` on page-show removes it; selecting and
+  scrolling still work, because someone must be able to copy a clause and reach
+  the end.
+- **Both shortcuts are optional and both are pre-ticked** — a components page,
+  which is what people expect. Un-ticking is a two-second decision they get to
+  make, rather than a surprise they find afterwards.
+- ⚠ **The Claude Code check appears ONLY when Claude Code is missing.** On a
+  machine that has it there is no page and no pause — which is correct, and is
+  why it looked absent to the person who built it: their machine already had it.
+
+### 7.7 🔴 THE UNINSTALLER USED TO FINISH GREEN ON A HALF-REMOVED INSTALL
+
+Reported 11/09 by the maintainer, and reported as a **habit, not an edge case**:
+they routinely forget to shut the daemon down before removing, and they had
+already noticed which two directories keep surviving — `app\` and `runtime\`.
+The naming was theirs before anyone read the script.
+
+**The mechanism.** `Delete` and `RMDir` set the error flag and NSIS carries on;
+nothing in the section read it. A live daemon holds two files open:
+
+```
+node.exe        HELD   the daemon IS that process — the image is mapped
+AgentCo.exe     HELD   the launcher waits on node for its exit code (§7.4b)
+app\…\*.js      gone   Node closes each file after reading it
+the registry key gone  DeleteRegKey cannot fail the way a locked file can
+```
+
+So the customer got: AgentCo missing from Apps & features, ~90 MB and a **live
+daemon still answering on 7317** still on disk, its own code deleted underneath
+it, and **no door back** — the uninstall entry that would let them retry was the
+one thing that always got removed successfully.
+
+**⚠ The polite stop is NOT the gate.** `agentco stop` exits 0 when nothing was
+running, and `POST /api/shutdown` returns before the process is gone. A design
+that trusted it would land back in exactly the state above. The gate is the
+**file lock on the thing about to be deleted**: `FileOpen … a` on a running image
+fails with a sharing violation, so the question asked is the question that
+matters. → [[agentco-free-discriminator]]
+
+- The runtime is located with `FindFirst "runtime\node-v*"`, never spelled out —
+  that version moves ~twice a year (§3.5) and a hard-coded one is a check that
+  silently stops checking after the next bump.
+- ⛔ **Never `taskkill /IM node.exe`.** That name is not ours; it is the
+  customer's editor and dev server too.
+- On failure: `MessageBox MB_RETRYCANCEL`, and Cancel **aborts before the first
+  `Delete`**. "We gave up" and "we half-removed it" can no longer both be true.
+- `/SD IDCANCEL`, because `uninstall.exe /S` has nobody to press Retry, and both
+  other outcomes — hang forever, or delete what it can — are worse than stopping
+  with the machine intact.
+
+**⚠ And the lock check cannot be the whole answer, so the section now ends by
+looking at the disk.** It closes the cause we met; a working directory inside
+`app\`, an antivirus mid-read or a preview pane fails the same silent way. If
+`app\` or `runtime\` survive, the uninstaller says so and **keeps
+`uninstall.exe` and the registry key** — which is what turns "close it and try
+again" into something the customer can actually do.
+→ [[agentco-detect-fix-pair-scope]]
+
+**Measured 11/09** — a stand-in tree (real `node.exe`, stub `agentco.cmd`),
+installed with `/S /D=`, uninstalled with `/S _?=`:
+
+| what was holding it | exit | took | what happened |
+|---|---|---|---|
+| nothing | 0 | 1.7 s | removed; `stop` never spawned |
+| a process on `node.exe`, `stop` works | 0 | 2.0 s | released on the first poll, then removed |
+| a process on `node.exe`, `stop` cannot help | 2 | 11 s | **nothing deleted at all** — not even the shortcuts |
+| a plain file inside `app\` | 2 | — | `runtime\` went, `app\` survived, and it was *reported*; entry kept |
+
+**And once more on the real 169.9 MB tree, with a real daemon** (`0.0.3` build,
+headless, `--port 7399`): exit 0, the daemon dead, 7399 closed, `company\` kept.
+
+⚠ **It took 9.6 s, and almost none of that is the gate.** The same uninstall
+with *nothing running* takes **9.9 s** — the cost is `RMDir /r` over **9 294
+files**, not the wait. Measured separately, the polite stop returns in **1.22 s**
+and `node.exe` is released **1.38 s** after it was asked. So the 10 s budget is
+not "nearly exhausted" as the wall-clock first suggested; the poll leaves on its
+first tick. ⚠ **A total that looks alarming is not evidence about the part you
+just added** — the discriminator was one run with no daemon at all.
+[[agentco-measurement-vs-conclusion]]
+
+Two smaller things the same pass fixed:
+
+- **`current` was never deleted** — `scripts/package.ts` writes that pointer file
+  and no line removed it, so `RMDir "$INSTDIR"` could never have succeeded even
+  on a machine with no `company\`.
+- **`NoClaude` had no `/SD`**, which hangs `setup.exe /S` forever on precisely
+  the machines that warning exists for. It is `/SD IDYES` now — the same answer
+  §7.6 argues for: warn, never block.
+
+⚠ **The update path is the same shape and is not built yet** (§3.5): it replaces
+`app\` and `runtime\`, the two directories this section could not remove, and it
+runs *far* more often than an uninstall. Whatever it does about a running daemon,
+it cannot be "hope it is off".
+
+### 9. The mark
+
+`installer/logo.svg` — a lit tile with three figures in it. Original, and
+deliberately nothing like Anthropic's or Claude's marks: agentco is a third-party
+app running on somebody's Claude subscription, and *looking official* is the risk
+area, not a compliment (→ SESSIONS_MEMORY §8.2).
+
+`scripts/icon.ts` **redraws it from the same numbers** to emit `agentco.ico`
+(16 · 32 · 48 · 256 px, 32-bit BMP entries). It draws rather than converts so a
+release needs no ImageMagick, no Inkscape and no rasteriser — the mark is made of
+one rounded rectangle and three circles precisely so that this is possible.
+
+⚠ **Two copies of one drawing drift**, and quietly: nudge a circle in the SVG and
+the website's logo silently stops matching the icon in the customer's taskbar.
+`test/icon.test.ts` reads both files and holds them against each other, plus the
+constraint the whole design exists for — **nothing thinner than a pixel at 16px**.
+
+⚠ `NotSigned`, verified. Every customer sees *"Windows protected your PC"* until
+§6 is paid for. That is the single remaining blocker on shipping to a non-coder.
+
+### 🔴 WHY NOT INNO SETUP — it is no longer free for commercial use
+
+The first draft of the installer was written for Inno, after a recommendation
+that said *"Inno Setup is free, and has been since 1997"*. **That is history, not
+the present.** Read out of the binaries of 6.7.3, installed 10/09:
+
+```
+ISCC.exe banner:  "Non-commercial use only"
+strings in Compil32.exe:
+   "Commercial license key"   "Purchase"   "Single User"
+   "Are you sure you want to remove your commercial license key
+    and revert to non-commercial use only?"
+```
+
+The bundled `license.txt` still carries the old text (*"for any purpose,
+including commercial applications"*), so **reading the licence file agrees with
+the outdated memory and the running product does not.** agentco is intended to be
+sold; that is commercial use.
+
+⚠ **This is the same class of mistake this document warns about twice elsewhere**
+— payment-processor terms (§8) and code-signing requirements (§6) both carry
+"verify, do not remember". The build tool got recommended from memory instead.
+Vendor terms are checked, never recalled. [[agentco-spec-says-done]]
+
+**NSIS was then checked the same way, and passes on evidence rather than memory:**
+
+```
+COPYING (1999-2026)   zlib/libpng — "for any purpose, including commercial
+                      applications"; compression modules zlib/bzip2/LZMA-CPL
+makensis banner       no non-commercial notice
+binary strings        no "license key" / "Purchase" / "Trial"
+```
+
+⚠ **And it is better here for a second reason nobody was looking for:** NSIS
+ships **67 language files including Vietnamese**, which Inno does not. The
+wizard's own chrome follows the customer, so §7.3's translation problem shrinks
+to the policy alone — where English-only is the deliberate answer.
+
+**The check that caught this took two minutes and is the reusable part:** install
+the tool, run its compiler, read its licence file, and grep its binaries for
+licence-key strings. ⚠ The licence FILE alone would have been misleading — Inno's
+still carries the old permissive text while the running product says otherwise.
+
+⚠ **The Claude Code check belongs at FIRST RUN, not in the installer** — or if it
+is in the installer, it must warn rather than block. The resolver has four install
+shapes across three operating systems and exactly one of them has been exercised
+on real hardware; a blocking gate turns every false negative into *"cannot install
+at all"*, on a machine that has Claude Code working perfectly. → §2
+
 ### 7.4 No console window, ever
 
 → `SPEC-cli.md` §1. The child-process flash is fixed. The remaining half is the
@@ -686,29 +945,40 @@ One source SVG; every ICO/PNG size is generated from it, never redrawn.
 
 ---
 
-## 9.5 🔴 The bundled Node is not a convenience — the SDK spawns `node` BY NAME
+## 9.5 What the bundled Node is actually for — a claim this file got WRONG
 
-Read out of `sdk.mjs` on 10/09:
+An earlier draft of this section said: *"`getDefaultExecutable()` returns the string
+`"node"`, therefore every single task runs through a `spawn('node', …)` resolved from
+`PATH`, therefore the launcher's `PATH` is what decides whether the product does
+anything at all."*
 
-```js
-getDefaultExecutable() { return isBun() ? "bun" : "node" }
-spawnLocalProcess(e) { …spawn(command, args, { …, env: o, windowsHide: true }) }
-//                                                  ↑ env defaults to { ...process.env }
+**That was read out of the minified source and it is false.** Measured 10/09, with the
+SDK's optional package hidden *and* no `node` on `PATH` at all:
+
+```
+node on PATH?  False
+✓  Claude Code            …\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe
+✓  Claude Code sign-in    the test call succeeded
 ```
 
-agentco passes no `pathToClaudeCodeExecutable` and no `executable`, so **every single
-task runs through a `spawn('node', …)` resolved from `PATH`**.
+A real task ran. When `pathToClaudeCodeExecutable` names a **native binary**, the SDK
+spawns it directly; `getDefaultExecutable()` governs the JS-CLI path, not this one.
+⚠ Inference from reading code produced a confident, wrong, specific claim — and it
+would have gone into a spec as fact. [[agentco-measurement-vs-conclusion]]
 
-⇒ `SPEC-cli.md §6.1`'s rule — the launcher prepends the bundled runtime to the
-daemon's `PATH` — is not about arms or samples or convenience. **It is the line that
-decides whether the product does anything at all.** Get it wrong and the failure is
-not "one connector is unavailable": it is every task, on every machine that has no
-Node of its own, which is precisely the customer the packaged build exists for.
+**What survives, and it is narrower and truer:**
 
-⚠ And the SDK hands the child `{ ...process.env }`, so it inherits whatever `PATH` the
-daemon has. One place to set it — the launcher — and one thing to test on a machine
-with no Node installed. That test is the single most valuable thing in the first
-packaging build.
+| needs the bundled runtime on `PATH` | why |
+|---|---|
+| the daemon itself | it *is* a Node process; the launcher invokes it by absolute path |
+| **CLI arms** (`core/cli-arm.ts`) | the customer's own commands — `python x.py`, `node script.js` |
+| **`npx` for MCP arms** (`core/armexec.ts`) | the cold path of every stdio connector in the catalogue |
+| ~~running a task~~ | **no** — the Claude binary is addressed by absolute path |
+
+⇒ `SPEC-cli.md §6.1`'s rule still holds, but its blast radius is *connectors and
+commands*, not *everything*. A machine with no Node still runs agentco and still gets
+answers; what it loses is the arm catalogue's cold path. That is a real bug and a
+much smaller one, and knowing which it is decides how early it has to be fixed.
 
 ---
 

@@ -102,50 +102,61 @@ export function openFolder(dir: string): void {
 
 function reveal(target: string): void {
   if (process.env['AGENTCO_HEADLESS'] === '1') return;
-  const win = process.platform === 'win32';
   /**
-   * ⚠ Windows goes through `cmd /c start` with an EMPTY second argument — that
-   * slot is the window title, and leaving it out makes `start` read a quoted
-   * path as the title and open nothing at all.
+   * ┌──────────────────────────────────────────────────────────────────────────
+   * │ 🔴 WINDOWS OPENS THROUGH `explorer.exe`, AND BOTH OBVIOUS ANSWERS WERE
+   * │ WRONG. Two bugs, one line. → SPEC-cli.md §1
+   * │
+   * │ ① `cmd /c start` + `detached: true` — the original. A black console
+   * │   window flashes before the browser appears. The user's words: it looks
+   * │   like something leaked out of the app, right after an icon was clicked.
+   * │
+   * │ ② `cmd /c start` + `windowsHide: true` — the repair, and it BROKE OPENING
+   * │   THE BROWSER AT ALL on the one path that matters. Reported from a real
+   * │   desktop: with the daemon already running, clicking the icon a second
+   * │   time did nothing. Measured, parent exiting immediately, marker on disk:
+   * │
+   * │       detached           LAUNCHED
+   * │       windowsHide        nothing        ← the repair
+   * │       both               LAUNCHED
+   * │       neither            nothing
+   * │
+   * │   `detached` is what lets the grandchild outlive a parent that exits in
+   * │   milliseconds — and `cmdStart`'s already-running branch does exactly
+   * │   that: it opens a browser and returns, with no server holding the loop
+   * │   alive. The other branch runs forever, which is why only one broke.
+   * │
+   * │   ⚠ AND THE FIRST PROBE MISSED IT by sleeping 2.5s after the spawn — it
+   * │   measured a shape the real code does not have.
+   * │   [[agentco-measurement-vs-conclusion]]
+   * │
+   * │ ⇒ THE FIX IS NOT A FLAG. It is not launching a CONSOLE program at all.
+   * │ Read out of the PE headers rather than assumed:
+   * │
+   * │       cmd.exe        subsystem 3 = CONSOLE   ← can always be given a window
+   * │       explorer.exe   subsystem 2 = GUI       ← cannot have one, ever
+   * │
+   * │ A GUI-subsystem process cannot be handed a console by any combination of
+   * │ flags, so the flash is impossible BY CONSTRUCTION rather than suppressed
+   * │ by an option whose interaction nobody can predict. `detached` stays and
+   * │ keeps the survival guarantee it always had.
+   * │
+   * │ ⚠ `explorer.exe` opens a URL in the default browser and a path in the
+   * │ file manager — exactly the two jobs `openBrowser` and `openFolder` need.
+   * │ It always exits non-zero; nothing here reads its exit code.
+   * └──────────────────────────────────────────────────────────────────────────
    */
-  const [cmd, args]: [string, string[]] = win
-    ? ['cmd', ['/c', 'start', '', target]]
-    : process.platform === 'darwin'
-      ? ['open', [target]]
-      : ['xdg-open', [target]];
+  const [cmd, args]: [string, string[]] =
+    process.platform === 'win32'
+      ? ['explorer.exe', [target]]
+      : process.platform === 'darwin'
+        ? ['open', [target]]
+        : ['xdg-open', [target]];
   try {
-    /**
-     * ┌──────────────────────────────────────────────────────────────────────
-     * │ 🔴 THE BLACK WINDOW THAT FLASHED BEFORE THE BROWSER OPENED. (user, 10/09)
-     * │
-     * │ `agentco start` prints its lines, then a console window appears for a
-     * │ fraction of a second, and only then does the browser come up. It is
-     * │ this spawn: `cmd.exe` is a CONSOLE application, and the two options it
-     * │ was given on Windows are exactly the ones that guarantee it gets a
-     * │ window of its own.
-     * │
-     * │ `detached: true` becomes `DETACHED_PROCESS` in libuv, which means the
-     * │ child inherits NO console — so cmd allocates itself a fresh one, and
-     * │ an allocated console is a visible window. `windowsHide` is the flag
-     * │ for this (`CREATE_NO_WINDOW`: a console with no window), but the two
-     * │ CONFLICT — with `DETACHED_PROCESS` set there is no console for
-     * │ `CREATE_NO_WINDOW` to describe, and it is ignored. Passing both fixes
-     * │ nothing, which is why this looks like a flag that does not work.
-     * │
-     * │ ⇒ ON WINDOWS, DROP `detached`. Nothing is lost: `start` hands the URL
-     * │ to the shell and exits immediately, so the browser is not our child
-     * │ and does not die with us — and Windows kills no process group on exit
-     * │ the way POSIX does. `detached` STAYS on macOS and Linux, where `open`
-     * │ and especially `xdg-open` can outlive the call and would otherwise be
-     * │ signalled along with the CLI.
-     * │
-     * │ ⚠ `unref()` on both, and it is what actually lets `agentco start` end:
-     * │ an un-unref'd child keeps the event loop alive.
-     * └──────────────────────────────────────────────────────────────────────
-     */
-    const opts: SpawnOptions = win
-      ? { windowsHide: true, stdio: 'ignore' }
-      : { detached: true, stdio: 'ignore' };
+    // ⚠ `unref()` below is what lets `agentco start` end — an un-unref'd child
+    // keeps the event loop alive. `detached` is what lets the OPENED thing
+    // survive us; removing it is the bug that came back. See the box above.
+    const opts: SpawnOptions = { detached: true, windowsHide: true, stdio: 'ignore' };
     const child = spawn(cmd, args, opts);
     /**
      * ┌──────────────────────────────────────────────────────────────────────

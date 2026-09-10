@@ -1,0 +1,76 @@
+AgentCo — what it does on this computer
+
+Please read this before installing. It is short on purpose, and it is written
+plainly rather than as a legal formula, because the point is that you actually
+know what you are agreeing to.
+
+
+WHAT AGENTCO DOES
+
+AgentCo runs a team of AI assistants on this machine, using your own Claude
+account. To do useful work, it can:
+
+  * READ AND WRITE FILES in the folders you point it at. It creates documents,
+    edits them, and deletes what it has written when you ask it to.
+
+  * RUN COMMANDS that you declare yourself. You write the command; AgentCo runs
+    it with the values an assistant fills in.
+
+  * CONNECT TO SERVICES you sign in to — for example Notion, GitHub or Google
+    Calendar — with the access level you choose when you connect them.
+
+  * SEND WHAT YOU TYPE, and the contents of documents you give it, TO ANTHROPIC,
+    because that is where Claude runs. Your usage is subject to your own
+    agreement with Anthropic.
+
+
+WHAT AGENTCO DOES NOT DO
+
+  * It does not send your documents, results or company data anywhere except to
+    Anthropic as part of answering you.
+
+  * It does not have an account system, and it does not upload anything to us.
+    We operate no server that holds your data.
+
+  * It does not read outside the folders you have given it, and it does not run
+    commands you have not declared.
+
+  * It checks once a day whether a newer version exists. That request contains
+    no identifier of you or your machine, and it can be switched off.
+
+
+WHERE THE BOUNDARIES ARE
+
+These are real limits built into the product, not promises:
+
+  * Each office works inside its own folder. That folder is the working root.
+
+  * A connection is granted to specific employees, not to the whole company.
+
+  * Every call an assistant makes through a connection is written to an audit
+    log you can read.
+
+  * A command you declare can be marked read-only, and then it can only read.
+
+
+YOUR RESPONSIBILITY
+
+AgentCo does what you and your assistants tell it to do, on real files, with
+real accounts, on this real computer. AI assistants make mistakes, and a mistake
+here can mean a file changed or deleted, a message sent, or money spent on your
+Claude account.
+
+You are responsible for what you point it at and what you allow it to do.
+
+Keep backups of anything you cannot afford to lose. Start with a folder where a
+mistake would not matter. Read what an assistant proposes before letting it run
+commands that change things.
+
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. To the extent permitted by the law that applies to you, the authors are
+not liable for any loss or damage arising from its use. Nothing here limits any
+right you have that cannot be limited by agreement.
+
+AgentCo is licensed under the terms in LICENSE.md, which is installed alongside
+this file.

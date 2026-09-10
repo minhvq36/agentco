@@ -42,3 +42,12 @@ notes/
 
 /*-snapshot.md
 /*-console.md
+
+# scripts/package.ts
+#
+# WARNING: building here makes the smoke test LIE. `out/` sits inside the repo,
+# so node module resolution walks UP out of the packaged tree and finds the
+# repo's own node_modules — the first run reported Claude Code at
+# `agentco/node_modules/...` when the package deliberately contains no such
+# thing. Build with `--out <somewhere outside the repo>` to test for real.
+/out/

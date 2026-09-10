@@ -76,6 +76,34 @@ test("🔴 `reveal` attaches an 'error' listener before unref", () => {
   );
 });
 
+test('🔴 `reveal` keeps `detached` AND stays off console programs', () => {
+  /**
+   * Two regressions guarded by one test, because they are the same line and
+   * they pull in opposite directions:
+   *
+   *  · DROP `detached` and the browser stops opening whenever the parent exits
+   *    immediately — which is exactly `cmdStart`'s already-running branch.
+   *    Measured: detached LAUNCHED, windowsHide-only nothing.
+   *  · LAUNCH `cmd` and a console window can always appear, because cmd.exe is
+   *    PE subsystem 3. `explorer.exe` is subsystem 2 and cannot have one.
+   *
+   * A fix for either one alone reintroduces the other, and both failures are
+   * invisible from a non-interactive session — so this is written down rather
+   * than left to whoever next touches the line.
+   */
+  const src = read('cli/daemonfile.ts');
+  const opts = /const opts: SpawnOptions = ([^;]+);/.exec(src);
+  assert.ok(opts, 'premise: reveal no longer builds its spawn options in one place');
+  assert.match(opts[1]!, /detached: true/, 'detached is what lets the opened thing outlive us');
+
+  // ⚠ No `\n` anchor — the file is CRLF, and requiring `;\n` made this premise
+  // fail against a declaration sitting right there.
+  const table = /const \[cmd, args\][\s\S]*?xdg-open[^;]*/.exec(src);
+  assert.ok(table, 'premise: reveal no longer picks its opener in one expression');
+  assert.ok(!/'cmd'/.test(table[0]), 'cmd.exe is a CONSOLE program — it can always be given a window');
+  assert.match(table[0], /explorer\.exe/, 'Windows must open through a GUI-subsystem program');
+});
+
 test("🔴 the taskkill fallback attaches an 'error' listener too", () => {
   // Same shape, worse place: it runs inside a timeout handler in a LIVE daemon,
   // so an uncaught throw there takes down a company that is mid-job.

@@ -95,8 +95,22 @@ function cmdInit(): void {
    * has now walked into five times. `Intl.DateTimeFormat().resolvedOptions()`
    * reads the real OS setting on Windows, macOS and Linux alike.
    */
+  /**
+   * ⚠ `--lang` GOES FIRST, and it is what the installer passes.
+   * → docs/SPEC-packaging.md §7.1
+   *
+   * The installer asked the person directly, so its answer outranks every hint
+   * below it — those exist for the case where nobody was asked. An OS set to
+   * English on a machine whose owner wants Vietnamese is a normal situation,
+   * not an odd one, and the only way to know is to have asked.
+   *
+   * ⚠ It is still `resolveLocale`, not a raw assignment: an unshipped tag must
+   * fall through to the hints rather than pin the interface to a catalogue that
+   * does not exist. → `docs/CLAUDE.md §Language`
+   */
   const locale = resolveLocale(
     [
+      typeof flags['lang'] === 'string' ? flags['lang'] : undefined,
       process.env['LC_ALL'],
       process.env['LC_MESSAGES'],
       process.env['LANG'],
