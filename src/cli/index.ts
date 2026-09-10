@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * CLI. → docs/SPEC-cli.md §2, docs/SPEC-offices.md
  *
@@ -17,6 +17,8 @@ import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
+import { appVersion } from '../core/version.js';
+import { describeSearch } from '../core/claude-code.js';
 import { resolveLocale, setLocale, t, type Locale } from '../i18n/index.js';
 import { formatUSD } from '../i18n/fmt.js';
 
@@ -152,7 +154,10 @@ async function cmdStart(): Promise<void> {
     pid: process.pid,
     port: daemon.port,
     url: daemon.url,
-    version: '0.0.1',
+    // ⚠ `appVersion()`, never a literal. This used to read `'0.0.1'`, hand-typed,
+    // while `/healthz` reported the real one — two copies of the ONE number the
+    // update channel exists to compare. → core/version.ts · SPEC-packaging §1
+    version: appVersion(),
     started_at: new Date().toISOString(),
   });
 
@@ -582,11 +587,39 @@ async function cmdDoctor(): Promise<void> {
     }
   }
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 CLAUDE CODE IS CHECKED BEFORE AUTH, AND THE ORDER IS THE POINT.   │
+   * │ → src/core/claude-code.ts · docs/SPEC-packaging.md §2                │
+   * │                                                                      │
+   * │ The SDK does not run Claude in-process — it SPAWNS an executable it  │
+   * │ does not go looking for. Without one, the auth check below fails     │
+   * │ with a message about the binary, and the reader concludes their      │
+   * │ LOGIN is broken. Two different problems, two different fixes, and    │
+   * │ the wrong one sends somebody to re-authenticate for an hour.         │
+   * │                                                                      │
+   * │ ⚠ IT PRINTS EVERY PATH IT TRIED, not just the verdict. "Claude Code: │
+   * │ not found" starts a support conversation; five paths with a mark     │
+   * │ beside each ends it with a screenshot.                               │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  const search = describeSearch();
+  checks.push([
+    t('cli.checkClaude'),
+    !!search.found,
+    search.found
+      ? `${search.found.path}  (${search.found.via})`
+      : t('cli.checkClaudeNo'),
+  ]);
+  if (!search.found) {
+    for (const c of search.tried) console.log(`       ·  ${c.ok ? '✓' : '✗'} ${c.via.padEnd(17)} ${c.path}`);
+  }
+
   // Auth: one real, very cheap call. This is the most common first-time failure.
   let authOk = false;
   let authNote = '';
   try {
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { query } = await import('../core/sdk.js');
     for await (const m of query({
       prompt: 'Reply with the single word: ok',
       options: {
@@ -655,7 +688,34 @@ function cmdHelp(): void {
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 function companyTemplate(locale: Locale): string {
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────
+   * │ 🔴 `installed_at` IS THE ONE THING IN THE PACKAGING PLAN THAT CANNOT
+   * │ BE DONE LATER. → docs/SPEC-packaging.md §5.1
+   * │
+   * │ Every policy that treats people who arrived early differently from
+   * │ people who arrived later needs to know when somebody arrived — and a
+   * │ future release cannot go back in time to find out. Ship without this
+   * │ and the choice is gone for good: either break a promise, or keep
+   * │ everything free for everyone forever.
+   * │
+   * │ It is written here, on `init`, and nowhere else. No backfill, and no
+   * │ guessing from filesystem timestamps — those survive neither a copy nor
+   * │ a restore, so a guess would quietly promote a two-year-old install to
+   * │ "new" or the reverse.
+   * │
+   * │ ⚠ ABSENT MEANS SOMETHING, AND IT IS NOT "unknown": a company with no
+   * │ `installed_at` was created BEFORE this field existed, so it is older
+   * │ than every company that has one. That is the correct reading and it
+   * │ needs no migration — which is the whole reason no backfill is wanted.
+   * │
+   * │ ⚠ A DATE, NOT A TIMESTAMP. Cohorts are decided by release day; an hour
+   * │ and a minute would be a more identifying value bought for nothing.
+   * └──────────────────────────────────────────────────────────────────────
+   */
+  const installedAt = new Date().toISOString().slice(0, 10);
   return `language: ${locale}
+installed_at: ${installedAt}
 
 runtime:
   port: 7317

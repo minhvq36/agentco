@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Assistant — the assistant for ONE office. A long-lived session, converses
  * with the person, splits work into tasks.
  *
@@ -18,7 +18,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query } from './sdk.js';
 import { z } from 'zod';
 
 import { activeOptions, findArm, folderRoots } from './catalog.js';

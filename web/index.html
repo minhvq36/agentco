@@ -4,6 +4,30 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AgentCo</title>
+    <!--
+      THE CHOSEN THEME, STAMPED BEFORE ANYTHING PAINTS. -> web/src/lib/theme.ts
+
+      Inline and blocking on purpose. `<script type="module">` is deferred, so
+      by the time the app's own code runs the browser may already have painted
+      the body once -- and somebody who chose "light" would watch the page flash
+      dark on every single reload.
+
+      It knows two things and nothing else: the storage key, and that the value
+      goes on `data-theme`. Anything else, including no storage at all, leaves
+      the attribute off, and the stylesheet's BASE palette is dark -- which is
+      the default, so there is nothing to write.
+
+      The key is duplicated from `lib/theme.ts`; that file's THEME_KEY box says
+      so, and says why it cannot be imported here.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem('agentco.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        /* blocked site data -- the base palette is the default anyway */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

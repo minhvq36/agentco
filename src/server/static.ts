@@ -121,12 +121,24 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse,
 const notBuilt = (): string => `<!doctype html>
 <html lang="${getLocale()}"><head><meta charset="utf-8"><title>${t('srv.notBuiltTitle')}</title>
 <style>
- body{margin:0;height:100vh;display:grid;place-items:center;background:#fbfaf8;color:#232019;
+ /* Dark, unconditionally — the same call as web/src/index.css §TWO STATES: the
+    machine does not get a vote on the product's colours. This page cannot read
+    the user's choice (there is no bundle yet, which is why it is showing at
+    all), so it uses the DEFAULT rather than asking prefers-color-scheme and
+    landing somewhere the app itself would never land.
+    ⚠ NO BACKTICKS IN HERE — this whole page is a template literal, and one
+    backtick in a comment ends it. Cost me a build. */
+ body{margin:0;height:100vh;display:grid;place-items:center;background:#16150f;color:#ece7dc;
       font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
- @media (prefers-color-scheme:dark){body{background:#16150f;color:#ece7dc}}
+ :root{color-scheme:dark}
  main{max-width:34rem;padding:2rem}
  h1{font-size:1.15rem;margin:0 0 .75rem}
- p{color:#7d766a;margin:.5rem 0}
+ /* ⚠ muted from the DARK palette (#948c7c), not the light one. The old value
+    was the light #7d766a, which under a prefers-color-scheme twin only ever sat
+    on light paper; pinning the page to dark without moving this leaves the
+    explanation as mid-grey on near-black. Same shape as the black bubble in
+    office.css — a ground that flipped and a colour on top of it that did not. */
+ p{color:#948c7c;margin:.5rem 0}
  code{display:block;background:rgba(128,128,128,.14);padding:.7rem .9rem;border-radius:.5rem;
       margin:.9rem 0;font:13px ui-monospace,Consolas,monospace}
 </style></head>

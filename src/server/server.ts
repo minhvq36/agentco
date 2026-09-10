@@ -25,6 +25,7 @@ import { RunError } from '../core/types.js';
 import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
+import { appVersion } from '../core/version.js';
 import { buildConfig, catalogForUi, defaultOptions, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
 import { callTool, httpTarget } from '../core/mcp-http.js';
@@ -636,7 +637,7 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
     // ── company level
     if (url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: pkgVersion(), offices: company.size });
+      return json(res, 200, { ok: true, version: appVersion(), offices: company.size });
     }
     // Anything that isn't /api/ is the UI — including a SPA's sub-paths.
     if (!url.pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD')) {
@@ -664,9 +665,22 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       });
     }
     if (url.pathname === '/api/company' && method === 'PATCH') {
-      const body = await readJson<{ models?: Record<string, string>; language?: string }>(req);
+      const body = await readJson<{ models?: Record<string, string>; language?: string; name?: string }>(req);
       if (body.language !== undefined) {
         return json(res, 200, { language: company.updateLanguage(body.language) });
+      }
+      /**
+       * ⚠ `!== undefined`, never a truthiness test. An EMPTY name is a real
+       * instruction — "go back to the default label" — and `if (body.name)`
+       * would drop it on the floor and fall through to the models branch,
+       * answering a rename with *"missing field: models"*. → `Company.updateName`
+       */
+      if (body.name !== undefined) {
+        const saved = company.updateName(String(body.name));
+        // Answer with what the SCREEN should show, so an empty name comes back
+        // as the label rather than as a blank title. The same `|| t()` the GET
+        // above uses — one rule, applied in both doors.
+        return json(res, 200, { name: saved || t('company.unnamed') });
       }
       if (!body.models) return json(res, 400, { error: t('srv.missingField', { field: 'models' }) });
       return json(res, 200, { models: company.updateModels(body.models) });
@@ -1758,16 +1772,7 @@ async function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Bu
   return Buffer.concat(chunks);
 }
 
-function pkgVersion(): string {
-  try {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(fs.readFileSync(path.resolve(here, '../../package.json'), 'utf8')) as {
-      version?: string;
-    };
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
+// `pkgVersion` moved to `core/version.ts §appVersion` on 10/09 — the CLI needs the
+// same number for `daemon.json`, and it had been carrying a hand-typed one.
 
 

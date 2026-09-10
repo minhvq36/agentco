@@ -1,9 +1,9 @@
+import { useRef, useState } from 'react';
 import { Home, Network, Pencil, Plus, Power, Square } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Select, Tip } from '@/components/ui/misc';
 import { actions, useApp } from '@/lib/store';
-import { api } from '@/lib/api';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatDate, formatTime, formatUSD, formatWeekday } from '@i18n/fmt';
 
@@ -306,6 +306,115 @@ function ViewSwitch() {
   );
 }
 
+/**
+ * THE COMPANY'S NAME — double-click, type, Enter. → docs/SPEC-ui.md §0
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ NO PENCIL BUTTON. (user, 10/09)                                          │
+ * │                                                                          │
+ * │ The office picker beside this one HAS a pencil, and that is right for it: │
+ * │ renaming an office can move a directory and change its id, so it is a     │
+ * │ deliberate act that deserves a dialog. The company name moves not one     │
+ * │ byte (`Company.updateName`), so it can be edited where it is written —    │
+ * │ and a second pencil two centimetres from the first would only make        │
+ * │ people wonder which of the two names they are about to change.            │
+ * │                                                                          │
+ * │ ⚠ DOUBLE-CLICK NEEDS A SECOND DOOR, and `title` is not it — a tooltip     │
+ * │ says nothing to somebody navigating by keyboard, and a plain `<h1>` is    │
+ * │ not even reachable by Tab. So the title is focusable and Enter opens the  │
+ * │ editor too. That is the whole cost of not shipping a button: two          │
+ * │ attributes and one key case.                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * `Escape` cancels and `blur` saves — deliberately opposite, and both are the
+ * common reading: Escape is the universal "forget it", while clicking away from
+ * a box you have typed in means you are done with it, not that you changed your
+ * mind. Losing what someone typed because they clicked the canvas is the
+ * project's worst class of bug (→ `AppState.draft`).
+ */
+function CompanyName() {
+  // ?? 'AgentCo' only covers the beat BEFORE `/api/company` lands. The server
+  // never sends an empty name: it substitutes `t('company.unnamed')` itself.
+  const name = useApp((s) => s.company?.name ?? 'AgentCo');
+  const [editing, setEditing] = useState(false);
+  /**
+   * ⚠ Guards against SAVING TWICE. Enter commits and then blurs the input,
+   * and `onBlur` would commit the same string a second time — one wasted PATCH,
+   * and a race in which the second answer overwrites the first.
+   */
+  const done = useRef(false);
+
+  if (!editing) {
+    return (
+      <h1
+        className="cursor-text rounded px-1 text-[15px] font-semibold hover:bg-accent-soft/50"
+        // Focusable, but NOT `role="button"`: it is still the page's heading,
+        // and relabelling it as a button to advertise one shortcut would cost a
+        // screen reader the landmark it uses to find the top of the app.
+        tabIndex={0}
+        title={t('header.companyRenameTip')}
+        aria-label={t('header.companyRenameTip')}
+        onDoubleClick={() => {
+          done.current = false;
+          setEditing(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          done.current = false;
+          setEditing(true);
+        }}
+      >
+        {name}
+      </h1>
+    );
+  }
+
+  const commit = (next: string): void => {
+    if (done.current) return;
+    done.current = true;
+    setEditing(false);
+    // Nothing changed ⇒ no request. Renaming to the same string is the most
+    // common way this box is closed, and it should cost nothing.
+    if (next.trim() === name.trim()) return;
+    void actions.renameCompany(next);
+  };
+
+  return (
+    <input
+      autoFocus
+      defaultValue={name}
+      maxLength={80}
+      aria-label={t('header.companyRenameTip')}
+      className="h-7 w-48 rounded-lg border border-line bg-paper px-2 text-[15px] font-semibold text-ink"
+      // Select the lot: the usual reason for opening this is replacing the
+      // default label outright, not appending to it.
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit(e.currentTarget.value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          /**
+           * ⚠ AND IT MUST NOT REACH THE WINDOW. `App` listens for Escape on
+           * `window` and STOPS THE RUNNING WORK with it — deliberately, it is
+           * the reflex a Claude Code user brings with them. Here Escape means
+           * "forget this rename", so without this line, cancelling a typo
+           * while the company is working would kill the job as well.
+           */
+          e.stopPropagation();
+          // Mark it done BEFORE closing, or the blur that follows saves the
+          // very edit this key just threw away.
+          done.current = true;
+          setEditing(false);
+        }
+      }}
+      onBlur={(e) => commit(e.currentTarget.value)}
+    />
+  );
+}
+
 export function Header({
   onNewOffice,
   onRenameOffice,
@@ -320,7 +429,7 @@ export function Header({
 
   return (
     <header className="flex flex-none items-center gap-3 border-b border-line bg-panel px-4 py-2.5">
-      <h1 className="text-[15px] font-semibold">{company?.name ?? 'AgentCo'}</h1>
+      <CompanyName />
 
       {company && company.offices.length > 0 && (
         <Select
@@ -399,8 +508,15 @@ export function Header({
           variant="ghost"
           aria-label={t('header.shutdown')}
           onClick={() => {
+            // The confirm stays a NATIVE dialog: it is the one action on this
+            // screen that ends the session, and the browser's own box cannot be
+            // missed, cannot be styled away and cannot fail to render.
             const ok = window.confirm(t('header.shutdownConfirm'));
-            if (ok) void api.shutdown().catch(() => undefined);
+            // Through `actions`, not straight to `api`: the store has to raise
+            // `poweredOff` BEFORE the request, or the dying SSE stream paints an
+            // error screen over the shutdown the user just asked for.
+            // → `actions.shutdown`
+            if (ok) void actions.shutdown();
           }}
         >
           <Power className="h-4 w-4" />

@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnOptions } from 'node:child_process';
 
 import type { CompanyPaths } from '../core/paths.js';
 
@@ -102,19 +102,79 @@ export function openFolder(dir: string): void {
 
 function reveal(target: string): void {
   if (process.env['AGENTCO_HEADLESS'] === '1') return;
+  const win = process.platform === 'win32';
   /**
    * ⚠ Windows goes through `cmd /c start` with an EMPTY second argument — that
    * slot is the window title, and leaving it out makes `start` read a quoted
    * path as the title and open nothing at all.
    */
-  const [cmd, args] =
-    process.platform === 'win32'
-      ? ['cmd', ['/c', 'start', '', target]]
-      : process.platform === 'darwin'
-        ? ['open', [target]]
-        : ['xdg-open', [target]];
+  const [cmd, args]: [string, string[]] = win
+    ? ['cmd', ['/c', 'start', '', target]]
+    : process.platform === 'darwin'
+      ? ['open', [target]]
+      : ['xdg-open', [target]];
   try {
-    spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────
+     * │ 🔴 THE BLACK WINDOW THAT FLASHED BEFORE THE BROWSER OPENED. (user, 10/09)
+     * │
+     * │ `agentco start` prints its lines, then a console window appears for a
+     * │ fraction of a second, and only then does the browser come up. It is
+     * │ this spawn: `cmd.exe` is a CONSOLE application, and the two options it
+     * │ was given on Windows are exactly the ones that guarantee it gets a
+     * │ window of its own.
+     * │
+     * │ `detached: true` becomes `DETACHED_PROCESS` in libuv, which means the
+     * │ child inherits NO console — so cmd allocates itself a fresh one, and
+     * │ an allocated console is a visible window. `windowsHide` is the flag
+     * │ for this (`CREATE_NO_WINDOW`: a console with no window), but the two
+     * │ CONFLICT — with `DETACHED_PROCESS` set there is no console for
+     * │ `CREATE_NO_WINDOW` to describe, and it is ignored. Passing both fixes
+     * │ nothing, which is why this looks like a flag that does not work.
+     * │
+     * │ ⇒ ON WINDOWS, DROP `detached`. Nothing is lost: `start` hands the URL
+     * │ to the shell and exits immediately, so the browser is not our child
+     * │ and does not die with us — and Windows kills no process group on exit
+     * │ the way POSIX does. `detached` STAYS on macOS and Linux, where `open`
+     * │ and especially `xdg-open` can outlive the call and would otherwise be
+     * │ signalled along with the CLI.
+     * │
+     * │ ⚠ `unref()` on both, and it is what actually lets `agentco start` end:
+     * │ an un-unref'd child keeps the event loop alive.
+     * └──────────────────────────────────────────────────────────────────────
+     */
+    const opts: SpawnOptions = win
+      ? { windowsHide: true, stdio: 'ignore' }
+      : { detached: true, stdio: 'ignore' };
+    const child = spawn(cmd, args, opts);
+    /**
+     * ┌──────────────────────────────────────────────────────────────────────
+     * │ 🔴 THIS LINE IS WHY THE DAEMON DOES NOT DIE ON A HEADLESS VPS. (10/09)
+     * │
+     * │ The `try/catch` around this spawn catches NOTHING that matters. A
+     * │ missing binary is reported ASYNCHRONOUSLY, as an `'error'` event — and
+     * │ an `'error'` event with no listener is re-thrown by EventEmitter, as
+     * │ an uncaught exception, which ends the process.
+     * │
+     * │ MEASURED: spawning a name that does not exist, in exactly the shape
+     * │ this function used, exits the process with code 1. The catch block ran
+     * │ zero times.
+     * │
+     * │ ⚠ AND THE PLACE IT HAPPENS IS A MINIMAL LINUX SERVER, where `xdg-open`
+     * │ is simply not installed — the normal state, not a broken machine. So
+     * │ `agentco start` printed its URL and then died, and the only thing that
+     * │ prevented it was an operator remembering `AGENTCO_HEADLESS=1`. A safe
+     * │ default that depends on somebody knowing a flag is not a safe default.
+     * │
+     * │ ⇒ NO DESKTOP IS NOT AN ERROR. There is nothing to report and nothing
+     * │ to retry: the interface already prints the URL for the operator to
+     * │ open themselves, which on a VPS is what they were going to do anyway.
+     * └──────────────────────────────────────────────────────────────────────
+     */
+    child.on('error', () => {
+      /* no desktop here (a server, a container) — the URL is already on screen */
+    });
+    child.unref();
   } catch {
     /* could not open it — the interface still shows the path to copy by hand */
   }

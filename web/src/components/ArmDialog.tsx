@@ -1511,8 +1511,8 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
             chooseAccount(r.name);
             /**
              * ⚠ Same check as the web flow: on this path the service decides
-             * who signs in, and *"repair minhvq36"* can come back as
-             * *"ttminhvq is now fine"*. The selection above is already correct;
+             * who signs in, and *"repair the acme-team account"* can come back
+             * as *"acme-personal is now fine"*. The selection above is correct;
              * what would be wrong is letting the user keep believing the row
              * they clicked got fixed. → `reconnecting`
              */

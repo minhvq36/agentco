@@ -37,6 +37,7 @@ export const vi: Catalog = {
 
   // ────────────────────────────────────────────────────────────────── app
   'app.fatalTitle': 'Mất kết nối tới công ty',
+  'app.poweredOff': 'Công ty đã tắt. Bạn có thể đóng thẻ này.',
   'app.openingCompany': 'Đang mở công ty…',
   'app.openingOffice': 'Đang mở văn phòng…',
   'app.noOfficesTitle': 'Công ty chưa có văn phòng nào',
@@ -93,6 +94,7 @@ export const vi: Catalog = {
   'header.stopTip': 'Dừng việc đang chạy. Daemon vẫn sống.',
   'header.shutdown': 'Tắt hẳn',
   'header.shutdownConfirm': 'Tắt hẳn?\n\nCông ty sẽ ngừng lại.',
+  'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',
   'header.state.paused': 'tạm nghỉ',
@@ -306,6 +308,11 @@ export const vi: Catalog = {
   'co.mustBeTier': '"{key}" phải là một MỨC: {tiers}.',
   'co.modelsChanged': 'Đã đổi model. Việc đang chạy giữ nguyên model cũ cho tới khi xong.',
   'co.unsupportedLanguage': 'Ngôn ngữ "{language}" không có trong danh sách hỗ trợ.',
+  'cli.checkClaude': 'Claude Code',
+  'cli.checkClaudeNo':
+    'không tìm thấy — hãy cài Claude Code, hoặc khai `claude_path:` trong company.yaml (các đường đã thử ở dưới)',
+  'co.nameTooLong': 'Tên công ty tối đa {max} ký tự.',
+  'co.nameChanged': 'Đã đổi tên công ty.',
   'co.armConfigMissing': 'Thiếu cấu hình cho cánh tay này.',
   'co.armAlreadyHere':
     'Văn phòng này đã có kết nối "{label}". Kéo dây từ nó sang nhân viên cần dùng — một kết nối dùng chung được cho nhiều người.',
@@ -769,8 +776,9 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   // ───────────────────────────────────────────────────────────── settings
   'settings.title': 'Cài đặt',
   'settings.language': 'Ngôn ngữ giao diện',
-  'settings.languageScope':
-    'Cái này chỉ đổi giao diện. Trợ lý và nhân viên luôn trả lời, ghi kết quả và đúc kinh nghiệm theo đúng thứ tiếng bạn đang gõ.',
+  'settings.theme': 'Màu giao diện',
+  'settings.themeLight': 'Sáng',
+  'settings.themeDark': 'Tối',
 
   // ────────────────────────────────────────────────────────────── dialogs
   'dialog.newOffice.title': 'Tạo văn phòng',

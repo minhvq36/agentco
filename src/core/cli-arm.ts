@@ -385,7 +385,52 @@ export interface RunResult {
  * │ `.cmd`/`.bat` on Windows (`npx`, `npm`). To wrap a `.cmd`, declare the full           │
  * │ path to its interpreter instead — **never turn on `shell`**.                       │
  * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ EXACTLY ONE AMBIENT VARIABLE CROSSES, AND IT IS `PATH` — see `childEnv`.
+ * That is a deliberate hole in "NO implicit env inheritance" above, not a
+ * softening of it: the rule still holds for everything else.
  */
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 AN ALLOWLIST OF ONE. `PATH` CROSSES; NOTHING ELSE DOES.
+ * │
+ * │ ⛔ NEVER `{ ...process.env, ...declared }`. `process.env` in the daemon
+ * │ holds `ANTHROPIC_API_KEY`, `AGENTCO_TOKEN` and OAuth material, and the
+ * │ person who DECLARES a CLI command is not necessarily the person who owns
+ * │ those keys. A spread here hands every key to every command the office can
+ * │ run — silently, with nothing on screen and nothing in the audit log to
+ * │ show it happened. That is the whole reason this is a function with a name
+ * │ rather than three characters at the call site.
+ * │
+ * │ WHY `PATH` HAD TO BE LET THROUGH AT ALL — two reasons, and the second one
+ * │ is the one that made it urgent:
+ * │
+ * │  ① POSIX would not find the binary. libuv replaces `environ` and calls
+ * │    `execvp`, which reads `PATH` from the environ it was just handed;
+ * │    absent, glibc falls back to `/bin:/usr/bin`. So a Node installed by
+ * │    `nvm`, or a customer's own tool under `/opt` or `/usr/local/bin`, does
+ * │    not resolve. ⚠ Windows hid this completely: measured 10/09, all four
+ * │    env shapes (`{}` included) still resolve a bare `node`, because
+ * │    `CreateProcess` searches the CALLING process's PATH. A bug that only
+ * │    exists on the platform we do not develop on.
+ * │
+ * │  ② THE DESKTOP BUILD CANNOT WORK WITHOUT IT. → `SPEC-cli.md §6.1`. The
+ * │    app ships its own Node beside the customer's and the launcher puts it
+ * │    first in the DAEMON's `PATH`. Wiping the environment for children
+ * │    throws away our own sidecar along with the customer's Node — so the
+ * │    packaging decision and this line are one thing, not two.
+ * │
+ * │ A DECLARED `PATH` WINS. Someone writing `env: { PATH: … }` in their own
+ * │ declaration is answering this exact question on purpose, and the ambient
+ * │ value must not overrule them.
+ * └──────────────────────────────────────────────────────────────────────────
+ */
+function childEnv(declared: Record<string, string>): Record<string, string> {
+  if (declared['PATH'] !== undefined) return declared;
+  const ambient = process.env['PATH'];
+  return ambient ? { ...declared, PATH: ambient } : declared;
+}
+
 export function runCommand(opts: {
   argv: string[];
   cwd: string;
@@ -397,7 +442,12 @@ export function runCommand(opts: {
     const [cmd, ...rest] = opts.argv;
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(cmd!, rest, { cwd: opts.cwd, env: opts.env, shell: false, windowsHide: true });
+      child = spawn(cmd!, rest, {
+        cwd: opts.cwd,
+        env: childEnv(opts.env),
+        shell: false,
+        windowsHide: true,
+      });
     } catch (e) {
       resolve({ ok: false, code: null, stdout: '', stderr: (e as Error).message, ms: 0, door: 'spawn' });
       return;
@@ -419,7 +469,18 @@ export function runCommand(opts: {
        */
       try {
         if (process.platform === 'win32' && child.pid) {
-          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+          // ⚠ `.on('error')`, and it is NOT belt-and-braces: a missing binary
+          // reaches us as an ASYNCHRONOUS `'error'` event, which this `try`
+          // cannot see, and an unlistened `'error'` is re-thrown by
+          // EventEmitter — i.e. it would take the whole daemon down from
+          // inside a timeout handler. Measured in `cli/daemonfile.ts`, where
+          // the same shape exited the process with code 1.
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on(
+            'error',
+            () => {
+              /* no taskkill on this machine — the timeout below still resolves */
+            },
+          );
         } else {
           child.kill('SIGKILL');
         }

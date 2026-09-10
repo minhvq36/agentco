@@ -4,8 +4,85 @@
  * The palette keeps the spirit of the v0 build: warm paper, brown-black ink, an
  * earthy orange accent. Tailwind v4 declares tokens with @theme — no
  * tailwind.config.js needed.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ TWO STATES: dark · light. DARK IS THE PRODUCT. → `lib/theme.ts`
+ * │
+ * │ 🔴 THE MACHINE DOES NOT GET A VOTE. (user, 10/09) There is deliberately
+ * │ NO `prefers-color-scheme` anywhere in this stylesheet. The default is dark
+ * │ because that is what agentco looks like, not because of what the operating
+ * │ system happens to be set to that week — and `test/theme-tokens.test.ts`
+ * │ fails the day a media query reappears here.
+ * │
+ * │ ⚠ THAT IS WHAT THE INCOGNITO WINDOW WAS ABOUT. The first cut followed the
+ * │ machine when nothing was stored, so Ctrl+Shift+N — no storage, no
+ * │ extensions — dropped straight to whatever the browser reported, and the
+ * │ user got a LIGHT app out of a private window. "Cleared storage" now means
+ * │ dark, on every machine, in every window.
+ * │
+ * │ ⇒ `@theme` HOLDS THE DARK PALETTE. It is the base, so no attribute at all
+ * │ (blocked site data, the inline script never ran, someone opened the HTML
+ * │ by hand) still lands on the product's own colours. Light is one override
+ * │ block, and it is the only deviation.
+ * │
+ * │ ⚠ Which also deleted a trap the first cut had to carry: a media query
+ * │ cannot be a member of a selector list, so "system dark" and "chosen dark"
+ * │ needed the same 15 declarations written TWICE, plus a load-bearing rule
+ * │ about which block came first. One base and one override needs neither.
+ * └──────────────────────────────────────────────────────────────────────────
  */
 @theme {
+  --color-paper: #16150f;
+  --color-panel: #1e1c15;
+  --color-line: #332f24;
+  --color-ink: #ece7dc;
+  --color-muted: #948c7c;
+  --color-accent: #e08a5c;
+  --color-accent-soft: #3a2a1f;
+  --color-ok: #7fb583;
+  --color-warn: #d8b45e;
+  --color-danger: #e07a6a;
+  /**
+   * The ground for an error message. Saturated enough to read as an error at a
+   * glance, pale enough that `ink` on top of it stays legible — an error has to
+   * SAY what happened, and to say anything it first has to be readable.
+   */
+  --color-danger-soft: #40201a;
+  --color-grid: #221f18;
+  --color-wire: #4a4436;
+
+  /**
+   * The JSON paste box — field names vs values. → `lib/json-paint.ts` ·
+   * `ArmDialog §JsonBox`
+   *
+   * ⚠ These MUST be theme tokens, not colour codes written straight into a class.
+   * The first cut on 31/08 hard-coded `text-[#2f6f6a]` and the user said so at
+   * once — *"why is it so washed out"*: a fixed colour is dark text on a dark
+   * ground under the dark theme. Here each colour has two values, and the
+   * light block below swaps both.
+   *
+   * ⚠ And they must be AS STRONG AS `ink`. "Neutral, not attention-grabbing"
+   * (the user's call) is about SATURATION, not contrast — text paler than normal
+   * text reads as "greyed out", not as "neutral".
+   */
+  --color-jkey: #7fc8bd;
+  --color-jval: #d9a97c;
+
+  --radius-node: 12px;
+}
+
+/**
+ * LIGHT — the ONE deviation from the product's own colours, and the only block
+ * in this file that answers to a choice.
+ *
+ * ⚠ Every token `@theme` declares has to appear here, or it keeps its DARK
+ * value on a light ground: pale text on pale paper, or the near-black box the
+ * error bubble once was (→ `office.css` §THE ROOM IS ALWAYS LIT — the same
+ * failure, from the other side). A hand-kept list cannot notice a token that
+ * arrives later, so `test/theme-tokens.test.ts` reads both blocks out of this
+ * file and fails on the first token that exists in one and not the other.
+ */
+:root[data-theme='light'] {
   --color-paper: #fbfaf8;
   --color-panel: #ffffff;
   --color-line: #e7e3dc;
@@ -16,53 +93,11 @@
   --color-ok: #3f7d4a;
   --color-warn: #b4832a;
   --color-danger: #c0392b;
-  /**
-   * The ground for an error message. Saturated enough to read as an error at a
-   * glance, pale enough that `ink` on top of it stays legible — an error has to
-   * SAY what happened, and to say anything it first has to be readable.
-   */
   --color-danger-soft: #fbe6e2;
   --color-grid: #ece7de;
   --color-wire: #cbc4b8;
-
-  /**
-   * The JSON paste box — field names vs values. → `lib/json-paint.ts` ·
-   * `ArmDialog §JsonBox`
-   *
-   * ⚠ These MUST be theme tokens, not colour codes written straight into a class.
-   * The first cut on 31/08 hard-coded `text-[#2f6f6a]` and the user said so at
-   * once — *"why is it so washed out"*: a fixed colour is dark text on a dark
-   * ground under the dark theme. Here each colour has two values, and the
-   * `prefers-color-scheme: dark` block below swaps both.
-   *
-   * ⚠ And they must be AS STRONG AS `ink`. "Neutral, not attention-grabbing"
-   * (the user's call) is about SATURATION, not contrast — text paler than normal
-   * text reads as "greyed out", not as "neutral".
-   */
   --color-jkey: #1f5f57;
   --color-jval: #6b3f1d;
-
-  --radius-node: 12px;
-}
-
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-paper: #16150f;
-    --color-panel: #1e1c15;
-    --color-line: #332f24;
-    --color-ink: #ece7dc;
-    --color-muted: #948c7c;
-    --color-accent: #e08a5c;
-    --color-accent-soft: #3a2a1f;
-    --color-ok: #7fb583;
-    --color-warn: #d8b45e;
-    --color-danger: #e07a6a;
-    --color-danger-soft: #40201a;
-    --color-grid: #221f18;
-    --color-wire: #4a4436;
-    --color-jkey: #7fc8bd;
-    --color-jval: #d9a97c;
-  }
 }
 
 html,
@@ -71,9 +106,22 @@ body,
   height: 100%;
 }
 
-/* Turns `light-dark()` on — the per-agent colour in the log depends on it. */
+/**
+ * `color-scheme` is what the BROWSER paints from — form controls, the
+ * scrollbar, the canvas behind the page — AND what `light-dark()` reads, which
+ * `lib/colors.ts` uses for every agent's colour in the log.
+ *
+ * ⚠ IT IS DECLARED, NEVER `light dark`. Leaving both on hands the question back
+ * to the machine, which is the one thing this whole design refuses to do: a
+ * light scrollbar down the side of a dark panel, and an agent's colour picked
+ * for a ground the page is not on. One value per state, and the states are the
+ * two the user can choose between.
+ */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 body {

@@ -272,6 +272,45 @@ export const CompanyConfigSchema = z.object({
   /** Empty = never named. → the note on `assistant.display_name` */
   name: z.string().default(''),
 
+  /**
+   * The day this company was created, `YYYY-MM-DD`. Written once by
+   * `agentco init` and never touched again. → docs/SPEC-packaging.md §5.1
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ ABSENT IS AN ANSWER HERE, AND IT IS NOT "unknown".                 │
+   * │                                                                      │
+   * │ A company with no `installed_at` was created BEFORE the field        │
+   * │ existed — so it is OLDER than every company that has one, and any    │
+   * │ rule about "who arrived first" must read it that way. Treating it as │
+   * │ "unknown, assume recent" would demote exactly the earliest users,    │
+   * │ who are the ones such a rule usually exists to reward.               │
+   * │                                                                      │
+   * │ ⚠ And nothing backfills it. A guess from a filesystem timestamp      │
+   * │ survives neither a copy nor a restore from backup, so it would       │
+   * │ quietly re-date old installs — writing a wrong fact into user data,  │
+   * │ where no later read can tell it was a guess. Same rule as            │
+   * │ `KnowledgeNode` having no `lang`. → docs/CLAUDE.md §Language         │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  installed_at: z.string().optional(),
+
+  /**
+   * Where Claude Code is, when the search cannot work it out.
+   * → `core/claude-code.ts` · docs/SPEC-packaging.md §2
+   *
+   * ⚠ THE ESCAPE HATCH, AND IT OUTRANKS EVERY CLEVER THING THE RESOLVER DOES.
+   * The search covers the install shapes we know of on the three operating
+   * systems we know of — this line covers the ones we do not, including the ones
+   * that do not exist yet. It is also how a support conversation ends in thirty
+   * seconds instead of a debugging session.
+   * → [[agentco-test-the-escape-hatch]]
+   *
+   * ⚠ A value that does not exist on disk is an ERROR, not a hint: the resolver
+   * stops rather than quietly running a different binary. Being ignored without
+   * being told is worse than being refused.
+   */
+  claude_path: z.string().optional(),
+
   runtime: z
     .object({
       port: z.number().int().default(7317),

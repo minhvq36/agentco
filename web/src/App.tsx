@@ -58,6 +58,7 @@ export default function App() {
    */
   const locale = useApp((s) => s.locale);
   const loading = useApp((s) => s.loading);
+  const poweredOff = useApp((s) => s.poweredOff);
   const fatal = useApp((s) => s.fatal);
   const company = useApp((s) => s.company);
   const canvas = useApp((s) => s.canvas);
@@ -122,6 +123,30 @@ export default function App() {
       void actions.saveCanvas(nodes, edges);
     }, 700);
   }, []);
+
+  /**
+   * THE COMPANY IS OFF. → `store.ts §AppState.poweredOff`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ IT IS TESTED BEFORE `fatal`, AND THAT ORDER IS THE FEATURE.            │
+   * │                                                                          │
+   * │ Shutting down kills the SSE stream a beat later, so `fatal` fills in with │
+   * │ "lost connection to the company" — an alarm with a Retry button, for      │
+   * │ something the user deliberately asked for. Swap these two blocks and the  │
+   * │ last thing anybody sees when they close agentco is an error screen.       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ONE QUIET LINE, and nothing else — no icon, no button, no border. There is
+   * no daemon left to serve a Retry, so every control that could be drawn here
+   * would be a control that does not work. (user, 10/09)
+   */
+  if (poweredOff) {
+    return (
+      <div className="flex h-full items-center justify-center bg-paper px-6 text-center">
+        <p className="text-[13px] text-muted">{t('app.poweredOff')}</p>
+      </div>
+    );
+  }
 
   if (fatal) {
     return (

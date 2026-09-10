@@ -31,6 +31,7 @@ import { plural, resolveLocale, setLocale, t } from '@i18n';
 
 import { mergeUserEcho } from './chat-echo';
 import { replayable } from './replay';
+import { applyTheme, bootTheme, type Theme } from './theme';
 
 export interface ChatMessage {
   id: number;
@@ -111,7 +112,33 @@ export interface AppState {
    * speaks. → docs/CLAUDE.md §Language
    */
   locale: Locale;
+  /**
+   * LIGHT · DARK · FOLLOW THE MACHINE. → `lib/theme.ts`
+   *
+   * ⚠ Here ONLY so the radio group in Settings can draw a dot next to the right
+   * row. What the screen actually looks like is decided by an attribute on
+   * `<html>` and the stylesheet — nothing in React reads this to paint.
+   *
+   * ⚠ And unlike `locale`, the server never hears about it: this is one
+   * browser's view state, the same class as `agentco:view`. Two machines
+   * looking at one company are allowed to disagree about the lights.
+   */
+  theme: Theme;
   loading: boolean;
+  /**
+   * The daemon was shut down FROM THIS SCREEN, and the user confirmed it.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ IT MUST OUTRANK `fatal`, AND THAT IS THE WHOLE POINT OF THE FLAG.        │
+   * │                                                                          │
+   * │ Shutting down kills the SSE stream a beat later, so `es.onerror` sets    │
+   * │ `fatal: "lost connection to the company"` — an alarm, with a Retry       │
+   * │ button, for something the user just asked for on purpose. Without a way  │
+   * │ to tell the two apart, the last thing anyone sees when they close the    │
+   * │ company down is an error screen.                                         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  poweredOff: boolean;
   /** A company-level error (daemon lost, config broken). It blocks the whole screen. */
   fatal: string | null;
   /** A passing error — shown as a toast, blocking nothing. */
@@ -344,7 +371,11 @@ const VIEW_KEY = 'agentco:view';
 
 const initial: AppState = {
   locale: bootLocale(),
+  // ⚠ `bootTheme` STAMPS the attribute as it reads — see the box in `theme.ts`.
+  // Its key lives in that module, which is why it is not in the pair above.
+  theme: bootTheme(),
   loading: true,
+  poweredOff: false,
   fatal: null,
   toast: null,
   company: null,
@@ -1156,6 +1187,72 @@ export const actions = {
     await guard(() => api.setLanguage(locale));
   },
 
+  /**
+   * Light · dark · follow the machine. → `lib/theme.ts`
+   *
+   * No round trip and nothing to await: the stylesheet has already repainted by
+   * the time this returns. It is deliberately NOT stored on the server the way
+   * the language is — see the note on `AppState.theme`.
+   */
+  setTheme(theme: Theme): void {
+    if (theme === state.theme) return;
+    applyTheme(theme);
+    set({ theme });
+  },
+
+  /**
+   * SHUT THE DAEMON DOWN — the last thing this screen ever does.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THE FLAG GOES UP BEFORE THE REQUEST, NOT AFTER IT.                       │
+   * │                                                                          │
+   * │ The server answers `{ok:true}` and only THEN exits, 100ms later — but    │
+   * │ the SSE stream can die first, and `es.onerror` writing `fatal` while     │
+   * │ this call is still in flight would put an error screen over a shutdown   │
+   * │ the user asked for. Raising it first means every later signal — the      │
+   * │ dropped stream, the failed fetch — lands on a screen that already says   │
+   * │ the right thing.                                                         │
+   * │                                                                          │
+   * │ ⚠ AND THE ERROR IS SWALLOWED ON PURPOSE, which is the one place in this  │
+   * │ file that is allowed. A daemon that dies before finishing the response   │
+   * │ is a request that fails — and it fails BECAUSE IT WORKED. Reporting it   │
+   * │ would be a red toast for a successful action.                            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  async shutdown(): Promise<void> {
+    set({ poweredOff: true });
+    // Close the stream ourselves rather than letting it reconnect into a dead
+    // port: EventSource retries forever, and each attempt is a console error on
+    // a screen whose whole job is to be quiet.
+    source?.close();
+    await api.shutdown().catch(() => undefined);
+  },
+
+  /**
+   * RENAME THE COMPANY — the title in the top-left corner.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ EMPTY IS A LEGAL VALUE, and it does not mean "leave it alone".           │
+   * │                                                                          │
+   * │ `company.yaml` starts with no `name:` at all, and the server renders     │
+   * │ that as `t('company.unnamed')` — a label that follows the interface      │
+   * │ switch. Clearing the box is how somebody gets back to it, so an empty    │
+   * │ string is sent through rather than treated as a cancel. → `Company.      │
+   * │ updateName`                                                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * The response carries the name the SERVER settled on, which is not always
+   * the string that was typed — trimmed, and swapped for the default label when
+   * it is empty. Taking ours instead would leave the header showing a blank
+   * title until the next reload.
+   */
+  async renameCompany(name: string): Promise<boolean> {
+    const res = await guard(() => api.setCompanyName(name));
+    if (!res) return false;
+    set({ company: state.company ? { ...state.company, name: res.name } : state.company });
+    return true;
+  },
+
   /** Clicking the tab already open CLOSES it. That is what a tab does. */
   openPanel(panel: PanelId | null): void {
     const next = state.panel === panel ? null : panel;
@@ -1396,6 +1493,8 @@ export function connectEvents(): () => void {
   };
 
   es.onerror = () => {
+    // The daemon we just switched off is not a daemon we lost. → `actions.shutdown`
+    if (state.poweredOff) return;
     // EventSource reconnects by itself. Only report once it has closed for good.
     if (es.readyState === EventSource.CLOSED) {
       set({ fatal: t('error.lostDaemon') });

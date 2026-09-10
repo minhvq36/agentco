@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Loading config. TWO LEVELS: the company (money, models) and the office (people,
  * knowledge).
  *
@@ -28,6 +28,7 @@ import {
 import { companyPaths, officePaths, type CompanyPaths, type OfficePaths } from './paths.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 import { resolveLocale, setLocale, t } from '../i18n/index.js';
+import { setClaudePath } from './claude-code.js';
 
 export interface LoadedOffice {
   id: string;
@@ -114,6 +115,18 @@ export function loadCompanyConfig(dir: string, overrides: Record<string, unknown
    * builder. See `CompanyConfigSchema.language`.
    */
   setLocale(resolveLocale([parsed.data.language], 'vi'));
+
+  /**
+   * The Claude Code override, adopted on the SAME line as the locale and for the
+   * same reason. → `core/claude-code.ts`
+   *
+   * ⚠ HERE rather than in `Company.open`, because `Company` is not the only
+   * caller: `updateModels`, `updateLanguage` and `updateName` all reload the
+   * config, and a hook on one door would leave the others carrying a stale path
+   * after the user edits `claude_path` and saves. One function that everybody
+   * already goes through has no such gap.
+   */
+  setClaudePath(parsed.data.claude_path);
 
   return parsed.data;
 }

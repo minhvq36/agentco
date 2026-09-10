@@ -1,4 +1,4 @@
-/**
+﻿/**
  * THE CLAUDE ACCOUNT LIMIT — two windows, two percentages, two reset marks.
  * → docs/SPEC-token-economy.md §5e
  *
@@ -56,7 +56,7 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query } from './sdk.js';
 
 /** The three levels the server returns. `allowed` = plenty left, `rejected` = already blocked. */
 export type EnergyStatus = 'allowed' | 'allowed_warning' | 'rejected';

@@ -350,6 +350,20 @@ export const api = {
     }),
 
   /**
+   * The company's own name — the title in the top-left corner.
+   *
+   * ⚠ Sending `''` is a real instruction, not a no-op: it returns the title to
+   * the default label. The reply carries what the server settled on (trimmed,
+   * or the default when empty), which is what the header must draw.
+   * → `Company.updateName`
+   */
+  setCompanyName: (name: string) =>
+    call<{ name: string }>('/api/company', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  /**
    * Interface language. → docs/CLAUDE.md §Language
    *
    * ⚠ Interface only. Nothing here reaches a prompt, and it must stay that way:

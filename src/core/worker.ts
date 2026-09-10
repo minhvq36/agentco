@@ -9,7 +9,8 @@
  * duration of the call.
  */
 
-import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query } from './sdk.js';
 
 import type { LoadedOffice } from './config.js';
 import fs from 'node:fs';

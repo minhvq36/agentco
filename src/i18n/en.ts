@@ -43,6 +43,12 @@ export const en = {
 
   // ────────────────────────────────────────────────────────────────── app
   'app.fatalTitle': 'Lost connection to the company',
+  /**
+   * The whole screen after a shutdown — ONE line, and it has to do two things:
+   * confirm that the thing the user asked for actually happened, and say what
+   * to do with the tab now. There is no daemon left to serve anything else.
+   */
+  'app.poweredOff': 'The company is off. You can close this tab.',
   'app.openingCompany': 'Opening the company…',
   'app.openingOffice': 'Opening the office…',
   'app.noOfficesTitle': 'This company has no offices yet',
@@ -117,6 +123,12 @@ export const en = {
   'header.stopTip': 'Stop the running work. The daemon stays up.',
   'header.shutdown': 'Shut down',
   'header.shutdownConfirm': 'Shut down?\n\nThe company will stop.',
+  /**
+   * Doubles as the tooltip and as the accessible name of the title, so it has
+   * to say WHAT IT IS as well as what to do with it — "Rename" alone would
+   * leave a screen reader announcing a nameless control at the top of the app.
+   */
+  'header.companyRenameTip': 'Company name — double-click to rename',
   'header.state.idle': 'idle',
   'header.state.working': 'working',
   'header.state.paused': 'paused',
@@ -409,6 +421,22 @@ export const en = {
   'co.mustBeTier': '“{key}” has to be a TIER: {tiers}.',
   'co.modelsChanged': 'Models changed. Work already running keeps the old model until it finishes.',
   'co.unsupportedLanguage': 'The language “{language}” is not one of the supported ones.',
+  /**
+   * A ceiling, not a rule about taste: the title is drawn in a fixed-height
+   * header beside the office picker and has no wrapping to fall back on. The
+   * number is in the sentence because "too long" without one sends the user
+   * back to delete characters and try again.
+   */
+  /**
+   * `doctor`'s Claude Code row. It is checked BEFORE auth on purpose: without an
+   * executable the auth check fails talking about a binary, and the reader
+   * concludes their login is broken. → `cmdDoctor` · SPEC-packaging §2
+   */
+  'cli.checkClaude': 'Claude Code',
+  'cli.checkClaudeNo':
+    'not found — install Claude Code, or set `claude_path:` in company.yaml (paths tried below)',
+  'co.nameTooLong': 'The company name is limited to {max} characters.',
+  'co.nameChanged': 'The company name changed.',
   'co.armConfigMissing': 'This connection has no configuration.',
   'co.armAlreadyHere':
     'This office already has the connection “{label}”. Draw a wire from it to whoever needs it — one connection can be shared by several people.',
@@ -992,12 +1020,14 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'settings.title': 'Settings',
   'settings.language': 'Interface language',
   /**
-   * This sentence is not decoration. Without it people flip the switch, wait
-   * for the assistant to change voice, and read "it did not" as a bug.
-   * → docs/CLAUDE.md §"The switch never reaches a prompt"
+   * ⚠ `settings.languageScope` and `settings.themeScope` were pruned 10/09 at
+   * the user's request — screen clutter, their call. What those two sentences
+   * were FOR is recorded in `SettingsPanel.tsx`, not lost with them: bring one
+   * back the day the support case they prevented actually arrives.
    */
-  'settings.languageScope':
-    'This changes the interface only. The assistant and your employees always reply, write results and record lessons in whatever language you type in.',
+  'settings.theme': 'Appearance',
+  'settings.themeLight': 'Light',
+  'settings.themeDark': 'Dark',
 
   // ────────────────────────────────────────────────────────────── dialogs
   'dialog.newOffice.title': 'Create an office',

@@ -45,6 +45,16 @@ Goal: **a stranger downloads it, runs it, hands it a real task, watches the agen
 
 Librarian · two-tier HOT knowledge · visual graph · manual document ingestion · Ed25519 license keys · Docker · `bench` · replay · tier escalation · Zalo/Messenger · adding roles via UI · Tauri · `concierge`.
 
+> **Update 10/09/2026 — packaging moved from "someday" to next.** `Ed25519 license
+> keys` and `Tauri` are no longer parked: they are `SPEC-packaging.md`, settled and
+> ready to build. Two items in it are **irreversible** and belong in v0 rather than in
+> the release that needs them — `installed_at`, and an `id` on every licence. Neither
+> can be added retroactively, and each is one field.
+>
+> ⚠ And one prerequisite that had never been budgeted anywhere: a **code signing
+> certificate** is a recurring cost and a precondition for selling to people who do
+> not build from source, not a finishing touch. → `SPEC-packaging.md` §6
+
 ### Suggested pace
 
 | Day | Work |
