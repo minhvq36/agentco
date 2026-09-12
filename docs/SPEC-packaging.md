@@ -284,6 +284,16 @@ GET https://agent-co.app/releases/stable.json
 GET https://agent-co.app/releases/stable.json.sig     ← detached Ed25519 signature
 ```
 
+⚠ **And the app asks US, never GitHub — settled 13/09/2026.** It is one fetch
+either way, and the wrong one cannot be undone, because the update channel is
+what a fix would have to travel through. The API returns what the *GitHub
+account* says rather than what *we signed*, so taking the account takes every
+customer (§3.2 is the whole answer to that); its anonymous ceiling is 60/hour
+per IP, which an office behind one NAT shares; and parsing GitHub's schema bakes
+their protocol into copies that live for years. **The manifest comes from us,
+the bytes come from GitHub's CDN** — we own the pointer, they carry the payload.
+Publishing mechanics live in `agentco-web/SPEC.md §8`.
+
 Static means: cacheable, free, nothing to DDoS, nothing to keep awake, no database to
 pool connections against. The whole *"anti-DDoS and overload"* section of a
 conventional licensing design solves a problem that only exists if you create it.
