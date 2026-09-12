@@ -43,6 +43,12 @@ export const en = {
 
   // ────────────────────────────────────────────────────────────────── app
   'app.fatalTitle': 'Lost connection to the company',
+  /**
+   * The whole screen after a shutdown — ONE line, and it has to do two things:
+   * confirm that the thing the user asked for actually happened, and say what
+   * to do with the tab now. There is no daemon left to serve anything else.
+   */
+  'app.poweredOff': 'The company is off. You can close this tab.',
   'app.openingCompany': 'Opening the company…',
   'app.openingOffice': 'Opening the office…',
   'app.noOfficesTitle': 'This company has no offices yet',
@@ -61,6 +67,35 @@ export const en = {
   'app.noAgentsHintAfter': 'button in the top-left corner.',
   'app.canvasHint': 'Drag nodes to arrange · connect the assistant to a person to grant access',
   'app.planRunning': 'running…',
+
+  // ─────────────────────────────────────────────────── the office view (room)
+  // → docs/SPEC-office-animation.md
+  // ⚠ These are APP strings — furniture, tooltips, the accessible summary. What
+  // a character SAYS is `say`, which passes through no catalogue and names no
+  // language. → docs/CLAUDE.md §Language
+  'office.desk': 'Results desk',
+  'office.openResults': 'open the Results panel',
+  'office.openLibrary': 'open the Document cabinet',
+  // ⚠ NO `openArm` / `connectArm` ANY MORE. The arm bench is a LABEL, not a door:
+  // one bench stands for N connections, so "open the nearest one" was a coin toss
+  // wearing a rule. → SPEC-office-animation.md §17i
+  'office.armNone': 'No connection',
+  'office.breakArea': 'Break area',
+  'office.summary': '{working} working, {resting} resting',
+  'office.viewDiagram': 'Diagram',
+  'office.viewRoom': 'Office',
+  'office.viewDiagramTip': 'The diagram: build and wire up the company',
+  'office.viewRoomTip': 'The room: watch what is happening right now',
+  'office.character': 'Character',
+  // ⚠ NO `characterHint`. Five faces in a row explain themselves; a paragraph
+  // reassuring the reader that a costume costs nothing answers a worry the control
+  // never raised. → SPEC-office-animation.md §17i
+  'office.characterPick': 'Character {n}',
+  'office.tint': 'Outfit colour',
+  'office.tintCustom': 'Pick any colour',
+  'office.hireHint': 'Nobody works here yet. Switch to the diagram to hire your first person.',
+  'office.zoomIn': 'Zoom in',
+  'office.zoomOut': 'Zoom out',
 
   // ───────────────────────────────────────────────────────────────── chat
   'chat.you': 'you',
@@ -88,6 +123,12 @@ export const en = {
   'header.stopTip': 'Stop the running work. The daemon stays up.',
   'header.shutdown': 'Shut down',
   'header.shutdownConfirm': 'Shut down?\n\nThe company will stop.',
+  /**
+   * Doubles as the tooltip and as the accessible name of the title, so it has
+   * to say WHAT IT IS as well as what to do with it — "Rename" alone would
+   * leave a screen reader announcing a nameless control at the top of the app.
+   */
+  'header.companyRenameTip': 'Company name — double-click to rename',
   'header.state.idle': 'idle',
   'header.state.working': 'working',
   'header.state.paused': 'paused',
@@ -380,6 +421,22 @@ export const en = {
   'co.mustBeTier': '“{key}” has to be a TIER: {tiers}.',
   'co.modelsChanged': 'Models changed. Work already running keeps the old model until it finishes.',
   'co.unsupportedLanguage': 'The language “{language}” is not one of the supported ones.',
+  /**
+   * A ceiling, not a rule about taste: the title is drawn in a fixed-height
+   * header beside the office picker and has no wrapping to fall back on. The
+   * number is in the sentence because "too long" without one sends the user
+   * back to delete characters and try again.
+   */
+  /**
+   * `doctor`'s Claude Code row. It is checked BEFORE auth on purpose: without an
+   * executable the auth check fails talking about a binary, and the reader
+   * concludes their login is broken. → `cmdDoctor` · SPEC-packaging §2
+   */
+  'cli.checkClaude': 'Claude Code',
+  'cli.checkClaudeNo':
+    'not found — install Claude Code, or set `claude_path:` in company.yaml (paths tried below)',
+  'co.nameTooLong': 'The company name is limited to {max} characters.',
+  'co.nameChanged': 'The company name changed.',
   'co.armConfigMissing': 'This connection has no configuration.',
   'co.armAlreadyHere':
     'This office already has the connection “{label}”. Draw a wire from it to whoever needs it — one connection can be shared by several people.',
@@ -913,6 +970,14 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'node.knowledgeHint': 'click to open',
   'node.armMissing': 'no longer plugged in',
   'node.armKeyDead': 'sign in again',
+  /**
+   * ⚠ NOT "sign in again" — that is `armKeyDead`, and it would be the wrong
+   * door here. This one means the office holds no value under the name this
+   * connection asks for: for an OAuth account the fix is to connect it, for a
+   * typed key it is `agentco secret set`. The node says WHAT IS WRONG; the
+   * panel behind the click says which of the two to do. → `office.ts §keyGoneOf`
+   */
+  'node.armKeyGone': 'no key stored',
   'node.armFallback': 'connection',
   'node.roleMissing': 'role not found',
   'node.resting': 'off duty',
@@ -955,12 +1020,14 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'settings.title': 'Settings',
   'settings.language': 'Interface language',
   /**
-   * This sentence is not decoration. Without it people flip the switch, wait
-   * for the assistant to change voice, and read "it did not" as a bug.
-   * → docs/CLAUDE.md §"The switch never reaches a prompt"
+   * ⚠ `settings.languageScope` and `settings.themeScope` were pruned 10/09 at
+   * the user's request — screen clutter, their call. What those two sentences
+   * were FOR is recorded in `SettingsPanel.tsx`, not lost with them: bring one
+   * back the day the support case they prevented actually arrives.
    */
-  'settings.languageScope':
-    'This changes the interface only. The assistant and your employees always reply, write results and record lessons in whatever language you type in.',
+  'settings.theme': 'Appearance',
+  'settings.themeLight': 'Light',
+  'settings.themeDark': 'Dark',
 
   // ────────────────────────────────────────────────────────────── dialogs
   'dialog.newOffice.title': 'Create an office',
@@ -1075,6 +1142,14 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'overview.removeOfficeTitle': 'Delete office “{name}” for good?',
   'overview.removeOfficeBefore': 'Deletes the whole folder',
   'overview.removeOfficeAfter': ': employees, skills, the knowledge base and every result made.',
+  /**
+   * ⚠ It used to be `inspector.agentDeleteBold`, borrowed from the employee-delete
+   * modal. That modal's whole paragraph is gone (§17i of SPEC-office-animation),
+   * and a key that outlives the sentence it was written for is a key whose name
+   * lies about where it belongs. Deleting a WHOLE OFFICE is still irreversible and
+   * still says so.
+   */
+  'overview.removeNoUndo': 'There is no getting it back.',
 
   // ────────────────────────────────────────────── inspector (right panel)
   'inspector.editProfile': 'Edit profile',
@@ -1166,9 +1241,6 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'inspector.armRemoveKeepBold': 'kept',
   'inspector.armRemoveKeep2':
     '. Plug the same thing back in and there is nothing to type again — only the wiring to redo.',
-  'inspector.agentDeleteBefore': 'You lose the file',
-  'inspector.agentDeleteMid': 'and every skill you wrote for this person.',
-  'inspector.agentDeleteBold': 'There is no getting it back.',
   'inspector.agentNotesBefore': 'The lessons notebook at',
   'inspector.agentNotesAfter':
     'is kept — that is what the office learned, not the private property of one name.',
@@ -1768,6 +1840,7 @@ export const enPlural = {
   'header.taskCount': { one: '{n} task', other: '{n} tasks' },
   'header.turnCount': { one: '{n} turn', other: '{n} turns' },
   'node.libraryCount': { one: '{n} document', other: '{n} documents' },
+  'office.armCount': { one: '{n} connection', other: '{n} connections' },
   'cmd.readingMore': { one: 'Reading {names} and {n} more file…', other: 'Reading {names} and {n} more files…' },
   'lib.shapeLines': { one: '{n} line', other: '{n} lines' },
   'lib.shapeCsv': { one: 'csv, {n} row', other: 'csv, {n} rows' },

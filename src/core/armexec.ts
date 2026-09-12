@@ -293,7 +293,18 @@ function findEntry(dir: string, name: string): string | undefined {
 function run(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     // `shell: true` on Windows because `npm` is actually `npm.cmd`; `spawn` doesn't resolve that on its own.
-    const p = spawn(cmd, args, { shell: process.platform === 'win32', stdio: 'ignore' });
+    //
+    // ⚠ AND `shell: true` ON WINDOWS MEANS A `cmd.exe`, i.e. A CONSOLE WINDOW.
+    // Same flash as the browser launcher in `cli/daemonfile.ts` (10/09), in a
+    // worse place: this one runs while somebody is watching the "Try it" dialog,
+    // and up to 120 seconds of black window is not a flash, it is a second app
+    // opening. `windowsHide` works HERE — unlike over there — precisely because
+    // this spawn is not `detached`, so there is a console for it to describe.
+    const p = spawn(cmd, args, {
+      shell: process.platform === 'win32',
+      stdio: 'ignore',
+      windowsHide: true,
+    });
     // A hard ceiling: an install hanging forever would hang the "Try it" button along with it.
     const kill = setTimeout(() => {
       try {

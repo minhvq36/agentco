@@ -75,6 +75,33 @@ export class Mailbox {
   private depth = 0;
 
   /**
+   * 🔴 THE ASSISTANT JUST BECAME FREE. Fired ONCE, when the lock fully opens.
+   * → `office.ts §pump`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────
+   * │ MEASURED 09/09: THE MAILBOX STUCK AT "2 WAITING", FOREVER.
+   * │
+   * │ `pump()` refuses to run while this lock is held, and it had exactly two
+   * │ triggers: a user message arriving, and the end of a pump cycle. But
+   * │ `run()` takes THIS SAME LOCK for its own turns — planning, the report,
+   * │ `/clear`'s compaction. A message that lands during one of those is
+   * │ pushed, sees `isBusy`, and turns around; the lock then opens with
+   * │ nobody watching, and the message sits there until the user happens to
+   * │ type again. The header keeps saying "2 waiting" for the rest of the
+   * │ session — *"as if it only ever works once"*.
+   * │
+   * │ ⚠ THE EXIT BELONGS HERE, NOT AT THE THREE CALL SITES. Waking the pump
+   * │ after each `lock()` in `office.ts` is the same fix written three times,
+   * │ and the fourth caller written next month is the one that forgets. This
+   * │ is the one place that knows the mutex just opened.
+   * │
+   * │ Third instance of one law in three days: *a waiting state needs an exit
+   * │ that does not run on the success path.*
+   * └──────────────────────────────────────────────────────────────────────
+   */
+  onFree?: () => void;
+
+  /**
    * Lock the assistant — a REAL MUTEX that queues, not just a flag.
    *
    * A `busy = true/false` flag is not enough: `run()` calls `plan()` and then
@@ -90,7 +117,23 @@ export class Mailbox {
         return await fn();
       } finally {
         this.depth--;
-        if (this.depth === 0) this.busy = false;
+        if (this.depth === 0) {
+          this.busy = false;
+          /**
+           * ⚠ AFTER `busy = false`, and inside the `finally` so a THROWN turn
+           * wakes the pump too — a failed reply must not strand the messages
+           * queued behind it. → `onFree`
+           *
+           * ⚠ Its own try/catch: this is a `finally`, and an exception thrown
+           * from here would replace the real error of the turn with a
+           * secondary one from the wake-up.
+           */
+          try {
+            this.onFree?.();
+          } catch {
+            /* a listener that throws must not take the lock down with it */
+          }
+        }
       }
     });
     // Keep the chain alive even when one link throws.
@@ -119,9 +162,35 @@ export class Mailbox {
 export function mergeUserText(items: readonly MailItem[]): string {
   const texts = items.filter((i) => i.kind === 'user').map((i) => (i as { text: string }).text);
   if (texts.length === 1) return texts[0]!;
+  /**
+   * 🔴 THE PRECEDENCE CLAUSE SITS ON THE LINE THAT INTRODUCES THE LIST.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────
+   * │ *"Do A"* then *"don't do A"* land in one cluster, and order alone does
+   * │ not tell a model which wins. So the rule is said — once, in the one
+   * │ place it is read.
+   * │
+   * │ ⚠ ON THIS LINE, not in a paragraph of its own. Measured in this repo:
+   * │ an abstract rule placed beside a concrete list LOSES to the list, and
+   * │ moving the condition onto the example's own line took a case from 1/4
+   * │ to 4/4. Same reason `route()` carries its language clause inside the
+   * │ field slot.
+   * │
+   * │ ⚠ *"where they conflict"*, NOT *"the last one wins"*. Most clusters are
+   * │ additions ("also do B"); a blanket last-wins would throw the first two
+   * │ requests away.
+   * │
+   * │ ⚠ It is a PROMPT rule, so it is a signal and not a gate. The
+   * │ deterministic half is elsewhere: `tick()` reads the mailbox before the
+   * │ cluster, so a cancellation still in the post gets into the cluster
+   * │ before the cluster is drained.
+   * └──────────────────────────────────────────────────────────────────────
+   */
   return (
     `I sent ${texts.length} messages in a row while you were busy. ` +
-    `Read all ${texts.length} and answer them as one request:\n` +
+    `Read all ${texts.length} as ONE request, in the order below — and where two of them ` +
+    `conflict, the LATER one wins and the earlier one is dropped, including a later message ` +
+    `that cancels an earlier one outright:\n` +
     texts.map((t, i) => `${i + 1}. ${t}`).join('\n')
   );
 }

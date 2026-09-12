@@ -272,6 +272,45 @@ export const CompanyConfigSchema = z.object({
   /** Empty = never named. → the note on `assistant.display_name` */
   name: z.string().default(''),
 
+  /**
+   * The day this company was created, `YYYY-MM-DD`. Written once by
+   * `agentco init` and never touched again. → docs/SPEC-packaging.md §5.1
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ ABSENT IS AN ANSWER HERE, AND IT IS NOT "unknown".                 │
+   * │                                                                      │
+   * │ A company with no `installed_at` was created BEFORE the field        │
+   * │ existed — so it is OLDER than every company that has one, and any    │
+   * │ rule about "who arrived first" must read it that way. Treating it as │
+   * │ "unknown, assume recent" would demote exactly the earliest users,    │
+   * │ who are the ones such a rule usually exists to reward.               │
+   * │                                                                      │
+   * │ ⚠ And nothing backfills it. A guess from a filesystem timestamp      │
+   * │ survives neither a copy nor a restore from backup, so it would       │
+   * │ quietly re-date old installs — writing a wrong fact into user data,  │
+   * │ where no later read can tell it was a guess. Same rule as            │
+   * │ `KnowledgeNode` having no `lang`. → docs/CLAUDE.md §Language         │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  installed_at: z.string().optional(),
+
+  /**
+   * Where Claude Code is, when the search cannot work it out.
+   * → `core/claude-code.ts` · docs/SPEC-packaging.md §2
+   *
+   * ⚠ THE ESCAPE HATCH, AND IT OUTRANKS EVERY CLEVER THING THE RESOLVER DOES.
+   * The search covers the install shapes we know of on the three operating
+   * systems we know of — this line covers the ones we do not, including the ones
+   * that do not exist yet. It is also how a support conversation ends in thirty
+   * seconds instead of a debugging session.
+   * → [[agentco-test-the-escape-hatch]]
+   *
+   * ⚠ A value that does not exist on disk is an ERROR, not a hint: the resolver
+   * stops rather than quietly running a different binary. Being ignored without
+   * being told is worse than being refused.
+   */
+  claude_path: z.string().optional(),
+
   runtime: z
     .object({
       port: z.number().int().default(7317),
@@ -592,6 +631,38 @@ export const CompanyConfigSchema = z.object({
    * this work — where the correct answer is `vi`.
    */
   language: z.enum(['vi', 'en']).optional(),
+
+  /**
+   * Interface features that are a matter of TASTE, not of running a company.
+   * → docs/SPEC-office-animation.md §11c
+   *
+   * ┌──────────────────────────────────────────────────────────────────────┐
+   * │ COMPANY LEVEL, beside `allow_core_prompt_edit`, and for the same     │
+   * │ reason: it answers *"does this door exist at all"*. It is NOT        │
+   * │ per-office (nobody wants the room in one office and not another) and │
+   * │ NOT `localStorage` — that answers *"which view am I in right now"*,  │
+   * │ a different question, and it stays in the browser.                   │
+   * │                                                                      │
+   * │ ⚠ Like `language`, this NEVER reaches a prompt. It says what the     │
+   * │ screen draws. `scheduler.ts` must not learn that a room exists —     │
+   * │ which is exactly why `task.progress.at` is emitted whether this is   │
+   * │ on or off: a field emitted only sometimes is a field nobody tests in │
+   * │ the "sometimes not" direction.                                       │
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
+  ui: z
+    .object({
+      /**
+       * Draw the office as a room, as a second view of the diagram.
+       *
+       * On by default: a feature that ships off is a feature nobody
+       * discovers, and off is genuinely free — the interface never fetches
+       * the chunk, so the cost of "on by default" is paid only by whoever
+       * presses the switch.
+       */
+      office_view: z.boolean().default(true),
+    })
+    .prefault({}),
 });
 export type CompanyConfig = z.infer<typeof CompanyConfigSchema>;
 
@@ -1326,6 +1397,21 @@ interface EventBase {
  * office) receives exactly this type; `Office.emit` attaches the other two
  * fields.
  */
+/**
+ * WHERE a worker's tool call landed — a place a person can point at.
+ * → `worker.ts §placeOf` · docs/SPEC-office-animation.md §6e
+ *
+ * Deliberately COARSE. It is not a tool name and must never become one: a tool
+ * name is a growing list (every arm adds more), while this is a fixed set of
+ * places that exist in every office. Adding a tool must never require adding a
+ * value here.
+ *
+ * `desk` means *"somewhere in the office that is not one of the named stores"* —
+ * the same default `roomOf` already falls back to, and it is a real answer, not
+ * a shrug.
+ */
+export type WorkPlace = 'desk' | 'library' | 'artifacts' | 'knowledge' | 'arm' | 'web' | 'shell';
+
 export type AgentEventBody =
   | { type: 'plan.created'; plan_id: string; request: string; steps: PlanStep[] }
   | { type: 'plan.step'; step: number; status: PlanStep['status'] }
@@ -1338,7 +1424,36 @@ export type AgentEventBody =
    */
   | { type: 'plan.finished'; status: PlanStatus; costUSD: number; turns: number }
   | { type: 'task.started'; task_id: string; role: string; say: string }
-  | { type: 'task.progress'; task_id: string; role: string; say: string }
+  /**
+   * `at` / `arm` — WHERE the tool call landed, as DATA. → docs/SPEC-office-animation.md §6c
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ KEPT, NOT INFERRED. It is the same `ToolCall` that built `say`, read by  │
+   * │ `placeOf()` sitting right beside `describeCall()` — `roomOf` already     │
+   * │ mapped the path to a room, `splitArmTool` already named the arm, and     │
+   * │ both answers were being thrown away the moment the sentence was built.   │
+   * │                                                                          │
+   * │ ⚠ THE POINT IS THAT NOBODY HAS TO READ `say`. That string has TWO        │
+   * │ authors (our `describeCall`, or the model's own prose when a message     │
+   * │ carries no tool call) and it goes through i18n — so a display side       │
+   * │ matching on it would work in exactly the language it was written in and  │
+   * │ silently stop working in every other. Same rule as `files` above: only   │
+   * │ what CODE put there may be acted on.                                    │
+   * │                                                                          │
+   * │ ⚠ Absent is normal and is the default: a turn with no tool call has no   │
+   * │ place, and "no place" must NEVER be rendered as a place. Every client    │
+   * │ that does not read these two fields is unaffected.                      │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  | {
+      type: 'task.progress';
+      task_id: string;
+      role: string;
+      say: string;
+      at?: WorkPlace;
+      /** The arm's server id, when `at === 'arm'` — WHICH connection, not just "a connection". */
+      arm?: string;
+    }
   | {
       type: 'task.done';
       task_id: string;
@@ -1481,6 +1596,21 @@ export type AgentEventBody =
        */
       note?: string;
       hold_ms?: number;
+      /**
+       * The HIDDEN WORKER is running, and which of its two shapes it is.
+       * → `office.ts §reading` · docs/SPEC-office-animation.md §6c②
+       *
+       * `library` = it was handed real document paths · `web` = no paths, so it
+       * is searching the web (`SPEC-offices.md` §6c). The office already branches
+       * on exactly this (`ok.length`) to build `note`; this field keeps the KIND,
+       * which the sentence spends and loses.
+       *
+       * ⚠ A separate optional field rather than a fourth value on `assistant`:
+       * adding `'reading'` there would change the sentence the existing status
+       * line builds for a case that already has a `note` overriding it — a
+       * display regression bought for nothing.
+       */
+      reading?: 'library' | 'web';
     }
   /**
    * The conversation was just cleared (`/clear` or auto-compaction). →

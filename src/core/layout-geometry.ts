@@ -33,6 +33,129 @@ export interface Point {
   y: number;
 }
 
+/**
+ * 🔴 THE SHAPE OF A WIRE, AS FOUR POINTS. → SPEC-office-animation.md §17j‴
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE CURVE HAD ONE AUTHOR AND NOW HAS TWO READERS, so it stops being a    │
+ * │ string.                                                                  │
+ * │                                                                          │
+ * │ `web/.../geometry.ts §curve` used to build the `d` attribute from these  │
+ * │ control points inline, and it was the only thing that knew them. The     │
+ * │ moment a SECOND reader appeared — *"is the pointer near this wire"* —    │
+ * │ the choice was to re-derive the same two control points beside the       │
+ * │ distance maths, which is the pair of copies this file was created to     │
+ * │ delete (see the header). The points move here; the string is formatted   │
+ * │ from them; nothing can disagree about where the wire actually runs.      │
+ * │                                                                          │
+ * │ ⚠ `up` flips BOTH control points. Leaving one is how the curve knots in  │
+ * │ the middle — it tries to bulge downward while both ends travel up.       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @returns `[start, control1, control2, end]` of a cubic Bezier, world units.
+ */
+export function wireCurve(a: Point, b: Point, up = false): [Point, Point, Point, Point] {
+  // `dy` scales with distance so short wires do not bulge.
+  const dy = Math.max(45, Math.abs(b.y - a.y) / 2);
+  const s = up ? -1 : 1;
+  return [a, { x: a.x, y: a.y + dy * s }, { x: b.x, y: b.y - dy * s }, b];
+}
+
+/**
+ * 🔴 HOW FAR FROM A WIRE THE POINTER MAY STRAY WHILE THAT WIRE IS LIT.
+ * → SPEC-office-animation.md §17j‴
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE USER'S PROPOSAL, AND THE HALF OF IT THAT MATTERS IS THE SECOND HALF: │
+ * │ *"widen the wire's select region while it IS selected — but leave it as  │
+ * │ it is when it is not, so picking one by accident stays hard."*           │
+ * │                                                                          │
+ * │ ⚠ IT IS A DISTANCE, NOT A WIDER HIT PATH, and that is the whole design.  │
+ * │ A 96-unit transparent stroke laid over the diagram while an edge is lit  │
+ * │ would own every pixel it covers: the nodes the wire runs THROUGH become  │
+ * │ unclickable exactly while the user is looking at that wire, and the      │
+ * │ escape from the latch — click a node — is the thing it would eat. The    │
+ * │ hit path stays 16 units and stays under the nodes; this widening lives   │
+ * │ entirely in a `pointermove` comparison and takes nothing from anybody.   │
+ * │                                                                          │
+ * │ ⚠ 20, TUNED DOWN FROM 48 BY HAND. 48 was picked as "under a third of a   │
+ * │ node's width"; sitting in front of the diagram said otherwise, and the   │
+ * │ number that survives is the one somebody felt rather than the one that   │
+ * │ had a tidy derivation. It is still comfortably wider than the 16-unit    │
+ * │ hit path, which is the only thing it has to beat to be worth having.     │
+ * │                                                                          │
+ * │ ⚠ NARROWING IT MADE THE SAMPLING BELOW MATTER MORE, and that is not      │
+ * │ obvious from this line: the chord error is a fixed number of units, so   │
+ * │ halving the corridor doubles its share of it. `N` moved 24 → 48 in the   │
+ * │ same change to keep the ripple under 5% of the corridor's edge.          │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const WIRE_REACH = 20;
+
+/**
+ * Is `p` within `reach` world units of the wire from `a` to `b`?
+ *
+ * ⚠ SAMPLED, not solved. The exact distance from a point to a cubic is a
+ * quintic; a few dozen chords cost nothing next to the pointer event that asked.
+ *
+ * ⚠ THE ERROR IS MEASURED, NOT ASSUMED. The first draft of this comment said
+ * *"accurate to well under a pixel"*, which was a guess and was wrong. Worst
+ * chord deviation across the most extreme wires this diagram produces:
+ *
+ *   N=24 → 2.23    N=32 → 1.27    N=48 → 0.58    N=64 → 0.32
+ *
+ * 🔴 **N IS CHOSEN AGAINST `WIRE_REACH`, NOT AGAINST ZERO.** The bound that
+ * matters is the ripple as a SHARE of the corridor's edge, so the two numbers
+ * move together: at a 48-unit corridor, 24 chords (2.23 ⇒ 4.6%) was enough; when
+ * the corridor was tuned down to 20 the same 24 became 11%, and N went to 48
+ * (0.58 ⇒ 2.9%). Narrowing the corridor without noticing this is silent — the
+ * absolute error never changed, only what it is measured against.
+ *
+ * ⚠ Over SEGMENTS rather than points: a long wire's chords are tens of units
+ * apart, so a pointer halfway between two samples would sit further from both
+ * than from the curve and read as "far away" — for one frame, which is exactly
+ * how a defect gets blamed on the browser instead of on this function.
+ */
+export function nearWire(
+  a: Point,
+  b: Point,
+  up: boolean,
+  p: Point,
+  reach: number = WIRE_REACH,
+): boolean {
+  const [p0, p1, p2, p3] = wireCurve(a, b, up);
+  const at = (t: number): Point => {
+    const u = 1 - t;
+    const w0 = u * u * u;
+    const w1 = 3 * u * u * t;
+    const w2 = 3 * u * t * t;
+    const w3 = t * t * t;
+    return {
+      x: w0 * p0.x + w1 * p1.x + w2 * p2.x + w3 * p3.x,
+      y: w0 * p0.y + w1 * p1.y + w2 * p2.y + w3 * p3.y,
+    };
+  };
+  // → the box above: 48 chords keep the ripple at 2.9% of a 20-unit corridor.
+  const N = 48;
+  let prev = at(0);
+  for (let i = 1; i <= N; i++) {
+    const next = at(i / N);
+    if (distToSegment(p, prev, next) <= reach) return true;
+    prev = next;
+  }
+  return false;
+}
+
+/** Shortest distance from `p` to the segment `v…w`. */
+function distToSegment(p: Point, v: Point, w: Point): number {
+  const dx = w.x - v.x;
+  const dy = w.y - v.y;
+  const len = dx * dx + dy * dy;
+  // A zero-length segment is a point — `t` would be `0/0`.
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - v.x) * dx + (p.y - v.y) * dy) / len));
+  return Math.hypot(p.x - (v.x + t * dx), p.y - (v.y + t * dy));
+}
+
 /** Node dimensions. Server and client MUST agree so their layouts match. */
 /**
  * ⚠ Shrunk on 23/08 (the user's call). The old diagram ran out of room fast:

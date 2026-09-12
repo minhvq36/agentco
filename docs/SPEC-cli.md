@@ -36,6 +36,48 @@ Control socket:
 
 Process state is written to `company/.state/daemon.json` (`pid`, `port`, `started_at`, `version`). A stale pid gets cleaned up automatically.
 
+### 🔴 NOTHING WE SPAWN ON WINDOWS MAY SHOW A CONSOLE WINDOW (10/09)
+
+Reported as *"start makes a terminal flash for a moment and then the browser
+opens"*, and the user named the real cost: it is what somebody sees after
+double-clicking an icon, and a black window appearing and vanishing **looks
+like something leaked out of the app**.
+
+Two spawns did it, both through `cmd.exe`, which is a **console** application:
+
+| where | why cmd | the fix |
+|---|---|---|
+| `cli/daemonfile.ts §reveal` — opens the browser and the office folder | `cmd /c start` | drop `detached` on Windows, add `windowsHide` |
+| `core/armexec.ts §run` — pre-installs an MCP package | `shell: true`, because `npm` is really `npm.cmd` | add `windowsHide` |
+
+**Why `windowsHide` alone was not enough in the first one, and is enough in the
+second.** The two options fight:
+
+- `detached: true` → libuv passes `DETACHED_PROCESS`: the child inherits **no
+  console**, so `cmd` allocates a fresh one — and an allocated console is a
+  visible window.
+- `windowsHide: true` → `CREATE_NO_WINDOW`: a console **with no window**. It
+  describes a console the child was given; with `DETACHED_PROCESS` there is no
+  such console, and the flag has nothing to act on.
+
+⇒ passing both changes nothing, which is exactly why this reads like a flag that
+does not work. `reveal` drops `detached` on Windows and keeps it on macOS and
+Linux — `start` hands the URL to the shell and exits, so the browser is not our
+child, and Windows kills no process group on exit the way POSIX does. `xdg-open`
+can outlive the call and still needs it.
+
+⚠ **NOT VERIFIED BY MEASUREMENT — verified by reading the flags.** Three attempts
+from an agent session failed to see the window at all: counting `conhost.exe`
+proves nothing (`CREATE_NO_WINDOW` still starts one, it just has no window),
+`MainWindowHandle` was `0` for every variant *including* the one that shows a
+window, and `FindWindow('ConsoleWindowClass', …)` returned `0` even for a
+`Start-Process` that definitely opened one — a non-interactive session has no
+desktop to look at. **The observation has to happen on the user's own desktop.**
+
+⚠ **AND THIS IS ONLY THE CHILD.** If the icon points at `node dist/cli/index.js
+start` or a `.bat`, the CLI's **own** console opens and stays — the daemon lives
+in it. That is a launcher question, not a spawn-flag one, and it is still open.
+
 ---
 
 ## 2. Commands
@@ -194,3 +236,131 @@ npm i -g agentco            # actually install
 ```
 
 V2 for people afraid of the terminal: package it as Tauri (~5MB) wrapping this same daemon + UI. Double-click to run. **Nothing gets rewritten** — this is exactly why the UI has to be a web UI from the start.
+
+### 6.1 🔴 THE DESKTOP BUILD SHIPS ITS OWN NODE, BESIDE THE CUSTOMER'S (settled 10/09)
+
+> ⚠ The line above says *"Tauri (~5MB) wrapping this same daemon"*, and taken
+> alone it is **not buildable**. Tauri is Rust + the OS webview; it carries no JS
+> runtime. The daemon **is** JS. So either the customer installs Node themselves
+> — and *"double-click to run"* is then untrue — or the app brings one. This
+> section is the missing half, not a change of direction.
+
+**Measured 10/09 on Windows:** `node.exe` **79.0 MB**, the whole `nodejs`
+directory (with `npm` and `npx` in it) **91.5 MB**.
+
+#### Three shapes, and only one of them is safe
+
+| | install Node into the SYSTEM | **our own Node inside the app** | ship no Node |
+|---|---|---|---|
+| customer already has Node | 💀 overwrite · version conflict | **not one byte touched** | fine |
+| customer has none | fine | fine | 💀 "double-click to run" is a lie |
+| `node` for the CLI sample | ✓ | ✓ | ✗ |
+| `npx` for the arm catalogue, **cold path** | ✓ | ✓ | ✗ |
+| disk | +0 | +91.5 MB | +0 |
+| what it touches on the machine | system PATH, registry, a dirty uninstall | **nothing** | nothing |
+
+The user's call, in their words: *"I don't want to overwrite — customers would
+curse me to death."* A developer with `nvm` is exactly the customer who would.
+
+#### The mechanism was already built, for a different reason
+
+`cli-arm.ts §runCommand` spawns with an **explicit `env` that we construct**
+(`{...ctx.env, ...a.env}`) — the *"NO implicit env inheritance"* rule written
+for the Docker constraint §16p ③. That rule turns out to be the hook: the daemon
+hands its children whatever `PATH` it likes, so the bundled runtime is reachable
+**only inside processes agentco spawns.** The customer's terminal, their `PATH`
+and their `nvm` never learn that any of this happened.
+
+**Ours goes FIRST in that PATH** (user's call). The arm catalogue then never
+breaks because the machine happens to carry an old Node — a failure that would
+read as *"agentco cannot connect this arm"* and land on our support queue. The
+price, stated: a customer whose own CLI arm needs *their* Node gets ours instead.
+`agentco doctor` already prints the running Node version and is where that is
+made visible, not a comment.
+
+⛔ **"Any Node will do, as long as one exists"** was considered and dropped: it
+makes the support surface *every* Node a customer might have, while still not
+delivering double-click-to-run. We pin ONE version and own it.
+
+#### Frequent updates decide the FOLDER LAYOUT, not just the runtime
+
+The user's constraint: *"it has to stay convenient and stable for shipping app
+updates often."* Two facts follow, and both are about **lifetimes that differ by
+two orders of magnitude** — the runtime moves maybe twice a year, the app moves
+weekly:
+
+```
+<install>/
+  runtime/node-v22.12.0/     ← pinned, named BY VERSION, rarely replaced
+  app/2026.09.10/            ← daemon + web/dist, replaced constantly
+  current  →  app/2026.09.10 ← a pointer, flipped last
+```
+
+1. **An update replaces `app/` only.** Put the runtime inside the folder that
+   gets replaced and every weekly update re-ships ~90 MB of a Node that did not
+   change.
+2. **Never overwrite in place — write a new folder and flip the pointer.** On
+   Windows a file held by a running process cannot be replaced, and `node.exe`
+   is held for as long as the daemon lives. Versioned folders also mean a failed
+   update rolls back by flipping the pointer the other way.
+3. **Install per-user (`%LOCALAPPDATA%`), not into `Program Files`** — the
+   latter asks for UAC on *every* update, which is precisely what "update often"
+   cannot afford.
+4. **The updater already has its shutdown door**: `liveDaemon()` → `POST
+   /api/shutdown` → wait for the process to exit → flip. The UI's power button
+   and the "the company is off" screen use that same door (§SPEC-ui).
+
+#### 🔴 TWO DOORS IN, AND THE DAEMON MUST NOT KNOW WHICH ONE IT CAME THROUGH
+
+`npm i -g agentco` does not go away — it stays the path for a VPS, for Docker
+and for anybody who lives in a terminal. The desktop installer is a **second
+door onto the same daemon**, never a replacement. Which means:
+
+⛔ **Nothing under `src/core/` may hard-code the bundled runtime's location.**
+A path like `<install>/runtime/node-v22.12.0/` is true for exactly one of the
+two doors, and the code that reads it cannot tell which door it is behind.
+`process.execPath` is true for both, always, and is already what
+`armexec.ts §fastLaunch` uses — for this same reason, written down before this
+section existed:
+
+> `process.execPath`, **not the literal string `'node'`**: the daemon may be
+> running on a node build that isn't on PATH.
+
+⇒ the bundled runtime reaches the daemon as **configuration handed in by the
+launcher** (an env var it prepends to `PATH`), not as knowledge the core holds.
+On the npm door nothing is handed in, and everything still works because the
+customer's own Node is what launched us in the first place.
+
+#### 🔴 `PATH` CROSSES INTO A CLI COMMAND. NOTHING ELSE DOES. (fixed 10/09)
+
+This was written up as a separate open item — *"`runCommand` passes no `PATH`;
+measure on POSIX before patching, the fix differs by answer."* **Both halves of
+that were wrong, and both corrections matter:**
+
+1. **It is not separate.** The launcher puts the bundled Node first in the
+   DAEMON's `PATH`; wiping the environment for children throws our own sidecar
+   away along with the customer's Node. The shape above **cannot work at all**
+   without this. One thing, not two.
+2. **The measurement was never a gate.** Both branches want the same patch — if
+   POSIX already resolved, passing `PATH` explicitly changes nothing; if it did
+   not, this fixes it. Measuring only tells us whether we repaired a live bug or
+   prevented one, which changes the release note, not the code.
+
+The mechanism, for the record: libuv replaces `environ` and calls `execvp`,
+which reads `PATH` out of the environ it was just handed; absent, glibc falls
+back to `/bin:/usr/bin` — so a Node from `nvm`, or a customer tool under `/opt`,
+does not resolve. ⚠ **Windows hid it completely**: measured 10/09, all four env
+shapes (`{}` included) still resolve a bare `node`, because `CreateProcess`
+searches the *calling* process's PATH. A bug that exists only on the platforms
+we do not develop on. → [[agentco-three-os-always]]
+
+⛔ **`{ ...process.env, ...declared }` IS NOT THE PATCH**, however much shorter
+it reads. The daemon's environment holds `ANTHROPIC_API_KEY`, `AGENTCO_TOKEN`
+and OAuth material, and whoever declares a CLI command is not necessarily
+whoever owns those keys — a spread hands every key to every command the office
+can run, silently, with nothing on screen and nothing in the audit log.
+`cli-arm.ts §childEnv` is therefore **an allowlist of one**, and a declared
+`PATH` still wins over the ambient one. `test/cli-arm-env.test.ts` asks the CHILD
+what it received rather than reading the source — the widening edit looks
+harmless as source and is a key leak on the wire. Verified by making it red:
+swapping in the spread fails exactly that test and nothing else.

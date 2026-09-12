@@ -521,6 +521,59 @@ export class Company {
   }
 
   /**
+   * RENAME THE COMPANY — the title in the top-left corner of the screen.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ IT IS A LABEL, AND THAT IS WHY IT IS THE CHEAPEST WRITE IN THE SYSTEM.   │
+   * │                                                                          │
+   * │ Nothing is keyed on it: the directory is `companyDir`, offices are keyed │
+   * │ by their own folder name, and the cost ledger records office ids. So     │
+   * │ unlike renaming an OFFICE — which can move a directory and change an id  │
+   * │ (`renameTarget`) — this moves not one byte and breaks not one path.      │
+   * │                                                                          │
+   * │ ⚠ AND IT REACHES NO PROMPT. `docs/CLAUDE.md §Language` names the company │
+   * │ name as the example of a datum that passes both tests: it becomes the    │
+   * │ user's own, and it never lands in a prefix. So no `cacheKey` moves and   │
+   * │ nothing is re-paid. Wire it into a prompt one day and this sentence      │
+   * │ stops being true — the rename would start costing a prefix rewrite       │
+   * │ across every office.                                                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * EMPTY IS ACCEPTED AND MEANS "unnamed". `name: ''` is the state a fresh
+   * `company.yaml` is in — the server then renders `t('company.unnamed')`, a
+   * label that follows the interface switch. Refusing an empty box would leave
+   * somebody who typed a name by accident with no way back to the default.
+   *
+   * Same write shape as `updateLanguage`: `parseDocument` so the user's own
+   * comments in `company.yaml` survive, then read the file back through the
+   * schema rather than patching the object in memory.
+   */
+  updateName(name: string): string {
+    const next = name.trim().replace(/\s+/g, ' ');
+    // A ceiling, not a rule about taste: this string is drawn in a fixed header
+    // beside the office picker, and there is no wrapping to fall back on.
+    if (next.length > 80) throw new RunError(t('co.nameTooLong', { max: 80 }), 'other');
+
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    doc.set('name', next);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+
+    this.config = loadCompanyConfig(this.dir);
+    /**
+     * ⚠ TELL THE OTHER TABS. The title is drawn from `GET /api/company`, which
+     * a tab only calls on boot — without this event a second window keeps the
+     * old name on screen until somebody presses F5, and this is precisely the
+     * class of thing the user reads as "the app lies about its own state".
+     */
+    this.emit({ type: 'company.offices', say: t('co.nameChanged'), office: '', plan_id: null });
+    return this.config.name;
+  }
+
+  /**
    * PLUG IN AN ARM. → docs/SPEC-arms.md §6
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -1408,8 +1461,15 @@ export class Company {
  * language. The moment a person types a name the key gets written and it is
  * their datum, never translated again.
  */
+/**
+ * ⚠ `id` IS QUOTED, for the same reason `name` beside it always was: an office
+ * named "1" slugs to `1`, and unquoted that is a NUMBER when the file is read
+ * back — the schema then rejects it and the whole office fails to load, which
+ * is worse than the employee case (a role is skipped; an office throws).
+ * → `config.ts §loadOffice`
+ */
 function officeTemplate(id: string, name: string): string {
-  return `id: ${id}
+  return `id: ${JSON.stringify(id)}
 name: ${JSON.stringify(name)}
 charter_file: charter.md
 

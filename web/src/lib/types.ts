@@ -19,6 +19,17 @@ export type { Locale };
 
 import type { NodeKind } from '@core/layout-geometry';
 
+/**
+ * Where a worker's tool call landed. → `src/core/types.ts §WorkPlace`
+ *
+ * ⚠ A HAND-WRITTEN COPY, like the rest of this file — deliberately NOT imported
+ * from `@core/types`, which pulls in `zod` and is therefore not one of the pure
+ * modules the interface is allowed to load. `@core` exists for
+ * `layout-geometry.ts`, and widening it to a schema file would drag a
+ * validation library into a bundle that has no use for one.
+ */
+export type WorkPlace = 'desk' | 'library' | 'artifacts' | 'knowledge' | 'arm' | 'web' | 'shell';
+
 export type OfficeState = 'idle' | 'working' | 'paused' | 'stopped';
 export type StepStatus = 'pending' | 'running' | 'done' | 'problem' | 'waiting_human';
 export type PlanStatus =
@@ -104,6 +115,23 @@ export interface CanvasNode {
    * → `office.ts §keyDeadOf`
    */
   keyDead?: string;
+  /**
+   * 🔴 THE ARM NAMES A CREDENTIAL THIS COMPANY DOES NOT HOLD. The name it
+   * asked for. → `office.ts §keyGoneOf` · `secrets.ts §keysFor`
+   *
+   * ⚠ A SECOND FIELD, NOT A SECOND MEANING OF `keyDead`. Dead = the service
+   * REFUSED a sign-in we still hold; gone = there is nothing stored under that
+   * name at all. Measured 08/09: three arms answered 401 for days with every
+   * credential alive and freshly refreshed, so `keyDead` was empty and the
+   * diagram stayed green. The advice differs too — sign in again vs. the key
+   * was never stored — and a confidently wrong instruction costs more than
+   * none.
+   *
+   * ⚠ Deterministic, and that is the whole design: it compares two things we
+   * wrote ourselves (the ledger, the key store). No handshake, no token, so it
+   * cannot be wrong the way a probe can.
+   */
+  keyGone?: string;
   /** Labels of the checkboxes that are on — the panel draws its chips from this. */
   optionLabels?: string[];
   /** There is a browser profile ⇒ the panel shows the "open sign-in window" button. */
@@ -119,6 +147,25 @@ export interface CanvasNode {
    */
   folders?: string[];
   hue?: number;
+  /**
+   * assistant/agent only: which row of `CAST` draws this person in the office
+   * view. **RESOLVED ON THE SERVER** (a stored choice, else hashed) — the
+   * interface never re-derives it, for the same reason it never re-derives
+   * `mark` or `armGroup`: one side answering a question is one side that can be
+   * wrong about it. → `@core/cast` · docs/SPEC-office-animation.md §4a
+   */
+  character?: number;
+  /**
+   * assistant/agent only: the colour of this person's recolourable garment in the
+   * office view, as `#rrggbb`. **RESOLVED ON THE SERVER**, same rule as
+   * `character`. → `@core/cast §assignTints` · docs/SPEC-office-art.md §11
+   *
+   * ⚠ ABSENT MEANS "drawn in the colour the artist gave them", not "no colour".
+   * Nobody is tinted until two people share a face, and the renderer draws no
+   * layer at all in that case — a `mix-blend-mode` layer is not free just because
+   * it changes nothing.
+   */
+  tint?: string;
   missing: boolean;
   connected: boolean;
   removable: boolean;
@@ -133,7 +180,31 @@ export interface CanvasState {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   knowledge: { shared: number; total: number };
+  /**
+   * The stored character CHOICES — never the resolved cast (that is
+   * `node.character`).
+   *
+   * ⚠ NOTHING READS IT ANY MORE, and that is stated rather than left to be
+   * discovered. It existed so a one-person change could `PUT` the stored map
+   * back untouched; `setCharacter` now sends the RESOLVED cast instead, because
+   * the sparse payload dragged up to six other people onto different faces
+   * (→ `store.ts §setCharacter` · SPEC-office-animation §17k‴). The field is
+   * kept for one round so an older tab mid-session does not read `undefined`,
+   * and it is a deletion candidate the next time this file is opened — a value
+   * on every canvas read that nobody consumes is how a dead concept survives.
+   */
+  cast: Record<string, number>;
 }
+
+/**
+ * ⚠ THE STORED TINT CHOICES ARE NOT SENT DOWN, and that is not an oversight.
+ *
+ * `cast` has to travel because the picker shows which face is SELECTED, and a
+ * hashed default must not look selected. A colour picker has no such state: it
+ * shows the colour the person is actually wearing, which is `node.tint`, and that
+ * is already on the node. Sending the map as well would be a second answer to a
+ * question that has one.
+ */
 
 export interface OfficeSummary {
   id: string;
@@ -184,6 +255,16 @@ export interface CompanyView {
    * English interface still gets Vietnamese answers, on purpose.
    */
   language: Locale;
+  /**
+   * Does the office view exist at all — `company.yaml → ui.office_view`.
+   * → docs/SPEC-office-animation.md §11c
+   *
+   * ⚠ Off means the switch is **not rendered** and the scene's chunk is never
+   * fetched. A greyed-out control that never works is worse than no control.
+   * Which view is currently open is a different question and lives in
+   * `localStorage` — two tabs on two views is legal.
+   */
+  officeView: boolean;
 }
 
 export interface PlanStep {
@@ -323,7 +404,26 @@ export type AgentEvent = EventBase &
      */
     | { type: 'plan.finished'; status: PlanStatus; costUSD: number; turns: number }
     | { type: 'task.started'; task_id: string; role: string; say: string }
-    | { type: 'task.progress'; task_id: string; role: string; say: string }
+    /**
+     * `at` / `arm` — WHERE this turn's tool call landed, as DATA.
+     * → `src/core/worker.ts §placeOf` · docs/SPEC-office-animation.md §6
+     *
+     * ⚠ THE WHOLE POINT IS THAT NOBODY READS `say` TO WORK THIS OUT. That
+     * string has two authors (our `describeCall`, or the model's own prose on a
+     * turn with no tool call) and it goes through i18n, so matching on it would
+     * work in exactly one language. Same rule as `files` on `master.message`:
+     * only what CODE put there may be acted on.
+     *
+     * ⚠ Absent is normal, and absent means NO PLACE — never a default place.
+     */
+    | {
+        type: 'task.progress';
+        task_id: string;
+        role: string;
+        say: string;
+        at?: WorkPlace;
+        arm?: string;
+      }
     | {
         type: 'task.done';
         task_id: string;
@@ -363,6 +463,15 @@ export type AgentEvent = EventBase &
          */
         note?: string;
         hold_ms?: number;
+        /**
+         * The hidden worker is running: `library` = reading named documents,
+         * `web` = searching the web. → `SPEC-offices.md` §6c
+         *
+         * The KIND, kept alongside the sentence that spends it. This is what
+         * lets the office view walk the assistant to the bookshelf for one and
+         * leave it standing for the other, without reading `note`.
+         */
+        reading?: 'library' | 'web';
       }
     | { type: 'office.cleared'; say: string }
     | { type: 'cost.tick'; totals: Usage & { tasks: number } }

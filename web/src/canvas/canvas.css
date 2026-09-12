@@ -177,28 +177,92 @@
   stroke-width: 16;
   cursor: pointer;
 }
-.edge:hover .wire {
+/*
+ * ⚠ `.is-hot`, NOT `:hover`, AND THE SWAP IS THE FIX. → SPEC-office-animation §17j
+ *
+ * The wire and its delete button are no longer siblings: the button was moved
+ * into `.edge-tools`, which is written AFTER the nodes because SVG paints in
+ * document order and has no `z-index`. A CSS descendant rule cannot reach across
+ * that, so hover is tracked in `Canvas.tsx` and lands here as one class on each
+ * of the two elements.
+ */
+.wire.is-hot {
   stroke: var(--color-accent);
 }
-.edge .cut {
+/*
+ * 🔴 THE LIFTED COPY OF THE CHOSEN WIRE. → SPEC-office-animation §17j′
+ *
+ * `.wire.is-hot` above recolours the wire where it is drawn — UNDER the nodes —
+ * so on a diagram of any density the highlight arrives as two or three orange
+ * fragments with boxes in between. This is the same curve drawn again inside
+ * `.edge-tools`, which is written after the nodes and therefore paints over
+ * them: while an edge is hot the user sees the connection end to end.
+ *
+ * ⚠ `pointer-events: none` is load-bearing, not tidiness. This path crosses
+ * every node its wire crosses; taking hits up here would swallow the clicks that
+ * open them — which is exactly why the 16-unit hit path stays downstairs.
+ *
+ * ⚠ Slightly thicker than the wire, not a different colour: it has to read as
+ * THIS wire brought forward, not as a second object lying on top of it.
+ */
+.wire-halo {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 3;
+  pointer-events: none;
+  opacity: 0;
+}
+.wire-halo.is-hot {
+  opacity: 1;
+}
+/*
+ * 🔴 CHOSEN, not merely lit. → SPEC-office-animation §17j″
+ *
+ * A click LATCHES an edge so the pointer can go anywhere without losing it. In
+ * the first cut that state looked exactly like hover, so the click produced no
+ * change on screen and the user went on tracing the wire with the pointer — the
+ * gesture the latch exists to replace. A state nobody can see is a state nobody
+ * uses.
+ *
+ * ⚠ Thicker, not a different colour: it is still THIS wire, brought forward and
+ * held. A second colour would read as a second kind of thing.
+ */
+.wire-halo.is-stuck {
+  stroke-width: 4.5;
+}
+.edge-tools .cut {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s;
 }
-.edge:hover .cut {
+.edge-tools .cut.is-hot {
   opacity: 1;
   pointer-events: auto;
   cursor: pointer;
 }
-.edge .cut circle {
+.edge-tools .cut circle {
   fill: var(--color-panel);
   stroke: var(--color-accent);
   stroke-width: 1.5;
 }
-.edge .cut text {
-  fill: var(--color-accent);
-  font-size: 12px;
+/* `Trash2` renders an <svg> that paints with `currentColor` and no fill — the
+   same contract `ArmIcon` relies on, so one colour declaration dresses it. */
+.edge-tools .cut > svg {
+  color: var(--color-accent);
+  overflow: visible;
 }
+/* The LATCHED button is solid: the same accent, filled rather than outlined, so
+   "this wire is chosen and Delete will cut it" is visible without reading a
+   tooltip. → `.wire-halo.is-stuck` */
+.edge-tools .cut.is-stuck circle {
+  fill: var(--color-accent);
+}
+.edge-tools .cut.is-stuck > svg {
+  color: var(--color-panel);
+}
+/* ⚠ No `.cut text` rule any more: the ✕ glyph is gone. A ✕ means CLOSE, and this
+   button removes a relationship — the trash icon the rest of the app deletes with
+   is what it says. */
 
 .ghost {
   fill: none;

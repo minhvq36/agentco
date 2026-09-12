@@ -43,7 +43,7 @@ export const BROWSER_ARM: CatalogArm = {
    *    The package name only appears under Advanced.
    */
   name: 'armCat.browser.name',
-  icon: '🌐',
+  icon: '',
   /** The interface draws a globe instead of a plug icon. → ArmIcon.tsx */
   shape: 'browser',
   /**

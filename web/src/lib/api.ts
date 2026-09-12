@@ -350,6 +350,20 @@ export const api = {
     }),
 
   /**
+   * The company's own name — the title in the top-left corner.
+   *
+   * ⚠ Sending `''` is a real instruction, not a no-op: it returns the title to
+   * the default label. The reply carries what the server settled on (trimmed,
+   * or the default when empty), which is what the header must draw.
+   * → `Company.updateName`
+   */
+  setCompanyName: (name: string) =>
+    call<{ name: string }>('/api/company', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  /**
    * Interface language. → docs/CLAUDE.md §Language
    *
    * ⚠ Interface only. Nothing here reaches a prompt, and it must stay that way:
@@ -364,7 +378,16 @@ export const api = {
 
   canvas: (id: string) => call<CanvasState>(`/api/office/${enc(id)}/canvas`),
 
-  saveCanvas: (id: string, payload: { nodes: unknown; edges: unknown }) =>
+  /**
+   * Every key is optional and ABSENT MEANS "leave it alone" — the server
+   * distinguishes absent from empty. That is what lets a costume change send
+   * only `cast`, and a node drag send only `nodes`/`edges`, without either one
+   * wiping the other. → `src/core/layout.ts §save`
+   */
+  saveCanvas: (
+    id: string,
+    payload: { nodes?: unknown; edges?: unknown; cast?: unknown; tint?: unknown },
+  ) =>
     call<CanvasState>(`/api/office/${enc(id)}/canvas`, { method: 'PUT', body: JSON.stringify(payload) }),
 
   addAgent: (id: string, input: { display_name: string; pitch: string; tier: string }) =>

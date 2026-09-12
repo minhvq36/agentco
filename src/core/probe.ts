@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TEST-HANDSHAKE AN ARM — the source behind the "Try it" button, the
  * capability list, and the token count shown on the node. → docs/SPEC-arms.md §3a · §6c · §7 · §9b
  *
@@ -35,7 +35,8 @@
  * DISK and TIME.
  */
 
-import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { query } from './sdk.js';
 
 import { ensureInstalled, fillArm, finishArm } from './armexec.js';
 import { missingSecretRefs } from './secrets.js';

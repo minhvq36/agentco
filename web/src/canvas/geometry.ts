@@ -1,5 +1,5 @@
 import { NODE_SIZE, type CanvasNode, type NodeKind } from '@/lib/types';
-import { arrangeAll, type Point } from '@core/layout-geometry';
+import { arrangeAll, wireCurve, type Point } from '@core/layout-geometry';
 
 export type { Point };
 
@@ -45,16 +45,17 @@ export function anchor(
 }
 
 /**
- * A vertical Bezier. `dy` scales with distance so short wires do not bulge.
+ * The `d` attribute of a wire — FORMATTING ONLY. → `@core §wireCurve`
  *
- * ⚠ `up` has to flip BOTH control points. Leave them as they are for an upward
- * wire and the curve knots in the middle — it tries to bulge downward while
- * both ends travel up.
+ * ⚠ THE CONTROL POINTS MOVED TO `core`, and the reason is `nearWire`: as soon as
+ * something other than the renderer had to know where the wire actually runs,
+ * the alternative was a second copy of these two points beside the distance
+ * maths. That is the exact pair of copies `layout-geometry.ts` was created to
+ * delete. This function now knows how to write a path and nothing else.
  */
 export function curve(a: Point, b: Point, up = false): string {
-  const dy = Math.max(45, Math.abs(b.y - a.y) / 2);
-  const s = up ? -1 : 1;
-  return `M ${a.x} ${a.y} C ${a.x} ${a.y + dy * s} ${b.x} ${b.y - dy * s} ${b.x} ${b.y}`;
+  const [p0, c1, c2, p3] = wireCurve(a, b, up);
+  return `M ${p0.x} ${p0.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p3.x} ${p3.y}`;
 }
 
 export function screenToWorld(ev: { clientX: number; clientY: number }, rect: DOMRect, view: Viewport): Point {

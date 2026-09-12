@@ -146,6 +146,11 @@ export function Sidebar() {
     const onMove = (ev: PointerEvent) => {
       next = clampWidth(startW + (ev.clientX - startX));
       pane.style.width = `${next}px`;
+      // The room's pan follows the handle, through the DOM. Routing this through
+      // `setState` is the one thing this whole drag path exists to avoid.
+      if (document.documentElement.style.getPropertyValue('--sidebar-w') !== '0px') {
+        document.documentElement.style.setProperty('--sidebar-w', `${next}px`);
+      }
     };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
@@ -169,9 +174,41 @@ export function Sidebar() {
 
   const wide = width >= Math.min(WIDE_W, maxWidth()) - 1;
 
+  /**
+   * IN THE OFFICE VIEW THE PANEL OVERLAYS INSTEAD OF PUSHING.
+   * → docs/SPEC-office-animation.md §11b
+   *
+   * On the diagram, pushing is right: it is a workspace you arrange, and a panel
+   * covering the node you are dragging is worse than a narrower canvas. The room
+   * is a fixed-aspect scene fitted to its frame, so narrowing it RE-FITS THE
+   * WHOLE ROOM — every person and every piece of furniture slides and shrinks
+   * because a panel opened. That is the same failure class as a layout that
+   * makes people resize the window to read it (SPEC-ui §3.1).
+   *
+   * No scrim: a scrim says "modal", and the room has to stay watchable while
+   * somebody reads the chat beside it.
+   */
+  const overlay = useApp((s) => s.view === 'office' && !!s.officeId);
+
+  /**
+   * The scene reads this to PAN rather than re-fit — one transform on the
+   * compositor, nothing re-laid-out. Written to the DOM rather than passed
+   * through React because the drag handle changes it 60 times a second, and the
+   * width during a drag is exactly what must not go through `setState`.
+   */
+  useEffect(() => {
+    const px = overlay && active ? `${width}px` : '0px';
+    document.documentElement.style.setProperty('--sidebar-w', px);
+    return () => document.documentElement.style.setProperty('--sidebar-w', '0px');
+  }, [overlay, active, width]);
+
   return (
-    <div className="flex flex-none border-r border-line bg-panel">
-      <nav className="flex w-14 flex-none flex-col items-center gap-1 border-r border-line py-2">
+    <div className={`flex flex-none border-r border-line bg-panel ${overlay ? 'relative z-30' : ''}`}>
+      <nav
+        className={`flex w-14 flex-none flex-col items-center gap-1 border-r border-line py-2 ${
+          overlay ? 'bg-panel' : ''
+        }`}
+      >
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const on = panel === tab.id;
@@ -206,7 +243,11 @@ export function Sidebar() {
       {active && (
         <section
           ref={paneRef}
-          className="relative flex flex-none flex-col"
+          className={
+            overlay
+              ? 'absolute left-14 top-0 z-30 flex h-full flex-col border-r border-line bg-panel shadow-2xl'
+              : 'relative flex flex-none flex-col'
+          }
           style={{ width }}
           aria-label={t(active.label)}
         >

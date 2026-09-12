@@ -168,34 +168,60 @@ free-form BCP-47 tag, on new nodes only. Old nodes stay blank, and blank means
 
 ## Comment boxes
 
-Design decisions live in `┌─ … ─┐` boxes next to the code they govern. They
-record the failure that was paid for, not just the conclusion.
+Design decisions live next to the code they govern. They record the failure that
+was paid for, not just the conclusion. **That part is the point and it stays.**
 
-Right-hand borders are padded by hand. Take a copy of the file **before** you
-edit it, then afterwards:
+### 🔴 The RIGHT-HAND BORDER is optional as of 08/09 — user's call
+
+A new block **does not need a `│` on the right**, and nobody should spend a pass
+putting one there. Write it open:
 
 ```
-git show HEAD:src/core/worker.ts > /tmp/base.ts     # or copy it first
-node --experimental-strip-types scripts/fix-comment-boxes.ts --against /tmp/base.ts src/core/worker.ts
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ WHAT WAS MEASURED, AND WHAT IT COST.
+ * │
+ * │ …
+ * └──────────────────────────────────────────────────────────────────────────
+ */
 ```
 
-Do not align them by eye. **Display width is not `string.length`**: a combining
-mark adds a code unit and no column, an emoji adds two code units and two
-columns, so counting characters is wrong in both directions at once.
+Or with no box at all — a `🔴` heading line and prose underneath reads the same.
 
-**The rule is "a line I edited keeps the width it had"** — not "every line
-matches its border". Measured across 154 real boxes: 1023 of 2495 body lines
-already disagree with their top border, and 645 still disagree with their own
-block's dominant width, with the deviation tracking line length rather than any
-character. The boxes are simply ragged by ±1 from years of padding by eye, and
-there is no hidden rule to recover. Normalising would rewrite ~40% of every box
-in the repository and bury the real diff under noise nobody can review.
+**Why the closing border went:** it is padded by hand, display width is not
+`string.length` (a combining mark adds a code unit and no column, an emoji adds
+two of each), and every edit to a line inside a block re-opens the arithmetic.
+Measured across 154 real boxes: **1023 of 2495 body lines already disagree with
+their own top border** — so the alignment was never actually holding, and the
+time was being spent to keep a thing that was already ragged looking almost
+aligned. The reason a box exists is the paragraph inside it; the border is
+decoration that charges rent on every edit.
 
-A line too wide to fit is **reported, never trimmed** — trimming would silently
-delete a clause from the reason a decision exists. Shorten the sentence and rerun.
+**What this does NOT change:**
+
+- ⛔ **Do not reflow existing boxes.** Normalising would rewrite ~40% of every
+  box in the repository and bury the real diff under noise nobody can review.
+  A closed box you edit keeps its borders — leave the line width alone and
+  accept the ±1; nothing reads it.
+- ⛔ **Never trim a sentence to make a line fit.** That was always the rule and
+  it is now the only rule about width: shorten by rewriting the thought, never
+  by dropping a condition, a date, a measured number, or a "but the other half
+  is just as dangerous".
+- `scripts/fix-comment-boxes.ts` stays for the boxes that are already closed.
+  It is **advisory** and it is no longer part of finishing a change.
+
+### The tool, for the closed boxes that remain
 
 `--check <file…>` reports lines sitting off their block's dominant width and
-writes nothing. It is advisory; a hit is not automatically a defect.
+writes nothing. `--against <baseline>` limits the fix to lines you actually
+edited — and ⚠ it still widens neighbouring blocks you never touched (measured:
+`19 in reflowed blocks`), so anything it writes has to be read back and the
+untouched blocks restored. Both are optional now; neither is a step in
+finishing a change.
+
+**If you do open one, do not align by eye.** Display width is not
+`string.length`: a combining mark adds a code unit and no column, an emoji adds
+two of each, so counting characters is wrong in both directions at once.
 
 ## Writing comments
 

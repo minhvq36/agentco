@@ -159,14 +159,26 @@ export const NodeShape = memo(function NodeShape({ node }: { node: CanvasNode })
             still wins over both — an arm whose config has vanished cannot be
             repaired by signing in, so offering that would be the wrong door.
           */}
-          <text className={`node-sub${node.keyDead && !node.missing ? ' node-sub-alert' : ''}`} x={38} y={s.h / 2 + 13}>
+          {/*
+            ⚠ `keyGone` sits BELOW `keyDead` in the order and above `via`, for
+            the same reason `keyDead` beat `via`: both answer *"can it run at
+            all"*. When somehow both are true, "the service refused you" is the
+            more specific fact and the one whose fix also fills the store.
+          */}
+          <text
+            className={`node-sub${(node.keyDead || node.keyGone) && !node.missing ? ' node-sub-alert' : ''}`}
+            x={38}
+            y={s.h / 2 + 13}
+          >
             {node.missing
               ? t('node.armMissing')
               : node.keyDead
                 ? t('node.armKeyDead')
-                : node.via
-                  ? cut(node.via, 16)
-                  : t('node.armFallback')}
+                : node.keyGone
+                  ? t('node.armKeyGone')
+                  : node.via
+                    ? cut(node.via, 16)
+                    : t('node.armFallback')}
           </text>
         </>
       )}

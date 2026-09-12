@@ -37,6 +37,7 @@ export const vi: Catalog = {
 
   // ────────────────────────────────────────────────────────────────── app
   'app.fatalTitle': 'Mất kết nối tới công ty',
+  'app.poweredOff': 'Công ty đã tắt. Bạn có thể đóng thẻ này.',
   'app.openingCompany': 'Đang mở công ty…',
   'app.openingOffice': 'Đang mở văn phòng…',
   'app.noOfficesTitle': 'Công ty chưa có văn phòng nào',
@@ -49,6 +50,25 @@ export const vi: Catalog = {
   'app.noAgentsHintAfter': 'ở góc trên bên trái.',
   'app.canvasHint': 'Kéo node để sắp xếp · kết nối Trợ lý và nhân viên để giao quyền',
   'app.planRunning': 'đang chạy…',
+
+  // ─────────────────────────────────────────────────── the office view (room)
+  'office.desk': 'Bàn hồ sơ',
+  'office.openResults': 'mở ngăn Kết quả',
+  'office.openLibrary': 'mở Tủ tài liệu',
+  'office.armNone': 'Chưa có kết nối',
+  'office.breakArea': 'Khu giải lao',
+  'office.summary': '{working} đang làm, {resting} đang nghỉ',
+  'office.viewDiagram': 'Sơ đồ',
+  'office.viewRoom': 'Văn phòng',
+  'office.viewDiagramTip': 'Sơ đồ: dựng và nối dây cho công ty',
+  'office.viewRoomTip': 'Căn phòng: xem đang có chuyện gì xảy ra',
+  'office.character': 'Nhân vật',
+  'office.characterPick': 'Nhân vật {n}',
+  'office.tint': 'Màu trang phục',
+  'office.tintCustom': 'Chọn màu bất kỳ',
+  'office.hireHint': 'Chưa có ai làm việc ở đây. Chuyển sang sơ đồ để tuyển người đầu tiên.',
+  'office.zoomIn': 'Phóng to',
+  'office.zoomOut': 'Thu nhỏ',
 
   // ───────────────────────────────────────────────────────────────── chat
   'chat.you': 'bạn',
@@ -74,6 +94,7 @@ export const vi: Catalog = {
   'header.stopTip': 'Dừng việc đang chạy. Daemon vẫn sống.',
   'header.shutdown': 'Tắt hẳn',
   'header.shutdownConfirm': 'Tắt hẳn?\n\nCông ty sẽ ngừng lại.',
+  'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',
   'header.state.paused': 'tạm nghỉ',
@@ -287,6 +308,11 @@ export const vi: Catalog = {
   'co.mustBeTier': '"{key}" phải là một MỨC: {tiers}.',
   'co.modelsChanged': 'Đã đổi model. Việc đang chạy giữ nguyên model cũ cho tới khi xong.',
   'co.unsupportedLanguage': 'Ngôn ngữ "{language}" không có trong danh sách hỗ trợ.',
+  'cli.checkClaude': 'Claude Code',
+  'cli.checkClaudeNo':
+    'không tìm thấy — hãy cài Claude Code, hoặc khai `claude_path:` trong company.yaml (các đường đã thử ở dưới)',
+  'co.nameTooLong': 'Tên công ty tối đa {max} ký tự.',
+  'co.nameChanged': 'Đã đổi tên công ty.',
   'co.armConfigMissing': 'Thiếu cấu hình cho cánh tay này.',
   'co.armAlreadyHere':
     'Văn phòng này đã có kết nối "{label}". Kéo dây từ nó sang nhân viên cần dùng — một kết nối dùng chung được cho nhiều người.',
@@ -713,6 +739,7 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'node.knowledgeHint': 'bấm để mở',
   'node.armMissing': 'không còn cắm',
   'node.armKeyDead': 'cần đăng nhập lại',
+  'node.armKeyGone': 'chưa có chìa',
   'node.armFallback': 'kết nối',
   'node.roleMissing': 'không tìm thấy vai trò',
   'node.resting': 'đang nghỉ',
@@ -749,8 +776,9 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   // ───────────────────────────────────────────────────────────── settings
   'settings.title': 'Cài đặt',
   'settings.language': 'Ngôn ngữ giao diện',
-  'settings.languageScope':
-    'Cái này chỉ đổi giao diện. Trợ lý và nhân viên luôn trả lời, ghi kết quả và đúc kinh nghiệm theo đúng thứ tiếng bạn đang gõ.',
+  'settings.theme': 'Màu giao diện',
+  'settings.themeLight': 'Sáng',
+  'settings.themeDark': 'Tối',
 
   // ────────────────────────────────────────────────────────────── dialogs
   'dialog.newOffice.title': 'Tạo văn phòng',
@@ -859,6 +887,7 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'overview.removeOfficeTitle': 'Xoá hẳn văn phòng “{name}”?',
   'overview.removeOfficeBefore': 'Xoá cả thư mục',
   'overview.removeOfficeAfter': ': nhân viên, kỹ năng, kho tri thức và mọi kết quả đã làm.',
+  'overview.removeNoUndo': 'Không lấy lại được.',
 
   // ────────────────────────────────────────────── inspector (right panel)
   'inspector.editProfile': 'Sửa hồ sơ',
@@ -949,9 +978,6 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'inspector.armRemoveKeep1': 'Cấu hình và chìa khoá',
   'inspector.armRemoveKeepBold': 'vẫn được giữ',
   'inspector.armRemoveKeep2': '. Cắm lại đúng thứ này thì không phải nhập lại gì — chỉ mất công nối dây.',
-  'inspector.agentDeleteBefore': 'Mất file',
-  'inspector.agentDeleteMid': 'và toàn bộ kỹ năng bạn đã viết cho người này.',
-  'inspector.agentDeleteBold': 'Không lấy lại được.',
   'inspector.agentNotesBefore': 'Sổ tay kinh nghiệm ở',
   'inspector.agentNotesAfter':
     'vẫn được giữ — đó là thứ văn phòng đã học được, không phải tài sản riêng của một cái tên.',
@@ -1495,6 +1521,7 @@ export const viPlural: PluralCatalog = {
   'header.taskCount': { one: '{n} việc', other: '{n} việc' },
   'header.turnCount': { one: '{n} lượt', other: '{n} lượt' },
   'node.libraryCount': { one: '{n} tài liệu', other: '{n} tài liệu' },
+  'office.armCount': { one: '{n} kết nối', other: '{n} kết nối' },
   'cmd.readingMore': { one: 'Đang đọc {names} và {n} file nữa…', other: 'Đang đọc {names} và {n} file nữa…' },
   'lib.shapeLines': { one: '{n} dòng', other: '{n} dòng' },
   'lib.shapeCsv': { one: 'csv, {n} dòng', other: 'csv, {n} dòng' },

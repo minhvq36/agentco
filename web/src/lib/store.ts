@@ -25,10 +25,13 @@ import type {
   StepStatus,
   Usage,
   Locale,
+  WorkPlace,
 } from './types';
 import { plural, resolveLocale, setLocale, t } from '@i18n';
 
 import { mergeUserEcho } from './chat-echo';
+import { replayable } from './replay';
+import { applyTheme, bootTheme, type Theme } from './theme';
 
 export interface ChatMessage {
   id: number;
@@ -67,6 +70,26 @@ export interface ChatMessage {
 export interface LiveAgent {
   status: 'working' | 'done' | 'error';
   say: string;
+  /**
+   * Where this person's last tool call landed, straight off `task.progress`.
+   * → docs/SPEC-office-animation.md §6
+   *
+   * ⚠ `undefined` means NO PLACE — a turn that called no tool. The office view
+   * must leave that person exactly where they are; substituting a default here
+   * would turn "we did not observe a place" into "they went to the desk", and
+   * the picture would be stating something nobody saw.
+   */
+  at?: WorkPlace;
+  /** Which arm, when `at === 'arm'`. */
+  arm?: string;
+  /**
+   * How many files the finished task produced. Set ONLY on `task.done`.
+   *
+   * It is the difference between a worker walking to the filing desk to put
+   * something down and one that has nothing to put down — a `deliver: reply`
+   * task answers and lands no file.
+   */
+  artifacts?: number;
 }
 
 export type PanelId =
@@ -89,7 +112,33 @@ export interface AppState {
    * speaks. → docs/CLAUDE.md §Language
    */
   locale: Locale;
+  /**
+   * LIGHT · DARK · FOLLOW THE MACHINE. → `lib/theme.ts`
+   *
+   * ⚠ Here ONLY so the radio group in Settings can draw a dot next to the right
+   * row. What the screen actually looks like is decided by an attribute on
+   * `<html>` and the stylesheet — nothing in React reads this to paint.
+   *
+   * ⚠ And unlike `locale`, the server never hears about it: this is one
+   * browser's view state, the same class as `agentco:view`. Two machines
+   * looking at one company are allowed to disagree about the lights.
+   */
+  theme: Theme;
   loading: boolean;
+  /**
+   * The daemon was shut down FROM THIS SCREEN, and the user confirmed it.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ IT MUST OUTRANK `fatal`, AND THAT IS THE WHOLE POINT OF THE FLAG.        │
+   * │                                                                          │
+   * │ Shutting down kills the SSE stream a beat later, so `es.onerror` sets    │
+   * │ `fatal: "lost connection to the company"` — an alarm, with a Retry       │
+   * │ button, for something the user just asked for on purpose. Without a way  │
+   * │ to tell the two apart, the last thing anyone sees when they close the    │
+   * │ company down is an error screen.                                         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  poweredOff: boolean;
   /** A company-level error (daemon lost, config broken). It blocks the whole screen. */
   fatal: string | null;
   /** A passing error — shown as a toast, blocking nothing. */
@@ -263,11 +312,70 @@ export interface AppState {
   panel: PanelId | null;
   /** The node selected on the canvas (a node id, not a role id). */
   selected: string | null;
+
+  /**
+   * WHICH VIEW of the office is open — the diagram, or the room.
+   * → docs/SPEC-office-animation.md §11a
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ `localStorage`, NOT the server. Identical reasoning to `agentco:office`:  │
+   * │ two tabs on two views is perfectly legal, and putting this on the server  │
+   * │ has one tab kicking the other. What the SERVER holds is a different       │
+   * │ question — `company.officeView` says whether this door exists at all.     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * Defaults to the diagram: a new office is an empty room, and the diagram is
+   * where a company gets built. The choice sticks once made.
+   */
+  view: 'diagram' | 'office';
+
+  /**
+   * The assistant's HIDDEN WORKER is running, and which shape it is.
+   * → `SPEC-offices.md` §6c · SPEC-office-animation §6c②
+   *
+   * Read straight off `office.activity.reading`, never inferred from the
+   * presence of `note` — which is a localized sentence and would make this
+   * work in exactly the language it was tested in.
+   */
+  assistantReading: 'library' | 'web' | null;
 }
+
+/**
+ * 🔴 EVERY KEY A `boot*()` READS IS DECLARED HERE, ABOVE `initial`. DO NOT MOVE
+ * THEM BACK DOWN BESIDE THE FUNCTION THAT USES THEM.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ MEASURED 07/09, IN THE BUILT BUNDLE — BOTH PREFERENCES WERE DEAD.        │
+ * │                                                                          │
+ * │ `initial` calls `bootLocale()` and `bootView()` while the object literal │
+ * │ is being built. Both key constants used to be declared 80 and 110 lines  │
+ * │ BELOW it. A function declaration hoists; a `const` initialiser does not, │
+ * │ and the bundler emits these as `var`, so at call time the key was        │
+ * │ `undefined` — not an error, just `localStorage.getItem(undefined)`,      │
+ * │ which reads a key named `"undefined"`, finds nothing, and falls back.    │
+ * │                                                                          │
+ * │ ⚠ SO `agentco:view` WAS WRITTEN CORRECTLY AND NEVER READ. Reproduced     │
+ * │ cold: set the key, load the page, land on the diagram — the switch       │
+ * │ looked like it did not remember anything. `agentco.locale` had exactly   │
+ * │ the same wound; it was invisible because `/api/company` corrects the     │
+ * │ language a moment later, so the only symptom was a flash.                │
+ * │                                                                          │
+ * │ ⚠ AND THE `try/catch` IS WHAT HID IT. It was written for "the browser    │
+ * │ blocks site data", and it swallowed a completely different failure into  │
+ * │ the same silent fallback. Nothing threw; there was simply nothing to     │
+ * │ throw. A `catch` is where a wrong premise hides.                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const LOCALE_KEY = 'agentco.locale';
+const VIEW_KEY = 'agentco:view';
 
 const initial: AppState = {
   locale: bootLocale(),
+  // ⚠ `bootTheme` STAMPS the attribute as it reads — see the box in `theme.ts`.
+  // Its key lives in that module, which is why it is not in the pair above.
+  theme: bootTheme(),
   loading: true,
+  poweredOff: false,
   fatal: null,
   toast: null,
   company: null,
@@ -293,6 +401,8 @@ const initial: AppState = {
   revealArtifact: null,
   panel: null,
   selected: null,
+  view: bootView(),
+  assistantReading: null,
 };
 
 let state: AppState = initial;
@@ -344,8 +454,6 @@ const draftKey = (officeId: string): string => `agentco:draft:${officeId}`;
  * browser blocks site data, and a language preference is never worth a white
  * screen. Missing or unreadable ⇒ fall back and let the fetch correct it.
  */
-const LOCALE_KEY = 'agentco.locale';
-
 function bootLocale(): Locale {
   let locale: Locale;
   try {
@@ -368,6 +476,23 @@ function applyLocale(locale: Locale): void {
     /* blocked storage — the server still knows, so only the first paint suffers */
   }
   set({ locale });
+}
+
+/**
+ * The view chosen last time. Same class of state as `agentco:office` and stored
+ * the same way — losing it on F5 would drop somebody back into the diagram every
+ * time they reload, which reads as the switch not working.
+ *
+ * ⚠ Swallows its own error, like every other `localStorage` call in this file:
+ * a private window or blocked site data must cost a preference, never a white
+ * screen.
+ */
+function bootView(): 'diagram' | 'office' {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'office' ? 'office' : 'diagram';
+  } catch {
+    return 'diagram';
+  }
 }
 
 const LAST_OFFICE = 'agentco:office';
@@ -477,6 +602,9 @@ async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
   }
 }
 
+/** The pending `setTint` write. 0 = nothing scheduled. → `actions.setTint` */
+let tintTimer = 0;
+
 // ───────────────────────────────────────────────────────────────── actions
 
 export const actions = {
@@ -560,13 +688,16 @@ export const actions = {
      *                 daemon stopping, and what makes the screen match what the
      *                 assistant still remembers.
      *  2. `history` — the daemon's in-memory ring buffer, for LIVE state (a plan
-     *                 in flight, who is doing what). `master.message` is dropped
-     *                 here because step 1 already had it; keeping it prints every
-     *                 message twice.
+     *                 in flight, who is doing what). What it may NOT apply is
+     *                 `replayable`'s list, and it is a list rather than the one
+     *                 `e.type === 'master.message'` test it used to be: an
+     *                 `office.cleared` still sitting in that buffer emptied the
+     *                 chat pane on every reload, hours after the `/clear` that
+     *                 caused it. → `replay.ts`
      */
     for (const e of detail.chat ?? []) applyEvent(e, false);
     for (const e of detail.history) {
-      if (e.type === 'master.message') continue;
+      if (!replayable(e.type)) continue;
       applyEvent(e, false);
     }
   },
@@ -1056,6 +1187,72 @@ export const actions = {
     await guard(() => api.setLanguage(locale));
   },
 
+  /**
+   * Light · dark · follow the machine. → `lib/theme.ts`
+   *
+   * No round trip and nothing to await: the stylesheet has already repainted by
+   * the time this returns. It is deliberately NOT stored on the server the way
+   * the language is — see the note on `AppState.theme`.
+   */
+  setTheme(theme: Theme): void {
+    if (theme === state.theme) return;
+    applyTheme(theme);
+    set({ theme });
+  },
+
+  /**
+   * SHUT THE DAEMON DOWN — the last thing this screen ever does.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THE FLAG GOES UP BEFORE THE REQUEST, NOT AFTER IT.                       │
+   * │                                                                          │
+   * │ The server answers `{ok:true}` and only THEN exits, 100ms later — but    │
+   * │ the SSE stream can die first, and `es.onerror` writing `fatal` while     │
+   * │ this call is still in flight would put an error screen over a shutdown   │
+   * │ the user asked for. Raising it first means every later signal — the      │
+   * │ dropped stream, the failed fetch — lands on a screen that already says   │
+   * │ the right thing.                                                         │
+   * │                                                                          │
+   * │ ⚠ AND THE ERROR IS SWALLOWED ON PURPOSE, which is the one place in this  │
+   * │ file that is allowed. A daemon that dies before finishing the response   │
+   * │ is a request that fails — and it fails BECAUSE IT WORKED. Reporting it   │
+   * │ would be a red toast for a successful action.                            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  async shutdown(): Promise<void> {
+    set({ poweredOff: true });
+    // Close the stream ourselves rather than letting it reconnect into a dead
+    // port: EventSource retries forever, and each attempt is a console error on
+    // a screen whose whole job is to be quiet.
+    source?.close();
+    await api.shutdown().catch(() => undefined);
+  },
+
+  /**
+   * RENAME THE COMPANY — the title in the top-left corner.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ EMPTY IS A LEGAL VALUE, and it does not mean "leave it alone".           │
+   * │                                                                          │
+   * │ `company.yaml` starts with no `name:` at all, and the server renders     │
+   * │ that as `t('company.unnamed')` — a label that follows the interface      │
+   * │ switch. Clearing the box is how somebody gets back to it, so an empty    │
+   * │ string is sent through rather than treated as a cancel. → `Company.      │
+   * │ updateName`                                                              │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * The response carries the name the SERVER settled on, which is not always
+   * the string that was typed — trimmed, and swapped for the default label when
+   * it is empty. Taking ours instead would leave the header showing a blank
+   * title until the next reload.
+   */
+  async renameCompany(name: string): Promise<boolean> {
+    const res = await guard(() => api.setCompanyName(name));
+    if (!res) return false;
+    set({ company: state.company ? { ...state.company, name: res.name } : state.company });
+    return true;
+  },
+
   /** Clicking the tab already open CLOSES it. That is what a tab does. */
   openPanel(panel: PanelId | null): void {
     const next = state.panel === panel ? null : panel;
@@ -1121,6 +1318,134 @@ export const actions = {
     set({ selected: nodeId });
   },
 
+  /**
+   * Diagram ⇄ room. → docs/SPEC-office-animation.md §11a
+   *
+   * Remembered per browser, never on the server. Everything else on screen —
+   * header, sidebar, plan strip, the inspector, the selection — survives the
+   * switch untouched: only the main scene swaps.
+   */
+  setView(view: 'diagram' | 'office'): void {
+    if (state.view === view) return;
+    set({ view });
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // A remembered view is a convenience; a white screen is not acceptable.
+    }
+  },
+
+  /**
+   * Somebody picked a different character for one person.
+   * → docs/SPEC-office-animation.md §6c③ · §17k‴
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 IT SENDS THE RESOLVED CAST, AND THIS COMMENT USED TO FORBID THAT.     │
+   * │                                                                          │
+   * │ It read: *"sends the stored CHOICES plus this one — never the resolved   │
+   * │ cast. Sending what everyone currently looks like would freeze every      │
+   * │ hashed default into `layout.json`, and the 'delete it and the office     │
+   * │ re-casts itself' property would be gone."* Both sentences are true. What │
+   * │ they left out is what the sparse payload costs, and it was measured:     │
+   * │                                                                          │
+   * │   an office of 12, ONE hand pick → up to **6 of the other 11** change    │
+   * │   face, and 4 change garment colour                                      │
+   * │                                                                          │
+   * │ Because a face is reserved before the rest are dealt, reserving one      │
+   * │ cascades through everybody the probe walks past. The user saw it from    │
+   * │ the other end: *"I change one person's character and the whole break     │
+   * │ area moves — I expected only that character to change."* It moves        │
+   * │ because a different face is a different per-sheet `scale` and a          │
+   * │ different `sitLift`, so a seated figure visibly jumps.                   │
+   * │                                                                          │
+   * │ ⇒ Freeze what everyone looks like AT THE MOMENT SOMEBODY CHOOSES. A pick │
+   * │ is a deliberate act on a screen the user is watching, and it is already  │
+   * │ a write — the objection §17k raises against storing (a READ that writes  │
+   * │ and emits `layout.changed`) does not apply here.                         │
+   * │                                                                          │
+   * │ ⚠ THE COST IS REAL AND IS NOW THE SMALLER ONE: after the first pick, the │
+   * │ office's whole cast is in `layout.json`, so *"delete it and the office   │
+   * │ re-casts itself"* holds only for an office nobody has ever dressed. It   │
+   * │ is bounded by that first pick, and `setTint` beside this has been paying │
+   * │ exactly the same price since it shipped.                                 │
+   * │                                                                          │
+   * │ ⚠ IT IS ALSO WHY HIRING AND FIRING STOP DISTURBING PEOPLE in a dressed   │
+   * │ office: a stored face is honoured verbatim and `pruneCast` only drops    │
+   * │ the leaver. That was the open hole in §17k″, half closed as a side       │
+   * │ effect rather than as a second mechanism.                                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  async setCharacter(nodeId: string, character: number): Promise<void> {
+    const id = state.officeId;
+    const canvas = state.canvas;
+    if (!id || !canvas) return;
+    /**
+     * ⚠ FROM `node.character`, the value the server RESOLVED, not from
+     * `canvas.cast`, which holds only what was already chosen by hand. The whole
+     * point is to pin the people who never chose.
+     */
+    const cast: Record<string, number> = {};
+    for (const n of canvas.nodes) if (typeof n.character === 'number') cast[n.id] = n.character;
+    cast[nodeId] = character;
+
+    // Optimistic: this is a costume, and waiting for a round trip to see it is
+    // exactly the "responds before the server answers" bar.
+    set({
+      canvas: {
+        ...canvas,
+        cast,
+        nodes: canvas.nodes.map((n) => (n.id === nodeId ? { ...n, character } : n)),
+      },
+    });
+    markLocalSave();
+    const next = await guard(() => api.saveCanvas(id, { cast }));
+    if (next) set({ canvas: next });
+  },
+
+  /**
+   * Somebody dragged the colour picker for one person.
+   * → docs/SPEC-office-art.md §11 · SPEC-office-animation §17k
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ REAL-TIME ON SCREEN, DEBOUNCED TO DISK — and they are not the same      │
+   * │ thing dressed differently.                                                │
+   * │                                                                           │
+   * │ A continuous picker fires on every pixel the pointer moves. The colour    │
+   * │ has to follow the finger, or the control feels broken; the SAVE must not, │
+   * │ or one drag across the spectrum is two hundred writes of `layout.json`    │
+   * │ and two hundred `layout.changed` events broadcast to every open tab.      │
+   * │                                                                           │
+   * │ ⚠ THE STORED MAP IS REBUILT FROM THE NODES, not kept as a second field.   │
+   * │ `CanvasState` deliberately does not carry the tint choices (→ types.ts),  │
+   * │ so the map sent up is assembled from every node that HAS a tint plus this │
+   * │ change. That is a real cost, stated: a colour the server computed for a   │
+   * │ face-clash gets written down the first time the user changes anybody's,   │
+   * │ turning a derived value into a stored one. It is bounded — it only        │
+   * │ affects people who were already tinted — and the alternative is shipping  │
+   * │ a second map down the wire on every canvas read.                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  setTint(nodeId: string, tint: string): void {
+    const canvas = state.canvas;
+    if (!canvas) return;
+    set({
+      canvas: { ...canvas, nodes: canvas.nodes.map((n) => (n.id === nodeId ? { ...n, tint } : n)) },
+    });
+    if (tintTimer) clearTimeout(tintTimer);
+    tintTimer = window.setTimeout(() => {
+      tintTimer = 0;
+      const id = state.officeId;
+      const now = state.canvas;
+      if (!id || !now) return;
+      const map: Record<string, string> = {};
+      for (const n of now.nodes) if (n.tint) map[n.id] = n.tint;
+      markLocalSave();
+      void guard(() => api.saveCanvas(id, { tint: map })).then((next) => {
+        if (next) set({ canvas: next });
+      });
+    }, 350);
+  },
+
   dismissToast(): void {
     set({ toast: null });
   },
@@ -1168,6 +1493,8 @@ export function connectEvents(): () => void {
   };
 
   es.onerror = () => {
+    // The daemon we just switched off is not a daemon we lost. → `actions.shutdown`
+    if (state.poweredOff) return;
     // EventSource reconnects by itself. Only report once it has closed for good.
     if (es.readyState === EventSource.CLOSED) {
       set({ fatal: t('error.lostDaemon') });
@@ -1216,10 +1543,22 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       set({ live: {}, activity: null });
       break;
 
+    /**
+     * ⚠ `task.started` carries NO place, and must not inherit one. It is the
+     * brief being handed over, before any tool has run — the person walks to
+     * their own spot, and only a real `at` moves them anywhere else.
+     */
     case 'task.started':
     case 'task.progress':
       clearTimeout(doneTimers[e.role]);
-      setLive(e.role, { status: 'working', say: e.say });
+      setLive(e.role, {
+        status: 'working',
+        say: e.say,
+        // Spread so ABSENT STAYS ABSENT: a progress turn with no tool call
+        // must clear the previous place rather than leave the person standing
+        // at a station they have already left.
+        ...(e.type === 'task.progress' && e.at ? { at: e.at, ...(e.arm ? { arm: e.arm } : {}) } : {}),
+      });
       // Who is doing what — shown in the chat frame, so nobody has to open another
       // panel to learn that the system is still alive.
       set({ activity: labelFor(e.role) + ': ' + e.say });
@@ -1229,7 +1568,10 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       const ok = e.status === 'done';
       // A finished task may mean new artifacts on disk. The Results panel reloads.
       if (e.artifacts.length) set({ artifactsVersion: state.artifactsVersion + 1 });
-      setLive(e.role, { status: ok ? 'done' : 'error', say: e.say });
+      // `artifacts` rides along because it is the difference between a worker
+      // with something to put on the filing desk and one without — a
+      // `deliver: reply` task answers and lands no file.
+      setLive(e.role, { status: ok ? 'done' : 'error', say: e.say, artifacts: e.artifacts.length });
       clearTimeout(doneTimers[e.role]);
       doneTimers[e.role] = setTimeout(() => {
         if (state.live[e.role]?.status === 'done') setLive(e.role, null);
@@ -1294,6 +1636,14 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
        * otherwise the old timer clears the status line of the NEW task that just
        * started.
        */
+      /**
+       * Written on EVERY `office.activity`, including when absent — the same
+       * rule as `libraryBusy`. A conditional write is how a state gets stuck on
+       * screen forever: the "no longer reading" branch would write nothing, and
+       * the assistant would stand at the bookshelf until the next lookup.
+       */
+      set({ assistantReading: e.reading ?? null });
+
       if (e.note) {
         if (noteTimer) clearTimeout(noteTimer);
         noteTimer = undefined;
