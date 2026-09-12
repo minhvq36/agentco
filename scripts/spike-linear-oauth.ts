@@ -23,7 +23,7 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * Source of truth is LINEAR'S DOCS, not Claude's docs:
- *   🌐 linear.app/docs/mcp
+ *    linear.app/docs/mcp
  *
  * ── SEVEN QUESTIONS, each one able to change the design ─────────────────────
  *

@@ -1,27 +1,33 @@
-import { Languages } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Languages, Moon, Palette, Sun } from 'lucide-react';
 
 import { SectionTitle } from '@/components/ui/misc';
 import { actions, useApp } from '@/lib/store';
-import { LOCALES, t, type Locale } from '@i18n';
+import { THEMES, type Theme } from '@/lib/theme';
+import { LOCALES, t, type Locale, type MessageKey } from '@i18n';
 
 /**
  * Settings — company-level, so it stays visible when there are no offices.
  * → docs/SPEC-ui.md §0 · docs/CLAUDE.md §Language
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ THE SCOPE SENTENCE IS THE FEATURE, NOT THE DECORATION.                   │
+ * │ ⚠ NEITHER SWITCH CARRIES A SCOPE SENTENCE ANY MORE. (user, 10/09)        │
  * │                                                                          │
- * │ This switch changes the INTERFACE. It does not change what the assistant │
- * │ writes back, what a worker puts in a result file, or what gets recorded  │
- * │ as a lesson — all of those follow whatever language the person is typing │
- * │ in, which this setting cannot know. A Vietnamese user may well want an   │
- * │ English interface, and that combination has to keep working.             │
+ * │ Both used to. The language one said the assistant still replies in       │
+ * │ whatever language you type in; the theme one said the choice lives in    │
+ * │ this browser and not in the company. Both were TRUE and both are still   │
+ * │ true — they were pruned as screen clutter, and that is the user's call   │
+ * │ to make.                                                                 │
  * │                                                                          │
- * │ Without the sentence, the obvious reading of a control labelled          │
- * │ "language" is that it governs everything. Someone flips it, sends a      │
- * │ message, gets a reply in the other language, and files a bug. Saying the │
- * │ boundary out loud where the control lives is cheaper than answering that │
- * │ bug once.                                                                │
+ * │ ⚠ WHAT THEY WERE THERE FOR HAS NOT GONE AWAY, so it is written here      │
+ * │ instead of being lost with them: the obvious reading of a control        │
+ * │ labelled "language" is that it governs everything, and someone who flips │
+ * │ it, sends a message and gets a reply in the other language has found a   │
+ * │ bug as far as they are concerned. The boundary itself is load-bearing    │
+ * │ and lives in `docs/CLAUDE.md §Language` — a Vietnamese user may well     │
+ * │ want an English interface, and that combination has to keep working.     │
+ * │ If that question ever comes back as a real support case, the sentence is │
+ * │ the cheap answer and it goes back here.                                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -38,8 +44,59 @@ const ENDONYM: Record<Locale, string> = {
   en: 'English',
 };
 
+/**
+ * ⚠ MESSAGE KEYS, NOT TEXT — the same rule as the tables at the top of
+ * `Header.tsx`. This table is module-level, so a resolved string would freeze at
+ * import time and these rows would keep the language the page loaded with while
+ * everything around them switched.
+ */
+const THEME_LABEL: Record<Theme, MessageKey> = {
+  dark: 'settings.themeDark',
+  light: 'settings.themeLight',
+};
+
+const THEME_ICON: Record<Theme, typeof Sun> = {
+  dark: Moon,
+  light: Sun,
+};
+
+/**
+ * One row of a radio group. Extracted the moment there were two groups on this
+ * screen rather than after the third: the classes below decide what "selected"
+ * looks like, and two copies of that is how one group quietly stops matching
+ * the other.
+ */
+function Choice({
+  on,
+  onPick,
+  children,
+  trailing,
+}: {
+  on: boolean;
+  onPick(): void;
+  children: ReactNode;
+  trailing?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={on}
+      onClick={onPick}
+      className={[
+        'flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+        on ? 'border-accent bg-accent-soft text-accent' : 'border-line text-ink hover:bg-accent-soft/40',
+      ].join(' ')}
+    >
+      <span className="flex items-center gap-2">{children}</span>
+      {trailing}
+    </button>
+  );
+}
+
 export function SettingsPanel() {
   const locale = useApp((s) => s.locale);
+  const theme = useApp((s) => s.theme);
 
   return (
     <div className="h-full overflow-y-auto px-3 py-3">
@@ -49,30 +106,42 @@ export function SettingsPanel() {
       </SectionTitle>
 
       <div role="radiogroup" aria-label={t('settings.language')} className="flex flex-col gap-1">
-        {LOCALES.map((code) => {
-          const on = code === locale;
-          return (
-            <button
-              key={code}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              onClick={() => void actions.setLanguage(code)}
-              className={[
-                'flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors',
-                on
-                  ? 'border-accent bg-accent-soft text-accent'
-                  : 'border-line text-ink hover:bg-accent-soft/40',
-              ].join(' ')}
-            >
-              <span>{ENDONYM[code]}</span>
+        {LOCALES.map((code) => (
+          <Choice
+            key={code}
+            on={code === locale}
+            onPick={() => void actions.setLanguage(code)}
+            trailing={
               <span className="text-[11px] uppercase tracking-wider text-muted">{code}</span>
-            </button>
+            }
+          >
+            {ENDONYM[code]}
+          </Choice>
+        ))}
+      </div>
+
+      {/*
+        APPEARANCE — two rows, and dark is first because dark is what agentco
+        looks like. There is deliberately no "follow the machine": the operating
+        system does not get a vote on the product's own colours, and an install
+        with nothing stored is dark rather than a guess. → `web/src/lib/theme.ts`
+      */}
+      <SectionTitle className="mb-2 mt-6 flex items-center gap-1.5">
+        <Palette className="h-3.5 w-3.5" />
+        {t('settings.theme')}
+      </SectionTitle>
+
+      <div role="radiogroup" aria-label={t('settings.theme')} className="flex flex-col gap-1">
+        {THEMES.map((id) => {
+          const Icon = THEME_ICON[id];
+          return (
+            <Choice key={id} on={id === theme} onPick={() => actions.setTheme(id)}>
+              <Icon className="h-4 w-4" />
+              {t(THEME_LABEL[id])}
+            </Choice>
           );
         })}
       </div>
-
-      <p className="mt-3 text-[13px] leading-relaxed text-muted">{t('settings.languageScope')}</p>
     </div>
   );
 }

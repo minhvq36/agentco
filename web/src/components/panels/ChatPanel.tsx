@@ -3,6 +3,7 @@ import { CornerDownLeft, FileText, MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Empty, Textarea } from '@/components/ui/misc';
+import { fileLineHit } from '@/lib/file-line';
 import { Markdown } from '@/lib/markdown';
 import { hasTable } from '@/lib/markdown-core';
 import { actions, labelFor, useApp } from '@/lib/store';
@@ -221,6 +222,11 @@ export function ChatPanel() {
  * reference, one deterministic comparison — and since the same function builds
  * both ends, they cannot drift apart.
  *
+ * ⚠ …and the suffix alone was not enough: the assistant's own report often ends
+ * its sentence on that same path, and the whole paragraph became one monospace
+ * button. `fileLineHit` anchors the match to a line that is NOTHING BUT a path.
+ * → `lib/file-line.ts`
+ *
  * A line matching NO file goes through `Markdown` like any other message. No
  * branch here is allowed to break how things render today.
  */
@@ -228,7 +234,7 @@ function FileLinks({ text, files }: { text: string; files: string[] }) {
   return (
     <span className="block">
       {text.split('\n').map((line, i) => {
-        const hit = files.find((f) => line.trim().endsWith(f));
+        const hit = fileLineHit(line, files);
         if (!hit) {
           return (
             <span key={i} className="block">

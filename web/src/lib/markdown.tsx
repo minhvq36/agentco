@@ -24,7 +24,13 @@
  * │ FIVE RULES, NO MORE — and two things left out ON PURPOSE.                │
  * │                                                                          │
  * │   ✅ ```code blocks```   ✅ `inline code`   ✅ **bold**   ✅ # headings  │
- * │   ✅ | tables |                                                          │
+ * │   ✅ | tables |          ✅ [label](https://…)                           │
+ * │                                                                          │
+ * │ Links were added on 08/09, for the shape a worker with web access ACTUALLY│
+ * │ produces: a comparison or a price list with its sources under it. Printed │
+ * │ raw, the reader has to select a URL out of the middle of a sentence and   │
+ * │ paste it — and the `[label](url)` brackets around it read as noise.       │
+ * │ `http`/`https` only, checked at parse time. → `markdown-core.ts §SAFE_URL`│
  * │                                                                          │
  * │ Tables were added on 20/08 because they are a shape employees ACTUALLY   │
  * │ produce: glossaries, spend breakdowns, price comparisons. Showing the raw│
@@ -67,12 +73,50 @@ const SIZES = {
   preview: ['text-[17px]', 'text-[15px]', 'text-[14px]'],
 } as const;
 
+/**
+ * 🔴 A LINK IS THE ONLY THING IN HERE THAT LEAVES THE MACHINE.
+ * → `markdown-core.ts §Span.href`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ THE LABEL AND THE DESTINATION ARE TWO DIFFERENT STRINGS, AND THE MODEL
+ * │ WROTE BOTH. `[your invoice](https://evil.example)` is valid markdown, so
+ * │ a link rendered with the label alone hands a model-chosen destination the
+ * │ interface's own credibility — the failure class this repo already
+ * │ legislates for result paths (*"only a path CODE placed there is
+ * │ clickable"*).
+ * │
+ * │ What is different, and why this is allowed: a result path ASSERTS that a
+ * │ file of the user's exists; an external link asserts nothing except *"the
+ * │ author wrote this address"*. So it may be opened — provided the address
+ * │ is READABLE BEFORE THE CLICK. Hence `title`, which every browser shows on
+ * │ hover and every screen reader announces.
+ * │
+ * │ ⚠ `rel="noopener noreferrer"`: without `noopener` the opened page gets a
+ * │ handle on this one through `window.opener` and can navigate it — the
+ * │ console that drives the whole company, with no authentication beyond
+ * │ "same machine". `noreferrer` keeps the local URL out of the other site's
+ * │ logs.
+ * │
+ * │ ⚠ The scheme was already checked at PARSE time, not here. A renderer that
+ * │ decides safety is a second opinion, and this one runs in two places.
+ * └──────────────────────────────────────────────────────────────────────────
+ */
 function Inline({ text }: { text: string }) {
   return (
     <>
       {spansOf(text).map((s, i) => {
         const body = s.code ? (
           <code className="rounded bg-line/60 px-1 py-px font-mono text-[0.9em] text-ink">{s.text}</code>
+        ) : s.href ? (
+          <a
+            href={s.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={s.href}
+            className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+          >
+            {s.text}
+          </a>
         ) : (
           s.text
         );

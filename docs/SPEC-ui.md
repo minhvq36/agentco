@@ -65,6 +65,62 @@ them to create an office before they can change the language forces them to read
 screen in a language they didn't come there to use.
 → `web/src/components/Sidebar.tsx §tabs` · `docs/CLAUDE.md §Language`
 
+#### Settings holds TWO switches, and they are kept in two different places (10/09)
+
+| | what it changes | where it is kept | who else sees it |
+|---|---|---|---|
+| **Interface language** | the words on screen | `company.yaml → language` | every browser on this company |
+| **Appearance** — dark · light | the colours on screen | `localStorage: agentco.theme` | this browser only |
+
+That split is not an oversight, it is the same rule `agentco:view` and
+`agentco:office` already follow: **a choice about a MACHINE lives on the
+machine.** Two people opening one company from two laptops, one in a dark room
+and one by a window, are not in disagreement — and putting the theme in
+`company.yaml` would have one of them switching the other's lights off. It
+touches no daemon state, no `company.yaml`, no prompt and no user data.
+
+##### 🔴 DARK IS THE DEFAULT, AND THE MACHINE DOES NOT GET A VOTE
+
+Two rows, dark first. There is deliberately **no "follow the system"**, and
+`web/src/index.css` carries **no `prefers-color-scheme` at all** — `test/
+theme-tokens.test.ts` fails the day one reappears, in the stylesheet *or* in the
+server's "not built yet" page.
+
+The first cut did follow the machine when nothing was stored, and it was wrong
+within a day of testing:
+
+> *"My machine is on the light theme, but I want the app to default to dark.
+> Why does Ctrl+Shift+N still come up light?"*
+
+A private window has no storage and no extensions, so the app fell straight
+through to whatever the browser reported. **"I cleared everything" has to mean
+"back to what agentco looks like", not "back to what Windows thinks."** Those
+are two different questions and only one of them is ours to answer.
+
+⇒ **`@theme` holds the DARK palette** — it is the base, so every path that ends
+in "no attribute on `<html>`" (blocked site data, a private window, the inline
+script never running, someone opening the file by hand) still lands on the
+product's own colours. Light is one override block and is the only deviation.
+
+⚠ That also deleted a trap the three-state version had to carry: a media query
+cannot be a member of a selector list, so "system dark" and "chosen dark" needed
+the same 15 declarations written **twice**, plus a load-bearing rule about which
+block came first. One base and one override needs neither.
+→ `web/src/lib/theme.ts` · `web/src/index.css` · `test/theme-tokens.test.ts`
+
+⚠ **NEITHER SWITCH CARRIES A SCOPE SENTENCE** (user, 10/09 — pruned as screen
+clutter). Both were true and both still are; what they were for is recorded in
+`SettingsPanel.tsx` rather than lost with them, because the boundary itself is
+load-bearing: someone who flips the language, sends a message and gets a reply
+in the other language has found a bug as far as they are concerned, and
+`docs/CLAUDE.md §Language` is why that is the correct behaviour. The sentence is
+the cheap answer to that support case on the day it actually arrives.
+
+⚠ **The room does not follow any of this.** `.office-root` pins every app colour
+token to its light value, because an office is a lit place (→ `office.css`). The
+theme switch reaches the canvas, the panels and the chrome; it does not reach the
+room, and that is the user's call, not an oversight.
+
 The three stores are the three most easily confused concepts in the product,
 distinguished by exactly one question: **who puts the file there?**
 
@@ -81,6 +137,45 @@ whatever gets learned becomes knowledge below.
 
 Each drawer has a line at the bottom stating what it IS and pointing to the
 others. **0 tokens** — lives entirely in the UI. → `SPEC-artifacts.md`
+
+### The company's name is edited WHERE IT IS WRITTEN — no pencil (10/09)
+
+Double-click the title top-left, type, **Enter**. `Escape` cancels, clicking away
+saves. There is deliberately **no pencil button beside it**, and the office
+picker two centimetres away deliberately still has one:
+
+| | renaming an OFFICE | renaming the COMPANY |
+|---|---|---|
+| what moves | the directory, and with it the `id` | nothing |
+| who else has to be told | every tab (`refreshCompany`), old receipts keep the old id | the title, and only the title |
+| door | pencil → dialog | edit in place |
+
+A dialog is the right weight for an act with consequences. For a label that
+moves not one byte it is three clicks for a rename, and a **second** pencil
+beside the first would only make people wonder which of the two names they are
+about to change. → `Header.tsx §CompanyName` · `Company.updateName`
+
+**Empty is a legal value and means "unnamed"** — the title goes back to
+`t('company.unnamed')`, a label that follows the interface switch. That is how
+somebody who typed a name by accident gets back to the default, so `PATCH
+/api/company` tests `name !== undefined` and never `if (name)`.
+
+⚠ **Escape must not escape.** `App` listens for Escape on `window` and stops the
+running work with it — the reflex a Claude Code user brings with them. The rename
+box calls `stopPropagation`, or cancelling a typo would kill the job as well.
+
+### Shutting down ends on a SCREEN, not on an error (10/09)
+
+Confirm → the daemon exits → **one quiet line, and nothing else**: no icon, no
+border, no Retry. There is no daemon left to serve a Retry, so any control drawn
+here would be a control that does not work.
+
+⚠ **`poweredOff` is tested BEFORE `fatal`, and the flag is raised BEFORE the
+request.** Shutting down kills the SSE stream a beat later, so `es.onerror`
+fills `fatal` in with *"lost connection to the company"* — an alarm, for
+something the user just asked for on purpose. Get either order wrong and the
+last thing anybody sees when they close agentco is an error screen.
+→ `store.ts §AppState.poweredOff` · `App.tsx`
 
 ### The sidebar is RESIZABLE — width is content, not decoration
 
@@ -120,6 +215,31 @@ name on its own line, with the description indented on the line below** instead
 of column-aligning them. Column-aligning with spaces only works with a monospace
 font, and the chat bubble uses a regular font — and this same command set also
 runs through Telegram, which is even narrower.
+
+### Markdown links: `[label](https://…)` — a SIXTH rule, and the only one that leaves the machine (08/09)
+
+The same renderer, both surfaces (chat and the `.md` preview). The reason is the
+same shape argument tables were added on: a worker with web access produces a
+comparison and puts its sources under it, and printed raw the reader has to pick
+a URL out of the middle of a sentence while the `[…](…)` brackets read as noise.
+
+**Two mechanisms, and neither is optional:**
+
+| | |
+|---|---|
+| `http`/`https` **allowlist**, at PARSE time | The text is model-generated — the premise that already forbids `dangerouslySetInnerHTML` here. `javascript:` is a valid URL in a markdown link; React strips it today, with a warning, but that is a library's courtesy, not our gate. A blocklist would need `data:`, `file:`, `vbscript:` and whatever is invented next; an allowlist needs nothing. ⚠ **Refused = printed verbatim**, never dropped: a link the interface will not open must not become one the reader cannot see |
+| the destination is **readable before the click** (`title`) | `[your invoice](https://evil.example)` is legal markdown, and the label and the address are two different strings the model wrote. Plus `rel="noopener noreferrer"` — without `noopener` the opened page can navigate this one, and this console drives the whole company with no authentication beyond "same machine" |
+
+⚠ **This does NOT reverse *"only a path CODE placed there is clickable"*.** That
+rule protects an assertion about the **user's own files** — underlining a path
+says *"this result exists, here"*. An external link asserts only *"the author
+wrote this address"*, and it is shown as one. Result paths keep their own,
+separate mechanism (`master.message.files`).
+
+⛔ Still not supported, on purpose: reference links (`[a][1]`), bare autolinking
+of a naked URL, images, and a URL containing brackets or spaces. A balanced-paren
+scanner is a parser; this is a rule in a file whose whole argument is *"the
+smallest surface breaks least"*.
 
 ### Markdown tables: THE WHOLE TABLE OR NOTHING (20/08)
 

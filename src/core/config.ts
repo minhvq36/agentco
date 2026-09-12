@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Loading config. TWO LEVELS: the company (money, models) and the office (people,
  * knowledge).
  *
@@ -28,6 +28,7 @@ import {
 import { companyPaths, officePaths, type CompanyPaths, type OfficePaths } from './paths.js';
 import { estimateTokens, truncateToTokens } from './tokens.js';
 import { resolveLocale, setLocale, t } from '../i18n/index.js';
+import { setClaudePath } from './claude-code.js';
 
 export interface LoadedOffice {
   id: string;
@@ -115,6 +116,18 @@ export function loadCompanyConfig(dir: string, overrides: Record<string, unknown
    */
   setLocale(resolveLocale([parsed.data.language], 'vi'));
 
+  /**
+   * The Claude Code override, adopted on the SAME line as the locale and for the
+   * same reason. → `core/claude-code.ts`
+   *
+   * ⚠ HERE rather than in `Company.open`, because `Company` is not the only
+   * caller: `updateModels`, `updateLanguage` and `updateName` all reload the
+   * config, and a hook on one door would leave the others carrying a stale path
+   * after the user edits `claude_path` and saves. One function that everybody
+   * already goes through has no such gap.
+   */
+  setClaudePath(parsed.data.claude_path);
+
   return parsed.data;
 }
 
@@ -134,7 +147,34 @@ export function loadOffice(
   const pp = officePaths(dir);
 
   const rawCfg = readYaml(pp.configFile) as Record<string, unknown>;
-  rawCfg['id'] ??= officeId;
+  /**
+   * 🔴 THE DIRECTORY NAME IS THE IDENTITY — it OVERWRITES whatever the file says.
+   * → `office.ts §roleTemplate` · `company.ts §officeTemplate`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────
+   * │ MEASURED 09/09: AN EMPLOYEE NAMED "1" WAS CREATED AND NEVER APPEARED.
+   * │
+   * │ The templates wrote `id: ${id}` unquoted, so a name that slugs to a YAML
+   * │ SCALAR stops being a string the moment it is read back: `1` → number,
+   * │ `true`/`false` → boolean, `null` → null, `0x1f` → number. `isSafeId`
+   * │ passes all of them — it guards the character set, not the parser's
+   * │ opinion of them. The schema then rejected the file, and the office
+   * │ carried on without it: a role SKIPPED WITH A WARNING nobody sees on
+   * │ stderr, an office THROWN OUT entirely. The user saw a create button that
+   * │ worked and a diagram that stayed empty.
+   * │
+   * │ ⚠ `=`, NOT `??=`. The fallback only fired when the key was absent, which
+   * │ is exactly the case that was never broken. And there is no second
+   * │ identity to respect: `roles/<id>.yaml` and `offices/<id>/` ARE the id
+   * │ everywhere else — `dropAgent`, `archiveAgent`, `skillFileFor` all build
+   * │ the path from it. A file whose inner `id` disagreed with its own name
+   * │ was already unreachable.
+   * │
+   * │ ⇒ This also SELF-HEALS the files already on disk: the templates are
+   * │ quoted now, but nobody has to go and fix what they wrote yesterday.
+   * └──────────────────────────────────────────────────────────────────────────
+   */
+  rawCfg['id'] = officeId;
   const parsedCfg = OfficeConfigSchema.safeParse(rawCfg);
   if (!parsedCfg.success) {
     throw new Error(t('cfg.badOfficeYaml', { office: officeId, detail: formatZodError(parsedCfg.error) }));
@@ -148,7 +188,9 @@ export function loadOffice(
     for (const file of fs.readdirSync(pp.roles).sort()) {
       if (!/\.(ya?ml)$/i.test(file)) continue;
       const roleRaw = readYaml(path.join(pp.roles, file)) as Record<string, unknown>;
-      roleRaw['id'] ??= file.replace(/\.(ya?ml)$/i, '');
+      // ⚠ The FILE NAME is the identity, and it overwrites what the file says.
+      // → the box on `rawCfg['id']` above for the employee named "1".
+      roleRaw['id'] = file.replace(/\.(ya?ml)$/i, '');
       const r = RoleSchema.safeParse(roleRaw);
       if (!r.success) {
         // One broken role file must NOT take the whole office down — the

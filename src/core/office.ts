@@ -27,7 +27,7 @@ import {
   safeJoin,
   slugId,
 } from './paths.js';
-import { readOAuth } from './secrets.js';
+import { keysFor, readOAuth, readSecrets } from './secrets.js';
 import { KnowledgeStore } from '../knowledge/store.js';
 import { LibraryStore, type DocRecord } from '../library/store.js';
 import { docPaths } from '../library/names.js';
@@ -45,7 +45,8 @@ import {
   resolveFileRefs,
   type ParsedInput,
 } from './commands.js';
-import { Mailbox, mergeUserText } from './mailbox.js';
+import { MAX_QUEUED, Mailbox, mergeUserText } from './mailbox.js';
+import { assignCast, assignTints, castOf } from './cast.js';
 import { PlanStore, agentHue } from './plans.js';
 import { Scheduler, delivered } from './scheduler.js';
 import { buildWorkerPrompt, describePrompt, type PromptLayer } from './prompt.js';
@@ -210,6 +211,12 @@ export interface CanvasNode extends LayoutNode {
   folders?: string[];
   /** representative color, shared with the log */
   hue?: number;
+  /**
+   * assistant/agent only: WHICH CHARACTER draws them in the office view.
+   * An index into `CAST` (`core/cast.ts`), resolved on the server — a stored
+   * choice if the office has one, otherwise hashed. → `canvas()`
+   */
+  character?: number;
   /** roles/<id>.yaml wasn't found, or the mcp server has vanished from company.yaml */
   missing: boolean;
   /** has a wire from the Assistant → gets assigned work. No wire = "idle". */
@@ -222,6 +229,17 @@ export interface CanvasState {
   nodes: CanvasNode[];
   edges: Array<{ from: string; to: string }>;
   knowledge: { shared: number; total: number };
+  /**
+   * The stored character CHOICES only — not the resolved cast.
+   *
+   * `node.character` already carries what to draw. This is the other half, and
+   * the interface needs it for exactly one job: changing one person's character
+   * means `PUT`ing the map back, and without the current choices it would have
+   * to send the resolved cast for EVERYBODY — freezing every hashed default
+   * into stored data and quietly killing the "delete layout.json and it
+   * re-casts itself" property.
+   */
+  cast: Record<string, number>;
 }
 
 export interface SayOutcome {
@@ -292,8 +310,29 @@ export class Office {
   private activeScheduler: Scheduler | undefined;
   /** The Assistant's mailbox — it's ONE person, doing one thing at a time. */
   private readonly mailbox = new Mailbox();
-  /** Work the user handed over while busy, finished once this job is done. */
-  private deferred: Array<{ request: string; at: number }> = [];
+  /**
+   * 🔴 ONE CLUSTER OF WORK HANDED OVER WHILE BUSY — never a queue of jobs.
+   * → `queueWork` · `drainDeferred` (user settled 09/09)
+   *
+   * ┌──────────────────────────────────────────────────────────────────────
+   * │ *"Pile everything typed afterwards into ONE cluster and set ONE new
+   * │ plan"* — so the office goes ask → work → **straight on** instead of
+   * │ ask → work → idle → ask, and there is only ever ONE thing waiting.
+   * │
+   * │ ⚠ THE TEXTS ARE KEPT APART AND MERGED ONCE, AT THE DRAIN. Merging as
+   * │ each message arrives would nest `mergeUserText`'s own scaffolding
+   * │ sentence inside itself — *"I sent 2 messages… 1. I sent 2 messages…"* —
+   * │ and hand that to the planner as if the user had written it.
+   * │
+   * │ ⚠ ONE CLUSTER MEANS ONE DECISION, and the cost is stated rather than
+   * │ hidden: there is no mechanism for taking back part of it. Changing your
+   * │ mind is `/stop`, then say the new thing. That is the standing rule of
+   * │ this repo — a draft you can correct beats an interruption — and it is
+   * │ what makes this the cheap option instead of a live DAG that has to be
+   * │ controllable.
+   * └──────────────────────────────────────────────────────────────────────
+   */
+  private deferred: { texts: string[]; at: number } | null = null;
   /** Artifacts from the job that just finished — handed off to the next queued job. */
   private lastArtifacts: string[] = [];
   /**
@@ -341,6 +380,23 @@ export class Office {
 
   constructor(loaded: LoadedOffice) {
     this.loaded = loaded;
+    /**
+     * ⚠ THE MAILBOX WAKES THE PUMP WHEN THE ASSISTANT BECOMES FREE.
+     * → `mailbox.ts §onFree`
+     *
+     * `run()` holds the assistant lock for planning and for the report, and a
+     * message arriving inside one of those windows saw `isBusy`, turned around,
+     * and was never looked at again. Measured 09/09: the header sat at "2
+     * waiting" for the rest of the session.
+     *
+     * ⚠ `emitActivity` too, not just the pump: if the batch turns out to be
+     * chat the pump answers it and re-emits anyway, but if the lock just closed
+     * on an EMPTY mailbox the header still has to stop saying "thinking".
+     */
+    this.mailbox.onFree = () => {
+      this.emitActivity();
+      this.tick();
+    };
     ensureOfficeDirs(loaded.paths);
     this.knowledge = new KnowledgeStore(loaded.dir, loaded.paths);
     this.knowledge.scan();
@@ -589,8 +645,8 @@ export class Office {
     // drop anything still in the mailbox, drop deferred work. Keeping any of
     // it means the user hits Stop and still sees the system keep working —
     // exactly what they just said not to do.
-    const dropped = this.mailbox.clear() + this.deferred.length;
-    this.deferred = [];
+    const dropped = this.mailbox.clear() + (this.deferred?.texts.length ?? 0);
+    this.deferred = null;
     if (this.state === 'working') this.setState('paused', t('off.stopping'));
     this.emitActivity();
     return { dropped, cutAssistant };
@@ -659,7 +715,7 @@ export class Office {
     }
 
     this.emitActivity();
-    void this.pump();
+    this.tick();
     return { intent: 'chat', reply: '' };
   }
 
@@ -784,8 +840,9 @@ export class Office {
     }
 
     this.emitActivity();
-    // Keep reading if there's more mail. Recurses via a microtask, so it doesn't deepen the call stack.
-    if (this.mailbox.size > 0) void this.pump();
+    // Keep going — more mail, or the cluster this batch may have just filled.
+    // Recurses via a microtask, so it doesn't deepen the call stack. → `tick`
+    this.tick();
   }
 
   private async handleUserBatch(text: string): Promise<void> {
@@ -844,7 +901,11 @@ export class Office {
       // The "Reading doc-2.md…" line — 0 tokens, and the other half of the
       // hidden worker's own honesty. `finally` so it doesn't get stuck on
       // screen if the read turn throws or gets cut by `/stop`. → `reading`
-      this.reading = readingNote(ok);
+      // The KIND rides along with the sentence, from the branch that already
+      // decides it. `readingNote` spends `ok.length` to pick a wording and then
+      // it is gone; a display side cannot get it back out of the sentence.
+      // → docs/SPEC-office-animation.md §6c②
+      this.reading = { note: readingNote(ok), kind: ok.length ? 'library' : 'web' };
       this.emitActivity();
       let found: { value: string; usage: Usage };
       try {
@@ -909,12 +970,17 @@ export class Office {
         // files may have changed, and an already-framed plan doesn't get
         // re-checked. Keep the more durable part — the description of the
         // work — and plan fresh when it actually runs.
+        // ⚠ QUEUE FIRST, THEN SPEAK. The sentence has to describe what actually
+        // happened: promising *"I'll pick it up next"* and then refusing the
+        // text because the cluster is full is the system lying about itself.
+        const took = this.queueWork(requestOf(draft));
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say: t('off.busyWillFollow'),
+          say: took ? t('off.busyWillFollow') : t('off.mailboxFlooded', { n: String(MAX_QUEUED) }),
         });
-        this.deferred.push({ request: requestOf(draft), at: Date.now() });
+        // ⚠ The job may have finished while `route()` was thinking. → `tick`
+        this.tick();
         return;
       }
       void this.run(requestOf(draft), draft).catch(() => {
@@ -929,15 +995,19 @@ export class Office {
       // only cost one extra planning round, while a wrong attachment breaks
       // both.
       if (this.state === 'working') {
+        // ⚠ Queue first, then speak — see the `plan` branch above.
+        const took = this.queueWork(routed.value.request);
         this.emit({
           type: 'master.message',
           role: 'assistant',
-          say:
-            routed.value.scope === 'refine'
+          say: !took
+            ? t('off.mailboxFlooded', { n: String(MAX_QUEUED) })
+            : routed.value.scope === 'refine'
               ? t('off.addendumNoted')
               : t('off.busyWillFollow'),
         });
-        this.deferred.push({ request: routed.value.request, at: Date.now() });
+        // ⚠ Same window as the `plan` branch above. → `tick`
+        this.tick();
         return;
       }
       // NO await: the DAG runs in the background, and during that time the
@@ -1012,7 +1082,7 @@ export class Office {
    * Assistant just knows the answer, when a real file-reading turn just ran.
    * → commands.ts `readingNote`
    */
-  private reading: string | null = null;
+  private reading: { note: string; kind: 'library' | 'web' } | null = null;
 
   private emitActivity(): void {
     const planning = this.currentRecord?.status === 'planning';
@@ -1022,9 +1092,10 @@ export class Office {
         assistant: 'thinking',
         workers: this.activeScheduler?.runningCount ?? 0,
         queued: this.mailbox.size,
-        jobs: this.deferred.length,
+        jobs: this.deferred ? 1 : 0,
         // ⚠ DELIBERATELY carries no `hold_ms` — see `reading`.
-        note: this.reading,
+        note: this.reading.note,
+        reading: this.reading.kind,
         plan_id: null,
       });
       return;
@@ -1038,7 +1109,7 @@ export class Office {
         assistant: 'thinking',
         workers: this.activeScheduler?.runningCount ?? 0,
         queued: this.mailbox.size,
-        jobs: this.deferred.length,
+        jobs: this.deferred ? 1 : 0,
         /**
          * States outright that it TAKES A FEW SECONDS — this is the longest
          * wait in the product where the user sees nothing running on the
@@ -1059,7 +1130,7 @@ export class Office {
       assistant: this.mailbox.isBusy ? 'thinking' : planning ? 'planning' : 'idle',
       workers: this.activeScheduler?.runningCount ?? 0,
       queued: this.mailbox.size,
-      jobs: this.deferred.length,
+      jobs: this.deferred ? 1 : 0,
       plan_id: this.currentRecord?.plan_id ?? null,
     });
   }
@@ -1084,7 +1155,7 @@ export class Office {
       assistant: this.mailbox.isBusy ? 'thinking' : 'idle',
       workers: this.activeScheduler?.runningCount ?? 0,
       queued: this.mailbox.size,
-      jobs: this.deferred.length,
+      jobs: this.deferred ? 1 : 0,
       note,
       hold_ms: holdMs,
       plan_id: null,
@@ -1155,7 +1226,7 @@ export class Office {
           !this.mailbox.isBusy &&
           !this.clearing &&
           this.mailbox.size === 0 &&
-          this.deferred.length === 0;
+          !this.deferred;
         if (idle) return reply(t('off.nothingRunning'));
         const { dropped, cutAssistant } = this.stop();
         return reply(
@@ -2312,43 +2383,46 @@ export class Office {
     this.settled.clear();
     this.emitActivity();
 
-    // Work the user handed over while busy: now it's its turn. Only
-    // continues when this run was NOT stopped — the user hitting Stop stops
-    // everything, including the queue.
-    const next = this.deferred.shift();
-    if (next && !this.stopRequested) {
-      this.emitActivity();
-      // HANDOFF: queued work is usually the continuation of what just
-      // finished ("make it sound even younger"). Not telling it where the
-      // previous output landed means it WRITES FROM SCRATCH instead of
-      // EDITING — far more expensive, and it throws away work already paid
-      // for.
-      //
-      // Built by code from the receipt already in hand: 0 tokens.
-      const done = this.lastArtifacts;
-      const request = done.length
-        ? // ⚠ English, hard-coded: this is glued onto the request the ASSISTANT
-          // reads, so it is prompt scaffolding, not chrome. The user's own words
-          // sit right above it and still set the reply language.
-          `${next.request}\n\n(The previous job just finished; its results are already at: ${done.join(', ')}. ` +
-          `If this request is an edit to that, EDIT the existing files — do not redo it from scratch.)`
-        : next.request;
-      void this.run(request).catch(() => {
-        /* run() has already emitted the error */
-      });
-    } else {
-      this.emitActivity();
-    }
-    // If there's still queued work, let it run first — compacting between
-    // two back-to-back jobs would cut exactly where the thread is continuous.
-    if (!next) this.maybeCompact();
+    // Was there work waiting BEFORE we opened the door? Asked here because
+    // `tick()` may consume it, and compaction must not cut between two
+    // back-to-back jobs — the thread is continuous there.
+    const queued = !!this.deferred;
 
-    // `setState` also emits an `office.state` carrying `say`. Putting the
-    // report sentence in there too would be a third repeat — a state only
-    // needs to say the STATE.
-    // `blocked` returns to `idle` like any closed run, but must NOT say "Job
-    // done." — no job ever ran, and the Assistant's question just appeared
-    // right above it.
+    /**
+     * 🔴 THE STATE CLOSES **BEFORE** THE QUEUE IS TOUCHED, and this order is the
+     * whole of the fix. → `drainDeferred`
+     *
+     * ┌──────────────────────────────────────────────────────────────────────
+     * │ MEASURED 09/09: QUEUED WORK HAD NEVER RUN. NOT ONCE.
+     * │
+     * │ `run()` refuses to start while the office is `working` (`throw
+     * │ RunError('officeBusyWait')`), and this function is still inside that
+     * │ state until `setState` — which used to sit TWELVE LINES BELOW the
+     * │ drain. So the sequence was: shift the item off the queue, call
+     * │ `run()`, have it throw, and swallow the throw in the `.catch(() => {})`
+     * │ two lines down. The user's work was taken out of the queue and
+     * │ dropped, silently, every time.
+     * │
+     * │ ⚠ AND THE FIRST PATCH FOR IT MADE IT WORSE. Guarding `drainDeferred`
+     * │ with `state !== 'working'` — correct as a rule — turned a silent drop
+     * │ into a permanent stall, because the guard was being asked at the one
+     * │ moment the state is always `working`. A rule can be right and still be
+     * │ asked in the wrong place.
+     * │
+     * │ ⚠ Moving `setState` up changes the ORDER OF EMITTED EVENTS, and the
+     * │ new order is the honest one: the finished job closes (`office.state:
+     * │ idle`), and only then does the queued job open its own `working`.
+     * │ Before, a queued job would have started while the previous one was
+     * │ still reporting itself as running.
+     * └──────────────────────────────────────────────────────────────────────
+     *
+     * `setState` also emits an `office.state` carrying `say`. Putting the
+     * report sentence in there too would be a third repeat — a state only
+     * needs to say the STATE.
+     * `blocked` returns to `idle` like any closed run, but must NOT say "Job
+     * done." — no job ever ran, and the Assistant's question just appeared
+     * right above it.
+     */
     this.setState(
       status === 'paused' || status === 'stopped' ? 'paused' : 'idle',
       status === 'paused'
@@ -2359,6 +2433,17 @@ export class Office {
             ? t('off.stateWaitingOnYou')
             : t('off.stateDone'),
     );
+
+    this.emitActivity();
+    /**
+     * ⚠ THE SAME DOOR EVERY OTHER TRANSITION USES. This path used to have its
+     * own drain and its own copy of the hand-off note; the office is free now
+     * and that is all this line has to say. → `tick`
+     */
+    this.tick();
+    // Queued work runs first — compacting between two back-to-back jobs would
+    // cut exactly where the thread is continuous.
+    if (!queued) this.maybeCompact();
   }
 
   // ── canvas
@@ -2426,21 +2511,120 @@ export class Office {
       return dead ? (oauth?.[dead]?.label ?? dead) : undefined;
     };
 
+    /**
+     * 🔴 THE SECOND DETERMINISTIC FAULT: the arm names a credential the store
+     * does not hold. → `secrets.ts §keysFor` · SPEC-arms §7a
+     *
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ WHY `keyDead` DID NOT COVER THIS, measured 08/09.                     │
+     * │                                                                       │
+     * │ `dead` is a fact we write when a service REFUSES a refresh. On 08/09  │
+     * │ Notion, GitHub and Linear all answered 401 while every one of their   │
+     * │ credentials was alive, present and freshly refreshed — the launch     │
+     * │ simply never received them. Nothing was `dead`, so the diagram stayed │
+     * │ green while three arms were unusable, for days.                       │
+     * │                                                                       │
+     * │ ⚠ IT ASKS THE LAUNCH'S OWN QUESTION, through `keysFor` — not a second │
+     * │ opinion assembled here. That is what stops this from drifting into    │
+     * │ the `missingSecretRefs` failure (a checker whose scope is wider than  │
+     * │ the filler's, so it reports a blank nobody will ever fill).           │
+     * │                                                                       │
+     * │ ⚠ STILL NOT A PING. It reads two things we wrote ourselves — the      │
+     * │ ledger and the key store — so it costs no network, no tokens, and it  │
+     * │ cannot be wrong the way a handshake can (§keyDeadOf's own argument).  │
+     * │ It answers *"can this arm even be launched"*, never *"is the service  │
+     * │ up"*.                                                                 │
+     * │                                                                       │
+     * │ ⚠ Lazy and once per diagram, the same shape as `oauth` above: an      │
+     * │ office whose arms need no credential touches no disk.                 │
+     * └──────────────────────────────────────────────────────────────────────┘
+     */
+    let held: Set<string> | null = null;
+    const keyGoneOf = (server: string): string | undefined => {
+      const names = keysFor(this.loaded.company.arms, { mcp: [server], secrets: [] }, server);
+      if (!names.length) return undefined;
+      held ??= new Set(Object.keys(readSecrets(companyPaths(this.loaded.companyDir))));
+      return names.find((n) => !held?.has(n));
+    };
+
+    /**
+     * WHO LOOKS LIKE WHOM, decided for the WHOLE ROSTER AT ONCE.
+     *
+     * It cannot be answered one node at a time: "is this face already taken"
+     * is a question about everybody else, and the per-node hash it replaces
+     * gave five employees a 3.8% chance of coming out all different.
+     * → `core/cast.ts §assignCast`
+     */
+    const faces = assignCast(
+      this.id,
+      layout.nodes.filter((n) => n.kind === 'assistant' || n.kind === 'agent').map((n) => n.id),
+      layout.cast ?? {},
+    );
+
+    /**
+     * WHOSE GARMENT IS RECOLOURED — and it is decided FROM `faces`, not beside it.
+     * → `core/cast.ts §assignTints` · docs/SPEC-office-art.md §11
+     *
+     * The whole question is *"does anybody else look like this person"*, so it can
+     * only be answered after the faces are dealt. Computing the two independently
+     * is how somebody ends up tinted for a clash the dealer had already resolved.
+     */
+    /**
+     * ⚠ THE TWO EXTRA ARGUMENTS ARE THE ANSWER TO *"WHO SHOULD CHANGE"*, and
+     * they are named HERE because this is where the architecture is known.
+     * → `core/cast.ts §TintOrder` · SPEC-office-animation §17k″
+     *
+     *   `anchor`  the assistant keeps its own colour, always. It is the one
+     *             figure the user must never have to hunt for (§17d), and by
+     *             plain id order it was the one that ALWAYS lost.
+     *   `picked`  a hand-picked face is the person who CAUSED the clash, so
+     *             the costume lands on them rather than on whoever was
+     *             already wearing that face.
+     */
+    const tints = assignTints(faces, layout.tint ?? {}, {
+      anchor: ASSISTANT_NODE,
+      picked: layout.cast ?? {},
+    });
+
     return {
       nodes: layout.nodes.map((n) => ({
-        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf, keyDeadOf),
+        ...this.describeNode(n, missing.has(n.id), connected.has(n.id), notes, viaOf, keyDeadOf, keyGoneOf),
         // The layout/grouping key — computed in ONE place (`layout.ts
         // §armGroup`) and sent along, so the "Rearrange" button on the
         // browser side sorts identically to the server. Recomputing it in
         // the UI would build a second copy of the same classification rule.
         ...this.layout.armGroup(n),
+        /**
+         * WHICH CHARACTER this person is, RESOLVED — a stored choice if there
+         * is one, otherwise the hash. → `core/cast.ts` · SPEC-office-animation §4a
+         *
+         * Resolved here rather than in the interface for the same reason `mark`
+         * is (see `describeNode`): the office view must draw a face on its
+         * first paint, and one side answering "who is this" is one side that
+         * can be wrong about it. Only people get one — furniture has no face,
+         * and sending `character` on a bookshelf would invite somebody to draw
+         * one.
+         */
+        ...(n.kind === 'assistant' || n.kind === 'agent'
+          ? {
+              character: faces[n.id] ?? castOf(this.id, n.id),
+              /**
+               * ⚠ ABSENT MEANS "DRAWN IN ITS OWN COLOUR", not "no colour". The
+               * renderer draws no tint layer at all for a person without this
+               * field, and that is the point: a `mix-blend-mode` layer costs a
+               * compositing pass per person per frame even at zero effect.
+               */
+              ...(tints[n.id] ? { tint: tints[n.id] } : {}),
+            }
+          : {}),
       })),
       edges: layout.edges,
       knowledge: { shared: this.knowledge.countShared(), total: this.knowledge.size },
+      cast: layout.cast ?? {},
     };
   }
 
-  saveCanvas(input: { nodes?: unknown; edges?: unknown }): CanvasState {
+  saveCanvas(input: { nodes?: unknown; edges?: unknown; cast?: unknown; tint?: unknown }): CanvasState {
     this.assertLive();
     const { touched } = this.layout.save(input);
     if (touched.length) this.reload();
@@ -2495,6 +2679,157 @@ export class Office {
     }
     if (touched) this.reload();
     return touched;
+  }
+
+  /**
+   * 🔴 TAKE THE NEXT PIECE OF QUEUED WORK — the ONE place that decides it may run.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THE QUEUE HAD EXACTLY ONE EXIT, AND IT WAS ON THE SUCCESS PATH.           │
+   * │ (measured 08/09, from the user's own transcript)                          │
+   * │                                                                          │
+   * │ A message typed while busy travels: mailbox → `route()` → *"the office is │
+   * │ working"* → `deferred.push`. But `route()` IS AN LLM TURN — around ten    │
+   * │ seconds. If the running job finishes inside that window, the drain at the │
+   * │ end of the job has ALREADY run, on an empty queue, and the push lands     │
+   * │ after it. Nothing else ever looks at the queue, so the item sits there    │
+   * │ forever: the header keeps saying *"1 waiting"* and the work never starts. │
+   * │                                                                          │
+   * │ What the user then sees is worse than a stall. The assistant is ONE       │
+   * │ continuous session that already answered *"I'll do it next"*, so when the │
+   * │ next request arrives it folds the forgotten one into that plan — the      │
+   * │ queued work reappears attached to an unrelated turn.                      │
+   * │                                                                          │
+   * │ ⇒ Whoever LEAVES the queue non-empty while the office is idle has to be   │
+   * │ able to start it. `docs/CLAUDE.md`'s own rule: *every waiting state needs │
+   * │ an exit that does not go through the success branch*.                     │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * @returns the item to run, or `undefined` — nothing queued, the office is
+   *          still busy, or the user pressed Stop.
+   */
+  private drainDeferred(): { request: string; at: number } | undefined {
+    if (this.stopRequested || this.state === 'working' || !this.deferred) return undefined;
+    const { texts, at } = this.deferred;
+    this.deferred = null;
+    /**
+     * ⚠ ONE MERGE, THE SAME MERGE THE MAILBOX USES. Three sentences typed
+     * during one job are ONE THOUGHT, and the function that already knows how
+     * to say that to the model is `mergeUserText` — built in code, 0 tokens,
+     * and English on purpose (it is prompt scaffolding, so it must not take
+     * the interface's language switch). → `mailbox.ts` · docs/CLAUDE.md §Language
+     */
+    return { request: mergeUserText(texts.map((text) => ({ kind: 'user', text, at }))), at };
+  }
+
+  /**
+   * Add to the one waiting cluster. → `deferred`
+   *
+   * @returns false when the cluster is full — the SAME ceiling the mailbox
+   *          uses, because it is the same question (how much may pile up
+   *          before we say so) and two numbers for one question drift.
+   */
+  private queueWork(text: string): boolean {
+    if (!this.deferred) {
+      // ⚠ `at` is when the WAIT started, not when the last message landed: it
+      // answers "how long has this been sitting there", and a later message
+      // must not reset that clock.
+      this.deferred = { texts: [text], at: Date.now() };
+      return true;
+    }
+    if (this.deferred.texts.length >= MAX_QUEUED) return false;
+    this.deferred.texts.push(text);
+    return true;
+  }
+
+  /**
+   * 🔴 THE ONE DOOR. *"Is there anything I can act on right now?"*
+   * → docs/SPEC-tools-approval.md §11b″ (user settled 09/09)
+   *
+   * ┌──────────────────────────────────────────────────────────────────────
+   * │ IT IS NOT THE NUMBER OF QUEUES THAT WAS FRAGILE — IT WAS THE NUMBER OF
+   * │ WAKE-UPS. Three stalls in three days, all the same shape: *a waiting
+   * │ state whose only exit ran on the success path*. Before this there were
+   * │ FIVE places that had to remember to nudge one of the two queues, and we
+   * │ had already paid for three of them being wrong. A sixth queue tomorrow
+   * │ would mean a seventh place to forget.
+   * │
+   * │ Now every state transition asks ONE function the SAME question, so
+   * │ there is exactly one place that can be wrong — and if it is, it is
+   * │ wrong loudly and everywhere, not silently in one branch.
+   * │
+   * │ 🔴 THE COLLECTION POINTS — every moment new work can become possible,
+   * │ and each is legal for the same reason (see below):
+   * │   · a message arrives                       `say()`
+   * │   · the assistant's lock opens              `mailbox.onFree`
+   * │   · a pump cycle ends, mail may remain      `pump()`
+   * │   · work is handed over while busy          `queueWork` call sites
+   * │   · a job closes                            `finish()`, after `setState`
+   * │
+   * │ ⚠ COLLECTING IS NOT STARTING, and that distinction is what keeps this
+   * │ sequential. Reading and classifying a message (`route()`) is an
+   * │ ASSISTANT turn and is legal while workers run — the receptionist is not
+   * │ busy just because the staff are. Whether a JOB may begin is a separate
+   * │ question, asked in exactly one other place (`drainDeferred`, which
+   * │ refuses while `state === 'working'`). Mixing the two is how two jobs
+   * │ would end up overlapping.
+   * │
+   * │ ⚠ NOTHING STARTS WHILE THE ASSISTANT IS MID-TURN, even if the office is
+   * │ otherwise idle. That turn may be the very message that cancels the
+   * │ queued work (*"don't do A any more"*), and starting A while it is being
+   * │ read is the mess this design exists to avoid. It costs nothing: the
+   * │ lock closing calls straight back in here.
+   * │
+   * │ ⚠ MAIL BEFORE WORK, and that order is a decision. A cancellation still
+   * │ sitting in the mailbox has to reach the cluster BEFORE the cluster is
+   * │ drained, or the office starts the one thing it was just told to drop.
+   * └──────────────────────────────────────────────────────────────────────
+   */
+  private tick(): void {
+    if (this.mailbox.isBusy) return;
+    if (this.mailbox.size > 0) {
+      void this.pump();
+      return;
+    }
+    this.startQueued();
+  }
+
+  /**
+   * Start the waiting cluster, if there is one and the office may take it.
+   * → `drainDeferred` · `tick`
+   *
+   * ⚠ THE ONLY PLACE THAT STARTS QUEUED WORK. It used to be two — the finish
+   * path had its own copy carrying the hand-off note, and the push path had one
+   * without it. Two starts is two sets of preconditions to keep in step.
+   */
+  private startQueued(): void {
+    const next = this.drainDeferred();
+    if (!next) return;
+    this.emitActivity();
+    /**
+     * HAND-OFF: queued work is usually the continuation of what just finished
+     * ("make it sound even younger"). Not telling it where the previous output
+     * landed means it WRITES FROM SCRATCH instead of EDITING — far more
+     * expensive, and it throws away work already paid for. Built by code from
+     * the receipt already in hand: 0 tokens.
+     *
+     * ⚠ READ ONCE, THEN CLEARED — a baton, not a standing fact. A cluster can
+     * only exist while a job was running (`queueWork` is unreachable otherwise),
+     * so whenever one is drained, the job it names really did just close. The
+     * clear is what keeps that true if that ever stops holding.
+     */
+    const done = this.lastArtifacts;
+    this.lastArtifacts = [];
+    const request = done.length
+      ? // ⚠ English, hard-coded: this is glued onto the request the ASSISTANT
+        // reads, so it is prompt scaffolding, not chrome. The user's own words
+        // sit right above it and still set the reply language.
+        `${next.request}\n\n(The previous job just finished; its results are already at: ${done.join(', ')}. ` +
+        `If this request is an edit to that, EDIT the existing files — do not redo it from scratch.)`
+      : next.request;
+    void this.run(request).catch(() => {
+      /* run() has already emitted the error to the UI */
+    });
   }
 
   /** Writes a string array into yaml, preserving comments. Removes the key entirely when empty. */
@@ -4207,6 +4542,7 @@ export class Office {
     viaOf: (server: string) => string | undefined,
     /** Looks up a REFUSED credential on that arm. Same lazy read — see `canvas()`. */
     keyDeadOf: (server: string) => string | undefined,
+    keyGoneOf: (server: string) => string | undefined,
   ): CanvasNode {
     const base: CanvasNode = { ...n, label: n.id, missing, connected, removable: true };
     /**
@@ -4316,11 +4652,24 @@ export class Office {
           const via = n.server ? viaOf(n.server) : undefined;
           return via ? { via } : {};
         })(),
-        // The only thing that paints a node red, and it is a fact we wrote
-        // ourselves, never a guess. → `canvas() §keyDeadOf`
+        /**
+         * The two things that paint a node red, and BOTH are facts we wrote
+         * ourselves — never a guess, never a handshake.
+         * → `canvas() §keyDeadOf` · `§keyGoneOf`
+         *
+         * ⚠ TWO FIELDS, NOT ONE, because they are two different sentences to a
+         * person: *"the service refused this sign-in"* and *"this office has no
+         * value stored under the name this arm asks for"*. Folding them into
+         * one flag would make the panel guess which advice to give — and a
+         * confidently wrong instruction costs more than none (§"wrong door").
+         */
         ...(() => {
           const keyDead = n.server ? keyDeadOf(n.server) : undefined;
           return keyDead ? { keyDead } : {};
+        })(),
+        ...(() => {
+          const keyGone = n.server ? keyGoneOf(n.server) : undefined;
+          return keyGone ? { keyGone } : {};
         })(),
         /**
          * The arm's REAL directory — read from `company.yaml`, NOT editable here.
@@ -4850,8 +5199,15 @@ function addUsage(a: Usage, b: Usage): Usage {
  * not substitute a default of its own. Writing one here is exactly what put our
  * interface-language sentence into user data. → the box in `addAgent`
  */
-function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
-  return `id: ${id}
+/**
+ * ⚠ `id` IS QUOTED, like `display_name` beside it. An id that slugs to a YAML
+ * scalar — `1`, `true`, `null`, `0x1f` — comes back from the parser as a
+ * number/boolean/null and fails the schema, and the employee silently never
+ * appears. `isSafeId` passes all of them: it guards the character set, not the
+ * parser's reading of them. → `config.ts §loadOffice`
+ */
+export function roleTemplate(id: string, displayName: string, pitch: string, tier: string): string {
+  return `id: ${JSON.stringify(id)}
 version: 1
 display_name: ${JSON.stringify(displayName)}
 avatar: "•"

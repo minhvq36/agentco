@@ -34,7 +34,43 @@ export function Tip({
 }) {
   return (
     <TooltipPrimitive.Root>
-      <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Trigger
+        asChild
+        /*
+         * ┌──────────────────────────────────────────────────────────────────────┐
+         * │ 🔴 A TOOLTIP THAT APPEARED ON ITS OWN AND WOULD NOT LEAVE.           │
+         * │ → SPEC-office-animation.md §17j                                      │
+         * │                                                                      │
+         * │ Reported as *"it gets stuck, like dragging the mouse out of the      │
+         * │ window fast"*, and then corrected by the user's own better           │
+         * │ observation: *"it is not stuck — every time I come back into the     │
+         * │ browser it appears and sits there."* That second sentence is the     │
+         * │ whole diagnosis.                                                     │
+         * │                                                                      │
+         * │ Radix opens on FOCUS (`react-tooltip` Trigger: `onFocus → if         │
+         * │ (!isPointerDownRef.current) onOpen()`). Returning to the window      │
+         * │ re-focuses whatever was focused when it left — normally the view     │
+         * │ switch, because that is what was last clicked. So a tooltip opens    │
+         * │ with the pointer nowhere near it, and nothing dismisses it: the      │
+         * │ pointer never entered, so it can never leave.                        │
+         * │                                                                      │
+         * │ ⚠ THE FIX IS NOT A TIMEOUT. A "hide after 10 s" would leave the      │
+         * │ tooltip up for ten seconds every single time and call that solved.   │
+         * │ Focus-to-open exists for KEYBOARD users; `:focus-visible` is the     │
+         * │ browser's own answer to *was this focus a keyboard focus*, and       │
+         * │ restored window focus on a mouse-clicked button is not one.          │
+         * │                                                                      │
+         * │ ⚠ `preventDefault()` is the mechanism, not a nudge: Radix composes   │
+         * │ our handler ahead of its own with `checkForDefaultPrevented`, so a   │
+         * │ prevented focus event never reaches `onOpen`.                        │
+         * └──────────────────────────────────────────────────────────────────────┘
+         */
+        onFocus={(e) => {
+          if (!e.currentTarget.matches(':focus-visible')) e.preventDefault();
+        }}
+      >
+        {children}
+      </TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
           side={side}

@@ -1,4 +1,5 @@
 ﻿import {
+  Fragment,
   forwardRef,
   useCallback,
   useEffect,
@@ -6,11 +7,13 @@
   useLayoutEffect,
   useRef,
 } from 'react';
+import { Trash2 } from 'lucide-react';
 
 import { canConnect, type CanvasEdge, type CanvasNode, type CanvasState } from '@/lib/types';
 import type { LiveAgent } from '@/lib/store';
 import { NodeShape } from './NodeShape';
 import { t } from '@i18n';
+import { nearWire } from '@core/layout-geometry';
 import {
   anchor,
   arrange,
@@ -96,7 +99,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const ghostRef = useRef<SVGPathElement | null>(null);
 
   const nodeEls = useRef(new Map<string, SVGGElement>());
-  const edgeEls = useRef(new Map<string, { wire: SVGPathElement; hit: SVGPathElement; cut: SVGGElement }>());
+  const edgeEls = useRef(new Map<string, EdgeEls>());
 
   /** LIVE positions. The source of truth while the user is interacting. */
   const posRef = useRef(new Map<string, Point>());
@@ -140,10 +143,115 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       const to = key.split(' ')[1] ?? '';
       const node = canvas.nodes.find((n) => n.id === to);
       const busy = !!(node?.role && live[node.role]?.status === 'working');
-      els.wire.classList.toggle('wire-busy', busy);
-      els.wire.classList.toggle('is-busy', busy);
+      els.wire?.classList.toggle('wire-busy', busy);
+      els.wire?.classList.toggle('is-busy', busy);
     }
   }, [live, canvas.nodes]);
+
+  /**
+   * ── WHICH WIRE IS UNDER THE POINTER. → SPEC-office-animation.md §17j
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ A CLASS TOGGLE THROUGH THE REF MAP, NOT REACT STATE.                     │
+   * │                                                                          │
+   * │ Hovering a wire must not re-render a canvas that is holding 60 fps while │
+   * │ SSE delivers into it — the rule this file has enforced since day one.    │
+   * │ The elements are already in `edgeEls`; two `classList.toggle` calls do   │
+   * │ the whole job.                                                           │
+   * │                                                                          │
+   * │ ⚠ AND THE DELAY IS NOT A FUDGE. The wire and its button are now in two    │
+   * │ different groups, so the pointer travelling from one to the other fires  │
+   * │ `leave` before `enter`. Clearing immediately would make the button       │
+   * │ vanish underneath the finger reaching for it — which is a sharper        │
+   * │ version of the bug being fixed.                                          │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const coolTimer = useRef(0);
+  /**
+   * 🔴 THE CHOSEN WIRE, AND IT OUTLIVES THE POINTER. → §17j′
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ HOVER ALONE COULD NOT REACH ITS OWN BUTTON, AND THE USER SAID SO         │
+   * │ EXACTLY: *"if I go for the delete button and meet another node on the    │
+   * │ way, the wire is lost and I cannot delete it."*                          │
+   * │                                                                          │
+   * │ The button sits at the wire's MIDPOINT, which on this diagram is         │
+   * │ routinely on top of, or behind, a third node. Crossing that node fires   │
+   * │ `pointerleave` on the wire and nothing fires `enter`, so the 90 ms grace │
+   * │ expires and the button goes out from under the finger. A longer grace is │
+   * │ the same bug with a wider window — the pointer can dwell over the node   │
+   * │ for as long as it likes.                                                 │
+   * │                                                                          │
+   * │ ⇒ A CLICK LATCHES IT. Hover still previews, and preview still expires;   │
+   * │ a latched wire stays lit until the user clicks somewhere else or presses │
+   * │ Escape, so the trip to the button has no time limit at all. This is the  │
+   * │ same shape as node selection, which is why it reads as one idea.         │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const stuck = useRef<string | null>(null);
+  /**
+   * ⚠ TWO CLASSES, NOT ONE. `is-hot` says *lit*; `is-stuck` says *this one is
+   * CHOSEN and will stay*. They looked identical in the first cut, so a click
+   * that latched an edge produced no change on screen and the user went on
+   * tracing the wire with the pointer — the gesture this was built to replace.
+   * A state the user cannot see is a state they will not use.
+   */
+  /**
+   * 🔴 WHICH WIRE IS LIT RIGHT NOW — the one Delete acts on. → §17j″
+   *
+   * ⚠ NOT `stuck`. A latched edge and a hovered edge are two different answers,
+   * and while the pointer is previewing edge B the LATCHED one is edge A: a
+   * shortcut reading `stuck` would cut a wire the user cannot see highlighted.
+   * The key acts on what is on screen, which is the only thing the user is
+   * looking at — and it hands hover users the same shortcut for free.
+   */
+  const lit = useRef<string | null>(null);
+  const paintHot = useCallback((key: string | null) => {
+    lit.current = key;
+    const held = stuck.current;
+    for (const [k, els] of edgeEls.current) {
+      const on = k === key;
+      const held_ = k === held && on;
+      for (const el of [els.wire, els.cut, els.halo]) {
+        el?.classList.toggle('is-hot', on);
+        el?.classList.toggle('is-stuck', held_);
+      }
+    }
+  }, []);
+  const hot = useCallback(
+    (key: string) => {
+      if (coolTimer.current) {
+        clearTimeout(coolTimer.current);
+        coolTimer.current = 0;
+      }
+      paintHot(key);
+    },
+    [paintHot],
+  );
+  const cool = useCallback(() => {
+    if (coolTimer.current) clearTimeout(coolTimer.current);
+    coolTimer.current = window.setTimeout(() => {
+      coolTimer.current = 0;
+      // ⚠ Back to the LATCHED wire, not to nothing. Without this the preview's
+      // expiry would silently cancel a choice the user made with a click.
+      paintHot(stuck.current);
+    }, COOL_MS);
+  }, [paintHot]);
+  /** Latch a wire, or let go of the one latched. `null` clears. */
+  const stick = useCallback(
+    (key: string | null) => {
+      if (stuck.current === key) return;
+      stuck.current = key;
+      if (coolTimer.current) {
+        clearTimeout(coolTimer.current);
+        coolTimer.current = 0;
+      }
+      paintHot(key);
+    },
+    [paintHot],
+  );
+  useEffect(() => () => clearTimeout(coolTimer.current), []);
+
 
   // ── selection
   useEffect(() => {
@@ -176,10 +284,40 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
         const a = anchor({ kind: from.kind, ...pf }, 'out', up);
         const b = anchor({ kind: to.kind, ...pt }, 'in', up);
         const d = curve(a, b, up);
-        els.wire.setAttribute('d', d);
-        els.hit.setAttribute('d', d);
-        els.cut.setAttribute('transform', `translate(${(a.x + b.x) / 2},${(a.y + b.y) / 2})`);
+        els.wire?.setAttribute('d', d);
+        els.hit?.setAttribute('d', d);
+        // ⚠ The halo takes the SAME `d`, from the same variable, in the same
+        // pass. It is a second drawing of one curve — the pair this file has to
+        // keep identical, which is why neither is allowed its own arithmetic.
+        els.halo?.setAttribute('d', d);
+        els.cut?.setAttribute('transform', `translate(${(a.x + b.x) / 2},${(a.y + b.y) / 2})`);
       }
+    },
+    [canvas.nodes],
+  );
+
+  /**
+   * The two ends of ONE wire, in world units, from the LIVE positions.
+   *
+   * ⚠ `posRef` first, `canvas.nodes` second — the same order `paintEdges` reads
+   * in. While a node is being dragged the store is a frame behind, and a reach
+   * test against last frame's anchors would drop the wire the user is holding.
+   */
+  const endsOf = useCallback(
+    (key: string): { a: Point; b: Point; up: boolean } | null => {
+      const e = edgesRef.current.find((x) => edgeKey(x) === key);
+      if (!e) return null;
+      const from = canvas.nodes.find((n) => n.id === e.from);
+      const to = canvas.nodes.find((n) => n.id === e.to);
+      if (!from || !to) return null;
+      const up = from.kind === 'mcp';
+      const pf = posRef.current.get(e.from) ?? from;
+      const pt = posRef.current.get(e.to) ?? to;
+      return {
+        a: anchor({ kind: from.kind, ...pf }, 'out', up),
+        b: anchor({ kind: to.kind, ...pt }, 'in', up),
+        up,
+      };
     },
     [canvas.nodes],
   );
@@ -246,6 +384,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const onPointerDown = useCallback(
     (ev: React.PointerEvent<SVGSVGElement>) => {
       if (ev.button !== 0) return;
+      /**
+       * ⚠ ANY pointer-down that reaches the canvas lets go of the latched wire.
+       * The two places that must NOT — the wire's own hit path and its delete
+       * button — both `stopPropagation`, so this handler never sees them. One
+       * rule, expressed by which events arrive, rather than a list of
+       * exceptions here that a new element could fall off the end of. → §17j′
+       */
+      stick(null);
       const target = ev.target as Element;
       const rect = svgRef.current!.getBoundingClientRect();
 
@@ -306,7 +452,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       svgRef.current?.classList.add('is-panning');
       onSelect(null);
     },
-    [onSelect],
+    [onSelect, stick],
   );
 
   const onPointerMove = useCallback(
@@ -362,9 +508,50 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       if (pan.current) {
         viewRef.current = { ...viewRef.current, x: ev.clientX - pan.current.x, y: ev.clientY - pan.current.y };
         applyView();
+        return;
+      }
+
+      /**
+       * 🔴 THE LIT WIRE'S REACH — the user's proposal, and the point of it is
+       * the second half. → SPEC-office-animation.md §17j‴
+       *
+       * ┌──────────────────────────────────────────────────────────────────────┐
+       * │ *"Widen the wire's select region while it IS selected — but leave it  │
+       * │ as it is when it is not, so picking one by accident stays hard."*     │
+       * │                                                                       │
+       * │ So the 16-unit hit path is untouched: it is still the only way to     │
+       * │ CHOOSE a wire, and it still lives under the nodes. What widens is the │
+       * │ region that KEEPS a chosen wire, and it widens as a DISTANCE rather   │
+       * │ than as a bigger transparent stroke.                                  │
+       * │                                                                       │
+       * │ ⚠ THAT DIFFERENCE IS THE WHOLE DESIGN. A 96-unit band laid over the   │
+       * │ diagram would own every pixel it covers, so the nodes the wire runs   │
+       * │ THROUGH would go dead exactly while the user is looking at that wire  │
+       * │ — and clicking a node is the escape from the latch, so it would eat   │
+       * │ its own way out. A comparison steals nothing from anybody.            │
+       * │                                                                       │
+       * │ ⚠ Only when nothing else is happening. A drag, a link and a pan each  │
+       * │ returned above, so by here the pointer is doing nothing but moving.   │
+       * └──────────────────────────────────────────────────────────────────────┘
+       */
+      const key = lit.current;
+      if (!key) return;
+      const ends = endsOf(key);
+      if (!ends) return;
+      const w = screenToWorld(ev, rect, viewRef.current);
+      if (nearWire(ends.a, ends.b, ends.up, w)) {
+        // ⚠ Cancel the pending cool, do NOT repaint. The wire is already lit —
+        // `lit.current` is where `key` came from — so `hot()` here would rewrite
+        // the same classes on every edge on every pointer move to change nothing.
+        if (coolTimer.current) {
+          clearTimeout(coolTimer.current);
+          coolTimer.current = 0;
+        }
+      } else if (key !== stuck.current && !coolTimer.current) {
+        cool();
       }
     },
-    [canvas.nodes, paintNode, paintEdges, applyView],
+    [canvas.nodes, paintNode, paintEdges, applyView, endsOf, cool],
   );
 
   const onPointerUp = useCallback(
@@ -441,10 +628,61 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const cutEdge = useCallback(
     (e: CanvasEdge) => {
       edgesRef.current = edgesRef.current.filter((x) => !(x.from === e.from && x.to === e.to));
+      // ⚠ The latch has to go with the wire. Left pointing at a key nothing owns
+      // any more, the next `cool()` would repaint a hot state onto an edge that
+      // was deleted — and `bindEdge` would have dropped its elements by then, so
+      // the failure is silent rather than visible.
+      stick(null);
       commit(true);
     },
-    [commit],
+    [commit, stick],
   );
+
+  /**
+   * 🔴 DELETE CUTS THE CHOSEN WIRE — the door that involves NO JOURNEY. → §17j″
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ THE BUTTON IS AT THE WIRE'S MIDPOINT, AND THAT IS THE PROBLEM.           │
+   * │                                                                          │
+   * │ On a real diagram the midpoint is routinely on top of a third node, so   │
+   * │ reaching it means dragging the pointer across other things — and the     │
+   * │ user reported the same difficulty twice, in two rounds: once after the   │
+   * │ button was lifted above the nodes, again after the whole wire was lit.   │
+   * │ Both fixes were right and neither removed the JOURNEY.                   │
+   * │                                                                          │
+   * │ ⇒ Point at the wire and press Delete. The mouse never has to leave it.   │
+   * │ Clicking first LATCHES the edge so the pointer is free to go anywhere    │
+   * │ before pressing the key; the button stays for people who prefer it, and  │
+   * │ Escape lets go.                                                          │
+   * │                                                                          │
+   * │ ⚠ NOT WHILE SOMEBODY IS TYPING. This listens on `window`, and the chat   │
+   * │ box, the rename field and every inspector input share that window —      │
+   * │ Backspace in a text field must delete a character, not a connection.     │
+   * │                                                                          │
+   * │ ⚠ IT IS DECLARED BELOW `cutEdge` AND MUST STAY THERE. The dependency     │
+   * │ array is evaluated during render; a `const` does not hoist, so an effect │
+   * │ written above it throws before the canvas ever paints. This file's own   │
+   * │ store learned that the expensive way on 07/09 (`store.ts §LOCALE_KEY`).  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        stick(null);
+        return;
+      }
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const key = lit.current;
+      if (!key || typing()) return;
+      const edge = edgesRef.current.find((x) => edgeKey(x) === key);
+      if (!edge) return;
+      // ⚠ Backspace is "go back" in a browser when nothing has claimed it.
+      e.preventDefault();
+      cutEdge(edge);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [stick, cutEdge]);
 
   const nodeById = new Map(canvas.nodes.map((n) => [n.id, n]));
 
@@ -477,24 +715,25 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                   d={d}
                   ref={(el) => bindEdge(edgeEls, edgeKey(e), 'wire', el)}
                 />
-                <path className="wire-hit" d={d} ref={(el) => bindEdge(edgeEls, edgeKey(e), 'hit', el)} />
-                <g
-                  className="cut"
-                  transform={`translate(${(a.x + b.x) / 2},${(a.y + b.y) / 2})`}
-                  ref={(el) => bindEdge(edgeEls, edgeKey(e), 'cut', el)}
-                  onPointerDown={(ev) => ev.stopPropagation()}
-                  onClick={(ev) => {
+                {/* ⚠ THE HIT PATH STAYS DOWN HERE, UNDER THE NODES, and only the
+                    button moves up. A 16-unit transparent stroke lifted above the
+                    nodes would steal every click where a wire crosses a box — the
+                    wire runs THROUGH the employee it points at, so that is not a
+                    corner case, it is every edge. → SPEC-office-animation §17j */}
+                <path
+                  className="wire-hit"
+                  d={d}
+                  ref={(el) => bindEdge(edgeEls, edgeKey(e), 'hit', el)}
+                  onPointerEnter={() => hot(edgeKey(e))}
+                  onPointerLeave={cool}
+                  /* ⚠ `stopPropagation`, or the svg's own handler reads this as
+                     a click on the background: it would start a pan and clear
+                     the node selection on the way to latching the wire. */
+                  onPointerDown={(ev) => {
                     ev.stopPropagation();
-                    cutEdge(e);
+                    stick(edgeKey(e));
                   }}
-                  role="button"
-                  aria-label={t('canvas.cutEdge')}
-                >
-                  <circle r={9} />
-                  <text y={4} textAnchor="middle">
-                    ✕
-                  </text>
-                </g>
+                />
               </g>
             );
           })}
@@ -513,9 +752,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
                   is live task state and clears itself, while this one only
                   clears when a person acts. The server decides it from a fact
                   it wrote down, never from a guess. → `office.ts §keyDeadOf`
+
+                  ⚠ `keyGone` shares the class, and only the class: the arm
+                  cannot run and a person has to act, which is the same red.
+                  What differs is the SENTENCE, and that lives in the subtitle
+                  — one colour, two instructions. → `office.ts §keyGoneOf`
                 */
                 className={`node node-${n.kind}${n.missing ? ' is-missing' : ''}${
-                  n.keyDead ? ' is-keydead' : ''
+                  n.keyDead || n.keyGone ? ' is-keydead' : ''
                 }${n.kind === 'agent' && !n.connected ? ' is-off' : ''}`}
                 data-node={n.id}
                 transform={`translate(${n.x},${n.y})`}
@@ -618,27 +862,162 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
           })}
         </g>
 
+        {/*
+          ┌──────────────────────────────────────────────────────────────────────┐
+          │ 🔴 THE DELETE BUTTONS LIVE ABOVE THE NODES. → SPEC-office-animation  │
+          │ §17j                                                                 │
+          │                                                                      │
+          │ SVG has no `z-index`. It paints in DOCUMENT ORDER and nothing else,  │
+          │ so a button that has to beat a node has to be written after the      │
+          │ nodes — there is no CSS that lifts it, and `will-change` / a         │
+          │ stacking context do not reorder SVG children.                        │
+          │                                                                      │
+          │ ⚠ Before this, a wire's ✕ sat under every node it passed behind.     │
+          │ The user's account of it is the whole bug report: *"I have to drag   │
+          │ the nodes apart to find a moment when the ✕ appears."* A door you    │
+          │ have to rearrange the room to reach is a door that does not work.    │
+          │                                                                      │
+          │ ⚠ ONE GROUP FOR ALL OF THEM, positioned by `paintEdges` through the  │
+          │ same `edgeEls` ref map as before. The button did not change owner —  │
+          │ only where it is written.                                            │
+          └──────────────────────────────────────────────────────────────────────┘
+        */}
+        {/*
+          ┌──────────────────────────────────────────────────────────────────────┐
+          │ 🔴 …AND SO DOES THE WIRE ITSELF, WHEN IT IS THE CHOSEN ONE. → §17j′  │
+          │                                                                      │
+          │ §17j promised *"a hovered edge lifts above every other edge and      │
+          │ every node"*. Only the BUTTON was lifted, and the user read the      │
+          │ difference straight off the screen: *"it lights up the bin but not   │
+          │ the whole wire."* Recolouring a line that runs behind three boxes    │
+          │ shows three orange fragments — which is not an answer to *which      │
+          │ connection am I about to delete*.                                    │
+          │                                                                      │
+          │ ⚠ A SECOND DRAWING OF THE SAME CURVE, not a moved one. The wire has  │
+          │ to stay under the nodes in its ordinary state — that is the whole    │
+          │ depth story of the diagram — so the lifted copy is drawn here and    │
+          │ shown only while the edge is hot. `paintEdges` gives both the same   │
+          │ `d` in the same pass, from one variable.                             │
+          │                                                                      │
+          │ ⚠ `pointer-events: none` (in the stylesheet). It crosses every node  │
+          │ the wire crosses; a hit-taking copy up here would swallow the click  │
+          │ that opens them — the exact trap the hit path is kept downstairs to  │
+          │ avoid.                                                               │
+          └──────────────────────────────────────────────────────────────────────┘
+        */}
+        <g className="edge-tools">
+          {canvas.edges.map((e) => {
+            const from = nodeById.get(e.from);
+            const to = nodeById.get(e.to);
+            if (!from || !to) return null;
+            const up = from.kind === 'mcp';
+            const a = anchor(from, 'out', up);
+            const b = anchor(to, 'in', up);
+            return (
+              <Fragment key={edgeKey(e)}>
+                <path
+                  className="wire-halo"
+                  d={curve(a, b, up)}
+                  ref={(el) => bindEdge(edgeEls, edgeKey(e), 'halo', el)}
+                />
+                <g
+                  className="cut"
+                  transform={`translate(${(a.x + b.x) / 2},${(a.y + b.y) / 2})`}
+                  ref={(el) => bindEdge(edgeEls, edgeKey(e), 'cut', el)}
+                  /* The button is in a different group from the wire it belongs to,
+                     so moving the pointer from one to the other fires `leave` on the
+                     first. Both ends claim the hover; `cool` is what resolves it. */
+                  onPointerEnter={() => hot(edgeKey(e))}
+                  onPointerLeave={cool}
+                  onPointerDown={(ev) => ev.stopPropagation()}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    cutEdge(e);
+                  }}
+                  role="button"
+                  aria-label={t('canvas.cutEdge')}
+                >
+                  <circle r={11} />
+                  {/* The same `Trash2` the Inspector, the Results panel and the
+                      Documents panel all delete with. A ✕ means *close*; this
+                      removes a relationship, and the two should not look alike. */}
+                  <Trash2 x={-7} y={-7} width={14} height={14} strokeWidth={2} />
+                </g>
+              </Fragment>
+            );
+          })}
+        </g>
+
         <path ref={ghostRef} className="ghost" />
       </g>
     </svg>
   );
 });
 
+/**
+ * ⚠ ONE SLOT AT A TIME, AND AN ENTRY DIES ONLY WHEN IT IS EMPTY.
+ *
+ * It used to `map.delete(key)` the moment ANY slot detached. That was survivable
+ * while all three elements were siblings inside one `<g>` — they always mounted
+ * and unmounted together. The delete button and the lifted highlight now live in
+ * a different group (§`.edge-tools`), so "one slot detached" and "this edge is
+ * gone" stopped being the same event, and the old version would have thrown the
+ * wire away every time either of them re-bound.
+ */
+/**
+ * How long a hover PREVIEW survives after the pointer leaves the wire. → §17j″
+ *
+ * ⚠ 320, up from 90, and it is a real measurement of a real gesture rather than
+ * a nicer-looking number: the pointer going from a wire to that wire's own
+ * button crosses whatever the diagram has put in between, and on this canvas
+ * that is usually a node. 90 ms is not long enough to cross one.
+ *
+ * ⚠ It is a BACKSTOP, not the fix. A pointer can dwell over that node for as
+ * long as it likes, so a preview that expires can always be outlasted — the
+ * answer to that is the latch, and this only makes the common case work without
+ * anybody having to learn about it.
+ */
+const COOL_MS = 320;
+
+/**
+ * Is a text field focused? The Delete/Backspace shortcut must not fire then.
+ *
+ * ⚠ `isContentEditable` as well as the two tag names: a rich-text field is a
+ * `<div>`, and forgetting it is how a shortcut eats somebody's typing in the one
+ * input that did not look like an input.
+ */
+function typing(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+}
+
+interface EdgeEls {
+  wire?: SVGPathElement;
+  hit?: SVGPathElement;
+  cut?: SVGGElement;
+  /** The lifted copy drawn above the nodes while this edge is hot. → §17j′ */
+  halo?: SVGPathElement;
+}
+
 function bindEdge(
-  store: React.RefObject<Map<string, { wire: SVGPathElement; hit: SVGPathElement; cut: SVGGElement }>>,
+  store: React.RefObject<Map<string, EdgeEls>>,
   key: string,
-  slot: 'wire' | 'hit' | 'cut',
+  slot: 'wire' | 'hit' | 'cut' | 'halo',
   el: SVGPathElement | SVGGElement | null,
 ): void {
   const map = store.current;
+  const cur = map.get(key);
   if (!el) {
-    map.delete(key);
+    if (!cur) return;
+    delete cur[slot];
+    if (!cur.wire && !cur.hit && !cur.cut && !cur.halo) map.delete(key);
     return;
   }
-  const cur = map.get(key) ?? ({} as { wire: SVGPathElement; hit: SVGPathElement; cut: SVGGElement });
+  const next = cur ?? {};
   // @ts-expect-error — three slots, three element types; assigning by slot name is right.
-  cur[slot] = el;
-  map.set(key, cur);
+  next[slot] = el;
+  map.set(key, next);
 }
 
 function clamp(v: number, lo: number, hi: number): number {

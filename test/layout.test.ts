@@ -4,12 +4,16 @@ import test from 'node:test';
 
 import {
   NODE_SIZE,
+  WIRE_REACH,
   agentSlot,
   arrangeAll,
   centeredSlot,
   clashes,
   firstFreeSlot,
+  nearWire,
+  wireCurve,
   type NodeKind,
+  type Point,
 } from '../dist/core/layout-geometry.js';
 
 type Node = { id: string; kind: NodeKind };
@@ -202,4 +206,115 @@ test('archiving/restoring several people in a row: each gets their own slot, no 
     assert.ok(!clashes(s, 'agent', placed), `person ${i + 1} must get their own slot`);
     placed.push({ kind: 'agent', ...s });
   }
+});
+
+// ─────────────────────────────────────── the shape of a wire, and its reach
+
+/**
+ * ⚠ THE CUBIC IS EVALUATED INDEPENDENTLY HERE, on purpose.
+ *
+ * `nearWire` samples the curve; a test that asked `wireCurve` to sample it too
+ * would assert the code equals itself. This is the textbook Bernstein form,
+ * written from the definition rather than from the implementation.
+ */
+function at(ps: readonly Point[], t: number): Point {
+  const u = 1 - t;
+  const w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+  return {
+    x: ps.reduce((s, p, i) => s + w[i]! * p.x, 0),
+    y: ps.reduce((s, p, i) => s + w[i]! * p.y, 0),
+  };
+}
+
+const dot = (p: Point, v: Point, w: Point): number => {
+  const dx = w.x - v.x;
+  const dy = w.y - v.y;
+  const len = dx * dx + dy * dy;
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - v.x) * dx + (p.y - v.y) * dy) / len));
+  return Math.hypot(p.x - (v.x + t * dx), p.y - (v.y + t * dy));
+};
+
+test('wireCurve: the ends are the ends, and `up` flips BOTH control points', () => {
+  // Leaving one unflipped is how the curve knots in the middle — it bulges
+  // downward while both ends travel up. Stated in the source; asserted here.
+  const a = { x: 10, y: 20 };
+  const b = { x: 300, y: 420 };
+  const down = wireCurve(a, b, false);
+  assert.deepEqual(down[0], a);
+  assert.deepEqual(down[3], b);
+  assert.ok(down[1]!.y > a.y, 'the first control leaves downward');
+  assert.ok(down[2]!.y < b.y, 'the second arrives from above');
+
+  const up = wireCurve(a, b, true);
+  assert.ok(up[1]!.y < a.y && up[2]!.y > b.y, 'both controls flip together');
+});
+
+test('wireCurve: a SHORT wire still bulges — `dy` has a floor', () => {
+  // Without the floor a wire between two nearly-level ports is a straight line
+  // and reads as an accident of the layout rather than as a connection.
+  const [, c1] = wireCurve({ x: 0, y: 0 }, { x: 200, y: 4 }, false);
+  assert.equal(c1!.y, 45);
+});
+
+test('🔴 nearWire: EVERY point on the curve is on the curve', () => {
+  // The gate on the sampling itself. `nearWire` walks 24 CHORDS; comparing
+  // against the 25 points instead would leave a spot halfway between two of
+  // them on a long wire reading as "far away", and the wire would drop under a
+  // moving pointer for one frame — which is how a defect gets blamed on the
+  // browser rather than on this function.
+  //
+  // ⚠ 1, AND IT IS A MEASUREMENT. Worst chord deviation across these wires:
+  // 2.23 at N=24, 1.27 at 32, 0.58 at 48. The first version of this test asked
+  // for 1 against N=24 and went red — the test was wrong, not the code.
+  //
+  // 🔴 THE ASSERTION BELOW IS THE POINT, not the constant: what makes N enough
+  // is its share of `WIRE_REACH`, so tuning the corridor DOWN (48 → 20, by hand)
+  // silently made the old N too coarse. This test is what said so.
+  const SLOP = 1;
+  assert.ok(SLOP < WIRE_REACH / 12, 'the sampling error must be small against the corridor it sits in');
+  const a = { x: 40, y: 60 };
+  const b = { x: 700, y: 640 };
+  for (const up of [false, true]) {
+    const ps = wireCurve(a, b, up);
+    for (let i = 0; i <= 200; i++) {
+      const p = at(ps, i / 200);
+      assert.ok(nearWire(a, b, up, p, SLOP), `${up ? 'up' : 'down'} wire: t=${i / 200} read as off it`);
+    }
+  }
+});
+
+test('🔴 nearWire follows the CURVE, not the straight line between the ends', () => {
+  // The discriminating case, and the premise is asserted first: a point that is
+  // genuinely on the wire while being further from the chord than the reach. A
+  // chord-based implementation passes every other test in this file and fails
+  // the user in exactly the place the wire bends.
+  const a = { x: 0, y: 0 };
+  const b = { x: 600, y: 600 };
+  const p = at(wireCurve(a, b, false), 0.25);
+  assert.ok(
+    dot(p, a, b) > WIRE_REACH,
+    `premise: this point is only ${Math.round(dot(p, a, b))} from the chord — it proves nothing`,
+  );
+  assert.equal(nearWire(a, b, false, p), true);
+});
+
+test('nearWire: far away is far away, in both axes', () => {
+  const a = { x: 0, y: 0 };
+  const b = { x: 0, y: 400 };
+  assert.equal(nearWire(a, b, false, { x: 0, y: 200 }), true, 'dead on it');
+  assert.equal(nearWire(a, b, false, { x: WIRE_REACH - 2, y: 200 }), true, 'inside the corridor');
+  assert.equal(nearWire(a, b, false, { x: WIRE_REACH + 4, y: 200 }), false, 'outside it');
+  assert.equal(nearWire(a, b, false, { x: 0, y: -WIRE_REACH - 4 }), false, 'past the start');
+  assert.equal(nearWire(a, b, false, { x: 0, y: 400 + WIRE_REACH + 4 }), false, 'past the end');
+});
+
+test('🔴 WIRE_REACH is narrower than the node it runs into', () => {
+  // The corridor is what KEEPS a lit wire, so a wide one would hold on across
+  // half the diagram and the highlight would stop meaning "this one". Half a
+  // node's width is the bound with a reason: two wires are only ever that close
+  // where they are already converging on the same box, and there the pointer is
+  // inside the box rather than in the corridor.
+  assert.ok(WIRE_REACH < NODE_SIZE.agent.w / 2, `${WIRE_REACH} is wider than half an employee`);
+  // And wider than the 16-unit hit path, or it would take nothing back.
+  assert.ok(WIRE_REACH > 16);
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -30,6 +30,17 @@ import { t } from '@i18n';
 
 import '@/canvas/canvas.css';
 
+/**
+ * THE ROOM IS A SEPARATE CHUNK, AND THAT IS WHAT "OFF" MEANS.
+ * → docs/SPEC-office-animation.md §11c②
+ *
+ * With `ui.office_view: false` the switch never renders, so this `import()`
+ * never runs and the bytes never reach the browser. For a local web app that is
+ * what "not installed" is — anything less would be a hidden button rather than
+ * an off switch, and leg G-10 of test 23 measures exactly that.
+ */
+const Office = lazy(() => import('@/office/Office'));
+
 export default function App() {
   /**
    * `key={locale}` REMOUNTS THE TREE when the interface language changes.
@@ -47,11 +58,18 @@ export default function App() {
    */
   const locale = useApp((s) => s.locale);
   const loading = useApp((s) => s.loading);
+  const poweredOff = useApp((s) => s.poweredOff);
   const fatal = useApp((s) => s.fatal);
   const company = useApp((s) => s.company);
   const canvas = useApp((s) => s.canvas);
   const live = useApp((s) => s.live);
   const selected = useApp((s) => s.selected);
+  /**
+   * Two conditions, and both are needed: the company allows the room at all,
+   * and this browser is currently looking at it. The first is a door that may
+   * not exist; the second is which door this tab walked through.
+   */
+  const room = useApp((s) => s.view === 'office' && s.company?.officeView !== false);
 
   const [newOffice, setNewOffice] = useState(false);
   const [renameOffice, setRenameOffice] = useState(false);
@@ -105,6 +123,30 @@ export default function App() {
       void actions.saveCanvas(nodes, edges);
     }, 700);
   }, []);
+
+  /**
+   * THE COMPANY IS OFF. → `store.ts §AppState.poweredOff`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ IT IS TESTED BEFORE `fatal`, AND THAT ORDER IS THE FEATURE.            │
+   * │                                                                          │
+   * │ Shutting down kills the SSE stream a beat later, so `fatal` fills in with │
+   * │ "lost connection to the company" — an alarm with a Retry button, for      │
+   * │ something the user deliberately asked for. Swap these two blocks and the  │
+   * │ last thing anybody sees when they close agentco is an error screen.       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   *
+   * ONE QUIET LINE, and nothing else — no icon, no button, no border. There is
+   * no daemon left to serve a Retry, so every control that could be drawn here
+   * would be a control that does not work. (user, 10/09)
+   */
+  if (poweredOff) {
+    return (
+      <div className="flex h-full items-center justify-center bg-paper px-6 text-center">
+        <p className="text-[13px] text-muted">{t('app.poweredOff')}</p>
+      </div>
+    );
+  }
 
   if (fatal) {
     return (
@@ -171,28 +213,57 @@ export default function App() {
 
             <main className="relative min-w-0 flex-1">
               {canvas ? (
-                <>
-                  <Canvas
-                    ref={canvasRef}
-                    canvas={canvas}
-                    live={live}
-                    selected={selected}
-                    onSelect={actions.select}
-                    onCommit={onCommit}
-                    onOpenStore={actions.showPanel}
-                    onDropDocs={actions.dropDocs}
-                  />
-                  <Toolbar
-                    onAddArm={() => setNewArm(true)}
-                    onAddAgent={() => setNewAgent(true)}
-                    onArrange={() => canvasRef.current?.autoArrange()}
-                    onFit={() => canvasRef.current?.fit()}
-                    onZoom={(f) => canvasRef.current?.zoomBy(f)}
-                  />
-                  {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <NoAgentsHint />}
-                  <PlanStrip />
-                  <Hint />
-                </>
+                /*
+                  Only the SCENE swaps. Header, sidebar, plan strip, inspector,
+                  toasts and the current selection all survive the switch — a
+                  view is a different way of looking at one office, not a
+                  different application. → docs/SPEC-office-animation.md §11a
+                */
+                room ? (
+                  <>
+                    <Suspense fallback={<Loading />}>
+                      <Office />
+                    </Suspense>
+                    {/*
+                      The toolbar is deliberately absent here: every button on it
+                      edits or navigates the SHAPE, and the room does not have
+                      one (§10).
+
+                      🔴 AND SO IS THE PLAN STRIP, WHICH REVERSES §11a. It sits
+                      at `bottom-3`, which on the canvas is empty space and in the
+                      room is the FRONT ROW — it covered the people the view
+                      exists to show. The room answers "who is working right now"
+                      by drawing it, and the same question is still one click away
+                      in the chat frame's activity line and in the Plans panel, so
+                      what is lost here is a shortcut, not the only copy of a
+                      fact (§13). → docs/SPEC-office-animation.md §11a
+                    */}
+                    {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <RoomHint />}
+                  </>
+                ) : (
+                  <>
+                    <Canvas
+                      ref={canvasRef}
+                      canvas={canvas}
+                      live={live}
+                      selected={selected}
+                      onSelect={actions.select}
+                      onCommit={onCommit}
+                      onOpenStore={actions.showPanel}
+                      onDropDocs={actions.dropDocs}
+                    />
+                    <Toolbar
+                      onAddArm={() => setNewArm(true)}
+                      onAddAgent={() => setNewAgent(true)}
+                      onArrange={() => canvasRef.current?.autoArrange()}
+                      onFit={() => canvasRef.current?.fit()}
+                      onZoom={(f) => canvasRef.current?.zoomBy(f)}
+                    />
+                    {canvas.nodes.filter((n) => n.kind === 'agent').length === 0 && <NoAgentsHint />}
+                    <PlanStrip />
+                    <Hint />
+                  </>
+                )
               ) : (
                 <div className="flex h-full items-center justify-center text-[13px] text-muted">
                   {t('app.openingOffice')}
@@ -327,6 +398,30 @@ function PlanStrip() {
           (officeState === 'working' ? t('app.planRunning') : plan.request)}
       </span>
     </button>
+  );
+}
+
+function Loading() {
+  return (
+    <div className="flex h-full items-center justify-center text-[13px] text-muted">
+      {t('app.openingOffice')}
+    </div>
+  );
+}
+
+/**
+ * The room with nobody hired yet is NOT an empty state screen — the room is
+ * already there, with the assistant standing in it. This is a hint sitting on
+ * top of it, pointing at the view that can actually hire somebody.
+ * → docs/SPEC-office-animation.md §5a′
+ */
+function RoomHint() {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
+      <div className="rounded-lg border border-line bg-panel/90 px-3 py-2 text-[13px] text-muted shadow-sm backdrop-blur">
+        {t('office.hireHint')}
+      </div>
+    </div>
   );
 }
 

@@ -363,11 +363,78 @@ export function tokenize(src: string): Token[] {
   return out;
 }
 
-/** A piece with `**` already resolved: `bold` says whether it wears a `<strong>`. */
+/** A piece with `**` already resolved — see below: `bold` says whether it wears a `<strong>`. */
 export interface Span {
   code: boolean;
   bold: boolean;
   text: string;
+  /**
+   * 🔴 PRESENT ⇒ THIS SPAN IS A LINK and `text` is the label the author wrote.
+   * `http:`/`https:` only — see `SAFE_URL`.
+   *
+   * ⚠ The label and the destination are TWO DIFFERENT STRINGS, and the author
+   * of both is usually the model. `[your invoice](https://evil.example)` is a
+   * legal markdown link, so the renderer must put the real destination where a
+   * person can see it before clicking. → `markdown.tsx §Inline`
+   */
+  href?: string;
+}
+
+/**
+ * `[label](url)` — the ONE inline rule with an outside destination.
+ *
+ * ⚠ NO NESTED PARENTHESES AND NO SPACES IN THE URL, deliberately. A balanced
+ * `(` scanner is a parser; this is a rule in a file whose whole argument is
+ * *"the smallest surface breaks least"*. A Wikipedia-style `..._(disambiguation)`
+ * link falls back to printing verbatim, which is what it does today anyway.
+ */
+const LINK = /\[([^\]\n]+)\]\(([^()\s]+)\)/g;
+
+/**
+ * 🔴 THE SCHEME ALLOWLIST — the only reason this rule is safe to add.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ `javascript:alert(1)` IS A VALID URL IN A MARKDOWN LINK, and the text
+ * │ here is MODEL-GENERATED — the same premise that made this file refuse
+ * │ `dangerouslySetInnerHTML`. React strips `javascript:` hrefs today, with a
+ * │ warning, but that is a library's courtesy and not our mechanism: the day
+ * │ it changes, or the day this parse feeds anything other than React, the
+ * │ hole is ours. So the gate is an ALLOWLIST, not a blocklist — `data:`,
+ * │ `file:`, `vbscript:` and every scheme nobody has thought of yet are out
+ * │ by construction rather than by enumeration.
+ * │
+ * │ ⚠ REFUSED MEANS PRINTED VERBATIM, never dropped. `[a](file:///etc)` still
+ * │ shows every character the author wrote — a link the interface will not
+ * │ open must not become a link the reader cannot see either.
+ * └──────────────────────────────────────────────────────────────────────────
+ */
+const SAFE_URL = /^https?:\/\/[^\s]+$/i;
+
+/**
+ * Splits one span into text and link pieces. Runs AFTER `**`, so a bold link
+ * keeps its bold and a link inside a code span is never touched at all.
+ *
+ * ⚠ A link that straddles a `**` boundary (`[a **b](url)`) is NOT joined back
+ * together: bold has already cut the text there. It prints verbatim, which is
+ * the same thing that happens to every other half-formed inline mark here.
+ */
+function withLinks(s: Span): Span[] {
+  if (s.code || !s.text.includes('](')) return [s];
+  const out: Span[] = [];
+  let last = 0;
+  for (const m of s.text.matchAll(LINK)) {
+    const [whole, label, url] = m;
+    // ⚠ `continue` WITHOUT moving `last`: the refused link stays inside the
+    // plain-text run and comes out verbatim on the next push.
+    if (!url || !label || !SAFE_URL.test(url)) continue;
+    const at = m.index ?? 0;
+    if (at > last) out.push({ code: false, bold: s.bold, text: s.text.slice(last, at) });
+    out.push({ code: false, bold: s.bold, text: label, href: url });
+    last = at + whole.length;
+  }
+  if (!out.length) return [s];
+  if (last < s.text.length) out.push({ code: false, bold: s.bold, text: s.text.slice(last) });
+  return out;
 }
 
 /**
@@ -442,5 +509,12 @@ export function spansOf(src: string): Span[] {
     push(false, false, rest);
   }
 
-  return out;
+  /**
+   * ⚠ INLINE PASS 3 IS FOLDED IN HERE, not offered as a second export. The
+   * contract this function already carries is *"returns a flat list so the
+   * renderer only has to map 1-to-1 onto tags — every decision is settled
+   * here"*. A second pass the caller has to remember to run is a decision that
+   * escaped, and the first caller to forget it silently loses every link.
+   */
+  return out.flatMap(withLinks);
 }

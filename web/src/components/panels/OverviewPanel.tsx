@@ -754,10 +754,9 @@ function ArchivedAgentsSection() {
               {t('inspector.confirmDeleteAgentTitle', { label: confirm?.label ?? '' })}
             </DialogTitle>
             <DialogDescription>
-              {t('inspector.agentDeleteBefore')} <code>roles/{confirm?.role}.yaml</code>{' '}
-              {t('inspector.agentDeleteMid')} <b>{t('inspector.agentDeleteBold')}</b>
-              <br />
-              <br />
+              {/* The `roles/<id>.yaml` line is gone here too — the same modal in a
+                  second place, and a warning removed from one of two copies is a
+                  warning the user meets at random. → SPEC-office-animation §17i */}
               {confirm && confirm.notes > 0 ? (
                 <>
                   <b>{plural('overview.lessonNotes', confirm.notes)}</b> {t('overview.atPath')}{' '}
@@ -935,7 +934,7 @@ function RemoveOfficeDialog({
           <DialogTitle>{t('overview.removeOfficeTitle', { name: target?.name ?? '' })}</DialogTitle>
           <DialogDescription>
             {t('overview.removeOfficeBefore')} <code>offices/{target?.id}/</code>
-            {t('overview.removeOfficeAfter')} <b>{t('inspector.agentDeleteBold')}</b>
+            {t('overview.removeOfficeAfter')} <b>{t('overview.removeNoUndo')}</b>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

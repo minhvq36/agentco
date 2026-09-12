@@ -104,6 +104,42 @@ function readRaw(paths: CompanyPaths): Record<string, unknown> {
   }
 }
 
+/**
+ * 🔴 WHICH CREDENTIAL NAMES A LAUNCH NEEDS — the ONE definition, read by both
+ * the code that FILLS them in and the code that CHECKS they are there.
+ * → `worker.ts §pickMcp` · `office.ts §canvas keyGoneOf`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ IT LIVES HERE, NOT IN `worker.ts`, FOR ONE REASON: **the scope of the    │
+ * │ function that FILLS must equal the scope of the function that CHECKS.**  │
+ * │ This repository has already paid for the other arrangement once —        │
+ * │ `missingSecretRefs` scanned the whole config while `injectSecrets` only  │
+ * │ filled `headers`, so a blank was reported forever and never filled. Two  │
+ * │ callers, one definition, and a test holds them together.                 │
+ * │                                                                          │
+ * │ 🔴 THE WIRE IS THE GRANT. Measured 08/09: not one of the twenty roles in │
+ * │ the user's company had a `secrets:` line, because `role.secrets` is      │
+ * │ written by `Office.grantArm` (the Connections dialog) and NOT by         │
+ * │ `LayoutStore.save` (dragging the wire on the diagram). Every OAuth arm   │
+ * │ therefore launched with an unfilled `${…}` and answered 401 — and the    │
+ * │ model reported *"there is no Notion tool"*, a claim about CAPABILITY     │
+ * │ produced by a broken WIRE. Reading the ledger through the wire, here at  │
+ * │ the point of use, is what makes a third door impossible to get wrong.    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * @param server absent ⇒ every key this ROLE's launch could need, for the
+ *               "you are missing keys" warning. Given ⇒ exactly what THAT arm
+ *               may see, which is what actually goes into one process env.
+ */
+export function keysFor(
+  arms: Readonly<Record<string, { secrets?: readonly string[] } | undefined>>,
+  role: { secrets: readonly string[]; mcp: readonly string[] },
+  server?: string,
+): string[] {
+  const wired = server === undefined ? role.mcp : [server];
+  return [...new Set([...role.secrets, ...wired.flatMap((s) => arms[s]?.secrets ?? [])])];
+}
+
 export function readSecrets(paths: CompanyPaths): SecretMap {
   const raw = readRaw(paths);
   const out: SecretMap = {};

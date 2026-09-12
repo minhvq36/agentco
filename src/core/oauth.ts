@@ -537,12 +537,12 @@ export async function refreshAccount(meta: AsMeta, acc: OAuthAccount): Promise<O
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ A SECOND SIGN-IN PATH — for vendors that DON'T open DCR. → SPEC-arms §5h·7        │
  * │                                                                          │
- * │ Why Notion's flow can't be reused: 🌐 GitHub's web flow REQUIRES a               │
+ * │ Why Notion's flow can't be reused:  GitHub's web flow REQUIRES a               │
  * │ `client_secret` — **PKCE is an ADDITION, not a REPLACEMENT**. A public client        │
  * │ going down that path dies at the exchange step, with a 401 saying *"wrong key"*.     │
  * │                                                                          │
  * │ The device flow, in exchange, **removes more than it adds**:                      │
- * │   · 0 `client_secret` — even at REFRESH time (🌐 *"Required unless the user           │
+ * │   · 0 `client_secret` — even at REFRESH time ( *"Required unless the user           │
  * │     access token was generated using the device flow"*)                          │
  * │   · **0 `redirect_uri`** ⇒ all of §5h·6 (`redirectBase` · `public_url` · nginx ·      │
  * │     Docker · VPS) DOES NOT APPLY to an arm taking this path                        │

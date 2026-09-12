@@ -46,7 +46,7 @@ pre-register every customer's domain, and pointing straight at `http://<ip>:<por
 **fails twice over** (both plain `http` and a raw IP) — the Cloud Console won't even
 let you save it.
 
-📌 **A Desktop-type client has no redirect field to fill in at all** — 🌐 *"The console
+📌 **A Desktop-type client has no redirect field to fill in at all** —  *"The console
 does not require any additional information to create OAuth 2.0 credentials for desktop
 applications."* Any loopback port works ⇒ **there is no "pick a good/bad port"** on
 Google's side, and nothing to conflict with. The only port that's real is **our own
