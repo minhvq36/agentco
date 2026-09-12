@@ -1,6 +1,6 @@
 {
     "name": "agentco",
-    "version": "0.0.1",
+    "version": "0.1.0",
     "description": "A virtual company that runs on your machine: Claude acts as director, orchestrating a team of specialist agents running in parallel.",
     "license": "SEE LICENSE IN LICENSE.md",
     "type": "module",

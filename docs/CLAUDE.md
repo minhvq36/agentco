@@ -223,6 +223,63 @@ finishing a change.
 `string.length`: a combining mark adds a code unit and no column, an emoji adds
 two of each, so counting characters is wrong in both directions at once.
 
+## Versions and releasing
+
+### 🔴 ONE NUMBER. `package.json#version` IS IT.
+
+Yes — the version of the code *is* the version of the `.exe`. There is no
+second number to keep in step, because a second number is a number that drifts:
+
+| Where it shows up | How it gets there |
+|---|---|
+| the running app, `daemon.json`, `/healthz` | `core/version.ts §appVersion()` **reads `package.json`** |
+| the packaged tree, `app/<version>/` | `scripts/package.ts` |
+| the installer, `VIProductVersion` + the Apps & features entry | `makensis /DVER=<same>` |
+| the git tag | `v<same>` |
+
+⛔ **Never write the number as a literal.** `cli/index.ts` once carried
+`version: '0.0.1'` by hand while `/healthz` reported the real one — two sources
+of truth for the exact number the update channel compares. That is the bug this
+table exists to prevent, and `test/packaging-fields.test.ts` guards it.
+
+⛔ **The installer FILENAME carries no version** (`AgentCo-win-x64-setup.exe`).
+GitHub's `releases/latest/download/<name>` alias resolves by exact filename, so
+the website's download button is a constant; a version in the name breaks that
+link on every release. → `agentco-web/SPEC.md §2`
+
+⚠ **The runtime layer keeps its own version** (`runtime/node-v22.12.0`) and is
+not this number: it moves about twice a year against the app's weekly cadence,
+which is the whole point of §3.5's per-layer manifest.
+
+### Pre-1.0, what a bump means
+
+`0.MINOR.PATCH`. MINOR when a user would notice (a feature, a changed flow, a
+migration); PATCH for fixes. 1.0.0 waits for the thing §4 of `SPEC-packaging`
+calls a licence — not for a feeling of completeness.
+
+### The release sequence
+
+```powershell
+# 1. bump         package.json → the new number, nothing else
+# 2. prove it     npm test                      # tsc + check-language + suite
+# 3. build        npm run build:all
+# 4. lay it down  node --experimental-strip-types scripts/package.ts
+# 5. installer    makensis /V2 /DTREE=out\AgentCo /DVER=<the same number> installer\agentco.nsi
+# 6. record it    git commit -am "Release v<n>"  &&  git tag -a v<n> -m "v<n>"
+# 7. publish      git push  &&  git push --tags
+```
+
+Then, on GitHub: a release **on that tag**, with `out\AgentCo-win-x64-setup.exe`
+attached.
+
+⚠ **Do NOT tick "Set as a pre-release".** `releases/latest` skips pre-releases
+entirely, so the website's download button would 404 while the release page
+looks perfectly fine. The one switch that silently breaks the one link.
+
+⚠ Last: flip `RELEASE_LIVE` and `RELEASE_INFO` in `agentco-web/config/site.ts`.
+Until that happens the site shows "coming soon" rather than a link to nothing —
+deliberately, so a half-finished release cannot hand anyone a dead button.
+
 ## Writing comments
 
 - English reads as the original, not as a translation. Keeping the metaphor is

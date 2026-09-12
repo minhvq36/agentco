@@ -33,7 +33,14 @@
 !include "LogicLib.nsh"
 
 Name "AgentCo"
-OutFile "${TREE}\..\AgentCo-${VER}-win-x64-setup.exe"
+; 🔴 THE FILENAME CARRIES NO VERSION, AND THAT IS LOAD-BEARING.
+; GitHub's stable alias resolves by exact filename —
+;   /releases/latest/download/AgentCo-win-x64-setup.exe
+; — so the website's download button is a constant. Put `${VER}` back in here
+; and every release silently breaks that link. The version lives in the git
+; tag, the release title, and `VIProductVersion` below.
+; → agentco-web/SPEC.md §2
+OutFile "${TREE}\..\AgentCo-win-x64-setup.exe"
 Unicode true
 SetCompressor /SOLID lzma
 
@@ -43,7 +50,9 @@ SetCompressor /SOLID lzma
 InstallDir "$LOCALAPPDATA\AgentCo"
 RequestExecutionLevel user
 
-VIProductVersion "0.0.0.0"
+; ⚠ Windows wants FOUR parts here and refuses three, so the build number is
+; pinned at 0 — `${VER}` stays the one number everybody else reads.
+VIProductVersion "${VER}.0"
 VIAddVersionKey "ProductName" "AgentCo"
 VIAddVersionKey "FileDescription" "AgentCo installer"
 VIAddVersionKey "FileVersion" "${VER}"
