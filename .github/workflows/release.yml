@@ -1,0 +1,140 @@
+# Build and publish a Windows release. -> docs/CLAUDE.md §Versions and releasing
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY THIS EXISTS, BEYOND CONVENIENCE
+#
+# Releasing was six commands in the right order on one person's machine, and a
+# forgotten step announced itself by a customer downloading the wrong thing.
+# Worse, the build COPIES THE BUILD MACHINE'S NODE into the tree
+# (`scripts/package.ts`), so "it worked on my laptop" was load-bearing in the
+# literal sense: the runtime a customer runs was whatever that laptop had.
+#
+# It is also the shape code signing needs. SignPath and every service like it
+# sign artifacts produced by a CI run they can verify — repo, branch, commit —
+# and refuse a file a developer built locally and uploaded. Without this file
+# there is nothing to sign. -> the signing step goes in below, once granted.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# The job creates a GitHub Release; nothing else here needs write access.
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ⚠ PINNED, and it is not pedantry: `scripts/package.ts` ships THIS node
+      # as the runtime layer (`runtime/node-v<version>`). The version here is
+      # the version on the customer's disk.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+
+      - run: npm ci
+      - run: npm --prefix web ci
+
+      # 🔴 ONE NUMBER. The tag and package.json must agree before anything is
+      # built — the alternative is a release called v0.2.0 containing app/0.1.0,
+      # which nothing downstream would notice. -> docs/CLAUDE.md §Versions
+      - name: The tag must match package.json
+        run: |
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = '${{ github.ref_name }}' -replace '^v', ''
+          if ($pkg -ne $tag) {
+            throw "tag $tag does not match package.json $pkg - bump one of them"
+          }
+          "version $pkg"
+
+      - run: npm test
+
+      - run: npm run build:all
+
+      # NSIS builds BOTH the launcher (inside package.ts) and the installer, so
+      # it has to be here before packaging, not after.
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Build the packaged tree
+        run: node --experimental-strip-types scripts/package.ts
+
+      # 🔴 THE SILENT FAILURE THIS STEP EXISTS FOR: with NSIS missing,
+      # `package.ts` prints "launcher SKIPPED" and exits 0. The release would
+      # then ship an installer with no `AgentCo.exe` — the icon a customer
+      # double-clicks — and every check upstream would still be green.
+      - name: The launcher must exist
+        run: |
+          $exe = 'out/AgentCo/AgentCo.exe'
+          if (-not (Test-Path $exe)) {
+            throw "no launcher at $exe - NSIS was missing and package.ts skipped it"
+          }
+          $app = "out/AgentCo/app/$((Get-Content package.json -Raw | ConvertFrom-Json).version)"
+          if (-not (Test-Path $app)) { throw "no app layer at $app" }
+          "launcher and app layer present"
+
+      - name: Build the installer
+        run: |
+          $ver = '${{ github.ref_name }}' -replace '^v', ''
+          # ⚠ `${env:...}` braces, not `$env:...`: the parentheses in
+          # `ProgramFiles(x86)` end the variable name otherwise, and the line
+          # fails with a parser error that says nothing about the path.
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) { throw "no makensis at $makensis" }
+          & $makensis /V2 /DTREE=out\AgentCo /DVER=$ver installer\agentco.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis exited $LASTEXITCODE" }
+
+      # ⚠ The filename carries no version on purpose: GitHub's
+      # `releases/latest/download/<name>` alias resolves by exact filename and
+      # the website's download button is a constant. -> agentco-web/SPEC.md §2
+      - name: Checksum
+        id: sum
+        run: |
+          $exe = 'out/AgentCo-win-x64-setup.exe'
+          if (-not (Test-Path $exe)) { throw "no installer at $exe" }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "$hash  $([math]::Round((Get-Item $exe).Length/1MB,2)) MB"
+
+      - name: Release notes
+        run: |
+          (Get-Content .github/release-notes.md -Raw).Replace('{{SHA256}}', '${{ steps.sum.outputs.sha256 }}') |
+            Set-Content notes.md -Encoding utf8
+
+      # 🔴 `--latest` IS THE LINE THE DOWNLOAD BUTTON DEPENDS ON. A release
+      # marked as a pre-release is excluded from `releases/latest`, so the
+      # website would 404 while this job stayed green and the release page
+      # looked perfect.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' `
+            'out/AgentCo-win-x64-setup.exe' `
+            --title '${{ github.ref_name }}' `
+            --notes-file notes.md `
+            --latest
+
+      # A last look from outside: the URL the website actually uses must answer
+      # with these exact bytes. Everything above proves we built a file; this
+      # proves a stranger can get it.
+      - name: The download alias must serve what we just built
+        run: |
+          $url = 'https://github.com/${{ github.repository }}/releases/latest/download/AgentCo-win-x64-setup.exe'
+          Invoke-WebRequest $url -OutFile check.exe -UseBasicParsing -MaximumRedirection 5
+          $got = (Get-FileHash check.exe -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne '${{ steps.sum.outputs.sha256 }}') {
+            throw "alias served $got, expected ${{ steps.sum.outputs.sha256 }}"
+          }
+          "alias serves the same bytes"
