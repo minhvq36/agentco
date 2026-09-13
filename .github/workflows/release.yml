@@ -41,12 +41,12 @@ jobs:
         shell: pwsh
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ⚠ PINNED, and it is not pedantry: `scripts/package.ts` ships THIS node
       # as the runtime layer (`runtime/node-v<version>`). The version here is
       # the version on the customer's disk.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22.12.0'
           cache: npm
@@ -104,7 +104,13 @@ jobs:
           # fails with a parser error that says nothing about the path.
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (-not (Test-Path $makensis)) { throw "no makensis at $makensis" }
-          & $makensis /V2 /DTREE=out\AgentCo /DVER=$ver installer\agentco.nsi
+          # 🔴 ABSOLUTE, ALWAYS. NSIS resolves a relative `File` path against
+          # the SCRIPT'S directory, not the working directory — so a relative
+          # `out\AgentCo` became `installer\out\AgentCo`, matched nothing, and
+          # failed with "no files found" while the tree sat right there. It
+          # never showed up locally because the local runs passed a full path.
+          $tree = (Resolve-Path out\AgentCo).Path
+          & $makensis /V2 "/DTREE=$tree" "/DVER=$ver" installer\agentco.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis exited $LASTEXITCODE" }
 
       # ⚠ The filename carries no version on purpose: GitHub's
@@ -124,10 +130,6 @@ jobs:
           (Get-Content .github/release-notes.md -Raw).Replace('{{SHA256}}', '${{ steps.sum.outputs.sha256 }}') |
             Set-Content notes.md -Encoding utf8
 
-      # 🔴 `--latest` IS THE LINE THE DOWNLOAD BUTTON DEPENDS ON. A release
-      # marked as a pre-release is excluded from `releases/latest`, so the
-      # website would 404 while this job stayed green and the release page
-      # looked perfect.
       # A dry run stops here and hands the installer back as a build artifact:
       # everything above is proven, nothing outside this repository moved.
       - name: Keep the installer (dry run)
@@ -138,6 +140,10 @@ jobs:
           path: out/AgentCo-win-x64-setup.exe
           if-no-files-found: error
 
+      # 🔴 `--latest` IS THE LINE THE DOWNLOAD BUTTON DEPENDS ON. A release
+      # marked as a pre-release is excluded from `releases/latest`, so the
+      # website would 404 while this job stayed green and the release page
+      # looked perfect.
       - name: Publish the release
         if: github.event_name == 'push'
         env:
