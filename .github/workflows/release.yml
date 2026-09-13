@@ -20,6 +20,14 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # ⚠ A DRY RUN EXISTS BECAUSE THE OBVIOUS TEST IS DESTRUCTIVE. Proving this
+  # pipeline by deleting a tag and pushing it again would break the download
+  # link for minutes AND change the installer's hash — NSIS embeds timestamps,
+  # so a rebuild is never byte-identical. Any checksum already published, or
+  # submitted to Microsoft for reputation review, is about the exact file
+  # attached to the release and nothing else. So: run everything, publish
+  # nothing, keep the artifact.
+  workflow_dispatch:
 
 # The job creates a GitHub Release; nothing else here needs write access.
 permissions:
@@ -49,13 +57,17 @@ jobs:
       # 🔴 ONE NUMBER. The tag and package.json must agree before anything is
       # built — the alternative is a release called v0.2.0 containing app/0.1.0,
       # which nothing downstream would notice. -> docs/CLAUDE.md §Versions
-      - name: The tag must match package.json
+      - name: Settle the version
+        id: version
         run: |
           $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $tag = '${{ github.ref_name }}' -replace '^v', ''
-          if ($pkg -ne $tag) {
-            throw "tag $tag does not match package.json $pkg - bump one of them"
+          if ('${{ github.event_name }}' -eq 'push') {
+            $tag = '${{ github.ref_name }}' -replace '^v', ''
+            if ($pkg -ne $tag) {
+              throw "tag $tag does not match package.json $pkg - bump one of them"
+            }
           }
+          "value=$pkg" >> $env:GITHUB_OUTPUT
           "version $pkg"
 
       - run: npm test
@@ -86,7 +98,7 @@ jobs:
 
       - name: Build the installer
         run: |
-          $ver = '${{ github.ref_name }}' -replace '^v', ''
+          $ver = '${{ steps.version.outputs.value }}'
           # ⚠ `${env:...}` braces, not `$env:...`: the parentheses in
           # `ProgramFiles(x86)` end the variable name otherwise, and the line
           # fails with a parser error that says nothing about the path.
@@ -116,7 +128,18 @@ jobs:
       # marked as a pre-release is excluded from `releases/latest`, so the
       # website would 404 while this job stayed green and the release page
       # looked perfect.
+      # A dry run stops here and hands the installer back as a build artifact:
+      # everything above is proven, nothing outside this repository moved.
+      - name: Keep the installer (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgentCo-win-x64-setup
+          path: out/AgentCo-win-x64-setup.exe
+          if-no-files-found: error
+
       - name: Publish the release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -130,6 +153,7 @@ jobs:
       # with these exact bytes. Everything above proves we built a file; this
       # proves a stranger can get it.
       - name: The download alias must serve what we just built
+        if: github.event_name == 'push'
         run: |
           $url = 'https://github.com/${{ github.repository }}/releases/latest/download/AgentCo-win-x64-setup.exe'
           Invoke-WebRequest $url -OutFile check.exe -UseBasicParsing -MaximumRedirection 5
