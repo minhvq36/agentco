@@ -261,6 +261,14 @@ binary npm pulls in as the SDK's optional dependency (fine under decision ③ of
 registry, we redistribute nothing). `doctor` found it and a test call went
 through; `init` → `start` → `/healthz` `0.1.0` → `stop` → port closed.
 
+**Before every publish, on all three systems — `scripts/smoke-npm.ts`**, run by
+`.github/workflows/npm-smoke.yml` on the tarball `npm pack` makes (the same file
+`npm publish` uploads). A published version number can never be cut again, so
+"try Linux after release" would spend one on a failure. 14/09, commit `bb0911d`:
+**6/6 green** — Ubuntu, macOS, Windows × Node 22 and 24 — including
+`desktop-file-validate` and `gio launch` of the shortcut on Ubuntu. Its first run
+caught a real bug (§6.2, one main category).
+
 ⚠ `prepack` deletes `dist/` and rebuilds. `tsc` never removes output for a
 source that was deleted, and the working tree held two such files
 (`core/master.js`, `server/ui.js`) — a publish from that tree would have

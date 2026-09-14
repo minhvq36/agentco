@@ -16,7 +16,7 @@
         "node": ">=22"
     },
     "bin": {
-        "agentco": "./dist/cli/index.js"
+        "agentco": "dist/cli/index.js"
     },
     "files": [
         "dist",
