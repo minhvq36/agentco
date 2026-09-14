@@ -717,49 +717,14 @@ export async function runWorker(deps: WorkerDeps, input: WorkerInput): Promise<R
 
       if (m['type'] === 'result') {
         usage = readUsage(m);
-        finalText = typeof m['result'] === 'string' ? m['result'] : '';
-        if (m['subtype'] === 'error_max_budget_usd') {
-          throw new RunError(
-            t('wk.hitBudget', { task: brief.task_id, ceiling: formatUSD(role.budget.max_usd) }),
-            'budget',
-          );
-        }
-        /**
-         * ┌────────────────────────────────────────────────────────────────────┐
-         * │ 🔴 HITTING THE TURN CAP MUST BE SAID IN HUMAN WORDS. (user caught    │
-         * │ this 08/27)                                                        │
-         * │                                                                    │
-         * │   *"then give me a proper sentence, why would you throw an           │
-         * │    error_max_turns that nobody understands"*                        │
-         * │                                                                    │
-         * │ The budget branch right above has had a decent message for a long  │
-         * │ time; the TURNS branch fell straight through as raw SDK error       │
-         * │ code. That asymmetry has no reason behind it — nobody had written   │
-         * │ it yet.                                                            │
-         * │                                                                    │
-         * │ ⚠⚠ AND THIS MESSAGE MUST STATE AN UNCOMFORTABLE TRUTH, not just     │
-         * │ translate the error code: **the job may have gotten PARTIALLY       │
-         * │ done.** This is debt recorded on 08/26 (`SESSIONS_MEMORY` §5s ⏸): a │
-         * │ run that hit the cap had already managed to call                    │
-         * │ `notion-update-page` before being cut off, but the closing report   │
-         * │ said *"not done"* — a sentence that's **wrong about the outside     │
-         * │ world**.                                                           │
-         * │                                                                    │
-         * │ With a file inside the office, getting it wrong is harmless. With   │
-         * │ an arm, it's the user's own Notion/GitHub — and we have NO way to   │
-         * │ know how far it got. So the correct sentence is *"unclear how far,  │
-         * │ check the log"*, not reassurance. → [[agentco-safe-default-direction]]│
-         * └────────────────────────────────────────────────────────────────────┘
-         */
-        if (m['subtype'] === 'error_max_turns') {
-          const armTouched = armCalled;
-          throw new RunError(
-            t('wk.hitMaxTurns', { turns: String(role.budget.max_turns) }) +
-              (armTouched ? t('wk.hitMaxTurnsWithArm') : '') +
-              t('wk.hitMaxTurnsNext'),
-            'max_turns',
-          );
-        }
+        // Throws for every failed result; returns the work only for a clean
+        // one. A function so a test can feed it. → §runResultText
+        finalText = runResultText(m, {
+          taskId: brief.task_id,
+          maxUsd: role.budget.max_usd,
+          maxTurns: role.budget.max_turns,
+          armCalled,
+        });
       }
     }
   } catch (err) {
@@ -1337,7 +1302,8 @@ async function repairReceipt(
       const m = msg as Record<string, unknown>;
       if (m['type'] === 'result') {
         usage = readUsage(m);
-        text = typeof m['result'] === 'string' ? m['result'] : '';
+        // A failed repair returns nothing, not its error sentence as "repaired JSON".
+        text = resultFailure(m) === undefined && typeof m['result'] === 'string' ? m['result'] : '';
       }
     }
   } catch {
@@ -1996,6 +1962,104 @@ function errorMessage(err: unknown): string {
  * │ generic one throws away information.                                    │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+/**
+ * The error a `result` message carries, or `undefined` when it carries none.
+ * → `assistant.ts` at `is_error` · `cli/doctor-auth.ts`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `subtype: 'success'` IS NOT SUCCESS. (14/09)                           │
+ * │                                                                          │
+ * │ The SDK marks a failed call on the result itself in TWO ways:            │
+ * │ `subtype: 'error_*'`, or `subtype: 'success'` with `is_error: true` — and │
+ * │ the second is how a rejected sign-in arrives. Measured: an invalid key   │
+ * │ came back as `success` + `is_error`, its `result` reading "Failed to     │
+ * │ authenticate. API Error: 401 …". `doctor` read only `subtype` and printed │
+ * │ ✓ over it — on six CI machines nobody was signed in on.                  │
+ * │                                                                          │
+ * │ The full rule already lived inline in the Assistant, while `doctor` and  │
+ * │ both worker paths each read half of it. One function, so the next reader │
+ * │ cannot pick the half that looks right.                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Returns the SDK's own sentence when it gave one — `sayError` keeps a real
+ * sentence as it is — else the machine code for `sayError` to translate. ⚠ Never
+ * the word `success`: a failed result with an empty `result` has nothing true
+ * to say about itself.
+ */
+export function resultFailure(m: Record<string, unknown>): string | undefined {
+  const subtype = typeof m['subtype'] === 'string' ? m['subtype'] : '';
+  if (m['is_error'] !== true && !subtype.startsWith('error')) return undefined;
+  return (
+    (typeof m['result'] === 'string' && m['result'].trim()) ||
+    (subtype.startsWith('error') ? subtype : 'unknown error from Claude Code')
+  );
+}
+
+/**
+ * A worker's `result` message → the text of the work, or a `RunError` that says
+ * what went wrong in words. → `runWorker`, `test/run-result.test.ts`
+ *
+ * ⚠ The `result` of a FAILED result is an error sentence, not the work — it
+ * must never reach the receipt parser, where "Failed to authenticate" would
+ * fail as malformed JSON and be reported as the worker's mistake.
+ * → §resultFailure
+ *
+ * Out of `runWorker`'s loop on 14/09 so the three failure branches have tests:
+ * nothing in this repository can hand `runWorker` a fake SDK stream.
+ */
+export function runResultText(
+  m: Record<string, unknown>,
+  ctx: { taskId: string; maxUsd: number; maxTurns: number; armCalled: boolean },
+): string {
+  const failure = resultFailure(m);
+  if (m['subtype'] === 'error_max_budget_usd') {
+    throw new RunError(t('wk.hitBudget', { task: ctx.taskId, ceiling: formatUSD(ctx.maxUsd) }), 'budget');
+  }
+  /**
+   * ┌────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 HITTING THE TURN CAP MUST BE SAID IN HUMAN WORDS. (user caught    │
+   * │ this 08/27)                                                        │
+   * │                                                                    │
+   * │   *"then give me a proper sentence, why would you throw an           │
+   * │    error_max_turns that nobody understands"*                        │
+   * │                                                                    │
+   * │ The budget branch right above has had a decent message for a long  │
+   * │ time; the TURNS branch fell straight through as raw SDK error       │
+   * │ code. That asymmetry has no reason behind it — nobody had written   │
+   * │ it yet.                                                            │
+   * │                                                                    │
+   * │ ⚠⚠ AND THIS MESSAGE MUST STATE AN UNCOMFORTABLE TRUTH, not just     │
+   * │ translate the error code: **the job may have gotten PARTIALLY       │
+   * │ done.** This is debt recorded on 08/26 (`SESSIONS_MEMORY` §5s ⏸): a │
+   * │ run that hit the cap had already managed to call                    │
+   * │ `notion-update-page` before being cut off, but the closing report   │
+   * │ said *"not done"* — a sentence that's **wrong about the outside     │
+   * │ world**.                                                           │
+   * │                                                                    │
+   * │ With a file inside the office, getting it wrong is harmless. With   │
+   * │ an arm, it's the user's own Notion/GitHub — and we have NO way to   │
+   * │ know how far it got. So the correct sentence is *"unclear how far,  │
+   * │ check the log"*, not reassurance. → [[agentco-safe-default-direction]]│
+   * └────────────────────────────────────────────────────────────────────┘
+   */
+  if (m['subtype'] === 'error_max_turns') {
+    throw new RunError(
+      t('wk.hitMaxTurns', { turns: String(ctx.maxTurns) }) +
+        (ctx.armCalled ? t('wk.hitMaxTurnsWithArm') : '') +
+        t('wk.hitMaxTurnsNext'),
+      'max_turns',
+    );
+  }
+  // Every other failed result — a rejected sign-in, a lost connection. The SDK
+  // usually throws right after one, but "usually" is a reading of its
+  // behaviour, not a contract; the result already says it failed.
+  if (failure !== undefined) {
+    const kind = classifyError(failure);
+    throw new RunError(sayError(failure, kind), kind);
+  }
+  return typeof m['result'] === 'string' ? m['result'] : '';
+}
+
 export function sayError(raw: string, kind: FailureKind): string {
   // The SDK already said something meaningful (not a machine code) ⇒ keep it as-is.
   if (!/^error_[a-z_]+$/.test(raw.trim())) return raw;

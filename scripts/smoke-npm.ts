@@ -328,7 +328,19 @@ async function main(): Promise<void> {
   );
   check(doctor.out.includes(en['cli.checkNode']!), 'doctor answers in English', doctor.out);
   const authLine = doctor.out.split(/\r?\n/).find((l) => l.includes(en['cli.checkAuth']!));
-  measured.push(['doctor sign-in', authLine?.includes('✓') ? 'ok (real call)' : 'not signed in (expected on CI)']);
+  check(authLine, 'doctor prints a sign-in line', doctor.out);
+  const signedIn = /^\s+✓/.test(authLine!);
+  check(signedIn === (doctor.code === 0), `the sign-in mark agrees with the exit code (✓ ⇔ 0, got ${doctor.code})`, doctor.out);
+  /**
+   * 🔴 ON CI NOBODY IS SIGNED IN, so ✓ there is a lie — and it was, on 14/09:
+   * `doctor` printed ✓ over a 401 on all six machines, and this script only
+   * reported it as a measurement. It is a check now. → cli/doctor-auth.ts
+   */
+  if (process.env['GITHUB_ACTIONS'] === 'true') {
+    check(!signedIn, 'on CI nobody is signed in, and doctor says so', authLine);
+  }
+  measured.push(['doctor sign-in', signedIn ? 'signed in (real call)' : 'not signed in']);
+  measured.push(['doctor', `${(doctor.ms / 1000).toFixed(1)} s`]);
 
   step('agentco start --no-ui');
   const port = await freePort();

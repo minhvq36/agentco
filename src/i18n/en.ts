@@ -755,6 +755,7 @@ export const en = {
   'cli.checkAuth': 'Claude Code sign-in',
   'cli.checkAuthOk': 'a test call went through',
   'cli.checkAuthHint': 'run `claude` once to sign in',
+  'cli.checkAuthTimeout': 'no answer within {seconds} s — check the network, then run `claude` once to sign in',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'not running — `agentco start`',
   'cli.shortcutNotLinux':

@@ -30,7 +30,7 @@ import { noteRateLimit } from './energy.js';
 import { driftRepair, driftsFrom } from './language-drift.js';
 import { LOOKUP_PROMPT, buildAssistantPrompt } from './prompt.js';
 import { delivered } from './scheduler.js';
-import { addUsage, classifyError, sayError } from './worker.js';
+import { addUsage, classifyError, resultFailure, sayError } from './worker.js';
 import {
   DeliverSchema,
   EMPTY_USAGE,
@@ -3278,10 +3278,10 @@ export class Assistant {
            * the turn cap. `classifyError` is what's supposed to decide, and
            * it can only decide if the error actually REACHES it.
            */
-          const failed =
-            m['is_error'] === true ||
-            (typeof m['subtype'] === 'string' && m['subtype'].startsWith('error'));
-          if (failed) {
+          // The rule itself is shared now — `doctor` got it wrong on its own.
+          // → worker.ts §resultFailure
+          const raw = resultFailure(m);
+          if (raw !== undefined) {
             /**
              * ┌──────────────────────────────────────────────────────────────┐
              * │ 🔴 THIS IS THE SPOT WHERE A USER COULD READ THE RAW TEXT             │
@@ -3301,9 +3301,6 @@ export class Assistant {
              * │ breaks the control flow is a cost nobody sees.                      │
              * └──────────────────────────────────────────────────────────────┘
              */
-            const raw =
-              (typeof m['result'] === 'string' && m['result'].trim()) ||
-              (typeof m['subtype'] === 'string' ? m['subtype'] : 'unknown error from Claude Code');
             const kind = classifyError(raw);
             throw new RunError(sayError(raw, kind), kind, { cause: m });
           }

@@ -17,6 +17,7 @@ import { Company } from '../core/company.js';
 import { adoptInterfaceLocale, osLocaleHints } from '../core/config.js';
 import { companyPaths, ensureCompanyDirs, isCompanyDir, resolveCompanyDir } from '../core/paths.js';
 import { DESKTOP_LAUNCHER_ENV, desktopEntry, desktopFileName } from './desktop-entry.js';
+import { readSignIn, SIGN_IN_PROBE_MS } from './doctor-auth.js';
 import { serve } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
@@ -635,31 +636,39 @@ async function cmdDoctor(): Promise<void> {
   }
 
   // Auth: one real, very cheap call. This is the most common first-time failure.
-  let authOk = false;
-  let authNote = '';
-  try {
-    const { query } = await import('../core/sdk.js');
-    for await (const m of query({
-      prompt: 'Reply with the single word: ok',
-      options: {
-        model: 'haiku',
-        maxTurns: 1,
-        persistSession: false,
-        settingSources: [],
-        allowedTools: [],
-        systemPrompt: 'Reply with one word.',
-      },
-    })) {
-      const msg = m as Record<string, unknown>;
-      if (msg['type'] === 'result') {
-        authOk = msg['subtype'] === 'success';
-        authNote = authOk ? t('cli.checkAuthOk') : String(msg['subtype']);
-      }
-    }
-  } catch (err) {
-    authNote = err instanceof Error ? err.message.slice(0, 90) : t('cli.unknownError');
-  }
-  checks.push([t('cli.checkAuth'), authOk, authNote || t('cli.checkAuthHint')]);
+  // ⚠ ✓ is harder to earn than `subtype: 'success'` → cli/doctor-auth.ts
+  const { query } = await import('../core/sdk.js');
+  const probe = new AbortController();
+  const ceiling = setTimeout(() => probe.abort(), SIGN_IN_PROBE_MS);
+  const signIn = await readSignIn(
+    () =>
+      query({
+        prompt: 'Reply with the single word: ok',
+        options: {
+          model: 'haiku',
+          maxTurns: 1,
+          persistSession: false,
+          settingSources: [],
+          allowedTools: [],
+          systemPrompt: 'Reply with one word.',
+          abortController: probe,
+        },
+      }),
+    () => probe.signal.aborted,
+  );
+  clearTimeout(ceiling);
+  const authOk = signIn.ok;
+  checks.push([
+    t('cli.checkAuth'),
+    authOk,
+    authOk
+      ? t('cli.checkAuthOk')
+      : signIn.timedOut
+        ? t('cli.checkAuthTimeout', { seconds: SIGN_IN_PROBE_MS / 1000 })
+        : signIn.note
+          ? signIn.note.slice(0, 90)
+          : t('cli.checkAuthHint'),
+  ]);
 
   const info = await liveDaemon(companyPaths(companyDir));
   checks.push([

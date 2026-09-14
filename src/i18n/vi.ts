@@ -590,6 +590,7 @@ export const vi: Catalog = {
   'cli.checkAuth': 'Đăng nhập Claude Code',
   'cli.checkAuthOk': 'gọi thử thành công',
   'cli.checkAuthHint': 'chạy `claude` một lần để đăng nhập',
+  'cli.checkAuthTimeout': 'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `claude` một lần để đăng nhập',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
   'cli.shortcutNotLinux':
