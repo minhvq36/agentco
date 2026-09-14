@@ -160,7 +160,21 @@ function check(ok: unknown, what: string, output?: string): void {
   }
   console.log(`  ✗ ${what}`);
   if (output !== undefined) console.log(output.replace(/^/gm, '    │ '));
+  annotate(what, output ?? '');
   throw new SmokeFailure(what);
+}
+
+/**
+ * ⚠ A JOB LOG NEEDS A SIGNED-IN GITHUB ACCOUNT — even on a public repository
+ * the logs endpoint answers 403 — but an annotation does not. So the failing
+ * check and its output also go out as one, and the reason a job is red can be
+ * read by anyone, from the API or the run page, without a token.
+ */
+function annotate(title: string, body: string): void {
+  if (process.env['GITHUB_ACTIONS'] !== 'true') return;
+  const esc = (s: string): string => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  const tail = body.length > 3_000 ? '…' + body.slice(-3_000) : body;
+  console.log(`::error title=${esc(title).replace(/[:,]/g, ' ')}::${esc(tail || title)}`);
 }
 
 function step(title: string): void {
@@ -394,7 +408,10 @@ try {
   await main();
   ok = true;
 } catch (err) {
-  if (!(err instanceof SmokeFailure)) console.error(err);
+  if (!(err instanceof SmokeFailure)) {
+    console.error(err);
+    annotate('the smoke script itself threw', err instanceof Error ? (err.stack ?? err.message) : String(err));
+  }
 } finally {
   if (daemon) killTree(daemon);
   report(ok);
