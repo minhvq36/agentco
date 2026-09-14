@@ -269,6 +269,19 @@ through; `init` → `start` → `/healthz` `0.1.0` → `stop` → port closed.
 `desktop-file-validate` and `gio launch` of the shortcut on Ubuntu. Its first run
 caught a real bug (§6.2, one main category).
 
+**Published 14/09: `@agent-co-app/cli@0.1.1`**, by hand from the maintainer's
+machine — trusted publishing can only be configured for a package that exists.
+Checked straight after from the registry (`SMOKE_FROM_REGISTRY=1`): 232 files,
+`latest` → 0.1.1, the same walk passes on Windows, install 25.7 s.
+
+**From then on the release pipeline publishes** (`release.yml`, on a `v*` tag):
+`smoke` (the three-system run) and `windows` must both pass → `npm` publishes
+through trusted publishing (OIDC, npm ≥ 11.5.1, no token anywhere) → `npm-verify`
+installs what the registry now serves on all three systems. ⚠ A version already
+on npm is skipped, not failed: npm refuses to publish over a version, and the
+tag for a version that went out by hand, or any re-run, would otherwise go red.
+`workflow_dispatch` stays a dry run (`npm publish --dry-run`).
+
 ⚠ `prepack` deletes `dist/` and rebuilds. `tsc` never removes output for a
 source that was deleted, and the working tree held two such files
 (`core/master.js`, `server/ui.js`) — a publish from that tree would have
