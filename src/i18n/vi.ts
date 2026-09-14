@@ -592,6 +592,12 @@ export const vi: Catalog = {
   'cli.checkAuthHint': 'chạy `claude` một lần để đăng nhập',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
+  'cli.shortcutNotLinux':
+    'Hiện chỉ tạo lối tắt trong menu trên Linux. Trên Windows, trình cài đã thêm sẵn một lối tắt vào Start menu.',
+  'cli.shortcutNoCompany': 'Không có công ty nào ở {dir}.\nChạy `agentco init` ở đó trước, rồi `agentco shortcut`.',
+  'cli.shortcutCreated': 'Đã thêm “{name}” vào menu ứng dụng.\n  {file}',
+  'cli.shortcutNodeNote': 'Lối tắt chạy bằng Node {version}. Nếu đổi phiên bản Node, chạy lại `agentco shortcut`.',
+  'cli.launchFailedTitle': 'AgentCo không bật được',
   'cli.help': `agentco — một công ty ảo chạy trên máy bạn
 
 agentco init                   Tạo công ty mới (RỖNG) trong ./company
@@ -611,6 +617,7 @@ agentco run "<việc>"           Giao một việc  (--office <mã> khi có nhi�
 agentco cost [--since 7d]      Xem đã tốn bao nhiêu  (--office <mã> để lọc)
 agentco cost --purge           Dọn các mục "không còn" khỏi sổ (văn phòng đã xoá)
 agentco doctor                 Kiểm tra máy đã sẵn sàng chưa
+agentco shortcut               Thêm công ty này vào menu ứng dụng (Linux)
 
 Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
 

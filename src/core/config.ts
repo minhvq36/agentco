@@ -87,6 +87,70 @@ function applyEnvOverrides(cfg: Record<string, unknown>): void {
   }
 }
 
+/**
+ * The OS's own language hints, in the order they outrank each other.
+ *
+ * ⚠ `Intl` is in the list because the POSIX variables are NOT SET ON WINDOWS.
+ * Reading only `LANG`/`LC_*` would hand every Windows user `en` regardless of
+ * their machine — the "correct on the dev's box" failure class this project
+ * has now walked into five times. `Intl.DateTimeFormat().resolvedOptions()`
+ * reads the real OS setting on Windows, macOS and Linux alike.
+ *
+ * `AGENTCO_LANGUAGE` goes first for the same reason it wins over company.yaml
+ * everywhere else (`applyEnvOverrides`): environment > file.
+ */
+export function osLocaleHints(): (string | undefined)[] {
+  return [
+    process.env['AGENTCO_LANGUAGE'],
+    process.env['LC_ALL'],
+    process.env['LC_MESSAGES'],
+    process.env['LANG'],
+    Intl.DateTimeFormat().resolvedOptions().locale,
+  ];
+}
+
+/**
+ * 🔴 PICK THE INTERFACE LANGUAGE BEFORE THE FIRST SENTENCE IS PRINTED.
+ *
+ * Measured 14/09 on a packed npm install: `company.yaml` said `language: en`,
+ * `agentco start` answered in English — and `status`, `stop` and `doctor`
+ * answered in Vietnamese. The locale was only ever set inside
+ * `loadCompanyConfig`, and those three commands never load the config: they
+ * ask the daemon, or look at a folder. So they printed in the module default,
+ * which is `vi` for the reason given in `i18n/index.ts`. Invisible on the
+ * developer's machine, where both answers are readable; the first thing an
+ * international npm user sees.
+ *
+ * Two cases, with the SAME fallbacks their twins already use:
+ *   · a company exists  ⇒ its `language`, and absent means `vi` — exactly
+ *     `loadCompanyConfig` below, so an existing install is not re-languaged
+ *   · no company yet    ⇒ the OS hints, fallback `en` — exactly `agentco init`,
+ *     because there is nothing to preserve (`doctor` before `init`)
+ *
+ * Only the `language` field is read, so this cannot fail where the command
+ * itself would not: ⚠ a company.yaml that does not parse leaves the
+ * existing-company fallback in place and is reported by whichever command
+ * actually loads it — this function choosing a language is not the place to
+ * announce a broken file.
+ */
+export function adoptInterfaceLocale(dir: string): void {
+  const file = companyPaths(dir).configFile;
+  if (!fs.existsSync(file)) {
+    setLocale(resolveLocale(osLocaleHints(), 'en'));
+    return;
+  }
+  let raw: Record<string, unknown> = {};
+  try {
+    const parsed = readYaml(file);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) raw = parsed as Record<string, unknown>;
+  } catch {
+    /* unparsable — see the ⚠ above; the loading command reports it */
+  }
+  applyEnvOverrides(raw);
+  const language = typeof raw['language'] === 'string' ? raw['language'] : undefined;
+  setLocale(resolveLocale([language], 'vi'));
+}
+
 export function loadCompanyConfig(dir: string, overrides: Record<string, unknown> = {}): CompanyConfig {
   const pp = companyPaths(dir);
   if (!fs.existsSync(pp.configFile)) {

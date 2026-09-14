@@ -757,6 +757,12 @@ export const en = {
   'cli.checkAuthHint': 'run `claude` once to sign in',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'not running — `agentco start`',
+  'cli.shortcutNotLinux':
+    'A menu shortcut is only created on Linux for now. On Windows, the installer already adds one to the Start menu.',
+  'cli.shortcutNoCompany': 'There is no company at {dir}.\nRun `agentco init` there first, then `agentco shortcut`.',
+  'cli.shortcutCreated': 'Added “{name}” to the applications menu.\n  {file}',
+  'cli.shortcutNodeNote': 'It starts with Node {version}. If you switch Node versions, run `agentco shortcut` again.',
+  'cli.launchFailedTitle': 'AgentCo could not start',
   'cli.help': `agentco — a virtual company that runs on your own machine
 
 agentco init                   Create a new (EMPTY) company in ./company
@@ -776,6 +782,7 @@ agentco run "<work>"           Hand over one job  (--office <code> when there ar
 agentco cost [--since 7d]      See what has been spent  (--office <code> to filter)
 agentco cost --purge           Clear "gone" entries from the ledger (deleted offices)
 agentco doctor                 Check whether the machine is ready
+agentco shortcut               Add this company to the applications menu (Linux)
 
 Common options:  --dir <path>  --port <n>  --host <ip>  --no-ui
 

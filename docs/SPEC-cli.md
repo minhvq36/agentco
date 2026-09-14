@@ -231,9 +231,73 @@ Error message principle: every error prints **what happened + what to do next**,
 ## 6. Installation
 
 ```bash
-npx agentco init            # try it out, no install
-npm i -g agentco            # actually install
+npm i -g @agent-co-app/cli    # the command it installs is still `agentco`
+agentco init                  # creates ./company where you are standing
+agentco start
+
+npx @agent-co-app/cli init    # try it without installing
 ```
+
+> ⚠ **Corrected 14/09/2026 — the earlier `npx agentco` / `npm i -g agentco` never
+> existed.** The unscoped name `agentco` belongs to an unrelated npm account
+> (`npm view agentco` → another maintainer, 0.0.1). Any doc telling people to run
+> `npx agentco` would have run a stranger's package. `agent-co` is not an option
+> either: npm refuses a new name that equals an existing one once `-` `.` `_` are
+> removed. The scope `@agent-co-app` matches the GitHub organisation and the
+> domain, so there is one name to hold instead of two — a free `@agent-co-app`
+> beside a package published as `@agent-co` would read as MORE official than
+> ours. The command stays `agentco`, because it comes from `bin`, not from the
+> package name.
+>
+> **The package does not exist until the first `npm publish`.** Creating the org
+> reserves the namespace and nothing else; until then both `npm i -g` and `npx`
+> answer 404. The website must not show the command before that — the same rule
+> as `RELEASE_LIVE`.
+
+**Measured 14/09 on Windows**, packed and installed into an isolated prefix:
+`npm i -g` took **27.6 s** and **~406 MB** — almost all of it the Claude Code
+binary npm pulls in as the SDK's optional dependency (fine under decision ③ of
+`SPEC-packaging §2`: the customer's own npm fetches it from Anthropic's
+registry, we redistribute nothing). `doctor` found it and a test call went
+through; `init` → `start` → `/healthz` `0.1.0` → `stop` → port closed.
+
+⚠ `prepack` deletes `dist/` and rebuilds. `tsc` never removes output for a
+source that was deleted, and the working tree held two such files
+(`core/master.js`, `server/ui.js`) — a publish from that tree would have
+shipped them.
+
+### 🔴 The company follows the directory the command is typed in (settled 14/09)
+
+`resolveCompanyDir` = `--dir` › `AGENTCO_COMPANY_DIR` › `./company`. The
+maintainer's call: *"a CLI normally follows the path"*. Kept as it was — the
+alternative, a fixed `~/AgentCo`, was weighed and not taken.
+
+⚠ **The cost, stated:** `agentco start` typed in a different folder does not
+find yesterday's company. A terminal opens in the home directory by default, so
+the common case works; the `.desktop` shortcut below records the absolute
+folder, so the GUI case does too. The Windows installer is unaffected — its
+`agentco.cmd` sets `AGENTCO_COMPANY_DIR` (`SPEC-packaging §7.5`).
+
+### 6.2 `agentco shortcut` — a menu icon on Linux (14/09)
+
+The npm door leaves a GUI user on Ubuntu opening a terminal every day to start
+an app whose whole interface is a browser tab. `agentco shortcut` writes
+`~/.local/share/applications/agentco-<hash of the folder>.desktop`.
+
+- 🔴 **Absolute paths only** — `process.execPath` and the CLI's real file. A
+  menu entry does not read `~/.bashrc`, so an nvm Node is not on its `PATH` and
+  `Exec=agentco start` would silently do nothing. `TryExec` hides the entry once
+  that Node is gone; running the command again rewrites it.
+- **One file per company**, because companies live wherever `init` was typed.
+- **Two escaping layers** in `Exec` (quoting, then the string rule): a `\` in a
+  path becomes four. Tested by reading the file back with a reader written from
+  the spec, not against a hand-written expected string.
+- 🔴 **A launcher with no terminal must still fail out loud** (`SPEC-packaging
+  §7.4b`). The entry sets `AGENTCO_LAUNCHER=desktop`; `fail()` then also raises a
+  desktop notification through `notify-send`, best-effort.
+- ⛔ **Not macOS.** Finder ignores `.desktop`; a Mac launcher is an `.app`
+  bundle, a separate mechanism, unmeasured. Not Windows either — the installer
+  already adds a Start-menu shortcut.
 
 V2 for people afraid of the terminal: package it as Tauri (~5MB) wrapping this same daemon + UI. Double-click to run. **Nothing gets rewritten** — this is exactly why the UI has to be a web UI from the start.
 

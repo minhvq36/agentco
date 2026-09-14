@@ -7,11 +7,16 @@
  * default.
  */
 
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Company } from '../core/company.js';
+import { adoptInterfaceLocale, osLocaleHints } from '../core/config.js';
 import { companyPaths, ensureCompanyDirs, isCompanyDir, resolveCompanyDir } from '../core/paths.js';
+import { DESKTOP_LAUNCHER_ENV, desktopEntry, desktopFileName } from './desktop-entry.js';
 import { serve } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
@@ -28,6 +33,11 @@ const argv = process.argv.slice(2);
 const command = argv[0] ?? 'help';
 const flags = parseFlags(argv.slice(1));
 const companyDir = resolveCompanyDir(typeof flags['dir'] === 'string' ? flags['dir'] : undefined);
+
+// Before ANY sentence is printed, including an error from `main()` itself.
+// `status`, `stop` and `doctor` never load the config, and they used to answer
+// in the module default. → core/config.ts §adoptInterfaceLocale
+adoptInterfaceLocale(companyDir);
 
 try {
   await main();
@@ -55,6 +65,8 @@ async function main(): Promise<void> {
       return cmdCost();
     case 'doctor':
       return cmdDoctor();
+    case 'shortcut':
+      return cmdShortcut();
     case 'help':
     case '--help':
     case '-h':
@@ -89,11 +101,10 @@ function cmdInit(): void {
    * Fallback `en`, not `vi`: an unmatched tag (`de`, `ar`, `es`) means we ship
    * no catalogue for that language, which is not evidence for Vietnamese.
    *
-   * ⚠ `Intl` is in the list because the POSIX variables are NOT SET ON WINDOWS.
-   * Reading only `LANG`/`LC_*` would hand every Windows user `en` regardless of
-   * their machine — the "correct on the dev's box" failure class this project
-   * has now walked into five times. `Intl.DateTimeFormat().resolvedOptions()`
-   * reads the real OS setting on Windows, macOS and Linux alike.
+   * ⚠ The OS hints are ONE list shared with `adoptInterfaceLocale`, which runs
+   * before every command — including why `Intl` is on it (the POSIX variables
+   * are not set on Windows). → core/config.ts §osLocaleHints. Two copies of
+   * that list is how `doctor` and `init` would come to disagree.
    */
   /**
    * ⚠ `--lang` GOES FIRST, and it is what the installer passes.
@@ -109,13 +120,7 @@ function cmdInit(): void {
    * does not exist. → `docs/CLAUDE.md §Language`
    */
   const locale = resolveLocale(
-    [
-      typeof flags['lang'] === 'string' ? flags['lang'] : undefined,
-      process.env['LC_ALL'],
-      process.env['LC_MESSAGES'],
-      process.env['LANG'],
-      Intl.DateTimeFormat().resolvedOptions().locale,
-    ],
+    [typeof flags['lang'] === 'string' ? flags['lang'] : undefined, ...osLocaleHints()],
     'en',
   );
   /**
@@ -669,6 +674,55 @@ async function cmdDoctor(): Promise<void> {
   if (!authOk) process.exit(EXIT.auth);
 }
 
+/**
+ * `agentco shortcut` — a Linux menu entry that starts THIS company.
+ * → docs/SPEC-cli.md §6.2 · cli/desktop-entry.ts
+ *
+ * ⚠ Refuses a folder that is not a company rather than writing an icon that
+ * would start one nobody created: from the menu there is no terminal to read
+ * the error in, so the mistake is caught here, where there still is one.
+ */
+function cmdShortcut(): void {
+  if (process.platform !== 'linux') {
+    console.log(t('cli.shortcutNotLinux'));
+    return;
+  }
+  if (!isCompanyDir(companyDir)) {
+    console.error(t('cli.shortcutNoCompany', { dir: companyDir }));
+    process.exit(EXIT.config);
+  }
+
+  const company = Company.open(companyDir);
+  const name = company.config.name ? `AgentCo · ${company.config.name}` : 'AgentCo';
+
+  // The REAL file of the running CLI, not `process.argv[1]` — that is usually
+  // npm's symlink in a bin directory, which is exactly the PATH-dependent
+  // thing a menu entry cannot rely on.
+  const cli = fileURLToPath(import.meta.url);
+  const icon = path.resolve(path.dirname(cli), '../../installer/logo.png');
+
+  // XDG says a relative XDG_DATA_HOME is invalid and must be ignored.
+  const xdg = process.env['XDG_DATA_HOME'];
+  const dataHome = xdg && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), '.local', 'share');
+  const dir = path.join(dataHome, 'applications');
+  fs.mkdirSync(dir, { recursive: true });
+
+  const file = path.join(dir, desktopFileName(companyDir));
+  fs.writeFileSync(
+    file,
+    desktopEntry({
+      name,
+      node: process.execPath,
+      cli,
+      companyDir,
+      ...(fs.existsSync(icon) ? { icon } : {}),
+    }),
+    'utf8',
+  );
+  console.log(t('cli.shortcutCreated', { name, file }));
+  console.log(t('cli.shortcutNodeNote', { version: process.versions.node }));
+}
+
 function cmdHelp(): void {
   console.log(t('cli.help'));
 }
@@ -780,10 +834,40 @@ function parseDuration(s: string): number | undefined {
   return m[2] === 'h' ? n * 3_600_000 : m[2] === 'd' ? n * 86_400_000 : n * 60_000;
 }
 
+/**
+ * 🔴 NOBODY IS READING stderr WHEN THE MENU STARTED US. → SPEC-packaging §7.4b
+ *
+ * A `.desktop` entry runs with `Terminal=false`, so a port already taken or a
+ * company folder that moved prints its sentence into nothing — and the person
+ * who clicked sees an icon that did nothing at all, which reads as "the app is
+ * broken". That lesson was paid for once already with the Windows launcher.
+ *
+ * Only when the entry said so (`AGENTCO_LAUNCHER=desktop`): a terminal user
+ * already has the sentence in front of them and does not need a popup too.
+ * ⚠ Best-effort by design — a desktop without `notify-send` loses the popup and
+ * nothing else, because the same message has already gone to stderr above.
+ */
+function notifyDesktop(message: string): void {
+  if (process.platform !== 'linux' || process.env[DESKTOP_LAUNCHER_ENV] !== 'desktop') return;
+  try {
+    const child = spawn('notify-send', [t('cli.launchFailedTitle'), message.slice(0, 300)], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.on('error', () => {
+      /* no notify-send here — stderr already carries the message */
+    });
+    child.unref();
+  } catch {
+    /* same: the popup is the only thing lost */
+  }
+}
+
 function fail(err: unknown): never {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`\n${msg}\n`);
   if (flags['verbose'] && err instanceof Error && err.stack) console.error(err.stack);
+  notifyDesktop(msg);
   const kind = (err as { kind?: string }).kind;
   process.exit(
     kind === 'auth' ? EXIT.auth : kind === 'budget' ? EXIT.budget : kind === 'rate_limit' ? EXIT.rateLimit : EXIT.general,

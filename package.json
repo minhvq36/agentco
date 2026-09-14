@@ -1,8 +1,16 @@
 {
-    "name": "agentco",
+    "name": "@agent-co-app/cli",
     "version": "0.1.0",
     "description": "A virtual company that runs on your machine: Claude acts as director, orchestrating a team of specialist agents running in parallel.",
     "license": "SEE LICENSE IN LICENSE.md",
+    "homepage": "https://agent-co.app",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/minhvq36/agentco.git"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
     "type": "module",
     "engines": {
         "node": ">=22"
@@ -14,6 +22,7 @@
         "dist",
         "templates",
         "web/dist",
+        "installer/logo.png",
         "README.md",
         "LICENSE.md"
     ],
@@ -25,6 +34,7 @@
         "check:language": "node --experimental-strip-types scripts/check-language.ts",
         "build:web": "npm --prefix web run build",
         "build:all": "tsc -p tsconfig.json && npm --prefix web run build",
+        "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && npm run build:all",
         "dev:web": "npm --prefix web run dev"
     },
     "dependencies": {
