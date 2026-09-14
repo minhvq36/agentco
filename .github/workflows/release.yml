@@ -203,9 +203,9 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
-      # ⚠ Trusted publishing needs npm >= 11.5.1. An older npm finds no token
-      # and fails with an auth error that never mentions OIDC.
-      - run: npm install -g npm@^11.5.1
+      # ⚠ `npm stage publish` needs npm >= 11.15.0 (trusted publishing alone
+      # needed 11.5.1). An older npm does not know the command at all.
+      - run: npm install -g npm@^11.15.0
 
       - run: npm ci
       - run: npm --prefix web ci
@@ -232,18 +232,60 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish (dry run)
+      # 🔴 STAGE, NEVER PUBLISH. The trusted publisher on npmjs.com allows
+      # `npm stage publish` and nothing else (settled 14/09): a version goes
+      # public only when a maintainer approves it in the Staged Packages tab,
+      # with a passkey. If anything in this pipeline is ever taken over — an
+      # action pinned by tag, a dependency `npm ci` runs, a leaked key that
+      # pushes a tag — what it built waits in a queue instead of reaching every
+      # `npm i -g`. The three-system smoke run proves the package WORKS; it
+      # says nothing about whether it is honest. That check is a human's.
+      # ⚠ A tag re-run while its version still waits for approval stages it
+      # again: `npm stage list` needs an interactive login, so this job cannot
+      # see the queue. Reject the duplicate on npmjs.com.
+      - name: Stage (dry run)
         if: github.event_name == 'workflow_dispatch'
-        run: npm publish --dry-run
+        run: npm stage publish . --dry-run
 
-      - name: Publish
+      - name: Stage for approval
         if: github.event_name == 'push' && steps.version.outputs.exists == 'false'
-        run: npm publish
+        run: |
+          npm stage publish . --provenance
+          echo "::notice::staged - approve it on npmjs.com: package page, Staged Packages tab"
+
+  # 🔴 A HUMAN IS IN THE LOOP, so the check of what npm serves waits for them.
+  # One idle runner polls; the three-system install starts only once the
+  # version is live. Red after 6 hours means "not approved yet" and is meant to
+  # read as the reminder it is — approve, then run `npm smoke` by hand with
+  # from-registry ticked.
+  npm-approved:
+    needs: npm
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Wait until the version is live on npm
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          spec="$(node -p "require('./package.json').name")@$ver"
+          for i in $(seq 1 350); do
+            got=$(npm view "$spec" version --prefer-online 2>/dev/null || true)
+            if [ "$got" = "$ver" ]; then echo "$spec is live"; exit 0; fi
+            if [ $((i % 30)) -eq 1 ]; then
+              echo "::notice::waiting for $spec - approve it in the Staged Packages tab on npmjs.com"
+            fi
+            sleep 60
+          done
+          echo "::error::$spec was not approved within 6 hours - approve it, then run 'npm smoke' by hand with from-registry ticked"
+          exit 1
 
   # What npm serves, installed and run on all three systems — also on a tag
   # whose version was already out, which is exactly when nobody would look.
   npm-verify:
-    needs: npm
+    needs: npm-approved
     if: github.event_name == 'push'
     permissions:
       contents: read

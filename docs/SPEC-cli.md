@@ -274,13 +274,23 @@ machine — trusted publishing can only be configured for a package that exists.
 Checked straight after from the registry (`SMOKE_FROM_REGISTRY=1`): 232 files,
 `latest` → 0.1.1, the same walk passes on Windows, install 25.7 s.
 
-**From then on the release pipeline publishes** (`release.yml`, on a `v*` tag):
-`smoke` (the three-system run) and `windows` must both pass → `npm` publishes
-through trusted publishing (OIDC, npm ≥ 11.5.1, no token anywhere) → `npm-verify`
-installs what the registry now serves on all three systems. ⚠ A version already
-on npm is skipped, not failed: npm refuses to publish over a version, and the
-tag for a version that went out by hand, or any re-run, would otherwise go red.
-`workflow_dispatch` stays a dry run (`npm publish --dry-run`).
+**From then on the release pipeline STAGES, and a human publishes** (`release.yml`,
+on a `v*` tag): `smoke` (the three-system run) and `windows` must both pass →
+`npm` runs `npm stage publish` through trusted publishing (OIDC, npm ≥ 11.15.0,
+no token anywhere) → the maintainer approves on npmjs.com (Staged Packages tab,
+passkey) → `npm-approved` sees the version live (polls ≤ 6 h) → `npm-verify`
+installs it on all three systems.
+
+🔴 **Stage-only, settled 14/09.** The trusted publisher on npmjs.com is configured
+with `npm stage publish` as its only permission — npm itself marks direct publish
+"not recommended". Direct publish would hand anything that ever takes over this
+pipeline (an action pinned by tag, a dependency `npm ci` runs, a leaked key that
+pushes a tag) a straight line to every `npm i -g`; the smoke run proves the
+package works, not that it is honest. The price is one passkey approval per
+release. ⚠ A version already on npm is skipped, not failed (npm refuses to
+publish over one). ⚠ A tag re-run while its version still waits stages a
+duplicate — `npm stage list` needs an interactive login, so CI cannot see the
+queue; reject it by hand. `workflow_dispatch` stays a dry run.
 
 ⚠ `prepack` deletes `dist/` and rebuilds. `tsc` never removes output for a
 source that was deleted, and the working tree held two such files
