@@ -32,6 +32,7 @@
         "typecheck": "tsc -p tsconfig.json --noEmit",
         "test": "tsc -p tsconfig.json && node --experimental-strip-types scripts/check-language.ts && node --test --experimental-strip-types test/*.test.ts",
         "check:language": "node --experimental-strip-types scripts/check-language.ts",
+        "smoke:npm": "node --experimental-strip-types scripts/smoke-npm.ts",
         "build:web": "npm --prefix web run build",
         "build:all": "tsc -p tsconfig.json && npm --prefix web run build",
         "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && npm run build:all",

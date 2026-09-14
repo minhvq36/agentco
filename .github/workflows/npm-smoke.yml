@@ -1,0 +1,65 @@
+# Install the npm package on all three operating systems and run it.
+# -> scripts/smoke-npm.ts · docs/SPEC-cli.md §6
+#
+# 🔴 IT RUNS ON A TARBALL, NOT ON THE REGISTRY. Before the first publish there
+# is nothing on npm to install, and after it a failure found here would cost a
+# version number that can never be cut again. `npm pack` is the exact file
+# `npm publish` uploads, so this is the test of the package — just earlier.
+#
+# `workflow_call` so the publish job can require it: nothing reaches npm
+# without having run on Linux, macOS and Windows first.
+
+name: npm smoke
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  # Anything that changes what the tarball contains or how it starts. Six jobs
+  # a push is the price; finding out at release time is the alternative.
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+      - src/**
+      - templates/**
+      - web/**
+      - installer/logo.png
+      - scripts/smoke-npm.ts
+      - .github/workflows/npm-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # `engines` says >=22. 22 is what most people have; 24 is the current
+        # LTS a fresh install gets — the one nobody on this project runs.
+        node: ['22', '24']
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }} · node ${{ matrix.node }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm --prefix web ci
+
+      # The two tools a Linux desktop brings: the spec's validator, and the
+      # launcher library that reads a .desktop file the way a click does.
+      - name: Desktop tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends desktop-file-utils libglib2.0-bin
+
+      - run: npm run smoke:npm
+        env:
+          SMOKE_STRICT: '1'
