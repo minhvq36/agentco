@@ -19,7 +19,8 @@ oversight.
 - About 170 MB of free space
 - Claude Code installed and signed in
 
-macOS and Linux run from source; there is no packaged installer for them yet.
+On macOS and Linux — or from any terminal, Windows included — install the same
+version from npm (Node 22 or newer): `npm i -g @agent-co-app/cli`
 
 ### Verifying the download
 

@@ -257,28 +257,38 @@ which is the whole point of §3.5's per-layer manifest.
 migration); PATCH for fixes. 1.0.0 waits for the thing §4 of `SPEC-packaging`
 calls a licence — not for a feeling of completeness.
 
-### The release sequence
+### The release sequence — a tag, then three things only a person can do
+
+CI does everything a machine can check. → `.github/workflows/release.yml` ·
+`SPEC-cli.md §6`
 
 ```powershell
-# 1. bump         package.json → the new number, nothing else
-# 2. prove it     npm test                      # tsc + check-language + suite
-# 3. build        npm run build:all
-# 4. lay it down  node --experimental-strip-types scripts/package.ts
-# 5. installer    makensis /V2 /DTREE=out\AgentCo /DVER=<the same number> installer\agentco.nsi
-# 6. record it    git commit -am "Release v<n>"  &&  git tag -a v<n> -m "v<n>"
-# 7. publish      git push  &&  git push --tags
+npm version 0.1.2 -m "Release v%s"   # package.json + lock, a commit, tag v0.1.2 (clean tree required)
+git push origin main v0.1.2          # the tag starts release.yml
 ```
 
-Then, on GitHub: a release **on that tag**, with `out\AgentCo-win-x64-setup.exe`
-attached.
+**What the tag does with no hands:** `npm test` → build → packaged tree → NSIS
+installer → GitHub Release marked `--latest`, SHA-256 in the notes → the
+website's download URL checked to serve those exact bytes. In parallel the npm
+package is installed and run on Ubuntu, macOS and Windows × Node 22/24; only if
+that AND the Windows job pass is it staged (`npm stage publish`).
 
-⚠ **Do NOT tick "Set as a pre-release".** `releases/latest` skips pre-releases
-entirely, so the website's download button would 404 while the release page
-looks perfectly fine. The one switch that silently breaks the one link.
+**What a person does, every release:**
 
-⚠ Last: flip `RELEASE_LIVE` and `RELEASE_INFO` in `agentco-web/config/site.ts`.
-Until that happens the site shows "coming soon" rather than a link to nothing —
-deliberately, so a half-finished release cannot hand anyone a dead button.
+| | Where | What |
+|---|---|---|
+| 1 | npmjs.com → `@agent-co-app/cli` → **Staged Packages** | **Approve** with the passkey. Nothing is on npm until then; `npm-approved` waits ≤ 6 h, then `npm-verify` installs the live version on all three systems. Stage-only is deliberate — `SPEC-cli §6`. |
+| 2 | `agentco-web/config/site.ts` | `RELEASE_INFO` → new `version` and `sizeMB` (the Windows job's *Checksum* step prints the size), push → Vercel redeploys. Forgetting breaks nothing — the button URL is a constant — but the page shows an old number. |
+| 3 | a real Windows desktop | Download from agent-co.app, install **over** the previous version, click the Start-menu icon. The one path no runner walks: SmartScreen, the NSIS pages, a desktop session. |
+
+⚠ **Changed `release.yml` itself?** Run it by hand first — Actions → Release →
+*Run workflow* on `main`. It builds and tests everything and publishes nothing
+(npm does `--dry-run`). A tag is the wrong place to find a typo: the Release is
+already public by the time a later job fails.
+
+⚠ **Do NOT tick "Set as a pre-release"** if you ever edit a release on GitHub by
+hand. `releases/latest` skips pre-releases entirely, so the website's download
+button would 404 while the release page looks perfectly fine.
 
 ## Writing comments
 
