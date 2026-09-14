@@ -1,4 +1,5 @@
-# Build and publish a Windows release. -> docs/CLAUDE.md §Versions and releasing
+# Build and publish a release: the Windows installer, then the npm package.
+# -> docs/CLAUDE.md §Versions and releasing · docs/SPEC-cli.md §6
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # WHY THIS EXISTS, BEYOND CONVENIENCE
@@ -29,7 +30,8 @@ on:
   # nothing, keep the artifact.
   workflow_dispatch:
 
-# The job creates a GitHub Release; nothing else here needs write access.
+# The Windows job creates a GitHub Release and needs this. The npm jobs set
+# their own, narrower permissions — a job-level block replaces this one.
 permissions:
   contents: write
 
@@ -168,3 +170,83 @@ jobs:
             throw "alias served $got, expected ${{ steps.sum.outputs.sha256 }}"
           }
           "alias serves the same bytes"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE NPM DOOR. -> docs/SPEC-cli.md §6
+  #
+  # 🔴 NOTHING REACHES NPM WITHOUT HAVING RUN ON ALL THREE SYSTEMS FIRST. A
+  # published version number can never be cut again, so the smoke run is a
+  # precondition here, not a report. npm also waits for the Windows job: ONE
+  # NUMBER means both doors carry a version, or neither does.
+  # ───────────────────────────────────────────────────────────────────────────
+  smoke:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/npm-smoke.yml
+
+  npm:
+    needs: [smoke, windows]
+    runs-on: ubuntu-latest
+    # Trusted publishing: npmjs.com trusts THIS workflow's OIDC identity
+    # (minhvq36/agentco, release.yml). No npm token exists anywhere to leak,
+    # and each version gets a provenance statement without asking for one.
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      # ⚠ Trusted publishing needs npm >= 11.5.1. An older npm finds no token
+      # and fails with an auth error that never mentions OIDC.
+      - run: npm install -g npm@^11.5.1
+
+      - run: npm ci
+      - run: npm --prefix web ci
+
+      # 🔴 ALREADY PUBLISHED IS NOT A FAILURE. 0.1.1 went out by hand (trusted
+      # publishing can only be set up for a package that exists), and any tag
+      # re-run meets the same wall: npm refuses to publish over a version.
+      # ⚠ `npm view name@<unknown version>` exits 0 with EMPTY output — only a
+      # missing PACKAGE is an error — so the output is compared, not the code.
+      - name: Settle the version
+        id: version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          name=$(node -p "require('./package.json').name")
+          if [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_NAME#v}" != "$pkg" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json $pkg - bump one of them"
+            exit 1
+          fi
+          got=$(npm view "$name@$pkg" version 2>/dev/null || true)
+          if [ "$got" = "$pkg" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$pkg is already on npm - nothing to publish"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish --dry-run
+
+      - name: Publish
+        if: github.event_name == 'push' && steps.version.outputs.exists == 'false'
+        run: npm publish
+
+  # What npm serves, installed and run on all three systems — also on a tag
+  # whose version was already out, which is exactly when nobody would look.
+  npm-verify:
+    needs: npm
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/npm-smoke.yml
+    with:
+      from-registry: true

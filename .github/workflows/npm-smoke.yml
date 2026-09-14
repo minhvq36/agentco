@@ -13,7 +13,18 @@ name: npm smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      from-registry:
+        description: Install name@version from npm instead of packing the checkout
+        type: boolean
+        default: false
+  # `from-registry: true` is the check AFTER a publish, from release.yml: what
+  # npm serves is what was tested before it went out.
   workflow_call:
+    inputs:
+      from-registry:
+        type: boolean
+        default: false
   # Anything that changes what the tarball contains or how it starts. Six jobs
   # a push is the price; finding out at release time is the alternative.
   push:
@@ -63,3 +74,4 @@ jobs:
       - run: npm run smoke:npm
         env:
           SMOKE_STRICT: '1'
+          SMOKE_FROM_REGISTRY: ${{ inputs.from-registry && '1' || '' }}

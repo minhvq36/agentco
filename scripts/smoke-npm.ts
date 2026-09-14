@@ -242,16 +242,37 @@ function has(cmd: string): boolean {
 // ─────────────────────────────────────────────────────────── the walk
 
 async function main(): Promise<void> {
-  step(`npm pack  (${PKG.name}@${PKG.version})`);
-  const pack = await npm(['pack', '--pack-destination', PACK_DIR], 600_000);
-  check(pack.code === 0, 'npm pack exited 0', pack.out);
-  const tgz = fs.readdirSync(PACK_DIR).filter((f) => f.endsWith('.tgz'));
-  check(tgz.length === 1, `one tarball (${tgz.join(', ') || 'none'})`);
-  const tarball = path.join(PACK_DIR, tgz[0]!);
-  measured.push(['tarball', `${(fs.statSync(tarball).size / 1024).toFixed(0)} KB`]);
+  /**
+   * SMOKE_FROM_REGISTRY=1 — the same walk, but installing `name@version` from
+   * npm instead of a local tarball: the check AFTER a publish that what the
+   * registry serves is what was tested before it.
+   */
+  let source: string;
+  if (process.env['SMOKE_FROM_REGISTRY'] === '1') {
+    source = `${PKG.name}@${PKG.version}`;
+    measured.push(['source', `registry (${source})`]);
+    // Right after a publish the registry can answer before it has the
+    // version — `npm view` of an unknown version exits 0 with empty output.
+    step(`wait for ${source} on the registry`);
+    const seen = await waitFor(async () => {
+      const v = await npm(['view', source, 'version', '--prefer-online'], 60_000);
+      return v.out.trim().split(/\r?\n/).includes(PKG.version) ? true : undefined;
+    }, 300_000);
+    check(seen, `the registry serves ${source}`);
+  } else {
+    step(`npm pack  (${PKG.name}@${PKG.version})`);
+    const pack = await npm(['pack', '--pack-destination', PACK_DIR], 600_000);
+    check(pack.code === 0, 'npm pack exited 0', pack.out);
+    const tgz = fs.readdirSync(PACK_DIR).filter((f) => f.endsWith('.tgz'));
+    check(tgz.length === 1, `one tarball (${tgz.join(', ') || 'none'})`);
+    source = path.join(PACK_DIR, tgz[0]!);
+    measured.push(['tarball', `${(fs.statSync(source).size / 1024).toFixed(0)} KB`]);
+  }
 
-  step('npm i -g <tarball> into an isolated prefix');
-  const install = await npm(['install', '-g', tarball, '--prefix', PREFIX, '--no-audit', '--no-fund'], 900_000);
+  step(`npm i -g ${path.isAbsolute(source) ? path.basename(source) : source} into an isolated prefix`);
+  // `--prefer-online`: a registry install must not be answered from a cache
+  // warmed by an earlier tarball install of the same name and version.
+  const install = await npm(['install', '-g', source, '--prefix', PREFIX, '--no-audit', '--no-fund', '--prefer-online'], 900_000);
   check(install.code === 0, 'npm install exited 0', install.out);
   measured.push(['install', `${(install.ms / 1000).toFixed(1)} s`]);
   measured.push(['installed size', `${(sizeOf(PREFIX) / 1024 / 1024).toFixed(0)} MB`]);
