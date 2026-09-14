@@ -311,6 +311,19 @@ export const CompanyConfigSchema = z.object({
    */
   claude_path: z.string().optional(),
 
+  /**
+   * The update check. → docs/SPEC-packaging.md §3.4, §3.6 · core/update-check.ts
+   *
+   * ⚠ `check: false` MEANS NO REQUEST AT ALL, not "ask but stay quiet": a VPS or
+   * an air-gapped install must be able to go completely silent. The existing
+   * env override does the same without editing yaml: `AGENTCO_UPDATES_CHECK=false`.
+   */
+  updates: z
+    .object({
+      check: z.boolean().default(true),
+    })
+    .prefault({}),
+
   runtime: z
     .object({
       port: z.number().int().default(7317),

@@ -362,7 +362,12 @@ in this section changes.
   wait for exit → flip `current` — the same door the UI's power button uses
   (SPEC-ui §0).
 
-### 3.6 v1: notify, never install — settled 15/09/2026, ⬜ not built
+### 3.6 v1: notify, never install — settled and built 15/09/2026, first shipped in 0.1.3
+
+Code: `core/update-check.ts` (fetch · verify · cache) · `core/update-links.ts`
+(the compiled-in link and command) · `GET /api/update` · the header line ·
+`scripts/release-keys.ts` (made the two keys, once) · `scripts/release-web.ts`
+(every release) · `test/update-check.test.ts`.
 
 What ships first, and what waits. Everything above still holds; this section
 cuts it to the part that can ship without the update-in-place debt.

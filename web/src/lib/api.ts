@@ -26,6 +26,7 @@ import type {
   AgentEvent,
   Locale,
 } from './types';
+import type { UpdateView } from '@core/update-links';
 import { t } from '@i18n';
 
 export class ApiError extends Error {
@@ -75,6 +76,9 @@ const enc = encodeURIComponent;
 
 export const api = {
   company: () => call<CompanyView>('/api/company'),
+
+  /** Whether a newer version exists — answered from the daemon's cache, never the network. */
+  update: () => call<UpdateView>('/api/update'),
 
   /**
    * Browse directories on the machine RUNNING THE DAEMON. A browser cannot hand

@@ -123,6 +123,9 @@ export const en = {
   'header.stopTip': 'Stop the running work. The daemon stays up.',
   'header.shutdown': 'Shut down',
   'header.shutdownConfirm': 'Shut down?\n\nThe company will stop.',
+  'header.update.available': 'Version {version} is available',
+  'header.update.download': 'Download at agent-co.app',
+  'header.update.dismiss': 'Hide until the next version',
   /**
    * Doubles as the tooltip and as the accessible name of the title, so it has
    * to say WHAT IT IS as well as what to do with it — "Rename" alone would

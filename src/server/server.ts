@@ -26,6 +26,7 @@ import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
 import { appVersion } from '../core/version.js';
+import { checkForUpdate, UPDATE_FIRST_CHECK_MS, UPDATE_TICK_MS, updateStatus } from '../core/update-check.js';
 import { buildConfig, catalogForUi, defaultOptions, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
 import { callTool, httpTarget } from '../core/mcp-http.js';
@@ -1166,6 +1167,12 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       return json(res, 200, { arms: company.listArms() });
     }
 
+    // From the cache only — this request never reaches the network.
+    // → core/update-check.ts §updateStatus · SPEC-packaging §3.6
+    if (url.pathname === '/api/update' && method === 'GET') {
+      return json(res, 200, updateStatus({ paths: company.paths, enabled: company.config.updates.check }));
+    }
+
     if (url.pathname === '/api/shutdown' && method === 'POST') {
       json(res, 200, { ok: true });
       setTimeout(() => opts.onShutdown?.(), 100);
@@ -1656,11 +1663,33 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
   refreshTimer.unref();
   tick();
 
+  /**
+   * The update check. → core/update-check.ts · SPEC-packaging §3.4, §3.6
+   *
+   * ⚠ NEVER ON THE STARTUP PATH: the first look waits 30 s, then every 6 h the
+   * daemon asks — and the 24 h cadence lives in the cache, so a restart is not
+   * a request. `unref` for the same reason as the loop above.
+   *
+   * ⚠ The config is read at EACH tick, so `updates.check: false` saved while
+   * the daemon runs takes effect at the next one, with no request in between.
+   */
+  const checkUpdates = (): void => {
+    void checkForUpdate({ paths: company.paths, enabled: company.config.updates.check }).catch((e: unknown) => {
+      process.emitWarning(`update check broke: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+  const firstUpdateCheck = setTimeout(checkUpdates, UPDATE_FIRST_CHECK_MS);
+  firstUpdateCheck.unref();
+  const updateTimer = setInterval(checkUpdates, UPDATE_TICK_MS);
+  updateTimer.unref();
+
   return {
     port,
     url: `http://${host}:${port}`,
     async close() {
       clearInterval(refreshTimer);
+      clearTimeout(firstUpdateCheck);
+      clearInterval(updateTimer);
       unsubscribe();
       for (const res of sseClients) res.end();
       sseClients.clear();

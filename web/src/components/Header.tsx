@@ -1,11 +1,13 @@
-import { useRef, useState } from 'react';
-import { Home, Network, Pencil, Plus, Power, Square } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Home, Network, Pencil, Plus, Power, Square, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Select, Tip } from '@/components/ui/misc';
 import { actions, useApp } from '@/lib/store';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatDate, formatTime, formatUSD, formatWeekday } from '@i18n/fmt';
+import { api } from '@/lib/api';
+import { NPM_UPDATE_COMMAND, WEBSITE_URL, type UpdateView } from '@core/update-links';
 
 /**
  * ⚠ These tables hold MESSAGE KEYS, not text. They are module-level, so a
@@ -415,6 +417,87 @@ function CompanyName() {
   );
 }
 
+/**
+ * "Version X is available". → docs/SPEC-packaging.md §3.6 · core/update-check.ts
+ *
+ * 🔴 THE LINK AND THE COMMAND COME FROM `@core/update-links`, compiled in —
+ * `/api/update` contributes a version number and nothing else. A forged
+ * manifest can therefore make this line show a wrong number; it cannot make it
+ * point anywhere.
+ *
+ * ⚠ Dismissal is PER VERSION: hiding 0.1.3 does not hide 0.1.4. Stored in the
+ * browser, wrapped, because a private window throws on `localStorage`.
+ *
+ * ⚠ Silent when anything is off — no daemon answer, checking disabled, nothing
+ * newer. This line is a courtesy, never an error state.
+ */
+const UPDATE_DISMISSED_KEY = 'agentco:update-dismissed';
+
+function UpdateNotice() {
+  const [view, setView] = useState<UpdateView | null>(null);
+  const [dismissed, setDismissed] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(UPDATE_DISMISSED_KEY);
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    let alive = true;
+    const load = (): void => {
+      api
+        .update()
+        .then((v) => {
+          if (alive) setView(v);
+        })
+        .catch(() => {
+          /* no answer is no banner */
+        });
+    };
+    load();
+    // The daemon refreshes its cache on its own schedule; this only re-reads it.
+    const timer = setInterval(load, 60 * 60 * 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  if (!view?.available || !view.latest || dismissed === view.latest) return null;
+  const latest = view.latest;
+
+  return (
+    <span className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-2.5 py-1 text-[12.5px]">
+      <span>{t('header.update.available', { version: latest })}</span>
+      {view.kind === 'packaged' ? (
+        <a href={WEBSITE_URL} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">
+          {t('header.update.download')}
+        </a>
+      ) : (
+        <code className="select-all rounded bg-black/20 px-1.5 font-mono text-[12px]">{NPM_UPDATE_COMMAND}</code>
+      )}
+      <Tip label={t('header.update.dismiss')}>
+        <button
+          type="button"
+          aria-label={t('header.update.dismiss')}
+          className="text-muted hover:text-ink"
+          onClick={() => {
+            try {
+              localStorage.setItem(UPDATE_DISMISSED_KEY, latest);
+            } catch {
+              /* storage blocked — it stays hidden for this page only */
+            }
+            setDismissed(latest);
+          }}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </Tip>
+    </span>
+  );
+}
+
 export function Header({
   onNewOffice,
   onRenameOffice,
@@ -473,6 +556,8 @@ export function Header({
       )}
 
       <div className="flex-1" />
+
+      <UpdateNotice />
 
       <EnergyChip />
 

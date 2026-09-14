@@ -278,7 +278,7 @@ that AND the Windows job pass is it staged (`npm stage publish`).
 | | Where | What |
 |---|---|---|
 | 1 | npmjs.com → `@agent-co-app/cli` → **Staged Packages** | **Approve** with the passkey. Nothing is on npm until then; `npm-approved` waits ≤ 6 h, then `npm-verify` installs the live version on all three systems. Stage-only is deliberate — `SPEC-cli §6`. |
-| 2 | `agentco-web/config/site.ts` | `RELEASE_INFO` → new `version` and `sizeMB` (the Windows job's *Checksum* step prints the size), push → Vercel redeploys. Forgetting breaks nothing — the button URL is a constant — but the page shows an old number. |
+| 2 | this machine → `agentco-web` | `node --experimental-strip-types scripts/release-web.ts` — refuses unless GitHub's `latest` release AND npm's `latest` are this version; then writes `RELEASE_INFO` and a `public/releases/stable.json` signed with `~/.agentco-release/working.key`, verified against the keys compiled into the app. Commit and push `agentco-web` → Cloudflare Pages redeploys. Forgetting breaks no download, but the page shows an old number and **installed copies are never told** a new version exists. → `SPEC-packaging §3.6` |
 | 3 | a real Windows desktop | Download from agent-co.app, install **over** the previous version, click the Start-menu icon. The one path no runner walks: SmartScreen, the NSIS pages, a desktop session. |
 
 ⚠ **Changed `release.yml` itself?** Run it by hand first — Actions → Release →
