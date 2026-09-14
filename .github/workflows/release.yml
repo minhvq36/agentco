@@ -136,7 +136,9 @@ jobs:
       # everything above is proven, nothing outside this repository moved.
       - name: Keep the installer (dry run)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        # v6: the first major on node24. v4 and v5 are node20, which GitHub
+        # deprecated and now forces onto node24 with a warning on every run.
+        uses: actions/upload-artifact@v6
         with:
           name: AgentCo-win-x64-setup
           path: out/AgentCo-win-x64-setup.exe
