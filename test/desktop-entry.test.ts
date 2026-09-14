@@ -103,6 +103,22 @@ test('one file per company: stable for a folder, different for another', () => {
   assert.match(desktopFileName('/home/a/one'), /^agentco-[0-9a-f]{8}\.desktop$/);
 });
 
+/**
+ * ⚠ Caught by `desktop-file-validate` on the first Ubuntu CI run (14/09), as a
+ * "hint" — `Office;Utility;` is two main categories and a menu lists the entry
+ * under each, so the icon appears twice. That validator only runs on Linux CI;
+ * this keeps the rule on every machine that runs `npm test`.
+ * Main categories: Desktop Menu Specification, Appendix A.
+ */
+test('exactly one main category, or the icon is listed twice in the menu', () => {
+  const MAIN = new Set([
+    'AudioVideo', 'Audio', 'Video', 'Development', 'Education', 'Game',
+    'Graphics', 'Network', 'Office', 'Science', 'Settings', 'System', 'Utility',
+  ]);
+  const categories = (field(desktopEntry(HOSTILE), 'Categories') ?? '').split(';').filter(Boolean);
+  assert.equal(categories.filter((c) => MAIN.has(c)).length, 1, `Categories=${categories.join(';')}`);
+});
+
 test('every Exec argument is quoted, including the ones that would not need it', () => {
   assert.equal(execArg('plain'), '"plain"');
 });

@@ -292,6 +292,9 @@ an app whose whole interface is a browser tab. `agentco shortcut` writes
 - **Two escaping layers** in `Exec` (quoting, then the string rule): a `\` in a
   path becomes four. Tested by reading the file back with a reader written from
   the spec, not against a hand-written expected string.
+- ⚠ **One main category** (`Categories=Office;`). `Office;Utility;` listed the
+  icon twice; `desktop-file-validate` flagged it on the first Ubuntu CI run
+  (14/09), a unit test now holds the rule everywhere.
 - 🔴 **A launcher with no terminal must still fail out loud** (`SPEC-packaging
   §7.4b`). The entry sets `AGENTCO_LAUNCHER=desktop`; `fail()` then also raises a
   desktop notification through `notify-send`, best-effort.

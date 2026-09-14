@@ -105,7 +105,10 @@ export function desktopEntry(o: DesktopEntryInput): string {
     // `start` never exits while the company runs, so a startup-notify spinner
     // would spin until the desktop gives up on it.
     'StartupNotify=false',
-    'Categories=Office;Utility;',
+    // ⚠ ONE main category. `Office;Utility;` was two, and a menu files the
+    // entry under each — the icon showed up twice. `desktop-file-validate`
+    // caught it on the first CI run (14/09); the unit tests could not.
+    'Categories=Office;',
   ];
   return lines.join('\n') + '\n';
 }
