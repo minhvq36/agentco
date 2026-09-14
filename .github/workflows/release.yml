@@ -243,9 +243,17 @@ jobs:
       # ⚠ A tag re-run while its version still waits for approval stages it
       # again: `npm stage list` needs an interactive login, so this job cannot
       # see the queue. Reject the duplicate on npmjs.com.
+      # ⚠ A DRY RUN STILL ASKS THE REGISTRY, and refuses a version that is
+      # already out. Measured on the first manual run, 14/09: "You cannot
+      # publish over the previously published versions: 0.1.1". So it stages a
+      # throwaway prerelease of the same code, on this runner only — the
+      # command, this npm and the tarball are exercised; the real number is not.
       - name: Stage (dry run)
         if: github.event_name == 'workflow_dispatch'
-        run: npm stage publish . --dry-run
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          npm version "$ver-dryrun.${{ github.run_id }}" --no-git-tag-version
+          npm stage publish . --dry-run --tag dryrun
 
       - name: Stage for approval
         if: github.event_name == 'push' && steps.version.outputs.exists == 'false'
