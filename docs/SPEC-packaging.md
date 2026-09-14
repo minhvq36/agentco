@@ -362,6 +362,63 @@ in this section changes.
   wait for exit → flip `current` — the same door the UI's power button uses
   (SPEC-ui §0).
 
+### 3.6 v1: notify, never install — settled 15/09/2026, ⬜ not built
+
+What ships first, and what waits. Everything above still holds; this section
+cuts it to the part that can ship without the update-in-place debt.
+
+- **Notify only.** The daemon learns that a newer version exists and the UI says
+  so. Nothing is downloaded, nothing is replaced. Applying an update — §3.5's
+  layers, flipping `current` while the daemon runs (`SESSIONS_MEMORY §4.2 #5`) —
+  is v2.
+- 🔴 **THE WORDS AND THE LINK IN THE BANNER ARE COMPILED INTO THE APP, NEVER READ
+  FROM THE MANIFEST.** A forged manifest can then lie about exactly one thing, a
+  version number, and send nobody anywhere. The banner says *"version X is
+  available"* and points at a constant: `https://agent-co.app` for the Windows
+  installer, `npm i -g @agent-co-app/cli@latest` for an npm install.
+  `notes_url` and `artifacts` are published for v2 and ignored by v1.
+- 🔴 **The signature is verified in v1 anyway** (§3.2), before a field is read.
+  The protocol is the one thing an installed copy can never be taught later: a
+  v1 that reads unsigned fields reads them for as long as it stays installed.
+- **The signing key lives on the maintainer's machine, never in CI** — the same
+  reasoning as npm stage-only (`SPEC-cli §6`): a taken-over pipeline must not be
+  able to sign. `scripts/release-web.ts <version>`, run by hand after the npm
+  approval, writes `RELEASE_INFO`, `public/releases/stable.json` and
+  `stable.json.sig` into the `agentco-web` checkout; the maintainer pushes. The
+  manual steps per release stay three: push the tag, approve on npm, run the
+  script and push the website.
+- 🔴 **TWO RELEASE KEYS, BOTH COMPILED IN (settled 15/09/2026).** A lost private
+  key would silence the channel for every installed copy — they verify against
+  compiled public keys and reject everything else, which is correct and
+  unrecoverable. So the app carries two public keys and accepts a manifest
+  signed by either: the **working key**, on the maintainer's machine, and the
+  **backup key**, kept offline (paper or a password manager), used only if the
+  working key is lost. Both are the project's keys, held by the maintainer —
+  a customer never sees, stores or remembers any of them. ⚠ Losing one costs
+  nothing a customer can see; losing both costs the banner, not the app (a
+  customer can still download from the website). ⚠ Separate from the licence
+  key (§4): different job, different blast radius.
+- **Cadence and the switch are §3.4's:** at most once per 24 h, cached in
+  `company/.state/update-check.json` (checked at, latest seen), never on the
+  startup path; `updates.check: false` means no request at all.
+- **The install kind decides the instruction, read from structure, not guessed:**
+  a packaged install is `<root>/app/<version>/…` beside `<root>/runtime/` (§2).
+  Anything else is an npm or source install.
+- **Surface:** `GET /api/update` answers from the cache — `{ current, latest?,
+  kind }`. The header shows one dismissible line when `latest > current`;
+  dismissal is per version.
+- **Failure is silence.** Unreachable, 404, malformed JSON: no banner, logged
+  once. **A bad signature: no banner, logged as an attack** (§3.2), never as "an
+  update we could not check".
+- **Manifest v1:** `{ "version", "released_at" }` required; every other field
+  optional and unread.
+- **Tests that must exist:** a well-formed manifest with a bad signature shows
+  nothing and its fields are never parsed · `updates.check: false` makes zero
+  fetches · the version comparison · install-kind detection on both layouts.
+
+⚠ The website's `/privacy` already says the app asks whether a newer version
+exists. Until this ships, that sentence is ahead of the code.
+
 ---
 
 ## 4. The licence
