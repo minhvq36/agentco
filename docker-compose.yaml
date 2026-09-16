@@ -50,8 +50,13 @@ services:
     # fails to publish the port and the container never starts, so the daemon
     # that knows how to move is never asked. Measured 17/09: this is exactly
     # what happens when you already run agentco on the same machine.
+    # ⚠ THE SAME NUMBER ON BOTH SIDES, on purpose. Docker's usual shape is
+    # `host:container` with a fixed container port, and `7319->7317` in
+    # `docker ps` then asks the reader to translate every time. One number is
+    # one fewer thing to wonder about — the same instinct as
+    # `docs/CLAUDE.md §ONE NUMBER`.
     ports:
-      - "127.0.0.1:${AGENTCO_PORT:-7317}:7317"
+      - "127.0.0.1:${AGENTCO_PORT:-7317}:${AGENTCO_PORT:-7317}"
 
     environment:
       # ┌──────────────────────────────────────────────────────────────────────
@@ -74,11 +79,41 @@ services:
       # │ mismatch produces `redirect_uri_mismatch`, whose message never
       # │ mentions the port.
       # └──────────────────────────────────────────────────────────────────────
+      # ⚠ THE CONFIG VALUE, NOT A `--port` FLAG. `cli/index.ts §433` writes a
+      # moved port back to company.yaml only when it came from the config —
+      # "`--port` is for this run and must not edit the file". Passing the flag
+      # would leave company.yaml claiming 7317 while the daemon answers
+      # elsewhere, which is exactly the drift the port self-healing was built to
+      # prevent. `AGENTCO_RUNTIME_PORT` sets the config itself, through the same
+      # env-over-file mechanism as the line below. -> core/config.ts
+      AGENTCO_RUNTIME_PORT: "${AGENTCO_PORT:-7317}"
+
       AGENTCO_RUNTIME_PUBLIC_URL: "http://127.0.0.1:${AGENTCO_PORT:-7317}"
 
-      # Your Anthropic key, if you use one. A Claude subscription works instead
-      # and is the usual choice — see docker/README.md; the credential then
-      # lives in the volume and this line is not needed.
+      # ┌──────────────────────────────────────────────────────────────────────
+      # │ SIGNING IN TO CLAUDE — MINTED BEFORE `up`, NOT INSIDE THE CONTAINER.
+      # │
+      # │ A subscription is the usual choice, and `claude setup-token` hands you
+      # │ a long-lived token that is consumed as an ENVIRONMENT VARIABLE:
+      # │
+      # │     Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>
+      # │
+      # │ So it has the same shape as an API key — one string — and it belongs
+      # │ in a `.env` beside this file. Run `claude setup-token` wherever you
+      # │ already have Claude Code (your own machine is fine), paste the result,
+      # │ and `docker compose up -d` is genuinely the only command: the
+      # │ container is ready to chat on its first start.
+      # │
+      # │ ⚠ Minting it INSIDE the container also works but needs a REAL
+      # │ terminal — `docker compose exec -it` cannot allocate one from a
+      # │ non-interactive shell, and `setup-token` is a raw-mode prompt that
+      # │ then waits forever, printing nothing. Measured 17/09, the hard way.
+      # │
+      # │ ⚠ Set ONE of these two. Both together is not an error, but it makes
+      # │ "which credential is this bill on" a question nobody can answer by
+      # │ reading the file.
+      # └──────────────────────────────────────────────────────────────────────
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
       # ⚠ OFF, BECAUSE IN HERE IT WOULD LIE. The update button runs
@@ -109,7 +144,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:7317/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+        - "fetch('http://127.0.0.1:${AGENTCO_PORT:-7317}/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
       interval: 30s
       timeout: 5s
       start_period: 40s

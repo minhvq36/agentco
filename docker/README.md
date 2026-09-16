@@ -78,24 +78,66 @@ agentco on the same machine.
 > never asked. The symptom is `Ports are not available`, at `up`, before any
 > agentco log line appears.
 
-## Signing in to Claude
+## Signing in to Claude — do this BEFORE `up`
 
-Two ways, and the second is the usual one.
+**A Claude subscription** is the usual choice. Mint a long-lived token wherever
+you already have Claude Code — your own laptop is fine, it does not have to be
+the server:
 
-**An API key** — put it in `.env`:
+```bash
+claude setup-token
+```
+
+It prints the token once and says so. Put it in a `.env` beside
+`docker-compose.yaml`:
+
+```bash
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+```
+
+**Or an API key**, if that is what you use:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-**A Claude subscription** — sign in once, inside the container:
+Set **one** of the two. Then `docker compose up -d` is the whole thing — the
+container can chat on its first start, with no step inside it.
+
+> ⚠ You *can* mint it inside the container instead, but only from a **real
+> terminal window**:
+>
+> ```bash
+> docker compose exec -it agentco claude setup-token
+> ```
+>
+> `setup-token` is a raw-mode prompt. Run it anywhere that cannot allocate a
+> terminal — a script, a CI job, an editor's shell pane — and it waits forever
+> while printing nothing at all. There is no error to read.
+
+> ⚠ **Changed `.env` and nothing happened?** `docker compose restart` restarts
+> the process with the environment it already had. Only `docker compose up -d`
+> recreates the container and reads `.env` again. The symptom is an old token
+> still failing after you have clearly replaced it, which sends people looking
+> at the token — the one thing that is now correct.
+
+### Checking what the container thinks
 
 ```bash
-docker compose exec -it agentco claude setup-token
+docker compose exec agentco claude auth status
 ```
 
-`HOME` lives in the volume, so the credential survives `down` and `up`. You do
-not need `ANTHROPIC_API_KEY` at all in this case.
+```json
+{ "loggedIn": true, "authMethod": "oauth_token", "apiProvider": "firstParty" }
+```
+
+⚠ `loggedIn: true` means **a credential is present**, not that it works — a
+token of pure nonsense produces exactly the output above. To know whether it
+actually works, ask something that uses it:
+
+```bash
+docker compose exec agentco agentco doctor
+```
 
 ## Your data
 
@@ -104,11 +146,14 @@ One named volume, `agentco-data`, holds two things that both matter:
 | | |
 |---|---|
 | `/data/company` | the company itself — offices, plans, artifacts, connections |
-| `/data/home` | `HOME`, and therefore `~/.claude`: the Claude credential **and the conversation records** |
+| `/data/home` | `HOME`, and therefore `~/.claude/projects/` — **the conversation records** |
 
-The second is easy to underestimate. Those records are what `resume:` reads; if
-they vanish, `/clear` fails permanently for every office that had one. They are
-not inside the company directory, which is why the volume covers `HOME` too.
+The second is easy to underestimate, and it is not about the credential: that
+arrives in an environment variable and is not stored here at all. It is about
+the records `resume:` reads. If they vanish, `/clear` fails **permanently** for
+every office that had one, with a message about keeping the conversation as-is
+that reads like a choice. They live outside the company directory, which is the
+whole reason the volume covers `HOME` too.
 
 **No host path appears anywhere**, on purpose: the directory a container sees is
 not the directory you typed, and agentco's write-outside-scope guard matches on

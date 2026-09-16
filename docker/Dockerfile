@@ -82,5 +82,9 @@ ENV HOME=/data/home \
     AGENTCO_COMPANY_DIR=/data/company \
     AGENTCO_HEADLESS=1
 
-EXPOSE 7317
+# ⚠ NO `EXPOSE`. The port is chosen at RUN time (`AGENTCO_RUNTIME_PORT` in
+# docker-compose.yaml), so a number baked in here could only ever be a stale
+# second copy — and `EXPOSE` opens nothing anyway, it is metadata. The compose
+# file's `ports:` is what actually publishes, and it and the daemon read the
+# same variable, so they cannot disagree.
 ENTRYPOINT ["/usr/local/bin/agentco-entrypoint"]

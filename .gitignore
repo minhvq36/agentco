@@ -22,6 +22,8 @@ bench/results/
 
 .env
 .env.*
+# ...but the template MUST ship: it is the only place that says a token has to be
+# pasted in by hand, and the person who needs it has no other way to find out.
 !.env.example
 *.pem
 *.key
