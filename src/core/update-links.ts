@@ -16,8 +16,31 @@ export const MANIFEST_URL = 'https://agent-co.app/releases/stable.json';
 /** Where a packaged (Windows installer) user goes for the new version. */
 export const WEBSITE_URL = 'https://agent-co.app';
 
-/** What an npm user runs. The package name is the one in `package.json`. */
-export const NPM_UPDATE_COMMAND = 'npm i -g @agent-co-app/cli@latest';
+/**
+ * The installer itself, one click from the banner.
+ *
+ * 🔴 OUR DOMAIN, NEVER GITHUB'S. `agent-co.app/_redirects` decides what this
+ * resolves to today; baking the vendor URL into every installed copy would be a
+ * promise we could not move. → SPEC-packaging §3.6
+ *
+ * It used to be `WEBSITE_URL`, which left the person who clicked on the home
+ * page to find the download button themselves — four steps where two will do.
+ * The npm door got its one command in 0.1.4; this is the nearest thing the
+ * installer door has until the update button exists.
+ */
+export const DOWNLOAD_URL = `${WEBSITE_URL}/download`;
+
+/**
+ * What an npm user runs.
+ *
+ * 🔴 IT WAS `npm i -g @agent-co-app/cli@latest` UNTIL 0.1.5, which was still
+ * true and no longer the answer. `agentco update` shipped in 0.1.4 — it stops
+ * the daemon, hands the install to a process outside the package so npm is not
+ * replacing the code that is running, and starts the company again. The banner
+ * is the ONLY place that tells anyone the command exists, and it went on
+ * naming the raw npm line: a feature built and then not wired to its own door.
+ */
+export const NPM_UPDATE_COMMAND = 'agentco update';
 
 /**
  * `packaged` — the Windows installer's tree (`app/<version>/` beside

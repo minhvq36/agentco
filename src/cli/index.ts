@@ -120,6 +120,11 @@ async function main(): Promise<void> {
       return cmdUpdate();
     case 'shortcut':
       return cmdShortcut();
+    case 'version':
+    case '--version':
+    case '-v':
+    case '-V':
+      return cmdVersion();
     case 'help':
     case '--help':
     case '-h':
@@ -1032,6 +1037,47 @@ function cmdShortcut(): void {
   );
   console.log(t('cli.shortcutCreated', { name, file }));
   console.log(t('cli.shortcutNodeNote', { version: process.versions.node }));
+}
+
+/**
+ * `agentco version` — and `--version`, and `-v`, because people type all three.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 UNTIL 0.1.5 THERE WAS NO WAY TO ASK. `agentco --version` answered      │
+ * │ "There is no command '--version'" and exited 2 — the one convention every │
+ * │ command-line tool keeps, and this one failed it.                          │
+ * │                                                                          │
+ * │ The number was never missing: `appVersion()` already wrote it into        │
+ * │ `daemon.json` and compared it against the update channel. There was       │
+ * │ simply no door. So people did what you do without a door: inferred it     │
+ * │ from which files happened to exist — and absence is not a signal.         │
+ * │                                                                          │
+ * │ It matters most right after `agentco update`, which otherwise gives no    │
+ * │ way at all to see whether it worked.                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ THE PATH IS PRINTED, and it is the useful half. "Which version" is one
+ * question; "which COPY of it am I running" is the other, and on a machine with
+ * nvm, volta or a second prefix they have different answers. That is the same
+ * confusion `globalPrefixFor` exists to stop the updater walking into.
+ */
+function cmdVersion(): void {
+  console.log(`agentco ${appVersion()}`);
+  const kind = installKind();
+  console.log(t(kind === 'packaged' ? 'cli.versionPackaged' : 'cli.versionNpm'));
+  console.log(`  ${packageRoot()}`);
+  /*
+   * ⚠ HOW TO REMOVE IT, HERE, RATHER THAN AS AN `agentco uninstall`. A command
+   * that removes itself can fail halfway and take away the only thing that
+   * could have fixed it — for a saving of a few keystrokes, once. A line that
+   * names the right incantation for the door you actually came through costs
+   * nothing and cannot break. → the decision, SESSIONS_MEMORY §4.4
+   */
+  console.log(
+    t(kind === 'packaged' ? 'cli.versionRemovePackaged' : 'cli.versionRemoveNpm', {
+      package: PACKAGE_NAME,
+    }),
+  );
 }
 
 function cmdHelp(): void {

@@ -7,7 +7,7 @@ import { actions, useApp } from '@/lib/store';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatDate, formatTime, formatUSD, formatWeekday } from '@i18n/fmt';
 import { api } from '@/lib/api';
-import { NPM_UPDATE_COMMAND, WEBSITE_URL, type UpdateView } from '@core/update-links';
+import { DOWNLOAD_URL, NPM_UPDATE_COMMAND, type UpdateView } from '@core/update-links';
 
 /**
  * ⚠ These tables hold MESSAGE KEYS, not text. They are module-level, so a
@@ -477,7 +477,7 @@ function UpdateNotice() {
     <span className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-2.5 py-1 text-[12.5px]">
       <span>{t('header.update.available', { version: latest })}</span>
       {view.kind === 'packaged' ? (
-        <a href={WEBSITE_URL} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">
+        <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">
           {t('header.update.download')}
         </a>
       ) : (

@@ -600,6 +600,12 @@ export const vi: Catalog = {
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
   'cli.createdShortcutHint': '  Muốn nó nằm trong menu ứng dụng? Chạy `agentco shortcut` ở đây.',
+  'cli.versionNpm': '  cài bằng npm',
+  'cli.versionPackaged': '  cài bằng bản cài đặt',
+  'cli.versionRemoveNpm':
+    '  gỡ bằng:  npm uninstall -g {package}    (thư mục công ty ở lại — đó là dữ liệu của bạn)',
+  'cli.versionRemovePackaged':
+    '  gỡ ở:     Settings → Apps → AgentCo    (thư mục công ty ở lại — đó là dữ liệu của bạn)',
   'cli.updatePackaged':
     'Bản này đến từ trình cài, không phải từ npm, nên `agentco update` không phải cửa của nó.\nTải bản mới ở {url} rồi cài đè lên bản này — thư mục nó đề nghị chính là thư mục bạn đang dùng.',
   'cli.updateAlready': 'Đang ở {version}, và đó là bản mới nhất.',
@@ -645,6 +651,7 @@ agentco secret rm <TÊN>        Xoá một chìa
 agentco run "<việc>"           Giao một việc  (--office <mã> khi có nhiều văn phòng)
 agentco cost [--since 7d]      Xem đã tốn bao nhiêu  (--office <mã> để lọc)
 agentco cost --purge           Dọn các mục "không còn" khỏi sổ (văn phòng đã xoá)
+agentco version                Đang chạy bản nào, và bản nằm ở đâu
 agentco doctor                 Kiểm tra máy đã sẵn sàng chưa
 agentco update [--to <bản>]    Cài bản mới nhất rồi bật lại  (cho bản cài bằng npm)
 agentco shortcut               Thêm công ty này vào menu ứng dụng (Linux)

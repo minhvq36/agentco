@@ -783,6 +783,15 @@ export const en = {
    * command having done nothing at all.
    */
   'cli.createdShortcutHint': '  Want it in the applications menu? Run `agentco shortcut` here.',
+  'cli.versionNpm': '  installed with npm',
+  'cli.versionPackaged': '  installed from the app installer',
+  // ⚠ Both say the company folder survives. Somebody removing a program does
+  // not expect to be asked about their documents afterwards, and would not
+  // forgive finding out later that nobody asked.
+  'cli.versionRemoveNpm':
+    '  remove with:  npm uninstall -g {package}    (the company folder stays — it is your data)',
+  'cli.versionRemovePackaged':
+    '  remove from:  Settings → Apps → AgentCo    (the company folder stays — it is your data)',
   'cli.updatePackaged':
     'This copy came from the installer, not from npm, so `agentco update` is not its door.\nGet the new version at {url} and install it over this one — the folder it proposes is the one you are in.',
   'cli.updateAlready': 'Already on {version}, which is the newest there is.',
@@ -848,6 +857,7 @@ agentco secret rm <NAME>       Delete a key
 agentco run "<work>"           Hand over one job  (--office <code> when there are several)
 agentco cost [--since 7d]      See what has been spent  (--office <code> to filter)
 agentco cost --purge           Clear "gone" entries from the ledger (deleted offices)
+agentco version                Which version this is, and which copy you are running
 agentco doctor                 Check whether the machine is ready
 agentco update [--to <ver>]    Install the newest version and start again  (npm installs)
 agentco shortcut               Add this company to the applications menu (Linux)
