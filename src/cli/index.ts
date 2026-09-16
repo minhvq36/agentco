@@ -338,24 +338,49 @@ async function cmdStart(): Promise<void> {
         // not let npm start until the request that spawned it has finished
         // dying. → cli/update-run.ts
         onHandOffUpdate: () => handOffUpdate('latest', true, `${daemon?.url ?? ''}/healthz`),
+        /**
+         * ⚠ CLOSE FIRST, SPAWN SECOND, ON THE SAME PORT — see below — and
+         * ⚠ COME BACK THROUGH THE LAUNCHER WHEN THERE IS ONE.
+         *
+         * 🔴 Restarting `node.exe` directly was wrong twice over (user, 17/09).
+         * `detached` plus a console subsystem is a CONSOLE WINDOW popping up on
+         * a desktop — the exact flash `.vbs`, then `explorer.exe`, then NSIS
+         * were each chosen to avoid. And `AgentCo.exe` is sitting there WAITING
+         * on the old process: when that exits the launcher exits too, so the
+         * app's presence in Task Manager quietly disappears after an update.
+         *
+         * `AgentCo.exe` solves both by being what it already is: a GUI-subsystem
+         * binary with no console to flash, which reads `current` and therefore
+         * starts the version that was just committed, and which goes on being
+         * the thing a person can see and close. → installer/launcher.nsi
+         *
+         * ⚠ The fallback still hides its window. A source checkout or a tree
+         * packaged without NSIS has no launcher, and a flash there would be the
+         * same bug with a smaller audience.
+         */
         onRestart: (version: string) => {
           console.log(t('cli.updateRestarting', { version }));
           void (async () => {
             clearDaemonFile(pp);
             await daemon?.close();
-            const entry = path.join(
-              path.dirname(path.dirname(packageRoot())),
-              'app',
-              version,
-              'dist',
-              'cli',
-              'index.js',
-            );
-            const child = spawn(
-              process.execPath,
-              [entry, 'start', '--no-ui', '--dir', companyDir, '--port', String(port)],
-              { detached: true, stdio: 'inherit' },
-            );
+
+            const root = path.dirname(path.dirname(packageRoot()));
+            const launcher = path.join(root, 'AgentCo.exe');
+            const child = fs.existsSync(launcher)
+              ? spawn(launcher, [], { detached: true, stdio: 'ignore', windowsHide: true })
+              : spawn(
+                  process.execPath,
+                  [
+                    path.join(root, 'app', version, 'dist', 'cli', 'index.js'),
+                    'start',
+                    '--no-ui',
+                    '--dir',
+                    companyDir,
+                    '--port',
+                    String(port),
+                  ],
+                  { detached: true, stdio: 'ignore', windowsHide: true },
+                );
             child.on('error', (err) => console.error(err.message));
             child.unref();
             process.exit(EXIT.ok);
@@ -573,7 +598,14 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): bool
       restart ? '1' : '',
       waitUrl ?? '',
     ],
-    { detached: true, stdio: 'inherit' },
+    /*
+     * ⚠ `windowsHide` EVEN THOUGH stdio IS INHERITED. Inheriting an existing
+     * console creates no window, so this costs nothing where somebody typed
+     * `agentco update` — and it is the difference between a quiet update and a
+     * console flashing onto the desktop when the BUTTON sent this from a daemon
+     * that was started by an icon. → SPEC-ui, the no-flashing-console rule
+     */
+    { detached: true, stdio: 'inherit', windowsHide: true },
   );
   // Without this listener a missing binary KILLS the process instead of
   // throwing — `try/catch` catches exactly none of it.

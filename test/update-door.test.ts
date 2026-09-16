@@ -82,6 +82,16 @@ test('the update helper never calls npm by name, and restarts by path', () => {
 
   // A missing binary reports through the 'error' event or it kills the process.
   assert.match(script, /child\.on\('error'/, script);
+
+  /*
+   * 🔴 NOTHING THIS HELPER STARTS MAY FLASH A CONSOLE. Found 17/09 by watching
+   * an update: the helper is hidden, but a child of a process with no console
+   * is exactly what Windows answers by opening a new one. The same flash cost a
+   * `.vbs`, then `cmd /c start`, and now this. → SPEC-ui
+   */
+  const spawns = script.match(/spawn\(/g) ?? [];
+  const hidden = script.match(/windowsHide: true/g) ?? [];
+  assert.equal(hidden.length, spawns.length, `${spawns.length} spawns, ${hidden.length} hidden:\n${script}`);
 });
 
 test('🔴 the update targets the prefix THIS copy lives in, not npm’s default', () => {

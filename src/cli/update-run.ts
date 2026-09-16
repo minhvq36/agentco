@@ -117,9 +117,12 @@ if (waitUrl) {
   }
 }
 
+// ⚠ \`windowsHide\` on everything this helper starts. The helper itself is
+// already hidden, and a child of a process with no console is exactly what
+// Windows answers by opening a new one. → the no-flashing-console rule
 function run(args, opts = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, args, { stdio: 'inherit', ...opts });
+    const child = spawn(process.execPath, args, { stdio: 'inherit', windowsHide: true, ...opts });
     child.on('error', (err) => {
       console.error('agentco update: ' + err.message);
       resolve(1);
@@ -149,6 +152,7 @@ if (restart) {
   const started = spawn(process.execPath, [packageRoot + '/dist/cli/index.js', 'start', '--dir', companyDir], {
     detached: true,
     stdio: 'inherit',
+    windowsHide: true,
   });
   started.on('error', (err) => console.error('agentco update: could not restart — ' + err.message));
   started.unref();
