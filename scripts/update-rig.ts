@@ -67,6 +67,51 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
  * │ update mechanism and not by a change that happened to ship with it.       │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
+if (STAGE_AS && argv.includes('--npm')) {
+  /*
+   * ⚠ THE NPM DOOR NEEDS NO LAYER AND NO LOCAL MANIFEST. Its button runs
+   * `npm i -g <pkg>@latest`, so the only thing that has to be arranged is an
+   * install that HAS the button and BELIEVES it is older than the registry.
+   * Install the published version into a prefix of its own, relabel it, done —
+   * and `globalPrefixFor` keeps npm inside that prefix, so the real global
+   * install on this machine is never touched.
+   */
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-npm-stage-'));
+  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  console.log(`\n  installing ${pkg.version} from the registry into a prefix of its own …`);
+  execFileSync(
+    process.execPath,
+    [npmCli, 'install', '-g', `@agent-co-app/cli@${pkg.version}`, '--prefix', prefix, '--no-audit', '--no-fund'],
+    { stdio: 'pipe' },
+  );
+
+  const pkgDir = path.join(prefix, 'node_modules', '@agent-co-app', 'cli');
+  const file = path.join(pkgDir, 'package.json');
+  const installed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  installed['version'] = STAGE_AS;
+  fs.writeFileSync(file, JSON.stringify(installed, null, 2) + '\n', 'utf8');
+
+  const company = path.join(prefix, 'company-here');
+  fs.mkdirSync(company, { recursive: true });
+  console.log(`
+  staged the published ${pkg.version} as ${STAGE_AS}, npm door.
+
+    prefix    ${prefix}
+
+  Create a company and start it — no manifest override, so it asks the real
+  agent-co.app and the button runs a real \`npm i -g\`:
+
+     node "${path.join(pkgDir, 'dist', 'cli', 'index.js')}" init  --dir "${company}"
+     node "${path.join(pkgDir, 'dist', 'cli', 'index.js')}" start --dir "${company}"
+
+  Wait 30 s, open Settings, press the button. npm installs into THIS prefix
+  only. When it comes back:
+
+     node "${path.join(pkgDir, 'dist', 'cli', 'index.js')}" version
+`);
+  process.exit(0);
+}
+
 if (STAGE_AS) {
   const install = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-stage-'));
   console.log(`\n  building the real packaged tree (${pkg.version}) …`);
