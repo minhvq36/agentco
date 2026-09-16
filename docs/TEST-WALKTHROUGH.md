@@ -2009,6 +2009,134 @@ it to **one** employee. Archive one employee. Unwire one employee.
 
 ---
 
+## Test 24 — The Docker door
+
+> Walk it as somebody who has never seen the repository: clone, fill in one file, launch.
+> Everything below was measured on 17/09/2026 against a real container, so an expected
+> result that does not appear is a finding, not a typo.
+>
+> ⚠ **This needs a released version carrying the token fix (0.1.7+).** On 0.1.6 the
+> interface loads and then every call answers 401 — see Leg F.
+
+### Leg A — launch ⏱ ~10 min (mostly the image build) · $0
+
+1. `claude setup-token` — anywhere you already have Claude Code. **It prints the token once
+   and stores nothing.** Copy it.
+2. `cp .env.example .env`, paste the token into `CLAUDE_CODE_OAUTH_TOKEN=`.
+3. `docker compose up -d`
+4. Open `http://127.0.0.1:7317`.
+
+**Expected**
+
+- The first build takes minutes and pulls ~300 MB of Claude Code. That is the SDK's own pinned
+  binary, and it is what makes the container able to work at all.
+- `docker compose ps` reads `127.0.0.1:7317->7317/tcp` — **the same number on both sides**, nothing
+  to translate.
+- `docker compose exec agentco agentco doctor` is **all ✓**, including `Claude Code sign-in — a test
+  call went through`. That line is a real call to Anthropic, not a check that a file exists.
+- The interface opens on an empty company. The entrypoint ran `agentco init` for you.
+
+🔴 **If `up` fails with `Ports are not available`** — something already holds 7317, most likely a
+desktop install of agentco. Set `AGENTCO_PORT` in `.env` and `up` again. Note what agentco's own
+port self-healing did here: **nothing**, and it could not have. Docker fails to publish the port,
+so the daemon that knows how to move is never started.
+
+### Leg B — where your data actually is ⏱ ~5 min · $0
+
+The question everybody asks second, and the answer surprises people.
+
+1. Look in the directory you cloned into. `git status`.
+2. `docker volume inspect agentco_agentco-data --format '{{.Mountpoint}}'`
+3. Try to open that path in Explorer / Finder.
+4. `docker compose cp agentco:/data/company/company.yaml ./peek.yaml` and open it.
+
+**Expected**
+
+- **Nothing was written into your clone.** `git status` is as clean as you left it. The container
+  does not touch the repository — the repository is only where `docker-compose.yaml` lives.
+- The volume reports something like `/var/lib/docker/volumes/agentco_agentco-data/_data`, and on
+  Windows or macOS **you cannot open it**: it is inside Docker's own VM. That is not a limitation
+  to route around, it is the fence — see Leg E.
+- `cp` brings a real file onto your real disk, and it is plain YAML. That is the supported way to
+  read or edit the config: copy out, edit, copy back, `docker compose restart`.
+
+⚠ **`company.yaml` says `port: 7317` even when you set `AGENTCO_PORT=7319`.** Not a bug: the
+compose file passes `AGENTCO_RUNTIME_PORT`, and environment outranks the file everywhere in
+agentco. `agentco doctor` reports the port actually being served.
+
+### Leg C — does it collide with the desktop install? ⏱ ~4 min · $0
+
+Run both at once, on purpose.
+
+1. Keep the container running. Start a desktop `agentco start` in some other folder.
+2. Compare `company` in each `/healthz`.
+
+**Expected**
+
+- **Two different fingerprints, two separate companies, no interference.** They share nothing: the
+  container's company lives in the volume, the desktop's lives in a folder, and neither can see the
+  other.
+- The only thing they can contend for is a **port number on the host**, which is Leg A's failure
+  and has nothing to do with the data.
+
+### Leg D — connecting an arm from inside a container ⏱ ~10 min · $0
+
+The leg that nobody expects to work, and the reason it does is worth understanding.
+
+1. In the container's interface, connect **GitHub**.
+2. Then connect **Notion**.
+
+**Expected**
+
+- **GitHub** shows a code to type into a browser. There is no redirect at all in a device flow, so
+  the container is irrelevant to it.
+- **Notion** opens your browser, you approve, and you land back on the interface signed in.
+
+Why the second one works, when the daemon is bound to `0.0.0.0` inside a namespace your browser has
+never heard of: the compose file declares `AGENTCO_RUNTIME_PUBLIC_URL=http://127.0.0.1:<port>`, and
+that address is real — Docker publishes it on your machine. Notion is **told** that address at
+registration time (it is a DCR provider; agentco registers a client on the spot declaring its own
+redirect), so it accepts it.
+
+🔴 **Delete that line from the compose file and try again**: every sign-in refuses before it starts,
+with a message naming the variable. That refusal is deliberate — `Host` is sent by the client, and
+the redirect is where the authorization code gets delivered.
+
+### Leg E — what the fence buys and what it costs ⏱ ~6 min · ~$0.05
+
+1. Give a role shell access. Ask it to read something outside the company — `/etc/hostname` will do.
+2. Ask it to read a file on **your** machine, e.g. the path you cloned into.
+
+**Expected**
+
+- The first works. The second **cannot**, and not because a hook refused: the path does not exist in
+  the container's namespace at all.
+- That is the containment `SPEC-tools-approval §5b` records us as *not* having on the desktop, where
+  `Bash` has no fence and a role with shell writes wherever you can. Here the kernel holds it.
+- The same fence is why "Files on this machine" sees only the volume. If you want the agent to work
+  on your documents, you have to mount them — and then you have chosen that, explicitly, per
+  directory. `mount` is Docker's way of declaring a folder, and it is a fence rather than a list.
+
+### Leg F — the traps, each of which points somewhere else ⏱ ~8 min · $0
+
+Reproduce them deliberately. Every one of these was found the hard way on 17/09.
+
+| Do this | What you see | What it actually is |
+|---|---|---|
+| Run 0.1.6 rather than 0.1.7+ | interface loads, then **"Lost connection to the company"** | the UI never sent its token; `/api/events` answered 401 and the event stream closed. The daemon is fine — `curl /healthz` proves it |
+| Change the token in `.env`, then `docker compose restart` | the **old** token still fails | `restart` reuses the environment it had. Only `up -d` re-reads `.env` |
+| `docker compose exec agentco claude setup-token` from a script or an editor pane | hangs forever, prints **nothing** | it is a raw-mode prompt and needs a real terminal. There is no error to read |
+| `docker compose down -v` | the company is gone | `-v` removes the volume. `down` alone keeps it — verify by recreating and finding your offices still there |
+
+### Leg G — survive a crash ⏱ ~3 min · $0
+
+1. Create an office. `docker compose kill && docker compose rm -f`.
+2. `docker compose up -d`.
+
+**Expected** — the office is still there, and **you are still signed in**. A brand-new container
+attached to the same volume finds the company and the conversation records. If instead you land on
+an empty company, the volume was not attached, and everything in Leg B is worth re-reading.
+
 ## Results log
 
 | Test | Runnable? | Actual cost | Turn count | Where it stumbled |
@@ -2037,6 +2165,7 @@ it to **one** employee. Archive one employee. Unwire one employee.
 | 20 Self-attach MCP | | | | |
 | 22 CLI → MCP | | | | |
 | 23 Office view | | | | |
+| 24 Docker door | | | | |
 
 **The three numbers that matter most:**
 

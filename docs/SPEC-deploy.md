@@ -234,6 +234,29 @@ must match** whatever the daemon put into the `redirect_uri`. A mismatch ⇒
 
 ### ① Invariant §1b's premise breaks — host ↔ container path mapping
 
+> ✅ **RE-READ 17/09 AND DOWNGRADED. This is a note for a FUTURE feature, not a
+> hole in the shipped product — and the entry below overstated it three times
+> before anyone opened the two files.**
+>
+> `SPEC-tools-approval §1b` opens with *"locked 22/08, **not yet built**"*. The
+> "exact string the user just typed" is that unbuilt design. What actually ships
+> is `officeJail` (`core/worker.ts §866`), and it matches on **resolved paths** —
+> `pathsIn(raw)` → `guardedZone(dirs, target, mode)` against real directories.
+> Inside a container those are `/data/company/…`, so it fences exactly as it does
+> on a desktop. Nothing is silently absent.
+>
+> 🔴 **And the direction is the opposite of what was feared.** §1b's own table
+> says `Bash` has **no hook at all**. On a desktop, a role with shell writes
+> anywhere the user can. In a container the kernel refuses, because the host
+> filesystem is not in the namespace. Docker does not inherit this hole — it
+> closes it, which is what §5's *"in exchange"* paragraph already said.
+>
+> **What remains true**, and is why this entry stays rather than being deleted:
+> when §1b is built, it must not be built on the premise that the path a person
+> types is the path the process sees. A bind mount breaks that premise, and a
+> guard written against it would be correct on the developer's machine and
+> absent in a container — the failure class this repository keeps paying for.
+
 `SPEC-tools-approval` §1b matches against **"the exact string the user just typed"**.
 The user types `D:\Downloads\x.md`; the container sees `/data/downloads/x.md` ⇒
 **never matches** ⇒ the write-outside-scope block is **silently absent** under Docker.
@@ -377,5 +400,5 @@ instruction, so people **follow it**, and burn time somewhere there's nothing to
 | ⏸ | Verification profile (path A): homepage + **privacy policy on the same domain** + demo video + domain verification in Search Console | overlaps exactly with the *golive* item — do it near the end, but **start it early since the WAIT is what costs time** |
 | ⏸ | Fill in the *GitHub App Callback URL* field in §6 | |
 | ✅ | ~~Sample Dockerfile + compose~~ | **shipped 17/09** — `docker/` + `docker-compose.yaml`, and **one** container, not two (§3.1: the daemon serves the interface). Built and run for real: `/healthz` answered, the token chain measured end to end (401 without · 200 by header · 200 by query) |
-| 🔴 | **§5① is still open, and the compose only DODGES it** | nothing is bind-mounted, so no host↔container path mapping exists to break the invariant. The moment anyone mounts their own documents — which `docker/README.md` invites — `SPEC-tools-approval §1b` is silently absent again. Mounting is the normal thing to want; this has to be paid before Docker reaches customer-facing docs |
+| ✅ | ~~**§5① blocks Docker**~~ | **withdrawn 17/09** — it was never a shipped hole. `§1b` is *"locked 22/08, not yet built"*; the guard that exists (`officeJail`) matches resolved paths and works identically in a container, and `Bash` — which has no guard at all — is fenced there by the kernel. The note survives as a **constraint on building §1b**, not as a blocker. The cost of three months believing otherwise: two files nobody opened |
 | ⏸ | Tier C (public domain) has still never been run | §3.1: it needs identity in front, not TLS. The `?token=` query form must not go through a logging proxy as-is |
