@@ -1,0 +1,14 @@
+# Line endings are a fact about bytes, not a preference, so they are decided here
+# rather than by whatever `core.autocrlf` each machine happens to have. The kho has
+# always been LF; this also makes the working copy LF, which is what every consumer
+# of these files expects. -> agentco-notes/SESSIONS_MEMORY.md §7
+#
+# ⚠ A `.sh` checked out with CRLF becomes `#!/bin/sh\r`, and the container answers
+# "no such file or directory" about a file that is plainly there. That is the trap
+# waiting for the Docker work on the backlog.
+* text=auto eol=lf
+
+# Windows reads these itself, and wants its own endings.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.nsi text eol=crlf
