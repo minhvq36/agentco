@@ -790,6 +790,10 @@ export const en = {
     'Cannot find npm beside this Node, so there is nothing to hand the work to. The company was NOT stopped.\nUpdate it yourself with:  {command}',
   'cli.updateHandedOff':
     'Installing {target} in a separate process, then starting the company again. Watch this terminal.',
+  // ⚠ The same sentence minus a promise it cannot keep. Nothing was running, so
+  // nothing will be started, and saying otherwise is the cheapest way to look
+  // broken while working correctly.
+  'cli.updateHandedOffIdle': 'Installing {target} in a separate process. Watch this terminal.',
   /**
    * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
    * Naming the neighbour is only possible when it answered `/healthz`; claiming

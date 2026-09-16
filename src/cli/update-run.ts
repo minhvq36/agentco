@@ -41,6 +41,35 @@ export function findNpmCli(
 }
 
 /**
+ * The npm prefix that THIS copy lives in, derived from where it is.
+ *
+ * 🔴 `npm install --global` ALONE UPDATES THE WRONG COPY. `--global` resolves
+ * the prefix from npm's own config — which is the default one, not necessarily
+ * the one the running copy was installed into. Anybody with nvm, volta or an
+ * `--prefix` of their own would watch the command succeed and nothing change,
+ * with a second copy quietly updated somewhere else. The prefix is not a
+ * preference here; it is a fact about the file that is executing.
+ *
+ * ⚠ Walk up to `node_modules` rather than counting path segments: a scoped name
+ * is two directories deep and an unscoped one is one, and the day the package
+ * is renamed the count is wrong with no test to notice.
+ *
+ * ⚠ The two layouts differ by one level — POSIX keeps `node_modules` under
+ * `lib/`, Windows does not — so the parent is checked by NAME, not by platform.
+ */
+export function globalPrefixFor(root: string): string | undefined {
+  let dir = path.resolve(root);
+  for (;;) {
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    if (path.basename(dir) === 'node_modules') {
+      return path.basename(parent) === 'lib' ? path.dirname(parent) : parent;
+    }
+    dir = parent;
+  }
+}
+
+/**
  * The script that outlives us.
  *
  * ⚠ IT IS WRITTEN TO A TEMP DIRECTORY, NOT SHIPPED IN THE PACKAGE — because the
@@ -58,7 +87,7 @@ export function updateScript(): string {
   return `// Written by \`agentco update\`. Safe to delete.
 import { spawn } from 'node:child_process';
 
-const [npmCli, pkg, target, packageRoot, companyDir] = process.argv.slice(2);
+const [npmCli, pkg, target, packageRoot, companyDir, prefix, restart] = process.argv.slice(2);
 
 function run(args, opts = {}) {
   return new Promise((resolve) => {
@@ -71,19 +100,32 @@ function run(args, opts = {}) {
   });
 }
 
-const code = await run([npmCli, 'install', '--global', pkg + '@' + target, '--no-audit', '--no-fund']);
+// --prefix pins the install to the tree this copy is running from. Without it
+// \`--global\` means "npm's default prefix", which is a different place for
+// anyone using nvm, volta or a prefix of their own.
+const args = [npmCli, 'install', '--global', pkg + '@' + target, '--no-audit', '--no-fund'];
+if (prefix) args.push('--prefix', prefix);
+const code = await run(args);
 if (code !== 0) {
   console.error('\\nagentco update: npm exited ' + code + '. Nothing was replaced — run \`agentco start\` to carry on.');
   process.exit(code);
 }
 
-// Detached so this helper can exit while the company keeps running, exactly as
-// \`agentco start\` behaves when a person runs it themselves.
-const started = spawn(process.execPath, [packageRoot + '/dist/cli/index.js', 'start', '--dir', companyDir], {
-  detached: true,
-  stdio: 'inherit',
-});
-started.on('error', (err) => console.error('agentco update: could not restart — ' + err.message));
-started.unref();
+// 🔴 PUT THINGS BACK AS THEY WERE, which means not starting a company that was
+// not running. Restarting unconditionally turns \`agentco update\` typed in some
+// unrelated directory into "and now a company is running here" — or, with no
+// company.yaml anywhere near, into an error about a thing nobody asked for.
+if (restart) {
+  // Detached so this helper can exit while the company keeps running, exactly
+  // as \`agentco start\` behaves when a person runs it themselves.
+  const started = spawn(process.execPath, [packageRoot + '/dist/cli/index.js', 'start', '--dir', companyDir], {
+    detached: true,
+    stdio: 'inherit',
+  });
+  started.on('error', (err) => console.error('agentco update: could not restart — ' + err.message));
+  started.unref();
+} else {
+  console.log('agentco update: done. Nothing was running, so nothing was started.');
+}
 `;
 }

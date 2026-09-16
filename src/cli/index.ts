@@ -28,7 +28,7 @@ import { serve, type Daemon } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { agentcoOnPort, DEFAULT_PORT, findFreePort, type PortOccupant } from './port.js';
-import { findNpmCli, updateScript } from './update-run.js';
+import { findNpmCli, globalPrefixFor, updateScript } from './update-run.js';
 import {
   compareVersions,
   installKind,
@@ -462,9 +462,21 @@ async function cmdUpdate(): Promise<void> {
    * process IS node. Same reason the script calls npm through its own js entry
    * point: Node cannot spawn a `.cmd` without a shell (EINVAL on Windows).
    */
+  const root = packageRoot();
   const child = spawn(
     process.execPath,
-    [script, npmCli, PACKAGE_NAME, target, packageRoot(), companyDir],
+    [
+      script,
+      npmCli,
+      PACKAGE_NAME,
+      target,
+      root,
+      companyDir,
+      globalPrefixFor(root) ?? '',
+      // Restart only what was actually running. `info` is the daemon this
+      // command stopped a moment ago; absent means there was nothing to put back.
+      info ? '1' : '',
+    ],
     { detached: true, stdio: 'inherit' },
   );
   // Without this listener a missing binary KILLS the process instead of
@@ -472,7 +484,7 @@ async function cmdUpdate(): Promise<void> {
   child.on('error', (err) => fail(err));
   child.unref();
 
-  console.log(t('cli.updateHandedOff', { target }));
+  console.log(t(info ? 'cli.updateHandedOff' : 'cli.updateHandedOffIdle', { target }));
   process.exit(EXIT.ok);
 }
 

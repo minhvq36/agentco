@@ -607,6 +607,7 @@ export const vi: Catalog = {
     'Không tìm thấy npm cạnh Node này nên không có gì để giao việc. Công ty **chưa** bị tắt.\nTự cập nhật bằng:  {command}',
   'cli.updateHandedOff':
     'Đang cài {target} ở một tiến trình riêng, xong sẽ bật lại công ty. Theo dõi ở terminal này.',
+  'cli.updateHandedOffIdle': 'Đang cài {target} ở một tiến trình riêng. Theo dõi ở terminal này.',
   'cli.portMoved':
     '  Cổng {from} đang bận nên công ty chuyển sang {to} — đã ghi vào runtime.port trong {file}.',
   'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',

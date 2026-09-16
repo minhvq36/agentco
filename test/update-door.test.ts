@@ -28,7 +28,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { findNpmCli, updateScript } from '../dist/cli/update-run.js';
+import { findNpmCli, globalPrefixFor, updateScript } from '../dist/cli/update-run.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as {
@@ -85,6 +85,35 @@ test('the update helper never calls npm by name, and restarts by path', () => {
 
   // A missing binary reports through the 'error' event or it kills the process.
   assert.match(script, /child\.on\('error'/, script);
+});
+
+test('🔴 the update targets the prefix THIS copy lives in, not npm’s default', () => {
+  // Windows: <prefix>/node_modules/<scope>/<name>
+  assert.equal(
+    globalPrefixFor(path.join('C:', 'np', 'node_modules', '@agent-co-app', 'cli')),
+    path.join('C:', 'np'),
+  );
+  /*
+   * POSIX: <prefix>/lib/node_modules/<scope>/<name> — one level deeper, and the
+   * difference is spotted by the NAME `lib`, never by `process.platform`.
+   *
+   * ⚠ Both sides go through `path.resolve`, because the function does: a
+   * rooted-but-driveless path picks up the current drive on Windows, and an
+   * expectation written without it fails for a reason that has nothing to do
+   * with the rule under test.
+   */
+  const posix = path.join(path.sep, 'usr', 'local', 'lib', 'node_modules', '@a', 'cli');
+  assert.equal(globalPrefixFor(posix), path.resolve(path.sep, 'usr', 'local'));
+  // Unscoped is one directory shallower; counting segments would break here.
+  assert.equal(
+    globalPrefixFor(path.join('C:', 'np', 'node_modules', 'cli')),
+    path.join('C:', 'np'),
+  );
+  // A source checkout has no prefix to speak of, and must not invent one.
+  assert.equal(globalPrefixFor(path.join('C:', 'code', 'agentco')), undefined);
+
+  // The script only passes --prefix when there is one to pass.
+  assert.match(updateScript(), /if \(prefix\) args\.push\('--prefix', prefix\)/, updateScript());
 });
 
 test('npm is found beside this Node, and the lookup is layout-driven', () => {
