@@ -25,24 +25,54 @@ on:
       from-registry:
         type: boolean
         default: false
-  # Anything that changes what the tarball contains or how it starts. Six jobs
-  # a push is the price; finding out at release time is the alternative.
+  # Anything that changes what the tarball contains, how it starts, or whether
+  # the suite still passes. Seven jobs a push is the price; finding out at
+  # release time is the alternative, and that is what this list is widened for:
+  # a test-only commit used to reach `main` without running once.
   push:
     branches: [main]
     paths:
       - package.json
       - package-lock.json
       - src/**
-      - templates/**
+      - test/**
       - web/**
       - installer/logo.png
-      - scripts/smoke-npm.ts
+      - scripts/**
       - .github/workflows/npm-smoke.yml
 
 permissions:
   contents: read
 
 jobs:
+  # ┌────────────────────────────────────────────────────────────────────────┐
+  # │ 🔴 THE SUITE USED TO RUN ONLY ON A TAG, i.e. only while cutting a       │
+  # │ release. (added 16/09/2026, after it cost one)                          │
+  # │                                                                         │
+  # │ `release.yml` runs `npm test` BEFORE `build:all`, so a test that needs   │
+  # │ `web/dist` passes on a developer machine — where it is lying around      │
+  # │ from the last build — and fails on CI at the one moment nothing else     │
+  # │ can proceed. Every push to `main` was green while `main` was broken.     │
+  # │                                                                         │
+  # │ ⚠ It deliberately does NOT build the web bundle first. Running the       │
+  # │ suite in the same barren state `release.yml` gives it is the whole       │
+  # │ point: a test that quietly depends on a build artefact must fail HERE.   │
+  # │                                                                         │
+  # │ ⚠ windows-latest, because that is the only platform the suite has ever   │
+  # │ run on. Adding Linux is worth doing and is a separate change with its    │
+  # │ own failures to read.                                                    │
+  # └────────────────────────────────────────────────────────────────────────┘
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
   smoke:
     strategy:
       fail-fast: false

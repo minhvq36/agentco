@@ -21,13 +21,12 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import { agentcoCmd } from '../dist/cli/launcher-text.js';
 import { findNpmCli, globalPrefixFor, updateScript } from '../dist/cli/update-run.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,19 +35,17 @@ const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
   name: string;
 };
 
-/** Build the packaged tree into a temp dir and read back what it generated. */
-function packagedCmd(): string {
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-pack-'));
-  execFileSync(
-    process.execPath,
-    ['--experimental-strip-types', path.join(ROOT, 'scripts', 'package.ts'), '--out', out],
-    { cwd: ROOT, stdio: 'pipe', timeout: 600_000 },
-  );
-  return fs.readFileSync(path.join(out, 'agentco.cmd'), 'utf8');
-}
-
 test('🔴 the packaged entry points ask `current` instead of naming a version', () => {
-  const cmd = packagedCmd();
+  /*
+   * ⚠ THE GENERATOR, NOT THE WHOLE PACKAGING RUN. This test used to execute
+   * `scripts/package.ts` and read the file it wrote — which copies ~90MB of
+   * Node runtime, runs an `npm install`, and needs `web/dist`. `npm test` does
+   * not build `web/dist`, and on CI `npm test` runs BEFORE `build:all`, so it
+   * passed on a developer machine and failed at the only moment the suite runs
+   * there: cutting a release. A rule about a string is checked against the
+   * string. → src/cli/launcher-text.ts
+   */
+  const cmd = agentcoCmd('22.12.0', PKG.version);
 
   // It reads the pointer…
   assert.match(cmd, /set \/p APPDIR=<"%HERE%current"/, cmd);

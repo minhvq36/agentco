@@ -23,6 +23,11 @@ import path from 'node:path';
 import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 
+// From `src/`, not `dist/`: this script runs under type stripping and must work
+// in a checkout that has not been built yet. One copy of the launcher text,
+// shared with the test that checks the rule it keeps. → src/cli/launcher-text.ts
+import { agentcoCmd } from '../src/cli/launcher-text.ts';
+
 const ROOT = path.dirname(url.fileURLToPath(new URL('..', import.meta.url + '/')));
 const argv = process.argv.slice(2);
 const OUT = path.resolve(argOf('--out') ?? path.join(ROOT, 'out', 'AgentCo'));
@@ -128,51 +133,7 @@ fs.writeFileSync(path.join(OUT, 'current'), path.relative(OUT, appDir), 'utf8');
  * correct: somebody typing `agentco doctor` wants to read the output.
  */
 const launcher = path.join(OUT, 'agentco.cmd');
-fs.writeFileSync(
-  launcher,
-  [
-    '@echo off',
-    'setlocal',
-    'set "HERE=%~dp0"',
-    `set "NODE=%HERE%runtime\\node-v${nodeVersion}"`,
-    // The bundled runtime goes FIRST so CLI arms and `npx` resolve against the
-    // Node we shipped rather than whatever the machine happens to carry. → §9.5
-    'set "PATH=%NODE%;%PATH%"',
-    // ⚠ WHERE THE COMPANY LIVES. A packaged install has no meaningful `cwd` and
-    // nobody types `--dir`, so `resolveCompanyDir` would look beside a directory
-    // nobody chose. It sits BESIDE the program — one place to find, nothing to
-    // look up, and outside `app\` which is replaced on every update. §7.5
-    //
-    // ⚠ Only when it exists: from a source checkout this script's output is run
-    // directly, and there `--dir` is passed by hand. Setting the variable
-    // unconditionally would silently redirect every developer command.
-    'if exist "%HERE%company\\company.yaml" set "AGENTCO_COMPANY_DIR=%HERE%company"',
-    //
-    // 🔴 WHICH VERSION TO RUN COMES FROM `current`, NOT FROM THIS FILE.
-    //
-    // It used to be written in here as a literal, and `AgentCo.exe` had it
-    // compiled in — so `current` was a pointer nothing read, and replacing
-    // `app\` with a newer folder changed nothing at all. An updater can only
-    // work if the thing that CHOOSES lives outside the thing being replaced.
-    // → SPEC-packaging §3.7 · SESSIONS_MEMORY §4.2 debt #5
-    //
-    // ⚠ The literal below is the FALLBACK, and it is the version this tree was
-    // built as: a missing, empty or stale `current` must land on something that
-    // exists rather than on nothing. Silence is the failure mode this launcher
-    // was rewritten from a `.vbs` to avoid, so the last resort still SPEAKS.
-    'set "APPDIR="',
-    'if exist "%HERE%current" set /p APPDIR=<"%HERE%current"',
-    `if not defined APPDIR set "APPDIR=app\\${pkg.version}"`,
-    `if not exist "%HERE%%APPDIR%\\dist\\cli\\index.js" set "APPDIR=app\\${pkg.version}"`,
-    'if not exist "%HERE%%APPDIR%\\dist\\cli\\index.js" (',
-    '  echo AgentCo: no app found under "%HERE%".',
-    '  echo Reinstall from agent-co.app to restore it.',
-    '  exit /b 2',
-    ')',
-    '"%NODE%\\node.exe" "%HERE%%APPDIR%\\dist\\cli\\index.js" %*',
-  ].join('\r\n'),
-  'utf8',
-);
+fs.writeFileSync(launcher, agentcoCmd(nodeVersion, pkg.version), 'utf8');
 
 /**
  * ② `AgentCo.exe` — THE DOUBLE-CLICK ENTRY. Built by NSIS, which is already the
