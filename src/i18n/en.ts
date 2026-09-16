@@ -123,9 +123,14 @@ export const en = {
   'header.stopTip': 'Stop the running work. The daemon stays up.',
   'header.shutdown': 'Shut down',
   'header.shutdownConfirm': 'Shut down?\n\nThe company will stop.',
-  'header.update.available': 'Version {version} is available',
-  'header.update.download': 'Download at agent-co.app',
-  'header.update.dismiss': 'Hide until the next version',
+  /*
+   * ⚠ `header.update.*` LIVED HERE AND IS GONE. The banner it belonged to was
+   * removed on 17/09/2026 (user's call, for focus): it announced a version and
+   * could not act on one, so it was a dead end, and the action already lives at
+   * the foot of the Settings panel. Keys with no call site are strings nobody
+   * maintains and translators keep translating.
+   * → web/src/components/Header.tsx · panels/SettingsPanel.tsx §UpdateAction
+   */
   /**
    * ⚠ THE APP USED TO SHOUT ABOUT A NEW VERSION AND NEVER SAY WHICH ONE YOU
    * HAD. (added 16/09/2026, moved out of the header the same day)

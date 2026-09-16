@@ -370,6 +370,50 @@ async function main(): Promise<void> {
   check((await healthz(port)) === undefined, 'the port no longer answers');
   check(!fs.existsSync(path.join(HOME, 'company', '.state', 'daemon.json')), 'daemon.json was cleared');
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 `agentco update` HAD NEVER RUN ON macOS OR LINUX. (added 17/09/2026)  │
+   * │                                                                          │
+   * │ Every piece of it was written for three systems — both npm layouts        │
+   * │ checked rather than picked by platform, `node <npm-cli.js>` because Node  │
+   * │ cannot spawn a `.cmd` without a shell, a prefix derived from where the    │
+   * │ running file is — and all of it was measured on Windows only, because     │
+   * │ `npm test` runs on Windows only. "Written for three, proved on one" is    │
+   * │ the sentence this project has paid for six times.                        │
+   * │                                                                          │
+   * │ ⚠ `--to` THIS VERSION, not `latest`: it exercises the whole mechanism —   │
+   * │ resolve npm, write a helper outside the package, wait, install, restart — │
+   * │ while landing on exactly what was already there. A smoke run must not     │
+   * │ depend on what the registry happens to call `latest` today, and must not  │
+   * │ leave a different version behind for the checks that follow.              │
+   * │                                                                          │
+   * │ ⚠ It installs into PREFIX, the isolated one this script made. If that     │
+   * │ ever stopped being true the machine's real global install would be        │
+   * │ overwritten by a test — which is why the version is read back from        │
+   * │ PKG_DIR afterwards rather than from `agentco version`.                    │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  step(`agentco update --to ${PKG.version}`);
+  const upd = await collect(agentco(['update', '--to', PKG.version]), 60_000);
+  check(upd.code === 0, 'update exited 0', upd.out);
+  check(!upd.out.includes('Cannot find npm'), 'npm was found beside this Node', upd.out);
+
+  // The helper is detached: wait for the package on disk to be rewritten.
+  const installedAgain = await waitFor(
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async () => {
+      try {
+        const v = (JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')) as { version: string })
+          .version;
+        return v === PKG.version ? v : undefined;
+      } catch {
+        return undefined; // mid-swap: npm has taken the file away
+      }
+    },
+    180_000,
+  );
+  check(installedAgain === PKG.version, `the isolated prefix still holds ${PKG.version}`, installedAgain);
+
   step('agentco shortcut');
   const shortcut = await collect(agentco(['shortcut']), 30_000);
   check(shortcut.code === 0, 'shortcut exited 0', shortcut.out);

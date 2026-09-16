@@ -94,9 +94,6 @@ export const vi: Catalog = {
   'header.stopTip': 'Dừng việc đang chạy. Daemon vẫn sống.',
   'header.shutdown': 'Tắt hẳn',
   'header.shutdownConfirm': 'Tắt hẳn?\n\nCông ty sẽ ngừng lại.',
-  'header.update.available': 'Đã có bản {version}',
-  'header.update.download': 'Tải ở agent-co.app',
-  'header.update.dismiss': 'Ẩn tới bản sau',
   // A name, a symbol and two numbers — the same line in both catalogues, and it
   // stays in the catalogue because no user-visible string is written in a component.
   'settings.footer': 'AgentCo © {year} · v{version}',
