@@ -149,9 +149,12 @@ if (code !== 0) {
 if (restart) {
   // Detached so this helper can exit while the company keeps running, exactly
   // as \`agentco start\` behaves when a person runs it themselves.
+  // ⚠ \`ignore\`, not \`inherit\`: inheriting would hand the restarted daemon this
+  // helper's log file and hold it open for the life of the company. The daemon
+  // has its own way of being watched. → the same trap one level up
   const started = spawn(process.execPath, [packageRoot + '/dist/cli/index.js', 'start', '--dir', companyDir], {
     detached: true,
-    stdio: 'inherit',
+    stdio: 'ignore',
     windowsHide: true,
   });
   started.on('error', (err) => console.error('agentco update: could not restart — ' + err.message));

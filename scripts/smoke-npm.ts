@@ -219,6 +219,30 @@ async function healthz(port: number): Promise<{ ok?: boolean; version?: string }
   }
 }
 
+/**
+ * What npm currently calls `latest`, which during a release is the version
+ * BEFORE this one.
+ *
+ * 🔴 The update step has to aim at something that EXISTS. Aiming at the version
+ * being released 404s every time, because smoke runs before the publish — and
+ * `--to latest` is answered, correctly, with "already on the newest there is",
+ * since the local build is ahead of the registry. Both leave the package on
+ * disk untouched and every assertion passing for nothing. An explicit older
+ * version is a real install and exercises the whole mechanism.
+ */
+async function registryLatest(): Promise<string | undefined> {
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${PKG.name.replace('/', '%2f')}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { 'dist-tags'?: Record<string, string> };
+    return body['dist-tags']?.['latest'];
+  } catch {
+    return undefined;
+  }
+}
+
 async function waitFor<T>(probe: () => Promise<T | undefined>, timeoutMs: number, stop?: () => boolean): Promise<T | undefined> {
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
@@ -393,26 +417,65 @@ async function main(): Promise<void> {
    * │ PKG_DIR afterwards rather than from `agentco version`.                    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
-  step(`agentco update --to ${PKG.version}`);
-  const upd = await collect(agentco(['update', '--to', PKG.version]), 60_000);
-  check(upd.code === 0, 'update exited 0', upd.out);
+  /*
+   * ⚠ `--to latest`, NOT `--to <this version>`. Smoke runs BEFORE the publish,
+   * so the version being released does not exist on the registry yet: aiming at
+   * it makes npm 404 every single time, the package on disk stays exactly as it
+   * was, and every assertion below passes without a thing having happened. That
+   * is what the first version of this step did.
+   *
+   * `latest` is whatever shipped before this one, which is a real install into
+   * the isolated prefix — and after the publish, when `npm-verify` runs this
+   * again with SMOKE_FROM_REGISTRY, `latest` is this version and it reinstalls
+   * itself. Both are a genuine npm run.
+   */
+  const published = await registryLatest();
+  if (!published) {
+    step('agentco update — skipped, nothing published to aim at');
+  } else {
+  step(`agentco update --to ${published}`);
+  const upd = await collect(agentco(['update', '--to', published]), 60_000);
+
+  // 🔴 THE HANG IS THE POINT. `collect` resolves on 'close', which fires only
+  // once the process has ended AND its streams are shut; the helper used to be
+  // handed this process's stdio and held them open long after it exited.
+  check(upd.code === 0, 'update exited 0 and CLOSED its streams', upd.out);
   check(!upd.out.includes('Cannot find npm'), 'npm was found beside this Node', upd.out);
 
-  // The helper is detached: wait for the package on disk to be rewritten.
-  const installedAgain = await waitFor(
+  // ⚠ The log the command printed is the only evidence the helper ran at all —
+  // it is detached, so nothing else can see it.
+  const logLine = /(\S+update\.log)/.exec(upd.out);
+  check(!!logLine, 'update printed where its log is', upd.out);
+  const npmSpoke = await waitFor(
     // eslint-disable-next-line @typescript-eslint/require-await
     async () => {
       try {
-        const v = (JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')) as { version: string })
-          .version;
-        return v === PKG.version ? v : undefined;
+        const body = fs.readFileSync(logLine![1]!, 'utf8');
+        return /added|changed|up to date|npm error|npm warn/.test(body) ? body : undefined;
       } catch {
-        return undefined; // mid-swap: npm has taken the file away
+        return undefined;
       }
     },
     180_000,
   );
-  check(installedAgain === PKG.version, `the isolated prefix still holds ${PKG.version}`, installedAgain);
+  check(!!npmSpoke, 'the detached helper actually ran npm', npmSpoke?.slice(-600));
+  check(!/npm error/.test(npmSpoke ?? ''), 'and npm did not fail', npmSpoke?.slice(-600));
+
+  const after = await waitFor(
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async () => {
+      try {
+        return (JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8')) as { version: string })
+          .version;
+      } catch {
+        return undefined; // mid-swap: npm has the file open
+      }
+    },
+    60_000,
+  );
+  check(!!after, 'the isolated prefix still holds a readable install', after);
+  measured.push(['update → installed', after ?? '(gone)']);
+  }
 
   step('agentco shortcut');
   const shortcut = await collect(agentco(['shortcut']), 30_000);

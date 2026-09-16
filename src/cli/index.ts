@@ -337,7 +337,7 @@ async function cmdStart(): Promise<void> {
         // The npm door's button. `waitUrl` is this very server: the helper must
         // not let npm start until the request that spawned it has finished
         // dying. → cli/update-run.ts
-        onHandOffUpdate: () => handOffUpdate('latest', true, `${daemon?.url ?? ''}/healthz`),
+        onHandOffUpdate: () => handOffUpdate('latest', true, `${daemon?.url ?? ''}/healthz`) !== undefined,
         /**
          * ⚠ CLOSE FIRST, SPAWN SECOND, ON THE SAME PORT — see below — and
          * ⚠ COME BACK THROUGH THE LAUNCHER WHEN THERE IS ONE.
@@ -559,8 +559,9 @@ async function cmdUpdate(): Promise<void> {
 
   // Restart only what was actually running. `info` is the daemon this command
   // stopped a moment ago; absent means there was nothing to put back.
-  handOffUpdate(target, !!info);
+  const logPath = handOffUpdate(target, !!info);
   console.log(t(info ? 'cli.updateHandedOff' : 'cli.updateHandedOffIdle', { target }));
+  if (logPath) console.log(t('cli.updateLog', { path: logPath }));
   process.exit(EXIT.ok);
 }
 
@@ -577,12 +578,34 @@ async function cmdUpdate(): Promise<void> {
  * Returns false when there is no npm to call, so a caller can refuse BEFORE
  * stopping anything.
  */
-function handOffUpdate(target: string, restart: boolean, waitUrl?: string): boolean {
+function handOffUpdate(target: string, restart: boolean, waitUrl?: string): string | undefined {
   const npmCli = findNpmCli();
-  if (!npmCli) return false;
+  if (!npmCli) return undefined;
 
-  const script = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-')), 'update.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-'));
+  const script = path.join(dir, 'update.mjs');
   fs.writeFileSync(script, updateScript(), 'utf8');
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 A LOG FILE, NOT THIS PROCESS'S STDIO. (found on CI, 17/09/2026)       │
+   * │                                                                          │
+   * │ `stdio: 'inherit'` handed the detached helper our own stdout and stderr,  │
+   * │ and a detached process keeps those handles OPEN after we exit. Node's     │
+   * │ `'close'` event fires only once the process has ended AND its streams     │
+   * │ have closed — so `agentco update` exited immediately and anything         │
+   * │ WAITING on it hung until its own timeout. A terminal never noticed,       │
+   * │ because a terminal is not waiting for EOF; the smoke test noticed the     │
+   * │ first time it ran.                                                        │
+   * │                                                                           │
+   * │ A command that hangs every script that calls it is broken, and watching   │
+   * │ npm scroll past is not worth that. The output goes to a file instead and  │
+   * │ the path is printed — which is also the only place a failure could be     │
+   * │ read from, since by then nobody is attached to anything.                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  const logPath = path.join(dir, 'update.log');
+  const log = fs.openSync(logPath, 'a');
 
   /*
    * ⚠ `node <script>`, never a shell. The three operating systems disagree
@@ -604,20 +627,16 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): bool
       restart ? '1' : '',
       waitUrl ?? '',
     ],
-    /*
-     * ⚠ `windowsHide` EVEN THOUGH stdio IS INHERITED. Inheriting an existing
-     * console creates no window, so this costs nothing where somebody typed
-     * `agentco update` — and it is the difference between a quiet update and a
-     * console flashing onto the desktop when the BUTTON sent this from a daemon
-     * that was started by an icon. → SPEC-ui, the no-flashing-console rule
-     */
-    { detached: true, stdio: 'inherit', windowsHide: true },
+    // ⚠ `windowsHide` as well: a detached child of a process with no console is
+    // exactly what Windows answers by opening one. → the no-flashing-console rule
+    { detached: true, stdio: ['ignore', log, log], windowsHide: true },
   );
   // Without this listener a missing binary KILLS the process instead of
   // throwing — `try/catch` catches exactly none of it.
   child.on('error', (err) => console.error(err.message));
   child.unref();
-  return true;
+  fs.closeSync(log);
+  return logPath;
 }
 
 async function cmdStop(): Promise<void> {

@@ -21,7 +21,9 @@
  */
 
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -30,6 +32,7 @@ import { agentcoCmd } from '../dist/cli/launcher-text.js';
 import { findNpmCli, globalPrefixFor, updateScript } from '../dist/cli/update-run.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CLI = path.join(ROOT, 'dist', 'cli', 'index.js');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as {
   version: string;
   name: string;
@@ -63,6 +66,38 @@ test('🔴 the packaged entry points ask `current` instead of naming a version',
   // launcher was rewritten away from.
   assert.match(cmd, /echo AgentCo: no app found/, cmd);
   assert.match(cmd, /exit \/b 2/, cmd);
+});
+
+test('🔴 the update helper is never handed THIS process’s stdio', () => {
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ `stdio: 'inherit'` gave the DETACHED helper our own stdout and stderr,  │
+   * │ and it kept those handles open after we exited. Node fires `'close'`    │
+   * │ only once a process has ended AND its streams have closed, so anything  │
+   * │ WAITING on `agentco update` hung until its own timeout. A terminal      │
+   * │ never notices — it is not waiting for EOF — and the smoke test found it │
+   * │ on CI the first time it ran.                                            │
+   * │                                                                         │
+   * │ ⚠ THIS IS A SHAPE TEST, AND THE HONEST REASON IS THAT THE BEHAVIOURAL   │
+   * │ ONE CANNOT BE HAD CHEAPLY. To tell the two apart the helper has to      │
+   * │ OUTLIVE the command, which means a real `npm install` — and one that    │
+   * │ did not name an isolated prefix would overwrite the machine's own       │
+   * │ global copy. A first attempt at the behavioural test passed against the │
+   * │ broken code, because it aimed at an unpublished version, so npm failed  │
+   * │ instantly and the helper died before the inherited pipe could matter.   │
+   * │                                                                         │
+   * │ The behaviour is proved where a prefix already exists: `smoke-npm.ts`   │
+   * │ runs `agentco update --to <this version>` on all three systems and      │
+   * │ waits for the command to CLOSE. This gate only stops the shape coming   │
+   * │ back between those runs.                                                │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'cli', 'index.ts'), 'utf8');
+  const call = /const child = spawn\(\s*process\.execPath,\s*\[\s*script,[\s\S]*?\n  \);/.exec(src);
+  assert.ok(call, 'could not find the hand-off spawn in cli/index.ts');
+  assert.doesNotMatch(call[0], /stdio: 'inherit'/, `the helper inherits our stdio:\n${call[0]}`);
+  assert.match(call[0], /stdio: \['ignore', log, log\]/, call[0]);
+  assert.match(call[0], /detached: true/, call[0]);
 });
 
 test('the update helper never calls npm by name, and restarts by path', () => {
