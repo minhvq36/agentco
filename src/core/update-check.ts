@@ -123,6 +123,24 @@ export function verifyManifest(
   });
 }
 
+/**
+ * ⚠ HTTPS, OR LOOPBACK — and the exception is principled rather than a
+ * convenience for the test rig it happens to enable.
+ *
+ * What guards a layer is the `sha256` sitting beside it inside a SIGNED
+ * manifest: anything that alters the bytes in flight fails the hash, whatever
+ * the scheme. TLS adds confidentiality — it hides WHICH version is being
+ * fetched — and that is worth requiring on a public URL and worth nothing at
+ * all on a socket that never leaves the machine.
+ *
+ * Refusing loopback would have cost the only way to exercise the apply path
+ * without publishing a release to aim at. → scripts/update-rig.ts
+ */
+function fetchableLayerUrl(url: string): boolean {
+  if (url.startsWith('https://')) return true;
+  return /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\//.test(url);
+}
+
 /** One downloadable layer of an install. → SPEC-packaging §3.5 */
 export interface Layer {
   version: string;
@@ -178,7 +196,7 @@ function readLayer(raw: unknown): Layer | undefined {
   return typeof l.version === 'string' &&
     VERSION.test(l.version) &&
     typeof l.url === 'string' &&
-    l.url.startsWith('https://') &&
+    fetchableLayerUrl(l.url) &&
     typeof l.sha256 === 'string' &&
     /^[0-9a-f]{64}$/.test(l.sha256) &&
     typeof l.size === 'number' &&

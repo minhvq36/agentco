@@ -38,6 +38,14 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 const args = process.argv.slice(2);
+// The probe seeds a throwaway company with the tree under test before starting
+// it, because \`start\` refuses a directory with no company.yaml.
+if (args[0] === 'init') {
+  const dir = args[args.indexOf('--dir') + 1];
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'company.yaml'), 'language: en\\n');
+  process.exit(0);
+}
 const port = Number(args[args.indexOf('--port') + 1]);
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\\/([A-Za-z]:)/, '$1'));
 const version = JSON.parse(fs.readFileSync(path.join(here, '..', '..', 'package.json'), 'utf8')).version;
@@ -51,8 +59,25 @@ http.createServer((req, res) => {
 }).listen(port, '127.0.0.1');
 `;
 
-/** The version that will not start. The probe must catch this. */
-const BAD_ENTRY = `process.exit(3);\n`;
+/**
+ * The version that INSTALLS fine and will not SERVE. The probe must catch it.
+ *
+ * ⚠ It passes `init` on purpose: a tree that fell over at the first step would
+ * be caught by almost anything. What has to be caught is the one that looks
+ * healthy right up until it is asked to do the job.
+ */
+const BAD_ENTRY = `
+import fs from 'node:fs';
+import path from 'node:path';
+const args = process.argv.slice(2);
+if (args[0] === 'init') {
+  const dir = args[args.indexOf('--dir') + 1];
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'company.yaml'), 'language: en\\n');
+  process.exit(0);
+}
+process.exit(3);
+`;
 
 function makeLayer(version: string, entry: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-fake-layer-'));

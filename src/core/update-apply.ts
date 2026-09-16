@@ -109,7 +109,29 @@ export async function probe(
   const entry = path.join(dir, 'dist', 'cli', 'index.js');
   if (!fs.existsSync(entry)) return { ok: false, detail: `no ${entry}` };
 
+  /*
+   * ⚠ A THROWAWAY COMPANY, AND IT IS THE NEW TREE THAT CREATES IT. `start`
+   * refuses a directory with no `company.yaml`, so the probe has to make one —
+   * and making it with the version under test means `init` is exercised too,
+   * which is the other half of "does this build work at all".
+   *
+   * ⚠ NEVER THE REAL COMPANY. A version that turns out to be broken must not
+   * have been given the customer's data to be broken with.
+   */
   const company = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-probe-'));
+  const seeded = await new Promise<number | null>((resolve) => {
+    const init = spawn(process.execPath, [entry, 'init', '--dir', company], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    init.on('error', () => resolve(null));
+    init.on('exit', (code) => resolve(code));
+  });
+  if (seeded !== 0) {
+    fs.rmSync(company, { recursive: true, force: true });
+    return { ok: false, detail: `init exited ${seeded}` };
+  }
+
   const child = spawn(
     process.execPath,
     [entry, 'start', '--no-ui', '--dir', company, '--port', String(port)],

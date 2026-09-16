@@ -99,15 +99,30 @@ test('🔴 a manifest is append-only: v1 and v2 each read on both kinds of insta
   const broken = Buffer.from(JSON.stringify({ version: '0.2.0', layers: { app: { url: 5 } } }));
   assert.deepEqual(readManifest(broken), { version: '0.2.0' });
 
-  // An http:// layer is not a layer. The manifest is signed; its contents are
-  // not an excuse to leave TLS.
-  const plain = Buffer.from(
-    JSON.stringify({
-      version: '0.2.0',
-      layers: { app: { version: '0.2.0', url: 'http://x/a.tgz', sha256: 'a'.repeat(64), size: 10 } },
-    }),
-  );
-  assert.deepEqual(readManifest(plain), { version: '0.2.0' });
+  /*
+   * ⚠ HTTPS on the open network, and LOOPBACK as a deliberate exception. What
+   * guards a layer is the `sha256` beside it inside a signed manifest — bytes
+   * altered in flight fail the hash whatever the scheme. TLS buys
+   * confidentiality, which is worth requiring on a public URL and worth
+   * nothing on a socket that never leaves the machine. Refusing loopback would
+   * cost the only way to exercise the apply path without publishing a release
+   * to aim at. → scripts/update-rig.ts
+   */
+  const layerWith = (url: string): Buffer =>
+    Buffer.from(
+      JSON.stringify({
+        version: '0.2.0',
+        layers: { app: { version: '0.2.0', url, sha256: 'a'.repeat(64), size: 10 } },
+      }),
+    );
+
+  assert.equal(readManifest(layerWith('http://example.com/a.tgz'))?.layers, undefined);
+  assert.equal(readManifest(layerWith('http://127.0.0.1:8080/a.tgz'))?.layers?.app?.size, 10);
+  assert.equal(readManifest(layerWith('http://localhost:8080/a.tgz'))?.layers?.app?.size, 10);
+  // ⚠ Not a prefix match: a host that merely STARTS with the loopback name is
+  // somebody else's machine.
+  assert.equal(readManifest(layerWith('http://127.0.0.1.evil.test/a.tgz'))?.layers, undefined);
+  assert.equal(readManifest(layerWith('http://localhost.evil.test/a.tgz'))?.layers, undefined);
 
   // And a manifest with no version at all is still nothing, as in v1.
   assert.equal(readManifest(Buffer.from(JSON.stringify({ released_at: 'x' }))), undefined);
