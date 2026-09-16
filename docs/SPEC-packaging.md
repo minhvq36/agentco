@@ -424,6 +424,107 @@ cuts it to the part that can ship without the update-in-place debt.
 ⚠ The website's `/privacy` already says the app asks whether a newer version
 exists. Until this ships, that sentence is ahead of the code.
 
+### 3.7 v2: one button, and it never commits a version it has not seen run
+
+Settled 17/09/2026. v1 tells you; v2 does it. The shape is fixed by two facts
+that are not negotiable and one that was measured:
+
+- **The interface is served by the thing being replaced.** Any button that
+  updates also kills the page it lives on.
+- **Only 0.1.4 and later can be updated this way at all.** The launcher decides
+  which version runs, and it learned to read `current` in 0.1.4 (§3.7.2).
+  Anything older has the number compiled in and must be installed by hand once.
+- **No SmartScreen.** The updater downloads a layer of `.js` files and restarts
+  `runtime/node.exe`, which is already on disk — it never runs a freshly
+  downloaded executable, so the wall a customer meets on first install is a
+  one-time cost rather than a per-release one. ⚠ Believed, not yet measured.
+
+#### 3.7.1 The one rule: probe before commit
+
+§3.5 already says *write the layer beside the old one, verify, and only then
+flip `current`*. v2 adds a second gate, because a correct `sha256` only proves
+the bytes arrived — not that the thing starts:
+
+1. download the `app` layer → verify `sha256` (under the manifest signature,
+   §3.2) → extract to `app/<new>/`, which touches nothing that is running;
+2. **start it on a free port with `--no-ui` and wait for `/healthz` to answer
+   with the new version**, then stop it;
+3. only now flip `current` and restart the real daemon;
+4. if the probe never answers: delete `app/<new>/`, leave `current` alone,
+   report. Nothing was ever at risk, so there is nothing to roll back.
+
+This is stronger than rolling back after the fact, and it is the reason the
+user's *"flip back and tell me"* (17/09) is satisfied without a half-applied
+state ever existing. The residual case — passes on a scratch port, fails on the
+real one — falls to §3.7.2's fallback, which is already shipped.
+
+⚠ **`--port <free>` on the probe, never the company's port.** The daemon being
+replaced is still holding it, and the probe must not fight the thing it is
+about to succeed. `cli/port.ts §findFreePort` is the door.
+
+#### 3.7.2 What the launcher already does (0.1.4)
+
+`agentco.cmd` and `AgentCo.exe` read `current`, fall back to the version they
+shipped with when it is missing, empty, or names a directory with no
+`dist/cli/index.js`, and **say so rather than doing nothing** when there is
+nothing left to run. Measured against a fabricated tree: the pointer beats the
+compiled-in version, a trailing CRLF is trimmed, a missing target falls back.
+→ `src/cli/launcher-text.ts` · `installer/launcher.nsi`
+
+#### 3.7.3 The payload does not exist yet
+
+🔴 A release publishes exactly one asset today, `AgentCo-win-x64-setup.exe`.
+There is nothing for an updater to fetch. `release.yml` must also produce and
+upload the `app` layer as its own archive, and `scripts/release-web.ts` must put
+its URL, size and `sha256` into the manifest — which makes this **manifest v2**
+(§3.5's `layers`), signed the same way and read by the same verifier.
+
+⚠ `readManifest` reads one field today and says so in its own comment. v2 must
+keep v1 readable: an installed 0.1.4 that meets a v2 manifest has to go on
+seeing a version number and nothing else, never an error.
+
+#### 3.7.4 The button, and the page that outlives the server
+
+No dialog, no folder picker, no confirmation — the install location is already
+known (`packageRoot()`), so there is nothing to ask. **No dismiss button
+either** (user, 17/09): the line lives at the foot of the Settings panel, beside
+`AgentCo © <year> · v<version>`, where it is only seen by somebody who went
+looking. The header keeps the dismissible banner; a notice that cannot be
+dismissed is a nuisance there and information here. → `SPEC-ui.md`
+
+The page survives its own server because **it is already in the browser**:
+
+```
+click → POST /api/update  → the daemon hands the work off and answers at once
+      → the page switches to a local "updating…" state, served by nobody
+      → it polls /healthz every second
+        · answers with the NEW version → reload
+        · answers with the OLD version → "nothing changed — see the terminal"
+        · still nothing after N seconds → the same sentence
+```
+
+Nothing reports progress from the server, nothing holds a connection open, and
+the failure path ends in a sentence rather than a spinner.
+
+#### 3.7.5 The npm door keeps its command
+
+`agentco update` (0.1.4) already stops the daemon, hands the install to a script
+**outside the package** so npm is not replacing the code that is running, and
+starts the company again. The button on that door runs the same thing; it does
+not grow a second mechanism. → `src/cli/update-run.ts`
+
+#### 3.7.6 Tests that must exist
+
+- the probe refuses to flip `current` when the new tree cannot serve `/healthz`,
+  and `app/<new>/` is gone afterwards;
+- a manifest whose `app` layer hash does not match is never extracted;
+- a v1 manifest still reads as a version on a v2-capable install, and a v2
+  manifest still reads as a version on a v1 install;
+- the probe picks a free port and does not touch the company's;
+- the Settings line has no dismiss control, and appears only when
+  `latest > current`;
+- `POST /api/update` is rejected cross-origin like every other mutation (§5b).
+
 ---
 
 ## 4. The licence
