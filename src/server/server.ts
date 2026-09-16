@@ -733,7 +733,10 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     }
     // Anything that isn't /api/ is the UI — including a SPA's sub-paths.
     if (!url.pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD')) {
-      serveStatic(req, res, url.pathname);
+      // The token rides in the HTML, because the interface has no way to ask for
+      // it: any endpoint serving it would sit behind the very gate it unlocks.
+      // Undefined on loopback ⇒ nothing is injected. → server/static.ts
+      serveStatic(req, res, url.pathname, opts.token);
       return;
     }
     if (url.pathname === '/api/company' && method === 'GET') {

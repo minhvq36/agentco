@@ -1,0 +1,9 @@
+# The image installs the PUBLISHED package and copies exactly one file, so the
+# build context should be close to empty. Without this, Docker uploads the whole
+# checkout — node_modules, web/dist, the packaged app/ tree, the runtime — and
+# the build spends minutes moving bytes it will never open.
+#
+# ⚠ Deny everything, then allow the one file back. An allow-list cannot be made
+# stale by a directory somebody adds later; a deny-list silently can.
+*
+!docker/entrypoint.sh

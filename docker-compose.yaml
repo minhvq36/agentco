@@ -1,0 +1,119 @@
+# agentco, self-hosted. -> docs/SPEC-deploy.md §3.1
+#
+#   docker compose up -d        then open http://127.0.0.1:7317
+#
+# ┌──────────────────────────────────────────────────────────────────────────
+# │ WHAT THIS FILE DOES NOT DO, AND WHY THAT IS THE POINT.
+# │
+# │ No TLS, no reverse proxy, no domain, no user accounts. The perimeter is the
+# │ operator's to design, because only the operator knows whether this sits
+# │ behind Cloudflare, inside a company VPN, on a Tailscale network, or on a
+# │ laptop. Shipping a guessed nginx config would be shipping a lie about an
+# │ infrastructure we cannot see. Every self-hosted product draws the line in
+# │ the same place.
+# │
+# │ 🔴 WHAT THE OPERATOR NEEDS TO KNOW BEFORE MOVING THAT LINE:
+# │ agentco authenticates with ONE SHARED TOKEN. There are no user accounts.
+# │ Anyone holding the token is, to this daemon, the owner: no per-person
+# │ revocation, no record of who did what, and rotating it logs everyone out at
+# │ once. That is a fact to design around, not a bug to wait on — put an
+# │ identity layer IN FRONT (Cloudflare Access, oauth2-proxy, Tailscale) and
+# │ the shared token goes back to being an internal detail between the proxy
+# │ and the daemon, which is the right job for it.
+# └──────────────────────────────────────────────────────────────────────────
+
+services:
+  agentco:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      # Pin a version instead of tracking latest:
+      #   args: { AGENTCO_VERSION: "0.1.6" }
+
+    # 🔴 127.0.0.1 ON PURPOSE — the port is reachable from THIS MACHINE ONLY,
+    # including when this machine is a VPS. Dropping the prefix publishes the
+    # daemon to every interface, and on most hosts that means the internet.
+    #
+    # Reaching it from elsewhere WITHOUT publishing it:
+    #   ssh -L 7317:127.0.0.1:7317 user@your-vps
+    # and the browser still opens 127.0.0.1:7317. That route also keeps Google
+    # OAuth on agentco's own app — loopback is exempt from Google's HTTPS rule,
+    # a real domain is not. -> SPEC-deploy §2 · §4
+    #
+    # ⚠ ONE VARIABLE, BECAUSE TWO COPIES OF A PORT NUMBER DRIFT. It appears here
+    # and in AGENTCO_RUNTIME_PUBLIC_URL below, and those two disagreeing is a
+    # `redirect_uri_mismatch` whose message never mentions a port. Change it in
+    # a `.env` beside this file: AGENTCO_PORT=7318
+    #
+    # ⚠ AGENTCO'S OWN PORT SELF-HEALING CANNOT HELP HERE. When 7317 is already
+    # taken on the host — by a desktop install of agentco, most likely — Docker
+    # fails to publish the port and the container never starts, so the daemon
+    # that knows how to move is never asked. Measured 17/09: this is exactly
+    # what happens when you already run agentco on the same machine.
+    ports:
+      - "127.0.0.1:${AGENTCO_PORT:-7317}:7317"
+
+    environment:
+      # ┌──────────────────────────────────────────────────────────────────────
+      # │ 🔴 WITHOUT THIS LINE, EVERY OAUTH LOGIN REFUSES TO START.
+      # │
+      # │ `redirectBase` has three branches, and a container lands in the third:
+      # │ bound to 0.0.0.0, nothing declared -> REFUSE. That is deliberate — the
+      # │ redirect is where the authorization code is delivered, and `Host` is
+      # │ sent by the client, so guessing it would let a caller choose where the
+      # │ code lands. -> src/server/oauth-routes.ts
+      # │
+      # │ Declaring loopback here is accepted even though the daemon binds
+      # │ 0.0.0.0, because the address it hands the provider is still loopback —
+      # │ which is also what keeps Google on agentco's own app, no keys, no
+      # │ Cloud Console. -> SPEC-deploy §2 · §4
+      # │
+      # │ ⚠ IT MUST MATCH THE PORT ON THE LEFT OF `ports:` ABOVE — the address
+      # │ the BROWSER uses, not the one inside the container. Remap to
+      # │ "127.0.0.1:8080:7317" and this becomes http://127.0.0.1:8080. A
+      # │ mismatch produces `redirect_uri_mismatch`, whose message never
+      # │ mentions the port.
+      # └──────────────────────────────────────────────────────────────────────
+      AGENTCO_RUNTIME_PUBLIC_URL: "http://127.0.0.1:${AGENTCO_PORT:-7317}"
+
+      # Your Anthropic key, if you use one. A Claude subscription works instead
+      # and is the usual choice — see docker/README.md; the credential then
+      # lives in the volume and this line is not needed.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # ⚠ OFF, BECAUSE IN HERE IT WOULD LIE. The update button runs
+      # `npm install -g`, which writes to the container's own filesystem — not
+      # to this volume. It would appear to work, and then vanish the next time
+      # the container is recreated. The update path for a container is the
+      # image: `docker compose pull && docker compose up -d` (or rebuild).
+      AGENTCO_UPDATES_CHECK: "false"
+
+    # ONE volume, covering both the company and HOME. HOME matters as much:
+    # `~/.claude` holds the subscription credential AND the conversation records
+    # that `resume:` needs — lose those and `/clear` throws forever, per
+    # core/office.ts. No host path appears here on purpose; mount your own
+    # documents if and where you want them.
+    volumes:
+      - agentco-data:/data
+
+    # ⚠ EXACTLY ONE REPLICA, and this is not a formality: the OAuth `state` ↔
+    # verifier pair lives in RAM (SPEC-deploy §5③). A second instance behind a
+    # load balancer would fail logins at exactly the load-splitting ratio.
+    # For the same reason, avoid restarting while someone is mid-login.
+    restart: unless-stopped
+
+    # `/healthz` is outside the token gate and reports the daemon's own version,
+    # so it answers honestly even before anyone has logged in. -> server.ts
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:7317/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+volumes:
+  agentco-data:

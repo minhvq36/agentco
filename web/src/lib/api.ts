@@ -28,6 +28,7 @@ import type {
 } from './types';
 import type { UpdateView } from '@core/update-links';
 import { t } from '@i18n';
+import { authHeaders, withToken } from './token';
 
 export class ApiError extends Error {
   constructor(
@@ -44,7 +45,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(path, {
       ...init,
-      headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
+      // ⚠ WRAPS whatever the caller built, rather than being merged in beside it:
+      // this is the one place every request passes through, so the token has to be
+      // applied HERE or a call that brings headers of its own would quietly lose
+      // it. On loopback there is no token and this adds nothing. → lib/token.ts
+      headers: authHeaders(
+        init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
+      ),
     });
   } catch {
     // The daemon going away mid-session WILL happen (Ctrl+C in the terminal). Say
@@ -540,8 +547,15 @@ export const api = {
    * `content-type` so the browser renders it; downloading is always
    * `octet-stream` + `content-disposition`.
    */
+  /**
+   * ⚠ `withToken`, because this is the ONE url the browser fetches on its own —
+   * `<img src>`, `<video src>`, `<object data>`, `<a href download>`. None of
+   * those can carry a header, so the token has to ride in the query string.
+   * Being the single producer is what makes that safe to reason about: there is
+   * no second place building an `/api/` url for the browser. → lib/token.ts
+   */
   artifactUrl: (id: string, p: string, download = false) =>
-    `/api/office/${enc(id)}/artifacts/file?path=${enc(p)}${download ? '&download=1' : ''}`,
+    withToken(`/api/office/${enc(id)}/artifacts/file?path=${enc(p)}${download ? '&download=1' : ''}`),
 
   /** Delete for good. One step — but unlike the library, THIS IS THE ONLY COPY. */
   removeArtifact: (id: string, p: string) =>

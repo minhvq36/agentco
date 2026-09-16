@@ -78,8 +78,62 @@ export function webBuildStale(): boolean {
   }
 }
 
+/**
+ * Stamp the daemon's token into the page that is about to be served.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 THE INTERFACE CANNOT ASK FOR THIS, SO THE PAGE ARRIVES HOLDING IT.
+ * │
+ * │ Under Docker the daemon binds `0.0.0.0`, which `serve()` refuses without a
+ * │ token — so every `/api/` call needs one. But the interface has no door to
+ * │ fetch it through: any such endpoint would itself sit behind the gate, and
+ * │ one that did not would hand the token to anyone who asked.
+ * │
+ * │ ⇒ the only party that can both prove it should know and deliver it is the
+ * │ daemon serving the HTML. Nothing is stored, nothing is in the URL, nothing
+ * │ survives the tab; a reload re-reads it from a daemon that had to be
+ * │ reachable for the page to exist at all.
+ * └──────────────────────────────────────────────────────────────────────────
+ *
+ * ⚠ IT GOES RIGHT AFTER `<head>`, ahead of the theme script and far ahead of
+ * the deferred module bundle, so it is set before any code can read it.
+ *
+ * ⚠ ESCAPED AS A JS STRING **and** past `<`. `JSON.stringify` alone is not
+ * enough inside a `<script>`: a token containing `</script>` would close the
+ * element and the rest would land on the page as markup.
+ */
+export function injectToken(html: string, token: string | undefined): string {
+  if (!token) return html;
+  /*
+   * ⚠ ONE RULE FOR THREE CHARACTERS, AND THEY ARE WRITTEN AS ESCAPES ON PURPOSE.
+   * `<` ends the script element as far as the HTML parser is concerned, whatever
+   * the JavaScript around it means. U+2028 and U+2029 are line terminators to a
+   * JS parser — and writing those two LITERALLY here is what broke this file on
+   * the first attempt: TypeScript read them as newlines and the string never
+   * closed. The defect and the defence were the same character.
+   */
+  const literal = JSON.stringify(token).replace(/[<\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  const tag = `<script>window.__AGENTCO_TOKEN__=${literal}</script>`;
+  const head = html.indexOf('<head>');
+  if (head < 0) {
+    /*
+     * A build with no `<head>` is broken, but failing the request would turn a
+     * broken page into no page. Serve it and SAY SO — the symptom otherwise is
+     * a blank interface and 401s with nothing pointing here.
+     */
+    console.error('agentco: index.html has no <head> — the interface will not receive its token');
+    return html;
+  }
+  return html.slice(0, head + 6) + tag + html.slice(head + 6);
+}
+
 /** Returns true when the request has been handled. */
-export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
+export function serveStatic(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  pathname: string,
+  token?: string,
+): boolean {
   const root = webRoot();
   if (!root) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -109,6 +163,17 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse,
       ? 'public, max-age=31536000, immutable'
       : 'no-cache',
   });
+
+  /*
+   * ⚠ ONLY THE HTML IS READ INTO MEMORY, and only when there is a token to add.
+   * Artifacts go through here too and they are arbitrarily large, so the stream
+   * stays the default path — the desktop install serves exactly the bytes it
+   * served before this branch existed.
+   */
+  if (token && ext === '.html') {
+    res.end(injectToken(fs.readFileSync(file, 'utf8'), token));
+    return true;
+  }
   fs.createReadStream(file).pipe(res);
   return true;
 }

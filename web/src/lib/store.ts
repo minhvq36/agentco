@@ -32,6 +32,7 @@ import { plural, resolveLocale, setLocale, t } from '@i18n';
 import { mergeUserEcho } from './chat-echo';
 import { replayable } from './replay';
 import { applyTheme, bootTheme, type Theme } from './theme';
+import { withToken } from './token';
 
 export interface ChatMessage {
   id: number;
@@ -1457,7 +1458,14 @@ let source: EventSource | undefined;
 
 export function connectEvents(): () => void {
   source?.close();
-  const es = new EventSource('/api/events');
+  /**
+   * ⚠ `withToken`: EventSource has NO way to send a header — no options object,
+   * no interceptor, nothing. It is the reason the token needs a query-string
+   * form at all, and the reason that form cannot simply be deleted later. Under
+   * Docker, without this the page loads and then every live update silently
+   * never arrives. → lib/token.ts
+   */
+  const es = new EventSource(withToken('/api/events'));
   source = es;
 
   es.onmessage = (m) => {

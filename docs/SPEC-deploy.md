@@ -90,6 +90,108 @@ because a browser navigation carries no headers — the callback's authenticatio
 
 ---
 
+## 3.1 One container, not two — and what had to be built first (17/09/2026)
+
+§3's two-container diagram is for **a VPS behind nginx**. Copying it to a local
+`docker compose` would buy the one failure mode §3② warns about and nothing
+else: **the daemon already serves the interface** (`server.ts §serveStatic`), and
+`@agent-co-app/cli` ships `dist` *and* `web/dist` in one package. So the shipped
+compose is **one service**, and the port you open is the port everything is on.
+
+The image installs the **published package**; it does not build from source. That
+package is the exact artifact CI installs and runs on three systems × Node 22/24
+every release, so the image inherits all of it. A second build path would be
+tested by nobody and free to drift — the `web/dist` failure of September, again.
+
+### 🔴 The interface never sent the token, and nothing said so
+
+Found by walking the door, 17/09. Three facts that only collide under Docker:
+
+| | |
+|---|---|
+| `server.ts §593` | binding anywhere but loopback **without a token throws** |
+| Docker | must bind `0.0.0.0` for a published port to reach it |
+| `web/src/lib/api.ts` | sent **no** `x-agentco-token`, anywhere |
+
+⇒ the page loads (static files are not gated) and then every call answers 401.
+A blank interface, and no sentence pointing anywhere. **Measured in a real
+container before the fix: `/api/company` → 401.**
+
+**The token needs two shapes, and that is not a convenience.** A header covers
+`call()`, but three things the interface already does cannot send one:
+`new EventSource('/api/events')`, the artifact previews (`<img src>`,
+`<video src>`, `<object data>`), and the download link. Those are the browser
+fetching a URL on its own behalf. `server.ts §708` already accepted both forms —
+what was missing was the interface ever sending either.
+
+**The token arrives IN the HTML** (`server/static.ts §injectToken`), because the
+interface has no door to ask through: any endpoint serving it would sit behind
+the very gate it unlocks, and one that did not would hand it to anyone. Nothing
+is stored, nothing is in the URL, nothing survives the tab.
+
+⚠ On loopback there is no token, and every one of these paths is a no-op — the
+desktop install sends the bytes it sent before. `test/token-door.test.ts` holds
+that, plus a gate over `web/src`: any **new** `/api/` url built outside `api.ts`
+must go through `withToken`, or it will 401 under Docker and look fine on the
+developer's machine.
+
+⚠ The query-string form is for **tier A/B only** (below). Behind a public proxy
+it lands in access logs; that is a different decision, not a bigger version of
+this one.
+
+### Three tiers, and the shipped default is the safe one
+
+| | Entry | Needs | State |
+|---|---|---|---|
+| **A** | `127.0.0.1` on this machine | nothing | shipped |
+| **B** | VPS + SSH tunnel / Tailscale | an SSH account | **works today** — §4 |
+| **C** | VPS + public domain | TLS · reverse proxy · **identity in front** | operator's call |
+
+The compose publishes to `127.0.0.1` **including on a VPS**. Tier C is not a
+missing feature: agentco authenticates with **one shared token and no user
+accounts**, so exposing it means buying identity from a proxy (Cloudflare
+Access, `oauth2-proxy`, Tailscale) rather than waiting for us to build it. That
+is the line every self-hosted product draws, and `docker/README.md` states the
+property rather than warning about it.
+
+### Settled by measurement, 17/09
+
+- **`claude setup-token`** — *"Set up a long-lived authentication token (requires
+  Claude subscription)"*. A subscription works in a container; `HOME` in the
+  volume keeps it. Docker is **not** API-key-only.
+- **Claude Code arrives with the package**, as the SDK's own pinned
+  `optionalDependency` — the 293 MB we decided to tolerate is what makes this
+  work. ⛔ never `--omit=optional`; Debian not Alpine (native binary, glibc);
+  architecture must match the host.
+- **`AGENTCO_RUNTIME_PUBLIC_URL` is mandatory here.** Bound to `0.0.0.0` with
+  nothing declared, `redirectBase` lands in branch ③ and **refuses** — GitHub
+  survives (device flow, no redirect), Notion and Google do not. Declaring
+  `http://127.0.0.1:<port>` is accepted *because the address handed to the
+  provider is still loopback*, which is also what keeps Google on agentco's own
+  app. One `.env` variable feeds both it and `ports:`, so they cannot drift.
+- **Port self-healing cannot help at the Docker boundary.** When the host port is
+  taken, Docker fails to publish and the container never starts — the daemon
+  that knows how to move is never asked. Measured: `Ports are not available`,
+  before any agentco log line.
+- **`HOME` must be in the volume**, not just the company directory:
+  `~/.claude` holds the credential *and* the conversation records `resume:`
+  needs. Losing those breaks `/clear` permanently (`core/office.ts`).
+- **The update button is switched off** (`AGENTCO_UPDATES_CHECK=false`): it runs
+  `npm install -g` into the container's filesystem, which would appear to work
+  and vanish on the next recreate. For a container the image *is* the version.
+
+### A port change does not cost a re-verification
+
+`refreshAccount` sends `grant_type` · `refresh_token` · `client_id` and **no
+`redirect_uri`** (`core/oauth.ts §520`); the redirect appears once, in
+`exchangeCode`. So an arm verified on 7317 keeps working on 7318. Only a **new**
+sign-in is affected, and all three mechanisms absorb it for different reasons:
+GitHub has no redirect at all, Google exempts every loopback port, and the DCR
+vendors are **told** the address at registration time — which is also why
+`$clients` is keyed by `${issuer}|${redirectUri}`.
+
+---
+
 ## 4. The tunnel route — keeps "0 keys" true even on a VPS
 
 ```
@@ -274,4 +376,6 @@ instruction, so people **follow it**, and burn time somewhere there's nothing to
 | ⏰ | **A measurement is already running, don't miss it**: the app is in `Testing` ⇒ the refresh token should die **~04/09/2026** | run `--refresh` after that date to **confirm the 7-day mark with our own measurement**, before Publishing |
 | ⏸ | Verification profile (path A): homepage + **privacy policy on the same domain** + demo video + domain verification in Search Console | overlaps exactly with the *golive* item — do it near the end, but **start it early since the WAIT is what costs time** |
 | ⏸ | Fill in the *GitHub App Callback URL* field in §6 | |
-| ⏸ | Sample Dockerfile + compose (2 containers + `.state` volume + `/api` route) | not a single line written yet |
+| ✅ | ~~Sample Dockerfile + compose~~ | **shipped 17/09** — `docker/` + `docker-compose.yaml`, and **one** container, not two (§3.1: the daemon serves the interface). Built and run for real: `/healthz` answered, the token chain measured end to end (401 without · 200 by header · 200 by query) |
+| 🔴 | **§5① is still open, and the compose only DODGES it** | nothing is bind-mounted, so no host↔container path mapping exists to break the invariant. The moment anyone mounts their own documents — which `docker/README.md` invites — `SPEC-tools-approval §1b` is silently absent again. Mounting is the normal thing to want; this has to be paid before Docker reaches customer-facing docs |
+| ⏸ | Tier C (public domain) has still never been run | §3.1: it needs identity in front, not TLS. The `?token=` query form must not go through a logging proxy as-is |
