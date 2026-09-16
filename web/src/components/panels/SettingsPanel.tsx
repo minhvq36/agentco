@@ -144,11 +144,11 @@ function VersionFooter() {
     // of the content: with spare room it drops to the bottom, and when the
     // sections outgrow the panel it simply follows them into the scroll.
     //
-    // ⚠ `text-center` on a BLOCK, not a measured offset. The sidebar is
-    // draggable, so any number computed once would be right at one width and
-    // wrong at every other; a block element is already exactly as wide as the
-    // panel, and centring inside it follows the drag for free.
-    <p className="mt-auto border-t border-line pt-3 text-center text-[11.5px] leading-relaxed text-muted">
+    // ⚠ Left, like every other line in this panel. Centred was tried (user,
+    // 16/09) and put back: the section titles and the choices all start at the
+    // same x, and one line breaking that column reads as a mistake rather than
+    // as a flourish.
+    <p className="mt-auto border-t border-line pt-3 text-[11.5px] leading-relaxed text-muted">
       {t('settings.footer', { year: String(new Date().getFullYear()), version: view.current })}
     </p>
   );
