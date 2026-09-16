@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The update check, v1: notice a newer version, never install one.
  * → docs/SPEC-packaging.md §3.4, §3.6
  *
@@ -282,12 +282,22 @@ export async function checkForUpdate(o: {
   now?: number;
   fetchBytes?: (url: string) => Promise<Uint8Array>;
   keys?: readonly ReleaseKey[];
+  /** Ignore the 24-hour cache. Only ever set when a person asked. */
+  force?: boolean;
 }): Promise<UpdateCache | undefined> {
   if (!o.enabled) return undefined;
 
   const now = o.now ?? Date.now();
   const previous = readUpdateCache(o.paths);
-  if (previous && now - Date.parse(previous.checked_at) < CHECK_EVERY_MS) return previous;
+  /*
+   * ⚠ `force` IS FOR A PERSON WHO ASKED, and nothing else. The 24-hour ceiling
+   * exists so the daemon does not knock on the door every time it starts — it
+   * is a rule about BACKGROUND curiosity. `agentco update` is somebody typing a
+   * command, and answering that from a note written up to a day ago is how the
+   * command came to say "already on 0.1.4, which is the newest there is" on the
+   * day 0.1.5 shipped (found 17/09/2026).
+   */
+  if (!o.force && previous && now - Date.parse(previous.checked_at) < CHECK_EVERY_MS) return previous;
 
   const get = o.fetchBytes ?? fetchBytes;
   let outcome: Outcome;

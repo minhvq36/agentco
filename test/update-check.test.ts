@@ -135,6 +135,32 @@ test('within 24 hours the cache answers and no request is made', async () => {
   assert.equal(fake.calls.length, 4);
 });
 
+test('🔴 `force` asks anyway — the ceiling is about background curiosity, not about a person', async () => {
+  /*
+   * `agentco update` read this cache and answered "already on 0.1.4, which is
+   * the newest there is" on the day 0.1.5 shipped (17/09/2026). The 24-hour cap
+   * exists so the DAEMON does not knock every time it starts; somebody typing a
+   * command is owed a fresh answer, not a note written up to a day ago.
+   * → cli/index.ts `cmdUpdate`
+   */
+  const paths = company();
+  const fake = site(MANIFEST, sign(MANIFEST, working));
+  await checkForUpdate({ paths, enabled: true, now: T0, keys: KEYS, ...fake });
+  assert.equal(fake.calls.length, 2);
+
+  await checkForUpdate({ paths, enabled: true, now: T0 + 1, keys: KEYS, ...fake });
+  assert.equal(fake.calls.length, 2, 'without force, a second look inside the window is silent');
+
+  await checkForUpdate({ paths, enabled: true, now: T0 + 1, keys: KEYS, force: true, ...fake });
+  assert.equal(fake.calls.length, 4, 'force must reach the network even one millisecond later');
+
+  // ⚠ And `force` does not override the OFF switch. "Off means off" outranks
+  // "somebody asked": an air-gapped install must be able to make no request at
+  // all, whatever is typed. → SPEC-packaging §3.4
+  await checkForUpdate({ paths, enabled: false, now: T0 + 2, keys: KEYS, force: true, ...fake });
+  assert.equal(fake.calls.length, 4, 'updates.check: false still means no request');
+});
+
 test('an unreachable site keeps the version it last knew', async () => {
   const paths = company();
   await checkForUpdate({ paths, enabled: true, now: T0, keys: KEYS, ...site(MANIFEST, sign(MANIFEST, working)) });

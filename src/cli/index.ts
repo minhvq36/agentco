@@ -30,10 +30,10 @@ import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './dae
 import { agentcoOnPort, DEFAULT_PORT, findFreePort, type PortOccupant } from './port.js';
 import { findNpmCli, globalPrefixFor, updateScript } from './update-run.js';
 import {
+  checkForUpdate,
   compareVersions,
   installKind,
   packageRoot,
-  readUpdateCache,
 } from '../core/update-check.js';
 import { WEBSITE_URL } from '../core/update-links.js';
 
@@ -534,11 +534,17 @@ async function cmdUpdate(): Promise<void> {
   /*
    * Only when going to `latest`, and only as a courtesy: an explicit `--to` is
    * an instruction, and the channel has no opinion about a version somebody
-   * named. A `bad-signature` answer is NOT a reason to refuse — npm is its own
-   * trust chain, and the manifest only ever contributed a number.
+   * named. A `bad-signature` or `unreachable` answer is NOT a reason to refuse —
+   * npm is its own trust chain, and the manifest only ever contributed a number.
+   *
+   * 🔴 ASKED FRESH, NOT READ FROM THE CACHE. Reading it is what made this
+   * command answer "already on 0.1.4, which is the newest there is" on the day
+   * 0.1.5 shipped: the cache is capped at 24 hours because the DAEMON must not
+   * knock every time it starts, and that ceiling has nothing to do with a
+   * person who just typed a command. → core/update-check.ts §checkForUpdate
    */
   if (target === 'latest') {
-    const seen = readUpdateCache(pp);
+    const seen = await checkForUpdate({ paths: pp, enabled: true, force: true });
     if (seen?.outcome === 'ok' && seen.latest && compareVersions(seen.latest, appVersion()) <= 0) {
       console.log(t('cli.updateAlready', { version: appVersion() }));
       return;
