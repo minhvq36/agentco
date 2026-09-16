@@ -479,6 +479,34 @@ export class Company {
   }
 
   /**
+   * Record the port this company ACTUALLY listens on. → cli/port.ts
+   *
+   * 🔴 THE WRITE IS WHAT MAKES MOVING A PORT LEGITIMATE. `start` moving to a
+   * free port WITHOUT this would leave company.yaml naming 7317 while the
+   * daemon answered on 7318 and the Linux `.desktop` entry pointed at the
+   * number the file names — one number, three answers, and the desktop icon
+   * the odd one out. Changing the file instead keeps the config true, and the
+   * change is visible to the person it happened to.
+   *
+   * ⚠ Same write shape as `updateModels`: through `parseDocument`, so comments
+   * the user put in company.yaml survive, then READ BACK through the schema
+   * rather than patched in memory. No event and no `applyCompanyConfig`: this
+   * number reaches nothing an office does, and at the moment it is called the
+   * daemon is not serving yet.
+   */
+  updatePort(port: number): void {
+    const doc = YAML.parseDocument(fs.readFileSync(this.paths.configFile, 'utf8'));
+    if (!doc.has('runtime')) doc.set('runtime', {});
+    doc.setIn(['runtime', 'port'], port);
+    fs.writeFileSync(
+      this.paths.configFile,
+      doc.toString({ lineWidth: 0, flowCollectionPadding: false }),
+      'utf8',
+    );
+    this.config = loadCompanyConfig(this.dir);
+  }
+
+  /**
    * Change the INTERFACE language. → `src/i18n/` · docs/CLAUDE.md §Language
    *
    * ┌──────────────────────────────────────────────────────────────────────────┐

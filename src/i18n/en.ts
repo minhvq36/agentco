@@ -784,14 +784,19 @@ export const en = {
    * "another agentco is running" about a stranger's service would be a guess
    * dressed as a fact, and the reader cannot check it either. → cli/port.ts
    */
+  'cli.portMoved':
+    '  Port {from} was taken, so this company moved to {to} — written to runtime.port in {file}.',
   'cli.portBusy': 'Port {port} is in use, so this company did not start.',
   'cli.portBusyAgentco':
     'Another agentco company is answering there (v{version}) — most likely the packaged app, which keeps a company of its own. It is open at {url}',
-  'cli.portBusyFixes':
-    'For THIS company:\n  · just this once:  agentco start --port {next}\n  · for good:        set runtime.port in {file}',
-  'cli.initPortNone':
-    '⚠ Ports {first}–{last} are all in use. Leaving {first} in company.yaml — change runtime.port there, or start with `agentco start --port <n>`.',
-  'cli.createdPort': '  Port {port} — {first} was taken. It is runtime.port in company.yaml.',
+  'cli.portBusyAsked':
+    'It was named with --port, so nothing was moved and nothing was written. Free right now: {next}',
+  'cli.portBusyNoneFree':
+    'Nothing above it is free either. Close whatever is holding these ports, or set runtime.port in {file} — {next} is the next one worth trying.',
+  'cli.portBusyUnknownAgentco':
+    'An older agentco (v{version}) is on that port and does not say which company it serves. This company was NOT moved, in case the two are the same folder. Update that one, or run this one with --port {next}.',
+  'cli.alreadyRunningAtPort':
+    'This company is already running at {url} — opening it. (Its daemon record was missing, so use the “Shut down” button in the tab rather than `agentco stop`.)',
   /**
    * ⚠ IT USED TO SAY "on Windows, the installer already adds one" — TO PEOPLE
    * WHO NEVER RAN THE INSTALLER. (fixed 16/09/2026)

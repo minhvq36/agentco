@@ -599,14 +599,19 @@ export const vi: Catalog = {
   'cli.checkAuthTimeout': 'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `claude` một lần để đăng nhập',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
+  'cli.portMoved':
+    '  Cổng {from} đang bận nên công ty chuyển sang {to} — đã ghi vào runtime.port trong {file}.',
   'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',
   'cli.portBusyAgentco':
     'Ở đó là một công ty agentco khác (bản {version}) — nhiều khả năng là bản cài desktop, nó giữ công ty riêng. Nó đang mở ở {url}',
-  'cli.portBusyFixes':
-    'Còn công ty NÀY:\n  · chạy tạm lần này:  agentco start --port {next}\n  · đổi hẳn:           sửa runtime.port trong {file}',
-  'cli.initPortNone':
-    '⚠ Các cổng {first}–{last} đều đang bận. Vẫn ghi {first} vào company.yaml — sửa runtime.port ở đó, hoặc chạy `agentco start --port <n>`.',
-  'cli.createdPort': '  Cổng {port} — {first} đang bận. Nó là runtime.port trong company.yaml.',
+  'cli.portBusyAsked':
+    'Cổng này do bạn chỉ định bằng --port nên không tự đổi và không ghi gì cả. Đang trống lúc này: {next}',
+  'cli.portBusyNoneFree':
+    'Các cổng phía trên cũng không còn chỗ trống. Đóng bớt thứ đang giữ chúng, hoặc sửa runtime.port trong {file} — {next} là cổng đáng thử tiếp.',
+  'cli.portBusyUnknownAgentco':
+    'Trên cổng đó là một bản agentco cũ (bản {version}), nó không khai đang phục vụ công ty nào. Công ty này KHÔNG được dời, phòng khi hai bên là cùng một thư mục. Cập nhật bản kia, hoặc chạy công ty này bằng --port {next}.',
+  'cli.alreadyRunningAtPort':
+    'Công ty này đang chạy sẵn ở {url} — đang mở ra. (Bản ghi daemon bị mất, nên hãy dùng nút “Tắt hẳn” trong tab thay vì `agentco stop`.)',
   'cli.shortcutNotLinux':
     'Hiện chỉ tạo lối tắt trong menu trên Linux.\nTrên Windows, icon đến từ bản cài ở agent-co.app; nếu cài bằng npm thì khởi động công ty bằng `agentco start`.\nTrên macOS không có lối tắt menu ở cả hai đường — `agentco start` là đường vào.',
   'cli.shortcutNoCompany': 'Không có công ty nào ở {dir}.\nChạy `agentco init` ở đó trước, rồi `agentco shortcut`.',

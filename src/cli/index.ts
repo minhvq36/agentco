@@ -15,13 +15,19 @@ import { fileURLToPath } from 'node:url';
 
 import { Company } from '../core/company.js';
 import { adoptInterfaceLocale, osLocaleHints } from '../core/config.js';
-import { companyPaths, ensureCompanyDirs, isCompanyDir, resolveCompanyDir } from '../core/paths.js';
+import {
+  companyFingerprint,
+  companyPaths,
+  ensureCompanyDirs,
+  isCompanyDir,
+  resolveCompanyDir,
+} from '../core/paths.js';
 import { DESKTOP_LAUNCHER_ENV, desktopEntry, desktopFileName } from './desktop-entry.js';
 import { readSignIn, SIGN_IN_PROBE_MS } from './doctor-auth.js';
 import { serve, type Daemon } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
-import { agentcoOnPort, DEFAULT_PORT, findFreePort, PORT_SCAN_MAX } from './port.js';
+import { agentcoOnPort, DEFAULT_PORT, findFreePort, type PortOccupant } from './port.js';
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
 import { appVersion } from '../core/version.js';
@@ -85,7 +91,7 @@ async function main(): Promise<void> {
  * Create an EMPTY company. No sample office, no sample employees.
  * → SPEC-offices.md §3
  */
-async function cmdInit(): Promise<void> {
+function cmdInit(): void {
   if (isCompanyDir(companyDir)) {
     console.log(t('cli.alreadyInit', { dir: companyDir }));
     return;
@@ -94,25 +100,17 @@ async function cmdInit(): Promise<void> {
   ensureCompanyDirs(pp);
 
   /**
-   * 🔴 THE PORT IS CHOSEN HERE, ONCE, AND WRITTEN DOWN. → cli/port.ts
+   * ⚠ ALWAYS THE DEFAULT, EVEN THOUGH THE SECOND COMPANY ON A MACHINE WILL
+   * COLLIDE WITH IT. (settled 16/09/2026, user)
    *
-   * An explicit `--port` is obeyed as given, busy or not: somebody who names a
-   * number means that number, and a clever substitution would be the surprise.
-   * Everything else searches from the default and records what it found, so the
-   * second company on a machine never collides with the first.
+   * A version of this searched for a free port here as well. It worked, and it
+   * was one mechanism too many: `start` already moves a taken port and writes
+   * the new number back, so the collision resolves itself the first time the
+   * company runs. Two mechanisms for one problem means two places to keep
+   * true, and the second one earns nothing — the outcome is the same file
+   * holding the same number.
    */
-  const host = typeof flags['host'] === 'string' ? flags['host'] : '127.0.0.1';
-  let port = DEFAULT_PORT;
-  if (typeof flags['port'] === 'number') {
-    port = flags['port'];
-  } else {
-    const free = await findFreePort(DEFAULT_PORT, host);
-    if (free === undefined) {
-      console.log(t('cli.initPortNone', { first: DEFAULT_PORT, last: DEFAULT_PORT + PORT_SCAN_MAX - 1 }));
-    } else {
-      port = free;
-    }
-  }
+  const port = typeof flags['port'] === 'number' ? flags['port'] : DEFAULT_PORT;
   /**
    * Resolve the interface language HERE, from the OS, and write it down.
    *
@@ -161,11 +159,45 @@ async function cmdInit(): Promise<void> {
   console.log(t('cli.createdCompanyYaml'));
   console.log(t('cli.createdOffices'));
   console.log(t('cli.createdEmpty'));
-  // Only when it is NOT the number the documentation names: saying "port 7317"
-  // every time trains people to skip the line that matters on the one machine
-  // where it is 7318.
-  if (port !== DEFAULT_PORT) console.log(t('cli.createdPort', { port, first: DEFAULT_PORT }));
   console.log(t('cli.createdNext'));
+}
+
+/**
+ * The two cases healing cannot reach: a `--port` the caller named and we must
+ * not override, and a machine with nothing free in the window above it.
+ *
+ * 🔴 IT GOES THROUGH `notifyDesktop`, AND THE FIRST VERSION OF THIS DID NOT.
+ * `console.error` alone is a dead end for everyone who did not arrive by
+ * terminal — which is the whole audience of a menu icon. The box on
+ * `notifyDesktop` names "a port already taken" as its example, and this branch
+ * still managed to route around it by exiting directly instead of through
+ * `fail()`. → SPEC-packaging §7.4b
+ */
+async function portDeadEnd(
+  port: number,
+  host: string,
+  file: string,
+  why: 'asked' | 'none-free' | 'unidentified',
+  occupant?: PortOccupant,
+): Promise<never> {
+  const next = (await findFreePort(port + 1, host)) ?? port + 1;
+
+  const lines = [t('cli.portBusy', { port })];
+  if (occupant && why !== 'unidentified') {
+    lines.push(t('cli.portBusyAgentco', { version: occupant.version, url: `http://${host}:${port}` }));
+  }
+  lines.push(
+    why === 'asked'
+      ? t('cli.portBusyAsked', { next })
+      : why === 'unidentified'
+        ? t('cli.portBusyUnknownAgentco', { version: occupant?.version ?? '?', next })
+        : t('cli.portBusyNoneFree', { next, file }),
+  );
+
+  const message = lines.join('\n');
+  console.error(message);
+  notifyDesktop(message);
+  process.exit(EXIT.config);
 }
 
 async function cmdStart(): Promise<void> {
@@ -180,52 +212,113 @@ async function cmdStart(): Promise<void> {
   }
 
   const company = Company.open(companyDir);
-  const port = typeof flags['port'] === 'number' ? flags['port'] : company.config.runtime.port;
+  const asked = typeof flags['port'] === 'number' ? flags['port'] : undefined;
   const host = typeof flags['host'] === 'string' ? flags['host'] : '127.0.0.1';
   const token = process.env['AGENTCO_TOKEN'];
 
   /**
-   * ⚠ THE `catch` HANDLES EXACTLY ONE CODE AND RE-THROWS THE REST.
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 A TAKEN PORT MOVES THE COMPANY AND WRITES THE NEW NUMBER DOWN.        │
+   * │ (16/09/2026)                                                             │
+   * │                                                                          │
+   * │ The first version of this printed a good sentence and stopped — and the  │
+   * │ sentence was a dead end for everyone who did not arrive by terminal.     │
+   * │ A `.desktop` entry runs with `Terminal=false`; the Windows launcher      │
+   * │ reads an EXIT CODE and shows "stopped unexpectedly (code 2)". The two    │
+   * │ ways out on offer — a CLI flag and editing company.yaml — are both       │
+   * │ developer-shaped, and the interface cannot be the third one, because     │
+   * │ this is the failure that stops the interface from existing.              │
+   * │                                                                          │
+   * │ So it heals instead of explaining: take the next free port, RECORD IT    │
+   * │ (`Company.updatePort`), carry on. Recording is the whole difference      │
+   * │ between healing and drifting — the config stays true, so the desktop     │
+   * │ entry and the launcher follow on their own.                              │
+   * │                                                                          │
+   * │ ⚠ AN EXPLICIT `--port` IS NEVER MOVED. Somebody who names a number is    │
+   * │ answering a question we did not ask, often pointing a script at a fixed  │
+   * │ address; healing there would be a surprise, not a kindness.              │
+   * └──────────────────────────────────────────────────────────────────────────┘
    *
-   * `serve()` rejects with whatever `server.once('error')` received, and a
-   * `catch` that swallowed all of them would fold every future listen failure —
-   * a bad `--host`, a permission denial, an interface that vanished — into one
-   * friendly Vietnamese sentence about ports. That is the shape of bug that
-   * never gets reported because the message sounds like it was expected.
+   * ⚠ THE `catch` HANDLES EXACTLY ONE CODE AND RE-THROWS THE REST. `serve()`
+   * rejects with whatever `server.once('error')` received, and a catch that
+   * swallowed all of them would fold every future listen failure — a bad
+   * `--host`, a permission denial, an interface that vanished — into one
+   * friendly sentence about ports. That is the shape of bug nobody reports,
+   * because the message sounds like it was expected.
    *
    * Above this, `liveDaemon` has ALREADY handled the common case: this
    * company's own daemon running, which opens a browser instead of erroring.
    * Reaching here means the port belongs to somebody else. → cli/port.ts
    */
-  let daemon: Daemon;
-  try {
-    daemon = await serve({
-      company,
-      port,
-      host,
-      ...(token ? { token } : {}),
-      onShutdown: () => {
-        console.log(t('cli.shutFromUi'));
-        clearDaemonFile(pp);
-        process.exit(EXIT.ok);
-      },
-    });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+  let port = asked ?? company.config.runtime.port;
+  const wanted = port;
+  let daemon: Daemon | undefined;
 
-    const occupantVersion = await agentcoOnPort(port, host);
-    // Suggest a port that actually works. A `port + 1` that is busy too turns
-    // one dead end into two.
-    const next = (await findFreePort(port + 1, host)) ?? port + 1;
+  // ⚠ A LOOP, NOT ONE RETRY: between `findFreePort` answering and `serve`
+  // asking, the port can be taken by somebody else. Rare, and cheap to survive.
+  for (let attempt = 0; attempt < 4 && !daemon; attempt++) {
+    try {
+      daemon = await serve({
+        company,
+        port,
+        host,
+        ...(token ? { token } : {}),
+        onShutdown: () => {
+          console.log(t('cli.shutFromUi'));
+          clearDaemonFile(pp);
+          process.exit(EXIT.ok);
+        },
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+      if (asked !== undefined) return portDeadEnd(port, host, pp.configFile, 'asked');
 
-    console.error(t('cli.portBusy', { port }));
-    if (occupantVersion) {
-      console.error(
-        t('cli.portBusyAgentco', { version: occupantVersion, url: `http://${host}:${port}` }),
-      );
+      const occupant = await agentcoOnPort(port, host);
+
+      /*
+       * 🔴 OUR OWN DAEMON, WITH ITS RECORD MISSING — the case `liveDaemon`
+       * above could not see, because it reads `daemon.json` and that file was
+       * not there. Same answer it would have given: open a tab. Starting a
+       * second daemon on one company folder is the thing healing must never do.
+       *
+       * ⚠ `stop` still needs the missing record, so the way out is the "Shut
+       * down" button in the tab now opening — which is why it opens.
+       */
+      if (occupant?.company === companyFingerprint(companyDir)) {
+        const url = `http://${host}:${port}`;
+        console.log(t('cli.alreadyRunningAtPort', { url }));
+        if (!flags['no-ui']) openBrowser(url);
+        return;
+      }
+
+      /*
+       * ⚠ AN AGENTCO THAT WILL NOT SAY WHICH COMPANY IT SERVES (any build
+       * before 0.1.3) IS A REFUSAL, NOT A MOVE. Moving and being wrong means
+       * two daemons over one key store and one ledger, silently. Refusing and
+       * being wrong means a sentence on the screen and `--port`. The visible
+       * failure is the cheaper one to be wrong about.
+       */
+      if (occupant && occupant.company === undefined) {
+        return portDeadEnd(port, host, pp.configFile, 'unidentified', occupant);
+      }
+
+      const free = await findFreePort(port + 1, host);
+      if (free === undefined) return portDeadEnd(port, host, pp.configFile, 'none-free', occupant);
+      port = free;
     }
-    console.error(t('cli.portBusyFixes', { next, file: pp.configFile }));
-    process.exit(EXIT.config);
+  }
+  // Every attempt in the window was taken between being found free and being
+  // asked for. Rare, and the same dead end as finding nothing free at all.
+  if (!daemon) return portDeadEnd(port, host, pp.configFile, asked === undefined ? 'none-free' : 'asked');
+
+  /*
+   * Only a port that came from company.yaml is written back — `--port` is for
+   * this run and must not edit the file. Written AFTER `serve` succeeded: the
+   * file records a port we actually hold, never one we hoped for.
+   */
+  if (asked === undefined && daemon.port !== wanted) {
+    company.updatePort(daemon.port);
+    console.log(t('cli.portMoved', { from: wanted, to: daemon.port, file: pp.configFile }));
   }
 
   writeDaemonFile(pp, {

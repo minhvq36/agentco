@@ -32,7 +32,7 @@ import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.
 import { callTool, httpTarget } from '../core/mcp-http.js';
 import { cliToolNames, isCliArm, parseCliArm } from '../core/cli-arm.js';
 import { grantFor, injectSecrets, missingSecretRefs, readSecrets } from '../core/secrets.js';
-import { companyPaths, officeDir, officePaths } from '../core/paths.js';
+import { companyFingerprint, companyPaths, officeDir, officePaths } from '../core/paths.js';
 import { endLogin, startLogin } from '../core/browser-login.js';
 import { getLocale, t } from '../i18n/index.js';
 import {
@@ -638,7 +638,16 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
     // ── company level
     if (url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: appVersion(), offices: company.size });
+      // `company` is a fingerprint of the folder, never the folder — it exists
+      // so `start` can tell "my own daemon, whose daemon.json went missing"
+      // apart from "a different company", and move only for the second.
+      // → core/paths.ts §companyFingerprint · cli/index.ts `cmdStart`
+      return json(res, 200, {
+        ok: true,
+        version: appVersion(),
+        offices: company.size,
+        company: companyFingerprint(company.dir),
+      });
     }
     // Anything that isn't /api/ is the UI — including a SPA's sub-paths.
     if (!url.pathname.startsWith('/api/') && (method === 'GET' || method === 'HEAD')) {

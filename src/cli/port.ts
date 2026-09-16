@@ -67,21 +67,40 @@ export async function findFreePort(
   return undefined;
 }
 
+export interface PortOccupant {
+  version: string;
+  /** `companyFingerprint` of the folder it serves. Absent before 0.1.3. */
+  company?: string;
+}
+
 /**
- * The version of the agentco holding this port, or `undefined` for anything else.
+ * The agentco holding this port, or `undefined` for anything else.
  *
- * ⚠ ONE REQUEST, to the port we already know about — never a sweep. The answer
- * only ever improves an error message, so it is allowed to fail: a timeout, a
- * stranger's service and a wrong shape all mean the same thing here, which is
- * "cannot say", and the caller prints the shorter sentence.
+ * ⚠ ONE REQUEST, to the port we already know about — never a sweep. It is
+ * allowed to fail: a timeout, a stranger's service and a wrong shape all mean
+ * the same thing here, which is "cannot say".
+ *
+ * 🔴 `company` IS WHAT STOPS A SECOND DAEMON ON ONE FOLDER. `start` reaches its
+ * healing branch only when `liveDaemon` found nothing — and `daemon.json` going
+ * missing under a LIVE daemon is a real way to get there, the file sitting one
+ * name away from the `.state/update-check.json` people are told to delete.
+ * Without this field, healing would answer that by starting a second daemon on
+ * the same company: two processes sharing one key store, one ledger, one
+ * mailbox. → SESSIONS_MEMORY §4.3
+ *
+ * ⚠ Optional, because a daemon from 0.1.2 or earlier does not send it. Absent
+ * means "cannot say", and the caller must not read that as "a different
+ * company" — it refuses to move rather than guessing.
  */
-export async function agentcoOnPort(port: number, host: string): Promise<string | undefined> {
+export async function agentcoOnPort(port: number, host: string): Promise<PortOccupant | undefined> {
   try {
     const res = await fetch(`http://${host}:${port}/healthz`, { signal: AbortSignal.timeout(2_000) });
     if (!res.ok) return undefined;
-    const body = (await res.json()) as { ok?: boolean; version?: string };
+    const body = (await res.json()) as { ok?: boolean; version?: string; company?: string };
     if (body.ok !== true || typeof body.version !== 'string') return undefined;
-    return body.version;
+    return typeof body.company === 'string'
+      ? { version: body.version, company: body.company }
+      : { version: body.version };
   } catch {
     return undefined;
   }

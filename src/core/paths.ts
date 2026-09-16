@@ -197,6 +197,23 @@ export function isCompanyDir(dir: string): boolean {
   return fs.existsSync(path.join(dir, 'company.yaml'));
 }
 
+/**
+ * Which company a daemon is serving, short enough to put in an answer.
+ *
+ * 🔴 A HASH, NOT THE PATH. `/healthz` is loopback by default but CAN be bound
+ * wider with a token, and a folder path carries the user's name, their drive
+ * layout and often their employer. Nothing needs to READ this — the only
+ * question ever asked of it is "is that the same company as mine?", which a
+ * comparison answers and a path would answer no better.
+ *
+ * ⚠ Case-folded, because Windows opens the same folder under either spelling
+ * and two spellings of one company must not look like two companies.
+ * → cli/index.ts `cmdStart` · server/server.ts `/healthz`
+ */
+export function companyFingerprint(companyDir: string): string {
+  return createHash('sha256').update(path.resolve(companyDir).toLowerCase()).digest('hex').slice(0, 16);
+}
+
 /** List of office IDs, in directory-name order. Empty is valid — see §3. */
 export function listOfficeIds(pp: CompanyPaths): string[] {
   if (!fs.existsSync(pp.offices)) return [];
