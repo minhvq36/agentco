@@ -1261,7 +1261,14 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     // From the cache only — this request never reaches the network.
     // → core/update-check.ts §updateStatus · SPEC-packaging §3.6
     if (url.pathname === '/api/update' && method === 'GET') {
-      return json(res, 200, updateStatus({ paths: company.paths, enabled: company.config.updates.check }));
+      // `applying` comes from here and nowhere else: the page cannot remember
+      // it across a remount, and a button that reappears mid-update is a button
+      // somebody presses twice. → update-links.ts §UpdateView
+      return json(
+        res,
+        200,
+        updateStatus({ paths: company.paths, enabled: company.config.updates.check, applying: updating }),
+      );
     }
 
     if (url.pathname === '/api/shutdown' && method === 'POST') {

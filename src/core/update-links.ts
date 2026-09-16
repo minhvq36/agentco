@@ -55,4 +55,18 @@ export interface UpdateView {
   latest?: string;
   available: boolean;
   kind: InstallKind;
+  /**
+   * An update is being applied RIGHT NOW.
+   *
+   * 🔴 IT LIVES ON THE SERVER BECAUSE THE PAGE FORGETS. (found 17/09/2026, by
+   * changing the language mid-update) The "updating…" state used to be React
+   * state, so anything that remounted the component — a language switch, a
+   * closed panel, a reload — brought the button back as if nothing were
+   * happening. Pressing it again got a 409 and the page then said "nothing
+   * changed", which was a lie told while the update was working.
+   *
+   * Work in progress is STATE, not a notification, and it belongs to whoever
+   * can still see it after the page has forgotten. → SPEC-ui.md
+   */
+  applying: boolean;
 }

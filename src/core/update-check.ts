@@ -338,6 +338,8 @@ export function updateStatus(o: {
   enabled: boolean;
   current?: string;
   kind?: InstallKind;
+  /** Passed in by the server, which is the only thing that knows. */
+  applying?: boolean;
 }): UpdateView {
   const current = o.current ?? appVersion();
   const kind = o.kind ?? installKind();
@@ -346,6 +348,7 @@ export function updateStatus(o: {
     current,
     kind,
     available: latest !== undefined && compareVersions(latest, current) > 0,
+    applying: o.applying ?? false,
     ...(latest ? { latest } : {}),
   };
 }

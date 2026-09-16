@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Languages, Moon, Palette, Sun } from 'lucide-react';
 
 import { SectionTitle } from '@/components/ui/misc';
@@ -184,13 +184,40 @@ function FooterLine({ view }: { view: UpdateView }) {
 type Phase = { at: 'idle' } | { at: 'working' } | { at: 'failed' };
 
 function UpdateAction({ view }: { view: UpdateView }) {
-  const [phase, setPhase] = useState<Phase>({ at: 'idle' });
+  /**
+   * 🔴 THE SERVER'S `applying` SEEDS THIS, because the page forgets. (user,
+   * 17/09) Changing the language mid-update remounted the component, local
+   * state went back to idle, and the button reappeared as if nothing were
+   * happening — on an update that was in fact running. Pressing it again
+   * earned a 409, which the old code reported as "nothing changed": a lie,
+   * told while it worked.
+   */
+  const [phase, setPhase] = useState<Phase>(view.applying ? { at: 'working' } : { at: 'idle' });
 
-  if (!view.available || !view.latest) return null;
-  const latest = view.latest;
+  // ⚠ Whoever mounts after a restart has to pick the truth up again, not keep
+  // whatever it was constructed with.
+  useEffect(() => {
+    if (view.applying) setPhase({ at: 'working' });
+  }, [view.applying]);
+
+  // ⚠ STABLE, or the effect below it re-runs on every render: a new function
+  // identity in a dependency array restarts the watcher, which restarts its
+  // five-minute ceiling, forever. → `WatchForRestart`
+  const gaveUp = useCallback(() => setPhase({ at: 'failed' }), []);
+
+  // ⚠ A run in progress outranks `available`: while the new version is
+  // unpacking the cache still says an update exists, and going back to a button
+  // there is the whole bug.
+  if (phase.at === 'idle' && (!view.available || !view.latest)) return null;
+  const latest = view.latest ?? view.current;
 
   if (phase.at === 'working') {
-    return <span className="text-[11.5px] text-accent">{t('settings.updateWorking')}</span>;
+    return (
+      <span className="text-[11.5px] text-accent">
+        {t('settings.updateWorking')}
+        <WatchForRestart before={view.current} onGaveUp={gaveUp} />
+      </span>
+    );
   }
   if (phase.at === 'failed') {
     return <span className="text-[11.5px] text-warn">{t('settings.updateFailed')}</span>;
@@ -201,15 +228,15 @@ function UpdateAction({ view }: { view: UpdateView }) {
       type="button"
       className="rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11.5px] text-accent transition-colors hover:bg-accent/20"
       onClick={() => {
+        // ⚠ Straight to `working`, and the WATCHER does the rest — including
+        // when this click loses the race and the server answers 409 because an
+        // update is already running. That is not a failure; it is the truth
+        // arriving by a different door.
         setPhase({ at: 'working' });
-        void api
-          .applyUpdate()
-          .then(() => waitForNewVersion(view.current))
-          .then((moved) => {
-            if (moved) window.location.reload();
-            else setPhase({ at: 'failed' });
-          })
-          .catch(() => setPhase({ at: 'failed' }));
+        void api.applyUpdate().catch(() => {
+          /* 409 means somebody already started it; anything else shows up as
+             the watcher giving up, with the daemon still on the old version */
+        });
       }}
     >
       {t('settings.updateTo', { version: latest })}
@@ -218,26 +245,48 @@ function UpdateAction({ view }: { view: UpdateView }) {
 }
 
 /**
+ * Watch `/healthz` through the restart, and reload when the version moves.
+ *
+ * ⚠ A COMPONENT, so that mounting is what starts it. Whoever renders the
+ * "updating" state gets the watcher for free — including a mount that happened
+ * because the page was rebuilt half way through, which is the case that was
+ * broken.
+ *
  * ⚠ THE CEILING IS GENEROUS ON PURPOSE. A packaged update downloads ~25 MB,
  * unpacks it and then STARTS THE NEW TREE ONCE to prove it runs before
  * committing (§3.7.1); an npm one runs a real `npm install`. Both are minutes
  * on a slow line, and giving up early would tell somebody it failed while it
  * was still working.
  */
-async function waitForNewVersion(before: string, ms = 5 * 60_000): Promise<boolean> {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 1_000));
-    try {
-      const res = await fetch('/healthz', { cache: 'no-store' });
-      if (!res.ok) continue;
-      const body = (await res.json()) as { version?: string };
-      if (typeof body.version === 'string' && body.version !== before) return true;
-    } catch {
-      /* the server is between lives — that is the expected middle of this */
-    }
-  }
-  return false;
+function WatchForRestart({ before, onGaveUp }: { before: string; onGaveUp(): void }) {
+  useEffect(() => {
+    let alive = true;
+    const until = Date.now() + 5 * 60_000;
+
+    const tick = async (): Promise<void> => {
+      while (alive && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 1_000));
+        try {
+          const res = await fetch('/healthz', { cache: 'no-store' });
+          if (!res.ok) continue;
+          const body = (await res.json()) as { version?: string };
+          if (typeof body.version === 'string' && body.version !== before) {
+            if (alive) window.location.reload();
+            return;
+          }
+        } catch {
+          /* the server is between lives — the expected middle of this */
+        }
+      }
+      if (alive) onGaveUp();
+    };
+    void tick();
+    return () => {
+      alive = false;
+    };
+  }, [before, onGaveUp]);
+
+  return null;
 }
 
 export function SettingsPanel() {

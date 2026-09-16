@@ -73,12 +73,24 @@ test('a valid manifest signed by the working key is read', async () => {
   const r = await checkForUpdate({ paths, enabled: true, now: T0, keys: KEYS, ...site(MANIFEST, sign(MANIFEST, working)) });
   assert.equal(r?.outcome, 'ok');
   assert.equal(r?.latest, '0.1.3');
+  /*
+   * ⚠ `applying: false` is part of the shape, and this `deepEqual` is why the
+   * field could not be added quietly. It is the SERVER's answer to "is one
+   * running right now" — the page cannot remember that across a remount, which
+   * is how a button came back mid-update and got pressed twice (17/09).
+   * `updateStatus` has no way to know on its own, so absent means no.
+   */
   assert.deepEqual(updateStatus({ paths, enabled: true, current: '0.1.2', kind: 'packaged' }), {
     current: '0.1.2',
     kind: 'packaged',
     available: true,
+    applying: false,
     latest: '0.1.3',
   });
+  assert.equal(
+    updateStatus({ paths, enabled: true, current: '0.1.2', kind: 'packaged', applying: true }).applying,
+    true,
+  );
 });
 
 test('🔴 the offline backup key is accepted too — losing the working key must not silence the channel', () => {
