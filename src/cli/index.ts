@@ -322,6 +322,45 @@ async function cmdStart(): Promise<void> {
           clearDaemonFile(pp);
           process.exit(EXIT.ok);
         },
+        /**
+         * ⚠ CLOSE FIRST, SPAWN SECOND, ON THE SAME PORT.
+         *
+         * The tab that pressed the button is polling that port and nothing
+         * else; coming back somewhere else would leave it waiting forever on an
+         * address nobody is serving. Closing before spawning is what makes the
+         * port free — the reverse order hands the new process an EADDRINUSE and
+         * its own self-heal would then move it, which is exactly right in
+         * general and exactly wrong here.
+         *
+         * ⚠ Detached, because this process is about to stop being.
+         */
+        // The npm door's button. `waitUrl` is this very server: the helper must
+        // not let npm start until the request that spawned it has finished
+        // dying. → cli/update-run.ts
+        onHandOffUpdate: () => handOffUpdate('latest', true, `${daemon?.url ?? ''}/healthz`),
+        onRestart: (version: string) => {
+          console.log(t('cli.updateRestarting', { version }));
+          void (async () => {
+            clearDaemonFile(pp);
+            await daemon?.close();
+            const entry = path.join(
+              path.dirname(path.dirname(packageRoot())),
+              'app',
+              version,
+              'dist',
+              'cli',
+              'index.js',
+            );
+            const child = spawn(
+              process.execPath,
+              [entry, 'start', '--no-ui', '--dir', companyDir, '--port', String(port)],
+              { detached: true, stdio: 'inherit' },
+            );
+            child.on('error', (err) => console.error(err.message));
+            child.unref();
+            process.exit(EXIT.ok);
+          })();
+        },
       });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
@@ -487,10 +526,31 @@ async function cmdUpdate(): Promise<void> {
     console.log(t('cli.stopSent', { pid: info.pid }));
   }
 
-  const script = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-')),
-    'update.mjs',
-  );
+  // Restart only what was actually running. `info` is the daemon this command
+  // stopped a moment ago; absent means there was nothing to put back.
+  handOffUpdate(target, !!info);
+  console.log(t(info ? 'cli.updateHandedOff' : 'cli.updateHandedOffIdle', { target }));
+  process.exit(EXIT.ok);
+}
+
+/**
+ * Write the helper outside the package and hand it the work. Shared by the
+ * command and by the button, because there is one right way to replace an npm
+ * install and a second copy of it would drift. → cli/update-run.ts
+ *
+ * @param waitUrl when the BUTTON sends this, the daemon is still answering the
+ *   request that spawned the helper; the helper waits for that URL to go quiet
+ *   before letting npm touch the package. The command needs no such wait — it
+ *   stopped the daemon itself and is leaving.
+ *
+ * Returns false when there is no npm to call, so a caller can refuse BEFORE
+ * stopping anything.
+ */
+function handOffUpdate(target: string, restart: boolean, waitUrl?: string): boolean {
+  const npmCli = findNpmCli();
+  if (!npmCli) return false;
+
+  const script = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-')), 'update.mjs');
   fs.writeFileSync(script, updateScript(), 'utf8');
 
   /*
@@ -510,19 +570,16 @@ async function cmdUpdate(): Promise<void> {
       root,
       companyDir,
       globalPrefixFor(root) ?? '',
-      // Restart only what was actually running. `info` is the daemon this
-      // command stopped a moment ago; absent means there was nothing to put back.
-      info ? '1' : '',
+      restart ? '1' : '',
+      waitUrl ?? '',
     ],
     { detached: true, stdio: 'inherit' },
   );
   // Without this listener a missing binary KILLS the process instead of
   // throwing — `try/catch` catches exactly none of it.
-  child.on('error', (err) => fail(err));
+  child.on('error', (err) => console.error(err.message));
   child.unref();
-
-  console.log(t(info ? 'cli.updateHandedOff' : 'cli.updateHandedOffIdle', { target }));
-  process.exit(EXIT.ok);
+  return true;
 }
 
 async function cmdStop(): Promise<void> {

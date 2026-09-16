@@ -140,18 +140,104 @@ function VersionFooter() {
 
   if (!view) return null;
   return (
-    // `mt-auto` is what pins it to the FOOT OF THE PANEL rather than to the end
-    // of the content: with spare room it drops to the bottom, and when the
-    // sections outgrow the panel it simply follows them into the scroll.
-    //
+    <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3">
+      <FooterLine view={view} />
+      <UpdateAction view={view} />
+    </div>
+  );
+}
+
+function FooterLine({ view }: { view: UpdateView }) {
+  return (
     // ⚠ Left, like every other line in this panel. Centred was tried (user,
     // 16/09) and put back: the section titles and the choices all start at the
     // same x, and one line breaking that column reads as a mistake rather than
     // as a flourish.
-    <p className="mt-auto border-t border-line pt-3 text-[11.5px] leading-relaxed text-muted">
+    <p className="text-[11.5px] leading-relaxed text-muted">
       {t('settings.footer', { year: String(new Date().getFullYear()), version: view.current })}
     </p>
   );
+}
+
+/**
+ * The update, immediately to the right of the version. → SPEC-packaging §3.7.4
+ *
+ * 🔴 NO DISMISS CONTROL, and that is the whole reason it lives here (user,
+ * 17/09). The header's banner can be closed because it arrives uninvited; this
+ * one is only ever seen by somebody who opened Settings, so a notice that
+ * cannot be dismissed is information rather than nagging. Closing the banner
+ * used to mean losing the only way back to it until the next release.
+ *
+ * 🔴 THE PAGE OUTLIVES ITS OWN SERVER. `POST /api/update` answers 202 and the
+ * daemon then stops existing — there is no connection to report progress on.
+ * This component is already in the browser, so it holds the "updating" state
+ * itself and polls `/healthz` until a version answers:
+ *
+ *   a NEW version  → reload, and the page comes back on the new code
+ *   the OLD one    → nothing changed; say so and stop
+ *   nothing at all → same sentence once the ceiling is reached
+ *
+ * ⚠ It polls `/healthz` rather than `/api/update`, because `/healthz` is the
+ * one route that exists before anything else is ready and carries the version
+ * with no cache in front of it.
+ */
+type Phase = { at: 'idle' } | { at: 'working' } | { at: 'failed' };
+
+function UpdateAction({ view }: { view: UpdateView }) {
+  const [phase, setPhase] = useState<Phase>({ at: 'idle' });
+
+  if (!view.available || !view.latest) return null;
+  const latest = view.latest;
+
+  if (phase.at === 'working') {
+    return <span className="text-[11.5px] text-accent">{t('settings.updateWorking')}</span>;
+  }
+  if (phase.at === 'failed') {
+    return <span className="text-[11.5px] text-warn">{t('settings.updateFailed')}</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      className="rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11.5px] text-accent transition-colors hover:bg-accent/20"
+      onClick={() => {
+        setPhase({ at: 'working' });
+        void api
+          .applyUpdate()
+          .then(() => waitForNewVersion(view.current))
+          .then((moved) => {
+            if (moved) window.location.reload();
+            else setPhase({ at: 'failed' });
+          })
+          .catch(() => setPhase({ at: 'failed' }));
+      }}
+    >
+      {t('settings.updateTo', { version: latest })}
+    </button>
+  );
+}
+
+/**
+ * ⚠ THE CEILING IS GENEROUS ON PURPOSE. A packaged update downloads ~25 MB,
+ * unpacks it and then STARTS THE NEW TREE ONCE to prove it runs before
+ * committing (§3.7.1); an npm one runs a real `npm install`. Both are minutes
+ * on a slow line, and giving up early would tell somebody it failed while it
+ * was still working.
+ */
+async function waitForNewVersion(before: string, ms = 5 * 60_000): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1_000));
+    try {
+      const res = await fetch('/healthz', { cache: 'no-store' });
+      if (!res.ok) continue;
+      const body = (await res.json()) as { version?: string };
+      if (typeof body.version === 'string' && body.version !== before) return true;
+    } catch {
+      /* the server is between lives — that is the expected middle of this */
+    }
+  }
+  return false;
 }
 
 export function SettingsPanel() {

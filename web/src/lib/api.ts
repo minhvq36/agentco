@@ -81,6 +81,17 @@ export const api = {
   update: () => call<UpdateView>('/api/update'),
 
   /**
+   * Start applying it. → SPEC-packaging §3.7.4
+   *
+   * ⚠ IT ANSWERS BEFORE THE WORK BEGINS (202) and the server then stops
+   * existing, so there is no second response to await and no progress to
+   * stream. The caller switches to a local state and polls `/healthz`; this
+   * page is already in the browser and does not need a server to keep
+   * rendering. → `panels/SettingsPanel.tsx §VersionFooter`
+   */
+  applyUpdate: () => call<{ ok: true }>('/api/update', { method: 'POST' }),
+
+  /**
    * Browse directories on the machine RUNNING THE DAEMON. A browser cannot hand
    * over an absolute path, and the OS dialog opens on the wrong machine when the
    * daemon is remote — so we list them ourselves. → `paths.ts §browseDirs`

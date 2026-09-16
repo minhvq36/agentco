@@ -100,6 +100,9 @@ export const vi: Catalog = {
   // A name, a symbol and two numbers — the same line in both catalogues, and it
   // stays in the catalogue because no user-visible string is written in a component.
   'settings.footer': 'AgentCo © {year} · v{version}',
+  'settings.updateTo': 'Cập nhật lên {version}',
+  'settings.updateWorking': 'Đang cập nhật — trang này sẽ tự quay lại.',
+  'settings.updateFailed': 'Không có gì thay đổi. Bản cũ vẫn đang chạy — xem terminal.',
   'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',
@@ -600,6 +603,12 @@ export const vi: Catalog = {
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
   'cli.createdShortcutHint': '  Muốn nó nằm trong menu ứng dụng? Chạy `agentco shortcut` ở đây.',
+  'cli.updateRestarting': 'Bản {version} đã vào chỗ — đang khởi động lại trên cùng cổng.',
+  'srv.updateNotPackaged':
+    'Bản này cài bằng npm, nên cập nhật bằng `agentco update` chứ không phải từ đây.',
+  'srv.updateBusy': 'Đang có một lượt cập nhật chạy rồi.',
+  'srv.updateNoNpm':
+    'Không tìm thấy npm cạnh Node này nên không có gì để giao việc. Không có gì bị tắt cả.',
   'cli.versionNpm': '  cài bằng npm',
   'cli.versionPackaged': '  cài bằng bản cài đặt',
   'cli.versionRemoveNpm':

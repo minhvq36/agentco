@@ -87,7 +87,35 @@ export function updateScript(): string {
   return `// Written by \`agentco update\`. Safe to delete.
 import { spawn } from 'node:child_process';
 
-const [npmCli, pkg, target, packageRoot, companyDir, prefix, restart] = process.argv.slice(2);
+const [npmCli, pkg, target, packageRoot, companyDir, prefix, restart, waitUrl] = process.argv.slice(2);
+
+/**
+ * 🔴 WAIT FOR THE DAEMON TO ACTUALLY BE GONE BEFORE npm TOUCHES THE PACKAGE.
+ *
+ * When a person types \`agentco update\` the CLI has already stopped it and left.
+ * When the BUTTON sends this, the daemon is answering the very request that
+ * spawned us and is only on its way out — npm replacing files under a live
+ * process is the hazard this whole helper exists to avoid, and starting half a
+ * second early would walk straight into it.
+ *
+ * ⚠ A ceiling, then proceed anyway: a daemon that will not die is a worse
+ * problem than a racy install, and hanging here forever would leave somebody
+ * staring at a page that never comes back with nothing written anywhere.
+ */
+if (waitUrl) {
+  const until = Date.now() + 30_000;
+  for (;;) {
+    let alive = false;
+    try {
+      const r = await fetch(waitUrl, { signal: AbortSignal.timeout(1_000) });
+      alive = r.ok;
+    } catch {
+      alive = false;
+    }
+    if (!alive || Date.now() > until) break;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
 
 function run(args, opts = {}) {
   return new Promise((resolve) => {

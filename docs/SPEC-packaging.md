@@ -350,6 +350,37 @@ start: write the new layer beside the old one, verify, and only then flip `curre
 Claude Code binary ever does ship (§2), it arrives as a third layer and nothing else
 in this section changes.
 
+#### 🔴 The manifest is APPEND-ONLY, forever
+
+**Never rename a field. Never change a field's type. Never remove a field an older
+version reads.** New information arrives as new keys and nothing else.
+
+The reason is not tidiness — it is that the reader is **already installed on
+somebody else's machine and cannot be fixed**. Break the contract and the copies
+that break are exactly the ones you can no longer reach; the only remedy left is
+asking every one of those people to install by hand, which is the thing this
+whole section exists to avoid.
+
+What that buys, concretely, is that a manifest version is **not a boundary**:
+
+| | reader v1 (0.1.3–0.1.4) | reader v2 |
+|---|---|---|
+| **manifest v1** | reads `version`, shows the banner | no `layers` → falls back to notifying |
+| **manifest v2** | reads `version`, **ignores `layers`**, shows the banner | applies it |
+
+Four cases, none broken, every one degrading to the previous behaviour rather
+than to an error. That works only because §3.6 required `version` and
+`released_at` and declared **every other field optional and unread** on
+15/09/2026 — before there was any second version to be compatible with. A
+forward-compatibility decision is worth almost nothing on the day it is made and
+cannot be made at all on the day it is needed.
+
+⚠ The boundary that *does* cost a manual install is a change to **how the
+launcher chooses which version to run**, not to the manifest. That was spent
+once already, between 0.1.3 and 0.1.4 (§3.7.2): copies older than 0.1.4 have the
+version compiled in and can never be reached by any updater written afterwards.
+Spend it as rarely as a game studio ships a sequel.
+
 ### 3.4 Cadence, and the off switch
 
 - At most **once every 24 hours**, cached; never on every start.

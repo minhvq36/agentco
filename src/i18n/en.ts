@@ -141,6 +141,11 @@ export const en = {
    * reading a support reply back over the phone.
    */
   'settings.footer': 'AgentCo © {year} · v{version}',
+  'settings.updateTo': 'Update to {version}',
+  // ⚠ It names the restart, because the page is about to go blank for a minute
+  // and an unexplained blank page is how somebody decides an app is broken.
+  'settings.updateWorking': 'Updating — this page will come back on its own.',
+  'settings.updateFailed': 'Nothing changed. The old version is still running — see the terminal.',
   /**
    * Doubles as the tooltip and as the accessible name of the title, so it has
    * to say WHAT IT IS as well as what to do with it — "Rename" alone would
@@ -783,6 +788,14 @@ export const en = {
    * command having done nothing at all.
    */
   'cli.createdShortcutHint': '  Want it in the applications menu? Run `agentco shortcut` here.',
+  'cli.updateRestarting': 'Version {version} is in place — restarting on the same port.',
+  'srv.updateNotPackaged':
+    'This copy was installed with npm, so it updates with `agentco update` rather than from here.',
+  'srv.updateBusy': 'An update is already running.',
+  // ⚠ Nothing was stopped. The check happens before the daemon is touched, so
+  // this is a refusal rather than the wreckage of an attempt.
+  'srv.updateNoNpm':
+    'No npm was found beside this Node, so there is nothing to hand the work to. Nothing was stopped.',
   'cli.versionNpm': '  installed with npm',
   'cli.versionPackaged': '  installed from the app installer',
   // ⚠ Both say the company folder survives. Somebody removing a program does

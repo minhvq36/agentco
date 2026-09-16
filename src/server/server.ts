@@ -26,7 +26,20 @@ import { serveStatic } from './static.js';
 import { openFolder } from '../cli/daemonfile.js';
 import { browseDirs } from '../core/paths.js';
 import { appVersion } from '../core/version.js';
-import { checkForUpdate, UPDATE_FIRST_CHECK_MS, UPDATE_TICK_MS, updateStatus } from '../core/update-check.js';
+import {
+  checkForUpdate,
+  compareVersions,
+  installKind,
+  packageRoot,
+  readManifest,
+  SIGNATURE_URL,
+  UPDATE_FIRST_CHECK_MS,
+  UPDATE_TICK_MS,
+  updateStatus,
+  verifyManifest,
+} from '../core/update-check.js';
+import { MANIFEST_URL } from '../core/update-links.js';
+import { applyLayer } from '../core/update-apply.js';
 import { buildConfig, catalogForUi, defaultOptions, findArm, normRepo } from '../core/catalog.js';
 import { baselineTokens, probeArm, toolsAtTier, type Tier } from '../core/probe.js';
 import { callTool, httpTarget } from '../core/mcp-http.js';
@@ -550,6 +563,21 @@ export interface ServeOptions {
   host?: string;
   token?: string;
   onShutdown?(): void;
+  /**
+   * A new version is on disk and `current` points at it. The CALLER closes the
+   * server and starts the new one — it holds the listening socket and knows the
+   * port, and handing those facts into here would be a second copy of them.
+   * → cli/index.ts `cmdStart` · SPEC-packaging §3.7.4
+   */
+  onRestart?(version: string): void;
+  /**
+   * The npm door's button. The caller spawns the same detached helper
+   * `agentco update` uses — the daemon cannot run npm against the package it is
+   * running from, and the CLI already owns that dance. Returns false when there
+   * is no npm to hand the work to, in which case nothing is stopped.
+   * → cli/update-run.ts · SPEC-packaging §3.7.5
+   */
+  onHandOffUpdate?(): boolean;
 }
 
 export interface Daemon {
@@ -575,6 +603,59 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
    * exactly why nobody would be able to reproduce it while hunting for it.
    */
   let boundPort = opts.port;
+
+  /** One update at a time. A second click while the first is unpacking would
+   *  extract two trees into the same directory. */
+  let updating = false;
+
+  /**
+   * Fetch the manifest fresh, verify it, and apply the `app` layer.
+   *
+   * ⚠ VERIFY, THEN READ — the same order as §3.2's check, and for the same
+   * reason: a manifest with a bad signature is an attack, not a download we
+   * could not check, so not one field of it is parsed.
+   *
+   * ⚠ It logs its own failures. This runs with nobody waiting on a response;
+   * the page is polling `/healthz` and will say "nothing changed" on its own,
+   * so the detail has to land somewhere a person can still find it.
+   */
+  async function runUpdate(): Promise<void> {
+    const get = async (u: string): Promise<Uint8Array> => {
+      const r = await fetch(u, { signal: AbortSignal.timeout(20_000), redirect: 'follow' });
+      if (!r.ok) throw new Error(`${u} answered ${r.status}`);
+      return new Uint8Array(await r.arrayBuffer());
+    };
+
+    try {
+      const [body, sig] = await Promise.all([get(MANIFEST_URL), get(SIGNATURE_URL)]);
+      if (!verifyManifest(body, Buffer.from(sig).toString('utf8'))) {
+        console.error('[update] manifest signature did not verify — nothing applied');
+        return;
+      }
+      const manifest = readManifest(body);
+      const layer = manifest?.layers?.app;
+      if (!manifest || !layer) {
+        console.error('[update] the manifest names no app layer — nothing to apply');
+        return;
+      }
+      if (compareVersions(layer.version, appVersion()) <= 0) {
+        console.error(`[update] ${layer.version} is not newer than ${appVersion()}`);
+        return;
+      }
+
+      // `<install>/app/<version>` → `<install>`. The applier writes beside it.
+      const root = path.dirname(path.dirname(packageRoot()));
+      const outcome = await applyLayer({ root }, layer);
+      if (!outcome.ok) {
+        console.error(`[update] ${outcome.reason}: ${outcome.detail}`);
+        return;
+      }
+      console.log(`[update] ${outcome.version} is in place — restarting`);
+      opts.onRestart?.(outcome.version);
+    } catch (err) {
+      console.error(`[update] ${String((err as Error).message ?? err)}`);
+    }
+  }
 
   /**
    * The deployer's actual domain, inferred ONCE from `runtime.public_url`.
@@ -1184,6 +1265,56 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
 
     if (url.pathname === '/api/shutdown' && method === 'POST') {
       json(res, 200, { ok: true });
+      setTimeout(() => opts.onShutdown?.(), 100);
+      return;
+    }
+
+    /**
+     * ┌────────────────────────────────────────────────────────────────────────
+     * │ 🔴 IT ANSWERS BEFORE IT STARTS, AND THAT IS THE DESIGN.
+     * │ → SPEC-packaging §3.7.4
+     * │
+     * │ Applying an update takes a minute and ends by killing this server — so
+     * │ there is no connection left to report progress on, and nothing to hold
+     * │ open. The page that clicked is already in the browser; it switches to
+     * │ its own "updating…" state and polls `/healthz` until a version answers.
+     * │ Anything else would be a spinner served by a process that is trying to
+     * │ stop existing.
+     * │
+     * │ ⚠ `packaged` ONLY. The npm door replaces the package this code is
+     * │ running from, which needs a process outside it — that is
+     * │ `agentco update`, and it already exists. One mechanism per door.
+     * │
+     * │ ⚠ The manifest is fetched FRESH rather than read from the 24-hour
+     * │ cache: somebody just clicked a button, so a request is expected, and
+     * │ the cache holds a version number while this needs a URL and a hash.
+     * └────────────────────────────────────────────────────────────────────────
+     */
+    if (url.pathname === '/api/update' && method === 'POST') {
+      if (updating) return json(res, 409, { error: t('srv.updateBusy') });
+      updating = true;
+
+      /*
+       * ⚠ TWO DOORS, ONE BUTTON, AND THEY DO NOT SHARE MACHINERY. The packaged
+       * tree is replaced beside itself and committed by a pointer; an npm
+       * install is replaced BY npm, from outside the package, which is what
+       * `agentco update` already does. Making one of them pretend to be the
+       * other is how a second copy of a mechanism gets born.
+       */
+      if (installKind() === 'packaged') {
+        json(res, 202, { ok: true });
+        void runUpdate().finally(() => {
+          updating = false;
+        });
+        return;
+      }
+
+      const handed = opts.onHandOffUpdate?.();
+      if (!handed) {
+        updating = false;
+        return json(res, 409, { error: t('srv.updateNoNpm') });
+      }
+      json(res, 202, { ok: true });
       setTimeout(() => opts.onShutdown?.(), 100);
       return;
     }

@@ -95,9 +95,61 @@ const block = /export const RELEASE_INFO = \{[\s\S]*?\} as const;/;
 if (!block.test(site)) fail(`no RELEASE_INFO block in ${siteFile} — the website changed shape; update this script`);
 const nextSite = site.replace(block, `export const RELEASE_INFO = {\n  version: '${VERSION}',\n  sizeMB: ${sizeMB},\n} as const;`);
 
+/**
+ * ── the app layer, if this release carries one
+ *
+ * 🔴 ADDITIVE, AND THAT IS THE WHOLE CONTRACT. §3.5: the manifest is
+ * append-only forever, because the reader is already installed on somebody
+ * else's machine and cannot be fixed. A copy from 0.1.3 or 0.1.4 meeting this
+ * file reads `version`, never looks at `layers`, and goes on telling its user
+ * that a new version exists — which is exactly what it did before.
+ *
+ * ⚠ THE NUMBERS COME FROM THE SIDECAR CI WROTE, never from this machine.
+ * `pack-layer.ts` hashed the exact bytes that were uploaded; re-hashing a local
+ * copy here would be hashing a different file that happens to look the same,
+ * and a hash nobody can tell is wrong is the worst kind.
+ *
+ * ⚠ A release with no layer is not an error. Until the first release built by
+ * the new workflow, and for any release cut by hand, there is simply nothing to
+ * apply — the manifest stays v1 and the button stays absent.
+ */
+const layerAsset = release.assets.find((a) => a.name === `agentco-app-${VERSION}.tar.gz`);
+const sidecar = release.assets.find((a) => a.name === `agentco-app-${VERSION}.tar.gz.json`);
+let layers: { app: { version: string; url: string; sha256: string; size: number } } | undefined;
+
+if (layerAsset && sidecar) {
+  const meta = await getJson<{ layer: string; version: string; size: number; sha256: string }>(
+    `https://github.com/${REPO}/releases/download/v${VERSION}/${sidecar.name}`,
+  );
+  if (meta.version !== VERSION) fail(`the layer sidecar says ${meta.version}, not ${VERSION}`);
+  if (meta.size !== layerAsset.size) {
+    fail(`the sidecar says ${meta.size} bytes, GitHub serves ${layerAsset.size}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(meta.sha256)) fail(`the sidecar's sha256 is not a sha256: ${meta.sha256}`);
+  layers = {
+    app: {
+      version: VERSION,
+      url: `https://github.com/${REPO}/releases/download/v${VERSION}/${layerAsset.name}`,
+      sha256: meta.sha256,
+      size: meta.size,
+    },
+  };
+  console.log(`  ✓ app layer ${layerAsset.name} · ${meta.size} bytes · ${meta.sha256.slice(0, 12)}…`);
+} else {
+  console.log('  – no app layer in this release: the manifest stays v1, the update button stays absent');
+}
+
 // ── 4. the manifest: sign, then prove the app would accept it
 const manifest = Buffer.from(
-  JSON.stringify({ version: VERSION, released_at: release.published_at.slice(0, 10) }, null, 2) + '\n',
+  JSON.stringify(
+    {
+      version: VERSION,
+      released_at: release.published_at.slice(0, 10),
+      ...(layers ? { layers } : {}),
+    },
+    null,
+    2,
+  ) + '\n',
   'utf8',
 );
 const signature = crypto.sign(null, manifest, privateKey);

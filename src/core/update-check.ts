@@ -90,14 +90,69 @@ export function verifyManifest(
   });
 }
 
-/** ⚠ Only ever called on bytes `verifyManifest` accepted. v1 reads one field. */
-export function readManifest(body: Uint8Array): { version: string } | undefined {
+/** One downloadable layer of an install. → SPEC-packaging §3.5 */
+export interface Layer {
+  version: string;
+  url: string;
+  sha256: string;
+  size: number;
+}
+
+export interface Manifest {
+  version: string;
+  /** Absent in a v1 manifest, and on any install that only knows how to notify. */
+  layers?: { app?: Layer };
+}
+
+/**
+ * ⚠ Only ever called on bytes `verifyManifest` accepted.
+ *
+ * 🔴 `version` IS THE ONLY REQUIRED FIELD, AND THAT IS A PROMISE, NOT AN
+ * OVERSIGHT. §3.5: the manifest is append-only forever, because the reader is
+ * already installed on somebody else's machine and cannot be fixed. So a v1
+ * manifest read here yields a version and no layers; a v2 manifest read by a
+ * v1 copy yields a version and its `layers` are never looked at. Four cases,
+ * every one degrading to the previous behaviour instead of to an error.
+ *
+ * ⚠ A MALFORMED `layers` IS NOT A MALFORMED MANIFEST. Dropping the whole answer
+ * because an optional block is wrong would turn "cannot update automatically"
+ * into "cannot even tell you a version exists" — strictly worse, and for the
+ * copies least able to do anything about it.
+ */
+export function readManifest(body: Uint8Array): Manifest | undefined {
   try {
-    const m = JSON.parse(Buffer.from(body).toString('utf8')) as { version?: unknown };
-    return typeof m.version === 'string' && VERSION.test(m.version) ? { version: m.version } : undefined;
+    const m = JSON.parse(Buffer.from(body).toString('utf8')) as {
+      version?: unknown;
+      layers?: unknown;
+    };
+    if (typeof m.version !== 'string' || !VERSION.test(m.version)) return undefined;
+
+    const app = readLayer((m.layers as { app?: unknown } | undefined)?.app);
+    return app ? { version: m.version, layers: { app } } : { version: m.version };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * ⚠ Every field checked, including `size`. The size is what lets a download be
+ * refused before it is read into memory rather than after — a manifest is a few
+ * hundred bytes and anything claiming otherwise is not one. → `fetchBytes`
+ */
+function readLayer(raw: unknown): Layer | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const l = raw as Partial<Layer>;
+  return typeof l.version === 'string' &&
+    VERSION.test(l.version) &&
+    typeof l.url === 'string' &&
+    l.url.startsWith('https://') &&
+    typeof l.sha256 === 'string' &&
+    /^[0-9a-f]{64}$/.test(l.sha256) &&
+    typeof l.size === 'number' &&
+    Number.isInteger(l.size) &&
+    l.size > 0
+    ? { version: l.version, url: l.url, sha256: l.sha256, size: l.size }
+    : undefined;
 }
 
 /**

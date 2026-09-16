@@ -127,6 +127,24 @@ jobs:
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           "$hash  $([math]::Round((Get-Item $exe).Length/1MB,2)) MB"
 
+      # 🔴 THE THING A RUNNING COPY FETCHES. Until 17/09/2026 a release
+      # published one asset — the installer — so the update design in
+      # SPEC-packaging §3.7 sat above a file that did not exist. The app layer
+      # is the ~25 MB that moves weekly; `runtime/` moves twice a year and
+      # `company/` is the customer's, which is what §2's split was for.
+      #
+      # ⚠ Its `.json` sidecar carries the size and sha256. `release-web.ts` runs
+      # hours later on another machine and has to put those in the manifest; a
+      # number that only existed in a CI log would be copied by hand, and a hash
+      # copied by hand is eventually wrong.
+      - name: Pack the app layer
+        run: |
+          node --experimental-strip-types scripts/pack-layer.ts --tree out/AgentCo --out out
+          $layer = Get-ChildItem out/agentco-app-*.tar.gz
+          if (-not $layer) { throw "pack-layer produced nothing" }
+          "layer=$($layer.Name)" >> $env:GITHUB_OUTPUT
+        id: layer
+
       - name: Release notes
         run: |
           (Get-Content .github/release-notes.md -Raw).Replace('{{SHA256}}', '${{ steps.sum.outputs.sha256 }}') |
@@ -153,8 +171,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $layer = (Get-ChildItem out/agentco-app-*.tar.gz).FullName
           gh release create '${{ github.ref_name }}' `
             'out/AgentCo-win-x64-setup.exe' `
+            $layer `
+            "$layer.json" `
             --title '${{ github.ref_name }}' `
             --notes-file notes.md `
             --latest
