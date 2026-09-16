@@ -145,21 +145,59 @@ One named volume, `agentco-data`, holds two things that both matter:
 
 | | |
 |---|---|
-| `/data/company` | the company itself — offices, plans, artifacts, connections |
-| `/data/home` | `HOME`, and therefore `~/.claude/projects/` — **the conversation records** |
+| `./docker/company` | **a real folder on your disk** — offices, plans, artifacts, connections |
+| `agentco-home` (named volume) | `HOME`, and therefore `~/.claude/projects/` — the conversation records |
 
-The second is easy to underestimate, and it is not about the credential: that
-arrives in an environment variable and is not stored here at all. It is about
-the records `resume:` reads. If they vanish, `/clear` fails **permanently** for
-every office that had one, with a message about keeping the conversation as-is
-that reads like a choice. They live outside the company directory, which is the
-whole reason the volume covers `HOME` too.
+**The company is a folder you can open.** Not a Docker-managed volume you have
+to `exec` into: a directory you can edit with any editor, diff, back up by
+copying, and carry to another machine by copying. That is the product's own
+principle — the value lives in the files — and files you cannot see are files
+you do not own. Change where it lives with `COMPANY_PATH` in `.env`.
 
-**No host path appears anywhere**, on purpose: the directory a container sees is
-not the directory you typed, and agentco's write-outside-scope guard matches on
-the name you typed. Mount your own documents if you want them — knowing that a
-tool asked to write to `D:\Downloads\x.md` will not recognise `/data/x.md` as
-the same place.
+> ⚠ **It is under `docker/` so it can never be the desktop one.** `agentco init`
+> creates `./company`; this door creates `./docker/company`. Two daemons writing
+> a single company folder is not supported — they overwrite each other's
+> `.state/daemon.json`, so `agentco status` and the Start-menu launcher end up
+> pointing at whichever wrote last rather than the one actually serving.
+>
+> ⚠ **It holds `.state/secrets.json` — live OAuth tokens** for every account you
+> connect. `/docker/company/` is gitignored, and a test keeps that true if the
+> default path is ever changed. Point `COMPANY_PATH` somewhere new and it is on
+> you to ignore it too.
+
+`HOME` stays a named volume deliberately. `~/.claude/projects/` grows a
+conversation record for every session — large, constant, and read by nobody with
+their eyes — and emptying that into your project folder would bury the part you
+came for. It still has to survive: those records are what `resume:` reads, and
+if they vanish `/clear` fails **permanently** for every office that had one,
+with a message about keeping the conversation as-is that reads like a choice.
+
+### Three costs of the bind mount, stated rather than discovered
+
+- **Ownership on a Linux host.** The container runs as root, so files it creates
+  are root-owned and need `sudo` to edit. Docker Desktop hides this; a VPS does
+  not.
+- **Speed on Docker Desktop.** A bind mount crosses a filesystem boundary into
+  Docker's VM. A folder with many small reads and writes can feel slower than a
+  named volume did.
+- **Paths read oddly.** The agent will say `/data/company/offices/…` while you
+  know it as `docker\company\offices\…`. Harmless — the write-outside-scope
+  guard fences on paths resolved *inside* the container — but it is a
+  translation you do in your head.
+
+### Mounting your own documents
+
+Add a line, and know what you are choosing:
+
+```yaml
+    volumes:
+      - ./docker/company:/data/company
+      - ~/Documents/work:/data/docs      # yours
+```
+
+A container sees only what it is mounted. That is a **fence rather than a list**,
+and it is the containment agentco does not have on the desktop, where a role with
+shell access can write anywhere you can.
 
 ## Updating
 

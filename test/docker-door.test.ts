@@ -130,16 +130,61 @@ test('the claude symlink is found, not spelled out, and proves itself in the sam
   assert.match(DOCKERFILE, /ln -s[\s\S]{0,80}claude \\\n?\s*&& claude --version|ln -s[\s\S]{0,120}claude --version/, DOCKERFILE);
 });
 
-test('the volume covers HOME, not just the company', () => {
+test('🔴 the company is a folder you can see; HOME is not', () => {
   /*
-   * `~/.claude/projects/` holds the conversation records `resume:` reads. Lose
-   * them and `/clear` fails permanently for every office that had one, with a
-   * message about keeping the conversation as-is that reads like a choice.
-   * They are NOT inside the company directory. → core/office.ts
+   * Two mounts, and the split is the decision. The company is bind-mounted so
+   * it can be opened, edited, backed up by copying and carried to another
+   * machine — files you cannot see are files you do not own.
+   *
+   * `/data/home` stays a named volume because it is `~/.claude`, whose
+   * `projects/` grows a conversation record per session. Those records are what
+   * `resume:` reads — losing them breaks `/clear` permanently (core/office.ts) —
+   * but nobody reads them with their eyes, and emptying them into somebody's
+   * project folder would bury the part they came for.
    */
   assert.match(DOCKERFILE, /HOME=\/data\/home/, DOCKERFILE);
   assert.match(DOCKERFILE, /AGENTCO_COMPANY_DIR=\/data\/company/, DOCKERFILE);
-  assert.match(COMPOSE, /- agentco-data:\/data\b/, COMPOSE);
+  assert.match(COMPOSE, /\$\{COMPANY_PATH[^}]*\}:\/data\/company/, COMPOSE);
+  assert.match(COMPOSE, /- agentco-home:\/data\/home/, COMPOSE);
+  // A bind mount of the whole of /data would drag ~/.claude onto the disk too.
+  assert.doesNotMatch(COMPOSE, /\}:\/data\s*$/m, COMPOSE);
+});
+
+test('🔴 every path the company could land in is ignored by git', () => {
+  /*
+   * A company holds `.state/secrets.json` — live OAuth tokens for every account
+   * the person has connected. The compose file's default puts it INSIDE the
+   * checkout, so `git add -A` is one keystroke away from publishing them. The
+   * repository already ignored `/company/`; the alternative this file now
+   * recommends has to be covered too, or the recommendation is the leak.
+   */
+  const ignore = read('.gitignore');
+  const def = /^COMPANY_PATH=(\S+)$/m.exec(ENV_EXAMPLE)?.[1]?.replace(/^\.\//, '');
+  assert.ok(def, 'no COMPANY_PATH in .env.example');
+  assert.match(
+    ignore,
+    new RegExp(`^/?${def!}/`, 'm'),
+    `.gitignore does not cover ${def}/, where secrets.json would live`,
+  );
+  assert.match(ignore, /\*\*\/secrets\.json/, 'the belt-and-braces rule for secrets.json is gone');
+});
+
+test('🔴 the compose fallback and the template offer the SAME folder', () => {
+  /*
+   * Two defaults for one path, and they are written in different files — the
+   * shape that drifts. Somebody who never creates a `.env` gets the compose
+   * fallback, and if that still said `./company` they would silently share the
+   * folder `agentco init` uses: two daemons, one company, each overwriting the
+   * other's `.state/daemon.json`, so `agentco status` and the launcher report
+   * whichever wrote last instead of the one actually serving.
+   */
+  const inCompose = /\$\{COMPANY_PATH:-([^}]+)\}:\/data\/company/.exec(COMPOSE)?.[1];
+  const inTemplate = /^COMPANY_PATH=(\S+)$/m.exec(ENV_EXAMPLE)?.[1];
+  assert.ok(inCompose, 'the compose mount has no default');
+  assert.equal(inCompose, inTemplate, 'compose falls back somewhere the template never mentions');
+
+  // And it must not be the desktop's folder, whatever both of them say.
+  assert.notEqual(inCompose, './company', 'the default IS the folder `agentco init` creates');
 });
 
 test('the update button is off, because in here it would lie', () => {

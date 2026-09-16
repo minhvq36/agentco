@@ -123,13 +123,42 @@ services:
       # image: `docker compose pull && docker compose up -d` (or rebuild).
       AGENTCO_UPDATES_CHECK: "false"
 
-    # ONE volume, covering both the company and HOME. HOME matters as much:
-    # `~/.claude` holds the subscription credential AND the conversation records
-    # that `resume:` needs — lose those and `/clear` throws forever, per
-    # core/office.ts. No host path appears here on purpose; mount your own
-    # documents if and where you want them.
+    # ┌──────────────────────────────────────────────────────────────────────
+    # │ TWO MOUNTS, BECAUSE ONLY ONE OF THEM IS YOURS TO LOOK AT.
+    # │
+    # │ The company is a real folder on your disk: you open it, edit it, diff
+    # │ it, back it up by copying it, and carry it to another machine the same
+    # │ way. That is the point of the product — the value lives in the files,
+    # │ and files you cannot see are files you do not own.
+    # │
+    # │ `/data/home` stays a named volume on purpose. It is `~/.claude`, and
+    # │ `projects/` under it grows a conversation record for every session —
+    # │ large, constant, and read by nobody with their eyes. Emptying that into
+    # │ your project folder would bury the part you actually came for.
+    # │
+    # │ ⚠ THREE COSTS OF THE BIND MOUNT, stated rather than discovered:
+    # │   · On a Linux host the container runs as root, so files it creates are
+    # │     root-owned and need `sudo` to edit. Docker Desktop hides this.
+    # │   · Bind mounts on Docker Desktop cross a VM filesystem boundary; a
+    # │     folder with many small reads and writes can feel slower than the
+    # │     named volume did.
+    # │   · The agent will name paths as `/data/company/…` while you know them
+    # │     as `<this folder>/company/…`. Harmless — `officeJail` fences on
+    # │     resolved paths inside the container — but it reads oddly.
+    # │
+    # │ ⚠ `COMPANY_PATH`, deliberately WITHOUT the `AGENTCO_` prefix: in this
+    # │ project that prefix means "an app config override" (core/config.ts maps
+    # │ `AGENTCO_RUNTIME_PORT` onto `runtime.port`). This is a host path that
+    # │ compose reads and the app never sees, so borrowing the prefix would be
+    # │ borrowing a meaning that is already taken.
+    # └──────────────────────────────────────────────────────────────────────
     volumes:
-      - agentco-data:/data
+      # ⚠ The fallback must be the same path `.env.example` offers. Somebody who
+      # never made a `.env` would otherwise land in `./company` — the folder
+      # `agentco init` uses — and two daemons would share one company without
+      # anyone choosing that. A test ties the two strings together.
+      - ${COMPANY_PATH:-./docker/company}:/data/company
+      - agentco-home:/data/home
 
     # ⚠ EXACTLY ONE REPLICA, and this is not a formality: the OAuth `state` ↔
     # verifier pair lives in RAM (SPEC-deploy §5③). A second instance behind a
@@ -151,4 +180,5 @@ services:
       retries: 3
 
 volumes:
-  agentco-data:
+  # Only Claude Code's own state. The company is a folder on your disk, above.
+  agentco-home:

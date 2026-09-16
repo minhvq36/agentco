@@ -13,6 +13,10 @@ company/.state/
 *.session.jsonl
 
 /company/
+# The Docker door's company. It lives under docker/ so it can never collide with
+# the desktop one, and it holds .state/secrets.json — live tokens for every
+# account the person has connected.
+/docker/company/
 /.bench-company/
 
 logs/
