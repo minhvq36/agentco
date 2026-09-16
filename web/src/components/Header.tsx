@@ -428,8 +428,11 @@ function CompanyName() {
  * ⚠ Dismissal is PER VERSION: hiding 0.1.3 does not hide 0.1.4. Stored in the
  * browser, wrapped, because a private window throws on `localStorage`.
  *
- * ⚠ Silent when anything is off — no daemon answer, checking disabled, nothing
- * newer. This line is a courtesy, never an error state.
+ * ⚠ TWO STATES, ONE FETCH (16/09/2026). With something newer to announce this
+ * is a banner; otherwise it is a quiet `v0.1.2` chip, because the interface
+ * used to name every version except the one you were running. Silent only when
+ * the daemon did not answer at all — this line is a courtesy, never an error
+ * state.
  */
 const UPDATE_DISMISSED_KEY = 'agentco:update-dismissed';
 
@@ -464,7 +467,33 @@ function UpdateNotice() {
     };
   }, []);
 
-  if (!view?.available || !view.latest || dismissed === view.latest) return null;
+  // No answer from the daemon ⇒ say nothing. An empty space is honest here; a
+  // "version unknown" chip would be a second thing to explain to support.
+  if (!view) return null;
+
+  /**
+   * ⚠ DISMISSING THE BANNER FALLS BACK TO THE CHIP, it does not clear the line.
+   * Hiding "0.1.4 is available" is a statement about the nagging, not about
+   * wanting to stop knowing which version is running — and the version is the
+   * half that gets asked for later.
+   */
+  if (!view.available || !view.latest || dismissed === view.latest) {
+    return (
+      <Tip
+        label={t(view.kind === 'packaged' ? 'header.versionPackaged' : 'header.versionNpm', {
+          version: view.current,
+        })}
+      >
+        {/* `text-muted`, the dimmest token this palette HAS — there is no
+            `faint` here, and a class Tailwind does not know is silently
+            nothing rather than an error. → docs/SPEC-ui.md */}
+        <span className="cursor-default text-[12.5px] tabular-nums text-muted">
+          {t('header.versionChip', { version: view.current })}
+        </span>
+      </Tip>
+    );
+  }
+
   const latest = view.latest;
 
   return (

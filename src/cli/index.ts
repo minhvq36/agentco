@@ -18,9 +18,10 @@ import { adoptInterfaceLocale, osLocaleHints } from '../core/config.js';
 import { companyPaths, ensureCompanyDirs, isCompanyDir, resolveCompanyDir } from '../core/paths.js';
 import { DESKTOP_LAUNCHER_ENV, desktopEntry, desktopFileName } from './desktop-entry.js';
 import { readSignIn, SIGN_IN_PROBE_MS } from './doctor-auth.js';
-import { serve } from '../server/server.js';
+import { serve, type Daemon } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
+import { agentcoOnPort, DEFAULT_PORT, findFreePort, PORT_SCAN_MAX } from './port.js';
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
 import { appVersion } from '../core/version.js';
@@ -84,13 +85,34 @@ async function main(): Promise<void> {
  * Create an EMPTY company. No sample office, no sample employees.
  * → SPEC-offices.md §3
  */
-function cmdInit(): void {
+async function cmdInit(): Promise<void> {
   if (isCompanyDir(companyDir)) {
     console.log(t('cli.alreadyInit', { dir: companyDir }));
     return;
   }
   const pp = companyPaths(companyDir);
   ensureCompanyDirs(pp);
+
+  /**
+   * 🔴 THE PORT IS CHOSEN HERE, ONCE, AND WRITTEN DOWN. → cli/port.ts
+   *
+   * An explicit `--port` is obeyed as given, busy or not: somebody who names a
+   * number means that number, and a clever substitution would be the surprise.
+   * Everything else searches from the default and records what it found, so the
+   * second company on a machine never collides with the first.
+   */
+  const host = typeof flags['host'] === 'string' ? flags['host'] : '127.0.0.1';
+  let port = DEFAULT_PORT;
+  if (typeof flags['port'] === 'number') {
+    port = flags['port'];
+  } else {
+    const free = await findFreePort(DEFAULT_PORT, host);
+    if (free === undefined) {
+      console.log(t('cli.initPortNone', { first: DEFAULT_PORT, last: DEFAULT_PORT + PORT_SCAN_MAX - 1 }));
+    } else {
+      port = free;
+    }
+  }
   /**
    * Resolve the interface language HERE, from the OS, and write it down.
    *
@@ -133,12 +155,16 @@ function cmdInit(): void {
    * resolved to `en` would write `language: en` and then report it in Vietnamese.
    */
   setLocale(locale);
-  fs.writeFileSync(pp.configFile, companyTemplate(locale), 'utf8');
+  fs.writeFileSync(pp.configFile, companyTemplate(locale, port), 'utf8');
 
   console.log(t('cli.created', { dir: companyDir }));
   console.log(t('cli.createdCompanyYaml'));
   console.log(t('cli.createdOffices'));
   console.log(t('cli.createdEmpty'));
+  // Only when it is NOT the number the documentation names: saying "port 7317"
+  // every time trains people to skip the line that matters on the one machine
+  // where it is 7318.
+  if (port !== DEFAULT_PORT) console.log(t('cli.createdPort', { port, first: DEFAULT_PORT }));
   console.log(t('cli.createdNext'));
 }
 
@@ -158,17 +184,49 @@ async function cmdStart(): Promise<void> {
   const host = typeof flags['host'] === 'string' ? flags['host'] : '127.0.0.1';
   const token = process.env['AGENTCO_TOKEN'];
 
-  const daemon = await serve({
-    company,
-    port,
-    host,
-    ...(token ? { token } : {}),
-    onShutdown: () => {
-      console.log(t('cli.shutFromUi'));
-      clearDaemonFile(pp);
-      process.exit(EXIT.ok);
-    },
-  });
+  /**
+   * ⚠ THE `catch` HANDLES EXACTLY ONE CODE AND RE-THROWS THE REST.
+   *
+   * `serve()` rejects with whatever `server.once('error')` received, and a
+   * `catch` that swallowed all of them would fold every future listen failure —
+   * a bad `--host`, a permission denial, an interface that vanished — into one
+   * friendly Vietnamese sentence about ports. That is the shape of bug that
+   * never gets reported because the message sounds like it was expected.
+   *
+   * Above this, `liveDaemon` has ALREADY handled the common case: this
+   * company's own daemon running, which opens a browser instead of erroring.
+   * Reaching here means the port belongs to somebody else. → cli/port.ts
+   */
+  let daemon: Daemon;
+  try {
+    daemon = await serve({
+      company,
+      port,
+      host,
+      ...(token ? { token } : {}),
+      onShutdown: () => {
+        console.log(t('cli.shutFromUi'));
+        clearDaemonFile(pp);
+        process.exit(EXIT.ok);
+      },
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+
+    const occupantVersion = await agentcoOnPort(port, host);
+    // Suggest a port that actually works. A `port + 1` that is busy too turns
+    // one dead end into two.
+    const next = (await findFreePort(port + 1, host)) ?? port + 1;
+
+    console.error(t('cli.portBusy', { port }));
+    if (occupantVersion) {
+      console.error(
+        t('cli.portBusyAgentco', { version: occupantVersion, url: `http://${host}:${port}` }),
+      );
+    }
+    console.error(t('cli.portBusyFixes', { next, file: pp.configFile }));
+    process.exit(EXIT.config);
+  }
 
   writeDaemonFile(pp, {
     pid: process.pid,
@@ -764,7 +822,7 @@ function cmdHelp(): void {
  * │ prompt dialog instead — both of which get updated with the code.         │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-function companyTemplate(locale: Locale): string {
+function companyTemplate(locale: Locale, port: number): string {
   /**
    * ┌──────────────────────────────────────────────────────────────────────
    * │ 🔴 `installed_at` IS THE ONE THING IN THE PACKAGING PLAN THAT CANNOT
@@ -795,7 +853,7 @@ function companyTemplate(locale: Locale): string {
 installed_at: ${installedAt}
 
 runtime:
-  port: 7317
+  port: ${port}
   concurrency: 4
 
 budgets:

@@ -127,6 +127,23 @@ export const en = {
   'header.update.download': 'Download at agent-co.app',
   'header.update.dismiss': 'Hide until the next version',
   /**
+   * ⚠ THE APP USED TO SHOUT ABOUT A NEW VERSION AND NEVER SAY WHICH ONE YOU
+   * HAD. (added 16/09/2026)
+   *
+   * Every support conversation opens with "which version are you on?", and
+   * until now nobody could answer it from the interface — the only version
+   * string it ever drew was somebody else's, in the update banner. The number
+   * was already on the client: `GET /api/update` carries `current` and `kind`
+   * beside `latest`, so this costs one more line of the same fetch.
+   *
+   * ⚠ `kind` goes in the TOOLTIP, not on the chip. It is the second thing
+   * support asks and the first thing a normal user does not care about, and a
+   * header is paid for in the attention of people who are not in trouble.
+   */
+  'header.versionChip': 'v{version}',
+  'header.versionNpm': 'agentco {version} · installed with npm',
+  'header.versionPackaged': 'agentco {version} · installed from the app installer',
+  /**
    * Doubles as the tooltip and as the accessible name of the title, so it has
    * to say WHAT IT IS as well as what to do with it — "Rename" alone would
    * leave a screen reader announcing a nameless control at the top of the app.
@@ -761,8 +778,33 @@ export const en = {
   'cli.checkAuthTimeout': 'no answer within {seconds} s — check the network, then run `claude` once to sign in',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'not running — `agentco start`',
+  /**
+   * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
+   * Naming the neighbour is only possible when it answered `/healthz`; claiming
+   * "another agentco is running" about a stranger's service would be a guess
+   * dressed as a fact, and the reader cannot check it either. → cli/port.ts
+   */
+  'cli.portBusy': 'Port {port} is in use, so this company did not start.',
+  'cli.portBusyAgentco':
+    'Another agentco company is answering there (v{version}) — most likely the packaged app, which keeps a company of its own. It is open at {url}',
+  'cli.portBusyFixes':
+    'For THIS company:\n  · just this once:  agentco start --port {next}\n  · for good:        set runtime.port in {file}',
+  'cli.initPortNone':
+    '⚠ Ports {first}–{last} are all in use. Leaving {first} in company.yaml — change runtime.port there, or start with `agentco start --port <n>`.',
+  'cli.createdPort': '  Port {port} — {first} was taken. It is runtime.port in company.yaml.',
+  /**
+   * ⚠ IT USED TO SAY "on Windows, the installer already adds one" — TO PEOPLE
+   * WHO NEVER RAN THE INSTALLER. (fixed 16/09/2026)
+   *
+   * There are two doors onto Windows, the packaged installer and npm, and only
+   * the first one leaves an icon behind. The sentence was written when there
+   * was only one, and it went on pointing everybody at a Start menu entry that
+   * does not exist for anyone who arrived through `npm i -g`. An error that
+   * sends you to the wrong door costs more than no error at all: it spends the
+   * reader's next ten minutes looking for something that was never there.
+   */
   'cli.shortcutNotLinux':
-    'A menu shortcut is only created on Linux for now. On Windows, the installer already adds one to the Start menu.',
+    'A menu shortcut is only created on Linux for now.\nOn Windows an icon comes from the packaged installer at agent-co.app; installed from npm, the company is started with `agentco start`.\nOn macOS there is no menu entry either way — `agentco start` is the way in.',
   'cli.shortcutNoCompany': 'There is no company at {dir}.\nRun `agentco init` there first, then `agentco shortcut`.',
   'cli.shortcutCreated': 'Added “{name}” to the applications menu.\n  {file}',
   'cli.shortcutNodeNote': 'It starts with Node {version}. If you switch Node versions, run `agentco shortcut` again.',

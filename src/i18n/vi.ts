@@ -97,6 +97,9 @@ export const vi: Catalog = {
   'header.update.available': 'Đã có bản {version}',
   'header.update.download': 'Tải ở agent-co.app',
   'header.update.dismiss': 'Ẩn tới bản sau',
+  'header.versionChip': 'v{version}',
+  'header.versionNpm': 'agentco {version} · cài bằng npm',
+  'header.versionPackaged': 'agentco {version} · cài bằng bản cài đặt',
   'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',
@@ -596,8 +599,16 @@ export const vi: Catalog = {
   'cli.checkAuthTimeout': 'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `claude` một lần để đăng nhập',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
+  'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',
+  'cli.portBusyAgentco':
+    'Ở đó là một công ty agentco khác (bản {version}) — nhiều khả năng là bản cài desktop, nó giữ công ty riêng. Nó đang mở ở {url}',
+  'cli.portBusyFixes':
+    'Còn công ty NÀY:\n  · chạy tạm lần này:  agentco start --port {next}\n  · đổi hẳn:           sửa runtime.port trong {file}',
+  'cli.initPortNone':
+    '⚠ Các cổng {first}–{last} đều đang bận. Vẫn ghi {first} vào company.yaml — sửa runtime.port ở đó, hoặc chạy `agentco start --port <n>`.',
+  'cli.createdPort': '  Cổng {port} — {first} đang bận. Nó là runtime.port trong company.yaml.',
   'cli.shortcutNotLinux':
-    'Hiện chỉ tạo lối tắt trong menu trên Linux. Trên Windows, trình cài đã thêm sẵn một lối tắt vào Start menu.',
+    'Hiện chỉ tạo lối tắt trong menu trên Linux.\nTrên Windows, icon đến từ bản cài ở agent-co.app; nếu cài bằng npm thì khởi động công ty bằng `agentco start`.\nTrên macOS không có lối tắt menu ở cả hai đường — `agentco start` là đường vào.',
   'cli.shortcutNoCompany': 'Không có công ty nào ở {dir}.\nChạy `agentco init` ở đó trước, rồi `agentco shortcut`.',
   'cli.shortcutCreated': 'Đã thêm “{name}” vào menu ứng dụng.\n  {file}',
   'cli.shortcutNodeNote': 'Lối tắt chạy bằng Node {version}. Nếu đổi phiên bản Node, chạy lại `agentco shortcut`.',
