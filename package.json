@@ -20,7 +20,6 @@
     },
     "files": [
         "dist",
-        "templates",
         "web/dist",
         "installer/logo.png",
         "README.md",

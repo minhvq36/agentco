@@ -97,9 +97,9 @@ export const vi: Catalog = {
   'header.update.available': 'Đã có bản {version}',
   'header.update.download': 'Tải ở agent-co.app',
   'header.update.dismiss': 'Ẩn tới bản sau',
-  'header.versionChip': 'v{version}',
-  'header.versionNpm': 'agentco {version} · cài bằng npm',
-  'header.versionPackaged': 'agentco {version} · cài bằng bản cài đặt',
+  // A name, a symbol and two numbers — the same line in both catalogues, and it
+  // stays in the catalogue because no user-visible string is written in a component.
+  'settings.footer': 'AgentCo © {year} · v{version}',
   'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',
@@ -599,6 +599,14 @@ export const vi: Catalog = {
   'cli.checkAuthTimeout': 'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `claude` một lần để đăng nhập',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
+  'cli.createdShortcutHint': '  Muốn nó nằm trong menu ứng dụng? Chạy `agentco shortcut` ở đây.',
+  'cli.updatePackaged':
+    'Bản này đến từ trình cài, không phải từ npm, nên `agentco update` không phải cửa của nó.\nTải bản mới ở {url} rồi cài đè lên bản này — thư mục nó đề nghị chính là thư mục bạn đang dùng.',
+  'cli.updateAlready': 'Đang ở {version}, và đó là bản mới nhất.',
+  'cli.updateNoNpm':
+    'Không tìm thấy npm cạnh Node này nên không có gì để giao việc. Công ty **chưa** bị tắt.\nTự cập nhật bằng:  {command}',
+  'cli.updateHandedOff':
+    'Đang cài {target} ở một tiến trình riêng, xong sẽ bật lại công ty. Theo dõi ở terminal này.',
   'cli.portMoved':
     '  Cổng {from} đang bận nên công ty chuyển sang {to} — đã ghi vào runtime.port trong {file}.',
   'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',
@@ -637,6 +645,7 @@ agentco run "<việc>"           Giao một việc  (--office <mã> khi có nhi�
 agentco cost [--since 7d]      Xem đã tốn bao nhiêu  (--office <mã> để lọc)
 agentco cost --purge           Dọn các mục "không còn" khỏi sổ (văn phòng đã xoá)
 agentco doctor                 Kiểm tra máy đã sẵn sàng chưa
+agentco update [--to <bản>]    Cài bản mới nhất rồi bật lại  (cho bản cài bằng npm)
 agentco shortcut               Thêm công ty này vào menu ứng dụng (Linux)
 
 Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui

@@ -48,6 +48,15 @@ SetCompressor /SOLID lzma
 ; `Program Files` would ask for UAC on EVERY update, which is exactly what
 ; "ships often" cannot afford, and it would need an administrator to remove.
 InstallDir "$LOCALAPPDATA\AgentCo"
+
+; -- REMEMBER WHERE THE LAST INSTALL WENT, so "install over the old one" needs
+; no thought. Without this the directory page always proposes the default: a
+; person who once chose another folder gets a SECOND copy somewhere else, with
+; its own company folder, and nothing says so. The value is the one this
+; installer already writes for Add/Remove Programs, so there is no second
+; record to keep true. -> SPEC-packaging §7.2
+InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentCo" "InstallLocation"
+
 RequestExecutionLevel user
 
 ; ⚠ Windows wants FOUR parts here and refuses three, so the build number is

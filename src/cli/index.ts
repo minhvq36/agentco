@@ -28,9 +28,20 @@ import { serve, type Daemon } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { agentcoOnPort, DEFAULT_PORT, findFreePort, type PortOccupant } from './port.js';
+import { findNpmCli, updateScript } from './update-run.js';
+import {
+  compareVersions,
+  installKind,
+  packageRoot,
+  readUpdateCache,
+} from '../core/update-check.js';
+import { WEBSITE_URL } from '../core/update-links.js';
+
+/** The name npm knows us by — read from the manifest, never typed twice. */
+const PACKAGE_NAME = packageName();
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
-import { appVersion } from '../core/version.js';
+import { appVersion, packageName } from '../core/version.js';
 import { describeSearch } from '../core/claude-code.js';
 import { resolveLocale, setLocale, t, type Locale } from '../i18n/index.js';
 import { formatUSD } from '../i18n/fmt.js';
@@ -73,6 +84,8 @@ async function main(): Promise<void> {
       return cmdCost();
     case 'doctor':
       return cmdDoctor();
+    case 'update':
+      return cmdUpdate();
     case 'shortcut':
       return cmdShortcut();
     case 'help':
@@ -160,6 +173,10 @@ function cmdInit(): void {
   console.log(t('cli.createdOffices'));
   console.log(t('cli.createdEmpty'));
   console.log(t('cli.createdNext'));
+  // ⚠ ONLY WHERE IT WORKS. A tip about a command that answers "not on this
+  // system" is worse than no tip: it spends the reader's attention and then
+  // refuses. → `cmdShortcut`
+  if (process.platform === 'linux') console.log(t('cli.createdShortcutHint'));
 }
 
 /**
@@ -367,6 +384,96 @@ async function cmdStart(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+}
+
+/**
+ * `agentco update` — the npm door's one command. → docs/SPEC-packaging.md §3.7
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 IT HANDS THE WORK TO A SCRIPT OUTSIDE THE PACKAGE AND THEN LEAVES.    │
+ * │                                                                          │
+ * │ Stopping the daemon is not enough, and that is the part that looks done  │
+ * │ when it is not: THIS process is itself running from                      │
+ * │ `<prefix>/node_modules/@agent-co-app/cli/dist/cli/index.js` — the very   │
+ * │ directory npm is about to replace. Node closes a `.js` after reading it, │
+ * │ so npm deletes it without complaint; the price is paid later, by the     │
+ * │ first `import()` that reaches for a file that is no longer there. A      │
+ * │ failure that depends on which code path ran is the worst kind to chase.  │
+ * │                                                                          │
+ * │ So: write a small script to the OS temp directory, spawn it detached,    │
+ * │ and exit. The house is empty before the builders arrive.                 │
+ * │                                                                          │
+ * │ ⚠ IF npm FAILS, THE OLD PACKAGE IS STILL THERE. There is no half-state   │
+ * │ to recover from — `agentco start` brings back exactly what was running.  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ `--to <version>` IS NOT A TEST FLAG. It is the npm door's way back: npm
+ * keeps every version ever published, so a bad release is undone by naming the
+ * old one. It is also what makes the whole path testable before a NEWER version
+ * exists — updating downwards runs exactly the same machinery.
+ */
+async function cmdUpdate(): Promise<void> {
+  const kind = installKind();
+  if (kind === 'packaged') {
+    console.log(t('cli.updatePackaged', { url: WEBSITE_URL }));
+    return;
+  }
+
+  const target = typeof flags['to'] === 'string' ? flags['to'] : 'latest';
+  const pp = companyPaths(companyDir);
+
+  // 🔴 BEFORE the daemon is touched. Finding out afterwards that there is no
+  // npm to call leaves the company stopped for a fact knowable a second earlier.
+  const npmCli = findNpmCli();
+  if (!npmCli) {
+    console.error(t('cli.updateNoNpm', { command: `npm i -g ${PACKAGE_NAME}@${target}` }));
+    process.exit(EXIT.config);
+  }
+
+  /*
+   * Only when going to `latest`, and only as a courtesy: an explicit `--to` is
+   * an instruction, and the channel has no opinion about a version somebody
+   * named. A `bad-signature` answer is NOT a reason to refuse — npm is its own
+   * trust chain, and the manifest only ever contributed a number.
+   */
+  if (target === 'latest') {
+    const seen = readUpdateCache(pp);
+    if (seen?.outcome === 'ok' && seen.latest && compareVersions(seen.latest, appVersion()) <= 0) {
+      console.log(t('cli.updateAlready', { version: appVersion() }));
+      return;
+    }
+  }
+
+  const info = await liveDaemon(pp);
+  if (info) {
+    await fetch(`${info.url}/api/shutdown`, { method: 'POST' }).catch(() => {});
+    console.log(t('cli.stopSent', { pid: info.pid }));
+  }
+
+  const script = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-')),
+    'update.mjs',
+  );
+  fs.writeFileSync(script, updateScript(), 'utf8');
+
+  /*
+   * ⚠ `node <script>`, never a shell. The three operating systems disagree
+   * about everything a shell does, and node is guaranteed present because this
+   * process IS node. Same reason the script calls npm through its own js entry
+   * point: Node cannot spawn a `.cmd` without a shell (EINVAL on Windows).
+   */
+  const child = spawn(
+    process.execPath,
+    [script, npmCli, PACKAGE_NAME, target, packageRoot(), companyDir],
+    { detached: true, stdio: 'inherit' },
+  );
+  // Without this listener a missing binary KILLS the process instead of
+  // throwing — `try/catch` catches exactly none of it.
+  child.on('error', (err) => fail(err));
+  child.unref();
+
+  console.log(t('cli.updateHandedOff', { target }));
+  process.exit(EXIT.ok);
 }
 
 async function cmdStop(): Promise<void> {

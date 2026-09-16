@@ -91,9 +91,31 @@ console.log('  deps     npm install --omit=dev --omit=optional …');
  */
 const npmCli = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
 if (!fs.existsSync(npmCli)) throw new Error(`no npm beside the runtime: ${npmCli}`);
+/**
+ * ⚠ `--ignore-scripts` — ASSEMBLING A TREE IS NOT INSTALLING ONE.
+ *
+ * A release is being built here; nobody typed `npm install`, so nothing should
+ * act as though somebody did. It also means no dependency's own install script
+ * executes while a release is assembled, and a build step is a bad place to run
+ * code that arrived with a package. None of our dependencies needs one — the
+ * SDK's platform binaries are optional and already omitted above.
+ *
+ * Found the honest way: a `postinstall` added to this package (since removed)
+ * made npm run it inside `app/<ver>/`, where `scripts/` is never copied, and
+ * the packaging step died on a missing file.
+ */
 execFileSync(
   process.execPath,
-  [npmCli, 'install', '--omit=dev', '--omit=optional', '--no-audit', '--no-fund', '--loglevel=error'],
+  [
+    npmCli,
+    'install',
+    '--omit=dev',
+    '--omit=optional',
+    '--ignore-scripts',
+    '--no-audit',
+    '--no-fund',
+    '--loglevel=error',
+  ],
   { cwd: appDir, stdio: 'inherit', windowsHide: true },
 );
 console.log(`  app      ${pkg.version}  ${mb(appDir)}`);
@@ -125,7 +147,29 @@ fs.writeFileSync(
     // directly, and there `--dir` is passed by hand. Setting the variable
     // unconditionally would silently redirect every developer command.
     'if exist "%HERE%company\\company.yaml" set "AGENTCO_COMPANY_DIR=%HERE%company"',
-    `"%NODE%\\node.exe" "%HERE%app\\${pkg.version}\\dist\\cli\\index.js" %*`,
+    //
+    // 🔴 WHICH VERSION TO RUN COMES FROM `current`, NOT FROM THIS FILE.
+    //
+    // It used to be written in here as a literal, and `AgentCo.exe` had it
+    // compiled in — so `current` was a pointer nothing read, and replacing
+    // `app\` with a newer folder changed nothing at all. An updater can only
+    // work if the thing that CHOOSES lives outside the thing being replaced.
+    // → SPEC-packaging §3.7 · SESSIONS_MEMORY §4.2 debt #5
+    //
+    // ⚠ The literal below is the FALLBACK, and it is the version this tree was
+    // built as: a missing, empty or stale `current` must land on something that
+    // exists rather than on nothing. Silence is the failure mode this launcher
+    // was rewritten from a `.vbs` to avoid, so the last resort still SPEAKS.
+    'set "APPDIR="',
+    'if exist "%HERE%current" set /p APPDIR=<"%HERE%current"',
+    `if not defined APPDIR set "APPDIR=app\\${pkg.version}"`,
+    `if not exist "%HERE%%APPDIR%\\dist\\cli\\index.js" set "APPDIR=app\\${pkg.version}"`,
+    'if not exist "%HERE%%APPDIR%\\dist\\cli\\index.js" (',
+    '  echo AgentCo: no app found under "%HERE%".',
+    '  echo Reinstall from agent-co.app to restore it.',
+    '  exit /b 2',
+    ')',
+    '"%NODE%\\node.exe" "%HERE%%APPDIR%\\dist\\cli\\index.js" %*',
   ].join('\r\n'),
   'utf8',
 );

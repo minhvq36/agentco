@@ -1,10 +1,12 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Languages, Moon, Palette, Sun } from 'lucide-react';
 
 import { SectionTitle } from '@/components/ui/misc';
+import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
 import { THEMES, type Theme } from '@/lib/theme';
 import { LOCALES, t, type Locale, type MessageKey } from '@i18n';
+import type { UpdateView } from '@core/update-links';
 
 /**
  * Settings — company-level, so it stays visible when there are no offices.
@@ -94,12 +96,70 @@ function Choice({
   );
 }
 
+/**
+ * The product footer — a name, a copyright, a version. → docs/SPEC-packaging.md §1
+ *
+ * 🔴 IT LIVED IN THE HEADER FIRST, AND THAT WAS THE WRONG SPLIT. (user, 16/09)
+ * The header is for EVENTS — "version X is available" is one: it expires and it
+ * has a close button. Which version you are RUNNING is reference. Nobody needs
+ * it until somebody asks, and then they need to be able to FIND it, not to have
+ * been shown it all day.
+ *
+ * ⚠ NO "installed with npm" HERE ANY MORE. It answers a question only the
+ * updater asks, and the update banner already branches on it — printing it in
+ * both places would make the footer explain a thing it cannot act on.
+ *
+ * ⚠ THE YEAR IS COMPUTED, never typed. A hard-coded one is wrong from the 1st
+ * of January and nothing anywhere reports it — the same silent-staleness the
+ * generated `company.yaml` gave up comments to avoid.
+ *
+ * ⚠ The copyright stays although the licence is source-available: FSL grants
+ * rights, it does not surrender ownership, and it is the copyright that makes
+ * the grant enforceable at all. The PRODUCT is named here, never a person.
+ *
+ * ⚠ Silent until the daemon answers. "Version unknown" would be a second thing
+ * to explain, and this line is worth nothing that costs anything.
+ */
+function VersionFooter() {
+  const [view, setView] = useState<UpdateView | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .update()
+      .then((v) => {
+        if (alive) setView(v);
+      })
+      .catch(() => {
+        /* no answer, no line */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!view) return null;
+  return (
+    // `mt-auto` is what pins it to the FOOT OF THE PANEL rather than to the end
+    // of the content: with spare room it drops to the bottom, and when the
+    // sections outgrow the panel it simply follows them into the scroll.
+    //
+    // ⚠ `text-center` on a BLOCK, not a measured offset. The sidebar is
+    // draggable, so any number computed once would be right at one width and
+    // wrong at every other; a block element is already exactly as wide as the
+    // panel, and centring inside it follows the drag for free.
+    <p className="mt-auto border-t border-line pt-3 text-center text-[11.5px] leading-relaxed text-muted">
+      {t('settings.footer', { year: String(new Date().getFullYear()), version: view.current })}
+    </p>
+  );
+}
+
 export function SettingsPanel() {
   const locale = useApp((s) => s.locale);
   const theme = useApp((s) => s.theme);
 
   return (
-    <div className="h-full overflow-y-auto px-3 py-3">
+    <div className="flex h-full flex-col overflow-y-auto px-3 py-3">
       <SectionTitle className="mb-2 flex items-center gap-1.5">
         <Languages className="h-3.5 w-3.5" />
         {t('settings.language')}
@@ -142,6 +202,8 @@ export function SettingsPanel() {
           );
         })}
       </div>
+
+      <VersionFooter />
     </div>
   );
 }

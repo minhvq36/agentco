@@ -128,21 +128,19 @@ export const en = {
   'header.update.dismiss': 'Hide until the next version',
   /**
    * ⚠ THE APP USED TO SHOUT ABOUT A NEW VERSION AND NEVER SAY WHICH ONE YOU
-   * HAD. (added 16/09/2026)
+   * HAD. (added 16/09/2026, moved out of the header the same day)
    *
-   * Every support conversation opens with "which version are you on?", and
-   * until now nobody could answer it from the interface — the only version
-   * string it ever drew was somebody else's, in the update banner. The number
-   * was already on the client: `GET /api/update` carries `current` and `kind`
-   * beside `latest`, so this costs one more line of the same fetch.
+   * Every support conversation opens with "which version are you on?" and
+   * "how did you install it?", and until now neither was answerable from the
+   * interface — the only version string it ever drew was somebody else's, in
+   * the update banner. Both facts were already on the client: `GET /api/update`
+   * carries `current` and `kind` beside `latest`.
    *
-   * ⚠ `kind` goes in the TOOLTIP, not on the chip. It is the second thing
-   * support asks and the first thing a normal user does not care about, and a
-   * header is paid for in the attention of people who are not in trouble.
+   * ⚠ `kind` is SPELLED OUT rather than hidden in a tooltip. At the foot of a
+   * settings panel there is room, and a tooltip says nothing to somebody
+   * reading a support reply back over the phone.
    */
-  'header.versionChip': 'v{version}',
-  'header.versionNpm': 'agentco {version} · installed with npm',
-  'header.versionPackaged': 'agentco {version} · installed from the app installer',
+  'settings.footer': 'AgentCo © {year} · v{version}',
   /**
    * Doubles as the tooltip and as the accessible name of the title, so it has
    * to say WHAT IT IS as well as what to do with it — "Rename" alone would
@@ -779,6 +777,20 @@ export const en = {
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'not running — `agentco start`',
   /**
+   * ⚠ `updateHandedOff` IS PRINTED BY A PROCESS THAT IS ABOUT TO EXIT, and the
+   * work carries on in another one. Saying "updated" here would be a claim
+   * about something that has not happened yet; saying nothing would read as the
+   * command having done nothing at all.
+   */
+  'cli.createdShortcutHint': '  Want it in the applications menu? Run `agentco shortcut` here.',
+  'cli.updatePackaged':
+    'This copy came from the installer, not from npm, so `agentco update` is not its door.\nGet the new version at {url} and install it over this one — the folder it proposes is the one you are in.',
+  'cli.updateAlready': 'Already on {version}, which is the newest there is.',
+  'cli.updateNoNpm':
+    'Cannot find npm beside this Node, so there is nothing to hand the work to. The company was NOT stopped.\nUpdate it yourself with:  {command}',
+  'cli.updateHandedOff':
+    'Installing {target} in a separate process, then starting the company again. Watch this terminal.',
+  /**
    * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
    * Naming the neighbour is only possible when it answered `/healthz`; claiming
    * "another agentco is running" about a stranger's service would be a guess
@@ -833,6 +845,7 @@ agentco run "<work>"           Hand over one job  (--office <code> when there ar
 agentco cost [--since 7d]      See what has been spent  (--office <code> to filter)
 agentco cost --purge           Clear "gone" entries from the ledger (deleted offices)
 agentco doctor                 Check whether the machine is ready
+agentco update [--to <ver>]    Install the newest version and start again  (npm installs)
 agentco shortcut               Add this company to the applications menu (Linux)
 
 Common options:  --dir <path>  --port <n>  --host <ip>  --no-ui

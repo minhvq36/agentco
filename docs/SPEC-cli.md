@@ -85,7 +85,7 @@ in it. That is a launcher question, not a spawn-flag one, and it is still open.
 ### Init & lifecycle
 
 ```bash
-agentco init [dir]              # scaffold company/ from a template, ask a few questions about the company
+agentco init [dir]              # scaffold company/ where you are standing — asks nothing, guesses the language from the OS
 agentco start [--port 7317] [--no-ui] [--daemon]
 agentco stop
 agentco status                  # daemon, running agents, current shift, warm cache

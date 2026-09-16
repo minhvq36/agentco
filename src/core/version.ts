@@ -28,7 +28,33 @@ import { fileURLToPath } from 'node:url';
  * Read once and remember. The file cannot change while the process runs, and a
  * version string is asked for on every `/healthz` — which is polled.
  */
-let cached: string | undefined;
+let cached: { version: string; name: string } | undefined;
+
+function manifest(): { version: string; name: string } {
+  if (cached !== undefined) return cached;
+  try {
+    // `dist/core/version.js` → the package root is two levels up. Same depth as
+    // `dist/server/`, which is where this function used to live.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(here, '../../package.json'), 'utf8')) as {
+      version?: string;
+      name?: string;
+    };
+    cached = { version: pkg.version ?? '0.0.0', name: pkg.name ?? '' };
+  } catch {
+    cached = { version: '0.0.0', name: '' };
+  }
+  return cached;
+}
+
+/**
+ * What npm knows this package as. Same file, same read, same reason: `agentco
+ * update` has to name the package, and a name typed a second time in the CLI is
+ * a name that survives a rename of the first one.
+ */
+export function packageName(): string {
+  return manifest().name;
+}
 
 /**
  * ⚠ `'0.0.0'` on failure, NOT a throw and not the real version.
@@ -40,17 +66,5 @@ let cached: string | undefined;
  * current — the safe direction of the two.
  */
 export function appVersion(): string {
-  if (cached !== undefined) return cached;
-  try {
-    // `dist/core/version.js` → the package root is two levels up. Same depth as
-    // `dist/server/`, which is where this function used to live.
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(fs.readFileSync(path.resolve(here, '../../package.json'), 'utf8')) as {
-      version?: string;
-    };
-    cached = pkg.version ?? '0.0.0';
-  } catch {
-    cached = '0.0.0';
-  }
-  return cached;
+  return manifest().version;
 }

@@ -57,6 +57,51 @@ Section
   ; not. -> SPEC-packaging §7.5
   System::Call 'kernel32::SetEnvironmentVariable(t "AGENTCO_COMPANY_DIR", t "$EXEDIR\company")'
 
+  ; ---------------------------------------------------------------------------
+  ; -- WHICH VERSION TO RUN COMES FROM `current`, NOT FROM THIS BINARY.
+  ;
+  ; ${APPVER} used to be used directly here, and `agentco.cmd` had the number
+  ; written into it the same way. `current` was therefore a POINTER NOTHING
+  ; READ: writing a newer `app\<ver>\` and flipping it changed nothing, because
+  ; the thing that CHOOSES was inside the thing being replaced — and this .exe
+  ; is held open while the daemon runs, so it cannot be replaced either.
+  ; An updater is only possible once the choice lives outside. -> SPEC-packaging §3.7
+  ;
+  ; ⚠ ${APPVER} REMAINS AS THE FALLBACK. A missing, empty or stale pointer must
+  ; land on a version that exists. And the last resort SPEAKS rather than doing
+  ; nothing — the whole reason this file replaced a .vbs was a second click that
+  ; silently did nothing.
+  ; ---------------------------------------------------------------------------
+  StrCpy $2 "app\${APPVER}"
+
+  ClearErrors
+  FileOpen $3 "$EXEDIR\current" r
+  ${IfNot} ${Errors}
+    FileRead $3 $4
+    FileClose $3
+    ; Trim trailing CR/LF: the packager writes no newline, but an editor that
+    ; touched the file would add one, and a path with a newline in it exists
+    ; nowhere.
+    trim:
+      StrCpy $5 $4 1 -1
+      ${If} $5 == "$\r"
+      ${OrIf} $5 == "$\n"
+        StrCpy $4 $4 -1
+        Goto trim
+      ${EndIf}
+    ${If} $4 != ""
+      StrCpy $2 $4
+    ${EndIf}
+  ${EndIf}
+
+  ${IfNot} ${FileExists} "$EXEDIR\$2\dist\cli\index.js"
+    StrCpy $2 "app\${APPVER}"
+  ${EndIf}
+  ${IfNot} ${FileExists} "$EXEDIR\$2\dist\cli\index.js"
+    MessageBox MB_ICONSTOP "AgentCo could not start: no app was found in its folder.$\r$\n$\r$\nReinstalling AgentCo from agent-co.app will restore it."
+    Abort
+  ${EndIf}
+
   ; -- Run it, and WAIT.
   ;
   ; Waiting is not an oversight. Two cases, and waiting is right for both:
@@ -66,7 +111,7 @@ Section
   ;                    onto it and exits at once.
   ; Either way a non-zero exit is a real failure that somebody must be told
   ; about, which is the whole reason this file exists.
-  nsExec::Exec '"$EXEDIR\${NODEDIR}\node.exe" "$EXEDIR\app\${APPVER}\dist\cli\index.js" start'
+  nsExec::Exec '"$EXEDIR\${NODEDIR}\node.exe" "$EXEDIR\$2\dist\cli\index.js" start'
   Pop $0
 
   ${If} $0 == "error"

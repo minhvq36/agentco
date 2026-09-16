@@ -55,6 +55,33 @@ Workers never talk to each other directly — every exchange goes through the ma
 - Node.js ≥ 22
 - The Claude Code CLI, logged in (`claude` runs). **No API key needed.**
 
+## Install, update, remove
+
+```sh
+npm i -g @agent-co-app/cli
+
+# then, in the folder where the company should live:
+agentco init
+agentco start
+```
+
+`npm i -g` writes to npm's global prefix, so the folder you are standing in stays
+empty until `init` — that is `init`'s job, and it creates `./company` right there.
+
+```sh
+agentco update              # newest version, then starts the company again
+agentco update --to 0.1.3   # or back to a named one, if a release goes wrong
+npm uninstall -g @agent-co-app/cli
+```
+
+Removing the package leaves the company folder alone. It is your data, not the
+program — delete it yourself if you mean to.
+
+Windows has a second door: a packaged installer at [agent-co.app](https://agent-co.app),
+which brings its own Node and adds a Start-menu icon. It updates by installing over
+itself, not by `agentco update`; the app tells you which door you came through at the
+bottom of the Settings panel.
+
 ## License
 
 [**FSL-1.1-ALv2**](LICENSE.md) — source-available. This is **not** open source under the OSI
