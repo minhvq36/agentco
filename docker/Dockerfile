@@ -45,6 +45,30 @@ ARG AGENTCO_VERSION=latest
 RUN npm install -g "@agent-co-app/cli@${AGENTCO_VERSION}" --no-audit --no-fund \
  && npm cache clean --force
 
+# ┌──────────────────────────────────────────────────────────────────────────
+# │ `claude` ON PATH — because signing in is something a PERSON types.
+# │
+# │ agentco itself does not need this: it resolves the binary by path through
+# │ the SDK's own pinned optionalDependency, which is the route that keeps the
+# │ protocol version matched (src/core/claude-code.ts). But a subscription is
+# │ set up by hand, once, with `docker compose exec agentco claude
+# │ setup-token` — and measured 17/09, that command did not exist: the binary
+# │ is nested inside the package's node_modules, not installed as a command.
+# │ The documentation said otherwise, which is how a README starts lying.
+# │
+# │ ⚠ FOUND, NOT NAMED. The directory carries the architecture in its name
+# │ (`claude-agent-sdk-linux-x64`), so writing the path out would produce an
+# │ image that builds on x64 and fails on arm64 with "no such file".
+# │
+# │ ⚠ The `--version` at the end is the point: a symlink to nowhere would
+# │ otherwise sit there quietly until somebody tried to sign in.
+# └──────────────────────────────────────────────────────────────────────────
+RUN CLAUDE_BIN="$(find /usr/local/lib/node_modules/@agent-co-app/cli/node_modules/@anthropic-ai \
+      -maxdepth 2 -name claude -type f -perm -u+x | head -n 1)" \
+ && test -n "$CLAUDE_BIN" \
+ && ln -s "$CLAUDE_BIN" /usr/local/bin/claude \
+ && claude --version
+
 COPY docker/entrypoint.sh /usr/local/bin/agentco-entrypoint
 # chmod here rather than relying on the checkout: git on Windows does not carry
 # the executable bit, so a file that is +x in the repository arrives 644.
