@@ -1,8 +1,12 @@
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs';
 import test from 'node:test';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { findClaudeCode, type World } from '../dist/core/claude-code.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * 🔴 FINDING CLAUDE CODE — THREE OPERATING SYSTEMS, FROM ONE MACHINE.
@@ -141,6 +145,49 @@ test('nothing anywhere: no crash, no guess, and the trail is still recorded', ()
   assert.equal(r.found, undefined);
   assert.ok(r.tried.length > 0, 'even a total miss must say where it looked');
   assert.ok(r.tried.every((c) => !c.ok));
+});
+
+test('🔴 nothing in the repository turns a file URL into a path by hand', () => {
+  /*
+   * A file URL is PERCENT-ENCODED. `new URL(u).pathname` gives back
+   * `/C:/Program%20Files/…`, and on a Windows CI runner whose temp directory is
+   * the 8.3 name `RUNNER~1`, `/C:/Users/RUNNER%7E1/…`. Stripping the leading
+   * slash with a regex leaves every one of those encoded, so the path does not
+   * exist and the code SILENTLY takes the other branch.
+   *
+   * `core/claude-code.ts §sdkPackageDir` did exactly this, inside a five-tier
+   * detector whose entire value is being able to say what it looked at: on any
+   * machine with a space in its paths that tier could never match, and nothing
+   * anywhere reported it. It was found 17/09/2026 only because the same line
+   * had been copied into a test fixture, where CI's `RUNNER~1` broke it loudly.
+   *
+   * So the gate is the CLASS, not the two lines: `fileURLToPath` is the only
+   * way this conversion happens. → SESSIONS_MEMORY §7
+   */
+  const roots = ['src', 'scripts', 'test', path.join('web', 'src')];
+  const offenders: string[] = [];
+
+  const walk = (dir: string): void => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'node_modules' && e.name !== 'dist') walk(p);
+      } else if (/\.(ts|tsx|mjs|js)$/.test(e.name)) {
+        const body = fs.readFileSync(p, 'utf8');
+        body.split('\n').forEach((line, i) => {
+          // ⚠ Comments are skipped, or this gate flags the paragraph above it
+          // and the one in `claude-code.ts` explaining the fix. A gate that
+          // reads code has to read code.
+          const t = line.trim();
+          if (t.startsWith('*') || t.startsWith('//') || t.startsWith('/*')) return;
+          if (/new URL\([^)]*\)\.pathname/.test(line)) offenders.push(`${p}:${i + 1}`);
+        });
+      }
+    }
+  };
+  for (const r of roots) walk(path.join(ROOT, r));
+
+  assert.deepEqual(offenders, [], `use fileURLToPath instead:\n${offenders.join('\n')}`);
 });
 
 test('an empty PATH entry is skipped rather than turned into a relative path', () => {

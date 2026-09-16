@@ -31,6 +31,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Where a candidate came from. Shown by `doctor`, so these are read by humans. */
 export type Via =
@@ -287,7 +288,22 @@ function sdkPackageDir(): string | undefined {
     // The package has no entry point to import, so resolve its package.json.
     const url = import.meta.resolve?.(`${name}/package.json`);
     if (!url) return undefined;
-    return path.dirname(new URL(url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+    /*
+     * 🔴 `fileURLToPath`, NEVER `new URL(u).pathname` WITH A REGEX.
+     *
+     * A file URL is percent-encoded. `C:\Program Files\…` comes back as
+     * `/C:/Program%20Files/…`, and a Windows 8.3 temp path as `RUNNER%7E1`;
+     * a Vietnamese folder name comes back as a run of `%C3%A1`. Stripping the
+     * leading slash by hand leaves every one of those encoded, so
+     * `exists()` says no and this tier NEVER MATCHES — silently, in a detector
+     * whose entire value is being able to say what it looked at.
+     *
+     * Found 17/09/2026 on CI, where the runner's temp directory is `RUNNER~1`.
+     * The same line had been copied into a test fixture, which is what failed
+     * first; the copy in the product would have gone on failing quietly on any
+     * machine with a space in its path. → SESSIONS_MEMORY §7
+     */
+    return path.dirname(fileURLToPath(url));
   } catch {
     return undefined;
   }

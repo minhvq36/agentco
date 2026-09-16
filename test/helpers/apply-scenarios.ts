@@ -37,6 +37,7 @@ const GOOD_ENTRY = `
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 const args = process.argv.slice(2);
 // The probe seeds a throwaway company with the tree under test before starting
 // it, because \`start\` refuses a directory with no company.yaml.
@@ -47,7 +48,10 @@ if (args[0] === 'init') {
   process.exit(0);
 }
 const port = Number(args[args.indexOf('--port') + 1]);
-const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\\/([A-Za-z]:)/, '$1'));
+// ⚠ fileURLToPath, never pathname + a regex: a file URL is percent-encoded, and
+// CI's temp directory is \`RUNNER~1\` → \`RUNNER%7E1\`. This line failing on CI is
+// what uncovered the same mistake in core/claude-code.ts.
+const here = path.dirname(fileURLToPath(import.meta.url));
 const version = JSON.parse(fs.readFileSync(path.join(here, '..', '..', 'package.json'), 'utf8')).version;
 http.createServer((req, res) => {
   if (req.url === '/healthz') {
