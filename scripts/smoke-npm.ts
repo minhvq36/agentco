@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The npm door, walked the way a stranger walks it. → docs/SPEC-cli.md §6
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -394,45 +394,47 @@ async function main(): Promise<void> {
   check((await healthz(port)) === undefined, 'the port no longer answers');
   check(!fs.existsSync(path.join(HOME, 'company', '.state', 'daemon.json')), 'daemon.json was cleared');
 
-  /**
-   * ┌──────────────────────────────────────────────────────────────────────────┐
-   * │ 🔴 `agentco update` HAD NEVER RUN ON macOS OR LINUX. (added 17/09/2026)  │
-   * │                                                                          │
-   * │ Every piece of it was written for three systems — both npm layouts        │
-   * │ checked rather than picked by platform, `node <npm-cli.js>` because Node  │
-   * │ cannot spawn a `.cmd` without a shell, a prefix derived from where the    │
-   * │ running file is — and all of it was measured on Windows only, because     │
-   * │ `npm test` runs on Windows only. "Written for three, proved on one" is    │
-   * │ the sentence this project has paid for six times.                        │
-   * │                                                                          │
-   * │ ⚠ `--to` THIS VERSION, not `latest`: it exercises the whole mechanism —   │
-   * │ resolve npm, write a helper outside the package, wait, install, restart — │
-   * │ while landing on exactly what was already there. A smoke run must not     │
-   * │ depend on what the registry happens to call `latest` today, and must not  │
-   * │ leave a different version behind for the checks that follow.              │
-   * │                                                                          │
-   * │ ⚠ It installs into PREFIX, the isolated one this script made. If that     │
-   * │ ever stopped being true the machine's real global install would be        │
-   * │ overwritten by a test — which is why the version is read back from        │
-   * │ PKG_DIR afterwards rather than from `agentco version`.                    │
-   * └──────────────────────────────────────────────────────────────────────────┘
-   */
-  /*
-   * ⚠ `--to latest`, NOT `--to <this version>`. Smoke runs BEFORE the publish,
-   * so the version being released does not exist on the registry yet: aiming at
-   * it makes npm 404 every single time, the package on disk stays exactly as it
-   * was, and every assertion below passes without a thing having happened. That
-   * is what the first version of this step did.
-   *
-   * `latest` is whatever shipped before this one, which is a real install into
-   * the isolated prefix — and after the publish, when `npm-verify` runs this
-   * again with SMOKE_FROM_REGISTRY, `latest` is this version and it reinstalls
-   * itself. Both are a genuine npm run.
-   */
+  step('agentco shortcut');
+  const shortcut = await collect(agentco(['shortcut']), 30_000);
+  check(shortcut.code === 0, 'shortcut exited 0', shortcut.out);
+  if (process.platform !== 'linux') {
+    check(shortcut.out.includes(fixed(en['cli.shortcutNotLinux']!)), 'not Linux: it says so and writes nothing', shortcut.out);
+  } else {
+    await linuxShortcut(en);
+  }
+
+  await updateStep();
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `agentco update` HAD NEVER RUN ON macOS OR LINUX. (added 17/09/2026)  │
+ * │                                                                          │
+ * │ Every piece of it was written for three systems — both npm layouts        │
+ * │ checked rather than picked by platform, `node <npm-cli.js>` because Node  │
+ * │ cannot spawn a `.cmd` without a shell, a prefix derived from where the    │
+ * │ running file is — and all of it was measured on Windows only, because     │
+ * │ `npm test` runs on Windows only. "Written for three, proved on one" is    │
+ * │ the sentence this project has paid for six times.                        │
+ * │                                                                          │
+ * │ 🔴 IT RUNS LAST, AND THAT IS NOT TIDINESS. A real update REPLACES the     │
+ * │ installation every check above is standing on: put in the middle, it      │
+ * │ downgraded the prefix and `gio launch` then started the older version,    │
+ * │ failing an assertion about a completely different thing. Ubuntu found     │
+ * │ that; Windows could not, because the `.desktop` section is Linux-only.    │
+ * │                                                                          │
+ * │ ⚠ And it hid for one release behind a broken test: aiming `--to` at the   │
+ * │ version being released 404s (smoke runs BEFORE the publish), so the step  │
+ * │ did nothing at all and left everything downstream intact. Fixing the test │
+ * │ is what surfaced the ordering fault. → registryLatest                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+async function updateStep(): Promise<void> {
   const published = await registryLatest();
   if (!published) {
     step('agentco update — skipped, nothing published to aim at');
-  } else {
+    return;
+  }
   step(`agentco update --to ${published}`);
   const upd = await collect(agentco(['update', '--to', published]), 60_000);
 
@@ -476,16 +478,6 @@ async function main(): Promise<void> {
   check(!!after, 'the isolated prefix still holds a readable install', after);
   measured.push(['update → installed', after ?? '(gone)']);
   }
-
-  step('agentco shortcut');
-  const shortcut = await collect(agentco(['shortcut']), 30_000);
-  check(shortcut.code === 0, 'shortcut exited 0', shortcut.out);
-  if (process.platform !== 'linux') {
-    check(shortcut.out.includes(fixed(en['cli.shortcutNotLinux']!)), 'not Linux: it says so and writes nothing', shortcut.out);
-  } else {
-    await linuxShortcut(en);
-  }
-}
 
 /**
  * CI cannot click an icon. The next best thing is to hand the file to the same
