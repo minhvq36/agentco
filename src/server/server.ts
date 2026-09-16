@@ -30,9 +30,9 @@ import {
   checkForUpdate,
   compareVersions,
   installKind,
+  manifestUrls,
   packageRoot,
   readManifest,
-  SIGNATURE_URL,
   UPDATE_FIRST_CHECK_MS,
   UPDATE_TICK_MS,
   updateStatus,
@@ -627,7 +627,8 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     };
 
     try {
-      const [body, sig] = await Promise.all([get(MANIFEST_URL), get(SIGNATURE_URL)]);
+      const urls = manifestUrls();
+      const [body, sig] = await Promise.all([get(urls.manifest), get(urls.signature)]);
       if (!verifyManifest(body, Buffer.from(sig).toString('utf8'))) {
         console.error('[update] manifest signature did not verify — nothing applied');
         return;

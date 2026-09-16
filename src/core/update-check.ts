@@ -36,6 +36,39 @@ import { appVersion } from './version.js';
 
 export const SIGNATURE_URL = `${MANIFEST_URL}.sig`;
 
+/**
+ * Where to ask. `AGENTCO_MANIFEST_URL` moves it.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE URL WAS NEVER THE FENCE, AND OPENING IT COSTS NOTHING.            │
+ * │                                                                          │
+ * │ Two things guard this channel and neither is an address:                 │
+ * │                                                                          │
+ * │   · nothing is read from a manifest until it verifies against a key      │
+ * │     COMPILED INTO THIS BUILD (§3.2) — so a different URL can only ever   │
+ * │     serve something we signed ourselves;                                 │
+ * │   · nothing is applied that is not NEWER than what is running, so an     │
+ * │     old-but-genuine manifest cannot be replayed as a downgrade.          │
+ * │                                                                          │
+ * │ What it buys: the apply path (§3.7) can be run end to end against a      │
+ * │ local manifest and a local layer, on a real packaged install, without    │
+ * │ publishing a version to test with. Before this, proving the button meant │
+ * │ cutting a release whose only purpose was to be a target.                 │
+ * │                                                                          │
+ * │ ⚠ Somebody who can set environment variables on the machine already owns │
+ * │ the machine. This is not the weakest link and pretending it is would     │
+ * │ cost a real capability — an air-gapped or VPS install pointing at an     │
+ * │ internal mirror wants exactly this. → SPEC-deploy                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function manifestUrls(env: NodeJS.ProcessEnv = process.env): {
+  manifest: string;
+  signature: string;
+} {
+  const base = env['AGENTCO_MANIFEST_URL']?.trim() || MANIFEST_URL;
+  return { manifest: base, signature: `${base}.sig` };
+}
+
 /** §3.4: at most once per 24 h — enforced by the cache, so a restart is not a request. */
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 /** Off the startup path: the daemon is serving well before anyone looks for updates. */
@@ -242,7 +275,8 @@ export async function checkForUpdate(o: {
   let outcome: Outcome;
   let latest: string | undefined;
   try {
-    const [body, sig] = await Promise.all([get(MANIFEST_URL), get(SIGNATURE_URL)]);
+    const urls = manifestUrls();
+    const [body, sig] = await Promise.all([get(urls.manifest), get(urls.signature)]);
     if (!verifyManifest(body, Buffer.from(sig).toString('utf8'), o.keys)) {
       outcome = 'bad-signature';
     } else {
