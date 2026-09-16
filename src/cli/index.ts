@@ -37,8 +37,6 @@ import {
 } from '../core/update-check.js';
 import { WEBSITE_URL } from '../core/update-links.js';
 
-/** The name npm knows us by — read from the manifest, never typed twice. */
-const PACKAGE_NAME = packageName();
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
 import { appVersion, packageName } from '../core/version.js';
@@ -47,6 +45,14 @@ import { resolveLocale, setLocale, t, type Locale } from '../i18n/index.js';
 import { formatUSD } from '../i18n/fmt.js';
 
 const EXIT = { ok: 0, general: 1, config: 2, noDaemon: 3, auth: 4, taskFail: 5, budget: 6, rateLimit: 7 };
+
+/**
+ * The name npm knows us by — read from the manifest, never typed twice.
+ *
+ * ⚠ BELOW the imports, not among them: `await main()` runs at the top level,
+ * so a `const` it depends on has to be initialised before that line is reached.
+ */
+const PACKAGE_NAME = packageName();
 
 const argv = process.argv.slice(2);
 const command = argv[0] ?? 'help';
@@ -58,10 +64,36 @@ const companyDir = resolveCompanyDir(typeof flags['dir'] === 'string' ? flags['d
 // in the module default. → core/config.ts §adoptInterfaceLocale
 adoptInterfaceLocale(companyDir);
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 ONE REF'D HANDLE FOR AS LONG AS A COMMAND IS RUNNING. (16/09/2026)    │
+ * │                                                                          │
+ * │ Node exits when the event loop has nothing left — and a pending `await`   │
+ * │ is NOT something left. A command that reaches a moment with no socket,    │
+ * │ no timer and no child process simply stops, exits 0, and prints           │
+ * │ "Detected unsettled top-level await" if anyone is reading stderr.         │
+ * │                                                                          │
+ * │ Caught on CI, never here: `agentco start` on a taken port walked away     │
+ * │ between `serve()` rejecting with EADDRINUSE — at which point the listener │
+ * │ it tried to open is already closed, so the process holds nothing — and    │
+ * │ the recovery that follows. The company was not moved, no error was        │
+ * │ printed, and the exit code was 0. Success, on paper.                      │
+ * │                                                                          │
+ * │ ⚠ IT IS NOT SPECIFIC TO THAT BRANCH, which is why it is here and not      │
+ * │ there. Any command whose last live handle closes mid-flight has the same  │
+ * │ shape, and the failure is silent in every one of them.                    │
+ * │                                                                          │
+ * │ ⚠ Cleared in `finally`, so a command that finishes still lets the process │
+ * │ exit on its own. `unref()` would defeat the entire point.                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const running = setInterval(() => {}, 60_000);
 try {
   await main();
 } catch (err) {
   fail(err);
+} finally {
+  clearInterval(running);
 }
 
 async function main(): Promise<void> {
