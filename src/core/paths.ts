@@ -166,6 +166,39 @@ export function officeDir(company: CompanyPaths, officeId: string): string {
   return path.join(company.offices, officeId);
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE LAST SEGMENT OF A PATH THAT CAME OUT OF A FILE — not out of this    │
+ * │ machine. (found 18/09/2026, the first time the suite ran on Linux)        │
+ * │                                                                          │
+ * │ `path.basename` reads the separator of the HOST. That is right for a      │
+ * │ path this process built, and wrong for a path a PERSON typed into         │
+ * │ `company.yaml` — because a company is a folder you can copy to another    │
+ * │ machine, which is a feature we shipped on purpose (`docker/company` is    │
+ * │ bind-mounted for exactly that). A CLI arm declared on Windows carries     │
+ * │ `cwd: "D:\\Works\\ke-toan"`; open that same company on Linux and          │
+ * │ `path.basename` finds no separator, so the label becomes the whole        │
+ * │ string `D:\Works\ke-toan` instead of `ke-toan`.                           │
+ * │                                                                          │
+ * │ ⚠ THE CALLER ALREADY KNEW. `defaultArmLabel` strips a trailing slash with │
+ * │ `/[\\/]+$/` — both separators, spelled out — and then hands the result to │
+ * │ a host-specific `basename` two lines later. The premise was right and the │
+ * │ tool was wrong, which is why no reader caught it.                         │
+ * │                                                                          │
+ * │ ⚠ NOT a general replacement for `path.basename`. Use this one ONLY for a  │
+ * │ string that arrived as DATA (config, a paste, a model's answer). For a    │
+ * │ path this process resolved, `path.basename` is correct and this one       │
+ * │ would wrongly cut a Linux filename that legally contains a backslash.     │
+ * │ → [[agentco-three-os-always]]                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function baseNameAnyOs(p: string): string {
+  const parts = p.split(/[\\/]+/);
+  // Trailing separators leave empty segments; `D:\a\b\` must answer `b`, not ''.
+  while (parts.length && !parts[parts.length - 1]) parts.pop();
+  return parts.length ? parts[parts.length - 1]! : '';
+}
+
 export function ensureCompanyDirs(pp: CompanyPaths): void {
   for (const dir of [pp.root, pp.offices, pp.logs, pp.state]) {
     fs.mkdirSync(dir, { recursive: true });

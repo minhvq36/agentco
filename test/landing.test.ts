@@ -36,8 +36,15 @@ test('landingOf: writing OUTSIDE the office → `outside`, NOT undefined', () =>
 });
 
 test('landingOf: `outside` keeps the raw path so it can still point the user to it', () => {
-  const spot = landingOf(OFFICE, { name: 'Write', input: { file_path: 'C:\\tmp\\stray.md' } });
-  assert.deepEqual(spot, { kind: 'outside', ref: 'C:/tmp/stray.md' });
+  /*
+   * ⚠ Host-absolute, built with `path.sep`. `C:\tmp\stray.md` only leaves the
+   * office on Windows; on Linux it is a relative filename that lands INSIDE,
+   * and `kind: 'file'` is the correct answer there — so the old literal was
+   * asking for the wrong verdict, not catching a wrong one.
+   */
+  const away = path.resolve(path.sep, 'tmp', 'stray.md');
+  const spot = landingOf(OFFICE, { name: 'Write', input: { file_path: away } });
+  assert.deepEqual(spot, { kind: 'outside', ref: away.replace(/\\/g, '/') });
 });
 
 test('landingOf: Edit and NotebookEdit go through the same door as Write', () => {
