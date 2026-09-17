@@ -616,6 +616,13 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
   let updating = false;
 
   /**
+   * A version already on disk and committed, which this process has NOT
+   * restarted into because an office was working when the moment came.
+   * → `core/update-links.ts §pendingRestart`
+   */
+  let pendingRestart: string | undefined;
+
+  /**
    * Fetch the manifest fresh, verify it, and apply the `app` layer.
    *
    * ⚠ VERIFY, THEN READ — the same order as §3.2's check, and for the same
@@ -658,6 +665,36 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         console.error(`[update] ${outcome.reason}: ${outcome.detail}`);
         return;
       }
+      /**
+       * ┌────────────────────────────────────────────────────────────────────┐
+       * │ 🔴 ASK AGAIN. The gate on `POST` proved nobody was working WHEN THE │
+       * │ BUTTON WAS PRESSED; this is a minute later, and the daemon has been │
+       * │ serving the whole time — downloading and probing do not stop it. So │
+       * │ a task can be handed out during the download and be killed by the   │
+       * │ restart, which `healStale()` then records as `failed`. The check at │
+       * │ the start and the check here are NOT the same check.               │
+       * │                                                                    │
+       * │ ⚠ SKIPPING THE RESTART LOSES NOTHING. `applyLayer` ends with        │
+       * │ `writeCurrent()`, so by this line the new layer is probed, on disk, │
+       * │ and already pointed at. Only the process is stale.                  │
+       * │                                                                    │
+       * │ ⚠ AND IT IS NOT RESCHEDULED. Restarting later, once the office goes │
+       * │ quiet, would close the app on somebody minutes after they last      │
+       * │ touched it — a surprise at a moment they did not choose. The next   │
+       * │ start is theirs to pick, and the page is told so.                    │
+       * │ → `pendingRestart`, which exists because `/healthz` would go on     │
+       * │ reporting the old number and the page would say "nothing changed".  │
+       * └────────────────────────────────────────────────────────────────────┘
+       */
+      const busy = company.workingOffices();
+      if (busy.length) {
+        pendingRestart = outcome.version;
+        console.log(
+          `[update] ${outcome.version} is in place — not restarting while ${busy.join(', ')} is working; it takes effect on the next start`,
+        );
+        return;
+      }
+
       console.log(`[update] ${outcome.version} is in place — restarting`);
       opts.onRestart?.(outcome.version);
     } catch (err) {
@@ -1284,7 +1321,12 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       return json(
         res,
         200,
-        updateStatus({ paths: company.paths, enabled: company.config.updates.check, applying: updating }),
+        updateStatus({
+          paths: company.paths,
+          enabled: company.config.updates.check,
+          applying: updating,
+          ...(pendingRestart ? { pendingRestart } : {}),
+        }),
       );
     }
 

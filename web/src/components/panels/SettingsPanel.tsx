@@ -205,6 +205,23 @@ function UpdateAction({ view }: { view: UpdateView }) {
   // five-minute ceiling, forever. → `WatchForRestart`
   const gaveUp = useCallback(() => setPhase({ at: 'failed' }), []);
 
+  /**
+   * ⚠ INSTALLED, WAITING FOR A RESTART — and it outranks everything below,
+   * including `failed`. The daemon applied the update and then declined to
+   * restart because an office was working; `/healthz` therefore goes on
+   * reporting the old number, the watcher's ceiling expires, and the honest
+   * answer to what it saw — "nothing changed" — is the wrong sentence for what
+   * actually happened. The server is the only thing that knows, so it says so.
+   * → `core/update-links.ts §pendingRestart`
+   */
+  if (view.pendingRestart) {
+    return (
+      <span className="text-[11.5px] text-accent">
+        {t('settings.updatePending', { version: view.pendingRestart })}
+      </span>
+    );
+  }
+
   // ⚠ A run in progress outranks `available`: while the new version is
   // unpacking the cache still says an update exists, and going back to a button
   // there is the whole bug.

@@ -350,6 +350,8 @@ export function updateStatus(o: {
   kind?: InstallKind;
   /** Passed in by the server, which is the only thing that knows. */
   applying?: boolean;
+  /** Likewise: a version already committed, waiting for a restart. → `UpdateView` */
+  pendingRestart?: string;
 }): UpdateView {
   const current = o.current ?? appVersion();
   const kind = o.kind ?? installKind();
@@ -360,5 +362,6 @@ export function updateStatus(o: {
     available: latest !== undefined && compareVersions(latest, current) > 0,
     applying: o.applying ?? false,
     ...(latest ? { latest } : {}),
+    ...(o.pendingRestart ? { pendingRestart: o.pendingRestart } : {}),
   };
 }

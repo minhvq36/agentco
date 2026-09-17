@@ -69,4 +69,27 @@ export interface UpdateView {
    * can still see it after the page has forgotten. → SPEC-ui.md
    */
   applying: boolean;
+  /**
+   * Applied, committed, and NOT restarted into — because work was running.
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THE COMMIT HAPPENS BEFORE THE RESTART, so skipping the restart costs   │
+   * │ nothing. `applyLayer` calls `writeCurrent()` as its last act: the new     │
+   * │ layer is on disk, probed, and `current` already points at it. All that is │
+   * │ left is this process ending so the launcher can start the new one.       │
+   * │                                                                          │
+   * │ ⚠ AND WE DO NOT RESTART LATER, ON PURPOSE. Waiting for the office to go   │
+   * │ idle and then restarting would take the app away from somebody in the     │
+   * │ middle of reading a result, minutes after they last touched anything —    │
+   * │ a surprise, at a moment they did not choose. It is already installed;     │
+   * │ the next start is theirs to pick.                                        │
+   * │                                                                          │
+   * │ ⚠ IT HAS TO REACH THE PAGE, which is the whole reason this field exists.  │
+   * │ `/healthz` keeps reporting the OLD version — correctly, the old process   │
+   * │ is still running — and the page, watching for the number to move, would   │
+   * │ conclude "nothing changed". That is the same lie `applying` was added to  │
+   * │ stop, told at a different moment. → SPEC-packaging §3.7                  │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  pendingRestart?: string;
 }

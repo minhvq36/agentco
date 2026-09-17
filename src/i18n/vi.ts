@@ -100,6 +100,8 @@ export const vi: Catalog = {
   'settings.updateTo': 'Cập nhật lên {version}',
   'settings.updateWorking': 'Đang cập nhật — trang này sẽ tự quay lại.',
   'settings.updateFailed': 'Không có gì thay đổi. Bản cũ vẫn đang chạy — xem terminal.',
+  'settings.updatePending':
+    'Đã cài xong v{version} — nó sẽ chạy ở lần mở agentco kế tiếp. Lúc đó đang có việc chạy nên không có gì bị ngắt.',
   'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',

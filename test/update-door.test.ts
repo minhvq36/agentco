@@ -409,3 +409,84 @@ test('⚠ `agentco update` the COMMAND is deliberately not gated the same way', 
   const src = fs.readFileSync(path.join(ROOT, 'src', 'core', 'company.ts'), 'utf8');
   assert.match(src, /workingOffices\(\): string\[\]/, 'the shared helper is gone');
 });
+
+test('🔴 the restart asks AGAIN, because the first check was a minute ago', () => {
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────
+   * │ The gate on POST proves nobody was working WHEN THE BUTTON WAS PRESSED.
+   * │ Downloading and probing do not stop the daemon, so it keeps serving for
+   * │ a minute or more — and a task handed out in that window is killed by
+   * │ the restart and written down by `healStale()` as `failed`.
+   * │
+   * │ Skipping the restart costs nothing: `applyLayer` ends with
+   * │ `writeCurrent()`, so the layer is probed, on disk, and already pointed
+   * │ at. Only this process is stale.
+   * └────────────────────────────────────────────────────────────────────────
+   */
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'server', 'server.ts'), 'utf8');
+  const body = /async function runUpdate\(\)[\s\S]*?\n  \}/.exec(src)?.[0] ?? '';
+  assert.ok(body, 'could not find runUpdate');
+
+  const asks = body.indexOf('workingOffices()');
+  const restarts = body.indexOf('opts.onRestart');
+  assert.ok(asks > 0, 'runUpdate restarts without asking who is working');
+  assert.ok(asks < restarts, 'it asks AFTER restarting, which is too late to matter');
+  assert.match(body, /pendingRestart = outcome\.version/, 'a skipped restart is not recorded anywhere');
+});
+
+test('⭐ a skipped restart REACHES THE PAGE, or it reads as "nothing changed"', () => {
+  /*
+   * `/healthz` keeps reporting the old number — correctly, the old process is
+   * still running — so the watcher's ceiling expires and the page concludes
+   * nothing happened. It did happen. This is the same lie `applying` was added
+   * to stop, told at a different moment, so it takes the same shape: state on
+   * the server, because the page cannot know.
+   */
+  const links = readSrc('src/core/update-links.ts');
+  assert.match(links, /pendingRestart\?: string/, 'UpdateView dropped the field');
+
+  const server = readSrc('src/server/server.ts');
+  assert.match(server, /pendingRestart \? \{ pendingRestart \} : \{\}/, 'GET /api/update no longer reports it');
+
+  const panel = readSrc('web/src/components/panels/SettingsPanel.tsx');
+  assert.match(panel, /view\.pendingRestart/, 'the panel ignores it');
+  // It has to win over `failed`, which is exactly what the watcher will have concluded.
+  assert.ok(
+    panel.indexOf('view.pendingRestart') < panel.indexOf("phase.at === 'failed'"),
+    'the "nothing changed" branch runs first and the honest sentence never shows',
+  );
+
+  for (const f of ['src/i18n/en.ts', 'src/i18n/vi.ts']) {
+    assert.match(readSrc(f), /'settings\.updatePending'/, `${f} has no sentence for it`);
+  }
+});
+
+test('🔴 npm failing no longer CLAIMS nothing was replaced — it looks', () => {
+  /*
+   * Measured 18/09/2026: the disk filled mid-install, npm had already swapped
+   * the tree and never wrote the shims, and the old line told somebody to run
+   * a command that no longer existed. This is the last moment anything of ours
+   * is alive to say anything at all.
+   */
+  const script = updateScript();
+  /*
+   * ⚠ COMMENT LINES STRIPPED, and the first draft of this very test forgot:
+   * the helper spends a paragraph explaining what the old line claimed, so the
+   * gate tripped over its own documentation. Third time in this repo — the
+   * Dockerfile's `--omit=optional` warning, `token-door`'s own prose naming
+   * `/api/events`, and now this. → `docker-door.test.ts §code`
+   */
+  const code = script
+    .split('\n')
+    .filter((l) => {
+      const s = l.trim();
+      return !s.startsWith('*') && !s.startsWith('//') && !s.startsWith('/*');
+    })
+    .join('\n');
+  assert.doesNotMatch(code, /Nothing was replaced/, 'the claim it cannot verify is back');
+  // Both shim shapes: `<prefix>/agentco.cmd` on Windows, `<prefix>/bin/agentco` on POSIX.
+  assert.match(script, /agentco\.cmd/, script.slice(0, 0) || 'it does not look for the Windows shim');
+  assert.match(script, /'bin', 'agentco'/, 'it does not look for the POSIX shim');
+  // And when it is gone, it says the one thing that repairs it.
+  assert.match(script, /npm i -g/, 'a broken install gets no repair command');
+});
