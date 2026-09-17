@@ -159,6 +159,66 @@ actually works, ask something that uses it:
 docker compose exec agentco agentco doctor
 ```
 
+## Arms: what connects here, and the one thing that cannot
+
+Measured through this door on 18/09/2026, on a published build.
+
+| Arm | Through Docker |
+|---|---|
+| GitHub | ✅ device flow — you type a code on github.com, nothing is redirected back |
+| Notion · Linear · Sentry · Asana · every web-flow arm | ✅ **provided `AGENTCO_RUNTIME_PUBLIC_URL` is set** (`docker-compose.yaml` sets it for you) |
+| Browser (Playwright), headless | ✅ works, and Chromium is already in the image |
+| Browser — **“Show the browser window”** | ❌ refused, and correctly |
+| Browser — **“Sign in / add cookies”** | ❌ refused, and correctly |
+
+### Why the two browser switches are refused
+
+Both open a **real window on the machine running the daemon**. That machine is
+the container: no screen, no session, nothing to look at. Refusing is not a
+missing feature — it is the daemon declining to open a window into a void and
+leave you waiting for it.
+
+The check reads the **socket address** of your connection and nothing else — not
+`Host`, not `X-Forwarded-For`, both of which the caller chooses. Through Docker
+your request arrives from the bridge gateway, so the answer is "not the same
+machine", which is simply true: you are talking to a container.
+
+⚠ **Do not try to loosen this by trusting a header or the bridge subnet.** The
+same check is what stops a stranger who can reach the port from claiming to be
+sitting at the keyboard.
+
+What to do instead: run those two switches **on the desktop or npm door**, on
+your own machine, where a window can actually open.
+
+⚠ **Not yet measured:** whether a profile signed in that way is usable from the
+container. The directory itself does travel — it lives at
+`offices/<id>/.state/browser`, inside the bind-mounted company folder. But a
+Chromium profile encrypts its cookies with a key the operating system holds
+(DPAPI on Windows, Keychain on macOS, the keyring on Linux), so a profile
+created on one and opened on another may well come back signed out. Nobody has
+run it. Treat headless-without-sign-in as what this door offers today.
+
+### The one setting that makes web-flow sign-in possible
+
+`AGENTCO_RUNTIME_PUBLIC_URL` is where the service sends the authorisation code
+back. The daemon refuses to guess it: `Host` comes from the caller, so inferring
+the redirect from it would let anyone who can reach the port choose where the
+code lands.
+
+`docker-compose.yaml` declares it as `http://127.0.0.1:${AGENTCO_PORT}` — right
+for the default setup, where you open the interface on the same machine that
+runs the container. **Put a domain in front and you must change it too**, or the
+code is sent to a `127.0.0.1` that is not yours:
+
+```bash
+# .env
+AGENTCO_RUNTIME_PUBLIC_URL=https://agentco.your-company.com
+```
+
+`http://` is only accepted for a loopback address; anything else must be
+`https://`, because an authorisation code crossing a network in the clear is a
+key anyone in the middle can pick up.
+
 ## Your data
 
 One named volume, `agentco-data`, holds two things that both matter:

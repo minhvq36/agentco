@@ -102,7 +102,42 @@ export function webBuildStale(): boolean {
  * enough inside a `<script>`: a token containing `</script>` would close the
  * element and the rest would land on the page as markup.
  */
-export function injectToken(html: string, token: string | undefined): string {
+export interface BootFacts {
+  /** `AGENTCO_TOKEN`, when there is one. No token ⇒ nothing is injected at all. */
+  token?: string | undefined;
+  /**
+   * Did this request arrive from the machine running the daemon —
+   * `isLoopback(req.socket.remoteAddress)`, computed by the caller because only
+   * it holds the socket.
+   *
+   * ┌────────────────────────────────────────────────────────────────────────
+   * │ 🔴 THE INTERFACE USED TO WORK THIS OUT ITSELF, AND UNDER DOCKER IT WAS
+   * │ WRONG. (found by a real test, 18/09/2026)
+   * │
+   * │ `ArmDialog.tsx` asked its own address bar — `window.location.hostname`.
+   * │ Open the container at `127.0.0.1:7319` and that answers "same machine",
+   * │ so "Show the browser window" appeared PRE-TICKED and the server then
+   * │ refused it, because the server reads the SOCKET and sees the Docker
+   * │ bridge. Two mechanisms answering one question, disagreeing exactly where
+   * │ it mattered — and the user meets the disagreement as an error message
+   * │ after the click. → [[agentco-count-mechanisms]]
+   * │
+   * │ The socket is the only answer that cannot be faked, and only the daemon
+   * │ can see it. So the page arrives already holding it, like the token.
+   * └────────────────────────────────────────────────────────────────────────
+   */
+  sameMachine: boolean;
+}
+
+export function injectBoot(html: string, boot: BootFacts): string {
+  /*
+   * ⚠ NO TOKEN ⇒ NOTHING INJECTED, and `sameMachine` is not an exception.
+   * A daemon with no token is bound to loopback — `serve()` refuses otherwise —
+   * so every connection it is capable of serving IS local, and the interface's
+   * default of `true` is not an optimistic guess but the only possible answer.
+   * The desktop install keeps serving exactly the bytes it served before.
+   */
+  const token = boot.token;
   if (!token) return html;
   /*
    * ⚠ ONE RULE FOR THREE CHARACTERS, AND THEY ARE WRITTEN AS ESCAPES ON PURPOSE.
@@ -113,7 +148,9 @@ export function injectToken(html: string, token: string | undefined): string {
    * closed. The defect and the defence were the same character.
    */
   const literal = JSON.stringify(token).replace(/[<\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
-  const tag = `<script>window.__AGENTCO_TOKEN__=${literal}</script>`;
+  const tag =
+    `<script>window.__AGENTCO_TOKEN__=${literal};` +
+    `window.__AGENTCO_SAME_MACHINE__=${boot.sameMachine ? 'true' : 'false'}</script>`;
   const head = html.indexOf('<head>');
   if (head < 0) {
     /*
@@ -132,7 +169,7 @@ export function serveStatic(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   pathname: string,
-  token?: string,
+  boot: BootFacts = { sameMachine: true },
 ): boolean {
   const root = webRoot();
   if (!root) {
@@ -170,8 +207,8 @@ export function serveStatic(
    * stays the default path — the desktop install serves exactly the bytes it
    * served before this branch existed.
    */
-  if (token && ext === '.html') {
-    res.end(injectToken(fs.readFileSync(file, 'utf8'), token));
+  if (boot.token && ext === '.html') {
+    res.end(injectBoot(fs.readFileSync(file, 'utf8'), boot));
     return true;
   }
   fs.createReadStream(file).pipe(res);

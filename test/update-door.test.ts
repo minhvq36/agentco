@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 🔴 `current` WAS A POINTER NOTHING READ, AND THE UPDATER IS THE THING THAT
  * NEEDS IT. (found 16/09/2026)
  *
@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { agentcoCmd } from '../dist/cli/launcher-text.js';
-import { findNpmCli, globalPrefixFor, updateScript } from '../dist/cli/update-run.js';
+import { checkSpace, findNpmCli, globalPrefixFor, sweepOldUpdateDirs, updateScript } from '../dist/cli/update-run.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(ROOT, 'dist', 'cli', 'index.js');
@@ -187,4 +187,164 @@ test('npm is found beside this Node, and the lookup is layout-driven', () => {
     seen.some((p) => p.includes(path.join('lib', 'node_modules', 'npm'))),
     seen.join('\n'),
   );
+});
+
+/*
+ * ┌────────────────────────────────────────────────────────────────────────────
+ * │ 🔴 A FULL DISK TOOK THE COMMAND AWAY. (measured on a real machine, 18/09/2026)
+ * │
+ * │   npm warn tar TAR_ENTRY_ERROR ENOSPC: no space left on device, write
+ * │   D:\> agentco start
+ * │   'agentco' is not recognized as an internal or external command
+ * │
+ * │ npm had removed the old tree and its shims, then ran out of room before
+ * │ writing the new ones. The package sat there at the new version with no way
+ * │ to start it, and nothing could offer a repair because the thing that would
+ * │ offer it was what vanished.
+ * │
+ * │ `npm install -g` is not a transaction, so there is no "all". These gates
+ * │ protect the other half: NOTHING, decided while everything still works.
+ * └────────────────────────────────────────────────────────────────────────────
+ */
+const readSrc = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const INDEX = readSrc('src/cli/index.ts');
+
+test('🔴 space is checked BEFORE the company is stopped, not after', () => {
+  /*
+   * The whole value is in the order. `cli/update-run.ts` opens with the rule —
+   * "everything that can fail is resolved before the daemon is stopped" — and
+   * the first version of this very patch broke it, putting the check inside
+   * `handOffUpdate`, which runs after the shutdown. A refusal that arrives
+   * after the company is down is not a refusal, it is an outage.
+   */
+  const body = INDEX.slice(INDEX.indexOf('async function cmdUpdate'));
+  const refusal = body.indexOf('updateRefusal(');
+  const stop = body.indexOf('liveDaemon(');
+  assert.ok(refusal > 0, 'cmdUpdate no longer asks updateRefusal');
+  assert.ok(stop > 0, 'cmdUpdate no longer looks for a running daemon');
+  assert.ok(
+    refusal < stop,
+    'the refusal is decided AFTER the daemon is found and stopped — that is an outage, not a refusal',
+  );
+});
+
+test('one set of rules, asked by both doors', () => {
+  // The command and the button must refuse for the same reasons. Two copies
+  // drift, and the one that drifts is the one nobody runs by hand.
+  assert.ok(INDEX.includes('function updateRefusal('), 'updateRefusal is gone');
+  const handoff = INDEX.slice(INDEX.indexOf('function handOffUpdate('));
+  assert.match(handoff.slice(0, 400), /updateRefusal\(/, 'handOffUpdate stopped asking');
+});
+
+test('checkSpace: a threshold nothing can satisfy is refused, and the free figure is real', () => {
+  const v = checkSpace(os.tmpdir(), Number.MAX_SAFE_INTEGER);
+  assert.equal(v.ok, false);
+  assert.equal(typeof v.free, 'number');
+  assert.ok((v.free ?? -1) >= 0, 'free space came back negative');
+  assert.equal(v.dir, os.tmpdir());
+});
+
+test('checkSpace: a threshold of zero always passes', () => {
+  assert.equal(checkSpace(os.tmpdir(), 0).ok, true);
+});
+
+test('⭐ checkSpace: a path it cannot read does NOT block the update', () => {
+  /*
+   * `statfs` fails on a network share, an exotic filesystem, or a path that is
+   * not there yet. A check that cannot read the disk must not become a check
+   * that blocks everyone — absence of an answer is not an answer.
+   */
+  const v = checkSpace(path.join(os.tmpdir(), 'agentco-no-such-dir-' + Date.now()));
+  assert.equal(v.ok, true);
+  assert.equal(v.free, undefined);
+});
+
+test('the sentence carries BOTH numbers and the path, in both languages', () => {
+  // "not enough space" sends somebody to look at a disk without telling them
+  // how much they are looking for.
+  for (const file of ['src/i18n/en.ts', 'src/i18n/vi.ts']) {
+    const line = readSrc(file);
+    assert.match(line, /'cli\.updateNoSpace'/, file);
+    const msg = /'cli\.updateNoSpace':\s*\n?\s*'([^']*)'/.exec(line)?.[1] ?? '';
+    for (const token of ['{need}', '{free}', '{dir}']) {
+      assert.ok(msg.includes(token), `${file} drops ${token}`);
+    }
+  }
+});
+
+test('🔴 an update sweeps the directories earlier updates left behind', () => {
+  /*
+   * Counted on a real machine, 18/09/2026: 421 of them, oldest three days old.
+   * The helper cannot remove its own — it RUNS from there and outlives the
+   * process that made it — so the next run does it. The only process that can
+   * safely delete one is a process not using it.
+   */
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-sweepbox-'));
+  try {
+    const made: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const d = path.join(box, `agentco-update-${i}`);
+      fs.mkdirSync(d);
+      fs.writeFileSync(path.join(d, 'update.log'), 'x');
+      // Staggered so "newest" is a fact and not the order readdir happens to give.
+      fs.utimesSync(d, new Date(1_000_000 + i * 60_000), new Date(1_000_000 + i * 60_000));
+      made.push(d);
+    }
+    // Something that is not ours must survive untouched.
+    const notOurs = path.join(box, 'something-else');
+    fs.mkdirSync(notOurs);
+
+    sweepOldUpdateDirs(box, 3);
+
+    const left = fs.readdirSync(box).filter((n) => n.startsWith('agentco-update-'));
+    assert.equal(left.length, 3, `swept to ${left.length}, expected 3`);
+    // The NEWEST three, because a failed update's only record is the log inside.
+    assert.deepEqual(left.sort(), ['agentco-update-5', 'agentco-update-6', 'agentco-update-7']);
+    assert.ok(fs.existsSync(notOurs), 'it removed a directory that was not ours');
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true });
+  }
+});
+
+test('the sweep never throws, whatever it is pointed at', () => {
+  /*
+   * Housekeeping must not be able to stop an update. A directory a running
+   * helper still holds refuses to be removed on Windows, and a temp directory
+   * that cannot be read is not a reason to refuse to install anything.
+   */
+  assert.doesNotThrow(() => sweepOldUpdateDirs(path.join(os.tmpdir(), 'agentco-nope-' + Date.now())));
+  assert.doesNotThrow(() => sweepOldUpdateDirs(os.tmpdir(), Number.MAX_SAFE_INTEGER));
+});
+
+test('⭐ the shipped code leaves nothing else behind', () => {
+  /*
+   * The standard, in the user's words: an app that keeps making files it never
+   * removes is not meaningfully different from a virus. So every temp directory
+   * the PRODUCT creates must be cleaned by somebody — `update-apply.ts` does it
+   * in a `finally`, and the update helper's is swept by the next run.
+   *
+   * ⚠ This gate reads `src/`, never `test/`: the suite makes thousands of temp
+   * directories on a developer's machine and none of them ship.
+   */
+  const shipped = ['src/cli/index.ts', 'src/core/update-apply.ts', 'src/cli/update-run.ts'];
+  const makers: string[] = [];
+  for (const rel of shipped) {
+    const body = readSrc(rel);
+    for (const m of body.matchAll(/mkdtempSync\(path\.join\(os\.tmpdir\(\), '([^']+)'/g)) {
+      makers.push(`${rel}:${m[1]}`);
+    }
+  }
+  // If a fourth one appears, decide who cleans it before this test is edited.
+  assert.deepEqual(
+    makers.sort(),
+    [
+      'src/cli/index.ts:agentco-update-',
+      'src/core/update-apply.ts:agentco-layer-',
+      'src/core/update-apply.ts:agentco-probe-',
+    ],
+    `a temp directory with no owner to clean it:\n${makers.join('\n')}`,
+  );
+  // And the two in update-apply are removed on every path out.
+  const apply = readSrc('src/core/update-apply.ts');
+  assert.equal((apply.match(/finally \{[\s\S]{0,200}?rmSync/g) ?? []).length, 2, apply.slice(0, 0) || 'both must clean up in a finally');
 });

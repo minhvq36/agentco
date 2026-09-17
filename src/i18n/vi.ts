@@ -620,6 +620,8 @@ export const vi: Catalog = {
   'cli.updateHandedOff': 'Đang cài {target} ở một tiến trình riêng, xong sẽ bật lại công ty.',
   'cli.updateHandedOffIdle': 'Đang cài {target} ở một tiến trình riêng.',
   'cli.updateLog': '  tiến trình và lỗi nếu có:  {path}',
+  'cli.updateNoSpace':
+    'Không đủ chỗ trống để cài, nên chưa đụng vào gì cả — công ty vẫn nguyên và vẫn chạy được.\nCài cần khoảng {need} trống; "{dir}" còn {free}.\nDọn bớt chỗ rồi thử lại. `npm cache clean --force` thường là chỗ lấy lại được nhiều nhất.',
   'cli.portMoved':
     '  Cổng {from} đang bận nên công ty chuyển sang {to} — đã ghi vào runtime.port trong {file}.',
   'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',
@@ -697,7 +699,7 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'srv.armFieldsMissing': 'thiếu "config", "catalogId" hoặc "armId"',
   'srv.catalogOrAccountMissing': 'thiếu "catalogId" hoặc "account"',
   'srv.loopbackOption':
-    '"{label}" chỉ bật được khi bạn mở agentco trên chính máy đang chạy nó. Cửa sổ trình duyệt mở trên máy chủ, nên xem từ xa thì không ai nhìn thấy nó.',
+    '"{label}" chỉ bật được khi trình duyệt và daemon nằm trên cùng một máy. Cửa sổ mở ra ở nơi daemon chạy — và container tính là một máy khác, nên chạy bằng Docker thì không ai nhìn thấy nó.',
   'srv.probeListFailed':
     'Không nối được để đọc danh sách việc: {reason}. Cánh tay có giới hạn quyền không cắm được khi chưa biết việc nào thuộc nấc nào.',
   'srv.noToolsAtTier':
@@ -706,7 +708,7 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
     'Từ chối bind {host} khi chưa có token đăng nhập.\nMở cổng này ra mạng nghĩa là cho người lạ chạy lệnh trên máy bạn.\nĐặt AGENTCO_TOKEN=<chuỗi bí mật> rồi thử lại.',
   'srv.connected': 'Đã kết nối {name}.',
   'srv.browserLoginLocalOnly':
-    'Cửa sổ đăng nhập chỉ mở được khi bạn dùng agentco trên chính máy đang chạy nó — cửa sổ sẽ bật lên ở máy chủ, nơi bạn không nhìn thấy.',
+    'Cửa sổ đăng nhập chỉ mở khi trình duyệt và daemon nằm trên cùng một máy — nó sẽ bật lên ở nơi daemon chạy, và container tính là một máy khác, nên chạy bằng Docker thì không có gì để nhìn.',
   'srv.previewTooBig': 'File nặng {mb}MB, quá lớn để xem trước. Tải về để mở.',
   'srv.bodyNotJson': 'Dữ liệu gửi lên không phải JSON hợp lệ.',
   'srv.uploadTooBig':

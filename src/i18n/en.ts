@@ -825,6 +825,19 @@ export const en = {
   // command has exited and nobody is attached to anything.
   'cli.updateLog': '  progress and any error:  {path}',
   /**
+   * ⚠ REFUSED, NOT FAILED, and the sentence has to carry that: nothing was
+   * replaced and the company is still there. Both numbers are in it because
+   * "not enough space" sends somebody to look at a disk without knowing how
+   * much they are looking for.
+   *
+   * 🔴 The cost of NOT saying this, measured 18/09: npm removed the old copy,
+   * ran out of room before writing the new shims, and `agentco` stopped
+   * existing as a command. There is no way back from inside — the thing that
+   * would repair it is what vanished. → cli/update-run.ts §checkSpace
+   */
+  'cli.updateNoSpace':
+    'Not enough disk space to install, so nothing was touched — the company is untouched and still works.\nInstalling needs about {need} free; “{dir}” has {free}.\nFree some space and try again. `npm cache clean --force` is usually the largest easy win.',
+  /**
    * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
    * Naming the neighbour is only possible when it answered `/healthz`; claiming
    * "another agentco is running" about a stranger's service would be a guess
@@ -983,8 +996,16 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'srv.noRoute': 'no such route',
   'srv.armFieldsMissing': 'missing “config”, “catalogId” or “armId”',
   'srv.catalogOrAccountMissing': 'missing “catalogId” or “account”',
+  /*
+   * ⚠ "the same machine", not "the very machine running it". Someone using the
+   * Docker door is sitting at that physical machine, so the old wording read as
+   * plainly false and sent them looking for a bug that is not there. The daemon
+   * is in a container; the window would open inside it, where there is no
+   * screen. Naming the container is the difference between a refusal a person
+   * can act on and one they argue with. (reworded 18/09/2026, after a test)
+   */
   'srv.loopbackOption':
-    '“{label}” can only be switched on when you open agentco on the very machine running it. The browser window opens on the server, so from a remote view nobody would ever see it.',
+    '“{label}” can only be switched on when your browser and the daemon are on the same machine. The window opens where the daemon runs — and a container counts as a different machine, so under Docker nobody would ever see it.',
   'srv.probeListFailed':
     'Could not connect to read the list of actions: {reason}. A connection with a permission limit cannot be plugged in until we know which action sits at which level.',
   'srv.noToolsAtTier':
@@ -993,7 +1014,7 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
     'Refusing to bind {host} with no sign-in token.\nOpening this port to the network means letting strangers run commands on your machine.\nSet AGENTCO_TOKEN=<a secret string> and try again.',
   'srv.connected': 'Connected {name}.',
   'srv.browserLoginLocalOnly':
-    'The sign-in window only opens when you are using agentco on the very machine running it — the window would appear on the server, where you cannot see it.',
+    'The sign-in window only opens when your browser and the daemon are on the same machine — it would appear where the daemon runs, and a container counts as a different machine, so under Docker there would be nothing to look at.',
   'srv.previewTooBig': 'The file is {mb}MB, too large to preview. Download it to open it.',
   'srv.bodyNotJson': 'What was sent up is not valid JSON.',
   'srv.uploadTooBig':

@@ -573,11 +573,18 @@ export interface ServeOptions {
   /**
    * The npm door's button. The caller spawns the same detached helper
    * `agentco update` uses — the daemon cannot run npm against the package it is
-   * running from, and the CLI already owns that dance. Returns false when there
-   * is no npm to hand the work to, in which case nothing is stopped.
+   * running from, and the CLI already owns that dance.
+   *
+   * Returns `undefined` when the work was handed off, or A SENTENCE saying why
+   * it was not — in which case nothing has been stopped.
+   *
+   * ⚠ IT USED TO RETURN A BOOLEAN, and the screen said "no npm" for every
+   * refusal. On 18/09 a real machine refused for a different reason entirely
+   * (a full disk, `cli/update-run.ts §checkSpace`), and a boolean has no room
+   * to say so. The reason is the whole value of refusing early.
    * → cli/update-run.ts · SPEC-packaging §3.7.5
    */
-  onHandOffUpdate?(): boolean;
+  onHandOffUpdate?(): string | undefined;
 }
 
 export interface Daemon {
@@ -736,7 +743,14 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // The token rides in the HTML, because the interface has no way to ask for
       // it: any endpoint serving it would sit behind the very gate it unlocks.
       // Undefined on loopback ⇒ nothing is injected. → server/static.ts
-      serveStatic(req, res, url.pathname, opts.token);
+      // `sameMachine` rides along for the same reason and by the same route: it
+      // is read from the SOCKET, which only the daemon can see, and the
+      // interface used to guess it from its own address bar — wrong under
+      // Docker, where the bridge is not loopback. → static.ts §BootFacts
+      serveStatic(req, res, url.pathname, {
+        token: opts.token,
+        sameMachine: isLoopback(req.socket.remoteAddress),
+      });
       return;
     }
     if (url.pathname === '/api/company' && method === 'GET') {
@@ -1320,10 +1334,19 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
         return;
       }
 
-      const handed = opts.onHandOffUpdate?.();
-      if (!handed) {
+      /*
+       * ⚠ NO HANDLER AND A HANDLER THAT SAID YES BOTH LOOK LIKE `undefined`
+       * through `?.()`, and they are opposite answers. Ask whether the handler
+       * exists first, then ask what it said. → [[agentco-absent-means-what-per-field]]
+       */
+      if (!opts.onHandOffUpdate) {
         updating = false;
         return json(res, 409, { error: t('srv.updateNoNpm') });
+      }
+      const refused = opts.onHandOffUpdate();
+      if (refused !== undefined) {
+        updating = false;
+        return json(res, 409, { error: refused || t('srv.updateNoNpm') });
       }
       json(res, 202, { ok: true });
       setTimeout(() => opts.onShutdown?.(), 100);

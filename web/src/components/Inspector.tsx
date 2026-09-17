@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
+import { SAME_MACHINE } from '@/lib/token';
 import type { ArmCall, CanvasNode } from '@/lib/types';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatDateTime } from '@i18n/fmt';
@@ -231,6 +232,24 @@ function BrowserLogin() {
   const [opened, setOpened] = useState(false);
 
   if (!officeId) return null;
+  /*
+   * ⚠ THE WHOLE BLOCK GOES, TITLE INCLUDED — not the button with an
+   * explanation left under it. (the user's call, 18/09/2026, on reading the
+   * first attempt: too long, nobody reads it)
+   *
+   * This panel opens an ordinary browser window WHERE THE DAEMON RUNS. Through
+   * the Docker door that is a container with no screen, so there is nothing
+   * this feature can do and nothing the reader can act on. A paragraph
+   * explaining an unavailable feature is still three sentences about something
+   * they cannot have — it costs attention on every visit and returns nothing.
+   *
+   * ⚠ ONLY HERE. The desktop and npm doors keep the button exactly as it was:
+   * there a window really does open, and the flow is the good one — sign in by
+   * hand once, into a persistent profile that then RENEWS ITSELF. Nothing about
+   * that path is degraded to accommodate this one.
+   * → HANDOFF §2 "Playwright sign-in across machines"
+   */
+  if (!SAME_MACHINE) return null;
   return (
     <div className="mb-3 rounded-lg border border-line p-3">
       <div className="flex items-center gap-2">

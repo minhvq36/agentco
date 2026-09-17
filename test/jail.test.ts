@@ -125,3 +125,79 @@ test('arm · artifacts/ and library/ are still open — the REVERSE half of the 
   assert.equal(arm('knowledge/shared/lesson.md'), undefined);
   assert.equal(arm(''), undefined);
 });
+
+/*
+ * ┌────────────────────────────────────────────────────────────────────────────
+ * │ 🔴 A SIBLING OFFICE WAS WIDE OPEN, AND THE FOLDER BAN DID NOT COVER IT.
+ * │ (measured 18/09/2026)
+ * │
+ * │ `swallowsOffice` blocks picking a PARENT of the office. It does not block
+ * │ picking the office NEXT DOOR:
+ * │
+ * │   root = <company>/offices/b   ->  swallowsOffice = false  ->  pluggable
+ * │
+ * │ and the guard named two directories — `<company>/.state` and
+ * │ `<thisOffice>/.state` — so office `b`'s were neither. Measured before the
+ * │ fix, every one of these came back "let through".
+ * │
+ * │ The rule now: INSIDE A COMPANY, THE MACHINERY IS SHUT AND THE CONTENT IS
+ * │ NOT. Machinery is `.state`, `.playwright-mcp` and the config files of ANY
+ * │ office; content is artifacts, library, knowledge, logs.
+ * └────────────────────────────────────────────────────────────────────────────
+ */
+const sibling = (...p: string[]) => path.join(companyDir, 'offices', 'b', ...p);
+
+test('🔴 sibling office · its key store is NOT readable through an arm', () => {
+  assert.equal(arm(sibling('.state', 'secrets.json')), 'secrets');
+  assert.equal(read(sibling('.state', 'secrets.json')), 'secrets');
+  assert.equal(write(sibling('.state', 'daemon.json')), 'secrets');
+});
+
+test('🔴 sibling office · its browser logs carry ITS session tokens, in plain text', () => {
+  // `browser.ts` measured a real one: a Facebook URL holding `fb_dtsg=...`.
+  assert.equal(arm(sibling('.playwright-mcp', 'console-1.log')), 'browser');
+  assert.equal(read(sibling('.playwright-mcp', 'console-1.log')), 'browser');
+});
+
+test('🔴 sibling office · writing ITS role file would grant capabilities to someone else', () => {
+  // Including a CLI declaration, which is a shell for a role whose shell is off.
+  assert.equal(arm(sibling('roles', 'x.yaml')), 'config');
+  assert.equal(arm(sibling('office.yaml')), 'config');
+  assert.equal(arm(sibling('connectors', 'c.json')), 'config');
+  assert.equal(write(sibling('skills', 's.md')), 'config');
+});
+
+test('sibling office · its CONTENT stays open — the fence is about machinery, not privacy', () => {
+  assert.equal(arm(sibling('artifacts', 'x.md')), undefined);
+  assert.equal(arm(sibling('library', 'text', 'c.txt')), undefined);
+  assert.equal(arm(sibling('logs', 'usage.jsonl')), undefined);
+});
+
+test('⭐ `.state` is a RESERVED NAME, so a company this process never loaded is covered too', () => {
+  /*
+   * The case no anchored list could reach: another company folder sitting
+   * somewhere on this disk, whose offices we have never heard of. Anchoring to
+   * `companyDir` would miss it and nothing would say so.
+   */
+  const elsewhere = path.resolve('/tmp/another-company');
+  assert.equal(arm(path.join(elsewhere, '.state', 'secrets.json')), 'secrets');
+  assert.equal(arm(path.join(elsewhere, 'offices', 'z', '.state', 'secrets.json')), 'secrets');
+  assert.equal(arm(path.join(elsewhere, '.playwright-mcp', 'console-1.log')), 'browser');
+  // Its CONTENT is not ours to fence: the user pointed an arm there on purpose.
+  assert.equal(arm(path.join(elsewhere, 'notes', 'x.md')), undefined);
+});
+
+test('a SEGMENT, never a substring — a user file that merely looks like ours stays readable', () => {
+  /*
+   * A guard that blocked `.stateroom` or `my.state-notes` would be switched off
+   * within the week, and rightly.
+   */
+  assert.equal(arm('notes/.stateroom/plan.md'), undefined);
+  assert.equal(arm('notes/my.state-notes.md'), undefined);
+  assert.equal(arm('notes/state/x.md'), undefined);
+});
+
+test('the same directory in a different case is the same directory on Windows', () => {
+  assert.equal(arm(sibling('.STATE', 'secrets.json')), 'secrets');
+  assert.equal(arm('.State/tasks/index.json'), 'secrets');
+});
