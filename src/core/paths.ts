@@ -732,6 +732,32 @@ function within(a: string, b: string): boolean {
 }
 
 /**
+ * agentco's own directory name, wherever it sits: `<company>/.state`,
+ * `<office>/.state`, and the same in a company this process has never loaded.
+ */
+const STATE_DIR = '.state';
+
+/**
+ * Is `name` one of this path's segments?
+ *
+ * ⚠ A SEGMENT, never a substring. `substring` would match `my.state-notes` and
+ * `.stateroom`, blocking a user's own file for looking a bit like ours —
+ * exactly the kind of false positive that gets a guard switched off.
+ *
+ * ⚠ Lowercased on EVERY platform, for the reason `within` gives above: on
+ * Windows `.STATE` and `.state` are the same directory, so a case-sensitive
+ * test there is a back door opened by pressing shift. Splitting on BOTH
+ * separators for the reason `baseNameAnyOs` gives: this string may have been
+ * typed by a model that has seen Windows paths all its life.
+ */
+function hasSegment(p: string, name: string): boolean {
+  return p
+    .toLowerCase()
+    .split(/[\\/]+/)
+    .includes(name.toLowerCase());
+}
+
+/**
  * Does this tool call touch a forbidden zone? `undefined` = let it through.
  *
  * `target` is the string the model typed — absolute or relative to the office
@@ -756,13 +782,39 @@ export function guardedZone(
   if (!target) return undefined;
   const abs = path.resolve(dirs.officeDir, target);
 
-  // `.state` comes BEFORE everything else: it exists both outside the office
-  // (the company copy) and inside it (the office copy), so checking it later
-  // would send half the cases down a different branch and hand back an
-  // explanation about something unrelated.
-  for (const state of [companyPaths(dirs.companyDir).state, officePaths(dirs.officeDir).state]) {
-    if (within(abs, state)) return 'secrets';
-  }
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THE GUARD USED TO NAME TWO DIRECTORIES, SO IT ONLY EVER PROTECTED    │
+   * │ THE OFFICE IT WAS STANDING IN. (measured 18/09/2026)                   │
+   * │                                                                        │
+   * │ It checked `<company>/.state` and `<thisOffice>/.state`. A SIBLING      │
+   * │ office's `.state` is neither, and `swallowsOffice` does not block       │
+   * │ picking one — it only blocks a parent:                                  │
+   * │                                                                        │
+   * │   root = <company>/offices/b   swallowsOffice -> false   ⇒ pluggable   │
+   * │     b/.state/secrets.json            -> let through                    │
+   * │     b/.playwright-mcp/console-*.log  -> let through                    │
+   * │     b/roles/*.yaml, b/office.yaml    -> let through                    │
+   * │                                                                        │
+   * │ So an arm in office `a` read office `b`'s OAuth tokens, on every door,  │
+   * │ since 0.2.0. A footgun rather than a remote hole — someone has to plug  │
+   * │ that folder in by hand — but a fence that named two paths while         │
+   * │ claiming to guard a kind of file.                                       │
+   * │ → [[agentco-rule-must-see-what-it-governs]]                            │
+   * └────────────────────────────────────────────────────────────────────────┘
+   *
+   * ⚠ A RESERVED NAME, NOT A LOCATION. `.state` is OUR name, not one a user
+   * types, so it is guarded wherever it appears — which also covers the case
+   * no list could: **a different company's folder** sitting somewhere on this
+   * disk, whose offices this process has never heard of. Anchoring to
+   * `companyDir` would have missed it, and nothing would have said so.
+   *
+   * ⚠ Still first, for the reason it always was: `.state` exists both outside
+   * the office (the company copy) and inside it, so checking it later would
+   * send half the cases down a different branch and answer with an
+   * explanation about something unrelated.
+   */
+  if (hasSegment(abs, STATE_DIR)) return 'secrets';
   /**
    * ┌────────────────────────────────────────────────────────────────────────┐
    * │ TWO CONDITIONS, ONE PLACE — and dropping either one breaks a different   │
@@ -790,8 +842,15 @@ export function guardedZone(
    * │ only read it once, when the worker gets built. → [[agentco-count-mechanisms]] │
    * └────────────────────────────────────────────────────────────────────────┘
    */
-  if (within(abs, path.join(dirs.officeDir, BROWSER_OUTPUT))) {
-    if (!dirs.hasBrowser || !isPageSnapshot(abs)) return 'browser';
+  if (hasSegment(abs, BROWSER_OUTPUT)) {
+    /*
+     * ⚠ THE EXEMPTION IS FOR YOUR OWN OUTPUT ONLY. Holding the browser arm
+     * earns a look at the snapshots THIS office produced — not at another
+     * office's, whose `console-*.log` carries that office's session tokens in
+     * plain text and whose arm this role was never given.
+     */
+    const mine = within(abs, path.join(dirs.officeDir, BROWSER_OUTPUT));
+    if (!mine || !dirs.hasBrowser || !isPageSnapshot(abs)) return 'browser';
   }
 
   if (mode === 'read') return undefined;
@@ -804,6 +863,30 @@ export function guardedZone(
   }
   for (const rel of OFFICE_CONFIG) {
     if (within(abs, path.join(dirs.officeDir, rel))) return 'config';
+  }
+  /**
+   * ⚠ AND THE SAME FILES IN **ANY** OFFICE OF THIS COMPANY, not only the one
+   * this worker is standing in. Writing `offices/<other>/roles/x.yaml` grants
+   * capabilities to somebody else's role — including a CLI declaration, which
+   * is a shell for a role whose shell is off (the §16i back door). The user
+   * handed over a FOLDER; they did not hand over the rules that govern the
+   * agent. Those are different grants, and only one of them was made.
+   *
+   * ⚠ Unlike `.state` this cannot be a reserved name: `roles`, `skills` and
+   * `connectors` are ordinary words that belong to users too. So it stays
+   * anchored — and the limit is stated rather than hidden: the config of a
+   * DIFFERENT company's offices is still reachable. That is a deliberate stop,
+   * not an oversight; catching it would mean asking the disk what a company
+   * is, on every tool call.
+   */
+  const offices = companyPaths(dirs.companyDir).offices;
+  if (within(abs, offices)) {
+    const seg = path
+      .relative(offices.toLowerCase(), abs.toLowerCase())
+      .split(/[\\/]+/)
+      .filter(Boolean);
+    // seg[0] = the office id, seg[1] = the first entry inside it
+    if (seg.length >= 2 && OFFICE_CONFIG.includes(seg[1]!)) return 'config';
   }
   if (within(abs, companyPaths(dirs.companyDir).configFile)) return 'config';
 

@@ -1163,19 +1163,28 @@ export function coveredBy(
  * │    exact same spot pays ~2,200 tokens PER TURN to buy a capability                  │
  * │    that's already there, for free.                                              │
  * │                                                                          │
- * │ 2. 🔴 IT ROUTES AROUND THE `.state/` GUARD. `paths.ts §guardedZone` blocks           │
- * │    reading the credential store and writing config files — but the hook            │
- * │    only matches BUILTIN tools (`Read|Grep|Glob|Write|Edit`). An MCP tool             │
- * │    named `mcp__x__read_file` does NOT match. ⇒ an arm pointed at the                 │
- * │    office directory reopens the exact two holes just patched this                  │
- * │    morning, through a different door.                                          │
+ * │ 2. ~~IT ROUTES AROUND THE `.state/` GUARD.~~ **NO LONGER TRUE — twice over.**       │
  * │                                                                          │
- * │ This is a NARROW patch for a WIDER hole: any filesystem MCP pointed                 │
- * │ anywhere containing `.state/` can route around it the same way. The wider           │
- * │ hole has to be patched by widening the hook's matcher to `mcp__*` —                 │
- * │ already noted in SPEC-arms §5f, NOT done yet, and nobody has measured               │
- * │ whether that matcher actually works. Don't read this gate as "already                │
- * │ safe": it closes the EASIEST path, not the whole class.                         │
+ * │    ⚠ THIS PARAGRAPH USED TO SAY the hook only matched builtin tools, that            │
+ * │    widening its matcher to `mcp__*` was "NOT done yet", and that "nobody              │
+ * │    has measured whether that matcher actually works". All three were                │
+ * │    corrected on 08/24 — `worker.ts` carries `{ matcher: 'mcp__.*' }` and              │
+ * │    `scripts/spike-mcp-hook.ts` measured a real deny — and the paragraph              │
+ * │    was left standing for three weeks, describing a hole as open after it              │
+ * │    had been closed. That is the expensive direction of stale: a reader                │
+ * │    concludes this gate is the only thing holding `.state` and does not                 │
+ * │    dare touch it. → [[agentco-spec-says-done]]                                  │
+ * │                                                                          │
+ * │    ⚠ And on 18/09 `guardedZone` stopped naming directories at all: `.state`           │
+ * │    and `.playwright-mcp` are RESERVED NAMES now, guarded wherever they                 │
+ * │    appear, and office config is guarded across every office of the                  │
+ * │    company. So an arm pointed anywhere — a parent, a sibling office, even              │
+ * │    a different company on the same disk — meets the same fence.                     │
+ * │                                                                          │
+ * │ ⇒ WHAT SURVIVES OF THIS GATE IS REASON 1: the token rent. It is advice,               │
+ * │ not a boundary, and it is scheduled to stop being a refusal. Do not add               │
+ * │ new safety arguments here — they belong in `guardedZone`, which is the                 │
+ * │ thing that runs on every tool call rather than once at configuration time.             │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 export function swallowsOffice(root: string, officeDir: string, companyDir: string): boolean {
