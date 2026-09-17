@@ -1,4 +1,4 @@
-# Install the npm package on all three operating systems and run it.
+﻿# Install the npm package on all three operating systems and run it.
 # -> scripts/smoke-npm.ts · docs/SPEC-cli.md §6
 #
 # 🔴 IT RUNS ON A TARBALL, NOT ON THE REGISTRY. Before the first publish there
@@ -58,12 +58,40 @@ jobs:
   # │ suite in the same barren state `release.yml` gives it is the whole       │
   # │ point: a test that quietly depends on a build artefact must fail HERE.   │
   # │                                                                         │
-  # │ ⚠ windows-latest, because that is the only platform the suite has ever   │
-  # │ run on. Adding Linux is worth doing and is a separate change with its    │
-  # │ own failures to read.                                                    │
+  # │ 🔴 AND UNTIL 18/09/2026 IT RAN ON WINDOWS ALONE. The suite had never      │
+  # │ executed on macOS or Linux, in either workflow — `release.yml:75` is     │
+  # │ windows too — while `smoke` below had crossed all three from the start.  │
+  # │ The gap is easy to miss because the file looks covered: the two ask      │
+  # │ different questions. SMOKE asks whether an installed package runs;       │
+  # │ THE SUITE asks whether the logic is right. Only the first was ever       │
+  # │ asked off Windows, and `paths.ts:289` is the standing example of what    │
+  # │ that hides — macOS normalises filenames to NFD where Linux and Windows   │
+  # │ keep NFC, so the same Vietnamese name is two different byte strings and  │
+  # │ no Windows run can tell.                                                 │
+  # │                                                                          │
+  # │ ⚠ `fail-fast: false` earns its place here more than anywhere else in     │
+  # │ this file. The first red run IS the deliverable: it names which tests    │
+  # │ read the real `process.platform` instead of injecting one the way        │
+  # │ `claude-code.test.ts` does. Cancelling the sibling legs would throw      │
+  # │ away the very list being asked for.                                      │
+  # │                                                                          │
+  # │ ⚠ One node version, not two. `smoke` crosses 22 and 24 because it        │
+  # │ exercises the runtime's install shape; the suite exercises our logic,    │
+  # │ where a second runtime costs three more jobs and asks no new question.   │
+  # │                                                                          │
+  # │ ⚠ THIS IS A RELEASE GATE, not a report. `release.yml` calls this whole   │
+  # │ workflow as its `smoke` job and `npm` needs it, so a red macOS leg now   │
+  # │ blocks a publish. That is the intent — but it means widening the matrix  │
+  # │ widens what a release must satisfy, which is a thing to know before a    │
+  # │ tag is cut, not while one is waiting.                                    │
   # └────────────────────────────────────────────────────────────────────────┘
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: suite · ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
