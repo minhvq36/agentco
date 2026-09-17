@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The moving parts of `agentco update`. → docs/SPEC-packaging.md §3.7
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -12,6 +12,7 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 /**
@@ -66,6 +67,142 @@ export function globalPrefixFor(root: string): string | undefined {
       return path.basename(parent) === 'lib' ? path.dirname(parent) : parent;
     }
     dir = parent;
+  }
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 A FULL DISK TAKES THE COMMAND AWAY AND LEAVES NOTHING TO PUT IT BACK. │
+ * │ (measured on a real machine, 18/09/2026)                                 │
+ * │                                                                          │
+ * │ `npm install -g` is NOT a transaction. It removes the old tree and its    │
+ * │ shims, then writes the new ones. The disk filled between those two steps: │
+ * │                                                                          │
+ * │   npm warn tar TAR_ENTRY_ERROR ENOSPC: no space left on device, write     │
+ * │                                                                          │
+ * │ and the result was the package present at the new version with NO         │
+ * │ `agentco`, `agentco.cmd` or `agentco.ps1` anywhere under the prefix:      │
+ * │                                                                          │
+ * │   D:\> agentco start                                                      │
+ * │   'agentco' is not recognized as an internal or external command          │
+ * │                                                                          │
+ * │ ⚠ AND THERE IS NO WAY BACK FROM INSIDE. npm deleted the old copy, so      │
+ * │ there is nothing to roll back to — and the thing that would offer to      │
+ * │ repair it is the very binary that just vanished. The packaged door does   │
+ * │ better (`core/update-apply.ts` probes a new layer before moving           │
+ * │ `current`, so a half-applied state never exists), but that shape is not   │
+ * │ available here: npm owns the install and offers no pointer to flip.       │
+ * │                                                                          │
+ * │ ⇒ THE ONLY LEVER IS BEFORE. We cannot have "all", so we protect           │
+ * │ "nothing": refuse while everything is still untouched. This belongs with  │
+ * │ `findNpmCli` under the rule at the top of this file — one more fact that  │
+ * │ is knowable a second before the daemon is stopped.                        │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ 2 GiB, from a measurement rather than a feeling: the installed global tree
+ * is **1,268 MB** (of which `@agent-co-app/cli` is 408 MB — Claude Code's SDK
+ * arrives as an optional dependency and is most of it), and npm holds parts of
+ * the old and new trees at once. Erring toward refusing is the safe direction,
+ * and the two consequences are not symmetric: refusing when there WAS room
+ * costs an annoyed person who frees space; allowing when there was NOT costs
+ * them their command line.
+ */
+const UPDATE_NEEDS_BYTES = 2 * 1024 * 1024 * 1024;
+
+export interface SpaceVerdict {
+  ok: boolean;
+  /** Free bytes on the volume holding `dir`, or `undefined` when unreadable. */
+  free?: number;
+  needed: number;
+  dir: string;
+}
+
+/**
+ * Is there room to install into `dir`?
+ *
+ * ⚠ UNREADABLE ⇒ `ok`. `statfs` can fail on a network share, an unusual
+ * filesystem, or a path that does not exist yet, and a check that cannot read
+ * the disk must not become a check that blocks the update. Absence of an
+ * answer is not an answer. → [[agentco-deterministic-vs-signal]]
+ */
+export function checkSpace(dir: string, needed: number = UPDATE_NEEDS_BYTES): SpaceVerdict {
+  try {
+    const s = fs.statfsSync(dir);
+    const free = s.bavail * s.bsize;
+    return { ok: free >= needed, free, needed, dir };
+  } catch {
+    return { ok: true, needed, dir };
+  }
+}
+
+/** How many update directories survive a sweep. → `sweepOldUpdateDirs` */
+const KEEP_UPDATE_DIRS = 3;
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 EVERY UPDATE LEFT A DIRECTORY BEHIND, FOREVER. (counted 18/09/2026:    │
+ * │ 421 of them, the oldest from 15/09 — three days)                         │
+ * │                                                                          │
+ * │ The user's words, and they are the right standard: *an app that keeps     │
+ * │ making files it never removes is not meaningfully different from a virus; │
+ * │ somebody who deletes the app must not be leaving things behind.*         │
+ * │                                                                          │
+ * │ ⚠ IT CANNOT CLEAN UP AFTER ITSELF, and that is why it was missed. The     │
+ * │ helper RUNS FROM this directory and deliberately outlives the process     │
+ * │ that created it — there is no later moment in that process to delete it,  │
+ * │ and the helper deleting its own running script is a fight with Windows    │
+ * │ file locking nobody wins. `update-apply.ts` has no such problem and       │
+ * │ cleans up in a `finally`; this one is genuinely a different shape.        │
+ * │                                                                          │
+ * │ ⇒ The NEXT run sweeps. The only process that can safely remove one is one │
+ * │ that is not using it.                                                    │
+ * │                                                                          │
+ * │ ⚠ KEEPS THE NEWEST FEW, on purpose. A failed update writes its only       │
+ * │ record into `update.log` there, and that log is the single place the      │
+ * │ reason can be read — a full disk said `ENOSPC` into exactly such a file.  │
+ * │ Sweeping to zero would tidy away the evidence for the one case where      │
+ * │ somebody needs it.                                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ NEVER THROWS. A directory another helper is still running from will refuse
+ * to be removed on Windows, and housekeeping must not be able to stop an
+ * update. Same rule as `audit.append`.
+ */
+export function sweepOldUpdateDirs(
+  /**
+   * ⚠ A PARAMETER so a test gets its own sandbox. Reading `os.tmpdir()` inside
+   * would make the test delete the real machine's directories and read whatever
+   * else happened to be there — the same trap the installer tests hit with the
+   * Uninstall key. → [[agentco-installer-tests-share-globals]]
+   */
+  tmp: string = os.tmpdir(),
+  keep: number = KEEP_UPDATE_DIRS,
+): void {
+  try {
+    const mine = fs
+      .readdirSync(tmp, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith('agentco-update-'))
+      .map((e) => {
+        const full = path.join(tmp, e.name);
+        let at = 0;
+        try {
+          at = fs.statSync(full).mtimeMs;
+        } catch {
+          /* vanished between readdir and stat — treat as oldest */
+        }
+        return { full, at };
+      })
+      .sort((a, b) => b.at - a.at);
+
+    for (const old of mine.slice(keep)) {
+      try {
+        fs.rmSync(old.full, { recursive: true, force: true });
+      } catch {
+        /* in use, or not ours to remove — leave it and carry on */
+      }
+    }
+  } catch {
+    /* no temp directory to read is not a reason to refuse an update */
   }
 }
 

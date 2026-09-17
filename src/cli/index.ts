@@ -28,7 +28,13 @@ import { serve, type Daemon } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { agentcoOnPort, DEFAULT_PORT, findFreePort, type PortOccupant } from './port.js';
-import { findNpmCli, globalPrefixFor, updateScript } from './update-run.js';
+import {
+  checkSpace,
+  findNpmCli,
+  globalPrefixFor,
+  sweepOldUpdateDirs,
+  updateScript,
+} from './update-run.js';
 import {
   checkForUpdate,
   compareVersions,
@@ -337,7 +343,12 @@ async function cmdStart(): Promise<void> {
         // The npm door's button. `waitUrl` is this very server: the helper must
         // not let npm start until the request that spawned it has finished
         // dying. → cli/update-run.ts
-        onHandOffUpdate: () => handOffUpdate('latest', true, `${daemon?.url ?? ''}/healthz`) !== undefined,
+        onHandOffUpdate: () => {
+          const r = handOffUpdate('latest', true, `${daemon?.url ?? ''}/healthz`);
+          // The REASON travels, not just a no. The button's 409 already reaches
+          // the screen; before this it always said "no npm", whatever the truth.
+          return r.ok ? undefined : r.why;
+        },
         /**
          * ⚠ CLOSE FIRST, SPAWN SECOND, ON THE SAME PORT — see below — and
          * ⚠ COME BACK THROUGH THE LAUNCHER WHEN THERE IS ONE.
@@ -524,10 +535,11 @@ async function cmdUpdate(): Promise<void> {
   const pp = companyPaths(companyDir);
 
   // 🔴 BEFORE the daemon is touched. Finding out afterwards that there is no
-  // npm to call leaves the company stopped for a fact knowable a second earlier.
-  const npmCli = findNpmCli();
-  if (!npmCli) {
-    console.error(t('cli.updateNoNpm', { command: `npm i -g ${PACKAGE_NAME}@${target}` }));
+  // npm to call — or no room to install into — leaves the company stopped for a
+  // fact that was knowable a second earlier. → cli/update-run.ts header
+  const blocked = updateRefusal(target);
+  if (blocked) {
+    console.error(blocked);
     process.exit(EXIT.config);
   }
 
@@ -559,9 +571,14 @@ async function cmdUpdate(): Promise<void> {
 
   // Restart only what was actually running. `info` is the daemon this command
   // stopped a moment ago; absent means there was nothing to put back.
-  const logPath = handOffUpdate(target, !!info);
+  const handed = handOffUpdate(target, !!info);
+  if (!handed.ok) {
+    // Only reachable if the disk filled between the check above and here.
+    console.error(handed.why);
+    process.exit(EXIT.config);
+  }
   console.log(t(info ? 'cli.updateHandedOff' : 'cli.updateHandedOffIdle', { target }));
-  if (logPath) console.log(t('cli.updateLog', { path: logPath }));
+  console.log(t('cli.updateLog', { path: handed.logPath }));
   process.exit(EXIT.ok);
 }
 
@@ -575,13 +592,52 @@ async function cmdUpdate(): Promise<void> {
  *   before letting npm touch the package. The command needs no such wait — it
  *   stopped the daemon itself and is leaving.
  *
- * Returns false when there is no npm to call, so a caller can refuse BEFORE
- * stopping anything.
+ * Returns a REASON instead of a log path when the work cannot be handed off, so
+ * a caller can refuse BEFORE stopping anything. Both refusals are facts that
+ * are knowable a second early; acting on them late is what leaves somebody
+ * worse off than when they started. → `cli/update-run.ts` header
  */
-function handOffUpdate(target: string, restart: boolean, waitUrl?: string): string | undefined {
-  const npmCli = findNpmCli();
-  if (!npmCli) return undefined;
+type HandOff = { ok: true; logPath: string } | { ok: false; why: string };
 
+/**
+ * Everything that makes this update impossible, as ONE sentence or nothing.
+ *
+ * ⚠ ONE FUNCTION, TWO CALLERS, AND THAT IS THE POINT. `cmdUpdate` asks it
+ * BEFORE stopping the company; `handOffUpdate` asks it again on the way in, so
+ * the button — which never stops anything until the handoff succeeds — gets the
+ * same answer without a second copy of the rules to keep in step.
+ */
+function updateRefusal(target: string): string | undefined {
+  if (!findNpmCli()) return t('cli.updateNoNpm', { command: `npm i -g ${PACKAGE_NAME}@${target}` });
+
+  /*
+   * ⚠ THE PREFIX, not this process's cwd or the temp directory. npm unpacks
+   * into `<prefix>/node_modules` (POSIX: `<prefix>/lib/node_modules`), and that
+   * is the volume that ran out — the helper's own script is a few kilobytes and
+   * never the problem. No prefix at all means a source checkout, which this
+   * command would not be installing into either.
+   */
+  const prefix = globalPrefixFor(packageRoot());
+  if (!prefix) return undefined;
+
+  const space = checkSpace(prefix);
+  if (space.ok) return undefined;
+  return t('cli.updateNoSpace', {
+    need: gib(space.needed),
+    free: gib(space.free ?? 0),
+    dir: space.dir,
+  });
+}
+
+function handOffUpdate(target: string, restart: boolean, waitUrl?: string): HandOff {
+  const why = updateRefusal(target);
+  if (why) return { ok: false, why };
+
+  const npmCli = findNpmCli()!;
+  const root = packageRoot();
+  const prefix = globalPrefixFor(root);
+
+  sweepOldUpdateDirs();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-'));
   const script = path.join(dir, 'update.mjs');
   fs.writeFileSync(script, updateScript(), 'utf8');
@@ -613,20 +669,9 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): stri
    * process IS node. Same reason the script calls npm through its own js entry
    * point: Node cannot spawn a `.cmd` without a shell (EINVAL on Windows).
    */
-  const root = packageRoot();
   const child = spawn(
     process.execPath,
-    [
-      script,
-      npmCli,
-      PACKAGE_NAME,
-      target,
-      root,
-      companyDir,
-      globalPrefixFor(root) ?? '',
-      restart ? '1' : '',
-      waitUrl ?? '',
-    ],
+    [script, npmCli, PACKAGE_NAME, target, root, companyDir, prefix ?? '', restart ? '1' : '', waitUrl ?? ''],
     // ⚠ `windowsHide` as well: a detached child of a process with no console is
     // exactly what Windows answers by opening one. → the no-flashing-console rule
     { detached: true, stdio: ['ignore', log, log], windowsHide: true },
@@ -636,8 +681,12 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): stri
   child.on('error', (err) => console.error(err.message));
   child.unref();
   fs.closeSync(log);
-  return logPath;
+  return { ok: true, logPath };
 }
+
+/** Bytes as whole-tenths of a GiB, for a sentence a person reads once. */
+const gib = (n: number): string => `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+
 
 async function cmdStop(): Promise<void> {
   const info = await liveDaemon(companyPaths(companyDir));

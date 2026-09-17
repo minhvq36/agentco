@@ -825,6 +825,19 @@ export const en = {
   // command has exited and nobody is attached to anything.
   'cli.updateLog': '  progress and any error:  {path}',
   /**
+   * ⚠ REFUSED, NOT FAILED, and the sentence has to carry that: nothing was
+   * replaced and the company is still there. Both numbers are in it because
+   * "not enough space" sends somebody to look at a disk without knowing how
+   * much they are looking for.
+   *
+   * 🔴 The cost of NOT saying this, measured 18/09: npm removed the old copy,
+   * ran out of room before writing the new shims, and `agentco` stopped
+   * existing as a command. There is no way back from inside — the thing that
+   * would repair it is what vanished. → cli/update-run.ts §checkSpace
+   */
+  'cli.updateNoSpace':
+    'Not enough disk space to install, so nothing was touched — the company is untouched and still works.\nInstalling needs about {need} free; “{dir}” has {free}.\nFree some space and try again. `npm cache clean --force` is usually the largest easy win.',
+  /**
    * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
    * Naming the neighbour is only possible when it answered `/healthz`; claiming
    * "another agentco is running" about a stranger's service would be a guess

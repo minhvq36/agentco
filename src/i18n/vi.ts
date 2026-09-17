@@ -620,6 +620,8 @@ export const vi: Catalog = {
   'cli.updateHandedOff': 'Đang cài {target} ở một tiến trình riêng, xong sẽ bật lại công ty.',
   'cli.updateHandedOffIdle': 'Đang cài {target} ở một tiến trình riêng.',
   'cli.updateLog': '  tiến trình và lỗi nếu có:  {path}',
+  'cli.updateNoSpace':
+    'Không đủ chỗ trống để cài, nên chưa đụng vào gì cả — công ty vẫn nguyên và vẫn chạy được.\nCài cần khoảng {need} trống; "{dir}" còn {free}.\nDọn bớt chỗ rồi thử lại. `npm cache clean --force` thường là chỗ lấy lại được nhiều nhất.',
   'cli.portMoved':
     '  Cổng {from} đang bận nên công ty chuyển sang {to} — đã ghi vào runtime.port trong {file}.',
   'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',
