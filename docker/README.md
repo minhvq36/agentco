@@ -121,6 +121,26 @@ container can chat on its first start, with no step inside it.
 > still failing after you have clearly replaced it, which sends people looking
 > at the token — the one thing that is now correct.
 
+### The usage chip shows one window, not two — that is the token, not Docker
+
+Measured 17/09 with the same probe on both sides:
+
+| | `claude login` | `CLAUDE_CODE_OAUTH_TOKEN` |
+|---|---|---|
+| `subscription_type` | `"pro"` | `null` |
+| `rate_limits_available` | `true` | **`false`** |
+
+A long-lived token from `setup-token` does not carry subscription or rate-limit
+reporting. Claude Code answers the request perfectly well — it answers "no". So
+the header's Week window has nothing to draw, while the Session one can still
+fill in from events during a real run, and the result looks half-broken without
+being broken at all.
+
+Nothing to fix here, and nothing lost: the limits still apply to your account,
+they are simply not visible through this door. Sign in with `claude login`
+inside the container if you want the chip, at the cost of an interactive step
+that has to be repeated whenever the volume is discarded.
+
 ### Checking what the container thinks
 
 ```bash

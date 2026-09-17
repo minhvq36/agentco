@@ -2127,6 +2127,7 @@ Reproduce them deliberately. Every one of these was found the hard way on 17/09.
 | Change the token in `.env`, then `docker compose restart` | the **old** token still fails | `restart` reuses the environment it had. Only `up -d` re-reads `.env` |
 | `docker compose exec agentco claude setup-token` from a script or an editor pane | hangs forever, prints **nothing** | it is a raw-mode prompt and needs a real terminal. There is no error to read |
 | `docker compose down -v` | the company is gone | `-v` removes the volume. `down` alone keeps it — verify by recreating and finding your offices still there |
+| Look at the usage chip in the header | **one window (Session), never Week** | the token, not Docker. `setup-token` returns `rate_limits_available: false`, so `usage()` succeeds and says "no"; Session still fills in from events during a real run, which is why it looks half-broken. `claude login` inside the container restores both |
 
 ### Leg G — survive a crash ⏱ ~3 min · $0
 

@@ -255,7 +255,28 @@ async function run(): Promise<void> {
 export function apply(res: Record<string, unknown>): void {
   if (!res || typeof res !== 'object') return;
 
-  if (res['rate_limits_available'] === false) return; // API key / Bedrock / Vertex
+  /**
+   * ⚠ A FOURTH CASE, MEASURED 17/09/2026: a long-lived token from
+   * `claude setup-token`. The list used to read "API key / Bedrock / Vertex",
+   * which made this look like an enterprise-only branch — it is not, it is the
+   * ordinary way a container signs in.
+   *
+   * Same probe, same build, two sign-ins:
+   *   `claude login`              → subscription_type "pro" · rate_limits_available true
+   *   CLAUDE_CODE_OAUTH_TOKEN     → subscription_type null  · rate_limits_available false
+   *
+   * So the header shows one window and not two, and that is the server
+   * declining to report rather than anything here failing. It cost an hour to
+   * work out from the outside, because `run()` swallows errors by design and
+   * `usage()` did not fail — it succeeded, and said "no".
+   *
+   * ⚠ The Session chip can still be populated, from `rate_limit_event` during a
+   * real query (`noteRateLimit`). Two sources, one of which survives this
+   * branch — which is exactly why the header looks half-filled rather than
+   * empty, and why that looks like a bug and is not one.
+   * → docker/README.md
+   */
+  if (res['rate_limits_available'] === false) return;
   const limits = res['rate_limits'];
   if (!limits || typeof limits !== 'object') return;
 
