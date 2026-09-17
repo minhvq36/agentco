@@ -232,6 +232,24 @@ function BrowserLogin() {
   const [opened, setOpened] = useState(false);
 
   if (!officeId) return null;
+  /*
+   * ⚠ THE WHOLE BLOCK GOES, TITLE INCLUDED — not the button with an
+   * explanation left under it. (the user's call, 18/09/2026, on reading the
+   * first attempt: too long, nobody reads it)
+   *
+   * This panel opens an ordinary browser window WHERE THE DAEMON RUNS. Through
+   * the Docker door that is a container with no screen, so there is nothing
+   * this feature can do and nothing the reader can act on. A paragraph
+   * explaining an unavailable feature is still three sentences about something
+   * they cannot have — it costs attention on every visit and returns nothing.
+   *
+   * ⚠ ONLY HERE. The desktop and npm doors keep the button exactly as it was:
+   * there a window really does open, and the flow is the good one — sign in by
+   * hand once, into a persistent profile that then RENEWS ITSELF. Nothing about
+   * that path is degraded to accommodate this one.
+   * → HANDOFF §2 "Playwright sign-in across machines"
+   */
+  if (!SAME_MACHINE) return null;
   return (
     <div className="mb-3 rounded-lg border border-line p-3">
       <div className="flex items-center gap-2">
@@ -252,32 +270,19 @@ function BrowserLogin() {
         )}
       </p>
       {err && <p className="mt-1.5 text-xs text-danger">{err}</p>}
-      {/*
-        ⚠ SAY IT BEFORE THE CLICK, NOT AFTER. This window opens where the DAEMON
-        runs, so over a remote connection — and a container is one — it would
-        appear where nobody is looking. The server refuses it either way
-        (`srv.browserLoginLocalOnly`); what was wrong was letting the user press
-        a button whose answer was already known, and learning why from an error.
-        Same rule as the `loopbackOnly` checkbox in `ArmDialog`, which hides
-        itself and explains instead. (18/09/2026)
-      */}
-      {!SAME_MACHINE ? (
-        <p className="mt-3 text-xs leading-relaxed text-muted">{t('srv.browserLoginLocalOnly')}</p>
-      ) : (
-        <Button
-          size="sm"
-          variant="primary"
-          className="mt-3"
-          disabled={busy}
-          onClick={() => void go()}
-        >
-          {busy
-            ? t('inspector.browserOpening')
-            : opened
-              ? t('inspector.browserReopen')
-              : t('inspector.browserOpen')}
-        </Button>
-      )}
+      <Button
+        size="sm"
+        variant="primary"
+        className="mt-3"
+        disabled={busy}
+        onClick={() => void go()}
+      >
+        {busy
+          ? t('inspector.browserOpening')
+          : opened
+            ? t('inspector.browserReopen')
+            : t('inspector.browserOpen')}
+      </Button>
     </div>
   );
 
