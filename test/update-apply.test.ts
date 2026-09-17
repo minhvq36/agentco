@@ -144,7 +144,17 @@ test('tar is resolved by absolute path, never through PATH', () => {
   // not found" is unactionable and four paths are something a person can check.
   const none = findTar({ SystemRoot: 'C:\\Windows' }, 'win32', () => false);
   assert.equal(none.found, undefined);
-  assert.ok(none.tried.length > 0 && none.tried.every((p) => path.isAbsolute(p)), none.tried.join(', '));
+  /*
+   * ⚠ `path.win32.isAbsolute`, because these paths were built for `win32` —
+   * the platform is a PARAMETER of `findTar`, which is what lets one machine
+   * check all three. The assertion has to read them with the same platform's
+   * rules the function was handed, or it is grading Windows output against
+   * whatever OS happens to run the suite. (18/09/2026)
+   */
+  assert.ok(
+    none.tried.length > 0 && none.tried.every((p) => path.win32.isAbsolute(p)),
+    none.tried.join(', '),
+  );
 
   // And it really is on the machine running this suite.
   assert.ok(findTar().found, `no system tar: ${findTar().tried.join(', ')}`);

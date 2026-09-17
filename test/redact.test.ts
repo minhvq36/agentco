@@ -87,7 +87,16 @@ test('⭐ an already-cleaned file is NOT re-read on the next pass', () => {
 
 
 test('⭐ the browser profile sits BEHIND guardedZone — employees cannot read it', () => {
-  const dirs = { companyDir: path.join('C:', 'cty'), officeDir: path.join('C:', 'cty', 'offices', 'kt') };
+  /*
+   * ⚠ Host-absolute company/office roots. `path.join('C:', 'cty')` is a real
+   * root only on Windows; on Linux it is the relative folder `C:/cty`, so the
+   * third target below — an ABSOLUTE office path — was silently re-joined onto
+   * `officeDir` (`/w/C:/cty/offices/kt/C:/cty/offices/kt/.state/...`) and the
+   * fence rightly said "not my directory". Measured 18/09/2026. The guard is
+   * unchanged; it was the fixture that only described Windows.
+   */
+  const companyDir = path.resolve(path.sep, 'cty');
+  const dirs = { companyDir, officeDir: path.join(companyDir, 'offices', 'kt') };
   for (const target of [
     path.join('.state', 'browser', 'profile'),
     path.join('.state', 'browser', 'profile', 'Default', 'Network', 'Cookies'),

@@ -70,7 +70,16 @@ test('no arm matches ⇒ still returns a path INSIDE THE OFFICE', () => {
 test('OLD behavior is unchanged when no table is passed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-vp-'));
   assert.equal(resolveInput(dir, 'artifacts/x.md'), path.join(dir, 'artifacts', 'x.md'));
-  assert.equal(resolveInput(dir, 'D:\\Downloads\\x'), 'D:\\Downloads\\x');
+  /*
+   * ⚠ Built with `path.sep`, not written as `D:\Downloads\x`. The rule under
+   * test is *"an ABSOLUTE path passes through untouched"*, and what counts as
+   * absolute is a property of the host: on Linux `D:\Downloads\x` is a
+   * perfectly ordinary RELATIVE filename, so the old literal asserted the
+   * opposite of the rule there. The code is right on both — the fixture was
+   * only ever absolute on one. (18/09/2026, the first Linux run)
+   */
+  const outside = path.resolve(path.sep, 'Downloads', 'x');
+  assert.equal(resolveInput(dir, outside), outside);
 });
 
 test('🔴 traversal still DIES, must not fall through to the arm branch', () => {

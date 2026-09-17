@@ -130,10 +130,20 @@ test('the update helper never calls npm by name, and restarts by path', () => {
 });
 
 test('🔴 the update targets the prefix THIS copy lives in, not npm’s default', () => {
-  // Windows: <prefix>/node_modules/<scope>/<name>
+  /*
+   * Windows: <prefix>/node_modules/<scope>/<name>
+   *
+   * ⚠ The expectation goes through `path.resolve` too — the same rule the
+   * POSIX half below already stated and this half did not follow. `C:/np` is a
+   * root on Windows and a RELATIVE folder on Linux, where `globalPrefixFor`'s
+   * own `path.resolve` prepends the cwd; comparing against the bare string
+   * then fails for a reason that has nothing to do with stripping
+   * `node_modules/<scope>/<name>`, which is the rule under test.
+   * → [[agentco-absent-means-what-per-field]] (18/09/2026)
+   */
   assert.equal(
     globalPrefixFor(path.join('C:', 'np', 'node_modules', '@agent-co-app', 'cli')),
-    path.join('C:', 'np'),
+    path.resolve('C:', 'np'),
   );
   /*
    * POSIX: <prefix>/lib/node_modules/<scope>/<name> — one level deeper, and the
@@ -149,7 +159,7 @@ test('🔴 the update targets the prefix THIS copy lives in, not npm’s default
   // Unscoped is one directory shallower; counting segments would break here.
   assert.equal(
     globalPrefixFor(path.join('C:', 'np', 'node_modules', 'cli')),
-    path.join('C:', 'np'),
+    path.resolve('C:', 'np'),
   );
   // A source checkout has no prefix to speak of, and must not invent one.
   assert.equal(globalPrefixFor(path.join('C:', 'code', 'agentco')), undefined);

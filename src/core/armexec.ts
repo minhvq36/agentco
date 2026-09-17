@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { compileCliArm, isCliArm } from './cli-arm.js';
+import { baseNameAnyOs } from './paths.js';
 import { injectSecrets } from './secrets.js';
 
 /**
@@ -164,17 +165,21 @@ export function defaultArmLabel(config: unknown): string | undefined {
     const cwd = first?.cwd;
     if (typeof cwd === 'string' && cwd.trim()) {
       /**
-       * Strip the trailing slash BEFORE calling `basename`: `D:\Records\2026\`
-       * gives an empty string otherwise. And strip the `{office}` placeholder
-       * too — it's our own syntax, not a piece of a folder name.
+       * Strip the trailing slash first: `D:\Records\2026\` gives an empty
+       * string otherwise. And strip the `{office}` placeholder too — it's our
+       * own syntax, not a piece of a folder name.
+       *
+       * ⚠ `baseNameAnyOs`, not `path.basename`: this string came out of
+       * `company.yaml`, so it carries the separator of whoever TYPED it, not
+       * of the machine reading it. → `core/paths.ts`
        */
       const clean = cwd.trim().split('{office}').join('').replace(/[\\/]+$/, '');
-      const base = clean ? path.basename(clean) : '';
+      const base = clean ? baseNameAnyOs(clean) : '';
       if (base) return base;
     }
     const bin = Array.isArray(first?.run) ? (first.run as unknown[])[0] : undefined;
     if (typeof bin === 'string' && bin.trim()) {
-      return path.basename(bin.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
+      return baseNameAnyOs(bin.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
     }
     return undefined;
   }
@@ -194,10 +199,11 @@ export function defaultArmLabel(config: unknown): string | undefined {
   const parsed = npxSpec(config as ExecConfig);
   if (parsed) return packageName(parsed.spec).split('/').pop() || undefined;
 
-  // Not going through `npx` ⇒ take the program name. `path.basename` so an
-  // absolute path doesn't turn into a long, unwieldy label.
+  // Not going through `npx` ⇒ take the program name, so an absolute path
+  // doesn't turn into a long, unwieldy label. `baseNameAnyOs` for the same
+  // reason as above: the command string is config, not something we resolved.
   if (typeof c.command === 'string' && c.command.trim()) {
-    return path.basename(c.command.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
+    return baseNameAnyOs(c.command.trim()).replace(/\.(exe|cmd|bat)$/i, '') || undefined;
   }
   return undefined;
 }
