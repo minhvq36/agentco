@@ -1,9 +1,12 @@
 ﻿
 
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { armHash, coveredBy, folderRoots, swallowsOffice } from '../dist/core/catalog.js';
+import { armHash, coveredBy, folderRoots } from '../dist/core/catalog.js';
 
 
 test('folderRoots: correctly picks out the absolute path in args', () => {
@@ -53,28 +56,33 @@ test('coveredBy: a shared name PREFIX is NOT the same folder', () => {
 });
 
 
-const OFFICE = 'D:\\cty\\offices\\noi-dung';
-const COMPANY = 'D:\\cty';
-
-test('swallowsOffice: the office folder itself blocks', () => {
-  assert.ok(swallowsOffice(OFFICE, OFFICE, COMPANY));
-});
-
-test('swallowsOffice: a PARENT of the office also blocks — it swallows `.state/` too', () => {
-  assert.ok(swallowsOffice('D:\\', OFFICE, COMPANY));
-  assert.ok(swallowsOffice(COMPANY, OFFICE, COMPANY));
-});
-
-test('swallowsOffice: a CHILD folder inside the office is ALLOWED', () => {
-  assert.equal(swallowsOffice(`${OFFICE}\\artifacts`, OFFICE, COMPANY), false);
-});
-
-test('swallowsOffice: an unrelated folder is allowed', () => {
-  assert.equal(swallowsOffice('D:\\Downloads', OFFICE, COMPANY), false);
-});
-
-test('swallowsOffice: still catches it despite a different slash style and case', () => {
-  assert.ok(swallowsOffice('d:/cty', OFFICE, COMPANY));
+/*
+ * ┌────────────────────────────────────────────────────────────────────────────
+ * │ ✅ `swallowsOffice` AND ITS FIVE TESTS ARE GONE (18/09/2026), and their
+ * │ absence is the feature. The five said: the office folder blocks, a PARENT
+ * │ blocks, `D:\` blocks, a different slash style still blocks.
+ * │
+ * │ They were guarding four files — `.state`, `.playwright-mcp`, and the
+ * │ config — by banning a whole SHAPE of directory, because at configuration
+ * │ time that was the only reachable handle. `guardedZone` now guards those
+ * │ four BY NAME on every tool call, wherever they sit, so the ban bought
+ * │ nothing it did not already have and cost somebody with `D:\Temp` a puzzle
+ * │ with no good answer: the office can be any number of levels down.
+ * │
+ * │ ⚠ The replacement is NOT here. It is `test/jail.test.ts`, which asserts
+ * │ that picking a parent, a sibling office, or another company entirely
+ * │ leaves the machinery shut and the content open. If this file ever grows a
+ * │ configuration-time ban again, that is the sign the runtime fence was the
+ * │ thing that needed fixing. → [[agentco-rule-must-see-what-it-governs]]
+ * └────────────────────────────────────────────────────────────────────────────
+ */
+test('⭐ nothing refuses a folder for containing the office any more', () => {
+  const src = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'core', 'company.ts'),
+    'utf8',
+  );
+  assert.doesNotMatch(src, /swallowsOffice/, 'the configuration-time ban is back in company.ts');
+  assert.doesNotMatch(src, /folderIsOfficeItself/, 'the refusal message is back');
 });
 
 test('coveredBy: a completely different folder passes through', () => {

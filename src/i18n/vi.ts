@@ -322,8 +322,6 @@ export const vi: Catalog = {
   'co.armConfigMissing': 'Thiếu cấu hình cho cánh tay này.',
   'co.armAlreadyHere':
     'Văn phòng này đã có kết nối "{label}". Kéo dây từ nó sang nhân viên cần dùng — một kết nối dùng chung được cho nhiều người.',
-  'co.folderIsOfficeItself':
-    '"{path}" chứa chính thư mục làm việc của văn phòng. Nhân viên đã đọc-ghi được ở đó sẵn mà không tốn token nào, nên cắm thêm là trả tiền cho thứ đang có. Chọn một thư mục bên ngoài.',
   'co.folderAlreadyCovered':
     'Thư mục này đã nằm trong kết nối "{id}" của văn phòng. Nối thẳng "{id}" vào nhân viên cần nó — một kết nối dùng chung được cho nhiều người, và cắm thêm cái thứ hai là trả token hai lần cho cùng một thứ.',
   'co.armPlugged': 'Đã cắm "{label}". Nhân viên được nối dây sẽ dùng được ngay ở việc kế tiếp.',

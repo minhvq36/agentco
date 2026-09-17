@@ -468,8 +468,6 @@ export const en = {
   'co.armConfigMissing': 'This connection has no configuration.',
   'co.armAlreadyHere':
     'This office already has the connection “{label}”. Draw a wire from it to whoever needs it — one connection can be shared by several people.',
-  'co.folderIsOfficeItself':
-    '“{path}” contains the office’s own working folder. Employees can already read and write there at no token cost, so plugging it in is paying for something you already have. Pick a folder outside it.',
   'co.folderAlreadyCovered':
     'This folder is already covered by the office’s “{id}” connection. Wire “{id}” straight to whoever needs it — one connection can be shared by several people, and plugging in a second is paying tokens twice for the same thing.',
   'co.armPlugged': 'Plugged in “{label}”. Anyone wired to it can use it from the next job on.',
