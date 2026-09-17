@@ -1,4 +1,4 @@
-﻿/**
+/**
  * A running OFFICE — the place where everything meets.
  *
  * → docs/SPEC-offices.md
@@ -5189,9 +5189,32 @@ function addUsage(a: Usage, b: Usage): Usage {
  * number, on the grounds that it is the first file an advanced user opens and
  * ought to explain itself. It still ought to — but not from here, because a
  * comment written at creation time is never rewritten and quietly rots against
- * the code. `tools: [Bash]` in particular is the ONE exception to "results
- * always stay inside the office folder", and that warning has to be somewhere
- * it stays true: the employee detail panel and docs/SPEC-artifacts.md §2.6.
+ * the code. The shell warning has to live somewhere it stays true: the employee
+ * detail panel and docs/SPEC-artifacts.md §2.6.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 `tools: []`, NOT `[Bash]` — THE DEFENCE OF THE OLD DEFAULT ASSUMED A
+ * │ DIALOG THAT HALF THE CALLERS NEVER SHOW. (changed 17/09/2026)
+ * │
+ * │ `SPEC-tools-approval §5` justified writing `[Bash]` here by pointing at the
+ * │ Add Worker dialog, which states plainly that this person will be able to
+ * │ run commands on your machine — *"a broad, SILENT default isn't convenient,
+ * │ it's a trap"*. Correct, and the premise held for exactly one caller.
+ * │
+ * │ The Assistant hires too, mid-conversation, with no dialog anywhere. Found
+ * │ in a real company, read straight off disk: an employee whose entire pitch
+ * │ was "write the research results down" — holding the one capability that
+ * │ reaches outside the office folder. Nobody chose it and nobody was told.
+ * │
+ * │ ⚠ AND IT IS NOT ONLY A SECURITY QUESTION. `types.ts §577` measured the
+ * │ planning cost: a shell in the toolset lets the Assistant write a brief that
+ * │ routes *"via shell command"*, which then fails one layer down. The tool
+ * │ being present changes what gets PLANNED, not just what can be run.
+ * │
+ * │ Off is recoverable in one click — the switch on the employee panel is the
+ * │ escape hatch and always was. On is not: by the time it matters it has
+ * │ already run. → [[agentco-safe-default-direction]]
+ * └──────────────────────────────────────────────────────────────────────────
  *
  * ⚠ `pitch` is the only thing the assistant sees when planning, so it is never
  * left blank — an empty pitch means the assistant has nothing to route on.
@@ -5219,7 +5242,7 @@ not_for: []
 skill_level: medium
 skills: {}
 
-tools: [Bash]
+tools: []
 model_tier: ${tier}
 use_preset: false
 

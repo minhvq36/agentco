@@ -24,6 +24,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import YAML from 'yaml';
+
+import { roleTemplate } from '../dist/core/office.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (...p: string[]): string => fs.readFileSync(path.join(HERE, '..', ...p), 'utf8');
@@ -47,6 +50,35 @@ test('🔴 `roleTemplate` writes the pitch it was given, and substitutes nothing
     /JSON\.stringify\(pitch \|\|/,
     'a `||` fallback here is exactly the wire that put our sentence into user data',
   );
+});
+
+test('🔴 a new employee gets NO shell, whoever hired them', () => {
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────
+   * │ THE OLD DEFAULT WAS DEFENDED BY A DIALOG HALF THE CALLERS NEVER SHOW.
+   * │
+   * │ `SPEC-tools-approval §5` argued for `tools: [Bash]` here because the Add
+   * │ Worker dialog says plainly that this person will be able to run commands
+   * │ on your machine — *"a broad, SILENT default isn't convenient, it's a
+   * │ trap"*. True, and true for exactly one of the two callers: the ASSISTANT
+   * │ hires mid-conversation, with no dialog anywhere.
+   * │
+   * │ Found 17/09 in a real company, read straight off disk: an employee whose
+   * │ entire pitch was "write the research results down" — holding the one
+   * │ capability that reaches outside the office folder.
+   * │
+   * │ ⚠ `[]` rather than deleting the key: office.ts §3206 — an empty list
+   * │ says "no additional tools", a missing key says "nobody ever thought
+   * │ about this".
+   * └────────────────────────────────────────────────────────────────────────
+   */
+  const yaml = roleTemplate('nguoi-moi', 'Someone New', 'writes things down', 'standard');
+  const parsed = YAML.parse(yaml) as { tools: unknown };
+  assert.deepEqual(parsed.tools, [], `a freshly hired employee can run commands:\n${yaml}`);
+
+  // The key has to BE there. A role with no `tools:` at all is the state the
+  // comment above calls "nobody has ever thought about this".
+  assert.match(yaml, /^tools: \[\]$/m, yaml);
 });
 
 test('🔴 `addAgent` refuses an empty pitch — the SAME gate `updateRole` already had', () => {
