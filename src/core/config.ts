@@ -66,13 +66,117 @@ function readYaml(file: string): unknown {
   }
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `_` IS BOTH THE NESTING SEPARATOR AND A LETTER INSIDE KEY NAMES, SO     │
+ * │ EVERY KEY THAT CONTAINS ONE WAS UNREACHABLE FROM THE ENVIRONMENT.        │
+ * │ (measured 18/09/2026 in a running container)                             │
+ * │                                                                          │
+ * │ `AGENTCO_RUNTIME_PUBLIC_URL` split into `runtime · public · url` and      │
+ * │ wrote `runtime.public.url`. The schema has no such key, zod strips        │
+ * │ unknown ones, and `runtime.public_url` stayed `""` — silently, with the   │
+ * │ variable sitting right there in `docker compose exec … env`.             │
+ * │                                                                          │
+ * │ ⚠ IT COST A REAL FEATURE, NOT A SETTING. Empty `public_url` + a daemon    │
+ * │ bound to `0.0.0.0` is branch ③ of `redirectBase` — REFUSE. So every       │
+ * │ OAuth sign-in through the Docker door (Notion, Linear, and every other    │
+ * │ web-flow arm) was impossible, while GitHub worked and hid it, because     │
+ * │ the device flow has no redirect at all.                                   │
+ * │                                                                          │
+ * │ ⚠ AND THREE PLACES DOCUMENTED THE SPELLING THAT COULD NOT WORK:           │
+ * │ `types.ts §public_url` calls it *"the existing env-override mechanism —   │
+ * │ no new concept invented"*, the refusal message prints it as the fix, and  │
+ * │ `docker-compose.yaml` sets it. All three were right about the intent and  │
+ * │ none of them was executable. → [[agentco-spec-says-done]]                 │
+ * │                                                                          │
+ * │ 19 keys were affected, including all nine of `budgets`.                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * The fix is to let the rule SEE what it governs: match each segment against
+ * the key names the schema really declares, longest first, instead of assuming
+ * one segment is one level. → [[agentco-rule-must-see-what-it-governs]]
+ */
+const ENV_PREFIX = 'AGENTCO_';
+
+/** Variables that drive the PROCESS, not the company. They never reach the config. */
+const NOT_CONFIG = ['company', 'dir', 'headless', 'log', 'format', 'token', 'office'];
+
+/**
+ * The key names the schema declares, as a plain nested object.
+ *
+ * ⚠ Taken from the SCHEMA, not written out here, so it cannot drift: a key
+ * added to `CompanyConfigSchema` tomorrow is addressable from the environment
+ * the same day, with nothing to remember.
+ *
+ * ⚠ Lazy and failure-tolerant: this runs before `safeParse`, so throwing here
+ * would turn a config problem into a crash somewhere that cannot explain
+ * itself. An empty map degrades to the old split-on-every-underscore
+ * behaviour — and `test/env-override.test.ts` asserts the map is NOT empty, so
+ * the degraded path is caught by a gate instead of rotting in production.
+ */
+let schemaShape: Record<string, unknown> | undefined;
+function knownKeys(): Record<string, unknown> {
+  if (schemaShape === undefined) {
+    try {
+      schemaShape = CompanyConfigSchema.parse({}) as Record<string, unknown>;
+    } catch {
+      schemaShape = {};
+    }
+  }
+  return schemaShape;
+}
+
+/**
+ * Which config path does this environment variable address? `undefined` = none.
+ *
+ * `AGENTCO_RUNTIME_PUBLIC_URL` → `['runtime', 'public_url']`
+ * `AGENTCO_RUNTIME_PORT`       → `['runtime', 'port']`
+ *
+ * ⚠ LONGEST MATCH WINS at every level. With both `public` and `public_url`
+ * declared, the greedy choice is the only one that can address the longer key
+ * at all — the shorter one is still reachable by spelling fewer segments.
+ *
+ * ⚠ A segment that matches nothing falls back to the old behaviour verbatim:
+ * the remaining parts become the path as-is. That is what keeps this change
+ * incapable of altering a variable that already worked — it can only bring a
+ * dead one to life. `test/env-override.test.ts` states that as a rule.
+ */
+export function configPathForEnv(name: string): string[] | undefined {
+  if (!name.startsWith(ENV_PREFIX)) return undefined;
+  const parts = name.slice(ENV_PREFIX.length).toLowerCase().split('_');
+  if (!parts[0] || NOT_CONFIG.includes(parts[0])) return undefined;
+
+  const out: string[] = [];
+  let node: unknown = knownKeys();
+  let i = 0;
+  while (i < parts.length) {
+    const keys =
+      node && typeof node === 'object' && !Array.isArray(node) ? Object.keys(node) : [];
+    let hit: string | undefined;
+    for (let j = parts.length; j > i; j--) {
+      const candidate = parts.slice(i, j).join('_');
+      if (keys.includes(candidate)) {
+        hit = candidate;
+        i = j;
+        break;
+      }
+    }
+    if (hit === undefined) {
+      out.push(...parts.slice(i));
+      break;
+    }
+    out.push(hit);
+    node = (node as Record<string, unknown>)[hit];
+  }
+  return out;
+}
+
 /** AGENTCO_RUNTIME_CONCURRENCY=8 -> config.runtime.concurrency = 8 */
 function applyEnvOverrides(cfg: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('AGENTCO_') || value === undefined) continue;
-    const pathParts = key.slice('AGENTCO_'.length).toLowerCase().split('_');
-    // Skip process-control variables; they are not company config
-    if (['company', 'dir', 'headless', 'log', 'format', 'token', 'office'].includes(pathParts[0] ?? '')) continue;
+    if (value === undefined) continue;
+    const pathParts = configPathForEnv(key);
+    if (!pathParts?.length) continue;
 
     let cursor: Record<string, unknown> = cfg;
     for (let i = 0; i < pathParts.length - 1; i++) {
