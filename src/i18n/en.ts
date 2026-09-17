@@ -468,8 +468,6 @@ export const en = {
   'co.armConfigMissing': 'This connection has no configuration.',
   'co.armAlreadyHere':
     'This office already has the connection “{label}”. Draw a wire from it to whoever needs it — one connection can be shared by several people.',
-  'co.folderIsOfficeItself':
-    '“{path}” contains the office’s own working folder. Employees can already read and write there at no token cost, so plugging it in is paying for something you already have. Pick a folder outside it.',
   'co.folderAlreadyCovered':
     'This folder is already covered by the office’s “{id}” connection. Wire “{id}” straight to whoever needs it — one connection can be shared by several people, and plugging in a second is paying tokens twice for the same thing.',
   'co.armPlugged': 'Plugged in “{label}”. Anyone wired to it can use it from the next job on.',
@@ -797,6 +795,18 @@ export const en = {
   'srv.updateNotPackaged':
     'This copy was installed with npm, so it updates with `agentco update` rather than from here.',
   'srv.updateBusy': 'An update is already running.',
+  /**
+   * ⚠ NAMES THE OFFICES. "Something is busy" sends somebody opening offices one
+   * by one; a name is a sentence they can act on — the same rule `officeJail`
+   * follows by denying WITH the right path.
+   *
+   * ⚠ And it says what would have happened, because the consequence is not
+   * obvious: the update ends by killing the daemon, and a task that dies with
+   * it is written down as `failed` — the log would blame the work for what the
+   * update did. → `company.ts §workingOffices`
+   */
+  'srv.updateOfficeBusy':
+    'Not updating while there is work running — {offices} is busy. Applying an update stops the company, and a task caught by that is recorded as failed, which would blame the work for something the update did.\nWait for it to finish, or press Stop, then update.',
   // ⚠ Nothing was stopped. The check happens before the daemon is touched, so
   // this is a refusal rather than the wreckage of an attempt.
   'srv.updateNoNpm':

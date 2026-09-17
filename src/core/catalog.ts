@@ -1153,49 +1153,6 @@ export function coveredBy(
 }
 
 /**
- * Does this root swallow the OFFICE (or COMPANY) directory whole?
- *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ BLOCKED, and the second reason is HEAVIER than the first.                       │
- * │                                                                          │
- * │ 1. REDUNDANT: `Read`/`Write`/`Glob`/`Grep` already read-write freely inside          │
- * │    the office directory (that's its `cwd`). Plugging an arm into that                │
- * │    exact same spot pays ~2,200 tokens PER TURN to buy a capability                  │
- * │    that's already there, for free.                                              │
- * │                                                                          │
- * │ 2. ~~IT ROUTES AROUND THE `.state/` GUARD.~~ **NO LONGER TRUE — twice over.**       │
- * │                                                                          │
- * │    ⚠ THIS PARAGRAPH USED TO SAY the hook only matched builtin tools, that            │
- * │    widening its matcher to `mcp__*` was "NOT done yet", and that "nobody              │
- * │    has measured whether that matcher actually works". All three were                │
- * │    corrected on 08/24 — `worker.ts` carries `{ matcher: 'mcp__.*' }` and              │
- * │    `scripts/spike-mcp-hook.ts` measured a real deny — and the paragraph              │
- * │    was left standing for three weeks, describing a hole as open after it              │
- * │    had been closed. That is the expensive direction of stale: a reader                │
- * │    concludes this gate is the only thing holding `.state` and does not                 │
- * │    dare touch it. → [[agentco-spec-says-done]]                                  │
- * │                                                                          │
- * │    ⚠ And on 18/09 `guardedZone` stopped naming directories at all: `.state`           │
- * │    and `.playwright-mcp` are RESERVED NAMES now, guarded wherever they                 │
- * │    appear, and office config is guarded across every office of the                  │
- * │    company. So an arm pointed anywhere — a parent, a sibling office, even              │
- * │    a different company on the same disk — meets the same fence.                     │
- * │                                                                          │
- * │ ⇒ WHAT SURVIVES OF THIS GATE IS REASON 1: the token rent. It is advice,               │
- * │ not a boundary, and it is scheduled to stop being a refusal. Do not add               │
- * │ new safety arguments here — they belong in `guardedZone`, which is the                 │
- * │ thing that runs on every tool call rather than once at configuration time.             │
- * └──────────────────────────────────────────────────────────────────────────┘
- */
-export function swallowsOffice(root: string, officeDir: string, companyDir: string): boolean {
-  const r = norm(root);
-  return [officeDir, companyDir].some((d) => {
-    const n = norm(d);
-    return n === r || n.startsWith(`${r}/`);
-  });
-}
-
-/**
  * The catalogue as the UI receives it: same shape, but every text field is the
  * SENTENCE rather than the catalogue key.
  *

@@ -35,7 +35,7 @@ import {
 } from './paths.js';
 import { Office } from './office.js';
 import { grantFor, readOAuth, readSecrets, writeSecrets } from './secrets.js';
-import { armHash, coveredBy, folderRoots, swallowsOffice } from './catalog.js';
+import { armHash, coveredBy, folderRoots } from './catalog.js';
 import { isLocale, t } from '../i18n/index.js';
 import {
   appendPurge,
@@ -138,6 +138,36 @@ export class Company {
         process.emitWarning(`Could not load office "${id}": ${msg}`);
       }
     }
+  }
+
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THE OFFICES THAT WOULD LOSE WORK IF THIS PROCESS STOPPED NOW.         │
+   * │ (added 18/09/2026)                                                       │
+   * │                                                                          │
+   * │ Four places already refuse to act on a busy office — rename, archive,     │
+   * │ delete, and the browser sign-in window. Updating was the fifth and the    │
+   * │ only one that did not ask, while being the one that takes down EVERY      │
+   * │ office at once: `/api/update` checked `updating` (one click at a time)    │
+   * │ and nothing else.                                                        │
+   * │                                                                          │
+   * │ What it costs to skip the check is not a crash, it is a LIE. The daemon   │
+   * │ dies mid-task, and on the next start `healStale()` writes `failed` over a │
+   * │ job that was running perfectly well — so the record blames the work for   │
+   * │ something the update did. A person reading that log has no way to know.   │
+   * │                                                                          │
+   * │ ⚠ RETURNS NAMES, not a boolean. "Something is busy, try later" sends      │
+   * │ somebody hunting through offices one by one; naming the one that is       │
+   * │ working gives them a sentence they can act on. Same rule as `officeJail`  │
+   * │ denying WITH the right path. → SPEC-packaging §3.7                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  workingOffices(): string[] {
+    const out: string[] = [];
+    for (const o of this.offices.values()) {
+      if (o.currentState === 'working') out.push(o.name);
+    }
+    return out;
   }
 
   list(): OfficeSummary[] {
@@ -718,15 +748,40 @@ export class Company {
     if (input.office && want.length) {
       const office = this.get(input.office);
 
-      // The office / company directory itself: redundant AND routes around
-      // the `.state/` guard. → `catalog.ts §swallowsOffice`
-      const bad = want.find((r) => swallowsOffice(r, office.loaded.dir, this.dir));
-      if (bad) {
-        throw new RunError(
-          t('co.folderIsOfficeItself', { path: bad }),
-          'other',
-        );
-      }
+      /*
+       * ┌──────────────────────────────────────────────────────────────────────
+       * │ ✅ REMOVED 18/09/2026: the refusal to pick a folder containing the
+       * │ office. It stood here for a year doing a job that now belongs
+       * │ somewhere better.
+       * │
+       * │ It was a PROXY. What actually needed protecting was four specific
+       * │ things — `.state`, `.playwright-mcp`, and the config files — and the
+       * │ only way to protect them at configuration time was to ban a whole
+       * │ SHAPE of directory. That is why it felt over-broad: it was.
+       * │
+       * │ Two things made it removable, in this order:
+       * │   08/24  the `mcp__.*` hook, so an arm's own calls meet `officeJail`
+       * │   18/09  `guardedZone` stopped naming directories — `.state` and
+       * │          `.playwright-mcp` are RESERVED NAMES guarded anywhere, and
+       * │          office config is guarded across every office of the company
+       * │
+       * │ ⇒ The fence now runs on EVERY TOOL CALL and does not care which
+       * │ folder the user picked. Banning the pick buys nothing it does not
+       * │ already have, and costs somebody with `D:\Temp` a puzzle: the office
+       * │ can sit any number of levels down, so "pick a folder outside it"
+       * │ could mean splitting one choice into ten.
+       * │
+       * │ ⚠ WHAT DOES NOT COME BACK. Do not re-add a configuration-time ban to
+       * │ close a runtime hole — that is how this one got here. A new hole
+       * │ belongs in `guardedZone`, which sees the path being touched rather
+       * │ than the folder somebody typed a week earlier.
+       * │ → `test/jail.test.ts` · [[agentco-rule-must-see-what-it-governs]]
+       * │
+       * │ ⚠ What remains true and is NOT a boundary: plugging an arm at the
+       * │ office pays token rent for `Read`/`Write`, which are already there
+       * │ and free. That is advice, and advice does not get to refuse.
+       * └──────────────────────────────────────────────────────────────────────
+       */
 
       const used = new Set<string>();
       for (const [roleId, role] of office.loaded.roles) {
