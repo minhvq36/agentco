@@ -1,6 +1,6 @@
 {
     "name": "@agent-co-app/cli",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "description": "A virtual company that runs on your machine: Claude acts as director, orchestrating a team of specialist agents running in parallel.",
     "license": "SEE LICENSE IN LICENSE.md",
     "homepage": "https://agent-co.app",
