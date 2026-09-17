@@ -795,6 +795,18 @@ export const en = {
   'srv.updateNotPackaged':
     'This copy was installed with npm, so it updates with `agentco update` rather than from here.',
   'srv.updateBusy': 'An update is already running.',
+  /**
+   * ⚠ NAMES THE OFFICES. "Something is busy" sends somebody opening offices one
+   * by one; a name is a sentence they can act on — the same rule `officeJail`
+   * follows by denying WITH the right path.
+   *
+   * ⚠ And it says what would have happened, because the consequence is not
+   * obvious: the update ends by killing the daemon, and a task that dies with
+   * it is written down as `failed` — the log would blame the work for what the
+   * update did. → `company.ts §workingOffices`
+   */
+  'srv.updateOfficeBusy':
+    'Not updating while there is work running — {offices} is busy. Applying an update stops the company, and a task caught by that is recorded as failed, which would blame the work for something the update did.\nWait for it to finish, or press Stop, then update.',
   // ⚠ Nothing was stopped. The check happens before the daemon is touched, so
   // this is a refusal rather than the wreckage of an attempt.
   'srv.updateNoNpm':

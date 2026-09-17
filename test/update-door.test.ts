@@ -348,3 +348,64 @@ test('⭐ the shipped code leaves nothing else behind', () => {
   const apply = readSrc('src/core/update-apply.ts');
   assert.equal((apply.match(/finally \{[\s\S]{0,200}?rmSync/g) ?? []).length, 2, apply.slice(0, 0) || 'both must clean up in a finally');
 });
+
+test('🔴 an update refuses while any office is working', () => {
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────
+   * │ Applying an update ends by killing this process. A task that dies with
+   * │ it is written down by `healStale()` as `failed` on the next start — so
+   * │ the record blames the WORK for what the UPDATE did, and the money spent
+   * │ sits in `usage.jsonl` attached to a job labelled a failure.
+   * │
+   * │ Four places already refused to act on a busy office (rename, archive,
+   * │ delete, browser sign-in). Updating was the fifth and the only one that
+   * │ did not ask — while being the one that takes down EVERY office at once.
+   * │ It checked `updating` (one click at a time) and nothing else.
+   * │
+   * │ ⚠ THE GATE IS ON THE SERVER, deliberately. Whatever the button does, the
+   * │ POST is what ends the process. Same lesson as `sameMachine`: a
+   * │ client-side check is a courtesy, the server is the fence.
+   * └────────────────────────────────────────────────────────────────────────
+   */
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'server', 'server.ts'), 'utf8');
+  const handler = /url\.pathname === '\/api\/update' && method === 'POST'[\s\S]{0,1400}/.exec(src)?.[0] ?? '';
+  assert.ok(handler, 'could not find the POST /api/update handler');
+
+  const busy = handler.indexOf('workingOffices()');
+  const apply = handler.indexOf('updating = true');
+  assert.ok(busy > 0, 'the update no longer asks which offices are working');
+  assert.ok(
+    busy < apply,
+    'the busy check runs AFTER the update is already claimed — it has to refuse before anything starts',
+  );
+  assert.match(handler, /srv\.updateOfficeBusy/, 'the refusal does not say why');
+
+  // It must cover BOTH doors, so it sits above the packaged/npm fork.
+  assert.ok(busy < handler.indexOf("installKind() === 'packaged'"), 'the npm door slips past the check');
+});
+
+test('the refusal NAMES the offices, in both languages', () => {
+  // "Something is busy" sends somebody opening offices one by one. A name is a
+  // sentence they can act on — the rule `officeJail` follows by denying WITH
+  // the path to use.
+  for (const file of ['src/i18n/en.ts', 'src/i18n/vi.ts']) {
+    const cat = readSrc(file);
+    const msg = /'srv\.updateOfficeBusy':\s*\n?\s*'([^']*)'/.exec(cat)?.[1] ?? '';
+    assert.ok(msg, `${file} has no srv.updateOfficeBusy`);
+    assert.ok(msg.includes('{offices}'), `${file} does not name the offices`);
+  }
+});
+
+test('⚠ `agentco update` the COMMAND is deliberately not gated the same way', () => {
+  /*
+   * Not an oversight, and written down so nobody "fixes" it in a hurry: the
+   * command is somebody typing a deliberate instruction in a terminal that
+   * then tells them what it stopped. The BUTTON is a casual click inside a
+   * running company, and it is the one that becomes automatic later — which is
+   * why the gate lives on the request, where a scheduler will pass through it
+   * too. If the command ever grows the same check, it belongs in the same
+   * place: `Company.workingOffices()`.
+   */
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'core', 'company.ts'), 'utf8');
+  assert.match(src, /workingOffices\(\): string\[\]/, 'the shared helper is gone');
+});

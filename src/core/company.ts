@@ -140,6 +140,36 @@ export class Company {
     }
   }
 
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 THE OFFICES THAT WOULD LOSE WORK IF THIS PROCESS STOPPED NOW.         │
+   * │ (added 18/09/2026)                                                       │
+   * │                                                                          │
+   * │ Four places already refuse to act on a busy office — rename, archive,     │
+   * │ delete, and the browser sign-in window. Updating was the fifth and the    │
+   * │ only one that did not ask, while being the one that takes down EVERY      │
+   * │ office at once: `/api/update` checked `updating` (one click at a time)    │
+   * │ and nothing else.                                                        │
+   * │                                                                          │
+   * │ What it costs to skip the check is not a crash, it is a LIE. The daemon   │
+   * │ dies mid-task, and on the next start `healStale()` writes `failed` over a │
+   * │ job that was running perfectly well — so the record blames the work for   │
+   * │ something the update did. A person reading that log has no way to know.   │
+   * │                                                                          │
+   * │ ⚠ RETURNS NAMES, not a boolean. "Something is busy, try later" sends      │
+   * │ somebody hunting through offices one by one; naming the one that is       │
+   * │ working gives them a sentence they can act on. Same rule as `officeJail`  │
+   * │ denying WITH the right path. → SPEC-packaging §3.7                       │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  workingOffices(): string[] {
+    const out: string[] = [];
+    for (const o of this.offices.values()) {
+      if (o.currentState === 'working') out.push(o.name);
+    }
+    return out;
+  }
+
   list(): OfficeSummary[] {
     const out: OfficeSummary[] = [];
     for (const o of this.offices.values()) {

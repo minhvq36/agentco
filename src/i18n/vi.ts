@@ -602,6 +602,8 @@ export const vi: Catalog = {
   'srv.updateNotPackaged':
     'Bản này cài bằng npm, nên cập nhật bằng `agentco update` chứ không phải từ đây.',
   'srv.updateBusy': 'Đang có một lượt cập nhật chạy rồi.',
+  'srv.updateOfficeBusy':
+    'Chưa cập nhật khi còn việc đang chạy — {offices} đang làm. Cập nhật sẽ tắt công ty, mà việc bị tắt giữa chừng sẽ được ghi là thất bại, tức là đổ lỗi cho công việc vì chuyện do bản cập nhật gây ra.\nĐợi nó xong, hoặc bấm Dừng, rồi cập nhật.',
   'srv.updateNoNpm':
     'Không tìm thấy npm cạnh Node này nên không có gì để giao việc. Không có gì bị tắt cả.',
   'cli.versionNpm': '  cài bằng npm',

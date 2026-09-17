@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Daemon: HTTP + SSE.
  *
  * → docs/SPEC-offices.md §8, docs/SPEC-cli.md §1
@@ -1317,6 +1317,23 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      */
     if (url.pathname === '/api/update' && method === 'POST') {
       if (updating) return json(res, 409, { error: t('srv.updateBusy') });
+
+      /*
+       * ⚠ NOT WHILE SOMEBODY IS WORKING. Applying an update ends by killing
+       * this process, and a task dying with it comes back marked `failed` by
+       * `healStale()` on the next start — so the log blames the work for what
+       * the update did, and nobody reading it can tell.
+       *
+       * ⚠ THE GATE IS HERE, not in the interface. Whatever a button does or
+       * does not do, this is the request that ends the process. Same lesson as
+       * `sameMachine` earlier today: a client-side check is a courtesy, and the
+       * server is the fence. → `company.ts §workingOffices`
+       */
+      const busy = company.workingOffices();
+      if (busy.length) {
+        return json(res, 409, { error: t('srv.updateOfficeBusy', { offices: busy.join(', ') }) });
+      }
+
       updating = true;
 
       /*
