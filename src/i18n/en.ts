@@ -152,6 +152,14 @@ export const en = {
   'settings.updateWorking': 'Updating — this page will come back on its own.',
   'settings.updateFailed': 'Nothing changed. The old version is still running — see the terminal.',
   /**
+   * ⚠ IT SAYS "INSTALLED", because it is — `writeCurrent()` already ran. What
+   * did not happen is the restart, and it did not happen because somebody was
+   * working. Saying "nothing changed" here (which is what the watcher would
+   * conclude from `/healthz`) would be wrong twice: it changed, and the reason
+   * it looks unchanged is a decision we made on the user's behalf.
+   */
+  'settings.updatePending': 'v{version} is installed — it starts the next time you open agentco. Work was running, so nothing was interrupted.',
+  /**
    * Doubles as the tooltip and as the accessible name of the title, so it has
    * to say WHAT IT IS as well as what to do with it — "Rename" alone would
    * leave a screen reader announcing a nameless control at the top of the app.
@@ -831,6 +839,14 @@ export const en = {
   // nothing will be started, and saying otherwise is the cheapest way to look
   // broken while working correctly.
   'cli.updateHandedOffIdle': 'Installing {target} in a separate process.',
+  /**
+   * ⚠ THE COMMAND'S OWN PAIR, and it promises something different: npm is about
+   * to speak, on this terminal, and this command is not going anywhere until it
+   * is done. The `HandedOff` pair above stays for the BUTTON, which really does
+   * hand the work to a process nobody is watching. → `cli/index.ts §updateInTerminal`
+   */
+  'cli.updateStarting': 'Installing {target}, then starting the company again.',
+  'cli.updateStartingIdle': 'Installing {target}.',
   // ⚠ The only place a failure can be read from: by the time npm speaks, this
   // command has exited and nobody is attached to anything.
   'cli.updateLog': '  progress and any error:  {path}',

@@ -275,7 +275,34 @@ const args = [npmCli, 'install', '--global', pkg + '@' + target, '--no-audit', '
 if (prefix) args.push('--prefix', prefix);
 const code = await run(args);
 if (code !== 0) {
-  console.error('\\nagentco update: npm exited ' + code + '. Nothing was replaced — run \`agentco start\` to carry on.');
+  /*
+   * 🔴 IT USED TO SAY "Nothing was replaced", WHICH IT CANNOT KNOW. Measured
+   * 18/09/2026: the disk filled mid-install, npm had already swapped the tree
+   * and never wrote the shims, and this line cheerfully told somebody to run a
+   * command that no longer existed.
+   *
+   * So ASK THE DISK instead of asserting. The shim is the one thing that
+   * decides whether the install is still usable, and its two shapes are known:
+   * \`<prefix>/agentco.cmd\` on Windows, \`<prefix>/bin/agentco\` on POSIX.
+   * This is the last moment anything of ours is alive to say it — after this
+   * the binary may be gone, and with it every way we have of speaking.
+   */
+  let alive = true;
+  if (prefix) {
+    const { existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    alive =
+      existsSync(join(prefix, 'agentco.cmd')) ||
+      existsSync(join(prefix, 'agentco')) ||
+      existsSync(join(prefix, 'bin', 'agentco'));
+  }
+  console.error(
+    alive
+      ? '\\nagentco update: npm exited ' + code + '. The old version is still there — run \`agentco start\` to carry on.'
+      : '\\nagentco update: npm exited ' + code + ', and the install is now BROKEN — \`agentco\` is gone from ' +
+        prefix +
+        '.\\nRepair it with:  npm i -g ' + pkg + '\\n(a full disk is the usual cause; \`npm cache clean --force\` frees the most)',
+  );
   process.exit(code);
 }
 

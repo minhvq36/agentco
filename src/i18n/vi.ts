@@ -100,6 +100,8 @@ export const vi: Catalog = {
   'settings.updateTo': 'Cập nhật lên {version}',
   'settings.updateWorking': 'Đang cập nhật — trang này sẽ tự quay lại.',
   'settings.updateFailed': 'Không có gì thay đổi. Bản cũ vẫn đang chạy — xem terminal.',
+  'settings.updatePending':
+    'Đã cài xong v{version} — nó sẽ chạy ở lần mở agentco kế tiếp. Lúc đó đang có việc chạy nên không có gì bị ngắt.',
   'header.companyRenameTip': 'Tên công ty — nháy đúp để sửa',
   'header.state.idle': 'rảnh',
   'header.state.working': 'đang làm',
@@ -619,6 +621,8 @@ export const vi: Catalog = {
     'Không tìm thấy npm cạnh Node này nên không có gì để giao việc. Công ty **chưa** bị tắt.\nTự cập nhật bằng:  {command}',
   'cli.updateHandedOff': 'Đang cài {target} ở một tiến trình riêng, xong sẽ bật lại công ty.',
   'cli.updateHandedOffIdle': 'Đang cài {target} ở một tiến trình riêng.',
+  'cli.updateStarting': 'Đang cài {target}, xong sẽ bật lại công ty.',
+  'cli.updateStartingIdle': 'Đang cài {target}.',
   'cli.updateLog': '  tiến trình và lỗi nếu có:  {path}',
   'cli.updateNoSpace':
     'Không đủ chỗ trống để cài, nên chưa đụng vào gì cả — công ty vẫn nguyên và vẫn chạy được.\nCài cần khoảng {need} trống; "{dir}" còn {free}.\nDọn bớt chỗ rồi thử lại. `npm cache clean --force` thường là chỗ lấy lại được nhiều nhất.',
