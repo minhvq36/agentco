@@ -571,15 +571,24 @@ async function cmdUpdate(): Promise<void> {
 
   // Restart only what was actually running. `info` is the daemon this command
   // stopped a moment ago; absent means there was nothing to put back.
-  const handed = handOffUpdate(target, !!info);
-  if (!handed.ok) {
+  /*
+   * ⚠ IT RUNS HERE AND THIS COMMAND WAITS. npm's own output goes straight to
+   * the terminal somebody is already looking at, and the command ends when the
+   * work ends — healthy or not. → `updateInTerminal`
+   */
+  console.log(t(info ? 'cli.updateStarting' : 'cli.updateStartingIdle', { target }));
+  const ran = await updateInTerminal(target, !!info);
+  if (!ran.ok) {
     // Only reachable if the disk filled between the check above and here.
-    console.error(handed.why);
+    console.error(ran.why);
     process.exit(EXIT.config);
   }
-  console.log(t(info ? 'cli.updateHandedOff' : 'cli.updateHandedOffIdle', { target }));
-  console.log(t('cli.updateLog', { path: handed.logPath }));
-  process.exit(EXIT.ok);
+  /*
+   * ⚠ ITS exit code, not a cheerful zero. `agentco update` in a script has to
+   * be able to fail, and the helper already prints the reason — including,
+   * since 18/09, whether the install is still usable at all.
+   */
+  process.exit(ran.code === 0 ? EXIT.ok : EXIT.general);
 }
 
 /**
@@ -629,10 +638,17 @@ function updateRefusal(target: string): string | undefined {
   });
 }
 
-function handOffUpdate(target: string, restart: boolean, waitUrl?: string): HandOff {
-  const why = updateRefusal(target);
-  if (why) return { ok: false, why };
-
+/**
+ * The helper script and the arguments it needs, written outside the package.
+ *
+ * ⚠ ONE SCRIPT, TWO WAYS OF RUNNING IT. The work npm does is identical; what
+ * differs is whether anybody is watching. → `handOffUpdate` · `updateInTerminal`
+ */
+function prepareHelper(
+  target: string,
+  restart: boolean,
+  waitUrl?: string,
+): { dir: string; argv: string[] } {
   const npmCli = findNpmCli()!;
   const root = packageRoot();
   const prefix = globalPrefixFor(root);
@@ -641,6 +657,61 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): Hand
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-update-'));
   const script = path.join(dir, 'update.mjs');
   fs.writeFileSync(script, updateScript(), 'utf8');
+
+  return {
+    dir,
+    argv: [script, npmCli, PACKAGE_NAME, target, root, companyDir, prefix ?? '', restart ? '1' : '', waitUrl ?? ''],
+  };
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE COMMAND RUNS IT IN FRONT OF YOU, AND WAITS. (user, 18/09/2026)       │
+ * │                                                                          │
+ * │ *"`agentco update` is a perfectly healthy command, it should not be       │
+ * │ making a job — let it finish and end, healthy or not."*                   │
+ * │                                                                          │
+ * │ Detaching exists because the helper has to OUTLIVE the process while npm  │
+ * │ replaces the package that process is running from. That reason belongs to │
+ * │ THE BUTTON, where the daemon is dying and nobody is watching. Typed in a  │
+ * │ terminal the situation is the opposite: the person IS the log, and a      │
+ * │ command that returns instantly and writes its real news to a file in TEMP │
+ * │ is a command whose failures nobody ever reads — which is exactly how a    │
+ * │ full disk spent an evening looking like a hang.                           │
+ * │                                                                          │
+ * │ ⚠ THE CI HANG CANNOT COME BACK HERE. `stdio: 'inherit'` was poison on a   │
+ * │ DETACHED child — it kept our handles open after we exited, so `'close'`   │
+ * │ never fired and anything waiting on the command hung to its own timeout.  │
+ * │ A child we wait for has no such gap, and `smoke-npm.ts` (which runs this  │
+ * │ very command and waits for it to CLOSE) gets a truer answer than before.  │
+ * │                                                                          │
+ * │ ⚠ Still a separate PROCESS, not an inline `npm install`. npm is replacing │
+ * │ the files this code was loaded from; running it from a script outside the │
+ * │ package is the part that was never negotiable.                            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+async function updateInTerminal(target: string, restart: boolean): Promise<{ ok: false; why: string } | { ok: true; code: number }> {
+  const why = updateRefusal(target);
+  if (why) return { ok: false, why };
+
+  const { argv } = prepareHelper(target, restart);
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, argv, { stdio: 'inherit', windowsHide: true });
+    // Without this listener a missing binary KILLS the process instead of
+    // throwing — `try/catch` catches exactly none of it.
+    child.on('error', (err) => {
+      console.error(err.message);
+      resolve({ ok: true, code: 1 });
+    });
+    child.on('exit', (code) => resolve({ ok: true, code: code ?? 1 }));
+  });
+}
+
+function handOffUpdate(target: string, restart: boolean, waitUrl?: string): HandOff {
+  const why = updateRefusal(target);
+  if (why) return { ok: false, why };
+
+  const { dir, argv } = prepareHelper(target, restart, waitUrl);
 
   /**
    * ┌──────────────────────────────────────────────────────────────────────────┐
@@ -658,6 +729,10 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): Hand
    * │ npm scroll past is not worth that. The output goes to a file instead and  │
    * │ the path is printed — which is also the only place a failure could be     │
    * │ read from, since by then nobody is attached to anything.                  │
+   * │                                                                          │
+   * │ ⚠ THIS IS THE BUTTON'S PATH ONLY, since 18/09. The COMMAND runs the same  │
+   * │ script in the foreground and waits for it — there the person is the log,  │
+   * │ and a file in TEMP is where its news went to die. → `updateInTerminal`    │
    * └──────────────────────────────────────────────────────────────────────────┘
    */
   const logPath = path.join(dir, 'update.log');
@@ -671,7 +746,7 @@ function handOffUpdate(target: string, restart: boolean, waitUrl?: string): Hand
    */
   const child = spawn(
     process.execPath,
-    [script, npmCli, PACKAGE_NAME, target, root, companyDir, prefix ?? '', restart ? '1' : '', waitUrl ?? ''],
+    argv,
     // ⚠ `windowsHide` as well: a detached child of a process with no console is
     // exactly what Windows answers by opening one. → the no-flashing-console rule
     { detached: true, stdio: ['ignore', log, log], windowsHide: true },

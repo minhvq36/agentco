@@ -94,6 +94,17 @@ export function Sidebar() {
   const unread = useApp((s) => s.messages.length - s.seenMessages);
   const working = useApp((s) => s.officeState === 'working');
   /**
+   * A newer version exists and nobody has looked yet.
+   *
+   * ⚠ IT FOLLOWS THE `chat` DOT, NOT THE `plans` ONE, and the two differ in
+   * what they are: `working` is a live fact that returns the moment it is true
+   * again; `unread` is something you can have SEEN. A waiting version is the
+   * second kind — opening Settings settles it for this session, closing the
+   * panel does not un-settle it, and a reload brings it back because the
+   * version is still waiting. → `store.ts §seenUpdate`
+   */
+  const newVersion = useApp((s) => s.updateAvailable && !s.seenUpdate);
+  /**
    * NO OFFICES ⇒ only the COMPANY-level drawer remains. (bug 02/09)
    *
    * The other five drawers describe an open office, so they are meaningless
@@ -232,6 +243,15 @@ export function Sidebar() {
                   )}
                   {tab.id === 'plans' && working && !on && (
                     <span className="soft-pulse absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent" />
+                  )}
+                  {/*
+                    ⚠ NOT `soft-pulse`. Pulsing is what `plans` uses to say
+                    "happening right now"; a version sitting on a server is a
+                    standing fact, and borrowing the urgent animation for it
+                    teaches people to read both of them wrong.
+                  */}
+                  {tab.id === 'settings' && newVersion && !on && (
+                    <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent" />
                   )}
                 </span>
               </Button>

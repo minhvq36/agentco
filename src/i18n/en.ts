@@ -839,6 +839,14 @@ export const en = {
   // nothing will be started, and saying otherwise is the cheapest way to look
   // broken while working correctly.
   'cli.updateHandedOffIdle': 'Installing {target} in a separate process.',
+  /**
+   * ⚠ THE COMMAND'S OWN PAIR, and it promises something different: npm is about
+   * to speak, on this terminal, and this command is not going anywhere until it
+   * is done. The `HandedOff` pair above stays for the BUTTON, which really does
+   * hand the work to a process nobody is watching. → `cli/index.ts §updateInTerminal`
+   */
+  'cli.updateStarting': 'Installing {target}, then starting the company again.',
+  'cli.updateStartingIdle': 'Installing {target}.',
   // ⚠ The only place a failure can be read from: by the time npm speaks, this
   // command has exited and nobody is attached to anything.
   'cli.updateLog': '  progress and any error:  {path}',

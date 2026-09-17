@@ -32,6 +32,35 @@ import { agentcoCmd } from '../dist/cli/launcher-text.js';
 import { checkSpace, findNpmCli, globalPrefixFor, sweepOldUpdateDirs, updateScript } from '../dist/cli/update-run.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Source with the COMMENT LINES REMOVED.
+ *
+ * ┌────────────────────────────────────────────────────────────────────────────
+ * │ 🔴 FOUR TIMES IN ONE EVENING a gate here tripped over prose that explains
+ * │ the very thing it forbids: the Dockerfile's `--omit=optional` warning,
+ * │ `token-door`'s own text naming `/api/events`, the helper's paragraph about
+ * │ "Nothing was replaced", and `handOffUpdate`'s box explaining why it does
+ * │ NOT use `stdio: 'inherit'`.
+ * │
+ * │ ⚠ AND ONE OF THEM STAYED GREEN FOR THE WRONG REASON, which is the shape
+ * │ worth naming: after the behaviour changed, a test went on passing because
+ * │ it matched the paragraph describing the OLD behaviour. A red test gets
+ * │ fixed; a green one that proves nothing is never looked at again.
+ * │
+ * │ The rule is the same one `scripts/check-language.ts` and
+ * │ `docker-door.test.ts §code` follow: a gate that cannot tell instructions
+ * │ from documentation gets switched off within the week.
+ * └────────────────────────────────────────────────────────────────────────────
+ */
+const code = (text: string): string =>
+  text
+    .split('\n')
+    .filter((l) => {
+      const s = l.trim();
+      return !s.startsWith('*') && !s.startsWith('//') && !s.startsWith('/*');
+    })
+    .join('\n');
 const CLI = path.join(ROOT, 'dist', 'cli', 'index.js');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as {
   version: string;
@@ -92,12 +121,20 @@ test('🔴 the update helper is never handed THIS process’s stdio', () => {
    * │ back between those runs.                                                │
    * └────────────────────────────────────────────────────────────────────────┘
    */
+  /*
+   * ⚠ SCOPED TO `handOffUpdate`, not to the shape of the argument list. Since
+   * 18/09 there are TWO spawns of the same helper — the command runs it in the
+   * foreground and waits, which is safe precisely because it is not detached —
+   * so a file-wide search for `stdio: 'inherit'` would now fail on the correct
+   * code. The rule was never "nobody inherits"; it is "THE DETACHED ONE must
+   * not". → `updateInTerminal`
+   */
   const src = fs.readFileSync(path.join(ROOT, 'src', 'cli', 'index.ts'), 'utf8');
-  const call = /const child = spawn\(\s*process\.execPath,\s*\[\s*script,[\s\S]*?\n  \);/.exec(src);
-  assert.ok(call, 'could not find the hand-off spawn in cli/index.ts');
-  assert.doesNotMatch(call[0], /stdio: 'inherit'/, `the helper inherits our stdio:\n${call[0]}`);
-  assert.match(call[0], /stdio: \['ignore', log, log\]/, call[0]);
-  assert.match(call[0], /detached: true/, call[0]);
+  const fn = code(/function handOffUpdate[\s\S]*?\n\}/.exec(src)?.[0] ?? '');
+  assert.ok(fn, 'could not find handOffUpdate in cli/index.ts');
+  assert.doesNotMatch(fn, /stdio: 'inherit'/, `the detached helper inherits our stdio:\n${fn}`);
+  assert.match(fn, /stdio: \['ignore', log, log\]/, fn);
+  assert.match(fn, /detached: true/, fn);
 });
 
 test('the update helper never calls npm by name, and restarts by path', () => {
@@ -112,8 +149,14 @@ test('the update helper never calls npm by name, and restarts by path', () => {
   // a PATH this shell may not have refreshed.
   assert.match(script, /packageRoot \+ '\/dist\/cli\/index\.js'/, script);
 
-  // npm failing must leave the old package in place and say so.
-  assert.match(script, /Nothing was replaced/, script);
+  /*
+   * ⚠ THIS LINE USED TO ASSERT THE OPPOSITE, and it kept passing after the
+   * behaviour changed — by matching the paragraph in the helper that EXPLAINS
+   * the old claim. A test green for the wrong reason is worse than a red one.
+   * The rule now: npm failing must report what it LOOKED AT, never assert what
+   * it cannot know. The full gate is further down this file.
+   */
+  assert.match(script, /existsSync\(join\(prefix/, 'the helper no longer checks whether the shim survived');
 
   // A missing binary reports through the 'error' event or it kills the process.
   assert.match(script, /child\.on\('error'/, script);
@@ -469,24 +512,82 @@ test('🔴 npm failing no longer CLAIMS nothing was replaced — it looks', () =
    * is alive to say anything at all.
    */
   const script = updateScript();
-  /*
-   * ⚠ COMMENT LINES STRIPPED, and the first draft of this very test forgot:
-   * the helper spends a paragraph explaining what the old line claimed, so the
-   * gate tripped over its own documentation. Third time in this repo — the
-   * Dockerfile's `--omit=optional` warning, `token-door`'s own prose naming
-   * `/api/events`, and now this. → `docker-door.test.ts §code`
-   */
-  const code = script
-    .split('\n')
-    .filter((l) => {
-      const s = l.trim();
-      return !s.startsWith('*') && !s.startsWith('//') && !s.startsWith('/*');
-    })
-    .join('\n');
-  assert.doesNotMatch(code, /Nothing was replaced/, 'the claim it cannot verify is back');
+  // ⚠ Comments stripped: the helper spends a paragraph explaining what the old
+  // line claimed. → the note on `code` at the top of this file.
+  const body = code(script);
+  assert.doesNotMatch(body, /Nothing was replaced/, 'the claim it cannot verify is back');
   // Both shim shapes: `<prefix>/agentco.cmd` on Windows, `<prefix>/bin/agentco` on POSIX.
-  assert.match(script, /agentco\.cmd/, script.slice(0, 0) || 'it does not look for the Windows shim');
+  assert.match(body, /agentco\.cmd/, 'it does not look for the Windows shim');
   assert.match(script, /'bin', 'agentco'/, 'it does not look for the POSIX shim');
   // And when it is gone, it says the one thing that repairs it.
   assert.match(script, /npm i -g/, 'a broken install gets no repair command');
+});
+
+test('🔴 `agentco update` runs in front of you and WAITS — no job, no log file to hunt', () => {
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────
+   * │ The user, 18/09/2026, after watching the command return instantly and
+   * │ print a path into TEMP: *"it is a perfectly healthy command, it should
+   * │ not be making a job — let it finish and end, healthy or not."*
+   * │
+   * │ Detaching exists so the helper OUTLIVES a process whose files npm is
+   * │ replacing. That reason belongs to the BUTTON, where the daemon is dying
+   * │ and nobody is watching. Typed in a terminal the person IS the log — and
+   * │ news written to a file in TEMP is news nobody reads, which is how a full
+   * │ disk spent an evening looking like a hang.
+   * │
+   * │ ⚠ The CI hang cannot return here: `stdio:'inherit'` was poison on a
+   * │ DETACHED child, whose open handles meant `'close'` never fired. A child
+   * │ we wait for has no such gap.
+   * └────────────────────────────────────────────────────────────────────────
+   */
+  const src = readSrc('src/cli/index.ts');
+
+  const fg = /async function updateInTerminal[\s\S]*?\n\}/.exec(src)?.[0] ?? '';
+  assert.ok(fg, 'updateInTerminal is gone — the command is a job again');
+  assert.match(fg, /stdio: 'inherit'/, 'the command hides npm output again');
+  assert.doesNotMatch(fg, /detached/, 'the command detaches again, so it cannot wait');
+  assert.match(fg, /child\.on\('exit'/, 'it does not wait for the helper to finish');
+
+  // The BUTTON keeps the old shape, and must: nobody is attached to read it.
+  const bg = /function handOffUpdate[\s\S]*?\n\}/.exec(src)?.[0] ?? '';
+  assert.match(bg, /detached: true/, bg);
+  assert.match(bg, /stdio: \['ignore', log, log\]/, bg);
+
+  // And the command reports the helper's own exit code, so a script can fail.
+  const cmd = src.slice(src.indexOf('async function cmdUpdate'));
+  assert.match(cmd.slice(0, 3000), /await updateInTerminal\(/, 'cmdUpdate no longer waits');
+  assert.match(cmd.slice(0, 3000), /ran\.code === 0 \? EXIT\.ok : EXIT\.general/, 'it always exits 0');
+});
+
+test('🔴 the Settings dot follows `chat`, and its "seen" NEVER reaches the disk', () => {
+  /*
+   * In memory it means "quiet for now"; on disk it would mean "silenced until
+   * somebody clears their browser data" — which is how a person ends up
+   * running an old version believing they are current. The top-of-screen
+   * banner was deleted outright partly to stop keeping a dismissible
+   * notification alive; persisting this would rebuild it in a smaller box.
+   */
+  const store = readSrc('web/src/lib/store.ts');
+  assert.match(store, /seenUpdate: boolean/, 'the flag is gone');
+  assert.match(store, /next === 'settings' \? \{ seenUpdate: true \}/, 'opening Settings no longer settles it');
+  assert.match(store, /updateAvailable: v\.available/, 'the store never learns whether a version is waiting');
+
+  // THE GATE: no persistence, by any route.
+  for (const m of store.matchAll(/(localStorage|sessionStorage)\.[a-zA-Z]+\(([^)]*)\)/g)) {
+    assert.doesNotMatch(m[0], /seenUpdate|updateAvailable/, `the update dot is being persisted: ${m[0]}`);
+  }
+
+  const bar = readSrc('web/src/components/Sidebar.tsx');
+  assert.match(bar, /id: 'settings'/, 'the tab id changed and the dot now matches nothing');
+  assert.match(bar, /s\.updateAvailable && !s\.seenUpdate/, 'the dot no longer reads both halves');
+  assert.match(bar, /tab\.id === 'settings' && newVersion && !on/, 'the dot ignores whether the panel is open');
+
+  /*
+   * ⚠ NOT `soft-pulse`. Pulsing is `plans` saying "happening right now"; a
+   * version sitting on a server is a standing fact. Borrowing the urgent
+   * animation for it teaches people to read both of them wrong.
+   */
+  const dot = /tab\.id === 'settings' && newVersion && !on[\s\S]{0,220}/.exec(bar)?.[0] ?? '';
+  assert.doesNotMatch(dot, /soft-pulse/, dot);
 });

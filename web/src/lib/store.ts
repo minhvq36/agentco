@@ -155,6 +155,32 @@ export interface AppState {
   messages: ChatMessage[];
   /** How many messages have been read. The "new message" dot must tell the truth, or drop it entirely. */
   seenMessages: number;
+  /**
+   * Is a newer version available — for the dot on the Settings tab.
+   *
+   * ⚠ READ AT BOOT, and that costs nothing: `GET /api/update` answers **from
+   * the cache only** and never touches the network (`server.ts §/api/update`).
+   * The dot has to be knowable BEFORE somebody opens Settings, which is the
+   * whole reason it cannot stay inside the panel that fetches it today.
+   */
+  updateAvailable: boolean;
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ SEEN THIS SESSION — and DELIBERATELY NOT PERSISTED. (user, 18/09/2026)   │
+   * │                                                                          │
+   * │ The dot follows the `chat` model, not the `plans` one: it goes out when   │
+   * │ you open Settings and stays out even if you close without updating, then  │
+   * │ comes back on a reload. "I have seen it, be quiet for now."               │
+   * │                                                                          │
+   * │ ⚠ IT MUST NEVER REACH `localStorage`. In memory it means *quiet for now*; │
+   * │ on disk it would mean *silenced until somebody clears their browser       │
+   * │ data*, which is how a person ends up running March's version believing    │
+   * │ they are current. The top-of-screen banner was deleted outright (plan B)  │
+   * │ partly to avoid keeping a dismissible-notification mechanism alive;       │
+   * │ writing this one down would be rebuilding it in a smaller box.            │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  seenUpdate: boolean;
   live: Record<string, LiveAgent>;
   cost: (Usage & { tasks: number }) | null;
   /**
@@ -386,6 +412,8 @@ const initial: AppState = {
   plan: null,
   messages: [],
   seenMessages: 0,
+  updateAvailable: false,
+  seenUpdate: false,
   live: {},
   cost: null,
   energy: null,
@@ -619,6 +647,18 @@ export const actions = {
     // `company.yaml` is the authority; the browser mirror was only a guess to
     // get the first paint right. Correct it now, silently, if they disagree.
     if (company.language && company.language !== state.locale) applyLocale(company.language);
+
+    /*
+     * ⚠ NOT AWAITED, and its failure is not this boot's problem. It answers
+     * from a cache and never reaches the network, so it is fast — but a dot is
+     * decoration next to an office that will not open, and nothing here should
+     * be able to delay the first paint or turn a missing field into a white
+     * screen. → `updateAvailable`
+     */
+    void api
+      .update()
+      .then((v) => set({ updateAvailable: v.available }))
+      .catch(() => undefined);
 
     if (company.offices.length === 0) {
       set({ loading: false, officeId: null, canvas: null });
@@ -1257,7 +1297,14 @@ export const actions = {
   /** Clicking the tab already open CLOSES it. That is what a tab does. */
   openPanel(panel: PanelId | null): void {
     const next = state.panel === panel ? null : panel;
-    set({ panel: next, ...(next === 'chat' ? { seenMessages: state.messages.length } : {}) });
+    set({
+      panel: next,
+      ...(next === 'chat' ? { seenMessages: state.messages.length } : {}),
+      // Opening Settings is the acknowledgement. Closing it again is not an
+      // un-acknowledgement — that is the whole difference from the `plans` dot,
+      // which is a live fact rather than something you can have seen.
+      ...(next === 'settings' ? { seenUpdate: true } : {}),
+    });
   },
 
   /**
