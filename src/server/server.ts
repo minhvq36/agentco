@@ -736,7 +736,14 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
       // The token rides in the HTML, because the interface has no way to ask for
       // it: any endpoint serving it would sit behind the very gate it unlocks.
       // Undefined on loopback ⇒ nothing is injected. → server/static.ts
-      serveStatic(req, res, url.pathname, opts.token);
+      // `sameMachine` rides along for the same reason and by the same route: it
+      // is read from the SOCKET, which only the daemon can see, and the
+      // interface used to guess it from its own address bar — wrong under
+      // Docker, where the bridge is not loopback. → static.ts §BootFacts
+      serveStatic(req, res, url.pathname, {
+        token: opts.token,
+        sameMachine: isLoopback(req.socket.remoteAddress),
+      });
       return;
     }
     if (url.pathname === '/api/company' && method === 'GET') {

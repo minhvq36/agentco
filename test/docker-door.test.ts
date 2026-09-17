@@ -105,7 +105,28 @@ test('🔴 OAuth is declared an address, or every sign-in refuses to start', () 
    * device flow; Notion and Google do not. Measured: the first version of this
    * compose file was missing the line.
    */
-  assert.match(COMPOSE, /AGENTCO_RUNTIME_PUBLIC_URL: "http:\/\/127\.0\.0\.1:\$\{AGENTCO_PORT/, COMPOSE);
+  const line = /^\s*AGENTCO_RUNTIME_PUBLIC_URL: "(.+)"\s*$/m.exec(COMPOSE)?.[1];
+  assert.ok(line, 'no AGENTCO_RUNTIME_PUBLIC_URL in docker-compose.yaml');
+
+  // The fallback is the loopback address built from the one port variable, so
+  // the ordinary setup needs nothing declared and still gets a valid redirect.
+  assert.match(line, /http:\/\/127\.0\.0\.1:\$\{AGENTCO_PORT/, line);
+
+  /*
+   * ⚠ AND IT MUST BE OVERRIDABLE. The two cases that REQUIRE a different value
+   * — a domain in front, or a mapping whose outside port differs from the
+   * inside one — are exactly the cases a deployer hits, and a hardcoded value
+   * left them editing this file. `:-`, not `-`: an empty line in `.env` (which
+   * is what `.env.example` ships) must fall through to the default rather than
+   * declare the empty string, which `redirectBase` would read as "undeclared"
+   * and refuse on.
+   */
+  assert.match(
+    line,
+    /^\$\{AGENTCO_RUNTIME_PUBLIC_URL:-/,
+    'hardcoded: a domain or a remapped port could then only be set by editing the compose file',
+  );
+  assert.match(ENV_EXAMPLE, /^AGENTCO_RUNTIME_PUBLIC_URL=$/m, 'the template never offers the override');
 });
 
 test('🔴 the image never omits the optional dependency Claude Code arrives in', () => {

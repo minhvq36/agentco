@@ -88,7 +88,13 @@ services:
       # env-over-file mechanism as the line below. -> core/config.ts
       AGENTCO_RUNTIME_PORT: "${AGENTCO_PORT:-7317}"
 
-      AGENTCO_RUNTIME_PUBLIC_URL: "http://127.0.0.1:${AGENTCO_PORT:-7317}"
+      # ⚠ OVERRIDABLE FROM `.env`, with the loopback address as the fallback.
+      # It used to be hardcoded here, which meant the one case that REQUIRES a
+      # different value — a domain in front, or a mapping whose outside port
+      # differs from the inside one — could only be fixed by editing this file.
+      # Asking someone to edit the compose file to deploy it is asking them to
+      # maintain a fork of it. → `.env.example §The public address`
+      AGENTCO_RUNTIME_PUBLIC_URL: "${AGENTCO_RUNTIME_PUBLIC_URL:-http://127.0.0.1:${AGENTCO_PORT:-7317}}"
 
       # ┌──────────────────────────────────────────────────────────────────────
       # │ SIGNING IN TO CLAUDE — MINTED BEFORE `up`, NOT INSIDE THE CONTAINER.

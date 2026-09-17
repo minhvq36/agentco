@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { actions, useApp } from '@/lib/store';
+import { SAME_MACHINE } from '@/lib/token';
 import type { ArmCall, CanvasNode } from '@/lib/types';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatDateTime } from '@i18n/fmt';
@@ -251,19 +252,32 @@ function BrowserLogin() {
         )}
       </p>
       {err && <p className="mt-1.5 text-xs text-danger">{err}</p>}
-      <Button
-        size="sm"
-        variant="primary"
-        className="mt-3"
-        disabled={busy}
-        onClick={() => void go()}
-      >
-        {busy
-          ? t('inspector.browserOpening')
-          : opened
-            ? t('inspector.browserReopen')
-            : t('inspector.browserOpen')}
-      </Button>
+      {/*
+        ⚠ SAY IT BEFORE THE CLICK, NOT AFTER. This window opens where the DAEMON
+        runs, so over a remote connection — and a container is one — it would
+        appear where nobody is looking. The server refuses it either way
+        (`srv.browserLoginLocalOnly`); what was wrong was letting the user press
+        a button whose answer was already known, and learning why from an error.
+        Same rule as the `loopbackOnly` checkbox in `ArmDialog`, which hides
+        itself and explains instead. (18/09/2026)
+      */}
+      {!SAME_MACHINE ? (
+        <p className="mt-3 text-xs leading-relaxed text-muted">{t('srv.browserLoginLocalOnly')}</p>
+      ) : (
+        <Button
+          size="sm"
+          variant="primary"
+          className="mt-3"
+          disabled={busy}
+          onClick={() => void go()}
+        >
+          {busy
+            ? t('inspector.browserOpening')
+            : opened
+              ? t('inspector.browserReopen')
+              : t('inspector.browserOpen')}
+        </Button>
+      )}
     </div>
   );
 

@@ -25,7 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { injectToken } from '../dist/server/static.js';
+import { injectBoot } from '../dist/server/static.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -38,12 +38,21 @@ test('🔴 no token means the page is served exactly as it was before', () => {
    * ever starts rewriting HTML for everybody, the cost lands on the 99% who
    * gained nothing from the feature.
    */
-  assert.equal(injectToken(HEAD, undefined), HEAD);
-  assert.equal(injectToken(HEAD, ''), HEAD);
+  assert.equal(injectBoot(HEAD, { token: undefined, sameMachine: true }), HEAD);
+  assert.equal(injectBoot(HEAD, { token: '', sameMachine: true }), HEAD);
+  /*
+   * ⚠ INCLUDING WHEN `sameMachine` IS FALSE, which cannot actually happen and
+   * is asserted anyway: `serve()` refuses to bind anywhere but loopback without
+   * a token, so a tokenless daemon only ever serves local connections. If that
+   * invariant is ever broken, the interface would silently default to `true` —
+   * so this line is here to make the impossible case explicit rather than
+   * merely absent. → [[agentco-deterministic-vs-signal]]
+   */
+  assert.equal(injectBoot(HEAD, { token: undefined, sameMachine: false }), HEAD);
 });
 
 test('the token is stamped in before anything can read it', () => {
-  const out = injectToken(HEAD, 'abc123');
+  const out = injectBoot(HEAD, { token: 'abc123', sameMachine: true });
 
   assert.match(out, /window\.__AGENTCO_TOKEN__="abc123"/, out);
   // Immediately after <head>: ahead of the theme script, and far ahead of the
@@ -64,7 +73,7 @@ test('🔴 a token cannot break out of the script element', () => {
    * gets a blank page with no explanation.
    */
   const nasty = '</script><img src=x onerror=alert(1)>';
-  const out = injectToken(HEAD, nasty);
+  const out = injectBoot(HEAD, { token: nasty, sameMachine: true });
   assert.ok(!out.includes('</script><img'), out);
   assert.match(out, /\\u003c\/script/, out);
   // Still exactly one script element.
@@ -77,12 +86,80 @@ test('a build with no <head> is served anyway, and says what is wrong', () => {
   const real = console.error;
   console.error = (...a: unknown[]) => void errors.push(a);
   try {
-    assert.equal(injectToken('<html><body>x</body></html>', 'abc'), '<html><body>x</body></html>');
+    assert.equal(
+      injectBoot('<html><body>x</body></html>', { token: 'abc', sameMachine: true }),
+      '<html><body>x</body></html>',
+    );
   } finally {
     console.error = real;
   }
   assert.equal(errors.length, 1, 'nothing was said about a page that will 401 forever');
   assert.match(String(errors[0]?.[0]), /token/i);
+});
+
+test('🔴 the page also arrives holding WHO CONNECTED, because the interface cannot know', () => {
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────
+   * │ Found by a real test through the Docker door, 18/09/2026: "Show the
+   * │ browser window" was offered, PRE-TICKED, and the server then refused it.
+   * │
+   * │   the interface asked   window.location.hostname   -> "127.0.0.1" -> yes
+   * │   the server asked      req.socket.remoteAddress   -> the bridge   -> no
+   * │
+   * │ Both were answering "are we on the same machine", and under Docker they
+   * │ disagreed — which is the only configuration where the question matters.
+   * │ A hostname describes the URL; a socket address describes who connected.
+   * └────────────────────────────────────────────────────────────────────────
+   */
+  const yes = injectBoot(HEAD, { token: 't', sameMachine: true });
+  const no = injectBoot(HEAD, { token: 't', sameMachine: false });
+
+  assert.match(yes, /window\.__AGENTCO_SAME_MACHINE__=true/, yes);
+  assert.match(no, /window\.__AGENTCO_SAME_MACHINE__=false/, no);
+  // One script element, both facts — a second tag is a second thing to order.
+  assert.equal(no.match(/<script>/g)?.length, 1, no);
+  assert.match(no, /<head><script>window\.__AGENTCO_TOKEN__/, no);
+});
+
+test('⭐ the interface never works out `sameMachine` for itself', () => {
+  /*
+   * THE GATE, not the fix. The fix is one line in `ArmDialog.tsx`; the danger
+   * is the NEXT place somebody needs this fact and reaches for the address bar
+   * again, because that is the obvious thing to reach for and it is right on
+   * every machine a developer owns. It is wrong only under Docker, which is
+   * precisely where nobody is looking. → `lib/token.ts §SAME_MACHINE`
+   */
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.tsx?$/.test(e.name)) continue;
+      fs.readFileSync(p, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          const code = line.trim();
+          // Comment lines are documentation, including this rule's own retelling.
+          if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) return;
+          if (!/location\.hostname/.test(code)) return;
+          offenders.push(`web/src/${path.relative(path.join(ROOT, 'web', 'src'), p)}:${i + 1}  ${code}`);
+        });
+    }
+  };
+  walk(path.join(ROOT, 'web', 'src'));
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these decide "same machine" from the URL, which says 127.0.0.1 under Docker:\n${offenders.join('\n')}`,
+  );
+
+  // And the two screens that ask the question read the server's answer.
+  assert.match(read('web/src/components/ArmDialog.tsx'), /SAME_MACHINE/, 'ArmDialog stopped reading it');
+  assert.match(read('web/src/components/Inspector.tsx'), /SAME_MACHINE/, 'the sign-in panel stopped reading it');
 });
 
 test('🔴 every `/api/` url the BROWSER fetches itself carries the token', () => {

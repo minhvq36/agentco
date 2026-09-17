@@ -34,6 +34,7 @@
 declare global {
   interface Window {
     __AGENTCO_TOKEN__?: string;
+    __AGENTCO_SAME_MACHINE__?: boolean;
   }
 }
 
@@ -44,6 +45,40 @@ declare global {
  */
 export const AUTH_TOKEN: string =
   typeof window !== 'undefined' && typeof window.__AGENTCO_TOKEN__ === 'string' ? window.__AGENTCO_TOKEN__ : '';
+
+/**
+ * Is the browser on the same machine as the daemon — **the server's answer**,
+ * read from the socket address of the request that served this page.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 THE INTERFACE USED TO ANSWER THIS ITSELF, FROM ITS OWN ADDRESS BAR:
+ * │
+ * │     /^(127\.|localhost$|\[::1\]$)/.test(window.location.hostname)
+ * │
+ * │ Under Docker you open `127.0.0.1:7319`, so that says "same machine" — and
+ * │ it is not. The daemon is in a container; it sees the bridge gateway and
+ * │ refuses. The user met the disagreement as an error AFTER clicking a
+ * │ checkbox that was offered to them, pre-ticked. (18/09/2026)
+ * │
+ * │ A hostname describes the URL. A socket address describes who connected.
+ * │ Only the second is the question being asked, and only the daemon can see
+ * │ it. → `src/server/static.ts §BootFacts`
+ * └──────────────────────────────────────────────────────────────────────────
+ *
+ * ⚠ ABSENT ⇒ `true`, and that is exact rather than optimistic. Nothing is
+ * injected when there is no token, and a daemon with no token is bound to
+ * loopback (`server.ts §593` refuses otherwise) — so every connection it can
+ * serve at all is local. The desktop install keeps the behaviour it had.
+ *
+ * ⚠ It is still only about the INTERFACE. The real gate is `server.ts
+ * §armConfig`, which re-reads the socket on the request that matters. Checking
+ * here keeps a button from being a riddle; checking there keeps it from being
+ * decoration.
+ */
+export const SAME_MACHINE: boolean =
+  typeof window !== 'undefined' && typeof window.__AGENTCO_SAME_MACHINE__ === 'boolean'
+    ? window.__AGENTCO_SAME_MACHINE__
+    : true;
 
 /**
  * Merge the token into whatever headers a caller already has.

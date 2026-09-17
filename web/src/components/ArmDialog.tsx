@@ -71,6 +71,7 @@ import {
 } from '@/lib/cli-form';
 import { fault, pretty, tokens } from '@/lib/json-paint';
 import { actions, useApp } from '@/lib/store';
+import { SAME_MACHINE } from '@/lib/token';
 import { plural, t, type MessageKey } from '@i18n';
 import { formatNumber } from '@i18n/fmt';
 import type { CatalogArm, InstalledArm, OAuthAccount, ProbeResult } from '@/lib/types';
@@ -711,12 +712,18 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
    * Are the browser and the daemon on the same machine — used to **hide** a
    * `loopbackOnly` checkbox.
    *
-   * ⚠ This is ONLY about the interface. The real gate is on the server and is
+   * ⚠ THE SERVER'S ANSWER, not ours. This line used to test
+   * `window.location.hostname`, which reads `127.0.0.1` under Docker and is
+   * wrong there: the daemon is in a container and sees the bridge. The box was
+   * shown pre-ticked and the server refused it on click. → `lib/token.ts
+   * §SAME_MACHINE`
+   *
+   * ⚠ Still ONLY about the interface. The real gate is on the server and is
    * measured from the **socket address** (`server.ts §armCtx`), which a client
    * cannot fake. Checking here keeps the button from being a riddle; checking
    * there keeps it from being decoration.
    */
-  const sameMachine = /^(127\.|localhost$|\[::1\]$)/i.test(window.location.hostname);
+  const sameMachine = SAME_MACHINE;
   /**
    * Load the checkbox defaults whenever the entry changes — **keyed on `pick`, not
    * spread across four reset sites**. Those four are four chances to forget one,
