@@ -1,5 +1,10 @@
 # AgentCo
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/minhvq36/agentco/main/docs/assets/banner.png"
+       alt="An agentco office: two employees standing on the floor of a drawn room, one saying “searching the web”, beside a document cabinet holding 3 documents and a results desk" />
+</p>
+
 **A virtual company of AI employees that runs on your own machine.** You give orders in plain
 language; a director plans the work, specialists run it in parallel, and everything they produce
 lands in a folder you own. `agentco` is a working codename.
@@ -82,20 +87,7 @@ node dist/cli/index.js doctor     # every line ✓ except the daemon — you hav
 node dist/cli/index.js start
 ```
 
-⚠ **`npm install` alone is not enough.** `dist/` is gitignored, so `node dist/cli/index.js` finds
-no such file. The build is what puts it there.
-
-⚠ **The two installs are separate on purpose.** Skipping the second makes `build:all` fail in its
-second half, after the server has already compiled — the most confusing place to stop.
-
-⚠ **`start` does not create a company**; it says so and exits 1. `init` is a step, not a courtesy.
-
-**Do not skip `doctor`.** It is the difference between finding out now and finding out from a job
-that fails for a reason it cannot explain. It checks Node, the company folder, Claude Code, and the
-sign-in — and the sign-in check is a **real call**, not a test that a file exists. Its one expected
-✗ at this point is the daemon, which is what the next line starts.
-
-### Or install the published package
+### Install the published package
 
 For running it rather than working on it:
 
@@ -107,7 +99,6 @@ Then, **in the folder where you want the company to live**:
 
 ```sh
 agentco init
-agentco doctor
 agentco start
 ```
 
