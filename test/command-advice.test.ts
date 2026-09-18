@@ -41,8 +41,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { en } from '../dist/i18n/en.js';
-import { vi } from '../dist/i18n/vi.js';
+import { en, enPlural } from '../dist/i18n/en.js';
+import { vi, viPlural } from '../dist/i18n/vi.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -104,9 +104,27 @@ function commandsIn(text: string): string[] {
   return out;
 }
 
+/**
+ * ⚠ THE PLURAL CATALOGUES TOO. They are a separate export with a different
+ * shape (`{ one, other }`), so building the list from `en`/`vi` alone leaves
+ * every plural sentence unread — and `Run \`claude\` {n} more times` would ship
+ * through a gate reporting clean. Nothing violates it today; that is the state
+ * in which a hole is cheapest to close and hardest to notice.
+ */
+function flatten(cat: Record<string, { one: string; other: string }>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, forms] of Object.entries(cat)) {
+    out[`${key}.one`] = forms.one;
+    out[`${key}.other`] = forms.other;
+  }
+  return out;
+}
+
 const CATALOGUES: Array<[string, Record<string, string>]> = [
   ['en', en as unknown as Record<string, string>],
   ['vi', vi as unknown as Record<string, string>],
+  ['en/plural', flatten(enPlural as unknown as Record<string, { one: string; other: string }>)],
+  ['vi/plural', flatten(viPlural as unknown as Record<string, { one: string; other: string }>)],
 ];
 
 test('🔴 no sentence sends a reader to `claude` — we ship it, but not as a command', () => {
@@ -273,8 +291,13 @@ test('🔴 no DOCUMENT tells a reader on their own machine to run `claude`', () 
   );
 });
 
+// The two prose catalogues; `cli.help` and `cli.loginStarting` are singular keys
+// and do not exist in the plural ones.
+const PROSE = CATALOGUES.filter(([lang]) => !lang.includes('plural'));
+
 test('both catalogues describe `login`, because a sign-in wall is where readers arrive', () => {
-  for (const [lang, cat] of CATALOGUES) {
+  assert.equal(PROSE.length, 2, 'expected exactly the en and vi prose catalogues');
+  for (const [lang, cat] of PROSE) {
     assert.ok(cat['cli.help']?.includes('agentco login'), `${lang}: help does not mention login`);
     assert.ok(cat['cli.loginStarting']?.includes('{path}'), `${lang}: login does not say WHICH binary`);
   }

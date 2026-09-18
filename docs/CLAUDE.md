@@ -130,18 +130,27 @@ and passed in as plain strings.
 ### Vietnamese in source
 
 `scripts/check-language.ts` runs inside `npm test` and fails on Vietnamese text
-in `src/`, `web/src/`, `test/`, `scripts/`, `docs/`, `README.md` and
-`package.json`. Two exemptions, both narrow:
+in `src/`, `web/src/`, `test/`, `scripts/`, `docs/`, `bench/`, `README.md` and
+`package.json`, across `.ts .tsx .mjs .js .md .json .yaml .yml .css .html`. Two
+exemptions, both narrow:
 
 - `src/i18n/vi.ts` — the catalogue itself, values only. Its comments are English.
 - A line carrying `i18n-allow-vietnamese: <reason>`, for a **fixture where
   Vietnamese is the thing under test**: diacritic-stripping in `slug.test.ts`,
   Unicode round-tripping in `markdown.test.ts`, reply scanning in
-  `lesson-guard.test.ts` and `knowledge.test.ts`, and the office-document
-  fixtures in `library.test.ts`.
+  `lesson-guard.test.ts` and `knowledge.test.ts`, the office-document fixtures
+  in `library.test.ts`, and the workload in `bench/tier-compare.mjs` — where
+  translating the fixture would change the measurement, because Vietnamese
+  tokenises considerably worse than English and that script exists to compare
+  model tiers on one workload.
 
-The file also carries a `PENDING` list — trees not yet migrated. It only ever
-shrinks; deleting a phase's entry *is* that phase's exit criterion.
+⚠ `bench/` and `.mjs` joined on 19/09/2026. `bench/README.md` had been
+Vietnamese the whole time, in a directory the front page of the repository links
+to by name. The gate was never wrong about what it read — `SCOPE` simply did not
+contain it. Widening `SCOPE` without widening the extension list would have been
+worse: the directory would have joined and four of its five files would still
+have gone unread, under a summary line saying "clean".
+→ [[agentco-rule-must-see-what-it-governs]]
 
 ⚠ `hasVietnameseDiacritics` inside that script is exact **only because it is
 pointed at our own source**, which has exactly two possible states. Point it at

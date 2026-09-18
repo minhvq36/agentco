@@ -46,7 +46,7 @@ import { WEBSITE_URL } from '../core/update-links.js';
 import { formatRunUsage } from '../core/usage.js';
 import { readSecrets, secretNames, writeSecrets } from '../core/secrets.js';
 import { appVersion, packageName } from '../core/version.js';
-import { describeSearch } from '../core/claude-code.js';
+import { describeSearch, type Candidate } from '../core/claude-code.js';
 import { resolveLocale, setLocale, t, type Locale } from '../i18n/index.js';
 import { formatUSD } from '../i18n/fmt.js';
 
@@ -914,7 +914,7 @@ async function cmdOffice(): Promise<void> {
     // away, use `archive`. A `--delete-files` flag used to separate those two
     // intentions, and that was the mistake: the flag easiest to forget was the
     // one deciding whether anything was lost.
-    if (flags['yes'] !== true) {
+    if (!flagOn('yes')) {
       console.error(
         t('cli.officeRmWarn', { id }),
       );
@@ -1178,9 +1178,7 @@ async function cmdDoctor(): Promise<void> {
       ? `${search.found.path}  (${search.found.via})`
       : t('cli.checkClaudeNo'),
   ]);
-  if (!search.found) {
-    for (const c of search.tried) console.log(`       ·  ${c.ok ? '✓' : '✗'} ${c.via.padEnd(17)} ${c.path}`);
-  }
+  if (!search.found) printTried(search.tried, console.log);
 
   // Auth: one real, very cheap call. This is the most common first-time failure.
   // ⚠ ✓ is harder to earn than `subtype: 'success'` → cli/doctor-auth.ts
@@ -1228,6 +1226,20 @@ async function cmdDoctor(): Promise<void> {
     console.log(`  ${ok ? '✓' : '✗'}  ${name.padEnd(24)} ${note}`);
   }
   if (!authOk) process.exit(EXIT.auth);
+}
+
+/**
+ * The paths the search looked at, one per line, with a mark beside each.
+ *
+ * ⚠ ONE RENDERER, TWO CALLERS, because there were two and they had already
+ * drifted inside a single change: `doctor` bulleted them onto stdout, `login`
+ * wrote a different indent to stderr. The sink is the parameter precisely
+ * because that is the only thing that legitimately differs — `doctor` is
+ * reporting, `login` is refusing. → `cli.checkClaudeNo` says "paths tried
+ * below", and this is "below" for both of them.
+ */
+function printTried(tried: readonly Candidate[], write: (line: string) => void): void {
+  for (const c of tried) write(`       ·  ${c.ok ? '✓' : '✗'} ${c.via.padEnd(17)} ${c.path}`);
 }
 
 /**
@@ -1301,11 +1313,11 @@ function cmdLogin(): void {
   const search = describeSearch();
   if (!search.found) {
     console.error(t('cli.checkClaudeNo'));
-    for (const c of search.tried) console.error(`  ${c.ok ? '✓' : '✗'} ${c.via.padEnd(17)} ${c.path}`);
+    printTried(search.tried, console.error);
     process.exit(EXIT.config);
   }
 
-  const token = flags['token'] === true;
+  const token = flagOn('token');
   console.log(t(token ? 'cli.loginTokenStarting' : 'cli.loginStarting', { path: search.found.path }));
 
   /*
@@ -1500,6 +1512,35 @@ mcpServers: {}
 
 allow_core_prompt_edit: false
 `;
+}
+
+/**
+ * A boolean flag is on when it is PRESENT.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `flags['x'] === true` IS NOT THAT TEST. (review, 19/09/2026)          │
+ * │                                                                          │
+ * │ `parseFlags` below consumes the next token as a VALUE for any flag, so   │
+ * │ `--token` alone lands `true`, while `--token true` lands the STRING      │
+ * │ 'true'. `=== true` then takes the opposite branch, in silence.           │
+ * │                                                                          │
+ * │ For `login --token` the opposite branch is an interactive sign-in — and  │
+ * │ in the container this flag exists to serve there is no TTY, so it HANGS  │
+ * │ rather than printing the token. The failure lands exactly where the flag │
+ * │ was needed.                                                              │
+ * │                                                                          │
+ * │ Two sites had it: `login --token` and `office rm --yes`. The second      │
+ * │ fails safe (it asks instead of deleting), which is why nobody noticed —  │
+ * │ a reminder that "no symptom" and "no bug" are different findings.        │
+ * │ → [[agentco-detect-fix-pair-scope]]                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Only an explicit denial turns it off; anything else present means yes.
+ */
+function flagOn(name: string): boolean {
+  const v = flags[name];
+  if (v === undefined) return false;
+  return !(v === false || v === 0 || v === 'false' || v === '0' || v === 'no');
 }
 
 function parseFlags(args: string[]): Record<string, string | number | boolean> {
