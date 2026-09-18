@@ -122,6 +122,8 @@ async function main(): Promise<void> {
       return cmdCost();
     case 'doctor':
       return cmdDoctor();
+    case 'login':
+      return cmdLogin();
     case 'update':
       return cmdUpdate();
     case 'shortcut':
@@ -1226,6 +1228,81 @@ async function cmdDoctor(): Promise<void> {
     console.log(`  ${ok ? '✓' : '✗'}  ${name.padEnd(24)} ${note}`);
   }
   if (!authOk) process.exit(EXIT.auth);
+}
+
+/**
+ * `agentco login` — sign in to Claude Code, through the copy WE brought.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 WE SHIPPED A WHOLE CLAUDE CODE AND NEVER GAVE ANYBODY A HANDLE ON IT. │
+ * │ (found 19/09/2026)                                                       │
+ * │                                                                          │
+ * │ `@anthropic-ai/claude-agent-sdk` declares `bin: undefined`, and the       │
+ * │ platform package it pulls in — `claude-agent-sdk-<platform>-<arch>` — is  │
+ * │ a lone executable with no shim. So `node_modules/.bin` has no `claude`,   │
+ * │ and neither does PATH. The binary is complete (it answers `auth`,         │
+ * │ `setup-token`, `doctor`), it was simply unreachable by name.              │
+ * │                                                                          │
+ * │ Meanwhile THREE messages told a blocked reader to "run `claude` once".    │
+ * │ For anyone who never installed Claude Code separately that is             │
+ * │ `command not found`, one line under a ✓ saying it was found — a           │
+ * │ contradiction on screen. The reader concludes agentco requires Claude     │
+ * │ Code to be installed first, installs it, and it WORKS, so the mistake is  │
+ * │ never reported and the product keeps the reputation of needing a          │
+ * │ developer's toolbox. → [[agentco-cant-vs-not-wired]]                      │
+ * │                                                                          │
+ * │ ⚠ THIS WAS ALREADY DIAGNOSED CORRECTLY, TWO DAYS EARLIER, AND FIXED IN   │
+ * │ ONE PLACE. `docker/Dockerfile:48` says it in as many words — "the binary  │
+ * │ is nested inside the package's node_modules, not installed as a command.  │
+ * │ The documentation said otherwise, which is how a README starts lying" —   │
+ * │ and symlinks `claude` onto PATH INSIDE THE IMAGE. Correct, and invisible  │
+ * │ to the other three doors, which went on lying for two more days.          │
+ * │                                                                          │
+ * │ The class was also fixed once before, on 16/09 (`cli.shortcutNotLinux`,   │
+ * │ which sent npm users to a Start-menu entry only the installer creates).   │
+ * │ Three instances, two correct diagnoses, no lock — so the lock is          │
+ * │ `test/command-advice.test.ts`, not this paragraph.                        │
+ * │   → [[agentco-detect-fix-pair-scope]] · [[agentco-wrong-door-errors]]     │
+ * │                                                                          │
+ * │ ⚠ NOT a `claude` shim of our own at install time. It would shadow a real  │
+ * │ Claude Code already on PATH, at a version we did not pin, and hand the    │
+ * │ user a global command they never asked this package for.                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ⚠ TWO SHAPES, NOT ARBITRARY PASS-THROUGH. Bare, it starts an interactive
+ * session, which is what "run `claude` once" always meant. `--token` runs
+ * `setup-token`, the long-lived credential a container needs — the one route
+ * `docker/README.md` documents and nothing on this machine could reach.
+ * Forwarding the rest of argv would quietly turn `agentco` into a launcher for
+ * an agent with none of our hooks attached, which is a different product.
+ */
+function cmdLogin(): void {
+  const search = describeSearch();
+  if (!search.found) {
+    console.error(t('cli.checkClaudeNo'));
+    for (const c of search.tried) console.error(`  ${c.ok ? '✓' : '✗'} ${c.via.padEnd(17)} ${c.path}`);
+    process.exit(EXIT.config);
+  }
+
+  const token = flags['token'] === true;
+  console.log(t(token ? 'cli.loginTokenStarting' : 'cli.loginStarting', { path: search.found.path }));
+
+  /*
+   * ⚠ `stdio: 'inherit'` and we WAIT — signing in is a conversation, and the
+   * browser it opens hands its code back to that session. Same shape as
+   * `updateInTerminal`, for the same reason. The `'error'` listener is not
+   * optional: a missing binary arrives as an EVENT, and an unheard `'error'`
+   * event ends this process instead of being caught. → daemonfile.ts
+   */
+  const child = spawn(search.found.path, token ? ['setup-token'] : [], {
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+  child.on('error', (err) => {
+    console.error(err.message);
+    process.exit(EXIT.general);
+  });
+  child.on('exit', (code) => process.exit(code ?? EXIT.general));
 }
 
 /**

@@ -71,7 +71,8 @@ a cURL command, or fill in a form — then press Test. →
 
 ## Run it
 
-**Requirements:** Node.js ≥ 22, and the Claude Code CLI signed in (`claude` runs). No API key.
+**Requirements:** Node.js ≥ 22 and a Claude subscription. **You do not have to install Claude Code
+separately** — the package brings its own copy; `agentco login` signs it in, once. No API key.
 
 ### From the clone you are already reading
 
@@ -83,6 +84,7 @@ npm install                       # server dependencies
 npm --prefix web install          # the interface is its own package; there are no workspaces
 npm run build:all                 # tsc + vite — this is what creates dist/cli/index.js
 node dist/cli/index.js init       # creates ./company here
+node dist/cli/index.js login      # signs in the Claude Code this package brought
 node dist/cli/index.js doctor     # every line ✓ except the daemon — you have not started it yet
 node dist/cli/index.js start
 ```
@@ -99,6 +101,7 @@ Then, **in the folder where you want the company to live**:
 
 ```sh
 agentco init
+agentco login     # once per machine; skip it if `claude` is already signed in here
 agentco start
 ```
 
@@ -131,11 +134,11 @@ Settings panel.
 
 Three steps, and only the second involves typing anything unusual.
 
-**1. Mint a token** — anywhere you already have Claude Code, including your own laptop. It does not
-have to be the server:
+**1. Mint a token** — on any machine, including your own laptop. It does not have to be the server,
+and you do not need Claude Code installed there:
 
 ```sh
-claude setup-token
+agentco login --token      # or `claude setup-token`, if you already have the CLI
 ```
 
 It prints the token **once** and stores nothing. Copy it.

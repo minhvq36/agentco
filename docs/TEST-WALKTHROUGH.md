@@ -18,7 +18,7 @@ node dist/cli/index.js doctor      # all ✓ EXCEPT "Daemon" — nothing is star
 node dist/cli/index.js start
 ```
 
-- `doctor` reports not logged in ⇒ run `claude` once, log in, try again.
+- `doctor` reports not logged in ⇒ run `node dist/cli/index.js login` once, log in, try again.
 - The company folder is `./company/`. Every 📝 path is relative to that.
 - Each test **creates a new office**, except where it explicitly says to reuse one.
 - **After every rebuild of the code ⇒ `stop` then `start` the daemon.** Cross-check: `company/.state/daemon.json` → `started_at` must be newer than `dist/`.

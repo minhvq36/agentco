@@ -400,7 +400,8 @@ export const vi: Catalog = {
     'Cửa sổ đăng nhập của văn phòng này đang mở, nên nhân viên chưa dùng được trình duyệt. Đóng cửa sổ đó rồi giao việc lại.',
   'off.rateLimited':
     'Hết lượt dùng Claude. Văn phòng tạm nghỉ, còn {n} việc chưa làm. Gõ /resume khi có lượt lại.',
-  'off.notSignedIn': 'Chưa đăng nhập Claude Code. Chạy `claude` một lần để đăng nhập rồi thử lại.',
+  'off.notSignedIn':
+    'Chưa đăng nhập Claude Code. Mở terminal, chạy `agentco login` một lần rồi thử lại.',
   'off.stopped': 'Đã dừng. Xong {done}/{total} việc, còn {left} việc chưa làm.',
   'off.stoppedHave': 'Đã có: {list}.',
   'off.resultsSaved': 'kết quả đã lưu',
@@ -595,8 +596,12 @@ export const vi: Catalog = {
   'cli.unknownError': 'lỗi không rõ',
   'cli.checkAuth': 'Đăng nhập Claude Code',
   'cli.checkAuthOk': 'gọi thử thành công',
-  'cli.checkAuthHint': 'chạy `claude` một lần để đăng nhập',
-  'cli.checkAuthTimeout': 'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `claude` một lần để đăng nhập',
+  'cli.checkAuthHint': 'chạy `agentco login` một lần để đăng nhập',
+  'cli.checkAuthTimeout':
+    'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `agentco login` một lần để đăng nhập',
+  'cli.loginStarting': 'Đang mở Claude Code để bạn đăng nhập. Xong thì đóng lại.\n  {path}',
+  'cli.loginTokenStarting':
+    'Đang xin Claude Code một token dài hạn. Nó in ra MỘT lần và không lưu lại — chép vào CLAUDE_CODE_OAUTH_TOKEN.\n  {path}',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'không chạy — `agentco start`',
   'cli.createdShortcutHint': '  Muốn nó nằm trong menu ứng dụng? Chạy `agentco shortcut` ở đây.',
@@ -662,6 +667,7 @@ agentco cost [--since 7d]      Xem đã tốn bao nhiêu  (--office <mã> để 
 agentco cost --purge           Dọn các mục "không còn" khỏi sổ (văn phòng đã xoá)
 agentco version                Đang chạy bản nào, và bản nằm ở đâu
 agentco doctor                 Kiểm tra máy đã sẵn sàng chưa
+agentco login                  Đăng nhập Claude Code  (--token để lấy khoá dài hạn cho container)
 agentco update [--to <bản>]    Cài bản mới nhất rồi bật lại  (cho bản cài bằng npm)
 agentco shortcut               Thêm công ty này vào menu ứng dụng (Linux)
 

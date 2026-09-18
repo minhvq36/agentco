@@ -90,7 +90,17 @@ agentco start [--port 7317] [--no-ui] [--daemon]
 agentco stop
 agentco status                  # daemon, running agents, current shift, warm cache
 agentco doctor                  # checks: node version, Claude auth, write permissions, port, bridges
+agentco login [--token]         # sign in to the Claude Code WE SHIP; --token = setup-token, for a container
 ```
+
+`agentco login` exists because the package brings its own Claude Code —
+`@anthropic-ai/claude-agent-sdk` pulls a platform binary that has **no bin
+shim**, so `claude` is on nobody's PATH unless they installed it separately.
+Until 0.2.5 three messages said "run `claude` once to sign in", which is
+`command not found` for exactly the reader who most needed it. The command
+spawns whatever `describeSearch()` resolved, in the foreground, and forwards
+nothing else — a general pass-through would make `agentco` a launcher for an
+agent with none of our hooks attached. Locked by `test/command-advice.test.ts`.
 
 `agentco start` defaults to **foreground + auto-opens the browser**. `--daemon` runs it in the background (for VPS use).
 

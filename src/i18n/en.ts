@@ -570,7 +570,14 @@ export const en = {
     'This office’s sign-in window is open, so employees cannot use the browser. Close it and hand the work over again.',
   'off.rateLimited':
     'Out of Claude usage. The office is resting with {n} jobs still to do. Type /resume when the limit clears.',
-  'off.notSignedIn': 'Not signed in to Claude Code. Run `claude` once to sign in, then try again.',
+  /**
+   * ⚠ "Open a terminal" EARNS ITS WORDS: this is the one sentence in the set
+   * that a reader meets in a BROWSER, where there is no prompt to type into.
+   * Signing in is interactive and needs a TTY, so naming the command alone
+   * would stop them one step later than the old sentence did.
+   */
+  'off.notSignedIn':
+    'Not signed in to Claude Code. Open a terminal, run `agentco login` once, then try again.',
   'off.stopped': 'Stopped. {done}/{total} jobs done, {left} still to do.',
   'off.stoppedHave': 'Already there: {list}.',
   'off.resultsSaved': 'results saved',
@@ -788,8 +795,12 @@ export const en = {
   'cli.unknownError': 'unknown error',
   'cli.checkAuth': 'Claude Code sign-in',
   'cli.checkAuthOk': 'a test call went through',
-  'cli.checkAuthHint': 'run `claude` once to sign in',
-  'cli.checkAuthTimeout': 'no answer within {seconds} s — check the network, then run `claude` once to sign in',
+  'cli.checkAuthHint': 'run `agentco login` once to sign in',
+  'cli.checkAuthTimeout':
+    'no answer within {seconds} s — check the network, then run `agentco login` once to sign in',
+  'cli.loginStarting': 'Starting Claude Code so you can sign in. Close it when it says you are in.\n  {path}',
+  'cli.loginTokenStarting':
+    'Asking Claude Code for a long-lived token. It prints it ONCE and stores nothing — copy it into CLAUDE_CODE_OAUTH_TOKEN.\n  {path}',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'not running — `agentco start`',
   'cli.createdShortcutHint': '  Want it in the applications menu? Run `agentco shortcut` here.',
@@ -912,6 +923,7 @@ agentco cost [--since 7d]      See what has been spent  (--office <code> to filt
 agentco cost --purge           Clear "gone" entries from the ledger (deleted offices)
 agentco version                Which version this is, and which copy you are running
 agentco doctor                 Check whether the machine is ready
+agentco login                  Sign in to Claude Code  (--token for a container's long-lived key)
 agentco update [--to <ver>]    Install the newest version and start again  (npm installs)
 agentco shortcut               Add this company to the applications menu (Linux)
 
