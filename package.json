@@ -1,51 +1,51 @@
 {
-    "name": "@agent-co-app/cli",
-    "version": "0.2.4",
-    "description": "A virtual company that runs on your machine: Claude acts as director, orchestrating a team of specialist agents running in parallel.",
-    "license": "SEE LICENSE IN LICENSE.md",
-    "homepage": "https://agent-co.app",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/minhvq36/agentco.git"
-    },
-    "publishConfig": {
-        "access": "public"
-    },
-    "type": "module",
-    "engines": {
-        "node": ">=22"
-    },
-    "bin": {
-        "agentco": "dist/cli/index.js"
-    },
-    "files": [
-        "dist",
-        "web/dist",
-        "installer/logo.png",
-        "README.md",
-        "LICENSE.md"
-    ],
-    "scripts": {
-        "dev": "tsx src/cli/index.ts",
-        "build": "tsc -p tsconfig.json",
-        "typecheck": "tsc -p tsconfig.json --noEmit",
-        "test": "tsc -p tsconfig.json && node --experimental-strip-types scripts/check-language.ts && node --test --experimental-strip-types test/*.test.ts",
-        "check:language": "node --experimental-strip-types scripts/check-language.ts",
-        "smoke:npm": "node --experimental-strip-types scripts/smoke-npm.ts",
-        "build:web": "npm --prefix web run build",
-        "build:all": "tsc -p tsconfig.json && npm --prefix web run build",
-        "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && npm run build:all",
-        "dev:web": "npm --prefix web run dev"
-    },
-    "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "0.3.231",
-        "pdfjs-dist": "~5.4.624",
-        "yaml": "^2.6.0",
-        "zod": "^4.0.0"
-    },
-    "devDependencies": {
-        "@types/node": "^22.10.0",
-        "tsx": "^4.19.0",
-        "typescript": "^5.7.0"
-    }
+  "name": "@agent-co-app/cli",
+  "version": "0.2.5",
+  "description": "A virtual company that runs on your machine: Claude acts as director, orchestrating a team of specialist agents running in parallel.",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "homepage": "https://agent-co.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/minhvq36/agentco.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "agentco": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "web/dist",
+    "installer/logo.png",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "scripts": {
+    "dev": "tsx src/cli/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --experimental-strip-types scripts/check-language.ts && node --test --experimental-strip-types test/*.test.ts",
+    "check:language": "node --experimental-strip-types scripts/check-language.ts",
+    "smoke:npm": "node --experimental-strip-types scripts/smoke-npm.ts",
+    "build:web": "npm --prefix web run build",
+    "build:all": "tsc -p tsconfig.json && npm --prefix web run build",
+    "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && npm run build:all",
+    "dev:web": "npm --prefix web run dev"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.231",
+    "pdfjs-dist": "~5.4.624",
+    "yaml": "^2.6.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
 }
