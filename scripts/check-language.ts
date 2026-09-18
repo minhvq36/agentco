@@ -42,14 +42,26 @@ const PRAGMA = /i18n-allow-vietnamese/;
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
-/** Trees the rule governs. Everything else in the repository is out of scope. */
-const SCOPE = ['src', 'web/src', 'test', 'scripts', 'docs', 'README.md', 'package.json'];
+/**
+ * Trees the rule governs. Everything else in the repository is out of scope.
+ *
+ * ⚠ `bench` JOINED ON 19/09/2026, AFTER ITS README HAD BEEN VIETNAMESE THE
+ * WHOLE TIME — in a directory the front page of the repository links to by
+ * name ("every number in FINDINGS is reproducible"). The gate was not wrong
+ * about anything it read; it simply was not pointed at the thing.
+ * → [[agentco-rule-must-see-what-it-governs]]
+ */
+const SCOPE = ['src', 'web/src', 'test', 'scripts', 'docs', 'bench', 'README.md', 'package.json'];
 
 /** The single permanent exemption: the Vietnamese catalogue itself. */
 const ALWAYS_ALLOWED = ['src/i18n/vi.ts'];
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.state', 'company']);
-const TEXT_FILE = /\.(ts|tsx|md|json|yaml|yml|css|html)$/;
+// ⚠ `mjs` is here because `bench/*.mjs` is the only executable source outside
+// `src`. Widening SCOPE without widening this would have added a directory and
+// still read only two of its five files — a gate that reports "clean" about
+// files it never opened is worse than no gate.
+const TEXT_FILE = /\.(ts|tsx|mjs|js|md|json|yaml|yml|css|html)$/;
 
 interface Offence {
   file: string;

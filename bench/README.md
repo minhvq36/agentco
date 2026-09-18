@@ -1,27 +1,49 @@
-# bench — đo chi phí token
+# bench — measuring token cost
 
-Hai script đo hành vi prompt cache của Claude Agent SDK. Đây là **hạt giống của `agentco bench`** (`docs/SPEC-token-economy.md` §6), giữ lại vì mọi con số trong `docs/FINDINGS-sdk-2026-08-14.md` đến từ đây và phải tái lập được.
+Three scripts that measure how the Claude Agent SDK really behaves around the prompt cache. This is
+the **seed of `agentco bench`** (`docs/SPEC-token-economy.md` §6), kept because every number in
+`docs/FINDINGS-sdk-2026-08-14.md` came from here and has to stay reproducible.
 
-## Chạy
+## Run
 
 ```bash
 cd bench
 npm install
-node probe-cache.mjs     # hành vi cache qua nhiều call cùng/khác prefix
-node probe-prefix.mjs    # kích thước prefix theo từng cấu hình
+node probe-cache.mjs     # cache behaviour across calls with the same / a different prefix
+node probe-prefix.mjs    # how big the prefix is, per configuration
+node tier-compare.mjs    # is the `eco` tier actually cheaper for work that USES TOOLS?
 ```
 
-Cần đã đăng nhập Claude Code trên máy (`claude` chạy được). **Không cần API key.**
+You need to be signed in to Claude Code on this machine — `agentco login` once is enough, you do not
+have to install Claude Code separately. **No API key.**
 
-## Lưu ý khi đọc kết quả
+`tier-compare.mjs` is different from the other two: it runs the real `runWorker` out of `dist/`, so
+build first (`npm run build:all` in the repo root).
 
-- **Mỗi lần chạy tốn tiền thật.** Dùng `model: "haiku"` và `maxTurns: 1` để giữ ở mức vài cent.
-- `probe-prefix.mjs` dùng **salt theo timestamp** để ép cache miss — đó là chủ ý, để `cache_creation_input_tokens` phản ánh đúng kích thước prefix.
-- `maxTurns: 1` là **trường hợp xấu nhất** cho khoản `cache_write` lặp lại. Task nhiều lượt khấu hao khoản đó, nên số ở đây là cận trên.
-- Kết quả phụ thuộc version SDK/CLI. Ghi lại version khi so sánh — nâng cấp SDK làm đổi prefix và ép cache write một lần.
+## Reading the results
 
-## Cần thêm
+- **Every run costs real money.** `model: "haiku"` and `maxTurns: 1` keep it to a few cents.
+- `probe-prefix.mjs` uses a **timestamp salt** to force a cache miss on purpose, so that
+  `cache_creation_input_tokens` reports the true size of the prefix.
+- `maxTurns: 1` is the **worst case** for the repeated `cache_write` charge. A multi-turn task
+  amortises it, so the figures here are an upper bound.
+- Results depend on the SDK/CLI version. Record it when comparing — upgrading the SDK changes the
+  prefix and forces a one-off cache write.
 
-- Đo với task nhiều lượt (`maxTurns: 10+`) để có số khấu hao thật
-- Đo `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` với khối tri thức HOT ~2K đặt trước marker, chạy từ hai process riêng biệt — kiểm chứng trực tiếp cho `docs/SPEC-token-economy.md` §2
-- Đo ngưỡng 429 khi chạy song song
+⚠ **The probe prompts were English-ised on 19/09/2026.** They used to be Vietnamese. Vietnamese
+tokenises considerably worse than English, so the absolute `prefix≈` figures for variants 3–6 of
+`probe-prefix.mjs` are now smaller than the ones recorded in FINDINGS. The comparison between
+variants is unaffected — all four share the same custom prompt and moved together — and variants 1–2
+never depended on it, because their prefix is the `claude_code` preset. If anything the numbers are
+more honest now: variants 1–2 were always measuring an English preset, so a Vietnamese custom prompt
+in 3–6 was comparing two things that differed in more than the one variable under test.
+
+⚠ `tier-compare.mjs` deliberately keeps its **Vietnamese workload**, and that is not an oversight —
+see the note at the top of the file. Language is the independent variable there, not the prose.
+
+## Still to measure
+
+- Multi-turn tasks (`maxTurns: 10+`), for a real amortised figure
+- `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` with a ~2K HOT knowledge block placed before the marker, run from
+  two separate processes — the direct check for `docs/SPEC-token-economy.md` §2
+- Where the 429 threshold sits under parallel load
