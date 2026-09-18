@@ -13,7 +13,8 @@ cd <agentco-folder>
 npm install
 npm --prefix web install
 npm run build:all
-node dist/cli/index.js doctor      # everything must be ✓, especially "Claude Code login"
+node dist/cli/index.js init        # ⚠ `start` does NOT create a company — it exits 1
+node dist/cli/index.js doctor      # all ✓ EXCEPT "Daemon" — nothing is started yet. "Claude Code sign-in" especially
 node dist/cli/index.js start
 ```
 
