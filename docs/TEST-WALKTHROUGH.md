@@ -2021,8 +2021,9 @@ it to **one** employee. Archive one employee. Unwire one employee.
 
 ### Leg A — launch ⏱ ~10 min (mostly the image build) · $0
 
-1. `claude setup-token` — anywhere you already have Claude Code. **It prints the token once
-   and stores nothing.** Copy it.
+1. `agentco login --token` — on any machine; it does not need Claude Code installed there.
+   (`claude setup-token` is the same thing, if you already have the CLI.) **It prints the
+   token once and stores nothing.** Copy it.
 2. `cp .env.example .env`, paste the token into `CLAUDE_CODE_OAUTH_TOKEN=`.
 3. `docker compose up -d`
 4. Open `http://127.0.0.1:7317`.

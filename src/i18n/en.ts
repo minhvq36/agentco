@@ -798,7 +798,7 @@ export const en = {
   'cli.checkAuthHint': 'run `agentco login` once to sign in',
   'cli.checkAuthTimeout':
     'no answer within {seconds} s — check the network, then run `agentco login` once to sign in',
-  'cli.loginStarting': 'Starting Claude Code so you can sign in. Close it when it says you are in.\n  {path}',
+  'cli.loginStarting': 'Signing in to Claude Code. Finish it in the browser it opens.\n  {path}',
   'cli.loginTokenStarting':
     'Asking Claude Code for a long-lived token. It prints it ONCE and stores nothing — copy it into CLAUDE_CODE_OAUTH_TOKEN.\n  {path}',
   'cli.checkDaemon': 'Daemon',

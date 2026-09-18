@@ -105,8 +105,9 @@ services:
       # │     Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>
       # │
       # │ So it has the same shape as an API key — one string — and it belongs
-      # │ in a `.env` beside this file. Run `claude setup-token` wherever you
-      # │ already have Claude Code (your own machine is fine), paste the result,
+      # │ in a `.env` beside this file. Run `agentco login --token` on any
+      # │ machine (your own is fine — it brings its own Claude Code, so one does
+      # │ not have to be installed there), paste the result,
       # │ and `docker compose up -d` is genuinely the only command: the
       # │ container is ready to chat on its first start.
       # │

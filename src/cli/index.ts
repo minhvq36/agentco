@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Company } from '../core/company.js';
-import { adoptInterfaceLocale, osLocaleHints } from '../core/config.js';
+import { adoptInterfaceLocale, loadCompanyConfig, osLocaleHints } from '../core/config.js';
 import {
   companyFingerprint,
   companyPaths,
@@ -1269,14 +1269,35 @@ async function cmdDoctor(): Promise<void> {
  * │ user a global command they never asked this package for.                  │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠ TWO SHAPES, NOT ARBITRARY PASS-THROUGH. Bare, it starts an interactive
- * session, which is what "run `claude` once" always meant. `--token` runs
- * `setup-token`, the long-lived credential a container needs — the one route
- * `docker/README.md` documents and nothing on this machine could reach.
- * Forwarding the rest of argv would quietly turn `agentco` into a launcher for
- * an agent with none of our hooks attached, which is a different product.
+ * ⚠ TWO SHAPES, NOT ARBITRARY PASS-THROUGH. Bare, it runs `auth login` —
+ * measured against the pinned binary (SDK 0.3.231): "Sign in to your Anthropic
+ * account", `--claudeai` by default. `--token` runs `setup-token`, the
+ * long-lived credential a container needs. Forwarding the rest of argv would
+ * quietly turn `agentco` into a launcher for an agent with none of our hooks
+ * attached, which is a different product.
+ *
+ * ⚠ NOT A BARE `claude`. The first version of this command spawned the binary
+ * with no arguments, on the reasoning that "run `claude` once" had always meant
+ * an interactive session. That IS the thing the paragraph above forbids: a full
+ * agent session in the user's cwd, with tools, hooks, MCP and CLAUDE.md
+ * discovery. It only resembled a login because a signed-OUT Claude Code happens
+ * to open with a sign-in prompt — for anyone already signed in (switching
+ * accounts, recovering from the 401 the daemon just reported) it drops them
+ * into a REPL holding file-write tools, and never says "you are in".
  */
 function cmdLogin(): void {
+  /*
+   * ⚠ FOR ITS SIDE EFFECT, and it has to happen BEFORE the search. `claude_path`
+   * lives in company.yaml and reaches the resolver only through
+   * `setClaudePath()`, which only `loadCompanyConfig` calls. `doctor` gets that
+   * for free because it opens the company first; this command is dispatched
+   * straight out of `main()`. Without this line the refusal below would tell the
+   * reader to set a field that this command had not read — advice that cannot
+   * fix the command printing it — and a reader who set `claude_path` to pin one
+   * copy would silently sign in through a DIFFERENT binary than the daemon runs.
+   */
+  if (isCompanyDir(companyDir)) loadCompanyConfig(companyDir);
+
   const search = describeSearch();
   if (!search.found) {
     console.error(t('cli.checkClaudeNo'));
@@ -1294,7 +1315,7 @@ function cmdLogin(): void {
    * optional: a missing binary arrives as an EVENT, and an unheard `'error'`
    * event ends this process instead of being caught. → daemonfile.ts
    */
-  const child = spawn(search.found.path, token ? ['setup-token'] : [], {
+  const child = spawn(search.found.path, token ? ['setup-token'] : ['auth', 'login'], {
     stdio: 'inherit',
     windowsHide: true,
   });

@@ -70,11 +70,24 @@ const ALLOWED: Record<string, string> = {
   'lib.notePdfReaderMissing': 'npm install',
 };
 
-/** `case 'x':` in the CLI's dispatch — the list of commands that actually run. */
+/**
+ * `case 'x':` inside `main()` — the commands that actually run.
+ *
+ * ⚠ ANCHORED TO THE SWITCH, not to the file. Scanning the whole of `index.ts`
+ * for `case '…':` is right only as long as there is exactly one such switch,
+ * which is true today and is not a property anyone maintains. A second one —
+ * `case 'linux':`, `case 'stdio':` — would quietly enrol its labels as
+ * commands, and a sentence naming `agentco linux` would pass. That is this
+ * file's own subject: a gate reporting clean about something it never read.
+ */
 function dispatched(): Set<string> {
   const src = fs.readFileSync(path.join(ROOT, 'src', 'cli', 'index.ts'), 'utf8');
+  const start = src.indexOf('async function main()');
+  assert.notEqual(start, -1, 'main() has been renamed — this gate no longer reads the dispatch');
+  const end = src.indexOf('\n}', src.indexOf('switch (command)', start));
+  assert.ok(end > start, 'the command switch is no longer inside main()');
   const out = new Set<string>();
-  for (const m of src.matchAll(/case '([a-z][a-z-]*)':/g)) out.add(m[1]!);
+  for (const m of src.slice(start, end).matchAll(/case '([a-z][a-z-]*)':/g)) out.add(m[1]!);
   return out;
 }
 
@@ -171,6 +184,93 @@ test('`agentco help` lists only commands that exist', () => {
     }
   }
   assert.deepEqual(offenders, [], `Listed but not dispatched:\n  ${offenders.join('\n  ')}`);
+});
+
+/**
+ * ⚠ THE DOCUMENTS TOO, BECAUSE THE FIRST TWO INSTANCES OF THIS BUG WERE IN
+ * DOCUMENTS. A lock that reads `src/i18n/` alone is smaller than the class it
+ * claims to hold: `docker/README.md`, `.env.example`, `docker-compose.yaml` and
+ * `TEST-WALKTHROUGH.md` all told a reader ON THEIR OWN MACHINE to run `claude
+ * setup-token`, and stayed that way through the first pass of this very fix.
+ *
+ * ⚠ Inside the image `claude` IS on PATH — `docker/Dockerfile` symlinks it. So
+ * a line that runs the command through `docker compose exec` (or `run`) is
+ * correct advice about a different machine, and only those are exempt.
+ */
+/**
+ * Prose that NAMES `claude` without sending anyone to it. No regex separates
+ * "run this" from "this is what that command does" — a detector that claimed to
+ * would be guessing, which is the thing this file exists to stop. So each one is
+ * a decision somebody wrote down, keyed on the words themselves: edit the line
+ * and the gate fires again, which is correct, because it wants re-reading.
+ */
+const DOC_ALLOWED: Array<{ file: string; contains: string; why: string }> = [
+  {
+    file: '.env.example',
+    contains: 'PRINTS the token and stores nothing',
+    why: 'describes what the command does; the instruction two lines below it is ours',
+  },
+  {
+    file: 'docker-compose.yaml',
+    contains: 'hands you',
+    why: 'explains where the token comes from; the instruction underneath is ours',
+  },
+  {
+    file: 'docker/README.md',
+    contains: '| `claude login` | `CLAUDE_CODE_OAUTH_TOKEN` |',
+    why: 'a measurement table comparing the two auth modes — a column heading, not a step',
+  },
+  {
+    file: 'docker/README.md',
+    contains: 'Sign in with `claude login`',
+    why: 'the next line says "inside the container", where the Dockerfile symlinks claude',
+  },
+  {
+    file: 'docs/TEST-WALKTHROUGH.md',
+    contains: 'is the same thing, if you already have the CLI',
+    why: 'offered beside ours and explicitly conditioned on already having it',
+  },
+  {
+    file: 'docs/TEST-WALKTHROUGH.md',
+    contains: 'inside the container restores both',
+    why: 'inside the container, where claude is on PATH',
+  },
+];
+
+const DOC_FILES = [
+  'README.md',
+  'CONTRIBUTING.md',
+  '.env.example',
+  'docker-compose.yaml',
+  'docker/README.md',
+  'docs/TEST-WALKTHROUGH.md',
+  'bench/README.md',
+];
+
+test('🔴 no DOCUMENT tells a reader on their own machine to run `claude`', () => {
+  const offenders: string[] = [];
+  for (const rel of DOC_FILES) {
+    const abs = path.join(ROOT, rel);
+    if (!fs.existsSync(abs)) continue;
+    fs.readFileSync(abs, 'utf8')
+      .split(/\r?\n/)
+      .forEach((line, i) => {
+        // Not a line that runs it in the container, where `claude` is symlinked.
+        if (/docker\s+compose\s+(exec|run)/.test(line)) return;
+        // `claude setup-token` offered as an ALTERNATIVE, next to ours, is fine.
+        if (/agentco login/.test(line)) return;
+        if (DOC_ALLOWED.some((a) => a.file === rel && line.includes(a.contains))) return;
+        if (/(^|[\s`"'(])claude\s+(setup-token|auth|login|--)/.test(line)) {
+          offenders.push(`${rel}:${i + 1}  ${line.trim().slice(0, 78)}`);
+        }
+      });
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    'Say `agentco login` (or `--token`). These readers may have no `claude`:\n  ' +
+      offenders.join('\n  '),
+  );
 });
 
 test('both catalogues describe `login`, because a sign-in wall is where readers arrive', () => {

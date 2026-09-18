@@ -80,12 +80,12 @@ agentco on the same machine.
 
 ## Signing in to Claude — do this BEFORE `up`
 
-**A Claude subscription** is the usual choice. Mint a long-lived token wherever
-you already have Claude Code — your own laptop is fine, it does not have to be
-the server:
+**A Claude subscription** is the usual choice. Mint a long-lived token on any
+machine — your own laptop is fine, it does not have to be the server, and you do
+not need Claude Code installed there:
 
 ```bash
-claude setup-token
+agentco login --token        # or `claude setup-token`, if you already have the CLI
 ```
 
 It prints the token once and says so. Put it in a `.env` beside

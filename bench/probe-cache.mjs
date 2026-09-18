@@ -1,4 +1,4 @@
-﻿import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const baseOpts = {
   systemPrompt: { type: "preset", preset: "claude_code", excludeDynamicSections: true },

@@ -599,7 +599,7 @@ export const vi: Catalog = {
   'cli.checkAuthHint': 'chạy `agentco login` một lần để đăng nhập',
   'cli.checkAuthTimeout':
     'không có phản hồi sau {seconds} s — kiểm tra mạng, rồi chạy `agentco login` một lần để đăng nhập',
-  'cli.loginStarting': 'Đang mở Claude Code để bạn đăng nhập. Xong thì đóng lại.\n  {path}',
+  'cli.loginStarting': 'Đang đăng nhập Claude Code. Hoàn tất trên trình duyệt vừa mở.\n  {path}',
   'cli.loginTokenStarting':
     'Đang xin Claude Code một token dài hạn. Nó in ra MỘT lần và không lưu lại — chép vào CLAUDE_CODE_OAUTH_TOKEN.\n  {path}',
   'cli.checkDaemon': 'Daemon',
