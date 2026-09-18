@@ -60,11 +60,16 @@ change would require collecting signatures again, and one unreachable contributo
 ## Getting started
 
 ```bash
-npm install
-npm run build:all     # compile server + web UI
-npm test              # 875 tests, ~20 seconds, 0 tokens, no LLM calls
-npm run dev           # run the CLI from source
+npm install                 # server dependencies
+npm --prefix web install    # the interface is its own package — there are no workspaces
+npm run build:all           # tsc + vite; this is what creates dist/
+npm test                    # 1278 tests, ~55 seconds, 0 tokens, no LLM calls
+npm run dev                 # run the CLI from source
 ```
+
+⚠ The second line used to be missing, and this block did not work on a fresh clone: `build:all`
+ends with `npm --prefix web run build`, which needs dependencies nobody had installed. It failed
+halfway, after the server had already compiled — the most confusing place to stop.
 
 ### Four quality criteria — they define "done"
 

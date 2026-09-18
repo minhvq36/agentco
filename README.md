@@ -76,12 +76,36 @@ Then, **in the folder where you want the company to live**:
 
 ```sh
 agentco init
+agentco doctor     # every line must be ✓ — the Claude Code sign-in especially
 agentco start
 ```
 
 `init` creates `./company` right there and `start` opens the interface. `npm i -g` installs into
 npm's global prefix, so the folder you are standing in stays empty until `init` — that is `init`'s
 whole job.
+
+**Do not skip `doctor`.** It is the difference between finding out now and finding out from a job
+that fails for a reason it cannot explain. It checks Node, the company folder, Claude Code, and the
+sign-in — and the sign-in check is a **real call**, not a test that a file exists.
+
+### Or from source
+
+Everything below is generated and none of it is in the repository, so a fresh clone needs all four
+before there is anything to run:
+
+```sh
+npm install                 # server dependencies
+npm --prefix web install    # the interface has its own; there are no workspaces
+npm run build:all           # tsc + vite — this is what creates dist/cli/index.js
+node dist/cli/index.js doctor
+node dist/cli/index.js start
+```
+
+⚠ **`npm install` alone is not enough**, and the failure is confusing if you try: `dist/` is
+gitignored, so `node dist/cli/index.js` finds no such file. The build is what puts it there.
+
+⚠ **The two installs are separate on purpose** — `web/` is its own package. Skipping the second one
+makes `build:all` fail in its second half, after the server has already compiled.
 
 <details>
 <summary>Updating, removing, and the Windows installer</summary>
