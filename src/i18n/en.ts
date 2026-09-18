@@ -792,12 +792,6 @@ export const en = {
   'cli.checkAuthTimeout': 'no answer within {seconds} s — check the network, then run `claude` once to sign in',
   'cli.checkDaemon': 'Daemon',
   'cli.checkDaemonNo': 'not running — `agentco start`',
-  /**
-   * ⚠ `updateHandedOff` IS PRINTED BY A PROCESS THAT IS ABOUT TO EXIT, and the
-   * work carries on in another one. Saying "updated" here would be a claim
-   * about something that has not happened yet; saying nothing would read as the
-   * command having done nothing at all.
-   */
   'cli.createdShortcutHint': '  Want it in the applications menu? Run `agentco shortcut` here.',
   'cli.updateRestarting': 'Version {version} is in place — restarting on the same port.',
   'srv.updateNotPackaged':
@@ -833,23 +827,22 @@ export const en = {
   'cli.updateAlready': 'Already on {version}, which is the newest there is.',
   'cli.updateNoNpm':
     'Cannot find npm beside this Node, so there is nothing to hand the work to. The company was NOT stopped.\nUpdate it yourself with:  {command}',
-  'cli.updateHandedOff':
-    'Installing {target} in a separate process, then starting the company again.',
-  // ⚠ The same sentence minus a promise it cannot keep. Nothing was running, so
-  // nothing will be started, and saying otherwise is the cheapest way to look
-  // broken while working correctly.
-  'cli.updateHandedOffIdle': 'Installing {target} in a separate process.',
   /**
-   * ⚠ THE COMMAND'S OWN PAIR, and it promises something different: npm is about
-   * to speak, on this terminal, and this command is not going anywhere until it
-   * is done. The `HandedOff` pair above stays for the BUTTON, which really does
-   * hand the work to a process nobody is watching. → `cli/index.ts §updateInTerminal`
+   * ⚠ THE `HandedOff` PAIR AND `updateLog` ARE GONE (18/09/2026), and the three
+   * of them went together because they described ONE arrangement that no longer
+   * exists: a command that started a detached job, returned at once, and printed
+   * a path into TEMP where the real news would later appear.
+   *
+   * `agentco update` now runs npm in front of the person and waits for it, so
+   * npm's own output IS the progress and IS the error. A sentence promising a
+   * log file would be pointing at nothing. → `cli/index.ts §updateInTerminal`
+   *
+   * ⚠ The second one drops a promise the first one cannot keep: nothing was
+   * running, so nothing will be started, and saying otherwise is the cheapest
+   * way to look broken while working correctly.
    */
   'cli.updateStarting': 'Installing {target}, then starting the company again.',
   'cli.updateStartingIdle': 'Installing {target}.',
-  // ⚠ The only place a failure can be read from: by the time npm speaks, this
-  // command has exited and nobody is attached to anything.
-  'cli.updateLog': '  progress and any error:  {path}',
   /**
    * ⚠ REFUSED, NOT FAILED, and the sentence has to carry that: nothing was
    * replaced and the company is still there. Both numbers are in it because

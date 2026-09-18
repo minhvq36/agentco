@@ -436,7 +436,15 @@ async function updateStep(): Promise<void> {
     return;
   }
   step(`agentco update --to ${published}`);
-  const upd = await collect(agentco(['update', '--to', published]), 60_000);
+  /*
+   * ⚠ FIVE MINUTES, NOT ONE. The old command handed the work off and returned
+   * in milliseconds, so 60 s was a formality. This one WAITS for npm, and CI
+   * measured that install at 65.3 s on the run that caught this very change —
+   * a ceiling four seconds above the observed time is a flake with a date on
+   * it. The old polling ceiling for the same work was 180 s; this keeps the
+   * headroom and puts it where the waiting now happens.
+   */
+  const upd = await collect(agentco(['update', '--to', published]), 300_000);
 
   // 🔴 THE HANG IS THE POINT. `collect` resolves on 'close', which fires only
   // once the process has ended AND its streams are shut; the helper used to be
@@ -444,24 +452,33 @@ async function updateStep(): Promise<void> {
   check(upd.code === 0, 'update exited 0 and CLOSED its streams', upd.out);
   check(!upd.out.includes('Cannot find npm'), 'npm was found beside this Node', upd.out);
 
-  // ⚠ The log the command printed is the only evidence the helper ran at all —
-  // it is detached, so nothing else can see it.
-  const logLine = /(\S+update\.log)/.exec(upd.out);
-  check(!!logLine, 'update printed where its log is', upd.out);
-  const npmSpoke = await waitFor(
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async () => {
-      try {
-        const body = fs.readFileSync(logLine![1]!, 'utf8');
-        return /added|changed|up to date|npm error|npm warn/.test(body) ? body : undefined;
-      } catch {
-        return undefined;
-      }
-    },
-    180_000,
+  /**
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ ⚠ THIS USED TO HUNT FOR A LOG PATH, and CI caught it on all three        │
+   * │ systems the moment the command stopped making a job. (18/09/2026)        │
+   * │                                                                          │
+   * │ The old shape: the command handed the work to a DETACHED helper, returned │
+   * │ at once, and printed `…/update.log` — which was the only evidence the     │
+   * │ helper had run, because nothing else could see it. So the check polled    │
+   * │ that file for npm's voice.                                               │
+   * │                                                                          │
+   * │ The new shape: the command runs the helper in FRONT of the person and     │
+   * │ waits, so npm speaks on this very stdout. There is no log file to find,   │
+   * │ and looking for one was asserting the absence of the feature.             │
+   * │                                                                          │
+   * │ ⚠ IT IS A STRONGER CHECK NOW, not a weaker one. Before, `upd.out` proved  │
+   * │ only that a process had been started; the real work was verified through  │
+   * │ a file, on a delay, with a 180-second ceiling. Now the command cannot     │
+   * │ have exited until npm was done, so its own output IS the evidence.        │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  check(!/update\.log/.test(upd.out), 'update no longer sends its news to a file nobody reads', upd.out);
+  check(
+    /added|changed|up to date/.test(upd.out),
+    'npm spoke on the terminal, and the command waited for it',
+    upd.out,
   );
-  check(!!npmSpoke, 'the detached helper actually ran npm', npmSpoke?.slice(-600));
-  check(!/npm error/.test(npmSpoke ?? ''), 'and npm did not fail', npmSpoke?.slice(-600));
+  check(!/npm error/.test(upd.out), 'and npm did not fail', upd.out);
 
   const after = await waitFor(
     // eslint-disable-next-line @typescript-eslint/require-await

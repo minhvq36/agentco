@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Vietnamese catalogue.
  *
  * ⚠ THE ONLY FILE IN THE REPOSITORY EXEMPT FROM THE ENGLISH-SOURCE RULE, and the
@@ -619,11 +619,8 @@ export const vi: Catalog = {
   'cli.updateAlready': 'Đang ở {version}, và đó là bản mới nhất.',
   'cli.updateNoNpm':
     'Không tìm thấy npm cạnh Node này nên không có gì để giao việc. Công ty **chưa** bị tắt.\nTự cập nhật bằng:  {command}',
-  'cli.updateHandedOff': 'Đang cài {target} ở một tiến trình riêng, xong sẽ bật lại công ty.',
-  'cli.updateHandedOffIdle': 'Đang cài {target} ở một tiến trình riêng.',
   'cli.updateStarting': 'Đang cài {target}, xong sẽ bật lại công ty.',
   'cli.updateStartingIdle': 'Đang cài {target}.',
-  'cli.updateLog': '  tiến trình và lỗi nếu có:  {path}',
   'cli.updateNoSpace':
     'Không đủ chỗ trống để cài, nên chưa đụng vào gì cả — công ty vẫn nguyên và vẫn chạy được.\nCài cần khoảng {need} trống; "{dir}" còn {free}.\nDọn bớt chỗ rồi thử lại. `npm cache clean --force` thường là chỗ lấy lại được nhiều nhất.',
   'cli.portMoved':
