@@ -702,13 +702,25 @@ export const en = {
    * *"Please run /login"*) pointed at a command that does not exist outside an
    * interactive `claude` session. → `worker.ts §sayError`
    *
-   * ⚠ KNOWN GAP, recorded rather than guessed at: the Windows installer puts no
-   * `agentco` on PATH (T5 §61), so this line is right for the npm door and only
-   * approximately right for that one. Branching on the install kind is the fix
-   * and it is a separate change — one sentence that is right for most beats no
-   * sentence at all, which is what was here before.
+   * ⚠ BOTH DOORS IN ONE SENTENCE, rather than one sentence chosen in code
+   * (user, 19/09/2026). The Windows installer puts no `agentco` on PATH
+   * (T5 §61) — it ships `agentco.cmd` inside the install folder instead — so a
+   * line naming only the first is wrong for exactly the audience most likely to
+   * read it: a desktop user who has never had Claude Code.
+   *
+   * The considered alternative was `{cmd}`, filled from `installKind()` with the
+   * real path. It reads better and it costs a retest of T5 §61 on a machine with
+   * the .exe installed, which is a reinstall, not a line. Declined for now on
+   * cost. The reader knows which way they installed; this sentence is correct
+   * for both and needs nothing computed, so nothing can compute it wrongly.
+   *
+   * ⚠ STILL NOT RIGHT FOR DOCKER, and that is recorded rather than papered
+   * over: that door signs in with `CLAUDE_CODE_OAUTH_TOKEN`, not with a login
+   * command. The sentence at least names something that exists in the
+   * container. → backlog
    */
-  'wk.stopAuth': 'Could not sign in to Claude on this machine. Open a terminal and run `agentco login` once.',
+  'wk.stopAuth':
+    'Could not sign in to Claude on this machine. Run `agentco login` once — or, on the desktop install, `agentco.cmd login` from the AgentCo folder.',
   'wk.stopOther': 'Claude Code stopped part-way ({raw}).',
 
   'off.leftoversOnBoot':

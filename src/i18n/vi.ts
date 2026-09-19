@@ -502,7 +502,7 @@ export const vi: Catalog = {
   'wk.stopUsageLimit': 'Tài khoản Claude đã hết hạn mức dùng.',
   'wk.stopRateLimit': 'Claude đang quá tải, thử lại sau ít phút.',
   'wk.stopAuth':
-    'Chưa đăng nhập được vào Claude trên máy này. Mở terminal và chạy `agentco login` một lần.',
+    'Chưa đăng nhập được vào Claude trên máy này. Chạy `agentco login` một lần — bản cài desktop thì chạy `agentco.cmd login` trong thư mục cài AgentCo.',
   'wk.stopOther': 'Claude Code dừng giữa chừng ({raw}).',
 
   'off.leftoversOnBoot':
