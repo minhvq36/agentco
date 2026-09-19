@@ -37,8 +37,22 @@ export interface SignIn {
   ok: boolean;
   /** The ceiling was hit — nothing is known about the login either way. */
   timedOut?: boolean;
-  /** Why it is not ok, in the SDK's words or `sayError`'s. */
+  /** Why it is not ok, in OUR words when we have a sentence for it. → `sayError` */
   note?: string;
+  /**
+   * The vendor's own words, kept ALONGSIDE `note` rather than replaced by it.
+   *
+   * ⚠ Two readers, two needs, and that is why both strings survive. `note` is
+   * for the person deciding what to do next — it must never name something
+   * they cannot run. `raw` is for the person pasting an error into a support
+   * thread, where the vendor's exact phrasing is the useful half. `doctor`
+   * prints ours and then this one in parentheses; the chat window prints only
+   * ours. → `cli/index.ts §signInNote`
+   *
+   * Equal to `note` whenever `sayError` passed the text straight through, and
+   * the caller drops the duplicate rather than printing one sentence twice.
+   */
+  raw?: string;
 }
 
 /**
@@ -51,6 +65,7 @@ export async function readSignIn(
 ): Promise<SignIn> {
   let ok = false;
   let note: string | undefined;
+  let vendor: string | undefined;
   try {
     for await (const msg of start()) {
       const m = msg as Record<string, unknown> | null;
@@ -58,13 +73,23 @@ export async function readSignIn(
       const raw = resultFailure(m);
       ok = raw === undefined;
       note = raw === undefined ? undefined : sayError(raw, classifyError(raw));
+      vendor = raw;
     }
   } catch (err) {
     ok = false;
     if (aborted()) return { ok: false, timedOut: true };
     // The result's own sentence, when there was one, says it better than the
     // SDK's wrapper around it ("Claude Code returned an error result: …").
-    note ??= err instanceof Error ? err.message : String(err);
+    //
+    // ⚠ CLASSIFIED HERE TOO, and this is the branch that used to leak: a throw
+    // carries the same "Not logged in · Please run /login" as a failed result,
+    // and only the result path was being read through `sayError`. One door was
+    // fixed while its twin two lines down stayed open. → `worker.ts §sayError`
+    if (note === undefined) {
+      const msg = err instanceof Error ? err.message : String(err);
+      note = sayError(msg, classifyError(msg));
+      vendor = msg;
+    }
   }
-  return { ok, ...(note ? { note } : {}) };
+  return { ok, ...(note ? { note } : {}), ...(vendor && vendor !== note ? { raw: vendor } : {}) };
 }

@@ -12,7 +12,7 @@ import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
 import { readSignIn } from '../dist/cli/doctor-auth.js';
-import { resultFailure } from '../dist/core/worker.js';
+import { classifyError, resultFailure, sayError } from '../dist/core/worker.js';
 
 const REJECTED = {
   type: 'result',
@@ -38,9 +38,9 @@ test('🔴 the 14/09 sequence — success + is_error, then a throw — is NOT si
     never,
   );
   assert.equal(r.ok, false);
-  assert.match(r.note ?? '', /401/);
+  assert.match(r.raw ?? '', /401/);
   // The result's own sentence, not the SDK's wrapper around it.
-  assert.doesNotMatch(r.note ?? '', /returned an error result/);
+  assert.doesNotMatch(r.raw ?? '', /returned an error result/);
 });
 
 test('…and the same result with no throw after it is still not signed in', async () => {
@@ -79,6 +79,62 @@ test('hitting the ceiling says so, rather than reporting the abort as a login pr
 
 test('no result at all is not signed in, with no invented reason', async () => {
   assert.deepEqual(await readSignIn(stream([]), never), { ok: false });
+});
+
+/**
+ * 🔴 The vendor's `/login` must not reach a reader who cannot run it.
+ * → core/worker.ts §sayError · cli/index.ts §signInNote
+ *
+ * The exact string below came off a real chat window on 19/09/2026, relayed
+ * out of the packaged `claude` binary. It is a correct instruction inside an
+ * interactive Claude Code session and a dead end everywhere else — and our own
+ * chat box HAS slash commands, so it reads as if it would work.
+ */
+const VENDOR_LOGIN = 'Not logged in · Please run /login';
+
+test('🔴 an auth failure gets OUR sentence, never the vendor "/login"', () => {
+  const kind = classifyError(VENDOR_LOGIN);
+  assert.equal(kind, 'auth', 'the classifier was already right — this is about using its answer');
+  const said = sayError(VENDOR_LOGIN, kind);
+  assert.doesNotMatch(said, /\/login/, 'a slash command the reader has no session to type it into');
+  assert.match(said, /agentco login/, 'must name the command they can actually run');
+});
+
+test('…and the same holds for every kind we have a sentence for', () => {
+  for (const [raw, kind] of [
+    ["You've hit your limit", 'usage_limit'],
+    ['HTTP 429 rate limit exceeded', 'rate_limit'],
+    ['401 unauthorized', 'auth'],
+  ] as const) {
+    assert.equal(classifyError(raw), kind);
+    assert.notEqual(sayError(raw, kind), raw, `${kind} still passed the vendor text straight through`);
+  }
+});
+
+test('⚠ `other` still passes the vendor text through — this is not a translation layer', () => {
+  const odd = 'the socket closed before the first message';
+  assert.equal(classifyError(odd), 'other');
+  assert.equal(sayError(odd, 'other'), odd);
+});
+
+test('a bare machine code is never shown as-is, even on `other`', () => {
+  assert.doesNotMatch(sayError('error_during_execution', 'other'), /^error_[a-z_]+$/);
+});
+
+test('🔴 doctor keeps the vendor reason BESIDE ours — two readers, both served', async () => {
+  const r = await readSignIn(
+    stream([{ type: 'result', subtype: 'success', is_error: true, result: VENDOR_LOGIN }]),
+    never,
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.note ?? '', /agentco login/, 'the instruction half');
+  assert.equal(r.raw, VENDOR_LOGIN, 'the support-thread half');
+});
+
+test('…and `raw` is dropped when it would only repeat `note`', async () => {
+  const r = await readSignIn(stream([], new Error('process exited with code 1')), never);
+  assert.equal(r.note, 'process exited with code 1');
+  assert.equal(r.raw, undefined, 'one sentence printed twice, in parentheses after itself');
 });
 
 test('resultFailure: both shapes of failure, and never the word "success" as the reason', () => {

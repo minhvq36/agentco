@@ -23,13 +23,14 @@ import {
   resolveCompanyDir,
 } from '../core/paths.js';
 import { DESKTOP_LAUNCHER_ENV, desktopEntry, desktopFileName } from './desktop-entry.js';
-import { readSignIn, SIGN_IN_PROBE_MS } from './doctor-auth.js';
+import { readSignIn, SIGN_IN_PROBE_MS, type SignIn } from './doctor-auth.js';
 import { serve, type Daemon } from '../server/server.js';
 import { webBuildStale } from '../server/static.js';
 import { clearDaemonFile, liveDaemon, openBrowser, writeDaemonFile } from './daemonfile.js';
 import { agentcoOnPort, DEFAULT_PORT, findFreePort, type PortOccupant } from './port.js';
 import {
   checkSpace,
+  checkWritable,
   findNpmCli,
   globalPrefixFor,
   sweepOldUpdateDirs,
@@ -632,12 +633,26 @@ function updateRefusal(target: string): string | undefined {
   if (!prefix) return undefined;
 
   const space = checkSpace(prefix);
-  if (space.ok) return undefined;
-  return t('cli.updateNoSpace', {
-    need: gib(space.needed),
-    free: gib(space.free ?? 0),
-    dir: space.dir,
-  });
+  if (!space.ok) {
+    return t('cli.updateNoSpace', {
+      need: gib(space.needed),
+      free: gib(space.free ?? 0),
+      dir: space.dir,
+    });
+  }
+
+  /*
+   * ⚠ THE DIRECTORY HOLDING THIS PACKAGE, not the prefix. npm removes and
+   * rewrites our own tree in place, so the permission that matters belongs to
+   * the folder it sits in — on a `sudo` install that folder is root's while the
+   * daemon is not. Asking about the prefix instead would pass on layouts where
+   * the prefix is writable and `lib/node_modules` under it is not.
+   * → `cli/update-run.ts §checkWritable`
+   */
+  const writable = checkWritable(path.dirname(packageRoot()));
+  if (!writable.ok) return t('cli.updateNoPermission', { dir: writable.dir });
+
+  return undefined;
 }
 
 /**
@@ -1203,17 +1218,7 @@ async function cmdDoctor(): Promise<void> {
   );
   clearTimeout(ceiling);
   const authOk = signIn.ok;
-  checks.push([
-    t('cli.checkAuth'),
-    authOk,
-    authOk
-      ? t('cli.checkAuthOk')
-      : signIn.timedOut
-        ? t('cli.checkAuthTimeout', { seconds: SIGN_IN_PROBE_MS / 1000 })
-        : signIn.note
-          ? signIn.note.slice(0, 90)
-          : t('cli.checkAuthHint'),
-  ]);
+  checks.push([t('cli.checkAuth'), authOk, signInNote(signIn)]);
 
   const info = await liveDaemon(companyPaths(companyDir));
   checks.push([
@@ -1226,6 +1231,36 @@ async function cmdDoctor(): Promise<void> {
     console.log(`  ${ok ? '✓' : '✗'}  ${name.padEnd(24)} ${note}`);
   }
   if (!authOk) process.exit(EXIT.auth);
+}
+
+/**
+ * `doctor`'s sign-in line. → `cli/doctor-auth.ts §SignIn`
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 OUR SENTENCE FIRST, THE VENDOR'S IN PARENTHESES. (user, 19/09/2026)   │
+ * │                                                                          │
+ * │ This line used to be `signIn.note ?? t('cli.checkAuthHint')` with the    │
+ * │ note straight from the SDK — so the vendor's string WON whenever there   │
+ * │ was one, and our hint only ever printed when the SDK said nothing. T7    │
+ * │ §80 asks this line to name `agentco login`; it was printing              │
+ * │ *"Please run /login"*, a command that exists only inside an interactive  │
+ * │ `claude` session, to somebody who has no way to open one.                │
+ * │                                                                          │
+ * │ ⚠ AND THE RAW REASON IS KEPT, unlike in the chat window. Two readers:    │
+ * │ whoever is fixing their own machine needs a command they can run;        │
+ * │ whoever is pasting this into a support thread needs the vendor's exact   │
+ * │ words. `doctor` is where the second reader stands, so it gets both.      │
+ * │                                                                          │
+ * │ ⚠ Each half is capped SEPARATELY. One cap over the pair would let a long │
+ * │ vendor string eat the instruction — losing precisely the half that was   │
+ * │ added to fix this.                                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function signInNote(signIn: SignIn): string {
+  if (signIn.ok) return t('cli.checkAuthOk');
+  if (signIn.timedOut) return t('cli.checkAuthTimeout', { seconds: SIGN_IN_PROBE_MS / 1000 });
+  if (!signIn.note) return t('cli.checkAuthHint');
+  return signIn.note.slice(0, 90) + (signIn.raw ? ` (${signIn.raw.slice(0, 90)})` : '');
 }
 
 /**

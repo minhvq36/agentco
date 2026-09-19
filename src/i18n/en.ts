@@ -696,7 +696,19 @@ export const en = {
   'wk.stopBudget': 'This turn hit the spend ceiling set for the job.',
   'wk.stopUsageLimit': 'The Claude account is out of usage.',
   'wk.stopRateLimit': 'Claude is overloaded; try again in a few minutes.',
-  'wk.stopAuth': 'Could not sign in to Claude on this machine.',
+  /**
+   * ⚠ NAMES THE NEXT STEP, because "could not sign in" on its own leaves the
+   * reader with nowhere to go — and the sentence this replaces (the vendor's
+   * *"Please run /login"*) pointed at a command that does not exist outside an
+   * interactive `claude` session. → `worker.ts §sayError`
+   *
+   * ⚠ KNOWN GAP, recorded rather than guessed at: the Windows installer puts no
+   * `agentco` on PATH (T5 §61), so this line is right for the npm door and only
+   * approximately right for that one. Branching on the install kind is the fix
+   * and it is a separate change — one sentence that is right for most beats no
+   * sentence at all, which is what was here before.
+   */
+  'wk.stopAuth': 'Could not sign in to Claude on this machine. Open a terminal and run `agentco login` once.',
   'wk.stopOther': 'Claude Code stopped part-way ({raw}).',
 
   'off.leftoversOnBoot':
@@ -867,6 +879,18 @@ export const en = {
    */
   'cli.updateNoSpace':
     'Not enough disk space to install, so nothing was touched — the company is untouched and still works.\nInstalling needs about {need} free; “{dir}” has {free}.\nFree some space and try again. `npm cache clean --force` is usually the largest easy win.',
+  /**
+   * ⚠ NAMES THE CAUSE, because "permission denied" alone sends people to
+   * `sudo` — which is what put the machine in this state. The folder belongs to
+   * root precisely because the install was run that way, and doing it again
+   * only moves the problem one release further along.
+   *
+   * ⚠ Same shape as `cli.updateNoSpace` above and for the same reason: refused,
+   * not failed. Nothing was replaced, the company is still there.
+   * → cli/update-run.ts §checkWritable
+   */
+  'cli.updateNoPermission':
+    'No permission to install into “{dir}”, so nothing was touched — the company is untouched and still works.\nThat folder belongs to another user, which is what installing with sudo leaves behind.\nGive npm a prefix you own and install once more: `npm config set prefix ~/.npm-global`, then put `~/.npm-global/bin` on your PATH.',
   /**
    * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
    * Naming the neighbour is only possible when it answered `/healthz`; claiming

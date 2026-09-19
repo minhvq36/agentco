@@ -30,14 +30,24 @@ test('a clean result is the work', () => {
 });
 
 test('🔴 success + is_error is a failure of kind auth, never the text of the work', () => {
+  const work = 'Failed to authenticate. API Error: 401 API key is invalid';
   const err = thrown(() =>
-    runResultText(
-      { type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate. API Error: 401 API key is invalid' },
-      CTX,
-    ),
+    runResultText({ type: 'result', subtype: 'success', is_error: true, result: work }, CTX),
   );
   assert.equal(err.kind, 'auth');
-  assert.match(err.message, /401/);
+  /*
+   * ⚠ CHANGED 19/09/2026: this used to assert the message still contained
+   * "401", i.e. that the vendor's own text survived. It does not any more, and
+   * that is the fix rather than a regression — `sayError` now uses the
+   * classification instead of computing it and passing the raw text through.
+   * The vendor string on this path was *"Not logged in · Please run /login"*,
+   * naming a command that exists only inside an interactive `claude` session.
+   *
+   * What the test was really guarding — "never the text of the work" — is
+   * unchanged and asserted below; only the substitute sentence is new.
+   */
+  assert.notEqual(err.message, work, 'the work text is being shown as the failure');
+  assert.match(err.message, /agentco login/, 'the reader is left with nothing to do');
 });
 
 test('the budget ceiling keeps its own kind and sentence', () => {

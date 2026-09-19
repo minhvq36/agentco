@@ -135,6 +135,51 @@ export function checkSpace(dir: string, needed: number = UPDATE_NEEDS_BYTES): Sp
   }
 }
 
+export interface WriteVerdict {
+  ok: boolean;
+  dir: string;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 A PREFIX OWNED BY ROOT FAILS AFTER THE DAEMON IS ALREADY DEAD.        │
+ * │ (found 19/09/2026 on a fresh Debian, and it is the ordinary path)        │
+ * │                                                                          │
+ * │ NodeSource puts Node in `/usr/lib/node_modules`, owned by root, so a     │
+ * │ plain `npm i -g` answers EACCES and npm's own advice is to run it with   │
+ * │ `sudo`. Almost everyone does. The install works — and the machine is now │
+ * │ one where the Update button CANNOT work: the daemon runs as the user,    │
+ * │ `handOffUpdate` spawns `npm install --global --prefix <where we run>`,   │
+ * │ and that write is refused. By then the helper has already been handed    │
+ * │ the job and this process is on its way out, so the refusal lands in a    │
+ * │ log nobody opens. The screen shows "Updating…" and then, five minutes    │
+ * │ later, invents a failure it cannot explain.                             │
+ * │                                                                          │
+ * │ ⚠ ASKED BESIDE `checkSpace`, i.e. BEFORE anything stops — that placement │
+ * │ is the entire fix. Both of these are knowable a second early, and a      │
+ * │ refusal that arrives early costs a sentence while the same refusal       │
+ * │ arriving late costs the running company. → `cli/index.ts §updateRefusal` │
+ * │                                                                          │
+ * │ ⚠ ONLY `EACCES`/`EPERM` REFUSE. Same discipline as `checkSpace`: a path  │
+ * │ that does not exist yet, an exotic filesystem or any other errno is an   │
+ * │ absent answer, and an absent answer must not block an update.           │
+ * │ → [[agentco-deterministic-vs-signal]]                                    │
+ * │                                                                          │
+ * │ ⚠ On Windows this passes almost always — `access(W_OK)` there reports    │
+ * │ the read-only attribute and not the ACL. That is the safe direction: no  │
+ * │ false refusals, and the case this exists for is a POSIX one.            │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export function checkWritable(dir: string): WriteVerdict {
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return { ok: true, dir };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return { ok: code !== 'EACCES' && code !== 'EPERM', dir };
+  }
+}
+
 /** How many update directories survive a sweep. → `sweepOldUpdateDirs` */
 const KEEP_UPDATE_DIRS = 3;
 

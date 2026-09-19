@@ -2060,9 +2060,40 @@ export function runResultText(
   return typeof m['result'] === 'string' ? m['result'] : '';
 }
 
+/**
+ * The sentence a human reads when a turn died. → `classifyError` right below
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE CLASSIFICATION IS USED, NOT COMPUTED AND THROWN AWAY. (user,      │
+ * │ 19/09/2026)                                                              │
+ * │                                                                          │
+ * │ This used to open with *"not a machine code ⇒ the SDK said something     │
+ * │ meaningful, keep it"* and return `raw` before any branch below could      │
+ * │ run. `classifyError` had already done its work correctly; the answer      │
+ * │ was computed and then dropped on the floor.                              │
+ * │                                                                          │
+ * │ What that cost, in a real chat window: the vendor binary says             │
+ * │ *"Not logged in · Please run /login"*. `/login` is a slash command that    │
+ * │ exists ONLY inside an interactive `claude` session — which this person    │
+ * │ has no way to open. Worse, our chat box HAS slash commands                │
+ * │ (`commands.ts:88-103`), so `/login` looks legitimate; typing it lands in  │
+ * │ `unknown` and `helpText()` lists commands that do not include it. The     │
+ * │ instruction is not wrong of Anthropic — it is right in their session      │
+ * │ and wrong once we relay it into ours.                                    │
+ * │                                                                          │
+ * │ ⚠ THE PASSTHROUGH STAYS FOR `other`, and that is the whole shape of      │
+ * │ this fix. This is NOT a translation layer draped over every vendor        │
+ * │ error: wrapping them all would bury the one real sentence in the cases    │
+ * │ where we have nothing better to say. We only speak where we have a        │
+ * │ sentence of our own, and `other` is by definition where we do not.        │
+ * │                                                                          │
+ * │ ⚠ NOTHING HERE MATCHES THE VENDOR'S WORDING. `classifyError` matches on   │
+ * │ a broad pattern, so the day Anthropic rewrites the string the            │
+ * │ classification still lands. Pinning their exact sentence here would      │
+ * │ hand us a fresh failure class on their next release.                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 export function sayError(raw: string, kind: FailureKind): string {
-  // The SDK already said something meaningful (not a machine code) ⇒ keep it as-is.
-  if (!/^error_[a-z_]+$/.test(raw.trim())) return raw;
   if (kind === 'max_turns') {
     return (
       t('wk.stopMaxTurns')
@@ -2072,6 +2103,9 @@ export function sayError(raw: string, kind: FailureKind): string {
   if (kind === 'usage_limit') return t('wk.stopUsageLimit');
   if (kind === 'rate_limit') return t('wk.stopRateLimit');
   if (kind === 'auth') return t('wk.stopAuth');
+  // `other` — no sentence of ours exists. Whatever the SDK said is better than
+  // a generic line, EXCEPT a bare machine code, which reads as nothing at all.
+  if (!/^error_[a-z_]+$/.test(raw.trim())) return raw;
   return t('wk.stopOther', { raw });
 }
 

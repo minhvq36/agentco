@@ -501,7 +501,8 @@ export const vi: Catalog = {
   'wk.stopBudget': 'Lượt này chạm trần chi phí đã đặt cho công việc.',
   'wk.stopUsageLimit': 'Tài khoản Claude đã hết hạn mức dùng.',
   'wk.stopRateLimit': 'Claude đang quá tải, thử lại sau ít phút.',
-  'wk.stopAuth': 'Chưa đăng nhập được vào Claude trên máy này.',
+  'wk.stopAuth':
+    'Chưa đăng nhập được vào Claude trên máy này. Mở terminal và chạy `agentco login` một lần.',
   'wk.stopOther': 'Claude Code dừng giữa chừng ({raw}).',
 
   'off.leftoversOnBoot':
@@ -628,6 +629,8 @@ export const vi: Catalog = {
   'cli.updateStartingIdle': 'Đang cài {target}.',
   'cli.updateNoSpace':
     'Không đủ chỗ trống để cài, nên chưa đụng vào gì cả — công ty vẫn nguyên và vẫn chạy được.\nCài cần khoảng {need} trống; "{dir}" còn {free}.\nDọn bớt chỗ rồi thử lại. `npm cache clean --force` thường là chỗ lấy lại được nhiều nhất.',
+  'cli.updateNoPermission':
+    'Không có quyền ghi vào "{dir}" nên chưa đụng vào gì cả — công ty vẫn nguyên và vẫn chạy được.\nThư mục đó thuộc về người dùng khác, đúng thứ mà cài bằng sudo để lại.\nĐặt cho npm một prefix thuộc về bạn rồi cài lại một lần: `npm config set prefix ~/.npm-global`, rồi thêm `~/.npm-global/bin` vào PATH.',
   'cli.portMoved':
     '  Cổng {from} đang bận nên công ty chuyển sang {to} — đã ghi vào runtime.port trong {file}.',
   'cli.portBusy': 'Cổng {port} đang được thứ khác dùng, nên công ty này chưa khởi động.',

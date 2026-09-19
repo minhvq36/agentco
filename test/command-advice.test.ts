@@ -68,6 +68,12 @@ const ALLOWED: Record<string, string> = {
   // A degraded FEATURE (keyword search inside PDFs), not a blocked path, and the
   // sentence already says an employee can still read the file if you name pages.
   'lib.notePdfReaderMissing': 'npm install',
+  // ⚠ This refusal can ONLY reach somebody who installed through npm — it is
+  // produced by the npm update door and nowhere else — so "not every reader has
+  // npm" cannot apply to this reader. And the command is the whole repair: the
+  // sentence's own instruction is "give npm a prefix you own", which is not
+  // advice anyone can act on without being told how. → cli/update-run.ts
+  'cli.updateNoPermission': 'npm config set prefix ~/.npm-global',
 };
 
 /**
@@ -252,6 +258,18 @@ const DOC_ALLOWED: Array<{ file: string; contains: string; why: string }> = [
     file: 'docs/TEST-WALKTHROUGH.md',
     contains: 'inside the container restores both',
     why: 'inside the container, where claude is on PATH',
+  },
+  {
+    file: 'README.md',
+    contains: 'or this, if you already have the CLI',
+    why:
+      'the Docker section, 19/09/2026. The rule this gate enforces is "offered beside ours", and ' +
+      'the gate implements "beside" as SAME LINE — here ours is the line directly above inside one ' +
+      'code block, which is the same offer laid out vertically. The line above is deliberately ' +
+      '`node dist/cli/index.js login --token` rather than `agentco login --token`: whoever is ' +
+      'reading the Docker section cloned this repo, and a clone has NEITHER command on PATH ' +
+      '(measured: the SDK declares no `bin`, so `npm install` creates no `claude` shim either). ' +
+      'The vendor line stays for the reader who installed Claude Code separately.',
   },
 ];
 

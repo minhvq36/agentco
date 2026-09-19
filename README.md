@@ -109,6 +109,17 @@ agentco start
 npm's global prefix, so the folder you are standing in stays empty until `init` — that is `init`'s
 whole job.
 
+**On macOS or Linux, if `npm i -g` answers `EACCES`:** npm's global folder belongs to root. Do not
+reach for `sudo` — that installs agentco as root while the daemon runs as you, and the Update button
+inside the app can then never write there, failing after the daemon has already stopped, where no
+message can reach your screen. Point npm at a folder you own instead:
+
+```sh
+npm config set prefix ~/.npm-global
+echo 'export PATH=$HOME/.npm-global/bin:$PATH' >> ~/.bashrc   # ~/.zshrc on zsh, the macOS default
+source ~/.bashrc
+```
+
 <details>
 <summary>Updating, removing, and the Windows installer</summary>
 
@@ -138,7 +149,8 @@ Three steps, and only the second involves typing anything unusual.
 and you do not need Claude Code installed there:
 
 ```sh
-agentco login --token      # or `claude setup-token`, if you already have the CLI
+node dist/cli/index.js login --token   # from a clone — after npm install && npm run build:all
+claude setup-token                     # or this, if you already have the CLI
 ```
 
 It prints the token **once** and stores nothing. Copy it.
