@@ -431,16 +431,39 @@ export function routeText(r: RouteOutcome): string {
   return '';
 }
 
-/** Is there at least one parseable JSON object in the string? A fact, not a guess. */
+/**
+ * Does this answer OPEN as a protocol envelope rather than as a sentence?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 IT USED TO ASK `JSON.parse`, AND THAT IS BACKWARDS. (user, 19/09/2026) │
+ * │                                                                          │
+ * │ The old version recognised an envelope by PARSING it, so the one case     │
+ * │ this gate exists for — an envelope that is broken — answered `false` and  │
+ * │ fell through to `return { intent: 'chat', say: raw }` in `decideRoute`.   │
+ * │ The user got `{"intent":"chat","say":"…"}` printed at them verbatim, and  │
+ * │ because the outcome was `chat` rather than `garbled`, BOTH rescues were   │
+ * │ lost at once: `route()` never ran its repair turn, and nothing was        │
+ * │ written to `route-failure.log`. The gate was strongest exactly where it   │
+ * │ needed to be weakest.                                                    │
+ * │                                                                          │
+ * │ ⚠ NO CLOSING BRACE IS REQUIRED, and that is deliberate. The commonest     │
+ * │ broken JSON of all is an answer cut off mid-write — out of tokens, a      │
+ * │ dropped connection — and it never closes anything. Demanding `}` would    │
+ * │ leave the frequent case walking through the door this was built to shut.  │
+ * │                                                                          │
+ * │ ⚠ `startsWith`, NOT "contains a brace". Prose that mentions `{ }` — a     │
+ * │ config snippet, a set in maths — is a real answer somebody paid a turn    │
+ * │ for, and swallowing it is the expensive direction to be wrong in. An      │
+ * │ envelope is recognised by how it OPENS, which is the one thing a          │
+ * │ truncated one still tells us. → [[agentco-fallback-throws-away-answers]]  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
 function hasJsonObject(text: string): boolean {
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
-  if (first === -1 || last <= first) return false;
-  try {
-    return typeof JSON.parse(text.slice(first, last + 1)) === 'object';
-  } catch {
-    return false;
-  }
+  return text
+    .replace(/^\s*```(?:json)?\s*\n?/, '')
+    .replace(/\n?```\s*$/, '')
+    .trim()
+    .startsWith('{');
 }
 
 const ReportSchema = z.object({
@@ -2302,12 +2325,34 @@ export class Assistant {
        * the human adds one"*. At that exact moment, half wrong, ever since
        * `lookup` gained web access.
        */
+      /**
+       * ⚠ NO QUOTED BUTTON NAME IN HERE, and the reason is mechanical rather
+       * than stylistic (user, 19/09/2026). This paragraph used to say `the
+       * "+ Employee" button` with straight double quotes; the model copied the
+       * phrase into `say`, unescaped, and the envelope around it stopped being
+       * JSON. Every `extractJson` door missed, `hasJsonObject` answered false
+       * on what it could not parse, and the raw envelope went on screen — on
+       * the FIRST message of a new office, which is the worst possible turn to
+       * lose. `hasJsonObject` is fixed too, but a prompt that hands the model
+       * a quote to copy is the thing that fired the gun.
+       *
+       * ⚠ AND CURLY QUOTES WOULD NOT BE A FIX — that patches one sentence and
+       * leaves the next author free to reopen the same hole. Describing the
+       * control by POSITION removes the class.
+       *
+       * It also settles a second, quieter bug: the name was pinned in English
+       * while every other locale draws its own translated label (see the same
+       * key in each `src/i18n/*.ts`), so the assistant was telling those users
+       * to look for a button that is not on their screen.
+       * → [[agentco-debt-hidden-by-model-priors]]
+       */
       return (
         `# Employees you can assign to\n\n(none — nobody has been added to this office yet)\n\n` +
         `You can still answer questions yourself through \`lookup\` — including looking things up ` +
         `on the web. What you cannot do is **produce anything the human keeps**: a file, a report, ` +
         `a table. That needs an employee, so when they ask for one, say so plainly and point them ` +
-        `at the "+ Employee" button. **Never describe this as something the product cannot do:** ` +
+        `at the button for adding an employee, in the top-left corner of the diagram. ` +
+        `**Never describe this as something the product cannot do:** ` +
         `every employee can search and read the web, and open files on the machine by full path. ` +
         `What is missing is a person to assign to, not a capability.`
       );

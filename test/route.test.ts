@@ -289,9 +289,67 @@ test('🔴 the final fallback message must NOT tell the user to "resend the exac
   assert.match(say, /theo cách khác|chia nhỏ/i, 'must leave a path forward DIFFERENT from what was just tried'); // i18n-allow-vietnamese: matches real i18n string (default locale vi)
 });
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE TEST WAS NAMED RIGHT AND MEASURING THE WRONG THING. (user,        │
+ * │ 19/09/2026)                                                              │
+ * │                                                                          │
+ * │ It called itself "broken JSON" and handed over                            │
+ * │ `{"tasks": "…"}` — **valid** JSON that simply matches no schema. So it    │
+ * │ exercised `hasJsonObject`'s happy path and proved nothing about the case  │
+ * │ in its own title. The whole class walked through underneath it for       │
+ * │ months. → [[agentco-test-the-escape-hatch]]                              │
+ * │                                                                          │
+ * │ The string below is the one a user actually saw in their chat window: an │
+ * │ unescaped `"` inside `say`, produced because the empty-roster prompt      │
+ * │ itself contained a quoted button name and the model copied it through.   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const REAL_BROKEN = '{"intent":"chat","say":"Point them at the "+ Employee" button to add somebody."}';
+
 test('🔴 broken JSON must still NOT leak verbatim to the user-facing side', () => {
   const r = decideRoute('{"tasks": "not shaped like anything we recognize"}');
   assert.doesNotMatch((r as { say: string }).say, /tasks/);
+});
+
+test('🔴 JSON that does not PARSE must not reach the user either — the 19/09 envelope', () => {
+  assert.throws(() => JSON.parse(REAL_BROKEN), 'the fixture has to be genuinely unparseable');
+  const r = decideRoute(REAL_BROKEN);
+  assert.equal(r.intent, 'garbled', 'an envelope is a protocol message, never a sentence');
+  assert.doesNotMatch((r as { say: string }).say, /intent|"say"/, 'the envelope reached the screen');
+});
+
+/**
+ * ⚠ A TRUNCATED ANSWER NEVER CLOSES ITS BRACE, and running out of tokens or
+ * losing the connection mid-write is the commonest way to get broken JSON at
+ * all. Requiring a `}` to recognise an envelope would let exactly that case —
+ * the frequent one — straight through to the chat window.
+ */
+test('🔴 an envelope cut off mid-sentence is still an envelope', () => {
+  const r = decideRoute('{"intent":"chat","say":"I had a look at the file and');
+  assert.equal(r.intent, 'garbled');
+  assert.doesNotMatch((r as { say: string }).say, /intent/);
+});
+
+test('…and a code fence around it changes nothing', () => {
+  const r = decideRoute('```json\n{"intent":"chat","say":"broken "quotes" here"}\n```');
+  assert.equal(r.intent, 'garbled');
+});
+
+/**
+ * ⚠ THE OTHER DIRECTION, and it is the expensive mistake: prose that merely
+ * mentions a brace is a real answer, and swallowing it costs the user the turn
+ * they paid for. `garbled` is for a protocol message that walked through the
+ * wrong door, not for anything containing `{`.
+ */
+test('prose that happens to contain a brace is NOT an envelope', () => {
+  for (const prose of [
+    'Use `{ "name": "x" }` in the config file and it will work.',
+    'The set {1, 2, 3} has three members.',
+    'I have not read that repo yet — want me to?',
+  ]) {
+    assert.equal(decideRoute(prose).intent, 'chat', prose);
+  }
 });
 
 test('ordinary prose still goes through the chat door as before', () => {
