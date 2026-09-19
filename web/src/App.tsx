@@ -482,7 +482,20 @@ function Toast() {
       }`}
     >
       <AlertTriangle className={`mt-0.5 h-4 w-4 flex-none ${bad ? 'text-danger' : 'text-muted'}`} />
-      <span className="text-[13px] leading-snug text-ink">{toast.text}</span>
+      {/*
+        ⚠ `whitespace-pre-wrap`, and it is a CORRECTNESS fix rather than a
+        layout one (19/09/2026). Server sentences carry real newlines — the
+        no-space and no-permission refusals both end in a short list of
+        commands to type — and HTML collapses those into spaces. The list
+        arrived as ONE run-on line, which somebody would reasonably select and
+        paste into a shell, where it is not the three commands we wrote but a
+        fourth thing nobody tested. A message that cannot be copied correctly
+        is worse than one that says less.
+
+        ⚠ `break-words` because a shell line is long and has no spaces to break
+        at; without it `max-w-md` is overflowed rather than wrapped.
+      */}
+      <span className="whitespace-pre-wrap break-words text-[13px] leading-snug text-ink">{toast.text}</span>
       <button
         className="mt-0.5 flex-none text-muted hover:text-ink"
         aria-label={t('common.dismissNotice')}

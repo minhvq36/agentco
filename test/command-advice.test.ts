@@ -68,12 +68,6 @@ const ALLOWED: Record<string, string> = {
   // A degraded FEATURE (keyword search inside PDFs), not a blocked path, and the
   // sentence already says an employee can still read the file if you name pages.
   'lib.notePdfReaderMissing': 'npm install',
-  // ⚠ This refusal can ONLY reach somebody who installed through npm — it is
-  // produced by the npm update door and nowhere else — so "not every reader has
-  // npm" cannot apply to this reader. And the command is the whole repair: the
-  // sentence's own instruction is "give npm a prefix you own", which is not
-  // advice anyone can act on without being told how. → cli/update-run.ts
-  'cli.updateNoPermission': 'npm config set prefix ~/.npm-global',
 };
 
 /**

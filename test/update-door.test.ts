@@ -538,10 +538,47 @@ test('🔴 permission to write is checked BEFORE anything stops, beside the spac
     'the check runs after the function has already said yes',
   );
 
+  /*
+   * ⚠ THE RECIPE HAS TO END IN AN INSTALL. (user walked it, 19/09/2026)
+   *
+   * The first version listed three lines — set the prefix, extend PATH, reload
+   * the shell — under a sentence that said "then install again" in prose. All
+   * three ran cleanly, and the refusal came back identical, because none of
+   * them moves the copy that is ALREADY installed: `packageRoot()` still
+   * pointed into root's tree. A repair that stops one step short reads as a
+   * repair that does not work, and the reader has no way to tell which.
+   *
+   * ⚠ And the package name is a PARAMETER. Typed into the catalogue it would
+   * be typed twice, and wrong on the day the package is renamed — in the one
+   * message nobody reads until they are already stuck.
+   */
   for (const f of ['src/i18n/en.ts', 'src/i18n/vi.ts']) {
     const msg = readSrc(f);
-    assert.match(msg, /'cli\.updateNoPermission'/, `${f} has no sentence for it`);
-    assert.match(msg, /npm config set prefix/, `${f} says no is wrong without saying what to do`);
+    const line = /'cli\.updateNoPermission':\s*\n?\s*"([^"]*)"/.exec(msg)?.[1] ?? '';
+    assert.ok(line, `${f} has no sentence for it`);
+    assert.match(line, /npm config set prefix/, `${f} says no without saying what to do`);
+    assert.match(line, /npm i -g \{pkg\}/, `${f} never tells them to install, so the refusal repeats`);
+    assert.ok(
+      line.indexOf('npm config set prefix') < line.indexOf('npm i -g {pkg}'),
+      `${f} installs before pointing npm somewhere writable — the same refusal, one step later`,
+    );
+    /*
+     * ⚠ AND IT MUST NOT END WITH `source`. (user walked it a second time,
+     * 19/09/2026 — the install had worked and the refusal came back identical)
+     *
+     * bash caches where it found a command. Reloading the shell file changes
+     * PATH and leaves that cache alone, so `agentco` went on resolving to the
+     * old copy. The detail that makes this certain rather than unlucky:
+     * everyone who reads this sentence read it BY RUNNING `agentco update` in
+     * that shell — so the cache is stale for the entire audience of the
+     * message, every time. A recipe cannot end in the one step that cannot
+     * work for the person reading it.
+     *
+     * A new terminal fixes it, needs no command, and is the same instruction
+     * on bash and zsh. → [[agentco-daemon-premise-in-cli]]
+     */
+    assert.doesNotMatch(line, /source ~\//, `${f} tells them to reload the shell, which leaves the old path cached`);
+    assert.match(line, /TERMINAL|terminal/, `${f} never says to open a new shell`);
   }
 });
 

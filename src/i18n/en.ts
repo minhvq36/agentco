@@ -902,7 +902,7 @@ export const en = {
    * → cli/update-run.ts §checkWritable
    */
   'cli.updateNoPermission':
-    'No permission to install into “{dir}”, so nothing was touched — the company is untouched and still works.\nThat folder belongs to another user, which is what installing with sudo leaves behind.\nGive npm a prefix you own and install once more: `npm config set prefix ~/.npm-global`, then put `~/.npm-global/bin` on your PATH.',
+    "No permission to install into “{dir}”, so nothing was touched — the company is untouched and still works.\nThat folder belongs to another user, which is what installing with sudo leaves behind.\nGive npm a prefix you own, then install again:\n  npm config set prefix ~/.npm-global\n  echo 'export PATH=$HOME/.npm-global/bin:$PATH' >> ~/.bashrc   # ~/.zshrc on zsh\n  # then open a NEW terminal and run the install:\n  npm i -g {pkg}\nThe new terminal matters: this one has already looked agentco up and remembers the old path. There, `which agentco` must answer ~/.npm-global/bin/agentco.",
   /**
    * ⚠ THESE THREE ARE PRINTED SEPARATELY, and the middle one is often absent.
    * Naming the neighbour is only possible when it answered `/healthz`; claiming

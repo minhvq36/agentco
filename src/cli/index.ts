@@ -649,8 +649,14 @@ function updateRefusal(target: string): string | undefined {
    * the prefix is writable and `lib/node_modules` under it is not.
    * → `cli/update-run.ts §checkWritable`
    */
+  /*
+   * ⚠ THE PACKAGE NAME IS A PARAMETER, never typed into the sentence. The
+   * recipe ends in an install, and an install needs the name — written twice it
+   * is written wrong the day the package is renamed, in the one message nobody
+   * reads until they are already stuck. → `PACKAGE_NAME`
+   */
   const writable = checkWritable(path.dirname(packageRoot()));
-  if (!writable.ok) return t('cli.updateNoPermission', { dir: writable.dir });
+  if (!writable.ok) return t('cli.updateNoPermission', { dir: writable.dir, pkg: PACKAGE_NAME });
 
   return undefined;
 }
