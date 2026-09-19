@@ -486,6 +486,19 @@ export type AgentEvent = EventBase &
      * infers by diffing its own list — see `ArmDialog §loadAccounts`.
      */
     | { type: 'company.offices'; say: string; account?: string }
+    /**
+     * A newer version is waiting — or no longer is. → `src/core/types.ts`
+     *
+     * ⚠ THE DOT'S SECOND WRITER, and before 19/09/2026 there was no second
+     * writer at all: `boot()` read `GET /api/update` once per page load and
+     * nothing ever corrected it, so the dot was as old as the tab. The daemon
+     * re-checks every six hours and now says so.
+     *
+     * ⚠ Sets `updateAvailable` ONLY. `seenUpdate` is this browser's own "I have
+     * looked at that already" and must not be reopened by a re-announcement —
+     * the tick repeats the same answer four times a day by design.
+     */
+    | { type: 'update.available'; available: boolean; latest?: string }
   );
 
 /**

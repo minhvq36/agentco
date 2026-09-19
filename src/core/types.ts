@@ -1672,6 +1672,43 @@ export type AgentEventBody =
   /** Office shape changed (dragged a node, wired/unwired, added/removed a worker). */
   | { type: 'layout.changed'; say: string }
   /** Office list changed. `office` is the one just added/removed. */
-  | { type: 'company.offices'; say: string };
+  | { type: 'company.offices'; say: string }
+  /**
+   * A newer version is (or is no longer) waiting. → `server.ts §checkUpdates`
+   *
+   * ┌──────────────────────────────────────────────────────────────────────────┐
+   * │ 🔴 NOTHING WROTE THIS FACT A SECOND TIME. (user, 19/09/2026)             │
+   * │                                                                          │
+   * │ `updateAvailable` had exactly one writer — `GET /api/update`, read once   │
+   * │ inside `actions.boot()` — so the dot on Settings was as old as the page.  │
+   * │ Leave the app open overnight, the daemon learns about a release at 3am,   │
+   * │ and in the morning there is still no dot; on a fresh machine `boot()`     │
+   * │ reads the cache BEFORE the first check has written it at 30 s, so the     │
+   * │ earliest a dot could appear was the SECOND time the app was opened. The   │
+   * │ whole class survived eleven releases because the test script said "press  │
+   * │ F5" — the patch was hiding inside the procedure meant to find the bug.    │
+   * │ → [[agentco-checking-erases-evidence]]                                   │
+   * │                                                                          │
+   * │ ⚠ EMITTED FROM THE TICK, never from the READ door. `GET /api/update`      │
+   * │ answering with an event would be a read that announces a change, and the  │
+   * │ client reloads on the announcement — a loop that runs silently.           │
+   * │ → [[agentco-read-must-not-emit-change]]                                  │
+   * │                                                                          │
+   * │ ⚠ And not from `checkForUpdate` in core either: that would drag an        │
+   * │ emitter into the core and fire on the CLI path, where nobody is           │
+   * │ listening and `agentco update` has its own way of speaking.               │
+   * │                                                                          │
+   * │ ⚠ STATELESS — every tick sends the current answer rather than a "changed" │
+   * │ signal, so nothing has to be remembered between ticks and a reconnecting  │
+   * │ page is correct within six hours instead of never. Re-announcing does not │
+   * │ reopen a dot the user already dismissed: `seenUpdate` is the client's own │
+   * │ flag and this does not touch it.                                          │
+   * │                                                                          │
+   * │ ⚠ A COMPANY-LEVEL event (`office: ''`), which is also why it is invisible │
+   * │ to `history()` — that replays per office. The boot-time read stays; this  │
+   * │ is only about every write after the first.                                │
+   * └──────────────────────────────────────────────────────────────────────────┘
+   */
+  | { type: 'update.available'; available: boolean; latest?: string };
 
 export type AgentEvent = EventBase & AgentEventBody;

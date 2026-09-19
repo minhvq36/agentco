@@ -619,16 +619,37 @@ export function toast(text: string, kind: 'error' | 'info' = 'error'): void {
  * itself — the job here is to show it, not swallow it. Losing the daemon blocks
  * the whole screen because every next action is meaningless; any other error is
  * reported and that is all.
+ *
+ * ⚠ EXPORTED SINCE 19/09/2026, for the one panel that was going around it. The
+ * update door is the only flow whose PURPOSE is to kill the daemon, and it was
+ * also the only flow refusing to notice that the daemon had died: both of its
+ * calls carried a private `.catch` that drew nothing, so "the daemon is gone"
+ * and "the daemon has not answered yet" looked identical on screen. A component
+ * outside this module could not reach `fatal`, so the way out was a silent
+ * catch. Now it can. → `panels/SettingsPanel.tsx §VersionFooter`
  */
-async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
+export async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (err instanceof ApiError && err.status === 0) set({ fatal: msg });
-    else toast(msg);
+    report(err);
     return undefined;
   }
+}
+
+/**
+ * The same rule, for a caller that already holds the error.
+ *
+ * ⚠ ONE MECHANISM, TWO DOORS — `guard` calls this rather than repeating it.
+ * The update button needs it because it has to INSPECT the error first (a 409
+ * tagged `in-flight` is not a failure at all) and only then decide to report,
+ * which a wrapper cannot express. Splitting the rule in two would be how one
+ * of the copies quietly stops matching the other. → `SettingsPanel §UpdateAction`
+ */
+export function report(err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof ApiError && err.status === 0) set({ fatal: msg });
+  else toast(msg);
 }
 
 /** The pending `setTint` write. 0 = nothing scheduled. → `actions.setTint` */
@@ -1591,6 +1612,16 @@ function applyEvent(e: AgentEvent, fromLive: boolean): void {
       set({ plan: { ...plan, steps } });
       break;
     }
+
+    /**
+     * ⚠ `updateAvailable` ONLY — `seenUpdate` is deliberately left alone. The
+     * daemon repeats this answer every six hours, so touching the "already
+     * looked" flag here would put a dismissed dot back on screen four times a
+     * day. → `lib/types.ts §update.available`
+     */
+    case 'update.available':
+      set({ updateAvailable: e.available });
+      break;
 
     case 'plan.finished':
       // The plan stays on screen after it finishes — the user was just reading it,

@@ -34,6 +34,20 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * A MACHINE-READABLE tag, present only where one status code carries more
+     * than one meaning and the caller has to act differently. → `server.ts`
+     *
+     * ⚠ NOT a second copy of `message`. `message` is the sentence to show, and
+     * it stays the thing that reaches the screen; `reason` exists so a caller
+     * can branch without matching on translated prose — which would work in
+     * exactly one language. Today one route sets it: `POST /api/update` marks
+     * its "already running" 409 `in-flight`, because that is the single 409
+     * out of four that means the work really is happening.
+     *
+     * ⚠ Absent is normal and means NO special case — never a default one.
+     */
+    readonly reason?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -70,11 +84,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    const msg =
-      body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
-        ? (body as { error: string }).error
-        : t('error.httpStatus', { status: res.status });
-    throw new ApiError(msg, res.status);
+    const fields = (body ?? {}) as { error?: unknown; reason?: unknown };
+    const msg = typeof fields.error === 'string' ? fields.error : t('error.httpStatus', { status: res.status });
+    throw new ApiError(msg, res.status, typeof fields.reason === 'string' ? fields.reason : undefined);
   }
   return body as T;
 }

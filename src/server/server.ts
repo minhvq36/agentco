@@ -1358,7 +1358,28 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
      * └────────────────────────────────────────────────────────────────────────
      */
     if (url.pathname === '/api/update' && method === 'POST') {
-      if (updating) return json(res, 409, { error: t('srv.updateBusy') });
+      /**
+       * ┌────────────────────────────────────────────────────────────────────
+       * │ 🔴 FOUR 409s LEAVE THIS ROUTE AND ONLY ONE OF THEM MEANS "IT IS
+       * │ RUNNING". (user, 19/09/2026 — real case on 0.2.4, npm door)
+       * │
+       * │ This one: an update really is in flight, so the page is right to
+       * │ keep saying "Updating…" and go on watching for the restart. The
+       * │ three below — an office is busy, no npm handler, a refusal from
+       * │ `handOffUpdate` — all mean NOTHING WILL HAPPEN, and a page that
+       * │ shows "Updating…" for them tells a lie and then, five minutes
+       * │ later, tells a second one: "the update failed", when it was never
+       * │ allowed to start.
+       * │
+       * │ ⚠ `reason` GOES ON THIS BRANCH ALONE. The other three already carry
+       * │ a human sentence naming what is wrong — the busy one even names the
+       * │ offices (`company.ts §workingOffices` returns names, not a boolean)
+       * │ — so the client shows those verbatim and needs no code to tell them
+       * │ apart. Tagging all four would be a second mechanism doing the job
+       * │ the sentences already do. → [[agentco-count-mechanisms]]
+       * └────────────────────────────────────────────────────────────────────
+       */
+      if (updating) return json(res, 409, { error: t('srv.updateBusy'), reason: 'in-flight' });
 
       /*
        * ⚠ NOT WHILE SOMEBODY IS WORKING. Applying an update ends by killing
@@ -1906,10 +1927,32 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
    * ⚠ The config is read at EACH tick, so `updates.check: false` saved while
    * the daemon runs takes effect at the next one, with no request in between.
    */
+  /**
+   * ⚠ AND THEN TELL THE PAGE. Without this the answer is written to a cache
+   * file that only `boot()` ever reads, so the "new version" dot is as old as
+   * the tab — see `types.ts §update.available` for what that cost. The emit is
+   * here, on the TICK, and not inside `checkForUpdate` (core, also used by the
+   * CLI) and not inside `GET /api/update` (a read must not announce a change).
+   *
+   * ⚠ `enabled: false` emits nothing at all, on purpose: off means off, and a
+   * `{ available: false }` would be an answer to a question we did not ask.
+   */
   const checkUpdates = (): void => {
-    void checkForUpdate({ paths: company.paths, enabled: company.config.updates.check }).catch((e: unknown) => {
-      process.emitWarning(`update check broke: ${e instanceof Error ? e.message : String(e)}`);
-    });
+    void checkForUpdate({ paths: company.paths, enabled: company.config.updates.check })
+      .then((cache) => {
+        if (!cache) return;
+        const view = updateStatus({ paths: company.paths, enabled: true });
+        company.emit({
+          type: 'update.available',
+          available: view.available,
+          ...(view.latest ? { latest: view.latest } : {}),
+          office: '',
+          plan_id: null,
+        });
+      })
+      .catch((e: unknown) => {
+        process.emitWarning(`update check broke: ${e instanceof Error ? e.message : String(e)}`);
+      });
   };
   const firstUpdateCheck = setTimeout(checkUpdates, UPDATE_FIRST_CHECK_MS);
   firstUpdateCheck.unref();

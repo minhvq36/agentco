@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Languages, Moon, Palette, Sun } from 'lucide-react';
 
 import { SectionTitle } from '@/components/ui/misc';
-import { api } from '@/lib/api';
-import { actions, useApp } from '@/lib/store';
+import { api, ApiError } from '@/lib/api';
+import { actions, guard, report, useApp } from '@/lib/store';
 import { THEMES, type Theme } from '@/lib/theme';
 import { LOCALES, t, type Locale, type MessageKey } from '@i18n';
 import type { UpdateView } from '@core/update-links';
@@ -123,16 +123,31 @@ function Choice({
 function VersionFooter() {
   const [view, setView] = useState<UpdateView | null>(null);
 
+  /**
+   * ⚠ THROUGH `guard`, not a private `.catch`. (user, 19/09/2026 — real case)
+   *
+   * Pressing Update at the npm door stops the daemon. Switching tabs and coming
+   * back remounted this component, the fetch failed against a server that no
+   * longer existed, the old `.catch` drew nothing — and the footer simply
+   * VANISHED, with no sentence anywhere. The user was looking at an interface
+   * that was still animating for a process that had been dead for a minute.
+   *
+   * The machinery for saying so already existed and this was one of only two
+   * callers deliberately walking around it: `guard` turns a lost daemon
+   * (`ApiError status === 0`) into the blocking screen that says so, and
+   * anything else into a toast. The flow whose whole purpose is to kill the
+   * daemon has no business being the flow that refuses to notice it died.
+   *
+   * ⚠ The "silent until it answers" rule below is untouched, and it is about
+   * something else: while `view` is null this renders NOTHING, because "version
+   * unknown" would be a second thing to explain. Silence while waiting, yes; a
+   * disappearance after a failure, no. → [[agentco-catch-hides-premises]]
+   */
   useEffect(() => {
     let alive = true;
-    api
-      .update()
-      .then((v) => {
-        if (alive) setView(v);
-      })
-      .catch(() => {
-        /* no answer, no line */
-      });
+    void guard(() => api.update()).then((v) => {
+      if (alive && v) setView(v);
+    });
     return () => {
       alive = false;
     };
@@ -245,14 +260,44 @@ function UpdateAction({ view }: { view: UpdateView }) {
       type="button"
       className="rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11.5px] text-accent transition-colors hover:bg-accent/20"
       onClick={() => {
-        // ⚠ Straight to `working`, and the WATCHER does the rest — including
-        // when this click loses the race and the server answers 409 because an
-        // update is already running. That is not a failure; it is the truth
-        // arriving by a different door.
+        /**
+         * ┌──────────────────────────────────────────────────────────────────┐
+         * │ 🔴 `working` FIRST, AND REVERSED ONLY ON A REFUSAL. (user,        │
+         * │ 19/09/2026 — real case on 0.2.4, npm door)                       │
+         * │                                                                  │
+         * │ The order is deliberate and stays: raising it before the request  │
+         * │ is what mounts the watcher even when this click LOSES A RACE and  │
+         * │ the server answers 409 because an update is already running.      │
+         * │ Waiting for a response before drawing would break that case.      │
+         * │                                                                  │
+         * │ What was wrong was the empty `.catch`: it swallowed all four 409s │
+         * │ this route can send, and three of them mean NOTHING WILL HAPPEN.  │
+         * │ Clicking while an office was working showed *"Updating — this     │
+         * │ page will come back on its own"* over a server that had already   │
+         * │ refused; five minutes later `WatchForRestart` gave up and said    │
+         * │ *"the update failed"*. Two sentences, both false, about an update │
+         * │ that was correctly declined.                                     │
+         * │                                                                  │
+         * │ ⚠ THE SERVER'S SENTENCE IS SHOWN VERBATIM. It deliberately names  │
+         * │ WHICH office is busy (`company.ts §workingOffices` returns names, │
+         * │ not a boolean) and it is already translated. Writing a client-side│
+         * │ line here would throw that name away a second time.              │
+         * │                                                                  │
+         * │ ⚠ A LOST DAEMON IS NOT A REFUSAL. `guard` sorts that: status 0    │
+         * │ blocks the screen, everything else is a toast. Same rule as the   │
+         * │ footer above, and the reason this goes through `guard` at all.    │
+         * └──────────────────────────────────────────────────────────────────┘
+         */
         setPhase({ at: 'working' });
-        void api.applyUpdate().catch(() => {
-          /* 409 means somebody already started it; anything else shows up as
-             the watcher giving up, with the daemon still on the old version */
+        void api.applyUpdate().catch((err: unknown) => {
+          // The one 409 of four that means it really is running: the truth
+          // arriving by a different door, not a failure. Keep watching.
+          if (err instanceof ApiError && err.reason === 'in-flight') return;
+          // Everything else: nothing is going to happen, so stand the button
+          // back up — and with `idle`, `WatchForRestart` unmounts and cannot
+          // invent a "failed" five minutes from now.
+          setPhase({ at: 'idle' });
+          report(err);
         });
       }}
     >

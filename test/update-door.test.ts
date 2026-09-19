@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 🔴 `current` WAS A POINTER NOTHING READ, AND THE UPDATER IS THE THING THAT
  * NEEDS IT. (found 16/09/2026)
  *
@@ -29,7 +29,14 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { agentcoCmd } from '../dist/cli/launcher-text.js';
-import { checkSpace, findNpmCli, globalPrefixFor, sweepOldUpdateDirs, updateScript } from '../dist/cli/update-run.js';
+import {
+  checkSpace,
+  checkWritable,
+  findNpmCli,
+  globalPrefixFor,
+  sweepOldUpdateDirs,
+  updateScript,
+} from '../dist/cli/update-run.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -411,8 +418,17 @@ test('🔴 an update refuses while any office is working', () => {
    * └────────────────────────────────────────────────────────────────────────
    */
   const src = fs.readFileSync(path.join(ROOT, 'src', 'server', 'server.ts'), 'utf8');
-  const handler = /url\.pathname === '\/api\/update' && method === 'POST'[\s\S]{0,1400}/.exec(src)?.[0] ?? '';
-  assert.ok(handler, 'could not find the POST /api/update handler');
+  /**
+   * ⚠ BOUNDED BY THE NEXT ROUTE, not by a character count. This used to slice a
+   * fixed 1400 characters and broke on 19/09/2026 for the most avoidable reason
+   * there is: somebody wrote a comment inside the handler, the window ran out
+   * before `installKind()`, and a test about ORDERING failed over prose. A test
+   * that fails when a comment grows is measuring the wrong thing.
+   */
+  const from = src.indexOf("url.pathname === '/api/update' && method === 'POST'");
+  const to = src.indexOf('── office level:', from);
+  assert.ok(from > 0 && to > from, 'could not find the POST /api/update handler');
+  const handler = src.slice(from, to);
 
   const busy = handler.indexOf('workingOffices()');
   const apply = handler.indexOf('updating = true');
@@ -425,6 +441,115 @@ test('🔴 an update refuses while any office is working', () => {
 
   // It must cover BOTH doors, so it sits above the packaged/npm fork.
   assert.ok(busy < handler.indexOf("installKind() === 'packaged'"), 'the npm door slips past the check');
+});
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 FOUR 409s, ONE OF WHICH MEANS "IT IS RUNNING". (user, 19/09/2026)     │
+ * │                                                                          │
+ * │ Real case on 0.2.4, npm door: pressed while an office was working, the    │
+ * │ server refused correctly, and the screen said *"Updating — this page will │
+ * │ come back on its own"*. Nothing was running and the page never came back; │
+ * │ five minutes later the watcher gave up and said the update had failed.    │
+ * │ Two sentences, both false, about a refusal that was right.               │
+ * │                                                                          │
+ * │ The bug is older than the busy fence it fired on — it arrived with the    │
+ * │ npm door — so the cases below deliberately cover a refusal OUTSIDE that   │
+ * │ fence too, or the fix would look like it was only about busy offices.     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 only the "already running" 409 is tagged — the other three are refusals', () => {
+  const src = readSrc('src/server/server.ts');
+  const from = src.indexOf("url.pathname === '/api/update' && method === 'POST'");
+  const to = src.indexOf('── office level:', from);
+  const handler = src.slice(from, to);
+
+  const tagged = [...handler.matchAll(/reason: 'in-flight'/g)];
+  assert.equal(tagged.length, 1, 'every 409 carries the tag, so the client cannot tell them apart');
+
+  // …and it is the one guarded by `updating`, not any of the others.
+  const line = handler.slice(0, handler.indexOf("reason: 'in-flight'"));
+  assert.match(line.slice(-200), /if \(updating\) return json\(res, 409/, 'the tag landed on the wrong refusal');
+
+  for (const other of ['srv.updateOfficeBusy', 'srv.updateNoNpm']) {
+    const at = handler.indexOf(other);
+    assert.ok(at > 0, `${other} is gone`);
+    assert.doesNotMatch(
+      handler.slice(at - 120, at + 120),
+      /reason: 'in-flight'/,
+      `${other} claims work is in flight when nothing will happen`,
+    );
+  }
+});
+
+test('🔴 the button stands back up on a refusal, and only keeps waiting for `in-flight`', () => {
+  const panel = readSrc('web/src/components/panels/SettingsPanel.tsx');
+  const click = panel.slice(panel.indexOf('onClick={() => {'), panel.indexOf('{t(\'settings.updateTo\''));
+
+  assert.doesNotMatch(click, /\.catch\(\(\) =>/, 'the empty catch is back — every refusal is swallowed again');
+  assert.match(click, /reason === 'in-flight'/, 'nothing distinguishes the one 409 that means it is running');
+  assert.match(click, /setPhase\(\{ at: 'idle' \}\)/, 'a refusal leaves the watcher mounted to invent a failure');
+  assert.match(click, /report\(err\)/, "the server's sentence never reaches the screen");
+
+  // The ORDER is the part that was right all along and must stay right: the
+  // watcher has to start even when this click loses a race.
+  assert.ok(
+    click.indexOf("setPhase({ at: 'working' })") < click.indexOf('api.applyUpdate()'),
+    'the phase now waits for the response — a click that loses the race draws nothing',
+  );
+});
+
+test('the client reads `reason` off the wire, or the branch above can never fire', () => {
+  const api = readSrc('web/src/lib/api.ts');
+  assert.match(api, /readonly reason\?: string/, 'ApiError cannot carry it');
+  assert.match(api, /fields\.reason === 'string'/, 'the body is parsed without it');
+});
+
+test('🔴 a lost daemon is NOT reported as a refusal — the panel goes through `guard`', () => {
+  /*
+   * §4.2 row 10: both callers of `/api/update` used to carry a private silent
+   * catch, so the ONE flow whose purpose is to kill the daemon was also the one
+   * flow that refused to notice it had died. Switching tabs after pressing
+   * Update made the footer simply vanish, with no sentence anywhere.
+   */
+  const panel = readSrc('web/src/components/panels/SettingsPanel.tsx');
+  assert.doesNotMatch(panel, /no answer, no line/, 'the silent catch is back in VersionFooter');
+  assert.match(panel, /guard\(\(\) => api\.update\(\)\)/, 'the footer is not going through guard');
+
+  const store = readSrc('web/src/lib/store.ts');
+  assert.match(store, /export function report/, 'the shared rule is gone');
+  assert.match(store, /err\.status === 0\) set\(\{ fatal: msg \}\)/, 'a lost daemon no longer blocks the screen');
+});
+
+test('🔴 permission to write is checked BEFORE anything stops, beside the space check', () => {
+  /*
+   * A `sudo` install leaves the prefix owned by root while the daemon runs as
+   * the user, so `npm install --global --prefix <here>` fails with EACCES —
+   * AFTER the daemon has been handed off and is on its way out, where no
+   * sentence can reach the screen. Both this and `checkSpace` are knowable a
+   * second early; asking late is what costs the running company.
+   */
+  const cli = code(readSrc('src/cli/index.ts'));
+  const refusal = cli.slice(cli.indexOf('function updateRefusal'), cli.indexOf('function prepareHelper'));
+  assert.match(refusal, /checkWritable\(/, 'nothing checks whether npm can write');
+  assert.match(refusal, /cli\.updateNoPermission/, 'the refusal has no sentence');
+  assert.ok(
+    refusal.indexOf('checkWritable(') < refusal.lastIndexOf('return undefined'),
+    'the check runs after the function has already said yes',
+  );
+
+  for (const f of ['src/i18n/en.ts', 'src/i18n/vi.ts']) {
+    const msg = readSrc(f);
+    assert.match(msg, /'cli\.updateNoPermission'/, `${f} has no sentence for it`);
+    assert.match(msg, /npm config set prefix/, `${f} says no is wrong without saying what to do`);
+  }
+});
+
+test('checkWritable: refuses on EACCES, and an absent answer is never a refusal', () => {
+  assert.equal(checkWritable(os.tmpdir()).ok, true, 'a writable directory was refused');
+  // ⚠ Not an error: a path that does not exist yet answers nothing, and nothing
+  // must not block an update. Same discipline as `checkSpace`.
+  assert.equal(checkWritable(path.join(os.tmpdir(), 'agentco-no-such-dir-' + Date.now())).ok, true);
 });
 
 test('the refusal NAMES the offices, in both languages', () => {
@@ -590,4 +715,53 @@ test('🔴 the Settings dot follows `chat`, and its "seen" NEVER reaches the dis
    */
   const dot = /tab\.id === 'settings' && newVersion && !on[\s\S]{0,220}/.exec(bar)?.[0] ?? '';
   assert.doesNotMatch(dot, /soft-pulse/, dot);
+});
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE DOT HAD ONE WRITER AND IT RAN ONCE PER PAGE LOAD. (user,          │
+ * │ 19/09/2026)                                                              │
+ * │                                                                          │
+ * │ `updateAvailable` was set only inside `actions.boot()`. Leave the app     │
+ * │ open, let the daemon learn about a release at 3am, and there is still no  │
+ * │ dot in the morning; on a fresh machine `boot()` reads the cache before    │
+ * │ the first check writes it at 30 s, so the earliest a dot could ever       │
+ * │ appear was the SECOND time the app was opened.                           │
+ * │                                                                          │
+ * │ It survived eleven releases because the manual script said "press F5" —   │
+ * │ the workaround was sitting inside the procedure meant to find the bug.    │
+ * │ Which is why the test below asks for the WRITER, not for a screenshot.    │
+ * │ → [[agentco-checking-erases-evidence]]                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test('🔴 something writes the dot a SECOND time — it is not as old as the page', () => {
+  const server = code(readSrc('src/server/server.ts'));
+  const tick = server.slice(server.indexOf('const checkUpdates'), server.indexOf('firstUpdateCheck'));
+  assert.match(tick, /company\.emit\(\{/, 'the six-hourly check still tells nobody');
+  assert.match(tick, /type: 'update\.available'/, tick);
+
+  // ⚠ NOT from the read door: a GET that announces a change closes a loop with
+  // whatever reloads on the announcement. → [[agentco-read-must-not-emit-change]]
+  const get = server.slice(
+    server.indexOf("url.pathname === '/api/update' && method === 'GET'"),
+    server.indexOf("url.pathname === '/api/shutdown'"),
+  );
+  assert.doesNotMatch(get, /emit\(/, 'the read door emits — a read that announces a change');
+
+  // ⚠ NOT from core either: `checkForUpdate` is shared with `agentco update`,
+  // where there is no emitter and nobody listening.
+  assert.doesNotMatch(readSrc('src/core/update-check.ts'), /emit\(/, 'an emitter reached the core');
+
+  // Both copies of the union, or the client cannot name what it receives.
+  for (const f of ['src/core/types.ts', 'web/src/lib/types.ts']) {
+    assert.match(readSrc(f), /type: 'update\.available'/, `${f} does not declare the event`);
+  }
+
+  const store = readSrc('web/src/lib/store.ts');
+  assert.match(store, /case 'update\.available':/, 'the store receives it and does nothing');
+  const branch = store.slice(store.indexOf("case 'update.available':"), store.indexOf("case 'plan.finished':"));
+  assert.match(branch, /set\(\{ updateAvailable: e\.available \}\)/, branch);
+  // ⚠ The tick repeats itself four times a day. Touching `seenUpdate` here
+  // would put a dismissed dot back on screen every six hours.
+  assert.doesNotMatch(branch, /seenUpdate/, 'a re-announcement reopens a dot the user already dismissed');
 });
