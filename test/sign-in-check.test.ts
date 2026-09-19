@@ -137,6 +137,24 @@ test('…and `raw` is dropped when it would only repeat `note`', async () => {
   assert.equal(r.raw, undefined, 'one sentence printed twice, in parentheses after itself');
 });
 
+/**
+ * 🔴 …INCLUDING WHEN `note` merely CONTAINS it. (found by review, 19/09/2026)
+ *
+ * The first version compared with `!==`, which only catches a verbatim
+ * passthrough. The `other` branch WRAPS a machine code into a sentence, so the
+ * two strings differed while one contained the other and `doctor` printed the
+ * code twice on the same line. The question was never "are these equal" but
+ * "does the second string tell the reader anything new".
+ */
+test('🔴 a machine code already inside our sentence is not repeated in parentheses', async () => {
+  const r = await readSignIn(
+    stream([{ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' }]),
+    never,
+  );
+  assert.match(r.note ?? '', /error_during_execution/, 'the code should appear once, inside our sentence');
+  assert.equal(r.raw, undefined, `printed twice: ${r.note} (${r.raw})`);
+});
+
 test('resultFailure: both shapes of failure, and never the word "success" as the reason', () => {
   assert.equal(resultFailure(CLEAN), undefined);
   assert.equal(resultFailure({ type: 'result', subtype: 'success' }), undefined);

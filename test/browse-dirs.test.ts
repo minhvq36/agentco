@@ -22,18 +22,43 @@ import { browseDirs } from '../dist/core/paths.js';
 
 const WIN = process.platform === 'win32';
 
-/** A path that is absolute on the OTHER platform, and therefore not here. */
-const FOREIGN = WIN ? '' : 'D:\\Temp';
+/**
+ * A path absolute on the OTHER platform, and therefore not here.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 THE FIRST VERSION OF THIS FILE SKIPPED THE WINDOWS CASE, and that is   │
+ * │ where the remaining bug was. (found by review, 19/09/2026)               │
+ * │                                                                          │
+ * │ It said "no POSIX-only shape exists on Windows" — which is exactly        │
+ * │ wrong, and the reason is `path.isAbsolute('/home/u/x')` answering `true`  │
+ * │ on win32, where Node reads a leading slash as the current drive's root.   │
+ * │ So a stored Linux path resolved to `D:\home\u\x`: invented, empty, and    │
+ * │ selectable as an arm's root. A skip written as a fact about the world,    │
+ * │ rather than about the test, hid the mirror image of the bug being fixed. │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+const FOREIGN = WIN ? '/home/minhvq36/project' : 'D:\\Temp';
 
-test('🔴 a foreign-shaped path is refused, never joined to the cwd', { skip: WIN && 'no POSIX-only shape exists on Windows' }, () => {
+test('🔴 a foreign-shaped path is refused, never joined to a local root', () => {
   const r = browseDirs(FOREIGN);
-  assert.doesNotMatch(r.path, /D:/, 'the Windows path survived into the answer');
-  assert.ok(!r.path.startsWith(process.cwd()) || r.path === path.parse(process.cwd()).root,
-    'the picker landed wherever `agentco start` was typed');
+  assert.notEqual(r.path, path.resolve(FOREIGN), 'the foreign path was resolved instead of refused');
+  if (WIN) assert.doesNotMatch(r.path, /home/i, `invented a local path: ${r.path}`);
+  else assert.doesNotMatch(r.path, /D:/, `the Windows path survived into the answer: ${r.path}`);
 });
 
-test('…and it lands exactly where NO target lands — one rule, no third behaviour', { skip: WIN && 'see above' }, () => {
+test('…and it lands exactly where NO target lands — one rule, no third behaviour', () => {
   assert.deepEqual(browseDirs(FOREIGN), browseDirs());
+});
+
+/**
+ * ⚠ THE OTHER DIRECTION, and it is the one that pays for the guard: refusing
+ * everything would also pass both tests above. A drive-lettered path on
+ * Windows, and a `/` path on POSIX, are what the picker itself hands back, so
+ * they have to keep working or the dialog cannot browse at all.
+ */
+test('a NATIVE absolute path is still accepted — the guard did not just refuse everything', () => {
+  const native = WIN ? path.parse(process.cwd()).root : '/';
+  assert.equal(browseDirs(native).path, path.resolve(native));
 });
 
 test('an empty target is the no-target case, not an error', () => {

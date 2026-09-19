@@ -934,6 +934,37 @@ export interface BrowseEntry {
   path: string;
 }
 
+/**
+ * Is this path absolute **in the shape THIS platform uses**?
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `path.isAbsolute` IS NOT THAT QUESTION, AND THE GAP IS ONE-WAY.       │
+ * │ (found by review, 19/09/2026, in the guard written the same day)         │
+ * │                                                                          │
+ * │ On POSIX it answers `false` for `D:\Temp`, which is what the guard       │
+ * │ needed. On win32 it answers **`true` for `/home/user/project`** — Node   │
+ * │ reads a leading slash as "the root of the current drive". Measured:      │
+ * │ `browseDirs('/home/minhvq36/project')` came back `D:\home\minhvq36\      │
+ * │ project` with nothing in it. Invented, non-existent, and SELECTABLE as   │
+ * │ an arm's root — the exact outcome the guard was added to stop, in the    │
+ * │ mirror direction, on the machine that has both daemons.                 │
+ * │                                                                          │
+ * │ Half a fence is worse than none: the comment above now claims the class  │
+ * │ is handled, so nobody looks again.                                       │
+ * │                                                                          │
+ * │ ⚠ Nothing legitimate loses. Every path the picker hands back on Windows  │
+ * │ is drive-lettered, because that is what `listDirs` builds; a bare `/…`   │
+ * │ can only arrive from somewhere else's filesystem. And refusing it lands  │
+ * │ on the drive list, which is a better answer than an empty invented       │
+ * │ folder.                                                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+function absoluteHere(p: string): boolean {
+  if (process.platform !== 'win32') return path.isAbsolute(p);
+  // `C:\…` or `C:/…`, or a UNC share. Deliberately NOT a bare leading slash.
+  return /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p);
+}
+
 export function browseDirs(target?: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
   /**
    * ⚠ A PATH THAT IS NOT ABSOLUTE **ON THIS PLATFORM** IS REFUSED, not
@@ -959,7 +990,7 @@ export function browseDirs(target?: string): { path: string; parent: string | nu
    * debt in SPEC-deploy §5 ①, a much larger problem; guessing at it here would
    * answer confidently and sometimes be wrong. Refuse, do not infer.
    */
-  if (target && !path.isAbsolute(target)) target = undefined;
+  if (target && !absoluteHere(target)) target = undefined;
 
   // Nothing passed = root. On Windows, "root" is a LIST OF DRIVES, not a
   // directory — skip this and a Windows user has no way up past `C:\` and can

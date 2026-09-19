@@ -740,6 +740,18 @@ test('🔴 something writes the dot a SECOND time — it is not as old as the pa
   assert.match(tick, /company\.emit\(\{/, 'the six-hourly check still tells nobody');
   assert.match(tick, /type: 'update\.available'/, tick);
 
+  /*
+   * ⚠ "off means off" HAS TO SURVIVE THE FETCH. (found by review, 19/09/2026)
+   * The first version passed a literal `enabled: true` to `updateStatus`, having
+   * captured the config before a fetch that can run for its whole timeout. Turn
+   * checking off in that window and the tick still broadcast a dot — and it
+   * sticks, because every later tick returns early and nothing is left to
+   * correct it. The config is re-read at each tick precisely so that switching
+   * it off takes effect with no request in between.
+   */
+  assert.doesNotMatch(tick, /enabled: true/, 'the tick answers from a flag captured before the fetch');
+  assert.match(tick, /company\.config\.updates\.check/, 'the tick never re-reads the config');
+
   // ⚠ NOT from the read door: a GET that announces a change closes a loop with
   // whatever reloads on the announcement. → [[agentco-read-must-not-emit-change]]
   const get = server.slice(

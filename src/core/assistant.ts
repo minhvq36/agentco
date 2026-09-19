@@ -460,8 +460,16 @@ export function routeText(r: RouteOutcome): string {
  */
 function hasJsonObject(text: string): boolean {
   return text
-    .replace(/^\s*```(?:json)?\s*\n?/, '')
-    .replace(/\n?```\s*$/, '')
+    /*
+     * ⚠ ANY language tag, not `json` alone. The first version of this matched
+     * `(?:json)?` and let three shapes straight through, measured: ```javascript,
+     * ```ts — and ```JSON, which is the one that says what the mistake was.
+     * Writing the tag we EXPECT rather than the tag SHAPE means every tag we did
+     * not think of is an open door, and the whole point of this gate is the cases
+     * nobody thought of. → [[agentco-one-family-tried]]
+     */
+    .replace(/^\s*```[A-Za-z0-9_+-]*[ \t]*\r?\n?/, '')
+    .replace(/\r?\n?```\s*$/, '')
     .trim()
     .startsWith('{');
 }

@@ -91,5 +91,15 @@ export async function readSignIn(
       vendor = msg;
     }
   }
-  return { ok, ...(note ? { note } : {}), ...(vendor && vendor !== note ? { raw: vendor } : {}) };
+  /*
+   * ⚠ `includes`, not `!==`. The first version dropped `raw` only when
+   * `sayError` had passed the vendor text through UNCHANGED — but the `other`
+   * branch WRAPS a machine code into a sentence (`wk.stopOther`), so the two
+   * strings differ while one contains the other, and `doctor` printed
+   * "Claude Code stopped part-way (error_during_execution). (error_during_execution)".
+   * The question is whether the reader learns anything new from the second
+   * string, and a substring never does. (found by review, 19/09/2026)
+   */
+  const extra = vendor && note && !note.includes(vendor) ? { raw: vendor } : {};
+  return { ok, ...(note ? { note } : {}), ...extra };
 }

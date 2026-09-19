@@ -331,9 +331,20 @@ test('🔴 an envelope cut off mid-sentence is still an envelope', () => {
   assert.doesNotMatch((r as { say: string }).say, /intent/);
 });
 
-test('…and a code fence around it changes nothing', () => {
-  const r = decideRoute('```json\n{"intent":"chat","say":"broken "quotes" here"}\n```');
-  assert.equal(r.intent, 'garbled');
+/**
+ * ⚠ EVERY language tag, because the first version of this gate matched only
+ * `json` and three shapes walked straight through — measured 19/09/2026:
+ * ```javascript, ```ts, and ```JSON. The last one is the one that says what the
+ * mistake was: the tag we EXPECTED was written down instead of the tag SHAPE,
+ * so every tag nobody thought of stayed an open door — on a gate whose entire
+ * job is the cases nobody thought of. → [[agentco-one-family-tried]]
+ */
+test('🔴 a code fence around it changes nothing, whatever language it claims', () => {
+  for (const fence of ['json', 'JSON', 'javascript', 'ts', 'jsonc', '']) {
+    const body = '{"intent":"chat","say":"broken "quotes" here"}';
+    const text = fence === '' ? '```\n' + body + '\n```' : '```' + fence + '\n' + body + '\n```';
+    assert.equal(decideRoute(text).intent, 'garbled', `\`\`\`${fence} let the envelope through`);
+  }
 });
 
 /**

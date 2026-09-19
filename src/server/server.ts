@@ -1941,7 +1941,19 @@ export async function serve(opts: ServeOptions): Promise<Daemon> {
     void checkForUpdate({ paths: company.paths, enabled: company.config.updates.check })
       .then((cache) => {
         if (!cache) return;
-        const view = updateStatus({ paths: company.paths, enabled: true });
+        /*
+         * ⚠ RE-READ, do not hardcode `true` here. The fetch above can take up
+         * to its timeout, and the config is deliberately read fresh at every
+         * tick (see the note above) so that switching checking off takes effect
+         * with no request in between. Answering from a flag captured before the
+         * fetch would broadcast a dot from a company that had switched off
+         * while it was in flight — and it sticks, because every later tick
+         * returns early and nothing is left to correct it.
+         * (found by review, 19/09/2026)
+         */
+        const enabled = company.config.updates.check;
+        if (!enabled) return;
+        const view = updateStatus({ paths: company.paths, enabled });
         company.emit({
           type: 'update.available',
           available: view.available,
