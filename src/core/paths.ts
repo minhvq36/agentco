@@ -914,8 +914,16 @@ export function guardedZone(
  * │ ⇒ List it ourselves. Works even when the daemon is remote or in a          │
  * │ container, and it lists the EXACT filesystem an arm will see — not the     │
  * │ filesystem of whoever is sitting in front of the screen. With Docker         │
- * │ (§10b) that's a make-or-break difference, and this picker is already        │
- * │ correct there with no changes needed.                                    │
+ * │ (§10b) that's a make-or-break difference.                                 │
+ * │                                                                          │
+ * │ ⚠ THIS USED TO SAY the picker was *"already correct there with no          │
+ * │ changes needed"* — corrected 19/09/2026 rather than deleted, because       │
+ * │ leaving it would have told the next reader this corner was settled. It    │
+ * │ is correct only for as long as nobody hands it a path of THE WRONG        │
+ * │ PLATFORM'S SHAPE, which is exactly what a shared browser does: Docker     │
+ * │ and the desktop build use the same default port ⇒ the same origin ⇒ one   │
+ * │ `localStorage`, holding `D:\Temp` from the Windows daemon and replaying   │
+ * │ it at the Linux one. → `browseDirs`                                       │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ⚠ READS NAMES ONLY, never content. It answers *"which directories exist"*,
@@ -927,6 +935,32 @@ export interface BrowseEntry {
 }
 
 export function browseDirs(target?: string): { path: string; parent: string | null; dirs: BrowseEntry[] } {
+  /**
+   * ⚠ A PATH THAT IS NOT ABSOLUTE **ON THIS PLATFORM** IS REFUSED, not
+   * resolved. (real case 19/09/2026)
+   *
+   * `path.resolve('D:\\Temp')` on POSIX does not see an absolute path — the
+   * shape is Windows's — so it JOINS it to the process's cwd and answers
+   * `/home/<user>/D:\Temp`. That is wherever `agentco start` happened to be
+   * typed, it does not exist, and `listDirs` then catches its own `readdirSync`
+   * and returns an empty list with an "up" button: a picker standing in a place
+   * that was never asked for, looking merely unhelpful rather than wrong.
+   *
+   * The damage is not limited to the listing. `ArmDialog` offers "use this
+   * folder" for whatever `path` comes back, so the invented path is SELECTABLE
+   * and lands as an arm's root — an arm pointed at nothing that reads on screen
+   * as fully configured.
+   *
+   * ⚠ FALL THROUGH TO THE NO-TARGET BRANCH, not to cwd and not to home. Those
+   * would be a third behaviour to learn; this way a bad target means exactly
+   * what no target means, which is a rule with no exceptions in it.
+   *
+   * ⚠ DO NOT TRANSLATE `D:\Temp` INTO `/mnt/d/Temp`. That is the path-mapping
+   * debt in SPEC-deploy §5 ①, a much larger problem; guessing at it here would
+   * answer confidently and sometimes be wrong. Refuse, do not infer.
+   */
+  if (target && !path.isAbsolute(target)) target = undefined;
+
   // Nothing passed = root. On Windows, "root" is a LIST OF DRIVES, not a
   // directory — skip this and a Windows user has no way up past `C:\` and can
   // never reach the D drive.
