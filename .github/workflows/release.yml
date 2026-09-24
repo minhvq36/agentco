@@ -278,11 +278,16 @@ jobs:
       # publish over the previously published versions: 0.1.1". So it stages a
       # throwaway prerelease of the same code, on this runner only — the
       # command, this npm and the tarball are exercised; the real number is not.
+      # ⚠ `--ignore-scripts`: since 24/09 the `version` lifecycle script
+      # refuses a number with no CHANGELOG.md section — and a throwaway
+      # `-dryrun.<id>` never has one. Measured on the first dry run after the
+      # gate landed (run 36025380026): this step, and only this step, went red.
+      # The gate is for numbers that ship; this one never does.
       - name: Stage (dry run)
         if: github.event_name == 'workflow_dispatch'
         run: |
           ver=$(node -p "require('./package.json').version")
-          npm version "$ver-dryrun.${{ github.run_id }}" --no-git-tag-version
+          npm version "$ver-dryrun.${{ github.run_id }}" --no-git-tag-version --ignore-scripts
           npm stage publish . --dry-run --tag dryrun
 
       - name: Stage for approval
