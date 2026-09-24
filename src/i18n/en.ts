@@ -1189,6 +1189,18 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
     'Prints a greeting with the name it was given. Screen output only, reads nothing and writes no file — safe to run any number of times.',
   'cliForm.noName': 'This command has no name yet.',
   'cliForm.noLine': 'There is no command line to run yet.',
+  // ⚠ Points at the SYNTAX: the example is the command the user already ran,
+  // so it is the one assumed right. → `exampleFits`
+  // ⚠ `{slot_name}` IS LITERAL TEXT, shown as the shape to type (user, 24/09:
+  // "a blank" told nobody what to write) — the same token `ExampleNoSlot`
+  // already prints, so the two messages teach one shape. SINGULAR on purpose:
+  // one `{…}` is ONE argv piece, and `{params}` would teach `cp {params}` ←
+  // "a.txt b.txt", which arrives as a single argument. It survives only
+  // because this key is called with NO params — `interpolate` returns the
+  // template untouched. Pass params to it one day and do not name one
+  // `slot_name`.
+  'cliForm.exampleNotSyntax':
+    'The example is not the syntax filled in, so this command cannot be saved yet. The example is the line you know runs — fix the Syntax: every part that changes from run to run has to be written in the form {slot_name}.',
 
   // ───────────────────────────────────────────────────────────── markdown
   'md.taskDone': 'done: ',
@@ -1547,6 +1559,15 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
   'arm.exOneDiff1': 'Differs from the syntax at',
   'arm.exOneDiff2': '. If that is the part that changes from run to run, turn it into',
   'arm.exOneDiff3': 'on the Syntax line — employees fill it in from there.',
+  /**
+   * ⚠ It names what will HAPPEN (the text runs as written), not a rule about
+   * brackets: the user who typed `<text>` copied it from a README and has no
+   * reason to know `{…}` is ours. → `suggestSlots`
+   */
+  'arm.slotHint': 'This looks like a place to fill in, but here it would run exactly as written:',
+  // ⚠ Not "Make it a blank" (user, 24/09): "blank" read as "erase it". The
+  // button applies the rewrite shown right beside it, so it says that.
+  'arm.slotApply': 'Apply suggestion',
   'arm.jsonPlaceholder':
     'Paste the MCP config block from the server’s README, for example:\n{ "command": "npx", "args": ["-y", "..."] }',
   'arm.jsonAt': 'Line {line}, column {col}: ',
@@ -1612,8 +1633,6 @@ Closing the browser tab does NOT stop the company. To stop it: the "Shut down" b
     '). Employees will not be able to tell the two apart — rename one of them.',
   'arm.cliSyntax': 'Syntax',
   'arm.cliExample': 'Example',
-  'arm.cliExampleMismatch':
-    'The example does not match the syntax — it needs the same number of pieces, and identical text everywhere that is not a placeholder.',
   'arm.cliDescription': 'Description',
   'arm.cliDescriptionPlaceholder':
     'What it does, what to expect when it runs, whether it overwrites anything, whether it can be undone',

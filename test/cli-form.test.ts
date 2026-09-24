@@ -11,11 +11,14 @@ import {
   declToDraft,
   draftToDecl,
   dupIds,
+  exampleFits,
   isCliPaste,
   joinArgv,
   sampleAct,
   slots,
+  slotFromExample,
   slugId,
+  suggestSlots,
   toArgv,
   type CliDraft,
 } from '../web/src/lib/cli-form.ts';
@@ -251,6 +254,124 @@ test('the FORM can itself generate a duplicate id — two near-identical names, 
 test('dupIds stays quiet when nothing collides', () => {
   assert.deepEqual(dupIds(draftToDecl([full(), { ...full(), say: 'second task' }], DIR)), []);
   assert.deepEqual(dupIds({}), []);
+});
+
+// ── suggestSlots — the Syntax line read the way a person wrote it (21/09) ──
+
+test('the line from 21/09 becomes ONE blank, and the saved argv has one slot', () => {
+  const line = 'python get_information.py --arg <nội dung thông tin>'; // i18n-allow-vietnamese: the user's own line, the case under test
+  // What shipped: four fixed pieces, no slot — argparse exits 2 on the extra three.
+  assert.equal(toArgv(line).length, 7);
+  assert.deepEqual(slots(toArgv(line)), []);
+
+  const fix = suggestSlots(line);
+  assert.ok(fix, 'the case that cost a support thread went unrecognised');
+  assert.equal(fix.line, 'python get_information.py --arg {noi_dung_thong_tin}');
+  assert.deepEqual(toArgv(fix.line), ['python', 'get_information.py', '--arg', '{noi_dung_thong_tin}']);
+  assert.deepEqual(slots(toArgv(fix.line)), ['noi_dung_thong_tin']);
+});
+
+test('recognised by how it OPENS: a forgotten `>` is still one blank', () => {
+  const fix = suggestSlots('python get_information.py --arg <nội dung thông tin'); // i18n-allow-vietnamese: fixture
+  assert.equal(fix?.line, 'python get_information.py --arg {noi_dung_thong_tin}');
+});
+
+test('a quoted `<…>` takes its quotes with it — they were only there for the spaces', () => {
+  const fix = suggestSlots('python x.py --arg "<nội dung thông tin>"'); // i18n-allow-vietnamese: fixture
+  assert.equal(fix?.line, 'python x.py --arg {noi_dung_thong_tin}');
+  assert.equal(fix?.fixes[0]?.from, '"<nội dung thông tin>"'); // i18n-allow-vietnamese: fixture
+});
+
+test('`{…}` with a name the machine cannot use is renamed, not left as a fixed piece', () => {
+  // `{nội dung}` today: toArgv cuts it in two, fillArgv matches neither half. // i18n-allow-vietnamese: fixture
+  assert.deepEqual(slots(toArgv('x --arg {nội dung}')), []); // i18n-allow-vietnamese: fixture
+  assert.equal(suggestSlots('x --arg {nội dung}')?.line, 'x --arg {noi_dung}'); // i18n-allow-vietnamese: fixture
+  assert.equal(suggestSlots('x --arg {my arg}')?.line, 'x --arg {my_arg}');
+});
+
+test('`--arg=<value>` and repeated `<arg> <arg>` both come out usable', () => {
+  assert.equal(suggestSlots('x --arg=<value>')?.line, 'x --arg={value}');
+  assert.equal(suggestSlots('cp <arg> <arg>')?.line, 'cp {arg} {arg_2}');
+  // A name already used by a real slot is not reused.
+  assert.equal(suggestSlots('cp {arg} <arg>')?.line, 'cp {arg} {arg_2}');
+});
+
+test('what already MEANS something is never touched', () => {
+  for (const line of [
+    'python x.py --arg {noi_dung}', // already a slot
+    'date --format "%Y-%m-%d"', // quoting keeps a piece together
+    'python x.py --arg "some fixed text"', // a quoted literal is a literal
+    'tool [--verbose] (a|b)', // "optional" / "pick one" in docs
+    'find . -exec rm {} ;', // `{}` is passed to find literally
+    'curl -d {"a":1} http://x?y=1', // JSON on the command line
+    'sort < input.txt', // a redirect, standing alone
+    'a -> b', // an arrow is not a blank
+  ]) {
+    assert.equal(suggestSlots(line), null, `touched: ${line}`);
+  }
+});
+
+// ── an example that is not the syntax filled in blocks saving (24/09) ──
+
+const EX = 'python get_information.py --arg "Xin chao tu AgentCo"';
+const row = (line: string, example: string): CliDraft => ({ ...blankAct(), say: 'run it', line, example });
+
+test('both failures of 21/09 now stop at the form, on the example field', () => {
+  const first = 'python get_information.py --arg <nội dung thông tin>'; // i18n-allow-vietnamese: the user's own line
+  const second = 'python get_information.py --arg "nội dung thông tin"'; // i18n-allow-vietnamese: the user's own line
+  for (const line of [first, second]) {
+    assert.equal(exampleFits(line, EX), false, `saved and failed at run time: ${line}`);
+    assert.deepEqual(cliProblems([row(line, EX)], t).map((p) => p.field), ['example']);
+  }
+});
+
+test('the one-click rewrite is what makes the same example fit', () => {
+  const fixed = suggestSlots('python get_information.py --arg <nội dung thông tin>')!.line; // i18n-allow-vietnamese: fixture
+  assert.equal(exampleFits(fixed, EX), true);
+  assert.deepEqual(cliProblems([row(fixed, EX)], t), []);
+});
+
+test('what still saves: no example, and a fixed command whose example is itself', () => {
+  assert.equal(exampleFits('python x.py --flag', ''), true);
+  assert.equal(exampleFits('python x.py --flag', '   '), true);
+  assert.equal(exampleFits('python x.py --flag', 'python x.py --flag'), true);
+  assert.equal(exampleFits('python x.py --flag', 'python x.py --other'), false);
+  // The sample the form offers must keep passing its own gate.
+  assert.equal(exampleFits(sampleAct(t).line, sampleAct(t).example), true);
+});
+
+// ── slotFromExample — the way out of the block when there is no shape to see ──
+
+test('the second failure of 21/09 gets a one-click way out, named after the flag', () => {
+  const line = 'python get_information.py --arg "fixed text"';
+  const example = 'python get_information.py --arg "Hello there"';
+  assert.equal(exampleFits(line, example), false);
+  assert.equal(suggestSlots(line), null, 'no shape to recognise — only the difference can tell');
+
+  const out = slotFromExample(line, example);
+  assert.ok(out);
+  assert.deepEqual(out.fix, { from: 'fixed text', to: '{arg}' });
+  assert.equal(out.line, 'python get_information.py --arg {arg}');
+  // One click and the block lifts: the same example now fits and yields the value.
+  assert.equal(exampleFits(out.line, example), true);
+  assert.deepEqual(alignExample(toArgv(out.line), toArgv(example)), { arg: 'Hello there' });
+});
+
+test('`--month=8` keeps its flag; no flag before it means `{value}`', () => {
+  assert.equal(slotFromExample('node c.js --month=8', 'node c.js --month=9')?.line, 'node c.js --month={month}');
+  assert.equal(slotFromExample('node c.js 8', 'node c.js 9')?.line, 'node c.js {value}');
+  assert.equal(slotFromExample('node c.js --dry-run 8', 'node c.js --dry-run 9')?.fix.to, '{dry_run}');
+});
+
+test('a name already taken by a real blank is not reused', () => {
+  assert.equal(slotFromExample('x {arg} --arg 1', 'x {arg} --arg 2')?.fix.to, '{arg_2}');
+});
+
+test('no button where a guess would go wrong', () => {
+  assert.equal(slotFromExample('x --a 1 --b 2', 'x --a 3 --b 4'), null, 'two differences: one blank or two?');
+  assert.equal(slotFromExample('x --a 1', 'x --a 1 2'), null, 'different piece counts are a different command');
+  assert.equal(slotFromExample('x --a 1', 'x --a 1'), null, 'nothing differs');
+  assert.equal(slotFromExample('x --a 1', ''), null, 'no example, nothing to compare');
 });
 
 test('isCliPaste asks the SAME question isCliArm asks — by `type`, not by absence', () => {

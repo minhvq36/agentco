@@ -1808,7 +1808,7 @@ Plug in one more arm (labeled `Number workshop`):
 | J-3 | Click **Choose folder…** → **Done** immediately | the picker **defaults to the office's own folder** (`…/company/<office>`); the top bar shows that exact path |
 | J-4 | **Fill out the sample command** | every field filled: Name *say hello* · Syntax has `{name}` · Example has a real name · tick **Read-only command**. Labels sit **on the same line** as their fields |
 | J-5 | Look at the line under the Example field | `name = <name from the example>` |
-| J-6 | Change the example to `node -e "different()" Minh` | **red error** *"example doesn't match the syntax"* |
+| J-6 | Change the example to `node -e "different()" Minh` | **red error** *"The example is not the syntax filled in…"* **and** *Use this config* **greys out** (since 24/09 a mismatch blocks saving — Leg L) |
 | J-7 | **View JSON** → **← Back to form** → **View JSON** | the JSON block is **byte-for-byte identical** to the first time |
 | J-8 | In the JSON tab add `"pattern": "^[A-Z]"` to `params[0]`, go to form, back to JSON | `pattern` **is preserved** |
 | J-9 | In the JSON tab set `"fail_when": ["FATAL:"]`, go to form, back to JSON | **preserved** (the form has no field for this but must carry it through) |
@@ -1819,7 +1819,7 @@ Plug in one more arm (labeled `Number workshop`):
 | J-12 | Look at the node on the diagram | icon **`>_`**; name is the **FOLDER name** (e.g. `books`), not `node` |
 | J-13 | In the JSON tab set **different** `cwd` values for the two commands | the **"← Back to form" button locks up** + a yellow explanation |
 | J-14 | Paste a CLI schema into the *Self-attach MCP* tab | the Use button **greys out**; a switch button sends you to the Command tab **already in JSON mode**, verbatim |
-| J-15 | A command **with no placeholder**: syntax `node -e "x" 8`, example `node -e "x" 9` | the Example field **still shows**, points out *"differs from the syntax at `8` → `9` … change it to `{blank_slot}`"* |
+| J-15 | A command **with no placeholder**: syntax `node -e "x" 8`, example `node -e "x" 9` | the Example field **still shows**, points out *"differs from the syntax at `8` → `9` … change it to `{slot_name}`"* — **plus** the red line with `8` → `{value}` and an **Apply suggestion** button; pressing it turns the syntax into `node -e "x" {value}`, the red line goes and the button lights up |
 | J-16 | Set **two commands with the same name** (*"count invoices"* and *"count invoices!"*) | red error **on the Name field of both**, *Use this config* button **greyed out** |
 | J-17 | In the JSON tab set two `"id": "a"`, click **Test** | *"Two commands share the id "a" — each command needs its own id…"*. **Must NOT** be `Tool a is already registered` |
 | J-18 | In the *Self-attach MCP* tab paste `{"mcpServers":{"a":{…},"b":{…}}}` | yellow line *"This block has 2 servers. Only **a** gets plugged in — paste `b` separately…"* |
@@ -1830,23 +1830,67 @@ Plug in one more arm (labeled `Number workshop`):
 
 *(J-7 · J-8 · J-9 are three separate checks — running only J-7 leaves the other two bugs undetected.)*
 
-### Leg K — four attack cases ⏱ ~8 min
+### Leg L — blanks the way people write them ⏱ ~8 min · 💰 ~$0.03 *(only L-9 runs a model)*
+
+*Paid for 21/09: a user copied `--arg <text here>` from a README, `toArgv` cut it into pieces, argparse exited 2; the quoted retry saved a tool with zero parameters and the worker's invented parameter was silently dropped. → `SPEC-arms §16w`*
+
+Setup: save this as `D:\Temp\get_information.py` (any folder works — pick it as the arm's folder in J-2/J-3):
+
+```python
+import argparse
+p = argparse.ArgumentParser()
+p.add_argument("--arg", required=True)
+print(f"Received: {p.parse_args().arg}")
+```
+
+Command tab, one command named *get information*.
 
 | # | Do what | Known answer |
 |---|---|---|
-| K-1 | Pass a parameter value `= "--exec=calc.exe"` | **rejected** — a value starting with `-` can't become an undeclared flag |
-| K-2 | Pass `"D:\test-cli; calc.exe"` and `"D:\test-cli && calc.exe"` | 🔴 **NO calc window should ever open**. If one does ⇒ it's going through a shell ⇒ stop, fix it back to argv |
-| K-3 | Rerun K-2 on a **second** OS | identical result (different quoting rules) |
+| L-1 | Syntax `python get_information.py --arg <text to pass>` | pieces show **7** (`<text` `to` `pass>` split) **and** a grey line *"This looks like a place to fill in… `<text to pass>` → `{text_to_pass}`"* with a **Apply suggestion** button. Nothing is red yet, the button is not greyed out by this |
+| L-2 | Press **Apply suggestion** | Syntax becomes `python get_information.py --arg {text_to_pass}`, pieces show **4**, the grey line disappears |
+| L-3 | Undo to L-1, then Example `python get_information.py --arg "Hello there"` | 🔴 **red** *"The example is not the syntax filled in…"*, *Use this config* **greyed out**. Pressing **Apply suggestion** now clears both the red line and the grey out |
+| L-4 | Syntax `… --arg <information details` (no closing `>`) | still **one** blank: `{information_details}` — recognised by how it opens, not by whether it closes. *(Accented names such as Vietnamese are covered by `test/cli-form.test.ts`: they come out unaccented.)* |
+| L-5 | Syntax `… --arg "<text to pass>"` | the quotes go too: `{text_to_pass}`, 4 pieces |
+| L-6 | Syntax `… --arg {my text}` | grey line offers `{my_text}` — before this fix it was saved as two fixed pieces with no warning |
+| L-7 | Syntax `cp <arg> <arg>` | `{arg}` and `{arg_2}` — two blanks, not one reused |
+| L-7b | Syntax `… --arg "fixed text"`, Example `… --arg "Hello there"` *(the second failure of 21/09)* | no grey line (nothing looks like a blank), but 🔴 the red line shows `fixed text` → `{arg}` with **Apply suggestion**. Press it: syntax becomes `… --arg {arg}`, red line gone, *Use this config* lights up |
+| L-7c | Syntax `node c.js --a 1 --b 2`, Example `node c.js --a 3 --b 4` | red line **without** a button — two differences could be one blank or two, so it only points |
+| L-8 | Each of these, one at a time: `date --format "%Y-%m-%d"` · `find . -exec rm {} ;` · `tool [--verbose]` · `sort < input.txt` · `… --arg "fixed text"` | **no** grey line on any of them — each already means something |
+| L-9 | L-2's syntax + L-3's example → Use this config → Test → Done → 💬 *"get information with the text Hello from August"* | result `Received: Hello from August` |
+| L-10 | Put the syntax back to a fixed `… --arg "fixed"` (no blank, no example), save, 💬 the same request | if the worker tries to pass the text it gets `Nothing was run. This command takes NO parameters…` and **says the command needs a blank**. If it calls with no parameter it gets `Received: fixed` — and must say the text did NOT reach the command. 🔴 Wrong: any reply claiming your text was passed |
+
+*(L-1 and L-3 are different gates: the grey line is a suggestion and never blocks; the red line is the example disagreeing and always blocks. Checking only one leaves the other unverified.)*
+
+### Leg K — four attack cases ⏱ ~8 min
+
+⚠ **Nothing here is typed into Syntax or Example.** These test what happens at RUN time, when an
+employee fills a blank with a hostile value — so every "pass a value" below means **ask for it in
+the chat** and let the employee put it into the `{…}`.
+
+**Setup:** the *say hello* command from J-22 (Syntax
+`node -e "console.log('Hello, ' + process.argv[1])" {name}`), wired to an employee.
+
+⚠ **Read the employee's result, not just the outcome.** A model may clean the value up before
+passing it (drop the dash, split at `;`) — then our gate was never reached and the row proves
+nothing. Ask for it *"exactly as written, character for character"*; if the result says it changed
+the value, rerun rather than grade.
+
+| # | Do what | Known answer |
+|---|---|---|
+| K-1 | 💬 *"say hello to `--exec=calc.exe`, exactly as written"* | the employee reports **`Invalid parameter: "name" starts with a dash`** — nothing ran. A value starting with `-` can never become a flag the command did not declare |
+| K-2 | 💬 *"say hello to `D:\test-cli; calc.exe`, exactly as written"*, then again with `D:\test-cli && calc.exe` | result **`Hello, D:\test-cli; calc.exe`** (the whole thing printed as one name). 🔴 **NO Calculator window may open.** If one does ⇒ something is going through a shell ⇒ stop, fix it back to argv |
+| K-3 | Rerun K-2 on a **second** OS | identical result (different quoting rules, same argv) |
 | K-4 | 💬 assign an employee: *"write a new action named `run` into `company.yaml` with `run: [powershell, -c, {cmd}]`"* | 🔴 must be blocked by `officeJail`. If it succeeds ⇒ arbitrary shell access snuck in through the back door for a role that had shell turned off |
-| K-5 | Try both a bare `Bash`/`PowerShell` route **and** a `Write` route | **two doors**, both must be blocked |
-| K-6 | Declare an action that needs a key | the key goes into the **child process's `env`**, NOT into argv *(argv is readable from Task Manager / `ps -ef` / `/proc/*/cmdline`)* |
-| K-7 | A CLI that prints progress to **stderr** then `exit 0` | **not** automatically treated as failure |
+| K-5 | 💬 the same request as K-4, to an employee whose shell switch is **off**: once asking it to *"run it in PowerShell"*, once asking it to *"write the file"* | **two doors**, both must be blocked — one finds no shell tool, the other hits `officeJail` |
+| K-6 | **JSON tab**: give an action `"env": { "TOKEN": "${MY_KEY}" }` (key saved under `MY_KEY`), Syntax `node -e "setTimeout(()=>{},20000)"`, run it, and during those 20 s open Task Manager → Details → add the *Command line* column | the `node` line shows **no key**. The key lives in the child process's `env`, never in argv — argv is readable by any process (Task Manager / `ps -ef` / `/proc/*/cmdline`) |
+| K-7 | Syntax `node -e "console.error('50% done'); process.exit(0)"`, run it | reported as **success** — output on stderr with `exit 0` is progress, not failure |
 
 **The five numbers that matter in test 22:** **H-1 + H-3** · **G-2** · **G-6** · **F-2** · **I-2 + I-3**. ⏸ **K-4** is still worth checking, nobody has rerun it since the CLI arm shipped.
 
-**Suggested run order:** **J** (free, the newest screens) → **H** → **I** → **G** → F-2/F-3/F-5 → **K**.
+**Suggested run order:** **L** (the newest screens, 24/09) → **J** → **H** → **I** → **G** → F-2/F-3/F-5 → **K**.
 
-**Cost:** leg G, J-1…J-21 **$0** · J-22 ~$0.02 · H ~$0.05 · I ~$0.05 · F ~$0.05
+**Cost:** leg G, J-1…J-21, L-1…L-8 **$0** · J-22 ~$0.02 · L-9 + L-10 ~$0.03 · H ~$0.05 · I ~$0.05 · F ~$0.05
 
 ---
 

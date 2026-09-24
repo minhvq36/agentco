@@ -591,6 +591,34 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
       shape[p.name] = p.required ? base : base.optional();
     }
 
+    /**
+     * 🔴 AN UNKNOWN PARAMETER IS REFUSED, NOT DROPPED. (paid for 21/09/2026)
+     *
+     * A raw shape makes the SDK wrap it in a plain `z.object`, which STRIPS
+     * unknown keys before the handler runs. Measured through the real MCP
+     * path: a command with no blank, called with `{content: "Xin chao thang 8"}`,
+     * ran its fixed line and returned `isError: false`. The employee had
+     * invented `content` because the tool offered no way to pass the user's
+     * text; the result printed the placeholder, and every layer above it —
+     * employee, assistant, user — had to guess why.
+     *
+     * ⇒ `.passthrough()` so the handler SEES the extra keys, and the handler
+     * refuses before spawning. Measured the same day: the schema the model is
+     * shown keeps the same `properties`.
+     *
+     * ⚠ The two consequences, written down before choosing
+     * (→ [[agentco-safe-default-direction]]): REFUSE costs one turn when an
+     * extra key was harmless; RUN costs a wrong result reported as success,
+     * which is what shipped. Refuse is the cheaper mistake.
+     *
+     * ⚠ The cast is because `tool()` is typed for a raw shape only; the MCP
+     * server underneath takes a Zod object too. `test/cli-arm.test.ts` runs a
+     * real MCP client against it, so an SDK upgrade that stops honouring this
+     * fails there instead of stripping quietly again.
+     */
+    const declared = new Set(Object.keys(shape));
+    const input = z.object(shape).passthrough() as unknown as typeof shape;
+
     return tool(
       a.id,
       /**
@@ -600,8 +628,30 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
        * CONSEQUENCES, not just the purpose. → §16l
        */
       a.description,
-      shape,
+      input,
       async (args): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> => {
+        const unknown = Object.keys(args as Record<string, unknown>).filter((k) => !declared.has(k));
+        if (unknown.length) {
+          // Written for the employee, and through it for the assistant: the
+          // fix is in the command's DECLARATION, which only the user can edit —
+          // not in a retry with a different key name.
+          return {
+            content: [
+              {
+                type: 'text',
+                text: declared.size
+                  ? `Nothing was run. Unknown parameter(s): ${unknown.join(', ')}. ` +
+                    `This command accepts only: ${[...declared].join(', ')}.`
+                  : `Nothing was run. This command takes NO parameters — it always runs exactly the same ` +
+                    `fixed line, so ${unknown.join(', ')} cannot reach it. To pass a value, the user has to ` +
+                    `edit this command and put a blank such as {value} in its Syntax. Tell the user that; ` +
+                    `do not retry with another parameter name.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         let filled: string[];
         try {
           filled = fillArgv(a, args as Record<string, unknown>);

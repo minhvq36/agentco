@@ -246,6 +246,197 @@ export function slots(argv: readonly string[]): string[] {
 }
 
 /**
+ * A slot name from whatever the user wrote inside the brackets.
+ *
+ * ⚠ ASCII ON PURPOSE, and not only because `fillArgv`'s regex is: the name
+ * becomes a property key in the tool's JSON schema, which the model API reads,
+ * and `slugId` already settled that a machine name is ours to generate — the
+ * user types *"nội dung thông tin"* and never learns the rule. // i18n-allow-vietnamese: the diacritics are the example
+ * Same `NFD` + `\p{M}` route as `slugId`, for the same paid-for reason.
+ */
+function slotName(text: string): string {
+  const s = text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/đ/gi, 'd') // i18n-allow-vietnamese: `đ` survives NFD, so it needs its own rule
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return s || 'value';
+}
+
+/** One suggested rewrite: what the user wrote, and the slot it becomes. */
+export interface SlotFix {
+  from: string;
+  to: string;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 "LOOKS LIKE A BLANK" — the Syntax line, read the way a person wrote it.
+ * │ (paid for 21/09/2026, office `teest1`, arm "Temp")
+ * │
+ * │ The user copied the shape every README uses —
+ * │   python get_information.py --arg <nội dung thông tin>        // i18n-allow-vietnamese: the user's own line
+ * │ — and nothing said that `<…>` means nothing here. `toArgv` cut it into
+ * │ FOUR fixed pieces (`<nội` `dung` `thông` `tin>`), argparse exited 2 on the // i18n-allow-vietnamese: the pieces it was cut into
+ * │ extra three, and the second try, with the text in quotes, saved ONE fixed
+ * │ piece and a tool with zero parameters: the employee could not pass a
+ * │ value however it tried. Both runs were deterministic, and both were ours.
+ * │
+ * │ ⭐ IT SUGGESTS, IT NEVER EDITS. Same rule as `ExampleNoSlot`: this is a
+ * │ guess, so the user clicks. Nothing blocks saving — a user who really
+ * │ means a literal `<b>` ignores one grey line.
+ * │
+ * │ 🔴 RECOGNISED BY HOW IT OPENS, NOT BY WHETHER IT CLOSES.
+ * │ → [[agentco-recognizer-validates-instead]]
+ * │  · `<` at the start of a piece (or right after `=`) opens a blank. It runs to the next `>`, or
+ * │    to the end of the line when the `>` was forgotten — the case most
+ * │    likely to be typed is exactly the one a strict parser would drop.
+ * │    Spaces inside are part of the ONE blank: `<nội dung thông tin>` is one. // i18n-allow-vietnamese: the user's own text
+ * │  · `{…}` whose inside is not a legal slot name (`{nội dung}`, `{my arg}`) // i18n-allow-vietnamese: the example
+ * │    — today that is saved as a fixed piece with no warning at all.
+ * │  · A blank that fills a whole quoted piece (`"<nội dung>"`) takes the // i18n-allow-vietnamese: the example
+ * │    quotes with it: the quotes were only ever there for the spaces.
+ * │
+ * │ ⚠ AND WHAT IT MUST NEVER TOUCH, because each already means something:
+ * │  · `"…"` / `'…'` — keep-this-together quoting (`--format "%Y-%m-%d"`)
+ * │  · `[…]` / `(a|b)` — "optional" / "pick one" in docs, not a value
+ * │  · `{}` empty — `find . -exec rm {} ;` passes it literally
+ * │  · `{"a":1}` — JSON on the command line; a `{` needs its `}` and an
+ * │    inside with no quote, colon or brace before it is read as a blank
+ * │  · `<` standing alone — a redirect in the doc the line came from
+ * └──────────────────────────────────────────────────────────────────────────
+ */
+export function suggestSlots(line: string): { line: string; fixes: SlotFix[] } | null {
+  const taken = new Set(slots(toArgv(line)));
+  const fixes: SlotFix[] = [];
+  const name = (inner: string): string => {
+    const base = slotName(inner);
+    let n = base;
+    for (let k = 2; taken.has(n); k++) n = `${base}_${k}`;
+    taken.add(n);
+    return n;
+  };
+
+  let out = '';
+  let i = 0;
+  while (i < line.length) {
+    const ch = line[i]!;
+    const atStart = i === 0 || /\s/.test(line[i - 1]!);
+
+    // A quoted piece: rewrite it whole when it is nothing but one `<…>` blank,
+    // otherwise copy it untouched — quotes mean "keep together", not "blank".
+    if ((ch === '"' || ch === "'") && atStart) {
+      const close = line.indexOf(ch, i + 1);
+      const end = close < 0 ? line.length : close + 1;
+      const body = line.slice(i + 1, close < 0 ? line.length : close);
+      const m = /^<([^<>]*\S[^<>]*)>?$/.exec(body);
+      if (m) {
+        const to = `{${name(m[1]!)}}`;
+        fixes.push({ from: line.slice(i, end), to });
+        out += to;
+      } else {
+        out += line.slice(i, end);
+      }
+      i = end;
+      continue;
+    }
+
+    // `--arg=<value>` opens a blank too: the `=` form is half of all CLI docs,
+    // and a slot in the middle of a piece is something `fillArgv` already does.
+    if (ch === '<' && (atStart || line[i - 1] === '=') && i + 1 < line.length && !/\s/.test(line[i + 1]!)) {
+      const close = line.indexOf('>', i + 1);
+      const end = close < 0 ? line.length : close + 1;
+      const inner = line.slice(i + 1, close < 0 ? line.length : close).trim();
+      if (inner) {
+        const to = `{${name(inner)}}`;
+        fixes.push({ from: line.slice(i, end), to });
+        out += to;
+        i = end;
+        continue;
+      }
+    }
+
+    if (ch === '{') {
+      const close = line.indexOf('}', i + 1);
+      const inner = close < 0 ? '' : line.slice(i + 1, close);
+      if (close > 0 && inner.trim() && !/["':{]/.test(inner) && !/^[a-z0-9_]+$/i.test(inner)) {
+        const to = `{${name(inner)}}`;
+        fixes.push({ from: line.slice(i, close + 1), to });
+        out += to;
+        i = close + 1;
+        continue;
+      }
+    }
+
+    out += ch;
+    i++;
+  }
+  return fixes.length ? { line: out, fixes } : null;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 THE BLOCK NEEDS A WAY OUT. (the user's call, 24/09/2026)
+ * │
+ * │ `exampleFits` refuses to save a syntax the example is not an instance of.
+ * │ For `<…>` the way out is `suggestSlots`; but the second failure of 21/09
+ * │ was `--arg "fixed text"` against `--arg "Hello there"` — no shape to
+ * │ recognise, only a DIFFERENCE. Without this, that user is blocked and has
+ * │ to learn `{…}` by hand: a gate with no exit, which is the UX cost the user
+ * │ warned about before the gate existed.
+ * │
+ * │ ⚠ EXACTLY ONE DIFFERING PIECE, or nothing. Two differences could be one
+ * │ blank or two, and a guess across them is where it goes wrong — those keep
+ * │ the pointer (`ExampleNoSlot`) and no button.
+ * │
+ * │ ⚠ THE NAME COMES FROM THE FLAG BEFORE IT, not from the value: the value in
+ * │ the syntax is usually a sample (`"fixed text"`), the flag says what it is
+ * │ (`--arg` → `{arg}`). `--month=8` against `--month=9` keeps its `--month=`
+ * │ and becomes `--month={month}`. No flag ⇒ `{value}`.
+ * │
+ * │ Same rule as `suggestSlots`: it suggests, the user clicks.
+ * └──────────────────────────────────────────────────────────────────────────
+ */
+export function slotFromExample(line: string, example: string): { line: string; fix: SlotFix } | null {
+  if (!line.trim() || !example.trim()) return null;
+  const argv = toArgv(line);
+  const ex = toArgv(example);
+  if (argv.length !== ex.length) return null;
+  const at = argv.map((_, i) => i).filter((i) => argv[i] !== ex[i]);
+  if (at.length !== 1) return null;
+  const i = at[0]!;
+  const piece = argv[i]!;
+  // A piece that already holds a blank is `alignExample`'s business, not a guess.
+  if (/\{[a-z0-9_]+\}/i.test(piece)) return null;
+
+  const taken = new Set(slots(argv));
+  const unique = (base: string): string => {
+    let n = base;
+    for (let k = 2; taken.has(n); k++) n = `${base}_${k}`;
+    return n;
+  };
+
+  // `--month=8` / `--month=9`: the part up to `=` is shared and stays.
+  const eq = /^(--?[a-z][\w-]*=)/i.exec(piece);
+  let head = '';
+  let base = 'value';
+  if (eq && ex[i]!.startsWith(eq[1]!)) {
+    head = eq[1]!;
+    base = slotName(head.replace(/^-+|=$/g, ''));
+  } else {
+    const flag = /^--?([a-z][\w-]*)$/i.exec(argv[i - 1] ?? '');
+    if (flag) base = slotName(flag[1]!);
+  }
+
+  const to = `${head}{${unique(base)}}`;
+  const next = argv.slice();
+  next[i] = to;
+  return { line: joinArgv(next), fix: { from: piece, to } };
+}
+
+/**
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ ⭐ THE EXAMPLE: THE USER TYPES **A WHOLE COMMAND**, THE MACHINE EXTRACTS │
  * │ **EACH SLOT**. (the user asked for this field back on 01/09, and this is │
@@ -419,8 +610,37 @@ export function draftToDecl(
  */
 export interface CliProblem {
   at: number;
-  field: 'say' | 'line';
+  field: 'say' | 'line' | 'example';
   say: string;
+}
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 AN EXAMPLE THAT IS NOT AN INSTANCE OF THE SYNTAX BLOCKS SAVING.
+ * │ (the user's call, 24/09/2026)
+ * │
+ * │ *"If we play deterministic, the Syntax and the Example have to agree
+ * │ deterministically — the example is usually the one thing that is surely
+ * │ right."* Both failures of 21/09 were exactly this: 7 syntax pieces
+ * │ against a 4-piece example, then a fixed piece where the example held a
+ * │ different value. The screen said so, in grey or in red, and let the
+ * │ command be saved anyway — so the disagreement surfaced at RUN time,
+ * │ through an employee, as a wrong result.
+ * │
+ * │ ⚠ THE EXAMPLE IS THE WITNESS, the syntax is the suspect. It is the line
+ * │ the user actually ran, so the message points at the Syntax line, and
+ * │ `suggestSlots` is the one-click way out.
+ * │
+ * │ ⚠ What still saves: NO example (a fixed command needs none), and an
+ * │ example identical to a syntax with no blank. Only a disagreement blocks.
+ * └──────────────────────────────────────────────────────────────────────────
+ */
+export function exampleFits(line: string, example: string): boolean {
+  if (!example.trim()) return true;
+  const argv = toArgv(line);
+  const ex = toArgv(example);
+  if (!slots(argv).length) return argv.length === ex.length && argv.every((p, i) => p === ex[i]);
+  return alignExample(argv, ex) !== null;
 }
 
 export function cliProblems(list: readonly CliDraft[], t: Translate): CliProblem[] {
@@ -428,6 +648,7 @@ export function cliProblems(list: readonly CliDraft[], t: Translate): CliProblem
   list.forEach((a, at) => {
     if (!a.say.trim()) out.push({ at, field: 'say', say: t('cliForm.noName') });
     if (!toArgv(a.line).length) out.push({ at, field: 'line', say: t('cliForm.noLine') });
+    else if (!exampleFits(a.line, a.example)) out.push({ at, field: 'example', say: t('cliForm.exampleNotSyntax') });
   });
   return out;
 }

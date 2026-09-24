@@ -6180,6 +6180,83 @@ to decide what to click. [[agentco-count-mechanisms]]
 
 ---
 
+## 16w. ✅ 24/09 — **BLANKS THE WAY PEOPLE WRITE THEM**, and three silences broken
+
+### What happened (21/09, office `teest1`, arm "Temp")
+
+A user copied the shape every README uses, `python get_information.py --arg <text>`, with the
+placeholder written in Vietnamese. Two tries, two failures, **both deterministic and both ours**:
+
+| Syntax typed | Saved as | Run |
+|---|---|---|
+| `--arg <four words>` | four **fixed** pieces — `toArgv` splits on spaces and knows nothing of `<>` | argparse: `unrecognized arguments`, exit 2 |
+| `--arg "four words"` | one fixed piece, a tool with **zero parameters** | the worker invented `content`, the SDK **stripped it**, the fixed line ran: success, printing the placeholder |
+
+The worker was not dumb — it had no knob, and said so. The assistant could not see the argv. The
+user concluded the product was weak. Each layer guessed, because each gate stayed silent.
+
+⚠ **The user proposed the opposite fix first** — accept `'' "" \`\` () [] ? <>` as blanks, or let
+the worker build the command. Both refused, for reasons worth keeping:
+- **The worker never builds the line** (§16e, §16i): a value is always ONE argv element. A worker
+  that composes the command can be talked into `; del …` by a file it reads.
+- **Most brackets already mean something**: `"…"` keeps a piece together (`--format "%Y-%m-%d"`),
+  `[…]` is "optional" in docs, `{}` is `find -exec`'s literal, `{"a":1}` is JSON. Reading them as
+  blanks trades a failure the user SEES for one nobody sees.
+- **The real axis is WHEN, not WHO**: at authoring the user is present and a guess is shown back;
+  at run time nobody watches. Flexibility goes to authoring, determinism stays at run time.
+- `=`, `%`, `&`, `|`, `$` need no handling: there is no shell (§16e), they reach the program verbatim.
+
+### ① `suggestSlots` — a suggestion, never an edit (`web/src/lib/cli-form.ts`)
+
+Recognised **by how it opens** ([[agentco-recognizer-validates-instead]]): `<` at the start of a
+piece or after `=`, running to `>` or to end of line when `>` was forgotten; `{…}` whose inside is
+not a legal name. A quoted piece that is nothing but `<…>` loses its quotes. Names are generated
+(`slotName`, ASCII — the name becomes a property key the model API reads), deduplicated
+(`{arg}` `{arg_2}`). A grey line + **Apply suggestion**; never blocks, never edits by itself.
+Never touches: quoted literals, `[…]`, `(a|b)`, `{}`, JSON, a lone `<`.
+
+### ② An example that is not the syntax filled in **blocks saving** (the user's call)
+
+> *"If we play deterministic, the Syntax and the Example have to agree — the example is usually
+> the one thing that is surely right."*
+
+`exampleFits` inside `cliProblems` — the same function that already greys the button, not a
+second rule. Same piece count, fixed pieces identical, only blanks differ. Still saves: no example,
+or an example identical to a blank-less syntax. **The message points at the SYNTAX**: the example
+is the witness (a line the user ran), the syntax is the suspect. Both 21/09 failures now stop here.
+⚠ The JSON tab still bypasses it — the form is the gate, as for `dupIds`.
+
+**②-bis The block needs a way out — `slotFromExample`** (the user's call, same day). `"fixed
+text"` against `"Hello there"` has no shape for `suggestSlots` to see, only a difference; without
+this, the gate above stops the user and makes them learn `{…}` by hand. When the two lines differ
+in **exactly one** piece, the red line carries the same **Apply suggestion** button. The name
+comes from the **flag before it** (`--arg` → `{arg}`; `--month=8` keeps `--month=` →
+`--month={month}`; no flag → `{value}`) — the value in the syntax is a sample, the flag says what
+it is. Two or more differences: pointer only, no button, because one blank or two is a guess.
+
+### ③ An unknown parameter is **refused, not dropped** (`core/cli-arm.ts §buildCliTools`)
+
+Measured through a real MCP client: a raw shape makes the SDK wrap it in `z.object`, which strips
+unknown keys **before** our handler. Now `z.object(shape).passthrough()` (cast: `tool()` is typed
+for a raw shape; the MCP server under it takes an object — measured, and the listed `properties`
+are unchanged) and the handler refuses with *"Nothing was run. This command takes NO parameters…
+tell the user; do not retry with another name"*. Consequences written first
+([[agentco-safe-default-direction]]): refuse costs one turn when an extra key was harmless; run
+cost a wrong result reported as success. `test/cli-arm.test.ts` goes through a real client, so an
+SDK upgrade that stops honouring `passthrough` fails there.
+
+**All green** (+16 over 0.2.7) · web build clean · walkthrough **Leg L**.
+
+### ⏸ Left open, on purpose
+
+- **A variable number of arguments** (`nargs='+'`, `file1 file2 …`): one blank is one argv piece.
+  Reopen with the first real command that needs it.
+- **The argv the worker actually ran is recorded (`onCall`) but the assistant cannot see it** — it
+  told the user "I have no log". Worth wiring when the next "what did it run?" comes in.
+- `YOUR_TOKEN`-style placeholders are **not** suggested: too close to real constants (`PATH`).
+
+---
+
 ## Sources
 
 **Read directly inside `node_modules`, `@anthropic-ai/claude-agent-sdk@0.3.231`** (📖 — types, not

@@ -66,6 +66,9 @@ import {
   sampleAct,
   slots,
   slugId,
+  exampleFits,
+  slotFromExample,
+  suggestSlots,
   toArgv,
   type CliDraft,
 } from '@/lib/cli-form';
@@ -2436,6 +2439,34 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                                 <p className="mt-1 text-[11px] text-danger">{t('cliForm.noLine')}</p>
                               )
                             )}
+                            {/* 🔴 `<your text>` LOOKS LIKE A BLANK AND IS NOT ONE — say so,
+                                and offer the rewrite. Grey, not red: it never blocks
+                                saving, and a user who means a literal `<b>` just
+                                ignores it. The pieces above re-render the moment the
+                                button is pressed, so the result is shown, not
+                                promised. → `suggestSlots` */}
+                            {(() => {
+                              const fix = suggestSlots(a.line);
+                              if (!fix) return null;
+                              return (
+                                <p className="mt-1 text-[11px] text-muted">
+                                  {t('arm.slotHint')}{' '}
+                                  {fix.fixes.map((f, k) => (
+                                    <span key={k} className="mr-1 inline-block">
+                                      <code className="rounded bg-accent-soft px-1">{f.from}</code> →{' '}
+                                      <code className="rounded bg-accent-soft px-1">{f.to}</code>
+                                    </span>
+                                  ))}
+                                  <button
+                                    type="button"
+                                    className="ml-1 text-accent underline-offset-2 hover:underline"
+                                    onClick={() => set({ line: fix.line })}
+                                  >
+                                    {t('arm.slotApply')}
+                                  </button>
+                                </p>
+                              );
+                            })()}
                           </Field>
 
                           {/*
@@ -2485,13 +2516,38 @@ export function ArmDialog({ open, onOpenChange }: { open: boolean; onOpenChange(
                               J-5 measurement loses a place to look.
                               → `toArgv`'s rule: a guess must show its result.
                             */}
-                            {names.length === 0 ? (
-                              <ExampleNoSlot line={a.line} example={a.example} />
-                            ) : vals === null ? (
-                              <p className="mt-1 text-[11px] text-danger">
-                                {t('arm.cliExampleMismatch')}
-                              </p>
-                            ) : null}
+                            {/*
+                              🔴 SINCE 24/09 A MISMATCH BLOCKS SAVING, so the red
+                              line is the reason the button is dim, in the field
+                              that caused it. With no blank yet, `ExampleNoSlot`
+                              still POINTS at where one belongs — the block says
+                              "not yet", the pointer says "here". → `exampleFits`
+                            */}
+                            {names.length === 0 && <ExampleNoSlot line={a.line} example={a.example} />}
+                            {(names.length === 0 ? !exampleFits(a.line, a.example) : vals === null) &&
+                              (() => {
+                                // The way out of the block, when there is exactly one
+                                // difference to turn into a blank. → `slotFromExample`
+                                const out = slotFromExample(a.line, a.example);
+                                return (
+                                  <p className="mt-1 text-[11px] text-danger">
+                                    {t('cliForm.exampleNotSyntax')}
+                                    {out && (
+                                      <span className="ml-1 inline-block text-muted">
+                                        <code className="rounded bg-accent-soft px-1">{out.fix.from}</code> →{' '}
+                                        <code className="rounded bg-accent-soft px-1">{out.fix.to}</code>
+                                        <button
+                                          type="button"
+                                          className="ml-1 text-accent underline-offset-2 hover:underline"
+                                          onClick={() => set({ line: out.line })}
+                                        >
+                                          {t('arm.slotApply')}
+                                        </button>
+                                      </span>
+                                    )}
+                                  </p>
+                                );
+                              })()}
                           </Field>
 
                           <Field

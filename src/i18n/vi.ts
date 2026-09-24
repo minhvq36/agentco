@@ -814,6 +814,8 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
     'In ra một lời chào kèm tên được đưa vào. Chỉ in ra màn hình, không đọc và không ghi file nào — chạy lại bao nhiêu lần cũng an toàn.',
   'cliForm.noName': 'Chưa đặt tên cho lệnh này.',
   'cliForm.noLine': 'Chưa có dòng lệnh nào để chạy.',
+  'cliForm.exampleNotSyntax':
+    'Ví dụ chưa phải là cú pháp được điền vào, nên chưa lưu được lệnh này. Ví dụ là dòng bạn biết chắc chạy được — hãy sửa dòng Cú pháp: phần nào thay đổi giữa các lần chạy thì phải viết thành dạng {slot_name}.',
 
   // ───────────────────────────────────────────────────────────── markdown
   'md.taskDone': 'đã xong: ',
@@ -1127,6 +1129,8 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'arm.exOneDiff1': 'Khác cú pháp ở',
   'arm.exOneDiff2': '. Nếu đây là chỗ thay đổi mỗi lần chạy, đổi nó thành',
   'arm.exOneDiff3': 'ở dòng Cú pháp — nhân viên sẽ điền vào đó.',
+  'arm.slotHint': 'Trông giống chỗ để điền, nhưng ở đây nó sẽ chạy nguyên chữ:',
+  'arm.slotApply': 'Sửa theo gợi ý',
   'arm.jsonPlaceholder':
     'Dán khối cấu hình MCP từ README của server, ví dụ:\n{ "command": "npx", "args": ["-y", "..."] }',
   'arm.jsonAt': 'Dòng {line}, cột {col}: ',
@@ -1191,8 +1195,6 @@ Tuỳ chọn chung:  --dir <path>  --port <n>  --host <ip>  --no-ui
   'arm.cliDupAfter': '). Nhân viên sẽ không phân biệt được hai lệnh này — đổi tên một trong hai.',
   'arm.cliSyntax': 'Cú pháp',
   'arm.cliExample': 'Ví dụ',
-  'arm.cliExampleMismatch':
-    'Ví dụ không khớp cú pháp — phải cùng số mảnh và giống hệt ở những chỗ không phải ô trống.',
   'arm.cliDescription': 'Miêu tả',
   'arm.cliDescriptionPlaceholder':
     'Nó làm gì, kết quả khi mong đợi chạy, có ghi đè không, hoàn tác được không',

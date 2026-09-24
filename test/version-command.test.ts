@@ -19,6 +19,7 @@
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -29,9 +30,21 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(ROOT, 'dist', 'cli', 'index.js');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { version: string };
 
+/**
+ * ⚠ A COMPANY OF ITS OWN, IN ENGLISH. (flaked 24/09/2026)
+ *
+ * It used to only delete `AGENTCO_COMPANY_DIR`, which sends the CLI to
+ * `<cwd>/company` — the developer's own dev company, whose `language` decides
+ * the words this test matches. The suite went red mid-session the moment that
+ * company was touched from the UI, with nothing in the change under test
+ * involved. A developer with several companies lying around hits this at
+ * random. So the test brings its own, and matches English on purpose.
+ */
+const COMPANY = fs.mkdtempSync(path.join(os.tmpdir(), 'agentco-version-'));
+fs.writeFileSync(path.join(COMPANY, 'company.yaml'), 'language: en\n', 'utf8');
+
 function run(args: string[]): { out: string; code: number | null } {
-  const env = { ...process.env };
-  delete env['AGENTCO_COMPANY_DIR'];
+  const env = { ...process.env, AGENTCO_COMPANY_DIR: COMPANY };
   const r = spawnSync(process.execPath, [CLI, ...args], { env, encoding: 'utf8', timeout: 60_000 });
   return { out: r.stdout + r.stderr, code: r.status };
 }

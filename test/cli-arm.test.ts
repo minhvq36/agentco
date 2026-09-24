@@ -13,6 +13,7 @@ import {
   CliArmSchema,
   cliSays,
   cliToolNames,
+  compileCliArm,
   fillArgv,
   isCliArm,
   parseCliArm,
@@ -294,6 +295,69 @@ test('default label: the FIRST action\'s program name, never a concatenation of 
   };
   assert.equal(defaultArmLabel(decl), 'python');
   assert.equal(defaultArmLabel({ type: 'cli', actions: [{ id: 'a', say: 's', description: 'd', run: [] }] }), undefined);
+});
+
+// ── an unknown parameter is refused, through the REAL MCP path (21/09) ──
+//
+// ⚠ Through a real client, not by calling the handler: the stripping happened
+// in the SDK's own `z.object`, BEFORE the handler — a test that calls the
+// handler directly would pass while the product still stripped. `InMemory`
+// comes from the MCP SDK that `claude-agent-sdk` itself runs on.
+
+async function callThroughMcp(decl: unknown, args: Record<string, unknown>) {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const calls: { argv: string[] }[] = [];
+  const cfg = compileCliArm('probe', decl, { officeDir: os.tmpdir(), env: {}, onCall: (r) => calls.push(r) }) as {
+    instance: { connect(t: unknown): Promise<void> };
+  };
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await cfg.instance.connect(a);
+  const client = new Client({ name: 'test', version: '1' });
+  await client.connect(b);
+  const listed = await client.listTools();
+  const r = (await client.callTool({ name: 'echo', arguments: args })) as {
+    isError?: boolean;
+    content: { text: string }[];
+  };
+  await client.close();
+  return { r, calls, schema: listed.tools[0]!.inputSchema };
+}
+
+const echo = (run: string[], params?: unknown[]) => ({
+  type: 'cli',
+  actions: [{ id: 'echo', say: 'echo', description: 'echo', run, ...(params ? { params } : {}) }],
+});
+const NODE_ECHO = [process.execPath, '-e', 'console.log(process.argv.slice(1).join("|"))'];
+
+test('a command with NO blank refuses a parameter instead of running its fixed line', async () => {
+  const { r, calls } = await callThroughMcp(echo([...NODE_ECHO, 'placeholder text']), { content: 'Xin chao thang 8' });
+  assert.equal(r.isError, true, 'shipped behaviour: the key was stripped and the fixed line ran as a success');
+  assert.equal(calls.length, 0, 'nothing may be spawned when the call was refused');
+  assert.match(r.content[0]!.text, /takes NO parameters/);
+  assert.match(r.content[0]!.text, /content/);
+});
+
+test('a command WITH a blank refuses an extra key, and still runs with the declared one', async () => {
+  const decl = echo([...NODE_ECHO, '{msg}'], [{ name: 'msg', type: 'string', required: true }]);
+
+  const bad = await callThroughMcp(decl, { msg: 'hi', content: 'extra' });
+  assert.equal(bad.r.isError, true);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.r.content[0]!.text, /accepts only: msg/);
+
+  const good = await callThroughMcp(decl, { msg: 'Xin chao thang 8' });
+  assert.notEqual(good.r.isError, true);
+  assert.equal(good.r.content[0]!.text.trim(), 'Xin chao thang 8');
+  // The model is shown the same parameter list as before the change.
+  assert.deepEqual(Object.keys((good.schema as { properties: object }).properties), ['msg']);
+});
+
+test('a command with no blank, called with no arguments, still just runs', async () => {
+  const { r, calls } = await callThroughMcp(echo([...NODE_ECHO, 'fixed']), {});
+  assert.notEqual(r.isError, true);
+  assert.equal(calls.length, 1);
+  assert.equal(r.content[0]!.text.trim(), 'fixed');
 });
 
 test('a NON-CLI config passes through prepareArm untouched (no cross-contamination)', () => {
