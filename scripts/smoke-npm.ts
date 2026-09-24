@@ -277,12 +277,27 @@ async function main(): Promise<void> {
     measured.push(['source', `registry (${source})`]);
     // Right after a publish the registry can answer before it has the
     // version — `npm view` of an unknown version exits 0 with empty output.
+    //
+    // 🔴 AND THE VERSION CAN BE LISTED BEFORE ITS FILE EXISTS. (0.2.8, 24/09)
+    // `npm view` answered 0.2.8 and the very next `npm i` got E404 on
+    // `cli-0.2.8.tgz` on most legs: the metadata had propagated, the tarball
+    // had not reached the CDN yet. A manual install minutes later worked. The
+    // question an install asks is "can I DOWNLOAD it", so that is the probe.
     step(`wait for ${source} on the registry`);
     const seen = await waitFor(async () => {
-      const v = await npm(['view', source, 'version', '--prefer-online'], 60_000);
-      return v.out.trim().split(/\r?\n/).includes(PKG.version) ? true : undefined;
-    }, 300_000);
-    check(seen, `the registry serves ${source}`);
+      const v = await npm(['view', source, 'version', 'dist.tarball', '--json', '--prefer-online'], 60_000);
+      let meta: { version?: string; 'dist.tarball'?: string } = {};
+      try {
+        meta = JSON.parse(v.out) as typeof meta;
+      } catch {
+        return undefined;
+      }
+      const url = meta['dist.tarball'];
+      if (meta.version !== PKG.version || !url) return undefined;
+      const head = await fetch(url, { method: 'HEAD' }).catch(() => undefined);
+      return head?.ok ? true : undefined;
+    }, 600_000);
+    check(seen, `the registry serves ${source}, tarball included`);
   } else {
     step(`npm pack  (${PKG.name}@${PKG.version})`);
     const pack = await npm(['pack', '--pack-destination', PACK_DIR], 600_000);

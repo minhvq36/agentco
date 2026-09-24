@@ -314,9 +314,16 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           spec="$(node -p "require('./package.json').name")@$ver"
+          # 🔴 LIVE MEANS DOWNLOADABLE, not just listed (0.2.8, 24/09): the
+          # version showed up in `npm view` while its .tgz still 404'd on the
+          # CDN, and npm-verify failed on most legs. So the tarball URL has to
+          # answer too. -> scripts/smoke-npm.ts, same probe
           for i in $(seq 1 350); do
             got=$(npm view "$spec" version --prefer-online 2>/dev/null || true)
-            if [ "$got" = "$ver" ]; then echo "$spec is live"; exit 0; fi
+            if [ "$got" = "$ver" ]; then
+              tgz=$(npm view "$spec" dist.tarball --prefer-online 2>/dev/null || true)
+              if [ -n "$tgz" ] && curl -sfI "$tgz" >/dev/null; then echo "$spec is live and downloadable"; exit 0; fi
+            fi
             if [ $((i % 30)) -eq 1 ]; then
               echo "::notice::waiting for $spec - approve it in the Staged Packages tab on npmjs.com"
             fi

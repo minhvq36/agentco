@@ -6,7 +6,7 @@ release's page on GitHub.
 Releases before 0.2.8 were published without this file; their pages on GitHub
 Releases carry the installer and checksum only.
 
-## 0.2.9 — unreleased
+## 0.2.9 — 2026-09-25
 
 ### Changed
 
