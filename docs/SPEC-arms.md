@@ -6257,6 +6257,68 @@ SDK upgrade that stops honouring `passthrough` fails there.
 
 ---
 
+## 16x. ✅ 25/09 — **THE EMPLOYEE READS THE COMMAND'S SHAPE**, never one of its values
+
+### What each form field reaches (traced in code 25/09)
+
+| Form field | The **assistant** sees | The **employee** sees |
+|---|---|---|
+| Connection label | ✅ roster | via the brief |
+| Command name (`say`) | ✅ the `does` line (≤ 4 per arm) | ✅ tool name (slug), and the description when that is empty |
+| Description | ❌ | ✅ verbatim |
+| Syntax | ❌ | each blank's name and type — **and since 25/09 `Runs: <shape>`** |
+| Example | ❌ | each blank's value (≤ 60 chars), never the whole line |
+| Read-only · folder · `fail_when` | ❌ | ❌ (log, UI, run time only) |
+
+In essence the employee does ONE thing: replaces each `{slot_name}` with a real value and pulls the
+switch. Everything else in the line is fixed and out of its reach.
+
+### Why (24/09, `mcp-audit.jsonl`)
+
+The user said *"arg is …"*; the assistant — which never sees the syntax — copied *"with parameter
+(arg)"* into the brief; the tool showed `{info: string}` and nothing tying `info` to `--arg`. The
+first call sent **both** `info` and `arg` and §16w ③ refused it. *"The employee is the expert — it
+has to be able to read the arm's spec."*
+
+### The rule — an allow-list of SHAPE, never a block-list of secrets (`core/cli-arm.ts §runsLine`)
+
+The description goes into the prompt on every turn, and users paste literal keys into argv (no
+shell, so `$TOKEN` never expands). Recognising every key is a guess; a missed guess leaks silently.
+So only what cannot be a value is sent: the program's **file name** (split on `\` AND `/` whatever
+the OS — `path.basename` returns a whole Windows path on Linux, which is the Docker door); long
+flags `--name` (charset `[A-Za-z0-9_-]`, ≤ 40) whole; `--name=value` → `--name=…`; `-x` whole,
+`-xVALUE` → `-x…` (`mysql -pSECRET`); blanks `{name}` whole; everything else `…`, runs collapsed.
+**One promise, testable: no byte of a fixed value leaves the machine.** `get_information.py` is not
+secret — but to code it is the same kind of piece as `sk-live-…`, and telling them apart is the
+guess this rule exists to avoid. What the command does belongs in Name/Description, which the user
+controls and which already travel verbatim.
+
+⚠ **Two existing roads this does NOT close**: Description is sent verbatim, and each blank's Example
+value is sent. Both predate this change; a key typed there reaches the prompt.
+
+### Measured 25/09 — before vs after, 5 runs each, clean office copy, memory reset per run
+
+| Brief | 0.2.8 | with `Runs:` |
+|---|---|---|
+| the user's own words (*"arg is …"*, in Vietnamese) | 5/5 first call exactly `{info}` | 5/5 |
+| the assistant's 24/09 rewrite (*"with parameter (arg)"*, verbatim from `plan.created`) | 5/5 | 5/5 |
+
+⚠ **The 24/09 failure did not reproduce** (0/10 before), so this does NOT show an improvement — it
+was a low-rate event. What it does show: **no new failure** (0/10 values carried `--arg`, all exactly
+the user's text) at the same cost (~$0.04/run). Kept because the context is strictly richer and free;
+[[agentco-measurement-vs-conclusion]]. Reopen if a first-call refusal on a CLI arm shows up again —
+then the next lever is the ASSISTANT, which still cannot see blank names at all.
+
+### Found on the way — `agentco run "task" --office sales` sent *"task sales"*
+
+`run` and `office new` rebuilt their text with `.filter(a => !a.startsWith('--'))`, a second rule
+blind to the first: `parseFlags` had already taken the word after `--office` as its value, and the
+filter put it back. The documented `--office <id>` form glued the office id onto every request;
+`--dir` sent a folder path to the model. `splitArgs` now answers both questions in one loop;
+`test/cli-args.test.ts` is the $0 witness.
+
+---
+
 ## Sources
 
 **Read directly inside `node_modules`, `@anthropic-ai/claude-agent-sdk@0.3.231`** (📖 — types, not

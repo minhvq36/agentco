@@ -558,6 +558,69 @@ export function fillArgv(a: CliAction, args: Record<string, unknown>): string[] 
   return a.run.map((el) => el.replace(/\{([a-z0-9_]+)\}/gi, (_, n: string) => value(n)));
 }
 
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────
+ * │ 🔴 THE EMPLOYEE READS THE COMMAND'S SHAPE — AND NEVER ONE OF ITS VALUES.
+ * │ (the user's call, 25/09/2026) → SPEC-arms §16x
+ * │
+ * │ Measured 24/09 (`mcp-audit.jsonl`, office `ho-tro-khach-hang`): the user
+ * │ said *"arg is …"*, the brief said *"with parameter (arg)"*, and the tool
+ * │ showed only `{info: string}`. Nothing tied `info` to `--arg`, so the first
+ * │ call sent BOTH `info` and `arg` and was refused. *"The employee is the
+ * │ expert — it has to be able to read the arm's spec."*
+ * │
+ * │ ⚠ BUT THE LINE ITSELF MAY HOLD A KEY. With no shell, `$TOKEN` never
+ * │ expands, so users paste the literal key into argv (§16 STILL OWED). The
+ * │ description goes into the prompt on every turn, i.e. off the machine.
+ * │
+ * │ ⇒ An ALLOW-list of shape, never a block-list of secrets. Recognising
+ * │ every key is a guess, and a missed guess leaks in silence
+ * │ ([[agentco-deterministic-vs-signal]]). What is sent is only what cannot
+ * │ be a value:
+ * │  · the program's FILE NAME — a full path carries the machine's user name
+ * │  · a long flag `--name` (letters, digits, `-`, `_`, ≤ 40), whole
+ * │  · `--name=value` → `--name=…` — cut at `=`
+ * │  · a short flag `-x`, whole; `-xVALUE` → `-x…` — `mysql -pSECRET`
+ * │  · a blank `{name}` — the user declared it; around it, the same rules
+ * │  · everything else → `…`, and consecutive `…` collapse into one
+ * │ One promise, testable: NO BYTE OF A FIXED VALUE LEAVES THE MACHINE.
+ * │ What remains: a user who makes a secret into a flag NAME. At that point it
+ * │ is not a value any more, and the ≤ 40 / charset rule still bounds it.
+ * └──────────────────────────────────────────────────────────────────────────
+ */
+const LONG_FLAG = /^--[A-Za-z][A-Za-z0-9_-]{0,39}$/;
+const LONG_FLAG_EQ = /^(--[A-Za-z][A-Za-z0-9_-]{0,39}=)/;
+const HAS_SLOT = /\{[a-z0-9_]+\}/i;
+
+function pieceShape(p: string): string {
+  if (HAS_SLOT.test(p)) {
+    // `--arg={info}` keeps its flag head; any other literal text around a
+    // blank is a value and becomes `…`.
+    const head = LONG_FLAG_EQ.exec(p)?.[1] ?? '';
+    const rest = p.slice(head.length);
+    return head + rest.split(/(\{[a-z0-9_]+\})/i).map((s, i) => (i % 2 ? s : s ? '…' : '')).join('');
+  }
+  if (LONG_FLAG.test(p)) return p;
+  const eq = LONG_FLAG_EQ.exec(p);
+  if (eq) return `${eq[1]}…`;
+  if (/^-[A-Za-z]$/.test(p)) return p;
+  if (/^-[A-Za-z]/.test(p)) return `${p.slice(0, 2)}…`;
+  return '…';
+}
+
+/** The command's shape for the model — see the box above. */
+export function runsLine(run: readonly string[]): string {
+  if (!run.length) return '';
+  const program = run[0]!.split(/[\\/]/).pop() || '…';
+  const out = [HAS_SLOT.test(program) ? pieceShape(program) : program];
+  for (const p of run.slice(1)) {
+    const s = pieceShape(p);
+    if (s === '…' && out[out.length - 1] === '…') continue;
+    out.push(s);
+  }
+  return out.join(' ');
+}
+
 // ═════════════════ 4 · DECLARATION → TOOL. A PURE FUNCTION (constraint §16p ①)
 
 /** Where a child process is allowed to live. `officeDir` resolves the `{office}` placeholder. */
@@ -626,8 +689,12 @@ export function buildCliTools(arm: CliArm, ctx: CliContext) {
        * tiers are gone, this is the **ONLY** place the model learns what this
        * command does and how dangerous it is — so it must state the
        * CONSEQUENCES, not just the purpose. → §16l
+       *
+       * ⚠ Plus ONE line we write, `Runs: <shape>` — so the employee can tell
+       * which blank goes after which flag. Shape only, never a value:
+       * `runsLine` above.
        */
-      a.description,
+      `${a.description}\nRuns: ${runsLine(a.run)}`,
       input,
       async (args): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> => {
         const unknown = Object.keys(args as Record<string, unknown>).filter((k) => !declared.has(k));

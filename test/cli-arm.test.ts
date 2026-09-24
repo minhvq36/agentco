@@ -18,6 +18,7 @@ import {
   isCliArm,
   parseCliArm,
   runCommand,
+  runsLine,
 } from '../dist/core/cli-arm.js';
 import { injectSecrets, missingSecretRefs } from '../dist/core/secrets.js';
 
@@ -297,6 +298,73 @@ test('default label: the FIRST action\'s program name, never a concatenation of 
   assert.equal(defaultArmLabel({ type: 'cli', actions: [{ id: 'a', say: 's', description: 'd', run: [] }] }), undefined);
 });
 
+// ── runsLine — the command's SHAPE for the employee, never a value (25/09) ──
+
+test('the case of 24/09: the employee can now see that {info} goes after --arg', () => {
+  assert.equal(runsLine(['python', 'get_information.py', '--arg', '{info}']), 'python … --arg {info}');
+});
+
+test('🔴 no byte of a fixed value leaves: keys in every place a user pastes them', () => {
+  const cases: [string[], string][] = [
+    [['curl', '-H', 'Authorization: Bearer sk-live-abc123', '{url}'], 'curl -H … {url}'],
+    [['node', 'c.js', '--token=ghp_SECRET999', '--month', '{month}'], 'node … --token=… --month {month}'],
+    [['mysql', '-uadmin', '-pS3cretPass', '-e', 'select 1'], 'mysql -u… -p… -e …'],
+    [['tool', '--api-key', 'AKIAXXXXXXXX'], 'tool --api-key …'],
+    [['tool', 'https://user:pass@example.com/{path}'], 'tool …{path}'],
+  ];
+  for (const [run, want] of cases) {
+    const got = runsLine(run);
+    assert.equal(got, want, JSON.stringify(run));
+    for (const secret of ['sk-live', 'ghp_', 'S3cret', 'admin', 'AKIA', 'user:pass', 'Bearer']) {
+      assert.ok(!got.includes(secret), `leaked "${secret}" from ${JSON.stringify(run)}: ${got}`);
+    }
+  }
+});
+
+test('🔴 the program path is cut the SAME way on every OS — the Docker door runs a Windows config on Linux', () => {
+  // `path.basename` would return the whole Windows string on Linux, user name
+  // included. The split is on both separators, whatever runs it.
+  assert.equal(runsLine(['C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\python.exe', '{x}']), 'python.exe {x}');
+  assert.equal(runsLine(['C:/Users/Admin/tools/run.cmd', '{x}']), 'run.cmd {x}');
+  assert.equal(runsLine(['\\\\fileserver\\share\\bin\\tool.exe', '{x}']), 'tool.exe {x}');
+  assert.equal(runsLine(['/home/minh/.local/bin/agent-tool', '{x}']), 'agent-tool {x}');
+  assert.equal(runsLine(['/Users/minh/Library/bin/tool', '{x}']), 'tool {x}');
+  assert.equal(runsLine(['./scripts/run.sh', '{x}']), 'run.sh {x}');
+  assert.equal(runsLine(['C:\\Program Files\\Git\\bin\\bash.exe', '{x}']), 'bash.exe {x}');
+  for (const r of ['C:\\Users\\Admin\\python.exe', '/home/minh/tool', '/Users/minh/tool']) {
+    const got = runsLine([r]);
+    assert.ok(!/Admin|minh|Users|home/.test(got), `path leaked: ${got}`);
+  }
+});
+
+test('paths passed as ARGUMENTS are values, on any OS', () => {
+  assert.equal(runsLine(['python', 'C:\\Users\\Admin\\get_information.py', '--arg', '{info}']), 'python … --arg {info}');
+  assert.equal(runsLine(['node', '--config=/home/minh/.cfg', '{x}']), 'node --config=… {x}');
+  assert.equal(runsLine(['tool', '-f/Users/minh/in.txt']), 'tool -f…');
+  assert.equal(runsLine(['tool', 'C:\\Users\\Admin\\{file}']), 'tool …{file}');
+});
+
+test('flags and blanks keep their shape; runs of values collapse to one …', () => {
+  assert.equal(runsLine(['tool', '-v', '--dry-run', 'a', 'b', 'c', '{x}']), 'tool -v --dry-run … {x}');
+  assert.equal(runsLine(['tool', '--arg={info}']), 'tool --arg={info}');
+  assert.equal(runsLine(['tool', '{a}-{b}']), 'tool {a}…{b}');
+  // A flag name longer than 40 characters is not trusted to be a name.
+  assert.equal(runsLine(['tool', `--${'x'.repeat(60)}`]), 'tool …');
+  assert.equal(runsLine([]), '');
+});
+
+test('the employee is shown the Runs line, through the real MCP path — and the code after -e is not', async () => {
+  const { r, description } = await callThroughMcp(
+    // `--` before `--msg`: without it NODE reads `--msg` as its own option.
+    echo([...NODE_ECHO, '--', '--msg', '{msg}'], [{ name: 'msg', type: 'string', required: true }]),
+    { msg: 'hi' },
+  );
+  assert.notEqual(r.isError, true, r.content[0]?.text);
+  // `process.execPath` is a full path on every OS; only its file name may show.
+  assert.match(description, /^echo\nRuns: node(\.exe)? -e … --msg \{msg\}$/);
+  assert.ok(!description.includes('console.log'), description);
+});
+
 // ── an unknown parameter is refused, through the REAL MCP path (21/09) ──
 //
 // ⚠ Through a real client, not by calling the handler: the stripping happened
@@ -321,7 +389,7 @@ async function callThroughMcp(decl: unknown, args: Record<string, unknown>) {
     content: { text: string }[];
   };
   await client.close();
-  return { r, calls, schema: listed.tools[0]!.inputSchema };
+  return { r, calls, schema: listed.tools[0]!.inputSchema, description: listed.tools[0]!.description ?? '' };
 }
 
 const echo = (run: string[], params?: unknown[]) => ({

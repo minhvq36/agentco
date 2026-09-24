@@ -1860,6 +1860,8 @@ Command tab, one command named *get information*.
 | L-9 | L-2's syntax + L-3's example → Use this config → Test → Done → 💬 *"get information with the text Hello from August"* | result `Received: Hello from August` |
 | L-10 | Put the syntax back to a fixed `… --arg "fixed"` (no blank, no example), save, 💬 the same request | if the worker tries to pass the text it gets `Nothing was run. This command takes NO parameters…` and **says the command needs a blank**. If it calls with no parameter it gets `Received: fixed` — and must say the text did NOT reach the command. 🔴 Wrong: any reply claiming your text was passed |
 
+| L-11 | L-9's command, then 💬 *"run get information, arg is Hello from August"* — say **arg**, not the blank's name | the result is `Received: Hello from August`. Then open `<company>/offices/<office>/.state/mcp-audit.jsonl`: the **first** call's `args` holds only the blank's name. ⚠ Measured 25/09 at 10/10 both before and after the `Runs:` line — a first call carrying `arg` too is a rare miss, not the rule; note it and move on rather than failing the leg |
+
 *(L-1 and L-3 are different gates: the grey line is a suggestion and never blocks; the red line is the example disagreeing and always blocks. Checking only one leaves the other unverified.)*
 
 ### Leg K — four attack cases ⏱ ~8 min

@@ -6,6 +6,24 @@ release's page on GitHub.
 Releases before 0.2.8 were published without this file; their pages on GitHub
 Releases carry the installer and checksum only.
 
+## 0.2.9 — unreleased
+
+### Changed
+
+- **Employees now see which blank of a command goes where.** Each command
+  shows its shape to the employee — `python … --arg {info}` — so a request
+  that says "arg is …" is understood as the `{info}` blank. Only the program's
+  name, the flags and the blanks are shown: every fixed value in the command
+  (a file name, a path, a key someone pasted in) stays on your machine.
+
+### Fixed
+
+- **`agentco run "task" --office sales` no longer adds "sales" to the task.**
+  The value of a flag was being read twice — once as the flag, once as part of
+  the text — so the office's name (or, with `--dir`, a folder path) was sent
+  to the assistant as if you had typed it. The same fix applies to
+  `agentco office new "Name" --dir …`.
+
 ## 0.2.8 — 2026-09-24
 
 A fix release for **Commands on this machine** (CLI connections).
