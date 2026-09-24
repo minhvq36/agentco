@@ -875,7 +875,7 @@ async function cmdOffice(): Promise<void> {
   }
 
   if (sub === 'new') {
-    const name = argv.slice(2).filter((a) => !a.startsWith('--')).join(' ').trim();
+    const name = splitArgs(argv.slice(2)).rest.join(' ').trim();
     if (!name) {
       console.error(t('cli.officeNameMissing'));
       process.exit(EXIT.config);
@@ -1022,7 +1022,7 @@ function cmdSecret(): void {
 }
 
 async function cmdRun(): Promise<void> {
-  const request = argv.slice(1).filter((a) => !a.startsWith('--')).join(' ').trim();
+  const request = splitArgs(argv.slice(1)).rest.join(' ').trim();
   if (!request) {
     console.error(t('cli.runMissing'));
     process.exit(EXIT.config);
@@ -1585,21 +1585,43 @@ function flagOn(name: string): boolean {
 }
 
 function parseFlags(args: string[]): Record<string, string | number | boolean> {
-  const out: Record<string, string | number | boolean> = {};
+  return splitArgs(args).flags;
+}
+
+/**
+ * 🔴 WHAT IS NOT A FLAG — decided by the SAME loop that decides what a flag
+ * consumed. (found 25/09/2026, while measuring)
+ *
+ * `run` and `office new` used to rebuild their text with
+ * `.filter((a) => !a.startsWith('--'))`, a second rule that knew nothing of
+ * the first: `parseFlags` had already taken the word after `--office` as its
+ * value, and the filter put it back. `agentco run "task" --office sales` — the
+ * form `help` itself prints — sent *"task sales"* to the model, and `--dir`
+ * sent a folder path. One loop now answers both questions.
+ */
+export function splitArgs(args: readonly string[]): {
+  flags: Record<string, string | number | boolean>;
+  rest: string[];
+} {
+  const flags: Record<string, string | number | boolean> = {};
+  const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    if (!a.startsWith('--')) continue;
+    if (!a.startsWith('--')) {
+      rest.push(a);
+      continue;
+    }
     const key = a.slice(2);
     const next = args[i + 1];
     if (next === undefined || next.startsWith('--')) {
-      out[key] = true;
+      flags[key] = true;
     } else {
       const n = Number(next);
-      out[key] = Number.isFinite(n) && next.trim() !== '' ? n : next;
+      flags[key] = Number.isFinite(n) && next.trim() !== '' ? n : next;
       i++;
     }
   }
-  return out;
+  return { flags, rest };
 }
 
 function parseDuration(s: string): number | undefined {
