@@ -271,13 +271,27 @@ calls a licence — not for a feeling of completeness.
 CI does everything a machine can check. → `.github/workflows/release.yml` ·
 `SPEC-cli.md §6`
 
+**0. Write what changed — before the number moves.** Add `## <version> —
+<date>` at the top of `CHANGELOG.md` and commit it. Written for the person
+who installs it, not for us: what they will notice, what now works that did
+not. `### Fixed` / `### Added` / `### Changed` as needed.
+
+🔴 **It is a gate, not a habit** (since 24/09/2026 — the user's call after
+nine releases in ten days shipped with identical, silent notes).
+`npm version` runs the `version` script *after* bumping and *before* the commit
+and tag exist; it calls `scripts/release-notes.ts --check`, and a missing or
+empty section **aborts `npm version`** with nothing committed. `release.yml`
+builds the GitHub release body with the same script, the section first under
+*"What's new in <version>"*, then `.github/release-notes.md` — and refuses
+there too, for a tag pushed any other way.
+
 ```powershell
-npm version 0.1.2 -m "Release v%s"   # package.json + lock, a commit, tag v0.1.2 (clean tree required)
+npm version 0.1.2 -m "Release v%s"   # package.json + lock, a commit, tag v0.1.2 (clean tree required) — refuses without a CHANGELOG section
 git push origin main v0.1.2          # the tag starts release.yml
 ```
 
 **What the tag does with no hands:** `npm test` → build → packaged tree → NSIS
-installer → GitHub Release marked `--latest`, SHA-256 in the notes → the
+installer → GitHub Release marked `--latest`, what changed on top and the SHA-256 in the notes → the
 website's download URL checked to serve those exact bytes. In parallel the npm
 package is installed and run on Ubuntu, macOS and Windows × Node 22/24; only if
 that AND the Windows job pass is it staged (`npm stage publish`).

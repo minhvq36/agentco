@@ -31,6 +31,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.json && node --experimental-strip-types scripts/check-language.ts && node --test --experimental-strip-types test/*.test.ts",
     "check:language": "node --experimental-strip-types scripts/check-language.ts",
+    "version": "node --experimental-strip-types scripts/release-notes.ts --check",
     "smoke:npm": "node --experimental-strip-types scripts/smoke-npm.ts",
     "build:web": "npm --prefix web run build",
     "build:all": "tsc -p tsconfig.json && npm --prefix web run build",

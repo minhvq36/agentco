@@ -145,10 +145,17 @@ jobs:
           "layer=$($layer.Name)" >> $env:GITHUB_OUTPUT
         id: layer
 
+      # 🔴 WHAT CHANGED GOES FIRST, AND ITS ABSENCE STOPS THE RELEASE (24/09).
+      # The body used to be `.github/release-notes.md` alone — identical on
+      # every version. The script prepends this version's `CHANGELOG.md`
+      # section and exits 1 when there is none, before anything is published.
+      # `npm version` ran the same check already; this catches a tag pushed
+      # any other way. -> scripts/release-notes.ts
       - name: Release notes
         run: |
-          (Get-Content .github/release-notes.md -Raw).Replace('{{SHA256}}', '${{ steps.sum.outputs.sha256 }}') |
-            Set-Content notes.md -Encoding utf8
+          node --experimental-strip-types scripts/release-notes.ts --sha256 '${{ steps.sum.outputs.sha256 }}' --out notes.md
+          if ($LASTEXITCODE -ne 0) { throw "release notes failed - see CHANGELOG.md" }
+          Get-Content notes.md -TotalCount 12
 
       # A dry run stops here and hands the installer back as a build artifact:
       # everything above is proven, nothing outside this repository moved.
